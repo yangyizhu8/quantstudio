@@ -37,7 +37,9 @@ class _HistoryMarket:
     def __init__(self):
         self.end_dates = []
 
-    def get_bars_by_count(self, codes, count, end_date, fields, fq):
+    def get_bars_by_count(self, codes, count, end_date, fields, fq, frequency="1d",
+                          bar_cutoff_ms=None):
+        # PR3: frequency 参数；PR4: bar_cutoff_ms 参数（缺口 1）。mock 同步签名。
         self.end_dates.append(end_date)
         return {codes[0]: pd.DataFrame({"close": [1.0] * count})}
 

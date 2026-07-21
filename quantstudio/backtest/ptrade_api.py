@@ -20,6 +20,8 @@ from .libs.security_code_rules import (
     bare_code, classify_security, exchange as security_exchange,
     normalize_security_code, normalize_to_ptrade, normalize_to_qmt,
 )
+# PR3: 频率查询能力错误（分钟数据缺失/不支持时上抛，严禁静默回退日线）
+from .providers.frequency_labels import FrequencyCapabilityError
 
 logger = logging.getLogger(__name__)
 
@@ -332,6 +334,8 @@ class PtradeAPI:
         self._prices = {}
         self._query_cache = {}
         self._daily_tasks = []
+        self._current_bar_ts = None   # PR4 缺口 1：分钟 Profile 当前 bar 时间戳
+        self._pct_chg_map = None      # PR4：日级 pctChg（分钟涨跌停判断）
         self._market = None
         self._fundamental = None
         self._reference = None
@@ -341,7 +345,21 @@ class PtradeAPI:
 
     def attach(self, engine, curr_data: pd.DataFrame, prev_data: pd.DataFrame,
                curr_date: str, prev_date: str, prices: dict = None):
-        """每个交易日注入引擎数据"""
+        """每个交易日注入引擎数据（向后兼容别名 = attach_day）。
+
+        PR4：日线循环调此方法（= attach_day，含 preload）。分钟循环用 attach_day（每日一次）
+        + attach_bar（每 bar 一次，跳过 preload）。
+        """
+        self.attach_day(engine, curr_data, prev_data, curr_date, prev_date, prices)
+
+    def attach_day(self, engine, curr_data: pd.DataFrame, prev_data: pd.DataFrame,
+                   curr_date: str, prev_date: str, prices: dict = None):
+        """PR4: 每日一次注入引擎数据，含 preload（行情/估值/参考数据预加载）。
+
+        【修正缺口 2】分钟 Profile 的 _prices 应传昨日收盘价（非当日 close），
+        因 before_trading_start 在 09:31 前执行，不能见到当日收盘。日线 Profile
+        仍传当日 close（日级 now 未定义的约定，与现有行为一致）。调用方负责传入正确的 prices。
+        """
         self._engine = engine
         # A1：从 engine 注入 EngineConfig，替代散落的 19 处硬编码绝对路径
         self._cfg = getattr(engine, 'config', None)
@@ -352,6 +370,12 @@ class PtradeAPI:
         self._prices = prices or {}
         # 清空当日查询缓存（PIT 语义：每天重新查，不跨日复用）
         self._query_cache = {}
+        # PR4：分钟 Profile 的 current_bar_ts 每日重置（由 attach_bar 逐 bar 更新）
+        self._current_bar_ts = None
+        self._pct_chg_map = None
+        # PR4：日级 curr_data（分钟 Profile 下供 _immediate_execute 的涨跌停判断用日级 pctChg）。
+        # attach_day 注入当日日线 snapshot；attach_bar 不覆盖它（bar 快照存 _current_day_data）。
+        self._daily_curr_data = curr_data
         if self._market is None and self._cfg is not None:
             from .providers.base import DataProviderRegistry
             registry = getattr(engine, '_providers', None) or DataProviderRegistry.from_duckdb(
@@ -366,6 +390,25 @@ class PtradeAPI:
             self._fundamental.preload(prev_date)
         if self._reference is not None:
             self._reference.preload()
+
+    def attach_bar(self, engine, bar_data: pd.DataFrame, curr_date: str, prev_date: str,
+                   prices: dict = None, pct_chg_map: dict = None,
+                   current_bar_ts=None):
+        """PR4: 每 bar 一次注入引擎数据，跳过 preload（避免每 bar DB 查询）。
+
+        【修正缺口 1】注入 current_bar_ts，get_history/get_price 的分钟查询锚定到此，
+        当日窗口截断到 current_bar_ts（含，因 end-labeled 下当前 bar 已完成是可见历史），
+        不含未来 bar。
+        """
+        self._engine = engine
+        self._current_day_data = bar_data
+        self._current_date = curr_date
+        self._prev_date = prev_date
+        self._prices = prices or {}
+        # 每 bar 清空查询缓存（PIT 语义：每根 bar 重新查）
+        self._query_cache = {}
+        self._pct_chg_map = pct_chg_map   # 日级 pctChg（分钟涨跌停判断用）
+        self._current_bar_ts = current_bar_ts   # 【修正缺口 1】
 
     def get_signals(self) -> list:
         """兼容旧接口（即时执行模式下返回空列表）"""
@@ -719,10 +762,16 @@ class PtradeAPI:
         """目标市值调仓（对应 Ptrade order_target_value）
         即时执行：调用后 Account 立即更新，策略下一行可见最新状态。
         value=0 全卖；value>0 调仓到目标市值。
-        A3: 返回 Order 对象，策略可检查 order.status 感知失败（涨跌停阻断/资金不足）。"""
+        A3: 返回 Order 对象，策略可检查 order.status 感知失败（涨跌停阻断/资金不足）。
+
+        PR2: next_open 模式下换算前分流到 _create_pending_order（T 日只入队 + 预扣，
+        T+1 drain 成交）。close/open 路径逐行不变。"""
+        if self._engine.match_price_mode == "next_open":
+            return self._engine._create_pending_order(
+                security, instruction="target_value", target_value=value)
         order = self._engine._immediate_execute(
             security, target_value=value, prices=self._prices,
-            date=self._current_date, curr_data=self._current_day_data)
+            date=self._current_date, curr_data=self._curr_data_for_execute())
         # 成交后原地刷新 portfolio（策略持有的 context 引用不变）
         self._engine.refresh_portfolio(self._prices)
         return order
@@ -730,10 +779,16 @@ class PtradeAPI:
     def order(self, security: str, amount: int, limit_price=None):
         """按股数下单（即时执行）
         amount>0 买入，amount<0 卖出。
-        A3: 返回 Order 对象。"""
+        A3: 返回 Order 对象。
+
+        PR2: next_open 模式下换算前分流到 _create_pending_order。close/open 不变。"""
+        if self._engine.match_price_mode == "next_open":
+            instr = "buy_shares" if amount >= 0 else "sell_shares"
+            return self._engine._create_pending_order(
+                security, instruction=instr, shares=abs(amount))
         order = self._engine._immediate_execute(
             security, shares=amount, prices=self._prices,
-            date=self._current_date, curr_data=self._current_day_data)
+            date=self._current_date, curr_data=self._curr_data_for_execute())
         self._engine.refresh_portfolio(self._prices)
         return order
 
@@ -743,7 +798,16 @@ class PtradeAPI:
         """按金额买入/卖出（对应 Ptrade order_value，增量操作）
         value>0 买入指定金额（增量加仓），value<0 卖出指定金额（增量减仓）。
         注意：order_value 是增量，order_target_value 才是调仓到目标市值（绝对）。
-        A3: 返回 Order 对象。"""
+        A3: 返回 Order 对象。
+
+        PR2: next_open 模式下换算前分流到 _create_pending_order（存原始 value，
+        T+1 drain 时用 T+1 open 重新换算股数，避免 T 日价换算的穿越）。close/open 不变。"""
+        if self._engine.match_price_mode == "next_open":
+            if value == 0:
+                return self._make_noop_order(security)
+            instr = "buy_value" if value > 0 else "sell_value"
+            return self._engine._create_pending_order(
+                security, instruction=instr, target_value=abs(value))
         bare = bare_code(security)
         price = self._get_current_price(bare)
         last_order = None
@@ -758,20 +822,26 @@ class PtradeAPI:
             if buy_shares > 0:
                 last_order = self._engine._immediate_execute(
                     security, shares=buy_shares, prices=self._prices,
-                    date=self._current_date, curr_data=self._current_day_data)
+                    date=self._current_date, curr_data=self._curr_data_for_execute())
         elif value < 0:
             # 卖出指定金额（增量）
             sell_shares = int(abs(value) / price)
             if sell_shares > 0:
                 last_order = self._engine._immediate_execute(
                     security, shares=-sell_shares, prices=self._prices,
-                    date=self._current_date, curr_data=self._current_day_data)
+                    date=self._current_date, curr_data=self._curr_data_for_execute())
         self._engine.refresh_portfolio(self._prices)
         return last_order if last_order is not None else self._make_noop_order(security)
 
     def order_target(self, security: str, target_amount: int, limit_price=None):
         """调仓到目标股数（对应 Ptrade order_target）。
-        A3: 返回 Order 对象。"""
+        A3: 返回 Order 对象。
+
+        PR2: next_open 模式下换算前分流到 _create_pending_order（存原始 target_amount，
+        T+1 drain 时用 T+1 持仓重新算 delta）。close/open 不变。"""
+        if self._engine.match_price_mode == "next_open":
+            return self._engine._create_pending_order(
+                security, instruction="target_shares", shares=target_amount)
         bare = bare_code(security)
         qmt_code = self._bare_to_qmt(bare)
         pos = self._engine.account.positions.get(qmt_code)
@@ -780,7 +850,7 @@ class PtradeAPI:
         if delta != 0:
             order = self._engine._immediate_execute(
                 security, shares=delta, prices=self._prices,
-                date=self._current_date, curr_data=self._current_day_data)
+                date=self._current_date, curr_data=self._curr_data_for_execute())
             self._engine.refresh_portfolio(self._prices)
             return order
         return self._make_noop_order(security)
@@ -809,7 +879,7 @@ class PtradeAPI:
             _field = unit   # 第3个位置参数实际是 field
             _sec_list = fields  # 第4个位置参数实际是 security_list
             count = _count
-            unit = _freq or '1d'
+            unit = _freq or frequency or '1d'   # PR4: count-first 模式下也接受 frequency 关键字
             fields = _field if _field else fields
             security = _sec_list if _sec_list else security_list
         # security_list 优先（Ptrade 官方参数名）
@@ -819,6 +889,9 @@ class PtradeAPI:
             return pd.DataFrame()
         if count is None:
             count = 20
+        # PR4: frequency 关键字作为 unit 的别名（兼容 get_history(60, frequency='1m', ...) 调用）
+        if frequency and unit == '1d':
+            unit = frequency
 
         sec_list = [security] if isinstance(security, str) else list(security)
 
@@ -844,8 +917,15 @@ class PtradeAPI:
             # include=True extends the window through current_date.
             anchor_date = ((self._current_date or self._prev_date) if include
                            else (self._prev_date or self._current_date))
+            # PR4 缺口 1：分钟 Profile 下锚定到 _current_bar_ts（防未来 bar 泄漏）。
+            # _current_bar_ts 由 attach_bar 注入；日线 Profile 为 None（走 PR3 原全天窗口）。
+            bar_cutoff_ms = None
+            cur_bar_ts = getattr(self, '_current_bar_ts', None)
+            if cur_bar_ts is not None and unit != '1d':
+                bar_cutoff_ms = int(pd.Timestamp(cur_bar_ts).value // 10**6)
             for bare, df in self._market.get_bars_by_count(
-                    bare_codes, count, anchor_date, None, fq).items():
+                    bare_codes, count, anchor_date, None, fq, frequency=unit,
+                    bar_cutoff_ms=bar_cutoff_ms).items():
                 df = df.copy()
                 df.index = range(-len(df), 0)
                 dfs[self._to_ptrade_code(bare)] = df
@@ -868,6 +948,10 @@ class PtradeAPI:
                     df0 = df0[available]
             if hasattr(self, '_query_cache'): self._query_cache[cache_key] = df0
             return df0
+        except FrequencyCapabilityError:
+            # PR3: 能力错误必须上抛，不静默吞成空 DataFrame（否则策略会把"无分钟数据"当"无信号"，
+            # 违反主计划 7.19 "严禁频率缺失时回退到日线；数据缺失返回结构化能力错误"）。
+            raise
         except Exception as e:
             logger.debug(f"get_history 失败: {e}")
             return {} if is_dict else pd.DataFrame()
@@ -908,6 +992,18 @@ class PtradeAPI:
         qmt = self._bare_to_qmt(bare_code)
         return self._prices.get(qmt, 0)
 
+    def _curr_data_for_execute(self):
+        """PR4: _immediate_execute 的 curr_data 来源。
+
+        分钟 Profile：用 _daily_curr_data（当日日线 snapshot），涨跌停判断用日级 pctChg
+        （分钟 bar 的 preClose 不复权，除权日风险）。
+        日线 Profile：用 _current_day_data（当日日线，与现有行为一致）。
+        """
+        daily = getattr(self, '_daily_curr_data', None)
+        if daily is not None:
+            return daily
+        return self._current_day_data
+
     def _make_noop_order(self, security: str):
         """构造无操作 Order（order_target delta=0 等）— A3。
         老策略 if order: 会判定为 False（filled=0），兼容。"""
@@ -942,14 +1038,20 @@ class PtradeAPI:
             securities = [security] if isinstance(security, str) else security
             dfs = {}
             bare_codes = [bare_code(sec) for sec in securities]
+            # PR4 缺口 1：分钟 Profile 下锚定到 _current_bar_ts（防未来 bar 泄漏）。
+            bar_cutoff_ms = None
+            cur_bar_ts = getattr(self, '_current_bar_ts', None)
+            if cur_bar_ts is not None and frequency != '1d':
+                bar_cutoff_ms = int(pd.Timestamp(cur_bar_ts).value // 10**6)
             if count and end_date:
                 provider_result = self._market.get_bars_by_count(
-                    bare_codes, count, pd.Timestamp(end_date).strftime('%Y-%m-%d'), None, fq)
+                    bare_codes, count, pd.Timestamp(end_date).strftime('%Y-%m-%d'), None, fq,
+                    frequency=frequency, bar_cutoff_ms=bar_cutoff_ms)
             else:
                 provider_result = self._market.get_bars(
                     bare_codes, pd.Timestamp(start_date or '1900-01-01').strftime('%Y-%m-%d'),
                     pd.Timestamp(end_date or self._prev_date or self._current_date).strftime('%Y-%m-%d'),
-                    None, fq)
+                    None, fq, frequency=frequency, bar_cutoff_ms=bar_cutoff_ms)
             for bare, df in provider_result.items():
                 if len(df) > 0:
                     df['trade_date'] = pd.to_datetime(df['time'], unit='ms', utc=True).dt.tz_convert('Asia/Shanghai').dt.strftime('%Y-%m-%d')
@@ -966,6 +1068,9 @@ class PtradeAPI:
             if len(dfs) == 1:
                 return list(dfs.values())[0]
             return CodeDict(dfs)
+        except FrequencyCapabilityError:
+            # PR3: 能力错误必须上抛（同 get_history），不静默吞成空 DataFrame。
+            raise
         except Exception as e:
             logger.debug(f"get_price 失败: {e}")
             return {} if is_dict else pd.DataFrame()
@@ -1519,16 +1624,48 @@ class PtradeAPI:
         return self._engine._today_trades
 
     def get_open_orders(self, security=None):
-        """获取未成交订单（即时执行模式下始终为空）"""
-        return []
+        """获取未成交订单。
+
+        PR2: next_open 模式返回当前 pending queue（仅 status=pending）；
+        close/open 即时执行模式下始终为空（保持 legacy 行为）。"""
+        if self._engine.match_price_mode != "next_open":
+            return []
+        pending = [po for po in self._engine._pending_orders if po.status == "pending"]
+        orders = [self._engine._po_to_order(po, filled=False) for po in pending]
+        if security:
+            bare = bare_code(security)
+            return [o for o in orders if bare_code(o.security) == bare]
+        return orders
 
     def get_order(self, order_id):
-        """根据 order_id 查订单"""
+        """根据 order_id 查订单。
+
+        PR2: next_open 模式查 _pending_orders + _today_orders；close/open 返回 None。"""
+        if self._engine.match_price_mode != "next_open":
+            return None
+        for po in self._engine._pending_orders:
+            if po.order_id == order_id:
+                return self._engine._po_to_order(po, filled=(po.status == "filled"))
+        for o in getattr(self._engine, '_today_orders', []):
+            if getattr(o, 'order_id', '') == order_id:
+                return o
         return None
 
     def cancel_order(self, order_param):
-        """撤单（即时执行模式下无法撤单，no-op）"""
-        pass
+        """撤单。
+
+        PR2: next_open 模式按 order_id 精确移除 pending 订单 + 归还预扣；
+        close/open 即时执行模式下 no-op（订单已即时成交，无法撤单）。
+
+        order_param 可以是 Order 对象（取 order_id）或 order_id 字符串。"""
+        if self._engine.match_price_mode != "next_open":
+            return
+        order_id = order_param
+        if hasattr(order_param, 'order_id'):
+            order_id = order_param.order_id
+        if order_id is None:
+            return
+        self._engine._cancel_pending_order(order_id)
 
     def set_volume_ratio(self, volume_ratio=0.25):
         """设置成交量占比限制"""
@@ -1548,8 +1685,11 @@ class PtradeAPI:
                     code=qmt, volume=volume, avg_cost=cost, can_sell=volume)
                 self._engine.account.cash -= volume * cost
 
-    def get_snapshot(self, security):
-        """获取实时快照（回测模式返回当日 bar 数据）"""
+    def get_snapshot(self, security, frequency="1d"):
+        """获取实时快照（回测模式返回当日 bar 数据）。
+
+        PR3: frequency 形参仅签名对齐主计划 7.17；当前实现读 _current_day_data（日线），
+        行为不变。分钟快照留待 PR4 引擎提供 _current_minute_data。"""
         bare = bare_code(security)
         data = self._current_day_data
         if data is None:

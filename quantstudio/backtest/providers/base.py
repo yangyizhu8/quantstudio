@@ -19,12 +19,25 @@ class MarketDataProvider(ABC):
     @abstractmethod
     def get_bars(self, codes: List[str], start_date: str, end_date: str,
                  fields: Optional[List[str]] = None,
-                 fq: Optional[str] = None) -> Dict[str, pd.DataFrame]: ...
+                 fq: Optional[str] = None,
+                 frequency: str = "1d",
+                 bar_cutoff_ms: Optional[int] = None) -> Dict[str, pd.DataFrame]: ...
+        # PR3: frequency 默认 "1d" 走日线（向后兼容）；"1m"/"5m"/... 走分钟表。
+        # PR4: bar_cutoff_ms 分钟 Profile 的当前 bar 截断（修正缺口 1，防未来 bar 泄漏）；
+        #      None 时走 PR3 原逻辑（日级全天窗口）。末位默认值保证日线路径零触达。
 
     @abstractmethod
     def get_bars_by_count(self, codes: List[str], count: int, end_date: str,
                           fields: Optional[List[str]] = None,
-                          fq: Optional[str] = None) -> Dict[str, pd.DataFrame]: ...
+                          fq: Optional[str] = None,
+                          frequency: str = "1d",
+                          bar_cutoff_ms: Optional[int] = None) -> Dict[str, pd.DataFrame]: ...
+
+    @abstractmethod
+    def get_snapshot(self, date_or_dt, frequency: str = "1d",
+                     fields: Optional[List[str]] = None) -> pd.DataFrame: ...
+        # PR3 补齐 5：抽象层补 get_snapshot 声明（主计划 7.17）。
+        # frequency="1d" 返回日线快照；分钟快照留待 PR4 引擎提供 _current_minute_data。
 
     @abstractmethod
     def get_benchmark(self, code: str, start_date: str,
@@ -167,5 +180,8 @@ class DataProviderRegistry:
                                      DuckDBFundamentalDataProvider,
                                      DuckDBMarketDataProvider,
                                      DuckDBReferenceDataProvider)
-        return cls(DuckDBMarketDataProvider(db_path), DuckDBFundamentalDataProvider(db_path),
-                   DuckDBReferenceDataProvider(db_path), DuckDBCalendarProvider(db_path))
+        # PR3: calendar 先建，再注入到 market provider（分钟查询需枚举交易日生成时段窗口）
+        calendar = DuckDBCalendarProvider(db_path)
+        market = DuckDBMarketDataProvider(db_path, calendar_provider=calendar)
+        return cls(market, DuckDBFundamentalDataProvider(db_path),
+                   DuckDBReferenceDataProvider(db_path), calendar)

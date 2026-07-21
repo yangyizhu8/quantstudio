@@ -62,9 +62,14 @@ class EngineConfig:
 class Position:
     """持仓"""
     code: str          # QMT 格式 600000.SH
-    volume: int = 0    # 持仓股数
+    volume: int = 0    # 持股股数
     avg_cost: float = 0.0  # 持仓均价
     can_sell: int = 0  # 可卖股数（T+1：今日买入的不可卖）
+    # PR2: next_open pending 卖单预扣股数。close/open 模式恒为 0（隔离契约）。
+    # get_positions() 返回的 enable_amount = can_sell - pending_sell_shares，
+    # 让 T 日策略看到真实可卖量，避免超卖穿越。T+1 drain 成交则 pending_sell_shares
+    # 归零并正式扣减 volume；拒单/expire/cancel 则原路归还。
+    pending_sell_shares: int = 0
 
 
 @dataclass
@@ -86,9 +91,12 @@ class Order:
     target_amount: int = 0   # 目标股数
     filled_amount: int = 0   # 实际成交股数
     price: float = 0.0       # 成交价（含滑点）
-    status: str = "rejected" # "filled"/"rejected"/"partial"/"pending"(Phase E 实盘预留)
+    status: str = "rejected" # "filled"/"rejected"/"partial"/"pending"(PR2 next_open + Phase E 实盘预留)
     reason: str = ""         # "limit_up_blocked"/"limit_down_blocked"/"insufficient_cash"/"no_price"
-    created_dt: str = ""     # 下单日期
+    created_dt: str = ""     # 下单日期（next_open: T 日信号日）
+    # PR2: next_open 成交日（T+1）。close/open 路径留空，向后兼容。
+    # 主计划 7.13 "正确记录 created_dt 和 filled_dt"。
+    filled_dt: str = ""
 
     def __bool__(self):
         """老策略 if order: 判定为是否成交（兼容旧代码不检查返回值的写法）"""
@@ -101,11 +109,53 @@ class Order:
 
 
 @dataclass
+class PendingOrder:
+    """PR2: next_open 延迟订单队列项。生命周期 created → pending → filled/rejected/expired/cancelled。
+
+    T 日策略下单 → _create_pending_order 创建 PendingOrder(status=pending) 并对称预扣资源；
+    T+1 开盘事件 _drain_pending_orders 用 T+1 open 价 + T+1 状态执行，成交则正式过户，
+    拒单/expire/cancel 则原路归还预扣。主计划 7.12 设计 + 7.13 任务清单。
+
+    instruction 7 枚举（与 PtradeAPI 四个交易方法换算前分流映射对齐）：
+      target_value  ← order_target_value(value)
+      target_shares ← order_target(target_amount)
+      buy_shares    ← order(+amount)
+      sell_shares   ← order(-amount)
+      buy_value     ← order_value(+value)
+      sell_value    ← order_value(-value)
+      sell_all      ← order_target_value(0) / 清仓
+    """
+    order_id: str
+    created_dt: str          # T 日（信号日）
+    scheduled_dt: str        # T+1 日（计划执行日）
+    security: str            # 策略原样传入的 security
+    code: str                # QMT 格式 600000.SH（引擎内部键）
+    instruction: str         # 7 枚举之一
+    direction: str           # "buy" / "sell"（创建时由 _estimate_pending 确定）
+    target_value: float | None = None
+    shares: int | None = None
+    # T 日预扣快照（cancel/reject/expired 精确归还用，防多日重复挂单的累积漂移）
+    est_cost: float = 0.0         # 买单预扣金额（含估算佣金/过户费）
+    est_shares: int = 0           # 卖单预扣股数
+    status: str = "pending"       # pending/filled/rejected/expired/cancelled
+    filled: float = 0.0           # 实际成交金额（drain 后填）
+    filled_amount: int = 0        # 实际成交股数
+    price: float = 0.0            # 实际成交价（T+1 open ± 滑点）
+    filled_dt: str = ""           # 成交日（T+1）；主计划 7.13 "区分 created_dt 与 filled_dt"
+    reason: str = ""              # 拒单原因
+
+
+@dataclass
 class Account:
     """账户"""
     # 默认本金对齐 Ptrade 平台回测默认 10 万（与 BacktestEngine.capital 默认一致，
     # 消除"忘传 capital 误用 100 万"陷阱）
     cash: float = 100_000.0
+    # PR2: next_open pending 买单预扣资金。close/open 模式恒为 0（隔离契约）。
+    # 贴合 A 股实盘"委托即冻结资金"语义；T 日策略可用现金 = cash - locked_cash 之外的自由部分，
+    # 避免重复下单穿越。locked_cash 仍计入总资产（净值不因挂单失真）。
+    # T+1 drain 成交则 locked_cash 归零（资金转为持仓）；拒单/expire/cancel 原路退回 cash。
+    locked_cash: float = 0.0
     positions: Dict[str, Position] = field(default_factory=dict)  # code → Position
 
     @property
@@ -119,10 +169,11 @@ class Account:
 
     @property
     def total_asset(self) -> float:
-        return self.cash + self.market_value
+        # PR2: locked_cash 计入总资产（净值不因挂单低估）。close/open 模式 locked_cash=0，数值不变。
+        return self.cash + self.locked_cash + self.market_value
 
     def total_asset_at_price(self, prices: Dict[str, float]) -> float:
-        return self.cash + self.market_value_at_price(prices)
+        return self.cash + self.locked_cash + self.market_value_at_price(prices)
 
 
 @dataclass
@@ -225,7 +276,9 @@ class BacktestEngine:
                  progress_callback=None,
                  config: Optional[EngineConfig] = None,
                  match_price_mode: str = "close",
-                 providers=None):
+                 providers=None,
+                 engine_profile: str = "daily-bar-v1",
+                 etf_t0: bool = False):
         """strategy_type: 'ptrade' = Ptrade 原版策略（唯一支持模式，即时成交 + 精确涨跌停）。
 
         注：custom 自定义信号模式已于 2026-07-19 废弃（不保证撮合精度、无涨跌停阻断、
@@ -273,6 +326,16 @@ class BacktestEngine:
         if match_price_mode not in ("close", "open", "next_open"):
             raise ValueError(f"match_price_mode 必须是 close/open/next_open， got {match_price_mode!r}")
         self.match_price_mode = match_price_mode
+        # PR4: 引擎 Profile（daily-bar-v1 逐日循环 / minute-bar-v1 分钟事件循环）
+        if engine_profile not in ("daily-bar-v1", "minute-bar-v1"):
+            raise ValueError(f"engine_profile 必须是 daily-bar-v1/minute-bar-v1， got {engine_profile!r}")
+        # 分钟 Profile 强制即时撮合，禁用 next_open pending queue（分钟是即时 bar 流模型）
+        if engine_profile == "minute-bar-v1" and match_price_mode == "next_open":
+            raise ValueError("minute-bar-v1 不支持 next_open（分钟即时撮合模型，无跨日 pending 语义）")
+        self.engine_profile = engine_profile
+        # PR4 决策 4：ETF T+0 只挂分钟 Profile。日线 Profile 强制 False（守护黄金基线 87,752.56）。
+        # is_etf 判定走 PR1 的 security_code_rules（不新写分类逻辑）。
+        self.etf_t0 = bool(etf_t0) if engine_profile == "minute-bar-v1" else False
         self.account = Account(cash=capital)
         self.result = BacktestResult()
         if providers is None:
@@ -284,6 +347,27 @@ class BacktestEngine:
         self._strategy_name = "strategy"
         self._initial_capital = capital
         self.result.initial_capital = float(capital)
+        # PR2: next_open pending order queue。close/open 模式下始终为空（隔离契约）。
+        # _pending_orders 跨日持久；_today_orders 每个 drain 日清空（避免 get_order 跨日累积）。
+        # _t_day_close_prices 由主循环每日注入，供 _create_pending_order 估算预扣（T 日 close，无穿越）。
+        self._pending_orders: list = []
+        self._today_orders: list = []
+        self._t_day_close_prices: dict = {}
+        self._current_date_str: str = ""
+
+    @property
+    def engine_semantics_version(self) -> str:
+        """PR2/PR4: 引擎执行语义版本（Run Card 记录用）。
+
+        - close/open：`0.1.0-legacy`（next_open pending queue 未激活，行为与 PR2 前一致）
+        - next_open：`0.2.0-next_open_pending`（PR2 真实 pending order queue）
+        - minute-bar-v1：`0.3.0-minute-bar`（PR4 分钟事件循环 + 精确调度 + ETF T+0）
+        """
+        if self.engine_profile == "minute-bar-v1":
+            return "0.3.0-minute-bar"
+        if self.match_price_mode == "next_open":
+            return "0.2.0-next_open_pending"
+        return "0.1.0-legacy"
 
     def run(self) -> BacktestResult:
         """Execute the daily-bar backtest."""
@@ -311,8 +395,12 @@ class BacktestEngine:
         benchmark_base_date = self._providers.calendar.get_trading_day(first_trade_day, offset=-1)
         benchmark_start = (benchmark_base_date.strftime('%Y-%m-%d')
                            if benchmark_base_date is not None else first_trade_day)
-        benchmark_raw = self._providers.market.get_benchmark(
-            benchmark_code, benchmark_start, trade_days[-1].strftime('%Y-%m-%d'))
+        benchmark_raw = {}
+        try:
+            benchmark_raw = self._providers.market.get_benchmark(
+                benchmark_code, benchmark_start, trade_days[-1].strftime('%Y-%m-%d'))
+        except Exception as e:
+            logger.debug(f"[Backtest] 基准数据加载失败（分钟测试合成库可能缺 index_daily）: {e}")
         first_bench = benchmark_raw.get(benchmark_start) or benchmark_raw.get(first_trade_day, 1.0)
 
         total_days = len(trade_days)
@@ -320,6 +408,11 @@ class BacktestEngine:
             day_str = day.strftime('%Y-%m-%d')
             if self._progress_callback:
                 self._progress_callback(i + 1, total_days, day_str)
+
+            # PR4: 分钟 Profile 走分钟事件循环（独立方法，日线循环逐行不变）
+            if self.engine_profile == "minute-bar-v1":
+                self._run_minute_day(i, day, trade_days, benchmark_raw, first_bench)
+                continue
 
             if i > 0:
                 prev_day = trade_days[i - 1]
@@ -341,6 +434,10 @@ class BacktestEngine:
             match_prices = self._build_match_prices(curr_data, trade_days, i)
             prices = {self._to_qmt(c): v for c, v in zip(curr_data['code'], curr_data['close'])}
 
+            # PR2: 注入 T 日状态供 _create_pending_order 估算预扣（T 日 close，无穿越）
+            self._current_date_str = day_str
+            self._t_day_close_prices = match_prices if self.match_price_mode == "next_open" else {}
+
             positions_snapshot = {}
             for code, pos in self.account.positions.items():
                 if pos.volume > 0:
@@ -354,6 +451,17 @@ class BacktestEngine:
 
             for pos in self.account.positions.values():
                 pos.can_sell = pos.volume
+
+            # PR2: T+1 drain（解锁之后、策略之前 — 修正点 1）。
+            # 仅 next_open 模式激活；close/open 模式零触达。drain 成交的新买单 can_sell=0
+            # 不被覆盖（解锁已在 drain 之前跑完）；pending 卖单走 pending_sell_shares 预扣。
+            # 成交价用 T+1 open（单独构建，不用 match_prices，后者在 next_open 模式下是 T 日 close）。
+            if self.match_price_mode == "next_open":
+                t1_open_prices = {self._to_qmt(c): v
+                                  for c, v in zip(curr_data['code'], curr_data['open'])}
+                self._today_orders = []
+                self._drain_pending_orders(curr_data, day_str, t1_open_prices)
+                self.refresh_portfolio(prices)
 
             prev_day_str = prev_day.strftime('%Y-%m-%d')
             self._run_ptrade_strategy(day, prev_day, match_prices, positions_snapshot,
@@ -377,6 +485,11 @@ class BacktestEngine:
                 'benchmark': bench_nav,
                 'positions': len([p for p in self.account.positions.values() if p.volume > 0]),
             })
+
+        # PR2: 主循环结束 → 末日 pending 订单标记 expired，预扣原路归还。
+        # 主计划 7.13 "末日订单标记 expired 或保留 pending"。仅 next_open 模式有 pending。
+        if self.match_price_mode == "next_open":
+            self._expire_remaining_pending()
 
         logger.info(f"[Backtest] completed: {len(self.result.nav_history)} days")
         from .ptrade_metrics import calculate_ptrade_like_metrics
@@ -423,6 +536,12 @@ class BacktestEngine:
             logger.debug(f"[即时执行] {code} {action}被阻断 (pct_chg={pct_chg:.4f})")
             return Order(order_id=f"ord_{code}_{date}", security=security, direction=direction,
                          status="rejected", reason=reason, created_dt=date)
+
+        # PR4: 停牌检查（仅分钟 Profile；日线保持现状避免影响黄金基线）。
+        # 分钟即时撮合应拒停牌单（suspendFlag==1 OR volume==0）。
+        if self.engine_profile == "minute-bar-v1" and self._is_halted_at(code, curr_data):
+            return Order(order_id=f"ord_{code}_{date}", security=security, direction=direction,
+                         status="rejected", reason="halted", created_dt=date)
 
         # 执行交易
         filled_vol = 0
@@ -506,14 +625,20 @@ class BacktestEngine:
 
         self.account.cash -= total_cost
         pos = self.account.positions.get(code)
+        # PR4 决策 4：ETF T+0（仅分钟 Profile + etf_t0=True）。is_etf 走 PR1 security_code_rules。
+        # 清理项：盘前解锁全证券一致；T+0 差异只在这里——买入后立即解锁（含昨日存量+今日新买）。
+        is_etf_t0 = self.etf_t0 and _is_etf_code(code)
         if pos:
             new_total = pos.volume + target_vol
             pos.avg_cost = (pos.avg_cost * pos.volume + fill_price * target_vol) / new_total
             pos.volume = new_total
-            # T+1: 今日买入的 can_sell 不增加
+            if is_etf_t0:
+                pos.can_sell = new_total   # ETF T+0：买入后立即全部可卖
+            # else: 股票 T+1，今日新买 can_sell 不增加
         else:
             self.account.positions[code] = Position(
-                code=code, volume=target_vol, avg_cost=fill_price, can_sell=0)
+                code=code, volume=target_vol, avg_cost=fill_price,
+                can_sell=(target_vol if is_etf_t0 else 0))
 
         self.result.trade_records.append({
             'date': date, 'code': code, 'action': 'buy',
@@ -586,26 +711,364 @@ class BacktestEngine:
         语义：
         - close（默认）：当日收盘价。⚠️ 未来函数风险（策略可读当日 close 再按 close 成交）。
         - open：当日开盘价。策略仍能读 close 做信号，但成交用 open。
-        - next_open：次日开盘价。最贴 Ptrade 实盘（T 日决策、T+1 开盘成交），
-          彻底消除未来函数。末日（无次日数据）回退到当日 close。
+        - next_open：PR2 修正——不再预取 T+1 开盘价（那是跨日穿越）。
+          改为返回当日 close 作为"策略可见现价"（供 _get_current_price / order_value 等
+          前置逻辑读现价）。真实撮合职责转移给 _drain_pending_orders 的 T+1 open
+          （主循环 next_open 分支单独构建 T+1 open 价字典传入 drain）。
+          这样消除了"T 日提前读 T+1 价并在 T 日循环内即时成交"的穿越，同时保证
+          策略在 T 日 handle_data 里查现价仍能拿到合理值（T 日 close，无穿越）。
 
         注意：记账价（净值/持仓估值）不在此方法，始终用当日收盘（见 run() 的 prices）。
         """
         if self.match_price_mode == "open":
             col = "open"
         elif self.match_price_mode == "next_open":
-            # 预取下一个交易日的开盘价
-            if i + 1 < len(trade_days):
-                next_data = self._get_daily_data(trade_days[i + 1])
-                if len(next_data) > 0:
-                    return {self._to_qmt(c): v
-                            for c, v in zip(next_data['code'], next_data['open'])}
-            # 末日或无数据：回退到当日收盘（记录日志便于排查）
-            logger.debug(f"[A2] next_open 无次日数据（i={i}），回退当日 close")
+            # PR2: 撮合价口径交给 drain 的 T+1 open；这里只返回当日 close 作"策略可见现价"。
             col = "close"
         else:  # close
             col = "close"
         return {self._to_qmt(c): v for c, v in zip(curr_data['code'], curr_data[col])}
+
+    # ===================== PR2: next_open pending order queue =====================
+
+    def _next_trade_day_str(self, day_str: str):
+        """返回 day_str 的下一交易日字符串；无下一日（末日/超出日历）返回 None。"""
+        try:
+            nxt = self._providers.calendar.get_trading_day(day_str, offset=1)
+        except Exception:
+            return None
+        if nxt is None:
+            return None
+        return nxt.strftime('%Y-%m-%d')
+
+    def _estimate_pending(self, code, instruction, target_value, shares, est_price):
+        """根据 instruction + T 日估算价，确定方向 + 预扣股数/金额。
+
+        返回 (direction, est_shares, est_cost)：
+        - direction: "buy" / "sell" / None（noop）
+        - 买单：est_shares 用 T 日 close 估算股数（向下取整到整手），est_cost 含估算佣金/过户费
+        - 卖单：est_shares 为待卖股数，est_cost=0（卖单不锁现金，锁 can_sell）
+        """
+        from .libs.shared_ashare_rules import round_to_lot
+        buy_instructions = ("target_value", "buy_shares", "buy_value", "target_shares")
+        sell_instructions = ("sell_shares", "sell_value", "sell_all")
+
+        if instruction in ("buy_value",):
+            direction = "buy"
+            est_shares = round_to_lot(int(target_value / est_price), 100)
+        elif instruction == "sell_value":
+            direction = "sell"
+            est_shares = round_to_lot(int(target_value / est_price), 100)
+        elif instruction == "target_value":
+            # target_value 的方向取决于目标 vs 当前持仓（用 T 日 close 估算）
+            pos = self.account.positions.get(code)
+            current_value = (pos.volume * est_price) if pos and pos.volume > 0 else 0
+            if target_value == 0:
+                direction = "sell"
+                est_shares = pos.volume if pos else 0
+            elif target_value >= current_value:
+                direction = "buy"
+                delta = target_value - current_value
+                est_shares = round_to_lot(int(delta / est_price), 100)
+            else:
+                direction = "sell"
+                delta = current_value - target_value
+                est_shares = round_to_lot(int(delta / est_price), 100)
+        elif instruction == "target_shares":
+            pos = self.account.positions.get(code)
+            current = pos.volume if pos else 0
+            delta = (shares or 0) - current
+            if delta > 0:
+                direction = "buy"
+                est_shares = round_to_lot(delta, 100)
+            elif delta < 0:
+                direction = "sell"
+                est_shares = round_to_lot(abs(delta), 100)
+            else:
+                return None, 0, 0.0
+        elif instruction == "buy_shares":
+            direction = "buy"
+            est_shares = round_to_lot(shares or 0, 100)
+        elif instruction == "sell_shares":
+            direction = "sell"
+            est_shares = round_to_lot(shares or 0, 100)
+        elif instruction == "sell_all":
+            direction = "sell"
+            pos = self.account.positions.get(code)
+            est_shares = pos.volume if pos else 0
+        else:
+            return None, 0, 0.0
+
+        if est_shares <= 0:
+            return None, 0, 0.0
+
+        if direction == "buy":
+            cost_amount = est_shares * est_price
+            commission = max(cost_amount * self.cost.commission_rate, self.cost.min_commission)
+            transfer_fee = cost_amount * self.cost.transfer_fee_rate
+            est_cost = cost_amount + commission + transfer_fee
+        else:
+            est_cost = 0.0
+        return direction, est_shares, est_cost
+
+    def _create_pending_order(self, security, instruction,
+                               target_value=None, shares=None) -> Order:
+        """PR2: T 日策略下单 → 创建 PendingOrder + 对称预扣资源。
+
+        T 日不产生 trade_record、不改 volume。买单预扣 locked_cash，卖单预扣 pending_sell_shares。
+        预扣用 T 日 close 估算（无穿越）。返回 status=pending 的 Order（__bool__ False，兼容老策略）。
+
+        主计划 7.13: T 日信号只创建 pending order；T 日现金/持仓不变。
+        """
+        bare = str(security).split(".")[0]
+        code = self._to_qmt(bare)
+        created_dt = self._current_date_str
+        scheduled_dt = self._next_trade_day_str(created_dt)
+
+        # 末日下单：无下一交易日 → 创建即拒，无预扣发生（无需归还）
+        if scheduled_dt is None:
+            return Order(order_id=f"pend_{code}_{created_dt}_rej",
+                         security=security, direction="unknown",
+                         status="rejected", reason="no_next_trade_day",
+                         created_dt=created_dt)
+
+        est_price = self._t_day_close_prices.get(code, 0)
+        if est_price <= 0:
+            return Order(order_id=f"pend_{code}_{created_dt}_rej",
+                         security=security, direction="unknown",
+                         status="rejected", reason="no_price", created_dt=created_dt)
+
+        direction, est_shares, est_cost = self._estimate_pending(
+            code, instruction, target_value, shares, est_price)
+        if direction is None:
+            # noop（如 target_shares delta=0）→ 返回 noop Order（与 order_target 现有行为一致）
+            return Order(order_id=f"pend_{code}_{created_dt}_noop",
+                         security=security, direction="unknown",
+                         status="rejected", reason="noop", created_dt=created_dt)
+
+        # 对称预扣
+        if direction == "buy":
+            if est_cost > self.account.cash:
+                return Order(order_id=f"pend_{code}_{created_dt}_rej",
+                             security=security, direction=direction,
+                             status="rejected", reason="insufficient_cash",
+                             created_dt=created_dt)
+            self.account.cash -= est_cost
+            self.account.locked_cash += est_cost
+        else:  # sell
+            pos = self.account.positions.get(code)
+            avail = (pos.can_sell - pos.pending_sell_shares) if pos else 0
+            if avail < est_shares:
+                return Order(order_id=f"pend_{code}_{created_dt}_rej",
+                             security=security, direction=direction,
+                             status="rejected", reason="insufficient_sellable",
+                             created_dt=created_dt)
+            pos.pending_sell_shares += est_shares
+
+        order_id = f"pend_{code}_{created_dt}_{len(self._pending_orders)}"
+        po = PendingOrder(
+            order_id=order_id, created_dt=created_dt, scheduled_dt=scheduled_dt,
+            security=security, code=code, instruction=instruction, direction=direction,
+            target_value=target_value, shares=shares,
+            est_cost=est_cost, est_shares=est_shares, status="pending")
+        self._pending_orders.append(po)
+        logger.debug(f"[PR2] 创建 pending {direction} {code} instr={instruction} "
+                     f"est_shares={est_shares} est_cost={est_cost:.0f} T={created_dt} T+1={scheduled_dt}")
+        return Order(order_id=order_id, security=security, direction=direction,
+                     status="pending", created_dt=created_dt)
+
+    def _reject_pending(self, po: PendingOrder, status: str, reason: str):
+        """拒单/expire/cancel 公共归还逻辑。status ∈ {rejected, expired, cancelled} 三态独立。
+        用 po.est_cost/est_shares 精确归还预扣，防累积漂移。"""
+        if po.direction == "buy":
+            self.account.locked_cash -= po.est_cost
+            self.account.cash += po.est_cost
+        else:  # sell
+            pos = self.account.positions.get(po.code)
+            if pos:
+                pos.pending_sell_shares = max(0, pos.pending_sell_shares - po.est_shares)
+        po.status = status
+        po.reason = reason
+
+    def _cancel_pending_order(self, order_id: str):
+        """PR2: cancel_order 按 order_id 精确移除目标单 + 归还预扣。
+        多日重复挂单允许累积，本方法只处理指定单。"""
+        for idx, po in enumerate(self._pending_orders):
+            if po.order_id == order_id and po.status == "pending":
+                self._reject_pending(po, "cancelled", "user_cancelled")
+                self._pending_orders.pop(idx)
+                return True
+        return False
+
+    def _expire_remaining_pending(self):
+        """PR2: 主循环结束，仍 pending 的订单标记 expired，原路归还预扣。
+        主计划 7.13 "末日订单标记 expired 或保留 pending"。"""
+        for po in self._pending_orders:
+            if po.status == "pending":
+                self._reject_pending(po, "expired", "end_of_backtest")
+
+    def _is_halted_at(self, code, curr_data) -> bool:
+        """停牌判断（与 ptrade_api.py:631,1497 一致）：suspendFlag==1 OR volume==0。"""
+        if curr_data is None:
+            return False
+        bare = code.split(".")[0] if "." in code else code
+        try:
+            row = curr_data[curr_data['code'] == bare]
+        except Exception:
+            return False
+        if len(row) == 0:
+            return False
+        r = row.iloc[0]
+        suspend = r.get('suspendFlag', 0)
+        volume = r.get('volume', 0)
+        try:
+            suspend = float(suspend)
+        except (TypeError, ValueError):
+            suspend = 0
+        try:
+            volume = float(volume)
+        except (TypeError, ValueError):
+            volume = 0
+        return suspend == 1 or volume == 0
+
+    def _resolve_at_t1(self, po: PendingOrder, t1_open: float):
+        """T+1 drain 时用 T+1 open + T+1 持仓重算 delta/shares（延迟解析，修正点 3）。
+
+        返回 (actual_shares, actual_value, skip_reason)：
+        - skip_reason 非空 → 跳过（below_rebalance_threshold 等），预扣原路归还
+        - actual_shares / actual_value 二选一传给 _execute_buy/_execute_sell（None 表示用另一口径）
+        """
+        code = po.code
+        pos = self.account.positions.get(code)
+
+        if po.instruction == "target_value":
+            current_value = (pos.volume * t1_open) if pos and pos.volume > 0 else 0
+            if po.target_value == 0:
+                return None, None, ""  # sell_all 路径
+            delta = po.target_value - current_value
+            if current_value > 0 and abs(delta) / current_value < self.min_rebalance_pct:
+                return None, None, "below_rebalance_threshold"
+            if delta > 0:
+                return None, delta, ""       # 买入增量
+            elif delta < 0:
+                return None, abs(delta), ""  # 卖出增量
+            else:
+                return None, None, "noop"
+        elif po.instruction == "buy_value":
+            return None, po.target_value, ""
+        elif po.instruction == "sell_value":
+            return None, po.target_value, ""
+        elif po.instruction == "buy_shares":
+            return po.shares, None, ""
+        elif po.instruction == "sell_shares":
+            return po.shares, None, ""
+        elif po.instruction == "target_shares":
+            current = pos.volume if pos else 0
+            delta = (po.shares or 0) - current
+            if delta > 0:
+                return delta, None, ""
+            elif delta < 0:
+                return abs(delta), None, ""
+            else:
+                return None, None, "noop"
+        elif po.instruction == "sell_all":
+            return None, None, ""
+        return None, None, "unknown_instruction"
+
+    def _drain_pending_orders(self, t1_data, t1_day_str: str, t1_open_prices: dict):
+        """PR2: T+1 开盘事件。用 T+1 open 价 + T+1 状态执行 scheduled_dt == T+1 的 pending orders。
+
+        主计划 7.13: T+1 开盘前执行 pending queue；使用 T+1 开盘价和 T+1 状态；
+        停牌/涨停/跌停/资金不足返回明确原因。成交则正式过户，trade_record 日期=T+1；
+        跳空重算股数超预扣 → 整单拒单 insufficient_cash_or_rounding，原路归还，不缩单。
+
+        t1_open_prices: T+1 open 价字典（主循环单独构建，不是 match_prices）。
+        """
+        from .libs.shared_ashare_rules import is_price_limit_blocked
+        still_pending = []
+        for po in self._pending_orders:
+            if po.status != "pending" or po.scheduled_dt != t1_day_str:
+                still_pending.append(po)
+                continue
+
+            t1_open = t1_open_prices.get(po.code, 0)
+            if t1_open <= 0:
+                self._reject_pending(po, "rejected", "no_price")
+                self._today_orders.append(self._po_to_order(po, filled=False))
+                continue
+
+            # 停牌检查（suspendFlag==1 OR volume==0）
+            if self._is_halted_at(po.code, t1_data):
+                self._reject_pending(po, "rejected", "halted")
+                self._today_orders.append(self._po_to_order(po, filled=False))
+                continue
+
+            # 涨跌停检查（用 T+1 当日 pct_chg）
+            pct_chg = self._get_pct_chg(po.code, t1_data, t1_day_str)
+            direction_int = 1 if po.direction == "buy" else 0
+            if is_price_limit_blocked(po.code, direction_int, pct_chg):
+                reason = "limit_up_blocked" if po.direction == "buy" else "limit_down_blocked"
+                self._reject_pending(po, "rejected", reason)
+                self._today_orders.append(self._po_to_order(po, filled=False))
+                continue
+
+            # 延迟解析：用 T+1 价 + T+1 持仓重算
+            actual_shares, actual_value, skip_reason = self._resolve_at_t1(po, t1_open)
+            if skip_reason:
+                self._reject_pending(po, "rejected", skip_reason)
+                self._today_orders.append(self._po_to_order(po, filled=False))
+                continue
+
+            # 释放预扣（防 double-count）
+            if po.direction == "buy":
+                self.account.locked_cash -= po.est_cost
+                self.account.cash += po.est_cost
+            else:
+                pos = self.account.positions.get(po.code)
+                if pos:
+                    pos.pending_sell_shares = max(0, pos.pending_sell_shares - po.est_shares)
+
+            # 用 T+1 open 正式执行（复用现有账本，trade_record 日期=T+1）
+            if po.direction == "buy":
+                vol, fp = self._execute_buy(
+                    po.code, t1_open,
+                    buy_value=actual_value if actual_value else None,
+                    buy_shares=actual_shares if actual_shares else None,
+                    date=t1_day_str, curr_data=t1_data)
+            else:
+                vol, fp = self._execute_sell(
+                    po.code, t1_open,
+                    sell_all=(po.instruction == "sell_all"),
+                    sell_value=actual_value if actual_value else None,
+                    sell_shares=actual_shares if actual_shares else None,
+                    date=t1_day_str, curr_data=t1_data)
+
+            if vol == 0:
+                # 资金不足/整手为 0 → 整单拒单（不缩单，与 _execute_buy 现有 PTrade 语义一致）
+                po.status = "rejected"
+                po.reason = "insufficient_cash_or_rounding"
+                self._today_orders.append(self._po_to_order(po, filled=False))
+            else:
+                po.status = "filled"
+                po.filled_amount = vol
+                po.price = fp
+                po.filled = vol * fp
+                po.filled_dt = t1_day_str
+                self._today_orders.append(self._po_to_order(po, filled=True))
+                logger.debug(f"[PR2] drain 成交 {po.direction} {po.code} "
+                             f"{vol}@{fp:.2f} T+1={t1_day_str}")
+        self._pending_orders = still_pending
+
+    def _po_to_order(self, po: PendingOrder, filled: bool) -> Order:
+        """把 PendingOrder 转为 Order（供 _today_orders / get_order 返回）。"""
+        return Order(
+            order_id=po.order_id, security=po.security, direction=po.direction,
+            target=abs(po.target_value) if po.target_value else 0.0,
+            filled=po.filled,
+            target_amount=abs(po.shares) if po.shares else 0,
+            filled_amount=po.filled_amount,
+            price=po.price, status=po.status, reason=po.reason,
+            created_dt=po.created_dt, filled_dt=po.filled_dt)
 
     def refresh_portfolio(self, prices):
         """原地更新 context.portfolio（补充项②：不重建 context，只更新属性）。
@@ -664,6 +1127,175 @@ class BacktestEngine:
 
         # 即时执行模式：不需要返回信号，交易已在策略执行过程中即时完成
 
+    # ===================== PR4: 分钟事件驱动回测 =====================
+
+    def _build_daily_pctchg_map(self, daily_data) -> dict:
+        """PR4: 从当日日线 snapshot 构建日级 pctChg 字典（分钟涨跌停判断用）。
+
+        分钟 bar 的 preClose 不复权（除权日风险），故涨跌停用日级 pctChg（已复权校正）。
+        """
+        pctchg = {}
+        if daily_data is None or len(daily_data) == 0:
+            return pctchg
+        for _, row in daily_data.iterrows():
+            bare = str(row.get('code', ''))
+            close = row.get('close', 0)
+            preclose = row.get('preClose', 0)
+            if preclose and preclose > 0:
+                pctchg[self._to_qmt(bare)] = (close - preclose) / preclose
+        return pctchg
+
+    def _load_minute_snapshots(self, day_str, daily_data):
+        """PR4: 加载当日全 universe 的分钟 bar，按 bar timestamp 分组。
+
+        返回 [(bar_ts, bar_snapshot_df), ...] 按 time 升序。
+        universe = daily_data 中的 code（当日有交易的证券）。
+
+        真实数据修复（2026-07-22）：原逐 code 循环（5525 只 × 4 次 DB 调用）在真实全
+        universe 上导致 duckdb C 扩展 GIL 累积崩溃（Fatal PyEval_SaveThread）。改为
+        批量查询：query_minute_bars_by_range_batch 一次 SQL per 表（stock_minutes/etf_minutes），
+        单日 DB 往返 ≤ 2 次（与 universe 大小无关）。个别 code 无分钟数据自然不在结果集
+        （与原"跳过"语义一致），整表无 freq 数据则 raise FrequencyCapabilityError（契约不变）。
+        """
+        from .providers.frequency_labels import FrequencyCapabilityError
+        import pandas as pd
+        if daily_data is None or len(daily_data) == 0:
+            return []
+        codes = [str(c) for c in daily_data['code'].unique()]
+        try:
+            all_bars = self._providers.market._data.query_minute_bars_by_range_batch(
+                codes, day_str, day_str, '1min', None,
+                getattr(self._providers.market, '_calendar', None))
+        except FrequencyCapabilityError:
+            # 整 universe 无分钟数据（表空或缺 freq），与原"全无则 raise"契约一致
+            raise FrequencyCapabilityError(
+                "TABLE_EMPTY", api_freq='1m', table="stock_minutes/etf_minutes",
+                detail=f"{day_str} 全 universe 无分钟数据")
+        if len(all_bars) == 0:
+            raise FrequencyCapabilityError(
+                "TABLE_EMPTY", api_freq='1m', table="stock_minutes/etf_minutes",
+                detail=f"{day_str} 全 universe 无分钟数据")
+        # 按 time 分组为 (bar_ts, snapshot_df)
+        snapshots = []
+        for ts_ms, group in all_bars.groupby('time'):
+            bar_ts = pd.Timestamp(ts_ms, unit='ms', tz='Asia/Shanghai')
+            snapshots.append((bar_ts, group))
+        return snapshots
+
+    def _run_minute_day(self, i, day, trade_days, benchmark_raw, first_bench):
+        """PR4: 分钟事件驱动——一个交易日的完整生命周期（主计划 7.24）。
+
+        生命周期：T+1 解锁 → attach_day → before_trading_start(1次) →
+        每 bar[更新 current_dt → attach_bar → run_daily 精确调度 → handle_data] →
+        after_trading_end(1次) → 日终净值。
+
+        修正缺口 1：attach_bar 注入 current_bar_ts，get_history/get_price 锚定到此（无未来泄漏）。
+        修正缺口 2：attach_day 传昨日收盘价（before_trading_start 在 09:31 前，不见当日收盘）。
+        """
+        from .ptrade_api import _api, Context, Portfolio, DataDict
+        from .minute_scheduler import _MinuteScheduler
+        import pandas as pd
+
+        day_str = day.strftime('%Y-%m-%d')
+        if i > 0:
+            prev_day = trade_days[i - 1]
+            prev_day_str = prev_day.strftime('%Y-%m-%d')
+        else:
+            # 第一日：用 calendar 取前一交易日（返回 date），包装成 prev_day_str
+            prev_date = self._providers.calendar.get_trading_day(day_str, offset=-1)
+            prev_day_str = prev_date.strftime('%Y-%m-%d') if prev_date else day_str
+            prev_day = prev_date   # date 对象，供 _get_daily_data 用（该函数接受 date/datetime）
+
+        # ① 取当日 + 前日日线 snapshot
+        daily_data = self._get_daily_data(day)
+        if len(daily_data) == 0:
+            logger.debug(f"[PR4] {day_str} 无日线数据，跳过")
+            return
+        prev_data = self._last_curr_data if getattr(self, '_last_curr_data', None) is not None \
+            else self._get_daily_data(prev_day)
+        self._last_curr_data = daily_data
+
+        # 【修正缺口 2】_prices 用昨日收盘价（before_trading_start 在 09:31 前，不见当日收盘）
+        prev_close_prices = {self._to_qmt(c): v
+                             for c, v in zip(prev_data['code'], prev_data['close'])} if len(prev_data) > 0 else {}
+        daily_pctchg = self._build_daily_pctchg_map(daily_data)
+
+        # ② T+1 解锁（盘前全证券一致；ETF T+0 差异只在 _execute_buy 买入后）
+        for pos in self.account.positions.values():
+            pos.can_sell = pos.volume
+
+        # ③ attach_day（每日一次，含 preload）—— 传 prev_close_prices（修正缺口 2）
+        self._current_date_str = day_str
+        ptrade_positions = self._get_ptrade_positions(prev_close_prices)
+        portfolio = Portfolio(self.account.cash, ptrade_positions)
+        ctx = Context(day_str, prev_day_str, portfolio)
+        self._ptrade_context = ctx
+        _api.attach_day(self, daily_data, prev_data, day_str, prev_day_str, prev_close_prices)
+
+        # ④ before_trading_start（每日一次；data 用当日日线，策略可读当日选股——与日线一致）
+        data_bts = DataDict()
+        data_bts.set_curr_data(daily_data, day_str)
+        try:
+            if 'before_trading_start' in self.strategy:
+                self.strategy['before_trading_start'](ctx, data_bts)
+        except Exception as e:
+            logger.error(f"[PR4] before_trading_start 错误: {e}")
+
+        # ⑤ 遍历当日所有分钟 bar（09:31-11:30, 13:01-15:00，含 15:00 收盘 bar）
+        bar_snapshots = self._load_minute_snapshots(day_str, daily_data)
+        scheduler = _MinuteScheduler(getattr(_api, '_daily_tasks', []))
+        scheduler.reset_day()
+        for bar_ts, bar_df in bar_snapshots:
+            bar_ts_str = bar_ts.strftime('%Y-%m-%d %H:%M:%S')
+            # 双更新 current_dt（ctx.current_dt + ctx.blotter.current_dt）
+            ctx.current_dt = bar_ts
+            if hasattr(ctx, 'blotter') and ctx.blotter is not None:
+                ctx.blotter.current_dt = bar_ts
+            # 该 bar 全 universe 收盘价（end-labeled：bar.close 是该分钟真实收盘）
+            bar_prices = {}
+            for _, row in bar_df.iterrows():
+                bare = str(row.get('code', ''))
+                bar_prices[self._to_qmt(bare)] = row.get('close', 0)
+            # 【修正缺口 1】attach_bar 注入 current_bar_ts
+            _api.attach_bar(self, bar_df, day_str, prev_day_str, bar_prices,
+                            daily_pctchg, current_bar_ts=bar_ts)
+            # 精确触发匹配该 bar 时刻的 run_daily（scheduler 在 handle_data 之前，主计划 7.24）
+            scheduler.dispatch_if_match(ctx, bar_ts)
+            # handle_data（每 bar 一次）
+            bar_data = DataDict()
+            bar_data.set_curr_data(bar_df, bar_ts_str)
+            try:
+                if 'handle_data' in self.strategy:
+                    self.strategy['handle_data'](ctx, bar_data)
+            except Exception as e:
+                logger.error(f"[PR4] handle_data 错误 @ {bar_ts_str}: {e}")
+
+        # ⑥ after_trading_end（每日一次，用当日日线 snapshot）
+        try:
+            if 'after_trading_end' in self.strategy:
+                self.strategy['after_trading_end'](ctx, self._build_data_dict(daily_data, day_str))
+        except Exception as e:
+            logger.debug(f"[PR4] after_trading_end 错误: {e}")
+
+        # ⑦ 日终净值（用当日日线 close 估值，收盘后记账，无穿越）
+        daily_close_prices = {self._to_qmt(c): v
+                              for c, v in zip(daily_data['code'], daily_data['close'])}
+        nav = self.account.total_asset_at_price(daily_close_prices)
+        bench_close = benchmark_raw.get(day_str, first_bench)
+        bench_nav = bench_close / first_bench * 100 if first_bench else 100.0
+        self.result.nav_history.append({
+            'date': day_str,
+            'nav': nav,
+            'cash': self.account.cash,
+            'market_value': self.account.market_value_at_price(daily_close_prices),
+            'benchmark': bench_nav,
+            'positions': len([p for p in self.account.positions.values() if p.volume > 0]),
+        })
+
+        # 【补齐主计划漏项】分钟进度回调（每日一次，保持签名兼容，不每 bar 回调）
+        if self._progress_callback:
+            self._progress_callback(i + 1, len(trade_days), day_str)
+
     def _get_ptrade_positions(self, prices: dict | None = None) -> dict:
         """Expose positions exactly as PTrade strategy/CSV containers do.
 
@@ -710,3 +1342,9 @@ class BacktestEngine:
         """Normalize any supported alias to the engine's QMT-style suffix."""
         from .libs.security_code_rules import normalize_to_qmt
         return normalize_to_qmt(bare_code)
+
+
+def _is_etf_code(code: str) -> bool:
+    """PR4 决策 4：ETF 判定，走 PR1 的 security_code_rules（不新写分类逻辑）。"""
+    from .libs.security_code_rules import is_etf
+    return is_etf(code)

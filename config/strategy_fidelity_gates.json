@@ -1,0 +1,80 @@
+﻿{
+  "gate_version": "1.0.0",
+  "description": "Cross-stage strategy-fidelity gates. These gates protect PTrade control-flow semantics and must run after any change to suffixes, portfolios, positions, orders, matching, lifecycle, providers, or engine behavior.",
+  "semantics": {
+    "portfolio_positions_container": "builtins.dict",
+    "portfolio_membership": "exact_key_match",
+    "portfolio_public_suffixes": [".SS", ".SZ", ".BJ"],
+    "alias_aware_apis": [
+      "get_position",
+      "DataDict",
+      "CodeDict",
+      "get_history",
+      "get_price",
+      "order_target_value"
+    ],
+    "forbidden": [
+      "alias-aware context.portfolio.positions",
+      "XSHG/XSHE keys in the public portfolio container",
+      "silent strategy-control-flow changes caused by suffix normalization"
+    ]
+  },
+  "gates": {
+    "etf_momentum": {
+      "required": true,
+      "strategy": "quantstudio/backtest/strategies/ETF动量.py",
+      "start": "2026-01-01",
+      "end": "2026-07-13",
+      "capital": 100000.0,
+      "match_price_mode": "close",
+      "slippage": 0.0,
+      "ptrade_samples": "../私募工作文件/ptrade_samples/ETF动量ptrade",
+      "accepted_verdicts": ["PASS"],
+      "expected_compare_exit_codes": [0],
+      "fidelity": {
+        "min_l1": 1.0,
+        "max_nav_deviation": 0.0001,
+        "max_drawdown_deviation": 0.000001,
+        "max_sharpe_deviation": 0.000001,
+        "min_l3": 1.0,
+        "max_l4": 0.0001
+      },
+      "local_result": {
+        "expected_final_asset": 87752.56,
+        "final_asset_tolerance": 1.0,
+        "expected_trade_count": 3,
+        "expected_trade_sequence": [
+          ["2026-01-05", "515880", "buy"],
+          ["2026-01-07", "515880", "sell"],
+          ["2026-01-07", "159870", "buy"]
+        ],
+        "expected_last_bought_code": "159870"
+      }
+    },
+    "smallcap_guard": {
+      "required": true,
+      "strategy": "quantstudio/backtest/strategies/小市值策略ptrade.py",
+      "start": "2026-01-01",
+      "end": "2026-04-29",
+      "capital": 100000.0,
+      "match_price_mode": "close",
+      "slippage": 0.0,
+      "ptrade_samples": "../私募工作文件/ptrade_samples/小市值ptrade",
+      "accepted_verdicts": ["PASS", "CLOSE"],
+      "expected_compare_exit_codes": [0, 1],
+      "fidelity": {
+        "min_l1": 0.72,
+        "max_nav_deviation": 0.003,
+        "max_drawdown_deviation": 0.018,
+        "max_sharpe_deviation": 0.03,
+        "min_l3": 0.95,
+        "max_l4": 0.003
+      },
+      "local_result": {
+        "expected_final_asset": 118551.21,
+        "final_asset_tolerance": 10.0,
+        "expected_trade_count": 57
+      }
+    }
+  }
+}

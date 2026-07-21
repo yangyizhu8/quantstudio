@@ -106,7 +106,8 @@ class StrategyRunner:
 
     def run(self, strategy: Union[StrategySpec, Dict[str, Callable], str, Path],
             start: str, end: str, capital: float = 100_000,
-            match_price_mode: str = "close", cost=None, progress_callback=None):
+            match_price_mode: str = "close", cost=None, progress_callback=None,
+            engine_profile: str = "daily-bar-v1", etf_t0: bool = False):
         if isinstance(strategy, (str, Path)):
             strategy = self.load(strategy)
         elif isinstance(strategy, dict):
@@ -118,5 +119,6 @@ class StrategyRunner:
         engine = self.engine_factory(db_path=None, config=self.config, providers=registry,
             strategy=strategy.functions, start=start, end=end, capital=capital,
             cost=cost or DEFAULT_TRADE_COST, strategy_type="ptrade",
-            match_price_mode=match_price_mode, progress_callback=progress_callback)
+            match_price_mode=match_price_mode, progress_callback=progress_callback,
+            engine_profile=engine_profile, etf_t0=etf_t0)
         return engine, engine.run()

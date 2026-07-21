@@ -26,13 +26,13 @@
       "schema_status": "AVAILABLE",
       "data_status": "DATA_MISSING",
       "adapter_status": "AVAILABLE",
-      "provider_status": "PROVIDER_MISSING",
+      "provider_status": "AVAILABLE",
       "engine_status": "ENGINE_MISSING",
       "platform_status": "PLATFORM_DEPENDENT",
       "execution_status": "BLOCKED",
-      "evidence": ["stock_minutes schema"],
-      "message": "分钟 Schema 可用，但 Provider 与 Engine 尚未贯通。",
-      "remediation": ["完成 PR3 Provider 频率路由", "完成 PR4 分钟事件引擎"]
+      "evidence": ["stock_minutes schema", "PR3 Provider frequency routing (query_minute_bars_by_range)"],
+      "message": "PR3 已贯通 Provider 频率路由（provider_status=AVAILABLE，仅表代码链路就绪，不得解释为分钟回测可用）。data_status 仍为 DATA_MISSING（分钟表空），engine_status 仍为 ENGINE_MISSING（PR4 分钟事件引擎未完成），整体 BLOCKED。",
+      "remediation": ["完成 PR4 分钟事件引擎", "分钟数据采集入库后 data_status 升级为 AVAILABLE"]
     },
     {
       "capability": "stock_tick_backtest",

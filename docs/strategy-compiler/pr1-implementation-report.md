@@ -90,3 +90,11 @@ The first PowerShell smoke attempt failed because the host GBK console could not
 ## Next-stage prerequisite
 
 User confirmation is required before PR2. PR2 is limited to true delayed `next_open` order semantics.
+
+## Post-PR1 Fidelity hardening
+
+After the initial PR1 report, ETF momentum was revalidated because a prior alias-aware portfolio implementation had caused a severe control-flow drift. The current implementation again produces final asset 87,752.56, 3 fills, and Fidelity PASS.
+
+A reusable real-strategy gate now validates ETF momentum and the small-cap guard baseline. The gate is mandatory before PR2 acceptance and all later runtime PRs.
+
+Latest evidence: `output/strategy-fidelity-gates/current-full-run/summary.json`.

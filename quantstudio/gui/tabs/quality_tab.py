@@ -38,7 +38,9 @@ OHLC_TABLES = ["stock_daily", "index_daily", "etf_daily"]
 # 含 volume/amount/close 的表（单位校验）
 UNIT_TABLES = ["stock_daily", "etf_daily"]  # index close=点不适用
 # 预期可能为空的表（不报 ⚠）
-EXPECTED_EMPTY = {"tick", "stock_minutes", "etf_minutes"}
+# stock_minutes/etf_minutes 已切换 xtquant 权威源（2026-07-21），采集后预期非空。
+# 采集前表空是已知状态；采集后表空是异常（此处移除使质量审计正确告警）。
+EXPECTED_EMPTY = {"tick"}
 
 
 class QualityTab(QWidget):

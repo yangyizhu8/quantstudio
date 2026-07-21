@@ -30,23 +30,64 @@ def _fields(df: pd.DataFrame, fields: Optional[List[str]]) -> pd.DataFrame:
 
 
 class DuckDBMarketDataProvider(MarketDataProvider):
-    def __init__(self, db_path: Path): self._data = DuckDBDataAccess(db_path)
+    def __init__(self, db_path: Path, calendar_provider=None):
+        self._data = DuckDBDataAccess(db_path)
+        # PR3: 分钟查询需 calendar 枚举交易日（生成时段窗口）。可后置注入。
+        self._calendar = calendar_provider
+    def set_calendar(self, calendar_provider):
+        """PR3: 后置注入 calendar（registry 组装时 market 先建，calendar 后建）。"""
+        self._calendar = calendar_provider
     def preload(self, start_date, end_date): self._data.preload_daily_bars(end_date)
     def get_daily_snapshot(self, date, fields=None):
         return _fields(self._data.query_daily_snapshot(_start_ms(date)), fields)
-    def get_bars(self, codes, start_date, end_date, fields=None, fq=None):
+    def get_bars(self, codes, start_date, end_date, fields=None, fq=None, frequency="1d",
+                 bar_cutoff_ms=None):
+        # PR3: frequency="1d"（默认）走原日线路径，字节级不变。
+        if frequency == "1d":
+            result = {}
+            for code in codes:
+                df = self._data.query_bars_by_range(code, _start_ms(start_date), _end_ms(end_date))
+                if not df.empty: result[code] = _fields(df, fields)
+            return result
+        # 分钟路径：绝不进入日线 fallback 链
+        from .frequency_labels import api_to_storage, FrequencyCapabilityError
+        storage_freq = api_to_storage(frequency)
         result = {}
         for code in codes:
-            df = self._data.query_bars_by_range(code, _start_ms(start_date), _end_ms(end_date))
+            df = self._data.query_minute_bars_by_range(
+                code, start_date, end_date, storage_freq, fq, self._calendar,
+                bar_cutoff_ms=bar_cutoff_ms)   # PR4 缺口 1
             if not df.empty: result[code] = _fields(df, fields)
         return result
-    def get_bars_by_count(self, codes, count, end_date, fields=None, fq=None):
+    def get_bars_by_count(self, codes, count, end_date, fields=None, fq=None, frequency="1d",
+                          bar_cutoff_ms=None):
+        # PR3: frequency="1d"（默认）走原日线路径，字节级不变。
+        if frequency == "1d":
+            result = {}
+            for code in codes:
+                df = self._data.query_bars_by_count_multi_table(
+                    code, count, _end_ms(end_date), use_qfq=str(fq).lower() in ('pre', 'dypre'))
+                if not df.empty: result[code] = _fields(df, fields)
+            return result
+        # 分钟路径
+        from .frequency_labels import api_to_storage
+        storage_freq = api_to_storage(frequency)
         result = {}
         for code in codes:
-            df = self._data.query_bars_by_count_multi_table(
-                code, count, _end_ms(end_date), use_qfq=str(fq).lower() in ('pre', 'dypre'))
+            df = self._data.query_minute_bars_by_count(
+                code, count, end_date, storage_freq, fq, self._calendar,
+                bar_cutoff_ms=bar_cutoff_ms)   # PR4 缺口 1
             if not df.empty: result[code] = _fields(df, fields)
         return result
+    def get_snapshot(self, date_or_dt, frequency="1d", fields=None):
+        """PR3 补齐 5：日线快照（frequency="1d"）。分钟快照留待 PR4 引擎提供 _current_minute_data。"""
+        from .frequency_labels import FrequencyCapabilityError, ERR_TABLE_EMPTY
+        if frequency != "1d":
+            raise FrequencyCapabilityError(
+                ERR_TABLE_EMPTY, api_freq=frequency,
+                detail="minute snapshot requires PR4 engine (current_bar 数据)")
+        date_str = str(date_or_dt)[:10]
+        return _fields(self._data.query_daily_snapshot(_start_ms(date_str)), fields)
     def get_benchmark(self, code, start_date, end_date):
         df = self._data.query_benchmark(code, _start_ms(start_date), _end_ms(end_date))
         if df.empty: return {}

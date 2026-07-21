@@ -34,6 +34,11 @@ def export_result(result, engine, output_dir=None):
         'slippage_rate': engine.cost.slippage_rate,
         'fixed_slippage': getattr(engine.cost, 'fixed_slippage', 0.0),
         'match_price_mode': engine.match_price_mode,
+        # PR2: 记录引擎执行语义版本。close/open 仍记 0.1.0-legacy；
+        # next_open 在 PR2 后启用真实 pending queue，记 0.2.0-next_open_pending。
+        # 主计划 7.13 "Run Card 记录执行模式" + lifecycle-and-timing-contract.md:54 "PR2 必须提升版本"。
+        'engine_semantics_version': getattr(engine, 'engine_semantics_version',
+                                             '0.1.0-legacy'),
         'min_rebalance_pct': engine.min_rebalance_pct,
     }
     pd.DataFrame([config_data]).to_csv(

@@ -113,16 +113,24 @@ def _check_data_readiness(db_path) -> bool:
 
 
 def main():
-    # 解析选项参数（A2 撮合价 / B4 对照）
+    # 解析选项参数（A2 撮合价 / B4 对照 / PR4 引擎 Profile）
     match_price_mode = _parse_flag(sys.argv[1:], '--match-price', 'close')
     do_compare = _parse_flag(sys.argv[1:], '--compare', has_value=False)
     ptrade_dir = _parse_flag(sys.argv[1:], '--ptrade-dir', None)
     output_report = (_parse_flag(sys.argv[1:], '--output', None) or
                      _parse_flag(sys.argv[1:], '--output-report', None))
     slippage = _parse_flag(sys.argv[1:], '--slippage', None)
+    # PR4: 引擎 Profile 选择（daily-bar-v1 / minute-bar-v1）+ ETF T+0 开关
+    engine_profile = _parse_flag(sys.argv[1:], '--profile', 'daily-bar-v1')
+    etf_t0_flag = _parse_flag(sys.argv[1:], '--etf-t0', 'false')
     if match_price_mode not in ("close", "open", "next_open"):
         print(f"❌ --match-price 必须是 close/open/next_open，got {match_price_mode!r}")
         sys.exit(1)
+    if engine_profile not in ("daily-bar-v1", "minute-bar-v1"):
+        print(f"❌ --profile 必须是 daily-bar-v1/minute-bar-v1，got {engine_profile!r}")
+        sys.exit(1)
+    # PR4 决策 4：etf_t0 只在 minute-bar-v1 生效（日线 Profile 强制 False）
+    etf_t0 = (etf_t0_flag.lower() == 'true') and (engine_profile == 'minute-bar-v1')
 
     # 位置参数（过滤掉 -- 开头的选项）
     args = [a for a in sys.argv[1:] if not a.startswith('--') and not _is_flag_value(sys.argv[1:], a)]
@@ -170,6 +178,8 @@ def main():
         cost=cost,  # 统一成本常量（与所有入口共用，保证口径一致）
         strategy_type="ptrade",
         match_price_mode=match_price_mode,  # A2：默认 close，对照验证时可切 next_open
+        engine_profile=engine_profile,  # PR4：默认 daily-bar-v1，分钟策略用 minute-bar-v1
+        etf_t0=etf_t0,  # PR4 决策 4：ETF T+0（仅 minute-bar-v1 生效）
     )
 
     engine._strategy_name = Path(strategy_path).stem
