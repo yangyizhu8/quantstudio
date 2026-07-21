@@ -281,6 +281,226 @@ class DuckDBDataAccess:
             df['trade_date'] = pd.to_datetime(df['time'], unit='ms', utc=True).dt.tz_convert('Asia/Shanghai').dt.strftime('%Y-%m-%d')
         return df
 
+    # ===================== PR3: 分钟 bar 查询 =====================
+
+    def _resolve_minute_table(self, code: str) -> Optional[str]:
+        """PR3: 根据 code 类型解析对应的分钟表名。
+
+        分类顺序：is_etf 先于 is_index（ETF 代码如 510300 不被指数规则误判）。
+        返回 "stock_minutes" / "etf_minutes" / None（指数/可转债等无分钟表）。
+        """
+        from ..libs.security_code_rules import is_etf, is_index, is_convertible_bond
+        # ETF 先判断（ETF 代码可能与指数区间重叠，如 510300）
+        if is_etf(code):
+            return "etf_minutes"
+        # 指数/可转债无对应分钟表（index_minutes/cb_minutes 不存在）→ None → TABLE_MISSING
+        if is_index(code) or is_convertible_bond(code):
+            return None
+        return "stock_minutes"
+
+    def query_minute_bars_by_range(
+        self, code: str, start_date: str, end_date: str, storage_freq: str,
+        fq: Optional[str] = None, calendar_provider=None,
+        bar_cutoff_ms: Optional[int] = None,
+    ) -> pd.DataFrame:
+        """PR3: 查 stock_minutes/etf_minutes 的指定原生 freq（区间查询）。
+
+        - 不聚合、不回退日线（严禁回退）。
+        - 时段过滤用 Python 侧生成的 epoch 毫秒窗口（修正 v1 的 time%N bug）。
+        - 表不存在/空/无该 freq → raise FrequencyCapabilityError（code 三分级）。
+        - 复权：fq='pre'/'dypre' 用 *_front 列替换 OHLC；preClose 保持原始（已知简化）。
+        - PR4 缺口 1：bar_cutoff_ms 非 None 时（分钟 Profile），当日窗口截断到此值（含当前 bar），
+          防止未来 bar 泄漏；None 时走 PR3 原逻辑（end_date 当天 23:59:59 截断）。
+        """
+        from .frequency_labels import (
+            FrequencyCapabilityError, ERR_TABLE_MISSING, ERR_TABLE_EMPTY,
+            ERR_FREQ_NOT_IN_TABLE, api_to_storage)
+        from .intraday_windows import build_intraday_sql_conditions, iter_trading_days_in_range
+
+        table = self._resolve_minute_table(code)
+        if table is None:
+            raise FrequencyCapabilityError(
+                ERR_TABLE_MISSING, api_freq=None,
+                table=f"index_minutes（指数无对应分钟表）",
+                detail=f"code={code} 是指数，无分钟表")
+
+        conn = self._get_conn()
+        if conn is None:
+            raise FrequencyCapabilityError(
+                ERR_TABLE_EMPTY, api_freq=None, table=table,
+                detail="DuckDB 连接不可用")
+
+        # 确认该 code 在表中有数据（防 table_empty 静默返回空冒充）
+        cnt_row = conn.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE code = ?", [code]).fetchone()
+        cnt = cnt_row[0] if cnt_row else 0
+        if cnt == 0:
+            raise FrequencyCapabilityError(
+                ERR_TABLE_EMPTY, api_freq=None, table=table,
+                detail=f"code={code} 在 {table} 中无数据")
+
+        # 确认该 freq 存在（列出可用 freq 集合，便于调用方定位缺口）
+        avail_rows = conn.execute(
+            f"SELECT DISTINCT freq FROM {table} WHERE code = ?", [code]).fetchall()
+        avail = [r[0] for r in avail_rows]
+        if storage_freq not in avail:
+            raise FrequencyCapabilityError(
+                ERR_FREQ_NOT_IN_TABLE, api_freq=None, storage_freq=storage_freq,
+                table=table, available_freqs=avail,
+                detail=f"{table} 有数据但缺 freq={storage_freq}")
+
+        # 时段窗口（本轮修正：Python 侧生成 epoch 毫秒区间）
+        day_strs = iter_trading_days_in_range(start_date, end_date, calendar_provider)
+        # PR4 缺口 1：分钟 Profile 传 bar_cutoff_ms（当前 bar 的 epoch 毫秒），
+        # 当日窗口截断到此值（含当前 bar，end-labeled 下已完成是可见历史）；
+        # None 时走 PR3 原逻辑（end_date 当天 23:59:59 截断，日级全天窗口）。
+        end_cutoff_ms = bar_cutoff_ms if bar_cutoff_ms is not None else self._end_ms(end_date)
+        where_clause, win_params = build_intraday_sql_conditions(day_strs, end_cutoff_ms)
+
+        df = conn.execute(f"""
+            SELECT code, time, freq, open, high, low, close, volume, amount, preClose,
+                   open_front, high_front, low_front, close_front,
+                   open_back, high_back, low_back, close_back,
+                   suspendFlag
+            FROM {table}
+            WHERE code = ? AND freq = ? AND ({where_clause})
+            ORDER BY time
+        """, [code, storage_freq] + win_params).fetchdf()
+
+        # 复权替换（补齐 3：preClose 保持原始，已知简化）
+        fq_norm = str(fq).lower() if fq else ""
+        if fq_norm in ('pre', 'dypre'):
+            for orig, qfq in [("open", "open_front"), ("high", "high_front"),
+                              ("low", "low_front"), ("close", "close_front")]:
+                if qfq in df.columns and df[qfq].notna().any():
+                    df[orig] = df[qfq]
+        elif fq_norm in ('post', 'dyback', 'dy_post'):
+            for orig, qfq in [("open", "open_back"), ("high", "high_back"),
+                              ("low", "low_back"), ("close", "close_back")]:
+                if qfq in df.columns and df[qfq].notna().any():
+                    df[orig] = df[qfq]
+        return df
+
+    def query_minute_bars_by_range_batch(
+        self, codes, start_date: str, end_date: str, storage_freq: str,
+        fq: Optional[str] = None, calendar_provider=None,
+        bar_cutoff_ms: Optional[int] = None,
+    ) -> pd.DataFrame:
+        """PR4 真实数据修复（2026-07-22）：批量查多 code 的分钟 bar，一次 SQL per 表。
+
+        替代 _load_minute_snapshots 的逐 code 循环（5525 只 × 4 次查询 = 2.2 万次 DB 调用，
+        导致 duckdb C 扩展 GIL 累积崩溃）。本方法按表分组（stock_minutes/etf_minutes），
+        每表一次 SQL（WHERE code IN (...) AND freq=? AND 时段窗口），单日 DB 往返 ≤ 2 次。
+
+        契约对齐 query_minute_bars_by_range：
+        - 复权替换（fq='pre'/'post'）逻辑一致
+        - 时段窗口（iter_trading_days_in_range + bar_cutoff_ms）一致
+        - FrequencyCapabilityError 语义：整表空（所有 code 都无数据）才 raise TABLE_EMPTY；
+          个别 code 无数据自然不在结果集（与原"逐 code 跳过"一致）
+        - 指数/可转债 code（_resolve_minute_table=None）自动跳过，不报错
+        """
+        from .frequency_labels import FrequencyCapabilityError, ERR_TABLE_EMPTY
+        from .intraday_windows import build_intraday_sql_conditions, iter_trading_days_in_range
+        import pandas as pd
+
+        codes = [str(c) for c in (codes or []) if c is not None and str(c).strip()]
+        if not codes:
+            return pd.DataFrame()
+
+        # 按表分组（stock_minutes / etf_minutes），指数/可转债（None）跳过
+        table_codes = {}  # table -> [codes]
+        for code in codes:
+            table = self._resolve_minute_table(code)
+            if table is None:
+                continue  # 指数/可转债无分钟表，跳过（与原 except TABLE_MISSING 一致）
+            table_codes.setdefault(table, []).append(code)
+
+        if not table_codes:
+            return pd.DataFrame()
+
+        conn = self._get_conn()
+        if conn is None:
+            raise FrequencyCapabilityError(
+                ERR_TABLE_EMPTY, api_freq=None, table="stock_minutes/etf_minutes",
+                detail="DuckDB 连接不可用")
+
+        day_strs = iter_trading_days_in_range(start_date, end_date, calendar_provider)
+        end_cutoff_ms = bar_cutoff_ms if bar_cutoff_ms is not None else self._end_ms(end_date)
+        where_clause, win_params = build_intraday_sql_conditions(day_strs, end_cutoff_ms)
+
+        parts = []
+        any_table_has_freq = False
+        for table, tbl_codes in table_codes.items():
+            # 整表 freq 存在性检查（一次，非每 code）
+            freq_check = conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE freq = ? AND code IN (SELECT unnest(?))",
+                [storage_freq, tbl_codes]).fetchone()
+            if freq_check[0] == 0:
+                # 该表这批 code 无此 freq 数据，跳过（整表空在最后统一判断）
+                continue
+            any_table_has_freq = True
+            # 一次 SQL 拉全 code（DuckDB unnest 参数化，避免 SQL 过长）
+            df = conn.execute(f"""
+                SELECT code, time, freq, open, high, low, close, volume, amount, preClose,
+                       open_front, high_front, low_front, close_front,
+                       open_back, high_back, low_back, close_back,
+                       suspendFlag
+                FROM {table}
+                WHERE freq = ? AND code IN (SELECT unnest(?)) AND ({where_clause})
+                ORDER BY time
+            """, [storage_freq, tbl_codes] + win_params).fetchdf()
+            if len(df) > 0:
+                parts.append(df)
+
+        if not any_table_has_freq:
+            raise FrequencyCapabilityError(
+                ERR_TABLE_EMPTY, api_freq=None, table="stock_minutes/etf_minutes",
+                detail=f"全 universe 在 {start_date}~{end_date} 无 freq={storage_freq} 分钟数据")
+
+        if not parts:
+            return pd.DataFrame()
+        result = pd.concat(parts, ignore_index=True)
+        result = result.sort_values('time').reset_index(drop=True)
+
+        # 复权替换（与单 code 版完全一致）
+        fq_norm = str(fq).lower() if fq else ""
+        if fq_norm in ('pre', 'dypre'):
+            for orig, qfq in [("open", "open_front"), ("high", "high_front"),
+                              ("low", "low_front"), ("close", "close_front")]:
+                if qfq in result.columns and result[qfq].notna().any():
+                    result[orig] = result[qfq]
+        elif fq_norm in ('post', 'dyback', 'dy_post'):
+            for orig, qfq in [("open", "open_back"), ("high", "high_back"),
+                              ("low", "low_back"), ("close", "close_back")]:
+                if qfq in result.columns and result[qfq].notna().any():
+                    result[orig] = result[qfq]
+        return result
+
+
+    def query_minute_bars_by_count(
+        self, code: str, count: int, end_date: str, storage_freq: str,
+        fq: Optional[str] = None, calendar_provider=None,
+        bar_cutoff_ms: Optional[int] = None,
+    ) -> pd.DataFrame:
+        """PR3: 查 stock_minutes/etf_minutes 的指定原生 freq（count 查询）。
+
+        PR3 先实现"end_date 当日收盘前 N 根 bar"（不跨日回溯）；
+        跨日 count 语义留待真实数据校准，文档注明。
+        PR4 缺口 1：bar_cutoff_ms 非 None 时（分钟 Profile），count 从当前 bar 往前数（含当前 bar）。
+        """
+        df = self.query_minute_bars_by_range(
+            code, end_date, end_date, storage_freq, fq, calendar_provider,
+            bar_cutoff_ms=bar_cutoff_ms)
+        if len(df) > count:
+            df = df.tail(count).reset_index(drop=True)
+        return df
+
+    @staticmethod
+    def _end_ms(date: str) -> int:
+        """返回 date 当日 23:59:59.999 的 epoch 毫秒（end 当天截断用）。"""
+        ts = pd.Timestamp(str(date)[:10]).tz_localize("Asia/Shanghai")
+        return int((ts.value // 10**6) + 86_399_999)
+
     def query_benchmark(self, code, start_ms, end_ms) -> pd.DataFrame:
         """迁移自 BacktestEngine._get_benchmark() (backtest_engine.py:737-754)"""
         conn = self._get_conn()

@@ -17,6 +17,7 @@ output/
 .claude/
 .codebuddy/
 .omc/
+.zcode/
 
 # Local runtime artifacts
 _runtime/
@@ -29,9 +30,3 @@ _runtime/
 Thumbs.db
 .vscode/
 .idea/
-
-# Accidental local scratch artifact
-{r[1]}')
-
-# Exact accidental scratch filename (glob-escaped brackets)
-{r[[]1[]]}')
