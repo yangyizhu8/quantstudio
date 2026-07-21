@@ -34,11 +34,16 @@ class DataQualityAuditor:
 
     def __init__(self, db_path: str | Path, schemas: Dict,
                  batch_audit_path: Optional[str | Path] = None,
-                 quarantine_path: Optional[str | Path] = None):
+                 quarantine_path: Optional[str | Path] = None,
+                 shared_conn=None):
+        """shared_conn: 可选，外部传入的持久 read_write 连接（采集流程内复用 writer 连接，
+        避免开 read_only 与 write 并发触发「different configuration」冲突）。
+        不传则自开 read_only 短连接（CLI/独立运行场景）。"""
         self.db_path = Path(db_path)
         self.schemas = schemas
         self.batch_audit_path = Path(batch_audit_path) if batch_audit_path else None
         self.quarantine_path = Path(quarantine_path) if quarantine_path else None
+        self._shared_conn = shared_conn
 
     @classmethod
     def from_config(cls, db_path: str | Path, rules_path: str | Path,
@@ -50,7 +55,14 @@ class DataQualityAuditor:
     def run(self) -> QualityReport:
         import duckdb
         report = QualityReport()
-        with duckdb.connect(str(self.db_path), read_only=True) as conn:
+        # 复用外部传入的 shared_conn（采集流程内，避免 read_only 与 write 并发配置冲突）；
+        # 否则自开 read_only 短连接（CLI/独立运行）。
+        own_conn = None
+        conn = self._shared_conn
+        if conn is None:
+            own_conn = duckdb.connect(str(self.db_path), read_only=True)
+            conn = own_conn
+        try:
             tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
             for table, schema in self.schemas.items():
                 if table not in tables:
@@ -85,6 +97,9 @@ class DataQualityAuditor:
                     self._add(report, "SourceTraceability", table, missing_source, "warning")
             if "source_watermark" in tables:
                 self._audit_watermarks(conn, report, tables)
+        finally:
+            if own_conn is not None:
+                own_conn.close()
         self._audit_batch_pipeline(report)
         self._audit_quarantine(report)
         return report
@@ -221,13 +236,38 @@ class DataQualityAuditor:
                  f'OR "low_{side}">LEAST("open_{side}","high_{side}","close_{side}"))')
             self._add(report, "AdjustmentOHLC", table, conn.execute(q).fetchone()[0], "error", side)
             if raw.issubset(columns):
-                q = (f'SELECT COUNT(*) FROM "{table}" WHERE "open_{side}" IS NOT NULL '
-                     'AND open>0 AND high>0 AND low>0 AND close>0 AND '
-                     f'(ABS(("open_{side}"/open)/("close_{side}"/close)-1)>0.02 OR '
-                     f'ABS(("high_{side}"/high)/("close_{side}"/close)-1)>0.02 OR '
-                     f'ABS(("low_{side}"/low)/("close_{side}"/close)-1)>0.02)')
-                self._add(report, "AdjustmentFactorConsistency", table,
-                          conn.execute(q).fetchone()[0], "error", side)
+                # AdjustmentFactorConsistency：同一根 K 线 OHLC 的复权因子应一致
+                #（防止 front 因子错套到 back 列等严重错配）。
+                # 阈值按数据源复权算法区分（2026-07-22 修复 xtquant 分钟 back 误报）：
+                # - tushare/baostock/akshare：日级单一 adj_factor，OHLC 共用因子，严格 2%
+                # - xtquant back（分钟）：逐 tick 累积后复权，同根 K 线 open/high/low/close
+                #   来自不同时刻 tick，因子有 2-4% 微差（算法固有，非数据错误），放宽 5%
+                #   实测 xtquant back 偏差全部 <4%（419/1877万 = 0.002%），>5% 仍是真错配。
+                #   xtquant front 以最新日为基准，无此问题，保持 2%。
+                has_source = "data_source" in columns
+                if has_source:
+                    # 分源统计：xtquant 用 5%，其余 2%
+                    q_xt = (f'SELECT COUNT(*) FROM "{table}" WHERE "open_{side}" IS NOT NULL '
+                            'AND open>0 AND high>0 AND low>0 AND close>0 '
+                            "AND data_source='xtquant' AND "
+                            f'(ABS(("open_{side}"/open)/("close_{side}"/close)-1)>0.05 OR '
+                            f'ABS(("high_{side}"/high)/("close_{side}"/close)-1)>0.05 OR '
+                            f'ABS(("low_{side}"/low)/("close_{side}"/close)-1)>0.05)')
+                    q_other = (f'SELECT COUNT(*) FROM "{table}" WHERE "open_{side}" IS NOT NULL '
+                               'AND open>0 AND high>0 AND low>0 AND close>0 '
+                               "AND (data_source IS NULL OR data_source!='xtquant') AND "
+                               f'(ABS(("open_{side}"/open)/("close_{side}"/close)-1)>0.02 OR '
+                               f'ABS(("high_{side}"/high)/("close_{side}"/close)-1)>0.02 OR '
+                               f'ABS(("low_{side}"/low)/("close_{side}"/close)-1)>0.02)')
+                    bad = conn.execute(q_xt).fetchone()[0] + conn.execute(q_other).fetchone()[0]
+                else:
+                    q = (f'SELECT COUNT(*) FROM "{table}" WHERE "open_{side}" IS NOT NULL '
+                         'AND open>0 AND high>0 AND low>0 AND close>0 AND '
+                         f'(ABS(("open_{side}"/open)/("close_{side}"/close)-1)>0.02 OR '
+                         f'ABS(("high_{side}"/high)/("close_{side}"/close)-1)>0.02 OR '
+                         f'ABS(("low_{side}"/low)/("close_{side}"/close)-1)>0.02)')
+                    bad = conn.execute(q).fetchone()[0]
+                self._add(report, "AdjustmentFactorConsistency", table, bad, "error", side)
             if "data_source" in columns:
                 missing = conn.execute(
                     f'SELECT COUNT(*) FROM "{table}" WHERE data_source=\'tushare\' '

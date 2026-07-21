@@ -153,6 +153,10 @@ class FieldAligner:
         # db_path：Canonical 库路径（DuckDB），用于 pctChg 垃圾值 DB 兜底推导。
         # 不传则跳过 DB 兜底（仅批次内 close_front 推导），不影响主流程。
         self.db_path = Path(db_path) if db_path else None
+        # shared_conn_provider：可选回调，返回持久 read_write 连接（采集流程内由 daemon
+        # 注入 writer.shared_conn）。用于 pctChg DB 兜底，避免开 read_only 与 write 并发冲突。
+        # 不传则降级为自开 read_only（CLI/回测场景，无并发 write 不冲突）。
+        self.shared_conn_provider = None
 
     @classmethod
     def from_config(cls, config_path: str | Path,
@@ -236,6 +240,17 @@ class FieldAligner:
         # is_delisting_risk：兜底，close<1 元 OR 近 20 日 circ_mv<5 亿（来自 valuation_df）
         if table == "stock_daily":
             applied_steps.append(self._derive_st_status(df, namechange_df, valuation_df))
+
+        # ---- Step 4.45: derive_valuation_fields（xtquant 日线补估值字段）----
+        # xtquant 不提供 peTTM/pbMRQ/psTTM/turn，tushare 时代这些来自 daily_basic。
+        # 切权威源到 xtquant 后，由 stock_daily_valuation 表（仍走 tushare daily_basic 作前置依赖）
+        # PIT JOIN 补全 stock_daily 的 peTTM/pbMRQ/turn 列，保证数据适配层
+        #（duckdb_data_access.py:99 SELECT peTTM/pbMRQ/turn）拿到非 NULL 值，避免回测层歧义。
+        # valuation_df 为 None（依赖表失败/ETF 无依赖）时留 NULL，不阻断（与 is_delisting_risk 同款容错）。
+        # 字段映射：valuation.pe_ttm→peTTM, valuation.pb→pbMRQ, valuation.turnover_rate→turn。
+        # psTTM 无对应源（valuation 表无），留 NULL（存量 tushare 段保留有值）。
+        if table in ("stock_daily", "etf_daily"):
+            applied_steps.append(self._derive_valuation_fields(df, valuation_df))
 
         # ---- Step 4.6: 价格/成交量/金额 舍入 ----
         # A 股原始成交价：2 位小数（报价单位 0.01 元）
@@ -580,6 +595,91 @@ class FieldAligner:
         logger.debug(f"[Aligner] derive_st_status: is_st_reliable={n_st}, is_delisting_risk={n_dr} / {len(df)}")
         return f"derive_st_done(st={n_st},dr={n_dr})"
 
+    def _derive_valuation_fields(self, df: pd.DataFrame,
+                                  valuation_df: Optional["pd.DataFrame"]) -> str:
+        """为 stock_daily/etf_daily 补 peTTM/pbMRQ/turn 列（xtquant 切源后的估值字段补全）。
+
+        背景：xtquant 不提供 peTTM/pbMRQ/psTTM/turn（tushare 时代来自 daily_basic）。
+        stock_daily_valuation 表（tushare daily_basic 前置依赖）含 pe_ttm/pb/turnover_rate，
+        用 PIT ASOF JOIN（≤time 最近一条，与 namechange 同语义）补到 stock_daily 对应列：
+          valuation.pe_ttm       → df.peTTM
+          valuation.pb           → df.pbMRQ
+          valuation.turnover_rate→ df.turn
+        psTTM 无对应源（valuation 表无该列），留 NULL。
+
+        valuation_df 为 None 或缺字段时留 NULL，不阻断（容错，与 _derive_st_status 同款）。
+        幂等：若 df 已有 peTTM 列且非空（如 tushare 直传），不覆盖（保留源原值）。
+        """
+        import pandas as pd
+        # 初始化目标列（缺失时建空列，保证 writer 不 KeyError）
+        for col in ("peTTM", "pbMRQ", "turn"):
+            if col not in df.columns:
+                df[col] = pd.NA
+
+        if valuation_df is None or len(valuation_df) == 0:
+            return "derive_valuation_skip_no_data"
+        if "code" not in df.columns or "time" not in df.columns:
+            return "derive_valuation_skip_no_key"
+        # valuation_df 必须含 pe_ttm/pb/turnover_rate 至少一个才有意义
+        val_fields = [f for f in ("pe_ttm", "pb", "turnover_rate") if f in valuation_df.columns]
+        if not val_fields:
+            return "derive_valuation_skip_no_fields"
+
+        try:
+            import duckdb
+            left = pd.DataFrame({
+                "_row_id": range(len(df)),
+                "code": df["code"].values,
+                "time": pd.to_numeric(df["time"], errors="coerce").values,
+            })
+            # ASOF JOIN 要求右表按 (code, time) 排序
+            right_cols = ["code", "time"] + val_fields
+            right = valuation_df[right_cols].copy()
+            right["time"] = pd.to_numeric(right["time"], errors="coerce")
+            for f in val_fields:
+                right[f] = pd.to_numeric(right[f], errors="coerce")
+            right = right.dropna(subset=["time"]).sort_values(["code", "time"])
+
+            conn = duckdb.connect()
+            try:
+                conn.register("_sd_left", left)
+                conn.register("_val_right", right)
+                # ASOF JOIN：每行找同 code 且 time ≤ df.time 的最近一条估值
+                joined = conn.execute("""
+                    SELECT l._row_id, r.pe_ttm, r.pb, r.turnover_rate
+                    FROM _sd_left l
+                    ASOF JOIN _val_right r
+                        ON l.code = r.code
+                       AND l.time >= r.time
+                """).fetchdf()
+            finally:
+                conn.close()
+
+            if len(joined) == 0:
+                return "derive_valuation_skip_join_empty"
+            joined = joined.sort_values("_row_id").reset_index(drop=True)
+
+            # 仅在原值为空时补（幂等，不覆盖源已有值）
+            if "pe_ttm" in val_fields:
+                mask = df["peTTM"].isna() & joined["pe_ttm"].notna()
+                df.loc[mask, "peTTM"] = joined.loc[mask, "pe_ttm"].values
+            if "pb" in val_fields:
+                mask = df["pbMRQ"].isna() & joined["pb"].notna()
+                df.loc[mask, "pbMRQ"] = joined.loc[mask, "pb"].values
+            if "turnover_rate" in val_fields:
+                mask = df["turn"].isna() & joined["turnover_rate"].notna()
+                df.loc[mask, "turn"] = joined.loc[mask, "turnover_rate"].values
+
+            n_pe = int(df["peTTM"].notna().sum())
+            n_pb = int(df["pbMRQ"].notna().sum())
+            n_turn = int(df["turn"].notna().sum())
+            logger.debug(f"[Aligner] derive_valuation_fields: peTTM={n_pe}, pbMRQ={n_pb}, "
+                         f"turn={n_turn} / {len(df)} (PIT ASOF JOIN valuation)")
+            return f"derive_valuation_done(pe={n_pe},pb={n_pb},turn={n_turn})"
+        except Exception as e:
+            logger.warning(f"[Aligner] derive_valuation_fields PIT JOIN 失败（peTTM/pbMRQ/turn 留 NULL）: {e}")
+            return "derive_valuation_failed"
+
     def _pit_st_flags_duckdb(self, df: pd.DataFrame, namechange_df: pd.DataFrame) -> Optional["pd.DataFrame"]:
         """用 DuckDB ASOF JOIN 批量算每行 stock_daily 的 is_st_reliable。
 
@@ -858,7 +958,14 @@ class FieldAligner:
         if len(cand) == 0:
             return 0
         try:
-            con = duckdb.connect(str(self.db_path), read_only=True)
+            # 优先用注入的 shared_conn（采集流程内，避免 read_only 与 write 并发冲突）；
+            # 无 provider 则降级自开 read_only（CLI/回测，无并发 write 不冲突）。
+            own_conn = None
+            if self.shared_conn_provider is not None:
+                con = self.shared_conn_provider()
+            else:
+                con = duckdb.connect(str(self.db_path), read_only=True)
+                own_conn = con
             n_fixed = 0
             for rid in cand.index:
                 code = str(df.loc[rid, "code"])
@@ -877,7 +984,8 @@ class FieldAligner:
                 if abs(derived) < 30:
                     df.loc[rid, "pctChg"] = derived
                     n_fixed += 1
-            con.close()
+            if own_conn is not None:
+                own_conn.close()
             if n_fixed:
                 logger.info(f"[E-3] pctChg DB 兜底修复 {n_fixed} 行（close_front 前一日推导）")
             return n_fixed

@@ -262,11 +262,71 @@ class DuckDBWriter(BaseWriter):
         # 连接锁：DuckDB 不允许同文件多线程同时新建连接，串行化连接生命周期
         import threading
         self._conn_lock = threading.Lock()
+        # 持久共享连接（read_write）：供 daemon 内部只读查询复用，避免与 write 的 read_write
+        # 短连接并发时开 read_only 连接触发「different configuration」冲突
+        # （DuckDB 规则：同 db 文件 read_only 与 read_write 不能并存，哪怕不同线程）。
+        # 所有内部查询统一走 read_write，永不冲突。GUI 的 read_only 查询属独立进程范畴。
+        self._shared_conn = None
         self._init_tables()
 
     def _conn(self):
         """新建连接（线程安全：调用方应在 write_lock/conn_lock 内使用并及时关闭）"""
         return self._duckdb.connect(str(self.db_path))
+
+    def _ensure_shared_conn(self):
+        """确保持久 read_write 连接已创建（调用方须持有 _conn_lock）。"""
+        if self._shared_conn is None:
+            self._shared_conn = self._duckdb.connect(str(self.db_path))
+        return self._shared_conn
+
+    def shared_conn(self):
+        """返回持久 read_write 连接（复用单例，线程安全）。
+
+        用途：daemon 内部只读查询改用此连接，避免开 read_only 连接与 write 的
+        read_write 连接并发触发「different configuration」冲突。
+        调用方负责加 _conn_lock 保护 execute（DuckDB 单连接并发 execute 会串行化）。
+        """
+        with self._conn_lock:
+            return self._ensure_shared_conn()
+
+    def execute_read(self, sql: str, params: Optional[list] = None):
+        """线程安全的只读查询（复用持久 read_write 连接，避免 read_only 冲突）。
+
+        返回 fetchall() 结果。调用方无需管理连接生命周期。
+        """
+        with self._conn_lock:
+            conn = self._ensure_shared_conn()
+            if params:
+                return conn.execute(sql, params).fetchall()
+            return conn.execute(sql).fetchall()
+
+    def read_df(self, sql: str, params: Optional[list] = None):
+        """线程安全的只读查询，返回 DataFrame（复用持久 read_write 连接）。
+
+        供 daemon 的 _prepare_namechange_df / _prepare_valuation_df / _prepare_close_df 用，
+        替代原 duckdb.connect(read_only=True) 短连接，避免与 write 的 read_write 连接并发冲突。
+        """
+        with self._conn_lock:
+            conn = self._ensure_shared_conn()
+            if params:
+                return conn.execute(sql, params).fetchdf()
+            return conn.execute(sql).fetchdf()
+
+    def close(self):
+        """关闭持久共享连接（GUI 重建 collector 时调用，避免连接泄漏）。"""
+        with self._conn_lock:
+            if self._shared_conn is not None:
+                try:
+                    self._shared_conn.close()
+                except Exception:
+                    pass
+                self._shared_conn = None
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def _init_tables(self):
         with self._conn_lock:

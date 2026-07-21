@@ -148,6 +148,8 @@ class ResidentCollector:
         writer = create_writer(data_cfg)
         # 将 Canonical 库路径注入 aligner，支撑 pctChg 垃圾值 DB 兜底推导（前一日 close_front）
         aligner.db_path = getattr(writer, "db_path", None)
+        # 注入 writer 的持久连接 provider，避免 aligner DB 兜底开 read_only 与 write 并发冲突
+        aligner.shared_conn_provider = getattr(writer, "shared_conn", None)
         batch_audit = BatchAudit(data_cfg.get("batch_audit_path",
                                                str(db_path("batch_audit.db"))))
         # 启动时配置校验（fail-fast：错误配置阻止启动，防调试残留/缺 PIT 门禁等）
@@ -231,6 +233,35 @@ class ResidentCollector:
         table = task["table"]
         freq = task.get("freq", "daily")
         codes_cfg = task.get("codes")
+
+        # PR 分钟源切换守卫（复权一致性，2026-07-21 用户批准）：
+        # 分钟表（stock_minutes/etf_minutes）权威源锁定 xtquant 单源。
+        # xtquant 三段式复权（none/front/back）与 tushare adj_factor 归一化算法不同，
+        # 若同表混用两源，front 列复权基准不一致会静默污染回测。
+        # 显式能力错误（缺数据停更）优于混源静默污染（不可检测的错误答案）。
+        # 若需 tushare 回填历史深度缺口，是一次性显式运维 + 重建全表复权列，绝不作日常 fallback。
+        MINUTE_AUTHORITY = {"stock_minutes": "xtquant", "etf_minutes": "xtquant"}
+        if table in MINUTE_AUTHORITY and source != MINUTE_AUTHORITY[table]:
+            logger.error(
+                f"[task={name}] 分钟表 {table} 权威源锁定为 {MINUTE_AUTHORITY[table]}"
+                f"（复权一致性决策 2026-07-21），拒绝用 {source} 写入（避免跨源复权基准不一致）。"
+                f"若需历史回填，请显式运维操作并重建全表复权列，单独过审批。")
+            return False
+
+        # 日线源切换守卫（复权一致性，2026-07-21 用户批准，对称 MINUTE_AUTHORITY）：
+        # stock_daily/etf_daily 权威源锁定 xtquant 单源。复权基准虽语义一致（都以最新交易日为锚），
+        # 但 xtquant passthrough 与 tushare _apply_qfq 算法精度不同（xtquant 逐日累计 vs tushare adj_factor 段常数），
+        # 同表混用会在切换边界产生轻微台阶（Fidelity 门禁 ±1 元容差敏感）。
+        # 守卫防止 source_priority 回退链在 xtquant 失败时静默写入 tushare 数据污染复权基准。
+        # miniQMT 不可用期间日线停更（data_status 如实反映），优于不可检测的混源污染。
+        DAILY_AUTHORITY = {"stock_daily": "xtquant", "etf_daily": "xtquant"}
+        if table in DAILY_AUTHORITY and source != DAILY_AUTHORITY[table]:
+            logger.error(
+                f"[task={name}] 日线表 {table} 权威源锁定为 {DAILY_AUTHORITY[table]}"
+                f"（复权一致性决策 2026-07-21），拒绝用 {source} 写入（避免跨源复权基准台阶）。"
+                f"若需历史回填，请显式运维操作并重建全表复权列，单独过审批。")
+            return False
+
         logger.info(f"[{batch_id}] === START task={name} source={source} table={table}/{freq} ===")
 
         # 全市场（ALL）→ 逐只股票并行拉取+入库
@@ -296,9 +327,7 @@ class ResidentCollector:
                                  if t.get("table") == "stock_namechange"), None)
                 if nc_task and nc_task.get("enabled", True):
                     try:
-                        import duckdb as _duckdb
-                        with _duckdb.connect(str(self.writer.db_path), read_only=True) as _conn:
-                            _nc_cnt = _conn.execute("SELECT COUNT(*) FROM stock_namechange").fetchone()[0]
+                        _nc_cnt = self.writer.execute_read("SELECT COUNT(*) FROM stock_namechange")[0][0]
                         if _nc_cnt == 0:
                             logger.info(f"[{batch_id}] 自动触发依赖表 stock_namechange（首次全量拉取）...")
                             _nc_run = dict(nc_task)
@@ -593,9 +622,7 @@ class ResidentCollector:
                              if t.get("table") == "stock_namechange"), None)
             if nc_task and nc_task.get("enabled", True):
                 try:
-                    import duckdb as _duckdb
-                    with _duckdb.connect(str(self.writer.db_path), read_only=True) as _conn:
-                        _nc_cnt = _conn.execute("SELECT COUNT(*) FROM stock_namechange").fetchone()[0]
+                    _nc_cnt = self.writer.execute_read("SELECT COUNT(*) FROM stock_namechange")[0][0]
                     if _nc_cnt == 0:
                         logger.info(f"[{batch_id}] 自动触发依赖表 stock_namechange（首次全量拉取）...")
                         _nc_run = dict(nc_task)
@@ -782,7 +809,7 @@ class ResidentCollector:
         每只股票独立：拉取→对齐→校验→入库。中断后已入库的不丢。
         source 由回退调度器传入。"""
         import time as _time
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
         import threading
         name = task["name"]
         table = task["table"]
@@ -853,9 +880,7 @@ class ResidentCollector:
                              if t.get("table") == "stock_namechange"), None)
             if nc_task and nc_task.get("enabled", True):
                 try:
-                    import duckdb as _duckdb
-                    with _duckdb.connect(str(self.writer.db_path), read_only=True) as _conn:
-                        _nc_cnt = _conn.execute("SELECT COUNT(*) FROM stock_namechange").fetchone()[0]
+                    _nc_cnt = self.writer.execute_read("SELECT COUNT(*) FROM stock_namechange")[0][0]
                     if _nc_cnt == 0:
                         logger.info(f"[{batch_id}] 自动触发依赖表 stock_namechange（首次全量拉取）...")
                         _nc_run = dict(nc_task)
@@ -936,17 +961,32 @@ class ResidentCollector:
             # 真实进度在下方 as_completed 循环里按完成数打印）
 
             # 等待全部完成 + 统计
-            for f in as_completed(futures):
-                total_written[0] += f.result()
-                done_count[0] += 1
-                # 完成阶段进度（每 50 只）
-                if done_count[0] % 50 == 0 or done_count[0] == total:
-                    elapsed = _time.time() - t0
+            # 分钟数据单只约 17 秒、8 线程 → 旧"每 50 只"打一次 ≈ 106 秒无输出，
+            # 看起来像卡住。改用完成数(约每 2% / 至少 10 只) + 时间兜底(每 30 秒) 双触发：
+            # 即使单只慢，也至少每 30 秒打一行心跳，避免误判卡死。
+            log_step = max(10, total // 50)  # 约 2% 一次，至少 10 只
+            last_progress_ts = _time.time()
+            pending = set(futures)
+            while pending and self._running:
+                done, pending = wait(pending, timeout=30.0, return_when=FIRST_COMPLETED)
+                for f in done:
+                    total_written[0] += f.result()
+                    done_count[0] += 1
+                now = _time.time()
+                # 触发条件：完成数跨过 log_step 整数倍 / 全部完成 / 距上次打点超 30 秒
+                time_heartbeat = now - last_progress_ts >= 30.0
+                count_step = done_count[0] % log_step == 0
+                if done_count[0] == total or count_step or time_heartbeat:
+                    elapsed = now - t0
                     speed = done_count[0] / elapsed if elapsed > 0 else 0
-                    eta = (total - done_count[0]) / speed if speed > 0 else 0
-                    logger.info(f"[{batch_id}] 进度: {done_count[0]}/{total} ({done_count[0]*100//total}%) "
+                    # speed=0（尚无完成）时 ETA 显示 "--" 避免误导为"即将完成"
+                    eta_str = f"{(total - done_count[0]) / speed:.0f}s" if speed > 0 else "--"
+                    tag = "心跳" if (time_heartbeat and not count_step) else "进度"
+                    logger.info(f"[{batch_id}] {tag}: {done_count[0]}/{total} "
+                                f"({done_count[0]*100//total}%) "
                                 f"已入库 {total_written[0]} 行, 失败 {fail_count[0]}, "
-                                f"已用 {elapsed:.0f}s, 剩余 {eta:.0f}s")
+                                f"已用 {elapsed:.0f}s, 剩余 {eta_str}")
+                    last_progress_ts = now
 
         fetch_ok, failure_rate, threshold = self._failure_gate(task, fail_count[0], done_count[0])
         reject_ok, reject_rate, _ = self._failure_gate(task, total_rejected[0], total_raw[0])
@@ -1067,10 +1107,15 @@ class ResidentCollector:
             return True
         try:
             from .quality_audit import DataQualityAuditor
+            # 传入 writer 的持久 read_write 连接，避免 quality_audit 自开 read_only
+            # 与 writer 的 read_write 并发触发「different configuration」冲突。
+            # 此处采集已完成（_run_full_quality_audit 在 execute_task 末尾调用），
+            # 无并发 write，独占 shared_conn 安全。
             report = DataQualityAuditor(
                 self.writer.db_path, self.aligner.schemas,
                 batch_audit_path=self.batch_audit.db_path,
-                quarantine_path=self.quarantine.db_path).run()
+                quarantine_path=self.quarantine.db_path,
+                shared_conn=self.writer.shared_conn()).run()
             errors = [issue for issue in report.issues if issue.severity == "error"]
             warnings = [issue for issue in report.issues if issue.severity == "warning"]
             if errors:
@@ -1168,20 +1213,20 @@ class ResidentCollector:
         if not time_col:
             return stored
         try:
-            import duckdb
-            with duckdb.connect(str(self.writer.db_path), read_only=True) as conn:
-                columns = {row[0] for row in conn.execute(f'DESCRIBE "{table}"').fetchall()}
-                where = []
-                params = []
-                if "data_source" in columns:
-                    where.append("data_source=?")
-                    params.append(source)
-                if "freq" in columns:
-                    where.append("freq=?")
-                    params.append(freq)
-                clause = " WHERE " + " AND ".join(where) if where else ""
-                actual = conn.execute(
-                    f'SELECT MAX("{time_col}") FROM "{table}"{clause}', params).fetchone()[0]
+            # 用 writer 持久 read_write 连接（避免 read_only 与 write 并发配置冲突）
+            columns = {row[0] for row in self.writer.execute_read(f'DESCRIBE "{table}"')}
+            where = []
+            params = []
+            if "data_source" in columns:
+                where.append("data_source=?")
+                params.append(source)
+            if "freq" in columns:
+                where.append("freq=?")
+                params.append(freq)
+            clause = " WHERE " + " AND ".join(where) if where else ""
+            rows = self.writer.execute_read(
+                f'SELECT MAX("{time_col}") FROM "{table}"{clause}', params or None)
+            actual = rows[0][0] if rows else None
             if actual is not None and int(stored) > int(actual):
                 logger.warning(f"[Watermark] {source}/{table}/{freq} 水位领先实际数据："
                                f"stored={stored}, actual={actual}，本轮从实际最大日期续拉")
@@ -1198,20 +1243,20 @@ class ResidentCollector:
         if not time_col:
             return None
         try:
-            import duckdb
-            with duckdb.connect(str(self.writer.db_path), read_only=True) as conn:
-                columns = {row[0] for row in conn.execute(f'DESCRIBE "{table}"').fetchall()}
-                where = []
-                params = []
-                if "data_source" in columns:
-                    where.append("data_source=?")
-                    params.append(source)
-                if "freq" in columns:
-                    where.append("freq=?")
-                    params.append(freq)
-                clause = " WHERE " + " AND ".join(where) if where else ""
-                actual = conn.execute(
-                    f'SELECT MAX("{time_col}") FROM "{table}"{clause}', params).fetchone()[0]
+            # 用 writer 持久 read_write 连接（避免 read_only 与 write 并发配置冲突）
+            columns = {row[0] for row in self.writer.execute_read(f'DESCRIBE "{table}"')}
+            where = []
+            params = []
+            if "data_source" in columns:
+                where.append("data_source=?")
+                params.append(source)
+            if "freq" in columns:
+                where.append("freq=?")
+                params.append(freq)
+            clause = " WHERE " + " AND ".join(where) if where else ""
+            rows = self.writer.execute_read(
+                f'SELECT MAX("{time_col}") FROM "{table}"{clause}', params or None)
+            actual = rows[0][0] if rows else None
             if actual is not None:
                 self.writer.advance_watermark(source, table, freq, int(actual), batch_id)
                 return int(actual)
@@ -1290,14 +1335,12 @@ class ResidentCollector:
                 return None
             start_ms = to_ms_timestamp(start)
             end_ms = to_ms_timestamp(end) + 86_400_000  # 含 end 当天
-            # 用 DuckDB 参数化查询（避免 5200+ codes 的 SQL 过长 + None 问题）
-            conn = duckdb.connect(str(db_path), read_only=True)
-            df = conn.execute("""
+            # 用 writer 持久 read_write 连接（避免 read_only 与 write 并发配置冲突）
+            df = self.writer.read_df("""
                 SELECT code, time, close FROM stock_daily
                 WHERE code IN (SELECT unnest(?))
                   AND time >= ? AND time <= ?
-            """, [bare_codes, start_ms, end_ms]).fetchdf()
-            conn.close()
+            """, [bare_codes, start_ms, end_ms])
             if len(df) == 0:
                 logger.debug(f"[Daemon] _prepare_close_df: stock_daily 无 {start}~{end} 行情（补算将跳过）")
                 return None
@@ -1315,18 +1358,15 @@ class ResidentCollector:
         若 DB 为空（auto-trigger 失败或首次未触发），返回 None → is_st_reliable 留 False。
         """
         try:
-            import duckdb
-            db_path = self.writer.db_path
-            with duckdb.connect(str(db_path), read_only=True) as conn:
-                try:
-                    df = conn.execute(
-                        "SELECT code, change_date, status_after FROM stock_namechange"
-                    ).fetchdf()
-                    if len(df) > 0:
-                        logger.info(f"[Daemon] namechange 复用已入库数据: {len(df)} 行")
-                        return df
-                except Exception:
-                    pass  # 表不存在或空
+            # 用 writer 持久 read_write 连接（避免 read_only 与 write 并发配置冲突）
+            try:
+                df = self.writer.read_df(
+                    "SELECT code, change_date, status_after FROM stock_namechange")
+                if len(df) > 0:
+                    logger.info(f"[Daemon] namechange 复用已入库数据: {len(df)} 行")
+                    return df
+            except Exception:
+                pass  # 表不存在或空
             logger.debug("[Daemon] namechange DB 为空，is_st_reliable 将留 False")
             return None
         except Exception as e:
@@ -1334,29 +1374,33 @@ class ResidentCollector:
             return None
 
     def _prepare_valuation_df(self, start: str, end: str) -> Optional["pd.DataFrame"]:
-        """为 stock_daily 推导 is_delisting_risk 准备每日估值 DataFrame。
+        """为 stock_daily 推导 is_delisting_risk + 估值字段补全 准备每日估值 DataFrame。
 
-        从已入库 stock_daily_valuation 读近 20 日 circ_mv 数据（依赖：stock_daily_valuation 任务先入库）。
-        返回 None 表示无数据（aligner 退化为仅靠 close<1 兜底）。
+        从已入库 stock_daily_valuation 读近 20 日数据（依赖：stock_daily_valuation 任务先入库）。
+        - circ_mv：用于 is_delisting_risk（近 20 日 MIN(circ_mv) < 5e8）
+        - pe_ttm/pb/turnover_rate：用于 aligner 补 stock_daily 的 peTTM/pbMRQ/turn 列
+          （xtquant 不提供这些估值字段，tushare 时代来自 daily_basic；切 xtquant 后由本表 PIT JOIN 补全，
+           保持数据适配层 duckdb_data_access.py 读 stock_daily 这些列时拿到非 NULL 值，避免回测层歧义）。
+        返回 None 表示无数据（aligner 退化为仅靠 close<1 兜底 + 估值列留 NULL）。
 
         ⚠️ 依赖顺序：stock_daily_valuation 任务必须在 stock_daily 之前执行（collector_tasks.json 顺序）。
         """
         try:
-            import duckdb
             from .aligner import to_ms_timestamp
             db_path = self.writer.db_path
             start_ms = to_ms_timestamp(start) - 20 * 86_400_000   # 多取 20 日做窗口
             end_ms = to_ms_timestamp(end) + 86_400_000
-            with duckdb.connect(str(db_path), read_only=True) as conn:
-                df = conn.execute("""
-                    SELECT code, time, circ_mv FROM stock_daily_valuation
-                    WHERE time >= ? AND time <= ?
-                """, [start_ms, end_ms]).fetchdf()
+            # 用 writer 持久 read_write 连接（避免 read_only 与 write 并发配置冲突）
+            df = self.writer.read_df("""
+                SELECT code, time, circ_mv, pe_ttm, pb, turnover_rate
+                FROM stock_daily_valuation
+                WHERE time >= ? AND time <= ?
+            """, [start_ms, end_ms])
             if len(df) == 0:
                 logger.warning(f"[Daemon] stock_daily_valuation 无 {start}~{end} 数据"
-                               "（is_delisting_risk 仅靠 close<1 兜底）")
+                               "（is_delisting_risk 仅靠 close<1 兜底，peTTM/pb/turn 留 NULL）")
                 return None
-            logger.info(f"[Daemon] valuation 准备: {len(df)} 行（用于 delisting_risk PIT）")
+            logger.info(f"[Daemon] valuation 准备: {len(df)} 行（用于 delisting_risk PIT + 估值字段补全）")
             return df
         except Exception as e:
             logger.warning(f"[Daemon] _prepare_valuation_df 失败: {e}")

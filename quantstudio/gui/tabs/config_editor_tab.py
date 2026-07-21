@@ -37,11 +37,14 @@ SOURCE_CAPABILITY = capability_matrix()
 # xtquant 为骨架权威源；tushare 为独立补充表（xtquant 不提供的数据维度）；
 # akshare 用于 ST 历史（hidden 联动）和退市名单（用户可见）。
 # 用户在 GUI 不再选数据源，框架内部按需混合多源打补丁。
+# 分钟表（stock_minutes/etf_minutes）权威源=xtquant，单源锁定（复权一致性决策 2026-07-21 用户批准）：
+# xtquant 三段式复权原生直通 aligner passthrough，禁止 tushare 兜底避免跨源复权基准不一致。
+# daemon 分钟表权威源守卫会拒绝非 xtquant 源写入，故 GUI 默认源必须与此一致。
 DEFAULT_SOURCE_MAP = {
     "stock_daily":          "xtquant",   # xtquant 骨架权威源
-    "stock_minutes":        "tushare",
-    "etf_daily":            "tushare",
-    "etf_minutes":          "tushare",
+    "stock_minutes":        "xtquant",   # 复权一致性单源锁定（2026-07-21）
+    "etf_daily":            "xtquant",   # 复权一致性单源锁定（2026-07-21，与 stock_daily 同款）
+    "etf_minutes":          "xtquant",   # 复权一致性单源锁定（2026-07-21）
     "index_daily":          "tushare",
     "index_constituents":   "akshare",
     "stock_float_share":    "xtquant",   # 报告期股本，xtquant Capital 为权威源
@@ -568,11 +571,22 @@ class ConfigEditorTab(QWidget):
             }
 
         self._write_json("collector_tasks.json", self._tasks_cfg)
-        # 自动刷新采集任务列表（source 等变更立即生效）
-        for tab in self.mw._tabs.values():
-            if hasattr(tab, 'refresh'):
-                tab.refresh()
-                break
+        # 自动刷新各 Tab（source 等变更立即生效）
+        # 注意：MainWindow 没有自定义 _tabs 字典，标签页由 FluentWindow 的
+        # stackedWidget 管理，需通过 stackedWidget.widget(i) 遍历。
+        stack = self.mw.stackedWidget
+        for i in range(stack.count()):
+            tab = stack.widget(i)
+            if tab is None:
+                continue
+            # 跳过当前编辑器自身，避免在保存后立即重建自身 UI
+            if tab is self:
+                continue
+            if hasattr(tab, "refresh"):
+                try:
+                    tab.refresh()
+                except Exception as e:
+                    logger.warning(f"Tab {i} refresh 失败: {e}")
 
     # ==================== 字段对齐规则页面 ====================
 

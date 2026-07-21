@@ -1662,7 +1662,7 @@
         "code_format": "tushare_to_raw",
         "unit_conversions": {},
         "time_to_ms": true,
-        "_note": "tushare stk_mins 已是 股/元，无需单位转换"
+        "_note": "tushare stk_mins 单位约定未经验证（2026-07-21）：_note 旧写'已是股/元'系未实证断言，与 xtquant volume=手的事故同类风险。当前 collector_tasks kline_1m 用 xtquant 单源，此映射从未被真实拉取验证。若未来用 tushare 拉分钟数据，必须先拉一只核实 vol/amount 实际单位，再决定是否补 ×100 转换——不要照抄日线 tushare 的 ×100（那是日线 vol=手已验证，分钟单位未验证）。"
       },
       "fin_indicator": {
         "column_map": {
@@ -1878,7 +1878,7 @@
         "code_format": "tushare_to_raw",
         "unit_conversions": {},
         "time_to_ms": true,
-        "_note": "tushare stk_mins 接口支持 ETF 代码，vol=股，原始价不复权"
+        "_note": "tushare stk_mins 接口支持 ETF 代码，原始价不复权。vol 单位约定未经验证（2026-07-21）：旧写'vol=股'系未实证断言，当前 collector_tasks etf_minutes 用 xtquant 单源，此映射从未真实拉取。未来用 tushare 拉 ETF 分钟前必须先核实 vol/amount 实际单位再决定是否补 ×100。"
       }
     },
     "baostock": {
@@ -2199,7 +2199,7 @@
       }
     },
     "xtquant": {
-      "_note": "xtquant(miniQMT)：代码 600000.SH；vol=股, amount=元。get_market_data_ex 返回 index=time + open/high/low/close/vol/amount。复权：adapter 直接拉 dividend_type=front/back 输出 open_front/open_back 等标准列，aligner 走 passthrough 填充（与 baostock 统一），彻底摆脱 tushare adj_factor 的 2000 积分门槛",
+      "_note": "xtquant(miniQMT)：代码 600000.SH；vol=手(1手=100股), amount=元, pvolume=股。get_market_data_ex 返回 index=time + open/high/low/close/volume/amount（注意原生列名是 volume，映射到 DuckDB volume）。volume 需 ×100 转股（见各表 unit_conversions）。复权：adapter 直接拉 dividend_type=front/back 输出 open_front/open_back 等标准列，aligner 走 passthrough 填充（与 baostock 统一），彻底摆脱 tushare adj_factor 的 2000 积分门槛",
       "stock_daily": {
         "column_map": {
           "stock_code": "code",
@@ -2209,12 +2209,15 @@
           "low": "low",
           "close": "close",
           "vol": "volume",
-          "amount": "amount"
+          "amount": "amount",
+          "preClose": "preClose",
+          "suspendFlag": "suspendFlag"
         },
         "code_format": "tushare_to_raw",
-        "unit_conversions": {},
+        "unit_conversions": {"volume": {"factor": 100, "_note": "手→股 ×100（xtquant volume 单位为手，schema 要求股；2026-07-21 修复 UnitCheck 批量误拒事故）"}},
         "time_to_ms": true,
-        "pctchg_source": "compute_from_raw"
+        "pctchg_source": "derived_from_front",
+        "_note": "preClose/suspendFlag xtquant 原生返回（2026-07-21 补映射，此前漏映射导致 NULL）。pctChg：xtquant 无官方 pct_chg 列，aligner Step 6 优先用 close_front.pct_change 推导（derived_from_front，复权基准一致避免除权日垃圾值），次选 close/preClose 同基准兜底。peTTM/pbMRQ/turn 由 aligner PIT JOIN stock_daily_valuation 补（xtquant 不提供估值字段）。"
       },
       "stock_minutes": {
         "column_map": {
@@ -2228,7 +2231,7 @@
           "amount": "amount"
         },
         "code_format": "tushare_to_raw",
-        "unit_conversions": {},
+        "unit_conversions": {"volume": {"factor": 100, "_note": "手→股 ×100（xtquant volume 单位为手，schema 要求股；2026-07-21 修复 UnitCheck 批量误拒事故）"}},
         "time_to_ms": true
       },
       "etf_daily": {
@@ -2240,13 +2243,14 @@
           "low": "low",
           "close": "close",
           "vol": "volume",
-          "amount": "amount"
+          "amount": "amount",
+          "preClose": "preClose"
         },
         "code_format": "tushare_to_raw",
-        "unit_conversions": {},
+        "unit_conversions": {"volume": {"factor": 100, "_note": "手→股 ×100（xtquant volume 单位为手，schema 要求股；2026-07-21 修复 UnitCheck 批量误拒事故）"}},
         "time_to_ms": true,
-        "pctchg_source": "compute_from_raw",
-        "_note": "xtquant get_market_data_ex 天然支持 ETF；vol=股/amount=元；pctChg 缺失时由 close/preClose 计算"
+        "pctchg_source": "derived_from_front",
+        "_note": "preClose xtquant 原生返回（2026-07-21 补映射）。etf_daily schema 无 suspendFlag（不停牌）。pctChg：xtquant 无官方 pct_chg，aligner Step 6 用 close_front.pct_change 推导（derived_from_front）。vol=手/amount=元。"
       },
       "etf_minutes": {
         "column_map": {
@@ -2261,9 +2265,9 @@
           "preClose": "preClose"
         },
         "code_format": "tushare_to_raw",
-        "unit_conversions": {},
+        "unit_conversions": {"volume": {"factor": 100, "_note": "手→股 ×100（xtquant volume 单位为手，schema 要求股；2026-07-21 修复 UnitCheck 批量误拒事故）"}},
         "time_to_ms": true,
-        "_note": "xtquant get_market_data_ex period=1m 支持 ETF，vol=股，dividend_type=none 原始价"
+        "_note": "xtquant get_market_data_ex period=1m 支持 ETF，vol=手，dividend_type=none 原始价"
       },
       "stock_float_share": {
         "identity": true,

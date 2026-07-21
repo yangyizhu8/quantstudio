@@ -1,7 +1,12 @@
 """XtquantAdapter — 迅投 miniQMT 数据源（本地客户端，需 QMT 运行）
 
-代码格式 600000.SH（带.market后缀）；vol=股, amount=元；支持 tick/1m/5m/1d。
+代码格式 600000.SH（带.market后缀）；volume=手(1手=100股), amount=元, pvolume=股；支持 tick/1m/5m/1d。
 复权支持 none/front/back/front_ratio/back_ratio。
+
+单位说明（2026-07-21 修正，原 docstring 错写 vol=股）：
+- volume：xtquant 返回单位是「手」（官方文档确认），alignment_rules.json 配 ×100 转「股」匹配 schema。
+- amount：单位「元」，与 schema 一致，无需转换（不像 tushare amount=千元 要 ×1000）。
+- pvolume：原始量单位「股」（仅部分品种返回），本项目未使用。
 
 依赖：需安装 miniQMT 客户端 + xtquant 库（QMT 安装目录 user_data_path 里）。
 """
@@ -190,6 +195,113 @@ class XtquantAdapter(BaseSourceAdapter):
         right = right.drop_duplicates(time_key, keep="last")
         return raw.merge(right, on=time_key, how="left")
 
+    # ===================== PR 分钟源切换：分窗下载可靠性层（修正 2，2026-07-21）=====================
+
+    @staticmethod
+    def _parse_windows(start: str, end: str, window_days: int = 31) -> List[Tuple[str, str]]:
+        """将 [start, end] 区间切分为 ≤window_days 天的窗口列表。
+
+        返回 [(win_start_yyyymmdd, win_end_yyyymmdd), ...]。
+        xtquant 的 download_history_data 对超长区间可能超时，分窗控制单次拉取量。
+        31 天/窗：分钟数据 ≤ 31×240=7440 bar/窗，内存和超时风险可控。
+        """
+        from datetime import datetime, timedelta
+        windows = []
+        cur = datetime.strptime(start.replace("-", "")[:8], "%Y%m%d")
+        end_dt = datetime.strptime(end.replace("-", "")[:8], "%Y%m%d")
+        while cur <= end_dt:
+            win_end = min(cur + timedelta(days=window_days - 1), end_dt)
+            windows.append((cur.strftime("%Y%m%d"), win_end.strftime("%Y%m%d")))
+            cur = win_end + timedelta(days=1)
+        return windows
+
+    def _fetch_one_window(self, xt, code: str, period: str,
+                          win_start: str, win_end: str) -> Optional[pd.DataFrame]:
+        """拉取单 code 单窗口的三段式数据（none/front/back），合并复权列。
+
+        返回合并后的 DataFrame（含 open_front/close_back 等），或 None（无数据）。
+        单窗失败不阻断整体（per-stock 循环的 try/except 兜底）。
+        """
+        # 主列：原始价
+        data = xt.get_market_data_ex(
+            stock_list=[code], period=period,
+            start_time=win_start, end_time=win_end, dividend_type="none")
+        if code not in data or len(data[code]) == 0:
+            return None
+        df = data[code].copy().reset_index()
+        df["stock_code"] = code
+        # 前复权（失败提升到 warning，因 fq='pre' 查询依赖 front 列）
+        try:
+            fdata = xt.get_market_data_ex(
+                stock_list=[code], period=period,
+                start_time=win_start, end_time=win_end, dividend_type="front")
+            if code in fdata and len(fdata[code]) > 0:
+                fr = fdata[code].reset_index()
+                df = self._merge_adjusted_ohlc(df, fr, "front")
+        except Exception as e:
+            logger.warning(f"[XtquantAdapter] front 复权拉取失败 {code} {win_start}~{win_end}："
+                           f"复权列将缺失，fq='pre' 查询会退回原始价。原因: {e}")
+        # 后复权（失败保持 debug，因 schema back 列 required=false）
+        try:
+            bdata = xt.get_market_data_ex(
+                stock_list=[code], period=period,
+                start_time=win_start, end_time=win_end, dividend_type="back")
+            if code in bdata and len(bdata[code]) > 0:
+                bk = bdata[code].reset_index()
+                df = self._merge_adjusted_ohlc(df, bk, "back")
+        except Exception as e:
+            logger.debug(f"[XtquantAdapter] back {code} {win_start}~{win_end} failed: {e}")
+        return df
+
+    def _fetch_one_code_windowed(self, xt, code: str, period: str,
+                                  start: str, end: str) -> Optional[pd.DataFrame]:
+        """分窗拉取单 code 的分钟数据（修正 2 核心方法）。
+
+        逐 31 天窗口：先 download_history_data（确保本地缓存），再 _fetch_one_window（三段式 get）。
+        计数探测：download 后若某窗 get 返回 0 行，记 warning（可能 download 失败或该窗无交易）。
+        合并所有窗口的 DataFrame。
+        """
+        import pandas as pd
+        windows = self._parse_windows(start, end)
+        if not windows:
+            return None
+        parts = []
+        empty_windows = 0
+        for win_start, win_end in windows:
+            # download 该窗历史数据到 miniQMT 本地缓存
+            try:
+                xt.download_history_data(code, period, win_start, win_end)
+            except Exception as e:
+                logger.debug(f"[XtquantAdapter] download {code} {period} {win_start}~{win_end} failed: {e}")
+            # 三段式拉取
+            df_win = self._fetch_one_window(xt, code, period, win_start, win_end)
+            if df_win is not None and len(df_win) > 0:
+                parts.append(df_win)
+            else:
+                empty_windows += 1
+        # 计数探测护栏：若超过一半窗口为空，可能 download 系统性失败
+        if empty_windows > len(windows) / 2 and len(windows) > 2:
+            logger.warning(f"[XtquantAdapter] {code} {start}~{end} 共 {len(windows)} 窗，"
+                           f"{empty_windows} 窗无数据（>50%），可能 download 系统性失败或该 code 历史不足")
+        if not parts:
+            return None
+        return pd.concat(parts, ignore_index=True)
+
+    def _fetch_one_code_full_range(self, xt, code: str, period: str,
+                                    start: str, end: str) -> Optional[pd.DataFrame]:
+        """单 code 全区间拉取（日线/其他表的原始路径，零触达）。
+
+        与改造前的逻辑逐行一致：全区间 download + 3 次全区间 get（none/front/back）。
+        """
+        st = start.replace("-", "")
+        et = end.replace("-", "")
+        # download 全区间到本地缓存
+        try:
+            xt.download_history_data(code, period, st, et)
+        except Exception as e:
+            logger.debug(f"[XtquantAdapter] download {code} {period} failed: {e}")
+        return self._fetch_one_window(xt, code, period, st, et)
+
     def get_all_stock_codes(self) -> List[str]:
         """获取全市场 A 股股票代码（xtquant 格式 600000.SH）"""
         try:
@@ -238,60 +350,89 @@ class XtquantAdapter(BaseSourceAdapter):
             codes = self.get_etf_codes() if table in ("etf_daily", "etf_minutes") else self.get_all_stock_codes()
 
         # 先下载数据（xtquant 需要先 download 再 get）
-        for code in codes:
+        # 进度日志（防误判卡死）：仅在多 code 模式（全市场一次拉取）打印。
+        # PER_STOCK 模式下 codes 只含 1 只，进度由 daemon 的 as_completed 循环统一负责，
+        # 此处不打（避免 1/1 (100%) 噪声刷屏）。
+        total = len(codes)
+        multi = total > 1
+        if multi:
+            log_interval = max(50, total // 20)  # 约 5% 打一次，至少 50 只
+            dl_start = __import__("time").time()
+        for idx, code in enumerate(codes, 1):
+            if multi and (idx == 1 or idx == total or idx % log_interval == 0):
+                elapsed = __import__("time").time() - dl_start
+                rate = idx / elapsed if elapsed > 0 else 0
+                eta = (total - idx) / rate if rate > 0 else 0
+                logger.info(f"[XtquantAdapter] {table}/{freq} download 进度: {idx}/{total} "
+                            f"({idx*100//total}%)，{rate:.1f} 只/秒，预计剩余 {eta:.0f} 秒")
             try:
                 xt.download_history_data(code, period, start, end)
             except Exception as e:
                 logger.debug(f"[XtquantAdapter] download {code} {period} failed: {e}")
+        if multi:
+            logger.info(f"[XtquantAdapter] {table}/{freq} download 完成，{total} 只，"
+                        f"耗时 {__import__('time').time() - dl_start:.0f} 秒")
 
         # 获取数据
         # 复权策略：xtquant 原生支持 dividend_type=front/back，直接拉出前/后复权价
         # 作为 open_front/close_front 等列，交由 aligner 的 passthrough 路径填充
         # （与 baostock 统一），彻底摆脱对 tushare adj_factor 接口（2000 积分门槛）的依赖。
+        # 分钟表（stock_minutes/etf_minutes）走分窗下载（修正 2，2026-07-21）：
+        # 分钟数据量级大（9 年 × 240 bar/日 ≈ 48 万行/code），全区间一次性 download 可能超时，
+        # 故逐 31 天窗口 download + 3 次 get（none/front/back）。
+        is_minute = table in ("stock_minutes", "etf_minutes")
         dfs = []
-        for code in codes:
+        if multi:
+            get_start = __import__("time").time()
+        for idx, code in enumerate(codes, 1):
+            if multi and (idx == 1 or idx == total or idx % log_interval == 0):
+                elapsed = __import__("time").time() - get_start
+                rate = idx / elapsed if elapsed > 0 else 0
+                eta = (total - idx) / rate if rate > 0 else 0
+                logger.info(f"[XtquantAdapter] {table}/{freq} 拉取进度: {idx}/{total} "
+                            f"({idx*100//total}%)，累计 {len(dfs)} 只有数据，"
+                            f"{rate:.1f} 只/秒，预计剩余 {eta:.0f} 秒")
             try:
-                st = start.replace("-", "")
-                et = end.replace("-", "")
-                # 主列：原始价（不复权）
-                data = xt.get_market_data_ex(
-                    stock_list=[code], period=period,
-                    start_time=st, end_time=et, dividend_type="none")
-                if code not in data or len(data[code]) == 0:
-                    continue
-                df = data[code].copy().reset_index()
-                df["stock_code"] = code
-                # 前复权价 → open_front/high_front/low_front/close_front
-                try:
-                    fdata = xt.get_market_data_ex(
-                        stock_list=[code], period=period,
-                        start_time=st, end_time=et, dividend_type="front")
-                    if code in fdata and len(fdata[code]) > 0:
-                        fr = fdata[code].reset_index()
-                        df = self._merge_adjusted_ohlc(df, fr, "front")
-                except Exception as e:
-                    logger.debug(f"[XtquantAdapter] front {code} failed: {e}")
-                # 后复权价 → open_back/...（尽力，失败留 NULL；schema back 列 required=false）
-                try:
-                    bdata = xt.get_market_data_ex(
-                        stock_list=[code], period=period,
-                        start_time=st, end_time=et, dividend_type="back")
-                    if code in bdata and len(bdata[code]) > 0:
-                        bk = bdata[code].reset_index()
-                        df = self._merge_adjusted_ohlc(df, bk, "back")
-                except Exception as e:
-                    logger.debug(f"[XtquantAdapter] back {code} failed: {e}")
-                dfs.append(df)
+                if is_minute:
+                    df = self._fetch_one_code_windowed(xt, code, period, start, end)
+                else:
+                    df = self._fetch_one_code_full_range(xt, code, period, start, end)
+                if df is not None and len(df) > 0:
+                    dfs.append(df)
             except Exception as e:
                 logger.debug(f"[XtquantAdapter] get {code} failed: {e}")
+        if multi:
+            logger.info(f"[XtquantAdapter] {table}/{freq} 拉取完成，{len(dfs)}/{total} 只有数据，"
+                        f"耗时 {__import__('time').time() - get_start:.0f} 秒")
 
         df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+
+        # 日线表补 isST 列（2026-07-21 切权威源 xtquant）：
+        # xtquant get_market_data_ex 不返回 isST，但 schema 要求该列存在
+        #（etf_daily required=true，缺失会被 validator IsSTNull 整表拒；stock_daily required=false 但下游
+        # COALESCE(isST,0) 依赖该列存在）。从 xtquant ST 板块成分股查询补：
+        # - stock_daily：code 在 ST 板块 → 1，否则 0（粗标，精确 ST 走 is_st_reliable namechange PIT）
+        # - etf_daily：ETF 无 ST，恒为 0（与 tushare_adapter etf 路径一致）
+        if table in ("stock_daily", "etf_daily") and len(df) > 0 and "code" in df.columns:
+            try:
+                if table == "etf_daily":
+                    df["isST"] = 0
+                else:
+                    st_codes = self.get_st_codes()
+                    if st_codes:
+                        df["isST"] = df["stock_code"].apply(
+                            lambda sc: 1 if str(sc).split(".")[0] in st_codes else 0)
+                    else:
+                        df["isST"] = 0
+            except Exception as e:
+                logger.warning(f"[XtquantAdapter] {table} 补 isST 失败（填 0 兜底）: {e}")
+                df["isST"] = 0
 
         metadata = {
             "source": "xtquant", "freq": freq, "table": table,
             "code_format": "tushare_to_raw",  # 600000.SH → 裸码
             "date_format": "YYYYMMDD",
-            "units": {"vol": "股", "amount": "元", "pct_chg": "%"},
+            "units": {"vol": "手", "amount": "元", "pct_chg": "%"},  # vol=手（alignment_rules 配 ×100 转股），原错写"股"已修正 2026-07-21
             "rows": len(df),
         }
         logger.info(f"[XtquantAdapter] {table}/{freq} fetched {len(df)} rows")
