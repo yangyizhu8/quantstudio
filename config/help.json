@@ -1,0 +1,91 @@
+{
+  "collector_tasks.json": {
+    "_title": "采集任务配置（collector_tasks.json）",
+    "_desc": "daemon 读取本文件，循环执行 tasks[] 里的每个任务。每张表只配一个最优源。",
+    "fields": {
+      "tasks[].name": "任务唯一标识，daemon 按 name 执行。示例: 'kline_1d'",
+      "tasks[].enabled": "任务开关。true=启用（GUI采集任务表显示+常驻进程增量拉取执行）; false=禁用（不显示+不执行）。默认 true",
+      "tasks[].source": "数据源名。可选: 'tushare' | 'baostock' | 'akshare' | 'xtquant' | 'a_stock_data' | 'joinquant' | 'efinance'",
+      "tasks[].table": "写入的 DuckDB 表名。可选: 'stock_daily' | 'stock_minutes' | 'tick' | 'fin_indicator' | 'index_daily'",
+      "tasks[].freq": "数据频率。可选: 'daily' | '1min' | '5min' | '15min' | '30min' | '60min'",
+      "tasks[].mode": "拉取模式。可选: 'incremental'(增量,默认) | 'full_range'(全量)。详见下方【拉取模式规则】",
+      "tasks[].start_date": "全量模式(full_range)的起始日期。格式 'YYYY-MM-DD'。full_range 模式必填。增量模式下作为无水位线时的兜底起始日。示例: '2018-01-01'",
+      "tasks[].end_date": "全量模式(full_range)的结束日期。格式 'YYYY-MM-DD'。full_range 模式可省略(默认=今天)。示例: '2026-07-13'",
+      "tasks[].codes": "股票代码列表。['ALL']=全市场自动获取(~5200只) | ['600000','000001']=指定 | 缺省=全市场。tushare 需带后缀 '600000.SH'",
+      "tasks[].rate_limit.calls_per_min": "每分钟最大API调用数。baostock建议60; tushare日线200; tushare分钟8",
+      "tasks[].rate_limit.wait_on_429": "true=遇到HTTP 429自动等60秒重试; false=直接报错",
+      "tasks[].write_mode": "写入方式。'duckdb_batch'(默认) | 'ilp'(QuestDB,Phase3)"
+    },
+    "examples": {
+      "全量自定义范围": "{\"mode\":\"full_range\", \"start_date\":\"2018-01-01\", \"end_date\":\"2026-07-13\", \"codes\":[\"ALL\"]}",
+      "增量默认(水位线)": "{\"mode\":\"incremental\"}",
+      "指定股票": "{\"codes\":[\"sh.600000\",\"sz.000001\"]}"
+    },
+    "拉取模式规则": {
+      "incremental_增量模式": {
+        "mode": "incremental（默认值，可省略）",
+        "start_date": "不需要配置。daemon 自动从水位线+1天开始拉取。首次无水位线时用 start_date 兜底（默认2020-01-01）",
+        "end_date": "不需要配置。自动拉到今天",
+        "自动调度": "✅ 参与 daemon 每日定时自动执行（daemon_schedule.daily_time，默认17:00）",
+        "适用场景": "日常增量更新（每天收盘后拉当日新数据），数据量小，耗时短"
+      },
+      "full_range_全量模式": {
+        "mode": "full_range（必须显式配置）",
+        "start_date": "✅ 必填。格式 YYYY-MM-DD。全量拉取的起始日期。示例: '2018-01-01'",
+        "end_date": "可省略（默认=今天）。格式 YYYY-MM-DD。示例: '2026-07-13'",
+        "自动调度": "❌ 不参与 daemon 自动循环。只通过 GUI 点按钮 / 命令行 --mode once 手动触发",
+        "适用场景": "首次建库、补历史数据、更换数据源后重建。拉完一次后建议改回 incremental",
+        "注意": "全市场(ALL) × 多年历史 耗时长（5200只×8年≈45-90分钟），有防重复机制(再拉只更新不重复)"
+      }
+    },
+    "sections": {
+      "daemon_schedule": "daemon 统一调度配置（替代旧 tasks[].schedule）。daily_time=每天自动执行增量任务的时间(HH:MM,默认17:00收盘后); check_interval_sec=检查间隔秒数(默认300=5分钟检查一次是否到点)。注意: full_range 任务不参与自动循环，只通过 GUI/命令行手动触发",
+      "qfq_maintenance": "QFQ 复权维护。baostock 由 adapter 3次adjustflag获取; tushare 用 adj_factor 计算。rebuild_on_gap=true 检测到除权除息缺口时自动重建",
+      "health_check": "健康检查。stale_alert_hours=数据过期阈值小时(6小时未更新则告警)",
+      "alert": "告警渠道。channels=['log']只日志 | ['log','webhook']日志+推送。webhook_url 填企业微信/钉钉URL"
+    }
+  },
+
+  "data_config.json": {
+    "_title": "数据库配置（data_config.json）",
+    "_desc": "默认 DuckDB（零部署）。生产大量数据可改 questdb。",
+    "fields": {
+      "type": "数据库类型。可选: 'duckdb'(默认,嵌入式,适合<10GB) | 'questdb'(时序专用,Phase3实现)",
+      "path": "主数据库文件路径。DuckDB 单文件存储所有行情表",
+      "quarantine.path": "隔离区 SQLite 文件路径（与主库分离）",
+      "quarantine.retention_days": "隔离区保留天数。超期未处理的自动标记archived（归档不删除，只改状态）",
+      "quarantine.auto_archive": "true=daemon自动归档过期数据; false=只在GUI手动归档"
+    },
+    "examples": {
+      "QuestDB配置(Phase3)": "{\"type\":\"questdb\", \"host\":\"localhost\", \"ilp_port\":9009, \"pg_port\":8812}"
+    }
+  },
+
+  "sources_config.json": {
+    "_title": "数据源凭证配置（sources_config.json）",
+    "_desc": "用 ${ENV_VAR} 占位符引用环境变量，不写入明文。enabled=true 的源才会被使用。",
+    "fields": {
+      "sources.tushare.enabled": "Tushare Pro 开关。付费源，分钟/财务的唯一来源",
+      "sources.tushare.token": "Tushare API token。从 tushare.pro 注册获取。用 ${TUSHARE_TOKEN} 引用环境变量",
+      "sources.baostock.enabled": "Baostock 开关。免费，日线主源，扩展指标全。无需注册",
+      "sources.baostock.user": "默认 anonymous 即可",
+      "sources.akshare.enabled": "Akshare 开关。免费，东方财富后端",
+      "sources.xtquant.enabled": "xtquant 开关。需 miniQMT 客户端运行，最全源(tick/分钟/日线/财务全覆盖)",
+      "sources.xtquant.qmt_path": "miniQMT 安装路径。示例: 'D:/国金QMT/userdata_mini'",
+      "sources.a_stock_data.enabled": "a-stock-data 开关。免费，基于 mootdx(TCP协议)，无需注册/无需QMT。支持日线+分钟线",
+      "sources.efinance.enabled": "efinance 开关。免费备选源",
+      "default_strategy": "默认数据源策略。'baostock_primary'=日线baostock+分钟财务tushare | 'xtquant_primary'=有QMT时全用xtquant | 'a_stock_data_primary'=免费用户全用mootdx"
+    }
+  },
+
+  "alignment_rules.json": {
+    "_title": "字段对齐规则（alignment_rules.json）",
+    "_desc": "高级配置：定义标准表结构(schema) + 各数据源字段映射(source_mappings)。一般不需修改。",
+    "fields": {
+      "schemas": "标准表结构定义。每个表含 primary_key/time_key/columns。一般不需改",
+      "source_mappings": "各数据源字段映射。tushare/baostock/akshare 已出厂预置。新增私有数据源时才需加",
+      "code_format_converters": "代码格式转换器定义。identity/tushare_to_raw/baostock_to_raw"
+    },
+    "_warning": "⚠ 这是底层 schema 配置，修改不当会导致数据对齐错误。除非添加新数据源，否则不要动。"
+  }
+}

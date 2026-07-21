@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional
+
+import pandas as pd
+
+
+class MarketDataProvider(ABC):
+    @abstractmethod
+    def preload(self, start_date: str, end_date: str) -> None: ...
+
+    @abstractmethod
+    def get_daily_snapshot(self, date: str,
+                           fields: Optional[List[str]] = None) -> pd.DataFrame: ...
+
+    @abstractmethod
+    def get_bars(self, codes: List[str], start_date: str, end_date: str,
+                 fields: Optional[List[str]] = None,
+                 fq: Optional[str] = None) -> Dict[str, pd.DataFrame]: ...
+
+    @abstractmethod
+    def get_bars_by_count(self, codes: List[str], count: int, end_date: str,
+                          fields: Optional[List[str]] = None,
+                          fq: Optional[str] = None) -> Dict[str, pd.DataFrame]: ...
+
+    @abstractmethod
+    def get_benchmark(self, code: str, start_date: str,
+                      end_date: str) -> Dict[str, float]: ...
+
+
+class FundamentalDataProvider(ABC):
+    FUND_TABLES: Dict[str, List[str]] = {
+        "valuation": ["code", "float_value", "a_floats", "total_value", "total_share",
+                      "market_cap", "circulating_market_cap", "pe_ratio", "pe_ratio_lyr",
+                      "pb_ratio", "ps_ratio", "pcf_ratio", "turnover_ratio"],
+        "balance_statement": ["code", "end_date", "publ_date", "total_assets", "total_liability",
+                              "total_equity", "total_parent_equity", "minority_interest",
+                              "total_current_assets", "total_non_current_assets",
+                              "total_current_liability", "total_non_current_liability",
+                              "cash_equivalents", "account_receivable", "account_payable",
+                              "inventory", "notes_payable", "advance_payment", "fixed_asset",
+                              "intangible_asset", "goodwill"],
+        "income_statement": ["code", "end_date", "publ_date", "operating_revenue", "operating_cost",
+                             "operating_profit", "total_profit", "net_profit",
+                             "np_parent_company_owners", "minority_profit", "total_operating_revenue",
+                             "total_operating_cost", "operating_tax_surcharges", "sale_expense",
+                             "manage_expense", "finance_expense", "rd_expense", "invest_income",
+                             "non_operating_income", "non_operating_expense", "income_tax",
+                             "basic_eps", "diluted_eps"],
+        "cashflow_statement": ["code", "end_date", "publ_date", "net_operate_cash_flow",
+                               "net_invest_cash_flow", "net_finance_cash_flow", "cash_add_balance",
+                               "end_cash_and_equiv", "sale_services", "buy_services",
+                               "goods_sale_and_services", "goods_buy_and_services", "invest_long_asset",
+                               "invest_other", "fixed_asset_depreciation", "intangible_asset_amortization",
+                               "debt_to_assets", "debt_paying_cash", "dividend_interest_payment"],
+        "eps": ["code", "end_date", "publ_date", "eps", "bps", "diluted_eps",
+                "total_asset_share", "deducted_eps", "operating_eps"],
+        "profit_ability": ["code", "end_date", "publ_date", "roe", "roa", "roic",
+                           "net_profit_margin", "gross_profit_margin", "operating_profit_margin",
+                           "total_profit_net_profit", "expense_to_revenue", "operate_profit_to_profit",
+                           "net_profit_to_balance", "roe_avg", "roa_avg"],
+        "growth_ability": ["code", "end_date", "publ_date", "np_yoy", "or_yoy", "equity_yoy",
+                           "netasset_yoy", "net_profit_5y_cagr", "operating_revenue_5y_cagr",
+                           "total_assets_yoy", "deducted_np_yoy"],
+        "operating_ability": ["code", "end_date", "publ_date", "accounts_receivable_turnover",
+                              "inventory_turnover", "accounts_payable_turnover", "total_asset_turnover",
+                              "current_asset_turnover", "fixed_asset_turnover", "equity_turnover",
+                              "operating_cycle", "asset_turnover_days"],
+        "debt_paying_ability": ["code", "end_date", "publ_date", "current_ratio", "quick_ratio",
+                                "cash_ratio", "debt_to_assets", "asset_to_liability", "equity_multiplier",
+                                "long_debt_to_assets", "long_debt_to_equity", "interest_protection_ratio",
+                                "operating_cashflow_to_liability", "operating_cashflow_to_debt"],
+    }
+
+    @abstractmethod
+    def preload(self, date: str) -> None: ...
+
+    @abstractmethod
+    def get_valuation(self, codes: List[str], date: str,
+                      fields: Optional[List[str]] = None) -> pd.DataFrame: ...
+
+    @abstractmethod
+    def get_valuation_query(self, filters: List[dict], order_by: List[dict],
+                            limit: Optional[int], date: str,
+                            fields: List[str]) -> pd.DataFrame: ...
+
+    @abstractmethod
+    def get_financial(self, codes: List[str], table: str, date: str,
+                      fields: Optional[List[str]] = None,
+                      start_year: Optional[int] = None,
+                      end_year: Optional[int] = None,
+                      report_types: Optional[str] = None) -> pd.DataFrame: ...
+
+
+class ReferenceDataProvider(ABC):
+    @abstractmethod
+    def preload(self) -> None: ...
+
+    @abstractmethod
+    def get_index_constituents(self, index_code: str,
+                               date: Optional[str] = None) -> List[str]: ...
+
+    @abstractmethod
+    def get_all_stocks(self, date: Optional[str] = None) -> List[str]: ...
+
+    @abstractmethod
+    def get_security_info(self, code: str) -> Optional[dict]: ...
+
+    @abstractmethod
+    def get_industry(self, code: str) -> Optional[dict]: ...
+
+    @abstractmethod
+    def get_stock_status(self, codes: List[str], date: str) -> pd.DataFrame: ...
+
+    @abstractmethod
+    def get_etf_list(self) -> List[str]: ...
+
+    @abstractmethod
+    def get_etf_info(self, codes: List[str]) -> dict: ...
+
+    @abstractmethod
+    def get_cb_list(self) -> List[str]: ...
+
+    @abstractmethod
+    def get_market_detail(self, mic: str) -> pd.DataFrame: ...
+
+    def get_exrights(self, code: str, date: Optional[str] = None) -> Optional[pd.DataFrame]: return None
+    def get_blocks(self, code: str) -> Optional[dict]: return None
+    def get_industry_stocks(self, industry_code: str) -> List[str]: return []
+    def get_etf_stock_list(self, etf_code: str) -> List[str]: return []
+    def get_etf_stock_info(self, etf_code: str, security: str) -> dict: return {}
+    def get_reits_list(self, date: Optional[str] = None) -> List[str]: return []
+    def get_cb_info(self) -> pd.DataFrame:
+        return pd.DataFrame(columns=['bond_code', 'bond_name', 'stock_code', 'stock_name',
+                                     'list_date', 'premium_rate', 'convert_date', 'maturity_date',
+                                     'convert_rate', 'convert_price', 'convert_value'])
+    def get_ipo_stocks(self) -> dict: return {}
+
+
+class CalendarProvider(ABC):
+    @abstractmethod
+    def get_trade_days(self, start_date: str, end_date: str) -> list: ...
+
+    @abstractmethod
+    def get_trading_day(self, date: str, offset: int = 0) -> 'datetime.date': ...
+
+    @abstractmethod
+    def get_all_trade_days(self) -> List[str]: ...
+
+    @abstractmethod
+    def get_kline_count(self, date: str) -> int: ...
+
+
+@dataclass
+class DataProviderRegistry:
+    market: MarketDataProvider
+    fundamental: FundamentalDataProvider
+    reference: ReferenceDataProvider
+    calendar: CalendarProvider
+
+    @classmethod
+    def from_duckdb(cls, db_path: Path) -> "DataProviderRegistry":
+        from .duckdb_provider import (DuckDBCalendarProvider,
+                                     DuckDBFundamentalDataProvider,
+                                     DuckDBMarketDataProvider,
+                                     DuckDBReferenceDataProvider)
+        return cls(DuckDBMarketDataProvider(db_path), DuckDBFundamentalDataProvider(db_path),
+                   DuckDBReferenceDataProvider(db_path), DuckDBCalendarProvider(db_path))

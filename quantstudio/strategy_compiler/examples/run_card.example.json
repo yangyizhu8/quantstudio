@@ -1,0 +1,30 @@
+{
+  "run_card_version": "1.0",
+  "run_id": "example_momentum-20260720T100000",
+  "strategy_id": "example_momentum",
+  "build_id": "20260720T100000-default",
+  "created_at": "2026-07-20T10:00:00+08:00",
+  "stage": "SPEC_ONLY",
+  "status": "PARTIAL",
+  "contract_versions": {
+    "strategy_spec_version": "1.0.0",
+    "engine_semantics_version": "0.1.0-legacy",
+    "provider_contract_version": "0.1.0-daily",
+    "security_code_rules_version": "1.0.0",
+    "ptrade_profile_version": "1.0.0-default",
+    "renderer_version": "0.0.0-planned",
+    "skill_version": "0.0.0-planned"
+  },
+  "profile": {"engine_profile_id": "daily-bar-v1", "ptrade_profile_id": "ptrade-default-v1", "execution_status": "READY"},
+  "data_window": {"start": null, "end": null, "as_of": null},
+  "artifacts": [
+    {"name": "strategy_spec", "path": "strategy_spec.json", "sha256": null},
+    {"name": "capability_report", "path": "capability_report.json", "sha256": null}
+  ],
+  "validation": {"schema": "PASS", "timing": "PASS", "hard_filters": "PASS", "api_portability": "NOT_RUN", "variant_consistency": "NOT_RUN"},
+  "smoke_backtest": null,
+  "fidelity": null,
+  "approximations": [],
+  "known_limitations": ["PR0 仅冻结契约，Renderer 尚未实现。"],
+  "reproducibility": {"python_version": "3.11.9", "quantstudio_version": "0.1.0", "random_seed": null, "data_fingerprint": null}
+}

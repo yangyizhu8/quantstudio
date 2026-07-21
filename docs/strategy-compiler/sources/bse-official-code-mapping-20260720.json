@@ -1,0 +1,1496 @@
+{
+  "source_url": "https://www.bse.cn/service/code_mapping.html",
+  "source_title": "北京证券交易所新旧代码对照表",
+  "retrieved_at": "2026-07-20",
+  "count": 248,
+  "mappings": [
+    {
+      "listing_date": "2024/4/8",
+      "name": "无锡鼎邦",
+      "new_code": "920931",
+      "old_code": "872931"
+    },
+    {
+      "listing_date": "2024/3/29",
+      "name": "芭薇股份",
+      "new_code": "920123",
+      "old_code": "837023"
+    },
+    {
+      "listing_date": "2024/3/25",
+      "name": "戈碧迦",
+      "new_code": "920438",
+      "old_code": "835438"
+    },
+    {
+      "listing_date": "2024/3/8",
+      "name": "铁拓机械",
+      "new_code": "920706",
+      "old_code": "873706"
+    },
+    {
+      "listing_date": "2024/2/2",
+      "name": "海昇药业",
+      "new_code": "920656",
+      "old_code": "870656"
+    },
+    {
+      "listing_date": "2024/1/26",
+      "name": "许昌智能",
+      "new_code": "920496",
+      "old_code": "831396"
+    },
+    {
+      "listing_date": "2024/1/18",
+      "name": "康农种业",
+      "new_code": "920403",
+      "old_code": "837403"
+    },
+    {
+      "listing_date": "2024/1/11",
+      "name": "云星宇",
+      "new_code": "920806",
+      "old_code": "873806"
+    },
+    {
+      "listing_date": "2024/1/5",
+      "name": "捷众科技",
+      "new_code": "920690",
+      "old_code": "873690"
+    },
+    {
+      "listing_date": "2023/12/28",
+      "name": "莱赛激光",
+      "new_code": "920363",
+      "old_code": "871263"
+    },
+    {
+      "listing_date": "2023/12/21",
+      "name": "西磁科技",
+      "new_code": "920061",
+      "old_code": "836961"
+    },
+    {
+      "listing_date": "2023/12/19",
+      "name": "灵鸽科技",
+      "new_code": "920284",
+      "old_code": "833284"
+    },
+    {
+      "listing_date": "2023/12/14",
+      "name": "派诺科技",
+      "new_code": "920375",
+      "old_code": "831175"
+    },
+    {
+      "listing_date": "2023/12/12",
+      "name": "无锡晶海",
+      "new_code": "920547",
+      "old_code": "836547"
+    },
+    {
+      "listing_date": "2023/12/5",
+      "name": "广厦环能",
+      "new_code": "920703",
+      "old_code": "873703"
+    },
+    {
+      "listing_date": "2023/11/30",
+      "name": "机科股份",
+      "new_code": "920579",
+      "old_code": "835579"
+    },
+    {
+      "listing_date": "2023/11/23",
+      "name": "坤博精工",
+      "new_code": "920570",
+      "old_code": "873570"
+    },
+    {
+      "listing_date": "2023/11/16",
+      "name": "纳科诺尔",
+      "new_code": "920522",
+      "old_code": "832522"
+    },
+    {
+      "listing_date": "2023/11/16",
+      "name": "泰鹏智能",
+      "new_code": "920132",
+      "old_code": "873132"
+    },
+    {
+      "listing_date": "2023/11/10",
+      "name": "前进科技",
+      "new_code": "920679",
+      "old_code": "873679"
+    },
+    {
+      "listing_date": "2023/11/8",
+      "name": "美心翼申",
+      "new_code": "920833",
+      "old_code": "873833"
+    },
+    {
+      "listing_date": "2023/11/2",
+      "name": "立方控股",
+      "new_code": "920130",
+      "old_code": "833030"
+    },
+    {
+      "listing_date": "2023/11/1",
+      "name": "并行科技",
+      "new_code": "920493",
+      "old_code": "839493"
+    },
+    {
+      "listing_date": "2023/10/27",
+      "name": "阿为特",
+      "new_code": "920693",
+      "old_code": "873693"
+    },
+    {
+      "listing_date": "2023/10/19",
+      "name": "卓兆点胶",
+      "new_code": "920026",
+      "old_code": "873726"
+    },
+    {
+      "listing_date": "2023/10/13",
+      "name": "骑士乳业",
+      "new_code": "920786",
+      "old_code": "832786"
+    },
+    {
+      "listing_date": "2023/9/28",
+      "name": "开特股份",
+      "new_code": "920978",
+      "old_code": "832978"
+    },
+    {
+      "listing_date": "2023/9/26",
+      "name": "科强股份",
+      "new_code": "920665",
+      "old_code": "873665"
+    },
+    {
+      "listing_date": "2023/9/18",
+      "name": "富恒新材",
+      "new_code": "920469",
+      "old_code": "832469"
+    },
+    {
+      "listing_date": "2023/9/15",
+      "name": "万德股份",
+      "new_code": "920519",
+      "old_code": "836419"
+    },
+    {
+      "listing_date": "2023/9/7",
+      "name": "力王股份",
+      "new_code": "920627",
+      "old_code": "831627"
+    },
+    {
+      "listing_date": "2023/9/1",
+      "name": "视声智能",
+      "new_code": "920976",
+      "old_code": "870976"
+    },
+    {
+      "listing_date": "2023/8/23",
+      "name": "国子软件",
+      "new_code": "920953",
+      "old_code": "872953"
+    },
+    {
+      "listing_date": "2023/8/18",
+      "name": "宏裕包材",
+      "new_code": "920274",
+      "old_code": "837174"
+    },
+    {
+      "listing_date": "2023/8/17",
+      "name": "博迅生物",
+      "new_code": "920504",
+      "old_code": "836504"
+    },
+    {
+      "listing_date": "2023/8/16",
+      "name": "路桥信息",
+      "new_code": "920748",
+      "old_code": "837748"
+    },
+    {
+      "listing_date": "2023/8/10",
+      "name": "华洋赛车",
+      "new_code": "920058",
+      "old_code": "834058"
+    },
+    {
+      "listing_date": "2023/8/8",
+      "name": "鸿智科技",
+      "new_code": "920926",
+      "old_code": "870726"
+    },
+    {
+      "listing_date": "2023/7/20",
+      "name": "锦波生物",
+      "new_code": "920982",
+      "old_code": "832982"
+    },
+    {
+      "listing_date": "2023/7/19",
+      "name": "豪声电子",
+      "new_code": "920701",
+      "old_code": "838701"
+    },
+    {
+      "listing_date": "2023/7/17",
+      "name": "惠同新材",
+      "new_code": "920751",
+      "old_code": "833751"
+    },
+    {
+      "listing_date": "2023/7/12",
+      "name": "天力复合",
+      "new_code": "920576",
+      "old_code": "873576"
+    },
+    {
+      "listing_date": "2023/7/10",
+      "name": "华信永道",
+      "new_code": "920592",
+      "old_code": "837592"
+    },
+    {
+      "listing_date": "2023/7/3",
+      "name": "瑞星股份",
+      "new_code": "920717",
+      "old_code": "836717"
+    },
+    {
+      "listing_date": "2023/6/30",
+      "name": "东方碳素",
+      "new_code": "920175",
+      "old_code": "832175"
+    },
+    {
+      "listing_date": "2023/6/29",
+      "name": "青矩技术",
+      "new_code": "920208",
+      "old_code": "836208"
+    },
+    {
+      "listing_date": "2023/6/27",
+      "name": "天罡股份",
+      "new_code": "920651",
+      "old_code": "832651"
+    },
+    {
+      "listing_date": "2023/6/21",
+      "name": "汇隆活塞",
+      "new_code": "920455",
+      "old_code": "833455"
+    },
+    {
+      "listing_date": "2023/6/8",
+      "name": "易实精密",
+      "new_code": "920221",
+      "old_code": "836221"
+    },
+    {
+      "listing_date": "2023/6/1",
+      "name": "武汉蓝电",
+      "new_code": "920779",
+      "old_code": "830779"
+    },
+    {
+      "listing_date": "2023/5/31",
+      "name": "星昊医药",
+      "new_code": "920017",
+      "old_code": "430017"
+    },
+    {
+      "listing_date": "2023/5/26",
+      "name": "宁新新材",
+      "new_code": "920719",
+      "old_code": "839719"
+    },
+    {
+      "listing_date": "2023/5/25",
+      "name": "美邦科技",
+      "new_code": "920471",
+      "old_code": "832471"
+    },
+    {
+      "listing_date": "2023/5/18",
+      "name": "晟楠科技",
+      "new_code": "920006",
+      "old_code": "837006"
+    },
+    {
+      "listing_date": "2023/5/15",
+      "name": "华原股份",
+      "new_code": "920837",
+      "old_code": "838837"
+    },
+    {
+      "listing_date": "2023/5/12",
+      "name": "巨能股份",
+      "new_code": "920578",
+      "old_code": "871478"
+    },
+    {
+      "listing_date": "2023/5/9",
+      "name": "海达尔",
+      "new_code": "920699",
+      "old_code": "836699"
+    },
+    {
+      "listing_date": "2023/4/25",
+      "name": "民士达",
+      "new_code": "920394",
+      "old_code": "833394"
+    },
+    {
+      "listing_date": "2023/4/24",
+      "name": "中裕科技",
+      "new_code": "920694",
+      "old_code": "871694"
+    },
+    {
+      "listing_date": "2023/4/19",
+      "name": "旺成科技",
+      "new_code": "920896",
+      "old_code": "830896"
+    },
+    {
+      "listing_date": "2023/4/18",
+      "name": "迪尔化工",
+      "new_code": "920304",
+      "old_code": "831304"
+    },
+    {
+      "listing_date": "2023/4/13",
+      "name": "鼎智科技",
+      "new_code": "920593",
+      "old_code": "873593"
+    },
+    {
+      "listing_date": "2023/4/6",
+      "name": "花溪科技",
+      "new_code": "920895",
+      "old_code": "872895"
+    },
+    {
+      "listing_date": "2023/4/3",
+      "name": "一诺威",
+      "new_code": "920261",
+      "old_code": "834261"
+    },
+    {
+      "listing_date": "2023/3/30",
+      "name": "东和新材",
+      "new_code": "920792",
+      "old_code": "839792"
+    },
+    {
+      "listing_date": "2023/3/23",
+      "name": "安达科技",
+      "new_code": "920809",
+      "old_code": "830809"
+    },
+    {
+      "listing_date": "2023/3/17",
+      "name": "雅达股份",
+      "new_code": "920556",
+      "old_code": "430556"
+    },
+    {
+      "listing_date": "2023/3/15",
+      "name": "明阳科技",
+      "new_code": "920663",
+      "old_code": "837663"
+    },
+    {
+      "listing_date": "2023/3/15",
+      "name": "康乐卫士",
+      "new_code": "920575",
+      "old_code": "833575"
+    },
+    {
+      "listing_date": "2023/3/14",
+      "name": "百甲科技",
+      "new_code": "920057",
+      "old_code": "835857"
+    },
+    {
+      "listing_date": "2023/3/10",
+      "name": "铁大科技",
+      "new_code": "920541",
+      "old_code": "872541"
+    },
+    {
+      "listing_date": "2023/3/8",
+      "name": "凯大催化",
+      "new_code": "920974",
+      "old_code": "830974"
+    },
+    {
+      "listing_date": "2023/3/1",
+      "name": "润普食品",
+      "new_code": "920422",
+      "old_code": "836422"
+    },
+    {
+      "listing_date": "2023/2/28",
+      "name": "艾能聚",
+      "new_code": "920770",
+      "old_code": "834770"
+    },
+    {
+      "listing_date": "2023/2/23",
+      "name": "峆一药业",
+      "new_code": "920478",
+      "old_code": "430478"
+    },
+    {
+      "listing_date": "2023/2/22",
+      "name": "舜宇精工",
+      "new_code": "920906",
+      "old_code": "831906"
+    },
+    {
+      "listing_date": "2023/2/21",
+      "name": "一致魔芋",
+      "new_code": "920273",
+      "old_code": "839273"
+    },
+    {
+      "listing_date": "2023/2/17",
+      "name": "利尔达",
+      "new_code": "920249",
+      "old_code": "832149"
+    },
+    {
+      "listing_date": "2023/2/16",
+      "name": "驰诚股份",
+      "new_code": "920407",
+      "old_code": "834407"
+    },
+    {
+      "listing_date": "2023/2/9",
+      "name": "新赣江",
+      "new_code": "920367",
+      "old_code": "873167"
+    },
+    {
+      "listing_date": "2023/2/6",
+      "name": "保丽洁",
+      "new_code": "920802",
+      "old_code": "832802"
+    },
+    {
+      "listing_date": "2023/2/2",
+      "name": "田野股份",
+      "new_code": "920023",
+      "old_code": "832023"
+    },
+    {
+      "listing_date": "2023/1/30",
+      "name": "乐创技术",
+      "new_code": "920425",
+      "old_code": "430425"
+    },
+    {
+      "listing_date": "2023/1/19",
+      "name": "天宏锂电",
+      "new_code": "920252",
+      "old_code": "873152"
+    },
+    {
+      "listing_date": "2023/1/18",
+      "name": "欧福蛋业",
+      "new_code": "920371",
+      "old_code": "839371"
+    },
+    {
+      "listing_date": "2023/1/11",
+      "name": "迅安科技",
+      "new_code": "920950",
+      "old_code": "834950"
+    },
+    {
+      "listing_date": "2022/12/30",
+      "name": "佳合科技",
+      "new_code": "920392",
+      "old_code": "872392"
+    },
+    {
+      "listing_date": "2022/12/30",
+      "name": "太湖雪",
+      "new_code": "920262",
+      "old_code": "838262"
+    },
+    {
+      "listing_date": "2022/12/30",
+      "name": "三祥科技",
+      "new_code": "920195",
+      "old_code": "831195"
+    },
+    {
+      "listing_date": "2022/12/29",
+      "name": "浙江大农",
+      "new_code": "920855",
+      "old_code": "831855"
+    },
+    {
+      "listing_date": "2022/12/29",
+      "name": "华光源海",
+      "new_code": "920351",
+      "old_code": "872351"
+    },
+    {
+      "listing_date": "2022/12/28",
+      "name": "美登科技",
+      "new_code": "920227",
+      "old_code": "838227"
+    },
+    {
+      "listing_date": "2022/12/27",
+      "name": "纬达光电",
+      "new_code": "920001",
+      "old_code": "873001"
+    },
+    {
+      "listing_date": "2022/12/26",
+      "name": "瑞奇智造",
+      "new_code": "920781",
+      "old_code": "833781"
+    },
+    {
+      "listing_date": "2022/12/23",
+      "name": "华密新材",
+      "new_code": "920247",
+      "old_code": "836247"
+    },
+    {
+      "listing_date": "2022/12/23",
+      "name": "雷神科技",
+      "new_code": "920190",
+      "old_code": "872190"
+    },
+    {
+      "listing_date": "2022/12/22",
+      "name": "合肥高科",
+      "new_code": "920718",
+      "old_code": "430718"
+    },
+    {
+      "listing_date": "2022/12/22",
+      "name": "凯华材料",
+      "new_code": "920526",
+      "old_code": "831526"
+    },
+    {
+      "listing_date": "2022/12/21",
+      "name": "九菱科技",
+      "new_code": "920505",
+      "old_code": "873305"
+    },
+    {
+      "listing_date": "2022/12/21",
+      "name": "康普化学",
+      "new_code": "920033",
+      "old_code": "834033"
+    },
+    {
+      "listing_date": "2022/12/20",
+      "name": "基康技术",
+      "new_code": "920879",
+      "old_code": "830879"
+    },
+    {
+      "listing_date": "2022/12/20",
+      "name": "奔朗新材",
+      "new_code": "920807",
+      "old_code": "836807"
+    },
+    {
+      "listing_date": "2022/12/16",
+      "name": "春光智能",
+      "new_code": "920810",
+      "old_code": "838810"
+    },
+    {
+      "listing_date": "2022/12/16",
+      "name": "丰安股份",
+      "new_code": "920608",
+      "old_code": "870508"
+    },
+    {
+      "listing_date": "2022/12/15",
+      "name": "康比特",
+      "new_code": "920429",
+      "old_code": "833429"
+    },
+    {
+      "listing_date": "2022/12/15",
+      "name": "国航远洋",
+      "new_code": "920571",
+      "old_code": "833171"
+    },
+    {
+      "listing_date": "2022/12/14",
+      "name": "汉维科技",
+      "new_code": "920957",
+      "old_code": "836957"
+    },
+    {
+      "listing_date": "2022/12/14",
+      "name": "柏星龙",
+      "new_code": "920075",
+      "old_code": "833075"
+    },
+    {
+      "listing_date": "2022/12/13",
+      "name": "特瑞斯",
+      "new_code": "920014",
+      "old_code": "834014"
+    },
+    {
+      "listing_date": "2022/12/12",
+      "name": "欧普泰",
+      "new_code": "920414",
+      "old_code": "836414"
+    },
+    {
+      "listing_date": "2022/12/9",
+      "name": "绿亨科技",
+      "new_code": "920866",
+      "old_code": "870866"
+    },
+    {
+      "listing_date": "2022/12/9",
+      "name": "欧康医药",
+      "new_code": "920230",
+      "old_code": "833230"
+    },
+    {
+      "listing_date": "2022/12/8",
+      "name": "恒立钻具",
+      "new_code": "920942",
+      "old_code": "836942"
+    },
+    {
+      "listing_date": "2022/12/7",
+      "name": "辰光医疗",
+      "new_code": "920300",
+      "old_code": "430300"
+    },
+    {
+      "listing_date": "2022/12/7",
+      "name": "秋乐种业",
+      "new_code": "920087",
+      "old_code": "831087"
+    },
+    {
+      "listing_date": "2022/12/6",
+      "name": "雷特科技",
+      "new_code": "920110",
+      "old_code": "832110"
+    },
+    {
+      "listing_date": "2022/12/2",
+      "name": "格利尔",
+      "new_code": "920641",
+      "old_code": "831641"
+    },
+    {
+      "listing_date": "2022/12/1",
+      "name": "倍益康",
+      "new_code": "920199",
+      "old_code": "870199"
+    },
+    {
+      "listing_date": "2022/11/29",
+      "name": "云里物里",
+      "new_code": "920374",
+      "old_code": "872374"
+    },
+    {
+      "listing_date": "2022/11/28",
+      "name": "方盛股份",
+      "new_code": "920662",
+      "old_code": "832662"
+    },
+    {
+      "listing_date": "2022/11/25",
+      "name": "力佳科技",
+      "new_code": "920237",
+      "old_code": "835237"
+    },
+    {
+      "listing_date": "2022/11/24",
+      "name": "新威凌",
+      "new_code": "920634",
+      "old_code": "871634"
+    },
+    {
+      "listing_date": "2022/11/18",
+      "name": "曙光数创",
+      "new_code": "920808",
+      "old_code": "872808"
+    },
+    {
+      "listing_date": "2022/11/18",
+      "name": "雅葆轩",
+      "new_code": "920357",
+      "old_code": "870357"
+    },
+    {
+      "listing_date": "2022/11/17",
+      "name": "恒太照明",
+      "new_code": "920339",
+      "old_code": "873339"
+    },
+    {
+      "listing_date": "2022/11/11",
+      "name": "远航精密",
+      "new_code": "920914",
+      "old_code": "833914"
+    },
+    {
+      "listing_date": "2022/11/9",
+      "name": "慧为智能",
+      "new_code": "920876",
+      "old_code": "832876"
+    },
+    {
+      "listing_date": "2022/10/31",
+      "name": "天纺标",
+      "new_code": "920753",
+      "old_code": "871753"
+    },
+    {
+      "listing_date": "2022/10/28",
+      "name": "华岭股份",
+      "new_code": "920139",
+      "old_code": "430139"
+    },
+    {
+      "listing_date": "2022/10/27",
+      "name": "夜光明",
+      "new_code": "920527",
+      "old_code": "873527"
+    },
+    {
+      "listing_date": "2022/10/18",
+      "name": "中科美菱",
+      "new_code": "920992",
+      "old_code": "835892"
+    },
+    {
+      "listing_date": "2022/10/14",
+      "name": "海能技术",
+      "new_code": "920476",
+      "old_code": "430476"
+    },
+    {
+      "listing_date": "2022/10/13",
+      "name": "亿能电力",
+      "new_code": "920046",
+      "old_code": "837046"
+    },
+    {
+      "listing_date": "2022/10/10",
+      "name": "新芝生物",
+      "new_code": "920685",
+      "old_code": "430685"
+    },
+    {
+      "listing_date": "2022/9/28",
+      "name": "硅烷科技",
+      "new_code": "920402",
+      "old_code": "838402"
+    },
+    {
+      "listing_date": "2022/9/27",
+      "name": "天马新材",
+      "new_code": "920971",
+      "old_code": "838971"
+    },
+    {
+      "listing_date": "2022/9/27",
+      "name": "中纺标",
+      "new_code": "920122",
+      "old_code": "873122"
+    },
+    {
+      "listing_date": "2022/9/23",
+      "name": "众诚科技",
+      "new_code": "920207",
+      "old_code": "835207"
+    },
+    {
+      "listing_date": "2022/9/2",
+      "name": "联迪信息",
+      "new_code": "920790",
+      "old_code": "839790"
+    },
+    {
+      "listing_date": "2022/9/2",
+      "name": "天铭科技",
+      "new_code": "920270",
+      "old_code": "836270"
+    },
+    {
+      "listing_date": "2022/9/1",
+      "name": "朗鸿科技",
+      "new_code": "920395",
+      "old_code": "836395"
+    },
+    {
+      "listing_date": "2022/9/1",
+      "name": "昆工科技",
+      "new_code": "920152",
+      "old_code": "831152"
+    },
+    {
+      "listing_date": "2022/8/22",
+      "name": "三维装备",
+      "new_code": "920834",
+      "old_code": "831834"
+    },
+    {
+      "listing_date": "2022/8/8",
+      "name": "海泰新能",
+      "new_code": "920985",
+      "old_code": "835985"
+    },
+    {
+      "listing_date": "2022/7/22",
+      "name": "派特尔",
+      "new_code": "920871",
+      "old_code": "836871"
+    },
+    {
+      "listing_date": "2022/7/18",
+      "name": "惠丰钻石",
+      "new_code": "920725",
+      "old_code": "839725"
+    },
+    {
+      "listing_date": "2022/7/13",
+      "name": "科润智控",
+      "new_code": "920062",
+      "old_code": "834062"
+    },
+    {
+      "listing_date": "2022/7/12",
+      "name": "晨光电缆",
+      "new_code": "920639",
+      "old_code": "834639"
+    },
+    {
+      "listing_date": "2022/7/6",
+      "name": "则成电子",
+      "new_code": "920821",
+      "old_code": "837821"
+    },
+    {
+      "listing_date": "2022/7/5",
+      "name": "恒进感应",
+      "new_code": "920870",
+      "old_code": "838670"
+    },
+    {
+      "listing_date": "2022/6/24",
+      "name": "优机股份",
+      "new_code": "920943",
+      "old_code": "833943"
+    },
+    {
+      "listing_date": "2022/6/20",
+      "name": "泰德股份",
+      "new_code": "920378",
+      "old_code": "831278"
+    },
+    {
+      "listing_date": "2022/6/17",
+      "name": "天润科技",
+      "new_code": "920564",
+      "old_code": "430564"
+    },
+    {
+      "listing_date": "2022/6/14",
+      "name": "奥迪威",
+      "new_code": "920491",
+      "old_code": "832491"
+    },
+    {
+      "listing_date": "2022/6/10",
+      "name": "灿能电力",
+      "new_code": "920299",
+      "old_code": "870299"
+    },
+    {
+      "listing_date": "2022/6/9",
+      "name": "荣亿精密",
+      "new_code": "920223",
+      "old_code": "873223"
+    },
+    {
+      "listing_date": "2022/6/2",
+      "name": "邦德股份",
+      "new_code": "920271",
+      "old_code": "838171"
+    },
+    {
+      "listing_date": "2022/5/27",
+      "name": "鑫汇科",
+      "new_code": "920267",
+      "old_code": "831167"
+    },
+    {
+      "listing_date": "2022/5/24",
+      "name": "骏创科技",
+      "new_code": "920533",
+      "old_code": "833533"
+    },
+    {
+      "listing_date": "2022/5/18",
+      "name": "大禹生物",
+      "new_code": "920970",
+      "old_code": "871970"
+    },
+    {
+      "listing_date": "2022/5/13",
+      "name": "科创新材",
+      "new_code": "920580",
+      "old_code": "833580"
+    },
+    {
+      "listing_date": "2022/4/15",
+      "name": "七丰精工",
+      "new_code": "920169",
+      "old_code": "873169"
+    },
+    {
+      "listing_date": "2022/3/21",
+      "name": "克莱特",
+      "new_code": "920689",
+      "old_code": "831689"
+    },
+    {
+      "listing_date": "2022/3/11",
+      "name": "路斯股份",
+      "new_code": "920419",
+      "old_code": "832419"
+    },
+    {
+      "listing_date": "2022/3/4",
+      "name": "凯德石英",
+      "new_code": "920179",
+      "old_code": "835179"
+    },
+    {
+      "listing_date": "2022/2/28",
+      "name": "泓禧科技",
+      "new_code": "920857",
+      "old_code": "871857"
+    },
+    {
+      "listing_date": "2022/2/23",
+      "name": "威贸电子",
+      "new_code": "920346",
+      "old_code": "833346"
+    },
+    {
+      "listing_date": "2022/1/18",
+      "name": "沪江材料",
+      "new_code": "920204",
+      "old_code": "870204"
+    },
+    {
+      "listing_date": "2022/1/6",
+      "name": "威博液压",
+      "new_code": "920245",
+      "old_code": "871245"
+    },
+    {
+      "listing_date": "2021/11/24",
+      "name": "吉冈精密",
+      "new_code": "920720",
+      "old_code": "836720"
+    },
+    {
+      "listing_date": "2021/11/15",
+      "name": "晶赛科技",
+      "new_code": "920981",
+      "old_code": "871981"
+    },
+    {
+      "listing_date": "2021/11/15",
+      "name": "中设咨询",
+      "new_code": "920873",
+      "old_code": "833873"
+    },
+    {
+      "listing_date": "2021/11/15",
+      "name": "科达自控",
+      "new_code": "920932",
+      "old_code": "831832"
+    },
+    {
+      "listing_date": "2021/11/15",
+      "name": "*ST广道",
+      "new_code": "920680",
+      "old_code": "839680"
+    },
+    {
+      "listing_date": "2021/11/15",
+      "name": "同心传动",
+      "new_code": "920454",
+      "old_code": "833454"
+    },
+    {
+      "listing_date": "2021/11/15",
+      "name": "大地电气",
+      "new_code": "920436",
+      "old_code": "870436"
+    },
+    {
+      "listing_date": "2021/11/15",
+      "name": "中寰股份",
+      "new_code": "920260",
+      "old_code": "836260"
+    },
+    {
+      "listing_date": "2021/11/15",
+      "name": "志晟信息",
+      "new_code": "920171",
+      "old_code": "832171"
+    },
+    {
+      "listing_date": "2021/11/15",
+      "name": "恒合股份",
+      "new_code": "920145",
+      "old_code": "832145"
+    },
+    {
+      "listing_date": "2021/11/15",
+      "name": "汉鑫科技",
+      "new_code": "920092",
+      "old_code": "837092"
+    },
+    {
+      "listing_date": "2021/11/9",
+      "name": "禾昌聚合",
+      "new_code": "920089",
+      "old_code": "832089"
+    },
+    {
+      "listing_date": "2021/11/5",
+      "name": "海希通讯",
+      "new_code": "920405",
+      "old_code": "831305"
+    },
+    {
+      "listing_date": "2021/11/3",
+      "name": "广脉科技",
+      "new_code": "920924",
+      "old_code": "838924"
+    },
+    {
+      "listing_date": "2021/10/28",
+      "name": "广咨国际",
+      "new_code": "920892",
+      "old_code": "836892"
+    },
+    {
+      "listing_date": "2021/10/25",
+      "name": "锦好医疗",
+      "new_code": "920925",
+      "old_code": "872925"
+    },
+    {
+      "listing_date": "2021/8/31",
+      "name": "吉林碳谷",
+      "new_code": "920077",
+      "old_code": "836077"
+    },
+    {
+      "listing_date": "2021/8/26",
+      "name": "*ST云创",
+      "new_code": "920305",
+      "old_code": "835305"
+    },
+    {
+      "listing_date": "2021/8/20",
+      "name": "五新隧装",
+      "new_code": "920174",
+      "old_code": "835174"
+    },
+    {
+      "listing_date": "2021/8/18",
+      "name": "国义招标",
+      "new_code": "920039",
+      "old_code": "831039"
+    },
+    {
+      "listing_date": "2021/8/16",
+      "name": "通易航天",
+      "new_code": "920642",
+      "old_code": "871642"
+    },
+    {
+      "listing_date": "2021/8/13",
+      "name": "梓橦宫",
+      "new_code": "920566",
+      "old_code": "832566"
+    },
+    {
+      "listing_date": "2021/8/9",
+      "name": "同辉信息",
+      "new_code": "920090",
+      "old_code": "430090"
+    },
+    {
+      "listing_date": "2021/8/6",
+      "name": "凯腾精工",
+      "new_code": "920553",
+      "old_code": "871553"
+    },
+    {
+      "listing_date": "2021/7/20",
+      "name": "华阳变速",
+      "new_code": "920146",
+      "old_code": "839946"
+    },
+    {
+      "listing_date": "2021/7/8",
+      "name": "星辰科技",
+      "new_code": "920885",
+      "old_code": "832885"
+    },
+    {
+      "listing_date": "2021/7/5",
+      "name": "美之高",
+      "new_code": "920765",
+      "old_code": "834765"
+    },
+    {
+      "listing_date": "2021/6/28",
+      "name": "拾比佰",
+      "new_code": "920768",
+      "old_code": "831768"
+    },
+    {
+      "listing_date": "2021/6/8",
+      "name": "智新电子",
+      "new_code": "920212",
+      "old_code": "837212"
+    },
+    {
+      "listing_date": "2021/6/3",
+      "name": "德瑞锂电",
+      "new_code": "920523",
+      "old_code": "833523"
+    },
+    {
+      "listing_date": "2021/5/27",
+      "name": "朱老六",
+      "new_code": "920726",
+      "old_code": "831726"
+    },
+    {
+      "listing_date": "2021/2/25",
+      "name": "利通科技",
+      "new_code": "920225",
+      "old_code": "832225"
+    },
+    {
+      "listing_date": "2021/2/23",
+      "name": "齐鲁华信",
+      "new_code": "920832",
+      "old_code": "830832"
+    },
+    {
+      "listing_date": "2021/2/22",
+      "name": "同力股份",
+      "new_code": "920599",
+      "old_code": "834599"
+    },
+    {
+      "listing_date": "2021/2/19",
+      "name": "德源药业",
+      "new_code": "920735",
+      "old_code": "832735"
+    },
+    {
+      "listing_date": "2021/2/9",
+      "name": "长虹能源",
+      "new_code": "920239",
+      "old_code": "836239"
+    },
+    {
+      "listing_date": "2021/2/5",
+      "name": "华维设计",
+      "new_code": "920427",
+      "old_code": "833427"
+    },
+    {
+      "listing_date": "2021/1/25",
+      "name": "驱动力",
+      "new_code": "920275",
+      "old_code": "838275"
+    },
+    {
+      "listing_date": "2021/1/12",
+      "name": "盖世食品",
+      "new_code": "920826",
+      "old_code": "836826"
+    },
+    {
+      "listing_date": "2021/1/11",
+      "name": "同惠电子",
+      "new_code": "920509",
+      "old_code": "833509"
+    },
+    {
+      "listing_date": "2021/1/8",
+      "name": "三元基因",
+      "new_code": "920344",
+      "old_code": "837344"
+    },
+    {
+      "listing_date": "2020/12/28",
+      "name": "秉扬科技",
+      "new_code": "920675",
+      "old_code": "836675"
+    },
+    {
+      "listing_date": "2020/12/28",
+      "name": "丰光精密",
+      "new_code": "920510",
+      "old_code": "430510"
+    },
+    {
+      "listing_date": "2020/12/25",
+      "name": "浩淼科技",
+      "new_code": "920856",
+      "old_code": "831856"
+    },
+    {
+      "listing_date": "2020/12/23",
+      "name": "安徽凤凰",
+      "new_code": "920000",
+      "old_code": "832000"
+    },
+    {
+      "listing_date": "2020/12/8",
+      "name": "数字人",
+      "new_code": "920670",
+      "old_code": "835670"
+    },
+    {
+      "listing_date": "2020/11/27",
+      "name": "德众汽车",
+      "new_code": "920030",
+      "old_code": "838030"
+    },
+    {
+      "listing_date": "2020/11/24",
+      "name": "诺思兰德",
+      "new_code": "920047",
+      "old_code": "430047"
+    },
+    {
+      "listing_date": "2020/11/18",
+      "name": "常辅股份",
+      "new_code": "920396",
+      "old_code": "871396"
+    },
+    {
+      "listing_date": "2020/11/9",
+      "name": "万通液压",
+      "new_code": "920839",
+      "old_code": "830839"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "润农节水",
+      "new_code": "920964",
+      "old_code": "830964"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "创远信科",
+      "new_code": "920961",
+      "old_code": "831961"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "森萱医药",
+      "new_code": "920946",
+      "old_code": "830946"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "颖泰生物",
+      "new_code": "920819",
+      "old_code": "833819"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "艾融软件",
+      "new_code": "920799",
+      "old_code": "830799"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "永顺生物",
+      "new_code": "920729",
+      "old_code": "839729"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "球冠电缆",
+      "new_code": "920682",
+      "old_code": "834682"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "富士达",
+      "new_code": "920640",
+      "old_code": "835640"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "殷图网联",
+      "new_code": "920508",
+      "old_code": "835508"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "佳先股份",
+      "new_code": "920489",
+      "old_code": "430489"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "三友科技",
+      "new_code": "920475",
+      "old_code": "834475"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "龙竹科技",
+      "new_code": "920445",
+      "old_code": "831445"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "大唐药业",
+      "new_code": "920433",
+      "old_code": "836433"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "苏轴股份",
+      "new_code": "920418",
+      "old_code": "430418"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "恒拓开源",
+      "new_code": "920415",
+      "old_code": "834415"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "新安洁",
+      "new_code": "920370",
+      "old_code": "831370"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "连城数控",
+      "new_code": "920368",
+      "old_code": "835368"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "鹿得医疗",
+      "new_code": "920278",
+      "old_code": "832278"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "生物谷",
+      "new_code": "920266",
+      "old_code": "833266"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "中航泰达",
+      "new_code": "920263",
+      "old_code": "836263"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "建邦科技",
+      "new_code": "920242",
+      "old_code": "837242"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "微创光电",
+      "new_code": "920198",
+      "old_code": "430198"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "贝特瑞",
+      "new_code": "920185",
+      "old_code": "835185"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "国源科技",
+      "new_code": "920184",
+      "old_code": "835184"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "同享科技",
+      "new_code": "920167",
+      "old_code": "839167"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "方大新材",
+      "new_code": "920163",
+      "old_code": "838163"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "旭杰科技",
+      "new_code": "920149",
+      "old_code": "836149"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "流金科技",
+      "new_code": "920021",
+      "old_code": "834021"
+    },
+    {
+      "listing_date": "2020/7/27",
+      "name": "凯添燃气",
+      "new_code": "920010",
+      "old_code": "831010"
+    }
+  ]
+}

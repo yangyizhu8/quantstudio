@@ -1,0 +1,56 @@
+{
+  "report_version": "1.0",
+  "generated_at": "2026-07-20T10:00:00+08:00",
+  "strategy_id": "example_momentum",
+  "requested_profile": "daily-bar-v1",
+  "capabilities": [
+    {
+      "capability": "stock_daily_backtest",
+      "required": true,
+      "event_type": "bar",
+      "schema_status": "AVAILABLE",
+      "data_status": "AVAILABLE",
+      "adapter_status": "AVAILABLE",
+      "provider_status": "READY",
+      "engine_status": "READY",
+      "platform_status": "READY",
+      "execution_status": "READY",
+      "evidence": ["stock_daily schema", "DuckDB daily provider", "daily engine"],
+      "message": "日线股票回测链路可执行。",
+      "remediation": []
+    },
+    {
+      "capability": "stock_1m_backtest",
+      "required": false,
+      "event_type": "bar",
+      "schema_status": "AVAILABLE",
+      "data_status": "DATA_MISSING",
+      "adapter_status": "AVAILABLE",
+      "provider_status": "PROVIDER_MISSING",
+      "engine_status": "ENGINE_MISSING",
+      "platform_status": "PLATFORM_DEPENDENT",
+      "execution_status": "BLOCKED",
+      "evidence": ["stock_minutes schema"],
+      "message": "分钟 Schema 可用，但 Provider 与 Engine 尚未贯通。",
+      "remediation": ["完成 PR3 Provider 频率路由", "完成 PR4 分钟事件引擎"]
+    },
+    {
+      "capability": "stock_tick_backtest",
+      "required": false,
+      "event_type": "tick",
+      "schema_status": "SCHEMA_ONLY",
+      "data_status": "DATA_MISSING",
+      "adapter_status": "ADAPTER_MISSING",
+      "provider_status": "PROVIDER_MISSING",
+      "engine_status": "PLANNED",
+      "platform_status": "PLATFORM_DEPENDENT",
+      "execution_status": "PLANNED",
+      "evidence": ["Tick schema placeholder"],
+      "message": "Tick 仅可表达，当前不可执行。",
+      "remediation": ["完成 PR9 Tick/L2 能力"]
+    }
+  ],
+  "overall_execution_status": "READY",
+  "blockers": [],
+  "repair_actions": []
+}

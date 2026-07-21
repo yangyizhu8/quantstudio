@@ -1,0 +1,75 @@
+{
+  "spec_version": "1.0",
+  "strategy_id": "example_momentum",
+  "strategy_name": "示例动量策略",
+  "strategy_type": "stock_selection",
+  "asset_class": "stock",
+  "target_platforms": ["quantstudio", "ptrade-default"],
+  "contract_versions": {
+    "strategy_spec_version": "1.0.0",
+    "engine_semantics_version": "0.1.0-legacy",
+    "provider_contract_version": "0.1.0-daily",
+    "security_code_rules_version": "1.0.0",
+    "ptrade_profile_version": "1.0.0-default",
+    "renderer_version": "0.0.0-planned",
+    "skill_version": "0.0.0-planned"
+  },
+  "time_model": {
+    "market_data_frequency": "1d",
+    "factor_frequency": "1d",
+    "signal_frequency": "1d",
+    "decision_clock": "before_trading_start",
+    "execution_clock": "next_open",
+    "portfolio_valuation_frequency": "1d",
+    "holding_period_unit": "trading_day",
+    "signal_data_cutoff": "T-1-close"
+  },
+  "engine_profile": {
+    "profile_id": "daily-bar-v1",
+    "event_type": "bar",
+    "bar_frequency": "1d",
+    "market_depth": "L1",
+    "order_book_levels": 0,
+    "schema_supported": true,
+    "execution_status": "READY"
+  },
+  "universe": {"kind": "index_constituents", "parameters": {"index": "000300.SH"}},
+  "hard_filters": {
+    "exclude_st": true,
+    "exclude_suspended": true,
+    "exclude_delisted": true,
+    "exclude_delisting_sorting": true,
+    "exclude_star_market": true,
+    "exclude_bse": true,
+    "min_listing_trade_days": 252,
+    "exclude_invalid_price": true,
+    "exclude_zero_volume": true,
+    "block_limit_up_buy": true,
+    "block_limit_down_sell": true,
+    "enforce_t1": true,
+    "round_lot": 100
+  },
+  "signals": {
+    "steps": [
+      {"id": "momentum_20d", "operation": "pct_change", "parameters": {"field": "close", "lookback": 20}},
+      {"id": "rank_desc", "operation": "rank", "parameters": {"source": "momentum_20d", "ascending": false}}
+    ]
+  },
+  "portfolio": {"kind": "equal_weight_top_n", "parameters": {"max_positions": 10, "rebalance": "weekly"}},
+  "execution": {"mode": "native", "match_price_mode": "next_open", "order_type": "market", "allow_partial_fill": false},
+  "risk": {"kind": "position_limits", "parameters": {"max_single_weight": 0.1, "cash_buffer": 0.02}},
+  "costs": {"commission_rate": 0.0003, "minimum_commission": 5.0, "stamp_tax_rate": 0.0005, "transfer_fee_rate": 0.00001, "slippage_bps": 5.0},
+  "data_requirements": {
+    "datasets": [
+      {"dataset": "stock_daily", "frequency": "1d", "fields": ["open", "high", "low", "close", "volume"], "required": true, "pit_required": false},
+      {"dataset": "stock_status", "frequency": "1d", "fields": ["is_st", "is_suspended", "is_delisted"], "required": true, "pit_required": true}
+    ]
+  },
+  "capability_requirements": ["stock_daily_backtest", "stock_status_filter", "ptrade_default_public_api"],
+  "approximations": [],
+  "user_confirmations": [
+    {"confirmation_id": "r2_5_strategy_spec", "status": "CONFIRMED", "confirmed_at": "2026-07-20T10:00:00+08:00", "note": "示例确认"}
+  ],
+  "validation_policy": {"no_lookahead": "BLOCK", "hard_filters": "BLOCK", "strict_public_api": true, "smoke_backtest": "WHEN_READY"},
+  "output": {"root": "output/strategy-compiler", "overwrite": false}
+}

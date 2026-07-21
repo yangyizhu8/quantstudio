@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://quantstudio.local/schemas/capability_report.schema.json",
+  "title": "QuantStudio Capability Report v1",
+  "type": "object",
+  "required": ["report_version", "generated_at", "strategy_id", "requested_profile", "capabilities", "overall_execution_status", "blockers", "repair_actions"],
+  "properties": {
+    "report_version": {"const": "1.0"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "strategy_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$"},
+    "requested_profile": {"type": "string", "minLength": 1},
+    "capabilities": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/capability"}},
+    "overall_execution_status": {"$ref": "#/definitions/executionStatus"},
+    "blockers": {"type": "array", "items": {"type": "string"}},
+    "repair_actions": {"type": "array", "items": {"type": "string"}}
+  },
+  "definitions": {
+    "status": {"enum": ["AVAILABLE", "READY", "DATA_MISSING", "ADAPTER_MISSING", "PROVIDER_MISSING", "ENGINE_MISSING", "PLATFORM_DEPENDENT", "DEGRADED", "SCHEMA_ONLY", "PLANNED", "UNSUPPORTED", "BLOCKED"]},
+    "executionStatus": {"enum": ["READY", "BLOCKED", "PLANNED", "UNSUPPORTED"]},
+    "capability": {
+      "type": "object",
+      "required": ["capability", "required", "event_type", "schema_status", "data_status", "adapter_status", "provider_status", "engine_status", "platform_status", "execution_status", "evidence", "message", "remediation"],
+      "properties": {
+        "capability": {"type": "string", "minLength": 1},
+        "required": {"type": "boolean"},
+        "event_type": {"enum": ["bar", "tick", "reference", "fundamental"]},
+        "schema_status": {"$ref": "#/definitions/status"},
+        "data_status": {"$ref": "#/definitions/status"},
+        "adapter_status": {"$ref": "#/definitions/status"},
+        "provider_status": {"$ref": "#/definitions/status"},
+        "engine_status": {"$ref": "#/definitions/status"},
+        "platform_status": {"$ref": "#/definitions/status"},
+        "execution_status": {"$ref": "#/definitions/executionStatus"},
+        "evidence": {"type": "array", "items": {"type": "string"}},
+        "message": {"type": "string"},
+        "remediation": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {"if": {"properties": {"event_type": {"const": "tick"}}}, "then": {"properties": {"execution_status": {"enum": ["BLOCKED", "PLANNED", "UNSUPPORTED"]}}}}
+      ]
+    }
+  },
+  "additionalProperties": false
+}

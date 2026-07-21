@@ -1,0 +1,2359 @@
+{
+  "_comment": "字段对齐规则配置 v2.0（khQuant 口径）。标准 mold 从 tushare 14 字段改为 khQuant 36 字段日线/29 字段分钟/34 字段 tick。单位统一为股/元，time 用毫秒时间戳 INTEGER，code 用裸 6 位码。",
+  "schema_version": "2.0",
+  "_standard": "khQuant",
+  "schemas": {
+    "stock_daily": {
+      "_note": "khQuant kline_1d 日线表，36 字段。pipeline 内部多加 code 列（主键 code+time），Exporter 导出时去掉 code 列、time 作单主键。",
+      "schema_version": "2.0",
+      "primary_key": [
+        "code",
+        "time"
+      ],
+      "time_key": "time",
+      "freq": "daily",
+      "columns": {
+        "code": {
+          "type": "str",
+          "required": true,
+          "regex": "^\\d{6}$"
+        },
+        "time": {
+          "type": "int",
+          "required": true,
+          "unit": "毫秒时间戳",
+          "gt": 0
+        },
+        "open": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "gt": 0
+        },
+        "high": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "gt": 0
+        },
+        "low": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "gt": 0
+        },
+        "close": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "gt": 0
+        },
+        "volume": {
+          "type": "float",
+          "required": true,
+          "unit": "股",
+          "ge": 0
+        },
+        "amount": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "ge": 0
+        },
+        "preClose": {
+          "type": "float",
+          "required": false,
+          "unit": "元",
+          "gt": 0
+        },
+        "suspendFlag": {
+          "type": "int",
+          "required": true,
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "settelementPrice": {
+          "type": "float",
+          "required": false,
+          "unit": "元",
+          "_note": "期货结算价，股票留 NULL"
+        },
+        "openInterest": {
+          "type": "float",
+          "required": false,
+          "_note": "期货持仓量，股票留 NULL"
+        },
+        "open_front": {
+          "type": "float",
+          "required": false,
+          "unit": "元",
+          "_note": "前复权开盘价"
+        },
+        "high_front": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "low_front": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "close_front": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "open_back": {
+          "type": "float",
+          "required": false,
+          "unit": "元",
+          "_note": "后复权开盘价"
+        },
+        "high_back": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "low_back": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "close_back": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "open_front_ratio": {
+          "type": "float",
+          "required": false,
+          "unit": "元",
+          "_note": "等比前复权，Phase 2 填 NULL"
+        },
+        "high_front_ratio": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "low_front_ratio": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "close_front_ratio": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "open_back_ratio": {
+          "type": "float",
+          "required": false,
+          "unit": "元",
+          "_note": "等比后复权，Phase 2 填 NULL"
+        },
+        "high_back_ratio": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "low_back_ratio": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "close_back_ratio": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "turn": {
+          "type": "float",
+          "required": false,
+          "unit": "%"
+        },
+        "pctChg": {
+          "type": "float",
+          "required": false,
+          "unit": "%"
+        },
+        "peTTM": {
+          "type": "float",
+          "required": false,
+          "_note": "滚动市盈率，来自 daily_basic"
+        },
+        "psTTM": {
+          "type": "float",
+          "required": false,
+          "_note": "滚动市销率"
+        },
+        "pcfNcfTTM": {
+          "type": "float",
+          "required": false,
+          "_note": "滚动市现率，tushare 无直接对应暂 NULL"
+        },
+        "pbMRQ": {
+          "type": "float",
+          "required": false,
+          "_note": "市净率"
+        },
+        "isST": {
+          "type": "int",
+          "required": false,
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "is_st_reliable": {
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "_note": "官方 ST/*ST 状态（从 stock_namechange PIT 推导）。True=当日处于 ST/*ST"
+        },
+        "is_st_reliable_source": {
+          "type": "str",
+          "required": false,
+          "enum": [
+            "namechange",
+            "none"
+          ],
+          "_note": "is_st_reliable 的数据来源。namechange=有变更记录，none=无记录（可能正常股或沪市缺口）"
+        },
+        "is_delisting_risk": {
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "_note": "退市风险兜底。True=close<1 元 OR 近 20 日 circ_mv<5 亿"
+        },
+        "is_delisting_risk_source": {
+          "type": "str",
+          "required": false,
+          "enum": [
+            "price",
+            "market_cap",
+            "both",
+            "none"
+          ],
+          "_note": "is_delisting_risk 的触发来源"
+        },
+        "dividend_type": {
+          "type": "str",
+          "required": true,
+          "default": "all",
+          "_note": "all=该行含全部复权类型"
+        },
+        "update_time": {
+          "type": "str",
+          "required": false,
+          "unit": "YYYY-MM-DD HH:MM:SS"
+        }
+      },
+      "available_at_field": "time",
+      "ohlc_logic": {
+        "high_ge_max": [
+          "high",
+          [
+            "open",
+            "low",
+            "close"
+          ]
+        ],
+        "low_le_min": [
+          "low",
+          [
+            "open",
+            "high",
+            "close"
+          ]
+        ]
+      },
+      "pctchg_tolerance_pct": 1.1
+    },
+    "stock_minutes": {
+      "_note": "khQuant kline_1m/5m 分钟线表，29 字段。日线专有的 turn/pctChg/peTTM 等 7 字段不出现。pipeline 内部加 code+freq 列。",
+      "schema_version": "2.0",
+      "primary_key": [
+        "code",
+        "time",
+        "freq"
+      ],
+      "time_key": "time",
+      "freq": "minute",
+      "columns": {
+        "code": {
+          "type": "str",
+          "required": true,
+          "regex": "^\\d{6}$"
+        },
+        "time": {
+          "type": "int",
+          "required": true,
+          "unit": "毫秒时间戳",
+          "gt": 0
+        },
+        "freq": {
+          "type": "str",
+          "required": true,
+          "enum": [
+            "1min",
+            "5min",
+            "15min",
+            "30min",
+            "60min"
+          ]
+        },
+        "open": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "gt": 0
+        },
+        "high": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "gt": 0
+        },
+        "low": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "gt": 0
+        },
+        "close": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "gt": 0
+        },
+        "volume": {
+          "type": "float",
+          "required": true,
+          "unit": "股",
+          "ge": 0
+        },
+        "amount": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "ge": 0
+        },
+        "preClose": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "suspendFlag": {
+          "type": "int",
+          "required": true,
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "settelementPrice": {
+          "type": "float",
+          "required": false
+        },
+        "openInterest": {
+          "type": "float",
+          "required": false
+        },
+        "open_front": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "high_front": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "low_front": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "close_front": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "open_back": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "high_back": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "low_back": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "close_back": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "open_front_ratio": {
+          "type": "float",
+          "required": false,
+          "_note": "Phase 2 填 NULL"
+        },
+        "high_front_ratio": {
+          "type": "float",
+          "required": false
+        },
+        "low_front_ratio": {
+          "type": "float",
+          "required": false
+        },
+        "close_front_ratio": {
+          "type": "float",
+          "required": false
+        },
+        "open_back_ratio": {
+          "type": "float",
+          "required": false,
+          "_note": "Phase 2 填 NULL"
+        },
+        "high_back_ratio": {
+          "type": "float",
+          "required": false
+        },
+        "low_back_ratio": {
+          "type": "float",
+          "required": false
+        },
+        "close_back_ratio": {
+          "type": "float",
+          "required": false
+        },
+        "dividend_type": {
+          "type": "str",
+          "required": true,
+          "default": "all"
+        },
+        "update_time": {
+          "type": "str",
+          "required": false
+        }
+      },
+      "available_at_field": "time",
+      "session_only": true,
+      "expected_bars_per_day": 240,
+      "session": {
+        "morning": [
+          "09:30",
+          "11:30"
+        ],
+        "afternoon": [
+          "13:00",
+          "15:00"
+        ]
+      }
+    },
+    "tick": {
+      "_note": "khQuant tick 表，34 字段（5 档盘口）。Phase 2 仅预定义 schema + Writer 建表，不写 tick Adapter。",
+      "schema_version": "2.0",
+      "primary_key": [
+        "code",
+        "time"
+      ],
+      "time_key": "time",
+      "freq": "tick",
+      "columns": {
+        "code": {
+          "type": "str",
+          "required": true,
+          "regex": "^\\d{6}$"
+        },
+        "time": {
+          "type": "int",
+          "required": true,
+          "unit": "毫秒时间戳",
+          "gt": 0
+        },
+        "lastPrice": {
+          "type": "float",
+          "required": true,
+          "unit": "元"
+        },
+        "open": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "high": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "low": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "lastClose": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "amount": {
+          "type": "float",
+          "required": true,
+          "unit": "元"
+        },
+        "volume": {
+          "type": "float",
+          "required": true,
+          "unit": "股"
+        },
+        "pvolume": {
+          "type": "float",
+          "required": false,
+          "_note": "持仓量，股票留 NULL"
+        },
+        "stockStatus": {
+          "type": "int",
+          "required": false
+        },
+        "openInt": {
+          "type": "float",
+          "required": false
+        },
+        "lastSettlementPrice": {
+          "type": "float",
+          "required": false
+        },
+        "askPrice1": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "askPrice2": {
+          "type": "float",
+          "required": false
+        },
+        "askPrice3": {
+          "type": "float",
+          "required": false
+        },
+        "askPrice4": {
+          "type": "float",
+          "required": false
+        },
+        "askPrice5": {
+          "type": "float",
+          "required": false
+        },
+        "bidPrice1": {
+          "type": "float",
+          "required": false
+        },
+        "bidPrice2": {
+          "type": "float",
+          "required": false
+        },
+        "bidPrice3": {
+          "type": "float",
+          "required": false
+        },
+        "bidPrice4": {
+          "type": "float",
+          "required": false
+        },
+        "bidPrice5": {
+          "type": "float",
+          "required": false
+        },
+        "askVol1": {
+          "type": "float",
+          "required": false,
+          "unit": "股"
+        },
+        "askVol2": {
+          "type": "float",
+          "required": false
+        },
+        "askVol3": {
+          "type": "float",
+          "required": false
+        },
+        "askVol4": {
+          "type": "float",
+          "required": false
+        },
+        "askVol5": {
+          "type": "float",
+          "required": false
+        },
+        "bidVol1": {
+          "type": "float",
+          "required": false
+        },
+        "bidVol2": {
+          "type": "float",
+          "required": false
+        },
+        "bidVol3": {
+          "type": "float",
+          "required": false
+        },
+        "bidVol4": {
+          "type": "float",
+          "required": false
+        },
+        "bidVol5": {
+          "type": "float",
+          "required": false
+        },
+        "transactionNum": {
+          "type": "int",
+          "required": false
+        },
+        "update_time": {
+          "type": "str",
+          "required": false
+        }
+      },
+      "available_at_field": "time"
+    },
+    "stock_float_share": {
+      "_note": "流通股本表（按财报/公告日，与三大报表同构）。end_date=报告期末日, ann_date=公告日, free_share=流通股本(股), total_share=总股本(股), circ_mv=流通市值(元), total_mv=总市值(元)。PIT 由 AnnDateLogic 校验 + 回测取数层按 ann_date 过滤",
+      "schema_version": "2.0",
+      "primary_key": [
+        "code",
+        "end_date",
+        "ann_date"
+      ],
+      "time_key": "end_date",
+      "freq": "quarterly",
+      "columns": {
+        "code": {
+          "type": "str",
+          "required": true,
+          "regex": "^\\d{6}$"
+        },
+        "end_date": {
+          "type": "int",
+          "required": true,
+          "unit": "毫秒时间戳"
+        },
+        "ann_date": {
+          "type": "int",
+          "required": true,
+          "unit": "毫秒时间戳"
+        },
+        "free_share": {
+          "type": "float",
+          "required": true,
+          "unit": "股",
+          "gt": 0
+        },
+        "total_share": {
+          "type": "float",
+          "required": false,
+          "unit": "股",
+          "gt": 0
+        },
+        "circ_mv": {
+          "type": "float",
+          "required": false,
+          "unit": "元",
+          "gt": 0
+        },
+        "total_mv": {
+          "type": "float",
+          "required": false,
+          "unit": "元",
+          "gt": 0
+        }
+      },
+      "available_at_field": "ann_date"
+    },
+    "stock_daily_valuation": {
+      "_note": "每日估值表（按交易日）。circ_mv=流通市值(元), total_mv=总市值(元), pe_ttm/pb/turnover_rate=每日估值指标。来源 tushare daily_basic。与 stock_float_share（报告期股本）分离：此表是每日随股价变化的估值，stock_float_share 是按报告期变化的股本",
+      "schema_version": "2.0",
+      "primary_key": [
+        "code",
+        "time"
+      ],
+      "time_key": "time",
+      "freq": "daily",
+      "available_at_field": "time",
+      "columns": {
+        "code": {
+          "type": "str",
+          "required": true,
+          "regex": "^\\d{6}$"
+        },
+        "time": {
+          "type": "int",
+          "required": true,
+          "unit": "毫秒时间戳"
+        },
+        "circ_mv": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "gt": 0
+        },
+        "total_mv": {
+          "type": "float",
+          "required": false,
+          "unit": "元",
+          "gt": 0
+        },
+        "pe_ttm": {
+          "type": "float",
+          "required": false
+        },
+        "pb": {
+          "type": "float",
+          "required": false
+        },
+        "turnover_rate": {
+          "type": "float",
+          "required": false,
+          "unit": "%"
+        }
+      }
+    },
+    "index_constituents": {
+      "_note": "指数成分股表。某指数在某日的成分股列表+权重。PIT 打标 available_at=time [E-1]",
+      "schema_version": "2.0",
+      "primary_key": [
+        "index_code",
+        "code",
+        "time"
+      ],
+      "time_key": "time",
+      "freq": "daily",
+      "columns": {
+        "index_code": {
+          "type": "str",
+          "required": true,
+          "regex": "^\\d{6}$"
+        },
+        "code": {
+          "type": "str",
+          "required": true,
+          "regex": "^\\d{6}$"
+        },
+        "time": {
+          "type": "int",
+          "required": true,
+          "unit": "毫秒时间戳"
+        },
+        "weight": {
+          "type": "float",
+          "required": false,
+          "unit": "%"
+        }
+      },
+      "available_at_field": "time"
+    },
+    "fin_indicator": {
+      "_note": "财务指标表，PIT 打标 available_at=ann_date [E-1]",
+      "schema_version": "2.0",
+      "primary_key": [
+        "code",
+        "end_date",
+        "ann_date"
+      ],
+      "time_key": "end_date",
+      "freq": "quarterly",
+      "columns": {
+        "code": {
+          "type": "str",
+          "required": true,
+          "regex": "^\\d{6}$"
+        },
+        "ann_date": {
+          "type": "int",
+          "required": true,
+          "unit": "毫秒时间戳"
+        },
+        "end_date": {
+          "type": "int",
+          "required": true,
+          "unit": "毫秒时间戳"
+        },
+        "eps": {
+          "type": "float",
+          "required": false
+        },
+        "bps": {
+          "type": "float",
+          "required": false
+        },
+        "roe": {
+          "type": "float",
+          "required": false,
+          "unit": "%"
+        },
+        "pe_ttm": {
+          "type": "float",
+          "required": false
+        },
+        "pb": {
+          "type": "float",
+          "required": false
+        },
+        "ps_ttm": {
+          "type": "float",
+          "required": false
+        },
+        "np_yoy": {
+          "type": "float",
+          "required": false,
+          "unit": "%"
+        }
+      },
+      "available_at_field": "ann_date"
+    },
+    "index_daily": {
+      "_note": "指数日线表，对齐 khQuant 口径",
+      "schema_version": "2.0",
+      "primary_key": [
+        "code",
+        "time"
+      ],
+      "time_key": "time",
+      "freq": "daily",
+      "columns": {
+        "code": {
+          "type": "str",
+          "required": true,
+          "regex": "^\\d{6}$"
+        },
+        "time": {
+          "type": "int",
+          "required": true,
+          "unit": "毫秒时间戳",
+          "gt": 0
+        },
+        "open": {
+          "type": "float",
+          "required": true,
+          "unit": "点",
+          "gt": 0
+        },
+        "high": {
+          "type": "float",
+          "required": true,
+          "unit": "点",
+          "gt": 0
+        },
+        "low": {
+          "type": "float",
+          "required": true,
+          "unit": "点",
+          "gt": 0
+        },
+        "close": {
+          "type": "float",
+          "required": true,
+          "unit": "点",
+          "gt": 0
+        },
+        "pctChg": {
+          "type": "float",
+          "required": false,
+          "unit": "%"
+        },
+        "volume": {
+          "type": "float",
+          "required": true,
+          "unit": "股",
+          "ge": 0
+        },
+        "amount": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "ge": 0
+        }
+      },
+      "available_at_field": "time"
+    },
+    "etf_daily": {
+      "_note": "ETF 日线表（对齐 stock_daily 含 16 复权列）；复权由 aligner 用 fund_adj 因子统一计算",
+      "schema_version": "2.0",
+      "primary_key": [
+        "code",
+        "time"
+      ],
+      "time_key": "time",
+      "freq": "daily",
+      "columns": {
+        "code": {
+          "type": "str",
+          "required": true,
+          "regex": "^\\d{6}$"
+        },
+        "time": {
+          "type": "int",
+          "required": true,
+          "unit": "毫秒时间戳",
+          "gt": 0
+        },
+        "open": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "gt": 0
+        },
+        "high": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "gt": 0
+        },
+        "low": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "gt": 0
+        },
+        "close": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "gt": 0
+        },
+        "preClose": {
+          "type": "float",
+          "required": false,
+          "unit": "元",
+          "ge": 0
+        },
+        "pctChg": {
+          "type": "float",
+          "required": false,
+          "unit": "%"
+        },
+        "volume": {
+          "type": "float",
+          "required": true,
+          "unit": "份",
+          "ge": 0
+        },
+        "amount": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "ge": 0
+        },
+        "turn": {
+          "type": "float",
+          "required": false,
+          "unit": "%"
+        },
+        "open_front": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "open_back": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "high_front": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "high_back": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "low_front": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "low_back": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "close_front": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "close_back": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "open_front_ratio": {
+          "type": "float",
+          "required": false,
+          "unit": "比例"
+        },
+        "open_back_ratio": {
+          "type": "float",
+          "required": false,
+          "unit": "比例"
+        },
+        "high_front_ratio": {
+          "type": "float",
+          "required": false,
+          "unit": "比例"
+        },
+        "high_back_ratio": {
+          "type": "float",
+          "required": false,
+          "unit": "比例"
+        },
+        "low_front_ratio": {
+          "type": "float",
+          "required": false,
+          "unit": "比例"
+        },
+        "low_back_ratio": {
+          "type": "float",
+          "required": false,
+          "unit": "比例"
+        },
+        "close_front_ratio": {
+          "type": "float",
+          "required": false,
+          "unit": "比例"
+        },
+        "close_back_ratio": {
+          "type": "float",
+          "required": false,
+          "unit": "比例"
+        },
+        "isST": {
+          "type": "int",
+          "required": true
+        },
+        "dividend_type": {
+          "type": "str",
+          "required": false
+        },
+        "update_time": {
+          "type": "str",
+          "required": false
+        }
+      },
+      "available_at_field": "time"
+    },
+    "balance_statement": {
+      "_note": "资产负债表（单位=元）",
+      "schema_version": "2.0",
+      "primary_key": [
+        "code",
+        "end_date",
+        "ann_date"
+      ],
+      "time_key": "end_date",
+      "columns": {
+        "code": {
+          "type": "str",
+          "required": true
+        },
+        "end_date": {
+          "type": "int",
+          "required": true,
+          "unit": "毫秒时间戳"
+        },
+        "ann_date": {
+          "type": "int",
+          "required": true,
+          "unit": "毫秒时间戳"
+        },
+        "total_assets": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "total_liability": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "total_equity": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "total_current_assets": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "total_non_current_assets": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "total_current_liability": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "total_non_current_liability": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "account_receivable": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "account_payable": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "inventory": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "cash_equivalents": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "fixed_asset": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "intangible_asset": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "goodwill": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "update_time": {
+          "type": "str",
+          "required": false
+        }
+      },
+      "available_at_field": "ann_date"
+    },
+    "income_statement": {
+      "_note": "利润表（单位=元）",
+      "schema_version": "2.0",
+      "primary_key": [
+        "code",
+        "end_date",
+        "ann_date"
+      ],
+      "time_key": "end_date",
+      "columns": {
+        "code": {
+          "type": "str",
+          "required": true
+        },
+        "end_date": {
+          "type": "int",
+          "required": true
+        },
+        "ann_date": {
+          "type": "int",
+          "required": true
+        },
+        "operating_revenue": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "operating_cost": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "operating_profit": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "total_profit": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "net_profit": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "np_parent_company_owners": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "sale_expense": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "manage_expense": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "finance_expense": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "rd_expense": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "income_tax": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "basic_eps": {
+          "type": "float",
+          "required": false,
+          "unit": "元/股"
+        },
+        "update_time": {
+          "type": "str",
+          "required": false
+        }
+      },
+      "available_at_field": "ann_date"
+    },
+    "cashflow_statement": {
+      "_note": "现金流量表（单位=元）",
+      "schema_version": "2.0",
+      "primary_key": [
+        "code",
+        "end_date",
+        "ann_date"
+      ],
+      "time_key": "end_date",
+      "columns": {
+        "code": {
+          "type": "str",
+          "required": true
+        },
+        "end_date": {
+          "type": "int",
+          "required": true
+        },
+        "ann_date": {
+          "type": "int",
+          "required": true
+        },
+        "net_operate_cash_flow": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "net_invest_cash_flow": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "net_finance_cash_flow": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "cash_add_balance": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "goods_sale_and_services": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "goods_buy_and_services": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "fixed_asset_depreciation": {
+          "type": "float",
+          "required": false,
+          "unit": "元"
+        },
+        "update_time": {
+          "type": "str",
+          "required": false
+        }
+      },
+      "available_at_field": "ann_date"
+    },
+    "stock_dividend": {
+      "_note": "除权除息",
+      "schema_version": "2.0",
+      "primary_key": [
+        "code",
+        "ex_date"
+      ],
+      "time_key": "ex_date",
+      "columns": {
+        "code": {
+          "type": "str",
+          "required": true
+        },
+        "ex_date": {
+          "type": "int",
+          "required": true
+        },
+        "record_date": {
+          "type": "int",
+          "required": false
+        },
+        "cash_div": {
+          "type": "float",
+          "required": false,
+          "unit": "元/股(税前)"
+        },
+        "stk_div": {
+          "type": "float",
+          "required": false,
+          "unit": "股/股"
+        },
+        "div_rat": {
+          "type": "float",
+          "required": false,
+          "unit": "%"
+        },
+        "update_time": {
+          "type": "str",
+          "required": false
+        }
+      }
+    },
+    "sw_industry": {
+      "_note": "申万行业分类",
+      "schema_version": "2.0",
+      "primary_key": [
+        "code",
+        "industry_code"
+      ],
+      "time_key": null,
+      "columns": {
+        "code": {
+          "type": "str",
+          "required": true
+        },
+        "industry_code": {
+          "type": "str",
+          "required": true
+        },
+        "industry_name": {
+          "type": "str",
+          "required": false
+        },
+        "industry_level": {
+          "type": "str",
+          "required": false
+        },
+        "update_time": {
+          "type": "str",
+          "required": false
+        }
+      }
+    },
+    "etf_minutes": {
+      "_note": "ETF 分钟线表（含16复权列），主键(code,time,freq)，复权用 fund_adj 因子计算",
+      "schema_version": "2.0",
+      "primary_key": [
+        "code",
+        "time",
+        "freq"
+      ],
+      "time_key": "time",
+      "freq": "minutes",
+      "columns": {
+        "code": {
+          "type": "str",
+          "required": true
+        },
+        "time": {
+          "type": "int",
+          "required": true,
+          "unit": "毫秒时间戳"
+        },
+        "freq": {
+          "type": "str",
+          "required": true
+        },
+        "open": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "gt": 0
+        },
+        "high": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "gt": 0
+        },
+        "low": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "gt": 0
+        },
+        "close": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "gt": 0
+        },
+        "volume": {
+          "type": "float",
+          "required": true,
+          "unit": "股",
+          "ge": 0
+        },
+        "amount": {
+          "type": "float",
+          "required": true,
+          "unit": "元",
+          "ge": 0
+        },
+        "preClose": {
+          "type": "float",
+          "required": false
+        },
+        "suspendFlag": {
+          "type": "int",
+          "required": false
+        },
+        "settelementPrice": {
+          "type": "float",
+          "required": false
+        },
+        "openInterest": {
+          "type": "float",
+          "required": false
+        },
+        "open_front": {
+          "type": "float",
+          "required": false
+        },
+        "high_front": {
+          "type": "float",
+          "required": false
+        },
+        "low_front": {
+          "type": "float",
+          "required": false
+        },
+        "close_front": {
+          "type": "float",
+          "required": false
+        },
+        "open_back": {
+          "type": "float",
+          "required": false
+        },
+        "high_back": {
+          "type": "float",
+          "required": false
+        },
+        "low_back": {
+          "type": "float",
+          "required": false
+        },
+        "close_back": {
+          "type": "float",
+          "required": false
+        },
+        "open_front_ratio": {
+          "type": "float",
+          "required": false
+        },
+        "high_front_ratio": {
+          "type": "float",
+          "required": false
+        },
+        "low_front_ratio": {
+          "type": "float",
+          "required": false
+        },
+        "close_front_ratio": {
+          "type": "float",
+          "required": false
+        },
+        "open_back_ratio": {
+          "type": "float",
+          "required": false
+        },
+        "high_back_ratio": {
+          "type": "float",
+          "required": false
+        },
+        "low_back_ratio": {
+          "type": "float",
+          "required": false
+        },
+        "close_back_ratio": {
+          "type": "float",
+          "required": false
+        },
+        "dividend_type": {
+          "type": "str",
+          "required": false
+        },
+        "update_time": {
+          "type": "str",
+          "required": false
+        }
+      }
+    },
+    "stock_namechange": {
+      "_note": "深市简称变更历史（带日期），用于推导 stock_daily.is_st_reliable。沪市无对称接口，靠退市兜底",
+      "schema_version": "2.0",
+      "primary_key": [
+        "code",
+        "change_date"
+      ],
+      "time_key": "change_date",
+      "columns": {
+        "code": {
+          "type": "str",
+          "required": true
+        },
+        "change_date": {
+          "type": "int",
+          "required": true,
+          "unit": "ms_timestamp"
+        },
+        "name_before": {
+          "type": "str",
+          "required": false
+        },
+        "name_after": {
+          "type": "str",
+          "required": false
+        },
+        "status_after": {
+          "type": "str",
+          "required": true,
+          "enum": [
+            "ST",
+            "*ST",
+            "DELISTING_SORTING",
+            "NORMAL",
+            "UNKNOWN"
+          ],
+          "_note": "从 name_after 推导的状态。adapter 已预填充"
+        },
+        "update_time": {
+          "type": "str",
+          "required": false
+        }
+      }
+    },
+    "stock_delist": {
+      "_note": "沪深退市公司名单（带终止上市日期），用于补充 stock_daily 退市判定",
+      "schema_version": "2.0",
+      "primary_key": [
+        "code",
+        "market"
+      ],
+      "time_key": "delist_date",
+      "columns": {
+        "code": {
+          "type": "str",
+          "required": true
+        },
+        "list_date": {
+          "type": "int",
+          "required": false,
+          "unit": "ms_timestamp"
+        },
+        "delist_date": {
+          "type": "int",
+          "required": true,
+          "unit": "ms_timestamp"
+        },
+        "market": {
+          "type": "str",
+          "required": true,
+          "enum": [
+            "SZ",
+            "SH"
+          ]
+        },
+        "update_time": {
+          "type": "str",
+          "required": false
+        }
+      }
+    }
+  },
+  "source_mappings": {
+    "tushare": {
+      "_note": "tushare 不再是 identity 源。需显式映射 + 单位转换（vol 手→股 ×100，amount 千元→元 ×1000）+ daily_basic merge 补 peTTM/pbMRQ/psTTM/turn [补丁1]",
+      "stock_daily": {
+        "column_map": {
+          "ts_code": "code",
+          "trade_date": "time",
+          "open": "open",
+          "high": "high",
+          "low": "low",
+          "close": "close",
+          "pre_close": "preClose",
+          "pct_chg": "pctChg",
+          "vol": "volume",
+          "amount": "amount",
+          "pe_ttm": "peTTM",
+          "pb": "pbMRQ",
+          "ps_ttm": "psTTM",
+          "turnover_rate": "turn"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {
+          "volume": {
+            "factor": 100,
+            "_note": "手→股 ×100"
+          },
+          "amount": {
+            "factor": 1000,
+            "_note": "千元→元 ×1000"
+          }
+        },
+        "time_to_ms": true,
+        "pctchg_source": "official",
+        "_daily_basic_merge": true,
+        "_daily_basic_note": "adapter 内部 merge daily_basic 补 peTTM/pbMRQ/psTTM/turn；pcfNcfTTM 填 NULL；isST 从 stock_basic.name LIKE %ST% 判断 [补丁1]"
+      },
+      "stock_minutes": {
+        "column_map": {
+          "ts_code": "code",
+          "trade_time": "time",
+          "open": "open",
+          "high": "high",
+          "low": "low",
+          "close": "close",
+          "vol": "volume",
+          "amount": "amount"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "_note": "tushare stk_mins 已是 股/元，无需单位转换"
+      },
+      "fin_indicator": {
+        "column_map": {
+          "ts_code": "code",
+          "ann_date": "ann_date",
+          "end_date": "end_date",
+          "dt_eps": "eps",
+          "bps": "bps",
+          "roe": "roe",
+          "pe_ttm": "pe_ttm",
+          "pb": "pb",
+          "ps_ttm": "ps_ttm",
+          "netprofit_yoy": "np_yoy"
+        },
+        "code_format": "tushare_to_raw",
+        "time_to_ms": true,
+        "_note": "v3：补全业务字段。tushare fina_indicator 标准字段名。字段名若与实际API不符（如 dt_eps vs eps），拉取时 dump 确认后微调"
+      },
+      "index_daily": {
+        "column_map": {
+          "ts_code": "code",
+          "trade_date": "time",
+          "open": "open",
+          "high": "high",
+          "low": "low",
+          "close": "close",
+          "pct_chg": "pctChg",
+          "vol": "volume",
+          "amount": "amount"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {
+          "volume": {
+            "factor": 100
+          },
+          "amount": {
+            "factor": 1000
+          }
+        },
+        "time_to_ms": true
+      },
+      "stock_float_share": {
+        "column_map": {
+          "ts_code": "code",
+          "end_date": "end_date",
+          "ann_date": "ann_date",
+          "free_share": "free_share",
+          "total_share": "total_share"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "_note": "v3：此表改为报告期股本（code,end_date,ann_date）。tushare daily_basic 是按交易日的每日估值，改入 stock_daily_valuation。tushare 无报告期股本源，此表由 xtquant Capital 主导。circ_mv/total_mv 由 aligner derive_fields 用 free_share×close 补算"
+      },
+      "stock_daily_valuation": {
+        "column_map": {
+          "ts_code": "code",
+          "trade_date": "time",
+          "circ_mv": "circ_mv",
+          "total_mv": "total_mv",
+          "pe_ttm": "pe_ttm",
+          "pb": "pb",
+          "turnover_rate": "turnover_rate"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "_note": "每日估值表。tushare daily_basic 提供 circ_mv/total_mv（adapter 已 ×10000 万元→元）、pe_ttm/pb/turnover_rate。按交易日入库"
+      },
+      "index_constituents": {
+        "column_map": {
+          "index_code": "index_code",
+          "stock_code": "code",
+          "trade_date": "time",
+          "weight": "weight"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true
+      },
+      "etf_daily": {
+        "column_map": {
+          "ts_code": "code",
+          "trade_date": "time",
+          "open": "open",
+          "high": "high",
+          "low": "low",
+          "close": "close",
+          "pre_close": "preClose",
+          "pct_chg": "pctChg",
+          "vol": "volume",
+          "amount": "amount"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {
+          "volume": {
+            "factor": 100,
+            "_note": "手→份 ×100"
+          },
+          "amount": {
+            "factor": 1000,
+            "_note": "千元→元 ×1000"
+          }
+        },
+        "time_to_ms": true,
+        "pctchg_source": "official",
+        "_note": "ETF daily 不 merge daily_basic（无 pe/pb）；turn 暂留 NULL（daily 接口不含换手率，需 fund_daily 另接口）"
+      },
+      "balance_statement": {
+        "column_map": {
+          "end_date": "end_date",
+          "ann_date": "ann_date",
+          "update_time": "update_time",
+          "total_assets": "total_assets",
+          "total_liab": "total_liability",
+          "total_hldr_eqy_inc_min_int": "total_equity",
+          "total_cur_assets": "total_current_assets",
+          "total_nca": "total_non_current_assets",
+          "total_cur_liab": "total_current_liability",
+          "total_ncl": "total_non_current_liability",
+          "accounts_rece": "account_receivable",
+          "accounts_payable": "account_payable",
+          "inventories": "inventory",
+          "cash_equ": "cash_equivalents",
+          "fix_assets": "fixed_asset",
+          "intan_assets": "intangible_asset",
+          "goodwill": "goodwill",
+          "ts_code": "code"
+        },
+        "code_format": "tushare_to_raw",
+        "time_to_ms": true,
+        "unit_conversions": {},
+        "_note": "tushare balancesheet 单位=元"
+      },
+      "income_statement": {
+        "column_map": {
+          "end_date": "end_date",
+          "ann_date": "ann_date",
+          "update_time": "update_time",
+          "total_revenue": "operating_revenue",
+          "oper_cost": "operating_cost",
+          "operate_profit": "operating_profit",
+          "total_profit": "total_profit",
+          "n_income": "net_profit",
+          "n_income_attr_p": "np_parent_company_owners",
+          "sell_exp": "sale_expense",
+          "admin_exp": "manage_expense",
+          "fin_exp": "finance_expense",
+          "rd_exp": "rd_expense",
+          "income_tax": "income_tax",
+          "basic_eps": "basic_eps",
+          "ts_code": "code"
+        },
+        "code_format": "tushare_to_raw",
+        "time_to_ms": true,
+        "unit_conversions": {}
+      },
+      "cashflow_statement": {
+        "column_map": {
+          "end_date": "end_date",
+          "ann_date": "ann_date",
+          "update_time": "update_time",
+          "n_cashflow_act": "net_operate_cash_flow",
+          "n_cashflow_inv_act": "net_invest_cash_flow",
+          "n_cash_flows_fnc_act": "net_finance_cash_flow",
+          "c_cash_equ_end_period": "cash_add_balance",
+          "c_fr_sale_sg": "goods_sale_and_services",
+          "c_paid_goods_s": "goods_buy_and_services",
+          "depr_fa_coga_dpba": "fixed_asset_depreciation",
+          "ts_code": "code"
+        },
+        "code_format": "tushare_to_raw",
+        "time_to_ms": true,
+        "unit_conversions": {}
+      },
+      "stock_dividend": {
+        "column_map": {
+          "ts_code": "code",
+          "ex_date": "ex_date",
+          "record_date": "record_date",
+          "cash_div": "cash_div",
+          "stk_div": "stk_div",
+          "div_rat": "div_rat",
+          "update_time": "update_time"
+        },
+        "code_format": "tushare_to_raw",
+        "time_to_ms": true,
+        "unit_conversions": {}
+      },
+      "sw_industry": {
+        "column_map": {
+          "ts_code": "code",
+          "industry_code": "industry_code",
+          "industry_name": "industry_name",
+          "industry_level": "industry_level",
+          "update_time": "update_time"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "_note": "tushare index_classify(L1)+stock_basic"
+      },
+      "etf_minutes": {
+        "column_map": {
+          "ts_code": "code",
+          "trade_time": "time",
+          "open": "open",
+          "high": "high",
+          "low": "low",
+          "close": "close",
+          "vol": "volume",
+          "amount": "amount"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "_note": "tushare stk_mins 接口支持 ETF 代码，vol=股，原始价不复权"
+      }
+    },
+    "baostock": {
+      "_note": "Baostock：代码 sh.600001/sz.000001；volume/amount 已是 股/元（与 khQuant 一致）；含扩展指标 peTTM/pbMRQ/psTTM/isST/turn [无需 daily_basic merge]",
+      "stock_daily": {
+        "column_map": {
+          "code": "code",
+          "date": "time",
+          "open": "open",
+          "high": "high",
+          "low": "low",
+          "close": "close",
+          "preclose": "preClose",
+          "pctChg": "pctChg",
+          "volume": "volume",
+          "amount": "amount",
+          "turn": "turn",
+          "peTTM": "peTTM",
+          "pbMRQ": "pbMRQ",
+          "psTTM": "psTTM",
+          "isST": "isST"
+        },
+        "code_format": "baostock_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "pctchg_source": "official"
+      },
+      "stock_minutes_5min": {
+        "column_map": {
+          "code": "code",
+          "date": "time",
+          "open": "open",
+          "high": "high",
+          "low": "low",
+          "close": "close",
+          "volume": "volume",
+          "amount": "amount"
+        },
+        "code_format": "baostock_to_raw",
+        "unit_conversions": {},
+        "freq_out": "5min",
+        "time_to_ms": true
+      },
+      "etf_daily": {
+        "column_map": {
+          "code": "code",
+          "date": "time",
+          "open": "open",
+          "high": "high",
+          "low": "low",
+          "close": "close",
+          "preclose": "preClose",
+          "pctChg": "pctChg",
+          "volume": "volume",
+          "amount": "amount",
+          "turn": "turn"
+        },
+        "code_format": "baostock_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "pctchg_source": "official",
+        "_note": "baostock query_history_k_data_plus 天然支持 ETF；vol=股/amount=元，与 etf_daily schema 一致无需换算"
+      },
+      "balance_statement": {
+        "column_map": {
+          "code": "code",
+          "pubDate": "ann_date",
+          "statDate": "end_date",
+          "update_time": "update_time",
+          "totalAssets": "total_assets",
+          "totalLiab": "total_liability",
+          "totalEquity": "total_equity",
+          "totalCurrentAssets": "total_current_assets",
+          "totalNonCurrentAssets": "total_non_current_assets"
+        },
+        "code_format": "baostock_to_raw",
+        "time_to_ms": true,
+        "unit_conversions": {}
+      },
+      "income_statement": {
+        "column_map": {
+          "code": "code",
+          "pubDate": "ann_date",
+          "statDate": "end_date",
+          "update_time": "update_time",
+          "operRevenue": "operating_revenue",
+          "operCost": "operating_cost",
+          "operateProfit": "operating_profit",
+          "totalProfit": "total_profit",
+          "netProfit": "net_profit",
+          "npParentCompanyowners": "np_parent_company_owners",
+          "sellExpense": "sale_expense",
+          "adminExpense": "manage_expense",
+          "finanExpense": "finance_expense"
+        },
+        "code_format": "baostock_to_raw",
+        "time_to_ms": true,
+        "unit_conversions": {}
+      },
+      "cashflow_statement": {
+        "column_map": {
+          "code": "code",
+          "pubDate": "ann_date",
+          "statDate": "end_date",
+          "update_time": "update_time",
+          "netCashFlowsOperAct": "net_operate_cash_flow",
+          "netCashFlowsInvAct": "net_invest_cash_flow",
+          "netCashFlowsFinAct": "net_finance_cash_flow",
+          "cashAddBal": "cash_add_balance"
+        },
+        "code_format": "baostock_to_raw",
+        "time_to_ms": true,
+        "unit_conversions": {}
+      },
+      "stock_dividend": {
+        "column_map": {
+          "code": "code",
+          "exDate": "ex_date",
+          "recordDate": "record_date",
+          "cashDiv": "cash_div",
+          "stkDiv": "stk_div"
+        },
+        "code_format": "baostock_to_raw",
+        "time_to_ms": true,
+        "unit_conversions": {}
+      },
+      "sw_industry": {
+        "column_map": {
+          "code": "code",
+          "industry": "industry_name",
+          "industryClassification": "industry_level"
+        },
+        "code_format": "baostock_to_raw",
+        "unit_conversions": {}
+      }
+    },
+    "akshare": {
+      "_note": "Akshare：中文字段名；代码 600000（裸码，已是 khQuant code 格式）；成交量是手需 ×100 转股；成交额已是元 [补丁：akshare 成交量是手非股]。复权：adapter 直接拉 adjust='qfq'/'hfq' 输出 open_front/open_back 等标准列，aligner 走 passthrough 填充（与 baostock 统一），彻底摆脱 tushare adj_factor 的 2000 积分门槛",
+      "stock_daily": {
+        "column_map": {
+          "日期": "time",
+          "股票代码": "code",
+          "开盘": "open",
+          "最高": "high",
+          "最低": "low",
+          "收盘": "close",
+          "涨跌幅": "pctChg",
+          "成交量": "volume",
+          "成交额": "amount",
+          "换手率": "turn"
+        },
+        "code_format": "identity",
+        "unit_conversions": {
+          "volume": {
+            "factor": 100,
+            "_note": "手→股 ×100"
+          }
+        },
+        "time_to_ms": true,
+        "pctchg_source": "official"
+      },
+      "etf_daily": {
+        "column_map": {
+          "股票代码": "code",
+          "日期": "time",
+          "开盘": "open",
+          "最高": "high",
+          "最低": "low",
+          "收盘": "close",
+          "涨跌幅": "pctChg",
+          "成交量": "volume",
+          "成交额": "amount",
+          "换手率": "turn"
+        },
+        "code_format": "identity",
+        "unit_conversions": {
+          "volume": {
+            "factor": 100,
+            "_note": "手→份 ×100"
+          }
+        },
+        "time_to_ms": true,
+        "pctchg_source": "official",
+        "_note": "akshare fund_etf_hist_em 中文字段；6位裸码；vol=手需×100，amount=元无需换算；无 preClose（aligner 由 close 推导 pctChg 或留空）"
+      },
+      "balance_statement": {
+        "column_map": {
+          "股票代码": "code",
+          "报告期": "end_date",
+          "公告日期": "ann_date",
+          "update_time": "update_time",
+          "资产总计": "total_assets",
+          "负债合计": "total_liability",
+          "所有者权益合计": "total_equity",
+          "流动资产合计": "total_current_assets",
+          "非流动资产合计": "total_non_current_assets",
+          "流动负债合计": "total_current_liability",
+          "非流动负债合计": "total_non_current_liability",
+          "应收账款": "account_receivable",
+          "应付账款": "account_payable",
+          "存货": "inventory",
+          "货币资金": "cash_equivalents",
+          "固定资产": "fixed_asset",
+          "无形资产": "intangible_asset",
+          "商誉": "goodwill"
+        },
+        "code_format": "identity",
+        "time_to_ms": true,
+        "unit_conversions": {}
+      },
+      "income_statement": {
+        "column_map": {
+          "股票代码": "code",
+          "报告期": "end_date",
+          "公告日期": "ann_date",
+          "update_time": "update_time",
+          "营业收入": "operating_revenue",
+          "营业成本": "operating_cost",
+          "营业利润": "operating_profit",
+          "利润总额": "total_profit",
+          "净利润": "net_profit",
+          "净利润(含少数股东损益)": "np_parent_company_owners",
+          "销售费用": "sale_expense",
+          "管理费用": "manage_expense",
+          "财务费用": "finance_expense",
+          "研发费用": "rd_expense",
+          "所得税费用": "income_tax",
+          "基本每股收益": "basic_eps"
+        },
+        "code_format": "identity",
+        "time_to_ms": true,
+        "unit_conversions": {}
+      },
+      "cashflow_statement": {
+        "column_map": {
+          "股票代码": "code",
+          "报告期": "end_date",
+          "公告日期": "ann_date",
+          "update_time": "update_time",
+          "经营活动产生的现金流量净额": "net_operate_cash_flow",
+          "投资活动产生的现金流量净额": "net_invest_cash_flow",
+          "筹资活动产生的现金流量净额": "net_finance_cash_flow",
+          "现金及现金等价物净增加额": "cash_add_balance",
+          "销售商品、提供劳务收到的现金": "goods_sale_and_services",
+          "购买商品、接受劳务支付的现金": "goods_buy_and_services",
+          "固定资产折旧、油气资产折耗、生产性生物资产折旧": "fixed_asset_depreciation"
+        },
+        "code_format": "identity",
+        "time_to_ms": true,
+        "unit_conversions": {}
+      },
+      "stock_dividend": {
+        "column_map": {
+          "股票代码": "code",
+          "除权除息日": "ex_date",
+          "股权登记日": "record_date",
+          "每10股派息(元)": "cash_div",
+          "每10股送股": "stk_div",
+          "分红总额": "div_rat"
+        },
+        "code_format": "identity",
+        "time_to_ms": true,
+        "unit_conversions": {},
+        "_note": "cash_div 需 /10 转为元/股"
+      },
+      "sw_industry": {
+        "column_map": {
+          "代码": "code",
+          "板块名称": "industry_name"
+        },
+        "code_format": "identity",
+        "unit_conversions": {}
+      },
+      "index_constituents": {
+        "column_map": {
+          "index_code": "index_code",
+          "code": "code",
+          "time": "time",
+          "weight": "weight"
+        },
+        "code_format": "identity",
+        "unit_conversions": {},
+        "_note": "akshare index_stock_cons_csindex 成分股，无 weight 留 NULL"
+      },
+      "etf_minutes": {
+        "column_map": {
+          "股票代码": "code",
+          "时间": "time",
+          "开盘": "open",
+          "最高": "high",
+          "最低": "low",
+          "收盘": "close",
+          "成交量": "volume",
+          "成交额": "amount"
+        },
+        "code_format": "identity",
+        "unit_conversions": {
+          "volume": {
+            "factor": 100,
+            "_note": "手→股 ×100"
+          }
+        },
+        "time_to_ms": true,
+        "_note": "akshare fund_etf_hist_min_em period=1，中文字段，vol=手需×100，原始价"
+      },
+      "stock_namechange": {
+        "identity": true,
+        "_note": "akshare stock_info_sz_change_name 已在 adapter 预清洗为标准字段（code/change_date/name_*/status_after）"
+      },
+      "stock_delist": {
+        "identity": true,
+        "_note": "akshare stock_info_sz/sh_delist 已在 adapter 预清洗为标准字段"
+      },
+      "stock_daily_valuation": {
+        "identity": true,
+        "time_to_ms": true,
+        "_note": "akshare stock_value_em 已在 adapter 预清洗为标准字段（code/time[YYYY-MM-DD]/circ_mv元/total_mv元/pe_ttm/pb）。time 输出 YYYY-MM-DD，由 aligner time_to_ms 统一转上海午夜毫秒（与 stock_daily 同口径，保证 PIT 对齐）。流通市值单位已是元，5e8 阈值有效。turnover_rate 不提供留 NULL"
+      }
+    },
+    "xtquant": {
+      "_note": "xtquant(miniQMT)：代码 600000.SH；vol=股, amount=元。get_market_data_ex 返回 index=time + open/high/low/close/vol/amount。复权：adapter 直接拉 dividend_type=front/back 输出 open_front/open_back 等标准列，aligner 走 passthrough 填充（与 baostock 统一），彻底摆脱 tushare adj_factor 的 2000 积分门槛",
+      "stock_daily": {
+        "column_map": {
+          "stock_code": "code",
+          "time": "time",
+          "open": "open",
+          "high": "high",
+          "low": "low",
+          "close": "close",
+          "vol": "volume",
+          "amount": "amount"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "pctchg_source": "compute_from_raw"
+      },
+      "stock_minutes": {
+        "column_map": {
+          "stock_code": "code",
+          "time": "time",
+          "open": "open",
+          "high": "high",
+          "low": "low",
+          "close": "close",
+          "vol": "volume",
+          "amount": "amount"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true
+      },
+      "etf_daily": {
+        "column_map": {
+          "stock_code": "code",
+          "time": "time",
+          "open": "open",
+          "high": "high",
+          "low": "low",
+          "close": "close",
+          "vol": "volume",
+          "amount": "amount"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "pctchg_source": "compute_from_raw",
+        "_note": "xtquant get_market_data_ex 天然支持 ETF；vol=股/amount=元；pctChg 缺失时由 close/preClose 计算"
+      },
+      "etf_minutes": {
+        "column_map": {
+          "stock_code": "code",
+          "time": "time",
+          "open": "open",
+          "high": "high",
+          "low": "low",
+          "close": "close",
+          "vol": "volume",
+          "amount": "amount",
+          "preClose": "preClose"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "_note": "xtquant get_market_data_ex period=1m 支持 ETF，vol=股，dividend_type=none 原始价"
+      },
+      "stock_float_share": {
+        "identity": true,
+        "time_to_ms": true,
+        "_note": "xtquant get_financial_data(Capital) 已在 adapter 预重命名字段（code/end_date/ann_date/free_share/total_share）。identity 空映射让 aligner 不报 KeyError。time_to_ms=true 把 end_date/ann_date 的 YYYYMMDD 转 ms。circ_mv/total_mv 由 aligner derive_fields 补算"
+      },
+      "balance_statement": {
+        "identity": true,
+        "time_to_ms": true,
+        "_note": "xtquant Balance 报表，adapter 已预重命名。最小映射（消除 KeyError），全字段对齐下一轮"
+      },
+      "income_statement": {
+        "identity": true,
+        "time_to_ms": true,
+        "_note": "xtquant Income 报表，adapter 已预重命名。最小映射（消除 KeyError），全字段对齐下一轮"
+      },
+      "cashflow_statement": {
+        "identity": true,
+        "time_to_ms": true,
+        "_note": "xtquant CashFlow 报表，adapter 已预重命名。最小映射（消除 KeyError），全字段对齐下一轮"
+      },
+      "fin_indicator": {
+        "identity": true,
+        "time_to_ms": true,
+        "_note": "xtquant PershareIndex 报表，adapter 已预重命名（eps/bps/roe）。最小映射（消除 KeyError），全字段对齐下一轮"
+      }
+    },
+    "a_stock_data": {
+      "_note": "a-stock-data(mootdx)：代码 6位裸码 688017(已是khQuant格式)；vol=股, amount=元；mootdx返回不复权原始价",
+      "stock_daily": {
+        "column_map": {
+          "code": "code",
+          "datetime": "time",
+          "open": "open",
+          "close": "close",
+          "high": "high",
+          "low": "low",
+          "vol": "volume",
+          "amount": "amount"
+        },
+        "code_format": "identity",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "pctchg_source": "compute_from_raw",
+        "_note_qfq": "mootdx返回不复权价，复权字段需用其他源补充或手动计算"
+      },
+      "stock_minutes": {
+        "column_map": {
+          "code": "code",
+          "datetime": "time",
+          "open": "open",
+          "close": "close",
+          "high": "high",
+          "low": "low",
+          "vol": "volume",
+          "amount": "amount"
+        },
+        "code_format": "identity",
+        "unit_conversions": {},
+        "time_to_ms": true
+      },
+      "etf_daily": {
+        "column_map": {
+          "code": "code",
+          "datetime": "time",
+          "open": "open",
+          "high": "high",
+          "low": "low",
+          "close": "close",
+          "amount": "amount",
+          "volume": "volume"
+        },
+        "code_format": "identity",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "pctchg_source": "compute_from_raw",
+        "_note": "mootdx bars() 天然支持 ETF；6位裸码 identity；vol=股/amount=元"
+      }
+    }
+  },
+  "code_format_converters": {
+    "_note": "代码格式转换器：全部目标为裸 6 位码（khQuant code 格式）",
+    "identity": {
+      "_desc": "已是 600000 格式，不转换"
+    },
+    "tushare_to_raw": {
+      "_desc": "600000.SH → 600000（去 .SH/.SZ/.BJ 后缀）"
+    },
+    "baostock_to_raw": {
+      "_desc": "sh.600000 → 600000 / sz.000001 → 000001（去市场前缀）"
+    }
+  }
+}

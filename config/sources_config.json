@@ -1,0 +1,35 @@
+{
+  "sources": {
+    "tushare": {
+      "enabled": true,
+      "token": "${TUSHARE_TOKEN}"
+    },
+    "baostock": {
+      "enabled": true,
+      "user": "anonymous"
+    },
+    "akshare": {
+      "enabled": true
+    },
+    "joinquant": {
+      "enabled": false,
+      "token": "${JQ_TOKEN}"
+    },
+    "xtquant": {
+      "enabled": true,
+      "qmt_path": "${QMT_PATH}"
+    },
+    "a_stock_data": {
+      "enabled": true
+    },
+    "efinance": {
+      "enabled": false
+    },
+    "custom_api": {
+      "enabled": false,
+      "base_url": "",
+      "api_key": "${CUSTOM_API_KEY}"
+    }
+  },
+  "default_source_priority": ["xtquant", "tushare", "akshare", "baostock"]
+}

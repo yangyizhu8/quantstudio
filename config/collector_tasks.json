@@ -1,0 +1,493 @@
+{
+  "daemon_schedule": {
+    "daily_time": "17:00",
+    "check_interval_sec": 300
+  },
+  "tasks": [
+    {
+      "name": "valuation_daily",
+      "enabled": true,
+      "source": "tushare",
+      "table": "stock_daily_valuation",
+      "freq": "daily",
+      "start_date": "2018-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "max_workers": 4,
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 30,
+        "wait_on_429": true
+      },
+      "hidden": true,
+      "_note": "stock_daily 的依赖表，用户不可见。stock_daily 采集时自动先拉取。源改为 tushare 优先（daily_basic 提供真实每日 circ_mv/total_mv，已验证稳定落库）；akshare 作回退",
+      "source_priority": [
+        "tushare",
+        "akshare"
+      ]
+    },
+    {
+      "name": "kline_1d",
+      "enabled": true,
+      "source": "tushare",
+      "table": "stock_daily",
+      "freq": "daily",
+      "start_date": "2018-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "max_workers": 3,
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 60,
+        "wait_on_429": true
+      },
+      "_note": "权威源已切 tushare（周末 xtquant 不可用，临时切换；下周 xtquant 恢复后改回 source=xtquant + source_priority=[xtquant,tushare,akshare,baostock]）。复权：tushare 走 adj_factor API 计算 front/back（需 2000 积分，本机 token 有 10000 积分足够）；客户环境无积分时由回退链 akshare/baostock 提供复权价",
+      "source_priority": [
+        "tushare",
+        "akshare",
+        "baostock"
+      ]
+    },
+    {
+      "name": "kline_1m",
+      "enabled": true,
+      "source": "tushare",
+      "table": "stock_minutes",
+      "freq": "1min",
+      "codes": [
+        "ALL"
+      ],
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 8,
+        "wait_on_429": true
+      },
+      "write_mode": "duckdb_batch",
+      "start_date": "2018-01-01",
+      "max_workers": 1,
+      "source_priority": [
+        "tushare"
+      ]
+    },
+    {
+      "name": "fin_indicator",
+      "enabled": true,
+      "source": "tushare",
+      "table": "fin_indicator",
+      "freq": "daily",
+      "codes": [
+        "ALL"
+      ],
+      "retry": {
+        "max": 3,
+        "backoff_sec": [
+          60,
+          120,
+          240
+        ]
+      },
+      "start_date": "2018-01-01",
+      "max_workers": 5,
+      "rate_limit": {
+        "calls_per_min": 60,
+        "wait_on_429": true
+      },
+      "source_priority": [
+        "tushare"
+      ]
+    },
+    {
+      "name": "stock_float_share",
+      "enabled": true,
+      "source": "xtquant",
+      "table": "stock_float_share",
+      "freq": "daily",
+      "codes": [
+        "ALL"
+      ],
+      "max_workers": 3,
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 60,
+        "wait_on_429": true
+      },
+      "start_date": "2018-01-01",
+      "source_priority": [
+        "xtquant",
+        "tushare"
+      ]
+    },
+    {
+      "name": "index_constituents",
+      "enabled": true,
+      "source": "akshare",
+      "table": "index_constituents",
+      "freq": "daily",
+      "codes": [
+        "ALL"
+      ],
+      "retry": {
+        "max": 3,
+        "backoff_sec": [
+          60,
+          120,
+          240
+        ]
+      },
+      "start_date": "2018-01-01",
+      "max_workers": 4,
+      "rate_limit": {
+        "calls_per_min": 60,
+        "wait_on_429": true
+      },
+      "source_priority": [
+        "akshare",
+        "tushare"
+      ]
+    },
+    {
+      "name": "index_daily",
+      "enabled": true,
+      "source": "tushare",
+      "table": "index_daily",
+      "freq": "daily",
+      "codes": [
+        "ALL"
+      ],
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 49,
+        "wait_on_429": true
+      },
+      "start_date": "2018-01-01",
+      "max_workers": 1,
+      "source_priority": [
+        "tushare",
+        "akshare",
+        "baostock"
+      ]
+    },
+    {
+      "name": "etf_daily",
+      "enabled": true,
+      "source": "tushare",
+      "table": "etf_daily",
+      "freq": "daily",
+      "start_date": "2018-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 54,
+        "wait_on_429": true
+      },
+      "max_workers": 4,
+      "source_priority": [
+        "tushare",
+        "akshare",
+        "baostock"
+      ]
+    },
+    {
+      "name": "balance_statement",
+      "enabled": true,
+      "source": "xtquant",
+      "table": "balance_statement",
+      "freq": "daily",
+      "start_date": "2018-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 59,
+        "wait_on_429": true
+      },
+      "max_workers": 1,
+      "source_priority": [
+        "xtquant",
+        "tushare",
+        "akshare",
+        "baostock"
+      ]
+    },
+    {
+      "name": "income_statement",
+      "enabled": true,
+      "source": "xtquant",
+      "table": "income_statement",
+      "freq": "daily",
+      "start_date": "2018-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 65,
+        "wait_on_429": true
+      },
+      "max_workers": 8,
+      "source_priority": [
+        "xtquant",
+        "tushare",
+        "akshare",
+        "baostock"
+      ]
+    },
+    {
+      "name": "cashflow_statement",
+      "enabled": true,
+      "source": "xtquant",
+      "table": "cashflow_statement",
+      "freq": "daily",
+      "start_date": "2018-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 52,
+        "wait_on_429": true
+      },
+      "max_workers": 8,
+      "source_priority": [
+        "xtquant",
+        "tushare",
+        "akshare",
+        "baostock"
+      ]
+    },
+    {
+      "name": "stock_dividend",
+      "enabled": true,
+      "source": "tushare",
+      "table": "stock_dividend",
+      "freq": "daily",
+      "start_date": "2018-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 60,
+        "wait_on_429": true
+      },
+      "max_workers": 8,
+      "source_priority": [
+        "tushare",
+        "akshare",
+        "baostock"
+      ]
+    },
+    {
+      "name": "sw_industry",
+      "enabled": true,
+      "source": "tushare",
+      "table": "sw_industry",
+      "freq": "daily",
+      "start_date": "2018-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "retry": {
+        "max": 3,
+        "backoff_sec": [
+          30,
+          60,
+          120
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 60,
+        "wait_on_429": true
+      },
+      "max_workers": 4,
+      "source_priority": [
+        "tushare",
+        "akshare",
+        "baostock"
+      ]
+    },
+    {
+      "name": "etf_minutes",
+      "enabled": true,
+      "source": "tushare",
+      "table": "etf_minutes",
+      "freq": "1min",
+      "start_date": "2024-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "max_workers": 8,
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 60,
+        "wait_on_429": true
+      },
+      "source_priority": [
+        "tushare",
+        "akshare"
+      ]
+    },
+    {
+      "name": "stock_namechange",
+      "enabled": true,
+      "hidden": true,
+      "source": "akshare",
+      "table": "stock_namechange",
+      "freq": "daily",
+      "start_date": "2010-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "_note": "深市简称变更历史（带日期）。stock_daily 前置依赖表：stock_daily 任务自动触发首次全量拉取，后续复用已入库数据。用户不可见。仅支持 akshare（tushare 无实现）。",
+      "source_priority": [
+        "akshare"
+      ],
+      "max_workers": 4,
+      "rate_limit": {
+        "calls_per_min": 60,
+        "wait_on_429": true
+      }
+    },
+    {
+      "name": "stock_delist",
+      "enabled": true,
+      "source": "akshare",
+      "table": "stock_delist",
+      "freq": "daily",
+      "start_date": "2018-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "_note": "沪深退市公司名单（沪深两市）。用户可见任务，支持全量/增量/常驻增量三种模式统一调度。仅支持 akshare（tushare 无实现）。",
+      "source_priority": [
+        "akshare"
+      ],
+      "max_workers": 4,
+      "rate_limit": {
+        "calls_per_min": 60,
+        "wait_on_429": true
+      }
+    }
+  ],
+  "qfq_maintenance": {
+    "enabled": true,
+    "rebuild_on_gap": true
+  },
+  "health_check": {
+    "stale_alert_hours": 6,
+    "full_quality_after_run": true
+  },
+  "alert": {
+    "channels": [
+      "log"
+    ],
+    "webhook_url": ""
+  },
+  "quality_gate": {
+    "max_failure_rate": 0.0001
+  }
+}

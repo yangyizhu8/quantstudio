@@ -1,0 +1,1689 @@
+"""
+Ptrade API 兼容层
+在 QuantStudio 回测引擎上模拟 Ptrade 平台的 API 接口
+策略代码可原封不动从 Ptrade 移植运行
+
+数据 100% 来自 DuckDB（QuantStudio 数据管线产出）
+"""
+from __future__ import annotations
+
+import logging
+import datetime
+from typing import Dict, List, Optional, Any
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import pandas as pd
+import numpy as np
+
+from .libs.security_code_rules import (
+    bare_code, classify_security, exchange as security_exchange,
+    normalize_security_code, normalize_to_ptrade, normalize_to_qmt,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ==================== 全局对象 ====================
+
+class GlobalVars:
+    """模拟 Ptrade 的 g 全局变量对象"""
+    def __init__(self):
+        self.index = ""
+        self.buy_stock_count = 5
+        self.screen_stock_count = 10
+        self.df = pd.DataFrame()
+        self.pre_position_list = []
+
+
+g = GlobalVars()
+
+
+class LogWrapper:
+    """模拟 Ptrade 的 log 对象"""
+    def info(self, msg):
+        logger.info(msg)
+    def warning(self, msg):
+        logger.warning(msg)
+    def error(self, msg):
+        logger.error(msg)
+    def critical(self, msg):
+        logger.critical(msg)
+    def debug(self, msg):
+        logger.debug(msg)
+
+
+log = LogWrapper()
+
+
+# ==================== Context / Data 对象 ====================
+
+class Portfolio:
+    """模拟 Ptrade 的 context.portfolio"""
+    def __init__(self, cash: float, positions: dict):
+        self.cash = cash
+        # PTrade exposes portfolio position keys with the two-letter exchange
+        # suffixes (.SS/.SZ).  Raw ``in portfolio.positions`` membership is exact:
+        # platform strategies that mix .XSHE/.XSHG with .SZ/.SS observe the same
+        # behavior locally.  Alias-aware lookup remains available through
+        # get_position()/DataDict/CodeDict where the platform APIs normalize it.
+        self.positions = dict(positions or {})
+        # 兼容 Position 对象和 dict
+        self.market_value = sum(
+            (p.last_sale_price if hasattr(p, 'last_sale_price') else p.get('current_price', 0))
+            * (p.amount if hasattr(p, 'amount') else p.get('volume', 0))
+            for p in self.positions.values()
+        )
+        self.total_value = self.cash + self.market_value
+
+
+class Position:
+    """模拟 Ptrade 的 position 对象"""
+    def __init__(self, sid: str, volume: int, avg_cost: float, current_price: float):
+        self.sid = sid
+        self.amount = volume
+        self.enable_amount = volume  # T+1: 实际可卖由引擎控制
+        self.cost_basis = avg_cost
+        self.last_sale_price = current_price
+        self.avg_cost = avg_cost
+
+    @property
+    def market_value(self):
+        """持仓市值 = 当前价 × 持仓量"""
+        return (self.last_sale_price or 0) * (self.amount or 0)
+
+
+class Context:
+    """模拟 Ptrade 的 context 对象"""
+    def __init__(self, current_date: str, prev_date: str, portfolio: Portfolio):
+        self.current_dt = pd.Timestamp(current_date)
+        self.previous_date = pd.Timestamp(prev_date)
+        self.portfolio = portfolio
+        # blotter.current_dt：部分策略用 context.blotter.current_dt.strftime() 取当前日期
+        self.blotter = type("_Blotter", (), {"current_dt": self.current_dt})()
+
+
+class BarData:
+    """模拟 Ptrade 的 data[security] 返回的 bar 数据"""
+    def __init__(self, row: pd.Series, dt: str):
+        self.dt = dt
+        self.open = float(row.get('open', 0))
+        self.high = float(row.get('high', 0))
+        self.low = float(row.get('low', 0))
+        self.close = float(row.get('close', 0))
+        self.price = float(row.get('close', 0))  # 最新价
+        self.volume = float(row.get('volume', 0))
+        self.preclose = float(row.get('preClose', row.get('pre_close', 0)))
+        # 涨跌停价计算（用 shared_ashare_rules）
+        from .libs.shared_ashare_rules import get_price_limit_pct
+        bare = bare_code(row.get('code', ''))
+        qmt_code = normalize_to_qmt(bare)
+        if self.preclose > 0:
+            limit_pct = get_price_limit_pct(qmt_code)
+            self.high_limit = round(self.preclose * (1 + limit_pct), 2)
+            self.low_limit = round(self.preclose * (1 - limit_pct), 2)
+        else:
+            self.high_limit = 0
+            self.low_limit = 0
+
+
+class DataDict:
+    """模拟 Ptrade 的 data 字典对象（data[security] → BarData）
+
+    Ptrade 语义（文档 2783 行）：两位尾缀(.SS/.SZ)与四位尾缀(.XSHG/.XSHE)、
+    甚至裸码皆可作为键取值，互通等价。本类按裸码归一化查找以支持该行为。
+    性能优化：惰性构建 BarData，只在 data[code] 被访问时才从 curr_data 查找构建。"""
+    def __init__(self):
+        self._data: Dict[str, BarData] = {}
+        self._curr_data = None  # 全市场 DataFrame（惰性构建时用）
+        self._day_str = ""
+
+    @staticmethod
+    def _bare(code: str) -> str:
+        """提取裸码（去后缀），用于跨后缀(.SS/.XSHG/.SZ/.XSHE/裸码)归一化查找。"""
+        return bare_code(code)
+
+    def set_curr_data(self, curr_data, day_str):
+        """注入全市场 DataFrame（用于惰性构建 BarData，避免预先构建 5000 个对象）"""
+        self._curr_data = curr_data
+        self._day_str = day_str
+
+    def __getitem__(self, code: str) -> BarData:
+        bare = self._bare(code)
+        # 优先精确匹配
+        if code in self._data:
+            return self._data[code]
+        for k, v in self._data.items():
+            if self._bare(k) == bare:
+                return v
+        # 惰性构建：从 curr_data 查找对应行
+        if self._curr_data is not None and 'code' in self._curr_data.columns:
+            row = self._curr_data[self._curr_data['code'] == bare]
+            if len(row) > 0:
+                bar = BarData(row.iloc[0], self._day_str)
+                ptrade_code = code if '.' in str(code) else self._guess_ptrade_code(bare)
+                self._data[ptrade_code] = bar
+                return bar
+        return BarData(pd.Series(), "")
+
+    @staticmethod
+    def _guess_ptrade_code(bare):
+        return normalize_to_ptrade(bare)
+
+    def __contains__(self, code: str) -> bool:
+        bare = self._bare(code)
+        if code in self._data:
+            return True
+        if any(self._bare(k) == bare for k in self._data.keys()):
+            return True
+        # 惰性检查：curr_data 里有没有
+        if self._curr_data is not None and 'code' in self._curr_data.columns:
+            return bare in self._curr_data['code'].values
+        return False
+
+    def set(self, code: str, bar: BarData):
+        self._data[code] = bar
+
+
+class CodeDict(dict):
+    """支持证券代码后缀互通的 dict 子类（Ptrade 语义：.SS/.XSHG/.SZ/.XSHE/裸码等价）。
+
+    用于 get_history(is_dict=True)/get_price(is_dict=True)/check_limit 等
+    所有返回 {ptrade_code: value} 的 API，使策略用任意后缀都能取到值。
+    内部仍按四位后缀(.XSHG/.XSHE)存储，查询时按裸码归一化匹配。"""
+
+    @staticmethod
+    def _bare(code: str) -> str:
+        return bare_code(code)
+
+    def __getitem__(self, code):
+        if super().__contains__(code):
+            return super().__getitem__(code)
+        bare = self._bare(code)
+        for k in self.keys():
+            if self._bare(k) == bare:
+                return super().__getitem__(k)
+        raise KeyError(code)
+
+    def __contains__(self, code) -> bool:
+        if super().__contains__(code):
+            return True
+        return any(self._bare(k) == self._bare(code) for k in self.keys())
+
+    def get(self, code, default=None):
+        try:
+            return self[code]
+        except KeyError:
+            return default
+
+
+# ==================== Ptrade API 函数 ====================
+
+# ===================== Ptrade ORM: query / valuation =====================
+# 轻量 ORM 模拟 Ptrade 的 query(valuation.code, valuation.market_cap).filter(...) 链式查询。
+# 策略常写：q = query(valuation.code, valuation.market_cap).filter(market_cap>=X).order_by(market_cap.asc())
+#          df = get_fundamentals(q)
+
+class _Field:
+    """valuation 表字段描述符（支持比较运算符生成过滤条件）。"""
+    def __init__(self, name: str, table: str = "valuation"):
+        self.name = name      # 字段名（如 'market_cap'）
+        self.table = table    # 表名（valuation）
+
+    def __ge__(self, v): return _Filter(self.name, ">=", v)
+    def __le__(self, v): return _Filter(self.name, "<=", v)
+    def __gt__(self, v): return _Filter(self.name, ">", v)
+    def __lt__(self, v): return _Filter(self.name, "<", v)
+    def __eq__(self, v): return _Filter(self.name, "==", v)
+
+    def asc(self): return _OrderBy(self.name, "asc")
+    def desc(self): return _OrderBy(self.name, "desc")
+
+
+class _Filter:
+    def __init__(self, field: str, op: str, value):
+        self.field, self.op, self.value = field, op, value
+
+
+class _OrderBy:
+    def __init__(self, field: str, direction: str):
+        self.field, self.direction = field, direction
+
+
+class _ValuationTable:
+    """valuation 表的 ORM 描述。strategy: valuation.code / valuation.market_cap / valuation.circulating_market_cap"""
+    def __init__(self):
+        self.code = _Field("code")
+        self.market_cap = _Field("market_cap")                # 总市值（亿元）
+        self.circulating_market_cap = _Field("circ_mv")       # 流通市值（亿元）
+        self.float_value = _Field("circ_mv")
+        self.a_floats = _Field("free_share")
+        self.total_value = _Field("total_mv")
+        self.total_share = _Field("total_share")
+        self.pe_ratio = _Field("pe_ratio")
+        self.pb_ratio = _Field("pb_ratio")
+        self.ps_ratio = _Field("ps_ratio")
+        self.turnover_ratio = _Field("turnover_ratio")
+
+
+class QueryBuilder:
+    """query() 返回的查询构建器，支持链式 .filter() / .order_by() / .limit()。"""
+    def __init__(self, fields: list):
+        self._fields = fields             # [_Field, ...]
+        self._filters: list = []          # [_Filter, ...]
+        self._order_by: list = []         # [_OrderBy, ...]
+        self._limit: int = None
+
+    def filter(self, *conditions) -> "QueryBuilder":
+        self._filters.extend(conditions)
+        return self
+
+    def order_by(self, *orders) -> "QueryBuilder":
+        self._order_by.extend(orders)
+        return self
+
+    def limit(self, n: int) -> "QueryBuilder":
+        self._limit = n
+        return self
+
+    @property
+    def field_names(self) -> list:
+        return [f.name if isinstance(f, _Field) else str(f) for f in self._fields]
+
+
+def query(*fields) -> QueryBuilder:
+    """Ptrade ORM 查询入口：query(valuation.code, valuation.market_cap) → QueryBuilder"""
+    return QueryBuilder(list(fields))
+
+
+# valuation 表描述符（全局单例，策略通过 valuation.market_cap 访问）
+valuation = _ValuationTable()
+
+
+class PtradeAPI:
+    """Ptrade API 兼容层。所有 Ptrade 策略调用的函数在这里实现。
+    数据来自 DuckDB，通过 _engine 注入。"""
+
+    def __init__(self, market=None, fundamental=None, reference=None, calendar=None):
+        self._engine = None  # BacktestEngine 引用
+        self._cfg = None     # EngineConfig（A1：由 attach 从 engine.config 注入，消除 19 处硬编码）
+        self._market = market
+        self._fundamental = fundamental
+        self._reference = reference
+        self._calendar = calendar
+        self._current_day_data = None  # 当日全市场数据
+        self._prev_day_data = None     # 前一日全市场数据
+        self._current_date = ""
+        self._prev_date = ""
+        self._benchmark = "000300"
+        self._limit_mode = "LIMIT"
+        self._prices = {}  # 当日价格字典（供即时执行用）
+
+    def reset_session(self):
+        """清理一次策略运行的可变状态。"""
+        self._engine = None
+        self._cfg = None
+        self._current_day_data = None
+        self._prev_day_data = None
+        self._current_date = ""
+        self._prev_date = ""
+        self._benchmark = "000300"
+        self._limit_mode = "LIMIT"
+        self._prices = {}
+        self._query_cache = {}
+        self._daily_tasks = []
+        self._market = None
+        self._fundamental = None
+        self._reference = None
+        self._calendar = None
+        g.__dict__.clear()
+        g.__dict__.update(GlobalVars().__dict__)
+
+    def attach(self, engine, curr_data: pd.DataFrame, prev_data: pd.DataFrame,
+               curr_date: str, prev_date: str, prices: dict = None):
+        """每个交易日注入引擎数据"""
+        self._engine = engine
+        # A1：从 engine 注入 EngineConfig，替代散落的 19 处硬编码绝对路径
+        self._cfg = getattr(engine, 'config', None)
+        self._current_day_data = curr_data
+        self._prev_day_data = prev_data
+        self._current_date = curr_date
+        self._prev_date = prev_date
+        self._prices = prices or {}
+        # 清空当日查询缓存（PIT 语义：每天重新查，不跨日复用）
+        self._query_cache = {}
+        if self._market is None and self._cfg is not None:
+            from .providers.base import DataProviderRegistry
+            registry = getattr(engine, '_providers', None) or DataProviderRegistry.from_duckdb(
+                self._cfg.db_path)
+            self._market = registry.market
+            self._fundamental = registry.fundamental
+            self._reference = registry.reference
+            self._calendar = registry.calendar
+        if self._market is not None:
+            self._market.preload(prev_date, prev_date)
+        if self._fundamental is not None:
+            self._fundamental.preload(prev_date)
+        if self._reference is not None:
+            self._reference.preload()
+
+    def get_signals(self) -> list:
+        """兼容旧接口（即时执行模式下返回空列表）"""
+        return []
+
+    # -------- 设置函数 --------
+
+    def set_benchmark(self, sids):
+        """设置基准指数"""
+        code = bare_code(sids)
+        self._benchmark = code
+
+    def set_limit_mode(self, mode):
+        self._limit_mode = mode
+
+    def set_universe(self, security_list):
+        pass  # DuckDB 模式无需订阅
+
+    def set_commission(self, **kwargs):
+        """支持策略在 initialize 中动态调整回测成本。
+
+        目前主要服务 ETF 策略：
+        - commission_ratio / min_commission 生效
+        - type='ETF' 时默认关闭印花税与过户费，贴近场内 ETF 交易口径
+        """
+        if self._engine is None or not hasattr(self._engine, 'cost') or self._engine.cost is None:
+            return
+        if 'commission_ratio' in kwargs and kwargs['commission_ratio'] is not None:
+            self._engine.cost.commission_rate = float(kwargs['commission_ratio'])
+        if 'min_commission' in kwargs and kwargs['min_commission'] is not None:
+            self._engine.cost.min_commission = float(kwargs['min_commission'])
+        sec_type = str(kwargs.get('type', '')).upper()
+        if sec_type == 'ETF':
+            self._engine.cost.stamp_tax_rate = 0.0
+            self._engine.cost.transfer_fee_rate = 0.0
+
+    def set_slippage(self, slippage=None, **kwargs):
+        """Configure proportional slippage through the strategy API."""
+        if self._engine is None or not hasattr(self._engine, "cost"):
+            return
+        value = slippage
+        if value is None:
+            value = kwargs.get("slippage_ratio", kwargs.get("ratio", kwargs.get("value")))
+        if value is not None:
+            self._engine.cost.slippage_rate = max(0.0, float(value))
+            self._engine.cost.fixed_slippage = 0.0
+
+    def set_fixed_slippage(self, slippage=0.0, **kwargs):
+        """Configure an absolute yuan-per-share execution offset."""
+        if self._engine is None or not hasattr(self._engine, "cost"):
+            return
+        value = kwargs.get("value", slippage)
+        self._engine.cost.fixed_slippage = max(0.0, float(value or 0.0))
+        self._engine.cost.slippage_rate = 0.0
+    # -------- 数据查询函数 --------
+
+    def get_index_stocks(self, index_code: str, date=None) -> list:
+        """获取指数成分股（对应 Ptrade get_index_stocks）
+        通过 ReferenceDataProvider 读取。"""
+        # 标准化指数代码
+        bare = bare_code(index_code)
+        try:
+            if self._reference is None:
+                return []
+            return [self._to_ptrade_code(code) for code in
+                    self._reference.get_index_constituents(bare, date)]
+        except Exception as e:
+            logger.warning(f"get_index_stocks({index_code}) 失败: {e}")
+        return []
+
+    # ---- get_fundamentals 辅助：各表的字段定义与数据来源 ----
+    # valuation / 三大报表 / 5 张能力表 → 各表完整字段名（按 Ptrade 口径）
+    # DuckDB 现状：valuation 完整可用（stock_float_share + stock_daily）；
+    #   fin_indicator 表就绪（eps/bps/roe/pe_ttm/pb/ps_ttm/np_yoy，待 ETL 填充）；
+    #   balance/income/cashflow 三大报表无表 → 返回带字段名的空 DataFrame（Ptrade 语义：无数据返回空）。
+    _FUND_TABLES: Dict[str, List[str]] = {
+        "valuation": ["code", "float_value", "a_floats", "total_value", "total_share",
+                      "market_cap", "circulating_market_cap",
+                      "pe_ratio", "pe_ratio_lyr", "pb_ratio", "ps_ratio", "pcf_ratio",
+                      "turnover_ratio"],
+        "balance_statement": ["code", "end_date", "publ_date", "total_assets", "total_liability",
+                              "total_equity", "total_parent_equity", "minority_interest",
+                              "total_current_assets", "total_non_current_assets",
+                              "total_current_liability", "total_non_current_liability",
+                              "cash_equivalents", "account_receivable", "account_payable",
+                              "inventory", "notes_payable", "advance_payment",
+                              "fixed_asset", "intangible_asset", "goodwill"],
+        "income_statement": ["code", "end_date", "publ_date", "operating_revenue", "operating_cost",
+                             "operating_profit", "total_profit", "net_profit",
+                             "np_parent_company_owners", "minority_profit",
+                             "total_operating_revenue", "total_operating_cost",
+                             "operating_tax_surcharges", "sale_expense", "manage_expense",
+                             "finance_expense", "rd_expense", "invest_income",
+                             "non_operating_income", "non_operating_expense",
+                             "income_tax", "basic_eps", "diluted_eps"],
+        "cashflow_statement": ["code", "end_date", "publ_date",
+                               "net_operate_cash_flow", "net_invest_cash_flow",
+                               "net_finance_cash_flow", "cash_add_balance",
+                               "end_cash_and_equiv", "sale_services",
+                               "buy_services", "goods_sale_and_services",
+                               "goods_buy_and_services",
+                               "invest_long_asset", "invest_other",
+                               "fixed_asset_depreciation", "intangible_asset_amortization",
+                               "debt_to_assets", "debt_paying_cash", "dividend_interest_payment"],
+        "eps": ["code", "end_date", "publ_date", "eps", "bps", "diluted_eps",
+                "total_asset_share", "deducted_eps", "operating_eps"],
+        "profit_ability": ["code", "end_date", "publ_date",
+                           "roe", "roa", "roic", "net_profit_margin", "gross_profit_margin",
+                           "operating_profit_margin", "total_profit_net_profit",
+                           "expense_to_revenue", "operate_profit_to_profit",
+                           "net_profit_to_balance", "roe_avg", "roa_avg"],
+        "growth_ability": ["code", "end_date", "publ_date",
+                           "np_yoy", "or_yoy", "equity_yoy", "netasset_yoy",
+                           "net_profit_5y_cagr", "operating_revenue_5y_cagr",
+                           "total_assets_yoy", "deducted_np_yoy"],
+        "operating_ability": ["code", "end_date", "publ_date",
+                              "accounts_receivable_turnover", "inventory_turnover",
+                              "accounts_payable_turnover", "total_asset_turnover",
+                              "current_asset_turnover", "fixed_asset_turnover",
+                              "equity_turnover", "operating_cycle", "asset_turnover_days"],
+        "debt_paying_ability": ["code", "end_date", "publ_date",
+                                "current_ratio", "quick_ratio", "cash_ratio",
+                                "debt_to_assets", "asset_to_liability",
+                                "equity_multiplier", "long_debt_to_assets",
+                                "long_debt_to_equity", "interest_protection_ratio",
+                                "operating_cashflow_to_liability", "operating_cashflow_to_debt"],
+    }
+
+    def _execute_query(self, qb: QueryBuilder) -> pd.DataFrame:
+        """执行 ORM query（query(valuation...).filter().order_by()）。
+
+        从 stock_float_share + stock_daily 查 valuation 字段，按 QueryBuilder 的
+        filter/order_by/limit 处理，返回 DataFrame（含 code 列，Ptrade 格式）。
+        market_cap/circ_mv/total_mv 单位：亿元（stock_float_share 存元 → /1e8）。
+        """
+        try:
+            if self._fundamental is None:
+                return pd.DataFrame()
+            qd = self._prev_date or self._current_date
+            df = self._fundamental.get_valuation_query(
+                [{'field': item.field, 'op': item.op, 'value': item.value} for item in qb._filters],
+                [{'field': item.field, 'direction': item.direction} for item in qb._order_by],
+                qb._limit, qd, qb.field_names)
+            # code 转为 Ptrade 格式
+            if "code" in df.columns:
+                df["code"] = df["code"].apply(self._to_ptrade_code)
+            return df.reset_index(drop=True)
+        except Exception as e:
+            logger.warning(f"_execute_query 失败: {e}")
+            return pd.DataFrame()
+
+    def get_fundamentals(self, security, table="valuation", fields=None, date=None,
+                         start_year=None, end_year=None, report_types=None,
+                         merge_type=None, is_dataframe=False, **kwargs) -> pd.DataFrame:
+        """获取财务/估值数据（对应 Ptrade get_fundamentals）。
+
+        支持 10 张表（Ptrade 口径）：
+          valuation(估值) / balance_statement(资产负债) / income_statement(利润) /
+          cashflow_statement(现金流) / eps(每股) / profit_ability(盈利) /
+          growth_ability(成长) / operating_ability(营运) / debt_paying_ability(偿债)
+
+        数据来源（DuckDB）：
+          - valuation: stock_float_share + stock_daily（完整可用）
+          - eps/profit/growth: fin_indicator（字段 eps/bps/roe/pe_ttm/pb/ps_ttm/np_yoy）
+          - 三大报表/operating/debt_paying: 暂无源表 → 返回带字段名的空 DataFrame
+
+        返回：DataFrame，索引为 Ptrade 格式代码。无数据时返回空 DataFrame（Ptrade 语义）。
+        """
+        # ---- 当日查询缓存（同一天内相同参数只查一次，大幅加速 score_stocks 等逐只查询场景）----
+        cache_key = ("fund", tuple(sorted([str(s) for s in (security if isinstance(security, list) else [security])])),
+                     str(table), str(fields), str(date))
+        if hasattr(self, '_query_cache') and cache_key in self._query_cache:
+            return self._query_cache[cache_key]
+
+        # ---- ORM 模式：第一个参数是 QueryBuilder（query(valuation...).filter(...)）----
+        if isinstance(security, QueryBuilder):
+            return self._execute_query(security)
+
+        sec_list = security if isinstance(security, list) else [security]
+        bare_codes = [bare_code(s) for s in sec_list]
+        table = str(table).strip()
+
+        # 未提供表名 → 默认 valuation（向后兼容旧调用）
+        if table not in self._FUND_TABLES:
+            logger.warning(f"get_fundamentals 未知表名 '{table}'，回退 valuation")
+            table = "valuation"
+
+        try:
+            if self._fundamental is None:
+                return pd.DataFrame(columns=self._FUND_TABLES[table])
+            # 确定查询日期：date > 回测上一交易日 > 当日
+            # 注意：query_ms 用当天 23:59:59（+86400000-1），
+            # 因为 stock_float_share 等表的 time 是当天收盘时刻(15:00)，不能用 00:00 查
+            if date:
+                qd = pd.Timestamp(date).strftime('%Y%m%d')
+                query_ms = int(pd.Timestamp(qd, tz='Asia/Shanghai').timestamp() * 1000) + 86_399_999
+            else:
+                qd = self._prev_date or self._current_date
+                query_ms = int(pd.Timestamp(qd, tz='Asia/Shanghai').timestamp() * 1000) + 86_399_999
+
+            if table == "valuation":
+                df = self._fundamental.get_valuation(bare_codes, qd, fields)
+                if len(df) == 0 and date:
+                    df = self._fundamental.get_valuation(bare_codes, self._current_date, fields)
+                if len(df) > 0:
+                    df = df.copy()
+                    df.index = [self._to_ptrade_code(code) for code in df.index]
+            elif table in ("eps", "profit_ability", "growth_ability"):
+                df = self._fundamental.get_financial(
+                    bare_codes, table, qd, fields, start_year, end_year, report_types)
+                if len(df) > 0:
+                    df = df.copy()
+                    df.index = [self._to_ptrade_code(code) for code in df.index]
+            else:
+                df = pd.DataFrame(columns=self._FUND_TABLES[table])
+
+            # 字段筛选
+            if fields:
+                field_list = [fields] if isinstance(fields, str) else list(fields)
+                available = [f for f in field_list if f in df.columns or f == 'code']
+                if available:
+                    df = df[available]
+
+            # 写入当日缓存
+            if hasattr(self, '_query_cache'):
+                self._query_cache[cache_key] = df
+            return df
+        except Exception as e:
+            logger.warning(f"get_fundamentals 失败: {e}")
+            return pd.DataFrame(columns=self._FUND_TABLES.get(table, []))
+
+    def filter_stock_by_status(self, stocks: list, filter_type=None, query_date=None) -> list:
+        """过滤 ST/停牌/退市（对应 Ptrade filter_stock_by_status，4 种 filter_type 全支持）。
+
+        本地实现读 stock_daily 的 4 个新字段（在 aligner 数据层预计算）：
+          - isST (旧字段，xtquant 不可靠，仅作 HALT 列保留)
+          - is_st_reliable: 官方 ST/*ST（从 stock_namechange PIT 推导）
+          - is_st_reliable_source: 'namechange' | 'none'
+          - is_delisting_risk: 退市风险兜底（close<1 OR 近20日 circ_mv<5亿）
+          - is_delisting_risk_source: 'price'|'market_cap'|'both'|'none'
+
+        filter_type 语义（与 Ptrade 官方对齐）：
+          - 'ST': is_st_reliable==True OR is_delisting_risk==True
+                  （Ptrade 实际行为：ST 股票和退市风险股都不该买）
+          - 'HALT': suspendFlag==1 OR volume==0（停牌）
+          - 'DELISTING': 前一日无数据行（已退市）
+          - 'DELISTING_SORTING': is_delisting_risk==True（退市整理期）
+
+        默认 ['ST','HALT','DELISTING']（向后兼容，不含 DELISTING_SORTING）。
+        """
+        if not filter_type:
+            filter_type = ["ST", "HALT", "DELISTING"]
+
+        result = list(stocks)
+        try:
+            data = self._prev_day_data
+            if data is not None:
+                if len(data) == 0:
+                    return result
+                status = pd.DataFrame({
+                    'code': data['code'],
+                    'is_st': data.get('is_st_reliable', False),
+                    'is_halt': ((data.get('suspendFlag', 0) == 1) |
+                                (data.get('volume', 0) == 0)),
+                    'is_delisting_risk': data.get('is_delisting_risk', False),
+                    'is_delisted': False,
+                })
+            elif self._reference is not None and query_date:
+                status = self._reference.get_stock_status(
+                    [bare_code(stock) for stock in result],
+                    query_date)
+            else:
+                return result
+            if status is None or len(status) == 0:
+                return result
+
+            filtered = []
+            for stock in result:
+                bare = bare_code(stock)
+                row = status[status['code'] == bare] if 'code' in status.columns else pd.DataFrame()
+                if len(row) == 0:
+                    if "DELISTING" in filter_type:
+                        continue
+                    filtered.append(stock)
+                    continue
+
+                r = row.iloc[0]
+                if "DELISTING" in filter_type and bool(r.get('is_delisted', False)): continue
+                if "HALT" in filter_type and bool(r.get('is_halt', False)): continue
+                if "ST" in filter_type and bool(
+                        r.get('is_st', False) or r.get('is_delisting_risk', False)): continue
+                if "DELISTING_SORTING" in filter_type and bool(
+                        r.get('is_delisting_risk', False)): continue
+                filtered.append(stock)
+
+            return filtered
+        except Exception:
+            return result
+
+    def check_limit(self, security, query_date=None) -> dict:
+        """检查涨跌停（对应 Ptrade check_limit）
+        使用 shared_ashare_rules 精确涨跌停规则（主板10%/创业板20%/科创板20%/北交所30%/ST5%）
+        返回 {code: 1(涨停)/-1(跌停)/0(正常)}"""
+        from .libs.shared_ashare_rules import get_price_limit_pct
+        result = CodeDict()
+        securities = [security] if isinstance(security, str) else security
+        data = self._current_day_data
+        if data is not None:
+            status = data.copy()
+        elif self._reference is not None and (query_date or self._current_date):
+            status = self._reference.get_stock_status(
+                [bare_code(sec) for sec in securities], query_date or self._current_date)
+        else:
+            return result
+        for sec in securities:
+            bare = bare_code(sec)
+            qmt_code = normalize_to_qmt(bare)
+            ptrade_code = self._to_ptrade_code(bare)
+            row = status[status['code'] == bare] if 'code' in status.columns else pd.DataFrame()
+            if len(row) > 0:
+                r = row.iloc[0]
+                close = r.get('close', 0)
+                preclose = r.get('preClose', 0)
+                if preclose and preclose > 0:
+                    pct = (close - preclose) / preclose
+                    limit_pct = get_price_limit_pct(qmt_code)
+                    if pct >= limit_pct - 0.002:  # 容差0.2%
+                        result[ptrade_code] = 1  # 涨停
+                    elif pct <= -(limit_pct - 0.002):
+                        result[ptrade_code] = -1  # 跌停
+                    else:
+                        result[ptrade_code] = 0
+                else:
+                    result[ptrade_code] = 0
+            else:
+                result[ptrade_code] = 0
+        return result
+
+    def get_positions(self, security=None) -> dict:
+        """获取持仓（对应 Ptrade get_positions）
+        Ptrade 语义：两位/四位尾缀皆可作键取值。"""
+        positions = self._engine._get_ptrade_positions()
+        if security:
+            pos = self._lookup_position(positions, security)
+            return {security: pos} if pos is not None else {}
+        return positions
+
+    # -------- 交易函数（即时执行模式）--------
+
+    def order_target_value(self, security: str, value: float, limit_price=None):
+        """目标市值调仓（对应 Ptrade order_target_value）
+        即时执行：调用后 Account 立即更新，策略下一行可见最新状态。
+        value=0 全卖；value>0 调仓到目标市值。
+        A3: 返回 Order 对象，策略可检查 order.status 感知失败（涨跌停阻断/资金不足）。"""
+        order = self._engine._immediate_execute(
+            security, target_value=value, prices=self._prices,
+            date=self._current_date, curr_data=self._current_day_data)
+        # 成交后原地刷新 portfolio（策略持有的 context 引用不变）
+        self._engine.refresh_portfolio(self._prices)
+        return order
+
+    def order(self, security: str, amount: int, limit_price=None):
+        """按股数下单（即时执行）
+        amount>0 买入，amount<0 卖出。
+        A3: 返回 Order 对象。"""
+        order = self._engine._immediate_execute(
+            security, shares=amount, prices=self._prices,
+            date=self._current_date, curr_data=self._current_day_data)
+        self._engine.refresh_portfolio(self._prices)
+        return order
+
+    # -------- 扩展交易函数（P1 新增）--------
+
+    def order_value(self, security: str, value: float, limit_price=None):
+        """按金额买入/卖出（对应 Ptrade order_value，增量操作）
+        value>0 买入指定金额（增量加仓），value<0 卖出指定金额（增量减仓）。
+        注意：order_value 是增量，order_target_value 才是调仓到目标市值（绝对）。
+        A3: 返回 Order 对象。"""
+        bare = bare_code(security)
+        price = self._get_current_price(bare)
+        last_order = None
+        if price <= 0:
+            from .backtest_engine import Order
+            return Order(order_id=f"ord_{security}_{self._current_date}", security=security,
+                         direction="unknown", status="rejected", reason="no_price",
+                         created_dt=self._current_date)
+        if value > 0:
+            # 买入指定金额（增量）：按金额/价格算股数，向下取整到100股整数倍
+            buy_shares = int(value / price)
+            if buy_shares > 0:
+                last_order = self._engine._immediate_execute(
+                    security, shares=buy_shares, prices=self._prices,
+                    date=self._current_date, curr_data=self._current_day_data)
+        elif value < 0:
+            # 卖出指定金额（增量）
+            sell_shares = int(abs(value) / price)
+            if sell_shares > 0:
+                last_order = self._engine._immediate_execute(
+                    security, shares=-sell_shares, prices=self._prices,
+                    date=self._current_date, curr_data=self._current_day_data)
+        self._engine.refresh_portfolio(self._prices)
+        return last_order if last_order is not None else self._make_noop_order(security)
+
+    def order_target(self, security: str, target_amount: int, limit_price=None):
+        """调仓到目标股数（对应 Ptrade order_target）。
+        A3: 返回 Order 对象。"""
+        bare = bare_code(security)
+        qmt_code = self._bare_to_qmt(bare)
+        pos = self._engine.account.positions.get(qmt_code)
+        current = pos.volume if pos else 0
+        delta = target_amount - current
+        if delta != 0:
+            order = self._engine._immediate_execute(
+                security, shares=delta, prices=self._prices,
+                date=self._current_date, curr_data=self._current_day_data)
+            self._engine.refresh_portfolio(self._prices)
+            return order
+        return self._make_noop_order(security)
+
+    # -------- 数据查询函数（P1 新增）--------
+
+    def get_history(self, security=None, count=None, unit='1d', fields=None,
+                    frequency=None, field=None, security_list=None,
+                    fq=None, include=False, fill='nan', is_dict=False) -> pd.DataFrame:
+        """获取历史数据（对应 Ptrade get_history），兼容两种签名：
+
+        签名 A（security-first，向后兼容）：
+            get_history(security, count, unit='1d', fields=None)
+        签名 B（count-first，Ptrade 官方）：
+            get_history(count, frequency='1d', field='close', security_list=None, ...)
+
+        识别规则：第一个位置参数为 int → count-first 模式。
+        字段映射：money→amount, price→close, factor→pctChg。
+        is_dict=True 时返回 {code: DataFrame}。"""
+        # ---- 签名识别：security 为 int → count-first 模式 ----
+        if isinstance(security, int):
+            # Ptrade 官方签名: get_history(count, frequency='1d', field='close', security_list=None, ...)
+            # 位置参数映射：security(实参)=count, count(实参)=frequency, unit(实参)=field, fields(实参)=security_list
+            _count = security
+            _freq = count  # 第2个位置参数实际是 frequency
+            _field = unit   # 第3个位置参数实际是 field
+            _sec_list = fields  # 第4个位置参数实际是 security_list
+            count = _count
+            unit = _freq or '1d'
+            fields = _field if _field else fields
+            security = _sec_list if _sec_list else security_list
+        # security_list 优先（Ptrade 官方参数名）
+        if security is None:
+            security = security_list
+        if security is None:
+            return pd.DataFrame()
+        if count is None:
+            count = 20
+
+        sec_list = [security] if isinstance(security, str) else list(security)
+
+        # ---- 当日查询缓存（同一天内相同参数只查一次）----
+        cache_key = ("hist", tuple(sorted([str(s) for s in sec_list])),
+                     int(count), str(unit), str(fields), str(fq), bool(is_dict))
+        if hasattr(self, '_query_cache') and cache_key in self._query_cache:
+            return self._query_cache[cache_key]
+
+        # Ptrade 字段 → DuckDB 列名映射
+        field_map = {'money': 'amount', 'amount': 'amount', 'price': 'close',
+                     'factor': 'pctChg', 'pctChg': 'pctChg', 'preclose': 'preClose',
+                     'is_open': 'volume'}
+        if isinstance(fields, str):
+            fields = [fields]
+
+        try:
+            if self._market is None:
+                return {} if is_dict else pd.DataFrame()
+            dfs = {}
+            bare_codes = [bare_code(sec) for sec in sec_list]
+            # PTrade include semantics: include=False stops at previous_date;
+            # include=True extends the window through current_date.
+            anchor_date = ((self._current_date or self._prev_date) if include
+                           else (self._prev_date or self._current_date))
+            for bare, df in self._market.get_bars_by_count(
+                    bare_codes, count, anchor_date, None, fq).items():
+                df = df.copy()
+                df.index = range(-len(df), 0)
+                dfs[self._to_ptrade_code(bare)] = df
+            if is_dict:
+                _result = CodeDict(dfs)
+                if hasattr(self, '_query_cache'): self._query_cache[cache_key] = _result
+                return _result
+            if not dfs:
+                return pd.DataFrame()
+            if len(dfs) == 1:
+                df0 = list(dfs.values())[0]
+            else:
+                # 多股票且 is_dict=False：纵向拼接，保留 code 列区分（Ptrade 多股票返回含证券代码列）
+                df0 = pd.concat(dfs.values(), ignore_index=False)
+            # 字段筛选（含 Ptrade 字段名映射）
+            if fields:
+                mapped = [field_map.get(f, f) for f in fields]
+                available = [m for m in mapped if m in df0.columns]
+                if available:
+                    df0 = df0[available]
+            if hasattr(self, '_query_cache'): self._query_cache[cache_key] = df0
+            return df0
+        except Exception as e:
+            logger.debug(f"get_history 失败: {e}")
+            return {} if is_dict else pd.DataFrame()
+
+    def attribute_history(self, security, count, unit='1d', fields=None) -> pd.Series:
+        """获取历史数据（对应 Ptrade attribute_history，返回单列 Series）"""
+        df = self.get_history(security, count, unit, fields)
+        if len(df) == 0:
+            return pd.Series(dtype=float)
+        # 取最后一行（最近一日）
+        return df.iloc[-1]
+
+    def current_price(self, security) -> float:
+        """获取当前价（对应 Ptrade current_price）"""
+        bare = bare_code(security)
+        return self._get_current_price(bare)
+
+    def get_current_data(self) -> dict:
+        """返回当日全部行情数据（对应 Ptrade get_current_data）"""
+        data = {}
+        if self._current_day_data is not None:
+            for _, row in self._current_day_data.iterrows():
+                bare = str(row['code'])
+                ptrade_code = self._to_ptrade_code(bare)
+                from .ptrade_api import BarData
+                data[ptrade_code] = BarData(row, self._current_date)
+        return data
+
+    # -------- 辅助 --------
+
+    def _get_current_price(self, bare_code: str) -> float:
+        """从当日数据获取最新价"""
+        if self._current_day_data is not None:
+            row = self._current_day_data[self._current_day_data['code'] == bare_code]
+            if len(row) > 0:
+                return float(row.iloc[0].get('close', 0))
+        # fallback to prices dict
+        qmt = self._bare_to_qmt(bare_code)
+        return self._prices.get(qmt, 0)
+
+    def _make_noop_order(self, security: str):
+        """构造无操作 Order（order_target delta=0 等）— A3。
+        老策略 if order: 会判定为 False（filled=0），兼容。"""
+        from .backtest_engine import Order
+        return Order(order_id=f"noop_{security}_{self._current_date}", security=security,
+                     direction="noop", status="rejected", reason="no_operation_needed",
+                     created_dt=self._current_date)
+
+    @staticmethod
+    def _bare_to_qmt(bare: str) -> str:
+        return normalize_to_qmt(bare)
+
+    @staticmethod
+    def _to_ptrade_code(bare_code: str) -> str:
+        """Return PTrade strategy/CSV codes via the authoritative normalizer."""
+        return normalize_to_ptrade(bare_code)
+
+    def get_price(self, security, start_date=None, end_date=None, frequency='1d',
+                  fields=None, fq=None, count=None, is_dict=False):
+        """获取历史行情（对应 Ptrade get_price）
+        security: 单个代码或列表
+        start_date/end_date: 'YYYY-MM-DD'
+        frequency: '1d'/'1m'/'5m' 等
+        fields: ['open','high','low','close','volume','amount'] 等
+        fq: 'pre'(前复权)/'post'(后复权)/None(不复权)
+        count: 获取数量（与 end_date 配合）
+        is_dict: True 返回 dict[code→DataFrame]，False 返回 DataFrame"""
+        try:
+            if self._market is None:
+                return {} if is_dict else pd.DataFrame()
+
+            securities = [security] if isinstance(security, str) else security
+            dfs = {}
+            bare_codes = [bare_code(sec) for sec in securities]
+            if count and end_date:
+                provider_result = self._market.get_bars_by_count(
+                    bare_codes, count, pd.Timestamp(end_date).strftime('%Y-%m-%d'), None, fq)
+            else:
+                provider_result = self._market.get_bars(
+                    bare_codes, pd.Timestamp(start_date or '1900-01-01').strftime('%Y-%m-%d'),
+                    pd.Timestamp(end_date or self._prev_date or self._current_date).strftime('%Y-%m-%d'),
+                    None, fq)
+            for bare, df in provider_result.items():
+                if len(df) > 0:
+                    df['trade_date'] = pd.to_datetime(df['time'], unit='ms', utc=True).dt.tz_convert('Asia/Shanghai').dt.strftime('%Y-%m-%d')
+                    # 复权处理
+                    if fq == 'pre' and 'close_front' not in df.columns:
+                        pass  # stock_daily 已有 front 字段（当前查询未含，简化处理）
+                    if fields:
+                        available = [f for f in fields if f in df.columns]
+                        if available:
+                            df = df[available]
+                    dfs[self._to_ptrade_code(bare)] = df
+            if is_dict:
+                return CodeDict(dfs)
+            if len(dfs) == 1:
+                return list(dfs.values())[0]
+            return CodeDict(dfs)
+        except Exception as e:
+            logger.debug(f"get_price 失败: {e}")
+            return {} if is_dict else pd.DataFrame()
+
+    # ===================== B1 批量取数 API（性能优化，策略可选）=====================
+    # 设计原则：
+    #   1. 只新增，不改动 get_fundamentals/get_history 的签名和返回格式（向后兼容）
+    #   2. 内部复用 _preload_market_data / _preload_float（避免重复预加载）
+    #   3. 语义与 get_fundamentals/get_history 一致，仅强制 list 入参、明确批量意图
+    #   4. 消除策略层逐只调用 get_fundamentals/get_history 的 N+1 模式
+
+    def get_fundamentals_batch(self, security_list, table='valuation',
+                               fields=None, date=None) -> pd.DataFrame:
+        """B1：批量查询多只股票基本面。返回 DataFrame，index=ptrade_code。
+
+        与 get_fundamentals(security_list, ...) 的区别：
+        - 强制 list 入参，语义明确（杜绝策略层逐只循环）
+        - 始终走预加载内存路径（_preload_float），单次过滤，无 N 次 DuckDB 往返
+        - 返回格式与 get_fundamentals 完全一致（index=code，columns=fields）
+
+        典型用法（替代 小市值策略2.py score_stocks 的逐只循环）：
+            df = get_fundamentals_batch(stock_pool, 'valuation',
+                                        fields=['float_value','pe_ttm'],
+                                        date=context.previous_date)
+            # df.index 是 ptrade_code，df['float_value'] 直接是各股票流通市值
+
+        空列表 / 无数据 → 返回空 DataFrame（不报错，Ptrade 语义）。
+        """
+        if not security_list:
+            return pd.DataFrame(columns=[fields] if isinstance(fields, str) else (fields or []))
+        # 直接复用 get_fundamentals（它已支持 list + 预加载路径）
+        # 这里的价值是：(1) 明确批量意图 (2) 强制 list (3) 固化测试
+        return self.get_fundamentals(security_list, table=table, fields=fields, date=date)
+
+    def get_history_batch(self, security_list, count, unit='1d',
+                          fields=None, fq=None, include=False) -> 'CodeDict':
+        """B1：批量查询多只股票历史行情。返回 CodeDict（{ptrade_code: DataFrame}）。
+
+        与 get_history(security_list, ...) 的区别：
+        - 强制 list 入参 + 强制 is_dict 语义（返回 {code: df}，便于逐只访问）
+        - 始终走预加载内存路径（_preload_daily），单次扫描，无 N 次 DuckDB 往返
+        - count/unit/fields/fq/include 语义与 get_history 一致
+
+        典型用法（替代逐只 get_history 算动量/反转因子）：
+            hist = get_history_batch(stock_pool, 21, '1d', fields=['close'], fq='pre')
+            for code, df in hist.items():
+                ret_20d = df['close'].iloc[-1] / df['close'].iloc[0] - 1
+
+        空列表 → 返回空 CodeDict。单只 → 返回只含一个 key 的 CodeDict。
+        """
+        if not security_list:
+            return CodeDict({})
+        # 复用 get_history（已支持 list + 预加载），强制 is_dict=True 返回 dict 形式
+        result = self.get_history(security=security_list, count=count, unit=unit,
+                                  fields=fields, fq=fq, include=include, is_dict=True)
+        if isinstance(result, CodeDict):
+            return result
+        if isinstance(result, dict):
+            return CodeDict(result)
+        # get_history 可能返回单 DataFrame（单只时），包装成 CodeDict
+        if isinstance(result, pd.DataFrame) and len(security_list) == 1:
+            return CodeDict({self._to_ptrade_code(bare_code(security_list[0])): result})
+        return CodeDict({})
+
+    def get_trading_day(self, day=0):
+        """获取交易日（day>0 未来N天，day<0 过去N天，day=0 当天）
+        返回 datetime.date 对象（Ptrade 原生行为）：支持 .strftime() 和日期减法 .days"""
+        try:
+            if self._calendar is None or not self._current_date:
+                return self._current_date
+            return self._calendar.get_trading_day(self._current_date, day)
+        except Exception:
+            return self._current_date
+
+    def get_trade_days(self, start_date=None, end_date=None, count=None):
+        """获取交易日列表，返回 ndarray"""
+        try:
+            if self._calendar is None:
+                return np.array([])
+            dates = self._calendar.get_trade_days(start_date or '1900-01-01',
+                                                  end_date or self._current_date)
+            if count:
+                dates = dates[-count:]
+            return np.array([date.strftime('%Y-%m-%d') for date in dates])
+        except Exception:
+            return np.array([])
+
+    def get_all_trades_days(self, date=None):
+        """获取全部交易日，返回 ndarray"""
+        return self.get_trade_days()
+
+    def get_trading_day_by_date(self, query_date, day=0):
+        """根据日期获取对应的交易日"""
+        if day == 0:
+            return str(query_date)[:10]
+        return self.get_trading_day(day)
+
+    def run_daily(self, context, func, time='9:31'):
+        """定时任务（回测模式中等效于在 handle_data 中调用）
+        在日线回测中，run_daily 注册的 func 每日由引擎执行（无 handle_data 时自动触发）。
+        注意：不在 initialize 时立即执行（此时 context 尚不完整），仅注册。"""
+        if not hasattr(self, '_daily_tasks'):
+            self._daily_tasks = []
+        self._daily_tasks.append((func, time))
+
+    def get_position(self, security):
+        """获取单只标的持仓（对应 Ptrade get_position）
+
+        Ptrade 语义：两位/四位尾缀皆可作键取值；空仓返回 amount=0 的 Position（非 None），
+        策略常写 `get_position(code).amount == 0` 判断空仓，依赖此行为。"""
+        positions = self._engine._get_ptrade_positions()
+        pos = self._lookup_position(positions, security)
+        if pos is not None:
+            return pos
+        # 空仓：返回 amount=0 的默认 Position（Ptrade 真实平台行为）
+        return Position(sid=security, volume=0, avg_cost=0.0, current_price=0.0)
+
+    @staticmethod
+    def _lookup_position(positions: dict, security: str):
+        """在持仓 dict 中按裸码归一化查找（支持 .SS/.XSHG/.SZ/.XSHE/裸码 互通）。"""
+        if not positions:
+            return None
+        if security in positions:
+            return positions[security]
+        bare = bare_code(security)
+        for k, v in positions.items():
+            if bare_code(k) == bare:
+                return v
+        return None
+
+    def get_Ashares(self, date=None):
+        """获取全 A 股列表"""
+        try:
+            if self._reference is None or not (self._current_date or date):
+                return []
+            return [self._to_ptrade_code(code) for code in
+                    self._reference.get_all_stocks(date or self._current_date)]
+        except Exception as e:
+            logger.debug(f"get_Ashares 失败: {e}")
+            return []
+
+    # ===================== 第2批新增 API =====================
+
+    def get_stock_exrights(self, stock_code, date=None):
+        """获取证券除权除息信息（对应 Ptrade get_stock_exrights）
+        返回 DataFrame（index=date，列: allotted_ps/rationed_ps/rationed_px/
+        bonus_ps/exer_forward_a/b/exer_backward_a/b），无数据返回 None。
+        DuckDB 暂无除权数据表 → 返回 None（Ptrade 语义：输入日期无信息返回 None）。"""
+        # 预留：未来若 DuckDB 新增 stock_dividend / exrights 表，在此实现
+        return self._reference.get_exrights(bare_code(stock_code), date)
+
+    def get_stock_blocks(self, stock_code):
+        """获取证券所属板块（对应 Ptrade get_stock_blocks）
+        返回 dict {HY:行业, DY:地域, GN:概念, ZJHHY:证监会行业, ...}，无数据返回 None。
+        DuckDB 暂无板块表 → 返回 None（Ptrade 语义：已退市/无数据返回 None）。"""
+        return self._reference.get_blocks(bare_code(stock_code))
+
+    def get_industry_stocks(self, industry_code):
+        """获取行业成份股（对应 Ptrade get_industry_stocks）
+        industry_code 尾缀须为 .XBHS（聚源行业编码），返回 list[str]。
+        DuckDB 暂无行业成分表 → 返回空 list。"""
+        return [self._to_ptrade_code(code) for code in
+                self._reference.get_industry_stocks(industry_code)]
+
+    def get_reits_list(self, date=None):
+        """获取公募 REITs 基金代码列表（对应 Ptrade get_reits_list）
+        DuckDB 暂无 REITs 表 → 返回空 list。"""
+        return [self._to_ptrade_code(code) for code in self._reference.get_reits_list(date)]
+
+    # -------- ETF 相关 --------
+
+    def get_etf_list(self):
+        """获取 ETF 代码列表（对应 Ptrade get_etf_list）
+        从 stock_daily 按 ETF 代码段（510/511/512/513/515/588/159 开头）提取最新交易日活跃品种。"""
+        try:
+            if self._reference is None:
+                return []
+            return [self._to_ptrade_code(code) for code in self._reference.get_etf_list()]
+        except Exception as e:
+            logger.debug(f"get_etf_list 失败: {e}")
+            return []
+
+    def get_etf_info(self, etf_code):
+        """获取 ETF 信息（对应 Ptrade get_etf_info）
+        返回 {code: {etf_redemption_code, publish, report_unit, ...}}。
+        DuckDB 无 ETF 申赎明细表 → 仅返回基础字段（从 stock_daily 推算 last_price）。"""
+        etfs = [etf_code] if isinstance(etf_code, str) else list(etf_code)
+        bare_codes = [bare_code(code) for code in etfs]
+        info = self._reference.get_etf_info(bare_codes)
+        return {self._to_ptrade_code(code): values for code, values in info.items()}
+
+    def get_etf_stock_list(self, etf_code):
+        """获取 ETF 成分券列表（对应 Ptrade get_etf_stock_list）
+        DuckDB 无 ETF 成分券表 → 返回空 list。"""
+        return [self._to_ptrade_code(code) for code in
+                self._reference.get_etf_stock_list(bare_code(etf_code))]
+
+    def get_etf_stock_info(self, etf_code, security):
+        """获取 ETF 成分券信息（对应 Ptrade get_etf_stock_info）
+        DuckDB 无 ETF 成分券表 → 返回空 dict。"""
+        return self._reference.get_etf_stock_info(
+            bare_code(etf_code), bare_code(security))
+
+    def get_ipo_stocks(self):
+        """获取当日 IPO 申购标的（对应 Ptrade get_ipo_stocks）
+        回测模式无法获取当日柜台 IPO 列表 → 返回空 dict。"""
+        return self._reference.get_ipo_stocks()
+
+    # -------- 可转债相关 --------
+
+    def get_cb_list(self):
+        """获取可转债市场代码列表（对应 Ptrade get_cb_list）
+        可转债代码：沪市 11x/13x，深市 12x。从 stock_daily 提取最新交易日活跃品种。"""
+        try:
+            if self._reference is None:
+                return []
+            return [self._to_ptrade_code(code) for code in self._reference.get_cb_list()]
+        except Exception as e:
+            logger.debug(f"get_cb_list 失败: {e}")
+            return []
+
+    def get_cb_info(self):
+        """获取可转债基础信息（对应 Ptrade get_cb_info）
+        返回 DataFrame（列: bond_code/bond_name/stock_code/stock_name/list_date/
+        premium_rate/convert_date/maturity_date/convert_rate/convert_price/convert_value）。
+        DuckDB 无可转债基础信息表 → 返回空 DataFrame（Ptrade 语义：无权限/无数据返回空）。"""
+        return self._reference.get_cb_info()
+
+    # ===================== 第3批新增 API（市场/文件/持仓/参数/期货降级）=====================
+
+    # -------- 市场信息 --------
+
+    def get_market_list(self) -> pd.DataFrame:
+        """Return exchange, index, and block market identifiers."""
+        return pd.DataFrame([
+            {"finance_mic": "SS", "finance_name": "???????"},
+            {"finance_mic": "SZ", "finance_name": "???????"},
+            {"finance_mic": "BJ", "finance_name": "???????"},
+            {"finance_mic": "CSI", "finance_name": "????"},
+            {"finance_mic": "XBHS", "finance_name": "????"},
+        ])
+
+    def get_market_detail(self, finance_mic) -> pd.DataFrame:
+        """获取市场详细信息（对应 Ptrade get_market_detail）
+        从 DuckDB 提取该市场下的产品代码列表。
+        finance_mic: 'XSHG'/'SS'(沪) / 'XSHE'/'SZ'(深) / 'CSI'(指数) / 'XBHS'(板块)。"""
+        mic = str(finance_mic).upper()
+        try:
+            if self._reference is None:
+                return pd.DataFrame(columns=['hq_type_code', 'prod_code', 'prod_name', 'trade_time_rule'])
+            return self._reference.get_market_detail(mic)
+        except Exception as e:
+            logger.debug(f"get_market_detail 失败: {e}")
+            return pd.DataFrame(columns=['hq_type_code', 'prod_code', 'prod_name', 'trade_time_rule'])
+
+    def get_trend_data(self, date=None, stocks=None, market=None):
+        """获取集中竞价期间代码数据（对应 Ptrade get_trend_data）
+        DuckDB 无集合竞价明细 → 用当日日线 bar 近似（open 价、当日量额）。
+        返回 {ptrade_code: {time_stamp/hq_px/wavg_px/business_amount/business_balance/amount}}。"""
+        data = self._current_day_data
+        if data is None or len(data) == 0:
+            return {}
+        # 筛选股票
+        if stocks is not None:
+            wanted = [stocks] if isinstance(stocks, str) else list(stocks)
+            wanted_bare = {bare_code(s) for s in wanted}
+            sub = data[data['code'].isin(wanted_bare)]
+        elif market is not None:
+            mkts = [market] if isinstance(market, str) else list(market)
+            mkts = [m.upper() for m in mkts]
+            def in_market(c):
+                market = security_exchange(c)
+                return ((market == 'SH' and 'XSHG' in mkts)
+                        or (market == 'SZ' and 'XSHE' in mkts)
+                        or (market == 'BJ' and ('XBJ' in mkts or 'BJ' in mkts)))
+            sub = data[data['code'].apply(in_market)]
+        else:
+            sub = data
+        try:
+            ts = int(pd.Timestamp(self._current_date, tz='Asia/Shanghai').timestamp())
+        except Exception:
+            ts = 0
+        result = {}
+        for _, r in sub.iterrows():
+            ptrade_code = self._to_ptrade_code(str(r.get('code', '')))
+            result[ptrade_code] = {
+                'time_stamp': ts,
+                'hq_px': float(r.get('open', 0)),
+                'wavg_px': float(r.get('amount', 0)) / float(r['volume']) if r.get('volume', 0) > 0 else float(r.get('open', 0)),
+                'business_amount': int(r.get('volume', 0)),
+                'business_balance': int(r.get('amount', 0)),
+                'amount': 0,
+            }
+        return result
+
+    # -------- 文件/持仓工具 --------
+
+    def create_dir(self, user_path) -> bool:
+        """创建文件子目录路径（对应 Ptrade create_dir）
+        因 Ptrade 禁用 os 模块而提供；此处基于回测输出根目录创建。返回是否成功。"""
+        try:
+            base = self._cfg.research_dir if self._cfg else Path("output/research")
+            target = base / str(user_path)
+            target.mkdir(parents=True, exist_ok=True)
+            return True
+        except Exception as e:
+            logger.warning(f"create_dir({user_path}) 失败: {e}")
+            return False
+
+    def get_trades_file(self, save_path='') -> Optional[str]:
+        """获取对账数据文件（对应 Ptrade get_trades_file，仅回测）
+        导出引擎成交记录为 CSV（表头: order_id,trading_id,entrust_id,security_code,
+        order_type,volume,price,total_money,trading_fee,trade_time）。成功返回路径。"""
+        try:
+            trades = getattr(self._engine, '_all_trades', None) or getattr(self._engine, '_today_trades', [])
+            base = self._cfg.output_dir if self._cfg else Path("output")
+            out_dir = base / str(save_path) if save_path else base
+            out_dir.mkdir(parents=True, exist_ok=True)
+            fname = f"trades_{self._current_date.replace('-', '')}.csv"
+            out_path = out_dir / fname
+            cols = ['order_id', 'trading_id', 'entrust_id', 'security_code', 'order_type',
+                    'volume', 'price', 'total_money', 'trading_fee', 'trade_time']
+            if isinstance(trades, list) and len(trades) > 0:
+                df = pd.DataFrame(trades)
+                for c in cols:
+                    if c not in df.columns:
+                        df[c] = ''
+                df[cols].to_csv(out_path, index=False, encoding='utf-8-sig')
+            else:
+                pd.DataFrame(columns=cols).to_csv(out_path, index=False, encoding='utf-8-sig')
+            return str(out_path)
+        except Exception as e:
+            logger.warning(f"get_trades_file 失败: {e}")
+            return None
+
+    def get_all_positions(self) -> list:
+        """获取全部持仓（对应 Ptrade get_all_positions，仅交易）
+        回测降级：把引擎 Position 对象转成 Ptrade 柜台格式的 dict list。"""
+        if not self._engine:
+            return []
+        result = []
+        for qmt_code, pos in self._engine.account.positions.items():
+            bare = normalize_security_code(qmt_code, "bare")
+            exchange_type = {'SH': '1', 'SZ': '2', 'BJ': '3'}[
+                security_exchange(qmt_code)]
+            ptrade_code = self._to_ptrade_code(bare)
+            last_price = getattr(pos, 'last_sale_price', None) or getattr(pos, 'current_price', 0) or 0
+            amount = getattr(pos, 'volume', 0) or getattr(pos, 'amount', 0) or 0
+            cost = getattr(pos, 'avg_cost', 0) or getattr(pos, 'cost_basis', 0) or 0
+            result.append({
+                'position_str': '', 'exchange_type': exchange_type,
+                'stock_code': bare, 'stock_name': ptrade_code, 'stock_type': '0',
+                'current_amount': amount, 'enable_amount': getattr(pos, 'can_sell', amount),
+                'last_price': last_price, 'cost_price': cost,
+                'market_value': last_price * amount, 'income_balance': (last_price - cost) * amount,
+                'profit_ratio': ((last_price - cost) / cost * 100) if cost > 0 else 0,
+                'delist_flag': '0', 'delist_date': 0,
+            })
+        return result
+
+    def convert_position_from_csv(self, path) -> list:
+        """从 CSV 读取底仓参数列表（对应 Ptrade convert_position_from_csv，仅回测）
+        CSV 格式: sid,enable_amount,amount,cost_basis。返回 list[dict]。"""
+        try:
+            full = Path(path)
+            if not full.is_absolute():
+                base = self._cfg.research_dir if self._cfg else Path("output/research")
+                full = base / path
+            df = pd.read_csv(full, dtype=str)
+            result = []
+            for _, row in df.iterrows():
+                result.append({
+                    'sid': str(row.get('sid', '')),
+                    'amount': str(row.get('amount', '')),
+                    'enable_amount': str(row.get('enable_amount', row.get('amount', ''))),
+                    'cost_basis': str(row.get('cost_basis', '')),
+                })
+            return result
+        except Exception as e:
+            logger.warning(f"convert_position_from_csv({path}) 失败: {e}")
+            return []
+
+    # -------- 参数与期货（降级实现）--------
+
+    def set_parameters(self, **kwargs):
+        """设置策略配置参数（对应 Ptrade set_parameters，仅交易）
+        回测模式：记录参数，返回 None。"""
+        if not hasattr(self, '_parameters'):
+            self._parameters = {}
+        self._parameters.update(kwargs)
+        return None
+
+    def get_instruments(self, contract) -> dict:
+        """Return basic security metadata; futures remain unsupported locally."""
+        bare = normalize_security_code(contract, "bare")
+        sec_type = classify_security(contract)
+        supported = {'main_board', 'chinext', 'star_market', 'bse', 'etf', 'convertible_bond'}
+        if sec_type in supported:
+            market = security_exchange(contract)
+            return {
+                'contract_code': self._to_ptrade_code(bare),
+                'contract_name': self._to_ptrade_code(bare),
+                'exchange': {'SH': '???', 'SZ': '???', 'BJ': '???'}[market],
+                'trade_unit': 100,
+                'contract_multiplier': 1.0,
+                'trade_code': bare,
+                'margin_rate': 1.0,
+            }
+        return {}
+
+    def get_dominant_contract(self, contract, date=None) -> dict:
+        """获取主力合约代码（对应 Ptrade get_dominant_contract）
+        DuckDB 无期货数据 → 返回空 dict。"""
+        logger.debug(f"get_dominant_contract({contract}): DuckDB 无期货数据，返回 {{}}")
+        return {}
+
+    def get_margin_rate(self, transaction_code) -> float:
+        """获取保证金比例（对应 Ptrade get_margin_rate，期货）
+        DuckDB 无期货 → 返回 1.0（全额）。"""
+        return 1.0
+
+    def get_underlying_code(self, symbols) -> dict:
+        """获取证券关联代码（对应 Ptrade get_underlying_code，交易模块）
+        DuckDB 无关联代码表 → 返回空 dict。"""
+        logger.debug("get_underlying_code: DuckDB 无关联代码表，返回 {}")
+        return {}
+
+    def get_user_name(self, login_account=True) -> Optional[str]:
+        """获取登录终端的资金账号（对应 Ptrade get_user_name，回测/交易）
+        回测模式无真实柜台账号 → 返回固定回测账号标识。"""
+        return "BACKTEST_ACCOUNT"
+
+    def get_research_path(self) -> str:
+        """获取研究界面根目录路径（对应 Ptrade get_research_path，回测/交易）
+        返回 QuantStudio 研究目录路径。"""
+        return str(self._cfg.research_dir) if self._cfg else "output/research"
+
+    def get_current_kline_count(self) -> int:
+        """获取当前时间的分钟 bar 数量（对应 Ptrade get_current_kline_count）
+        日线回测模式：返回当前回测日在全市场交易日历中的序号（近似分钟 bar 数）。
+        一交易日 240 分钟，日线回测取当日已过去的分钟数（收盘=240）。"""
+        try:
+            if self._calendar is None or not self._current_date:
+                return 0
+            return self._calendar.get_kline_count(self._current_date)
+        except Exception:
+            return 0
+
+    def get_stock_name(self, stocks):
+        """获取股票名称（DuckDB 无 name 字段，返回代码作为名称）"""
+        if isinstance(stocks, str):
+            return {stocks: stocks}
+        return {s: s for s in stocks}
+
+    def get_stock_info(self, stocks, field=None):
+        """获取股票信息"""
+        if isinstance(stocks, str):
+            stocks = [stocks]
+        result = {}
+        for s in stocks:
+            result[s] = {'name': s, 'code': s}
+        if field and isinstance(stocks, str) and len(result) == 1:
+            return list(result.values())[0].get(field)
+        return result
+
+    def get_security_info(self, code):
+        """获取证券基础信息（对应 Ptrade get_security_info）
+        返回含 start_date（上市日期）的对象，策略用于剔除次新股。"""
+        bare = bare_code(code)
+        # 当日缓存（上市日期不变，同一天内重复查直接返回）
+        cache_key = ("sec_info", bare)
+        if hasattr(self, '_query_cache') and cache_key in self._query_cache:
+            return self._query_cache[cache_key]
+        # 优先从预加载查（避免逐只 MIN(time) 查询）
+        info = self._reference.get_security_info(bare) if self._reference is not None else None
+        start_dt = info.get('start_date') if info else None
+        # 返回轻量对象（支持 .start_date 属性访问）
+        result = type("SecurityInfo", (), {
+            "code": code, "start_date": start_dt,
+            "display_name": code, "name": code,
+        })()
+        if hasattr(self, '_query_cache'):
+            self._query_cache[cache_key] = result
+        return result
+
+    def get_industry(self, code):
+        """获取证券行业信息（对应 Ptrade get_industry）
+        返回 {'sw_l1': {'industry_code': ..., 'industry_name': ...}} 格式。
+        从 sw_industry 表查申万一级行业；无数据返回 None。"""
+        bare = bare_code(code)
+        try:
+            if self._reference is None:
+                return None
+            return self._reference.get_industry(bare)
+        except Exception:
+            return None
+
+    def get_stock_status(self, stocks, query_type='ST', query_date=None):
+        """获取股票状态（ST/停牌/退市/退市整理期）。
+        query_type='ST': 返回 {code: bool}，True=官方 ST/*ST 或退市风险股
+                         （与 filter_stock_by_status ST 分支语义一致）
+        query_type='HALT': 返回 {code: bool}，True=停牌
+        query_type='DELISTING_SORTING': 返回 {code: bool}，True=退市风险股（兜底判定）
+
+        数据来源：stock_daily 的 is_st_reliable / is_delisting_risk（aligner 预计算）。
+        """
+        if isinstance(stocks, str):
+            stocks = [stocks]
+        result = {}
+        data = self._prev_day_data
+        status = None
+        if data is None and self._reference is not None and (query_date or self._prev_date):
+            status = self._reference.get_stock_status(
+                [bare_code(stock) for stock in stocks], query_date or self._prev_date)
+        if data is None and status is None:
+            return {s: False for s in stocks}
+        for s in stocks:
+            bare = bare_code(s)
+            row = ((status[status['code'] == bare] if 'code' in status.columns else pd.DataFrame())
+                   if status is not None else
+                   (data[data['code'] == bare] if 'code' in data.columns else pd.DataFrame()))
+            if len(row) > 0:
+                r = row.iloc[0]
+                if query_type == 'ST':
+                    result[s] = bool(r.get('is_st', r.get('is_st_reliable', False)) or
+                                     r.get('is_delisting_risk', False))
+                elif query_type == 'HALT':
+                    result[s] = bool(r.get('is_halt', False) or
+                                     r.get('suspendFlag', 0) == 1 or r.get('volume', 0) == 0)
+                elif query_type == 'DELISTING_SORTING':
+                    result[s] = bool(r.get('is_delisting_risk', False))
+                else:
+                    result[s] = False
+            else:
+                result[s] = False
+        return result
+
+    def get_orders(self, security=None):
+        """获取当日订单列表"""
+        if not hasattr(self._engine, '_today_orders'):
+            return []
+        orders = self._engine._today_orders
+        if security:
+            return [o for o in orders if o.get('code') == security]
+        return orders
+
+    def get_trades(self):
+        """获取当日成交列表"""
+        if not hasattr(self._engine, '_today_trades'):
+            return []
+        return self._engine._today_trades
+
+    def get_open_orders(self, security=None):
+        """获取未成交订单（即时执行模式下始终为空）"""
+        return []
+
+    def get_order(self, order_id):
+        """根据 order_id 查订单"""
+        return None
+
+    def cancel_order(self, order_param):
+        """撤单（即时执行模式下无法撤单，no-op）"""
+        pass
+
+    def set_volume_ratio(self, volume_ratio=0.25):
+        """设置成交量占比限制"""
+        self._volume_ratio = volume_ratio
+
+    def set_yesterday_position(self, poslist):
+        """设置初始持仓（底仓）"""
+        if self._engine:
+            for pos in poslist:
+                code = pos.get('sid', pos.get('code', ''))
+                bare = bare_code(code)
+                qmt = normalize_to_qmt(code)
+                volume = int(pos.get('amount', pos.get('volume', 0)))
+                cost = float(pos.get('cost_basis', pos.get('avg_cost', 10.0)))
+                from .backtest_engine import Position as Pos
+                self._engine.account.positions[qmt] = Pos(
+                    code=qmt, volume=volume, avg_cost=cost, can_sell=volume)
+                self._engine.account.cash -= volume * cost
+
+    def get_snapshot(self, security):
+        """获取实时快照（回测模式返回当日 bar 数据）"""
+        bare = bare_code(security)
+        data = self._current_day_data
+        if data is None:
+            return {}
+        row = data[data['code'] == bare] if 'code' in data.columns else pd.DataFrame()
+        if len(row) == 0:
+            return {}
+        r = row.iloc[0]
+        return {
+            'last_price': r.get('close', 0),
+            'open': r.get('open', 0),
+            'high': r.get('high', 0),
+            'low': r.get('low', 0),
+            'volume': r.get('volume', 0),
+            'amount': r.get('amount', 0),
+            'preclose': r.get('preClose', 0),
+        }
+
+    def get_frequency(self):
+        """获取回测频率"""
+        return 'daily'
+
+    def get_business_type(self):
+        """获取业务类型"""
+        return 'stock'
+
+    def get_MACD(self, close, short=12, long=26, m=9):
+        """Ptrade 原生 MACD"""
+        from .libs.MyTT import MACD
+        return MACD(np.array(close), short, long, m)
+
+    def get_KDJ(self, high, low, close, n=9, m1=3, m2=3):
+        """Ptrade 原生 KDJ"""
+        from .libs.MyTT import KDJ
+        return KDJ(np.array(high), np.array(low), np.array(close), n, m1, m2)
+
+    def get_RSI(self, close, n=6):
+        """Ptrade 原生 RSI"""
+        from .libs.MyTT import RSI
+        return RSI(np.array(close), n)
+
+    def get_CCI(self, high, low, close, n=14):
+        """Ptrade 原生 CCI"""
+        from .libs.MyTT import CCI
+        return CCI(np.array(high), np.array(low), np.array(close), n)
+
+
+# ==================== 全局 API 实例 ====================
+
+_api = PtradeAPI()
+
+# 导出为 Ptrade 策略期望的全局函数名
+set_benchmark = _api.set_benchmark
+set_limit_mode = _api.set_limit_mode
+set_backtest = lambda *a, **kw: None
+set_universe = _api.set_universe
+set_commission = _api.set_commission
+set_slippage = _api.set_slippage
+set_fixed_slippage = _api.set_fixed_slippage
+get_index_stocks = _api.get_index_stocks
+get_fundamentals = _api.get_fundamentals
+filter_stock_by_status = _api.filter_stock_by_status
+check_limit = _api.check_limit
+get_positions = _api.get_positions
+get_position = _api.get_position
+order_target_value = _api.order_target_value
+order = _api.order
+order_value = _api.order_value
+order_target = _api.order_target
+get_history = _api.get_history
+get_price = _api.get_price
+attribute_history = _api.attribute_history
+# B1 批量取数 API（模块级绑定，供 ptrade_import 注入）
+get_fundamentals_batch = _api.get_fundamentals_batch
+get_history_batch = _api.get_history_batch
+current_price = _api.current_price
+get_current_data = _api.get_current_data
+get_trading_day = _api.get_trading_day
+get_trade_days = _api.get_trade_days
+get_all_trades_days = _api.get_all_trades_days
+get_trading_day_by_date = _api.get_trading_day_by_date
+run_daily = _api.run_daily
+get_Ashares = _api.get_Ashares
+get_stock_name = _api.get_stock_name
+get_stock_info = _api.get_stock_info
+get_stock_status = _api.get_stock_status
+get_security_info = _api.get_security_info
+get_industry = _api.get_industry
+get_orders = _api.get_orders
+get_trades = _api.get_trades
+get_open_orders = _api.get_open_orders
+get_order = _api.get_order
+cancel_order = _api.cancel_order
+set_volume_ratio = _api.set_volume_ratio
+set_yesterday_position = _api.set_yesterday_position
+get_snapshot = _api.get_snapshot
+get_frequency = _api.get_frequency
+get_business_type = _api.get_business_type
+get_MACD = _api.get_MACD
+get_KDJ = _api.get_KDJ
+get_RSI = _api.get_RSI
+get_CCI = _api.get_CCI
+is_trade = lambda: False  # 回测模式返回 False（Ptrade 语义）
+
+# ===== 第2批新增：财务/除权/板块/行业/ETF/可转债 =====
+get_stock_exrights = _api.get_stock_exrights
+get_stock_blocks = _api.get_stock_blocks
+get_industry_stocks = _api.get_industry_stocks
+get_reits_list = _api.get_reits_list
+get_etf_list = _api.get_etf_list
+get_etf_info = _api.get_etf_info
+get_etf_stock_list = _api.get_etf_stock_list
+get_etf_stock_info = _api.get_etf_stock_info
+get_ipo_stocks = _api.get_ipo_stocks
+get_cb_list = _api.get_cb_list
+get_cb_info = _api.get_cb_info
+
+# ===== 第3批新增：市场/文件/持仓/参数/期货降级 =====
+get_market_list = _api.get_market_list
+get_market_detail = _api.get_market_detail
+get_trend_data = _api.get_trend_data
+create_dir = _api.create_dir
+get_trades_file = _api.get_trades_file
+get_all_positions = _api.get_all_positions
+convert_position_from_csv = _api.convert_position_from_csv
+set_parameters = _api.set_parameters
+get_instruments = _api.get_instruments
+get_dominant_contract = _api.get_dominant_contract
+get_margin_rate = _api.get_margin_rate
+get_underlying_code = _api.get_underlying_code
+get_user_name = _api.get_user_name
+get_research_path = _api.get_research_path
+get_current_kline_count = _api.get_current_kline_count
+
+# ===== ORM 查询（query/valuation，模块级函数/对象）=====
+# query 和 valuation 是模块级定义的，非 PtradeAPI 实例方法，已在上方定义
+# 此处显式声明确保 ptrade_import 可导入（Python 模块顶层名称自动可见，无需赋值）

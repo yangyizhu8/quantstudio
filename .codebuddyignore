@@ -1,0 +1,24 @@
+# 大型数据库文件
+data/
+*.db
+*.db-journal
+*.db.wal
+
+# 虚拟环境
+venv_quant_studio/
+venv/
+.venv/
+
+# 回测产物
+output/
+
+# 编译缓存
+__pycache__/
+*.pyc
+*.egg-info/
+
+# 日志
+*.log
+
+# 临时文件
+*.tmp
