@@ -114,13 +114,46 @@ class TestInstallSkill:
     def test_quick_validate_missing_fails_and_rolls_back(self, dest_root, monkeypatch):
         """If quick_validate.py cannot be found, install FAILS + rolls back.
 
+        _find_quick_validate now RAISES FileNotFoundError (was returning None).
         Validation is the install's acceptance gate — an unverified install must
-        not be reported as success. (Reviewer fix: was returning True.)
+        not be reported as success.
         """
-        monkeypatch.setattr(install_skill, "_find_quick_validate", lambda: None)
+        def raise_missing():
+            raise FileNotFoundError("quick_validate.py not found")
+        monkeypatch.setattr(install_skill, "_find_quick_validate", raise_missing)
         ok, dest, msg = install_skill.install_skill(
             source=SOURCE, dest_root=dest_root, name="qs-no-qv",
         )
         assert not ok
         assert "rolled back" in msg
         assert not dest.exists(), "unverified install must be rolled back"
+
+    def test_bundled_quick_validate_used(self, monkeypatch):
+        """Install uses the BUNDLED quick_validate.py (no external dependency).
+
+        The bundled copy lives in the Skill's own scripts/ dir, so the install
+        works on any agent client (ZCode / Claude Code / Codex / CodeBuddy)
+        without requiring skill-creator to be installed.
+        """
+        qv = install_skill._find_quick_validate()
+        assert qv.name == "quick_validate.py"
+        # bundled = inside the quantstudio-strategy-compiler scripts dir
+        assert qv.parent.name == "scripts"
+        assert "quantstudio-strategy-compiler" in str(qv)
+
+    @pytest.mark.parametrize("agent", ["claude", "codex", "codebuddy"])
+    def test_multi_agent_dest_root(self, agent, tmp_path):
+        """--agent selects the correct destination root for each client."""
+        dest = tmp_path / "skills"
+        ok, installed, msg = install_skill.install_skill(
+            source=SOURCE, dest_root=dest, name="qs-test", agent=agent,
+        )
+        assert ok, msg
+        assert installed == dest / "qs-test"
+
+    def test_unknown_agent_rejected(self, tmp_path):
+        """An unrecognized --agent value raises (no silent wrong-target install)."""
+        with pytest.raises(ValueError, match="unknown --agent"):
+            install_skill.install_skill(
+                source=SOURCE, dest_root=None, name="x", agent="bogus-client",
+            )

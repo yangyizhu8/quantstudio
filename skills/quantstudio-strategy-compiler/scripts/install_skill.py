@@ -29,10 +29,20 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Default install root: the directory the running agent reads skills from.
-# ~/.agents/skills/ is where qf-rock-pipeline / x2strategy / etc. already live
-# (verified at CP8 dev time).
-_DEFAULT_DEST_ROOT = Path.home() / ".agents" / "skills"
+# Install roots per agent client (user-level). --agent selects which; "auto"
+# picks the first whose base dir already exists (a hint the client is installed).
+# Claude Code also supports a PROJECT-level .claude/skills/ (see README); pass
+# --dest-root <project>/.claude/skills explicitly for that.
+_AGENT_DEST_ROOTS: dict[str, Path] = {
+    "zcode": Path.home() / ".agents" / "skills",
+    "codex": Path.home() / ".codex" / "skills",
+    "claude": Path.home() / ".claude" / "skills",
+    "codebuddy": Path.home() / ".codebuddy" / "skills",
+}
+
+# Default (back-compat): ZCode's ~/.agents/skills, where this project's other
+# skills already live. Override via --agent or --dest-root.
+_DEFAULT_DEST_ROOT = _AGENT_DEST_ROOTS["zcode"]
 
 # Default source: the project-tracked Skill.
 # Script lives at <repo>/skills/quantstudio-strategy-compiler/scripts/install_skill.py
@@ -42,19 +52,50 @@ _DEFAULT_SOURCE = (
     / "skills" / "quantstudio-strategy-compiler"
 )
 
-# quick_validate.py locations, searched in order. The canonical one ships with
-# the skill-creator system skill; a couple of historical copies exist.
-_QUICK_VALIDATE_CANDIDATES = [
-    Path.home() / ".codex" / "skills" / ".system" / "skill-creator" / "scripts" / "quick_validate.py",
-    Path.home() / ".agents" / "skills_archive" / "_retired" / "skill-creator" / "scripts" / "quick_validate.py",
-]
+
+def _resolve_dest_root(agent: str | None, dest_root: Path | None) -> Path:
+    """Resolve the install destination root from --agent / --dest-root.
+
+    --dest-root wins. Else --agent selects a known client root. "auto" (default)
+    picks the first agent root whose parent exists (client installed), falling
+    back to the ZCode default.
+    """
+    if dest_root is not None:
+        return dest_root
+    if agent and agent != "auto":
+        if agent not in _AGENT_DEST_ROOTS:
+            raise ValueError(
+                f"unknown --agent {agent!r}; choose from {list(_AGENT_DEST_ROOTS)} "
+                f"or 'auto', or pass --dest-root"
+            )
+        return _AGENT_DEST_ROOTS[agent]
+    # auto: prefer a client root that already exists on this machine.
+    for root in _AGENT_DEST_ROOTS.values():
+        if root.parent.exists():
+            return root
+    return _DEFAULT_DEST_ROOT
 
 
-def _find_quick_validate() -> Path | None:
-    for c in _QUICK_VALIDATE_CANDIDATES:
+def _find_quick_validate() -> Path:
+    """Locate quick_validate.py: the BUNDLED copy (always present in this Skill's
+    scripts/) is the primary source, so the install never depends on an external
+    skill-creator path (which differs per agent client). The canonical
+    ~/.codex copy is a secondary fallback (kept for parity, not required).
+    """
+    bundled = Path(__file__).resolve().parent / "quick_validate.py"
+    if bundled.exists():
+        return bundled
+    # Fallback: canonical skill-creator copy (historical locations).
+    for c in (
+        Path.home() / ".codex" / "skills" / ".system" / "skill-creator" / "scripts" / "quick_validate.py",
+        Path.home() / ".agents" / "skills_archive" / "_retired" / "skill-creator" / "scripts" / "quick_validate.py",
+    ):
         if c.exists():
             return c
-    return None
+    raise FileNotFoundError(
+        "quick_validate.py not found: neither the bundled copy "
+        f"({bundled}) nor any fallback exists. The Skill install is incomplete."
+    )
 
 
 def _validate_skill(source: Path) -> list[str]:
@@ -76,13 +117,14 @@ def install_skill(
     *,
     force: bool = False,
     skip_validate: bool = False,
+    agent: str | None = None,
 ) -> tuple[bool, Path, str]:
     """Install the Skill. Returns (ok, installed_path, message).
 
     On failure (validation or pre-checks), no partial install is left behind.
     """
     source = Path(source) if source else _DEFAULT_SOURCE
-    dest_root = Path(dest_root) if dest_root else _DEFAULT_DEST_ROOT
+    dest_root = _resolve_dest_root(agent, dest_root)
     # Derive the skill name from SKILL.md frontmatter `name:` if not given.
     name = name or _read_skill_name(source) or source.name
     dest = dest_root / name
@@ -110,18 +152,14 @@ def install_skill(
         return True, dest, f"installed (validation skipped): {dest}"
 
     # Chain quick_validate on the INSTALLED copy (not the source).
-    qv = _find_quick_validate()
-    if qv is None:
-        # Validation is the install's acceptance gate. If the validator itself
-        # cannot be found, the install is UNVERIFIED — roll back so an unverified
-        # Skill never shadows the source. (Use --skip-validate to install
-        # without verification, accepting responsibility explicitly.)
+    # The bundled quick_validate.py (in this Skill's own scripts/) is the primary
+    # source, so this never depends on an external skill-creator install.
+    try:
+        qv = _find_quick_validate()
+    except FileNotFoundError as e:
+        # Validator missing = unverified install = roll back.
         shutil.rmtree(dest, ignore_errors=True)
-        return False, dest, (
-            f"quick_validate.py not found in known locations "
-            f"({[str(c) for c in _QUICK_VALIDATE_CANDIDATES]}); install rolled back "
-            f"(unverified install not allowed — pass --skip-validate to force)."
-        )
+        return False, dest, f"{e}; install rolled back (--skip-validate to force)."
 
     # Attention point ② (same as smoke): force UTF-8 so console codepage cannot
     # corrupt quick_validate's output on Windows.
@@ -165,7 +203,12 @@ def _read_skill_name(source: Path) -> str | None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Install quantstudio-strategy-compiler Skill")
     parser.add_argument("--source", default=None, help=f"Source Skill dir (default: {_DEFAULT_SOURCE})")
-    parser.add_argument("--dest-root", default=None, help=f"Install root (default: {_DEFAULT_DEST_ROOT})")
+    parser.add_argument("--dest-root", default=None,
+                        help="Install root (overrides --agent). For Claude Code project-level, "
+                             "use <project>/.claude/skills")
+    parser.add_argument("--agent", default="auto",
+                        choices=["auto", "zcode", "codex", "claude", "codebuddy"],
+                        help="Target agent client (default: auto = first existing root)")
     parser.add_argument("--name", default=None, help="Skill name (default: from SKILL.md frontmatter)")
     parser.add_argument("--force", action="store_true", help="Overwrite existing destination")
     parser.add_argument("--skip-validate", action="store_true", help="Skip quick_validate chain")
@@ -175,6 +218,7 @@ def main(argv: list[str] | None = None) -> int:
         source=Path(args.source) if args.source else None,
         dest_root=Path(args.dest_root) if args.dest_root else None,
         name=args.name, force=args.force, skip_validate=args.skip_validate,
+        agent=args.agent,
     )
     print(("OK: " if ok else "FAIL: ") + msg)
     return 0 if ok else 1
