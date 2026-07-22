@@ -13,8 +13,8 @@
 | PR2 `next_open` semantics | PASS | Real pending-order queue implemented; close/open zero-touch verified by real Fidelity gates; user confirmed |
 | PR3 Multi-frequency Provider | PASS / WAITING_CONFIRMATION | Provider frequency routing implemented (native freq only; aggregation deferred to PR3.5); daily path byte-level unchanged |
 | PR4 Minute event engine | CONFIRMED (2026-07-22) | Minute event loop implemented (main-loop branch + precise run_daily + ETF T+0 minute-only); daily path byte-level unchanged; **real-minute smoke PASS** (510050 ETF × 2026-07-17 × full-universe); **end-labeled verified** (241 bars/day, 09:30 call-auction O=H=L=C); **GIL defect fixed** (batch loading, was deferred perf item that became functional blocker on real data) |
-| PR5 Skill skeleton | NOT_STARTED | No incomplete production Skill created |
-| PR6 IR/renderers/validators | NOT_STARTED | Planned |
+| PR5 Skill skeleton | DONE (0.1.0-skeleton, 2026-07-22) | Skill created at `skills/quantstudio-strategy-compiler/` (SKILL.md + agents/openai.yaml + 11 references + 3 schemas + 2 scripts); quick_validate PASS; inspect_capabilities live run READY (honest probe, tick PLANNED); validate_strategy_spec PR0 example green + 3 violation variants red; awaiting user confirmation before PR6 |
+| PR6 IR/renderers/validators | IN_PROGRESS (PR6a DELIVERED 2026-07-22, PR6b NOT_STARTED) | **PR6a/PR6b 拆分授权偏离**（用户 2026-07-22 批准）：PR6a = IR 契约 + builder + dual renderer + 2 validators + case 1 e2e（33 tests）；PR6b = 5 validators + install_skill + 2 templates + 9 golden cases + operation 扩展。详见 pr6a-implementation-report.md |
 | PR7 Fidelity closure | NOT_STARTED | Planned |
 
 ## PR0 acceptance
@@ -41,7 +41,7 @@ PR0 report: `docs/strategy-compiler/pr0-implementation-report.md`.
 | `security_code_rules_version` | `1.0.0` | PR1 authoritative runtime module |
 | `ptrade_profile_version` | `1.0.0-default` | default public API profile |
 | `renderer_version` | `0.0.0-planned` | planned for PR6 |
-| `skill_version` | `0.0.0-planned` | planned for PR5 |
+| `skill_version` | `0.1.0-skeleton` | PR5: Skill skeleton created (SKILL.md + references + schemas + 2 scripts); rendering arrives in PR6 |
 
 ## PR1 completed work
 

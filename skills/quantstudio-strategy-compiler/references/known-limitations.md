@@ -6,16 +6,30 @@
 
 These are documented, accepted limitations of the current compiler/runtime. They are NOT bugs — each was a conscious scope decision with a deferral trigger. The Skill must surface these to users so Specs don't assume capabilities that don't exist yet.
 
-## PR5 (Skill skeleton) — current scope limits
+## PR6a (IR + render + 2 validators) — DELIVERED 2026-07-22
 
-- **No code rendering**. PR5 stops at Spec (R2.5 user confirmation). Rendering to `.py` (QuantStudio + PTrade) is PR6. A user asking for code in PR5 must be told "rendering is PR6 scope".
-- **No IR**. `build_strategy_ir.py` is PR6. The Spec's `signals.steps` map conceptually to future SignalNodes but no IR is built.
-- **No install_skill.py**. Originally listed in the minimal-skeleton scripts (master plan §4.2 line 296), removed from PR5 because §7.29 does not mandate it. Re-added in PR6. (Decision chain: PR5 plan review, user-approved 2026-07-22.)
-- **inspect_capabilities.py covers the core subset** of the 14 data-gate checks (§8). Remaining checks marked NOT_IMPLEMENTED, completed in PR6.
+- **IR contract authored** (`docs/strategy-compiler/strategy-ir-contract.md`): 11 node types × 9 fields, `signals.steps`→node mapping, 12 cross-node invariants, 10 lookahead high-risk items mapped to rule IDs.
+- **IR builder + renderer delivered**: `build_strategy_ir.py` (Spec→IR), `render.py` (IR→dual .py via Jinja2), 4 templates (QS/PTrade × daily/minute).
+- **2 validators delivered**: `scan_lookahead` (10 high-risk items, all BLOCK; #10 PR3.5-deferred), `validate_local_strategy` (syntax + lifecycle + API whitelist + Guard + semantics contract).
+- **Supported operations (PR6a)**: `ma` (IndicatorNode), `cross` (SignalNode). Others raise with step id + "PR6b 扩展" — never silently downgrade.
+- **e2e stops at static validation**. `run_smoke_backtest` (actual backtest execution) is PR6b. PR6a case 1 verifies: spec→IR→render→compile→Guard→scan_lookahead→validate_local all PASS, but does NOT run a backtest.
+- **33 tests**: 20 e2e (强一致性 + IR 承重 + 变体 + 差异层 + 黄金保护 + validator 正向) + 13 negative (10 lookahead high-risk + 3 local-strategy).
 
-## PR6 — not yet started
+## PR6b — remaining PR6 scope (NOT_STARTED)
 
-- IR nodes (11 types), dual renderers, 7 validators (validate_local_strategy / validate_ptrade_portability / scan_lookahead / check_hard_filters / compare_strategy_variants / run_smoke_backtest). All `0.0.0-planned`.
+- 5 validators: `validate_ptrade_portability` / `check_hard_filters` / `compare_strategy_variants` (14-dimension consistency) / `run_smoke_backtest` (actual execution) / `validate_strategy_spec` IR-level upgrade.
+- `install_skill.py` (copy project skill → user skill dir, chain quick_validate).
+- 2 templates: `strategy_spec.json` / `run_card.json` skeletons.
+- 9 golden cases (case 2-10 from master plan §7.37).
+- `build_strategy_ir` operation expansion: `pct_change`/`ema`/`std`/`zscore`/`rank`/`top_n`/`threshold`/`compare` + Factor/Ranking full impl + RiskNode stop_loss/take_profit.
+- Multi-stock universe rendering (index_constituents/list): PR6a templates only fully render single_stock.
+- 1m→5m aggregation lookahead check (#10): blocked on PR3.5 IndicatorNode frequency field.
+
+## PR5 (Skill skeleton) — completed
+
+- **No code rendering in PR5** (PR6a now delivers it).
+- **No install_skill.py** (PR6b).
+- **inspect_capabilities.py covers the core subset** of the 14 data-gate checks (§8).
 
 ## PR3.5 — 1m aggregation deferred
 

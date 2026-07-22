@@ -1,0 +1,332 @@
+{
+  "strategy_ir_version": "1.0",
+  "strategy_id": "case1_dual_ma",
+  "source_spec_sha256": "fd3639dbe1c43362ae77f0eefa93438bb3e54f5562861289da9bac3efe6bddf2",
+  "contract_versions": {
+    "strategy_spec_version": "1.0.0",
+    "engine_semantics_version": "0.1.0-legacy",
+    "provider_contract_version": "0.2.0-frequency-aware",
+    "security_code_rules_version": "1.0.0",
+    "ptrade_profile_version": "1.0.0-default",
+    "renderer_version": "0.0.0-planned",
+    "skill_version": "0.1.0-skeleton"
+  },
+  "engine_profile": {
+    "profile_id": "daily-bar-v1",
+    "event_type": "bar",
+    "bar_frequency": "1d",
+    "market_depth": "L1",
+    "order_book_levels": 0,
+    "schema_supported": true,
+    "execution_status": "READY"
+  },
+  "time_model": {
+    "market_data_frequency": "1d",
+    "factor_frequency": "1d",
+    "signal_frequency": "1d",
+    "decision_clock": "before_trading_start",
+    "execution_clock": "current_bar",
+    "portfolio_valuation_frequency": "1d",
+    "holding_period_unit": "trading_day",
+    "signal_data_cutoff": "T-1-close"
+  },
+  "nodes": [
+    {
+      "node_id": "universe",
+      "node_type": "UniverseNode",
+      "input": [],
+      "output": "universe",
+      "parameters": {
+        "kind": "single_stock",
+        "code": "600570.SH"
+      },
+      "required_capabilities": [],
+      "timing": "pre_open",
+      "platform_mapping": {
+        "quantstudio": "g.security = '600570.SH'; universe is the single stock itself",
+        "ptrade-default": "同 QS（注入 API 一致）"
+      },
+      "validation_rules": [
+        "UNIVERSE-NONEMPTY"
+      ]
+    },
+    {
+      "node_id": "hard_filter_selection",
+      "node_type": "HardFilterNode",
+      "input": [
+        "universe"
+      ],
+      "output": "filtered_universe",
+      "parameters": {
+        "filters": [
+          "exclude_st",
+          "exclude_suspended",
+          "exclude_delisted",
+          "exclude_delisting_sorting",
+          "exclude_star_market",
+          "exclude_bse",
+          "min_listing_trade_days",
+          "exclude_invalid_price",
+          "exclude_zero_volume",
+          "block_limit_up_buy",
+          "block_limit_down_sell",
+          "enforce_t1",
+          "round_lot"
+        ],
+        "stage": "selection",
+        "spec_filters": {
+          "exclude_st": true,
+          "exclude_suspended": true,
+          "exclude_delisted": true,
+          "exclude_delisting_sorting": true,
+          "exclude_star_market": true,
+          "exclude_bse": true,
+          "min_listing_trade_days": 252,
+          "exclude_invalid_price": true,
+          "exclude_zero_volume": true,
+          "block_limit_up_buy": true,
+          "block_limit_down_sell": true,
+          "enforce_t1": true,
+          "round_lot": 100
+        }
+      },
+      "required_capabilities": [
+        "stock_status_filter"
+      ],
+      "timing": "pre_open",
+      "platform_mapping": {
+        "quantstudio": "selection stage: filter_stock_by_status for ST/HALT/DELISTING + listing-day/price/volume checks; for single_stock universe most filters are no-op (the stock either passes or gets fully rejected) but all 13 are evaluated so the rule set is uniform across universe kinds",
+        "ptrade-default": "同 QS"
+      },
+      "validation_rules": [
+        "HARDFILTER-STOCK-13",
+        "HARDFILTER-ASSET-MATCH"
+      ]
+    },
+    {
+      "node_id": "dataload_market",
+      "node_type": "DataLoadNode",
+      "input": [
+        "filtered_universe"
+      ],
+      "output": "close_history",
+      "parameters": {
+        "dataset": "stock_daily",
+        "frequency": "1d",
+        "fields": [
+          "close"
+        ],
+        "pit_required": true,
+        "pit_anchor": "previous_date",
+        "lookback": 20
+      },
+      "required_capabilities": [
+        "stock_daily_backtest"
+      ],
+      "timing": "pre_open",
+      "platform_mapping": {
+        "quantstudio": "get_history(20, '1d', field=['close'], security_list=g.security, fq='dypre', include=False, is_dict=True)",
+        "ptrade-default": "get_history(20, '1d', field=['close'], security_list=g.security, fq='dypre', include=False, is_dict=True)；禁止 get_history_batch"
+      },
+      "validation_rules": [
+        "DATALOAD-PIT-PREVIOUS-DATE"
+      ]
+    },
+    {
+      "node_id": "ma5",
+      "node_type": "IndicatorNode",
+      "input": [
+        "close_history"
+      ],
+      "output": "ma5",
+      "parameters": {
+        "operation": "ma",
+        "field": "close",
+        "lookback": 5
+      },
+      "required_capabilities": [],
+      "timing": "bar",
+      "platform_mapping": {
+        "quantstudio": "get_ma(<close_history_data>, 5) helper; <close_history_data> = concat(g.<close_history>, [data[code].close])",
+        "ptrade-default": "同 QS"
+      },
+      "validation_rules": [
+        "INDICATOR-LOOKBACK-POSITIVE",
+        "INDICATOR-NO-FUTURE-BAR"
+      ]
+    },
+    {
+      "node_id": "ma10",
+      "node_type": "IndicatorNode",
+      "input": [
+        "close_history"
+      ],
+      "output": "ma10",
+      "parameters": {
+        "operation": "ma",
+        "field": "close",
+        "lookback": 10
+      },
+      "required_capabilities": [],
+      "timing": "bar",
+      "platform_mapping": {
+        "quantstudio": "get_ma(<close_history_data>, 10) helper; <close_history_data> = concat(g.<close_history>, [data[code].close])",
+        "ptrade-default": "同 QS"
+      },
+      "validation_rules": [
+        "INDICATOR-LOOKBACK-POSITIVE",
+        "INDICATOR-NO-FUTURE-BAR"
+      ]
+    },
+    {
+      "node_id": "cross_signal",
+      "node_type": "SignalNode",
+      "input": [
+        "ma5",
+        "ma10"
+      ],
+      "output": "cross_signal",
+      "parameters": {
+        "operation": "cross",
+        "sources": [
+          "ma5",
+          "ma10"
+        ],
+        "direction": "golden"
+      },
+      "required_capabilities": [],
+      "timing": "bar",
+      "platform_mapping": {
+        "quantstudio": "if ma5 > ma10 and position empty -> buy; elif ma5 < ma10 and position held -> sell",
+        "ptrade-default": "同 QS"
+      },
+      "validation_rules": [
+        "SIGNAL-TIMING-CONSISTENT",
+        "SIGNAL-NO-SAME-CLOSE-TRADE"
+      ]
+    },
+    {
+      "node_id": "portfolio_single_position",
+      "node_type": "PortfolioNode",
+      "input": [
+        "cross_signal"
+      ],
+      "output": "target_weights",
+      "parameters": {
+        "kind": "single_position",
+        "max_positions": 1,
+        "rebalance": "signal_triggered",
+        "target_weight": 1.0
+      },
+      "required_capabilities": [],
+      "timing": "bar",
+      "platform_mapping": {
+        "quantstudio": "order_value(code, cash) when buy signal; order_target(code, 0) when sell signal",
+        "ptrade-default": "同 QS"
+      },
+      "validation_rules": [
+        "PORTFOLIO-WEIGHT-VALID",
+        "PORTFOLIO-POSITIONS-EXACT-MATCH"
+      ]
+    },
+    {
+      "node_id": "risk_limits",
+      "node_type": "RiskNode",
+      "input": [
+        "target_weights"
+      ],
+      "output": "risk_checked_weights",
+      "parameters": {
+        "kind": "position_limits",
+        "max_single_weight": 1.0,
+        "cash_buffer": 0.0
+      },
+      "required_capabilities": [],
+      "timing": "bar",
+      "platform_mapping": {
+        "quantstudio": "position-limit check: max_single_weight=1.0 before execution",
+        "ptrade-default": "同 QS"
+      },
+      "validation_rules": [
+        "RISK-BEFORE-EXECUTION"
+      ]
+    },
+    {
+      "node_id": "execution_market",
+      "node_type": "ExecutionNode",
+      "input": [
+        "risk_checked_weights"
+      ],
+      "output": "orders",
+      "parameters": {
+        "order_api": "order_value",
+        "match_price_mode": "close",
+        "order_type": "market",
+        "allow_partial_fill": false
+      },
+      "required_capabilities": [],
+      "timing": "bar",
+      "platform_mapping": {
+        "quantstudio": "order_value(g.security, cash) on buy; order_target(g.security, 0) on sell (match_price_mode=close, order_type=market)",
+        "ptrade-default": "同 QS；无本地撮合扩展"
+      },
+      "validation_rules": [
+        "EXEC-MATCH-PRICE-CONSISTENT",
+        "EXEC-T1-ENFORCED"
+      ]
+    },
+    {
+      "node_id": "hard_filter_execution",
+      "node_type": "HardFilterNode",
+      "input": [
+        "orders"
+      ],
+      "output": "filtered_orders",
+      "parameters": {
+        "filters": [
+          "block_limit_up_buy",
+          "block_limit_down_sell",
+          "enforce_t1",
+          "round_lot"
+        ],
+        "stage": "execution"
+      },
+      "required_capabilities": [
+        "stock_status_filter"
+      ],
+      "timing": "bar",
+      "platform_mapping": {
+        "quantstudio": "check_limit(code)[code] + is_t1_blocked + round_to_lot (shared_ashare_rules) at order time",
+        "ptrade-default": "同 QS；禁止本地批量校验"
+      },
+      "validation_rules": [
+        "HARDFILTER-EXECUTION-STAGE"
+      ]
+    },
+    {
+      "node_id": "diagnostic",
+      "node_type": "DiagnosticNode",
+      "input": [
+        "filtered_orders"
+      ],
+      "output": "diagnostics",
+      "parameters": {
+        "kind": "log",
+        "fields": [
+          "entry_signal",
+          "exit_signal",
+          "fill_price"
+        ]
+      },
+      "required_capabilities": [],
+      "timing": "post_close",
+      "platform_mapping": {
+        "quantstudio": "log.info('Buying %s' / 'Selling %s') + g state recording",
+        "ptrade-default": "同 QS"
+      },
+      "validation_rules": [
+        "DIAG-NON-EMPTY"
+      ]
+    }
+  ]
+}

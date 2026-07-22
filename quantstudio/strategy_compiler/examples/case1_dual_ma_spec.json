@@ -1,0 +1,96 @@
+{
+  "spec_version": "1.0",
+  "strategy_id": "case1_dual_ma",
+  "strategy_name": "Case 1 daily dual-MA single stock",
+  "strategy_type": "timing",
+  "asset_class": "stock",
+  "target_platforms": ["quantstudio", "ptrade-default"],
+  "contract_versions": {
+    "strategy_spec_version": "1.0.0",
+    "engine_semantics_version": "0.1.0-legacy",
+    "provider_contract_version": "0.2.0-frequency-aware",
+    "security_code_rules_version": "1.0.0",
+    "ptrade_profile_version": "1.0.0-default",
+    "renderer_version": "0.0.0-planned",
+    "skill_version": "0.1.0-skeleton"
+  },
+  "time_model": {
+    "market_data_frequency": "1d",
+    "factor_frequency": "1d",
+    "signal_frequency": "1d",
+    "decision_clock": "before_trading_start",
+    "execution_clock": "current_bar",
+    "portfolio_valuation_frequency": "1d",
+    "holding_period_unit": "trading_day",
+    "signal_data_cutoff": "T-1-close"
+  },
+  "engine_profile": {
+    "profile_id": "daily-bar-v1",
+    "event_type": "bar",
+    "bar_frequency": "1d",
+    "market_depth": "L1",
+    "order_book_levels": 0,
+    "schema_supported": true,
+    "execution_status": "READY"
+  },
+  "universe": {
+    "kind": "single_stock",
+    "parameters": {"code": "600570.SH"}
+  },
+  "hard_filters": {
+    "exclude_st": true,
+    "exclude_suspended": true,
+    "exclude_delisted": true,
+    "exclude_delisting_sorting": true,
+    "exclude_star_market": true,
+    "exclude_bse": true,
+    "min_listing_trade_days": 252,
+    "exclude_invalid_price": true,
+    "exclude_zero_volume": true,
+    "block_limit_up_buy": true,
+    "block_limit_down_sell": true,
+    "enforce_t1": true,
+    "round_lot": 100
+  },
+  "signals": {
+    "steps": [
+      {"id": "ma5", "operation": "ma", "parameters": {"field": "close", "lookback": 5}},
+      {"id": "ma10", "operation": "ma", "parameters": {"field": "close", "lookback": 10}},
+      {"id": "cross_signal", "operation": "cross", "parameters": {"sources": ["ma5", "ma10"], "direction": "golden"}}
+    ]
+  },
+  "portfolio": {
+    "kind": "single_position",
+    "parameters": {"max_positions": 1, "rebalance": "signal_triggered", "target_weight": 1.0}
+  },
+  "execution": {
+    "mode": "native",
+    "match_price_mode": "close",
+    "order_type": "market",
+    "allow_partial_fill": false
+  },
+  "risk": {
+    "kind": "position_limits",
+    "parameters": {"max_single_weight": 1.0, "cash_buffer": 0.0}
+  },
+  "costs": {
+    "commission_rate": 0.0003,
+    "minimum_commission": 5.0,
+    "stamp_tax_rate": 0.0005,
+    "transfer_fee_rate": 0.00001,
+    "slippage_bps": 5.0
+  },
+  "data_requirements": {
+    "datasets": [
+      {"dataset": "stock_daily", "frequency": "1d", "fields": ["open", "high", "low", "close", "volume"], "required": true, "pit_required": false},
+      {"dataset": "stock_status", "frequency": "1d", "fields": ["is_st", "is_suspended", "is_delisted"], "required": true, "pit_required": true}
+    ]
+  },
+  "capability_requirements": ["stock_daily_backtest", "stock_status_filter"],
+  "approximations": [],
+  "user_confirmations": [
+    {"confirmation_id": "r2_5_strategy_spec", "status": "CONFIRMED", "confirmed_at": "2026-07-22T17:58:00+08:00", "note": "Case 1 spec confirmed for PR6a skeleton validation."}
+  ],
+  "validation_policy": {"no_lookahead": "BLOCK", "hard_filters": "BLOCK", "strict_public_api": true, "smoke_backtest": "WHEN_READY"},
+  "output": {"root": "output/generated_strategies", "overwrite": false}
+}
