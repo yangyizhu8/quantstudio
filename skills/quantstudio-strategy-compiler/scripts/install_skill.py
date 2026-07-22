@@ -112,11 +112,15 @@ def install_skill(
     # Chain quick_validate on the INSTALLED copy (not the source).
     qv = _find_quick_validate()
     if qv is None:
-        # quick_validate not found is a soft warning, not a rollback trigger —
-        # the copy succeeded; we just couldn't chain the structural check.
-        return True, dest, (
-            f"installed: {dest} (WARN: quick_validate.py not found in known "
-            f"locations; structural validation skipped)."
+        # Validation is the install's acceptance gate. If the validator itself
+        # cannot be found, the install is UNVERIFIED — roll back so an unverified
+        # Skill never shadows the source. (Use --skip-validate to install
+        # without verification, accepting responsibility explicitly.)
+        shutil.rmtree(dest, ignore_errors=True)
+        return False, dest, (
+            f"quick_validate.py not found in known locations "
+            f"({[str(c) for c in _QUICK_VALIDATE_CANDIDATES]}); install rolled back "
+            f"(unverified install not allowed — pass --skip-validate to force)."
         )
 
     # Attention point ② (same as smoke): force UTF-8 so console codepage cannot

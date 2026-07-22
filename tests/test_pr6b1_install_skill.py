@@ -110,3 +110,17 @@ class TestInstallSkill:
         assert ok
         assert dest.exists()
         assert "validation skipped" in msg
+
+    def test_quick_validate_missing_fails_and_rolls_back(self, dest_root, monkeypatch):
+        """If quick_validate.py cannot be found, install FAILS + rolls back.
+
+        Validation is the install's acceptance gate — an unverified install must
+        not be reported as success. (Reviewer fix: was returning True.)
+        """
+        monkeypatch.setattr(install_skill, "_find_quick_validate", lambda: None)
+        ok, dest, msg = install_skill.install_skill(
+            source=SOURCE, dest_root=dest_root, name="qs-no-qv",
+        )
+        assert not ok
+        assert "rolled back" in msg
+        assert not dest.exists(), "unverified install must be rolled back"

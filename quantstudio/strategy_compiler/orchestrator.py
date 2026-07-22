@@ -11,12 +11,19 @@ field mapping, documented in handoff §2 CP7).
 
 Stage machine (run_card.schema.json `stage` enum):
     SPEC_ONLY → STATIC_VALIDATED → SMOKE_EXECUTED
-The orchestrator advances the stage as far as each gate permits. If a static
-validator BLOCKS, the stage stays at STATIC_VALIDATED (or SPEC_ONLY if schema
-itself fails) and smoke is NOT attempted (a static-failing strategy has no
-business hitting the engine). If the capability gate blocks, stage advances to
-SMOKE_EXECUTED with smoke status BLOCKED (R6: code generated + static passed +
-execution blocked honestly recorded).
+The `stage` field records which pipeline STEP was reached (not pass/fail — that
+is the `status` field). Advancement rules:
+  - SPEC_ONLY: schema/contracts validation failed → IR never built, stop here.
+  - STATIC_VALIDATED: IR + render + static validators all RAN. Reached whether
+    the static validators PASS or BLOCK — the static step executed, so the
+    stage reflects that. (A static BLOCK is recorded in `validation.*` and
+    `status`; the stage is not rolled back to SPEC_ONLY, which would falsely
+    imply IR/render never happened.)
+  - SMOKE_EXECUTED: the smoke step RAN. Reached only when static validators
+    PASS (a static-failing strategy is not engine-worthy, so smoke is NOT
+    attempted). If the capability gate blocks, stage is SMOKE_EXECUTED with
+    smoke status BLOCKED (R6: code generated + static passed + execution
+    blocked honestly recorded).
 
 Golden protection (contract §6): render() raises on protected IDs; the
 orchestrator surfaces this as a top-level error (not a silent run_card).
@@ -212,8 +219,9 @@ def orchestrate(
     known_limitations.extend(_collect_violation_strs(v_var))
 
     static_ok = ok_look and ok_hf and port_ok and ok_var
-    if static_ok:
-        stage = _STAGE_STATIC_VALIDATED
+    # Stage advances to STATIC_VALIDATED once the static validators have RUN,
+    # regardless of pass/block — the step executed. (status reflects pass/block.)
+    stage = _STAGE_STATIC_VALIDATED
 
     # Write variant_consistency_report.json (single writer rule)
     vc_path = out_dir / "variant_consistency_report.json"

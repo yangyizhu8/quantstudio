@@ -180,6 +180,91 @@ class TestBatchDiffLayer:
 
 
 # ---------------------------------------------------------------------------
+# minute + manual_list (all 4 templates supported — reviewer fix)
+# ---------------------------------------------------------------------------
+
+def _to_minute(ir):
+    """Produce a minute-profile copy of the IR (mirrors PR6a test helper)."""
+    from copy import deepcopy
+    ir2 = deepcopy(ir)
+    ir2.engine_profile["bar_frequency"] = "1m"
+    ir2.engine_profile["profile_id"] = "minute-bar-v1"
+    ir2.time_model["market_data_frequency"] = "1m"
+    ir2.time_model["factor_frequency"] = "1m"
+    ir2.time_model["signal_frequency"] = "1m"
+    ir2.time_model["portfolio_valuation_frequency"] = "1m"
+    return ir2
+
+
+class TestMinuteManualList:
+    """All 4 templates (daily+minute × QS+PTrade) render manual_list.
+
+    Reviewer caught that minute templates raised NotImplementedError on
+    non-single_stock. Now they render the multi-stock rotation branch.
+    """
+
+    def test_minute_qs_renders_manual_list(self, case1_spec):
+        ir = build_strategy_ir(_pct_rank_spec(case1_spec))
+        code = render_quantstudio(_to_minute(ir))
+        compile(code, "<qs_min>", "exec")
+        assert "NotImplementedError" not in code
+        for c in ("600570.SH", "000001.SZ", "600036.SH"):
+            assert c in code
+
+    def test_minute_pt_renders_manual_list(self, case1_spec):
+        ir = build_strategy_ir(_pct_rank_spec(case1_spec))
+        code = render_ptrade(_to_minute(ir))
+        compile(code, "<pt_min>", "exec")
+        assert "NotImplementedError" not in code
+        for c in ("600570.SH", "000001.SZ", "600036.SH"):
+            assert c in code
+
+    def test_minute_batch_diff_layer(self, case1_spec):
+        """minute + manual_list: QS batch / PTrade loop (AST, all 4 templates)."""
+        ir = build_strategy_ir(_pct_rank_spec(case1_spec))
+        min_ir = _to_minute(ir)
+        qs_calls = _called_names(render_quantstudio(min_ir))
+        pt_calls = _called_names(render_ptrade(min_ir))
+        assert "get_history_batch" in qs_calls
+        assert "get_history_batch" not in pt_calls
+        assert "get_history" in pt_calls
+
+
+# ---------------------------------------------------------------------------
+# scores dict population (semantic correctness — reviewer caught the bug)
+# ---------------------------------------------------------------------------
+
+class TestScoresPopulation:
+    """pct_change results must populate the `scores` dict (ranking source).
+
+    Reviewer caught that the daily templates assigned to {{ ind.id }}[code]
+    (an undefined name) instead of scores[code], leaving scores empty and the
+    ranking broken. This is an IR→render 传导 correctness check, not just AST.
+    """
+
+    @pytest.mark.parametrize("profile,render", [
+        ("quantstudio", render_quantstudio),
+        ("ptrade-default", render_ptrade),
+    ])
+    def test_daily_scores_populated(self, case1_spec, profile, render):
+        ir = build_strategy_ir(_pct_rank_spec(case1_spec))
+        code = render(ir)
+        assert "scores[code] =" in code, (
+            f"{profile} daily: pct_change must assign to scores[code], not "
+            f"an undefined indicator-name dict (ranking would be empty)"
+        )
+
+    @pytest.mark.parametrize("profile,render", [
+        ("quantstudio", render_quantstudio),
+        ("ptrade-default", render_ptrade),
+    ])
+    def test_minute_scores_populated(self, case1_spec, profile, render):
+        ir = build_strategy_ir(_pct_rank_spec(case1_spec))
+        code = render(_to_minute(ir))
+        assert "scores[code] =" in code
+
+
+# ---------------------------------------------------------------------------
 # zscore deferred to PR6b-2 (raises, not silently OK)
 # ---------------------------------------------------------------------------
 

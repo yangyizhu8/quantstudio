@@ -133,3 +133,59 @@ class TestGoldenProtection:
         spec["strategy_id"] = "etf_momentum"
         with pytest.raises(GoldenProtectionError, match="etf_momentum"):
             orchestrate(spec, run_smoke=False, out_dir=tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# static-BLOCK path: stage stays STATIC_VALIDATED, smoke NOT invoked
+# ---------------------------------------------------------------------------
+
+class TestStaticBlockPath:
+    def test_static_block_stage_static_validated_smoke_skipped(self, case1_spec, tmp_path, monkeypatch):
+        """A static validator BLOCK must leave stage=STATIC_VALIDATED (the static
+        step ran), record the block in validation.*, set status=BLOCKED, and NOT
+        invoke the smoke engine (a static-failing strategy is not engine-worthy).
+
+        We force a static BLOCK by monkeypatching check_hard_filters to fail, and
+        assert the smoke inspector was never called (via a spy that would raise).
+        """
+        import quantstudio.strategy_compiler.orchestrator as orch_mod
+
+        smoke_called = {"yes": False}
+
+        def spy_inspect(strategy_id, profile_id):
+            smoke_called["yes"] = True  # if reached, smoke was attempted — bug
+            raise AssertionError("smoke inspector must NOT run on static BLOCK")
+
+        monkeypatch.setattr(orch_mod, "_inspect_capabilities", spy_inspect)
+
+        # Force check_hard_filters to BLOCK by stripping execution-stage nodes
+        def fake_check(ir, spec=None):
+            from quantstudio.strategy_compiler.validators.scan_lookahead import Violation
+            return False, [Violation("HARDFILTER-EXECUTION-STAGE", "BLOCK", "forced")], []
+
+        monkeypatch.setattr(orch_mod, "check_hard_filters", fake_check)
+
+        rc = orchestrate(case1_spec, run_smoke=True, out_dir=tmp_path)
+
+        # stage reflects the step reached (static ran), NOT rolled back to SPEC_ONLY
+        assert rc["stage"] == "STATIC_VALIDATED", (
+            f"static BLOCK must stay STATIC_VALIDATED (step ran), got {rc['stage']}"
+        )
+        assert rc["validation"]["hard_filters"] == "BLOCKED"
+        assert rc["status"] == "BLOCKED"
+        # smoke NOT attempted
+        assert rc["smoke_backtest"] is None
+        assert not smoke_called["yes"], "smoke engine must NOT be invoked on static BLOCK"
+        # the IR/render artifacts WERE written (proving we got past SPEC_ONLY)
+        artifact_names = {a["name"] for a in rc["artifacts"]}
+        assert "strategy_ir.json" in artifact_names
+        _validate_run_card_schema(rc)
+
+    def test_schema_fail_stage_spec_only(self, case1_spec, tmp_path):
+        """Schema failure → stage SPEC_ONLY (IR never built), no artifacts."""
+        spec = deepcopy(case1_spec)
+        spec["time_model"]["market_data_frequency"] = "1m"  # violates bar==mdf rule
+        rc = orchestrate(spec, run_smoke=False, out_dir=tmp_path)
+        assert rc["stage"] == "SPEC_ONLY"
+        assert rc["validation"]["schema"] == "BLOCKED"
+        assert rc["artifacts"] == []  # nothing built

@@ -16,7 +16,7 @@ PR6b-1 does **not** shortcut PR6b-2 scope; it ships the validation infrastructur
 
 ## 1. Deliverables
 
-### New files (8)
+### New files (12)
 | Path | Purpose |
 |---|---|
 | `quantstudio/strategy_compiler/orchestrator.py` | **End-to-end pipeline**: spec→IR→render→7 validators→`run_card.json` + `variant_consistency_report.json`. Single writer of run_card (validators stay pure). Stage machine SPEC_ONLY→STATIC_VALIDATED→SMOKE_EXECUTED. |
@@ -30,7 +30,7 @@ PR6b-1 does **not** shortcut PR6b-2 scope; it ships the validation infrastructur
 | `tests/test_pr6b1_operation_expansion.py` | pct_change/rank/top_n + manual_list + 遗留要求① batch diff (AST) + zscore PR6b-2 raise. |
 | `tests/test_pr6b1_install_skill.py` | install + validate + rollback + force + pycache exclusion. |
 
-### Modifications (CP1-5, carried from prior session)
+### Modifications (8, CP1-5 carried from prior session + review fixes)
 | Path | Change |
 |---|---|
 | `build_strategy_ir.py` | `_PR6B1_INDICATOR_OPS={ma,pct_change}`; `_PR6B1_RANKING_OPS={rank,top_n,bottom_n}`; pct_change numpy inline + RankingNode branch; manual_list codes passthrough; raise PR6a→PR6b-1. |
@@ -38,6 +38,7 @@ PR6b-1 does **not** shortcut PR6b-2 scope; it ships the validation infrastructur
 | `contracts.py` | RankingNode predecessor bug fix (`_IR_PIPELINE_PREDECESSORS` cleared; `_EITHER_PREDECESSORS` extended with SignalNode). |
 | `skills/.../scripts/validate_strategy_spec.py` | Converged to `contracts.validate_strategy_spec` (5 timing rules, single source of truth) + defensive import. |
 | `skills/.../templates/quantstudio_daily.py.j2` + `ptrade_daily.py.j2` (+ minute) | manual_list multi-stock branch (QS emits `get_history_batch` / PTrade loops `get_history`). |
+| `skills/.../templates/quantstudio_minute.py.j2` + `ptrade_minute.py.j2` | manual_list branch (review fix: previously raised NotImplementedError on non-single_stock; now renders the minute multi-stock rotation in `_trade_on_minute`). |
 | `docs/strategy-compiler/frequency-and-engine-profile.md` | minute-bar-v1 BLOCKED(DATA_MISSING) → READY (data now in DB). |
 | `docs/strategy-compiler/implementation-status.md` | stale →实测 row counts + smoke PASS + end-labeled VERIFIED. |
 
@@ -115,5 +116,20 @@ Deferred to PR6b-2: Factor ops (`zscore`/`winsorize`/`neutralize`/`combine`) + `
 New: `orchestrator.py`, `validators/run_smoke_backtest.py`, `validators/check_hard_filters.py`, `validators/validate_ptrade_portability.py`, `validators/compare_strategy_variants.py`, `scripts/install_skill.py`, 4 test files, this report.
 Modified (CP1-5): `build_strategy_ir.py`, `render.py`, `contracts.py`, `scripts/validate_strategy_spec.py`, 4 templates, 2 docs.
 
-## 7. Next (PR6b-2)
+## 7. Review follow-up (b2de47a → follow-up commit)
+
+Code review of `b2de47a` found 5 issues; all fixed in a follow-up commit (the
+data-ops files were committed separately as `4e17c3a`).
+
+| # | Issue | Fix |
+|---|---|---|
+| 1 | Minute templates raised `NotImplementedError` on manual_list (only 2 daily templates done; handoff required all 4). | Implemented `manual_list` branch in both minute templates (`_trade_on_minute` multi-stock rotation). Also fixed a latent bug in all daily+minute templates: pct_change was assigning to an undefined `{{ ind.id }}[code]` instead of `scores[code]`, leaving the ranking source empty. Now all 4 templates populate `scores[code]` (verified by compile + AST + parametrized tests). |
+| 2 | Stage machine contradiction: docstring claimed static BLOCK stays `STATIC_VALIDATED`, but code left it at `SPEC_ONLY`. | Fixed: `stage` advances to `STATIC_VALIDATED` once static validators *run* (the step executed, pass-or-block); only schema failure stays `SPEC_ONLY` (IR never built). Added `test_static_block_stage_static_validated_smoke_skipped` (asserts smoke inspector never called via spy) + `test_schema_fail_stage_spec_only`. |
+| 3 | `quality_audit.py` was also uncommitted alongside `daemon.py` (same xtquant gate fix). | Committed both together as independent data-ops commit `4e17c3a` (not mixed into PR6b-1). |
+| 4 | Report file counts stated "8 new + 12 modified"; actual is 12 new + 8 modified. | Corrected to 12 + 8. |
+| 5 | `install_skill` returned success (True) when `quick_validate.py` was not found. | Fixed: missing validator now FAILS + rolls back (unverified install not allowed); `--skip-validate` remains the explicit opt-out. Added `test_quick_validate_missing_fails_and_rolls_back`. |
+
+Test count after follow-up: PR6a+PR6b-1 = **81 passed** (was 71; +10 tests covering minute+manual_list, scores population, static-BLOCK stage, qv-missing rollback).
+
+## 8. Next (PR6b-2)
 9 golden cases (incl. real minute smoke case 6), `index_constituents`, Factor ops, cost passthrough, RiskNode stop_loss. PR6b-1's orchestrator + run_card + validators are the infrastructure these consume — no rework expected.

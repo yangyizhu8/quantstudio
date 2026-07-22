@@ -85,14 +85,26 @@ def before_trading_start(context, data):
 
 def handle_data(context, data):
     # IndicatorNode(s): pct_change per stock + RankingNode: top_n select.
+    # pct_change results accumulate into the `scores` dict (the ranking source).
     scores = {}
 {% for ind in pct_change_indicators %}
     for code in g.stock_list:
         hist = g.history[code]
         curr = data[code].close
         series = np.concatenate((hist, [curr]))
-        {{ ind.id }}[code] = (series[-1] - series[-{{ ind.lookback }}-1]) / series[-{{ ind.lookback }}-1]
+        scores[code] = (series[-1] - series[-{{ ind.lookback }}-1]) / series[-{{ ind.lookback }}-1]
 {% endfor %}
+{% if not pct_change_indicators %}
+    # ma-based scoring fallback (no pct_change indicator declared)
+    for code in g.stock_list:
+        hist = g.history[code]
+        curr = data[code].close
+        series = np.concatenate((hist, [curr]))
+{% for ma in ma_indicators %}
+        {{ ma.id }} = _get_ma(series, {{ ma.lookback }})
+{% endfor %}
+        scores[code] = {{ (ma_indicators[-1].id) if ma_indicators else 'curr' }}
+{% endif %}
     # RankingNode (operation={{ ranking_op }}, top_n={{ ranking_top_n }}, ascending={{ ranking_ascending }}).
     sorted_codes = sorted(scores.keys(), key=lambda c: scores[c], reverse={{ not ranking_ascending }})
     selected = sorted_codes[:g.max_positions]

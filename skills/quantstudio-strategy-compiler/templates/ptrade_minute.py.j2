@@ -66,11 +66,75 @@ def handle_data(context, data):
 
 def _get_ma(close_array, num):
     return round(close_array[-num:].mean(), 2)
+{% elif universe_codes %}
+import numpy as np
+
+
+def initialize(context):
+    # UniverseNode (kind=manual_list): multi-stock rotation, minute profile.
+    g.stock_list = [{% for c in universe_codes %}'{{ c }}'{% if not loop.last %}, {% endif %}{% endfor %}]
+    g.lookback = {{ dataload_lookback }}
+    g.max_positions = {{ portfolio_max_positions }}
+    run_daily(context, _trade_on_minute, time='09:35')
+
+
+def before_trading_start(context, data):
+    # PTrade profile MUST loop single-stock get_history
+    # (get_history_batch is forbidden in PTrade public API — local-only optimization).
+    g.history = {}
+    for code in g.stock_list:
+        h = get_history({{ dataload_lookback }}, '1d',
+                        field={{ dataload_fields }}, security_list=code,
+                        fq='dypre', include=False, is_dict=True)
+        g.history[code] = h[code]['{{ dataload_fields[0] }}']
+    g.stock_list = filter_stock_by_status(
+        g.stock_list, filter_type=['ST', 'HALT', 'DELISTING'], query_date=None
+    )
+
+
+def _trade_on_minute(context):
+    """Scheduled at 09:35. Multi-stock rotation on daily-history scores.
+
+    PTrade loops get_history per stock (no get_history_batch). Minute per-bar
+    scoring deferred to PR6b-2 unless a Spec declares minute indicators.
+    """
+    scores = {}
+{% for ind in pct_change_indicators %}
+    for code in g.stock_list:
+        hist = g.history[code]
+        scores[code] = (hist[-1] - hist[-{{ ind.lookback }}-1]) / hist[-{{ ind.lookback }}-1]
+{% endfor %}
+{% if not pct_change_indicators %}
+    for code in g.stock_list:
+        scores[code] = g.history[code][-1]
+{% endif %}
+    sorted_codes = sorted(scores.keys(), key=lambda c: scores[c], reverse={{ not ranking_ascending }})
+    selected = sorted_codes[:g.max_positions]
+
+    for code in list(context.portfolio.positions.keys()):
+        if code not in selected:
+            order_target_value(code, 0)
+    position_count = len(context.portfolio.positions)
+    if position_count < g.max_positions:
+        value = context.portfolio.cash / (g.max_positions - position_count)
+        for code in selected:
+            if code not in context.portfolio.positions:
+                order_value(code, value)
+                log.info('Buying %s @ %s' % (code, context.current_dt))
+
+
+def handle_data(context, data):
+    pass
+
+
+def _get_ma(close_array, num):
+    return round(close_array[-num:].mean(), 2)
 {% else %}
 
 
 def initialize(context):
     raise NotImplementedError(
-        'universe kind={{ universe_kind }} rendering is PR6b scope'
+        'universe kind={{ universe_kind }} rendering is PR6b-2 scope '
+        '(PR6b-1 minute template renders single_stock + manual_list)'
     )
 {% endif %}
