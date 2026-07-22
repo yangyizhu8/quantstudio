@@ -121,6 +121,19 @@ Evidence: `output/strategy-fidelity-gates/current-full-run/summary.json`.
 
 This Fidelity command is mandatory for PR2 and every later runtime stage. A stage cannot be marked PASS based only on pytest. Golden values cannot be changed without a separately documented real PTrade re-baseline and explicit user approval.
 
+### smallcap_guard re-baseline (2026-07-22, user-approved)
+
+After the xtquant daily cutover (stock_daily 100% xtquant as of 2026-07-22), the smallcap_guard envelope was re-baselined from the tushare-era values to the xtquant-data values. Full attribution in `docs/strategy-compiler/pr6a-smallcap-baseline-drift-analysis.md`.
+
+| Element | Old (tushare, until 2026-07-22) | New (xtquant, from 2026-07-22) | Note |
+|---|---|---|---|
+| expected_final_asset | 118551.21 | 118160.53 | center value updated; ±10 tolerance unchanged |
+| expected_trade_count | 57 | 59 | center value updated |
+| fidelity (L1/L2/L3/L4) | unchanged | unchanged | tolerances NOT relaxed |
+| sim_terminal_warning | n/a | added | miniQMT sim ST board empty (isST=0); is_st_reliable backstops; re-verify on real terminal |
+
+Approval basis: xtquant single-source lock is an approved architecture decision (2026-07-21); etf_momentum hard gate PASSES on the same xtquant data (87752.56 exact); the 0.33% smallcap drift is within the reasonable magnitude of back-adjustment algorithm differences. Old envelope archived in `config/strategy_fidelity_gates.json` `_baseline_history[0]`.
+
 ## PR2 completed work
 
 PR2 implemented a real pending-order queue, eliminating the cross-day look-ahead in the legacy `next_open` mode. The change is strictly isolated to `match_price_mode == "next_open"`; `close`/`open` execution paths are untouched line-by-line.

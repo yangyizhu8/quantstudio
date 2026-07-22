@@ -426,12 +426,9 @@ class DuckDBWriter(BaseWriter):
         with self._conn_lock:
             conn = self._conn()
             try:
-                # 统计写入前已有行数（用于检测重复）
-                try:
-                    rows_before = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-                except Exception:
-                    rows_before = 0
-                # 幂等 upsert：主键冲突时 UPDATE（防重复写入的核心）
+                # 性能修复（2026-07-22）：原实现 write 前后各跑一次 SELECT COUNT(*) FROM <table>
+                # 全表统计，在大表（百万→千万行）上每次数秒，8 线程持 _conn_lock 串行 →
+                # 全量拉取 56 秒/只（理论 1.9s）。改为只数本批主键已存在的行（走索引，毫秒级）。
                 conn.register("_tmp_write", df)
                 pk_cols = {
                     "stock_daily": "(code, time)",
@@ -452,6 +449,15 @@ class DuckDBWriter(BaseWriter):
                     "stock_namechange": "(code, change_date)",
                     "stock_delist": "(code, market)",
                 }.get(table)
+                # 写前：数本批主键在目标表已存在的行数（=将被 UPDATE 的，走索引快）
+                updated_rows = 0
+                if pk_cols:
+                    try:
+                        updated_rows = conn.execute(
+                            f"SELECT COUNT(*) FROM {table} WHERE {pk_cols} IN "
+                            f"(SELECT {pk_cols} FROM _tmp_write)").fetchone()[0]
+                    except Exception:
+                        updated_rows = 0
                 if pk_cols:
                     col_list = ", ".join(df.columns)
                     update_set = ", ".join(f"{c}=EXCLUDED.{c}" for c in df.columns)
@@ -462,13 +468,9 @@ class DuckDBWriter(BaseWriter):
                 else:
                     conn.execute(f"INSERT INTO {table} SELECT * FROM _tmp_write")
                 conn.unregister("_tmp_write")
-                # 统计写入后行数，判断新增/更新
-                try:
-                    rows_after = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-                except Exception:
-                    rows_after = 0
-                new_rows = max(0, rows_after - rows_before)  # clamp 防竞态负值
-                updated_rows = max(0, len(df) - new_rows)
+                # new/updated 审计：updated = 写前已存在的行数；new = 本批其余
+                # （精度：本批内主键重复已由 validator 去重，故 new + updated = len(df)）
+                new_rows = max(0, len(df) - updated_rows)
             finally:
                 conn.close()
         logger.info(f"[DuckDBWriter] {table} batch={batch_id}: wrote {len(df)} rows "

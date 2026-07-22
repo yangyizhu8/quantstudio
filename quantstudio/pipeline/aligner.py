@@ -157,6 +157,25 @@ class FieldAligner:
         # 注入 writer.shared_conn）。用于 pctChg DB 兜底，避免开 read_only 与 write 并发冲突。
         # 不传则降级为自开 read_only（CLI/回测场景，无并发 write 不冲突）。
         self.shared_conn_provider = None
+        # 线程局部 in-memory 连接池（性能修复 2026-07-22）：
+        # 原 5 处 PIT JOIN 每次调 duckdb.connect() 建新 in-memory 连接，8 线程并发时
+        # 连接创建 + GIL 竞争导致 align 从 0.2s/只暴涨到 22-33s/只（150 倍恶化）。
+        # 改为每线程复用一个持久 in-memory 连接，避免反复建/销毁。
+        import threading
+        self._thread_local = threading.local()
+
+    def _get_thread_conn(self):
+        """返回当前线程的持久 in-memory DuckDB 连接（复用，避免反复创建）。
+
+        in-memory 连接的 register() 会覆盖同名临时视图，所以每次 ASOF JOIN
+        register 新的 _left/_right 前无需清理上一次的（同名覆盖）。
+        """
+        import duckdb
+        conn = getattr(self._thread_local, "conn", None)
+        if conn is None:
+            conn = duckdb.connect()
+            self._thread_local.conn = conn
+        return conn
 
     @classmethod
     def from_config(cls, config_path: str | Path,
@@ -472,19 +491,16 @@ class FieldAligner:
         })
         # DuckDB 要求 ASOF JOIN 的右表按 join key 排序
         right = right.sort_values(["code", "time"])
-        conn = duckdb.connect()
-        try:
-            conn.register("_fs_left", left)
-            conn.register("_sd_right", right)
-            joined = conn.execute("""
-                SELECT l._row_id, r.close
-                FROM _fs_left l
-                ASOF LEFT JOIN _sd_right r
-                    ON l.code = r.code
-                   AND l.end_date >= r.time
-            """).fetchdf()
-        finally:
-            conn.close()
+        conn = self._get_thread_conn()  # 复用线程局部连接（避免并发下反复建连接）
+        conn.register("_fs_left", left)
+        conn.register("_sd_right", right)
+        joined = conn.execute("""
+            SELECT l._row_id, r.close
+            FROM _fs_left l
+            ASOF LEFT JOIN _sd_right r
+                ON l.code = r.code
+               AND l.end_date >= r.time
+        """).fetchdf()
         # 按 _row_id 排序回到 df 原顺序
         joined = joined.sort_values("_row_id")
         close_series = pd.Series(pd.to_numeric(joined["close"], errors="coerce").values,
@@ -632,28 +648,30 @@ class FieldAligner:
                 "code": df["code"].values,
                 "time": pd.to_numeric(df["time"], errors="coerce").values,
             })
-            # ASOF JOIN 要求右表按 (code, time) 排序
+            # 性能修复（2026-07-22）：valuation_df 是全市场全历史（~951 万行），
+            # 但当前 df 只涉及 1-N 个 code。先按 code 过滤，避免对全表做 ASOF JOIN
+            # （951 万行 → 几千行，17s → 毫秒级）。
+            codes_in_df = set(df["code"].astype(str).unique())
             right_cols = ["code", "time"] + val_fields
             right = valuation_df[right_cols].copy()
+            right["code"] = right["code"].astype(str)
+            right = right[right["code"].isin(codes_in_df)]
             right["time"] = pd.to_numeric(right["time"], errors="coerce")
             for f in val_fields:
                 right[f] = pd.to_numeric(right[f], errors="coerce")
             right = right.dropna(subset=["time"]).sort_values(["code", "time"])
 
-            conn = duckdb.connect()
-            try:
-                conn.register("_sd_left", left)
-                conn.register("_val_right", right)
-                # ASOF JOIN：每行找同 code 且 time ≤ df.time 的最近一条估值
-                joined = conn.execute("""
-                    SELECT l._row_id, r.pe_ttm, r.pb, r.turnover_rate
-                    FROM _sd_left l
-                    ASOF JOIN _val_right r
-                        ON l.code = r.code
-                       AND l.time >= r.time
-                """).fetchdf()
-            finally:
-                conn.close()
+            conn = self._get_thread_conn()  # 复用线程局部连接
+            conn.register("_sd_left", left)
+            conn.register("_val_right", right)
+            # ASOF JOIN：每行找同 code 且 time ≤ df.time 的最近一条估值
+            joined = conn.execute("""
+                SELECT l._row_id, r.pe_ttm, r.pb, r.turnover_rate
+                FROM _sd_left l
+                ASOF JOIN _val_right r
+                    ON l.code = r.code
+                   AND l.time >= r.time
+            """).fetchdf()
 
             if len(joined) == 0:
                 return "derive_valuation_skip_join_empty"
@@ -698,20 +716,17 @@ class FieldAligner:
         right["_t"] = pd.to_numeric(right["_t"], errors="coerce")
         right = right.dropna(subset=["_t"]).sort_values(["code", "_t"])
 
-        conn = duckdb.connect()
-        try:
-            conn.register("_sd_left", left)
-            conn.register("_nc_right", right)
-            joined = conn.execute("""
-                SELECT l._row_id,
-                       CASE WHEN r.status_after IN ('ST', '*ST') THEN TRUE ELSE FALSE END AS is_st
-                FROM _sd_left l
-                ASOF LEFT JOIN _nc_right r
-                    ON l.code = r.code
-                   AND l.time >= r._t
-            """).fetchdf()
-        finally:
-            conn.close()
+        conn = self._get_thread_conn()  # 复用线程局部连接
+        conn.register("_sd_left", left)
+        conn.register("_nc_right", right)
+        joined = conn.execute("""
+            SELECT l._row_id,
+                   CASE WHEN r.status_after IN ('ST', '*ST') THEN TRUE ELSE FALSE END AS is_st
+            FROM _sd_left l
+            ASOF LEFT JOIN _nc_right r
+                ON l.code = r.code
+               AND l.time >= r._t
+        """).fetchdf()
         joined = joined.sort_values("_row_id").reset_index(drop=True)
         return joined[["is_st"]]
 
@@ -728,28 +743,30 @@ class FieldAligner:
             "code": df["code"].values,
             "time": pd.to_numeric(df["time"], errors="coerce").values,
         })
+        # 性能修复（2026-07-22）：按 df 涉及的 code 过滤 valuation_df
+        # （全市场 951 万行 → 当前票几千行），避免全表 JOIN。
+        codes_in_df = set(df["code"].astype(str).unique())
         right = valuation_df[["code", "time", "circ_mv"]].copy()
+        right["code"] = right["code"].astype(str)
+        right = right[right["code"].isin(codes_in_df)]
         right["time"] = pd.to_numeric(right["time"], errors="coerce")
         right["circ_mv"] = pd.to_numeric(right["circ_mv"], errors="coerce")
         right = right.dropna(subset=["time", "circ_mv"])
 
-        conn = duckdb.connect()
-        try:
-            conn.register("_sd_left", left)
-            conn.register("_val_right", right)
-            # 关联 + 聚合：每行 stock_daily 找近 20 日（20*86400000 ms）的 MIN(circ_mv)
-            joined = conn.execute("""
-                SELECT l._row_id,
-                       CASE WHEN MIN(r.circ_mv) < 5e8 AND COUNT(r.circ_mv) > 0
-                            THEN TRUE ELSE FALSE END AS is_risk
-                FROM _sd_left l
-                LEFT JOIN _val_right r
-                    ON l.code = r.code
-                   AND r.time BETWEEN l.time - 20*86400000 AND l.time
-                GROUP BY l._row_id
-            """).fetchdf()
-        finally:
-            conn.close()
+        conn = self._get_thread_conn()  # 复用线程局部连接
+        conn.register("_sd_left", left)
+        conn.register("_val_right", right)
+        # 关联 + 聚合：每行 stock_daily 找近 20 日（20*86400000 ms）的 MIN(circ_mv)
+        joined = conn.execute("""
+            SELECT l._row_id,
+                   CASE WHEN MIN(r.circ_mv) < 5e8 AND COUNT(r.circ_mv) > 0
+                        THEN TRUE ELSE FALSE END AS is_risk
+            FROM _sd_left l
+            LEFT JOIN _val_right r
+                ON l.code = r.code
+               AND r.time BETWEEN l.time - 20*86400000 AND l.time
+            GROUP BY l._row_id
+        """).fetchdf()
         joined = joined.sort_values("_row_id").reset_index(drop=True)
         return pd.Series(joined["is_risk"].values, index=df.index)
 

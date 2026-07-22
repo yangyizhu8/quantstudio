@@ -413,7 +413,8 @@ class XtquantAdapter(BaseSourceAdapter):
         # COALESCE(isST,0) 依赖该列存在）。从 xtquant ST 板块成分股查询补：
         # - stock_daily：code 在 ST 板块 → 1，否则 0（粗标，精确 ST 走 is_st_reliable namechange PIT）
         # - etf_daily：ETF 无 ST，恒为 0（与 tushare_adapter etf 路径一致）
-        if table in ("stock_daily", "etf_daily") and len(df) > 0 and "code" in df.columns:
+        # 注意：adapter 层列名是 stock_code（aligner rename 前），条件检查用 stock_code。
+        if table in ("stock_daily", "etf_daily") and len(df) > 0 and "stock_code" in df.columns:
             try:
                 if table == "etf_daily":
                     df["isST"] = 0

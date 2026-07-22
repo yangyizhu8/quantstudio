@@ -327,6 +327,11 @@ class PreIngestValidator:
                 reject_mask_batch("AdjustmentOHLC", side, bad_ohlc_h | bad_ohlc_l)
                 # FactorConsistency: 与 raw ohlc 的比值一致性
                 # 仅当 raw 4 列都在且 >0
+                # 阈值源感知（2026-07-22，与 quality_audit 一致）：
+                # - xtquant back（分钟+日线）：逐 tick 累积复权，同根 K 线 OHLC 因子有 2-4% 微差
+                #   （算法固有，非数据错误），用 5%；实测偏差全部 <4%，>5% 才是真错配
+                # - xtquant front / 其他源：日级单一因子，OHLC 共用，严格 2%
+                consistency_threshold = 0.05 if (source == "xtquant" and side == "back") else 0.02
                 raw_all_present = all(c in df.columns for c in raw_ohlc)
                 if raw_all_present:
                     raw_arr = np.column_stack([
@@ -336,14 +341,15 @@ class PreIngestValidator:
                     factor_ok = checkable & raw_pos & ~bad_ohlc_h & ~bad_ohlc_l
                     bad_factor = np.zeros(n, dtype=bool)
                     if factor_ok.any():
+                        idx_calc = np.nonzero(factor_ok)[0]
                         with np.errstate(divide="ignore", invalid="ignore"):
-                            factors = np.where(raw_arr > 0, arr / raw_arr, np.nan)
+                            arr_sub = arr[idx_calc]
+                            raw_sub = raw_arr[idx_calc]
+                            factors = np.where(raw_sub > 0, arr_sub / raw_sub, np.nan)
                             base = np.nanmean(factors, axis=1)
-                            # max|factor/base - 1| > 0.02
                             rel = np.abs(factors / base[:, None] - 1)
                             max_rel = np.nanmax(rel, axis=1)
-                            bad_factor_calc = (base <= 0) | (max_rel > 0.02)
-                        idx_calc = np.nonzero(factor_ok)[0]
+                            bad_factor_calc = (base <= 0) | (max_rel > consistency_threshold)
                         bad_factor[idx_calc[bad_factor_calc]] = True
                     reject_mask_batch("AdjustmentFactorConsistency", side, bad_factor)
 
