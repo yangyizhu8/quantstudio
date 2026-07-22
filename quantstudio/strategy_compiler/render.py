@@ -143,13 +143,27 @@ def _build_template_context(ir: StrategyIR, profile: str) -> dict[str, Any]:
             ctx["dataload_fields"] = p.get("fields", ["close"])
             ctx["dataload_lookback"] = p.get("lookback", 20)
             ctx["dataload_pit_anchor"] = p.get("pit_anchor", "previous_date")
-        elif nt == "IndicatorNode" and p.get("operation") == "ma":
-            # Collect all ma indicators (multiple allowed: ma5, ma10, ...).
-            ctx.setdefault("ma_indicators", []).append({
-                "id": node.output,
-                "field": p.get("field", "close"),
-                "lookback": p.get("lookback"),
-            })
+        elif nt == "IndicatorNode":
+            op = p.get("operation")
+            if op == "ma":
+                # Collect all ma indicators (multiple allowed: ma5, ma10, ...).
+                ctx.setdefault("ma_indicators", []).append({
+                    "id": node.output,
+                    "field": p.get("field", "close"),
+                    "lookback": p.get("lookback"),
+                })
+            elif op == "pct_change":
+                ctx.setdefault("pct_change_indicators", []).append({
+                    "id": node.output,
+                    "field": p.get("field", "close"),
+                    "lookback": p.get("lookback"),
+                })
+        elif nt == "RankingNode":
+            ctx["ranking_op"] = p.get("operation")
+            ctx["ranking_source"] = p.get("source")
+            ctx["ranking_ascending"] = p.get("ascending", False)
+            ctx["ranking_top_n"] = p.get("top_n")
+            ctx["ranking_output"] = node.output
         elif nt == "SignalNode" and p.get("operation") == "cross":
             ctx["signal_op"] = "cross"
             ctx["signal_sources"] = p.get("sources", [])

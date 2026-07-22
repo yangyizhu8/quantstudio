@@ -140,8 +140,11 @@ _IR_PIPELINE_PREDECESSORS: dict[str, set[str]] = {
     "IndicatorNode": {"DataLoadNode"},
     "FactorNode": {"DataLoadNode"},
     "SignalNode": {"IndicatorNode", "FactorNode"},
-    "RankingNode": {"SignalNode"},
-    "PortfolioNode": {"RankingNode", "SignalNode"},
+    # RankingNode + PortfolioNode have "either-of" predecessors handled by
+    # _EITHER_PREDECESSORS below (Ranking <- Indicator|Factor|Signal;
+    # Portfolio <- Ranking|Signal). Their hard-required set here is empty.
+    "RankingNode": set(),
+    "PortfolioNode": set(),
     "RiskNode": {"PortfolioNode"},
     "ExecutionNode": {"PortfolioNode", "RiskNode"},
     "DiagnosticNode": {"ExecutionNode"},
@@ -189,11 +192,11 @@ def validate_strategy_ir(payload: Mapping[str, Any]) -> None:
     # For each node, every required predecessor type must appear earlier.
     # Some types accept "either of" predecessors (set union), not "all of":
     #   SignalNode   <- IndicatorNode OR FactorNode
-    #   RankingNode  <- IndicatorNode OR FactorNode (rank can act on raw indicator)
+    #   RankingNode  <- IndicatorNode OR FactorNode OR SignalNode (rank can act on raw indicator OR post-signal)
     #   PortfolioNode <- RankingNode OR SignalNode
     _EITHER_PREDECESSORS: dict[str, set[str]] = {
         "SignalNode": {"IndicatorNode", "FactorNode"},
-        "RankingNode": {"IndicatorNode", "FactorNode"},
+        "RankingNode": {"IndicatorNode", "FactorNode", "SignalNode"},
         "PortfolioNode": {"RankingNode", "SignalNode"},
     }
     seen_types: set[str] = set()

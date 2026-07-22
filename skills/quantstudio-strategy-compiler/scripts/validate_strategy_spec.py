@@ -1,16 +1,21 @@
 #!/usr/bin/env python
 """Validate a strategy_spec.json against the QuantStudio contract.
 
-PR5 minimal runnable version. Validation is primarily JSON-Schema based
-(strategy_spec.schema.json encodes most constraints via allOf: tick status,
-proxy pairings, stock hard_filters, no-lookahead T-close+current_bar reject).
-The extra checks below cover only what the schema CANNOT enforce.
+PR6b-1: converged to contracts.py single-source-of-truth. Validation now
+includes the 5 cross-field timing rules from
+quantstudio.strategy_compiler.contracts.validate_strategy_spec (bar/tick
+frequency alignment, frequency rank monotonicity, next_open clock consistency,
+proxy approximation records) ON TOP of the JSON-Schema check. The Skill-local
+extras (spec_version consistency, capability warnings) are preserved.
 
 Usage:
     python validate_strategy_spec.py <strategy_spec.json>
     python validate_strategy_spec.py <spec.json> --schema <custom.schema.json>
 
 Exit code: 0 = valid, 1 = invalid (violations printed to stderr).
+
+Note: requires the quantstudio package importable (run from project root or
+project venv). If import fails, a clear error is printed (not a raw ImportError).
 """
 from __future__ import annotations
 
@@ -27,6 +32,29 @@ def _here() -> Path:
 
 def _default_schema_path() -> Path:
     return _here().parent / "schemas" / "strategy_spec.schema.json"
+
+
+def _import_contracts_validate():
+    """Import contracts.validate_strategy_spec with defensive error handling.
+
+    Returns the callable, or raises SystemExit with a clear message if the
+    quantstudio package is not importable (the Skill must run from project root
+    or project venv — "no quantstudio package" is not a real scenario per the
+    Skill's deployment context).
+    """
+    try:
+        from quantstudio.strategy_compiler.contracts import (
+            validate_strategy_spec as _contracts_validate,
+            ContractValidationError,
+        )
+        return _contracts_validate, ContractValidationError
+    except ImportError as e:
+        raise SystemExit(
+            "validate_strategy_spec 需要 quantstudio 包（含 5 条 timing 规则的单一真源）。\n"
+            "请在项目根目录或项目 venv 中运行：\n"
+            "  cd D:\\miniQMT策略实盘\\QuantStudio && python -m pip install -e .\n"
+            f"原始 ImportError: {e}"
+        )
 
 
 def _validate_jsonschema(spec: Dict[str, Any], schema: Dict[str, Any]) -> List[str]:
@@ -125,15 +153,29 @@ def _check_capability_requirements_exist(spec: Dict[str, Any]) -> Tuple[List[str
 
 
 def validate_spec(spec: Dict[str, Any], schema: Dict[str, Any]) -> Tuple[bool, List[str], List[str]]:
-    """Full validation: schema + extra checks the schema cannot enforce.
+    """Full validation: schema + contracts.py timing rules + Skill-local extras.
+
+    PR6b-1: converged to contracts.validate_strategy_spec as the single source
+    of truth for the 5 cross-field timing rules (bar/tick frequency alignment,
+    frequency rank monotonicity, next_open clock, proxy approximation records).
+    The Skill-local extras (spec_version consistency, capability warnings) run
+    on top.
 
     Returns (is_valid, violations, warnings).
-    - violations: hard errors (schema + spec_version consistency) → invalid
+    - violations: hard errors (schema + contracts timing + spec_version) → invalid
     - warnings: soft notices (unknown capability IDs) → valid but printed
     """
     violations: List[str] = []
     warnings: List[str] = []
     violations.extend(_validate_jsonschema(spec, schema))
+
+    # PR6b-1: contracts.py timing rules (single source of truth).
+    _contracts_validate, _ContractValidationError = _import_contracts_validate()
+    try:
+        _contracts_validate(spec)
+    except _ContractValidationError as e:
+        violations.append(f"[timing] {e}")
+
     violations.extend(_check_spec_version_consistency(spec))
     cap_violations, cap_warnings = _check_capability_requirements_exist(spec)
     violations.extend(cap_violations)

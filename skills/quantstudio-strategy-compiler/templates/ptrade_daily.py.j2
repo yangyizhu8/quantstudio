@@ -62,12 +62,59 @@ def handle_data(context, data):
 def _get_ma(close_array, num):
     """Simple moving average helper."""
     return round(close_array[-num:].mean(), 2)
+{% elif universe_codes %}
+import numpy as np
+
+
+def initialize(context):
+    # UniverseNode (kind=manual_list): multi-stock rotation strategy.
+    g.stock_list = [{% for c in universe_codes %}'{{ c }}'{% if not loop.last %}, {% endif %}{% endfor %}]
+    g.lookback = {{ dataload_lookback }}
+    g.max_positions = {{ portfolio_max_positions }}
+
+
+def before_trading_start(context, data):
+    # DataLoadNode: PTrade profile MUST loop single-stock get_history
+    # (get_history_batch is forbidden in PTrade public API — local-only optimization).
+    g.history = {}
+    for code in g.stock_list:
+        h = get_history({{ dataload_lookback }}, '{{ dataload_frequency }}',
+                        field={{ dataload_fields }}, security_list=code,
+                        fq='dypre', include=False, is_dict=True)
+        g.history[code] = h[code]['{{ dataload_fields[0] }}']
+    g.stock_list = filter_stock_by_status(
+        g.stock_list, filter_type=['ST', 'HALT', 'DELISTING'], query_date=None
+    )
+
+
+def handle_data(context, data):
+    scores = {}
+{% for ind in pct_change_indicators %}
+    for code in g.stock_list:
+        hist = g.history[code]
+        curr = data[code].close
+        series = np.concatenate((hist, [curr]))
+        {{ ind.id }}[code] = (series[-1] - series[-{{ ind.lookback }}-1]) / series[-{{ ind.lookback }}-1]
+{% endfor %}
+    sorted_codes = sorted(scores.keys(), key=lambda c: scores[c], reverse={{ not ranking_ascending }})
+    selected = sorted_codes[:g.max_positions]
+
+    for code in list(context.portfolio.positions.keys()):
+        if code not in selected:
+            order_target_value(code, 0)
+    position_count = len(context.portfolio.positions)
+    if position_count < g.max_positions:
+        value = context.portfolio.cash / (g.max_positions - position_count)
+        for code in selected:
+            if code not in context.portfolio.positions:
+                order_value(code, value)
+                log.info('Buying %s' % code)
 {% else %}
 
 
-# PTrade daily template: PR6a fully renders single_stock only.
+# PTrade daily template: PR6b-1 renders single_stock + manual_list.
 def initialize(context):
     raise NotImplementedError(
-        'universe kind={{ universe_kind }} rendering is PR6b scope'
+        'universe kind={{ universe_kind }} rendering is PR6b-2 scope'
     )
 {% endif %}

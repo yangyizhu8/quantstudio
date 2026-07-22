@@ -60,6 +60,56 @@ def handle_data(context, data):
 def _get_ma(close_array, num):
     """Simple moving average helper (mirrors 双均线策略.py)."""
     return round(close_array[-num:].mean(), 2)
+{% elif universe_codes %}
+import numpy as np
+
+
+def initialize(context):
+    # UniverseNode (kind=manual_list): multi-stock rotation strategy.
+    g.stock_list = [{% for c in universe_codes %}'{{ c }}'{% if not loop.last %}, {% endif %}{% endfor %}]
+    g.lookback = {{ dataload_lookback }}
+    g.max_positions = {{ portfolio_max_positions }}
+
+
+def before_trading_start(context, data):
+    # DataLoadNode: batch history for all stocks (QuantStudio optimization).
+    # QS profile allows get_history_batch; PTrade profile must loop (see ptrade template).
+    h = get_history_batch(g.stock_list, {{ dataload_lookback }}, '{{ dataload_frequency }}',
+                          field={{ dataload_fields }}, fq='dypre', include=False)
+    g.history = h  # dict: code -> array of close
+    # Selection-stage HardFilterNode: filter ST/HALT/DELISTING.
+    g.stock_list = filter_stock_by_status(
+        g.stock_list, filter_type=['ST', 'HALT', 'DELISTING'], query_date=None
+    )
+
+
+def handle_data(context, data):
+    # IndicatorNode(s): pct_change per stock + RankingNode: top_n select.
+    scores = {}
+{% for ind in pct_change_indicators %}
+    for code in g.stock_list:
+        hist = g.history[code]
+        curr = data[code].close
+        series = np.concatenate((hist, [curr]))
+        {{ ind.id }}[code] = (series[-1] - series[-{{ ind.lookback }}-1]) / series[-{{ ind.lookback }}-1]
+{% endfor %}
+    # RankingNode (operation={{ ranking_op }}, top_n={{ ranking_top_n }}, ascending={{ ranking_ascending }}).
+    sorted_codes = sorted(scores.keys(), key=lambda c: scores[c], reverse={{ not ranking_ascending }})
+    selected = sorted_codes[:g.max_positions]
+
+    # PortfolioNode (kind=equal_weight_top_n): sell-first, buy-second.
+    # Sell positions not in today's selected list.
+    for code in list(context.portfolio.positions.keys()):
+        if code not in selected:
+            order_target_value(code, 0)
+    # Buy missing selections with equal weight.
+    position_count = len(context.portfolio.positions)
+    if position_count < g.max_positions:
+        value = context.portfolio.cash / (g.max_positions - position_count)
+        for code in selected:
+            if code not in context.portfolio.positions:
+                order_value(code, value)
+                log.info('Buying %s' % code)
 {% elif universe_index %}
 
 
@@ -67,34 +117,28 @@ def initialize(context):
     # UniverseNode (kind=index_constituents).
     g.index = '{{ universe_index }}'
     g.lookback = {{ dataload_lookback }}
-    # PortfolioNode (kind={{ portfolio_kind }}, max_positions={{ portfolio_max_positions }}).
     g.max_positions = {{ portfolio_max_positions }}
 
 
 def before_trading_start(context, data):
-    # Universe + selection-stage HardFilterNode (13 filters).
     g.stock_list = get_index_stocks(g.index)
     g.stock_list = filter_stock_by_status(
         g.stock_list, filter_type=['ST', 'HALT', 'DELISTING'], query_date=None
     )
-    # DataLoadNode: history for signal computation.
-    # PR6a skeleton: indicator/signal rendering for multi-stock universes
-    # is partially scaffolded; full multi-stock render arrives in PR6b.
     raise NotImplementedError(
-        'multi-stock universe rendering (index_constituents) is PR6b scope; '
-        'PR6a quantstudio_daily template only fully renders single_stock.'
+        'multi-stock universe rendering (index_constituents) is PR6b-2 scope; '
+        'PR6b-1 quantstudio_daily template renders single_stock + manual_list.'
     )
 
 
 def handle_data(context, data):
-    raise NotImplementedError('PR6b scope (multi-stock)')
+    raise NotImplementedError('PR6b-2 scope (index_constituents)')
 {% else %}
 
 
-# UniverseNode kind={{ universe_kind }} not fully supported in PR6a daily template.
-# PR6a fully renders single_stock only; other kinds arrive in PR6b.
+# UniverseNode kind={{ universe_kind }} not fully supported in PR6b-1 daily template.
 def initialize(context):
     raise NotImplementedError(
-        'universe kind={{ universe_kind }} rendering is PR6b scope'
+        'universe kind={{ universe_kind }} rendering is PR6b-2 scope'
     )
 {% endif %}

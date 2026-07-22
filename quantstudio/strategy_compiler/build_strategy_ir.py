@@ -42,17 +42,25 @@ _EXECUTION_FILTER_SUBSET: tuple[str, ...] = (
     "block_limit_up_buy", "block_limit_down_sell", "enforce_t1", "round_lot",
 )
 
-# PR6a-supported operations (contract §7.1). Others raise.
-_PR6A_INDICATOR_OPS: frozenset[str] = frozenset({"ma"})
-_PR6A_SIGNAL_OPS: frozenset[str] = frozenset({"cross"})
+# PR6b-1-supported operations (contract §7.1/§7.2). Others raise.
+# PR6b-1 adds pct_change (Indicator) + rank/top_n (Ranking) on top of PR6a's ma/cross.
+# Factor ops (zscore/winsorize/neutralize/combine) + threshold/compare Signal → PR6b-2.
+_PR6B1_INDICATOR_OPS: frozenset[str] = frozenset({"ma", "pct_change"})
+_PR6B1_SIGNAL_OPS: frozenset[str] = frozenset({"cross"})
+_PR6B1_RANKING_OPS: frozenset[str] = frozenset({"rank", "top_n", "bottom_n"})
 # Mapping: operation -> IR node_type (contract §3 table).
 _OPERATION_TO_NODE_TYPE: dict[str, str] = {
     # IndicatorNode
     "ma": "IndicatorNode",
+    "pct_change": "IndicatorNode",
     # SignalNode
     "cross": "SignalNode",
-    # The following are recognized as valid operations but NOT supported in PR6a;
-    # they raise with a clear "PR6b" message. Listed here so unknown operations
+    # RankingNode
+    "rank": "RankingNode",
+    "top_n": "RankingNode",
+    "bottom_n": "RankingNode",
+    # The following are recognized as valid operations but NOT supported in PR6b-1;
+    # they raise with a clear "PR6b-2" message. Listed here so unknown operations
     # can be distinguished from "valid-but-deferred" operations in the error.
 }
 
@@ -106,7 +114,13 @@ def _build_universe_node(spec: dict[str, Any]) -> IRNode:
     elif kind == "index_constituents":
         qs = f"g.stock_list = get_index_stocks('{params.get('index', '')}')"
     elif kind in ("etf_list", "manual_list"):
-        qs = "g.stock_list = [<codes from parameters>]"
+        codes = params.get("codes", [])
+        if not codes:
+            raise ContractValidationError(
+                f"universe.kind={kind} requires non-empty parameters.codes"
+            )
+        codes_repr = ", ".join(repr(c) for c in codes)
+        qs = f"g.stock_list = [{codes_repr}]"
     else:
         raise ContractValidationError(f"Unknown universe.kind: {kind!r}")
     return _make_node(
@@ -130,7 +144,7 @@ def _build_selection_hard_filter_node(spec: dict[str, Any]) -> IRNode:
     asset_class = spec.get("asset_class", "stock")
     if asset_class != "stock":
         raise ContractValidationError(
-            f"PR6a build_strategy_ir only supports asset_class=stock; got {asset_class!r} (ETF/CB/futures进PR6b)"
+            f"PR6b-1 build_strategy_ir only supports asset_class=stock; got {asset_class!r} (ETF/CB/futures进PR6b-2)"
         )
     # Contract §6 note: list all 13 regardless of which the Spec sets true/false.
     # The Spec's hard_filters values are recorded in parameters.spec_filters
@@ -176,7 +190,7 @@ def _build_dataload_node(spec: dict[str, Any]) -> IRNode:
             "data_requirements must contain a bar dataset (stock_daily/etf_daily/stock_minutes/etf_minutes)"
         )
     freq = bar_ds["frequency"]
-    # Collect fields actually used by signal steps (ma `field` param).
+    # Collect fields actually used by signal steps (indicator `field` param).
     used_fields: list[str] = []
     for s in spec["signals"]["steps"]:
         f = s.get("parameters", {}).get("field")
@@ -185,11 +199,12 @@ def _build_dataload_node(spec: dict[str, Any]) -> IRNode:
     # Fallback to dataset fields if no step declares a field.
     if not used_fields:
         used_fields = list(bar_ds["fields"])
-    # Lookback: max(ma lookback) * 2 for safety margin (双均线策略.py pattern).
+    # Lookback: max(indicator lookback) * 2 for safety margin (双均线策略.py pattern).
+    # PR6b-1: covers ma AND pct_change (both IndicatorNode with lookback).
     lookbacks = [
         s["parameters"]["lookback"]
         for s in spec["signals"]["steps"]
-        if s["operation"] == "ma" and "lookback" in s["parameters"]
+        if s["operation"] in _PR6B1_INDICATOR_OPS and "lookback" in s.get("parameters", {})
     ]
     lookback = (max(lookbacks) * 2) if lookbacks else 20
     is_minute = freq in ("1m", "5m", "15m", "30m", "60m")
@@ -234,22 +249,33 @@ def _build_signal_chain_nodes(spec: dict[str, Any]) -> list[IRNode]:
         params = dict(step.get("parameters", {}))
         output = step_id  # contract §3: output name == step id for traceability
 
-        if op in _PR6A_INDICATOR_OPS:
+        if op in _PR6B1_INDICATOR_OPS:
             node_type = "IndicatorNode"
-            # Resolve source: ma uses close_history (DataLoad output) by default
+            # Resolve source: uses close_history (DataLoad output) by default
             # unless parameters.source points to another indicator.
             source = params.get("source", "close_history")
             input_refs = [source] if source in step_id_to_output or source == "close_history" else ["close_history"]
-            lookback_val = params.get("lookback", "?")
-            qs = (
-                f"get_ma(<{source}_data>, {lookback_val}) helper; "
-                f"<{source}_data> = concat(g.<{source}>, [data[code].{params.get('field', 'close')}])"
-            )
+            field = params.get("field", "close")
+            lookback_val = params.get("lookback")
+            if lookback_val is None or lookback_val <= 0:
+                raise ContractValidationError(
+                    f"indicator step {step_id!r} (operation={op}) requires positive parameters.lookback"
+                )
+            if op == "ma":
+                qs = (
+                    f"get_ma(<{source}_data>, {lookback_val}) helper; "
+                    f"<{source}_data> = concat(g.<{source}>, [data[code].{field}])"
+                )
+            elif op == "pct_change":
+                qs = (
+                    f"pct = (<{source}>[-1] - <{source}>[-{lookback_val}-1]) / <{source}>[-{lookback_val}-1]; "
+                    f"<{source}> = g.<{source}>[code] (history array per stock)"
+                )
             validation_rules = ["INDICATOR-LOOKBACK-POSITIVE", "INDICATOR-NO-FUTURE-BAR"]
             required_caps: list[str] = []
             timing = "bar"
-            parameters = {"operation": op, "field": params.get("field", "close"), "lookback": params.get("lookback")}
-        elif op in _PR6A_SIGNAL_OPS:
+            parameters = {"operation": op, "field": field, "lookback": lookback_val}
+        elif op in _PR6B1_SIGNAL_OPS:
             node_type = "SignalNode"
             sources = params.get("sources", [])
             if not sources:
@@ -273,11 +299,36 @@ def _build_signal_chain_nodes(spec: dict[str, Any]) -> list[IRNode]:
             required_caps = []
             timing = "bar"
             parameters = {"operation": op, "sources": list(sources), "direction": direction}
+        elif op in _PR6B1_RANKING_OPS:
+            node_type = "RankingNode"
+            source = params.get("source")
+            if not source:
+                raise ContractValidationError(
+                    f"ranking step {step_id!r} (operation={op}) requires parameters.source"
+                )
+            if source not in step_id_to_output and source != "close_history":
+                raise ContractValidationError(
+                    f"ranking step {step_id!r} references unknown source {source!r}; "
+                    f"known upstream: {list(step_id_to_output)}"
+                )
+            input_refs = [source if source == "close_history" else step_id_to_output[source]]
+            ascending = params.get("ascending", False)
+            top_n_val = params.get("top_n") or params.get("n")
+            qs = (
+                f"sorted_codes = sorted(scores.keys(), key=lambda c: scores[c], reverse={not ascending}); "
+                f"selected = sorted_codes[:{top_n_val}]"
+            )
+            validation_rules = ["RANK-SOURCE-EXISTS"]
+            required_caps = []
+            timing = "bar"
+            parameters: dict[str, Any] = {"operation": op, "source": source, "ascending": ascending}
+            if top_n_val is not None:
+                parameters["top_n"] = top_n_val
         else:
             # Contract §3: unknown/deferred operation must raise (no silent downgrade).
             raise ContractValidationError(
-                f"signals.steps step id={step_id!r} operation={op!r} is not supported in PR6a "
-                f"(supported: ma, cross). Extend in PR6b. "
+                f"signals.steps step id={step_id!r} operation={op!r} is not supported in PR6b-1 "
+                f"(supported: ma, pct_change, cross, rank, top_n, bottom_n). Extend in PR6b-2. "
                 f"See strategy-ir-contract.md §3 mapping table."
             )
 
@@ -427,7 +478,7 @@ def build_strategy_ir(spec: dict[str, Any]) -> StrategyIR:
     NOT derive node order from the order of fields in the Spec.
 
     Raises ContractValidationError on:
-      - unsupported operation (PR6a: only `ma` and `cross`)
+      - unsupported operation (PR6b-1: ma, pct_change, cross, rank, top_n, bottom_n)
       - missing required Spec fields
       - signal source referencing unknown upstream step
       - asset_class != stock (PR6a scope; ETF/CB/futures进PR6b)

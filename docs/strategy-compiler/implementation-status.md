@@ -86,7 +86,7 @@ Final logs: `output/strategy-compiler-pr1/`.
 3. Beijing inputs accept `.BJ/.XBJ/.XBSE`; public output is `.BJ`.
 4. Historical BSE codes are classified but not rewritten to `920`, preserving historical database keys.
 5. `next_open` now implements a real pending-order queue (PR2). T-day signal creates a pending order with symmetric pre-deduction (`locked_cash` for buys, `pending_sell_shares` for sells); T+1 open event drains the queue with T+1 price and state. `close`/`open` modes are untouched.
-6. Minute and Tick capability status is unchanged.
+6. Minute capability now READY (post-PR4 + real data ingested 2026-07-22); Tick still BLOCKED (PR9 scope). [Updated 2026-07-22: at PR1 time both were BLOCKED; minute has since flipped to READY.]
 7. The workspace is not a Git repository; audit evidence is the file list, tests, smoke output, and official mapping snapshot.
 
 
@@ -206,11 +206,11 @@ The master plan 7.19 `1m→5m/15m/30m/60m` real-time aggregation and `test_minut
 - [x] `DuckDBMarketDataProvider`: frequency dispatch in `get_bars`/`get_bars_by_count`; implemented `get_snapshot`; calendar injected via `from_duckdb` for trading-day enumeration.
 - [x] `DuckDBDataAccess`: added `query_minute_bars_by_range`/`query_minute_bars_by_count`/`_resolve_minute_table` (ETF→etf_minutes, index/cb→None→TABLE_MISSING).
 - [x] PtradeAPI: `get_history` passes `unit`, `get_price` passes `frequency`, `get_snapshot` gains `frequency` param; `FrequencyCapabilityError` pierces the `except Exception` (no silent swallow).
-- [x] `capability_report.example.json`: `stock_1m_backtest.provider_status` PROVIDER_MISSING→AVAILABLE (code link ready only; data_status still DATA_MISSING; execution_status still BLOCKED).
+- [x] `capability_report.example.json`: `stock_1m_backtest.provider_status` PROVIDER_MISSING→AVAILABLE (code link ready only). [Updated 2026-07-22: data_status now AVAILABLE, execution_status now READY post-ingestion — the PR3-time "still DATA_MISSING/BLOCKED" parenthetical is superseded.]
 
 ### PR3 known simplifications / verification TODOs (real-data smoke)
 
-- Bar timestamp convention assumes **end-labeled** (09:31 bar = 09:30:01-09:31:00). Cannot verify against real data (tables empty). Listed as the first verification item when minute data is ingested; if actually start-labeled, the session windows shift by one minute.
+- Bar timestamp convention assumes **end-labeled** (09:31 bar = 09:30:01-09:31:00). [Updated 2026-07-22: VERIFIED on real data — 09:30 bar O=H=L=C 集合竞价签名 confirms end-labeled. The PR3-time "Cannot verify against real data (tables empty)" caveat is closed.]
 - `preClose` keeps the raw value under `fq='pre'` (minute preClose is for pct-chg reference only; impact minimal). Documented simplification.
 - Minute `count` query implements "N bars before end_date same-day" only; cross-day count semantics deferred to real-data calibration.
 
@@ -274,11 +274,13 @@ Real Fidelity gates:          ETF PASS 87752.561780/3  smallcap CLOSE 118551.211
 
 ### PR4 real-minute-data status (decision 2)
 
-Minute tables (`stock_minutes`/`etf_minutes`) remain empty (0 rows). The daemon collector (`quantstudio/pipeline/daemon.py`) is full-market and time-uncontrollable (tushare rate-limited, days for full history). Per decision 2, small-sample real smoke (5 ETF × 1 month) is the intended validation, but the collector does not support code/date scoping without config changes (out of PR4 scope). **Fell back to synthetic tests** (32 passing, covering all 6 golden use cases + gap-1 no-leak). Real minute data ingestion is an independent task (user may start separately); PR4 acceptance is not blocked.
+**[更新 2026-07-22]** Minute tables now have real xtquant data: stock_minutes 18,777,900 rows + etf_minutes 46,940,329 rows (ingested 2026-07-21/22). PR4 real-data smoke PASS (510050 ETF × 2026-07-17 × full universe). The original PR4-time text below is retained as historical context (superseded by the 2026-07-22 closure):
+
+~PR4 original: Minute tables (`stock_minutes`/`etf_minutes`) remain empty (0 rows). The daemon collector is full-market and time-uncontrollable (tushare rate-limited). Per decision 2, small-sample real smoke is the intended validation. Fell back to synthetic tests (32 passing). Real minute data ingestion is an independent task.~ — superseded; data ingested + smoke PASS.
 
 ### PR4 end-labeled convention (承接前置提醒 1)
 
-All minute event timing assumes end-labeled (09:31 bar = 09:30:01-09:31:00). Cannot verify against real data (tables empty). Listed as first verification item when minute data is ingested. If actually start-labeled, session windows shift by 1 minute — stop and report, do not self-patch (would cascade to PR3 intraday_windows).
+**[更新 2026-07-22]** VERIFIED end-labeled on real data (09:30 bar O=H=L=C 集合竞价签名). The original "Cannot verify against real data (tables empty)" caveat is closed.
 
 ### PR4 known limitations / reports
 
@@ -323,9 +325,9 @@ Real Fidelity gates: ETF PASS 87752.561780/3  smallcap CLOSE 118551.211880/57 (d
 - miniQMT downtime: minute tables stop updating (data_status reflects honestly). Single-source lock means no silent tushare fallback.
 - Historical depth: pre-batch probe determines actual xtquant cache depth; start_date adjusted if <2018.
 
-### Post-ingestion smoke (end-labeled first real verification)
+### Post-ingestion smoke (end-labeled first real verification) — DONE 2026-07-22
 
-After user manually ingests via pyqt, 5 ETF × 2026-01 1-month real smoke validates: end-labeled convention (first real contact), session filtering, gap-1 no-leak, match timing. **If start-labeled, stop and report — do not self-patch** (would cascade to PR3).
+Real xtquant minute data ingested (18.78M stock_minutes + 46.94M etf_minutes). 510050 ETF × 2026-07-17 × full-universe smoke PASS. end-labeled VERIFIED (09:30 bar O=H=L=C). Session filtering, gap-1 no-leak, match timing all confirmed on real data.
 
 ## Incident log: xtquant volume unit gap (2026-07-21, first real ingestion)
 

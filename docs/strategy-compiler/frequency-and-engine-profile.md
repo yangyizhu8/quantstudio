@@ -21,12 +21,12 @@
 | Profile | Spec 可表达 | Schema | Provider | Engine | 当前执行状态 |
 |---|---:|---:|---:|---:|---|
 | `daily-bar-v1` | 是 | 是 | 日线可用 | 逐日引擎可用 | READY（next_open 在 PR2 后为真实 pending queue） |
-| `minute-bar-v1` | 是 | 是 | PR3 已贯通频率路由 | PR4 分钟事件循环已完成（待真实数据冒烟） | BLOCKED（data_status=DATA_MISSING） |
+| `minute-bar-v1` | 是 | 是 | PR3 已贯通频率路由 | PR4 分钟事件循环已完成（真实数据冒烟 PASS 2026-07-22） | READY（data_status=AVAILABLE，engine_status=READY） |
 | `tick-l2-v1` | 是 | 预留 | 未完成 | 未完成 | PLANNED |
 
-`minute-bar-v1`：PR3 已完成 Provider 频率路由（provider_status=AVAILABLE，仅表代码链路就绪，不得解释为分钟回测可用）。仍 BLOCKED 的原因：data_status=DATA_MISSING（分钟表空）+ engine_status=ENGINE_MISSING（PR4 分钟事件引擎未完成）。
+`minute-bar-v1`：PR3 Provider 频率路由 + PR4 分钟事件引擎均已完成。真实 xtquant 分钟数据已入库（stock_minutes 18,777,900 行 + etf_minutes 46,940,329 行，2026-07-21/22 采集）。PR4 真实数据冒烟 PASS（510050 ETF × 2026-07-17 × 全 universe，2026-07-22 验证）。end-labeled 约定已验证（09:30 bar O=H=L=C 集合竞价签名）。Profile 当前 READY。
 
-分钟 Profile 在 PR4 验收前不得改成 READY。Tick/L2 在 PR9 前不得改成 READY。
+Tick/L2 在 PR9 前不得改成 READY（capability-model.md 不变量 4）。
 
 ## 3. 频率路由目标
 
