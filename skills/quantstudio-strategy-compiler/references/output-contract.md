@@ -1,0 +1,51 @@
+# 输出目录与 Run Card 契约
+
+> Derived from docs/strategy-compiler/output-and-run-card-contract.md @ 2026-07-22
+> 权威源：docs/strategy-compiler/ 下的原始契约文档
+> 本文件为 Skill 派生快照，契约变更时必须同步（见 SKILL.md 同步纪律）
+
+## 1. 每策略输出结构
+
+```text
+<output-root>/<strategy_id>/<build_id>/
+├── <strategy_id>_quantstudio.py
+├── <strategy_id>_ptrade.py
+├── strategy_spec.json
+├── strategy_ir.json
+├── capability_report.json
+├── static_validation_report.json
+├── variant_consistency_report.json
+├── run_card.json
+├── README.md
+├── local_backtest/        # 仅实际执行后创建
+└── fidelity/              # 导入 PTrade 结果并对照后创建
+```
+
+**不存在的执行结果目录不得用空文件伪造成功。**
+
+## 2. 覆盖与可复现性
+
+- `build_id` 必须稳定区分一次编译产物。
+- 默认不覆盖既有构建；覆盖必须由 Spec 显式允许。
+- Run Card 记录 Spec/IR/代码/报告路径及 SHA-256（产物存在后）。
+- 保存所有契约版本、Profile、数据区间、Python/QuantStudio 版本、随机种子和数据指纹。
+- 相同输入、数据和版本应生成相同业务代码；时间戳等运行元数据不得进入业务逻辑。
+
+## 3. 状态语义
+
+- `PASS`：当前阶段所有必需检查通过。
+- `PARTIAL`：合法中间产物已生成，但后续阶段未运行。
+- `BLOCKED`：能力门禁阻止执行；**不得写成回测通过**。
+- `FAILED`：已运行的验证或执行失败。
+
+`stage` 分为 `SPEC_ONLY`、`STATIC_VALIDATED`、`SMOKE_EXECUTED`、`FIDELITY_COMPARED`。
+
+## 4. Run Card Schema
+
+机器定义：`quantstudio/strategy_compiler/schemas/run_card.schema.json`
+
+示例：`quantstudio/strategy_compiler/examples/run_card.example.json`
+
+## 5. PR5 现实约束
+
+Skill 当前版本（PR5）停在 Spec：Run Card `stage = SPEC_ONLY`、`status = PARTIAL`。`SMOKE_EXECUTED`/`FIDELITY_COMPARED` 需要 PR6 渲染产物（`.py`/`strategy_ir.json`/`local_backtest/`/`fidelity/`）实际存在后才能填入，PR5 不得伪造这些阶段或目录。

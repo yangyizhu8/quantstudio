@@ -1,0 +1,4 @@
+interface:
+  display_name: "QuantStudio Strategy Compiler"
+  short_description: "Compile strategy ideas into validated backtest code"
+  default_prompt: "Use $quantstudio-strategy-compiler to turn a strategy idea or spec into a validated strategy_spec.json, gating on capability inspection and explicit user confirmation. Rendering to QuantStudio + PTrade code arrives in PR6."
