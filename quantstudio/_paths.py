@@ -2,8 +2,10 @@
 
 解析优先级（从高到低）：
 1. 环境变量 ``QUANTSTUDIO_DATA_ROOT``（便于部署时重定向，无需改代码）
-2. ``config/data_config.json`` 中 ``path`` 字段的父目录（配置中心，含绝对路径）
-3. 回退：项目根 / ``data``（兼容旧布局，未曾移动时仍可用）
+2. ``config/data_config.json`` 中 ``path`` 字段的父目录（配置中心）
+   - 相对路径锚定到项目根（不依赖 cwd，daemon 跨目录运行也正确）
+   - 绝对路径原样使用
+3. 回退：项目根 / ``data``（默认客户布局：数据库解压到 <项目根>/data/）
 
 用法::
 
@@ -32,7 +34,12 @@ def get_data_root() -> Path:
         cfg = json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
         p = cfg.get("path")
         if p:
-            return Path(p).parent
+            # config path 指向数据库文件本身；data root 是其父目录。
+            # 相对路径锚定到项目根（不依赖 cwd，daemon/回测跨目录运行都正确）；
+            # 绝对路径原样使用。
+            pp = Path(p)
+            full = pp if pp.is_absolute() else (_ROOT / pp)
+            return full.parent.resolve()
     except Exception:
         # 配置缺失/损坏时回退，保证可导入、可定位
         pass

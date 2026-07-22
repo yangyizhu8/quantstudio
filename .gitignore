@@ -1,5 +1,10 @@
-data/
-*.db
+# Database files are large (12GB) and distributed separately (压缩包发给客户).
+# The data/ directory itself is tracked (contains .gitkeep + placement guide).
+data/*.db
+data/*.db-journal
+data/*.db.wal
+data/*.sqlite
+data/*.sqlite3
 *.db-journal
 *.db.wal
 __pycache__/

@@ -16,7 +16,7 @@ Skill 依赖整个 QuantStudio 项目，**不是独立可运行**的。客户机
 |---|---|---|
 | Python ≥ 3.9 | 推荐 3.11 | `python --version` |
 | QuantStudio 包（editable 安装） | 提供编译器、回测引擎、DuckDB 适配器 | `cd QuantStudio && pip install -e .` |
-| DuckDB 数据库 | 含 stock_daily / etf_daily / stock_minutes 等行情数据 | DB 路径见 `quantstudio/_paths.py` |
+| DuckDB 数据库（12 GB） | 含 stock_daily / etf_daily / stock_minutes 等行情数据，**单独压缩包分发**（不进 git，超 GitHub 100MB 上限） | 解压到 `<项目根>/data/quantstudio.db`（见下） |
 | PyYAML | quick_validate 解析 SKILL.md frontmatter（已写入 pyproject 依赖） | `pip install pyyaml` |
 | 一个 AI 编程智能体 | ZCode / Claude Code / Codex / CodeBuddy 等，用于调用 Skill | — |
 
@@ -24,6 +24,28 @@ Skill 依赖整个 QuantStudio 项目，**不是独立可运行**的。客户机
 ```bash
 pip install -e .
 ```
+
+### 数据库放置（重要）
+
+数据库文件（约 12 GB）**不在 GitHub 仓库内**（超 GitHub 单文件 100 MB 上限），
+通过压缩包另行分发。拿到压缩包后，解压到项目内的 `data/` 目录：
+
+```
+QuantStudio/
+└── data/
+    └── quantstudio.db     ← 解压到这里
+```
+
+数据库路径由 `config/data_config.json` 的 `path` 字段（相对项目根 `data/quantstudio.db`）
+解析，所有读库入口（回测引擎、采集管线、能力探测）统一走 `quantstudio._paths.db_path()`。
+
+**验证数据库就位**（项目根目录运行）：
+```bash
+python -c "from quantstudio._paths import db_path; print(db_path()); print('存在:', db_path().exists())"
+# 应输出 .../QuantStudio/data/quantstudio.db 且 存在: True
+```
+
+> 若需把数据库放在别的位置，设置环境变量 `QUANTSTUDIO_DATA_ROOT=<你的data目录>`。
 
 ---
 

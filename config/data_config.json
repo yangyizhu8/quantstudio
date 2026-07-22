@@ -1,12 +1,12 @@
 {
   "type": "duckdb",
-  "path": "D:/miniQMT策略实盘/_runtime/data/quantstudio.db",
+  "path": "data/quantstudio.db",
   "quarantine": {
-    "path": "D:/miniQMT策略实盘/_runtime/data/quarantine.db",
+    "path": "data/quarantine.db",
     "retention_days": 7,
     "auto_archive": true,
     "max_rows": 500000,
     "rate_alert_threshold": 1000,
-    "_note": "防膨胀：7天归档(原30天过松致3天攒9.9GB)、50万行硬上限(原10万在全量拉取时被依赖表合法拒绝撑满,导致主表拒绝行被误丢弃)、单规则单日1000行速率提示。db path 已改绝对路径，避免 daemon 在不同 cwd 下写错文件"
+    "_note": "防膨胀：7天归档、50万行硬上限、单规则单日1000行速率提示。path 用相对项目根路径，由 _paths.get_data_root() 锚定到项目根解析（不依赖 cwd，daemon 跨目录运行正确）。客户移交时数据库解压到 <项目根>/data/quantstudio.db。"
   }
 }

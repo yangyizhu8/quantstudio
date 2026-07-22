@@ -20,7 +20,9 @@ import duckdb
 from datetime import datetime
 from pathlib import Path
 
-DB = Path("D:/miniQMT策略实盘/_runtime/data/quantstudio.db")
+# 走统一的 db_path() 解析（不再硬编码绝对路径，移交可移植）。
+from quantstudio._paths import db_path
+DB = db_path()
 
 
 def main():
