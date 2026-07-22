@@ -776,8 +776,8 @@ class ResidentCollector:
                                 f"已入库 {total_written[0]} 行, 失败 {fail_count[0]}, "
                                 f"已用 {elapsed:.0f}s, 剩余 {eta:.0f}s")
 
-        fetch_ok, failure_rate, threshold = self._failure_gate(task, fail_count[0], done_count[0])
-        reject_ok, reject_rate, _ = self._failure_gate(task, total_rejected[0], total_raw[0])
+        fetch_ok, failure_rate, threshold = self._failure_gate(task, fail_count[0], done_count[0], source=source)
+        reject_ok, reject_rate, _ = self._failure_gate(task, total_rejected[0], total_raw[0], source=source, is_reject=True)
         has_usable_result = total_written[0] > 0 or (mode == "incremental" and fail_count[0] == 0)
         task_ok = fetch_ok and reject_ok and has_usable_result
 
@@ -988,8 +988,8 @@ class ResidentCollector:
                                 f"已用 {elapsed:.0f}s, 剩余 {eta_str}")
                     last_progress_ts = now
 
-        fetch_ok, failure_rate, threshold = self._failure_gate(task, fail_count[0], done_count[0])
-        reject_ok, reject_rate, _ = self._failure_gate(task, total_rejected[0], total_raw[0])
+        fetch_ok, failure_rate, threshold = self._failure_gate(task, fail_count[0], done_count[0], source=source)
+        reject_ok, reject_rate, _ = self._failure_gate(task, total_rejected[0], total_raw[0], source=source, is_reject=True)
         has_usable_result = total_written[0] > 0 or (mode == "incremental" and fail_count[0] == 0)
         task_ok = fetch_ok and reject_ok and has_usable_result
 
@@ -1430,10 +1430,24 @@ class ResidentCollector:
         except (ValueError, TypeError, OverflowError):
             return None
 
-    def _failure_gate(self, task: Dict, failed: int, attempted: int):
-        """统一分片任务失败率门禁；默认允许失败比例不超过 0.01%。"""
+    def _failure_gate(self, task: Dict, failed: int, attempted: int, source: str = None, is_reject: bool = False):
+        """统一分片任务失败率门禁；默认允许失败比例不超过 0.01%。
+
+        PR6b-1 修复（2026-07-23）：拒绝率（is_reject=True）对 xtquant source
+        放宽到 1%。原因：xtquant back 复权是逐 tick 累积，同根 K 线 OHLC
+        因子有 2-4% 微差（算法固有，非数据错误），validator 已用源感知阈值
+        （xtquant back 5%），但仍有一小部分边缘 case 超过 5% 被隔离（~0.5-0.6%）。
+        daemon 的 0.01% 拒绝率阈值把这些正常隔离当任务失败，触发无意义的
+        源切换链 + 不推进 watermark（导致下次全量重拉）。
+
+        拉取失败率（is_reject=False）保持 0.01% 严格——那是真正的拉取失败，
+        不是数据质量过滤。
+        """
         cfg = self.tasks_cfg.get("quality_gate", {})
         threshold = float(task.get("max_failure_rate", cfg.get("max_failure_rate", 0.0001)))
+        # 拒绝率对 xtquant 放宽（AdjustmentFactorConsistency 算法固有微差）
+        if is_reject and source == "xtquant":
+            threshold = max(threshold, float(cfg.get("max_reject_rate_xtquant", 0.01)))
         threshold = max(0.0, threshold)
         rate = (failed / attempted) if attempted > 0 else 0.0
         return rate <= threshold, rate, threshold
