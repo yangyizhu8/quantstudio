@@ -1,7 +1,7 @@
 {
   "strategy_ir_version": "1.0",
   "strategy_id": "case1_dual_ma",
-  "source_spec_sha256": "fd3639dbe1c43362ae77f0eefa93438bb3e54f5562861289da9bac3efe6bddf2",
+  "source_spec_sha256": "0a8fcc6befc86c944d2b21c521bd8753bb6915e0ccdafee492407f2c36a4e1d6",
   "contract_versions": {
     "strategy_spec_version": "1.0.0",
     "engine_semantics_version": "0.1.0-legacy",
@@ -9,7 +9,7 @@
     "security_code_rules_version": "1.0.0",
     "ptrade_profile_version": "1.0.0-default",
     "renderer_version": "0.0.0-planned",
-    "skill_version": "0.1.0-skeleton"
+    "skill_version": "0.2.0-pr6b1"
   },
   "engine_profile": {
     "profile_id": "daily-bar-v1",

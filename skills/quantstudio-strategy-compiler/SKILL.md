@@ -7,7 +7,7 @@ description: Turn a strategy idea or spec into validated QuantStudio plus PTrade
 
 Compile strategy ideas into validated, backtestable QuantStudio + PTrade code, gated by capability inspection and user confirmation.
 
-**Skill version**: 0.1.0-skeleton (PR5). Code rendering (R3+) arrives in PR6; this Skill currently stops at Spec (R2.5).
+**Skill version**: 0.2.0-pr6b1 (PR6a + PR6b-1). Full compile pipeline delivered: Spec -> IR -> dual render (QuantStudio + PTrade) -> 7 validators -> run_card. The orchestrator (`quantstudio.strategy_compiler.orchestrator`) is the end-to-end entry point; this Skill no longer stops at Spec. PR6b-2 (9 golden cases, index_constituents, Factor ops, cost passthrough, stop_loss) is the remaining scope.
 
 ## When to trigger
 
@@ -33,11 +33,11 @@ Never skip R-1. Never copy status values from examples -- inspect the real envir
 2. **R-1 -- Capability inspection**: run `inspect_capabilities.py`, present the honest status.
 3. **R2 -- Spec draft**: produce a `strategy_spec.json` conforming to `schemas/strategy_spec.schema.json`. Validate with `scripts/validate_strategy_spec.py`.
 4. **R2.5 -- User confirmation (HARD GATE)**: present the Spec to the user. **No code generation until explicit confirmation.**
-5. **R3+ -- Rendering (PR6, NOT this Skill version)**: IR -> dual renderers -> smoke backtest. SKILL.md notes this is out of PR5 scope.
+5. **R3 -- Render + validate (DELIVERED)**: after confirmation, run the orchestrator: `python -m quantstudio.strategy_compiler.orchestrator <spec.json> [--start] [--end]`. This builds the IR, renders dual-platform `.py`, runs 7 static validators, inspects capabilities, runs the smoke backtest (if READY), and writes `run_card.json` + `variant_consistency_report.json`.
 
 ## R2.5 hard gate -- no code before confirmation
 
-Generating `.py` strategy code before R2.5 user confirmation is forbidden. The Spec draft must be shown to the user with approximations, capability gaps, and hard-filter settings called out. Only after the user explicitly confirms may rendering proceed -- and rendering itself is PR6, so in PR5 the workflow stops at the confirmed Spec.
+Generating `.py` strategy code before R2.5 user confirmation is forbidden. The Spec draft must be shown to the user with approximations, capability gaps, and hard-filter settings called out. Only after the user explicitly confirms may rendering proceed. The orchestrator enforces golden protection at render time (protected IDs raise) but cannot read user intent -- present the Spec and wait for CONFIRMED first.
 
 ## When to stop
 
@@ -51,8 +51,8 @@ Generating `.py` strategy code before R2.5 user confirmation is forbidden. The S
 
 Only when ALL hold:
 1. R2.5 user confirmation recorded in `user_confirmations` with `status: CONFIRMED`.
-2. `inspect_capabilities.py` reports `overall_execution_status: READY` for every required capability.
-3. (PR6) Renderer is available -- in PR5 this condition is never met, so PR5 never generates code.
+2. `inspect_capabilities.py` reports `overall_execution_status: READY` for every required capability (the orchestrator gates smoke on this; non-READY produces `smoke_backtest.status=BLOCKED`, never a false PASS).
+3. The renderer + validators are available (DELIVERED in PR6a/PR6b-1 via `quantstudio.strategy_compiler`).
 
 ## Profile awareness
 
@@ -76,7 +76,7 @@ Read only what the current round needs:
 - Output & Run Card -> `references/output-contract.md`
 - Architecture/invariants -> `references/framework-contract.md`
 - Known limits -> `references/known-limitations.md`
-- IR (PR6) -> `references/strategy-ir-contract.md` (placeholder until PR6)
+- IR (PR6a/PR6b-1) -> `references/strategy-ir-contract.md` (11 node types, signals.steps mapping, 10 lookahead high-risk items)
 
 Do not read all references up front -- that defeats the "no unnecessary large docs" acceptance criterion.
 
@@ -84,7 +84,8 @@ Do not read all references up front -- that defeats the "no unnecessary large do
 
 - Spec lands at `output/generated_strategies/<strategy_id>/strategy_spec.json`.
 - After drafting, run `scripts/validate_strategy_spec.py` self-check; fix all violations before presenting to user.
-- Run Card stage after PR5 = `SPEC_ONLY` (smoke/Fidelity stages need PR6 rendering).
+- After R2.5 confirmation, run the orchestrator; it writes `strategy_ir.json`, `<id>_quantstudio.py`, `<id>_ptrade.py`, `capability_report.json`, `variant_consistency_report.json`, and `run_card.json` (stage advances SPEC_ONLY -> STATIC_VALIDATED -> SMOKE_EXECUTED as gates pass).
+- Run Card `stage` records the pipeline step reached; `status` records PASS/BLOCKED/FAILED. Fidelity comparison (R7) is PR7 scope (`fidelity` field stays null).
 - Do not auto-overwrite existing strategies; `output.overwrite` must be explicit in the Spec.
 
 ## Synchronization discipline (references are derived snapshots)
@@ -92,7 +93,7 @@ Do not read all references up front -- that defeats the "no unnecessary large do
 `docs/strategy-compiler/` is the **authoritative source** for contracts. `references/` here are derived snapshots taken 2026-07-22 (see each file's header for its source). When a contract document changes upstream:
 1. Update the corresponding `references/*.md` snapshot.
 2. Bump `skill_version` if the change affects Skill behavior.
-3. This sync check is on the PR6/PR7 checklist -- do not let the two drift.
+3. Do not let the two drift -- PR6b-1 already refreshed `known-limitations.md` to reflect delivered IR/render/validators.
 
 ## Golden protected strategies (never auto-overwrite)
 
