@@ -75,18 +75,21 @@ def initialize(context):
     g.stock_list = [{% for c in universe_codes %}'{{ c }}'{% if not loop.last %}, {% endif %}{% endfor %}]
     g.lookback = {{ dataload_lookback }}
     g.max_positions = {{ portfolio_max_positions }}
+    g.top_n = {{ ranking_top_n if ranking_top_n else portfolio_max_positions }}
     run_daily(context, _trade_on_minute, time='09:35')
 
 
 def before_trading_start(context, data):
     # PTrade profile MUST loop single-stock get_history
     # (get_history_batch is forbidden in PTrade public API — local-only optimization).
+    # {{ dataload_frequency }} keeps the IR frequency (daily snapshot for limit
+    # checks even in minute profile). Extract close into a 1-D array per code.
     g.history = {}
     for code in g.stock_list:
-        h = get_history({{ dataload_lookback }}, '1d',
+        h = get_history({{ dataload_lookback }}, '{{ dataload_frequency }}',
                         field={{ dataload_fields }}, security_list=code,
                         fq='dypre', include=False, is_dict=True)
-        g.history[code] = h[code]['{{ dataload_fields[0] }}']
+        g.history[code] = np.array(h[code]['{{ dataload_fields[0] }}'].values, dtype=float)
     g.stock_list = filter_stock_by_status(
         g.stock_list, filter_type=['ST', 'HALT', 'DELISTING'], query_date=None
     )
@@ -109,7 +112,7 @@ def _trade_on_minute(context):
         scores[code] = g.history[code][-1]
 {% endif %}
     sorted_codes = sorted(scores.keys(), key=lambda c: scores[c], reverse={{ not ranking_ascending }})
-    selected = sorted_codes[:g.max_positions]
+    selected = sorted_codes[:g.top_n]
 
     for code in list(context.portfolio.positions.keys()):
         if code not in selected:

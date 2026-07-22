@@ -114,13 +114,14 @@ class TestRanking:
         assert ranking[0].parameters.get("top_n") == 2
 
     def test_rank_render_emits_sorted_topn(self, case1_spec):
-        """QS render emits scores dict + sorted()[:max_positions]."""
+        """QS render emits scores dict + sorted()[:top_n] (the IR selection count)."""
         spec = _pct_rank_spec(case1_spec)
         ir = build_strategy_ir(spec)
         qs = render_quantstudio(ir)
         assert "scores" in qs
         assert "sorted(" in qs
-        assert "[:g.max_positions]" in qs or "[: 2]" in qs or "[:max_positions" in qs
+        # Slice by ranking top_n, NOT max_positions (audit bug#4 fix).
+        assert "[:g.top_n]" in qs
 
 
 # ---------------------------------------------------------------------------

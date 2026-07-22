@@ -86,16 +86,20 @@ def initialize(context):
     g.stock_list = [{% for c in universe_codes %}'{{ c }}'{% if not loop.last %}, {% endif %}{% endfor %}]
     g.lookback = {{ dataload_lookback }}
     g.max_positions = {{ portfolio_max_positions }}
+    g.top_n = {{ ranking_top_n if ranking_top_n else portfolio_max_positions }}
     # Schedule the trade decision at a fixed minute (same as single_stock minute).
     run_daily(context, _trade_on_minute, time='09:35')
 
 
 def before_trading_start(context, data):
-    # DataLoadNode: batch daily history for limit checks + scoring baseline.
-    # QS profile allows get_history_batch; PTrade must loop (see ptrade template).
-    h = get_history_batch(g.stock_list, {{ dataload_lookback }}, '1d',
-                          field={{ dataload_fields }}, fq='dypre', include=False)
-    g.history = h  # dict: code -> array of close
+    # DataLoadNode: batch history for limit checks + scoring baseline.
+    # get_history_batch returns CodeDict{code: DataFrame}; extract the close
+    # column into a 1-D array per code. {{ dataload_frequency }} keeps the IR
+    # frequency (daily snapshot even in minute profile — for limit checks).
+    h = get_history_batch(g.stock_list, {{ dataload_lookback }}, '{{ dataload_frequency }}',
+                          fields={{ dataload_fields }}, fq='dypre', include=False)
+    g.history = {code: np.array(df['{{ dataload_fields[0] }}'].values, dtype=float)
+                 for code, df in h.items()}
     g.stock_list = filter_stock_by_status(
         g.stock_list, filter_type=['ST', 'HALT', 'DELISTING'], query_date=None
     )
@@ -119,8 +123,9 @@ def _trade_on_minute(context):
         scores[code] = g.history[code][-1]
 {% endif %}
     # RankingNode (operation={{ ranking_op }}, top_n={{ ranking_top_n }}, ascending={{ ranking_ascending }}).
+    # Slice by ranking top_n (the IR-declared selection count), NOT max_positions.
     sorted_codes = sorted(scores.keys(), key=lambda c: scores[c], reverse={{ not ranking_ascending }})
-    selected = sorted_codes[:g.max_positions]
+    selected = sorted_codes[:g.top_n]
 
     # PortfolioNode (kind=equal_weight_top_n): sell-first, buy-second.
     for code in list(context.portfolio.positions.keys()):
