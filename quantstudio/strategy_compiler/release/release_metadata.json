@@ -1,0 +1,27 @@
+{
+  "version": "0.3.0-mvp",
+  "release_name": "QuantStudio Strategy Compiler MVP",
+  "stage": "G4 Release Closure",
+  "status": "released-pending-final-review",
+  "pipeline": "Spec → IR → dual Renderer (QuantStudio + Strict-PTrade) → strategy package",
+  "cli_entry": "python -m quantstudio.strategy_compiler.cli package <spec> --out <dir>",
+  "skill": {
+    "name": "quantstudio-strategy-compiler",
+    "version": "0.3.0-mvp",
+    "install_script": "skills/quantstudio-strategy-compiler/scripts/install_skill.py"
+  },
+  "boundaries": {
+    "data_digest_status": "blocked",
+    "real_market_data": false,
+    "live_qmt": false,
+    "resident_daemon": false,
+    "real_fidelity_reference": "deferred",
+    "note": "This MVP delivers the hermetic compile pipeline + dual Renderer + strategy package + CLI. Real market-data digest, real-data Fidelity, and real-market Reference verification are deferred (not faked)."
+  },
+  "components": {
+    "g1_i_basket_engine": "merged to main (bcdc85d)",
+    "g2_cp3_reference_closure": "Hermetic Partial Closure, merged to main (53d90f5); data digest blocked",
+    "g3_package_closure": "merged to main (9a99b18); manifest auditability + G2 linkage portability",
+    "g4_release": "CLI E2E + Skill install/validation + 0.3.0-mvp version + release docs"
+  }
+}

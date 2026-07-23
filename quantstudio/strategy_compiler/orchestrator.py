@@ -66,7 +66,8 @@ _CHECK_NOT_RUN = "NOT_RUN"
 _CHECK_FAILED = "FAILED"
 
 # Skill version for run_card contract_versions.skill_version.
-_SKILL_VERSION = "0.2.0-pr6b1"
+# G4: bumped to 0.3.0-mvp (G1-I basket + G2 CP3 reference + G3 package + G4 CLI release).
+_SKILL_VERSION = "0.3.0-mvp"
 
 
 def _sha256_file(path: Path) -> str:
