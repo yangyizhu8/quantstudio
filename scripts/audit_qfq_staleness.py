@@ -798,11 +798,86 @@ def run_audit(args, etf_universe_provider=None, xtdata_client=None,
         imp_e = analyze_signal_impact(canon_e, fresh_e, "etf_daily")
         print(f"    {imp_e}")
 
+    # ---------- QFQ revision detection（PR2 Commit 2）----------
+    # 注意：revision ≠ 上面 changed/stable/no_record（那是 LAG 时间序列状态分类）。
+    # revision = 同一 (asset_type, code, factor_time) 跨审计批次的 factor_value 变化 > epsilon。
+    run_revision_audit(args, etf_universe, as_of_dt)
+
     conn.close()
     print()
     print("=" * 80)
     print("审计完成。未修改正式 Canonical 数据库；可能刷新 xtquant 本地缓存（download_history_data）。")
     print("=" * 80)
+
+
+def run_revision_audit(args, etf_universe: list, as_of_dt: datetime):
+    """PR2 Commit 2：QFQ 复权因子修订检测 +（可选）持久化。
+
+    默认 dry-run（只读，不建表、不写 qfq_aux.db）：
+      - revision schema 不存在或 observation 表存在但 ETF 无基线 → 输出 baseline_unavailable
+        （不声称"0 revision"，因为尚无基线可比）。
+    --persist-revision-audit：才初始化 revision schema + 单事务写 run/event/observation baseline。
+      明确提示正在写 qfq_aux.db 的 revision audit 表（非 repair/write-back）。
+    --revision-epsilon：变更阈值（默认 1e-9），dry-run 与 persist 共用，写入 qfq_revision_run.epsilon。
+    """
+    from quantstudio.pipeline.qfq_revision import (
+        RevisionStore, ASSET_TYPE_ETF, REVISION_SCHEMA_VERSION)
+    epsilon = float(getattr(args, "revision_epsilon", 1e-9))
+    as_of_ms = int(as_of_dt.replace(hour=23, minute=59, second=59).timestamp() * 1000)
+    qfq_db = DATA_ROOT / "qfq_aux.db"
+    store = RevisionStore(qfq_db)
+    persist = bool(getattr(args, "persist_revision_audit", False))
+
+    print("【QFQ 修订检测】(revision ≠ changed/stable/no_record 的 LAG 时间序列分类)")
+    print(f"  asset_type=ETF, as_of={as_of_dt.strftime('%Y-%m-%d')}, epsilon={epsilon}")
+    print(f"  universe: {len(etf_universe)} 只 ETF 裸码")
+
+    if not persist:
+        # dry-run：只读，不建表、不写
+        result = store.dry_run_detect(ASSET_TYPE_ETF, as_of_ms, epsilon, etf_universe)
+        if not result.baseline_available:
+            print("  状态: baseline_unavailable（revision schema 不存在或 ETF 无历史 observation 基线）")
+            print("  注：无基线时无法判断 revision；首次 --persist-revision-audit 会 seed baseline。")
+        else:
+            print(f"  observed={result.observed_count} new={result.new_count} "
+                  f"unchanged={result.unchanged_count} revised={result.revised_count} "
+                  f"future_excluded={result.future_excluded_count}")
+            for ev in result.events[:10]:
+                rel = "NULL" if ev.relative_delta is None else f"{ev.relative_delta:.6g}"
+                print(f"  revised: {ev.code} factor_time={ms_to_bj(ev.factor_time)} "
+                      f"prev={ev.previous_factor} curr={ev.current_factor} "
+                      f"abs_delta={ev.abs_delta:.6g} rel={rel}")
+        print("  （dry-run，未写 qfq_aux.db；传 --persist-revision-audit 持久化）")
+        return
+
+    # persist 路径：单事务写 audit 辅助表
+    print("  >>> 正在写 qfq_aux.db 的 revision audit 表（run/event/observation；非 repair/write-back）")
+    try:
+        rid, result = store.run_persisted_audit(
+            ASSET_TYPE_ETF, as_of_ms, epsilon, etf_universe,
+            window_end_ms=as_of_ms)
+        print(f"  run_id={rid} status=completed schema_version={REVISION_SCHEMA_VERSION}")
+        if result.baseline_seeded:
+            print(f"  baseline_seeded=True（首次 seed，全部 new_record={result.new_count}，revised=0）")
+        print(f"  observed={result.observed_count} new={result.new_count} "
+              f"unchanged={result.unchanged_count} revised={result.revised_count} "
+              f"future_excluded={result.future_excluded_count}")
+        for ev in result.events[:10]:
+            rel = "NULL" if ev.relative_delta is None else f"{ev.relative_delta:.6g}"
+            print(f"  revised: {ev.code} factor_time={ms_to_bj(ev.factor_time)} "
+                  f"prev={ev.previous_factor} curr={ev.current_factor} "
+                  f"abs_delta={ev.abs_delta:.6g} rel={rel} revision_no={ev.revision_no}")
+    except Exception as e:
+        # binding §5: 失败在独立短事务记 failed run（新 run_id，不覆盖）
+        logger.error("revision 持久化失败: " + str(e))
+        try:
+            import uuid as _uuid
+            fail_rid = f"r_fail_{_uuid.uuid4().hex[:12]}"
+            store.record_failed_run(fail_rid, ASSET_TYPE_ETF, as_of_ms, epsilon, str(e),
+                                    window_end_ms=as_of_ms)
+        except Exception as e2:
+            logger.error("记录 failed run 也失败: " + str(e2))
+        raise
 
 
 def resolve_audit_window(as_of_dt: datetime, full_history: bool,
@@ -895,5 +970,14 @@ if __name__ == "__main__":
     parser.add_argument("--full-history", action="store_true", help="完整历史（默认滚动 2 年）")
     parser.add_argument("--no-download", action="store_true",
                         help="跳过 download_history_data（用本地缓存，副作用最小）")
+    parser.add_argument("--persist-revision-audit", action="store_true",
+                        help="持久化 QFQ revision audit（写 qfq_aux.db 的 revision 表，默认 dry-run）")
+    parser.add_argument("--revision-epsilon", type=float, default=1e-9,
+                        help="revision 变化阈值（默认 1e-9，>=0 有限；dry-run 与 persist 共用）")
     args = parser.parse_args()
+    # binding §7: epsilon 非有限/负值立即拒绝
+    import math as _math
+    if _math.isnan(args.revision_epsilon) or _math.isinf(args.revision_epsilon) \
+            or args.revision_epsilon < 0:
+        parser.error(f"--revision-epsilon 必须 >= 0 且有限，得到 {args.revision_epsilon!r}")
     run_audit(args)

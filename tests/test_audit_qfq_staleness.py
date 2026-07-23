@@ -820,3 +820,114 @@ class TestDownloadMock:
                                               "stock_daily", do_download=False, xtdata_client=xtdata)
         assert meta["download_performed"] is False
         assert not xtdata.download_history_data.called
+
+
+# ===========================================================================
+# 14. QFQ revision detection CLI 集成（PR2 Commit 2）
+# ===========================================================================
+
+class TestRevisionAuditCli:
+    """audit-fix/Commit 2：默认 dry-run 零写入；--persist-revision-audit 端到端写。"""
+
+    def _make_qfq_aux(self, tmp_root, adj_rows):
+        import sqlite3
+        db = tmp_root / "qfq_aux.db"
+        conn = sqlite3.connect(str(db))
+        conn.execute("CREATE TABLE IF NOT EXISTS adj_factor "
+                     "(code TEXT, time INTEGER, adj_factor REAL, PRIMARY KEY(code, time))")
+        conn.executemany("INSERT INTO adj_factor VALUES (?,?,?)", adj_rows)
+        conn.commit()
+        conn.close()
+        return db
+
+    def _args(self, **kw):
+        import argparse
+        base = dict(as_of_date="2026-07-23", stocks=None, etfs=None,
+                    full_history=False, no_download=True,
+                    persist_revision_audit=False, revision_epsilon=1e-9)
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def test_dry_run_creates_no_revision_schema(self, tmp_data_root, capsys):
+        """默认 dry-run：revision schema 不存在时运行后仍不存在、不写 qfq_aux.db。"""
+        import scripts.audit_qfq_staleness as aud
+        self._make_qfq_aux(tmp_data_root, [("510050", _ms(2026, 6, 20), 1.0)])
+        aud.run_revision_audit(self._args(), ["510050"],
+                                datetime(2026, 7, 23, tzinfo=BJ))
+        out = capsys.readouterr().out
+        assert "baseline_unavailable" in out
+        assert "dry-run" in out
+        # revision 表未创建
+        import sqlite3
+        conn = sqlite3.connect(str(tmp_data_root / "qfq_aux.db"))
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        conn.close()
+        assert not ({"qfq_revision_run", "qfq_revision_observation", "qfq_revision_event"} & tables)
+
+    def test_persist_end_to_end_seed_then_revision(self, tmp_data_root, capsys):
+        """--persist-revision-audit：run1 seed → run2 revision，三表写入。"""
+        import sqlite3
+        import scripts.audit_qfq_staleness as aud
+        self._make_qfq_aux(tmp_data_root, [("510050", _ms(2026, 6, 20), 1.0)])
+        # run1 seed
+        aud.run_revision_audit(self._args(persist_revision_audit=True), ["510050"],
+                                datetime(2026, 7, 23, tzinfo=BJ))
+        out1 = capsys.readouterr().out
+        assert "baseline_seeded=True" in out1
+        assert "正在写 qfq_aux.db" in out1
+        # 改同键值 → run2 revision
+        conn = sqlite3.connect(str(tmp_data_root / "qfq_aux.db"))
+        conn.execute("UPDATE adj_factor SET adj_factor=1.0005 WHERE code='510050'")
+        conn.commit()
+        conn.close()
+        aud.run_revision_audit(self._args(persist_revision_audit=True), ["510050"],
+                                datetime(2026, 7, 23, tzinfo=BJ))
+        out2 = capsys.readouterr().out
+        assert "revised=1" in out2
+        # 三表有数据
+        conn = sqlite3.connect(str(tmp_data_root / "qfq_aux.db"))
+        assert conn.execute("SELECT count(*) FROM qfq_revision_run WHERE status='completed'").fetchone()[0] == 2
+        assert conn.execute("SELECT count(*) FROM qfq_revision_event").fetchone()[0] == 1
+        ev = conn.execute("SELECT previous_factor,current_factor FROM qfq_revision_event").fetchone()
+        assert ev == (1.0, 1.0005)
+        conn.close()
+
+    def test_persist_does_not_modify_adj_factor(self, tmp_data_root):
+        """persist 后 adj_factor 行逐行不变（非 repair/write-back）。"""
+        import sqlite3
+        import scripts.audit_qfq_staleness as aud
+        self._make_qfq_aux(tmp_data_root, [("510050", _ms(2026, 6, 20), 1.0),
+                                            ("159919", _ms(2026, 6, 20), 2.0)])
+        conn = sqlite3.connect(str(tmp_data_root / "qfq_aux.db"))
+        before = conn.execute("SELECT code,time,adj_factor FROM adj_factor ORDER BY code").fetchall()
+        conn.close()
+        aud.run_revision_audit(self._args(persist_revision_audit=True),
+                                ["510050", "159919"], datetime(2026, 7, 23, tzinfo=BJ))
+        conn = sqlite3.connect(str(tmp_data_root / "qfq_aux.db"))
+        after = conn.execute("SELECT code,time,adj_factor FROM adj_factor ORDER BY code").fetchall()
+        conn.close()
+        assert before == after  # persist 未动 adj_factor
+
+    def test_revision_epsilon_printed_and_shared(self, tmp_data_root, capsys):
+        """--revision-epsilon 打印且 dry-run/persist 共用，写入 run.epsilon。"""
+        import sqlite3
+        import scripts.audit_qfq_staleness as aud
+        self._make_qfq_aux(tmp_data_root, [("510050", _ms(2026, 6, 20), 1.0)])
+        aud.run_revision_audit(self._args(persist_revision_audit=True, revision_epsilon=0.01),
+                                ["510050"], datetime(2026, 7, 23, tzinfo=BJ))
+        out = capsys.readouterr().out
+        assert "epsilon=0.01" in out
+        conn = sqlite3.connect(str(tmp_data_root / "qfq_aux.db"))
+        eps = conn.execute("SELECT epsilon FROM qfq_revision_run").fetchone()[0]
+        conn.close()
+        assert eps == 0.01
+
+    def test_negative_epsilon_rejected_at_parse(self, tmp_data_root):
+        """CLI parse 阶段拒绝负 epsilon（argparse parser.error → SystemExit）。"""
+        import subprocess, sys
+        proc = subprocess.run(
+            [sys.executable, "scripts/audit_qfq_staleness.py", "--revision-epsilon", "-1"],
+            cwd=str(_ROOT), capture_output=True, text=True)
+        assert proc.returncode != 0
+        assert "revision-epsilon" in proc.stderr or "revision-epsilon" in proc.stdout
