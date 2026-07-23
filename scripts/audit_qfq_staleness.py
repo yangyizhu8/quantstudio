@@ -603,25 +603,53 @@ def _build_default_xtquant_etf_provider():
     audit-fix2 阻断 1 修正：默认生产路径必须真正调用 xtquant ETF provider，
     得到 Canonical ∪ xtquant union（而非 provider=None 导致的 canonical-only）。
 
+    audit-fix3 勘误：sources_config.json 的 "sources" 是 **dict**（key 为源名，
+    如 {"xtquant": {...}}），不是 list。旧实现按 list 遍历（src.get("name")）会
+    对 dict 的 key 字符串调用 .get() → 'str' object has no attribute 'get'，
+    provider 永远为空 → 默认路径静默降级 canonical-only，阻断 1 实际未关闭。
+
+    本实现与 daemon._get_adapter（daemon.py:1178）口径一致：
+      sources = cfg.get("sources", {})
+      xt_cfg  = sources.get("xtquant", {})   # dict schema（权威）
+    并对 ${ENV_VAR} 占位符做与 daemon 相同的展开。同时对历史 list schema 做防御
+    兼容（不假定一定是 dict）。
+
     - 从 config/sources_config.json 读 xtquant 配置构造 XtquantAdapter（懒连接），
       调其 get_etf_codes()（返回带 .SH/.SZ 后缀的代码，由 _default_etf_universe 归一化裸码）。
-    - 任一步失败（无 config / xtquant 未安装 / QMT 未连接）返回空 list，
+    - 任一步失败（无 config / xtquant 未启用 / xtquant 未安装 / QMT 未连接）返回空 list，
       _default_etf_universe 会降级为 canonical-only（不静默吞错，会打 WARNING）。
     """
+    import os
     try:
         import json
         cfg_path = _ROOT / "config" / "sources_config.json"
         cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-        xt_cfg = None
-        for src in cfg.get("sources", []):
-            if src.get("name") == "xtquant":
-                xt_cfg = src
-                break
-        if xt_cfg is None:
+        sources = cfg.get("sources", {})
+        # 权威 schema: dict（key 为源名）。与 daemon._get_adapter 一致。
+        if isinstance(sources, dict):
+            src_cfg = sources.get("xtquant", {})
+        elif isinstance(sources, list):
+            # 防御：兼容历史 list schema（每项含 "name" 字段）
+            src_cfg = next((s for s in sources
+                            if isinstance(s, dict) and s.get("name") == "xtquant"), {})
+        else:
+            src_cfg = {}
+        if not src_cfg:
             logger.warning("sources_config.json 无 xtquant 源配置，ETF provider 返回空（降级 canonical-only）")
             return lambda: []
+        if not src_cfg.get("enabled", False):
+            logger.warning("sources_config.json 中 xtquant 未 enabled，ETF provider 返回空（降级 canonical-only）")
+            return lambda: []
+        # 展开 ${ENV_VAR} 占位符（与 daemon.py:1182-1188 一致）
+        expanded = {}
+        for k, v in src_cfg.items():
+            if isinstance(v, str) and v.startswith("${") and v.endswith("}"):
+                expanded[k] = os.environ.get(v[2:-1], "")
+            else:
+                expanded[k] = v
+        expanded["name"] = "xtquant"
         from quantstudio.pipeline.sources.xtquant_adapter import XtquantAdapter
-        adapter = XtquantAdapter(xt_cfg)  # 懒连接，构造不立即连 QMT
+        adapter = XtquantAdapter(expanded)  # 懒连接，构造不立即连 QMT
         return adapter.get_etf_codes
     except Exception as e:
         logger.warning("构造 xtquant ETF provider 失败（降级 canonical-only）: " + str(e))

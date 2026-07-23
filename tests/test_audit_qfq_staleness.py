@@ -18,6 +18,13 @@ audit-fix2 关键加强（4 阻断精确反例）：
 - 阻断 2：provider 返回 510050.SH/159919.SZ → universe 归一化为裸码去重
 - 阻断 3：明确只支持 epoch-ms（删 mixed 兼容声明 + 修弱测试）
 - 阻断 4：ETF adj_factor 两处 SQL 加 as-of 上界（future 不进 changed/no_record）
+
+audit-fix3 勘误（阻断 1 根因）：
+- _build_default_xtquant_etf_provider 旧实现误把 sources 当 list 遍历，
+  真实 sources_config.json 的 "sources" 是 dict（key=源名），导致 .get() 失败、
+  provider 永远为空 → 默认路径静默降级 canonical-only。
+- 新增 hermetic 测试：真实 dict 形状 config + 真实 builder（不 monkeypatch builder 本体）
+  + fake adapter（禁止连 live QMT），断言 provider 实际产出 ETF codes。
 """
 from __future__ import annotations
 
@@ -391,22 +398,158 @@ class TestEtfUniverse:
         assert "159919.SZ" not in codes
         assert codes.count("510050") == 1
 
-    def test_default_run_audit_path_calls_xtquant_provider(self, tmp_data_root, monkeypatch):
-        """audit-fix2 阻断 1：默认 run_audit 路径真正调用 xtquant ETF provider。
+    def test_builder_parses_real_dict_config_and_yields_codes(self, tmp_data_root, monkeypatch, tmp_path):
+        """audit-fix3 阻断 1（hermetic）：真实 dict 形状 sources_config.json 被正确解析。
 
-        run_audit 在 etf_universe_provider=None 且 xtquant_etf_provider=None（默认生产路径）时
-        不应回退到 canonical-only；必须经 _build_default_xtquant_etf_provider() 构造真实 provider，
-        并把非 None provider 传给 _default_etf_universe。
+        审计-fix2 的 builder 误把 sources 当 list 遍历（src.get("name")），而真实
+        sources_config.json 的 "sources" 是 dict（key=源名）。旧实现对 dict key
+        字符串调 .get() → 'str' object has no attribute 'get'，provider 永远为空 →
+        默认路径静默降级 canonical-only，阻断 1 实际未关闭。
 
-        本测试不连接 live QMT：mock fetch_fresh_front_xtquant / read_canonical，
-        spy _default_etf_universe 捕获传入的 provider，并用哨兵 provider 验证默认构造路径。
+        本测试**不 monkeypatch builder 本体**，而是：
+        1. 写一份真实 dict 形状的 sources_config.json（与 config/sources_config.json 一致）；
+        2. 指向 aud._ROOT 到该临时根，让真实 _build_default_xtquant_etf_provider() 运行；
+        3. 用 fake adapter（注入 sys.modules，禁止连 live QMT）替换真实 XtquantAdapter；
+        4. 断言 builder 返回的 provider 实际产出 ETF codes（含 enabled/${ENV} 展开）。
         """
+        import json
+        import sys
+        import types
         import scripts.audit_qfq_staleness as aud
-        import duckdb
-        import argparse
-        import pandas as pd
 
-        # 最小 canonical DB（etf_daily 含一只 canonical code）
+        # 1. 真实 dict 形状 config（与项目 config/sources_config.json schema 一致）
+        fake_root = tmp_path / "fakeroot"
+        (fake_root / "config").mkdir(parents=True)
+        (fake_root / "config" / "sources_config.json").write_text(json.dumps({
+            "sources": {
+                "tushare": {"enabled": True, "token": "${TUSHARE_TOKEN}"},
+                "xtquant": {"enabled": True, "qmt_path": "${QMT_PATH}"}
+            },
+            "default_source_priority": ["xtquant", "tushare"]
+        }), encoding="utf-8")
+        monkeypatch.setattr(aud, "_ROOT", fake_root)
+
+        # 2. fake XtquantAdapter（注入 sys.modules，禁止连 live QMT）
+        captured = {}
+
+        class FakeXtquantAdapter:
+            def __init__(self, cfg):
+                captured["cfg"] = dict(cfg)
+
+            def get_etf_codes(self):
+                return ["510050.SH", "159919.SZ"]
+
+        fake_mod = types.ModuleType("quantstudio.pipeline.sources.xtquant_adapter")
+        fake_mod.XtquantAdapter = FakeXtquantAdapter
+        monkeypatch.setitem(sys.modules,
+                            "quantstudio.pipeline.sources.xtquant_adapter", fake_mod)
+
+        # 3. 调真实 builder（不 monkeypatch builder 本体）
+        provider = aud._build_default_xtquant_etf_provider()
+        result = provider()
+
+        # 4. 关键断言：真实 dict config 被解析，provider 实际产出 ETF codes
+        assert result == ["510050.SH", "159919.SZ"], \
+            f"真实 dict config 下 provider 返回空（阻断 1 回归）: {result}"
+        # cfg 已展开 ${ENV}、加 name=xtquant（与 daemon._get_adapter 一致）
+        assert captured["cfg"]["name"] == "xtquant"
+        assert captured["cfg"]["enabled"] is True
+        assert captured["cfg"]["qmt_path"] == ""  # ${QMT_PATH} 未设环境变量 → 空串
+
+    def test_builder_list_schema_compat(self, tmp_data_root, monkeypatch, tmp_path):
+        """audit-fix3：builder 对历史 list schema 做防御兼容（不假定一定是 dict）。"""
+        import json
+        import sys
+        import types
+        import scripts.audit_qfq_staleness as aud
+
+        fake_root = tmp_path / "fakeroot2"
+        (fake_root / "config").mkdir(parents=True)
+        (fake_root / "config" / "sources_config.json").write_text(json.dumps({
+            "sources": [{"name": "tushare", "enabled": True},
+                        {"name": "xtquant", "enabled": True, "qmt_path": "/x"}]
+        }), encoding="utf-8")
+        monkeypatch.setattr(aud, "_ROOT", fake_root)
+
+        class FakeAdapter:
+            def __init__(self, cfg):
+                pass
+
+            def get_etf_codes(self):
+                return ["510050.SH"]
+
+        fake_mod = types.ModuleType("quantstudio.pipeline.sources.xtquant_adapter")
+        fake_mod.XtquantAdapter = FakeAdapter
+        monkeypatch.setitem(sys.modules,
+                            "quantstudio.pipeline.sources.xtquant_adapter", fake_mod)
+
+        provider = aud._build_default_xtquant_etf_provider()
+        assert provider() == ["510050.SH"]
+
+    def test_builder_disabled_returns_empty(self, tmp_data_root, monkeypatch, tmp_path):
+        """audit-fix3：xtquant enabled=false 时 provider 返回空（显式降级，非异常）。"""
+        import json
+        import sys
+        import types
+        import scripts.audit_qfq_staleness as aud
+
+        fake_root = tmp_path / "fakeroot3"
+        (fake_root / "config").mkdir(parents=True)
+        (fake_root / "config" / "sources_config.json").write_text(json.dumps({
+            "sources": {"xtquant": {"enabled": False}}
+        }), encoding="utf-8")
+        monkeypatch.setattr(aud, "_ROOT", fake_root)
+        # 即使有真实 adapter，enabled=False 也不应构造
+        constructed = []
+
+        class FakeAdapter:
+            def __init__(self, cfg):
+                constructed.append(cfg)
+
+        fake_mod = types.ModuleType("quantstudio.pipeline.sources.xtquant_adapter")
+        fake_mod.XtquantAdapter = FakeAdapter
+        monkeypatch.setitem(sys.modules,
+                            "quantstudio.pipeline.sources.xtquant_adapter", fake_mod)
+
+        provider = aud._build_default_xtquant_etf_provider()
+        assert provider() == []
+        assert constructed == [], "enabled=False 不应构造 adapter"
+
+    def test_default_run_audit_uses_nonempty_provider(self, tmp_data_root, monkeypatch):
+        """audit-fix2/3 阻断 1 wiring：默认 run_audit 路径把非 None provider 传给 universe。
+
+        与 hermetic builder 测试互补：builder 本体不被替换，但 _ROOT 指向 enabled=true 的
+        临时 config + fake adapter，验证 run_audit 默认路径端到端产出含 xtquant code 的 universe。
+        """
+        import json
+        import sys
+        import types
+        import argparse
+        import duckdb
+        import pandas as pd
+        import scripts.audit_qfq_staleness as aud
+
+        # 真实 dict config（enabled=true）
+        fake_root = tmp_data_root / "fakeroot"
+        (fake_root / "config").mkdir(parents=True)
+        (fake_root / "config" / "sources_config.json").write_text(json.dumps({
+            "sources": {"xtquant": {"enabled": True, "qmt_path": "${QMT_PATH}"}}
+        }), encoding="utf-8")
+        monkeypatch.setattr(aud, "_ROOT", fake_root)
+
+        class FakeAdapter:
+            def __init__(self, cfg):
+                pass
+
+            def get_etf_codes(self):
+                return ["510050.SH"]  # xtquant 带后缀（会被 bare_code 归一化）
+
+        fake_mod = types.ModuleType("quantstudio.pipeline.sources.xtquant_adapter")
+        fake_mod.XtquantAdapter = FakeAdapter
+        monkeypatch.setitem(sys.modules,
+                            "quantstudio.pipeline.sources.xtquant_adapter", fake_mod)
+
+        # 最小 canonical DB
         db = tmp_data_root / "quantstudio.db"
         conn = duckdb.connect(str(db))
         conn.execute("CREATE TABLE etf_daily (code VARCHAR, time BIGINT)")
@@ -415,39 +558,31 @@ class TestEtfUniverse:
         conn.execute("CREATE TABLE source_watermark (source VARCHAR, table_name VARCHAR, freq VARCHAR, last_date BIGINT)")
         conn.close()
         monkeypatch.setattr(aud, "db_path", lambda: str(db))
-
-        # 不连接 live QMT：mock fresh 拉取 + canonical 读取为 no-op
+        # 不连接 live QMT
         monkeypatch.setattr(aud, "fetch_fresh_front_xtquant",
                             lambda *a, **k: (pd.DataFrame(), {"download_performed": False}))
         monkeypatch.setattr(aud, "read_canonical", lambda *a, **k: pd.DataFrame())
 
-        # 哨兵默认 provider（替代真实 XtquantAdapter，记录调用）
-        sentinel_calls = {"n": 0}
-
-        def sentinel_provider():
-            sentinel_calls["n"] += 1
-            return ["510050.SH"]  # xtquant 带后缀（会被 bare_code 归一化）
-        monkeypatch.setattr(aud, "_build_default_xtquant_etf_provider",
-                            lambda: sentinel_provider)
-
-        # spy _default_etf_universe 捕获传入的 provider（验证非 None）
-        captured = {"provider": "NOT_CALLED"}
+        # spy universe 捕获 provider + 返回值
+        captured = {"provider": "NOT_CALLED", "universe": []}
         real_universe = aud._default_etf_universe
 
         def spy(conn, xtquant_etf_provider=None):
             captured["provider"] = xtquant_etf_provider
-            return real_universe(conn, xtquant_etf_provider=xtquant_etf_provider)
+            res = real_universe(conn, xtquant_etf_provider=xtquant_etf_provider)
+            captured["universe"] = res
+            return res
         monkeypatch.setattr(aud, "_default_etf_universe", spy)
 
         args = argparse.Namespace(
             as_of_date="2026-07-23", stocks=None, etfs=None,
             full_history=False, no_download=True)
-        # 默认生产路径：etf_universe_provider=None + xtquant_etf_provider=None
         aud.run_audit(args)
 
-        # 关键断言：默认路径构造并调用了 xtquant provider（非 canonical-only 回归）
-        assert captured["provider"] is not None, "默认路径传给 _default_etf_universe 的 provider 为 None（canonical-only 回归）"
-        assert sentinel_calls["n"] >= 1, "默认路径未调用 xtquant ETF provider"
+        # 关键断言：默认路径 provider 非 None，且 universe 含 xtquant 提供的裸码（归一化后）
+        assert captured["provider"] is not None, "默认路径 provider 为 None（canonical-only 回归）"
+        assert "510050" in captured["universe"], \
+            f"默认路径 universe 未含 xtquant code（阻断 1 回归）: {captured['universe']}"
 
 
 # ===========================================================================
