@@ -119,10 +119,18 @@ def get_watermark(conn, source: str, table: str, freq: str = "daily"):
 # ---------------------------------------------------------------------------
 
 def normalize_ex_date(ex_date) -> int:
-    """stock_dividend.ex_date 可能是 YYYYMMDD 整数（旧数据）或 epoch ms（正式库实际格式）。
+    """归一化 stock_dividend.ex_date。
 
-    统一转为 epoch ms（北京时区 00:00）。
-    判定依据：8 位且以 19/20 开头 → YYYYMMDD；否则视为 epoch ms。
+    **生产口径（audit-fix2 阻断 3 修正）：只支持 epoch ms。**
+    正式库 stock_dividend.ex_date 实际是 epoch ms（如 1784649600000=2026-07-22，已确认）。
+
+    本函数对 8 位 YYYYMMDD 整数做防御性兜底转换（仅 Python 侧，不覆盖 SQL 路径），
+    但**不构成对 YYYYMMDD 旧数据的兼容声明** —— select_stock_candidates 的 SQL 用
+    epoch ms 下界/上界过滤，YYYYMMDD 整数（如 20260701≈2e7）远小于 cutoff_ms（≈1.78e12），
+    会在 SQL 阶段被直接过滤，根本进不到本函数。因此纯 YYYYMMDD 旧数据会漏选，
+    这是明确局限，非支持声明。
+
+    判定依据：8 位且以 19/20 开头 → 视为 YYYYMMDD（兜底）；否则视为 epoch ms（直通）。
     """
     if ex_date is None:
         return 0
@@ -161,13 +169,15 @@ def select_stock_candidates(conn, as_of_dt: datetime, n: int = 10,
                              days_back: int = 30, include_future: bool = False) -> tuple:
     """从 stock_dividend 查除权股票，按 past/today/future 分类。
 
-    审计-fix 阻断 1 修正：
-    - stock_dividend.ex_date 正式库实际是 epoch ms（如 1784649600000=2026-07-22），
-      但可能混有 YYYYMMDD 整数（旧数据）。查询用 epoch ms 的下界和上界，
-      同时兼容 YYYYMMDD（数值远小于 epoch ms，会被 epoch ms cutoff 过滤掉，
-      但 normalize_ex_date 在 Python 侧兜底转换）。
-    - 阻断 1 关键修复：active 查询加 upper bound（as_of 当天 23:59），
-      使 future epoch-ms 记录不会占满 LIMIT 挤掉 today/past active 事件。
+    **audit-fix2 阻断 3 修正：明确只支持 epoch ms（生产口径），不支持 mixed。**
+    stock_dividend.ex_date 正式库实际是 epoch ms（已确认）。本查询用 epoch ms 的下界
+    与上界做范围过滤。YYYYMMDD 整数（如 20260701≈2e7）远小于 cutoff_ms（≈1.78e12），
+    会在 SQL 阶段被直接过滤掉 —— 这是已知局限，非兼容声明。若未来库中出现纯 YYYYMMDD
+    旧数据，需先用 epoch ms 重建，本脚本不做 mixed 兼容。
+
+    审计-fix 阻断 1 修正（已实现，保留）：
+    - active 查询加 upper bound（as_of 当天 23:59），使 future epoch-ms 记录不会
+      占满 LIMIT 挤掉 today/past active 事件。
     - future 用独立查询（无 upper bound），不与 active 竞争 LIMIT。
 
     返回 (active_candidates, upcoming_candidates)。
@@ -183,7 +193,7 @@ def select_stock_candidates(conn, as_of_dt: datetime, n: int = 10,
     active, upcoming = [], []
 
     # active 查询：cutoff <= ex_date <= as_of_day_end（含 past + today，排除 future）
-    # 用 epoch ms 比较；YYYYMMDD 旧数据因数值小会被 cutoff_ms 过滤（normalize 兜底）
+    # epoch ms 范围过滤（audit-fix2 阻断 3：只支持 epoch ms；YYYYMMDD 旧数据会被过滤）
     active_rows = conn.execute("""
         SELECT code, ex_date, cash_div, stk_div FROM stock_dividend
         WHERE ex_date >= ? AND ex_date <= ?
@@ -234,6 +244,12 @@ def select_etf_candidates_from_adj_factor(etf_universe: list, as_of_dt: datetime
     - 阻断 6：factor_epsilon 参数化（默认 1e-9 精度 epsilon，非 0.001 严重度阈值）。
       epsilon 用于"是否发生版本变化"；严重度阈值（如 0.1%）应在报告层标注，不在此判定。
 
+    audit-fix2 阻断 4 修正（确定性 as-of 语义）：
+    - 两处 SQL 都加 `time <= as_of_end_ms` 上界（as_of 当天 23:59:59 北京时间）。
+      固定 --as-of-date 时，as_of 之后的未来因子变化不会进入 changed，
+      future-only 记录不会被视为 as-of 时点"已有记录"（归入 no_record）。
+    - changed_candidates 按 ETF code 去重（同一 ETF 多次因子变化只报一只一次）。
+
     评审 1: sqlite3 + 统一 adj_factor 表（epoch-ms time，qfq_maintenance.py:57）。
     评审 3: 先全历史 LAG，再外层 WHERE time >= cutoff（窗口边界修正）。
 
@@ -246,6 +262,8 @@ def select_etf_candidates_from_adj_factor(etf_universe: list, as_of_dt: datetime
         logger.warning("qfq_aux.db 不存在，ETF 因子查询跳过")
         return [], [], list(etf_universe)
     cutoff_ms = int((as_of_dt - timedelta(days=days_back)).timestamp() * 1000)
+    # 阻断 4: as-of 上界（as_of 当天 23:59:59 北京时间），确定性 as-of 语义
+    as_of_end_ms = int(as_of_dt.replace(hour=23, minute=59, second=59).timestamp() * 1000)
     try:
         conn = sqlite3.connect(str(qfq_db))
         tables = [r[0] for r in conn.execute(
@@ -255,12 +273,14 @@ def select_etf_candidates_from_adj_factor(etf_universe: list, as_of_dt: datetime
             conn.close()
             return [], [], list(etf_universe)
         ph = ",".join("?" * len(etf_universe))
-        # 先查有记录的 code（用于区分 stable_with_record vs no_record）
+        # 先查 as-of 时点已有记录的 code（阻断 4: 加 time <= as_of_end_ms 上界，
+        # future-only 记录不算 as-of 时点已记录，归入 no_record）
         recorded_rows = conn.execute(f"""
-            SELECT DISTINCT code FROM adj_factor WHERE code IN ({ph})
-        """, list(etf_universe)).fetchall()
+            SELECT DISTINCT code FROM adj_factor
+            WHERE code IN ({ph}) AND time <= ?
+        """, list(etf_universe) + [as_of_end_ms]).fetchall()
         codes_with_any_record = {r[0] for r in recorded_rows}
-        # 评审 3 + 阻断 6: LAG 全历史 + epsilon 判定
+        # 评审 3 + 阻断 6: LAG 全历史 + epsilon 判定；阻断 4: change 查询加 time <= as_of_end_ms
         change_rows = conn.execute(f"""
             WITH t AS (
                 SELECT code, time, adj_factor,
@@ -273,18 +293,21 @@ def select_etf_candidates_from_adj_factor(etf_universe: list, as_of_dt: datetime
             SELECT code, time, adj_factor, prev_adj
             FROM t
             WHERE time >= ?
+              AND time <= ?
               AND prev_adj IS NOT NULL
               AND ABS(adj_factor - prev_adj) > ?
             ORDER BY time DESC
-        """, list(etf_universe) + [cutoff_ms, factor_epsilon]).fetchall()
+        """, list(etf_universe) + [cutoff_ms, as_of_end_ms, factor_epsilon]).fetchall()
         conn.close()
     except Exception as e:
         logger.warning("adj_factor 查询失败: " + str(e))
         return [], [], list(etf_universe)
-    # 阻断 2: 三类分离
+    # 阻断 2: 三类分离；阻断 4 顺手修复: changed_candidates 按 ETF code 去重
     codes_with_recent_change = set()
     changed_candidates = []
     for code, t, adj, prev in change_rows:
+        if code in codes_with_recent_change:
+            continue  # 同一 ETF 多次因子变化只报一次（去重）
         codes_with_recent_change.add(code)
         changed_candidates.append((code, int(t), abs(float(adj) - float(prev))))
     stable_with_record = sorted(codes_with_any_record - codes_with_recent_change)
@@ -574,8 +597,49 @@ def analyze_signal_impact(canon_df, fresh_df, table: str) -> dict:
 # 主流程
 # ---------------------------------------------------------------------------
 
-def run_audit(args, etf_universe_provider=None, xtdata_client=None):
-    """主流程。etf_universe_provider/xtdata_client 可注入（测试用）。"""
+def _build_default_xtquant_etf_provider():
+    """构造默认 xtquant ETF provider（无参数 callable，返回 list[str]）。
+
+    audit-fix2 阻断 1 修正：默认生产路径必须真正调用 xtquant ETF provider，
+    得到 Canonical ∪ xtquant union（而非 provider=None 导致的 canonical-only）。
+
+    - 从 config/sources_config.json 读 xtquant 配置构造 XtquantAdapter（懒连接），
+      调其 get_etf_codes()（返回带 .SH/.SZ 后缀的代码，由 _default_etf_universe 归一化裸码）。
+    - 任一步失败（无 config / xtquant 未安装 / QMT 未连接）返回空 list，
+      _default_etf_universe 会降级为 canonical-only（不静默吞错，会打 WARNING）。
+    """
+    try:
+        import json
+        cfg_path = _ROOT / "config" / "sources_config.json"
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        xt_cfg = None
+        for src in cfg.get("sources", []):
+            if src.get("name") == "xtquant":
+                xt_cfg = src
+                break
+        if xt_cfg is None:
+            logger.warning("sources_config.json 无 xtquant 源配置，ETF provider 返回空（降级 canonical-only）")
+            return lambda: []
+        from quantstudio.pipeline.sources.xtquant_adapter import XtquantAdapter
+        adapter = XtquantAdapter(xt_cfg)  # 懒连接，构造不立即连 QMT
+        return adapter.get_etf_codes
+    except Exception as e:
+        logger.warning("构造 xtquant ETF provider 失败（降级 canonical-only）: " + str(e))
+        return lambda: []
+
+
+def run_audit(args, etf_universe_provider=None, xtdata_client=None,
+              xtquant_etf_provider=None):
+    """主流程。
+
+    etf_universe_provider/xtquant_etf_provider/xtdata_client 可注入（测试用）。
+
+    audit-fix2 阻断 1 修正：默认生产路径（三个注入参数均为 None）必须真正调用
+    xtquant ETF provider，得到 Canonical ∪ xtquant union。
+    - etf_universe_provider：完全替换 universe 计算的 callable（conn → list），优先级最高。
+    - xtquant_etf_provider：仅注入 _default_etf_universe 的 xtquant 源（无参数 → list）。
+      默认 None 时，run_audit 内部调用 _build_default_xtquant_etf_provider() 构造真实 provider。
+    """
     print("=" * 80)
     print("只读实证审计 v3：fresh xtquant 前复权 vs canonical DuckDB 前复权")
     print("=" * 80)
@@ -656,10 +720,15 @@ def run_audit(args, etf_universe_provider=None, xtdata_client=None):
     print()
 
     # ---------- ETF（阻断 3: universe = canonical ∪ xtquant）----------
-    if etf_universe_provider is None:
-        etf_universe = _default_etf_universe(conn, xtquant_etf_provider=None)
-    else:
+    # audit-fix2 阻断 1：默认路径必须真正调用 xtquant ETF provider（非 canonical-only）
+    if etf_universe_provider is not None:
         etf_universe = etf_universe_provider(conn)
+    else:
+        # 默认生产路径：构造真实 xtquant ETF provider（除非显式注入替代）
+        provider = (xtquant_etf_provider
+                    if xtquant_etf_provider is not None
+                    else _build_default_xtquant_etf_provider())
+        etf_universe = _default_etf_universe(conn, xtquant_etf_provider=provider)
     print(f"【ETF universe】{len(etf_universe)} 只（canonical DISTINCT ∪ xtquant）")
     print(f"  示例: {etf_universe[:5]}")
     # 阻断 2: 三类分离（changed/stable/no_record）
@@ -733,20 +802,32 @@ def _default_etf_universe(conn, xtquant_etf_provider=None) -> list:
       测试用 mock 注入；生产可传入调用 XtquantAdapter 的闭包。
     - 不读 codes=["ALL"]（评审 2）。
     - 任一源失败时降级用另一源（不静默吞错）。
+
+    audit-fix2 阻断 2 修正（裸码归一化去重）：
+    - adj_factor 权威口径是裸码（qfq_maintenance.py:57），canonical etf_daily.code 也是裸码。
+    - 但 xtquant（XtquantAdapter.get_etf_codes）返回带后缀的 510050.SH / 159919.SZ，
+      若直接 union 会导致同一 ETF 重复（510050 + 510050.SH），且带后缀的 code 查 adj_factor
+      查不到 → 被错误归入 no_record。
+    - 修复：所有源代码统一过 quantstudio.backtest.libs.security_code_rules.bare_code()
+      归一化为裸码后再 union，确保去重且与 adj_factor 口径一致。
     """
+    from quantstudio.backtest.libs.security_code_rules import bare_code
+
     codes = set()
-    # 源 1: canonical DISTINCT
+    # 源 1: canonical DISTINCT（裸码）
     try:
         rows = conn.execute("SELECT DISTINCT code FROM etf_daily").fetchall()
-        codes.update(r[0] for r in rows)
+        for r in rows:
+            codes.add(bare_code(r[0]))
     except Exception as e:
         logger.warning("读取 canonical etf_daily 失败: " + str(e))
-    # 源 2: xtquant provider（注入）
+    # 源 2: xtquant provider（注入）→ 归一化为裸码后 union（阻断 2）
     if xtquant_etf_provider is not None:
         try:
             xt_codes = xtquant_etf_provider()
             if xt_codes:
-                codes.update(xt_codes)
+                for c in xt_codes:
+                    codes.add(bare_code(c))
         except Exception as e:
             logger.warning("xtquant ETF provider 失败（仅用 canonical）: " + str(e))
     return sorted(codes)

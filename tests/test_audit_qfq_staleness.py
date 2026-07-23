@@ -1,7 +1,7 @@
-"""tests/test_audit_qfq_staleness.py — QFQ 审计脚本专项测试（PR2 Commit 1 audit-fix）。
+"""tests/test_audit_qfq_staleness.py — QFQ 审计脚本专项测试（PR2 Commit 1 audit-fix + audit-fix2）。
 
-覆盖评审 15 项 + audit-fix 7 阻断的精确断言。全部用 mock xtquant + tmp_path DATA_ROOT +
-临时 DuckDB/SQLite，不连接 live QMT，不碰正式库。
+覆盖评审 15 项 + audit-fix 7 阻断 + audit-fix2 4 阻断的精确断言。全部用 mock xtquant +
+tmp_path DATA_ROOT + 临时 DuckDB/SQLite，不连接 live QMT，不碰正式库。
 
 audit-fix 关键加强：
 - stock_dividend 用正式 epoch-ms schema（非 YYYYMMDD）
@@ -12,6 +12,12 @@ audit-fix 关键加强：
 - canonical/fresh/overlap earliest 元数据分开
 - resolve_audit_window 纯函数测试
 - factor_epsilon 小幅变化（1.0000 → 1.0005）
+
+audit-fix2 关键加强（4 阻断精确反例）：
+- 阻断 1：默认 run_audit 路径真正调用 xtquant ETF provider（非 canonical-only）
+- 阻断 2：provider 返回 510050.SH/159919.SZ → universe 归一化为裸码去重
+- 阻断 3：明确只支持 epoch-ms（删 mixed 兼容声明 + 修弱测试）
+- 阻断 4：ETF adj_factor 两处 SQL 加 as-of 上界（future 不进 changed/no_record）
 """
 from __future__ import annotations
 
@@ -157,21 +163,29 @@ class TestStockCandidateSelection:
         assert "600_today" in active_codes, "today 被 future LIMIT 挤掉了"
 
     def test_mixed_yyyymmdd_and_epoch_ms(self, tmp_data_root):
-        """混合 YYYYMMDD（旧数据）+ epoch-ms（正式）。"""
+        """audit-fix2 阻断 3：明确只支持 epoch-ms（非 mixed 兼容）。
+
+        生产口径 stock_dividend.ex_date 是 epoch ms。YYYYMMDD 整数（如 20260701≈2e7）
+        远小于 cutoff_ms（≈1.78e12），会在 SQL 阶段被 epoch-ms 范围过滤掉，
+        根本进不到 normalize_ex_date()。本测试精确断言这个已知局限：
+        YYYYMMDD 旧数据**会漏选**（不声称支持 mixed），epoch-ms 数据正常选中。
+        """
         from scripts.audit_qfq_staleness import select_stock_candidates
         as_of = datetime(2026, 7, 23, tzinfo=BJ)
         self._make_stock_dividend_db(tmp_data_root, [
-            ("700001", 20260701, 0.2, 0),            # YYYYMMDD past（旧数据）
-            ("700002", _ms(2026, 7, 15), 0.2, 0),    # epoch-ms past
+            ("700001", 20260701, 0.2, 0),            # YYYYMMDD（旧数据，已知会漏选）
+            ("700002", _ms(2026, 7, 15), 0.2, 0),    # epoch-ms（正式口径，正常选中）
         ])
         import duckdb
         conn = duckdb.connect(str(tmp_data_root / "quantstudio.db"))
         active, _ = select_stock_candidates(conn, as_of, n=10, days_back=365)
         conn.close()
         active_codes = [c[0] for c in active]
-        # YYYYMMDD 旧数据因数值小（20260701 << epoch ms cutoff）会被 SQL 过滤；
-        # 但这是已知行为（旧数据兼容），active 至少应包含 epoch-ms 的 700002
+        # epoch-ms 正式口径数据正常选中
         assert "700002" in active_codes
+        # 已知局限（非兼容声明）：YYYYMMDD 旧数据被 epoch-ms SQL cutoff 过滤 → 漏选。
+        # 断言它确实没被选中，精确记录此局限；若未来需支持 YYYYMMDD 须重建库为 epoch ms。
+        assert "700001" not in active_codes, "YYYYMMDD 旧数据不应被 epoch-ms SQL 选中（已知局限）"
 
 
 # ===========================================================================
@@ -249,6 +263,64 @@ class TestEtfAdjFactor:
             ["510210"], as_of, days_back=30)
         assert len(changed) == 1
 
+    def test_future_adj_factor_change_not_in_changed(self, tmp_data_root):
+        """audit-fix2 阻断 4：as_of=2026-07-23，2026-07-24 的未来因子变化不进 changed。
+
+        复现评审反例：future_factor_changed=[('510210', 2026-07-24, 0.1)] 被旧实现报为 changed。
+        修复后两处 SQL 加 time <= as_of_end_ms 上界，future 不进 changed。
+        """
+        from scripts.audit_qfq_staleness import select_etf_candidates_from_adj_factor
+        as_of = datetime(2026, 7, 23, tzinfo=BJ)
+        self._make_qfq_aux(tmp_data_root, [
+            # 7-22 历史 anchor + 7-24 未来变化（跨 as_of）
+            ("510210", _ms(2026, 7, 22), 1.0),
+            ("510210", _ms(2026, 7, 24), 1.1),   # future 变化（> as_of 当天）
+        ])
+        changed, stable, no_record = select_etf_candidates_from_adj_factor(
+            ["510210"], as_of, days_back=30)
+        changed_codes = [c[0] for c in changed]
+        # 关键：future 变化不进 changed
+        assert "510210" not in changed_codes, "未来因子变化被报为 changed（缺 as-of 上界）"
+        # 510210 在 as_of 时点有历史记录（7-22 <= as_of 当天 23:59），属 stable_with_record
+        assert "510210" in stable
+        assert "510210" not in no_record
+
+    def test_future_only_code_treated_as_no_record(self, tmp_data_root):
+        """audit-fix2 阻断 4：future-only 记录不被视为 as-of 时点已有记录（归入 no_record）。
+
+        复现评审反例：codes_with_any_record 查询缺上界，future-only 记录被算成"已有记录"。
+        修复后 recorded 查询加 time <= as_of_end_ms，future-only code 归入 no_record。
+        """
+        from scripts.audit_qfq_staleness import select_etf_candidates_from_adj_factor
+        as_of = datetime(2026, 7, 23, tzinfo=BJ)
+        self._make_qfq_aux(tmp_data_root, [
+            # 510300 只有 2026-07-25 一条（future-only，> as_of）
+            ("510300", _ms(2026, 7, 25), 1.0),
+        ])
+        changed, stable, no_record = select_etf_candidates_from_adj_factor(
+            ["510300"], as_of, days_back=30)
+        # 关键：future-only 不算 as-of 时点已记录 → 归入 no_record（非 stable）
+        assert "510300" not in stable, "future-only 记录被误判为 as-of 时点已记录"
+        assert "510300" in no_record
+        assert changed == []
+
+    def test_changed_candidates_deduped_by_code(self, tmp_data_root):
+        """audit-fix2 建议顺手修复：同一 ETF 多次因子变化，changed 只报一只一次。"""
+        from scripts.audit_qfq_staleness import select_etf_candidates_from_adj_factor
+        as_of = datetime(2026, 7, 23, tzinfo=BJ)
+        self._make_qfq_aux(tmp_data_root, [
+            # 510210 在窗口内有 3 次变化（同一 ETF 多版本）
+            ("510210", _ms(2026, 7, 10), 1.0),
+            ("510210", _ms(2026, 7, 15), 1.05),
+            ("510210", _ms(2026, 7, 20), 1.10),
+        ])
+        changed, _, _ = select_etf_candidates_from_adj_factor(
+            ["510210"], as_of, days_back=30)
+        changed_codes = [c[0] for c in changed]
+        # 同一 code 只报一次（去重），不报 3 次
+        assert changed_codes.count("510210") == 1, f"同一 ETF 重复报为多只: {changed_codes}"
+        assert len(changed) == 1
+
 
 # ===========================================================================
 # 6. ETF universe：canonical ∪ xtquant union（阻断 3）
@@ -294,6 +366,88 @@ class TestEtfUniverse:
         codes = _default_etf_universe(conn, xtquant_etf_provider=bad_provider)
         conn.close()
         assert "A" in codes  # canonical 仍可用
+
+    def test_suffixed_codes_normalized_to_bare_and_deduped(self, tmp_data_root):
+        """audit-fix2 阻断 2：provider 返回 510050.SH/159919.SZ → universe 归一化裸码去重。
+
+        复现评审反例：canonical=['510050'], xtquant=['510050.SH','159919.SZ']。
+        旧实现直接 union 得 ['159919.SZ','510050','510050.SH']（未去重、带后缀）。
+        修复后必须得去重后的裸码 ['510050','159919']。
+        """
+        from scripts.audit_qfq_staleness import _default_etf_universe
+        import duckdb
+        db = tmp_data_root / "quantstudio.db"
+        conn = duckdb.connect(str(db))
+        conn.execute("CREATE TABLE etf_daily (code VARCHAR, time BIGINT)")
+        conn.execute("INSERT INTO etf_daily VALUES ('510050', 1)")  # canonical 裸码
+        def provider():
+            return ["510050.SH", "159919.SZ"]  # xtquant 带后缀
+        codes = _default_etf_universe(conn, xtquant_etf_provider=provider)
+        conn.close()
+        # 关键：去重后的裸码，无后缀，无重复
+        assert codes == ["159919", "510050"], f"未归一化/去重: {codes}"
+        # 反例校验：绝不能出现带后缀的 code 或重复
+        assert "510050.SH" not in codes
+        assert "159919.SZ" not in codes
+        assert codes.count("510050") == 1
+
+    def test_default_run_audit_path_calls_xtquant_provider(self, tmp_data_root, monkeypatch):
+        """audit-fix2 阻断 1：默认 run_audit 路径真正调用 xtquant ETF provider。
+
+        run_audit 在 etf_universe_provider=None 且 xtquant_etf_provider=None（默认生产路径）时
+        不应回退到 canonical-only；必须经 _build_default_xtquant_etf_provider() 构造真实 provider，
+        并把非 None provider 传给 _default_etf_universe。
+
+        本测试不连接 live QMT：mock fetch_fresh_front_xtquant / read_canonical，
+        spy _default_etf_universe 捕获传入的 provider，并用哨兵 provider 验证默认构造路径。
+        """
+        import scripts.audit_qfq_staleness as aud
+        import duckdb
+        import argparse
+        import pandas as pd
+
+        # 最小 canonical DB（etf_daily 含一只 canonical code）
+        db = tmp_data_root / "quantstudio.db"
+        conn = duckdb.connect(str(db))
+        conn.execute("CREATE TABLE etf_daily (code VARCHAR, time BIGINT)")
+        conn.execute("INSERT INTO etf_daily VALUES ('CANON_A', 1)")
+        conn.execute("CREATE TABLE stock_dividend (code VARCHAR, ex_date BIGINT, cash_div DOUBLE, stk_div DOUBLE)")
+        conn.execute("CREATE TABLE source_watermark (source VARCHAR, table_name VARCHAR, freq VARCHAR, last_date BIGINT)")
+        conn.close()
+        monkeypatch.setattr(aud, "db_path", lambda: str(db))
+
+        # 不连接 live QMT：mock fresh 拉取 + canonical 读取为 no-op
+        monkeypatch.setattr(aud, "fetch_fresh_front_xtquant",
+                            lambda *a, **k: (pd.DataFrame(), {"download_performed": False}))
+        monkeypatch.setattr(aud, "read_canonical", lambda *a, **k: pd.DataFrame())
+
+        # 哨兵默认 provider（替代真实 XtquantAdapter，记录调用）
+        sentinel_calls = {"n": 0}
+
+        def sentinel_provider():
+            sentinel_calls["n"] += 1
+            return ["510050.SH"]  # xtquant 带后缀（会被 bare_code 归一化）
+        monkeypatch.setattr(aud, "_build_default_xtquant_etf_provider",
+                            lambda: sentinel_provider)
+
+        # spy _default_etf_universe 捕获传入的 provider（验证非 None）
+        captured = {"provider": "NOT_CALLED"}
+        real_universe = aud._default_etf_universe
+
+        def spy(conn, xtquant_etf_provider=None):
+            captured["provider"] = xtquant_etf_provider
+            return real_universe(conn, xtquant_etf_provider=xtquant_etf_provider)
+        monkeypatch.setattr(aud, "_default_etf_universe", spy)
+
+        args = argparse.Namespace(
+            as_of_date="2026-07-23", stocks=None, etfs=None,
+            full_history=False, no_download=True)
+        # 默认生产路径：etf_universe_provider=None + xtquant_etf_provider=None
+        aud.run_audit(args)
+
+        # 关键断言：默认路径构造并调用了 xtquant provider（非 canonical-only 回归）
+        assert captured["provider"] is not None, "默认路径传给 _default_etf_universe 的 provider 为 None（canonical-only 回归）"
+        assert sentinel_calls["n"] >= 1, "默认路径未调用 xtquant ETF provider"
 
 
 # ===========================================================================
