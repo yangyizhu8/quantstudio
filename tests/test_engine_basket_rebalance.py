@@ -1091,3 +1091,485 @@ def _make_fixed_cal(days):
             idx = max(0, min(len(self._days) - 1, idx + offset))
             return pd.Timestamp(self._days[idx], tz="Asia/Shanghai").date()
     return Cal(list(days))
+
+
+# =====================================================================
+# Corrective G1-I（audit-fix）：6 类阻断的反例测试（RED→GREEN）
+# =====================================================================
+
+# ---------- 阻断 1：EngineConfig.rebalance_mode 必须真正生效 ----------
+
+def _cfg_with_rebalance(mode):
+    """构造带 rebalance_mode 的 EngineConfig（用占位路径，不连真实库）。"""
+    from quantstudio.backtest.backtest_engine import EngineConfig
+    return EngineConfig(db_path="/tmp/test.db", output_dir="/tmp/out",
+                        research_dir="/tmp/research", rebalance_mode=mode)
+
+
+def test_blocker1_config_rebalance_mode_activates_basket():
+    """config.rebalance_mode=callback_basket 且不传独立参数 → basket 激活"""
+    from quantstudio.backtest.backtest_engine import BacktestEngine
+    engine = BacktestEngine(
+        db_path=None, strategy={},
+        start="2026-01-05", end="2026-01-05",
+        match_price_mode="next_open", engine_profile="daily-bar-v1",
+        config=_cfg_with_rebalance("callback_basket"),
+    )
+    assert engine.rebalance_mode == "callback_basket"
+    assert engine.basket_active is True
+    assert engine.engine_semantics_version == "0.4.0-next_open_basket"
+
+
+def test_blocker1_config_legacy_stays_legacy():
+    """config.rebalance_mode=legacy → legacy（即便 next_open）"""
+    from quantstudio.backtest.backtest_engine import BacktestEngine
+    engine = BacktestEngine(
+        db_path=None, strategy={},
+        start="2026-01-05", end="2026-01-05",
+        match_price_mode="next_open", engine_profile="daily-bar-v1",
+        config=_cfg_with_rebalance("legacy"),
+    )
+    assert engine.rebalance_mode == "legacy"
+    assert engine.basket_active is False
+    assert engine.engine_semantics_version == "0.2.0-next_open_pending"
+
+
+def test_blocker1_explicit_param_overrides_config():
+    """显式独立参数非 None → 覆盖 config（兼容优先级）"""
+    from quantstudio.backtest.backtest_engine import BacktestEngine
+    engine = BacktestEngine(
+        db_path=None, strategy={},
+        start="2026-01-05", end="2026-01-05",
+        match_price_mode="next_open", engine_profile="daily-bar-v1",
+        config=_cfg_with_rebalance("callback_basket"),
+        rebalance_mode="legacy",  # 显式覆盖
+    )
+    assert engine.rebalance_mode == "legacy"
+    assert engine.basket_active is False
+
+
+def test_blocker1_invalid_resolved_mode_raises():
+    """非法值在最终解析后抛错（无论来源）"""
+    from quantstudio.backtest.backtest_engine import BacktestEngine
+    with pytest.raises(ValueError, match="rebalance_mode"):
+        BacktestEngine(
+            db_path=None, strategy={},
+            start="2026-01-05", end="2026-01-05",
+            match_price_mode="next_open", engine_profile="daily-bar-v1",
+            config=_cfg_with_rebalance("bogus"),
+        )
+
+
+# ---------- 阻断 2：run_daily / before_trading_start 必须走 legacy ----------
+
+def test_blocker2_handle_data_order_goes_to_basket():
+    """handle_data 中 order → basket（basket_id 非 None）"""
+    engine = _make_basket_engine(cash=100_000)
+    engine._t_day_close_prices = {"600000.SH": 10.0}
+    engine._next_trade_day_str = lambda d: "2026-01-06"
+
+    engine.push_basket_context("2026-01-05")
+    engine.order_in_basket("600000.SH", instruction="buy_value", target_value=10_000)
+    engine.submit_basket()
+    # handle_data 路径：订单在 basket 内，不在 _pending_orders
+    assert len(engine._baskets) == 1
+    assert len(engine._baskets[0].buy_orders) == 1
+    assert len(engine._pending_orders) == 0
+
+
+def test_blocker2_run_daily_order_goes_to_legacy_pending():
+    """run_daily 中 order → _pending_orders（basket_id=None）
+
+    验证：run_daily 执行时 _current_basket 必须为 None。
+    通过 _route_next_open 的条件间接验证：构造引擎后，不在 basket context 内下单 → legacy。
+    """
+    import quantstudio.backtest.ptrade_api as P
+    engine = _make_basket_engine(cash=100_000)
+    engine._t_day_close_prices = {"600000.SH": 10.0}
+    engine._next_trade_day_str = lambda d: "2026-01-06"
+    # run_daily 时机：_current_basket is None（submit 已在 handle_data 后执行）
+    assert engine._current_basket is None
+    P._api.attach(engine, None, None, "2026-01-05", "2026-01-04", {"600000.SH": 10.0})
+    P._api.order_value("600000.SH", 10_000)  # 模拟 run_daily 内下单
+    # 应进 _pending_orders（legacy），basket_id=None
+    assert len(engine._pending_orders) == 1
+    assert engine._pending_orders[0].basket_id is None
+    assert len(engine._baskets) == 0
+
+
+def test_blocker2_before_trading_start_order_goes_to_legacy_pending():
+    """before_trading_start 中 order → _pending_orders（basket_id=None）"""
+    import quantstudio.backtest.ptrade_api as P
+    engine = _make_basket_engine(cash=100_000)
+    engine._t_day_close_prices = {"600000.SH": 10.0}
+    engine._next_trade_day_str = lambda d: "2026-01-06"
+    # before_trading_start 时机：_current_basket is None
+    assert engine._current_basket is None
+    P._api.attach(engine, None, None, "2026-01-05", "2026-01-04", {"600000.SH": 10.0})
+    P._api.order_value("600000.SH", 10_000)
+    assert len(engine._pending_orders) == 1
+    assert engine._pending_orders[0].basket_id is None
+
+
+def test_blocker2_mixed_callbacks_same_day_correct_queues(build_db):
+    """同一天三类 callback 混合：before_trading_start/run_daily → legacy；handle_data → basket"""
+    from quantstudio.backtest.backtest_engine import BacktestEngine, Position
+    from tests.conftest import daily_row, make_providers
+
+    rows = [daily_row(c, "2026-01-05", close=10.0, open_p=10.0, preclose=10.0)
+            for c in ("600000", "600001", "600002")]
+    db = build_db(stock_daily=rows)
+    providers = make_providers(db, _make_fixed_cal(("2026-01-05", "2026-01-06")))
+
+    events = []
+
+    def initialize(ctx):
+        from quantstudio.backtest.ptrade_api import _api
+        _api.run_daily(ctx, lambda c: events.append(("daily", _api.order_value("600001.SH", 8000))))
+
+    def before_trading_start(ctx, data):
+        from quantstudio.backtest.ptrade_api import order_value
+        order_value("600002.SH", 8000)  # before_trading_start → legacy
+        events.append(("bts",))
+
+    def handle_data(ctx, data):
+        from quantstudio.backtest.ptrade_api import order_value
+        order_value("600000.SH", 8000)  # handle_data → basket
+        events.append(("handle",))
+
+    engine = BacktestEngine(
+        db_path=str(db),
+        strategy={"initialize": initialize, "before_trading_start": before_trading_start,
+                  "handle_data": handle_data},
+        start="2026-01-05", end="2026-01-06",
+        match_price_mode="next_open", engine_profile="daily-bar-v1",
+        rebalance_mode="callback_basket", providers=providers,
+    )
+    engine.run()
+
+    # Day1：handle_data 订单在 basket，before_trading_start/run_daily 在 _pending_orders（T+1 drain 后清空）
+    real_baskets = [b for b in engine._baskets if b.buy_orders or b.sell_orders]
+    assert len(real_baskets) >= 1
+    basket_codes = {po.code for po in real_baskets[0].buy_orders}
+    assert "600000.SH" in basket_codes  # handle_data → basket
+    # 600001(run_daily) 和 600002(before_trading_start) 不应在任何 basket 内
+    for b in real_baskets:
+        for po in b.buy_orders + b.sell_orders:
+            assert po.code not in ("600001.SH", "600002.SH")
+
+
+# ---------- 阻断 3：Basket Order 生命周期对公共 API 可见 ----------
+
+def test_blocker3_runtime_order_has_basket_id_field():
+    """Order dataclass 必须有 basket_id 字段；order_in_basket 返回的 pending Order 带 basket_id"""
+    from quantstudio.backtest.backtest_engine import Order
+    # Order dataclass 有 basket_id 字段（默认 None）
+    o = Order(order_id="x", security="600000.SH", direction="buy")
+    assert hasattr(o, "basket_id")
+    assert o.basket_id is None  # legacy 默认 None
+
+    engine = _make_basket_engine(cash=100_000)
+    engine._t_day_close_prices = {"600000.SH": 10.0}
+    engine._next_trade_day_str = lambda d: "2026-01-06"
+    engine.push_basket_context("2026-01-05")
+    ret = engine.order_in_basket("600000.SH", instruction="buy_value", target_value=10_000)
+    # 返回的 pending Order 必须带 basket_id
+    assert hasattr(ret, "basket_id")
+    assert ret.basket_id is not None
+    assert ret.basket_id == engine._current_basket.basket_id
+    engine.submit_basket()
+
+
+def test_blocker3_legacy_order_basket_id_always_none():
+    """legacy Order 的 basket_id 始终为 None（_create_pending_order + _po_to_order）"""
+    engine = _make_basket_engine(cash=100_000)
+    engine._t_day_close_prices = {"600000.SH": 10.0}
+    engine._next_trade_day_str = lambda d: "2026-01-06"
+    ret = engine._create_pending_order("600000.SH", instruction="target_value", target_value=10_000)
+    assert ret.basket_id is None
+    # _po_to_order 复制：basket_id=None
+    po = engine._pending_orders[0]
+    o = engine._po_to_order(po, filled=False)
+    assert o.basket_id is None
+
+
+def test_blocker3_get_open_orders_includes_basket_pending():
+    """get_open_orders 必须包含所有 pending basket orders（带 basket_id）"""
+    import quantstudio.backtest.ptrade_api as P
+    engine = _make_basket_engine(cash=100_000)
+    engine._t_day_close_prices = {"600000.SH": 10.0, "600001.SH": 10.0}
+    engine._next_trade_day_str = lambda d: "2026-01-06"
+    P._api.attach(engine, None, None, "2026-01-05", "2026-01-04",
+                  {"600000.SH": 10.0, "600001.SH": 10.0})
+    # basket 订单
+    engine.push_basket_context("2026-01-05")
+    engine.order_in_basket("600000.SH", instruction="buy_value", target_value=10_000)
+    engine.order_in_basket("600001.SH", instruction="buy_value", target_value=10_000)
+    engine.submit_basket()
+    # get_open_orders 应返回 2 个 basket pending orders，basket_id 非 None
+    open_orders = P._api.get_open_orders()
+    basket_orders = [o for o in open_orders if o.basket_id is not None]
+    assert len(basket_orders) == 2
+
+
+def test_blocker3_get_order_finds_basket_order_through_lifecycle():
+    """get_order 可查 basket pending；drain 后仍可查同一 basket_id（status/filled_dt/reason 正确）"""
+    import quantstudio.backtest.ptrade_api as P
+    engine = _make_basket_engine(cash=5_000)
+    basket = _setup_rotation_basket(engine, buy_value=9000)
+    sell_po = basket.sell_orders[0]
+    P._api.attach(engine, None, None, "2026-01-06", "2026-01-05", {})
+    # T 日：get_order 能查到 basket pending sell
+    o_pending = P._api.get_order(sell_po.order_id)
+    assert o_pending is not None
+    assert o_pending.basket_id == basket.basket_id
+
+    # T+1 drain
+    t1_data = _t1_data([
+        ("600000", 10.0, 10.0, 10.0, 100000, 0),
+        ("600001", 10.0, 10.0, 10.0, 100000, 0),
+    ])
+    t1_open = {"600000.SH": 10.0, "600001.SH": 10.0}
+    for pos in engine.account.positions.values():
+        pos.can_sell = pos.volume
+    engine._drain_baskets(t1_data, "2026-01-06", t1_open)
+    # drain 后 get_order 仍可查同一 basket_id
+    o_filled = P._api.get_order(sell_po.order_id)
+    assert o_filled is not None
+    assert o_filled.basket_id == basket.basket_id
+    assert o_filled.status == "filled"
+    assert o_filled.filled_dt == "2026-01-06"
+
+
+def test_blocker3_cancel_order_routes_to_basket_cancel():
+    """public cancel_order 能按 order_id 定位 basket PendingOrder 并调用 basket cancel"""
+    import quantstudio.backtest.ptrade_api as P
+    from quantstudio.backtest.backtest_engine import Position
+    engine = _make_basket_engine(cash=5_000)
+    engine.account.positions["600000.SH"] = Position(
+        code="600000.SH", volume=1000, avg_cost=10.0, can_sell=1000)
+    engine._t_day_close_prices = {"600000.SH": 10.0}
+    engine._next_trade_day_str = lambda d: "2026-01-06"
+    P._api.attach(engine, None, None, "2026-01-05", "2026-01-04", {"600000.SH": 10.0})
+    engine.push_basket_context("2026-01-05")
+    engine.order_in_basket("600000.SH", instruction="sell_all")
+    engine.submit_basket()
+    basket = engine._baskets[0]
+    sell_po = basket.sell_orders[0]
+    assert engine.account.positions["600000.SH"].pending_sell_shares == 1000
+
+    # public cancel_order（传 order_id）
+    P._api.cancel_order(sell_po.order_id)
+    assert sell_po.status == "cancelled"
+    assert engine.account.positions["600000.SH"].pending_sell_shares == 0  # 归还
+
+
+# ---------- 阻断 4：取消 mandatory sell 后必须中止 buy leg ----------
+
+def test_blocker4_cancel_mandatory_sell_aborts_buy_leg():
+    """反例：cancel 卖单后 drain，buy leg 必须全拒，原持仓不变，cash 不减。
+
+    场景：初始持仓 600000.SH 1000 股；basket 卖 600000 + 买 600001；
+    cancel 卖单 → T+1 drain → 600001 应 0 股、所有 buy rejected、
+    reason=mandatory_sell_cancelled、原持仓不变、cash 不减。
+    """
+    from quantstudio.backtest.backtest_engine import Position
+    engine = _make_basket_engine(cash=5_000)
+    engine.account.positions["600000.SH"] = Position(
+        code="600000.SH", volume=1000, avg_cost=10.0, can_sell=1000)
+    engine._t_day_close_prices = {"600000.SH": 10.0, "600001.SH": 10.0}
+    engine._next_trade_day_str = lambda d: "2026-01-06"
+    engine.push_basket_context("2026-01-05")
+    engine.order_in_basket("600000.SH", instruction="sell_all")
+    engine.order_in_basket("600001.SH", instruction="buy_value", target_value=9000)
+    engine.submit_basket()
+    basket = engine._baskets[0]
+    cash_before_cancel = engine.account.cash
+    sell_po = basket.sell_orders[0]
+
+    # cancel mandatory sell
+    engine.cancel_basket_order(basket, sell_po)
+
+    # T+1 drain
+    t1_data = _t1_data([
+        ("600000", 10.0, 10.0, 10.0, 100000, 0),
+        ("600001", 10.0, 10.0, 10.0, 100000, 0),
+    ])
+    t1_open = {"600000.SH": 10.0, "600001.SH": 10.0}
+    for pos in engine.account.positions.values():
+        pos.can_sell = pos.volume
+    engine._drain_baskets(t1_data, "2026-01-06", t1_open)
+
+    # buy leg 全拒
+    for buy_po in basket.buy_orders:
+        assert buy_po.status == "rejected"
+        assert buy_po.reason == "mandatory_sell_cancelled"
+    # 原持仓不变
+    assert engine.account.positions["600000.SH"].volume == 1000
+    # 新标的 0 股
+    pos600001 = engine.account.positions.get("600001.SH")
+    assert pos600001 is None or pos600001.volume == 0
+    # cash 不减
+    assert engine.account.cash == pytest.approx(cash_before_cancel)
+    # basket 标记 mandatory_sell_cancelled
+    assert basket.mandatory_sell_cancelled is True
+
+
+def test_blocker4_cancel_buy_does_not_abort_basket():
+    """cancel buy（非 mandatory sell）不应触发 mandatory_sell_cancelled"""
+    engine = _make_basket_engine(cash=100_000)
+    engine._t_day_close_prices = {"600000.SH": 10.0, "600001.SH": 10.0}
+    engine._next_trade_day_str = lambda d: "2026-01-06"
+    engine.push_basket_context("2026-01-05")
+    engine.order_in_basket("600000.SH", instruction="buy_value", target_value=9000)
+    engine.order_in_basket("600001.SH", instruction="buy_value", target_value=9000)
+    engine.submit_basket()
+    basket = engine._baskets[0]
+    # cancel 其中一个 buy（不影响另一个）
+    engine.cancel_basket_order(basket, basket.buy_orders[0])
+    assert basket.mandatory_sell_cancelled is False
+    assert len(basket.buy_orders) == 1
+
+
+# ---------- 阻断 5：post-preflight 执行失败必须中止后续买单 ----------
+
+def test_blocker5_post_preflight_execution_failure_aborts_remaining(monkeypatch):
+    """反例：preflight 全过，但执行阶段第二笔 buy 失败 → 当前订单 + 所有剩余 rejected，
+    不再调用 _execute_buy，cash 不继续减，basket=partial。
+
+    通过 monkeypatch _execute_buy 让第二笔返回 (0, price) 模拟执行期失败。
+    """
+    from quantstudio.backtest.backtest_engine import Position
+    engine = _make_basket_engine(cash=30_000)
+    engine._t_day_close_prices = {"600001.SH": 10.0, "600002.SH": 10.0, "600003.SH": 10.0}
+    engine._next_trade_day_str = lambda d: "2026-01-06"
+    engine.push_basket_context("2026-01-05")
+    engine.order_in_basket("600001.SH", instruction="buy_value", target_value=8000)
+    engine.order_in_basket("600002.SH", instruction="buy_value", target_value=8000)
+    engine.order_in_basket("600003.SH", instruction="buy_value", target_value=8000)
+    engine.submit_basket()
+    basket = engine._baskets[0]
+
+    # monkeypatch _execute_buy：第 1 笔成功，第 2 笔失败 (0, price)，第 3 笔不应被调用
+    real_execute_buy = engine._execute_buy
+    call_log = []
+
+    def fake_execute_buy(code, price, **kwargs):
+        call_log.append(code)
+        if len(call_log) == 2:
+            return 0, price  # 第二笔执行失败
+        return real_execute_buy(code, price, **kwargs)
+    monkeypatch.setattr(engine, "_execute_buy", fake_execute_buy)
+
+    t1_data = _t1_data([
+        ("600001", 10.0, 10.0, 10.0, 100000, 0),
+        ("600002", 10.0, 10.0, 10.0, 100000, 0),
+        ("600003", 10.0, 10.0, 10.0, 100000, 0),
+    ])
+    t1_open = {c: 10.0 for c in ("600001.SH", "600002.SH", "600003.SH")}
+    for pos in engine.account.positions.values():
+        pos.can_sell = pos.volume
+    cash_before = engine.account.cash
+    engine._drain_baskets(t1_data, "2026-01-06", t1_open)
+
+    # 只调用了前 2 笔 _execute_buy（第 3 笔未执行）
+    assert len(call_log) == 2
+    assert "600003.SH" not in call_log
+    # 第 1 笔 filled，第 2、3 笔 rejected(reason=execution_failed_after_preflight)
+    statuses = {po.code: po.status for po in basket.buy_orders}
+    reasons = {po.code: po.reason for po in basket.buy_orders}
+    assert statuses["600001.SH"] == "filled"
+    assert statuses["600002.SH"] == "rejected"
+    assert statuses["600003.SH"] == "rejected"
+    assert reasons["600002.SH"] == "execution_failed_after_preflight"
+    assert reasons["600003.SH"] == "execution_failed_after_preflight"
+    # basket partial
+    assert basket.status == "partial"
+    # 第 3 标的 0 股
+    pos3 = engine.account.positions.get("600003.SH")
+    assert pos3 is None or pos3.volume == 0
+
+
+# ---------- 阻断 6：handle_data 异常时必须放弃半成品 basket ----------
+
+def test_blocker6_handle_data_exception_aborts_basket(build_db):
+    """反例：handle_data 先下单后抛异常 → basket 被 abort（不进入 _baskets 待 drain），
+    所有订单 cancelled(reason=callback_exception)，卖单预扣归还，T+1 不产生成交。
+    """
+    from quantstudio.backtest.backtest_engine import BacktestEngine, Position
+    from tests.conftest import daily_row, make_providers
+
+    rows = [daily_row(c, day, close=10.0, open_p=10.0, preclose=10.0)
+            for c in ("600000", "600001")
+            for day in ("2026-01-05", "2026-01-06")]
+    db = build_db(stock_daily=rows)
+    providers = make_providers(db, _make_fixed_cal(("2026-01-05", "2026-01-06")))
+
+    def initialize(ctx):
+        pass
+
+    def handle_data(ctx, data):
+        from quantstudio.backtest.ptrade_api import order_target_value, order_value
+        order_target_value("600000.SH", 0)        # 卖单（已持仓）
+        order_value("600001.SH", 8000)            # 买单
+        raise RuntimeError("strategy boom")       # 下单后抛异常
+
+    engine = BacktestEngine(
+        db_path=str(db),
+        strategy={"initialize": initialize, "handle_data": handle_data},
+        start="2026-01-05", end="2026-01-06",
+        match_price_mode="next_open", engine_profile="daily-bar-v1",
+        rebalance_mode="callback_basket", providers=providers,
+    )
+    engine.account.positions["600000.SH"] = Position(
+        code="600000.SH", volume=1000, avg_cost=10.0, can_sell=1000)
+    engine.run()
+
+    # 没有任何 basket 进入待 drain 队列（abort 不 append 到 _baskets）
+    real_baskets = [b for b in engine._baskets if b.buy_orders or b.sell_orders]
+    assert len(real_baskets) == 0
+    # 卖单预扣已归还（不变式：end-of-backtest pending_sell_shares==0）
+    pos = engine.account.positions.get("600000.SH")
+    assert pos is None or pos.pending_sell_shares == 0
+    # 原持仓未变（T+1 无成交）
+    assert engine.account.positions.get("600000.SH").volume == 1000
+    # 新标的未建仓
+    pos600001 = engine.account.positions.get("600001.SH")
+    assert pos600001 is None or pos600001.volume == 0
+    # 无 trade_record（T+1 drain 没执行任何 basket 订单）
+    assert len(engine.result.trade_records) == 0
+
+
+def test_blocker6_abort_basket_context_directly():
+    """abort_basket_context 单元：放弃半成品 basket，归还卖单预扣，不进入 _baskets"""
+    from quantstudio.backtest.backtest_engine import Position
+    engine = _make_basket_engine(cash=5_000)
+    engine.account.positions["600000.SH"] = Position(
+        code="600000.SH", volume=1000, avg_cost=10.0, can_sell=1000)
+    engine._t_day_close_prices = {"600000.SH": 10.0, "600001.SH": 10.0}
+    engine._next_trade_day_str = lambda d: "2026-01-06"
+    engine.push_basket_context("2026-01-05")
+    engine.order_in_basket("600000.SH", instruction="sell_all")
+    engine.order_in_basket("600001.SH", instruction="buy_value", target_value=9000)
+    basket = engine._current_basket
+    assert engine.account.positions["600000.SH"].pending_sell_shares == 1000
+    baskets_before = len(engine._baskets)
+
+    aborted = engine.abort_basket_context("callback_exception")
+    assert engine._current_basket is None
+    assert aborted.status == "cancelled"
+    # 卖单预扣归还
+    assert engine.account.positions["600000.SH"].pending_sell_shares == 0
+    # 所有订单 cancelled(reason=callback_exception)
+    for po in aborted.sell_orders + aborted.buy_orders:
+        assert po.status == "cancelled"
+        assert po.reason == "callback_exception"
+    # 未进入 _baskets（待 drain 队列）
+    assert len(engine._baskets) == baskets_before
+
+
+
+
+
+
+

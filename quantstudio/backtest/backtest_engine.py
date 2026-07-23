@@ -101,6 +101,8 @@ class Order:
     # PR2: next_open 成交日（T+1）。close/open 路径留空，向后兼容。
     # 主计划 7.13 "正确记录 created_dt 和 filled_dt"。
     filled_dt: str = ""
+    # G1-I audit-fix 阻断3: 所属 basket id（运行时 Order 可见）。None = 独立订单（legacy）。
+    basket_id: Optional[str] = None
 
     def __bool__(self):
         """老策略 if order: 判定为是否成交（兼容旧代码不检查返回值的写法）"""
@@ -168,6 +170,9 @@ class RebalanceBasket:
     buy_orders: List[PendingOrder] = field(default_factory=list)
     status: str = "pending"               # 见 §10 状态真值表
     realized_sell_proceeds: float = 0.0   # 审计元数据（不重复加到 cash）
+    # G1-I audit-fix 阻断4: 取消任意 mandatory sell 后置 True → drain 时 buy leg 全拒
+    # （reason=mandatory_sell_cancelled），避免旧仓未退又买入新仓的超目标持仓风险。
+    mandatory_sell_cancelled: bool = False
 
 
 @dataclass
@@ -304,7 +309,7 @@ class BacktestEngine:
                  providers=None,
                  engine_profile: str = "daily-bar-v1",
                  etf_t0: bool = False,
-                 rebalance_mode: str = "legacy"):
+                 rebalance_mode: Optional[str] = None):
         """strategy_type: 'ptrade' = Ptrade 原版策略（唯一支持模式，即时成交 + 精确涨跌停）。
 
         注：custom 自定义信号模式已于 2026-07-19 废弃（不保证撮合精度、无涨跌停阻断、
@@ -359,13 +364,17 @@ class BacktestEngine:
         if engine_profile == "minute-bar-v1" and match_price_mode == "next_open":
             raise ValueError("minute-bar-v1 不支持 next_open（分钟即时撮合模型，无跨日 pending 语义）")
         self.engine_profile = engine_profile
-        # G1-I: basket 再平衡激活门禁（设计 v2 §3.2-§3.3）。
-        if rebalance_mode not in ("legacy", "callback_basket"):
-            raise ValueError(f"rebalance_mode 必须是 legacy/callback_basket， got {rebalance_mode!r}")
+        # G1-I: basket 再平衡激活门禁（设计 v2 §3.2-§3.3，audit-fix 阻断1）。
+        # 解析优先级：显式构造参数（非 None）> config.rebalance_mode > "legacy"。
+        # 这样 EngineConfig.rebalance_mode 能真正生效；显式参数仅作兼容覆盖。
+        resolved_rebalance_mode = (rebalance_mode if rebalance_mode is not None
+                                   else getattr(self.config, 'rebalance_mode', 'legacy'))
+        if resolved_rebalance_mode not in ("legacy", "callback_basket"):
+            raise ValueError(f"rebalance_mode 必须是 legacy/callback_basket， got {resolved_rebalance_mode!r}")
         # §3.3: minute-bar-v1 + callback_basket → 显式 BLOCK（非静默退化）
-        if rebalance_mode == "callback_basket" and engine_profile == "minute-bar-v1":
+        if resolved_rebalance_mode == "callback_basket" and engine_profile == "minute-bar-v1":
             raise ValueError("minute-bar-v1 不支持 callback_basket（分钟即时撮合模型，无跨日 basket 语义）")
-        self.rebalance_mode = rebalance_mode
+        self.rebalance_mode = resolved_rebalance_mode
         # PR4 决策 4：ETF T+0 只挂分钟 Profile。日线 Profile 强制 False（守护黄金基线 87,752.56）。
         # is_etf 判定走 PR1 的 security_code_rules（不新写分类逻辑）。
         self.etf_t0 = bool(etf_t0) if engine_profile == "minute-bar-v1" else False
@@ -969,6 +978,32 @@ class BacktestEngine:
         self._baskets.append(basket)
         return basket
 
+    def abort_basket_context(self, reason: str = "callback_exception"):
+        """G1-I audit-fix 阻断6: handle_data 异常时放弃半成品 basket（不提交到待 drain 队列）。
+
+        - 归还所有 pending sell orders 的 pending_sell_shares；
+        - buy orders 无 cash 归还（T 日未预扣）；
+        - 所有 order status=cancelled/rejected，reason=<reason>；
+        - basket status=cancelled，**不进入 _baskets**（T+1 不产生成交）；
+        - _current_basket=None。
+        """
+        basket = self._current_basket
+        self._current_basket = None
+        if basket is None:
+            return None
+        for po in basket.sell_orders + basket.buy_orders:
+            if po.status != "pending":
+                continue
+            if po.direction == "sell":
+                pos = self.account.positions.get(po.code)
+                if pos:
+                    pos.pending_sell_shares = max(0, pos.pending_sell_shares - po.est_shares)
+            po.status = "cancelled"
+            po.reason = reason
+        basket.status = "cancelled"
+        # 不 append 到 _baskets：放弃的半成品不进入 T+1 drain（审计上仍返回引用供调用方记录）
+        return basket
+
     def _intent_direction(self, instruction, target_value, shares, pos):
         """G1-I: 从指令意图判定方向（不依赖估算结果），供冲突检查用。
 
@@ -1083,7 +1118,7 @@ class BacktestEngine:
         logger.debug(f"[G1-I] basket {basket.basket_id} 入篮 {direction} {code} "
                      f"instr={instruction} est_shares={est_shares} T={created_dt} T+1={scheduled_dt}")
         return Order(order_id=order_id, security=security, direction=direction,
-                     status="pending", created_dt=created_dt)
+                     status="pending", created_dt=created_dt, basket_id=basket.basket_id)
 
     def _drain_baskets(self, t1_data, t1_day_str: str, t1_open_prices: dict):
         """G1-I: T+1 开盘 basket drain 状态机（设计 v2 §6）。
@@ -1130,12 +1165,15 @@ class BacktestEngine:
         # §6.2: realized_sell_proceeds 仅审计元数据（_execute_sell 已计入 cash，不重复加）
         basket.realized_sell_proceeds = cash_after_sells - cash_before_sells
 
-        # Phase 2: mandatory sell 失败检查 → buy leg 全拒（§7）
-        if sell_has_failure:
+        # Phase 2: mandatory sell 失败检查 → buy leg 全拒（§7）。
+        # audit-fix 阻断4: mandatory sell 被 cancel 同样中止 buy leg（mandatory_sell_cancelled）。
+        if sell_has_failure or basket.mandatory_sell_cancelled:
+            reject_reason = "mandatory_sell_failed" if sell_has_failure else "mandatory_sell_cancelled"
             for buy_po in basket.buy_orders:
                 buy_po.status = "rejected"
-                buy_po.reason = "mandatory_sell_failed"
+                buy_po.reason = reject_reason
             basket.status = "partial" if sell_any_filled else "rejected"
+            self._record_basket_orders_today(basket)
             return
 
         # 无卖单或卖单全过 → 进入 buy leg
@@ -1163,10 +1201,18 @@ class BacktestEngine:
                 buy_po.reason = reject_reason if (not ok and reject_reason) else "insufficient_cash_after_sells"
             basket.status = "partial" if (sell_any_filled or any(
                 po.status == "filled" for po in basket.sell_orders)) else "rejected"
+            self._record_basket_orders_today(basket)
             return
 
-        # 全部预检通过 + 资金充足 → 依次执行（§6.1 Phase 3B）
+        # 全部预检通过 + 资金充足 → 依次执行（§6.1 Phase 3B）。
+        # audit-fix 阻断5: 执行阶段某笔 buy 意外失败（_execute_buy 返回 0）→
+        # 当前订单 + 所有剩余 rejected(reason=execution_failed_after_preflight)，不再继续。
+        exec_failed = False
         for buy_po, actual_shares, actual_value, _ok, _rr in preflight:
+            if exec_failed:
+                buy_po.status = "rejected"
+                buy_po.reason = "execution_failed_after_preflight"
+                continue
             vol, fp = self._execute_buy(
                 buy_po.code, t1_open_prices.get(buy_po.code, 0),
                 buy_value=actual_value if actual_value else None,
@@ -1180,7 +1226,8 @@ class BacktestEngine:
                 buy_po.filled_dt = t1_day_str
             else:
                 buy_po.status = "rejected"
-                buy_po.reason = "insufficient_cash_or_rounding"
+                buy_po.reason = "execution_failed_after_preflight"
+                exec_failed = True
 
         # Phase 5: basket status 更新（§10 真值表）
         sell_all_filled = all(po.status == "filled" for po in basket.sell_orders) if basket.sell_orders else True
@@ -1189,6 +1236,13 @@ class BacktestEngine:
             basket.status = "completed"
         else:
             basket.status = "partial"
+        self._record_basket_orders_today(basket)
+
+    def _record_basket_orders_today(self, basket):
+        """G1-I audit-fix 阻断3: basket drain 后把 filled/rejected Order 放入 _today_orders，
+        使 get_order / get_orders 能查询（含 basket_id）。"""
+        for po in basket.sell_orders + basket.buy_orders:
+            self._today_orders.append(self._po_to_order(po, filled=(po.status == "filled")))
 
     def _drain_basket_sell(self, po, t1_data, t1_day_str, t1_open_prices,
                             is_price_limit_blocked) -> bool:
@@ -1248,6 +1302,8 @@ class BacktestEngine:
             pos = self.account.positions.get(po.code)
             if pos:
                 pos.pending_sell_shares = max(0, pos.pending_sell_shares - po.est_shares)
+            # audit-fix 阻断4: 取消 mandatory sell → 标记 basket，drain 时 buy leg 全拒
+            basket.mandatory_sell_cancelled = True
         # buy 无预扣，无需归还
         po.status = "cancelled"
         po.reason = "user_cancelled"
@@ -1532,7 +1588,8 @@ class BacktestEngine:
             target_amount=abs(po.shares) if po.shares else 0,
             filled_amount=po.filled_amount,
             price=po.price, status=po.status, reason=po.reason,
-            created_dt=po.created_dt, filled_dt=po.filled_dt)
+            created_dt=po.created_dt, filled_dt=po.filled_dt,
+            basket_id=po.basket_id)
 
     def refresh_portfolio(self, prices):
         """原地更新 context.portfolio（补充项②：不重建 context，只更新属性）。
@@ -1582,23 +1639,26 @@ class BacktestEngine:
             logger.error(f"[Ptrade] before_trading_start 错误: {e}")
         try:
             # G1-I: handle_data 内的订单形成一个 basket（§3.6）。
-            # basket_active 时 push → handle_data → submit；非 basket 模式不开启 context。
+            # §3.6 顺序：before_trading_start / run_daily 走 legacy（_current_basket=None）；
+            # 仅 handle_data 在 basket context 内。因此 push → handle_data → submit，
+            # submit 之后才执行 run_daily，确保 run_daily 的订单进 _pending_orders（legacy）。
             if self.basket_active:
                 self.push_basket_context(day_str)
             if 'handle_data' in self.strategy:
                 self.strategy['handle_data'](ctx, data)
+            # handle_data 结束立即提交 basket（audit-fix 阻断2：run_daily 不并入 basket）
+            if self.basket_active and self._current_basket is not None:
+                self.submit_basket()
             # run_daily 注册任务与 handle_data 可并存；日线引擎每天均执行一次。
-            # §3.6: run_daily 在 basket context 内执行（其订单也并入 handle_data 的 basket）。
+            # 此时 _current_basket 已 None → run_daily 订单走 legacy pending。
             daily_tasks = getattr(_api, '_daily_tasks', [])
             for func, _time in daily_tasks:
                 func(ctx)
-            if self.basket_active:
-                self.submit_basket()
         except Exception as e:
             logger.error(f"[Ptrade] handle_data 错误: {e}")
-            # 异常时也要 pop basket context，避免泄漏到下一日
+            # 异常时 abort basket context（audit-fix 阻断6：不提交半成品 basket）
             if self.basket_active and self._current_basket is not None:
-                self.submit_basket()
+                self.abort_basket_context("callback_exception")
 
         # 即时执行模式：不需要返回信号，交易已在策略执行过程中即时完成
 

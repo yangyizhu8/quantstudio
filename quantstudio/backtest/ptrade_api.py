@@ -1641,10 +1641,19 @@ class PtradeAPI:
         """获取未成交订单。
 
         PR2: next_open 模式返回当前 pending queue（仅 status=pending）；
-        close/open 即时执行模式下始终为空（保持 legacy 行为）。"""
+        close/open 即时执行模式下始终为空（保持 legacy 行为）。
+        G1-I audit-fix 阻断3: basket_active 时同时包含 basket 内 pending orders。"""
         if self._engine.match_price_mode != "next_open":
             return []
         pending = [po for po in self._engine._pending_orders if po.status == "pending"]
+        # G1-I: basket pending orders（所有 status=pending 的 basket 订单）
+        if getattr(self._engine, 'basket_active', False):
+            for b in getattr(self._engine, '_baskets', []):
+                if b.status != "pending":
+                    continue
+                for po in b.sell_orders + b.buy_orders:
+                    if po.status == "pending":
+                        pending.append(po)
         orders = [self._engine._po_to_order(po, filled=False) for po in pending]
         if security:
             bare = bare_code(security)
@@ -1654,12 +1663,20 @@ class PtradeAPI:
     def get_order(self, order_id):
         """根据 order_id 查订单。
 
-        PR2: next_open 模式查 _pending_orders + _today_orders；close/open 返回 None。"""
+        PR2: next_open 模式查 _pending_orders + _today_orders；close/open 返回 None。
+        G1-I audit-fix 阻断3: basket_active 时同时查 basket pending/filled/rejected/
+        cancelled/expired 订单（全生命周期可见）。"""
         if self._engine.match_price_mode != "next_open":
             return None
         for po in self._engine._pending_orders:
             if po.order_id == order_id:
                 return self._engine._po_to_order(po, filled=(po.status == "filled"))
+        # G1-I: basket orders（pending + 已 drain 状态）
+        if getattr(self._engine, 'basket_active', False):
+            for b in getattr(self._engine, '_baskets', []):
+                for po in b.sell_orders + b.buy_orders:
+                    if po.order_id == order_id:
+                        return self._engine._po_to_order(po, filled=(po.status == "filled"))
         for o in getattr(self._engine, '_today_orders', []):
             if getattr(o, 'order_id', '') == order_id:
                 return o
@@ -1671,7 +1688,9 @@ class PtradeAPI:
         PR2: next_open 模式按 order_id 精确移除 pending 订单 + 归还预扣；
         close/open 即时执行模式下 no-op（订单已即时成交，无法撤单）。
 
-        order_param 可以是 Order 对象（取 order_id）或 order_id 字符串。"""
+        order_param 可以是 Order 对象（取 order_id）或 order_id 字符串。
+        G1-I audit-fix 阻断3: basket_active 时若 order_id 命中 basket 订单，
+        调用 cancel_basket_order（并触发 mandatory sell 中止 buy leg，见阻断4）。"""
         if self._engine.match_price_mode != "next_open":
             return
         order_id = order_param
@@ -1679,6 +1698,15 @@ class PtradeAPI:
             order_id = order_param.order_id
         if order_id is None:
             return
+        # G1-I: 先查 basket pending orders（命中则走 basket cancel）
+        if getattr(self._engine, 'basket_active', False):
+            for b in getattr(self._engine, '_baskets', []):
+                if b.status != "pending":
+                    continue
+                for po in b.sell_orders + b.buy_orders:
+                    if po.order_id == order_id and po.status == "pending":
+                        self._engine.cancel_basket_order(b, po)
+                        return
         self._engine._cancel_pending_order(order_id)
 
     def set_volume_ratio(self, volume_ratio=0.25):
