@@ -931,3 +931,47 @@ class TestRevisionAuditCli:
             cwd=str(_ROOT), capture_output=True, text=True)
         assert proc.returncode != 0
         assert "revision-epsilon" in proc.stderr or "revision-epsilon" in proc.stdout
+
+    def test_failed_persist_uses_same_run_id_and_no_completed(self, tmp_data_root, capsys):
+        """阻断 3 CLI：persist 失败时，failed ledger 用与本次尝试相同的 run_id（不另起 r_fail_*）。
+
+        构造：adj_factor 含 NULL factor（review 阻断 1 修复后 loader 不静默丢弃 →
+        detector 拒绝 → persist 抛错）。断言：
+          - run_revision_audit 抛异常；
+          - run_id 在输出中（run_id=...）出现一次，failed ledger 用同一 run_id；
+          - 无 completed run、无 event、baseline 不推进；
+          - 同一 failed run_id 再执行被拒绝（run_persisted_audit 拒绝已存在 run_id）。
+        """
+        import re
+        import sqlite3
+        import scripts.audit_qfq_staleness as aud
+        from quantstudio.pipeline.qfq_revision import RevisionInputError
+        # NULL factor → loader 不丢弃 → detector 拒绝 → persist 失败
+        self._make_qfq_aux(tmp_data_root, [("510050", _ms(2026, 6, 20), None)])
+        with pytest.raises(Exception):
+            aud.run_revision_audit(self._args(persist_revision_audit=True),
+                                    ["510050"], datetime(2026, 7, 23, tzinfo=BJ))
+        out = capsys.readouterr().out
+        # 输出含预生成 run_id（run_id=r_xxxxxxxxxxxx）
+        m = re.search(r"run_id=(r_[0-9a-f]+)", out)
+        assert m is not None, "persist 路径未打印预生成 run_id"
+        attempted_rid = m.group(1)
+        conn = sqlite3.connect(str(tmp_data_root / "qfq_aux.db"))
+        # failed ledger 用同一 run_id（不是 r_fail_*）
+        row = conn.execute("SELECT run_id,status FROM qfq_revision_run").fetchone()
+        assert row is not None and row[0] == attempted_rid and row[1] == "failed", \
+            f"failed ledger run_id={row}, 期望与尝试一致 {attempted_rid}"
+        # 无 completed、无 event、无 observation 推进
+        assert conn.execute("SELECT count(*) FROM qfq_revision_run WHERE status='completed'").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM qfq_revision_event").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM qfq_revision_observation").fetchone()[0] == 0
+        conn.close()
+        # 同一 failed run_id 再执行 run_persisted_audit 被拒绝（已存在）
+        store_rid = attempted_rid
+        from quantstudio.pipeline.qfq_revision import RevisionStore
+        store = RevisionStore(tmp_data_root / "qfq_aux.db")
+        # 用合法 observation 但同 run_id → 应被拒（已存在 failed）
+        with pytest.raises(RevisionInputError):
+            store.run_persisted_audit("ETF", _ms(2026, 7, 23), 1e-9, ["510050"],
+                                      observations=[("510050", _ms(2026, 6, 20), 1.0)],
+                                      run_id=store_rid)

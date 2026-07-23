@@ -452,33 +452,43 @@ class TestRevisionStorePersist:
         assert ("510050", _ms(2026, 6, 20), 1.0005) in after  # 我们的 UPDATE
 
     def test_drift_accumulation_triggers_revision(self, tmp_path):
-        """binding §4 补充：连续两次小漂移（每次 <= epsilon）累计超 epsilon → 仍不报 revision
-        （因为 unchanged 保留原 baseline，不更新 factor_value，所以累计阈值不变）。
-        这正是"保留原 baseline 不更新"的目的：单次漂移只要 <= epsilon 就永远算 unchanged，
-        baseline 不悄悄推进；只有当某次 |current-baseline| > epsilon 才报 revision。"""
+        """binding §4：unchanged 保留原 baseline factor_value（不悄悄推进），故连续多次
+        小漂移每次相对 *原 baseline* 都 <= epsilon → 永远 unchanged；只有当某次相对
+        原 baseline > epsilon 才报 revision。
+
+        review 文字修正：旧 docstring 误称"累计超 epsilon"，但数值（4e-10、8e-10）均 < 1e-9，
+        从未超过。本测试实际证明的是"阈值不被漂移悄悄推高"：若 baseline 被静默更新成当前值，
+        则第 2 次的 8e-10（相对第 1 次推进后的 1.0+4e-10 差 4e-10）仍 unchanged，但相对
+        原 baseline 1.0 差 8e-10 也 < 1e-9 —— 所以两侧都 unchanged，无法仅靠 8e-10 区分。
+        为精确证明 baseline 不推进，本测试直接断言 observation.factor_value 全程守在 1.0，
+        并用一次真正的 > epsilon（1.0005）触发 revision。"""
         from quantstudio.pipeline.qfq_revision import RevisionStore
         db = _make_qfq_aux(tmp_path, adj_rows=[("510050", _ms(2026, 6, 20), 1.0)])
         store = RevisionStore(db)
         store.run_persisted_audit("ETF", _ms(2026, 7, 23), 1e-9, ["510050"])  # seed=1.0
-        # 漂移 1：1.0 → 1.0+4e-10（<= epsilon）→ unchanged，baseline 仍 1.0
+        # 漂移 1：1.0 → 1.0+4e-10（相对 baseline 1.0，4e-10 <= 1e-9）→ unchanged，baseline 仍 1.0
         conn = sqlite3.connect(str(db))
         conn.execute("UPDATE adj_factor SET adj_factor=1.0+4e-10 WHERE code='510050'")
         conn.commit()
         conn.close()
         _, r1 = store.run_persisted_audit("ETF", _ms(2026, 7, 23), 1e-9, ["510050"])
         assert r1.unchanged_count == 1 and r1.revised_count == 0
-        # baseline 仍 1.0（未推进）
+        # 关键：baseline 未被悄悄推进（仍 1.0，不是 1.0+4e-10）
         conn = sqlite3.connect(str(db))
         assert conn.execute("SELECT factor_value FROM qfq_revision_observation").fetchone()[0] == 1.0
         conn.close()
-        # 漂移 2：当前 1.0+4e-10 → 1.0+8e-10（相对 baseline 1.0 仍 <= epsilon）→ 仍 unchanged
+        # 漂移 2：当前 1.0+4e-10 → 1.0+8e-10（相对 *原 baseline* 1.0，8e-10 仍 <= 1e-9）→ 仍 unchanged
         conn = sqlite3.connect(str(db))
         conn.execute("UPDATE adj_factor SET adj_factor=1.0+8e-10 WHERE code='510050'")
         conn.commit()
         conn.close()
         _, r2 = store.run_persisted_audit("ETF", _ms(2026, 7, 23), 1e-9, ["510050"])
         assert r2.unchanged_count == 1 and r2.revised_count == 0
-        # 当某次真正 > epsilon（1.0 → 1.0005）→ 才 revision（baseline 一直守在 1.0）
+        # baseline 仍守在 1.0（多次小漂移未推高阈值）
+        conn = sqlite3.connect(str(db))
+        assert conn.execute("SELECT factor_value FROM qfq_revision_observation").fetchone()[0] == 1.0
+        conn.close()
+        # 当某次相对原 baseline 真正 > epsilon（1.0 → 1.0005，差 5e-4 >> 1e-9）→ 才 revision
         conn = sqlite3.connect(str(db))
         conn.execute("UPDATE adj_factor SET adj_factor=1.0005 WHERE code='510050'")
         conn.commit()
@@ -577,3 +587,195 @@ class TestEndToEnd:
         assert code == "510050"  # 裸码无后缀
         assert ft == _ms(2026, 6, 20)  # epoch-ms
         conn.close()
+
+
+# ===========================================================================
+# 7. Commit 2 review corrective（4 阻断 + 4 补强）
+# ===========================================================================
+
+class TestCommit2ReviewCorrective:
+    """Commit 2 Review FAIL 的 4 个材料阻断修复 + 4 项测试补强。"""
+
+    # ---- 阻断 1：NULL factor 不得静默丢弃 ----
+    def test_null_factor_source_rejected_not_silently_dropped(self, tmp_path):
+        """阻断 1：adj_factor=NULL 的源行不得在 loader 静默过滤，必须交给 detector 显式拒绝。
+
+        旧实现 loader `if r[2] is not None` 会丢弃 NULL → observed=0 → completed 空审计。
+        修复：loader 原样返回，detector 校验并抛 RevisionInputError，persist 整体失败。
+        """
+        from quantstudio.pipeline.qfq_revision import RevisionStore, RevisionInputError
+        db = _make_qfq_aux(tmp_path, adj_rows=[("510050", _ms(2026, 6, 20), None)])
+        store = RevisionStore(db)
+        # loader 不再静默过滤 NULL
+        obs = store.load_observations_from_adj_factor(["510050"], _ms(2026, 7, 23))
+        assert obs == [("510050", _ms(2026, 6, 20), None)]
+        # persist 路径整体失败（detector 拒绝 NULL factor_value）
+        with pytest.raises(RevisionInputError):
+            store.run_persisted_audit("ETF", _ms(2026, 7, 23), 1e-9, ["510050"],
+                                      run_id="r_null_source")
+        # 失败后整体回滚：事务内的 CREATE TABLE 也回滚 → revision 表可能不存在；
+        # 若存在则必为空。无论哪种，都无 completed run、无 observation（NULL 不被伪装成"无观察"）
+        conn = sqlite3.connect(str(db))
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "qfq_revision_run" in tables:
+            assert conn.execute("SELECT count(*) FROM qfq_revision_run WHERE status='completed'").fetchone()[0] == 0
+        if "qfq_revision_observation" in tables:
+            assert conn.execute("SELECT count(*) FROM qfq_revision_observation").fetchone()[0] == 0
+        conn.close()
+
+    def test_corrupt_baseline_rejects_not_classified_as_new(self, tmp_path):
+        """补强：baseline 中出现非有限值（NULL/NaN/Inf 落库）必须明确失败，不能分类为 new。"""
+        from quantstudio.pipeline.qfq_revision import detect_revisions, RevisionInputError
+        # baseline 里有个 NaN 值（损坏）
+        bl = {("510050", _ms(2026, 6, 20)): float("nan")}
+        with pytest.raises(RevisionInputError):
+            detect_revisions([("510050", _ms(2026, 6, 20), 1.0)],
+                             bl, "ETF", _ms(2026, 7, 23), 1e-9)
+
+    # ---- 阻断 2：None code 不得接受为 "NONE" ----
+    def test_none_code_rejected_before_bare_code(self):
+        """阻断 2：bare_code(None)=="NONE"；必须在调用前显式拒绝 code is None。"""
+        from quantstudio.pipeline.qfq_revision import detect_revisions, RevisionInputError
+        with pytest.raises(RevisionInputError):
+            detect_revisions([(None, _ms(2026, 6, 20), 1.0)],
+                             None, "ETF", _ms(2026, 7, 23), 1e-9, baseline_available=False)
+
+    def test_empty_and_whitespace_code_rejected(self):
+        """阻断 2：空串、纯空白 code 拒绝。"""
+        from quantstudio.pipeline.qfq_revision import detect_revisions, RevisionInputError
+        for bad in ["", "   ", "\t"]:
+            with pytest.raises(RevisionInputError):
+                detect_revisions([(bad, _ms(2026, 6, 20), 1.0)],
+                                 None, "ETF", _ms(2026, 7, 23), 1e-9, baseline_available=False)
+
+    def test_none_literal_code_rejected(self):
+        """阻断 2：归一化后为 "NONE" 字面（None 误入）也拒绝。"""
+        from quantstudio.pipeline.qfq_revision import detect_revisions, RevisionInputError
+        with pytest.raises(RevisionInputError):
+            detect_revisions([("NONE", _ms(2026, 6, 20), 1.0)],
+                             None, "ETF", _ms(2026, 7, 23), 1e-9, baseline_available=False)
+
+    def test_none_code_persist_rejected(self, tmp_path):
+        """阻断 2 端到端：persist 路径拒绝 None code，不持久化为 logical code 'NONE'。"""
+        from quantstudio.pipeline.qfq_revision import RevisionStore, RevisionInputError
+        db = _make_qfq_aux(tmp_path, adj_rows=[("510050", _ms(2026, 6, 20), 1.0)])
+        store = RevisionStore(db)
+        with pytest.raises(RevisionInputError):
+            store.run_persisted_audit("ETF", _ms(2026, 7, 23), 1e-9, ["510050"],
+                                      observations=[(None, _ms(2026, 6, 20), 1.0)],
+                                      run_id="r_none_code")
+        # 整体回滚（事务内 detect 拒绝 None code）→ observation 表可能不存在；
+        # 若存在，不得有 logical code 'NONE'
+        conn = sqlite3.connect(str(db))
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "qfq_revision_observation" in tables:
+            assert conn.execute("SELECT count(*) FROM qfq_revision_observation WHERE code='NONE'").fetchone()[0] == 0
+        conn.close()
+
+    # ---- 阻断 4：record_failed_run 必须复用输入校验 ----
+    def test_record_failed_run_rejects_invalid_asset_type(self, tmp_path):
+        """阻断 4：record_failed_run 拒绝非法 asset_type（ETF-only 契约）。"""
+        from quantstudio.pipeline.qfq_revision import RevisionStore, RevisionInputError
+        db = _make_qfq_aux(tmp_path)
+        store = RevisionStore(db)
+        with pytest.raises(RevisionInputError):
+            store.record_failed_run("r1", "STOCK", _ms(2026, 7, 23), 1e-9, "err")
+        # 不得创建 schema / 写 failed ledger
+        conn = sqlite3.connect(str(db))
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "qfq_revision_run" not in tables
+        conn.close()
+
+    def test_record_failed_run_rejects_invalid_as_of(self, tmp_path):
+        """阻断 4：record_failed_run 拒绝非法 as_of_ms（非 epoch-ms）。"""
+        from quantstudio.pipeline.qfq_revision import RevisionStore, RevisionInputError
+        db = _make_qfq_aux(tmp_path)
+        store = RevisionStore(db)
+        with pytest.raises(RevisionInputError):
+            store.record_failed_run("r1", "ETF", 1, 1e-9, "err")  # as_of=1 非 epoch-ms
+
+    def test_record_failed_run_rejects_invalid_window(self, tmp_path):
+        """阻断 4：record_failed_run 拒绝非法 window（非 epoch-ms）。"""
+        from quantstudio.pipeline.qfq_revision import RevisionStore, RevisionInputError
+        db = _make_qfq_aux(tmp_path)
+        store = RevisionStore(db)
+        with pytest.raises(RevisionInputError):
+            store.record_failed_run("r1", "ETF", _ms(2026, 7, 23), 1e-9, "err",
+                                    window_start_ms=-5)
+        with pytest.raises(RevisionInputError):
+            store.record_failed_run("r2", "ETF", _ms(2026, 7, 23), 1e-9, "err",
+                                    window_end_ms=99999999999999)
+
+    def test_record_failed_run_rejects_negative_epsilon(self, tmp_path):
+        """阻断 4：record_failed_run 拒绝负 epsilon。"""
+        from quantstudio.pipeline.qfq_revision import RevisionStore, RevisionInputError
+        db = _make_qfq_aux(tmp_path)
+        store = RevisionStore(db)
+        with pytest.raises(RevisionInputError):
+            store.record_failed_run("r1", "ETF", _ms(2026, 7, 23), -1e-9, "err")
+
+    # ---- 补强：真实中途回滚（event 已写后、completed 前失败）----
+    def test_mid_txn_rollback_after_event_write(self, tmp_path):
+        """补强：在 event 已 INSERT、observation UPDATE 后、completed 前注入失败 → 全部回滚。
+
+        用 SQLite trigger 在 qfq_revision_event INSERT 后抛错，模拟"event 已写、completed 未达"。
+        断言：无 completed run、无 event、observation 保持旧值。
+        """
+        from quantstudio.pipeline.qfq_revision import RevisionStore
+        db = _make_qfq_aux(tmp_path, adj_rows=[("510050", _ms(2026, 6, 20), 1.0)])
+        store = RevisionStore(db)
+        store.init_schema()
+        rid1, _ = store.run_persisted_audit("ETF", _ms(2026, 7, 23), 1e-9, ["510050"])  # seed
+        # 装一个 trigger：在 event INSERT 后抛错（RAISE）使后续 revised run 在写 event 时失败
+        conn = sqlite3.connect(str(db))
+        conn.execute("""
+            CREATE TRIGGER trg_fail_on_event_insert AFTER INSERT ON qfq_revision_event
+            BEGIN
+                SELECT RAISE(ABORT, 'injected failure after event write');
+            END""")
+        conn.commit()
+        conn.close()
+        # 改同键值 → run2 会写 event → trigger 抛错 → 事务回滚
+        conn = sqlite3.connect(str(db))
+        conn.execute("UPDATE adj_factor SET adj_factor=1.0005 WHERE code='510050'")
+        conn.commit()
+        conn.close()
+        with pytest.raises(sqlite3.IntegrityError):
+            store.run_persisted_audit("ETF", _ms(2026, 7, 23), 1e-9, ["510050"],
+                                      run_id="r_mid_fail")
+        conn = sqlite3.connect(str(db))
+        # 回滚：无 r_mid_fail run、无 event、observation 仍 rid1 的 seed 值（1.0, rev_no=0）
+        assert conn.execute("SELECT count(*) FROM qfq_revision_run WHERE run_id='r_mid_fail'").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM qfq_revision_event").fetchone()[0] == 0
+        obs = conn.execute("SELECT factor_value,revision_no FROM qfq_revision_observation").fetchone()
+        assert obs == (1.0, 0)
+        conn.close()
+
+    # ---- 补强：revised 路径 adj_factor 逐行不变 ----
+    def test_revised_path_adj_factor_row_by_row_unchanged(self, tmp_path):
+        """补强：revised 路径执行前后，source adj_factor 全部行逐行不变（非 repair/write-back）。
+
+        手工 UPDATE source 触发 revised，重新 capture before，persist，再逐行比较 before==after。
+        """
+        from quantstudio.pipeline.qfq_revision import RevisionStore
+        db = _make_qfq_aux(tmp_path, adj_rows=[
+            ("510050", _ms(2026, 6, 20), 1.0),
+            ("159919", _ms(2026, 6, 20), 2.0),
+            ("510300", _ms(2026, 6, 21), 1.5)])
+        store = RevisionStore(db)
+        store.run_persisted_audit("ETF", _ms(2026, 7, 23), 1e-9,
+                                  ["510050", "159919", "510300"])  # seed
+        # 手工改 source 触发 revised，capture before（改之后、persist 之前）
+        conn = sqlite3.connect(str(db))
+        conn.execute("UPDATE adj_factor SET adj_factor=1.0005 WHERE code='510050'")
+        conn.commit()
+        before = conn.execute("SELECT code,time,adj_factor FROM adj_factor ORDER BY code,time").fetchall()
+        conn.close()
+        # persist（revised 路径）
+        store.run_persisted_audit("ETF", _ms(2026, 7, 23), 1e-9,
+                                  ["510050", "159919", "510300"], run_id="r_rev")
+        # 逐行比较：persist 不动 source adj_factor
+        conn = sqlite3.connect(str(db))
+        after = conn.execute("SELECT code,time,adj_factor FROM adj_factor ORDER BY code,time").fetchall()
+        conn.close()
+        assert before == after

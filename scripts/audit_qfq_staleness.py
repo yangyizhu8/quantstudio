@@ -851,12 +851,17 @@ def run_revision_audit(args, etf_universe: list, as_of_dt: datetime):
         return
 
     # persist 路径：单事务写 audit 辅助表
+    # review 修正（阻断 3）：预生成 run_id，completed 与 failed 必须用同一 run_id，
+    # 不得在 catch 分支另起 r_fail_*，以保证运行追踪/终态语义/重放拒绝/对账。
+    import uuid as _uuid
+    run_id = f"r_{_uuid.uuid4().hex[:12]}"
     print("  >>> 正在写 qfq_aux.db 的 revision audit 表（run/event/observation；非 repair/write-back）")
+    print(f"  run_id={run_id}")
     try:
         rid, result = store.run_persisted_audit(
             ASSET_TYPE_ETF, as_of_ms, epsilon, etf_universe,
-            window_end_ms=as_of_ms)
-        print(f"  run_id={rid} status=completed schema_version={REVISION_SCHEMA_VERSION}")
+            window_end_ms=as_of_ms, run_id=run_id)
+        print(f"  status=completed schema_version={REVISION_SCHEMA_VERSION}")
         if result.baseline_seeded:
             print(f"  baseline_seeded=True（首次 seed，全部 new_record={result.new_count}，revised=0）")
         print(f"  observed={result.observed_count} new={result.new_count} "
@@ -868,15 +873,13 @@ def run_revision_audit(args, etf_universe: list, as_of_dt: datetime):
                   f"prev={ev.previous_factor} curr={ev.current_factor} "
                   f"abs_delta={ev.abs_delta:.6g} rel={rel} revision_no={ev.revision_no}")
     except Exception as e:
-        # binding §5: 失败在独立短事务记 failed run（新 run_id，不覆盖）
-        logger.error("revision 持久化失败: " + str(e))
+        # binding §5: 失败在独立短事务记 failed run，使用与本次尝试相同的 run_id（阻断 3）
+        logger.error(f"revision 持久化失败 (run_id={run_id}): " + str(e))
         try:
-            import uuid as _uuid
-            fail_rid = f"r_fail_{_uuid.uuid4().hex[:12]}"
-            store.record_failed_run(fail_rid, ASSET_TYPE_ETF, as_of_ms, epsilon, str(e),
+            store.record_failed_run(run_id, ASSET_TYPE_ETF, as_of_ms, epsilon, str(e),
                                     window_end_ms=as_of_ms)
         except Exception as e2:
-            logger.error("记录 failed run 也失败: " + str(e2))
+            logger.error(f"记录 failed run 也失败 (run_id={run_id}): " + str(e2))
         raise
 
 

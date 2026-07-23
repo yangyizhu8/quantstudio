@@ -80,24 +80,65 @@ def _validate_epsilon(epsilon: float) -> float:
 
 
 def _bare_code(code) -> str:
-    """归一化为裸码（复用项目权威 security_code_rules.bare_code）。"""
+    """归一化为裸码（复用项目权威 security_code_rules.bare_code）。
+
+    binding §2 修正（review）：security_code_rules.bare_code(None) 会把 None 字符串化成
+    "NONE"（bare_code 内部 str(code).strip().upper().split(".")[0]），旧实现只检查归一化结果
+    是否为空，导致 code=None 被当作合法 logical code "NONE" 持久化。必须在调用 bare_code 前
+    显式拒绝 None / 空串 / 纯空白；同时拒绝归一化后的字面 "NONE"（None 误入的典型产物）。
+    """
+    if code is None:
+        raise RevisionInputError("code 不能为 None")
+    if not isinstance(code, str):
+        # 非字符串先转串再校验空白（数字 code 等）
+        s = str(code)
+    else:
+        s = code
+    if s is None or s.strip() == "":
+        raise RevisionInputError(f"code 为空或纯空白: {code!r}")
     from quantstudio.backtest.libs.security_code_rules import bare_code
     bc = bare_code(code)
-    if not bc:
+    if not bc or bc.strip() == "":
         raise RevisionInputError(f"code 为空或归一化后为空: {code!r}")
+    if bc.upper() == "NONE":
+        # bare_code(None) == "NONE"；此处兜底拒绝（防 None 误入经其它路径到达）
+        raise RevisionInputError(f"code 归一化为 'NONE'（疑似 None 输入）: {code!r}")
     return bc
 
 
 def _valid_factor_time(ft) -> int:
-    """factor_time 必须是有效 epoch-ms integer。"""
+    """factor_time / as_of_ms / window 必须是有效 epoch-ms integer。
+
+    合理区间：2000-01-01 ~ 2100-01-01（项目数据自 2018 起，2000 下界安全且能拒 0/1 等非法值）。
+    review 阻断 4：as_of_ms=1 等明显非法 epoch-ms 必须被拒（旧下界 v<=0 放行了 1）。
+    """
     try:
         v = int(ft)
     except (TypeError, ValueError):
         raise RevisionInputError(f"factor_time 非整数 epoch-ms: {ft!r}")
-    # epoch-ms 合理区间（1970 ~ 2100）。过小/过大视为非法。
-    if v <= 0 or v > 4102444800000:  # 2100-01-01 ms
-        raise RevisionInputError(f"factor_time 超出合理 epoch-ms 区间: {ft!r}")
+    if v < 946684800000 or v > 4102444800000:  # 2000-01-01 ms ~ 2100-01-01 ms
+        raise RevisionInputError(f"factor_time 超出合理 epoch-ms 区间（2000~2100）: {ft!r}")
     return v
+
+
+def _validate_run_inputs(asset_type: str, as_of_ms: int, epsilon: float,
+                         window_start_ms: Optional[int] = None,
+                         window_end_ms: Optional[int] = None):
+    """共享校验：run 级输入（asset_type / as_of_ms / epsilon / window）。
+
+    review 修正（阻断 4）：persisted path 与 record_failed_run 必须复用同一校验，
+    保证 ETF-only + epoch-ms schema 契约不被 failed ledger 绕过。
+    """
+    if asset_type not in _ALLOWED_ASSET_TYPES:
+        raise RevisionInputError(
+            f"asset_type 当前仅支持 {_ALLOWED_ASSET_TYPES}: {asset_type!r}")
+    _validate_epsilon(epsilon)
+    _valid_factor_time(as_of_ms)
+    # window 非空时校验 epoch-ms
+    if window_start_ms is not None:
+        _valid_factor_time(window_start_ms)
+    if window_end_ms is not None:
+        _valid_factor_time(window_end_ms)
 
 
 def _normalize_observations(raw_obs: List[Tuple]) -> List[Tuple[str, int, float]]:
@@ -224,9 +265,11 @@ def detect_revisions(observations: List[Tuple], previous_baseline: Optional[Dict
         prev = bl[key]
         prev_f = _finite_or_none(prev)
         if prev_f is None:
-            # 基线值损坏（NaN/Inf 落库）→ 视为 new（无法比较），不计 unchanged/revised
-            result.new_count += 1
-            continue
+            # review 加固（阻断 1）：基线值损坏（NULL/NaN/Inf 落库）必须明确失败，
+            # 不能静默分类为 new 后保留损坏 baseline。抛 RevisionInputError 使 persist 整体回滚。
+            raise RevisionInputError(
+                f"baseline factor_value 损坏（非有限数），拒绝比较并保留损坏基线: "
+                f"key={(code, ft)} value={prev!r}")
         delta = abs(fv - prev_f)
         if delta <= eps:
             result.unchanged_count += 1
@@ -357,10 +400,15 @@ class RevisionStore:
 
     def load_observations_from_adj_factor(self, etf_universe: List[str],
                                           as_of_end_ms: int, conn=None) -> List[Tuple]:
-        """从 adj_factor 读 observations（含可能 future 行；future 由 detector 过滤）。
+        """从 adj_factor 读 observations（含可能 future 行 + NULL/损坏值；交给 detector 校验）。
 
         binding §1: loader 返回全部匹配 universe 的 (code,factor_time,factor_value)，
         future 过滤交给 detect_revisions（产 future_excluded_count），不在 loader 静默删除。
+        review 修正（阻断 1）：**不得在 loader 静默过滤 NULL factor_value**。旧实现
+        `if r[2] is not None` 会把 adj_factor=NULL 的损坏源行静默删除，绕过 detector 的
+        None/NaN/Inf 拒绝门禁，伪装成"没有观察"并生成 completed 空审计。修复：返回原始行
+        （含 NULL），由 _normalize_observations / detect_revisions 显式校验并抛
+        RevisionInputError；persist 路径因此整体失败+回滚+记 failed ledger。
         code 用裸码（adj_factor 口径即裸码）。
         """
         own = conn is None
@@ -378,7 +426,8 @@ class RevisionStore:
             rows = conn.execute(
                 f"SELECT code, time, adj_factor FROM adj_factor WHERE code IN ({ph})",
                 list(etf_universe)).fetchall()
-            return [(r[0], int(r[1]), r[2]) for r in rows if r[2] is not None]
+            # 原样返回（含 NULL factor_value），校验交给 detector；不在此静默过滤。
+            return [(r[0], int(r[1]), r[2]) for r in rows]
         finally:
             if own:
                 conn.close()
@@ -408,12 +457,11 @@ class RevisionStore:
         Returns:
             (run_id, detection_result)
         """
-        # 入口先校验 epsilon/asset_type（早失败，不进事务）
-        eps = _validate_epsilon(epsilon)
-        if asset_type not in _ALLOWED_ASSET_TYPES:
-            raise RevisionInputError(f"asset_type 当前仅支持 {_ALLOWED_ASSET_TYPES}: {asset_type!r}")
+        # 入口先校验 run 级输入（早失败，不进事务；与 record_failed_run 共享同一校验）
+        _validate_run_inputs(asset_type, as_of_ms, epsilon, window_start_ms, window_end_ms)
+        eps = float(epsilon)
         rid = run_id or f"r_{uuid.uuid4().hex[:12]}"
-        as_of_v = _valid_factor_time(as_of_ms)
+        as_of_v = int(as_of_ms)
         started_at = datetime.now(BJ_TZ).isoformat(timespec="seconds")
 
         conn = sqlite3.connect(str(self.db_path), timeout=30)
@@ -524,9 +572,16 @@ class RevisionStore:
 
         与 run_persisted_audit 分离：后者整体回滚后调用本方法落 failed 行。
         failed run 携带 error；不含 event，不推进 observation。
+
+        review 修正（阻断 4）：必须复用与 persisted path 相同的 asset_type / as_of_ms /
+        epsilon / window 校验（ETF-only + epoch-ms），不得绕过。非法输入不创建 schema、
+        不写 failed ledger。
         """
+        # 复用 persisted path 的全部输入校验
+        _validate_run_inputs(asset_type, as_of_ms, epsilon, window_start_ms, window_end_ms)
+        eps = _validate_epsilon(epsilon)  # 二次显式（_validate_run_inputs 内已校验，保持冗余清晰）
+        as_of_v = _valid_factor_time(as_of_ms)
         started_at = datetime.now(BJ_TZ).isoformat(timespec="seconds")
-        eps = _validate_epsilon(epsilon)
         with sqlite3.connect(str(self.db_path), timeout=30) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=30000")
@@ -543,7 +598,7 @@ class RevisionStore:
                 " epsilon, status, observed_count, new_count, unchanged_count, revised_count, "
                 " started_at, finished_at, error) "
                 "VALUES (?,?,?,?,?,?,?,'failed',0,0,0,0,?,?,?)",
-                [run_id, REVISION_SCHEMA_VERSION, asset_type, int(as_of_ms),
+                [run_id, REVISION_SCHEMA_VERSION, asset_type, as_of_v,
                  window_start_ms, window_end_ms, eps, started_at,
                  datetime.now(BJ_TZ).isoformat(timespec="seconds"), error])
             conn.commit()
@@ -555,9 +610,13 @@ class RevisionStore:
 
         binding §2: revision schema 不存在或 observation 表存在但该 asset_type 无基线
         → baseline_available=False，调用方据 result.baseline_available 输出 baseline_unavailable。
+
+        review 加固（阻断 1）：损坏源数据（NULL/NaN/Inf factor_value）不再静默丢弃，
+        detect_revisions 会抛 RevisionInputError（与 persisted path 一致）。调用方据需 catch。
         """
-        eps = _validate_epsilon(epsilon)
-        as_of_v = _valid_factor_time(as_of_ms)
+        _validate_run_inputs(asset_type, as_of_ms, epsilon)
+        eps = float(epsilon)
+        as_of_v = int(as_of_ms)
         if not self.db_path.exists():
             # 整库不存在 → 表不存在 → baseline_unavailable
             return RevisionDetectionResult(
