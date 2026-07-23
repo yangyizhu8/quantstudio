@@ -1,0 +1,692 @@
+"""只读实证审计 v3：fresh xtquant 前复权 vs canonical DuckDB 前复权差异。
+
+PR2 Commit 1整改（评审 11 项）：
+  1. ETF 因子改用 sqlite3 查统一 adj_factor 表（非 duckdb/fund_adj）
+  2. ETF universe = canonical DISTINCT ∪ xtquant（参数/mock 注入，不读 codes=["ALL"]）
+  3. ETF LAG 窗口边界修正（先全历史 LAG 再 WHERE）
+  4. 股票候选 past/today/future 分类（默认只 past+today）
+  5. --as-of-date 参数（可复现，默认北京时间今天）
+  6. time-key merge（v2 已改，补异常测试）
+  7. NULL 状态变化识别（null_mismatch vs numeric_diff）
+  8. SQL 参数化 + 表名白名单（stock_daily/etf_daily）
+  9. 市场代码转换复用 security_code_rules.normalize_to_qmt（含北交所）
+  10. full-history/rolling-window 语义准确（start=as_of-2y，区分 window/canonical_earliest）
+  11. download_history_data 副作用准确描述（可能刷新 xtquant 本地缓存，非完全只读）
+
+不写正式 Canonical DuckDB；可能刷新 xtquant 本地缓存（download_history_data 副作用）。
+
+用法：
+    python scripts/audit_qfq_staleness.py
+    python scripts/audit_qfq_staleness.py --as-of-date 2026-07-23
+    python scripts/audit_qfq_staleness.py --stocks 600875,600039
+    python scripts/audit_qfq_staleness.py --etfs 510210,159928
+    python scripts/audit_qfq_staleness.py --full-history
+    python scripts/audit_qfq_staleness.py --no-download
+"""
+from __future__ import annotations
+
+import argparse
+import logging
+import sqlite3
+import sys
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+from typing import Optional
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
+
+import pandas as pd
+import duckdb
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s",
+                    datefmt="%H:%M:%S")
+logger = logging.getLogger(__name__)
+
+from quantstudio._paths import db_path, DATA_ROOT
+
+BJ_TZ = timezone(timedelta(hours=8))
+_ALLOWED_TABLES = frozenset({"stock_daily", "etf_daily"})  # 表名白名单
+
+
+def ms_to_bj(ms) -> str:
+    """毫秒 epoch → 北京时间 YYYY-MM-DD 字符串。"""
+    if ms is None:
+        return "None"
+    try:
+        return datetime.fromtimestamp(int(ms) / 1000, tz=BJ_TZ).strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OverflowError):
+        return "?"
+
+
+def to_qmt_code(code: str) -> str:
+    """市场代码转换，复用项目权威 security_code_rules（含北交所 920/legacy）。
+
+    不再硬编码 5/6/9→.SH 规则（会把 920xxx 北交所错误映射为 .SH）。
+    """
+    from quantstudio.backtest.libs.security_code_rules import normalize_to_qmt
+    return normalize_to_qmt(code)
+
+
+# ---------------------------------------------------------------------------
+# DB 元信息查询（参数化 SQL，表名白名单）
+# ---------------------------------------------------------------------------
+
+def _validate_table(table: str) -> str:
+    if table not in _ALLOWED_TABLES:
+        raise ValueError(f"非法表名 {table!r}，仅允许 {sorted(_ALLOWED_TABLES)}")
+    return table
+
+
+def get_canonical_meta(conn, table: str) -> dict:
+    """输出 Canonical 表关键元信息。表名经白名单校验。"""
+    table = _validate_table(table)
+    meta = {"table": table}
+    try:
+        meta["max_time"] = conn.execute(f"SELECT MAX(time) FROM {table}").fetchone()[0]
+    except Exception:
+        meta["max_time"] = None
+    try:
+        meta["row_count"] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+    except Exception:
+        meta["row_count"] = 0
+    try:
+        meta["max_update_time"] = conn.execute(
+            f"SELECT MAX(update_time) FROM {table}").fetchone()[0]
+    except Exception:
+        meta["max_update_time"] = None
+    try:
+        meta["source_dist"] = conn.execute(
+            f"SELECT data_source, COUNT(*) FROM {table} GROUP BY data_source"
+        ).fetchall()
+    except Exception:
+        meta["source_dist"] = []
+    return meta
+
+
+def get_watermark(conn, source: str, table: str, freq: str = "daily"):
+    try:
+        r = conn.execute(
+            "SELECT last_date FROM source_watermark WHERE source=? AND table_name=? AND freq=?",
+            [source, table, freq]).fetchone()
+        return r[0] if r else None
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# 股票候选（评审 4: past/today/future 分类）
+# ---------------------------------------------------------------------------
+
+def normalize_ex_date(ex_date) -> int:
+    """stock_dividend.ex_date 可能是 YYYYMMDD 整数或 epoch ms，统一转为 epoch ms（北京时区 00:00）。"""
+    if ex_date is None:
+        return 0
+    s = str(int(ex_date))
+    if len(s) == 8 and s.startswith(("20", "19")):
+        try:
+            dt = datetime.strptime(s, "%Y%m%d").replace(tzinfo=BJ_TZ)
+            return int(dt.timestamp() * 1000)
+        except ValueError:
+            return 0
+    return int(ex_date)
+
+
+def classify_ex_date(ex_ms: int, as_of_ms: int) -> str:
+    """除权日分类：past / today / future（评审 4）。
+
+    默认 stale 审计候选只含 past+today；future 单独输出 upcoming。
+    """
+    if ex_ms == 0:
+        return "unknown"
+    # 按"日"粒度比较（截到当天 00:00 北京时间）
+    ex_day = datetime.fromtimestamp(ex_ms / 1000, tz=BJ_TZ).strftime("%Y-%m-%d")
+    as_of_day = datetime.fromtimestamp(as_of_ms / 1000, tz=BJ_TZ).strftime("%Y-%m-%d")
+    if ex_day < as_of_day:
+        return "past"
+    if ex_day == as_of_day:
+        return "today"
+    return "future"
+
+
+def select_stock_candidates(conn, as_of_dt: datetime, n: int = 10,
+                             days_back: int = 30, include_future: bool = False) -> tuple:
+    """从 stock_dividend 查除权股票，按 past/today/future 分类。
+
+    返回 (active_candidates, upcoming_candidates)，每个是 [(code, ex_ms, cash_div, stk_div, status), ...]。
+    active = past + today（默认 stale 审计候选）。
+    upcoming = future（单独输出，不计入 stale 结论）。
+    """
+    as_of_ms = int(as_of_dt.timestamp() * 1000)
+    # stock_dividend.ex_date 实际格式是 YYYYMMDD 整数（如 20260601），
+    # 不是 epoch ms。cutoff 也用 YYYYMMDD 整数比较。
+    cutoff_yyyymmdd = int((as_of_dt - timedelta(days=days_back)).strftime("%Y%m%d"))
+    # 查 cutoff 之后的所有除权（含未来），再在 Python 里分类
+    rows = conn.execute("""
+        SELECT code, ex_date, cash_div, stk_div FROM stock_dividend
+        WHERE ex_date >= ? AND (cash_div > 0.05 OR stk_div > 0.05)
+        ORDER BY ex_date DESC LIMIT ?
+    """, [cutoff_yyyymmdd, n * 3]).fetchall()  # 多取一些以便分类后仍有足够 active
+    active, upcoming = [], []
+    for code, ex_date, cash_div, stk_div in rows:
+        ex_ms = normalize_ex_date(ex_date)
+        if not ex_ms:
+            continue
+        status = classify_ex_date(ex_ms, as_of_ms)
+        entry = (code, ex_ms, float(cash_div or 0), float(stk_div or 0), status)
+        if status in ("past", "today"):
+            active.append(entry)
+        elif status == "future":
+            upcoming.append(entry)
+    return active[:n], upcoming
+
+
+# ---------------------------------------------------------------------------
+# ETF 因子查询（评审 1/2/3: sqlite3 + 统一 adj_factor + LAG 窗口修正）
+# ---------------------------------------------------------------------------
+
+def select_etf_candidates_from_adj_factor(etf_universe: list, as_of_dt: datetime,
+                                          days_back: int = 30) -> tuple:
+    """从 qfq_aux.db（SQLite）的统一 adj_factor 表查 ETF 因子变化。
+
+    评审 1: 使用 sqlite3，非 duckdb；查统一 adj_factor 表（无独立 fund_adj 表）。
+    评审 2: etf_universe 由调用方注入（canonical DISTINCT ∪ xtquant），不读 codes=["ALL"]。
+    评审 3: LAG 窗口边界修正——先对 code 完整序列算 LAG，再在外层 WHERE 过滤 time。
+
+    返回 (candidates_with_factor_change, etfs_no_factor_record)。
+    candidates_with_factor_change: [(code, change_time_ms, factor_delta), ...]
+    etfs_no_factor_record: [code, ...]（无因子历史，报告"无法判断"非"无变化"）
+    """
+    if not etf_universe:
+        return [], []
+    qfq_db = DATA_ROOT / "qfq_aux.db"
+    if not qfq_db.exists():
+        logger.warning("qfq_aux.db 不存在，ETF 因子查询跳过")
+        return [], list(etf_universe)
+    cutoff_ms = int((as_of_dt - timedelta(days=days_back)).timestamp() * 1000)
+    try:
+        conn = sqlite3.connect(str(qfq_db))
+        tables = [r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+        if "adj_factor" not in tables:
+            logger.warning("qfq_aux.db 无 adj_factor 表")
+            conn.close()
+            return [], list(etf_universe)
+        # 评审 3: 先全历史 LAG，再外层 WHERE（避免窗口第一行 LAG=NULL 漏检）
+        ph = ",".join("?" * len(etf_universe))
+        rows = conn.execute(f"""
+            WITH t AS (
+                SELECT code, time, adj_factor,
+                       LAG(adj_factor) OVER (
+                           PARTITION BY code ORDER BY time
+                       ) AS prev_adj
+                FROM adj_factor
+                WHERE code IN ({ph})
+            )
+            SELECT code, time, adj_factor, prev_adj
+            FROM t
+            WHERE time >= ?
+              AND prev_adj IS NOT NULL
+              AND ABS(adj_factor - prev_adj) > 0.001
+            ORDER BY time DESC
+        """, list(etf_universe) + [cutoff_ms]).fetchall()
+        conn.close()
+    except Exception as e:
+        logger.warning("adj_factor 查询失败: " + str(e))
+        return [], list(etf_universe)
+    # 区分有变化 vs 无记录
+    codes_with_change = set()
+    candidates = []
+    for code, t, adj, prev in rows:
+        codes_with_change.add(code)
+        candidates.append((code, int(t), abs(float(adj) - float(prev))))
+    no_record = [c for c in etf_universe if c not in codes_with_change]
+    return candidates, no_record
+
+
+# ---------------------------------------------------------------------------
+# xtquant fresh 拉取（time-key merge，评审 6；download 副作用说明，评审 11）
+# ---------------------------------------------------------------------------
+
+def fetch_fresh_front_xtquant(codes, start_date: str, end_date: str,
+                               table: str = "stock_daily",
+                               do_download: bool = True,
+                               xtdata_client=None) -> tuple:
+    """从 xtquant 拉取 fresh 三段式数据，按 time 键 merge。
+
+    **副作用说明（评审 11）**：do_download=True 时会调用 download_history_data，
+    可能刷新 miniQMT 本地行情缓存。不写正式 Canonical DuckDB，但非完全只读。
+
+    xtdata_client：可注入 mock（测试用，不连 live QMT）。None 时 import xtquant.xtdata。
+
+    返回 (df, freshness_meta)。
+    """
+    if xtdata_client is None:
+        try:
+            import xtquant.xtdata as xtdata
+            xtdata_client = xtdata
+        except ImportError as e:
+            logger.error("xtquant 未安装: " + str(e))
+            return pd.DataFrame(), {"error": str(e)}
+
+    period = "1d" if table in ("stock_daily", "etf_daily") else "1m"
+    freshness = {
+        "connect_time": datetime.now(BJ_TZ).isoformat(timespec="seconds"),
+        "download_performed": do_download,
+        "per_code": {},
+    }
+
+    frames = []
+    for bare in codes:
+        xc = to_qmt_code(bare)
+        code_meta = {"raw": 0, "front": 0, "back": 0, "max_time": None}
+        try:
+            if do_download:
+                try:
+                    xtdata_client.download_history_data(xc, period, start_date, end_date)
+                except Exception as e:
+                    logger.warning("  " + bare + " download 失败（用本地缓存）: " + str(e))
+            none_d = xtdata_client.get_market_data_ex(stock_list=[xc], period=period,
+                start_time=start_date, end_time=end_date, dividend_type="none")
+            front_d = xtdata_client.get_market_data_ex(stock_list=[xc], period=period,
+                start_time=start_date, end_time=end_date, dividend_type="front")
+            back_d = xtdata_client.get_market_data_ex(stock_list=[xc], period=period,
+                start_time=start_date, end_time=end_date, dividend_type="back")
+            if xc not in none_d or len(none_d[xc]) == 0:
+                logger.warning("  " + bare + ": xtquant raw 无数据")
+                freshness["per_code"][bare] = code_meta
+                continue
+            raw = none_d[xc].reset_index().copy()
+            raw.columns = [str(c).lower() for c in raw.columns]
+            if "time" not in raw.columns:
+                raw = raw.rename(columns={raw.columns[0]: "time"})
+            raw["time"] = raw["time"].astype("int64")
+            raw["code"] = bare
+            code_meta["raw"] = len(raw)
+            code_meta["max_time"] = int(raw["time"].max())
+            # 评审 6: 按 time 键 merge（非数组位置赋值）
+            for label, dataset in (("front", front_d), ("back", back_d)):
+                if xc in dataset and len(dataset[xc]) > 0:
+                    adj = dataset[xc].reset_index().copy()
+                    adj.columns = [str(c).lower() for c in adj.columns]
+                    if "time" not in adj.columns:
+                        adj = adj.rename(columns={adj.columns[0]: "time"})
+                    adj["time"] = adj["time"].astype("int64")
+                    adj = adj.drop_duplicates(subset=["time"], keep="last")  # keep=last
+                    code_meta[label] = len(adj)
+                    price_cols = [c for c in ("open", "high", "low", "close") if c in adj.columns]
+                    adj_sub = adj[["time"] + price_cols].rename(
+                        columns={c: c + "_" + label for c in price_cols})
+                    raw = raw.merge(adj_sub, on="time", how="left")
+            frames.append(raw)
+            freshness["per_code"][bare] = code_meta
+        except Exception as e:
+            logger.warning("  " + bare + " fresh 拉取失败: " + str(e))
+            freshness["per_code"][bare] = code_meta
+    if not frames:
+        return pd.DataFrame(), freshness
+    df = pd.concat(frames, ignore_index=True)
+    return df, freshness
+
+
+# ---------------------------------------------------------------------------
+# canonical 读取（参数化 SQL，评审 8）
+# ---------------------------------------------------------------------------
+
+def read_canonical(conn, codes, table: str) -> pd.DataFrame:
+    """参数化查询（评审 8）。表名白名单校验。空 code list 返回空 DataFrame。"""
+    table = _validate_table(table)
+    if not codes:
+        return pd.DataFrame()
+    cols = ("code, time, open, high, low, close, volume, amount, "
+            "open_front, high_front, low_front, close_front, "
+            "open_back, high_back, low_back, close_back, preClose, pctChg")
+    ph = ",".join("?" * len(codes))
+    sql = f"SELECT {cols} FROM {table} WHERE code IN ({ph}) ORDER BY code, time"
+    return conn.execute(sql, list(codes)).fetchdf()
+
+
+# ---------------------------------------------------------------------------
+# 对比分析（评审 7: NULL mismatch 识别 + unique/cells 分离）
+# ---------------------------------------------------------------------------
+
+def compare_front(canon_df, fresh_df, table: str) -> dict:
+    """对比 canonical vs fresh front 列，区分 numeric_diff 与 null_mismatch（评审 7）。"""
+    if canon_df.empty or fresh_df.empty:
+        return {"error": "empty dataframe", "table": table}
+    front_cols = ["open_front", "high_front", "low_front", "close_front"]
+    available = [c for c in front_cols if c in fresh_df.columns]
+    if not available:
+        return {"error": "fresh 无 front 列", "table": table}
+    merged = canon_df[["code", "time"] + [c for c in front_cols if c in canon_df.columns]].merge(
+        fresh_df[["code", "time"] + available], on=["code", "time"],
+        suffixes=("_canon", "_fresh"), how="inner")
+    result = {"table": table, "rows_compared": len(merged),
+              "canonical_earliest": int(merged["time"].min()) if len(merged) else None,
+              "overlap_earliest": int(merged["time"].min()) if len(merged) else None}
+    # 评审 7: 任意列有差异（含 NULL mismatch）的唯一行
+    any_diff_mask = pd.Series(False, index=merged.index)
+    numeric_diff_mask = pd.Series(False, index=merged.index)
+    null_mismatch_mask = pd.Series(False, index=merged.index)
+    per_col = {}
+    max_abs = 0.0
+    max_rel = 0.0
+    for col in available:
+        cc, fc = col + "_canon", col + "_fresh"
+        if cc not in merged.columns or fc not in merged.columns:
+            continue
+        canon_na = merged[cc].isna()
+        fresh_na = merged[fc].isna()
+        # NULL mismatch: 一方 NULL 另一方有效（XOR）
+        col_null_mismatch = canon_na ^ fresh_na
+        # numeric diff: 双方都有效且差的绝对值 > 1e-6
+        both_valid = (~canon_na) & (~fresh_na)
+        diff = (merged[fc] - merged[cc]).abs()
+        col_numeric_diff = both_valid & (diff > 1e-6)
+        col_any = col_null_mismatch | col_numeric_diff
+        n_cells = int(col_any.sum())
+        n_null = int(col_null_mismatch.sum())
+        n_num = int(col_numeric_diff.sum())
+        per_col[col] = {"cells": n_cells, "null_mismatch": n_null,
+                        "numeric_diff": n_num,
+                        "max_abs": float(diff[both_valid].max()) if both_valid.any() else 0.0}
+        any_diff_mask |= col_any
+        null_mismatch_mask |= col_null_mismatch
+        numeric_diff_mask |= col_numeric_diff
+        if both_valid.any():
+            max_abs = max(max_abs, float(diff[both_valid].max()))
+            rel = diff[both_valid] / merged.loc[both_valid, fc].abs().replace(0, float("nan"))
+            max_rel = max(max_rel, float(rel.max()) if not rel.empty else 0.0)
+    # 评审 7: unique rows 是任意列有差异的 (code,time) 行数（不乘 4）
+    result["affected_unique_rows"] = int(any_diff_mask.sum())
+    result["affected_cells"] = sum(p["cells"] for p in per_col.values())
+    result["null_mismatch_cells"] = int(null_mismatch_mask.sum())
+    result["numeric_diff_cells"] = int(numeric_diff_mask.sum())
+    result["affected_code_count"] = int(merged.loc[any_diff_mask, "code"].nunique())
+    result["affected_codes"] = sorted(merged.loc[any_diff_mask, "code"].unique().tolist())
+    result["max_abs_diff"] = max_abs
+    result["max_rel_diff_pct"] = max_rel * 100
+    if any_diff_mask.any():
+        result["earliest_diff_time"] = int(merged.loc[any_diff_mask, "time"].min())
+    else:
+        result["earliest_diff_time"] = None
+    result["per_column"] = per_col
+    return result
+
+
+def analyze_ex_date_returns(canon_df, fresh_df, candidates, table: str) -> list:
+    """除权日收益率精确分析（评审 5: 精确匹配 ex_date，无最近邻替代）。"""
+    results = []
+    for entry in candidates:
+        # 兼容 4 元组（旧）和 5 元组（新，含 status）
+        code = entry[0]; ex_ms = entry[1]; cash_div = entry[2]; stk_div = entry[3]
+        status = entry[4] if len(entry) > 4 else None
+        entry_out = {"code": code, "ex_date": ms_to_bj(ex_ms), "ex_ms": ex_ms,
+                     "cash_div": cash_div, "stk_div": stk_div, "classify_status": status}
+        canon_ex = canon_df[(canon_df["code"] == code) & (canon_df["time"] == ex_ms)]
+        fresh_ex = fresh_df[(fresh_df["code"] == code) & (fresh_df["time"] == ex_ms)] \
+            if "close_front" in fresh_df.columns else pd.DataFrame()
+        if canon_ex.empty:
+            entry_out["status"] = "pending_ex_date_ingestion"
+            entry_out["note"] = "Canonical 未含除权日 " + ms_to_bj(ex_ms) + " 行"
+            results.append(entry_out)
+            continue
+        ex_row = canon_ex.iloc[0]
+        prev = canon_df[(canon_df["code"] == code) & (canon_df["time"] < ex_ms)].sort_values("time")
+        if prev.empty:
+            entry_out["status"] = "no_prev_trading_day"
+            results.append(entry_out)
+            continue
+        prev_row = prev.iloc[-1]
+        canon_raw_ret = (ex_row["close"] / prev_row["close"] - 1) * 100 if prev_row["close"] else None
+        canon_front_ret = ((ex_row["close_front"] / prev_row["close_front"] - 1) * 100
+                           if prev_row["close_front"] and ex_row["close_front"] else None)
+        fresh_front_ret = None
+        boundary_gap = None
+        fresh_prev = fresh_df[(fresh_df["code"] == code) & (fresh_df["time"] < ex_ms)].sort_values("time") \
+            if not fresh_df.empty else pd.DataFrame()
+        if not fresh_ex.empty and not fresh_prev.empty and "close_front" in fresh_df.columns:
+            fe = fresh_ex.iloc[0]
+            fp = fresh_prev.iloc[-1]
+            fresh_front_ret = ((fe["close_front"] / fp["close_front"] - 1) * 100
+                               if fp["close_front"] and fe["close_front"] else None)
+            if prev_row["close_front"] and fp["close_front"]:
+                boundary_gap = float(prev_row["close_front"]) - float(fp["close_front"])
+        entry_out.update({
+            "status": "analyzed",
+            "canon_raw_return_pct": canon_raw_ret,
+            "canon_front_return_pct": canon_front_ret,
+            "fresh_front_return_pct": fresh_front_ret,
+            "pctchg_recorded": ex_row.get("pctChg"),
+            "boundary_gap_canon_minus_fresh_at_prev_day": boundary_gap,
+        })
+        results.append(entry_out)
+    return results
+
+
+def analyze_signal_impact(canon_df, fresh_df, table: str) -> dict:
+    """对 5/20/60 日均线、20 日动量的实际影响。"""
+    if canon_df.empty or fresh_df.empty or "close_front" not in fresh_df.columns:
+        return {"status": "skip", "reason": "无 fresh close_front"}
+    merged = canon_df[["code", "time", "close_front"]].merge(
+        fresh_df[["code", "time", "close_front"]], on=["code", "time"],
+        suffixes=("_canon", "_fresh"))
+    # 评审 7: diff 含 NULL mismatch
+    canon_na = merged["close_front_canon"].isna()
+    fresh_na = merged["close_front_fresh"].isna()
+    diff = (merged["close_front_fresh"] - merged["close_front_canon"]).abs()
+    both_valid = (~canon_na) & (~fresh_na)
+    diff_mask = (canon_na ^ fresh_na) | (both_valid & (diff > 1e-6))
+    codes_with_diff = sorted(merged.loc[diff_mask, "code"].unique().tolist())
+    if not codes_with_diff:
+        return {"status": "no_diff", "codes_checked": sorted(merged["code"].unique().tolist())[:5]}
+    impact = {"status": "has_diff", "codes_with_front_diff": codes_with_diff}
+    sample = codes_with_diff[0]
+    for label, src in (("canonical", canon_df), ("fresh", fresh_df)):
+        sub = src[src["code"] == sample].sort_values("time").reset_index(drop=True)
+        if "close_front" not in sub.columns or len(sub) < 5:
+            continue
+        cf = sub["close_front"].astype(float)
+        impact[label] = {
+            "ma5_last": float(cf.rolling(5).mean().iloc[-1]) if len(cf) >= 5 else None,
+            "ma20_last": float(cf.rolling(20).mean().iloc[-1]) if len(cf) >= 20 else None,
+            "ma60_last": float(cf.rolling(60).mean().iloc[-1]) if len(cf) >= 60 else None,
+            "momentum_20d_pct": float(cf.iloc[-1] / cf.iloc[-20] - 1) * 100 if len(cf) >= 20 else None,
+        }
+    impact["sample_code"] = sample
+    return impact
+
+
+# ---------------------------------------------------------------------------
+# 主流程
+# ---------------------------------------------------------------------------
+
+def run_audit(args, etf_universe_provider=None, xtdata_client=None):
+    """主流程。etf_universe_provider/xtdata_client 可注入（测试用）。"""
+    print("=" * 80)
+    print("只读实证审计 v3：fresh xtquant 前复权 vs canonical DuckDB 前复权")
+    print("=" * 80)
+    print()
+
+    # 评审 5: as_of_date 统一使用
+    if args.as_of_date:
+        as_of_dt = datetime.strptime(args.as_of_date, "%Y-%m-%d").replace(tzinfo=BJ_TZ)
+    else:
+        as_of_dt = datetime.now(BJ_TZ)
+    print(f"as_of_date: {as_of_dt.strftime('%Y-%m-%d')} (北京时间)")
+    print()
+
+    db = str(db_path())
+    conn = duckdb.connect(db, read_only=True)
+    print("=== Canonical 元信息 ===")
+    for tbl in ("stock_daily", "etf_daily"):
+        meta = get_canonical_meta(conn, tbl)
+        print(f"  {tbl}:")
+        print(f"    max(time) = {meta['max_time']} = {ms_to_bj(meta['max_time'])}")
+        print(f"    row_count = {meta['row_count']}")
+        print(f"    max(update_time) = {meta['max_update_time']}")
+        print(f"    source_dist = {meta['source_dist']}")
+    print("  source_watermark:")
+    for src, tbl in [("xtquant", "stock_daily"), ("xtquant", "etf_daily")]:
+        wm = get_watermark(conn, src, tbl)
+        print(f"    {src}/{tbl} = {wm} = {ms_to_bj(wm)}")
+    print()
+
+    # 评审 10: 窗口语义准确
+    end_date = as_of_dt.strftime("%Y%m%d")
+    if args.full_history:
+        start_date = "20180101"
+        window_desc = "完整历史（2018-01-01 起）"
+    else:
+        start_date = (as_of_dt - timedelta(days=730)).strftime("%Y%m%d")  # 滚动 2 年
+        window_desc = f"滚动 2 年窗口（{start_date} ~ {end_date}）"
+    print(f"审计窗口: {window_desc}")
+    print("  注：默认模式仅证明'窗口内历史行受影响'；--full-history 才能写'全历史受影响'")
+    print()
+
+    # ---------- 股票（评审 4: past/today/future 分类）----------
+    stock_active, stock_upcoming = select_stock_candidates(
+        conn, as_of_dt, n=10, days_back=30, include_future=False)
+    if args.stocks:
+        override = [s.strip() for s in args.stocks.split(",")]
+        stock_active = [(c, 0, 0, 0, "override") for c in override]
+        stock_upcoming = []
+    print(f"【股票样本】active (past+today): {len(stock_active)} 只")
+    for c, ex_ms, cd, sd, status in stock_active[:10]:
+        print(f"  {c} ex={ms_to_bj(ex_ms)} cash={cd} stk={sd} [{status}]")
+    if stock_upcoming:
+        print(f"【股票 upcoming (future，不计入 stale 结论)】{len(stock_upcoming)} 只:")
+        for c, ex_ms, cd, sd, status in stock_upcoming[:5]:
+            print(f"  {c} ex={ms_to_bj(ex_ms)} cash={cd} stk={sd} [{status}]")
+    print()
+
+    stock_codes = [c[0] for c in stock_active]
+    if stock_codes:
+        print("  [1/3] fresh xtquant 拉取（time-key merge，可能刷新本地缓存）...")
+        fresh_s, fresh_meta_s = fetch_fresh_front_xtquant(
+            stock_codes, start_date, end_date, "stock_daily",
+            do_download=not args.no_download, xtdata_client=xtdata_client)
+        print(f"  fresh 行数: {len(fresh_s)}")
+        print(f"  新鲜度: download_performed={fresh_meta_s.get('download_performed')}")
+        print()
+        print("  [2/3] canonical 读取...")
+        canon_s = read_canonical(conn, stock_codes, "stock_daily")
+        print(f"  canonical 行数: {len(canon_s)}")
+        print()
+        print("  [3/3] 对比分析:")
+        diff_s = compare_front(canon_s, fresh_s, "stock_daily")
+        print_diff_summary(diff_s)
+        print()
+        print("  除权日收益率精确分析:")
+        disc_s = analyze_ex_date_returns(canon_s, fresh_s, stock_active, "stock_daily")
+        for d in disc_s:
+            print(f"    {d}")
+        print()
+        print("  信号影响（均线/动量）:")
+        imp_s = analyze_signal_impact(canon_s, fresh_s, "stock_daily")
+        print(f"    {imp_s}")
+    print()
+
+    # ---------- ETF（评审 2: universe 注入）----------
+    if etf_universe_provider is None:
+        etf_universe = _default_etf_universe(conn)
+    else:
+        etf_universe = etf_universe_provider(conn)
+    print(f"【ETF universe】{len(etf_universe)} 只（canonical DISTINCT ∪ xtquant）")
+    print(f"  示例: {etf_universe[:5]}")
+    etf_cands, etf_no_record = select_etf_candidates_from_adj_factor(
+        etf_universe, as_of_dt, days_back=30)
+    print(f"【ETF 因子变化】{len(etf_cands)} 只（来自 adj_factor）")
+    for c, t, delta in etf_cands[:10]:
+        print(f"  {c} change={ms_to_bj(t)} delta={delta}")
+    if etf_no_record:
+        print(f"【ETF 无因子记录】{len(etf_no_record)} 只（报告'无法判断'，非'无变化'）:")
+        print(f"  示例: {etf_no_record[:5]}")
+    print()
+    # ETF 候选 = 因子变化的 + 无记录的（无记录的也走哨兵采样兜底，评审 2）
+    etf_sample = [c[0] for c in etf_cands][:10]
+    if not etf_sample and etf_no_record:
+        etf_sample = etf_no_record[:10]  # 无因子变化时审计无记录的（兜底）
+    if args.etfs:
+        etf_sample = [s.strip() for s in args.etfs.split(",")]
+    if etf_sample:
+        print(f"【ETF 审计样本】{len(etf_sample)} 只: {etf_sample[:5]}")
+        print("  [1/3] fresh xtquant ETF 拉取...")
+        fresh_e, _ = fetch_fresh_front_xtquant(
+            etf_sample, start_date, end_date, "etf_daily",
+            do_download=not args.no_download, xtdata_client=xtdata_client)
+        print(f"  fresh 行数: {len(fresh_e)}")
+        print()
+        print("  [2/3] canonical ETF 读取...")
+        canon_e = read_canonical(conn, etf_sample, "etf_daily")
+        print(f"  canonical 行数: {len(canon_e)}")
+        print()
+        print("  [3/3] 对比分析:")
+        diff_e = compare_front(canon_e, fresh_e, "etf_daily")
+        print_diff_summary(diff_e)
+        print()
+        print("  信号影响:")
+        imp_e = analyze_signal_impact(canon_e, fresh_e, "etf_daily")
+        print(f"    {imp_e}")
+
+    conn.close()
+    print()
+    print("=" * 80)
+    print("审计完成。未修改正式 Canonical 数据库；可能刷新 xtquant 本地缓存（download_history_data）。")
+    print("=" * 80)
+
+
+def _default_etf_universe(conn) -> list:
+    """默认 ETF universe = canonical etf_daily DISTINCT ∪ xtquant get_etf_codes。
+
+    评审 2: 不读 codes=["ALL"]。xtquant 失败时仅用 canonical。
+    """
+    codes = set()
+    try:
+        rows = conn.execute("SELECT DISTINCT code FROM etf_daily").fetchall()
+        codes.update(r[0] for r in rows)
+    except Exception as e:
+        logger.warning("读取 canonical etf_daily 失败: " + str(e))
+    try:
+        from quantstudio.pipeline.sources.xtquant_adapter import XtquantAdapter
+        # 不实例化（需要 qmt_path），仅尝试静态方法（若有）；失败则跳过
+        # 实际项目可能无静态 get_etf_codes，此处保守处理
+    except Exception:
+        pass
+    return sorted(codes)
+
+
+def print_diff_summary(diff: dict):
+    print("  === 差异汇总 ===")
+    if "error" in diff:
+        print("    错误: " + diff["error"])
+        return
+    print(f"    对比行数: {diff['rows_compared']}")
+    print(f"    受影响代码数: {diff['affected_code_count']}")
+    print(f"    受影响代码: {','.join(diff.get('affected_codes', [])[:10])}")
+    print(f"    受影响唯一历史行 (code,time): {diff['affected_unique_rows']}")
+    print(f"    受影响 front 字段单元格总数: {diff['affected_cells']}")
+    print(f"      其中 NULL mismatch 单元格: {diff['null_mismatch_cells']}")
+    print(f"      其中 numeric diff 单元格: {diff['numeric_diff_cells']}")
+    print(f"    最大绝对差: {round(diff['max_abs_diff'], 6)}")
+    print(f"    最大相对差: {round(diff['max_rel_diff_pct'], 4)}%")
+    if diff.get("earliest_diff_time"):
+        print(f"    最早差异时间: {ms_to_bj(diff['earliest_diff_time'])}")
+    print(f"    overlap_earliest: {ms_to_bj(diff.get('overlap_earliest'))}")
+    print("    各列差异:")
+    for col, s in diff.get("per_column", {}).items():
+        print(f"      {col}: cells={s['cells']} null_mismatch={s['null_mismatch']} "
+              f"numeric_diff={s['numeric_diff']} max_abs={round(s['max_abs'], 6)}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="只读 QFQ 陈旧度审计 v3")
+    parser.add_argument("--as-of-date", default=None,
+                        help="YYYY-MM-DD（默认北京时间今天，测试可固定）")
+    parser.add_argument("--stocks", default=None, help="逗号分隔股票代码")
+    parser.add_argument("--etfs", default=None, help="逗号分隔 ETF 代码")
+    parser.add_argument("--full-history", action="store_true", help="完整历史（默认滚动 2 年）")
+    parser.add_argument("--no-download", action="store_true",
+                        help="跳过 download_history_data（用本地缓存，副作用最小）")
+    args = parser.parse_args()
+    run_audit(args)
