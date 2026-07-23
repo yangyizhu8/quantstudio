@@ -1,8 +1,8 @@
 ﻿# Strategy Compiler Implementation Status
 
 > Master plan: `QuantStudio Strategy Compiler frozen master plan v1.0`  
-> Current stage: PR2  
-> Stage status: **PR2 implementation complete with real Fidelity gates passing; waiting for user approval before PR3**
+> Current stage: PR6b-2A / Skill MVP G1
+> Stage status: **G1-I corrective commit `bcdc85d` merged to `main` via `--ff-only` on 2026-07-24 (main HEAD=`bcdc85d`, `merge-base --is-ancestor bcdc85d main` PASS, no merge commit, main worktree clean). Unrelated dirty-main changes (GUI/config/QFQ/docs, 14 files) preserved on WIP branch `codex/main-dirty-wip` (`7f223af`+`faabc20`), not merged to main. Awaiting final G1-I Review; G2 CP3 Reference closure starts only after final Review PASS. CP3 remains BLOCKED at feature commit `8931430`.**
 
 ## Stage overview
 
@@ -14,7 +14,7 @@
 | PR3 Multi-frequency Provider | PASS / WAITING_CONFIRMATION | Provider frequency routing implemented (native freq only; aggregation deferred to PR3.5); daily path byte-level unchanged |
 | PR4 Minute event engine | CONFIRMED (2026-07-22) | Minute event loop implemented (main-loop branch + precise run_daily + ETF T+0 minute-only); daily path byte-level unchanged; **real-minute smoke PASS** (510050 ETF × 2026-07-17 × full-universe); **end-labeled verified** (241 bars/day, 09:30 call-auction O=H=L=C); **GIL defect fixed** (batch loading, was deferred perf item that became functional blocker on real data) |
 | PR5 Skill skeleton | DONE (0.1.0-skeleton, 2026-07-22) | Skill created at `skills/quantstudio-strategy-compiler/` (SKILL.md + agents/openai.yaml + 11 references + 3 schemas + 2 scripts); quick_validate PASS; inspect_capabilities live run READY (honest probe, tick PLANNED); validate_strategy_spec PR0 example green + 3 violation variants red; awaiting user confirmation before PR6 |
-| PR6 IR/renderers/validators | IN_PROGRESS (PR6a DELIVERED 2026-07-22, PR6b NOT_STARTED) | **PR6a/PR6b 拆分授权偏离**（用户 2026-07-22 批准）：PR6a = IR 契约 + builder + dual renderer + 2 validators + case 1 e2e（33 tests）；PR6b = 5 validators + install_skill + 2 templates + 9 golden cases + operation 扩展。详见 pr6a-implementation-report.md |
+| PR6 IR/renderers/validators | IN_PROGRESS — G1 PASS / MERGED TO MAIN | PR6a + PR6b-1 已在 `main`；G1-I corrective `bcdc85d` 已于 2026-07-24 经 `--ff-only` 合并到 `main`（HEAD=`bcdc85d`，待最终 Review）。PR6b-2A CP1/CP2 已通过，CP3 partial `8931430` 保留；G2 待最终 Review PASS 后开始。 |
 | PR7 Fidelity closure | NOT_STARTED | Planned |
 
 ## PR0 acceptance
@@ -455,4 +455,222 @@ Original `_load_minute_snapshots` (per-code loop × 5525 codes × 4 DB calls = ~
 ## ZCode handoff
 
 The executable handoff document is docs/strategy-compiler/zcode-handoff-20260721.md; repository entry point is ZCODE_START_HERE.md.
+## QFQ A' PR2 Commit 2 Review FAIL (2026-07-23)
+
+- Worktree/branch: `D:\miniQMT策略实盘\QuantStudio-pr2` / `codex/qfq-a-pr2`.
+- Commit: `58200514500080e697cc25967229a65f216f48aa`, parent `c99fcb230b0fc2689927fe72931b8a3bba30b50e`.
+- Merge/scope: feature branch only, not merged to `main`; worktree clean; four-file 1352-line delta limited to qfq_revision, audit CLI integration, and tests.
+- Tests: four-file py_compile PASS; targeted 87 passed; full 583 passed / 8 skipped / 5 failed, with the five failures matching the known isolated DB/output fixture baseline. A reviewer trigger-based counterexample confirmed rollback after event insertion is functionally atomic.
+- Review result: **FAIL / NEEDS CORRECTIVE COMMIT**. PR2 closeout/main merge is not authorized.
+- Material blockers:
+  1. `load_observations_from_adj_factor()` silently drops NULL factor rows, bypassing finite-value validation; a target ETF with NULL factor produces a completed run with observed_count=0 instead of an audit failure.
+  2. `_bare_code(None)` accepts the logical code `NONE` because the shared bare-code helper stringifies None.
+  3. CLI persistence failures are recorded under a newly generated `r_fail_*` rather than the failed attempt's run_id, breaking run traceability and terminal run-id semantics.
+  4. `record_failed_run()` does not validate ETF-only asset_type or epoch-ms as_of and can persist invalid ledger rows.
+- Test gaps: committed rollback injection fails before run/event/observation writes; add a failure after event insertion. Revised-path adj_factor immutability should compare a snapshot taken after the test's manual source update against post-persist rows.
+- Accepted direction: revision-vs-LAG semantics, explicit three-table schema, default dry-run, explicit persist boundary, BEGIN IMMEDIATE transaction, seed/unchanged/revised behavior, epsilon/as-of handling, baseline preservation, and isolated E2E evidence.
+- Next gate: narrowly scoped corrective commit fixing the four blockers and adding counterexample tests; no PR2 closeout or main merge before PASS.
+
+
+## Daemon v3 PR1 review status (2026-07-23)
+
+- Workspace/branch: `D:\miniQMT策略实盘\QuantStudio` / `main`.
+- Commit: `e78ec25ba9c136982d46fc58ca2862bc40b68d2c` (`daemon v3: decouple resident collector into independent OS process`).
+- Git status: commit is directly on `main`; unrelated GUI/theme/source changes and `scripts/audit_qfq_staleness.py` remain uncommitted.
+- Test evidence: critical-file `py_compile` PASS; full repository suite `486 passed in 32.70s`; live daemon identity/parent-detachment/single-instance lock/idle DuckDB-open checks PASS.
+- Review result: **FAIL / NEEDS FIX**. The stage is not accepted and QFQ PR2 must not start yet.
+- Material blockers:
+  1. `run_one_cycle()` does not consume `daemon_stop.request` while a cycle is running, so graceful stop is not observed at task boundaries.
+  2. An interrupted task traversal can still be persisted as `completed`.
+  3. `collector.close()` failure is swallowed and the run is still persisted as `completed`, contradicting the strict completion contract.
+  4. `publish_status()` continues and overwrites status when stale-process identity verification returns `AccessDenied`.
+  5. No versioned daemon-specific tests were committed; current semantic failures were reproduced with isolated inline tests.
+- Next gate: corrective commit + committed daemon lifecycle tests + 2026-07-23 21:00 real scheduling/runtime validation, then re-review. No approval for QFQ A' PR2 before this gate passes.
+## Daemon v3 PR1 re-review PASS (2026-07-23)
+
+This supersedes the earlier `e78ec25` FAIL entry.
+
+- Workspace/branch: `D:\miniQMT策略实盘\QuantStudio` / `main`.
+- Commits: base `e78ec25ba9c136982d46fc58ca2862bc40b68d2c`; corrective `bdece953b6811150d97336dfc11a8be31ca57767`.
+- Merge status: both commits are directly on `main`.
+- Accepted scope: detached daemon lifecycle, GUI token handshake, psutil identity verification, single-instance and collector-run locks, idle DuckDB release, task-boundary stop consumption, strict interrupted/completed/failed_cleanup state, AccessDenied startup abort, bounded bootstrap behavior, and exact git-commit runtime logging.
+- Test evidence: `tests/test_daemon_lifecycle.py` 23 passed; full suite 509 passed in 26.24s.
+- Runtime evidence: PID 50528 launched at 20:44:16 from exact commit `bdece95`; identity `alive`; parent process absent; bootstrap remained 0 bytes; idle DuckDB read-only open succeeded; real `daily_time=21:00` cycle triggered at 21:04:20 and wrote `daemon_run_state.status=running`; first `valuation_daily` task succeeded.
+- Review result: **APPROVED / PASS**. QFQ A' PR2 may start from a clean branch/worktree based on `bdece95`.
+- Remaining risks: current full cycle is still running and final completed/task summary remains operational monitoring; stop is guaranteed at task boundaries but not yet by an independent watcher inside a single long task; POSIX runtime is not validated; the current main worktree has unrelated dirty GUI/theme/source files and must not be used as the PR2 write set.
+- Next stage: create an isolated clean PR2 worktree from `bdece95`; do not perform PR2 writes against the live DuckDB until the active 21:00 collection releases `collector_run.lock`.
+## QFQ A' PR2 isolation gate PASS (2026-07-23)
+
+- Worktree: `D:\miniQMT策略实盘\QuantStudio-pr2`.
+- Branch: `codex/qfq-a-pr2`.
+- Base HEAD: `bdece953b6811150d97336dfc11a8be31ca57767`.
+- Merge status: no PR2 commit yet; not merged to `main`.
+- Worktree status: only `?? scripts/audit_qfq_staleness.py`.
+- Audit script SHA-256 in source and target: `eba1f0d7f51d18cb2ee934ec1b1f34ef4ec670fef859fa4da1fa8a2723f904f6`.
+- Isolation evidence: main worktree remains dirty but unchanged; PR6b-2A worktree remains at `21382b3`; PR2 `DATA_ROOT` resolves to `D:\miniQMT策略实盘\QuantStudio-pr2\data`; no live DB copied and no `QUANTSTUDIO_DATA_ROOT` override.
+- Runtime separation: main daemon PID 50528 remains alive and owns the active 21:00 collection; PR2 tests must use temporary DATA_ROOT/DB and mocked xtquant, and must not touch the live collector lock.
+- Review result: **APPROVED / PASS** for the isolation checkpoint. Commit 1 audit-baseline work may begin.
+- Commit 1 gate: fix SQLite `adj_factor` ETF selection, real ETF universe, date/as-of semantics, keyed merges, NULL mismatch statistics, parameterized SQL/market-code routing, deterministic full-history reporting, and add hermetic tests. Commit 1 must contain audit script + tests only, no repair writes.
+## QFQ A' PR2 Commit 1 review FAIL (2026-07-23)
+
+- Worktree/branch: `D:\miniQMT策略实盘\QuantStudio-pr2` / `codex/qfq-a-pr2`.
+- Commit: `27619ef537fb0492d1fd5e3bee2e4fde446fce0a`, base `bdece95`.
+- Merge status: feature branch only; not merged to `main`.
+- Scope evidence: exactly two new files (`scripts/audit_qfq_staleness.py`, `tests/test_audit_qfq_staleness.py`); worktree clean after commit; main dirty worktree unchanged.
+- Tests: audit suite 33 passed; full suite 529 passed / 8 skipped / 5 failed. The five failures are the known isolated-worktree DB/output fixture failures, not introduced by this commit.
+- Review result: **FAIL / NEEDS FIX**. Commit 2 is blocked.
+- Material blockers:
+  1. Stock candidate SQL assumes YYYYMMDD while live `stock_dividend.ex_date` is epoch-ms; future rows can consume the LIMIT and hide current active events.
+  2. ETF `no_record` is computed from `codes_with_change`, so stable ETFs with factor history are falsely reported as having no records.
+  3. `_default_etf_universe()` claims Canonical ∪ xtquant but implements Canonical only.
+  4. `null_mismatch_cells` and `numeric_diff_cells` count OR-combined rows, not cells across four price columns.
+  5. `canonical_earliest` is calculated after inner merge and duplicates overlap earliest; fresh/canonical coverage metadata is incomplete.
+  6. Factor-change epsilon remains hard-coded at 0.001 and can miss small true revisions.
+  7. Several tests are vacuous or schema-inaccurate: rolling window does not call production logic, injected provider is not asserted, union is not tested, and stock candidate integration covers YYYYMMDD but not the live epoch-ms schema.
+- Next gate: corrective audit commit with real-schema and counterexample tests; no revision-detection/audit-schema work before re-review passes.
+## Strategy Compiler Skill MVP delivery route approved (2026-07-23)
+
+The user approved a compressed four-gate delivery route. The authoritative sequencing addendum is:
+
+`docs/strategy-compiler/skill-mvp-delivery-roadmap-20260723.md`
+
+### Delivery boundary
+
+The first formal Skill MVP release is limited to:
+
+1. G1 — `next_open` basket engine semantics;
+2. G2 — CP3 frozen Reference Oracle package;
+3. G3 — Local/Strict-PTrade dual Renderer, dual stub, and strategy package;
+4. G4 — CLI E2E, Skill install/validation, version `0.3.0-mvp`, and release documentation.
+
+The following no longer block the first Skill MVP release and are deferred as independent product increments: CP5a GUI integration, CP5b real PTrade result import/comparison, PR7 automatic Fidelity closure, PR6b-2B PIT-safe dynamic ETF universe, Tick/L1/L2, and deployment packaging.
+
+### Current accepted state
+
+- Existing Skill version: `0.2.0-pr6b1`.
+- `main`: PR6a and PR6b-1 delivered.
+- Feature worktree/branch: `D:\miniQMT策略实盘\QuantStudio-pr6b2a` / `pr6b2a-etf-rotation`.
+- Feature HEAD: `893143063f33450c5abe1ea670d126f494cf2197`; not merged to `main`.
+- CP1/CP2: PASS.
+- CP3: BLOCKED. The partial Oracle fixes are retained, but final signal/order/NAV reference artifacts depend on G1.
+- Verified test evidence at `8931430`: CP3 42 passed; selective compiler suite 233 passed; full repository 622 collected / 609 passed / 8 skipped / 5 failed. The five failures are the known isolated-worktree DB/output fixture failures.
+
+### Next gate
+
+G1-I commit `799fb43` failed Review. Submit one corrective implementation commit on `codex/next-open-basket`; do not merge to `main` and do not start G2. Keep `pr6b2a-etf-rotation` untouched.
+
+### Review compression rule
+
+Target remaining formal Reviews: G1-D design, G1-I implementation, G2 Reference closure, G3 package closure, and G4 release — five Reviews across four major gates. Micro-fixes are reviewed only after a gate fails; test-count growth alone is not acceptance evidence.
+## G1-D next_open basket design Review FAIL (2026-07-23)
+
+- Worktree/branch: `D:\miniQMT策略实盘\QuantStudio-basket-design` / `engine-basket-design`.
+- Base: `main` commit `bdece95`.
+- Delivery commit: `be909fc14490846be16c6de446bc71182f8e5d91`.
+- Scope/merge status: exactly one new design document (`docs/strategy-compiler/engine-basket-rebalance-design.md`, 340 lines); no runtime/test code changes; worktree clean; not merged to `main`; isolated from `pr6b2a-etf-rotation`.
+- Review result: **FAIL / NEEDS CORRECTIVE DESIGN**. G1-I implementation is not authorized.
+- Material blockers:
+  1. Automatic basket context around every `handle_data` call contradicts the promise that existing next_open non-basket behavior remains unchanged. Activation must be explicit and versioned; the supported callback/profile boundary must be frozen rather than left in §15.
+  2. Phase 2 double-counts sell proceeds: existing `_execute_sell` already adds net proceeds to `account.cash`, while the design computes `available_cash = account.cash + realized_sell_proceeds`.
+  3. The documented “all-or-nothing” buy policy is not atomic: buys are executed sequentially and only remaining buys are rejected after a shortage. It must preflight all T+1 actual buy prices/shares/fees before executing any buy.
+  4. Cancel/expire incorrectly says no reservation needs restoration, although basket sell orders pre-debit `pending_sell_shares`. Exact sell reservation refund is mandatory.
+  5. The price-limit sell direction is reversed. A limit-up blocks buys, while a limit-down blocks sells; the current table states the opposite for sells.
+  6. Deterministic sorting by ETF pool index is not implementable in the generic engine because order calls do not carry the strategy pool. Use an engine-visible frozen key/sequence and define duplicate/conflicting order handling.
+  7. Basket status semantics are ambiguous: sells-filled/buys-rejected cannot be indistinguishably marked `rejected`; cancelled/expired, sell-only, buy-only, mixed independent/basket, and partial market-state outcomes need explicit status rules.
+  8. Version activation and scope are incomplete: define the EngineConfig/Spec switch for `0.4.0-next_open_basket`, daily/minute interaction, old-engine behavior, target-value direction changes at T+1, and same-day multi-basket policy.
+- Required corrective design: fix the accounting/state-machine contradictions, freeze all §15 items, expand the test matrix with activation compatibility, cash-delta accounting, atomic buy preflight, reservation refund, mixed-order priority, status semantics, duplicate code/direction, and daily/minute gating.
+- Next gate: corrective design-only commit + independent Review. No BacktestEngine/PtradeAPI code before PASS.
+## G1-D corrective basket design Review PASS (2026-07-23)
+
+This supersedes the G1-D `be909fc` FAIL entry.
+
+- Worktree/branch: `D:\miniQMT策略实盘\QuantStudio-basket-design` / `engine-basket-design`.
+- Base: `main` commit `bdece95`.
+- Corrective commit: `8f7d0e4dd04304f259816da117a63dcaec268c75`.
+- Merge status: feature branch only; not merged to `main`.
+- Scope evidence: exactly one modified design document (`docs/strategy-compiler/engine-basket-rebalance-design.md`); 259 insertions / 189 deletions; zero Python/test runtime changes; worktree clean; isolated from `pr6b2a-etf-rotation`.
+- Accepted design scope: explicit default-off `rebalance_mode`; daily+next_open+callback_basket activation for `0.4.0-next_open_basket`; minute basket BLOCK; no sell-proceeds double count; mandatory-sell success gate; T+1 actual-price atomic buy preflight; reservation refund; corrected limit directions; bare-code uniqueness/sorting; direction-lock MVP restriction; status truth table; independent-order priority; old-engine rejection; 25-item test matrix.
+- Review result: **APPROVED / PASS for G1-D**. G1-I implementation may begin.
+- Binding G1-I acceptance constraints:
+  1. Preflight is read-only. `_execute_buy` (or one explicitly named execution helper) is the sole cash mutation for buys; implementation must not pre-deduct `actual_required_cash` and then call `_execute_buy` again.
+  2. Cancelling any mandatory sell must make the basket buy leg ineligible (`mandatory_sell_cancelled`) or cancel the whole basket; remaining buys must not execute while the old position remains.
+  3. Runtime `Order` visibility must include `basket_id`. Strategy `trigger_reason` remains a separate G2/reference-layer field unless an explicit API is designed; the engine must not fabricate it from order rejection reasons.
+  4. `basket_id`/sequence formatting and ordering must be lexically deterministic (fixed-width sequence or numeric sort).
+  5. G1-I engine scope is daily-bar basket semantics and engine-level reporting/tests. Strategy Spec/Renderer/package plumbing may be finalized in G3 to avoid conflicts with `pr6b2a-etf-rotation`, but `EngineConfig.rebalance_mode` and engine semantics version must be real and tested in G1-I.
+  6. Add tests for mandatory-sell cancel abort, buy preflight no-mutation/sole execution deduction, `Order.basket_id` visibility, deterministic basket sequence, and unexpected post-preflight execution failure handling, in addition to the 25-item matrix.
+- Branch guidance: create a new implementation branch/worktree (recommended `codex/next-open-basket`) from `8f7d0e4`; do not implement on the live main worktree and do not touch `pr6b2a-etf-rotation`.
+- Next gate: one complete G1-I implementation delivery with code, committed hermetic tests, original targeted/full-suite summaries, runtime artifacts, and merge status. Do not split phases A-F into separate formal Reviews.
+## QFQ A' PR2 audit-fix Review FAIL (2026-07-23)
+
+- Worktree/branch: `D:\miniQMT策略实盘\QuantStudio-pr2` / `codex/qfq-a-pr2`.
+- Corrective commit: `02c94f2282e36d0639b0b3ce1070deded3bf87b7`, parent `27619ef537fb0492d1fd5e3bee2e4fde446fce0a`, project base `bdece953b6811150d97336dfc11a8be31ca57767`.
+- Merge/scope: feature branch only, not merged to `main`; worktree clean; exactly two modified files (audit script + audit tests), 469 insertions / 284 deletions.
+- Tests: audit suite 38 passed; PR2 full suite 534 passed / 8 skipped / 5 failed. Clean detached `bdece95` baseline reproduced the same five failures with 496 passed / 8 skipped, confirming they are pre-existing isolated-worktree DB/output fixture failures.
+- Review result: **FAIL / NEEDS ANOTHER AUDIT-FIX**. Commit 2 remains blocked.
+- Remaining blockers:
+  1. Default production path calls `_default_etf_universe(..., None)`; CLI never wires `XtquantAdapter.get_etf_codes`, so claimed Canonical ∪ xtquant remains canonical-only outside injected tests.
+  2. Real xtquant ETF codes are suffixed while Canonical/adj_factor uses bare codes; union lacks suffix-to-bare normalization, causing duplicates and false `no_record` classifications.
+  3. Mixed YYYYMMDD + epoch-ms stock selection is not supported by SQL. The named mixed-format test explicitly accepts omission of the YYYYMMDD row and asserts only the epoch-ms row.
+  4. ETF factor queries lack an as-of upper bound, so future factor rows can be reported as changed/recorded for a historical as-of date.
+- Confirmed fixes retained: epoch-ms active/future LIMIT separation, stable/no-record base separation, per-cell mismatch counts, canonical/fresh/overlap metadata, factor epsilon, and direct window-function tests.
+- Next gate: audit-only corrective commit with production-default union wiring, real code normalization, exact mixed-format assertions, and future-factor exclusion tests; no revision-detection/audit-schema work before PASS.
+## QFQ A' PR2 audit-fix2 Review FAIL (2026-07-23)
+
+- Worktree/branch: `D:\miniQMT策略实盘\QuantStudio-pr2` / `codex/qfq-a-pr2`.
+- Corrective commit: `426736144182b1204966686e80e144db06b37bb6`, parent `02c94f2282e36d0639b0b3ce1070deded3bf87b7`.
+- Merge/scope: feature branch only, not merged to `main`; exactly two committed files (audit script + audit tests), 269 insertions / 34 deletions. Worktree is not strictly clean because `docs/pr2-audit-fix2-handoff.md` is untracked.
+- Tests: audit script py_compile PASS; audit suite 43 passed; full suite 539 passed / 8 skipped / 5 failed. The five failures match the previously verified clean `bdece95` isolated baseline and are unrelated.
+- Review result: **FAIL / NEEDS AUDIT-FIX3**. Commit 2 remains blocked.
+- Remaining blocker: `_build_default_xtquant_etf_provider()` assumes `config/sources_config.json["sources"]` is a list of objects with `name`, but the committed config uses a dict keyed by source name. The real builder therefore raises `'str' object has no attribute 'get'`, catches it, and returns an empty provider, leaving the production default universe canonical-only.
+- Test gap: `test_default_run_audit_path_calls_xtquant_provider` monkeypatches the builder itself with a sentinel, so it validates wiring but not real config parsing/adapter construction and cannot catch the production failure.
+- Confirmed fixes retained: suffix-to-bare normalization/deduplication, adj_factor as-of upper bounds, future-only no-record classification, changed-code deduplication, and explicit epoch-ms-only stock-dividend scope.
+- Next gate: audit-fix3 using the actual dict config schema plus a hermetic builder test with real-shaped temporary config and a fake adapter; no Commit 2 work before PASS.
+## G1-I basket engine implementation Review FAIL (2026-07-23)
+
+- Worktree/branch: `D:\miniQMT策略实盘\QuantStudio-basket-impl` / `codex/next-open-basket`.
+- Base: approved G1-D commit `8f7d0e4dd04304f259816da117a63dcaec268c75`.
+- Delivery commit: `799fb43a7a80cfded6d0214cfa2ec2931ffcea56`.
+- Merge status: feature branch only; not merged to `main`.
+- Scope: `backtest_engine.py`, `ptrade_api.py`, and new `tests/test_engine_basket_rebalance.py`; 1597 insertions / 15 deletions; worktree clean; `pr6b2a-etf-rotation`, GUI, daemon, QFQ, and config/theme untouched.
+- Test evidence: basket suite 41 passed. Full repository independently rerun: 550 collected / 537 passed / 8 skipped / 5 failed. The five failures are the known isolated-worktree calendar/fidelity artifact failures, but the delivery report's `522 passed / 8 skipped` summary is not the actual full pytest summary.
+- Review result: **FAIL / NEEDS CORRECTIVE IMPLEMENTATION**. No merge and no G2 authorization.
+- Reproduced blockers:
+  1. `EngineConfig.rebalance_mode` is ignored when callers pass `config=` without also passing the duplicate constructor argument; a config containing `callback_basket` produces `engine.rebalance_mode == legacy` and `basket_active == False`.
+  2. `run_daily` callbacks execute while `_current_basket` is active, contradicting the approved boundary that run_daily orders remain legacy.
+  3. Runtime `Order` has no `basket_id`; basket pending/filled/rejected events are not appended to `_today_orders`; `get_open_orders`, `get_order`, and public `cancel_order` only inspect legacy `_pending_orders`. Basket order lifecycle is therefore not publicly visible/cancellable.
+  4. Cancelling a mandatory sell merely removes it. The buy leg can still execute while the old position remains. Reproduced: old `600000` volume 1000 remained while new `600001` volume 400 was bought and basket status became completed.
+  5. After atomic preflight, an unexpected first `_execute_buy` failure does not reject remaining buys. Reproduced: first buy rejected, second buy filled, basket partial; required `execution_failed_after_preflight` behavior is absent.
+  6. If `handle_data` raises after creating orders, the exception path calls `submit_basket`, so a partially constructed failed callback can still execute on T+1. It must abort/refund instead.
+  7. The 41-test suite omits the binding G1-I tests for config propagation, run_daily legacy routing, full Order/get/cancel lifecycle, mandatory-sell cancel abort, post-preflight failure, and callback-exception abort.
+- Corrective gate: one audit-fix commit on the same implementation branch, with hermetic counterexample tests first. Do not split into multiple formal Reviews.
+## G1-I basket engine corrective Review PASS (2026-07-23)
+
+- Date: 2026-07-23.
+- Worktree/branch: `D:\miniQMT策略实盘\QuantStudio-basket-impl` / `codex/next-open-basket`; worktree clean.
+- Base and commit: approved G1-D base `8f7d0e4`; corrective commit `bcdc85d` (parent `799fb43`).
+- Accepted scope: `quantstudio/backtest/backtest_engine.py`, `quantstudio/backtest/ptrade_api.py`, and `tests/test_engine_basket_rebalance.py`; commit delta `592 insertions / 22 deletions`; no GUI/daemon/QFQ/config/pr6b2a changes.
+- Accepted fixes: config rebalance-mode resolution, run_daily/before_trading_start legacy routing, basket Order/public lifecycle visibility, mandatory-sell cancel abort, post-preflight execution-failure abort, and callback-exception basket abort.
+- Test evidence: basket suite `59 passed`; feature full suite `555 passed / 8 skipped / 5 failed`; clean baseline `8f7d0e4` full suite `496 passed / 8 skipped / 5 failed`; the same five calendar/output-fixture failures occur on both and no new failure is introduced.
+- Generated/runtime evidence: isolated feature worktree lacks the fidelity golden artifacts, so four existing fidelity tests remain non-hermetic; this is retained as a known risk, not accepted as a new G1-I failure.
+- Merge status: **not merged to `main`**. Review authorizes the merge only; no merge is claimed.
+- Remaining risks: run_card basket metadata, CP3 Oracle/reference closure, and trigger_reason/Spec/Renderer/manifest propagation remain post-G1 work; full suite fixture hermeticity remains open. The current `main` worktree has unrelated dirty GUI/config/QFQ/docs changes, so merge must use a clean integration worktree or safely preserve those changes first.
+- Review result: **PASS / APPROVED**.
+- Next stage: merge `bcdc85d` into `main` and verify with Git; only then start G2 CP3 Reference closure.
+
+---
+
+## QFQ A' PR2 audit-fix3 Review PASS (2026-07-23)
+
+This supersedes the PR2 Commit 1 / audit-fix / audit-fix2 FAIL entries while retaining them as history.
+
+- Date: 2026-07-23.
+- Worktree/branch: `D:\miniQMT策略实盘\QuantStudio-pr2` / `codex/qfq-a-pr2`.
+- Accepted commit: `c99fcb230b0fc2689927fe72931b8a3bba30b50e`; chain `c99fcb2 → 4267361 → 02c94f2 → 27619ef → bdece95`.
+- Merge status: feature branch only; not merged to `main`; worktree clean after review/tests.
+- Accepted scope: audit script + committed hermetic audit tests only. The final corrective delta is two files, 198 insertions / 35 deletions. Accepted cumulative behavior includes real dict-schema xtquant provider construction, bare-code Canonical∪xtquant ETF universe, epoch-ms stock candidates, deterministic adj_factor as-of classification, changed-code deduplication, keyed front merges, per-cell NULL/numeric statistics, separate canonical/fresh/overlap coverage, parameterized factor epsilon, and accurate side-effect/window reporting. Revision detection, audit schema, and repair writes are not part of this accepted commit.
+- Tests: audit script py_compile PASS; targeted audit suite 46 passed; full suite 542 passed / 8 skipped / 5 failed. The five failures are the previously reproduced isolated-worktree Canonical DB/output fixture failures and are not introduced by PR2.
+- Runtime evidence: real project `config/sources_config.json` plus a fake adapter exercised the unmodified builder and returned `['510050.SH', '159919.SZ']`; captured config was `enabled=True, qmt_path='', name='xtquant'`. No live QMT, formal DuckDB, or collector lock was touched.
+- Review result: **APPROVED / PASS**. Commit 2 (revision detection + audit schema) is authorized.
+- Remaining risks: explicit canonical-only degradation when xtquant is unavailable/disabled; epoch-ms-only stock-dividend contract; five repository tests remain non-hermetic; branch is not merged to `main`.
+- Next gate: implement Commit 2 in the same isolated branch/worktree with auditable scope, hermetic tests, and no formal Canonical repair writes; submit commit/diff/test/runtime evidence for Review.
 
