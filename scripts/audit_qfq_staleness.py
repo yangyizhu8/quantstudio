@@ -119,17 +119,26 @@ def get_watermark(conn, source: str, table: str, freq: str = "daily"):
 # ---------------------------------------------------------------------------
 
 def normalize_ex_date(ex_date) -> int:
-    """stock_dividend.ex_date 可能是 YYYYMMDD 整数或 epoch ms，统一转为 epoch ms（北京时区 00:00）。"""
+    """stock_dividend.ex_date 可能是 YYYYMMDD 整数（旧数据）或 epoch ms（正式库实际格式）。
+
+    统一转为 epoch ms（北京时区 00:00）。
+    判定依据：8 位且以 19/20 开头 → YYYYMMDD；否则视为 epoch ms。
+    """
     if ex_date is None:
         return 0
-    s = str(int(ex_date))
+    try:
+        v = int(ex_date)
+    except (TypeError, ValueError):
+        return 0
+    s = str(v)
     if len(s) == 8 and s.startswith(("20", "19")):
         try:
             dt = datetime.strptime(s, "%Y%m%d").replace(tzinfo=BJ_TZ)
             return int(dt.timestamp() * 1000)
         except ValueError:
             return 0
-    return int(ex_date)
+    # 否则视为 epoch ms（正式库 stock_dividend.ex_date 实际是 epoch ms）
+    return v
 
 
 def classify_ex_date(ex_ms: int, as_of_ms: int) -> str:
@@ -139,7 +148,6 @@ def classify_ex_date(ex_ms: int, as_of_ms: int) -> str:
     """
     if ex_ms == 0:
         return "unknown"
-    # 按"日"粒度比较（截到当天 00:00 北京时间）
     ex_day = datetime.fromtimestamp(ex_ms / 1000, tz=BJ_TZ).strftime("%Y-%m-%d")
     as_of_day = datetime.fromtimestamp(as_of_ms / 1000, tz=BJ_TZ).strftime("%Y-%m-%d")
     if ex_day < as_of_day:
@@ -153,32 +161,60 @@ def select_stock_candidates(conn, as_of_dt: datetime, n: int = 10,
                              days_back: int = 30, include_future: bool = False) -> tuple:
     """从 stock_dividend 查除权股票，按 past/today/future 分类。
 
-    返回 (active_candidates, upcoming_candidates)，每个是 [(code, ex_ms, cash_div, stk_div, status), ...]。
-    active = past + today（默认 stale 审计候选）。
-    upcoming = future（单独输出，不计入 stale 结论）。
+    审计-fix 阻断 1 修正：
+    - stock_dividend.ex_date 正式库实际是 epoch ms（如 1784649600000=2026-07-22），
+      但可能混有 YYYYMMDD 整数（旧数据）。查询用 epoch ms 的下界和上界，
+      同时兼容 YYYYMMDD（数值远小于 epoch ms，会被 epoch ms cutoff 过滤掉，
+      但 normalize_ex_date 在 Python 侧兜底转换）。
+    - 阻断 1 关键修复：active 查询加 upper bound（as_of 当天 23:59），
+      使 future epoch-ms 记录不会占满 LIMIT 挤掉 today/past active 事件。
+    - future 用独立查询（无 upper bound），不与 active 竞争 LIMIT。
+
+    返回 (active_candidates, upcoming_candidates)。
+    active = past + today（默认 stale 审计候选，上限 as_of 当天）。
+    upcoming = future（独立查询，不计入 stale 结论）。
     """
     as_of_ms = int(as_of_dt.timestamp() * 1000)
-    # stock_dividend.ex_date 实际格式是 YYYYMMDD 整数（如 20260601），
-    # 不是 epoch ms。cutoff 也用 YYYYMMDD 整数比较。
-    cutoff_yyyymmdd = int((as_of_dt - timedelta(days=days_back)).strftime("%Y%m%d"))
-    # 查 cutoff 之后的所有除权（含未来），再在 Python 里分类
-    rows = conn.execute("""
-        SELECT code, ex_date, cash_div, stk_div FROM stock_dividend
-        WHERE ex_date >= ? AND (cash_div > 0.05 OR stk_div > 0.05)
-        ORDER BY ex_date DESC LIMIT ?
-    """, [cutoff_yyyymmdd, n * 3]).fetchall()  # 多取一些以便分类后仍有足够 active
+    cutoff_ms = int((as_of_dt - timedelta(days=days_back)).timestamp() * 1000)
+    # as_of 当天 23:59:59 北京时间（active 上界，防 future 占满 LIMIT）
+    as_of_day_end = (as_of_dt.replace(hour=23, minute=59, second=59))
+    as_of_end_ms = int(as_of_day_end.timestamp() * 1000)
+
     active, upcoming = [], []
-    for code, ex_date, cash_div, stk_div in rows:
+
+    # active 查询：cutoff <= ex_date <= as_of_day_end（含 past + today，排除 future）
+    # 用 epoch ms 比较；YYYYMMDD 旧数据因数值小会被 cutoff_ms 过滤（normalize 兜底）
+    active_rows = conn.execute("""
+        SELECT code, ex_date, cash_div, stk_div FROM stock_dividend
+        WHERE ex_date >= ? AND ex_date <= ?
+          AND (cash_div > 0.05 OR stk_div > 0.05)
+        ORDER BY ex_date DESC LIMIT ?
+    """, [cutoff_ms, as_of_end_ms, n]).fetchall()
+    for code, ex_date, cash_div, stk_div in active_rows:
         ex_ms = normalize_ex_date(ex_date)
         if not ex_ms:
             continue
         status = classify_ex_date(ex_ms, as_of_ms)
-        entry = (code, ex_ms, float(cash_div or 0), float(stk_div or 0), status)
+        # active 查询理论上只返回 past+today；double-check
         if status in ("past", "today"):
-            active.append(entry)
-        elif status == "future":
-            upcoming.append(entry)
-    return active[:n], upcoming
+            active.append((code, ex_ms, float(cash_div or 0), float(stk_div or 0), status))
+
+    # upcoming 查询：ex_date > as_of_day_end（future，独立 LIMIT 不与 active 竞争）
+    upcoming_rows = conn.execute("""
+        SELECT code, ex_date, cash_div, stk_div FROM stock_dividend
+        WHERE ex_date > ?
+          AND (cash_div > 0.05 OR stk_div > 0.05)
+        ORDER BY ex_date ASC LIMIT ?
+    """, [as_of_end_ms, n]).fetchall()
+    for code, ex_date, cash_div, stk_div in upcoming_rows:
+        ex_ms = normalize_ex_date(ex_date)
+        if not ex_ms:
+            continue
+        status = classify_ex_date(ex_ms, as_of_ms)
+        if status == "future":
+            upcoming.append((code, ex_ms, float(cash_div or 0), float(stk_div or 0), status))
+
+    return active, upcoming
 
 
 # ---------------------------------------------------------------------------
@@ -186,23 +222,29 @@ def select_stock_candidates(conn, as_of_dt: datetime, n: int = 10,
 # ---------------------------------------------------------------------------
 
 def select_etf_candidates_from_adj_factor(etf_universe: list, as_of_dt: datetime,
-                                          days_back: int = 30) -> tuple:
+                                          days_back: int = 30,
+                                          factor_epsilon: float = 1e-9) -> tuple:
     """从 qfq_aux.db（SQLite）的统一 adj_factor 表查 ETF 因子变化。
 
-    评审 1: 使用 sqlite3，非 duckdb；查统一 adj_factor 表（无独立 fund_adj 表）。
-    评审 2: etf_universe 由调用方注入（canonical DISTINCT ∪ xtquant），不读 codes=["ALL"]。
-    评审 3: LAG 窗口边界修正——先对 code 完整序列算 LAG，再在外层 WHERE 过滤 time。
+    审计-fix 阻断 2/6 修正：
+    - 阻断 2：正确区分三类 ETF：
+        * changed_candidates：窗口内有因子变化（> epsilon）
+        * stable_with_record：有完整因子历史但窗口内无变化
+        * no_record：完全无 adj_factor 记录（报告"无法判断"非"无变化"）
+    - 阻断 6：factor_epsilon 参数化（默认 1e-9 精度 epsilon，非 0.001 严重度阈值）。
+      epsilon 用于"是否发生版本变化"；严重度阈值（如 0.1%）应在报告层标注，不在此判定。
 
-    返回 (candidates_with_factor_change, etfs_no_factor_record)。
-    candidates_with_factor_change: [(code, change_time_ms, factor_delta), ...]
-    etfs_no_factor_record: [code, ...]（无因子历史，报告"无法判断"非"无变化"）
+    评审 1: sqlite3 + 统一 adj_factor 表（epoch-ms time，qfq_maintenance.py:57）。
+    评审 3: 先全历史 LAG，再外层 WHERE time >= cutoff（窗口边界修正）。
+
+    返回 (changed_candidates, stable_with_record, no_record)。
     """
     if not etf_universe:
-        return [], []
+        return [], [], []
     qfq_db = DATA_ROOT / "qfq_aux.db"
     if not qfq_db.exists():
         logger.warning("qfq_aux.db 不存在，ETF 因子查询跳过")
-        return [], list(etf_universe)
+        return [], [], list(etf_universe)
     cutoff_ms = int((as_of_dt - timedelta(days=days_back)).timestamp() * 1000)
     try:
         conn = sqlite3.connect(str(qfq_db))
@@ -211,10 +253,15 @@ def select_etf_candidates_from_adj_factor(etf_universe: list, as_of_dt: datetime
         if "adj_factor" not in tables:
             logger.warning("qfq_aux.db 无 adj_factor 表")
             conn.close()
-            return [], list(etf_universe)
-        # 评审 3: 先全历史 LAG，再外层 WHERE（避免窗口第一行 LAG=NULL 漏检）
+            return [], [], list(etf_universe)
         ph = ",".join("?" * len(etf_universe))
-        rows = conn.execute(f"""
+        # 先查有记录的 code（用于区分 stable_with_record vs no_record）
+        recorded_rows = conn.execute(f"""
+            SELECT DISTINCT code FROM adj_factor WHERE code IN ({ph})
+        """, list(etf_universe)).fetchall()
+        codes_with_any_record = {r[0] for r in recorded_rows}
+        # 评审 3 + 阻断 6: LAG 全历史 + epsilon 判定
+        change_rows = conn.execute(f"""
             WITH t AS (
                 SELECT code, time, adj_factor,
                        LAG(adj_factor) OVER (
@@ -227,21 +274,22 @@ def select_etf_candidates_from_adj_factor(etf_universe: list, as_of_dt: datetime
             FROM t
             WHERE time >= ?
               AND prev_adj IS NOT NULL
-              AND ABS(adj_factor - prev_adj) > 0.001
+              AND ABS(adj_factor - prev_adj) > ?
             ORDER BY time DESC
-        """, list(etf_universe) + [cutoff_ms]).fetchall()
+        """, list(etf_universe) + [cutoff_ms, factor_epsilon]).fetchall()
         conn.close()
     except Exception as e:
         logger.warning("adj_factor 查询失败: " + str(e))
-        return [], list(etf_universe)
-    # 区分有变化 vs 无记录
-    codes_with_change = set()
-    candidates = []
-    for code, t, adj, prev in rows:
-        codes_with_change.add(code)
-        candidates.append((code, int(t), abs(float(adj) - float(prev))))
-    no_record = [c for c in etf_universe if c not in codes_with_change]
-    return candidates, no_record
+        return [], [], list(etf_universe)
+    # 阻断 2: 三类分离
+    codes_with_recent_change = set()
+    changed_candidates = []
+    for code, t, adj, prev in change_rows:
+        codes_with_recent_change.add(code)
+        changed_candidates.append((code, int(t), abs(float(adj) - float(prev))))
+    stable_with_record = sorted(codes_with_any_record - codes_with_recent_change)
+    no_record = sorted(set(etf_universe) - codes_with_any_record)
+    return changed_candidates, stable_with_record, no_record
 
 
 # ---------------------------------------------------------------------------
@@ -351,24 +399,48 @@ def read_canonical(conn, codes, table: str) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def compare_front(canon_df, fresh_df, table: str) -> dict:
-    """对比 canonical vs fresh front 列，区分 numeric_diff 与 null_mismatch（评审 7）。"""
+    """对比 canonical vs fresh front 列，区分 numeric_diff 与 null_mismatch。
+
+    审计-fix 阻断 4/5 修正：
+    - 阻断 4：null_mismatch_cells / numeric_diff_cells 是**单元格数**（per-col 求和），
+      不是"任意列发生该类型的唯一行数"。四列同时 NULL mismatch 应=4 单元格，非 1。
+      新增 null_mismatch_unique_rows / numeric_diff_unique_rows 表示唯一行数。
+    - 阻断 5：canonical_earliest / fresh_earliest 在 merge 前分别计算；
+      overlap_earliest / overlap_latest 在 merge 后计算。三者不再恒等。
+    """
     if canon_df.empty or fresh_df.empty:
         return {"error": "empty dataframe", "table": table}
     front_cols = ["open_front", "high_front", "low_front", "close_front"]
     available = [c for c in front_cols if c in fresh_df.columns]
     if not available:
         return {"error": "fresh 无 front 列", "table": table}
+    # 阻断 5: merge 前分别计算 earliest/latest
+    canonical_earliest = int(canon_df["time"].min()) if len(canon_df) else None
+    canonical_latest = int(canon_df["time"].max()) if len(canon_df) else None
+    fresh_earliest = int(fresh_df["time"].min()) if len(fresh_df) else None
+    fresh_latest = int(fresh_df["time"].max()) if len(fresh_df) else None
     merged = canon_df[["code", "time"] + [c for c in front_cols if c in canon_df.columns]].merge(
         fresh_df[["code", "time"] + available], on=["code", "time"],
         suffixes=("_canon", "_fresh"), how="inner")
-    result = {"table": table, "rows_compared": len(merged),
-              "canonical_earliest": int(merged["time"].min()) if len(merged) else None,
-              "overlap_earliest": int(merged["time"].min()) if len(merged) else None}
-    # 评审 7: 任意列有差异（含 NULL mismatch）的唯一行
+    result = {
+        "table": table,
+        "canonical_rows": len(canon_df),
+        "fresh_rows": len(fresh_df),
+        "overlap_rows": len(merged),
+        "canonical_earliest": canonical_earliest,
+        "canonical_latest": canonical_latest,
+        "fresh_earliest": fresh_earliest,
+        "fresh_latest": fresh_latest,
+        "overlap_earliest": int(merged["time"].min()) if len(merged) else None,
+        "overlap_latest": int(merged["time"].max()) if len(merged) else None,
+        "rows_compared": len(merged),  # = overlap_rows（保留旧名兼容）
+    }
     any_diff_mask = pd.Series(False, index=merged.index)
-    numeric_diff_mask = pd.Series(False, index=merged.index)
-    null_mismatch_mask = pd.Series(False, index=merged.index)
+    null_mismatch_unique_mask = pd.Series(False, index=merged.index)
+    numeric_diff_unique_mask = pd.Series(False, index=merged.index)
     per_col = {}
+    total_null_cells = 0   # 阻断 4: 单元格求和
+    total_numeric_cells = 0
     max_abs = 0.0
     max_rel = 0.0
     for col in available:
@@ -377,31 +449,32 @@ def compare_front(canon_df, fresh_df, table: str) -> dict:
             continue
         canon_na = merged[cc].isna()
         fresh_na = merged[fc].isna()
-        # NULL mismatch: 一方 NULL 另一方有效（XOR）
         col_null_mismatch = canon_na ^ fresh_na
-        # numeric diff: 双方都有效且差的绝对值 > 1e-6
         both_valid = (~canon_na) & (~fresh_na)
         diff = (merged[fc] - merged[cc]).abs()
         col_numeric_diff = both_valid & (diff > 1e-6)
         col_any = col_null_mismatch | col_numeric_diff
-        n_cells = int(col_any.sum())
         n_null = int(col_null_mismatch.sum())
         n_num = int(col_numeric_diff.sum())
-        per_col[col] = {"cells": n_cells, "null_mismatch": n_null,
+        total_null_cells += n_null      # 阻断 4: 单元格累加
+        total_numeric_cells += n_num
+        per_col[col] = {"cells": n_null + n_num, "null_mismatch": n_null,
                         "numeric_diff": n_num,
                         "max_abs": float(diff[both_valid].max()) if both_valid.any() else 0.0}
         any_diff_mask |= col_any
-        null_mismatch_mask |= col_null_mismatch
-        numeric_diff_mask |= col_numeric_diff
+        null_mismatch_unique_mask |= col_null_mismatch
+        numeric_diff_unique_mask |= col_numeric_diff
         if both_valid.any():
             max_abs = max(max_abs, float(diff[both_valid].max()))
             rel = diff[both_valid] / merged.loc[both_valid, fc].abs().replace(0, float("nan"))
             max_rel = max(max_rel, float(rel.max()) if not rel.empty else 0.0)
-    # 评审 7: unique rows 是任意列有差异的 (code,time) 行数（不乘 4）
+    # 阻断 4: unique_rows（任意列有差异）vs cells（单元格求和）
     result["affected_unique_rows"] = int(any_diff_mask.sum())
-    result["affected_cells"] = sum(p["cells"] for p in per_col.values())
-    result["null_mismatch_cells"] = int(null_mismatch_mask.sum())
-    result["numeric_diff_cells"] = int(numeric_diff_mask.sum())
+    result["affected_cells"] = total_null_cells + total_numeric_cells
+    result["null_mismatch_cells"] = total_null_cells                    # 单元格数
+    result["numeric_diff_cells"] = total_numeric_cells                  # 单元格数
+    result["null_mismatch_unique_rows"] = int(null_mismatch_unique_mask.sum())  # 唯一行数
+    result["numeric_diff_unique_rows"] = int(numeric_diff_unique_mask.sum())    # 唯一行数
     result["affected_code_count"] = int(merged.loc[any_diff_mask, "code"].nunique())
     result["affected_codes"] = sorted(merged.loc[any_diff_mask, "code"].unique().tolist())
     result["max_abs_diff"] = max_abs
@@ -532,14 +605,9 @@ def run_audit(args, etf_universe_provider=None, xtdata_client=None):
         print(f"    {src}/{tbl} = {wm} = {ms_to_bj(wm)}")
     print()
 
-    # 评审 10: 窗口语义准确
-    end_date = as_of_dt.strftime("%Y%m%d")
-    if args.full_history:
-        start_date = "20180101"
-        window_desc = "完整历史（2018-01-01 起）"
-    else:
-        start_date = (as_of_dt - timedelta(days=730)).strftime("%Y%m%d")  # 滚动 2 年
-        window_desc = f"滚动 2 年窗口（{start_date} ~ {end_date}）"
+    # 阻断 7: 窗口解析用纯函数 resolve_audit_window（可测试）
+    start_date, end_date, window_desc = resolve_audit_window(
+        as_of_dt, args.full_history)
     print(f"审计窗口: {window_desc}")
     print("  注：默认模式仅证明'窗口内历史行受影响'；--full-history 才能写'全历史受影响'")
     print()
@@ -587,20 +655,24 @@ def run_audit(args, etf_universe_provider=None, xtdata_client=None):
         print(f"    {imp_s}")
     print()
 
-    # ---------- ETF（评审 2: universe 注入）----------
+    # ---------- ETF（阻断 3: universe = canonical ∪ xtquant）----------
     if etf_universe_provider is None:
-        etf_universe = _default_etf_universe(conn)
+        etf_universe = _default_etf_universe(conn, xtquant_etf_provider=None)
     else:
         etf_universe = etf_universe_provider(conn)
     print(f"【ETF universe】{len(etf_universe)} 只（canonical DISTINCT ∪ xtquant）")
     print(f"  示例: {etf_universe[:5]}")
-    etf_cands, etf_no_record = select_etf_candidates_from_adj_factor(
+    # 阻断 2: 三类分离（changed/stable/no_record）
+    etf_cands, etf_stable, etf_no_record = select_etf_candidates_from_adj_factor(
         etf_universe, as_of_dt, days_back=30)
-    print(f"【ETF 因子变化】{len(etf_cands)} 只（来自 adj_factor）")
+    print(f"【ETF 因子变化】{len(etf_cands)} 只（changed，来自 adj_factor）")
     for c, t, delta in etf_cands[:10]:
         print(f"  {c} change={ms_to_bj(t)} delta={delta}")
+    if etf_stable:
+        print(f"【ETF 有记录无变化】{len(etf_stable)} 只（stable_with_record）:")
+        print(f"  示例: {etf_stable[:5]}")
     if etf_no_record:
-        print(f"【ETF 无因子记录】{len(etf_no_record)} 只（报告'无法判断'，非'无变化'）:")
+        print(f"【ETF 无因子记录】{len(etf_no_record)} 只（no_record，报告'无法判断'非'无变化'）:")
         print(f"  示例: {etf_no_record[:5]}")
     print()
     # ETF 候选 = 因子变化的 + 无记录的（无记录的也走哨兵采样兜底，评审 2）
@@ -636,23 +708,47 @@ def run_audit(args, etf_universe_provider=None, xtdata_client=None):
     print("=" * 80)
 
 
-def _default_etf_universe(conn) -> list:
-    """默认 ETF universe = canonical etf_daily DISTINCT ∪ xtquant get_etf_codes。
+def resolve_audit_window(as_of_dt: datetime, full_history: bool,
+                          history_start: str = "20180101",
+                          rolling_days: int = 730) -> tuple:
+    """纯函数：解析审计窗口（评审 7 阻断 7：抽出可测试）。
 
-    评审 2: 不读 codes=["ALL"]。xtquant 失败时仅用 canonical。
+    返回 (start_date_yyyymmdd, end_date_yyyymmdd, window_description)。
+    - full_history=True: 20180101 ~ as_of
+    - full_history=False: as_of - rolling_days ~ as_of（滚动 2 年）
+    """
+    end_date = as_of_dt.strftime("%Y%m%d")
+    if full_history:
+        return history_start, end_date, f"完整历史（{history_start} ~ {end_date}）"
+    start_dt = as_of_dt - timedelta(days=rolling_days)
+    start_date = start_dt.strftime("%Y%m%d")
+    return start_date, end_date, f"滚动 {rolling_days} 天窗口（{start_date} ~ {end_date}）"
+
+
+def _default_etf_universe(conn, xtquant_etf_provider=None) -> list:
+    """默认 ETF universe = canonical etf_daily DISTINCT ∪ xtquant codes。
+
+    审计-fix 阻断 3 修正：真正实现 union（非 canonical only）。
+    - xtquant_etf_provider：可注入的 provider（无参数，返回 list[str]）。
+      测试用 mock 注入；生产可传入调用 XtquantAdapter 的闭包。
+    - 不读 codes=["ALL"]（评审 2）。
+    - 任一源失败时降级用另一源（不静默吞错）。
     """
     codes = set()
+    # 源 1: canonical DISTINCT
     try:
         rows = conn.execute("SELECT DISTINCT code FROM etf_daily").fetchall()
         codes.update(r[0] for r in rows)
     except Exception as e:
         logger.warning("读取 canonical etf_daily 失败: " + str(e))
-    try:
-        from quantstudio.pipeline.sources.xtquant_adapter import XtquantAdapter
-        # 不实例化（需要 qmt_path），仅尝试静态方法（若有）；失败则跳过
-        # 实际项目可能无静态 get_etf_codes，此处保守处理
-    except Exception:
-        pass
+    # 源 2: xtquant provider（注入）
+    if xtquant_etf_provider is not None:
+        try:
+            xt_codes = xtquant_etf_provider()
+            if xt_codes:
+                codes.update(xt_codes)
+        except Exception as e:
+            logger.warning("xtquant ETF provider 失败（仅用 canonical）: " + str(e))
     return sorted(codes)
 
 
@@ -661,18 +757,20 @@ def print_diff_summary(diff: dict):
     if "error" in diff:
         print("    错误: " + diff["error"])
         return
-    print(f"    对比行数: {diff['rows_compared']}")
+    # 阻断 5: 元数据分开（canonical/fresh/overlap）
+    print(f"    canonical_rows={diff.get('canonical_rows')} earliest={ms_to_bj(diff.get('canonical_earliest'))} latest={ms_to_bj(diff.get('canonical_latest'))}")
+    print(f"    fresh_rows={diff.get('fresh_rows')} earliest={ms_to_bj(diff.get('fresh_earliest'))} latest={ms_to_bj(diff.get('fresh_latest'))}")
+    print(f"    overlap_rows={diff.get('overlap_rows')} earliest={ms_to_bj(diff.get('overlap_earliest'))} latest={ms_to_bj(diff.get('overlap_latest'))}")
     print(f"    受影响代码数: {diff['affected_code_count']}")
     print(f"    受影响代码: {','.join(diff.get('affected_codes', [])[:10])}")
     print(f"    受影响唯一历史行 (code,time): {diff['affected_unique_rows']}")
     print(f"    受影响 front 字段单元格总数: {diff['affected_cells']}")
-    print(f"      其中 NULL mismatch 单元格: {diff['null_mismatch_cells']}")
-    print(f"      其中 numeric diff 单元格: {diff['numeric_diff_cells']}")
+    print(f"      其中 NULL mismatch 单元格: {diff['null_mismatch_cells']} (唯一行: {diff.get('null_mismatch_unique_rows')})")
+    print(f"      其中 numeric diff 单元格: {diff['numeric_diff_cells']} (唯一行: {diff.get('numeric_diff_unique_rows')})")
     print(f"    最大绝对差: {round(diff['max_abs_diff'], 6)}")
     print(f"    最大相对差: {round(diff['max_rel_diff_pct'], 4)}%")
     if diff.get("earliest_diff_time"):
         print(f"    最早差异时间: {ms_to_bj(diff['earliest_diff_time'])}")
-    print(f"    overlap_earliest: {ms_to_bj(diff.get('overlap_earliest'))}")
     print("    各列差异:")
     for col, s in diff.get("per_column", {}).items():
         print(f"      {col}: cells={s['cells']} null_mismatch={s['null_mismatch']} "
