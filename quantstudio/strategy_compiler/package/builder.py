@@ -117,6 +117,19 @@ def build_strategy_package(
     engine_semantics_version = spec.get("contract_versions", {}).get(
         "engine_semantics_version", "0.1.0-legacy")
 
+    # Stage 0 (fail-fast, before touching disk): build IR + render dual-platform.
+    # GoldenProtectionError / G2ReferenceError raise HERE, before any package dir
+    # is created, so failed builds leave no partial output on disk.
+    ir = build_strategy_ir(spec)
+    qs_code = render_quantstudio(ir)   # raises GoldenProtectionError on protected IDs
+    pt_code = render_ptrade(ir)
+
+    # G2 linkage validation also fails closed before disk writes (G2ReferenceError).
+    if g2_reference is not None:
+        g2_note = _g2_readme_note(g2_reference)  # may raise G2ReferenceError
+    else:
+        g2_note = "Not linked (no G2 reference closure provided)."
+
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     pkg_dir = out_dir / _package_dir_name(strategy_id, package_version)
@@ -124,14 +137,6 @@ def build_strategy_package(
     if pkg_dir.exists():
         shutil.rmtree(pkg_dir)
     pkg_dir.mkdir(parents=True, exist_ok=True)
-
-    # Stage 1: build IR (Spec → IR)
-    ir = build_strategy_ir(spec)
-
-    # Stage 2: render dual-platform (IR → QuantStudio + Strict-PTrade)
-    # render_quantstudio/render_ptrade raise GoldenProtectionError on protected IDs.
-    qs_code = render_quantstudio(ir)
-    pt_code = render_ptrade(ir)
 
     qs_file = output_filename(strategy_id, "quantstudio")
     pt_file = output_filename(strategy_id, "ptrade-default")
@@ -144,12 +149,6 @@ def build_strategy_package(
     _write_text_no_bom(
         _INIT_PY_TEMPLATE.format(strategy_id=strategy_id, version=package_version),
         pkg_dir / "__init__.py")
-
-    # G2 linkage note for README (computed before manifest; G2ReferenceError may raise).
-    if g2_reference is not None:
-        g2_note = _g2_readme_note(g2_reference)
-    else:
-        g2_note = "Not linked (no G2 reference closure provided)."
 
     # README written BEFORE manifest so its digest can be included.
     _write_text_no_bom(

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quantstudio"
-version = "0.1.0"
+version = "0.3.0-mvp"
 description = "标准化数据管道 + 通用量化回测系统（双层校验 + 双轨回测引擎）"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -48,6 +48,7 @@ all = [
 [project.scripts]
 quantstudio-daemon = "quantstudio.pipeline.daemon:main"
 quantstudio-run = "quantstudio.engine.cli:main"
+qs-compile = "quantstudio.strategy_compiler.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

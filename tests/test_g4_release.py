@@ -214,3 +214,153 @@ class TestDualRendererRegression:
             src = (pkg / f).read_text(encoding="utf-8")
             ast.parse(src)
             compile(src, str(pkg / f), "exec")
+
+
+# ── 8. Corrective (G4 audit-fix): entry point + version unity + G2 error ─────
+
+class TestEntryPoint:
+    def test_qs_compile_console_entry_point_in_pyproject(self):
+        """pyproject.toml must declare the qs-compile console entry point."""
+        import re
+        text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        assert 'qs-compile' in text, "qs-compile console entry point missing"
+        assert 'quantstudio.strategy_compiler.cli:main' in text
+
+    def test_qs_compile_help_works_installed(self):
+        """`python -m quantstudio.strategy_compiler.cli --help` succeeds (entry point usable)."""
+        result = subprocess.run(
+            [sys.executable, "-m", "quantstudio.strategy_compiler.cli", "--help"],
+            capture_output=True, text=True, cwd=str(ROOT), check=False)
+        assert result.returncode == 0
+        assert "package" in result.stdout.lower()
+
+
+class TestVersionUnity:
+    """0.3.0-mvp must be consistent across pyproject, quantstudio.__version__,
+    SKILL.md, active example, orchestrator, release metadata, CLI default."""
+
+    def _collect_versions(self):
+        import quantstudio
+        from quantstudio.strategy_compiler.orchestrator import _SKILL_VERSION
+        meta = _load(ROOT / "quantstudio" / "strategy_compiler" / "release" / "release_metadata.json")
+        skill_md = (ROOT / "skills" / "quantstudio-strategy-compiler" / "SKILL.md").read_text(encoding="utf-8")
+        example = _load(EXAMPLES / "case1_dual_ma_spec.json")
+        return {
+            "quantstudio.__version__": quantstudio.__version__,
+            "orchestrator _SKILL_VERSION": _SKILL_VERSION,
+            "release_metadata.version": meta["version"],
+            "pyproject.version": self._pyproject_version(),
+            "skill_md_has_0.3.0-mvp": "0.3.0-mvp" in skill_md,
+            "example.skill_version": example.get("contract_versions", {}).get("skill_version"),
+        }
+
+    def _pyproject_version(self):
+        import re
+        text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+        return m.group(1) if m else None
+
+    def test_all_versions_are_030_mvp(self):
+        v = self._collect_versions()
+        assert v["quantstudio.__version__"] == "0.3.0-mvp", v
+        assert v["orchestrator _SKILL_VERSION"] == "0.3.0-mvp", v
+        assert v["release_metadata.version"] == "0.3.0-mvp", v
+        assert v["pyproject.version"] == "0.3.0-mvp", v
+        assert v["skill_md_has_0.3.0-mvp"] is True, v
+        assert v["example.skill_version"] == "0.3.0-mvp", v
+
+
+class TestG2ReferenceErrorHandling:
+    """G2ReferenceError (missing frozen artifact) must be caught by the CLI:
+    stable user-level error message + deterministic exit code (no traceback)."""
+
+    def test_missing_g2_frozen_artifact_deterministic_exit(self, tmp_path, case1_spec):
+        """CLI with --g2-frozen-dir pointing to a dir missing artifacts → clean error, stable exit."""
+        spec_path = tmp_path / "spec.json"
+        spec_path.write_text(json.dumps(case1_spec), encoding="utf-8")
+        # empty frozen dir (no artifacts)
+        bad_frozen = tmp_path / "bad_frozen"
+        bad_frozen.mkdir()
+        result = _run_cli(
+            ["package", str(spec_path), "--out", str(tmp_path / "out"),
+             "--g2-frozen-dir", str(bad_frozen)],
+            cwd=ROOT)
+        assert result.returncode != 0
+        # No Python traceback in stderr (caught, not propagated)
+        assert "Traceback" not in result.stderr, "G2ReferenceError leaked as traceback"
+        # Deterministic exit code (a fixed non-zero, not the unstable default 1 from exception)
+        assert result.returncode == 4, f"expected exit 4 for G2 reference error, got {result.returncode}"
+
+    def test_missing_g2_frozen_artifact_clean_message(self, tmp_path, case1_spec):
+        spec_path = tmp_path / "spec.json"
+        spec_path.write_text(json.dumps(case1_spec), encoding="utf-8")
+        bad_frozen = tmp_path / "bad_frozen"
+        bad_frozen.mkdir()
+        result = _run_cli(
+            ["package", str(spec_path), "--out", str(tmp_path / "out"),
+             "--g2-frozen-dir", str(bad_frozen)],
+            cwd=ROOT)
+        assert "g2" in result.stderr.lower() or "reference" in result.stderr.lower()
+
+
+class TestFailureExitCodes:
+    """Each CLI failure mode has a distinct, deterministic exit code + stderr summary."""
+
+    def test_invalid_spec_exit_2(self, tmp_path):
+        spec = tmp_path / "bad.json"
+        spec.write_text("{not json", encoding="utf-8")
+        r = _run_cli(["package", str(spec), "--out", str(tmp_path / "o")], cwd=ROOT)
+        assert r.returncode == 2
+
+    def test_missing_spec_exit_2(self, tmp_path):
+        r = _run_cli(["package", str(tmp_path / "nope.json"), "--out", str(tmp_path / "o")], cwd=ROOT)
+        assert r.returncode == 2
+
+    def test_golden_protection_exit_3(self, tmp_path, case1_spec):
+        spec = dict(case1_spec)
+        spec["strategy_id"] = "etf_momentum"
+        spec_path = tmp_path / "spec.json"
+        spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        r = _run_cli(["package", str(spec_path), "--out", str(tmp_path / "o")], cwd=ROOT)
+        assert r.returncode == 3
+
+    def test_failed_build_cleans_up_output(self, tmp_path, case1_spec):
+        """A failed build (golden protection) must not leave a partial package dir."""
+        spec = dict(case1_spec)
+        spec["strategy_id"] = "etf_momentum"
+        spec_path = tmp_path / "spec.json"
+        spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        out_dir = tmp_path / "out"
+        r = _run_cli(["package", str(spec_path), "--out", str(out_dir)], cwd=ROOT)
+        assert r.returncode == 3
+        # no partial package leaked (golden protection raises before any package write)
+        if out_dir.exists():
+            entries = list(out_dir.iterdir())
+            assert entries == [], f"partial package leaked after failure: {entries}"
+
+
+class TestInstalledCliE2E:
+    """Real E2E: invoke the installed entry point (python -m ...cli) as a user would."""
+
+    def test_package_subcommand_help(self):
+        r = subprocess.run(
+            [sys.executable, "-m", "quantstudio.strategy_compiler.cli", "package", "--help"],
+            capture_output=True, text=True, cwd=str(ROOT), check=False)
+        assert r.returncode == 0
+        assert "--out" in r.stdout
+        assert "--g2-frozen-dir" in r.stdout
+
+    def test_real_e2e_build_succeeds(self, tmp_path, case1_spec):
+        """Full real E2E: write spec, run CLI, verify package built correctly."""
+        spec_path = tmp_path / "my_strategy.json"
+        spec_path.write_text(json.dumps(case1_spec), encoding="utf-8")
+        out_dir = tmp_path / "release_pkgs"
+        r = _run_cli(["package", str(spec_path), "--out", str(out_dir)], cwd=ROOT)
+        assert r.returncode == 0, f"E2E failed: {r.stderr}"
+        assert "package built" in r.stdout
+        pkgs = list(out_dir.iterdir())
+        assert len(pkgs) == 1
+        pkg = pkgs[0]
+        assert (pkg / "manifest.json").exists()
+        assert (pkg / "case1_dual_ma_quantstudio.py").exists()
+        assert (pkg / "case1_dual_ma_ptrade.py").exists()

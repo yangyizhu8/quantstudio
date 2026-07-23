@@ -7,7 +7,7 @@ description: Turn a strategy idea or spec into validated QuantStudio plus PTrade
 
 Compile strategy ideas into validated, backtestable QuantStudio + PTrade code, gated by capability inspection and user confirmation.
 
-**Skill version**: 0.2.0-pr6b1 (PR6a + PR6b-1). Full compile pipeline delivered: Spec -> IR -> dual render (QuantStudio + PTrade) -> 7 validators -> run_card. The orchestrator (`quantstudio.strategy_compiler.orchestrator`) is the end-to-end entry point; this Skill no longer stops at Spec. PR6b-2 (9 golden cases, index_constituents, Factor ops, cost passthrough, stop_loss) is the remaining scope.
+**Skill version**: 0.3.0-mvp (G1-I basket + G2 CP3 reference + G3 package + G4 CLI release). Full compile pipeline delivered: Spec -> IR -> dual render (QuantStudio + PTrade) -> strategy package, drivable via the `qs-compile` CLI (`quantstudio.strategy_compiler.cli`). G2 CP3 reference closure (Hermetic Partial, data digest blocked) + G3 deterministic package closure now in main. Real market-data digest/Fidelity/Reference verification deferred.
 
 ## When to trigger
 

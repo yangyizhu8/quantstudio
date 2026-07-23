@@ -21,6 +21,7 @@ from typing import Optional
 
 from .contracts import validate_strategy_spec
 from .package.builder import build_strategy_package
+from .package.manifest import G2ReferenceError
 from .render import GoldenProtectionError
 
 
@@ -80,8 +81,11 @@ def cmd_package(args: argparse.Namespace) -> int:
         # Honest propagation: golden-protected IDs are not packageable.
         print(f"ERROR: golden protection — {e}", file=sys.stderr)
         return 3
-    # build_strategy_package also raises G2ReferenceError (fail-closed) which propagulates
-    # as an uncaught exception -> non-zero exit + traceback (honest failure surfacing).
+    except G2ReferenceError as e:
+        # G2 reference linkage incomplete (missing frozen artifact) — fail closed
+        # with a stable user-level message + deterministic exit code (no traceback).
+        print(f"ERROR: G2 reference closure incomplete — {e}", file=sys.stderr)
+        return 4
 
     print(f"package built: {pkg_dir}")
     manifest = json.loads((pkg_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -105,7 +109,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_pkg.add_argument("--out", required=True, help="Output directory for the package")
     p_pkg.add_argument("--g2-frozen-dir", default=None,
                        help="Directory with G2 frozen reference artifacts (4 files)")
-    p_pkg.add_argument("--package-version", default="0.1.0", help="Package semver (default 0.1.0)")
+    p_pkg.add_argument("--package-version", default="0.3.0-mvp", help="Package semver (default 0.3.0-mvp)")
     p_pkg.set_defaults(func=cmd_package)
     return parser
 
