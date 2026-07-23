@@ -2,7 +2,7 @@
 
 > Master plan: `QuantStudio Strategy Compiler frozen master plan v1.0`  
 > Current stage: PR6b-2A / Skill MVP G1
-> Stage status: **G1-I corrective commit `bcdc85d` merged to `main` via `--ff-only` on 2026-07-24 (main contains `bcdc85d` via `--ff-only`; current HEAD is a descendant docs commit, and `merge-base --is-ancestor bcdc85d main` PASS, no merge commit, main worktree clean). Unrelated dirty-main changes (GUI/config/QFQ/docs, 14 files) preserved on WIP branch `codex/main-dirty-wip` (`7f223af`+`faabc20`), not merged to main. Awaiting final G1-I Review; G2 CP3 Reference closure starts only after final Review PASS. CP3 remains BLOCKED at feature commit `8931430`.**
+> Stage status: **G1-I corrective commit `bcdc85d` merged to `main` via `--ff-only` on 2026-07-24 (main contains `bcdc85d` via `--ff-only`; current HEAD=`62870d4` is a descendant merge commit for the disjoint QFQ PR2 integration, and `merge-base --is-ancestor bcdc85d main` PASS, no merge commit, main worktree clean). Unrelated dirty-main changes (GUI/config/QFQ/docs, 14 files) preserved on WIP branch `codex/main-dirty-wip` (`7f223af`+`faabc20`+`9858c26`), not merged to main. Final G1-I Review PASS; G2 CP3 Reference closure is now authorized to start, but has not started. CP3 remains BLOCKED at feature commit `8931430`.**
 
 ## Stage overview
 
@@ -14,7 +14,7 @@
 | PR3 Multi-frequency Provider | PASS / WAITING_CONFIRMATION | Provider frequency routing implemented (native freq only; aggregation deferred to PR3.5); daily path byte-level unchanged |
 | PR4 Minute event engine | CONFIRMED (2026-07-22) | Minute event loop implemented (main-loop branch + precise run_daily + ETF T+0 minute-only); daily path byte-level unchanged; **real-minute smoke PASS** (510050 ETF × 2026-07-17 × full-universe); **end-labeled verified** (241 bars/day, 09:30 call-auction O=H=L=C); **GIL defect fixed** (batch loading, was deferred perf item that became functional blocker on real data) |
 | PR5 Skill skeleton | DONE (0.1.0-skeleton, 2026-07-22) | Skill created at `skills/quantstudio-strategy-compiler/` (SKILL.md + agents/openai.yaml + 11 references + 3 schemas + 2 scripts); quick_validate PASS; inspect_capabilities live run READY (honest probe, tick PLANNED); validate_strategy_spec PR0 example green + 3 violation variants red; awaiting user confirmation before PR6 |
-| PR6 IR/renderers/validators | IN_PROGRESS — G1 PASS / MERGED TO MAIN | PR6a + PR6b-1 已在 `main`；G1-I corrective `bcdc85d` 已于 2026-07-24 经 `--ff-only` 合并到 `main`（当前 HEAD 为其 docs descendant，待最终 Review）。PR6b-2A CP1/CP2 已通过，CP3 partial `8931430` 保留；G2 待最终 Review PASS 后开始。 |
+| PR6 IR/renderers/validators | IN_PROGRESS — G1 PASS / MERGED TO MAIN | PR6a + PR6b-1 已在 `main`；G1-I corrective `bcdc85d` 已经 `--ff-only` 合并到 `main`（当前 HEAD=`62870d4`，其后的 QFQ merge commit；G1 文件集不受影响）。PR6b-2A CP1/CP2 已通过，CP3 partial `8931430` 保留；G2 已获授权开始，但当前尚未启动。 |
 | PR7 Fidelity closure | NOT_STARTED | Planned |
 
 ## PR0 acceptance
@@ -673,4 +673,12 @@ This supersedes the PR2 Commit 1 / audit-fix / audit-fix2 FAIL entries while ret
 - Review result: **APPROVED / PASS**. Commit 2 (revision detection + audit schema) is authorized.
 - Remaining risks: explicit canonical-only degradation when xtquant is unavailable/disabled; epoch-ms-only stock-dividend contract; five repository tests remain non-hermetic; branch is not merged to `main`.
 - Next gate: implement Commit 2 in the same isolated branch/worktree with auditable scope, hermetic tests, and no formal Canonical repair writes; submit commit/diff/test/runtime evidence for Review.
+## G1-I final Review PASS (2026-07-23)
 
+- Main/worktree: `D:\miniQMT策略实盘\QuantStudio` / `main`, clean; current HEAD=`62870d4`.
+- Merge evidence: `bcdc85d` is an ancestor of `main`; G1-I entered main through the prior `--ff-only` path. The later `62870d4` merge is a disjoint QFQ PR2 integration and does not modify the G1 basket files.
+- WIP preservation: `codex/main-dirty-wip` HEAD=`9858c26`, retaining `7f223af`, `faabc20`, and `9858c26`; no WIP changes are merged to main.
+- Accepted G1-I scope: G1-D design v2, basket engine/API implementation, 6 corrective blocker fixes, and 59 basket tests.
+- Test evidence: current main basket suite `59 passed`; prior full-suite evidence `563 passed / 5 failed` had only resident-DB/calendar environment failures and no G1-I regression. The subsequent QFQ merge is disjoint from G1-I; no G1 basket file changed after `bcdc85d`.
+- Review result: **PASS / APPROVED**. G1-I is complete and G2 CP3 Reference closure is authorized, but G2 has not started.
+- Remaining risks: CP3 Reference fixtures/digests/Oracle, G3 dual Renderer/package, G4 CLI E2E/release, and known non-hermetic DB/calendar tests remain open.
