@@ -7,8 +7,12 @@
   "source_head_subject": "PR6b-2A CP3 partial audit-fix v2: order status capture + suffix determinism + exit dedup",
   "ported_into_worktree": "D:/miniQMT策略实盘/QuantStudio-g2-cp3",
   "ported_into_branch": "codex/g2-cp3-reference",
-  "port_base_main_commit": "b3da10b",
+  "port_base_main_commit": "35bf44a",
   "engine_semantics_version": "0.4.0-next_open_basket",
+  "engine_commit_bound": "bcdc85df42439d38fb421e4c4197502c8c48d304",
+  "closure_stage": "G2 CP3 Hermetic Reference Partial Closure — PASS WITH DATA DIGEST BLOCKED",
+  "data_digest_status": "blocked",
+  "data_digest_block_reason": "hermetic synthetic scenario; real market data digest deferred (G3/real-data stage). This partial closure validates the hermetic Reference pipeline only; it does NOT validate real-data Fidelity or real-market Reference.",
   "engine_semantics_note": "Spec contract_versions.engine_semantics_version updated from 0.1.0-legacy to 0.4.0-next_open_basket to reflect the G1-I basket engine now in main. Strategy parameters/formulas/signal conditions/order priorities are UNCHANGED (Oracle body ported verbatim).",
   "ported_files": [
     {

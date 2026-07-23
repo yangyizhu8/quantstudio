@@ -145,6 +145,7 @@ def build_reference_artifacts(
     oracle_path: str | Path,
     source_digest: Dict[str, Any],
     starting_cash: float = 100000.0,
+    generated_at: Optional[str] = None,
 ) -> ReferenceArtifacts:
     """Run the Oracle over the scenario, capture frozen signal/order/NAV artifacts.
 
@@ -411,7 +412,7 @@ def build_reference_artifacts(
         r["order_seq"] = i
     nav_rows.sort(key=lambda r: r["trading_date"])
 
-    gen_at = datetime.now(BJ_TZ).isoformat(timespec="seconds")
+    gen_at = generated_at if generated_at is not None else datetime.now(BJ_TZ).isoformat(timespec="seconds")
     signals_artifact = {
         "schema_version": "1.0",
         "strategy_id": strategy_id,

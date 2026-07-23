@@ -19,13 +19,89 @@ def sha256_bytes(data: bytes) -> str:
 
 
 def sha256_file(path: str | Path) -> str:
-    return sha256_bytes(Path(path).read_bytes())
+    """Deterministic SHA-256 over a file's content, CRLF-safe.
+
+    Reads git blob bytes (LF-normalized) when the path is inside a git repo so
+    the digest is identical regardless of core.autocrlf / platform line endings.
+    Falls back to raw bytes (LF-normalized in-memory) for non-repo paths. This is
+    required for byte-level determinism of frozen artifacts and provenance hashes.
+    """
+    p = Path(path)
+    data = _git_blob_bytes(p)
+    if data is None:
+        # Not in a repo / not tracked: normalize CRLF→LF in memory for cross-platform stability.
+        data = p.read_bytes().replace(b"\r\n", b"\n")
+    return sha256_bytes(data)
+
+
+def _git_blob_bytes(path: Path) -> bytes | None:
+    """Return the LF-normalized bytes of `path` as git stores it (index blob), or None if unavailable."""
+    import subprocess
+    try:
+        rel = _repo_relative(path)
+    except Exception:
+        return None
+    if rel is None:
+        return None
+    try:
+        # `git show :<path>` reads the staged/index blob (LF-normalized by git).
+        out = subprocess.run(
+            ["git", "show", f":{rel}"], capture_output=True, cwd=str(path.parent),
+            check=False,
+        )
+        if out.returncode == 0:
+            return out.stdout
+        # Fallback: HEAD blob (for committed-but-not-staged-identical files).
+        out = subprocess.run(
+            ["git", "show", f"HEAD:{rel}"], capture_output=True, cwd=str(path.parent),
+            check=False,
+        )
+        return out.stdout if out.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def _repo_relative(path: Path) -> str | None:
+    """Return path relative to repo root if tracked, else None."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], capture_output=True,
+            cwd=str(path.parent if path.is_file() else str(path)), check=False,
+        )
+        if out.returncode != 0:
+            return None
+        root = out.stdout.decode("utf-8", "replace").strip()
+        if not root:
+            return None
+        try:
+            rel = Path(path).resolve().relative_to(Path(root).resolve())
+        except ValueError:
+            return None
+        rel_str = str(rel).replace("\\", "/")
+        return rel_str
+    except Exception:
+        return None
 
 
 def sha256_json(obj: Any) -> str:
     """Deterministic SHA-256 over a JSON-serializable object (sorted keys, no whitespace)."""
     blob = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     return sha256_bytes(blob)
+
+
+def canonical_json_bytes(obj: Any) -> bytes:
+    """Canonical UTF-8 JSON bytes (sorted keys, compact, LF) for byte-level digest/reproducibility."""
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def canonical_json_digest(obj: Any) -> str:
+    """Deterministic SHA-256 over the canonical JSON bytes of an artifact dict.
+
+    Used to prove frozen artifacts are byte-reproducible (independent of generated_at
+    when generated_at is fixed, and independent of dict insertion order / platform).
+    """
+    return sha256_bytes(canonical_json_bytes(obj))
 
 
 def compute_source_digest(

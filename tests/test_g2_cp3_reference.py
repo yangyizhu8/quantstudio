@@ -66,8 +66,12 @@ def _build_scenario(n_days=3):
         closes, vols, raws, opens = {}, {}, {}, {}
         for qmt in pool:
             b = qmt.split(".")[0]
-            # uptrend series (close > MA20 > MA60), deterministic per code
-            series = [10.0 + 0.05 * i + (abs(hash(b)) % 100) * 0.001 for i in range(70)]
+            # uptrend series (close > MA20 > MA60), deterministic per code.
+            # NOTE: use zlib.crc32 (deterministic, not PYTHONHASHSEED-randomized like hash())
+            # so frozen artifacts are byte-reproducible across processes/machines.
+            import zlib
+            jitter = (zlib.crc32(b.encode("utf-8")) % 100) * 0.001
+            series = [10.0 + 0.05 * i + jitter for i in range(70)]
             closes[b] = series
             vols[b] = [1000.0] * 70
             raws[b] = series[-1]
@@ -82,6 +86,9 @@ def _build_scenario(n_days=3):
 
 def _build_source_digest():
     from quantstudio.strategy_compiler.reference.source_digest import compute_source_digest
+    # Blocker 4: bind to the G1-I engine commit (bcdc85d) — the actual referenced engine
+    # code, a stable ancestor. Never a synthetic placeholder, never the moving HEAD.
+    G1_I_ENGINE_COMMIT = "bcdc85df42439d38fb421e4c4197502c8c48d304"
     schema_paths = [
         SCHEMAS / "reference_signals.schema.json",
         SCHEMAS / "reference_orders.schema.json",
@@ -91,10 +98,10 @@ def _build_source_digest():
     spec = _load_json(SPEC_PATH)
     return compute_source_digest(
         ORACLE_PATH, SPEC_PATH, [str(p) for p in schema_paths], spec,
-        engine_commit="b3da10b-g2-test",
+        engine_commit=G1_I_ENGINE_COMMIT,
         engine_semantics_version="0.4.0-next_open_basket",
         data_digest_status="blocked",
-        data_digest_block_reason="hermetic synthetic scenario; no real market data digest in CP3 scope",
+        data_digest_block_reason="hermetic synthetic scenario; real market data digest deferred (G3/real-data stage)",
     )
 
 
@@ -342,3 +349,154 @@ class TestRuntimeIsolation:
         import quantstudio.strategy_compiler.reference.artifact_builder as ab
         src = Path(ab.__file__).read_text(encoding="utf-8")
         assert "xtquant" not in src
+
+
+# ── 8. Corrective (audit-fix): frozen artifacts + determinism + real commit ─
+
+FROZEN_DIR = ROOT / "tests" / "strategy_references" / "frozen"
+FROZEN_FILES = [
+    "reference_signals.json",
+    "reference_orders.json",
+    "reference_nav.json",
+    "source_digest.json",
+]
+
+
+def _actual_engine_commit():
+    """Resolve the real engine commit via git (never a synthetic placeholder)."""
+    import subprocess
+    out = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
+                         cwd=str(ROOT), check=False)
+    return out.stdout.decode("utf-8").strip()
+
+
+class TestDeterministicGeneratedAt:
+    """Blocker 3b: generated_at must be injectable/fixed so frozen artifacts are
+    byte-deterministic; canonical byte digest must be reproducible across runs."""
+
+    def test_generated_at_injected_not_wallclock(self):
+        """build_reference_artifacts accepts a fixed generated_at and uses it verbatim."""
+        from quantstudio.strategy_compiler.reference.artifact_builder import build_reference_artifacts
+        fixed = "1970-01-01T00:00:00+08:00"
+        art = build_reference_artifacts(_build_scenario(), ORACLE_PATH,
+                                        _build_source_digest(), generated_at=fixed)
+        assert art.signals["generated_at"] == fixed
+        assert art.orders["generated_at"] == fixed
+        assert art.nav["generated_at"] == fixed
+
+    def test_canonical_digest_reproducible_across_runs(self):
+        """Two builds with the same fixed generated_at yield identical canonical digests."""
+        from quantstudio.strategy_compiler.reference.source_digest import canonical_json_digest
+        fixed = "1970-01-01T00:00:00+08:00"
+        a1 = build_reference_artifacts_fixed(fixed)
+        a2 = build_reference_artifacts_fixed(fixed)
+        for key in ("signals", "orders", "nav"):
+            assert canonical_json_digest(a1.__dict__[key]) == \
+                   canonical_json_digest(a2.__dict__[key]), f"{key} digest not reproducible"
+
+
+def build_reference_artifacts_fixed(generated_at):
+    from quantstudio.strategy_compiler.reference.artifact_builder import build_reference_artifacts
+    return build_reference_artifacts(_build_scenario(), ORACLE_PATH,
+                                     _build_source_digest(), generated_at=generated_at)
+
+
+class TestEngineCommitBinding:
+    """Blocker 4: source_digest.engine_commit must bind to a real engine commit,
+    never a synthetic placeholder like 'b3da10b-g2-test'. Binds to the G1-I engine
+    commit (bcdc85d) — the actual referenced engine code, which is a stable ancestor
+    surviving the closure commit (not the moving HEAD, which would stale on commit)."""
+
+    G1_I_ENGINE_COMMIT = "bcdc85df42439d38fb421e4c4197502c8c48d304"
+
+    def test_no_synthetic_engine_commit_in_source_digest(self, artifacts):
+        sd = artifacts.source_digest
+        # Must be a real 40-char hex git SHA, not a synthetic '-test' string.
+        assert sd["engine_commit"] != "b3da10b-g2-test"
+        assert "-test" not in sd["engine_commit"]
+        assert len(sd["engine_commit"]) == 40
+        assert all(c in "0123456789abcdef" for c in sd["engine_commit"])
+
+    def test_engine_commit_is_real_ancestor(self, artifacts):
+        """The bound engine_commit (bcdc85d, G1-I) must be a real commit and an ancestor
+        of HEAD (i.e. the referenced engine code is actually present in the repo)."""
+        import subprocess
+        ec = artifacts.source_digest["engine_commit"]
+        assert ec == self.G1_I_ENGINE_COMMIT
+        out = subprocess.run(["git", "merge-base", "--is-ancestor", ec, "HEAD"],
+                             cwd=str(ROOT))
+        assert out.returncode == 0, f"{ec} is not an ancestor of HEAD"
+
+
+class TestFrozenArtifactsOnDisk:
+    """Blocker 1: the 4 reference artifacts exist as versioned frozen files in the repo,
+    committed (not generated at test time only)."""
+
+    @pytest.mark.parametrize("fname", FROZEN_FILES)
+    def test_frozen_artifact_exists_and_validates(self, fname):
+        path = FROZEN_DIR / fname
+        assert path.exists(), f"frozen artifact {fname} not committed to repo"
+        obj = _load_json(path)
+        # schema file naming: source_digest.json -> reference_source_digest.schema.json
+        base = fname.replace(".json", "")
+        schema_name = "reference_source_digest" if base == "source_digest" else base
+        schema = _load_json(SCHEMAS / f"{schema_name}.schema.json")
+        jsonschema.validate(obj, schema)  # raises on invalid
+
+    def test_frozen_artifacts_match_fresh_build(self):
+        """Frozen files must equal a fresh deterministic build (fixed generated_at,
+        real engine commit). Guards against stale/divergent frozen artifacts."""
+        from quantstudio.strategy_compiler.reference.source_digest import canonical_json_digest
+        fixed = "1970-01-01T00:00:00+08:00"
+        fresh = build_reference_artifacts_fixed(fixed)
+        # source_digest must bind to actual HEAD; rebuild it with real commit
+        from quantstudio.strategy_compiler.reference.source_digest import compute_source_digest
+        schema_paths = [
+            SCHEMAS / "reference_signals.schema.json",
+            SCHEMAS / "reference_orders.schema.json",
+            SCHEMAS / "reference_nav.schema.json",
+            SCHEMAS / "reference_source_digest.schema.json",
+        ]
+        spec = _load_json(SPEC_PATH)
+        fresh_sd = compute_source_digest(
+            ORACLE_PATH, SPEC_PATH, [str(p) for p in schema_paths], spec,
+            engine_commit=TestEngineCommitBinding.G1_I_ENGINE_COMMIT,
+            engine_semantics_version="0.4.0-next_open_basket",
+            data_digest_status="blocked",
+            data_digest_block_reason="hermetic synthetic scenario; real market data digest deferred (G3/real-data stage)",
+        )
+        for key, fname in (("signals", "reference_signals.json"),
+                           ("orders", "reference_orders.json"),
+                           ("nav", "reference_nav.json")):
+            frozen = _load_json(FROZEN_DIR / fname)
+            assert canonical_json_digest(frozen) == canonical_json_digest(fresh.__dict__[key]), \
+                f"{fname} frozen != fresh deterministic build"
+        frozen_sd = _load_json(FROZEN_DIR / "source_digest.json")
+        assert canonical_json_digest(frozen_sd) == canonical_json_digest(fresh_sd)
+
+    def test_frozen_source_digest_data_blocked(self):
+        """Frozen source_digest must honestly record data_digest_status=blocked."""
+        sd = _load_json(FROZEN_DIR / "source_digest.json")
+        assert sd["input_data_digest"] is None
+        assert sd["data_digest_status"] == "blocked"
+        assert sd["data_digest_block_reason"]
+
+
+class TestReloadAndRevalidate:
+    """Reviewer req: reload frozen artifacts from disk and re-validate schema + digest
+    (simulates independent re-verification of the committed closure)."""
+
+    def test_reload_all_frozen_validate_schema_and_digest_stable(self):
+        from quantstudio.strategy_compiler.reference.source_digest import canonical_json_digest
+        # Record digests of on-disk bytes
+        first_pass = {}
+        for fname in FROZEN_FILES:
+            obj = _load_json(FROZEN_DIR / fname)
+            base = fname.replace(".json", "")
+            schema_name = "reference_source_digest" if base == "source_digest" else base
+            jsonschema.validate(obj, _load_json(SCHEMAS / f"{schema_name}.schema.json"))
+            first_pass[fname] = canonical_json_digest(obj)
+        # Reload a second time and confirm digests stable (no nondeterminism on disk)
+        for fname in FROZEN_FILES:
+            obj = _load_json(FROZEN_DIR / fname)
+            assert canonical_json_digest(obj) == first_pass[fname]
