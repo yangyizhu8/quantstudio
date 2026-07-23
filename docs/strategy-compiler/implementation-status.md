@@ -1,8 +1,8 @@
 ﻿# Strategy Compiler Implementation Status
 
 > Master plan: `QuantStudio Strategy Compiler frozen master plan v1.0`  
-> Current stage: PR6b-2A / Skill MVP G2 (Hermetic Partial Closure)
-> Stage status: **G2 CP3 Hermetic Reference Partial Closure merged to `main` via `--ff-only` on 2026-07-23 (current main HEAD=`6af7247`; G2 closure commit=`53d90f5`, ancestor of main; `53d90f5` contains frozen reference signals/orders/nav/source_digest artifacts, reference module, schemas, Oracle port + tests; `merge-base --is-ancestor bcdc85d main` PASS; G1-I engine/API/test files untouched by G2 delta). Data digest boundary: `input_data_digest=null`, `data_digest_status=blocked` — real market-data digest/Fidelity/Reference verification DEFERRED (not faked; no live QMT/resident daemon/real DuckDB). This is a Hermetic/Synthetic Reference Partial Closure, NOT equivalent to a complete real-data Reference closure PASS. G3/G4 not yet authorized. CP3 Oracle reference (pr6b2a `8931430`) remains the independent truth source.**
+> Current stage: PR6b-2A / Skill MVP G3 (Package Closure, in progress)
+> Stage status: **G2 CP3 Hermetic Reference Partial Closure merged to `main` (G2 closure commit `53d90f5` is a main ancestor; `merge-base --is-ancestor bcdc85d main` PASS; G1-I engine/API/test untouched by G2 delta). Data digest boundary: `input_data_digest=null`, `data_digest_status=blocked` — real market-data digest/Fidelity/Reference verification DEFERRED (not faked; no live QMT/resident daemon/real DuckDB). G2 is a Hermetic/Synthetic Reference Partial Closure, NOT a complete real-data Reference closure PASS. G3 Package Closure now in progress on `codex/g3-package` (from main); G4 not authorized. CP3 Oracle reference (pr6b2a `8931430`) remains the independent truth source. NOTE: stage identity is tracked by commit ancestry (`bcdc85d`=G1-I, `53d90f5`=G2 closure, both main ancestors), not by a fixed "current HEAD" string that self-invalidates on docs commits.**
 
 ## Stage overview
 

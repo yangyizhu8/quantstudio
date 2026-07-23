@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Strategy Package Manifest",
+  "description": "Manifest for a G3-rendered strategy package (Spec→IR→dual Renderer→package). Records version, entry points, artifact digests, target platforms, and optional G2 reference-closure linkage.",
+  "type": "object",
+  "required": [
+    "manifest_version",
+    "package_version",
+    "strategy_id",
+    "strategy_name",
+    "target_platforms",
+    "engine_semantics_version",
+    "entry_points",
+    "artifact_digests",
+    "render_timestamp"
+  ],
+  "properties": {
+    "manifest_version": { "type": "string", "const": "1.0" },
+    "package_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+" },
+    "strategy_id": { "type": "string", "minLength": 1 },
+    "strategy_name": { "type": "string" },
+    "target_platforms": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "engine_semantics_version": { "type": "string" },
+    "entry_points": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["platform", "filename"],
+        "properties": {
+          "platform": { "type": "string" },
+          "filename": { "type": "string" }
+        }
+      }
+    },
+    "artifact_digests": {
+      "type": "object",
+      "description": "sha256 (hex) of each packaged artifact filename",
+      "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+    },
+    "render_timestamp": {
+      "description": "Fixed sentinel for deterministic builds (NOT wall-clock).",
+      "type": ["string", "null"]
+    },
+    "g2_reference_closure": {
+      "type": ["object", "null"],
+      "description": "Optional linkage to G2 CP3 frozen reference artifacts. When present, proves the strategy's reference closure is tracked (data_digest_status records the deferred boundary).",
+      "properties": {
+        "reference_signals_path": { "type": "string" },
+        "reference_orders_path": { "type": "string" },
+        "reference_nav_path": { "type": "string" },
+        "source_digest_path": { "type": "string" },
+        "data_digest_status": { "type": "string", "enum": ["frozen", "blocked"] },
+        "oracle_source_digest": { "type": ["string", "null"] }
+      }
+    },
+    "builder_version": { "type": "string" }
+  },
+  "additionalProperties": false
+}
