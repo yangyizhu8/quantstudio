@@ -1,0 +1,117 @@
+{
+  "spec_version": "1.0",
+  "strategy_id": "etf_regression_rotation_v1",
+  "strategy_name": "ETF regression-momentum rotation (static 13 pool, PR6b-2A)",
+  "strategy_type": "rotation",
+  "asset_class": "etf",
+  "target_platforms": ["quantstudio", "ptrade-default"],
+  "target_outputs": ["local", "ptrade"],
+  "benchmark": "000300.SH",
+  "contract_versions": {
+    "strategy_spec_version": "1.0.0",
+    "engine_semantics_version": "0.4.0-next_open_basket",
+    "provider_contract_version": "0.2.0-frequency-aware",
+    "security_code_rules_version": "1.0.0",
+    "ptrade_profile_version": "1.0.0-default",
+    "renderer_version": "0.2.0-pr6b2a",
+    "skill_version": "0.2.0-pr6b2a"
+  },
+  "time_model": {
+    "market_data_frequency": "1d",
+    "factor_frequency": "1d",
+    "signal_frequency": "1d",
+    "decision_clock": "before_trading_start",
+    "execution_clock": "next_open",
+    "portfolio_valuation_frequency": "1d",
+    "holding_period_unit": "trading_day",
+    "signal_data_cutoff": "T-1-close"
+  },
+  "engine_profile": {
+    "profile_id": "daily-bar-v1",
+    "event_type": "bar",
+    "bar_frequency": "1d",
+    "market_depth": "L1",
+    "order_book_levels": 0,
+    "schema_supported": true,
+    "execution_status": "READY"
+  },
+  "universe": {
+    "kind": "manual_list",
+    "parameters": {
+      "codes": [
+        "518880.SH", "513880.SH", "159770.SZ", "159819.SZ", "513100.SH",
+        "159915.SZ", "515880.SH", "513120.SH", "159755.SZ", "159652.SZ",
+        "510500.SH", "159870.SZ", "159995.SZ"
+      ]
+    }
+  },
+  "hard_filters": {
+    "exclude_st": false,
+    "exclude_suspended": true,
+    "exclude_delisted": false,
+    "exclude_delisting_sorting": false,
+    "exclude_star_market": false,
+    "exclude_bse": false,
+    "min_listing_trade_days": 0,
+    "exclude_invalid_price": true,
+    "exclude_zero_volume": true,
+    "block_limit_up_buy": true,
+    "block_limit_down_sell": true,
+    "enforce_t1": true,
+    "round_lot": 100
+  },
+  "signals": {
+    "steps": [
+      {"id": "ma20", "operation": "ma", "parameters": {"field": "close", "lookback": 20}},
+      {"id": "ma60", "operation": "ma", "parameters": {"field": "close", "lookback": 60}},
+      {"id": "trend_filter", "operation": "compare", "parameters": {"operands": ["close_history", "ma20", "ma60"], "comparator": ">"}},
+      {"id": "regression_slope", "operation": "regression_slope", "parameters": {"field": "close", "lookback": 25, "annual_trading_days": 250}},
+      {"id": "r_squared", "operation": "r_squared", "parameters": {"field": "close", "lookback": 25}},
+      {"id": "volume_surge", "operation": "volume_surge", "parameters": {"field": "volume", "lookback": 6, "surge_multiplier": 2.5}},
+      {"id": "momentum_score", "operation": "multiply", "parameters": {"sources": ["regression_slope", "r_squared"]}},
+      {"id": "eligible_pool", "operation": "and", "parameters": {"sources": ["trend_filter", "volume_surge"], "negate_sources": ["volume_surge"]}},
+      {"id": "volume_exit", "operation": "held_exit", "parameters": {"trigger": "volume_surge", "execution_clock": "next_open"}},
+      {"id": "top3", "operation": "top_n", "parameters": {"source": "momentum_score", "eligible_filter": "eligible_pool", "exit_signal": "volume_exit", "top_n": 3, "ascending": false}}
+    ]
+  },
+  "portfolio": {
+    "kind": "equal_weight_top_n",
+    "parameters": {"max_positions": 3, "rebalance": "signal_triggered", "target_weight": 1.0}
+  },
+  "execution": {
+    "mode": "native",
+    "match_price_mode": "next_open",
+    "order_type": "market",
+    "allow_partial_fill": false
+  },
+  "risk": {
+    "kind": "stop_loss",
+    "parameters": {
+      "stop_loss_percent": 0.08,
+      "fallback_mode": "asset",
+      "fallback_asset": "511880.SH",
+      "max_single_weight": 0.34,
+      "cash_buffer": 0.0
+    }
+  },
+  "costs": {
+    "commission_rate": 0.00005,
+    "minimum_commission": 0.5,
+    "stamp_tax_rate": 0.0,
+    "transfer_fee_rate": 0.0,
+    "slippage_bps": 0.0
+  },
+  "data_requirements": {
+    "datasets": [
+      {"dataset": "etf_daily", "frequency": "1d", "fields": ["open", "high", "low", "close", "volume"], "required": true, "pit_required": false},
+      {"dataset": "etf_status", "frequency": "1d", "fields": ["is_suspended"], "required": true, "pit_required": true}
+    ]
+  },
+  "capability_requirements": ["etf_daily_backtest", "etf_status_filter"],
+  "approximations": [],
+  "user_confirmations": [
+    {"confirmation_id": "pr6b2a_etf_rotation_spec", "status": "CONFIRMED", "confirmed_at": "2026-07-23T12:00:00+08:00", "note": "PR6b-2A ETF rotation static pool spec confirmed for CP2 IR build."}
+  ],
+  "validation_policy": {"no_lookahead": "BLOCK", "hard_filters": "BLOCK", "strict_public_api": true, "smoke_backtest": "WHEN_READY"},
+  "output": {"root": "output/generated_strategies", "overwrite": false}
+}

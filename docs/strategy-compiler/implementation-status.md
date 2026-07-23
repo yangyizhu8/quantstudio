@@ -530,9 +530,14 @@ This supersedes the earlier `e78ec25` FAIL entry.
 - Next gate: corrective audit commit with real-schema and counterexample tests; no revision-detection/audit-schema work before re-review passes.
 ## Strategy Compiler Skill MVP delivery route approved (2026-07-23)
 
-The user approved a compressed four-gate delivery route. The authoritative sequencing addendum is:
-
-`docs/strategy-compiler/skill-mvp-delivery-roadmap-20260723.md`
+The user approved a compressed four-gate delivery route. The original sequencing
+note (`docs/strategy-compiler/skill-mvp-delivery-roadmap-20260723.md`) was
+referenced here as an "authoritative addendum" but that file is not present in
+the repository. Authoritative sequencing is therefore this section itself plus
+the G1/G2/G3/G4 gate records below; do not treat the roadmap filename as a
+live document. (G2 CP3 note: CP3 = an independent hand-written Reference Oracle
+per `pr6b2a-plan-etf-rotation.md` §CP3, with anti-circular-validation — the
+Oracle must not be fed from Codegen/Renderer output.)
 
 ### Delivery boundary
 

@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://quantstudio.local/schemas/reference_signals.schema.json",
+  "title": "CP3 Reference Signals Artifact",
+  "type": "object",
+  "required": ["schema_version", "strategy_id", "engine_semantics_version", "timezone", "generated_at", "signals"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "strategy_id": {"type": "string", "minLength": 1},
+    "engine_semantics_version": {"type": "string", "minLength": 1},
+    "timezone": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "source_digest_ref": {"type": "string", "minLength": 1},
+    "signals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["trading_date", "bare_code", "qmt_code"],
+        "properties": {
+          "trading_date": {"type": "string", "format": "date"},
+          "bare_code": {"type": "string", "minLength": 1},
+          "qmt_code": {"type": "string", "minLength": 1},
+          "trend_ok": {"type": "boolean"},
+          "momentum_score": {"type": ["number", "null"]},
+          "r_squared": {"type": ["number", "null"]},
+          "volume_surge": {"type": "boolean"},
+          "all_negative_session": {"type": "boolean"},
+          "eligible": {"type": "boolean"},
+          "selected_rank": {"type": ["integer", "null"], "minimum": 1}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

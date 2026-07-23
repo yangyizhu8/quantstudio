@@ -36,6 +36,7 @@
     "fidelity": {"oneOf": [{"type": "null"}, {"$ref": "#/definitions/fidelityResult"}]},
     "approximations": {"type": "array", "items": {"type": "string"}},
     "known_limitations": {"type": "array", "items": {"type": "string"}},
+    "reference_closure": {"oneOf": [{"type": "null"}, {"$ref": "#/definitions/referenceClosure"}]},
     "reproducibility": {
       "type": "object",
       "required": ["python_version", "quantstudio_version", "random_seed", "data_fingerprint"],
@@ -44,11 +45,12 @@
     }
   },
   "definitions": {
-    "semver": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"},
+    "semver": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z._-]+)?$"},
     "contractVersions": {"type": "object", "required": ["strategy_spec_version", "engine_semantics_version", "provider_contract_version", "security_code_rules_version", "ptrade_profile_version", "renderer_version", "skill_version"], "properties": {"strategy_spec_version": {"$ref": "#/definitions/semver"}, "engine_semantics_version": {"$ref": "#/definitions/semver"}, "provider_contract_version": {"$ref": "#/definitions/semver"}, "security_code_rules_version": {"$ref": "#/definitions/semver"}, "ptrade_profile_version": {"$ref": "#/definitions/semver"}, "renderer_version": {"$ref": "#/definitions/semver"}, "skill_version": {"$ref": "#/definitions/semver"}}, "additionalProperties": false},
     "checkStatus": {"enum": ["PASS", "BLOCKED", "NOT_RUN", "FAILED"]},
     "smokeResult": {"type": "object", "required": ["status", "command", "summary"], "properties": {"status": {"enum": ["PASS", "BLOCKED", "FAILED"]}, "command": {"type": "string"}, "summary": {"type": "string"}}, "additionalProperties": false},
-    "fidelityResult": {"type": "object", "required": ["status", "report_path", "summary"], "properties": {"status": {"enum": ["PASS", "PARTIAL", "FAILED"]}, "report_path": {"type": "string"}, "summary": {"type": "string"}}, "additionalProperties": false}
+    "fidelityResult": {"type": "object", "required": ["status", "report_path", "summary"], "properties": {"status": {"enum": ["PASS", "PARTIAL", "FAILED"]}, "report_path": {"type": "string"}, "summary": {"type": "string"}}, "additionalProperties": false},
+    "referenceClosure": {"type": "object", "required": ["schema_version", "oracle_source_digest", "data_digest", "config_digest", "signals_path", "orders_path", "nav_path", "source_digest_path", "trigger_reason_taxonomy"], "properties": {"schema_version": {"const": "1.0"}, "oracle_source_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "data_digest": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}, "config_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "signals_path": {"type": "string", "minLength": 1}, "orders_path": {"type": "string", "minLength": 1}, "nav_path": {"type": "string", "minLength": 1}, "source_digest_path": {"type": "string", "minLength": 1}, "trigger_reason_taxonomy": {"type": "array", "items": {"type": "string"}}}, "additionalProperties": false}
   },
   "additionalProperties": false
 }

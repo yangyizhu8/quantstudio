@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://quantstudio.local/schemas/reference_orders.schema.json",
+  "title": "CP3 Reference Orders Artifact (three-field separation)",
+  "type": "object",
+  "required": ["schema_version", "strategy_id", "engine_semantics_version", "timezone", "generated_at", "orders"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "strategy_id": {"type": "string", "minLength": 1},
+    "engine_semantics_version": {"type": "string", "minLength": 1},
+    "timezone": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "source_digest_ref": {"type": "string", "minLength": 1},
+    "trigger_reason_taxonomy": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Strategy-layer trigger reasons (stop_loss/volume_surge/rotation_exit/rotation_buy/defensive_clear/defensive_buy/no_candidate_clear)."
+    },
+    "orders": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["order_seq", "event_date", "trading_date", "bare_code", "qmt_code", "direction", "trigger_reason", "order_status"],
+        "properties": {
+          "order_seq": {"type": "integer", "minimum": 1},
+          "event_date": {"type": "string", "format": "date"},
+          "trading_date": {"type": "string", "format": "date"},
+          "bare_code": {"type": "string", "minLength": 1},
+          "qmt_code": {"type": "string", "minLength": 1},
+          "direction": {"enum": ["buy", "sell"]},
+          "trigger_reason": {"type": ["string", "null"], "description": "Strategy-layer reason; never an engine reject/cancel cause."},
+          "order_status": {"enum": ["filled", "rejected", "pending", "noop", "cancelled"], "description": "Engine-layer terminal/runtime status."},
+          "order_reason": {"type": ["string", "null"], "description": "Engine-layer reject/cancel reason; never a strategy reason."},
+          "requested_value": {"type": ["number", "null"]},
+          "requested_shares": {"type": ["integer", "null"], "minimum": 0},
+          "filled_price": {"type": ["number", "null"]},
+          "filled_shares": {"type": ["integer", "null"], "minimum": 0},
+          "basket_id": {"type": ["string", "null"]},
+          "momentum_score": {"type": ["number", "null"]}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

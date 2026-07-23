@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://quantstudio.local/schemas/reference_source_digest.schema.json",
+  "title": "CP3 Reference Source Digest",
+  "type": "object",
+  "required": ["schema_version", "strategy_id", "oracle_source_digest", "spec_digest", "artifact_schema_digest", "config_digest", "engine_commit", "engine_semantics_version", "data_digest_status"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "strategy_id": {"type": "string", "minLength": 1},
+    "oracle_source_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "spec_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "artifact_schema_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$", "description": "SHA-256 over the concatenated reference_* schema bytes (signals+orders+nav+source_digest)."},
+    "input_data_digest": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+    "data_digest_status": {"enum": ["frozen", "blocked"], "description": "blocked = real input-data digest not yet producible in current CP3 hermetic scope; do NOT treat file-existence as data-freeze evidence."},
+    "data_digest_block_reason": {"type": ["string", "null"]},
+    "config_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$", "description": "SHA-256 over the frozen Spec bytes (strategy_id + frozen params + costs)."},
+    "engine_commit": {"type": "string", "minLength": 1},
+    "engine_semantics_version": {"type": "string", "minLength": 1},
+    "provenance_ref": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}
