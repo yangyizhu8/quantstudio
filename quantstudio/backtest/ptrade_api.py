@@ -758,6 +758,20 @@ class PtradeAPI:
 
     # -------- 交易函数（即时执行模式）--------
 
+    def _route_next_open(self, security, instruction, target_value=None, shares=None):
+        """G1-I: next_open 模式订单路由（设计 v2 §3.6）。
+
+        - basket_active 且在 handle_data 内（_current_basket 非 None）→ order_in_basket
+          （before_trading_start / run_daily 调用时 _current_basket=None → 走 legacy pending）
+        - 否则 → _create_pending_order（legacy 单订单队列，§12 行为不变）
+        """
+        eng = self._engine
+        if getattr(eng, 'basket_active', False) and eng._current_basket is not None:
+            return eng.order_in_basket(security, instruction,
+                                       target_value=target_value, shares=shares)
+        return eng._create_pending_order(security, instruction,
+                                         target_value=target_value, shares=shares)
+
     def order_target_value(self, security: str, value: float, limit_price=None):
         """目标市值调仓（对应 Ptrade order_target_value）
         即时执行：调用后 Account 立即更新，策略下一行可见最新状态。
@@ -765,10 +779,10 @@ class PtradeAPI:
         A3: 返回 Order 对象，策略可检查 order.status 感知失败（涨跌停阻断/资金不足）。
 
         PR2: next_open 模式下换算前分流到 _create_pending_order（T 日只入队 + 预扣，
-        T+1 drain 成交）。close/open 路径逐行不变。"""
+        T+1 drain 成交）。close/open 路径逐行不变。
+        G1-I: basket_active 且 handle_data 内 → order_in_basket。"""
         if self._engine.match_price_mode == "next_open":
-            return self._engine._create_pending_order(
-                security, instruction="target_value", target_value=value)
+            return self._route_next_open(security, "target_value", target_value=value)
         order = self._engine._immediate_execute(
             security, target_value=value, prices=self._prices,
             date=self._current_date, curr_data=self._curr_data_for_execute())
@@ -781,11 +795,11 @@ class PtradeAPI:
         amount>0 买入，amount<0 卖出。
         A3: 返回 Order 对象。
 
-        PR2: next_open 模式下换算前分流到 _create_pending_order。close/open 不变。"""
+        PR2: next_open 模式下换算前分流到 _create_pending_order。close/open 不变。
+        G1-I: basket_active 且 handle_data 内 → order_in_basket。"""
         if self._engine.match_price_mode == "next_open":
             instr = "buy_shares" if amount >= 0 else "sell_shares"
-            return self._engine._create_pending_order(
-                security, instruction=instr, shares=abs(amount))
+            return self._route_next_open(security, instr, shares=abs(amount))
         order = self._engine._immediate_execute(
             security, shares=amount, prices=self._prices,
             date=self._current_date, curr_data=self._curr_data_for_execute())
@@ -801,13 +815,13 @@ class PtradeAPI:
         A3: 返回 Order 对象。
 
         PR2: next_open 模式下换算前分流到 _create_pending_order（存原始 value，
-        T+1 drain 时用 T+1 open 重新换算股数，避免 T 日价换算的穿越）。close/open 不变。"""
+        T+1 drain 时用 T+1 open 重新换算股数，避免 T 日价换算的穿越）。close/open 不变。
+        G1-I: basket_active 且 handle_data 内 → order_in_basket。"""
         if self._engine.match_price_mode == "next_open":
             if value == 0:
                 return self._make_noop_order(security)
             instr = "buy_value" if value > 0 else "sell_value"
-            return self._engine._create_pending_order(
-                security, instruction=instr, target_value=abs(value))
+            return self._route_next_open(security, instr, target_value=abs(value))
         bare = bare_code(security)
         price = self._get_current_price(bare)
         last_order = None
@@ -838,10 +852,10 @@ class PtradeAPI:
         A3: 返回 Order 对象。
 
         PR2: next_open 模式下换算前分流到 _create_pending_order（存原始 target_amount，
-        T+1 drain 时用 T+1 持仓重新算 delta）。close/open 不变。"""
+        T+1 drain 时用 T+1 持仓重新算 delta）。close/open 不变。
+        G1-I: basket_active 且 handle_data 内 → order_in_basket。"""
         if self._engine.match_price_mode == "next_open":
-            return self._engine._create_pending_order(
-                security, instruction="target_shares", shares=target_amount)
+            return self._route_next_open(security, "target_shares", shares=target_amount)
         bare = bare_code(security)
         qmt_code = self._bare_to_qmt(bare)
         pos = self._engine.account.positions.get(qmt_code)

@@ -42,6 +42,10 @@ class EngineConfig:
     # 与 PtradeBaseline.source_id 做一致性校验，防止沉默漂移。
     # 已知口径：tushare（本地 DuckDB）/ xtquant（交易所直连源）/ juyuan（Ptrade 平台聚源）。
     data_source: str = "tushare"
+    # G1-I: basket 再平衡开关（设计 v2 §3.2）。默认 "legacy"（next_open 单订单队列，不变）。
+    # "callback_basket" 仅在 daily-bar-v1 + next_open 下激活 → 0.4.0-next_open_basket 语义。
+    # 通过显式开关隔离而非自动检测，保证 close/open 与 legacy next_open 零回归。
+    rebalance_mode: str = "legacy"
 
     @classmethod
     def default(cls) -> "EngineConfig":
@@ -143,6 +147,27 @@ class PendingOrder:
     price: float = 0.0            # 实际成交价（T+1 open ± 滑点）
     filled_dt: str = ""           # 成交日（T+1）；主计划 7.13 "区分 created_dt 与 filled_dt"
     reason: str = ""              # 拒单原因
+    # G1-I: 所属 basket id（设计 v2 §4.2）。None = 独立订单（legacy pending queue）。
+    basket_id: Optional[str] = None
+
+
+@dataclass
+class RebalanceBasket:
+    """G1-I: basket 再平衡容器（设计 v2 §4.1）。
+
+    每次 handle_data 调用形成一个 basket（daily-bar-v1 only，§3.6）。
+    卖单优先 drain（Phase 1），所得现金支持买单（Phase 3A/3B 原子预检）。
+
+    status 真值表见设计 §10：pending → completed/partial/rejected/cancelled/expired。
+    realized_sell_proceeds 仅作审计元数据（卖出所得已由 _execute_sell 计入 cash，不重复加，§6.2）。
+    """
+    basket_id: str                        # "basket_{created_dt}_{seq}"
+    created_dt: str                       # T 日日期
+    scheduled_dt: str                     # T+1 日期
+    sell_orders: List[PendingOrder] = field(default_factory=list)
+    buy_orders: List[PendingOrder] = field(default_factory=list)
+    status: str = "pending"               # 见 §10 状态真值表
+    realized_sell_proceeds: float = 0.0   # 审计元数据（不重复加到 cash）
 
 
 @dataclass
@@ -278,7 +303,8 @@ class BacktestEngine:
                  match_price_mode: str = "close",
                  providers=None,
                  engine_profile: str = "daily-bar-v1",
-                 etf_t0: bool = False):
+                 etf_t0: bool = False,
+                 rebalance_mode: str = "legacy"):
         """strategy_type: 'ptrade' = Ptrade 原版策略（唯一支持模式，即时成交 + 精确涨跌停）。
 
         注：custom 自定义信号模式已于 2026-07-19 废弃（不保证撮合精度、无涨跌停阻断、
@@ -333,6 +359,13 @@ class BacktestEngine:
         if engine_profile == "minute-bar-v1" and match_price_mode == "next_open":
             raise ValueError("minute-bar-v1 不支持 next_open（分钟即时撮合模型，无跨日 pending 语义）")
         self.engine_profile = engine_profile
+        # G1-I: basket 再平衡激活门禁（设计 v2 §3.2-§3.3）。
+        if rebalance_mode not in ("legacy", "callback_basket"):
+            raise ValueError(f"rebalance_mode 必须是 legacy/callback_basket， got {rebalance_mode!r}")
+        # §3.3: minute-bar-v1 + callback_basket → 显式 BLOCK（非静默退化）
+        if rebalance_mode == "callback_basket" and engine_profile == "minute-bar-v1":
+            raise ValueError("minute-bar-v1 不支持 callback_basket（分钟即时撮合模型，无跨日 basket 语义）")
+        self.rebalance_mode = rebalance_mode
         # PR4 决策 4：ETF T+0 只挂分钟 Profile。日线 Profile 强制 False（守护黄金基线 87,752.56）。
         # is_etf 判定走 PR1 的 security_code_rules（不新写分类逻辑）。
         self.etf_t0 = bool(etf_t0) if engine_profile == "minute-bar-v1" else False
@@ -354,20 +387,41 @@ class BacktestEngine:
         self._today_orders: list = []
         self._t_day_close_prices: dict = {}
         self._current_date_str: str = ""
+        # G1-I: basket 再平衡状态（设计 v2 §4/§3.6）。
+        # _baskets: 已提交的 basket 列表（跨日持久，drain 后状态更新）。
+        # _current_basket: handle_data 调用期间的活跃 basket context（None=不在 basket 内）。
+        # _basket_seq: basket id 序号（同日递增）。
+        # 仅 basket_active 时使用；close/open/legacy next_open 路径恒不触达（§12）。
+        self._baskets: list = []
+        self._current_basket = None
+        self._basket_seq: int = 0
 
     @property
     def engine_semantics_version(self) -> str:
-        """PR2/PR4: 引擎执行语义版本（Run Card 记录用）。
+        """PR2/PR4/G1-I: 引擎执行语义版本（Run Card 记录用）。
 
         - close/open：`0.1.0-legacy`（next_open pending queue 未激活，行为与 PR2 前一致）
-        - next_open：`0.2.0-next_open_pending`（PR2 真实 pending order queue）
+        - next_open + legacy：`0.2.0-next_open_pending`（PR2 真实 pending order queue）
+        - next_open + callback_basket：`0.4.0-next_open_basket`（G1-I basket 再平衡）
         - minute-bar-v1：`0.3.0-minute-bar`（PR4 分钟事件循环 + 精确调度 + ETF T+0）
         """
         if self.engine_profile == "minute-bar-v1":
             return "0.3.0-minute-bar"
         if self.match_price_mode == "next_open":
+            if self.basket_active:
+                return "0.4.0-next_open_basket"
             return "0.2.0-next_open_pending"
         return "0.1.0-legacy"
+
+    @property
+    def basket_active(self) -> bool:
+        """G1-I: basket 再平衡是否激活（设计 v2 §3.2 三条件同时满足）。
+
+        通过显式开关隔离，保证 close/open 与 legacy next_open 零回归（§12）。
+        """
+        return (self.engine_profile == "daily-bar-v1"
+                and self.match_price_mode == "next_open"
+                and self.rebalance_mode == "callback_basket")
 
     def run(self) -> BacktestResult:
         """Execute the daily-bar backtest."""
@@ -461,6 +515,9 @@ class BacktestEngine:
                                   for c, v in zip(curr_data['code'], curr_data['open'])}
                 self._today_orders = []
                 self._drain_pending_orders(curr_data, day_str, t1_open_prices)
+                # G1-I: basket drain（独立订单之后，§11 优先级）。basket_active 时激活。
+                if self.basket_active:
+                    self._drain_baskets(curr_data, day_str, t1_open_prices)
                 self.refresh_portfolio(prices)
 
             prev_day_str = prev_day.strftime('%Y-%m-%d')
@@ -490,6 +547,9 @@ class BacktestEngine:
         # 主计划 7.13 "末日订单标记 expired 或保留 pending"。仅 next_open 模式有 pending。
         if self.match_price_mode == "next_open":
             self._expire_remaining_pending()
+            # G1-I: basket 也 expire（§9.2，pending_sell_shares 归零不变式）
+            if self.basket_active:
+                self._expire_remaining_baskets()
 
         logger.info(f"[Backtest] completed: {len(self.result.nav_history)} days")
         from .ptrade_metrics import calculate_ptrade_like_metrics
@@ -877,6 +937,410 @@ class BacktestEngine:
         return Order(order_id=order_id, security=security, direction=direction,
                      status="pending", created_dt=created_dt)
 
+    # ===================== G1-I: basket rebalance =====================
+
+    def push_basket_context(self, created_dt: str):
+        """G1-I: handle_data 调用前 push basket context（设计 v2 §3.6）。
+
+        每次 handle_data 调用形成一个 basket。before_trading_start / run_daily 不并入 basket
+        （那些路径的订单仍走 _create_pending_order legacy 队列）。
+        """
+        self._basket_seq += 1
+        seq_str = f"{self._basket_seq:03d}"
+        dt_compact = created_dt.replace("-", "")
+        basket_id = f"basket_{dt_compact}_{seq_str}"
+        scheduled_dt = self._next_trade_day_str(created_dt)
+        self._current_basket = RebalanceBasket(
+            basket_id=basket_id, created_dt=created_dt,
+            scheduled_dt=scheduled_dt if scheduled_dt else created_dt)
+
+    def submit_basket(self):
+        """G1-I: handle_data 调用后 pop + 提交 basket（设计 v2 §3.6）。
+
+        空 basket（无任何有效订单）→ 标记 cancelled，不入 _baskets。
+        否则入 _baskets，等待 scheduled_dt 的 T+1 drain。
+        """
+        basket = self._current_basket
+        self._current_basket = None
+        if basket is None:
+            return None
+        if not basket.sell_orders and not basket.buy_orders:
+            basket.status = "cancelled"
+        self._baskets.append(basket)
+        return basket
+
+    def _intent_direction(self, instruction, target_value, shares, pos):
+        """G1-I: 从指令意图判定方向（不依赖估算结果），供冲突检查用。
+
+        与 _estimate_pending 的区别：即使 _estimate_pending 因边界返回 None（如 sell_all-0），
+        本函数仍能给出意图方向，保证 §4.3 冲突检测不漏判。
+        """
+        sell_instructions = ("sell_shares", "sell_value", "sell_all")
+        if instruction in sell_instructions:
+            return "sell"
+        if instruction in ("buy_shares", "buy_value"):
+            return "buy"
+        if instruction == "target_value":
+            return "sell" if target_value == 0 else "buy"
+        if instruction == "target_shares":
+            current = pos.volume if pos else 0
+            delta = (shares or 0) - current
+            return "buy" if delta >= 0 else "sell"
+        return None
+
+    def order_in_basket(self, security, instruction,
+                        target_value=None, shares=None) -> Order:
+        """G1-I: basket 内下单（设计 v2 §4.3/§5）。
+
+        与 _create_pending_order 的区别：
+        - 订单挂在当前 basket 上（basket_id 非空），不进 _pending_orders。
+        - 卖单仍预扣 pending_sell_shares（§5.1）；买单不预扣 cash（§5.2，T+1 原子预检）。
+        - 同一 bare code 唯一性检查（§4.3）：重复/冲突/不支持 target → 拒绝后者。
+        """
+        basket = self._current_basket
+        if basket is None:
+            raise RuntimeError("order_in_basket 需在 push_basket_context / submit_basket 之间调用")
+        bare = str(security).split(".")[0]
+        code = self._to_qmt(bare)
+        created_dt = basket.created_dt
+        scheduled_dt = basket.scheduled_dt
+
+        # 末日下单：无下一交易日 → 创建即拒
+        if self._next_trade_day_str(created_dt) is None:
+            return Order(order_id=f"basket_{code}_{created_dt}_rej",
+                         security=security, direction="unknown",
+                         status="rejected", reason="no_next_trade_day", created_dt=created_dt)
+
+        est_price = self._t_day_close_prices.get(code, 0)
+        if est_price <= 0:
+            return Order(order_id=f"basket_{code}_{created_dt}_rej",
+                         security=security, direction="unknown",
+                         status="rejected", reason="no_price", created_dt=created_dt)
+
+        # §4.3: 同一 bare code 唯一性（已入篮的 code 集合）
+        existing_codes = {po.code for po in basket.sell_orders + basket.buy_orders}
+
+        # MVP 限制（§4.3）：对已持仓标的只接受 target_value=0 的 sell-all；
+        # 对未持仓标的只接受 target_value>0 的 buy；其余增减仓 BLOCK。
+        pos = self.account.positions.get(code)
+
+        def _reject(reason, direction="unknown"):
+            return Order(order_id=f"basket_{code}_{created_dt}_rej",
+                         security=security, direction=direction,
+                         status="rejected", reason=reason, created_dt=created_dt)
+
+        # 先判定方向 + MVP target 合法性（复用 _estimate_pending 的方向逻辑）
+        direction, est_shares, est_cost = self._estimate_pending(
+            code, instruction, target_value, shares, est_price)
+
+        # §4.3 唯一性 / 冲突检查（先于 noop / MVP target 检查：同 code 冲突优先归 conflict/duplicate）。
+        # 用"指令意图方向"判定，避免 _estimate_pending 在边界（如 sell_all-0）返回 None 导致漏判。
+        intent_direction = self._intent_direction(instruction, target_value, shares, pos)
+        if code in existing_codes:
+            prior_dirs = {po.direction for po in basket.sell_orders + basket.buy_orders
+                          if po.code == code}
+            check_dir = direction or intent_direction
+            if check_dir is None:
+                return _reject("noop")
+            if check_dir in prior_dirs:
+                return _reject("basket_duplicate_order", check_dir)
+            else:
+                return _reject("basket_conflicting_order", check_dir)
+
+        if direction is None:
+            return _reject("noop")
+
+        # MVP 限制：只允许 sell_all（已持仓清仓）和纯买入（未持仓建仓）
+        if pos and pos.volume > 0:
+            # 已持仓：只接受 sell_all（target_value=0）
+            if instruction != "sell_all" and not (instruction == "target_value" and target_value == 0):
+                return _reject("basket_unsupported_target", direction)
+        else:
+            # 未持仓：只接受买入类（direction=buy）
+            if direction != "buy":
+                return _reject("basket_unsupported_target", direction)
+
+        # 卖单：预扣 pending_sell_shares（§5.1，与 legacy 一致）；买单：不预扣 cash（§5.2）
+        if direction == "sell":
+            avail = (pos.can_sell - pos.pending_sell_shares) if pos else 0
+            if avail < est_shares:
+                return _reject("insufficient_sellable", direction)
+            pos.pending_sell_shares += est_shares
+            est_cost = 0.0  # 卖单不锁现金
+        # 买单：不预扣 cash / locked_cash（§5.2 变更）
+
+        order_id = f"basket_{code}_{created_dt}_{self._basket_seq}_{len(basket.buy_orders) + len(basket.sell_orders)}"
+        po = PendingOrder(
+            order_id=order_id, created_dt=created_dt, scheduled_dt=scheduled_dt,
+            security=security, code=code, instruction=instruction, direction=direction,
+            target_value=target_value, shares=shares,
+            est_cost=est_cost, est_shares=est_shares, status="pending",
+            basket_id=basket.basket_id)
+        if direction == "buy":
+            basket.buy_orders.append(po)
+        else:
+            basket.sell_orders.append(po)
+        logger.debug(f"[G1-I] basket {basket.basket_id} 入篮 {direction} {code} "
+                     f"instr={instruction} est_shares={est_shares} T={created_dt} T+1={scheduled_dt}")
+        return Order(order_id=order_id, security=security, direction=direction,
+                     status="pending", created_dt=created_dt)
+
+    def _drain_baskets(self, t1_data, t1_day_str: str, t1_open_prices: dict):
+        """G1-I: T+1 开盘 basket drain 状态机（设计 v2 §6）。
+
+        处理顺序（§11）：独立订单（basket_id=None）已由 _drain_pending_orders 先 drain；
+        本方法只处理 basket（按 basket_id 排序）。
+
+        每个 scheduled_dt == T+1 的 basket 按五阶段处理：
+          Phase 1: 卖单优先（bare code 字典序）→ _execute_sell 已 cash += net_proceeds
+          Phase 2: mandatory sell 失败检查 → buy leg 全拒（reason=mandatory_sell_failed）
+          Phase 3A: buy-leg 原子预检（T+1 实际价计算 actual_required_cash）
+          Phase 3B: buy-leg 执行判定（total > cash 或 preflight 失败 → 全拒）
+          Phase 5: basket status 更新（§10 真值表）
+
+        t1_open_prices: T+1 open 价字典。
+        """
+        from .libs.shared_ashare_rules import is_price_limit_blocked
+        # 按 basket_id 排序（§6.3）
+        baskets_to_drain = sorted(
+            [b for b in self._baskets if b.status == "pending" and b.scheduled_dt == t1_day_str],
+            key=lambda b: b.basket_id)
+        for basket in baskets_to_drain:
+            self._drain_single_basket(basket, t1_data, t1_day_str, t1_open_prices,
+                                      is_price_limit_blocked)
+
+    def _drain_single_basket(self, basket, t1_data, t1_day_str, t1_open_prices,
+                              is_price_limit_blocked):
+        """G1-I: 单个 basket 的五阶段 drain（设计 v2 §6.1）。"""
+        # Phase 1: 卖单优先（bare code 字典序，§6.3）
+        basket.sell_orders.sort(key=lambda po: po.code)
+        basket.buy_orders.sort(key=lambda po: po.code)
+        sells = basket.sell_orders
+        cash_before_sells = self.account.cash
+        sell_has_failure = False
+        sell_any_filled = False
+        for po in sells:
+            ok = self._drain_basket_sell(po, t1_data, t1_day_str, t1_open_prices,
+                                          is_price_limit_blocked)
+            if ok:
+                sell_any_filled = True
+            else:
+                sell_has_failure = True
+        cash_after_sells = self.account.cash
+        # §6.2: realized_sell_proceeds 仅审计元数据（_execute_sell 已计入 cash，不重复加）
+        basket.realized_sell_proceeds = cash_after_sells - cash_before_sells
+
+        # Phase 2: mandatory sell 失败检查 → buy leg 全拒（§7）
+        if sell_has_failure:
+            for buy_po in basket.buy_orders:
+                buy_po.status = "rejected"
+                buy_po.reason = "mandatory_sell_failed"
+            basket.status = "partial" if sell_any_filled else "rejected"
+            return
+
+        # 无卖单或卖单全过 → 进入 buy leg
+        buys = basket.buy_orders
+
+        # Phase 3A: buy-leg 原子预检（T+1 实际价计算 actual_required_cash，§7.2）
+        preflight = []  # [(buy_po, actual_shares, actual_value, ok, reject_reason)]
+        total_required_cash = 0.0
+        preflight_any_failed = False
+        for buy_po in buys:
+            ok, actual_shares, actual_value, reject_reason, req_cash = self._buy_preflight_one(
+                buy_po, t1_data, t1_day_str, t1_open_prices, is_price_limit_blocked)
+            preflight.append((buy_po, actual_shares, actual_value, ok, reject_reason))
+            if ok:
+                total_required_cash += req_cash
+            else:
+                preflight_any_failed = True
+
+        # Phase 3B: buy-leg 执行判定（全过才执行，否则全拒，§7.2）
+        if preflight_any_failed or total_required_cash > self.account.cash + 1e-9:
+            for buy_po, _ash, _av, ok, reject_reason in preflight:
+                buy_po.status = "rejected"
+                # 已被预检标记具体原因（halted/limit_up/direction_changed/rounding）的保留；
+                # 否则统一归为资金不足
+                buy_po.reason = reject_reason if (not ok and reject_reason) else "insufficient_cash_after_sells"
+            basket.status = "partial" if (sell_any_filled or any(
+                po.status == "filled" for po in basket.sell_orders)) else "rejected"
+            return
+
+        # 全部预检通过 + 资金充足 → 依次执行（§6.1 Phase 3B）
+        for buy_po, actual_shares, actual_value, _ok, _rr in preflight:
+            vol, fp = self._execute_buy(
+                buy_po.code, t1_open_prices.get(buy_po.code, 0),
+                buy_value=actual_value if actual_value else None,
+                buy_shares=actual_shares if actual_shares else None,
+                date=t1_day_str, curr_data=t1_data)
+            if vol > 0:
+                buy_po.status = "filled"
+                buy_po.filled_amount = vol
+                buy_po.price = fp
+                buy_po.filled = vol * fp
+                buy_po.filled_dt = t1_day_str
+            else:
+                buy_po.status = "rejected"
+                buy_po.reason = "insufficient_cash_or_rounding"
+
+        # Phase 5: basket status 更新（§10 真值表）
+        sell_all_filled = all(po.status == "filled" for po in basket.sell_orders) if basket.sell_orders else True
+        buy_all_filled = all(po.status == "filled" for po in basket.buy_orders) if basket.buy_orders else True
+        if sell_all_filled and buy_all_filled:
+            basket.status = "completed"
+        else:
+            basket.status = "partial"
+
+    def _drain_basket_sell(self, po, t1_data, t1_day_str, t1_open_prices,
+                            is_price_limit_blocked) -> bool:
+        """G1-I: Phase 1 单笔卖单 drain。返回是否成交（True=filled）。"""
+        t1_open = t1_open_prices.get(po.code, 0)
+        if t1_open <= 0:
+            po.status = "rejected"; po.reason = "no_price"
+            self._release_basket_sell_reservation(po)
+            return False
+        if self._is_halted_at(po.code, t1_data):
+            po.status = "rejected"; po.reason = "halted"
+            self._release_basket_sell_reservation(po)
+            return False
+        pct_chg = self._get_pct_chg(po.code, t1_data, t1_day_str)
+        # direction=0 查跌停阻断（§8：跌停卖 blocked）
+        if is_price_limit_blocked(po.code, 0, pct_chg):
+            po.status = "rejected"; po.reason = "limit_down_blocked"
+            self._release_basket_sell_reservation(po)
+            return False
+        # 释放预扣（防 double-count，§6.2）
+        self._release_basket_sell_reservation(po)
+        # 用 T+1 open 执行（_execute_sell 内部已 cash += net_proceeds）
+        # target_value=0 与 sell_all 等价（清仓，§4.3 MVP）
+        is_sell_all = po.instruction == "sell_all" or (
+            po.instruction == "target_value" and po.target_value == 0)
+        vol, fp = self._execute_sell(
+            po.code, t1_open,
+            sell_all=is_sell_all,
+            sell_value=po.target_value if po.instruction == "sell_value" else None,
+            sell_shares=po.shares if po.instruction == "sell_shares" else None,
+            date=t1_day_str, curr_data=t1_data)
+        if vol > 0:
+            po.status = "filled"; po.filled_amount = vol; po.price = fp
+            po.filled = vol * fp; po.filled_dt = t1_day_str
+            return True
+        po.status = "rejected"; po.reason = "insufficient_cash_or_rounding"
+        return False
+
+    def _release_basket_sell_reservation(self, po):
+        """G1-I: 释放卖单预扣的 pending_sell_shares（drain 执行前调用，防 double-count）。"""
+        pos = self.account.positions.get(po.code)
+        if pos:
+            pos.pending_sell_shares = max(0, pos.pending_sell_shares - po.est_shares)
+
+    def cancel_basket_order(self, basket, po):
+        """G1-I: 取消 basket 内订单 + 归还预扣（设计 v2 §9.1）。
+
+        - sell order → 精确减少 pending_sell_shares（by est_shares）
+        - buy order → 无需归还（未预扣 cash）
+        - 从 basket 移除该 order；basket 变空 → status = "cancelled"
+        - refund 幂等：已 filled/rejected/cancelled 的 order 不得重复归还（状态不变）
+        """
+        # 幂等：仅 pending 状态可 cancel
+        if po.status != "pending":
+            return False
+        if po.direction == "sell":
+            pos = self.account.positions.get(po.code)
+            if pos:
+                pos.pending_sell_shares = max(0, pos.pending_sell_shares - po.est_shares)
+        # buy 无预扣，无需归还
+        po.status = "cancelled"
+        po.reason = "user_cancelled"
+        # 从 basket 移除
+        if po in basket.sell_orders:
+            basket.sell_orders.remove(po)
+        if po in basket.buy_orders:
+            basket.buy_orders.remove(po)
+        if not basket.sell_orders and not basket.buy_orders:
+            basket.status = "cancelled"
+        return True
+
+    def _expire_remaining_baskets(self):
+        """G1-I: 主循环结束，仍 pending 的 basket 标记 expired，归还卖单预扣（设计 v2 §9.2）。
+
+        不变式：end-of-backtest 后所有 pending_sell_shares == 0。
+        """
+        for basket in self._baskets:
+            if basket.status != "pending":
+                continue
+            for po in basket.sell_orders + basket.buy_orders:
+                if po.status != "pending":
+                    continue
+                if po.direction == "sell":
+                    pos = self.account.positions.get(po.code)
+                    if pos:
+                        pos.pending_sell_shares = max(0, pos.pending_sell_shares - po.est_shares)
+                po.status = "expired"
+                po.reason = "end_of_backtest"
+            basket.status = "expired"
+
+    def _buy_preflight_one(self, po, t1_data, t1_day_str, t1_open_prices,
+                            is_price_limit_blocked):
+        """G1-I: Phase 3A 单笔买单原子预检（§7.2）。
+
+        返回 (ok, actual_shares, actual_value, reject_reason, required_cash)。
+        actual_shares/actual_value 二选一非 None（None 表示用另一口径传给 _execute_buy）。
+        """
+        from .libs.shared_ashare_rules import round_to_lot
+        t1_open = t1_open_prices.get(po.code, 0)
+        if t1_open <= 0:
+            return False, None, None, "no_price", 0.0
+        if self._is_halted_at(po.code, t1_data):
+            return False, None, None, "halted", 0.0
+        pct_chg = self._get_pct_chg(po.code, t1_data, t1_day_str)
+        # direction=1 查涨停阻断（§8：涨停买 blocked）
+        if is_price_limit_blocked(po.code, 1, pct_chg):
+            return False, None, None, "limit_up_blocked", 0.0
+
+        # 用 T+1 实际价重算股数/金额（延迟解析，§6/§7.2）
+        pos = self.account.positions.get(po.code)
+        if po.instruction == "buy_value":
+            actual_shares = None
+            actual_value = po.target_value
+        elif po.instruction == "buy_shares":
+            actual_shares = po.shares
+            actual_value = None
+        elif po.instruction == "target_value":
+            current_value = (pos.volume * t1_open) if pos and pos.volume > 0 else 0
+            delta = po.target_value - current_value
+            if po.target_value == 0:
+                return False, None, None, "noop", 0.0
+            if delta <= 0:
+                # §5.3: T+1 跳空导致方向翻转（T 日判 buy，T+1 重算后应卖）→ reject
+                return False, None, None, "direction_changed_at_drain", 0.0
+            if current_value > 0 and abs(delta) / current_value < self.min_rebalance_pct:
+                return False, None, None, "below_rebalance_threshold", 0.0
+            actual_shares = None
+            actual_value = delta
+        elif po.instruction == "target_shares":
+            current = pos.volume if pos else 0
+            delta = (po.shares or 0) - current
+            if delta <= 0:
+                return False, None, None, "direction_changed_at_drain", 0.0
+            actual_shares = round_to_lot(delta, 100)
+            actual_value = None
+        else:
+            return False, None, None, "unknown_instruction", 0.0
+
+        # 用 T+1 价计算实际所需现金（含佣金/过户费；买入侧本就无印花税）
+        if actual_shares is not None:
+            shares_int = round_to_lot(actual_shares, 100)
+        else:
+            shares_int = round_to_lot(int(actual_value / t1_open), 100)
+        if shares_int <= 0:
+            return False, None, None, "insufficient_cash_or_rounding", 0.0
+        fill_price = self._apply_slippage(t1_open, "buy")
+        cost_amount = shares_int * fill_price
+        commission = max(cost_amount * self.cost.commission_rate, self.cost.min_commission)
+        transfer_fee = cost_amount * self.cost.transfer_fee_rate
+        required_cash = cost_amount + commission + transfer_fee
+        return True, actual_shares, actual_value, "", required_cash
+
     def _reject_pending(self, po: PendingOrder, status: str, reason: str):
         """拒单/expire/cancel 公共归还逻辑。status ∈ {rejected, expired, cancelled} 三态独立。
         用 po.est_cost/est_shares 精确归还预扣，防累积漂移。"""
@@ -1112,18 +1576,29 @@ class BacktestEngine:
         # 调用 Ptrade 策略函数（即时执行：order 直接成交）
         try:
             if 'before_trading_start' in self.strategy:
+                # §3.6: before_trading_start 不并入 basket（_current_basket 仍 None → legacy pending）
                 self.strategy['before_trading_start'](ctx, data)
         except Exception as e:
             logger.error(f"[Ptrade] before_trading_start 错误: {e}")
         try:
+            # G1-I: handle_data 内的订单形成一个 basket（§3.6）。
+            # basket_active 时 push → handle_data → submit；非 basket 模式不开启 context。
+            if self.basket_active:
+                self.push_basket_context(day_str)
             if 'handle_data' in self.strategy:
                 self.strategy['handle_data'](ctx, data)
             # run_daily 注册任务与 handle_data 可并存；日线引擎每天均执行一次。
+            # §3.6: run_daily 在 basket context 内执行（其订单也并入 handle_data 的 basket）。
             daily_tasks = getattr(_api, '_daily_tasks', [])
             for func, _time in daily_tasks:
                 func(ctx)
+            if self.basket_active:
+                self.submit_basket()
         except Exception as e:
             logger.error(f"[Ptrade] handle_data 错误: {e}")
+            # 异常时也要 pop basket context，避免泄漏到下一日
+            if self.basket_active and self._current_basket is not None:
+                self.submit_basket()
 
         # 即时执行模式：不需要返回信号，交易已在策略执行过程中即时完成
 
