@@ -1,6 +1,6 @@
 {
   "daemon_schedule": {
-    "daily_time": "17:00",
+    "daily_time": "21:00",
     "check_interval_sec": 300
   },
   "tasks": [
@@ -476,7 +476,17 @@
     "rebuild_on_gap": true
   },
   "health_check": {
-    "stale_alert_hours": 6,
+    "stale_alert_hours": 30,
+    "stale_alert_hours_by_freq": {
+      "1min": 20
+    },
+    "stale_alert_hours_by_table": {
+      "fin_indicator": 2200,
+      "balance_statement": 2200,
+      "income_statement": 2200,
+      "cashflow_statement": 2200,
+      "stock_float_share": 720
+    },
     "full_quality_after_run": true
   },
   "alert": {

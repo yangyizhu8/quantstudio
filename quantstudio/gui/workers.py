@@ -1,6 +1,7 @@
 """后台任务封装（QThread）。所有耗时操作必须放此处，否则 GUI 冻结。"""
 from pathlib import Path
 from PyQt6.QtCore import QThread, pyqtSignal
+from filelock import FileLock, Timeout
 
 
 class BaseWorker(QThread):
@@ -21,8 +22,11 @@ class BaseWorker(QThread):
 
 
 class DaemonWorker(BaseWorker):
-    """QThread 包装 daemon.run_forever()，实现 GUI 可启动/停止常驻增量进程。
-    与 TaskWorker/ExportWorker 不同：不 emit finished_ok（持续运行直到 stop）。"""
+    """DEPRECATED v3：旧版 QThread daemon 包装，长期持有 DuckDB _shared_conn，
+    与 GUI 跨进程读库冲突。新常驻模式由独立 OS 进程（subprocess）+ DaemonLifecycle
+    负责，GUI 通过 quantstudio.gui.daemon_process 管理子进程。此类保留作回退，
+    **新代码不应实例化**。
+    """
 
     progress = pyqtSignal(str)
 
@@ -41,6 +45,152 @@ class DaemonWorker(BaseWorker):
         """优雅停止常驻进程"""
         self.collector._running = False
         self.progress.emit("正在停止常驻进程...")
+
+
+def _collector_run_lock_path() -> Path:
+    """collector_run.lock 路径（与 daemon_lifecycle.collector_run_lock_path 同源）。"""
+    from quantstudio._paths import DATA_ROOT
+    return DATA_ROOT / ".collector_run.lock"
+
+
+class LockedTaskWorker(BaseWorker):
+    """v3：GUI 手动拉取单个任务的 Worker。
+
+    collector_run.lock 在本 worker 线程内 acquire/release（评审 1），
+    覆盖 from_configs + resolve_source_chain + execute_task + 质量审计 + close 全程。
+    主线程不碰 collector、不超时等锁。
+
+    获取锁失败（daemon 正在写库）→ emit finished_err("定时采集正在运行，请稍后重试")。
+    """
+
+    def __init__(self, task: dict, config_dir: Path, mode: str = "incremental",
+                 run_quality_audit: bool = True, lock_timeout: int = 5):
+        super().__init__()
+        self.task = task
+        self.config_dir = Path(config_dir)
+        self.mode = mode
+        self.run_quality_audit = run_quality_audit
+        self.lock_timeout = lock_timeout
+
+    def run(self):
+        from quantstudio.pipeline.daemon import ResidentCollector
+        lock = FileLock(str(_collector_run_lock_path()), timeout=self.lock_timeout)
+        try:
+            lock.acquire()
+        except Timeout:
+            self.finished_err.emit("定时采集正在运行，请稍后重试")
+            return
+        collector = None
+        try:
+            self.progress.emit(f"开始({self.mode}): {self.task['name']}")
+            # 锁内首次 from_configs（_init_tables 安全）
+            collector = ResidentCollector.from_configs(
+                self.config_dir / "data_config.json",
+                self.config_dir / "sources_config.json",
+                self.config_dir / "collector_tasks.json",
+                self.config_dir / "alignment_rules.json")
+            # 预检查（resolve_source_chain）在 worker 线程内（评审 2）
+            chain = collector.resolve_source_chain(self.task)
+            if not chain:
+                self.finished_err.emit(
+                    f"任务 {self.task.get('name','?')} 没有已启用且支持该任务的数据源")
+                return
+            ok = collector.execute_task(
+                self.task, mode=self.mode,
+                run_quality_audit=self.run_quality_audit)
+            if ok:
+                self.finished_ok.emit({"task": self.task["name"], "mode": self.mode})
+            else:
+                self.finished_err.emit(f"任务失败: {self.task['name']}")
+        except Exception as e:
+            self.finished_err.emit(f"{type(e).__name__}: {e}")
+        finally:
+            # 关键：释放 _shared_conn（评审 1.4）
+            if collector is not None:
+                try:
+                    collector.close()
+                except Exception:
+                    pass
+            try:
+                lock.release()
+            except Exception:
+                pass
+
+
+class LockedRunAllWorker(BaseWorker):
+    """v3：GUI"全部执行"的 Worker。
+
+    持有 collector_run.lock 跑完整个队列 + 末尾质量审计（评审 1：不每任务单独
+    拿锁，防 daemon 插入队列中间）。主线程零 collector 调用。
+    """
+
+    def __init__(self, tasks: list, config_dir: Path,
+                 mode: str = "incremental", lock_timeout: int = 5):
+        super().__init__()
+        self.tasks = tasks
+        self.config_dir = Path(config_dir)
+        self.mode = mode
+        self.lock_timeout = lock_timeout
+
+    def run(self):
+        from quantstudio.pipeline.daemon import ResidentCollector
+        lock = FileLock(str(_collector_run_lock_path()), timeout=self.lock_timeout)
+        try:
+            lock.acquire()
+        except Timeout:
+            self.finished_err.emit("定时采集正在运行，请稍后重试")
+            return
+        collector = None
+        results = []
+        try:
+            collector = ResidentCollector.from_configs(
+                self.config_dir / "data_config.json",
+                self.config_dir / "sources_config.json",
+                self.config_dir / "collector_tasks.json",
+                self.config_dir / "alignment_rules.json")
+            total = len(self.tasks)
+            for i, task in enumerate(self.tasks):
+                if self._cancelled:
+                    self.progress.emit("已取消")
+                    break
+                name = task.get("name", "?")
+                # 队列内跳过无可用数据源的任务（不抛错）
+                try:
+                    chain = collector.resolve_source_chain(task)
+                except Exception:
+                    chain = []
+                if not chain:
+                    self.progress.emit(f"⏭ 跳过 {name}（无可用数据源）({i+1}/{total})")
+                    results.append({"name": name, "ok": False, "skipped": True})
+                    continue
+                self.progress.emit(f"执行 {name} ({i+1}/{total})")
+                try:
+                    ok = collector.execute_task(task, mode=self.mode,
+                                                run_quality_audit=False)
+                    results.append({"name": name, "ok": ok})
+                except Exception as e:
+                    results.append({"name": name, "ok": False, "error": str(e)})
+                    self.progress.emit(f"❌ {name}: {e}")
+            # 队列结束后统一审计
+            try:
+                collector._run_full_quality_audit()
+            except Exception as e:
+                self.progress.emit(f"质量审计异常: {e}")
+            ok_count = sum(1 for r in results if r.get("ok"))
+            self.finished_ok.emit({"results": results, "ok_count": ok_count,
+                                   "total": len(results)})
+        except Exception as e:
+            self.finished_err.emit(f"{type(e).__name__}: {e}")
+        finally:
+            if collector is not None:
+                try:
+                    collector.close()
+                except Exception:
+                    pass
+            try:
+                lock.release()
+            except Exception:
+                pass
 
 
 class TaskWorker(BaseWorker):
@@ -194,6 +344,6 @@ class BacktestWorker(BaseWorker):
 
     def _on_engine_progress(self, current, total, date_str):
         if self._cancelled:
-            raise KeyboardInterrupt("用户取消回测")
+            raise RuntimeError("用户取消回测")
         self.day_progress.emit(current, total, date_str)
         self.progress.emit(f"[{current}/{total}] {date_str}")

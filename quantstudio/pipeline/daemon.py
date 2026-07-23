@@ -25,6 +25,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 import uuid
 from datetime import datetime, timedelta
@@ -129,6 +130,30 @@ class ResidentCollector:
 
         self._running = True
         self._adapters: Dict[str, object] = {}  # source → adapter 实例（复用连接）
+
+    def close(self):
+        """v3：释放所有持连接子组件（主要是 writer._shared_conn）。
+
+        daemon 每轮采集后、GUI 手动操作后都必须调用，确保空闲期不持有 DuckDB
+        读写连接，避免跨进程读库冲突。writer.close() 已存在（writers.py），
+        对其它组件做防御性 try/except（aligner/quarantine/validator 当前不持有
+        长连接，但接口预留）。
+        """
+        for comp_attr in ("writer", "aligner", "quarantine", "validator"):
+            comp = getattr(self, comp_attr, None)
+            if comp is not None and hasattr(comp, "close"):
+                try:
+                    comp.close()
+                except Exception as e:
+                    logger.debug(f"[ResidentCollector.close] {comp_attr}.close() 异常: {e}")
+        # 关闭已缓存的 adapter 连接（如 xtquant/baostock 的 session）
+        for adapter in self._adapters.values():
+            if hasattr(adapter, "close"):
+                try:
+                    adapter.close()
+                except Exception:
+                    pass
+        self._adapters.clear()
 
     @classmethod
     def from_configs(cls, data_cfg_path, sources_cfg_path, tasks_cfg_path, align_rules_path):
@@ -1017,7 +1042,11 @@ class ResidentCollector:
 
     # ---------------- 事件循环（统一每日调度）----------------
     def run_forever(self, max_iterations: Optional[int] = None):
-        """7×24 常驻循环。
+        """DEPRECATED v3：旧版常驻循环，长期持有 DuckDB _shared_conn，与 GUI 跨进程
+        读库冲突。新常驻模式由 ``DaemonLifecycle``（daemon_lifecycle.py）负责轻量调度，
+        空闲期不持有 collector/连接。此方法保留作回退，**新代码不应调用**。
+
+        7×24 常驻循环（旧语义）：
         - incremental 任务：每天 daemon_schedule.daily_time 自动执行一轮
         - full_range 任务：不参与自动循环，仅 run_once / GUI 手动触发
         """
@@ -1025,15 +1054,24 @@ class ResidentCollector:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         lock = FileLock(str(lock_path), timeout=5)
 
-        # 优雅退出信号
+        # 优雅退出信号：仅在主解释器主线程注册。
+        # 原因：signal.signal() 只能在主线程调用；GUI 通过 DaemonWorker(QThread) 跑
+        # run_forever 时当前线程非主线程，注册会抛
+        # ValueError: signal only works in main thread of the main interpreter。
+        # GUI 场景的优雅退出由 DaemonWorker.stop() 设 self._running=False 实现，
+        # 不依赖 signal handler；CLI 独立进程场景仍在主线程，signal 注册有效（Ctrl+C 退出）。
         def _stop(signum, frame):
             logger.info(f"[Daemon] received signal {signum}, graceful shutdown...")
             self._running = False
-        signal.signal(signal.SIGINT, _stop)
-        try:
-            signal.signal(signal.SIGTERM, _stop)
-        except (AttributeError, ValueError):
-            pass
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGINT, _stop)
+            try:
+                signal.signal(signal.SIGTERM, _stop)
+            except (AttributeError, ValueError, OSError):
+                pass
+        else:
+            logger.info("[Daemon] 非主线程运行（如 GUI DaemonWorker），跳过 signal 注册；"
+                        "退出由 stop() 触发 self._running=False。")
 
         # 读调度配置
         sched_cfg = self.tasks_cfg.get("daemon_schedule", {})
@@ -1480,11 +1518,33 @@ class ResidentCollector:
             time.sleep(5)
 
     def _health_check(self):
-        """健康检查：数据新鲜度"""
+        """健康检查：数据新鲜度。
+
+        阈值按"缺 1 个完整交易日才算 stale"原则，支持三级 fallback：
+            table 级 > freq 级 > 全局默认。
+        配置示例（collector_tasks.json::health_check）::
+
+            "stale_alert_hours": 30,                # 全局默认（日线：覆盖过夜 + daemon 17:00 调度窗口）
+            "stale_alert_hours_by_freq": {
+                "1min": 20                          # 分钟：15:00 收盘 → 次日 11:00 才报
+            },
+            "stale_alert_hours_by_table": {
+                "fin_indicator": 2200,              # 季报：~90 天
+                "balance_statement": 2200,
+                "income_statement": 2200,
+                "cashflow_statement": 2200,
+                "stock_float_share": 720            # 流通股本：~30 天
+            }
+
+        缺省默认值 30h（向后兼容：旧 config 只有 stale_alert_hours=6 时仍按 6 取，
+        不改变既有行为；新 config 显式提高到 30h 才启用分级阈值）。
+        """
         hc = self.tasks_cfg.get("health_check", {})
         if not hc:
             return
-        stale_hours = hc.get("stale_alert_hours", 6)
+        global_default = hc.get("stale_alert_hours", 30)
+        by_freq = hc.get("stale_alert_hours_by_freq", {}) or {}
+        by_table = hc.get("stale_alert_hours_by_table", {}) or {}
         for task in self.tasks_cfg.get("tasks", []):
             chain = self._resolve_source_chain(task)
             source = chain[0] if chain else task.get("source")
@@ -1492,6 +1552,13 @@ class ResidentCollector:
                 continue
             table = task["table"]
             freq = task.get("freq", "daily")
+            # 三级 fallback：table 级 > freq 级 > 全局默认
+            if table in by_table:
+                stale_hours = by_table[table]
+            elif freq in by_freq:
+                stale_hours = by_freq[freq]
+            else:
+                stale_hours = global_default
             last = self._get_safe_watermark(source, table, freq)
             if last:
                 try:
@@ -1533,26 +1600,66 @@ def main():
                         help="forever 模式下最大迭代次数（测试用）")
     parser.add_argument("--config-dir", default=str(ROOT / "config"),
                         help="配置目录")
+    parser.add_argument("--instance-token", default=None,
+                        help="v3: GUI 启动传入的实例 token（用于身份校验）。"
+                             "CLI 手动启动可不传，daemon 自行生成。")
     args = parser.parse_args()
 
+    # v3 日志：TimedRotatingFileHandler（午夜轮转，保留 14 天）+ 控制台
+    from logging.handlers import TimedRotatingFileHandler
+    from quantstudio._paths import DATA_ROOT
+    log_dir = DATA_ROOT / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    file_handler = TimedRotatingFileHandler(
+        log_dir / "daemon.log", when="midnight", backupCount=14, encoding="utf-8")
+    file_handler.suffix = "%Y-%m-%d"
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        datefmt="%H:%M:%S")
+        datefmt="%H:%M:%S",
+        handlers=[logging.StreamHandler(), file_handler])
 
     cdir = Path(args.config_dir)
-    collector = ResidentCollector.from_configs(
-        cdir / "data_config.json",
-        cdir / "sources_config.json",
-        cdir / "collector_tasks.json",
-        cdir / "alignment_rules.json")
 
     if args.mode == "once":
+        # once 模式：collector_run.lock 内 from_configs + run_once + close（不写 daemon status）
+        from .daemon_lifecycle import CollectorRunLock
         logger.info(f"[CLI] 单次执行模式 task={args.task or 'ALL'}")
-        collector.run_once(task_name=args.task, mode=args.pull_mode)
+        try:
+            with CollectorRunLock(timeout=30):  # once 模式给较长等锁时间
+                collector = ResidentCollector.from_configs(
+                    cdir / "data_config.json",
+                    cdir / "sources_config.json",
+                    cdir / "collector_tasks.json",
+                    cdir / "alignment_rules.json")
+                try:
+                    collector.run_once(task_name=args.task, mode=args.pull_mode)
+                finally:
+                    collector.close()
+        except Exception as e:
+            if "collector_run" in str(e).lower() or "timeout" in str(e).lower():
+                logger.error(f"[CLI] collector_run.lock 获取失败（daemon 或 GUI 正在采集）: {e}")
+            else:
+                raise
     else:
-        logger.info(f"[CLI] 常驻模式 max_iter={args.max_iter}")
-        collector.run_forever(max_iterations=args.max_iter)
+        # forever 模式：v3 走 DaemonLifecycle 轻量调度（不调用旧 run_forever）
+        from .daemon_lifecycle import DaemonLifecycle
+        logger.info(f"[CLI] 常驻模式（v3 DaemonLifecycle）max_iter={args.max_iter} "
+                    f"token={'provided' if args.instance_token else 'auto-generated'}")
+        lifecycle = DaemonLifecycle(
+            config_dir=cdir,
+            instance_token=args.instance_token,
+            max_iterations=args.max_iter)
+        if not lifecycle.acquire_instance_lock():
+            logger.error("[CLI] 另一个 daemon 已在运行，退出")
+            sys.exit(1)
+        lifecycle.publish_status()
+        try:
+            lifecycle.run_forever()
+        finally:
+            # clear_own_status 已在 run_forever() 末尾调用；此处作为崩溃兜底
+            # （run_forever 抛未捕获异常时仍保证 status 清理）。
+            lifecycle.clear_own_status()
 
 
 if __name__ == "__main__":

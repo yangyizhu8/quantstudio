@@ -5,14 +5,19 @@ import json
 import logging
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidgetItem,
     QHeaderView, QLabel, QMessageBox, QAbstractItemView)
 from qfluentwidgets import (
-    PushButton, TableWidget, GroupHeaderCardWidget)
+    PushButton, TableWidget, GroupHeaderCardWidget, StateToolTip)
 
-from ..workers import TaskWorker, DaemonWorker
+from ..workers import LockedTaskWorker, LockedRunAllWorker
+from ..daemon_process import (
+    is_daemon_running, get_daemon_status, start_daemon_subprocess,
+    request_graceful_stop, force_kill_daemon, read_bootstrap_log_tail,
+    check_db_openable,
+)
 from quantstudio._paths import db_path
 from quantstudio.pipeline.source_capabilities import capability_matrix
 
@@ -32,9 +37,14 @@ class TaskTab(QWidget):
     def __init__(self, main_window):
         super().__init__()
         self.mw = main_window
-        self.collector = None
+        self.collector = None  # DEPRECATED v3：手动拉取改用 LockedTaskWorker 内部 from_configs
         self.tasks = []
-        self.daemon_worker = None  # 常驻进程 worker（非 None=运行中）
+        # v3 daemon 子进程状态（取代旧 DaemonWorker/QThread）
+        self._daemon_token = None           # GUI 启动时生成的 token（握手用）
+        self._daemon_proc = None            # subprocess.Popen 句柄
+        self._daemon_state = "stopped"      # stopped|starting|running|stop_requested|force_stopping
+        self._start_handshake_elapsed = 0   # 启动握手计时（500ms × 次数）
+        self._stop_wait_elapsed = 0         # 停止等待计时（2s × 次数）
         # 运行态集合：{任务名: 模式('full_range'/'incremental')}
         # 作用：标记正在执行的任务，使 refresh() 重建表格后按钮仍保持
         # 禁用 + "执行中..." 状态，防止导航切走再切回导致按钮"复活"被反复点击。
@@ -43,6 +53,21 @@ class TaskTab(QWidget):
         self._task_status = {}
         self._setup_ui()
         self._load_tasks()
+        # v3：低频状态同步 QTimer（3s 轮询 daemon status）
+        self._daemon_poll_timer = QTimer(self)
+        self._daemon_poll_timer.setInterval(3000)
+        self._daemon_poll_timer.timeout.connect(self._on_daemon_poll)
+        # 启动握手/停止等待专用 QTimer（500ms / 2s）
+        self._handshake_timer = QTimer(self)
+        self._handshake_timer.setInterval(500)
+        self._handshake_timer.timeout.connect(self._on_handshake_tick)
+        self._stop_wait_timer = QTimer(self)
+        self._stop_wait_timer.setInterval(2000)
+        self._stop_wait_timer.timeout.connect(self._on_stop_wait_tick)
+        # GUI 启动时从 status 文件恢复按钮状态（关 GUI 后重开能显示"运行中"）
+        self._sync_daemon_state()
+        if self._daemon_state == "running":
+            self._daemon_poll_timer.start()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -147,8 +172,10 @@ class TaskTab(QWidget):
             op_layout.setContentsMargins(2, 2, 2, 2)
             op_layout.setSpacing(4)
             full_btn = PushButton("全量拉取")
+            full_btn.setObjectName("fullBtn")  # 供 _apply_all_task_buttons_state 定位
             full_btn.setToolTip(f"全量拉取：读取配置的 start_date~end_date")
             inc_btn = PushButton("增量拉取")
+            inc_btn.setObjectName("incBtn")  # 供 _apply_all_task_buttons_state 定位
             inc_btn.setToolTip("增量拉取：水位线 → 今天")
             # 运行态：若该任务正在执行，则两按钮禁用，并把执行中的那个标"执行中..."
             self._apply_task_button_state(full_btn, inc_btn, running_mode)
@@ -163,12 +190,40 @@ class TaskTab(QWidget):
             self.task_table.setCellWidget(i, 6, op_widget)
 
     def _apply_task_button_state(self, full_btn: PushButton, inc_btn: PushButton, running_mode: str | None):
-        """统一维护单任务两颗按钮的文案/可点击状态。"""
+        """统一维护单任务两颗按钮的文案/可点击状态。
+
+        可点击态取决于“本任务是否在执行”：本任务 idle 才允许点击。
+        若当前有其它任务正在执行（_running_tasks 非空），本任务即便 idle
+        也要禁用，避免用户一次点击多个采集任务并行拉取。
+        """
         full_btn.setText("执行中..." if running_mode == "full_range" else "全量拉取")
         inc_btn.setText("执行中..." if running_mode == "incremental" else "增量拉取")
         is_idle = running_mode is None
-        full_btn.setEnabled(is_idle)
-        inc_btn.setEnabled(is_idle)
+        # 本任务 idle 且 全局无任何任务在执行 时才允许点击
+        can_click = is_idle and not self._running_tasks
+        full_btn.setEnabled(can_click)
+        inc_btn.setEnabled(can_click)
+
+    def _apply_all_task_buttons_state(self):
+        """就地更新所有任务行的按钮可点击态（不重查水位线、不重建表格）。
+
+        触发时机：
+          - 任一任务启动时：全局禁用所有按钮（执行中的那颗显示"执行中..."）
+          - 任务完成/失败时：清空 _running_tasks 后恢复所有按钮可点击
+        依赖 _render_tasks 给按钮 setObjectName('fullBtn'/'incBtn')。
+        """
+        for row in range(self.task_table.rowCount()):
+            op_widget = self.task_table.cellWidget(row, 6)
+            if op_widget is None:
+                continue
+            full_btn = op_widget.findChild(PushButton, "fullBtn")
+            inc_btn = op_widget.findChild(PushButton, "incBtn")
+            if full_btn is None or inc_btn is None:
+                continue
+            task_name_item = self.task_table.item(row, 0)
+            task_name = task_name_item.text() if task_name_item else ""
+            running_mode = self._running_tasks.get(task_name)
+            self._apply_task_button_state(full_btn, inc_btn, running_mode)
 
     def _get_status_text(self, task_name: str, running_mode: str | None = None) -> str:
         """返回状态列文案；运行中的任务优先展示执行中状态。"""
@@ -218,59 +273,205 @@ class TaskTab(QWidget):
             logger.info("ResidentCollector 初始化完成")
         return self.collector
 
-    # ---------------- 常驻增量拉取开关 ----------------
+    # ---------------- 常驻增量拉取开关（v3 subprocess 版）----------------
     def _toggle_daemon(self):
-        """切换常驻增量拉取进程的 开/停"""
-        if self.daemon_worker is not None:
-            # 当前运行中 → 停止
+        """切换常驻进程 开/停（基于实际 status 而非内存变量）。"""
+        if self._daemon_state in ("starting", "stop_requested", "force_stopping"):
+            return  # 过渡态，忽略点击
+        if self._daemon_state == "running":
             self._stop_daemon()
         else:
-            # 当前停止 → 启动
             self._start_daemon()
 
     def _start_daemon(self):
-        """启动常驻增量拉取进程"""
-        collector = self._get_collector()
-        collector._running = True
-        self.daemon_worker = DaemonWorker(collector)
-        self.daemon_worker.progress.connect(lambda msg: self.status_label.setText(msg))
-        # 注意：daemon_worker 持续运行不 emit finished，不放 hold_worker（不会被自动释放）
-        self.daemon_worker.start()
-        self._update_daemon_btn(running=True)
+        """启动 daemon 子进程（detached），随后 QTimer 握手轮询 status。"""
+        # 已有 daemon 在跑（如用户手动 CLI 启动）→ 不重复启动
+        if is_daemon_running():
+            QMessageBox.information(
+                self, "已在运行",
+                "常驻采集进程已在运行（可能是手动 CLI 启动）。如需重启请先停止。")
+            self._sync_daemon_state()
+            return
+        try:
+            token, proc = start_daemon_subprocess(self.mw.config_dir)
+        except Exception as e:
+            QMessageBox.critical(self, "启动失败",
+                f"启动常驻进程失败：\n\n{type(e).__name__}: {e}")
+            return
+        self._daemon_token = token
+        self._daemon_proc = proc
+        self._daemon_state = "starting"
+        self._start_handshake_elapsed = 0
+        self._update_daemon_btn()
+        self._handshake_timer.start()
+
+    def _on_handshake_tick(self):
+        """启动握手 QTimer：每 500ms 检查 status 文件，最长 30s（60 次）。"""
+        self._start_handshake_elapsed += 1
+        # 子进程已死？
+        if self._daemon_proc is not None and self._daemon_proc.poll() is not None:
+            self._handshake_timer.stop()
+            tail = read_bootstrap_log_tail(self._daemon_token)
+            self._daemon_state = "stopped"
+            self._daemon_token = None
+            self._daemon_proc = None
+            self._update_daemon_btn()
+            QMessageBox.critical(
+                self, "启动失败",
+                f"常驻进程启动后立即退出。bootstrap 日志尾部：\n\n{tail[-1500:]}")
+            return
+        # status 文件出现且 token 匹配？
+        status = get_daemon_status()
+        if status and status.get("instance_token") == self._daemon_token \
+                and status.get("status") == "running":
+            self._handshake_timer.stop()
+            self._daemon_state = "running"
+            self._update_daemon_btn()
+            self.status_label.setText("🟢 常驻采集进程已启动")
+            self._daemon_poll_timer.start()
+            return
+        # 超时 30s
+        if self._start_handshake_elapsed >= 60:
+            self._handshake_timer.stop()
+            tail = read_bootstrap_log_tail(self._daemon_token)
+            self._daemon_state = "stopped"
+            self._daemon_token = None
+            self._daemon_proc = None
+            self._update_daemon_btn()
+            QMessageBox.critical(
+                self, "启动超时",
+                f"30 秒内未收到 daemon 启动握手。bootstrap 日志尾部：\n\n{tail[-1500:]}")
 
     def _stop_daemon(self):
-        """停止常驻增量拉取进程"""
-        if self.daemon_worker is not None:
-            self.daemon_worker.stop()
-            self.daemon_worker.wait(5000)  # 等最多5秒优雅退出
-            self.daemon_worker = None
-        self._update_daemon_btn(running=False)
+        """优雅停止：写 stop.request，QTimer 等待 status 消失，60s 超时弹窗。"""
+        if not request_graceful_stop(timeout_check_token=self._daemon_token):
+            # token 不匹配或 status 不存在 → 可能是手动 CLI 启动的 daemon
+            status = get_daemon_status()
+            if status is None:
+                self._sync_daemon_state()
+                return
+            # 用 status 里的 token 重新尝试（CLI 启动场景）
+            if not request_graceful_stop(timeout_check_token=None):
+                QMessageBox.warning(self, "无法停止",
+                    "无法发送停止请求（status 文件异常）。可尝试强制停止。")
+                return
+            self._daemon_token = status.get("instance_token")
+        self._daemon_state = "stop_requested"
+        self._stop_wait_elapsed = 0
+        self._update_daemon_btn()
+        self._stop_wait_timer.start()
 
-    def _update_daemon_btn(self, running: bool):
-        """更新开关按钮的显示状态"""
-        if running:
-            self.daemon_btn.setText("🟢 进程常驻增量拉取：运行中（点击停止）")
+    def _on_stop_wait_tick(self):
+        """停止等待 QTimer：每 2s 检查 status，最长 60s（30 次）。"""
+        self._stop_wait_elapsed += 1
+        status = get_daemon_status()
+        if status is None or not is_daemon_running():
+            # daemon 已退出
+            self._stop_wait_timer.stop()
+            self._daemon_state = "stopped"
+            self._daemon_token = None
+            self._daemon_proc = None
+            self._update_daemon_btn()
+            self.status_label.setText("🔴 常驻采集进程已停止")
+            self._daemon_poll_timer.stop()
+            return
+        if self._stop_wait_elapsed >= 30:  # 60s 超时
+            self._stop_wait_timer.stop()
+            self._prompt_force_kill()
+
+    def _prompt_force_kill(self):
+        """60s 超时后弹窗询问是否强制终止。"""
+        reply = QMessageBox.warning(
+            self, "优雅停止超时",
+            "常驻采集进程尚未到达安全退出点，可能正在拉取或写入数据库。\n\n"
+            "强制终止可能造成当前批次残留或数据库异常，是否强制终止？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.No:
+            # 不撤销 stop.request，继续等待
+            self._stop_wait_elapsed = 0
+            self._stop_wait_timer.start()
+            return
+        # 强制路径
+        self._daemon_state = "force_stopping"
+        self._update_daemon_btn()
+        ok, msg = force_kill_daemon()
+        if ok:
+            self._daemon_state = "stopped"
+            self._daemon_token = None
+            self._daemon_proc = None
+            self._update_daemon_btn()
+            self.status_label.setText("⚠ 常驻进程已被强制终止")
+            self._daemon_poll_timer.stop()
+            # 强制停止后检查 DB 可打开性
+            db_ok, db_msg = check_db_openable()
+            if not db_ok:
+                QMessageBox.warning(self, "数据库检查", db_msg)
         else:
+            QMessageBox.warning(self, "强制终止失败", msg)
+            self._daemon_state = "stop_requested"
+            self._update_daemon_btn()
+
+    def _on_daemon_poll(self):
+        """低频状态同步（3s）：daemon 异常退出时按钮自动恢复 stopped。"""
+        if self._daemon_state == "running":
+            if not is_daemon_running():
+                logger.warning("[TaskTab] daemon 进程消失（异常退出），按钮恢复 stopped")
+                self._daemon_state = "stopped"
+                self._daemon_token = None
+                self._daemon_proc = None
+                self._update_daemon_btn()
+                self._daemon_poll_timer.stop()
+                self.status_label.setText("⚠ 常驻进程异常退出")
+
+    def _sync_daemon_state(self):
+        """从 status 文件同步 daemon 状态（GUI 启动时 + refresh 时）。
+
+        daemon 子进程独立于 GUI，重启 GUI 后通过此函数恢复按钮显示。
+        """
+        if is_daemon_running():
+            self._daemon_state = "running"
+            status = get_daemon_status()
+            self._daemon_token = status.get("instance_token") if status else None
+        else:
+            self._daemon_state = "stopped"
+            self._daemon_token = None
+        self._daemon_proc = None  # GUI 重启后无法持有旧 Popen 句柄
+        self._update_daemon_btn()
+
+    def _update_daemon_btn(self):
+        """更新开关按钮的显示状态（v3 五态）。"""
+        state = self._daemon_state
+        if state == "running":
+            self.daemon_btn.setText("🟢 进程常驻增量拉取：运行中（点击停止）")
+            self.daemon_btn.setEnabled(True)
+        elif state == "starting":
+            self.daemon_btn.setText("⏳ 正在启动常驻进程...")
+            self.daemon_btn.setEnabled(False)
+        elif state == "stop_requested":
+            self.daemon_btn.setText("⏳ 等待常驻进程安全退出...")
+            self.daemon_btn.setEnabled(False)
+        elif state == "force_stopping":
+            self.daemon_btn.setText("⚠ 正在强制终止...")
+            self.daemon_btn.setEnabled(False)
+        else:  # stopped
             self.daemon_btn.setText("🔴 进程常驻增量拉取：已停止（点击启动）")
+            self.daemon_btn.setEnabled(True)
 
     def _run_single(self, task: dict, mode: str, full_btn: PushButton, inc_btn: PushButton):
-        """执行单个采集任务（后台 TaskWorker）。
+        """执行单个采集任务（后台 LockedTaskWorker）。
         mode: 'full_range'（全量，读配置日期）/ 'incremental'（增量，水位线→今天）
-        full_btn/inc_btn: 两个按钮引用，执行时互禁。"""
+        full_btn/inc_btn: 两个按钮引用，执行时全局互禁。
+
+        v3 评审 1+2：collector_run.lock 在 worker 线程内 acquire/release，
+        from_configs/resolve_source_chain/execute_task 全在 worker 内，
+        主线程零 collector 调用（不冻结 GUI、不隐式打开 DuckDB）。
+        """
         table = task.get("table", "")
         freq = task.get("freq", "daily")
 
-        try:
-            chain = self._get_collector().resolve_source_chain(task)
-        except Exception as e:
-            QMessageBox.warning(self, "数据源检查失败", str(e))
-            return
-        if not chain:
-            QMessageBox.warning(
-                self, "无可用数据源",
-                f"任务 {table}/{freq} 没有已启用且实现该接口的数据源?\n\n"
-                "请检查 source_priority、数据源启用状态和依赖安装。")
-            return
+        # 主线程仅做纯静态检查（不创建 collector、不打开 DB，评审 2）
+        # 数据源链可用性检查延后到 worker 内（resolve_source_chain 在锁内）
 
         if mode == "full_range":
             start = task.get("start_date", "").strip()
@@ -280,18 +481,25 @@ class TaskTab(QWidget):
                     f"请在「配置编辑」标签页为任务 '{task.get('name','?')}' 设置开始日期。")
                 return
 
-        # 互禁：登记运行态（refresh 重建表格后仍保持禁用）+ 即时禁用两按钮
+        # 全局互禁：登记运行态后立即禁用所有任务的按钮（防止用户一次点击多个任务并行拉取）
         task_name = task.get("name", "")
         self._running_tasks[task_name] = mode
         self._set_task_status(task_name, self._get_status_text(task_name, mode))
-        self._apply_task_button_state(full_btn, inc_btn, mode)
+        self._apply_all_task_buttons_state()
 
         mode_label = "全量" if mode == "full_range" else "增量"
         self.status_label.setText(f"执行中({mode_label}): {task['name']}...")
+        # 加载提示弹出（数据采集后台运行中）
+        if not hasattr(self, '_collect_tooltip') or self._collect_tooltip is None:
+            self._collect_tooltip = StateToolTip(
+                f"数据采集进行中({mode_label})", f"正在拉取 {task['name']}...", self)
+            self._collect_tooltip.show()
         try:
-            collector = self._get_collector()
-            worker = TaskWorker(task, collector, mode=mode)
-            worker.progress.connect(lambda msg: self.status_label.setText(msg))
+            # v3：LockedTaskWorker 在线程内持锁、from_configs、execute、close
+            worker = LockedTaskWorker(
+                task=task, config_dir=self.mw.config_dir, mode=mode,
+                run_quality_audit=True)
+            worker.progress.connect(self._on_collect_progress)
             worker.finished_ok.connect(lambda res: self._on_task_done(task, True, res))
             worker.finished_err.connect(lambda err: self._on_task_done(task, False, err))
             self.mw.hold_worker(worker)
@@ -300,7 +508,7 @@ class TaskTab(QWidget):
             logger.exception("启动采集任务失败: %s", task_name)
             self._running_tasks.pop(task_name, None)
             self._set_task_status(task_name, "失败")
-            self._apply_task_button_state(full_btn, inc_btn, None)
+            self._apply_all_task_buttons_state()
             self.status_label.setText(f"❌ 启动失败: {task_name}")
             QMessageBox.critical(self, "启动失败", f"任务 '{task_name}' 启动失败：\n\n{type(e).__name__}: {e}")
 
@@ -315,7 +523,10 @@ class TaskTab(QWidget):
             return None
 
     def _check_source_supports(self, source: str, table: str, freq: str) -> str:
-        """检查数据源是否支持该任务。返回错误消息（空串=支持）。"""
+        """DEPRECATED v3：此方法在主线程调用 _get_collector()，违反评审 2
+        （主线程不得隐式 from_configs 打开 DuckDB）。当前无调用方（预检查已移入
+        LockedTaskWorker 内部）。保留作回退参考，新代码不应调用。
+        """
         try:
             adapter = self._get_collector()._get_adapter(source)
             # 1. 检查表+频率支持
@@ -367,50 +578,74 @@ class TaskTab(QWidget):
         return None
 
     def _run_all(self):
-        """全部执行（串行，防限流）。默认增量模式。"""
+        """全部执行（v3：单 LockedRunAllWorker 持锁跑完整个队列 + 末尾审计）。
+
+        评审 1：不每任务单独拿锁，防 daemon 插入队列中间。
+        默认增量模式，主线程零 collector 调用。
+        """
         if not self.tasks:
             return
         self.run_all_btn.setEnabled(False)
         self.run_all_btn.setText("⏳ 全部执行中...")
-        self._run_queue = list(self.tasks)
-        self._run_next_in_queue()
-
-    def _run_next_in_queue(self):
-        if not getattr(self, "_run_queue", None):
-            quality_ok = self._get_collector()._run_full_quality_audit()
-            self.run_all_btn.setEnabled(True)
-            self.run_all_btn.setText("▶ 全部执行")
-            self.status_label.setText("全部执行完成" if quality_ok else "❌ 全部执行完成，但质量检查未通过")
-            self.refresh()
-            return
-        task = self._run_queue.pop(0)
-        # Use the same fallback chain as the collector. Do not reject a task
-        # merely because its preferred source is disabled when a fallback works.
-        if not self._get_collector().resolve_source_chain(task):
-            logger.warning(f"跳过 {task['name']}: 无已启用且支持该任务的数据源")
-            self.status_label.setText(f"⏭ 跳过 {task['name']}（无可用数据源）")
-            self._run_next_in_queue()
-            return
-        task_name = task.get("name", "")
-        self._running_tasks[task_name] = "incremental"
-        self._set_task_status(task_name, self._get_status_text(task_name, "incremental"))
-        self.refresh()
+        # 登记所有任务为运行态（按钮互禁）
+        for t in self.tasks:
+            name = t.get("name", "")
+            if name:
+                self._running_tasks[name] = "incremental"
+                self._set_task_status(name, "增量执行中")
+        self._apply_all_task_buttons_state()
+        # 加载提示
+        if not hasattr(self, '_collect_tooltip') or self._collect_tooltip is None:
+            self._collect_tooltip = StateToolTip(
+                "全部执行进行中", f"正在执行 {len(self.tasks)} 个任务...", self)
+            self._collect_tooltip.show()
         try:
-            collector = self._get_collector()
-            worker = TaskWorker(task, collector, mode="incremental",
-                                run_quality_audit=False)  # 队列结束后统一审计
-            worker.progress.connect(lambda msg: self.status_label.setText(msg))
-            worker.finished_ok.connect(lambda res, t=task: self._on_run_all_task_done(t, True, res))
-            worker.finished_err.connect(lambda err, t=task: self._on_run_all_task_done(t, False, err))
+            worker = LockedRunAllWorker(
+                tasks=list(self.tasks), config_dir=self.mw.config_dir,
+                mode="incremental")
+            worker.progress.connect(self._on_collect_progress)
+            worker.finished_ok.connect(self._on_run_all_done)
+            worker.finished_err.connect(lambda err: self._on_run_all_done(
+                {"results": [], "ok_count": 0, "total": 0, "error": err}))
             self.mw.hold_worker(worker)
             worker.start()
         except Exception as e:
-            logger.exception("全部执行启动失败: %s", task_name)
-            self._running_tasks.pop(task_name, None)
-            self._set_task_status(task_name, "失败")
-            self.status_label.setText(f"❌ 启动失败: {task_name}")
-            self.refresh()
-            self._run_next_in_queue()
+            logger.exception("全部执行启动失败: %s", e)
+            for t in self.tasks:
+                self._running_tasks.pop(t.get("name", ""), None)
+            self._apply_all_task_buttons_state()
+            self.run_all_btn.setEnabled(True)
+            self.run_all_btn.setText("▶ 全部执行")
+            self.status_label.setText(f"❌ 启动失败: {e}")
+            QMessageBox.critical(self, "启动失败", f"全部执行启动失败：\n\n{type(e).__name__}: {e}")
+
+    def _on_run_all_done(self, result: dict):
+        """全部执行完成的统一回调。"""
+        for t in self.tasks:
+            self._running_tasks.pop(t.get("name", ""), None)
+        ok_count = result.get("ok_count", 0)
+        total = result.get("total", 0)
+        err = result.get("error")
+        self.run_all_btn.setEnabled(True)
+        self.run_all_btn.setText("▶ 全部执行")
+        if err:
+            self.status_label.setText(f"❌ 全部执行失败: {err}")
+            QMessageBox.warning(self, "全部执行", f"执行失败：\n\n{err}")
+        elif ok_count == total:
+            self.status_label.setText(f"✅ 全部执行完成（{ok_count}/{total}）")
+        else:
+            self.status_label.setText(f"⚠ 全部执行完成（{ok_count}/{total} 成功，{total-ok_count} 失败）")
+        # 关闭加载提示
+        if hasattr(self, '_collect_tooltip') and self._collect_tooltip:
+            self._collect_tooltip.setContent(f"完成 {ok_count}/{total}")
+            self._collect_tooltip = None
+        self.refresh()
+
+    def _on_collect_progress(self, msg):
+        """采集进度更新（同时更新 status_label + StateToolTip）。"""
+        self.status_label.setText(msg)
+        if hasattr(self, '_collect_tooltip') and self._collect_tooltip:
+            self._collect_tooltip.setContent(msg)
 
     def _on_task_done(self, task: dict, ok: bool, result):
         task_name = task.get("name", "")
@@ -423,11 +658,12 @@ class TaskTab(QWidget):
         self._running_tasks.pop(task_name, None)
         self._set_task_status(task_name, "成功" if ok else "失败")
         self.refresh()
-
-    def _on_run_all_task_done(self, task: dict, ok: bool, result):
-        """全部执行模式下的单任务收尾：更新状态后继续队列。"""
-        self._on_task_done(task, ok, result)
-        self._run_next_in_queue()
+        # 所有任务完成后关闭加载提示（无运行中任务 + 无队列残留）
+        if not self._running_tasks and not getattr(self, '_task_queue', None):
+            if hasattr(self, '_collect_tooltip') and self._collect_tooltip:
+                self._collect_tooltip.setContent(
+                    f"{'✅' if ok else '❌'} {task_name} 完成")
+                self._collect_tooltip = None
 
     def _reset_watermark(self):
         """重置水位线（下次全量拉取）"""
@@ -450,7 +686,11 @@ class TaskTab(QWidget):
     def refresh(self):
         """刷新任务列表（重新从 collector_tasks.json 加载配置 + 水位线 + 批次审计 + 按钮状态）"""
         self._load_tasks()  # 重新从配置文件加载（修复：配置编辑器改 source 后刷新可生效）
-        self._update_daemon_btn(running=(self.daemon_worker is not None))
+        # v3：从 daemon status 文件同步按钮状态（不再依赖内存 daemon_worker）
+        if self._daemon_state not in ("starting", "stop_requested", "force_stopping"):
+            self._sync_daemon_state()
+        else:
+            self._update_daemon_btn()
         self._render_tasks()
         # 批次审计
         try:

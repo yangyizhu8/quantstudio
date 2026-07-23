@@ -30,6 +30,14 @@ _runtime/
 *.sqlite3
 *.duckdb
 
+# daemon 运行时（v3 进程解耦：子进程状态/锁/PID/日志）
+data/.daemon.lock
+data/.collector_run.lock
+data/daemon_status.json
+data/daemon_run_state.json
+data/daemon_stop.request
+data/logs/
+
 # OS/editor
 .DS_Store
 Thumbs.db

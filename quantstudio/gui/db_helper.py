@@ -1,12 +1,29 @@
 """GUI 专用只读数据库查询封装。
-DuckDB 连接用 read_only=True（避免与采集进程写入冲突）；SQLite 短连接。"""
+DuckDB 连接用 read_only=True（避免与采集进程写入冲突）；SQLite 短连接。
+
+v3 评审 4：daemon 采集期持有 DuckDB RW 连接（collector_run.lock 内），
+此时 GUI 的 read_only 查询可能触发 "另一进程正在使用此文件" IOException。
+所有 DuckDB 查询经 _safe_query 包装，捕获 IOException 后返回空 DataFrame
++ 警告日志，GUI 不崩溃（优雅降级）。
+"""
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+
+def _is_db_busy_error(exc: Exception) -> bool:
+    """识别 DuckDB 文件锁冲突异常（跨中英文环境）。"""
+    msg = str(exc).lower()
+    return ("another process" in msg or "used by another process" in msg
+            or "另一进程" in str(exc) or "正在使用" in str(exc)
+            or "could not lock" in msg or "io error" in msg)
 
 
 class DbHelper:
@@ -17,12 +34,33 @@ class DbHelper:
         self.quarantine_path = Path(quarantine_path)
         self.batch_audit_path = Path(batch_audit_path)
 
+    def _safe_query(self, sql: str) -> pd.DataFrame:
+        """v3 评审 4：DuckDB 查询统一包装，捕获 IO/lock 异常优雅降级。
+
+        daemon 采集期（持有 RW 连接）时，GUI read_only 查询会触发 IOException。
+        返回空 DataFrame + 警告日志，调用方据此显示"数据库采集中，请稍后刷新"。
+        其它异常（SQL 语法错等）正常向上抛。
+        """
+        import duckdb
+        try:
+            with duckdb.connect(str(self.duckdb_path), read_only=True) as conn:
+                return conn.execute(sql).fetchdf()
+        except duckdb.IOException as e:
+            if _is_db_busy_error(e):
+                logger.warning(f"[DbHelper] DuckDB 忙（daemon 采集中？），返回空结果: {e}")
+                return pd.DataFrame()
+            raise
+        except Exception as e:
+            # 兼容某些 duckdb 版本将 IO 错误归为普通 Exception 的情况
+            if _is_db_busy_error(e):
+                logger.warning(f"[DbHelper] DuckDB 忙（daemon 采集中？），返回空结果: {e}")
+                return pd.DataFrame()
+            raise
+
     # ---------------- DuckDB（主库，只读）----------------
     def query_duckdb(self, sql: str) -> pd.DataFrame:
-        """通用只读 SQL 查询"""
-        import duckdb
-        with duckdb.connect(str(self.duckdb_path), read_only=True) as conn:
-            return conn.execute(sql).fetchdf()
+        """通用只读 SQL 查询（经 _safe_query 包装，DB 忙时返回空）。"""
+        return self._safe_query(sql)
 
     def list_tables(self) -> list:
         """SHOW TABLES"""

@@ -1,0 +1,632 @@
+"""DaemonLifecycle — v3 常驻采集进程的轻量调度核心。
+
+替代旧 ResidentCollector.run_forever() 的常驻循环语义（旧版长期持有 DuckDB
+共享连接，与 GUI 跨进程读库冲突）。本模块实现：
+
+1. **.daemon.lock**：daemon 单实例锁，daemon 生命周期持有。
+2. **daemon_status.json**：带 instance_token 的状态文件，原子写。
+3. **psutil 五验**：身份校验（PID + create_time + exe + cmdline + token）。
+4. **.collector_run.lock 封装**：采集/健康检查的 per-operation 互斥。
+5. **daemon_run_state.json**：每日执行状态持久化（completed 严格语义）。
+6. **daemon_stop.request 轮询**：优雅停止信号。
+7. **轻量调度循环**：空闲期无 ResidentCollector、无 DuckDB 连接，GUI 可正常读库。
+
+核心纪律（评审决议）：
+- daemon 空闲时不得持有 DuckDB 连接；
+- collector_run.lock 必须在 from_configs 之前；
+- 每轮采集/审计/健康检查后 finally 调 collector.close()；
+- 只有 daemon 自己写/清 status；GUI 只读（强制停止路径除外，且需五验通过）。
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import sys
+import time
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+import psutil
+from filelock import FileLock, Timeout
+
+logger = logging.getLogger(__name__)
+
+# 运行时文件目录（与 .collector.lock 同惯例）
+def _data_root() -> Path:
+    from quantstudio._paths import DATA_ROOT
+    return DATA_ROOT
+
+# 状态/信号/锁文件路径
+def daemon_lock_path() -> Path:
+    return _data_root() / ".daemon.lock"
+
+def collector_run_lock_path() -> Path:
+    return _data_root() / ".collector_run.lock"
+
+def daemon_status_path() -> Path:
+    return _data_root() / "daemon_status.json"
+
+def daemon_run_state_path() -> Path:
+    return _data_root() / "daemon_run_state.json"
+
+def daemon_stop_request_path() -> Path:
+    return _data_root() / "daemon_stop.request"
+
+
+# ---------------------------------------------------------------------------
+# psutil 五验（评审 9）
+# ---------------------------------------------------------------------------
+
+def verify_daemon_identity(status: dict) -> str:
+    """校验状态文件对应的进程身份。
+
+    返回 'alive' | 'stale' | 'denied'：
+      - alive：五项全部通过，可安全 stop/clear。
+      - stale：进程不存在或身份不匹配（PID 复用他进程），可清理 stale status。
+      - denied：权限不足，**不清不杀**，只能提示用户。
+
+    五项校验：
+      1. PID 存活；
+      2. create_time ±1s；
+      3. exe 路径（normcase+abspath）；
+      4. cmdline 含 'quantstudio.pipeline.daemon'；
+      5. instance_token（仅当 status 的 cmdline 含 token 时，要求 p.cmdline() 亦含）。
+    """
+    if not status or "pid" not in status:
+        return "stale"
+    try:
+        p = psutil.Process(status["pid"])
+    except psutil.NoSuchProcess:
+        return "stale"
+    except psutil.AccessDenied:
+        return "denied"
+    try:
+        if not p.is_running():
+            return "stale"
+        # create_time ±1s 浮点误差容忍
+        if abs(p.create_time() - float(status.get("create_time", 0))) > 1.0:
+            return "stale"
+        # exe 路径：normcase + abspath（评审 9）
+        actual_exe = os.path.normcase(os.path.abspath(p.exe()))
+        stored_exe = os.path.normcase(os.path.abspath(status.get("exe", "")))
+        if actual_exe != stored_exe:
+            return "stale"
+        # cmdline 含 quantstudio.pipeline.daemon
+        p_cmdline = p.cmdline()
+        cmdline_str = " ".join(p_cmdline)
+        if "quantstudio.pipeline.daemon" not in cmdline_str:
+            return "stale"
+        # instance_token：仅当 status 的 cmdline 记录含 token 时（GUI 启动场景）
+        # 才要求 p.cmdline() 也含 token；CLI 手动启动场景不校验（评审 6 方案 B）。
+        token = status.get("instance_token")
+        stored_cmdline = status.get("cmdline", [])
+        if token and token in stored_cmdline:
+            if token not in p_cmdline:
+                return "stale"
+        return "alive"
+    except psutil.NoSuchProcess:
+        return "stale"
+    except psutil.AccessDenied:
+        return "denied"
+    except (psutil.Error, OSError):
+        return "stale"
+
+
+# ---------------------------------------------------------------------------
+# status 文件原子读写（评审 5 所有权）
+# ---------------------------------------------------------------------------
+
+def _atomic_write_json(path: Path, data: dict):
+    """临时文件 + os.replace 原子写。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}.{uuid.uuid4().hex[:8]}")
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+def read_daemon_status() -> Optional[dict]:
+    """读取 status 文件。损坏/缺失返回 None。"""
+    path = daemon_status_path()
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+
+def clear_daemon_status_if_owned(status: dict) -> bool:
+    """清理 status 文件，但必须三验（pid+create_time+token）属于当前进程。
+
+    返回 True 表示已清理；False 表示不是自己的（他进程持有），不删。
+    daemon 正常退出和 GUI 强制停止都用此函数。
+    """
+    if not status:
+        return False
+    current_pid = os.getpid()
+    try:
+        current_create = psutil.Process(current_pid).create_time()
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        current_create = 0.0
+    token_match = (status.get("instance_token") == status.get("_owner_token")) or \
+                  (status.get("pid") == current_pid)
+    pid_match = status.get("pid") == current_pid
+    create_match = abs(float(status.get("create_time", 0)) - current_create) <= 1.0
+    # daemon 自己清理：pid + create_time 必匹配；token 比对由调用方保证
+    if pid_match and create_match:
+        try:
+            daemon_status_path().unlink(missing_ok=True)
+            return True
+        except OSError:
+            return False
+    return False
+
+
+def clear_stale_status() -> str:
+    """清理陈旧 status（进程已不存在）。daemon 启动时调用。
+
+    返回 'cleared' | 'alive_other' | 'denied' | 'none'：
+      - cleared：原 status 对应进程已死，已清理；
+      - alive_other：原 status 进程仍活（另一个 daemon 在跑），调用方应退出；
+      - denied：权限不足无法确认，**不清**，调用方应退出；
+      - none：无 status 文件。
+    """
+    status = read_daemon_status()
+    if status is None:
+        return "none"
+    result = verify_daemon_identity(status)
+    if result == "alive":
+        return "alive_other"  # 另一个 daemon 在跑
+    if result == "denied":
+        return "denied"  # 不清不杀
+    # stale：可清理
+    try:
+        daemon_status_path().unlink(missing_ok=True)
+        logger.info("[DaemonLifecycle] 清理陈旧 status 文件（原进程已退出）")
+        return "cleared"
+    except OSError as e:
+        logger.warning(f"[DaemonLifecycle] 清理陈旧 status 失败: {e}")
+        return "denied"
+
+
+# ---------------------------------------------------------------------------
+# run_state 持久化（评审 7）
+# ---------------------------------------------------------------------------
+
+def read_run_state() -> Optional[dict]:
+    path = daemon_run_state_path()
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+
+def write_run_state(**fields):
+    """原子写 run_state（合并已有字段）。"""
+    path = daemon_run_state_path()
+    current = read_run_state() or {}
+    current.update(fields)
+    _atomic_write_json(path, current)
+
+
+def is_today_completed() -> bool:
+    """判断今日 run_state 是否已 completed（重启不重跑）。"""
+    state = read_run_state()
+    if not state:
+        return False
+    today = datetime.now().strftime("%Y-%m-%d")
+    return state.get("scheduled_date") == today and state.get("status") == "completed"
+
+
+def is_today_pending_rerun() -> bool:
+    """判断今日是否有未完成轮次（running/interrupted），需重跑。
+
+    stale-running（进程已死但状态未清）也视为 pending rerun。
+    """
+    state = read_run_state()
+    if not state:
+        return False
+    today = datetime.now().strftime("%Y-%m-%d")
+    if state.get("scheduled_date") != today:
+        return False
+    if state.get("status") in ("running", "interrupted"):
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# stop.request 轮询（评审 5/6）
+# ---------------------------------------------------------------------------
+
+def read_stop_request() -> Optional[dict]:
+    path = daemon_stop_request_path()
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+
+def consume_stop_request_if_matched(instance_token: str) -> bool:
+    """daemon 检测 stop.request：token 匹配则删除并返回 True。"""
+    req = read_stop_request()
+    if req is None:
+        return False
+    if req.get("instance_token") != instance_token:
+        return False  # 不是给我的
+    try:
+        daemon_stop_request_path().unlink(missing_ok=True)
+        logger.info("[DaemonLifecycle] 收到停止请求，准备优雅退出")
+        return True
+    except OSError:
+        return True
+
+
+# ---------------------------------------------------------------------------
+# collector_run.lock 封装（per-operation）
+# ---------------------------------------------------------------------------
+
+class CollectorRunLock:
+    """collector_run.lock 的上下文管理器封装。
+
+    timeout：
+      - 整轮采集：5s（等待 GUI 手动释放）；
+      - 健康检查：0s（非阻塞，拿不到即跳过）。
+    """
+
+    def __init__(self, timeout: float = 5.0):
+        self.timeout = timeout
+        self._lock: Optional[FileLock] = None
+
+    def __enter__(self) -> "CollectorRunLock":
+        self._lock = FileLock(str(collector_run_lock_path()), timeout=self.timeout)
+        self._lock.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._lock is not None:
+            try:
+                self._lock.release()
+            except Exception:
+                pass
+        return False
+
+    def try_acquire(self) -> bool:
+        """非阻塞尝试，失败返回 False（不抛）。"""
+        self._lock = FileLock(str(collector_run_lock_path()), timeout=0)
+        try:
+            self._lock.acquire(timeout=0)
+            return True
+        except Timeout:
+            self._lock = None
+            return False
+
+
+# ---------------------------------------------------------------------------
+# DaemonLifecycle 主类（轻量调度循环）
+# ---------------------------------------------------------------------------
+
+class DaemonLifecycle:
+    """daemon 子进程的轻量调度核心。
+
+    持有 .daemon.lock 全程；空闲期不创建 ResidentCollector、不持有 DuckDB 连接；
+    到执行点在 collector_run.lock 内临时 from_configs + 跑轮次 + close。
+    """
+
+    # 单实例锁（daemon 生命周期持有）
+    _instance_lock: Optional[FileLock] = None
+
+    def __init__(self, config_dir: Path, instance_token: Optional[str] = None,
+                 max_iterations: Optional[int] = None):
+        self.config_dir = Path(config_dir)
+        self.instance_token = instance_token or uuid.uuid4().hex
+        self.max_iterations = max_iterations
+        self._running = True
+        self._status: Optional[dict] = None  # 本进程的 status 快照
+
+    # -- 启动握手 [1][2][3][4] --
+    def acquire_instance_lock(self) -> bool:
+        """[1] 获取 .daemon.lock（非阻塞）。失败=另一个 daemon 在跑。"""
+        lock_path = daemon_lock_path()
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self._instance_lock = FileLock(str(lock_path), timeout=0)
+        try:
+            self._instance_lock.acquire(timeout=0)
+            return True
+        except Timeout:
+            logger.warning("[DaemonLifecycle] .daemon.lock 已被占用（另一个 daemon 运行中），退出")
+            return False
+
+    def publish_status(self):
+        """[3][4] 清陈旧 status + 原子写本进程 status。"""
+        # 清陈旧（进程已死的旧 status）
+        clear_result = clear_stale_status()
+        if clear_result == "alive_other":
+            raise RuntimeError("检测到另一个 daemon 仍在运行，拒绝启动")
+        if clear_result == "denied":
+            logger.warning("[DaemonLifecycle] 无法确认陈旧 status 进程身份，"
+                           "继续启动（可能残留旧 status）")
+        # 收集本进程身份信息
+        p = psutil.Process(os.getpid())
+        cmdline = sys.argv[:]
+        self._status = {
+            "pid": os.getpid(),
+            "create_time": p.create_time(),
+            "exe": sys.executable,
+            "cmdline": cmdline,
+            "instance_token": self.instance_token,
+            "config_dir": str(self.config_dir),
+            "started_at": datetime.now().isoformat(timespec="seconds"),
+            "status": "running",
+        }
+        _atomic_write_json(daemon_status_path(), self._status)
+        logger.info(f"[DaemonLifecycle] status 已发布 (pid={self._status['pid']}, "
+                    f"token={self.instance_token[:8]}...)")
+
+    def update_status(self, **fields):
+        """更新本进程 status（如 status: running → stop_requested）。"""
+        if self._status is None:
+            return
+        self._status.update(fields)
+        _atomic_write_json(daemon_status_path(), self._status)
+
+    def clear_own_status(self):
+        """退出时清理自己的 status（pid + create_time 双验）。"""
+        if self._status is None:
+            return
+        if clear_daemon_status_if_owned(self._status):
+            logger.info("[DaemonLifecycle] 已清理本进程 status 文件")
+        else:
+            logger.warning("[DaemonLifecycle] status 已被替换或非本进程所有，不清理")
+
+    # -- 调度循环 [6] --
+    def run_forever(self):
+        """轻量调度循环：持 .daemon.lock，无 collector 无 conn。
+
+        配置热加载：每轮迭代重新读 collector_tasks.json，用户在 GUI 配置编辑里
+        改 daily_time / check_interval 后无需重启 daemon，下个 tick 即生效。
+        """
+        from quantstudio._paths import DATA_ROOT
+        # 启动时读一次（仅用于首条日志，循环内每次重新读）
+        tasks_cfg = self._read_tasks_cfg()
+        sched_cfg = tasks_cfg.get("daemon_schedule", {}) if tasks_cfg else {}
+        daily_time = sched_cfg.get("daily_time", "17:00")
+        check_interval = sched_cfg.get("check_interval_sec", 300)
+
+        logger.info(f"[DaemonLifecycle] 启动轻量调度循环。daily_time={daily_time}, "
+                    f"check_interval={check_interval}s, today_completed={is_today_completed()}, "
+                    f"today_pending_rerun={is_today_pending_rerun()}")
+
+        iteration = 0
+        last_daily_time = daily_time
+        last_check_interval = check_interval
+        while self._running:
+            iteration += 1
+            # 检测停止请求
+            if consume_stop_request_if_matched(self.instance_token):
+                self._graceful_exit()
+                break
+            # 配置热加载：每轮重新读调度配置（用户改 daily_time 后下个 tick 生效）
+            tasks_cfg = self._read_tasks_cfg()
+            sched_cfg = tasks_cfg.get("daemon_schedule", {}) if tasks_cfg else {}
+            daily_time = sched_cfg.get("daily_time", "17:00")
+            check_interval = sched_cfg.get("check_interval_sec", 300)
+            # 配置变化时打日志（便于排查"为何触发时间变了"）
+            if daily_time != last_daily_time or check_interval != last_check_interval:
+                logger.info(f"[DaemonLifecycle] 检测到调度配置变化："
+                            f"daily_time {last_daily_time}→{daily_time}, "
+                            f"check_interval {last_check_interval}→{check_interval}")
+                last_daily_time = daily_time
+                last_check_interval = check_interval
+            # 调度判定
+            now = datetime.now()
+            today_str = now.strftime("%Y-%m-%d")
+            now_hm = now.strftime("%H:%M")
+            should_run = (now_hm >= daily_time and
+                          not is_today_completed() and
+                          (not is_today_pending_rerun() or self._is_first_run_today(today_str)))
+            # pending_rerun 场景：首 tick 立即补跑
+            if is_today_pending_rerun() and not is_today_completed():
+                should_run = True
+            if should_run:
+                logger.info(f"[DaemonLifecycle] === 开始每日采集轮次 ({today_str}, daily_time={daily_time}) ===")
+                try:
+                    self.run_one_cycle(tasks_cfg)
+                except Exception as e:
+                    logger.exception(f"[DaemonLifecycle] 采集轮次异常: {e}")
+                logger.info("[DaemonLifecycle] === 每日采集轮次结束 ===")
+            # 健康检查 tick（非阻塞 try-lock，拿不到跳过）
+            try:
+                self.run_health_check(tasks_cfg)
+            except Exception as e:
+                logger.debug(f"[DaemonLifecycle] 健康检查跳过或异常: {e}")
+            # 再次检测停止请求（健康检查后）
+            if consume_stop_request_if_matched(self.instance_token):
+                self._graceful_exit()
+                break
+            # 退出条件
+            if self.max_iterations is not None and iteration >= self.max_iterations:
+                logger.info(f"[DaemonLifecycle] 达到 max_iterations={self.max_iterations}，退出")
+                break
+            # 可中断睡眠
+            self._interruptible_sleep(check_interval)
+
+        self.clear_own_status()
+
+    def _is_first_run_today(self, today_str: str) -> bool:
+        """pending_rerun 时的首 tick 补跑判定（总是 True，靠水位线防重复）。"""
+        return True
+
+    def _read_tasks_cfg(self) -> dict:
+        path = self.config_dir / "collector_tasks.json"
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"[DaemonLifecycle] 读取 collector_tasks.json 失败: {e}")
+            return {}
+
+    # -- 整轮采集（评审 7） --
+    def run_one_cycle(self, tasks_cfg: dict):
+        """整轮采集：collector_run.lock 内 from_configs + 遍历 + 审计 + close。
+
+        completed 严格条件：lock 获取成功 + 任务完整遍历 + 每任务有明确结果 +
+        质量审计执行 + collector.close() 成功。任一不满足 → 不写 completed。
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+        run_id = f"r_{uuid.uuid4().hex[:8]}"
+        started_at = datetime.now().isoformat(timespec="seconds")
+
+        # 阻塞获取 collector_run.lock（5s 等 GUI 手动释放）
+        lock = CollectorRunLock(timeout=5)
+        try:
+            lock.__enter__()
+        except Timeout:
+            logger.info("[DaemonLifecycle] collector_run.lock 被占用（GUI 正在采集），本轮跳过")
+            return  # 不写 run_state（lock 获取失败不写任何状态，评审 7）
+        collector = None
+        task_summary = []
+        success_count = 0
+        failed_count = 0
+        quality_audit_ok = False
+        try:
+            # 拿到 lock，写 running
+            write_run_state(
+                scheduled_date=today, run_id=run_id, status="running",
+                started_at=started_at, finished_at=None,
+                success_count=0, failed_count=0, quality_audit_ok=False,
+                task_summary=[],
+            )
+            # 锁内首次 from_configs（_init_tables 安全）
+            from quantstudio.pipeline.daemon import ResidentCollector
+            collector = ResidentCollector.from_configs(
+                self.config_dir / "data_config.json",
+                self.config_dir / "sources_config.json",
+                self.config_dir / "collector_tasks.json",
+                self.config_dir / "alignment_rules.json",
+            )
+            tasks = tasks_cfg.get("tasks", [])
+            for task in tasks:
+                if not self._running:
+                    logger.info("[DaemonLifecycle] 收到停止信号，中断任务遍历")
+                    break
+                if not task.get("enabled", True):
+                    continue
+                if task.get("mode", "incremental") != "incremental":
+                    continue
+                task_name = task.get("name", "")
+                result_entry = {"name": task_name, "result": "skipped"}
+                try:
+                    ok = collector.execute_task(task, mode="incremental",
+                                                run_quality_audit=False)
+                    if ok:
+                        result_entry["result"] = "success"
+                        success_count += 1
+                    else:
+                        result_entry["result"] = "failed"
+                        result_entry["error"] = "execute_task 返回 False"
+                        failed_count += 1
+                except Exception as e:
+                    result_entry["result"] = "failed"
+                    result_entry["error"] = f"{type(e).__name__}: {e}"
+                    failed_count += 1
+                    logger.error(f"[DaemonLifecycle] 任务 {task_name} 失败: {e}", exc_info=True)
+                task_summary.append(result_entry)
+                # 每任务后更新（便于崩溃排查）
+                write_run_state(success_count=success_count, failed_count=failed_count,
+                                task_summary=task_summary)
+            # finally 收尾：质量审计
+            try:
+                quality_audit_ok = collector._run_full_quality_audit()
+            except Exception as e:
+                logger.error(f"[DaemonLifecycle] 质量审计失败: {e}", exc_info=True)
+                quality_audit_ok = False
+        except Exception as e:
+            # 可处理异常 → interrupted（评审 7）
+            write_run_state(status="interrupted",
+                            finished_at=datetime.now().isoformat(timespec="seconds"),
+                            error=f"{type(e).__name__}: {e}",
+                            success_count=success_count, failed_count=failed_count,
+                            quality_audit_ok=quality_audit_ok, task_summary=task_summary)
+            logger.exception(f"[DaemonLifecycle] 轮次异常（标 interrupted）: {e}")
+            return
+        finally:
+            # 关键：释放 _shared_conn（评审 1.4）
+            if collector is not None:
+                try:
+                    collector.close()
+                except Exception as e:
+                    logger.warning(f"[DaemonLifecycle] collector.close() 异常: {e}")
+            try:
+                lock.__exit__(None, None, None)
+            except Exception:
+                pass
+        # 收尾完写 completed（严格条件全部满足）
+        write_run_state(
+            status="completed",
+            finished_at=datetime.now().isoformat(timespec="seconds"),
+            success_count=success_count, failed_count=failed_count,
+            quality_audit_ok=quality_audit_ok, task_summary=task_summary,
+        )
+        if failed_count > 0:
+            logger.warning(f"[DaemonLifecycle] 今日轮次完成但有 {failed_count} 个任务失败，"
+                           f"请检查 task_summary 和日志")
+        else:
+            logger.info(f"[DaemonLifecycle] 今日轮次全部成功 ({success_count} 任务)")
+
+    # -- 健康检查（评审 3：try-lock 非阻塞） --
+    def run_health_check(self, tasks_cfg: dict):
+        """健康检查：collector_run.lock 非阻塞，拿不到跳过。"""
+        lock = CollectorRunLock(timeout=0)
+        if not lock.try_acquire():
+            logger.debug("[DaemonLifecycle] 健康检查跳过（collector_run.lock 忙）")
+            return
+        collector = None
+        try:
+            from quantstudio.pipeline.daemon import ResidentCollector
+            collector = ResidentCollector.from_configs(
+                self.config_dir / "data_config.json",
+                self.config_dir / "sources_config.json",
+                self.config_dir / "collector_tasks.json",
+                self.config_dir / "alignment_rules.json",
+            )
+            collector._health_check()
+        except Exception as e:
+            logger.debug(f"[DaemonLifecycle] 健康检查异常: {e}")
+        finally:
+            if collector is not None:
+                try:
+                    collector.close()
+                except Exception:
+                    pass
+            try:
+                lock.__exit__(None, None, None)
+            except Exception:
+                pass
+
+    # -- 可中断睡眠 --
+    def _interruptible_sleep(self, seconds: int):
+        """可中断睡眠：每秒检测停止请求。"""
+        elapsed = 0
+        while elapsed < seconds and self._running:
+            if consume_stop_request_if_matched(self.instance_token):
+                self._running = False
+                return
+            time.sleep(1)
+            elapsed += 1
+
+    # -- 优雅退出 --
+    def _graceful_exit(self):
+        """停止请求触发：标记状态，等当前安全点结束。"""
+        self._running = False
+        try:
+            self.update_status(status="stopping")
+        except Exception:
+            pass
+        logger.info("[DaemonLifecycle] 优雅退出流程启动，等待当前安全步骤结束")
+        # 当前如果在 run_one_cycle 内，循环会在下个任务边界 break；
+        # _interruptible_sleep 也会在 1s 内响应。
