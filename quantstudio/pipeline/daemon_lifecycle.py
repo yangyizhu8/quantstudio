@@ -341,16 +341,36 @@ class DaemonLifecycle:
             logger.warning("[DaemonLifecycle] .daemon.lock 已被占用（另一个 daemon 运行中），退出")
             return False
 
+    def release_instance_lock(self):
+        """释放 .daemon.lock（publish_status 失败或退出时调用）。"""
+        if self._instance_lock is not None:
+            try:
+                self._instance_lock.release()
+            except Exception:
+                pass
+            try:
+                # 清理 lock 文件（FileLock 不会自动删）
+                daemon_lock_path().unlink(missing_ok=True)
+            except Exception:
+                pass
+            self._instance_lock = None
+
     def publish_status(self):
-        """[3][4] 清陈旧 status + 原子写本进程 status。"""
-        # 清陈旧（进程已死的旧 status）
+        """[3][4] 清陈旧 status + 原子写本进程 status。
+
+        Review FIX-4：alive_other / denied 都必须**拒绝启动**，不得覆盖原 status。
+        - alive_other：另一个 daemon 在跑；
+        - denied：无法确认原 status 进程身份（AccessDenied），不清不杀也不覆盖。
+        两种情况都 raise，调用方（main）负责释放 .daemon.lock 并退出。
+        """
         clear_result = clear_stale_status()
         if clear_result == "alive_other":
             raise RuntimeError("检测到另一个 daemon 仍在运行，拒绝启动")
         if clear_result == "denied":
-            logger.warning("[DaemonLifecycle] 无法确认陈旧 status 进程身份，"
-                           "继续启动（可能残留旧 status）")
-        # 收集本进程身份信息
+            raise RuntimeError(
+                "无法确认陈旧 status 进程身份（AccessDenied），"
+                "不清不杀也不覆盖原 status；请人工处理 data/daemon_status.json 后重启")
+        # clear_result in ("cleared", "none") → 安全发布本进程 status
         p = psutil.Process(os.getpid())
         cmdline = sys.argv[:]
         self._status = {
@@ -470,12 +490,24 @@ class DaemonLifecycle:
             logger.error(f"[DaemonLifecycle] 读取 collector_tasks.json 失败: {e}")
             return {}
 
-    # -- 整轮采集（评审 7） --
+    # -- 整轮采集（评审 7 + Review FIX-1/2/3） --
     def run_one_cycle(self, tasks_cfg: dict):
         """整轮采集：collector_run.lock 内 from_configs + 遍历 + 审计 + close。
 
-        completed 严格条件：lock 获取成功 + 任务完整遍历 + 每任务有明确结果 +
-        质量审计执行 + collector.close() 成功。任一不满足 → 不写 completed。
+        completed 严格条件（全部满足才写 completed）：
+          1. lock 获取成功；
+          2. 任务列表完整遍历（traversal_completed=True，未因 stop/异常 break）；
+          3. 每个 eligible task 都有明确结果（success/failed，非 skipped-by-stop）；
+          4. 质量审计执行（无论成败）；
+          5. collector.close() 成功（close_ok=True）。
+
+        任一不满足 → 写 interrupted（原因 stop_requested / cleanup_failed / exception）。
+
+        stop.request 消费点（Review FIX-1）：
+          - 每个 task 开始前；
+          - 每个 task 完成后；
+          - 质量审计开始前；
+          - 质量审计完成后。
         """
         today = datetime.now().strftime("%Y-%m-%d")
         run_id = f"r_{uuid.uuid4().hex[:8]}"
@@ -493,13 +525,37 @@ class DaemonLifecycle:
         success_count = 0
         failed_count = 0
         quality_audit_ok = False
+        # Review FIX-2：显式追踪遍历完整性
+        eligible_task_count = 0
+        attempted_task_count = 0
+        traversal_completed = False
+        stop_requested = False
+        close_ok = False
+        # Review FIX-1：任务边界消费 stop.request
+        def _check_stop_at_boundary(point_name: str):
+            nonlocal stop_requested
+            if consume_stop_request_if_matched(self.instance_token):
+                self._running = False
+                stop_requested = True
+                # 同步通知 collector 内部循环（per_stock/per_date 已支持 _running 检查）
+                if collector is not None:
+                    try:
+                        collector._running = False
+                    except Exception:
+                        pass
+                logger.info(f"[DaemonLifecycle] 任务边界({point_name})收到停止请求，"
+                            f"中断遍历")
+                return True
+            return False
+
         try:
             # 拿到 lock，写 running
             write_run_state(
                 scheduled_date=today, run_id=run_id, status="running",
                 started_at=started_at, finished_at=None,
                 success_count=0, failed_count=0, quality_audit_ok=False,
-                task_summary=[],
+                task_summary=[], eligible_task_count=0, attempted_task_count=0,
+                traversal_completed=False, stop_requested=False,
             )
             # 锁内首次 from_configs（_init_tables 安全）
             from quantstudio.pipeline.daemon import ResidentCollector
@@ -509,17 +565,24 @@ class DaemonLifecycle:
                 self.config_dir / "collector_tasks.json",
                 self.config_dir / "alignment_rules.json",
             )
+            # 增量开始前消费 stop（用户可能在 from_configs 期间点了停止）
+            _check_stop_at_boundary("pre_cycle")
             tasks = tasks_cfg.get("tasks", [])
             for task in tasks:
-                if not self._running:
-                    logger.info("[DaemonLifecycle] 收到停止信号，中断任务遍历")
+                # Review FIX-1：每个 task 开始前消费 stop；
+                # 也检查 self._running（stop 可能已在 pre_cycle 被消费，文件已删）
+                if stop_requested or not self._running:
+                    break
+                if _check_stop_at_boundary(f"pre_task_{task.get('name','?')}"):
                     break
                 if not task.get("enabled", True):
                     continue
                 if task.get("mode", "incremental") != "incremental":
                     continue
+                eligible_task_count += 1
                 task_name = task.get("name", "")
                 result_entry = {"name": task_name, "result": "skipped"}
+                attempted_task_count += 1
                 try:
                     ok = collector.execute_task(task, mode="incremental",
                                                 run_quality_audit=False)
@@ -538,45 +601,107 @@ class DaemonLifecycle:
                 task_summary.append(result_entry)
                 # 每任务后更新（便于崩溃排查）
                 write_run_state(success_count=success_count, failed_count=failed_count,
-                                task_summary=task_summary)
-            # finally 收尾：质量审计
+                                task_summary=task_summary,
+                                eligible_task_count=eligible_task_count,
+                                attempted_task_count=attempted_task_count)
+                # Review FIX-1：每个 task 完成后消费 stop
+                if _check_stop_at_boundary(f"post_task_{task_name}"):
+                    break
+            else:
+                # for 循环正常结束（未 break）→ 遍历完成
+                traversal_completed = True
+            # Review FIX-1：质量审计开始前消费 stop
+            if not stop_requested:
+                _check_stop_at_boundary("pre_quality_audit")
+            # finally 收尾：质量审计（即使 stop 也执行，保证审计覆盖已采集数据）
             try:
                 quality_audit_ok = collector._run_full_quality_audit()
             except Exception as e:
                 logger.error(f"[DaemonLifecycle] 质量审计失败: {e}", exc_info=True)
                 quality_audit_ok = False
+            # Review FIX-1：质量审计完成后消费 stop
+            _check_stop_at_boundary("post_quality_audit")
         except Exception as e:
             # 可处理异常 → interrupted（评审 7）
             write_run_state(status="interrupted",
                             finished_at=datetime.now().isoformat(timespec="seconds"),
                             error=f"{type(e).__name__}: {e}",
                             success_count=success_count, failed_count=failed_count,
-                            quality_audit_ok=quality_audit_ok, task_summary=task_summary)
+                            quality_audit_ok=quality_audit_ok, task_summary=task_summary,
+                            eligible_task_count=eligible_task_count,
+                            attempted_task_count=attempted_task_count,
+                            traversal_completed=False,
+                            stop_requested=stop_requested)
             logger.exception(f"[DaemonLifecycle] 轮次异常（标 interrupted）: {e}")
             return
         finally:
-            # 关键：释放 _shared_conn（评审 1.4）
+            # Review FIX-3：collector.close() 失败不得 completed
             if collector is not None:
                 try:
                     collector.close()
+                    close_ok = True
                 except Exception as e:
-                    logger.warning(f"[DaemonLifecycle] collector.close() 异常: {e}")
+                    close_ok = False
+                    logger.error(f"[DaemonLifecycle] collector.close() 失败: {e}",
+                                 exc_info=True)
+                    # Review FIX-3：检查 DuckDB 可打开性，必要时阻止下轮
+                    try:
+                        import duckdb
+                        from quantstudio._paths import db_path
+                        test_conn = duckdb.connect(str(db_path()), read_only=True)
+                        test_conn.close()
+                    except Exception as dbe:
+                        logger.error(f"[DaemonLifecycle] DuckDB 不可打开，"
+                                     f"可能残留连接: {dbe}")
+            else:
+                close_ok = True  # 无 collector 无需 close
             try:
                 lock.__exit__(None, None, None)
             except Exception:
                 pass
-        # 收尾完写 completed（严格条件全部满足）
-        write_run_state(
-            status="completed",
-            finished_at=datetime.now().isoformat(timespec="seconds"),
-            success_count=success_count, failed_count=failed_count,
-            quality_audit_ok=quality_audit_ok, task_summary=task_summary,
-        )
-        if failed_count > 0:
-            logger.warning(f"[DaemonLifecycle] 今日轮次完成但有 {failed_count} 个任务失败，"
-                           f"请检查 task_summary 和日志")
+        # Review FIX-2/3：严格判定 completed vs interrupted
+        can_complete = (traversal_completed and not stop_requested and close_ok)
+        if can_complete:
+            write_run_state(
+                status="completed",
+                finished_at=datetime.now().isoformat(timespec="seconds"),
+                success_count=success_count, failed_count=failed_count,
+                quality_audit_ok=quality_audit_ok, task_summary=task_summary,
+                eligible_task_count=eligible_task_count,
+                attempted_task_count=attempted_task_count,
+                traversal_completed=traversal_completed,
+                stop_requested=stop_requested,
+            )
+            if failed_count > 0:
+                logger.warning(f"[DaemonLifecycle] 今日轮次完成但有 {failed_count} 个任务失败，"
+                               f"请检查 task_summary 和日志")
+            else:
+                logger.info(f"[DaemonLifecycle] 今日轮次全部成功 ({success_count} 任务)")
         else:
-            logger.info(f"[DaemonLifecycle] 今日轮次全部成功 ({success_count} 任务)")
+            # 中断：stop_requested 或 close 失败或异常
+            reason = []
+            if stop_requested:
+                reason.append("stop_requested")
+            if not close_ok:
+                reason.append("cleanup_failed")
+            if not traversal_completed and not stop_requested:
+                reason.append("traversal_incomplete")
+            interrupt_reason = ",".join(reason) if reason else "unknown"
+            interrupt_status = "interrupted" if close_ok else "failed_cleanup"
+            write_run_state(
+                status=interrupt_status,
+                finished_at=datetime.now().isoformat(timespec="seconds"),
+                reason=interrupt_reason,
+                success_count=success_count, failed_count=failed_count,
+                quality_audit_ok=quality_audit_ok, task_summary=task_summary,
+                eligible_task_count=eligible_task_count,
+                attempted_task_count=attempted_task_count,
+                traversal_completed=traversal_completed,
+                stop_requested=stop_requested,
+            )
+            logger.warning(f"[DaemonLifecycle] 今日轮次未完成（{interrupt_status}, "
+                           f"reason={interrupt_reason}），attempted={attempted_task_count}/"
+                           f"eligible={eligible_task_count}")
 
     # -- 健康检查（评审 3：try-lock 非阻塞） --
     def run_health_check(self, tasks_cfg: dict):

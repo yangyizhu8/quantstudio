@@ -1588,6 +1588,21 @@ def _resolve_env(value):
 # ---------------------------------------------------------------------------
 # CLI 入口
 # ---------------------------------------------------------------------------
+def _get_git_commit() -> str:
+    """获取当前 git commit hash（启动日志打印，便于精确验收）。失败返回 'unknown'。"""
+    try:
+        import subprocess
+        root = Path(__file__).resolve().parent.parent
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(root), capture_output=True, text=True, timeout=2)
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return "unknown"
+
+
 def main():
     parser = argparse.ArgumentParser(description="QuantStudio 常驻采集进程")
     parser.add_argument("--mode", choices=["forever", "once"], default="forever",
@@ -1613,11 +1628,22 @@ def main():
     file_handler = TimedRotatingFileHandler(
         log_dir / "daemon.log", when="midnight", backupCount=14, encoding="utf-8")
     file_handler.suffix = "%Y-%m-%d"
+    stream_handler = logging.StreamHandler()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
-        handlers=[logging.StreamHandler(), file_handler])
+        handlers=[stream_handler, file_handler])
+    # Review FIX-5：GUI 启动场景（stdout/stderr 重定向到 bootstrap_{token}.log）下，
+    # logging 初始化后移除 StreamHandler，避免 bootstrap 文件持续接收整份日志副本
+    # 且无轮转能力。CLI 手动启动场景保留 StreamHandler（输出到终端）。
+    # bootstrap 文件只捕获 basicConfig 之前的 import/启动崩溃，符合其设计目的。
+    if args.instance_token and sys.platform == "win32":
+        # GUI 启动：stdout 是 bootstrap 文件 fd
+        if not sys.stdout.isatty():
+            logging.getLogger().removeHandler(stream_handler)
+            logger.info("[CLI] GUI 启动场景：已移除 StreamHandler，"
+                        "后续日志仅写 daemon.log（bootstrap 文件停止增长）")
 
     cdir = Path(args.config_dir)
 
@@ -1644,8 +1670,11 @@ def main():
     else:
         # forever 模式：v3 走 DaemonLifecycle 轻量调度（不调用旧 run_forever）
         from .daemon_lifecycle import DaemonLifecycle
+        # Review FIX-6：启动日志打印 git commit hash，便于精确验收
+        git_commit = _get_git_commit()
         logger.info(f"[CLI] 常驻模式（v3 DaemonLifecycle）max_iter={args.max_iter} "
-                    f"token={'provided' if args.instance_token else 'auto-generated'}")
+                    f"token={'provided' if args.instance_token else 'auto-generated'} "
+                    f"git_commit={git_commit}")
         lifecycle = DaemonLifecycle(
             config_dir=cdir,
             instance_token=args.instance_token,
@@ -1653,13 +1682,33 @@ def main():
         if not lifecycle.acquire_instance_lock():
             logger.error("[CLI] 另一个 daemon 已在运行，退出")
             sys.exit(1)
-        lifecycle.publish_status()
         try:
+            # Review FIX-4：publish_status 可能因 alive_other/denied 抛 RuntimeError
+            lifecycle.publish_status()
             lifecycle.run_forever()
+        except RuntimeError as e:
+            # publish_status 拒绝启动（alive_other / AccessDenied）
+            logger.error(f"[CLI] 启动被拒绝: {e}")
+            # 不清 status（不是自己的），仅释放 .daemon.lock
+            lifecycle.release_instance_lock()
+            sys.exit(1)
+        except Exception:
+            # 未预期异常：释放 .daemon.lock + 清自己的 status（如已发布）
+            logger.exception("[CLI] daemon 异常退出")
+            try:
+                lifecycle.clear_own_status()
+            except Exception:
+                pass
+            lifecycle.release_instance_lock()
+            sys.exit(1)
         finally:
-            # clear_own_status 已在 run_forever() 末尾调用；此处作为崩溃兜底
-            # （run_forever 抛未捕获异常时仍保证 status 清理）。
-            lifecycle.clear_own_status()
+            # 正常退出路径：clear_own_status 已在 run_forever() 末尾调用；
+            # 此处作为崩溃兜底（run_forever 抛未捕获异常时仍保证 status 清理）。
+            try:
+                lifecycle.clear_own_status()
+            except Exception:
+                pass
+            lifecycle.release_instance_lock()
 
 
 if __name__ == "__main__":
