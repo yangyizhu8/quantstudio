@@ -2,7 +2,7 @@
 
 > Master plan: `QuantStudio Strategy Compiler frozen master plan v1.0`  
 > Current stage: PR6b-2A / Skill MVP G1
-> Stage status: **G1-I corrective commit `bcdc85d` merged to `main` via `--ff-only` on 2026-07-24 (main HEAD=`bcdc85d`, `merge-base --is-ancestor bcdc85d main` PASS, no merge commit, main worktree clean). Unrelated dirty-main changes (GUI/config/QFQ/docs, 14 files) preserved on WIP branch `codex/main-dirty-wip` (`7f223af`+`faabc20`), not merged to main. Awaiting final G1-I Review; G2 CP3 Reference closure starts only after final Review PASS. CP3 remains BLOCKED at feature commit `8931430`.**
+> Stage status: **G1-I corrective commit `bcdc85d` merged to `main` via `--ff-only` on 2026-07-24 (main contains `bcdc85d` via `--ff-only`; current HEAD is a descendant docs commit, and `merge-base --is-ancestor bcdc85d main` PASS, no merge commit, main worktree clean). Unrelated dirty-main changes (GUI/config/QFQ/docs, 14 files) preserved on WIP branch `codex/main-dirty-wip` (`7f223af`+`faabc20`), not merged to main. Awaiting final G1-I Review; G2 CP3 Reference closure starts only after final Review PASS. CP3 remains BLOCKED at feature commit `8931430`.**
 
 ## Stage overview
 
@@ -14,7 +14,7 @@
 | PR3 Multi-frequency Provider | PASS / WAITING_CONFIRMATION | Provider frequency routing implemented (native freq only; aggregation deferred to PR3.5); daily path byte-level unchanged |
 | PR4 Minute event engine | CONFIRMED (2026-07-22) | Minute event loop implemented (main-loop branch + precise run_daily + ETF T+0 minute-only); daily path byte-level unchanged; **real-minute smoke PASS** (510050 ETF × 2026-07-17 × full-universe); **end-labeled verified** (241 bars/day, 09:30 call-auction O=H=L=C); **GIL defect fixed** (batch loading, was deferred perf item that became functional blocker on real data) |
 | PR5 Skill skeleton | DONE (0.1.0-skeleton, 2026-07-22) | Skill created at `skills/quantstudio-strategy-compiler/` (SKILL.md + agents/openai.yaml + 11 references + 3 schemas + 2 scripts); quick_validate PASS; inspect_capabilities live run READY (honest probe, tick PLANNED); validate_strategy_spec PR0 example green + 3 violation variants red; awaiting user confirmation before PR6 |
-| PR6 IR/renderers/validators | IN_PROGRESS — G1 PASS / MERGED TO MAIN | PR6a + PR6b-1 已在 `main`；G1-I corrective `bcdc85d` 已于 2026-07-24 经 `--ff-only` 合并到 `main`（HEAD=`bcdc85d`，待最终 Review）。PR6b-2A CP1/CP2 已通过，CP3 partial `8931430` 保留；G2 待最终 Review PASS 后开始。 |
+| PR6 IR/renderers/validators | IN_PROGRESS — G1 PASS / MERGED TO MAIN | PR6a + PR6b-1 已在 `main`；G1-I corrective `bcdc85d` 已于 2026-07-24 经 `--ff-only` 合并到 `main`（当前 HEAD 为其 docs descendant，待最终 Review）。PR6b-2A CP1/CP2 已通过，CP3 partial `8931430` 保留；G2 待最终 Review PASS 后开始。 |
 | PR7 Fidelity closure | NOT_STARTED | Planned |
 
 ## PR0 acceptance
