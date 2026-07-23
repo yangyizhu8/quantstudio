@@ -15,11 +15,12 @@ Boundaries (reviewer-authorized G3 scope):
 from __future__ import annotations
 
 from .builder import build_strategy_package, PACKAGE_BUILDER_VERSION
-from .manifest import write_manifest, build_manifest
+from .manifest import build_manifest, write_manifest, G2ReferenceError
 
 __all__ = [
     "build_strategy_package",
     "build_manifest",
     "write_manifest",
+    "G2ReferenceError",
     "PACKAGE_BUILDER_VERSION",
 ]

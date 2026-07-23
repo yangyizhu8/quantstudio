@@ -48,15 +48,23 @@
     },
     "g2_reference_closure": {
       "type": ["object", "null"],
-      "description": "Optional linkage to G2 CP3 frozen reference artifacts. When present, proves the strategy's reference closure is tracked (data_digest_status records the deferred boundary).",
+      "description": "Optional linkage to G2 CP3 frozen reference artifacts. Uses logical artifact IDs + sha256 (no dev-machine absolute paths for portability). When present, all 4 frozen artifacts were verified to exist (fail-closed) and data_digest_status records the deferred boundary.",
       "properties": {
-        "reference_signals_path": { "type": "string" },
-        "reference_orders_path": { "type": "string" },
-        "reference_nav_path": { "type": "string" },
-        "source_digest_path": { "type": "string" },
+        "frozen_artifact_digests": {
+          "type": "object",
+          "description": "sha256 (hex) of each G2 frozen artifact, keyed by logical ID",
+          "properties": {
+            "reference_signals": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "reference_orders": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "reference_nav": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "source_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          },
+          "required": ["reference_signals", "reference_orders", "reference_nav", "source_digest"]
+        },
         "data_digest_status": { "type": "string", "enum": ["frozen", "blocked"] },
         "oracle_source_digest": { "type": ["string", "null"] }
-      }
+      },
+      "required": ["frozen_artifact_digests", "data_digest_status"]
     },
     "builder_version": { "type": "string" }
   },

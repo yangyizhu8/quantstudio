@@ -1,33 +1,30 @@
 """G3 strategy package builder: Spec → IR → dual Renderer → structured package.
 
 Reuses the PR6a render.py (golden-protected dual renderer) and build_strategy_ir.
-Produces a self-contained, deterministic strategy package directory:
+Produces a self-contained, deterministic strategy package directory.
 
-    <strategy_id>__<package_version>/
-      manifest.json              # version, entry points, digests, G2 linkage
-      strategy_spec.json         # frozen input spec
-      strategy_ir.json           # frozen IR
-      <id>_quantstudio.py        # QuantStudio rendered strategy
-      <id>_ptrade.py             # Strict-PTrade rendered strategy (no batch APIs)
-      __init__.py                # package init (no side effects)
-      README.md                  # generated docs
+G3 audit-fix corrective changes:
+- Build order: ALL non-manifest artifacts written FIRST, then digests computed,
+  then manifest written ONCE (no self-reference, no rewrite).
+- manifest.json excluded from artifact_digests (self-reference unsolvable);
+  README.md included.
+- Rebuild into an existing package dir clears stale files (rmtree + mkdir).
+- G2 linkage: 4 frozen artifacts must exist (fail closed via G2ReferenceError),
+  recorded by logical ID + sha256 (no absolute paths in manifest).
 
 Boundaries:
-- Deterministic: fixed render_timestamp sentinel; canonical JSON bytes; byte-identical
-  rendered strategies across builds (render.py itself is deterministic given same IR).
-- Path isolation: all outputs under the single package dir; nothing leaks to out_dir root.
-- UTF-8 no BOM on all text files.
+- Deterministic, path-isolated, UTF-8 no BOM, cross-process stable.
 - Golden protection: render raises GoldenProtectionError on protected IDs.
 - Does not modify G2 frozen artifacts or G1-I engine/API/test.
 """
 from __future__ import annotations
 
-import json
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from ..build_strategy_ir import build_strategy_ir
-from ..reference.source_digest import canonical_json_bytes
+from ..reference.source_digest import canonical_json_bytes, sha256_file
 from ..render import (
     GoldenProtectionError,
     output_filename,
@@ -35,6 +32,7 @@ from ..render import (
     render_quantstudio,
 )
 from .manifest import build_manifest, write_manifest
+from .manifest import G2ReferenceError  # re-export
 
 PACKAGE_BUILDER_VERSION = "1.0.0"
 DEFAULT_PACKAGE_VERSION = "0.1.0"
@@ -86,7 +84,7 @@ def _write_canonical_json(obj: Any, path: Path) -> None:
 
 
 def _write_text_no_bom(text: str, path: Path) -> None:
-    """Write text as UTF-8 without BOM."""
+    """Write text as UTF-8 without BOM, LF newlines."""
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
@@ -103,13 +101,15 @@ def build_strategy_package(
         spec: validated strategy_spec dict.
         out_dir: parent directory; a single package subdir is created within it.
         package_version: semver for the package (default 0.1.0).
-        g2_reference: optional G2 frozen-closure path linkage.
+        g2_reference: optional G2 frozen-closure path linkage (4 artifacts required
+            if provided; fail-closed on missing).
 
     Returns:
         Path to the created package directory.
 
     Raises:
         GoldenProtectionError: if strategy_id is golden-protected.
+        G2ReferenceError: if g2_reference provided but a frozen artifact is missing.
     """
     strategy_id = spec["strategy_id"]
     strategy_name = spec.get("strategy_name", strategy_id)
@@ -120,6 +120,9 @@ def build_strategy_package(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     pkg_dir = out_dir / _package_dir_name(strategy_id, package_version)
+    # Rebuild-safe: clear any stale package dir so old files don't survive.
+    if pkg_dir.exists():
+        shutil.rmtree(pkg_dir)
     pkg_dir.mkdir(parents=True, exist_ok=True)
 
     # Stage 1: build IR (Spec → IR)
@@ -133,7 +136,7 @@ def build_strategy_package(
     qs_file = output_filename(strategy_id, "quantstudio")
     pt_file = output_filename(strategy_id, "ptrade-default")
 
-    # Stage 3: write all artifacts (deterministic encoding)
+    # Stage 3: write ALL non-manifest artifacts first (deterministic encoding).
     _write_canonical_json(spec, pkg_dir / "strategy_spec.json")
     _write_canonical_json(ir.to_dict(), pkg_dir / "strategy_ir.json")
     _write_text_no_bom(qs_code, pkg_dir / qs_file)
@@ -142,14 +145,31 @@ def build_strategy_package(
         _INIT_PY_TEMPLATE.format(strategy_id=strategy_id, version=package_version),
         pkg_dir / "__init__.py")
 
-    # Stage 4: build + write manifest (after artifacts exist so digests compute)
+    # G2 linkage note for README (computed before manifest; G2ReferenceError may raise).
+    if g2_reference is not None:
+        g2_note = _g2_readme_note(g2_reference)
+    else:
+        g2_note = "Not linked (no G2 reference closure provided)."
+
+    # README written BEFORE manifest so its digest can be included.
+    _write_text_no_bom(
+        _README_TEMPLATE.format(
+            strategy_name=strategy_name, strategy_id=strategy_id, version=package_version,
+            platforms=", ".join(target_platforms),
+            engine_semantics_version=engine_semantics_version,
+            builder_version=PACKAGE_BUILDER_VERSION,
+            qs_file=qs_file, pt_file=pt_file, g2_note=g2_note),
+        pkg_dir / "README.md")
+
+    # Stage 4: build manifest. artifact_filenames lists every NON-manifest file
+    # (manifest never self-references). G2 linkage built inside (fail-closed).
     entry_points = [
         {"platform": "quantstudio", "filename": qs_file},
         {"platform": "ptrade-default", "filename": pt_file},
     ]
     artifact_filenames = [
         "strategy_spec.json", "strategy_ir.json", qs_file, pt_file,
-        "manifest.json", "__init__.py",
+        "__init__.py", "README.md",
     ]
     manifest = build_manifest(
         strategy_id=strategy_id,
@@ -163,28 +183,31 @@ def build_strategy_package(
         g2_reference=g2_reference,
         builder_version=PACKAGE_BUILDER_VERSION,
     )
-    # write manifest, then re-read to recompute manifest's own digest entry (it's in artifact_digests)
-    write_manifest(manifest, pkg_dir)
-    # recompute manifest digest now that the file exists, and rewrite once for consistency
-    manifest["artifact_digests"]["manifest.json"] = sha256_file_local(pkg_dir / "manifest.json")
+    # Single manifest write — no self-reference, no rewrite. Stable.
     write_manifest(manifest, pkg_dir)
 
-    # Stage 5: README (after manifest so it can reference final state)
-    g2_note = "Not linked (no G2 reference closure provided)." if g2_reference is None else \
-        f"Linked to G2 CP3 frozen closure (data_digest_status={manifest['g2_reference_closure']['data_digest_status']})."
-    _write_text_no_bom(
-        _README_TEMPLATE.format(
-            strategy_name=strategy_name, strategy_id=strategy_id, version=package_version,
-            platforms=", ".join(target_platforms),
-            engine_semantics_version=engine_semantics_version,
-            builder_version=PACKAGE_BUILDER_VERSION,
-            qs_file=qs_file, pt_file=pt_file, g2_note=g2_note),
-        pkg_dir / "README.md")
+    # Stage 5: post-write per-file consistency verification (audit gate).
+    _verify_artifact_digests(pkg_dir, manifest)
 
     return pkg_dir
 
 
-def sha256_file_local(path: Path) -> str:
-    """Local sha256 (deferred import to keep module-level clean)."""
-    from ..reference.source_digest import sha256_file
-    return sha256_file(path)
+def _g2_readme_note(g2_reference: Dict[str, Any]) -> str:
+    """README note for G2 linkage (also validates existence, fail-closed)."""
+    from .manifest import _build_g2_linkage  # reuse the same fail-closed logic
+    linkage = _build_g2_linkage(g2_reference)
+    return (f"Linked to G2 CP3 frozen closure (4 artifacts verified; "
+            f"data_digest_status={linkage['data_digest_status']}).")
+
+
+def _verify_artifact_digests(pkg_dir: Path, manifest: Dict[str, Any]) -> None:
+    """Audit gate: every recorded artifact_digest equals the actual file's sha256.
+    manifest.json is deliberately NOT in artifact_digests (no self-reference)."""
+    for fname, recorded in manifest["artifact_digests"].items():
+        p = pkg_dir / fname
+        if not p.exists():
+            raise AssertionError(f"manifest lists {fname} but file missing after build")
+        actual = sha256_file(p)
+        if actual != recorded:
+            raise AssertionError(
+                f"artifact digest mismatch for {fname}: manifest {recorded[:12]} != actual {actual[:12]}")
