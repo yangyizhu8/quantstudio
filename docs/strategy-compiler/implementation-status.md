@@ -2,7 +2,7 @@
 
 > Master plan: `QuantStudio Strategy Compiler frozen master plan v1.0`  
 > Current stage: PR6b-2A / Skill MVP G1
-> Stage status: **G1-I corrective commit `bcdc85d` merged to `main` via `--ff-only` on 2026-07-23 (main contains `bcdc85d` via `--ff-only`; PR2 merge commit=`62870d4`; current main HEAD=`a85835f` (latest docs-only descendant; ancestry `bcdc85d → 09bf151 → fa3ee1c → 62870d4 → b2d940a → 30e4a9a → 271bb0e → a85835f`), and `merge-base --is-ancestor bcdc85d main` PASS, no merge commit, main worktree clean). Unrelated dirty-main changes (GUI/config/QFQ/docs, 14 files) preserved on WIP branch `codex/main-dirty-wip` (`7f223af`+`faabc20`+`9858c26`), not merged to main. Final G1-I Review PASS; G2 CP3 Reference closure is now authorized to start, but has not started. CP3 remains BLOCKED at feature commit `8931430`.**
+> Stage status: **G1-I corrective commit `bcdc85d` merged to `main` via `--ff-only` on 2026-07-23 (main contains `bcdc85d` via `--ff-only`; PR2 merge commit=`62870d4`; current main HEAD=`b3da10b` (latest docs-only descendant; ancestry `bcdc85d → 09bf151 → fa3ee1c → 62870d4 → b2d940a → 30e4a9a → 271bb0e → a85835f → b3da10b`; this docs commit itself advances main by one, accepted as docs-only descendant per reviewer), and `merge-base --is-ancestor bcdc85d main` PASS, no merge commit, main worktree clean). Unrelated dirty-main changes (GUI/config/QFQ/docs, 14 files) preserved on WIP branch `codex/main-dirty-wip` (`7f223af`+`faabc20`+`9858c26`), not merged to main. Final G1-I Review PASS; G2 CP3 Reference closure is now authorized to start, but has not started. CP3 remains BLOCKED at feature commit `8931430`.**
 
 ## Stage overview
 
@@ -675,7 +675,7 @@ This supersedes the PR2 Commit 1 / audit-fix / audit-fix2 FAIL entries while ret
 - Next gate: implement Commit 2 in the same isolated branch/worktree with auditable scope, hermetic tests, and no formal Canonical repair writes; submit commit/diff/test/runtime evidence for Review.
 ## G1-I final Review PASS (2026-07-23)
 
-- Main/worktree: `D:\miniQMT策略实盘\QuantStudio` / `main`, clean; PR2 merge commit=`62870d4`; current main HEAD=`a85835f` (latest docs-only descendant; ancestry `bcdc85d → 09bf151 → fa3ee1c → 62870d4 → b2d940a → 30e4a9a → 271bb0e → a85835f`).
+- Main/worktree: `D:\miniQMT策略实盘\QuantStudio` / `main`, clean; PR2 merge commit=`62870d4`; current main HEAD=`b3da10b` (latest docs-only descendant; ancestry `bcdc85d → 09bf151 → fa3ee1c → 62870d4 → b2d940a → 30e4a9a → 271bb0e → a85835f → b3da10b`; this docs commit itself advances main by one, accepted as docs-only descendant per reviewer).
 - Merge evidence: `bcdc85d` is an ancestor of `main`; G1-I entered main through the prior `--ff-only` path. The later `62870d4` merge is a disjoint QFQ PR2 integration and does not modify the G1 basket files.
 - WIP preservation: `codex/main-dirty-wip` HEAD=`9858c26`, retaining `7f223af`, `faabc20`, and `9858c26`; no WIP changes are merged to main.
 - Accepted G1-I scope: G1-D design v2, basket engine/API implementation, 6 corrective blocker fixes, and 59 basket tests.
