@@ -5,8 +5,13 @@ data/*.db-journal
 data/*.db.wal
 data/*.sqlite
 data/*.sqlite3
+# DuckDB shared-memory / write-ahead-log sidecar files (qfq_aux.db-shm, qfq_aux.db-wal)
+data/*.db-shm
+data/*.db-wal
 *.db-journal
 *.db.wal
+*.db-shm
+*.db-wal
 __pycache__/
 *.pyc
 *.egg-info/

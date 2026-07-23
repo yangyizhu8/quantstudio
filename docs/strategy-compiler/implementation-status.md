@@ -1,8 +1,8 @@
 ﻿# Strategy Compiler Implementation Status
 
 > Master plan: `QuantStudio Strategy Compiler frozen master plan v1.0`  
-> Current stage: PR6b-2A / Skill MVP G1
-> Stage status: **G1-I corrective commit `bcdc85d` merged to `main` via `--ff-only` on 2026-07-23 (main contains `bcdc85d` via `--ff-only`; PR2 merge commit=`62870d4`; current main HEAD=`b3da10b` (latest docs-only descendant; ancestry `bcdc85d → 09bf151 → fa3ee1c → 62870d4 → b2d940a → 30e4a9a → 271bb0e → a85835f → b3da10b`; this docs commit itself advances main by one, accepted as docs-only descendant per reviewer), and `merge-base --is-ancestor bcdc85d main` PASS, no merge commit, main worktree clean). Unrelated dirty-main changes (GUI/config/QFQ/docs, 14 files) preserved on WIP branch `codex/main-dirty-wip` (`7f223af`+`faabc20`+`9858c26`), not merged to main. Final G1-I Review PASS; G2 CP3 Reference closure is now authorized to start, but has not started. CP3 remains BLOCKED at feature commit `8931430`.**
+> Current stage: PR6b-2A / Skill MVP G2 (Hermetic Partial Closure)
+> Stage status: **G2 CP3 Hermetic Reference Partial Closure merged to `main` via `--ff-only` on 2026-07-23 (main HEAD=`53d90f5`; G2 closure commit `53d90f5` contains frozen reference signals/orders/nav/source_digest artifacts, reference module, schemas, Oracle port + tests; `merge-base --is-ancestor bcdc85d main` PASS; G1-I engine/API/test files untouched by G2 delta). Data digest boundary: `input_data_digest=null`, `data_digest_status=blocked` — real market-data digest/Fidelity/Reference verification DEFERRED (not faked; no live QMT/resident daemon/real DuckDB). This is a Hermetic/Synthetic Reference Partial Closure, NOT equivalent to a complete real-data Reference closure PASS. G3/G4 not yet authorized. CP3 Oracle reference (pr6b2a `8931430`) remains the independent truth source.**
 
 ## Stage overview
 
@@ -14,7 +14,7 @@
 | PR3 Multi-frequency Provider | PASS / WAITING_CONFIRMATION | Provider frequency routing implemented (native freq only; aggregation deferred to PR3.5); daily path byte-level unchanged |
 | PR4 Minute event engine | CONFIRMED (2026-07-22) | Minute event loop implemented (main-loop branch + precise run_daily + ETF T+0 minute-only); daily path byte-level unchanged; **real-minute smoke PASS** (510050 ETF × 2026-07-17 × full-universe); **end-labeled verified** (241 bars/day, 09:30 call-auction O=H=L=C); **GIL defect fixed** (batch loading, was deferred perf item that became functional blocker on real data) |
 | PR5 Skill skeleton | DONE (0.1.0-skeleton, 2026-07-22) | Skill created at `skills/quantstudio-strategy-compiler/` (SKILL.md + agents/openai.yaml + 11 references + 3 schemas + 2 scripts); quick_validate PASS; inspect_capabilities live run READY (honest probe, tick PLANNED); validate_strategy_spec PR0 example green + 3 violation variants red; awaiting user confirmation before PR6 |
-| PR6 IR/renderers/validators | IN_PROGRESS — G1 PASS / MERGED TO MAIN | PR6a + PR6b-1 已在 `main`；G1-I corrective `bcdc85d` 已经 `--ff-only` 合并到 `main`（当前 HEAD=`62870d4`，其后的 QFQ merge commit；G1 文件集不受影响）。PR6b-2A CP1/CP2 已通过，CP3 partial `8931430` 保留；G2 已获授权开始，但当前尚未启动。 |
+| PR6 IR/renderers/validators | IN_PROGRESS — G1+G2 MERGED TO MAIN | PR6a + PR6b-1 已在 `main`；G1-I `bcdc85d` + G2 CP3 Hermetic Partial Closure `53d90f5` 均已 `--ff-only` 合并到 `main`（HEAD=`53d90f5`；G2 delta 不含 G1 engine/API/test 文件）。G2 = Hermetic/Synthetic Reference Partial Closure，input_data_digest=null/data_digest_status=blocked，真实数据 digest/Fidelity 后置；G3/G4 未授权。CP3 Oracle reference `8931430` 保留为独立 truth source。 |
 | PR7 Fidelity closure | NOT_STARTED | Planned |
 
 ## PR0 acceptance
