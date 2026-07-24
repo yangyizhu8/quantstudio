@@ -6,8 +6,12 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PyQt6.QtWidgets import QApplication
-from qfluentwidgets import ScrollArea
+
+qt_widgets = pytest.importorskip("PyQt6.QtWidgets")
+qfluentwidgets = pytest.importorskip("qfluentwidgets")
+
+QApplication = qt_widgets.QApplication
+ScrollArea = qfluentwidgets.ScrollArea
 
 from quantstudio.gui.tabs.source_tab import SourceTab
 
@@ -33,8 +37,23 @@ class DummyMainWindow:
         self.config_dir = config_dir
 
 
-def test_source_tab_uses_transparent_fluent_scroll_area(app, source_config):
+def test_source_tab_uses_transparent_fluent_scroll_area(
+    app, source_config, monkeypatch
+):
+    transparent_calls = []
+    original_enable = ScrollArea.enableTransparentBackground
+
+    def enable_transparent_background(scroll_area):
+        transparent_calls.append(scroll_area)
+        original_enable(scroll_area)
+
+    monkeypatch.setattr(
+        ScrollArea,
+        "enableTransparentBackground",
+        enable_transparent_background,
+    )
+
     tab = SourceTab(DummyMainWindow(source_config))
 
     assert isinstance(tab.scroll_area, ScrollArea)
-    assert "background: transparent" in tab.scroll_area.styleSheet()
+    assert transparent_calls == [tab.scroll_area]
