@@ -77,8 +77,8 @@ python -m quantstudio.strategy_compiler.orchestrator <spec.json> [--start] [--en
 
 Python API：
 ```python
-from quantstudio.strategy_compiler.delivery import deliver_strategy
-deliver_strategy(spec, out_dir="output/strategy_deliveries")
+# Skill-local delivery script (not in the released wheel; lives in Skill scripts/)
+# python skills/quantstudio-strategy-compiler/scripts/deliver_strategy.py spec.json --out output/strategy_deliveries
 ```
 
 ---

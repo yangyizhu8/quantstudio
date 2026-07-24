@@ -92,8 +92,8 @@ qs-compile package <spec.json> --out <dir> [--g2-frozen-dir <dir>] [--package-ve
 ```
 Or via the delivery orchestration layer (preferred for Skill workflow):
 ```python
-from quantstudio.strategy_compiler.delivery import deliver_strategy
-deliver_strategy(spec, out_dir=<dir>, g2_frozen_dir=<optional>)
+# Skill-local delivery script (not in the released wheel; lives in Skill scripts/)
+# python skills/quantstudio-strategy-compiler/scripts/deliver_strategy.py <spec> --out <dir> [--g2-frozen-dir <dir>] [--allow-deferred-smoke]
 ```
 
 This generates the structured strategy package with:
