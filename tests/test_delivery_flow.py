@@ -235,6 +235,22 @@ class TestSmokeTruthTable:
         report = (base / "DELIVERY_REPORT.md").read_text(encoding="utf-8")
         assert "DELIVERED_WITHOUT_SMOKE" in report
 
+    def test_unknown_smoke_status_allow_false_fails(self, tmp_path, monkeypatch):
+        """Unknown smoke status (e.g. 'GARBLED') must fail closed regardless of allow."""
+        monkeypatch.setattr("quantstudio.strategy_compiler.orchestrator.orchestrate",
+                            self._fake_orchestrate_factory("GARBLED"))
+        with pytest.raises(RuntimeError, match="[Uu]nknown"):
+            ds.deliver_strategy(_confirmed_spec(), out_dir=tmp_path, run_smoke=True,
+                                allow_deferred_smoke=False)
+
+    def test_unknown_smoke_status_allow_true_also_fails(self, tmp_path, monkeypatch):
+        """Unknown smoke status must fail closed EVEN with allow_deferred_smoke=True."""
+        monkeypatch.setattr("quantstudio.strategy_compiler.orchestrator.orchestrate",
+                            self._fake_orchestrate_factory("GARBLED"))
+        with pytest.raises(RuntimeError, match="[Uu]nknown"):
+            ds.deliver_strategy(_confirmed_spec(), out_dir=tmp_path, run_smoke=True,
+                                allow_deferred_smoke=True)
+
 
 # ── Quick validate UTF-8 ───────────────────────────────────────────────────────
 

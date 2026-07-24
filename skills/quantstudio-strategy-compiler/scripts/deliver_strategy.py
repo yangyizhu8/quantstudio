@@ -96,12 +96,13 @@ def deliver_strategy(
                 raise RuntimeError("Smoke status missing; deferred not allowed.")
             delivery_status = "DELIVERED_WITH_DEFERRED_SMOKE"
         else:
-            # Unknown status → fail closed
-            if not allow_deferred_smoke:
-                _write_report(base, spec, run_card, None, "FAILED_SMOKE",
-                              f"unknown smoke status: {smoke_status}")
-                raise RuntimeError(f"Unknown smoke status: {smoke_status}")
-            delivery_status = "DELIVERED_WITH_DEFERRED_SMOKE"
+            # Unknown status → ALWAYS fail closed, regardless of allow_deferred_smoke.
+            # An unrecognized smoke status must never produce a package, even with
+            # explicit deferred authorization — it indicates a pipeline bug or
+            # contract violation that must be investigated, not silently deferred.
+            _write_report(base, spec, run_card, None, "FAILED_SMOKE",
+                          f"unknown smoke status: {smoke_status}")
+            raise RuntimeError(f"Unknown smoke status: {smoke_status}")
     else:
         # run_smoke=False
         if not allow_deferred_smoke:
