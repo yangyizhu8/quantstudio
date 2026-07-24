@@ -11,6 +11,16 @@ from qfluentwidgets import (
 
 logger = logging.getLogger(__name__)
 
+_SOURCE_SCROLL_STYLE = """
+QWidget#sourceScrollContent {
+    background-color: #202020;
+    color: #ffffff;
+}
+QWidget#sourceScrollContent QLabel {
+    color: #ffffff;
+}
+"""
+
 
 class SourceTab(QWidget):
     """数据源配置：每个源一个 GroupBox（CheckBox + 凭证 LineEdit）"""
@@ -27,8 +37,9 @@ class SourceTab(QWidget):
         self.scroll_area = ScrollArea()
         self.scroll_area.enableTransparentBackground()
         self.scroll_area.setWidgetResizable(True)
-        inner = QWidget()
-        self.inner_layout = QVBoxLayout(inner)
+        self.scroll_content = QWidget()
+        self.scroll_content.setObjectName("sourceScrollContent")
+        self.inner_layout = QVBoxLayout(self.scroll_content)
 
         # 各源的配置（label, credential_field）
         self.source_defs = [
@@ -70,9 +81,10 @@ class SourceTab(QWidget):
         self.inner_layout.addWidget(self.save_btn)
         self.inner_layout.addStretch()
 
-        self.scroll_area.setWidget(inner)
+        self.scroll_area.setWidget(self.scroll_content)
         outer = QVBoxLayout(self)
         outer.addWidget(self.scroll_area)
+        self.setStyleSheet(_SOURCE_SCROLL_STYLE)
 
     def _load_config(self):
         try:

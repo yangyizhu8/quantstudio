@@ -12,8 +12,12 @@ qt_widgets = pytest.importorskip("PyQt6.QtWidgets")
 qfluentwidgets = pytest.importorskip("qfluentwidgets")
 
 QApplication = qt_widgets.QApplication
+QLabel = qt_widgets.QLabel
+QPalette = pytest.importorskip("PyQt6.QtGui").QPalette
 NavigationInterface = qfluentwidgets.NavigationInterface
 ScrollArea = qfluentwidgets.ScrollArea
+Theme = qfluentwidgets.Theme
+setTheme = qfluentwidgets.setTheme
 
 from quantstudio.gui.main_window import MainWindow
 from quantstudio.gui.tabs.backtest_tab import BacktestTab
@@ -139,6 +143,26 @@ def test_source_tab_uses_transparent_fluent_scroll_area(
 
     assert isinstance(tab.scroll_area, ScrollArea)
     assert transparent_calls == [tab.scroll_area]
+
+
+def test_source_tab_dark_scroll_content_uses_dark_background_and_white_text(
+    app, source_config
+):
+    setTheme(Theme.DARK)
+    tab = SourceTab(DummyMainWindow(source_config))
+    tab.show()
+    app.processEvents()
+
+    assert tab.scroll_content.objectName() == "sourceScrollContent"
+    assert tab.scroll_area.widget() is tab.scroll_content
+    assert tab.scroll_content.palette().color(QPalette.ColorRole.Window).name() == "#202020"
+    assert tab.scroll_content.palette().color(QPalette.ColorRole.WindowText).name() == "#ffffff"
+    assert tab.scroll_content.findChild(QLabel).palette().color(
+        QPalette.ColorRole.WindowText
+    ).name() == "#ffffff"
+
+    tab.close()
+    app.processEvents()
 
 
 @pytest.mark.parametrize(
