@@ -13,6 +13,7 @@ qfluentwidgets = pytest.importorskip("qfluentwidgets")
 QApplication = qt_widgets.QApplication
 ScrollArea = qfluentwidgets.ScrollArea
 
+from quantstudio.gui.tabs.config_editor_tab import ConfigEditorTab
 from quantstudio.gui.tabs.source_tab import SourceTab
 
 
@@ -29,6 +30,42 @@ def source_config(tmp_path):
     (config_dir / "sources_config.json").write_text(
         json.dumps({"sources": {}}), encoding="utf-8"
     )
+    return config_dir
+
+
+@pytest.fixture
+def config_editor_config(tmp_path):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    configs = {
+        "data_config.json": {},
+        "sources_config.json": {"sources": {}},
+        "collector_tasks.json": {
+            "daemon_schedule": {
+                "daily_time": "17:00",
+                "check_interval_sec": 300,
+            },
+            "tasks": [
+                {
+                    "name": "daily stock",
+                    "table": "stock_daily",
+                    "freq": "daily",
+                    "enabled": True,
+                    "source": "xtquant",
+                    "start_date": "2018-01-01",
+                    "codes": ["ALL"],
+                    "max_workers": 4,
+                    "rate_limit": {
+                        "calls_per_min": 60,
+                        "wait_on_429": True,
+                    },
+                }
+            ],
+        },
+        "alignment_rules.json": {"schemas": {}, "source_mappings": {}},
+    }
+    for name, config in configs.items():
+        (config_dir / name).write_text(json.dumps(config), encoding="utf-8")
     return config_dir
 
 
@@ -57,3 +94,60 @@ def test_source_tab_uses_transparent_fluent_scroll_area(
 
     assert isinstance(tab.scroll_area, ScrollArea)
     assert transparent_calls == [tab.scroll_area]
+
+
+@pytest.mark.parametrize(
+    ("page_name", "scroll_name", "content_name", "object_name"),
+    [
+        ("sources_page", "sources_scroll", "sources_scroll_content", "sourcesScrollContent"),
+        ("tasks_page", "tasks_scroll", "tasks_scroll_content", "tasksScrollContent"),
+        (
+            "alignment_page",
+            "alignment_scroll",
+            "alignment_scroll_content",
+            "alignmentScrollContent",
+        ),
+    ],
+)
+def test_config_editor_pages_use_scoped_dark_scroll_panels(
+    app,
+    config_editor_config,
+    monkeypatch,
+    page_name,
+    scroll_name,
+    content_name,
+    object_name,
+):
+    transparent_calls = []
+    original_enable = ScrollArea.enableTransparentBackground
+
+    def enable_transparent_background(scroll_area):
+        transparent_calls.append(scroll_area)
+        original_enable(scroll_area)
+
+    monkeypatch.setattr(
+        ScrollArea,
+        "enableTransparentBackground",
+        enable_transparent_background,
+    )
+
+    tab = ConfigEditorTab(DummyMainWindow(config_editor_config))
+    page = getattr(tab, page_name)
+    scroll = getattr(tab, scroll_name)
+    content = getattr(tab, content_name)
+
+    assert isinstance(scroll, ScrollArea)
+    assert scroll in transparent_calls
+    assert content.objectName() == object_name
+    style = page.styleSheet()
+    assert f"#{object_name}" in style
+    assert "#202020" in style
+    assert "#ffffff" in style
+
+
+def test_config_editor_task_frame_has_scoped_object_name(app, config_editor_config):
+    tab = ConfigEditorTab(DummyMainWindow(config_editor_config))
+
+    assert len(tab.task_widgets) == 1
+    task_frame = tab.task_widgets[0][2]
+    assert task_frame.objectName() == "taskCard"

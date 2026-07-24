@@ -33,6 +33,22 @@ DB_TYPES = ["duckdb", "sqlite", "questdb", "mysql"]
 # 采集任务能力矩阵（从 task_tab 复制，避免循环导入）
 SOURCE_CAPABILITY = capability_matrix()
 
+_DARK_CONFIG_STYLE = """
+QWidget#sourcesScrollContent,
+QWidget#tasksScrollContent,
+QWidget#alignmentScrollContent,
+QFrame#taskCard {
+    background-color: #202020;
+    color: #ffffff;
+}
+QWidget#sourcesScrollContent QLabel,
+QWidget#tasksScrollContent QLabel,
+QWidget#alignmentScrollContent QLabel,
+QFrame#taskCard QLabel {
+    color: #ffffff;
+}
+"""
+
 # 各表的默认数据源（GUI 取消数据源下拉框后，框架按此映射自动决定源）。
 # xtquant 为骨架权威源；tushare 为独立补充表（xtquant 不提供的数据维度）；
 # akshare 用于 ST 历史（hidden 联动）和退市名单（用户可见）。
@@ -248,10 +264,12 @@ class ConfigEditorTab(QWidget):
         layout.addWidget(QLabel("🔌 数据源凭证 (sources_config.json)"))
 
         # 滚动区域
-        scroll = ScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll_content = QWidget()
-        self.sources_form = QGridLayout(scroll_content)
+        self.sources_scroll = ScrollArea()
+        self.sources_scroll.setWidgetResizable(True)
+        self.sources_scroll.enableTransparentBackground()
+        self.sources_scroll_content = QWidget()
+        self.sources_scroll_content.setObjectName("sourcesScrollContent")
+        self.sources_form = QGridLayout(self.sources_scroll_content)
 
         self.source_widgets = {}  # {source_name: {field: widget}}
         try:
@@ -309,8 +327,9 @@ class ConfigEditorTab(QWidget):
             self.source_widgets[name] = widgets
             row += 1
 
-        scroll.setWidget(scroll_content)
-        layout.addWidget(scroll)
+        self.sources_scroll.setWidget(self.sources_scroll_content)
+        layout.addWidget(self.sources_scroll)
+        page.setStyleSheet(_DARK_CONFIG_STYLE)
 
         save_btn = PushButton("💾 保存数据源凭证")
         save_btn.clicked.connect(self._save_sources_config)
@@ -360,12 +379,14 @@ class ConfigEditorTab(QWidget):
             self._tasks_cfg = {"tasks": []}
 
         # 任务列表（按类别分组，可滚动）
-        scroll = ScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll_content = QWidget()
-        scroll_layout = QVBoxLayout(scroll_content)
+        self.tasks_scroll = ScrollArea()
+        self.tasks_scroll.setWidgetResizable(True)
+        self.tasks_scroll.enableTransparentBackground()
+        self.tasks_scroll_content = QWidget()
+        self.tasks_scroll_content.setObjectName("tasksScrollContent")
+        scroll_layout = QVBoxLayout(self.tasks_scroll_content)
 
-        self.task_widgets = []  # [(task_dict_ref, widgets_dict)]
+        self.task_widgets = []  # [(task_dict_ref, widgets_dict, task_frame)]
 
         # 按 table 分类（跳过 hidden 任务：如 stock_daily_valuation 是 stock_daily 的前置依赖表，
         # 由框架自动联动拉取，用户无需也不应手动配置，显示出来是冗余）
@@ -411,8 +432,9 @@ class ConfigEditorTab(QWidget):
             scroll_layout.addWidget(cat_group)
 
         scroll_layout.addStretch()
-        scroll.setWidget(scroll_content)
-        layout.addWidget(scroll, 1)
+        self.tasks_scroll.setWidget(self.tasks_scroll_content)
+        layout.addWidget(self.tasks_scroll, 1)
+        page.setStyleSheet(_DARK_CONFIG_STYLE)
 
         save_btn = PushButton("💾 保存采集任务")
         save_btn.clicked.connect(self._save_tasks_config)
@@ -422,6 +444,7 @@ class ConfigEditorTab(QWidget):
     def _build_task_card(self, task: dict) -> QFrame:
         """构建单个任务卡片"""
         frame = QFrame()
+        frame.setObjectName("taskCard")
         frame.setFrameShape(QFrame.Shape.Box)
         fl = QGridLayout(frame)
         fl.setContentsMargins(8, 4, 8, 4)
@@ -526,7 +549,7 @@ class ConfigEditorTab(QWidget):
             "start_date": start_edit, "end_date": end_edit, "codes": codes_edit,
             "max_workers": workers_spin, "calls_per_min": rate_spin, "wait_on_429": wait429_combo,
         }
-        self.task_widgets.append((task, widgets))
+        self.task_widgets.append((task, widgets, frame))
         return frame
 
     def _save_tasks_config(self):
@@ -537,7 +560,7 @@ class ConfigEditorTab(QWidget):
         }
 
         # 更新每个任务
-        for task, widgets in self.task_widgets:
+        for task, widgets, _frame in self.task_widgets:
             task["enabled"] = widgets["enabled"].currentText() == "true"
             # source / source_priority 由 collector_tasks.json 真实配置决定，不在 GUI 编辑，保留原值。
             # 注意：旧逻辑会在此用 DEFAULT_SOURCE_MAP 硬编码覆盖 task["source"]，
@@ -581,10 +604,12 @@ class ConfigEditorTab(QWidget):
         layout = QVBoxLayout(page)
         layout.addWidget(QLabel("📐 字段对齐规则 (alignment_rules.json) — 只读"))
 
-        scroll = ScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll_content = QWidget()
-        scroll_layout = QVBoxLayout(scroll_content)
+        self.alignment_scroll = ScrollArea()
+        self.alignment_scroll.setWidgetResizable(True)
+        self.alignment_scroll.enableTransparentBackground()
+        self.alignment_scroll_content = QWidget()
+        self.alignment_scroll_content.setObjectName("alignmentScrollContent")
+        scroll_layout = QVBoxLayout(self.alignment_scroll_content)
 
         try:
             with (self.mw.config_dir / "alignment_rules.json").open("r", encoding="utf-8") as f:
@@ -637,8 +662,9 @@ class ConfigEditorTab(QWidget):
         scroll_layout.addWidget(mappings_group)
 
         scroll_layout.addStretch()
-        scroll.setWidget(scroll_content)
-        layout.addWidget(scroll, 1)
+        self.alignment_scroll.setWidget(self.alignment_scroll_content)
+        layout.addWidget(self.alignment_scroll, 1)
+        page.setStyleSheet(_DARK_CONFIG_STYLE)
         return page
 
     # ==================== 通用工具 ====================
