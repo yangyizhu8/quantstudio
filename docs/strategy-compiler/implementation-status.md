@@ -1,8 +1,8 @@
 ﻿# Strategy Compiler Implementation Status
 
 > Master plan: `QuantStudio Strategy Compiler frozen master plan v1.0`  
-> Current stage: PR6b-2A / Skill MVP G4 (Release Closure corrective, pending Final Release Review)
-> Stage status: **G1-I (`bcdc85d`) + G2 Hermetic Partial Closure (`53d90f5`) + G3 Package Closure (`9a99b18`) all merged to `main`. G4 Release Closure corrective on `codex/g4-release` (G4 base commit `2bce099` + corrective on top; CLI E2E + Skill install + 0.3.0-mvp + release docs + qs-compile entry point + version unity + G2ReferenceError handling; not merged main, pending Final Release Review). Data digest boundary: `input_data_digest=null`/`data_digest_status=blocked` — real market-data digest/Fidelity/Reference DEFERRED (not faked; no live QMT/resident daemon/real DuckDB). Stage identity tracked by commit ancestry (`bcdc85d`=G1-I, `53d90f5`=G2, `9a99b18`=G3, all main ancestors). CP3 Oracle reference (pr6b2a `8931430`) remains independent truth source.**
+> Current stage: Skill MVP 0.3.0-mvp — G4 RELEASED / G1-G4 COMPLETE
+> Stage status: **G1-I (`bcdc85d`) + G2 Hermetic Partial Closure (`53d90f5`) + G3 Package Closure (`9a99b18`) + G4 Release Closure (`09e2d29`) all merged to `main`. G4 PASS / APPROVED FOR RELEASE — 0.3.0-mvp released (distribution version `0.3.0+mvp`, release label `0.3.0-mvp`, release date 2026-07-24). G1-G4 Skill MVP route COMPLETE. Data digest boundary: `input_data_digest=null`/`data_digest_status=blocked` — real market-data digest/Fidelity/Reference DEFERRED (not faked; no live QMT/resident daemon/real DuckDB). Stage identity tracked by commit ancestry (`bcdc85d`=G1-I, `53d90f5`=G2, `9a99b18`=G3, `09e2d29`=G4, all main ancestors). CP3 Oracle reference (pr6b2a `8931430`) remains independent truth source.**
 
 ## Stage overview
 
@@ -14,7 +14,7 @@
 | PR3 Multi-frequency Provider | PASS / WAITING_CONFIRMATION | Provider frequency routing implemented (native freq only; aggregation deferred to PR3.5); daily path byte-level unchanged |
 | PR4 Minute event engine | CONFIRMED (2026-07-22) | Minute event loop implemented (main-loop branch + precise run_daily + ETF T+0 minute-only); daily path byte-level unchanged; **real-minute smoke PASS** (510050 ETF × 2026-07-17 × full-universe); **end-labeled verified** (241 bars/day, 09:30 call-auction O=H=L=C); **GIL defect fixed** (batch loading, was deferred perf item that became functional blocker on real data) |
 | PR5 Skill skeleton | DONE (0.1.0-skeleton, 2026-07-22) | Skill created at `skills/quantstudio-strategy-compiler/` (SKILL.md + agents/openai.yaml + 11 references + 3 schemas + 2 scripts); quick_validate PASS; inspect_capabilities live run READY (honest probe, tick PLANNED); validate_strategy_spec PR0 example green + 3 violation variants red; awaiting user confirmation before PR6 |
-| PR6 IR/renderers/validators | IN_PROGRESS — G1+G2+G3 MERGED TO MAIN; G4 Release Closure IN REVIEW | PR6a + PR6b-1 已在 `main`；G1-I `bcdc85d` + G2 `53d90f5` + G3 `9a99b18` 均为 `main` 祖先。G4 Release Closure 在 `codex/g4-release` 交付 corrective（qs-compile entry point + 0.3.0-mvp 版本统一 + G2ReferenceError 处理 + CLI E2E + release docs；base commit `2bce099` + corrective），未合并 main，待 Final Release Review。G2 = Hermetic Reference Partial Closure，input_data_digest=null/data_digest_status=blocked，真实数据 digest/Fidelity 后置。阶段身份以 commit ancestry 标识。CP3 Oracle reference `8931430` 保留为独立 truth source。 |
+| PR6 IR/renderers/validators | DONE — G1+G2+G3+G4 MERGED TO MAIN; 0.3.0-mvp RELEASED | PR6a + PR6b-1 已在 `main`；G1-I `bcdc85d` + G2 `53d90f5` + G3 `9a99b18` + G4 `09e2d29` 均为 `main` 祖先。G4 Release Closure 已合并 main 并发布 0.3.0-mvp（dist `0.3.0+mvp`，2026-07-24）。G1-G4 Skill MVP 路线完成。G2 = Hermetic Reference Partial Closure，input_data_digest=null/data_digest_status=blocked，真实数据 digest/Fidelity/Reference 后置。CP3 Oracle reference `8931430` 保留为独立 truth source。 |
 | PR7 Fidelity closure | NOT_STARTED | Planned |
 
 ## PR0 acceptance
