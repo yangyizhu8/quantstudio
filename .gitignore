@@ -15,6 +15,11 @@ data/*.db-wal
 __pycache__/
 *.pyc
 *.egg-info/
+
+# Build / dist artifacts (wheel output). Root-anchored so they do NOT match
+# the versioned quantstudio/strategy_compiler/release/ package.
+/build/
+/release/dist/
 .pytest_cache/
 .venv/
 venv/
