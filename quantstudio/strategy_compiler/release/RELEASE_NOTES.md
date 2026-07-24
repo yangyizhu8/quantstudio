@@ -46,10 +46,21 @@ Copies the Skill, runs quick_validate on the installed copy, rolls back on failu
   are hermetic (synthetic scenarios / frozen artifacts).
 - **Real Fidelity/Reference verification: deferred** to a later release.
 
+### Delivery flow integration (0.3.0-mvp)
+- The Skill **auto-orchestrates** orchestrator validation + qs-compile package
+  generation. Normal users do NOT need to manually run qs-compile.
+- `qs-compile` remains the formal CLI entry for advanced users, scripts, and CI.
+- CLI direct entry: `qs-compile package <spec> --out <dir>` (preferred).
+  `python -m quantstudio.strategy_compiler.cli` as dev/diagnostic fallback.
+- `deliver_strategy()` API chains both steps into a unified output dir:
+  `validation/` (orchestrator artifacts) + `package/` (strategy package) +
+  `DELIVERY_REPORT.md` (unified summary).
+
 ### Known limitations
 - 5 repository tests remain non-hermetic (calendar + fidelity golden-baseline
   fixtures) — environment-only failures, not pipeline defects.
 - `np.log` RuntimeWarning in one CP3 NaN-exclusion test (non-blocking).
+
 
 ### Reproducibility
 - Deterministic builds: fixed render-timestamp sentinel, canonical JSON,

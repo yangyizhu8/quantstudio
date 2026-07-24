@@ -29,11 +29,121 @@ Never skip R-1. Never copy status values from examples -- inspect the real envir
 
 ## Multi-round interaction order
 
-1. **R0 -- Idea parsing**: decompose the user's natural-language idea into universe / indicators / entry / exit / rebalance.
-2. **R-1 -- Capability inspection**: run `inspect_capabilities.py`, present the honest status.
-3. **R2 -- Spec draft**: produce a `strategy_spec.json` conforming to `schemas/strategy_spec.schema.json`. Validate with `scripts/validate_strategy_spec.py`.
-4. **R2.5 -- User confirmation (HARD GATE)**: present the Spec to the user. **No code generation until explicit confirmation.**
-5. **R3 -- Render + validate (DELIVERED)**: after confirmation, run the orchestrator: `python -m quantstudio.strategy_compiler.orchestrator <spec.json> [--start] [--end]`. This builds the IR, renders dual-platform `.py`, runs 7 static validators, inspects capabilities, runs the smoke backtest (if READY), and writes `run_card.json` + `variant_consistency_report.json`.
+The Skill auto-orchestrates the full pipeline. The user only needs to:
+1. Describe their strategy in natural language
+2. Review and confirm the Spec
+
+Everything else (validation + package generation) is automatic.
+
+### R0 — Idea parsing
+Decompose the user's natural-language idea into:
+- Universe (stock/ETF pool, single stock, dynamic pool)
+- Indicators (MA, momentum, volume surge, etc.)
+- Entry / exit signals
+- Rebalance logic (daily, target weight)
+- Execution (market/limit, next_open/close)
+- Risk management (stop-loss, position limits)
+- Cost model (commission, stamp tax, slippage)
+- Data requirements (frequency, lookback window)
+
+### R-1 — Capability inspection
+Run `scripts/inspect_capabilities.py` against the live DuckDB. Present honest status:
+- `READY` → may proceed to Spec draft
+- `BLOCKED` / `PLANNED` / `UNSUPPORTED` → STOP. Report blockers and remediation.
+- Never fabricate data capabilities.
+
+### R2 — Spec draft
+Generate `strategy_spec.json` conforming to `schemas/strategy_spec.schema.json`.
+Validate with `scripts/validate_strategy_spec.py`.
+Present to the user:
+- Full Spec content
+- Key assumptions and approximations
+- Data capability boundaries (READY vs BLOCKED)
+- Risk warnings
+- Explicit confirmation items in `user_confirmations`
+
+**Do not generate strategy code or packages before user confirms.**
+
+### R2.5 — User confirmation (HARD GATE)
+Present the Spec to the user with approximations, capability gaps, and hard-filter
+settings called out. Wait for explicit CONFIRMED. No code generation until then.
+
+### R3 — Validation (orchestrator)
+After confirmation, run the orchestrator:
+```
+python -m quantstudio.strategy_compiler.orchestrator <spec.json> [--start] [--end] [--no-smoke]
+```
+This builds IR, renders dual-platform `.py`, runs 7 static validators, inspects
+capabilities, runs smoke backtest (if READY), and writes:
+- `run_card.json` (stage + status + validation results)
+- `capability_report.json`
+- `variant_consistency_report.json`
+- `strategy_ir.json` + `<id>_quantstudio.py` + `<id>_ptrade.py`
+
+**Gate**: If static validation fails, STOP. Do not proceed to package generation.
+If smoke backtest is BLOCKED (capability/data boundary), record honestly — BLOCKED
+is acceptable as a known deferred boundary; PASS is never faked.
+
+### R4 — Package generation (qs-compile)
+Only after R3 validation passes (or smoke is BLOCKED on a known deferred boundary),
+automatically call qs-compile to generate the strategy package:
+```
+qs-compile package <spec.json> --out <dir> [--g2-frozen-dir <dir>] [--package-version <ver>]
+```
+Or via the delivery orchestration layer (preferred for Skill workflow):
+```python
+from quantstudio.strategy_compiler.delivery import deliver_strategy
+deliver_strategy(spec, out_dir=<dir>, g2_frozen_dir=<optional>)
+```
+
+This generates the structured strategy package with:
+- `manifest.json` (version, entry points, artifact SHA-256 digests)
+- `<id>_quantstudio.py` + `<id>_ptrade.py` (dual-rendered)
+- `strategy_spec.json` + `strategy_ir.json` (frozen)
+- `__init__.py` + `README.md`
+
+Verify: manifest schema valid, all artifact digests match, both strategies
+compile (ast.parse + compile), G2 linkage data_digest_status=blocked (not faked).
+
+**If qs-compile is not in PATH**: report the installation error clearly. Do NOT
+silently skip package generation. Development fallback: `python -m quantstudio.strategy_compiler.cli`.
+
+### R5 — Delivery summary
+Return to the user:
+- Validation output directory (`validation/`)
+- Strategy package output directory (`package/`)
+- `manifest.json` — artifact digests + G2 linkage
+- `run_card.json` — validation status
+- `capability_report.json` — data/execution readiness
+- `variant_consistency_report.json` — dual-platform consistency
+- `DELIVERY_REPORT.md` — unified summary
+- Known limitations + data digest/Fidelity deferred explanation
+- Clear conclusion: can the user use the delivered files?
+
+## Delivery output directory
+
+The `deliver_strategy()` function creates a unified output:
+```
+output/strategy_deliveries/<strategy_id>/
+├── validation/              ← orchestrator artifacts (run_card, IR, validators)
+│   ├── strategy_spec.json
+│   ├── strategy_ir.json
+│   ├── capability_report.json
+│   ├── variant_consistency_report.json
+│   ├── run_card.json
+│   ├── <id>_quantstudio.py
+│   └── <id>_ptrade.py
+├── package/                 ← qs-compile strategy package
+│   └── <id>__<version>/
+│       ├── manifest.json
+│       ├── strategy_spec.json
+│       ├── strategy_ir.json
+│       ├── <id>_quantstudio.py
+│       ├── <id>_ptrade.py
+│       ├── __init__.py
+│       └── README.md
+└── DELIVERY_REPORT.md       ← unified delivery summary
+```
 
 ## R2.5 hard gate -- no code before confirmation
 
@@ -84,9 +194,21 @@ Do not read all references up front -- that defeats the "no unnecessary large do
 
 - Spec lands at `output/generated_strategies/<strategy_id>/strategy_spec.json`.
 - After drafting, run `scripts/validate_strategy_spec.py` self-check; fix all violations before presenting to user.
-- After R2.5 confirmation, run the orchestrator; it writes `strategy_ir.json`, `<id>_quantstudio.py`, `<id>_ptrade.py`, `capability_report.json`, `variant_consistency_report.json`, and `run_card.json` (stage advances SPEC_ONLY -> STATIC_VALIDATED -> SMOKE_EXECUTED as gates pass).
+- After R2.5 confirmation, the Skill runs the full delivery flow via `deliver_strategy()`:
+  - **Validation** (R3): orchestrator writes `strategy_ir.json`, `<id>_quantstudio.py`, `<id>_ptrade.py`, `capability_report.json`, `variant_consistency_report.json`, `run_card.json`.
+  - **Package** (R4): qs-compile generates the structured strategy package with manifest + digests.
+  - **Report** (R5): `DELIVERY_REPORT.md` provides the unified summary.
 - Run Card `stage` records the pipeline step reached; `status` records PASS/BLOCKED/FAILED. Fidelity comparison (R7) is PR7 scope (`fidelity` field stays null).
 - Do not auto-overwrite existing strategies; `output.overwrite` must be explicit in the Spec.
+
+## Three-layer architecture
+
+1. **quantstudio-strategy-compiler Skill** (AI workflow layer): understands natural language, generates Spec, gates on user confirmation, orchestrates validation + delivery.
+2. **orchestrator** (validation engine): Spec schema → IR → dual render → 7 validators → capability inspection → smoke backtest → run_card.
+3. **qs-compile** (CLI delivery entry): Spec → IR → dual Renderer → structured strategy package with manifest + digests. Direct CLI for advanced users / scripts / CI.
+
+Normal users: interact with the Skill; the Skill auto-calls orchestrator then qs-compile.
+Advanced users: `qs-compile package <spec> --out <dir>` directly.
 
 ## Synchronization discipline (references are derived snapshots)
 

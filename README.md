@@ -64,3 +64,87 @@ PTrade 对照：
 python -m quantstudio.backtest.run_ptrade_strategy strategy.py 2026-01-01 2026-06-30 \
   --match-price close --compare --ptrade-dir <Ptrade导出目录> --output output/compare.json
 ```
+
+---
+
+## Strategy Compiler 0.3.0-mvp — 策略编译器
+
+将自然语言策略想法编译成经验证的双平台（QuantStudio + PTrade）策略包。
+
+### 三层关系
+
+| 层 | 角色 | 谁用 |
+|---|---|---|
+| **Skill** | AI 工作流：理解自然语言 → Spec → 用户确认 → 编排验证 + 交付 | 普通用户（通过 AI） |
+| **orchestrator** | 验证引擎：Spec → IR → 双 Renderer → 7 validators → run_card | Skill 自动调用 |
+| **qs-compile** | CLI 交付：Spec → IR → dual Renderer → strategy package | Skill 自动调用；高级用户直接用 |
+
+### 推荐安装
+
+```bash
+# 独立虚拟环境
+python -m venv qs-env
+qs-env\Scripts\activate
+pip install quantstudio-0.3.0+mvp-py3-none-any.whl jinja2 jsonschema pyyaml packaging
+
+# 验证
+qs-compile --help
+
+# 安装 Skill
+python skills/quantstudio-strategy-compiler/scripts/install_skill.py --agent zcode
+```
+
+### 普通用户使用方式
+
+向 AI 说："帮我生成一个双均线策略。" AI 自动完成：
+1. 理解策略 → 2. 能力检查 → 3. 生成 Spec → 4. 展示确认 → 5. 验证 → 6. 交付包
+
+**普通用户不需要手动调用 qs-compile。** Skill 自动串联 orchestrator + qs-compile。
+
+### 高级用户 CLI
+
+```bash
+qs-compile package spec.json --out output/packages [--g2-frozen-dir <dir>]
+```
+
+### 输出目录
+
+```
+output/strategy_deliveries/<strategy_id>/
+├── validation/      ← orchestrator 验证产物 (run_card, capability_report, ...)
+├── package/         ← qs-compile 策略包 (manifest, dual .py, spec/IR)
+└── DELIVERY_REPORT.md  ← 统一交付摘要
+```
+
+### 验证报告
+
+- `run_card.json`：总验收卡（stage/status/各验证结果）
+- `capability_report.json`：数据/执行能力就绪状态
+- `variant_consistency_report.json`：QS vs PTrade 14 维一致性
+- `manifest.json`：artifact SHA-256 digests（可审计）
+
+### data_digest blocked 说明
+
+`data_digest_status=blocked`：真实市场数据 digest **deferred**（后置，不伪造）。本 MVP
+使用 Hermetic/Synthetic 场景验证 pipeline 正确性，**不等于**真实数据 Fidelity 已验证。
+真实 Fidelity/Reference 验证、live QMT、resident daemon 均不在本次 MVP 范围。
+
+### 常见错误
+
+| 场景 | exit code | 说明 |
+|---|---|---|
+| success | 0 | 包生成成功 |
+| invalid/missing spec | 2 | Spec 不存在或 JSON 无效 |
+| Golden Protection | 3 | 策略 ID 在保护名单中 |
+| G2 frozen incomplete | 4 | G2 frozen artifact 缺失 |
+
+### 不在本 MVP 范围
+
+真实市场数据接入、live QMT、resident daemon、PR7 自动 Fidelity、GUI 集成、部署产品化。
+
+### 更多文档
+
+- 用户指南：`docs/strategy-compiler/USER_GUIDE.md`
+- Skill 操作手册：`skills/quantstudio-strategy-compiler/SKILL.md`
+- 发布说明：`quantstudio/strategy_compiler/release/RELEASE_NOTES.md`
+- 项目状态：`docs/strategy-compiler/implementation-status.md`
