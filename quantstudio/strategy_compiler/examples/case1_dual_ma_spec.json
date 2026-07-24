@@ -4,10 +4,7 @@
   "strategy_name": "Case 1 daily dual-MA single stock",
   "strategy_type": "timing",
   "asset_class": "stock",
-  "target_platforms": [
-    "quantstudio",
-    "ptrade-default"
-  ],
+  "target_platforms": ["quantstudio", "ptrade-default"],
   "contract_versions": {
     "strategy_spec_version": "1.0.0",
     "engine_semantics_version": "0.1.0-legacy",
@@ -38,9 +35,7 @@
   },
   "universe": {
     "kind": "single_stock",
-    "parameters": {
-      "code": "600570.SH"
-    }
+    "parameters": {"code": "600570.SH"}
   },
   "hard_filters": {
     "exclude_st": true,
@@ -59,42 +54,14 @@
   },
   "signals": {
     "steps": [
-      {
-        "id": "ma5",
-        "operation": "ma",
-        "parameters": {
-          "field": "close",
-          "lookback": 5
-        }
-      },
-      {
-        "id": "ma10",
-        "operation": "ma",
-        "parameters": {
-          "field": "close",
-          "lookback": 10
-        }
-      },
-      {
-        "id": "cross_signal",
-        "operation": "cross",
-        "parameters": {
-          "sources": [
-            "ma5",
-            "ma10"
-          ],
-          "direction": "golden"
-        }
-      }
+      {"id": "ma5", "operation": "ma", "parameters": {"field": "close", "lookback": 5}},
+      {"id": "ma10", "operation": "ma", "parameters": {"field": "close", "lookback": 10}},
+      {"id": "cross_signal", "operation": "cross", "parameters": {"sources": ["ma5", "ma10"], "direction": "golden"}}
     ]
   },
   "portfolio": {
     "kind": "single_position",
-    "parameters": {
-      "max_positions": 1,
-      "rebalance": "signal_triggered",
-      "target_weight": 1.0
-    }
+    "parameters": {"max_positions": 1, "rebalance": "signal_triggered", "target_weight": 1.0}
   },
   "execution": {
     "mode": "native",
@@ -104,67 +71,26 @@
   },
   "risk": {
     "kind": "position_limits",
-    "parameters": {
-      "max_single_weight": 1.0,
-      "cash_buffer": 0.0
-    }
+    "parameters": {"max_single_weight": 1.0, "cash_buffer": 0.0}
   },
   "costs": {
     "commission_rate": 0.0003,
     "minimum_commission": 5.0,
     "stamp_tax_rate": 0.0005,
-    "transfer_fee_rate": 1e-05,
+    "transfer_fee_rate": 0.00001,
     "slippage_bps": 5.0
   },
   "data_requirements": {
     "datasets": [
-      {
-        "dataset": "stock_daily",
-        "frequency": "1d",
-        "fields": [
-          "open",
-          "high",
-          "low",
-          "close",
-          "volume"
-        ],
-        "required": true,
-        "pit_required": false
-      },
-      {
-        "dataset": "stock_status",
-        "frequency": "1d",
-        "fields": [
-          "is_st",
-          "is_suspended",
-          "is_delisted"
-        ],
-        "required": true,
-        "pit_required": true
-      }
+      {"dataset": "stock_daily", "frequency": "1d", "fields": ["open", "high", "low", "close", "volume"], "required": true, "pit_required": false},
+      {"dataset": "stock_status", "frequency": "1d", "fields": ["is_st", "is_suspended", "is_delisted"], "required": true, "pit_required": true}
     ]
   },
-  "capability_requirements": [
-    "stock_daily_backtest",
-    "stock_status_filter"
-  ],
+  "capability_requirements": ["stock_daily_backtest", "stock_status_filter"],
   "approximations": [],
   "user_confirmations": [
-    {
-      "confirmation_id": "r2_5_strategy_spec",
-      "status": "CONFIRMED",
-      "confirmed_at": "2026-07-22T17:58:00+08:00",
-      "note": "Case 1 spec confirmed for PR6a skeleton validation."
-    }
+    {"confirmation_id": "r2_5_strategy_spec", "status": "CONFIRMED", "confirmed_at": "2026-07-22T17:58:00+08:00", "note": "Case 1 spec confirmed for PR6a skeleton validation."}
   ],
-  "validation_policy": {
-    "no_lookahead": "BLOCK",
-    "hard_filters": "BLOCK",
-    "strict_public_api": true,
-    "smoke_backtest": "WHEN_READY"
-  },
-  "output": {
-    "root": "output/generated_strategies",
-    "overwrite": false
-  }
+  "validation_policy": {"no_lookahead": "BLOCK", "hard_filters": "BLOCK", "strict_public_api": true, "smoke_backtest": "WHEN_READY"},
+  "output": {"root": "output/generated_strategies", "overwrite": false}
 }

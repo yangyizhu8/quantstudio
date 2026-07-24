@@ -236,23 +236,8 @@ class TestEntryPoint:
 
 
 class TestVersionUnity:
-    """0.3.0-mvp must be consistent across pyproject, quantstudio.__version__,
-    SKILL.md, active example, orchestrator, release metadata, CLI default."""
-
-    def _collect_versions(self):
-        import quantstudio
-        from quantstudio.strategy_compiler.orchestrator import _SKILL_VERSION
-        meta = _load(ROOT / "quantstudio" / "strategy_compiler" / "release" / "release_metadata.json")
-        skill_md = (ROOT / "skills" / "quantstudio-strategy-compiler" / "SKILL.md").read_text(encoding="utf-8")
-        example = _load(EXAMPLES / "case1_dual_ma_spec.json")
-        return {
-            "quantstudio.__version__": quantstudio.__version__,
-            "orchestrator _SKILL_VERSION": _SKILL_VERSION,
-            "release_metadata.version": meta["version"],
-            "pyproject.version": self._pyproject_version(),
-            "skill_md_has_0.3.0-mvp": "0.3.0-mvp" in skill_md,
-            "example.skill_version": example.get("contract_versions", {}).get("skill_version"),
-        }
+    """Version split: Python distribution version = 0.3.0+mvp (PEP 440); product/
+    Skill release label = 0.3.0-mvp. Tests the correct MAPPING, not naive equality."""
 
     def _pyproject_version(self):
         import re
@@ -260,14 +245,33 @@ class TestVersionUnity:
         m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
         return m.group(1) if m else None
 
-    def test_all_versions_are_030_mvp(self):
-        v = self._collect_versions()
-        assert v["quantstudio.__version__"] == "0.3.0-mvp", v
-        assert v["orchestrator _SKILL_VERSION"] == "0.3.0-mvp", v
-        assert v["release_metadata.version"] == "0.3.0-mvp", v
-        assert v["pyproject.version"] == "0.3.0-mvp", v
-        assert v["skill_md_has_0.3.0-mvp"] is True, v
-        assert v["example.skill_version"] == "0.3.0-mvp", v
+    def test_distribution_version_is_pep440_compliant(self):
+        """pyproject + quantstudio.__version__ use the PEP 440 distribution version 0.3.0+mvp
+        (NOT 0.3.0-mvp, which fails `pip wheel`)."""
+        import quantstudio
+        assert self._pyproject_version() == "0.3.0+mvp"
+        assert quantstudio.__version__ == "0.3.0+mvp"
+
+    def test_release_label_is_030_mvp_in_skill_orchestrator_spec(self):
+        """Product/Skill release label 0.3.0-mvp in SKILL.md, orchestrator, example spec."""
+        from quantstudio.strategy_compiler.orchestrator import _SKILL_VERSION
+        skill_md = (ROOT / "skills" / "quantstudio-strategy-compiler" / "SKILL.md").read_text(encoding="utf-8")
+        example = _load(EXAMPLES / "case1_dual_ma_spec.json")
+        assert _SKILL_VERSION == "0.3.0-mvp"
+        assert "0.3.0-mvp" in skill_md
+        assert example["contract_versions"]["skill_version"] == "0.3.0-mvp"
+
+    def test_release_metadata_records_both_versions(self):
+        """release_metadata.json records release_label (0.3.0-mvp) AND distribution_version (0.3.0+mvp)."""
+        meta = _load(ROOT / "quantstudio" / "strategy_compiler" / "release" / "release_metadata.json")
+        assert meta["release_label"] == "0.3.0-mvp"
+        assert meta["distribution_version"] == "0.3.0+mvp"
+
+    def test_pip_wheel_version_compliant(self):
+        """The distribution version must parse as valid PEP 440 (no 'pep440' build error)."""
+        from packaging.version import Version
+        v = Version(self._pyproject_version())
+        assert str(v) == "0.3.0+mvp"
 
 
 class TestG2ReferenceErrorHandling:
@@ -364,3 +368,118 @@ class TestInstalledCliE2E:
         assert (pkg / "manifest.json").exists()
         assert (pkg / "case1_dual_ma_quantstudio.py").exists()
         assert (pkg / "case1_dual_ma_ptrade.py").exists()
+
+
+# ── 9. Corrective #2: real wheel build + isolated venv install + qs-compile ──
+
+class TestWheelBuild:
+    """The Python distribution version must build a wheel (PEP 440 compliant)."""
+
+    def test_pip_wheel_succeeds(self, tmp_path):
+        """`pip wheel . --no-deps` must succeed (version is PEP 440 compliant)."""
+        wheel_dir = tmp_path / "wheels"
+        wheel_dir.mkdir()
+        r = subprocess.run(
+            [sys.executable, "-m", "pip", "wheel", ".", "--no-deps",
+             "-w", str(wheel_dir)],
+            capture_output=True, text=True, cwd=str(ROOT), check=False, timeout=300)
+        assert r.returncode == 0, f"pip wheel failed: {r.stderr[-500:]}"
+        wheels = list(wheel_dir.glob("quantstudio-*.whl"))
+        assert len(wheels) == 1, f"expected 1 wheel, got {wheels}"
+        assert "0.3.0+mvp" in wheels[0].name or "0.3.0_mvp" in wheels[0].name
+
+    def test_wheel_includes_resources(self, tmp_path):
+        """Wheel must bundle templates, schemas, examples, release metadata."""
+        wheel_dir = tmp_path / "wheels"
+        wheel_dir.mkdir()
+        subprocess.run(
+            [sys.executable, "-m", "pip", "wheel", ".", "--no-deps",
+             "-w", str(wheel_dir)],
+            capture_output=True, text=True, cwd=str(ROOT), check=True, timeout=300)
+        wheel = next(wheel_dir.glob("quantstudio-*.whl"))
+        import zipfile
+        with zipfile.ZipFile(wheel) as zf:
+            names = zf.namelist()
+        assert any("strategy_compiler/templates/quantstudio_daily.py.j2" in n for n in names), \
+            "templates not in wheel"
+        assert any("strategy_compiler/schemas/strategy_spec.schema.json" in n for n in names), \
+            "schemas not in wheel"
+        assert any("strategy_compiler/examples/case1_dual_ma_spec.json" in n for n in names), \
+            "examples not in wheel"
+        assert any("strategy_compiler/release/release_metadata.json" in n for n in names), \
+            "release metadata not in wheel"
+
+
+class TestInstalledConsoleScriptE2E:
+    """REAL installed console-script E2E: build wheel → isolated venv → install →
+    run `qs-compile` from OUTSIDE the repo. NOT python -m."""
+
+    @pytest.fixture(scope="class")
+    def installed_venv(self, tmp_path_factory):
+        """Build wheel, create isolated venv, install, yield (venv_python, qs_compile_path, work_dir)."""
+        tmp = tmp_path_factory.mktemp("g4_install")
+        wheel_dir = tmp / "wheels"
+        wheel_dir.mkdir()
+        subprocess.run(
+            [sys.executable, "-m", "pip", "wheel", ".", "--no-deps", "-w", str(wheel_dir)],
+            capture_output=True, text=True, cwd=str(ROOT), check=True, timeout=300)
+        wheel = next(wheel_dir.glob("quantstudio-*.whl"))
+        venv_dir = tmp / "venv"
+        subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True, timeout=120)
+        venv_python = str(venv_dir / "Scripts" / "python.exe")
+        subprocess.run(
+            [venv_python, "-m", "pip", "install", str(wheel), "jinja2", "jsonschema", "packaging"],
+            capture_output=True, text=True, check=True, timeout=300)
+        qs_compile = str(venv_dir / "Scripts" / "qs-compile.exe")
+        work_dir = tmp / "outside_repo"
+        work_dir.mkdir()
+        return venv_python, qs_compile, work_dir
+
+    def test_qs_compile_help_from_outside_repo(self, installed_venv):
+        """`qs-compile --help` works from a non-repo directory (installed console script)."""
+        _venv_python, qs_compile, work_dir = installed_venv
+        r = subprocess.run([qs_compile, "--help"], capture_output=True, text=True,
+                           cwd=str(work_dir), check=False)
+        assert r.returncode == 0, f"qs-compile --help failed: {r.stderr}"
+        assert "package" in r.stdout.lower()
+
+    def test_qs_compile_package_build_from_outside_repo(self, installed_venv, case1_spec):
+        """`qs-compile package <spec> --out <dir>` builds a package from outside the repo."""
+        _venv_python, qs_compile, work_dir = installed_venv
+        spec_path = work_dir / "spec.json"
+        spec_path.write_text(json.dumps(case1_spec), encoding="utf-8")
+        out_dir = work_dir / "out"
+        r = subprocess.run(
+            [qs_compile, "package", str(spec_path), "--out", str(out_dir)],
+            capture_output=True, text=True, cwd=str(work_dir), check=False)
+        assert r.returncode == 0, f"qs-compile package failed: {r.stderr}"
+        pkgs = list(out_dir.iterdir())
+        assert len(pkgs) == 1
+        pkg = pkgs[0]
+        assert (pkg / "manifest.json").exists()
+        assert (pkg / "case1_dual_ma_quantstudio.py").exists()
+        assert (pkg / "case1_dual_ma_ptrade.py").exists()
+        manifest = _load(pkg / "manifest.json")
+        from quantstudio.strategy_compiler.reference.source_digest import sha256_file
+        for fname, recorded in manifest["artifact_digests"].items():
+            assert sha256_file(pkg / fname) == recorded
+
+    def test_qs_compile_g2_boundary_from_outside_repo(self, installed_venv, case1_spec):
+        """`qs-compile package --g2-frozen-dir <dir>` records data_digest_status=blocked."""
+        _venv_python, qs_compile, work_dir = installed_venv
+        spec_path = work_dir / "spec.json"
+        spec_path.write_text(json.dumps(case1_spec), encoding="utf-8")
+        frozen_copy = work_dir / "frozen"
+        frozen_copy.mkdir()
+        import shutil
+        for f in FROZEN.iterdir():
+            shutil.copy(f, frozen_copy / f.name)
+        out_dir = work_dir / "out"
+        r = subprocess.run(
+            [qs_compile, "package", str(spec_path), "--out", str(out_dir),
+             "--g2-frozen-dir", str(frozen_copy)],
+            capture_output=True, text=True, cwd=str(work_dir), check=False)
+        assert r.returncode == 0, f"qs-compile g2 failed: {r.stderr}"
+        pkg = next(out_dir.iterdir())
+        manifest = _load(pkg / "manifest.json")
+        assert manifest["g2_reference_closure"]["data_digest_status"] == "blocked"

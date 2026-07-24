@@ -1,4 +1,6 @@
 {
+  "release_label": "0.3.0-mvp",
+  "distribution_version": "0.3.0+mvp",
   "version": "0.3.0-mvp",
   "release_name": "QuantStudio Strategy Compiler MVP",
   "stage": "G4 Release Closure",

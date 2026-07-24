@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quantstudio"
-version = "0.3.0-mvp"
+version = "0.3.0+mvp"
 description = "标准化数据管道 + 通用量化回测系统（双层校验 + 双轨回测引擎）"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -60,4 +60,5 @@ python_files = ["test_*.py"]
 
 [tool.setuptools.package-data]
 "quantstudio.backtest.libs" = ["bse_legacy_code_mapping.json"]
-"quantstudio.strategy_compiler" = ["schemas/*.json", "examples/*.json"]
+"quantstudio.strategy_compiler" = ["schemas/*.json", "examples/*.json", "templates/*.j2"]
+"quantstudio.strategy_compiler.release" = ["*.json", "*.md"]

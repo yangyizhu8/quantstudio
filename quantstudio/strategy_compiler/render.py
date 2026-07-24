@@ -34,12 +34,14 @@ _HARDCODED_PROTECTED: set[str] = {
     "dual_ma_sample",
 }
 
-# Templates live under skills/quantstudio-strategy-compiler/templates/.
-# Resolve relative to this module so render works regardless of CWD.
-_TEMPLATES_DIR = (
+# Templates: prefer package-bundled (installed wheel works without source tree);
+# fall back to the source-tree skills/ location for dev.
+_PKG_TEMPLATES = Path(__file__).resolve().parent / "templates"
+_SKILL_TEMPLATES = (
     Path(__file__).resolve().parents[2]
     / "skills" / "quantstudio-strategy-compiler" / "templates"
 )
+_TEMPLATES_DIR = _PKG_TEMPLATES if _PKG_TEMPLATES.is_dir() else _SKILL_TEMPLATES
 
 # Profile -> (template filename prefix, output suffix)
 _PROFILE_TEMPLATE_MAP: dict[str, dict[str, str]] = {
