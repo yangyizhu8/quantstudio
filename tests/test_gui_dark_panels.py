@@ -17,6 +17,7 @@ QPalette = pytest.importorskip("PyQt6.QtGui").QPalette
 NavigationInterface = qfluentwidgets.NavigationInterface
 ScrollArea = qfluentwidgets.ScrollArea
 Theme = qfluentwidgets.Theme
+qconfig = qfluentwidgets.qconfig
 setTheme = qfluentwidgets.setTheme
 
 from quantstudio.gui.main_window import MainWindow
@@ -148,21 +149,30 @@ def test_source_tab_uses_transparent_fluent_scroll_area(
 def test_source_tab_dark_scroll_content_uses_dark_background_and_white_text(
     app, source_config
 ):
-    setTheme(Theme.DARK)
-    tab = SourceTab(DummyMainWindow(source_config))
-    tab.show()
-    app.processEvents()
+    original_theme = qconfig.theme
+    tab = None
+    try:
+        setTheme(Theme.DARK)
+        tab = SourceTab(DummyMainWindow(source_config))
+        tab.show()
+        app.processEvents()
 
-    assert tab.scroll_content.objectName() == "sourceScrollContent"
-    assert tab.scroll_area.widget() is tab.scroll_content
-    assert tab.scroll_content.palette().color(QPalette.ColorRole.Window).name() == "#202020"
-    assert tab.scroll_content.palette().color(QPalette.ColorRole.WindowText).name() == "#ffffff"
-    assert tab.scroll_content.findChild(QLabel).palette().color(
-        QPalette.ColorRole.WindowText
-    ).name() == "#ffffff"
+        assert tab.scroll_content.objectName() == "sourceScrollContent"
+        assert tab.scroll_area.widget() is tab.scroll_content
+        assert tab.scroll_content.palette().color(QPalette.ColorRole.Window).name() == "#202020"
+        assert tab.scroll_content.palette().color(QPalette.ColorRole.WindowText).name() == "#ffffff"
+        assert tab.scroll_content.findChild(QLabel).palette().color(
+            QPalette.ColorRole.WindowText
+        ).name() == "#ffffff"
 
-    tab.close()
-    app.processEvents()
+        rendered = tab.scroll_content.grab().toImage()
+        background = rendered.pixelColor(rendered.width() - 2, rendered.height() - 2)
+        assert background.name() == "#202020"
+    finally:
+        if tab is not None:
+            tab.close()
+            app.processEvents()
+        setTheme(original_theme)
 
 
 @pytest.mark.parametrize(
