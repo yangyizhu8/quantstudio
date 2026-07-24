@@ -14,6 +14,7 @@ QApplication = qt_widgets.QApplication
 ScrollArea = qfluentwidgets.ScrollArea
 
 from quantstudio.gui.tabs.config_editor_tab import ConfigEditorTab
+from quantstudio.gui.tabs.quality_tab import QualityTab
 from quantstudio.gui.tabs.source_tab import SourceTab
 
 
@@ -82,6 +83,14 @@ class DummyMainWindow:
         self.config_dir = config_dir
         self.stackedWidget = EmptyStackedWidget()
         self._tabs = {}
+
+
+def test_quality_tab_keeps_details_in_four_column_table(app):
+    tab = QualityTab(DummyMainWindow(None))
+
+    assert tab.check_table.columnCount() == 4
+    assert tab.check_table.horizontalHeaderItem(3).text() == "详情"
+    assert not hasattr(tab, "detail_text")
 
 
 def test_source_tab_uses_transparent_fluent_scroll_area(
