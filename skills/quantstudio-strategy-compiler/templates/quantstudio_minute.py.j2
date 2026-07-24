@@ -18,7 +18,290 @@ Minute profile notes (minute_scheduler.py contract):
 
 Golden protection: render() would have raised before reaching this template.
 """
-{% if security_code %}
+{% if strategy_pattern == 'smallcap_overnight_scalp' %}
+import numpy as np
+
+
+def initialize(context):
+    set_benchmark('{{ benchmark }}')
+    g.market_cap_pool_size = {{ market_cap_pool_size }}
+    g.buy_count = {{ buy_count }}
+    g.max_concurrent_positions = {{ max_concurrent_positions }}
+    g.cash_buffer = {{ cash_buffer }}
+    g.amplitude_threshold = {{ amplitude_threshold }}
+    g.ema_period = {{ ema_indicator.lookback }}
+    g.amplitude_lookback = {{ amplitude_indicator.lookback }}
+    g.recent_suspension_days = {{ recent_suspension_days }}
+    g.min_listing_days = 365
+    g.preopen_candidates = []
+    g.entry_dates = {}
+    run_daily(context, buy_today_batch, time='{{ entry_time }}')
+    run_daily(context, sell_previous_batches, time='{{ exit_time }}')
+
+
+def before_trading_start(context, data):
+    _reconcile_entry_dates(context)
+    all_stocks = [code for code in get_Ashares(context.previous_date) if _is_allowed_board(code)]
+    if not all_stocks:
+        g.preopen_candidates = []
+        return
+    try:
+        all_stocks = filter_stock_by_status(
+            all_stocks, filter_type=['ST', 'HALT', 'DELISTING', 'DELISTING_SORTING'], query_date=None
+        )
+    except Exception as exc:
+        log.info('Current status filter failed: %s' % exc)
+
+    try:
+        valuation_df = get_fundamentals(
+            all_stocks, 'valuation', fields=['float_value'], date=context.previous_date
+        )
+        valuation_df = valuation_df[valuation_df['float_value'] > 0].sort_values('float_value')
+        market_cap_pool = valuation_df.head(g.market_cap_pool_size).index.tolist()
+    except Exception as exc:
+        log.info('Valuation universe failed: %s' % exc)
+        g.preopen_candidates = []
+        return
+
+    candidates = []
+    for code in market_cap_pool:
+        if not _listed_long_enough(code, context):
+            continue
+        history = _load_daily_history(code, max(g.ema_period, g.amplitude_lookback, g.recent_suspension_days))
+        closes = history.get('close', np.asarray([], dtype=float))
+        highs = history.get('high', np.asarray([], dtype=float))
+        lows = history.get('low', np.asarray([], dtype=float))
+        volumes = history.get('volume', np.asarray([], dtype=float))
+        required = max(g.ema_period, g.amplitude_lookback, g.recent_suspension_days)
+        if min(len(closes), len(highs), len(lows), len(volumes)) < required:
+            continue
+        if not np.all(np.isfinite(closes[-g.ema_period:])):
+            continue
+        recent_volumes = volumes[-g.recent_suspension_days:]
+        if not np.all(np.isfinite(recent_volumes)) or np.any(recent_volumes <= 0):
+            continue
+        amp_highs = highs[-g.amplitude_lookback:]
+        amp_lows = lows[-g.amplitude_lookback:]
+        min_low = np.min(amp_lows)
+        if not np.isfinite(min_low) or min_low <= 0:
+            continue
+        amplitude = (np.max(amp_highs) - min_low) / min_low
+        if not np.isfinite(amplitude) or amplitude > g.amplitude_threshold:
+            continue
+        ema_value = _ema(closes[-g.ema_period:], g.ema_period)
+        previous_close = closes[-1]
+        previous_low = lows[-1]
+        if ema_value is None or previous_close <= ema_value:
+            continue
+        candidates.append({'code': code, 'previous_low': float(previous_low)})
+
+    g.preopen_candidates = candidates
+    log.info('Pre-open candidates: %s' % [item['code'] for item in candidates])
+
+
+def buy_today_batch(context):
+    today = _date_text(context.current_dt)
+    positions = context.portfolio.positions
+    current_count = sum(1 for position in positions.values() if getattr(position, 'amount', 0) > 0)
+    available_slots = max(0, g.max_concurrent_positions - current_count)
+    buy_slots = min(g.buy_count, available_slots)
+    if buy_slots <= 0:
+        log.info('No overlap capacity for new batch')
+        return
+
+    selected = []
+    for item in g.preopen_candidates:
+        code = item['code']
+        try:
+            snapshot = get_snapshot(code)
+            open_price = float(snapshot.get('open', 0) or 0)
+        except Exception as exc:
+            log.info('Skipping %s: opening snapshot failed: %s' % (code, exc))
+            continue
+        if open_price <= 0 or open_price >= item['previous_low']:
+            continue
+        try:
+            limit_state = _lookup_by_bare(check_limit(code), code, 0)
+        except Exception:
+            limit_state = 0
+        if limit_state != 0:
+            log.info('Skipping %s: limit state=%s' % (code, limit_state))
+            continue
+        selected.append(code)
+        if len(selected) >= buy_slots:
+            break
+
+    if not selected:
+        log.info('No stocks passed the opening-gap condition')
+        return
+    deployable_cash = max(0.0, float(context.portfolio.cash) * (1.0 - g.cash_buffer))
+    if deployable_cash <= 0:
+        log.info('No available cash for the new overlapping batch')
+        return
+    per_stock_value = deployable_cash / float(len(selected))
+    for code in selected:
+        try:
+            order_value(code, per_stock_value)
+            g.entry_dates[_bare_code(code)] = today
+            log.info('Buying %s with value %.2f, entry_date=%s' % (code, per_stock_value, today))
+        except Exception as exc:
+            log.info('Buy order failed for %s: %s' % (code, exc))
+
+
+def sell_previous_batches(context):
+    today = _date_text(context.current_dt)
+    for actual_code, position in list(context.portfolio.positions.items()):
+        if getattr(position, 'amount', 0) <= 0:
+            continue
+        bare = _bare_code(actual_code)
+        entry_date = g.entry_dates.get(bare)
+        if entry_date == today:
+            continue
+        try:
+            limit_state = _lookup_by_bare(check_limit(actual_code), actual_code, 0)
+        except Exception:
+            limit_state = 0
+        if limit_state == -1:
+            log.info('Cannot sell %s at 10:30: limit down' % actual_code)
+            continue
+        try:
+            order_target_value(actual_code, 0)
+            log.info('Selling previous batch %s at 10:30' % actual_code)
+        except Exception as exc:
+            log.info('Sell order failed for %s: %s' % (actual_code, exc))
+
+
+def handle_data(context, data):
+    pass
+
+
+def _reconcile_entry_dates(context):
+    position_bares = set(
+        _bare_code(code) for code, position in context.portfolio.positions.items()
+        if getattr(position, 'amount', 0) > 0
+    )
+    for bare in list(g.entry_dates.keys()):
+        if bare not in position_bares:
+            del g.entry_dates[bare]
+    previous_date = str(context.previous_date)[:10]
+    for bare in position_bares:
+        if bare not in g.entry_dates:
+            g.entry_dates[bare] = previous_date
+
+
+def _listed_long_enough(code, context):
+    try:
+        info = get_security_info(code)
+        start_date = getattr(info, 'start_date', None)
+        if start_date is None:
+            return False
+        current_date = context.current_dt.date() if hasattr(context.current_dt, 'date') else context.current_dt
+        listing_date = start_date.date() if hasattr(start_date, 'date') else start_date
+        return (current_date - listing_date).days >= g.min_listing_days
+    except Exception:
+        return False
+
+
+def _load_daily_history(code, count):
+    try:
+        history = get_history(
+            count, '1d', field=['close', 'high', 'low', 'volume'], security_list=code,
+            fq='dypre', include=False, is_dict=True
+        )
+        item = _lookup_history_item(history, code)
+        return {
+            field: _finite_series(_extract_history_field(item, field))
+            for field in ('close', 'high', 'low', 'volume')
+        }
+    except Exception:
+        return {}
+
+
+def _ema(values, period):
+    if len(values) < period:
+        return None
+    alpha = 2.0 / float(period + 1)
+    value = float(values[0])
+    for current in values[1:]:
+        value = alpha * float(current) + (1.0 - alpha) * value
+    return value if np.isfinite(value) else None
+
+
+def _lookup_history_item(history, code):
+    if history is None:
+        return None
+    try:
+        return history[code]
+    except (KeyError, IndexError, TypeError, ValueError):
+        pass
+    target = _bare_code(code)
+    try:
+        keys = history.keys()
+    except AttributeError:
+        return None
+    for key in keys:
+        if _bare_code(key) == target:
+            return history[key]
+    return None
+
+
+def _extract_history_field(history_item, field):
+    if history_item is None:
+        return np.asarray([], dtype=object)
+    try:
+        values = history_item[field]
+    except (KeyError, IndexError, TypeError, ValueError):
+        return np.asarray([], dtype=object)
+    if hasattr(values, 'values'):
+        values = values.values
+    return np.asarray(values, dtype=object)
+
+
+def _finite_series(values):
+    result = []
+    for value in np.asarray(values, dtype=object).reshape(-1):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = np.nan
+        result.append(number if np.isfinite(number) else np.nan)
+    return np.asarray(result, dtype=float)
+
+
+def _lookup_by_bare(mapping, code, default=None):
+    if mapping is None:
+        return default
+    try:
+        return mapping[code]
+    except Exception:
+        pass
+    target = _bare_code(code)
+    try:
+        items = mapping.items()
+    except AttributeError:
+        return default
+    for key, value in items:
+        if _bare_code(key) == target:
+            return value
+    return default
+
+
+def _is_allowed_board(code):
+    bare = _bare_code(code)
+    if bare.startswith(('688', '300', '301', '920')):
+        return False
+    return bare.startswith(('600', '601', '603', '605', '000', '001', '002', '003'))
+
+
+def _bare_code(code):
+    return str(code).strip().upper().split('.')[0]
+
+
+def _date_text(value):
+    if hasattr(value, 'strftime'):
+        return value.strftime('%Y-%m-%d')
+    return str(value)[:10]
+{% elif security_code %}
 import numpy as np
 
 

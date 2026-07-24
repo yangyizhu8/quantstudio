@@ -1,0 +1,254 @@
+{
+  "spec_version": "1.0",
+  "strategy_id": "smallcap_scalp_compiler_fixture",
+  "strategy_name": "Smallcap overnight scalp compiler fixture",
+  "strategy_type": "stock_selection",
+  "asset_class": "stock",
+  "target_platforms": [
+    "quantstudio",
+    "ptrade-default"
+  ],
+  "benchmark": "000300.SH",
+  "initial_capital": 100000,
+  "contract_versions": {
+    "strategy_spec_version": "1.0.0",
+    "engine_semantics_version": "0.5.0-timed-overlap",
+    "provider_contract_version": "0.3.0-listing-master",
+    "security_code_rules_version": "1.0.0",
+    "ptrade_profile_version": "1.0.0-default",
+    "renderer_version": "0.3.3-mvp",
+    "skill_version": "0.3.3-mvp"
+  },
+  "time_model": {
+    "market_data_frequency": "1m",
+    "factor_frequency": "1d",
+    "signal_frequency": "1d",
+    "decision_clock": "09:31",
+    "execution_clock": "current_bar",
+    "portfolio_valuation_frequency": "1d",
+    "holding_period_unit": "trading_day",
+    "signal_data_cutoff": "T-open",
+    "entry_clock": "09:31",
+    "exit_clock": "10:30",
+    "exit_day_offset": 1,
+    "overlap_policy": "allow_previous_day_overlap",
+    "max_concurrent_positions": 14,
+    "new_buy_cash_policy": "available_cash_only"
+  },
+  "engine_profile": {
+    "profile_id": "minute-bar-v1",
+    "event_type": "bar",
+    "bar_frequency": "1m",
+    "market_depth": "L1",
+    "order_book_levels": 0,
+    "schema_supported": true,
+    "execution_status": "READY"
+  },
+  "universe": {
+    "kind": "smallest_market_cap",
+    "parameters": {
+      "pool_size": 500,
+      "field": "circulating_market_cap",
+      "min_listing_trade_days": 252,
+      "recent_suspension_days": 5,
+      "exclude_chinext": true
+    }
+  },
+  "hard_filters": {
+    "exclude_st": true,
+    "exclude_suspended": true,
+    "exclude_delisted": true,
+    "exclude_delisting_sorting": true,
+    "exclude_star_market": true,
+    "exclude_bse": true,
+    "exclude_chinext": true,
+    "min_listing_trade_days": 252,
+    "exclude_invalid_price": true,
+    "exclude_zero_volume": true,
+    "block_limit_up_buy": true,
+    "block_limit_down_sell": true,
+    "enforce_t1": true,
+    "round_lot": 100
+  },
+  "signals": {
+    "steps": [
+      {
+        "id": "amplitude4",
+        "operation": "rolling_amplitude",
+        "parameters": {
+          "field": "close",
+          "high_field": "high",
+          "low_field": "low",
+          "lookback": 4,
+          "denominator": "min_low"
+        }
+      },
+      {
+        "id": "ema5",
+        "operation": "ema",
+        "parameters": {
+          "field": "close",
+          "lookback": 5
+        }
+      },
+      {
+        "id": "amplitude_ok",
+        "operation": "compare",
+        "parameters": {
+          "left": "amplitude4",
+          "right_value": 0.1,
+          "comparator": "<="
+        }
+      },
+      {
+        "id": "trend_ok",
+        "operation": "compare",
+        "parameters": {
+          "left": "close_history",
+          "right": "ema5",
+          "comparator": ">"
+        }
+      },
+      {
+        "id": "gap_ok",
+        "operation": "open_below_previous_low",
+        "parameters": {
+          "open_field": "open",
+          "low_field": "low",
+          "low_offset": -1
+        }
+      },
+      {
+        "id": "entry_condition",
+        "operation": "and",
+        "parameters": {
+          "sources": [
+            "amplitude_ok",
+            "trend_ok",
+            "gap_ok"
+          ]
+        }
+      }
+    ]
+  },
+  "portfolio": {
+    "kind": "overlap_timed_equal_weight",
+    "parameters": {
+      "max_positions": 7,
+      "max_concurrent_positions": 14,
+      "rebalance": "daily",
+      "target_weight": 0.14,
+      "new_buy_cash_policy": "available_cash_only"
+    }
+  },
+  "execution": {
+    "mode": "native",
+    "match_price_mode": "open",
+    "order_type": "market",
+    "allow_partial_fill": false
+  },
+  "risk": {
+    "kind": "time_exit",
+    "parameters": {
+      "max_single_weight": 0.14,
+      "cash_buffer": 0.02,
+      "amplitude_threshold": 0.1,
+      "exit_day_offset": 1,
+      "exit_time": "10:30"
+    }
+  },
+  "costs": {
+    "commission_rate": 0.0003,
+    "minimum_commission": 5.0,
+    "stamp_tax_rate": 0.0005,
+    "transfer_fee_rate": 1e-05,
+    "slippage_bps": 0.0
+  },
+  "data_requirements": {
+    "datasets": [
+      {
+        "dataset": "stock_daily",
+        "frequency": "1d",
+        "fields": [
+          "open",
+          "high",
+          "low",
+          "close",
+          "volume",
+          "suspendFlag"
+        ],
+        "required": true,
+        "pit_required": false
+      },
+      {
+        "dataset": "stock_minutes",
+        "frequency": "1m",
+        "fields": [
+          "open",
+          "high",
+          "low",
+          "close",
+          "volume"
+        ],
+        "required": true,
+        "pit_required": false
+      },
+      {
+        "dataset": "stock_daily_valuation",
+        "frequency": "1d",
+        "fields": [
+          "circ_mv"
+        ],
+        "required": true,
+        "pit_required": true
+      },
+      {
+        "dataset": "stock_basic",
+        "frequency": "1d",
+        "fields": [
+          "list_date",
+          "list_status"
+        ],
+        "required": true,
+        "pit_required": true
+      }
+    ]
+  },
+  "capability_requirements": [
+    "stock_daily_backtest",
+    "stock_minute_backtest",
+    "stock_status_filter",
+    "stock_daily_valuation",
+    "stock_basic",
+    "scheduled_intraday_execution",
+    "position_batch_state",
+    "quantstudio_public_api",
+    "ptrade_default_public_api"
+  ],
+  "approximations": [
+    {
+      "mode": "other",
+      "original_execution_clock": "09:30",
+      "approximation": true,
+      "approximation_reason": "Opening auction execution is approximated by the first completed minute callback at 09:31.",
+      "user_confirmed": true,
+      "risk_disclosure": "Fills may differ from the official opening auction price."
+    }
+  ],
+  "user_confirmations": [
+    {
+      "confirmation_id": "compiler_fixture",
+      "status": "CONFIRMED"
+    }
+  ],
+  "validation_policy": {
+    "no_lookahead": "BLOCK",
+    "hard_filters": "BLOCK",
+    "strict_public_api": true,
+    "smoke_backtest": "WHEN_READY"
+  },
+  "output": {
+    "root": "output/generated_strategies",
+    "overwrite": false
+  }
+}

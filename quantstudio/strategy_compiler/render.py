@@ -25,6 +25,8 @@ from typing import Any
 
 import jinja2
 
+from quantstudio.backtest.libs.security_code_rules import normalize_to_ptrade, normalize_to_qmt
+
 from .ir_nodes import StrategyIR
 
 # Contract §3.6: hardcoded fallback (config 不可用时兜底)
@@ -128,7 +130,16 @@ def _build_template_context(ir: StrategyIR, profile: str) -> dict[str, Any]:
         "contract_versions": ir.contract_versions,
         "engine_profile": ir.engine_profile,
         "time_model": ir.time_model,
+        "metadata": ir.metadata,
+        "benchmark": ir.metadata.get("benchmark") or "000300.XSHG",
+        "initial_capital": ir.metadata.get("initial_capital") or 100000.0,
     }
+
+    normalize_code = normalize_to_ptrade if profile == "ptrade-default" else normalize_to_qmt
+    if ctx.get("benchmark"):
+        ctx["benchmark"] = normalize_code(ctx["benchmark"])
+
+    cross_count = 0
 
     # Walk nodes by type and extract concrete params.
     for node in ir.nodes:
@@ -136,9 +147,19 @@ def _build_template_context(ir: StrategyIR, profile: str) -> dict[str, Any]:
         p = node.parameters
         if nt == "UniverseNode":
             ctx["universe_kind"] = p.get("kind")
-            ctx["security_code"] = p.get("code")  # single_stock
-            ctx["universe_index"] = p.get("index")  # index_constituents
-            ctx["universe_codes"] = p.get("codes")  # manual_list/etf_list
+            code = p.get("code")
+            index = p.get("index")
+            codes = p.get("codes")
+            ctx["security_code"] = normalize_code(code) if code else None
+            ctx["universe_index"] = normalize_code(index) if index else None
+            ctx["universe_codes"] = [normalize_code(item) for item in codes] if codes else None
+            ctx["universe_parameters"] = dict(p)
+            if p.get("kind") == "smallest_market_cap":
+                ctx["market_cap_pool_size"] = p.get("pool_size", 500)
+                ctx["market_cap_field"] = p.get("field", "circulating_market_cap")
+                ctx["min_listing_trade_days"] = p.get("min_listing_trade_days", 252)
+                ctx["recent_suspension_days"] = p.get("recent_suspension_days", 5)
+                ctx["exclude_chinext"] = p.get("exclude_chinext", True)
         elif nt == "DataLoadNode":
             ctx["dataload_dataset"] = p.get("dataset")
             ctx["dataload_frequency"] = p.get("frequency")
@@ -160,6 +181,19 @@ def _build_template_context(ir: StrategyIR, profile: str) -> dict[str, Any]:
                     "field": p.get("field", "close"),
                     "lookback": p.get("lookback"),
                 })
+            elif op == "ema":
+                ctx.setdefault("ema_indicators", []).append({
+                    "id": node.output,
+                    "field": p.get("field", "close"),
+                    "lookback": p.get("lookback"),
+                })
+            elif op == "rolling_amplitude":
+                ctx.setdefault("amplitude_indicators", []).append({
+                    "id": node.output,
+                    "lookback": p.get("lookback"),
+                    "high_field": p.get("high_field", "high"),
+                    "low_field": p.get("low_field", "low"),
+                })
         elif nt == "RankingNode":
             ctx["ranking_op"] = p.get("operation")
             ctx["ranking_source"] = p.get("source")
@@ -167,30 +201,91 @@ def _build_template_context(ir: StrategyIR, profile: str) -> dict[str, Any]:
             ctx["ranking_top_n"] = p.get("top_n")
             ctx["ranking_output"] = node.output
         elif nt == "SignalNode" and p.get("operation") == "cross":
+            cross_count += 1
+            if cross_count > 1:
+                raise ValueError("multiple cross SignalNodes are not supported")
             ctx["signal_op"] = "cross"
             ctx["signal_sources"] = p.get("sources", [])
             ctx["signal_direction"] = p.get("direction", "golden")
+        elif nt == "SignalNode":
+            ctx.setdefault("signal_steps", []).append({"id": node.output, **dict(p)})
         elif nt == "PortfolioNode":
             ctx["portfolio_kind"] = p.get("kind")
             ctx["portfolio_max_positions"] = p.get("max_positions", 1)
             ctx["portfolio_rebalance"] = p.get("rebalance", "signal_triggered")
             ctx["portfolio_target_weight"] = p.get("target_weight", 1.0)
+            ctx["portfolio_parameters"] = dict(p)
         elif nt == "RiskNode":
             ctx["risk_kind"] = p.get("kind")
             ctx["risk_max_single_weight"] = p.get("max_single_weight", 1.0)
             ctx["risk_cash_buffer"] = p.get("cash_buffer", 0.0)
+            ctx["risk_parameters"] = dict(p)
         elif nt == "ExecutionNode":
             ctx["exec_order_api"] = p.get("order_api", "order_value")
             ctx["exec_match_price_mode"] = p.get("match_price_mode", "close")
             ctx["exec_order_type"] = p.get("order_type", "market")
 
-    # Determine the "fast" and "slow" ma for cross signals (golden/death).
-    ma_list = ctx.get("ma_indicators", [])
-    if len(ma_list) >= 2 and ctx.get("signal_op") == "cross":
-        # Sort by lookback ascending: fast = shortest, slow = longest.
-        sorted_ma = sorted(ma_list, key=lambda m: m["lookback"])
-        ctx["ma_fast"] = sorted_ma[0]
-        ctx["ma_slow"] = sorted_ma[-1]
+    match_price_mode = ctx.get("exec_match_price_mode", "close")
+    ctx["ptrade_rebalance_time"] = (
+        "9:31" if match_price_mode in ("next_open", "open") else "15:00"
+    )
+    ctx["ptrade_requires_minute_schedule"] = match_price_mode in ("next_open", "open")
+
+    universe_kind = ctx.get("universe_kind")
+    if universe_kind == "smallest_market_cap":
+        ema_items = ctx.get("ema_indicators", [])
+        amp_items = ctx.get("amplitude_indicators", [])
+        signal_ops = {item.get("operation") for item in ctx.get("signal_steps", [])}
+        if len(ema_items) != 1 or len(amp_items) != 1 or not {
+            "compare", "open_below_previous_low", "and"
+        }.issubset(signal_ops):
+            raise ValueError(
+                "smallest_market_cap renderer requires one EMA, one rolling_amplitude, "
+                "compare + open_below_previous_low + and signals"
+            )
+        ctx["strategy_pattern"] = "smallcap_overnight_scalp"
+        ctx["ema_indicator"] = ema_items[0]
+        ctx["amplitude_indicator"] = amp_items[0]
+        ctx["entry_time"] = ir.time_model.get("entry_clock", "9:31")
+        ctx["exit_time"] = ir.time_model.get("exit_clock", "10:30")
+        ctx["exit_day_offset"] = ir.time_model.get("exit_day_offset", 1)
+        ctx["max_concurrent_positions"] = ir.time_model.get("max_concurrent_positions", 14)
+        ctx["new_buy_cash_policy"] = ir.time_model.get("new_buy_cash_policy", "available_cash_only")
+        ctx["buy_count"] = ctx.get("portfolio_parameters", {}).get("max_positions", 7)
+        ctx["cash_buffer"] = ctx.get("risk_parameters", {}).get("cash_buffer", 0.02)
+        ctx["amplitude_threshold"] = ctx.get("risk_parameters", {}).get("amplitude_threshold", 0.10)
+    if universe_kind == "single_stock" and ctx.get("signal_op") != "cross":
+        raise ValueError("single_stock rendering requires a supported dual-MA cross signal")
+
+    pct_by_id = {item["id"]: item for item in ctx.get("pct_change_indicators", [])}
+    if universe_kind == "manual_list":
+        ranking_source = ctx.get("ranking_source")
+        if ranking_source not in pct_by_id:
+            raise ValueError(
+                f"unsupported manual_list ranking source {ranking_source!r}; expected pct_change indicator"
+            )
+        ctx["ranking_indicator"] = pct_by_id[ranking_source]
+
+    # Resolve cross operands strictly from the IR-declared sources. The currently
+    # supported renderer semantics are ma_fast > ma_slow (golden direction).
+    if ctx.get("signal_op") == "cross":
+        ma_by_id = {item["id"]: item for item in ctx.get("ma_indicators", [])}
+        sources = ctx.get("signal_sources", [])
+        if (
+            ctx.get("signal_direction") != "golden"
+            or len(sources) != 2
+            or any(source not in ma_by_id for source in sources)
+        ):
+            raise ValueError(
+                "unsupported cross combination: expected two MA sources with direction='golden'"
+            )
+        first, second = (ma_by_id[source] for source in sources)
+        if first["lookback"] >= second["lookback"]:
+            raise ValueError(
+                "unsupported cross combination: first MA source must be faster than second"
+            )
+        ctx["ma_fast"] = first
+        ctx["ma_slow"] = second
 
     return ctx
 

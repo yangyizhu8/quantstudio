@@ -36,6 +36,10 @@ from typing import Optional
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
+# 自动载入 config/secrets.env（提供 QMT_PATH 等凭证）
+from quantstudio._secrets import load_secrets_env
+load_secrets_env()
+
 import pandas as pd
 import duckdb
 

@@ -1,0 +1,213 @@
+{
+  "profile_id": "ptrade-backtest-public-v1",
+  "profile_version": "1.2.2",
+  "verified_on": "2026-07-24",
+  "policy": "Canonical dual-target code must use exact PTrade backtest public signatures; QuantStudio adapters must be equally strict so local PASS predicts platform acceptance.",
+  "signatures": {
+    "set_slippage": {
+      "contexts": [
+        "backtest",
+        "trade"
+      ],
+      "max_positional": 1,
+      "allowed_keywords": [
+        "slippage"
+      ],
+      "examples": [
+        "set_slippage(0.0)",
+        "set_slippage(slippage=0.0)"
+      ]
+    },
+    "set_fixed_slippage": {
+      "contexts": [
+        "backtest",
+        "trade"
+      ],
+      "max_positional": 1,
+      "allowed_keywords": [
+        "fixedslippage"
+      ],
+      "examples": [
+        "set_fixed_slippage(0.0)",
+        "set_fixed_slippage(fixedslippage=0.0)"
+      ]
+    },
+    "get_history": {
+      "contexts": [
+        "backtest",
+        "trade"
+      ],
+      "max_positional": 8,
+      "allowed_keywords": [
+        "count",
+        "frequency",
+        "field",
+        "security_list",
+        "fq",
+        "include",
+        "fill",
+        "is_dict"
+      ],
+      "examples": [
+        "get_history(60, frequency='1d', field=['close'], security_list='600000.SS', fq='pre', include=False, is_dict=True)"
+      ]
+    },
+    "get_stock_info": {
+      "contexts": [
+        "backtest",
+        "trade"
+      ],
+      "allowed_keywords": [
+        "stocks",
+        "field"
+      ],
+      "replacement_for": "get_security_info",
+      "max_positional": 2,
+      "return_shape": "{security: {'listed_date': 'YYYY-MM-DD', ...}}"
+    },
+    "get_snapshot": {
+      "contexts": [
+        "trade"
+      ],
+      "max_positional": 1,
+      "allowed_keywords": [
+        "security"
+      ],
+      "forbidden_in_backtest": true
+    },
+    "check_limit": {
+      "contexts": [
+        "trade"
+      ],
+      "forbidden_in_backtest": true
+    },
+    "get_open_orders": {
+      "contexts": [
+        "backtest",
+        "trade"
+      ],
+      "max_positional": 1,
+      "allowed_keywords": [
+        "security"
+      ],
+      "examples": [
+        "get_open_orders()",
+        "get_open_orders(security='600000.SS')"
+      ]
+    },
+    "get_security_info": {
+      "contexts": [
+        "local_extension"
+      ],
+      "unsupported_on_ptrade": true,
+      "replacement_for": "get_stock_info(..., field=['listed_date'])"
+    },
+    "get_current_data": {
+      "contexts": [
+        "local_extension"
+      ],
+      "unsupported_on_ptrade": true
+    },
+    "get_order": {
+      "contexts": [
+        "backtest",
+        "trade"
+      ],
+      "max_positional": 1,
+      "allowed_keywords": [
+        "order_id"
+      ]
+    },
+    "set_commission": {
+      "contexts": [
+        "backtest",
+        "trade"
+      ],
+      "max_positional": 0,
+      "allowed_keywords": [
+        "commission_ratio",
+        "min_commission",
+        "type"
+      ]
+    },
+    "order": {
+      "contexts": [
+        "backtest",
+        "trade"
+      ],
+      "max_positional": 3,
+      "allowed_keywords": [
+        "security",
+        "amount",
+        "limit_price"
+      ],
+      "return_shape": "order_id string on accepted submission, None on failure"
+    },
+    "order_target_value": {
+      "contexts": [
+        "backtest",
+        "trade"
+      ],
+      "max_positional": 3,
+      "allowed_keywords": [
+        "security",
+        "value",
+        "limit_price"
+      ],
+      "return_shape": "order_id string on accepted submission, None on failure"
+    },
+    "filter_stock_by_status": {
+      "contexts": [
+        "backtest",
+        "trade",
+        "research"
+      ],
+      "max_positional": 3,
+      "allowed_keywords": [
+        "stocks",
+        "filter_type",
+        "query_date"
+      ],
+      "allowed_functions": [
+        "before_trading_start"
+      ],
+      "notes": [
+        "PTrade documents this API as callable only from before_trading_start. DELISTING_SORTING only filters current-day data."
+      ]
+    }
+  },
+  "local_only_symbols": [
+    "get_history_batch",
+    "get_fundamentals_batch",
+    "get_security_info",
+    "get_current_data",
+    "EMA",
+    "MA",
+    "SMA",
+    "WMA",
+    "REF",
+    "HHV",
+    "LLV",
+    "CROSS",
+    "EVERY",
+    "EXIST"
+  ],
+  "portable_rules": [
+    "Use numpy/pandas or locally defined helpers for indicators unless the PTrade public API explicitly supplies the function.",
+    "Backtest code must not call get_snapshot or check_limit; those are trading-context APIs. get_open_orders is available in backtest and trade contexts.",
+    "Use get_stock_info(..., field=['listed_date']) for listing dates.",
+    "For a confirmed current completed minute bar, use get_history(..., frequency='1m', include=True) only inside the scheduled minute callback and document the cutoff.",
+    "Date arguments passed to PTrade APIs should be normalized to YYYYmmdd strings unless the platform documents a date object.",
+    "Treat order/order_target_value return values as opaque order IDs or None; do not rely on QuantStudio-local result.status attributes. Use get_order/get_open_orders and portfolio reconciliation.",
+    "Call filter_stock_by_status only from before_trading_start. Use get_stock_status for status checks required by scheduled callbacks."
+  ],
+  "validation_policy": {
+    "all_profiled_calls": "validate allowed keyword names and positional limits for every profiled API",
+    "dynamic_kwargs": "BLOCK because exact broker compatibility cannot be proven",
+    "local_adapter_rule": "do not accept undocumented aliases through **kwargs"
+  },
+  "runtime_corrections": {
+    "get_open_orders": "PTrade public documentation marks get_open_orders(security=None) available in backtest and trade; profile 1.2.0 incorrectly blocked it.",
+    "source_checked_on": "2026-07-24"
+  }
+}

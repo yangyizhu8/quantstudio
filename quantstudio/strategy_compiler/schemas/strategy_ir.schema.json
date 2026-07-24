@@ -3,64 +3,333 @@
   "$id": "https://quantstudio.local/schemas/strategy_ir.schema.json",
   "title": "QuantStudio Strategy IR v1",
   "type": "object",
-  "required": ["strategy_ir_version", "strategy_id", "source_spec_sha256", "contract_versions", "engine_profile", "time_model", "nodes"],
+  "required": [
+    "strategy_ir_version",
+    "strategy_id",
+    "source_spec_sha256",
+    "contract_versions",
+    "engine_profile",
+    "time_model",
+    "nodes"
+  ],
   "properties": {
-    "strategy_ir_version": {"const": "1.0"},
-    "strategy_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$"},
-    "source_spec_sha256": {"oneOf": [{"type": "string", "pattern": "^[a-f0-9]{64}$"}, {"type": "null"}]},
-    "contract_versions": {"$ref": "#/definitions/contractVersions"},
+    "strategy_ir_version": {
+      "const": "1.0"
+    },
+    "strategy_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{2,63}$"
+    },
+    "source_spec_sha256": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "contract_versions": {
+      "$ref": "#/definitions/contractVersions"
+    },
     "engine_profile": {
       "type": "object",
-      "required": ["profile_id", "event_type", "bar_frequency", "market_depth", "order_book_levels", "schema_supported", "execution_status"],
+      "required": [
+        "profile_id",
+        "event_type",
+        "bar_frequency",
+        "market_depth",
+        "order_book_levels",
+        "schema_supported",
+        "execution_status"
+      ],
       "properties": {
-        "profile_id": {"type": "string", "minLength": 1},
-        "event_type": {"enum": ["bar", "tick"]},
-        "bar_frequency": {"type": ["string", "null"], "enum": [null, "1m", "5m", "15m", "30m", "60m", "1d"]},
-        "market_depth": {"enum": ["L1", "L2"]},
-        "order_book_levels": {"type": "integer", "minimum": 0, "maximum": 20},
-        "schema_supported": {"type": "boolean"},
-        "execution_status": {"enum": ["READY", "BLOCKED", "PLANNED", "UNSUPPORTED"]}
+        "profile_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_type": {
+          "enum": [
+            "bar",
+            "tick"
+          ]
+        },
+        "bar_frequency": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            null,
+            "1m",
+            "5m",
+            "15m",
+            "30m",
+            "60m",
+            "1d"
+          ]
+        },
+        "market_depth": {
+          "enum": [
+            "L1",
+            "L2"
+          ]
+        },
+        "order_book_levels": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "schema_supported": {
+          "type": "boolean"
+        },
+        "execution_status": {
+          "enum": [
+            "READY",
+            "BLOCKED",
+            "PLANNED",
+            "UNSUPPORTED"
+          ]
+        }
       },
       "additionalProperties": false
     },
     "time_model": {
       "type": "object",
-      "required": ["market_data_frequency", "factor_frequency", "signal_frequency", "decision_clock", "execution_clock", "portfolio_valuation_frequency", "holding_period_unit", "signal_data_cutoff"],
+      "required": [
+        "market_data_frequency",
+        "factor_frequency",
+        "signal_frequency",
+        "decision_clock",
+        "execution_clock",
+        "portfolio_valuation_frequency",
+        "holding_period_unit",
+        "signal_data_cutoff"
+      ],
       "properties": {
-        "market_data_frequency": {"$ref": "#/definitions/frequency"},
-        "factor_frequency": {"$ref": "#/definitions/frequency"},
-        "signal_frequency": {"$ref": "#/definitions/frequency"},
-        "decision_clock": {"oneOf": [{"enum": ["before_trading_start", "market_open", "bar_close", "after_trading_end"]}, {"type": "string", "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?$"}]},
-        "execution_clock": {"enum": ["current_bar", "next_bar", "next_open", "market_open", "market_close"]},
-        "portfolio_valuation_frequency": {"$ref": "#/definitions/frequency"},
-        "holding_period_unit": {"enum": ["bar", "trading_day", "calendar_day", "week", "month"]},
-        "signal_data_cutoff": {"enum": ["T-1-close", "T-open", "current-bar-open", "current-bar-close", "previous-bar-close", "T-close"]}
+        "market_data_frequency": {
+          "$ref": "#/definitions/frequency"
+        },
+        "factor_frequency": {
+          "$ref": "#/definitions/frequency"
+        },
+        "signal_frequency": {
+          "$ref": "#/definitions/frequency"
+        },
+        "decision_clock": {
+          "oneOf": [
+            {
+              "enum": [
+                "before_trading_start",
+                "market_open",
+                "bar_close",
+                "after_trading_end"
+              ]
+            },
+            {
+              "type": "string",
+              "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?$"
+            }
+          ]
+        },
+        "execution_clock": {
+          "enum": [
+            "current_bar",
+            "next_bar",
+            "next_open",
+            "market_open",
+            "market_close"
+          ]
+        },
+        "portfolio_valuation_frequency": {
+          "$ref": "#/definitions/frequency"
+        },
+        "holding_period_unit": {
+          "enum": [
+            "bar",
+            "trading_day",
+            "calendar_day",
+            "week",
+            "month"
+          ]
+        },
+        "signal_data_cutoff": {
+          "enum": [
+            "T-1-close",
+            "T-open",
+            "current-bar-open",
+            "current-bar-close",
+            "previous-bar-close",
+            "T-close"
+          ]
+        }
       },
       "additionalProperties": false
     },
-    "nodes": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/irNode"}}
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/irNode"
+      }
+    },
+    "metadata": {
+      "type": "object"
+    }
   },
   "definitions": {
-    "frequency": {"enum": ["tick", "1m", "5m", "15m", "30m", "60m", "1d"]},
-    "semver": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z._-]+)?$"},
-    "contractVersions": {"type": "object", "required": ["strategy_spec_version", "engine_semantics_version", "provider_contract_version", "security_code_rules_version", "ptrade_profile_version", "renderer_version", "skill_version"], "properties": {"strategy_spec_version": {"$ref": "#/definitions/semver"}, "engine_semantics_version": {"$ref": "#/definitions/semver"}, "provider_contract_version": {"$ref": "#/definitions/semver"}, "security_code_rules_version": {"$ref": "#/definitions/semver"}, "ptrade_profile_version": {"$ref": "#/definitions/semver"}, "renderer_version": {"$ref": "#/definitions/semver"}, "skill_version": {"$ref": "#/definitions/semver"}}, "additionalProperties": false},
-    "nodeType": {"enum": ["UniverseNode", "HardFilterNode", "DataLoadNode", "IndicatorNode", "FactorNode", "SignalNode", "RankingNode", "PortfolioNode", "RiskNode", "ExecutionNode", "DiagnosticNode"]},
-    "identifier": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
-    "timing": {"enum": ["pre_open", "bar", "tick", "reference", "fundamental", "post_close"]},
-    "platformMapping": {"type": "object", "required": ["quantstudio", "ptrade-default"], "properties": {"quantstudio": {"type": "string", "minLength": 1}, "ptrade-default": {"type": "string", "minLength": 1}}, "additionalProperties": false},
+    "frequency": {
+      "enum": [
+        "tick",
+        "1m",
+        "5m",
+        "15m",
+        "30m",
+        "60m",
+        "1d"
+      ]
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z._-]+)?$"
+    },
+    "contractVersions": {
+      "type": "object",
+      "required": [
+        "strategy_spec_version",
+        "engine_semantics_version",
+        "provider_contract_version",
+        "security_code_rules_version",
+        "ptrade_profile_version",
+        "renderer_version",
+        "skill_version"
+      ],
+      "properties": {
+        "strategy_spec_version": {
+          "$ref": "#/definitions/semver"
+        },
+        "engine_semantics_version": {
+          "$ref": "#/definitions/semver"
+        },
+        "provider_contract_version": {
+          "$ref": "#/definitions/semver"
+        },
+        "security_code_rules_version": {
+          "$ref": "#/definitions/semver"
+        },
+        "ptrade_profile_version": {
+          "$ref": "#/definitions/semver"
+        },
+        "renderer_version": {
+          "$ref": "#/definitions/semver"
+        },
+        "skill_version": {
+          "$ref": "#/definitions/semver"
+        }
+      },
+      "additionalProperties": false
+    },
+    "nodeType": {
+      "enum": [
+        "UniverseNode",
+        "HardFilterNode",
+        "DataLoadNode",
+        "IndicatorNode",
+        "FactorNode",
+        "SignalNode",
+        "RankingNode",
+        "PortfolioNode",
+        "RiskNode",
+        "ExecutionNode",
+        "DiagnosticNode"
+      ]
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "timing": {
+      "enum": [
+        "pre_open",
+        "bar",
+        "tick",
+        "reference",
+        "fundamental",
+        "post_close"
+      ]
+    },
+    "platformMapping": {
+      "type": "object",
+      "required": [
+        "quantstudio",
+        "ptrade-default"
+      ],
+      "properties": {
+        "quantstudio": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ptrade-default": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
     "irNode": {
       "type": "object",
-      "required": ["node_id", "node_type", "input", "output", "parameters", "required_capabilities", "timing", "platform_mapping", "validation_rules"],
+      "required": [
+        "node_id",
+        "node_type",
+        "input",
+        "output",
+        "parameters",
+        "required_capabilities",
+        "timing",
+        "platform_mapping",
+        "validation_rules"
+      ],
       "properties": {
-        "node_id": {"$ref": "#/definitions/identifier"},
-        "node_type": {"$ref": "#/definitions/nodeType"},
-        "input": {"type": "array", "items": {"$ref": "#/definitions/identifier"}},
-        "output": {"$ref": "#/definitions/identifier"},
-        "parameters": {"type": "object"},
-        "required_capabilities": {"type": "array", "items": {"type": "string", "minLength": 1}},
-        "timing": {"$ref": "#/definitions/timing"},
-        "platform_mapping": {"$ref": "#/definitions/platformMapping"},
-        "validation_rules": {"type": "array", "items": {"type": "string", "minLength": 1}}
+        "node_id": {
+          "$ref": "#/definitions/identifier"
+        },
+        "node_type": {
+          "$ref": "#/definitions/nodeType"
+        },
+        "input": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/identifier"
+          }
+        },
+        "output": {
+          "$ref": "#/definitions/identifier"
+        },
+        "parameters": {
+          "type": "object"
+        },
+        "required_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "timing": {
+          "$ref": "#/definitions/timing"
+        },
+        "platform_mapping": {
+          "$ref": "#/definitions/platformMapping"
+        },
+        "validation_rules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
       },
       "additionalProperties": false
     }

@@ -123,7 +123,8 @@ KNOWN_CAPABILITY_IDS = {
     # filter / data capabilities
     "stock_status_filter", "etf_status_filter",
     "stock_daily", "etf_daily", "stock_minutes", "etf_minutes", "tick_data",
-    "index_daily", "fin_indicator", "stock_float_share", "stock_dividend",
+    "index_daily", "fin_indicator", "stock_float_share", "stock_dividend", "stock_basic",
+    "stock_daily_valuation", "scheduled_intraday_execution", "position_batch_state",
     "sw_industry", "index_constituents", "stock_namechange",
     # platform capabilities
     "ptrade_default_public_api", "quantstudio_public_api",

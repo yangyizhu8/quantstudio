@@ -200,6 +200,7 @@ class StrategyIR:
     contract_versions: dict[str, str] = field(default_factory=dict)
     engine_profile: dict[str, Any] = field(default_factory=dict)
     time_model: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to the strategy_ir.schema.json-conformant dict."""
@@ -210,6 +211,7 @@ class StrategyIR:
             "contract_versions": self.contract_versions,
             "engine_profile": self.engine_profile,
             "time_model": self.time_model,
+            "metadata": self.metadata,
             "nodes": [
                 {
                     "node_id": n.node_id,
@@ -254,4 +256,5 @@ class StrategyIR:
             contract_versions=payload.get("contract_versions", {}),
             engine_profile=payload.get("engine_profile", {}),
             time_model=payload.get("time_model", {}),
+            metadata=payload.get("metadata", {}),
         )

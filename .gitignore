@@ -53,3 +53,7 @@ data/logs/
 Thumbs.db
 .vscode/
 .idea/
+
+# 内部 AI agent 交接文档（不对外交付）
+HANDOFF_ZCODE.md
+ZCODE_START_HERE.md

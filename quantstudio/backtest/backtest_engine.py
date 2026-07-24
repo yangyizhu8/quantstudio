@@ -27,6 +27,18 @@ logger = logging.getLogger(__name__)
 from quantstudio._paths import db_path
 
 
+def _prefer_project_data_db(project_root: Path, configured_db: Path) -> Path:
+    """Prefer the current project's DuckDB for local backtests.
+
+    Strategy code remains storage-isolated and receives data through providers.
+    An explicitly packaged project database at ``<project>/data/quantstudio.db``
+    wins; configured/environment data roots remain the fallback for deployments
+    where the project-local database is absent.
+    """
+    project_db = Path(project_root) / "data" / "quantstudio.db"
+    return project_db.resolve() if project_db.exists() else Path(configured_db)
+
+
 @dataclass
 class EngineConfig:
     """引擎运行配置（A1，D1）— 由 CLI/GUI 启动时显式注入，不做路径推导。
@@ -56,7 +68,7 @@ class EngineConfig:
         """
         root = Path(__file__).resolve().parents[2]  # quantstudio/backtest/ → 项目根
         return cls(
-            db_path=db_path(),
+            db_path=_prefer_project_data_db(root, db_path()),
             output_dir=root / "output",
             research_dir=root / "output" / "research",
         )

@@ -1,9 +1,9 @@
 {
-  "release_label": "0.3.0-mvp",
-  "distribution_version": "0.3.0+mvp",
-  "version": "0.3.0-mvp",
-  "release_name": "QuantStudio Strategy Compiler MVP",
-  "stage": "G4 Release Closure",
+  "release_label": "0.3.2-mvp",
+  "distribution_version": "0.3.2+mvp",
+  "version": "0.3.2-mvp",
+  "release_name": "QuantStudio Strategy Compiler Runtime Compatibility and Stable Publish Corrective",
+  "stage": "Post-G4 Runtime Compatibility Corrective",
   "status": "released",
   "release_date": "2026-07-24",
   "g4_closure_commit": "09e2d29",
@@ -11,7 +11,7 @@
   "cli_entry": "qs-compile package <spec> --out <dir>",
   "skill": {
     "name": "quantstudio-strategy-compiler",
-    "version": "0.3.0-mvp",
+    "version": "0.3.2-mvp",
     "install_script": "skills/quantstudio-strategy-compiler/scripts/install_skill.py"
   },
   "boundaries": {
@@ -20,12 +20,13 @@
     "live_qmt": false,
     "resident_daemon": false,
     "real_fidelity_reference": "deferred",
-    "note": "This MVP delivers the hermetic compile pipeline + dual Renderer + strategy package + CLI. Real market-data digest, real-data Fidelity, and real-market Reference verification are deferred (not faked)."
+    "note": "Real data digest and cross-platform Fidelity remain deferred. Runtime templates now fail soft on unsupported PTrade symbols and publish stable GUI/PTrade entry points."
   },
   "components": {
     "g1_i_basket_engine": "merged to main (bcdc85d)",
     "g2_cp3_reference_closure": "Hermetic Partial Closure, merged to main (53d90f5); data digest blocked",
     "g3_package_closure": "merged to main (9a99b18); manifest auditability + G2 linkage portability",
-    "g4_release": "merged to main (09e2d29); CLI E2E + Skill install/validation + 0.3.0-mvp + release docs"
+    "g4_release": "merged to main (09e2d29); CLI E2E + Skill install/validation + 0.3.0-mvp + release docs",
+    "runtime_compatibility": "0.3.2: structured-array history, unsupported-symbol skip, scheduled daily rebalance, exact target-value sizing, stable publish paths"
   }
 }

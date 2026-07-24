@@ -143,6 +143,7 @@ class TestManualList:
         pt = render_ptrade(ir)
         for code in ("600570.SH", "000001.SZ", "600036.SH"):
             assert code in qs, f"{code} missing from QS render"
+        for code in ("600570.SS", "000001.SZ", "600036.SS"):
             assert code in pt, f"{code} missing from PTrade render"
         # max_positions (2) propagates
         assert "g.max_positions" in qs or "max_positions" in qs
@@ -217,7 +218,7 @@ class TestMinuteManualList:
         code = render_ptrade(_to_minute(ir))
         compile(code, "<pt_min>", "exec")
         assert "NotImplementedError" not in code
-        for c in ("600570.SH", "000001.SZ", "600036.SH"):
+        for c in ("600570.SS", "000001.SZ", "600036.SS"):
             assert c in code
 
     def test_minute_batch_diff_layer(self, case1_spec):

@@ -109,7 +109,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_pkg.add_argument("--out", required=True, help="Output directory for the package")
     p_pkg.add_argument("--g2-frozen-dir", default=None,
                        help="Directory with G2 frozen reference artifacts (4 files)")
-    p_pkg.add_argument("--package-version", default="0.3.0-mvp", help="Package semver (default 0.3.0-mvp)")
+    p_pkg.add_argument("--package-version", default="0.3.2-mvp", help="Package semver (default 0.3.2-mvp)")
     p_pkg.set_defaults(func=cmd_package)
     return parser
 

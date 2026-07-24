@@ -445,24 +445,24 @@ class PtradeAPI:
             self._engine.cost.stamp_tax_rate = 0.0
             self._engine.cost.transfer_fee_rate = 0.0
 
-    def set_slippage(self, slippage=None, **kwargs):
-        """Configure proportional slippage through the strategy API."""
-        if self._engine is None or not hasattr(self._engine, "cost"):
-            return
-        value = slippage
-        if value is None:
-            value = kwargs.get("slippage_ratio", kwargs.get("ratio", kwargs.get("value")))
-        if value is not None:
-            self._engine.cost.slippage_rate = max(0.0, float(value))
-            self._engine.cost.fixed_slippage = 0.0
+    def set_slippage(self, slippage=0.1):
+        """Set proportional slippage with the real PTrade call signature.
 
-    def set_fixed_slippage(self, slippage=0.0, **kwargs):
-        """Configure an absolute yuan-per-share execution offset."""
+        PTrade accepts ``set_slippage(slippage=...)`` or one positional value.
+        Local-only aliases are rejected so local success predicts platform success.
+        """
         if self._engine is None or not hasattr(self._engine, "cost"):
             return
-        value = kwargs.get("value", slippage)
-        self._engine.cost.fixed_slippage = max(0.0, float(value or 0.0))
+        self._engine.cost.slippage_rate = max(0.0, float(slippage or 0.0))
+        self._engine.cost.fixed_slippage = 0.0
+
+    def set_fixed_slippage(self, fixedslippage=0.1):
+        """Set fixed yuan-per-share slippage with the PTrade signature."""
+        if self._engine is None or not hasattr(self._engine, "cost"):
+            return
+        self._engine.cost.fixed_slippage = max(0.0, float(fixedslippage or 0.0))
         self._engine.cost.slippage_rate = 0.0
+
     # -------- 数据查询函数 --------
 
     def get_index_stocks(self, index_code: str, date=None) -> list:
@@ -640,6 +640,38 @@ class PtradeAPI:
             logger.warning(f"get_fundamentals 失败: {e}")
             return pd.DataFrame(columns=self._FUND_TABLES.get(table, []))
 
+    def _resolve_status_source(self, stocks, query_date=None):
+        """Resolve stock-status data for an explicit PIT date.
+
+        No query_date keeps the historical strategy behavior and uses the
+        preloaded previous-trading-day snapshot.  An explicit current/previous
+        date uses the matching in-memory daily snapshot; any other date is
+        delegated to ReferenceDataProvider.  This makes reusable multi-day
+        suspension/ST checks possible without direct database access.
+        """
+        query_key = str(query_date)[:10] if query_date is not None else None
+        current_key = str(getattr(self, '_current_date', '') or '')[:10]
+        previous_key = str(getattr(self, '_prev_date', '') or '')[:10]
+
+        if query_key is None:
+            return self._prev_day_data, None
+        if query_key == current_key:
+            current_daily = getattr(self, '_daily_curr_data', None)
+            if current_daily is not None:
+                return current_daily, None
+            if self._current_day_data is not None:
+                return self._current_day_data, None
+        if query_key == previous_key and self._prev_day_data is not None:
+            return self._prev_day_data, None
+        if self._reference is not None:
+            try:
+                status = self._reference.get_stock_status(
+                    [bare_code(stock) for stock in stocks], query_key)
+                return None, status
+            except Exception:
+                return None, None
+        return None, None
+
     def filter_stock_by_status(self, stocks: list, filter_type=None, query_date=None) -> list:
         """过滤 ST/停牌/退市（对应 Ptrade filter_stock_by_status，4 种 filter_type 全支持）。
 
@@ -664,23 +696,20 @@ class PtradeAPI:
 
         result = list(stocks)
         try:
-            data = self._prev_day_data
+            data, status = self._resolve_status_source(result, query_date)
             if data is not None:
                 if len(data) == 0:
                     return result
                 status = pd.DataFrame({
                     'code': data['code'],
-                    'is_st': data.get('is_st_reliable', False),
+                    'is_st': data.get('is_st_reliable', data.get('is_st', False)),
                     'is_halt': ((data.get('suspendFlag', 0) == 1) |
-                                (data.get('volume', 0) == 0)),
+                                (data.get('volume', 0) == 0) |
+                                data.get('is_halt', False)),
                     'is_delisting_risk': data.get('is_delisting_risk', False),
-                    'is_delisted': False,
+                    'is_delisted': data.get('is_delisted', False),
                 })
-            elif self._reference is not None and query_date:
-                status = self._reference.get_stock_status(
-                    [bare_code(stock) for stock in result],
-                    query_date)
-            else:
+            elif status is None:
                 return result
             if status is None or len(status) == 0:
                 return result
@@ -1540,14 +1569,36 @@ class PtradeAPI:
         return {s: s for s in stocks}
 
     def get_stock_info(self, stocks, field=None):
-        """获取股票信息"""
-        if isinstance(stocks, str):
-            stocks = [stocks]
+        """Return PTrade-shaped stock metadata from the formal reference layer.
+
+        ``field`` accepts a field name or list such as ``['listed_date']``.
+        Dates use the documented ``YYYY-MM-DD`` string shape, and the result is
+        always keyed by the caller's original security code.
+        """
+        stock_list = [stocks] if isinstance(stocks, str) else list(stocks or [])
+        requested = [field] if isinstance(field, str) else list(field or [])
         result = {}
-        for s in stocks:
-            result[s] = {'name': s, 'code': s}
-        if field and isinstance(stocks, str) and len(result) == 1:
-            return list(result.values())[0].get(field)
+        for security in stock_list:
+            bare = bare_code(security)
+            info = self._reference.get_security_info(bare) if self._reference is not None else None
+            start_date = info.get('start_date') if info else None
+            listed_date = None
+            if start_date is not None:
+                try:
+                    listed_date = pd.Timestamp(start_date).strftime('%Y-%m-%d')
+                except Exception:
+                    listed_date = None
+            record = {
+                'stock_name': (info or {}).get('display_name', security),
+                'stock_type': 'stock',
+                'listed_date': listed_date,
+                'de_listed_date': None,
+                'exchange_type': security_exchange(security),
+                'code': security,
+            }
+            if requested:
+                record = {name: record.get(name) for name in requested}
+            result[security] = record
         return result
 
     def get_security_info(self, code):
@@ -1594,11 +1645,8 @@ class PtradeAPI:
         if isinstance(stocks, str):
             stocks = [stocks]
         result = {}
-        data = self._prev_day_data
-        status = None
-        if data is None and self._reference is not None and (query_date or self._prev_date):
-            status = self._reference.get_stock_status(
-                [bare_code(stock) for stock in stocks], query_date or self._prev_date)
+        effective_date = query_date if query_date is not None else None
+        data, status = self._resolve_status_source(stocks, effective_date)
         if data is None and status is None:
             return {s: False for s in stocks}
         for s in stocks:
@@ -1612,8 +1660,9 @@ class PtradeAPI:
                     result[s] = bool(r.get('is_st', r.get('is_st_reliable', False)) or
                                      r.get('is_delisting_risk', False))
                 elif query_type == 'HALT':
+                    volume_halt = ('volume' in r.index and r.get('volume') == 0)
                     result[s] = bool(r.get('is_halt', False) or
-                                     r.get('suspendFlag', 0) == 1 or r.get('volume', 0) == 0)
+                                     r.get('suspendFlag', 0) == 1 or volume_halt)
                 elif query_type == 'DELISTING_SORTING':
                     result[s] = bool(r.get('is_delisting_risk', False))
                 else:

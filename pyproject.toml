@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quantstudio"
-version = "0.3.0+mvp"
+version = "0.3.2+mvp"
 description = "标准化数据管道 + 通用量化回测系统（双层校验 + 双轨回测引擎）"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -15,7 +15,7 @@ dependencies = [
     "numpy>=1.23",
     "python-dateutil>=2.8",
     "pytz>=2023.3",
-    "duckdb>=0.9.0",
+    "duckdb>=1.5.5",
     "filelock>=3.0",
     "fastjsonschema>=2.18",
     "jinja2>=3.1",
@@ -40,7 +40,7 @@ all = [
     "tushare>=1.2.89",
     "baostock>=0.8.8",
     "akshare>=1.10.0",
-    "duckdb>=0.9.0",
+    "duckdb>=1.5.5",
     "PyQt6>=6.5.0",
     "PyQt6-Fluent-Widgets>=1.11",
 ]

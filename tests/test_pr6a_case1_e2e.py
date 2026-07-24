@@ -179,13 +179,14 @@ class TestProfileDiffLayer:
         assert "get_fundamentals_batch" not in calls
         assert "get_history_batch" not in calls
 
-    def test_qs_ptrade_share_identical_api_callset(self, case1_ir):
-        """QS 与 PTrade 调用集合一致 (lifecycle 体两平台相同, 契约 §5)."""
+    def test_qs_ptrade_use_explicit_profile_specific_calls(self, case1_ir):
+        """PTrade uses scheduled, history-only runtime compatibility semantics."""
         qs_calls = self._called_names(render_quantstudio(case1_ir))
         pt_calls = self._called_names(render_ptrade(case1_ir))
-        assert qs_calls == pt_calls, (
-            f"API callset differs: QS-only={qs_calls-pt_calls}, PTrade-only={pt_calls-qs_calls}"
-        )
+        assert "run_daily" in pt_calls
+        assert "get_history_batch" not in pt_calls
+        assert "get_history_batch" not in qs_calls  # single-stock case
+        assert "order_target_value" in pt_calls
 
     def test_ptrade_header_declares_profile(self, case1_ir):
         code = render_ptrade(case1_ir)

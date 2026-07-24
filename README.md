@@ -2,6 +2,23 @@
 
 统一数据管线 + PTrade 兼容量化回测框架。
 
+## 快速开始（客户上手）
+
+```bash
+git clone <你的仓库地址>
+cd QuantStudio
+pip install -e ".[all]"
+cp config/secrets.env.example config/secrets.env   # 编辑填入你的 TUSHARE_TOKEN / QMT_PATH
+# 数据库约 12GB，不随 git 分发：按 data/README.md 解压到 data/quantstudio.db
+python main_gui.py                                   # 启动 PyQt 控制台（GUI）
+# 或常驻采集：python -m quantstudio.pipeline.daemon --mode forever
+```
+
+要点：
+- 依赖通过 pip 安装（纯 Python + 预编译 wheel，无需本地编译）。
+- `secrets.env` 在程序启动时**自动加载**（详见下方「凭证配置」），无需手动 `source` / `export`。
+- 数据库需单独获取并放到 `data/quantstudio.db`，否则回测/采集无数据可读（详见 `data/README.md`）。
+
 ## 架构保证
 
 - **强制统一入库链**：`adapter -> aligner -> validator -> writer -> watermark -> quality audit`，任何数据源和运行模式都不能绕过。
@@ -18,6 +35,25 @@
 ```bash
 pip install -e ".[all]"
 ```
+
+## 凭证配置（config/secrets.env）
+
+程序在启动时（包导入 / 各入口）会**自动加载** `config/secrets.env` 到进程环境变量，无需手动 `source` 或 `export`。
+
+1. 复制模板并填入真实凭证（文件不提交 git，含明文）：
+   ```bash
+   cp config/secrets.env.example config/secrets.env
+   ```
+   - `TUSHARE_TOKEN`：Tushare Pro 付费 token（采集 / 回测数据源）
+   - `JQ_TOKEN`：聚宽 token（可选）
+   - `QMT_PATH`：miniQMT 客户端目录（如实盘 / xtquant 数据源需要，如 `D:/国金QMT/userdata_mini`）
+   - `CUSTOM_API_KEY` / `ALERT_WEBHOOK`：自定义 API / 告警 webhook（可选）
+
+2. `${ENV_VAR}` 占位符：`config/sources_config.json` 中可写 `${TUSHARE_TOKEN}`、`${QMT_PATH}` 等，
+   运行时自动展开为对应环境变量的值；也可直接填实际值（如 QMT 直接填路径）。
+
+3. 优先级：**进程已有环境变量 > secrets.env**。若你已 `export` 同名变量，或在测试中以
+   `monkeypatch` 注入，则文件中的值不会覆盖它们。
 
 ## 数据采集
 

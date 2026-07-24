@@ -1,222 +1,269 @@
 ---
 name: quantstudio-strategy-compiler
-description: Turn a strategy idea or spec into validated QuantStudio plus PTrade code. Triggers on intent to compile/generate/convert a strategy into backtestable code, build dual-platform versions, or move from natural-language idea to executable spec. Always gates on capability inspection and explicit user confirmation before any code generation.
+description: Strict agent-first strategy engineering for QuantStudio and PTrade. Use when an agent must convert a strategy idea or research specification into separately validated local and PTrade code through mandatory R0-R6 customer interaction, capability inspection, confirmed design, lifecycle/API composition, local backtesting, real PTrade public-signature validation, dual-code semantic consistency checks, and gated publication. Never skip stages or use strategy-specific renderer templates.
 ---
 
-# QuantStudio Strategy Compiler
+# QuantStudio Agent-first Strategy Engineering
 
-Compile strategy ideas into validated, backtestable QuantStudio + PTrade code, gated by capability inspection and user confirmation.
+Treat the calling agent as the strategy author. Constrain it with project lifecycle, data, timing, PTrade public API, validation, and delivery gates. Never implement a strategy by adding its name or shape to Compiler/Renderer/Jinja branches.
 
-**Skill version**: 0.3.0-mvp (G1-I basket + G2 CP3 reference + G3 package + G4 CLI release). Full compile pipeline delivered: Spec -> IR -> dual render (QuantStudio + PTrade) -> strategy package, drivable via the `qs-compile` CLI (`quantstudio.strategy_compiler.cli`). G2 CP3 reference closure (Hermetic Partial, data digest blocked) + G3 deterministic package closure now in main. Real market-data digest/Fidelity/Reference verification deferred.
+## Absolute execution rules
 
-## When to trigger
+1. Execute stages strictly in order: `R0 -> R1 -> R2 -> R2.5 -> R3 -> R4 -> R5 -> R6`.
+2. Never combine, infer-complete, retroactively mark, or silently skip a stage.
+3. At every stage, show the customer the stage output and unresolved decisions. Stop when customer confirmation is required.
+4. Do not generate executable strategy code before R2.5 explicit confirmation.
+5. Do not publish before local backtest PASS, PTrade-profile validation PASS, and dual consistency PASS.
+6. Persist stage/evidence in `agent_workspace/workspace_state.json`. Resume from this ledger; do not rely on conversational memory alone.
+7. If any gate is BLOCKED, remain at that stage. Do not weaken requirements, substitute strategy semantics, or advance the ledger.
+8. A generated strategy must target the **PTrade backtest public API subset**. QuantStudio adapts to PTrade-compatible calls, never the reverse.
+9. R0 and R2.5 are real conversational stop points. The calling agent must not self-confirm, infer consent from silence, reuse an unrelated prior confirmation, or continue in the same turn without the customer's explicit answer.
+10. Local backtests obtain data through QuantStudio providers. Prefer `<current-project>/data/quantstudio.db`; use a configured/external database only when the project-local database is absent or the customer explicitly approves the override. Strategy source must never open DuckDB itself.
+11. Customer-provided PTrade runtime failures invalidate the previous PTrade PASS and R6 publication. Return to R1/R4, repair the reusable profile/adapter/Skill rule, regenerate both targets, and repeat post-generation consistency checks.
 
-Invoke when the user expresses intent to:
-- "compile / generate / build a strategy" into backtestable code
-- convert a strategy idea / natural-language description / research note into a Spec or code
-- produce dual-platform (QuantStudio + PTrade) versions from one source
-- move from "I have a strategy idea" to "I have validated code"
+## Responsibility boundary
 
-Do NOT trigger for: pure backtest tuning of an existing strategy, data ingestion ops, or Fidelity gate runs (those have their own workflows).
+### Skill and project components own
 
-## Mandatory first step: capability inspection (R-1)
+- lifecycle signatures and callback timing;
+- public API signatures and context availability;
+- data/PIT/no-lookahead contracts and local backtest data-source resolution;
+- A-share status, T+1, lot, cost and execution boundaries;
+- local adapter compatibility with real PTrade signatures;
+- static validation, local backtesting, PTrade-profile validation;
+- generation of both target files and post-generation consistency checks.
 
-Before drafting any Spec, run `scripts/inspect_capabilities.py` against the live DuckDB. The report's `overall_execution_status` gates everything that follows:
-- `READY` -> may proceed to Spec draft (R2)
-- `BLOCKED` / `PLANNED` / `UNSUPPORTED` -> STOP. Report the blockers and remediation to the user. Do not draft a Spec that pretends capabilities are ready.
+### Calling agent owns
 
-Never skip R-1. Never copy status values from examples -- inspect the real environment (current state: stock_minutes/etf_minutes have real xtquant data, unlike the PR3-era DATA_MISSING example).
+- strategy-specific universe, indicators, signals, ranking and state;
+- portfolio allocation, exit logic and fail-soft behavior;
+- implementation and repair inside confirmed semantics.
 
-## Multi-round interaction order
+A missing reusable API is fixed in the adapter/profile/Skill with unrelated component tests. Never fix it by adding a branch for the requesting strategy.
 
-The Skill auto-orchestrates the full pipeline. The user only needs to:
-1. Describe their strategy in natural language
-2. Review and confirm the Spec
+## Authoritative references
 
-Everything else (validation + package generation) is automatic.
+Load only as needed:
 
-### R0 — Idea parsing
-Decompose the user's natural-language idea into:
-- Universe (stock/ETF pool, single stock, dynamic pool)
-- Indicators (MA, momentum, volume surge, etc.)
-- Entry / exit signals
-- Rebalance logic (daily, target weight)
-- Execution (market/limit, next_open/close)
-- Risk management (stop-loss, position limits)
-- Cost model (commission, stamp tax, slippage)
-- Data requirements (frequency, lookback window)
+- component inventory: `references/component-catalog.json`
+- real PTrade signatures/context: `references/ptrade-api-signatures.json`
+- runtime shapes: `references/ptrade-runtime-compatibility.md`
+- lifecycle/timing: `references/lifecycle-and-timing.md`
+- no-lookahead: `references/no-lookahead-rules.md`
+- A-share filters: `references/ashare-hard-filters.md`
 
-### R-1 — Capability inspection
-Run `scripts/inspect_capabilities.py` against the live DuckDB. Present honest status:
-- `READY` → may proceed to Spec draft
-- `BLOCKED` / `PLANNED` / `UNSUPPORTED` → STOP. Report blockers and remediation.
-- Never fabricate data capabilities.
+Local injected symbols or successful local execution are not proof of PTrade support.
 
-### R2 — Spec draft
-Generate `strategy_spec.json` conforming to `schemas/strategy_spec.schema.json`.
-Validate with `scripts/validate_strategy_spec.py`.
-Present to the user:
-- Full Spec content
-- Key assumptions and approximations
-- Data capability boundaries (READY vs BLOCKED)
-- Risk warnings
-- Explicit confirmation items in `user_confirmations`
+# Mandatory stage orchestration
 
-**Do not generate strategy code or packages before user confirms.**
+## R0 - Customer strategy semantics
 
-### R2.5 — User confirmation (HARD GATE)
-Present the Spec to the user with approximations, capability gaps, and hard-filter
-settings called out. Wait for explicit CONFIRMED. No code generation until then.
+Present and confirm:
 
-### R3 — Validation (orchestrator)
-After confirmation, run the orchestrator:
+- point-in-time universe and ordering;
+- exact mathematical definitions and warm-up;
+- entry/exit predicates;
+- signal cutoff, decision clock, execution clock and fill proxy;
+- holding period, T+1/T+0, repeated-symbol and batch behavior;
+- maximum simultaneous holdings, overlap, cash and leverage policy;
+- order rejection, suspension and limit-state handling;
+- costs, slippage and benchmark.
+
+Identify contradictions with concrete examples. Do not choose a material interpretation for the customer.
+
+**R0 hard stop and exit gate:** show the full R0 review table, ask for an explicit customer decision, and stop. Exit only after all material semantic contradictions are answered by the customer. Record the confirming customer statement in the workspace ledger; an agent-authored `true` value is not evidence.
+
+## R1 - Program-specific capability inspection
+
+After the customer has explicitly completed R0, inspect only capabilities required by this strategy:
+
+- resolve the local backtest database in this order: `<current-project>/data/quantstudio.db`, then an explicitly approved configured/external DuckDB; record the absolute path, existence, selected tables, row/date coverage and resolution reason;
+- tables, columns, PIT anchors and date coverage through the adapter/provider layer;
+- local engine profile and lifecycle;
+- PTrade backtest/trade context availability;
+- exact function signatures and permitted keyword names;
+- data return shapes and code suffixes.
+
+Classify each item as `READY`, `APPROXIMATION_REQUIRES_CONFIRMATION`, `DATA_BLOCKED`, `LOCAL_ONLY`, `PTRADE_CONTEXT_BLOCKED`, or `MISSING_REUSABLE_API`.
+
+For every API planned for generated code, check `ptrade-api-signatures.json`. Examples:
+
+- use `set_slippage(slippage=...)`, never `slippage_ratio=...`;
+- use `get_stock_info(..., field=['listed_date'])`, not local `get_security_info()`;
+- do not use `get_snapshot` or `check_limit` in PTrade backtest code; `get_open_orders(security=None)` is allowed but must use its documented signature;
+- do not assume locally injected MyTT names such as `EMA` exist on PTrade; use NumPy/pandas or define a portable helper.
+
+Do not let strategy source import `duckdb`, `quantstudio._paths`, or provider modules. The framework selects DuckDB; the strategy calls injected public APIs.
+
+**R1 exit gate:** no unknown API signature/context, no hidden data gap, and a recorded local data-source path/provenance. If project-local DuckDB exists but another source is selected without explicit customer approval, R1 is BLOCKED.
+
+## R2 - Design contract and component plan
+
+Write and schema-validate:
+
+```text
+output/generated_strategies/<strategy_id>/agent_strategy_design.json
+output/generated_strategies/<strategy_id>/R2_AGENT_COMPONENT_PLAN.md
 ```
-python -m quantstudio.strategy_compiler.orchestrator <spec.json> [--start] [--end] [--no-smoke]
-```
-This builds IR, renders dual-platform `.py`, runs 7 static validators, inspects
-capabilities, runs smoke backtest (if READY), and writes:
-- `run_card.json` (stage + status + validation results)
-- `capability_report.json`
-- `variant_consistency_report.json`
-- `strategy_ir.json` + `<id>_quantstudio.py` + `<id>_ptrade.py`
 
-**Gate**: If static validation fails, STOP. Do not proceed to package generation.
-If smoke backtest is BLOCKED (capability/data boundary), record honestly — BLOCKED
-is acceptable as a known deferred boundary; PASS is never faked.
+The contract records natural-language semantics, lifecycle callbacks, public APIs, state fields, approximations, tests, and output paths. It must include:
 
-### R4 — Package generation (qs-compile)
-Only after R3 validation passes (or smoke is BLOCKED on a known deferred boundary),
-automatically call qs-compile to generate the strategy package:
+```json
+"constraints": {
+  "runtime_state_guard_required": true,
+  "portable_source_required": true,
+  "no_lookahead": true
+}
 ```
-qs-compile package <spec.json> --out <dir> [--g2-frozen-dir <dir>] [--package-version <ver>]
+
+Do not encode a renderer pattern or fixed strategy kind.
+
+**R2 exit gate:** schema PASS and complete customer review package.
+
+## R2.5 - Explicit customer hard confirmation
+
+Show the full design, API component plan, approximations, platform differences, output paths and validation plan. Wait for explicit confirmation.
+
+Require:
+
+```json
+{
+  "open_questions": [],
+  "user_confirmations": {
+    "strategy_semantics": true,
+    "execution_approximations": true,
+    "component_plan": true
+  }
+}
 ```
-Or via the delivery orchestration layer (preferred for Skill workflow):
+
+All approximations require `confirmed=true`.
+
+**R2.5 hard stop and exit gate:** present the complete package, ask the customer to confirm it, and stop. Confirmation flags may become true only from that explicit reply; persist the confirming text/time/evidence verbatim. No code before this gate.
+
+## R3 - Scaffold and agent implementation
+
+Run `scripts/create_agent_workspace.py`. The scaffold wires lifecycle and schedules only.
+
+Every generated strategy must define an idempotent:
+
 ```python
-# Skill-local delivery script (not in the released wheel; lives in Skill scripts/)
-# python skills/quantstudio-strategy-compiler/scripts/deliver_strategy.py <spec> --out <dir> [--g2-frozen-dir <dir>] [--allow-deferred-smoke]
+def _ensure_runtime_state():
+    ...
 ```
 
-This generates the structured strategy package with:
-- `manifest.json` (version, entry points, artifact SHA-256 digests)
-- `<id>_quantstudio.py` + `<id>_ptrade.py` (dual-rendered)
-- `strategy_spec.json` + `strategy_ir.json` (frozen)
-- `__init__.py` + `README.md`
+It must use `hasattr`/missing-field checks and never reset existing state. It must be the first executable statement in:
 
-Verify: manifest schema valid, all artifact digests match, both strategies
-compile (ast.parse + compile), G2 linkage data_digest_status=blocked (not faked).
+- `initialize`;
+- `before_trading_start`;
+- `handle_data`;
+- `after_trading_end`;
+- every scheduled callback.
 
-**If qs-compile is not in PATH**: report the installation error clearly. Do NOT
-silently skip package generation. Development fallback: `python -m quantstudio.strategy_compiler.cli`.
+Reason: real PTrade may continue later lifecycle calls after `initialize` raises. State safety cannot depend on successful initialization.
 
-### R5 — Delivery summary
-Return to the user:
-- Validation output directory (`validation/`)
-- Strategy package output directory (`package/`)
-- `manifest.json` — artifact digests + G2 linkage
-- `run_card.json` — validation status
-- `capability_report.json` — data/execution readiness
-- `variant_consistency_report.json` — dual-platform consistency
-- `DELIVERY_REPORT.md` — unified summary
-- Known limitations + data digest/Fidelity deferred explanation
-- Clear conclusion: can the user use the delivered files?
+The agent implements strategy logic using the PTrade backtest public subset. Do not hand-maintain divergent local/PTrade business logic. Use only injected APIs for data; local execution must route those APIs to the selected project DuckDB provider rather than opening storage from strategy source.
 
-## Delivery output directory
+**R3 exit gate:** complete canonical source with no scaffold markers.
 
-The `deliver_strategy()` function creates a unified output:
-```
-output/strategy_deliveries/<strategy_id>/
-├── validation/              ← orchestrator artifacts (run_card, IR, validators)
-│   ├── strategy_spec.json
-│   ├── strategy_ir.json
-│   ├── capability_report.json
-│   ├── variant_consistency_report.json
-│   ├── run_card.json
-│   ├── <id>_quantstudio.py
-│   └── <id>_ptrade.py
-├── package/                 ← qs-compile strategy package
-│   └── <id>__<version>/
-│       ├── manifest.json
-│       ├── strategy_spec.json
-│       ├── strategy_ir.json
-│       ├── <id>_quantstudio.py
-│       ├── <id>_ptrade.py
-│       ├── __init__.py
-│       └── README.md
-└── DELIVERY_REPORT.md       ← unified delivery summary
+## R4 - Separate static validation
+
+Run the validator twice:
+
+```powershell
+python scripts/validate_agent_strategy.py strategy.py --design agent_strategy_design.json --target-profile quantstudio
+python scripts/validate_agent_strategy.py strategy.py --design agent_strategy_design.json --target-profile ptrade
 ```
 
-## R2.5 hard gate -- no code before confirmation
+Both must pass. PTrade validation checks real keyword names for every profiled API, rejects unverifiable `**kwargs`, checks context availability, local-only symbols, state-guard idempotence, lifecycle, timing, PIT and portability. A permissive local adapter signature is never accepted as platform evidence.
 
-Generating `.py` strategy code before R2.5 user confirmation is forbidden. The Spec draft must be shown to the user with approximations, capability gaps, and hard-filter settings called out. Only after the user explicitly confirms may rendering proceed. The orchestrator enforces golden protection at render time (protected IDs raise) but cannot read user intent -- present the Spec and wait for CONFIRMED first.
+Repair reusable incompatibilities in the adapter/profile/Skill first. Regenerate strategy output under the corrected rules; do not hand-patch only one target file.
 
-## When to stop
+**R4 exit gate:** QuantStudio PASS and PTrade PASS, with reports saved separately.
 
-- Capability inspection returns non-READY for a required capability -> stop, report blockers.
-- Data gap unfilled -> stop, do not silently shrink the universe to "make it work".
-- User has not confirmed R2.5 -> stop at Spec, do not render.
-- The target strategy_id collides with a golden protected strategy (gate IDs `etf_momentum` / `smallcap_guard` in config/strategy_fidelity_gates.json, or the dual-MA sample strategy) -> stop, do not auto-overwrite.
-- A requested Profile is Planned/Unsupported (e.g. tick) -> stop, report.
+## R5 - Local backtest and runtime review
 
-## When code generation is allowed
+Run the confirmed engine profile. Verify callback times, orders, holdings, T+1, cash, overlap, empty pools, missing data and failure paths. Re-run both R4 validations after every material source change.
 
-Only when ALL hold:
-1. R2.5 user confirmation recorded in `user_confirmations` with `status: CONFIRMED`.
-2. `inspect_capabilities.py` reports `overall_execution_status: READY` for every required capability (the orchestrator gates smoke on this; non-READY produces `smoke_backtest.status=BLOCKED`, never a false PASS).
-3. The renderer + validators are available (DELIVERED in PR6a/PR6b-1 via `quantstudio.strategy_compiler`).
+Record `workspace_state.json` with at least:
 
-## Profile awareness
+```json
+{
+  "stage": "BACKTEST_PASS",
+  "backtest_status": "PASS",
+  "backtest_data_source": "duckdb_provider",
+  "backtest_db_path": "<absolute-current-project>/data/quantstudio.db",
+  "backtest_db_resolution": "project_data_preferred"
+}
+```
 
-Distinguish four Profiles precisely (see `references/frequency-and-engine-profiles.md`):
-- **Daily-bar** (`daily-bar-v1`): `event_type=bar`, `bar_frequency=1d`. Most strategies. READY.
-- **Minute-bar** (`minute-bar-v1`): `event_type=bar`, `bar_frequency=1m/5m/...`. READY (PR4 verified on real data).
-- **Tick** (`event_type=tick`): first version execution_status must be BLOCKED/PLANNED/UNSUPPORTED -- never READY.
-- **Planned**: not a real Profile; a Spec may declare intent, but execution is BLOCKED.
+Before accepting R5, verify the path actually exists and the backtest report names the same database/provider provenance. An external path requires a recorded customer-approved override.
 
-Never confuse daily/minute proxy modes (`daily_open_proxy` pairs with `match_price_mode=open`; `daily_close_proxy` pairs with `close`) -- the schema enforces these pairings, do not work around them.
+If real PTrade runtime evidence is provided by the customer, treat every runtime exception as a profile/Skill/adapter regression first. Add a generic validator/test before regenerating outputs.
 
-## References (load on demand, do NOT preload all)
+**R5 exit gate:** local backtest PASS and no unresolved PTrade-profile issue.
 
-Read only what the current round needs:
-- Spec fields/constraints -> `references/strategy-spec-contract.md`
-- Capability status vocabulary & invariants -> `references/api-capability-matrix.md`
-- Lifecycle/timing/no-lookahead -> `references/lifecycle-and-timing.md` + `references/no-lookahead-rules.md`
-- Frequency/Profile -> `references/frequency-and-engine-profiles.md`
-- A-share hard filters & code rules -> `references/ashare-hard-filters.md`
-- PTrade profile -> `references/ptrade-profiles.md`
-- Output & Run Card -> `references/output-contract.md`
-- Architecture/invariants -> `references/framework-contract.md`
-- Known limits -> `references/known-limitations.md`
-- IR (PR6a/PR6b-1) -> `references/strategy-ir-contract.md` (11 node types, signals.steps mapping, 10 lookahead high-risk items)
+## R6 - Generate both targets, then compare, then publish
 
-Do not read all references up front -- that defeats the "no unnecessary large docs" acceptance criterion.
+`publish_agent_strategy.py` must:
 
-## Output and validation
+1. verify the workflow ledger and local backtest PASS;
+2. generate both target files into a staging directory;
+3. read the generated QuantStudio staging file and validate it separately;
+4. read the generated PTrade staging file and validate it separately against real public signatures/context;
+5. run `validate_dual_consistency.py` only after both staging files physically exist;
+6. compare lifecycle functions, schedules, public API calls, strategy parameters and normalized semantic AST;
+7. publish atomically only when all checks PASS;
+8. write local, PTrade, consistency and publish reports.
 
-- Spec lands at `output/generated_strategies/<strategy_id>/strategy_spec.json`.
-- After drafting, run `scripts/validate_strategy_spec.py` self-check; fix all violations before presenting to user.
-- After R2.5 confirmation, the Skill runs the full delivery flow via `deliver_strategy()`:
-  - **Validation** (R3): orchestrator writes `strategy_ir.json`, `<id>_quantstudio.py`, `<id>_ptrade.py`, `capability_report.json`, `variant_consistency_report.json`, `run_card.json`.
-  - **Package** (R4): qs-compile generates the structured strategy package with manifest + digests.
-  - **Report** (R5): `DELIVERY_REPORT.md` provides the unified summary.
-- Run Card `stage` records the pipeline step reached; `status` records PASS/BLOCKED/FAILED. Fidelity comparison (R7) is PR7 scope (`fidelity` field stays null).
-- Do not auto-overwrite existing strategies; `output.overwrite` must be explicit in the Spec.
+Never claim dual delivery from a pre-generation comparison, from comparing the canonical input with itself, or from hashes calculated before target generation. Consistency is checked **after both target files are generated**, and the report must state `comparison_phase=post_generation_staging`.
 
-## Three-layer architecture
+**R6 exit gate:** local validation PASS, PTrade validation PASS, consistency PASS, hashes recorded, publication PASS.
 
-1. **quantstudio-strategy-compiler Skill** (AI workflow layer): understands natural language, generates Spec, gates on user confirmation, orchestrates validation + delivery.
-2. **orchestrator** (validation engine): Spec schema → IR → dual render → 7 validators → capability inspection → smoke backtest → run_card.
-3. **qs-compile** (CLI delivery entry): Spec → IR → dual Renderer → structured strategy package with manifest + digests. Direct CLI for advanced users / scripts / CI.
+# PTrade compatibility rules
 
-Normal users: interact with the Skill; the Skill auto-calls orchestrator then qs-compile.
-Advanced users: `qs-compile package <spec> --out <dir>` directly.
+- API keyword names must match the platform exactly. Python acceptance through local `**kwargs` is forbidden as compatibility evidence.
+- Backtest/trading/research context availability is enforced separately.
+- Use PTrade `.SS/.SZ/.BJ` security suffixes in portable source.
+- Normalize comparison keys by bare six-digit code where API containers may differ.
+- Use NumPy/pandas or source-defined helpers for indicators unless the PTrade public profile explicitly lists the indicator.
+- A current completed minute may use `get_history(..., frequency='1m', include=True)` only in a confirmed scheduled minute callback with an explicit current-bar cutoff.
+- `get_snapshot` and `check_limit` are not allowed in PTrade backtest source. `get_open_orders(security=None)` is allowed in backtest and trade contexts.
+- `filter_stock_by_status` is called only from `before_trading_start`; scheduled callbacks use `get_stock_status` for current status checks.
+- Use order rejection and documented price fields for backtest limit behavior; trading-only checks may be used only in a separately validated trading profile.
 
-## Synchronization discipline (references are derived snapshots)
+# Runtime failure repair protocol
 
-`docs/strategy-compiler/` is the **authoritative source** for contracts. `references/` here are derived snapshots taken 2026-07-22 (see each file's header for its source). When a contract document changes upstream:
-1. Update the corresponding `references/*.md` snapshot.
-2. Bump `skill_version` if the change affects Skill behavior.
-3. Do not let the two drift -- PR6b-1 already refreshed `known-limitations.md` to reflect delivered IR/render/validators.
+When a customer supplies a real PTrade exception:
 
-## Golden protected strategies (never auto-overwrite)
+1. mark the prior PTrade validation/publication evidence stale;
+2. reproduce the incompatibility with a minimal reusable API/profile test;
+3. repair the local adapter signature/shape only so that local acceptance matches PTrade, and repair the Skill/profile/validator so future agents generate portable calls;
+4. do not add a strategy ID, strategy-name branch, one-off template, or one-target hotfix;
+5. regenerate the canonical output under the corrected generic rules;
+6. rerun QuantStudio validation, PTrade validation, local backtest, physical dual-target generation, and post-generation consistency;
+7. report the old and new hashes and explicitly retire the old upload artifact.
 
-The golden protected strategies (Chinese-named sample files referenced by `etf_momentum` / `smallcap_guard` gate configs, plus the dual-MA sample) carry frozen Fidelity baselines (ETF 87752.56+/-1). Any change requires the golden-baseline change protocol (zcode-handoff S.11), not a silent regeneration.
+# Prohibited behavior
+
+- skipping a stage because the answer seems obvious;
+- generating code while R2.5 is unconfirmed;
+- treating local execution as PTrade validation;
+- using undocumented keyword aliases;
+- using local-only APIs in canonical source;
+- assuming `initialize` always completes before other callbacks;
+- publishing before both profile validations and post-generation consistency PASS;
+- editing only one published target to make it pass;
+- adding strategy IDs/names to Skill, Compiler, Renderer or templates;
+- selecting an external database while `<current-project>/data/quantstudio.db` exists without explicit customer approval;
+- patching only the currently failing strategy or only the PTrade copy instead of repairing the reusable contract and regenerating both outputs.
+
+# Commands
+
+- scaffold: `scripts/create_agent_workspace.py`
+- profile validation: `scripts/validate_agent_strategy.py`
+- consistency: `scripts/validate_dual_consistency.py`
+- gated publish: `scripts/publish_agent_strategy.py`
+- Skill validation: `scripts/quick_validate.py`
+
+Legacy Spec/IR/Jinja compilation is used only when the customer explicitly requests legacy reproduction. It is never the default path for a new strategy.

@@ -3,78 +3,925 @@
   "$id": "https://quantstudio.local/schemas/strategy_spec.schema.json",
   "title": "QuantStudio Strategy Spec v1",
   "type": "object",
-  "required": ["spec_version", "strategy_id", "strategy_name", "strategy_type", "asset_class", "target_platforms", "contract_versions", "time_model", "engine_profile", "universe", "hard_filters", "signals", "portfolio", "execution", "risk", "costs", "data_requirements", "capability_requirements", "approximations", "user_confirmations", "validation_policy", "output"],
+  "required": [
+    "spec_version",
+    "strategy_id",
+    "strategy_name",
+    "strategy_type",
+    "asset_class",
+    "target_platforms",
+    "contract_versions",
+    "time_model",
+    "engine_profile",
+    "universe",
+    "hard_filters",
+    "signals",
+    "portfolio",
+    "execution",
+    "risk",
+    "costs",
+    "data_requirements",
+    "capability_requirements",
+    "approximations",
+    "user_confirmations",
+    "validation_policy",
+    "output"
+  ],
   "properties": {
-    "spec_version": {"const": "1.0"},
-    "strategy_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$"},
-    "strategy_name": {"type": "string", "minLength": 1},
-    "strategy_type": {"enum": ["stock_selection", "rotation", "timing", "allocation", "custom"]},
-    "asset_class": {"enum": ["stock", "etf", "mixed"]},
-    "target_platforms": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
-    "contract_versions": {"$ref": "#/definitions/contractVersions"},
+    "spec_version": {
+      "const": "1.0"
+    },
+    "strategy_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{2,63}$"
+    },
+    "strategy_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strategy_type": {
+      "enum": [
+        "stock_selection",
+        "rotation",
+        "timing",
+        "allocation",
+        "custom"
+      ]
+    },
+    "asset_class": {
+      "enum": [
+        "stock",
+        "etf",
+        "mixed"
+      ]
+    },
+    "target_platforms": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "contract_versions": {
+      "$ref": "#/definitions/contractVersions"
+    },
     "time_model": {
       "type": "object",
-      "required": ["market_data_frequency", "factor_frequency", "signal_frequency", "decision_clock", "execution_clock", "portfolio_valuation_frequency", "holding_period_unit", "signal_data_cutoff"],
+      "required": [
+        "market_data_frequency",
+        "factor_frequency",
+        "signal_frequency",
+        "decision_clock",
+        "execution_clock",
+        "portfolio_valuation_frequency",
+        "holding_period_unit",
+        "signal_data_cutoff"
+      ],
       "properties": {
-        "market_data_frequency": {"$ref": "#/definitions/frequency"},
-        "factor_frequency": {"$ref": "#/definitions/frequency"},
-        "signal_frequency": {"$ref": "#/definitions/frequency"},
-        "decision_clock": {"oneOf": [{"enum": ["before_trading_start", "market_open", "bar_close", "after_trading_end"]}, {"type": "string", "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?$"}]},
-        "execution_clock": {"enum": ["current_bar", "next_bar", "next_open", "market_open", "market_close"]},
-        "portfolio_valuation_frequency": {"$ref": "#/definitions/frequency"},
-        "holding_period_unit": {"enum": ["bar", "trading_day", "calendar_day", "week", "month"]},
-        "signal_data_cutoff": {"enum": ["T-1-close", "T-open", "current-bar-open", "current-bar-close", "previous-bar-close", "T-close"]}
+        "market_data_frequency": {
+          "$ref": "#/definitions/frequency"
+        },
+        "factor_frequency": {
+          "$ref": "#/definitions/frequency"
+        },
+        "signal_frequency": {
+          "$ref": "#/definitions/frequency"
+        },
+        "decision_clock": {
+          "oneOf": [
+            {
+              "enum": [
+                "before_trading_start",
+                "market_open",
+                "bar_close",
+                "after_trading_end"
+              ]
+            },
+            {
+              "type": "string",
+              "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?$"
+            }
+          ]
+        },
+        "execution_clock": {
+          "enum": [
+            "current_bar",
+            "next_bar",
+            "next_open",
+            "market_open",
+            "market_close"
+          ]
+        },
+        "portfolio_valuation_frequency": {
+          "$ref": "#/definitions/frequency"
+        },
+        "holding_period_unit": {
+          "enum": [
+            "bar",
+            "trading_day",
+            "calendar_day",
+            "week",
+            "month"
+          ]
+        },
+        "signal_data_cutoff": {
+          "enum": [
+            "T-1-close",
+            "T-open",
+            "current-bar-open",
+            "current-bar-close",
+            "previous-bar-close",
+            "T-close"
+          ]
+        },
+        "entry_clock": {
+          "oneOf": [
+            {
+              "enum": [
+                "before_trading_start",
+                "market_open",
+                "bar_close",
+                "after_trading_end"
+              ]
+            },
+            {
+              "type": "string",
+              "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?$"
+            }
+          ]
+        },
+        "exit_clock": {
+          "oneOf": [
+            {
+              "enum": [
+                "before_trading_start",
+                "market_open",
+                "bar_close",
+                "after_trading_end"
+              ]
+            },
+            {
+              "type": "string",
+              "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?$"
+            }
+          ]
+        },
+        "exit_day_offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "overlap_policy": {
+          "enum": [
+            "none",
+            "allow_previous_day_overlap"
+          ]
+        },
+        "max_concurrent_positions": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "new_buy_cash_policy": {
+          "enum": [
+            "available_cash_only",
+            "target_portfolio_value"
+          ]
+        }
       },
       "additionalProperties": false
     },
     "engine_profile": {
       "type": "object",
-      "required": ["profile_id", "event_type", "bar_frequency", "market_depth", "order_book_levels", "schema_supported", "execution_status"],
+      "required": [
+        "profile_id",
+        "event_type",
+        "bar_frequency",
+        "market_depth",
+        "order_book_levels",
+        "schema_supported",
+        "execution_status"
+      ],
       "properties": {
-        "profile_id": {"type": "string", "minLength": 1},
-        "event_type": {"enum": ["bar", "tick"]},
-        "bar_frequency": {"type": ["string", "null"], "enum": [null, "1m", "5m", "15m", "30m", "60m", "1d"]},
-        "market_depth": {"enum": ["L1", "L2"]},
-        "order_book_levels": {"type": "integer", "minimum": 0, "maximum": 20},
-        "schema_supported": {"type": "boolean"},
-        "execution_status": {"enum": ["READY", "BLOCKED", "PLANNED", "UNSUPPORTED"]}
+        "profile_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_type": {
+          "enum": [
+            "bar",
+            "tick"
+          ]
+        },
+        "bar_frequency": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            null,
+            "1m",
+            "5m",
+            "15m",
+            "30m",
+            "60m",
+            "1d"
+          ]
+        },
+        "market_depth": {
+          "enum": [
+            "L1",
+            "L2"
+          ]
+        },
+        "order_book_levels": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "schema_supported": {
+          "type": "boolean"
+        },
+        "execution_status": {
+          "enum": [
+            "READY",
+            "BLOCKED",
+            "PLANNED",
+            "UNSUPPORTED"
+          ]
+        }
       },
       "additionalProperties": false
     },
-    "universe": {"$ref": "#/definitions/component"},
+    "universe": {
+      "$ref": "#/definitions/component"
+    },
     "hard_filters": {
       "type": "object",
-      "required": ["exclude_st", "exclude_suspended", "exclude_delisted", "exclude_delisting_sorting", "exclude_star_market", "exclude_bse", "min_listing_trade_days", "exclude_invalid_price", "exclude_zero_volume", "block_limit_up_buy", "block_limit_down_sell", "enforce_t1", "round_lot"],
+      "required": [
+        "exclude_st",
+        "exclude_suspended",
+        "exclude_delisted",
+        "exclude_delisting_sorting",
+        "exclude_star_market",
+        "exclude_bse",
+        "min_listing_trade_days",
+        "exclude_invalid_price",
+        "exclude_zero_volume",
+        "block_limit_up_buy",
+        "block_limit_down_sell",
+        "enforce_t1",
+        "round_lot"
+      ],
       "properties": {
-        "exclude_st": {"type": "boolean"}, "exclude_suspended": {"type": "boolean"}, "exclude_delisted": {"type": "boolean"}, "exclude_delisting_sorting": {"type": "boolean"}, "exclude_star_market": {"type": "boolean"}, "exclude_bse": {"type": "boolean"}, "min_listing_trade_days": {"type": "integer", "minimum": 0}, "exclude_invalid_price": {"type": "boolean"}, "exclude_zero_volume": {"type": "boolean"}, "block_limit_up_buy": {"type": "boolean"}, "block_limit_down_sell": {"type": "boolean"}, "enforce_t1": {"type": "boolean"}, "round_lot": {"type": "integer", "minimum": 1}
+        "exclude_st": {
+          "type": "boolean"
+        },
+        "exclude_suspended": {
+          "type": "boolean"
+        },
+        "exclude_delisted": {
+          "type": "boolean"
+        },
+        "exclude_delisting_sorting": {
+          "type": "boolean"
+        },
+        "exclude_star_market": {
+          "type": "boolean"
+        },
+        "exclude_bse": {
+          "type": "boolean"
+        },
+        "min_listing_trade_days": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exclude_invalid_price": {
+          "type": "boolean"
+        },
+        "exclude_zero_volume": {
+          "type": "boolean"
+        },
+        "block_limit_up_buy": {
+          "type": "boolean"
+        },
+        "block_limit_down_sell": {
+          "type": "boolean"
+        },
+        "enforce_t1": {
+          "type": "boolean"
+        },
+        "round_lot": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "exclude_chinext": {
+          "type": "boolean"
+        }
       },
       "additionalProperties": false
     },
-    "signals": {"type": "object", "required": ["steps"], "properties": {"steps": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["id", "operation", "parameters"], "properties": {"id": {"type": "string", "minLength": 1}, "operation": {"type": "string", "minLength": 1}, "parameters": {"type": "object"}}, "additionalProperties": false}}}, "additionalProperties": false},
-    "portfolio": {"$ref": "#/definitions/component"},
-    "execution": {"type": "object", "required": ["mode", "match_price_mode", "order_type", "allow_partial_fill"], "properties": {"mode": {"enum": ["native", "daily_open_proxy", "daily_close_proxy"]}, "match_price_mode": {"enum": ["open", "close", "next_open"]}, "order_type": {"enum": ["market", "limit"]}, "allow_partial_fill": {"type": "boolean"}}, "additionalProperties": false},
-    "risk": {"$ref": "#/definitions/component"},
-    "costs": {"type": "object", "required": ["commission_rate", "minimum_commission", "stamp_tax_rate", "transfer_fee_rate", "slippage_bps"], "properties": {"commission_rate": {"type": "number", "minimum": 0}, "minimum_commission": {"type": "number", "minimum": 0}, "stamp_tax_rate": {"type": "number", "minimum": 0}, "transfer_fee_rate": {"type": "number", "minimum": 0}, "slippage_bps": {"type": "number", "minimum": 0}}, "additionalProperties": false},
-    "data_requirements": {"type": "object", "required": ["datasets"], "properties": {"datasets": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["dataset", "frequency", "fields", "required", "pit_required"], "properties": {"dataset": {"type": "string", "minLength": 1}, "frequency": {"$ref": "#/definitions/frequency"}, "fields": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}, "required": {"type": "boolean"}, "pit_required": {"type": "boolean"}}, "additionalProperties": false}}}, "additionalProperties": false},
-    "capability_requirements": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
-    "approximations": {"type": "array", "items": {"type": "object", "required": ["mode", "original_execution_clock", "approximation", "approximation_reason", "user_confirmed", "risk_disclosure"], "properties": {"mode": {"enum": ["daily_open_proxy", "daily_close_proxy", "other"]}, "original_execution_clock": {"type": "string", "minLength": 1}, "approximation": {"const": true}, "approximation_reason": {"type": "string", "minLength": 1}, "user_confirmed": {"const": true}, "risk_disclosure": {"type": "string", "minLength": 1}}, "additionalProperties": false}},
-    "user_confirmations": {"type": "array", "items": {"type": "object", "required": ["confirmation_id", "status"], "properties": {"confirmation_id": {"type": "string", "minLength": 1}, "status": {"enum": ["PENDING", "CONFIRMED", "REJECTED"]}, "confirmed_at": {"type": ["string", "null"], "format": "date-time"}, "note": {"type": "string"}}, "additionalProperties": false}},
-    "validation_policy": {"type": "object", "required": ["no_lookahead", "hard_filters", "strict_public_api", "smoke_backtest"], "properties": {"no_lookahead": {"const": "BLOCK"}, "hard_filters": {"const": "BLOCK"}, "strict_public_api": {"type": "boolean"}, "smoke_backtest": {"enum": ["WHEN_READY", "REQUIRED", "DISABLED"]}}, "additionalProperties": false},
-    "output": {"type": "object", "required": ["root", "overwrite"], "properties": {"root": {"type": "string", "minLength": 1}, "overwrite": {"type": "boolean"}}, "additionalProperties": false}
+    "signals": {
+      "type": "object",
+      "required": [
+        "steps"
+      ],
+      "properties": {
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "operation",
+              "parameters"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "operation": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "portfolio": {
+      "$ref": "#/definitions/component"
+    },
+    "execution": {
+      "type": "object",
+      "required": [
+        "mode",
+        "match_price_mode",
+        "order_type",
+        "allow_partial_fill"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "native",
+            "daily_open_proxy",
+            "daily_close_proxy"
+          ]
+        },
+        "match_price_mode": {
+          "enum": [
+            "open",
+            "close",
+            "next_open"
+          ]
+        },
+        "order_type": {
+          "enum": [
+            "market",
+            "limit"
+          ]
+        },
+        "allow_partial_fill": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "risk": {
+      "$ref": "#/definitions/component"
+    },
+    "costs": {
+      "type": "object",
+      "required": [
+        "commission_rate",
+        "minimum_commission",
+        "stamp_tax_rate",
+        "transfer_fee_rate",
+        "slippage_bps"
+      ],
+      "properties": {
+        "commission_rate": {
+          "type": "number",
+          "minimum": 0
+        },
+        "minimum_commission": {
+          "type": "number",
+          "minimum": 0
+        },
+        "stamp_tax_rate": {
+          "type": "number",
+          "minimum": 0
+        },
+        "transfer_fee_rate": {
+          "type": "number",
+          "minimum": 0
+        },
+        "slippage_bps": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "data_requirements": {
+      "type": "object",
+      "required": [
+        "datasets"
+      ],
+      "properties": {
+        "datasets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "dataset",
+              "frequency",
+              "fields",
+              "required",
+              "pit_required"
+            ],
+            "properties": {
+              "dataset": {
+                "type": "string",
+                "minLength": 1
+              },
+              "frequency": {
+                "$ref": "#/definitions/frequency"
+              },
+              "fields": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "pit_required": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "capability_requirements": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "approximations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "mode",
+          "original_execution_clock",
+          "approximation",
+          "approximation_reason",
+          "user_confirmed",
+          "risk_disclosure"
+        ],
+        "properties": {
+          "mode": {
+            "enum": [
+              "daily_open_proxy",
+              "daily_close_proxy",
+              "other"
+            ]
+          },
+          "original_execution_clock": {
+            "type": "string",
+            "minLength": 1
+          },
+          "approximation": {
+            "const": true
+          },
+          "approximation_reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "user_confirmed": {
+            "const": true
+          },
+          "risk_disclosure": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "user_confirmations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "confirmation_id",
+          "status"
+        ],
+        "properties": {
+          "confirmation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "PENDING",
+              "CONFIRMED",
+              "REJECTED"
+            ]
+          },
+          "confirmed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "validation_policy": {
+      "type": "object",
+      "required": [
+        "no_lookahead",
+        "hard_filters",
+        "strict_public_api",
+        "smoke_backtest"
+      ],
+      "properties": {
+        "no_lookahead": {
+          "const": "BLOCK"
+        },
+        "hard_filters": {
+          "const": "BLOCK"
+        },
+        "strict_public_api": {
+          "type": "boolean"
+        },
+        "smoke_backtest": {
+          "enum": [
+            "WHEN_READY",
+            "REQUIRED",
+            "DISABLED"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "required": [
+        "root",
+        "overwrite"
+      ],
+      "properties": {
+        "root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "overwrite": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "benchmark": {
+      "type": "string",
+      "minLength": 1
+    },
+    "initial_capital": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    }
   },
   "definitions": {
-    "frequency": {"enum": ["tick", "1m", "5m", "15m", "30m", "60m", "1d"]},
-    "component": {"type": "object", "required": ["kind", "parameters"], "properties": {"kind": {"type": "string", "minLength": 1}, "parameters": {"type": "object"}}, "additionalProperties": false},
-    "semver": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"},
-    "contractVersions": {"type": "object", "required": ["strategy_spec_version", "engine_semantics_version", "provider_contract_version", "security_code_rules_version", "ptrade_profile_version", "renderer_version", "skill_version"], "properties": {"strategy_spec_version": {"$ref": "#/definitions/semver"}, "engine_semantics_version": {"$ref": "#/definitions/semver"}, "provider_contract_version": {"$ref": "#/definitions/semver"}, "security_code_rules_version": {"$ref": "#/definitions/semver"}, "ptrade_profile_version": {"$ref": "#/definitions/semver"}, "renderer_version": {"$ref": "#/definitions/semver"}, "skill_version": {"$ref": "#/definitions/semver"}}, "additionalProperties": false}
+    "frequency": {
+      "enum": [
+        "tick",
+        "1m",
+        "5m",
+        "15m",
+        "30m",
+        "60m",
+        "1d"
+      ]
+    },
+    "component": {
+      "type": "object",
+      "required": [
+        "kind",
+        "parameters"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parameters": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "contractVersions": {
+      "type": "object",
+      "required": [
+        "strategy_spec_version",
+        "engine_semantics_version",
+        "provider_contract_version",
+        "security_code_rules_version",
+        "ptrade_profile_version",
+        "renderer_version",
+        "skill_version"
+      ],
+      "properties": {
+        "strategy_spec_version": {
+          "$ref": "#/definitions/semver"
+        },
+        "engine_semantics_version": {
+          "$ref": "#/definitions/semver"
+        },
+        "provider_contract_version": {
+          "$ref": "#/definitions/semver"
+        },
+        "security_code_rules_version": {
+          "$ref": "#/definitions/semver"
+        },
+        "ptrade_profile_version": {
+          "$ref": "#/definitions/semver"
+        },
+        "renderer_version": {
+          "$ref": "#/definitions/semver"
+        },
+        "skill_version": {
+          "$ref": "#/definitions/semver"
+        }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false,
   "allOf": [
-    {"if": {"properties": {"engine_profile": {"properties": {"event_type": {"const": "tick"}}}}}, "then": {"properties": {"engine_profile": {"properties": {"bar_frequency": {"type": "null"}, "execution_status": {"enum": ["BLOCKED", "PLANNED", "UNSUPPORTED"]}}}}}},
-    {"if": {"properties": {"engine_profile": {"properties": {"event_type": {"const": "bar"}}}}}, "then": {"properties": {"engine_profile": {"properties": {"bar_frequency": {"type": "string"}}}}}},
-    {"if": {"properties": {"execution": {"properties": {"mode": {"const": "daily_open_proxy"}}}}}, "then": {"properties": {"execution": {"properties": {"match_price_mode": {"const": "open"}}}, "time_model": {"properties": {"market_data_frequency": {"const": "1d"}}}, "engine_profile": {"properties": {"event_type": {"const": "bar"}, "bar_frequency": {"const": "1d"}}}, "approximations": {"contains": {"properties": {"mode": {"const": "daily_open_proxy"}}}}}}},
-    {"if": {"properties": {"execution": {"properties": {"mode": {"const": "daily_close_proxy"}}}}}, "then": {"properties": {"execution": {"properties": {"match_price_mode": {"const": "close"}}}, "time_model": {"properties": {"market_data_frequency": {"const": "1d"}}}, "engine_profile": {"properties": {"event_type": {"const": "bar"}, "bar_frequency": {"const": "1d"}}}, "approximations": {"contains": {"properties": {"mode": {"const": "daily_close_proxy"}}}}}}},
-    {"not": {"properties": {"execution": {"properties": {"mode": {"const": "daily_close_proxy"}}}, "time_model": {"properties": {"signal_data_cutoff": {"const": "T-close"}, "execution_clock": {"const": "current_bar"}}, "required": ["signal_data_cutoff", "execution_clock"]}}, "required": ["execution", "time_model"]}},
-    {"if": {"properties": {"asset_class": {"const": "stock"}}}, "then": {"properties": {"hard_filters": {"properties": {"exclude_st": {"const": true}, "exclude_suspended": {"const": true}, "exclude_delisted": {"const": true}, "exclude_delisting_sorting": {"const": true}, "exclude_invalid_price": {"const": true}, "exclude_zero_volume": {"const": true}, "block_limit_up_buy": {"const": true}, "block_limit_down_sell": {"const": true}, "enforce_t1": {"const": true}, "round_lot": {"const": 100}}}}}}
+    {
+      "if": {
+        "properties": {
+          "engine_profile": {
+            "properties": {
+              "event_type": {
+                "const": "tick"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "engine_profile": {
+            "properties": {
+              "bar_frequency": {
+                "type": "null"
+              },
+              "execution_status": {
+                "enum": [
+                  "BLOCKED",
+                  "PLANNED",
+                  "UNSUPPORTED"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "engine_profile": {
+            "properties": {
+              "event_type": {
+                "const": "bar"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "engine_profile": {
+            "properties": {
+              "bar_frequency": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "mode": {
+                "const": "daily_open_proxy"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "match_price_mode": {
+                "const": "open"
+              }
+            }
+          },
+          "time_model": {
+            "properties": {
+              "market_data_frequency": {
+                "const": "1d"
+              }
+            }
+          },
+          "engine_profile": {
+            "properties": {
+              "event_type": {
+                "const": "bar"
+              },
+              "bar_frequency": {
+                "const": "1d"
+              }
+            }
+          },
+          "approximations": {
+            "contains": {
+              "properties": {
+                "mode": {
+                  "const": "daily_open_proxy"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "mode": {
+                "const": "daily_close_proxy"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "match_price_mode": {
+                "const": "close"
+              }
+            }
+          },
+          "time_model": {
+            "properties": {
+              "market_data_frequency": {
+                "const": "1d"
+              }
+            }
+          },
+          "engine_profile": {
+            "properties": {
+              "event_type": {
+                "const": "bar"
+              },
+              "bar_frequency": {
+                "const": "1d"
+              }
+            }
+          },
+          "approximations": {
+            "contains": {
+              "properties": {
+                "mode": {
+                  "const": "daily_close_proxy"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "not": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "mode": {
+                "const": "daily_close_proxy"
+              }
+            }
+          },
+          "time_model": {
+            "properties": {
+              "signal_data_cutoff": {
+                "const": "T-close"
+              },
+              "execution_clock": {
+                "const": "current_bar"
+              }
+            },
+            "required": [
+              "signal_data_cutoff",
+              "execution_clock"
+            ]
+          }
+        },
+        "required": [
+          "execution",
+          "time_model"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "asset_class": {
+            "const": "stock"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "hard_filters": {
+            "properties": {
+              "exclude_st": {
+                "const": true
+              },
+              "exclude_suspended": {
+                "const": true
+              },
+              "exclude_delisted": {
+                "const": true
+              },
+              "exclude_delisting_sorting": {
+                "const": true
+              },
+              "exclude_invalid_price": {
+                "const": true
+              },
+              "exclude_zero_volume": {
+                "const": true
+              },
+              "block_limit_up_buy": {
+                "const": true
+              },
+              "block_limit_down_sell": {
+                "const": true
+              },
+              "enforce_t1": {
+                "const": true
+              },
+              "round_lot": {
+                "const": 100
+              }
+            }
+          }
+        }
+      }
+    }
   ]
 }

@@ -1,4 +1,4 @@
 interface:
-  display_name: "QuantStudio Strategy Compiler"
-  short_description: "Compile strategy ideas into validated backtest code"
-  default_prompt: "Use $quantstudio-strategy-compiler to turn a strategy idea or spec into a validated strategy_spec.json, gating on capability inspection and explicit user confirmation. Rendering to QuantStudio + PTrade code arrives in PR6."
+  display_name: "QuantStudio Strict Agent-first Strategy Engineering"
+  short_description: "Strict R0-R6 workflow, project DuckDB priority, real PTrade validation"
+  default_prompt: "Use $quantstudio-strategy-compiler. Execute R0-R6 strictly in order and stop for explicit customer replies at R0 and R2.5; never self-confirm or skip a stage. Route local backtest data through providers and prefer the current project data/quantstudio.db without direct strategy storage access. Target exact PTrade public signatures, generate both files into staging, validate each generated file, compare them only after both exist, and publish only on full PASS."

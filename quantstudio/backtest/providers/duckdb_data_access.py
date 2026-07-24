@@ -106,9 +106,18 @@ class DuckDBDataAccess:
             logger.debug(f"[Preload] 加载 {len(self._preload_daily)} 行行情")
             # 预加载每只股票的上市日期（get_security_info 用，避免逐只 MIN(time) 查询）
             # 上市日是历史固定值，无 PIT 问题，可全局加载
-            self._preload_listing = conn.execute(
-                "SELECT code, MIN(time) as listing_time FROM stock_daily GROUP BY code"
-            ).fetchdf()
+            tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
+            if "stock_basic" in tables:
+                self._preload_listing = conn.execute(
+                    "SELECT code, list_date AS listing_time FROM stock_basic "
+                    "WHERE list_date IS NOT NULL"
+                ).fetchdf()
+            else:
+                # Compatibility fallback only. Strategy Compiler capability gates
+                # requiring formal listing age must reject this fallback.
+                self._preload_listing = conn.execute(
+                    "SELECT code, MIN(time) as listing_time FROM stock_daily GROUP BY code"
+                ).fetchdf()
         except Exception:
             pass
 

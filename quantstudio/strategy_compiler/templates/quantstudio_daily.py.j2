@@ -78,7 +78,7 @@ def before_trading_start(context, data):
     # column into a 1-D array per code for vectorized scoring.
     h = get_history_batch(g.stock_list, {{ dataload_lookback }}, '{{ dataload_frequency }}',
                           fields={{ dataload_fields }}, fq='dypre', include=False)
-    g.history = {code: np.array(df['{{ dataload_fields[0] }}'].values, dtype=float)
+    g.history = {_bare_code(code): np.asarray(df['{{ dataload_fields[0] }}'].values, dtype=object)
                  for code, df in h.items()}
     # Selection-stage HardFilterNode: filter ST/HALT/DELISTING.
     g.stock_list = filter_stock_by_status(
@@ -87,45 +87,92 @@ def before_trading_start(context, data):
 
 
 def handle_data(context, data):
-    # IndicatorNode(s): pct_change per stock + RankingNode: top_n select.
-    # pct_change results accumulate into the `scores` dict (the ranking source).
     scores = {}
-{% for ind in pct_change_indicators %}
     for code in g.stock_list:
-        hist = g.history[code]
-        curr = data[code].close
+        hist = _finite_series(g.history.get(_bare_code(code), []))
+        curr = _finite_float(data[code].close)
+        if curr is None:
+            continue
         series = np.concatenate((hist, [curr]))
-        scores[code] = (series[-1] - series[-{{ ind.lookback }}-1]) / series[-{{ ind.lookback }}-1]
+{% if signal_op == 'cross' %}
+        if len(series) < {{ [ma_fast.lookback, ma_slow.lookback]|max }} or not np.all(np.isfinite(series[-{{ [ma_fast.lookback, ma_slow.lookback]|max }}:])):
+            continue
+        {{ ma_fast.id }} = _get_ma(series, {{ ma_fast.lookback }})
+        {{ ma_slow.id }} = _get_ma(series, {{ ma_slow.lookback }})
+        if {{ ma_fast.id }} is None or {{ ma_slow.id }} is None or not ({{ ma_fast.id }} > {{ ma_slow.id }}):
+            continue
+{% endif %}
+{% for ind in [ranking_indicator] %}
+        if len(series) < {{ ind.lookback }} + 1 or not np.all(np.isfinite(series[-{{ ind.lookback }}-1:])):
+            continue
+        denominator = series[-{{ ind.lookback }}-1]
+        if not np.isfinite(denominator) or denominator == 0:
+            continue
+        score = (series[-1] - denominator) / denominator
+        if np.isfinite(score):
+            scores[code] = score
 {% endfor %}
 {% if not pct_change_indicators %}
-    # ma-based scoring fallback (no pct_change indicator declared)
-    for code in g.stock_list:
-        hist = g.history[code]
-        curr = data[code].close
-        series = np.concatenate((hist, [curr]))
-{% for ma in ma_indicators %}
-        {{ ma.id }} = _get_ma(series, {{ ma.lookback }})
-{% endfor %}
-        scores[code] = {{ (ma_indicators[-1].id) if ma_indicators else 'curr' }}
+        scores[code] = series[-1]
 {% endif %}
-    # RankingNode (operation={{ ranking_op }}, top_n={{ ranking_top_n }}, ascending={{ ranking_ascending }}).
-    # Slice by ranking top_n (the IR-declared selection count), NOT max_positions.
     sorted_codes = sorted(scores.keys(), key=lambda c: scores[c], reverse={{ not ranking_ascending }})
     selected = sorted_codes[:g.top_n]
+    selected_bare = {_bare_code(code) for code in selected}
 
-    # PortfolioNode (kind=equal_weight_top_n): sell-first, buy-second.
-    # Sell positions not in today's selected list.
-    for code in list(context.portfolio.positions.keys()):
-        if code not in selected:
-            order_target_value(code, 0)
-    # Buy missing selections with equal weight.
-    position_count = len(context.portfolio.positions)
-    if position_count < g.max_positions:
-        value = context.portfolio.cash / (g.max_positions - position_count)
-        for code in selected:
-            if code not in context.portfolio.positions:
-                order_value(code, value)
-                log.info('Buying %s' % code)
+    positions = context.portfolio.positions
+    for actual_code in list(positions.keys()):
+        if _bare_code(actual_code) not in selected_bare:
+            order_target_value(actual_code, 0)
+            log.info('Selling %s' % actual_code)
+    total_value = _portfolio_total_value(context)
+    target_value = total_value / float(g.max_positions) if g.max_positions > 0 else 0.0
+    for code in selected:
+        order_target_value(code, target_value)
+        log.info('Targeting %s value for %s' % (target_value, code))
+
+
+def _portfolio_total_value(context):
+    portfolio = context.portfolio
+    for name in ('total_value', 'portfolio_value', 'total_asset'):
+        value = getattr(portfolio, name, None)
+        if value is not None:
+            try:
+                value = float(value)
+                if np.isfinite(value) and value > 0:
+                    return value
+            except (TypeError, ValueError):
+                pass
+    market_value = sum(
+        float(getattr(position, 'market_value', 0) or 0)
+        for position in portfolio.positions.values()
+    )
+    return float(portfolio.cash) + market_value
+
+
+def _bare_code(code):
+    return str(code).strip().upper().split('.')[0]
+
+
+def _finite_float(value):
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if np.isfinite(result) else None
+
+
+def _finite_series(values):
+    return np.asarray([
+        converted if converted is not None else np.nan
+        for converted in (_finite_float(value) for value in np.asarray(values, dtype=object).reshape(-1))
+    ], dtype=float)
+
+
+def _get_ma(close_array, num):
+    if len(close_array) < num:
+        return None
+    value = close_array[-num:].mean()
+    return round(value, 2) if np.isfinite(value) else None
 {% elif universe_index %}
 
 

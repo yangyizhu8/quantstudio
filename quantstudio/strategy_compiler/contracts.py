@@ -85,6 +85,32 @@ def validate_strategy_spec(payload: Mapping[str, Any]) -> None:
             f"{mode} requires a confirmed approximation record"
         )
 
+    scheduled_fields = (
+        "entry_clock", "exit_clock", "exit_day_offset", "overlap_policy",
+        "max_concurrent_positions", "new_buy_cash_policy",
+    )
+    present = [field for field in scheduled_fields if field in time_model]
+    if present and len(present) != len(scheduled_fields):
+        missing = [field for field in scheduled_fields if field not in time_model]
+        raise ContractValidationError(
+            f"scheduled entry/exit time model is incomplete; missing {missing}"
+        )
+    if present:
+        if engine.get("bar_frequency") not in ("1m", "5m", "15m", "30m", "60m"):
+            raise ContractValidationError(
+                "scheduled intraday entry/exit requires a minute-bar engine profile"
+            )
+        if time_model["exit_day_offset"] < 1:
+            raise ContractValidationError(
+                "overnight timed exit requires exit_day_offset >= 1"
+            )
+        if time_model["overlap_policy"] == "allow_previous_day_overlap":
+            portfolio_max = payload.get("portfolio", {}).get("parameters", {}).get("max_positions", 1)
+            if time_model["max_concurrent_positions"] < portfolio_max * 2:
+                raise ContractValidationError(
+                    "overlap policy requires max_concurrent_positions >= 2 * portfolio.max_positions"
+                )
+
 
 def validate_capability_report(payload: Mapping[str, Any]) -> None:
     """Validate capability dimensions and forbid false READY claims."""

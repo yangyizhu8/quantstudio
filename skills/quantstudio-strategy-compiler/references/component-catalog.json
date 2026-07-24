@@ -1,0 +1,188 @@
+{
+  "catalog_version": "1.1.1",
+  "design_principle": "Agent authors strategy-specific logic; the Skill constrains lifecycle, public APIs, timing, portability, and validation.",
+  "lifecycle_components": [
+    {
+      "id": "initialize",
+      "signature": "initialize(context)",
+      "required": true,
+      "purpose": "one-time parameters, benchmark, costs, universe and schedule registration"
+    },
+    {
+      "id": "before_trading_start",
+      "signature": "before_trading_start(context, data)",
+      "required": false,
+      "purpose": "PIT universe construction and factor preparation before the session"
+    },
+    {
+      "id": "handle_data",
+      "signature": "handle_data(context, data)",
+      "required": false,
+      "purpose": "daily or per-minute bar event handling"
+    },
+    {
+      "id": "run_daily",
+      "signature": "run_daily(context, callback, time='HH:MM')",
+      "required": false,
+      "purpose": "named scheduled callbacks; minute profile fires before handle_data on the matching end-labelled bar"
+    },
+    {
+      "id": "after_trading_end",
+      "signature": "after_trading_end(context, data)",
+      "required": false,
+      "purpose": "post-close diagnostics and state reconciliation"
+    }
+  ],
+  "api_groups": {
+    "configuration": [
+      "set_benchmark",
+      "set_universe",
+      "set_commission",
+      "set_slippage",
+      "set_fixed_slippage",
+      "set_limit_mode",
+      "set_backtest",
+      "set_volume_ratio",
+      "set_yesterday_position"
+    ],
+    "universe_reference": [
+      "get_Ashares",
+      "get_index_stocks",
+      "get_industry_stocks",
+      "get_etf_list",
+      "get_cb_list",
+      "get_ipo_stocks",
+      "filter_stock_by_status",
+      "get_security_info",
+      "get_stock_info",
+      "get_stock_status",
+      "get_stock_name",
+      "get_industry"
+    ],
+    "market_data": [
+      "get_history",
+      "get_price",
+      "attribute_history",
+      "current_price",
+      "get_current_data",
+      "get_snapshot",
+      "get_trend_data"
+    ],
+    "fundamentals": [
+      "query",
+      "valuation",
+      "get_fundamentals"
+    ],
+    "calendar": [
+      "get_trading_day",
+      "get_trade_days",
+      "get_all_trades_days",
+      "get_trading_day_by_date"
+    ],
+    "portfolio_orders": [
+      "get_positions",
+      "get_position",
+      "get_orders",
+      "get_trades",
+      "get_open_orders",
+      "get_order",
+      "cancel_order",
+      "order",
+      "order_value",
+      "order_target",
+      "order_target_value",
+      "check_limit",
+      "is_trade"
+    ],
+    "ashare_rules": [
+      "is_price_limit_blocked",
+      "is_t1_blocked",
+      "round_to_lot",
+      "get_price_limit_pct",
+      "is_star_market",
+      "is_chinext_market",
+      "is_bse_market",
+      "is_st_stock"
+    ],
+    "scheduling_diagnostics": [
+      "run_daily",
+      "log"
+    ]
+  },
+  "ptrade_forbidden_apis": [
+    "get_fundamentals_batch",
+    "get_history_batch",
+    "create_dir",
+    "get_trades_file",
+    "get_research_path",
+    "convert_position_from_csv"
+  ],
+  "forbidden_import_prefixes": [
+    "duckdb",
+    "sqlite3",
+    "sqlalchemy",
+    "psycopg2",
+    "pymysql",
+    "quantstudio.pipeline",
+    "quantstudio.backtest.providers",
+    "quantstudio._paths"
+  ],
+  "forbidden_direct_io": [
+    "open",
+    "read_csv",
+    "read_parquet",
+    "read_sql",
+    "read_pickle"
+  ],
+  "canonical_code_policy": {
+    "security_code_style": ".SS/.SZ/.BJ PTrade public style; local adapter normalizes aliases",
+    "dual_target_source": "one canonical Python source is copied to both targets after validation",
+    "batch_api_policy": "use portable per-security APIs in canonical code; local-only batch APIs are forbidden",
+    "storage_policy": "Strategy code never accesses DuckDB, providers, or local files directly; local backtests route injected APIs through provider adapters.",
+    "api_subset": "PTrade backtest public API subset is authoritative; local adapter must emulate it.",
+    "indicator_policy": "Use numpy/pandas or source-defined helpers; do not assume locally injected MyTT names exist on PTrade.",
+    "runtime_state_policy": "Every lifecycle and scheduled callback calls an idempotent _ensure_runtime_state() as its first executable statement.",
+    "local_backtest_data_priority": "<current-project>/data/quantstudio.db first; configured/external DuckDB only when absent or explicitly customer-approved."
+  },
+  "local_extension_groups": {
+    "local_mytt_helpers": [
+      "REF",
+      "HHV",
+      "LLV",
+      "COUNT",
+      "EVERY",
+      "EXIST",
+      "CROSS",
+      "MA",
+      "EMA",
+      "SMA",
+      "WMA",
+      "MACD",
+      "KDJ",
+      "RSI",
+      "CCI",
+      "ATR",
+      "BOLL",
+      "ROC"
+    ],
+    "local_backtest_optimizations": [
+      "get_history_batch",
+      "get_fundamentals_batch",
+      "get_security_info",
+      "get_current_data"
+    ]
+  },
+  "ptrade_signature_profile": "references/ptrade-api-signatures.json",
+  "ptrade_backtest_forbidden_apis": [
+    "get_snapshot",
+    "check_limit",
+    "get_security_info",
+    "get_current_data",
+    "get_history_batch",
+    "get_fundamentals_batch",
+    "create_dir",
+    "get_trades_file",
+    "get_research_path",
+    "convert_position_from_csv"
+  ]
+}

@@ -236,3 +236,84 @@ def test_none_prev_day_data_returns_all():
     _attach_with_prev_day(None)
     result = ptrade_api.filter_stock_by_status(["600000", "002231"])
     assert result == ["600000", "002231"], "None 数据时不误杀"
+
+
+# ========== 10. Explicit PIT date routing (agent-first reusable component) ==========
+
+class _StatusReferenceFixture:
+    def __init__(self, by_date):
+        self.by_date = by_date
+        self.calls = []
+
+    def get_stock_status(self, codes, date):
+        date_key = str(date)[:10]
+        self.calls.append((tuple(codes), date_key))
+        rows = []
+        payload = self.by_date.get(date_key, {})
+        for code in codes:
+            values = payload.get(code, {})
+            rows.append({
+                'code': code,
+                'is_st': values.get('is_st', False),
+                'is_halt': values.get('is_halt', False),
+                'is_delisting_risk': values.get('is_delisting_risk', False),
+                'is_delisted': values.get('is_delisted', False),
+            })
+        return pd.DataFrame(rows)
+
+
+def test_get_stock_status_explicit_historical_date_uses_reference_not_prev_snapshot():
+    """A five-day suspension filter must query each requested PIT date."""
+    ptrade_api._prev_day_data = _make_prev_day([
+        {'code': '600000', 'suspendFlag': 0, 'volume': 10000},
+    ])
+    ptrade_api._prev_date = '2026-07-23'
+    ptrade_api._current_date = '2026-07-24'
+    reference = _StatusReferenceFixture({
+        '2026-07-21': {'600000': {'is_halt': True}},
+    })
+    original = ptrade_api._reference
+    ptrade_api._reference = reference
+    try:
+        status = ptrade_api.get_stock_status(
+            ['600000.SS'], query_type='HALT', query_date='2026-07-21')
+    finally:
+        ptrade_api._reference = original
+    assert status['600000.SS'] is True
+    assert reference.calls == [(('600000',), '2026-07-21')]
+
+
+def test_filter_stock_by_status_explicit_current_date_uses_current_daily_snapshot():
+    """Order-time filtering must not silently reuse yesterday's normal status."""
+    ptrade_api._prev_day_data = _make_prev_day([
+        {'code': '600000', 'is_st_reliable': False, 'volume': 10000},
+    ])
+    ptrade_api._daily_curr_data = _make_prev_day([
+        {'code': '600000', 'is_st_reliable': True, 'volume': 10000},
+    ])
+    ptrade_api._prev_date = '2026-07-23'
+    ptrade_api._current_date = '2026-07-24'
+    result = ptrade_api.filter_stock_by_status(
+        ['600000.SS'], filter_type=['ST'], query_date='2026-07-24')
+    assert result == []
+
+
+
+def test_get_stock_status_historical_normalized_row_without_volume_is_not_halted():
+    """ReferenceDataProvider already supplies is_halt; missing raw volume must not default to zero."""
+    ptrade_api._prev_day_data = _make_prev_day([
+        {'code': '600000', 'suspendFlag': 0, 'volume': 10000},
+    ])
+    ptrade_api._prev_date = '2026-07-17'
+    ptrade_api._current_date = '2026-07-20'
+    reference = _StatusReferenceFixture({
+        '2026-07-13': {'600000': {'is_halt': False}},
+    })
+    original = ptrade_api._reference
+    ptrade_api._reference = reference
+    try:
+        status = ptrade_api.get_stock_status(
+            ['600000.SS'], query_type='HALT', query_date='2026-07-13')
+    finally:
+        ptrade_api._reference = original
+    assert status['600000.SS'] is False

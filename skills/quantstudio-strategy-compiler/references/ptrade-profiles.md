@@ -32,3 +32,12 @@ PTrade Renderer 输出必须通过：语法、生命周期、API 白名单、禁
 ## 4. Profile 演进
 
 不同券商差异通过显式 Profile ID/版本表达，不使用隐藏条件。任何 API 白名单、回调、字段权限或撮合含义变化必须提升 `ptrade_profile_version`。
+
+## 5. Runtime shape and scheduling corrective (0.3.2)
+
+- Historical values may be pandas objects or NumPy structured arrays.
+- Daily multi-stock ranking uses previous-close history in `before_trading_start`, not `data[code]`.
+- Unsupported/empty securities are skipped with logs.
+- `run_daily` performs one rebalance; `handle_data` is empty for daily-factor strategies.
+- Open/next-open approximations schedule 09:31 and require broker minute-period backtesting.
+- Shanghai output uses `.SS`; history and position matching use bare codes.

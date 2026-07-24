@@ -1,9 +1,9 @@
-"""G4 Release Closure tests: CLI E2E + Skill install/validation + 0.3.0-mvp release.
+"""G4 Release Closure tests: CLI E2E + Skill install/validation + 0.3.2-mvp release.
 
 Validates the G4 work-package scope (reviewer-authorized):
 - CLI E2E: Spec → IR → dual Renderer → strategy package (via a package-build CLI);
 - Skill install/validation flow;
-- Version upgrade to 0.3.0-mvp;
+- Version upgrade to 0.3.2-mvp;
 - release metadata, usage/limitations/release docs;
 - hermetic CLI tests, install verification, dual Renderer/package regression;
 - G3 manifest/digest verification retained in the CLI flow;
@@ -104,20 +104,20 @@ class TestCliPackageBuild:
         assert result.returncode != 0
 
 
-# ── 2. Version 0.3.0-mvp ─────────────────────────────────────────────────────
+# ── 2. Version 0.3.2-mvp ─────────────────────────────────────────────────────
 
 class TestVersion:
     def test_skill_version_is_030_mvp(self):
-        """Skill version bumped to 0.3.0-mvp (run_card skill_version default)."""
+        """Skill version bumped to 0.3.2-mvp (run_card skill_version default)."""
         from quantstudio.strategy_compiler.orchestrator import _SKILL_VERSION
-        assert _SKILL_VERSION == "0.3.0-mvp"
+        assert _SKILL_VERSION == "0.3.2-mvp"
 
     def test_release_metadata_records_version(self):
-        """A release metadata file records the 0.3.0-mvp version."""
+        """A release metadata file records the 0.3.2-mvp version."""
         meta_path = ROOT / "quantstudio" / "strategy_compiler" / "release" / "release_metadata.json"
         assert meta_path.exists(), "release_metadata.json missing"
         meta = _load(meta_path)
-        assert meta["version"] == "0.3.0-mvp"
+        assert meta["version"] == "0.3.2-mvp"
 
 
 # ── 3. Release docs ──────────────────────────────────────────────────────────
@@ -127,7 +127,7 @@ class TestReleaseDocs:
         notes = ROOT / "quantstudio" / "strategy_compiler" / "release" / "RELEASE_NOTES.md"
         assert notes.exists()
         text = notes.read_text(encoding="utf-8")
-        assert "0.3.0-mvp" in text
+        assert "0.3.2-mvp" in text
 
     def test_release_notes_state_data_digest_boundary(self):
         """Release notes honestly state the data-digest-deferred boundary."""
@@ -236,8 +236,8 @@ class TestEntryPoint:
 
 
 class TestVersionUnity:
-    """Version split: Python distribution version = 0.3.0+mvp (PEP 440); product/
-    Skill release label = 0.3.0-mvp. Tests the correct MAPPING, not naive equality."""
+    """Version split: Python distribution version = 0.3.2+mvp (PEP 440); product/
+    Skill release label = 0.3.2-mvp. Tests the correct MAPPING, not naive equality."""
 
     def _pyproject_version(self):
         import re
@@ -246,32 +246,32 @@ class TestVersionUnity:
         return m.group(1) if m else None
 
     def test_distribution_version_is_pep440_compliant(self):
-        """pyproject + quantstudio.__version__ use the PEP 440 distribution version 0.3.0+mvp
-        (NOT 0.3.0-mvp, which fails `pip wheel`)."""
+        """pyproject + quantstudio.__version__ use the PEP 440 distribution version 0.3.2+mvp
+        (NOT 0.3.2-mvp, which fails `pip wheel`)."""
         import quantstudio
-        assert self._pyproject_version() == "0.3.0+mvp"
-        assert quantstudio.__version__ == "0.3.0+mvp"
+        assert self._pyproject_version() == "0.3.2+mvp"
+        assert quantstudio.__version__ == "0.3.2+mvp"
 
     def test_release_label_is_030_mvp_in_skill_orchestrator_spec(self):
-        """Product/Skill release label 0.3.0-mvp in SKILL.md, orchestrator, example spec."""
+        """Product/Skill release label 0.3.2-mvp in SKILL.md, orchestrator, example spec."""
         from quantstudio.strategy_compiler.orchestrator import _SKILL_VERSION
         skill_md = (ROOT / "skills" / "quantstudio-strategy-compiler" / "SKILL.md").read_text(encoding="utf-8")
         example = _load(EXAMPLES / "case1_dual_ma_spec.json")
-        assert _SKILL_VERSION == "0.3.0-mvp"
-        assert "0.3.0-mvp" in skill_md
-        assert example["contract_versions"]["skill_version"] == "0.3.0-mvp"
+        assert _SKILL_VERSION == "0.3.2-mvp"
+        assert "0.3.2-mvp" in skill_md
+        assert example["contract_versions"]["skill_version"] == "0.3.2-mvp"
 
     def test_release_metadata_records_both_versions(self):
-        """release_metadata.json records release_label (0.3.0-mvp) AND distribution_version (0.3.0+mvp)."""
+        """release_metadata.json records release_label (0.3.2-mvp) AND distribution_version (0.3.2+mvp)."""
         meta = _load(ROOT / "quantstudio" / "strategy_compiler" / "release" / "release_metadata.json")
-        assert meta["release_label"] == "0.3.0-mvp"
-        assert meta["distribution_version"] == "0.3.0+mvp"
+        assert meta["release_label"] == "0.3.2-mvp"
+        assert meta["distribution_version"] == "0.3.2+mvp"
 
     def test_pip_wheel_version_compliant(self):
         """The distribution version must parse as valid PEP 440 (no 'pep440' build error)."""
         from packaging.version import Version
         v = Version(self._pyproject_version())
-        assert str(v) == "0.3.0+mvp"
+        assert str(v) == "0.3.2+mvp"
 
 
 class TestG2ReferenceErrorHandling:
@@ -386,7 +386,7 @@ class TestWheelBuild:
         assert r.returncode == 0, f"pip wheel failed: {r.stderr[-500:]}"
         wheels = list(wheel_dir.glob("quantstudio-*.whl"))
         assert len(wheels) == 1, f"expected 1 wheel, got {wheels}"
-        assert "0.3.0+mvp" in wheels[0].name or "0.3.0_mvp" in wheels[0].name
+        assert "0.3.2+mvp" in wheels[0].name or "0.3.2_mvp" in wheels[0].name
 
     def test_wheel_includes_resources(self, tmp_path):
         """Wheel must bundle templates, schemas, examples, release metadata."""

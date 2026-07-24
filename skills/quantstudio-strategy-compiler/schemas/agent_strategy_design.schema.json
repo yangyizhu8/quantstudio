@@ -1,0 +1,314 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://quantstudio.local/schemas/agent_strategy_design.schema.json",
+  "title": "QuantStudio Agent-first Strategy Design Contract",
+  "type": "object",
+  "required": [
+    "design_version",
+    "strategy_id",
+    "strategy_name",
+    "asset_class",
+    "targets",
+    "engine_profile",
+    "strategy_semantics",
+    "timing",
+    "components",
+    "constraints",
+    "approximations",
+    "open_questions",
+    "user_confirmations",
+    "output"
+  ],
+  "properties": {
+    "design_version": {
+      "const": "2.0"
+    },
+    "strategy_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{2,63}$"
+    },
+    "strategy_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "asset_class": {
+      "enum": [
+        "stock",
+        "etf",
+        "mixed",
+        "convertible_bond",
+        "custom"
+      ]
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "quantstudio",
+          "ptrade"
+        ]
+      }
+    },
+    "engine_profile": {
+      "type": "object",
+      "required": [
+        "profile_id",
+        "bar_frequency",
+        "match_price_mode"
+      ],
+      "properties": {
+        "profile_id": {
+          "enum": [
+            "daily-bar-v1",
+            "minute-bar-v1"
+          ]
+        },
+        "bar_frequency": {
+          "enum": [
+            "1d",
+            "1m",
+            "5m",
+            "15m",
+            "30m",
+            "60m"
+          ]
+        },
+        "match_price_mode": {
+          "enum": [
+            "close",
+            "open",
+            "next_open",
+            "current_bar"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "strategy_semantics": {
+      "type": "object",
+      "required": [
+        "universe",
+        "entry_rules",
+        "exit_rules",
+        "portfolio_rules",
+        "risk_rules"
+      ],
+      "properties": {
+        "universe": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entry_rules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exit_rules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "portfolio_rules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "risk_rules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "timing": {
+      "type": "object",
+      "required": [
+        "signal_data_cutoff",
+        "decision_events",
+        "holding_semantics"
+      ],
+      "properties": {
+        "signal_data_cutoff": {
+          "type": "string",
+          "minLength": 1
+        },
+        "holding_semantics": {
+          "type": "string",
+          "minLength": 1
+        },
+        "decision_events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "lifecycle"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "lifecycle": {
+                "enum": [
+                  "before_trading_start",
+                  "handle_data",
+                  "run_daily",
+                  "after_trading_end"
+                ]
+              },
+              "time": {
+                "type": "string",
+                "pattern": "^(?:[01]?\\d|2[0-3]):[0-5]\\d$"
+              },
+              "purpose": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "components": {
+      "type": "object",
+      "required": [
+        "lifecycle_hooks",
+        "api_groups",
+        "required_apis"
+      ],
+      "properties": {
+        "lifecycle_hooks": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "initialize",
+              "before_trading_start",
+              "handle_data",
+              "after_trading_end"
+            ]
+          }
+        },
+        "api_groups": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "required_apis": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "implementation_notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "constraints": {
+      "type": "object",
+      "required": [
+        "hard_filters",
+        "no_lookahead",
+        "portable_source_required",
+        "runtime_state_guard_required"
+      ],
+      "properties": {
+        "hard_filters": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "no_lookahead": {
+          "const": true
+        },
+        "portable_source_required": {
+          "const": true
+        },
+        "runtime_state_guard_required": {
+          "const": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "approximations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "description",
+          "confirmed"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "confirmed": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "user_confirmations": {
+      "type": "object",
+      "required": [
+        "strategy_semantics",
+        "execution_approximations",
+        "component_plan"
+      ],
+      "properties": {
+        "strategy_semantics": {
+          "type": "boolean"
+        },
+        "execution_approximations": {
+          "type": "boolean"
+        },
+        "component_plan": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "required": [
+        "overwrite"
+      ],
+      "properties": {
+        "overwrite": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

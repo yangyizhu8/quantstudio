@@ -36,9 +36,10 @@ def deliver_strategy(
     out_dir: str | Path,
     *,
     g2_frozen_dir: Optional[str | Path] = None,
-    package_version: str = "0.3.0-mvp",
+    package_version: str = "0.3.2-mvp",
     run_smoke: bool = True,
     allow_deferred_smoke: bool = False,
+    project_root: Optional[str | Path] = None,
 ) -> Path:
     """Run full delivery: R2.5 gate → validate → package → report.
 
@@ -46,6 +47,11 @@ def deliver_strategy(
     to generate package when smoke is BLOCKED or not run.
     """
     strategy_id = spec["strategy_id"]
+    project_root_path = Path(project_root).resolve() if project_root else None
+    if project_root_path is not None and str(project_root_path) not in sys.path:
+        # Prefer the live project package over an older installed wheel. This also
+        # lets orchestrator locate the project Skill capability inspector.
+        sys.path.insert(0, str(project_root_path))
 
     # --- R2.5 HARD GATE (BEFORE any work) ---
     _enforce_confirmation_gate(spec)
@@ -125,8 +131,15 @@ def deliver_strategy(
     pkg_dir = build_strategy_package(spec, out_dir=pkg_parent,
                                      package_version=package_version, g2_reference=g2_ref)
 
-    # --- Stage 5: report ---
-    _write_report(base, spec, run_card, pkg_dir, delivery_status)
+    # --- Stage 5: publish user-facing entry points ---
+    published_paths = None
+    if project_root_path is not None:
+        from quantstudio.strategy_compiler.publish import publish_strategy_entry_points
+        published_paths = publish_strategy_entry_points(spec, pkg_dir, project_root_path)
+
+    # --- Stage 6: report ---
+    _write_report(base, spec, run_card, pkg_dir, delivery_status,
+                  published_paths=published_paths)
     return base
 
 
@@ -152,7 +165,7 @@ def _enforce_confirmation_gate(spec: dict) -> None:
                 f"(id={c.get('confirmation_id')}); ALL must be CONFIRMED.")
 
 
-def _write_report(base, spec, run_card, pkg_dir, delivery_status, reason=""):
+def _write_report(base, spec, run_card, pkg_dir, delivery_status, reason="", published_paths=None):
     """Write DELIVERY_REPORT.md — only lists files that exist."""
     validation = run_card.get("validation", {})
     smoke = run_card.get("smoke_backtest") or {}
@@ -182,8 +195,14 @@ def _write_report(base, spec, run_card, pkg_dir, delivery_status, reason=""):
         lines.append(f"- Validation: `{base / 'validation'}`")
     if pkg_dir and pkg_dir.exists():
         lines.append(f"- Package: `{pkg_dir}`")
+    if published_paths:
+        lines.append(f"- QuantStudio GUI strategy: `{published_paths['quantstudio']}`")
+        lines.append(f"- PTrade strategy: `{published_paths['ptrade-default']}`")
 
     lines += ["", "## Files for the user"]
+    if published_paths:
+        lines.append(f"- QuantStudio/PyQt: `{published_paths['quantstudio']}`")
+        lines.append(f"- PTrade: `{published_paths['ptrade-default']}`")
     listed = False
     if pkg_dir and pkg_dir.exists():
         for f in sorted(pkg_dir.iterdir()):
@@ -207,24 +226,49 @@ def _write_report(base, spec, run_card, pkg_dir, delivery_status, reason=""):
     (base / "DELIVERY_REPORT.md").write_text("\n".join(lines), encoding="utf-8", newline="\n")
 
 
+def _discover_project_root(spec_path: Path | None = None, explicit: str | Path | None = None) -> Path:
+    if explicit:
+        root = Path(explicit).resolve()
+        if not (root / "quantstudio" / "backtest" / "strategies").is_dir():
+            raise RuntimeError(f"invalid QuantStudio project root: {root}")
+        return root
+    candidates = [Path.cwd().resolve()]
+    if spec_path is not None:
+        candidates.extend(spec_path.resolve().parents)
+    for candidate in candidates:
+        if (candidate / "quantstudio" / "backtest" / "strategies").is_dir():
+            return candidate
+    raise RuntimeError(
+        "cannot locate QuantStudio project root; run from the project root or pass --project-root"
+    )
+
+
 def main(argv=None) -> int:
     import argparse
     parser = argparse.ArgumentParser(description="Deliver strategy: validate + package")
     parser.add_argument("spec", help="Path to strategy_spec.json")
     parser.add_argument("--out", required=True, help="Output directory")
     parser.add_argument("--g2-frozen-dir", default=None)
-    parser.add_argument("--package-version", default="0.3.0-mvp")
+    parser.add_argument("--package-version", default="0.3.2-mvp")
     parser.add_argument("--no-smoke", action="store_true")
     parser.add_argument("--allow-deferred-smoke", action="store_true",
                         help="Explicitly allow package generation with smoke BLOCKED/absent")
+    parser.add_argument("--project-root", default=None,
+                        help="QuantStudio project root; defaults to auto-discovery")
+    parser.add_argument("--no-publish", action="store_true",
+                        help="Do not publish strategies to project ptrade/ and GUI strategy directories")
     args = parser.parse_args(argv)
 
-    spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
+    spec_path = Path(args.spec).resolve()
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
     try:
+        project_root = None if args.no_publish else _discover_project_root(
+            spec_path, args.project_root)
         base = deliver_strategy(
             spec, out_dir=args.out, g2_frozen_dir=args.g2_frozen_dir,
             package_version=args.package_version, run_smoke=not args.no_smoke,
-            allow_deferred_smoke=args.allow_deferred_smoke)
+            allow_deferred_smoke=args.allow_deferred_smoke,
+            project_root=project_root)
         print(f"delivery complete: {base}")
         return 0
     except DeliveryConfirmationError as e:

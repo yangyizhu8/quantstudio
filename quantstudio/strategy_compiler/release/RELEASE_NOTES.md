@@ -1,4 +1,15 @@
-# QuantStudio Strategy Compiler — Release Notes
+# QuantStudio Strategy Compiler ? Release Notes
+
+## 0.3.2-mvp (Runtime Compatibility and Stable Publish Corrective)
+
+- PTrade daily templates accept pandas and NumPy structured-array `get_history` results.
+- Unsupported or history-empty securities are skipped instead of crashing on `BarDict`.
+- Daily ranking is computed before trading from previous-close history; trading is scheduled with `run_daily`; `handle_data` does not repeatedly recalculate or access unsupported symbols.
+- Multi-stock portfolios use `order_target_value` target sizing for daily equal-weight restoration.
+- Shanghai/Broker suffix aliases are normalized and QuantStudio batch-history keys use bare-code lookup.
+- Skill delivery publishes QuantStudio strategies to `quantstudio/backtest/strategies/` and PTrade strategies to project-root `ptrade/`.
+- Delivery prefers the live project package over stale site-packages and can locate the capability inspector from the project Skill.
+- Real data digest and cross-platform Fidelity remain deferred.
 
 ## 0.3.0-mvp (G4 Release Closure)
 

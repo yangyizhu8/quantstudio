@@ -108,6 +108,7 @@ class _Position:
 class _Portfolio:
     def __init__(self, cash=100_000.0):
         self.cash = cash
+        self.total_value = cash
         self.positions = {}  # code -> _Position
 
 
@@ -133,15 +134,17 @@ def _build_stubs(stock_list, *, seed_offset=0):
       - data: {code: _Bar} for the current bar's close
     """
     orders = []
-    history = {code: _make_close_series(i + seed_offset) for i, code in enumerate(stock_list)}
+    scheduled = []
+    bare = lambda code: str(code).split(".")[0]
+    history = {bare(code): _make_close_series(i + seed_offset) for i, code in enumerate(stock_list)}
     # current bar close = last hist value + small delta (so pct_change is well-defined)
-    data = {code: _Bar(float(history[code][-1] + 0.5)) for code in stock_list}
+    data = {code: _Bar(float(history[bare(code)][-1] + 0.5)) for code in stock_list}
 
     def get_history_batch(security_list, count, unit="1d", fields=None, fq=None, include=False):
         # Real: returns CodeDict{code: DataFrame}. Build DataFrames from arrays.
         out = {}
         for code in security_list:
-            arr = history[code][-count:]
+            arr = history[bare(code)][-count:]
             out[code] = pd.DataFrame({"close": arr})
         return out  # dict-like with .items()
 
@@ -149,7 +152,7 @@ def _build_stubs(stock_list, *, seed_offset=0):
                     fq=None, include=False, is_dict=False):
         # PTrade per-stock: returns {code: DataFrame} when is_dict=True
         code = security_list
-        arr = history[code][-count:]
+        arr = history[bare(code)][-count:]
         return {code: pd.DataFrame({"close": arr})}
 
     def filter_stock_by_status(stock_list, filter_type=None, query_date=None):
@@ -180,7 +183,8 @@ def _build_stubs(stock_list, *, seed_offset=0):
         "order_target": order_target,
         "get_position": get_position,
         "log": types.SimpleNamespace(info=lambda *a, **k: None),
-        "run_daily": lambda ctx, fn, time=None: None,  # no-op scheduler
+        "run_daily": lambda ctx, fn, time=None: scheduled.append((fn, time)),
+        "_scheduled": scheduled,
         "np": np,
         "g": _G(),
     }
@@ -203,6 +207,8 @@ def _execute_strategy(code_str, stock_list, *, context=None, call_handle_data=Tr
     ns["before_trading_start"](ctx, data)
     if call_trade_on_minute and "_trade_on_minute" in ns:
         ns["_trade_on_minute"](ctx)
+    elif ns.get("_scheduled"):
+        ns["_scheduled"][0][0](ctx)
     elif call_handle_data and "handle_data" in ns:
         ns["handle_data"](ctx, data)
     return ns, orders, ctx
@@ -234,9 +240,8 @@ class TestExecQSDailyManualList:
         ir = build_strategy_ir(spec)
         code = render_quantstudio(ir)
         ns, orders, ctx = _execute_strategy(code, self.STOCKS, call_handle_data=True)
-        # exactly 1 order_value (buy 1 stock), not 2
-        buys = [o for o in orders if o[0] == "order_value"]
-        assert len(buys) == 1, f"top_n=1 should select 1 stock, got {len(buys)} buys: {buys}"
+        targets = [o for o in orders if o[0] == "order_target_value" and o[2] > 0]
+        assert len(targets) == 1, f"top_n=1 should target 1 stock, got {len(targets)}: {targets}"
 
     def test_history_is_1d_array(self, case1_spec):
         """g.history[code] must be a 1-D array (bug#2: was CodeDict/DataFrame)."""
@@ -245,9 +250,10 @@ class TestExecQSDailyManualList:
         code = render_quantstudio(ir)
         ns, _, _ = _execute_strategy(code, self.STOCKS, call_handle_data=True)
         for code_s in self.STOCKS:
-            arr = ns["g"].history[code_s]
-            assert isinstance(arr, np.ndarray), f"history[{code_s}] is {type(arr)}, expected ndarray"
-            assert arr.ndim == 1, f"history[{code_s}] is {arr.ndim}D, expected 1D"
+            key = code_s.split(".")[0]
+            arr = ns["g"].history[key]
+            assert isinstance(arr, np.ndarray), f"history[{key}] is {type(arr)}, expected ndarray"
+            assert arr.ndim == 1, f"history[{key}] is {arr.ndim}D, expected 1D"
 
 
 # ---------------------------------------------------------------------------
@@ -270,8 +276,8 @@ class TestExecPTradeDailyManualList:
         ir = build_strategy_ir(spec)
         code = render_ptrade(ir)
         ns, orders, ctx = _execute_strategy(code, self.STOCKS, call_handle_data=True)
-        buys = [o for o in orders if o[0] == "order_value"]
-        assert len(buys) == 1, f"PTrade top_n=1 should buy 1, got {len(buys)}"
+        targets = [o for o in orders if o[0] == "order_target_value" and o[2] > 0]
+        assert len(targets) == 1, f"PTrade top_n=1 should target 1, got {len(targets)}"
 
 
 # ---------------------------------------------------------------------------
@@ -311,8 +317,8 @@ class TestExecMinuteManualList:
         ir = _to_minute_ir(build_strategy_ir(spec))
         code = render_ptrade(ir)
         ns, orders, ctx = _execute_strategy(code, self.STOCKS, call_trade_on_minute=True)
-        buys = [o for o in orders if o[0] == "order_value"]
-        assert len(buys) == 1
+        targets = [o for o in orders if o[0] == "order_target_value" and o[2] > 0]
+        assert len(targets) == 1
 
 
 # ---------------------------------------------------------------------------

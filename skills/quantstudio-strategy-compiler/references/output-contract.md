@@ -49,3 +49,14 @@
 ## 5. PR5 现实约束
 
 Skill 当前版本（PR5）停在 Spec：Run Card `stage = SPEC_ONLY`、`status = PARTIAL`。`SMOKE_EXECUTED`/`FIDELITY_COMPARED` 需要 PR6 渲染产物（`.py`/`strategy_ir.json`/`local_backtest/`/`fidelity/`）实际存在后才能填入，PR5 不得伪造这些阶段或目录。
+
+## 6. Stable user-facing publish paths (0.3.2)
+
+After validation and package creation, publish entry points to:
+
+```text
+<project-root>/quantstudio/backtest/strategies/<strategy_id>_quantstudio.py
+<project-root>/ptrade/<strategy_id>_ptrade.py
+```
+
+The first directory is the exact directory scanned by the PyQt backtest strategy selector. The structured package remains the audit source; published files are byte-identical copies of its entry points. If a different file already exists and `output.overwrite=false`, publishing fails closed. Identical existing files are idempotent.
