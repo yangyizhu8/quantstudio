@@ -81,6 +81,7 @@ class DummyMainWindow:
     def __init__(self, config_dir):
         self.config_dir = config_dir
         self.stackedWidget = EmptyStackedWidget()
+        self._tabs = {}
 
 
 def test_source_tab_uses_transparent_fluent_scroll_area(
