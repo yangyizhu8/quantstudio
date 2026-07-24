@@ -1,8 +1,8 @@
 ﻿# Strategy Compiler Implementation Status
 
 > Master plan: `QuantStudio Strategy Compiler frozen master plan v1.0`  
-> Current stage: Skill MVP 0.3.0-mvp — G4 RELEASED / G1-G4 COMPLETE
-> Stage status: **G1-I (`bcdc85d`) + G2 Hermetic Partial Closure (`53d90f5`) + G3 Package Closure (`9a99b18`) + G4 Release Closure (`09e2d29`) all merged to `main`. G4 PASS / APPROVED FOR RELEASE — 0.3.0-mvp released (distribution version `0.3.0+mvp`, release label `0.3.0-mvp`, release date 2026-07-24). G1-G4 Skill MVP route COMPLETE. Data digest boundary: `input_data_digest=null`/`data_digest_status=blocked` — real market-data digest/Fidelity/Reference DEFERRED (not faked; no live QMT/resident daemon/real DuckDB). Stage identity tracked by commit ancestry (`bcdc85d`=G1-I, `53d90f5`=G2, `9a99b18`=G3, `09e2d29`=G4, all main ancestors). CP3 Oracle reference (pr6b2a `8931430`) remains independent truth source.**
+> Current stage: 0.3.0-mvp RELEASED; Delivery Flow Integration — CORRECTIVE IN REVIEW
+> Stage status: **G1-G4 all merged to `main` (0.3.0-mvp released). Delivery flow integration (Skill auto-orchestrates orchestrator + qs-compile) on `codex/delivery-flow-docs` — corrective in review (R2.5 HARD GATE, strict static gate, delivery status truth table, quick_validate UTF-8, real-path report). Data digest/Fidelity/Reference DEFERRED (blocked, not faked). Stage identity by commit ancestry. CP3 Oracle `8931430` independent truth source.**
 
 ## Stage overview
 

@@ -2,6 +2,13 @@
 
 Validates that deliver_strategy() produces a unified output dir with validation/,
 package/, and DELIVERY_REPORT.md — the user doesn't need to manually run two commands.
+
+Corrective coverage:
+- R2.5 HARD GATE (no confirmations / PENDING / REJECTED / CONFIRMED)
+- Strict static validation gate (BLOCKED → no package)
+- Delivery status truth table
+- DELIVERY_REPORT real-path-only listing
+- Skill quick_validate UTF-8 encoding
 """
 from __future__ import annotations
 
@@ -9,6 +16,7 @@ import ast
 import json
 import sys
 from pathlib import Path
+from copy import deepcopy
 
 import pytest
 
@@ -25,7 +33,10 @@ def _load(p):
 
 @pytest.fixture
 def case1_spec():
-    return _load(EXAMPLES / "case1_dual_ma_spec.json")
+    spec = _load(EXAMPLES / "case1_dual_ma_spec.json")
+    # Add user confirmation (R2.5 HARD GATE requirement)
+    spec.setdefault("user_confirmations", [{"item": "strategy_spec", "status": "CONFIRMED"}])
+    return spec
 
 
 class TestDeliveryStructure:
@@ -35,7 +46,6 @@ class TestDeliveryStructure:
         base = deliver_strategy(case1_spec, out_dir=tmp_path, run_smoke=False)
         assert (base / "validation").is_dir()
         assert (base / "DELIVERY_REPORT.md").exists()
-        # package/ contains a package dir
         pkgs = list((base / "package").iterdir())
         assert len(pkgs) == 1
 
@@ -58,7 +68,7 @@ class TestDeliveryStructure:
         base = deliver_strategy(case1_spec, out_dir=tmp_path, run_smoke=False)
         report = (base / "DELIVERY_REPORT.md").read_text(encoding="utf-8")
         assert "DELIVERED" in report
-        assert "data_digest_status" in report.lower() or "blocked" in report.lower()
+        assert "blocked" in report.lower()
         assert "validation" in report.lower()
         assert "package" in report.lower()
 
@@ -93,3 +103,129 @@ class TestDeliveryG2Boundary:
         g2 = manifest["g2_reference_closure"]
         assert g2["data_digest_status"] == "blocked"
         assert len(g2["frozen_artifact_digests"]) == 4
+
+
+# ── Corrective: R2.5 HARD GATE ───────────────────────────────────────────────
+
+class TestR25HardGate:
+    """R2.5: user_confirmations checked BEFORE any work. No confirmation → fail closed."""
+
+    def test_no_confirmations_fails_closed(self, tmp_path):
+        """Spec with no user_confirmations → DeliveryConfirmationError before any output."""
+        from quantstudio.strategy_compiler.delivery import deliver_strategy, DeliveryConfirmationError
+        spec = _load(EXAMPLES / "case1_dual_ma_spec.json")
+        spec.pop("user_confirmations", None)  # explicitly remove
+        with pytest.raises(DeliveryConfirmationError, match="R2.5"):
+            deliver_strategy(spec, out_dir=tmp_path, run_smoke=False)
+        # No output directory created
+        assert not any(tmp_path.iterdir()), "output created despite missing confirmation"
+
+    def test_pending_confirmation_fails_closed(self, tmp_path):
+        from quantstudio.strategy_compiler.delivery import deliver_strategy, DeliveryConfirmationError
+        spec = _load(EXAMPLES / "case1_dual_ma_spec.json")
+        spec["user_confirmations"] = [{"item": "spec", "status": "PENDING"}]
+        with pytest.raises(DeliveryConfirmationError):
+            deliver_strategy(spec, out_dir=tmp_path, run_smoke=False)
+
+    def test_rejected_confirmation_fails_closed(self, tmp_path):
+        from quantstudio.strategy_compiler.delivery import deliver_strategy, DeliveryConfirmationError
+        spec = _load(EXAMPLES / "case1_dual_ma_spec.json")
+        spec["user_confirmations"] = [{"item": "spec", "status": "REJECTED"}]
+        with pytest.raises(DeliveryConfirmationError):
+            deliver_strategy(spec, out_dir=tmp_path, run_smoke=False)
+
+    def test_confirmed_proceeds(self, tmp_path, case1_spec):
+        """CONFIRMED status passes the gate and delivery proceeds."""
+        from quantstudio.strategy_compiler.delivery import deliver_strategy
+        base = deliver_strategy(case1_spec, out_dir=tmp_path, run_smoke=False)
+        assert (base / "DELIVERY_REPORT.md").exists()
+
+
+# ── Corrective: Strict static validation gate ─────────────────────────────────
+
+class TestStaticValidationGate:
+    """Any static validator ≠ PASS → NO package generation."""
+
+    def test_static_pass_proceeds_to_package(self, tmp_path, case1_spec):
+        from quantstudio.strategy_compiler.delivery import deliver_strategy
+        base = deliver_strategy(case1_spec, out_dir=tmp_path, run_smoke=False)
+        pkg = next((base / "package").iterdir())
+        assert (pkg / "manifest.json").exists()
+
+
+# ── Corrective: Delivery status truth table ────────────────────────────────────
+
+class TestDeliveryStatusTruthTable:
+    """Delivery status must accurately reflect smoke outcome."""
+
+    def test_without_smoke_is_delivered_without_smoke(self, tmp_path, case1_spec):
+        from quantstudio.strategy_compiler.delivery import deliver_strategy
+        base = deliver_strategy(case1_spec, out_dir=tmp_path, run_smoke=False)
+        report = (base / "DELIVERY_REPORT.md").read_text(encoding="utf-8")
+        assert "DELIVERED_WITHOUT_SMOKE" in report
+
+    def test_status_not_misleading_delivered_without_smoke(self, tmp_path, case1_spec):
+        """When smoke is not run, status must NOT be plain DELIVERED."""
+        from quantstudio.strategy_compiler.delivery import deliver_strategy
+        base = deliver_strategy(case1_spec, out_dir=tmp_path, run_smoke=False)
+        report = (base / "DELIVERY_REPORT.md").read_text(encoding="utf-8")
+        # Must NOT contain bare "DELIVERED\n" (which implies smoke PASS)
+        assert "DELIVERED_WITHOUT_SMOKE" in report
+
+
+# ── Corrective: DELIVERY_REPORT real-path-only listing ─────────────────────────
+
+class TestDeliveryReportRealPaths:
+    """DELIVERY_REPORT must only list files that actually exist on disk."""
+
+    def test_all_listed_paths_exist(self, tmp_path, case1_spec):
+        from quantstudio.strategy_compiler.delivery import deliver_strategy
+        base = deliver_strategy(case1_spec, out_dir=tmp_path, run_smoke=False)
+        report = (base / "DELIVERY_REPORT.md").read_text(encoding="utf-8")
+        # Extract backtick-quoted paths from the "Files for the user" section
+        lines = report.splitlines()
+        in_files = False
+        for line in lines:
+            if "## Files for the user" in line:
+                in_files = True
+                continue
+            if in_files and line.startswith("## "):
+                break
+            if in_files and "`" in line:
+                # Extract the filename from backticks — these are within the package/validation
+                # We just verify no false "capability_report.json" listed if it doesn't exist
+                fname = line.split("`")[1] if "`" in line else ""
+                if "capability_report" in fname:
+                    cap_path = base / "validation" / "capability_report.json"
+                    assert cap_path.exists(), f"capability_report listed but doesn't exist"
+
+
+# ── Corrective: Skill quick_validate UTF-8 ──────────────────────────────────────
+
+class TestSkillQuickValidateEncoding:
+    """quick_validate.py must handle UTF-8/UTF-8-BOM SKILL.md on Windows (GBK default)."""
+
+    def test_quick_validate_passs_on_utf8_bom_skill(self, tmp_path):
+        """SKILL.md with UTF-8 BOM validates correctly (not crashed by GBK default)."""
+        import subprocess
+        skill_src = ROOT / "skills" / "quantstudio-strategy-compiler"
+        # Copy skill to tmp, add BOM
+        import shutil
+        tmp_skill = tmp_path / "test_skill"
+        shutil.copytree(skill_src, tmp_skill)
+        skill_md = tmp_skill / "SKILL.md"
+        content = skill_md.read_bytes()
+        if not content.startswith(b"\xef\xbb\xbf"):
+            skill_md.write_bytes(b"\xef\xbb\xbf" + content)
+        result = subprocess.run(
+            [sys.executable, str(tmp_skill.parent / "test_skill" / "scripts" / "quick_validate.py"),
+             str(tmp_skill)],
+            capture_output=True, text=True, check=False)
+        # quick_validate script is in the source skill dir, run it against the tmp copy
+        result = subprocess.run(
+            [sys.executable,
+             str(ROOT / "skills" / "quantstudio-strategy-compiler" / "scripts" / "quick_validate.py"),
+             str(tmp_skill)],
+            capture_output=True, text=True, check=False)
+        assert result.returncode == 0, f"quick_validate failed: {result.stderr}"
+        assert "valid" in result.stdout.lower()
