@@ -75,6 +75,7 @@ class MainWindow(FluentWindow):
 
         # 切换 Tab 时自动刷新数据
         self.stackedWidget.currentChanged.connect(self._on_tab_switched)
+        self.navigationInterface.expand(useAni=False)
 
     def _create_tab(self, row: int) -> QWidget:
         """创建指定 Tab 组件，失败时返回错误提示标签"""

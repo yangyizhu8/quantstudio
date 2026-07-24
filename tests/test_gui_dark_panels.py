@@ -12,8 +12,10 @@ qt_widgets = pytest.importorskip("PyQt6.QtWidgets")
 qfluentwidgets = pytest.importorskip("qfluentwidgets")
 
 QApplication = qt_widgets.QApplication
+NavigationInterface = qfluentwidgets.NavigationInterface
 ScrollArea = qfluentwidgets.ScrollArea
 
+from quantstudio.gui.main_window import MainWindow
 from quantstudio.gui.tabs.backtest_tab import BacktestTab
 from quantstudio.gui.tabs.config_editor_tab import ConfigEditorTab
 from quantstudio.gui.tabs.quality_tab import QualityTab
@@ -86,6 +88,27 @@ class DummyMainWindow:
         self.root_path = config_dir.parent if config_dir is not None else None
         self.stackedWidget = EmptyStackedWidget()
         self._tabs = {}
+
+
+def test_main_window_expands_navigation_without_animation(
+    app, monkeypatch, tmp_path
+):
+    calls = []
+
+    monkeypatch.setattr(
+        NavigationInterface,
+        "expand",
+        lambda self, useAni=True: calls.append(useAni),
+    )
+    monkeypatch.setattr(MainWindow, "_create_tab", lambda self, row: qt_widgets.QWidget())
+    monkeypatch.setattr(MainWindow, "_integrate_log_panel", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_install_log_handler", lambda self: None)
+
+    window = MainWindow(object(), tmp_path)
+
+    assert calls == [False]
+    window.close()
+    app.processEvents()
 
 
 def test_quality_tab_keeps_details_in_four_column_table(app):
