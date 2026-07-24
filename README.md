@@ -97,6 +97,8 @@ result, output_dir = payload
 - 数据 100% 来自 DuckDB（QuantStudio 数据管线产出），策略禁止直连数据库（强制隔离）。
 - 含与看海量化（khQuant）[策略工具箱](https://khsci.com/khQuant/chapter13/)的对照表，便于跨框架迁移。
 
+> **让 AI 帮你写策略**：想把策略需求交给其他智能体、自动产出可运行策略并落入 GUI 可选目录？参见 **[`docs/prompt_engineering.md`](docs/prompt_engineering.md)**（提示词工程 V1，含「策略文件自动落盘到 `quantstudio/backtest/strategies/`」指令）。
+
 ## 质量与对齐
 
 ```bash
