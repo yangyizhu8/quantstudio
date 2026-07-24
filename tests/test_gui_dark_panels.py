@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -13,6 +14,7 @@ qfluentwidgets = pytest.importorskip("qfluentwidgets")
 QApplication = qt_widgets.QApplication
 ScrollArea = qfluentwidgets.ScrollArea
 
+from quantstudio.gui.tabs.backtest_tab import BacktestTab
 from quantstudio.gui.tabs.config_editor_tab import ConfigEditorTab
 from quantstudio.gui.tabs.quality_tab import QualityTab
 from quantstudio.gui.tabs.source_tab import SourceTab
@@ -81,6 +83,7 @@ class EmptyStackedWidget:
 class DummyMainWindow:
     def __init__(self, config_dir):
         self.config_dir = config_dir
+        self.root_path = config_dir.parent if config_dir is not None else None
         self.stackedWidget = EmptyStackedWidget()
         self._tabs = {}
 
@@ -190,3 +193,67 @@ def test_save_tasks_preserves_source_priority_and_passthrough_fields(
     assert saved["passthrough_option"] == {"keep": True}
     assert saved["end_date"] == "2026-07-24"
     assert saved["max_workers"] == 9
+
+
+@pytest.fixture
+def backtest_tab(app, tmp_path):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    return BacktestTab(DummyMainWindow(config_dir))
+
+
+def test_backtest_progress_logs_once_and_updates_status(backtest_tab, caplog):
+    message = "加载策略: demo.py"
+
+    with caplog.at_level(logging.INFO, logger="quantstudio.gui.tabs.backtest_tab"):
+        backtest_tab._on_progress(message)
+
+    matching = [record for record in caplog.records if record.getMessage() == message]
+    assert len(matching) == 1
+    assert backtest_tab.status_label.text() == message
+    assert not hasattr(backtest_tab, "log_text")
+
+
+def test_backtest_finished_does_not_repeat_completion_log(
+    backtest_tab, caplog, monkeypatch
+):
+    class StubBacktestResultWindow:
+        def __init__(self, output_dir, root_path):
+            self.output_dir = output_dir
+            self.root_path = root_path
+
+        def show(self):
+            pass
+
+    monkeypatch.setattr(
+        "quantstudio.gui.backtest_result_window.BacktestResultWindow",
+        StubBacktestResultWindow,
+    )
+    message = "回测完成: output/run-1"
+
+    with caplog.at_level(logging.INFO, logger="quantstudio.gui.tabs.backtest_tab"):
+        backtest_tab._on_progress(message)
+        backtest_tab._on_finished({"output_dir": "output/run-1"})
+
+    matching = [record for record in caplog.records if record.getMessage() == message]
+    assert len(matching) == 1
+
+
+def test_backtest_error_logs_once_and_shows_message_box(
+    backtest_tab, caplog, monkeypatch
+):
+    calls = []
+    monkeypatch.setattr(
+        qt_widgets.QMessageBox,
+        "critical",
+        lambda *args: calls.append(args),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="quantstudio.gui.tabs.backtest_tab"):
+        backtest_tab._on_error("engine failed")
+
+    matching = [
+        record for record in caplog.records if "engine failed" in record.getMessage()
+    ]
+    assert len(matching) == 1
+    assert len(calls) == 1
