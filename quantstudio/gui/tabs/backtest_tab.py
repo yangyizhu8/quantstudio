@@ -8,9 +8,9 @@ from pathlib import Path
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
-    QMessageBox, QSplitter)
+    QMessageBox)
 from qfluentwidgets import (
-    ComboBox, LineEdit, PushButton, ProgressBar, PlainTextEdit,
+    ComboBox, LineEdit, PushButton, ProgressBar,
     GroupHeaderCardWidget, DoubleSpinBox, SpinBox)
 
 from ..workers import BacktestWorker
@@ -109,17 +109,6 @@ class BacktestTab(QWidget):
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
 
-        # 5. 日志面板
-        log_group = GroupHeaderCardWidget()
-        log_group.setTitle("回测日志")
-        log_layout = log_group.layout()  # reuse the card's existing QVBoxLayout
-        self.log_text = PlainTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setMaximumBlockCount(3000)
-        self.log_text.setStyleSheet("font-family: Consolas, monospace; font-size: 12px;")
-        log_layout.addWidget(self.log_text)
-        layout.addWidget(log_group, 1)
-
         self._refresh_strategies()
 
     def _refresh_strategies(self):
@@ -155,9 +144,6 @@ class BacktestTab(QWidget):
             'match_price_mode': self.match_price_combo.currentData(),
         }
 
-        # 清空日志
-        self.log_text.clear()
-
         # 创建 Worker
         self._worker = BacktestWorker(strategy_path, params)
         self._worker.progress.connect(self._on_progress)
@@ -182,8 +168,8 @@ class BacktestTab(QWidget):
             self.status_label.setText("正在停止...")
 
     def _on_progress(self, msg):
-        """日志消息"""
-        self.log_text.appendPlainText(msg)
+        """记录回测进度消息并更新状态。"""
+        logger.info(msg)
         self.status_label.setText(msg[:80])
 
     def _on_day_progress(self, current, total, date_str):
@@ -199,7 +185,6 @@ class BacktestTab(QWidget):
 
         output_dir = result.get("output_dir", "")
         self.status_label.setText(f"✅ 回测完成: {output_dir}")
-        self.log_text.appendPlainText(f"\n✅ 回测完成，结果导出至: {output_dir}")
 
         # 打开结果可视化窗口
         try:
@@ -216,7 +201,7 @@ class BacktestTab(QWidget):
         self.stop_btn.setEnabled(False)
         self.progress_bar.setVisible(False)
         self.status_label.setText(f"❌ 回测失败")
-        self.log_text.appendPlainText(f"\n❌ 错误: {err}")
+        logger.error(err)
         QMessageBox.critical(self, "回测错误", err[:500])
 
     def refresh(self):

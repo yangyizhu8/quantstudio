@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidgetItem,
     QHeaderView, QLabel)
 from qfluentwidgets import (
-    TableWidget, PushButton, PlainTextEdit, GroupHeaderCardWidget)
+    TableWidget, PushButton, GroupHeaderCardWidget)
 
 logger = logging.getLogger(__name__)
 
@@ -73,15 +73,6 @@ class QualityTab(QWidget):
         glayout.addWidget(self.check_table)
         layout.addWidget(group, 2)
 
-        detail_group = GroupHeaderCardWidget()
-        detail_group.setTitle("详情")
-        detail_layout = detail_group.layout()  # reuse the card's existing QVBoxLayout
-        self.detail_text = PlainTextEdit()
-        self.detail_text.setReadOnly(True)
-        self.detail_text.setStyleSheet("font-family: Consolas, monospace; font-size: 12px;")
-        detail_layout.addWidget(self.detail_text)
-        layout.addWidget(detail_group, 1)
-
     def _run_all_checks(self):
         checks = [
             ("0", "统一契约审计（全表/复权/频率/水位）", self._check_contract_audit),
@@ -96,7 +87,6 @@ class QualityTab(QWidget):
             ("9", "isST 缺失", self._check_isst_null),
         ]
         self.check_table.setRowCount(len(checks))
-        all_detail = []
         for i, (num, name, fn) in enumerate(checks):
             self.check_table.setItem(i, 0, QTableWidgetItem(num))
             self.check_table.setItem(i, 1, QTableWidgetItem(name))
@@ -106,8 +96,6 @@ class QualityTab(QWidget):
                 result, detail = "❌ 异常", str(e)
             self.check_table.setItem(i, 2, QTableWidgetItem(result))
             self.check_table.setItem(i, 3, QTableWidgetItem(detail.split("\n")[0][:80]))
-            all_detail.append(f"[{num}] {name}\n{result}\n{detail}\n")
-        self.detail_text.setPlainText("\n".join(all_detail))
 
     def _check_contract_audit(self):
         """配置驱动的全库质量审计，覆盖所有 schema。"""
