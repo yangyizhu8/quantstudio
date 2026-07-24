@@ -1,8 +1,8 @@
 ﻿# Strategy Compiler Implementation Status
 
 > Master plan: `QuantStudio Strategy Compiler frozen master plan v1.0`  
-> Current stage: 0.3.0-mvp RELEASED; Delivery Flow Integration — CORRECTIVE IN REVIEW
-> Stage status: **G1-G4 all merged to `main` (0.3.0-mvp released). Delivery flow integration (Skill auto-orchestrates orchestrator + qs-compile) on `codex/delivery-flow-docs` — corrective in review (R2.5 HARD GATE, strict static gate, delivery status truth table, quick_validate UTF-8, real-path report). Data digest/Fidelity/Reference DEFERRED (blocked, not faked). Stage identity by commit ancestry. CP3 Oracle `8931430` independent truth source.**
+> Current stage: 0.3.0-mvp RELEASED; Delivery Flow Integration — MERGED TO MAIN / PASS
+> Stage status: **G1-G4 + Delivery Flow Integration all merged to `main` (0.3.0-mvp released). Delivery flow: Skill auto-orchestrates orchestrator + Skill-local deliver_strategy.py (`545f6bd`→`f5a1821`→`6b076de`→`98bf145`, all main ancestors). R2.5 HARD GATE (ALL confirmations CONFIRMED), strict static gate, smoke truth table (unknown always fail closed), 29 delivery tests PASS. Wheel SHA-256 unchanged (ccda32d9...). Data digest/Fidelity/Reference DEFERRED (blocked, not faked). CP3 Oracle `8931430` independent truth source.**
 
 ## Stage overview
 
