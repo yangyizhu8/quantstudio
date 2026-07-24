@@ -87,6 +87,16 @@ result, output_dir = payload
 
 策略文件无需导入数据库或 provider，只实现 `initialize`、`before_trading_start`、`handle_data` 和可选 `after_trading_end`。
 
+## 策略工具箱（PTrade 兼容 API 参考）
+
+写策略 / 移植 Ptrade 策略时，可直接使用的**全部生命周期回调、注入式 API 函数、MyTT 指标库与 A股交易规则**，详见 **[`docs/strategy_toolbox.md`](docs/strategy_toolbox.md)**。
+
+要点：
+- 策略文件**零 import**：引擎加载时自动注入全部 API（`get_history` / `get_fundamentals` / `order_*` 等 50+ 函数）、MyTT 指标库、`shared_ashare_rules` A股规则，以及 `g` / `log` / `pandas` / `numpy`。
+- 完整 Ptrade 生命周期：`initialize`（必需）+ `before_trading_start` / `handle_data` / `after_trading_end` / `set_backtest`（可选）。
+- 数据 100% 来自 DuckDB（QuantStudio 数据管线产出），策略禁止直连数据库（强制隔离）。
+- 含与看海量化（khQuant）[策略工具箱](https://khsci.com/khQuant/chapter13/)的对照表，便于跨框架迁移。
+
 ## 质量与对齐
 
 ```bash
