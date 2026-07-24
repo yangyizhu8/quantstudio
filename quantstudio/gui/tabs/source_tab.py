@@ -5,9 +5,9 @@ import json
 import logging
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QFormLayout, QLabel, QMessageBox, QScrollArea)
+    QWidget, QVBoxLayout, QFormLayout, QLabel, QMessageBox)
 from qfluentwidgets import (
-    GroupHeaderCardWidget, CheckBox, LineEdit, PushButton)
+    GroupHeaderCardWidget, CheckBox, LineEdit, PushButton, ScrollArea)
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +24,9 @@ class SourceTab(QWidget):
         self._load_config()
 
     def _setup_ui(self):
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
+        self.scroll_area = ScrollArea()
+        self.scroll_area.enableTransparentBackground()
+        self.scroll_area.setWidgetResizable(True)
         inner = QWidget()
         self.inner_layout = QVBoxLayout(inner)
 
@@ -69,9 +70,9 @@ class SourceTab(QWidget):
         self.inner_layout.addWidget(self.save_btn)
         self.inner_layout.addStretch()
 
-        scroll.setWidget(inner)
+        self.scroll_area.setWidget(inner)
         outer = QVBoxLayout(self)
-        outer.addWidget(scroll)
+        outer.addWidget(self.scroll_area)
 
     def _load_config(self):
         try:
