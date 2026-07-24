@@ -95,7 +95,6 @@ result, output_dir = payload
 - 策略文件**零 import**：引擎加载时自动注入全部 API（`get_history` / `get_fundamentals` / `order_*` 等 50+ 函数）、MyTT 指标库、`shared_ashare_rules` A股规则，以及 `g` / `log` / `pandas` / `numpy`。
 - 完整 Ptrade 生命周期：`initialize`（必需）+ `before_trading_start` / `handle_data` / `after_trading_end` / `set_backtest`（可选）。
 - 数据 100% 来自 DuckDB（QuantStudio 数据管线产出），策略禁止直连数据库（强制隔离）。
-- 含与看海量化（khQuant）[策略工具箱](https://khsci.com/khQuant/chapter13/)的对照表，便于跨框架迁移。
 
 > **让 AI 帮你写策略**：想把策略需求交给其他智能体、自动产出可运行策略并落入 GUI 可选目录？参见 **[`docs/prompt_engineering.md`](docs/prompt_engineering.md)**（提示词工程 V1，含「策略文件自动落盘到 `quantstudio/backtest/strategies/`」指令）。
 
@@ -116,6 +115,8 @@ python -m quantstudio.backtest.run_ptrade_strategy strategy.py 2026-01-01 2026-0
 ---
 
 ## Strategy Compiler 0.3.0-mvp — 策略编译器
+
+> **⚠ 完善中（请勿使用）**：该模块仍在开发中，**暂时不要用于策略生成**，短期内会开放。待完善完成后会移除本提示。
 
 将自然语言策略想法编译成经验证的双平台（QuantStudio + PTrade）策略包。
 

@@ -300,16 +300,3 @@ run_strategy(
 4. **运行方式**：GUI 选中路径 + CLI 命令。
 5. **风险与数据前提**：所需数据表、涨跌停/T+1 假设、过拟合提示。
 6. **落盘确认**：写出文件的绝对路径，及其在 PyQt 策略文件栏的显示说明。
-
----
-
-## 附：与看海量化（khQuant）提示词工程的对照
-
-| 维度 | 看海 khQuant | 本项目 QuantStudio |
-|---|---|---|
-| 提示词目标 | 引导 Agent 生成看海策略 | 引导 Agent 生成 Ptrade 兼容本地策略 |
-| 策略形态 | `init` / `khHandlebar` 回调 | `initialize` / `handle_data` / `before_trading_start` / `after_trading_end` / `set_backtest` |
-| 数据层 | 看海平台 | DuckDB 本地 provider（强制隔离，禁直连） |
-| 信号 vs 执行 | `generate_signal` 解耦返回信号列表 | `order_*` 即时执行，返回 Order 对象 |
-| 指标 | MyTT + 缠论 | MyTT + `get_MACD/KDJ/RSI/CCI`（无内置缠论） |
-| 落盘 | 由用户处置 | **强制写入 `strategies/` 目录**供 GUI 直选（本工程独有要求） |
