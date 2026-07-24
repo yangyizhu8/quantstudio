@@ -52,7 +52,10 @@ def config_editor_config(tmp_path):
                     "freq": "daily",
                     "enabled": True,
                     "source": "xtquant",
+                    "source_priority": ["xtquant", "tushare"],
+                    "passthrough_option": {"keep": True},
                     "start_date": "2018-01-01",
+                    "end_date": "2026-07-24",
                     "codes": ["ALL"],
                     "max_workers": 4,
                     "rate_limit": {
@@ -69,9 +72,15 @@ def config_editor_config(tmp_path):
     return config_dir
 
 
+class EmptyStackedWidget:
+    def count(self):
+        return 0
+
+
 class DummyMainWindow:
     def __init__(self, config_dir):
         self.config_dir = config_dir
+        self.stackedWidget = EmptyStackedWidget()
 
 
 def test_source_tab_uses_transparent_fluent_scroll_area(
@@ -151,3 +160,23 @@ def test_config_editor_task_frame_has_scoped_object_name(app, config_editor_conf
     assert len(tab.task_widgets) == 1
     task_frame = tab.task_widgets[0][2]
     assert task_frame.objectName() == "taskCard"
+
+
+def test_save_tasks_preserves_source_priority_and_passthrough_fields(
+    app, config_editor_config, monkeypatch
+):
+    tab = ConfigEditorTab(DummyMainWindow(config_editor_config))
+    _task, widgets, _frame = tab.task_widgets[0]
+    widgets["max_workers"].setValue(9)
+    monkeypatch.setattr(qt_widgets.QMessageBox, "information", lambda *args: None)
+
+    tab._save_tasks_config()
+
+    saved = json.loads(
+        (config_editor_config / "collector_tasks.json").read_text(encoding="utf-8")
+    )["tasks"][0]
+    assert saved["source"] == "xtquant"
+    assert saved["source_priority"] == ["xtquant", "tushare"]
+    assert saved["passthrough_option"] == {"keep": True}
+    assert saved["end_date"] == "2026-07-24"
+    assert saved["max_workers"] == 9
