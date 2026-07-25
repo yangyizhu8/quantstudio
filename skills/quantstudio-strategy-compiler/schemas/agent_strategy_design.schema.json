@@ -62,7 +62,8 @@
         "profile_id": {
           "enum": [
             "daily-bar-v1",
-            "minute-bar-v1"
+            "minute-bar-v1",
+            "daily-open-close-proxy-v1"
           ]
         },
         "bar_frequency": {

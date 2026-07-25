@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Validate agent-authored QuantStudio/PTrade strategy code against real profiles."""
 from __future__ import annotations
 
@@ -366,7 +366,7 @@ def validate_strategy(
                 owner_times = reachable_schedule_times.get(owner or "", set())
                 schedule_time = sorted(owner_times)[0] if len(owner_times) == 1 else None
                 allowed_current_minute = (
-                    design["engine_profile"]["profile_id"] == "minute-bar-v1"
+                    design["engine_profile"]["profile_id"] in ("minute-bar-v1", "daily-open-close-proxy-v1")
                     and schedule_time is not None
                     and schedule_time >= "09:31"
                     and _literal_frequency(call) in {"1m", "1min"}
@@ -397,7 +397,7 @@ def validate_strategy(
             issues.append(_issue("SCHEDULE-TIME", "BLOCK", "run_daily requires a literal confirmed time='HH:MM'", line))
         elif not re.fullmatch(r"(?:[01]?\d|2[0-3]):[0-5]\d", schedule_time):
             issues.append(_issue("SCHEDULE-TIME", "BLOCK", f"invalid run_daily time: {schedule_time!r}", line))
-        elif schedule_time == "09:30" and design["engine_profile"]["profile_id"] == "minute-bar-v1":
+        elif schedule_time == "09:30" and design["engine_profile"]["profile_id"] in ("minute-bar-v1", "daily-open-close-proxy-v1"):
             issues.append(_issue("AUCTION-BAR-UNAVAILABLE", "BLOCK", "QuantStudio minute events start at 09:31; use a confirmed 09:31 approximation or another model", line))
 
     if design["engine_profile"]["profile_id"] == "daily-bar-v1":
@@ -476,3 +476,4 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

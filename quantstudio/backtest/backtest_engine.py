@@ -370,10 +370,10 @@ class BacktestEngine:
             raise ValueError(f"match_price_mode 必须是 close/open/next_open， got {match_price_mode!r}")
         self.match_price_mode = match_price_mode
         # PR4: 引擎 Profile（daily-bar-v1 逐日循环 / minute-bar-v1 分钟事件循环）
-        if engine_profile not in ("daily-bar-v1", "minute-bar-v1"):
-            raise ValueError(f"engine_profile 必须是 daily-bar-v1/minute-bar-v1， got {engine_profile!r}")
+        if engine_profile not in ("daily-bar-v1", "minute-bar-v1", "daily-open-close-proxy-v1"):
+            raise ValueError(f"engine_profile 必须是 daily-bar-v1/minute-bar-v1/daily-open-close-proxy-v1， got {engine_profile!r}")
         # 分钟 Profile 强制即时撮合，禁用 next_open pending queue（分钟是即时 bar 流模型）
-        if engine_profile == "minute-bar-v1" and match_price_mode == "next_open":
+        if engine_profile in ("minute-bar-v1", "daily-open-close-proxy-v1") and match_price_mode == "next_open":
             raise ValueError("minute-bar-v1 不支持 next_open（分钟即时撮合模型，无跨日 pending 语义）")
         self.engine_profile = engine_profile
         # G1-I: basket 再平衡激活门禁（设计 v2 §3.2-§3.3，audit-fix 阻断1）。
@@ -408,6 +408,7 @@ class BacktestEngine:
         self._today_orders: list = []
         self._t_day_close_prices: dict = {}
         self._current_date_str: str = ""
+        self._proxy_intraday_bars: list = []
         # G1-I: basket 再平衡状态（设计 v2 §4/§3.6）。
         # _baskets: 已提交的 basket 列表（跨日持久，drain 后状态更新）。
         # _current_basket: handle_data 调用期间的活跃 basket context（None=不在 basket 内）。
@@ -428,6 +429,8 @@ class BacktestEngine:
         """
         if self.engine_profile == "minute-bar-v1":
             return "0.3.0-minute-bar"
+        if self.engine_profile == "daily-open-close-proxy-v1":
+            return "0.5.0-daily-open-close-proxy"
         if self.match_price_mode == "next_open":
             if self.basket_active:
                 return "0.4.0-next_open_basket"
@@ -487,6 +490,9 @@ class BacktestEngine:
             # PR4: 分钟 Profile 走分钟事件循环（独立方法，日线循环逐行不变）
             if self.engine_profile == "minute-bar-v1":
                 self._run_minute_day(i, day, trade_days, benchmark_raw, first_bench)
+                continue
+            if self.engine_profile == "daily-open-close-proxy-v1":
+                self._run_daily_open_close_proxy_day(i, day, trade_days, benchmark_raw, first_bench)
                 continue
 
             if i > 0:
@@ -784,6 +790,19 @@ class BacktestEngine:
             preclose = row.iloc[0].get('preClose', 0)
             if preclose and preclose > 0:
                 return (close - preclose) / preclose
+        return 0.0
+
+    def _get_open_pct_chg(self, code, curr_data, open_price):
+        """Return T+1 opening gap versus T-1 close for pending-open checks."""
+        if curr_data is None or not open_price or open_price <= 0:
+            return 0.0
+        bare = code.split(".")[0] if "." in code else code
+        row = curr_data[curr_data["code"] == bare] if "code" in curr_data.columns else pd.DataFrame()
+        if len(row) == 0:
+            return 0.0
+        preclose = row.iloc[0].get("preClose", 0)
+        if preclose and preclose > 0:
+            return (float(open_price) - float(preclose)) / float(preclose)
         return 0.0
 
     def _build_match_prices(self, curr_data, trade_days, i):
@@ -1268,7 +1287,7 @@ class BacktestEngine:
             po.status = "rejected"; po.reason = "halted"
             self._release_basket_sell_reservation(po)
             return False
-        pct_chg = self._get_pct_chg(po.code, t1_data, t1_day_str)
+        pct_chg = self._get_open_pct_chg(po.code, t1_data, t1_open)
         # direction=0 查跌停阻断（§8：跌停卖 blocked）
         if is_price_limit_blocked(po.code, 0, pct_chg):
             po.status = "rejected"; po.reason = "limit_down_blocked"
@@ -1360,7 +1379,7 @@ class BacktestEngine:
             return False, None, None, "no_price", 0.0
         if self._is_halted_at(po.code, t1_data):
             return False, None, None, "halted", 0.0
-        pct_chg = self._get_pct_chg(po.code, t1_data, t1_day_str)
+        pct_chg = self._get_open_pct_chg(po.code, t1_data, t1_open)
         # direction=1 查涨停阻断（§8：涨停买 blocked）
         if is_price_limit_blocked(po.code, 1, pct_chg):
             return False, None, None, "limit_up_blocked", 0.0
@@ -1536,7 +1555,7 @@ class BacktestEngine:
                 continue
 
             # 涨跌停检查（用 T+1 当日 pct_chg）
-            pct_chg = self._get_pct_chg(po.code, t1_data, t1_day_str)
+            pct_chg = self._get_open_pct_chg(po.code, t1_data, t1_open)
             direction_int = 1 if po.direction == "buy" else 0
             if is_price_limit_blocked(po.code, direction_int, pct_chg):
                 reason = "limit_up_blocked" if po.direction == "buy" else "limit_down_blocked"
@@ -1691,6 +1710,110 @@ class BacktestEngine:
             if preclose and preclose > 0:
                 pctchg[self._to_qmt(bare)] = (close - preclose) / preclose
         return pctchg
+
+    def _run_daily_open_close_proxy_day(self, i, day, trade_days, benchmark_raw, first_bench):
+        """Run two causal synthetic intraday snapshots from a completed daily bar.
+
+        The 09:31 snapshot exposes only the known opening print (OHLC all equal
+        to daily open).  The 15:00 snapshot exposes the completed daily OHLC.
+        This profile is a generic daily-data proxy for strategies whose
+        confirmed semantics require open entry and completed-close decisions
+        when historical minute coverage is unavailable.
+        """
+        from .ptrade_api import _api, Context, Portfolio, DataDict
+        from .minute_scheduler import _MinuteScheduler
+
+        day_str = day.strftime('%Y-%m-%d')
+        if i > 0:
+            prev_day = trade_days[i - 1]
+        else:
+            prev_date = self._providers.calendar.get_trading_day(day_str, offset=-1)
+            prev_day = (pd.Timestamp(prev_date, tz='Asia/Shanghai').to_pydatetime()
+                        if prev_date is not None else day)
+        prev_day_str = prev_day.strftime('%Y-%m-%d')
+        prev_data = (self._last_curr_data if i > 0 and getattr(self, '_last_curr_data', None) is not None
+                     else self._get_daily_data(prev_day))
+        daily_data = self._get_daily_data(day)
+        if daily_data is None or len(daily_data) == 0:
+            logger.debug("[DailyProxy] %s no daily data, skipped", day_str)
+            return
+        self._last_curr_data = daily_data
+        self._current_date_str = day_str
+        self._proxy_intraday_bars = []
+
+        for pos in self.account.positions.values():
+            pos.can_sell = pos.volume
+
+        prev_close_prices = ({self._to_qmt(c): v for c, v in zip(prev_data['code'], prev_data['close'])}
+                             if prev_data is not None and len(prev_data) > 0 else {})
+        ptrade_positions = self._get_ptrade_positions(prev_close_prices)
+        portfolio = Portfolio(self.account.cash, ptrade_positions)
+        ctx = Context(day_str, prev_day_str, portfolio)
+        self._ptrade_context = ctx
+        _api.attach_day(self, daily_data, prev_data, day_str, prev_day_str, prev_close_prices)
+
+        preopen_data = DataDict()
+        preopen_data.set_curr_data(prev_data if prev_data is not None else daily_data, prev_day_str)
+        try:
+            if 'before_trading_start' in self.strategy:
+                self.strategy['before_trading_start'](ctx, preopen_data)
+        except Exception as exc:
+            logger.error("[DailyProxy] before_trading_start error: %s", exc)
+
+        open_bar = daily_data.copy()
+        for field in ('high', 'low', 'close'):
+            open_bar[field] = open_bar['open']
+        if 'amount' in open_bar.columns:
+            open_bar['amount'] = 0.0
+        if 'volume' in open_bar.columns:
+            halted = ((open_bar.get('suspendFlag', 0) == 1) | (daily_data['volume'] <= 0))
+            open_bar['volume'] = (~halted).astype(float)
+
+        close_bar = daily_data.copy()
+        snapshots = [
+            (pd.Timestamp(f"{day_str} 09:31:00", tz='Asia/Shanghai'), open_bar),
+            (pd.Timestamp(f"{day_str} 15:00:00", tz='Asia/Shanghai'), close_bar),
+        ]
+        scheduler = _MinuteScheduler(getattr(_api, '_daily_tasks', []))
+        scheduler.reset_day()
+        for bar_ts, raw_bar in snapshots:
+            bar_df = raw_bar.copy()
+            bar_df['time'] = int(bar_ts.value // 10**6)
+            self._proxy_intraday_bars.append(bar_df.copy())
+            ctx.current_dt = bar_ts
+            if hasattr(ctx, 'blotter') and ctx.blotter is not None:
+                ctx.blotter.current_dt = bar_ts
+            bar_prices = {self._to_qmt(c): v for c, v in zip(bar_df['code'], bar_df['close'])}
+            pct_map = self._build_daily_pctchg_map(bar_df)
+            _api.attach_bar(self, bar_df, day_str, prev_day_str, bar_prices,
+                            pct_map, current_bar_ts=bar_ts)
+            scheduler.dispatch_if_match(ctx, bar_ts)
+            if 'handle_data' in self.strategy:
+                bar_data = DataDict()
+                bar_data.set_curr_data(bar_df, bar_ts.strftime('%Y-%m-%d %H:%M:%S'))
+                try:
+                    self.strategy['handle_data'](ctx, bar_data)
+                except Exception as exc:
+                    logger.error("[DailyProxy] handle_data error @ %s: %s", bar_ts, exc)
+
+        try:
+            if 'after_trading_end' in self.strategy:
+                self.strategy['after_trading_end'](ctx, self._build_data_dict(daily_data, day_str))
+        except Exception as exc:
+            logger.debug("[DailyProxy] after_trading_end error: %s", exc)
+
+        daily_close_prices = {self._to_qmt(c): v for c, v in zip(daily_data['code'], daily_data['close'])}
+        nav = self.account.total_asset_at_price(daily_close_prices)
+        bench_close = benchmark_raw.get(day_str, first_bench)
+        bench_nav = bench_close / first_bench * 100 if first_bench else 100.0
+        self.result.nav_history.append({
+            'date': day_str,
+            'nav': nav,
+            'cash': self.account.cash,
+            'market_value': self.account.market_value_at_price(daily_close_prices),
+            'benchmark': bench_nav,
+            'positions': len([p for p in self.account.positions.values() if p.volume > 0]),
+        })
 
     def _load_minute_snapshots(self, day_str, daily_data):
         """PR4: 加载当日全 universe 的分钟 bar，按 bar timestamp 分组。

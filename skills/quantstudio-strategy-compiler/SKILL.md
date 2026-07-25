@@ -230,6 +230,7 @@ Never claim dual delivery from a pre-generation comparison, from comparing the c
 - A current completed minute may use `get_history(..., frequency='1m', include=True)` only in a confirmed scheduled minute callback with an explicit current-bar cutoff.
 - `get_snapshot` and `check_limit` are not allowed in PTrade backtest source. `get_open_orders(security=None)` is allowed in backtest and trade contexts.
 - `filter_stock_by_status` is called only from `before_trading_start`; scheduled callbacks use `get_stock_status` for current status checks.
+- For customer-requested QuantStudio-only event strategies, external CSV/event data is ingested by the generic `strategy_events` adapter and queried with local extension `get_strategy_events`; set targets to `quantstudio` only and never claim PTrade portability.
 - Use order rejection and documented price fields for backtest limit behavior; trading-only checks may be used only in a separately validated trading profile.
 
 # Runtime failure repair protocol

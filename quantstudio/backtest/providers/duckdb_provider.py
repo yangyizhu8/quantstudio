@@ -197,6 +197,12 @@ class DuckDBReferenceDataProvider(ReferenceDataProvider):
     def get_cb_list(self):
         df = self._data.query_cb_list_active()
         return df['code'].astype(str).tolist() if not df.empty else []
+    def get_strategy_events(self, event_type, effective_date=None, start_date=None,
+                            end_date=None, codes=None):
+        return self._data.query_strategy_events(
+            event_type, effective_date=effective_date, start_date=start_date,
+            end_date=end_date, codes=codes)
+
     def get_market_detail(self, mic):
         mic = str(mic).upper()
         aliases = {

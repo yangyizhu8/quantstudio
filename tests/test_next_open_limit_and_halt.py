@@ -75,6 +75,22 @@ def test_drain_rejects_buy_on_t1_limit_up():
 
 # ========== T+1 跌停：卖单拒单 ==========
 
+
+
+def test_drain_uses_open_gap_not_future_close_for_limit_check():
+    """Open below limit but close at limit must fill; next-open cannot use future close."""
+    engine = _make_next_open_engine(cash=100_000)
+    po = _setup_pending_buy(engine, target_value=10_000, price=10.0)
+    t1_data = pd.DataFrame({
+        "code": ["600000"],
+        "open": [10.5], "close": [11.0], "preClose": [10.0],
+        "volume": [100000], "suspendFlag": [0],
+    })
+    engine._drain_pending_orders(t1_data, "2026-01-06", {"600000.SH": 10.5})
+    assert po.status == "filled"
+    assert po.reason == ""
+    assert len(engine.result.trade_records) == 1
+
 def test_drain_rejects_sell_on_t1_limit_down():
     """T+1 跌停：卖单拒单 reason=limit_down_blocked，pending_sell_shares 归还"""
     engine = _make_next_open_engine(cash=10_000)

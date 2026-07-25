@@ -35,6 +35,9 @@ class DuckDBDataAccess:
         self._ro_conn = None
         # 预加载缓存（与 PtradeAPI 原缓存变量一一对应）
         self._preload_daily: Optional[pd.DataFrame] = None
+        # code -> original row positions. Avoid scanning the full preload for
+        # every portable per-security get_history call.
+        self._preload_daily_code_positions: Optional[dict] = None
         self._preload_prev_ms: Optional[int] = None
         self._preload_float: Optional[pd.DataFrame] = None
         self._preload_listing: Optional[pd.DataFrame] = None
@@ -103,6 +106,7 @@ class DuckDBDataAccess:
                 LIMIT 4000000
             """).fetchdf()
             self._preload_prev_ms = prev_ms
+            self._build_preload_daily_code_positions()
             logger.debug(f"[Preload] 加载 {len(self._preload_daily)} 行行情")
             # 预加载每只股票的上市日期（get_security_info 用，避免逐只 MIN(time) 查询）
             # 上市日是历史固定值，无 PIT 问题，可全局加载
@@ -521,6 +525,47 @@ class DuckDBDataAccess:
             ORDER BY time
         """).fetchdf()
 
+    def query_strategy_events(self, event_type, effective_date=None, start_date=None,
+                              end_date=None, codes=None) -> pd.DataFrame:
+        """Query generic strategy events without exposing storage to strategies."""
+        columns = [
+            "event_type", "event_date", "effective_date", "code", "signal",
+            "name", "category", "source", "source_row_id", "source_key", "payload", "imported_at",
+        ]
+        conn = self._get_conn()
+        if conn is None:
+            return pd.DataFrame(columns=columns)
+        try:
+            tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
+            if "strategy_events" not in tables:
+                return pd.DataFrame(columns=columns)
+            where = ["event_type = ?"]
+            params = [str(event_type)]
+            if effective_date is not None:
+                where.append("effective_date = ?::DATE")
+                params.append(str(effective_date)[:10])
+            if start_date is not None:
+                where.append("effective_date >= ?::DATE")
+                params.append(str(start_date)[:10])
+            if end_date is not None:
+                where.append("effective_date <= ?::DATE")
+                params.append(str(end_date)[:10])
+            normalized_codes = [str(code) for code in (codes or [])]
+            if normalized_codes:
+                placeholders = ",".join(["?"] * len(normalized_codes))
+                where.append(f"code IN ({placeholders})")
+                params.extend(normalized_codes)
+            sql = (
+                "SELECT event_type, event_date, effective_date, code, signal, "
+                "name, category, source, source_row_id, source_key, payload, imported_at "
+                "FROM strategy_events WHERE " + " AND ".join(where) +
+                " ORDER BY effective_date, event_date, source_row_id NULLS LAST, source_key"
+            )
+            return conn.execute(sql, params).fetchdf()
+        except Exception as exc:
+            logger.warning("query_strategy_events failed: %s", exc)
+            return pd.DataFrame(columns=columns)
+
     def query_listing_dates(self) -> pd.DataFrame:
         """迁移自 PtradeAPI._preload_market_data() 中的上市日期查询 (ptrade_api.py:388-390)"""
         conn = self._get_conn()
@@ -529,6 +574,27 @@ class DuckDBDataAccess:
         return conn.execute(
             "SELECT code, MIN(time) as listing_time FROM stock_daily GROUP BY code"
         ).fetchdf()
+
+    def _build_preload_daily_code_positions(self):
+        """Build a reusable code-to-row-position index for daily history."""
+        if self._preload_daily is None:
+            self._preload_daily_code_positions = None
+            return
+        if self._preload_daily_code_positions is None:
+            self._preload_daily_code_positions = {
+                str(code): positions
+                for code, positions in self._preload_daily.groupby(
+                    "code", sort=False, observed=True).indices.items()
+            }
+
+    def _preloaded_daily_for_code(self, bare):
+        if self._preload_daily is None:
+            return None
+        self._build_preload_daily_code_positions()
+        positions = (self._preload_daily_code_positions or {}).get(str(bare))
+        if positions is None:
+            return self._preload_daily.iloc[0:0]
+        return self._preload_daily.iloc[positions]
 
     def get_history_from_preload(self, sec_list, count, fq, is_dict, fields, field_map) -> Optional[Any]:
         """从预加载内存查 get_history（避免 DuckDB 查询）。
@@ -544,7 +610,9 @@ class DuckDBDataAccess:
         for sec in sec_list:
             bare = str(sec).split(".")[0]
             # PIT 过滤：只取 <= prev_date 的数据（预加载数据已按 time DESC 排序）
-            sub_all = self._preload_daily[self._preload_daily['code'] == bare]
+            sub_all = self._preloaded_daily_for_code(bare)
+            if sub_all is None:
+                return None
             if prev_ms is not None:
                 sub_all = sub_all[sub_all['time'] <= prev_ms]
             sub = sub_all.head(int(count))
@@ -553,7 +621,10 @@ class DuckDBDataAccess:
                 INDEX_ETF_MAP = {"000300": "510300", "000905": "510500",
                                  "000016": "510050", "000852": "510880"}
                 if bare in INDEX_ETF_MAP:
-                    sub = self._preload_daily[self._preload_daily['code'] == INDEX_ETF_MAP[bare]].head(int(count))
+                    sub = self._preloaded_daily_for_code(INDEX_ETF_MAP[bare])
+                    if prev_ms is not None:
+                        sub = sub[sub['time'] <= prev_ms]
+                    sub = sub.head(int(count))
             if len(sub) == 0:
                 continue
             df = sub.sort_values('time').copy()

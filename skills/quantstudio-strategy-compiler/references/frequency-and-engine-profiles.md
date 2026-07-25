@@ -48,3 +48,13 @@ Provider 必须接收并贯通 frequency；不支持时返回明确能力错误�
 ## 4. READY 判定
 
 只有 Schema、数据覆盖、Adapter、Provider、Engine、目标平台与输出目录全部满足要求，且对应冒烟测试通过，Profile 才可宣称 READY。代码仅通过语法检查不等于可执行。
+
+
+## 5. `daily-open-close-proxy-v1`
+
+- Runtime data source: daily OHLC only; it does not claim that historical minute bars exist.
+- Causal callbacks: 09:31 exposes only the daily opening print; 15:00 exposes the completed daily OHLC.
+- Intended use: customer-confirmed daily proxies that require open entry and completed-close decisions when the requested historical interval has no minute coverage.
+- Portable strategy surface: callbacks and orders still use the PTrade public subset; the proxy is a QuantStudio engine implementation detail.
+- `get_history(..., frequency='1m', include=True)` returns only synthetic snapshots already completed at the current proxy clock. At 09:31 only one opening snapshot exists; at 15:00 the opening and completed-close snapshots exist.
+- This profile must be explicitly named in the design contract and must record the customer confirmation for the daily proxy approximation.

@@ -1,6 +1,6 @@
 {
   "profile_id": "ptrade-backtest-public-v1",
-  "profile_version": "1.2.2",
+  "profile_version": "1.3.1",
   "verified_on": "2026-07-24",
   "policy": "Canonical dual-target code must use exact PTrade backtest public signatures; QuantStudio adapters must be equally strict so local PASS predicts platform acceptance.",
   "signatures": {
@@ -174,6 +174,20 @@
       "notes": [
         "PTrade documents this API as callable only from before_trading_start. DELISTING_SORTING only filters current-day data."
       ]
+    },
+    "get_strategy_events": {
+      "contexts": [
+        "quantstudio_local_backtest"
+      ],
+      "unsupported_on_ptrade": true,
+      "replacement_for": "No native PTrade equivalent; use only when targets exclude ptrade."
+    },
+    "order_at_price": {
+      "contexts": [
+        "quantstudio_local_backtest"
+      ],
+      "unsupported_on_ptrade": true,
+      "replacement_for": "No native PTrade equivalent; use only when targets exclude ptrade."
     }
   },
   "local_only_symbols": [
@@ -190,7 +204,9 @@
     "LLV",
     "CROSS",
     "EVERY",
-    "EXIST"
+    "EXIST",
+    "get_strategy_events",
+    "order_at_price"
   ],
   "portable_rules": [
     "Use numpy/pandas or locally defined helpers for indicators unless the PTrade public API explicitly supplies the function.",

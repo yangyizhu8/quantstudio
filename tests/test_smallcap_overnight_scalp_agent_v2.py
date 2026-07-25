@@ -198,3 +198,24 @@ def test_overlap_adds_seven_percent_to_existing_position():
     )
     module.buy_today_batch(context)
     assert orders == [("600000.SS", 14000.0)]
+
+
+
+def test_existing_open_exit_order_prevents_duplicate_submission():
+    module = load_module()
+    initialize_without_runtime(module)
+    module.g.batches = {"2026-07-01": ["600000"]}
+    module.get_position = lambda code: SimpleNamespace(amount=700, enable_amount=700, market_value=7000.0)
+    module.get_open_orders = lambda **kwargs: [SimpleNamespace(security="600000.SS", status="pending")]
+    clear_status(module)
+    module.order = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("duplicate order"))
+    context = SimpleNamespace(current_dt=pd.Timestamp("2026-07-02 10:30:00"))
+    module.sell_due_batches(context)
+    assert "600000" in module.g.pending_exits
+
+
+def test_history_field_supports_numpy_structured_arrays():
+    module = load_module()
+    rows = np.array([(1.0, 2.0), (3.0, 4.0)], dtype=[("open", "f8"), ("close", "f8")])
+    history = {"600000.SS": rows}
+    assert module._history_field(history, "600000.SS", "close").tolist() == [2.0, 4.0]

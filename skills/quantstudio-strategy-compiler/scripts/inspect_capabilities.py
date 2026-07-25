@@ -364,7 +364,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Inspect capabilities → capability_report.json")
     parser.add_argument("--db", required=True, help="Path to quantstudio.db")
     parser.add_argument("--profile", required=True,
-                        choices=["daily-bar-v1", "minute-bar-v1", "tick-bar-v1", "planned"],
+                        choices=["daily-bar-v1", "minute-bar-v1", "daily-open-close-proxy-v1", "tick-bar-v1", "planned"],
                         help="Engine profile to inspect against")
     parser.add_argument("--strategy-id", required=True, help="Strategy identifier")
     parser.add_argument("--out", default=None, help="Output JSON path (default: stdout only)")

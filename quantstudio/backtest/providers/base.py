@@ -151,6 +151,14 @@ class ReferenceDataProvider(ABC):
                                      'list_date', 'premium_rate', 'convert_date', 'maturity_date',
                                      'convert_rate', 'convert_price', 'convert_value'])
     def get_ipo_stocks(self) -> dict: return {}
+    def get_strategy_events(self, event_type: str, effective_date: Optional[str] = None,
+                            start_date: Optional[str] = None,
+                            end_date: Optional[str] = None,
+                            codes: Optional[List[str]] = None) -> pd.DataFrame:
+        return pd.DataFrame(columns=[
+            "event_type", "event_date", "effective_date", "code", "signal",
+            "name", "category", "source", "source_row_id", "source_key", "payload", "imported_at",
+        ])
 
 
 class CalendarProvider(ABC):

@@ -1,5 +1,5 @@
 {
-  "catalog_version": "1.1.1",
+  "catalog_version": "1.2.1",
   "design_principle": "Agent authors strategy-specific logic; the Skill constrains lifecycle, public APIs, timing, portability, and validation.",
   "lifecycle_components": [
     {
@@ -107,6 +107,12 @@
     "scheduling_diagnostics": [
       "run_daily",
       "log"
+    ],
+    "strategy_events": [
+      "get_strategy_events"
+    ],
+    "local_execution": [
+      "order_at_price"
     ]
   },
   "ptrade_forbidden_apis": [
@@ -142,7 +148,8 @@
     "api_subset": "PTrade backtest public API subset is authoritative; local adapter must emulate it.",
     "indicator_policy": "Use numpy/pandas or source-defined helpers; do not assume locally injected MyTT names exist on PTrade.",
     "runtime_state_policy": "Every lifecycle and scheduled callback calls an idempotent _ensure_runtime_state() as its first executable statement.",
-    "local_backtest_data_priority": "<current-project>/data/quantstudio.db first; configured/external DuckDB only when absent or explicitly customer-approved."
+    "local_backtest_data_priority": "<current-project>/data/quantstudio.db first; configured/external DuckDB only when absent or explicitly customer-approved.",
+    "event_data_policy": "External event files are ingested into strategy_events by a generic importer; local-only strategies query them through get_strategy_events and never read files directly."
   },
   "local_extension_groups": {
     "local_mytt_helpers": [
@@ -170,6 +177,12 @@
       "get_fundamentals_batch",
       "get_security_info",
       "get_current_data"
+    ],
+    "local_event_data": [
+      "get_strategy_events"
+    ],
+    "local_backtest_execution": [
+      "order_at_price"
     ]
   },
   "ptrade_signature_profile": "references/ptrade-api-signatures.json",
@@ -184,5 +197,17 @@
     "get_trades_file",
     "get_research_path",
     "convert_position_from_csv"
+  ],
+  "engine_profiles": [
+    {
+      "id": "daily-open-close-proxy-v1",
+      "data_source": "stock_daily/etf_daily",
+      "callbacks": [
+        "09:31 opening snapshot",
+        "15:00 completed daily snapshot"
+      ],
+      "execution": "current synthetic completed-bar price through public order APIs",
+      "purpose": "causal daily-data proxy when confirmed semantics require open entry and close exit but historical minute coverage is unavailable"
+    }
   ]
 }

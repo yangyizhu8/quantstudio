@@ -39,7 +39,7 @@ def _parse_flag(argv, flag_name, default=None, has_value=True):
 
 
 # 带值的 flag 列表（用于过滤位置参数时跳过这些 flag 的值）
-_VALUE_FLAGS = {'--match-price', '--ptrade-dir', '--output', '--output-report', '--slippage'}
+_VALUE_FLAGS = {'--match-price', '--ptrade-dir', '--output', '--output-report', '--slippage', '--profile', '--etf-t0'}
 
 
 def _is_flag_value(argv, token):
@@ -126,8 +126,8 @@ def main():
     if match_price_mode not in ("close", "open", "next_open"):
         print(f"❌ --match-price 必须是 close/open/next_open，got {match_price_mode!r}")
         sys.exit(1)
-    if engine_profile not in ("daily-bar-v1", "minute-bar-v1"):
-        print(f"❌ --profile 必须是 daily-bar-v1/minute-bar-v1，got {engine_profile!r}")
+    if engine_profile not in ("daily-bar-v1", "minute-bar-v1", "daily-open-close-proxy-v1"):
+        print(f"❌ --profile 必须是 daily-bar-v1/minute-bar-v1/daily-open-close-proxy-v1，got {engine_profile!r}")
         sys.exit(1)
     # PR4 决策 4：etf_t0 只在 minute-bar-v1 生效（日线 Profile 强制 False）
     etf_t0 = (etf_t0_flag.lower() == 'true') and (engine_profile == 'minute-bar-v1')

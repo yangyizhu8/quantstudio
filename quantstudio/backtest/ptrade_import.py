@@ -22,13 +22,13 @@ from .ptrade_api import (
     get_history, get_price, attribute_history,
     current_price, get_current_data, get_snapshot,
     get_trading_day, get_trade_days, get_all_trades_days, get_trading_day_by_date,
-    run_daily, get_Ashares,
+    run_daily, get_Ashares, get_strategy_events,
     get_stock_name, get_stock_info, get_stock_status,
     get_security_info, get_industry,
     get_orders, get_trades, get_open_orders, get_order, cancel_order,
     get_frequency, get_business_type,
     get_MACD, get_KDJ, get_RSI, get_CCI,
-    order_target_value, order, order_value, order_target,
+    order_target_value, order, order_at_price, order_value, order_target,
     is_trade, g, log,
     # 第2批新增：财务/除权/板块/行业/ETF/可转债
     get_stock_exrights, get_stock_blocks, get_industry_stocks, get_reits_list,
@@ -39,6 +39,7 @@ from .ptrade_api import (
     create_dir, get_trades_file, get_all_positions, convert_position_from_csv,
     set_parameters, get_instruments, get_dominant_contract, get_margin_rate,
     get_underlying_code, get_user_name, get_research_path, get_current_kline_count,
+    load_research_signals,
     # 第4批新增：ORM 查询（query/valuation）
     query, valuation,
     # 第5批新增：B1 批量取数 API（性能优化，策略可选）

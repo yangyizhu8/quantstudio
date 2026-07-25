@@ -42,17 +42,31 @@ g = GlobalVars()
 
 
 class LogWrapper:
-    """模拟 Ptrade 的 log 对象"""
-    def info(self, msg):
-        logger.info(msg)
-    def warning(self, msg):
-        logger.warning(msg)
-    def error(self, msg):
-        logger.error(msg)
-    def critical(self, msg):
-        logger.critical(msg)
-    def debug(self, msg):
-        logger.debug(msg)
+    """模拟 Ptrade 的 log 对象（兼容 printf 风格多参：log.info(fmt, *args)）。"""
+    @staticmethod
+    def _render(msg, args):
+        # 无额外参数：原样输出（兼容 f-string / 单字符串写法）
+        if not args:
+            return msg
+        # 字符串按 % 风格格式化，对齐真实 Ptrade 行为
+        if isinstance(msg, str):
+            try:
+                return msg % args
+            except (TypeError, ValueError):
+                # 占位符缺失/不匹配时退化为拼接，避免抛异常中断回测
+                return msg + " " + " ".join(str(a) for a in args)
+        return msg
+
+    def info(self, msg, *args):
+        logger.info(self._render(msg, args))
+    def warning(self, msg, *args):
+        logger.warning(self._render(msg, args))
+    def error(self, msg, *args):
+        logger.error(self._render(msg, args))
+    def critical(self, msg, *args):
+        logger.critical(self._render(msg, args))
+    def debug(self, msg, *args):
+        logger.debug(self._render(msg, args))
 
 
 log = LogWrapper()
@@ -837,6 +851,25 @@ class PtradeAPI:
 
     # -------- 扩展交易函数（P1 新增）--------
 
+    def order_at_price(self, security: str, amount: int, execution_price: float):
+        """QuantStudio-only explicit-price execution for completed-bar research.
+
+        The caller must use a price already visible at its decision clock. This
+        supports causal daily strategies that enter through next-open pending
+        orders but exit at the completed current-day close.
+        """
+        if self._engine is None:
+            return None
+        price = float(execution_price or 0.0)
+        if price <= 0:
+            return None
+        qmt_code = self._bare_to_qmt(bare_code(security))
+        order_result = self._engine._immediate_execute(
+            security, shares=int(amount), prices={qmt_code: price},
+            date=self._current_date, curr_data=self._curr_data_for_execute())
+        self._engine.refresh_portfolio({qmt_code: price})
+        return order_result
+
     def order_value(self, security: str, value: float, limit_price=None):
         """按金额买入/卖出（对应 Ptrade order_value，增量操作）
         value>0 买入指定金额（增量加仓），value<0 卖出指定金额（增量减仓）。
@@ -900,6 +933,40 @@ class PtradeAPI:
 
     # -------- 数据查询函数（P1 新增）--------
 
+    def _get_proxy_intraday_history(self, sec_list, count, fields, is_dict, field_map):
+        """Return only completed synthetic bars for daily-open-close-proxy-v1."""
+        bars = getattr(self._engine, '_proxy_intraday_bars', []) if self._engine else []
+        dfs = {}
+        for security in sec_list:
+            bare = bare_code(security)
+            parts = []
+            for snapshot in bars:
+                if snapshot is None or len(snapshot) == 0 or 'code' not in snapshot.columns:
+                    continue
+                selected = snapshot[snapshot['code'].astype(str) == str(bare)]
+                if len(selected) > 0:
+                    parts.append(selected.copy())
+            if not parts:
+                continue
+            frame = pd.concat(parts, ignore_index=True)
+            if 'time' in frame.columns:
+                frame = frame.sort_values('time')
+            frame = frame.tail(int(count)).copy()
+            frame.index = range(-len(frame), 0)
+            if fields:
+                mapped = [field_map.get(value, value) for value in fields]
+                available = [value for value in mapped if value in frame.columns]
+                if available:
+                    frame = frame[available]
+            dfs[self._to_ptrade_code(bare)] = frame
+        if is_dict:
+            return CodeDict(dfs)
+        if not dfs:
+            return pd.DataFrame()
+        if len(dfs) == 1:
+            return next(iter(dfs.values()))
+        return pd.concat(dfs.values(), ignore_index=False)
+
     def get_history(self, security=None, count=None, unit='1d', fields=None,
                     frequency=None, field=None, security_list=None,
                     fq=None, include=False, fill='nan', is_dict=False) -> pd.DataFrame:
@@ -923,8 +990,11 @@ class PtradeAPI:
             _sec_list = fields  # 第4个位置参数实际是 security_list
             count = _count
             unit = _freq or frequency or '1d'   # PR4: count-first 模式下也接受 frequency 关键字
-            fields = _field if _field else fields
-            security = _sec_list if _sec_list else security_list
+            if field is not None:
+                fields = field
+            elif _field and _field != '1d':
+                fields = _field
+            security = security_list if security_list is not None else _sec_list
         # security_list 优先（Ptrade 官方参数名）
         if security is None:
             security = security_list
@@ -950,6 +1020,14 @@ class PtradeAPI:
                      'is_open': 'volume'}
         if isinstance(fields, str):
             fields = [fields]
+
+        if (include and unit != '1d' and self._engine is not None
+                and getattr(self._engine, 'engine_profile', None) == 'daily-open-close-proxy-v1'):
+            result = self._get_proxy_intraday_history(
+                sec_list, count, fields, is_dict, field_map)
+            if hasattr(self, '_query_cache'):
+                self._query_cache[cache_key] = result
+            return result
 
         try:
             if self._market is None:
@@ -1496,6 +1574,40 @@ class PtradeAPI:
             logger.warning(f"convert_position_from_csv({path}) 失败: {e}")
             return []
 
+    def load_research_signals(self, csv_path, fallback=None):
+        """读取每日更新的首次覆盖研报 CSV（框架侧 I/O，供策略经注入 API 调用）。
+
+        返回 (rows, source)：rows 为 [(code6, name, industry, pub), ...]，仅保留
+        买入(评级代码007)/增持(006)；发布日期归一化为 YYYY-MM-DD（兼容
+        "2026-06-26 00:00:00.000" 时间戳后缀）。source 为 "csv:<文件名>" 或 "embedded"。
+        csv_path 缺失/解析失败时回退 fallback（默认空列表），source="embedded"。
+        """
+        try:
+            p = Path(csv_path)
+            if p.is_file():
+                df = pd.read_csv(p, dtype=str, encoding="utf-8-sig")
+                rows = []
+                for _, r in df.iterrows():
+                    code = str(r.get("股票代码") or "").strip()
+                    name = str(r.get("股票名称") or "").strip()
+                    industry = str(r.get("行业") or "").strip()
+                    pub_raw = str(r.get("发布日期") or "").strip()
+                    rc = str(r.get("评级代码") or "").strip()
+                    rating = str(r.get("评级") or "").strip()
+                    if not code or not pub_raw:
+                        continue
+                    # 评级代码存在多种写法：006/007（带前导零）或单数字 6/7；
+                    # 统一接受买入/增持（文本 评级 列兜底，兼容编码缺失/不规范行）。
+                    if rc not in ("006", "007", "6", "7") and rating not in ("买入", "增持"):
+                        continue
+                    rows.append((code.zfill(6), name, industry, pub_raw.split()[0]))
+                if rows:
+                    return rows, "csv:" + p.name
+        except Exception as e:
+            logger.warning(f"[load_research_signals] 解析失败 {csv_path}: {e}")
+        fb = list(fallback) if fallback else []
+        return fb, "embedded"
+
     # -------- 参数与期货（降级实现）--------
 
     def set_parameters(self, **kwargs):
@@ -1567,6 +1679,31 @@ class PtradeAPI:
         if isinstance(stocks, str):
             return {stocks: stocks}
         return {s: s for s in stocks}
+
+    def get_strategy_events(self, event_type, effective_date=None, start_date=None,
+                            end_date=None, security_list=None):
+        """Return generic locally-ingested strategy events through the API layer.
+
+        This is a QuantStudio local-backtest extension. Strategy source remains
+        storage-isolated; the ReferenceDataProvider owns the DuckDB query.
+        """
+        columns = [
+            "event_type", "event_date", "effective_date", "code", "signal",
+            "name", "category", "source", "source_row_id", "source_key", "payload", "imported_at",
+        ]
+        if self._reference is None:
+            return pd.DataFrame(columns=columns)
+        codes = None
+        if security_list is not None:
+            values = [security_list] if isinstance(security_list, str) else list(security_list)
+            codes = [normalize_to_ptrade(code) for code in values]
+        try:
+            return self._reference.get_strategy_events(
+                event_type, effective_date=effective_date, start_date=start_date,
+                end_date=end_date, codes=codes)
+        except Exception as exc:
+            logger.warning("get_strategy_events failed: %s", exc)
+            return pd.DataFrame(columns=columns)
 
     def get_stock_info(self, stocks, field=None):
         """Return PTrade-shaped stock metadata from the formal reference layer.
@@ -1848,6 +1985,7 @@ get_positions = _api.get_positions
 get_position = _api.get_position
 order_target_value = _api.order_target_value
 order = _api.order
+order_at_price = _api.order_at_price
 order_value = _api.order_value
 order_target = _api.order_target
 get_history = _api.get_history
@@ -1864,6 +2002,7 @@ get_all_trades_days = _api.get_all_trades_days
 get_trading_day_by_date = _api.get_trading_day_by_date
 run_daily = _api.run_daily
 get_Ashares = _api.get_Ashares
+get_strategy_events = _api.get_strategy_events
 get_stock_name = _api.get_stock_name
 get_stock_info = _api.get_stock_info
 get_stock_status = _api.get_stock_status
@@ -1914,6 +2053,7 @@ get_underlying_code = _api.get_underlying_code
 get_user_name = _api.get_user_name
 get_research_path = _api.get_research_path
 get_current_kline_count = _api.get_current_kline_count
+load_research_signals = _api.load_research_signals
 
 # ===== ORM 查询（query/valuation，模块级函数/对象）=====
 # query 和 valuation 是模块级定义的，非 PtradeAPI 实例方法，已在上方定义

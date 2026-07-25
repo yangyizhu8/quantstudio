@@ -1,5 +1,5 @@
 """
-smallcap_overnight_scalp_7.py
+smallcap_overnight_scalp_7.py ? portable rebuild
 
 Agent-authored canonical QuantStudio/PTrade strategy.
 
@@ -12,8 +12,9 @@ Confirmed semantics:
 - First attempt to sell the prior batch at T+1 10:30; retry failed exits every
   later minute and carry genuine unfilled positions across days.
 
-This single PTrade-style source is intended to be published unchanged to both
-QuantStudio and PTrade. Market/reference/order access uses injected public APIs.
+This canonical source targets the documented PTrade backtest public subset and is
+published unchanged to QuantStudio and PTrade. Local data is injected through
+project providers; strategy code never opens DuckDB, providers, or local files.
 """
 
 from datetime import date, datetime
@@ -24,39 +25,60 @@ import numpy as np
 STRATEGY_ID = "smallcap_overnight_scalp_7"
 
 
+def _ensure_runtime_state():
+    """Idempotently create all runtime parameters and persistent fields."""
+    if not hasattr(g, "universe_size"):
+        g.universe_size = 500
+    if not hasattr(g, "buy_count"):
+        g.buy_count = 7
+    if not hasattr(g, "daily_batch_weight"):
+        g.daily_batch_weight = 0.49
+    if not hasattr(g, "per_stock_weight"):
+        g.per_stock_weight = 0.07
+    if not hasattr(g, "cash_reserve_weight"):
+        g.cash_reserve_weight = 0.02
+    if not hasattr(g, "amplitude_lookback"):
+        g.amplitude_lookback = 4
+    if not hasattr(g, "amplitude_threshold"):
+        g.amplitude_threshold = 0.10
+    if not hasattr(g, "ema_period"):
+        g.ema_period = 5
+    if not hasattr(g, "ema_warmup_bars"):
+        g.ema_warmup_bars = 60
+    if not hasattr(g, "recent_suspension_days"):
+        g.recent_suspension_days = 5
+    if not hasattr(g, "minimum_listing_days"):
+        g.minimum_listing_days = 365
+    if not hasattr(g, "preopen_candidates"):
+        g.preopen_candidates = []
+    if not hasattr(g, "batches"):
+        g.batches = {}
+    if not hasattr(g, "pending_exits"):
+        g.pending_exits = set()
+    if not hasattr(g, "buy_executed_dates"):
+        g.buy_executed_dates = set()
+    if not hasattr(g, "last_exit_attempt_minute"):
+        g.last_exit_attempt_minute = {}
+    if not hasattr(g, "daily_diagnostics"):
+        g.daily_diagnostics = {}
+
+
 def initialize(context):
-    """Configure the confirmed lifecycle, costs, parameters, and persistent state."""
+    """Configure costs and callbacks without assuming later callbacks wait on success."""
+    _ensure_runtime_state()
     set_benchmark("000300.SS")
     set_commission(commission_ratio=0.00035, min_commission=5.0, type="STOCK")
-    set_slippage(slippage_ratio=0.0)
-
-    g.universe_size = 500
-    g.buy_count = 7
-    g.daily_batch_weight = 0.49
-    g.per_stock_weight = 0.07
-    g.cash_reserve_weight = 0.02
-    g.amplitude_lookback = 4
-    g.amplitude_threshold = 0.10
-    g.ema_period = 5
-    g.ema_warmup_bars = 60
-    g.recent_suspension_days = 5
-    g.minimum_listing_days = 365
-
-    g.preopen_candidates = []
-    g.batches = {}
-    g.pending_exits = set()
-    g.buy_executed_dates = set()
-    g.last_exit_attempt_minute = {}
-    g.daily_diagnostics = {}
-
+    set_slippage(slippage=0.0)
     run_daily(context, buy_today_batch, time="09:31")
     run_daily(context, sell_due_batches, time="10:30")
 
 
 def before_trading_start(context, data):
-    """Build the T-1 PIT pool and precompute all completed-daily-bar conditions."""
+    """Build the T-1 PIT pool and precompute completed-daily-bar conditions."""
+    _ensure_runtime_state()
     today = _date_text(context.current_dt)
     previous_date = _date_text(context.previous_date)
+    previous_api_date = _api_date(context.previous_date)
     _reconcile_batch_state(context, previous_date)
 
     diagnostics = {
@@ -71,7 +93,7 @@ def before_trading_start(context, data):
     }
 
     try:
-        stocks = list(get_Ashares(context.previous_date) or [])
+        stocks = list(get_Ashares(previous_api_date) or [])
     except Exception as exc:
         log.info("get_Ashares failed for %s: %s" % (previous_date, exc))
         stocks = []
@@ -85,24 +107,21 @@ def before_trading_start(context, data):
         stocks = filter_stock_by_status(
             stocks,
             filter_type=["ST", "HALT", "DELISTING", "DELISTING_SORTING"],
-            query_date=previous_date,
+            query_date=previous_api_date,
         )
     except Exception as exc:
         log.info("T-1 status filter failed; fail-closed for the day: %s" % exc)
         stocks = []
     diagnostics["status_ok"] = len(stocks)
 
-    listing_ok = []
-    for code in stocks:
-        if _listed_for_at_least(code, context.current_dt, g.minimum_listing_days):
-            listing_ok.append(code)
-    stocks = listing_ok
+    stocks = _filter_by_listing_age(
+        stocks, context.current_dt, g.minimum_listing_days)
     diagnostics["listing_ok"] = len(stocks)
 
     stocks = _exclude_recent_suspensions(stocks, context.previous_date)
     diagnostics["recent_halt_ok"] = len(stocks)
 
-    cap_rows = _load_pit_float_values(stocks, context.previous_date)
+    cap_rows = _load_pit_float_values(stocks, previous_api_date)
     diagnostics["valuation_ok"] = len(cap_rows)
     cap_rows.sort(key=lambda item: (item["float_value"], _bare_code(item["code"])))
     cap_rows = cap_rows[:g.universe_size]
@@ -126,20 +145,17 @@ def before_trading_start(context, data):
         "small500=%s daily_conditions=%s"
         % (
             today,
-            diagnostics["all_ashares"],
-            diagnostics["main_board"],
-            diagnostics["status_ok"],
-            diagnostics["listing_ok"],
-            diagnostics["recent_halt_ok"],
-            diagnostics["valuation_ok"],
-            diagnostics["smallest_500"],
-            diagnostics["daily_conditions_ok"],
+            diagnostics["all_ashares"], diagnostics["main_board"],
+            diagnostics["status_ok"], diagnostics["listing_ok"],
+            diagnostics["recent_halt_ok"], diagnostics["valuation_ok"],
+            diagnostics["smallest_500"], diagnostics["daily_conditions_ok"],
         )
     )
 
 
 def buy_today_batch(context):
-    """At 09:31, apply the low-open/current-tradability rule and buy today's batch."""
+    """At 09:31 evaluate the completed first-minute bar and buy today's batch."""
+    _ensure_runtime_state()
     today = _date_text(context.current_dt)
     if today in g.buy_executed_dates:
         return
@@ -154,17 +170,20 @@ def buy_today_batch(context):
             continue
         if not _currently_tradeable_for_buy(code, today):
             continue
-        snapshot = _safe_snapshot(code)
-        open_price = _finite_float(snapshot.get("open"))
-        current_price = _finite_float(snapshot.get("last_price"))
-        volume = _finite_float(snapshot.get("volume"))
+        minute = _current_minute_bar(code)
+        open_price = _finite_float(minute.get("open"))
+        current_price = _finite_float(minute.get("close"))
+        volume = _finite_float(minute.get("volume"))
         if open_price is None or current_price is None or volume is None:
             continue
         if open_price <= 0 or current_price <= 0 or volume <= 0:
             continue
         if not (open_price < item["previous_low"]):
             continue
-        selected.append(item)
+        candidate = dict(item)
+        candidate["entry_open"] = open_price
+        candidate["entry_close"] = current_price
+        selected.append(candidate)
         if len(selected) >= g.buy_count:
             break
 
@@ -190,24 +209,29 @@ def buy_today_batch(context):
         allocation = min(per_name_budget, remaining_cash)
         if allocation <= 0:
             break
-        position = get_position(code)
-        current_value = _position_market_value(position)
+        before_position = get_position(code)
+        before_amount = _position_amount(before_position)
+        current_value = _position_market_value(before_position)
         target_value = current_value + allocation
         try:
-            result = order_target_value(code, target_value)
+            order_id = order_target_value(code, target_value)
         except Exception as exc:
             log.info("Buy submit failed %s: %s" % (code, exc))
             continue
-        if _order_rejected(result):
+        if _order_submission_failed(order_id):
             log.info("Buy rejected %s at 09:31" % code)
+            continue
+        after_amount = _position_amount(get_position(code))
+        open_pending = _has_open_order(code)
+        if after_amount <= before_amount and not open_pending:
+            log.info("Buy produced no fill/open order %s at 09:31" % code)
             continue
         submitted.append(_bare_code(code))
         remaining_cash -= allocation
         log.info(
             "Buy batch=%s code=%s increment=%.2f target=%.2f open=%.4f prev_low=%.4f"
             % (today, code, allocation, target_value,
-               _finite_float(_safe_snapshot(code).get("open")) or 0.0,
-               item["previous_low"])
+               item["entry_open"], item["previous_low"])
         )
 
     g.batches[today] = sorted(set(submitted))
@@ -218,7 +242,8 @@ def buy_today_batch(context):
 
 
 def sell_due_batches(context):
-    """At 10:30, make the first mandatory exit attempt for every due batch."""
+    """At 10:30 make the first mandatory exit attempt for every due batch."""
+    _ensure_runtime_state()
     today = _date_text(context.current_dt)
     due = _due_symbols(today)
     for bare in due:
@@ -228,7 +253,8 @@ def sell_due_batches(context):
 
 
 def handle_data(context, data):
-    """After 10:30, retry genuine failed exits at most once per completed minute bar."""
+    """After 10:30 retry genuine failed exits once per completed minute bar."""
+    _ensure_runtime_state()
     if _time_text(context.current_dt) < "10:30":
         return
     today = _date_text(context.current_dt)
@@ -237,7 +263,8 @@ def handle_data(context, data):
 
 
 def after_trading_end(context, data):
-    """Reconcile actual positions with batch state and carry unresolved exits honestly."""
+    """Reconcile actual positions and carry unresolved exits honestly."""
+    _ensure_runtime_state()
     today = _date_text(context.current_dt)
     _reconcile_batch_state(context, today)
     held = sorted(_held_bare_codes(context))
@@ -253,7 +280,8 @@ def _exclude_recent_suspensions(stocks, previous_date):
     if not stocks:
         return []
     try:
-        days = list(get_trade_days(end_date=previous_date, count=g.recent_suspension_days))
+        days = list(get_trade_days(
+            end_date=_api_date(previous_date), count=g.recent_suspension_days))
     except Exception as exc:
         log.info("get_trade_days for suspension filter failed: %s" % exc)
         return []
@@ -265,7 +293,8 @@ def _exclude_recent_suspensions(stocks, previous_date):
     excluded = set()
     for day in days:
         try:
-            status = get_stock_status(stocks, query_type="HALT", query_date=day)
+            status = get_stock_status(
+                stocks, query_type="HALT", query_date=_api_date(day))
         except Exception as exc:
             log.info("Historical HALT query failed for %s: %s" % (day, exc))
             return []
@@ -316,11 +345,12 @@ def _completed_daily_feature(code):
     try:
         history = get_history(
             g.ema_warmup_bars,
-            "1d",
+            frequency="1d",
             field=["close", "high", "low", "volume"],
             security_list=code,
             fq="pre",
             include=False,
+            fill="nan",
             is_dict=True,
         )
     except Exception as exc:
@@ -353,14 +383,11 @@ def _completed_daily_feature(code):
     if not np.isfinite(amplitude) or amplitude > g.amplitude_threshold:
         return None
 
-    try:
-        ema_values = np.asarray(EMA(closes[-g.ema_warmup_bars:], g.ema_period), dtype=float)
-    except Exception:
-        return None
-    if len(ema_values) == 0 or not np.isfinite(ema_values[-1]):
+    ema_value = _ema_last(closes[-g.ema_warmup_bars:], g.ema_period)
+    if ema_value is None:
         return None
     previous_close = float(closes[-1])
-    if not (previous_close > float(ema_values[-1])):
+    if not (previous_close > ema_value):
         return None
 
     previous_low = float(lows[-1])
@@ -370,27 +397,21 @@ def _completed_daily_feature(code):
         "code": _portable_code(code),
         "previous_low": previous_low,
         "previous_close": previous_close,
-        "ema5": float(ema_values[-1]),
+        "ema5": ema_value,
         "amplitude4": float(amplitude),
     }
 
 
 def _currently_tradeable_for_buy(code, today):
-    try:
-        filtered = filter_stock_by_status(
-            [code],
-            filter_type=["ST", "HALT", "DELISTING", "DELISTING_SORTING"],
-            query_date=today,
-        )
-        if not filtered:
+    for query_type in ("ST", "HALT", "DELISTING"):
+        try:
+            status = get_stock_status(
+                [code], query_type=query_type, query_date=_api_date(today))
+        except Exception:
             return False
-    except Exception:
-        return False
-    try:
-        limit_state = _mapping_value(check_limit(code), code, None)
-    except Exception:
-        return False
-    return limit_state == 0
+        if bool(_mapping_value(status, code, False)):
+            return False
+    return True
 
 
 def _attempt_exit(context, bare, today, reason):
@@ -401,7 +422,7 @@ def _attempt_exit(context, bare, today, reason):
 
     code = _portable_code(bare)
     position = get_position(code)
-    amount = int(_finite_float(getattr(position, "amount", 0)) or 0)
+    amount = _position_amount(position)
     enabled = int(_finite_float(getattr(position, "enable_amount", 0)) or 0)
     if amount <= 0:
         _resolve_due_code(bare, today)
@@ -413,38 +434,34 @@ def _attempt_exit(context, bare, today, reason):
         g.pending_exits.add(bare)
         return
 
-    try:
-        tradable = filter_stock_by_status(
-            [code], filter_type=["HALT", "DELISTING"], query_date=today)
-        if not tradable:
+    for query_type in ("HALT", "DELISTING"):
+        try:
+            status = get_stock_status(
+                [code], query_type=query_type, query_date=_api_date(today))
+        except Exception:
             g.pending_exits.add(bare)
             return
-    except Exception:
-        g.pending_exits.add(bare)
-        return
+        if bool(_mapping_value(status, code, False)):
+            g.pending_exits.add(bare)
+            return
 
+    before_amount = amount
     try:
-        limit_state = _mapping_value(check_limit(code), code, None)
-    except Exception:
-        limit_state = None
-    if limit_state is None or limit_state == -1:
-        g.pending_exits.add(bare)
-        return
-
-    try:
-        result = order(code, -enabled)
+        order_id = order(code, -enabled)
     except Exception as exc:
         log.info("Exit submit failed %s reason=%s error=%s" % (code, reason, exc))
         g.pending_exits.add(bare)
         return
-    if _order_rejected(result):
+    if _order_submission_failed(order_id):
         log.info("Exit rejected %s qty=%s reason=%s" % (code, enabled, reason))
         g.pending_exits.add(bare)
         return
 
     refreshed = get_position(code)
+    remaining_amount = _position_amount(refreshed)
     remaining_enabled = int(_finite_float(getattr(refreshed, "enable_amount", 0)) or 0)
-    if remaining_enabled <= 0 and not _has_open_order(code):
+    open_pending = _has_open_order(code)
+    if remaining_amount <= max(0, before_amount - enabled) and remaining_enabled <= 0             and not open_pending:
         _resolve_due_code(bare, today)
     else:
         g.pending_exits.add(bare)
@@ -508,12 +525,7 @@ def _held_bare_codes(context):
 
 def _has_open_order(code):
     try:
-        orders = get_open_orders(code)
-    except TypeError:
-        try:
-            orders = get_open_orders()
-        except Exception:
-            return False
+        orders = get_open_orders(security=code)
     except Exception:
         return False
     if orders is None:
@@ -536,19 +548,27 @@ def _has_open_order(code):
     return False
 
 
-def _listed_for_at_least(code, current_dt, minimum_days):
+def _filter_by_listing_age(stocks, current_dt, minimum_days):
+    if not stocks:
+        return []
     try:
-        info = get_security_info(code)
-        start_date = getattr(info, "start_date", None)
-    except Exception:
-        return False
-    if start_date is None:
-        return False
+        info_map = get_stock_info(stocks, field=["listed_date"])
+    except Exception as exc:
+        log.info("Batch listing-date query failed: %s" % exc)
+        return []
     current_day = _date_value(current_dt)
-    listing_day = _date_value(start_date)
-    if current_day is None or listing_day is None:
-        return False
-    return (current_day - listing_day).days >= int(minimum_days)
+    if current_day is None:
+        return []
+    result = []
+    for code in stocks:
+        record = _mapping_value(info_map, code, {})
+        listed_date = record.get("listed_date") if hasattr(record, "get") else None
+        listing_day = _date_value(listed_date)
+        if listing_day is None:
+            continue
+        if (current_day - listing_day).days >= int(minimum_days):
+            result.append(code)
+    return result
 
 
 def _date_value(value):
@@ -561,10 +581,13 @@ def _date_value(value):
             return value.date()
         except Exception:
             pass
-    try:
-        return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
-    except Exception:
-        return None
+    text = str(value).strip()
+    for pattern, width in (("%Y-%m-%d", 10), ("%Y%m%d", 8)):
+        try:
+            return datetime.strptime(text[:width], pattern).date()
+        except Exception:
+            pass
+    return None
 
 
 def _history_field(history, code, field):
@@ -608,13 +631,26 @@ def _history_item(history, code):
     return None
 
 
-def _safe_snapshot(code):
+def _current_minute_bar(code):
     try:
-        snapshot = get_snapshot(code, frequency="1m")
-        return snapshot if isinstance(snapshot, dict) else {}
+        history = get_history(
+            1,
+            frequency="1m",
+            field=["open", "close", "volume"],
+            security_list=code,
+            fq="pre",
+            include=True,
+            fill="nan",
+            is_dict=True,
+        )
     except Exception as exc:
-        log.info("Snapshot failed %s: %s" % (code, exc))
+        log.info("Current minute history failed %s: %s" % (code, exc))
         return {}
+    result = {}
+    for field in ("open", "close", "volume"):
+        values = _history_field(history, code, field)
+        result[field] = values[-1] if len(values) else None
+    return result
 
 
 def _mapping_value(mapping, code, default=None):
@@ -635,11 +671,42 @@ def _mapping_value(mapping, code, default=None):
     return default
 
 
-def _order_rejected(order_result):
-    if order_result is None:
-        return False
-    status = str(getattr(order_result, "status", "")).lower()
-    return status in ("rejected", "cancelled", "canceled", "failed", "expired")
+def _order_submission_failed(order_id):
+    if order_id is None:
+        return True
+    if isinstance(order_id, (str, int)):
+        try:
+            detail = get_order(order_id)
+        except Exception:
+            detail = None
+        if detail is not None:
+            status = str(getattr(detail, "status", "")).lower()
+            if status in ("rejected", "cancelled", "canceled", "failed", "expired"):
+                return True
+    return False
+
+
+def _ema_last(values, period):
+    try:
+        array = np.asarray(values, dtype=float).reshape(-1)
+    except Exception:
+        return None
+    if len(array) == 0 or not np.all(np.isfinite(array)) or int(period) <= 0:
+        return None
+    alpha = 2.0 / (float(period) + 1.0)
+    ema = float(array[0])
+    for value in array[1:]:
+        ema = alpha * float(value) + (1.0 - alpha) * ema
+    return ema if np.isfinite(ema) else None
+
+
+def _position_amount(position):
+    return int(_finite_float(getattr(position, "amount", 0)) or 0)
+
+
+def _api_date(value):
+    day = _date_value(value)
+    return day.strftime("%Y%m%d") if day is not None else str(value)
 
 
 def _position_market_value(position):
