@@ -46,7 +46,7 @@
 | 对象 | 关键属性 / 用法 |
 |------|----------------|
 | `g`（GlobalVars） | 全局变量：`g.index`、`g.buy_stock_count`、`g.screen_stock_count`、`g.df`、`g.pre_position_list`。策略跨 bar 共享状态。 |
-| `log` | `log.info/warning/error/critical/debug(msg)`，转发到框架 logger。 |
+| `log` | `log.info/warning/error/critical/debug(msg)`，转发到框架 logger。**支持 printf 风格多参**：`log.info("信号=%s 条数=%d", src, n)` 按 `%` 风格格式化（对齐真实 Ptrade）；同时兼容 f-string / 单字符串写法。 |
 | `context`（Context） | `context.current_dt`（pd.Timestamp 当前交易日）、`context.previous_date`、`context.portfolio`、`context.blotter.current_dt`。 |
 | `context.portfolio` | `cash`、`positions`（dict，键为 Ptrade 格式代码）、`market_value`、`total_value`。 |
 | `data`（DataDict） | `data[code]` → `BarData`。支持 `.SS/.XSHG/.SZ/.XSHE/裸码` 互通取值；惰性构建。 |
@@ -184,6 +184,7 @@
 | `create_dir(user_path)` | 创建研究子目录（回测输出根下），返回 bool。 |
 | `get_trades_file(save_path='')` | 导出成交记录为 CSV，返回路径。 |
 | `convert_position_from_csv(path)` | 从 CSV 读底仓参数列表（`sid/enable_amount/amount/cost_basis`）。 |
+| `load_research_signals(csv_path, fallback=None)` | 注入 API：由**框架侧**读取外部研报/信号 CSV（仅保留买入/增持，自动兼容 `评级代码` 混用 `006/007` 与单数字 `6/7`、发布日期带时间戳后缀等脏格式），返回 `(rows, source)`。策略需要外部文件数据（如研报/信号表）时必须调用它，**禁止策略内自行 `open()/read_csv()`**（会被 `StrategyIsolationGuard` 拦截）。CSV 缺失/解析失败回退 `fallback`。 |
 | `get_instruments(contract)` | 证券元数据（期货不支持，返回空 dict）。 |
 | `get_dominant_contract(contract,date)` | 主力合约，无期货数据返回 `{}`。 |
 | `get_margin_rate(code)` | 保证金比例，无期货返回 `1.0`。 |
