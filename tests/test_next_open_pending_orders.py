@@ -113,22 +113,22 @@ def test_drain_pending_buy_fills_at_t1_open_not_close():
     engine._create_pending_order("600000.SH", instruction="target_value", target_value=10_000)
     po = engine._pending_orders[0]
 
-    # T+1 数据：open=11.0（成交价），close=10.5（不触发涨停：10.5/10-1=5%）。
+    # T+1 数据：open=10.8（成交价），close=10.5（不触发涨停：10.5/10-1=5%）。
     # open 与 close 明显不同，锁住"成交价=open≠close"口径。
     t1_data = pd.DataFrame({
         'code': ['600000'],
-        'open': [11.0], 'close': [10.5], 'preClose': [10.0],
+        'open': [10.8], 'close': [10.5], 'preClose': [10.0],
         'volume': [100000], 'suspendFlag': [0],
     })
-    t1_open_prices = {"600000.SH": 11.0}
+    t1_open_prices = {"600000.SH": 10.8}
 
     engine._drain_pending_orders(t1_data, "2026-01-06", t1_open_prices)
 
     assert po.status == "filled"
     assert po.filled_dt == "2026-01-06"
     assert po.filled_amount > 0
-    # 成交价基于 T+1 open=11.0（±滑点），与 T+1 close=10.5 明确不同（锁住成交价口径）
-    assert abs(po.price - 11.0) < 0.5  # 在 open±滑点附近
+    # 成交价基于 T+1 open=10.8（±滑点），与 T+1 close=10.5 明确不同（锁住成交价口径）
+    assert abs(po.price - 10.8) < 0.5  # 在 open±滑点附近
     assert po.price != 10.5  # 不是 close 价
 
     # locked_cash 归零（已转为持仓）

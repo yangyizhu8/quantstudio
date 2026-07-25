@@ -5,6 +5,8 @@ description: Strict agent-first strategy engineering for QuantStudio and PTrade.
 
 # QuantStudio Agent-first Strategy Engineering
 
+Skill release: `0.3.2-mvp`.
+
 Treat the calling agent as the strategy author. Constrain it with project lifecycle, data, timing, PTrade public API, validation, and delivery gates. Never implement a strategy by adding its name or shape to Compiler/Renderer/Jinja branches.
 
 ## Absolute execution rules

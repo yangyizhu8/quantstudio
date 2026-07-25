@@ -32,11 +32,12 @@ def before_trading_start(context, data):
 def handle_data(context, data):
     # IndicatorNode(s): fetch history plus the completed current bar entirely
     # from front-adjusted columns. Never append raw BarDict OHLC.
-    h = get_history_batch(
-        [g.security], {{ dataload_lookback + 1 }}, '{{ dataload_frequency }}',
-        fields={{ dataload_fields }}, fq='pre', include=True
+    h = get_history(
+        {{ dataload_lookback + 1 }}, '{{ dataload_frequency }}',
+        field={{ dataload_fields }}, security_list=g.security,
+        fq='pre', include=True, is_dict=True
     )
-    frame = next(iter(h.values()), None)
+    frame = h[g.security]
     if frame is None or '{{ dataload_fields[0] }}' not in frame:
         return
     close_data = np.asarray(frame['{{ dataload_fields[0] }}'].values, dtype=float)

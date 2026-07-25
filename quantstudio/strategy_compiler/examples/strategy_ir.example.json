@@ -30,6 +30,10 @@
     "holding_period_unit": "trading_day",
     "signal_data_cutoff": "T-1-close"
   },
+  "metadata": {
+    "benchmark": null,
+    "initial_capital": null
+  },
   "nodes": [
     {
       "node_id": "universe",
@@ -147,7 +151,7 @@
       "required_capabilities": [],
       "timing": "bar",
       "platform_mapping": {
-        "quantstudio": "get_ma(<qfq_close_history_including_completed_bar>, 5) helper; all signal closes use fq='pre'",
+        "quantstudio": "simple moving average of close, lookback=5; signal OHLC uses fq='pre'",
         "ptrade-default": "同 QS"
       },
       "validation_rules": [
@@ -170,7 +174,7 @@
       "required_capabilities": [],
       "timing": "bar",
       "platform_mapping": {
-        "quantstudio": "get_ma(<qfq_close_history_including_completed_bar>, 10) helper; all signal closes use fq='pre'",
+        "quantstudio": "simple moving average of close, lookback=10; signal OHLC uses fq='pre'",
         "ptrade-default": "同 QS"
       },
       "validation_rules": [

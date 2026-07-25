@@ -279,15 +279,15 @@ def _build_signal_chain_nodes(spec: dict[str, Any]) -> list[IRNode]:
                     f"indicator step {step_id!r} (operation={op}) requires positive parameters.lookback"
                 )
             if op == "ma":
-                qs = f"simple moving average of {field}, lookback={lookback_val}"
+                qs = f"simple moving average of {field}, lookback={lookback_val}; signal OHLC uses fq='pre'"
             elif op == "pct_change":
-                qs = f"pct_change({field}, lookback={lookback_val})"
+                qs = f"pct_change({field}, lookback={lookback_val}); signal OHLC uses fq='pre'"
             elif op == "ema":
-                qs = f"EMA({field}, lookback={lookback_val}, adjust=False)"
+                qs = f"EMA({field}, lookback={lookback_val}, adjust=False); signal OHLC uses fq='pre'"
             else:
                 high_field = params.get("high_field", "high")
                 low_field = params.get("low_field", "low")
-                qs = f"(max({high_field})-min({low_field}))/min({low_field}), lookback={lookback_val}"
+                qs = f"(max({high_field})-min({low_field}))/min({low_field}), lookback={lookback_val}; signal OHLC uses fq='pre'"
             validation_rules = ["INDICATOR-LOOKBACK-POSITIVE", "INDICATOR-NO-FUTURE-BAR"]
             required_caps: list[str] = []
             timing = "bar"

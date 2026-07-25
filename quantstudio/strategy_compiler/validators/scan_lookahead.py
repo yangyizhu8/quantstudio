@@ -67,7 +67,7 @@ def scan_lookahead(ir: StrategyIR, code: str) -> tuple[bool, list[Violation], li
     if ast_available:
         _check_item_1_before_trading_close(tree, violations)
         _check_item_2_same_close_signal_trade(tree, ir, violations)
-        _check_item_5_include_true(tree, violations)
+        _check_item_5_include_true(tree, ir, violations)
         _check_item_6_fundamentals_current_date(tree, violations)
         _check_item_9_minute_future(tree, ir, violations)
 
@@ -203,26 +203,51 @@ def _check_item_2_same_close_signal_trade(tree: ast.AST, ir: StrategyIR, violati
         ))
 
 
-def _check_item_5_include_true(tree: ast.AST, violations: list[Violation]) -> None:
-    """#5: get_history(..., include=True) misuse (DATALOAD-NO-INCLUDE-TRUE).
+def _check_item_5_include_true(
+    tree: ast.AST, ir: StrategyIR, violations: list[Violation]
+) -> None:
+    """Block incomplete-bar reads while allowing the completed daily qfq bar.
 
-    Detection: any get_history call with include=True keyword. include=True pulls
-    the current (possibly incomplete) bar into history — future leak in minute mode.
+    The sole allowed include=True shape is a daily-bar-v1 ``handle_data`` call
+    to ``get_history`` with daily frequency and literal ``fq='pre'``. At that
+    lifecycle point the daily bar is complete; using the history API prevents
+    raw BarDict OHLC from being mixed into a front-adjusted signal series.
     """
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    bar_freq = ir.engine_profile.get("bar_frequency", "1d")
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if _call_name(node) != "get_history":
+        if not isinstance(node, ast.Call) or _call_name(node) != "get_history":
             continue
         kws = _kw_args(node)
-        if "include" in kws and _const_value(kws["include"]) is True:
-            violations.append(Violation(
-                rule_id="DATALOAD-NO-INCLUDE-TRUE",
-                severity="BLOCK",
-                message="get_history(..., include=True) pulls the current/incomplete bar into history "
-                        "— future-bar leakage (高危 #5). Use include=False.",
-                location=f"line {node.lineno}",
-            ))
+        if _const_value(kws.get("include")) is not True:
+            continue
+        owner = None
+        current = node
+        while current in parents:
+            current = parents[current]
+            if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                owner = current.name
+                break
+        frequency = None
+        if len(node.args) >= 2:
+            frequency = _const_value(node.args[1])
+        if frequency is None:
+            frequency = _const_value(kws.get("frequency") or kws.get("unit"))
+        allowed_completed_daily = (
+            bar_freq == "1d"
+            and owner == "handle_data"
+            and frequency == "1d"
+            and _const_value(kws.get("fq")) == "pre"
+        )
+        if allowed_completed_daily:
+            continue
+        violations.append(Violation(
+            rule_id="DATALOAD-NO-INCLUDE-TRUE",
+            severity="BLOCK",
+            message="get_history(..., include=True) is allowed only for a completed daily "
+                    "handle_data bar with literal fq='pre'; otherwise it risks future-bar leakage.",
+            location=f"line {node.lineno}",
+        ))
 
 
 def _check_item_6_fundamentals_current_date(tree: ast.AST, violations: list[Violation]) -> None:
