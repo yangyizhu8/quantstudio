@@ -969,7 +969,7 @@ class PtradeAPI:
 
     def get_history(self, security=None, count=None, unit='1d', fields=None,
                     frequency=None, field=None, security_list=None,
-                    fq=None, include=False, fill='nan', is_dict=False) -> pd.DataFrame:
+                    fq='pre', include=False, fill='nan', is_dict=False) -> pd.DataFrame:
         """获取历史数据（对应 Ptrade get_history），兼容两种签名：
 
         签名 A（security-first，向后兼容）：
@@ -1120,6 +1120,10 @@ class PtradeAPI:
         （分钟 bar 的 preClose 不复权，除权日风险）。
         日线 Profile：用 _current_day_data（当日日线，与现有行为一致）。
         """
+        if (self._engine is not None
+                and getattr(self._engine, 'engine_profile', None) == 'daily-open-close-proxy-v1'
+                and self._current_bar_ts is not None):
+            return self._current_day_data
         daily = getattr(self, '_daily_curr_data', None)
         if daily is not None:
             return daily
@@ -1143,13 +1147,13 @@ class PtradeAPI:
         return normalize_to_ptrade(bare_code)
 
     def get_price(self, security, start_date=None, end_date=None, frequency='1d',
-                  fields=None, fq=None, count=None, is_dict=False):
+                  fields=None, fq='pre', count=None, is_dict=False):
         """获取历史行情（对应 Ptrade get_price）
         security: 单个代码或列表
         start_date/end_date: 'YYYY-MM-DD'
         frequency: '1d'/'1m'/'5m' 等
         fields: ['open','high','low','close','volume','amount'] 等
-        fq: 'pre'(前复权)/'post'(后复权)/None(不复权)
+        fq: 'pre'(前复权，默认)/'post'(后复权)/None(不复权)
         count: 获取数量（与 end_date 配合）
         is_dict: True 返回 dict[code→DataFrame]，False 返回 DataFrame"""
         try:
@@ -1227,7 +1231,7 @@ class PtradeAPI:
         return self.get_fundamentals(security_list, table=table, fields=fields, date=date)
 
     def get_history_batch(self, security_list, count, unit='1d',
-                          fields=None, fq=None, include=False) -> 'CodeDict':
+                          fields=None, fq='pre', include=False) -> 'CodeDict':
         """B1：批量查询多只股票历史行情。返回 CodeDict（{ptrade_code: DataFrame}）。
 
         与 get_history(security_list, ...) 的区别：
