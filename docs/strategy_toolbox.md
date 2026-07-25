@@ -80,7 +80,7 @@
 | 函数 | 说明 |
 |------|------|
 | `get_history(...)` | 获取历史 K 线，**双签名兼容**：`get_history(security,count,unit='1d',fields=...,fq='pre')` 与 Ptrade 官方 `get_history(count,frequency='1d',field='close',security_list=...,fq='pre')`。**fq 默认 `'pre'`（前复权）**。支持 `is_dict=True` 返回 `{code:DataFrame}`。字段映射 `money→amount`、`price→close`、`factor→pctChg`。 |
-| `get_history_batch(sec_list,count,unit='1d',fields=...,fq='pre',include=...)` | B1 批量取数：强制 list 入参 + 返回 `CodeDict`，消除逐只 N+1 查询。**fq 默认 `'pre'`**。 |
+| `get_history_batch(sec_list,count,unit='1d',fields=...,fq='pre',include=...)` | B1 批量取数：强制 list 入参 + 返回 `CodeDict`；**复用 `get_history` 的 `get_bars_by_count` 活跃路径**（不读取已停用的 `_preload_daily` 全市场缓存，当前底层仍按代码逐只查询，并非单次批量扫描）。**fq 默认 `'pre'`**。 |
 | `get_price(security,start_date,end_date,frequency='1d',fields,fq='pre',count,is_dict)` | 按日期区间/数量取历史行情，返回 DataFrame 或 `CodeDict`。**fq 默认 `'pre'`（前复权）**。 |
 | `attribute_history(security,count,unit='1d',fields)` | 取历史数据最近一行（单列 Series）。 |
 | `current_price(security)` | 当前价。 |

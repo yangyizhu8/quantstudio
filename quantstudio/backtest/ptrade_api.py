@@ -1236,7 +1236,7 @@ class PtradeAPI:
 
         与 get_history(security_list, ...) 的区别：
         - 强制 list 入参 + 强制 is_dict 语义（返回 {code: df}，便于逐只访问）
-        - 始终走预加载内存路径（_preload_daily），单次扫描，无 N 次 DuckDB 往返
+        - 复用 get_history（走 get_bars_by_count 活跃路径），不读取 _preload_daily 全市场缓存；当前底层仍按代码逐只查询，并非单次批量扫描
         - count/unit/fields/fq/include 语义与 get_history 一致
 
         典型用法（替代逐只 get_history 算动量/反转因子）：

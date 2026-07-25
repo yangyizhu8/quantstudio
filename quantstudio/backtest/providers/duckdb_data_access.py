@@ -80,9 +80,11 @@ class DuckDBDataAccess:
     def preload_daily_bars(self, prev_date: str) -> None:
         """预加载全市场行情到内存（仅首次加载，回测期间复用，get_history_from_preload 按 prev_ms 过滤）。
 
-        迁移自 PtradeAPI._preload_market_data() (ptrade_api.py:355-392)
-        PIT 语义：不同回测日查到的历史数据通过 _preload_prev_ms 过滤实现。
-        首次加载后缓存 _preload_daily / _preload_listing，后续调用只更新 _preload_prev_ms。
+        DEPRECATED/未调用（自 2026-07-25）：当前生产取数路径 get_history/get_history_batch
+        走 get_bars_by_count() → query_bars_by_count_multi_table()，不读取 _preload_daily，
+        也不调用 get_history_from_preload()；估值 PIT 与上市日期分别由 FundamentalProvider /
+        ReferenceProvider 独立管理。DuckDBMarketDataProvider.preload() 已停止调用本方法，
+        仅保留为未调用兼容代码，不删除。
         """
         prev_ms = int(pd.Timestamp(prev_date, tz='Asia/Shanghai').timestamp() * 1000) + 86_399_999
         # 估值数据（float_value/pe_ratio）每日重算 PIT 快照
@@ -96,7 +98,7 @@ class DuckDBDataAccess:
             conn = self._get_conn()
             if conn is None:
                 return
-            # 预加载足够大的行情窗口（回测全期，内存 ~60MB）
+            # 预加载足够大的行情窗口（回测全期；实测约 400 万行、约 759MiB（约 796MB 十进制），常驻内存。该方法现已不再被调用——保留为未调用兼容代码。）
             self._preload_daily = conn.execute("""
                 SELECT code, time, open, high, low, close, volume, amount,
                        pctChg, preClose, turn, peTTM, pbMRQ, psTTM,
