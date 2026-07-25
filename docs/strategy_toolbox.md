@@ -1,7 +1,7 @@
 # QuantStudio 策略工具箱（PTrade 兼容回测 API）
 
-本框架在 QuantStudio 本地回测引擎上**完整模拟 Ptrade 平台的 API 接口**，Ptrade 策略可
-原封不动移植运行。数据 100% 来自 DuckDB（QuantStudio 数据管线产出），不依赖任何外部
+本框架在 QuantStudio 本地回测引擎上对齐**已登记并验证的 PTrade 回测公共 API 子集**，同时提供明确标记的 QuantStudio 本地扩展。
+只有通过 PTrade Profile Validator 的策略才可声明可移植；本地运行成功不等于真实平台兼容。数据 100% 来自 DuckDB（QuantStudio 数据管线产出），不依赖任何外部
 回测平台。
 
 > 对照参考：本文档结构对齐看海量化（khQuant）[3.2 策略工具箱](
@@ -33,11 +33,11 @@
 | `before_trading_start` | 可选 | `def before_trading_start(context, data):` | 每交易日开盘前调用（09:31 前）。做盘前选股、预计算。 |
 | `handle_data` | 可选 | `def handle_data(context, data):` | **逐 bar 心跳**（日线=每日、分钟=每根 bar）。主力策略逻辑在此编写。 |
 | `after_trading_end` | 可选 | `def after_trading_end(context):` | 每交易日收盘后调用。做收盘统计、日志。 |
-| `set_backtest` | 可选 | `def set_backtest(context, backtest_obj):` | 接收回测配置对象（实盘移植兼容钩子）。 |
+| `set_backtest` | 仅 QuantStudio 本地可选 | `def set_backtest(context, backtest_obj):` | 本地回测扩展/兼容钩子；真实 PTrade/IQEngine 无此公共生命周期 API。 |
 
-> 与看海框架对照：看海本章仅明示 `init` 与 `khHandlebar` 两个回调；本框架提供 Ptrade
-> 原生的完整 5 个生命周期钩子（`initialize`≈`init`，`handle_data`≈`khHandlebar`，并额外
-> 提供 `before_trading_start`/`after_trading_end`/`set_backtest`）。
+> 与看海框架对照：看海本章仅明示 `init` 与 `khHandlebar` 两个回调；本框架提供 PTrade
+> 可移植生命周期回调 `initialize`、`before_trading_start`、`handle_data`、`after_trading_end`，
+> 并在 QuantStudio 本地额外提供 `set_backtest` 等扩展；本地扩展不得进入双端/PTrade 目标。
 
 ---
 
@@ -68,9 +68,11 @@
 | `set_commission(**kw)` | 设置佣金：`commission_ratio`/`min_commission`；`type='ETF'` 时关闭印花税与过户费。 |
 | `set_slippage(slippage=0.1)` | 设置比例滑点（Ptrade 签名 `set_slippage(slippage=...)`）。 |
 | `set_fixed_slippage(fixedslippage=0.1)` | 设置每股固定滑点（Ptrade 签名）。 |
-| `set_backtest(*a, **kw)` | 兼容实盘钩子（回测空实现）。 |
+| `set_backtest(*a, **kw)` | **QuantStudio 本地扩展**（回测空实现）。真实 PTrade/IQEngine 无此公共 API；双端/PTrade Validator 阻断。 |
 | `set_volume_ratio(v=0.25)` | 设置成交量占比限制。 |
 | `set_yesterday_position(poslist)` | 设置初始底仓（CSV dict 列表：`sid/amount/cost_basis`）。 |
+
+> 可移植性红线：`set_backtest()`、`is_trade()` 仅供 QuantStudio 本地单端策略；双端/PTrade 源码不得调用。日志请使用 `log.warning(...)`，禁止 `log.warn(...)`。
 | `set_parameters(**kw)` | 设置策略参数（交易端兼容，回测记录参数）。 |
 
 ### 3.2 行情 / 历史数据
@@ -259,7 +261,7 @@ def after_trading_end(context):
 
 | 维度 | 看海 khQuant（chapter13） | QuantStudio（本框架） |
 |------|--------------------------|----------------------|
-| 生命周期 | `init` + `khHandlebar`（本章明示） | `initialize` + `before_trading_start` + `handle_data` + `after_trading_end` + `set_backtest`（完整 Ptrade 钩子） |
+| 生命周期 | `init` + `khHandlebar`（本章明示） | PTrade 可移植：`initialize` + `before_trading_start` + `handle_data` + `after_trading_end`；QuantStudio 本地另有 `set_backtest` 扩展 |
 | 数据查询 | `khGet/khPrice/khIndex/khHas` | `get_history`/`get_price`/`attribute_history`/`current_price`/`get_current_data`/`get_snapshot` + `CodeDict` 归一化 |
 | 财务/估值 | （ORM 不在本章） | `query`/`valuation` ORM + `get_fundamentals`（10 张表，valuation 完整） |
 | 历史/指标 | `khHistory` + MyTT + 缠论 `KhChanLunTools` | `get_history`/`get_price` + MyTT（50+）+ `get_MACD/KDJ/RSI/CCI`（无内置缠论） |

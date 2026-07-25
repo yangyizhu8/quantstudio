@@ -54,3 +54,10 @@ Generated PTrade code must pass:
 
 - PTrade documents `filter_stock_by_status` as callable only from `before_trading_start`. Generated scheduled callbacks must use `get_stock_status` instead.
 - `DELISTING_SORTING` filtering applies only to current-day data.
+
+## Profile correction 1.5.0 — real IQEngine initialization/logger failure
+
+- `set_backtest()` and `is_trade()` are QuantStudio-local injected extensions, not PTrade backtest public APIs. Dual/PTrade validation blocks both calls.
+- A local guard such as `if not is_trade(): set_backtest()` is not portable because the guard itself is also absent on the real platform. PTrade output must omit the local-only switch.
+- The verified portable logger methods are `log.debug`, `log.info`, `log.warning`, `log.error`, and `log.critical`. `log.warn` is blocked because real IQEngine `LogEngine` does not expose that alias.
+- Runtime evidence was supplied on 2026-07-25 with a platform timestamp of 2026-07-26; the future timestamp is retained as evidence metadata but does not change the contract diagnosis.

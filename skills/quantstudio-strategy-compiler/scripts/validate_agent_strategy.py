@@ -199,6 +199,30 @@ def _load_ptrade_profile() -> dict[str, Any]:
     return load_json(skill_root() / "references" / "ptrade-api-signatures.json")
 
 
+def _validate_ptrade_logger_call(
+    call: ast.Call,
+    profile: dict[str, Any],
+    issues: list[dict[str, Any]],
+) -> None:
+    """Enforce the logger methods exposed by the real PTrade IQEngine runtime."""
+    if not isinstance(call.func, ast.Attribute) or not isinstance(call.func.value, ast.Name):
+        return
+    if call.func.value.id != "log":
+        return
+    method = call.func.attr
+    logger_profile = profile.get("logger_methods", {})
+    blocked = logger_profile.get("blocked_aliases", {})
+    allowed = set(logger_profile.get("allowed", []))
+    if method in blocked:
+        issues.append(_issue(
+            "PTRADE-LOG-METHOD", "BLOCK", blocked[method], call.lineno))
+    elif allowed and method not in allowed:
+        issues.append(_issue(
+            "PTRADE-LOG-METHOD", "BLOCK",
+            f"log.{method}() is not in the verified PTrade logger profile; "
+            f"allowed methods are {sorted(allowed)}.", call.lineno))
+
+
 def _validate_ptrade_call(
     call: ast.Call,
     name: str,
@@ -340,8 +364,10 @@ def validate_strategy(
             callback, schedule_time = _literal_schedule(node)
             schedules.append((callback, schedule_time, node.lineno))
         _validate_signal_price_adjustment(node, name, issues)
-        if strict_ptrade and name:
-            _validate_ptrade_call(node, name, ptrade_profile, defined_names, issues)
+        if strict_ptrade:
+            _validate_ptrade_logger_call(node, ptrade_profile, issues)
+            if name:
+                _validate_ptrade_call(node, name, ptrade_profile, defined_names, issues)
 
     target_set = set(design.get("targets", []))
     local_only_symbols = set(ptrade_profile.get("local_only_symbols", []))

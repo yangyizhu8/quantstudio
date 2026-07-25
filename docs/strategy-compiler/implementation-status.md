@@ -1,4 +1,4 @@
-﻿# Strategy Compiler Implementation Status
+# Strategy Compiler Implementation Status
 
 > Master plan: `QuantStudio Strategy Compiler frozen master plan v1.0`  
 > Current stage: 0.3.0-mvp RELEASED; Delivery Flow Integration — MERGED TO MAIN / PASS
@@ -687,3 +687,13 @@ This supersedes the PR2 Commit 1 / audit-fix / audit-fix2 FAIL entries while ret
 - Test evidence: current main basket suite `59 passed`; prior full-suite evidence `563 passed / 5 failed` had only resident-DB/calendar environment failures and no G1-I regression. The subsequent QFQ merge is disjoint from G1-I; no G1 basket file changed after `bcdc85d`.
 - Review result: **PASS / APPROVED**. G1-I is complete and G2 CP3 Reference closure is authorized, but G2 has not started.
 - Remaining risks: CP3 Reference fixtures/digests/Oracle, G3 dual Renderer/package, G4 CLI E2E/release, and known non-hermetic DB/calendar tests remain open.
+---
+
+## PTrade profile 1.5.0 runtime-contract repair (2026-07-25)
+
+- Trigger: customer-supplied real IQEngine traceback carries platform timestamp `2026-07-26` (future relative to the review date) and fails in `initialize` with `NameError: set_backtest is not defined`; the same run also reports `LogEngine` has no `warn` attribute.
+- Root cause: the Skill component catalog exposed QuantStudio-local `set_backtest`/`is_trade`, but the PTrade signature profile did not classify them as `LOCAL_ONLY`; the validator also had no explicit logger-method contract, so a dual-target source containing both defects could receive PTrade PASS.
+- Generic repair: PTrade profile `1.5.0` marks `set_backtest` and `is_trade` local-only, validates `log.debug/info/warning/error/critical`, blocks `log.warn`, and updates Skill rules plus README/strategy-toolbox/prompt-engineering references.
+- Regression evidence: PTrade validator targeted suite `17 passed`; related Skill/delivery/release suites `101 passed`; Skill quick validation, JSON parse, Python compile, and installed-skill hash comparison all PASS.
+- Artifact status: the previous `tech_etf_mvo_rotation` PTrade PASS/publication is stale. Revalidation now blocks the source on both local-only calls and five `log.warn` call sites, in addition to pre-existing schedule/design mismatches. The old upload artifact must not be reused.
+- Synchronization status: local repair only. No staging, commit, push, or pull request is authorized until explicit post-repair customer confirmation.

@@ -88,6 +88,24 @@ def test_ptrade_validator_blocks_wrong_set_slippage_keyword():
     assert "PTRADE-API-SIGNATURE" in rules
 
 
+def test_ptrade_validator_blocks_quantstudio_backtest_switches():
+    rules = block_rules(valid_source(extra_initialize=(
+        "    if not is_trade():\n"
+        "        set_backtest()")))
+    assert "PTRADE-LOCAL-SYMBOL" in rules
+    assert "TARGET-LOCAL-EXTENSION-BAN" in rules
+
+
+def test_ptrade_validator_blocks_log_warn_and_accepts_log_warning():
+    blocked = block_rules(valid_source(extra_rebalance="    log.warn('rejected')"))
+    assert "PTRADE-LOG-METHOD" in blocked
+
+    report = validate_strategy(
+        design(), valid_source(extra_rebalance="    log.warning('rejected')"),
+        target_profile="ptrade")
+    assert report["status"] == "PASS", report
+
+
 def test_ptrade_validator_accepts_real_set_slippage_keyword():
     report = validate_strategy(
         design(), valid_source(extra_initialize="    set_slippage(slippage=0.0)"),

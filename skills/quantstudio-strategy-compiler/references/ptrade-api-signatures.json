@@ -1,6 +1,6 @@
 {
   "profile_id": "ptrade-backtest-public-v1",
-  "profile_version": "1.4.0",
+  "profile_version": "1.5.0",
   "verified_on": "2026-07-25",
   "policy": "Canonical dual-target code must use exact PTrade backtest public signatures; QuantStudio adapters must be equally strict so local PASS predicts platform acceptance.",
   "signatures": {
@@ -234,7 +234,9 @@
     "EXIST",
     "get_strategy_events",
     "order_at_price",
-    "get_etf_list_local"
+    "get_etf_list_local",
+    "set_backtest",
+    "is_trade"
   ],
   "portable_rules": [
     "Generated backtest signal-price calls must use the literal fq='pre'; missing, dynamic, dypre, post-adjusted, and attribute_history price paths are blocked.",
@@ -253,6 +255,20 @@
   },
   "runtime_corrections": {
     "get_open_orders": "PTrade public documentation marks get_open_orders(security=None) available in backtest and trade; profile 1.2.0 incorrectly blocked it.",
-    "source_checked_on": "2026-07-24"
+    "source_checked_on": "2026-07-25",
+    "set_backtest_is_trade": "Runtime traceback supplied on 2026-07-25 (platform timestamp 2026-07-26) proves set_backtest/is_trade are QuantStudio-local extensions, not PTrade backtest public APIs.",
+    "log_warn": "Runtime traceback supplied on 2026-07-25 (platform timestamp 2026-07-26) proves IQEngine LogEngine has no warn attribute; generated PTrade source must use log.warning."
+  },
+  "logger_methods": {
+    "allowed": [
+      "debug",
+      "info",
+      "warning",
+      "error",
+      "critical"
+    ],
+    "blocked_aliases": {
+      "warn": "Use log.warning(...); the real IQEngine LogEngine does not expose log.warn(...)."
+    }
   }
 }

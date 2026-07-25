@@ -5,7 +5,7 @@ description: Strict target-aware agent-first strategy engineering for QuantStudi
 
 # QuantStudio Agent-first Strategy Engineering
 
-Skill release: `0.5.0-user-pyqt-candidate-flow` (built on the `0.3.2-mvp` compiler/package baseline).
+Skill release: `0.5.1-ptrade-runtime-contract-hotfix` (built on the `0.3.2-mvp` compiler/package baseline).
 
 Treat the calling agent as the strategy author. Constrain it with project lifecycle, data, timing, PTrade public API, validation, and delivery gates. Never implement a strategy by adding its name or shape to Compiler/Renderer/Jinja branches.
 
@@ -23,6 +23,7 @@ Treat the calling agent as the strategy author. Constrain it with project lifecy
 10. Local backtests obtain data through QuantStudio providers. Prefer `<current-project>/data/quantstudio.db`; use a configured/external database only when the project-local database is absent or the customer explicitly approves the override. Strategy source must never open DuckDB itself.
 11. In dual mode, customer-provided PTrade runtime failures invalidate the previous PTrade PASS and R6 publication. Return to R1/R4, repair the reusable profile/adapter/Skill rule, regenerate both targets, and repeat post-generation consistency checks.
 12. All OHLC prices used for indicators, ranking, entry/exit signals, or risk thresholds must come from an injected history/price API with the literal keyword `fq='pre'`. Never omit `fq`, use `None`/`post`/`dypre`, or mix raw `data[code].open/high/low/close` into a front-adjusted signal series. Raw prices remain valid only for order matching, fills, cash, and position valuation.
+13. `set_backtest()` and `is_trade()` are QuantStudio-local extensions. Any dual/PTrade source that calls them is BLOCKED; remove the backtest-only switch from the PTrade target rather than relying on a local guard. PTrade logging uses `log.debug/info/warning/error/critical`; `log.warn` is BLOCKED.
 
 ## Responsibility boundary
 
@@ -287,6 +288,8 @@ In user-PyQt mode, R6 must verify the validated candidate still exists with the 
 # PTrade compatibility rules
 
 - API keyword names must match the platform exactly. Python acceptance through local `**kwargs` is forbidden as compatibility evidence.
+- `set_backtest()` and `is_trade()` are LOCAL_ONLY and forbidden in dual/PTrade backtest source. Do not wrap one local-only call with another.
+- Use `log.warning(...)`, never `log.warn(...)`, in portable source; real IQEngine `LogEngine` does not expose the alias.
 - Backtest/trading/research context availability is enforced separately.
 - Use PTrade `.SS/.SZ/.BJ` security suffixes in portable source and in local ETF-universe return values.
 - Normalize comparison keys by bare six-digit code where API containers may differ.
