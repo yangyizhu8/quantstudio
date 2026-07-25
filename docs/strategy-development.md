@@ -46,6 +46,8 @@ result, output_dir = payload
 - `open`：按当日开盘成交，用于口径诊断；
 - `next_open`：信号后下一交易日开盘成交，用于更严格的反未来函数研究。
 
+**价格口径为前复权闭环**：引擎每日全市场快照（`query_daily_snapshot`，撮合价/持仓估值/`data[code].price` 的唯一来源）OHLC 统一映射前复权列（`*_front`，缺失回退原始价），`preClose` 按 `close_front/close` 同因子缩放；与策略取数链路（默认 `fq='pre'`）同一连续口径，ETF 拆分/分红除权日无价格缺口与虚假盈亏（分红等价于自动再投资）。`pctChg`/`volume`/`amount` 保持原始口径。
+
 GUI、CLI 和 `StrategyRunner` 都将该参数传入同一个 `BacktestEngine`。
 
 ## 可替换数据层

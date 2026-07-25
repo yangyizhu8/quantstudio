@@ -48,7 +48,7 @@
 | `g`（GlobalVars） | 全局变量：`g.index`、`g.buy_stock_count`、`g.screen_stock_count`、`g.df`、`g.pre_position_list`。策略跨 bar 共享状态。 |
 | `log` | `log.info/warning/error/critical/debug(msg)`，转发到框架 logger。**支持 printf 风格多参**：`log.info("信号=%s 条数=%d", src, n)` 按 `%` 风格格式化（对齐真实 Ptrade）；同时兼容 f-string / 单字符串写法。 |
 | `context`（Context） | `context.current_dt`（pd.Timestamp 当前交易日）、`context.previous_date`、`context.portfolio`、`context.blotter.current_dt`。 |
-| `context.portfolio` | `cash`、`positions`（dict，键为 Ptrade 格式代码）、`market_value`、`total_value`。 |
+| `context.portfolio` | `cash`、`positions`（dict，键为 Ptrade 格式代码）、`market_value`、`total_value`；**PTrade 标准属性**：`portfolio_value`（= 组合总净值，同 `total_value`）、`positions_value`（= 持仓市值，同 `market_value`）。 |
 | `data`（DataDict） | `data[code]` → `BarData`。支持 `.SS/.XSHG/.SZ/.XSHE/裸码` 互通取值；惰性构建。 |
 | `BarData` | `open`/`high`/`low`/`close`/`price`(=close)/`volume`/`preclose`/`high_limit`/`low_limit`（涨跌停价由 A股规则精确计算）。 |
 | `Position` | `sid`/`amount`/`enable_amount`(可卖，T+1 由引擎控)/`cost_basis`/`last_sale_price`/`avg_cost`/`market_value`。 |
@@ -78,6 +78,8 @@
 ### 3.2 行情 / 历史数据
 
 > 前复权为框架默认：注入 API（`get_history`/`get_price`/`get_history_batch`）与底层数据适配层（`providers.get_bars`/`get_bars_by_count`）默认均为 `fq='pre'`；策略不传 `fq` 即获前复权价，需不复权须显式 `fq=None`。
+>
+> **撮合/估值同为前复权口径（前复权闭环）**：引擎每日全市场快照 `query_daily_snapshot`（成交价、持仓估值、`data[code].price`、`BarData` OHLC 的唯一来源）将 OHLC 映射为前复权列（`*_front`，缺失回退原始价），`preClose` 按 `close_front/close` 同因子缩放，保证 `(close-preClose)/preClose` 与真实日收益一致。因此 ETF 份额拆分、股票分红除权不会产生价格缺口与虚假盈亏；代价是成交价为前复权价（分红等价于自动再投资，前复权回测标准口径）。`pctChg`/`volume`/`amount` 保持原始口径。
 
 | 函数 | 说明 |
 |------|------|

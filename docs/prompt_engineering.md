@@ -65,6 +65,7 @@ QuantStudio 是一个 100% 本地、DuckDB 驱动、Ptrade 兼容的 A股日/分
 - get_history(security,count,unit='1d',fields,fq='pre',include=False,is_dict=False)：单标的历史，索引 -count..0。
 - get_price(security,start,end,frequency='1d',fields,fq='pre',count,is_dict=False)
 - ⚠️ **取数默认前复权（fq='pre'）**：框架 API 与底层数据适配层默认均为前复权；生成策略取历史/行情务必使用 `fq='pre'`（不复权才显式传 `fq=None`）。**切勿依赖不复权价格做回测**（除权缺口会导致信号与收益失真）。即便省略 fq 也已是前复权，但建议显式写出 `fq='pre'` 以表意清晰。
+- ⚠️ **撮合/估值同为前复权口径（前复权闭环）**：成交价、持仓估值、`data[code].price` 均来自引擎前复权快照（OHLC 映射 `*_front`，`preClose` 同因子缩放），与信号价同一连续口径；ETF 拆分/分红除权无价格缺口、无虚假盈亏（分红等价于自动再投资）。策略可直接比较 `data[code].price` 与 `get_history(fq='pre')` 序列。
 - get_fundamentals(security|QueryBuilder, table, fields, date)：valuation 完整可用；eps/profit_ability/
   growth_ability 等可用；balance/income/cashflow 三张报表【返回空 DataFrame】。
 - query(valuation.market_cap).filter(...).order_by(...).limit(n) 后 get_fundamentals(q)
@@ -72,7 +73,7 @@ QuantStudio 是一个 100% 本地、DuckDB 驱动、Ptrade 兼容的 A股日/分
 - PTrade 兼容：get_index_stocks(idx)、get_Ashares()、get_etf_list()、get_cb_list()
 - QuantStudio 本地扩展：get_etf_list_local(query_date=None, etf_type="equity", active_only=True)、get_history_batch(...)；仅当生成目标不包含 PTrade 时允许
 - check_limit(code)→{code:1涨/-1跌/0平}；filter_stock_by_status(stocks,filter_type=[...])
-- get_positions()、get_position(code)、context.portfolio.positions/positions_value/cash
+- get_positions()、get_position(code)、context.portfolio.positions/positions_value/portfolio_value/cash
 - load_research_signals(csv_path, fallback=None)：注入 API，由框架侧读取外部研报/信号 CSV（仅保留买入/增持），返回 (rows, source)；需要外部文件数据（如研报/信号表）时用它，**禁止策略内自行 open()/read_csv()**。
 
 【撮合机制（理解即可，代码写法与模式无关）】
