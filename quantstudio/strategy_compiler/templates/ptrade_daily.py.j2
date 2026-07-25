@@ -32,7 +32,7 @@ def before_trading_start(context, data):
         history = get_history(
             g.lookback, '{{ dataload_frequency }}',
             field={{ dataload_fields }}, security_list=g.security,
-            fq='dypre', include=False, is_dict=True
+            fq='pre', include=False, is_dict=True
         )
         item = _lookup_history_item(history, g.security)
         closes = _finite_series(_extract_history_field(item, '{{ dataload_fields[0] }}'))
@@ -171,7 +171,7 @@ def before_trading_start(context, data):
             history = get_history(
                 g.lookback, '{{ dataload_frequency }}',
                 field={{ dataload_fields }}, security_list=code,
-                fq='dypre', include=False, is_dict=True
+                fq='pre', include=False, is_dict=True
             )
             item = _lookup_history_item(history, code)
             closes = _finite_series(_extract_history_field(item, '{{ dataload_fields[0] }}'))

@@ -75,6 +75,8 @@
 
 ### 3.2 行情 / 历史数据
 
+> 前复权为框架默认：注入 API（`get_history`/`get_price`/`get_history_batch`）与底层数据适配层（`providers.get_bars`/`get_bars_by_count`）默认均为 `fq='pre'`；策略不传 `fq` 即获前复权价，需不复权须显式 `fq=None`。
+
 | 函数 | 说明 |
 |------|------|
 | `get_history(...)` | 获取历史 K 线，**双签名兼容**：`get_history(security,count,unit='1d',fields=...,fq='pre')` 与 Ptrade 官方 `get_history(count,frequency='1d',field='close',security_list=...,fq='pre')`。**fq 默认 `'pre'`（前复权）**。支持 `is_dict=True` 返回 `{code:DataFrame}`。字段映射 `money→amount`、`price→close`、`factor→pctChg`。 |

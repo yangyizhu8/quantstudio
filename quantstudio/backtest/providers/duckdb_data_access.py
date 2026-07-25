@@ -566,6 +566,19 @@ class DuckDBDataAccess:
             logger.warning("query_strategy_events failed: %s", exc)
             return pd.DataFrame(columns=columns)
 
+    def query_corporate_actions(self, date_ms: int) -> pd.DataFrame:
+        """Return ex-date cash/stock distributions for a trading date."""
+        conn = self._get_conn()
+        if conn is None:
+            return pd.DataFrame(columns=["code", "cash_div", "stk_div", "div_rat"])
+        tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
+        if "stock_dividend" not in tables:
+            return pd.DataFrame(columns=["code", "cash_div", "stk_div", "div_rat"])
+        return conn.execute(
+            "SELECT code, cash_div, stk_div, div_rat FROM stock_dividend WHERE ex_date = ?",
+            [int(date_ms)],
+        ).fetchdf()
+
     def query_listing_dates(self) -> pd.DataFrame:
         """迁移自 PtradeAPI._preload_market_data() 中的上市日期查询 (ptrade_api.py:388-390)"""
         conn = self._get_conn()

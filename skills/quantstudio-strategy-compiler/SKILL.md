@@ -20,6 +20,7 @@ Treat the calling agent as the strategy author. Constrain it with project lifecy
 9. R0 and R2.5 are real conversational stop points. The calling agent must not self-confirm, infer consent from silence, reuse an unrelated prior confirmation, or continue in the same turn without the customer's explicit answer.
 10. Local backtests obtain data through QuantStudio providers. Prefer `<current-project>/data/quantstudio.db`; use a configured/external database only when the project-local database is absent or the customer explicitly approves the override. Strategy source must never open DuckDB itself.
 11. Customer-provided PTrade runtime failures invalidate the previous PTrade PASS and R6 publication. Return to R1/R4, repair the reusable profile/adapter/Skill rule, regenerate both targets, and repeat post-generation consistency checks.
+12. All OHLC prices used for indicators, ranking, entry/exit signals, or risk thresholds must come from an injected history/price API with the literal keyword `fq='pre'`. Never omit `fq`, use `None`/`post`/`dypre`, or mix raw `data[code].open/high/low/close` into a front-adjusted signal series. Raw prices remain valid only for order matching, fills, cash, and position valuation.
 
 ## Responsibility boundary
 
@@ -27,7 +28,7 @@ Treat the calling agent as the strategy author. Constrain it with project lifecy
 
 - lifecycle signatures and callback timing;
 - public API signatures and context availability;
-- data/PIT/no-lookahead contracts and local backtest data-source resolution;
+- data/PIT/no-lookahead contracts, front-adjusted signal-price enforcement, and local backtest data-source resolution;
 - A-share status, T+1, lot, cost and execution boundaries;
 - local adapter compatibility with real PTrade signatures;
 - static validation, local backtesting, PTrade-profile validation;
@@ -67,7 +68,8 @@ Present and confirm:
 - holding period, T+1/T+0, repeated-symbol and batch behavior;
 - maximum simultaneous holdings, overlap, cash and leverage policy;
 - order rejection, suspension and limit-state handling;
-- costs, slippage and benchmark.
+- costs, slippage and benchmark;
+- the fixed price-basis contract: signal OHLC uses front-adjusted prices (`fq='pre'`), while execution and valuation use raw tradable prices.
 
 Identify contradictions with concrete examples. Do not choose a material interpretation for the customer.
 
@@ -78,7 +80,7 @@ Identify contradictions with concrete examples. Do not choose a material interpr
 After the customer has explicitly completed R0, inspect only capabilities required by this strategy:
 
 - resolve the local backtest database in this order: `<current-project>/data/quantstudio.db`, then an explicitly approved configured/external DuckDB; record the absolute path, existence, selected tables, row/date coverage and resolution reason;
-- tables, columns, PIT anchors and date coverage through the adapter/provider layer;
+- tables, columns, PIT anchors and date coverage through the adapter/provider layer, including non-null `*_front` OHLC coverage for every required asset/frequency;
 - local engine profile and lifecycle;
 - PTrade backtest/trade context availability;
 - exact function signatures and permitted keyword names;
@@ -89,6 +91,7 @@ Classify each item as `READY`, `APPROXIMATION_REQUIRES_CONFIRMATION`, `DATA_BLOC
 For every API planned for generated code, check `ptrade-api-signatures.json`. Examples:
 
 - use `set_slippage(slippage=...)`, never `slippage_ratio=...`;
+- use the literal `fq='pre'` on every signal-price `get_history`, `get_history_batch`, or `get_price` call; `attribute_history` is forbidden because its portable signature cannot prove front adjustment;
 - use `get_stock_info(..., field=['listed_date'])`, not local `get_security_info()`;
 - do not use `get_snapshot` or `check_limit` in PTrade backtest code; `get_open_orders(security=None)` is allowed but must use its documented signature;
 - do not assume locally injected MyTT names such as `EMA` exist on PTrade; use NumPy/pandas or define a portable helper.
@@ -109,6 +112,10 @@ output/generated_strategies/<strategy_id>/R2_AGENT_COMPONENT_PLAN.md
 The contract records natural-language semantics, lifecycle callbacks, public APIs, state fields, approximations, tests, and output paths. It must include:
 
 ```json
+"market_data_contract": {
+  "signal_price_adjustment": "pre",
+  "execution_price_basis": "raw_trade_price"
+},
 "constraints": {
   "runtime_state_guard_required": true,
   "portable_source_required": true,
@@ -162,7 +169,7 @@ It must use `hasattr`/missing-field checks and never reset existing state. It mu
 
 Reason: real PTrade may continue later lifecycle calls after `initialize` raises. State safety cannot depend on successful initialization.
 
-The agent implements strategy logic using the PTrade backtest public subset. Do not hand-maintain divergent local/PTrade business logic. Use only injected APIs for data; local execution must route those APIs to the selected project DuckDB provider rather than opening storage from strategy source.
+The agent implements strategy logic using the PTrade backtest public subset. Do not hand-maintain divergent local/PTrade business logic. Use only injected APIs for data; local execution must route those APIs to the selected project DuckDB provider rather than opening storage from strategy source. Every signal-price call must spell `fq='pre'` literally. Use raw current/snapshot prices only for execution checks, order sizing, fill reconciliation, cash, and valuation; never concatenate them into a front-adjusted indicator series.
 
 **R3 exit gate:** complete canonical source with no scaffold markers.
 
@@ -175,7 +182,7 @@ python scripts/validate_agent_strategy.py strategy.py --design agent_strategy_de
 python scripts/validate_agent_strategy.py strategy.py --design agent_strategy_design.json --target-profile ptrade
 ```
 
-Both must pass. PTrade validation checks real keyword names for every profiled API, rejects unverifiable `**kwargs`, checks context availability, local-only symbols, state-guard idempotence, lifecycle, timing, PIT and portability. A permissive local adapter signature is never accepted as platform evidence.
+Both must pass. PTrade validation checks real keyword names for every profiled API, rejects unverifiable `**kwargs`, checks context availability, local-only symbols, state-guard idempotence, lifecycle, timing, PIT, portability, and the mandatory literal `fq='pre'` signal-price contract. A permissive local adapter signature is never accepted as platform evidence.
 
 Repair reusable incompatibilities in the adapter/profile/Skill first. Regenerate strategy output under the corrected rules; do not hand-patch only one target file.
 
@@ -227,7 +234,8 @@ Never claim dual delivery from a pre-generation comparison, from comparing the c
 - Use PTrade `.SS/.SZ/.BJ` security suffixes in portable source.
 - Normalize comparison keys by bare six-digit code where API containers may differ.
 - Use NumPy/pandas or source-defined helpers for indicators unless the PTrade public profile explicitly lists the indicator.
-- A current completed minute may use `get_history(..., frequency='1m', include=True)` only in a confirmed scheduled minute callback with an explicit current-bar cutoff.
+- Every `get_history`, `get_history_batch`, and `get_price` call used by generated backtest code must include the literal keyword `fq='pre'`; `dypre`, post-adjustment, missing/dynamic values, and `attribute_history` are blocked.
+- A current completed minute may use `get_history(..., frequency='1m', fq='pre', include=True)` only in a confirmed scheduled minute callback with an explicit current-bar cutoff.
 - `get_snapshot` and `check_limit` are not allowed in PTrade backtest source. `get_open_orders(security=None)` is allowed in backtest and trade contexts.
 - `filter_stock_by_status` is called only from `before_trading_start`; scheduled callbacks use `get_stock_status` for current status checks.
 - For customer-requested QuantStudio-only event strategies, external CSV/event data is ingested by the generic `strategy_events` adapter and queried with local extension `get_strategy_events`; set targets to `quantstudio` only and never claim PTrade portability.
@@ -251,6 +259,7 @@ When a customer supplies a real PTrade exception:
 - generating code while R2.5 is unconfirmed;
 - treating local execution as PTrade validation;
 - using undocumented keyword aliases;
+- omitting `fq='pre'`, using another adjustment mode, using `attribute_history`, or mixing raw bar OHLC into front-adjusted signal calculations;
 - using local-only APIs in canonical source;
 - assuming `initialize` always completes before other callbacks;
 - publishing before both profile validations and post-generation consistency PASS;

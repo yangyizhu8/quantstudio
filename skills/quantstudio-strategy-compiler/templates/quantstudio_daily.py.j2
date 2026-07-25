@@ -24,19 +24,24 @@ def initialize(context):
 
 
 def before_trading_start(context, data):
-    # DataLoadNode (pit_anchor=previous_date, no lookahead).
-    # Pull N days of history anchored at previous close; include=False keeps
-    # the current bar out of the pre-open snapshot (no future leak).
-    h = get_history({{ dataload_lookback }}, '{{ dataload_frequency }}',
-                    field={{ dataload_fields }}, security_list=g.security,
-                    fq='dypre', include=False, is_dict=True)
-    g.close_data = h[g.security]['{{ dataload_fields[0] }}']
+    # Selection/status preparation belongs here. Signal OHLC is loaded only
+    # after the daily bar is complete so the whole series has one qfq basis.
+    pass
 
 
 def handle_data(context, data):
-    # IndicatorNode(s): compute MA over history + current bar.
-    current_price = data[g.security].close
-    close_data = np.concatenate((g.close_data, np.array([current_price])), axis=0)
+    # IndicatorNode(s): fetch history plus the completed current bar entirely
+    # from front-adjusted columns. Never append raw BarDict OHLC.
+    h = get_history_batch(
+        [g.security], {{ dataload_lookback + 1 }}, '{{ dataload_frequency }}',
+        fields={{ dataload_fields }}, fq='pre', include=True
+    )
+    frame = next(iter(h.values()), None)
+    if frame is None or '{{ dataload_fields[0] }}' not in frame:
+        return
+    close_data = np.asarray(frame['{{ dataload_fields[0] }}'].values, dtype=float)
+    if len(close_data) == 0 or not np.all(np.isfinite(close_data)):
+        return
 {% for ma in ma_indicators %}
     {{ ma.id }} = _get_ma(close_data, {{ ma.lookback }})
 {% endfor %}
@@ -73,13 +78,6 @@ def initialize(context):
 
 
 def before_trading_start(context, data):
-    # DataLoadNode: batch history for all stocks (QuantStudio optimization).
-    # get_history_batch returns CodeDict{code: DataFrame}; extract the close
-    # column into a 1-D array per code for vectorized scoring.
-    h = get_history_batch(g.stock_list, {{ dataload_lookback }}, '{{ dataload_frequency }}',
-                          fields={{ dataload_fields }}, fq='dypre', include=False)
-    g.history = {_bare_code(code): np.asarray(df['{{ dataload_fields[0] }}'].values, dtype=object)
-                 for code, df in h.items()}
     # Selection-stage HardFilterNode: filter ST/HALT/DELISTING.
     g.stock_list = filter_stock_by_status(
         g.stock_list, filter_type=['ST', 'HALT', 'DELISTING'], query_date=None
@@ -87,13 +85,17 @@ def before_trading_start(context, data):
 
 
 def handle_data(context, data):
+    # Fetch history plus the completed current daily bar on one qfq basis.
+    # Raw BarDict OHLC remains execution-only and never enters signal series.
+    h = get_history_batch(
+        g.stock_list, {{ dataload_lookback + 1 }}, '{{ dataload_frequency }}',
+        fields={{ dataload_fields }}, fq='pre', include=True
+    )
+    g.history = {_bare_code(code): np.asarray(df['{{ dataload_fields[0] }}'].values, dtype=object)
+                 for code, df in h.items()}
     scores = {}
     for code in g.stock_list:
-        hist = _finite_series(g.history.get(_bare_code(code), []))
-        curr = _finite_float(data[code].close)
-        if curr is None:
-            continue
-        series = np.concatenate((hist, [curr]))
+        series = _finite_series(g.history.get(_bare_code(code), []))
 {% if signal_op == 'cross' %}
         if len(series) < {{ [ma_fast.lookback, ma_slow.lookback]|max }} or not np.all(np.isfinite(series[-{{ [ma_fast.lookback, ma_slow.lookback]|max }}:])):
             continue

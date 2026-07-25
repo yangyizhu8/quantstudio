@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import sys
@@ -27,6 +27,10 @@ def confirmed_design() -> dict:
             "profile_id": "minute-bar-v1",
             "bar_frequency": "1m",
             "match_price_mode": "current_bar",
+        },
+        "market_data_contract": {
+            "signal_price_adjustment": "pre",
+            "execution_price_basis": "raw_trade_price",
         },
         "strategy_semantics": {
             "universe": "All A-shares as of previous trading day, then confirmed status filters",
@@ -163,6 +167,31 @@ def test_agent_implemented_strategy_validates_and_publishes_identical_source(tmp
     assert local.read_bytes() == ptrade.read_bytes() == strategy_path.read_bytes()
 
 
+
+
+def test_validator_requires_literal_front_adjustment_for_signal_price_apis():
+    design = confirmed_design()
+    variants = {
+        "missing": implemented_source().replace("                              fq='pre', include=False)",
+                                                "                              include=False)"),
+        "none": implemented_source().replace("fq='pre'", "fq=None"),
+        "post": implemented_source().replace("fq='pre'", "fq='post'"),
+        "dypre": implemented_source().replace("fq='pre'", "fq='dypre'"),
+        "dynamic": implemented_source().replace("fq='pre'", "fq=g.adjustment"),
+    }
+    for label, source in variants.items():
+        report = validate_strategy(design, source, target_profile="ptrade")
+        assert report["status"] == "BLOCKED", (label, report)
+        assert any(item["rule_id"] == "SIGNAL-PRICE-ADJUSTMENT"
+                   and item["severity"] == "BLOCK" for item in report["issues"]), (label, report)
+
+
+def test_validator_blocks_attribute_history_because_adjustment_is_unprovable():
+    source = implemented_source() + "\n\ndef raw_history():\n    return attribute_history('600000.SS', 5)\n"
+    report = validate_strategy(confirmed_design(), source, target_profile="ptrade")
+    assert any(item["rule_id"] == "SIGNAL-PRICE-ADJUSTMENT"
+               and item["severity"] == "BLOCK" for item in report["issues"])
+
 def test_validator_blocks_storage_and_local_batch_api():
     design = confirmed_design()
     source = implemented_source() + "\nimport duckdb\n\ndef bad():\n    return get_history_batch([], 5, '1d')\n"
@@ -224,3 +253,5 @@ def test_skill_prompt_enforces_customer_stops_data_priority_and_post_generation_
     assert "<current-project>/data/quantstudio.db" in skill
     assert "comparison_phase=post_generation_staging" in skill
     assert "patching only the currently failing strategy" in skill
+    assert "literal keyword `fq='pre'`" in skill
+    assert "signal_price_adjustment" in skill

@@ -206,7 +206,7 @@ def _load_daily_history(code, count):
     try:
         history = get_history(
             count, '1d', field=['close', 'high', 'low', 'volume'], security_list=code,
-            fq='dypre', include=False, is_dict=True
+            fq='pre', include=False, is_dict=True
         )
         item = _lookup_history_item(history, code)
         return {
@@ -320,7 +320,7 @@ def before_trading_start(context, data):
     # (ptrade_api.py attach_day); minute preClose is unadjusted.
     h = get_history({{ dataload_lookback }}, '1d',
                     field={{ dataload_fields }}, security_list=g.security,
-                    fq='dypre', include=False, is_dict=True)
+                    fq='pre', include=False, is_dict=True)
     g.close_data = h[g.security]['{{ dataload_fields[0] }}']
 
 
@@ -332,7 +332,7 @@ def _trade_on_minute(context):
     # Minute history: include=False ensures no future minute leaks.
     h = get_history({{ dataload_lookback }}, '{{ bar_frequency }}',
                     field={{ dataload_fields }}, security_list=g.security,
-                    fq='dypre', include=False, is_dict=True)
+                    fq='pre', include=False, is_dict=True)
     close_data = h[g.security]['{{ dataload_fields[0] }}']
 {% for ma in ma_indicators %}
     {{ ma.id }} = _get_ma(close_data, {{ ma.lookback }})
@@ -380,7 +380,7 @@ def before_trading_start(context, data):
     # column into a 1-D array per code. {{ dataload_frequency }} keeps the IR
     # frequency (daily snapshot even in minute profile — for limit checks).
     h = get_history_batch(g.stock_list, {{ dataload_lookback }}, '{{ dataload_frequency }}',
-                          fields={{ dataload_fields }}, fq='dypre', include=False)
+                          fields={{ dataload_fields }}, fq='pre', include=False)
     g.history = {code: np.array(df['{{ dataload_fields[0] }}'].values, dtype=float)
                  for code, df in h.items()}
     g.stock_list = filter_stock_by_status(

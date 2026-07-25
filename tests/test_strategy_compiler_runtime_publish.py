@@ -31,6 +31,16 @@ def _rendered():
     return render_quantstudio(ir), render_ptrade(ir)
 
 
+
+
+def test_rendered_history_uses_one_explicit_front_adjustment_literal():
+    quantstudio_code, ptrade_code = _rendered()
+    assert "fq='dypre'" not in quantstudio_code
+    assert "fq='dypre'" not in ptrade_code
+    assert "fq='pre'" in quantstudio_code
+    assert "fq='pre'" in ptrade_code
+    assert "data[code].close" not in quantstudio_code
+
 def test_ptrade_manual_list_uses_broker_safe_runtime_shape():
     _, code = _rendered()
     tree = ast.parse(code)

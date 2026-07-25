@@ -228,7 +228,7 @@ def _build_dataload_node(spec: dict[str, Any]) -> IRNode:
     pit_anchor = "previous_date"
     qs = (
         f"get_history({lookback}, '{freq}', field={used_fields!r}, "
-        f"security_list=g.security, fq='dypre', include=False, is_dict=True)"
+        f"security_list=g.security, fq='pre', include=False, is_dict=True)"
     )
     ptrade = qs + "；禁止 get_history_batch"
     return _make_node(

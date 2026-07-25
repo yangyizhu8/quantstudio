@@ -40,7 +40,7 @@ class DuckDBMarketDataProvider(MarketDataProvider):
     def preload(self, start_date, end_date): self._data.preload_daily_bars(end_date)
     def get_daily_snapshot(self, date, fields=None):
         return _fields(self._data.query_daily_snapshot(_start_ms(date)), fields)
-    def get_bars(self, codes, start_date, end_date, fields=None, fq=None, frequency="1d",
+    def get_bars(self, codes, start_date, end_date, fields=None, fq='pre', frequency="1d",
                  bar_cutoff_ms=None):
         # PR3: frequency="1d"（默认）走原日线路径，字节级不变。
         if frequency == "1d":
@@ -59,7 +59,7 @@ class DuckDBMarketDataProvider(MarketDataProvider):
                 bar_cutoff_ms=bar_cutoff_ms)   # PR4 缺口 1
             if not df.empty: result[code] = _fields(df, fields)
         return result
-    def get_bars_by_count(self, codes, count, end_date, fields=None, fq=None, frequency="1d",
+    def get_bars_by_count(self, codes, count, end_date, fields=None, fq='pre', frequency="1d",
                           bar_cutoff_ms=None):
         # PR3: frequency="1d"（默认）走原日线路径，字节级不变。
         if frequency == "1d":
@@ -167,6 +167,8 @@ class DuckDBReferenceDataProvider(ReferenceDataProvider):
     def get_industry(self, code):
         row = self._data.query_sw_industry(code)
         return ({'sw_l1': {'industry_code': row[0], 'industry_name': row[1]}} if row else None)
+    def get_corporate_actions(self, date):
+        return self._data.query_corporate_actions(_start_ms(str(date)[:10]))
     def get_stock_status(self, codes, date):
         source = self._data.query_daily_for_status(_start_ms(date))
         rows = []

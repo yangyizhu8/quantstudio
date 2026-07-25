@@ -10,6 +10,7 @@
     "asset_class",
     "targets",
     "engine_profile",
+    "market_data_contract",
     "strategy_semantics",
     "timing",
     "components",
@@ -86,6 +87,24 @@
         }
       },
       "additionalProperties": true
+    },
+    "market_data_contract": {
+      "type": "object",
+      "required": [
+        "signal_price_adjustment",
+        "execution_price_basis"
+      ],
+      "properties": {
+        "signal_price_adjustment": {
+          "const": "pre",
+          "description": "All OHLC inputs used by indicators, ranking, entry/exit signals and risk thresholds must be front-adjusted via fq='pre'."
+        },
+        "execution_price_basis": {
+          "const": "raw_trade_price",
+          "description": "Order matching, cash, fills and position valuation remain on actual tradable prices."
+        }
+      },
+      "additionalProperties": false
     },
     "strategy_semantics": {
       "type": "object",

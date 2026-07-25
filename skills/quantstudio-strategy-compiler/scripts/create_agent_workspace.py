@@ -88,6 +88,7 @@ def _render_strategy(design: dict) -> str:
         '',
         '# Add strategy-specific helper functions below. Keep all data/order access behind',
         '# the injected public APIs listed in COMPONENT_PLAN.md.',
+        "# Signal-price history calls must use literal fq='pre'; raw prices are execution-only.",
         '',
     ])
     return "\n".join(lines)
@@ -103,6 +104,8 @@ def _render_plan(design: dict) -> str:
         f"- Engine profile: `{design['engine_profile']['profile_id']}` / `{design['engine_profile']['bar_frequency']}`",
         f"- Match price: `{design['engine_profile']['match_price_mode']}`",
         f"- Signal cutoff: `{design['timing']['signal_data_cutoff']}`",
+        f"- Signal price adjustment: `{design['market_data_contract']['signal_price_adjustment']}` (`fq='pre'` required)",
+        f"- Execution price basis: `{design['market_data_contract']['execution_price_basis']}`",
         '',
         '## Confirmed semantics',
         '',
@@ -128,6 +131,9 @@ def _render_plan(design: dict) -> str:
         *[f"- {item}" for item in design['constraints'].get('hard_filters', [])],
         '- No direct DuckDB/provider/file access.',
         '- No local-only batch API in canonical dual-target source.',
+        "- Every signal-price get_history/get_history_batch/get_price call uses literal fq='pre'.",
+        '- attribute_history is forbidden because its price adjustment cannot be proven.',
+        '- Raw bar/snapshot OHLC is execution-only and must not enter indicator or signal series.',
         '- No strategy-pattern branch may be added to Compiler or templates.',
         '',
         '## Calling-agent implementation notes',

@@ -19,7 +19,7 @@ class MarketDataProvider(ABC):
     @abstractmethod
     def get_bars(self, codes: List[str], start_date: str, end_date: str,
                  fields: Optional[List[str]] = None,
-                 fq: Optional[str] = None,
+                 fq: Optional[str] = "pre",
                  frequency: str = "1d",
                  bar_cutoff_ms: Optional[int] = None) -> Dict[str, pd.DataFrame]: ...
         # PR3: frequency 默认 "1d" 走日线（向后兼容）；"1m"/"5m"/... 走分钟表。
@@ -29,7 +29,7 @@ class MarketDataProvider(ABC):
     @abstractmethod
     def get_bars_by_count(self, codes: List[str], count: int, end_date: str,
                           fields: Optional[List[str]] = None,
-                          fq: Optional[str] = None,
+                          fq: Optional[str] = "pre",
                           frequency: str = "1d",
                           bar_cutoff_ms: Optional[int] = None) -> Dict[str, pd.DataFrame]: ...
 
@@ -141,6 +141,8 @@ class ReferenceDataProvider(ABC):
     def get_market_detail(self, mic: str) -> pd.DataFrame: ...
 
     def get_exrights(self, code: str, date: Optional[str] = None) -> Optional[pd.DataFrame]: return None
+    def get_corporate_actions(self, date: str) -> pd.DataFrame:
+        return pd.DataFrame(columns=["code", "cash_div", "stk_div", "div_rat"])
     def get_blocks(self, code: str) -> Optional[dict]: return None
     def get_industry_stocks(self, industry_code: str) -> List[str]: return []
     def get_etf_stock_list(self, etf_code: str) -> List[str]: return []

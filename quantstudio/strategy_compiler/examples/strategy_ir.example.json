@@ -125,8 +125,8 @@
       ],
       "timing": "pre_open",
       "platform_mapping": {
-        "quantstudio": "get_history(20, '1d', field=['close'], security_list=g.security, fq='dypre', include=False, is_dict=True)",
-        "ptrade-default": "get_history(20, '1d', field=['close'], security_list=g.security, fq='dypre', include=False, is_dict=True)；禁止 get_history_batch"
+        "quantstudio": "get_history(20, '1d', field=['close'], security_list=g.security, fq='pre', include=False, is_dict=True)",
+        "ptrade-default": "get_history(20, '1d', field=['close'], security_list=g.security, fq='pre', include=False, is_dict=True)；禁止 get_history_batch"
       },
       "validation_rules": [
         "DATALOAD-PIT-PREVIOUS-DATE"
@@ -147,7 +147,7 @@
       "required_capabilities": [],
       "timing": "bar",
       "platform_mapping": {
-        "quantstudio": "get_ma(<close_history_data>, 5) helper; <close_history_data> = concat(g.<close_history>, [data[code].close])",
+        "quantstudio": "get_ma(<qfq_close_history_including_completed_bar>, 5) helper; all signal closes use fq='pre'",
         "ptrade-default": "同 QS"
       },
       "validation_rules": [
@@ -170,7 +170,7 @@
       "required_capabilities": [],
       "timing": "bar",
       "platform_mapping": {
-        "quantstudio": "get_ma(<close_history_data>, 10) helper; <close_history_data> = concat(g.<close_history>, [data[code].close])",
+        "quantstudio": "get_ma(<qfq_close_history_including_completed_bar>, 10) helper; all signal closes use fq='pre'",
         "ptrade-default": "同 QS"
       },
       "validation_rules": [

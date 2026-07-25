@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Validate agent-authored QuantStudio/PTrade strategy code against real profiles."""
 from __future__ import annotations
 
@@ -151,6 +151,40 @@ def _literal_frequency(call: ast.Call) -> str | None:
     return None
 
 
+SIGNAL_PRICE_APIS = {"get_history", "get_history_batch", "get_price"}
+
+
+def _validate_signal_price_adjustment(
+    call: ast.Call,
+    name: str,
+    issues: list[dict[str, Any]],
+) -> None:
+    """Enforce one explicit front-adjusted price basis for generated signals."""
+    if name == "attribute_history":
+        issues.append(_issue(
+            "SIGNAL-PRICE-ADJUSTMENT", "BLOCK",
+            "attribute_history() cannot prove the required front-adjusted price basis; "
+            "use get_history(..., fq='pre') instead.", call.lineno))
+        return
+    if name not in SIGNAL_PRICE_APIS:
+        return
+    fq_node = _keyword(call, "fq")
+    if fq_node is None:
+        issues.append(_issue(
+            "SIGNAL-PRICE-ADJUSTMENT", "BLOCK",
+            f"{name}() must include the explicit literal keyword fq='pre'; "
+            "omitted or positional adjustment modes are not accepted.", call.lineno))
+        return
+    fq_value = constant_value(fq_node)
+    if fq_value != "pre":
+        rendered = repr(fq_value) if fq_value is not None else (
+            ast.unparse(fq_node) if hasattr(ast, "unparse") else "<dynamic>")
+        issues.append(_issue(
+            "SIGNAL-PRICE-ADJUSTMENT", "BLOCK",
+            f"{name}() must use literal fq='pre', got {rendered}; "
+            "None, dypre, post-adjustment, and dynamic values are forbidden.", call.lineno))
+
+
 def _defined_or_imported_names(tree: ast.Module) -> set[str]:
     names = set(function_map(tree))
     for node in tree.body:
@@ -291,6 +325,7 @@ def validate_strategy(
         if name == "run_daily":
             callback, schedule_time = _literal_schedule(node)
             schedules.append((callback, schedule_time, node.lineno))
+        _validate_signal_price_adjustment(node, name, issues)
         if strict_ptrade and name:
             _validate_ptrade_call(node, name, ptrade_profile, defined_names, issues)
 

@@ -22,6 +22,10 @@ def design() -> dict:
         "asset_class": "stock",
         "targets": ["quantstudio", "ptrade"],
         "engine_profile": {"profile_id": "minute-bar-v1", "bar_frequency": "1m", "match_price_mode": "close"},
+        "market_data_contract": {
+            "signal_price_adjustment": "pre",
+            "execution_price_basis": "raw_trade_price",
+        },
         "strategy_semantics": {"universe": "manual", "entry_rules": [], "exit_rules": [], "portfolio_rules": [], "risk_rules": []},
         "timing": {
             "signal_data_cutoff": "current completed 09:31 minute bar",
@@ -125,7 +129,7 @@ def test_state_guard_is_required_first_in_every_callback():
 def test_current_minute_include_true_allowed_only_in_confirmed_schedule():
     source = valid_source(extra_rebalance=(
         "    get_history(1, frequency='1m', field=['open', 'close'], "
-        "security_list='600000.SS', include=True)"))
+        "security_list='600000.SS', fq='pre', include=True)"))
     report = validate_strategy(design(), source, target_profile="ptrade")
     assert report["status"] == "PASS", report
 
@@ -133,7 +137,7 @@ def test_current_minute_include_true_allowed_only_in_confirmed_schedule():
 
 def test_ptrade_validator_checks_all_profiled_api_keywords():
     rules = block_rules(valid_source(extra_rebalance=(
-        "    get_history(1, frequency='1m', bogus_keyword=True)")))
+        "    get_history(1, frequency='1m', fq='pre', bogus_keyword=True)")))
     assert "PTRADE-API-SIGNATURE" in rules
 
 
@@ -154,7 +158,7 @@ def test_runtime_state_helper_must_not_reset_existing_fields():
 def test_current_minute_include_true_allowed_through_scheduled_helper():
     source = valid_source(extra_rebalance="    current_minute()") + "\n" + "\n".join([
         "def current_minute():",
-        "    return get_history(1, frequency='1m', field=['open'], security_list='600000.SS', include=True)",
+        "    return get_history(1, frequency='1m', field=['open'], security_list='600000.SS', fq='pre', include=True)",
     ])
     report = validate_strategy(design(), source, target_profile="ptrade")
     assert report["status"] == "PASS", report

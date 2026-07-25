@@ -245,6 +245,7 @@ class BacktestResult:
     trade_records: List[Dict] = field(default_factory=list)  # 交易记录
     metrics_summary: Dict = field(default_factory=dict)      # 统一指标来源（GUI / CLI 共用）
     round_trips: List[Dict] = field(default_factory=list)    # 配对后的 round-trip 交易明细
+    corporate_actions: List[Dict] = field(default_factory=list)
 
     def report(self):
         if not self.nav_history:
@@ -486,6 +487,7 @@ class BacktestEngine:
             day_str = day.strftime('%Y-%m-%d')
             if self._progress_callback:
                 self._progress_callback(i + 1, total_days, day_str)
+            self._apply_corporate_actions(day_str)
 
             # PR4: 分钟 Profile 走分钟事件循环（独立方法，日线循环逐行不变）
             if self.engine_profile == "minute-bar-v1":
@@ -677,6 +679,52 @@ class BacktestEngine:
             created_dt=date,
         )
 
+    def _stamp_tax_rate(self, date: str) -> float:
+        """Historical A-share sell stamp duty (halved from 2023-08-28)."""
+        if str(date)[:10] >= "2023-08-28":
+            return min(float(self.cost.stamp_tax_rate), 0.0005)
+        return float(self.cost.stamp_tax_rate)
+
+    def _apply_corporate_actions(self, day_str: str) -> None:
+        """Apply ex-date dividends to positions before the opening callback.
+
+        Cash distributions are credited net of the conservative 20% short-hold
+        dividend tax. Stock distributions increase shares and reduce per-share
+        cost without creating PnL.
+        """
+        if not self.account.positions:
+            return
+        reference = getattr(self._providers, "reference", None)
+        if reference is None or not hasattr(reference, "get_corporate_actions"):
+            return
+        actions = reference.get_corporate_actions(day_str)
+        if actions is None or len(actions) == 0:
+            return
+        for _, row in actions.iterrows():
+            code = self._to_qmt(str(row.get("code", "")))
+            pos = self.account.positions.get(code)
+            if pos is None or pos.volume <= 0:
+                continue
+            old_volume = int(pos.volume)
+            cash_div = max(0.0, float(row.get("cash_div", 0.0) or 0.0))
+            stock_div = max(0.0, float(row.get("stk_div", 0.0) or 0.0))
+            cash_credit = old_volume * cash_div * 0.80
+            if cash_credit:
+                self.account.cash += cash_credit
+            if cash_div:
+                pos.avg_cost = max(0.0, pos.avg_cost - cash_div)
+            added = int(round(old_volume * stock_div))
+            if added > 0:
+                new_volume = old_volume + added
+                pos.avg_cost = pos.avg_cost * old_volume / new_volume
+                pos.volume = new_volume
+                pos.can_sell += added
+            self.result.corporate_actions.append({
+                "date": day_str, "code": code, "cash_div_per_share": cash_div,
+                "cash_credit_net": cash_credit, "stock_div_ratio": stock_div,
+                "added_shares": added,
+            })
+
     def _apply_slippage(self, price: float, direction: str) -> float:
         """Apply strategy-configured slippage below the public API boundary."""
         fixed = max(0.0, float(getattr(self.cost, "fixed_slippage", 0.0)))
@@ -758,7 +806,7 @@ class BacktestEngine:
         fill_price = self._apply_slippage(price, "sell")
         proceeds = target_vol * fill_price
         commission = max(proceeds * self.cost.commission_rate, self.cost.min_commission)
-        stamp_tax = proceeds * self.cost.stamp_tax_rate
+        stamp_tax = proceeds * self._stamp_tax_rate(date)
         transfer_fee = proceeds * self.cost.transfer_fee_rate
         net_proceeds = proceeds - commission - stamp_tax - transfer_fee
 
