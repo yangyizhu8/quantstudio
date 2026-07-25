@@ -42,6 +42,7 @@ QuantStudio 是一个 100% 本地、DuckDB 驱动、Ptrade 兼容的 A股日/分
 - get_index_stocks(idx)、get_Ashares()、get_etf_list()、get_cb_list()
 - check_limit(code)→{code:1涨/-1跌/0平}；filter_stock_by_status(stocks,filter_type=[...])
 - get_positions()、get_position(code)、context.portfolio.positions/positions_value/cash
+- load_research_signals(csv_path, fallback=None)：注入 API，由框架侧读取外部研报/信号 CSV（仅保留买入/增持），返回 (rows, source)；需要外部文件数据（如研报/信号表）时用它，**禁止策略内自行 open()/read_csv()**。
 
 【撮合机制（理解即可，代码写法与模式无关）】
 - 默认即时撮合（close 模式）：order_* 在当前交易日收盘/当前价成交，持仓瞬时刷新。
@@ -59,7 +60,7 @@ QuantStudio 是一个 100% 本地、DuckDB 驱动、Ptrade 兼容的 A股日/分
 
 【硬性约束】
 1) 文件顶部/任意处不得出现 import（包括 import pandas/numpy）。pd=np 已注入。
-2) 不得 import duckdb 或读取任何 .db；只通过注入的 API 取数。
+2) 严禁任何直接文件 I/O：不得 import duckdb/sqlite3 等数据库驱动，也**不得调用 open()/read_csv()/read_parquet()/read_sql()/read_pickle() 等读取本地文件（.db/.csv/.parquet/.json 等）**。取数只通过注入的 API。若策略需要外部文件数据，必须改用框架注入的专用 API（例如 load_research_signals(csv_path, fallback=...)），文件读取由框架侧完成；否则加载时 StrategyIsolationGuard 会静态拦截并抛 StrategyIsolationError（策略文件连 import os/pathlib 都不允许，open() 为内置函数亦被禁）。
 3) 代码后缀归一化：可用 .XSHG/.XSHE/.SS/.SZ 或裸码；持仓字典用 QMT 格式(.SH/.SZ)，
    check_limit 返回 Ptrade 格式；建议全策略统一用 .XSHG/.XSHE。
 4) 只在 initialize 里、且 not is_trade() 时调用 set_backtest/set_limit_mode。
