@@ -1,5 +1,14 @@
 # QuantStudio Strategy Compiler ? Release Notes
 
+## 0.5.0-user-pyqt-candidate-flow (2026-07-25)
+
+- Added independent R0 backtest-execution ownership: agent-managed or user-PyQt.
+- Added hash-bound `__candidate_quantstudio.py` generation after R4 PASS.
+- Added structured user backtest evidence validation with ETF lower-bound, database, profile, completion and runtime-check gates.
+- Added failure routing to R1/R3/R4 and source-drift invalidation.
+- R6 now promotes user-tested candidates by regenerating formal targets and removing the candidate.
+
+
 ## 0.4.0-target-aware (2026-07-25)
 
 - Added QuantStudio-only PIT ETF universe API `get_etf_list_local(query_date=None, etf_type="equity", active_only=True)` through injected API -> ReferenceDataProvider -> DuckDB data access.

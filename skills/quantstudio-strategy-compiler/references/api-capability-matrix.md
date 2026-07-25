@@ -50,3 +50,13 @@ Schema：`quantstudio/strategy_compiler/schemas/capability_report.schema.json`
 | PTrade validation / dual consistency | REQUIRED | NOT_APPLICABLE |
 
 Local dynamic ETF readiness requires `etf_basic` classification/listing metadata and historical availability in `etf_daily`. Missing metadata is `DATA_BLOCKED`, not an implicit all-ETF fallback.
+
+## Backtest execution ownership
+
+| Capability | Agent-managed | User-PyQt |
+|---|---:|---:|
+| Agent starts R5 | Customer-confirmed window only | BLOCK |
+| PyQt candidate after R4 | NOT_APPLICABLE | READY |
+| Hash-bound user evidence | NOT_APPLICABLE | REQUIRED |
+| Formal publish before R5 PASS | BLOCK | BLOCK |
+| Candidate removal after R6 | NOT_APPLICABLE | REQUIRED |

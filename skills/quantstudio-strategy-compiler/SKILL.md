@@ -5,7 +5,7 @@ description: Strict target-aware agent-first strategy engineering for QuantStudi
 
 # QuantStudio Agent-first Strategy Engineering
 
-Skill release: `0.4.0-target-aware` (built on the `0.3.2-mvp` compiler/package baseline).
+Skill release: `0.5.0-user-pyqt-candidate-flow` (built on the `0.3.2-mvp` compiler/package baseline).
 
 Treat the calling agent as the strategy author. Constrain it with project lifecycle, data, timing, PTrade public API, validation, and delivery gates. Never implement a strategy by adding its name or shape to Compiler/Renderer/Jinja branches.
 
@@ -13,9 +13,9 @@ Treat the calling agent as the strategy author. Constrain it with project lifecy
 
 1. Execute stages strictly in order: `R0 -> R1 -> R2 -> R2.5 -> R3 -> R4 -> R5 -> R6`.
 2. Never combine, infer-complete, retroactively mark, or silently skip a stage.
-3. At every stage, show the customer the stage output and unresolved decisions. Stop when customer confirmation is required.
+3. At every stage, show the customer the stage output and unresolved decisions. Stop when customer confirmation is required. R0 must separately confirm target platforms and who executes R5 backtesting.
 4. Do not generate executable strategy code before R2.5 explicit confirmation.
-5. Do not publish before the selected target-mode gates pass: every mode requires local backtest and QuantStudio validation; dual mode additionally requires PTrade-profile validation and post-generation dual consistency.
+5. Do not publish formal targets before the selected target-mode gates pass: every mode requires R4 validation and hash-bound R5 backtest PASS; dual mode additionally requires PTrade-profile validation and post-generation dual consistency. A user-PyQt candidate is temporary, not a formal publication.
 6. Persist stage/evidence in `agent_workspace/workspace_state.json`. Resume from this ledger; do not rely on conversational memory alone.
 7. If any gate is BLOCKED, remain at that stage. Do not weaken requirements, substitute strategy semantics, or advance the ledger.
 8. R0 must explicitly select one target mode. Dual mode targets the **PTrade backtest public API subset** and forbids local extensions. QuantStudio-only mode may use registered local extensions but must never claim PTrade portability.
@@ -217,27 +217,39 @@ Repair reusable incompatibilities in the adapter/profile/Skill first. Regenerate
 
 **R4 exit gate:** dual mode = QuantStudio PASS + PTrade PASS; QuantStudio-only mode = QuantStudio PASS + `PTrade validation: NOT_APPLICABLE`. Reports remain separate and auditable.
 
-## R5 - Local backtest and runtime review
+## R5 - Backtest execution and evidence review
 
-Run the confirmed engine profile. Verify callback times, orders, holdings, T+1, cash, overlap, empty pools, missing data and failure paths. Re-run every applicable R4 validation after each material source change.
+R5 execution owner comes from the confirmed R0 contract.
 
-Record `workspace_state.json` with at least:
+### Agent-managed mode
 
-```json
-{
-  "stage": "BACKTEST_PASS",
-  "backtest_status": "PASS",
-  "backtest_data_source": "duckdb_provider",
-  "backtest_db_path": "<absolute-current-project>/data/quantstudio.db",
-  "backtest_db_resolution": "project_data_preferred"
-}
-```
+Run only the customer-confirmed window/profile. Record provider/database provenance, runtime checks, and PASS/FAIL as before. Do not invent dates.
 
-Before accepting R5, verify the path actually exists and the backtest report names the same database/provider provenance. An external path requires a recorded customer-approved override.
+### User-PyQt mode
 
-If real PTrade runtime evidence is provided by the customer, treat every runtime exception as a profile/Skill/adapter regression first. Add a generic validator/test before regenerating outputs.
+After R4 PASS, run `scripts/prepare_user_backtest_candidate.py`. It must:
 
-**R5 exit gate:** local backtest PASS and no unresolved issue for the selected targets. PTrade-profile issues are `NOT_APPLICABLE` when PTrade is not selected.
+1. revalidate the canonical source for every selected target;
+2. write only `quantstudio/backtest/strategies/<strategy_id>__candidate_quantstudio.py`;
+3. prepend a comment-only `UNVALIDATED_BY_BACKTEST / NOT_FOR_PTRADE_UPLOAD` marker;
+4. record canonical and candidate SHA-256 hashes;
+5. set `stage=AWAITING_USER_BACKTEST`, `formal_publish_allowed=false`;
+6. show the recommended window while leaving actual dates to the user.
+
+The user runs PyQt and submits complete logs/report. Convert them into `user_backtest_evidence.json`, then run `scripts/review_user_backtest_evidence.py`. Evidence must bind to the candidate hash and include database path, selected window, capital, engine profile, match mode, completion/exception status, runtime checks, and a non-empty log excerpt.
+
+Evidence results:
+
+- incomplete or start before the ETF hard lower bound -> `USER_BACKTEST_EVIDENCE_INCOMPLETE`, remain R5;
+- candidate hash drift -> return R4;
+- strategy logic failure -> return R3;
+- framework/data/API failure -> return R1;
+- PTrade profile/validator failure -> return R4;
+- complete PASS -> `stage=BACKTEST_PASS`, `formal_publish_allowed=true`.
+
+Every repair invalidates old R4/R5 hashes. Regenerate the candidate after the new R4 PASS and require a new PyQt run.
+
+**R5 exit gate:** hash-bound runtime evidence PASS for the exact candidate source, regardless of who executed the backtest.
 
 ## R6 - Target-aware generation, validation, and publication
 
@@ -268,7 +280,9 @@ Never claim dual delivery from a pre-generation comparison or from comparing the
    - `Dual consistency: NOT_APPLICABLE`
    - `PTrade output: NOT_GENERATED`
 
-**R6 exit gate:** all applicable validation gates PASS, non-applicable gates explicitly recorded, hashes recorded, and publication PASS.
+In user-PyQt mode, R6 must verify the validated candidate still exists with the same hash, generate fresh formal staging files from the canonical source, validate/compare them, atomically write formal targets, then remove the `__candidate` file. Record `candidate_status=PROMOTED` and `candidate_removed=true`. Never promote an edited candidate.
+
+**R6 exit gate:** all applicable validation gates PASS, non-applicable gates explicitly recorded, hashes recorded, the temporary candidate retired when applicable, and publication PASS.
 
 # PTrade compatibility rules
 
@@ -315,14 +329,20 @@ When a customer supplies a real PTrade exception:
 - calling `get_etf_list_local` or `get_history_batch` in dual/PTrade targets;
 - calling `get_etf_list` in any backtest target;
 - generating a dual ETF strategy before the static whitelist is explicitly confirmed;
-- reporting PTrade PASS or dual-consistency PASS for a QuantStudio-only strategy.
+- reporting PTrade PASS or dual-consistency PASS for a QuantStudio-only strategy;
+- treating a PyQt candidate as a formal/PTrade upload artifact;
+- accepting user backtest claims without candidate-hash, data-source, window and completion evidence;
+- keeping a `__candidate` file after successful formal promotion;
+- reusing R5 evidence after canonical/candidate source changes.
 
 # Commands
 
 - scaffold: `scripts/create_agent_workspace.py`
 - profile validation: `scripts/validate_agent_strategy.py`
 - consistency: `scripts/validate_dual_consistency.py`
-- gated publish: `scripts/publish_agent_strategy.py`
+- user-PyQt candidate: `scripts/prepare_user_backtest_candidate.py`
+- user evidence review: `scripts/review_user_backtest_evidence.py`
+- gated formal publish: `scripts/publish_agent_strategy.py`
 - Skill validation: `scripts/quick_validate.py`
 
 Legacy Spec/IR/Jinja compilation is used only when the customer explicitly requests legacy reproduction. It is never the default path for a new strategy.

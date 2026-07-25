@@ -11,6 +11,9 @@ from pathlib import Path
 from agent_skill_common import load_json, write_json
 from validate_agent_strategy import validate_strategy
 from validate_dual_consistency import compare_sources
+from user_backtest_flow import (
+    USER_MODE, ensure_candidate_path_is_safe, sha256_path, validation_mode,
+)
 
 
 _ALLOWED_PREPUBLISH_STAGES = {"BACKTEST_PASS", "LOCAL_VALIDATION_PASS", "DUAL_VALIDATION_PASS", "PUBLISHED"}
@@ -46,6 +49,31 @@ def _not_applicable_report(strategy_id: str, source: str, target_profile: str,
     }
 
 
+def _validate_user_managed_publish(design: dict, state: dict,
+                                   project_root: Path) -> tuple[Path | None, str | None]:
+    if validation_mode(design) != USER_MODE:
+        return None, None
+    if state.get("backtest_execution_owner") != USER_MODE:
+        raise ValueError("user_pyqt mode requires R5 evidence reviewed as user_pyqt")
+    if state.get("backtest_evidence_status") != "PASS":
+        raise ValueError("user_pyqt mode requires backtest_evidence_status='PASS'")
+    if state.get("formal_publish_allowed") is not True:
+        raise ValueError("user_pyqt evidence has not unlocked formal publication")
+    raw_candidate = state.get("candidate_path")
+    expected_hash = state.get("candidate_sha256")
+    if not raw_candidate or not expected_hash:
+        raise ValueError("candidate path/hash evidence is missing from workspace state")
+    candidate = ensure_candidate_path_is_safe(
+        raw_candidate, project_root, design["strategy_id"])
+    if not candidate.exists():
+        raise ValueError(f"validated candidate no longer exists: {candidate}")
+    actual_hash = sha256_path(candidate)
+    if actual_hash != expected_hash:
+        raise ValueError(
+            "validated candidate changed after R5 evidence; return to R4 and rerun user backtest")
+    return candidate, actual_hash
+
+
 def _atomic_write(path: Path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
@@ -79,6 +107,8 @@ def publish(strategy_path: Path, design_path: Path, project_root: Path,
     design = load_json(design_path)
     state_path, state = _load_workflow_state(strategy_path)
     _validate_backtest_data_source(state, project_root)
+    candidate_to_retire, candidate_hash = _validate_user_managed_publish(
+        design, state, project_root)
     canonical_payload = strategy_path.read_bytes()
     canonical_source = canonical_payload.decode("utf-8-sig")
     strategy_id = design["strategy_id"]
@@ -158,6 +188,13 @@ def publish(strategy_path: Path, design_path: Path, project_root: Path,
         for target_name, final_path in final_targets.items():
             _atomic_write(final_path, staged[target_name].read_bytes())
 
+    candidate_removed = False
+    if candidate_to_retire is not None:
+        if sha256_path(candidate_to_retire) != candidate_hash:
+            raise ValueError("candidate changed during R6 publication; cleanup blocked")
+        candidate_to_retire.unlink()
+        candidate_removed = True
+
     digest = hashlib.sha256(canonical_payload).hexdigest()
     state.update({
         "stage": "PUBLISHED",
@@ -169,6 +206,8 @@ def publish(strategy_path: Path, design_path: Path, project_root: Path,
         "quantstudio_output_status": "GENERATED",
         "ptrade_output_status": ("GENERATED" if "ptrade" in final_targets else "NOT_GENERATED"),
         "canonical_sha256": digest,
+        "candidate_status": ("PROMOTED" if candidate_to_retire is not None else state.get("candidate_status")),
+        "candidate_removed": candidate_removed,
     })
     write_json(state_path, state)
 
@@ -181,6 +220,12 @@ def publish(strategy_path: Path, design_path: Path, project_root: Path,
         "validated_after_target_generation": True,
         "quantstudio_output_status": "GENERATED",
         "ptrade_output_status": ("GENERATED" if "ptrade" in final_targets else "NOT_GENERATED"),
+        "candidate_promotion": {
+            "mode": validation_mode(design),
+            "candidate_sha256": candidate_hash,
+            "candidate_removed": candidate_removed,
+            "status": ("PROMOTED" if candidate_to_retire is not None else "NOT_APPLICABLE"),
+        },
         "targets": [
             {"platform": name, "path": str(path),
              "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}

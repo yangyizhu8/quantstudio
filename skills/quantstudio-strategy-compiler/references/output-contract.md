@@ -60,3 +60,7 @@ After validation and package creation, publish entry points to:
 ```
 
 The QuantStudio directory is the exact directory scanned by the PyQt backtest strategy selector. Dual mode writes both paths after local validation, PTrade validation, and post-generation consistency. QuantStudio-only mode writes only the first path, creates no PTrade placeholder, and records PTrade validation / dual consistency as `NOT_APPLICABLE` plus PTrade output as `NOT_GENERATED`. If a different file already exists and `output.overwrite=false`, publishing fails closed.
+
+## Candidate and promotion paths (0.5.0)
+
+User-PyQt mode exposes only `<project-root>/quantstudio/backtest/strategies/<strategy_id>__candidate_quantstudio.py` after R4 PASS. It is explicitly not a formal or PTrade upload artifact. After hash-bound R5 PASS, R6 writes formal QuantStudio/PTrade targets and removes the candidate. Candidate retention after promotion is a publication failure.

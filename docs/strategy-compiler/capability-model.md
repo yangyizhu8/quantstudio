@@ -38,3 +38,7 @@ Schema：`quantstudio/strategy_compiler/schemas/capability_report.schema.json`
 ## Target-aware local ETF capability
 
 `get_etf_list_local` is READY only for QuantStudio-only targets when `etf_basic` exists and PIT metadata/history checks pass. It is LOCAL_ONLY/BLOCK for dual or PTrade targets. Missing metadata is DATA_BLOCKED and cannot fall back to a latest code-prefix list while claiming domestic-equity semantics.
+
+## User-executed R5 capability
+
+User-PyQt execution does not weaken R5. The capability is READY only when R4 produced a hash-bound candidate and the submitted evidence identifies the same file, provider/database, window, profile and completed runtime checks. Missing evidence is EVIDENCE_INCOMPLETE; source drift returns R4.

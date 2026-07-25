@@ -476,3 +476,7 @@ YYYY-MM-DD HH:MM:SS - INFO - <消息>
 5. `etf_type="equity"` additionally requires `is_cross_border=false`.
 
 The call is blocked when targets include PTrade. Dual ETF strategies use a customer-confirmed static whitelist; QuantStudio-only strategies may use the local API and `get_history_batch`.
+
+## User-PyQt candidate contract
+
+R4 PASS may expose a comment-marked QuantStudio candidate in the PyQt strategy directory. It is byte-derived from the canonical source and bound by SHA-256. No formal target may be published until reviewed R5 evidence proves the same candidate completed on the recorded provider/database/window/profile. Source drift invalidates R4. R6 regenerates formal files and retires the candidate.

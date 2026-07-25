@@ -46,7 +46,7 @@ def confirmation_errors(design: dict[str, Any]) -> list[str]:
     confirmations = design.get("user_confirmations", {})
     required_confirmations = ["strategy_semantics", "execution_approximations", "component_plan"]
     if design.get("design_version") == "2.1":
-        required_confirmations.append("generation_target")
+        required_confirmations.extend(["generation_target", "backtest_validation_mode"])
         if "ptrade" in design.get("targets", []) and design.get("asset_class") == "etf":
             required_confirmations.append("static_etf_whitelist")
     for key in required_confirmations:

@@ -47,3 +47,7 @@ PR0 只冻结结构；不存在的执行结果目录不得用空文件伪造成�
 ## Target-aware output status
 
 For `targets=["quantstudio"]`, the Run Card records QuantStudio validation PASS, PTrade validation NOT_APPLICABLE, dual consistency NOT_APPLICABLE, and PTrade output NOT_GENERATED. Only the PyQt strategy file is published. Dual mode retains both physical outputs and post-generation consistency evidence.
+
+## User-PyQt candidate Run Card
+
+The R0 contract records the R5 execution owner. For user-PyQt mode the Run Card must include candidate/canonical SHA-256, candidate path, recommended and actual user-selected windows, project database provenance, capital, profile, match mode, completion/exception state, runtime checks, and evidence review status. Formal publication remains locked until evidence PASS. Successful R6 promotion removes the candidate and records both final hashes.

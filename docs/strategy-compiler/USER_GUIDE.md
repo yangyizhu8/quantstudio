@@ -156,3 +156,7 @@ A: 确认 strategy_id 不在黄金保护名单（etf_momentum / smallcap_guard /
 ## Choosing dual or QuantStudio-only output
 
 R0 now requires an explicit target choice. Choose dual output when PTrade portability is required; ETF universes must then be a confirmed static whitelist. Choose QuantStudio-only when local PIT ETF discovery is required; the strategy may call `get_etf_list_local` and `get_history_batch`, and no PTrade file or PTrade PASS claim is produced.
+
+## Letting the user run R5 in PyQt
+
+Choose `validation_execution.mode=user_pyqt` at R0. After R4, run the candidate-preparation command and select the `__candidate` file in PyQt. Choose the actual dates in PyQt; the Skill only supplies listing/warm-up recommendations. Submit the complete log/report for evidence review. PASS unlocks R6; failures route to R1, R3, or R4. The final promotion removes the temporary file.

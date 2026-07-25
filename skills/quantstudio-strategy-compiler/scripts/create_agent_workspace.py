@@ -114,6 +114,7 @@ def _render_plan(design: dict) -> str:
         f"- Strategy ID: `{design['strategy_id']}`",
         f"- Targets: {', '.join(design['targets'])}",
         f"- Universe mode: `{design.get('universe_contract', {}).get('mode', 'legacy_dual')}`",
+        f"- Backtest validation owner: `{design.get('validation_execution', {}).get('mode', 'agent_managed')}`",
         f"- Engine profile: `{design['engine_profile']['profile_id']}` / `{design['engine_profile']['bar_frequency']}`",
         f"- Match price: `{design['engine_profile']['match_price_mode']}`",
         f"- Signal cutoff: `{design['timing']['signal_data_cutoff']}`",
@@ -143,6 +144,10 @@ def _render_plan(design: dict) -> str:
         '',
         *[f"- {item}" for item in design['constraints'].get('hard_filters', [])],
         '- No direct DuckDB/provider/file access.',
+        '- Backtest dates are never hardcoded in strategy source; use the confirmed window contract.',
+        ('- User-PyQt mode: publish only a __candidate file after R4; formal targets remain blocked until hash-bound R5 evidence PASS.'
+         if design.get("validation_execution", {}).get("mode") == "user_pyqt" else
+         '- Agent-managed mode: R5 is executed by the agent only with the customer-confirmed backtest window.'),
         ('- Dual target: no local-only API; ETF universes use the confirmed static whitelist.'
          if "ptrade" in design.get("targets", []) else
          '- QuantStudio-only target: registered local APIs are allowed; PTrade portability must not be claimed.'),
@@ -175,6 +180,11 @@ def create_workspace(design_path: Path, out_dir: Path, overwrite: bool = False) 
         "stage": "SCAFFOLDED",
         "targets": design.get("targets", []),
         "universe_mode": design.get("universe_contract", {}).get("mode", "legacy_dual"),
+        "validation_execution_mode": design.get("validation_execution", {}).get("mode", "agent_managed"),
+        "candidate_status": "NOT_GENERATED",
+        "backtest_evidence_status": "NOT_APPLICABLE" if design.get("validation_execution", {}).get("mode") != "user_pyqt" else "PENDING",
+        "formal_publish_allowed": False,
+        "backtest_window_contract": design.get("backtest_window_contract", {}),
         "agent_implementation_required": True,
         "canonical_source": "strategy.py",
         "quantstudio_output": (

@@ -1,0 +1,181 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://quantstudio.local/schemas/user_backtest_evidence.schema.json",
+  "title": "QuantStudio User PyQt Backtest Evidence",
+  "type": "object",
+  "required": [
+    "evidence_version",
+    "strategy_id",
+    "candidate_path",
+    "candidate_sha256",
+    "execution_owner",
+    "run_status",
+    "backtest_status",
+    "completed",
+    "exception_count",
+    "fatal_error",
+    "backtest_data_source",
+    "backtest_db_path",
+    "start_date",
+    "end_date",
+    "initial_cash",
+    "engine_profile",
+    "match_price_mode",
+    "runtime_checks",
+    "log_excerpt"
+  ],
+  "properties": {
+    "evidence_version": {
+      "const": "1.0"
+    },
+    "strategy_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{2,63}$"
+    },
+    "candidate_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "candidate_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "execution_owner": {
+      "const": "user_pyqt"
+    },
+    "run_status": {
+      "enum": [
+        "COMPLETED",
+        "FAILED"
+      ]
+    },
+    "backtest_status": {
+      "enum": [
+        "PASS",
+        "FAIL"
+      ]
+    },
+    "completed": {
+      "type": "boolean"
+    },
+    "exception_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "fatal_error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "backtest_data_source": {
+      "const": "duckdb_provider"
+    },
+    "backtest_db_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "start_date": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "end_date": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "initial_cash": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "engine_profile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "match_price_mode": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runtime_checks": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "boolean"
+      }
+    },
+    "log_excerpt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "log_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "report_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "failure_class": {
+      "enum": [
+        "strategy_logic",
+        "framework_data_api",
+        "ptrade_profile_validator",
+        "evidence_incomplete",
+        "source_drift"
+      ]
+    },
+    "external_db_override_confirmed": {
+      "type": "boolean"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "backtest_status": {
+            "const": "PASS"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "run_status": {
+            "const": "COMPLETED"
+          },
+          "completed": {
+            "const": true
+          },
+          "exception_count": {
+            "const": 0
+          },
+          "fatal_error": {
+            "type": "null"
+          },
+          "runtime_checks": {
+            "additionalProperties": {
+              "const": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "backtest_status": {
+            "const": "FAIL"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "failure_class"
+        ]
+      }
+    }
+  ],
+  "additionalProperties": false
+}

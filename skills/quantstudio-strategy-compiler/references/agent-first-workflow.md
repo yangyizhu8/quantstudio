@@ -74,3 +74,7 @@ A new strategy normally adds only its design/workspace/output files. A project s
 - `get_etf_list()` retains the PTrade-named contract and is blocked in backtest source.
 - Dual ETF mode uses a customer-confirmed static whitelist and forbids local-only APIs.
 - QuantStudio-only ETF mode may call `get_etf_list_local()` and `get_history_batch()`; the local API routes through ReferenceDataProvider and the DuckDB adapter, never direct strategy storage access.
+
+## User-PyQt candidate branch
+
+R0 independently records `validation_execution.mode=agent_managed|user_pyqt`. In user-PyQt mode, R4 PASS creates only `<strategy_id>__candidate_quantstudio.py` with canonical/candidate hashes and `formal_publish_allowed=false`. The user chooses dates in PyQt and submits complete evidence. Hash drift returns R4; strategy failures return R3; framework/data/API failures return R1; profile/validator failures return R4. R6 regenerates formal artifacts, removes the candidate, and records promotion evidence.

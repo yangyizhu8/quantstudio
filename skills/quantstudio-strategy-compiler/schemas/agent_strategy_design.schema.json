@@ -323,6 +323,9 @@
         },
         "static_etf_whitelist": {
           "type": "boolean"
+        },
+        "backtest_validation_mode": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false
@@ -391,6 +394,92 @@
         }
       },
       "additionalProperties": true
+    },
+    "validation_execution": {
+      "type": "object",
+      "required": [
+        "mode",
+        "require_hash_bound_evidence"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "agent_managed",
+            "user_pyqt"
+          ]
+        },
+        "require_hash_bound_evidence": {
+          "const": true
+        },
+        "candidate_filename_suffix": {
+          "const": "__candidate_quantstudio.py"
+        },
+        "user_selects_backtest_window": {
+          "type": "boolean"
+        },
+        "formal_publish_requires_backtest_pass": {
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "backtest_window_contract": {
+      "type": "object",
+      "required": [
+        "strategy_must_not_hardcode_backtest_dates",
+        "agent_must_not_start_unconfirmed_backtest"
+      ],
+      "properties": {
+        "pool_latest_listing_date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "hard_earliest_start_date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "lookback_trading_days": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "required_close_bars": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "recommended_start_date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "recommended_end_date_as_of_local_data": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "actual_window_selected_by": {
+          "enum": [
+            "user_pyqt",
+            "customer_confirmed_agent_run"
+          ]
+        },
+        "strategy_must_not_hardcode_backtest_dates": {
+          "const": true
+        },
+        "agent_must_not_start_unconfirmed_backtest": {
+          "const": true
+        }
+      },
+      "additionalProperties": true
     }
   },
   "additionalProperties": true,
@@ -439,15 +528,21 @@
       },
       "then": {
         "required": [
-          "universe_contract"
+          "universe_contract",
+          "validation_execution",
+          "backtest_window_contract"
         ],
         "properties": {
           "user_confirmations": {
             "required": [
-              "generation_target"
+              "generation_target",
+              "backtest_validation_mode"
             ],
             "properties": {
               "generation_target": {
+                "const": true
+              },
+              "backtest_validation_mode": {
                 "const": true
               }
             }
@@ -622,6 +717,100 @@
               },
               "local_dynamic_api": {
                 "const": "get_etf_list_local"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "design_version": {
+            "const": "2.1"
+          },
+          "validation_execution": {
+            "properties": {
+              "mode": {
+                "const": "user_pyqt"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "validation_execution": {
+            "required": [
+              "candidate_filename_suffix",
+              "user_selects_backtest_window",
+              "formal_publish_requires_backtest_pass"
+            ],
+            "properties": {
+              "candidate_filename_suffix": {
+                "const": "__candidate_quantstudio.py"
+              },
+              "user_selects_backtest_window": {
+                "const": true
+              },
+              "formal_publish_requires_backtest_pass": {
+                "const": true
+              }
+            }
+          },
+          "backtest_window_contract": {
+            "required": [
+              "actual_window_selected_by"
+            ],
+            "properties": {
+              "actual_window_selected_by": {
+                "const": "user_pyqt"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "design_version": {
+            "const": "2.1"
+          },
+          "validation_execution": {
+            "properties": {
+              "mode": {
+                "const": "agent_managed"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "validation_execution": {
+            "required": [
+              "formal_publish_requires_backtest_pass"
+            ],
+            "properties": {
+              "formal_publish_requires_backtest_pass": {
+                "const": true
+              }
+            }
+          },
+          "backtest_window_contract": {
+            "required": [
+              "actual_window_selected_by"
+            ],
+            "properties": {
+              "actual_window_selected_by": {
+                "const": "customer_confirmed_agent_run"
               }
             }
           }

@@ -60,10 +60,21 @@ def local_etf_design() -> dict:
             "etf_type": "equity",
             "active_only": True,
         },
+        "validation_execution": {
+            "mode": "agent_managed",
+            "require_hash_bound_evidence": True,
+            "formal_publish_requires_backtest_pass": True,
+        },
+        "backtest_window_contract": {
+            "actual_window_selected_by": "customer_confirmed_agent_run",
+            "strategy_must_not_hardcode_backtest_dates": True,
+            "agent_must_not_start_unconfirmed_backtest": True,
+        },
         "approximations": [],
         "open_questions": [],
         "user_confirmations": {
             "generation_target": True,
+            "backtest_validation_mode": True,
             "strategy_semantics": True,
             "execution_approximations": True,
             "component_plan": True,

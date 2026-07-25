@@ -148,3 +148,7 @@ adapter.fetch_table → aligner.align → validator.validate → writer.write
 - Missing `etf_basic` is an explicit capability error; no code-prefix or latest-list fallback may claim to be a domestic-equity PIT universe.
 
 Because Saturday, July 25, 2026 is the synchronization date, rows whose `list_date` is after July 25, 2026 remain metadata-only future listings and are excluded by the PIT query until their actual listing date and historical bars are available.
+
+## User-selected backtest window provenance
+
+For user-PyQt R5, the Skill records the project DuckDB path and recommends ETF listing/warm-up bounds, but does not select or hardcode the actual dates. Submitted evidence must record the user's actual start/end dates and cannot start before the confirmed ETF-pool hard lower bound.

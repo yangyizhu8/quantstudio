@@ -1,4 +1,4 @@
 interface:
   display_name: "QuantStudio Strict Agent-first Strategy Engineering"
-  short_description: "Strict R0-R6, explicit dual/local targets, PIT ETF routing"
-  default_prompt: "Use $quantstudio-strategy-compiler. Execute R0-R6 strictly in order. At R0 first ask the customer to choose dual (QuantStudio + PTrade) or QuantStudio-only, and stop for explicit replies at R0 and R2.5. Route local data through providers and prefer project data/quantstudio.db. Dual ETF strategies use a confirmed static whitelist and forbid local-only APIs; QuantStudio-only ETF strategies may use get_etf_list_local/get_history_batch and must record PTrade/dual checks as NOT_APPLICABLE. Publish only applicable targets after their gates pass."
+  short_description: "Strict R0-R6 with agent/user-PyQt backtest ownership"
+  default_prompt: "Use $quantstudio-strategy-compiler. Execute R0-R6 strictly. At R0 separately confirm target platforms and whether R5 is agent-managed or user-PyQt. User-PyQt mode creates only a hash-bound __candidate QuantStudio file after R4, waits for complete PyQt logs/report, routes failures to R1/R3/R4, and unlocks R6 only after evidence PASS. Formal promotion regenerates target files and removes the candidate. Never hardcode or privately choose backtest dates."

@@ -1,5 +1,9 @@
 # QuantStudio 策略生成提示词工程（V1）
 
+
+## R0-VALIDATION-OWNER：回测执行方
+
+R0除目标平台外，还必须询问：由Agent运行R5，还是在R4后生成 `__candidate_quantstudio.py` 供用户在PyQt自行回测。用户模式下，实际日期只能由用户在PyQt设置；Agent仅给出ETF最晚上市日和完整暖机日建议。用户提交的日志必须绑定候选文件SHA-256、数据库路径、日期、资金、Profile、完成状态及运行检查。PASS后R6重新生成正式双端文件并删除候选文件；失败按策略逻辑→R3、框架/数据/API→R1、Profile/Validator→R4回退。
 ## 0. 生成目标必须先确认（Agent-first R0-TARGET）
 
 在任何策略设计或代码生成之前，提示词必须要求用户明确选择：

@@ -136,3 +136,7 @@ output/strategy_deliveries/<strategy_id>/
 ## Target-aware ETF strategy generation
 
 The QuantStudio strategy compiler asks for the generation target at R0. Dual ETF strategies use a customer-confirmed static whitelist and publish both QuantStudio/PTrade files. QuantStudio-only ETF strategies may use `get_etf_list_local` plus `get_history_batch`, publish only to the PyQt strategy directory, and report PTrade/dual consistency as `NOT_APPLICABLE`.
+
+## User-PyQt R5 branch
+
+R0 can assign R5 to the user. R4 then produces a hash-bound `__candidate_quantstudio.py` for PyQt. Complete evidence PASS unlocks R6; failures return to R1/R3/R4; successful promotion removes the candidate.

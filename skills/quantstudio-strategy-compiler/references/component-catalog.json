@@ -214,5 +214,24 @@
       "execution": "current synthetic completed-bar price through public order APIs",
       "purpose": "causal daily-data proxy when confirmed semantics require open entry and close exit but historical minute coverage is unavailable"
     }
-  ]
+  ],
+  "workflow": {
+    "backtest_execution_modes": [
+      "agent_managed",
+      "user_pyqt"
+    ],
+    "user_pyqt_candidate_suffix": "__candidate_quantstudio.py",
+    "user_pyqt_evidence_schema": "schemas/user_backtest_evidence.schema.json",
+    "user_pyqt_failure_routing": {
+      "strategy_logic": "R3",
+      "framework_data_api": "R1",
+      "ptrade_profile_validator": "R4",
+      "source_drift": "R4",
+      "evidence_incomplete": "R5"
+    }
+  },
+  "scripts": {
+    "prepare_user_backtest_candidate": "scripts/prepare_user_backtest_candidate.py",
+    "review_user_backtest_evidence": "scripts/review_user_backtest_evidence.py"
+  }
 }

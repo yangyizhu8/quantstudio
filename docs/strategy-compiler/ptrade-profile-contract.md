@@ -34,3 +34,7 @@ PTrade Renderer 输出必须通过：语法、生命周期、API 白名单、禁
 - `get_etf_list()` is trading-context only in the strict PTrade profile and is blocked in PTrade backtest source.
 - `get_etf_list_local()` and `get_history_batch()` are registered QuantStudio-only APIs and are blocked whenever `targets` contains `ptrade`.
 - Dual ETF backtests use a customer-confirmed static whitelist. Local-only ETF backtests may use the PIT local universe API.
+
+## Candidate boundary
+
+A QuantStudio `__candidate` file is never a PTrade artifact. PTrade formal output is generated only in R6 after hash-bound R5 PASS and is revalidated against the public profile.

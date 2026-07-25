@@ -288,3 +288,7 @@ def after_trading_end(context):
 > **动态 ETF 池目标规则**：双端（QuantStudio + PTrade）策略必须使用用户在 R2/R2.5 明确确认的静态 ETF 白名单，两端共用同一列表，并禁止 `get_etf_list_local()`/`get_history_batch()`；仅 QuantStudio 本地策略才允许动态 API。`get_etf_list_local()` 只负责 ETF 分类、上市/退市时间、查询日期、历史数据存在性与代码格式，MA、动量、流动性、异常放量、TopN 等策略逻辑必须留在策略文件。
 
 > **元数据前置条件**：本地数据库必须存在 `etf_basic`。使用 `python scripts/sync_etf_basic.py --db data/quantstudio.db` 从 Tushare `fund_basic` 同步，并以 `etf_daily` 首末行情补齐缺失日期。缺表时接口抛出明确的 `ReferenceDataCapabilityError`，不会降级冒充“境内股票型 ETF”。
+
+## 用户PyQt候选文件
+
+`<strategy_id>__candidate_quantstudio.py` 只用于R4后由用户在PyQt执行R5。它必须带有非正式/禁止上传PTrade标记和候选哈希。策略内不得写死回测日期；实际区间由用户设置。日志证据审核PASS后，R6生成正式文件并删除候选文件。
