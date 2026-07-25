@@ -332,4 +332,10 @@ run_strategy(
 5. **风险与数据前提**：所需数据表、涨跌停/T+1 假设、过拟合提示。
 6. **落盘确认**：写出文件的绝对路径，及其在 PyQt 策略文件栏的显示说明。
 
-- When a local ETF strategy depends on `get_etf_list_local()`, require the `etf_basic` pipeline task to be healthy. Its only authority is Tushare, and all collection modes use the same DuckDB-baseline date/unit/field normalization before changed-row upsert; do not introduce code-prefix fallbacks or a second metadata source.
+- When a local ETF strategy depends on `get_etf_list_local()`, require the `etf_basic` pipeline task to be healthy. Its only authority is Tushare, and all collection modes use the same DuckDB-baseline date/unit/field normalization before changed-row upsert; do not introduce code-prefix fallbacks or a second metadata source。
+
+## 框架层变更审阅记录（perf/datadict-day-index）
+
+本次 `quantstudio/backtest/ptrade_api.py`、`quantstudio/backtest/backtest_engine.py` 新增 DataDict/BacktestEngine 当日 DataFrame 的 `{raw_code: first_iloc}` 实例代码索引，将 `df['code'] == bare` 的 O(N) 布尔过滤替换为 O(1) 索引查找；`None`（无法构建）时严格回退原布尔过滤。
+
+**AGENTS.md 框架铁律适用**：本变更为纯性能优化，已审阅确认未改变任何公共/注入 API 签名、返回结构、数据语义或回测行为，也未涉及 `StrategyIsolationGuard` 文件 I/O 禁令等约束变更。因此本文档中策略生成/隔离守卫相关表述不受影响，无需修改。

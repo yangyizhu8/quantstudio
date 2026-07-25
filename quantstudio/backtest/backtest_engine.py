@@ -418,6 +418,9 @@ class BacktestEngine:
         self._baskets: list = []
         self._current_basket = None
         self._basket_seq: int = 0
+        # 实例私有按日索引缓存（纯性能优化）：FIFO，固定上限 4；缓存项存 (df, index)，
+        # 命中时验证 entry_df is df 防止 id 复用读到脏索引。不缓存构建失败的 None。
+        self._df_index_cache: list = []
 
     @property
     def engine_semantics_version(self) -> str:
@@ -827,12 +830,40 @@ class BacktestEngine:
         logger.debug(f"[即时卖出] {code} {target_vol}股@{fill_price:.2f} 净收入{net_proceeds:.2f}")
         return target_vol, fill_price
 
+    def _df_index(self, df):
+        """实例私有按日索引查询：命中（验证 entry_df is df）返回索引，否则构建并入 FIFO 缓存。
+
+        上限固定 4，超出淘汰最旧；不缓存构建失败的 None。返回 None 时调用点回退原布尔过滤。
+        """
+        from .ptrade_api import _build_code_index
+        for entry_df, idx in self._df_index_cache:
+            if entry_df is df:
+                return idx
+        built = _build_code_index(df)
+        if built is not None:
+            self._df_index_cache.append((df, built))
+            if len(self._df_index_cache) > 4:
+                self._df_index_cache.pop(0)
+        return built
+
     def _get_pct_chg(self, code, curr_data, date):
         """获取当日涨跌幅"""
         if curr_data is None:
             return 0.0
         bare = code.split(".")[0] if "." in code else code
-        row = curr_data[curr_data['code'] == bare] if 'code' in curr_data.columns else pd.DataFrame()
+        if 'code' not in curr_data.columns:
+            return 0.0
+        idx = self._df_index(curr_data)
+        if idx is not None:
+            i = idx.get(bare)
+            if i is not None:
+                close = curr_data.iloc[i].get('close', 0)
+                preclose = curr_data.iloc[i].get('preClose', 0)
+                if preclose and preclose > 0:
+                    return (close - preclose) / preclose
+            return 0.0
+        # 索引不可用 → 回退原布尔过滤
+        row = curr_data[curr_data['code'] == bare]
         if len(row) > 0:
             close = row.iloc[0].get('close', 0)
             preclose = row.iloc[0].get('preClose', 0)
@@ -845,10 +876,21 @@ class BacktestEngine:
         if curr_data is None or not open_price or open_price <= 0:
             return 0.0
         bare = code.split(".")[0] if "." in code else code
-        row = curr_data[curr_data["code"] == bare] if "code" in curr_data.columns else pd.DataFrame()
-        if len(row) == 0:
+        if "code" not in curr_data.columns:
             return 0.0
-        preclose = row.iloc[0].get("preClose", 0)
+        idx = self._df_index(curr_data)
+        preclose = None
+        if idx is not None:
+            i = idx.get(bare)
+            if i is None:
+                return 0.0
+            preclose = curr_data.iloc[i].get("preClose", 0)
+        else:
+            # 索引不可用 → 回退原布尔过滤
+            row = curr_data[curr_data["code"] == bare]
+            if len(row) == 0:
+                return 0.0
+            preclose = row.iloc[0].get("preClose", 0)
         if preclose and preclose > 0:
             return (float(open_price) - float(preclose)) / float(preclose)
         return 0.0
@@ -1511,13 +1553,23 @@ class BacktestEngine:
         if curr_data is None:
             return False
         bare = code.split(".")[0] if "." in code else code
-        try:
-            row = curr_data[curr_data['code'] == bare]
-        except Exception:
+        if 'code' not in curr_data.columns:
             return False
-        if len(row) == 0:
-            return False
-        r = row.iloc[0]
+        idx = self._df_index(curr_data)
+        if idx is not None:
+            i = idx.get(bare)
+            if i is None:
+                return False
+            r = curr_data.iloc[i]
+        else:
+            # 索引不可用 → 回退原布尔过滤（保留原 try/except 异常行为）
+            try:
+                row = curr_data[curr_data['code'] == bare]
+            except Exception:
+                return False
+            if len(row) == 0:
+                return False
+            r = row.iloc[0]
         suspend = r.get('suspendFlag', 0)
         volume = r.get('volume', 0)
         try:

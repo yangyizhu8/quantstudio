@@ -285,7 +285,7 @@ def after_trading_end(context):
 
 ---
 
-*本文档条目均来自源码实装（`quantstudio/backtest/ptrade_api.py`、`ptrade_import.py`、
+*本文档条目均来自源码实装（`quantstudio/backtest/ptrade_api.py`、`ptrace_import.py`、
 `strategy_runner.py`、`libs/MyTT.py`、`libs/shared_ashare_rules.py`），与看海框架仅为
 结构对照，不代表两框架 API 完全等价。*
 
@@ -297,4 +297,10 @@ def after_trading_end(context):
 
 `<strategy_id>__candidate_quantstudio.py` 只用于R4后由用户在PyQt执行R5。它必须带有非正式/禁止上传PTrade标记和候选哈希。策略内不得写死回测日期；实际区间由用户设置。日志证据审核PASS后，R6生成正式文件并删除候选文件。
 
-> **`etf_basic` freshness:** metadata is maintained by the enabled `etf_basic` collector task with Tushare as the single authority. Full, incremental, and resident collection share the same baseline normalization and changed-row upsert path. The compatibility command `scripts/sync_etf_basic.py` uses the same contract. Restart a resident collector after deploying task/config changes.
+> **`etf_basic` freshness:** metadata is maintained by the enabled `etf_basic` collector task with Tushare as the single authority. Full, incremental, and resident collection share the same baseline normalization and changed-row upsert path. The compatibility command `scripts/sync_etf_basic.py` uses the same contract. Restart a resident collector after deploying task/config changes。
+
+## 框架层变更审阅记录（perf/datadict-day-index）
+
+本次 `quantstudio/backtest/ptrade_api.py`、`quantstudio/backtest/backtest_engine.py` 新增 DataDict/BacktestEngine 当日 DataFrame 的 `{raw_code: first_iloc}` 实例代码索引，将 `df['code'] == bare` 的 O(N) 布尔过滤替换为 O(1) 索引查找；`None`（无法构建）时严格回退原布尔过滤。
+
+**AGENTS.md 框架铁律适用**：本变更为纯性能优化，已审阅确认未改变 `data[code]`（DataDict）、`get_current_price`、`is_halted`、`pct_chg` 等任何接口的函数名、签名、返回类型、返回字段、空值/异常行为或兼容行为；未改变数据语义或回测行为。因此本文档第 3 节 DataDict/`BarData`/`Position` 等条目不受影响，无需修改。
