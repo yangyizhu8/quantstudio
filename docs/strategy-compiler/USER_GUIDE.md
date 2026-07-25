@@ -152,3 +152,7 @@ A: 确认 strategy_id 不在黄金保护名单（etf_momentum / smallcap_guard /
 - PR7（自动 Fidelity 闭环）
 - GUI 集成
 - 部署产品化（Docker/systemd/NSSM）
+
+## Choosing dual or QuantStudio-only output
+
+R0 now requires an explicit target choice. Choose dual output when PTrade portability is required; ETF universes must then be a confirmed static whitelist. Choose QuantStudio-only when local PIT ETF discovery is required; the strategy may call `get_etf_list_local` and `get_history_batch`, and no PTrade file or PTrade PASS claim is produced.

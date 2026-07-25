@@ -38,3 +38,15 @@ Schema：`quantstudio/strategy_compiler/schemas/capability_report.schema.json`
 示例：`quantstudio/strategy_compiler/examples/capability_report.example.json`
 
 **能力报告必须提供证据、可读消息和修复建议，不能只给布尔值。**
+
+## Target-aware ETF capabilities
+
+| Capability | Dual target | QuantStudio-only |
+|---|---:|---:|
+| `get_etf_list()` in backtest | BLOCK | BLOCK |
+| Customer-confirmed static ETF whitelist | REQUIRED for ETF strategies | OPTIONAL |
+| `get_etf_list_local()` PIT universe | BLOCK | READY when `etf_basic` metadata exists |
+| `get_history_batch()` | BLOCK | READY |
+| PTrade validation / dual consistency | REQUIRED | NOT_APPLICABLE |
+
+Local dynamic ETF readiness requires `etf_basic` classification/listing metadata and historical availability in `etf_daily`. Missing metadata is `DATA_BLOCKED`, not an implicit all-ETF fallback.

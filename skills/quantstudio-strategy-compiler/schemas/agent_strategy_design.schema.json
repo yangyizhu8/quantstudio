@@ -22,7 +22,11 @@
   ],
   "properties": {
     "design_version": {
-      "const": "2.0"
+      "enum": [
+        "2.0",
+        "2.1"
+      ],
+      "description": "2.0 is the legacy dual-target contract; 2.1 adds explicit target and ETF-universe routing."
     },
     "strategy_id": {
       "type": "string",
@@ -260,7 +264,7 @@
           "const": true
         },
         "portable_source_required": {
-          "const": true
+          "type": "boolean"
         },
         "runtime_state_guard_required": {
           "const": true
@@ -313,6 +317,12 @@
         },
         "component_plan": {
           "type": "boolean"
+        },
+        "generation_target": {
+          "type": "boolean"
+        },
+        "static_etf_whitelist": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false
@@ -325,10 +335,298 @@
       "properties": {
         "overwrite": {
           "type": "boolean"
+        },
+        "quantstudio_path": {
+          "type": "string"
+        },
+        "ptrade_path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "universe_contract": {
+      "type": "object",
+      "required": [
+        "mode",
+        "local_dynamic_api_allowed"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "portable_public_api",
+            "static_whitelist",
+            "dynamic_local"
+          ]
+        },
+        "local_dynamic_api_allowed": {
+          "type": "boolean"
+        },
+        "local_dynamic_api": {
+          "enum": [
+            "get_etf_list_local"
+          ]
+        },
+        "static_etf_whitelist": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9]{6}\\.(SS|SZ)$"
+          }
+        },
+        "etf_type": {
+          "enum": [
+            "equity",
+            "bond",
+            "money",
+            "commodity",
+            "gold",
+            "qdii",
+            "all"
+          ]
+        },
+        "active_only": {
+          "type": "boolean"
         }
       },
       "additionalProperties": true
     }
   },
-  "additionalProperties": true
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "design_version": {
+            "const": "2.0"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "targets": {
+            "allOf": [
+              {
+                "contains": {
+                  "const": "quantstudio"
+                }
+              },
+              {
+                "contains": {
+                  "const": "ptrade"
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "properties": {
+              "portable_source_required": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "design_version": {
+            "const": "2.1"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "universe_contract"
+        ],
+        "properties": {
+          "user_confirmations": {
+            "required": [
+              "generation_target"
+            ],
+            "properties": {
+              "generation_target": {
+                "const": true
+              }
+            }
+          },
+          "targets": {
+            "contains": {
+              "const": "quantstudio"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "design_version": {
+            "const": "2.1"
+          },
+          "targets": {
+            "contains": {
+              "const": "ptrade"
+            }
+          },
+          "asset_class": {
+            "const": "etf"
+          }
+        },
+        "required": [
+          "asset_class"
+        ]
+      },
+      "then": {
+        "properties": {
+          "constraints": {
+            "properties": {
+              "portable_source_required": {
+                "const": true
+              }
+            }
+          },
+          "universe_contract": {
+            "required": [
+              "static_etf_whitelist"
+            ],
+            "properties": {
+              "mode": {
+                "const": "static_whitelist"
+              },
+              "local_dynamic_api_allowed": {
+                "const": false
+              },
+              "static_etf_whitelist": {
+                "minItems": 1
+              }
+            }
+          },
+          "user_confirmations": {
+            "required": [
+              "static_etf_whitelist"
+            ],
+            "properties": {
+              "static_etf_whitelist": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "design_version": {
+            "const": "2.1"
+          },
+          "targets": {
+            "contains": {
+              "const": "ptrade"
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "constraints": {
+            "properties": {
+              "portable_source_required": {
+                "const": true
+              }
+            }
+          },
+          "universe_contract": {
+            "properties": {
+              "local_dynamic_api_allowed": {
+                "const": false
+              },
+              "mode": {
+                "not": {
+                  "const": "dynamic_local"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "design_version": {
+            "const": "2.1"
+          },
+          "targets": {
+            "const": [
+              "quantstudio"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "constraints": {
+            "properties": {
+              "portable_source_required": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "design_version": {
+            "const": "2.1"
+          },
+          "targets": {
+            "const": [
+              "quantstudio"
+            ]
+          },
+          "asset_class": {
+            "const": "etf"
+          }
+        },
+        "required": [
+          "asset_class"
+        ]
+      },
+      "then": {
+        "properties": {
+          "constraints": {
+            "properties": {
+              "portable_source_required": {
+                "const": false
+              }
+            }
+          },
+          "universe_contract": {
+            "required": [
+              "local_dynamic_api",
+              "etf_type",
+              "active_only"
+            ],
+            "properties": {
+              "mode": {
+                "const": "dynamic_local"
+              },
+              "local_dynamic_api_allowed": {
+                "const": true
+              },
+              "local_dynamic_api": {
+                "const": "get_etf_list_local"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

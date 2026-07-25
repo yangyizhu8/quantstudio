@@ -9,10 +9,11 @@ The caller is an intelligent agent. Preserve its ability to design indicators, s
 - Translate the idea into a reviewable design contract.
 - Force explicit confirmation of timing, execution approximations, position overlap, costs, and hard filters.
 - Select lifecycle hooks and public API groups from `component-catalog.json`.
-- Scaffold a canonical PTrade-style Python strategy file with extension points only.
+- R0 first records an explicit target mode: dual (QuantStudio + PTrade) or QuantStudio-only.
+- Scaffold a target-aware Python strategy file with extension points only.
 - Require all market, fundamental, reference, calendar, portfolio, and order access to use injected project APIs.
 - Validate syntax, isolation, portability, schedules, no-lookahead rules, lifecycle coverage, and design/code consistency.
-- Run local backtests and publish the same canonical source to QuantStudio and PTrade targets.
+- Run local backtests for every mode. Dual mode publishes the same portable source to both targets; QuantStudio-only mode publishes one local source and records PTrade/consistency as NOT_APPLICABLE.
 
 ## Responsibilities left to the calling agent
 
@@ -54,7 +55,7 @@ Run `scripts/validate_agent_strategy.py`. Repair BLOCK findings in strategy code
 
 Run the declared daily/minute profile. Review orders, holdings, trigger times, empty-universe behavior, insufficient history, suspended/limit states, and position/cash invariants. Strategy-specific failures are fixed by the calling agent.
 
-### R6 - Publish dual targets
+### R6 - Target-aware publish
 
 Run `scripts/publish_agent_strategy.py`. It validates then publishes the exact same canonical strategy source to:
 - `quantstudio/backtest/strategies/<strategy_id>_quantstudio.py`
@@ -67,3 +68,9 @@ Platform headers may differ; executable strategy content must have the same SHA-
 Never add strategy names or strategy shapes to Skill, Compiler, renderer, or templates. Do not introduce `if strategy_pattern == "some_strategy"` branches.
 
 A new strategy normally adds only its design/workspace/output files. A project source change is justified only for a genuinely reusable API/lifecycle capability and must be tested independently of the requesting strategy.
+
+## ETF universe routing
+
+- `get_etf_list()` retains the PTrade-named contract and is blocked in backtest source.
+- Dual ETF mode uses a customer-confirmed static whitelist and forbids local-only APIs.
+- QuantStudio-only ETF mode may call `get_etf_list_local()` and `get_history_batch()`; the local API routes through ReferenceDataProvider and the DuckDB adapter, never direct strategy storage access.

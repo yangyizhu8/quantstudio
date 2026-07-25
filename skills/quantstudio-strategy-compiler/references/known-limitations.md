@@ -58,3 +58,7 @@ These are documented, accepted limitations of the current compiler/runtime. They
 ## Sync reminder
 
 When a limitation is resolved (e.g. PR3.5 aggregation implemented, or PR6 rendering arrives), this file MUST be updated and `skill_version` bumped. Stale limitations mislead users into avoiding capabilities that now work.
+
+## ETF metadata classification
+
+`get_etf_list_local(etf_type="equity")` depends on the synchronized `etf_basic` table. The current `etf-basic-v1` classification is auditable and sourced from Tushare `fund_basic`, with keyword/code rules for cross-border and commodity subclasses and `etf_daily` only for missing date completion. Classification defects must be repaired in the reusable metadata sync/overrides, never hidden in strategy logic.

@@ -43,3 +43,7 @@ PR0 只冻结结构；不存在的执行结果目录不得用空文件伪造成�
 示例：`quantstudio/strategy_compiler/examples/run_card.example.json`
 
 当前 PR0 示例为 `SPEC_ONLY/PARTIAL`，明确 Renderer 和冒烟尚未运行。
+
+## Target-aware output status
+
+For `targets=["quantstudio"]`, the Run Card records QuantStudio validation PASS, PTrade validation NOT_APPLICABLE, dual consistency NOT_APPLICABLE, and PTrade output NOT_GENERATED. Only the PyQt strategy file is published. Dual mode retains both physical outputs and post-generation consistency evidence.

@@ -22,6 +22,7 @@ from .libs.security_code_rules import (
 )
 # PR3: 频率查询能力错误（分钟数据缺失/不支持时上抛，严禁静默回退日线）
 from .providers.frequency_labels import FrequencyCapabilityError
+from .providers.base import ReferenceDataCapabilityError
 
 logger = logging.getLogger(__name__)
 
@@ -1378,6 +1379,30 @@ class PtradeAPI:
             logger.debug(f"get_etf_list 失败: {e}")
             return []
 
+    def get_etf_list_local(self, query_date=None, etf_type="equity", active_only=True):
+        """Return a PIT ETF universe for QuantStudio-only local backtests.
+
+        This is deliberately a separate local extension. ``get_etf_list`` keeps its
+        PTrade-name compatibility contract and must not be used to imply that PTrade
+        backtests support dynamic ETF-universe discovery.
+        """
+        if self._reference is None:
+            raise ReferenceDataCapabilityError(
+                "get_etf_list_local requires an attached QuantStudio reference-data provider"
+            )
+        effective_date = query_date
+        if effective_date is None:
+            effective_date = self._current_date
+        if effective_date is None or not str(effective_date).strip():
+            raise ReferenceDataCapabilityError(
+                "get_etf_list_local(query_date=None) requires an active backtest date; "
+                "pass query_date explicitly outside a running backtest"
+            )
+        bare_codes = self._reference.get_etf_list_local(
+            query_date=effective_date, etf_type=etf_type, active_only=active_only
+        )
+        return [self._to_ptrade_code(code) for code in bare_codes]
+
     def get_etf_info(self, etf_code):
         """获取 ETF 信息（对应 Ptrade get_etf_info）
         返回 {code: {etf_redemption_code, publish, report_unit, ...}}。
@@ -2034,6 +2059,7 @@ get_stock_blocks = _api.get_stock_blocks
 get_industry_stocks = _api.get_industry_stocks
 get_reits_list = _api.get_reits_list
 get_etf_list = _api.get_etf_list
+get_etf_list_local = _api.get_etf_list_local
 get_etf_info = _api.get_etf_info
 get_etf_stock_list = _api.get_etf_stock_list
 get_etf_stock_info = _api.get_etf_stock_info

@@ -32,7 +32,7 @@ from .ptrade_api import (
     is_trade, g, log,
     # 第2批新增：财务/除权/板块/行业/ETF/可转债
     get_stock_exrights, get_stock_blocks, get_industry_stocks, get_reits_list,
-    get_etf_list, get_etf_info, get_etf_stock_list, get_etf_stock_info, get_ipo_stocks,
+    get_etf_list, get_etf_list_local, get_etf_info, get_etf_stock_list, get_etf_stock_info, get_ipo_stocks,
     get_cb_list, get_cb_info,
     # 第3批新增：市场/文件/持仓/参数/期货降级
     get_market_list, get_market_detail, get_trend_data,

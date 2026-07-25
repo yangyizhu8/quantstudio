@@ -1,4 +1,4 @@
 interface:
   display_name: "QuantStudio Strict Agent-first Strategy Engineering"
-  short_description: "Strict R0-R6 workflow, project DuckDB priority, real PTrade validation"
-  default_prompt: "Use $quantstudio-strategy-compiler. Execute R0-R6 strictly in order and stop for explicit customer replies at R0 and R2.5; never self-confirm or skip a stage. Route local backtest data through providers and prefer the current project data/quantstudio.db without direct strategy storage access. Target exact PTrade public signatures, generate both files into staging, validate each generated file, compare them only after both exist, and publish only on full PASS."
+  short_description: "Strict R0-R6, explicit dual/local targets, PIT ETF routing"
+  default_prompt: "Use $quantstudio-strategy-compiler. Execute R0-R6 strictly in order. At R0 first ask the customer to choose dual (QuantStudio + PTrade) or QuantStudio-only, and stop for explicit replies at R0 and R2.5. Route local data through providers and prefer project data/quantstudio.db. Dual ETF strategies use a confirmed static whitelist and forbid local-only APIs; QuantStudio-only ETF strategies may use get_etf_list_local/get_history_batch and must record PTrade/dual checks as NOT_APPLICABLE. Publish only applicable targets after their gates pass."

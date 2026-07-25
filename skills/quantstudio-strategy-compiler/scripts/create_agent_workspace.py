@@ -13,15 +13,27 @@ def _render_strategy(design: dict) -> str:
     hooks = list(dict.fromkeys(["initialize", *design["components"].get("lifecycle_hooks", [])]))
     events = design["timing"].get("decision_events", [])
     scheduled = [event for event in events if event.get("lifecycle") == "run_daily"]
+    dual_target = "ptrade" in design.get("targets", [])
+    scope_label = "canonical QuantStudio/PTrade" if dual_target else "QuantStudio-only"
+    injection_label = (
+        "Public PTrade-style APIs, numpy/pandas, g and log are injected locally."
+        if dual_target else
+        "QuantStudio APIs, registered local extensions, numpy/pandas, g and log are injected locally."
+    )
+    publish_label = (
+        "The validated file is published unchanged to both QuantStudio and PTrade."
+        if dual_target else
+        "The validated file is published only to the QuantStudio PyQt strategy directory."
+    )
 
     lines = [
         '"""',
-        f'{strategy_id}.py - agent-authored canonical QuantStudio/PTrade strategy.',
+        f'{strategy_id}.py - agent-authored {scope_label} strategy.',
         '',
         'This file is intentionally a lifecycle/API scaffold, not a strategy template.',
         'Implement strategy-specific universe, indicators, signals, state and risk below.',
-        'Public PTrade-style APIs, MyTT, numpy/pandas, g and log are injected locally.',
-        'The validated file is published unchanged to both QuantStudio and PTrade.',
+        injection_label,
+        publish_label,
         '"""',
         '',
         f"STRATEGY_ID = {strategy_id!r}",
@@ -101,6 +113,7 @@ def _render_plan(design: dict) -> str:
         '',
         f"- Strategy ID: `{design['strategy_id']}`",
         f"- Targets: {', '.join(design['targets'])}",
+        f"- Universe mode: `{design.get('universe_contract', {}).get('mode', 'legacy_dual')}`",
         f"- Engine profile: `{design['engine_profile']['profile_id']}` / `{design['engine_profile']['bar_frequency']}`",
         f"- Match price: `{design['engine_profile']['match_price_mode']}`",
         f"- Signal cutoff: `{design['timing']['signal_data_cutoff']}`",
@@ -130,7 +143,9 @@ def _render_plan(design: dict) -> str:
         '',
         *[f"- {item}" for item in design['constraints'].get('hard_filters', [])],
         '- No direct DuckDB/provider/file access.',
-        '- No local-only batch API in canonical dual-target source.',
+        ('- Dual target: no local-only API; ETF universes use the confirmed static whitelist.'
+         if "ptrade" in design.get("targets", []) else
+         '- QuantStudio-only target: registered local APIs are allowed; PTrade portability must not be claimed.'),
         "- Every signal-price get_history/get_history_batch/get_price call uses literal fq='pre'.",
         '- attribute_history is forbidden because its price adjustment cannot be proven.',
         '- Raw bar/snapshot OHLC is execution-only and must not enter indicator or signal series.',
@@ -158,8 +173,18 @@ def create_workspace(design_path: Path, out_dir: Path, overwrite: bool = False) 
     write_json(out_dir / "workspace_state.json", {
         "strategy_id": design["strategy_id"],
         "stage": "SCAFFOLDED",
+        "targets": design.get("targets", []),
+        "universe_mode": design.get("universe_contract", {}).get("mode", "legacy_dual"),
         "agent_implementation_required": True,
         "canonical_source": "strategy.py",
+        "quantstudio_output": (
+            f"quantstudio/backtest/strategies/{design['strategy_id']}_quantstudio.py"
+            if "quantstudio" in design.get("targets", []) else "NOT_GENERATED"
+        ),
+        "ptrade_output": (
+            f"ptrade/{design['strategy_id']}_ptrade.py"
+            if "ptrade" in design.get("targets", []) else "NOT_GENERATED"
+        ),
     })
     return out_dir
 

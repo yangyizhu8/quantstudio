@@ -272,6 +272,20 @@ def validate_strategy(
         or not structural_keys.issubset(design)
     if fatal_design:
         return _report(design, source_name, target_profile, issues)
+    if target_profile == "ptrade" and "ptrade" not in design.get("targets", []):
+        if any(item["severity"] == "BLOCK" for item in issues):
+            return _report(design, source_name, target_profile, issues)
+        return {
+            "report_version": "2.1",
+            "strategy_id": design.get("strategy_id"),
+            "source": source_name,
+            "target_profile": target_profile,
+            "status": "NOT_APPLICABLE",
+            "block_count": 0,
+            "warning_count": 0,
+            "reason": "design targets exclude ptrade",
+            "issues": [],
+        }
 
     try:
         tree = ast.parse(source, filename=source_name)
@@ -328,6 +342,49 @@ def validate_strategy(
         _validate_signal_price_adjustment(node, name, issues)
         if strict_ptrade and name:
             _validate_ptrade_call(node, name, ptrade_profile, defined_names, issues)
+
+    target_set = set(design.get("targets", []))
+    local_only_symbols = set(ptrade_profile.get("local_only_symbols", []))
+    external_calls = [(call, name) for call, name, _ in calls
+                      if name and name not in defined_names]
+    if "ptrade" in target_set:
+        for call, name in external_calls:
+            if name in local_only_symbols:
+                issues.append(_issue(
+                    "TARGET-LOCAL-EXTENSION-BAN", "BLOCK",
+                    f"dual/PTrade target cannot call QuantStudio-local API {name}().",
+                    call.lineno))
+    for call, name in external_calls:
+        if name == "get_etf_list":
+            issues.append(_issue(
+                "PTRADE-GET-ETF-LIST-BACKTEST-BAN", "BLOCK",
+                "get_etf_list() is unavailable in the PTrade backtest profile; "
+                "use a confirmed static whitelist for dual targets or "
+                "get_etf_list_local() for QuantStudio-only targets.",
+                call.lineno))
+
+    universe_contract = design.get("universe_contract", {})
+    if universe_contract.get("mode") == "dynamic_local" \
+            and "get_etf_list_local" not in called:
+        issues.append(_issue(
+            "LOCAL-DYNAMIC-ETF-API-REQUIRED", "BLOCK",
+            "dynamic_local universe contract requires get_etf_list_local()."))
+    if universe_contract.get("mode") == "static_whitelist":
+        confirmed_whitelist = set(universe_contract.get("static_etf_whitelist", []))
+        source_literals = {
+            node.value for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        missing_whitelist = sorted(confirmed_whitelist - source_literals)
+        if missing_whitelist:
+            issues.append(_issue(
+                "STATIC-ETF-WHITELIST-MISMATCH", "BLOCK",
+                f"strategy source is missing confirmed ETF whitelist entries: {missing_whitelist}"))
+    if "ptrade" not in target_set and re.search(
+            r"PTrade\s+(?:validation\s*[:=]\s*)?PASS", source, re.IGNORECASE):
+        issues.append(_issue(
+            "LOCAL-ONLY-PTRADE-CLAIM", "BLOCK",
+            "QuantStudio-only source must not claim PTrade validation PASS."))
 
     scheduled_times = {callback: schedule for callback, schedule, _ in schedules if callback}
 

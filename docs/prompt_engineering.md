@@ -1,5 +1,29 @@
 # QuantStudio 策略生成提示词工程（V1）
 
+## 0. 生成目标必须先确认（Agent-first R0-TARGET）
+
+在任何策略设计或代码生成之前，提示词必须要求用户明确选择：
+
+1. **双端（推荐）**：QuantStudio 本地 + PTrade；
+2. **仅 QuantStudio 本地回测**。
+
+不得由 Agent 默认替用户确认。目标选择写入 `targets`、`universe_contract` 与 `user_confirmations.generation_target`。
+
+- **双端 ETF 策略**：禁止 `get_etf_list()`、`get_etf_list_local()`、`get_history_batch()`；将用户确认的静态 ETF 白名单写入 R2 设计合同和两端同一策略源，R2.5 再次确认。
+- **仅本地 ETF 策略**：允许 `get_etf_list_local()` 按回测日期从 `etf_basic` + `etf_daily` 动态构建 PIT ETF 池，可结合 `get_history_batch()`；不得宣称 PTrade PASS。
+- **验证分流**：双端执行 QuantStudio + PTrade + 双端一致性；仅本地把 PTrade validation、Dual consistency 记为 `NOT_APPLICABLE`。
+- **输出分流**：本地文件固定落入 `quantstudio/backtest/strategies/<strategy_id>_quantstudio.py` 供 PyQt 下拉列表读取；PTrade 文件仅在双端模式生成到 `ptrade/<strategy_id>_ptrade.py`，本地模式不创建占位文件。
+
+可直接加入提示词的硬约束：
+
+```text
+R0 首先询问并记录生成目标：双端或仅 QuantStudio 本地。
+双端 ETF 策略只能使用用户确认的静态白名单，禁止所有 local-only API。
+仅本地 ETF 策略使用 get_etf_list_local 做 PIT 动态池；PTrade 验证和双端一致性为 NOT_APPLICABLE。
+策略不得直接访问 DuckDB；动态池必须经过注入 API → ReferenceDataProvider → DuckDB 数据适配层。
+```
+
+
 > 本文档用于**引导一个智能体（AI Agent）为 QuantStudio 本地量化回测框架生成可运行的策略代码**。
 > 你（用户）只需把本文档整体复制，连同「你的策略需求」一起发给任意支持代码生成的智能体，
 > 它即可准确理解本框架的策略生成契约，产出能在本框架跑起来的 `.py` 策略，并**自动存入项目指定目录**、在 PyQt 回测面板直接可视化回测。
@@ -40,7 +64,8 @@ QuantStudio 是一个 100% 本地、DuckDB 驱动、Ptrade 兼容的 A股日/分
   growth_ability 等可用；balance/income/cashflow 三张报表【返回空 DataFrame】。
 - query(valuation.market_cap).filter(...).order_by(...).limit(n) 后 get_fundamentals(q)
 - get_current_data()→{code:BarData}；data[code].price / current_price(code) 取当日价
-- get_index_stocks(idx)、get_Ashares()、get_etf_list()、get_cb_list()
+- PTrade 兼容：get_index_stocks(idx)、get_Ashares()、get_etf_list()、get_cb_list()
+- QuantStudio 本地扩展：get_etf_list_local(query_date=None, etf_type="equity", active_only=True)、get_history_batch(...)；仅当生成目标不包含 PTrade 时允许
 - check_limit(code)→{code:1涨/-1跌/0平}；filter_stock_by_status(stocks,filter_type=[...])
 - get_positions()、get_position(code)、context.portfolio.positions/positions_value/cash
 - load_research_signals(csv_path, fallback=None)：注入 API，由框架侧读取外部研报/信号 CSV（仅保留买入/增持），返回 (rows, source)；需要外部文件数据（如研报/信号表）时用它，**禁止策略内自行 open()/read_csv()**。
@@ -145,7 +170,7 @@ def handle_data(context, data):
 |---|---|---|
 | `MarketDataProvider` | 行情 / 历史 K 线 / 基准 | `get_history`, `get_price`, `get_bars`(底层), `get_benchmark`, `get_current_data` |
 | `FundamentalDataProvider` | 估值 / 财务表 | `get_fundamentals`, `query(...)` |
-| `ReferenceDataProvider` | 指数成分 / 股票状态 / 板块 / ETF/转债 | `get_index_stocks`, `get_Ashares`, `get_etf_list`, `get_cb_list`, `filter_stock_by_status`, `check_limit`, `get_security_info` |
+| `ReferenceDataProvider` | 指数成分 / 股票状态 / 板块 / ETF/转债 / PIT ETF 元数据 | `get_index_stocks`, `get_Ashares`, `get_etf_list`（PTrade 同名契约）, `get_etf_list_local`（仅本地）, `get_cb_list`, `filter_stock_by_status`, `check_limit`, `get_security_info` |
 | `CalendarProvider` | 交易日历 | `get_trade_days`, `get_trading_day`, `get_all_trade_days` |
 
 **智能体须知**：
@@ -190,7 +215,7 @@ def handle_data(context, data):
 2. **行情/历史**：`get_history`, `get_price`, `get_current_data`, `current_price`, `history`(别名)
 3. **财务/估值 ORM**：`get_fundamentals`, `query`, `valuation`, `balance_statement`, `income_statement`, `cashflow_statement`, `eps`, `profit_ability`, `growth_ability`, `operating_ability`, `debt_paying_ability`
 4. **股票状态/涨跌停**：`get_stock_status`, `check_limit`, `is_suspended`, `is_st`, `filter_stock_by_status`
-5. **指数/ETF/转债/REITs**：`get_index_stocks`, `get_Ashares`, `get_etf_list`, `get_etf_info`, `get_cb_list`, `get_reits_list`
+5. **指数/ETF/转债/REITs**：`get_index_stocks`, `get_Ashares`, `get_etf_list`（PTrade 回测禁止）, `get_etf_list_local`（仅 QuantStudio 本地单端）, `get_etf_info`, `get_cb_list`, `get_reits_list`
 6. **交易日历**：`get_trade_days`, `get_trading_day`, `get_all_trade_days`, `get_kline_count`
 7. **交易函数（即时）**：`order`, `order_value`, `order_target`, `order_target_value`
 8. **交易函数（next_open）**：`order_target_value_next_open` 等（映射到 next_open 模式）

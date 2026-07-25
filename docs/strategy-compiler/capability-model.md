@@ -34,3 +34,7 @@ Schema：`quantstudio/strategy_compiler/schemas/capability_report.schema.json`
 示例：`quantstudio/strategy_compiler/examples/capability_report.example.json`
 
 能力报告必须提供证据、可读消息和修复建议，不能只给布尔值。
+
+## Target-aware local ETF capability
+
+`get_etf_list_local` is READY only for QuantStudio-only targets when `etf_basic` exists and PIT metadata/history checks pass. It is LOCAL_ONLY/BLOCK for dual or PTrade targets. Missing metadata is DATA_BLOCKED and cannot fall back to a latest code-prefix list while claiming domestic-equity semantics.

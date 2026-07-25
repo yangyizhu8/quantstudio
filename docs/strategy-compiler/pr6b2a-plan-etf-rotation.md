@@ -1,3 +1,5 @@
+> **2026-07-25 implementation update:** the deferred local PIT universe is now implemented as the separate QuantStudio-only API `get_etf_list_local()`. The original `get_etf_list()` remains PTrade-named and blocked in backtest source. Dual ETF strategies still use a customer-confirmed static whitelist; local-only strategies may use the new API. See `docs/interface-contract.md` and `docs/strategy_toolbox.md`.
+
 # PR6b-2A 实施计划：ETF 静态池轮动垂直切片
 
 > **状态**：APPROVED（批准日期 2026-07-23），作为 PR6b-2A 权威实施基线。未经用户明确下达"开始 PR6b-2A 实施"指令不得开始任何 CP。本文档只定义计划，不含任何已执行代码。

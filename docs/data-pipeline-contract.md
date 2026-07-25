@@ -135,3 +135,16 @@ adapter.fetch_table → aligner.align → validator.validate → writer.write
 | 版本 | 日期 | 改动 |
 |---|---|---|
 | v1.0 | 2026-07-18 | 初版：两表两层市值口径、xtquant PIT 约束、derive_fields 补算规范、扩展规范 |
+
+## ETF reference metadata for local PIT universes
+
+`etf_daily` is market data only and cannot identify domestic equity, bond, money, commodity, gold, or QDII/cross-border classes. QuantStudio therefore maintains a separate `etf_basic` reference table for `get_etf_list_local`.
+
+- Synchronize with: `python scripts/sync_etf_basic.py --db data/quantstudio.db`.
+- Source: Tushare `fund_basic(market="E")`; classification version `etf-basic-v1`.
+- Required PIT fields: `code`, `exchange`, `list_date`, `delist_date`, `etf_type`, `is_cross_border`, source/version audit fields.
+- `etf_daily` is joined only to confirm bars existed on or before the query date and to fill missing metadata dates during synchronization.
+- Strategy indicators, liquidity screens, momentum, abnormal volume, and ranking are prohibited in the provider/data-adapter layer.
+- Missing `etf_basic` is an explicit capability error; no code-prefix or latest-list fallback may claim to be a domestic-equity PIT universe.
+
+Because Saturday, July 25, 2026 is the synchronization date, rows whose `list_date` is after July 25, 2026 remain metadata-only future listings and are excluded by the PIT query until their actual listing date and historical bars are available.

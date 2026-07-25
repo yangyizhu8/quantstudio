@@ -8,6 +8,10 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 
+class ReferenceDataCapabilityError(RuntimeError):
+    """Raised when a requested reference-data contract is not available locally."""
+
+
 class MarketDataProvider(ABC):
     @abstractmethod
     def preload(self, start_date: str, end_date: str) -> None: ...
@@ -130,6 +134,10 @@ class ReferenceDataProvider(ABC):
 
     @abstractmethod
     def get_etf_list(self) -> List[str]: ...
+
+    @abstractmethod
+    def get_etf_list_local(self, query_date: str, etf_type: str = "equity",
+                           active_only: bool = True) -> List[str]: ...
 
     @abstractmethod
     def get_etf_info(self, codes: List[str]) -> dict: ...

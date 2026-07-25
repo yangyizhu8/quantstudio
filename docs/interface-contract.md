@@ -1,4 +1,4 @@
-﻿# 接口契约文档（策略作者必读）
+# 接口契约文档（策略作者必读）
 
 > 版本: v1.0（Phase A）| 对应方案 v2.1 Phase A0-A4
 > 适用对象: **策略作者**（写 initialize/handle_data 等生命周期函数的人）
@@ -462,3 +462,17 @@ YYYY-MM-DD HH:MM:SS - INFO - <消息>
 > **后续扩展**：若用户后续导出完整 2025-07-13 ~ 2026-07-13 区间，规格表不变，仅样本替换。导入器设计应与区间无关。
 
 
+
+## Local ETF universe API contract
+
+`get_etf_list()` remains a PTrade-named compatibility API and is unavailable in the PTrade backtest profile. QuantStudio does not widen it.
+
+`get_etf_list_local(query_date=None, etf_type="equity", active_only=True)` is a registered QuantStudio-only extension:
+
+1. API layer resolves `query_date=None` from the active backtest date.
+2. `ReferenceDataProvider.get_etf_list_local` normalizes the date.
+3. `DuckDBDataAccess.query_etf_universe_pit` filters `etf_basic` by listing/delisting metadata and requires at least one `etf_daily` bar on or before the query date.
+4. The API returns PTrade-style `.SS/.SZ` codes.
+5. `etf_type="equity"` additionally requires `is_cross_border=false`.
+
+The call is blocked when targets include PTrade. Dual ETF strategies use a customer-confirmed static whitelist; QuantStudio-only strategies may use the local API and `get_history_batch`.

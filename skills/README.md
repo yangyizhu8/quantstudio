@@ -132,3 +132,7 @@ output/strategy_deliveries/<strategy_id>/
 - 用户指南：`docs/strategy-compiler/USER_GUIDE.md`
 - 发布说明：`quantstudio/strategy_compiler/release/RELEASE_NOTES.md`
 - 项目状态：`docs/strategy-compiler/implementation-status.md`
+
+## Target-aware ETF strategy generation
+
+The QuantStudio strategy compiler asks for the generation target at R0. Dual ETF strategies use a customer-confirmed static whitelist and publish both QuantStudio/PTrade files. QuantStudio-only ETF strategies may use `get_etf_list_local` plus `get_history_batch`, publish only to the PyQt strategy directory, and report PTrade/dual consistency as `NOT_APPLICABLE`.

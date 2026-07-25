@@ -20,6 +20,8 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
+from .base import ReferenceDataCapabilityError
+
 logger = logging.getLogger(__name__)
 
 
@@ -944,6 +946,61 @@ class DuckDBDataAccess:
               AND time = (SELECT MAX(time) FROM stock_daily)
               AND volume > 0
         """).fetchdf()
+
+    def query_etf_universe_pit(self, query_date_start_ms: int, query_date_end_ms: int,
+                               etf_type: str = "equity", active_only: bool = True) -> pd.DataFrame:
+        """Return the point-in-time local ETF universe from ``etf_basic``.
+
+        The metadata table is authoritative for ETF classification and listing/delisting
+        dates. ``etf_daily`` is consulted only to prove that at least one historical bar
+        existed on or before the requested date. Strategy indicators and liquidity rules
+        deliberately remain outside this data-access contract.
+        """
+        conn = self._get_conn()
+        if conn is None:
+            return pd.DataFrame(columns=["code"])
+        available_tables = {
+            row[0] for row in conn.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+            ).fetchall()
+        }
+        missing_tables = sorted({"etf_basic", "etf_daily"} - available_tables)
+        if missing_tables:
+            raise ReferenceDataCapabilityError(
+                "get_etf_list_local requires etf_basic metadata and etf_daily history; "
+                f"missing table(s): {missing_tables}. Run scripts/sync_etf_basic.py "
+                "after the ETF market-data table is available"
+            )
+
+        normalized_type = str(etf_type or "equity").strip().lower()
+        allowed_types = {"all", "equity", "bond", "money", "commodity", "gold", "qdii"}
+        if normalized_type not in allowed_types:
+            raise ValueError(
+                f"unsupported etf_type={etf_type!r}; expected one of {sorted(allowed_types)}"
+            )
+
+        predicates = [
+            "e.list_date IS NOT NULL",
+            "e.list_date <= ?",
+            "EXISTS (SELECT 1 FROM etf_daily d WHERE d.code = e.code AND d.time <= ?)",
+        ]
+        params: list[Any] = [int(query_date_start_ms), int(query_date_end_ms)]
+        if active_only:
+            predicates.append("(e.delist_date IS NULL OR e.delist_date > ?)")
+            params.append(int(query_date_start_ms))
+        if normalized_type == "equity":
+            predicates.extend(["e.etf_type = 'equity'", "COALESCE(e.is_cross_border, FALSE) = FALSE"])
+        elif normalized_type != "all":
+            predicates.append("e.etf_type = ?")
+            params.append(normalized_type)
+
+        sql = f"""
+            SELECT e.code
+            FROM etf_basic e
+            WHERE {' AND '.join(predicates)}
+            ORDER BY e.code
+        """
+        return conn.execute(sql, params).fetchdf()
 
     def query_cb_list_active(self) -> pd.DataFrame:
         """迁移自 PtradeAPI.get_cb_list() (ptrade_api.py:1689-1695)"""

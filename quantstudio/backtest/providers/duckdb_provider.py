@@ -199,6 +199,16 @@ class DuckDBReferenceDataProvider(ReferenceDataProvider):
     def get_etf_list(self):
         df = self._data.query_etf_list_active()
         return df['code'].astype(str).tolist() if not df.empty else []
+    def get_etf_list_local(self, query_date, etf_type="equity", active_only=True):
+        if query_date is None or not str(query_date).strip():
+            raise ValueError("query_date is required at the provider layer")
+        date_text = pd.Timestamp(query_date).strftime("%Y-%m-%d")
+        df = self._data.query_etf_universe_pit(
+            _start_ms(date_text), _end_ms(date_text),
+            etf_type=etf_type, active_only=bool(active_only),
+        )
+        return df['code'].astype(str).tolist() if not df.empty else []
+
     def get_etf_info(self, codes):
         return {code: {'etf_redemption_code': code, 'publish': 0, 'report_unit': 1000000,
                        'cash_balance': 0.0, 'max_cash_ratio': 0.0, 'pre_cash_component': 0.0,

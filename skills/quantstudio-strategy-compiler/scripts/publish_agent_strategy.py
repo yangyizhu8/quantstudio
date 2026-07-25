@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate, validate, compare, and atomically publish dual-platform strategy code."""
+"""Gate, validate, and atomically publish target-aware strategy code."""
 from __future__ import annotations
 
 import argparse
@@ -13,7 +13,7 @@ from validate_agent_strategy import validate_strategy
 from validate_dual_consistency import compare_sources
 
 
-_ALLOWED_PREPUBLISH_STAGES = {"BACKTEST_PASS", "DUAL_VALIDATION_PASS", "PUBLISHED"}
+_ALLOWED_PREPUBLISH_STAGES = {"BACKTEST_PASS", "LOCAL_VALIDATION_PASS", "DUAL_VALIDATION_PASS", "PUBLISHED"}
 
 
 def _load_workflow_state(strategy_path: Path) -> tuple[Path, dict]:
@@ -29,6 +29,21 @@ def _load_workflow_state(strategy_path: Path) -> tuple[Path, dict]:
     if state.get("backtest_status") != "PASS":
         raise ValueError("local backtest evidence must be PASS before dual publication")
     return state_path, state
+
+
+def _not_applicable_report(strategy_id: str, source: str, target_profile: str,
+                           reason: str) -> dict:
+    return {
+        "report_version": "2.1",
+        "strategy_id": strategy_id,
+        "source": source,
+        "target_profile": target_profile,
+        "status": "NOT_APPLICABLE",
+        "block_count": 0,
+        "warning_count": 0,
+        "reason": reason,
+        "issues": [],
+    }
 
 
 def _atomic_write(path: Path, payload: bytes) -> None:
@@ -82,9 +97,9 @@ def publish(strategy_path: Path, design_path: Path, project_root: Path,
     if existing and not allow_overwrite:
         raise FileExistsError(f"target exists and overwrite is false: {existing}")
 
-    # R6 is deliberately file-based: generate both target files in staging first,
-    # then read and validate those generated artifacts, then compare them. A
-    # comparison of the canonical input before target generation is not evidence.
+    # R6 is deliberately file-based: generate every selected target in staging first,
+    # then read and validate those generated artifacts. Dual consistency is evaluated
+    # only when both selected target files physically exist.
     with tempfile.TemporaryDirectory(
         prefix=".dual_target_stage_", dir=str(strategy_path.parent)
     ) as stage_dir_text:
@@ -97,34 +112,49 @@ def publish(strategy_path: Path, design_path: Path, project_root: Path,
 
         local_path = staged.get("quantstudio")
         ptrade_path = staged.get("ptrade")
-        local_source = (local_path.read_text(encoding="utf-8-sig")
-                        if local_path else canonical_source)
-        ptrade_source = (ptrade_path.read_text(encoding="utf-8-sig")
-                         if ptrade_path else canonical_source)
+        if local_path is None:
+            raise ValueError("QuantStudio target is required for agent-first publication")
+        local_source = local_path.read_text(encoding="utf-8-sig")
 
         local_validation = validate_strategy(
-            design, local_source, str(local_path or strategy_path), "quantstudio")
-        ptrade_validation = validate_strategy(
-            design, ptrade_source, str(ptrade_path or strategy_path), "ptrade")
+            design, local_source, str(local_path), "quantstudio")
         write_json(strategy_path.parent / "local_validation_report.json", local_validation)
-        write_json(strategy_path.parent / "ptrade_validation_report.json", ptrade_validation)
         if local_validation["status"] != "PASS":
             raise ValueError(
                 "QuantStudio generated-target validation blocked publication with "
                 f"{local_validation['block_count']} BLOCK issue(s)")
-        if "ptrade" in design.get("targets", []) and ptrade_validation["status"] != "PASS":
-            raise ValueError(
-                "PTrade generated-target validation blocked publication with "
-                f"{ptrade_validation['block_count']} BLOCK issue(s)")
 
-        consistency = compare_sources(local_source, ptrade_source, design)
-        consistency["comparison_phase"] = "post_generation_staging"
-        consistency["staged_targets_exist_before_comparison"] = all(
-            path.exists() for path in staged.values())
+        if ptrade_path is not None:
+            ptrade_source = ptrade_path.read_text(encoding="utf-8-sig")
+            ptrade_validation = validate_strategy(
+                design, ptrade_source, str(ptrade_path), "ptrade")
+            if ptrade_validation["status"] != "PASS":
+                raise ValueError(
+                    "PTrade generated-target validation blocked publication with "
+                    f"{ptrade_validation['block_count']} BLOCK issue(s)")
+            consistency = compare_sources(local_source, ptrade_source, design)
+            consistency["comparison_phase"] = "post_generation_staging"
+            consistency["staged_targets_exist_before_comparison"] = all(
+                path.exists() for path in staged.values())
+            if consistency["status"] != "PASS":
+                raise ValueError("dual-platform semantic consistency validation failed")
+        else:
+            ptrade_validation = _not_applicable_report(
+                strategy_id, str(strategy_path), "ptrade",
+                "design targets exclude ptrade; no PTrade artifact was generated",
+            )
+            consistency = {
+                "report_version": "1.1",
+                "strategy_id": strategy_id,
+                "status": "NOT_APPLICABLE",
+                "comparison_phase": "NOT_APPLICABLE",
+                "staged_targets_exist_before_comparison": True,
+                "reason": "single-target QuantStudio publication",
+                "issues": [],
+            }
+
+        write_json(strategy_path.parent / "ptrade_validation_report.json", ptrade_validation)
         write_json(strategy_path.parent / "dual_consistency_report.json", consistency)
-        if consistency["status"] != "PASS":
-            raise ValueError("dual-platform semantic consistency validation failed")
-
         for target_name, final_path in final_targets.items():
             _atomic_write(final_path, staged[target_name].read_bytes())
 
@@ -136,6 +166,8 @@ def publish(strategy_path: Path, design_path: Path, project_root: Path,
         "ptrade_validation_status": ptrade_validation["status"],
         "dual_consistency_status": consistency["status"],
         "dual_consistency_phase": consistency["comparison_phase"],
+        "quantstudio_output_status": "GENERATED",
+        "ptrade_output_status": ("GENERATED" if "ptrade" in final_targets else "NOT_GENERATED"),
         "canonical_sha256": digest,
     })
     write_json(state_path, state)
@@ -145,8 +177,10 @@ def publish(strategy_path: Path, design_path: Path, project_root: Path,
         "strategy_id": strategy_id,
         "status": "PASS",
         "canonical_sha256": digest,
-        "identical_source": consistency["exact_source_match"],
+        "identical_source": consistency.get("exact_source_match"),
         "validated_after_target_generation": True,
+        "quantstudio_output_status": "GENERATED",
+        "ptrade_output_status": ("GENERATED" if "ptrade" in final_targets else "NOT_GENERATED"),
         "targets": [
             {"platform": name, "path": str(path),
              "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
@@ -162,7 +196,7 @@ def publish(strategy_path: Path, design_path: Path, project_root: Path,
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Publish an agent-authored strategy to validated dual targets")
+    parser = argparse.ArgumentParser(description="Publish an agent-authored strategy to its validated target mode")
     parser.add_argument("strategy", help="Canonical strategy.py")
     parser.add_argument("--design", required=True, help="agent_strategy_design.json")
     parser.add_argument("--project-root", required=True)

@@ -57,7 +57,8 @@
       "get_stock_info",
       "get_stock_status",
       "get_stock_name",
-      "get_industry"
+      "get_industry",
+      "get_etf_list_local"
     ],
     "market_data": [
       "get_history",
@@ -121,7 +122,8 @@
     "create_dir",
     "get_trades_file",
     "get_research_path",
-    "convert_position_from_csv"
+    "convert_position_from_csv",
+    "get_etf_list_local"
   ],
   "forbidden_import_prefixes": [
     "duckdb",
@@ -149,7 +151,8 @@
     "indicator_policy": "Use numpy/pandas or source-defined helpers; do not assume locally injected MyTT names exist on PTrade.",
     "runtime_state_policy": "Every lifecycle and scheduled callback calls an idempotent _ensure_runtime_state() as its first executable statement.",
     "local_backtest_data_priority": "<current-project>/data/quantstudio.db first; configured/external DuckDB only when absent or explicitly customer-approved.",
-    "event_data_policy": "External event files are ingested into strategy_events by a generic importer; local-only strategies query them through get_strategy_events and never read files directly."
+    "event_data_policy": "External event files are ingested into strategy_events by a generic importer; local-only strategies query them through get_strategy_events and never read files directly.",
+    "target_routing_policy": "R0 explicitly selects dual-target or QuantStudio-only. Dual ETF strategies use a user-confirmed static whitelist; QuantStudio-only ETF strategies may use get_etf_list_local and get_history_batch."
   },
   "local_extension_groups": {
     "local_mytt_helpers": [
@@ -176,7 +179,8 @@
       "get_history_batch",
       "get_fundamentals_batch",
       "get_security_info",
-      "get_current_data"
+      "get_current_data",
+      "get_etf_list_local"
     ],
     "local_event_data": [
       "get_strategy_events"
@@ -196,7 +200,8 @@
     "create_dir",
     "get_trades_file",
     "get_research_path",
-    "convert_position_from_csv"
+    "convert_position_from_csv",
+    "get_etf_list_local"
   ],
   "engine_profiles": [
     {

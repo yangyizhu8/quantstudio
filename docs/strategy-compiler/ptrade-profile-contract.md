@@ -28,3 +28,9 @@ PTrade Renderer 输出必须通过：语法、生命周期、API 白名单、禁
 ## 4. Profile 演进
 
 不同券商差异通过显式 Profile ID/版本表达，不使用隐藏条件。任何 API 白名单、回调、字段权限或撮合含义变化必须提升 `ptrade_profile_version`。
+
+## 2026-07-25 ETF universe capability split
+
+- `get_etf_list()` is trading-context only in the strict PTrade profile and is blocked in PTrade backtest source.
+- `get_etf_list_local()` and `get_history_batch()` are registered QuantStudio-only APIs and are blocked whenever `targets` contains `ptrade`.
+- Dual ETF backtests use a customer-confirmed static whitelist. Local-only ETF backtests may use the PIT local universe API.

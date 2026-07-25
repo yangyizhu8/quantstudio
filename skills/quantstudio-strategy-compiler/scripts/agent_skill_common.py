@@ -44,7 +44,12 @@ def validate_design(design: dict[str, Any]) -> list[str]:
 def confirmation_errors(design: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     confirmations = design.get("user_confirmations", {})
-    for key in ("strategy_semantics", "execution_approximations", "component_plan"):
+    required_confirmations = ["strategy_semantics", "execution_approximations", "component_plan"]
+    if design.get("design_version") == "2.1":
+        required_confirmations.append("generation_target")
+        if "ptrade" in design.get("targets", []) and design.get("asset_class") == "etf":
+            required_confirmations.append("static_etf_whitelist")
+    for key in required_confirmations:
         if confirmations.get(key) is not True:
             errors.append(f"user_confirmations.{key} must be true before code generation")
     open_questions = design.get("open_questions", [])

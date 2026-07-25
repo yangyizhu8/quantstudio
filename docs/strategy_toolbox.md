@@ -80,7 +80,7 @@
 | 函数 | 说明 |
 |------|------|
 | `get_history(...)` | 获取历史 K 线，**双签名兼容**：`get_history(security,count,unit='1d',fields=...,fq='pre')` 与 Ptrade 官方 `get_history(count,frequency='1d',field='close',security_list=...,fq='pre')`。**fq 默认 `'pre'`（前复权）**。支持 `is_dict=True` 返回 `{code:DataFrame}`。字段映射 `money→amount`、`price→close`、`factor→pctChg`。 |
-| `get_history_batch(sec_list,count,unit='1d',fields=...,fq='pre',include=...)` | B1 批量取数：强制 list 入参 + 返回 `CodeDict`；**复用 `get_history` 的 `get_bars_by_count` 活跃路径**（不读取已停用的 `_preload_daily` 全市场缓存，当前底层仍按代码逐只查询，并非单次批量扫描）。**fq 默认 `'pre'`**。 |
+| `get_history_batch(sec_list,count,unit='1d',fields=...,fq='pre',include=...)` | **QuantStudio 本地扩展**：强制 list 入参 + 返回 `CodeDict`，消除策略侧逐只 N+1 调用；**复用 `get_history` 的 `get_bars_by_count` 活跃路径**（不读取已停用的 `_preload_daily` 全市场缓存，当前底层仍按代码逐只查询，并非单次批量扫描）。仅本地单端策略允许；双端/PTrade 目标由 Validator 阻断。**fq 默认 `'pre'`**。 |
 | `get_price(security,start_date,end_date,frequency='1d',fields,fq='pre',count,is_dict)` | 按日期区间/数量取历史行情，返回 DataFrame 或 `CodeDict`。**fq 默认 `'pre'`（前复权）**。 |
 | `attribute_history(security,count,unit='1d',fields)` | 取历史数据最近一行（单列 Series）。 |
 | `current_price(security)` | 当前价。 |
@@ -120,7 +120,8 @@
 |------|------|
 | `get_index_stocks(index_code,date)` | 指数成份股（ReferenceDataProvider，可用）。 |
 | `get_reits_list(date)` | 公募 REITs 列表，无源表返回空 list。 |
-| `get_etf_list()` | ETF 代码列表（按代码段提取活跃品种，可用）。 |
+| `get_etf_list()` | **PTrade 同名兼容 API**。PTrade 回测 profile 不可用；Validator 对所有回测策略阻断调用，避免“本地通过、PTrade 上传失败”的假兼容。不得扩展成本地动态池。 |
+| `get_etf_list_local(query_date=None,etf_type="equity",active_only=True)` | **QuantStudio 本地回测专用扩展 API**。`query_date=None` 时使用当前回测日；经 `ReferenceDataProvider`/DuckDB 适配层从 `etf_basic` 元数据与 `etf_daily` 历史可用性构造 PIT ETF 池，返回 `.SS/.SZ` 代码。`equity` 仅返回分类为境内股票型且 `is_cross_border=false` 的 ETF。仅本地单端策略允许。 |
 | `get_etf_info(etf_code)` | ETF 信息，无申赎明细表→仅基础字段。 |
 | `get_etf_stock_list(etf_code)` | ETF 成分券，无源表返回空 list。 |
 | `get_etf_stock_info(etf_code,security)` | ETF 成分券信息，无源表返回空 dict。 |
@@ -264,7 +265,7 @@ def after_trading_end(context):
 | 历史/指标 | `khHistory` + MyTT + 缠论 `KhChanLunTools` | `get_history`/`get_price` + MyTT（50+）+ `get_MACD/KDJ/RSI/CCI`（无内置缠论） |
 | 交易信号 | `generate_signal`/`calculate_max_buy_volume`/`round_price`（返回信号列表，与回测解耦） | `order`/`order_value`/`order_target`/`order_target_value`（**即时执行**，返回 Order 对象，与引擎紧耦合） |
 | 时间工具 | `is_trade_time`/`is_trade_day`/`get_trade_days_count` | `get_trading_day`/`get_trade_days`/`get_all_trades_days`/`get_trading_day_by_date`/`get_current_kline_count` |
-| ETF 工具 | `is_etf`/`is_t0_etf` | `get_etf_list`/`get_etf_info`/`get_etf_stock_list` 等（无 `is_etf` 布尔，改用列表/信息类 API） |
+| ETF 工具 | `is_etf`/`is_t0_etf` | PTrade 兼容：`get_etf_list`/`get_etf_info`/`get_etf_stock_list`；本地单端扩展：`get_etf_list_local`（PIT 动态池） |
 | 辅助 | `get_stock_names`/`normalize_stock_code` | `get_stock_name`/`get_security_info`/`normalize_*`（内部归一化，策略一般无需主动调用） |
 | 导入方式 | `from khQuantImport import *` | 引擎自动注入 `ptrade_import` 全部名称（策略零 import） |
 | 数据来源 | 看海平台 | DuckDB（QuantStudio 数据管线产出），100% 本地 |
@@ -283,3 +284,7 @@ def after_trading_end(context):
 *本文档条目均来自源码实装（`quantstudio/backtest/ptrade_api.py`、`ptrade_import.py`、
 `strategy_runner.py`、`libs/MyTT.py`、`libs/shared_ashare_rules.py`），与看海框架仅为
 结构对照，不代表两框架 API 完全等价。*
+
+> **动态 ETF 池目标规则**：双端（QuantStudio + PTrade）策略必须使用用户在 R2/R2.5 明确确认的静态 ETF 白名单，两端共用同一列表，并禁止 `get_etf_list_local()`/`get_history_batch()`；仅 QuantStudio 本地策略才允许动态 API。`get_etf_list_local()` 只负责 ETF 分类、上市/退市时间、查询日期、历史数据存在性与代码格式，MA、动量、流动性、异常放量、TopN 等策略逻辑必须留在策略文件。
+
+> **元数据前置条件**：本地数据库必须存在 `etf_basic`。使用 `python scripts/sync_etf_basic.py --db data/quantstudio.db` 从 Tushare `fund_basic` 同步，并以 `etf_daily` 首末行情补齐缺失日期。缺表时接口抛出明确的 `ReferenceDataCapabilityError`，不会降级冒充“境内股票型 ETF”。

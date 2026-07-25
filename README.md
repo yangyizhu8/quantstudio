@@ -87,9 +87,9 @@ result, output_dir = payload
 
 策略文件无需导入数据库或 provider，只实现 `initialize`、`before_trading_start`、`handle_data` 和可选 `after_trading_end`。
 
-## 策略工具箱（PTrade 兼容 API 参考）
+## 策略工具箱（PTrade 兼容 API + QuantStudio 本地扩展）
 
-写策略 / 移植 Ptrade 策略时，可直接使用的**全部生命周期回调、注入式 API 函数、MyTT 指标库与 A股交易规则**，详见 **[`docs/strategy_toolbox.md`](docs/strategy_toolbox.md)**。
+写策略 / 移植 PTrade 策略时，可直接使用的**全部生命周期回调、注入式 API 函数、MyTT 指标库与 A股交易规则**，详见 **[`docs/strategy_toolbox.md`](docs/strategy_toolbox.md)**。其中 `get_etf_list()` 保持 PTrade 同名契约且禁止用于回测动态池；本地单端策略可使用 `get_etf_list_local(query_date=None, etf_type="equity", active_only=True)`，该接口经 ReferenceDataProvider → DuckDB 数据适配层按 `etf_basic` + `etf_daily` 做 PIT 查询。
 
 要点：
 - 策略文件**零 import**：引擎加载时自动注入全部 API（`get_history` / `get_fundamentals` / `order_*` 等 50+ 函数）、MyTT 指标库、`shared_ashare_rules` A股规则，以及 `g` / `log` / `pandas` / `numpy`。
@@ -99,7 +99,7 @@ result, output_dir = payload
 - 框架取数（注入 API 与底层数据适配层）默认前复权（`fq='pre'`）：策略不传 `fq` 即获得前复权价；需不复权请显式 `fq=None`。
 - 读取**外部文件数据**（研报 CSV、信号表等）必须经由框架注入 API，例如 `load_research_signals(csv_path, fallback=...)`，文件 I/O 逻辑下沉到框架侧 `ptrade_api`；策略内直接 `open()` / `read_csv()` 会被 `StrategyIsolationGuard` 静态拦截并抛 `StrategyIsolationError`。
 
-> **让 AI 帮你写策略**：想把策略需求交给其他智能体、自动产出可运行策略并落入 GUI 可选目录？参见 **[`docs/prompt_engineering.md`](docs/prompt_engineering.md)**（提示词工程 V1，含「策略文件自动落盘到 `quantstudio/backtest/strategies/`」指令）。
+> **让 AI 帮你写策略**：想把策略需求交给其他智能体、自动产出可运行策略并落入 GUI 可选目录？参见 **[`docs/prompt_engineering.md`](docs/prompt_engineering.md)**。Agent-first 流程会在 R0 首先要求明确选择“双端（QuantStudio + PTrade）”或“仅 QuantStudio 本地”；双端 ETF 策略固化用户确认的静态白名单，本地单端 ETF 策略才允许动态调用 `get_etf_list_local()`。默认输出分别为 `quantstudio/backtest/strategies/<strategy_id>_quantstudio.py` 与（仅双端）`ptrade/<strategy_id>_ptrade.py`。
 >
 > ⚠️ **AI 生成策略同样受 `StrategyIsolationGuard` 约束**：自动生成的策略代码**不得包含 `open()` / `read_csv()` 等直接文件 I/O**，也不得 import 框架内部模块；需要外部数据（如研报/信号 CSV）时，必须调用框架注入的 `load_research_signals` 等 API，否则加载即报 `StrategyIsolationError`。提示词中应明确该约束。
 

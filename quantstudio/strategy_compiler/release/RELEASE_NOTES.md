@@ -1,5 +1,14 @@
 # QuantStudio Strategy Compiler ? Release Notes
 
+## 0.4.0-target-aware (2026-07-25)
+
+- Added QuantStudio-only PIT ETF universe API `get_etf_list_local(query_date=None, etf_type="equity", active_only=True)` through injected API -> ReferenceDataProvider -> DuckDB data access.
+- Added `etf_basic` metadata synchronization via `scripts/sync_etf_basic.py`; ETF classification/listing metadata remains separate from strategy indicators.
+- Kept `get_etf_list()` as the PTrade-named contract and blocked it in backtest validation.
+- Added R0 target selection, schema-conditional portability, static-whitelist dual ETF mode, dynamic-local ETF mode, target-aware validation, and target-aware publication.
+- QuantStudio-only publication creates no PTrade placeholder and records PTrade validation / dual consistency as `NOT_APPLICABLE`.
+
+
 ## 0.3.2-mvp (Runtime Compatibility and Stable Publish Corrective)
 
 - PTrade daily templates accept pandas and NumPy structured-array `get_history` results.
