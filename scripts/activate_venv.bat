@@ -9,6 +9,6 @@ echo.
 echo 常用命令:
 echo   python main_gui.py                    启动 GUI 控制台
 echo   python -m quantstudio.pipeline.daemon --mode once --task kline_1d_baostock   单次拉数据
-echo   python tests\test_khquant_migration.py    跑测试
+echo   python tests\test_pipeline_migration.py    跑测试
 echo.
 cmd /k

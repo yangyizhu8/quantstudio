@@ -1,10 +1,10 @@
 {
-  "_comment": "字段对齐规则配置 v2.0（khQuant 口径）。标准 mold 从 tushare 14 字段改为 khQuant 36 字段日线/29 字段分钟/34 字段 tick。单位统一为股/元，time 用毫秒时间戳 INTEGER，code 用裸 6 位码。",
+  "_comment": "字段对齐规则配置 v2.0（统一 口径）。标准 mold 从 tushare 14 字段改为 统一 36 字段日线/29 字段分钟/34 字段 tick。单位统一为股/元，time 用毫秒时间戳 INTEGER，code 用裸 6 位码。",
   "schema_version": "2.0",
-  "_standard": "khQuant",
+  "_standard": "统一",
   "schemas": {
     "stock_daily": {
-      "_note": "khQuant kline_1d 日线表，36 字段。pipeline 内部多加 code 列（主键 code+time），Exporter 导出时去掉 code 列、time 作单主键。",
+      "_note": "统一 kline_1d 日线表，36 字段。pipeline 内部多加 code 列（主键 code+time），Exporter 导出时去掉 code 列、time 作单主键。",
       "schema_version": "2.0",
       "primary_key": [
         "code",
@@ -273,7 +273,7 @@
       "pctchg_tolerance_pct": 1.1
     },
     "stock_minutes": {
-      "_note": "khQuant kline_1m/5m 分钟线表，29 字段。日线专有的 turn/pctChg/peTTM 等 7 字段不出现。pipeline 内部加 code+freq 列。",
+      "_note": "统一 kline_1m/5m 分钟线表，29 字段。日线专有的 turn/pctChg/peTTM 等 7 字段不出现。pipeline 内部加 code+freq 列。",
       "schema_version": "2.0",
       "primary_key": [
         "code",
@@ -461,7 +461,7 @@
       }
     },
     "tick": {
-      "_note": "khQuant tick 表，34 字段（5 档盘口）。Phase 2 仅预定义 schema + Writer 建表，不写 tick Adapter。",
+      "_note": "统一 tick 表，34 字段（5 档盘口）。Phase 2 仅预定义 schema + Writer 建表，不写 tick Adapter。",
       "schema_version": "2.0",
       "primary_key": [
         "code",
@@ -821,7 +821,7 @@
       "available_at_field": "ann_date"
     },
     "index_daily": {
-      "_note": "指数日线表，对齐 khQuant 口径",
+      "_note": "指数日线表，对齐 统一 口径",
       "schema_version": "2.0",
       "primary_key": [
         "code",
@@ -1974,7 +1974,7 @@
       }
     },
     "baostock": {
-      "_note": "Baostock：代码 sh.600001/sz.000001；volume/amount 已是 股/元（与 khQuant 一致）；含扩展指标 peTTM/pbMRQ/psTTM/isST/turn [无需 daily_basic merge]",
+      "_note": "Baostock：代码 sh.600001/sz.000001；volume/amount 已是 股/元（与 统一 一致）；含扩展指标 peTTM/pbMRQ/psTTM/isST/turn [无需 daily_basic merge]",
       "stock_daily": {
         "column_map": {
           "code": "code",
@@ -2108,7 +2108,7 @@
       }
     },
     "akshare": {
-      "_note": "Akshare：中文字段名；代码 600000（裸码，已是 khQuant code 格式）；成交量是手需 ×100 转股；成交额已是元 [补丁：akshare 成交量是手非股]。复权：adapter 直接拉 adjust='qfq'/'hfq' 输出 open_front/open_back 等标准列，aligner 走 passthrough 填充（与 baostock 统一），彻底摆脱 tushare adj_factor 的 2000 积分门槛",
+      "_note": "Akshare：中文字段名；代码 600000（裸码，已是 统一 code 格式）；成交量是手需 ×100 转股；成交额已是元 [补丁：akshare 成交量是手非股]。复权：adapter 直接拉 adjust='qfq'/'hfq' 输出 open_front/open_back 等标准列，aligner 走 passthrough 填充（与 baostock 统一），彻底摆脱 tushare adj_factor 的 2000 积分门槛",
       "stock_daily": {
         "column_map": {
           "日期": "time",
@@ -2408,7 +2408,7 @@
       }
     },
     "a_stock_data": {
-      "_note": "a-stock-data(mootdx)：代码 6位裸码 688017(已是khQuant格式)；vol=股, amount=元；mootdx返回不复权原始价",
+      "_note": "a-stock-data(mootdx)：代码 6位裸码 688017(已是统一格式)；vol=股, amount=元；mootdx返回不复权原始价",
       "stock_daily": {
         "column_map": {
           "code": "code",
@@ -2461,7 +2461,7 @@
     }
   },
   "code_format_converters": {
-    "_note": "代码格式转换器：全部目标为裸 6 位码（khQuant code 格式）",
+    "_note": "代码格式转换器：全部目标为裸 6 位码（统一 code 格式）",
     "identity": {
       "_desc": "已是 600000 格式，不转换"
     },

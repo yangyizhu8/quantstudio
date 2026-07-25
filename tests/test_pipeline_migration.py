@@ -1,14 +1,14 @@
-"""khQuant 口径迁移验证测试（替代旧 tushare 口径测试）
+"""统一 口径迁移验证测试（替代旧 tushare 口径测试）
 
-验证标准层从 tushare 切换到 khQuant 后的完整闭环：
+验证标准层从 tushare 切换到 统一 后的完整闭环：
 ① schema 正确：日线 36 字段、分钟 29 字段、tick 34 字段
-② 字段映射：tushare/baostock → khQuant（code 裸码 / time ms / volume 股 / amount 元 / pctChg）
+② 字段映射：tushare/baostock → 统一（code 裸码 / time ms / volume 股 / amount 元 / pctChg）
 ③ 单位转换：tushare vol×100(手→股)/amount×1000(千元→元)，baostock 近 identity
 ④ 交叉验证：tushare vs baostock 对齐后 diff=0
 ⑤ daily_basic merge [补丁1]：tushare 补 peTTM/pbMRQ/psTTM/turn
 ⑥ suspendFlag 推导 [补丁3]：volume==0 → 1
 ⑦ Quarantine 修复重放 [E-2]
-⑧ 导出器：khQuant 原生分库（无 code 列、kline_1d 表名）
+⑧ 导出器：统一 原生分库（无 code 列、kline_1d 表名）
 """
 from __future__ import annotations
 
@@ -39,9 +39,9 @@ def test_schema_fields():
     daily_n = len(a.schemas["stock_daily"]["columns"])
     minute_n = len(a.schemas["stock_minutes"]["columns"])
     tick_n = len(a.schemas["tick"]["columns"])
-    print(f"  stock_daily: {daily_n} 列（40 khQuant + code 内部 = 41，含 is_st_reliable×4）")
-    print(f"  stock_minutes: {minute_n} 列（29 khQuant + code + freq = 31）")
-    print(f"  tick: {tick_n} 列（34 khQuant + code = 35）")
+    print(f"  stock_daily: {daily_n} 列（40 统一 + code 内部 = 41，含 is_st_reliable×4）")
+    print(f"  stock_minutes: {minute_n} 列（29 统一 + code + freq = 31）")
+    print(f"  tick: {tick_n} 列（34 统一 + code = 35）")
     assert daily_n == 41, f"日线应为 41 列（含 4 个 ST 状态字段），实际 {daily_n}"
     assert minute_n == 31, f"分钟应为 31 列，实际 {minute_n}"
     assert tick_n == 35, f"tick 应为 35 列，实际 {tick_n}"
@@ -71,7 +71,7 @@ def test_code_and_time():
 
 
 def test_unit_conversion():
-    """③ 单位转换：模拟 tushare raw → khQuant aligned"""
+    """③ 单位转换：模拟 tushare raw → 统一 aligned"""
     print("\n[③] 单位转换验证")
     a = FieldAligner.from_config(ROOT / "config" / "alignment_rules.json")
     # tushare raw（vol 手, amount 千元）
@@ -157,7 +157,7 @@ def test_quarantine_replay():
 
 def main():
     print("=" * 70)
-    print("khQuant 口径迁移验证测试")
+    print("统一 口径迁移验证测试")
     print("=" * 70)
     test_schema_fields()
     test_code_and_time()
@@ -165,7 +165,7 @@ def main():
     test_suspend_flag()
     test_quarantine_replay()
     print("\n" + "=" * 70)
-    print("✅ khQuant 口径迁移全部验证通过")
+    print("✅ 统一 口径迁移全部验证通过")
     print("  ① schema 36/29/34 字段  ② 裸码+ms时间戳  ③ 单位转换")
     print("  ⑥ suspendFlag  ⑦ Quarantine 重放")
     print("  （④交叉验证 ⑤daily_basic ⑧导出器 需真实数据，已在前序验证）")

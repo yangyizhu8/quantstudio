@@ -195,7 +195,7 @@ class AStockDataAdapter(BaseSourceAdapter):
 
         metadata = {
             "source": "a_stock_data", "freq": freq, "table": table,
-            "code_format": "identity",  # 6位裸码，已是 khQuant 格式
+            "code_format": "identity",  # 6位裸码，已是统一格式
             "date_format": "YYYY-MM-DD HH:MM",
             "units": {"vol": "股", "amount": "元"},
             "rows": len(df),

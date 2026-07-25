@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # 代码格式转换器（基线 §五 code_format_converters）
 # ---------------------------------------------------------------------------
 def normalize_code(code: str, fmt: str = "identity") -> Optional[str]:
-    """统一股票代码到 khQuant 裸码格式 600000 / 000001 / 830001（无市场后缀）
+    """统一股票代码到 统一裸码格式 600000 / 000001 / 830001（无市场后缀）
 
     支持的输入格式：
         identity:        600000（已是裸码）
@@ -77,10 +77,10 @@ def market_of_code(code: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 日期/时间统一到毫秒时间戳（khQuant time 字段，INTEGER 毫秒 epoch）
+# 日期/时间统一到毫秒时间戳（统一time 字段，INTEGER 毫秒 epoch）
 # ---------------------------------------------------------------------------
 def to_ms_timestamp(val: Any) -> Optional[int]:
-    """统一任意日期/时间格式到毫秒时间戳 INTEGER（khQuant 口径）
+    """统一任意日期/时间格式到毫秒时间戳 INTEGER（统一口径）
     兼容：20260713 / 2026-07-13 / 2026-07-13 09:30:00 / datetime / Timestamp / 秒/毫秒数字
     """
     if val is None or (isinstance(val, float) and np.isnan(val)):
@@ -131,7 +131,7 @@ def to_ms_timestamp(val: Any) -> Optional[int]:
 
 # 兼容旧调用（保留 datetime 模式，内部转 ms）
 def normalize_datetime(val: Any) -> Optional[int]:
-    """[兼容] 返回毫秒时间戳（khQuant time 字段）"""
+    """[兼容] 返回毫秒时间戳（统一time 字段）"""
     return to_ms_timestamp(val)
 
 
@@ -234,7 +234,7 @@ class FieldAligner:
             df[code_col] = df[code_col].apply(lambda c: normalize_code(c, fmt))
         applied_steps.append("code_normalize")
 
-        # ---- Step 3: 时间统一到毫秒时间戳（khQuant time 字段，INTEGER ms）----
+        # ---- Step 3: 时间统一到毫秒时间戳（统一time 字段，INTEGER ms）----
         if time_to_ms:
             # schema 中 type=int 且是时间相关的列（time/ann_date/end_date）转 ms
             time_cols = [c for c, spec in schema["columns"].items()
@@ -871,7 +871,7 @@ class FieldAligner:
         return self._fill_ratio_null(result)
 
     def _preserve_pctchg(self, df: pd.DataFrame, table: str, declared: str) -> Tuple[pd.DataFrame, str]:
-        """[E-3] 真实涨跌幅统一用 pctChg 字段（khQuant 命名）
+        """[E-3] 真实涨跌幅统一用 pctChg 字段（统一命名）
 
         优先级（严禁用不复权 close/preClose 直接除算，除权日会产生 ±1000% 垃圾值）：
           1. official    : 源已提供 pctChg（如 tushare/akshare/baostock/xtquant 官方涨跌幅）→ 直接保留

@@ -1,17 +1,17 @@
 """
-KhQuantExporter — khQuant 原生分库导出器
+KLineExporter — 统一原生分库导出器
 
 职责：从单库 quantstudio.db（pipeline 内部格式，含 code 列、主键 code+time）
-读取某股票数据，按 khQuant 原生格式导出为按股票分库的 .db 文件：
+读取某股票数据，按 统一原生格式导出为按股票分库的 .db 文件：
     - 无 code 列（分库设计，每库单股票）
     - time 作单主键
-    - 表名 kline_1d / kline_1m / kline_5m / tick（khQuant 原生命名）
+    - 表名 kline_1d / kline_1m / kline_5m / tick（统一原生命名）
     - 目录结构：SH/600000.db、SZ/000001.db、BJ/830001.db
 
-对接 khQuant 引擎时调用此导出器生成引擎能读的库。
+对接 统一引擎时调用此导出器生成引擎能读的库。
 
 使用：
-    exp = KhQuantExporter("data/quantstudio.db", out_dir="data/khquant_db")
+    exp = KLineExporter("data/quantstudio.db", out_dir="data/kline_db")
     exp.export(code="600000", freqs=["daily", "1min"])
 """
 from __future__ import annotations
@@ -28,8 +28,8 @@ from quantstudio._paths import db_path, DATA_ROOT
 logger = logging.getLogger(__name__)
 
 
-# pipeline 表名 → khQuant 原生表名 + freq 映射
-FREQ_TO_KHQUANT = {
+# pipeline 表名 → 统一原生表名 + freq 映射
+FREQ_TO_KLINE = {
     "daily": ("stock_daily", "kline_1d"),
     "1min": ("stock_minutes", "kline_1m"),
     "5min": ("stock_minutes", "kline_5m"),
@@ -40,11 +40,11 @@ FREQ_TO_KHQUANT = {
 }
 
 
-class KhQuantExporter:
-    """khQuant 原生分库导出器
+class KLineExporter:
+    """统一原生分库导出器
 
     config 示例：
-        exp = KhQuantExporter("data/quantstudio.db", "data/khquant_db")
+        exp = KLineExporter("data/quantstudio.db", "data/kline_db")
     """
 
     def __init__(self, src_db: str | Path, out_dir: str | Path):
@@ -54,7 +54,7 @@ class KhQuantExporter:
 
     def export(self, code: str, freqs: Optional[List[str]] = None,
                start_ms: Optional[int] = None, end_ms: Optional[int] = None) -> Path:
-        """导出单股票的 khQuant 原生 .db 文件。
+        """导出单股票的 统一原生 .db 文件。
 
         Args:
             code: 6 位裸码（如 600000）
@@ -66,7 +66,7 @@ class KhQuantExporter:
         """
         freqs = freqs or ["daily"]
         market = market_of_code(code)  # SH / SZ / BJ
-        # khQuant 目录结构：SH/600000.db
+        # 统一目录结构：SH/600000.db
         market_dir = self.out_dir / market
         market_dir.mkdir(parents=True, exist_ok=True)
         out_path = market_dir / f"{code}.db"
@@ -80,18 +80,18 @@ class KhQuantExporter:
         with duckdb.connect(str(self.src_db), read_only=True) as src:
             with duckdb.connect(str(out_path)) as dst:
                 for freq in freqs:
-                    if freq not in FREQ_TO_KHQUANT:
+                    if freq not in FREQ_TO_KLINE:
                         logger.warning(f"[Exporter] 未知频率 {freq}，跳过")
                         continue
-                    src_table, kh_table = FREQ_TO_KHQUANT[freq]
+                    src_table, kh_table = FREQ_TO_KLINE[freq]
                     df = self._read_source(src, src_table, code, freq, start_ms, end_ms)
                     if len(df) == 0:
                         logger.info(f"[Exporter] {code}/{freq}: 0 行，跳过 {kh_table}")
                         continue
-                    # 去掉 code 列（khQuant 分库设计无 code 列）
+                    # 去掉 code 列（统一分库设计无 code 列）
                     if "code" in df.columns:
                         df = df.drop(columns=["code"])
-                    # 写入 khQuant 原生表（time 单主键）
+                    # 写入 统一原生表（time 单主键）
                     dst.register("_tmp_export", df)
                     dst.execute(f"CREATE TABLE IF NOT EXISTS {kh_table} AS SELECT * FROM _tmp_export WHERE 1=0")
                     dst.execute(f"INSERT INTO {kh_table} SELECT * FROM _tmp_export")
@@ -135,7 +135,7 @@ class KhQuantExporter:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     ROOT = Path(__file__).resolve().parent.parent.parent
-    exp = KhQuantExporter(db_path(), DATA_ROOT / "khquant_db")
+    exp = KLineExporter(db_path(), DATA_ROOT / "kline_db")
     # 导出 600000 日线
     try:
         p = exp.export("600000", freqs=["daily"])

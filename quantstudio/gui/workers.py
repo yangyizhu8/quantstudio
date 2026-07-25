@@ -225,7 +225,7 @@ class TaskWorker(BaseWorker):
 
 
 class ExportWorker(BaseWorker):
-    """导出 khQuant 格式分库 .db。调用 KhQuantExporter.export。"""
+    """导出 K线原生格式分库 .db。调用 KLineExporter.export。"""
 
     def __init__(self, exporter, codes, freqs):
         super().__init__()

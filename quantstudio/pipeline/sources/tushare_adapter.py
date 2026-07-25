@@ -224,7 +224,7 @@ class TushareAdapter(BaseSourceAdapter):
                 self._call_api, api_name, start_date=start_fmt, end_date=end_fmt)
 
         # [补丁1] stock_daily 需要 merge daily_basic 补 peTTM/pbMRQ/psTTM/turn
-        # khQuant 36 字段里的扩展指标在 tushare 分布在 daily_basic 表，不在 daily 里
+        # 统一 36 字段里的扩展指标在 tushare 分布在 daily_basic 表，不在 daily 里
         is_daily_basic_needed = (table == "stock_daily")
         if is_daily_basic_needed and len(df) > 0:
             df = self._merge_daily_basic(df, codes, start_fmt, end_fmt)

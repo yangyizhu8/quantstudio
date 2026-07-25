@@ -203,7 +203,7 @@ class BaostockAdapter(BaseSourceAdapter):
 
     def _fetch_daily(self, codes: Optional[List[str]], start: str, end: str) -> Tuple[pd.DataFrame, Dict]:
         """日线：3 次 API 调用获取 raw(adjustflag=3) + front(2) + back(1) 三套复权价。
-        khQuant schema 要求 open/close=原始价，open_front/close_front=前复权，open_back/close_back=后复权。
+        统一 schema 要求 open/close=原始价，open_front/close_front=前复权，open_back/close_back=后复权。
         扩展指标(peTTM/pbMRQ/psTTM/isST/turn)从 adjustflag=3 的调用获取。"""
         bs = self._client
         target_codes = [self._to_bs_code(c) for c in (codes or ["sh.600000"])]

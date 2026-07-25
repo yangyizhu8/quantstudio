@@ -1,4 +1,4 @@
-"""Tab6: khQuant 导出（分库导出 .db 文件）"""
+"""Tab6: K线分库导出（分库导出 .db 文件）"""
 from __future__ import annotations
 
 import logging
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class ExportTab(QWidget):
-    """khQuant 导出：选目录 + 输入代码 + 选频率 + 后台导出"""
+    """K线分库导出：选目录 + 输入代码 + 选频率 + 后台导出"""
 
     def __init__(self, main_window):
         super().__init__()
@@ -45,7 +45,7 @@ class ExportTab(QWidget):
         out_layout = QHBoxLayout(inner)
         out_group.layout().addWidget(inner)
         self.out_edit = LineEdit()
-        self.out_edit.setText(str(DATA_ROOT / "khquant_db"))
+        self.out_edit.setText(str(DATA_ROOT / "kline_db"))
         out_layout.addWidget(self.out_edit)
         browse_btn = PushButton("浏览...")
         browse_btn.clicked.connect(self._browse_dir)
@@ -128,8 +128,8 @@ class ExportTab(QWidget):
             QMessageBox.information(self, "提示", "请至少选一个频率")
             return
 
-        from quantstudio.pipeline.exporter import KhQuantExporter
-        exporter = KhQuantExporter(
+        from quantstudio.pipeline.exporter import KLineExporter
+        exporter = KLineExporter(
             db_path(), self.out_edit.text())
         worker = ExportWorker(exporter, codes, freqs)
         worker.progress.connect(lambda msg: self.status_label.setText(msg))

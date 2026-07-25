@@ -44,7 +44,7 @@ class WriteResult(int):
         return f"WriteResult(submitted={int(self)}, new={self.new}, updated={self.updated})"
 
 
-# 各表的建表 DDL（DuckDB 方言，khQuant 口径 v2.0）
+# 各表的建表 DDL（DuckDB 方言，统一口径 v2.0）
 # time 用 BIGINT（毫秒时间戳），volume=股，amount=元，code=裸6位码
 DDL_DUCKDB = {
     "stock_daily": """
@@ -526,7 +526,7 @@ class DuckDBWriter(BaseWriter):
 
     @staticmethod
     def _table_columns(table: str) -> List[str]:
-        """返回表的列名（与 DDL 顺序一致，khQuant 口径 v2.0）"""
+        """返回表的列名（与 DDL 顺序一致，统一口径 v2.0）"""
         COLS = {
             "stock_daily": ["code", "time", "open", "high", "low", "close",
                             "volume", "amount", "preClose", "suspendFlag",

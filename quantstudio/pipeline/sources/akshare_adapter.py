@@ -1,7 +1,7 @@
 """AkshareAdapter — Akshare 数据源（免费，东方财富后端）
 
-中文字段名；代码 600000（裸码，已是 khQuant code 格式）；
-成交量单位为手（需 ×100 转股 [khQuant 口径]）；成交额单位为元（与 khQuant 一致）。
+中文字段名；代码 600000（裸码，已是统一 code 格式）；
+成交量单位为手（需 ×100 转股 [统一口径]）；成交额单位为元（与统一口径一致）。
 
 日线：stock_zh_a_hist(period='daily', adjust='qfq'/'hfq'/None)
 """
@@ -23,7 +23,7 @@ class AkshareAdapter(BaseSourceAdapter):
     config 示例：
         {"name": "akshare", "rate_limit": {"calls_per_min": 30, "wait_on_429": True}}
 
-    注意：akshare 成交量单位是"手"，khQuant volume 是"股"，FieldAligner 会 ×100 转换。
+    注意：akshare 成交量单位是"手"，统一 volume 是"股"，FieldAligner 会 ×100 转换。
     """
 
     def __init__(self, config: Dict):

@@ -1321,7 +1321,7 @@ class BacktestResultWindow(QMainWindow):
             main_legend_fontsize = int(10 * self.font_scale)  # 适中的主图图例字体
             self.ax.legend(loc='upper left', facecolor='#333333', edgecolor='#404040', framealpha=0.9, fancybox=True, shadow=True, fontsize=main_legend_fontsize)
             # 
-            self.ax.text(0.5, 0.5, 'khQuant', 
+            self.ax.text(0.5, 0.5, 'QuantStudio', 
                         horizontalalignment='center', verticalalignment='center',
                         transform=self.ax.transAxes, fontsize=60, alpha=0.1, 
                         color='#888888', fontweight='bold', 

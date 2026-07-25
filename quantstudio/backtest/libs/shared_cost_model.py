@@ -3,7 +3,7 @@
 核心特性：
 - 滑点：支持双模式（tick最小变动价位 + ratio比例）
 - 印花税：0.05%（2023年8月起正确值）
-- 流量费：OSkhQuant有，ChinaAEngine没有 → 可选加入
+- 流量费：开源实现有，ChinaAEngine没有 → 可选加入
 - 过户费：统一为双边万0.1
 
 用法:
@@ -32,7 +32,7 @@ from typing import Literal
 class SharedCostModel:
     """统一的A股交易成本模型。
 
-    融合了 OSkhQuant 的双滑点模式 + ChinaAEngine 的精确费率结构。
+    融合了 开源实现 的双滑点模式 + ChinaAEngine 的精确费率结构。
     """
 
     # 佣金
@@ -68,14 +68,14 @@ class SharedCostModel:
             滑点后价格（按精度四舍五入）。
         """
         if self.slippage_mode == "tick":
-            # tick模式：按最小变动价位跳数（OSkhQuant方案）
+            # tick模式：按最小变动价位跳数（开源实现方案）
             slip = self.slippage_tick_size * self.slippage_tick_count
             if direction == "buy":
                 return round(price + slip, self.price_decimals)
             else:
                 return round(price - slip, self.price_decimals)
         else:
-            # ratio模式：按比例（ChinaAEngine方案，但OSkhQuant除以2更精确）
+            # ratio模式：按比例（ChinaAEngine方案，但开源实现除以2更精确）
             ratio = self.slippage_ratio / 2
             if direction == "buy":
                 return round(price * (1 + ratio), self.price_decimals)
@@ -96,7 +96,7 @@ class SharedCostModel:
         """过户费（双边收取）。
 
         注意：ChinaAEngine按成交额万0.1双边收取（统一口径）。
-        OSkhQuant仅沪市按笔收取，口径不同。此处采用统一口径。
+        开源实现仅沪市按笔收取，口径不同。此处采用统一口径。
         """
         return notional * self.transfer_fee
 

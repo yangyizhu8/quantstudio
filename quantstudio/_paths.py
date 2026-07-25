@@ -12,7 +12,7 @@
     from quantstudio._paths import db_path, DATA_ROOT
     conn = duckdb.connect(str(db_path()))                 # quantstudio.db
     qfq = QFQMaintenance(db_path())                       # 同上的简写
-    export_dir = DATA_ROOT / "khquant_db"                 # 其它数据子目录
+    export_dir = DATA_ROOT / "kline_db"                 # 其它数据子目录
 """
 from __future__ import annotations
 

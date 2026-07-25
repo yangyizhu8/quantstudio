@@ -54,7 +54,7 @@ class QFQMaintenance:
             # WAL 模式 + busy_timeout（减少多线程并发写锁冲突）
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=30000")
-            # adj_factor 存储表（khQuant 口径：code 裸码，time 毫秒时间戳）
+            # adj_factor 存储表（统一口径：code 裸码，time 毫秒时间戳）
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS adj_factor (
                     code TEXT, time INTEGER, adj_factor REAL,
@@ -84,7 +84,7 @@ class QFQMaintenance:
                          end: Optional[str] = None, is_etf: bool = False):
         """从 tushare 拉取复权因子增量入库。adapter 须为 TushareAdapter。
         股票用 adj_factor API，ETF/基金用 fund_adj API（字段同名 adj_factor）。
-        入库时 code 转裸码、trade_date 转毫秒时间戳（khQuant 口径）。"""
+        入库时 code 转裸码、trade_date 转毫秒时间戳（统一口径）。"""
         end = end or datetime.now().strftime("%Y-%m-%d")
         api_name = "fund_adj" if is_etf else "adj_factor"
         api = getattr(adapter._client, api_name)
@@ -274,7 +274,7 @@ if __name__ == "__main__":
     else:
         print("✅ 无跳变（数据干净）")
 
-    # 测试：构造一个假跳变验证检测能力（khQuant 口径：code 裸码，time 毫秒时间戳）
+    # 测试：构造一个假跳变验证检测能力（统一口径：code 裸码，time 毫秒时间戳）
     print("\n=== 跳变检测能力验证（构造假跳变）===")
     import duckdb, tempfile, os
     from .aligner import to_ms_timestamp

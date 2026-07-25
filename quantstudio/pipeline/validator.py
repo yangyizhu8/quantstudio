@@ -136,7 +136,7 @@ class PreIngestValidator:
                     bad = is_null
                 reject_mask_batch("RequiredValueNull", col, bad, s)
 
-        # ---- 2. CodeFormat：代码格式正则（khQuant 裸码 ^\d{6}$）----
+        # ---- 2. CodeFormat：代码格式正则（统一裸码 ^\d{6}$）----
         pk = schema.get("primary_key", ["code"])
         code_col = pk[0] if pk else "code"
         if code_col in df.columns:
