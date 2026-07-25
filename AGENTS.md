@@ -78,3 +78,17 @@
 > 仅接受不改变当前回测引擎、策略逻辑、数据语义和回测结果的纯性能优化。先核对生产调用链，再限定最小改动范围，并以修复前后黄金结果逐项一致作为通过条件。任何可能改变行为的内容必须剥离并重新按框架行为变更审核。
 
 本铁律长期有效，除非用户以后明确要求修改或撤销。
+
+## 【铁律】策略生成默认仅本地 QuantStudio，禁止自作主张调用 compiler skill / 生成 PTrade 代码
+
+1. **默认行为**：用户给出策略开发提示词时，只生成 **QuantStudio 本地零依赖策略**并落盘
+   `quantstudio/backtest/strategies/`。**不得主动调用 `quantstudio-strategy-compiler` 技能，
+   不得生成 PTrade 目标代码**，除非用户明确说"调用 skill"或明确要求 PTrade 移植。
+2. **原因**：该 skill 尚未开发完善，其产出的 PTrade 代码无法在真实平台运行
+   （2026-07-26 实测：真实 IQEngine 报 `NameError: name 'set_backtest' is not defined`——
+   `set_backtest` 是本地引擎自创函数，真实 PTrade 无此 API；该 skill 的 PTrade 签名档案
+   仅覆盖 14 个 API，未将本地扩展标记为 LOCAL_ONLY）。
+3. **skill 修复线索（待用户重启 skill 开发时使用）**：
+   - 将 `set_backtest`/`is_trade` 等本地扩展标记为 LOCAL_ONLY，PTrade 校验应 BLOCK；
+   - PTrade 目标中回测专属开关需用 `hasattr` 守卫或剔除；
+   - 旧 PTrade 产出物 `ptrade/tech_etf_mvo_rotation_ptrade.py` 已被真实平台证伪，视为失效。
