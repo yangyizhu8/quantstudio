@@ -4,19 +4,32 @@
 
 ## 快速开始（客户上手）
 
-```bash
-git clone <你的仓库地址>
-cd QuantStudio
-pip install -e ".[all]"
-cp config/secrets.env.example config/secrets.env   # 编辑填入你的 TUSHARE_TOKEN / QMT_PATH
-# 数据库约 12GB，不随 git 分发：按 data/README.md 解压到 data/quantstudio.db
-python main_gui.py                                   # 启动 PyQt 控制台（GUI）
-# 或常驻采集：python -m quantstudio.pipeline.daemon --mode forever
+> 下面是一段**可直接复制给智能体的完整部署提示词**。你不需要懂编程——把它整段发给任意 AI 编程助手，它会替你从 GitHub 拉代码、装依赖、配好凭证，并启动 PyQt 回测界面，最后教你在界面上跑回测。
+
+把下面整段（从【部署提示词开始】到【部署提示词结束】）复制，连同你的任何额外需求，一起发给智能体：
+
+```text
+【部署提示词开始】
+
+请你帮我在本机部署 QuantStudio 量化回测框架，并启动它的 PyQt 图形界面，让我能在界面上跑策略回测。我是计算机小白，请严格按以下顺序执行，并在每一步用大白话向我说明你在做什么、是否需要我提供信息：
+
+1. 获取代码：从 GitHub 仓库 https://github.com/yangyizhu8/quantstudio 克隆到本机一个好找的目录（例如 D:/QuantStudio），然后进入该目录。
+2. 安装依赖：在该目录下执行 `pip install -e ".[all]"` 安装全部依赖（纯 Python + 预编译包，无需本地编译）。如果遇到报错，用通俗语言告诉我原因和解决办法，不要跳过。
+3. 配置凭证：
+   - 先询问我是否有 Tushare Pro 的 token。如果我有，请让我提供，然后做三件事：把 `TUSHARE_TOKEN=我的token` 写入 `config/secrets.env`（若文件不存在，先 `cp config/secrets.env.example config/secrets.env` 创建）；把同样的 `TUSHARE_TOKEN` 写入 `config/secrets.env.example`；并把 `TUSHARE_TOKEN` 加入我的系统环境变量。如果我【没有】Tushare token，这一步直接跳过，不要报错或中断。
+   - 再询问我 miniQMT 客户端的本地目录路径（例如 `D:/国金QMT/userdata_mini`）。如果有，把 `QMT_PATH=该路径` 同样写入 `config/secrets.env` 与 `config/secrets.env.example`，并加入系统环境变量；如果我没有或暂时不需要，也跳过。
+   - 说明：以上配置无需我手动 `source` 或 `export`，程序启动时会自动读取 `config/secrets.env`。
+4. 准备数据库：明确提醒我把回测数据库文件 `quantstudio.db`（约 12GB，不随 git 分发，需我自行获取）放进项目的 `data/` 目录。等我确认文件已经放好后，才进行下一步。
+5. 启动界面：运行 `python main_gui.py` 启动 PyQt 控制台。启动成功后，告诉我在界面里如何操作：进入「策略回测」模块 → 在策略文件栏选中一个策略 → 设置起止日期和初始资金 → 点击「运行回测」，即可可视化查看收益曲线、持仓和成交记录。
+
+注意：整个过程你只负责把环境搭好并启动界面，**不要替我跑回测**；回测由我在界面上自己点。如果某一步卡住（例如缺数据库文件、网络失败、依赖装不上），请用通俗语言告诉我原因和下一步该怎么办。
+
+【部署提示词结束】
 ```
 
-要点：
+要点（给智能体参考）：
 - 依赖通过 pip 安装（纯 Python + 预编译 wheel，无需本地编译）。
-- `secrets.env` 在程序启动时**自动加载**（详见下方「凭证配置」），无需手动 `source` / `export`。
+- `secrets.env` 在程序启动时**自动加载**，无需手动 `source` / `export`。
 - 数据库需单独获取并放到 `data/quantstudio.db`，否则回测/采集无数据可读（详见 `data/README.md`）。
 
 ## 架构保证

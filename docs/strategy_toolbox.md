@@ -4,9 +4,6 @@
 只有通过 PTrade Profile Validator 的策略才可声明可移植；本地运行成功不等于真实平台兼容。数据 100% 来自 DuckDB（QuantStudio 数据管线产出），不依赖任何外部
 回测平台。
 
-> 对照参考：本文档结构对齐看海量化（khQuant）[3.2 策略工具箱](
-> https://khsci.com/khQuant/chapter13/)，但全部条目均为**本框架实际实装**的 API。
-
 ---
 
 ## 0. 基本约定
@@ -34,10 +31,6 @@
 | `handle_data` | 可选 | `def handle_data(context, data):` | **逐 bar 心跳**（日线=每日、分钟=每根 bar）。主力策略逻辑在此编写。 |
 | `after_trading_end` | 可选 | `def after_trading_end(context):` | 每交易日收盘后调用。做收盘统计、日志。 |
 | `set_backtest` | 仅 QuantStudio 本地可选 | `def set_backtest(context, backtest_obj):` | 本地回测扩展/兼容钩子；真实 PTrade/IQEngine 无此公共生命周期 API。 |
-
-> 与看海框架对照：看海本章仅明示 `init` 与 `khHandlebar` 两个回调；本框架提供 PTrade
-> 可移植生命周期回调 `initialize`、`before_trading_start`、`handle_data`、`after_trading_end`，
-> 并在 QuantStudio 本地额外提供 `set_backtest` 等扩展；本地扩展不得进入双端/PTrade 目标。
 
 ---
 
@@ -208,7 +201,7 @@
 - **均线与核心指标**：`MA` `SMA` `EMA` `WMA` `DMA` `MACD` `KDJ` `RSI` `WR` `BIAS` `BOLL` `PSY` `CCI` `ATR` `BBI` `DMI` `TRIX` `CR` `EMV` `DPO` `BRAR` `MTM` `MASS` `ROC` `EXPMA` `OBV` `MFI` `ASI` `SAR`
 
 > 均为数组运算（输入/输出 `numpy array` 或 `pandas Series`），与通达信公式语义一致。
-> 本框架未内置看海的缠论工具箱（`KhChanLunTools`），如需分型/笔段可在策略层用 MyTT 自行实现。
+> 本框架未内置缠论工具箱（分型/笔段），如需可在策略层用 MyTT 自行实现。
 
 ### 3.11 A股交易规则（shared_ashare_rules，已注入）
 
@@ -259,23 +252,6 @@ def after_trading_end(context):
 
 ---
 
-## 5. 与看海框架（khQuant）对照
-
-| 维度 | 看海 khQuant（chapter13） | QuantStudio（本框架） |
-|------|--------------------------|----------------------|
-| 生命周期 | `init` + `khHandlebar`（本章明示） | PTrade 可移植：`initialize` + `before_trading_start` + `handle_data` + `after_trading_end`；QuantStudio 本地另有 `set_backtest` 扩展 |
-| 数据查询 | `khGet/khPrice/khIndex/khHas` | `get_history`/`get_price`/`attribute_history`/`current_price`/`get_current_data`/`get_snapshot` + `CodeDict` 归一化 |
-| 财务/估值 | （ORM 不在本章） | `query`/`valuation` ORM + `get_fundamentals`（10 张表，valuation 完整） |
-| 历史/指标 | `khHistory` + MyTT + 缠论 `KhChanLunTools` | `get_history`/`get_price` + MyTT（50+）+ `get_MACD/KDJ/RSI/CCI`（无内置缠论） |
-| 交易信号 | `generate_signal`/`calculate_max_buy_volume`/`round_price`（返回信号列表，与回测解耦） | `order`/`order_value`/`order_target`/`order_target_value`（**即时执行**，返回 Order 对象，与引擎紧耦合） |
-| 时间工具 | `is_trade_time`/`is_trade_day`/`get_trade_days_count` | `get_trading_day`/`get_trade_days`/`get_all_trades_days`/`get_trading_day_by_date`/`get_current_kline_count` |
-| ETF 工具 | `is_etf`/`is_t0_etf` | PTrade 兼容：`get_etf_list`/`get_etf_info`/`get_etf_stock_list`；本地单端扩展：`get_etf_list_local`（PIT 动态池） |
-| 辅助 | `get_stock_names`/`normalize_stock_code` | `get_stock_name`/`get_security_info`/`normalize_*`（内部归一化，策略一般无需主动调用） |
-| 导入方式 | `from khQuantImport import *` | 引擎自动注入 `ptrade_import` 全部名称（策略零 import） |
-| 数据来源 | 看海平台 | DuckDB（QuantStudio 数据管线产出），100% 本地 |
-
----
-
 ## 6. 运行前置
 
 - **数据库就绪**：`data/quantstudio.db`（约 12GB，不随 git 分发，按 `data/README.md` 单独获取）。
@@ -284,10 +260,6 @@ def after_trading_end(context):
   `StrategyRunner`/`BacktestEngine` 加载策略文件即可，详见 README「快速开始」。
 
 ---
-
-*本文档条目均来自源码实装（`quantstudio/backtest/ptrade_api.py`、`ptrace_import.py`、
-`strategy_runner.py`、`libs/MyTT.py`、`libs/shared_ashare_rules.py`），与看海框架仅为
-结构对照，不代表两框架 API 完全等价。*
 
 > **动态 ETF 池目标规则**：双端（QuantStudio + PTrade）策略必须使用用户在 R2/R2.5 明确确认的静态 ETF 白名单，两端共用同一列表，并禁止 `get_etf_list_local()`/`get_history_batch()`；仅 QuantStudio 本地策略才允许动态 API。`get_etf_list_local()` 只负责 ETF 分类、上市/退市时间、查询日期、历史数据存在性与代码格式，MA、动量、流动性、异常放量、TopN 等策略逻辑必须留在策略文件。
 
