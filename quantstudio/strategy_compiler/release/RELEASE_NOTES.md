@@ -94,3 +94,5 @@ Copies the Skill, runs quick_validate on the installed copy, rolls back on failu
 ### Reproducibility
 - Deterministic builds: fixed render-timestamp sentinel, canonical JSON,
   byte-identical packages across builds and processes (PYTHONHASHSEED-stable).
+
+- Promoted `etf_basic` from a manual bootstrap-only sync to a first-class Tushare-only snapshot task shared by full, incremental, and resident collection, with DuckDB-baseline field/date/unit normalization and changed-row upsert.

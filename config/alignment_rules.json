@@ -1053,6 +1053,93 @@
       },
       "available_at_field": "time"
     },
+    "etf_basic": {
+      "_note": "ETF reference snapshot. Canonical contract is anchored to the current DuckDB etf_basic table. Tushare YYYYMMDD dates become Asia/Shanghai midnight milliseconds; SH becomes SS. Unit-bearing fields outside the baseline (for example issue_amount/p_value) are not admitted.",
+      "schema_version": "etf-basic-v1",
+      "primary_key": [
+        "code"
+      ],
+      "freq": "daily",
+      "dataset_kind": "snapshot",
+      "columns": {
+        "code": {
+          "type": "str",
+          "required": true,
+          "regex": "^\\d{6}$"
+        },
+        "ts_code": {
+          "type": "str",
+          "required": true
+        },
+        "name": {
+          "type": "str",
+          "required": true
+        },
+        "exchange": {
+          "type": "str",
+          "required": true,
+          "unit": "SS/SZ"
+        },
+        "list_date": {
+          "type": "int",
+          "required": false,
+          "unit": "milliseconds at Asia/Shanghai 00:00"
+        },
+        "delist_date": {
+          "type": "int",
+          "required": false,
+          "unit": "milliseconds at Asia/Shanghai 00:00"
+        },
+        "etf_type": {
+          "type": "str",
+          "required": true,
+          "unit": "equity/bond/money/commodity/gold/qdii/other"
+        },
+        "tracking_index": {
+          "type": "str",
+          "required": true
+        },
+        "is_cross_border": {
+          "type": "bool",
+          "required": true
+        },
+        "status": {
+          "type": "str",
+          "required": false,
+          "unit": "Tushare L/D/P"
+        },
+        "fund_type": {
+          "type": "str",
+          "required": true
+        },
+        "invest_type": {
+          "type": "str",
+          "required": false
+        },
+        "type": {
+          "type": "str",
+          "required": false
+        },
+        "classification_method": {
+          "type": "str",
+          "required": true
+        },
+        "classification_version": {
+          "type": "str",
+          "required": true
+        },
+        "update_time": {
+          "type": "str",
+          "required": true,
+          "unit": "ISO-8601 +08:00"
+        },
+        "data_source": {
+          "type": "str",
+          "required": true,
+          "unit": "tushare_fund_basic"
+        }
+      }
+    },
     "balance_statement": {
       "_note": "资产负债表（单位=元）",
       "schema_version": "2.0",
@@ -1879,6 +1966,11 @@
         "unit_conversions": {},
         "time_to_ms": true,
         "_note": "tushare stk_mins 接口支持 ETF 代码，原始价不复权。vol 单位约定未经验证（2026-07-21）：旧写'vol=股'系未实证断言，当前 collector_tasks etf_minutes 用 xtquant 单源，此映射从未真实拉取。未来用 tushare 拉 ETF 分钟前必须先核实 vol/amount 实际单位再决定是否补 ×100。"
+      },
+      "etf_basic": {
+        "identity": true,
+        "time_to_ms": false,
+        "_note": "Adapter returns raw fund_basic fields; FieldAligner invokes etf_basic_standardizer before identity alignment, so no second date/unit conversion is allowed."
       }
     },
     "baostock": {
@@ -2214,7 +2306,12 @@
           "suspendFlag": "suspendFlag"
         },
         "code_format": "tushare_to_raw",
-        "unit_conversions": {"volume": {"factor": 100, "_note": "手→股 ×100（xtquant volume 单位为手，schema 要求股；2026-07-21 修复 UnitCheck 批量误拒事故）"}},
+        "unit_conversions": {
+          "volume": {
+            "factor": 100,
+            "_note": "手→股 ×100（xtquant volume 单位为手，schema 要求股；2026-07-21 修复 UnitCheck 批量误拒事故）"
+          }
+        },
         "time_to_ms": true,
         "pctchg_source": "derived_from_front",
         "_note": "preClose/suspendFlag xtquant 原生返回（2026-07-21 补映射，此前漏映射导致 NULL）。pctChg：xtquant 无官方 pct_chg 列，aligner Step 6 优先用 close_front.pct_change 推导（derived_from_front，复权基准一致避免除权日垃圾值），次选 close/preClose 同基准兜底。peTTM/pbMRQ/turn 由 aligner PIT JOIN stock_daily_valuation 补（xtquant 不提供估值字段）。"
@@ -2231,7 +2328,12 @@
           "amount": "amount"
         },
         "code_format": "tushare_to_raw",
-        "unit_conversions": {"volume": {"factor": 100, "_note": "手→股 ×100（xtquant volume 单位为手，schema 要求股；2026-07-21 修复 UnitCheck 批量误拒事故）"}},
+        "unit_conversions": {
+          "volume": {
+            "factor": 100,
+            "_note": "手→股 ×100（xtquant volume 单位为手，schema 要求股；2026-07-21 修复 UnitCheck 批量误拒事故）"
+          }
+        },
         "time_to_ms": true
       },
       "etf_daily": {
@@ -2247,7 +2349,12 @@
           "preClose": "preClose"
         },
         "code_format": "tushare_to_raw",
-        "unit_conversions": {"volume": {"factor": 100, "_note": "手→股 ×100（xtquant volume 单位为手，schema 要求股；2026-07-21 修复 UnitCheck 批量误拒事故）"}},
+        "unit_conversions": {
+          "volume": {
+            "factor": 100,
+            "_note": "手→股 ×100（xtquant volume 单位为手，schema 要求股；2026-07-21 修复 UnitCheck 批量误拒事故）"
+          }
+        },
         "time_to_ms": true,
         "pctchg_source": "derived_from_front",
         "_note": "preClose xtquant 原生返回（2026-07-21 补映射）。etf_daily schema 无 suspendFlag（不停牌）。pctChg：xtquant 无官方 pct_chg，aligner Step 6 用 close_front.pct_change 推导（derived_from_front）。vol=手/amount=元。"
@@ -2265,7 +2372,12 @@
           "preClose": "preClose"
         },
         "code_format": "tushare_to_raw",
-        "unit_conversions": {"volume": {"factor": 100, "_note": "手→股 ×100（xtquant volume 单位为手，schema 要求股；2026-07-21 修复 UnitCheck 批量误拒事故）"}},
+        "unit_conversions": {
+          "volume": {
+            "factor": 100,
+            "_note": "手→股 ×100（xtquant volume 单位为手，schema 要求股；2026-07-21 修复 UnitCheck 批量误拒事故）"
+          }
+        },
         "time_to_ms": true,
         "_note": "xtquant get_market_data_ex period=1m 支持 ETF，vol=手，dividend_type=none 原始价"
       },

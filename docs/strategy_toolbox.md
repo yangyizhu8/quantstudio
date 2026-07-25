@@ -292,3 +292,5 @@ def after_trading_end(context):
 ## 用户PyQt候选文件
 
 `<strategy_id>__candidate_quantstudio.py` 只用于R4后由用户在PyQt执行R5。它必须带有非正式/禁止上传PTrade标记和候选哈希。策略内不得写死回测日期；实际区间由用户设置。日志证据审核PASS后，R6生成正式文件并删除候选文件。
+
+> **`etf_basic` freshness:** metadata is maintained by the enabled `etf_basic` collector task with Tushare as the single authority. Full, incremental, and resident collection share the same baseline normalization and changed-row upsert path. The compatibility command `scripts/sync_etf_basic.py` uses the same contract. Restart a resident collector after deploying task/config changes.

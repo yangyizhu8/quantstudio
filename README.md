@@ -202,3 +202,7 @@ output/strategy_deliveries/<strategy_id>/
 - Skill 操作手册：`skills/quantstudio-strategy-compiler/SKILL.md`
 - 发布说明：`quantstudio/strategy_compiler/release/RELEASE_NOTES.md`
 - 项目状态：`docs/strategy-compiler/implementation-status.md`
+
+### ETF basic reference collection
+
+`etf_basic` is now a first-class pipeline task. Its authority and only configured source are Tushare (`fund_basic(market="E")`). Full, incremental, and resident modes all use the same path: fetch snapshot -> canonical baseline standardization -> validation -> changed-row DuckDB upsert. Tushare `YYYYMMDD` list/delist dates are converted to Asia/Shanghai midnight milliseconds, `.SH` is normalized to `SS`, and fields with unrelated units (such as `issue_amount` and `p_value`) are excluded. Missing list/delist dates may be filled from the first/last `etf_daily` bar. Restart an already-running resident collector after changing this task configuration.

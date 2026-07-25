@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 TUSHARE_API_MAP = {
     ("stock_daily", "daily"):   "daily",
     ("etf_daily", "daily"):     "fund_daily",   # ETF/基金日线用 fund_daily（daily 接口不含基金）
+    ("etf_basic", "daily"):     "fund_basic",   # ETF reference snapshot; no date range
     ("stock_minutes", "1min"):  "stk_mins",
     ("stock_minutes", "5min"):  "stk_mins",
     ("stock_minutes", "15min"): "stk_mins",
@@ -161,7 +162,7 @@ class TushareAdapter(BaseSourceAdapter):
                     codes: Optional[List[str]] = None) -> Tuple[pd.DataFrame, Dict]:
         # codes=None/ALL → 自动获取全市场
         if codes is None or codes == ["ALL"] or codes == "ALL":
-            if table in ("stock_float_share", "index_constituents"):
+            if table in ("stock_float_share", "index_constituents", "etf_basic"):
                 pass  # 这两个表有自己的 codes 逻辑
             elif table == "etf_daily":
                 codes = self.get_etf_codes()
@@ -173,6 +174,10 @@ class TushareAdapter(BaseSourceAdapter):
                 codes = self.get_all_stock_codes()
 
         # 流通股本表：从 daily_basic 提取 circ_mv/free_share
+        # ETF reference snapshot; standardized by FieldAligner.
+        if table == "etf_basic":
+            return self._fetch_etf_basic()
+
         if table == "stock_float_share":
             return self._fetch_float_share(start, end, codes)
 
@@ -313,6 +318,39 @@ class TushareAdapter(BaseSourceAdapter):
             cur = (cur.replace(day=1) + timedelta(days=32)).replace(day=1)
         return months
 
+
+
+    def _fetch_etf_basic(self) -> Tuple[pd.DataFrame, Dict]:
+        """Fetch the Tushare exchange-fund reference snapshot for etf_basic.
+
+        Only baseline-consumed fields are requested. Fields with unrelated numeric
+        units such as issue_amount and p_value are deliberately excluded. The raw
+        list/delist dates are YYYYMMDD and are converted by the canonical standardizer.
+        """
+        fields = (
+            "ts_code,name,fund_type,list_date,delist_date,benchmark,"
+            "status,invest_type,type"
+        )
+        df = self._retry_with_backoff(
+            self._call_api, "fund_basic", market="E", fields=fields)
+        if df is None:
+            df = pd.DataFrame()
+        metadata = {
+            "source": "tushare",
+            "source_endpoint": "fund_basic",
+            "freq": "daily",
+            "table": "etf_basic",
+            "granularity": "snapshot",
+            "code_format": "tushare",
+            "date_format": "YYYYMMDD",
+            "units": {
+                "list_date": "calendar_date_YYYYMMDD",
+                "delist_date": "calendar_date_YYYYMMDD",
+            },
+            "rows": len(df),
+        }
+        logger.info(f"[TushareAdapter] etf_basic snapshot fetched {len(df)} raw rows")
+        return df, metadata
 
     def _fetch_float_share(self, start: str, end: str,
                            codes: Optional[List[str]]) -> Tuple[pd.DataFrame, Dict]:

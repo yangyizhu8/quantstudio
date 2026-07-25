@@ -244,6 +244,42 @@
       ]
     },
     {
+      "name": "etf_basic",
+      "enabled": true,
+      "source": "tushare",
+      "table": "etf_basic",
+      "freq": "daily",
+      "start_date": "2018-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "dataset_kind": "snapshot",
+      "skip_unchanged": true,
+      "change_compare_exclude": [
+        "update_time"
+      ],
+      "data_source_label": "tushare_fund_basic",
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 30,
+        "wait_on_429": true
+      },
+      "max_workers": 1,
+      "source_priority": [
+        "tushare"
+      ],
+      "_note": "Authority=Tushare, single-source only. fund_basic(market=E) is fetched as a full snapshot, while full/incremental/resident entry points share fetch -> baseline standardize -> validate -> changed-row upsert. YYYYMMDD dates become Asia/Shanghai midnight milliseconds; SH becomes SS. Only etf_basic baseline fields are admitted, excluding unit-bearing issue_amount/p_value. Missing list/delist dates use etf_daily first/last bars. Semantically unchanged rows are not rewritten; new/changed rows upsert by code."
+    },
+    {
       "name": "balance_statement",
       "enabled": true,
       "source": "xtquant",

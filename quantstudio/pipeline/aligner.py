@@ -191,6 +191,7 @@ class FieldAligner:
               close_df: Optional[pd.DataFrame] = None,
               namechange_df: Optional[pd.DataFrame] = None,
               valuation_df: Optional[pd.DataFrame] = None,
+              etf_daily_bounds_df: Optional[pd.DataFrame] = None,
               freq: Optional[str] = None) -> Tuple[pd.DataFrame, Dict]:
         """执行对齐流水线，返回 (标准化DataFrame, metadata)。
 
@@ -213,6 +214,13 @@ class FieldAligner:
         mapping = self._get_mapping(table, source, freq=freq)
         schema = self.schemas[table]
         applied_steps = []
+
+        # etf_basic is a Tushare fund_basic reference snapshot. Normalize it to
+        # the current DuckDB baseline contract before the generic alignment steps.
+        if table == "etf_basic" and source == "tushare":
+            from .etf_basic_standardizer import build_payload
+            raw_df = build_payload(raw_df, daily_bounds=etf_daily_bounds_df)
+            applied_steps.append("etf_basic_baseline_standardize")
         time_to_ms = mapping.get("time_to_ms", False)
 
         # ---- Step 1: 列名映射 ----

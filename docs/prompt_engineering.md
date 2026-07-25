@@ -331,3 +331,5 @@ run_strategy(
 4. **运行方式**：GUI 选中路径 + CLI 命令。
 5. **风险与数据前提**：所需数据表、涨跌停/T+1 假设、过拟合提示。
 6. **落盘确认**：写出文件的绝对路径，及其在 PyQt 策略文件栏的显示说明。
+
+- When a local ETF strategy depends on `get_etf_list_local()`, require the `etf_basic` pipeline task to be healthy. Its only authority is Tushare, and all collection modes use the same DuckDB-baseline date/unit/field normalization before changed-row upsert; do not introduce code-prefix fallbacks or a second metadata source.

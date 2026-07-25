@@ -139,6 +139,18 @@ DDL_DUCKDB = {
             isST INTEGER, dividend_type VARCHAR, update_time VARCHAR,
             PRIMARY KEY(code, time)
         )""",
+    "etf_basic": """
+        CREATE TABLE IF NOT EXISTS etf_basic (
+            code VARCHAR PRIMARY KEY,
+            ts_code VARCHAR, name VARCHAR, exchange VARCHAR,
+            list_date BIGINT, delist_date BIGINT,
+            etf_type VARCHAR NOT NULL, tracking_index VARCHAR,
+            is_cross_border BOOLEAN NOT NULL, status VARCHAR,
+            fund_type VARCHAR, invest_type VARCHAR, type VARCHAR,
+            classification_method VARCHAR NOT NULL,
+            classification_version VARCHAR NOT NULL,
+            update_time VARCHAR, data_source VARCHAR
+        )""",
     "stock_float_share": """
         CREATE TABLE IF NOT EXISTS stock_float_share (
             code VARCHAR, end_date BIGINT, ann_date BIGINT,
@@ -397,6 +409,7 @@ class DuckDBWriter(BaseWriter):
                 "index_daily": ["code", "time"],
                 "stock_daily_valuation": ["code", "time"],
                 "etf_daily": ["code", "time"],
+                "etf_basic": ["code"],
                 "stock_float_share": ["code", "end_date", "ann_date"],
                 "index_constituents": ["index_code", "code", "time"],
                 "balance_statement": ["code", "end_date", "ann_date"],
@@ -416,7 +429,10 @@ class DuckDBWriter(BaseWriter):
         str_cols = {"code", "freq", "dividend_type", "update_time", "data_source",
                     "index_code", "industry_code", "industry_name", "industry_level",
                     "name_before", "name_after", "status_after", "market",
-                    "is_st_reliable_source", "is_delisting_risk_source"}
+                    "is_st_reliable_source", "is_delisting_risk_source",
+                    "ts_code", "name", "exchange", "etf_type", "tracking_index",
+                    "status", "fund_type", "invest_type", "type",
+                    "classification_method", "classification_version"}
         for c in df.columns:
             if c in str_cols:
                 continue
@@ -439,6 +455,7 @@ class DuckDBWriter(BaseWriter):
                     "index_daily": "(code, time)",
                     "stock_daily_valuation": "(code, time)",
                     "etf_daily": "(code, time)",
+                    "etf_basic": "(code)",
                     "stock_float_share": "(code, end_date, ann_date)",
                     "index_constituents": "(index_code, code, time)",
                     "balance_statement": "(code, end_date, ann_date)",
@@ -560,6 +577,11 @@ class DuckDBWriter(BaseWriter):
                           "open_front_ratio", "high_front_ratio", "low_front_ratio", "close_front_ratio",
                           "open_back_ratio", "high_back_ratio", "low_back_ratio", "close_back_ratio",
                           "isST", "dividend_type", "update_time", "data_source"],
+            "etf_basic": ["code", "ts_code", "name", "exchange",
+                          "list_date", "delist_date", "etf_type", "tracking_index",
+                          "is_cross_border", "status", "fund_type", "invest_type",
+                          "type", "classification_method", "classification_version",
+                          "update_time", "data_source"],
             "stock_float_share": ["code", "end_date", "ann_date",
                                   "free_share", "total_share",
                                   "circ_mv", "total_mv", "update_time", "data_source"],

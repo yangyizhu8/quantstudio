@@ -41,6 +41,7 @@ _WRITER_PK_REFERENCE = {
     "fin_indicator": ["code", "end_date", "ann_date"],
     "index_daily": ["code", "time"],
     "etf_daily": ["code", "time"],
+    "etf_basic": ["code"],
     "stock_float_share": ["code", "end_date", "ann_date"],
     "stock_daily_valuation": ["code", "time"],
     "index_constituents": ["index_code", "code", "time"],

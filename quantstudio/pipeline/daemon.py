@@ -423,11 +423,15 @@ class ResidentCollector:
                     valuation_df = self._prepare_valuation_df(start, end)
                 except Exception as e:
                     logger.warning(f"[{batch_id}] valuation 准备失败: {e}")
+            etf_daily_bounds_df = None
+            if table == "etf_basic":
+                etf_daily_bounds_df = self._prepare_etf_daily_bounds()
             std_df, align_meta = self.aligner.align(raw_df, table, source,
                                                      adj_factor_df=adj_factor_df,
                                                      close_df=close_df,
                                                      namechange_df=namechange_df,
                                                      valuation_df=valuation_df,
+                                                     etf_daily_bounds_df=etf_daily_bounds_df,
                                                      freq=freq)
             rows_aligned = len(std_df)
 
@@ -444,13 +448,16 @@ class ResidentCollector:
             # 5. 入库（幂等）
             write_new = write_updated = 0
             if rows_passed > 0:
-                wr = self._stamp_and_write(res, table, batch_id, source)
+                wr = self._stamp_and_write(res, table, batch_id, source, task=task)
                 rows_written = wr
                 write_new = getattr(wr, "new", 0)
                 write_updated = getattr(wr, "updated", 0)
 
             # 6. 水位推进（仅成功）
-            new_watermark = self._max_date(res.passed_df, table)
+            if task.get("dataset_kind") == "snapshot":
+                new_watermark = self._snapshot_watermark(end)
+            else:
+                new_watermark = self._max_date(res.passed_df, table)
             if new_watermark:
                 self.writer.advance_watermark(source, table, freq, new_watermark, batch_id)
 
@@ -1302,18 +1309,64 @@ class ResidentCollector:
             logger.error(f"[Watermark] 推进 {source}/{table}/{freq} 失败: {e}", exc_info=True)
         return None
 
-    def _stamp_and_write(self, res, table: str, batch_id: str, source: str):
-        """带数据源溯源戳的幂等写入。
-
-        在通过校验的数据上打 data_source 列（记录本次实际采用的权威源），
-        再调用 writer 幂等 upsert。data_source 列由 writer 的 COLS/DDL 定义，
-        缺失时由自动迁移补齐；未配置该列的表会自动忽略（无副作用）。
-        """
+    def _stamp_and_write(self, res, table: str, batch_id: str, source: str,
+                         task: Optional[Dict] = None):
+        """Stamp provenance, then write only changed rows for snapshot datasets."""
+        task = task or {}
         df = res.passed_df
-        if df is not None and len(df) > 0 and "data_source" in self.writer._table_columns(table):
+        if df is not None and len(df) > 0:
             df = df.copy()
-            df["data_source"] = source
+        if df is not None and len(df) > 0 and "data_source" in self.writer._table_columns(table):
+            df["data_source"] = task.get("data_source_label", source)
+        if (df is not None and len(df) > 0
+                and task.get("dataset_kind") == "snapshot"
+                and task.get("skip_unchanged", False)):
+            df = self._filter_unchanged_snapshot_rows(
+                df, table, exclude=task.get("change_compare_exclude", ["update_time"]))
         return self.writer.write(df, table, batch_id)
+
+    def _filter_unchanged_snapshot_rows(self, df: pd.DataFrame, table: str,
+                                        exclude=None) -> pd.DataFrame:
+        """Keep new/changed snapshot rows; never delete locally retained history."""
+        schema = self.aligner.schemas.get(table, {})
+        pk = [c for c in schema.get("primary_key", []) if c in df.columns]
+        if not pk:
+            return df
+        exclude = set(exclude or [])
+        compare_cols = [c for c in df.columns if c not in set(pk) | exclude]
+        if not compare_cols:
+            return df
+        try:
+            selected = pk + compare_cols
+            quoted = ", ".join('"' + c.replace('"', '""') + '"' for c in selected)
+            existing = self.writer.read_df(f'SELECT {quoted} FROM "{table}"')
+        except Exception as exc:
+            logger.warning(f"[SnapshotDiff] {table} existing-read failed; falling back to full-batch upsert: {exc}")
+            return df
+        if existing is None or existing.empty:
+            return df
+
+        incoming = df.set_index(pk, drop=False)
+        current = existing.drop_duplicates(pk, keep="last").set_index(pk, drop=False)
+        aligned = current.reindex(incoming.index)
+        changed = pd.Series(~incoming.index.isin(current.index), index=incoming.index, dtype=bool)
+        for col in compare_cols:
+            equal = incoming[col].eq(aligned[col]) | (incoming[col].isna() & aligned[col].isna())
+            changed |= ~equal.fillna(False)
+        out = incoming.loc[changed.to_numpy()].reset_index(drop=True)
+        logger.info(f"[SnapshotDiff] {table}: validated={len(df)} changed={len(out)} "
+                    f"unchanged={len(df)-len(out)} exclude={sorted(exclude)}")
+        return out[df.columns]
+
+    @staticmethod
+    def _snapshot_watermark(end: str) -> str:
+        """Store snapshot success date as Asia/Shanghai midnight milliseconds."""
+        stamp = pd.Timestamp(str(end))
+        if stamp.tzinfo is None:
+            stamp = stamp.tz_localize("Asia/Shanghai")
+        else:
+            stamp = stamp.tz_convert("Asia/Shanghai")
+        return str(int(stamp.normalize().timestamp() * 1000))
 
     def _fetch_adj_factor(self, adapter, codes: Optional[list], start: str, end: str,
                           is_etf: bool = False):
@@ -1410,6 +1463,18 @@ class ResidentCollector:
         except Exception as e:
             logger.warning(f"[Daemon] _prepare_namechange_df 失败: {e}")
             return None
+
+    def _prepare_etf_daily_bounds(self) -> pd.DataFrame:
+        """Read first/last etf_daily bars used to fill missing reference dates."""
+        try:
+            return self.writer.read_df("""
+                SELECT code, MIN(time) AS first_bar_ms, MAX(time) AS last_bar_ms
+                FROM etf_daily
+                GROUP BY code
+            """)
+        except Exception as exc:
+            logger.warning(f"[Daemon] etf_daily bounds unavailable; keeping Tushare null dates: {exc}")
+            return pd.DataFrame(columns=["code", "first_bar_ms", "last_bar_ms"])
 
     def _prepare_valuation_df(self, start: str, end: str) -> Optional["pd.DataFrame"]:
         """为 stock_daily 推导 is_delisting_risk + 估值字段补全 准备每日估值 DataFrame。

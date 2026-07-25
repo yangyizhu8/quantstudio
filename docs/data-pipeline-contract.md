@@ -152,3 +152,14 @@ Because Saturday, July 25, 2026 is the synchronization date, rows whose `list_da
 ## User-selected backtest window provenance
 
 For user-PyQt R5, the Skill records the project DuckDB path and recommends ETF listing/warm-up bounds, but does not select or hardcode the actual dates. Submitted evidence must record the user's actual start/end dates and cannot start before the confirmed ETF-pool hard lower bound.
+
+## `etf_basic` pipeline contract
+
+- **Authority/source:** Tushare only; task source chain is exactly `["tushare"]`. The endpoint is `fund_basic(market="E")`.
+- **Granularity:** reference snapshot, not a time-series slice. A successful incremental/resident run records a daily snapshot watermark; the next day fetches the complete source snapshot again.
+- **Canonical baseline:** the current DuckDB `etf_basic` schema and semantics. `code` is bare six digits, `ts_code` retains `.SH/.SZ`, `exchange` is `SS/SZ`, and list/delist dates are milliseconds at Asia/Shanghai 00:00.
+- **Unit isolation:** only baseline-consumed fields are requested. `issue_amount`, `p_value`, and other numeric fields with unrelated units are not admitted into the table.
+- **Enrichment:** missing `list_date` uses the first `etf_daily` bar; a delisted row with no `delist_date` uses the last bar plus one calendar day.
+- **Write semantics:** validate the full canonical snapshot, compare it with stored rows excluding volatile `update_time`, and upsert only new or semantically changed rows by primary key `code`. Source-side temporary absence never physically deletes retained historical metadata.
+- **Entry-point parity:** CLI full range, CLI/GUI incremental, and resident scheduling call the same adapter, standardizer, validator, diff, writer, and watermark implementation.
+- **Compatibility script:** `python scripts/sync_etf_basic.py --db data/quantstudio.db` remains available for bootstrap/manual replacement and imports the same standardizer and DDL as the pipeline task.
