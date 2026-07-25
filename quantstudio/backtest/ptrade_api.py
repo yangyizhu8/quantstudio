@@ -93,6 +93,21 @@ class Portfolio:
         )
         self.total_value = self.cash + self.market_value
 
+    @property
+    def portfolio_value(self):
+        """PTrade 标准属性：组合总净值（= 现金 + 持仓市值）。
+
+        PTrade 公开 API 为 context.portfolio.portfolio_value；本地此前仅有
+        total_value 别名，导致可移植策略在本框架运行报 AttributeError。
+        此处补齐标准属性，保持与 PTrade 语义一致（框架级可复用修复）。
+        """
+        return self.total_value
+
+    @property
+    def positions_value(self):
+        """PTrade 标准属性：持仓市值（本地别名 market_value）。"""
+        return self.market_value
+
 
 class Position:
     """模拟 Ptrade 的 position 对象"""

@@ -104,8 +104,11 @@
           "description": "All OHLC inputs used by indicators, ranking, entry/exit signals and risk thresholds must be front-adjusted via fq='pre'."
         },
         "execution_price_basis": {
-          "const": "raw_trade_price",
-          "description": "Order matching, cash, fills and position valuation remain on actual tradable prices."
+          "enum": [
+            "raw_trade_price",
+            "pre_adjusted_price"
+          ],
+          "description": "撮合/现金/成交/持仓估值的价格口径。raw_trade_price=原始成交价（真实报价口径）；pre_adjusted_price=前复权价（2026-07-25 方案A：引擎撮合/估值链路与信号链路统一前复权，消除ETF拆分/分红除权缺口，分红等价于自动再投资）。两种口径均为合法引擎 Profile，策略设计必须与目标引擎实际口径一致。"
         }
       },
       "additionalProperties": false

@@ -197,20 +197,46 @@ class DuckDBDataAccess:
         支持股票 + ETF：
         - stock_daily 提供完整股票快照
         - etf_daily 补充 ETF 行情，填充统一列结构，便于 Ptrade 策略在同一日同时访问股票/ETF/行业 ETF
+
+        【前复权撮合口径（方案A，2026-07-25 决策）】
+        本快照是引擎撮合/估值链路（链路②）的唯一价格来源：成交价、持仓估值、
+        data[code].price、check_limit 比较价均取自这里。为与策略取数链路（链路①，
+        get_history/get_price 默认 fq='pre'）保持同一连续价格口径，OHLC 四价映射为
+        前复权列（*_front，缺失时回退原始价）；preClose 按 close_front/close 同因子
+        缩放，保证 (close-preClose)/preClose 与真实日收益一致。
+        效果：ETF 份额拆分/股票分红除权日的价格缺口被消除，不会再出现原始价口径下
+        的虚假巨亏/巨盈；代价是成交价为前复权价（前复权回测的标准做法，分红等价于
+        自动再投资）。volume/amount/pctChg 保持原始口径（pctChg 本身已是复权校正后
+        的真实涨跌幅）。
         """
         conn = self._get_conn()
         if conn is None:
             return pd.DataFrame()
+        # OHLC → 前复权；preClose 按 close_front/close 同因子缩放（除权日数据源
+        # preClose 本身已是除权参考价，再乘当日复权因子即可与昨日 close_front 连续）
+        _adj_ohlc = """
+                   COALESCE(open_front, open)   AS open,
+                   COALESCE(high_front, high)   AS high,
+                   COALESCE(low_front, low)     AS low,
+                   COALESCE(close_front, close) AS close,"""
+        _adj_preclose = """
+                   CASE WHEN close > 0 AND close_front IS NOT NULL AND close_front > 0
+                        THEN preClose * (close_front / close)
+                        ELSE preClose END AS preClose,"""
         return conn.execute(f"""
-            SELECT code, time, open, high, low, close, volume, amount,
-                   pctChg, preClose, turn, peTTM, pbMRQ, isST, suspendFlag,
+            SELECT code, time,{_adj_ohlc}
+                   volume, amount,
+                   pctChg,{_adj_preclose}
+                   turn, peTTM, pbMRQ, isST, suspendFlag,
                    is_st_reliable, is_st_reliable_source,
                    is_delisting_risk, is_delisting_risk_source
             FROM stock_daily
             WHERE time = {date_ms}
             UNION ALL
-            SELECT code, time, open, high, low, close, volume, amount,
-                   pctChg, preClose, turn,
+            SELECT code, time,{_adj_ohlc}
+                   volume, amount,
+                   pctChg,{_adj_preclose}
+                   turn,
                    NULL AS peTTM, NULL AS pbMRQ,
                    COALESCE(isST, 0) AS isST,
                    0 AS suspendFlag,
