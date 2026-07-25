@@ -206,4 +206,10 @@ output/strategy_deliveries/<strategy_id>/
 
 ### ETF basic reference collection
 
-`etf_basic` is now a first-class pipeline task. Its authority and only configured source are Tushare (`fund_basic(market="E")`). Full, incremental, and resident modes all use the same path: fetch snapshot -> canonical baseline standardization -> validation -> changed-row DuckDB upsert. Tushare `YYYYMMDD` list/delist dates are converted to Asia/Shanghai midnight milliseconds, `.SH` is normalized to `SS`, and fields with unrelated units (such as `issue_amount` and `p_value`) are excluded. Missing list/delist dates may be filled from the first/last `etf_daily` bar. Restart an already-running resident collector after changing this task configuration.
+`etf_basic` is now a first-class pipeline task. Its authority and only configured source are Tushare (`fund_basic(market="E")`). Full, incremental, and resident modes all use the same path: fetch snapshot -> canonical baseline standardization -> validation -> changed-row DuckDB upsert. Tushare `YYYYMMDD` list/delist dates are converted to Asia/Shanghai midnight milliseconds, `.SH` is normalized to `SS`, and fields with unrelated units (such as `issue_amount` and `p_value`) are excluded. Missing list/delist dates may be filled from the first/last `etf_daily` bar. Restart an already-running resident collector after changing this task configuration。
+
+## 框架层变更审阅记录（perf/datadict-day-index）
+
+本次 `quantstudio/backtest/ptrade_api.py`、`quantstudio/backtest/backtest_engine.py` 新增 DataDict/BacktestEngine 当日 DataFrame 的 `{raw_code: first_iloc}` 实例代码索引，将 `df['code'] == bare` 的 O(N) 布尔过滤替换为 O(1) 索引查找；`None`（无法构建）时严格回退原布尔过滤。
+
+**AGENTS.md 框架铁律适用**：本变更为纯性能优化，已审阅确认未改变任何公共/注入 API 的函数名、签名、默认值、返回类型、返回字段、列顺序、索引、dtype、空值行为、异常行为或兼容行为；未改变行情取数范围、复权口径、生命周期调用时机、撮合/费用/持仓/现金/涨跌停处理、策略信号或回测指标；`data[code]`（DataDict）、`get_current_price`、`is_halted`、`pct_chg` 等接口语义与返回结构不变。因此本文档相关表述不受影响，无需修改。

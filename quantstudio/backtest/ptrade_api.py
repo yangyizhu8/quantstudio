@@ -27,6 +27,35 @@ from .providers.base import ReferenceDataCapabilityError
 logger = logging.getLogger(__name__)
 
 
+# ==================== 按日行情索引构建（纯性能优化，无缓存） ====================
+# 仅把 O(行数) 的全表布尔过滤替换为 O(1) 字典查找，不改变任何返回数据/字段/归一化/PIT 语义。
+# 索引键为 df['code'] 的「原始元素」（不做任何转换：不 str、不 bare_code、不去空格、不改大小写），
+# 查找键为调用处原本传给 `df['code'] == bare` 右侧的 bare 原值 —— 二者与 pandas 元素比较语义
+# 逐字节一致，因此 `iloc[index]` 返回的正是原布尔过滤 `df[df['code'] == bare].iloc[0]` 那一行
+# （取首次出现）。缓存不在此处做，由各调用方（DataDict / PtradeAPI / BacktestEngine）按实例
+# 生命周期持有并在 DataFrame 切换时失效，避免跨实例共享状态与 GC/finalizer 时序依赖。
+def _build_code_index(df):
+    """构建 {raw_code_value: 首次出现 iloc} 索引（纯函数，无内部缓存）。
+
+    返回语义（调用点据此严格区分两种状态）：
+      - None : 无法安全构建（df 为 None / 缺 'code' 列 / 构建异常）→ 调用点必须回退原布尔过滤，
+               以保留原路径的异常（如缺列 KeyError）、空值与 fallback 行为。
+      - dict : 已构建成功。含「合法空 DataFrame（有 code 列但 0 行）」返回 {}；用 .get(raw) 取 iloc。
+               注意：{} 与 None 不可混淆 —— 前者代表「成功但无数据」，后者代表「不可用，需回退」。
+    """
+    if df is None or not hasattr(df, 'columns') or 'code' not in df.columns:
+        return None
+    idx = {}
+    try:
+        col = df['code']
+        for i in range(len(col)):
+            c = col.iloc[i]
+            idx.setdefault(c, i)  # 重复 code 保留首次出现 iloc，对齐 .iloc[0]
+    except Exception:
+        return None
+    return idx
+
+
 # ==================== 全局对象 ====================
 
 class GlobalVars:
@@ -169,6 +198,7 @@ class DataDict:
         self._data: Dict[str, BarData] = {}
         self._curr_data = None  # 全市场 DataFrame（惰性构建时用）
         self._day_str = ""
+        self._code_index = None  # 实例私有按日索引缓存；set_curr_data 时失效
 
     @staticmethod
     def _bare(code: str) -> str:
@@ -179,6 +209,7 @@ class DataDict:
         """注入全市场 DataFrame（用于惰性构建 BarData，避免预先构建 5000 个对象）"""
         self._curr_data = curr_data
         self._day_str = day_str
+        self._code_index = None  # DataFrame 切换 → 失效索引缓存
 
     def __getitem__(self, code: str) -> BarData:
         bare = self._bare(code)
@@ -188,14 +219,25 @@ class DataDict:
         for k, v in self._data.items():
             if self._bare(k) == bare:
                 return v
-        # 惰性构建：从 curr_data 查找对应行
+        # 惰性构建：从 curr_data 按索引查找对应行（等价于原布尔过滤 .iloc[0]，O(1)）
         if self._curr_data is not None and 'code' in self._curr_data.columns:
-            row = self._curr_data[self._curr_data['code'] == bare]
-            if len(row) > 0:
-                bar = BarData(row.iloc[0], self._day_str)
-                ptrade_code = code if '.' in str(code) else self._guess_ptrade_code(bare)
-                self._data[ptrade_code] = bar
-                return bar
+            if self._code_index is None:
+                self._code_index = _build_code_index(self._curr_data)
+            if self._code_index is not None:
+                i = self._code_index.get(bare)
+                if i is not None:
+                    bar = BarData(self._curr_data.iloc[i], self._day_str)
+                    ptrade_code = code if '.' in str(code) else self._guess_ptrade_code(bare)
+                    self._data[ptrade_code] = bar
+                    return bar
+            else:
+                # 索引不可用 → 回退原布尔过滤（保留缺列 KeyError / 空值 / fallback 行为）
+                row = self._curr_data[self._curr_data['code'] == bare]
+                if len(row) > 0:
+                    bar = BarData(row.iloc[0], self._day_str)
+                    ptrade_code = code if '.' in str(code) else self._guess_ptrade_code(bare)
+                    self._data[ptrade_code] = bar
+                    return bar
         return BarData(pd.Series(), "")
 
     @staticmethod
@@ -210,6 +252,11 @@ class DataDict:
             return True
         # 惰性检查：curr_data 里有没有
         if self._curr_data is not None and 'code' in self._curr_data.columns:
+            if self._code_index is None:
+                self._code_index = _build_code_index(self._curr_data)
+            if self._code_index is not None:
+                return bare in self._code_index
+            # 索引不可用 → 回退原布尔过滤语义
             return bare in self._curr_data['code'].values
         return False
 
@@ -344,6 +391,7 @@ class PtradeAPI:
         self._reference = reference
         self._calendar = calendar
         self._current_day_data = None  # 当日全市场数据
+        self._code_index = None        # 实例私有按日索引缓存；attach_day/attach_bar/reset_session 失效
         self._prev_day_data = None     # 前一日全市场数据
         self._current_date = ""
         self._prev_date = ""
@@ -370,6 +418,7 @@ class PtradeAPI:
         self._fundamental = None
         self._reference = None
         self._calendar = None
+        self._code_index = None       # 会话重置 → 失效索引缓存
         g.__dict__.clear()
         g.__dict__.update(GlobalVars().__dict__)
 
@@ -395,6 +444,7 @@ class PtradeAPI:
         self._cfg = getattr(engine, 'config', None)
         self._current_day_data = curr_data
         self._prev_day_data = prev_data
+        self._code_index = None       # 每日 DataFrame 切换 → 失效索引缓存
         self._current_date = curr_date
         self._prev_date = prev_date
         self._prices = prices or {}
@@ -434,6 +484,7 @@ class PtradeAPI:
         self._current_day_data = bar_data
         self._current_date = curr_date
         self._prev_date = prev_date
+        self._code_index = None       # 每 bar DataFrame 切换 → 失效索引缓存
         self._prices = prices or {}
         # 每 bar 清空查询缓存（PIT 语义：每根 bar 重新查）
         self._query_cache = {}
@@ -1122,9 +1173,17 @@ class PtradeAPI:
     def _get_current_price(self, bare_code: str) -> float:
         """从当日数据获取最新价"""
         if self._current_day_data is not None:
-            row = self._current_day_data[self._current_day_data['code'] == bare_code]
-            if len(row) > 0:
-                return float(row.iloc[0].get('close', 0))
+            if self._code_index is None:
+                self._code_index = _build_code_index(self._current_day_data)
+            if self._code_index is not None:
+                i = self._code_index.get(bare_code)
+                if i is not None:
+                    return float(self._current_day_data.iloc[i].get('close', 0))
+            else:
+                # 索引不可用 → 回退原布尔过滤（保留缺 'code' 列时的 KeyError 原行为）
+                row = self._current_day_data[self._current_day_data['code'] == bare_code]
+                if len(row) > 0:
+                    return float(row.iloc[0].get('close', 0))
         # fallback to prices dict
         qmt = self._bare_to_qmt(bare_code)
         return self._prices.get(qmt, 0)
