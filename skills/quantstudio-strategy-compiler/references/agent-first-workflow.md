@@ -33,6 +33,8 @@ Present a structured summary of universe, data cutoff, entry, exit, holding peri
 
 Inspect relevant tables, fields, coverage, engine profile, and PTrade API availability. This is an inventory, not a declaration that the entire strategy is compilable.
 
+For dual targets, every planned API must have a verified entry in `ptrade-api-signatures.json`. Missing signatures are `MISSING_REUSABLE_API` and keep R1 blocked; they are never customer-waivable approximations.
+
 ### R2 - Draft design contract
 
 Write `agent_strategy_design.json` using `schemas/agent_strategy_design.schema.json`. Keep rules in clear natural language. Set `market_data_contract.signal_price_adjustment` to `pre` and `execution_price_basis` to `raw_trade_price`. Select lifecycle and API components, but do not encode strategy logic as a renderer pattern.

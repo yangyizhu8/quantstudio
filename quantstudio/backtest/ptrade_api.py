@@ -1874,14 +1874,15 @@ class PtradeAPI:
             return None
 
     def get_stock_status(self, stocks, query_type='ST', query_date=None):
-        """获取股票状态（ST/停牌/退市/退市整理期）。
-        query_type='ST': 返回 {code: bool}，True=官方 ST/*ST 或退市风险股
-                         （与 filter_stock_by_status ST 分支语义一致）
-        query_type='HALT': 返回 {code: bool}，True=停牌
-        query_type='DELISTING_SORTING': 返回 {code: bool}，True=退市风险股（兜底判定）
+        """获取股票状态（与 PTrade 公共签名对齐）。
+
+        PTrade 公共 ``query_type`` 取值为 ``ST``、``HALT`` 和
+        ``DELISTING``。``DELISTING_SORTING`` 仅作为本地向后兼容别名保留；
+        双端可移植策略源码必须使用 ``DELISTING``。
 
         数据来源：stock_daily 的 is_st_reliable / is_delisting_risk（aligner 预计算）。
         """
+        query_type = str(query_type or 'ST').upper()
         if isinstance(stocks, str):
             stocks = [stocks]
         result = {}
@@ -1903,7 +1904,7 @@ class PtradeAPI:
                     volume_halt = ('volume' in r.index and r.get('volume') == 0)
                     result[s] = bool(r.get('is_halt', False) or
                                      r.get('suspendFlag', 0) == 1 or volume_halt)
-                elif query_type == 'DELISTING_SORTING':
+                elif query_type in {'DELISTING', 'DELISTING_SORTING'}:
                     result[s] = bool(r.get('is_delisting_risk', False))
                 else:
                     result[s] = False

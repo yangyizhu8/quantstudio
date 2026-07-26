@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import builtins
 import json
 import re
 from pathlib import Path
@@ -304,6 +305,16 @@ def _validate_ptrade_call(
                 issues.append(_issue(
                     "PTRADE-API-SIGNATURE", "BLOCK",
                     f"{name}() accepts at most {max_positional} positional argument(s).", call.lineno))
+        for keyword, values in spec.get("canonical_keyword_values", {}).items():
+            value_node = _keyword(call, keyword)
+            if value_node is None:
+                continue
+            value = constant_value(value_node)
+            if value is not None and value not in values:
+                issues.append(_issue(
+                    "PTRADE-API-SIGNATURE", "BLOCK",
+                    f"{name}() keyword {keyword!r} must use one of {values}; got {value!r}.",
+                    call.lineno))
 
     if name in set(profile.get("local_only_symbols", [])) and name not in defined_names:
         issues.append(_issue(
@@ -411,14 +422,32 @@ def validate_strategy(
 
     target_set = set(design.get("targets", []))
     local_only_symbols = set(ptrade_profile.get("local_only_symbols", []))
+    profiled_apis = set(ptrade_profile.get("signatures", {}))
     external_calls = [(call, name) for call, name, _ in calls
                       if name and name not in defined_names]
     if "ptrade" in target_set:
+        required_apis = set(design["components"].get("required_apis", []))
+        for api in sorted(required_apis - {"log"}):
+            if api in local_only_symbols:
+                issues.append(_issue(
+                    "PTRADE-DESIGN-LOCAL-API", "BLOCK",
+                    f"dual/PTrade design declares QuantStudio-local API {api}()."))
+            elif api not in profiled_apis:
+                issues.append(_issue(
+                    "PTRADE-DESIGN-UNPROFILED-API", "BLOCK",
+                    f"dual/PTrade design declares {api}(), but no verified PTrade signature/profile entry exists."))
+        python_builtins = set(dir(builtins))
         for call, name in external_calls:
             if name in local_only_symbols:
                 issues.append(_issue(
                     "TARGET-LOCAL-EXTENSION-BAN", "BLOCK",
                     f"dual/PTrade target cannot call QuantStudio-local API {name}().",
+                    call.lineno))
+            elif isinstance(call.func, ast.Name) and name not in python_builtins \
+                    and name not in profiled_apis:
+                issues.append(_issue(
+                    "PTRADE-API-UNPROFILED", "BLOCK",
+                    f"{name}() is an external top-level call without a verified PTrade signature/profile entry.",
                     call.lineno))
     for call, name in external_calls:
         if name == "get_etf_list":

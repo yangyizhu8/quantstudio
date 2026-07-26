@@ -108,6 +108,8 @@ result, output_dir = payload
 - 运行时依赖分层：QuantStudio 本地会注入 API、`g`/`log` 以及 `np`/`pd`；真实 PTrade 不注入 `numpy`/`pandas` 别名，因此双端/PTrade 源码使用它们时必须显式写 `import numpy as np` / `import pandas as pd`。数据库驱动、框架内部模块和直接文件 I/O 仍被禁止。
 - `log` 对象兼容 **printf 风格多参**：`log.info("信号=%s 条数=%d", src, n)` 按 `%` 风格格式化；双端/PTrade 可移植代码仅使用 `debug/info/warning/error/critical`，`log.warn(...)` 会被 Validator 阻断。
 - 生命周期分层：PTrade 可移植回调为 `initialize`（必需）+ `before_trading_start` / `handle_data` / `after_trading_end`（可选）；`set_backtest()` 与 `is_trade()` 仅属 QuantStudio 本地扩展，双端/PTrade 代码会被 Validator 阻断。
+- PTrade Profile 1.7.0 对股票双端常用 API 登记精确签名：`set_benchmark`、`run_daily`、`get_Ashares`、`get_index_stocks`、`get_stock_status`、`get_positions`、`get_position`、`get_trade_days`、`get_fundamentals`。双端设计或源码调用未登记的顶层注入 API 时默认 `BLOCK`，不得用“近似确认”绕过。
+- `get_stock_status` 的可移植 `query_type` 仅为 `ST` / `HALT` / `DELISTING`；`DELISTING_SORTING` 仅是 `filter_stock_by_status` 的过滤类型及本地向后兼容别名。
 - 数据 100% 来自 DuckDB（QuantStudio 数据管线产出），策略禁止直连数据库（强制隔离）。
 - 框架取数（注入 API 与底层数据适配层）默认前复权（`fq='pre'`）：策略不传 `fq` 即获得前复权价；需不复权请显式 `fq=None`。
 - **撮合/估值链路与取数链路前复权闭环**：引擎每日全市场快照（`query_daily_snapshot`，成交价、持仓估值、`data[code].price`、涨跌停比较价的唯一来源）OHLC 统一映射前复权列（`*_front`，缺失回退原始价），`preClose` 按 `close_front/close` 同因子缩放。信号价、成交价、持仓估值同一连续口径，ETF 份额拆分/股票分红除权日不再产生原始价缺口导致的虚假盈亏（分红等价于自动再投资，前复权回测标准口径）。`pctChg`/`volume`/`amount` 保持原始口径。

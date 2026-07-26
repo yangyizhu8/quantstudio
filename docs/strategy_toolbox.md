@@ -53,7 +53,7 @@
 
 | 函数 | 说明 |
 |------|------|
-| `set_benchmark(sids)` | 设置基准指数（如 `'000300'`）。 |
+| `set_benchmark(sids)` | **PTrade Profile 1.7.0 已登记**。设置基准指数；双端源码使用 PTrade 后缀，例如 `set_benchmark('000300.SS')`。 |
 | `set_limit_mode(mode)` | 设置限价模式（`'LIMIT'`）。 |
 | `set_universe(security_list)` | 设置股票池（DuckDB 模式无需订阅，空实现）。 |
 | `set_commission(**kw)` | 设置佣金：`commission_ratio`/`min_commission`；`type='ETF'` 时关闭印花税与过户费。 |
@@ -64,6 +64,8 @@
 | `set_yesterday_position(poslist)` | 设置初始底仓（CSV dict 列表：`sid/amount/cost_basis`）。 |
 
 > 可移植性红线：`set_backtest()`、`is_trade()` 仅供 QuantStudio 本地单端策略；双端/PTrade 源码不得调用。日志请使用 `log.warning(...)`，禁止 `log.warn(...)`。
+
+> **签名默认拒绝**：双端设计的 `components.required_apis` 和源码中的外部顶层调用都必须登记在 `skills/quantstudio-strategy-compiler/references/ptrade-api-signatures.json`。未登记 API 会直接 `BLOCK`，不能归类为用户可确认的执行近似。
 | `set_parameters(**kw)` | 设置策略参数（交易端兼容，回测记录参数）。 |
 
 ### 3.2 行情 / 历史数据
@@ -81,7 +83,7 @@
 | `current_price(security)` | 当前价。 |
 | `get_current_data()` | 当日全市场行情 dict（`code→BarData`）。 |
 | `get_snapshot(security,frequency='1d')` | 实时快照（回测返回当日 bar）。 |
-| `get_Ashares(date=None)` | 全 A 股列表。 |
+| `get_Ashares(date=None)` | **PTrade Profile 1.7.0 已登记**。全 A 股列表；传日期时双端源码统一使用 `YYYYmmdd` 字符串。 |
 
 ### 3.3 财务 / 估值（ORM + 多表）
 
@@ -100,7 +102,7 @@
 |------|------|
 | `filter_stock_by_status(stocks,filter_type,query_date)` | 过滤 ST/停牌/退市。4 种 `filter_type` 全支持：`'ST'`(官方 ST/*ST 或退市风险)、`'HALT'`(停牌)、`'DELISTING'`(已退市)、`'DELISTING_SORTING'`(退市整理期)。默认 `['ST','HALT','DELISTING']`。 |
 | `check_limit(security,query_date)` | 涨跌停检查，返回 `CodeDict`：`1`涨停/`-1`跌停/`0`正常（主板10%/创业板20%/科创板20%/北交所30%/ST5%，见 `shared_ashare_rules`）。 |
-| `get_stock_status(stocks,query_type='ST',query_date)` | 返回 `{code:bool}`：`'ST'`/`'HALT'`/`'DELISTING_SORTING'`。 |
+| `get_stock_status(stocks,query_type='ST',query_date=None)` | **PTrade Profile 1.7.0 已登记**，返回 `{code:bool}`。可移植值仅为 `'ST'`/`'HALT'`/`'DELISTING'`；`query_date` 使用 `YYYYmmdd`。`'DELISTING_SORTING'` 仅保留为本地兼容别名，双端源码禁止使用。 |
 | `get_stock_info(stocks,field)` | 证券元数据（上市日期等），返回按原代码键的 dict。 |
 | `get_security_info(code)` | 证券基础信息对象（`.start_date`/`.display_name` 等），用于剔除次新股。 |
 | `get_industry(code)` | 申万行业信息（`{'sw_l1':{...}}`），无数据返回 `None`。 |
@@ -144,7 +146,7 @@
 | `order_target(security,target_amount,limit_price)` | 调仓到目标股数（绝对）。 |
 | `order_value(security,value,limit_price)` | 按金额下单（**增量**：`value>0`加仓、`value<0`减仓）。 |
 | `order_target_value(security,value,limit_price)` | 调仓到目标市值（`value=0`全卖）。 |
-| `run_daily(context,func,time='9:31')` | 注册定时任务（日线回测中等效每日调用；`initialize` 时仅注册不立即执行）。 |
+| `run_daily(context,func,time='9:31',reference_security=None)` | **PTrade Profile 1.7.0 已登记**，仅在 `initialize` 注册。日线 Profile 的精确盘中时刻不可证明，`09:31` 等盘中调度必须选择分钟 Profile。 |
 
 成交价模式 `match_price_mode`：
 - `close`/`open`：**即时执行**，调用后账户立即更新，下一行可见最新状态。
@@ -154,8 +156,8 @@
 
 | 函数 | 说明 |
 |------|------|
-| `get_positions(security=None)` | 全部/单只持仓（dict，后缀互通）。 |
-| `get_position(security)` | 单只持仓；空仓返回 `amount=0` 的 `Position`（非 `None`）。 |
+| `get_positions(security=None)` | **PTrade Profile 1.7.0 已登记**。全部/单只持仓（dict，后缀互通）。 |
+| `get_position(security)` | **PTrade Profile 1.7.0 已登记**。单只持仓；空仓返回 `amount=0` 的 `Position`（非 `None`）。 |
 | `get_all_positions()` | 全部持仓（柜台格式 dict list）。 |
 | `get_orders(security)` | 当日订单列表。 |
 | `get_trades()` | 当日成交列表。 |
@@ -217,9 +219,9 @@
 ## 4. 最小策略示例
 
 ```python
-# 小市值轮动（示意）：仅需实现生命周期函数，无需 import
+# QuantStudio-only 小市值轮动示意（使用本地 batch/check_limit 扩展，不声明 PTrade 可移植）
 def initialize(context):
-    set_benchmark('000300')
+    set_benchmark('000300.SS')
     set_commission(commission_ratio=0.0003, min_commission=5.0, type='stock')
     g.N = 20          # 选股数量
     g.hold_days = 15  # 调仓周期
@@ -227,7 +229,8 @@ def initialize(context):
 
 def before_trading_start(context, data):
     # 盘前剔除 ST/停牌/退市，按流通市值升序取前 N
-    pool = get_Ashares(context.previous_date)
+    api_date = context.previous_date.strftime('%Y%m%d')
+    pool = get_Ashares(api_date)
     pool = filter_stock_by_status(pool, ['ST', 'HALT', 'DELISTING'])
     df = get_fundamentals_batch(pool, 'valuation', fields=['float_value'],
                                 date=context.previous_date)

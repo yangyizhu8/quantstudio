@@ -1,7 +1,7 @@
 {
   "profile_id": "ptrade-backtest-public-v1",
-  "profile_version": "1.6.0",
-  "verified_on": "2026-07-25",
+  "profile_version": "1.7.0",
+  "verified_on": "2026-07-26",
   "policy": "Canonical dual-target code must use exact PTrade backtest public signatures; QuantStudio adapters must be equally strict so local PASS predicts platform acceptance.",
   "signatures": {
     "set_slippage": {
@@ -180,6 +180,188 @@
         "PTrade documents this API as callable only from before_trading_start. DELISTING_SORTING only filters current-day data."
       ]
     },
+    "set_benchmark": {
+      "contexts": [
+        "backtest",
+        "trade"
+      ],
+      "max_positional": 1,
+      "allowed_keywords": [
+        "sids"
+      ],
+      "allowed_functions": [
+        "initialize"
+      ],
+      "examples": [
+        "set_benchmark('000300.SS')"
+      ],
+      "return_shape": "None"
+    },
+    "run_daily": {
+      "contexts": [
+        "backtest",
+        "trade"
+      ],
+      "max_positional": 4,
+      "allowed_keywords": [
+        "context",
+        "func",
+        "time",
+        "reference_security"
+      ],
+      "allowed_functions": [
+        "initialize"
+      ],
+      "examples": [
+        "run_daily(context, rebalance, time='09:31')"
+      ],
+      "notes": [
+        "Daily-period PTrade backtests execute run_daily callbacks at the daily bar time; an intraday time such as 09:31 requires a minute-period backtest profile."
+      ]
+    },
+    "get_Ashares": {
+      "contexts": [
+        "research",
+        "backtest",
+        "trade"
+      ],
+      "max_positional": 1,
+      "allowed_keywords": [
+        "date"
+      ],
+      "examples": [
+        "get_Ashares()",
+        "get_Ashares('20260724')"
+      ],
+      "return_shape": "list[str] using .SS/.SZ suffixes",
+      "notes": [
+        "date uses YYYYmmdd when supplied."
+      ]
+    },
+    "get_index_stocks": {
+      "contexts": [
+        "research",
+        "backtest",
+        "trade"
+      ],
+      "max_positional": 2,
+      "allowed_keywords": [
+        "index_code",
+        "date"
+      ],
+      "examples": [
+        "get_index_stocks('000300.XBHS')",
+        "get_index_stocks('000300.XBHS', date='20260724')"
+      ],
+      "return_shape": "list[str] using .SS/.SZ suffixes",
+      "notes": [
+        "date uses YYYYmmdd when supplied; index_code must use the PTrade index identifier accepted by the target deployment."
+      ]
+    },
+    "get_stock_status": {
+      "contexts": [
+        "research",
+        "backtest",
+        "trade"
+      ],
+      "max_positional": 3,
+      "allowed_keywords": [
+        "stocks",
+        "query_type",
+        "query_date"
+      ],
+      "examples": [
+        "get_stock_status(['600000.SS'], query_type='ST', query_date='20260724')",
+        "get_stock_status(['600000.SS'], query_type='DELISTING', query_date='20260724')"
+      ],
+      "return_shape": "{security: bool}",
+      "canonical_keyword_values": {
+        "query_type": [
+          "ST",
+          "HALT",
+          "DELISTING"
+        ]
+      },
+      "notes": [
+        "query_date uses YYYYmmdd when supplied. DELISTING_SORTING belongs to filter_stock_by_status and is not a public get_stock_status query_type."
+      ]
+    },
+    "get_positions": {
+      "contexts": [
+        "backtest",
+        "trade"
+      ],
+      "max_positional": 1,
+      "allowed_keywords": [
+        "security"
+      ],
+      "examples": [
+        "get_positions()",
+        "get_positions('600000.SS')"
+      ],
+      "return_shape": "dict keyed by PTrade security code; empty selection returns {}"
+    },
+    "get_position": {
+      "contexts": [
+        "backtest",
+        "trade"
+      ],
+      "max_positional": 1,
+      "allowed_keywords": [
+        "security"
+      ],
+      "examples": [
+        "get_position('600000.SS')"
+      ],
+      "return_shape": "Position; empty position exposes amount=0"
+    },
+    "get_trade_days": {
+      "contexts": [
+        "research",
+        "backtest",
+        "trade"
+      ],
+      "max_positional": 3,
+      "allowed_keywords": [
+        "start_date",
+        "end_date",
+        "count"
+      ],
+      "examples": [
+        "get_trade_days(count=10)",
+        "get_trade_days(start_date='20260101', end_date='20260724')"
+      ],
+      "return_shape": "numpy.ndarray of trading dates",
+      "notes": [
+        "start_date and count are mutually exclusive."
+      ]
+    },
+    "get_fundamentals": {
+      "contexts": [
+        "research",
+        "backtest",
+        "trade"
+      ],
+      "max_positional": 9,
+      "allowed_keywords": [
+        "security",
+        "table",
+        "fields",
+        "date",
+        "start_year",
+        "end_year",
+        "report_types",
+        "date_type",
+        "merge_type"
+      ],
+      "examples": [
+        "get_fundamentals(['600000.SS'], 'valuation', fields=['market_cap'], date='20260724')"
+      ],
+      "return_shape": "pandas.DataFrame in date-query mode",
+      "notes": [
+        "date-query and start_year/end_year query modes are mutually exclusive; merge_type=None is required for PIT-safe backtests unless the design explicitly proves another mode."
+      ]
+    },
     "get_strategy_events": {
       "contexts": [
         "quantstudio_local_backtest"
@@ -252,14 +434,18 @@
   "validation_policy": {
     "all_profiled_calls": "validate allowed keyword names and positional limits for every profiled API",
     "dynamic_kwargs": "BLOCK because exact broker compatibility cannot be proven",
-    "local_adapter_rule": "do not accept undocumented aliases through **kwargs"
+    "local_adapter_rule": "do not accept undocumented aliases through **kwargs",
+    "unprofiled_top_level_calls": "BLOCK every external top-level call in dual/PTrade source unless it is a Python builtin, imported/local function, or registered in signatures.",
+    "required_api_profile": "BLOCK a dual/PTrade design when components.required_apis contains an API absent from signatures (except the log object)."
   },
   "runtime_corrections": {
     "get_open_orders": "PTrade public documentation marks get_open_orders(security=None) available in backtest and trade; profile 1.2.0 incorrectly blocked it.",
-    "source_checked_on": "2026-07-25",
+    "source_checked_on": "2026-07-26",
     "set_backtest_is_trade": "Runtime traceback supplied on 2026-07-25 (platform timestamp 2026-07-26) proves set_backtest/is_trade are QuantStudio-local extensions, not PTrade backtest public APIs.",
     "log_warn": "Runtime traceback supplied on 2026-07-25 (platform timestamp 2026-07-26) proves IQEngine LogEngine has no warn attribute; generated PTrade source must use log.warning.",
-    "numpy_pandas_injection": "Real IQEngine log supplied on 2026-07-25 shows 79 occurrences of NameError for np; PTrade does not inject QuantStudio-local np/pd aliases. Portable source must import numpy/pandas explicitly when used."
+    "numpy_pandas_injection": "Real IQEngine log supplied on 2026-07-25 shows 79 occurrences of NameError for np; PTrade does not inject QuantStudio-local np/pd aliases. Portable source must import numpy/pandas explicitly when used.",
+    "core_stock_api_profile": "Profile 1.7.0 registers set_benchmark, run_daily, get_Ashares, get_index_stocks, get_stock_status, get_positions, get_position, get_trade_days, and get_fundamentals; unprofiled injected calls now fail closed.",
+    "get_stock_status_delisting": "PTrade get_stock_status uses query_type=DELISTING. DELISTING_SORTING is a filter_stock_by_status filter type, not a get_stock_status query type."
   },
   "logger_methods": {
     "allowed": [

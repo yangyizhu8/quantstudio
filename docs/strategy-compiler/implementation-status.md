@@ -706,3 +706,11 @@ This supersedes the PR2 Commit 1 / audit-fix / audit-fix2 FAIL entries while ret
 - Generic repair: Profile `1.6.0` requires explicit `numpy`/`pandas` imports when `np`/`pd`/full module names are used; Validator emits `PTRADE-RUNTIME-IMPORT`; ordinary calculation imports remain allowed while storage/internal imports and direct I/O remain blocked.
 - Artifact status: SHA `cc918d31dd99263db7c1271df2acb7ff0f2c017fad4580924423889d4d34ea01` is invalidated and must not be uploaded again.
 - Synchronization status: local repair only until post-repair customer confirmation.
+
+## PTrade profile 1.7.0 stock-core signature closure (2026-07-26)
+
+- Added verified profile entries for `set_benchmark`, `run_daily`, `get_Ashares`, `get_index_stocks`, `get_stock_status`, `get_positions`, `get_position`, `get_trade_days`, and `get_fundamentals`.
+- Validator now fails closed on unprofiled required APIs and external top-level calls through `PTRADE-DESIGN-UNPROFILED-API` / `PTRADE-API-UNPROFILED`.
+- Generic canonical keyword validation blocks literal `get_stock_status(query_type='DELISTING_SORTING')`; portable code uses `DELISTING`.
+- QuantStudio adapter now accepts public `get_stock_status(..., query_type='DELISTING')` while preserving `DELISTING_SORTING` as a local compatibility alias.
+- Added dual-target validation/publication and adapter regression coverage. No real-broker runtime PASS is claimed by this static repair.

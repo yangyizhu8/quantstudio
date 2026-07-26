@@ -5,7 +5,7 @@ description: Strict target-aware agent-first strategy engineering for QuantStudi
 
 # QuantStudio Agent-first Strategy Engineering
 
-Skill release: `0.5.2-ptrade-explicit-runtime-imports` (built on the `0.3.2-mvp` compiler/package baseline).
+Skill release: `0.5.3-ptrade-stock-core-profile` (built on the `0.3.2-mvp` compiler/package baseline).
 
 Treat the calling agent as the strategy author. Constrain it with project lifecycle, data, timing, PTrade public API, validation, and delivery gates. Never implement a strategy by adding its name or shape to Compiler/Renderer/Jinja branches.
 
@@ -25,6 +25,8 @@ Treat the calling agent as the strategy author. Constrain it with project lifecy
 12. All OHLC prices used for indicators, ranking, entry/exit signals, or risk thresholds must come from an injected history/price API with the literal keyword `fq='pre'`. Never omit `fq`, use `None`/`post`/`dypre`, or mix raw `data[code].open/high/low/close` into a front-adjusted signal series. Raw prices remain valid only for order matching, fills, cash, and position valuation.
 13. `set_backtest()` and `is_trade()` are QuantStudio-local extensions. Any dual/PTrade source that calls them is BLOCKED; remove the backtest-only switch from the PTrade target rather than relying on a local guard. PTrade logging uses `log.debug/info/warning/error/critical`; `log.warn` is BLOCKED.
 14. PTrade does not inject QuantStudio-local `np`/`pd` aliases. Dual/PTrade source using NumPy or pandas must explicitly declare `import numpy as np` and/or `import pandas as pd`; only storage/internal imports remain forbidden. Unimported calculation aliases are BLOCKED.
+15. Dual/PTrade validation is fail-closed for injected APIs. Every external top-level call and every `components.required_apis` entry must exist in `ptrade-api-signatures.json`; an unprofiled call is `MISSING_REUSABLE_API` at R1 and `BLOCK` at validation, never an approximation that the customer can waive.
+16. The registered stock-core portable subset includes `set_benchmark`, `run_daily`, `get_Ashares`, `get_index_stocks`, `get_stock_status`, `get_positions`, `get_position`, `get_trade_days`, and `get_fundamentals`. `get_stock_status` uses `query_type='ST'|'HALT'|'DELISTING'`; `DELISTING_SORTING` belongs only to `filter_stock_by_status`.
 
 ## Responsibility boundary
 
@@ -105,6 +107,8 @@ After the customer has explicitly completed R0, inspect only capabilities requir
 - for local dynamic ETF universes, `etf_basic` existence, classification version/source, listing/delisting coverage, `etf_daily` history coverage, and PIT checks at pre-listing/post-listing/post-delisting dates.
 
 Classify each item as `READY`, `APPROXIMATION_REQUIRES_CONFIRMATION`, `DATA_BLOCKED`, `LOCAL_ONLY`, `PTRADE_CONTEXT_BLOCKED`, or `MISSING_REUSABLE_API`.
+
+`APPROXIMATION_REQUIRES_CONFIRMATION` is reserved for explicitly modeled timing, fill, or execution proxies whose APIs are already verified. A missing PTrade signature/context is never customer-waivable: classify it as `MISSING_REUSABLE_API`, keep R1 BLOCKED, repair the reusable profile/adapter plus tests, then repeat R1.
 
 For every API planned for generated code, check `ptrade-api-signatures.json`. Examples:
 
@@ -298,7 +302,8 @@ In user-PyQt mode, R6 must verify the validated candidate still exists with the 
 - Every `get_history`, `get_history_batch`, and `get_price` call used by generated backtest code must include the literal keyword `fq='pre'`; `dypre`, post-adjustment, missing/dynamic values, and `attribute_history` are blocked.
 - A current completed minute may use `get_history(..., frequency='1m', fq='pre', include=True)` only in a confirmed scheduled minute callback with an explicit current-bar cutoff.
 - `get_snapshot` and `check_limit` are not allowed in PTrade backtest source. `get_open_orders(security=None)` is allowed in backtest and trade contexts.
-- `filter_stock_by_status` is called only from `before_trading_start`; scheduled callbacks use `get_stock_status` for current status checks.
+- `filter_stock_by_status` is called only from `before_trading_start`; scheduled callbacks use `get_stock_status` for current status checks. Portable status checks use only `query_type='ST'`, `'HALT'`, or `'DELISTING'`; never pass `DELISTING_SORTING` to `get_stock_status`.
+- Stock-core dual strategies may use the registered signatures for `set_benchmark`, `run_daily`, `get_Ashares`, `get_index_stocks`, `get_stock_status`, `get_positions`, `get_position`, `get_trade_days`, and `get_fundamentals`. Any other injected top-level API remains BLOCKED until its exact public signature, context and return shape are added to the profile and local adapter regression tests.
 - `get_etf_list()` is blocked in backtest source. Dual ETF strategies use the customer-confirmed static whitelist; QuantStudio-only ETF strategies use `get_etf_list_local()` through the provider/data-adapter chain.
 - `get_etf_list_local()` returns metadata/PIT/code-format results only; MA, momentum, liquidity, abnormal-volume and ranking rules remain in strategy source.
 - For customer-requested QuantStudio-only event strategies, external CSV/event data is ingested by the generic `strategy_events` adapter and queried with local extension `get_strategy_events`; set targets to `quantstudio` only and never claim PTrade portability.

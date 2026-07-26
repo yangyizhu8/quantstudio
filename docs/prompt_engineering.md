@@ -70,9 +70,10 @@ QuantStudio 本地注入 API / 指标 / 全局对象（g、log、pd、np、MyTT�
   growth_ability 等可用；balance/income/cashflow 三张报表【返回空 DataFrame】。
 - query(valuation.market_cap).filter(...).order_by(...).limit(n) 后 get_fundamentals(q)
 - get_current_data()→{code:BarData}；data[code].price / current_price(code) 取当日价
-- PTrade 兼容：get_index_stocks(idx)、get_Ashares()、get_etf_list()、get_cb_list()
+- PTrade Profile 1.7.0 已登记股票核心：`set_benchmark`、`run_daily`、`get_Ashares`、`get_index_stocks`、`get_stock_status`、`get_positions`、`get_position`、`get_trade_days`、`get_fundamentals`。未登记顶层 API 在双端模式默认 BLOCK。
 - QuantStudio 本地扩展：get_etf_list_local(query_date=None, etf_type="equity", active_only=True)、get_history_batch(...)；仅当生成目标不包含 PTrade 时允许
 - check_limit(code)→{code:1涨/-1跌/0平}；filter_stock_by_status(stocks,filter_type=[...])
+- get_stock_status(stocks, query_type='ST'|'HALT'|'DELISTING', query_date='YYYYmmdd')；`DELISTING_SORTING` 只用于 filter_stock_by_status
 - get_positions()、get_position(code)、context.portfolio.positions/positions_value/portfolio_value/cash
 - load_research_signals(csv_path, fallback=None)：注入 API，由框架侧读取外部研报/信号 CSV（仅保留买入/增持），返回 (rows, source)；需要外部文件数据（如研报/信号表）时用它，**禁止策略内自行 open()/read_csv()**。
 
@@ -217,10 +218,10 @@ def handle_data(context, data):
 
 > 完整签名见 [`docs/strategy_toolbox.md`](strategy_toolbox.md)。此处给智能体速查。
 
-1. **设置类**：PTrade 公共子集按签名档案使用；已确认的本地扩展 `set_backtest`/`is_trade` 仅限 QuantStudio-only
+1. **设置类**：PTrade 公共子集按签名档案使用；`set_benchmark`/`run_daily` 已进入 Profile 1.7.0；本地扩展 `set_backtest`/`is_trade` 仅限 QuantStudio-only
 2. **行情/历史**：`get_history`, `get_price`, `get_current_data`, `current_price`, `history`(别名)
 3. **财务/估值 ORM**：`get_fundamentals`, `query`, `valuation`, `balance_statement`, `income_statement`, `cashflow_statement`, `eps`, `profit_ability`, `growth_ability`, `operating_ability`, `debt_paying_ability`
-4. **股票状态/涨跌停**：`get_stock_status`, `check_limit`, `is_suspended`, `is_st`, `filter_stock_by_status`
+4. **股票状态/涨跌停**：`get_stock_status` 可移植值仅 `ST/HALT/DELISTING`；`filter_stock_by_status` 可使用 `DELISTING_SORTING`；`check_limit`/`is_suspended`/`is_st` 须按目标 Profile 分类
 5. **指数/ETF/转债/REITs**：`get_index_stocks`, `get_Ashares`, `get_etf_list`（PTrade 回测禁止）, `get_etf_list_local`（仅 QuantStudio 本地单端）, `get_etf_info`, `get_cb_list`, `get_reits_list`
 6. **交易日历**：`get_trade_days`, `get_trading_day`, `get_all_trade_days`, `get_kline_count`
 7. **交易函数（即时）**：`order`, `order_value`, `order_target`, `order_target_value`
@@ -231,6 +232,8 @@ def handle_data(context, data):
 12. **A股规则**（全局 `shared_ashare_rules`）：`get_price_limit_pct` 等
 
 **运行时对象**：两端均依赖 `g`、`log`、生命周期 `context/data` 与公共 API；QuantStudio 本地额外注入 `pd/np/MyTT/shared_ashare_rules`。双端/PTrade 源码不得依赖该本地注入，使用 NumPy/pandas 时必须显式 import。
+
+**双端签名门控**：R1 若发现计划 API 未登记在 `ptrade-api-signatures.json`，必须标记 `MISSING_REUSABLE_API` 并停止；不得写成 `APPROXIMATION_REQUIRES_CONFIRMATION`。R4 对未登记的 required API 和源码顶层调用均 fail-closed BLOCK。
 
 ---
 

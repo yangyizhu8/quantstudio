@@ -1,6 +1,6 @@
 # PTrade Profile 契约
 
-> Derived from docs/strategy-compiler/ptrade-profile-contract.md @ 2026-07-22
+> Derived from docs/strategy-compiler/ptrade-profile-contract.md @ 2026-07-26
 > 权威源：docs/strategy-compiler/ 下的原始契约文档
 > 本文件为 Skill 派生快照，契约变更时必须同步（见 SKILL.md 同步纪律）
 
@@ -41,3 +41,10 @@ PTrade Renderer 输出必须通过：语法、生命周期、API 白名单、禁
 - `run_daily` performs one rebalance; `handle_data` is empty for daily-factor strategies.
 - Open/next-open approximations schedule 09:31 and require broker minute-period backtesting.
 - Shanghai output uses `.SS`; history and position matching use bare codes.
+
+## 2026-07-26 PTrade Profile 1.7.0 stock-core signature closure
+
+- Registered exact signatures and return-shape notes for `set_benchmark`, `run_daily`, `get_Ashares`, `get_index_stocks`, `get_stock_status`, `get_positions`, `get_position`, `get_trade_days`, and `get_fundamentals`.
+- Dual/PTrade validation is fail-closed: every `components.required_apis` entry and every external top-level source call must be profiled. Missing entries are `MISSING_REUSABLE_API` at R1 and `BLOCK` at R4; they cannot be waived as execution approximations.
+- Portable `get_stock_status` accepts `ST`, `HALT`, or `DELISTING`. `DELISTING_SORTING` is a `filter_stock_by_status` filter type and a local backward-compatible alias only.
+- Static Profile PASS proves conformance to the registered default subset, not successful execution on every broker/IQEngine deployment.

@@ -62,8 +62,16 @@ Generated PTrade code must pass:
 - The verified portable logger methods are `log.debug`, `log.info`, `log.warning`, `log.error`, and `log.critical`. `log.warn` is blocked because real IQEngine `LogEngine` does not expose that alias.
 - Runtime evidence was supplied on 2026-07-25 with a platform timestamp of 2026-07-26; the future timestamp is retained as evidence metadata but does not change the contract diagnosis.
 
-## Profile correction 1.6.0 ? explicit calculation-module imports
+## Profile correction 1.6.0 — explicit calculation-module imports
 
 - Real IQEngine runtime evidence supplied on 2026-07-25 contains 79 `NameError: name 'np' is not defined` warnings. QuantStudio injects `np`/`pd`; PTrade does not.
 - Dual/PTrade source that uses NumPy or pandas must explicitly include `import numpy as np` and/or `import pandas as pd`. Ordinary calculation-library imports are allowed; database drivers, QuantStudio internals, and direct file I/O remain forbidden.
 - PTrade validation blocks every used `np`, `pd`, `numpy`, or `pandas` name that is not bound to the verified module import. This prevents fail-soft code from silently converting a runtime dependency failure into an empty portfolio.
+
+## Profile correction 1.7.0 — registered stock-core APIs and fail-closed validation
+
+- Registered exact public profile entries for `set_benchmark`, `run_daily`, `get_Ashares`, `get_index_stocks`, `get_stock_status`, `get_positions`, `get_position`, `get_trade_days`, and `get_fundamentals`.
+- Dual/PTrade design validation now BLOCKS every `components.required_apis` item missing from the signature profile. Source validation also BLOCKS unprofiled external top-level calls while allowing Python builtins, imports, local helpers, and profiled APIs.
+- `get_stock_status` portable values are `ST`, `HALT`, and `DELISTING`. `DELISTING_SORTING` remains a `filter_stock_by_status` filter type and local backward-compatible alias only.
+- QuantStudio's `get_stock_status` adapter now implements public `query_type='DELISTING'` with the same `is_delisting_risk` result as the legacy local alias.
+- Static profile PASS remains portability evidence only; real broker/IQEngine runtime evidence is still required before claiming deployment acceptance.

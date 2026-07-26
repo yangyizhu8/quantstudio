@@ -1,6 +1,6 @@
 # Known Limitations
 
-> New file aggregated from PR3/PR4 reports + implementation-status.md @ 2026-07-22
+> Updated from project implementation and runtime evidence @ 2026-07-26
 > 权威源：docs/strategy-compiler/pr{3,4}-implementation-report.md + implementation-status.md
 > 本文件为 Skill 派生快照，每个 PR 完成时必须同步更新本清单
 
@@ -15,20 +15,28 @@ These are documented, accepted limitations of the current compiler/runtime. They
 - **e2e stops at static validation**. `run_smoke_backtest` (actual backtest execution) is PR6b. PR6a case 1 verifies: spec→IR→render→compile→Guard→scan_lookahead→validate_local all PASS, but does NOT run a backtest.
 - **33 tests**: 20 e2e (强一致性 + IR 承重 + 变体 + 差异层 + 黄金保护 + validator 正向) + 13 negative (10 lookahead high-risk + 3 local-strategy).
 
-## PR6b — remaining PR6 scope (NOT_STARTED)
+## Agent-first validation/publish status — current 2026-07-26
 
-- 5 validators: `validate_ptrade_portability` / `check_hard_filters` / `compare_strategy_variants` (14-dimension consistency) / `run_smoke_backtest` (actual execution) / `validate_strategy_spec` IR-level upgrade.
-- `install_skill.py` (copy project skill → user skill dir, chain quick_validate).
-- 2 templates: `strategy_spec.json` / `run_card.json` skeletons.
-- 9 golden cases (case 2-10 from master plan §7.37).
-- `build_strategy_ir` operation expansion: `pct_change`/`ema`/`std`/`zscore`/`rank`/`top_n`/`threshold`/`compare` + Factor/Ranking full impl + RiskNode stop_loss/take_profit.
-- Multi-stock universe rendering (index_constituents/list): PR6a templates only fully render single_stock.
-- 1m→5m aggregation lookahead check (#10): blocked on PR3.5 IndicatorNode frequency field.
+Delivered:
+
+- target-aware `validate_agent_strategy.py` with separate QuantStudio/PTrade profiles;
+- `validate_dual_consistency.py` post-generation physical-file comparison;
+- agent-managed and hash-bound User-PyQt R5 evidence flows;
+- gated `publish_agent_strategy.py` dual-target publication;
+- `install_skill.py` plus `quick_validate.py` installation validation;
+- PTrade stock-core signature profile 1.7.0 and fail-closed blocking for unprofiled injected APIs.
+
+Remaining limitations:
+
+- there is no automated real-broker/IQEngine smoke runner; local execution and static PTrade validation are not runtime platform proof;
+- broker/version-specific API differences still require runtime evidence and an explicit profile correction;
+- the legacy Spec→IR/Jinja pipeline retains its PR6a operation and multi-stock rendering limits and is not the default path for new agent-authored strategies;
+- 1m→5m aggregation lookahead validation remains deferred with the aggregation engine capability.
 
 ## PR5 (Skill skeleton) — completed
 
 - **No code rendering in PR5** (PR6a now delivers it).
-- **No install_skill.py** (PR6b).
+- **`install_skill.py` is delivered** and validates the installed copy with `quick_validate.py`.
 - **inspect_capabilities.py covers the core subset** of the 14 data-gate checks (§8).
 
 ## PR3.5 — 1m aggregation deferred
@@ -50,10 +58,16 @@ These are documented, accepted limitations of the current compiler/runtime. They
 
 ## Data source caveats (post-xtquant switch)
 
-- **stock_daily / etf_daily still hold tushare data**; xtquant daily cutover (runbook) is user manual ops, not yet executed. Testing continues on tushare until cutover.
-- **stock_minutes / etf_minutes**: real xtquant data ingested (18.78M / 46.94M rows). PR4 real-minute smoke PASS.
+- **stock_daily / etf_daily** now hold xtquant data after the daily cutover (8,936,972 / 1,318,108 rows on 2026-07-26).
+- **stock_minutes / etf_minutes** hold xtquant data (22,535,730 / 47,713,321 rows on 2026-07-26).
 - **xtquant back adjustment**: per-tick cumulative algorithm — same bar OHLC factors differ by 2-4% (algorithm feature, not bug). quality_audit uses 5% threshold for xtquant back, 2% for others.
 - **etf_daily UnitCheck 5 rows / stock_dividend FutureTimestamp 1 row**: legacy data artifacts, documented in quality report, not blocking.
+
+## PTrade profile scope
+
+- Profile 1.7.0 verifies the registered public subset only. Any external top-level API absent from `ptrade-api-signatures.json` is deliberately BLOCKED rather than treated as an approximation.
+- `get_stock_status` portable source uses `ST`, `HALT`, or `DELISTING`. `DELISTING_SORTING` is retained only as a local backward-compatible alias and as a `filter_stock_by_status` filter type.
+- Static PASS proves signature/profile conformance, not successful execution on every broker IQEngine deployment.
 
 ## Sync reminder
 
