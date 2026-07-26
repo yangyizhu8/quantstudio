@@ -1077,7 +1077,8 @@ class PtradeAPI:
 
         # ---- 当日查询缓存（同一天内相同参数只查一次）----
         cache_key = ("hist", tuple(sorted([str(s) for s in sec_list])),
-                     int(count), str(unit), str(fields), str(fq), bool(is_dict))
+                     int(count), str(unit), str(fields), str(fq),
+                     bool(is_dict), bool(include))
         if hasattr(self, '_query_cache') and cache_key in self._query_cache:
             return self._query_cache[cache_key]
 
