@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from agent_skill_common import (
-    call_name, confirmation_errors, constant_value, function_map,
-    is_placeholder_function, load_catalog, load_json, skill_root,
-    validate_design, write_json,
+    call_name, confirmation_errors, confirmation_evidence_errors, constant_value,
+    execution_funding_errors, function_map, is_placeholder_function, load_catalog,
+    load_json, portfolio_contract_errors, skill_root, validate_design, write_json,
 )
 
 
@@ -238,6 +238,447 @@ def _load_ptrade_profile() -> dict[str, Any]:
     return load_json(skill_root() / "references" / "ptrade-api-signatures.json")
 
 
+# --- PTrade get_history(is_dict=True) return-shape safety (profile 1.8.0) ---
+#
+# The real platform may return a mapping whose per-security item is a pandas
+# DataFrame, a NumPy structured array or a recarray, and item[field] may be a
+# Series or an ndarray. Generated code must therefore normalize extracted
+# fields with np.asarray (optionally behind a hasattr(values, 'values') guard)
+# instead of assuming pandas-only attributes exist.
+
+HISTORY_ITEM_NUMERIC_FUNCS = {
+    "mean", "std", "sum", "min", "max", "median", "percentile", "var",
+    "average", "polyfit", "corrcoef", "diff", "argmax", "argmin", "cumsum",
+    "nanmean", "nanstd", "nansum", "nanmedian",
+}
+
+
+def _is_dict_history_call(node: ast.AST) -> bool:
+    return bool(
+        isinstance(node, ast.Call)
+        and call_name(node) == "get_history"
+        and constant_value(_keyword(node, "is_dict")) is True
+    )
+
+
+def _is_history_mapping(node: ast.AST, mapping_names: set[str]) -> bool:
+    if isinstance(node, ast.Name):
+        return node.id in mapping_names
+    return _is_dict_history_call(node)
+
+
+def _history_shape_symbols(tree: ast.AST) -> tuple[set[str], set[str]]:
+    """Track names bound to is_dict=True history mapping items and fields."""
+    mappings: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and _is_dict_history_call(node.value):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    mappings.add(target.id)
+
+    items: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.For):
+            iter_call = node.iter
+            if isinstance(iter_call, ast.Call) and isinstance(iter_call.func, ast.Attribute) \
+                    and iter_call.func.attr in {"items", "values"} \
+                    and _is_history_mapping(iter_call.func.value, mappings):
+                if iter_call.func.attr == "items" and isinstance(node.target, ast.Tuple) \
+                        and len(node.target.elts) == 2 \
+                        and isinstance(node.target.elts[1], ast.Name):
+                    items.add(node.target.elts[1].id)
+                elif iter_call.func.attr == "values" and isinstance(node.target, ast.Name):
+                    items.add(node.target.id)
+        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Subscript) \
+                and _is_history_mapping(node.value.value, mappings):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    items.add(target.id)
+
+    fields: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Subscript) \
+                and isinstance(node.value.value, ast.Name) \
+                and node.value.value.id in items:
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    fields.add(target.id)
+    return items, fields
+
+
+def _root_name(node: ast.AST) -> str | None:
+    current = node
+    while isinstance(current, (ast.Subscript, ast.Attribute)):
+        current = current.value
+    return current.id if isinstance(current, ast.Name) else None
+
+
+def _hasattr_guarded(node: ast.AST, parents: dict[ast.AST, ast.AST],
+                     items: set[str], fields: set[str]) -> bool:
+    """True when an enclosing ``if hasattr(<root>, ...)`` guards the access."""
+    tracked = items | fields
+    current = node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, ast.If):
+            for part in ast.walk(current.test):
+                if isinstance(part, ast.Call) and call_name(part) == "hasattr" \
+                        and part.args and _root_name(part.args[0]) in tracked:
+                    return True
+    return False
+
+
+def _history_base_kind(node: ast.AST, items: set[str], fields: set[str]) -> str | None:
+    if isinstance(node, ast.Name):
+        if node.id in items:
+            return "item"
+        if node.id in fields:
+            return "field"
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) \
+            and node.value.id in items:
+        return "field"  # item[field]
+    return None
+
+
+def _validate_history_shape_safety(
+    tree: ast.AST,
+    parents: dict[ast.AST, ast.AST],
+    issues: list[dict[str, Any]],
+) -> None:
+    items, fields = _history_shape_symbols(tree)
+    if not items:
+        return
+
+    normalized: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func_name = node.func.attr if isinstance(node.func, ast.Attribute) else (
+                node.func.id if isinstance(node.func, ast.Name) else "")
+            if func_name in {"asarray", "array"}:
+                for arg in node.args:
+                    if isinstance(arg, ast.Name) and arg.id in fields:
+                        normalized.add(arg.id)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            base = node.value
+            kind = _history_base_kind(base, items, fields)
+            if kind is None:
+                continue
+            rendered = ast.unparse(node) if hasattr(ast, "unparse") else node.attr
+            if node.attr == "values":
+                if not _hasattr_guarded(node, parents, items, fields):
+                    issues.append(_issue(
+                        "PTRADE-HISTORY-SHAPE-UNSAFE", "BLOCK",
+                        f"{rendered} assumes a pandas object from "
+                        "get_history(..., is_dict=True); the platform may return a NumPy "
+                        "structured/recarray item. Normalize with "
+                        "np.asarray(item[field], dtype=float) or a hasattr(values, 'values') "
+                        "guarded helper instead.", node.lineno))
+            elif node.attr in {"iloc", "loc", "empty", "columns", "index"}:
+                if not _hasattr_guarded(node, parents, items, fields):
+                    issues.append(_issue(
+                        "PTRADE-HISTORY-PANDAS-ONLY", "BLOCK",
+                        f"{rendered} is a pandas-only attribute on a "
+                        "get_history(..., is_dict=True) item/field; structured arrays and "
+                        "recarrays do not expose it.", node.lineno))
+            elif node.attr == "to_numpy":
+                parent = parents.get(node)
+                if isinstance(parent, ast.Call) and parent.func is node \
+                        and not _hasattr_guarded(node, parents, items, fields):
+                    issues.append(_issue(
+                        "PTRADE-HISTORY-PANDAS-ONLY", "BLOCK",
+                        f"{rendered}() is a pandas-only method on a "
+                        "get_history(..., is_dict=True) item/field; use np.asarray(...).",
+                        node.lineno))
+
+    # Numerical use of an extracted field without np.asarray normalization.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) \
+                and node.value.id in items and isinstance(node.slice, ast.Constant):
+            parent = parents.get(node)
+            if isinstance(parent, ast.Call):
+                func_name = parent.func.attr if isinstance(parent.func, ast.Attribute) else (
+                    parent.func.id if isinstance(parent.func, ast.Name) else "")
+                if func_name in HISTORY_ITEM_NUMERIC_FUNCS:
+                    issues.append(_issue(
+                        "PTRADE-HISTORY-NORMALIZATION-MISSING", "BLOCK",
+                        "history field is consumed numerically without np.asarray "
+                        "normalization; wrap it as np.asarray(item[field], dtype=float).",
+                        node.lineno))
+            elif isinstance(parent, (ast.BinOp, ast.Compare)):
+                issues.append(_issue(
+                    "PTRADE-HISTORY-NORMALIZATION-MISSING", "BLOCK",
+                    "history field is used in arithmetic/comparison without np.asarray "
+                    "normalization; wrap it as np.asarray(item[field], dtype=float).",
+                    node.lineno))
+        elif isinstance(node, ast.Name) and node.id in fields \
+                and isinstance(node.ctx, ast.Load) and node.id not in normalized:
+            parent = parents.get(node)
+            if isinstance(parent, ast.Call):
+                func_name = parent.func.attr if isinstance(parent.func, ast.Attribute) else (
+                    parent.func.id if isinstance(parent.func, ast.Name) else "")
+                if func_name in HISTORY_ITEM_NUMERIC_FUNCS:
+                    issues.append(_issue(
+                        "PTRADE-HISTORY-NORMALIZATION-MISSING", "BLOCK",
+                        f"history field {node.id!r} is consumed numerically without "
+                        "np.asarray normalization.", node.lineno))
+            elif isinstance(parent, (ast.BinOp, ast.Compare)):
+                issues.append(_issue(
+                    "PTRADE-HISTORY-NORMALIZATION-MISSING", "BLOCK",
+                    f"history field {node.id!r} is used in arithmetic/comparison without "
+                    "np.asarray normalization.", node.lineno))
+
+
+# --- Standard history-field helper contract (design 2.2, dual targets) ---
+
+STANDARD_HISTORY_HELPER = "_extract_history_field"
+
+
+def _validate_history_helper_required(
+    design: dict[str, Any],
+    tree: ast.AST,
+    functions: dict[str, Any],
+    parents: dict[ast.AST, ast.AST],
+    issues: list[dict[str, Any]],
+) -> None:
+    """Design 2.2 dual strategies using get_history(is_dict=True) must route
+    every field extraction through the standard _extract_history_field helper.
+
+    This keeps the static validator and the agent-first runtime-shape fixture
+    on one identical contract: the fixture executes exactly the helper the
+    strategy actually uses.
+    """
+    if design.get("design_version") != "2.2":
+        return
+    items, _fields = _history_shape_symbols(tree)
+    if not items:
+        return
+    helper = functions.get(STANDARD_HISTORY_HELPER)
+    if helper is None or is_placeholder_function(helper):
+        issues.append(_issue(
+            "PTRADE-HISTORY-HELPER-REQUIRED", "BLOCK",
+            f"design 2.2 dual strategies using get_history(is_dict=True) must define "
+            f"the standard {STANDARD_HISTORY_HELPER}(history_item, field, dtype=float) "
+            "helper so the runtime-shape fixture can execute the real extraction code."))
+        return
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) \
+                and node.value.id in items:
+            owner = _owner_function(node, parents)
+            if owner != STANDARD_HISTORY_HELPER:
+                issues.append(_issue(
+                    "PTRADE-HISTORY-HELPER-REQUIRED", "BLOCK",
+                    f"history item field extraction happens outside "
+                    f"{STANDARD_HISTORY_HELPER}; call "
+                    f"{STANDARD_HISTORY_HELPER}(df, 'field', float) instead of direct "
+                    "item[field] extraction.", node.lineno))
+
+
+# --- Machine-checkable portfolio/capital contract (design 2.2) ---
+
+RUNTIME_PORTFOLIO_VALUE_ATTRS = {"total_value", "portfolio_value", "total_asset"}
+
+
+def _validate_portfolio_contract_code(
+    design: dict[str, Any],
+    tree: ast.AST,
+    functions: dict[str, Any],
+    issues: list[dict[str, Any]],
+) -> None:
+    contract = design.get("portfolio_contract")
+    if not isinstance(contract, dict):
+        return
+    sizing_mode = contract.get("sizing_mode")
+
+    for node in ast.walk(tree):
+        for field, assignment in _g_assignment_fields(node):
+            value = getattr(assignment, "value", None)
+            if not isinstance(value, ast.Constant) or not isinstance(value.value, (int, float)) \
+                    or isinstance(value.value, bool):
+                continue
+            if sizing_mode == "runtime_total_value" and field in {"capital", "per_target"}:
+                issues.append(_issue(
+                    "PORTFOLIO-HARDCODED-CAPITAL", "BLOCK",
+                    f"sizing_mode=runtime_total_value forbids hardcoded g.{field} = "
+                    f"{value.value!r}; derive position targets from the runtime portfolio "
+                    "total value.", getattr(assignment, "lineno", None)))
+            elif sizing_mode == "fixed_notional" and field == "capital":
+                required_cash = contract.get("required_initial_cash")
+                if isinstance(required_cash, (int, float)) and value.value != required_cash:
+                    issues.append(_issue(
+                        "PORTFOLIO-FIXED-NOTIONAL-MISMATCH", "BLOCK",
+                        f"g.capital = {value.value!r} contradicts "
+                        f"portfolio_contract.required_initial_cash = {required_cash!r}.",
+                        getattr(assignment, "lineno", None)))
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or call_name(node) != "order_target_value":
+            continue
+        value_node = _keyword(node, "value")
+        if value_node is None and len(node.args) >= 2:
+            value_node = node.args[1]
+        number = constant_value(value_node) if value_node is not None else None
+        if not isinstance(number, (int, float)) or isinstance(number, bool):
+            continue
+        if number <= 0:
+            continue  # order_target_value(code, 0) is a liquidation, always allowed
+        if sizing_mode == "runtime_total_value":
+            issues.append(_issue(
+                "PORTFOLIO-HARDCODED-CAPITAL", "BLOCK",
+                f"sizing_mode=runtime_total_value forbids a hardcoded positive "
+                f"order_target_value amount ({number!r}); size buys from the runtime "
+                "portfolio total value.", node.lineno))
+        elif sizing_mode == "fixed_notional":
+            fixed_target = contract.get("fixed_target_value")
+            if isinstance(fixed_target, (int, float)) and number != fixed_target:
+                issues.append(_issue(
+                    "PORTFOLIO-FIXED-NOTIONAL-MISMATCH", "BLOCK",
+                    f"order_target_value amount {number!r} contradicts "
+                    f"portfolio_contract.fixed_target_value = {fixed_target!r}.",
+                    node.lineno))
+
+    if sizing_mode == "runtime_total_value":
+        has_helper = "_portfolio_total_value" in functions
+        has_runtime_field = any(
+            isinstance(node, ast.Attribute) and node.attr in RUNTIME_PORTFOLIO_VALUE_ATTRS
+            for node in ast.walk(tree)
+        )
+        if not has_helper and not has_runtime_field:
+            issues.append(_issue(
+                "PORTFOLIO-RUNTIME-VALUE-MISSING", "BLOCK",
+                "sizing_mode=runtime_total_value requires a _portfolio_total_value(context) "
+                "helper or equivalent reads of runtime portfolio fields "
+                f"{sorted(RUNTIME_PORTFOLIO_VALUE_ATTRS)} (cash + positions market value)."))
+
+
+# --- Standardized R5 rebalance/portfolio audit logs (design 2.2) ---
+
+LOG_METHODS = {"debug", "info", "warning", "error", "critical"}
+LIFECYCLE_CALLBACKS = {"initialize", "before_trading_start", "handle_data", "after_trading_end"}
+
+
+def _static_text(node: ast.AST) -> str:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(
+            value.value for value in node.values
+            if isinstance(value, ast.Constant) and isinstance(value.value, str))
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+        return _static_text(node.left)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+            and node.func.attr == "format":
+        return _static_text(node.func.value)
+    return ""
+
+
+def _log_call_texts(tree: ast.AST, parents: dict[ast.AST, ast.AST]) -> list[tuple[str, str | None, int]]:
+    texts: list[tuple[str, str | None, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == "log" \
+                and node.func.attr in LOG_METHODS and node.args:
+            text = _static_text(node.args[0])
+            if text:
+                texts.append((text, _owner_function(node, parents), node.lineno))
+    return texts
+
+
+def _reachable_callbacks(tree: ast.AST, functions: dict[str, Any],
+                         parents: dict[ast.AST, ast.AST]) -> set[str]:
+    roots = set(functions) & LIFECYCLE_CALLBACKS
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and call_name(node) == "run_daily":
+            callback, _schedule = _literal_schedule(node)
+            if callback:
+                roots.add(callback)
+    local_graph: dict[str, set[str]] = {name: set() for name in functions}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            owner = _owner_function(node, parents)
+            name = call_name(node)
+            if owner in local_graph and name in local_graph:
+                local_graph[owner].add(name)
+    reachable: set[str] = set()
+    stack = list(roots)
+    while stack:
+        current = stack.pop()
+        if current in reachable:
+            continue
+        reachable.add(current)
+        stack.extend(local_graph.get(current, ()))
+    return reachable
+
+
+def _validate_r5_audit_logs(
+    design: dict[str, Any],
+    tree: ast.AST,
+    functions: dict[str, Any],
+    parents: dict[ast.AST, ast.AST],
+    issues: list[dict[str, Any]],
+) -> None:
+    """AST-level audit-log verification: the QS_*_AUDIT markers must appear in
+    real log.* calls carrying the required keys, emitted from a callback that
+    is actually reachable from the strategy lifecycle. Comments, docstrings
+    and dead helpers cannot satisfy this gate.
+    """
+    if not isinstance(design.get("r5_deployment_invariants"), dict):
+        return
+    texts = _log_call_texts(tree, parents)
+    reachable = _reachable_callbacks(tree, functions, parents)
+    rebalance_logs = [entry for entry in texts if "QS_REBALANCE_AUDIT" in entry[0]]
+    portfolio_logs = [entry for entry in texts if "QS_PORTFOLIO_AUDIT" in entry[0]]
+    if not rebalance_logs and not portfolio_logs:
+        issues.append(_issue(
+            "R5-AUDIT-LOG-MISSING", "BLOCK",
+            "designs with r5_deployment_invariants must emit machine-parseable "
+            "QS_REBALANCE_AUDIT and QS_PORTFOLIO_AUDIT log lines so R5 can verify "
+            "selected/submitted/actual deployment."))
+        return
+    if rebalance_logs:
+        for text, owner, line in rebalance_logs:
+            missing = [key for key in ("rebalance_id", "date", "selected", "buy_submitted")
+                       if f"{key}=" not in text]
+            if missing:
+                issues.append(_issue(
+                    "R5-REBALANCE-AUDIT-INCOMPLETE", "BLOCK",
+                    f"QS_REBALANCE_AUDIT log call must record keys {missing} "
+                    "(fixed key=value format; rebalance_id uniquely binds this "
+                    "rebalance to its QS_PORTFOLIO_AUDIT).", line))
+            if owner not in reachable:
+                issues.append(_issue(
+                    "R5-REBALANCE-AUDIT-INCOMPLETE", "BLOCK",
+                    f"QS_REBALANCE_AUDIT is emitted from {owner or '<module>'}, which is "
+                    "not reachable from any lifecycle/scheduled callback; the audit "
+                    "must fire from the rebalance execution path.", line))
+    else:
+        issues.append(_issue(
+            "R5-REBALANCE-AUDIT-INCOMPLETE", "BLOCK",
+            "QS_REBALANCE_AUDIT log line is missing; each rebalance must record "
+            "date/selected/tradable/sell_submitted/buy_submitted."))
+    if portfolio_logs:
+        for text, owner, line in portfolio_logs:
+            missing = [key for key in ("rebalance_id", "date", "positions") if f"{key}=" not in text]
+            if missing:
+                issues.append(_issue(
+                    "R5-PORTFOLIO-AUDIT-INCOMPLETE", "BLOCK",
+                    f"QS_PORTFOLIO_AUDIT log call must record keys {missing} "
+                    "(fixed key=value format; rebalance_id must equal the "
+                    "corresponding QS_REBALANCE_AUDIT id).", line))
+            if owner not in reachable:
+                issues.append(_issue(
+                    "R5-PORTFOLIO-AUDIT-INCOMPLETE", "BLOCK",
+                    f"QS_PORTFOLIO_AUDIT is emitted from {owner or '<module>'}, which is "
+                    "not reachable from any lifecycle/scheduled callback; record actual "
+                    "positions from after_trading_end or the next trading day.", line))
+    else:
+        issues.append(_issue(
+            "R5-PORTFOLIO-AUDIT-INCOMPLETE", "BLOCK",
+            "QS_PORTFOLIO_AUDIT log line is missing; after_trading_end (or the next "
+            "trading day) must record actual positions/cash_ratio/gross_exposure."))
+
+
 def _validate_ptrade_logger_call(
     call: ast.Call,
     profile: dict[str, Any],
@@ -334,6 +775,12 @@ def validate_strategy(
         issues.append(_issue("DESIGN-SCHEMA", "BLOCK", message))
     for message in confirmation_errors(design):
         issues.append(_issue("DESIGN-CONFIRMATION", "BLOCK", message))
+    for item in confirmation_evidence_errors(design):
+        issues.append(_issue(item["rule_id"], "BLOCK", item["message"]))
+    for item in portfolio_contract_errors(design):
+        issues.append(_issue(item["rule_id"], "BLOCK", item["message"]))
+    for item in execution_funding_errors(design):
+        issues.append(_issue(item["rule_id"], "BLOCK", item["message"]))
     if target_profile not in {"canonical", "quantstudio", "ptrade"}:
         issues.append(_issue("TARGET-PROFILE", "BLOCK", f"unknown target profile {target_profile!r}"))
 
@@ -354,6 +801,9 @@ def validate_strategy(
             "source": source_name,
             "target_profile": target_profile,
             "status": "NOT_APPLICABLE",
+            "profile_validation_status": "NOT_APPLICABLE",
+            "runtime_validation_status": "NOT_APPLICABLE",
+            "deployment_status": "NOT_APPLICABLE",
             "block_count": 0,
             "warning_count": 0,
             "reason": "design targets exclude ptrade",
@@ -626,6 +1076,12 @@ def validate_strategy(
         issues.append(_issue("AGENT-IMPLEMENTATION-MISSING", "BLOCK", "strategy source still contains scaffold implementation markers"))
     if "strategy_pattern" in source:
         issues.append(_issue("NO-STRATEGY-PATTERN", "BLOCK", "strategy source must not depend on strategy_pattern dispatch"))
+
+    if strict_ptrade:
+        _validate_history_shape_safety(tree, parents, issues)
+        _validate_history_helper_required(design, tree, functions, parents, issues)
+    _validate_portfolio_contract_code(design, tree, functions, issues)
+    _validate_r5_audit_logs(design, tree, functions, parents, issues)
     return _report(design, source_name, target_profile, issues)
 
 
@@ -633,12 +1089,19 @@ def _report(design: dict[str, Any], source_name: str, target_profile: str,
             issues: list[dict[str, Any]]) -> dict[str, Any]:
     blocks = [item for item in issues if item["severity"] == "BLOCK"]
     warnings = [item for item in issues if item["severity"] == "WARN"]
+    status = "BLOCKED" if blocks else "PASS"
     return {
-        "report_version": "2.0",
+        "report_version": "2.1",
         "strategy_id": design.get("strategy_id"),
         "source": source_name,
         "target_profile": target_profile,
-        "status": "BLOCKED" if blocks else "PASS",
+        "status": status,
+        # Static profile validation terminology (Skill 0.6.0): a static PASS is
+        # portability evidence only; it never means broker-runtime verified or
+        # deployable.
+        "profile_validation_status": status,
+        "runtime_validation_status": "NOT_VERIFIED",
+        "deployment_status": "NOT_DEPLOYABLE",
         "block_count": len(blocks),
         "warning_count": len(warnings),
         "issues": issues,

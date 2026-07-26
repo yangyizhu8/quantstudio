@@ -21,7 +21,8 @@
 
 Generated PTrade code must pass:
 - AST syntax and public-API portability checks;
-- a structured-array history fixture;
+- the agent-first source runtime-shape fixture (`scripts/validate_runtime_shapes.py`) for any history-field extraction helper — the legacy renderer structured-array fixture below applies to legacy Jinja output only;
+- a structured-array history fixture (legacy renderer path);
 - an empty/unsupported BSE-symbol fixture;
 - a BarDict fixture that raises on any direct access for daily ranking strategies;
 - a scheduler assertion for the declared rebalance time;
@@ -75,6 +76,21 @@ Generated PTrade code must pass:
 - `get_stock_status` portable values are `ST`, `HALT`, and `DELISTING`. `DELISTING_SORTING` remains a `filter_stock_by_status` filter type and local backward-compatible alias only.
 - QuantStudio's `get_stock_status` adapter now implements public `query_type='DELISTING'` with the same `is_delisting_risk` result as the legacy local alias.
 - Static profile PASS remains portability evidence only; real broker/IQEngine runtime evidence is still required before claiming deployment acceptance.
+
+## Profile correction 1.8.0 — get_history return-shape contract and agent-first runtime fixture
+
+- `get_history(..., is_dict=True)` now carries an explicit return contract: the mapping item may be `pandas.DataFrame`, `numpy.structured_array` or `numpy.recarray`; `item[field]` may be `pandas.Series` or `numpy.ndarray`.
+- Generated code must normalize extracted fields with `np.asarray(item[field], dtype=float)` or a `hasattr(values, 'values')` guarded helper (`_extract_history_field`) before numerical use. Unguarded `.values`/`.iloc`/`.loc`/`.to_numpy()`/`.columns`/`.index`/`.empty` on history items/fields are BLOCKED (`PTRADE-HISTORY-SHAPE-UNSAFE` / `PTRADE-HISTORY-PANDAS-ONLY` / `PTRADE-HISTORY-NORMALIZATION-MISSING`).
+- Two fixture layers are now distinct and must not be conflated:
+  - **legacy renderer runtime fixture** — covers old Renderer/Jinja output only;
+  - **agent-first source runtime-shape fixture** — `scripts/validate_runtime_shapes.py` extracts the strategy's own helper and runs it against DataFrame/Series/structured-array/recarray/None/empty/missing-field/NaN-inf fixtures, requiring DataFrame/recarray result equality and fail-soft empties.
+- "structured-array fixture covered" may only be claimed when the agent-first validator actually ran the new fixture.
+
+## Skill correction 0.6.0 — runtime-shape and capital gates
+
+- Design 2.2 adds machine-checkable `portfolio_contract`, `rebalance_funding_contract`, `history_coverage_contract`, `r5_deployment_invariants`, and verbatim `confirmation_evidence`. Contradictory capital math (e.g. 20 x 5% = 100% plus a 15% cash buffer) BLOCKs at design time.
+- R5 PASS is bound to hash-verified real artifacts (`config.csv`/`daily_stats.csv`/`trades.csv`/run log); self-reported `runtime_checks` booleans are no longer authoritative. A finished exception-free backtest that never deployed the designed capital BLOCKs.
+- Static PTrade PASS is reported as `PTRADE_PROFILE_PASS` with runtime `NOT_VERIFIED` / deployment `NOT_DEPLOYABLE`; a real broker runtime failure retires all old evidence via `scripts/retire_ptrade_runtime_evidence.py`.
 
 ## Skill correction 0.5.4 — pre-adjusted execution contract
 

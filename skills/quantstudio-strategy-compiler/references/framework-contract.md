@@ -54,5 +54,5 @@ QuantStudio Strategy Compiler 采用编译器流水线，而不是分别手写�
 - 日线引擎和现有 PTrade 生命周期可用。
 - 分钟 Schema/采集基础存在，但 Provider frequency 路由与分钟事件引擎未完成时，不得标记 READY。
 - Tick 仅预留 Schema/Spec 表达，不能标记 READY。
-- `next_open` 当前为 legacy 语义（`engine_semantics_version=0.1.0-legacy`），不满足真正 pending queue 语义，任何修复必须提升版本并更新 Run Card/Changelog。
+- `next_open` 当前为 legacy 语义（`engine_semantics_version=0.1.0-legacy`），不满足真正 pending queue 语义，任何修复必须提升版本并更新 Run Card/Changelog。各 match mode 下同批卖出资金能否供买入的固化结论见 `execution-funding-matrix.md`；该矩阵是验证输入，不是引擎修改许可。
 - 证券代码分类集中在 `quantstudio/backtest/libs/security_code_rules.py`（详见 `ashare-hard-filters.md`）。

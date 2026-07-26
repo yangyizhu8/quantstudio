@@ -5,7 +5,9 @@ description: Strict target-aware agent-first strategy engineering for QuantStudi
 
 # QuantStudio Agent-first Strategy Engineering
 
-Skill release: `0.5.4-pre-adjusted-execution-contract` (built on the `0.3.2-mvp` compiler/package baseline).
+Skill release: `0.6.0-runtime-shape-capital-gates` (built on the `0.3.2-mvp` compiler/package baseline).
+
+Contract versions at this release: agent design `2.2`, PTrade profile `1.8.0`, user backtest evidence `2.0`, validation report `2.1`. Design `2.1` artifacts must not be auto-migrated to PASS; regenerate the design under 2.2 and repeat the R2.5 confirmation.
 
 Treat the calling agent as the strategy author. Constrain it with project lifecycle, data, timing, PTrade public API, validation, and delivery gates. Never implement a strategy by adding its name or shape to Compiler/Renderer/Jinja branches.
 
@@ -27,6 +29,14 @@ Treat the calling agent as the strategy author. Constrain it with project lifecy
 14. PTrade does not inject QuantStudio-local `np`/`pd` aliases. Dual/PTrade source using NumPy or pandas must explicitly declare `import numpy as np` and/or `import pandas as pd`; only storage/internal imports remain forbidden. Unimported calculation aliases are BLOCKED.
 15. Dual/PTrade validation is fail-closed for injected APIs. Every external top-level call and every `components.required_apis` entry must exist in `ptrade-api-signatures.json`; an unprofiled call is `MISSING_REUSABLE_API` at R1 and `BLOCK` at validation, never an approximation that the customer can waive.
 16. The registered stock-core portable subset includes `set_benchmark`, `run_daily`, `get_Ashares`, `get_index_stocks`, `get_stock_status`, `get_positions`, `get_position`, `get_trade_days`, and `get_fundamentals`. `get_stock_status` uses `query_type='ST'|'HALT'|'DELISTING'`; `DELISTING_SORTING` belongs only to `filter_stock_by_status`.
+17. `get_history(..., is_dict=True)` returns a mapping whose per-security item may be a pandas DataFrame, a NumPy structured array, or a recarray; `item[field]` may be a Series or an ndarray. Generated code must normalize extracted fields with `np.asarray(item[field], dtype=float)` (or a `hasattr(values, 'values')` guarded helper such as `_extract_history_field`) before any numerical use. Unguarded `.values`, `.iloc`, `.loc`, `.to_numpy()`, `.columns`, `.index`, `.empty` on history items/fields are BLOCKED. Design 2.2 dual strategies using `is_dict=True` must define the standard `_extract_history_field(history_item, field, dtype=float)` helper and route every extraction through it, so the agent-first runtime-shape fixture executes the exact production extraction code. The fixture is a hard gate inside `prepare_user_backtest_candidate.py` and is re-verified by hash at publication — it is not a manual step; the legacy renderer/Jinja fixture is not a substitute.
+18. Design capital and backtest capital must be one machine-checkable contract. `portfolio_contract.sizing_mode=runtime_total_value` derives per-position targets from the runtime portfolio value and forbids hardcoded `g.capital`/`g.per_target`/fixed positive `order_target_value` amounts; `fixed_notional` binds `required_initial_cash` and `fixed_target_value`, and R5 BLOCKs any run whose actual `init_capital` differs. `order_target_value(code, 0)` is a liquidation and is always allowed.
+19. Rebalance funding must follow `references/execution-funding-matrix.md`: `close`/`open` + `run_daily` executes immediately (same-batch sell proceeds may fund buys); `next_open` + `run_daily`/`before_trading_start` is legacy pending (same-batch proceeds are unavailable); `next_open` + `handle_data` + basket uses basket-atomic sell-first **only when** `engine_profile.profile_id='daily-bar-v1'` and `engine_profile.rebalance_mode='callback_basket'` are also declared (engine semantics `0.4.0-next_open_basket`, re-verified from config.csv at R5); unknown combinations are BLOCKED. A cash buffer only covers fees/lot-rounding/minor drift — never claim it solves full-turnover funding under legacy pending; use basket or two-phase rebalancing instead. Never hardcode `0.85` or any fixed exposure as a universal template.
+20. R5 PASS requires hash-bound real artifacts, not self-reported booleans: `result_dir` plus SHA-256-bound `config.csv`, `daily_stats.csv`, `trades.csv` and run log. The reviewer verifies the hashes and then analyzes **exactly those verified files** — the CSV paths must equal `result_dir/<canonical name>`, all paths must be absolute and traversal-free, and `config.csv` must match the declared window, candidate/strategy identity, match mode and `expected_engine_semantics_version`. Deployment invariants are enforced **per rebalance** from the `QS_REBALANCE_AUDIT`/`QS_PORTFOLIO_AUDIT` lines (positions/fill/exposure/cash at each rebalance date), never from a historical max or whole-period average. A finished, exception-free backtest that never deployed the designed capital BLOCKs (`capital_contract_mismatch` / `deployment_invariant_failed` / `execution_funding_failed` / `artifact_*`). `runtime_checks=true` is informational only. A legitimate `signal_dependent` no-trade run may bind `trades_csv=null` with a clean completion log; strict-target strategies must always bind a real `trades.csv`.
+21. Designs carrying `r5_deployment_invariants` must emit machine-parseable audit lines: `QS_REBALANCE_AUDIT rebalance_id=... date=... selected=... tradable=... sell_submitted=... buy_submitted=...` per rebalance and `QS_PORTFOLIO_AUDIT rebalance_id=... date=... positions=... cash_ratio=... gross_exposure=...` after trading. Fixed key=value format; do not rely on JSON-module-only serialization or free-text logs. `rebalance_id` is the only authoritative one-to-one association: every id is unique, each rebalance matches exactly one portfolio audit with the same id, a portfolio audit can never prove two rebalances, its date must not predate its rebalance nor reach past the next rebalance (next_open may audit on the next trading day via the same id). Duplicate/missing/orphan ids are `evidence_incomplete`.
+22. Design 2.2 confirmations require verbatim evidence in `confirmation_evidence`: `confirmed=true`, non-empty `customer_text`, timezone-aware ISO `confirmed_at`, `source=customer_reply` for `generation_target`, `strategy_semantics`, `portfolio_contract`, `rebalance_funding_contract`, and `r5_deployment_invariants`. A bare boolean is not evidence.
+23. Static PTrade validation PASS is reported as `PTRADE_PROFILE_PASS` with `runtime_validation_status=NOT_VERIFIED` and `deployment_status=NOT_DEPLOYABLE`. It must never be phrased as "PTrade 可上线/已验证/部署通过". Broker runtime PASS requires customer-supplied real-platform evidence; a later real runtime failure makes all old evidence `STALE` via `scripts/retire_ptrade_runtime_evidence.py`.
+24. `history_coverage_contract.lookback_bars` is an indicator lookback, not a demand that the selected backtest window be preceded by that many in-window trading days; provider history before the window start remains available. R1 checks full-history candidate counts at the first possible decision date; R5 reads `history_eligible_count` from the first rebalance audit and classifies shortfalls as DATA_BLOCKED or the confirmed fail-soft rule — never as a guessed "start date too late".
 
 ## Responsibility boundary
 
@@ -55,6 +65,7 @@ Load only as needed:
 - component inventory: `references/component-catalog.json`
 - real PTrade signatures/context: `references/ptrade-api-signatures.json`
 - runtime shapes: `references/ptrade-runtime-compatibility.md`
+- execution funding matrix: `references/execution-funding-matrix.md`
 - lifecycle/timing: `references/lifecycle-and-timing.md`
 - no-lookahead: `references/no-lookahead-rules.md`
 - A-share filters: `references/ashare-hard-filters.md`
@@ -155,6 +166,46 @@ The contract records natural-language semantics, lifecycle callbacks, public API
 
 Do not encode a renderer pattern or fixed strategy kind. For QuantStudio-only ETF mode set `targets=["quantstudio"]`, `portable_source_required=false`, and `universe_contract.mode="dynamic_local"` with `local_dynamic_api="get_etf_list_local"`.
 
+Design 2.2 additionally requires these machine-checkable contracts (schema-validated and cross-checked for contradictions):
+
+```json
+"portfolio_contract": {
+  "sizing_mode": "runtime_total_value",
+  "required_initial_cash": null,
+  "allocation_mode": "equal_weight",
+  "allocation_denominator": "configured_target_count",
+  "target_holdings": 20,
+  "gross_exposure_target": 0.85,
+  "cash_buffer_ratio": 0.15,
+  "per_position_target_weight": 0.0425,
+  "max_single_weight": 0.05,
+  "allow_leverage": false
+},
+"rebalance_funding_contract": {
+  "requires_same_cycle_sell_proceeds": true,
+  "implementation_mode": "sell_then_buy_immediate",
+  "cash_only_for_new_buys": false
+},
+"history_coverage_contract": {
+  "lookback_bars": 252,
+  "frequency": "1d",
+  "history_required_before_first_decision": true,
+  "backtest_start_does_not_truncate_provider_history": true,
+  "minimum_candidates_with_full_history": 20
+},
+"r5_deployment_invariants": {
+  "holding_count_mode": "strict_target_when_candidates_available",
+  "target_holdings": 20,
+  "minimum_fill_ratio": 0.9,
+  "minimum_gross_exposure": 0.8,
+  "maximum_cash_ratio_after_rebalance": 0.2,
+  "maximum_insufficient_cash_rejections": 0,
+  "require_at_least_one_rebalance": true
+}
+```
+
+The cross-checks BLOCK self-contradicting capital math before R3: `gross_exposure_target + cash_buffer_ratio <= 1`, `target_holdings x per_position_target_weight <= gross_exposure_target`, `per_position_target_weight <= max_single_weight`, `fixed_notional` must bind `required_initial_cash`/`fixed_target_value`, and `runtime_total_value` must not carry fixed amounts. A design claiming 20 x 5% = 100% deployment plus a 15% cash buffer is a contradiction (`PORTFOLIO-CASH-BUFFER-CONTRADICTION`), not an approximation. `rebalance_funding_contract` must be compatible with the confirmed `match_price_mode` and decision lifecycle per `references/execution-funding-matrix.md`.
+
 **R2 exit gate:** schema PASS and complete customer review package.
 
 ## R2.5 - Explicit customer hard confirmation
@@ -177,6 +228,8 @@ Require:
 ```
 
 All approximations require `confirmed=true`. `static_etf_whitelist` is required only for dual ETF mode, but when required it must reflect the customer-confirmed codes rather than an agent-inferred list.
+
+Design 2.2 also requires verbatim `confirmation_evidence` entries (customer_text + timezone-aware confirmed_at + source=customer_reply) for `generation_target`, `strategy_semantics`, `portfolio_contract`, `rebalance_funding_contract`, and `r5_deployment_invariants`; the boolean flags alone are not accepted.
 
 **R2.5 hard stop and exit gate:** present the complete package, ask the customer to confirm it, and stop. Confirmation flags may become true only from that explicit reply; persist the confirming text/time/evidence verbatim. No code before this gate.
 
@@ -217,11 +270,19 @@ python scripts/validate_agent_strategy.py strategy.py --design agent_strategy_de
 python scripts/validate_agent_strategy.py strategy.py --design agent_strategy_design.json --target-profile ptrade
 ```
 
-QuantStudio validation must pass in every mode. In dual mode, PTrade validation must also pass and checks real keyword names for every profiled API, rejects unverifiable `**kwargs`, checks context availability, local-only symbols, state-guard idempotence, lifecycle, timing, PIT, portability, and the mandatory literal `fq='pre'` signal-price contract. A permissive local adapter signature is never accepted as platform evidence.
+QuantStudio validation must pass in every mode. In dual mode, PTrade validation must also pass and checks real keyword names for every profiled API, rejects unverifiable `**kwargs`, checks context availability, local-only symbols, state-guard idempotence, lifecycle, timing, PIT, portability, the mandatory literal `fq='pre'` signal-price contract, and the `get_history(is_dict=True)` return-shape contract (unguarded pandas-only access on history items is BLOCKED). A permissive local adapter signature is never accepted as platform evidence.
+
+For dual mode strategies that consume `get_history(is_dict=True)`, the agent-first runtime-shape fixture is a **mandatory third R4 gate**, enforced inside `scripts/prepare_user_backtest_candidate.py` (candidate generation BLOCKs on fixture FAIL) and re-verified by `scripts/publish_agent_strategy.py`: the recorded `runtime_shape_fixture_source_sha256` must equal the canonical hash being published (canonical edits make the old fixture PASS stale), and `runtime_shape_fixture_report.json` must still exist, match its recorded SHA-256, still record `status=PASS`, and reference the same canonical source file. It executes the strategy's standard `_extract_history_field` helper against DataFrame/Series/structured-array/recarray/empty/missing-field fixtures and requires DataFrame/recarray result equality plus fail-soft empties. The legacy renderer/Jinja runtime fixture does not cover agent-first source and is not a substitute. It may still be run standalone:
+
+```powershell
+python scripts/validate_runtime_shapes.py strategy.py
+```
+
+R4 reports distinguish static and runtime truth: `profile_validation_status=PASS` means the static contract passed; `runtime_validation_status` stays `NOT_VERIFIED` and `deployment_status` stays `NOT_DEPLOYABLE` until the customer supplies real broker runtime evidence.
 
 Repair reusable incompatibilities in the adapter/profile/Skill first. Regenerate strategy output under the corrected rules; do not hand-patch only one target file.
 
-**R4 exit gate:** dual mode = QuantStudio PASS + PTrade PASS; QuantStudio-only mode = QuantStudio PASS + `PTrade validation: NOT_APPLICABLE`. Reports remain separate and auditable.
+**R4 exit gate:** dual mode = QuantStudio static PASS + PTrade static PASS + agent-first runtime-shape fixture PASS (when the source consumes `get_history(is_dict=True)`); QuantStudio-only mode = QuantStudio PASS + `PTrade validation: NOT_APPLICABLE`. Reports remain separate and auditable.
 
 ## R5 - Backtest execution and evidence review
 
@@ -242,16 +303,20 @@ After R4 PASS, run `scripts/prepare_user_backtest_candidate.py`. It must:
 5. set `stage=AWAITING_USER_BACKTEST`, `formal_publish_allowed=false`;
 6. show the recommended window while leaving actual dates to the user.
 
-The user runs PyQt and submits complete logs/report. Convert them into `user_backtest_evidence.json`, then run `scripts/review_user_backtest_evidence.py`. Evidence must bind to the candidate hash and include database path, selected window, capital, engine profile, match mode, completion/exception status, runtime checks, and a non-empty log excerpt.
+The user runs PyQt and submits complete logs/report. Convert them into `user_backtest_evidence.json` (evidence_version `2.0`), then run `scripts/review_user_backtest_evidence.py`. Evidence must bind to the candidate hash and include database path, selected window, capital, engine profile, match mode, completion/exception status, a non-empty log excerpt, **and the real run artifacts**: `result_dir` plus SHA-256-bound `config.csv`, `daily_stats.csv`, `trades.csv`, and run log (`artifacts`). The reviewer first verifies every hash, then analyzes **exactly those verified files** (`scripts/analyze_backtest_artifacts.py`): the CSV paths must resolve to `result_dir/config.csv|daily_stats.csv|trades.csv`, all paths absolute and traversal-free. It cross-checks `config.csv` against the declared window, candidate/strategy identity, match mode, `engine_semantics_version`, and actual `init_capital`; computes trade counts, unique bought symbols, rebalance days, turnover, and `insufficient_cash`/`insufficient_sellable`/limit/halt/no-price/exception counters; and enforces `r5_deployment_invariants` **per rebalance** from the `QS_REBALANCE_AUDIT`/`QS_PORTFOLIO_AUDIT` lines. Self-reported `runtime_checks` booleans are informational and never authoritative.
+
+R5 PASS requires all of: candidate hash match, database path match, engine profile/match mode match, actual initial cash satisfying `portfolio_contract` (fixed_notional equality), complete exception-free run, at least one rebalance when required, and every `r5_deployment_invariants` threshold (positions, fill ratio, gross exposure, cash ratio, insufficient-cash rejections) verified from the parsed artifacts.
 
 Evidence results:
 
-- incomplete or start before the ETF hard lower bound -> `USER_BACKTEST_EVIDENCE_INCOMPLETE`, remain R5;
+- incomplete, evidence 1.0, missing/hash-mismatched artifacts, or start before the ETF hard lower bound -> `USER_BACKTEST_EVIDENCE_INCOMPLETE` / `artifact_missing` / `artifact_hash_mismatch`, remain R5;
 - candidate hash drift -> return R4;
-- strategy logic failure -> return R3;
-- framework/data/API failure -> return R1;
+- strategy logic failure or `deployment_invariant_failed` -> return R3;
+- framework/data/API failure (including DATA_BLOCKED history coverage) -> return R1;
 - PTrade profile/validator failure -> return R4;
-- complete PASS -> `stage=BACKTEST_PASS`, `formal_publish_allowed=true`.
+- `capital_contract_mismatch` (e.g. designed 1,000,000 but ran 100,000) -> remain R5, rerun with the designed capital;
+- `execution_funding_failed` (insufficient-cash rejections beyond threshold) -> return R2/R3 for funding-mode redesign;
+- complete artifact-verified PASS -> `stage=BACKTEST_PASS`, `formal_publish_allowed=true`.
 
 Every repair invalidates old R4/R5 hashes. Regenerate the candidate after the new R4 PASS and require a new PyQt run.
 
@@ -300,6 +365,7 @@ In user-PyQt mode, R6 must verify the validated candidate still exists with the 
 - Normalize comparison keys by bare six-digit code where API containers may differ.
 - Use NumPy/pandas or source-defined helpers for indicators unless the PTrade public profile explicitly lists the indicator. When used, import them explicitly (`import numpy as np`, `import pandas as pd`); real PTrade does not inject QuantStudio aliases.
 - Every `get_history`, `get_history_batch`, and `get_price` call used by generated backtest code must include the literal keyword `fq='pre'`; `dypre`, post-adjustment, missing/dynamic values, and `attribute_history` are blocked.
+- A field extracted from `get_history(..., is_dict=True)` must be normalized with `np.asarray(...)` before numerical use. Do not unconditionally use `.values`, `.iloc`, `.loc`, `.to_numpy()`, `.columns`, `.index` or `.empty` on a per-security history item or extracted field; the item may be a DataFrame, structured array, or recarray.
 - A current completed minute may use `get_history(..., frequency='1m', fq='pre', include=True)` only in a confirmed scheduled minute callback with an explicit current-bar cutoff.
 - `get_snapshot` and `check_limit` are not allowed in PTrade backtest source. `get_open_orders(security=None)` is allowed in backtest and trade contexts.
 - `filter_stock_by_status` is called only from `before_trading_start`; scheduled callbacks use `get_stock_status` for current status checks. Portable status checks use only `query_type='ST'`, `'HALT'`, or `'DELISTING'`; never pass `DELISTING_SORTING` to `get_stock_status`.
@@ -313,13 +379,13 @@ In user-PyQt mode, R6 must verify the validated candidate still exists with the 
 
 When a customer supplies a real PTrade exception:
 
-1. mark the prior PTrade validation/publication evidence stale;
+1. run `scripts/retire_ptrade_runtime_evidence.py` with the verbatim reason: the prior PTrade profile PASS, local backtest evidence, candidate hash and formal publish permission become `STALE`, and the old candidate/upload artifacts are renamed `*.RETIRED_DO_NOT_UPLOAD` (kept for audit, never reused or rehashed);
 2. reproduce the incompatibility with a minimal reusable API/profile test;
 3. repair the local adapter signature/shape only so that local acceptance matches PTrade, and repair the Skill/profile/validator so future agents generate portable calls;
 4. do not add a strategy ID, strategy-name branch, one-off template, or one-target hotfix;
 5. regenerate the canonical output under the corrected generic rules;
 6. rerun QuantStudio validation, PTrade validation, local backtest, physical dual-target generation, and post-generation consistency;
-7. report the old and new hashes and explicitly retire the old upload artifact.
+7. report the old and new hashes and explicitly confirm the old upload artifact stayed retired.
 
 # Prohibited behavior
 
@@ -341,6 +407,16 @@ When a customer supplies a real PTrade exception:
 - reporting PTrade PASS or dual-consistency PASS for a QuantStudio-only strategy;
 - treating a PyQt candidate as a formal/PTrade upload artifact;
 - accepting user backtest claims without candidate-hash, data-source, window and completion evidence;
+- accepting self-reported `runtime_checks=true` booleans as R5 PASS evidence instead of hash-bound real artifacts;
+- claiming R5 PASS for a backtest that finished without exceptions but never deployed the designed capital/positions;
+- unguarded pandas-only access (`.values`/`.iloc`/`.loc`/`.to_numpy()`/`.columns`/`.index`/`.empty`) on `get_history(..., is_dict=True)` items or extracted fields;
+- hardcoding `g.capital`/`g.per_target`/fixed positive `order_target_value` amounts under `sizing_mode=runtime_total_value`;
+- treating a fixed cash buffer (e.g. 0.85 exposure / 15% cash) as a universal solution for sell-proceeds timing under `next_open` legacy pending semantics;
+- claiming `next_open` + `run_daily` same-batch sell proceeds can fund buys, or routing `close` + `run_daily` to pending semantics;
+- recording user confirmations as bare booleans without verbatim customer text and timezone-aware timestamps (design 2.2);
+- phrasing static `PTRADE_PROFILE_PASS` as "PTrade 可上线/已验证/部署通过";
+- reusing old R4/R5 PASS, candidate, or staging files after a real PTrade runtime failure without regenerating fresh hashes;
+- interpreting `lookback_bars` as a requirement that the backtest window itself contain that many extra pre-start trading days;
 - keeping a `__candidate` file after successful formal promotion;
 - reusing R5 evidence after canonical/candidate source changes.
 
@@ -348,9 +424,12 @@ When a customer supplies a real PTrade exception:
 
 - scaffold: `scripts/create_agent_workspace.py`
 - profile validation: `scripts/validate_agent_strategy.py`
+- agent-first runtime-shape fixture: `scripts/validate_runtime_shapes.py`
 - consistency: `scripts/validate_dual_consistency.py`
 - user-PyQt candidate: `scripts/prepare_user_backtest_candidate.py`
+- artifact analysis: `scripts/analyze_backtest_artifacts.py`
 - user evidence review: `scripts/review_user_backtest_evidence.py`
+- PTrade runtime-failure retirement: `scripts/retire_ptrade_runtime_evidence.py`
 - gated formal publish: `scripts/publish_agent_strategy.py`
 - Skill validation: `scripts/quick_validate.py`
 

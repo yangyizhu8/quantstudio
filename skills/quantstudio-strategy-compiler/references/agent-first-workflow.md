@@ -39,11 +39,13 @@ For dual targets, every planned API must have a verified entry in `ptrade-api-si
 
 Write `agent_strategy_design.json` using `schemas/agent_strategy_design.schema.json`. Keep rules in clear natural language. Set `market_data_contract.signal_price_adjustment` to `pre` and `execution_price_basis` to `pre_adjusted_price`. Signal history, engine matching, fills, cash, valuation, `data[code].price`, and BarData OHLC use the same front-adjusted snapshot contract. Select lifecycle and API components, but do not encode strategy logic as a renderer pattern.
 
+Design 2.2 additionally requires machine-checkable contracts: `portfolio_contract` (sizing mode, target holdings, exposure/cash/weight bounds), `rebalance_funding_contract` (checked against `references/execution-funding-matrix.md`), `history_coverage_contract` (lookback coverage, not window truncation), `r5_deployment_invariants` (deployment thresholds R5 verifies from real artifacts), and verbatim `confirmation_evidence`. Self-contradictory capital math (20 x 5% + 15% cash buffer) BLOCKs at design time, never reaches R3.
+
 ### R2.5 - Customer confirmation gate
 
 Present exact strategy semantics, all approximations and platform differences, selected lifecycle callbacks and public APIs, unresolved data gaps, and expected holding/overlap/cash behavior.
 
-Do not create strategy code until `strategy_semantics`, `execution_approximations`, and `component_plan` are all true and `open_questions` is empty.
+Do not create strategy code until `strategy_semantics`, `execution_approximations`, and `component_plan` are all true and `open_questions` is empty. Design 2.2 also requires `confirmation_evidence` entries with verbatim customer text and timezone-aware timestamps for the generation target, strategy semantics, portfolio contract, rebalance funding contract, and R5 deployment invariants.
 
 ### R3 - Scaffold and agent implementation
 
@@ -56,6 +58,8 @@ Run `scripts/validate_agent_strategy.py`. Repair BLOCK findings in strategy code
 ### R5 - Local backtest and semantic review
 
 Run the declared daily/minute profile. Review orders, holdings, trigger times, empty-universe behavior, insufficient history, suspended/limit states, and position/cash invariants. Strategy-specific failures are fixed by the calling agent.
+
+R5 PASS is artifact-bound (evidence 2.0): the reviewer re-parses hash-verified `config.csv`/`daily_stats.csv`/`trades.csv`/run log and enforces the `portfolio_contract` capital check and `r5_deployment_invariants`. "回测跑完、无异常" is not PASS — the strategy must have actually deployed the designed capital (positions, exposure, cash ratio, zero excess insufficient-cash rejections). Strategies with `r5_deployment_invariants` must emit `QS_REBALANCE_AUDIT`/`QS_PORTFOLIO_AUDIT` key=value log lines.
 
 ### R6 - Target-aware publish
 

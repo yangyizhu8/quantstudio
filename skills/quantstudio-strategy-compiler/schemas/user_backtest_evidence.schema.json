@@ -21,12 +21,14 @@
     "initial_cash",
     "engine_profile",
     "match_price_mode",
-    "runtime_checks",
-    "log_excerpt"
+    "log_excerpt",
+    "result_dir",
+    "artifacts"
   ],
   "properties": {
     "evidence_version": {
-      "const": "1.0"
+      "const": "2.0",
+      "description": "2.0 binds real run artifacts with SHA-256. Self-reported runtime_checks booleans are informational only and are never authoritative PASS evidence. Evidence 1.0 submissions are rejected as EVIDENCE_INCOMPLETE."
     },
     "strategy_id": {
       "type": "string",
@@ -100,11 +102,49 @@
       "minProperties": 1,
       "additionalProperties": {
         "type": "boolean"
-      }
+      },
+      "description": "Informational user notes only; never authoritative for R5 PASS."
     },
     "log_excerpt": {
       "type": "string",
       "minLength": 1
+    },
+    "result_dir": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Absolute path of the exported backtest result directory containing config.csv/daily_stats.csv/trades.csv and the run log."
+    },
+    "artifacts": {
+      "type": "object",
+      "required": [
+        "config_csv",
+        "daily_stats_csv",
+        "trades_csv",
+        "log_file"
+      ],
+      "properties": {
+        "config_csv": {
+          "$ref": "#/definitions/artifact"
+        },
+        "daily_stats_csv": {
+          "$ref": "#/definitions/artifact"
+        },
+        "trades_csv": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/artifact"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "May be null only for holding_count_mode=signal_dependent no-trade runs with a clean completion log; strict-target strategies must bind a real trades.csv."
+        },
+        "log_file": {
+          "$ref": "#/definitions/artifact"
+        }
+      },
+      "additionalProperties": false
     },
     "log_path": {
       "type": [
@@ -124,11 +164,37 @@
         "framework_data_api",
         "ptrade_profile_validator",
         "evidence_incomplete",
-        "source_drift"
+        "source_drift",
+        "capital_contract_mismatch",
+        "deployment_invariant_failed",
+        "execution_funding_failed",
+        "artifact_missing",
+        "artifact_hash_mismatch",
+        "artifact_contract_mismatch"
       ]
     },
     "external_db_override_confirmed": {
       "type": "boolean"
+    }
+  },
+  "definitions": {
+    "artifact": {
+      "type": "object",
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false
     }
   },
   "allOf": [
@@ -153,11 +219,6 @@
           },
           "fatal_error": {
             "type": "null"
-          },
-          "runtime_checks": {
-            "additionalProperties": {
-              "const": true
-            }
           }
         }
       }

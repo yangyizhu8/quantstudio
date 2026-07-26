@@ -24,9 +24,10 @@
     "design_version": {
       "enum": [
         "2.0",
-        "2.1"
+        "2.1",
+        "2.2"
       ],
-      "description": "2.0 is the legacy dual-target contract; 2.1 adds explicit target and ETF-universe routing."
+      "description": "2.0 is the legacy dual-target contract; 2.1 adds explicit target and ETF-universe routing; 2.2 adds machine-checkable portfolio/execution-funding/history-coverage/R5-invariant contracts and verbatim confirmation evidence. 2.1 artifacts must not be auto-migrated to 2.2 PASS."
     },
     "strategy_id": {
       "type": "string",
@@ -88,6 +89,17 @@
             "next_open",
             "current_bar"
           ]
+        },
+        "rebalance_mode": {
+          "enum": [
+            "legacy",
+            "callback_basket"
+          ],
+          "description": "Engine basket activation requires profile_id=daily-bar-v1 + match_price_mode=next_open + rebalance_mode=callback_basket. Mandatory when rebalance_funding_contract.implementation_mode=basket_atomic_sell_first."
+        },
+        "expected_engine_semantics_version": {
+          "type": "string",
+          "description": "R5 compares config.csv engine_semantics_version against this value (e.g. 0.4.0-next_open_basket proves the basket was actually active)."
         }
       },
       "additionalProperties": true
@@ -395,6 +407,224 @@
       },
       "additionalProperties": true
     },
+    "portfolio_contract": {
+      "type": "object",
+      "required": [
+        "sizing_mode",
+        "allocation_mode",
+        "target_holdings",
+        "gross_exposure_target",
+        "cash_buffer_ratio",
+        "per_position_target_weight",
+        "max_single_weight",
+        "allow_leverage"
+      ],
+      "properties": {
+        "sizing_mode": {
+          "enum": [
+            "runtime_total_value",
+            "fixed_notional"
+          ],
+          "description": "runtime_total_value derives per-position targets from the runtime portfolio value (required_initial_cash must be null); fixed_notional binds absolute required_initial_cash and fixed_target_value."
+        },
+        "required_initial_cash": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "exclusiveMinimum": 0
+        },
+        "fixed_target_value": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "exclusiveMinimum": 0
+        },
+        "allocation_mode": {
+          "enum": [
+            "equal_weight",
+            "signal_weighted",
+            "custom"
+          ]
+        },
+        "allocation_denominator": {
+          "enum": [
+            "configured_target_count",
+            "actual_selected_count"
+          ]
+        },
+        "target_holdings": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "gross_exposure_target": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "cash_buffer_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "per_position_target_weight": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "max_single_weight": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "allow_leverage": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "rebalance_funding_contract": {
+      "type": "object",
+      "required": [
+        "requires_same_cycle_sell_proceeds",
+        "implementation_mode",
+        "cash_only_for_new_buys"
+      ],
+      "properties": {
+        "requires_same_cycle_sell_proceeds": {
+          "type": "boolean"
+        },
+        "implementation_mode": {
+          "enum": [
+            "sell_then_buy_immediate",
+            "basket_atomic_sell_first",
+            "staged_two_phase",
+            "cash_only_new_buys"
+          ]
+        },
+        "cash_only_for_new_buys": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "history_coverage_contract": {
+      "type": "object",
+      "required": [
+        "lookback_bars",
+        "frequency",
+        "history_required_before_first_decision",
+        "backtest_start_does_not_truncate_provider_history",
+        "minimum_candidates_with_full_history"
+      ],
+      "properties": {
+        "lookback_bars": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Indicator lookback length. It does NOT mean the backtest start date must be preceded by this many trading days inside the selected window; provider history before the window start remains available."
+        },
+        "frequency": {
+          "enum": [
+            "1d",
+            "1m",
+            "5m",
+            "15m",
+            "30m",
+            "60m"
+          ]
+        },
+        "history_required_before_first_decision": {
+          "const": true
+        },
+        "backtest_start_does_not_truncate_provider_history": {
+          "const": true
+        },
+        "minimum_candidates_with_full_history": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": true
+    },
+    "r5_deployment_invariants": {
+      "type": "object",
+      "required": [
+        "holding_count_mode",
+        "target_holdings",
+        "minimum_fill_ratio",
+        "minimum_gross_exposure",
+        "maximum_cash_ratio_after_rebalance",
+        "maximum_insufficient_cash_rejections",
+        "require_at_least_one_rebalance"
+      ],
+      "properties": {
+        "holding_count_mode": {
+          "enum": [
+            "strict_target_when_candidates_available",
+            "up_to_target_count",
+            "signal_dependent"
+          ]
+        },
+        "target_holdings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minimum_fill_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "minimum_gross_exposure": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "maximum_cash_ratio_after_rebalance": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "maximum_insufficient_cash_rejections": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "require_at_least_one_rebalance": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "confirmation_evidence": {
+      "type": "object",
+      "description": "Design 2.2 verbatim customer confirmation records. Bare booleans are not evidence; required keys and field-level checks are enforced by agent_skill_common.confirmation_evidence_errors.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "confirmed",
+          "customer_text",
+          "confirmed_at",
+          "source"
+        ],
+        "properties": {
+          "confirmed": {
+            "const": true
+          },
+          "customer_text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "confirmed_at": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "const": "customer_reply"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
     "validation_execution": {
       "type": "object",
       "required": [
@@ -522,7 +752,10 @@
       "if": {
         "properties": {
           "design_version": {
-            "const": "2.1"
+            "enum": [
+              "2.1",
+              "2.2"
+            ]
           }
         }
       },
@@ -559,7 +792,10 @@
       "if": {
         "properties": {
           "design_version": {
-            "const": "2.1"
+            "enum": [
+              "2.1",
+              "2.2"
+            ]
           },
           "targets": {
             "contains": {
@@ -616,7 +852,10 @@
       "if": {
         "properties": {
           "design_version": {
-            "const": "2.1"
+            "enum": [
+              "2.1",
+              "2.2"
+            ]
           },
           "targets": {
             "contains": {
@@ -653,7 +892,10 @@
       "if": {
         "properties": {
           "design_version": {
-            "const": "2.1"
+            "enum": [
+              "2.1",
+              "2.2"
+            ]
           },
           "targets": {
             "const": [
@@ -678,7 +920,10 @@
       "if": {
         "properties": {
           "design_version": {
-            "const": "2.1"
+            "enum": [
+              "2.1",
+              "2.2"
+            ]
           },
           "targets": {
             "const": [
@@ -727,7 +972,10 @@
       "if": {
         "properties": {
           "design_version": {
-            "const": "2.1"
+            "enum": [
+              "2.1",
+              "2.2"
+            ]
           },
           "validation_execution": {
             "properties": {
@@ -778,7 +1026,10 @@
       "if": {
         "properties": {
           "design_version": {
-            "const": "2.1"
+            "enum": [
+              "2.1",
+              "2.2"
+            ]
           },
           "validation_execution": {
             "properties": {
@@ -811,6 +1062,67 @@
             "properties": {
               "actual_window_selected_by": {
                 "const": "customer_confirmed_agent_run"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "design_version": {
+            "const": "2.2"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "portfolio_contract",
+          "rebalance_funding_contract",
+          "history_coverage_contract",
+          "r5_deployment_invariants",
+          "confirmation_evidence"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "rebalance_funding_contract": {
+            "properties": {
+              "implementation_mode": {
+                "const": "basket_atomic_sell_first"
+              }
+            },
+            "required": [
+              "implementation_mode"
+            ]
+          }
+        },
+        "required": [
+          "rebalance_funding_contract"
+        ]
+      },
+      "then": {
+        "properties": {
+          "engine_profile": {
+            "required": [
+              "rebalance_mode",
+              "expected_engine_semantics_version"
+            ],
+            "properties": {
+              "profile_id": {
+                "const": "daily-bar-v1"
+              },
+              "match_price_mode": {
+                "const": "next_open"
+              },
+              "rebalance_mode": {
+                "const": "callback_basket"
+              },
+              "expected_engine_semantics_version": {
+                "const": "0.4.0-next_open_basket"
               }
             }
           }

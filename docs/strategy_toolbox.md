@@ -78,7 +78,7 @@
 
 | 函数 | 说明 |
 |------|------|
-| `get_history(...)` | 获取历史 K 线，**双签名兼容**：`get_history(security,count,unit='1d',fields=...,fq='pre',include=False)` 与 Ptrade 官方 `get_history(count,frequency='1d',field='close',security_list=...,fq='pre',include=False)`。**fq 默认 `'pre'`（前复权）**。支持 `is_dict=True` 返回 `{code:DataFrame}`。字段映射 `money→amount`、`price→close`、`factor→pctChg`。**`include` 控制历史数据可见边界（防未来函数）**：`include=False` 截止 `previous_date`（不含当前交易日），`include=True` 延伸至 `current_date`（含当前交易日）。**不同 `include` 值不会共享历史查询缓存（缓存键含 `include`）**，混合调用须分别取数。 |
+| `get_history(...)` | 获取历史 K 线，**双签名兼容**：`get_history(security,count,unit='1d',fields=...,fq='pre',include=False)` 与 Ptrade 官方 `get_history(count,frequency='1d',field='close',security_list=...,fq='pre',include=False)`。**fq 默认 `'pre'`（前复权）**。支持 `is_dict=True` 返回 `{code:DataFrame}`（本地适配层）。**PTrade Profile 1.8.0 返回形状契约**：真实平台上 `is_dict=True` 的 mapping item 可能是 pandas DataFrame / NumPy structured array / recarray，`item[field]` 可能是 Series 或 ndarray；双端/PTrade 源码必须先 `np.asarray(item[field], dtype=float)`（或 `hasattr(values,'values')` 守卫的 helper）归一化再参与数值计算，对 history item 的无保护 `.values`/`.iloc`/`.loc`/`.to_numpy()`/`.columns`/`.index`/`.empty` 访问会被 Validator 阻断。字段映射 `money→amount`、`price→close`、`factor→pctChg`。**`include` 控制历史数据可见边界（防未来函数）**：`include=False` 截止 `previous_date`（不含当前交易日），`include=True` 延伸至 `current_date`（含当前交易日）。**不同 `include` 值不会共享历史查询缓存（缓存键含 `include`）**，混合调用须分别取数。 |
 | `get_history_batch(sec_list,count,unit='1d',fields=...,fq='pre',include=...)` | **QuantStudio 本地扩展**：强制 list 入参 + 返回 `CodeDict`，消除策略侧逐只 N+1 调用；**复用 `get_history` 的 `get_bars_by_count` 活跃路径**（不读取已停用的 `_preload_daily` 全市场缓存，当前底层仍按代码逐只查询，并非单次批量扫描）。仅本地单端策略允许；双端/PTrade 目标由 Validator 阻断。**fq 默认 `'pre'`**。 |
 | `get_price(security,start_date,end_date,frequency='1d',fields,fq='pre',count,is_dict)` | 按日期区间/数量取历史行情，返回 DataFrame 或 `CodeDict`。**fq 默认 `'pre'`（前复权）**。 |
 | `attribute_history(security,count,unit='1d',fields)` | 取历史数据最近一行（单列 Series）。 |
@@ -270,7 +270,7 @@ def after_trading_end(context):
 
 ## 用户PyQt候选文件
 
-`<strategy_id>__candidate_quantstudio.py` 只用于R4后由用户在PyQt执行R5。它必须带有非正式/禁止上传PTrade标记和候选哈希。策略内不得写死回测日期；实际区间由用户设置。日志证据审核PASS后，R6生成正式文件并删除候选文件。
+`<strategy_id>__candidate_quantstudio.py` 只用于R4后由用户在PyQt执行R5。它必须带有非正式/禁止上传PTrade标记和候选哈希。策略内不得写死回测日期；实际区间由用户设置。R5 证据 2.0 必须绑定真实回测产物：结果目录 + `config.csv`/`daily_stats.csv`/`trades.csv`/运行日志及各自 SHA-256；review 脚本自动解析实际本金、match mode、调仓后持仓数、资金暴露/现金占比、买卖笔数与 `insufficient_cash` 等拒单计数，并对照设计中的 `portfolio_contract` 与 `r5_deployment_invariants`——本金不符（`capital_contract_mismatch`）或仓位未按设计部署（`deployment_invariant_failed`，例如目标20只实际只持有2只）即使回测无异常跑完也一律 BLOCK。自报的 `runtime_checks` 布尔值不再作为 PASS 权威依据。证据审核PASS后，R6生成正式文件并删除候选文件。真实 PTrade 运行失败后，旧候选/上传文件会被重命名为 `*.RETIRED_DO_NOT_UPLOAD` 并作废旧哈希，必须重新生成。
 
 > **`etf_basic` freshness:** metadata is maintained by the enabled `etf_basic` collector task with Tushare as the single authority. Full, incremental, and resident collection share the same baseline normalization and changed-row upsert path. The compatibility command `scripts/sync_etf_basic.py` uses the same contract. Restart a resident collector after deploying task/config changes。
 

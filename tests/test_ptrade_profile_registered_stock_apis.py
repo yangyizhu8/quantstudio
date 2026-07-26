@@ -152,7 +152,7 @@ def rebalance(context):
 def test_profile_registers_core_stock_portability_apis():
     profile = json.loads((ROOT / "skills" / "quantstudio-strategy-compiler" /
                           "references" / "ptrade-api-signatures.json").read_text(encoding="utf-8"))
-    assert profile["profile_version"] == "1.7.0"
+    assert profile["profile_version"] == "1.8.0"
     for name in (
         "set_benchmark", "run_daily", "get_Ashares", "get_index_stocks",
         "get_stock_status", "get_positions", "get_position",
@@ -161,6 +161,17 @@ def test_profile_registers_core_stock_portability_apis():
     assert profile["signatures"]["get_stock_status"]["canonical_keyword_values"]["query_type"] == [
         "ST", "HALT", "DELISTING"
     ]
+
+
+def test_profile_records_get_history_is_dict_return_contract():
+    profile = json.loads((ROOT / "skills" / "quantstudio-strategy-compiler" /
+                          "references" / "ptrade-api-signatures.json").read_text(encoding="utf-8"))
+    contract = profile["signatures"]["get_history"]["return_contract"]["is_dict_true"]
+    assert contract["container"] == "mapping"
+    assert set(contract["item_types"]) == {
+        "pandas.DataFrame", "numpy.structured_array", "numpy.recarray"}
+    assert set(contract["field_value_types"]) == {"pandas.Series", "numpy.ndarray"}
+    assert any("np.asarray" in rule for rule in profile["portable_rules"])
 
 
 def test_registered_stock_api_source_passes_ptrade_validation():

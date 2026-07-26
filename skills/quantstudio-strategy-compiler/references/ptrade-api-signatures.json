@@ -1,6 +1,6 @@
 {
   "profile_id": "ptrade-backtest-public-v1",
-  "profile_version": "1.7.0",
+  "profile_version": "1.8.0",
   "verified_on": "2026-07-26",
   "policy": "Canonical dual-target code must use exact PTrade backtest public signatures; QuantStudio adapters must be equally strict so local PASS predicts platform acceptance.",
   "signatures": {
@@ -55,6 +55,22 @@
         "fq": [
           "pre"
         ]
+      },
+      "return_contract": {
+        "is_dict_true": {
+          "container": "mapping",
+          "item_types": [
+            "pandas.DataFrame",
+            "numpy.structured_array",
+            "numpy.recarray"
+          ],
+          "field_access": "item[field]",
+          "field_value_types": [
+            "pandas.Series",
+            "numpy.ndarray"
+          ],
+          "normalization": "np.asarray(item[field], dtype=float).reshape(-1) or an equivalent hasattr(values, 'values') guarded helper before any numerical use"
+        }
       }
     },
     "get_stock_info": {
@@ -422,6 +438,7 @@
   ],
   "portable_rules": [
     "Generated backtest signal-price calls must use the literal fq='pre'; missing, dynamic, dypre, post-adjusted, and attribute_history price paths are blocked.",
+    "A field extracted from get_history(..., is_dict=True) must be normalized with np.asarray(...) before numerical use. Do not unconditionally use .values, .iloc, .loc, .to_numpy(), .columns, .index or .empty on a per-security history item or extracted field.",
     "PTrade does not inject numpy/pandas aliases. If source uses np/pd/numpy/pandas, it must explicitly import the corresponding module.",
     "Use numpy/pandas or locally defined helpers for indicators unless the PTrade public API explicitly supplies the function.",
     "Backtest code must not call get_snapshot or check_limit; those are trading-context APIs. get_open_orders is available in backtest and trade contexts.",
@@ -445,7 +462,8 @@
     "log_warn": "Runtime traceback supplied on 2026-07-25 (platform timestamp 2026-07-26) proves IQEngine LogEngine has no warn attribute; generated PTrade source must use log.warning.",
     "numpy_pandas_injection": "Real IQEngine log supplied on 2026-07-25 shows 79 occurrences of NameError for np; PTrade does not inject QuantStudio-local np/pd aliases. Portable source must import numpy/pandas explicitly when used.",
     "core_stock_api_profile": "Profile 1.7.0 registers set_benchmark, run_daily, get_Ashares, get_index_stocks, get_stock_status, get_positions, get_position, get_trade_days, and get_fundamentals; unprofiled injected calls now fail closed.",
-    "get_stock_status_delisting": "PTrade get_stock_status uses query_type=DELISTING. DELISTING_SORTING is a filter_stock_by_status filter type, not a get_stock_status query type."
+    "get_stock_status_delisting": "PTrade get_stock_status uses query_type=DELISTING. DELISTING_SORTING is a filter_stock_by_status filter type, not a get_stock_status query type.",
+    "get_history_return_shape": "Profile 1.8.0 records the get_history(..., is_dict=True) return contract: mapping items may be pandas.DataFrame, numpy.structured_array or numpy.recarray; item[field] may be a pandas.Series or numpy.ndarray. Generated code must normalize fields with np.asarray before numerical use; unguarded pandas-only attribute access (.values/.iloc/.loc/.to_numpy()/.columns/.index/.empty) on history items is blocked by the validator."
   },
   "logger_methods": {
     "allowed": [

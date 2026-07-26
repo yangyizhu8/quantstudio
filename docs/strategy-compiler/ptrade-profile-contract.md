@@ -39,6 +39,13 @@ PTrade Renderer 输出必须通过：语法、生命周期、API 白名单、禁
 
 A QuantStudio `__candidate` file is never a PTrade artifact. PTrade formal output is generated only in R6 after hash-bound R5 PASS and is revalidated against the public profile.
 
+## 2026-07-26 PTrade Profile 1.8.0 get_history return-shape closure
+
+- `get_history(..., is_dict=True)` 登记显式 `return_contract`：mapping item 可能是 pandas DataFrame / NumPy structured array / recarray；`item[field]` 可能是 Series 或 ndarray。
+- 可移植规则：提取字段必须先经 `np.asarray(...)` 归一化再参与数值计算；对 history item/字段的无保护 pandas 专属访问（`.values`/`.iloc`/`.loc`/`.to_numpy()`/`.columns`/`.index`/`.empty`）由 agent-first Validator 一律 BLOCK（`PTRADE-HISTORY-SHAPE-UNSAFE` / `PTRADE-HISTORY-PANDAS-ONLY` / `PTRADE-HISTORY-NORMALIZATION-MISSING`）。
+- fixture 分层明确区分：legacy renderer runtime fixture（仅覆盖旧 Jinja 产出）与 agent-first source runtime-shape fixture（`scripts/validate_runtime_shapes.py`，对策略自带 helper 执行 DataFrame/Series/structured/recarray/空/缺字段/NaN-inf 真实形状）。未实际运行 agent-first fixture 不得声称"structured-array fixture 已覆盖"。
+- 静态验证术语：R4 报告区分 `profile_validation_status`（静态契约）与 `runtime_validation_status=NOT_VERIFIED`、`deployment_status=NOT_DEPLOYABLE`；静态 PASS 不得表述为"PTrade 可上线/已验证/部署通过"。真实券商运行失败后由 `scripts/retire_ptrade_runtime_evidence.py` 将旧 R4 PASS、candidate、staging 与哈希一并置为 STALE/RETIRED。
+
 ## 2026-07-26 PTrade Profile 1.7.0 stock-core signature closure
 
 - Registered exact signatures and return-shape notes for `set_benchmark`, `run_daily`, `get_Ashares`, `get_index_stocks`, `get_stock_status`, `get_positions`, `get_position`, `get_trade_days`, and `get_fundamentals`.

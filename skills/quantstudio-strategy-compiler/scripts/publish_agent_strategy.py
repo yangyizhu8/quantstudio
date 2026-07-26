@@ -11,6 +11,7 @@ from pathlib import Path
 from agent_skill_common import load_json, write_json
 from validate_agent_strategy import validate_strategy
 from validate_dual_consistency import compare_sources
+from validate_runtime_shapes import requires_runtime_shape_fixture
 from user_backtest_flow import (
     USER_MODE, ensure_candidate_path_is_safe, sha256_path, validation_mode,
 )
@@ -31,6 +32,11 @@ def _load_workflow_state(strategy_path: Path) -> tuple[Path, dict]:
             f"{sorted(_ALLOWED_PREPUBLISH_STAGES)} after local backtest")
     if state.get("backtest_status") != "PASS":
         raise ValueError("local backtest evidence must be PASS before dual publication")
+    if state.get("ptrade_runtime_status") in {"FAIL", "STALE"} \
+            or state.get("ptrade_profile_validation_status") == "STALE":
+        raise ValueError(
+            "a real PTrade runtime failure retired the old evidence; repair the reusable "
+            "profile/adapter/Skill rule and regenerate fresh hashes before publishing")
     return state_path, state
 
 
@@ -112,6 +118,44 @@ def publish(strategy_path: Path, design_path: Path, project_root: Path,
     canonical_payload = strategy_path.read_bytes()
     canonical_source = canonical_payload.decode("utf-8-sig")
     strategy_id = design["strategy_id"]
+
+    # R4 third gate, re-verified at publication time: a dual-target source
+    # consuming get_history(is_dict=True) must hold a runtime-shape fixture
+    # PASS bound to the exact canonical hash being published.
+    if requires_runtime_shape_fixture(design, canonical_source):
+        if state.get("runtime_shape_fixture_status") != "PASS":
+            raise ValueError(
+                "agent-first runtime-shape fixture PASS is required before "
+                "publication; run prepare_user_backtest_candidate.py or the "
+                "fixture gate for this canonical source")
+        canonical_digest = hashlib.sha256(canonical_payload).hexdigest()
+        if state.get("runtime_shape_fixture_source_sha256") != canonical_digest:
+            raise ValueError(
+                "canonical source changed after the runtime-shape fixture PASS; "
+                "the old fixture evidence is STALE, rerun the fixture gate")
+        # Audit closure: the recorded fixture report must still exist, match
+        # its recorded SHA-256, still say PASS, and point at this canonical
+        # source file.
+        report_path = strategy_path.parent / "runtime_shape_fixture_report.json"
+        if not report_path.exists():
+            raise ValueError(
+                f"runtime-shape fixture report is missing: {report_path}; "
+                "rerun the fixture gate")
+        actual_report_sha = sha256_path(report_path)
+        if actual_report_sha != state.get("runtime_shape_fixture_report_sha256"):
+            raise ValueError(
+                "runtime-shape fixture report changed after it was recorded; "
+                "the fixture evidence is not trustworthy, rerun the fixture gate")
+        fixture_report = load_json(report_path)
+        if fixture_report.get("status") != "PASS":
+            raise ValueError(
+                "runtime-shape fixture report no longer records PASS; "
+                "rerun the fixture gate")
+        recorded_source = fixture_report.get("source")
+        if recorded_source and Path(recorded_source).resolve() != strategy_path.resolve():
+            raise ValueError(
+                f"runtime-shape fixture report was produced for {recorded_source}, "
+                f"not the canonical source {strategy_path}")
 
     final_targets: dict[str, Path] = {}
     if "quantstudio" in design["targets"]:
@@ -215,6 +259,16 @@ def publish(strategy_path: Path, design_path: Path, project_root: Path,
         "report_version": "2.1",
         "strategy_id": strategy_id,
         "status": "PASS",
+        # Static profile PASS is portability evidence only. Broker runtime
+        # verification requires customer-supplied real-platform evidence and
+        # must never be implied by this report.
+        "ptrade_profile_validation_status": (
+            "PTRADE_PROFILE_PASS" if ptrade_validation["status"] == "PASS"
+            else ptrade_validation["status"]),
+        "ptrade_runtime_validation_status": (
+            "PTRADE_BROKER_RUNTIME_NOT_VERIFIED" if "ptrade" in final_targets
+            else "NOT_APPLICABLE"),
+        "deployment_status": "NOT_DEPLOYABLE",
         "canonical_sha256": digest,
         "identical_source": consistency.get("exact_source_match"),
         "validated_after_target_generation": True,

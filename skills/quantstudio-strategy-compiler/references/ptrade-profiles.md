@@ -42,6 +42,12 @@ PTrade Renderer 输出必须通过：语法、生命周期、API 白名单、禁
 - Open/next-open approximations schedule 09:31 and require broker minute-period backtesting.
 - Shanghai output uses `.SS`; history and position matching use bare codes.
 
+## 2026-07-26 PTrade Profile 1.8.0 get_history return-shape closure
+
+- `get_history(..., is_dict=True)` records an explicit `return_contract`: mapping items may be pandas DataFrame / NumPy structured array / recarray; `item[field]` may be Series or ndarray.
+- Portable rule: extracted fields must be normalized with `np.asarray(...)` before numerical use; unguarded pandas-only attribute access on history items is BLOCKED by the agent-first validator, and `scripts/validate_runtime_shapes.py` executes the strategy's helper against the real shape fixtures.
+- 静态 Profile PASS 仍只证明对注册子集的静态一致性；真实券商/IQEngine 运行证据由独立状态（`PTRADE_BROKER_RUNTIME_PASS` / `NOT_VERIFIED` / `STALE`）表达，不得混写。
+
 ## 2026-07-26 PTrade Profile 1.7.0 stock-core signature closure
 
 - Registered exact signatures and return-shape notes for `set_benchmark`, `run_daily`, `get_Ashares`, `get_index_stocks`, `get_stock_status`, `get_positions`, `get_position`, `get_trade_days`, and `get_fundamentals`.

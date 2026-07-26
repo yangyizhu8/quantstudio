@@ -7,6 +7,7 @@ from pathlib import Path
 
 from agent_skill_common import confirmation_errors, load_json, validate_design, write_json
 from validate_agent_strategy import validate_strategy
+from validate_runtime_shapes import requires_runtime_shape_fixture, validate_runtime_shapes
 from user_backtest_flow import (
     R4_PASS_STAGES, USER_MODE, atomic_write, candidate_path, candidate_payload,
     load_workflow_state, sha256_bytes, sha256_path, validation_mode, write_state,
@@ -44,6 +45,24 @@ def prepare_candidate(strategy_path: Path, design_path: Path, project_root: Path
         raise ValueError("PTrade R4 validation must PASS before candidate generation")
 
     canonical_hash = sha256_bytes(canonical_payload)
+
+    # R4 third gate: the agent-first runtime-shape fixture is mandatory (not a
+    # manual step) whenever the dual-target source consumes
+    # get_history(is_dict=True). The fixture executes the strategy's own
+    # extraction helper against the real broker return shapes.
+    fixture_status = "NOT_APPLICABLE"
+    fixture_report_sha = None
+    if requires_runtime_shape_fixture(design, canonical_source):
+        fixture_report = validate_runtime_shapes(strategy_path)
+        fixture_report_path = strategy_path.parent / "runtime_shape_fixture_report.json"
+        write_json(fixture_report_path, fixture_report)
+        fixture_status = fixture_report["status"]
+        fixture_report_sha = sha256_path(fixture_report_path)
+        if fixture_status != "PASS":
+            raise ValueError(
+                "agent-first runtime-shape fixture must PASS before candidate "
+                f"generation: {fixture_report.get('failures') or fixture_report.get('error')}")
+
     output = candidate_path(project_root, strategy_id)
     if output.exists() and not overwrite:
         raise FileExistsError(f"candidate exists; use --overwrite after a new R4 PASS: {output}")
@@ -63,15 +82,23 @@ def prepare_candidate(strategy_path: Path, design_path: Path, project_root: Path
         "formal_publish_allowed": False,
         "local_validation_status": local_validation["status"],
         "ptrade_validation_status": ptrade_validation["status"],
+        "runtime_shape_fixture_status": fixture_status,
+        "runtime_shape_fixture_source_sha256": canonical_hash if fixture_status == "PASS" else None,
+        "runtime_shape_fixture_report_sha256": fixture_report_sha,
         "recommended_backtest_start": design.get("backtest_window_contract", {}).get("recommended_start_date"),
         "hard_earliest_start_date": design.get("backtest_window_contract", {}).get("hard_earliest_start_date"),
         "actual_backtest_window_selected_by_user": True,
     })
     write_state(state_path, state)
     report = {
-        "report_version": "1.0",
+        "report_version": "1.1",
         "strategy_id": strategy_id,
         "status": "PASS",
+        # Static profile PASS terminology (Skill 0.6.0): the candidate is
+        # profile-conformant but neither broker-runtime verified nor deployable.
+        "profile_validation_status": "PTRADE_PROFILE_PASS" if ptrade_validation["status"] == "PASS" else local_validation["status"],
+        "runtime_validation_status": "PTRADE_BROKER_RUNTIME_NOT_VERIFIED",
+        "deployment_status": "NOT_DEPLOYABLE",
         "candidate_status": "AWAITING_USER_BACKTEST",
         "candidate_path": str(output.resolve()),
         "candidate_sha256": candidate_hash,
@@ -79,6 +106,7 @@ def prepare_candidate(strategy_path: Path, design_path: Path, project_root: Path
         "not_for_ptrade_upload": True,
         "formal_publish_allowed": False,
         "recommended_backtest_window": design.get("backtest_window_contract", {}),
+        "runtime_shape_fixture_status": fixture_status,
         "local_validation": local_validation,
         "ptrade_validation": ptrade_validation,
     }

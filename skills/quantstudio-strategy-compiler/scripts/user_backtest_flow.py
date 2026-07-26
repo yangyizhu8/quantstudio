@@ -77,3 +77,57 @@ def ensure_candidate_path_is_safe(path: str | Path, project_root: str | Path,
 
 def write_state(path: str | Path, state: dict) -> None:
     write_json(path, state)
+
+
+RETIRED_SUFFIX = ".RETIRED_DO_NOT_UPLOAD"
+
+
+def retire_artifact(path: str | Path, *, must_be_under: str | Path | None = None) -> Path | None:
+    """Retire a stale upload/candidate artifact while keeping it auditable.
+
+    The file is renamed with a RETIRED_DO_NOT_UPLOAD suffix plus a SHA-256
+    prefix of its content so retired evidence is never overwritten. When
+    ``must_be_under`` is given, paths outside that directory are refused so a
+    polluted workspace state cannot move arbitrary files.
+    """
+    source = Path(path).resolve()
+    if must_be_under is not None:
+        root = Path(must_be_under).resolve()
+        if root != source.parent and root not in source.parents:
+            raise ValueError(f"refuse to retire artifact outside {root}: {source}")
+    if not source.exists():
+        return None
+    digest = sha256_path(source)[:12]
+    retired = source.with_name(f"{source.name}{RETIRED_SUFFIX}.{digest}")
+    counter = 1
+    while retired.exists():
+        retired = source.with_name(f"{source.name}{RETIRED_SUFFIX}.{digest}.{counter}")
+        counter += 1
+    source.rename(retired)
+    return retired
+
+
+def mark_ptrade_runtime_failure(state: dict, reason: str,
+                                retired_artifacts: list[str] | None = None) -> dict:
+    """Real PTrade broker runtime failure invalidates every prior PASS.
+
+    Old R4 profile PASS, candidate, local backtest evidence and formal publish
+    permission all become STALE; regeneration under a repaired profile must
+    produce fresh hashes. Old artifacts are retired, never silently reused.
+    """
+    state.update({
+        "stage": "PTRADE_RUNTIME_FAIL_RETURN_R1_R4",
+        "ptrade_profile_validation_status": "STALE",
+        "ptrade_runtime_status": "FAIL",
+        "local_backtest_status": "STALE",
+        "backtest_status": "STALE",
+        "backtest_evidence_status": "STALE",
+        "formal_publish_allowed": False,
+        "candidate_status": "STALE",
+        "candidate_sha256": None,
+        "canonical_sha256_status": "STALE",
+        "old_ptrade_artifact_status": "RETIRED",
+        "ptrade_runtime_failure_reason": reason,
+        "retired_artifacts": retired_artifacts or [],
+    })
+    return state

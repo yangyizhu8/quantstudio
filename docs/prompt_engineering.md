@@ -3,7 +3,7 @@
 
 ## R0-VALIDATION-OWNER：回测执行方
 
-R0除目标平台外，还必须询问：由Agent运行R5，还是在R4后生成 `__candidate_quantstudio.py` 供用户在PyQt自行回测。用户模式下，实际日期只能由用户在PyQt设置；Agent仅给出ETF最晚上市日和完整暖机日建议。用户提交的日志必须绑定候选文件SHA-256、数据库路径、日期、资金、Profile、完成状态及运行检查。PASS后R6重新生成正式双端文件并删除候选文件；失败按策略逻辑→R3、框架/数据/API→R1、Profile/Validator→R4回退。
+R0除目标平台外，还必须询问：由Agent运行R5，还是在R4后生成 `__candidate_quantstudio.py` 供用户在PyQt自行回测。用户模式下，实际日期只能由用户在PyQt设置；Agent仅给出ETF最晚上市日和完整暖机日建议。用户提交的证据（2.0）必须绑定候选文件SHA-256、数据库路径、日期、资金、Profile、完成状态，以及**真实回测产物**：结果目录 + `config.csv`/`daily_stats.csv`/`trades.csv`/运行日志及各自 SHA-256；review 脚本自动解析实际本金、持仓部署与拒单计数，自报 `runtime_checks` 布尔值不再作为 PASS 依据。设计本金、仓位计算本金与实际回测本金必须一致（`portfolio_contract`），"回测跑完无异常但仓位未部署"判 `deployment_invariant_failed`。PASS后R6重新生成正式双端文件并删除候选文件；失败按策略逻辑/部署不变量→R3、框架/数据/API→R1、Profile/Validator→R4、本金不符/产物问题→R5回退。
 ## 0. 生成目标必须先确认（Agent-first R0-TARGET）
 
 在任何策略设计或代码生成之前，提示词必须要求用户明确选择：
@@ -71,7 +71,8 @@ QuantStudio 本地注入 API / 指标 / 全局对象（g、log、pd、np、MyTT�
   growth_ability 等可用；balance/income/cashflow 三张报表【返回空 DataFrame】。
 - query(valuation.market_cap).filter(...).order_by(...).limit(n) 后 get_fundamentals(q)
 - get_current_data()→{code:BarData}；data[code].price / current_price(code) 取当日价
-- PTrade Profile 1.7.0 已登记股票核心：`set_benchmark`、`run_daily`、`get_Ashares`、`get_index_stocks`、`get_stock_status`、`get_positions`、`get_position`、`get_trade_days`、`get_fundamentals`。未登记顶层 API 在双端模式默认 BLOCK。
+- PTrade Profile 1.8.0 已登记股票核心：`set_benchmark`、`run_daily`、`get_Ashares`、`get_index_stocks`、`get_stock_status`、`get_positions`、`get_position`、`get_trade_days`、`get_fundamentals`。未登记顶层 API 在双端模式默认 BLOCK。
+- ⚠️ **get_history(is_dict=True) 返回形状契约（Profile 1.8.0）**：真实平台 mapping item 可能是 pandas DataFrame / NumPy structured array / recarray。双端/PTrade 源码对 history item 提取字段后必须先 `np.asarray(item[field], dtype=float)`（或 `hasattr(values,'values')` 守卫的 helper）归一化再做数值计算；禁止无保护地使用 `.values`/`.iloc`/`.loc`/`.to_numpy()`/`.columns`/`.index`/`.empty`。
 - QuantStudio 本地扩展：get_etf_list_local(query_date=None, etf_type="equity", active_only=True)、get_history_batch(...)；仅当生成目标不包含 PTrade 时允许
 - check_limit(code)→{code:1涨/-1跌/0平}；filter_stock_by_status(stocks,filter_type=[...])
 - get_stock_status(stocks, query_type='ST'|'HALT'|'DELISTING', query_date='YYYYmmdd')；`DELISTING_SORTING` 只用于 filter_stock_by_status

@@ -1,0 +1,152 @@
+{
+  "design_version": "2.1",
+  "strategy_id": "contrarian_loser_reversal",
+  "strategy_name": "A股反转策略(输家组合均值回归)·对标沪深300·长档季度重排",
+  "asset_class": "stock",
+  "targets": [
+    "quantstudio",
+    "ptrade"
+  ],
+  "engine_profile": {
+    "profile_id": "daily-bar-v1",
+    "bar_frequency": "1d",
+    "match_price_mode": "close"
+  },
+  "market_data_contract": {
+    "signal_price_adjustment": "pre",
+    "execution_price_basis": "raw_trade_price"
+  },
+  "strategy_semantics": {
+    "universe": "全A剔除ST/退市/停牌/科创板(688)/北交所(.BJ)/上市不足252交易日；信号基于过去252交易日前复权累计跌幅降序排名",
+    "entry_rules": [
+      "每个季度末交易日收盘，计算全A候选池内每只股票过去252交易日的前复权累计跌幅 = (close_front[-252] - close_front[-1]) / close_front[-1]",
+      "按累计跌幅降序排序，剔除科创板(688.*)、北交所(*.BJ)、上市不足252日的标的后，取跌幅最大的前20只",
+      "对选出的20只标的，按等权重分配资金（每只目标市值 = 总资金100万 / 20 = 5万），使用 order_target_value 调仓至目标市值",
+      "单只标的持仓市值上限5%（防单票摊平死穴）"
+    ],
+    "exit_rules": [
+      "仅在季度重排时替换持仓：新一期跌幅榜中仍在榜则持有，跌出则卖出",
+      "标的被标记为退市/停牌时由框架在 before_trading_start 中移除，不参与下期选股",
+      "不主动止损、不猜底；靠篮子摊平与季度再平衡消化个体风险"
+    ],
+    "portfolio_rules": [
+      "等权配置20只标的，每只目标市值5万元（总资金100万元）",
+      "调仓频率：季度（每季度最后一个交易日收盘执行 rebalance）",
+      "调仓触发：rebalance 内部按当前交易日期判断是否为季度末月最后一个交易日"
+    ],
+    "risk_rules": [
+      "硬过滤：剔除ST/*ST、退市、停牌、科创板(688)、北交所(.BJ)、上市<252日",
+      "T+1 交易规则；涨跌停板与整手(100股)由框架保证",
+      "单只持仓市值上限5%，总持仓上限100%（不满仓现金留存以备调仓滑点）",
+      "基准：沪深300（set_benchmark('000300.SH')）"
+    ]
+  },
+  "timing": {
+    "signal_data_cutoff": "T-1 收盘（get_history(..., fq='pre', include=False) 截至上一交易日）",
+    "decision_events": [
+      {
+        "name": "rebalance",
+        "lifecycle": "run_daily",
+        "time": "15:00",
+        "purpose": "季度末交易日收盘执行输家组合重排与等权调仓"
+      }
+    ],
+    "holding_semantics": "持有至季度重排替换；仅退市/停牌由框架在 before_trading_start 移除，不主动止损"
+  },
+  "components": {
+    "lifecycle_hooks": [
+      "initialize",
+      "before_trading_start",
+      "handle_data",
+      "after_trading_end"
+    ],
+    "api_groups": [
+      "history_api",
+      "universe_api",
+      "status_api",
+      "order_api",
+      "benchmark_api",
+      "schedule_api",
+      "cost_api"
+    ],
+    "required_apis": [
+      "get_history",
+      "get_Ashares",
+      "filter_stock_by_status",
+      "get_stock_status",
+      "order_target_value",
+      "get_positions",
+      "get_position",
+      "set_benchmark",
+      "run_daily",
+      "set_commission",
+      "set_slippage",
+      "log"
+    ],
+    "implementation_notes": [
+      "累计跌幅与排名用纯 Python/NumPy 计算，必须显式 import numpy as np（PTrade 不注入 np）",
+      "科创板(688.*)按代码前缀过滤；北交所(.BJ)由 get_Ashares 返回集自然排除后仍需显式剔除",
+      "上市天数用 get_history(count=252, fq='pre', include=False) 返回行数 >= 252 判定，避免额外 API 依赖",
+      "filter_stock_by_status 仅在 before_trading_start 调用；盘中状态检查用 get_stock_status",
+      "所有信号价 get_history 调用必须含字面量 fq='pre'，include=False",
+      "_ensure_runtime_state 必须在 initialize/before_trading_start/rebalance/after_trading_end 首行调用，用 hasattr 幂等守卫"
+    ]
+  },
+  "constraints": {
+    "hard_filters": [
+      "exclude_st",
+      "exclude_suspended",
+      "exclude_delisted",
+      "exclude_star_market",
+      "exclude_bse",
+      "min_listing_days_252",
+      "t1",
+      "price_limit",
+      "lot_100"
+    ],
+    "no_lookahead": true,
+    "portable_source_required": true,
+    "runtime_state_guard_required": true
+  },
+  "approximations": [
+    {
+      "id": "signal_cutoff_proxy",
+      "description": "季度调仓信号基于 T-1 收盘前复权数据（get_history include=False）；run_daily(time='15:00') 在日线引擎收盘触发，order_target_value 以当日 close 撮合，信号到成交存在当日延迟（日线引擎标准近似）。",
+      "confirmed": true
+    },
+    {
+      "id": "ptrade_runtime_not_verified_by_skill",
+      "description": "PTrade 目标文件通过 R4 静态签名校验（stock-core 子集已在 ptrade-api-signatures.json v1.7.0 登记），但本 Skill 未在真实 IQEngine 运行该文件；实盘上传前用户需自行在 PTrade 环境验证。QuantStudio 候选由用户在 PyQt 跑回测并提交哈希绑定证据。",
+      "confirmed": true
+    }
+  ],
+  "open_questions": [],
+  "user_confirmations": {
+    "strategy_semantics": true,
+    "execution_approximations": true,
+    "component_plan": true,
+    "generation_target": true,
+    "backtest_validation_mode": true
+  },
+  "output": {
+    "overwrite": true,
+    "quantstudio_path": "quantstudio/backtest/strategies/contrarian_loser_reversal_quantstudio.py",
+    "ptrade_path": "ptrade/contrarian_loser_reversal_ptrade.py"
+  },
+  "universe_contract": {
+    "mode": "portable_public_api",
+    "local_dynamic_api_allowed": false
+  },
+  "validation_execution": {
+    "mode": "user_pyqt",
+    "require_hash_bound_evidence": true,
+    "candidate_filename_suffix": "__candidate_quantstudio.py",
+    "user_selects_backtest_window": true,
+    "formal_publish_requires_backtest_pass": true
+  },
+  "backtest_window_contract": {
+    "strategy_must_not_hardcode_backtest_dates": true,
+    "agent_must_not_start_unconfirmed_backtest": true,
+    "actual_window_selected_by": "user_pyqt"
+  }
+}
