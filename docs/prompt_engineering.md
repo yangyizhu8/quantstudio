@@ -66,6 +66,7 @@ QuantStudio 本地注入 API / 指标 / 全局对象（g、log、pd、np、MyTT�
 - get_price(security,start,end,frequency='1d',fields,fq='pre',count,is_dict=False)
 - ⚠️ **取数默认前复权（fq='pre'）**：框架 API 与底层数据适配层默认均为前复权；生成策略取历史/行情务必使用 `fq='pre'`（不复权才显式传 `fq=None`）。**切勿依赖不复权价格做回测**（除权缺口会导致信号与收益失真）。即便省略 fq 也已是前复权，但建议显式写出 `fq='pre'` 以表意清晰。
 - ⚠️ **撮合/估值同为前复权口径（前复权闭环）**：成交价、持仓估值、`data[code].price` 均来自引擎前复权快照（OHLC 映射 `*_front`，`preClose` 同因子缩放），与信号价同一连续口径；ETF 拆分/分红除权无价格缺口、无虚假盈亏（分红等价于自动再投资）。策略可直接比较 `data[code].price` 与 `get_history(fq='pre')` 序列。
+- ⚠️ **设计契约强制值**：`signal_price_adjustment="pre"`、`execution_price_basis="pre_adjusted_price"`。生成器不得输出 `raw_trade_price`；旧设计需迁移后重新确认和回测。
 - get_fundamentals(security|QueryBuilder, table, fields, date)：valuation 完整可用；eps/profit_ability/
   growth_ability 等可用；balance/income/cashflow 三张报表【返回空 DataFrame】。
 - query(valuation.market_cap).filter(...).order_by(...).limit(n) 后 get_fundamentals(q)

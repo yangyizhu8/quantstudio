@@ -5,7 +5,7 @@ description: Strict target-aware agent-first strategy engineering for QuantStudi
 
 # QuantStudio Agent-first Strategy Engineering
 
-Skill release: `0.5.3-ptrade-stock-core-profile` (built on the `0.3.2-mvp` compiler/package baseline).
+Skill release: `0.5.4-pre-adjusted-execution-contract` (built on the `0.3.2-mvp` compiler/package baseline).
 
 Treat the calling agent as the strategy author. Constrain it with project lifecycle, data, timing, PTrade public API, validation, and delivery gates. Never implement a strategy by adding its name or shape to Compiler/Renderer/Jinja branches.
 
@@ -22,7 +22,7 @@ Treat the calling agent as the strategy author. Constrain it with project lifecy
 9. R0 and R2.5 are real conversational stop points. The calling agent must not self-confirm, infer consent from silence, reuse an unrelated prior confirmation, or continue in the same turn without the customer's explicit answer.
 10. Local backtests obtain data through QuantStudio providers. Prefer `<current-project>/data/quantstudio.db`; use a configured/external database only when the project-local database is absent or the customer explicitly approves the override. Strategy source must never open DuckDB itself.
 11. In dual mode, customer-provided PTrade runtime failures invalidate the previous PTrade PASS and R6 publication. Return to R1/R4, repair the reusable profile/adapter/Skill rule, regenerate both targets, and repeat post-generation consistency checks.
-12. All OHLC prices used for indicators, ranking, entry/exit signals, or risk thresholds must come from an injected history/price API with the literal keyword `fq='pre'`. Never omit `fq`, use `None`/`post`/`dypre`, or mix raw `data[code].open/high/low/close` into a front-adjusted signal series. Raw prices remain valid only for order matching, fills, cash, and position valuation.
+12. Signal, execution and valuation use one front-adjusted price basis. Indicator/ranking/entry/exit/risk OHLC must come from an injected history/price API with literal `fq='pre'`; engine matching, fills, cash, position valuation, `data[code].price` and BarData OHLC use the front-adjusted snapshot (`*_front`, raw fallback only when adjusted data is unavailable). `raw_trade_price` is not an allowed Agent-first execution contract.
 13. `set_backtest()` and `is_trade()` are QuantStudio-local extensions. Any dual/PTrade source that calls them is BLOCKED; remove the backtest-only switch from the PTrade target rather than relying on a local guard. PTrade logging uses `log.debug/info/warning/error/critical`; `log.warn` is BLOCKED.
 14. PTrade does not inject QuantStudio-local `np`/`pd` aliases. Dual/PTrade source using NumPy or pandas must explicitly declare `import numpy as np` and/or `import pandas as pd`; only storage/internal imports remain forbidden. Unimported calculation aliases are BLOCKED.
 15. Dual/PTrade validation is fail-closed for injected APIs. Every external top-level call and every `components.required_apis` entry must exist in `ptrade-api-signatures.json`; an unprofiled call is `MISSING_REUSABLE_API` at R1 and `BLOCK` at validation, never an approximation that the customer can waive.
@@ -88,7 +88,7 @@ Present and confirm:
 - maximum simultaneous holdings, overlap, cash and leverage policy;
 - order rejection, suspension and limit-state handling;
 - costs, slippage and benchmark;
-- the fixed price-basis contract: signal OHLC uses front-adjusted prices (`fq='pre'`), while execution and valuation use raw tradable prices.
+- the fixed price-basis contract: signal OHLC, execution, fills and valuation all use the front-adjusted engine snapshot; strategy history calls use literal `fq='pre'`.
 
 Identify contradictions with concrete examples. Do not choose a material interpretation for the customer.
 
@@ -138,7 +138,7 @@ The contract records natural-language semantics, lifecycle callbacks, public API
 ```json
 "market_data_contract": {
   "signal_price_adjustment": "pre",
-  "execution_price_basis": "raw_trade_price"
+  "execution_price_basis": "pre_adjusted_price"
 },
 "targets": ["quantstudio", "ptrade"],
 "universe_contract": {

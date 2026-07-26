@@ -75,3 +75,9 @@ Generated PTrade code must pass:
 - `get_stock_status` portable values are `ST`, `HALT`, and `DELISTING`. `DELISTING_SORTING` remains a `filter_stock_by_status` filter type and local backward-compatible alias only.
 - QuantStudio's `get_stock_status` adapter now implements public `query_type='DELISTING'` with the same `is_delisting_risk` result as the legacy local alias.
 - Static profile PASS remains portability evidence only; real broker/IQEngine runtime evidence is still required before claiming deployment acceptance.
+
+## Skill correction 0.5.4 — pre-adjusted execution contract
+
+- QuantStudio's implemented engine profile uses the front-adjusted daily/minute snapshot for matching, fills, cash, valuation, `data[code].price`, and BarData OHLC.
+- Agent-first designs now require `execution_price_basis=pre_adjusted_price`; raw execution declarations are blocked as incompatible with the selected local engine profile.
+- This is a design/profile contract correction. It does not claim that a broker PTrade runtime internally values positions with QuantStudio's adjusted snapshot; dual validation proves source/API portability while local backtest evidence records the QuantStudio execution basis.

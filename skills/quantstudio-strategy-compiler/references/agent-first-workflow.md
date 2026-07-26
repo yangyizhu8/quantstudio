@@ -37,7 +37,7 @@ For dual targets, every planned API must have a verified entry in `ptrade-api-si
 
 ### R2 - Draft design contract
 
-Write `agent_strategy_design.json` using `schemas/agent_strategy_design.schema.json`. Keep rules in clear natural language. Set `market_data_contract.signal_price_adjustment` to `pre` and `execution_price_basis` to `raw_trade_price`. Select lifecycle and API components, but do not encode strategy logic as a renderer pattern.
+Write `agent_strategy_design.json` using `schemas/agent_strategy_design.schema.json`. Keep rules in clear natural language. Set `market_data_contract.signal_price_adjustment` to `pre` and `execution_price_basis` to `pre_adjusted_price`. Signal history, engine matching, fills, cash, valuation, `data[code].price`, and BarData OHLC use the same front-adjusted snapshot contract. Select lifecycle and API components, but do not encode strategy logic as a renderer pattern.
 
 ### R2.5 - Customer confirmation gate
 

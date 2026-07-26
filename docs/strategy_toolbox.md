@@ -74,6 +74,8 @@
 >
 > **撮合/估值同为前复权口径（前复权闭环）**：引擎每日全市场快照 `query_daily_snapshot`（成交价、持仓估值、`data[code].price`、`BarData` OHLC 的唯一来源）将 OHLC 映射为前复权列（`*_front`，缺失回退原始价），`preClose` 按 `close_front/close` 同因子缩放，保证 `(close-preClose)/preClose` 与真实日收益一致。因此 ETF 份额拆分、股票分红除权不会产生价格缺口与虚假盈亏；代价是成交价为前复权价（分红等价于自动再投资，前复权回测标准口径）。`pctChg`/`volume`/`amount` 保持原始口径。
 
+> Agent-first `agent_strategy_design.json` 只允许 `execution_price_basis="pre_adjusted_price"`；信号、撮合、成交、现金和估值不得声明为 raw 口径。
+
 | 函数 | 说明 |
 |------|------|
 | `get_history(...)` | 获取历史 K 线，**双签名兼容**：`get_history(security,count,unit='1d',fields=...,fq='pre')` 与 Ptrade 官方 `get_history(count,frequency='1d',field='close',security_list=...,fq='pre')`。**fq 默认 `'pre'`（前复权）**。支持 `is_dict=True` 返回 `{code:DataFrame}`。字段映射 `money→amount`、`price→close`、`factor→pctChg`。 |

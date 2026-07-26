@@ -30,7 +30,7 @@ def _design() -> dict:
         },
         "market_data_contract": {
             "signal_price_adjustment": "pre",
-            "execution_price_basis": "raw_trade_price",
+            "execution_price_basis": "pre_adjusted_price",
         },
         "strategy_semantics": {
             "universe": "Previous-day A-share universe",

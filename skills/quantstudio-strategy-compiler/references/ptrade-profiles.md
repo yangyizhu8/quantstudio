@@ -48,3 +48,9 @@ PTrade Renderer 输出必须通过：语法、生命周期、API 白名单、禁
 - Dual/PTrade validation is fail-closed: every `components.required_apis` entry and every external top-level source call must be profiled. Missing entries are `MISSING_REUSABLE_API` at R1 and `BLOCK` at R4; they cannot be waived as execution approximations.
 - Portable `get_stock_status` accepts `ST`, `HALT`, or `DELISTING`. `DELISTING_SORTING` is a `filter_stock_by_status` filter type and a local backward-compatible alias only.
 - Static Profile PASS proves conformance to the registered default subset, not successful execution on every broker/IQEngine deployment.
+
+## 2026-07-26 Agent-first execution-price contract
+
+- The selected QuantStudio backtest engine profile uses `pre_adjusted_price` for matching, fills, cash, valuation, `data[code].price`, and BarData OHLC.
+- Agent-first designs must declare `signal_price_adjustment=pre` and `execution_price_basis=pre_adjusted_price`; `raw_trade_price` is rejected.
+- PTrade public-API validation remains a portability gate and does not redefine the broker runtime's internal valuation basis.

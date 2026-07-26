@@ -714,3 +714,11 @@ This supersedes the PR2 Commit 1 / audit-fix / audit-fix2 FAIL entries while ret
 - Generic canonical keyword validation blocks literal `get_stock_status(query_type='DELISTING_SORTING')`; portable code uses `DELISTING`.
 - QuantStudio adapter now accepts public `get_stock_status(..., query_type='DELISTING')` while preserving `DELISTING_SORTING` as a local compatibility alias.
 - Added dual-target validation/publication and adapter regression coverage. No real-broker runtime PASS is claimed by this static repair.
+
+## Agent-first Skill 0.5.4 pre-adjusted execution contract (2026-07-26)
+
+- Customer decision: the framework's front-adjusted snapshot is the single authoritative basis for signal history, matching, fills, cash, position valuation, `data[code].price`, and BarData OHLC.
+- Schema correction: `market_data_contract.execution_price_basis` is now constant `pre_adjusted_price`; `raw_trade_price` is rejected.
+- Skill/workflow examples now emit `signal_price_adjustment=pre` plus `execution_price_basis=pre_adjusted_price`.
+- Existing raw-price design artifacts are stale and must return to R2, receive a fresh R2.5 confirmation, then repeat R4/R5 before publication.
+- This correction aligns the design contract with the already implemented `query_daily_snapshot` front-adjusted matching/valuation path; it does not change engine order matching code in this patch.
