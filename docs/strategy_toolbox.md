@@ -8,9 +8,7 @@
 
 ## 0. 基本约定
 
-- **策略文件无需任何 import 语句**：引擎加载策略时，自动把 `ptrade_import` 模块的全部
-  名称注入到策略命名空间（含全部 API、MyTT 指标库、A股规则函数、`g`/`log`、
-  `pandas`/`numpy`）。即 `from ptrade_import import *` 的效果由引擎代为完成。
+- **运行时依赖按目标分层**：QuantStudio 本地加载时会注入 `ptrade_import` 的 API、`g`/`log` 以及 `np`/`pd`；真实 PTrade/IQEngine 不注入 `numpy`/`pandas` 别名。双端/PTrade 策略使用数组或 DataFrame 时必须显式写 `import numpy as np` / `import pandas as pd`。普通计算库 import 允许，数据库驱动、QuantStudio 内部模块和直接文件 I/O 仍禁止。
 - **策略隔离（强制）**：策略代码禁止直接 `import duckdb/sqlite3/sqlalchemy/pymysql`、
   `quantstudio.pipeline`、`quantstudio.backtest.providers`、`quantstudio._paths`，也
   禁止直接调用 `open/read_csv/read_parquet/read_sql/read_pickle`。数据访问必须走注入的

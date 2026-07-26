@@ -1,6 +1,6 @@
 {
   "profile_id": "ptrade-backtest-public-v1",
-  "profile_version": "1.5.0",
+  "profile_version": "1.6.0",
   "verified_on": "2026-07-25",
   "policy": "Canonical dual-target code must use exact PTrade backtest public signatures; QuantStudio adapters must be equally strict so local PASS predicts platform acceptance.",
   "signatures": {
@@ -240,6 +240,7 @@
   ],
   "portable_rules": [
     "Generated backtest signal-price calls must use the literal fq='pre'; missing, dynamic, dypre, post-adjusted, and attribute_history price paths are blocked.",
+    "PTrade does not inject numpy/pandas aliases. If source uses np/pd/numpy/pandas, it must explicitly import the corresponding module.",
     "Use numpy/pandas or locally defined helpers for indicators unless the PTrade public API explicitly supplies the function.",
     "Backtest code must not call get_snapshot or check_limit; those are trading-context APIs. get_open_orders is available in backtest and trade contexts.",
     "Use get_stock_info(..., field=['listed_date']) for listing dates.",
@@ -257,7 +258,8 @@
     "get_open_orders": "PTrade public documentation marks get_open_orders(security=None) available in backtest and trade; profile 1.2.0 incorrectly blocked it.",
     "source_checked_on": "2026-07-25",
     "set_backtest_is_trade": "Runtime traceback supplied on 2026-07-25 (platform timestamp 2026-07-26) proves set_backtest/is_trade are QuantStudio-local extensions, not PTrade backtest public APIs.",
-    "log_warn": "Runtime traceback supplied on 2026-07-25 (platform timestamp 2026-07-26) proves IQEngine LogEngine has no warn attribute; generated PTrade source must use log.warning."
+    "log_warn": "Runtime traceback supplied on 2026-07-25 (platform timestamp 2026-07-26) proves IQEngine LogEngine has no warn attribute; generated PTrade source must use log.warning.",
+    "numpy_pandas_injection": "Real IQEngine log supplied on 2026-07-25 shows 79 occurrences of NameError for np; PTrade does not inject QuantStudio-local np/pd aliases. Portable source must import numpy/pandas explicitly when used."
   },
   "logger_methods": {
     "allowed": [
@@ -270,5 +272,11 @@
     "blocked_aliases": {
       "warn": "Use log.warning(...); the real IQEngine LogEngine does not expose log.warn(...)."
     }
+  },
+  "runtime_module_imports": {
+    "np": "numpy",
+    "pd": "pandas",
+    "numpy": "numpy",
+    "pandas": "pandas"
   }
 }

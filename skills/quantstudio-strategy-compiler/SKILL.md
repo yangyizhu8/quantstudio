@@ -5,7 +5,7 @@ description: Strict target-aware agent-first strategy engineering for QuantStudi
 
 # QuantStudio Agent-first Strategy Engineering
 
-Skill release: `0.5.1-ptrade-runtime-contract-hotfix` (built on the `0.3.2-mvp` compiler/package baseline).
+Skill release: `0.5.2-ptrade-explicit-runtime-imports` (built on the `0.3.2-mvp` compiler/package baseline).
 
 Treat the calling agent as the strategy author. Constrain it with project lifecycle, data, timing, PTrade public API, validation, and delivery gates. Never implement a strategy by adding its name or shape to Compiler/Renderer/Jinja branches.
 
@@ -24,6 +24,7 @@ Treat the calling agent as the strategy author. Constrain it with project lifecy
 11. In dual mode, customer-provided PTrade runtime failures invalidate the previous PTrade PASS and R6 publication. Return to R1/R4, repair the reusable profile/adapter/Skill rule, regenerate both targets, and repeat post-generation consistency checks.
 12. All OHLC prices used for indicators, ranking, entry/exit signals, or risk thresholds must come from an injected history/price API with the literal keyword `fq='pre'`. Never omit `fq`, use `None`/`post`/`dypre`, or mix raw `data[code].open/high/low/close` into a front-adjusted signal series. Raw prices remain valid only for order matching, fills, cash, and position valuation.
 13. `set_backtest()` and `is_trade()` are QuantStudio-local extensions. Any dual/PTrade source that calls them is BLOCKED; remove the backtest-only switch from the PTrade target rather than relying on a local guard. PTrade logging uses `log.debug/info/warning/error/critical`; `log.warn` is BLOCKED.
+14. PTrade does not inject QuantStudio-local `np`/`pd` aliases. Dual/PTrade source using NumPy or pandas must explicitly declare `import numpy as np` and/or `import pandas as pd`; only storage/internal imports remain forbidden. Unimported calculation aliases are BLOCKED.
 
 ## Responsibility boundary
 
@@ -293,7 +294,7 @@ In user-PyQt mode, R6 must verify the validated candidate still exists with the 
 - Backtest/trading/research context availability is enforced separately.
 - Use PTrade `.SS/.SZ/.BJ` security suffixes in portable source and in local ETF-universe return values.
 - Normalize comparison keys by bare six-digit code where API containers may differ.
-- Use NumPy/pandas or source-defined helpers for indicators unless the PTrade public profile explicitly lists the indicator.
+- Use NumPy/pandas or source-defined helpers for indicators unless the PTrade public profile explicitly lists the indicator. When used, import them explicitly (`import numpy as np`, `import pandas as pd`); real PTrade does not inject QuantStudio aliases.
 - Every `get_history`, `get_history_batch`, and `get_price` call used by generated backtest code must include the literal keyword `fq='pre'`; `dypre`, post-adjustment, missing/dynamic values, and `attribute_history` are blocked.
 - A current completed minute may use `get_history(..., frequency='1m', fq='pre', include=True)` only in a confirmed scheduled minute callback with an explicit current-bar cutoff.
 - `get_snapshot` and `check_limit` are not allowed in PTrade backtest source. `get_open_orders(security=None)` is allowed in backtest and trade contexts.

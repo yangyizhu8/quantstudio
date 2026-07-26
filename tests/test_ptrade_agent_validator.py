@@ -106,6 +106,22 @@ def test_ptrade_validator_blocks_log_warn_and_accepts_log_warning():
     assert report["status"] == "PASS", report
 
 
+def test_ptrade_validator_blocks_unimported_numpy_and_pandas_aliases():
+    rules = block_rules(valid_source(extra_rebalance=(
+        "    np.mean([1.0, 2.0])\n"
+        "    pd.Series([1.0, 2.0])")))
+    assert "PTRADE-RUNTIME-IMPORT" in rules
+
+
+def test_ptrade_validator_accepts_explicit_numpy_and_pandas_imports():
+    source = "import numpy as np\nimport pandas as pd\n\n" + valid_source(
+        extra_rebalance=(
+            "    np.mean([1.0, 2.0])\n"
+            "    pd.Series([1.0, 2.0])"))
+    report = validate_strategy(design(), source, target_profile="ptrade")
+    assert report["status"] == "PASS", report
+
+
 def test_ptrade_validator_accepts_real_set_slippage_keyword():
     report = validate_strategy(
         design(), valid_source(extra_initialize="    set_slippage(slippage=0.0)"),

@@ -697,3 +697,12 @@ This supersedes the PR2 Commit 1 / audit-fix / audit-fix2 FAIL entries while ret
 - Regression evidence: PTrade validator targeted suite `17 passed`; related Skill/delivery/release suites `101 passed`; Skill quick validation, JSON parse, Python compile, and installed-skill hash comparison all PASS.
 - Artifact status: the previous `tech_etf_mvo_rotation` PTrade PASS/publication is stale. Revalidation now blocks the source on both local-only calls and five `log.warn` call sites, in addition to pre-existing schedule/design mismatches. The old upload artifact must not be reused.
 - Synchronization status: local repair only. No staging, commit, push, or pull request is authorized until explicit post-repair customer confirmation.
+---
+
+## PTrade profile 1.6.0 explicit-runtime-import repair (2026-07-25)
+
+- Trigger: real IQEngine log from `2026-05-11` through `2026-07-06` contains 79 `NameError: name 'np' is not defined` warnings. The strategy silently converted the missing runtime dependency into empty-history fail-soft behavior and stayed in cash.
+- Root cause: QuantStudio injects `np`/`pd`, while real PTrade does not. Skill prompts incorrectly required zero imports and the PTrade validator did not verify calculation-module bindings.
+- Generic repair: Profile `1.6.0` requires explicit `numpy`/`pandas` imports when `np`/`pd`/full module names are used; Validator emits `PTRADE-RUNTIME-IMPORT`; ordinary calculation imports remain allowed while storage/internal imports and direct I/O remain blocked.
+- Artifact status: SHA `cc918d31dd99263db7c1271df2acb7ff0f2c017fad4580924423889d4d34ea01` is invalidated and must not be uploaded again.
+- Synchronization status: local repair only until post-repair customer confirmation.

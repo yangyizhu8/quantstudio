@@ -1,4 +1,4 @@
-﻿# QuantStudio
+# QuantStudio
 
 统一数据管线 + PTrade 兼容量化回测框架。
 
@@ -105,7 +105,7 @@ result, output_dir = payload
 写策略 / 移植 PTrade 策略时，可直接使用的**全部生命周期回调、注入式 API 函数、MyTT 指标库与 A股交易规则**，详见 **[`docs/strategy_toolbox.md`](docs/strategy_toolbox.md)**。其中 `get_etf_list()` 保持 PTrade 同名契约且禁止用于回测动态池；本地单端策略可使用 `get_etf_list_local(query_date=None, etf_type="equity", active_only=True)`，该接口经 ReferenceDataProvider → DuckDB 数据适配层按 `etf_basic` + `etf_daily` 做 PIT 查询。
 
 要点：
-- 策略文件**零 import**：引擎加载时自动注入全部 API（`get_history` / `get_fundamentals` / `order_*` 等 50+ 函数）、MyTT 指标库、`shared_ashare_rules` A股规则，以及 `g` / `log` / `pandas` / `numpy`。
+- 运行时依赖分层：QuantStudio 本地会注入 API、`g`/`log` 以及 `np`/`pd`；真实 PTrade 不注入 `numpy`/`pandas` 别名，因此双端/PTrade 源码使用它们时必须显式写 `import numpy as np` / `import pandas as pd`。数据库驱动、框架内部模块和直接文件 I/O 仍被禁止。
 - `log` 对象兼容 **printf 风格多参**：`log.info("信号=%s 条数=%d", src, n)` 按 `%` 风格格式化；双端/PTrade 可移植代码仅使用 `debug/info/warning/error/critical`，`log.warn(...)` 会被 Validator 阻断。
 - 生命周期分层：PTrade 可移植回调为 `initialize`（必需）+ `before_trading_start` / `handle_data` / `after_trading_end`（可选）；`set_backtest()` 与 `is_trade()` 仅属 QuantStudio 本地扩展，双端/PTrade 代码会被 Validator 阻断。
 - 数据 100% 来自 DuckDB（QuantStudio 数据管线产出），策略禁止直连数据库（强制隔离）。

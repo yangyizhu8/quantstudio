@@ -61,3 +61,9 @@ Generated PTrade code must pass:
 - A local guard such as `if not is_trade(): set_backtest()` is not portable because the guard itself is also absent on the real platform. PTrade output must omit the local-only switch.
 - The verified portable logger methods are `log.debug`, `log.info`, `log.warning`, `log.error`, and `log.critical`. `log.warn` is blocked because real IQEngine `LogEngine` does not expose that alias.
 - Runtime evidence was supplied on 2026-07-25 with a platform timestamp of 2026-07-26; the future timestamp is retained as evidence metadata but does not change the contract diagnosis.
+
+## Profile correction 1.6.0 ? explicit calculation-module imports
+
+- Real IQEngine runtime evidence supplied on 2026-07-25 contains 79 `NameError: name 'np' is not defined` warnings. QuantStudio injects `np`/`pd`; PTrade does not.
+- Dual/PTrade source that uses NumPy or pandas must explicitly include `import numpy as np` and/or `import pandas as pd`. Ordinary calculation-library imports are allowed; database drivers, QuantStudio internals, and direct file I/O remain forbidden.
+- PTrade validation blocks every used `np`, `pd`, `numpy`, or `pandas` name that is not bound to the verified module import. This prevents fail-soft code from silently converting a runtime dependency failure into an empty portfolio.

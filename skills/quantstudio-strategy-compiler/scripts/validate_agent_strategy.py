@@ -195,6 +195,44 @@ def _defined_or_imported_names(tree: ast.Module) -> set[str]:
     return names
 
 
+def _import_alias_map(tree: ast.Module) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                aliases[alias.asname or alias.name.split(".")[0]] = alias.name
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            for alias in node.names:
+                aliases[alias.asname or alias.name] = module
+    return aliases
+
+
+def _validate_ptrade_runtime_imports(
+    tree: ast.Module,
+    profile: dict[str, Any],
+    issues: list[dict[str, Any]],
+) -> None:
+    """Require explicit imports for calculation modules not injected by PTrade."""
+    required = profile.get("runtime_module_imports", {})
+    if not required:
+        return
+    imports = _import_alias_map(tree)
+    used_lines: dict[str, int] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) \
+                and node.id in required:
+            used_lines.setdefault(node.id, node.lineno)
+    for alias, line in sorted(used_lines.items()):
+        module = required[alias]
+        if imports.get(alias) != module:
+            issues.append(_issue(
+                "PTRADE-RUNTIME-IMPORT", "BLOCK",
+                f"PTrade does not inject {alias!r}; add explicit `import {module}"
+                f"{' as ' + alias if alias != module else ''}` before using it.",
+                line))
+
+
 def _load_ptrade_profile() -> dict[str, Any]:
     return load_json(skill_root() / "references" / "ptrade-api-signatures.json")
 
@@ -323,6 +361,8 @@ def validate_strategy(
     functions = function_map(tree)
     parents = _parent_map(tree)
     defined_names = _defined_or_imported_names(tree)
+    if strict_ptrade:
+        _validate_ptrade_runtime_imports(tree, ptrade_profile, issues)
     required_hooks = set(design["components"].get("lifecycle_hooks", [])) | {"initialize"}
 
     for hook in sorted(required_hooks):

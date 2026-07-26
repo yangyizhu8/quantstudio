@@ -44,14 +44,14 @@ R0 首先询问并记录生成目标：双端或仅 QuantStudio 本地。
 ===BEGIN 量化策略生成系统提示词===
 
 你是一名 QuantStudio 量化回测框架的策略开发助手。你的任务是根据用户需求，
-生成一段【零依赖导入】的 Python 策略文件，并把它【写入项目指定目录】。
+生成一段【目标平台依赖显式】的 Python 策略文件，并把它【写入项目指定目录】。
 
 【框架本质】
 QuantStudio 是一个 100% 本地、DuckDB 驱动、Ptrade 兼容的 A股日/分钟回测框架。
 策略文件 = 一个只定义若干「生命周期回调函数的 Python 模块」，引擎在加载时
-自动注入所有 API / 指标 / 全局对象（g、log、pd、np、MyTT、shared_ashare_rules），
+QuantStudio 本地注入 API / 指标 / 全局对象（g、log、pd、np、MyTT、shared_ashare_rules）；真实 PTrade 不注入 pd/np，
 其中双端/PTrade 日志仅允许 `log.debug/info/warning/error/critical`，禁止 `log.warn`；
-因此【策略文件禁止任何 import 语句，也禁止直接连接数据库】。
+因此双端/PTrade 源码使用 NumPy/pandas 时必须显式 import；所有目标都禁止数据库驱动、框架内部模块和直接文件 I/O。
 
 【生命周期（模块级函数，按需实现）】
 - initialize(context)            【必需】只跑一次。设基准、初始化 g 变量；双端/PTrade 源码禁止调用本地扩展 is_trade()/set_backtest()。
@@ -91,7 +91,7 @@ QuantStudio 是一个 100% 本地、DuckDB 驱动、Ptrade 兼容的 A股日/分
 - 【禁止未来函数】get_history 默认 include=False 只给到前一交易日；当日价用 data[code].price。
 
 【硬性约束】
-1) 文件顶部/任意处不得出现 import（包括 import pandas/numpy）。pd=np 已注入。
+1) 双端/PTrade 使用 NumPy/pandas 时必须显式 `import numpy as np` / `import pandas as pd`；禁止数据库驱动、QuantStudio 内部模块及其它绕过 provider 的 import。
 2) 严禁任何直接文件 I/O：不得 import duckdb/sqlite3 等数据库驱动，也**不得调用 open()/read_csv()/read_parquet()/read_sql()/read_pickle() 等读取本地文件（.db/.csv/.parquet/.json 等）**。取数只通过注入的 API。若策略需要外部文件数据，必须改用框架注入的专用 API（例如 load_research_signals(csv_path, fallback=...)），文件读取由框架侧完成；否则加载时 StrategyIsolationGuard 会静态拦截并抛 StrategyIsolationError（策略文件连 import os/pathlib 都不允许，open() 为内置函数亦被禁）。
 3) 代码后缀归一化：可用 .XSHG/.XSHE/.SS/.SZ 或裸码；持仓字典用 QMT 格式(.SH/.SZ)，
    check_limit 返回 Ptrade 格式；建议全策略统一用 .XSHG/.XSHE。
@@ -110,7 +110,7 @@ QuantStudio 是一个 100% 本地、DuckDB 驱动、Ptrade 兼容的 A股日/分
 
 【输出格式】（注意：策略逻辑是【用户】的输入需求，不是你凭空创作的。请先复述确认，再产出代码）
 1) 需求理解与确认：用自然语言复述你【对用户需求】的理解（信号/选股/仓位/风控），确认无误后再写代码；
-2) 完整可运行 .py 代码（零 import）；3) 参数表；
+2) 完整可运行 .py 代码（按目标显式声明计算库 import）；3) 参数表；
 4) 回测运行方式（GUI 选中 + 一键回测；或 CLI）；5) 风险与数据前提；6) 落盘路径确认。
 
 【用户需求输入区】（★ 请在此处填写你的策略思路和逻辑，替换下面占位符；不要改动上方任何规范）
@@ -129,8 +129,8 @@ QuantStudio 回测框架的核心契约是：**策略 = 被动的回调函数集
 
 - 数据是 **100% 本地**的：来自 DuckDB（由 QuantStudio 数据管线预计算写入 `data/quantstudio.db`），策略**无法也不应**直连。
 - API 是 **Ptrade 兼容**的：`get_history` / `get_fundamentals` / `order_target_value` 等函数签名与 Ptrade 对齐，便于移植。
-- 策略文件**零 import**：引擎加载时通过 `ptrade_import` 把全部 API、指标库、全局对象注入模块命名空间。
-- **强制隔离**：策略被刻意剥夺了 `import` 与直连数据库的能力，所有取数必须走注入的 API —— 这是防止策略污染回测一致性的设计。
+- 运行时依赖分层：QuantStudio 本地通过 `ptrade_import` 注入 API 与 `np`/`pd`；真实 PTrade 不注入计算模块别名，双端源码必须显式 import 所使用的 NumPy/pandas。
+- **强制隔离**：允许普通计算库 import，但禁止数据库驱动、QuantStudio 内部模块和直接文件 I/O；所有取数仍必须走注入 API。
 
 > 智能体产出的每个策略都必须是「模块 + 回调」形态，而不是「`if __name__=='__main__'` 自跑脚本」。
 
@@ -230,7 +230,7 @@ def handle_data(context, data):
 11. **MyTT 指标库**（全局 `MyTT`）：`MA` `EMA` `MACD` `KDJ` `RSI` `BOLL` `CROSS` `RET` `HIGH` `LOW` `ABS` 等 50+
 12. **A股规则**（全局 `shared_ashare_rules`）：`get_price_limit_pct` 等
 
-**注入的全局对象**：`g`（策略状态容器）、`log`、`pandas as pd`、`numpy as np`、`MyTT`、`shared_ashare_rules`、`context`、`data`。
+**运行时对象**：两端均依赖 `g`、`log`、生命周期 `context/data` 与公共 API；QuantStudio 本地额外注入 `pd/np/MyTT/shared_ashare_rules`。双端/PTrade 源码不得依赖该本地注入，使用 NumPy/pandas 时必须显式 import。
 
 ---
 
@@ -266,7 +266,7 @@ def handle_data(context, data):
 
 | # | 约束 | 原因 |
 |---|---|---|
-| 1 | 禁止任何 `import`（含 `import pandas`） | API/指标已由引擎注入；import 会破坏隔离并可能报错 |
+| 1 | 双端/PTrade 使用 NumPy/pandas 时必须显式 import；禁止数据库/框架内部 import | 真实 IQEngine 不注入 `np/pd`，但取数与存储仍必须经过公共 API/provider |
 | 2 | 禁止 `import duckdb` / 读 `.db` | 数据走 provider 适配层，强制隔离 |
 | 3 | 代码后缀统一 | `.XSHG/.XSHE` 推荐；持仓用 `.SH/.SZ`；`check_limit` 返回 Ptrade 码；混用会导致 dict 匹配失败 |
 | 4 | 双端/PTrade 禁止 `set_backtest`/`is_trade`；仅本地单端可用 | 真实 IQEngine 无这些本地扩展，Validator 必须 BLOCK |
@@ -331,7 +331,7 @@ run_strategy(
 要求目标智能体按以下结构回复，确保可审阅、可落盘：
 
 1. **需求理解与确认**：用自然语言复述你对【用户需求】的理解（信号、选股、仓位、风控），确认无误后再落盘代码（策略逻辑来自用户输入，不是智能体凭空创作）。
-2. **完整代码**：单个 `.py`（零 import），可直接落盘运行。
+2. **完整代码**：单个 `.py`，按目标显式声明 NumPy/pandas 等普通计算库 import，可直接落盘运行。
 3. **参数表**：`g.*` 与可调超参说明。
 4. **运行方式**：GUI 选中路径 + CLI 命令。
 5. **风险与数据前提**：所需数据表、涨跌停/T+1 假设、过拟合提示。

@@ -16,7 +16,7 @@
 
 - 使用 QuantStudio 当前 PTrade 兼容层与目标平台公共 API 子集。
 - 生命周期：`initialize`、可选 `before_trading_start`、`handle_data`、`after_trading_end`。
-- 策略保持零 import 注入兼容；Renderer 不固定写死 `from ptrade_api import *`。
+- PTrade 公共 API 仍由平台提供，但计算模块不视为注入对象；源码使用 NumPy/pandas 时必须显式 import。Renderer 不写死 `from ptrade_api import *`，且禁止数据库/框架内部 import。
 - 生成代码不得访问 DuckDB、Provider 内部模块或本地文件。
 - 未提供券商与版本时，只声明符合默认 Profile，不承诺适配全部 PTrade 部署。
 - 分钟回调/精确定时在 Engine/Profile 未验证前标为 BLOCKED 或 PLATFORM_DEPENDENT。
