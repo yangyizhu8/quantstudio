@@ -664,6 +664,7 @@ def _build_reference_capabilities(ref: Dict[str, Any],
                 "(raw, kept as-is, no custom conflict-resolution rule). "
                 "industry_membership is NOT PIT READY; ambiguous dates are "
                 "fail-closed at API level.")
+            fail_closed_verified = False
             # 歧义日期 fail-closed 真实探针
             try:
                 from quantstudio.backtest.providers.base import (
@@ -675,12 +676,14 @@ def _build_reference_capabilities(ref: Dict[str, Any],
                     try:
                         provider.get_industry(acode, adate)
                         mem_ev.append(
-                            f"WARN: ambiguous date {adate} for {acode} "
-                            "did NOT fail closed")
+                            f"ambiguous date {adate} for {acode} "
+                            "did NOT fail closed -> capability contract BROKEN")
+                        fail_closed_verified = False
                     except ReferenceDataCapabilityError:
                         mem_ev.append(
                             f"ambiguous-date fail-closed verified "
                             f"({acode} @ {adate})")
+                        fail_closed_verified = True
             except Exception as e:
                 mem_ev.append(f"ambiguity fail-closed probe error: {e}")
         elif mig:
@@ -706,23 +709,47 @@ def _build_reference_capabilities(ref: Dict[str, Any],
     except Exception as e:
         mem_ev.append(f"industry PIT probe failed: {type(e).__name__}: {e}")
     if mem_approx:
-        # 数据存在且结构合法，但含歧义区间：DEGRADED（近似，需用户确认），
-        # 而非 DATA_MISSING；歧义日期在 API 层 fail-closed。
-        approx_cap = {
-            "schema_status": STATUS_AVAILABLE, "data_status": STATUS_DEGRADED,
-            "adapter_status": STATUS_AVAILABLE, "provider_status": STATUS_AVAILABLE,
-            "engine_status": STATUS_AVAILABLE, "platform_status": STATUS_AVAILABLE,
-            "evidence": mem_ev,
-            "message": "raw overlapping intervals preserved; ambiguous dates "
-                       "fail-closed; APPROXIMATION_REQUIRES_CONFIRMATION "
-                       "(NOT formal PIT READY)",
-            "remediation": ["R1 must classify APPROXIMATION_REQUIRES_CONFIRMATION "
-                            "and obtain customer confirmation before relying on "
-                            "historical industry membership"],
-        }
-        cap = _cap("industry_membership_pit", False, "reference", approx_cap)
-        cap["status_detail"] = [DETAIL_DATA_BLOCKED,
-                                DETAIL_PTRADE_RUNTIME_UNVERIFIED]
+        if fail_closed_verified:
+            # 真实探针已抛 ReferenceDataCapabilityError -> 确认 fail-closed 成立
+            approx_cap = {
+                "schema_status": STATUS_AVAILABLE, "data_status": STATUS_DEGRADED,
+                "adapter_status": STATUS_AVAILABLE, "provider_status": STATUS_AVAILABLE,
+                "engine_status": STATUS_AVAILABLE, "platform_status": STATUS_AVAILABLE,
+                "evidence": mem_ev,
+                "message": "raw overlapping intervals preserved; ambiguous dates "
+                           "fail-closed (verified); APPROXIMATION_REQUIRES_CONFIRMATION "
+                           "(NOT formal PIT READY)",
+                "remediation": ["R1 must classify APPROXIMATION_REQUIRES_CONFIRMATION "
+                                "and obtain customer confirmation before relying on "
+                                "historical industry membership"],
+            }
+            cap = _cap("industry_membership_pit", False, "reference", approx_cap)
+            cap["status_detail"] = [DETAIL_DATA_BLOCKED,
+                                    DETAIL_PTRADE_RUNTIME_UNVERIFIED]
+        else:
+            # F6 硬门禁：歧义 fail-closed 探针未抛 ReferenceDataCapabilityError
+            # （未抛错 / 抛错类型不正确 / 无 ambiguous_sample / 探针自身异常）
+            # -> capability contract BROKEN，provider 必须 BLOCKED，
+            #    message 明确声明 BROKEN 且不得出现未限定的 “fail-closed verified”。
+            broken_cap = {
+                "schema_status": STATUS_AVAILABLE, "data_status": STATUS_DEGRADED,
+                "adapter_status": STATUS_AVAILABLE, "provider_status": STATUS_BLOCKED,
+                "engine_status": STATUS_AVAILABLE, "platform_status": STATUS_AVAILABLE,
+                "evidence": mem_ev,
+                "message": ("F6 hard gate: ambiguous-date capability contract BROKEN — "
+                            "provider did NOT raise ReferenceDataCapabilityError on "
+                            "overlapping-interval (ambiguous) dates; "
+                            "industry_membership capability is BLOCKED (NOT PIT READY)"),
+                "remediation": [
+                    "Fix get_industry to raise ReferenceDataCapabilityError on "
+                    "ambiguous (overlapping-interval) dates before declaring "
+                    "industry_membership capability available",
+                    "R1 must classify APPROXIMATION_REQUIRES_CONFIRMATION and obtain "
+                    "customer confirmation once the contract is restored"],
+            }
+            cap = _cap("industry_membership_pit", False, "reference", broken_cap)
+            cap["status_detail"] = [DETAIL_DATA_BLOCKED,
+                                    DETAIL_PTRADE_RUNTIME_UNVERIFIED]
         caps.append(cap)
     else:
         caps.append(_ref_cap(

@@ -14,7 +14,7 @@
 - F4a corrective: `fetch_table` normalizes None/'ALL'/['ALL'] before dispatch (no more `ALL.SI` requests); empty single-industry member fetch is all-or-nothing fail-closed.
 - F4b corrective: industry membership intervals are repaired by a deterministic daily-uniqueness transform (gate: positive overlaps / multi-current / orphan / bad ranges all 0); formal table primary keys now include `industry_level`.
 - F5 corrective: the formal daemon universe `get_index_daily_universe()` (CSI + SW2021 L1) serves full/incremental/resident through the per-stock path; next-day incremental watermark behavior covered by daemon integration tests.
-- F6 corrective: `get_industry` profile entry corrected to the exact local signature/shape; capability inspection now probes through real Provider/API calls and reports DATA_BLOCKED honestly (meta missing / interval overlaps / resident path unreachable).
+- F6 corrective: `get_industry` profile entry corrected to the exact local signature/shape; capability inspection now probes through real Provider/API calls and reports DATA_BLOCKED honestly (meta missing / interval overlaps / resident path unreachable). The ambiguity fail-closed probe now enforces a hard gate: only when `get_industry` genuinely raises `ReferenceDataCapabilityError` on an overlapping-interval (ambiguous) date is the capability `provider_status=AVAILABLE` with message "verified"; otherwise (`get_industry` returns without error / wrong exception type / no ambiguous sample / probe internal error) the `industry_membership_pit` capability is `provider_status=BLOCKED` with `message` declaring `contract BROKEN`, and never claims an unqualified "fail-closed verified".
 
 
 ## 0.7.0-framework-repair-f1-f6 (2026-07-27)
