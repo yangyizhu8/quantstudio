@@ -207,6 +207,90 @@
 - **均线与核心指标**：`MA` `SMA` `EMA` `WMA` `DMA` `MACD` `KDJ` `RSI` `WR` `BIAS` `BOLL` `PSY` `CCI` `ATR` `BBI` `DMI` `TRIX` `CR` `EMV` `DPO` `BRAR` `MTM` `MASS` `ROC` `EXPMA` `OBV` `MFI` `ASI` `SAR`
 
 > 均为数组运算（输入/输出 `numpy array` 或 `pandas Series`），与通达信公式语义一致。
+
+---
+
+## 4. QFQ 重锚引擎（pipeline 级，fresh_staged / ratio 双模型）
+
+> 模块：`quantstudio.pipeline.qfq_reanchor_engine`。**这是 pipeline 编排层 API，不是注入策略的 API**——
+> 策略代码不应直接调用。本节供 pipeline 调用方 / Agent 编排重锚任务时参考（门禁要求记录）。
+> 决策文档：`docs/qfq-reanchor-minute-model-decision-20260727.md`（B-1 已于 2026-07-27 批准并实现）。
+
+### 4.1 入口 API
+
+```python
+apply_reanchor_for_security(
+    conn,                              # 显式 DuckDB 连接（调用方持有，非内部新建）
+    *, asset_type: str,               # "STOCK" | "ETF"
+    code: str,
+    fresh_daily: pd.DataFrame,        # 日线前复权（ratio 模式用）
+    calendar: CalendarService,        # 必须；fresh 分钟逐自然日校验 is_trading_day
+    freqs: Sequence[str] = ("1min",),
+    golden_minutes: Optional[pd.DataFrame] = None,   # ratio 模式方法 A 黄金抽验
+    ex_dates_ms: Sequence[int] = (),
+    allow_multi_segment: bool = False,
+    tol: Optional[ReanchorTolerances] = None,
+    price_source: str = "xtquant",
+    trigger_surface: str = "batch2",
+    event_id: Optional[str] = None,
+    list_date_ms: Optional[int] = None,
+    # —— 模型选择（B-1 批准边界，铁律）——
+    model: str = "ratio",             # "ratio" | "fresh_staged"，必须显式
+    model_reason: Optional[str] = None,   # fresh_staged 必填；写入事件审计
+    fresh_minutes: Optional[pd.DataFrame] = None,  # fresh_staged 必填
+    fresh_source: Optional[str] = None,        # 事件审计：如 "xtquant"
+    fresh_capture_id: Optional[str] = None,    # 事件审计：采集批次 id
+    fresh_metadata_sha256: Optional[str] = None,  # 事件审计：fresh 元数据哈希
+) -> ReanchorResult
+```
+
+### 4.2 模型选择语义（禁止静默切换）
+
+- **`ratio`**（默认）：方法 B（按 freq 独立、OHLC 交叉验证、稳定簇）+ 方法 A 黄金抽验（3 日 × 5 bar，09:30 不计入）。原行为逐位不变；**禁止**传 `fresh_minutes`（防呆：`ValueError`）。
+- **`fresh_staged`**：fresh xtquant 分钟前复权**逐值写入**四 `*_front` 列。必须提供 `fresh_minutes`
+  （列 = `code/time/freq?` + OHLC raw + 四 `*_front`；多 freq 须含 `freq` 列），且 `model_reason` 必填。
+- 引擎**不存在**「ratio BLOCK → fresh_staged 静默回退」路径；切换模型必须由调用方显式改写 `model` 并书面留痕 `model_reason`。
+
+### 4.3 事务与四态事件审计
+
+单证券调用在一个显式连接上完成。所有 `blocked`/`rolled_back`/`failed`/`committed` 事件
+**都记录** `model` / `model_reason` / `model_audit`（含 `fresh_source`、`fresh_capture_id`、
+`metadata_sha256`、`tick_size`、`freqs`、`minute_coverage` / precheck 摘要）：
+
+| status | 触发 | 事务 |
+|--------|------|------|
+| `committed` | 全部通过 | anchor 推进 + 价格修正**同一事务** |
+| `blocked` | 方法 B/A 或数据契约失败（含周末/未知日、raw NULL/NaN/Inf/≤0） | 回滚 + 独立短事务 `blocked` 事件 |
+| `rolled_back` | COMMIT 前 postcheck 失败 | 回滚 + 独立短事务 `rolled_back` 事件 |
+| `failed` | 其它异常 | 记录 `failed` 事件后**重新抛出** |
+
+三种失败路径都**绝不推进 anchor**，绝不污染已提交数据。
+
+### 4.4 纵深防御 postcheck（COMMIT 前硬门禁）
+
+`minute_staged_match`（精确）> `scale_consistency`（容差）> `minute_tick_error`（≤1 tick）> `minute_raw_match`（eps=1e-9 最精确）：
+
+- **`minute_raw_match`**：先显式拦截 raw 一侧 `IS NULL OR NOT isfinite() OR <=0`（SQL 三值逻辑陷阱：
+  `ABS(NULL-x)>eps` 结果为 NULL，WHERE 按非真过滤会**静默漏检**），再比逐 bar abs diff；`n_invalid>0` 直接抛 `minute_raw_match` 并整券回滚。
+- **`minute_tick_error`**：同样先拦截 NULL/NaN/Inf/≤0，再比 `ABS(diff) <= tick_size`。
+- 覆盖率（coverage）：`fresh_minutes` 须覆盖目标 freq 全交易日，缺失即 BLOCK；结果 `ReanchorResult.minute_coverage` 写入事件审计。
+
+### 4.5 tick_size 资产路由（第六轮阻断 4）
+
+`tick_size` **不能写死 0.01**，须按资产/市场路由：`resolve_tick_size(asset_type, tol)`
+= `STOCK=0.01` / `ETF=0.001`；显式 `tol.tick_size` 可覆盖；未知资产抛异常。
+事件 `model_audit.tick_size` 记录实际使用值（合成/真实回归均校验）。
+
+### 4.6 交易日历校验（第六轮阻断 2）
+
+`stage_fresh_minutes(conn, asset_type, code, freq, fm, tol, calendar=...)` 对**每个**自然日
+调用 `CalendarService.is_trading_day` 校验：
+
+- 周末或非开市日 → 整券 BLOCK（`fresh_minutes_non_trading_day`）。
+- 日历 provider 未覆盖的未知日 → 整券 BLOCK（`fresh_minutes_unknown_day`）。
+- `calendar=None` → 直接抛 `ValueError`（强制调用方显式注入日历）。
+
+钟面时刻合法（如周六 09:31）≠ 自然日开市，必须逐日校验；session-aware 窗口为 `[09:31,11:30] ∪ [13:01,15:00]`（09:30 不计入连续竞价）。
 > 本框架未内置缠论工具箱（分型/笔段），如需可在策略层用 MyTT 自行实现。
 
 ### 3.11 A股交易规则（shared_ashare_rules，已注入）
