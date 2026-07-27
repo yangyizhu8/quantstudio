@@ -98,9 +98,21 @@ def _gate_membership(conn, staging: str, cls_staging: str) -> dict:
          AND LEAST(a.t,b.t) - GREATEST(a.f,b.f) > 0
          AND GREATEST(a.f,b.f) <= LEAST(a.t,b.t)
     """).fetchone()[0]
+    # P0-B 硬门禁：同一 (system, version, level, code) 在 effective_to IS NULL
+    # 下存在多条 -> multi_current（与 orphan 正交，必须阻断）。
+    multi_current = conn.execute(f"""
+        SELECT COUNT(*) FROM (
+          SELECT code FROM {staging}
+          WHERE effective_to IS NULL
+          GROUP BY classification_system, classification_version,
+                   industry_level, code
+          HAVING COUNT(*) > 1)
+    """).fetchone()[0]
     return {"rows": rows, "bad_ranges": bad, "orphan_rows": orphan,
+            "multi_current_codes": int(multi_current),
             "raw_overlap_pairs": overlaps,
-            "ok": rows > 0 and bad == 0 and orphan == 0}
+            "ok": rows > 0 and int(multi_current) == 0
+                  and int(orphan) == 0 and int(bad) == 0}
 
 
 class InjectedSwapFailure(RuntimeError):
@@ -128,6 +140,11 @@ def _atomic_swap(conn, watermark_ms: int, batch_id: str,
             conn.execute(f"ALTER TABLE {staging} RENAME TO {official}")
             if fail_inject == "after_first_rename" and i == 0:
                 raise InjectedSwapFailure("injected after first rename")
+        # 交换后 schema 断言：rename 后正式表即原 staging，再次按官方 DDL
+        # 精确比对列名/类型/NOT NULL/PK，确认交换事务内 schema 一致；
+        # 任一表 schema 不符即抛 RebuildError，整个事务 ROLLBACK。
+        for official in STAGING:
+            _assert_constraints(official, official, conn)
         for j, official in enumerate(STAGING):
             if fail_inject == "watermark_mid" and j == 1:
                 raise InjectedSwapFailure("injected watermark failure")
@@ -143,6 +160,69 @@ def _atomic_swap(conn, watermark_ms: int, batch_id: str,
         raise
 
 
+def _parse_ddl(official_ddl: str):
+    """从 CREATE TABLE DDL 解析 (列定义有序列表, 主键列列表)。
+
+    仅支持本项目使用的受限 DDL 子集：列名 + 类型 + 可选 NOT NULL，
+    以及 PRIMARY KEY (...)。解析失败抛 RebuildError。
+    """
+    import re as _re
+    cols = []
+    pk = []
+    # 先以正则提取 PRIMARY KEY (...) 子句（其内含逗号，不能先按逗号切分）。
+    m = _re.search(r"PRIMARY\s+KEY\s*\(([^)]*)\)", official_ddl, _re.IGNORECASE)
+    if m:
+        for p in m.group(1).split(","):
+            pk.append(p.strip().split()[0].strip('"`'))
+    # 去掉 PRIMARY KEY 子句后再按逗号切分列定义，避免 PK 逗号干扰。
+    body = official_ddl.split("(", 1)[-1].rsplit(")", 1)[0]
+    body_no_pk = _re.sub(r"PRIMARY\s+KEY\s*\([^)]*\)", "", body,
+                          flags=_re.IGNORECASE)
+    for raw in body_no_pk.split(","):
+        seg = raw.strip()
+        if not seg:
+            continue
+        up = seg.upper()
+        if up.startswith("UNIQUE") or up.startswith("FOREIGN") or up.startswith("CHECK"):
+            continue
+        parts = seg.split()
+        if len(parts) < 2:
+            continue
+        name = parts[0].strip('"`')
+        typ = parts[1]
+        not_null = "NOT NULL" in up
+        cols.append((name, typ, not_null))
+    # DuckDB 对 PRIMARY KEY 列隐式强制 NOT NULL；DDL 文本常省略显式 NOT NULL，
+    # 故将 PK 列视为 NOT NULL 以匹配 DuckDB 实际 schema。
+    # DuckDB 实际 PRIMARY KEY 顺序遵循"列定义顺序"，而非 PRIMARY KEY 子句书写
+    # 顺序，故以列定义顺序返回 PK 列，才能与 PRAGMA table_info 的 pk 顺序一致。
+    pk_set = set(pk)
+    cols = [(n, t, (nn or n in pk_set)) for (n, t, nn) in cols]
+    pk_in_order = [n for (n, t, nn) in cols if n in pk_set]
+    return cols, pk_in_order
+
+
+def _assert_constraints(official, staging, conn):
+    """精确比对 staging 实际 schema 与官方 DDL：列名/顺序/类型/NOT NULL/主键。
+
+    任一不符即 RebuildError（绝不静默放过，确保 raw 1:1 保留）。
+    """
+    from quantstudio.pipeline.writers import DDL_DUCKDB
+    cols, pk_cols = _parse_ddl(DDL_DUCKDB[official])
+    actual = conn.execute(f"PRAGMA table_info({staging})").fetchall()
+    actual_cols = [(r[1], r[2].upper(), bool(r[3])) for r in actual]
+    expected_cols = [(c[0], c[1].upper(), c[2]) for c in cols]
+    if actual_cols != expected_cols:
+        raise RebuildError(
+            f"[{official}] staging schema mismatch: "
+            f"got={actual_cols} want={expected_cols}")
+    actual_pk = [r[1] for r in actual if r[5]]
+    if set(actual_pk) != set(pk_cols) or actual_pk != pk_cols:
+        raise RebuildError(
+            f"[{official}] PRIMARY KEY mismatch: "
+            f"got={actual_pk} want={pk_cols}")
+
+
 def rebuild_industry_tables(adapter, aligner, validator, writer,
                             start: str, end: str,
                             batch_id: str = "rebuild-industry",
@@ -154,6 +234,7 @@ def rebuild_industry_tables(adapter, aligner, validator, writer,
         # 0. staging 准备
         for official, staging in STAGING.items():
             _create_staging(conn, official, staging)
+            _assert_constraints(official, staging, conn)
         # 1. 拉取（失败 → RebuildError，正式表不变）
         for table, staging in STAGING.items():
             try:

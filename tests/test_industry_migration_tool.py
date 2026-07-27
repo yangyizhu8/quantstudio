@@ -16,7 +16,8 @@ duckdb = pytest.importorskip("duckdb")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from rebuild_industry_tables import (  # noqa: E402
-    rebuild_industry_tables, RebuildError, InjectedSwapFailure)
+    rebuild_industry_tables, RebuildError, InjectedSwapFailure,
+    STAGING, _assert_constraints)
 
 from quantstudio.pipeline.aligner import FieldAligner  # noqa: E402
 from quantstudio.pipeline.validator import PreIngestValidator  # noqa: E402
@@ -69,6 +70,18 @@ class FakeAdapter:
             orphan = MEM_DF.copy()
             orphan.loc[0, "industry_code"] = "801999"  # 不在分类表 → orphan 门控失败
             return orphan, {}
+        if self.mode == "multi_current_mem" and table == "industry_membership":
+            # 同一 code 600000 在同一 system/version/level 下存在两个不同
+            # current 行业（effective_to 均 NULL）→ multi_current 门控失败
+            mc = pd.DataFrame([
+                {"classification_system": "SW", "classification_version": "SW2021",
+                 "industry_level": "L1", "industry_code": "801010", "code": "600000",
+                 "effective_from": _ms("2018-01-01"), "effective_to": None},
+                {"classification_system": "SW", "classification_version": "SW2021",
+                 "industry_level": "L1", "industry_code": "801011", "code": "600000",
+                 "effective_from": _ms("2018-01-01"), "effective_to": None},
+            ])
+            return mc, {"interval_repair": {"total": 2}}
         if table == "industry_classification":
             return CLS_DF.copy(), {}
         return MEM_DF.copy(), {"interval_repair": {"total": 2}}
@@ -180,3 +193,25 @@ def test_failure_injection_official_untouched(env, mode):
     after = _official_snapshot(db)
     assert before == after            # 正式表逐字节不变
     assert _staging_leftovers(db) == set()
+
+
+def test_membership_multi_current_hard_gate(env):
+    """端到端：同一 code 在同一 system/version/level 下存在两个不同 current 行业
+    -> rebuild_industry_tables 必须抛 RebuildError；正式表逐字节不变、schema/PK
+    不变、水位不推进、staging 无残留。"""
+    db, writer, aligner, validator = env
+    adapter = FakeAdapter("multi_current_mem")
+    before = _official_snapshot(db)
+    wm_before = writer.get_last_date("tushare", "industry_membership", "daily")
+    with pytest.raises(RebuildError):
+        rebuild_industry_tables(adapter, aligner, validator, writer,
+                                "2018-01-01", "2026-07-24")
+    after = _official_snapshot(db)
+    assert before == after            # 正式表数据逐字节不变
+    assert writer.get_last_date(
+        "tushare", "industry_membership", "daily") == wm_before  # 水位不推进
+    assert _staging_leftovers(db) == set()   # staging 已清理
+    # schema/PK 完全一致（列名/类型/顺序/NOT NULL/PK 顺序）
+    for official in STAGING:
+        with duckdb.connect(str(db), read_only=True) as conn:
+            _assert_constraints(official, official, conn)

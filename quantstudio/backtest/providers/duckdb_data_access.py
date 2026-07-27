@@ -14,6 +14,7 @@ CalendarProvider 抽象接口，并把本类作为 DuckDB 实现委托。
 from __future__ import annotations
 
 import logging
+import re
 from typing import Dict, List, Optional, Any
 
 import pandas as pd
@@ -21,6 +22,17 @@ import numpy as np
 from pathlib import Path
 
 from .base import ReferenceDataCapabilityError
+
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _require_valid_identifier(name: str, where: str) -> str:
+    if not isinstance(name, str) or not _IDENTIFIER_RE.match(name):
+        raise ValueError(
+            f"[{where}] invalid identifier {name!r}: "
+            "must match ^[A-Za-z_][A-Za-z0-9_]*$")
+    return name
+
 
 logger = logging.getLogger(__name__)
 
@@ -1122,28 +1134,52 @@ class DuckDBDataAccess:
             f"SELECT industry_code, industry_name FROM sw_industry WHERE code='{code}' LIMIT 1"
         ).fetchone()
 
-    def query_industry_membership_quality(self, table: str = "industry_membership") -> dict:
+    def query_industry_membership_quality(self, table: str = "industry_membership",
+                                          classification_table: str = "industry_classification") -> dict:
         """industry_membership 区间质量门控（F4b）。
 
         返回 dict（表缺失时 present=False）：
-        - positive_overlaps：同一 (system, version, level, code) 下相交时长
-          > 0 天的区间对数（边界日相接不计）；
-        - boundary_touches：仅共享单一边界日的区间对数（信息项）；
-        - multi_current_codes：effective_to IS NULL 区间 > 1 的证券数；
-        - orphan_rows：industry_code 不在 industry_classification
-          （SW/SW2021/L1）中的成员行数；
-        - bad_ranges：effective_from > effective_to 的行数；
-        - total_rows / codes：总量。验收标准：前四类问题全为 0。
+        - positive_overlaps / boundary_touches / multi_current_codes /
+          orphan_rows / bad_ranges / total_rows / codes 同前；
+        - classification_present / quality_complete / ok / reason 为纠正新增：
+          classification 表缺失必须 fail-closed（绝不能把"分类表不存在"
+          误表示为 orphan_rows=0）。
 
-        Args:
-            table: 目标表名（原子迁移时传 staging 表名以在交换前校验）。
+        classification_table 必须来自标识符白名单，防止注入。
         """
+        # F4 纠正：table 与 classification_table 均经标识符白名单校验，
+        # 在拼入任何 SQL 之前拒绝注入式非法名。
+        table = _require_valid_identifier(
+            table, "query_industry_membership_quality.table")
+        classification_table = _require_valid_identifier(
+            classification_table, "query_industry_membership_quality.classification_table")
         conn = self._get_conn()
         if conn is None:
             return {"present": False}
         tables = self._existing_tables()
         if table not in tables:
             return {"present": False}
+        classification_present = classification_table in tables
+        if not classification_present:
+            # 分类表缺失：绝不能把 orphan 误判为 0；quality 不完整，ok=False。
+            total, codes = conn.execute(
+                f"SELECT COUNT(*), COUNT(DISTINCT code) "
+                f"FROM {table} WHERE classification_system='SW' "
+                f"AND industry_level='L1'").fetchone()
+            return {
+                "present": True,
+                "classification_present": False,
+                "quality_complete": False,
+                "ok": False,
+                "positive_overlaps": 0,
+                "boundary_touches": 0,
+                "multi_current_codes": 0,
+                "orphan_rows": None,
+                "bad_ranges": 0,
+                "total_rows": int(total or 0),
+                "codes": int(codes or 0),
+                "reason": "classification_table_missing",
+            }
         base = (f"FROM {table} WHERE classification_system='SW' "
                 "AND industry_level='L1'")
         total, codes = conn.execute(
@@ -1174,12 +1210,12 @@ class DuckDBDataAccess:
               GROUP BY code HAVING COUNT(*) > 1)
         """).fetchone()[0]
         orphan = 0
-        if "industry_classification" in tables:
+        if classification_present:
             orphan = conn.execute(f"""
                 SELECT COUNT(*) FROM {table} m
                 WHERE m.classification_system='SW' AND m.industry_level='L1'
                   AND NOT EXISTS (
-                    SELECT 1 FROM industry_classification c
+                    SELECT 1 FROM {classification_table} c
                     WHERE c.classification_system = m.classification_system
                       AND c.classification_version = m.classification_version
                       AND c.industry_level = m.industry_level
@@ -1188,14 +1224,20 @@ class DuckDBDataAccess:
         bad = conn.execute(
             f"SELECT COUNT(*) {base} AND effective_to IS NOT NULL "
             "AND effective_from > effective_to").fetchone()[0]
+        ok = bool(total > 0 and int(multi_current or 0) == 0
+                  and int(orphan or 0) == 0 and int(bad or 0) == 0)
         return {"present": True,
+                "classification_present": True,
+                "quality_complete": True,
+                "ok": ok,
                 "positive_overlaps": int(pos or 0),
                 "boundary_touches": int(boundary or 0),
                 "multi_current_codes": int(multi_current or 0),
                 "orphan_rows": int(orphan or 0),
                 "bad_ranges": int(bad or 0),
                 "total_rows": int(total or 0),
-                "codes": int(codes or 0)}
+                "codes": int(codes or 0),
+                "reason": None if ok else "quality_incomplete"}
 
     def query_sw_index_daily_coverage(self) -> pd.DataFrame:
         """申万行业指数日线覆盖报告（F5 §7.6 数据质量门控 / F6 R1 能力核查）。
