@@ -68,10 +68,16 @@ class TushareAdapter(BaseSourceAdapter):
         return freq in ("daily", "1min", "5min", "15min", "30min", "60min")
 
     def supports_task(self, table: str, freq: str) -> tuple:
-        """tushare 支持矩阵：日线 + 分钟线 + 财务 + 指数，不支持 tick"""
+        """tushare 支持矩阵：日线 + 分钟线 + 财务 + 指数，不支持 tick
+
+        F4 治理：tushare 不再宣称 sw_industry（旧实现为 index_classify 名称
+        匹配 + 伪 SW_行业名 代码，已删除）；正式能力为
+        industry_classification / industry_membership（index_classify +
+        index_member 正式成员接口）。"""
         supported = set(TUSHARE_API_MAP) | {
             ("stock_float_share", "daily"), ("stock_daily_valuation", "daily"),
-            ("index_constituents", "daily"), ("sw_industry", "daily")}
+            ("index_constituents", "daily"),
+            ("industry_classification", "daily"), ("industry_membership", "daily")}
         return ((True, "") if (table, freq) in supported else
                 (False, f"tushare 未实现 {table}/{freq}"))
 
@@ -162,14 +168,17 @@ class TushareAdapter(BaseSourceAdapter):
                     codes: Optional[List[str]] = None) -> Tuple[pd.DataFrame, Dict]:
         # codes=None/ALL → 自动获取全市场
         if codes is None or codes == ["ALL"] or codes == "ALL":
-            if table in ("stock_float_share", "index_constituents", "etf_basic"):
-                pass  # 这两个表有自己的 codes 逻辑
+            # F4a：统一归一化 None/'ALL'/['ALL'] → None，防止 'ALL' 被当作
+            # 具体代码传入下游 fetcher（如请求 ALL.SI）。
+            codes = None
+            if table in ("stock_float_share", "index_constituents", "etf_basic",
+                         "industry_classification", "industry_membership",
+                         "index_daily"):
+                pass  # 这些表有自己的 codes 逻辑
             elif table == "etf_daily":
                 codes = self.get_etf_codes()
             elif table == "etf_minutes":
                 codes = self.get_etf_codes()
-            elif table == "index_daily":
-                codes = self.get_index_codes()
             else:
                 codes = self.get_all_stock_codes()
 
@@ -197,9 +206,15 @@ class TushareAdapter(BaseSourceAdapter):
         if table == "stock_dividend":
             return self._fetch_dividend(start, end, codes)
 
-        # 申万行业分类（index_classify + stock_basic 合并）
-        if table == "sw_industry":
-            return self._fetch_sw_industry(start, end, codes)
+        # 指数日线（F5：普通指数 index_daily + 申万行业指数 sw_daily 统一路由）
+        if table == "index_daily":
+            return self._fetch_index_daily(start, end, codes)
+
+        # 申万行业正式分类定义与成员历史（F4：index_classify + index_member）
+        if table == "industry_classification":
+            return self._fetch_industry_classification(start, end, codes)
+        if table == "industry_membership":
+            return self._fetch_industry_membership(start, end, codes)
 
         api_name = TUSHARE_API_MAP.get((table, freq))
         if not api_name:
@@ -456,6 +471,166 @@ class TushareAdapter(BaseSourceAdapter):
         logger.info(f"[TushareAdapter] index_constituents fetched {len(result)} rows")
         return result, metadata
 
+    #: F5：sw_daily 正式接口必须返回的字段（capability probe）
+    _SW_DAILY_REQUIRED = {"ts_code", "trade_date", "open", "high", "low",
+                          "close", "pct_change", "vol", "amount"}
+
+    def get_sw_index_codes(self) -> List[str]:
+        """申万行业指数宇宙（tushare 格式 801010.SI）。
+
+        范围 = SW2021 L1 分类（probe 自 index_classify，与 industry_classification
+        表同一源端口径）；不写任何策略白名单。probe 失败返回空列表并记 error
+        （调用方对含 SW 代码的请求 fail-closed）。成功结果按实例缓存
+        （per-stock 模式下避免逐代码重复 probe）；失败不缓存。
+        """
+        cached = getattr(self, "_sw_index_codes_cache", None)
+        if cached:
+            return list(cached)
+        import tushare as ts
+        pro = ts.pro_api(self.token)
+        try:
+            self.rate_limiter.acquire()
+            ic = pro.index_classify(level="L1", src="SW2021")
+        except Exception as e:
+            logger.error(f"[TushareAdapter] index_classify probe failed: {e}")
+            return []
+        if ic is None or len(ic) == 0 or "index_code" not in ic.columns:
+            logger.error("[TushareAdapter] index_classify probe returned invalid payload")
+            return []
+        codes = [str(c) for c in ic["index_code"].tolist()]
+        self._sw_index_codes_cache = list(codes)
+        logger.info(f"[TushareAdapter] 申万行业指数宇宙: {len(codes)} 个")
+        return codes
+
+    #: SW2021 L1 官方行业数量（申万正式分类事实，非策略白名单）
+    SW2021_L1_EXPECTED_COUNT = 31
+    _SW_CODE_RE = __import__("re").compile(r"^\d{6}\.SI$")
+
+    def _validate_sw_universe(self, codes: List[str]) -> None:
+        """SW2021 L1 宇宙完整性门控（F5 审核返工）。
+
+        异常/空/数量不等于 31/重复/格式非法 → RuntimeError（整个采集任务
+        失败，水位不变），绝不静默退化为仅普通指数宇宙。
+        """
+        if not codes:
+            raise RuntimeError(
+                "SW2021 L1 universe probe failed/empty (fail-closed)")
+        if len(codes) != self.SW2021_L1_EXPECTED_COUNT:
+            raise RuntimeError(
+                f"SW2021 L1 universe incomplete: {len(codes)} codes, "
+                f"expected {self.SW2021_L1_EXPECTED_COUNT} (fail-closed)")
+        if len(set(codes)) != len(codes):
+            raise RuntimeError("SW2021 L1 universe contains duplicates (fail-closed)")
+        bad = [c for c in codes if not self._SW_CODE_RE.match(str(c))]
+        if bad:
+            raise RuntimeError(
+                f"SW2021 L1 universe bad format {bad[:5]} (fail-closed)")
+
+    def get_index_daily_universe(self) -> List[str]:
+        """正式动态指数宇宙（F5）：普通指数 + SW2021 L1 申万行业指数。
+
+        daemon full/incremental/resident 三种模式的 index_daily 任务统一经此
+        方法取全量宇宙。SW 宇宙先过完整性门控（31/格式/唯一），门控失败
+        抛 RuntimeError → 整个任务失败且水位不变，绝不静默退化。
+        """
+        sw = self.get_sw_index_codes()
+        self._validate_sw_universe(sw)
+        return list(self.get_index_codes()) + list(sw)
+
+    @staticmethod
+    def _looks_like_sw_index(code: str) -> bool:
+        text = str(code).strip().upper()
+        if text.endswith(".SI"):
+            return True
+        bare = text.split(".")[0]
+        return bare.startswith("801")
+
+    def _fetch_index_daily(self, start: str, end: str,
+                           codes: Optional[List[str]]) -> Tuple[pd.DataFrame, Dict]:
+        """指数日线统一入口（F5）：普通指数 + 申万行业指数 → 同一 canonical schema。
+
+        源端路由（§7.2）：普通指数 → index_daily 接口；申万行业指数
+        （.SI 后缀或属 SW2021 L1 宇宙）→ sw_daily 正式接口。
+        单位换算（§7.3）：sw_daily vol=万股/amount=万元 → 本方法换算为
+        index_daily 接口单位（手/千元），下游 aligner 统一映射为 股/元，
+        与现有 index_daily 完全一致。输出列与 index_daily 接口对齐：
+        ts_code/trade_date/open/high/low/close/pct_chg/vol/amount。
+
+        fail-closed：分类 probe 失败且请求含 SW 代码 → RuntimeError；
+        sw_daily 字段漂移 → RuntimeError；单代码空数据 → 跳过（不伪造行）。
+        """
+        import tushare as ts
+        pro = ts.pro_api(self.token)
+        start_fmt = self._fmt_date(start)
+        end_fmt = self._fmt_date(end)
+
+        if codes:
+            code_list = [str(c) for c in codes]
+        else:
+            code_list = list(self.get_index_codes()) + list(self.get_sw_index_codes())
+
+        # SW 宇宙 probe（仅当请求可能含 SW 代码时才需要）
+        sw_universe: set = set()
+        if any(self._looks_like_sw_index(c) for c in code_list):
+            sw_universe = {c.split(".")[0] for c in self.get_sw_index_codes()}
+            if not sw_universe:
+                raise RuntimeError(
+                    "index_classify probe failed/empty: cannot safely route "
+                    "SW industry index codes (fail-closed)")
+
+        def _is_sw(code: str) -> bool:
+            text = str(code).strip().upper()
+            if text.endswith(".SI"):
+                return True
+            return text.split(".")[0] in sw_universe
+
+        normal_frames, sw_frames = [], []
+        for code in code_list:
+            if not _is_sw(code):
+                try:
+                    self.rate_limiter.acquire()
+                    raw = pro.index_daily(ts_code=code, start_date=start_fmt,
+                                          end_date=end_fmt)
+                except Exception as e:
+                    logger.warning(f"[TushareAdapter] index_daily {code} failed: {e}")
+                    continue
+                if raw is not None and len(raw) > 0:
+                    normal_frames.append(raw)
+                continue
+            bare = str(code).split(".")[0]
+            ts_code = f"{bare}.SI"
+            try:
+                self.rate_limiter.acquire()
+                raw = pro.sw_daily(ts_code=ts_code, start_date=start_fmt,
+                                   end_date=end_fmt)
+            except Exception as e:
+                raise RuntimeError(f"sw_daily {ts_code} failed: {e}") from e
+            if raw is None or len(raw) == 0:
+                logger.warning(f"[TushareAdapter] sw_daily {ts_code} empty, skipped")
+                continue
+            missing = self._SW_DAILY_REQUIRED - set(raw.columns)
+            if missing:
+                raise RuntimeError(
+                    f"sw_daily {ts_code} field drift {missing} (fail-closed)")
+            raw = raw.rename(columns={"pct_change": "pct_chg"})
+            # 单位换算：万股→手（×100），万元→千元（×10），与 index_daily 接口口径一致
+            raw["vol"] = pd.to_numeric(raw["vol"], errors="coerce") * 100
+            raw["amount"] = pd.to_numeric(raw["amount"], errors="coerce") * 10
+            sw_frames.append(raw[["ts_code", "trade_date", "open", "high", "low",
+                                  "close", "pct_chg", "vol", "amount"]])
+
+        frames = normal_frames + sw_frames
+        df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        metadata = {
+            "source": "tushare", "freq": "daily", "table": "index_daily",
+            "code_format": "tushare_to_raw", "date_format": "YYYYMMDD",
+            "units": {"vol": "手", "amount": "千元", "pct_chg": "%"},
+            "rows": len(df),
+        }
+        logger.info(f"[TushareAdapter] index_daily fetched {len(df)} rows "
+                    f"({len(normal_frames)} normal + {len(sw_frames)} SW codes)")
+        return df, metadata
+
     def _fetch_etf_daily(self, start: str, end: str,
                          codes: Optional[List[str]]) -> Tuple[pd.DataFrame, Dict]:
         """拉取 ETF 日线（tushare fund_daily 接口）。
@@ -607,49 +782,125 @@ class TushareAdapter(BaseSourceAdapter):
         logger.info(f"[TushareAdapter] stock_dividend fetched {len(result)} rows ({total} codes, 失败 {fail_count})")
         return result, metadata
 
-    def _fetch_sw_industry(self, start: str, end: str,
-                           codes: Optional[List[str]]) -> Tuple[pd.DataFrame, Dict]:
-        """拉申万行业分类（index_classify L1 分类 + stock_basic 的 industry 字段合并）。"""
+    #: F4 数据源契约（§6.3）：正式申万接口必须返回的字段（adapter capability probe）。
+    _SW_CLASSIFY_REQUIRED = {"index_code", "industry_name", "level", "parent_code", "src"}
+    _SW_MEMBER_REQUIRED = {"index_code", "con_code", "in_date", "out_date"}
+
+    @staticmethod
+    def _yyyymmdd_to_ms(value) -> Optional[int]:
+        """YYYYMMDD → Asia/Shanghai 当日 00:00 毫秒；空值 → None。"""
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return None
+        text = str(value).strip()
+        if not text or text.lower() in ("none", "nat", "nan"):
+            return None
+        return int(pd.to_datetime(text, format="%Y%m%d").tz_localize(
+            "Asia/Shanghai").timestamp() * 1000)
+
+    def _fetch_industry_classification(self, start: str, end: str,
+                                       codes: Optional[List[str]]) -> Tuple[pd.DataFrame, Dict]:
+        """申万行业分类定义（index_classify L1/SW2021）→ industry_classification（F4）。
+
+        行业列表只来自正式分类接口；capability probe 确认字段齐全，字段漂移或
+        源端不可用时 fail-closed 返回空（不写入）。绝不使用 stock_basic.industry
+        中文名猜测，绝不生成伪 SW_行业名 代码。
+        effective_from=0 表示分类定义长期有效（index_classify 不提供生效日期）。
+        """
         import tushare as ts
         pro = ts.pro_api(self.token)
-        # 1. 取申万 L1 行业分类
         try:
+            self.rate_limiter.acquire()
             ic = pro.index_classify(level="L1", src="SW2021")
         except Exception as e:
-            logger.warning(f"[TushareAdapter] index_classify failed: {e}")
-            ic = pd.DataFrame()
-        industry_map = {}
-        if len(ic) > 0:
-            for _, r in ic.iterrows():
-                industry_map[r["index_code"]] = r["industry_name"]
-        # 2. 取全市场股票的行业（stock_basic 的 industry 字段）
-        try:
-            sb = pro.stock_basic(list_status="L", fields="ts_code,industry")
-        except Exception as e:
-            logger.warning(f"[TushareAdapter] stock_basic failed: {e}")
+            logger.error(f"[TushareAdapter] index_classify failed (fail-closed): {e}")
             return pd.DataFrame(), {}
-        # 3. 合并：股票→行业名→行业代码（申万 L1）
-        result = []
-        for _, r in sb.iterrows():
-            ind_name = r.get("industry", "")
-            # 匹配申万行业代码
-            ind_code = ""
-            for k, v in industry_map.items():
-                if v == ind_name:
-                    ind_code = k
-                    break
-            if not ind_code and ind_name:
-                ind_code = f"SW_{ind_name}"  # 无精确匹配时用名称生成代码
-            result.append({
-                "ts_code": r["ts_code"], "industry_code": ind_code or "UNKNOWN",
-                "industry_name": ind_name or "未分类", "industry_level": "L1",
+        if ic is None or len(ic) == 0:
+            logger.error("[TushareAdapter] index_classify returned empty (fail-closed)")
+            return pd.DataFrame(), {}
+        missing = self._SW_CLASSIFY_REQUIRED - set(ic.columns)
+        if missing:
+            logger.error(f"[TushareAdapter] index_classify field drift {missing} (fail-closed)")
+            return pd.DataFrame(), {}
+        rows = []
+        for _, r in ic.iterrows():
+            parent = str(r.get("parent_code") or "").strip()
+            rows.append({
+                "classification_system": "SW",
+                "classification_version": str(r["src"]),
+                "industry_code": str(r["index_code"]).split(".")[0],
+                "industry_name": str(r["industry_name"]),
+                "industry_level": str(r["level"]),
+                "parent_industry_code": parent if parent and parent != "0" else None,
+                "effective_from": 0,
+                "effective_to": None,
             })
-        if not result:
+        df = pd.DataFrame(rows)
+        metadata = {"source": "tushare", "freq": "daily",
+                    "table": "industry_classification",
+                    "code_format": "identity", "rows": len(df)}
+        logger.info(f"[TushareAdapter] industry_classification fetched {len(df)} rows")
+        return df, metadata
+
+    def _fetch_industry_membership(self, start: str, end: str,
+                                   codes: Optional[List[str]]) -> Tuple[pd.DataFrame, Dict]:
+        """申万行业成员历史（index_member）→ industry_membership（F4）。
+
+        股票—行业关系只来自正式成员接口（con_code + in_date/out_date PIT 区间）；
+        不得用当前快照回填历史。行业范围：codes 显式行业代码列表，或全部
+        SW2021 L1（来自 index_classify）。all-or-nothing fail-closed：任一行业
+        成员拉取失败或字段漂移 → 返回空，绝不写部分快照。
+        """
+        import tushare as ts
+        pro = ts.pro_api(self.token)
+        if codes:
+            industry_codes = [str(c).split(".")[0] for c in codes]
+        else:
+            cls_df, _ = self._fetch_industry_classification(start, end, None)
+            if cls_df.empty:
+                logger.error("[TushareAdapter] no SW2021 L1 classification (fail-closed)")
+                return pd.DataFrame(), {}
+            industry_codes = cls_df["industry_code"].tolist()
+        frames = []
+        for ind in industry_codes:
+            try:
+                self.rate_limiter.acquire()
+                m = pro.index_member(index_code=f"{ind}.SI")
+            except Exception as e:
+                logger.error(f"[TushareAdapter] index_member {ind} failed "
+                             f"(fail-closed, all-or-nothing): {e}")
+                return pd.DataFrame(), {}
+            if m is None or len(m) == 0:
+                logger.error(f"[TushareAdapter] index_member {ind} empty/None "
+                             f"(fail-closed, all-or-nothing)")
+                return pd.DataFrame(), {}
+            missing = self._SW_MEMBER_REQUIRED - set(m.columns)
+            if missing:
+                logger.error(f"[TushareAdapter] index_member {ind} field drift "
+                             f"{missing} (fail-closed)")
+                return pd.DataFrame(), {}
+            frames.append(m)
+        if not frames:
             return pd.DataFrame(), {}
-        df = pd.DataFrame(result)
-        metadata = {"source": "tushare", "freq": "daily", "table": "sw_industry",
-                    "code_format": "tushare_to_raw", "rows": len(df)}
-        logger.info(f"[TushareAdapter] sw_industry fetched {len(df)} rows")
+        raw = pd.concat(frames, ignore_index=True)
+        df = pd.DataFrame({
+            "classification_system": "SW",
+            "classification_version": "SW2021",
+            "industry_level": "L1",
+            "industry_code": raw["index_code"].astype(str).str.split(".").str[0],
+            "code": raw["con_code"].astype(str).str.split(".").str[0],
+            "effective_from": raw["in_date"].map(self._yyyymmdd_to_ms),
+            "effective_to": raw["out_date"].map(self._yyyymmdd_to_ms),
+        })
+        df = df.dropna(subset=["effective_from"])
+        # F4b：区间重叠治理 transform（同一证券同一 system/version/level 每日唯一）
+        from ..industry_membership_standardizer import resolve_membership_intervals
+        df, repair_stats = resolve_membership_intervals(df)
+        metadata = {"source": "tushare", "freq": "daily",
+                    "table": "industry_membership",
+                    "code_format": "identity", "rows": len(df),
+                    "interval_repair": repair_stats}
+        logger.info(f"[TushareAdapter] industry_membership fetched {len(df)} rows "
+                    f"({len(industry_codes)} industries)")
         return df, metadata
 
 

@@ -869,6 +869,9 @@ class ResidentCollector:
         # 获取全市场代码列表（按表类型选择正确的代码获取方法）
         if table in ("etf_daily", "etf_minutes") and hasattr(adapter, "get_etf_codes"):
             all_codes = adapter.get_etf_codes()
+        elif table == "index_daily" and hasattr(adapter, "get_index_daily_universe"):
+            # F5：正式动态指数宇宙 = 普通指数 + SW2021 L1 申万行业指数
+            all_codes = adapter.get_index_daily_universe()
         elif table == "index_daily" and hasattr(adapter, "get_index_codes"):
             all_codes = adapter.get_index_codes()
         elif hasattr(adapter, "get_all_stock_codes"):
@@ -1323,7 +1326,19 @@ class ResidentCollector:
                 and task.get("skip_unchanged", False)):
             df = self._filter_unchanged_snapshot_rows(
                 df, table, exclude=task.get("change_compare_exclude", ["update_time"]))
-        return self.writer.write(df, table, batch_id)
+        result = self.writer.write(df, table, batch_id)
+        if table == "index_constituents" and df is not None and len(df) > 0:
+            # F3 修订：成分批次写入后立即打 snapshot_meta 完整性契约
+            # （expected_count/status 在打点确定，不依赖未来数据）。
+            from quantstudio.pipeline.index_constituents_meta import refresh_snapshot_meta
+            with self.writer._conn_lock:
+                conn = self.writer._conn()
+                try:
+                    refresh_snapshot_meta(
+                        conn, index_codes=sorted(df["index_code"].astype(str).unique()))
+                finally:
+                    conn.close()
+        return result
 
     def _filter_unchanged_snapshot_rows(self, df: pd.DataFrame, table: str,
                                         exclude=None) -> pd.DataFrame:

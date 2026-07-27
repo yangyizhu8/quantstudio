@@ -83,6 +83,8 @@ python -m quantstudio.pipeline.daemon --mode forever
 
 GUI 中的“全量拉取”“增量拉取”“进程常驻增量拉取”调用相同公共入口。
 
+指数日线（F5）：`index_daily` 任务的正式动态宇宙（`get_index_daily_universe`）统一覆盖普通指数与 31 个 SW2021 L1 申万行业指数，full/incremental/resident 同一路径——tushare 普通指数走 `index_daily` 接口、申万指数走 `sw_daily` 正式接口，同一 canonical schema（股/元）；`industry_classification` / `industry_membership` 任务维护正式 SW2021 行业分类与 PIT 成员历史（tushare `index_classify`/`index_member`），旧 `sw_industry` 仅为审计快照。契约详见 `docs/data-pipeline-contract.md`。
+
 ## 策略回测
 
 ```python
@@ -108,13 +110,18 @@ result, output_dir = payload
 - 运行时依赖分层：QuantStudio 本地会注入 API、`g`/`log` 以及 `np`/`pd`；真实 PTrade 不注入 `numpy`/`pandas` 别名，因此双端/PTrade 源码使用它们时必须显式写 `import numpy as np` / `import pandas as pd`。数据库驱动、框架内部模块和直接文件 I/O 仍被禁止。
 - `log` 对象兼容 **printf 风格多参**：`log.info("信号=%s 条数=%d", src, n)` 按 `%` 风格格式化；双端/PTrade 可移植代码仅使用 `debug/info/warning/error/critical`，`log.warn(...)` 会被 Validator 阻断。
 - 生命周期分层：PTrade 可移植回调为 `initialize`（必需）+ `before_trading_start` / `handle_data` / `after_trading_end`（可选）；`set_backtest()` 与 `is_trade()` 仅属 QuantStudio 本地扩展，双端/PTrade 代码会被 Validator 阻断。
-- PTrade Profile 1.8.0 对股票双端常用 API 登记精确签名：`set_benchmark`、`run_daily`、`get_Ashares`、`get_index_stocks`、`get_stock_status`、`get_positions`、`get_position`、`get_trade_days`、`get_fundamentals`。双端设计或源码调用未登记的顶层注入 API 时默认 `BLOCK`，不得用"近似确认"绕过。
+- PTrade Profile 1.9.0 对股票双端常用 API 登记精确签名：`set_benchmark`、`run_daily`、`get_Ashares`、`get_index_stocks`、`get_stock_status`、`get_positions`、`get_position`、`get_trade_days`、`get_fundamentals`、`get_industry`。双端设计或源码调用未登记的顶层注入 API 时默认 `BLOCK`，不得用"近似确认"绕过。
 - PTrade Profile 1.8.0 登记 `get_history(..., is_dict=True)` 返回形状契约：mapping item 可能是 pandas DataFrame / NumPy structured array / recarray。提取字段必须先 `np.asarray(...)` 归一化再参与数值计算；对 history item 的无保护 `.values`/`.iloc`/`.to_numpy()` 等 pandas 专属访问会被 Validator 阻断，并须通过 agent-first 运行时形状 fixture（`validate_runtime_shapes.py`）。
 - `get_stock_status` 的可移植 `query_type` 仅为 `ST` / `HALT` / `DELISTING`；`DELISTING_SORTING` 仅是 `filter_stock_by_status` 的过滤类型及本地向后兼容别名。
 - 数据 100% 来自 DuckDB（QuantStudio 数据管线产出），策略禁止直连数据库（强制隔离）。
 - 框架取数（注入 API 与底层数据适配层）默认前复权（`fq='pre'`）：策略不传 `fq` 即获得前复权价；需不复权请显式 `fq=None`。
 - **撮合/估值链路与取数链路前复权闭环**：引擎每日全市场快照（`query_daily_snapshot`，成交价、持仓估值、`data[code].price`、涨跌停比较价的唯一来源）OHLC 统一映射前复权列（`*_front`，缺失回退原始价），`preClose` 按 `close_front/close` 同因子缩放。信号价、成交价、持仓估值同一连续口径，ETF 份额拆分/股票分红除权日不再产生原始价缺口导致的虚假盈亏（分红等价于自动再投资，前复权回测标准口径）。`pctChg`/`volume`/`amount` 保持原始口径。
 - **Agent-first 唯一价格契约**：`market_data_contract.signal_price_adjustment="pre"` 且 `execution_price_basis="pre_adjusted_price"`。`raw_trade_price` 已从新设计 Schema 中移除；旧 raw 设计必须回到 R2 迁移并重新通过 R2.5/R4/R5。
+- **统一证券元数据（F2）**：`get_stock_info` 股票行为与历史完全一致（名称=裸码、上市日=行情首根K线），仅扩展 ETF（真实名称、`stock_type='etf'`、上市/退市日 `YYYY-MM-DD`，fallback 显式标记）；未知代码保持兼容空值。本地 ETF 元数据支持 ≠ PTrade 真实 ETF 支持（未验证）。
+- **指数成分严格 PIT（F3）**：`get_index_stocks(date)` 只取不晚于该日的最近 `complete` 快照——非历史并集、无未来泄漏、无快照返回空；完整性由 `index_constituents_snapshot_meta` 批次契约（expected_count/status）在打点判定，不依赖未来数据；回测中不传 date 自动用当前回测日期。
+- **行业归属 APPROXIMATION_REQUIRES_CONFIRMATION（F4，非 PIT READY）**：`get_industry` 按当前回测日期 as-of 查正式 SW2021 成员表（`industry_classification`/`industry_membership`）。**关键语义边界**：官方 `index_member` 仅给 `in_date`/`out_date`，无冲突裁决规则；canonical 表**原样保留重叠区间**（如 SW2021 重新分类），**不应用自定义“生效日较新者胜”裁决**，每日唯一门控不再要求为 0。重叠命中时 `get_industry` 抛 `ReferenceDataCapabilityError`（fail-closed），绝不返回任意自定义裁决近似；能力标注 APPROXIMATION_REQUIRES_CONFIRMATION（因 canonical 表原样保留重叠区间、非 PIT READY，但运行时重叠一律 fail-closed）。无有效历史归属返回 `None`；正式表缺失 fail-closed；旧 `sw_industry` 仅为审计快照。
+- **申万行业指数日线（F5）**：31 个 SW2021 L1 行业指数与普通指数统一入 `index_daily`（tushare `sw_daily` 路由，股/元单位）；`get_history` 对 801xxx 走 index_daily，`fq='pre'` 回退原始 OHLC。
+- **调仓模式（F1）**：PyQt 回测面板透出 `rebalance_mode`（默认 `legacy`；`callback_basket` 仅 daily-bar-v1+next_open，导出 `engine_semantics_version=0.4.0-next_open_basket`，close/open 被 GUI 阻断；`run_daily` 订单永不进入 basket）。
 - 读取**外部文件数据**（研报 CSV、信号表等）必须经由框架注入 API，例如 `load_research_signals(csv_path, fallback=...)`，文件 I/O 逻辑下沉到框架侧 `ptrade_api`；策略内直接 `open()` / `read_csv()` 会被 `StrategyIsolationGuard` 静态拦截并抛 `StrategyIsolationError`。
 
 > **让 AI 帮你写策略**：想把策略需求交给其他智能体、自动产出可运行策略并落入 GUI 可选目录？参见 **[`docs/prompt_engineering.md`](docs/prompt_engineering.md)**。Agent-first 流程会在 R0 分别确认目标平台，以及R5由Agent执行还是由用户在PyQt执行；双端 ETF 策略固化用户确认的静态白名单，本地单端 ETF 策略才允许动态调用 `get_etf_list_local()`。用户PyQt模式在R4后只生成 `quantstudio/backtest/strategies/<strategy_id>__candidate_quantstudio.py`，用户自行选择回测日期并提交日志；R5 证据 2.0 要求绑定真实回测产物（`config.csv`/`daily_stats.csv`/`trades.csv`/运行日志及各自 SHA-256），由 review 脚本自动解析实际本金、持仓部署与拒单计数——"回测跑完无异常"不再是 PASS 依据；证据PASS后，R6生成正式文件并删除临时候选文件。默认正式输出分别为 `quantstudio/backtest/strategies/<strategy_id>_quantstudio.py` 与（仅双端）`ptrade/<strategy_id>_ptrade.py`。

@@ -436,6 +436,60 @@
       ]
     },
     {
+      "name": "industry_classification",
+      "enabled": true,
+      "source": "tushare",
+      "table": "industry_classification",
+      "freq": "daily",
+      "start_date": "2018-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "retry": {
+        "max": 3,
+        "backoff_sec": [
+          30,
+          60,
+          120
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 60,
+        "wait_on_429": true
+      },
+      "max_workers": 1,
+      "source_priority": [
+        "tushare"
+      ]
+    },
+    {
+      "name": "industry_membership",
+      "enabled": true,
+      "source": "tushare",
+      "table": "industry_membership",
+      "freq": "daily",
+      "start_date": "2018-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "retry": {
+        "max": 3,
+        "backoff_sec": [
+          30,
+          60,
+          120
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 60,
+        "wait_on_429": true
+      },
+      "max_workers": 1,
+      "source_priority": [
+        "tushare"
+      ]
+    },
+    {
       "name": "etf_minutes",
       "enabled": true,
       "source": "xtquant",

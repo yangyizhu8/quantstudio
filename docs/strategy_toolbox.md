@@ -78,7 +78,7 @@
 
 | 函数 | 说明 |
 |------|------|
-| `get_history(...)` | 获取历史 K 线，**双签名兼容**：`get_history(security,count,unit='1d',fields=...,fq='pre',include=False)` 与 Ptrade 官方 `get_history(count,frequency='1d',field='close',security_list=...,fq='pre',include=False)`。**fq 默认 `'pre'`（前复权）**。支持 `is_dict=True` 返回 `{code:DataFrame}`（本地适配层）。**PTrade Profile 1.8.0 返回形状契约**：真实平台上 `is_dict=True` 的 mapping item 可能是 pandas DataFrame / NumPy structured array / recarray，`item[field]` 可能是 Series 或 ndarray；双端/PTrade 源码必须先 `np.asarray(item[field], dtype=float)`（或 `hasattr(values,'values')` 守卫的 helper）归一化再参与数值计算，对 history item 的无保护 `.values`/`.iloc`/`.loc`/`.to_numpy()`/`.columns`/`.index`/`.empty` 访问会被 Validator 阻断。字段映射 `money→amount`、`price→close`、`factor→pctChg`。**`include` 控制历史数据可见边界（防未来函数）**：`include=False` 截止 `previous_date`（不含当前交易日），`include=True` 延伸至 `current_date`（含当前交易日）。**不同 `include` 值不会共享历史查询缓存（缓存键含 `include`）**，混合调用须分别取数。 |
+| `get_history(...)` | 获取历史 K 线，**双签名兼容**：`get_history(security,count,unit='1d',fields=...,fq='pre',include=False)` 与 Ptrade 官方 `get_history(count,frequency='1d',field='close',security_list=...,fq='pre',include=False)`。**fq 默认 `'pre'`（前复权）**。支持 `is_dict=True` 返回 `{code:DataFrame}`（本地适配层）。**PTrade Profile 1.8.0 返回形状契约**：真实平台上 `is_dict=True` 的 mapping item 可能是 pandas DataFrame / NumPy structured array / recarray，`item[field]` 可能是 Series 或 ndarray；双端/PTrade 源码必须先 `np.asarray(item[field], dtype=float)`（或 `hasattr(values,'values')` 守卫的 helper）归一化再参与数值计算，对 history item 的无保护 `.values`/`.iloc`/`.loc`/`.to_numpy()`/`.columns`/`.index`/`.empty` 访问会被 Validator 阻断。字段映射 `money→amount`、`price→close`、`factor→pctChg`。**`include` 控制历史数据可见边界（防未来函数）**：`include=False` 截止 `previous_date`（不含当前交易日），`include=True` 延伸至 `current_date`（含当前交易日）。**不同 `include` 值不会共享历史查询缓存（缓存键含 `include`）**，混合调用须分别取数。**多表路由（F5/F6）**：普通股票→`stock_daily`，ETF→`etf_daily`，普通指数与申万行业指数（801xxx）→统一 `index_daily`（指数历史不足时按既有契约用 `INDEX_ETF_MAP` 跟踪 ETF 代理，如 000300→510300）；`fq='pre'` 对指数回退原始 OHLC（指数无复权列，绝不套用 ETF 前复权逻辑）。 |
 | `get_history_batch(sec_list,count,unit='1d',fields=...,fq='pre',include=...)` | **QuantStudio 本地扩展**：强制 list 入参 + 返回 `CodeDict`，消除策略侧逐只 N+1 调用；**复用 `get_history` 的 `get_bars_by_count` 活跃路径**（不读取已停用的 `_preload_daily` 全市场缓存，当前底层仍按代码逐只查询，并非单次批量扫描）。仅本地单端策略允许；双端/PTrade 目标由 Validator 阻断。**fq 默认 `'pre'`**。 |
 | `get_price(security,start_date,end_date,frequency='1d',fields,fq='pre',count,is_dict)` | 按日期区间/数量取历史行情，返回 DataFrame 或 `CodeDict`。**fq 默认 `'pre'`（前复权）**。 |
 | `attribute_history(security,count,unit='1d',fields)` | 取历史数据最近一行（单列 Series）。 |
@@ -105,9 +105,9 @@
 | `filter_stock_by_status(stocks,filter_type,query_date)` | 过滤 ST/停牌/退市。4 种 `filter_type` 全支持：`'ST'`(官方 ST/*ST 或退市风险)、`'HALT'`(停牌)、`'DELISTING'`(已退市)、`'DELISTING_SORTING'`(退市整理期)。默认 `['ST','HALT','DELISTING']`。 |
 | `check_limit(security,query_date)` | 涨跌停检查，返回 `CodeDict`：`1`涨停/`-1`跌停/`0`正常（主板10%/创业板20%/科创板20%/北交所30%/ST5%，见 `shared_ashare_rules`）。 |
 | `get_stock_status(stocks,query_type='ST',query_date=None)` | **PTrade Profile 1.7.0 已登记**，返回 `{code:bool}`。可移植值仅为 `'ST'`/`'HALT'`/`'DELISTING'`；`query_date` 使用 `YYYYmmdd`。`'DELISTING_SORTING'` 仅保留为本地兼容别名，双端源码禁止使用。 |
-| `get_stock_info(stocks,field)` | 证券元数据（上市日期等），返回按原代码键的 dict。 |
-| `get_security_info(code)` | 证券基础信息对象（`.start_date`/`.display_name` 等），用于剔除次新股。 |
-| `get_industry(code)` | 申万行业信息（`{'sw_l1':{...}}`），无数据返回 `None`。 |
+| `get_stock_info(stocks,field)` | **股票+ETF 统一证券元数据（F2，PTrade Profile 1.9.0 登记）**。返回按调用方原代码键的 dict：`stock_name`、`stock_type`（`'stock'`/`'etf'`）、`listed_date`/`de_listed_date`（`YYYY-MM-DD`，未退市为 `None`）、`exchange_type`、`code`。`field` 传字符串或列表均按名过滤。**股票行为与历史完全一致（2026-07-27 审核修订）**：`stock_name`=裸码、`listed_date`=`stock_daily` 首根K线。**仅扩展 ETF**：`stock_name`=真实名称、`stock_type='etf'`、`listed_date`=`etf_basic.list_date`（缺失时按 etf_basic 管线契约用首个 `etf_daily` 交易日补齐并标记 `etf_daily_min_fallback`）、`de_listed_date`=`etf_basic.delist_date`。未知代码保持兼容空值行为（`stock_type='stock'`、日期为 `None`、名称为入参代码）。本地 ETF 元数据支持 ≠ PTrade 真实 ETF 支持（PTrade 运行未验证）。 |
+| `get_security_info(code)` | 本地扩展。证券基础信息对象（`.start_date`/`.display_name` 等），用于剔除次新股；底层同 F2 统一元数据层，股票与 ETF 均可返回上市日。 |
+| `get_industry(code)` | **申万一级行业（PTrade Profile 1.9.0 登记，capability = APPROXIMATION_REQUIRES_CONFIRMATION，非 PIT READY）**。返回 `{'sw_l1': {'industry_code','industry_name','classification_system','classification_version'}}`。回测上下文自动以**当前回测日期** as-of 查询正式 `industry_membership`（SW/SW2021）有效区间（`effective_from <= d AND (effective_to IS NULL OR effective_to >= d)`）。**关键语义边界（F4 审核，2026-07-27）**：官方 `index_member` 仅提供 `in_date`/`out_date`，**无任何冲突裁决规则**；故 canonical 表**原样保留重叠区间**（如 SW2021 重新分类致同一证券某日同属新旧两类），**不应用任何自定义“生效日较新者胜”裁决**。as-of 命中重叠区间时 `get_industry` **抛 `ReferenceDataCapabilityError`（fail-closed）**，绝不返回任意自定义裁决近似，能力明确标注 APPROXIMATION_REQUIRES_CONFIRMATION（因 canonical 表原样保留重叠区间、非 PIT READY，但运行时重叠一律 fail-closed）。无有效历史归属返回 `None`，**绝不使用最新行业回填过去**。正式表缺失时抛 `ReferenceDataCapabilityError`（fail-closed），**绝不回退 legacy `sw_industry` 快照**（该表仅为审计保留）。 |
 | `get_industry_stocks(industry_code)` | 行业成份股（尾缀 `.XBHS`），无源表返回空 list。 |
 | `get_stock_blocks(code)` | 板块归属（`HY/DY/GN/ZJHHY`），无源表返回 `None`。 |
 | `get_stock_exrights(code,date)` | 除权除息信息，无源表返回 `None`。 |
@@ -117,7 +117,7 @@
 
 | 函数 | 说明（本地数据可用性） |
 |------|------|
-| `get_index_stocks(index_code,date)` | 指数成份股（ReferenceDataProvider，可用）。 |
+| `get_index_stocks(index_code,date)` | **指数成份股，严格 PIT（F3，PTrade Profile 1.9.0 登记）**。显式 `date`：只取不晚于该日的**最近 status='complete' 快照**（as-of），不是历史并集、绝不使用未来快照；无历史快照返回空（fail-closed）。**完整性只由 `index_constituents_snapshot_meta` 批次契约在打点写入时判定**（n/expected_count/status，不依赖未来数据）；无 meta 的指数 fail-closed。回测中未传 `date` 时自动注入**当前回测日期**（绝不读数据库全局最新快照）；非回测直接调用保留“最新快照”兼容。返回标准 `.SS/.SZ` 代码、去重、顺序确定。指数代码支持 `000300`/`000300.SH`/`.SS`/`.XBHS`。 |
 | `get_reits_list(date)` | 公募 REITs 列表，无源表返回空 list。 |
 | `get_etf_list()` | **PTrade 同名兼容 API**。PTrade 回测 profile 不可用；Validator 对所有回测策略阻断调用，避免“本地通过、PTrade 上传失败”的假兼容。不得扩展成本地动态池。 |
 | `get_etf_list_local(query_date=None,etf_type="equity",active_only=True)` | **QuantStudio 本地回测专用扩展 API**。`query_date=None` 时使用当前回测日；经 `ReferenceDataProvider`/DuckDB 适配层从 `etf_basic` 元数据与 `etf_daily` 历史可用性构造 PIT ETF 池，返回 `.SS/.SZ` 代码。`equity` 仅返回分类为境内股票型且 `is_cross_border=false` 的 ETF。仅本地单端策略允许。 |
@@ -153,6 +153,10 @@
 成交价模式 `match_price_mode`：
 - `close`/`open`：**即时执行**，调用后账户立即更新，下一行可见最新状态。
 - `next_open`：T 日入队 + 预扣，T+1 开盘成交（避免穿越）。
+
+调仓模式 `rebalance_mode`（F1，`EngineConfig.rebalance_mode` 单一配置路径）：
+- `legacy`（默认）：现有单订单/pending 行为，修复前后结果逐项一致。
+- `callback_basket`：basket 原子再平衡（先卖后买），**仅 daily-bar-v1 + `next_open` 激活**，结果导出记录 `engine_semantics_version=0.4.0-next_open_basket`（`next_open + legacy` 保持 `0.2.0-next_open_pending`）；分钟 Profile 显式拒绝。生命周期边界不变：只有 `handle_data` 的订单进入 basket，`run_daily`/`before_trading_start` 永不进入；需要 basket 的策略必须把调仓下单放入 `handle_data`。PyQt 回测面板提供通用下拉框透出（内部值 `legacy`/`callback_basket`），`close`/`open + callback_basket` 在点击运行前被 GUI 阻断。
 
 持仓 / 订单查询：
 

@@ -1467,6 +1467,112 @@
         }
       }
     },
+    "industry_classification": {
+      "_note": "行业分类定义（F4 正式 canonical 表）。effective_from=0 表示分类定义长期有效（源端 index_classify 不提供生效日期）；日期列为 Asia/Shanghai 00:00 毫秒。",
+      "schema_version": "2.0",
+      "primary_key": [
+        "classification_system",
+        "classification_version",
+        "industry_level",
+        "industry_code",
+        "effective_from"
+      ],
+      "time_key": null,
+      "columns": {
+        "classification_system": {
+          "type": "str",
+          "required": true
+        },
+        "classification_version": {
+          "type": "str",
+          "required": true
+        },
+        "industry_code": {
+          "type": "str",
+          "required": true,
+          "regex": "^\\d{6}$"
+        },
+        "industry_name": {
+          "type": "str",
+          "required": true
+        },
+        "industry_level": {
+          "type": "str",
+          "required": true
+        },
+        "parent_industry_code": {
+          "type": "str",
+          "required": false
+        },
+        "effective_from": {
+          "type": "int",
+          "required": true,
+          "unit": "毫秒时间戳"
+        },
+        "effective_to": {
+          "type": "int",
+          "required": false,
+          "unit": "毫秒时间戳"
+        },
+        "update_time": {
+          "type": "str",
+          "required": false
+        }
+      },
+      "code_field": "industry_code"
+    },
+    "industry_membership": {
+      "_note": "行业成员历史（F4 正式 canonical 表，PIT）。effective_from/effective_to 为 Asia/Shanghai 00:00 毫秒闭区间；effective_to=NULL 表示当前有效。禁止用当前快照回填历史。",
+      "schema_version": "2.0",
+      "primary_key": [
+        "classification_system",
+        "classification_version",
+        "industry_level",
+        "industry_code",
+        "code",
+        "effective_from"
+      ],
+      "time_key": null,
+      "columns": {
+        "classification_system": {
+          "type": "str",
+          "required": true
+        },
+        "classification_version": {
+          "type": "str",
+          "required": true
+        },
+        "industry_level": {
+          "type": "str",
+          "required": true
+        },
+        "industry_code": {
+          "type": "str",
+          "required": true,
+          "regex": "^\\d{6}$"
+        },
+        "code": {
+          "type": "str",
+          "required": true,
+          "regex": "^\\d{6}$"
+        },
+        "effective_from": {
+          "type": "int",
+          "required": true,
+          "unit": "毫秒时间戳"
+        },
+        "effective_to": {
+          "type": "int",
+          "required": false,
+          "unit": "毫秒时间戳"
+        },
+        "update_time": {
+          "type": "str",
+          "required": false
+        }
+      },
+      "code_field": "code"
+    },
     "etf_minutes": {
       "_note": "ETF 分钟线表（含16复权列），主键(code,time,freq)，复权用 fund_adj 因子计算",
       "schema_version": "2.0",
@@ -1950,6 +2056,39 @@
         "code_format": "tushare_to_raw",
         "unit_conversions": {},
         "_note": "tushare index_classify(L1)+stock_basic"
+      },
+      "industry_classification": {
+        "column_map": {
+          "classification_system": "classification_system",
+          "classification_version": "classification_version",
+          "industry_code": "industry_code",
+          "industry_name": "industry_name",
+          "industry_level": "industry_level",
+          "parent_industry_code": "parent_industry_code",
+          "effective_from": "effective_from",
+          "effective_to": "effective_to",
+          "update_time": "update_time"
+        },
+        "code_format": "identity",
+        "unit_conversions": {},
+        "_note": "tushare index_classify(L1, SW2021) → 正式分类定义（F4，adapter 已产出 canonical 列）",
+        "code_col": "industry_code"
+      },
+      "industry_membership": {
+        "column_map": {
+          "classification_system": "classification_system",
+          "classification_version": "classification_version",
+          "industry_level": "industry_level",
+          "industry_code": "industry_code",
+          "code": "code",
+          "effective_from": "effective_from",
+          "effective_to": "effective_to",
+          "update_time": "update_time"
+        },
+        "code_format": "identity",
+        "unit_conversions": {},
+        "_note": "tushare index_member → 正式成员历史 PIT（F4，adapter 已产出 canonical 列）",
+        "code_col": "code"
       },
       "etf_minutes": {
         "column_map": {

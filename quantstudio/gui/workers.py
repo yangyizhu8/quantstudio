@@ -313,6 +313,9 @@ class BacktestWorker(BaseWorker):
                 db_path=_user_db,
                 output_dir=_base_cfg.output_dir,
                 research_dir=_base_cfg.research_dir,
+                # F1: rebalance_mode 单一配置路径 — 只通过 EngineConfig 传入，
+                # 不在 BacktestEngine 构造函数中重复传递第二份值。
+                rebalance_mode=self.params.get('rebalance_mode', 'legacy'),
             )
             engine = BacktestEngine(
                 db_path=self.params['db_path'],  # 向后兼容

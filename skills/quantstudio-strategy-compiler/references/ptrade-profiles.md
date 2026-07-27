@@ -42,6 +42,13 @@ PTrade Renderer 输出必须通过：语法、生命周期、API 白名单、禁
 - Open/next-open approximations schedule 09:31 and require broker minute-period backtesting.
 - Shanghai output uses `.SS`; history and position matching use bare codes.
 
+## 2026-07-27 PTrade Profile 1.9.0 industry + PIT contract closure
+
+- Registered `get_industry(code)` with the exact local runnable subset: single positional (or `code=` keyword), returning the direct `{'sw_l1': {...}}` dict (NOT security-keyed) or None. PIT contract: formal SW2021 membership (`industry_classification` + `industry_membership`, interval-transformed to daily uniqueness) strictly as-of the current backtest date; no valid membership -> None; legacy `sw_industry` is audit-only. Real-PTrade shape/classification version is `PTRADE_RUNTIME_UNVERIFIED`.
+- `get_index_stocks` notes now declare the strict as-of PIT contract (no history union, no future snapshots, empty when no snapshot on/before date, partial snapshots never served as complete).
+- `get_stock_info` notes now declare unified stock/ETF metadata (stock_type, ETF list/delist dates, listing-date fallback marking) and explicitly separate local ETF metadata support from unverified PTrade runtime ETF support.
+- Static profile PASS 仍只证明对注册子集的静态一致性；PTrade 平台成分历史深度与行业分类版本按部署核实，状态为 `PTRADE_RUNTIME_UNVERIFIED`。
+
 ## 2026-07-26 PTrade Profile 1.8.0 get_history return-shape closure
 
 - `get_history(..., is_dict=True)` records an explicit `return_contract`: mapping items may be pandas DataFrame / NumPy structured array / recarray; `item[field]` may be Series or ndarray.

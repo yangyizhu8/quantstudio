@@ -50,6 +50,11 @@ _WRITER_PK_REFERENCE = {
     "cashflow_statement": ["code", "end_date", "ann_date"],
     "stock_dividend": ["code", "ex_date"],
     "sw_industry": ["code", "industry_code"],
+    "industry_classification": ["classification_system", "classification_version",
+                                "industry_level", "industry_code", "effective_from"],
+    "industry_membership": ["classification_system", "classification_version",
+                            "industry_level", "industry_code", "code",
+                            "effective_from"],
 }
 
 # 各源的代码格式（用于第 1 项 codes 校验）

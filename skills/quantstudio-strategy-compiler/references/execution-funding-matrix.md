@@ -47,6 +47,18 @@
 - 未知 match mode 或未知 implementation_mode → **BLOCK**（`EXECUTION-FUNDING-INCOMPATIBLE`）；
 - 全量换仓需求落在 `next_open` legacy pending 上且既不用 basket 也不用两阶段 → 退回 R2/R3 重设计（`EXECUTION-STAGED-REBALANCE-REQUIRED`）。
 
+## 3.1 PyQt rebalance_mode 透出（2026-07-27，F1）
+
+- PyQt 回测控制台新增通用 `rebalance_mode` 下拉框（内部值 `legacy` /
+  `callback_basket`，显示文本不作为引擎参数），默认 `legacy`，经
+  `EngineConfig.rebalance_mode` 单一路径传入引擎；
+- GUI 组合校验：`callback_basket` 仅适用于 daily-bar-v1 + `next_open`，
+  `close`/`open` + `callback_basket` 在点击运行前阻断；分钟引擎不支持 basket；
+- 生命周期边界不变：`run_daily` / `before_trading_start` 订单永不进入 basket；
+  需要 basket 的策略必须把调仓下单放入 `handle_data`；
+- PyQt R5 证据要求 basket 时，config.csv 必须出现
+  `engine_semantics_version=0.4.0-next_open_basket`，否则 R4/R5 BLOCK。
+
 ## 4. 现金缓冲不是通用解
 
 Skill 文档与 agent 设计必须明确：

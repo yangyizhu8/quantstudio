@@ -42,8 +42,8 @@ def normalize_code(code: str, fmt: str = "identity") -> Optional[str]:
         return code if re.match(r"^\d{6}$", code) else None
 
     if fmt == "tushare_to_raw":
-        # 600000.SH → 600000
-        m = re.match(r"^(\d{6})\.(SH|SZ|BJ)$", code, re.IGNORECASE)
+        # 600000.SH → 600000；801010.SI（申万行业指数，F5）→ 801010
+        m = re.match(r"^(\d{6})\.(SH|SZ|BJ|SI)$", code, re.IGNORECASE)
         if m:
             return m.group(1)
         # 已是裸码
@@ -228,7 +228,9 @@ class FieldAligner:
         applied_steps.append("column_map")
 
         # ---- Step 2: 代码格式统一（裸 6 位码）----
-        code_col = self._find_code_col(df, schema)
+        # code_col 可由映射显式声明（如 industry_classification 主键首列是
+        # classification_system 而非证券代码）；未声明时按 schema 主键首列推断。
+        code_col = mapping.get("code_col") or self._find_code_col(df, schema)
         if code_col is not None:
             fmt = mapping.get("code_format", "identity")
             df[code_col] = df[code_col].apply(lambda c: normalize_code(c, fmt))

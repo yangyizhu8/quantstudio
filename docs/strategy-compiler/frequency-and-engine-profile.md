@@ -28,14 +28,17 @@
 
 Tick/L2 在 PR9 前不得改成 READY（capability-model.md 不变量 4）。
 
+`rebalance_mode`（F1）：`callback_basket` 仅在 `daily-bar-v1` + `next_open` 下激活（`engine_semantics_version=0.4.0-next_open_basket`）；`minute-bar-v1` + `callback_basket` 显式 BLOCK（ValueError），不静默退化；默认 `legacy` 不受影响。
+
 ## 3. 频率路由目标
 
 | 资产 | `1d` | 分钟 | Tick |
 |---|---|---|---|
 | 股票 | `stock_daily` | `stock_minutes` | 预留 Tick 表/Profile |
 | ETF | `etf_daily` | `etf_minutes` | 预留 |
+| 指数（普通 + 申万行业 801xxx） | `index_daily`（统一表；指数历史不足按 INDEX_ETF_MAP 代理） | 无（指数无分钟表 → 结构化能力错误） | 预留 |
 
-Provider 必须接收并贯通 frequency；不支持时返回明确能力错误，不得回退日线冒充分时数据。
+Provider 必须接收并贯通 frequency；不支持时返回明确能力错误，不得回退日线冒充分时数据。`fq='pre'` 在日线层用 `*_front` 列替换原始价，复权列缺失（如指数）时回退原始 OHLC——该回退是文档化契约而非静默降级（F5/F6）。
 
 PR3 路由实现：`get_bars(frequency='1d')` 走日线路径（字节级不变）；分钟频率查询 `stock_minutes`/`etf_minutes` 的原生 freq 列（1min/5min/15min/30min/60min，每个 freq 独立存储一份）。需某 freq 但表中无时返回结构化能力错误（列出可用 freq 集合）。1m→5m/15m/30m/60m 实时聚合经用户 2026-07-21 批准推迟至 PR3.5（触发条件：真实分钟数据入库后出现原生 freq 缺口的实际需求）。
 

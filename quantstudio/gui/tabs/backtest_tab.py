@@ -88,6 +88,16 @@ class BacktestTab(QWidget):
         self.match_price_combo.addItem("next_open (anti-lookahead)", userData="next_open")
         param_form.addRow("Match price:", self.match_price_combo)
 
+        # F1: rebalance_mode 通用配置透出。内部值固定为引擎契约字符串，
+        # 显示文本仅用于展示，绝不作为引擎参数。
+        self.rebalance_mode_combo = ComboBox()
+        self.rebalance_mode_combo.addItem(
+            "Legacy pending / immediate behavior", userData="legacy")
+        self.rebalance_mode_combo.addItem(
+            "Callback basket — next_open + handle_data only",
+            userData="callback_basket")
+        param_form.addRow("Rebalance mode:", self.rebalance_mode_combo)
+
         layout.addWidget(param_group)
 
         # 3. 按钮区
@@ -133,6 +143,18 @@ class BacktestTab(QWidget):
             QMessageBox.warning(self, "错误", f"DuckDB 不存在: {db_path_str}")
             return
 
+        match_price_mode = self.match_price_combo.currentData()
+        rebalance_mode = self.rebalance_mode_combo.currentData()
+
+        # F1 组合校验：callback_basket 仅适用于 daily-bar-v1 + next_open。
+        # 当前 PyQt 回测入口是日线引擎（daily-bar-v1），分钟引擎不支持 basket。
+        if rebalance_mode == "callback_basket" and match_price_mode != "next_open":
+            QMessageBox.warning(
+                self, "参数冲突",
+                "callback_basket 仅适用于 daily-bar-v1 + next_open；\n"
+                "close/open 请使用 legacy。")
+            return
+
         params = {
             'db_path': db_path_str,
             'start': self.start_edit.text().strip(),
@@ -141,7 +163,8 @@ class BacktestTab(QWidget):
             'commission': self.commission_spin.value(),
             'stamp_tax': self.stamp_spin.value(),
             'slippage': self.slippage_spin.value(),
-            'match_price_mode': self.match_price_combo.currentData(),
+            'match_price_mode': match_price_mode,
+            'rebalance_mode': rebalance_mode,
         }
 
         # 创建 Worker

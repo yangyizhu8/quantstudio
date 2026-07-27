@@ -118,3 +118,27 @@ def make_providers(db_path, calendar):
         "market": market,
         "fundamental": None, "reference": None, "calendar": calendar,
     })()
+
+
+# ---------------------------------------------------------------------------
+# Qt 会话级 keepalive（2026-07-27，2026-07-27 审核修订）
+# 多个测试模块各自定义模块级 app fixture；模块拆除后 QApplication 若失去
+# 最后一个 Python 引用，sip 会删除 C++ QApplication 并连带删除 qfluentwidgets
+# 的 qconfig 单例，导致后续模块创建控件报 "QConfig has been deleted"。
+# 本 fixture 只在**某个测试已经创建了** QApplication 时登记引用（绝不主动
+# 创建），保证非 Qt 的后端测试不会无条件拉起 QApplication。
+# ---------------------------------------------------------------------------
+_QAPP_SESSION_KEEPALIVE = []
+
+
+@pytest.fixture(autouse=True)
+def _qapplication_session_keepalive():
+    try:
+        from PyQt6.QtWidgets import QApplication
+    except ImportError:
+        yield
+        return
+    instance = QApplication.instance()
+    if instance is not None and instance not in _QAPP_SESSION_KEEPALIVE:
+        _QAPP_SESSION_KEEPALIVE.append(instance)
+    yield

@@ -71,11 +71,13 @@ QuantStudio 本地注入 API / 指标 / 全局对象（g、log、pd、np、MyTT�
   growth_ability 等可用；balance/income/cashflow 三张报表【返回空 DataFrame】。
 - query(valuation.market_cap).filter(...).order_by(...).limit(n) 后 get_fundamentals(q)
 - get_current_data()→{code:BarData}；data[code].price / current_price(code) 取当日价
-- PTrade Profile 1.8.0 已登记股票核心：`set_benchmark`、`run_daily`、`get_Ashares`、`get_index_stocks`、`get_stock_status`、`get_positions`、`get_position`、`get_trade_days`、`get_fundamentals`。未登记顶层 API 在双端模式默认 BLOCK。
+- PTrade Profile 1.9.0 已登记股票核心：`set_benchmark`、`run_daily`、`get_Ashares`、`get_index_stocks`（含严格 PIT/date 契约）、`get_stock_status`、`get_positions`、`get_position`、`get_trade_days`、`get_fundamentals`、`get_industry`。未登记顶层 API 在双端模式默认 BLOCK。
 - ⚠️ **get_history(is_dict=True) 返回形状契约（Profile 1.8.0）**：真实平台 mapping item 可能是 pandas DataFrame / NumPy structured array / recarray。双端/PTrade 源码对 history item 提取字段后必须先 `np.asarray(item[field], dtype=float)`（或 `hasattr(values,'values')` 守卫的 helper）归一化再做数值计算；禁止无保护地使用 `.values`/`.iloc`/`.loc`/`.to_numpy()`/`.columns`/`.index`/`.empty`。
 - QuantStudio 本地扩展：get_etf_list_local(query_date=None, etf_type="equity", active_only=True)、get_history_batch(...)；仅当生成目标不包含 PTrade 时允许
 - check_limit(code)→{code:1涨/-1跌/0平}；filter_stock_by_status(stocks,filter_type=[...])
 - get_stock_status(stocks, query_type='ST'|'HALT'|'DELISTING', query_date='YYYYmmdd')；`DELISTING_SORTING` 只用于 filter_stock_by_status
+- get_stock_info(stocks, field=...)（F2）：股票+ETF 统一元数据（stock_type/listed_date/de_listed_date，`YYYY-MM-DD`），剔除次新股用 `field=['listed_date']`；未知代码返回兼容空值记录。
+- get_industry(code)（F4）：申万一级行业严格 PIT（当前回测日 as-of SW2021 正式成员表），返回 `{'sw_l1': {...}}` 或 `None`；歧义日期（源端重叠，当日 >1 个不同行业归属）抛 ReferenceDataCapabilityError，绝不任意选一条；正式表缺失 fail-closed，绝不回退 legacy 快照。
 - get_positions()、get_position(code)、context.portfolio.positions/positions_value/portfolio_value/cash
 - load_research_signals(csv_path, fallback=None)：注入 API，由框架侧读取外部研报/信号 CSV（仅保留买入/增持），返回 (rows, source)；需要外部文件数据（如研报/信号表）时用它，**禁止策略内自行 open()/read_csv()**。
 
@@ -185,7 +187,8 @@ def handle_data(context, data):
 **智能体须知**：
 
 - 取数一律走注入的 API；**禁止** `import duckdb` 或读 `.db`。
-- **点面数据时点（PIT）**：截面类数据（`get_fundamentals(date=)`、`filter_stock_by_status(query_date=)`、`get_index_stocks(date=)`）默认取**前一交易日**，避免未来泄漏。
+- **点面数据时点（PIT）**：截面类数据（`get_fundamentals(date=)`、`filter_stock_by_status(query_date=)`）默认取**前一交易日**，避免未来泄漏。`get_index_stocks(date=)`（F3）为**严格 as-of**：只取不晚于该日的**最近完整快照**（非历史并集、绝不用未来快照），无历史快照返回空；回测中不传 `date` 时注入当前回测日期，绝不读数据库全局最新快照；partial 快照不得冒充完整 PIT。`get_industry`（F4）同为严格 as-of（SW2021 正式成员表），无有效历史归属返回 `None`，正式表缺失 fail-closed。
+- **get_history 多表路由（F5/F6）**：股票→`stock_daily`，ETF→`etf_daily`，普通指数与申万行业指数（801xxx）→统一 `index_daily`；`fq='pre'` 对指数回退原始 OHLC。
 - `get_history(security, count, include=False)`：默认 `include=False` 表示含当前交易日但历史截止前一交易日，**不会泄露当日未来 bar**（分钟 Profile 由 `bar_cutoff_ms` 截断当前 bar 后半段）。
 - 估值表 `valuation` 字段完整（float_value / a_floats / pe_ratio / pb_ratio …）；三大财务报表（balance/income/cashflow）当前返回空 DataFrame，财务因子请优先用 `eps` / `profit_ability` / `growth_ability` / `operating_ability` / `debt_paying_ability` 等已落地表。
 
@@ -203,6 +206,7 @@ def handle_data(context, data):
 | **涨跌停** | 买涨停股 / 卖跌停股返回 `Order(status='rejected', reason=...)`。`check_limit(code)` 先判：`1`涨停 / `-1`跌停 / `0`其它。 |
 | **整手约束** | A股/ETF 100 股整数倍，可转债 10 张。推荐用 `order_target_value`（目标权重）让引擎容错；按股数下单须自行整除 100。 |
 | **篮子再平衡** | `order_in_basket`（G1-I 强制先卖后买）用于特殊场景，普通策略用 `order_target_value` 即可完成换仓。 |
+| **调仓模式** | `rebalance_mode`（F1）：默认 `legacy`；`callback_basket` 仅 daily-bar-v1 + `next_open` 激活（导出记录 `engine_semantics_version=0.4.0-next_open_basket`），分钟 Profile 拒绝；`run_daily`/`before_trading_start` 订单永不进入 basket，需要 basket 的策略须把调仓下单放入 `handle_data`。PyQt 面板有通用下拉框透出，`close`/`open + callback_basket` 会被 GUI 阻断。 |
 | **订单返回** | 所有 `order_*` 返回 `Order` 对象；务必检查 `order.status`（'filled'/'open'/'rejected'）与 `order.reason`。 |
 
 **典型稳健写法**：

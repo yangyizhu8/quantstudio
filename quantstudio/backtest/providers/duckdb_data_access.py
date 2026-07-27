@@ -610,13 +610,49 @@ class DuckDBDataAccess:
         ).fetchdf()
 
     def query_listing_dates(self) -> pd.DataFrame:
-        """迁移自 PtradeAPI._preload_market_data() 中的上市日期查询 (ptrade_api.py:388-390)"""
+        """统一上市日期查询（F2 修订版）：股票行为与修复前一致，仅扩展 ETF。
+
+        迁移自 PtradeAPI._preload_market_data() 中的上市日期查询 (ptrade_api.py:388-390)。
+
+        上市日期口径（2026-07-27 审核修订）：
+        - 股票：**保持修复前行为** —— stock_daily.MIN(time)（'stock_daily_min'），
+          不用 stock_basic 覆盖，保证 get_stock_info/get_security_info 股票值级一致；
+        - ETF：etf_basic.list_date（'etf_basic'）；etf_basic 上市日缺失时按现有
+          etf_basic 管线契约使用首个 etf_daily 交易日补齐
+          （'etf_daily_min_fallback'，不得宣称正式上市日能力）；
+        - 不使用代码前缀猜测上市日或资产类型（etf_basic 元数据成员资格判定）。
+        返回列：code, listing_time, listing_source（旧消费方只读 code/listing_time）。
+        """
         conn = self._get_conn()
         if conn is None:
-            return pd.DataFrame()
-        return conn.execute(
-            "SELECT code, MIN(time) as listing_time FROM stock_daily GROUP BY code"
-        ).fetchdf()
+            return pd.DataFrame(columns=["code", "listing_time", "listing_source"])
+        tables = self._existing_tables()
+        branches = []
+        etf_exclusions = []
+        if "etf_basic" in tables:
+            branches.append(
+                "SELECT code, list_date AS listing_time, 'etf_basic' AS listing_source "
+                "FROM etf_basic WHERE list_date IS NOT NULL")
+            etf_exclusions.append(
+                "code NOT IN (SELECT code FROM etf_basic WHERE list_date IS NOT NULL)")
+        if {"etf_basic", "etf_daily"} <= tables:
+            branches.append(
+                "SELECT e.code, MIN(d.time) AS listing_time, "
+                "'etf_daily_min_fallback' AS listing_source "
+                "FROM etf_basic e JOIN etf_daily d ON d.code = e.code "
+                "WHERE e.list_date IS NULL GROUP BY e.code")
+            etf_exclusions.append(
+                "code NOT IN (SELECT code FROM etf_basic WHERE list_date IS NULL)")
+        if "stock_daily" in tables:
+            # 股票（及未被 etf_basic 覆盖的代码）：修复前行为 = stock_daily 首根K线
+            where = ("WHERE " + " AND ".join(etf_exclusions)) if etf_exclusions else ""
+            branches.append(
+                "SELECT code, MIN(time) AS listing_time, "
+                f"'stock_daily_min' AS listing_source "
+                f"FROM stock_daily {where} GROUP BY code")
+        if not branches:
+            return pd.DataFrame(columns=["code", "listing_time", "listing_source"])
+        return conn.execute(" UNION ALL ".join(branches)).fetchdf()
 
     def _build_preload_daily_code_positions(self):
         """Build a reusable code-to-row-position index for daily history."""
@@ -924,17 +960,139 @@ class DuckDBDataAccess:
             ORDER BY f.code, f.end_date
         """).fetchdf()
 
-    # ===================== 参考数据查询 =====================
+    # ===================== 统一证券元数据（F2） =====================
 
-    def query_index_constituents(self, index_code) -> pd.DataFrame:
-        """迁移自 PtradeAPI.get_index_stocks() (ptrade_api.py:607-610)"""
+    #: query_security_metadata 统一内部字段（列顺序固定，属数据契约）
+    SECURITY_METADATA_COLUMNS = [
+        "code", "name", "security_type", "exchange",
+        "list_date", "delist_date", "status", "data_source",
+    ]
+
+    def _existing_tables(self) -> set:
         conn = self._get_conn()
         if conn is None:
-            return pd.DataFrame()
+            return set()
+        return {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
+
+    def query_security_metadata(self, codes=None) -> pd.DataFrame:
+        """统一股票/ETF 证券元数据查询（F2）。
+
+        数据路由：stock_basic（security_type='stock'）∪ etf_basic（'etf'），
+        输出固定列 ``SECURITY_METADATA_COLUMNS``（见类常量），日期列为毫秒时间戳。
+        不为任何单只证券写代码分支；不使用代码前缀猜测资产类型。
+        旧库缺某张表时只路由到存在的表；两张都缺返回带固定列的空 DataFrame。
+        """
+        conn = self._get_conn()
+        if conn is None:
+            return pd.DataFrame(columns=self.SECURITY_METADATA_COLUMNS)
+        tables = self._existing_tables()
+        branches = []
+        params: list = []
+        if "stock_basic" in tables:
+            branches.append(
+                "SELECT code, name, 'stock' AS security_type, exchange, "
+                "list_date, delist_date, list_status AS status, data_source "
+                "FROM stock_basic")
+        if "etf_basic" in tables:
+            branches.append(
+                "SELECT code, name, 'etf' AS security_type, exchange, "
+                "list_date, delist_date, status, data_source "
+                "FROM etf_basic")
+        if not branches:
+            return pd.DataFrame(columns=self.SECURITY_METADATA_COLUMNS)
+        sql = " UNION ALL ".join(branches)
+        if codes:
+            placeholders = ", ".join("?" for _ in codes)
+            sql = (f"SELECT * FROM ({sql}) WHERE code IN ({placeholders}) "
+                   "ORDER BY code")
+            params = [str(c) for c in codes]
+        else:
+            sql = f"SELECT * FROM ({sql}) ORDER BY code"
+        return conn.execute(sql, params).fetchdf()
+
+    # ===================== 参考数据查询 =====================
+
+    def query_index_constituents(self, index_code, as_of_ms=None) -> pd.DataFrame:
+        """指数成分 PIT 查询（F3 修订：完整性来自 snapshot_meta 批次契约）。
+
+        语义（§5.2 + 2026-07-27 审核修订）：
+        - 只取不晚于 as_of_ms 的最近 status='complete' 快照；无则返回空，
+          绝不向未来 fallback；
+        - 完整性**只**由 index_constituents_snapshot_meta 在打点写入时判定
+          （expected_count/status 契约），不依赖未来快照；无 meta 的指数
+          fail-closed 返回空（不能证明完整）；
+        - ``as_of_ms=None``：最新 complete 快照（Provider 直接调用的文档化兼容）；
+        - 返回去重、按 code 排序，列：code, weight, time。
+        """
+        conn = self._get_conn()
+        if conn is None:
+            return pd.DataFrame(columns=["code", "weight", "time"])
+        tables = self._existing_tables()
+        if not {"index_constituents", "index_constituents_snapshot_meta"} <= tables:
+            return pd.DataFrame(columns=["code", "weight", "time"])
+        params: list = [str(index_code)]
+        where = "index_code = ? AND status = 'complete'"
+        if as_of_ms is not None:
+            where += " AND time <= ?"
+            params.append(int(as_of_ms))
+        row = conn.execute(
+            "SELECT MAX(time) FROM index_constituents_snapshot_meta "
+            f"WHERE {where}", params).fetchone()
+        if row is None or row[0] is None:
+            return pd.DataFrame(columns=["code", "weight", "time"])
+        snapshot_time = int(row[0])
+        df = conn.execute(
+            "SELECT code, weight, time FROM index_constituents "
+            "WHERE index_code = ? AND time = ? ORDER BY code",
+            [str(index_code), snapshot_time]).fetchdf()
+        # 同日多源/重复行冲突：去重保序（质量门控由 query_index_constituents_quality 标记）
+        return df.drop_duplicates(subset=["code"], keep="first").reset_index(drop=True)
+
+    def query_index_constituents_quality(self, index_code=None) -> pd.DataFrame:
+        """指数成分快照质量报告（F3 修订：以 snapshot_meta 批次契约为准）。
+
+        每行一个 (index_code, time) 快照：n_constituents、expected_count、
+        status（complete/partial，写入时判定，不依赖未来数据）、
+        n_duplicate_codes、n_negative_weights、weight_sum（源端原值汇总，
+        不因单位差异静默修改）。meta 缺失返回带固定列的空 DataFrame。
+        """
+        cols = ["index_code", "time", "n_constituents", "expected_count",
+                "status", "n_duplicate_codes", "n_negative_weights",
+                "n_blank_codes", "weight_sum"]
+        conn = self._get_conn()
+        if conn is None:
+            return pd.DataFrame(columns=cols)
+        tables = self._existing_tables()
+        if "index_constituents_snapshot_meta" not in tables:
+            return pd.DataFrame(columns=cols)
+        params: list = []
+        where = ""
+        if index_code is not None:
+            where = "WHERE m.index_code = ?"
+            params = [str(index_code)]
+        if "index_constituents" in tables:
+            return conn.execute(f"""
+                SELECT m.index_code, m.time, m.n_constituents, m.expected_count,
+                       m.status,
+                       COALESCE(m.n_duplicate_codes, 0) AS n_duplicate_codes,
+                       COALESCE(m.n_negative_weights, 0) AS n_negative_weights,
+                       COALESCE(m.n_blank_codes, 0) AS n_blank_codes,
+                       s.weight_sum
+                FROM index_constituents_snapshot_meta m
+                LEFT JOIN (
+                    SELECT index_code, time, SUM(weight) AS weight_sum
+                    FROM index_constituents GROUP BY index_code, time
+                ) s ON s.index_code = m.index_code AND s.time = m.time
+                {where}
+                ORDER BY m.index_code, m.time
+            """, params).fetchdf()
         return conn.execute(f"""
-            SELECT DISTINCT code FROM index_constituents
-            WHERE index_code = '{index_code}'
-        """).fetchdf()
+            SELECT m.index_code, m.time, m.n_constituents, m.expected_count,
+                   m.status, 0 AS n_duplicate_codes, 0 AS n_negative_weights,
+                   0 AS n_blank_codes, NULL AS weight_sum
+            FROM index_constituents_snapshot_meta m {where}
+            ORDER BY m.index_code, m.time
+        """, params).fetchdf()
 
     def query_all_stocks(self, before_ms) -> pd.DataFrame:
         """迁移自 PtradeAPI.get_Ashares() (ptrade_api.py:1566-1570)"""
@@ -950,6 +1108,11 @@ class DuckDBDataAccess:
     def query_sw_industry(self, code):
         """迁移自 PtradeAPI.get_industry() (ptrade_api.py:2024-2026)
 
+        【LEGACY 快照，仅审计用途】sw_industry 不是正式申万一级 PIT 分类
+        （历史由 index_classify 名称匹配生成，含伪 SW_行业名 代码风险）。
+        正式能力已迁移到 industry_classification + industry_membership（F4），
+        Provider.get_industry 不再读取本方法。
+
         返回 (industry_code, industry_name) 或 None
         """
         conn = self._get_conn()
@@ -958,6 +1121,190 @@ class DuckDBDataAccess:
         return conn.execute(
             f"SELECT industry_code, industry_name FROM sw_industry WHERE code='{code}' LIMIT 1"
         ).fetchone()
+
+    def query_industry_membership_quality(self, table: str = "industry_membership") -> dict:
+        """industry_membership 区间质量门控（F4b）。
+
+        返回 dict（表缺失时 present=False）：
+        - positive_overlaps：同一 (system, version, level, code) 下相交时长
+          > 0 天的区间对数（边界日相接不计）；
+        - boundary_touches：仅共享单一边界日的区间对数（信息项）；
+        - multi_current_codes：effective_to IS NULL 区间 > 1 的证券数；
+        - orphan_rows：industry_code 不在 industry_classification
+          （SW/SW2021/L1）中的成员行数；
+        - bad_ranges：effective_from > effective_to 的行数；
+        - total_rows / codes：总量。验收标准：前四类问题全为 0。
+
+        Args:
+            table: 目标表名（原子迁移时传 staging 表名以在交换前校验）。
+        """
+        conn = self._get_conn()
+        if conn is None:
+            return {"present": False}
+        tables = self._existing_tables()
+        if table not in tables:
+            return {"present": False}
+        base = (f"FROM {table} WHERE classification_system='SW' "
+                "AND industry_level='L1'")
+        total, codes = conn.execute(
+            f"SELECT COUNT(*), COUNT(DISTINCT code) {base}").fetchone()
+        pos, boundary = conn.execute(f"""
+            WITH m AS (
+              SELECT rowid, classification_system, classification_version,
+                     industry_level, code, effective_from f,
+                     COALESCE(effective_to, 9223372036854775807) t
+              FROM {table}
+              WHERE classification_system='SW' AND industry_level='L1'
+            )
+            SELECT
+              SUM(CASE WHEN LEAST(a.t, b.t) - GREATEST(a.f, b.f) > 0
+                       THEN 1 ELSE 0 END),
+              SUM(CASE WHEN LEAST(a.t, b.t) - GREATEST(a.f, b.f) = 0
+                       THEN 1 ELSE 0 END)
+            FROM m a JOIN m b
+              ON a.classification_system = b.classification_system
+             AND a.classification_version = b.classification_version
+             AND a.industry_level = b.industry_level
+             AND a.code = b.code AND a.rowid < b.rowid
+             AND GREATEST(a.f, b.f) <= LEAST(a.t, b.t)
+        """).fetchone()
+        multi_current = conn.execute(f"""
+            SELECT COUNT(*) FROM (
+              SELECT code {base} AND effective_to IS NULL
+              GROUP BY code HAVING COUNT(*) > 1)
+        """).fetchone()[0]
+        orphan = 0
+        if "industry_classification" in tables:
+            orphan = conn.execute(f"""
+                SELECT COUNT(*) FROM {table} m
+                WHERE m.classification_system='SW' AND m.industry_level='L1'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM industry_classification c
+                    WHERE c.classification_system = m.classification_system
+                      AND c.classification_version = m.classification_version
+                      AND c.industry_level = m.industry_level
+                      AND c.industry_code = m.industry_code)
+            """).fetchone()[0]
+        bad = conn.execute(
+            f"SELECT COUNT(*) {base} AND effective_to IS NOT NULL "
+            "AND effective_from > effective_to").fetchone()[0]
+        return {"present": True,
+                "positive_overlaps": int(pos or 0),
+                "boundary_touches": int(boundary or 0),
+                "multi_current_codes": int(multi_current or 0),
+                "orphan_rows": int(orphan or 0),
+                "bad_ranges": int(bad or 0),
+                "total_rows": int(total or 0),
+                "codes": int(codes or 0)}
+
+    def query_sw_index_daily_coverage(self) -> pd.DataFrame:
+        """申万行业指数日线覆盖报告（F5 §7.6 数据质量门控 / F6 R1 能力核查）。
+
+        以 industry_classification（SW / SW2021 / L1）为全集基准，LEFT JOIN
+        index_daily 实际覆盖：返回 industry_code, industry_name, has_daily,
+        min_time, max_time, n_rows。正式表缺失返回带固定列的空 DataFrame
+        （能力判定的调用方应将其视为 DATA_BLOCKED）。
+        """
+        cols = ["industry_code", "industry_name", "has_daily",
+                "min_time", "max_time", "n_rows"]
+        conn = self._get_conn()
+        if conn is None:
+            return pd.DataFrame(columns=cols)
+        tables = self._existing_tables()
+        if "industry_classification" not in tables:
+            return pd.DataFrame(columns=cols)
+        if "index_daily" not in tables:
+            return conn.execute("""
+                SELECT industry_code, industry_name,
+                       FALSE AS has_daily, NULL AS min_time, NULL AS max_time, 0 AS n_rows
+                FROM industry_classification
+                WHERE classification_system='SW' AND classification_version='SW2021'
+                  AND industry_level='L1' ORDER BY industry_code
+            """).fetchdf()
+        return conn.execute("""
+            SELECT c.industry_code, c.industry_name,
+                   (d.n_rows IS NOT NULL AND d.n_rows > 0) AS has_daily,
+                   d.min_time, d.max_time, COALESCE(d.n_rows, 0) AS n_rows
+            FROM industry_classification c
+            LEFT JOIN (
+                SELECT code, MIN(time) AS min_time, MAX(time) AS max_time,
+                       COUNT(*) AS n_rows
+                FROM index_daily GROUP BY code
+            ) d ON d.code = c.industry_code
+            WHERE c.classification_system='SW' AND c.classification_version='SW2021'
+              AND c.industry_level='L1'
+            ORDER BY c.industry_code
+        """).fetchdf()
+
+    def query_industry_membership(self, code, as_of_ms=None):
+        """正式行业归属 PIT 查询（F4 + 2026-07-27 审核语义边界）。
+
+        语义（§6.6 + 审核修订）：
+        - as_of_ms 传入：返回当日**唯一**有效归属（effective_from <= as_of AND
+          (effective_to IS NULL OR effective_to >= as_of)）；
+        - **歧义日期 fail-closed**：当日有多于一个**不同行业**的有效归属时
+          （源端区间重叠属原始事实，官方 index_member 契约无冲突裁决规则，
+          项目不得自定义裁决），抛 ReferenceDataCapabilityError，
+          绝不用 ORDER BY 任意选一条；
+        - as_of_ms=None：返回当前有效归属（同样要求唯一，否则 fail-closed）；
+        - 无有效历史归属返回 None，绝不使用最新行业填充过去日期；
+        - 正式表缺失抛 ReferenceDataCapabilityError（fail-closed），
+          绝不回退到 legacy sw_industry 快照。
+
+        返回 dict：industry_code/industry_name/classification_system/
+        classification_version/effective_from/effective_to，或 None。
+        """
+        from .base import ReferenceDataCapabilityError
+        conn = self._get_conn()
+        if conn is None:
+            raise ReferenceDataCapabilityError(
+                "get_industry requires industry_membership/industry_classification; "
+                "database connection unavailable")
+        tables = self._existing_tables()
+        missing = sorted({"industry_membership", "industry_classification"} - tables)
+        if missing:
+            raise ReferenceDataCapabilityError(
+                "get_industry requires formal SW PIT tables "
+                f"(missing: {missing}). Run the industry_classification / "
+                "industry_membership pipeline; legacy sw_industry is audit-only "
+                "and is never served as formal SW2021 L1 data.")
+        params: list = [str(code)]
+        if as_of_ms is not None:
+            where = ("m.effective_from <= ? "
+                     "AND (m.effective_to IS NULL OR m.effective_to >= ?)")
+            params += [int(as_of_ms), int(as_of_ms)]
+        else:
+            where = "m.effective_to IS NULL"
+        rows = conn.execute(f"""
+            SELECT m.industry_code, c.industry_name,
+                   m.classification_system, m.classification_version,
+                   m.effective_from, m.effective_to
+            FROM industry_membership m
+            LEFT JOIN industry_classification c
+              ON c.classification_system = m.classification_system
+             AND c.classification_version = m.classification_version
+             AND c.industry_code = m.industry_code
+             AND c.industry_level = m.industry_level
+            WHERE m.code = ?
+              AND m.classification_system = 'SW'
+              AND m.industry_level = 'L1'
+              AND {where}
+            ORDER BY m.effective_from DESC
+        """, params).fetchall()
+        if not rows:
+            return None
+        distinct = {r[0] for r in rows}
+        if len(distinct) > 1:
+            raise ReferenceDataCapabilityError(
+                f"ambiguous industry membership for {code} at as_of={as_of_ms}: "
+                f"{len(distinct)} distinct industries {sorted(distinct)} — "
+                "source intervals overlap and the official index_member contract "
+                "has no conflict-resolution rule; fail-closed instead of "
+                "arbitral selection")
+        r = rows[0]
+        return {"industry_code": r[0], "industry_name": r[1],
+                "classification_system": r[2], "classification_version": r[3],
+                "effective_from": r[4], "effective_to": r[5]}
 
     def query_etf_list_active(self) -> pd.DataFrame:
         """迁移自 PtradeAPI.get_etf_list() (ptrade_api.py:1621-1628)"""

@@ -160,21 +160,96 @@ class DuckDBReferenceDataProvider(ReferenceDataProvider):
         if self._data._preload_listing is None:
             self._data._preload_listing = self._data.query_listing_dates()
     def get_index_constituents(self, index_code, date=None):
-        df = self._data.query_index_constituents(index_code)
+        """指数成分 PIT 查询（F3）。
+
+        - ``date`` 显式传入：严格 as-of（不晚于该日的最近完整快照，无则空）；
+        - ``date=None``（Provider 直接调用）：保留"最新快照"兼容行为（文档化）。
+          回测路径由 ptrade_api 注入当前回测日期，绝不落入此分支。
+        """
+        bare = str(index_code).strip().upper().split('.')[0]
+        as_of_ms = _end_ms(str(date)[:10]) if date else None
+        df = self._data.query_index_constituents(bare, as_of_ms)
         return df['code'].astype(str).tolist() if not df.empty else []
     def get_all_stocks(self, date=None):
         df = self._data.query_all_stocks(_end_ms(date) if date else 2**63 - 1)
         return df['code'].astype(str).tolist() if not df.empty else []
     def get_security_info(self, code):
+        """证券元数据（F2 修订版）：股票行为与修复前一致，仅扩展 ETF。
+
+        - ETF（etf_basic 元数据成员）：返回真实名称、'etf' 类型、etf_basic
+          上市/退市日；list_date 缺失时按 etf_basic 管线契约用首个 etf_daily
+          交易日补齐并在 data_source 标记 'etf_daily_min_fallback'；
+        - 股票及其他代码：**修复前行为** —— start_date=stock_daily 首根K线、
+          display_name=入参代码；新增键（end_date/security_type/exchange/
+          data_source）为附加键，不影响既有消费方；
+        - 均无记录返回 None（既有兼容行为）。
+        """
         self.preload()
-        listing_ms = self._data.query_security_info_from_preload(code)
-        if not listing_ms: return None
+        bare = str(code).split('.')[0]
+        meta = self._data.query_security_metadata(codes=[bare])
+        etf_row = None
+        if not meta.empty:
+            etf_rows = meta[meta['security_type'] == 'etf']
+            if not etf_rows.empty:
+                etf_row = etf_rows.iloc[0]
+        if etf_row is not None:
+            listing_ms = self._data.query_security_info_from_preload(bare)
+            listing_source = None
+            preload = self._data._preload_listing
+            if preload is not None and 'listing_source' in preload.columns:
+                rows = preload[preload['code'] == bare]
+                if len(rows) > 0 and rows.iloc[0]['listing_time']:
+                    listing_source = rows.iloc[0]['listing_source']
+            delist = etf_row.get('delist_date')
+            info = {
+                'code': code,
+                'start_date': (pd.Timestamp(listing_ms, unit='ms', tz='Asia/Shanghai').to_pydatetime()
+                               if listing_ms else None),
+                'display_name': (etf_row['name']
+                                 if etf_row.get('name') is not None and pd.notna(etf_row.get('name'))
+                                 else code),
+                'security_type': 'etf',
+                'exchange': etf_row.get('exchange'),
+                'end_date': (pd.Timestamp(delist, unit='ms', tz='Asia/Shanghai').to_pydatetime()
+                             if delist is not None and pd.notna(delist) else None),
+                'data_source': etf_row.get('data_source'),
+            }
+            # fallback 来源必须显式标记，覆盖正式 data_source 声明
+            if listing_source and str(listing_source).endswith('_fallback'):
+                info['data_source'] = listing_source
+            return info
+        # 股票/其他：修复前行为（start_date=stock_daily 首根K线，display_name=入参代码）
+        listing_ms = self._data.query_security_info_from_preload(bare)
+        if not listing_ms:
+            return None
         return {'code': code,
                 'start_date': pd.Timestamp(listing_ms, unit='ms', tz='Asia/Shanghai').to_pydatetime(),
-                'display_name': code}
-    def get_industry(self, code):
-        row = self._data.query_sw_industry(code)
-        return ({'sw_l1': {'industry_code': row[0], 'industry_name': row[1]}} if row else None)
+                'display_name': code,
+                'security_type': 'stock',
+                'exchange': None,
+                'end_date': None,
+                'data_source': None}
+    def get_industry(self, code, date=None):
+        """正式行业归属 PIT 查询（F4）。
+
+        - ``date`` 显式传入：严格 as-of（effective_from <= d AND
+          (effective_to IS NULL OR effective_to >= d)），无有效历史归属返回 None；
+        - ``date=None``（Provider 直接调用）：返回当前有效归属（文档化兼容）；
+        - 正式表缺失抛 ReferenceDataCapabilityError（fail-closed），
+          绝不回退 legacy sw_industry 快照。
+        """
+        bare = str(code).split('.')[0]
+        # 日期列均为 Asia/Shanghai 当日 00:00 ms，PIT 区间比较按日起点口径
+        as_of_ms = _start_ms(str(date)[:10]) if date else None
+        row = self._data.query_industry_membership(bare, as_of_ms)
+        if row is None:
+            return None
+        return {'sw_l1': {
+            'industry_code': row['industry_code'],
+            'industry_name': row['industry_name'],
+            'classification_system': row['classification_system'],
+            'classification_version': row['classification_version'],
+        }}
     def get_corporate_actions(self, date):
         return self._data.query_corporate_actions(_start_ms(str(date)[:10]))
     def get_stock_status(self, codes, date):

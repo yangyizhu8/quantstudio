@@ -1,7 +1,7 @@
 {
   "profile_id": "ptrade-backtest-public-v1",
-  "profile_version": "1.8.0",
-  "verified_on": "2026-07-26",
+  "profile_version": "1.9.0",
+  "verified_on": "2026-07-27",
   "policy": "Canonical dual-target code must use exact PTrade backtest public signatures; QuantStudio adapters must be equally strict so local PASS predicts platform acceptance.",
   "signatures": {
     "set_slippage": {
@@ -84,7 +84,12 @@
       ],
       "replacement_for": "get_security_info",
       "max_positional": 2,
-      "return_shape": "{security: {'listed_date': 'YYYY-MM-DD', ...}}"
+      "return_shape": "{security: {'listed_date': 'YYYY-MM-DD', ...}}",
+      "notes": [
+        "QuantStudio (2026-07-27, F2): stocks and ETFs are both served from the unified security metadata layer (stock_basic/etf_basic). stock_type is 'stock' or 'etf'; ETF de_listed_date is populated when delisted. Dates are YYYY-MM-DD; unknown securities keep the compat empty record keyed by the caller's code.",
+        "Listing-date priority: stock_basic.list_date (stock_daily first-bar fallback is marked *_fallback and must not be claimed as formal listing-date capability); ETF list_date comes from etf_basic, filled from first etf_daily bar when missing.",
+        "Local ETF metadata support does NOT imply real PTrade ETF metadata support; PTrade runtime remains unverified."
+      ]
     },
     "get_snapshot": {
       "contexts": [
@@ -271,7 +276,11 @@
       ],
       "return_shape": "list[str] using .SS/.SZ suffixes",
       "notes": [
-        "date uses YYYYmmdd when supplied; index_code must use the PTrade index identifier accepted by the target deployment."
+        "date uses YYYYmmdd when supplied; index_code must use the PTrade index identifier accepted by the target deployment.",
+        "PIT contract (2026-07-27, F3): explicit date is a strict as-of query — only the most recent complete snapshot on/before date is returned; never a history union, never a future snapshot.",
+        "When date is omitted inside a backtest, QuantStudio injects the current backtest date (never the database-global latest snapshot); outside a backtest the latest snapshot is returned (documented compat).",
+        "Empty list is returned when no snapshot exists on/before date (fail-closed); partial snapshots (constituent count far below the index maximum) are never served as complete PIT data.",
+        "Local data readiness does NOT imply PTrade platform constituent-history depth; verify coverage per deployment."
       ]
     },
     "get_stock_status": {
@@ -413,6 +422,24 @@
       ],
       "unsupported_on_ptrade": true,
       "replacement_for": "A user-confirmed static ETF whitelist when targets include ptrade"
+    },
+    "get_industry": {
+      "contexts": [
+        "research",
+        "backtest",
+        "trade"
+      ],
+      "max_positional": 1,
+      "allowed_keywords": [
+        "code"
+      ],
+      "return_shape": "{'sw_l1': {'industry_code': str, 'industry_name': str, 'classification_system': str, 'classification_version': str}} or None",
+      "notes": [
+        "Registered 2026-07-27 (F4); signature/shape corrected 2026-07-27 review to the exact local runnable subset: get_industry(code) with a single positional (or code= keyword), returning the direct sw_l1 dict (NOT keyed by security) or None.",
+        "QuantStudio serves sw_l1 from formal SW2021 PIT tables (industry_classification + industry_membership), strictly as-of the current backtest date; no valid membership -> None; never falls back to the latest industry or the legacy sw_industry snapshot.",
+        "Real-PTrade shape (security-keyed dict, date keyword, platform classification version) is NOT verified; dual-target designs must not assume {security: ...} wrapping or a date kwarg, and must record PTRADE_RUNTIME_UNVERIFIED.",
+        "Strategies depending on historical industry membership without industry_membership PIT coverage must be DATA_BLOCKED at R1."
+      ]
     }
   },
   "local_only_symbols": [

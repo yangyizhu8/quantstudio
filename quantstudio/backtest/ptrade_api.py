@@ -547,15 +547,32 @@ class PtradeAPI:
     # -------- 数据查询函数 --------
 
     def get_index_stocks(self, index_code: str, date=None) -> list:
-        """获取指数成分股（对应 Ptrade get_index_stocks）
-        通过 ReferenceDataProvider 读取。"""
-        # 标准化指数代码
+        """获取指数成分股（对应 Ptrade get_index_stocks），严格 PIT（F3）。
+
+        - 显式 ``date``：标准化为 YYYY-MM-DD 后严格 as-of 查询；
+        - 未显式传入：回测上下文注入当前回测日期（绝不使用数据库全局最新快照）；
+          非回测直接调用由 Provider 保留"最新快照"兼容行为；
+        - 返回标准 .SS/.SZ 成分股代码，去重且顺序确定。
+        """
         bare = bare_code(index_code)
+        # 日期契约：显式 date 标准化；未传时回测期间注入当前回测日期
+        if date is not None:
+            effective_date = str(date)[:10]
+        elif self._current_date:
+            effective_date = str(self._current_date)[:10]
+        else:
+            effective_date = None
         try:
             if self._reference is None:
                 return []
-            return [self._to_ptrade_code(code) for code in
-                    self._reference.get_index_constituents(bare, date)]
+            constituents = self._reference.get_index_constituents(bare, effective_date)
+            # 双保险去重（Provider 已保证，这里保序去重防御旧 Provider 实现）
+            seen, unique = set(), []
+            for code in constituents:
+                if code not in seen:
+                    seen.add(code)
+                    unique.append(code)
+            return [self._to_ptrade_code(code) for code in unique]
         except Exception as e:
             logger.warning(f"get_index_stocks({index_code}) 失败: {e}")
         return []
@@ -1823,17 +1840,25 @@ class PtradeAPI:
             bare = bare_code(security)
             info = self._reference.get_security_info(bare) if self._reference is not None else None
             start_date = info.get('start_date') if info else None
+            end_date = info.get('end_date') if info else None
             listed_date = None
             if start_date is not None:
                 try:
                     listed_date = pd.Timestamp(start_date).strftime('%Y-%m-%d')
                 except Exception:
                     listed_date = None
+            de_listed_date = None
+            if end_date is not None:
+                try:
+                    de_listed_date = pd.Timestamp(end_date).strftime('%Y-%m-%d')
+                except Exception:
+                    de_listed_date = None
             record = {
                 'stock_name': (info or {}).get('display_name', security),
-                'stock_type': 'stock',
+                # F2：股票/ETF 统一元数据；未知证券保持既有兼容行为（'stock' + 空值）
+                'stock_type': (info or {}).get('security_type', 'stock'),
                 'listed_date': listed_date,
-                'de_listed_date': None,
+                'de_listed_date': de_listed_date,
                 'exchange_type': security_exchange(security),
                 'code': security,
             }
@@ -1863,16 +1888,18 @@ class PtradeAPI:
         return result
 
     def get_industry(self, code):
-        """获取证券行业信息（对应 Ptrade get_industry）
-        返回 {'sw_l1': {'industry_code': ..., 'industry_name': ...}} 格式。
-        从 sw_industry 表查申万一级行业；无数据返回 None。"""
+        """获取证券行业信息（对应 Ptrade get_industry），APPROXIMATION_REQUIRES_CONFIRMATION（F4，非 PIT READY）。
+
+        返回 {'sw_l1': {'industry_code', 'industry_name',
+        'classification_system', 'classification_version'}} 格式。
+        签名不变；回测上下文自动注入当前回测日期（as-of），无有效历史归属
+        返回 None，绝不使用最新行业。正式表缺失时 ReferenceDataCapabilityError
+        向上传播（fail-closed），绝不回退 legacy sw_industry 快照。"""
         bare = bare_code(code)
-        try:
-            if self._reference is None:
-                return None
-            return self._reference.get_industry(bare)
-        except Exception:
+        if self._reference is None:
             return None
+        effective_date = str(self._current_date)[:10] if self._current_date else None
+        return self._reference.get_industry(bare, effective_date)
 
     def get_stock_status(self, stocks, query_type='ST', query_date=None):
         """获取股票状态（与 PTrade 公共签名对齐）。

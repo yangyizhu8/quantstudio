@@ -74,6 +74,17 @@
 - **问题**：Ptrade 官方 `get_history(count, frequency, field, security_list)` 位置参数映射错误，`security_list` 落到了 `fields` 参数位
 - **修复**：正确映射 `_sec_list = fields`（第4位置参数）
 
+## 二-B、F1-F6 框架修复记录（2026-07-27）
+
+> 注意：本文件 L23/L89 描述的 961 只成分行为是 **F3 修复前**的历史并集语义；F3 后 `get_index_stocks(date)` 为严格 as-of 最近完整快照。
+
+- **F1 PyQt rebalance_mode 透出**：GUI 下拉框（默认 `legacy`）→ `EngineConfig.rebalance_mode` 单一路径；`callback_basket` 仅 daily-bar-v1+next_open（`0.4.0-next_open_basket`），close/open 被 GUI 阻断；`run_daily` 永不进入 basket。
+- **F2 统一证券元数据（审核修订）**：`get_stock_info` 股票值级行为与历史完全一致（名称=裸码、上市日=行情首根K线，黄金对比 identical）；仅扩展 ETF（etf_basic 真实名称/上市/退市日，fallback 显式标记）。
+- **F3 指数成分严格 PIT（审核修订）**：`get_index_stocks(date)` 严格 as-of 最近 `complete` 快照；完整性由 `index_constituents_snapshot_meta` 批次契约在打点判定（不依赖未来数据），未来写入不改变历史查询（测试锁定）。
+- **F4 行业分类治理（审核修订，2026-07-27 重分类为 APPROXIMATION_REQUIRES_CONFIRMATION）**：正式 SW2021 表 `industry_classification`/`industry_membership`（主键含 industry_level）。**移除自定义冲突裁决**：官方 `index_member` 仅提供 `in_date`/`out_date`、无冲突裁决规则，故 canonical 表**原样保留重叠区间**（如 SW2021 重新分类），不再要求“每日唯一门控全 0”。硬门控仅保留 multi-current/orphan/坏区间=0；重叠区间存在时 capability = APPROXIMATION_REQUIRES_CONFIRMATION（非 PIT READY）。删除名称匹配及伪 `SW_行业名` 代码；`get_industry` 严格 as-of，重叠命中抛 `ReferenceDataCapabilityError`（fail-closed），绝不返回任意自定义裁决近似；正式表缺失 fail-closed；legacy `sw_industry` 仅审计。
+- **F5 申万行业指数日线**：`sw_daily` → 统一 `index_daily`（31 个 SW2021 L1，股/元单位）；`get_history` 801xxx 路由 index_daily，`fq='pre'` 回退原始 OHLC。
+- **F6 能力档案同步**：PTrade Profile 1.9.0（登记 get_industry + PIT 契约）；capability report 新增 7 项机检能力（status_detail 令牌）。
+
 ---
 
 ## 三、已排除的嫌疑人清单
@@ -146,6 +157,9 @@
 - [ ] score_stocks 批量化性能优化（待实施）
 - [ ] 完整周期回测 2026-01-01 ~ 2026-07-13（待执行）
 - [ ] 本地 vs Ptrade 收益率/回撤终验（待执行）
+- [ ] F3 后用 Ptrade 成分快照复核 get_index_stocks 严格 PIT 结果（2026-07-27 起语义已变）
+- [ ] F1 callback_basket vs legacy 等价性运行对比（PyQt R5 证据需含 0.4.0-next_open_basket）
+- [ ] F5/F6 SW 行业指数覆盖门控纳入 R1（query_sw_index_daily_coverage / capability report）
 
 ---
 
@@ -158,3 +172,7 @@
 | `run_small_cap.py` | cost=DEFAULT_TRADE_COST |
 | `ptrade_api.py` | 时间戳精度(4处) + float_value 单位统一 + date Timestamp 解析 + fallback + fq='pre' 处理 + get_history 参数映射 + 连接缓存 + Position.market_value + get_security_info + get_industry + pe_ttm 别名 |
 | `writers.py` | DuckDB 并发连接锁（_conn_lock） |
+| `backtest_engine.py` | （既有）rebalance_mode/engine_semantics_version；F1 未改引擎内核 |
+| `backtest_tab.py`/`workers.py` | F1：rebalance_mode GUI 透出与组合阻断 |
+| `duckdb_data_access.py`/`duckdb_provider.py`/`ptrade_api.py` | F2 统一元数据 / F3 成分 PIT / F4 行业 PIT / F5-F6 路由与覆盖报告 |
+| `tushare_adapter.py`/`aligner.py`/`validator.py`/`writers.py` | F4 行业正式表管线 / F5 sw_daily 路由（.SI 代码、单位换算、capability probe） |

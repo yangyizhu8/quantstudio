@@ -137,8 +137,10 @@ class PreIngestValidator:
                 reject_mask_batch("RequiredValueNull", col, bad, s)
 
         # ---- 2. CodeFormat：代码格式正则（统一裸码 ^\d{6}$）----
+        # code_field 可由 schema 显式声明（如 industry_classification 主键首列是
+        # classification_system 而非证券代码）；未声明时按主键首列推断（既有行为）。
         pk = schema.get("primary_key", ["code"])
-        code_col = pk[0] if pk else "code"
+        code_col = schema.get("code_field") or (pk[0] if pk else "code")
         if code_col in df.columns:
             code_re = schema["columns"].get(code_col, {}).get("regex", r"^\d{6}$")
             pat = re.compile(code_re)

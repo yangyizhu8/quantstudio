@@ -58,3 +58,11 @@ A QuantStudio `__candidate` file is never a PTrade artifact. PTrade formal outpu
 - The selected QuantStudio backtest engine profile uses `pre_adjusted_price` for matching, fills, cash, valuation, `data[code].price`, and BarData OHLC.
 - Agent-first designs must declare `signal_price_adjustment=pre` and `execution_price_basis=pre_adjusted_price`; `raw_trade_price` is rejected.
 - PTrade public-API validation remains a portability gate and does not redefine the broker runtime's internal valuation basis.
+
+## 2026-07-27 PTrade Profile 1.9.0 industry + PIT contract closure (F1-F6)
+
+- `get_industry(security, date=None)` 正式登记（sw_l1 返回形状 + PIT 契约）：本地严格 as-of 当前回测日期查 SW2021 正式成员表；无有效归属返回 None；legacy `sw_industry` 不再作为正式数据。PTrade 平台行业分类版本按部署核实（`PTRADE_RUNTIME_UNVERIFIED`）。
+- `get_index_stocks` 声明严格 as-of PIT/date 契约（F3）：非历史并集、无未来快照、无快照返回空、partial 快照不计完整 PIT；PTrade 平台成分历史深度按部署核实。
+- `get_stock_info` 声明股票+ETF 统一元数据（F2）：stock_type/上市/退市日（YYYY-MM-DD）、fallback 显式标记；本地 ETF 元数据支持 ≠ PTrade 真实 ETF 支持（未验证）。
+- `callback_basket` 是 QuantStudio 引擎语义模式（`0.4.0-next_open_basket`），仅 daily-bar-v1 + next_open；PTrade 渲染不得输出 basket 专属构造；PyQt 已透出 `rebalance_mode`（默认 legacy）。
+- `get_history` 多表路由（股票/ETF/指数含申万行业指数→统一 index_daily）与 `fq='pre'` 复权列缺失回退原始价为引擎侧保证（F5/F6），不改变策略可见契约。

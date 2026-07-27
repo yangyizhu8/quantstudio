@@ -118,7 +118,15 @@ class ReferenceDataProvider(ABC):
 
     @abstractmethod
     def get_index_constituents(self, index_code: str,
-                               date: Optional[str] = None) -> List[str]: ...
+                               date: Optional[str] = None) -> List[str]:
+        """指数成分 PIT 查询（F3 契约）。
+
+        ``date`` 显式传入（YYYY-MM-DD）：严格 as-of，只返回不晚于该日的
+        最近完整快照；无历史快照返回空列表，绝不向未来 fallback、绝不返回
+        历史并集。``date=None`` 仅限非回测直接调用：保留"最新快照"兼容行为；
+        回测期间由 ptrade_api 注入当前回测日期，绝不使用数据库全局最新日期。
+        """
+        ...
 
     @abstractmethod
     def get_all_stocks(self, date: Optional[str] = None) -> List[str]: ...
@@ -127,7 +135,18 @@ class ReferenceDataProvider(ABC):
     def get_security_info(self, code: str) -> Optional[dict]: ...
 
     @abstractmethod
-    def get_industry(self, code: str) -> Optional[dict]: ...
+    def get_industry(self, code: str,
+                     date: Optional[str] = None) -> Optional[dict]:
+        """行业归属 PIT 查询（F4 契约）。
+
+        ``date``（YYYY-MM-DD）显式传入：严格 as-of，无有效历史归属返回 None，
+        绝不使用最新行业填充过去日期。``date=None`` 仅限非回测直接调用：
+        返回当前有效归属。正式表缺失时抛 ReferenceDataCapabilityError
+        （fail-closed），绝不回退 legacy sw_industry 快照。
+        外部 PTrade 签名（ptrade_api.get_industry(code)）不变，由 API 层
+        自动注入当前回测日期。
+        """
+        ...
 
     @abstractmethod
     def get_stock_status(self, codes: List[str], date: str) -> pd.DataFrame: ...

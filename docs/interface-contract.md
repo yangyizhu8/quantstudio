@@ -169,10 +169,15 @@ if df.empty:  # ✅ 正确
 
 | API | 无数据时返回 | 策略判空 |
 |---|---|---|
-| `get_industry(code)` | `None`（不是空 dict） | `if industry and industry.get('sw_l1'):` 双重判空 |
-| `get_security_info(code).start_date` | `None` | `if start_date and start_date <= ...:` |
-| `get_index_stocks(code)` | `[]` | `if stocks:` |
+| `get_industry(code)` | `None`（不是空 dict）。**APPROXIMATION_REQUIRES_CONFIRMATION（F4，非 PIT READY）**：当前回测日 as-of 查 SW2021 正式成员表。官方 `index_member` 仅给 `in_date`/`out_date`、无冲突裁决规则，canonical 表原样保留重叠区间、不应用自定义裁决；重叠命中时抛 `ReferenceDataCapabilityError`（fail-closed），绝不返回任意自定义裁决近似。无有效历史归属返回 `None`，绝不使用最新行业；正式表缺失抛 `ReferenceDataCapabilityError`（fail-closed），绝不回退 legacy `sw_industry` 快照 | `if industry and industry.get('sw_l1'):` 双重判空 |
+| `get_security_info(code).start_date` | `None`。F2 起股票与 ETF 统一元数据层均可返回上市日 | `if start_date and start_date <= ...:` |
+| `get_stock_info(stocks, field)` | 未知代码返回兼容空值记录（`stock_type='stock'`、日期 `None`、名称为入参代码）。股票行为与历史完全一致（名称=裸码、上市日=stock_daily 首根K线）；F2 仅扩展 ETF：`stock_type='etf'` 与真实名称/上市/退市日（`YYYY-MM-DD`） | `if info[code]['listed_date']:` |
+| `get_index_stocks(code)` | `[]`。严格 PIT（F3）：显式 `date` 只取不晚于该日的最近 `complete` 快照（完整性由 `index_constituents_snapshot_meta` 批次契约在打点判定，不依赖未来数据）；无历史快照/无 meta 返回空（fail-closed，不向未来 fallback）；回测中不传 `date` 注入当前回测日期 | `if stocks:` |
 | `get_history(...)` | 空 DataFrame | `if df.empty or len(df) < N:` |
+
+### get_history 路由与前复权回退契约（F5/F6）
+
+多表路由：普通股票→`stock_daily`；ETF→`etf_daily`；普通指数与申万行业指数（801xxx）→统一 `index_daily`（行业指数与普通指数共用 canonical schema：code/time/OHLC/pctChg/volume[股]/amount[元]）；指数历史不足时按既有契约用 `INDEX_ETF_MAP` 跟踪 ETF 代理（如 000300→510300）。`fq='pre'` 用 `*_front` 列替换原始价；指数无复权列时回退原始 OHLC（指数行情绝不套用 ETF 前复权逻辑）。行业指数不写入 `stock_daily`，无数据返回空而非静默转换。
 
 ---
 
@@ -270,8 +275,19 @@ config = EngineConfig(
     db_path=ROOT / "data" / "quantstudio.db",
     output_dir=ROOT / "output",
     research_dir=ROOT / "output" / "research",
+    rebalance_mode="legacy",  # F1：默认 legacy；"callback_basket" 仅 daily-bar-v1 + next_open
 )
 engine = BacktestEngine(config=config, ...)
+
+### rebalance_mode 与篮子再平衡契约（F1）
+
+- `rebalance_mode` 默认 `legacy`（现有单订单/pending 行为，修复前后逐项一致）；
+- `callback_basket` 仅在 daily-bar-v1 + `next_open` 激活，导出记录
+  `engine_semantics_version=0.4.0-next_open_basket`（`next_open + legacy` 保持
+  `0.2.0-next_open_pending`）；分钟 Profile 显式 ValueError；
+- 生命周期边界：`handle_data` 订单进入 basket；`run_daily`/`before_trading_start` 永不进入；
+- PyQt 回测面板以通用下拉框透出（内部值 `legacy`/`callback_basket`，显示文本不作引擎参数），
+  `close`/`open + callback_basket` 在点击运行前被 GUI 阻断。
 ```
 
 **策略作者无需关心**：
@@ -337,6 +353,7 @@ API 底层封装口径（§1-§8，函数语义/撮合逻辑）与**数据源口
 | v1.2 | 2026-07-18 | ST/退市复写对齐：§6 新增 filter_stock_by_status 4 种 filter_type 契约 + is_st_reliable/is_delisting_risk 字段说明 + 已知数据限制 |
 | v1.3 | 2026-07-19 | §9 新增数据源口径契约：EngineConfig.data_source(默认 tushare) 与 PtradeBaseline.source_id(默认 juyuan) 一致性断言（白名单跨源 tushare↔juyuan 告警放行，其余/未声明口径拒绝对照） |
 | v1.4 | 2026-07-20 | 持仓容器后缀语义回归修复：portfolio/get_positions 恢复 .SS/.SZ 精确 dict membership；跨后缀兼容仅保留在 get_position/DataDict/CodeDict，防止 ETF 动量策略控制流漂移 |
+| v1.5 | 2026-07-27 | F1-F6 框架修复：§5 取数缺失语义表更新（get_stock_info ETF 统一元数据/get_index_stocks 严格 PIT/get_industry 严格 PIT fail-closed）+ get_history 多表路由与前复权回退契约；§8 EngineConfig 新增 rebalance_mode 与篮子再平衡契约 |
 
 ---
 

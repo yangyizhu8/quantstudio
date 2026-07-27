@@ -71,6 +71,8 @@ DEFAULT_SOURCE_MAP = {
     "cashflow_statement":   "xtquant",
     "stock_dividend":       "tushare",
     "sw_industry":          "tushare",
+    "industry_classification": "tushare",  # F4 正式分类定义（SW2021 L1）
+    "industry_membership":  "tushare",     # F4 正式成员历史 PIT
     "tick":                 "xtquant",
     "stock_namechange":     "akshare",   # hidden 联动任务（stock_daily 前置依赖）
     "stock_delist":         "akshare",   # 沪深退市名单（用户可见）
@@ -92,6 +94,8 @@ CODES_ALL_HINT = {
     "cashflow_statement": "ALL = 全部 A 股",
     "stock_dividend": "ALL = 全部 A 股",
     "sw_industry": "ALL = 全部股票行业",
+    "industry_classification": "ALL = 全部申万一级行业定义",
+    "industry_membership": "ALL = 全部申万一级行业成员历史",
 }
 
 # 表名 → 中文简述（任务卡片右侧显示）
@@ -109,7 +113,9 @@ TABLE_DESCRIPTION = {
     "income_statement": "利润表",
     "cashflow_statement": "现金流量表",
     "stock_dividend": "除权除息记录",
-    "sw_industry": "申万行业分类",
+    "sw_industry": "申万行业分类（legacy 快照，仅审计）",
+    "industry_classification": "行业分类定义（SW2021 L1 正式）",
+    "industry_membership": "行业成员历史（PIT 正式）",
 }
 
 # 按表类型分组（用于采集任务分区域显示）
@@ -120,6 +126,7 @@ TABLE_CATEGORIES = {
     "指数成分": ["index_constituents"],
     "三大报表": ["balance_statement", "income_statement", "cashflow_statement"],
     "除权行业": ["stock_dividend", "sw_industry"],
+    "行业分类": ["industry_classification", "industry_membership"],
     "其他": [],  # 未归类的表放这里
 }
 

@@ -1,5 +1,32 @@
 # QuantStudio Strategy Compiler ? Release Notes
 
+## 0.7.2-framework-repair-review-round3 (2026-07-27)
+
+- F3: snapshot completeness now uses COUNT(DISTINCT code); quality violations (duplicate/negative/blank codes) force `invalid`; missing expectations config fails closed; variable-count indices must be explicitly registered (`variable_indices`) — unregistered indices are `unknown` and never served.
+- F4: official `index_member` has no conflict-resolution rule — raw overlapping intervals are preserved 1:1 (only from>to dirty rows dropped); ambiguous dates fail closed at API level (`ReferenceDataCapabilityError`); `industry_membership_pit` is downgraded to APPROXIMATION_REQUIRES_CONFIRMATION/DATA_BLOCKED (DEGRADED), never formal PIT READY while overlaps exist. Safe migration tool `scripts/rebuild_industry_tables.py` (staging + gates + single-transaction atomic swap; failure injection leaves official tables byte-identical).
+- F5: SW2021 L1 universe gate (31 codes / format / uniqueness) — probe failure, short, duplicate or malformed universes fail the whole daemon task with watermark unchanged (public-entry tests).
+
+
+## 0.7.1-framework-repair-review-correctives (2026-07-27)
+
+- F2 corrective: `get_stock_info` stock behavior restored to pre-repair values byte-for-byte (name=bare code, listed_date=first `stock_daily` bar); only ETF metadata is extended. Golden value-level comparison vs HEAD: identical.
+- F3 corrective: snapshot completeness now comes from the formal batch contract `index_constituents_snapshot_meta` (n/expected_count/status, determined at ingest, never from future snapshots); future writes cannot change historical query results.
+- F4a corrective: `fetch_table` normalizes None/'ALL'/['ALL'] before dispatch (no more `ALL.SI` requests); empty single-industry member fetch is all-or-nothing fail-closed.
+- F4b corrective: industry membership intervals are repaired by a deterministic daily-uniqueness transform (gate: positive overlaps / multi-current / orphan / bad ranges all 0); formal table primary keys now include `industry_level`.
+- F5 corrective: the formal daemon universe `get_index_daily_universe()` (CSI + SW2021 L1) serves full/incremental/resident through the per-stock path; next-day incremental watermark behavior covered by daemon integration tests.
+- F6 corrective: `get_industry` profile entry corrected to the exact local signature/shape; capability inspection now probes through real Provider/API calls and reports DATA_BLOCKED honestly (meta missing / interval overlaps / resident path unreachable).
+
+
+## 0.7.0-framework-repair-f1-f6 (2026-07-27)
+
+- F1: PyQt backtest console exposes generic `rebalance_mode` (`legacy` default / `callback_basket`) via a single `EngineConfig.rebalance_mode` path; GUI blocks `callback_basket` with `close`/`open`; `run_daily` orders never enter the basket.
+- F2: unified stock/ETF security metadata layer (`query_security_metadata`) feeding `get_security_info` / `get_stock_info`; ETF list/delist dates served; listing-date fallbacks explicitly marked; unknown-security compat behavior unchanged.
+- F3: `get_index_stocks(date)` is now strict as-of PIT (latest complete snapshot on/before date; no history union, no future snapshots, fail-closed empty); partial snapshots are flagged and never served as complete PIT data.
+- F4: formal SW2021 industry tables `industry_classification` + `industry_membership` (PIT effective ranges) replace the removed name-matching logic; `get_industry` serves historical as-of membership and fails closed when formal tables are missing; legacy `sw_industry` is audit-only.
+- F5: SW industry index daily bars flow through the unified `index_daily` pipeline (tushare `sw_daily` routed for SW2021 L1 codes, canonical 股/元 units, full/incremental/resident + watermark inherited); `get_history` routes 801xxx to `index_daily` with raw-OHLC `fq='pre'` fallback.
+- F6: PTrade profile 1.9.0 registers `get_industry` and declares the PIT/date contracts; capability report adds machine-checkable capabilities (`security_metadata_stock/etf`, `index_constituents_pit`, `index_constituents_history_coverage`, `industry_classification_sw2021`, `industry_membership_pit`, `sw_l1_index_daily`, `gui_rebalance_mode`, `callback_basket_pyqt`) with `status_detail` tokens; R1 checks are deeper than table existence.
+
+
 ## 0.5.0-user-pyqt-candidate-flow (2026-07-25)
 
 - Added independent R0 backtest-execution ownership: agent-managed or user-PyQt.

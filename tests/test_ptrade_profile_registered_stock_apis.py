@@ -152,15 +152,17 @@ def rebalance(context):
 def test_profile_registers_core_stock_portability_apis():
     profile = json.loads((ROOT / "skills" / "quantstudio-strategy-compiler" /
                           "references" / "ptrade-api-signatures.json").read_text(encoding="utf-8"))
-    assert profile["profile_version"] == "1.8.0"
+    assert profile["profile_version"] == "1.9.0"
     for name in (
         "set_benchmark", "run_daily", "get_Ashares", "get_index_stocks",
-        "get_stock_status", "get_positions", "get_position",
+        "get_stock_status", "get_positions", "get_position", "get_industry",
     ):
         assert name in profile["signatures"]
     assert profile["signatures"]["get_stock_status"]["canonical_keyword_values"]["query_type"] == [
         "ST", "HALT", "DELISTING"
     ]
+    # F3：get_index_stocks 必须声明 PIT/date 契约
+    assert any("as-of" in n for n in profile["signatures"]["get_index_stocks"]["notes"])
 
 
 def test_profile_records_get_history_is_dict_return_contract():

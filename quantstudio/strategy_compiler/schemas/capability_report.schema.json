@@ -33,7 +33,8 @@
         "execution_status": {"$ref": "#/definitions/executionStatus"},
         "evidence": {"type": "array", "items": {"type": "string"}},
         "message": {"type": "string"},
-        "remediation": {"type": "array", "items": {"type": "string"}}
+        "remediation": {"type": "array", "items": {"type": "string"}},
+    "status_detail": {"type": "array", "items": {"enum": ["API_PROFILE_READY", "LOCAL_DATA_READY", "LOCAL_RUNTIME_READY", "PTRADE_STATIC_PROFILE_READY", "PTRADE_RUNTIME_UNVERIFIED", "DATA_BLOCKED"]}}
       },
       "additionalProperties": false,
       "allOf": [

@@ -1,0 +1,13 @@
+{
+  "_note": "指数成分快照完整性正式契约（F3 修订 v2）：固定成分指数登记 expected_count；可变成分指数必须在 variable_indices 显式登记（否则 status='unknown'，fail-closed 不服务）。指数公开元数据，非策略白名单。配置缺失时打点 fail-closed（ExpectationsConfigError）。",
+  "expectations": {
+    "000016": 50,
+    "000300": 300,
+    "000688": 50,
+    "000852": 1000,
+    "000905": 500
+  },
+  "variable_indices": [
+    "399101"
+  ]
+}

@@ -5,9 +5,9 @@ description: Strict target-aware agent-first strategy engineering for QuantStudi
 
 # QuantStudio Agent-first Strategy Engineering
 
-Skill release: `0.6.0-runtime-shape-capital-gates` (built on the `0.3.2-mvp` compiler/package baseline).
+Skill release: `0.7.0-framework-repair-f1-f6` (built on the `0.3.2-mvp` compiler/package baseline).
 
-Contract versions at this release: agent design `2.2`, PTrade profile `1.8.0`, user backtest evidence `2.0`, validation report `2.1`. Design `2.1` artifacts must not be auto-migrated to PASS; regenerate the design under 2.2 and repeat the R2.5 confirmation.
+Contract versions at this release: agent design `2.2`, PTrade profile `1.9.0`, user backtest evidence `2.0`, validation report `2.1`. Design `2.1` artifacts must not be auto-migrated to PASS; regenerate the design under 2.2 and repeat the R2.5 confirmation.
 
 Treat the calling agent as the strategy author. Constrain it with project lifecycle, data, timing, PTrade public API, validation, and delivery gates. Never implement a strategy by adding its name or shape to Compiler/Renderer/Jinja branches.
 
@@ -115,11 +115,18 @@ After the customer has explicitly completed R0, inspect only capabilities requir
 - PTrade backtest/trade context availability when `ptrade` is a selected target; otherwise record it as `NOT_APPLICABLE`;
 - exact function signatures and permitted keyword names for the selected targets;
 - data return shapes and code suffixes;
-- for local dynamic ETF universes, `etf_basic` existence, classification version/source, listing/delisting coverage, `etf_daily` history coverage, and PIT checks at pre-listing/post-listing/post-delisting dates.
+- for local dynamic ETF universes, `etf_basic` existence, classification version/source, listing/delisting coverage, `etf_daily` history coverage, and PIT checks at pre-listing/post-listing/post-delisting dates;
+- `get_stock_info` (F2): stock listing dates, ETF listing dates, ETF delisting dates, the `{security: {...}}` return shape, and unknown-security compat behavior — table existence alone is not sufficient;
+- `get_index_stocks(date)` (F3): verify on live data that an explicit date really changes the result (no history union), the snapshot coverage start, absence of future-snapshot leakage, and snapshot completeness — completeness is decided **only** by the `index_constituents_snapshot_meta` batch contract (n/expected_count/status at ingest, never from future snapshots); indices without meta are DATA_BLOCKED;
+- SW industry classification (F4): classification system/version (`SW`/`SW2021`), PIT effective ranges in `industry_membership`, structural gates (orphan / bad ranges must be 0), and that no pseudo `SW_<name>` codes exist. Official `index_member` has no conflict-resolution rule: raw overlapping intervals are preserved 1:1, ambiguous dates fail closed at API level, and while any overlap exists the capability is APPROXIMATION_REQUIRES_CONFIRMATION / DATA_BLOCKED — never formal PIT READY. The legacy `sw_industry` table is audit-only;
+- SW industry index daily (F5): SW2021 L1 index count (31), daily coverage in unified `index_daily`, OHLC/amount sanity, `fq='pre'` raw-OHLC fallback for indices, the latest source watermark, and formal resident reachability (enabled `index_daily` daemon task consuming `get_index_daily_universe()`); one-off backfills never count as pipeline READY;
+- engine rebalance mode (F1): `next_open + callback_basket` requires `daily-bar-v1` + `handle_data` + `expected_engine_semantics_version='0.4.0-next_open_basket'`; `run_daily` orders never enter the basket; PyQt exposes `rebalance_mode` (default `legacy`) since 2026-07-27.
 
 Classify each item as `READY`, `APPROXIMATION_REQUIRES_CONFIRMATION`, `DATA_BLOCKED`, `LOCAL_ONLY`, `PTRADE_CONTEXT_BLOCKED`, or `MISSING_REUSABLE_API`.
 
 `APPROXIMATION_REQUIRES_CONFIRMATION` is reserved for explicitly modeled timing, fill, or execution proxies whose APIs are already verified. A missing PTrade signature/context is never customer-waivable: classify it as `MISSING_REUSABLE_API`, keep R1 BLOCKED, repair the reusable profile/adapter plus tests, then repeat R1.
+
+Machine-checkable capability identifiers (emitted by `inspect_capabilities.py` in the capability report, with `status_detail` tokens `API_PROFILE_READY` / `LOCAL_DATA_READY` / `LOCAL_RUNTIME_READY` / `PTRADE_STATIC_PROFILE_READY` / `PTRADE_RUNTIME_UNVERIFIED` / `DATA_BLOCKED`): `security_metadata_stock`, `security_metadata_etf`, `index_constituents_pit`, `index_constituents_history_coverage`, `industry_classification_sw2021`, `industry_membership_pit`, `sw_l1_index_daily`, `gui_rebalance_mode`, `callback_basket_pyqt`. When a design declares the related APIs, R1 must cite the matching capability entry: data missing -> `DATA_BLOCKED`; API not in the PTrade profile -> `MISSING_REUSABLE_API`; locally READY but real-PTrade unverified -> never write "PTrade verified"; historical constituents without PIT coverage -> BLOCK; historical industry with only a current snapshot -> BLOCK; `next_open + callback_basket` with `run_daily` order lifecycle -> BLOCK; PyQt R5 evidence not activating `0.4.0-next_open_basket` semantics when the design requires basket -> BLOCK.
 
 For every API planned for generated code, check `ptrade-api-signatures.json`. Examples:
 

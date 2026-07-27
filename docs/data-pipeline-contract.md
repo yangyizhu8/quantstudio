@@ -135,6 +135,7 @@ adapter.fetch_table → aligner.align → validator.validate → writer.write
 | 版本 | 日期 | 改动 |
 |---|---|---|
 | v1.0 | 2026-07-18 | 初版：两表两层市值口径、xtquant PIT 约束、derive_fields 补算规范、扩展规范 |
+| v1.1 | 2026-07-27 | F3-F5：新增 index_constituents 快照完整性契约、SW 行业分类参考数据契约（industry_classification/industry_membership）、index_daily/sw_daily 统一指数日线管线契约 |
 
 ## ETF reference metadata for local PIT universes
 
@@ -163,3 +164,26 @@ For user-PyQt R5, the Skill records the project DuckDB path and recommends ETF l
 - **Write semantics:** validate the full canonical snapshot, compare it with stored rows excluding volatile `update_time`, and upsert only new or semantically changed rows by primary key `code`. Source-side temporary absence never physically deletes retained historical metadata.
 - **Entry-point parity:** CLI full range, CLI/GUI incremental, and resident scheduling call the same adapter, standardizer, validator, diff, writer, and watermark implementation.
 - **Compatibility script:** `python scripts/sync_etf_basic.py --db data/quantstudio.db` remains available for bootstrap/manual replacement and imports the same standardizer and DDL as the pipeline task.
+
+## `index_constituents` snapshot integrity contract (F3 §5.6)
+
+- **PIT 语义**：`get_index_constituents(index_code, date)` / `get_index_stocks(date)` 只取不晚于 as-of 日的**最近完整快照**；不是历史并集、绝不使用未来快照、无历史快照返回空（fail-closed）。回测期间 API 注入当前回测日期，绝不读数据库全局最新快照。
+- **完整性批次契约（2026-07-27 审核修订）**：完整性只由 `index_constituents_snapshot_meta` 在打点写入时判定（`n_constituents` / `expected_count` / `status`，expected_count 来自 `config/index_constituents_expectations.json` 指数公开元数据），**绝不依赖未来快照**；API 只消费 `status='complete'` 快照，无 meta 的指数 fail-closed；未来数据写入不得改变历史查询结果（测试锁定）。daemon 在 `index_constituents` 任务写入后自动打点（幂等）。
+- **写入**：主键 `(index_code, code, time)`，changed-row upsert；同日多源冲突须在写入前消除或按既有数据源优先级处理。
+
+## SW industry classification reference contract (F4)
+
+- **正式权威**：tushare `index_classify(level='L1', src='SW2021')`（分类定义 → `industry_classification`）+ `index_member`（成员历史 → `industry_membership`，`in_date/out_date` → `effective_from/effective_to` 毫秒，`NULL` 表示当前有效）。主键含 `industry_level`（2026-07-27 升级）。安全重建工具：`scripts/rebuild_industry_tables.py`（staging + 门控 + 单事务原子交换，失败正式表不变）。
+- **禁止**：不得用 `stock_basic.industry` 中文名匹配生成行业代码；不得生成伪 `SW_<行业名>` 代码；不得用当前快照回填历史；数据源不可用或字段漂移 → fail-closed（成员表 all-or-nothing，不写部分快照）。
+- **区间重叠语义边界（F4b，2026-07-27 审核修订）**：官方 `index_member` 契约只有 in_date/out_date，**没有冲突裁决规则**。transform 严格 1:1 保留原始区间（仅剔除 from > to 脏数据），**严禁项目自定义裁决**；同一证券同一 system/version/level 当日有多于一个不同行业归属的**歧义日期**由 Provider 层 fail-closed（`ReferenceDataCapabilityError`）。`query_industry_membership_quality()` 报告重叠对数（原始事实）；硬性门控：orphan=0、bad_ranges=0。能力定级：存在歧义区间时 industry_membership 为 **APPROXIMATION_REQUIRES_CONFIRMATION / DATA_BLOCKED**，不得宣称正式 PIT READY。单行业成员空结果 → all-or-nothing fail-closed。
+- **legacy 治理**：旧 `sw_industry` 表仅保留作审计（legacy snapshot），任何公开 API 不得再把它当作正式 SW2021 L1 PIT 数据；Provider 正式读取 `industry_membership`，正式表缺失时 `get_industry` fail-closed。
+- **采集任务**：`industry_classification` / `industry_membership`（`config/collector_tasks.json`，source 链 `["tushare"]`，full/incremental/resident 同一路径）。
+
+## `index_daily` / `sw_daily` pipeline contract (F5)
+
+- **统一 canonical 表**：申万行业指数与普通指数同写 `index_daily`（code/time/OHLC/pctChg/volume[股]/amount[元]），不新建策略私有行情表。
+- **源端路由**：tushare 普通指数 → `index_daily` 接口；申万行业指数（`.SI` 后缀或 SW2021 L1 宇宙成员）→ `sw_daily` 正式接口。行业指数范围来自 SW2021 L1 分类（adapter probe `index_classify`），允许配置显式代码列表，不写策略白名单。
+- **单位**：`sw_daily` vol=万股/amount=万元 → adapter 换算为 `index_daily` 接口单位（手/千元）→ aligner 统一映射为 股/元，与既有 `index_daily` 完全一致；OHLC 单位=点。
+- **代码**：内部 canonical 裸码（`801010`），`.SI` 后缀仅存在于源端映射；不加复权列；`fq='pre'` 对指数回退原始 OHLC；行业指数不写入 `stock_daily`。
+- **正式宇宙与增量水位（2026-07-27 审核修订）**：daemon per-stock 路径消费 `get_index_daily_universe()`（普通指数 + SW2021 L1，probe 缓存），full/incremental/resident 同一路径；source_watermark、重试、限流、缺口审计、changed-row upsert、源端空数据 fail-closed（字段漂移 RuntimeError、单代码空数据跳过）、最新交易日完整性检查，全部走统一 daemon 路径（full/incremental/次日更新/run_once 有集成测试锁定）。
+- **质量门控**：SW2021 L1 31 个行业定义完整；每个行业指数有日线；OHLC 合法（high ≥ max(open,close)、low ≤ min(open,close)）、成交额非负、日期不重复、区间连续、最新交易日覆盖（`query_sw_index_daily_coverage` 报告）。

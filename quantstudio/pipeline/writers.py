@@ -165,6 +165,17 @@ DDL_DUCKDB = {
             weight DOUBLE,
             PRIMARY KEY(index_code, code, time)
         )""",
+    # ---- 指数成分快照完整性契约（F3 修订）：完整性在打点写入时确定，不依赖未来数据 ----
+    "index_constituents_snapshot_meta": """
+        CREATE TABLE IF NOT EXISTS index_constituents_snapshot_meta (
+            index_code VARCHAR, time BIGINT,
+            n_constituents INTEGER, expected_count INTEGER,
+            status VARCHAR,
+            n_duplicate_codes INTEGER, n_negative_weights INTEGER,
+            n_blank_codes INTEGER,
+            update_time VARCHAR, data_source VARCHAR,
+            PRIMARY KEY(index_code, time)
+        )""",
     # ---- 三大报表（对齐 Ptrade 口径，字段单位=元）----
     "balance_statement": """
         CREATE TABLE IF NOT EXISTS balance_statement (
@@ -204,12 +215,33 @@ DDL_DUCKDB = {
             update_time VARCHAR,
             PRIMARY KEY(code, ex_date)
         )""",
-    # ---- 申万行业分类 ----
+    # ---- 申万行业分类（LEGACY 快照，仅审计；正式能力见下两张表 F4）----
     "sw_industry": """
         CREATE TABLE IF NOT EXISTS sw_industry (
             code VARCHAR, industry_code VARCHAR, industry_name VARCHAR, industry_level VARCHAR,
             update_time VARCHAR,
             PRIMARY KEY(code, industry_code)
+        )""",
+    # ---- 行业分类定义（F4 正式 canonical 表；effective_from=0 表示长期有效）----
+    "industry_classification": """
+        CREATE TABLE IF NOT EXISTS industry_classification (
+            classification_system VARCHAR, classification_version VARCHAR,
+            industry_code VARCHAR, industry_name VARCHAR, industry_level VARCHAR,
+            parent_industry_code VARCHAR,
+            effective_from BIGINT, effective_to BIGINT,
+            update_time VARCHAR, data_source VARCHAR,
+            PRIMARY KEY (classification_system, classification_version,
+                         industry_level, industry_code, effective_from)
+        )""",
+    # ---- 行业成员历史（F4 正式 canonical 表，PIT 有效区间）----
+    "industry_membership": """
+        CREATE TABLE IF NOT EXISTS industry_membership (
+            classification_system VARCHAR, classification_version VARCHAR,
+            industry_level VARCHAR, industry_code VARCHAR, code VARCHAR,
+            effective_from BIGINT, effective_to BIGINT,
+            update_time VARCHAR, data_source VARCHAR,
+            PRIMARY KEY (classification_system, classification_version,
+                         industry_level, industry_code, code, effective_from)
         )""",
     "source_watermark": """
         CREATE TABLE IF NOT EXISTS source_watermark (
@@ -412,11 +444,17 @@ class DuckDBWriter(BaseWriter):
                 "etf_basic": ["code"],
                 "stock_float_share": ["code", "end_date", "ann_date"],
                 "index_constituents": ["index_code", "code", "time"],
+                "index_constituents_snapshot_meta": ["index_code", "time"],
                 "balance_statement": ["code", "end_date", "ann_date"],
                 "income_statement": ["code", "end_date", "ann_date"],
                 "cashflow_statement": ["code", "end_date", "ann_date"],
                 "stock_dividend": ["code", "ex_date"],
                 "sw_industry": ["code", "industry_code"],
+                "industry_classification": ["classification_system", "classification_version",
+                                            "industry_level", "industry_code", "effective_from"],
+                "industry_membership": ["classification_system", "classification_version",
+                                        "industry_level", "industry_code", "code",
+                                        "effective_from"],
                 "stock_namechange": ["code", "change_date"],
                 "stock_delist": ["code", "market"],
             }.get(table, [])
@@ -432,6 +470,7 @@ class DuckDBWriter(BaseWriter):
                     "is_st_reliable_source", "is_delisting_risk_source",
                     "ts_code", "name", "exchange", "etf_type", "tracking_index",
                     "status", "fund_type", "invest_type", "type",
+                    "classification_system", "parent_industry_code",
                     "classification_method", "classification_version"}
         for c in df.columns:
             if c in str_cols:
@@ -458,11 +497,14 @@ class DuckDBWriter(BaseWriter):
                     "etf_basic": "(code)",
                     "stock_float_share": "(code, end_date, ann_date)",
                     "index_constituents": "(index_code, code, time)",
+                    "index_constituents_snapshot_meta": "(index_code, time)",
                     "balance_statement": "(code, end_date, ann_date)",
                     "income_statement": "(code, end_date, ann_date)",
                     "cashflow_statement": "(code, end_date, ann_date)",
                     "stock_dividend": "(code, ex_date)",
                     "sw_industry": "(code, industry_code)",
+                    "industry_classification": "(classification_system, classification_version, industry_level, industry_code, effective_from)",
+                    "industry_membership": "(classification_system, classification_version, industry_level, industry_code, code, effective_from)",
                     "stock_namechange": "(code, change_date)",
                     "stock_delist": "(code, market)",
                 }.get(table)
@@ -605,6 +647,19 @@ class DuckDBWriter(BaseWriter):
             "stock_dividend": ["code", "ex_date", "record_date",
                                "cash_div", "stk_div", "div_rat", "update_time", "data_source"],
             "sw_industry": ["code", "industry_code", "industry_name", "industry_level", "update_time", "data_source"],
+            "industry_classification": ["classification_system", "classification_version",
+                                        "industry_code", "industry_name", "industry_level",
+                                        "parent_industry_code", "effective_from", "effective_to",
+                                        "update_time", "data_source"],
+            "industry_membership": ["classification_system", "classification_version",
+                                    "industry_level", "industry_code", "code",
+                                    "effective_from", "effective_to",
+                                    "update_time", "data_source"],
+            "index_constituents_snapshot_meta": ["index_code", "time", "n_constituents",
+                                                 "expected_count", "status",
+                                                 "n_duplicate_codes", "n_negative_weights",
+                                                 "n_blank_codes",
+                                                 "update_time", "data_source"],
             "stock_namechange": ["code", "change_date", "name_before", "name_after",
                                  "status_after", "update_time", "data_source"],
             "stock_delist": ["code", "list_date", "delist_date", "market", "update_time", "data_source"],
