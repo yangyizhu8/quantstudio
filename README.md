@@ -296,3 +296,27 @@ output/strategy_deliveries/<strategy_id>/
 本次 `quantstudio/backtest/ptrade_api.py`、`quantstudio/backtest/backtest_engine.py` 新增 DataDict/BacktestEngine 当日 DataFrame 的 `{raw_code: first_iloc}` 实例代码索引，将 `df['code'] == bare` 的 O(N) 布尔过滤替换为 O(1) 索引查找；`None`（无法构建）时严格回退原布尔过滤。
 
 **AGENTS.md 框架铁律适用**：本变更为纯性能优化，已审阅确认未改变任何公共/注入 API 的函数名、签名、默认值、返回类型、返回字段、列顺序、索引、dtype、空值行为、异常行为或兼容行为；未改变行情取数范围、复权口径、生命周期调用时机、撮合/费用/持仓/现金/涨跌停处理、策略信号或回测指标；`data[code]`（DataDict）、`get_current_price`、`is_halted`、`pct_chg` 等接口语义与返回结构不变。因此本文档相关表述不受影响，无需修改。
+
+## 框架层变更审阅记录（perf/backtest-data-cache）
+
+`quantstudio/backtest/providers/duckdb_data_access.py` 的内部语义等价性能优化（仅 1 项）：
+`_existing_tables()` 缓存 `SHOW TABLES` 结果，消除 `preload_daily_bars` /
+`query_strategy_events` / `query_corporate_actions` 三处直接 `SHOW TABLES` 查询（小市值策略
+76 交易日实测 SHOW TABLES 调用 **152 → 1**）；返回防御性 `set` 副本；`close()` 将
+`_tables_cache` 恢复 `None`；原直接 `SHOW TABLES` 路径统一走 `_existing_tables()`。
+
+**调用路径事实（b41400d）**：当前共有 **10 个**表存在性检查调用方共享 `_existing_tables()`，
+其中 **7 个**是 b41400d 既有调用方，另有 `preload_daily_bars` / `query_strategy_events` /
+`query_corporate_actions` 3 个原直接执行 `SHOW TABLES` 的调用方在本次收敛至统一入口。
+`query_daily_snapshot` 在 b41400d 中已直接查询 `stock_daily`/`etf_daily`，不属于上述 10 个调用方。
+旧基线 d8a0791 曾包含该调用方，因此历史数量为 11，但不适用于本次发布基线。
+
+**AGENTS.md 框架铁律适用**：本变更为纯性能优化，语义完全等价——`_existing_tables()` 返回集合
+与优化前逐字符一致，仅避免重复 `SHOW TABLES`；未改变任何公共/注入 API、取数范围、复权口径、
+生命周期、撮合/费用/持仓/现金/涨跌停处理、策略信号或回测指标。完整验证见
+`docs/performance_optimization.md`。
+
+**provider-level get_history 缓存（`query_bars_by_count_multi_table`）本轮拒绝实施、进入
+backlog**：小市值与双均线真实策略 `get_history` 命中均为 0；`PtradeAPI.get_history()` 已有
+`_query_cache` 层；synthetic 86× 不构成生产收益证据；4096 条目上限是条目数而非字节内存上限；
+后续实施须满足 byte-bounded LRU + 真实生产命中证据。

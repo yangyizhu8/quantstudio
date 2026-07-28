@@ -1,5 +1,21 @@
 # QuantStudio Strategy Compiler ? Release Notes
 
+## 0.7.3-backtest-show-tables-cache (2026-07-28 门 1 收敛整改)
+
+- SHOW TABLES 表集合缓存落地（仅 1 项语义等价优化）：`_existing_tables()` 缓存 `SHOW TABLES`
+  结果；`preload_daily_bars` / `query_strategy_events` / `query_corporate_actions` 3 处原直接
+  `SHOW TABLES` 收敛至统一路径（小市值策略 76 交易日实测 152 → 1）；返回防御性 `set` 副本；
+  `close()` 恢复 `None`。
+- 调用路径事实（b41400d）：当前共 10 个 catalog/表存在性检查调用方共享 `_existing_tables()`；
+  其中 7 个为 b41400d 既有调用方，`preload_daily_bars` / `query_strategy_events` /
+  `query_corporate_actions` 3 个原直接 `SHOW TABLES` 已收敛至统一入口；`query_daily_snapshot`
+  在 b41400d 中已直接查询 `stock_daily`/`etf_daily`，不属于上述 10 个调用方。
+- provider-level get_history 缓存（`query_bars_by_count_multi_table`）拒绝实施、进入 backlog：
+  小市值/双均线真实命中 0；`PtradeAPI.get_history()` 已有 `_query_cache`；synthetic 86× 不构成
+  生产收益证据；4096 条目上限是条目数非字节上限。
+- 验证：定向测试 6 项全绿；全量 nodeid 对比零回归；黄金结果字节级一致；A/B 交错 B,O,O,B,B,O
+  确定性收益 SHOW TABLES 152→1、SQL 减少；端到端耗时高噪声。
+
 ## 0.7.2-framework-repair-review-round3 (2026-07-27)
 
 - F3: snapshot completeness now uses COUNT(DISTINCT code); quality violations (duplicate/negative/blank codes) force `invalid`; missing expectations config fails closed; variable-count indices must be explicitly registered (`variable_indices`) — unregistered indices are `unknown` and never served.

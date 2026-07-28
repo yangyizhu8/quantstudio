@@ -47,6 +47,7 @@ class DuckDBDataAccess:
     def __init__(self, db_path: Path):
         self._db_path = Path(db_path)
         self._ro_conn = None
+        self._tables_cache: Optional[set] = None  # 表集合缓存（SHOW TABLES 结果，回测期只读恒定）
         # 预加载缓存（与 PtradeAPI 原缓存变量一一对应）
         self._preload_daily: Optional[pd.DataFrame] = None
         # code -> original row positions. Avoid scanning the full preload for
@@ -82,6 +83,7 @@ class DuckDBDataAccess:
 
     def close(self):
         """关闭连接"""
+        self._tables_cache = None  # 释放表集合缓存，允许重连后看到新表
         if self._ro_conn is not None:
             try:
                 self._ro_conn.close()
@@ -126,7 +128,7 @@ class DuckDBDataAccess:
             logger.debug(f"[Preload] 加载 {len(self._preload_daily)} 行行情")
             # 预加载每只股票的上市日期（get_security_info 用，避免逐只 MIN(time) 查询）
             # 上市日是历史固定值，无 PIT 问题，可全局加载
-            tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
+            tables = self._existing_tables()
             if "stock_basic" in tables:
                 self._preload_listing = conn.execute(
                     "SELECT code, list_date AS listing_time FROM stock_basic "
@@ -578,7 +580,7 @@ class DuckDBDataAccess:
         if conn is None:
             return pd.DataFrame(columns=columns)
         try:
-            tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
+            tables = self._existing_tables()
             if "strategy_events" not in tables:
                 return pd.DataFrame(columns=columns)
             where = ["event_type = ?"]
@@ -613,7 +615,7 @@ class DuckDBDataAccess:
         conn = self._get_conn()
         if conn is None:
             return pd.DataFrame(columns=["code", "cash_div", "stk_div", "div_rat"])
-        tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
+        tables = self._existing_tables()
         if "stock_dividend" not in tables:
             return pd.DataFrame(columns=["code", "cash_div", "stk_div", "div_rat"])
         return conn.execute(
@@ -981,10 +983,18 @@ class DuckDBDataAccess:
     ]
 
     def _existing_tables(self) -> set:
-        conn = self._get_conn()
-        if conn is None:
-            return set()
-        return {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
+        """返回当前数据库存在的表名集合（小写）。
+
+        统一表存在性探测入口；所有 provider 方法经此查询，避免重复 SHOW TABLES。
+        回测期间数据库只读、表集合恒定，故首次查询后缓存，后续返回防御性 set 副本；
+        close() 将缓存置 None。
+        """
+        if self._tables_cache is None:
+            conn = self._get_conn()
+            if conn is None:
+                return set()
+            self._tables_cache = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
+        return set(self._tables_cache)
 
     def query_security_metadata(self, codes=None) -> pd.DataFrame:
         """统一股票/ETF 证券元数据查询（F2）。
