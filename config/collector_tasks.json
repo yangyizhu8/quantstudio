@@ -124,7 +124,13 @@
       },
       "source_priority": [
         "tushare"
-      ]
+      ],
+      "authority_reconciliation": {
+        "enabled": true,
+        "mode": "purge_non_authoritative",
+        "scope": "full_range_only",
+        "cleanup_source_watermark": true
+      }
     },
     {
       "name": "stock_float_share",
@@ -408,7 +414,13 @@
         "tushare",
         "akshare",
         "baostock"
-      ]
+      ],
+      "authority_reconciliation": {
+        "enabled": true,
+        "mode": "purge_non_authoritative",
+        "scope": "full_range_only",
+        "cleanup_source_watermark": true
+      }
     },
     {
       "name": "sw_industry",
@@ -568,6 +580,33 @@
   "qfq_maintenance": {
     "enabled": true,
     "rebuild_on_gap": true
+  },
+  "qfq_orchestrator": {
+    "enabled": false,
+    "require_bootstrap": true,
+    "price_source": "xtquant",
+    "stock_factor_detector": "tushare_adj_factor",
+    "etf_factor_detector": "tushare_fund_adj",
+    "freqs": ["1min"],
+    "factor_overlap_lookback_days": 30,
+    "fresh_fetch_workers": 4,
+    "claim_lease_sec": 600,
+    "retry_max": 5,
+    "retry_backoff_sec": [60, 120, 240, 480, 960],
+    "dead_letter_policy": {"max_attempts": 8},
+    "watermark_policy": "hold_until_consistent",
+    "quality_thresholds": {
+      "tick_error_abs": 1e-9,
+      "tick_error_rel": 1e-6,
+      "front_exact_match": true,
+      "raw_unchanged": true,
+      "row_conservation": true,
+      "coverage_min": 0.0,
+      "pending_sla_hours": 72,
+      "dead_letter_max": 0
+    },
+    "bootstrap": {"batch_size": 50, "max_parallel_securities": 8},
+    "_note": "生产启用前必须：①bootstrap 完成且写 completed；②用户明确确认部署。启用后四张价格表（stock_daily/stock_minutes/etf_daily/etf_minutes）水位延迟到协调周期结束统一提交，未通过 QFQ 质量门控不推进。price_source 锁 xtquant 单源（禁止 Tushare/AkShare/Baostock 价格）。watermark_policy 仅允许 hold_until_consistent。"
   },
   "health_check": {
     "stale_alert_hours": 30,

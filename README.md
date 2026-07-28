@@ -293,7 +293,21 @@ output/strategy_deliveries/<strategy_id>/
 
 ## W2 staging / 框架修复（2026-07-27 session, file timestamp 2026-07-28）
 
-> 状态：框架代码补正完成（W1→W2-0.7A），staging 安全闭环测试就绪（W2-0.7B）。数据等待 W2 staging 全量回填。禁止在 W2-0.7B 通过前执行真实 staging prepare / Tushare 回填 / promotion / 修改正式库 / Git stage-commit-push。
+> 状态：框架代码补正完成（W1→W2-0.7A）→ staging 安全闭环测试（W2-0.7B，58 项）→ W2-0.8 框架修复（审核不通过）→ **W2-0.9 最终收口**（5 项缺陷 A-E + Phase 5 + C/F 补完 + 性能回归回退，全量 1571 passed）。W2 真实执行（Phase 0-4）暴露的框架缺陷已全部本地修复。数据等待用 **Git worktree 外** staging 路径重新执行完整 W2。禁止在审核通过前执行真实 staging prepare / Tushare 回填 / promotion / 修改正式库 / Git stage-commit-push。
+
+### W2-0.9 框架修复（2026-07-28 最终收口）
+
+W2-0.8 审核发现 9 项问题，W2-0.9 逐项关闭（详见 `docs/framework-fix-report-20260728.md` 与 `output/w2_fin_growth_dividend_20260728/phase4_defect_report.md`）：
+
+- **A — writer VARCHAR 类型保护（补完）**：`writers.py` 入库前用 `DESCRIBE` 取目标列 DuckDB 类型，VARCHAR 列不再被 `pd.to_numeric` 吞掉（修复 `div_proc="实施"`→NULL）；**fallback 白名单补 div_proc/div_rat**（W2-0.8 漏）；DESCRIBE 失败记录 warning 不静默。
+- **B — 通用 authority_reconciliation（补完）**：完整契约严格校验（mode=`purge_non_authoritative`/scope=`full_range_only` 未知值 config_lint + 运行时 fail-fast）；全触发条件（full_range + authority + fallback=false + actual source==authority）；**原子事务**（BEGIN/DELETE/校验/COMMIT 或 ROLLBACK）；cleanup_source_watermark=false 不删 watermark；空表不静默 PASS；标识符校验防注入。
+- **D — run_once/CLI 退出码传播**：`run_once` 返回 `{task_found, task_ok, audit_run, audit_ok}`；task 不存在/failed/audit failed → CLI exit 1；staging `phase_run_task` 增加 batch ledger final status cross-check + 真实 CLI 子进程退出契约测试。
+- **E — --quality-audit full|none**：daemon CLI 新增该参数（默认 full，生产语义不变）；staging 分阶段装载用 none。
+- **Phase 5 — baseline-delta audit（接入重做）**：`validate_audit_evidence` 不再要求 `errors_count==0`，改为要求 `baseline_delta_passed=True`；目标表零 error，非目标表允许继承，new/regressed/severity-upgrade BLOCK；phase_audit 顺序调整（先 delta 再 strict validate）。
+- **C/F — Git worktree 外 staging 路径（强制）**：非 dry-run prepare 必须 fail-closed BLOCK staging_root 在 Git worktree/项目根/data 内；preflight 独占检查；detached runner **不自动 kill**（scan 只报告；kill 显式+再验证；同 root 阻断）。
+- **性能回归**：duckdb_data_access/duckdb_provider/ptrade_api 3 文件**回退到 HEAD**（batch 优化无条件查不存在的表 + 破坏测试替身）；纯性能等价修复组=回退状态。
+
+测试：新增 5 个测试文件（43 项）+ 现有 staging 测试适配；W2-0.9 专项 **165 passed**；全量 **1571 passed, 1 warning**（唯一 warning 与 W2 无关，原样保留）。
 
 ### Profile 1.10.0
 
