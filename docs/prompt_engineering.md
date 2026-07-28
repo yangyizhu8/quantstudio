@@ -300,6 +300,7 @@ def handle_data(context, data):
 | 7 | 文件名非 `_` 开头 | PyQt 回测面板只列出该目录下非下划线 `.py`（见第 8 节） |
 | 8 | 禁止自定义与框架 API / 生命周期【同名】函数；可自定义其它辅助函数（不与框架 API/生命周期同名） | 防止覆盖引擎注入、破坏隔离与一致性 |
 | 9 | 只落盘策略代码，不自行回测 | 回测交由用户在 PyQt 自行运行，保证策略生成高效 |
+| 10 | **不得绕过 canonical data pipeline，不得在策略内手工补救 NULL/混源数据（W2-0.9）** | authority-locked 表（fin_indicator/stock_dividend）的 `data_source` 必须经 pipeline 收敛为 `{tushare}` 单源；策略只能依赖最终已通过 `baseline_delta_audit` 的数据契约。发现 NULL/混源应报告数据问题（重跑 pipeline），而非在策略层 DELETE/UPDATE/打补丁。依赖字段（np_yoy/or_yoy/tr_yoy/diluted_eps/cash_div_before_tax/cash_div_after_tax/div_proc）的就绪性是回填有效性门控的结果，不是策略层职责。 |
 
 ---
 
