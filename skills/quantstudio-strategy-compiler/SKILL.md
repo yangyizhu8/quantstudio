@@ -7,14 +7,16 @@ description: Strict target-aware agent-first strategy engineering for QuantStudi
 
 Skill release: `0.7.0-framework-repair-f1-f6` (built on the `0.3.2-mvp` compiler/package baseline).
 
-Contract versions at this release: agent design `2.2`, PTrade profile `1.9.0`, user backtest evidence `2.0`, validation report `2.1`. Design `2.1` artifacts must not be auto-migrated to PASS; regenerate the design under 2.2 and repeat the R2.5 confirmation.
+Contract versions at this release: agent design `2.2`, PTrade profile `1.10.0`, user backtest evidence `2.0`, validation report `2.1`. Design `2.1` artifacts must not be auto-migrated to PASS; regenerate the design under 2.2 and repeat the R2.5 confirmation.
 
 Treat the calling agent as the strategy author. Constrain it with project lifecycle, data, timing, PTrade public API, validation, and delivery gates. Never implement a strategy by adding its name or shape to Compiler/Renderer/Jinja branches.
 
 ## Absolute execution rules
 
+0. **Full-process enforcement (no stage may be skipped, short-circuited, or self-exempted).** Every invocation of this skill — regardless of the strategy's apparent simplicity, the customer's familiarity, or any prior similar work — must run the complete mandatory pipeline `R0 -> R1 -> R2 -> R2.5 -> R3 -> R4 -> R5 -> R6` in order, with no stage omitted, abbreviated, merged, "fast-tracked", or judged by the agent to be "obviously unnecessary". The agent has **no authority** to self-decide that a stage does not apply and skip it; if a stage appears inapplicable, the agent must still enter it, record the explicit `NOT_APPLICABLE` / `READY` / `BLOCKED` classification and the customer-facing output, persist it to `agent_workspace/workspace_state.json`, and only then advance. A stage is "complete" only when its written exit-gate criteria are satisfied and recorded; a conversational shortcut, an unconfirmed assumption, or a silent pass is never a valid completion. The agent must not emit any summary, conclusion, or formal deliverable until R6 has actually completed. If the customer asks to "just generate the code" or skip ahead, the agent must decline the shortcut, run every mandatory stage, and (where appropriate) offer the user-PyQt path — but never skip the R0/R2.5 customer-confirmation gates or the R1/R4/R5 checks.
+
 1. Execute stages strictly in order: `R0 -> R1 -> R2 -> R2.5 -> R3 -> R4 -> R5 -> R6`.
-2. Never combine, infer-complete, retroactively mark, or silently skip a stage.
+2. Never combine, infer-complete, retroactively mark, or silently skip a stage. Each stage's entry and exit must be materially performed, not asserted.
 3. At every stage, show the customer the stage output and unresolved decisions. Stop when customer confirmation is required. R0 must separately confirm target platforms and who executes R5 backtesting.
 4. Do not generate executable strategy code before R2.5 explicit confirmation.
 5. Do not publish formal targets before the selected target-mode gates pass: every mode requires R4 validation and hash-bound R5 backtest PASS; dual mode additionally requires PTrade-profile validation and post-generation dual consistency. A user-PyQt candidate is temporary, not a formal publication.
@@ -396,6 +398,8 @@ When a customer supplies a real PTrade exception:
 
 # Prohibited behavior
 
+- skipping, short-circuiting, or self-exempting any mandatory stage (`R0`/`R1`/`R2`/`R2.5`/`R3`/`R4`/`R5`/`R6`) because the task seems simple, the customer is familiar, or prior similar work exists; every stage must be entered, performed, and recorded;
+- marking a stage "done" from a conversational shortcut, an unconfirmed assumption, or a silent pass instead of satisfying its written exit-gate criteria;
 - skipping a stage because the answer seems obvious;
 - generating code while R2.5 is unconfirmed;
 - treating local execution as PTrade validation;

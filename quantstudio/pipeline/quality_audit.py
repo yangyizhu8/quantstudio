@@ -35,15 +35,19 @@ class DataQualityAuditor:
     def __init__(self, db_path: str | Path, schemas: Dict,
                  batch_audit_path: Optional[str | Path] = None,
                  quarantine_path: Optional[str | Path] = None,
-                 shared_conn=None):
+                 shared_conn=None,
+                 authority_rules: Optional[Dict] = None):
         """shared_conn: 可选，外部传入的持久 read_write 连接（采集流程内复用 writer 连接，
         避免开 read_only 与 write 并发触发「different configuration」冲突）。
-        不传则自开 read_only 短连接（CLI/独立运行场景）。"""
+        不传则自开 read_only 短连接（CLI/独立运行场景）。
+        authority_rules: 可选，来源权威性规则，格式：
+        {table: {authoritative_source: str, allow_fallback: bool}}。"""
         self.db_path = Path(db_path)
         self.schemas = schemas
         self.batch_audit_path = Path(batch_audit_path) if batch_audit_path else None
         self.quarantine_path = Path(quarantine_path) if quarantine_path else None
         self._shared_conn = shared_conn
+        self._authority_rules = authority_rules
 
     @classmethod
     def from_config(cls, db_path: str | Path, rules_path: str | Path,
@@ -92,9 +96,82 @@ class DataQualityAuditor:
                     self._audit_frequency(conn, report, table, columns)
                 self._audit_future_and_pit(conn, report, table, columns)
                 if "data_source" in columns:
+                    # SourceTraceability severity: elevated to error when authority rules
+                    # require an authoritative source without fallback.
+                    source_trace_severity = "warning"
+                    if self._authority_rules and table in self._authority_rules:
+                        rule = self._authority_rules[table]
+                        if not rule.get("allow_fallback", True):
+                            source_trace_severity = "error"
                     missing_source = conn.execute(
                         f'SELECT COUNT(*) FROM "{table}" WHERE data_source IS NULL').fetchone()[0]
-                    self._add(report, "SourceTraceability", table, missing_source, "warning")
+                    self._add(report, "SourceTraceability", table, missing_source,
+                              source_trace_severity)
+                    # Authority source check: fully derived from authority_rules
+                    if self._authority_rules and table in self._authority_rules:
+                        rule = self._authority_rules[table]
+                        authority = rule["authoritative_source"]
+                        allow_fallback = rule.get("allow_fallback", True)
+                        non_authority = conn.execute(
+                            f"SELECT COUNT(*) FROM \"{table}\" "
+                            f"WHERE data_source IS NOT NULL AND data_source != '{authority}'"
+                        ).fetchone()[0]
+                        severity = "error" if not allow_fallback else "warning"
+                        self._add(report, "AuthoritySourceViolation", table, non_authority, severity,
+                                  f"non-{authority} rows in authority-locked table")
+                # Growth field coverage check (fin_indicator)
+                if table == "fin_indicator" and {"np_yoy", "or_yoy"} <= columns:
+                    tushare_rows = conn.execute(
+                        "SELECT COUNT(*) FROM fin_indicator WHERE data_source='tushare'"
+                    ).fetchone()[0]
+                    if tushare_rows > 0:
+                        np_null = conn.execute(
+                            "SELECT COUNT(*) FROM fin_indicator "
+                            "WHERE data_source='tushare' AND np_yoy IS NULL"
+                        ).fetchone()[0]
+                        or_null = conn.execute(
+                            "SELECT COUNT(*) FROM fin_indicator "
+                            "WHERE data_source='tushare' AND or_yoy IS NULL"
+                        ).fetchone()[0]
+                        if np_null == tushare_rows:
+                            self._add(report, "GrowthFieldAllNull", table, tushare_rows, "error",
+                                      "np_yoy is 100% NULL for tushare-sourced data")
+                        if or_null == tushare_rows:
+                            self._add(report, "GrowthFieldAllNull", table, tushare_rows, "error",
+                                      "or_yoy is 100% NULL for tushare-sourced data")
+                # Dividend field validation (stock_dividend)
+                if table == "stock_dividend" and {"cash_div_before_tax", "cash_div_after_tax"} <= columns:
+                    # Both columns populated is normal (Tushare provides both pre-tax and post-tax)
+                    # Check: pre-tax >= post-tax (with tolerance)
+                    cross_check = conn.execute(
+                        "SELECT COUNT(*) FROM stock_dividend "
+                        "WHERE cash_div_before_tax IS NOT NULL AND cash_div_after_tax IS NOT NULL "
+                        "AND cash_div_before_tax < cash_div_after_tax - 0.001"
+                    ).fetchone()[0]
+                    if cross_check > 0:
+                        self._add(report, "DividendTaxInversion", table, cross_check, "error",
+                                  "cash_div_after_tax > cash_div_before_tax (tax inversion)")
+                    # Check non-negative
+                    neg_before = conn.execute(
+                        "SELECT COUNT(*) FROM stock_dividend WHERE cash_div_before_tax < 0"
+                    ).fetchone()[0]
+                    neg_after = conn.execute(
+                        "SELECT COUNT(*) FROM stock_dividend WHERE cash_div_after_tax < 0"
+                    ).fetchone()[0]
+                    if neg_before:
+                        self._add(report, "DividendNegative", table, neg_before, "error",
+                                  "cash_div_before_tax is negative")
+                    if neg_after:
+                        self._add(report, "DividendNegative", table, neg_after, "error",
+                                  "cash_div_after_tax is negative")
+                if table == "stock_dividend" and "div_proc" in columns:
+                    non_implemented = conn.execute(
+                        "SELECT COUNT(*) FROM stock_dividend "
+                        "WHERE div_proc IS NOT NULL AND div_proc != '实施'"
+                    ).fetchone()[0]
+                    if non_implemented > 0:
+                        self._add(report, "DividendNonImplemented", table, non_implemented, "error",
+                                  "non-implemented dividend records exist")
             if "source_watermark" in tables:
                 self._audit_watermarks(conn, report, tables)
         finally:

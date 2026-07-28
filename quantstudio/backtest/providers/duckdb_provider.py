@@ -252,6 +252,23 @@ class DuckDBReferenceDataProvider(ReferenceDataProvider):
         }}
     def get_corporate_actions(self, date):
         return self._data.query_corporate_actions(_start_ms(str(date)[:10]))
+    def get_exrights(self, code, date=None):
+        """Return ex-rights info for a single code on a given date.
+
+        Args:
+            code: Security code (bare or PTrade format).
+            date: Date string; if None the table is checked but no data is
+                  returned (the underlying query requires a concrete date).
+
+        Returns:
+            DataFrame with PTrade-compatible columns (allotted_ps, bonus_ps,
+            etc.) indexed by date, or None if no data.
+        """
+        if date is None:
+            return None
+        date_ms = _start_ms(str(date)[:10])
+        bare = str(code).split(".")[0]
+        return self._data.query_stock_exrights(bare, date_ms)
     def get_stock_status(self, codes, date):
         source = self._data.query_daily_for_status(_start_ms(date))
         rows = []

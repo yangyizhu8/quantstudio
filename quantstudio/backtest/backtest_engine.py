@@ -691,9 +691,10 @@ class BacktestEngine:
     def _apply_corporate_actions(self, day_str: str) -> None:
         """Apply ex-date dividends to positions before the opening callback.
 
-        Cash distributions are credited net of the conservative 20% short-hold
-        dividend tax. Stock distributions increase shares and reduce per-share
-        cost without creating PnL.
+        Cash distributions: reads cash_div_before_tax (pre-tax per-share cash dividend),
+        credits cash net of 20% conservative short-hold dividend tax.
+        Falls back to legacy cash_div column for backward compatibility.
+        Stock distributions increase shares and reduce per-share cost without creating PnL.
         """
         if not self.account.positions:
             return
@@ -709,13 +710,16 @@ class BacktestEngine:
             if pos is None or pos.volume <= 0:
                 continue
             old_volume = int(pos.volume)
-            cash_div = max(0.0, float(row.get("cash_div", 0.0) or 0.0))
+            # Prefer cash_div_before_tax (pre-tax); fall back to legacy cash_div
+            cash_div_before_tax = max(0.0, float(row.get("cash_div_before_tax",
+                                             row.get("cash_div", 0.0) or 0.0)))
             stock_div = max(0.0, float(row.get("stk_div", 0.0) or 0.0))
-            cash_credit = old_volume * cash_div * 0.80
+            # 20% short-hold dividend tax on pre-tax amount
+            cash_credit = old_volume * cash_div_before_tax * 0.80
             if cash_credit:
                 self.account.cash += cash_credit
-            if cash_div:
-                pos.avg_cost = max(0.0, pos.avg_cost - cash_div)
+            if cash_div_before_tax:
+                pos.avg_cost = max(0.0, pos.avg_cost - cash_div_before_tax)
             added = int(round(old_volume * stock_div))
             if added > 0:
                 new_volume = old_volume + added
@@ -723,9 +727,14 @@ class BacktestEngine:
                 pos.volume = new_volume
                 pos.can_sell += added
             self.result.corporate_actions.append({
-                "date": day_str, "code": code, "cash_div_per_share": cash_div,
-                "cash_credit_net": cash_credit, "stock_div_ratio": stock_div,
+                "date": day_str, "code": code,
+                "cash_div_per_share": cash_div_before_tax,
+                "cash_div_before_tax": cash_div_before_tax,
+                "cash_div_after_tax": float(row.get("cash_div_after_tax", 0.0) or 0.0),
+                "cash_credit_net": cash_credit,
+                "stock_div_ratio": stock_div,
                 "added_shares": added,
+                "tax_policy": "pre_tax_x_0.80",
             })
 
     def _apply_slippage(self, price: float, direction: str) -> float:

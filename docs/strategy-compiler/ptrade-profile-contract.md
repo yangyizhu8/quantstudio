@@ -66,3 +66,11 @@ A QuantStudio `__candidate` file is never a PTrade artifact. PTrade formal outpu
 - `get_stock_info` 声明股票+ETF 统一元数据（F2）：stock_type/上市/退市日（YYYY-MM-DD）、fallback 显式标记；本地 ETF 元数据支持 ≠ PTrade 真实 ETF 支持（未验证）。
 - `callback_basket` 是 QuantStudio 引擎语义模式（`0.4.0-next_open_basket`），仅 daily-bar-v1 + next_open；PTrade 渲染不得输出 basket 专属构造；PyQt 已透出 `rebalance_mode`（默认 legacy）。
 - `get_history` 多表路由（股票/ETF/指数含申万行业指数→统一 index_daily）与 `fq='pre'` 复权列缺失回退原始价为引擎侧保证（F5/F6），不改变策略可见契约。
+
+## 2026-07-27 PTrade Profile 1.10.0 get_stock_exrights registration
+
+- `get_stock_exrights(security, date=None)` 正式登记。返回 DataFrame（date 索引，8 列 PTrade 兼容：allotted_ps/rationed_ps/rationed_px/bonus_ps/exer_forward_a/exer_backward_a/bexer_backward_a/b），无数据返回 `None`。
+- Contexts: research/backtest/trade。portable usage 必须显式传 `date`；`date=None` 返回 `None`（底层查询需具体日期）。
+- 源表 `stock_dividend`（tushare 权威源，`allow_fallback=false`）。schema 兼容旧列 `cash_div`，自动检测 `cash_div_before_tax` 存在性。
+- 受 Tushare 接口频率限制（~200 次/分钟），批量调用需间隔。
+- PTrade 平台除权除息字段映射与字段准确性按部署核实（`PTRADE_RUNTIME_UNVERIFIED`）。

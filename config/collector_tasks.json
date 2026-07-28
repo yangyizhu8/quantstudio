@@ -101,6 +101,8 @@
       "name": "fin_indicator",
       "enabled": true,
       "source": "tushare",
+      "authoritative_source": "tushare",
+      "allow_fallback": false,
       "table": "fin_indicator",
       "freq": "daily",
       "codes": [
@@ -379,6 +381,8 @@
       "name": "stock_dividend",
       "enabled": true,
       "source": "tushare",
+      "authoritative_source": "tushare",
+      "allow_fallback": false,
       "table": "stock_dividend",
       "freq": "daily",
       "start_date": "2018-01-01",

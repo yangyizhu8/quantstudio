@@ -611,17 +611,83 @@ class DuckDBDataAccess:
             return pd.DataFrame(columns=columns)
 
     def query_corporate_actions(self, date_ms: int) -> pd.DataFrame:
-        """Return ex-date cash/stock distributions for a trading date."""
+        """Return ex-date cash/stock distributions for a trading date.
+
+        Schema-compatible: works with both old (cash_div only) and new schemas.
+        Returns: code, cash_div_before_tax, cash_div_after_tax, cash_div (legacy), stk_div.
+        """
         conn = self._get_conn()
         if conn is None:
-            return pd.DataFrame(columns=["code", "cash_div", "stk_div", "div_rat"])
+            return pd.DataFrame(columns=["code", "cash_div_before_tax", "cash_div_after_tax",
+                                         "cash_div", "stk_div"])
         tables = self._existing_tables()
         if "stock_dividend" not in tables:
-            return pd.DataFrame(columns=["code", "cash_div", "stk_div", "div_rat"])
-        return conn.execute(
-            "SELECT code, cash_div, stk_div, div_rat FROM stock_dividend WHERE ex_date = ?",
-            [int(date_ms)],
+            return pd.DataFrame(columns=["code", "cash_div_before_tax", "cash_div_after_tax",
+                                         "cash_div", "stk_div"])
+        # Schema 兼容：动态检测新列是否已迁移
+        actual_cols = {row[0] for row in conn.execute("DESCRIBE stock_dividend").fetchall()}
+        if "cash_div_before_tax" in actual_cols:
+            return conn.execute(
+                """SELECT code,
+                          COALESCE(cash_div_before_tax, cash_div) AS cash_div_before_tax,
+                          cash_div_after_tax,
+                          cash_div, stk_div
+                   FROM stock_dividend WHERE ex_date = ?""",
+                [int(date_ms)],
+            ).fetchdf()
+        else:
+            # 旧 schema 兼容：只有 legacy cash_div
+            return conn.execute(
+                """SELECT code,
+                          cash_div AS cash_div_before_tax,
+                          CAST(NULL AS DOUBLE) AS cash_div_after_tax,
+                          cash_div, stk_div
+                   FROM stock_dividend WHERE ex_date = ?""",
+                [int(date_ms)],
+            ).fetchdf()
+
+    def query_stock_exrights(self, code: str, date_ms: int) -> Optional[pd.DataFrame]:
+        """Query stock_dividend for ex-rights information on a given date.
+
+        Schema-compatible: works with old schema (cash_div only) and new schema.
+        Returns a DataFrame with PTrade-compatible columns indexed by date,
+        or None if no data found or the table is missing.
+        """
+        conn = self._get_conn()
+        if conn is None:
+            return None
+        tables = self._existing_tables()
+        if "stock_dividend" not in tables:
+            return None
+        # Schema 兼容：动态检测列
+        actual_cols = {row[0] for row in conn.execute("DESCRIBE stock_dividend").fetchall()}
+        bonus_expr = ("COALESCE(cash_div_before_tax, cash_div)" if "cash_div_before_tax" in actual_cols
+                      else "cash_div")
+        df = conn.execute(
+            f"SELECT ex_date, {bonus_expr} AS bonus_raw, stk_div "
+            "FROM stock_dividend WHERE code = ? AND ex_date = ?",
+            [str(code), int(date_ms)],
         ).fetchdf()
+        if df.empty:
+            return None
+        # Map to PTrade-compatible columns
+        df["bonus_ps"] = df["bonus_raw"]
+        df["allotted_ps"] = df["stk_div"]
+        df["rationed_ps"] = None
+        df["rationed_px"] = None
+        df["exer_forward_a"] = None
+        df["exer_forward_b"] = None
+        df["exer_backward_a"] = None
+        df["exer_backward_b"] = None
+        # Index by date (ex_date ms -> Timestamp)
+        df["date"] = pd.to_datetime(
+            df["ex_date"], unit="ms", utc=True
+        ).dt.tz_convert("Asia/Shanghai")
+        df = df.set_index("date")
+        return df[[
+            "allotted_ps", "rationed_ps", "rationed_px", "bonus_ps",
+            "exer_forward_a", "exer_forward_b", "exer_backward_a", "exer_backward_b",
+        ]]
 
     def query_listing_dates(self) -> pd.DataFrame:
         """统一上市日期查询（F2 修订版）：股票行为与修复前一致，仅扩展 ETF。
@@ -943,7 +1009,10 @@ class DuckDBDataAccess:
             LEFT JOIN daily_pit d ON d.code = v.code
         """).fetchdf()
     def query_fin_indicator(self, codes, ann_date_ms, start_year, end_year, report_types) -> pd.DataFrame:
-        """迁移自 PtradeAPI._fundamentals_fin_indicator() (ptrade_api.py:827-861)"""
+        """迁移自 PtradeAPI._fundamentals_fin_indicator() (ptrade_api.py:827-861)
+
+        Schema 兼容：正式库可能缺少 or_yoy 列（W2 迁移前），动态检测并安全回退。
+        """
         conn = self._get_conn()
         if conn is None:
             return pd.DataFrame()
@@ -962,12 +1031,16 @@ class DuckDBDataAccess:
                 m_end = rt_map[report_types][1]
                 rt_cond = f"AND (CAST(strftime('%m', make_timestamp(f.end_date*1000)) AS INTEGER) = {m_end})"
 
+        # Schema 兼容：动态检测新列是否已迁移
+        actual_cols = {row[0] for row in conn.execute("DESCRIBE fin_indicator").fetchall()}
+        or_yoy_expr = "f.or_yoy" if "or_yoy" in actual_cols else "CAST(NULL AS DOUBLE) AS or_yoy"
+
         return conn.execute(f"""
             SELECT f.code,
                    f.end_date,
                    f.ann_date  AS publ_date,
                    f.eps, f.bps, f.roe,
-                   f.pe_ttm, f.pb, f.ps_ttm, f.np_yoy
+                   f.pe_ttm, f.pb, f.ps_ttm, f.np_yoy, {or_yoy_expr}
             FROM fin_indicator f
             WHERE f.code IN ('{codes_in}')
               AND {where_date} {where_year} {rt_cond}

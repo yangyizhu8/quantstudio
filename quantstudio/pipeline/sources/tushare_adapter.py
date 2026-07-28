@@ -228,10 +228,16 @@ class TushareAdapter(BaseSourceAdapter):
         elif codes:
             # 按代码循环拉
             dfs = []
+            # fin_indicator 显式请求所需字段（包含 update_flag 用于 PIT 修订记录去重）
+            fin_indicator_fields = ("ts_code,ann_date,end_date,update_flag,"
+                                    "eps,dt_eps,bps,roe,netprofit_yoy,or_yoy,tr_yoy")
+            api_kwargs = {"start_date": start_fmt, "end_date": end_fmt}
             for code in codes:
+                kwargs = {"ts_code": code, **api_kwargs}
+                if api_name == "fina_indicator":
+                    kwargs["fields"] = fin_indicator_fields
                 raw = self._retry_with_backoff(
-                    self._call_api, api_name, ts_code=code,
-                    start_date=start_fmt, end_date=end_fmt)
+                    self._call_api, api_name, **kwargs)
                 dfs.append(raw)
             df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
         else:
@@ -751,35 +757,79 @@ class TushareAdapter(BaseSourceAdapter):
 
     def _fetch_dividend(self, start: str, end: str,
                         codes: Optional[List[str]]) -> Tuple[pd.DataFrame, Dict]:
-        """拉除权除息（dividend），按 ts_code 逐只查全历史。"""
-        import tushare as ts
-        pro = ts.pro_api(self.token)
-        if codes is None or codes == ["ALL"]:
+        """拉取除权除息（dividend），按 ts_code 逐只查全历史。
+
+        单股模式（len(codes)==1）：失败抛异常（供 per_stock process_one 捕获计数），
+        无数据视为 successful-empty（不计数为失败）。
+        批量模式（codes=None/ALL/多股）：逐只捕获异常，metadata 记录完整统计。
+        metadata 始终包含: total_codes, successful_codes, empty_codes,
+        failed_codes, failed_code_samples（最多 5 个）。
+        """
+        if codes is None or codes == ["ALL"] or codes == "ALL":
             codes = self.get_all_stock_codes()
+            is_single = False
+        else:
+            is_single = (len(codes) == 1)
+
         dfs = []
         total = len(codes)
+        success_count = 0
+        empty_count = 0
         fail_count = 0
+        failed_samples: list = []
+
+        div_fields = ("ts_code,ex_date,record_date,ann_date,end_date,"
+                      "cash_div_tax,cash_div,stk_div,stk_bo_rate,stk_co_rate,div_proc")
         for i, code in enumerate(codes):
             if total > 50 and i % 200 == 0:
                 logger.info(f"[TushareAdapter] dividend 进度: {i}/{total} ({i*100//total}%)")
             try:
-                self.rate_limiter.acquire()
-                df = pro.dividend(ts_code=code, fields="ts_code,ex_date,record_date,cash_div,stk_div,div_rat")
+                df = self._retry_with_backoff(
+                    self._call_api, "dividend", ts_code=code, fields=div_fields)
                 if df is not None and len(df) > 0:
                     dfs.append(df)
+                    success_count += 1
+                else:
+                    empty_count += 1
             except Exception as e:
                 fail_count += 1
-                logger.debug(f"[TushareAdapter] dividend {code} failed: {e}")
+                if len(failed_samples) < 5:
+                    failed_samples.append({"code": code, "error": str(e)[:200]})
+                if is_single:
+                    # 单股模式：构建 metadata 后重新抛出，供 per_stock process_one 捕获
+                    logger.error(f"[TushareAdapter] dividend 单股 {code} 拉取失败: {e}")
+                    raise
+
+        metadata = {
+            "source": "tushare", "freq": "daily", "table": "stock_dividend",
+            "code_format": "tushare_to_raw", "date_format": "YYYYMMDD",
+            "total_codes": total,
+            "successful_codes": success_count,
+            "empty_codes": empty_count,
+            "failed_codes": fail_count,
+            "failed_code_samples": failed_samples,
+        }
+
         if not dfs:
-            return pd.DataFrame(), {}
+            metadata["rows"] = 0
+            level = logger.info if fail_count == 0 else logger.warning
+            level("[TushareAdapter] stock_dividend fetched 0 rows "
+                  f"(total={total}, success={success_count}, empty={empty_count}, fail={fail_count})")
+            return pd.DataFrame(), metadata
+
         result = pd.concat(dfs, ignore_index=True)
+        # 过滤：只保留已实施的分红记录
+        if "div_proc" in result.columns:
+            result = result[result["div_proc"] == "实施"]
         # 过滤无除权日的记录（预案/公告阶段，非实际除权）
         if "ex_date" in result.columns:
             result = result.dropna(subset=["ex_date"])
             result = result[result["ex_date"].astype(str).str.strip() != "None"]
-        metadata = {"source": "tushare", "freq": "daily", "table": "stock_dividend",
-                    "code_format": "tushare_to_raw", "date_format": "YYYYMMDD", "rows": len(result)}
-        logger.info(f"[TushareAdapter] stock_dividend fetched {len(result)} rows ({total} codes, 失败 {fail_count})")
+            result = result.reset_index(drop=True)
+
+        metadata["rows"] = len(result)
+        logger.info(f"[TushareAdapter] dividend 过滤后保留 {len(result)} 行（已实施+有除权日）；"
+                    f"codes: total={total}, success={success_count}, empty={empty_count}, fail={fail_count}")
         return result, metadata
 
     #: F4 数据源契约（§6.3）：正式申万接口必须返回的字段（adapter capability probe）。

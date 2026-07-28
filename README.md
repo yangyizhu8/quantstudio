@@ -291,6 +291,43 @@ output/strategy_deliveries/<strategy_id>/
 
 `etf_basic` is now a first-class pipeline task. Its authority and only configured source are Tushare (`fund_basic(market="E")`). Full, incremental, and resident modes all use the same path: fetch snapshot -> canonical baseline standardization -> validation -> changed-row DuckDB upsert. Tushare `YYYYMMDD` list/delist dates are converted to Asia/Shanghai midnight milliseconds, `.SH` is normalized to `SS`, and fields with unrelated units (such as `issue_amount` and `p_value`) are excluded. Missing list/delist dates may be filled from the first/last `etf_daily` bar. Restart an already-running resident collector after changing this task configuration。
 
+## W2 staging / 框架修复（2026-07-27 session, file timestamp 2026-07-28）
+
+> 状态：框架代码补正完成（W1→W2-0.7A），staging 安全闭环测试就绪（W2-0.7B）。数据等待 W2 staging 全量回填。禁止在 W2-0.7B 通过前执行真实 staging prepare / Tushare 回填 / promotion / 修改正式库 / Git stage-commit-push。
+
+### Profile 1.10.0
+
+- PTrade Profile 升级至 1.10.0：正式登记 `get_stock_exrights(security, date=None)`（返回 DataFrame，index=date，列: allotted_ps/rationed_ps/rationed_px/bonus_ps/exer_forward_a/exer_backward_a/bexer_backward_a/b）。portable usage 必须显式传 `date`；`date=None` 返回 `None`（底层查询需具体日期）。
+- 注：`get_stock_exrights` 受 Tushare 接口频率限制（每分钟最多 200 次），批量调用需加间隔。
+
+### 增长字段（fin_indicator）
+
+新增：`or_yoy`（营收同比增长率，%）、`tr_yoy`（营业总收入同比增长率，%）`、`update_flag`（0=初版/1=修订版，PIT 去重）、`diluted_eps`（稀释 EPS，独立于 eps 列）。
+
+### 分红字段（stock_dividend）
+
+标准化：`cash_div_before_tax`（税前每股现金分红）、`cash_div_after_tax`（税后每股现金分红）、`stk_bo_rate`（送股比例）、`stk_co_rate`（转增比例）、`div_proc`（仅入库"实施"记录）。公司行为引擎税务策略：`pre_tax × 0.80`。
+
+### get_stock_exrights API
+
+完整签名：`get_stock_exrights(security, date=None)`。contexts: research/backtest/trade。返回 DataFrame（date 索引, 8 列 PTrade 兼容）或 None。源表 `stock_dividend`（tushare 权威源），schema 兼容旧列 `cash_div`。portable usage 必须显式传 `date`；`date=None` 返回 `None`。受 Tushare 频率限制（~200/min），批量建议间隔。
+
+### W2-0.7B staging 安全闭环（2026-07-28）
+
+staging 回填工具 `scripts/backfill_fin_growth_dividend_staging.py` 提供 `prepare / run-task / audit / promote` 四阶段，全程只操作 staging 副本，绝不修改正式库；`--promote` 仅 dry-run（打印命令，不执行）。安全门控：
+
+- **prepare**：daemon/collector 活跃检测（`verify_daemon_identity`，stale 放行 / alive+denied+corrupt BLOCK）、磁盘 ≥ 2x 源库、源库 SHA-256 一致性、`--reset-staging` 需 `.quantstudio_staging.json` marker 校验且目标不得为磁盘根/项目根/data 根/源库父或含源库。
+- **run-task**：config `db_path` 必须指向 staging.db（否则 SAFETY BLOCK）；子进程写 runtime manifest（atomic `os.replace` + nonce replay 防护），父进程严格校验 `format_version/task/nonce/QUANTSTUDIO_DATA_ROOT/imported_DATA_ROOT` + 七个路径字段全部 resolve 到 staging root；`timeout=0` 表示无超时，`timeout>0` 按 elapsed 终止；heartbeat 每 30s 可见。
+- **audit / promote**：版本分离（`data_schema_version=2.0` 来自 alignment_rules vs `ptrade_profile_version=1.10.0` 来自 ptrade-api-signatures）；batch conservation（`rows_passed + rows_rejected == rows_raw`）；batch ID 唯一性 + 一任务一批；runtime manifest 内容校验；authority_rules 锁定 tushare 单源（`allow_fallback=false`）；audit `checks_run>0` 且 `errors_count==0`。
+
+测试覆盖：`tests/test_fin_growth_dividend_staging_tool.py` 共 **58 项**（原 13 + W2-0.7B 新增 45），含负向门控（daemon alive/denied/corrupt BLOCK、stale 放行；collector lock held BLOCK、stale 放行；timeout=0/正数/heartbeat；reset marker 四类 BLOCK；缺配置/磁盘失败/源库不可读/size mismatch/SHA mismatch BLOCK；child manifest 缺失/stale nonce/wrong task/wrong DATA_ROOT/wrong path/wrong PID/stale/future timestamp BLOCK；duplicate batch/same-task/conservation/schema/profile/audit errors BLOCK；growth/dividend 全零 BLOCK；manifest audit 后漂移/删除 BLOCK）+ 两类双任务 E2E：**真实子进程 E2E**（真实 `python -m quantstudio.pipeline.daemon` 子进程 + `sitecustomize.py` 注入 FAKE `TushareAdapter`，验证 manifest pid == 实际 Popen PID、created_at ∈ 生命周期窗口、源库字节不变）与快速模拟 E2E（prepare→fin→div→audit→promote dry-run）。详见 `docs/staging-runbook.md` 与 `docs/framework-fix-report-20260728.md`。
+
+### 当前 DB 状态
+
+正式库仍为旧 schema（fin_indicator 11 列 167,028 行，增长字段全 NULL；stock_dividend 旧 cash_div 列，口径不明）。数据等待 W2 staging 回填：schema 迁移（`_migrate_add_columns` 幂等）-> staging prepare + fin_indicator 回填 -> staging stock_dividend 回填 -> 质量审计 -> promotion（原子替换）。正式库旧 schema 待 W2 回填后才会迁移；当前 staging 工具与所有 DataAccess 查询均支持旧/新 schema 兼容（动态检测列存在性）。
+
+详见 `docs/framework-fix-report-20260728.md`（W2-0.7B 最终测试矩阵）与 `docs/framework-fix-report-20260727.md`（W1→W2-0.7A 框架修复）。
+
 ## 框架层变更审阅记录（perf/datadict-day-index）
 
 本次 `quantstudio/backtest/ptrade_api.py`、`quantstudio/backtest/backtest_engine.py` 新增 DataDict/BacktestEngine 当日 DataFrame 的 `{raw_code: first_iloc}` 实例代码索引，将 `df['code'] == bare` 的 O(N) 布尔过滤替换为 O(1) 索引查找；`None`（无法构建）时严格回退原布尔过滤。

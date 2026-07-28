@@ -1,6 +1,6 @@
 {
   "profile_id": "ptrade-backtest-public-v1",
-  "profile_version": "1.9.0",
+  "profile_version": "1.10.0",
   "verified_on": "2026-07-27",
   "policy": "Canonical dual-target code must use exact PTrade backtest public signatures; QuantStudio adapters must be equally strict so local PASS predicts platform acceptance.",
   "signatures": {
@@ -72,6 +72,21 @@
           "normalization": "np.asarray(item[field], dtype=float).reshape(-1) or an equivalent hasattr(values, 'values') guarded helper before any numerical use"
         }
       }
+    },
+    "get_stock_exrights": {
+      "contexts": ["research", "backtest", "trade"],
+      "max_positional": 2,
+      "allowed_keywords": ["security", "date"],
+      "examples": [
+        "get_stock_exrights(security='600000.SS', date='20260716')"
+      ],
+      "return_shape": "None or pandas.DataFrame indexed by date with columns [allotted_ps, rationed_ps, rationed_px, bonus_ps, exer_forward_a, exer_forward_b, exer_backward_a, exer_backward_b]",
+      "notes": [
+        "date uses YYYYmmdd when supplied. date parameter is required for portable usage. Omitting date is valid only in local/QuantStudio-only mode.",
+        "bonus_ps maps to pre-tax cash dividend per share (cash_div_before_tax)",
+        "allotted_ps maps to stock dividend per share (stk_div). Does NOT include bonus share transfers (stk_bo_rate) or capital reserve transfers (stk_co_rate).",
+        "rationed_ps/rationed_px and exer_* columns are NULL when source data is unavailable."
+      ]
     },
     "get_stock_info": {
       "contexts": [

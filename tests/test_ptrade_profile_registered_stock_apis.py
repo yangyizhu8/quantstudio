@@ -152,10 +152,11 @@ def rebalance(context):
 def test_profile_registers_core_stock_portability_apis():
     profile = json.loads((ROOT / "skills" / "quantstudio-strategy-compiler" /
                           "references" / "ptrade-api-signatures.json").read_text(encoding="utf-8"))
-    assert profile["profile_version"] == "1.9.0"
+    assert profile["profile_version"] == "1.10.0"
     for name in (
         "set_benchmark", "run_daily", "get_Ashares", "get_index_stocks",
         "get_stock_status", "get_positions", "get_position", "get_industry",
+        "get_stock_exrights",
     ):
         assert name in profile["signatures"]
     assert profile["signatures"]["get_stock_status"]["canonical_keyword_values"]["query_type"] == [
@@ -163,6 +164,23 @@ def test_profile_registers_core_stock_portability_apis():
     ]
     # F3：get_index_stocks 必须声明 PIT/date 契约
     assert any("as-of" in n for n in profile["signatures"]["get_index_stocks"]["notes"])
+
+
+def test_profile_project_and_install_consistent():
+    """项目 profile 与安装 profile 深度一致"""
+    proj = json.loads((ROOT / "skills" / "quantstudio-strategy-compiler" /
+                        "references" / "ptrade-api-signatures.json").read_text(encoding="utf-8"))
+    inst = json.loads(Path("C:/Users/Administrator/.agents/skills/quantstudio-strategy-compiler/"
+                           "references/ptrade-api-signatures.json").read_text(encoding="utf-8"))
+    assert proj["profile_version"] == inst["profile_version"] == "1.10.0"
+    assert "get_stock_exrights" in proj["signatures"]
+    assert "get_stock_exrights" in inst["signatures"]
+    assert "get_industry" in proj["signatures"]
+    assert "get_industry" in inst["signatures"]
+    assert "get_stock_info" in proj["signatures"]
+    assert "get_stock_info" in inst["signatures"]
+    assert "get_index_stocks" in proj["signatures"]
+    assert "get_index_stocks" in inst["signatures"]
 
 
 def test_profile_records_get_history_is_dict_return_contract():

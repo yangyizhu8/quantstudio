@@ -71,7 +71,7 @@ QuantStudio 本地注入 API / 指标 / 全局对象（g、log、pd、np、MyTT�
   growth_ability 等可用；balance/income/cashflow 三张报表【返回空 DataFrame】。
 - query(valuation.market_cap).filter(...).order_by(...).limit(n) 后 get_fundamentals(q)
 - get_current_data()→{code:BarData}；data[code].price / current_price(code) 取当日价
-- PTrade Profile 1.9.0 已登记股票核心：`set_benchmark`、`run_daily`、`get_Ashares`、`get_index_stocks`（含严格 PIT/date 契约）、`get_stock_status`、`get_positions`、`get_position`、`get_trade_days`、`get_fundamentals`、`get_industry`。未登记顶层 API 在双端模式默认 BLOCK。
+- PTrade Profile 1.10.0 已登记股票核心：`set_benchmark`、`run_daily`、`get_Ashares`、`get_index_stocks`（含严格 PIT/date 契约）、`get_stock_status`、`get_positions`、`get_position`、`get_trade_days`、`get_fundamentals`、`get_industry`、`get_stock_exrights`（分红除权数据，portable 模式 date 必填）。未登记顶层 API 在双端模式默认 BLOCK。
 - ⚠️ **get_history(is_dict=True) 返回形状契约（Profile 1.8.0）**：真实平台 mapping item 可能是 pandas DataFrame / NumPy structured array / recarray。双端/PTrade 源码对 history item 提取字段后必须先 `np.asarray(item[field], dtype=float)`（或 `hasattr(values,'values')` 守卫的 helper）归一化再做数值计算；禁止无保护地使用 `.values`/`.iloc`/`.loc`/`.to_numpy()`/`.columns`/`.index`/`.empty`。
 - QuantStudio 本地扩展：get_etf_list_local(query_date=None, etf_type="equity", active_only=True)、get_history_batch(...)；仅当生成目标不包含 PTrade 时允许
 - check_limit(code)→{code:1涨/-1跌/0平}；filter_stock_by_status(stocks,filter_type=[...])

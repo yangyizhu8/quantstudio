@@ -762,8 +762,8 @@
       "available_at_field": "time"
     },
     "fin_indicator": {
-      "_note": "财务指标表，PIT 打标 available_at=ann_date [E-1]",
-      "schema_version": "2.0",
+      "_note": "财务指标表，PIT 打标 available_at=ann_date [E-1]。pe_ttm/pb/ps_ttm 为 legacy 兼容列，正式估值走 valuation 数据链。",
+      "schema_version": "2.1",
       "primary_key": [
         "code",
         "end_date",
@@ -791,6 +791,11 @@
           "type": "float",
           "required": false
         },
+        "diluted_eps": {
+          "type": "float",
+          "required": false,
+          "_note": "来自 Tushare dt_eps，与 eps 独立列不再碰撞"
+        },
         "bps": {
           "type": "float",
           "required": false
@@ -802,20 +807,40 @@
         },
         "pe_ttm": {
           "type": "float",
-          "required": false
+          "required": false,
+          "_note": "legacy 兼容；正式估值走 valuation 数据链"
         },
         "pb": {
           "type": "float",
-          "required": false
+          "required": false,
+          "_note": "legacy 兼容"
         },
         "ps_ttm": {
           "type": "float",
-          "required": false
+          "required": false,
+          "_note": "legacy 兼容"
         },
         "np_yoy": {
           "type": "float",
           "required": false,
           "unit": "%"
+        },
+        "or_yoy": {
+          "type": "float",
+          "required": false,
+          "unit": "%",
+          "_note": "营收同比增长率，来源 Tushare or_yoy"
+        },
+        "tr_yoy": {
+          "type": "float",
+          "required": false,
+          "unit": "%",
+          "_note": "营业总收入同比增长率，来源 Tushare tr_yoy"
+        },
+        "update_flag": {
+          "type": "int",
+          "required": false,
+          "_note": "0=初版公告 1=修订版，用于 PIT 修订记录去重"
         }
       },
       "available_at_field": "ann_date"
@@ -1395,8 +1420,8 @@
       "available_at_field": "ann_date"
     },
     "stock_dividend": {
-      "_note": "除权除息",
-      "schema_version": "2.0",
+      "_note": "除权除息。cash_div 为 legacy 兼容列，新数据强制使用 cash_div_before_tax/cash_div_after_tax。",
+      "schema_version": "2.1",
       "primary_key": [
         "code",
         "ex_date"
@@ -1415,20 +1440,59 @@
           "type": "int",
           "required": false
         },
+        "ann_date": {
+          "type": "int",
+          "required": false,
+          "_note": "分红预案公告日"
+        },
+        "end_date": {
+          "type": "int",
+          "required": false,
+          "_note": "分红所属财务报告期截止日"
+        },
+        "cash_div_before_tax": {
+          "type": "float",
+          "required": false,
+          "unit": "元/股(税前)",
+          "_note": "来源 Tushare cash_div_tax"
+        },
+        "cash_div_after_tax": {
+          "type": "float",
+          "required": false,
+          "unit": "元/股(税后)",
+          "_note": "来源 Tushare cash_div"
+        },
         "cash_div": {
           "type": "float",
           "required": false,
-          "unit": "元/股(税前)"
+          "unit": "元/股",
+          "_note": "legacy 兼容列；新数据源禁止以此列为唯一权威字段"
         },
         "stk_div": {
           "type": "float",
           "required": false,
           "unit": "股/股"
         },
+        "stk_bo_rate": {
+          "type": "float",
+          "required": false,
+          "_note": "送股比例，来源 Tushare stk_bo_rate"
+        },
+        "stk_co_rate": {
+          "type": "float",
+          "required": false,
+          "_note": "转增比例，来源 Tushare stk_co_rate"
+        },
+        "div_proc": {
+          "type": "str",
+          "required": false,
+          "_note": "分红进度：实施/预案/取消等；仅入库'实施'记录"
+        },
         "div_rat": {
           "type": "float",
           "required": false,
-          "unit": "%"
+          "unit": "%",
+          "_note": "legacy 兼容；非 Tushare dividend 有效返回字段"
         },
         "update_time": {
           "type": "str",
@@ -1862,17 +1926,21 @@
           "ts_code": "code",
           "ann_date": "ann_date",
           "end_date": "end_date",
-          "dt_eps": "eps",
+          "eps": "eps",
+          "dt_eps": "diluted_eps",
           "bps": "bps",
           "roe": "roe",
           "pe_ttm": "pe_ttm",
           "pb": "pb",
           "ps_ttm": "ps_ttm",
-          "netprofit_yoy": "np_yoy"
+          "netprofit_yoy": "np_yoy",
+          "or_yoy": "or_yoy",
+          "tr_yoy": "tr_yoy",
+          "update_flag": "update_flag"
         },
         "code_format": "tushare_to_raw",
         "time_to_ms": true,
-        "_note": "v3：补全业务字段。tushare fina_indicator 标准字段名。字段名若与实际API不符（如 dt_eps vs eps），拉取时 dump 确认后微调"
+        "_note": "v4：eps/diluted_eps 分离避免重复列名；新增 or_yoy/tr_yoy/update_flag。增长率字段统一单位 %（不做 /100）。正式估值走 valuation 链，pe_ttm/pb/ps_ttm legacy 保留。"
       },
       "index_daily": {
         "column_map": {
@@ -2036,14 +2104,20 @@
           "ts_code": "code",
           "ex_date": "ex_date",
           "record_date": "record_date",
-          "cash_div": "cash_div",
+          "ann_date": "ann_date",
+          "end_date": "end_date",
+          "cash_div_tax": "cash_div_before_tax",
+          "cash_div": "cash_div_after_tax",
           "stk_div": "stk_div",
-          "div_rat": "div_rat",
+          "stk_bo_rate": "stk_bo_rate",
+          "stk_co_rate": "stk_co_rate",
+          "div_proc": "div_proc",
           "update_time": "update_time"
         },
         "code_format": "tushare_to_raw",
         "time_to_ms": true,
-        "unit_conversions": {}
+        "unit_conversions": {},
+        "_note": "v2：cash_div_tax→cash_div_before_tax(税前)，cash_div→cash_div_after_tax(税后)。不再请求不存在的 div_rat。仅入库 div_proc=实施 且 ex_date 非空记录。"
       },
       "sw_industry": {
         "column_map": {

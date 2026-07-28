@@ -110,7 +110,7 @@
 | `get_industry(code)` | **申万一级行业（PTrade Profile 1.9.0 登记，capability = APPROXIMATION_REQUIRES_CONFIRMATION，非 PIT READY）**。返回 `{'sw_l1': {'industry_code','industry_name','classification_system','classification_version'}}`。回测上下文自动以**当前回测日期** as-of 查询正式 `industry_membership`（SW/SW2021）有效区间（`effective_from <= d AND (effective_to IS NULL OR effective_to >= d)`）。**关键语义边界（F4 审核，2026-07-27）**：官方 `index_member` 仅提供 `in_date`/`out_date`，**无任何冲突裁决规则**；故 canonical 表**原样保留重叠区间**（如 SW2021 重新分类致同一证券某日同属新旧两类），**不应用任何自定义“生效日较新者胜”裁决**。as-of 命中重叠区间时 `get_industry` **抛 `ReferenceDataCapabilityError`（fail-closed）**，绝不返回任意自定义裁决近似，能力明确标注 APPROXIMATION_REQUIRES_CONFIRMATION（因 canonical 表原样保留重叠区间、非 PIT READY，但运行时重叠一律 fail-closed）。无有效历史归属返回 `None`，**绝不使用最新行业回填过去**。正式表缺失时抛 `ReferenceDataCapabilityError`（fail-closed），**绝不回退 legacy `sw_industry` 快照**（该表仅为审计保留）。 |
 | `get_industry_stocks(industry_code)` | 行业成份股（尾缀 `.XBHS`），无源表返回空 list。 |
 | `get_stock_blocks(code)` | 板块归属（`HY/DY/GN/ZJHHY`），无源表返回 `None`。 |
-| `get_stock_exrights(code,date)` | 除权除息信息，无源表返回 `None`。 |
+| `get_stock_exrights(security, date=None)` | **PTrade Profile 1.10.0 已登记**。获取证券除权除息信息。完整签名：`get_stock_exrights(security, date=None)`，contexts: research/backtest/trade。返回 DataFrame（date 索引，8 列 PTrade 兼容：allotted_ps/rationed_ps/rationed_px/bonus_ps/exer_forward_a/exer_backward_a/bexer_backward_a/b），或 `None`（无数据/缺表/`date=None`）。portable usage 必须显式传 `date`；源表 `stock_dividend`（tushare 权威源），schema 兼容旧列。受 Tushare 接口频率限制（~200 次/分钟），批量调用需间隔。 |
 | `get_stock_name(stocks)` | 股票名称（DuckDB 无名称字段时回退为代码）。 |
 
 ### 3.5 指数 / 板块 / ETF / 可转债 / REITs

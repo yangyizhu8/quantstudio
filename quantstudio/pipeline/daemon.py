@@ -287,6 +287,22 @@ class ResidentCollector:
                 f"若需历史回填，请显式运维操作并重建全表复权列，单独过审批。")
             return False
 
+        # 通用权威源守卫（task 级 authoritative_source 声明，覆盖所有表类型）
+        authoritative = task.get("authoritative_source")
+        if authoritative and source != authoritative:
+            allow_fb = task.get("allow_fallback", True)
+            if not allow_fb:
+                # allow_fallback=false：严格锁定，拒绝任何非权威源写入
+                logger.error(
+                    f"[task={name}] 任务权威源锁定为 {authoritative}"
+                    f"（allow_fallback=false），拒绝用 {source} 写入。")
+                return False
+            else:
+                # allow_fallback=true：允许回退源，但记录 warning
+                logger.warning(
+                    f"[task={name}] 当前源 {source} 非权威源 {authoritative}"
+                    f"（allow_fallback=true，作为回退写入）。")
+
         logger.info(f"[{batch_id}] === START task={name} source={source} table={table}/{freq} ===")
 
         # 全市场（ALL）→ 逐只股票并行拉取+入库
@@ -296,7 +312,7 @@ class ResidentCollector:
         is_all_market = codes_cfg == ["ALL"] or codes_cfg == "ALL" or codes_cfg is None
         if is_all_market and source == "tushare" and table in ("stock_daily", "stock_float_share", "stock_daily_valuation"):
             return self._execute_task_per_trade_date(task, batch_id, started_at, source)
-        if is_all_market and table in ("stock_daily", "stock_minutes", "index_daily", "etf_daily", "etf_minutes", "fin_indicator", "stock_daily_valuation"):
+        if is_all_market and table in ("stock_daily", "stock_minutes", "index_daily", "etf_daily", "etf_minutes", "fin_indicator", "stock_daily_valuation", "stock_dividend"):
             return self._execute_task_per_stock(task, batch_id, started_at, source)
 
         # 普通模式（指定 codes 或非全市场）
@@ -1159,10 +1175,12 @@ class ResidentCollector:
             # 与 writer 的 read_write 并发触发「different configuration」冲突。
             # 此处采集已完成（_run_full_quality_audit 在 execute_task 末尾调用），
             # 无并发 write，独占 shared_conn 安全。
+            authority_rules = build_authority_rules(self.tasks_cfg)
             report = DataQualityAuditor(
                 self.writer.db_path, self.aligner.schemas,
                 batch_audit_path=self.batch_audit.db_path,
                 quarantine_path=self.quarantine.db_path,
+                authority_rules=authority_rules,
                 shared_conn=self.writer.shared_conn()).run()
             errors = [issue for issue in report.issues if issue.severity == "error"]
             warnings = [issue for issue in report.issues if issue.severity == "warning"]
@@ -1220,14 +1238,22 @@ class ResidentCollector:
         """
         table = task.get("table")
         freq = task.get("freq", "daily")
-        chain: List[str] = list(task.get("source_priority") or [])
-        s = task.get("source")
-        if s and s not in chain:
-            chain.append(s)
-        global_pri = self.sources_cfg.get("default_source_priority") or []
-        for g in global_pri:
-            if g not in chain:
-                chain.append(g)
+        authoritative = task.get("authoritative_source")
+        allow_fallback = task.get("allow_fallback", True)
+
+        # 权威源锁定：当 allow_fallback=false 且 authoritative_source 已设置时，
+        # 仅使用该权威源（不追加全局 default_source_priority，不启用任何回退链）。
+        if authoritative and not allow_fallback:
+            chain: List[str] = [authoritative]
+        else:
+            chain: List[str] = list(task.get("source_priority") or [])
+            s = task.get("source")
+            if s and s not in chain:
+                chain.append(s)
+            global_pri = self.sources_cfg.get("default_source_priority") or []
+            for g in global_pri:
+                if g not in chain:
+                    chain.append(g)
 
         out: List[str] = []
         for src in chain:
@@ -1249,6 +1275,11 @@ class ResidentCollector:
             skipped = [c for c in chain if c not in out]
             logger.info(f"[SourceChain] task={task.get('name')} 候选链 {chain} → 可用 {out}"
                         f"（跳过未启用/不支持: {skipped}）")
+        # 警告：如果声明了 authoritative_source 但未出现在可用源链中
+        if authoritative and authoritative not in out:
+            logger.warning(
+                f"[SourceChain] task={task.get('name')} authoritative_source='{authoritative}' "
+                f"不在可用源链 {out} 中（源可能未启用或不支持 {table}/{freq}）")
         return out
 
     def _get_safe_watermark(self, source: str, table: str, freq: str) -> Optional[str]:
@@ -1665,6 +1696,24 @@ def _resolve_env(value):
     return value
 
 
+def build_authority_rules(tasks_cfg: Dict) -> Dict:
+    """从 collector_tasks 构建 authority_rules，供 quality audit 和 staging 使用。
+
+    Returns: {table_name: {"authoritative_source": str, "allow_fallback": bool}}
+    """
+    rules = {}
+    for task in tasks_cfg.get("tasks", []):
+        if not isinstance(task, dict):
+            continue
+        auth = task.get("authoritative_source")
+        if auth:
+            rules[task["table"]] = {
+                "authoritative_source": auth,
+                "allow_fallback": task.get("allow_fallback", True),
+            }
+    return rules
+
+
 # ---------------------------------------------------------------------------
 # CLI 入口
 # ---------------------------------------------------------------------------
@@ -1698,6 +1747,10 @@ def main():
     parser.add_argument("--instance-token", default=None,
                         help="v3: GUI 启动传入的实例 token（用于身份校验）。"
                              "CLI 手动启动可不传，daemon 自行生成。")
+    parser.add_argument("--runtime-manifest", default=None, type=str,
+                        help="Absolute path to write runtime manifest JSON after collector init (atomic write)")
+    parser.add_argument("--runtime-nonce", default=None, type=str,
+                        help="Nonce UUID to embed in runtime manifest for replay protection")
     args = parser.parse_args()
 
     # v3 日志：TimedRotatingFileHandler（午夜轮转，保留 14 天）+ 控制台
@@ -1738,6 +1791,64 @@ def main():
                     cdir / "sources_config.json",
                     cdir / "collector_tasks.json",
                     cdir / "alignment_rules.json")
+                # Runtime manifest: atomic write after real component construction
+                if args.runtime_manifest:
+                    import os as _os
+                    from datetime import datetime as _dt
+                    try:
+                        from quantstudio._paths import DATA_ROOT as _DATA_ROOT
+                        from quantstudio.pipeline.daemon_lifecycle import (
+                            collector_run_lock_path as _crlock,
+                            daemon_lock_path as _dlock,
+                            daemon_status_path as _dstatus,
+                        )
+                        _imported_data_root = str(_DATA_ROOT.resolve())
+                        _collector_lock = str(_crlock().resolve())
+                        _daemon_lock = str(_dlock().resolve())
+                        _daemon_status = str(_dstatus().resolve())
+                    except Exception:
+                        _imported_data_root = ""
+                        _collector_lock = ""
+                        _daemon_lock = ""
+                        _daemon_status = ""
+                    _manifest = {
+                        "format_version": "1.0",
+                        "task": args.task,
+                        "pid": _os.getpid(),
+                        "nonce": args.runtime_nonce,
+                        "created_at": _dt.now().isoformat(),
+                        "QUANTSTUDIO_DATA_ROOT": _os.environ.get("QUANTSTUDIO_DATA_ROOT", ""),
+                        "imported_DATA_ROOT": _imported_data_root,
+                        "writer_db_path": str(collector.writer.db_path) if hasattr(collector, 'writer') else "",
+                        "batch_audit_db_path": str(collector.batch_audit.db_path) if hasattr(collector, 'batch_audit') else "",
+                        "quarantine_db_path": str(collector.quarantine.db_path) if hasattr(collector, 'quarantine') else "",
+                        "daemon_log_path": str((_DATA_ROOT / "logs" / "daemon.log").resolve()) if _imported_data_root else "",
+                        "collector_lock_path": _collector_lock,
+                        "daemon_lock_path": _daemon_lock,
+                        "daemon_status_path": _daemon_status,
+                        "config_dir": args.config_dir or "",
+                        "manifest_path": args.runtime_manifest,
+                        "python_executable": sys.executable,
+                    }
+                    # Pre-write validation: all paths must be under DATA_ROOT
+                    _staging_root_str = _os.environ.get("QUANTSTUDIO_DATA_ROOT", "")
+                    if _staging_root_str:
+                        _sr = Path(_staging_root_str).resolve()
+                        for _k in ("writer_db_path", "batch_audit_db_path", "quarantine_db_path",
+                                    "daemon_log_path", "collector_lock_path", "daemon_lock_path", "daemon_status_path"):
+                            _v = _manifest.get(_k, "")
+                            if _v:
+                                try:
+                                    Path(_v).resolve().relative_to(_sr)
+                                except ValueError:
+                                    logger.error(f"Runtime manifest BLOCK: {_k}={_v} not under staging root {_sr}")
+                                    return 1
+                    _tmp = args.runtime_manifest + ".tmp"
+                    import json as _json
+                    with open(_tmp, 'w', encoding='utf-8') as _f:
+                        _json.dump(_manifest, _f, indent=2, ensure_ascii=False)
+                    _os.replace(_tmp, args.runtime_manifest)
+                    logger.info(f"Runtime manifest written: {args.runtime_manifest}")
                 try:
                     collector.run_once(task_name=args.task, mode=args.pull_mode)
                 finally:

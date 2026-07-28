@@ -1432,13 +1432,11 @@ class PtradeAPI:
 
     # ===================== 第2批新增 API =====================
 
-    def get_stock_exrights(self, stock_code, date=None):
+    def get_stock_exrights(self, security, date=None):
         """获取证券除权除息信息（对应 Ptrade get_stock_exrights）
         返回 DataFrame（index=date，列: allotted_ps/rationed_ps/rationed_px/
-        bonus_ps/exer_forward_a/b/exer_backward_a/b），无数据返回 None。
-        DuckDB 暂无除权数据表 → 返回 None（Ptrade 语义：输入日期无信息返回 None）。"""
-        # 预留：未来若 DuckDB 新增 stock_dividend / exrights 表，在此实现
-        return self._reference.get_exrights(bare_code(stock_code), date)
+        bonus_ps/exer_forward_a/b/exer_backward_a/b），无数据返回 None。"""
+        return self._reference.get_exrights(bare_code(security), date)
 
     def get_stock_blocks(self, stock_code):
         """获取证券所属板块（对应 Ptrade get_stock_blocks）

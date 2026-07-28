@@ -227,6 +227,13 @@ class FieldAligner:
         df = self._map_columns(raw_df, mapping)
         applied_steps.append("column_map")
 
+        # 重复列名检测：防止不同源字段映射到同一标准列名（如 dt_eps 和 eps 都映射为 eps）
+        dup_cols = df.columns[df.columns.duplicated()].tolist()
+        if dup_cols:
+            raise ValueError(
+                f"Duplicate column names after mapping for {table}/{source}: {dup_cols}"
+            )
+
         # ---- Step 2: 代码格式统一（裸 6 位码）----
         # code_col 可由映射显式声明（如 industry_classification 主键首列是
         # classification_system 而非证券代码）；未声明时按 schema 主键首列推断。

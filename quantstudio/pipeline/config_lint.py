@@ -154,6 +154,24 @@ def _lint_one_task(task: Dict, name: str, schemas: Dict, sources: Dict,
     # 第 1 项：codes 合法性（按链首位源判断格式）
     _lint_codes(name, chain[0] if chain else "", codes, errors, warnings)
 
+    # 权威源校验：authoritative_source 必须已启用且支持该 task 的 table/freq
+    authoritative = task.get("authoritative_source")
+    if authoritative:
+        ok, reason = supports_task(authoritative, table, freq)
+        if not ok:
+            errors.append(
+                f"task '{name}': authoritative_source='{authoritative}' "
+                f"不支持 {table}/{freq}: {reason}")
+        elif not sources.get(authoritative, {}).get("enabled", False):
+            errors.append(
+                f"task '{name}': authoritative_source='{authoritative}' "
+                f"未在 sources_config 中启用")
+        if task.get("allow_fallback") is False:
+            if not (ok and sources.get(authoritative, {}).get("enabled", False)):
+                errors.append(
+                    f"task '{name}': allow_fallback=false 但 "
+                    f"authoritative_source='{authoritative}' 不可用（未启用或不支持该表）")
+
 
 def _lint_codes(task_name: str, source: str, codes, errors: List[str], warnings: List[str]):
     """校验 codes 字段：["ALL"] 或合法代码列表"""
