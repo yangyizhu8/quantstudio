@@ -350,6 +350,15 @@ def after_trading_end(context):
 - **运行**：`python main_gui.py` 或在 `python -m quantstudio.pipeline.daemon` 之外，用
   `StrategyRunner`/`BacktestEngine` 加载策略文件即可，详见 README「快速开始」。
 
+## 6.1 数据质量契约（W2-0.9，策略层铁律）
+
+策略生成与回测**只能依赖 canonical data pipeline 的最终已通过数据契约**，不得绕过：
+
+- **authority-locked 表（fin_indicator / stock_dividend）**：最终 `data_source` 集合必须恰好为 `{tushare}`（`allow_fallback=false`）。经 W2 全量回填 + authority reconciliation 后，旧 NULL/akshare 历史行已被清理。**策略代码不得在表内手工补救 NULL 或混源数据**——若发现 NULL/混源，说明数据契约未通过，应报告数据问题而非在策略层打补丁。
+- **不得在策略内手工 DELETE/UPDATE 修复数据**：数据修复必须经 canonical pipeline（staging → audit → promotion），策略层只读已通过审计的数据。
+- **依赖字段（np_yoy/or_yoy/tr_yoy/diluted_eps/cash_div_before_tax/cash_div_after_tax/div_proc）**：这些字段的存在与有效非零是回填有效性门控的结果（`baseline_delta_passed=true`，目标表零 error）。策略应假设它们已就绪；若回测报字段缺失/全 NULL，先查 staging audit 是否通过，而非改策略。
+- **div_proc 口径**：stock_dividend 仅保留 `div_proc='实施'` 的记录（adapter 过滤 + writer DDL 类型保护，确保 VARCHAR 值不被 numeric coercion 吞掉）。
+
 ---
 
 > **动态 ETF 池目标规则**：双端（QuantStudio + PTrade）策略必须使用用户在 R2/R2.5 明确确认的静态 ETF 白名单，两端共用同一列表，并禁止 `get_etf_list_local()`/`get_history_batch()`；仅 QuantStudio 本地策略才允许动态 API。`get_etf_list_local()` 只负责 ETF 分类、上市/退市时间、查询日期、历史数据存在性与代码格式，MA、动量、流动性、异常放量、TopN 等策略逻辑必须留在策略文件。
