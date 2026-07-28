@@ -167,9 +167,19 @@ class DuckDBReferenceDataProvider(ReferenceDataProvider):
         # 全市场 N+1（get_stock_info 循环逐码）。改为首次全量载入一次，
         # 后续内存过滤。query_security_metadata 本身不动（仍支持批量/无参）。
         self._security_meta_df = None
+        # 阶段 2.5：{bare: 子DataFrame} 字典（首次填充时构建），消除 get_security_info 内
+        # 逐只 df[df['code']==bare] 的 O(N) 布尔扫描（get_stock_info 全市场万次调用→新 N+1）。
+        self._security_meta_by_code = None
+        # 阶段 B(b)：{ms: datetime} memoization 缓存。pd.Timestamp(ms, unit='ms',
+        # tz='Asia/Shanghai') 的时区转换每次 ~1ms，get_security_info 万次调用累计 ~10s。
+        # 同一 listing_ms 在全市场多只跨天重复（同一股票 2 天各调一次）→ O(1) 查表。
+        # 纯 memoization：同 ms 同输出，返回类型/值/时区逐值不变。
+        self._ms_dt_cache: dict = {}
     def preload(self):
         if self._data._preload_listing is None:
             self._data._preload_listing = self._data.query_listing_dates()
+            # 阶段 2.5：_preload_listing 重新载入时同步失效其 O(1) 索引字典。
+            self._data._preload_listing_by_code = None
     def get_index_constituents(self, index_code, date=None):
         """指数成分 PIT 查询（F3）。
 
@@ -202,31 +212,38 @@ class DuckDBReferenceDataProvider(ReferenceDataProvider):
         # 列/行/类型字节级一致（SECURITY_METADATA_COLUMNS 固定列顺序）。
         if self._security_meta_df is None:
             self._security_meta_df = self._data.query_security_metadata()
-        meta = self._security_meta_df[self._security_meta_df['code'] == bare]
-        etf_row = None
-        if not meta.empty:
-            etf_rows = meta[meta['security_type'] == 'etf']
-            if not etf_rows.empty:
-                etf_row = etf_rows.iloc[0]
+            # 阶段 C：每个 code 在 stock_basic∪etf_basic 中唯一 1 行（实测 7650 个 code 全单行，
+            # 无跨 stock/etf 表重复）。故字典直接存 g.iloc[0].to_dict() 单行字典，消除后续
+            # get_security_info 内 meta[meta['security_type']=='etf'] 等的逐次单行子表布尔索引
+            # （pandas 在 10087 次调用上累计 ~10s）。g.iloc[0] 即该唯一行，与原 df[df['code']==bare]
+            # 取到的子表 .iloc[0] 字节级等价。groupby(sort=False) 仅保序，单行场景无影响。
+            self._security_meta_by_code = {
+                c: g.iloc[0].to_dict() for c, g in self._security_meta_df.groupby('code', sort=False)
+            }
+        # 阶段 C：字典直接存单行字典 → O(1) 取行，按 security_type 决定 ETF/股票分支，
+        # 不再对单行子表做 meta[meta['security_type']=='etf'] 布尔索引（等价 etf_rows.iloc[0]）。
+        row = self._security_meta_by_code.get(bare)
+        etf_row = row if (row is not None and row.get('security_type') == 'etf') else None
         if etf_row is not None:
             listing_ms = self._data.query_security_info_from_preload(bare)
+            # 阶段 2.5：复用 _preload_listing_by_code 字典（query_security_info_from_preload
+            # 首次调用时已惰性构建），消除原 preload[preload['code']==bare] 的逐只 O(N) 扫描。
+            # 等价原 `len(rows)>0 and rows.iloc[0]['listing_time']` 判定后才取 listing_source。
             listing_source = None
-            preload = self._data._preload_listing
-            if preload is not None and 'listing_source' in preload.columns:
-                rows = preload[preload['code'] == bare]
-                if len(rows) > 0 and rows.iloc[0]['listing_time']:
-                    listing_source = rows.iloc[0]['listing_source']
+            entry = (self._data._preload_listing_by_code.get(bare)
+                     if self._data._preload_listing_by_code is not None else None)
+            if entry is not None and entry[0]:
+                listing_source = entry[1]
             delist = etf_row.get('delist_date')
             info = {
                 'code': code,
-                'start_date': (pd.Timestamp(listing_ms, unit='ms', tz='Asia/Shanghai').to_pydatetime()
-                               if listing_ms else None),
+                'start_date': self._ms_to_pydatetime(listing_ms),
                 'display_name': (etf_row['name']
                                  if etf_row.get('name') is not None and pd.notna(etf_row.get('name'))
                                  else code),
                 'security_type': 'etf',
                 'exchange': etf_row.get('exchange'),
-                'end_date': (pd.Timestamp(delist, unit='ms', tz='Asia/Shanghai').to_pydatetime()
+                'end_date': (self._ms_to_pydatetime(delist)
                              if delist is not None and pd.notna(delist) else None),
                 'data_source': etf_row.get('data_source'),
             }
@@ -239,7 +256,7 @@ class DuckDBReferenceDataProvider(ReferenceDataProvider):
         if not listing_ms:
             return None
         return {'code': code,
-                'start_date': pd.Timestamp(listing_ms, unit='ms', tz='Asia/Shanghai').to_pydatetime(),
+                'start_date': self._ms_to_pydatetime(listing_ms),
                 'display_name': code,
                 'security_type': 'stock',
                 'exchange': None,
@@ -285,17 +302,38 @@ class DuckDBReferenceDataProvider(ReferenceDataProvider):
         date_ms = _start_ms(str(date)[:10])
         bare = str(code).split(".")[0]
         return self._data.query_stock_exrights(bare, date_ms)
+    def _ms_to_pydatetime(self, ms):
+        # 阶段 B(b)：memoize。pd.Timestamp(ms, unit='ms', tz='Asia/Shanghai') 的时区转换
+        # 每次 ~1ms，get_security_info 万次调用累计 ~10s。同一 listing_ms 在全市场多只
+        # 跨天重复（同一股票 2 天各调一次）→ O(1) 查表。纯 memoization：同 ms 同输出，
+        # 返回类型/值/时区逐值不变（下游依赖 pd.Timestamp/.date()）。
+        if ms is None:
+            return None
+        cache = self._ms_dt_cache
+        v = cache.get(ms)
+        if v is None:
+            v = pd.Timestamp(ms, unit='ms', tz='Asia/Shanghai').to_pydatetime()
+            cache[ms] = v
+        return v
     def get_stock_status(self, codes, date):
         source = self._data.query_daily_for_status(_start_ms(date))
+        # 阶段 B(a)：一次性将全市场 source 预构建为 {code: 字段字典}，循环内 O(1) 取行，
+        # 消除原 source[source['code']==code] 的 O(N²) 逐只布尔扫描（get_stock_status
+        # 全市场调用时 cumtime ~14.7s）。每个 code 在当日快照中唯一（日线一行一码），
+        # 故无需 iloc[0] 取首行语义；'code' 缺失回退空字典（等价原空匹配）。row.get(...)
+        # 对 dict / Series 等价。
+        if 'code' in source.columns:
+            source_by_code = source.set_index('code').to_dict('index')
+        else:
+            source_by_code = {}
         rows = []
         for code in codes:
-            matches = source[source['code'] == code] if 'code' in source.columns else pd.DataFrame()
-            if matches.empty:
+            row = source_by_code.get(code)
+            if row is None:
                 rows.append({'code': code, 'is_st': False, 'is_halt': False,
                              'is_delisting_risk': False, 'is_delisted': True,
                              'preClose': None, 'close': None})
                 continue
-            row = matches.iloc[0]
             rows.append({'code': code, 'is_st': bool(row.get('is_st_reliable', False)),
                          'is_st_reliable_source': row.get('is_st_reliable_source', 'none'),
                          'is_halt': bool(row.get('suspendFlag', 0) == 1 or row.get('volume', 0) == 0),

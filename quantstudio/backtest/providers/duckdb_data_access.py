@@ -68,6 +68,11 @@ class DuckDBDataAccess:
         self._preload_prev_ms: Optional[int] = None
         self._preload_float: Optional[pd.DataFrame] = None
         self._preload_listing: Optional[pd.DataFrame] = None
+        # 阶段 2.5：{code: (listing_time, listing_source)} 字典（首次查询惰性构建），
+        # 替代 query_security_info_from_preload / get_security_info ETF 分支内逐只
+        # _preload_listing[code==x] 的 O(N) 布尔扫描（get_security_info 全市场万次
+        # 调用→新 N+1）。取首行出现（等价原 iloc[0]）。
+        self._preload_listing_by_code: Optional[dict] = None
         self._preload_fs: Optional[pd.DataFrame] = None
         self._preload_fs_month: Optional[str] = None
         # 纯性能优化：日线快照内存缓存（query_daily_snapshot 结果）。
@@ -1610,10 +1615,24 @@ class DuckDBDataAccess:
         """
         if self._preload_listing is None:
             return None
-        row = self._preload_listing[self._preload_listing['code'] == code]
-        if len(row) > 0 and row.iloc[0]['listing_time']:
-            return row.iloc[0]['listing_time']
-        return None
+        # 阶段 2.5：惰性构建 {code: (listing_time, listing_source)} 字典（首行出现，等价
+        # 原 iloc[0]），替代逐只 _preload_listing[code==x] 的 O(N) 布尔扫描（get_security_info
+        # 全市场万次调用→新 N+1）。listing_source 一并缓存，供 get_security_info 的 ETF
+        # 分支复用，消除其第二处逐只扫描。字典构建仅一次。
+        if self._preload_listing_by_code is None:
+            has_ls = 'listing_source' in self._preload_listing.columns
+            self._preload_listing_by_code = {}
+            for _, r in self._preload_listing.iterrows():
+                c = r['code']
+                if c not in self._preload_listing_by_code:
+                    self._preload_listing_by_code[c] = (
+                        r['listing_time'],
+                        r['listing_source'] if has_ls else None,
+                    )
+        entry = self._preload_listing_by_code.get(code)
+        # 等价原 `if len(row) > 0 and row.iloc[0]['listing_time']` 的标量真值判定
+        # （含 NaN 透传、0 视为 None），下游 get_security_info 对结果再判 `if listing_ms`。
+        return entry[0] if entry and entry[0] else None
 
     # ===================== 交易日历查询 =====================
 

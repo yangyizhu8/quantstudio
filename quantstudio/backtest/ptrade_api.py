@@ -812,17 +812,29 @@ class PtradeAPI:
             if status is None or len(status) == 0:
                 return result
 
+            # 纯性能优化：将全市场 status 预构建为 {code: 字段字典}（一次性向量化），
+            # 循环内改为 O(1) 查找，消除原 status[status['code']==bare] 的 O(N²) 布尔扫描。
+            # 不可用 status.groupby('code') + g.iloc[0]：逐组 iloc 触发巨量 pandas 行抽取开销
+            # （6634 组×76 天≈50万次 iloc → 反而比原 O(N²) 布尔扫描更慢）。
+            # set_index('code').to_dict('index') 为单趟 C 级操作；每个 code 在 status 中唯一
+            # （日线快照一行一码 / get_stock_status 亦一行一码），无需 iloc[0] 取首行语义。
+            # 下游 r.get(...) 对 dict / Series 均等价；'code' 缺失时回退为空字典（等价原空匹配）。
+            if 'code' in status.columns:
+                status_by_code = status.set_index('code').to_dict('index')
+            else:
+                status_by_code = {}
+
             filtered = []
             for stock in result:
                 bare = bare_code(stock)
-                row = status[status['code'] == bare] if 'code' in status.columns else pd.DataFrame()
-                if len(row) == 0:
+                row = status_by_code.get(bare)
+                if row is None:
                     if "DELISTING" in filter_type:
                         continue
                     filtered.append(stock)
                     continue
 
-                r = row.iloc[0]
+                r = row
                 if "DELISTING" in filter_type and bool(r.get('is_delisted', False)): continue
                 if "HALT" in filter_type and bool(r.get('is_halt', False)): continue
                 if "ST" in filter_type and bool(
