@@ -241,6 +241,22 @@ def handle_data(context, data):
 
 **双端签名门控**：R1 若发现计划 API 未登记在 `ptrade-api-signatures.json`，必须标记 `MISSING_REUSABLE_API` 并停止；不得写成 `APPROXIMATION_REQUIRES_CONFIRMATION`。R4 对未登记的 required API 和源码顶层调用均 fail-closed BLOCK。
 
+### 5.x QFQ 重锚引擎（pipeline 级，非策略注入）
+
+> 完整语义见 [`docs/strategy_toolbox.md`](strategy_toolbox.md) 第 4 节与
+> [`docs/qfq-reanchor-minute-model-decision-20260727.md`](qfq-reanchor-minute-model-decision-20260727.md)。
+> **策略代码不得调用此引擎**；它是 pipeline 编排层 API。
+
+若 Agent 负责编排 QFQ 重锚任务（如写回测后处理 / 数据管线），必须遵守以下铁律：
+
+- **模型必须显式**：调用 `apply_reanchor_for_security(..., model="ratio"|"fresh_staged", model_reason=...)`，
+  引擎**不存在**「ratio BLOCK → fresh_staged 静默回退」路径，**禁止静默切换模型**。
+- **`fresh_staged` 必填 `model_reason`**（书面留痕为何切换），且必传 `fresh_minutes` + 审计三元组
+  （`fresh_source` / `fresh_capture_id` / `fresh_metadata_sha256`）。
+- **`tick_size` 按资产路由**：`STOCK=0.01` / `ETF=0.001`，不得写死 0.01。
+- **`fresh_minutes` 须过交易日历校验**：每个自然日 `CalendarService.is_trading_day`，周末/未知日整券 BLOCK。
+- 失败事件（blocked/rolled_back/failed/committed）均带 `model` / `model_reason` / `model_audit` 审计，绝不静默遗漏。
+
 ---
 
 ## 6. 指标计算函数（防未来函数）

@@ -75,6 +75,9 @@ class PreIngestValidator:
         与原 implementation 完全一致（由 tests/test_validator_behavior.py 锁定）。
         """
         schema = self.schemas[table]
+        # 入口防御：确保 DataFrame 使用连续 RangeIndex，消除外部非连续 index 导致的
+        # .iloc[pos] 越界问题（如 index [5,9] 在 len=2 时 .iloc[9] 触发 IndexError）。
+        df = df.reset_index(drop=True)
         n = len(df)
         # 用 numpy bool 数组（比 pandas Series 标量赋值快得多）
         reject_mask = np.zeros(n, dtype=bool)
@@ -359,23 +362,22 @@ class PreIngestValidator:
         pk_cols = [c for c in schema.get("primary_key", []) if c in df.columns]
         if pk_cols:
             before = len(df)
-            # 财务报表特殊处理：主键含 ann_date 时，同一报告期(code,end_date)可能有多条
-            # 不同公告日的记录（初版 + 重述/更正版）。保留 ann_date 最新的一条，
-            # 即最终修正版，避免财务因子用到过时初版（如 000159 重述差7倍案例）。
-            # ann_date 为空时（未公告）保留原序最后一条，不参与 ann_date 比较。
-            has_fin_ann_date = "ann_date" in pk_cols and "ann_date" in df.columns
-            if has_fin_ann_date:
-                fin_pk = [c for c in pk_cols if c != "ann_date"]  # [code, end_date]
-                if fin_pk:
-                    df["_ann_for_rank"] = pd.to_numeric(df["ann_date"], errors="coerce")
-                    # 同 fin_pk 组内，ann_date 最大(含空)的排第一；空 ann_date 退回保留原最后一条
-                    df = (
-                        df.sort_values("_ann_for_rank", ascending=False, na_position="last")
-                          .drop_duplicates(subset=fin_pk, keep="first")
-                          .drop(columns="_ann_for_rank")
-                    )
-            # 主键去重（同 ann_date 的 flag=0/1 重复对在此被合并）
-            df = df.drop_duplicates(subset=pk_cols, keep="last")
+            # 主键去重（PIT 语义，2026-07-27 用户批示）：
+            # - 不同 ann_date 的报告版本**全部保留**（财务表完整主键已含
+            #   ann_date：(code,end_date,ann_date)）——下游 as-of 查询在两次
+            #   公告之间见初版、之后见重述版；
+            # - 仅对**完全相同完整主键**的重复行去重：
+            #   * 有 update_flag 列 → 同主键优先保留 update_flag=1（最终修正
+            #     版）；平局用稳定排序 + 原行序（确定性）；
+            #   * 无 update_flag 列 → 确定性规则：保留原始输入顺序的最后一条。
+            # 禁止回退到 max(ann_date) 只保留最新版（丢失 PIT 历史）。
+            if "update_flag" in df.columns:
+                upd_rank = pd.to_numeric(df["update_flag"], errors="coerce").fillna(-1)
+                order = upd_rank.sort_values(ascending=False, kind="stable").index
+                df = df.loc[order].drop_duplicates(subset=pk_cols, keep="first")
+                df = df.loc[df.index.sort_values()]   # 恢复原行序（确定性输出）
+            else:
+                df = df.drop_duplicates(subset=pk_cols, keep="last")
             fixed_count += before - len(df)
             # 重建 mask（去重后行数变化）：用 df.index 反查原位置
             # drop_duplicates 默认 keep='last'，保留的行 index 来自原 df

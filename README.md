@@ -144,6 +144,65 @@ python -m quantstudio.backtest.run_ptrade_strategy strategy.py 2026-01-01 2026-0
 
 ---
 
+## QFQ 重锚引擎（fresh_staged / ratio 双模型）
+
+> 模块：`quantstudio.pipeline.qfq_reanchor_engine`。负责把日线/分钟前复权（QFQ）价格
+> 从「比例锚（ratio）」修正升级到「fresh xtquant 逐值写入（fresh_staged，B-1，2026-07-27 批准）」。
+> 本文档仅记语义边界，完整 API 见 [`docs/strategy_toolbox.md`](docs/strategy_toolbox.md) 第 4 节。
+
+### 双模型选择语义（铁律）
+
+`apply_reanchor_for_security(conn, *, asset_type, code, fresh_daily, calendar, ...,
+model="ratio", model_reason=None, fresh_minutes=None, fresh_source=None,
+fresh_capture_id=None, fresh_metadata_sha256=None)`：
+
+- **`model` 必须显式传入**，引擎内**不存在**「ratio BLOCK → fresh_staged 静默回退」路径。
+- **`ratio`**（默认）：方法 B + 方法 A 黄金抽验，原行为逐位不变；**禁止**传 `fresh_minutes`（防呆）。
+- **`fresh_staged`**：fresh xtquant 分钟前复权逐值写入。必须提供 `fresh_minutes`
+  （列 = `code/time/freq?` + OHLC raw + 四 `*_front`；多 freq 须含 `freq` 列），且
+  **`model_reason` 必填**（写入事件审计，留痕为何切换模型）。
+- 切换模型必须由调用方显式改写 `model` 并给出书面 `model_reason`，**禁止静默切换**。
+
+### 事务与四态事件审计
+
+单证券调用在一个显式连接上完成，成功与失败路径审计如下（全部带 `model` /
+`model_reason` / `model_audit` 键，含 `fresh_source`、`fresh_capture_id`、
+`metadata_sha256`、`tick_size`、`freqs`、`minute_coverage` / precheck 摘要）：
+
+| status | 含义 | 事务 |
+|--------|------|------|
+| `committed` | 成功 | anchor 推进 + 价格修正 **同一事务** |
+| `blocked` | 方法 B/A 或数据契约失败 | 回滚 + 独立短事务 `blocked` 事件 |
+| `rolled_back` | postcheck 失败 | 回滚 + 独立短事务 `rolled_back` 事件 |
+| `failed` | 其它异常 | 记录 `failed` 事件后**重新抛出** |
+
+三种失败路径都**绝不推进 anchor**，绝不污染已提交数据。
+
+### 纵深防御 postcheck（COMMIT 前硬门禁）
+
+`minute_staged_match`（精确）> `scale_consistency`（容差）> `minute_tick_error`
+（≤1 tick）> `minute_raw_match`（eps=1e-9 最精确）。其中：
+
+- `minute_raw_match` 先显式拦截 raw 一侧 `IS NULL OR NOT isfinite() OR <=0`
+  （SQL 三值逻辑陷阱：`ABS(NULL-x)>eps` 结果为 NULL，WHERE 按非真过滤会**静默漏检**），
+  再比逐 bar abs diff；`n_invalid>0` 直接抛 `minute_raw_match`。
+- `minute_tick_error` 同样先拦截 NULL/NaN/Inf/<=0，再比 `ABS(diff) <= tick_size`。
+
+### tick_size 资产路由（第六轮阻断 4）
+
+`tick_size` **不能写死 0.01**，须按资产/市场路由：`resolve_tick_size(asset_type, tol)`
+= `STOCK=0.01` / `ETF=0.001`；显式 `tol.tick_size` 可覆盖；未知资产抛异常。
+事件 `model_audit.tick_size` 记录实际使用值。
+
+### 交易日历校验（第六轮阻断 2）
+
+`stage_fresh_minutes` 对**每个**自然日调用 `CalendarService.is_trading_day` 校验：
+周末或非开市日整券 BLOCK（`fresh_minutes_non_trading_day`）；日历 provider 未覆盖的
+未知日 BLOCK（`fresh_minutes_unknown_day`）。钟面时刻合法（如周六 09:31）≠ 自然日开市，
+必须逐日校验。`calendar=None` 直接抛 `ValueError`。
+
+---
+
 ## Strategy Compiler 0.3.0-mvp — 策略编译器
 
 > **⚠ 完善中（请勿使用）**：该模块仍在开发中，**暂时不要用于策略生成**，短期内会开放。待完善完成后会移除本提示。

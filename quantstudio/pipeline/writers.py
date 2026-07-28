@@ -566,6 +566,169 @@ class DuckDBWriter(BaseWriter):
             finally:
                 conn.close()
 
+    # ------------------------------------------------------------------
+    # 事务感知内部方法（QFQ 重锚编排专用）
+    # ------------------------------------------------------------------
+    # 说明：以下 *_on_conn 方法在**调用方提供的连接与事务**内执行，
+    #   - 不获取 self._conn_lock（连接由调用方持有并串行化）；
+    #   - 不 commit / 不 rollback / 不 close（事务边界由调用方掌控）。
+    # 用途：QFQ 重锚编排需将「价格修正 UPDATE + anchor 状态更新 + 表级水位推进 +
+    #   被过滤证券欠账」放入**同一 DuckDB 事务**保证原子性（设计 v3 §4.5 / §8）。
+    # 公共 advance_watermark 行为保持不变（自开短连接自动提交），本方法为其事务版补充。
+
+    def _advance_watermark_on_conn(self, conn, source: str, table: str, freq: str,
+                                   last_date, batch_id: str) -> None:
+        """在给定连接/事务内推进表级水位（PK source,table_name,freq）。不 commit。
+
+        语义与公共 ``advance_watermark`` 完全一致（同一 INSERT ... ON CONFLICT 形态、
+        同一 updated_at 口径），仅事务边界交由调用方。
+        """
+        now = datetime.now().isoformat()
+        conn.execute(
+            "INSERT INTO source_watermark VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT (source, table_name, freq) DO UPDATE SET "
+            "last_date=EXCLUDED.last_date, last_batch_id=EXCLUDED.last_batch_id, "
+            "updated_at=EXCLUDED.updated_at",
+            [source, table, freq, last_date, batch_id, now])
+
+    def _upsert_pending_backfill_on_conn(self, conn, *, asset_type: str, code: str,
+                                         table_name: str, freq: str,
+                                         range_start, range_end,
+                                         reason: str, anchor_version=None,
+                                         status: str = "pending",
+                                         now: Optional[str] = None,
+                                         reopen: bool = False) -> None:
+        """在给定连接/事务内登记「被过滤证券」的精确欠账区间（设计 v4 §1.1）。不 commit。
+
+        幂等语义（阻断 4 修复）：
+        - 同 PK 已 ``resolved`` 且未显式 ``reopen`` → 保持 resolved，**不静默重开**（幂等）。
+        - 显式 ``reopen=True`` → ``status='pending'``、``resolved_at=NULL``、
+          ``last_error=NULL``、``attempt_count=0``（重新进入欠账）。
+
+        输入校验（阻断 4）：``range_start <= range_end``；``asset_type`` 合法；
+        ``table_name`` 属四价格表白名单；``freq`` 非空；``status`` 属允许集合。
+        任一不满足抛 ``ValueError``。
+
+        热路径（可靠性 阻断 5）：假定 schema 已由编排初始化，不再每条 upsert 前重复发 DDL；
+        表不存在直接失败，让启动初始化问题显性暴露。
+        """
+        from quantstudio.pipeline.qfq_reanchor_schema import (
+            _normalize_asset_type, _normalize_code, _validate_epoch_ms,
+            PRICE_TABLES, BACKFILL_STATUS, ASSET_TABLE_MAP,
+        )
+        from quantstudio.pipeline.qfq_calendar import _norm_freq
+
+        # —— 输入校验（阻断 4 + 阻断 3 关联契约）——
+        # asset_type：归一化（"stock"→"STOCK"），拒绝非法值
+        asset_type = _normalize_asset_type(asset_type)
+        # code：canonical 裸 6 位码（复用 schema 单一规则，不复制）
+        code = _normalize_code(code)
+        # table_name：四价格表白名单
+        if table_name not in PRICE_TABLES:
+            raise ValueError(
+                f"非法 table_name: {table_name!r}（仅四价格表 {sorted(PRICE_TABLES)}）")
+        # asset_type ↔ table_name 关联契约
+        if table_name not in ASSET_TABLE_MAP.get(asset_type, frozenset()):
+            raise ValueError(
+                f"asset_type={asset_type} 与 table_name={table_name!r} 不匹配"
+                f"（STOCK→stock_daily/stock_minutes；ETF→etf_daily/etf_minutes）")
+        # freq：非空 + 与 table_name 关联（daily↔daily，minutes↔1min）
+        if not freq or not str(freq).strip():
+            raise ValueError("freq 不能为空")
+        freq = str(freq).strip()
+        kind, n = _norm_freq(freq)
+        if kind == "unknown":
+            raise ValueError(f"非法 freq: {freq!r}")
+        if table_name.endswith("_daily") and kind != "daily":
+            raise ValueError(
+                f"table_name={table_name!r} 为日线表，freq 必须为 daily，收到 {freq!r}")
+        if table_name.endswith("_minutes") and (kind != "minute" or n != 1):
+            raise ValueError(
+                f"table_name={table_name!r} 为分钟表，freq 必须为 1min（batch1），收到 {freq!r}")
+        # 阻断 2：freq 规范化为 storage canonical（别名 1m/1d 必须写入 1min/daily）。
+        # 输入别名可兼容，但存储值唯一规范，否则后续 WHERE freq=? / ON CONFLICT 无法命中
+        # canonical，造成欠账无法正确补拉或 readback。
+        if kind == "daily":
+            freq_canonical = "daily"
+        elif kind == "minute" and n == 1:
+            freq_canonical = "1min"
+        else:
+            raise NotImplementedError(
+                f"freq={freq!r} 暂不支持（batch1 仅 daily/1min）")
+        # range_start/range_end：有效 epoch-ms（共享 schema 校验，拒绝非法/越界）
+        try:
+            rs = _validate_epoch_ms(range_start)
+            re_ = _validate_epoch_ms(range_end)
+        except ValueError as e:
+            raise ValueError(f"range_start/range_end 非法: {e}")
+        if rs > re_:
+            raise ValueError(f"range_start 必须 <= range_end: {rs} > {re_}")
+        # reason：非空字符串
+        if not isinstance(reason, str):
+            raise ValueError(f"reason 必须为非空字符串: {reason!r}")
+        reason = reason.strip()
+        if not reason:
+            raise ValueError("reason 不能为空")
+        # reopen：严格 bool（避免 "false"/0 被当真值）
+        if not isinstance(reopen, bool):
+            raise ValueError(f"reopen 必须为 bool: {reopen!r}")
+        # status：允许集合
+        if status not in BACKFILL_STATUS:
+            raise ValueError(
+                f"非法 status: {status!r}（仅 {sorted(BACKFILL_STATUS)}）")
+
+        ts = now or datetime.now().isoformat()
+
+        # —— 条件重开：resolved 且未显式 reopen → 保持 resolved，不重开 ——
+        row = conn.execute(
+            "SELECT status, resolved_at, last_error, attempt_count FROM qfq_pending_backfill "
+            "WHERE asset_type=? AND code=? AND table_name=? AND freq=? "
+            "AND range_start=? AND range_end=?",
+            [asset_type, code, table_name, freq_canonical, rs, re_]).fetchone()
+
+        # —— 阻断 3：普通 upsert（欠账登记）禁止创建/变更终态或处理中态 ——
+        # resolved / in_progress 必须由专用状态机方法（如 _resolve_backfill_on_conn /
+        # _mark_backfill_in_progress_on_conn）处理。普通 upsert 仅允许非终态
+        # {pending, blocked, retryable_failed}；非终态 row 的普通 upsert 仍按既有
+        # 幂等/重开逻辑处理（不在此拦截）。
+        if status in ("resolved", "in_progress"):
+            raise ValueError(
+                f"status={status!r} 为终态/处理中态，禁止通过普通 upsert 创建或变更；"
+                f"必须使用专用状态机方法（如 _resolve_backfill_on_conn）。"
+                f"普通 upsert 仅允许 {sorted(BACKFILL_STATUS - {'resolved', 'in_progress'})}")
+        if row is not None and row[0] == "resolved" and not reopen:
+            return  # 幂等：保持 resolved，不静默重开
+
+        # —— 决定保留/清空的 resolved 上下文 ——
+        if row is not None and reopen:
+            resolved_at_val = None
+            last_error_val = None
+            attempt_count_val = 0
+        elif row is not None:
+            # 非重开：保留既有 resolved_at / last_error / attempt_count
+            resolved_at_val = row[1]
+            last_error_val = row[2]
+            attempt_count_val = row[3] if row[3] is not None else 0
+        else:
+            resolved_at_val = None
+            last_error_val = None
+            attempt_count_val = 0
+        upsert_status = "pending" if reopen else status
+
+        conn.execute(
+            "INSERT INTO qfq_pending_backfill "
+            "(asset_type, code, table_name, freq, range_start, range_end, reason, "
+            " anchor_version, status, attempt_count, last_error, created_at, updated_at, resolved_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT (asset_type, code, table_name, freq, range_start, range_end) "
+            "DO UPDATE SET reason=EXCLUDED.reason, anchor_version=EXCLUDED.anchor_version, "
+            "status=EXCLUDED.status, updated_at=EXCLUDED.updated_at, "
+            "resolved_at=EXCLUDED.resolved_at, last_error=EXCLUDED.last_error, "
+            "attempt_count=EXCLUDED.attempt_count",
+            [asset_type, code, table_name, freq_canonical, rs, re_,
+             reason, anchor_version, upsert_status, attempt_count_val,
+             last_error_val, ts, ts, resolved_at_val])
+
     @staticmethod
     def _table_columns(table: str) -> List[str]:
         """返回表的列名（与 DDL 顺序一致，统一口径 v2.0）"""
