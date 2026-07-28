@@ -113,37 +113,118 @@ def test_unit_check_still_active_for_yuan_unit():
 
 
 # ---------------------------------------------------------------------------
-# 测试 2：财务重述保留 ann_date 最新版（防重述丢失回归）
+# 测试 2：财务去重 PIT 语义（2026-07-27 批示：不同 ann_date 版本全部保留，
+# 仅对完全相同完整主键 (code,end_date,ann_date) 去重；禁止回退 max(ann_date)）
 # ---------------------------------------------------------------------------
-def test_financial_dedup_keeps_latest_ann_date():
-    """同一 (code,end_date) 多版本时，保留 ann_date 最大的最新修正版"""
-    schemas = {
-        "balance_statement": {
-            "primary_key": ["code", "end_date", "ann_date"],
-            "time_key": "end_date",
-            "available_at_field": "ann_date",
-            "columns": {
-                "code": {"type": "str", "required": True, "regex": r"^\d{6}$"},
-                "end_date": {"type": "int", "required": True},
-                "ann_date": {"type": "int", "required": True},
-                "total_assets": {"type": "float", "required": False},
-            },
-        }
+
+_FIN_SCHEMAS = {
+    "balance_statement": {
+        "primary_key": ["code", "end_date", "ann_date"],
+        "time_key": "end_date",
+        "available_at_field": "ann_date",
+        "columns": {
+            "code": {"type": "str", "required": True, "regex": r"^\d{6}$"},
+            "end_date": {"type": "int", "required": True},
+            "ann_date": {"type": "int", "required": True},
+            "total_assets": {"type": "float", "required": False},
+        },
     }
-    v = PreIngestValidator(schemas)
-    # 000159 重述案例：初版 5.2e8 + 重述 3.69e9（差7倍）+ flag 重复对
+}
+
+_END_2021 = 1640908800000        # 2021-12-31 报告期
+_ANN_V1 = 1648012800000          # 初版公告 2022-03-23
+_ANN_V2 = 1649616000000          # 重述公告 2022-04-11
+
+
+def test_financial_dedup_keeps_latest_ann_date():
+    """（契约已更新为 PIT 语义）000159 重述案例：初版与重述版**都保留**，
+    仅同 ann_date 的完全重复行去掉一条——重述历史不丢、初版也不丢。"""
+    v = PreIngestValidator(_FIN_SCHEMAS)
     df = pd.DataFrame([
-        {"code": "000159", "end_date": 1640908800000, "ann_date": 1648012800000, "total_assets": 5.2e8},
-        {"code": "000159", "end_date": 1640908800000, "ann_date": 1649616000000, "total_assets": 3.69e9},
-        {"code": "000159", "end_date": 1640908800000, "ann_date": 1649616000000, "total_assets": 3.69e9},
+        {"code": "000159", "end_date": _END_2021, "ann_date": _ANN_V1, "total_assets": 5.2e8},
+        {"code": "000159", "end_date": _END_2021, "ann_date": _ANN_V2, "total_assets": 3.69e9},
+        {"code": "000159", "end_date": _END_2021, "ann_date": _ANN_V2, "total_assets": 3.69e9},
         {"code": "600000", "end_date": 1703980800000, "ann_date": 1711641600000, "total_assets": 9.46e12},
     ])
     res = v.validate(df, "balance_statement", "test_batch", "tushare")
     p = res.passed_df
-    r159 = p[p["code"] == "000159"]
-    assert len(r159) == 1, f"000159 应只保留1条，实际 {len(r159)}"
-    assert float(r159["total_assets"].iloc[0]) == 3.69e9, (
-        f"应保留重述版 3.69e9，实际 {r159['total_assets'].iloc[0]}")
+    r159 = p[p["code"] == "000159"].sort_values("ann_date")
+    assert len(r159) == 2, f"000159 应保留初版+重述版共2条，实际 {len(r159)}"
+    assert list(r159["ann_date"]) == [_ANN_V1, _ANN_V2]
+    assert list(r159["total_assets"]) == [5.2e8, 3.69e9]
+
+
+def test_financial_dedup_retains_all_ann_date_versions():
+    """PIT 契约 1：同一 (code,end_date) 三个不同 ann_date 版本全部保留。"""
+    v = PreIngestValidator(_FIN_SCHEMAS)
+    anns = [_ANN_V1, _ANN_V2, _ANN_V2 + 86400000 * 30]
+    df = pd.DataFrame([
+        {"code": "000159", "end_date": _END_2021, "ann_date": a,
+         "total_assets": 1e9 + i} for i, a in enumerate(anns)])
+    res = v.validate(df, "balance_statement", "test_batch", "tushare")
+    p = res.passed_df.sort_values("ann_date")
+    assert len(p) == 3
+    assert list(p["ann_date"]) == anns
+    assert res.fixed_count == 0                  # 无任何行被当作重复修剪
+
+
+def test_financial_dedup_same_ann_date_keeps_one():
+    """PIT 契约 2：完全相同 (code,end_date,ann_date) 的重复行仅保留一条。"""
+    v = PreIngestValidator(_FIN_SCHEMAS)
+    df = pd.DataFrame([
+        {"code": "000159", "end_date": _END_2021, "ann_date": _ANN_V1, "total_assets": 5.2e8},
+        {"code": "000159", "end_date": _END_2021, "ann_date": _ANN_V1, "total_assets": 5.2e8},
+        {"code": "000159", "end_date": _END_2021, "ann_date": _ANN_V1, "total_assets": 5.3e8},
+    ])
+    res = v.validate(df, "balance_statement", "test_batch", "tushare")
+    p = res.passed_df
+    assert len(p) == 1
+    # 无 update_flag → 确定性规则：保留原始输入顺序的最后一条
+    assert float(p["total_assets"].iloc[0]) == 5.3e8
+    assert res.fixed_count == 2
+
+
+def test_financial_dedup_update_flag_priority():
+    """PIT 契约 3：同完整主键重复且带 update_flag → 优先保留 update_flag=1。"""
+    v = PreIngestValidator(_FIN_SCHEMAS)
+    df = pd.DataFrame([
+        # update_flag=1（最终修正版）故意放前面：不靠 keep='last' 的位置巧合
+        {"code": "000159", "end_date": _END_2021, "ann_date": _ANN_V1,
+         "total_assets": 5.25e8, "update_flag": 1},
+        {"code": "000159", "end_date": _END_2021, "ann_date": _ANN_V1,
+         "total_assets": 5.2e8, "update_flag": 0},
+        # 不同 ann_date 版本不受 update_flag 去重影响，仍保留
+        {"code": "000159", "end_date": _END_2021, "ann_date": _ANN_V2,
+         "total_assets": 3.69e9, "update_flag": 0},
+    ])
+    res = v.validate(df, "balance_statement", "test_batch", "tushare")
+    p = res.passed_df.sort_values("ann_date")
+    assert len(p) == 2
+    v1 = p[p["ann_date"] == _ANN_V1]
+    assert float(v1["total_assets"].iloc[0]) == 5.25e8   # flag=1 优先
+    assert int(v1["update_flag"].iloc[0]) == 1
+    assert float(p[p["ann_date"] == _ANN_V2]["total_assets"].iloc[0]) == 3.69e9
+
+
+def test_financial_pit_asof_sees_correct_version():
+    """PIT 契约 4：as-of 日期在两次公告之间 → 只见初版；之后 → 见重述版。
+    （在 validator 保留的 passed_df 上执行下游标准 as-of 选择规则。）"""
+    v = PreIngestValidator(_FIN_SCHEMAS)
+    df = pd.DataFrame([
+        {"code": "000159", "end_date": _END_2021, "ann_date": _ANN_V1, "total_assets": 5.2e8},
+        {"code": "000159", "end_date": _END_2021, "ann_date": _ANN_V2, "total_assets": 3.69e9},
+    ])
+    p = v.validate(df, "balance_statement", "test_batch", "tushare").passed_df
+
+    def asof(ts_ms: int) -> float:
+        vis = p[(p["code"] == "000159") & (p["ann_date"] <= ts_ms)]
+        assert len(vis) > 0, "as-of 时点应至少可见一个已公告版本"
+        return float(vis.sort_values("ann_date")["total_assets"].iloc[-1])
+
+    between = _ANN_V1 + 86400000 * 3            # 两次公告之间
+    after = _ANN_V2 + 86400000 * 3              # 重述公告之后
+    assert asof(between) == 5.2e8, "两次公告之间必须只见初版（防未来函数）"
+    assert asof(after) == 3.69e9, "重述公告之后必须见重述版"
 
 
 # ---------------------------------------------------------------------------

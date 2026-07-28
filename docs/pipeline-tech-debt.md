@@ -91,7 +91,7 @@
 | # | 问题 | 修复 | 测试 |
 |---|------|------|------|
 | 1 | UnitCheck 误判指数（硬编码跳过） | 读 schema.columns.close.unit | test_unit_check_skips_non_yuan_unit |
-| 2 | 财务重述版本丢失（keep="last"） | 主键含 ann_date 时按 ann_date 降序 keep first | test_financial_dedup_keeps_latest_ann_date |
+| 2 | 财务重述版本丢失（keep="last" 吞掉重述版） | PIT 去重：不同 ann_date 版本**全部保留**；仅对完全相同 `(code,end_date,ann_date)` 完整主键去重；有 `update_flag` 时同完整主键优先 `update_flag=1`，无则确定性去重 | test_financial_dedup_keeps_latest_ann_date（已改为断言两版都保留）+ 新增 4 项见下 |
 | 3 | writer 返回提交行数非新增行数 | WriteResult 携带 .new/.updated | test_writer_upsert_distinguishes_new_and_updated |
 | 4 | 调试配置残留（kline_1m 600000.SH） | config_lint 启动校验 + 改 ALL | test_config_lint_catches_debug_residue |
 | 5 | RateLimiter 双时间戳（限流减半） | 删除重复 append | test_rate_limiter_single_timestamp_per_acquire |
@@ -100,3 +100,45 @@
 | 8 | PctChgRange 硬编码 22% | 读 pctchg_tolerance_pct + 指数跳过 | （含在 test_unit_check_skips_non_yuan_unit） |
 | 9 | TD-1 PER_DATE 绕过限流 | _api 封装走 _retry_with_backoff | test_per_date_api_calls_go_through_rate_limiter |
 | 10 | TD-2 PER_DATE isST 格式不匹配 | split('.')[0] 比较裸码 | test_per_date_isst_matches_bare_code |
+
+---
+
+## 2026-07-27 validator PIT 去重语义修订（独立框架行为变更，不与 QFQ B-1 捆绑）
+
+> **重要**：本变更是 validator 框架的通用去重语义修正，**独立于 QFQ 重锚 B-1**，单独回归、单独汇报。
+
+### 问题
+
+旧实现 `keep="last"`（或按 `ann_date` 降序 `keep="first"`）会**吞掉财务重述版**：同一
+`(code, end_date)` 下不同 `ann_date` 的公告版本只留一份，历史重述轨迹丢失，as-of 查询看不到
+初版与重述版的差异，违反 PIT（point-in-time）语义。
+
+### 修复（validator.py L361-389）
+
+```python
+if "update_flag" in df.columns:
+    upd_rank = pd.to_numeric(df["update_flag"], errors="coerce").fillna(-1)
+    order = upd_rank.sort_values(ascending=False, kind="stable").index
+    df = df.loc[order].drop_duplicates(subset=pk_cols, keep="first")
+    df = df.loc[df.index.sort_values()]   # 恢复原行序（确定性输出）
+else:
+    df = df.drop_duplicates(subset=pk_cols, keep="last")
+```
+
+**正确 PIT 语义**：
+
+1. **不同 `ann_date` 版本全部保留**（不回退到 `max(ann_date)`，不吞重述版）。
+2. 仅对**完全相同** `(code, end_date, ann_date)` 完整主键去重。
+3. 有 `update_flag` 时，同完整主键优先 `update_flag=1`；无 `update_flag` 走确定性重复去重。
+4. 输出恢复原始行序，保证确定性。
+
+适用表（主键含 `ann_date`）：`balance_statement` / `fin_indicator` / `income_statement` /
+`cashflow_statement` / `stock_float_share`；其中 `fin_indicator` 含 `update_flag` 列。
+
+### 测试（tests/test_pipeline_guardrails.py，共 5 项，18 passed）
+
+- `test_financial_dedup_keeps_latest_ann_date`（**契约更新**）：000159 初版+重述版**都保留**，len==2，ann_date 顺序 `[v1, v2]`。
+- `test_financial_dedup_retains_all_ann_date_versions`：3 个不同 ann_date 全保留，`fixed_count==0`。
+- `test_financial_dedup_same_ann_date_keeps_one`：同完整主键仅留 1 条（无 flag 保留最后一条 5.3e8）。
+- `test_financial_dedup_update_flag_priority`：`flag=1` 优先（5.25e8）；不同 ann_date 仍保留。
+- `test_financial_pit_asof_sees_correct_version`：as-of 两次公告之间见初版 5.2e8，之后见重述版 3.69e9。
