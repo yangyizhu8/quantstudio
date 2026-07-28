@@ -8,6 +8,7 @@ from unrelated 4xx/8xx NEEQ or delisted-board codes.
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -22,10 +23,12 @@ except (OSError, ValueError, TypeError):  # fail closed: never classify all 4xx/
     BSE_LEGACY_TO_920 = {}
 
 
+@lru_cache(maxsize=65536)
 def bare_code(code) -> str:
     return str(code).strip().upper().split(".")[0]
 
 
+@lru_cache(maxsize=65536)
 def _suffix(code) -> str:
     text = str(code).strip().upper()
     return text.split(".", 1)[1] if "." in text else ""
@@ -42,6 +45,7 @@ def is_st_stock(code: str, name: Optional[str] = None) -> bool:
     return any(upper.startswith(prefix) for prefix in _ST_PREFIXES)
 
 
+@lru_cache(maxsize=65536)
 def is_bse_market(code: str) -> bool:
     """Return BSE equity membership without blanket 4xx/8xx inference."""
     bare = bare_code(code)
@@ -109,6 +113,7 @@ def classify_security(code: str) -> str:
     return "unknown"
 
 
+@lru_cache(maxsize=65536)
 def exchange(code: str) -> str:
     """Return SH/SZ/BJ, with exact BSE membership overriding a wrong alias."""
     bare = bare_code(code)
@@ -138,6 +143,7 @@ def exchange_of(code: str) -> str:
     return exchange(code)
 
 
+@lru_cache(maxsize=65536)
 def normalize_security_code(code: str, target: Literal["qmt", "ptrade", "bare"] = "qmt") -> str:
     bare = bare_code(code)
     if target not in {"qmt", "ptrade", "bare"}:

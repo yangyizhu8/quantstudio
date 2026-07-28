@@ -48,9 +48,9 @@ def _build_code_index(df):
     idx = {}
     try:
         col = df['code']
-        for i in range(len(col)):
-            c = col.iloc[i]
-            idx.setdefault(c, i)  # 重复 code 保留首次出现 iloc，对齐 .iloc[0]
+        vals = col.tolist()  # 一次性转 Python list，避免逐元素 pandas 标量访问（O(行数)→O(1) 字典构建）
+        for i in range(len(vals)):
+            idx.setdefault(vals[i], i)  # 重复 code 保留首次出现 iloc，对齐 .iloc[0]
     except Exception:
         return None
     return idx

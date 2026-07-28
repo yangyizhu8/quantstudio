@@ -38,14 +38,19 @@ class DuckDBMarketDataProvider(MarketDataProvider):
         """PR3: 后置注入 calendar（registry 组装时 market 先建，calendar 后建）。"""
         self._calendar = calendar_provider
     def preload(self, start_date, end_date):
-        # 纯性能优化（2026-07-25）：停止创建 _preload_daily 全市场内存缓存。
-        # 当前生产取数路径 get_history/get_history_batch 走 get_bars_by_count()
-        # → query_bars_by_count_multi_table()，不读取 _preload_daily，也不调用
-        # get_history_from_preload()；估值 PIT 与上市日期分别由 FundamentalProvider /
-        # ReferenceProvider 独立管理。故取消该无效内存分配，不改变数据/语义/API 契约。
-        # 旧方法 DuckDBDataAccess.preload_daily_bars / get_history_from_preload 保留为
-        # 未调用兼容代码，不删除。
-        return
+        """回测前批量预加载数据（纯性能优化钩子）。
+
+        由引擎在日线循环前以全期 [start_date, end_date] 调用一次，或由 ptrade_api 的
+        每日 attach_day(prev_date, prev_date) 触发。实现幂等：全期预取完成后后续调用
+        直接跳过，避免重复全表扫描。语义不变：query_daily_snapshot 命中内存后返回与
+        单日查询字节级一致的结果。
+        """
+        # 归一化日期参数：兼容 'YYYY-MM-DD' 字符串、naive/tz-aware Timestamp，
+        # 避免 _start_ms 对 tz-aware Timestamp 直接传 tz 报错导致预取被静默跳过。
+        self._data.preload_daily_snapshots(
+            _start_ms(str(start_date)[:10]),
+            _end_ms(str(end_date)[:10]),
+        )
     def get_daily_snapshot(self, date, fields=None):
         return _fields(self._data.query_daily_snapshot(_start_ms(date)), fields)
     def get_bars(self, codes, start_date, end_date, fields=None, fq='pre', frequency="1d",

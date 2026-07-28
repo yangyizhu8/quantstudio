@@ -36,6 +36,18 @@ def _require_valid_identifier(name: str, where: str) -> str:
 
 logger = logging.getLogger(__name__)
 
+# 日线快照前复权 OHLC / preClose 缩放口径（方案A，2026-07-25 决策），供 query_daily_snapshot
+# 与 preload_daily_snapshots 共用，保证 per-day 查询与全期预取结果字节级一致。
+_ADJ_OHLC_SQL = """
+               COALESCE(open_front, open)   AS open,
+               COALESCE(high_front, high)   AS high,
+               COALESCE(low_front, low)     AS low,
+               COALESCE(close_front, close) AS close,"""
+_ADJ_PRECLOSE_SQL = """
+               CASE WHEN close > 0 AND close_front IS NOT NULL AND close_front > 0
+                    THEN preClose * (close_front / close)
+                    ELSE preClose END AS preClose,"""
+
 
 class DuckDBDataAccess:
     """DuckDB（QuantStudio 数据管线产出）数据访问实现。
@@ -58,6 +70,12 @@ class DuckDBDataAccess:
         self._preload_listing: Optional[pd.DataFrame] = None
         self._preload_fs: Optional[pd.DataFrame] = None
         self._preload_fs_month: Optional[str] = None
+        # 纯性能优化：日线快照内存缓存（query_daily_snapshot 结果）。
+        # 由 preload_daily_snapshots 一次性区间预取填充，避免每日对行情表做全表扫描。
+        self._daily_snapshot_cache: dict = {}
+        self._daily_snapshot_loaded = False
+        self._cached_min_ms = None
+        self._cached_max_ms = None
 
     # ===================== 连接管理 =====================
 
@@ -84,6 +102,10 @@ class DuckDBDataAccess:
     def close(self):
         """关闭连接"""
         self._tables_cache = None  # 释放表集合缓存，允许重连后看到新表
+        self._daily_snapshot_cache = {}  # 释放日线快照缓存
+        self._daily_snapshot_loaded = False
+        self._cached_min_ms = None
+        self._cached_max_ms = None
         if self._ro_conn is not None:
             try:
                 self._ro_conn.close()
@@ -222,34 +244,44 @@ class DuckDBDataAccess:
         的虚假巨亏/巨盈；代价是成交价为前复权价（前复权回测的标准做法，分红等价于
         自动再投资）。volume/amount/pctChg 保持原始口径（pctChg 本身已是复权校正后
         的真实涨跌幅）。
+
+        纯性能优化：先查内存缓存（由 preload_daily_snapshots 一次性区间预取填充），
+        未命中再回退到单日 per-day 查询；每次返回独立副本，避免跨日共享 DataFrame
+        被调用方就地修改而污染缓存。
         """
+        cached = self._daily_snapshot_cache.get(date_ms)
+        if cached is not None:
+            return cached.copy()
         conn = self._get_conn()
         if conn is None:
             return pd.DataFrame()
-        # OHLC → 前复权；preClose 按 close_front/close 同因子缩放（除权日数据源
-        # preClose 本身已是除权参考价，再乘当日复权因子即可与昨日 close_front 连续）
-        _adj_ohlc = """
-                   COALESCE(open_front, open)   AS open,
-                   COALESCE(high_front, high)   AS high,
-                   COALESCE(low_front, low)     AS low,
-                   COALESCE(close_front, close) AS close,"""
-        _adj_preclose = """
-                   CASE WHEN close > 0 AND close_front IS NOT NULL AND close_front > 0
-                        THEN preClose * (close_front / close)
-                        ELSE preClose END AS preClose,"""
-        return conn.execute(f"""
-            SELECT code, time,{_adj_ohlc}
+        try:
+            df = conn.execute(self._snapshot_sql(f"time = {date_ms}")).fetchdf()
+        except Exception as e:
+            logger.warning(f"[DuckDB] 日线快照查询失败 date_ms={date_ms}: {e}")
+            return pd.DataFrame()
+        self._daily_snapshot_cache[date_ms] = df.copy()
+        return df
+
+    def _snapshot_sql(self, where_clause: str) -> str:
+        """日线快照 SELECT（stock_daily UNION ALL etf_daily），per-day 与全期预取共用。
+
+        where_clause 为 `time = {date_ms}` 或 `time BETWEEN {start_ms} AND {end_ms}`，
+        列集合与前复权口径完全一致，仅过滤范围不同，保证结果字节级一致。
+        """
+        return f"""
+            SELECT code, time,{_ADJ_OHLC_SQL}
                    volume, amount,
-                   pctChg,{_adj_preclose}
+                   pctChg,{_ADJ_PRECLOSE_SQL}
                    turn, peTTM, pbMRQ, isST, suspendFlag,
                    is_st_reliable, is_st_reliable_source,
                    is_delisting_risk, is_delisting_risk_source
             FROM stock_daily
-            WHERE time = {date_ms}
+            WHERE {where_clause}
             UNION ALL
-            SELECT code, time,{_adj_ohlc}
+            SELECT code, time,{_ADJ_OHLC_SQL}
                    volume, amount,
-                   pctChg,{_adj_preclose}
+                   pctChg,{_ADJ_PRECLOSE_SQL}
                    turn,
                    NULL AS peTTM, NULL AS pbMRQ,
                    COALESCE(isST, 0) AS isST,
@@ -259,8 +291,39 @@ class DuckDBDataAccess:
                    FALSE AS is_delisting_risk,
                    'etf_daily' AS is_delisting_risk_source
             FROM etf_daily
-            WHERE time = {date_ms}
-        """).fetchdf()
+            WHERE {where_clause}
+        """
+
+    def preload_daily_snapshots(self, start_ms: int, end_ms: int) -> None:
+        """纯性能优化：一次性预取 [start_ms, end_ms] 全期日线快照到内存。
+
+        替代回测期间每日对 stock_daily（约 330 万行）做 `WHERE time = X` 全表扫描。
+        结果按 time 分组缓存，query_daily_snapshot 直接命中内存；行/列/顺序与单日查询
+        字节级一致。幂等：已预取则跳过，避免重复扫描。
+        """
+        # 按区间覆盖判断（可扩展），避免 attach_day 逐日 preload(prev_date) 提前置位
+        # _daily_snapshot_loaded 导致引擎全期 preload 被硬 guard 跳过：全期预取总能扩展
+        # 缓存以覆盖全部交易日，逐日/重复预取在已覆盖时直接跳过。
+        if (self._daily_snapshot_loaded and self._cached_min_ms is not None
+                and self._cached_min_ms <= start_ms and self._cached_max_ms >= end_ms):
+            return
+        conn = self._get_conn()
+        if conn is None:
+            self._daily_snapshot_loaded = True
+            return
+        try:
+            df = conn.execute(
+                self._snapshot_sql(f"time BETWEEN {start_ms} AND {end_ms}")
+            ).fetchdf()
+            if not df.empty:
+                for t, grp in df.groupby("time"):
+                    self._daily_snapshot_cache[int(t)] = grp.reset_index(drop=True)
+                keys = list(self._daily_snapshot_cache.keys())
+                self._cached_min_ms = min(min(keys), start_ms)
+                self._cached_max_ms = max(max(keys), end_ms)
+        except Exception as e:
+            logger.warning(f"[DuckDB] 日线快照区间预取失败 [{start_ms},{end_ms}]: {e}")
+        self._daily_snapshot_loaded = True
 
     def query_bars_by_range(self, code, start_ms, end_ms) -> pd.DataFrame:
         """迁移自 PtradeAPI.get_price() 的条件分支 (ptrade_api.py:1373-1384)

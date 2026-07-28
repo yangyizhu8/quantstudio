@@ -486,6 +486,19 @@ class BacktestEngine:
         first_bench = benchmark_raw.get(benchmark_start) or benchmark_raw.get(first_trade_day, 1.0)
 
         total_days = len(trade_days)
+
+        # 纯性能优化：一次性预取回测全期日线快照，避免每日对行情表做全表扫描。
+        # 内存缓存后 query_daily_snapshot 命中，结果与单日查询字节级一致。
+        # 预取区间下探到首个交易日的前一个交易日，覆盖日循环 day0 的 prev_date。
+        try:
+            pre_start = self._providers.calendar.get_trading_day(
+                trade_days[0].strftime('%Y-%m-%d'), offset=-1)
+            pre_start_str = (pre_start.strftime('%Y-%m-%d')
+                             if pre_start is not None else trade_days[0].strftime('%Y-%m-%d'))
+            self._providers.market.preload(pre_start_str, trade_days[-1].strftime('%Y-%m-%d'))
+        except Exception as e:
+            logger.debug(f"[Backtest] 日线快照预取跳过（性能优化不可用）: {e}")
+
         for i, day in enumerate(trade_days):
             day_str = day.strftime('%Y-%m-%d')
             if self._progress_callback:
