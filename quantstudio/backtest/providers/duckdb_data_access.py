@@ -990,13 +990,35 @@ class DuckDBDataAccess:
     def query_valuation_monthly_fallback(self, bare_codes, query_ms) -> pd.DataFrame:
         """迁移自 PtradeAPI._fundamentals_valuation() 回退路径 (ptrade_api.py:786-808)
 
-        stock_float_share + stock_daily fallback
+        stock_float_share + stock_daily fallback。
+
+        修复（2026-07-29）：stock_float_share 表**无 time 列**（真实列：code/end_date/
+        ann_date/free_share/total_share/circ_mv/total_mv/update_time/data_source），原 SQL
+        误用 s.time 与 MAX(time) FROM stock_float_share，使 DuckDB 1.5.5 binder 把对不存在
+        列的聚合解析走偏，对外报成误导性的 'WHERE clause cannot contain aggregates'。
+        改用正确列名 end_date + CTE + QUALIFY 窗口函数（与 query_valuation_daily_pit :952
+        同款写法，DuckDB 1.5.5 兼容）。PIT 语义不变：取 end_date<=query_ms 的最新一期
+        stock_float_share（同报告期多次公告取最新 ann_date）+ time<=query_ms 的最新一日
+        stock_daily，LEFT JOIN 到每只 code。
         """
         conn = self._get_conn()
         if conn is None:
             return pd.DataFrame()
         codes_in = "','".join(bare_codes)
         return conn.execute(f"""
+            WITH latest_share AS (
+                SELECT code, circ_mv, total_mv, end_date, ann_date
+                FROM stock_float_share
+                WHERE code IN ('{codes_in}') AND end_date <= {query_ms}
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY code ORDER BY end_date DESC, ann_date DESC) = 1
+            ),
+            latest_daily AS (
+                SELECT code, peTTM, pbMRQ, psTTM, pcfNcfTTM, turn, close
+                FROM stock_daily
+                WHERE code IN ('{codes_in}') AND time <= {query_ms}
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY code ORDER BY time DESC) = 1
+            )
             SELECT s.code,
                    s.circ_mv        AS float_value,
                    s.circ_mv        AS circulating_market_cap,
@@ -1010,12 +1032,8 @@ class DuckDBDataAccess:
                    d.turn           AS turnover_ratio,
                    CASE WHEN d.close IS NULL OR d.close = 0 THEN NULL
                         ELSE s.circ_mv / d.close END AS a_floats
-            FROM stock_float_share s
-            LEFT JOIN stock_daily d
-              ON d.code = s.code
-             AND d.time = (SELECT MAX(time) FROM stock_daily WHERE time <= {query_ms})
-            WHERE s.code IN ('{codes_in}')
-              AND s.time = (SELECT MAX(time) FROM stock_float_share WHERE time <= {query_ms})
+            FROM latest_share s
+            LEFT JOIN latest_daily d ON d.code = s.code
         """).fetchdf()
 
     def query_total_share(self, bare_codes, query_ms) -> pd.DataFrame:
