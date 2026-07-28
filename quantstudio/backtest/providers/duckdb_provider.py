@@ -160,7 +160,13 @@ class DuckDBFundamentalDataProvider(FundamentalDataProvider):
 
 
 class DuckDBReferenceDataProvider(ReferenceDataProvider):
-    def __init__(self, db_path: Path): self._data = DuckDBDataAccess(db_path)
+    def __init__(self, db_path: Path):
+        self._data = DuckDBDataAccess(db_path)
+        # 惰性全量证券元数据缓存（性能优化，语义等价）。
+        # get_security_info 原对每个 code 调 query_security_metadata(codes=[bare])，
+        # 全市场 N+1（get_stock_info 循环逐码）。改为首次全量载入一次，
+        # 后续内存过滤。query_security_metadata 本身不动（仍支持批量/无参）。
+        self._security_meta_df = None
     def preload(self):
         if self._data._preload_listing is None:
             self._data._preload_listing = self._data.query_listing_dates()
@@ -191,7 +197,12 @@ class DuckDBReferenceDataProvider(ReferenceDataProvider):
         """
         self.preload()
         bare = str(code).split('.')[0]
-        meta = self._data.query_security_metadata(codes=[bare])
+        # 惰性全量载入证券元数据（首次），后续内存过滤。等价于原
+        # query_security_metadata(codes=[bare])：单码 ORDER BY 无排序影响，
+        # 列/行/类型字节级一致（SECURITY_METADATA_COLUMNS 固定列顺序）。
+        if self._security_meta_df is None:
+            self._security_meta_df = self._data.query_security_metadata()
+        meta = self._security_meta_df[self._security_meta_df['code'] == bare]
         etf_row = None
         if not meta.empty:
             etf_rows = meta[meta['security_type'] == 'etf']
