@@ -470,6 +470,28 @@ class DuckDBWriter(BaseWriter):
             if len(df) < before:
                 logger.info(f"[DuckDBWriter] {table}: 入库前去重 {before}→{len(df)} 行")
         # 确保类型（字符串列跳过数值转换）
+        # DDL 驱动（W2-0.9 缺陷 A 修复）：优先按目标表实际 DuckDB 列类型判定——
+        # VARCHAR 列一律不经过 pd.to_numeric（否则 "实施" 等字符串值会被 coerce 成 NaN，
+        # 落库为 NULL，如 stock_dividend.div_proc）。DESCRIBE 取不到类型时回退到 str_cols
+        # 白名单（W2-0.9：白名单必须含 div_proc，且 DESCRIBE 失败不得完全静默）。
+        varchar_cols: set = set()
+        describe_failed = False
+        try:
+            with self._conn_lock:
+                _conn = self._conn()
+                try:
+                    for _r in _conn.execute(f"DESCRIBE {table}").fetchall():
+                        # _r = (col_name, col_type, nullable, key, default, extra)
+                        if len(_r) >= 2 and isinstance(_r[1], str) and _r[1].upper().startswith("VARCHAR"):
+                            varchar_cols.add(_r[0])
+                finally:
+                    _conn.close()
+        except Exception as _e:
+            # 不静默：记录一次可诊断 warning（不含敏感信息），回退到 str_cols 白名单。
+            describe_failed = True
+            logger.warning(
+                f"[DuckDBWriter] DESCRIBE {table} failed ({type(_e).__name__}); "
+                f"falling back to static str_cols whitelist for type protection")
         str_cols = {"code", "freq", "dividend_type", "update_time", "data_source",
                     "index_code", "industry_code", "industry_name", "industry_level",
                     "name_before", "name_after", "status_after", "market",
@@ -477,7 +499,11 @@ class DuckDBWriter(BaseWriter):
                     "ts_code", "name", "exchange", "etf_type", "tracking_index",
                     "status", "fund_type", "invest_type", "type",
                     "classification_system", "parent_industry_code",
-                    "classification_method", "classification_version"}
+                    "classification_method", "classification_version",
+                    # W2-0.9 缺陷 A 补完：fallback 白名单必须含 div_proc，
+                    # 保证 DESCRIBE 失败时 "实施" 也不会被 to_numeric 吞掉。
+                    "div_proc", "div_rat"}.union(varchar_cols)
+        del describe_failed  # 诊断标记已用于 warning，不再需要
         for c in df.columns:
             if c in str_cols:
                 continue

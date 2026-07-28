@@ -567,6 +567,25 @@ class DaemonLifecycle:
             )
             # 增量开始前消费 stop（用户可能在 from_configs 期间点了停止）
             _check_stop_at_boundary("pre_cycle")
+            # —— QFQ 协调周期开启（resident orchestrator v2）——
+            # enabled=false（默认）→ qfq_begin_cycle 返回 None，不写任何 qfq 字段，
+            # 后续水位推进走旧路径，本函数行为与接入前逐位一致（紧急回退开关）。
+            # enabled=true → 先开周期再跑增量任务，任务内四价格表水位改为延迟提交；
+            # 开启失败则 fail-closed：任务照跑，但价格表水位保持不动（绝不提前推进）。
+            qfq_cycle_id = None
+            if not stop_requested:
+                try:
+                    qfq_cycle_id = collector.qfq_begin_cycle()
+                    if qfq_cycle_id:
+                        write_run_state(qfq_phase="cycle_started",
+                                        qfq_cycle_id=qfq_cycle_id, qfq_error=None)
+                except Exception as e:
+                    logger.error(f"[DaemonLifecycle] QFQ 协调周期开启失败"
+                                 f"（fail-closed，价格表水位本轮保持）: {e}",
+                                 exc_info=True)
+                    write_run_state(qfq_phase="begin_failed",
+                                    qfq_cycle_id=None,
+                                    qfq_error=f"{type(e).__name__}: {e}")
             tasks = tasks_cfg.get("tasks", [])
             for task in tasks:
                 # Review FIX-1：每个 task 开始前消费 stop；
@@ -610,6 +629,49 @@ class DaemonLifecycle:
             else:
                 # for 循环正常结束（未 break）→ 遍历完成
                 traversal_completed = True
+            # —— QFQ post-ingest 协调阶段（增量任务后、质量审计前）——
+            # 完整闭环：recover → discover → claim/merge → reanchor → gate →
+            # commit/hold watermarks（四价格表水位在此统一提交或保持）。
+            # stop 中断 → 跳过本阶段，本轮 defer 的 intent 保持 pending，
+            # 水位不推进（安全），下轮 begin_cycle 自动 supersede 清障。
+            if qfq_cycle_id is not None:
+                if stop_requested:
+                    write_run_state(qfq_phase="interrupted",
+                                    qfq_error="stop_requested，post-ingest 未执行，"
+                                              "水位保持（下轮清障重算）")
+                else:
+                    write_run_state(qfq_phase="post_ingest_running")
+                    try:
+                        qfq_summary = collector.qfq_run_post_ingest(run_id)
+                        if qfq_summary is not None:
+                            write_run_state(
+                                qfq_phase=qfq_summary.status,
+                                qfq_error=qfq_summary.error,
+                                qfq_summary={
+                                    "cycle_id": qfq_summary.cycle_id,
+                                    "triggers_found": qfq_summary.triggers_found,
+                                    "claimed": qfq_summary.claimed,
+                                    "committed": qfq_summary.committed,
+                                    "retryable_failed": qfq_summary.retryable_failed,
+                                    "dead_letter": qfq_summary.dead_letter,
+                                    "watermarks_committed":
+                                        qfq_summary.watermarks_committed,
+                                    "watermarks_held": qfq_summary.watermarks_held,
+                                    "bootstrap_required":
+                                        qfq_summary.bootstrap_required,
+                                })
+                            if qfq_summary.status != "finalized":
+                                logger.warning(
+                                    f"[DaemonLifecycle] QFQ post-ingest 未完全通过："
+                                    f"status={qfq_summary.status} "
+                                    f"error={qfq_summary.error} "
+                                    f"held={qfq_summary.watermarks_held}"
+                                    f"（水位按 hold_until_consistent 保持）")
+                    except Exception as e:
+                        logger.error(f"[DaemonLifecycle] QFQ post-ingest 异常"
+                                     f"（水位保持，下轮重试）: {e}", exc_info=True)
+                        write_run_state(qfq_phase="failed",
+                                        qfq_error=f"{type(e).__name__}: {e}")
             # Review FIX-1：质量审计开始前消费 stop
             if not stop_requested:
                 _check_stop_at_boundary("pre_quality_audit")

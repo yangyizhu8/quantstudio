@@ -49,7 +49,7 @@ from quantstudio._paths import db_path
 # QFQ 辅助库文件名（与 qfq_maintenance.py 口径一致）
 QFQ_AUX_DB_NAME = "qfq_aux.db"
 
-SCHEMA_VERSION = "reanchor-1.0"
+SCHEMA_VERSION = "reanchor-2.0"
 
 # —— 资产类型白名单（与 qfq_observation / writers 共用，单一真相源）——
 QFQ_ASSET_TYPES = frozenset({"STOCK", "ETF"})
@@ -59,9 +59,44 @@ PRICE_TABLES = frozenset({
     "stock_daily", "stock_minutes", "etf_daily", "etf_minutes",
 })
 
-# —— pending backfill 合法状态集合 ——
+# —— pending backfill 合法状态集合（含 dead_letter，编排器死信）——
 BACKFILL_STATUS = frozenset({
     "pending", "resolved", "in_progress", "blocked", "retryable_failed",
+    "dead_letter",
+})
+
+# —— cycle run 阶段 / 状态（phase 与 status 同词汇）——
+CYCLE_PHASES = frozenset({
+    "started", "recovering", "observing", "fetching", "applying",
+    "gating", "finalized", "interrupted", "failed",
+})
+CYCLE_STATUS = frozenset(CYCLE_PHASES)
+
+# —— trigger queue 合法状态集合 ——
+TRIGGER_STATUS = frozenset({
+    "scheduled", "pending", "in_progress", "committed",
+    "retryable_failed", "blocked", "dead_letter",
+})
+
+# —— watermark intent 合法状态集合 ——
+WATERMARK_INTENT_STATUS = frozenset({
+    "pending", "held", "committed", "superseded",
+})
+
+# —— fresh capture 合法状态集合 ——
+FRESH_CAPTURE_STATUS = frozenset({
+    "captured", "applied", "failed",
+})
+
+# —— observation cursor 合法状态集合 ——
+OBSERVATION_CURSOR_STATUS = frozenset({
+    "ok", "failed",
+})
+
+# —— trigger type 合法集合 ——
+TRIGGER_TYPES = frozenset({
+    "stock_dividend", "stock_adj_factor", "etf_fund_adj",
+    "factor_revision", "factor_new", "bootstrap",
 })
 
 # —— asset_type ↔ 价格表 关联白名单（pending backfill 关联契约，阻断 3）——
@@ -221,6 +256,12 @@ DDL_DUCKDB: Dict[str, str] = {
             status         VARCHAR NOT NULL,
             attempt_count  INTEGER DEFAULT 0,
             last_error     VARCHAR,
+            trigger_id     VARCHAR,
+            last_event_id  VARCHAR,
+            next_retry_at  TIMESTAMP,
+            claimed_by     VARCHAR,
+            claimed_at     TIMESTAMP,
+            dead_letter_at TIMESTAMP,
             created_at     TIMESTAMP NOT NULL,
             updated_at     TIMESTAMP NOT NULL,
             resolved_at    TIMESTAMP,
@@ -264,6 +305,107 @@ DDL_DUCKDB: Dict[str, str] = {
             source     VARCHAR,
             updated_at TIMESTAMP,
             PRIMARY KEY (cal_date)
+        )""",
+    # ---- 编排器每轮运行（resident orchestrator v2：六状态机 + 计数）----
+    "qfq_cycle_run": """
+        CREATE TABLE IF NOT EXISTS qfq_cycle_run (
+            cycle_id          VARCHAR   NOT NULL,
+            business_date     BIGINT,
+            trigger_surface   VARCHAR,
+            config_hash       VARCHAR,
+            schema_hash       VARCHAR,
+            phase             VARCHAR   NOT NULL,
+            discovered_count  BIGINT    DEFAULT 0,
+            executed_count    BIGINT    DEFAULT 0,
+            success_count     BIGINT    DEFAULT 0,
+            failed_count      BIGINT    DEFAULT 0,
+            pending_count     BIGINT    DEFAULT 0,
+            status            VARCHAR   NOT NULL,
+            started_at        TIMESTAMP NOT NULL,
+            finished_at       TIMESTAMP,
+            error             VARCHAR,
+            updated_at        TIMESTAMP NOT NULL,
+            PRIMARY KEY (cycle_id)
+        )""",
+    # ---- 持久化 trigger 队列（事件发现 → 重锚执行的单一真相源）----
+    "qfq_trigger_queue": """
+        CREATE TABLE IF NOT EXISTS qfq_trigger_queue (
+            trigger_id      VARCHAR   NOT NULL,
+            asset_type      VARCHAR   NOT NULL,
+            code            VARCHAR   NOT NULL,
+            trigger_type    VARCHAR   NOT NULL,
+            detection_source VARCHAR  NOT NULL,
+            source_key      VARCHAR,
+            effective_date   BIGINT,
+            payload_hash     VARCHAR,
+            factor_old       DOUBLE,
+            factor_new       DOUBLE,
+            factor_revision  BIGINT,
+            status           VARCHAR   NOT NULL,
+            attempt_count    INTEGER   DEFAULT 0,
+            next_retry_at    TIMESTAMP,
+            claimed_by       VARCHAR,
+            claimed_at       TIMESTAMP,
+            last_event_id    VARCHAR,
+            last_error       VARCHAR,
+            dead_letter_at   TIMESTAMP,
+            created_at       TIMESTAMP NOT NULL,
+            updated_at       TIMESTAMP NOT NULL,
+            completed_at     TIMESTAMP,
+            PRIMARY KEY (trigger_id)
+        )""",
+    # ---- 四价格表延迟水位（协调周期结束前不推进）----
+    "qfq_watermark_intent": """
+        CREATE TABLE IF NOT EXISTS qfq_watermark_intent (
+            cycle_id           VARCHAR   NOT NULL,
+            source             VARCHAR   NOT NULL,
+            table_name         VARCHAR   NOT NULL,
+            freq               VARCHAR   NOT NULL,
+            old_watermark      VARCHAR,
+            candidate_watermark VARCHAR,
+            status             VARCHAR   NOT NULL,
+            hold_reason        VARCHAR,
+            committed_at       TIMESTAMP,
+            PRIMARY KEY (cycle_id, source, table_name, freq)
+        )""",
+    # ---- fresh 采集证据固化（不复制万行数据，留不可抵赖摘要）----
+    "qfq_fresh_capture": """
+        CREATE TABLE IF NOT EXISTS qfq_fresh_capture (
+            capture_id        VARCHAR   NOT NULL,
+            asset_type        VARCHAR   NOT NULL,
+            code              VARCHAR   NOT NULL,
+            source            VARCHAR,
+            daily_range_start BIGINT,
+            daily_range_end   BIGINT,
+            minute_range_start BIGINT,
+            minute_range_end  BIGINT,
+            daily_row_count   BIGINT,
+            minute_row_count  BIGINT,
+            daily_min_time    BIGINT,
+            daily_max_time    BIGINT,
+            minute_min_time   BIGINT,
+            minute_max_time   BIGINT,
+            daily_sha256      VARCHAR,
+            minute_sha256     VARCHAR,
+            metadata_sha256   VARCHAR,
+            status            VARCHAR,
+            created_at        TIMESTAMP NOT NULL,
+            updated_at        TIMESTAMP NOT NULL,
+            PRIMARY KEY (capture_id)
+        )""",
+    # ---- 检测游标（每个 detector × asset_type 的进度/as-of）----
+    "qfq_observation_cursor": """
+        CREATE TABLE IF NOT EXISTS qfq_observation_cursor (
+            detector_name   VARCHAR   NOT NULL,
+            asset_type      VARCHAR   NOT NULL,
+            cursor_as_of    BIGINT,
+            last_run_id     VARCHAR,
+            scan_range_start BIGINT,
+            scan_range_end   BIGINT,
+            status          VARCHAR,
+            last_error      VARCHAR,
+            updated_at      TIMESTAMP NOT NULL,
+            PRIMARY KEY (detector_name, asset_type)
         )""",
 }
 
@@ -349,7 +491,37 @@ DUCKDB_COLS: Dict[str, List[str]] = {
     "qfq_pending_backfill": [
         "asset_type", "code", "table_name", "freq", "range_start", "range_end",
         "reason", "anchor_version", "status", "attempt_count", "last_error",
+        "trigger_id", "last_event_id", "next_retry_at", "claimed_by",
+        "claimed_at", "dead_letter_at",
         "created_at", "updated_at", "resolved_at",
+    ],
+    "qfq_cycle_run": [
+        "cycle_id", "business_date", "trigger_surface", "config_hash", "schema_hash",
+        "phase", "discovered_count", "executed_count", "success_count",
+        "failed_count", "pending_count", "status", "started_at", "finished_at",
+        "error", "updated_at",
+    ],
+    "qfq_trigger_queue": [
+        "trigger_id", "asset_type", "code", "trigger_type", "detection_source",
+        "source_key", "effective_date", "payload_hash", "factor_old", "factor_new",
+        "factor_revision", "status", "attempt_count", "next_retry_at", "claimed_by",
+        "claimed_at", "last_event_id", "last_error", "dead_letter_at",
+        "created_at", "updated_at", "completed_at",
+    ],
+    "qfq_watermark_intent": [
+        "cycle_id", "source", "table_name", "freq", "old_watermark",
+        "candidate_watermark", "status", "hold_reason", "committed_at",
+    ],
+    "qfq_fresh_capture": [
+        "capture_id", "asset_type", "code", "source", "daily_range_start",
+        "daily_range_end", "minute_range_start", "minute_range_end",
+        "daily_row_count", "minute_row_count", "daily_min_time", "daily_max_time",
+        "minute_min_time", "minute_max_time", "daily_sha256", "minute_sha256",
+        "metadata_sha256", "status", "created_at", "updated_at",
+    ],
+    "qfq_observation_cursor": [
+        "detector_name", "asset_type", "cursor_as_of", "last_run_id",
+        "scan_range_start", "scan_range_end", "status", "last_error", "updated_at",
     ],
     "qfq_bootstrap_run": [
         "bootstrap_run_id", "asset_type", "params", "resume_cursor", "total_count",

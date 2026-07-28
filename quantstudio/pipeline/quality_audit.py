@@ -36,18 +36,25 @@ class DataQualityAuditor:
                  batch_audit_path: Optional[str | Path] = None,
                  quarantine_path: Optional[str | Path] = None,
                  shared_conn=None,
-                 authority_rules: Optional[Dict] = None):
+                 authority_rules: Optional[Dict] = None,
+                 qfq_thresholds: Optional[Dict] = None):
         """shared_conn: 可选，外部传入的持久 read_write 连接（采集流程内复用 writer 连接，
         避免开 read_only 与 write 并发触发「different configuration」冲突）。
         不传则自开 read_only 短连接（CLI/独立运行场景）。
         authority_rules: 可选，来源权威性规则，格式：
-        {table: {authoritative_source: str, allow_fallback: bool}}。"""
+        {table: {authoritative_source: str, allow_fallback: bool}}。
+        qfq_thresholds: 可选，QFQ 编排专项门控阈值（collector_tasks.json 的
+        qfq_orchestrator.quality_thresholds 块）。**None（默认）= 完全跳过 QFQ
+        专项审计**（编排器 disabled 时保持旧行为，不因历史 qfq 表残留新增失败）；
+        非 None 时启用 dead_letter / pending SLA / stale in_progress /
+        残留 pending watermark intent 四项检查。"""
         self.db_path = Path(db_path)
         self.schemas = schemas
         self.batch_audit_path = Path(batch_audit_path) if batch_audit_path else None
         self.quarantine_path = Path(quarantine_path) if quarantine_path else None
         self._shared_conn = shared_conn
         self._authority_rules = authority_rules
+        self._qfq_thresholds = qfq_thresholds
 
     @classmethod
     def from_config(cls, db_path: str | Path, rules_path: str | Path,
@@ -174,6 +181,8 @@ class DataQualityAuditor:
                                   "non-implemented dividend records exist")
             if "source_watermark" in tables:
                 self._audit_watermarks(conn, report, tables)
+            if self._qfq_thresholds is not None:
+                self._audit_qfq_orchestration(conn, report, tables)
         finally:
             if own_conn is not None:
                 own_conn.close()
@@ -432,6 +441,61 @@ class DataQualityAuditor:
                 severity = "error" if int(watermark) > int(maximum) else "warning"
                 self._add(report, "WatermarkConsistency", table, 1, severity,
                           f"{source}/{freq}: watermark={watermark}, max={maximum}")
+
+    def _audit_qfq_orchestration(self, conn, report, tables):
+        """QFQ 编排专项门控（仅编排器 enabled 时启用，qfq_thresholds 非 None）。
+
+        与编排器 _qfq_gate 口径一致（gate 决定单轮水位提交；本审计做全库级
+        兜底巡检，daemon 每轮采集后 + CLI 独立运行均覆盖）：
+          - QfqDeadLetter：dead_letter 数 > dead_letter_max（默认 0）→ error；
+          - QfqPendingSla：pending/retryable_failed 停留超 pending_sla_hours
+            （默认 72h）→ error（事件积压超 SLA，QFQ 修正没跟上）；
+          - QfqStaleInProgress：in_progress 超 stale_in_progress_hours（默认
+            24h，远大于 claim lease）→ error（崩溃残留未被 recover 回收）；
+          - QfqStaleWatermarkIntent：归属周期已终结/缺失但仍 pending 的
+            watermark intent → warning（begin_cycle 应已 supersede，残留说明
+            清障逻辑未跑）；held intent → warning（水位被 gate 扣住，需关注）。
+
+        qfq 表不存在（尚未 bootstrap/init_schema）→ 全部跳过，不算失败。
+        """
+        thr = self._qfq_thresholds or {}
+        dl_max = int(thr.get("dead_letter_max", 0))
+        sla_h = int(thr.get("pending_sla_hours", 72))
+        stale_h = int(thr.get("stale_in_progress_hours", 24))
+        if "qfq_trigger_queue" in tables:
+            dl = conn.execute(
+                "SELECT COUNT(*) FROM qfq_trigger_queue WHERE status='dead_letter'"
+            ).fetchone()[0]
+            if dl > dl_max:
+                self._add(report, "QfqDeadLetter", "qfq_trigger_queue", dl, "error",
+                          f"dead_letter={dl} 超过阈值 {dl_max}，需人工 reopen/排查")
+            overdue = conn.execute(
+                "SELECT COUNT(*) FROM qfq_trigger_queue "
+                "WHERE status IN ('pending','retryable_failed') "
+                f"AND created_at < NOW() - INTERVAL {sla_h} HOUR").fetchone()[0]
+            self._add(report, "QfqPendingSla", "qfq_trigger_queue", overdue, "error",
+                      f"pending/retryable_failed 停留超 {sla_h}h（SLA）")
+            stale_ip = conn.execute(
+                "SELECT COUNT(*) FROM qfq_trigger_queue WHERE status='in_progress' "
+                f"AND (claimed_at IS NULL OR claimed_at < NOW() - INTERVAL {stale_h} HOUR)"
+            ).fetchone()[0]
+            self._add(report, "QfqStaleInProgress", "qfq_trigger_queue", stale_ip,
+                      "error", f"in_progress 超 {stale_h}h 未回收（recover 未生效）")
+        if "qfq_watermark_intent" in tables and "qfq_cycle_run" in tables:
+            stale_pending = conn.execute(
+                "SELECT COUNT(*) FROM qfq_watermark_intent wi "
+                "LEFT JOIN qfq_cycle_run cr ON cr.cycle_id = wi.cycle_id "
+                "WHERE wi.status='pending' AND (cr.cycle_id IS NULL "
+                " OR cr.status IN ('finalized','finalized_held','failed','interrupted'))"
+            ).fetchone()[0]
+            self._add(report, "QfqStaleWatermarkIntent", "qfq_watermark_intent",
+                      stale_pending, "warning",
+                      "终结周期残留 pending intent（应被下一轮 begin_cycle supersede）")
+            held = conn.execute(
+                "SELECT COUNT(*) FROM qfq_watermark_intent WHERE status='held'"
+            ).fetchone()[0]
+            self._add(report, "QfqWatermarkHeld", "qfq_watermark_intent", held,
+                      "warning", "水位被 gate 扣住（hold_until_consistent），待修复后提交")
 
     @staticmethod
     def _add(report, check, table, count, severity, detail=""):

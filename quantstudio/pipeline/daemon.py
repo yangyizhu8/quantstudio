@@ -116,6 +116,14 @@ class ResidentCollector:
         collector.run_forever()
     """
 
+    # —— QFQ 常驻编排器字段（类级缺省，兼容绕过 __init__ 的构造路径，
+    # 如测试中 ResidentCollector.__new__() 手动设属性；缺省 None →
+    # _qfq_config() 返回 enabled=False 安全默认 → 旧路径 writer.advance_watermark，
+    # 行为逐位不变（紧急回退开关）。真实 __init__ 仍会显式赋同样的值。 ——
+    _qfq_cfg_obj = None      # QFQOrchestratorConfig（惰性加载）
+    _qfq_orch = None         # QFQResidentOrchestrator（惰性构造）
+    _qfq_cycle_id = None     # 当前活跃协调周期
+
     def __init__(self, data_cfg: Dict, sources_cfg: Dict, tasks_cfg: Dict,
                  aligner: FieldAligner, validator: PreIngestValidator,
                  writer, quarantine: Quarantine, batch_audit: BatchAudit):
@@ -130,6 +138,13 @@ class ResidentCollector:
 
         self._running = True
         self._adapters: Dict[str, object] = {}  # source → adapter 实例（复用连接）
+
+        # —— QFQ 常驻编排器（resident orchestrator v2）——
+        # enabled=false（默认）时以下三个字段全程保持 None/未用，
+        # 水位推进走旧路径 writer.advance_watermark，行为逐位不变（紧急回退开关）。
+        self._qfq_cfg_obj = None      # QFQOrchestratorConfig（惰性加载）
+        self._qfq_orch = None         # QFQResidentOrchestrator（惰性构造）
+        self._qfq_cycle_id: Optional[str] = None  # 当前活跃协调周期
 
     def close(self):
         """v3：释放所有持连接子组件（主要是 writer._shared_conn）。
@@ -184,6 +199,108 @@ class ResidentCollector:
         assert_configs_ok(data_cfg, sources_cfg, tasks_cfg, pseudo_align_rules)
         return cls(data_cfg, sources_cfg, tasks_cfg, aligner, validator,
                    writer, quarantine, batch_audit)
+
+    # ---------------- QFQ 协调周期（resident orchestrator v2）----------------
+    def _qfq_config(self):
+        """惰性加载 qfq_orchestrator 配置块（缺失/未启用 → enabled=False 安全默认）。
+
+        from_configs 启动时 config_lint 已 fail-fast 校验过该块，这里不会因
+        非法配置在任务中途才抛错。
+        """
+        if self._qfq_cfg_obj is None:
+            from .qfq_orchestrator_types import QFQOrchestratorConfig
+            block = self.tasks_cfg.get("qfq_orchestrator", {}) or {}
+            self._qfq_cfg_obj = QFQOrchestratorConfig.from_dict(dict(block))
+        return self._qfq_cfg_obj
+
+    def qfq_enabled(self) -> bool:
+        return bool(self._qfq_config().enabled)
+
+    def _qfq_orchestrator(self):
+        """惰性构造编排器（xtquant fetcher 惰性连接；calendar 走主库交易日历）。"""
+        if self._qfq_orch is None:
+            from .qfq_resident_orchestrator import QFQResidentOrchestrator
+            from .qfq_fresh_capture import XtquantFreshFetcher
+            from .qfq_calendar import CalendarService
+            cfg = self._qfq_config()
+            self._qfq_orch = QFQResidentOrchestrator(
+                cfg, main_db=str(self.writer.db_path),
+                fetcher=XtquantFreshFetcher(),   # 惰性：首次取数才 import/连 xtquant
+                calendar=CalendarService(main_db=self.writer.db_path),
+                watermark_advancer=self.writer.advance_watermark)
+        return self._qfq_orch
+
+    def qfq_begin_cycle(self) -> Optional[str]:
+        """开启 QFQ 协调周期（daemon 每轮增量任务开始前调用）。
+
+        enabled=false → 返回 None（旧路径，逐位不变）。
+        enabled=true  → 幂等建 schema + supersede 崩溃残留 intent（restart 语义）
+                        + 建 qfq_cycle_run，返回 cycle_id；此后四价格表水位
+                        一律 defer，直到 qfq_run_post_ingest 的 gate 决定提交/保持。
+        """
+        if not self.qfq_enabled():
+            return None
+        orch = self._qfq_orchestrator()
+        conn = self.writer.shared_conn()
+        aux_conn = None
+        try:
+            if orch.aux_db:
+                import sqlite3 as _sqlite3
+                aux_conn = _sqlite3.connect(str(orch.aux_db))
+            orch.init_schema(conn, aux_conn)
+            if aux_conn is not None:
+                aux_conn.commit()
+        finally:
+            if aux_conn is not None:
+                aux_conn.close()
+        self._qfq_cycle_id = orch.begin_cycle(conn)
+        logger.info(f"[qfq] 协调周期开启 cycle_id={self._qfq_cycle_id}"
+                    f"（四价格表水位延迟到周期结束统一提交）")
+        return self._qfq_cycle_id
+
+    def qfq_run_post_ingest(self, run_id: str):
+        """增量任务全部结束后执行 post-ingest 闭环（recover→discover→claim→
+        reanchor→gate→commit/hold watermarks）。disabled 或未开周期 → no-op None。"""
+        if not self.qfq_enabled() or self._qfq_cycle_id is None:
+            return None
+        import time as _time
+        orch = self._qfq_orchestrator()
+        conn = self.writer.shared_conn()
+        try:
+            summary = orch.run_post_ingest(
+                conn, cycle_id=self._qfq_cycle_id, run_id=run_id,
+                as_of_ms=int(_time.time() * 1000))
+        finally:
+            self._qfq_cycle_id = None
+        return summary
+
+    def _advance_or_defer_watermark(self, source: str, table: str, freq: str,
+                                    new_watermark, batch_id: str) -> None:
+        """水位推进唯一入口（红线）。
+
+        - 编排器 enabled 且 table ∈ 四价格表 且协调周期已开 → defer_watermark
+          （写 qfq_watermark_intent，gate 通过才统一提交）；
+        - enabled 但周期未开（如 GUI 手动跑任务）→ fail-closed **保持水位不动**
+          （绝不提前推进；旧水位下轮幂等重拉，安全）；
+        - disabled / 非价格表 → 旧路径 writer.advance_watermark，逐位不变。
+        """
+        cfg = self._qfq_config()
+        if cfg.can_coordinate_watermark(table):
+            if self._qfq_cycle_id is not None:
+                orch = self._qfq_orchestrator()
+                orch.defer_watermark(
+                    self.writer.shared_conn(), cycle_id=self._qfq_cycle_id,
+                    source=source, table=table, freq=freq,
+                    candidate_watermark=new_watermark)
+                logger.info(f"[qfq] {source}/{table}/{freq} 水位延迟提交 "
+                            f"candidate={new_watermark} cycle={self._qfq_cycle_id}")
+            else:
+                logger.warning(
+                    f"[qfq] {source}/{table}/{freq} 水位保持不动：qfq_orchestrator "
+                    f"enabled 但无活跃协调周期（candidate={new_watermark} 丢弃，"
+                    f"下轮 daemon 周期从旧水位幂等重拉后统一提交）")
+            return
+        self.writer.advance_watermark(source, table, freq, new_watermark, batch_id)
 
     # ---------------- 单任务执行（核心流水线，硬编码顺序不可绕过）----------------
     def _execute_task(self, task: Dict) -> bool:
@@ -475,7 +592,8 @@ class ResidentCollector:
             else:
                 new_watermark = self._max_date(res.passed_df, table)
             if new_watermark:
-                self.writer.advance_watermark(source, table, freq, new_watermark, batch_id)
+                # 红线：水位推进唯一入口（qfq enabled 时四价格表延迟提交）
+                self._advance_or_defer_watermark(source, table, freq, new_watermark, batch_id)
 
             logger.info(f"[{batch_id}] ✅ raw={rows_raw} aligned={rows_aligned} "
                         f"passed={rows_passed} rejected={rows_rejected} written={rows_written} "
@@ -831,6 +949,16 @@ class ResidentCollector:
 
         # 允许失败率内视为本轮完成并推进到 end；超阈值不推进，下轮从旧水位重试。
         if task_ok:
+            # W2-0.8 缺陷 B：full_range 成功后执行 authority reconciliation（清除既有
+            # 非 authoritative 历史行 + watermark），使 authority-locked 表单源收敛。
+            # 失败则降级为 batch failed，不推进水位。
+            recon = self._authority_reconcile(task, source, table, batch_id)
+            if recon["enabled"] and recon["ran"] and not recon["ok"]:
+                task_ok = False
+                logger.error(
+                    f"[{batch_id}] authority_reconciliation failed: {recon['reason']}; "
+                    f"batch 降级 failed，不推进水位")
+        if task_ok:
             self._advance_actual_watermark(source, table, freq, batch_id)
 
         elapsed = _time.time() - t0
@@ -1046,6 +1174,16 @@ class ResidentCollector:
 
         # 允许失败率内视为本轮完成并推进到 end；超阈值不推进，下轮从旧水位重试。
         if task_ok:
+            # W2-0.8 缺陷 B：full_range 成功后执行 authority reconciliation（清除既有
+            # 非 authoritative 历史行 + watermark），使 authority-locked 表单源收敛。
+            # 失败则降级为 batch failed，不推进水位。
+            recon = self._authority_reconcile(task, source, table, batch_id)
+            if recon["enabled"] and recon["ran"] and not recon["ok"]:
+                task_ok = False
+                logger.error(
+                    f"[{batch_id}] authority_reconciliation failed: {recon['reason']}; "
+                    f"batch 降级 failed，不推进水位")
+        if task_ok:
             self._advance_actual_watermark(source, table, freq, batch_id)
 
         elapsed = _time.time() - t0
@@ -1128,11 +1266,31 @@ class ResidentCollector:
         logger.info("[Daemon] ResidentCollector 已停止")
 
     def run_once(self, task_name: Optional[str] = None,
-                 mode: str = "incremental"):
-        """Run one task or all enabled tasks with explicit range semantics."""
+                 mode: str = "incremental",
+                 quality_audit: str = "full"):
+        """Run one task or all enabled tasks with explicit range semantics.
+
+        Returns a dict result (W2-0.8 缺陷 D/E 修复):
+            {"task_found": bool, "task_ok": bool, "audit_run": bool, "audit_ok": bool}
+
+        `quality_audit`:
+            "full" (default, production-safe) — run the full-DB quality audit after
+              the task and include its result in the returned aggregate. This
+              preserves the existing resident/GUI semantic.
+            "none" — skip the full-DB audit. Used by staging phase_run_task for
+              staged loads (each target table loaded separately; the final unified
+              audit is run by staging Phase 6). A not-yet-loaded sibling target
+              table must NOT cause a staged task to appear failed.
+        """
         if mode not in ("full_range", "incremental"):
             raise ValueError(f"unsupported collection mode: {mode!r}")
+        if quality_audit not in ("full", "none"):
+            raise ValueError(f"unsupported quality_audit mode: {quality_audit!r}")
         tasks = self.tasks_cfg.get("tasks", [])
+        task_found = False
+        task_ok = True
+        audit_ok = True
+        audit_run = False
         try:
             for task in tasks:
                 if task_name and task["name"] != task_name:
@@ -1140,9 +1298,23 @@ class ResidentCollector:
                 if not task_name and not task.get("enabled", True):
                     logger.info(f"[Daemon] skip disabled task: {task['name']}")
                     continue
-                self.execute_task(task, mode=mode, run_quality_audit=False)
+                task_found = True
+                ok = self.execute_task(task, mode=mode, run_quality_audit=False)
+                if not ok:
+                    task_ok = False
+            if task_name and not task_found:
+                logger.error(f"[Daemon] task not found: {task_name}")
+                task_ok = False
         finally:
-            self._run_full_quality_audit()
+            if quality_audit == "full":
+                audit_run = True
+                audit_ok = self._run_full_quality_audit()
+        return {
+            "task_found": task_found,
+            "task_ok": task_ok,
+            "audit_run": audit_run,
+            "audit_ok": audit_ok,
+        }
 
     def _run_incremental_cycle(self):
         """执行一轮常驻增量任务；无论成功、失败或中断，结束后必跑质量审计。"""
@@ -1164,6 +1336,167 @@ class ResidentCollector:
         finally:
             self._run_full_quality_audit()
 
+    def _authority_reconcile(self, task: Dict, source: str, table: str,
+                              batch_id: str) -> Dict:
+        """W2-0.9 缺陷 B：通用 authority reconciliation（完整契约 + 原子事务）。
+
+        在 full_range 成功写入后，清除目标表中**既有的非权威/NULL data_source 行**，
+        使 authority-locked 表收敛到单一权威源。这是纯 upsert 无法做到的（upsert 只触及
+        本次有数据的 code，旧 NULL/akshare 历史行残留会导致 SourceTraceability/
+        AuthoritySourceViolation 审计失败）。
+
+        配置契约（严格）：
+            authority_reconciliation:
+              enabled: true
+              mode: purge_non_authoritative      # 仅支持此值
+              scope: full_range_only             # 仅支持此值
+              cleanup_source_watermark: true|false
+        未声明该键的旧任务行为不变。enabled=true 但 mode/scope 为未知值 → fail-fast（ok=False，
+        不执行 DELETE），绝不在忽略未知配置后执行删除。
+
+        真实触发条件（全部满足才执行 DELETE）：
+          - authority_reconciliation.enabled == true
+          - mode == "purge_non_authoritative" 且 scope == "full_range_only"
+          - task.authoritative_source 非空
+          - task.allow_fallback == false
+          - task.mode == "full_range"（runtime）
+          - 本轮 actual source == authoritative_source
+        cleanup_source_watermark=False 时只删数据行，不删任何 watermark。
+
+        事务：表数据 DELETE、可选 watermark DELETE、后置 source 集合校验位于同一事务
+        （BEGIN/COMMIT/ROLLBACK）。任一步失败 → ROLLBACK，不留半删除状态。
+        后置结果必须为 source 集合恰好等于 {authoritative}；full_range 有可用写入结果
+        却得到空表时不静默 PASS。
+
+        返回 dict：{enabled, ran, ok, reason, mode, scope, cleanup_source_watermark,
+                   authoritative_source, actual_source, rows_purged, watermarks_purged,
+                   source_set_after}
+        失败时 ok=False，调用方将 batch 标记 failed 且不推进水位。
+        """
+        import re as _re
+        result = {"enabled": False, "ran": False, "ok": True, "reason": "",
+                  "mode": None, "scope": None, "cleanup_source_watermark": True,
+                  "authoritative_source": None, "actual_source": source,
+                  "rows_purged": 0, "watermarks_purged": 0, "source_set_after": []}
+        recon_cfg = task.get("authority_reconciliation") or {}
+        if not recon_cfg.get("enabled", False):
+            return result
+        result["enabled"] = True
+
+        # 严格契约校验：mode/scope 必须是受支持值，否则 fail-fast（不执行 DELETE）
+        rec_mode = recon_cfg.get("mode")
+        rec_scope = recon_cfg.get("scope")
+        cleanup_wm = recon_cfg.get("cleanup_source_watermark", True)
+        result["mode"] = rec_mode
+        result["scope"] = rec_scope
+        result["cleanup_source_watermark"] = cleanup_wm
+        if rec_mode != "purge_non_authoritative":
+            result["ok"] = False
+            result["reason"] = f"unsupported authority_reconciliation.mode={rec_mode!r}"
+            logger.error(f"[{batch_id}] authority_reconciliation BLOCKED: {result['reason']}")
+            return result
+        if rec_scope != "full_range_only":
+            result["ok"] = False
+            result["reason"] = f"unsupported authority_reconciliation.scope={rec_scope!r}"
+            logger.error(f"[{batch_id}] authority_reconciliation BLOCKED: {result['reason']}")
+            return result
+
+        # 触发条件
+        authoritative = task.get("authoritative_source")
+        result["authoritative_source"] = authoritative
+        allow_fb = task.get("allow_fallback", True)
+        rt_mode = task.get("mode", "incremental")
+        if not authoritative:
+            result["reason"] = "authoritative_source not set"
+            return result
+        if allow_fb:
+            result["reason"] = "allow_fallback=true (not strict)"
+            return result
+        if rt_mode != "full_range":
+            result["reason"] = f"runtime mode={rt_mode} (reconciliation is full_range-only)"
+            return result
+        if source != authoritative:
+            result["reason"] = (f"actual source {source!r} != authoritative "
+                                f"{authoritative!r}")
+            return result
+
+        # 标识符校验：table 必须是可信 schema 标识符（字母/数字/下划线），防 SQL 注入
+        if not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table):
+            result["ok"] = False
+            result["reason"] = f"invalid table identifier: {table!r}"
+            logger.error(f"[{batch_id}] authority_reconciliation BLOCKED: {result['reason']}")
+            return result
+
+        # 触发条件全部满足：执行 purge（原子事务）
+        # NOTE: shared_conn() 内部 acquire/release _conn_lock 并返回持久 read_write 连接。
+        # 不要外层再套 `with self.writer._conn_lock`（非重入锁会自死锁）。once 模式单表
+        # 单线程，在 shared conn 上操作无需再加锁。
+        result["ran"] = True
+        conn = self.writer.shared_conn()
+        try:
+            conn.execute("BEGIN")
+            rows_before = conn.execute(
+                f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            # NULL-safe: IS DISTINCT FROM treats NULL != authoritative correctly
+            conn.execute(
+                f"DELETE FROM {table} "
+                f"WHERE data_source IS DISTINCT FROM ?", [authoritative])
+            rows_after = conn.execute(
+                f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            result["rows_purged"] = rows_before - rows_after
+            wm_before = 0
+            wm_after = 0
+            if cleanup_wm:
+                wm_before = conn.execute(
+                    "SELECT COUNT(*) FROM source_watermark WHERE table_name = ?",
+                    [table]).fetchone()[0]
+                conn.execute(
+                    "DELETE FROM source_watermark "
+                    "WHERE table_name = ? AND source IS DISTINCT FROM ?",
+                    [table, authoritative])
+                wm_after = conn.execute(
+                    "SELECT COUNT(*) FROM source_watermark WHERE table_name = ?",
+                    [table]).fetchone()[0]
+                result["watermarks_purged"] = wm_before - wm_after
+            # 后置校验：source 集合必须恰好为 {authoritative}（不能是空表——
+            # full_range 有可用写入结果却得到空表说明回填未生效，不得静默 PASS）
+            remaining = conn.execute(
+                f"SELECT DISTINCT data_source FROM {table}").fetchall()
+            remaining_sources = {r[0] for r in remaining}
+            result["source_set_after"] = sorted(s for s in remaining_sources if s is not None)
+            if remaining_sources != {authoritative}:
+                # 回滚整个事务，不留半删除状态
+                try:
+                    conn.execute("ROLLBACK")
+                except Exception:
+                    pass
+                result["ok"] = False
+                if not remaining_sources:
+                    result["reason"] = (f"post-reconcile {table} is empty — full_range "
+                                        f"produced no usable authoritative rows")
+                else:
+                    result["reason"] = (f"post-reconcile source set {remaining_sources} "
+                                        f"!= {{{authoritative}}}")
+                logger.error(f"[{batch_id}] authority_reconciliation FAILED "
+                             f"(rolled back): {result['reason']}")
+                return result
+            conn.execute("COMMIT")
+            logger.info(
+                f"[{batch_id}] authority_reconciliation: purged "
+                f"{result['rows_purged']} non-{authoritative} rows + "
+                f"{result['watermarks_purged']} watermarks from {table} "
+                f"(source_set_after={result['source_set_after']})")
+        except Exception as e:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            result["ok"] = False
+            result["reason"] = f"reconciliation error: {e}"
+            logger.error(f"[{batch_id}] authority_reconciliation FAILED "
+                         f"(rolled back): {e}", exc_info=True)
+        return result
+
     def _run_full_quality_audit(self):
         """采集完成后执行 Canonical 全库质量审计。"""
         hc = self.tasks_cfg.get("health_check", {})
@@ -1176,12 +1509,18 @@ class ResidentCollector:
             # 此处采集已完成（_run_full_quality_audit 在 execute_task 末尾调用），
             # 无并发 write，独占 shared_conn 安全。
             authority_rules = build_authority_rules(self.tasks_cfg)
+            # QFQ 专项门控：仅编排器 enabled 时启用（None → 完全跳过，disabled
+            # 行为逐位不变，不会因历史 qfq 表残留数据新增审计失败）。
+            qfq_block = self.tasks_cfg.get("qfq_orchestrator", {}) or {}
+            qfq_thresholds = (dict(qfq_block.get("quality_thresholds", {}) or {})
+                              if qfq_block.get("enabled") else None)
             report = DataQualityAuditor(
                 self.writer.db_path, self.aligner.schemas,
                 batch_audit_path=self.batch_audit.db_path,
                 quarantine_path=self.quarantine.db_path,
                 authority_rules=authority_rules,
-                shared_conn=self.writer.shared_conn()).run()
+                shared_conn=self.writer.shared_conn(),
+                qfq_thresholds=qfq_thresholds).run()
             errors = [issue for issue in report.issues if issue.severity == "error"]
             warnings = [issue for issue in report.issues if issue.severity == "warning"]
             if errors:
@@ -1337,7 +1676,8 @@ class ResidentCollector:
                 f'SELECT MAX("{time_col}") FROM "{table}"{clause}', params or None)
             actual = rows[0][0] if rows else None
             if actual is not None:
-                self.writer.advance_watermark(source, table, freq, int(actual), batch_id)
+                # 红线：水位推进唯一入口（qfq enabled 时四价格表延迟提交）
+                self._advance_or_defer_watermark(source, table, freq, int(actual), batch_id)
                 return int(actual)
         except Exception as e:
             logger.error(f"[Watermark] 推进 {source}/{table}/{freq} 失败: {e}", exc_info=True)
@@ -1751,6 +2091,10 @@ def main():
                         help="Absolute path to write runtime manifest JSON after collector init (atomic write)")
     parser.add_argument("--runtime-nonce", default=None, type=str,
                         help="Nonce UUID to embed in runtime manifest for replay protection")
+    # W2-0.8 缺陷 E：显式控制单任务后的全库审计。默认 full（生产/常驻语义不变）；
+    # staging 分阶段装载用 none，避免尚未回填的兄弟目标表导致当前任务假失败。
+    parser.add_argument("--quality-audit", choices=["full", "none"], default="full",
+                        help="once 模式下任务后的全库质量审计：full(默认)|none")
     args = parser.parse_args()
 
     # v3 日志：TimedRotatingFileHandler（午夜轮转，保留 14 天）+ 控制台
@@ -1850,12 +2194,27 @@ def main():
                     _os.replace(_tmp, args.runtime_manifest)
                     logger.info(f"Runtime manifest written: {args.runtime_manifest}")
                 try:
-                    collector.run_once(task_name=args.task, mode=args.pull_mode)
+                    result = collector.run_once(
+                        task_name=args.task, mode=args.pull_mode,
+                        quality_audit=args.quality_audit)
                 finally:
                     collector.close()
+            # W2-0.8 缺陷 D：CLI 退出码必须反映任务+审计结果，不能总返回 0。
+            # task 不存在 / task failed / 启用了 audit 且 audit failed → exit 1。
+            if not result["task_found"]:
+                logger.error(f"[CLI] task not found: {args.task}")
+                sys.exit(1)
+            if not result["task_ok"]:
+                logger.error(f"[CLI] task failed (see batch_audit ledger)")
+                sys.exit(1)
+            if result["audit_run"] and not result["audit_ok"]:
+                logger.error(f"[CLI] quality audit failed")
+                sys.exit(1)
+            logger.info("[CLI] once 完成（task + audit 全部通过）")
         except Exception as e:
             if "collector_run" in str(e).lower() or "timeout" in str(e).lower():
                 logger.error(f"[CLI] collector_run.lock 获取失败（daemon 或 GUI 正在采集）: {e}")
+                sys.exit(1)
             else:
                 raise
     else:

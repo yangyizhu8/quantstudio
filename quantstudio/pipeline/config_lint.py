@@ -101,6 +101,9 @@ def lint_configs(data_cfg: Dict, sources_cfg: Dict,
         _lint_schema_pit_gate(table, schema, errors)
         _lint_schema_pk_consistency(table, schema, warnings)
 
+    # 第 6 项：qfq_orchestrator 块（resident orchestrator v2）fail-fast
+    _lint_qfq_orchestrator(tasks_cfg, sources, errors, warnings)
+
     return errors, warnings
 
 
@@ -172,6 +175,31 @@ def _lint_one_task(task: Dict, name: str, schemas: Dict, sources: Dict,
                     f"task '{name}': allow_fallback=false 但 "
                     f"authoritative_source='{authoritative}' 不可用（未启用或不支持该表）")
 
+    # W2-0.9 缺陷 B：authority_reconciliation 契约严格校验（fail-fast）。
+    # 声明了该键但 mode/scope 为未知值必须报错，绝不能忽略未知配置后仍执行 DELETE。
+    recon = task.get("authority_reconciliation")
+    if recon:
+        if not isinstance(recon, dict):
+            errors.append(
+                f"task '{name}': authority_reconciliation 必须是对象")
+        else:
+            if recon.get("enabled") is True:
+                rec_mode = recon.get("mode")
+                rec_scope = recon.get("scope")
+                if rec_mode != "purge_non_authoritative":
+                    errors.append(
+                        f"task '{name}': authority_reconciliation.enabled=true 但 "
+                        f"mode={rec_mode!r} 不受支持（仅 'purge_non_authoritative'）")
+                if rec_scope != "full_range_only":
+                    errors.append(
+                        f"task '{name}': authority_reconciliation.enabled=true 但 "
+                        f"scope={rec_scope!r} 不受支持（仅 'full_range_only'）")
+                if "cleanup_source_watermark" in recon and not isinstance(
+                        recon["cleanup_source_watermark"], bool):
+                    errors.append(
+                        f"task '{name}': authority_reconciliation.cleanup_source_watermark "
+                        f"必须是 bool")
+
 
 def _lint_codes(task_name: str, source: str, codes, errors: List[str], warnings: List[str]):
     """校验 codes 字段：["ALL"] 或合法代码列表"""
@@ -206,6 +234,53 @@ def _lint_codes(task_name: str, source: str, codes, errors: List[str], warnings:
         warnings.append(
             f"task '{task_name}': codes 只有 {len(codes)} 只 ({codes[:3]})，"
             f"疑似调试残留，全市场任务建议用 [\"ALL\"]")
+
+
+def _lint_qfq_orchestrator(tasks_cfg: Dict, sources: Dict,
+                           errors: List[str], warnings: List[str]):
+    """第 6 项：qfq_orchestrator 配置块校验（fail-fast）。
+
+    - 块缺失 → 安全默认（enabled=False），不报错；
+    - 块存在 → 复用 QFQOrchestratorConfig.from_dict 的单一真相源校验
+      （price_source 锁 xtquant / freqs 含 1min / watermark_policy 仅
+      hold_until_consistent 等），非法直接 ERROR 阻止启动；
+    - enabled=true 时额外要求：xtquant（价格修正源）与 tushare（因子发现源）
+      在 sources_config 中已启用，否则编排器每轮 fail-closed 空转 → ERROR；
+    - 未知顶层键 → WARN（typo 防御，如 watermark_polcy 拼错会被静默忽略）。
+    """
+    block = tasks_cfg.get("qfq_orchestrator")
+    if block is None:
+        return
+    if not isinstance(block, dict):
+        errors.append("qfq_orchestrator: 必须是对象")
+        return
+    from .qfq_orchestrator_types import (
+        QFQOrchestratorConfig, QFQConfigError, DEFAULT_ORCHESTRATOR_CFG)
+    known_keys = set(DEFAULT_ORCHESTRATOR_CFG) | {"_note"}
+    for k in sorted(set(block) - known_keys):
+        warnings.append(
+            f"qfq_orchestrator: 未知配置键 '{k}'（会被静默忽略，疑似拼写错误）")
+    try:
+        cfg = QFQOrchestratorConfig.from_dict(dict(block))
+    except QFQConfigError as e:
+        errors.append(f"qfq_orchestrator: {e}")
+        return
+    except Exception as e:  # 类型错误等（如 retry_max 非数字）
+        errors.append(f"qfq_orchestrator: 配置解析失败 {type(e).__name__}: {e}")
+        return
+    if cfg.enabled:
+        if not sources.get(cfg.price_source, {}).get("enabled", False):
+            errors.append(
+                f"qfq_orchestrator: enabled=true 但价格修正源 "
+                f"'{cfg.price_source}' 未在 sources_config 启用（编排器将 fail-closed）")
+        # 因子发现源：stock/etf detector 目前均为 tushare_*（qfq_event_discovery 契约）
+        for det in (cfg.stock_factor_detector, cfg.etf_factor_detector):
+            if det.startswith("tushare") and not sources.get(
+                    "tushare", {}).get("enabled", False):
+                errors.append(
+                    f"qfq_orchestrator: enabled=true 且 detector '{det}' 需要 "
+                    f"tushare，但 tushare 未在 sources_config 启用")
+                break
 
 
 def _lint_schema_pit_gate(table: str, schema: Dict, errors: List[str]):
