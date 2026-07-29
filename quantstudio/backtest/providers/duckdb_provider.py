@@ -76,12 +76,10 @@ class DuckDBMarketDataProvider(MarketDataProvider):
                           bar_cutoff_ms=None):
         # PR3: frequency="1d"（默认）走原日线路径，字节级不变。
         if frequency == "1d":
-            result = {}
-            for code in codes:
-                df = self._data.query_bars_by_count_multi_table(
-                    code, count, _end_ms(end_date), use_qfq=str(fq).lower() in ('pre', 'dypre'))
-                if not df.empty: result[code] = _fields(df, fields)
-            return result
+            # 阶段1 批量化：单条/少量批量 SQL 取代 N 次单码 SQL，与逐只调用字节级等价
+            use_qfq = str(fq).lower() in ('pre', 'dypre')
+            batch = self._data.query_bars_by_count_batch(codes, count, _end_ms(end_date), use_qfq)
+            return {c: _fields(df, fields) for c, df in batch.items()}
         # 分钟路径
         from .frequency_labels import api_to_storage
         storage_freq = api_to_storage(frequency)

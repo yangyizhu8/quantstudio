@@ -406,6 +406,83 @@ class DuckDBDataAccess:
             df['trade_date'] = pd.to_datetime(df['time'], unit='ms', utc=True).dt.tz_convert('Asia/Shanghai').dt.strftime('%Y-%m-%d')
         return df
 
+    def query_bars_by_count_batch(self, codes, count, before_ms, use_qfq: bool = False) -> Dict[str, pd.DataFrame]:
+        """阶段1 批量化：与 query_bars_by_count_multi_table 逐只调用字节级等价，
+        但用单次/少量批量 SQL 取代 N 次单码 SQL（O(N) -> O(1)）。
+
+        语义约束（逐项对齐单码版 query_bars_by_count_multi_table）：
+        - 每只代码取 time <= before_ms 的最近 N 根（ROW_NUMBER PARTITION BY code
+          ORDER BY time DESC <= N）。
+        - 三表优先级：按代码类型路由到 stock/etf/index 单表（stock 命中即不查 etf/index），
+          与 _resolve_minute_table 同款 is_etf/is_index 路由。
+        - INDEX_ETF_MAP fallback：指数代码在 index_daily 取空时，用跟踪 ETF 代理批量查一次。
+        - use_qfq=True 时用 *_front 替换 open/high/low/close（与单码版 L400-404 一致）。
+        - 生成 trade_date 列（与单码版 L406 一致）。
+        - 返回 {code: DataFrame}，列/行/排序/qfq/trade_date 与逐只版逐行一致。
+        code 用参数化占位（code IN (?, ?, ...)），不拼 f-string，消除 SQL 注入。
+        """
+        conn = self._get_conn()
+        if conn is None:
+            return {}
+        if not codes:
+            return {}
+        count = int(count)
+        INDEX_ETF_MAP = {"000300": "510300", "000905": "510500",
+                         "000016": "510050", "000852": "510880"}
+        # 各表列定义（与单码版 SELECT 列集完全一致）
+        TABLE_COLS = {
+            "stock_daily": "code, time, open, high, low, close, volume, amount, pctChg, preClose, turn, peTTM, pbMRQ, open_front, high_front, low_front, close_front",
+            "etf_daily": "code, time, open, high, low, close, volume, amount, pctChg, preClose, turn, NULL as peTTM, NULL as pbMRQ, open_front, high_front, low_front, close_front",
+            "index_daily": "code, time, open, high, low, close, volume, amount, pctChg, NULL as preClose, NULL as turn, NULL as peTTM, NULL as pbMRQ, NULL as open_front, NULL as high_front, NULL as low_front, NULL as close_front",
+        }
+        ETF_FALLBACK_COLS = ("code, time, open, high, low, close, volume, amount, pctChg, preClose, "
+                             "turn, NULL as peTTM, NULL as pbMRQ, open_front, high_front, low_front, close_front")
+
+        result: Dict[str, pd.DataFrame] = {}
+
+        def _post(df, use_qfq):
+            df = df.sort_values("time").reset_index(drop=True)
+            if use_qfq:
+                for orig, qfq in (("open", "open_front"), ("high", "high_front"),
+                                  ("low", "low_front"), ("close", "close_front")):
+                    if qfq in df.columns and df[qfq].notna().any():
+                        df[orig] = df[qfq]
+            df["trade_date"] = pd.to_datetime(df["time"], unit="ms", utc=True).dt.tz_convert("Asia/Shanghai").dt.strftime("%Y-%m-%d")
+            return df
+
+        # ---- 逐表优先级 stock -> etf -> index，与单码版完全一致（一只代码只取一张表）----
+        for tbl, cols in (("stock_daily", TABLE_COLS["stock_daily"]),
+                          ("etf_daily", TABLE_COLS["etf_daily"]),
+                          ("index_daily", TABLE_COLS["index_daily"])):
+            remaining = [c for c in codes if c not in result]
+            if not remaining:
+                break
+            placeholders = ", ".join(["?"] * len(remaining))
+            inner = (f"SELECT *, ROW_NUMBER() OVER (PARTITION BY code ORDER BY time DESC) AS _rn "
+                     f"FROM {tbl} WHERE code IN ({placeholders}) AND time <= ?")
+            sql = f"SELECT {cols} FROM ({inner}) WHERE _rn <= ?"
+            df = conn.execute(sql, remaining + [before_ms, count]).fetchdf()
+            if df is None or df.empty:
+                continue
+            for c, sub in df.groupby("code", sort=False):
+                result[c] = _post(sub, use_qfq)
+
+        # ---- INDEX_ETF_MAP fallback：仍未命中的指数代码用跟踪 ETF 代理批量查一次 ----
+        missing = [c for c in codes if c not in result and c in INDEX_ETF_MAP]
+        if missing:
+            proxy_map = {INDEX_ETF_MAP[c]: c for c in missing}  # proxy_code -> 原 index code
+            proxies = list(proxy_map.keys())
+            placeholders = ", ".join(["?"] * len(proxies))
+            inner = (f"SELECT *, ROW_NUMBER() OVER (PARTITION BY code ORDER BY time DESC) AS _rn "
+                     f"FROM etf_daily WHERE code IN ({placeholders}) AND time <= ?")
+            sql = f"SELECT {ETF_FALLBACK_COLS} FROM ({inner}) WHERE _rn <= ?"
+            df = conn.execute(sql, proxies + [before_ms, count]).fetchdf()
+            if df is not None and not df.empty:
+                for proxy_code, sub in df.groupby("code", sort=False):
+                    # 以原 index code 为 key（单码版 df.code=proxy 但 result key=原 index code）
+                    result[proxy_map[proxy_code]] = _post(sub, use_qfq)
+        return result
+
     # ===================== PR3: 分钟 bar 查询 =====================
 
     def _resolve_minute_table(self, code: str) -> Optional[str]:

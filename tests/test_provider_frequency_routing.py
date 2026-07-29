@@ -127,8 +127,12 @@ def test_get_bars_by_count_daily_default_unchanged():
     from quantstudio.backtest.providers.duckdb_provider import DuckDBMarketDataProvider
     provider = DuckDBMarketDataProvider.__new__(DuckDBMarketDataProvider)
     provider._data = type("D", (), {})()
-    provider._data.query_bars_by_count_multi_table = lambda code, count, before_ms, use_qfq=False: pd.DataFrame(
-        {'code': [code], 'time': [before_ms], 'close': [10.0]})
+    # 阶段1 批量化后日线路径调用 query_bars_by_count_batch（返回 {code: df}），
+    # 替代旧的逐只 query_bars_by_count_multi_table。
+    provider._data.query_bars_by_count_batch = lambda codes, count, before_ms, use_qfq=False: {
+        code: pd.DataFrame({'code': [code], 'time': [before_ms], 'close': [10.0]})
+        for code in codes
+    }
     provider._calendar = None
 
     # 不传 frequency → 默认 '1d' → 走日线
