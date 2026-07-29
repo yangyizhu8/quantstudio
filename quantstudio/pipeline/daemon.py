@@ -1800,19 +1800,20 @@ class ResidentCollector:
         """拉取复权因子供 aligner 计算 8 个复权字段。
         仅 tushare 支持 adj_factor/fund_adj API；其他源返回 None（复权字段留 NULL，不影响主流程）。
         复权因子存 SQLite（qfq_aux.db），避免重复拉取。is_etf=True 时用 fund_adj 接口。"""
-        from .qfq_maintenance import QFQMaintenance
+        from .qfq_maintenance import QFQMaintenance, resolve_ts_codes
         from .aligner import normalize_code, to_ms_timestamp
         qfq = QFQMaintenance(self.writer.db_path)
-        # codes 可能是裸码，tushare 需要 .SH/.SZ 后缀
-        tushare_codes = []
-        raw_codes = codes or []
-        for c in raw_codes:
-            c = str(c).strip()
-            if "." in c:  # 已带后缀
-                tushare_codes.append(c)
-            else:  # 裸码 → 补后缀（按市场）
-                from .aligner import market_of_code
-                tushare_codes.append(f"{c}.{market_of_code(c)}")
+        # codes 可能是裸码或带后缀；统一用 resolve_ts_codes 解析为 Tushare ts_code
+        # （元数据优先，资产类型感知前缀 fallback）。修复：market_of_code 对 ETF
+        # 裸码（5/1 开头）会误判 BJ，改用 resolve_ts_codes 保证 daemon 与
+        # QFQFactorRefresher 后缀推导一致。
+        raw_codes = [str(c).strip() for c in (codes or [])]
+        if raw_codes:
+            asset_type = "ETF" if is_etf else "STOCK"
+            tushare_codes = resolve_ts_codes(
+                raw_codes, asset_type=asset_type, main_db=str(self.writer.db_path))
+        else:
+            tushare_codes = []
         # 转裸码列表（用于 SQL 查询过滤）
         bare_codes = [normalize_code(c, "tushare_to_raw") for c in tushare_codes]
         try:
