@@ -169,6 +169,108 @@ def build_staging_env() -> dict:
     return manifest
 
 
+def _table_content_sha(conn, table: str, codes: list):
+    """对指定表指定码的核心列内容做 SHA（含行顺序）。返回 (sha, rows)。"""
+    ph = ",".join([f"'{c}'" for c in codes])
+    df = conn.execute(
+        f"SELECT {', '.join(PRICE_COLS)} FROM {table} "
+        f"WHERE code IN ({ph}) ORDER BY code, time"
+    ).fetchdf()
+    sha = hashlib.sha256(df.to_csv(index=False).encode("utf-8")).hexdigest()
+    return sha, len(df)
+
+
+def snapshot_baseline() -> dict:
+    """记录演练前基线：每张表的 SHA + 行数 + CSV。"""
+    logger.info("记录基线快照（演练前）")
+    baseline = {}
+    with duckdb.connect(str(STAGING_DB), read_only=True) as conn:
+        for tbl, codes in TABLE_CODES.items():
+            sha, n = _table_content_sha(conn, tbl, codes)
+            baseline[tbl] = {"sha256": sha, "rows": n}
+            # 导出 CSV 供人工核对
+            ph = ",".join([f"'{c}'" for c in codes])
+            df = conn.execute(
+                f"SELECT {', '.join(PRICE_COLS)} FROM {tbl} "
+                f"WHERE code IN ({ph}) ORDER BY code, time"
+            ).fetchdf()
+            df.to_csv(OUTPUT_DIR / f"baseline_{tbl}.csv", index=False)
+    (OUTPUT_DIR / "baseline_sha.json").write_text(
+        json.dumps(baseline, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info(f"基线 SHA 已记录: "
+                f"{json.dumps({k: v['sha256'][:12] for k, v in baseline.items()})}")
+    return baseline
+
+
+def split_etf_factors() -> dict:
+    """ETF 因子分库：dry_run 预检 + 实跑，验证行数守恒。"""
+    from quantstudio.pipeline.qfq_maintenance import (
+        migrate_split_etf_factors, get_etf_universe)
+    from quantstudio.pipeline.qfq_reanchor_schema import init_sqlite_schema
+    logger.info("ETF 因子分库迁移")
+    # 复制来的正式 aux 可能缺 fund_adj 表（旧版），先 init_sqlite_schema 补建
+    with sqlite3.connect(str(STAGING_AUX)) as a:
+        init_sqlite_schema(a)
+        a.commit()
+    etf_universe = get_etf_universe(STAGING_DB)
+    trace = {"etf_universe_size": len(etf_universe),
+             "etf_universe_sample": sorted(etf_universe)[:5]}
+    # dry_run 预检
+    moved_dry, sample_dry = migrate_split_etf_factors(
+        STAGING_AUX, etf_universe=etf_universe, dry_run=True)
+    trace["dry_run"] = {"moved_rows": moved_dry, "sample": sample_dry}
+    logger.info(f"  dry_run: 预计迁移 {moved_dry} 行 ETF 因子")
+    # 迁移前行数
+    with sqlite3.connect(str(STAGING_AUX)) as a:
+        adj_before = a.execute("SELECT COUNT(*) FROM adj_factor").fetchone()[0]
+        fund_before = a.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='fund_adj'"
+        ).fetchone()[0]
+    trace["before"] = {"adj_factor_rows": adj_before, "fund_adj_exists": bool(fund_before)}
+    # 实跑
+    moved_real, sample_real = migrate_split_etf_factors(
+        STAGING_AUX, etf_universe=etf_universe, dry_run=False)
+    trace["real"] = {"moved_rows": moved_real}
+    # 迁移后行数 + 守恒校验
+    with sqlite3.connect(str(STAGING_AUX)) as a:
+        adj_after = a.execute("SELECT COUNT(*) FROM adj_factor").fetchone()[0]
+        fund_after = a.execute("SELECT COUNT(*) FROM fund_adj").fetchone()[0]
+    trace["after"] = {"adj_factor_rows": adj_after, "fund_adj_rows": fund_after}
+    # 守恒：adj_before == adj_after + moved_real
+    trace["conservation_ok"] = (adj_before == adj_after + moved_real)
+    logger.info(f"  迁移完成：adj {adj_before}→{adj_after}，fund_adj→{fund_after}，"
+                f"守恒={trace['conservation_ok']}")
+    (OUTPUT_DIR / "factor_migration_trace.json").write_text(
+        json.dumps(trace, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    return trace
+
+
+def inject_front_pollution() -> dict:
+    """对 600000 若干行 front 注入污染值，记录真实值（演练后应被修正回来）。"""
+    logger.info("注入 front 污染样本（600000 最近 5 行 close_front）")
+    pollution = {"code": "600000", "polluted_rows": 0, "records": []}
+    with duckdb.connect(str(STAGING_DB)) as conn:
+        # 取最近 5 行的 time + 真实 close_front/close
+        rows = conn.execute(
+            "SELECT time, close, close_front FROM stock_daily "
+            "WHERE code='600000' ORDER BY time DESC LIMIT 5"
+        ).fetchall()
+        for t, close, close_front in rows:
+            polluted = float(close) + 1.0  # 污染值 = close + 1
+            conn.execute(
+                "UPDATE stock_daily SET close_front=? "
+                "WHERE code='600000' AND time=?", [polluted, t])
+            pollution["records"].append({
+                "time": t, "true_close_front": float(close_front),
+                "true_close": float(close), "polluted_value": polluted})
+            pollution["polluted_rows"] += 1
+        conn.commit()
+    (OUTPUT_DIR / "front_pollution_injected.json").write_text(
+        json.dumps(pollution, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info(f"  注入 {pollution['polluted_rows']} 行污染（close_front=close+1）")
+    return pollution
+
+
 def main() -> int:
     logger.info("=" * 60)
     logger.info("QFQ staging 演练（首轮：核心守恒闭环）")
@@ -181,6 +283,9 @@ def main() -> int:
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     (OUTPUT_DIR / "environment.json").write_text(
         json.dumps(env, ensure_ascii=False, indent=2), encoding="utf-8")
+    baseline = snapshot_baseline()
+    migration = split_etf_factors()
+    pollution = inject_front_pollution()
     return 0
 
 
