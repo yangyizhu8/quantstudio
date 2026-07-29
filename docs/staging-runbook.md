@@ -115,13 +115,15 @@ python scripts/backfill_fin_growth_dividend_staging.py `
 生成 `staging-root/audit_evidence.json`，由统一 strict validator `validate_audit_evidence`
 门控。验证点（任一不满足返回码非 0）：
 
-- `passed=true`；`audit.checks_run > 0` 且 `audit.errors_count == 0`
+- `passed=true`（结构收集成功标记，不代表 raw audit 零 error）；`audit.checks_run > 0`
 - 版本分离：`data_schema_version == "2.0"`（来自 alignment_rules.json）
   且 `ptrade_profile_version == "1.10.0"`（来自 ptrade-api-signatures.json）
 - staging/source DB path/size/sha256 与磁盘实际一致；4 个 config 文件 hash 一致
 - authority_rules：fin_indicator / stock_dividend 均 `authoritative_source=tushare` 且
   `allow_fallback=false`；runtime manifest ≥ 2 且内容完整；ledger 可读
-- batch conservation：每任务 `rows_passed + rows_rejected == rows_raw`；
+- batch conservation：每任务 `rows_passed + rows_rejected <= rows_raw`
+  （DataValidator 分流前先做主键去重，去重掉的行不计入 passed/rejected，属合法收敛；
+  去重只会减少行数不会增加）且 `rows_written == rows_passed`（入库一致性）；
   batch ID 唯一 + 一任务一批 + status=success + source=tushare
 - growth_field_stats（np_yoy/or_yoy/tr_yoy 键存在）+ dividend_stats（税前/税后/stk 键存在）
   + watermark 含两个任务
