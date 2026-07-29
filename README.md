@@ -306,8 +306,10 @@ W2-0.8 审核发现 9 项问题，W2-0.9 逐项关闭（详见 `docs/framework-f
 - **Phase 5 — baseline-delta audit（接入重做）**：`validate_audit_evidence` 不再要求 `errors_count==0`，改为要求 `baseline_delta_passed=True`；目标表零 error，非目标表允许继承，new/regressed/severity-upgrade BLOCK；phase_audit 顺序调整（先 delta 再 strict validate）。
 - **C/F — Git worktree 外 staging 路径（强制）**：非 dry-run prepare 必须 fail-closed BLOCK staging_root 在 Git worktree/项目根/data 内；preflight 独占检查；detached runner **不自动 kill**（scan 只报告；kill 显式+再验证；同 root 阻断）。
 - **性能回归**：duckdb_data_access/duckdb_provider/ptrade_api 3 文件**回退到 HEAD**（batch 优化无条件查不存在的表 + 破坏测试替身）；纯性能等价修复组=回退状态。
+- **G — watermark 审计口径对齐（W2-0.9 修正）**：`quality_audit._audit_watermarks` 优先用 schema 的 `time_key` 选业务时间列，回退再用硬编码优先级，与 daemon `_advance_actual_watermark`/`_get_safe_watermark` 推进口径对齐；修复 stock_dividend（`time_key=ex_date`）按除权日推进水位却被审计误用 `end_date` 比较导致的 `WatermarkConsistency` 误报。
+- **H — batch 守恒口径修正（W2-0.9 修正）**：守恒等式由 `rows_passed + rows_rejected == rows_raw` 放宽为 `<= rows_raw`（DataValidator 分流前主键去重属合法收敛，去重只减不增）+ 新增 `rows_written == rows_passed` 入库一致性；`evidence.passed` 改为仅标记结构收集成功（`len(evidence_errors)==0`），raw audit 的 inherited error 归 baseline_delta 门禁负责，不再误伤 evidence 通过。
 
-测试：新增 5 个测试文件（43 项）+ 现有 staging 测试适配；W2-0.9 专项 **165 passed**；全量 **1571 passed, 1 warning**（唯一 warning 与 W2 无关，原样保留）。
+测试：新增 5 个测试文件（43 项）+ 现有 staging 测试适配；W2-0.9 专项 **165 passed**；全量 **1676 passed, 1 warning**（唯一 warning 与 W2 无关，原样保留）。
 
 ### Profile 1.10.0
 

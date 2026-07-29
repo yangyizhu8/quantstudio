@@ -425,8 +425,14 @@ class DataQualityAuditor:
             if table not in tables or watermark is None:
                 continue
             columns = {row[0] for row in conn.execute(f'DESCRIBE "{table}"').fetchall()}
-            time_col = next((col for col in ("time", "end_date", "ex_date", "change_date", "delist_date")
-                             if col in columns), None)
+            # 优先使用 schema 的 time_key（与 daemon 水位推进口径 _advance_actual_watermark /
+            # _get_safe_watermark 对齐），避免审计与采集用两套 time_col 导致 watermark 误报。
+            schema_time_key = self.schemas.get(table, {}).get("time_key") if self.schemas else None
+            if schema_time_key and schema_time_key in columns:
+                time_col = schema_time_key
+            else:
+                time_col = next((col for col in ("time", "end_date", "ex_date", "change_date", "delist_date")
+                                 if col in columns), None)
             if not time_col:
                 continue
             where = []

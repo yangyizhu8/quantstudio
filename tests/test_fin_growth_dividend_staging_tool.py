@@ -1901,22 +1901,69 @@ class TestValidatorSameTaskBatchesBlocked:
 
 
 class TestValidatorBatchConservationFailBlocked:
-    """test_validator_batch_conservation_failure_blocked"""
+    """test_validator_batch_conservation_failure_blocked
 
-    def test_validator_batch_conservation_failure_blocked(self):
-        """rows_passed + rows_rejected != rows_raw must fail validation."""
+    守恒口径（W2-0.9 修正）：DataValidator 分流前先做主键去重
+    (validator.py drop_duplicates)，去重掉的行既不计入 passed 也不计入
+    rejected，属合法收敛。因此守恒放宽为：
+      rows_passed + rows_rejected <= rows_raw  （去重只会减少行数）
+    且入库一致性：rows_written == rows_passed。
+    真正的违规是 passed+rejected 超过 raw，或 written 与 passed 不一致。
+    """
+
+    def test_validator_batch_conservation_exceeds_raw_blocked(self):
+        """rows_passed + rows_rejected > rows_raw must fail validation."""
         from scripts.backfill_fin_growth_dividend_staging import validate_audit_evidence
         with tempfile.TemporaryDirectory() as tmp:
             tmp_p = Path(tmp)
             db_path = _make_mini_db()
             staging_root, staging_db, staging_cfg_dir = _setup_full_staging(tmp_p, db_path)
             ev = _make_full_passing_evidence(staging_db, db_path, staging_cfg_dir)
-            # 5 != 3 + 1
+            # 3 + 3 = 6 > raw 5 (passed+rejected 超过 raw, 违规)
             ev["batch_counts"]["fin_indicator"] = {
-                "rows_raw": 5, "rows_passed": 3, "rows_rejected": 1}
+                "rows_raw": 5, "rows_passed": 3, "rows_rejected": 3}
             ok, reason = validate_audit_evidence(ev, staging_db, Path(db_path), staging_cfg_dir)
             assert not ok
             assert "rows_passed" in reason
+            os.unlink(db_path)
+
+    def test_validator_batch_written_not_equal_passed_blocked(self):
+        """rows_written != rows_passed must fail validation (入库一致性)."""
+        from scripts.backfill_fin_growth_dividend_staging import validate_audit_evidence
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_p = Path(tmp)
+            db_path = _make_mini_db()
+            staging_root, staging_db, staging_cfg_dir = _setup_full_staging(tmp_p, db_path)
+            ev = _make_full_passing_evidence(staging_db, db_path, staging_cfg_dir)
+            # passed+rejected (4) <= raw (5) 合法去重, 但 written != passed 违规
+            ev["batch_counts"]["fin_indicator"] = {
+                "rows_raw": 5, "rows_passed": 3, "rows_rejected": 1, "rows_written": 2}
+            ok, reason = validate_audit_evidence(ev, staging_db, Path(db_path), staging_cfg_dir)
+            assert not ok
+            assert "rows_written" in reason
+            os.unlink(db_path)
+
+    def test_validator_batch_conservation_dedup_allowed(self):
+        """合法去重 (passed+rejected < raw) 必须通过, 不应误判为违规."""
+        from scripts.backfill_fin_growth_dividend_staging import validate_audit_evidence
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_p = Path(tmp)
+            db_path = _make_mini_db()
+            staging_root, staging_db, staging_cfg_dir = _setup_full_staging(tmp_p, db_path)
+            ev = _make_full_passing_evidence(staging_db, db_path, staging_cfg_dir)
+            # 272765 raw, 167312 passed, 8 rejected, written==passed (真实全量回填口径)
+            ev["batch_counts"]["fin_indicator"] = {
+                "rows_raw": 272765, "rows_passed": 167312,
+                "rows_rejected": 8, "rows_written": 167312}
+            ev["batch_counts"]["stock_dividend"] = {
+                "rows_raw": 55094, "rows_passed": 54904,
+                "rows_rejected": 0, "rows_written": 54904}
+            ok, reason = validate_audit_evidence(ev, staging_db, Path(db_path), staging_cfg_dir)
+            # 只校验守恒相关逻辑通过 (其他 evidence 字段由 _make_full_passing_evidence 保证)
+            # 若因其他原因失败, reason 不应包含 rows_passed/rows_written 守恒信息
+            if not ok:
+                assert "rows_passed" not in reason, f"合法去重被误判: {reason}"
+                assert "rows_written" not in reason, f"合法去重被误判: {reason}"
             os.unlink(db_path)
 
 
