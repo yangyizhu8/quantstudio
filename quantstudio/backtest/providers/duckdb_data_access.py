@@ -458,9 +458,12 @@ class DuckDBDataAccess:
             if not remaining:
                 break
             placeholders = ", ".join(["?"] * len(remaining))
-            inner = (f"SELECT *, ROW_NUMBER() OVER (PARTITION BY code ORDER BY time DESC) AS _rn "
-                     f"FROM {tbl} WHERE code IN ({placeholders}) AND time <= ?")
-            sql = f"SELECT {cols} FROM ({inner}) WHERE _rn <= ?"
+            # QUALIFY 直接写法（等价原「子查询 + 外层 WHERE _rn<=N」，但允许 DuckDB
+            # 优化器下推窗口函数，只取每只最近 N 根，避免大表上先取全量历史再过滤）。
+            # 参数顺序不变：code IN(...) + before_ms(time<=?) + count(QUALIFY<=?)。
+            sql = (f"SELECT {cols} FROM {tbl} "
+                   f"WHERE code IN ({placeholders}) AND time <= ? "
+                   f"QUALIFY ROW_NUMBER() OVER (PARTITION BY code ORDER BY time DESC) <= ?")
             df = conn.execute(sql, remaining + [before_ms, count]).fetchdf()
             if df is None or df.empty:
                 continue
@@ -473,9 +476,10 @@ class DuckDBDataAccess:
             proxy_map = {INDEX_ETF_MAP[c]: c for c in missing}  # proxy_code -> 原 index code
             proxies = list(proxy_map.keys())
             placeholders = ", ".join(["?"] * len(proxies))
-            inner = (f"SELECT *, ROW_NUMBER() OVER (PARTITION BY code ORDER BY time DESC) AS _rn "
-                     f"FROM etf_daily WHERE code IN ({placeholders}) AND time <= ?")
-            sql = f"SELECT {ETF_FALLBACK_COLS} FROM ({inner}) WHERE _rn <= ?"
+            # QUALIFY 直接写法（与循环体同款优化；参数顺序不变：code IN(...) + before_ms + count）。
+            sql = (f"SELECT {ETF_FALLBACK_COLS} FROM etf_daily "
+                   f"WHERE code IN ({placeholders}) AND time <= ? "
+                   f"QUALIFY ROW_NUMBER() OVER (PARTITION BY code ORDER BY time DESC) <= ?")
             df = conn.execute(sql, proxies + [before_ms, count]).fetchdf()
             if df is not None and not df.empty:
                 for proxy_code, sub in df.groupby("code", sort=False):
