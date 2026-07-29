@@ -441,12 +441,26 @@ class DuckDBDataAccess:
         result: Dict[str, pd.DataFrame] = {}
 
         def _post(df, use_qfq):
-            df = df.sort_values("time").reset_index(drop=True)
+            """向量化后处理：对整张大 DataFrame 一次性完成排序 + qfq 替换 + trade_date
+            生成，外层 groupby 仅做切片（不再逐只 sort/qfq/trade_date）。
+
+            与原「逐只 _post」逐行字节级等价：
+            - 排序：整表按 (code, time) 排一次，组内即 time 升序，等价于原每子集
+              sort_values("time")。
+            - qfq 替换：用 per-code 的 notna().groupby(code).transform("max") 掩码，
+              仅当该 code 的 *_front 列存在任意非空才整列替换（与原 notna().any() 守卫
+              逐行一致，含 qfq 局部为空时原列留 NaN 的边界）。
+            - trade_date：整表一次性生成，与原逐行格式（%Y-%m-%d）一致。
+            """
+            # 整表排序一次（组内 time 升序），替代 5000 次子集 sort_values。
+            df = df.sort_values(["code", "time"]).reset_index(drop=True)
             if use_qfq:
                 for orig, qfq in (("open", "open_front"), ("high", "high_front"),
                                   ("low", "low_front"), ("close", "close_front")):
-                    if qfq in df.columns and df[qfq].notna().any():
-                        df[orig] = df[qfq]
+                    if qfq in df.columns:
+                        # per-code 守卫：该 code 的 qfq 列任意非空 -> 整列替换原始列。
+                        grp = df[qfq].notna().groupby(df["code"]).transform("max")
+                        df.loc[grp, orig] = df.loc[grp, qfq]
             df["trade_date"] = pd.to_datetime(df["time"], unit="ms", utc=True).dt.tz_convert("Asia/Shanghai").dt.strftime("%Y-%m-%d")
             return df
 
@@ -467,8 +481,9 @@ class DuckDBDataAccess:
             df = conn.execute(sql, remaining + [before_ms, count]).fetchdf()
             if df is None or df.empty:
                 continue
+            df = _post(df, use_qfq)  # 整表向量化后处理
             for c, sub in df.groupby("code", sort=False):
-                result[c] = _post(sub, use_qfq)
+                result[c] = sub.reset_index(drop=True)
 
         # ---- INDEX_ETF_MAP fallback：仍未命中的指数代码用跟踪 ETF 代理批量查一次 ----
         missing = [c for c in codes if c not in result and c in INDEX_ETF_MAP]
@@ -482,9 +497,10 @@ class DuckDBDataAccess:
                    f"QUALIFY ROW_NUMBER() OVER (PARTITION BY code ORDER BY time DESC) <= ?")
             df = conn.execute(sql, proxies + [before_ms, count]).fetchdf()
             if df is not None and not df.empty:
+                df = _post(df, use_qfq)  # 整表向量化后处理
                 for proxy_code, sub in df.groupby("code", sort=False):
                     # 以原 index code 为 key（单码版 df.code=proxy 但 result key=原 index code）
-                    result[proxy_map[proxy_code]] = _post(sub, use_qfq)
+                    result[proxy_map[proxy_code]] = sub.reset_index(drop=True)
         return result
 
     # ===================== PR3: 分钟 bar 查询 =====================
