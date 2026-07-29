@@ -144,6 +144,16 @@ class RevisionRow:
 
 
 @dataclass
+class FactorNewRow:
+    """任务3：相邻 factor_time 值变化检测命中——新 factor_time 与前一 factor_time 值不同。"""
+    asset_type: str
+    code: str
+    factor_time: int
+    previous_value: float
+    current_value: float
+
+
+@dataclass
 class ObservationResult:
     run_id: str
     observed: int = 0
@@ -152,6 +162,7 @@ class ObservationResult:
     revised_count: int = 0
     future_excluded: int = 0
     revisions: List[RevisionRow] = field(default_factory=list)
+    factor_new: List[FactorNewRow] = field(default_factory=list)
 
 
 class ObservationStore:
@@ -272,6 +283,18 @@ class ObservationStore:
         try:
             if own:
                 c.execute("BEGIN IMMEDIATE")
+            # 任务3：baseline 识别——本批之前该 (asset_type,code) 是否已有观测。
+            # 首次建立基线的 code 在本批内不触发 factor_new（避免历史洪水）。
+            _code_set = {}
+            for _at, _cd, _ft, _fv in to_write:
+                _code_set[(_at, _cd)] = True
+            baseline_map = {}
+            for (_at, _cd) in _code_set:
+                _ex = c.execute(
+                    "SELECT 1 FROM qfq_factor_observation "
+                    "WHERE asset_type=? AND code=? LIMIT 1",
+                    [_at, _cd]).fetchone()
+                baseline_map[(_at, _cd)] = (_ex is None)
             for asset_type, code, ft, fv in to_write:
                 result.observed += 1
                 row = c.execute(
@@ -291,6 +314,20 @@ class ObservationStore:
                         [asset_type, code, ft, fv, 1, run_id, run_id, now, now],
                     )
                     result.new_count += 1
+                    # 任务3：相邻 factor_time 值变化检测（仅非 baseline code 触发 factor_new）
+                    if not baseline_map.get((asset_type, code), False):
+                        _prev = c.execute(
+                            "SELECT factor_time, factor_value FROM qfq_factor_observation "
+                            "WHERE asset_type=? AND code=? AND factor_time < ? "
+                            "ORDER BY factor_time DESC LIMIT 1",
+                            [asset_type, code, ft]).fetchone()
+                        if _prev is not None:
+                            _pv = float(_prev[1])
+                            if not _tol_eq(_pv, fv, ea, er):
+                                result.factor_new.append(FactorNewRow(
+                                    asset_type=asset_type, code=code,
+                                    factor_time=ft, previous_value=_pv,
+                                    current_value=fv))
                     continue
 
                 last_value, last_rev = row

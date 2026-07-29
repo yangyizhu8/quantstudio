@@ -201,6 +201,36 @@ fresh_capture_id=None, fresh_metadata_sha256=None)`：
 未知日 BLOCK（`fresh_minutes_unknown_day`）。钟面时刻合法（如周六 09:31）≠ 自然日开市，
 必须逐日校验。`calendar=None` 直接抛 `ValueError`。
 
+### 主动因子刷新与 detector degraded（常驻编排器）
+
+> 模块：`quantstudio.pipeline.qfq_factor_refresh`（`QFQFactorRefresher`）+
+> `quantstudio.pipeline.qfq_maintenance`（`resolve_ts_codes`）+
+> `quantstudio.pipeline.aligner`（`raw_to_tushare_ts_code`）。
+
+常驻 QFQ 编排器在事件发现之前主动刷新股票 `adj_factor` 与 ETF `fund_adj`（分别写
+独立 SQLite 表），避免把陈旧因子快照误解释为"今天没有事件"。
+
+- **默认关闭**：`qfq_orchestrator.factor_refresh_enabled` 默认 `False`（独立 opt-in）。
+  主动因子刷新默认关闭。生产启用前必须通过股票/ETF ts_code 转换、刷新失败降级、
+  水位 hold 和全量回归测试，并取得用户明确部署确认。
+- **degraded 契约**：某资产类别**全部逐码请求失败**（`fetch_adj_factor` 抛
+  `FactorRefreshError`）→ `degraded=True` → daemon 四价格表水位强制 hold、
+  `qfq_cycle_run.detector_degraded=1`。**正常返回空数据不降级**（区间内无复权事件，
+  返回 0 行不误报）。**部分码失败不降级**——保留成功结果落库，失败码仅 WARNING；
+  这是当前明确但有风险的契约（部分失败码可能继续使用旧快照），是否升级为
+  "任意单码失败即 degraded"另立后续正确性变更审核。
+- **ts_code 转换**：`QFQFactorRefresher` 在调用 Tushare `adj_factor`/`fund_adj` 前，
+  在各资产类别**自己的 try 块内**统一将裸码解析为 Tushare ts_code——`resolve_ts_codes`
+  对裸码优先查 `stock_basic`/`etf_basic` 元数据表权威 ts_code，**已带合法 Tushare 后缀
+  （.SH/.SZ/.BJ，含 .SS→.SH）的输入幂等保留、不被元数据覆盖**；裸码元数据 miss 时用资产类型感知的
+  前缀规则（`raw_to_tushare_ts_code`：STOCK 6→SH/0,3→SZ/4,8→BJ；ETF 5→SH/1→SZ）
+  fallback，不丢弃任何码；未知首位前缀防御性 fallback 到 .BJ 并记 WARNING。股票转换异常不影响 ETF（跨资产类别隔离）。
+  > 注：本转换仅作用于 `QFQFactorRefresher` 的主动刷新路径，不覆盖 daemon 其它
+  > Tushare 因子调用方（如 `daemon._fetch_adj_factor` 收到裸 ETF 时仍依赖现有
+  > `market_of_code()`，可能错误推导 `.BJ`，作为独立残余风险）。
+- **职责分离**：Tushare 负责因子（`adj_factor`/`fund_adj`），xtquant 负责价格
+  （fresh_capture 单源锁定）；两者来源隔离，因子刷新不触碰价格表。
+
 ---
 
 ## Strategy Compiler 0.3.0-mvp — 策略编译器

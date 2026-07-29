@@ -257,6 +257,28 @@ def handle_data(context, data):
 - **`fresh_minutes` 须过交易日历校验**：每个自然日 `CalendarService.is_trading_day`，周末/未知日整券 BLOCK。
 - 失败事件（blocked/rolled_back/failed/committed）均带 `model` / `model_reason` / `model_audit` 审计，绝不静默遗漏。
 
+若 Agent 编排常驻 QFQ 编排器的**主动因子刷新**（`QFQFactorRefresher.refresh`），追加铁律：
+
+- **默认关闭**：`factor_refresh_enabled` 默认 `False`。主动因子刷新默认关闭；生产启用前
+  必须通过股票/ETF ts_code 转换、刷新失败降级、水位 hold 和全量回归测试，并取得用户
+  明确部署确认。不得在未确认前启用。
+- **degraded 即 hold 水位**：某资产类别全部逐码请求失败（`FactorRefreshError`）→
+  `degraded=True` → 四价格表水位强制 hold（`qfq_cycle_run.detector_degraded=1`）。
+  **禁止**把因子刷新失败静默解释为"今天没有事件"而推进水位。
+- **正常空数据不降级**：区间内无复权事件（Tushare 返回空 DataFrame）→ `degraded=False`，
+  不得误报为失败。
+- **部分码失败当前不降级**（已知风险）：保留成功结果，失败码仅 WARNING；失败码可能
+  继续使用旧快照。是否升级为"任意单码失败即 degraded"须单独正确性变更审核。
+- **裸码 → Tushare ts_code 边界转换**：`QFQFactorRefresher` 调用 Tushare
+  `adj_factor`/`fund_adj` 前，必须在各资产类别**自己的 try 块内**用 `resolve_ts_codes`
+  把裸码解析为 ts_code。**已带合法 Tushare 后缀的输入幂等保留（不被覆盖）；裸码优先用
+  `stock_basic`/`etf_basic` 元数据，miss 时资产类型感知前缀 fallback；未知前缀防御性
+  fallback 到 .BJ 并记 WARNING**。不得直接把裸码当 ts_code 传给 Tushare；不得用
+  `market_of_code()` 推导 ETF 后缀（5/1 开头会误判 BJ）。
+  股票转换异常不得阻断 ETF 刷新（跨资产类别隔离）。
+- **职责分离**：Tushare 只负责因子（`adj_factor`/`fund_adj`，写 SQLite），xtquant 只负责
+  价格（fresh_capture 单源锁定）。因子刷新绝不触碰四价格表。
+
 ---
 
 ## 6. 指标计算函数（防未来函数）

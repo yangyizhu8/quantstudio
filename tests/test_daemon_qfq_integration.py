@@ -454,7 +454,7 @@ def _patch_collector(monkeypatch, fake):
 
 
 def _run_state(tmp_root):
-    return json.loads((tmp_root / "daemon_run_state.json").read_text())
+    return json.loads((tmp_root / "daemon_run_state.json").read_text(encoding="utf-8"))
 
 
 class _FakeSummary:
@@ -521,7 +521,7 @@ class TestLifecycleQfqIntegration:
         def exec_and_stop(task, mode="incremental", run_quality_audit=False):
             orig(task, mode=mode, run_quality_audit=run_quality_audit)
             req = {"instance_token": lc.instance_token, "requested_at": "now"}
-            (tmp_data_root / "daemon_stop.request").write_text(json.dumps(req))
+            (tmp_data_root / "daemon_stop.request").write_text(json.dumps(req), encoding="utf-8")
             return True
         fc.execute_task = exec_and_stop
         _patch_collector(monkeypatch, fc)
@@ -556,3 +556,68 @@ class TestLifecycleQfqIntegration:
         assert rs["status"] == "completed"       # 轮次不因 QFQ 崩（水位保持即安全）
         assert rs["qfq_phase"] == "failed"
         assert "post boom" in rs["qfq_error"]
+
+
+# ===========================================================================
+# 任务2.2：因子刷新 degraded → 水位 hold + detector_degraded=1；成功 → 正常推进
+# ===========================================================================
+
+class TestFactorRefreshDegradedHold:
+
+    def _run(self, tmp_path, monkeypatch, degraded):
+        conn = _qfq_conn()
+        qfq_block = {"enabled": True, "require_bootstrap": False,
+                     "price_source": "xtquant", "factor_refresh_enabled": True}
+        c = _make_collector(conn, qfq_block=qfq_block, tmpdir=tmp_path)
+        calls = []
+        orig = c._qfq_refresh_factors
+        def fake_refresh(orch):
+            calls.append(orch)
+            return degraded
+        monkeypatch.setattr(c, "_qfq_refresh_factors", fake_refresh)
+        cid = c.qfq_begin_cycle()
+        # 先 defer 一个待推进水位，post-ingest 才会写出 qfq_watermark_intent（提交/hold）
+        c._advance_or_defer_watermark("xtquant", "stock_daily", "daily", WM, "b6")
+        summary = c.qfq_run_post_ingest("r1")
+        det = conn.execute(
+            "SELECT detector_degraded FROM qfq_cycle_run WHERE cycle_id=?",
+            [cid]).fetchone()[0]
+        intent_status = conn.execute(
+            "SELECT status FROM qfq_watermark_intent WHERE cycle_id=?",
+            [cid]).fetchone()[0]
+        conn.close()
+        return summary, det, intent_status, len(c.writer.advanced), calls
+
+    def test_refresh_success_advances_watermark(self, tmp_path, monkeypatch):
+        summary, det, intent_status, advanced, calls = self._run(
+            tmp_path, monkeypatch, degraded=False)
+        assert calls, "因子刷新必须被调用（factor_refresh_enabled=True）"
+        assert summary.status == "finalized"
+        assert det == 0                       # 检测器健康
+        assert advanced == 1                  # 水位正常推进（一次提交）
+        assert intent_status == "committed"
+
+    def test_refresh_degraded_holds_watermark(self, tmp_path, monkeypatch):
+        summary, det, intent_status, advanced, calls = self._run(
+            tmp_path, monkeypatch, degraded=True)
+        assert calls, "因子刷新必须被调用（factor_refresh_enabled=True）"
+        assert summary.status == "finalized_held"   # 水位被 hold
+        assert det == 1                                # detector_degraded 落库
+        assert advanced == 0                          # 四价格表水位未推进
+        assert intent_status == "held"
+
+    def test_factor_refresh_disabled_skips_refresh(self, tmp_path, monkeypatch):
+        """factor_refresh_enabled 缺省=False → 不调用刷新，旧路径水位推进不变。"""
+        conn = _qfq_conn()
+        c = _make_collector(conn, qfq_block={"enabled": True,
+                                             "require_bootstrap": False,
+                                             "price_source": "xtquant"},
+                            tmpdir=tmp_path)
+        calls = []
+        monkeypatch.setattr(c, "_qfq_refresh_factors",
+                            lambda orch: calls.append(orch) or False)
+        cid = c.qfq_begin_cycle()
+        summary = c.qfq_run_post_ingest("r1")
+        assert calls == []                    # 未启用 → 刷新完全不调用
+        assert summary.status == "finalized"  # 旧行为不受影响
+        conn.close()

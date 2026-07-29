@@ -76,6 +76,74 @@ def market_of_code(code: str) -> str:
     return "BJ"
 
 
+# Tushare ts_code 合法格式（6 位裸码 + .SH/.SZ/.BJ）
+_TS_CODE_RE = re.compile(r"^\d{6}\.(SH|SZ|BJ)$")
+
+
+def raw_to_tushare_ts_code(code: str, asset_type: str) -> str:
+    """裸码/已带后缀码 → Tushare ts_code（资产类型感知前缀规则，无 DB 依赖）。
+
+    与 ``raw_to_xtquant``（xtquant 专用）的区别：本函数显式按 ``asset_type`` 路由，
+    因为 Tushare 的 ETF 后缀规则（5→SH、1→SZ）需资产类型感知，且语义归属 Tushare。
+    不要将本函数用于 xtquant / QMT / PTrade 等其它代码格式。
+
+    Args:
+        code: 6 位裸码（如 "510300"）或已带合法后缀（如 "600000.SH"，幂等）。
+        asset_type: "STOCK" 或 "ETF"（大小写不敏感，内部规范为大写）。
+
+    Returns:
+        Tushare ts_code（大写，如 "510300.SH"）。
+
+    Raises:
+        ValueError: asset_type 非 STOCK/ETF；或输入含未知后缀（既非裸码也非合法后缀）；
+            或裸码非 6 位数字。
+
+    前缀规则（Tushare 后缀口径）：
+        STOCK: 6→SH、0/3→SZ、4/8→BJ
+        ETF:   5→SH、1→SZ；其余 → BJ（仅作最后防御性 fallback，调用方应记 warning）
+    """
+    at = str(asset_type).strip().upper()
+    if at not in ("STOCK", "ETF"):
+        raise ValueError(
+            f"asset_type 必须为 STOCK 或 ETF，收到 {asset_type!r}")
+    c = str(code).strip().upper()
+
+    # 兼容项目内部 .SS → Tushare .SH
+    if c.endswith(".SS"):
+        c = c[:-3] + ".SH"
+    # 已带合法后缀 → 幂等返回
+    if _TS_CODE_RE.match(c):
+        return c
+
+    # 含未知后缀（既非裸码也非合法 .SH/.SZ/.BJ）→ 拒绝，避免产生 510300.SS.SH 一类双后缀
+    if "." in c:
+        raise ValueError(
+            f"输入含未知后缀，无法转为 Tushare ts_code: {code!r}")
+
+    # 裸码 → 按前缀规则补后缀
+    bare = c
+    if not re.match(r"^\d{6}$", bare):
+        raise ValueError(f"裸码必须为 6 位数字: {code!r}")
+    if at == "STOCK":
+        if bare.startswith("6"):
+            mkt = "SH"
+        elif bare.startswith(("0", "3")):
+            mkt = "SZ"
+        elif bare.startswith(("4", "8")):
+            mkt = "BJ"
+        else:
+            mkt = "BJ"  # 防御性 fallback（2/5/7/9 等非股票前缀不应出现）
+    else:  # ETF
+        if bare.startswith("5"):
+            mkt = "SH"
+        elif bare.startswith("1"):
+            mkt = "SZ"
+        else:
+            # ETF 其余前缀 → BJ 仅作最后防御性 fallback，调用方应记 warning
+            mkt = "BJ"
+    return f"{bare}.{mkt}"
+
+
 # ---------------------------------------------------------------------------
 # 日期/时间统一到毫秒时间戳（统一time 字段，INTEGER 毫秒 epoch）
 # ---------------------------------------------------------------------------

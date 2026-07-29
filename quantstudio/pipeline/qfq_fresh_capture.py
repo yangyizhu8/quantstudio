@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import abc
 import hashlib
+import json
 import logging
 from datetime import datetime
 from typing import Dict, Optional, Tuple
@@ -99,6 +100,29 @@ def _sha256_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
+class FreshCaptureDownloadError(Exception):
+    """任务5.1：download_history_data 任一窗口失败 → 进入 retryable failure。
+
+    禁止静默用旧缓存：上层 trigger 应进入 retry / backoff，而非把过期数据解释成新证据。
+    """
+    pass
+
+
+def _split_windows(start_yyyymmdd: str, end_yyyymmdd: str, cap_days: int):
+    """任务5.1：把 [start,end] 切成单窗不超过 cap_days 的闭区间天列表（含端点）。"""
+    s = pd.Timestamp(start_yyyymmdd)
+    e = pd.Timestamp(end_yyyymmdd)
+    if e < s:
+        return []
+    windows = []
+    cur = s
+    while cur <= e:
+        nxt = min(cur + pd.Timedelta(days=cap_days - 1), e)
+        windows.append((cur.strftime("%Y%m%d"), nxt.strftime("%Y%m%d")))
+        cur = nxt + pd.Timedelta(days=1)
+    return windows
+
+
 # ---------------------------------------------------------------------------
 # 抽象 fetcher（可注入；测试用 FakeFreshFetcher 完全脱离 xtquant）
 # ---------------------------------------------------------------------------
@@ -127,13 +151,21 @@ class XtquantFreshFetcher(FreshFetcher):
     """真实 xtquant fetcher（惰性连接，模块加载不触发网络）。
 
     仅作为单源锁定下的真实实现；生产路径由 ``FreshCapture.capture`` 注入。
+
+    任务5.1：fetch 前必须先 download_history_data（长区间分窗），再 get_market_data_ex；
+    任一窗口下载失败 → 抛 FreshCaptureDownloadError（禁止静默用旧缓存）。
     """
+
+    # 单窗上限（可配置）：daily 默认 365 天/窗，1min 默认 30 天/窗
+    DAILY_WINDOW_DAYS = 365
+    MINUTE_WINDOW_DAYS = 30
 
     def __init__(self, adapter=None):
         # adapter 预留（可传入已构造的 XtquantAdapter 复用连接）；默认惰性 import xtquant。
         self._adapter = adapter
         self._xt = None
         self._connected = False
+        self.download_trace = None  # 任务5.2：跨 daily/minute 两次 fetch 累积的下载轨迹
 
     def _ensure(self):
         """惰性 import + 连接 xtquant；首次真正取数才发生（模块加载不触发网络）。"""
@@ -189,6 +221,29 @@ class XtquantFreshFetcher(FreshFetcher):
             return pd.DataFrame(columns=_RAW_PRICE_COLS)
         return self._extract(data[xt_code])
 
+    def _download(self, xt, xt_code, period, start_yyyymmdd, end_yyyymmdd):
+        """任务5.1：先 download_history_data（长区间分窗），再返回窗口状态列表。
+
+        任一窗口下载失败 → 抛 FreshCaptureDownloadError（禁止静默用旧缓存）。
+        """
+        cap = self.DAILY_WINDOW_DAYS if period == "1d" else self.MINUTE_WINDOW_DAYS
+        windows = _split_windows(start_yyyymmdd, end_yyyymmdd, cap)
+        trace_windows = []
+        failed = False
+        for (ws, we) in windows:
+            try:
+                xt.download_history_data(xt_code, period, ws, we)
+                trace_windows.append({"start": ws, "end": we, "status": "ok"})
+            except Exception as e:  # 网络/接口异常 → retryable failure
+                trace_windows.append(
+                    {"start": ws, "end": we, "status": "failed", "error": str(e)})
+                failed = True
+        if failed:
+            raise FreshCaptureDownloadError(
+                f"download_history_data 失败（{xt_code} {period} "
+                f"{start_yyyymmdd}~{end_yyyymmdd}）：{trace_windows}")
+        return trace_windows
+
     def fetch_none_front(
         self,
         asset_type: str,
@@ -199,8 +254,20 @@ class XtquantFreshFetcher(FreshFetcher):
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         xt = self._ensure()
         self._ensure_connected(xt)
+        # 任务5.1：先 download_history_data（分窗），失败则进入 retryable failure
+        self.download_trace = self.download_trace or {}
+        if "download_start" not in self.download_trace:
+            self.download_trace["download_start"] = datetime.now().isoformat(timespec="seconds")
+        windows = self._download(xt, xt_code, period, start_yyyymmdd, end_yyyymmdd)
         none_df = self._get(xt, xt_code, period, start_yyyymmdd, end_yyyymmdd, "none")
         front_df = self._get(xt, xt_code, period, start_yyyymmdd, end_yyyymmdd, "front")
+        # 任务5.2：累积下载轨迹（capture() 落库）
+        self.download_trace[period] = {
+            "requested_range": [start_yyyymmdd, end_yyyymmdd],
+            "window_list": windows,
+            "window_status": [w["status"] for w in windows],
+        }
+        self.download_trace["download_finish"] = datetime.now().isoformat(timespec="seconds")
         return none_df, front_df
 
 
@@ -384,6 +451,21 @@ class FreshCapture:
 
         capture_id = capture_id_of(asset_type, code, run_id)
 
+        # 任务5.2：download 轨迹（仅 XtquantFreshFetcher 累积；FakeFreshFetcher 无）
+        _dl = getattr(fetcher, "download_trace", None)
+        download_trace = None
+        if _dl is not None:
+            download_trace = json.dumps({
+                "download_start": _dl.get("download_start"),
+                "download_finish": _dl.get("download_finish"),
+                "requested_range": _dl.get("requested_range"),
+                "window_list": _dl.get("window_list"),
+                "window_status": _dl.get("window_status"),
+                "daily_content_sha": daily_sha256,
+                "minute_content_sha": minute_sha256,
+                "metadata_sha": metadata_sha256,
+            }, ensure_ascii=False)
+
         # min/max time
         daily_min_time = int(fresh_daily["time"].min()) if len(fresh_daily) else None
         daily_max_time = int(fresh_daily["time"].max()) if len(fresh_daily) else None
@@ -409,6 +491,7 @@ class FreshCapture:
             daily_sha256=daily_sha256,
             minute_sha256=minute_sha256,
             metadata_sha256=metadata_sha256,
+            download_trace=download_trace,
             status="captured",
             created_at=now,
             updated_at=now,
