@@ -621,3 +621,122 @@ class TestFactorRefreshDegradedHold:
         assert calls == []                    # 未启用 → 刷新完全不调用
         assert summary.status == "finalized"  # 旧行为不受影响
         conn.close()
+
+
+# ===========================================================================
+# daemon._fetch_adj_factor ETF 裸码后缀推导（修复 market_of_code 误判 BJ）
+# ===========================================================================
+class TestDaemonFetchAdjFactorEtfSuffix:
+    """验证 daemon._fetch_adj_factor 用 resolve_ts_codes 正确处理 ETF 裸码后缀。
+
+    修复前：market_of_code 对 5/1 开头 ETF 误判 .BJ（如 510300→510300.BJ）。
+    修复后：resolve_ts_codes 元数据优先 + 资产感知前缀 fallback（510300→510300.SH）。
+    """
+
+    def test_etf_bare_code_not_misjudged_as_bj(self, tmp_path):
+        """ETF 裸码 510300 应转为 510300.SH（非 .BJ），159915 应转为 .SZ。"""
+        import duckdb
+        # 建临时 quantstudio.db + etf_basic 元数据
+        main_db = tmp_path / "quantstudio.db"
+        with duckdb.connect(str(main_db)) as dc:
+            dc.execute("CREATE TABLE etf_basic (code VARCHAR, ts_code VARCHAR)")
+            dc.execute("INSERT INTO etf_basic VALUES ('510300','510300.SH'),('159915','159915.SZ')")
+        # 建临时 qfq_aux.db（fetch_adj_factor 写入需要）
+        aux_db = tmp_path / "qfq_aux.db"
+        aconn = sqlite3.connect(str(aux_db))
+        aconn.execute("CREATE TABLE adj_factor (code TEXT, time INTEGER, adj_factor REAL)")
+        aconn.execute("CREATE TABLE fund_adj (code TEXT, time INTEGER, adj_factor REAL)")
+        aconn.commit()
+        aconn.close()
+
+        # fake adapter 捕获 fetch_adj_factor 收到的 codes
+        captured = {"stock": None, "etf": None}
+
+        class _CapturingAdapter:
+            class rate_limiter:
+                @staticmethod
+                def acquire():
+                    pass
+
+            class _client:
+                @staticmethod
+                def adj_factor(ts_code, start_date, end_date):
+                    captured["stock"] = captured["stock"] or []
+                    captured["stock"].append(ts_code)
+                    import pandas as pd
+                    return pd.DataFrame(
+                        [{"ts_code": ts_code, "trade_date": "20260105", "adj_factor": 1.0}])
+
+                @staticmethod
+                def fund_adj(ts_code, start_date, end_date):
+                    captured["etf"] = captured["etf"] or []
+                    captured["etf"].append(ts_code)
+                    import pandas as pd
+                    return pd.DataFrame(
+                        [{"ts_code": ts_code, "trade_date": "20260105", "adj_factor": 1.0}])
+
+        # 构造最小 collector，writer.db_path 指向临时库
+        from quantstudio.pipeline.daemon import ResidentCollector
+        c = ResidentCollector.__new__(ResidentCollector)
+
+        class _Writer:
+            db_path = str(main_db)
+        c.writer = _Writer()
+
+        # 调用 _fetch_adj_factor（ETF 裸码）
+        c._fetch_adj_factor(_CapturingAdapter(), ["510300", "159915"],
+                            "20260101", "20260131", is_etf=True)
+        # 断言：ETF 裸码被正确转为 .SH/.SZ，不是 .BJ
+        assert captured["etf"] is not None
+        assert "510300.SH" in captured["etf"], f"510300 应为 .SH，实际 {captured['etf']}"
+        assert "159915.SZ" in captured["etf"], f"159915 应为 .SZ，实际 {captured['etf']}"
+        assert not any(x.endswith(".BJ") for x in captured["etf"]), \
+            f"ETF 不应出现 .BJ 误判：{captured['etf']}"
+
+    def test_stock_bare_code_suffix_correct(self, tmp_path):
+        """股票裸码 600000→.SH、000001→.SZ、300750→.SZ。"""
+        import duckdb
+        main_db = tmp_path / "quantstudio.db"
+        with duckdb.connect(str(main_db)) as dc:
+            dc.execute("CREATE TABLE stock_basic (code VARCHAR, ts_code VARCHAR)")
+            dc.execute("INSERT INTO stock_basic VALUES ('600000','600000.SH'),('000001','000001.SZ')")
+        aux_db = tmp_path / "qfq_aux.db"
+        aconn = sqlite3.connect(str(aux_db))
+        aconn.execute("CREATE TABLE adj_factor (code TEXT, time INTEGER, adj_factor REAL)")
+        aconn.commit()
+        aconn.close()
+
+        captured = []
+
+        class _CapturingAdapter:
+            class rate_limiter:
+                @staticmethod
+                def acquire():
+                    pass
+
+            class _client:
+                @staticmethod
+                def adj_factor(ts_code, start_date, end_date):
+                    captured.append(ts_code)
+                    import pandas as pd
+                    return pd.DataFrame(
+                        [{"ts_code": ts_code, "trade_date": "20260105", "adj_factor": 1.0}])
+
+                @staticmethod
+                def fund_adj(ts_code, start_date, end_date):
+                    import pandas as pd
+                    return pd.DataFrame()
+
+        from quantstudio.pipeline.daemon import ResidentCollector
+        c = ResidentCollector.__new__(ResidentCollector)
+
+        class _Writer:
+            db_path = str(main_db)
+        c.writer = _Writer()
+
+        c._fetch_adj_factor(_CapturingAdapter(), ["600000", "000001", "300750"],
+                            "20260101", "20260131", is_etf=False)
+        assert "600000.SH" in captured
+        assert "000001.SZ" in captured
+        assert "300750.SZ" in captured  # 创业板 3 → SZ
+
