@@ -25,7 +25,7 @@ from quantstudio.pipeline.qfq_reanchor_schema import (
     init_duckdb_schema,
     init_sqlite_schema,
 )
-from quantstudio.pipeline.qfq_event_discovery import EventDiscovery
+from quantstudio.pipeline.qfq_event_discovery import EventDiscovery, _norm_div_val
 
 BJ_TZ = timezone(timedelta(hours=8))
 
@@ -107,8 +107,20 @@ def test_dividend_dedup_and_payload_stable(env):
     total = dconn.execute("SELECT COUNT(*) FROM qfq_trigger_queue").fetchone()[0]
     assert total == 2
 
-    # payload_hash 确定性：与本地重算一致
-    ph = payload_hash_of(["600000", PAST_MS, PAST_REC_MS, 0.5, 0.0, 0.5, "实施"])
+    # payload_hash 确定性：与本地重算一致（任务4：13 字段完整业务 hash + _norm_div_val 规范化）
+    # 种子仅提供 code/ex_date/record_date/cash_div/stk_div/div_rat/div_proc，
+    # ann_date/end_date/before_tax/after_tax/stk_bo_rate/stk_co_rate 为 NULL → 规范化后 ""
+    expected_div = [
+        "600000", PAST_MS, PAST_REC_MS,
+        None, None,  # ann_date / end_date 未提供
+        _norm_div_val(None), _norm_div_val(None),  # cash_div_before_tax / after_tax 未提供
+        _norm_div_val(0.5),   # cash_div
+        _norm_div_val(0.0),   # stk_div
+        _norm_div_val(None), _norm_div_val(None),  # stk_bo_rate / stk_co_rate 未提供
+        _norm_div_val(0.5),   # div_rat
+        _norm_div_val("实施"),  # div_proc
+    ]
+    ph = payload_hash_of(expected_div)
     stored = dconn.execute(
         "SELECT payload_hash FROM qfq_trigger_queue WHERE code='600000'"
     ).fetchone()[0]

@@ -265,14 +265,55 @@ class ResidentCollector:
             return None
         import time as _time
         orch = self._qfq_orchestrator()
+        # —— 任务2.2：因子刷新（主动拉股票/ETF 因子），决定本轮检测器是否可信 ——
+        detector_degraded = False
+        if self._qfq_config().factor_refresh_enabled:
+            detector_degraded = self._qfq_refresh_factors(orch)
         conn = self.writer.shared_conn()
         try:
             summary = orch.run_post_ingest(
                 conn, cycle_id=self._qfq_cycle_id, run_id=run_id,
-                as_of_ms=int(_time.time() * 1000))
+                as_of_ms=int(_time.time() * 1000),
+                detector_degraded=detector_degraded)
         finally:
             self._qfq_cycle_id = None
         return summary
+
+    def _qfq_refresh_factors(self, orch) -> bool:
+        """任务2.2：调用 QFQFactorRefresher 主动刷股票/ETF 因子。
+
+        返回 True 表示本轮 detector 不可信（刷新失败/异常）→ 调用方须 hold 水位。
+        任何异常一律 fail-safe 降级为 degraded=True，绝不抛到上层破坏 post-ingest。
+        """
+        try:
+            from .qfq_factor_refresh import QFQFactorRefresher
+            from .qfq_maintenance import get_stock_universe, get_etf_universe
+            refresher = QFQFactorRefresher(aux_db=orch.aux_db)
+            adapter = self._get_adapter("tushare", None)
+            main_db = str(self.writer.db_path)
+            stock_universe = get_stock_universe(main_db)
+            etf_universe = get_etf_universe(main_db)
+            cfg = self._qfq_config()
+            overlap_days = int(getattr(cfg, "factor_overlap_lookback_days", 5))
+            lookback_days = 365
+            rate_limiter = getattr(adapter, "rate_limiter", None)
+            res = refresher.refresh(
+                adapter, stock_universe, etf_universe,
+                overlap_days=overlap_days, lookback_days=lookback_days,
+                rate_limiter=rate_limiter)
+            if res.degraded:
+                logger.warning(
+                    f"[qfq] 因子刷新 degraded（stock_failed={res.stock_failed}, "
+                    f"etf_failed={res.etf_failed}, err={res.error}）→ 水位 hold")
+                return True
+            logger.info(
+                f"[qfq] 因子刷新完成 stock={res.stock_refreshed}/"
+                f"etf={res.etf_refreshed}（degraded=False）")
+            return False
+        except Exception as e:  # pragma: no cover - fail-safe 降级
+            logger.warning(
+                f"[qfq] 因子刷新异常 → degraded=True（水位 hold）: {e}", exc_info=True)
+            return True
 
     def _advance_or_defer_watermark(self, source: str, table: str, freq: str,
                                     new_watermark, batch_id: str) -> None:

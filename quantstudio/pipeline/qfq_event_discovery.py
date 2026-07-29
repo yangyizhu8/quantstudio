@@ -55,6 +55,19 @@ def _now_ts() -> str:
     return datetime.now(BJ_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _norm_div_val(v):
+    """任务4：统一规范化分红字段——None/NaN → ''；字符串数值 → strip。保证 hash 稳定。"""
+    if v is None:
+        return ""
+    try:
+        import math as _math
+        if isinstance(v, float) and _math.isnan(v):
+            return ""
+    except TypeError:
+        pass
+    return str(v).strip()
+
+
 class EventDiscovery:
     """QFQ 增量事件发现器。
 
@@ -114,16 +127,36 @@ class EventDiscovery:
         Returns:
             本次**新插入**的 TriggerRecord 列表（已存在的不计入）。
         """
+        # 任务4：动态探测列，兼容旧/新 schema（缺列按 NULL 处理，不阻断）
+        present = {str(r[0]).lower() for r in conn.execute("DESCRIBE stock_dividend").fetchall()}
+        if "ex_date" not in present:
+            return []
+        _wanted = ["code", "ex_date", "record_date", "ann_date", "end_date",
+                   "cash_div_before_tax", "cash_div_after_tax", "cash_div",
+                   "stk_div", "stk_bo_rate", "stk_co_rate", "div_rat", "div_proc"]
+        _sel = []
+        for _c in _wanted:
+            if _c == "code":
+                _sel.append("code")  # code 必然存在
+            elif _c.lower() in present:
+                _sel.append(_c)
+            else:
+                _sel.append(f"NULL AS {_c}")
+        _where = "ex_date IS NOT NULL"
+        if "div_proc" in present:
+            _where = f"div_proc='实施' AND {_where}"
         rows = conn.execute(
-            "SELECT code, ex_date, record_date, cash_div, stk_div, div_rat, div_proc "
-            "FROM stock_dividend WHERE div_proc='实施' AND ex_date IS NOT NULL"
+            "SELECT {cols} FROM stock_dividend WHERE {where}".format(
+                cols=", ".join(_sel), where=_where)
         ).fetchall()
 
         new_records: List[TriggerRecord] = []
         now = _now_ts()
         max_ex_date: Optional[int] = None
 
-        for code, ex_date, record_date, cash_div, stk_div, div_rat, div_proc in rows:
+        for (code, ex_date, record_date, ann_date, end_date, cash_div_before_tax,
+             cash_div_after_tax, cash_div, stk_div, stk_bo_rate, stk_co_rate,
+             div_rat, div_proc) in rows:
             ex_date = int(ex_date)
             if max_ex_date is None or ex_date > max_ex_date:
                 max_ex_date = ex_date
@@ -131,8 +164,20 @@ class EventDiscovery:
                 continue  # bootstrap：跳过 INSERT，只记录 cursor
 
             effective_date = ex_date
-            payload_hash = payload_hash_of(
-                [code, ex_date, record_date, cash_div, stk_div, div_rat, div_proc])
+            # 任务4：完整业务字段 hash（旧/新 schema 共用；update_time 不进 hash）
+            payload_hash = payload_hash_of([
+                code, ex_date, record_date,
+                int(ann_date) if ann_date is not None else None,
+                int(end_date) if end_date is not None else None,
+                _norm_div_val(cash_div_before_tax),
+                _norm_div_val(cash_div_after_tax),
+                _norm_div_val(cash_div),
+                _norm_div_val(stk_div),
+                _norm_div_val(stk_bo_rate),
+                _norm_div_val(stk_co_rate),
+                _norm_div_val(div_rat),
+                _norm_div_val(div_proc),
+            ])
             trigger_id = trigger_id_of(
                 "STOCK", code, ex_date, "stock_dividend", payload_hash)
             status = "scheduled" if ex_date > as_of_ms else "pending"
@@ -198,6 +243,9 @@ class EventDiscovery:
 
             result = self.obs_store.record_observations(
                 observations, run_id, as_of_ms=as_of_ms, conn=aux_conn)
+            # 任务3：相邻 factor_time 值变化检测 → factor_new trigger（DuckDB）
+            if getattr(result, "factor_new", None):
+                self._emit_factor_new_triggers(conn, result.factor_new, run_id, as_of_ms)
             aux_conn.commit()
         finally:
             aux_conn.close()
@@ -206,6 +254,39 @@ class EventDiscovery:
         self._upsert_cursor(conn, detector_name, asset_type, as_of_ms, run_id,
                             status="ok")
         return result
+
+    # ------------------------------------------------------------------
+    # 3b. 相邻 factor_time 值变化 → factor_new trigger（DuckDB，幂等）
+    # ------------------------------------------------------------------
+    def _emit_factor_new_triggers(self, conn, factor_new_list, run_id, as_of_ms):
+        """任务3：把 record_observations 收集的 factor_new 候选幂等落地为 qfq_trigger_queue。
+
+        detection_source = tushare_adj_factor_new（股票）/ tushare_fund_adj_new（ETF）；
+        trigger_type = factor_new；trigger_id 确定性；future factor_time → scheduled。
+        """
+        now = _now_ts()
+        for fn in factor_new_list:
+            ds = "tushare_fund_adj_new" if fn.asset_type == "ETF" else "tushare_adj_factor_new"
+            payload_hash = payload_hash_of(
+                [fn.code, fn.factor_time, fn.previous_value, fn.current_value])
+            trigger_id = trigger_id_of(fn.asset_type, fn.code, fn.factor_time, ds, payload_hash)
+            status = "scheduled" if fn.factor_time > as_of_ms else "pending"
+            existed = conn.execute(
+                "SELECT 1 FROM qfq_trigger_queue WHERE trigger_id=?",
+                [trigger_id]).fetchone() is not None
+            conn.execute(
+                "INSERT OR IGNORE INTO qfq_trigger_queue "
+                "(trigger_id, asset_type, code, trigger_type, detection_source, source_key, "
+                 " effective_date, payload_hash, factor_old, factor_new, factor_revision, "
+                 " status, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [trigger_id, fn.asset_type, fn.code, "factor_new", ds,
+                 str(fn.factor_time), fn.factor_time, payload_hash,
+                 fn.previous_value, fn.current_value, None, status, now, now])
+            if not existed:
+                logger.info(
+                    f"[qfq_event] factor_new trigger {trigger_id} "
+                    f"({fn.asset_type} {fn.code} @ {fn.factor_time})")
 
     def observe_stock_adj_factor(self, conn, *, as_of_ms: int, run_id: str,
                                  bootstrap: bool = False) -> ObservationResult:

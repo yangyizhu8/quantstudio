@@ -51,6 +51,9 @@ QFQ_AUX_DB_NAME = "qfq_aux.db"
 
 SCHEMA_VERSION = "reanchor-2.0"
 
+# 任务6.3：detector 基线版本（bootstrap 建基线时的版本标识；变更需重做 bootstrap）
+DETECTOR_BASELINE_VERSION = "v1"
+
 # —— 资产类型白名单（与 qfq_observation / writers 共用，单一真相源）——
 QFQ_ASSET_TYPES = frozenset({"STOCK", "ETF"})
 
@@ -279,6 +282,9 @@ DDL_DUCKDB: Dict[str, str] = {
             blocked_count    BIGINT,
             failed_count     BIGINT,
             status           VARCHAR,
+            schema_version   VARCHAR,
+            config_hash      VARCHAR,
+            baseline_version VARCHAR,
             started_at       TIMESTAMP,
             updated_at       TIMESTAMP
         )""",
@@ -324,6 +330,7 @@ DDL_DUCKDB: Dict[str, str] = {
             started_at        TIMESTAMP NOT NULL,
             finished_at       TIMESTAMP,
             error             VARCHAR,
+            detector_degraded BOOLEAN   DEFAULT 0,
             updated_at        TIMESTAMP NOT NULL,
             PRIMARY KEY (cycle_id)
         )""",
@@ -388,6 +395,7 @@ DDL_DUCKDB: Dict[str, str] = {
             daily_sha256      VARCHAR,
             minute_sha256     VARCHAR,
             metadata_sha256   VARCHAR,
+            download_trace    VARCHAR,
             status            VARCHAR,
             created_at        TIMESTAMP NOT NULL,
             updated_at        TIMESTAMP NOT NULL,
@@ -462,6 +470,18 @@ DDL_SQLITE: Dict[str, str] = {
             updated_at    TEXT    NOT NULL,
             PRIMARY KEY (asset_type, code, round_no)
         )""",
+    # ---- 股票复权因子表（仅股票，裸码口径；结构与 fund_adj 完全一致）----
+    "adj_factor": """
+        CREATE TABLE IF NOT EXISTS adj_factor (
+            code TEXT, time INTEGER, adj_factor REAL,
+            PRIMARY KEY (code, time)
+        )""",
+    # ---- ETF/基金复权因子表（仅 ETF，裸码口径；与 adj_factor 结构完全一致）----
+    "fund_adj": """
+        CREATE TABLE IF NOT EXISTS fund_adj (
+            code TEXT, time INTEGER, adj_factor REAL,
+            PRIMARY KEY (code, time)
+        )""",
 }
 
 
@@ -499,7 +519,7 @@ DUCKDB_COLS: Dict[str, List[str]] = {
         "cycle_id", "business_date", "trigger_surface", "config_hash", "schema_hash",
         "phase", "discovered_count", "executed_count", "success_count",
         "failed_count", "pending_count", "status", "started_at", "finished_at",
-        "error", "updated_at",
+        "error", "detector_degraded", "updated_at",
     ],
     "qfq_trigger_queue": [
         "trigger_id", "asset_type", "code", "trigger_type", "detection_source",
@@ -517,7 +537,7 @@ DUCKDB_COLS: Dict[str, List[str]] = {
         "daily_range_end", "minute_range_start", "minute_range_end",
         "daily_row_count", "minute_row_count", "daily_min_time", "daily_max_time",
         "minute_min_time", "minute_max_time", "daily_sha256", "minute_sha256",
-        "metadata_sha256", "status", "created_at", "updated_at",
+        "metadata_sha256", "download_trace", "status", "created_at", "updated_at",
     ],
     "qfq_observation_cursor": [
         "detector_name", "asset_type", "cursor_as_of", "last_run_id",
@@ -526,6 +546,7 @@ DUCKDB_COLS: Dict[str, List[str]] = {
     "qfq_bootstrap_run": [
         "bootstrap_run_id", "asset_type", "params", "resume_cursor", "total_count",
         "completed_count", "blocked_count", "failed_count", "status",
+        "schema_version", "config_hash", "baseline_version",
         "started_at", "updated_at",
     ],
     "qfq_bootstrap_item": [

@@ -38,6 +38,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from quantstudio.pipeline.qfq_reanchor_schema import (
     init_duckdb_schema, init_sqlite_schema, aux_db_path,
+    SCHEMA_VERSION, DETECTOR_BASELINE_VERSION,
     PRICE_TABLES, ASSET_TABLE_MAP,
 )
 from quantstudio.pipeline.qfq_orchestrator_types import (
@@ -139,9 +140,9 @@ class QFQResidentOrchestrator:
         conn.execute(
             "INSERT INTO qfq_cycle_run "
             "(cycle_id, business_date, trigger_surface, config_hash, schema_hash, "
-            " phase, discovered_count, executed_count, success_count, failed_count, "
-            " pending_count, status, started_at, updated_at) "
-            "VALUES (?,?,?,?,?, 'started', 0,0,0,0,0, 'started', ?, ?)",
+             " phase, discovered_count, executed_count, success_count, failed_count, "
+             " pending_count, status, started_at, updated_at, detector_degraded) "
+            "VALUES (?,?,?,?,?, 'started', 0,0,0,0,0, 'started', ?, ?, 0)",
             [cycle_id, business_date_ms, "resident_v2", config_hash, schema_hash,
              now, now])
         return cycle_id
@@ -601,9 +602,56 @@ class QFQResidentOrchestrator:
     # bootstrap（首次部署）
     # ------------------------------------------------------------------
     def bootstrap_completed(self, conn) -> bool:
-        row = conn.execute(
-            "SELECT COUNT(*) FROM qfq_bootstrap_run WHERE status='completed'").fetchone()
-        return (row[0] or 0) > 0
+        """任务6.2/6.3：bootstrap 完成态 fail-closed 判定。
+
+        必须同时满足：
+        1. 存在 status='completed' 的 bootstrap_run；
+        2. 版本校验：schema_version / config_hash / baseline_version 与当前一致
+           （任一不匹配 → 视为未完成，需重做 bootstrap）；
+        3. 证券级状态机全清：pending / in_progress / blocked / failed / dead_letter
+           计数均为 0（blocked 不得解锁，failed/dead_letter 不得被当作完成）。
+        任一非零或版本不匹配 → 返回 False（本轮 fail-closed，不推进水位、不处理 trigger）。
+        """
+        run = conn.execute(
+            "SELECT bootstrap_run_id, schema_version, config_hash, baseline_version "
+            "FROM qfq_bootstrap_run WHERE status='completed' "
+            "ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()
+        if run is None:
+            return False
+        run_id, schema_v, config_h, baseline_v = run[0], run[1], run[2], run[3]
+
+        # 任务6.3：版本校验（落库值为 NULL 时视为旧库，跳过该单项校验，避免破坏历史库）
+        if schema_v is not None and schema_v != SCHEMA_VERSION:
+            logger.warning(
+                f"[qfq_orch] bootstrap 未完成：schema_version 不匹配 "
+                f"({schema_v} != {SCHEMA_VERSION})")
+            return False
+        cur_cfg_h = getattr(self.cfg, "config_hash", None)
+        if (config_h is not None and cur_cfg_h is not None
+                and config_h != cur_cfg_h):
+            logger.warning(
+                f"[qfq_orch] bootstrap 未完成：config_hash 不匹配 "
+                f"({config_h} != {cur_cfg_h})")
+            return False
+        cur_bl = getattr(self.cfg, "detector_baseline_version", DETECTOR_BASELINE_VERSION)
+        if baseline_v is not None and baseline_v != cur_bl:
+            logger.warning(
+                f"[qfq_orch] bootstrap 未完成：baseline_version 不匹配 "
+                f"({baseline_v} != {cur_bl})")
+            return False
+
+        # 任务6.2：证券级状态机全清才视为完成（blocked 不得解锁）
+        counts = conn.execute(
+            "SELECT status, COUNT(*) FROM qfq_bootstrap_item "
+            "WHERE bootstrap_run_id=? GROUP BY status", [run_id]).fetchall()
+        by_status = {r[0]: r[1] for r in counts}
+        for bad in ("pending", "in_progress", "blocked", "failed", "dead_letter"):
+            if by_status.get(bad, 0) > 0:
+                logger.warning(
+                    f"[qfq_orch] bootstrap 未完成：存在 {bad}={by_status.get(bad, 0)}")
+                return False
+        return True
 
     def _aux_query(self, sql: str, params: Sequence = ()) -> List[tuple]:
         """在 SQLite 辅助库（qfq_aux.db）上执行只读查询。
@@ -623,39 +671,90 @@ class QFQResidentOrchestrator:
         finally:
             aconn.close()
 
+    def _classify_bootstrap_security(self, conn, asset_type: str, code: str) -> str:
+        """分类候选证券，仅 'stale' 进入重锚队列（任务6.1）。
+
+        类别（不引入新网络调用）：
+          - no_price_history：四价格表无该券历史 → 重锚无意义，跳过。
+          - unverifiable：既无分红也无因子观察（缺重锚依据，候选已保证其一，
+                          理论不可达）→ 跳过留待下轮。
+          - consistent：已有已提交重锚（qfq_trigger_queue 对应 trigger 已 committed）
+                        → front 价格已据此重锚，跳过。
+          - stale：有价格历史且有重锚依据，但无已提交重锚证据 → 进重锚队列。
+        """
+        daily_t = ASSET_PRICE_TABLES[asset_type][0]
+        if not conn.execute(
+                f"SELECT 1 FROM {daily_t} WHERE code=? LIMIT 1", [code]).fetchone():
+            return "no_price_history"
+        has_div = conn.execute(
+            "SELECT 1 FROM stock_dividend WHERE code=?", [code]).fetchone()
+        has_obs = self._aux_query(
+            "SELECT 1 FROM qfq_factor_observation "
+            "WHERE asset_type=? AND code=? LIMIT 1",
+            [asset_type, code])
+        if not has_div and not has_obs:
+            return "unverifiable"
+        committed = conn.execute(
+            "SELECT 1 FROM qfq_trigger_queue "
+            "WHERE asset_type=? AND code=? AND status='committed' "
+            "AND trigger_type IN ('stock_dividend', 'factor_new') LIMIT 1",
+            [asset_type, code]).fetchone()
+        if committed:
+            return "consistent"
+        return "stale"
+
     def bootstrap_plan(self, conn, *, as_of_ms: int) -> BootstrapPlan:
-        """候选 = 有股票分红(实施) 或 有因子观察的证券；写入 qfq_bootstrap_item(pending)。"""
-        items: List[Tuple[str, str]] = []
+        """候选 = 有股票分红(实施) 或 有因子观察的证券；仅 'stale' 入队重锚（任务6.1）。"""
+        candidates: List[Tuple[str, str]] = []
         sd = conn.execute(
             "SELECT DISTINCT code FROM stock_dividend WHERE div_proc='实施'").fetchall()
         for (code,) in sd:
-            items.append(("STOCK", code))
+            candidates.append(("STOCK", code))
         obs = self._aux_query(
             "SELECT DISTINCT asset_type, code FROM qfq_factor_observation")
         for at, code in obs:
-            items.append((at, code))
+            candidates.append((at, code))
         # 去重
         seen = set()
         uniq = []
-        for at, code in items:
+        for at, code in candidates:
             k = (at, code)
             if k in seen:
                 continue
             seen.add(k)
             uniq.append(k)
+        # 任务6.1：分类后仅 stale 入队重锚队列
+        stale_items: List[Tuple[str, str]] = []
+        classify: Dict[str, int] = {}
+        for at, code in uniq:
+            cat = self._classify_bootstrap_security(conn, at, code)
+            classify[cat] = classify.get(cat, 0) + 1
+            if cat == "stale":
+                stale_items.append((at, code))
         run_id = f"bs_{uuid.uuid4().hex[:10]}"
+        # 任务6.3：落盘版本标识，供 bootstrap_completed 做 fail-closed 校验
+        _schema_v = SCHEMA_VERSION
+        _config_h = getattr(self.cfg, "config_hash", None)
+        _baseline_v = getattr(self.cfg, "detector_baseline_version", DETECTOR_BASELINE_VERSION)
         conn.execute(
             "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, total_count, "
-            " completed_count, blocked_count, failed_count, status, started_at, updated_at) "
-            "VALUES (?,?,0,0,0,'planned',?,?)",
-            [run_id, len(uniq), _now_ts(), _now_ts()])
-        for at, code in uniq:
+            " completed_count, blocked_count, failed_count, status, "
+            " schema_version, config_hash, baseline_version, started_at, updated_at) "
+            "VALUES (?,?,0,0,0,'planned',?,?,?,?,?)",
+            [run_id, len(uniq), _schema_v, _config_h, _baseline_v,
+             _now_ts(), _now_ts()])
+        for at, code in stale_items:
             conn.execute(
                 "INSERT INTO qfq_bootstrap_item (bootstrap_run_id, asset_type, code, "
                 " status, updated_at) VALUES (?,?,?,'pending',?) "
                 "ON CONFLICT (bootstrap_run_id, asset_type, code) DO NOTHING",
                 [run_id, at, code, _now_ts()])
-        return BootstrapPlan(total=len(uniq), items=uniq, run_id=run_id)
+        # 分类计数作为可观测性日志（不影响持久化结构）
+        if classify:
+            logger.info(
+                f"[qfq_orch] bootstrap 候选分类 {classify}；"
+                f"入队 stale={len(stale_items)}/{len(uniq)}")
+        return BootstrapPlan(total=len(uniq), items=stale_items, run_id=run_id)
 
     def bootstrap_run(self, conn, *, run_id: str, as_of_ms: int,
                       fetcher: FreshFetcher, resume: bool = False) -> Dict:
@@ -754,17 +853,25 @@ class QFQResidentOrchestrator:
     # 主入口：post-ingest 阶段
     # ------------------------------------------------------------------
     def run_post_ingest(self, conn, *, cycle_id: str, run_id: str,
-                        as_of_ms: int, fetcher: Optional[FreshFetcher] = None) -> CycleSummary:
+                        as_of_ms: int, fetcher: Optional[FreshFetcher] = None,
+                        detector_degraded: bool = False) -> CycleSummary:
         """daemon 在普通增量任务 + 水位延迟写完后调用。
 
         流程：recover → discover → claim/merge → reanchor → gate → commit/hold watermarks。
         返回 CycleSummary（含 watermarks_committed/held）。
+
+        detector_degraded: 由 daemon 调用方传入，表示本轮因子刷新失败/缺失，
+            检测器不可信 → 四价格表水位强制 hold（仍跑 discover，但 gate 不通过）。
         """
         fetcher = fetcher or self.fetcher
         summary = CycleSummary(cycle_id=cycle_id)
         if not self.cfg.enabled:
             summary.error = "orchestrator disabled"
             return summary
+        # 记录本轮因子检测器健康度（即使后续 discover 抛错也要落库，供审计/水位决策）
+        conn.execute(
+            "UPDATE qfq_cycle_run SET detector_degraded=? WHERE cycle_id=?",
+            [1 if detector_degraded else 0, cycle_id])
         if self.cfg.require_bootstrap and not self.bootstrap_completed(conn):
             summary.bootstrap_required = True
             summary.error = "require_bootstrap=true 且无可匹配 completed bootstrap，fail-closed"
@@ -807,6 +914,13 @@ class QFQResidentOrchestrator:
 
             self._set_cycle_phase(conn, cycle_id, "gating")
             passed, report = self._qfq_gate(conn, cycle_id, units, run_id)
+            if detector_degraded:
+                # 因子检测器本轮不可信（刷新失败/缺失）→ 四价格表水位强制 hold：
+                # 仍跑 discover，但 gate 不通过，避免基于不可信因子重锚推进水位。
+                passed = False
+                report.setdefault("reasons", []).append(
+                    "detector_degraded: 因子刷新失败，价格水位强制 hold")
+                logger.warning("[qfq_orch] detector_degraded=True → 本轮价格水位强制 hold")
             summary.gate_report = report
 
             self._set_cycle_phase(conn, cycle_id, "finalized")

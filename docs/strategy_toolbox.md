@@ -291,6 +291,53 @@ apply_reanchor_for_security(
 - `calendar=None` → 直接抛 `ValueError`（强制调用方显式注入日历）。
 
 钟面时刻合法（如周六 09:31）≠ 自然日开市，必须逐日校验；session-aware 窗口为 `[09:31,11:30] ∪ [13:01,15:00]`（09:30 不计入连续竞价）。
+
+### 4.7 主动因子刷新与 detector degraded（常驻编排器，pipeline 调用方参考）
+
+> 模块：`quantstudio.pipeline.qfq_factor_refresh.QFQFactorRefresher` +
+> `qfq_maintenance.resolve_ts_codes` + `aligner.raw_to_tushare_ts_code`。
+> 策略代码不应直接调用。本节供常驻 QFQ 编排器 / Agent 编排因子刷新任务时参考。
+
+常驻 QFQ 编排器在事件发现之前主动刷新股票 `adj_factor`（写 `adj_factor` 表）与 ETF
+`fund_adj`（写独立 `fund_adj` 表），避免陈旧因子快照被误解释为"今天没有事件"。
+
+**配置与启用**：
+- `qfq_orchestrator.factor_refresh_enabled` 默认 `False`（独立 opt-in）。
+  主动因子刷新默认关闭。生产启用前必须通过股票/ETF ts_code 转换、刷新失败降级、
+  水位 hold 和全量回归测试，并取得用户明确部署确认。
+
+**degraded 契约**（`RefreshResult`）：
+- 某资产类别**全部逐码请求失败**（`fetch_adj_factor` 抛 `FactorRefreshError`）→
+  `degraded=True` → daemon 四价格表水位强制 hold、`qfq_cycle_run.detector_degraded=1`。
+- **正常返回空数据不降级**：区间内无复权事件时 Tushare 返回空 DataFrame（不抛异常），
+  返回 0 行，`degraded=False`（不误报）。
+- **部分码失败不降级**：保留成功结果落库，失败码仅 WARNING。这是当前明确但有风险
+  的契约（部分失败码可能继续使用旧快照），是否升级为"任意单码失败即 degraded"另立
+  后续正确性变更审核。
+
+**裸码 → Tushare ts_code 转换**（C3 修复）：
+- `QFQFactorRefresher.refresh` 在调用 Tushare `adj_factor`/`fund_adj` 前，在各资产类别
+  **自己的 try 块内**用 `resolve_ts_codes(codes, asset_type, main_db)` 把裸码解析为
+  Tushare ts_code。股票转换异常不影响 ETF（跨资产类别隔离）。
+- `resolve_ts_codes`：**已带合法 Tushare 后缀（.SH/.SZ/.BJ，含 .SS→.SH）的输入幂等保留、
+  不被元数据覆盖**；对裸码优先查 `stock_basic`/`etf_basic` 元数据表权威 ts_code（单次参数化
+  `WHERE code IN (SELECT unnest(?))`，输出顺序/数量与输入一致、不丢码）；裸码元数据 miss
+  时用资产类型感知前缀规则 fallback；未知首位前缀防御性 fallback 到 .BJ 并聚合 WARNING。
+- `raw_to_tushare_ts_code(code, asset_type)`：纯前缀规则（无 DB 依赖）。STOCK 6→SH /
+  0,3→SZ / 4,8→BJ；ETF 5→SH / 1→SZ / 其余→BJ（防御性）。已带 `.SH/.SZ/.BJ` 幂等，
+  兼容 `.SS`→`.SH`，未知后缀抛 `ValueError`。
+- `fetch_adj_factor` 入库时用 `normalize_code(ts_code, "tushare_to_raw")` 转裸码，故
+  落库仍为裸码口径，与 `get_*_universe` 返回的裸码语义一致。
+- **范围说明**：本转换仅作用于 `QFQFactorRefresher` 的主动刷新路径，不覆盖 daemon 其它
+  Tushare 因子调用方。`daemon._fetch_adj_factor` 收到裸 ETF 时仍依赖现有 `market_of_code()`
+  （6→SH/0,3→SZ/其余→BJ），对 5/1 开头的 ETF 会错误推导 `.BJ`，作为独立残余风险登记。
+
+**RateLimiter**：限流统一由 `fetch_adj_factor` 内部逐码 `adapter.rate_limiter.acquire()`
+负责（每码一次）。`refresh` 的 `rate_limiter` 参数仅为兼容保留，不再主动调用。
+
+**职责分离**：Tushare 负责因子（`adj_factor`/`fund_adj`），xtquant 负责价格
+（fresh_capture 单源锁定）；因子刷新只写 SQLite 因子表，绝不触碰四价格表。
+
 > 本框架未内置缠论工具箱（分型/笔段），如需可在策略层用 MyTT 自行实现。
 
 ### 3.11 A股交易规则（shared_ashare_rules，已注入）

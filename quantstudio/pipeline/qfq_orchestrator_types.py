@@ -223,6 +223,7 @@ class FreshCaptureRecord:
     daily_sha256: Optional[str] = None
     minute_sha256: Optional[str] = None
     metadata_sha256: Optional[str] = None
+    download_trace: Optional[str] = None
     status: str = "captured"
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -259,6 +260,7 @@ class ReanchorOutcome:
 # 缺省配置（enabled=False，安全默认；显式开启才进入协调周期）
 DEFAULT_ORCHESTRATOR_CFG: Dict = {
     "enabled": False,
+    "factor_refresh_enabled": False,
     "require_bootstrap": True,
     "price_source": "xtquant",
     "stock_factor_detector": "tushare_adj_factor",
@@ -288,6 +290,7 @@ DEFAULT_ORCHESTRATOR_CFG: Dict = {
 @dataclass
 class QFQOrchestratorConfig:
     enabled: bool = False
+    factor_refresh_enabled: bool = False  # 任务2.2：主动因子刷新（默认关闭，独立 opt-in）
     require_bootstrap: bool = True
     price_source: str = "xtquant"
     stock_factor_detector: str = "tushare_adj_factor"
@@ -338,6 +341,7 @@ class QFQOrchestratorConfig:
         qt = cfg.get("quality_thresholds", {}) or {}
         obj = cls(
             enabled=bool(cfg.get("enabled", False)),
+            factor_refresh_enabled=bool(cfg.get("factor_refresh_enabled", False)),
             require_bootstrap=bool(cfg.get("require_bootstrap", True)),
             price_source=str(cfg.get("price_source", "xtquant")),
             stock_factor_detector=str(cfg.get("stock_factor_detector", "tushare_adj_factor")),
