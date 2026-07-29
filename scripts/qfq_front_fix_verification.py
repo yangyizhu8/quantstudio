@@ -81,40 +81,45 @@ def _ensure_trade_calendar(conn) -> None:
 def _build_fresh_inputs(conn):
     """构造【完全自洽的合成 fresh】数据验证 fresh_staged 修正语义。
 
-    fresh_staged 模型 postcheck 的 front_chain 同时校验乘法 dev 和加法 dev：
-    - 乘法 dev：|close_front(t)/close_front(prev) - close(t)/preClose(t)| ≤ tol_return
-    - 加法 dev：|(close_t − cf_t) − (preClose_t − cf_prev)| ≤ 1 tick（减法复权豁免）
+    关键约束（经多轮 postcheck 分析）：
+    1. fresh_staged postcheck 的 front_chain 校验：除权日 preClose≠prev_close 会致加法 dev 超 tick。
+    2. minutes 须覆盖 staged daily span 内所有交易日。
+    故选【除权后无除权连续区间】（7/16~7/24，最近除权日 7/15 之后），fresh_daily/minutes
+    只取该窗口，span 内全部无除权 → front_chain 加法 dev 自洽。
 
-    恒定乘法比例 K 无法满足加法 dev（(1-K)(close-prev) ≠ 0）。
-    故用【减法复权】模型：front = raw - 固定 D。这样：
-    - 加法链：(close_t − (close_t−D)) − (preClose_t − (preClose_t−D)) = D − D = 0 ≤ tick ✓
-    - 乘法 dev：超 tol 但被加法豁免 ✓（fresh_staged 二者满足其一即可）
-
-    同时把库内对应证券的 front 列也设为 raw - D（建立一致的"真值"基线）。
+    用【减法复权】front = raw - D：加法链 (close-(close-D))-(preClose-(preClose-D))=0 ≤ tick。
+    同时把库内对应窗口的 front 列设为 raw - D（建立"真值"基线）。
     """
-    D = 1.0  # 固定减法复权偏移（模拟前复权：front = raw - 1.0）
-    # daily
+    D = 1.0
+    START_MS = 1784217600000  # 2026-07-17（最近除权日 7/16 之后，无除权连续段起点）
+    # 删除窗口前的 daily + minutes（让 target 与 fresh 覆盖一致，满足 minute 覆盖校验）
+    conn.execute("DELETE FROM stock_daily WHERE code=? AND time < ?", [TARGET, START_MS])
+    conn.execute("DELETE FROM stock_minutes WHERE code=? AND time < ?", [TARGET, START_MS])
+    conn.commit()
+    # daily（只取窗口）
     fd = conn.execute(
         f"SELECT code, time, {','.join(RAW_COLS)} FROM stock_daily "
-        f"WHERE code=? ORDER BY time", [TARGET]
+        f"WHERE code=? AND time >= ? ORDER BY time", [TARGET, START_MS]
     ).fetchdf()
     fresh_daily = fd.copy()
     for rc, fc in zip(RAW_COLS, FRONT_COLS):
         fresh_daily[fc] = fresh_daily[rc] - D
-    # minutes（需含 freq 列）
+    # minutes（只取窗口，需含 freq 列）
     fm = conn.execute(
         f"SELECT code, time, freq, {','.join(RAW_COLS)} FROM stock_minutes "
-        f"WHERE code=? ORDER BY time", [TARGET]
+        f"WHERE code=? AND time >= ? ORDER BY time", [TARGET, START_MS]
     ).fetchdf()
     fresh_minutes = fm.copy()
     for rc, fc in zip(RAW_COLS, FRONT_COLS):
         fresh_minutes[fc] = fresh_minutes[rc] - D
-    logger.info(f"构造合成 fresh 输入（减法复权 D={D}）：daily {len(fresh_daily)} 行，"
+    logger.info(f"构造合成 fresh（减法 D={D}，窗口 7/16+）：daily {len(fresh_daily)} 行，"
                 f"minutes {len(fresh_minutes)} 行")
-    # 把库内 front 列也设为 raw - D（建立一致的"真值"基线，供后续污染/修正对照）
+    # 把库内【窗口内】的 front 列设为 raw - D（建立"真值"基线）
     for rc, fc in zip(RAW_COLS, FRONT_COLS):
-        conn.execute(f"UPDATE stock_daily SET {fc}={rc}-? WHERE code=?", [D, TARGET])
-        conn.execute(f"UPDATE stock_minutes SET {fc}={rc}-? WHERE code=?", [D, TARGET])
+        conn.execute(f"UPDATE stock_daily SET {fc}={rc}-? WHERE code=? AND time >= ?",
+                     [D, TARGET, START_MS])
+        conn.execute(f"UPDATE stock_minutes SET {fc}={rc}-? WHERE code=? AND time >= ?",
+                     [D, TARGET, START_MS])
     conn.commit()
     return fresh_daily, fresh_minutes, D
 
