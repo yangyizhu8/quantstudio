@@ -271,6 +271,47 @@ def inject_front_pollution() -> dict:
     return pollution
 
 
+def drive_reconcile() -> dict:
+    """驱动 CLI reconcile-once：dry-run 先行，再 --execute。"""
+    logger.info("驱动 CLI reconcile-once")
+    # 全局参数（--db/--aux-db/--override/--json/--execute）必须在子命令之前
+    # require_bootstrap=false：演练目的是验证重锚守恒，跳过 bootstrap fail-closed
+    # （未 bootstrap 时编排器会拒绝处理任何 trigger）
+    base = [sys.executable, "-m", "quantstudio.pipeline.qfq_orchestrator_cli",
+            "--db", str(STAGING_DB), "--aux-db", str(STAGING_AUX),
+            "--override", "enabled=true",
+            "--override", "require_bootstrap=false", "--json"]
+    result = {"dry_run": {}, "execute": {}}
+    # dry-run（不带 --execute）
+    logger.info("  [1/2] dry-run")
+    p = subprocess.run(base + ["reconcile-once"],
+                       capture_output=True, text=True, cwd=str(ROOT))
+    result["dry_run"] = {"returncode": p.returncode,
+                         "stdout_tail": p.stdout[-500:],
+                         "stderr_tail": p.stderr[-500:]}
+    logger.info(f"    dry-run rc={p.returncode}")
+    # execute（--execute 插到子命令前）
+    logger.info("  [2/2] execute")
+    p = subprocess.run(base + ["--execute", "reconcile-once"],
+                       capture_output=True, text=True, cwd=str(ROOT))
+    result["execute"] = {"returncode": p.returncode,
+                         "stdout": p.stdout,
+                         "stderr_tail": p.stderr[-1500:]}
+    # 尝试解析 summary
+    try:
+        summary = json.loads(p.stdout)
+        result["summary"] = summary
+        logger.info(f"    summary status={summary.get('status')} "
+                    f"committed={summary.get('committed')} "
+                    f"held={summary.get('watermarks_held')}")
+    except Exception:
+        result["summary"] = None
+        logger.warning(f"    summary 解析失败，rc={p.returncode}")
+    (OUTPUT_DIR / "reconcile_summary.json").write_text(
+        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    return result
+
+
 def main() -> int:
     logger.info("=" * 60)
     logger.info("QFQ staging 演练（首轮：核心守恒闭环）")
@@ -286,6 +327,7 @@ def main() -> int:
     baseline = snapshot_baseline()
     migration = split_etf_factors()
     pollution = inject_front_pollution()
+    reconcile = drive_reconcile()
     return 0
 
 
