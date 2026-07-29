@@ -51,10 +51,10 @@ def before_trading_start(context, data):
             if hist is None or len(hist) < 60:
                 continue
 
-            closes = np.array(hist, dtype=float)
-            curr_close = closes[-1]
-            ma20 = np.mean(closes[-20:])
-            ma60 = np.mean(closes[-60:])
+            closes = np.array(hist['close'], dtype=float)
+            curr_close = float(closes[-1])
+            ma20 = float(np.mean(closes[-20:]))
+            ma60 = float(np.mean(closes[-60:]))
 
             if curr_close > ma20 and ma20 > ma60:
                 ret_25d = (closes[-1] - closes[-25]) / closes[-25]
