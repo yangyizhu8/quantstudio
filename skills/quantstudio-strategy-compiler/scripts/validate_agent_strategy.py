@@ -764,6 +764,80 @@ def _validate_ptrade_call(
             f"or use a documented PTrade public API.", call.lineno))
 
 
+# --- A4 (PHASE1): dual-target field-name + is_dict=True hard blocks ---
+_LOCAL_ONLY_COLUMNS = {"amount", "close_front", "volume_front", "open_front"}
+_LOCAL_TO_CANONICAL = {
+    "amount": "money",
+    "close_front": "close",
+    "volume_front": "volume",
+    "open_front": "open",
+}
+
+
+def _validate_dual_target_field_names(tree, issues, parents):
+    """Block dual-target code referencing QuantStudio-only column names.
+
+    Direct attribute/subscript access (df.amount, df['amount'], item.close_front)
+    is a hard break on PTrade. The sanctioned _extract_series(df, 'amount', 'money')
+    helper is allowed when a canonical PTrade name ('money'/'close'/...) is also
+    requested, because it degrades gracefully after the B1 reverse-mapping.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in _LOCAL_ONLY_COLUMNS:
+            rendered = ast.unparse(node) if hasattr(ast, "unparse") else node.attr
+            canon = _LOCAL_TO_CANONICAL[node.attr]
+            issues.append(_issue(
+                "PTRADE-LOCAL-COLUMN", "BLOCK",
+                f"{rendered} uses QuantStudio-only column {node.attr!r}; PTrade returns "
+                f"{canon!r}. Use {canon!r} (or the _extract_series helper with {canon!r} "
+                f"in the requested names).", node.lineno))
+        elif isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) \
+                and isinstance(node.slice.value, str) and node.slice.value in _LOCAL_ONLY_COLUMNS:
+            rendered = ast.unparse(node) if hasattr(ast, "unparse") else node.slice.value
+            canon = _LOCAL_TO_CANONICAL[node.slice.value]
+            issues.append(_issue(
+                "PTRADE-LOCAL-COLUMN", "BLOCK",
+                f"{rendered} indexes QuantStudio-only column {node.slice.value!r}; PTrade "
+                f"returns {canon!r}. Use {canon!r}.", node.lineno))
+    # _extract_series(df, 'amount', 'money') style: block only if no canonical name present.
+    canonical_names = set(_LOCAL_TO_CANONICAL.values())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and call_name(node) in {"_extract_series", "extract_series"}:
+            requested: set[str] = set()
+            for arg in list(node.args)[1:]:
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    requested.add(arg.value)
+            for kw in node.keywords:
+                if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                    requested.add(kw.value.value)
+            if requested & _LOCAL_ONLY_COLUMNS and not (requested & canonical_names):
+                issues.append(_issue(
+                    "PTRADE-LOCAL-COLUMN", "BLOCK",
+                    f"{call_name(node)}(...) requests QuantStudio-only column(s) "
+                    f"{sorted(requested & _LOCAL_ONLY_COLUMNS)} without a canonical PTrade "
+                    f"name; pass 'money'/'close'/... so it degrades after B1.",
+                    node.lineno))
+
+
+def _validate_is_dict_usage(tree, issues):
+    """Block dual-target code that calls get_history/get_price with is_dict=True.
+
+    is_dict=True yields a divergent return shape across QuantStudio (DataFrame map)
+    and PTrade (array/recarray map). Dual-target code must use the default DataFrame
+    path (omit is_dict or set is_dict=False) which is portable to both engines.
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = call_name(node)
+        if name in {"get_history", "get_price"} and constant_value(_keyword(node, "is_dict")) is True:
+            issues.append(_issue(
+                "PTRADE-IS-DICT-BAN", "BLOCK",
+                f"{name}(..., is_dict=True) returns a divergent mapping shape across "
+                f"QuantStudio/PTrade; dual-target code must omit is_dict or use is_dict=False "
+                f"(default DataFrame path is portable).", node.lineno))
+
+
 def validate_strategy(
     design: dict[str, Any],
     source: str,
@@ -869,6 +943,10 @@ def validate_strategy(
             _validate_ptrade_logger_call(node, ptrade_profile, issues)
             if name:
                 _validate_ptrade_call(node, name, ptrade_profile, defined_names, issues)
+
+    if strict_ptrade:
+        _validate_dual_target_field_names(tree, issues, parents)
+        _validate_is_dict_usage(tree, issues)
 
     target_set = set(design.get("targets", []))
     local_only_symbols = set(ptrade_profile.get("local_only_symbols", []))

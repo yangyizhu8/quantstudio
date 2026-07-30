@@ -441,9 +441,10 @@
     "get_industry": {
       "contexts": [
         "research",
-        "backtest",
-        "trade"
+        "backtest"
       ],
+      "unsupported_on_ptrade": true,
+      "replacement_for": "PTrade only provides get_industry_stocks(code) (industry code -> constituent stock list). Local get_industry(code) returns the stock's own industry membership. Semantics differ in direction; there is NO direct PTrade equivalent. Dual-target code must rebuild the logic with get_industry_stocks, or degrade to LOCAL_ONLY.",
       "max_positional": 1,
       "allowed_keywords": [
         "code"
@@ -453,9 +454,294 @@
         "Registered 2026-07-27 (F4); signature/shape corrected 2026-07-27 review to the exact local runnable subset: get_industry(code) with a single positional (or code= keyword), returning the direct sw_l1 dict (NOT keyed by security) or None.",
         "QuantStudio serves sw_l1 from formal SW2021 PIT tables (industry_classification + industry_membership), strictly as-of the current backtest date; no valid membership -> None; never falls back to the latest industry or the legacy sw_industry snapshot.",
         "Real-PTrade shape (security-keyed dict, date keyword, platform classification version) is NOT verified; dual-target designs must not assume {security: ...} wrapping or a date kwarg, and must record PTRADE_RUNTIME_UNVERIFIED.",
-        "Strategies depending on historical industry membership without industry_membership PIT coverage must be DATA_BLOCKED at R1."
-      ]
+        "Strategies depending on historical industry membership without industry_membership PIT coverage must be DATA_BLOCKED at R1.",
+        "Downgraded to LOCAL_ONLY on 2026-07-30 per AGENTS.md 铁律#4 user ruling: PTrade 官方文档无独立 get_industry，仅 get_industry_stocks。"
+    ]
+  },
+  "set_limit_mode": {
+    "contexts": ["backtest"],
+    "max_positional": 1,
+    "allowed_keywords": ["limit_mode"],
+    "examples": ["set_limit_mode('LIMIT')", "set_limit_mode(limit_mode='LIMIT')"],
+    "canonical_keyword_values": {"limit_mode": ["LIMIT", "UNLIMITED", "CLOSE"]},
+    "return_shape": "None"
+  },
+  "set_universe": {
+    "contexts": ["backtest", "trade"],
+    "max_positional": 1,
+    "allowed_keywords": ["security_list"],
+    "examples": ["set_universe(['600000.SS'])"]
+  },
+  "set_volume_ratio": {
+    "contexts": ["backtest"],
+    "max_positional": 1,
+    "allowed_keywords": ["volume_ratio"],
+    "examples": ["set_volume_ratio(0.25)"]
+  },
+  "set_yesterday_position": {
+    "contexts": ["backtest"],
+    "max_positional": 1,
+    "allowed_keywords": ["poslist"],
+    "examples": ["set_yesterday_position([('600000.SS', 100)])"]
+  },
+  "set_parameters": {
+    "contexts": ["backtest", "trade"],
+    "max_positional": 0,
+    "allowed_keywords": [],
+    "notes": ["Real Ptrade pass-through **kwargs API; call with explicit keyword args. Validator treats as known Ptrade API."]
+  },
+  "run_interval": {
+    "contexts": ["trade"],
+    "max_positional": 2,
+    "allowed_keywords": ["func", "seconds", "interval_timer_ranges"],
+    "allowed_functions": ["initialize"],
+    "forbidden_in_backtest": true,
+    "examples": ["run_interval(context, func, seconds=10)"]
+  },
+  "get_price": {
+    "contexts": ["research", "backtest", "trade"],
+    "max_positional": 8,
+    "allowed_keywords": ["security", "start_date", "end_date", "frequency", "fields", "fq", "count", "is_dict"],
+    "examples": ["get_price('600000.SS', start_date='20240101', end_date='20240131', frequency='1d')"],
+    "canonical_keyword_values": {"fq": ["pre"]},
+    "return_contract": {
+      "is_dict_true": {
+        "container": "mapping",
+        "item_types": ["pandas.DataFrame", "numpy.structured_array", "numpy.recarray"],
+        "field_access": "item[field]",
+        "field_value_types": ["pandas.Series", "numpy.ndarray"],
+        "normalization": "np.asarray(item[field], dtype=float).reshape(-1) or an equivalent hasattr(values, 'values') guarded helper before any numerical use"
+      }
     }
+  },
+  "attribute_history": {
+    "contexts": ["backtest", "trade"],
+    "max_positional": 6,
+    "allowed_keywords": ["security", "fields", "count", "unit", "skip_paused", "df", "bar_order"],
+    "notes": ["Param order differs between QuantStudio-local adapter (security, count, unit, fields) and real Ptrade attribute_history (security, fields, bar_count, skip_paused, df, bar_order). Prefer get_history/get_price for portable dual-target code."],
+    "return_shape": "pandas.Series or pandas.DataFrame"
+  },
+  "current_price": {
+    "contexts": ["backtest", "trade"],
+    "max_positional": 1,
+    "allowed_keywords": ["security"],
+    "examples": ["current_price('600000.SS')"],
+    "return_shape": "float"
+  },
+  "get_trading_day": {
+    "contexts": ["research", "backtest", "trade"],
+    "max_positional": 1,
+    "allowed_keywords": ["day"],
+    "examples": ["get_trading_day('20240101')"]
+  },
+  "get_all_trades_days": {
+    "contexts": ["research", "backtest", "trade"],
+    "max_positional": 1,
+    "allowed_keywords": ["date"],
+    "examples": ["get_all_trades_days()"]
+  },
+  "get_trading_day_by_date": {
+    "contexts": ["research", "backtest", "trade"],
+    "max_positional": 2,
+    "allowed_keywords": ["query_date", "day"],
+    "examples": ["get_trading_day_by_date('20240101', 0)"]
+  },
+  "get_market_list": {
+    "contexts": ["research", "backtest", "trade"],
+    "max_positional": 0,
+    "examples": ["get_market_list()"]
+  },
+  "get_market_detail": {
+    "contexts": ["research", "backtest", "trade"],
+    "max_positional": 1,
+    "allowed_keywords": ["finance_mic"],
+    "examples": ["get_market_detail('XSHG')"]
+  },
+  "get_trend_data": {
+    "contexts": ["research", "backtest", "trade"],
+    "max_positional": 3,
+    "allowed_keywords": ["date", "stocks", "market"],
+    "examples": ["get_trend_data(date='20240101')"]
+  },
+  "get_stock_name": {
+    "contexts": ["research", "backtest", "trade"],
+    "max_positional": 1,
+    "allowed_keywords": ["stocks"],
+    "examples": ["get_stock_name('600000.SS')"],
+    "return_shape": "str or {security: str}"
+  },
+  "get_stock_blocks": {
+    "contexts": ["research", "backtest", "trade"],
+    "max_positional": 1,
+    "allowed_keywords": ["stock_code"],
+    "examples": ["get_stock_blocks('600000.SS')"]
+  },
+  "get_industry_stocks": {
+    "contexts": ["research", "backtest", "trade"],
+    "max_positional": 1,
+    "allowed_keywords": ["industry_code"],
+    "examples": ["get_industry_stocks('SW801010')"]
+  },
+  "get_etf_info": {
+    "contexts": ["trade"],
+    "max_positional": 1,
+    "allowed_keywords": ["etf_code"],
+    "examples": ["get_etf_info('510050.SS')"]
+  },
+  "get_etf_stock_list": {
+    "contexts": ["trade"],
+    "max_positional": 1,
+    "allowed_keywords": ["etf_code"],
+    "examples": ["get_etf_stock_list('510050.SS')"]
+  },
+  "get_etf_stock_info": {
+    "contexts": ["trade"],
+    "max_positional": 2,
+    "allowed_keywords": ["etf_code", "security"],
+    "examples": ["get_etf_stock_info('510050.SS', '600000.SS')"]
+  },
+  "get_ipo_stocks": {
+    "contexts": ["trade"],
+    "max_positional": 0,
+    "examples": ["get_ipo_stocks()"]
+  },
+  "get_cb_list": {
+    "contexts": ["trade"],
+    "max_positional": 0,
+    "examples": ["get_cb_list()"]
+  },
+  "get_cb_info": {
+    "contexts": ["research", "trade"],
+    "max_positional": 0,
+    "examples": ["get_cb_info()"]
+  },
+  "get_reits_list": {
+    "contexts": ["research", "backtest", "trade"],
+    "max_positional": 1,
+    "allowed_keywords": ["date"],
+    "examples": ["get_reits_list()"]
+  },
+  "get_all_positions": {
+    "contexts": ["trade"],
+    "max_positional": 0,
+    "examples": ["get_all_positions()"],
+    "return_shape": "list of Position"
+  },
+  "get_user_name": {
+    "contexts": ["backtest", "trade"],
+    "max_positional": 1,
+    "allowed_keywords": ["login_account"],
+    "examples": ["get_user_name()"]
+  },
+  "order_target": {
+    "contexts": ["backtest", "trade"],
+    "max_positional": 3,
+    "allowed_keywords": ["security", "amount", "limit_price"],
+    "examples": ["order_target('600000.SS', 100)"],
+    "return_shape": "order_id string on accepted submission, None on failure"
+  },
+  "order_value": {
+    "contexts": ["backtest", "trade"],
+    "max_positional": 3,
+    "allowed_keywords": ["security", "value", "limit_price"],
+    "examples": ["order_value('600000.SS', 10000)"],
+    "return_shape": "order_id string on accepted submission, None on failure"
+  },
+  "cancel_order": {
+    "contexts": ["backtest", "trade"],
+    "max_positional": 1,
+    "allowed_keywords": ["order_param"],
+    "examples": ["cancel_order(order_id)"]
+  },
+  "get_orders": {
+    "contexts": ["backtest", "trade"],
+    "max_positional": 1,
+    "allowed_keywords": ["security"],
+    "examples": ["get_orders()", "get_orders(security='600000.SS')"]
+  },
+  "get_trades": {
+    "contexts": ["backtest", "trade"],
+    "max_positional": 0,
+    "examples": ["get_trades()"]
+  },
+  "get_frequency": {
+    "contexts": ["backtest", "trade"],
+    "max_positional": 0,
+    "examples": ["get_frequency()"],
+    "return_shape": "str"
+  },
+  "get_business_type": {
+    "contexts": ["backtest", "trade"],
+    "max_positional": 0,
+    "examples": ["get_business_type()"],
+    "return_shape": "str"
+  },
+  "get_underlying_code": {
+    "contexts": ["research", "backtest", "trade"],
+    "max_positional": 1,
+    "allowed_keywords": ["symbols"],
+    "examples": ["get_underlying_code('ABC')"]
+  },
+  "get_margin_rate": {
+    "contexts": ["research", "backtest", "trade"],
+    "max_positional": 1,
+    "allowed_keywords": ["transaction_code"],
+    "examples": ["get_margin_rate('600000.SS')"]
+  },
+  "get_instruments": {
+    "contexts": ["research", "backtest", "trade"],
+    "max_positional": 1,
+    "allowed_keywords": ["contract"],
+    "examples": ["get_instruments('AU')"]
+  },
+  "get_dominant_contract": {
+    "contexts": ["research", "backtest", "trade"],
+    "max_positional": 2,
+    "allowed_keywords": ["contract", "date"],
+    "examples": ["get_dominant_contract('AU')"]
+  },
+  "get_MACD": {
+    "contexts": ["backtest", "trade"],
+    "max_positional": 4,
+    "allowed_keywords": ["close", "short", "long", "m"],
+    "examples": ["get_MACD(close)"],
+    "return_shape": "tuple (dif, dea, macd)"
+  },
+  "get_KDJ": {
+    "contexts": ["backtest", "trade"],
+    "max_positional": 5,
+    "allowed_keywords": ["high", "low", "close", "n", "m1", "m2"],
+    "examples": ["get_KDJ(high, low, close)"],
+    "return_shape": "tuple (K, D, J)"
+  },
+  "get_RSI": {
+    "contexts": ["backtest", "trade"],
+    "max_positional": 2,
+    "allowed_keywords": ["close", "n"],
+    "examples": ["get_RSI(close)"],
+    "return_shape": "numpy.ndarray"
+  },
+  "get_CCI": {
+    "contexts": ["backtest", "trade"],
+    "max_positional": 4,
+    "allowed_keywords": ["high", "low", "close", "n"],
+    "examples": ["get_CCI(high, low, close)"],
+    "return_shape": "numpy.ndarray"
+  },
+  "query": {
+    "contexts": ["research"],
+    "notes": ["Ptrade ORM-style query; QuantStudio-local adapter. Use only when targets exclude ptrade or via documented ORM contract."]
+  },
+  "valuation": {
+    "contexts": ["research"],
+    "notes": ["Ptrade ORM-style valuation; QuantStudio-local adapter. Use only when targets exclude ptrade or via documented ORM contract."]
+  },
+  "load_research_signals": {
+    "contexts": ["quantstudio_local_backtest"],
+    "unsupported_on_ptrade": true,
+    "replacement_for": "No native PTrade equivalent; reads a local research CSV under get_research_path.",
+    "return_shape": "dict keyed by date/security with signal values"
+  }
   },
   "local_only_symbols": [
     "get_history_batch",
@@ -476,7 +762,13 @@
     "order_at_price",
     "get_etf_list_local",
     "set_backtest",
-    "is_trade"
+    "is_trade",
+    "create_dir",
+    "get_trades_file",
+    "get_research_path",
+    "convert_position_from_csv",
+    "load_research_signals",
+    "get_industry"
   ],
   "portable_rules": [
     "Generated backtest signal-price calls must use the literal fq='pre'; missing, dynamic, dypre, post-adjusted, and attribute_history price paths are blocked.",
