@@ -1,0 +1,71 @@
+{
+  "preflight_at": "2026-07-29T23:16:19+08:00",
+  "raw_source": {
+    "stock_daily": [
+      {
+        "data_source": "xtquant",
+        "n": 8952545
+      }
+    ],
+    "etf_daily": [
+      {
+        "data_source": "xtquant",
+        "n": 1318108
+      }
+    ],
+    "stock_minutes": [
+      {
+        "data_source": "xtquant",
+        "n": 26290456
+      }
+    ],
+    "etf_minutes": [
+      {
+        "data_source": "xtquant",
+        "n": 47713321
+      }
+    ]
+  },
+  "raw_alignment": [
+    {
+      "code": "000012",
+      "target_count": 2079,
+      "fresh_count": 2079,
+      "matched_count": 2079,
+      "missing_target": 0,
+      "missing_fresh": 0,
+      "duplicate_target": 0,
+      "duplicate_fresh": 0,
+      "open_mismatch": 0,
+      "open_max_abs_diff": 0.0,
+      "high_mismatch": 0,
+      "high_max_abs_diff": 0.0,
+      "low_mismatch": 0,
+      "low_max_abs_diff": 0.0,
+      "close_mismatch": 0,
+      "close_max_abs_diff": 0.0,
+      "fully_aligned": true
+    },
+    {
+      "code": "510300",
+      "target_count": 2075,
+      "fresh_count": 2075,
+      "matched_count": 2075,
+      "missing_target": 0,
+      "missing_fresh": 0,
+      "duplicate_target": 0,
+      "duplicate_fresh": 0,
+      "open_mismatch": 0,
+      "open_max_abs_diff": 0.0,
+      "high_mismatch": 0,
+      "high_max_abs_diff": 0.0,
+      "low_mismatch": 0,
+      "low_max_abs_diff": 0.0,
+      "close_mismatch": 0,
+      "close_max_abs_diff": 0.0,
+      "fully_aligned": true
+    }
+  ],
+  "validation_status": "PASS",
+  "blocking_errors": []
+}

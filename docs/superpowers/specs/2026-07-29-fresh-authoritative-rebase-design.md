@@ -19,21 +19,16 @@
 当前 `stage_fresh_daily` precheck 与 postcheck `scale_consistency` 校验 fresh 数据自身：
 `open_front/open ≈ close_front/close`（纯乘法）或加法偏移 ≤1 tick（纯加法）。
 
-真实 xtquant 的前复权数学模型经实测确认为**纯减法复权**（`front = raw - 累积分红 D`）：
-同一根 K 线内 `open-open_front == close-close_front`（减法偏移差 add_spread 在近期数据
-精确为 0）。但 precheck 的乘法比例假设不成立（减法复权下比例天然不恒定）。
+真实 xtquant 的前复权数据**既不严格满足纯乘法，也不严格满足纯加法**。
+候选假设 H1（未完成跨证券/跨事件验证，不构成门禁）：在部分样本中同一根 K 线四 OHLC 字段
+近似共享加法偏移（近期数据 add_dev≈0），但跨证券/全历史一致性不成立（600875 add_dev 恒 0，
+000012/002864 add_dev 达 0.66/2.76；详见验证报告 §2）。
 
-加法豁免在**近期数据**成立（2024 年 619 行 add_dev 全为 0），但在**全历史**失效：
-累积分红 D 越大（历史越早），xtquant 的减法偏移精度误差越大（2018 年 D≈2.75 时
-add_dev 达 0.06，超 1 tick=0.01）。这是 xtquant 对历史数据前复权的**精度衰减特性**
-（疑似 float32 或有限精度内部计算）。实测全历史 2076 行中 124 行 add_dev 超 tick。
+`add_dev ≤ k×D`（D=close-close_front，代数恒等式）作为硬门禁已被证伪：对 1~20 tick 污染
+全漏检 + 同步偏移结构性盲区 + 缺乏损坏区分能力（详见验证报告 §4）。**不作为门禁，仅作观察指标。**
 
-> **明确区分**：基准漂移解释"为什么需要全历史重基准"；precheck 假设是"为什么当前代码
-> 跑不通"。两者不能混为一谈。
-
-> **精度衰减的确定性边界**：add_dev 与累积分红 D 正相关。D 的计算：`D(t) = close - close_front`
-> （fresh 数据可直接算）。add_dev 上界应建模为 `add_dev ≤ k × D + c`（k 为精度衰减系数，
-> c 为固定舍入），从真实样本拟合可证明的上界，而非反向调参。
+> **明确区分**：基准漂移（业务根因）解释"为什么需要全历史重基准"；precheck 理想化假设
+> （直接阻断）解释"为什么当前代码跑不通"。两者不能混为一谈。
 
 ### 1.3 为何不选 A（窗口化）/ B（放宽容差）
 - **A 不成立**：引擎要求 fresh 分钟全量覆盖库内存量区间（窗口覆盖触发
@@ -45,7 +40,7 @@ add_dev 达 0.06，超 1 tick=0.01）。这是 xtquant 对历史数据前复权�
 
 新增显式模型 `model="fresh_authoritative_rebase"`（独立命名，不复用 fresh_staged）。
 
-### 2.1 核心契约（审核确认的 12 条）
+### 2.1 核心契约（审核确认的 11 条）
 1. fresh 必须来自锁定的 xtquant 数据源，保留 capture_id、内容 SHA、下载区间、下载轨迹。
 2. daily 和 minute 必须**完整覆盖**库内目标证券整个存量区间：禁止窗口覆盖、缺行、增行、
    重复行、区间静默截断。
@@ -55,19 +50,27 @@ add_dev 达 0.06，超 1 tick=0.01）。这是 xtquant 对历史数据前复权�
 6. fresh 自身仍须检查：finite、正数、OHLC K线关系（low≤min(o,c)≤max(o,c)≤high）、
    交易日、session、cadence、代码、频率、键唯一性。
 7. 写后正式表四个 front 字段必须与 staged fresh **逐 bar 精确一致**（或满足明确的序列化精度）。
-8. close 复权因子链**分段检查**：结合已知除权事件/因子变化分段，无事件区间不得出现
-   无法解释的因子突变。
-9. daily 与 minute 的边界、覆盖范围、可比收盘值需**跨表校验**。
-10. 任一 precheck/postcheck 失败**整券回滚**，不推进 anchor 和水位。
-11. 同一 capture 重复执行必须**幂等**。
-12. 不得通过 ratio BLOCK 后静默切换；常驻编排器须显式选择该模式并记录原因。
+8. daily 与 minute 的边界、覆盖范围、可比收盘值需**跨表校验**。
+9. 任一 precheck/postcheck 失败**整券回滚**，不推进 anchor 和水位。
+10. 同一 capture 重复执行必须**幂等**（capture 不可变性 + 冲突检测 + 崩溃恢复，见 §3.5）。
+11. 不得通过 ratio BLOCK 后静默切换；常驻编排器须显式选择该模式并记录原因。
+
+> ~~原第 8 条"close 复权因子链分段检查"~~ 已否决（验证报告证明无适用经验公式），
+> 移入 §8 未来研究。
 
 ### 2.2 与 fresh_staged 的关系
 - **复用**：逐值写入能力（`update_daily_front_from_staged` / `apply_fresh_minute_staged`
   的 UPDATE 四 front 列逻辑）、raw 逐 bar 对齐校验、完整覆盖校验。
-- **替换**：precheck 的乘法/加法比例校验 → 改为 raw 对齐 + 基本校验；
-  postcheck 的 scale_consistency 乘法校验 → 改为复权因子链分段检查。
-- **新增**：fresh_authoritative_rebase 专属的"全历史完整覆盖 + 因子链分段 + 写后精确一致"。
+- **替换**：precheck 的乘法/加法比例校验 → **移除**（不替换为 k×D 或因子链，由 raw 对齐 +
+  写后一致承担）；postcheck 的 scale_consistency / front_chain 乘法校验 → **移除**。
+- **新增**：fresh_authoritative_rebase 专属的"全历史完整覆盖 + 写后精确一致"。
+
+> **信任边界（核心）**：fresh_authoritative_rebase 将经过来源认证和内容冻结的 xtquant front
+> 作为**权威输入（oracle）**。引擎不通过经验复权公式重新证明源端 front 的经济语义，而是验证：
+> 源标识、数据完整性、目标 raw 对齐、全量覆盖、字段守恒、原子写入、写后精确匹配。
+> **框架不独立证明 oracle 自身的复权语义正确性，也不检测 fresh capture 阶段形成的同步 front 污染。**
+> 若需检测此类错误，必须增加独立 oracle（独立公司行为链/独立复权因子源），属于未来研究
+> （见 §8），不列入当前实现范围。
 
 ## 3. 详细设计
 
@@ -94,10 +97,11 @@ MODELS: Tuple[str, ...] = ("ratio", "fresh_staged", "fresh_authoritative_rebase"
   - fresh 多行/少行/重复 → BLOCK（"全历史覆盖，禁止窗口/缺行/增行"）。
 - fresh_minutes 同理（按 freq 分组，staged==target==matched）。
 
-**C. raw 逐 bar 对齐（核心安全网）**
+**C. raw 逐 bar 对齐（对齐及传输完整性保证）**
 - fresh 的 raw OHLC（open/high/low/close）与库内对应行**逐 bar 精确一致**（|Δ|≤eps）。
-  - 任一 raw 差异 → BLOCK（"fresh raw 与库内不一致，无法解释"）。
-  - 这是 rebase 模式的核心安全保证：只信任 raw 一致时的 front 重写。
+  - 任一 raw 差异 → BLOCK（"fresh raw 与库内不一致，无法对齐"）。
+  - **保障范围**：证明 fresh 与库内 raw 来源对齐、未被传输错位/串码/截断。
+  - **不保障**：无法检测 fresh front 自身的同步偏移污染（属源端语义故障，见 §2.2 信任边界）。
 
 **D. 移除的比例校验（删除）**
 - ~~`open_front/open ≈ close_front/close`（乘法）~~ —— 删除。
@@ -115,47 +119,48 @@ MODELS: Tuple[str, ...] = ("ratio", "fresh_staged", "fresh_authoritative_rebase"
 - cross_table_overlap：daily close_front vs minute 当日末 bar close_front（容差 tol_cross）。
 - minute_staged_match / minute_raw_match / minute_coverage / minute_tick_error（fresh_staged 四项）。
 
-**替换的校验**
-- ~~scale_consistency（乘法比例）~~ → **复权因子链分段检查**（见 3.4）。
-- ~~front_chain_return（乘法/加法收益）~~ → **分段内收益一致性**（见 3.4）。
+**移除的校验（不替换为因子链/k×D，见 §3.4 说明）**
+- ~~scale_consistency（乘法比例）~~ —— 移除（理想化假设不适用真实 xtquant）。
+- ~~front_chain_return（乘法/加法收益）~~ —— 移除（同上）。
+- 这两项的防护意图由"raw 逐 bar 对齐 + 写后 front==staged 精确一致"承担（对齐/写入完整性），
+  不覆盖源端语义故障（见 §2.2 信任边界）。
 
-### 3.4 复权因子链分段检查（⚠️ 待验证设计假设，非已确认契约）
+### 3.4 已否决的经验语义校验研究（不列入实现）
 
-> **状态**：本节为待验证设计假设。只读验证报告（`docs/qfq-rebase-precision-validation-20260729.md`）
-> 已证明 `add_dev ≤ k×D` **不能**作为硬门禁（跨证券不一致 + 故障全漏检 + 整段加减盲区）。
-> 本节原设计的"无除权区间因子恒定"假设已被证伪（81% 交易日因子漂移 >1e-4）。
-> 在确定替代校验逻辑前，本节不作为实现依据。
+简短历史结论（详见验证报告 `docs/qfq-rebase-precision-validation-20260729.md`）：
+- **因子恒定假设已证伪**：无除权区间复权因子并非恒定（81% 交易日漂移 >1e-4）。
+- **add_dev ≤ k×D 已证伪**：对 1~20 tick 污染全漏检 + 同步偏移盲区 + 无损坏区分能力。
+- **不列入当前实现**。当前实现只承担确定性完整性保证（raw 对齐 + 写后一致 + 守恒）。
+- **独立语义 oracle 属未来研究**（§8），当前不寻找经验替代逻辑。
 
-**原假设（已证伪）**：前复权因子 `f(t) = close_front(t)/close(t)` 在无除权区间恒定。
-实测 000012 全历史 81% 交易日因子漂移 >1e-4，假设不成立。
+### 3.5 幂等性与 capture 不可变性（审核要求补充）
 
-**候选 H1（待验证，不构成门禁）**：同一根 K 线四 OHLC 字段近似共享加法偏移。
-部分证券（600875/510300）精确成立（add_dev=0），但 000012/002864 不成立（add_dev 达 0.66/2.76），
-且跨证券无统一规律（add_dev 主要受日内振幅和证券特异性影响，非 D 单变量函数）。
+> 当前框架现实（必须在实现中处理）：
+> - `capture_id = sha1(asset_type|code|run_id)` —— 运行轮次寻址，非内容寻址。
+> - `INSERT OR REPLACE INTO qfq_fresh_capture` —— 同 capture_id 不同内容会覆盖，而非 BLOCK。
+> - 引擎先 committed event，`cap.mark_applied()` 在引擎返回后另行执行，两者非同一原子事务。
+> 若 event committed 后、capture 标记 applied 前崩溃，会出现 event=committed 但 capture=captured。
 
-**验证结论**：详见 `docs/qfq-rebase-precision-validation-20260729.md`。add_dev ≤ k×D 对
-1~20 tick 污染全部漏检，且有"整段加减盲区"（open/close 同步偏移使 add_dev 不变）。
-**不作为硬门禁**，仅作观察/审计/告警指标。
+**幂等契约（rebase 模式必须实现）**：
+1. **capture 已存在且 event 已 committed**：修复 capture 状态（标记 applied），**不重复写价**（以 committed event 为成功事实）。
+2. **capture 已存在但 event 未 committed（含崩溃恢复）**：现有 qfq_fresh_capture 不持久保存 fresh payload，
+   无法直接复用。采用**方案二**：允许重新采集相同请求区间，但必须与已登记的 source、code、asset_type、
+   区间、daily SHA、minute SHA、metadata SHA **完全一致**；一致后继续 apply，任何差异 → BLOCK
+   `capture_id_content_conflict`，**禁止覆盖原 capture 元数据**（INSERT OR REPLACE 改为先查冲突）。
+3. **capture applied 但无 committed event**：异常恢复状态，**不能静默跳过**（可能写入未完成）。需人工或下轮恢复处置。
+4. **event/capture 都未完成**：重新采集并校验内容（同方案二规则）后继续。
+5. **内容 SHA 共同校验**：内容 SHA、请求区间、source、code、asset_type 必须共同校验一致才算同一 capture。
+6. **冲突检测**：capture_id 已存在但重新采集的 metadata SHA 不同 → BLOCK `capture_id_content_conflict`。
+7. **不得仅凭 capture.status='applied' 判定数据库已正确**：必须 capture applied AND event committed 同时成立才算成功。
 
-**C 方案安全门禁**只依赖确定性条件（见 2.1 节契约 1-12），核心是：
-- fresh raw 与库内 raw 逐 bar 一致（第 3 条）
-- 写后 front 与 staged fresh 逐 bar 精确一致（第 7 条）
-- 全历史完整覆盖 + 守恒（第 2/4/5 条）
-
-移除原 precheck 的理想化乘法/加法假设（第 5 条），由 raw 一致 + 写后一致承担安全责任。
-具体替代校验逻辑待后续设计确定（见第 7 节未解决问题）。
-
-### 3.5 幂等性
-- 同一 capture_id 重复执行：检查该 capture 是否已 applied（qfq_fresh_capture.status='applied'
-  且对应 event committed）→ 跳过重写，返回已 committed 结果。
-- anchor 推进逻辑不变（已 committed 的 event 不重复推进）。
+> 这是 C 方案"权威输入可审计"的关键组成部分。
 
 ### 3.6 写入流程（复用 fresh_staged）
 ```
 1. stage_fresh_authoritative: precheck（A-D）→ 建 staged 临时表
 2. apply_fresh_minute_staged: 分钟 raw 对齐 + 覆盖 + UPDATE 四 front（复用）
 3. update_daily_front_from_staged: daily UPDATE 四 front（复用）
-4. run_postchecks_authoritative: 写后校验（含因子链分段）
+4. run_postchecks_authoritative: 写后校验（确定性完整性校验：写后 front==staged、守恒、跨表）
 5. 全部通过 → committed event + anchor 推进（同一事务）
 6. 任一失败 → ROLLBACK + blocked/rolled_back event（独立短事务）
 ```
@@ -172,10 +177,13 @@ MODELS: Tuple[str, ...] = ("ratio", "fresh_staged", "fresh_authoritative_rebase"
 - 至少 2 只 ETF（验证 0.001 tick 路由）
 - 场景：多次分红、送转、分红送转混合、长期无除权、停牌跨事件
 
-### 4.3 逐项验证
-- 全历史 daily/minute front 与 fresh oracle 一致
+### 4.3 逐项验证（按信任域分类）
+- 全历史 daily/minute front 与 fresh oracle 一致（写后 front==staged）
 - raw、back、行数、非 front 列完全守恒
-- 故障注入全部被挡：缺 bar、多 bar、重复 bar、raw 污染、front 单点污染、错误证券、错误频率
+- **结构/覆盖故障**被挡：缺 bar、多 bar、重复 bar、错误时间（coverage precheck）
+- **对齐故障**被挡：错误证券、错误日期、raw 错位（raw match precheck）
+- **事务写入故障**被挡：UPDATE 后 front 被改（staged-match postcheck）
+- **源端语义故障**（fresh front 同步偏移）：确定性条件不检测，需独立 oracle（未来研究，§8）
 - 重复执行幂等
 - 故障注入后事务完整回滚
 - 代表性策略在"增量重基准库"与"同 fresh 快照干净全量重建库"间：
@@ -189,10 +197,12 @@ MODELS: Tuple[str, ...] = ("ratio", "fresh_staged", "fresh_authoritative_rebase"
 - stage_fresh_authoritative：基本校验 + 完整覆盖 + raw 对齐（删除比例校验）
 - 单元测试：raw 对齐 / 覆盖 / K线关系 / 故障注入
 
-### 阶段 R2：postcheck（因子链分段检查）
-- run_postchecks 增加 rebase 分支：复权因子链分段 + 分段内收益一致 + 除权日跳变合理
-- 替换 scale_consistency / front_chain 的乘法假设
-- 单元测试：分段因子平滑 / 除权日跳变 / 无事件区间收益一致
+### 阶段 R2：postcheck（移除乘法假设，确定性校验）
+- run_postchecks 增加 rebase 分支：移除 scale_consistency（乘法）和 front_chain（乘法/加法收益）
+- 保留 daily_staged_match（写后 front==staged 精确一致）、kline_relation、row_conservation、
+  cross_table_overlap、minute_* 四项
+- 不引入因子链分段检查或 k×D（已证伪，见 §3.4 + 验证报告）
+- 单元测试：写后一致 / 守恒 / 跨表边界 / 故障注入（结构/对齐/写入三类，源端语义类不要求检测）
 
 ### 阶段 R3：真实数据验收
 - staging 副本上对 000012 等真实证券全历史重基准
@@ -214,8 +224,21 @@ MODELS: Tuple[str, ...] = ("ratio", "fresh_staged", "fresh_authoritative_rebase"
 - 不碰 daemon.py 既有逻辑（rebase 由编排器显式选择，编排器改动单独审核）。
 
 ## 7. 已知风险
-- factor_drift_tol（1e-4）需真实数据校准：若 xtquant 在无除权区间的因子舍入偏差 >1e-4，
-  需调整为可证明的上界（基于真实样本的因子漂移分布，非反向调参）。
-- 复权因子链分段依赖 ex_dates 准确性：ex_dates 缺漏会导致无事件区间误判（把除权日当
-  无事件区间，因子突变被误报）。需交叉验证 ex_dates 与因子 observation 变化点。
-- 全历史 fresh 下载耗时：2076 行 daily + 数万行 minute 的 xtquant 下载，需评估性能。
+- **源端语义故障不可检测**（信任边界核心风险）：fresh front 同步偏移污染无法被确定性条件
+  检测。C 方案以"xtquant front 为权威 oracle"为前提接受此风险；若不接受，需独立 oracle（§8）。
+- **raw 逐 bar 一致的全市场覆盖率未验证**：预检仅抽样 000012/510300（daily，0 差异），
+  全市场（5202 股票 + 1605 ETF）+ minute raw 的差异率待扩大预检。若部分证券 raw 不一致，
+  需 BLOCK 或先 raw 迁移。
+- 全历史 fresh 下载耗时：2076+ 行 daily + 数万行 minute 的 xtquant 全量下载，需评估性能。
+- ~~factor_drift_tol / 因子链分段检查~~ —— 已证伪，移入 §8 未来研究，不列入实现。
+
+## 8. 未来研究：独立语义 oracle（不在当前实现范围）
+
+C 方案以"xtquant front 为权威 oracle"为前提，不检测源端同步 front 污染。若未来需要检测
+此类错误，必须引入**独立 oracle**（不共享同一错误链路的验证来源），候选方向（均待研究，
+不构成当前承诺）：
+- 独立公司行为事件链（cash_div/stk_div/ex_date）驱动的复权因子重算，与 xtquant front 抽样核验。
+- 独立前复权因子源（如 Tushare adj_factor / fund_adj）的交叉验证。
+- 基于公司行为参数的复权结果区间校验。
+
+> 这些方向在 add_dev ≤ k×D 被证伪后提出，尚未验证可行性，不列入 R1-R4 实现阶段。

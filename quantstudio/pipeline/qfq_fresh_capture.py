@@ -394,6 +394,7 @@ class FreshCapture:
         minute_range_ms: Tuple[int, int],
         fetcher: FreshFetcher,
         source: str = "xtquant",
+        write: bool = True,
     ) -> Tuple[FreshCaptureRecord, pd.DataFrame, pd.DataFrame]:
         """采集单证券 fresh 日线+分钟线，计算证据 hash 并落 ``qfq_fresh_capture`` 表。
 
@@ -497,18 +498,17 @@ class FreshCapture:
             updated_at=now,
         )
 
-        self._insert(conn, record)
+        # write=False：仅计算证据并落内存 record，捕获落库交由引擎的不可变契约
+        # （resolve_fresh_capture → NEW 时 write_fresh_capture plain INSERT）完成，
+        # 避免在编排器侧用 INSERT OR REPLACE 覆盖已提交捕获。
+        if write:
+            self._insert(conn, record)
         return record, fresh_daily, fresh_minute
 
     def _insert(self, conn, record: FreshCaptureRecord) -> None:
-        placeholders = ", ".join(["?"] * len(FRESH_CAPTURE_COLS))
-        cols = ", ".join(FRESH_CAPTURE_COLS)
-        sql = (
-            f"INSERT OR REPLACE INTO qfq_fresh_capture ({cols}) "
-            f"VALUES ({placeholders})"
-        )
-        params = [getattr(record, c) for c in FRESH_CAPTURE_COLS]
-        conn.execute(sql, params)
+        # 不可变写入：复用引擎侧 write_fresh_capture（plain INSERT），遇到
+        # 已存在同 capture_id 直接抛 Duplicate 而非覆盖（INSERT OR REPLACE 已移除）。
+        write_fresh_capture(conn, record)
 
     def get_capture(
         self, conn, capture_id: str
@@ -530,3 +530,106 @@ class FreshCapture:
             "WHERE capture_id = ?",
             ["applied", _now_ts(), capture_id],
         )
+
+
+# ---------------------------------------------------------------------------
+# capture 不可变契约（§3.5 / 阶段2 R1）
+# ---------------------------------------------------------------------------
+
+class CaptureContentConflict(Exception):
+    """capture_id 已存在但登记内容与重新采集不一致（§3.5 冲突检测）。
+
+    触发后**禁止 INSERT OR REPLACE 覆盖原 capture 元数据**；调用方应 BLOCK。
+    """
+
+
+# resolve_fresh_capture 返回值
+CAPTURE_ACTION_NEW = "new"                              # 全新 capture，可 INSERT
+CAPTURE_ACTION_RECOLLECT_OK = "recollect_ok"            # 已存在、event 未提交、内容一致，可重新采集
+CAPTURE_ACTION_ALREADY_COMMITTED = "already_committed"  # 已存在、event 已提交，不重复写价
+CAPTURE_ACTION_RECOVER_APPLIED_NO_EVENT = "recover_applied_no_event"  # 已 applied 但无 event，须显式恢复
+
+
+def _event_committed_for_capture(conn, capture_id: str) -> bool:
+    """capture 对应的 reanchor event 是否已 committed（写入 qfq_reanchor_event）。"""
+    n = conn.execute(
+        "SELECT COUNT(*) FROM qfq_reanchor_event WHERE status='committed' "
+        "AND json_extract_string(minute_ratio_plan, '$.model_audit.fresh_capture_id')=?",
+        [capture_id]).fetchone()[0]
+    return int(n) > 0
+
+
+def resolve_fresh_capture(conn, *, capture_id: str, asset_type: str, code: str,
+                           source: str, daily_range_start, daily_range_end,
+                           minute_range_start, minute_range_end,
+                           daily_sha256: str, minute_sha256: str,
+                           metadata_sha256: str) -> str:
+    """§3.5 capture 不可变契约：先查冲突，再决定动作。
+
+    返回动作：
+    - CAPTURE_ACTION_NEW：capture_id 不存在，调用方可 INSERT（**禁止 INSERT OR REPLACE**）。
+    - CAPTURE_ACTION_ALREADY_COMMITTED：已存在且 event 已 committed → 修复
+      capture.status='applied'（若不是），不重复写价。
+    - CAPTURE_ACTION_RECOVER_APPLIED_NO_EVENT：capture.status=='applied' 但无 committed
+      event → 异常恢复路径，**不得静默跳过**。
+    - CAPTURE_ACTION_RECOLLECT_OK：已存在、event 未提交、内容一致 → 允许重新采集继续。
+
+    冲突（已登记 source/code/asset_type/区间/SHA 与重新采集不一致）→ 抛
+    CaptureContentConflict（禁止覆盖原元数据）。
+    """
+    row = conn.execute(
+        "SELECT capture_id, asset_type, code, source, daily_range_start, daily_range_end, "
+        "minute_range_start, minute_range_end, daily_sha256, minute_sha256, metadata_sha256, "
+        "status FROM qfq_fresh_capture WHERE capture_id=?", [capture_id]).fetchone()
+    if row is None:
+        return CAPTURE_ACTION_NEW
+    got = dict(zip(
+        ["capture_id", "asset_type", "code", "source", "daily_range_start",
+         "daily_range_end", "minute_range_start", "minute_range_end",
+         "daily_sha256", "minute_sha256", "metadata_sha256", "status"], row))
+    expected = dict(
+        asset_type=asset_type, code=code, source=source,
+        daily_range_start=daily_range_start, daily_range_end=daily_range_end,
+        minute_range_start=minute_range_start, minute_range_end=minute_range_end,
+        daily_sha256=daily_sha256, minute_sha256=minute_sha256,
+        metadata_sha256=metadata_sha256)
+    mismatch = [k for k in expected if str(got[k]) != str(expected[k])]
+    if mismatch:
+        raise CaptureContentConflict(
+            f"capture_id={capture_id} 内容冲突（字段 {mismatch}）：已登记与重新采集不一致，"
+            f"禁止 INSERT OR REPLACE 覆盖原 capture 元数据")
+    if _event_committed_for_capture(conn, capture_id):
+        if got["status"] != "applied":
+            conn.execute(
+                "UPDATE qfq_fresh_capture SET status='applied', updated_at=? "
+                "WHERE capture_id=?", [_now_ts(), capture_id])
+        return CAPTURE_ACTION_ALREADY_COMMITTED
+    if got["status"] == "applied":
+        return CAPTURE_ACTION_RECOVER_APPLIED_NO_EVENT
+    return CAPTURE_ACTION_RECOLLECT_OK
+
+
+def write_fresh_capture(conn, rec: "FreshCaptureRecord") -> None:
+    """写入一条全新 capture（**INSERT，非 INSERT OR REPLACE**）。
+
+    与 resolve_fresh_capture 配合：仅当 resolve 返回 CAPTURE_ACTION_NEW 时调用。
+    若 capture_id 已存在（违反契约），INSERT 主键冲突抛错（数据库层兜底，杜绝静默覆盖）。
+    """
+    cols = [
+        "capture_id", "asset_type", "code", "source", "daily_range_start",
+        "daily_range_end", "minute_range_start", "minute_range_end",
+        "daily_sha256", "minute_sha256", "metadata_sha256", "status",
+        "daily_row_count", "minute_row_count", "created_at", "updated_at",
+    ]
+    placeholders = ", ".join(["?"] * len(cols))
+    vals = [
+        rec.capture_id, rec.asset_type, rec.code, rec.source,
+        rec.daily_range_start, rec.daily_range_end,
+        rec.minute_range_start, rec.minute_range_end,
+        rec.daily_sha256, rec.minute_sha256, rec.metadata_sha256,
+        rec.status, rec.daily_row_count, rec.minute_row_count,
+        rec.created_at or _now_ts(), rec.updated_at or _now_ts(),
+    ]
+    conn.execute(
+        f"INSERT INTO qfq_fresh_capture ({', '.join(cols)}) VALUES ({placeholders})",
+        vals)

@@ -1,0 +1,70 @@
+{
+  "captured_at": "2026-07-29T23:25:34+08:00",
+  "xtquant_env": {
+    "probe_source": "xtquant 包导入探测",
+    "xtquant_package": "xtquant_250516",
+    "note": "miniQMT 服务信息需 --refresh 时 xtquant.connect 返回；此处不伪装动态探测"
+  },
+  "download_range": "20150101-20260726",
+  "per_security": [
+    {
+      "code": "000012",
+      "rows": 2808,
+      "source_dataframe_sha256": "653969d8ace767aaee798ef3676a6d6eb61fe02ad5919cc5be9e30021d4a1efe",
+      "fixture_canonical_sha256": "ca579fcf3c5cb011e22b42e35702bdd34ec20345341a7622c1167aac65b74e4b",
+      "fixture_file_sha256": "761accbde2bdf8005f3b6e1c0caa80c58ed0b7a040b60f248661fe8185093e6e"
+    },
+    {
+      "code": "600000",
+      "rows": 2808,
+      "source_dataframe_sha256": "4446eb7ac274c23e05d33e837cb848a3a644c71df56ba875f6d223e9457e75e1",
+      "fixture_canonical_sha256": "e7a6548c1102b48bab8346b1ecf3ab2e5e73061c9968f211aaf0b4ba1622f674",
+      "fixture_file_sha256": "0c0a573c27d13d27e0289481ccd8224135c6665152997b88ddb86f12d9a8f43c"
+    },
+    {
+      "code": "600875",
+      "rows": 2808,
+      "source_dataframe_sha256": "6d8ff38c042cbeb46bbe7061a629ad93ff9e2fb957d27e1ef129345b9ea08a55",
+      "fixture_canonical_sha256": "d5548d3fe2570999695b78dacfd2f8dfa3176c6be5baeab2745216534c867f77",
+      "fixture_file_sha256": "967b74fb053a8a1394f9dcf3c84a8f9dbaa0f3b6eab94d72bed0b75e29f0cc13"
+    },
+    {
+      "code": "600039",
+      "rows": 2808,
+      "source_dataframe_sha256": "1bce999a4cc99b7b31689a0fbb7b0aa4e9b9ea15e3461fd7fe7c0051c64e048f",
+      "fixture_canonical_sha256": "60ee9e448417e19ef675f6007f5b2ae84167ec6ebe8d1745d3aa98417757de45",
+      "fixture_file_sha256": "024fa2628c558b470646dcec9e83cf5dd441a61c66d309cf436728020305bd99"
+    },
+    {
+      "code": "002864",
+      "rows": 2108,
+      "source_dataframe_sha256": "68fa976dd4dffdc7c2d2b0a053c2b4e230d11ce853b922cb09c98af5699657e6",
+      "fixture_canonical_sha256": "04f4d2135f383f3e87292667cd091cf52f415d12004d26f9a1df95d647b2bf0c",
+      "fixture_file_sha256": "d049b4b7c9726df5aaabaf40b4dd5c46f0431ed555314a667ae18c084716988c"
+    },
+    {
+      "code": "600519",
+      "rows": 2808,
+      "source_dataframe_sha256": "de5fe29e092602ed5454ca6f13d1e7661358440f1967a39f99483440c3d8b3aa",
+      "fixture_canonical_sha256": "b2b121965836720557d4a13babfc9cefc00b39a031804f62a49edcad48a31842",
+      "fixture_file_sha256": "7520a3eaa5e0fb26b921e4bbbcbc1b66dea0431188cd110752616be03e6f16fa"
+    },
+    {
+      "code": "510300",
+      "rows": 2808,
+      "source_dataframe_sha256": "fa48cbe7021291ac384dc6995c9dc2e87a57a57bf3160def2b7a22cc66734e89",
+      "fixture_canonical_sha256": "a90e02e9530a62e40f180672cb3da8b429d3c7e6204f4a96f8aa1a2c40a88830",
+      "fixture_file_sha256": "63ac7a54495ae0e7be3f96e46c8a8861cd99b4e45a50fc7a1735cf21ec9fd305"
+    },
+    {
+      "code": "159919",
+      "rows": 2808,
+      "source_dataframe_sha256": "9b5969451398079007b9b6de0d65c8ea3322606af1548b3e3d3d14c975e21503",
+      "fixture_canonical_sha256": "5f609a787b94965bb6d712cf7ec4975d6afe01b1e153bbdbdf3c8b5716f48bfe",
+      "fixture_file_sha256": "0f8cbed77ea2daf8f3789ec3df70eba2582058f643ed1dad7c5c6d3ca19d4bd8"
+    }
+  ],
+  "repeat_download_identical": true,
+  "repeat_download_sha1": "adbd60a6b814350dafb82bfb8a9dab0b60ae984498b3aed28d44c6292ae7de21",
+  "repeat_download_sha2": "adbd60a6b814350dafb82bfb8a9dab0b60ae984498b3aed28d44c6292ae7de21"
+}
