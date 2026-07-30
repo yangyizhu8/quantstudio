@@ -1,0 +1,87 @@
+{
+  "title": "双目标（QuantStudio + PTrade）铁律前置降级矩阵",
+  "applies_to": "dual-target strategy generation (QuantStudio local engine + real PTrade IQEngine)",
+  "rule": "R0 渲染本矩阵；用户选双目标时自动套用，R2.5 不再就该点提问。所有降级以 PTrade 契约为不可变真相源（AGENTS.md 铁律#4）。",
+  "source_taskbook": "PHASE1_TASKBOOK.md A2",
+  "generated_at": "2026-07-29",
+  "factor_degradations": [
+    {
+      "id": "newhigh_ratio",
+      "factor": "新高比例",
+      "original": "行业成分股创60日新高占比",
+      "dual_target_feasible": false,
+      "forced_mapping": "ETF 自身是否创60日新高(0/1)，再在白名单截面取均值",
+      "note": "行业成分股不可得，退化为白名单 ETF 个体新高代理"
+    },
+    {
+      "id": "amount_share",
+      "factor": "成交额占比",
+      "original": "行业成交额 / 全市场成交额",
+      "dual_target_feasible": false,
+      "forced_mapping": "ETF成交额 / 白名单ETF总成交额",
+      "note": "全市场成交额不可得，退化为白名单内占比"
+    },
+    {
+      "id": "bear_signal_1",
+      "factor": "熊市①",
+      "original": "全市场成交额连续5日 < 20日均×80%",
+      "dual_target_feasible": false,
+      "forced_mapping": "白名单ETF合计成交额代理（连续5日 < 白名单20日均×80%）",
+      "note": "全市场量能不可得，退化为白名单代理"
+    },
+    {
+      "id": "bear_signal_3",
+      "factor": "熊市③",
+      "original": "全A新高比例 < 5%",
+      "dual_target_feasible": false,
+      "forced_mapping": "白名单中创60日新高ETF占比 < 阈值（默认 S3_BEAR_FRAC=0.05）",
+      "note": "全A新高不可得，退化为白名单ETF新高占比；阈值见 A1 历史探测自标定"
+    },
+    {
+      "id": "other_factors",
+      "factor": "其余因子",
+      "original": "ETF 自身行情可算（动量/量能/相对强弱/突破/趋势）",
+      "dual_target_feasible": true,
+      "forced_mapping": "公式不变",
+      "note": "不降级"
+    },
+    {
+      "id": "industry_mapping",
+      "factor": "行业映射",
+      "original": "动态 tracking_index 匹配",
+      "dual_target_feasible": false,
+      "forced_mapping": "静态白名单（申万一级 25 只代表 ETF，用户 R2.5 确认）",
+      "note": "动态行业跟踪在双端不可复现，固定为静态白名单"
+    }
+  ],
+  "api_level_degradations": [
+    {
+      "id": "amount_to_money",
+      "kind": "field_rename",
+      "local_physical": "amount",
+      "ptrade_contract": "money",
+      "feasible": true,
+      "fix": "B1（返回路径加 DB名→Ptrade名 逆映射，双列并存）；生成代码应优先用 money，兼容 amount",
+      "status": "framework_fix_pending"
+    },
+    {
+      "id": "close_front_to_close",
+      "kind": "field_rename",
+      "local_physical": "close_front",
+      "ptrade_contract": "close",
+      "feasible": true,
+      "fix": "fq='pre' 下 duckdb_data_access 已正确处理 close_front→close，无泄漏",
+      "status": "ok"
+    },
+    {
+      "id": "is_dict_true",
+      "kind": "return_structure",
+      "local": "get_history(is_dict=True) 返回 {code: DataFrame}",
+      "ptrade": "get_history(is_dict=True) 返回 {code: array/recarray}",
+      "feasible": false,
+      "fix": "A4 拦截：双目标代码禁止 is_dict=True，改用默认 DataFrame 路径（双端一致可移植）",
+      "status": "skill_block"
+    }
+  ],
+  "acceptance": "R0 包含本矩阵；双目标用户在 R0 自动套用降级，R2.5 不再就该点提问。"
+}

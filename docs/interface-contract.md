@@ -297,6 +297,18 @@ engine = BacktestEngine(config=config, ...)
 
 **策略作者只需知道**：调用 `get_fundamentals`/`get_history` 等取数 API，框架自动查对的库。
 
+### 空交易日错误诊断契约
+
+回测区间无交易日时，`BacktestEngine.run()` 仍抛出 `ValueError`，基础消息仍为
+`No trading days in backtest range: {start} ~ {end}`。DuckDB 日历 provider 支持诊断时，
+消息追加以下一种多行上下文，但不改变异常类型、交易日查询返回值或成功路径行为：
+
+- 数据库无法连接：数据库路径、文件存在性、连接异常及占用/配置排查建议；
+- 连接成功但区间无数据：`stock_daily` 实际最小/最大日期、不同交易日数及补采建议。
+
+诊断钩子不存在、返回异常或诊断数据无法解析时，必须退化为原始单行消息，诊断失败不得掩盖
+原始 `ValueError`。该诊断只在空交易日失败分支执行。
+
 ---
 
 ## 9. 数据源口径契约（D10 决策）

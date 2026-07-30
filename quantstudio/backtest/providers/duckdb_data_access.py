@@ -1767,6 +1767,70 @@ class DuckDBDataAccess:
         where = " AND ".join(conditions) if conditions else "1=1"
         return conn.execute(f"SELECT DISTINCT time FROM stock_daily WHERE {where} ORDER BY time").fetchdf()
 
+    def diagnose_stock_daily_range(self) -> dict:
+        """诊断 stock_daily 表的数据覆盖范围与连接可用性。
+
+        仅用于错误信息细化（"No trading days" 分支），不参与任何成功取数路径。
+        返回 dict：
+          {
+            "db_path": str,            # 实际尝试连接的数据库路径
+            "file_exists": bool,       # 数据库文件是否存在
+            "connection_ok": bool,     # _get_conn() 是否成功拿到只读连接
+            "table_exists": bool,      # stock_daily 表是否存在
+            "min_time": int|None,      # stock_daily.time 最小值(ms)，无数据/无表为 None
+            "max_time": int|None,      # stock_daily.time 最大值(ms)
+            "distinct_days": int|None, # stock_daily 不同 time 计数
+            "error": str|None,         # 连接/查询阶段的异常信息(若有)
+          }
+        每个 SQL 单独 try/except，任一失败仅置 error 字段，方法绝不向上抛
+        （best-effort 诊断函数）。不做任何缓存（诊断仅失败路径触发，
+        且避免与 _cached_min_ms/_max_ms 语义混淆）。
+        """
+        info = {
+            "db_path": str(self._db_path) if self._db_path is not None else None,
+            "file_exists": bool(self._db_path is not None and self._db_path.exists()),
+            "connection_ok": False,
+            "table_exists": False,
+            "min_time": None,
+            "max_time": None,
+            "distinct_days": None,
+            "error": None,
+        }
+        conn = self._get_conn()  # 复用现有契约：成功返回连接、失败返回 None（不改它）
+        info["connection_ok"] = conn is not None
+        if conn is None:
+            # _get_conn 内 try/except: pass 吞掉了真实异常——为诊断补一次独立探测，
+            # 仅取异常文本，不替换 _get_conn 的连接实例。
+            try:
+                import duckdb as _ddb
+                _probe = _ddb.connect(str(self._db_path), read_only=True)
+                _probe.close()
+            except Exception as e:
+                info["error"] = str(e)
+            return info
+        try:
+            df = conn.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_name = 'stock_daily'"
+            ).fetchdf()
+            info["table_exists"] = len(df) > 0
+        except Exception as e:
+            info["error"] = str(e)
+            return info
+        if not info["table_exists"]:
+            return info
+        try:
+            row = conn.execute(
+                "SELECT MIN(time), MAX(time), COUNT(DISTINCT time) FROM stock_daily"
+            ).fetchone()
+            if row is not None:
+                info["min_time"] = int(row[0]) if row[0] is not None else None
+                info["max_time"] = int(row[1]) if row[1] is not None else None
+                info["distinct_days"] = int(row[2]) if row[2] is not None else None
+        except Exception as e:
+            info["error"] = str(e)
+        return info
+
     def query_trade_day_offset(self, curr_ms, offset) -> pd.DataFrame:
         """迁移自 PtradeAPI.get_trading_day() (ptrade_api.py:1473-1481)
 

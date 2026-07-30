@@ -41,6 +41,11 @@ Write `agent_strategy_design.json` using `schemas/agent_strategy_design.schema.j
 
 Design 2.2 additionally requires machine-checkable contracts: `portfolio_contract` (sizing mode, target holdings, exposure/cash/weight bounds), `rebalance_funding_contract` (checked against `references/execution-funding-matrix.md`), `history_coverage_contract` (lookback coverage, not window truncation), `r5_deployment_invariants` (deployment thresholds R5 verifies from real artifacts), and verbatim `confirmation_evidence`. Self-contradictory capital math (20 x 5% + 15% cash buffer) BLOCKs at design time, never reaches R3.
 
+**RISK_WARNINGS（R2 组件计划强制段）** — 凡含日频再平衡或 ETF 轮动的 R2 包，必须产出以下两段预警：
+
+1. **碎单风险（fragmented-order friction）**：日频再平衡 × 小资金（默认 10 万）× 最低佣金 5 元，会放大换手摩擦。参考实跑量级 ≈ 445 笔 / ≈ 2200 元/年；应在组件计划建议"再平衡阈值（权重偏离 > 2% 才调）"或持仓缓冲带，避免无谓碎单。
+2. **撮合模式语义（fill semantics）**：本策略语义 = 盘后信号次日开盘成交 → GUI 撮合必须选 `next_open`。提示：GUI 默认撮合 = `close` / 佣金 = 万 3.5 / 滑点 = 0，必须手动改为 `next_open` / `0.00025` / `0.001`。R4 Handoff 必须同步复述撮合模式与费率配置，否则视为 R4 未闭环。
+
 ### R2.5 - Customer confirmation gate
 
 Present exact strategy semantics, all approximations and platform differences, selected lifecycle callbacks and public APIs, unresolved data gaps, and expected holding/overlap/cash behavior.

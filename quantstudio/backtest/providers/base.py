@@ -203,6 +203,16 @@ class CalendarProvider(ABC):
     @abstractmethod
     def get_kline_count(self, date: str) -> int: ...
 
+    def diagnose(self) -> Optional[dict]:
+        """返回该 provider 的数据范围诊断信息，用于错误信息细化。
+
+        非抽象、带默认实现：基类默认返回 None（表示该 provider 不支持诊断，
+        例如测试 mock），所有现有子类/测试桩零改动兼容。
+        DuckDBCalendarProvider 覆写为返回 stock_daily 覆盖范围。
+        仅在"无交易日"失败分支被引擎调用，不参与任何成功路径。
+        """
+        return None
+
 
 @dataclass
 class DataProviderRegistry:

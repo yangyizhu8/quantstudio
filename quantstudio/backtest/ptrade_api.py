@@ -264,6 +264,21 @@ class DataDict:
         self._data[code] = bar
 
 
+def _ensure_money_alias(df):
+    """B1：DB 物理列 'amount' → Ptrade 契约列 'money' 的返回端逆映射。
+
+    当 DataFrame 含 'amount' 且不含 'money' 时，在末尾追加与 'amount' 同值的
+    'money' 列（canonical），并保留 'amount' 别名。绝不删除 'amount'、绝不改变
+    任何数值、绝不改变已有列顺序（新列追加在末尾）。幂等。
+    """
+    if df is None or not hasattr(df, "columns") or len(df) == 0:
+        return df
+    if "amount" in df.columns and "money" not in df.columns:
+        df = df.copy()
+        df["money"] = df["amount"]
+    return df
+
+
 class CodeDict(dict):
     """支持证券代码后缀互通的 dict 子类（Ptrade 语义：.SS/.XSHG/.SZ/.XSHE/裸码等价）。
 
@@ -1146,6 +1161,7 @@ class PtradeAPI:
                     bar_cutoff_ms=bar_cutoff_ms).items():
                 df = df.copy()
                 df.index = range(-len(df), 0)
+                df = _ensure_money_alias(df)
                 dfs[self._to_ptrade_code(bare)] = df
             if is_dict:
                 _result = CodeDict(dfs)
@@ -1163,7 +1179,9 @@ class PtradeAPI:
                 mapped = [field_map.get(f, f) for f in fields]
                 available = [m for m in mapped if m in df0.columns]
                 if available:
-                    df0 = df0[available]
+                    df0 = df0[list(dict.fromkeys(available))]
+                    # B1：唯一闸门——选列后含 'amount' 即补同值 'money'（含请求 fields=['money'] 场景）
+                    df0 = _ensure_money_alias(df0)
             if hasattr(self, '_query_cache'): self._query_cache[cache_key] = df0
             return df0
         except FrequencyCapabilityError:
@@ -1289,9 +1307,13 @@ class PtradeAPI:
                     if fq == 'pre' and 'close_front' not in df.columns:
                         pass  # stock_daily 已有 front 字段（当前查询未含，简化处理）
                     if fields:
-                        available = [f for f in fields if f in df.columns]
+                        # B1：canonical 'money' 映射到 DB 物理列 'amount'（选列用），返回端再补 'money' 别名
+                        mapped_fields = ['amount' if f == 'money' else f for f in fields]
+                        available = [f for f in mapped_fields if f in df.columns]
                         if available:
                             df = df[available]
+                    # B1：唯一闸门——含 'amount' 即补同值 'money'（选列后统一处理）
+                    df = _ensure_money_alias(df)
                     dfs[self._to_ptrade_code(bare)] = df
             if is_dict:
                 return CodeDict(dfs)
@@ -1898,7 +1920,12 @@ class PtradeAPI:
         return result
 
     def get_industry(self, code):
-        """获取证券行业信息（对应 Ptrade get_industry），APPROXIMATION_REQUIRES_CONFIRMATION（F4，非 PIT READY）。
+        """获取证券行业信息（LOCAL_ONLY 本地扩展，非 Ptrade API），APPROXIMATION_REQUIRES_CONFIRMATION（F4，非 PIT READY）。
+
+        PTrade 官方无独立 get_industry，仅有 get_industry_stocks(industry_code)
+        （返回行业成分股列表）；本函数返回个股行业归属——语义方向相反、无直接等价。
+        双目标策略禁用本 API（skill 档案已标 unsupported_on_ptrade:true，
+        Validator 会 BLOCK），须改用 get_industry_stocks 重建或降级为本地专有。
 
         返回 {'sw_l1': {'industry_code', 'industry_name',
         'classification_system', 'classification_version'}} 格式。

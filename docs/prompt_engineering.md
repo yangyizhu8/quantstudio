@@ -64,6 +64,7 @@ QuantStudio 本地注入 API / 指标 / 全局对象（g、log、pd、np、MyTT�
 【数据层（全部来自 DuckDB，绝不直连 DB）】
 - get_history(security,count,unit='1d',fields,fq='pre',include=False,is_dict=False)：单标的历史，索引 -count..0。
 - get_price(security,start,end,frequency='1d',fields,fq='pre',count,is_dict=False)
+- ⚠️ **成交额列名双端契约（B1）**：成交额的 Ptrade 契约名为 `money`（DB 物理列 `amount`）。`get_history`/`get_price` 返回的 DataFrame 含 `amount` 时同步追加同值 `money` 列，`fields=['money']` 请求正确返回。**双端/PTrade 目标代码只读 `money`**——读 `amount`/`close_front`/`volume_front`/`open_front` 等本地列名会被 Validator 以 `PTRADE-LOCAL-COLUMN` 阻断；本地单端策略读 `amount` 仍兼容。
 - ⚠️ **取数默认前复权（fq='pre'）**：框架 API 与底层数据适配层默认均为前复权；生成策略取历史/行情务必使用 `fq='pre'`（不复权才显式传 `fq=None`）。**切勿依赖不复权价格做回测**（除权缺口会导致信号与收益失真）。即便省略 fq 也已是前复权，但建议显式写出 `fq='pre'` 以表意清晰。
 - ⚠️ **撮合/估值同为前复权口径（前复权闭环）**：成交价、持仓估值、`data[code].price` 均来自引擎前复权快照（OHLC 映射 `*_front`，`preClose` 同因子缩放），与信号价同一连续口径；ETF 拆分/分红除权无价格缺口、无虚假盈亏（分红等价于自动再投资）。策略可直接比较 `data[code].price` 与 `get_history(fq='pre')` 序列。
 - ⚠️ **设计契约强制值**：`signal_price_adjustment="pre"`、`execution_price_basis="pre_adjusted_price"`。生成器不得输出 `raw_trade_price`；旧设计需迁移后重新确认和回测。
