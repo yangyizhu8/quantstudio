@@ -407,3 +407,6 @@ class DuckDBCalendarProvider(CalendarProvider):
         return pd.to_datetime(df['time'], unit='ms', utc=True).dt.tz_convert(
             'Asia/Shanghai').dt.strftime('%Y-%m-%d').tolist()
     def get_kline_count(self, date): return self._data.query_kline_count(_end_ms(date))
+    def diagnose(self):
+        """委托 DuckDBDataAccess 获取 stock_daily 覆盖范围（仅"无交易日"错误诊断用）。"""
+        return self._data.diagnose_stock_daily_range()

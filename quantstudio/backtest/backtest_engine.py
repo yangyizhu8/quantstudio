@@ -458,7 +458,7 @@ class BacktestEngine:
         _api.reset_session()
         trade_days = self._get_trade_days()
         if not trade_days:
-            raise ValueError(f"No trading days in backtest range: {self.start} ~ {self.end}")
+            raise ValueError(self._build_empty_trade_days_error())
         logger.info(f"[Backtest] {len(trade_days)} trading days: {trade_days[0]} ~ {trade_days[-1]}")
 
         if self.strategy_type == "ptrade" and 'initialize' in self.strategy:
@@ -2114,6 +2114,62 @@ class BacktestEngine:
     def _get_trade_days(self) -> list:
         """获取回测区间的交易日列表"""
         return self._providers.calendar.get_trade_days(self.start, self.end)
+
+    def _build_empty_trade_days_error(self) -> str:
+        """构建"无交易日"错误的细化诊断信息。
+
+        原行为：raise ValueError("No trading days in backtest range: {start} ~ {end}")
+        现行为：异常类型仍为 ValueError，message 追加诊断上下文，帮助区分
+          - 数据库连接失败/文件缺失
+          - 库有数据但不在回测区间（显示实际 MIN/MAX）
+        成功路径不受影响（仅在空交易日分支调用）。诊断全程被 getattr/try-except
+        守卫，任何诊断失败一律回退到原始 message，绝不引入新的失败路径。
+        """
+        base = f"No trading days in backtest range: {self.start} ~ {self.end}"
+
+        # 安全获取诊断信息：provider 可能是测试 mock（无 diagnose 方法）
+        diagnose_fn = getattr(self._providers.calendar, "diagnose", None)
+        if not callable(diagnose_fn):
+            return base  # mock/不支持诊断 → 保持原样，零行为变更
+
+        try:
+            info = diagnose_fn() or {}
+        except Exception:
+            return base  # 诊断自身异常不得掩盖原始错误
+
+        if not info:
+            return base  # diagnose() 返回 None/{}（基类默认）→ 保持原样
+
+        if not info.get("connection_ok"):
+            return (
+                f"{base}\n"
+                f"  原因：无法连接数据库。请检查：\n"
+                f"    - 数据库路径：{info.get('db_path')}\n"
+                f"    - 文件是否存在：{info.get('file_exists')}\n"
+                f"    - 连接异常：{info.get('error') or '（无详细信息，可能文件被其它进程独占占用）'}\n"
+                f"  建议：关闭其它占用该数据库的程序（daemon、其它 GUI 实例）后重试；"
+                f"确认 config/data_config.json 的 path 指向正确的 quantstudio.db。"
+            )
+
+        try:
+            min_t = info.get("min_time")
+            max_t = info.get("max_time")
+            n = info.get("distinct_days")
+            min_str = (pd.Timestamp(min_t, unit="ms", tz="Asia/Shanghai").strftime("%Y-%m-%d")
+                       if min_t is not None else "无数据")
+            max_str = (pd.Timestamp(max_t, unit="ms", tz="Asia/Shanghai").strftime("%Y-%m-%d")
+                       if max_t is not None else "无数据")
+            return (
+                f"{base}\n"
+                f"  原因：数据库中没有该区间的行情数据。stock_daily 实际覆盖范围：\n"
+                f"    - 日期范围：{min_str} ~ {max_str}\n"
+                f"    - 交易日总数：{n if n is not None else 0}\n"
+                f"    - 数据库路径：{info.get('db_path')}\n"
+                f"  建议：请先在「采集任务」Tab 采集 {self.start} ~ {self.end} 期间的 stock_daily 数据"
+                f"（确认 TUSHARE_TOKEN 已配置），采集完成后重新回测。"
+            )
+        except Exception:
+            return base
 
     def _get_daily_data(self, day: datetime.datetime) -> pd.DataFrame:
         """获取某日的全市场日线数据（含 is_st_reliable / is_delisting_risk 等 ST 字段）"""

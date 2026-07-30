@@ -209,6 +209,12 @@ fresh_capture_id=None, fresh_metadata_sha256=None)`：
 未知日 BLOCK（`fresh_minutes_unknown_day`）。钟面时刻合法（如周六 09:31）≠ 自然日开市，
 必须逐日校验。`calendar=None` 直接抛 `ValueError`。
 
+回测区间查询不到交易日时仍抛 `ValueError("No trading days...")`，异常类型与成功路径契约不变；
+错误消息会进一步区分 DuckDB 文件/连接失败与 `stock_daily` 数据范围不覆盖，并显示数据库路径、
+文件存在性或实际日期范围。连接失败时先关闭占用数据库的 daemon/其它 GUI 实例并核对
+`config/data_config.json`；范围缺失时在「采集任务」Tab 补采对应区间后重试。诊断不可用或异常时
+自动退化为原始单行错误消息。
+
 ### 主动因子刷新与 detector degraded（常驻编排器）
 
 > 模块：`quantstudio.pipeline.qfq_factor_refresh`（`QFQFactorRefresher`）+
