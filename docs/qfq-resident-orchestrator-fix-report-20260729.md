@@ -1,9 +1,9 @@
 # QFQ 常驻编排器修复报告（2026-07-29）
 
-> **状态**：常驻 QFQ 编排器核心正确性修复全部落地并通过审核（PR #6/#7/#8）。
-> staging 演练首轮通过 + front 修正语义验证通过。
-> **生产配置仍关闭**：`qfq_orchestrator.enabled=false`、`factor_refresh_enabled=false`。
-> 全量回归 **1709 passed**（PR #6 时），后续 PR #7/#8 无新增失败。
+> **状态**：常驻 QFQ 编排器（PR #6/#7/#8）+ authoritative rebase 全链路（R1/R2/阶段4/阶段6A）
+> + R3 真实 staging 验收全部完成。阶段6A trigger 粒度修复已落地。**生产配置仍关闭**：
+> `qfq_orchestrator.enabled=false`、`factor_refresh_enabled=false`。功能进入"待生产启用"状态。
+> 全量 qfq 回归 **214 passed**（authoritative 29 + batch1 104 + batch2 83 + orchestrator 13，含重叠去重）。
 
 ## 1. 修复目标
 
@@ -69,6 +69,31 @@ daemon 每轮采集后自动发现股票/ETF 除权除息事件，用 fresh xtqu
 **关键技术点**：减法复权模型（front=raw-D）满足 front_chain 加法豁免；
 窗口选除权后无除权连续段；tushare trade_cal 填完整日历。
 
+### 阶段六：authoritative rebase 全链路 + 阶段6A 粒度修复
+
+在 orchestrator 核心之上，新增 `fresh_authoritative_rebase` 模型并完成生产闭环：
+
+- **R1（模型注册 + precheck）**：`MODELS` 增加 `fresh_authoritative_rebase`；`apply_reanchor_for_security`
+  增加 rebase 分支（显式模型选择 + 防呆）；`stage_fresh_authoritative`：基本校验 + 完整覆盖 +
+  raw 逐 bar 对齐（删除理想化乘法/加法比例校验）。
+- **R2（postcheck）**：`run_postchecks` 增加 rebase 分支，移除 `scale_consistency`（乘法）和
+  `front_chain`（乘法/加法收益），保留 daily_staged_match / kline_relation / row_conservation /
+  cross_table_overlap / minute_* 四项 + 事务回滚 + capture 不可变契约（冲突检测 + 崩溃恢复幂等）。
+- **阶段4（编排器接入）**：编排器显式选择 rebase；capture `INSERT OR REPLACE`→plain `INSERT` 清理 +
+  端到端 FakeFreshFetcher（10 passed）。
+- **阶段6A（trigger 粒度修复）**：`_reanchor_security` 在 rebase 模式下改从 `stock_dividend` +
+  `factor_observation` 取该证券**全量** ex_dates，修复增量轮次丢历史除权日的局部重基缺陷。
+  仅影响 rebase 模式（`ratio`/`fresh_staged` 逐位不变），`apply_reanchor_for_security` 签名不变。
+
+**R3 真实 staging 验收结论（committed>0 证实功能可用）**：
+- 2.1 单证券直接 apply（全 ex_dates 一次性）→ 4/4 committed（000012 多次分红 / 002864 送转 /
+  510300 ETF / 600000 银行分红）；front 调整比率与 xtquant 前复权逐日一致（机器精度 ~1e-16）；
+  raw/back/行数 SHA 演练前后逐行一致。
+- 2.2 编排器 reconcile-once（9 证券全样本）→ `triggers_found=151, committed=6/7 单元`
+  （ETF 无 ex_date 不入队），`blocked=0`，正式库 SHA 不变。对比 fresh_staged 演练 `committed=0`
+  被乘法校验 BLOCK。
+- 证据目录：`output/qfq_rebase_r3_20260730/`（~810MB staging 数据不入库，仅保留结论）。
+
 ## 3. 变更框架文件清单
 
 | 文件 | 主要改动 |
@@ -100,12 +125,17 @@ test_qfq_event_discovery（改动）/ test_daemon_qfq_integration（degraded hol
 | staging 守恒 | raw/back/行数一致，正式库 SHA 不变 |
 | front 修正 | committed，raw/back 守恒，front 修正回真值 |
 | 双环境 | CP936 / PYTHONUTF8=1 均 0 failed |
+| **R3 authoritative rebase 验收** | **committed>0**（2.1 单证券 4/4；2.2 编排器 6/7 单元），front~oracle ~1e-16，守恒，正式库 SHA 不变 |
+| **全量 qfq 回归（含6A）** | **214 passed**（authoritative 29 + batch1 104 + batch2 83 + orchestrator 13，重叠去重） |
 
 ## 6. 已知风险
 
 | 风险 | 状态 | 说明 |
 |------|------|------|
 | 部分码失败不 degraded | 保持现状（风险2） | 失败码可能用旧快照；是否升级另立审核 |
+| 源端语义故障不可检测 | 信任边界核心（R3 确认） | fresh front 同步偏移污染无法被确定性条件检测；以 xtquant front 为权威 oracle 接受 |
+| trigger 粒度（增量重基） | **已修复（阶段6A）** | rebase 永远传全量 ex_dates，增量轮次不再丢历史除权日 |
+| raw 全市场覆盖率未验证 | 生产启用前必做 | 预检仅抽样 000012/510300；全市场 5202+1605 差异率待扩 |
 | daemon 其它 Tushare 因子路径 | 已修复（PR #8） | _fetch_adj_factor 已用 resolve_ts_codes |
 | rate_limiter 参数残余 | 保留不用 | refresh 的 rate_limiter 参数保留但不再调用 |
 | front 修正需基准一致 | 已记录 | 真实数据下重锚常 BLOCK，front 修正需合成/基准一致场景 |
@@ -126,11 +156,44 @@ test_qfq_event_discovery（改动）/ test_daemon_qfq_integration（degraded hol
 
 ## 9. 生产启用前置
 
-生产启用必须满足（详见 `docs/qfq-resident-runbook.md` 第 2 节）：
+生产启用必须满足（详见 `docs/qfq-resident-runbook.md` 第 2 节「部署门控」）：
 1. 全量回归 0 failed
-2. staging 演练通过
-3. front 修正验证通过
+2. R3 staging 验收 committed>0 + 守恒通过
+3. trigger 粒度修复测试通过（阶段6A）
 4. miniQMT 可用 + trade_calendar 完整
-5. **取得用户明确部署确认**
+5. 全市场 raw 准入预检（5202 股票 + 1605 ETF）
+6. dead_letter 清零 + pending_backfill 无超期
+7. 至少一个真实除权事件 committed
+8. 多日常驻运行稳定
+9. **取得用户明确部署确认**
 
 当前 `enabled=false`，未启用生产闭环。
+
+## 10. 拟同步文件清单（阶段6，待用户确认后 commit/push）
+
+> 铁律：框架层代码 + 文档须同 PR 同步。以下为 `feat/qfq-authoritative-rebase` 分支拟同步范围。
+> **未 push，enabled=false**。
+
+**6A 代码 + 测试**
+- `quantstudio/pipeline/qfq_resident_orchestrator.py`（阶段6A：rebase 传全量 ex_dates）
+- `tests/test_qfq_resident_orchestrator.py`（+3 用例：增量全量 / 多 trigger 合并 / rebase BLOCK）
+
+**6B 文档（本轮更新）**
+- `docs/qfq-resident-runbook.md`（§1.5 三模型 + §2 部署门控）
+- `docs/qfq-resident-orchestrator-fix-report-20260729.md`（阶段六 + R3 + §5/§6 更新）
+- `docs/superpowers/specs/2026-07-29-fresh-authoritative-rebase-design.md`（§5 R1-R4 完成 + §7 风险）
+
+**QFQ rebase 线程既有文件（同分支一并同步，详见 `docs/qfq-rebase-branch-separation.md`）**
+- `quantstudio/pipeline/qfq_reanchor_engine.py`、`qfq_fresh_capture.py`（R1/R2/阶段4）
+- `docs/qfq-rebase-precision-validation-20260729.md`、`docs/qfq-raw-admission-preflight-20260729.md`
+- `tests/test_qfq_authoritative_rebase.py`、`test_qfq_reanchor_batch2.py`
+- `scripts/preflight_raw_admission.py`、`scripts/validate_qfq_rebase_precision.py`
+- `tests/fixtures/qfq_raw_admission/`、`tests/fixtures/qfq_rebase_precision/`、`docs/evidence/`
+- `docs/qfq-rebase-branch-separation.md`
+
+**R3 验收脚本与证据（可选入库）**
+- `scripts/qfq_rebase_r3_staging.py`（staging 验收脚本）
+- `output/qfq_rebase_r3_20260730/*.json` / `*.txt`（结论证据；~810MB staging 数据不入库）
+
+**明确排除（不入库）**：`data/staging_qfq_rebase_r3_20260730/`（~810MB 运行时 DB）、
+`bench_artifacts/` 临时文件、`data/quantstudio.zip` 等大文件（铁律）。
