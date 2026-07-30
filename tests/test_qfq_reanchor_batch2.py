@@ -1865,6 +1865,12 @@ _AUDIT_KW = dict(fresh_source="xtdata.get_market_data_ex",
                  fresh_metadata_sha256="ab" * 32)
 
 
+def _cap_sha(s: str) -> str:
+    """生成合法 64 位 hex 的 metadata/内容 sha（不同采集批次用不同值）。"""
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+
 class TestFreshStagedModel:
     """B-1 fresh_staged 模型（用户批准边界 9 条，2026-07-27）：
 
@@ -1986,7 +1992,11 @@ class TestFreshStagedModel:
             fresh_daily=_fresh_daily("600875", scales), calendar=cal,
             freqs=("1min",), ex_dates_ms=(D5,), list_date_ms=D1,
             model="fresh_staged", model_reason=_B1_REASON,
-            fresh_minutes=fm_missing, **_AUDIT_KW)
+            fresh_minutes=fm_missing,
+            **{k: v for k, v in _AUDIT_KW.items()
+               if k not in ("fresh_capture_id", "fresh_metadata_sha256")},
+            fresh_capture_id="cap-cov-missing",
+            fresh_metadata_sha256=_cap_sha("cov-missing"))
         assert res.status == "blocked"
         assert res.block_reason == "minute_coverage_incomplete"
 
@@ -2000,7 +2010,11 @@ class TestFreshStagedModel:
             fresh_daily=_fresh_daily("600875", scales), calendar=cal,
             freqs=("1min",), ex_dates_ms=(D5,), list_date_ms=D1,
             model="fresh_staged", model_reason=_B1_REASON,
-            fresh_minutes=fm_extra, **_AUDIT_KW)
+            fresh_minutes=fm_extra,
+            **{k: v for k, v in _AUDIT_KW.items()
+               if k not in ("fresh_capture_id", "fresh_metadata_sha256")},
+            fresh_capture_id="cap-cov-extra",
+            fresh_metadata_sha256=_cap_sha("cov-extra"))
         assert res2.status == "blocked"
         assert res2.block_reason == "minute_coverage_incomplete"
 
@@ -2028,13 +2042,17 @@ class TestFreshStagedModel:
         fm = _fresh_minutes_syn("600875", scales)
         fm = pd.concat([fm, fm.iloc[[4]]], ignore_index=True)
         cases.append((fm, "fresh_minutes_dup_key"))
-        for fm_bad, reason in cases:
+        for i, (fm_bad, reason) in enumerate(cases):
             res = apply_reanchor_for_security(
                 conn, asset_type="STOCK", code="600875",
                 fresh_daily=_fresh_daily("600875", scales), calendar=cal,
                 freqs=("1min",), ex_dates_ms=(D5,), list_date_ms=D1,
                 model="fresh_staged", model_reason=_B1_REASON,
-                fresh_minutes=fm_bad, **_AUDIT_KW)
+                fresh_minutes=fm_bad,
+                **{k: v for k, v in _AUDIT_KW.items()
+                   if k not in ("fresh_capture_id", "fresh_metadata_sha256")},
+                fresh_capture_id=f"cap-viol-{i}",
+                fresh_metadata_sha256=_cap_sha(f"viol-{i}"))
             assert res.status == "blocked", reason
             assert res.block_reason == reason
         pd.testing.assert_frame_equal(pre_m, _snap(conn, "stock_minutes"))

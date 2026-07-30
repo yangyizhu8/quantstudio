@@ -1,0 +1,7 @@
+fault,domain,baseline_add_dev,polluted_add_dev,delta_add_dev,D_polluted,kD_thresh_0.06,detected_by_kD,detected_by_tick,note
+close_front +1tick,source_semantic,0.071897,0.061897,-0.01,4.4077,0.2645,False,True,阈值用污染后D'；add_dev敏感性分析非门禁实测
+close_front +2tick,source_semantic,0.071897,0.051897,-0.02,4.3977,0.2639,False,True,阈值用污染后D'；add_dev敏感性分析非门禁实测
+close_front +5tick,source_semantic,0.071897,0.021897,-0.05,4.3677,0.2621,False,True,阈值用污染后D'；add_dev敏感性分析非门禁实测
+close_front +10tick,source_semantic,0.071897,0.028103,-0.043794,4.3177,0.2591,False,True,阈值用污染后D'；add_dev敏感性分析非门禁实测
+close_front +20tick,source_semantic,0.071897,0.128103,0.056206,4.2177,0.2531,False,True,阈值用污染后D'；add_dev敏感性分析非门禁实测
+整段四front同步+0.5,source_semantic,0.071897,0.071897,0.0,3.9177,0.2351,False,True,同步偏移盲区：delta_add_dev 应≈0（open/close同步偏移，add_dev不变）

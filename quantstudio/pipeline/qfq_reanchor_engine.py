@@ -77,6 +77,7 @@ DuckDB 连接；测试一律使用临时库/合成 fixture，禁止在正式 dat
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -98,6 +99,13 @@ from quantstudio.pipeline.qfq_reanchor_schema import (
 from quantstudio.pipeline.qfq_calendar import (
     CalendarService, TZ, _day_midnight_ms, _norm_freq,
 )
+from quantstudio.pipeline.qfq_fresh_capture import (
+    resolve_fresh_capture, write_fresh_capture, FreshCapture,
+    CaptureContentConflict,
+    CAPTURE_ACTION_NEW, CAPTURE_ACTION_ALREADY_COMMITTED,
+    CAPTURE_ACTION_RECOLLECT_OK, CAPTURE_ACTION_RECOVER_APPLIED_NO_EVENT,
+)
+from quantstudio.pipeline.qfq_orchestrator_types import FreshCaptureRecord
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +118,7 @@ RAW_COLS: Tuple[str, ...] = ("open", "high", "low", "close")
 # - "fresh_staged"：fresh xtquant 分钟前复权**逐值写入**（staged minute → 仅
 #   UPDATE 四个 front 列）。模型由调用方**显式**选择并给出书面原因写入事件审计；
 #   引擎内部**不存在任何 ratio BLOCK 后静默切换到 fresh_staged 的回退逻辑**。
-MODELS: Tuple[str, ...] = ("ratio", "fresh_staged")
+MODELS: Tuple[str, ...] = ("ratio", "fresh_staged", "fresh_authoritative_rebase")
 
 # stored raw vs fresh(dividend_type=none) raw 一致性硬阈（浮点存取噪声级，
 # 实测 fixture 最大差 <4e-15；任何真实数据差异都远大于此阈）
@@ -736,6 +744,247 @@ def stage_fresh_minutes(conn, asset_type: str, code: str, freq: str,
     return staged
 
 
+# ---------------------------------------------------------------------------
+# fresh_authoritative_rebase 预检（R1）
+# ---------------------------------------------------------------------------
+# 设计依据：docs/superpowers/specs/2026-07-29-fresh-authoritative-rebase-design.md §3
+# 核心安全假设：xtquant front 为权威 oracle。rebase 的「对齐 + 传输 + 覆盖 + 守恒 +
+# 原子写入 + 写后一致」由框架保证；不检测源端 fresh front 自身同步污染（信任边界）。
+#
+# 与 fresh_staged 的关键差异：
+#   * 删除乘法（open/close ≈ k×raw）与加法（≤1 tick 偏移）比例/理想化校验（§3.3 D）。
+#   * 日线要求「全历史严格覆盖」（缺/多/重复行一律 BLOCK），而非 tol 容忍缺失。
+#   * 新增 fresh raw 与库内 raw 逐 bar 精确对齐（核心安全网，替代乘法/加法假设）。
+# ---------------------------------------------------------------------------
+
+def _check_daily_coverage_strict(conn, asset_type, code, df):
+    """rebase 日线全历史覆盖：target == staged == matched，缺/多/重复行一律 BLOCK。"""
+    daily_table, _ = _tables_of(asset_type)
+    view = f"_qfq_cov_d_{code}"
+    conn.register(view, df[["code", "time"]])
+    try:
+        target_count = int(conn.execute(
+            f"SELECT COUNT(*) FROM {daily_table} WHERE code=?", [code]).fetchone()[0])
+        staged_count = int(conn.execute(f"SELECT COUNT(*) FROM {view}").fetchone()[0])
+        matched = int(conn.execute(
+            f"SELECT COUNT(*) FROM {daily_table} t JOIN {view} s "
+            f"ON t.code=s.code AND t.time=s.time WHERE t.code=?", [code]).fetchone()[0])
+    finally:
+        conn.unregister(view)
+    if df.duplicated(subset=["code", "time"]).any():
+        raise ReanchorBlocked("daily_coverage_duplicate",
+            f"code={code} fresh 日线 (code,time) 存在重复行")
+    missing_target = target_count - matched
+    extra = staged_count - matched
+    if missing_target != 0 or extra != 0:
+        raise ReanchorBlocked("daily_coverage_mismatch",
+            f"rebase 日线覆盖不全：缺 {missing_target}/多 {extra} 行"
+            f"（要求全历史严格一致，禁止缺行/增行）")
+
+
+def _check_daily_raw_align(conn, asset_type, code, df, tol):
+    """rebase 日线 raw 逐 bar 对齐：fresh raw OHLC 与库内 raw 逐 bar 精确一致（|Δ|≤eps）。
+
+    保障范围：证明 fresh 与库内 raw 来源对齐、未被传输错位/串码/截断（信任边界不覆盖
+    fresh front 自身污染）。
+    """
+    daily_table, _ = _tables_of(asset_type)
+    view = f"_qfq_raw_d_{code}"
+    conn.register(view, df[["code", "time"] + list(RAW_COLS)])
+    try:
+        raw_pred = " OR ".join(
+            f"ABS(t.{c} - s.{c}) > {_RAW_MATCH_EPS!r}" for c in RAW_COLS)
+        n = int(conn.execute(
+            f"SELECT COUNT(*) FROM {daily_table} t JOIN {view} s "
+            f"ON t.code=s.code AND t.time=s.time WHERE t.code=? AND ({raw_pred})",
+            [code]).fetchone()[0])
+    finally:
+        conn.unregister(view)
+    if n:
+        raise ReanchorBlocked("daily_raw_mismatch",
+            f"日线 raw OHLC 共 {n} 行与库内不一致（|Δ|>{_RAW_MATCH_EPS}）；"
+            f"fresh raw 与库内 raw 未对齐，无法安全 rebase")
+    view2 = f"_qfq_raw_d2_{code}"
+    conn.register(view2, df[["code", "time"] + list(RAW_COLS)])
+    try:
+        inv = " OR ".join(
+            f"t.{c} IS NULL OR NOT isfinite(t.{c}) OR t.{c} <= 0 OR "
+            f"s.{c} IS NULL OR NOT isfinite(s.{c}) OR s.{c} <= 0"
+            for c in RAW_COLS)
+        ninv = int(conn.execute(
+            f"SELECT COUNT(*) FROM {daily_table} t JOIN {view2} s "
+            f"ON t.code=s.code AND t.time=s.time WHERE t.code=? AND ({inv})",
+            [code]).fetchone()[0])
+    finally:
+        conn.unregister(view2)
+    if ninv:
+        raise ReanchorBlocked("daily_raw_invalid",
+            f"日线 raw 存在 NULL/NaN/Inf/<=0 共 {ninv} 根（raw 被污染）")
+
+
+def _stage_fresh_daily_rebase(conn, asset_type, code, fresh_daily, tol, calendar):
+    """rebase 日线预检 + 构建 STAGED_DAILY：A 基本 + B 全历史严格覆盖 + C raw 逐 bar 对齐。
+
+    与 stage_fresh_daily 的差异：**不做乘法/加法比例校验**；覆盖要求全历史严格一致；
+    新增 fresh raw 与库内 raw 逐 bar 精确对齐。
+    """
+    tol = tol or ReanchorTolerances()
+    asset_type = _normalize_asset_type(asset_type)
+    code = _normalize_code(code)
+    if fresh_daily is None or len(fresh_daily) == 0:
+        raise ReanchorBlocked("fresh_daily_empty", f"code={code} fresh 日线为空")
+    missing = [c for c in _STAGED_REQUIRED if c not in fresh_daily.columns]
+    if missing:
+        raise ReanchorBlocked("fresh_daily_missing_cols", f"缺列 {missing}")
+    df = fresh_daily.copy()
+    bad_code = df["code"].astype(str).str.strip() != code
+    if bool(bad_code.any()):
+        raise ReanchorBlocked("fresh_daily_code_mismatch",
+            f"存在非 {code} 行: {df.loc[bad_code, 'code'].unique()[:5]}")
+    for t in df["time"]:
+        _validate_epoch_ms(t)
+    df["time"] = df["time"].astype("int64")
+    if df.duplicated(subset=["code", "time"]).any():
+        raise ReanchorBlocked("fresh_daily_dup_key", "staged (code,time) 存在重复")
+    # A 基本：finite>0（删除乘法/加法比例校验；K 线关系由 postcheck kline_relation 负责）
+    for _, row in df.iterrows():
+        if not _is_finite_pos(row["close"]) or not _is_finite_pos(row["close_front"]):
+            raise ReanchorBlocked("fresh_daily_bad_close",
+                f"time={row['time']} close={row['close']!r} close_front={row['close_front']!r}")
+        for c in ("open", "high", "low", "open_front", "high_front", "low_front"):
+            v = row[c]
+            if v is not None and not (isinstance(v, float) and math.isnan(v)):
+                if not _is_finite_pos(v):
+                    raise ReanchorBlocked("fresh_daily_bad_value",
+                        f"time={row['time']} {c}={v!r}")
+    # B 全历史严格覆盖（缺/多/重复行一律 BLOCK）
+    _check_daily_coverage_strict(conn, asset_type, code, df)
+    # C raw 逐 bar 对齐
+    _check_daily_raw_align(conn, asset_type, code, df, tol)
+    staged = f"qfq_staged_fresh_daily_{code}"
+    view = f"_qfq_staged_view_{code}"
+    conn.register(view, df[list(_STAGED_REQUIRED)])
+    conn.execute(f"DROP TABLE IF EXISTS {staged}")
+    conn.execute(f"CREATE TEMP TABLE {staged} AS SELECT * FROM {view}")
+    conn.unregister(view)
+    return staged
+
+
+def _fresh_minutes_basic_light(fm, code, freq_c):
+    """rebase 分钟 A 基本轻量初检（列/code/dup/time/finite>0）；详尽 session/交易日校验
+    由 apply 内 stage_fresh_minutes 复核。"""
+    missing = [c for c in _STAGED_REQUIRED if c not in fm.columns]
+    if missing:
+        raise ReanchorBlocked("fresh_minutes_missing_cols",
+            f"freq={freq_c} 缺列 {missing}")
+    bad_code = fm["code"].astype(str).str.strip() != code
+    if bool(bad_code.any()):
+        raise ReanchorBlocked("fresh_minutes_code_mismatch",
+            f"存在非 {code} 行: {fm.loc[bad_code, 'code'].unique()[:5]}")
+    for t in fm["time"]:
+        _validate_epoch_ms(t)
+    if fm.duplicated(subset=["code", "time", "freq"]).any():
+        raise ReanchorBlocked("fresh_minutes_dup_key",
+            f"freq={freq_c} (code,time,freq) 存在重复")
+    for c in RAW_COLS + FRONT_COLS:
+        v = fm[c].astype(float)
+        bad = v.isna() | ~np.isfinite(v) | (v <= 0)
+        if bool(bad.any()):
+            t_bad = int(fm.loc[bad, "time"].iloc[0])
+            raise ReanchorBlocked("fresh_minutes_null_or_bad",
+                f"freq={freq_c} 列 {c} 存在 NULL/非 finite>0（首例 time={t_bad}）")
+
+
+def _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol):
+    """rebase 分钟预检 B+C：全历史严格覆盖（缺/多/重复 0）+ raw 逐 bar 对齐。
+
+    fresh_staged 的覆盖/raw 对齐在 apply_fresh_minute_staged（B 部分）与 postcheck
+    minute_raw_match 中；rebase 跳过后检，故在此预检显式承担（§3.C 核心安全网）。
+    """
+    _, minute_table = _tables_of(asset_type)
+    mfreq = _canon_minute_freq(freq_c)
+    view = f"_qfq_cov_m_{code}_{mfreq}"
+    conn.register(view, fm[["code", "time"] + list(RAW_COLS)])
+    try:
+        target_count = int(conn.execute(
+            f"SELECT COUNT(*) FROM {minute_table} WHERE code=? AND freq=?",
+            [code, mfreq]).fetchone()[0])
+        staged_count = int(conn.execute(f"SELECT COUNT(*) FROM {view}").fetchone()[0])
+        matched = int(conn.execute(
+            f"SELECT COUNT(*) FROM {minute_table} t JOIN {view} s "
+            f"ON t.code=s.code AND t.time=s.time AND t.freq=? "
+            f"WHERE t.code=?", [mfreq, code]).fetchone()[0])
+    finally:
+        conn.unregister(view)
+    if fm.duplicated(subset=["code", "time", "freq"]).any():
+        raise ReanchorBlocked("minute_coverage_duplicate",
+            f"rebase 分钟 freq={mfreq} (code,time,freq) 重复")
+    missing_target = target_count - matched
+    extra = staged_count - matched
+    if missing_target != 0 or extra != 0:
+        raise ReanchorBlocked("minute_coverage_mismatch",
+            f"rebase 分钟 freq={mfreq} 覆盖不全：缺 {missing_target}/多 {extra} 行"
+            f"（要求全历史严格一致）")
+    # C raw 逐 bar 对齐（同 postcheck minute_raw_match 口径）
+    view2 = f"_qfq_raw_m_{code}_{mfreq}"
+    conn.register(view2, fm[["code", "time"] + list(RAW_COLS)])
+    try:
+        raw_invalid = " OR ".join(
+            f"t.{c} IS NULL OR NOT isfinite(t.{c}) OR t.{c} <= 0 OR "
+            f"s.{c} IS NULL OR NOT isfinite(s.{c}) OR s.{c} <= 0"
+            for c in RAW_COLS)
+        raw_pred = " OR ".join(
+            f"ABS(t.{c} - s.{c}) > {_RAW_MATCH_EPS!r}" for c in RAW_COLS)
+        n_invalid = int(conn.execute(
+            f"SELECT COUNT(*) FROM {minute_table} t JOIN {view2} s "
+            f"ON t.code=s.code AND t.time=s.time AND t.freq=? "
+            f"WHERE t.code=? AND ({raw_invalid})", [mfreq, code]).fetchone()[0])
+        n_raw = int(conn.execute(
+            f"SELECT COUNT(*) FROM {minute_table} t JOIN {view2} s "
+            f"ON t.code=s.code AND t.time=s.time AND t.freq=? "
+            f"WHERE t.code=? AND NOT ({raw_invalid}) AND ({raw_pred})",
+            [mfreq, code]).fetchone()[0])
+    finally:
+        conn.unregister(view2)
+    if n_invalid:
+        raise ReanchorBlocked("minute_raw_mismatch",
+            f"rebase 分钟 freq={mfreq} raw 存在 {n_invalid} 根 NULL/NaN/Inf/<=0"
+            f"（raw 被污染，无法安全 rebase）")
+    if n_raw:
+        raise ReanchorBlocked("minute_raw_mismatch",
+            f"rebase 分钟 freq={mfreq} raw OHLC 共 {n_raw} 行与库内不一致"
+            f"（|Δ|>{_RAW_MATCH_EPS}）；fresh raw 与库内 raw 未对齐")
+
+
+def stage_fresh_authoritative(conn, asset_type, code, fresh_daily, fresh_minutes,
+                               canon_freqs, tol, calendar):
+    """rebase 模型预检（A-D）→ 构建 STAGED_DAILY（分钟构建在 apply 循环内完成）。
+
+    - 日线：A 基本 + B 全历史严格覆盖 + C raw 逐 bar 对齐（**删除乘法/加法比例校验**）。
+    - 分钟：freq 集合必须与 canon_freqs 完全一致；逐 freq 做 C raw 逐 bar 对齐 +
+      B 全历史严格覆盖（A 基本由 apply 内 stage_fresh_minutes 复核）。
+    返回 STAGED_DAILY 临时表名。
+    """
+    staged_daily = _stage_fresh_daily_rebase(
+        conn, asset_type, code, fresh_daily, tol, calendar)
+    actual_freqs = {str(f) for f in fresh_minutes["freq"].unique()}
+    if actual_freqs != set(canon_freqs):
+        raise ReanchorBlocked("minute_freq_mismatch",
+            f"fresh_minutes freq 集合 {sorted(actual_freqs)} 与预期 "
+            f"{sorted(canon_freqs)} 不一致（不得缺频/多频）")
+    for freq_c in canon_freqs:
+        fm = fresh_minutes
+        if "freq" in fm.columns:
+            fm = fm[fm["freq"].astype(str).map(
+                lambda f: _canon_minute_freq(f) if f else "") == freq_c]
+        elif len(canon_freqs) > 1:
+            raise ReanchorBlocked("fresh_minutes_missing_cols",
+                f"多 freq（{canon_freqs}）时 fresh_minutes 必须含 freq 列")
+        _fresh_minutes_basic_light(fm, code, freq_c)
+        _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol)
+    return staged_daily
+
+
 def apply_fresh_minute_staged(conn, asset_type: str, code: str, freq: str,
                               staged_minute: str,
                               tol: Optional[ReanchorTolerances] = None) -> Dict:
@@ -1072,6 +1321,97 @@ def run_postchecks(conn, *, asset_type: str, code: str,
             "daily_staged_match",
             f"staged 存在非交易日日期 {non_trading[:5]}（共 {len(non_trading)} 个）")
 
+    # ---- rebase 模型：跳过 (2) front-chain 收益 / (3) 缩放一致性 / (7)-(10) fresh_staged
+    #      专属四项（§3.3 删除乘法/加法假设 + 理想化模型假设）。安全责任由「raw 逐 bar
+    #      对齐预检」+「写后一致（UPDATE 只触碰 front 四列）」承担。仅跑模型无关检查
+    #      (1)(4)(5)(6)。这是为了在真实除权场景下 rebase 不被乘法/加法假设 BLOCK。----
+    if model == "fresh_authoritative_rebase":
+        daily_full = conn.execute(
+            f"SELECT time, open, high, low, close, open_front, high_front, low_front, "
+            f"close_front FROM {daily_table} WHERE code=? AND time BETWEEN ? AND ? "
+            f"ORDER BY time", [code, span_lo, span_hi]).df()
+        details["front_chain_return"] = {
+            "status": "skipped", "checked": 0,
+            "reason": "fresh_authoritative_rebase 删除 front-chain 收益乘法/加法假设（§3.3）"}
+        details["scale_consistency"] = {
+            "status": "skipped", "daily_max_dev": 0.0, "minute_max_dev": {},
+            "reason": "fresh_authoritative_rebase 删除缩放一致性（乘法/加法）假设（§3.3）"}
+        # (4) K 线关系：low_front <= min(o,c) <= max(o,c) <= high_front（复用正常路径逻辑）
+        kline_bad = {}
+        for table, extra in ((daily_table, ""), *(
+                (minute_table, f" AND freq='{_canon_minute_freq(f)}'") for f in freqs)):
+            n_bad = conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE code=?{extra} "
+                f"AND open_front IS NOT NULL AND high_front IS NOT NULL "
+                f"AND low_front IS NOT NULL AND close_front IS NOT NULL "
+                f"AND NOT (low_front <= LEAST(open_front, close_front) "
+                f"AND GREATEST(open_front, close_front) <= high_front)",
+                [code]).fetchone()[0]
+            key = table if not extra else f"{table}{extra.replace(' AND freq=', '@')}"
+            kline_bad[key] = int(n_bad)
+            if int(n_bad) != 0:
+                raise PostcheckFailed("kline_relation", f"{key} 违反 K 线关系 {n_bad} 行")
+        details["kline_relation"] = kline_bad
+        # (5) 行数守恒
+        post_counts = collect_row_counts(conn, asset_type, code, freqs)
+        if post_counts != pre_counts:
+            raise PostcheckFailed(
+                "row_conservation", f"行数不守恒: pre={pre_counts} post={post_counts}")
+        details["row_conservation"] = {"pre": pre_counts, "post": post_counts}
+        # (6) 跨表重叠日
+        cross = {}
+        for freq in freqs:
+            freq_c = _canon_minute_freq(freq)
+            mdf = conn.execute(
+                f"SELECT time, close_front FROM {minute_table} "
+                f"WHERE code=? AND freq=? AND close_front IS NOT NULL ORDER BY time",
+                [code, freq_c]).df()
+            if len(mdf) == 0:
+                continue
+            mdf["day"] = _day_ms_of(mdf["time"])
+            mdf["clock_min"] = _clock_min_of(mdf["time"])
+            cont = mdf[_cont_mask(mdf["clock_min"], freq_c)]
+            last_bar = cont.groupby("day").last()
+            minute_days = {int(x) for x in mdf["day"].unique()}
+            n_check, worst = 0, 0.0
+            for _, drow in daily_full.iterrows():
+                d = int(drow["time"])
+                if d not in minute_days:
+                    continue
+                if d not in last_bar.index:
+                    raise PostcheckFailed(
+                        "cross_table_overlap",
+                        f"freq={freq_c} day={d} 存在分钟行但无有效连续竞价 bar")
+                dcf = drow["close_front"]
+                mcf = float(last_bar.loc[d, "close_front"])
+                if dcf is None or (isinstance(dcf, float) and math.isnan(dcf)):
+                    continue
+                dev = abs(mcf / float(dcf) - 1.0)
+                worst = max(worst, dev)
+                n_check += 1
+                if dev > tol.tol_cross:
+                    raise PostcheckFailed(
+                        "cross_table_overlap",
+                        f"freq={freq_c} day={d} 分钟末bar front={mcf} vs 日线 front="
+                        f"{dcf} dev={dev:.2e} > {tol.tol_cross:.2e}")
+            cross[freq_c] = {"checked": n_check, "max_dev": worst}
+        details["cross_table_overlap"] = cross
+        # §3.4 R2：rebase 复用 fresh_staged 三项写后逐 bar 一致（不跑 ≤1 tick 理想校验）
+        if staged_minutes:
+            d_sm, d_rm, d_cov, _ = _run_minute_staged_postchecks(
+                conn, asset_type=asset_type, code=code, freqs=freqs,
+                staged_minutes=staged_minutes, minute_table=minute_table,
+                tick=tick, include_tick_error=False)
+            details["minute_staged_match"] = d_sm
+            details["minute_raw_match"] = d_rm
+            details["minute_coverage"] = d_cov
+        else:
+            raise PostcheckFailed(
+                "minute_staged_match",
+                "fresh_authoritative_rebase 模式缺 staged 分钟表（必须提供）")
+        details["model"] = model
+        return details
+
     # ---- (2) front-chain 收益一致性（真实相邻交易日；缺失日不得静默当停牌）----
     drows = conn.execute(
         f"SELECT time, close, preClose, close_front FROM {daily_table} "
@@ -1272,85 +1612,113 @@ def run_postchecks(conn, *, asset_type: str, code: str,
     # ---- (7)-(10) B-1 fresh_staged 专属四项（ratio 模式不出现，六项集合不变）----
     if model == "fresh_staged":
         staged_minutes = staged_minutes or {}
-        d_staged_match: Dict[str, Dict] = {}
-        d_raw_match: Dict[str, Dict] = {}
-        d_coverage: Dict[str, Dict] = {}
-        d_tick: Dict[str, Dict] = {}
-        for freq in freqs:
-            freq_c = _canon_minute_freq(freq)
-            sm = staged_minutes.get(freq_c)
-            if not sm:
-                raise PostcheckFailed(
-                    "minute_staged_match",
-                    f"freq={freq_c} 缺 staged 分钟表（fresh_staged 模式必须提供）")
-            # (7) minute_staged_match：写入后四 front 列 vs staged 逐值一致
-            n_mis = int(conn.execute(
-                f"SELECT COUNT(*) FROM {minute_table} t JOIN {sm} s "
-                f"ON t.time = s.time WHERE t.code=? AND t.freq=? AND ("
-                f"t.open_front IS DISTINCT FROM s.open_front OR "
-                f"t.high_front IS DISTINCT FROM s.high_front OR "
-                f"t.low_front IS DISTINCT FROM s.low_front OR "
-                f"t.close_front IS DISTINCT FROM s.close_front)",
-                [code, freq_c]).fetchone()[0])
-            n_match = int(conn.execute(
-                f"SELECT COUNT(*) FROM {minute_table} t JOIN {sm} s "
-                f"ON t.time = s.time WHERE t.code=? AND t.freq=?",
-                [code, freq_c]).fetchone()[0])
-            d_staged_match[freq_c] = {"matched": n_match, "mismatch": n_mis}
-            if n_mis:
-                raise PostcheckFailed(
-                    "minute_staged_match",
-                    f"freq={freq_c} 写入后 {n_mis} 根 bar 四 front 列与 staged 不一致")
-            # (8) minute_raw_match：写入后 raw OHLC 仍与 staged raw 逐 bar 一致
-            #     （证明 UPDATE 只触碰 front 四列，未污染 raw）。
-            #     第六轮阻断 1 修复：NULL 参与 ABS 比较时 SQL 结果为 NULL，
-            #     WHERE 按"非真"过滤 → raw 被改成 NULL 会静默漏检。必须先
-            #     **显式**检查 NULL/NaN/Inf/<=0（两侧都查），再比较 abs 差。
-            raw_invalid = " OR ".join(
-                f"t.{c} IS NULL OR NOT isfinite(t.{c}) OR t.{c} <= 0 OR "
-                f"s.{c} IS NULL OR NOT isfinite(s.{c}) OR s.{c} <= 0"
-                for c in RAW_COLS)
-            raw_pred = " OR ".join(
-                f"ABS(t.{c} - s.{c}) > {_RAW_MATCH_EPS!r}" for c in RAW_COLS)
-            n_invalid = int(conn.execute(
-                f"SELECT COUNT(*) FROM {minute_table} t JOIN {sm} s "
-                f"ON t.time = s.time WHERE t.code=? AND t.freq=? AND ({raw_invalid})",
-                [code, freq_c]).fetchone()[0])
-            n_raw = int(conn.execute(
-                f"SELECT COUNT(*) FROM {minute_table} t JOIN {sm} s "
-                f"ON t.time = s.time WHERE t.code=? AND t.freq=? AND "
-                f"NOT ({raw_invalid}) AND ({raw_pred})",
-                [code, freq_c]).fetchone()[0])
-            d_raw_match[freq_c] = {"raw_invalid": n_invalid, "raw_mismatch": n_raw}
-            if n_invalid:
-                raise PostcheckFailed(
-                    "minute_raw_match",
-                    f"freq={freq_c} 写入后 stored/staged raw OHLC 存在 "
-                    f"{n_invalid} 根 NULL/NaN/Inf/<=0（raw 被污染，NULL 不得"
-                    f"借 SQL 三值逻辑漏检）")
-            if n_raw:
-                raise PostcheckFailed(
-                    "minute_raw_match",
-                    f"freq={freq_c} 写入后 stored raw OHLC 与 staged raw 出现 "
-                    f"{n_raw} 根不一致（raw 被污染或同源前提破坏）")
-            # (9) minute_coverage：staged==target==matched 且 missing 全 0
-            staged_count = int(conn.execute(
-                f"SELECT COUNT(*) FROM {sm}").fetchone()[0])
-            target_count = int(conn.execute(
-                f"SELECT COUNT(*) FROM {minute_table} WHERE code=? AND freq=?",
-                [code, freq_c]).fetchone()[0])
-            cov = {"staged_count": staged_count, "target_count": target_count,
-                   "matched_count": n_match,
-                   "missing_target": staged_count - n_match,
-                   "missing_staged": target_count - n_match}
-            d_coverage[freq_c] = cov
-            if not (staged_count == target_count == n_match):
-                raise PostcheckFailed(
-                    "minute_coverage",
-                    f"freq={freq_c} 覆盖不完整 {cov}")
-            # (10) minute_tick_error：写入后四 front 列 vs fresh 逐 bar ≤1 tick
-            #      （NULL/NaN/Inf/<=0 显式计入超差——不借三值逻辑漏检；
-            #      tick 按资产路由，见 resolve_tick_size）
+        d_sm, d_rm, d_cov, d_tk = _run_minute_staged_postchecks(
+            conn, asset_type=asset_type, code=code, freqs=freqs,
+            staged_minutes=staged_minutes, minute_table=minute_table,
+            tick=tick, include_tick_error=True)
+        details["minute_staged_match"] = d_sm
+        details["minute_raw_match"] = d_rm
+        details["minute_coverage"] = d_cov
+        details["minute_tick_error"] = d_tk
+    return details
+
+
+def _run_minute_staged_postchecks(conn, *, asset_type: str, code: str,
+                                  freqs: Sequence[str],
+                                  staged_minutes: Dict[str, str],
+                                  minute_table: str, tick: float,
+                                  include_tick_error: bool):
+    """B-1 写后逐 bar 一致校验（§3.4），供 fresh_staged 与 fresh_authoritative_rebase 共用。
+
+    返回 (d_staged_match, d_raw_match, d_coverage, d_tick)。
+
+    - ``include_tick_error=True``（fresh_staged）：额外做四 front vs fresh ≤1 tick 理想校验；
+    - ``include_tick_error=False``（fresh_authoritative_rebase）：rebase 删除 ≤1 tick
+      假设（§3.3），不跑该项（由 front_exact_match 直接替代）。
+
+    三项确定性校验（minute_staged_match / minute_raw_match / minute_coverage）对两种模型
+    都跑：证明 UPDATE 仅触 front 四列、raw 未被污染、覆盖完整。
+    """
+    d_staged_match: Dict[str, Dict] = {}
+    d_raw_match: Dict[str, Dict] = {}
+    d_coverage: Dict[str, Dict] = {}
+    d_tick: Dict[str, Dict] = {}
+    for freq in freqs:
+        freq_c = _canon_minute_freq(freq)
+        sm = staged_minutes.get(freq_c)
+        if not sm:
+            raise PostcheckFailed(
+                "minute_staged_match",
+                f"freq={freq_c} 缺 staged 分钟表（fresh staged/rebase 模式必须提供）")
+        # (7) minute_staged_match：写入后四 front 列 vs staged 逐值一致
+        n_mis = int(conn.execute(
+            f"SELECT COUNT(*) FROM {minute_table} t JOIN {sm} s "
+            f"ON t.time = s.time WHERE t.code=? AND t.freq=? AND ("
+            f"t.open_front IS DISTINCT FROM s.open_front OR "
+            f"t.high_front IS DISTINCT FROM s.high_front OR "
+            f"t.low_front IS DISTINCT FROM s.low_front OR "
+            f"t.close_front IS DISTINCT FROM s.close_front)",
+            [code, freq_c]).fetchone()[0])
+        n_match = int(conn.execute(
+            f"SELECT COUNT(*) FROM {minute_table} t JOIN {sm} s "
+            f"ON t.time = s.time WHERE t.code=? AND t.freq=?",
+            [code, freq_c]).fetchone()[0])
+        d_staged_match[freq_c] = {"matched": n_match, "mismatch": n_mis}
+        if n_mis:
+            raise PostcheckFailed(
+                "minute_staged_match",
+                f"freq={freq_c} 写入后 {n_mis} 根 bar 四 front 列与 staged 不一致")
+        # (8) minute_raw_match：写入后 raw OHLC 仍与 staged raw 逐 bar 一致
+        #     （证明 UPDATE 只触碰 front 四列，未污染 raw）。
+        #     第六轮阻断 1 修复：NULL 参与 ABS 比较时 SQL 结果为 NULL，
+        #     WHERE 按"非真"过滤 → raw 被改成 NULL 会静默漏检。必须先
+        #     **显式**检查 NULL/NaN/Inf/<=0（两侧都查），再比较 abs 差。
+        raw_invalid = " OR ".join(
+            f"t.{c} IS NULL OR NOT isfinite(t.{c}) OR t.{c} <= 0 OR "
+            f"s.{c} IS NULL OR NOT isfinite(s.{c}) OR s.{c} <= 0"
+            for c in RAW_COLS)
+        raw_pred = " OR ".join(
+            f"ABS(t.{c} - s.{c}) > {_RAW_MATCH_EPS!r}" for c in RAW_COLS)
+        n_invalid = int(conn.execute(
+            f"SELECT COUNT(*) FROM {minute_table} t JOIN {sm} s "
+            f"ON t.time = s.time WHERE t.code=? AND t.freq=? AND ({raw_invalid})",
+            [code, freq_c]).fetchone()[0])
+        n_raw = int(conn.execute(
+            f"SELECT COUNT(*) FROM {minute_table} t JOIN {sm} s "
+            f"ON t.time = s.time WHERE t.code=? AND t.freq=? AND "
+            f"NOT ({raw_invalid}) AND ({raw_pred})",
+            [code, freq_c]).fetchone()[0])
+        d_raw_match[freq_c] = {"raw_invalid": n_invalid, "raw_mismatch": n_raw}
+        if n_invalid:
+            raise PostcheckFailed(
+                "minute_raw_match",
+                f"freq={freq_c} 写入后 stored/staged raw OHLC 存在 "
+                f"{n_invalid} 根 NULL/NaN/Inf/<=0（raw 被污染，NULL 不得"
+                f"借 SQL 三值逻辑漏检）")
+        if n_raw:
+            raise PostcheckFailed(
+                "minute_raw_match",
+                f"freq={freq_c} 写入后 stored raw OHLC 与 staged raw 出现 "
+                f"{n_raw} 根不一致（raw 被污染或同源前提破坏）")
+        # (9) minute_coverage：staged==target==matched 且 missing 全 0
+        staged_count = int(conn.execute(
+            f"SELECT COUNT(*) FROM {sm}").fetchone()[0])
+        target_count = int(conn.execute(
+            f"SELECT COUNT(*) FROM {minute_table} WHERE code=? AND freq=?",
+            [code, freq_c]).fetchone()[0])
+        cov = {"staged_count": staged_count, "target_count": target_count,
+               "matched_count": n_match,
+               "missing_target": staged_count - n_match,
+               "missing_staged": target_count - n_match}
+        d_coverage[freq_c] = cov
+        if not (staged_count == target_count == n_match):
+            raise PostcheckFailed(
+                "minute_coverage",
+                f"freq={freq_c} 覆盖不完整 {cov}")
+        # (10) minute_tick_error：写入后四 front 列 vs fresh 逐 bar ≤1 tick
+        #      （NULL/NaN/Inf/<=0 显式计入超差——不借三值逻辑漏检；
+        #      tick 按资产路由，见 resolve_tick_size）
+        if include_tick_error:
             tick_pred = " OR ".join(
                 f"t.{c} IS NULL OR NOT isfinite(t.{c}) OR t.{c} <= 0 OR "
                 f"ABS(t.{c} - s.{c}) > {tick!r}" for c in FRONT_COLS)
@@ -1373,11 +1741,7 @@ def run_postchecks(conn, *, asset_type: str, code: str,
                     f"freq={freq_c} 写入后 {bars_over} 根 bar front vs fresh 超 "
                     f"1 tick（首例 time={int(trow[1])}，max_abs_err="
                     f"{float(max_err or 0.0):.4f}，tick={tick}）")
-        details["minute_staged_match"] = d_staged_match
-        details["minute_raw_match"] = d_raw_match
-        details["minute_coverage"] = d_coverage
-        details["minute_tick_error"] = d_tick
-    return details
+    return d_staged_match, d_raw_match, d_coverage, d_tick
 
 
 def collect_row_counts(conn, asset_type: str, code: str,
@@ -1452,6 +1816,77 @@ def _advance_anchor_on_conn(conn, *, asset_type: str, code: str, price_source: s
         [asset_type, code, price_source, new_version, "ok", event_id,
          last_ex_date, now])
     return new_version
+
+
+def _anchor_version_of(conn, *, asset_type: str, code: str,
+                       price_source: str = "xtquant") -> int:
+    """读当前 anchor_version（无记录返回 0）。"""
+    row = conn.execute(
+        "SELECT anchor_version FROM qfq_anchor_state "
+        "WHERE asset_type=? AND code=? AND price_source=?",
+        [asset_type, code, price_source]).fetchone()
+    return int(row[0] or 0) if row else 0
+
+
+def _fresh_content_hashes(fresh_daily: pd.DataFrame,
+                          fresh_minutes: pd.DataFrame):
+    """计算 fresh 内容 hash（与 FreshCapture.capture 同口径），供 capture 不可变契约比对。
+
+    daily：time/open/high/low/close + 四 front 列；minute：time/open/high/low/close/
+    freq + 四 front 列。与 qfq_fresh_capture.FreshCapture.capture 保持完全一致，确保
+    崩溃恢复幂等时「同份数据」比对一致。
+    """
+    daily_cols = ["time", "open", "high", "low", "close"] + list(FRONT_COLS)
+    minute_cols = ["time", "open", "high", "low", "close", "freq"] + list(FRONT_COLS)
+    daily_csv = fresh_daily[daily_cols].to_csv(index=False)
+    minute_csv = fresh_minutes[minute_cols].to_csv(index=False)
+    return (hashlib.sha256(daily_csv.encode("utf-8")).hexdigest(),
+            hashlib.sha256(minute_csv.encode("utf-8")).hexdigest())
+
+
+def _resolve_capture_contract(conn, *, asset_type: str, code: str, source: str,
+                              capture_id: str, metadata_sha256: str,
+                              fresh_daily: pd.DataFrame, fresh_minutes: pd.DataFrame,
+                              freqs: Sequence[str] = ()):
+    """§3.5 capture 不可变契约 + 崩溃恢复幂等（R2）。
+
+    计算 fresh 内容 hash/区间（与 FreshCapture.capture 同口径），与已登记 capture 比对；
+    按 resolve_fresh_capture 四动作返回 ``(record_or_None, action)``：
+
+    - NEW → 写 capture（plain INSERT，不可变），返回 (rec, NEW)；
+    - ALREADY_COMMITTED / RECOLLECT_OK / RECOVER_APPLIED_NO_EVENT → 返回 (None, action)
+      （由调用方据 action 决定：幂等返回 / 继续 apply / 异常恢复）。
+    """
+    # 单 freq 且 fresh_minutes 缺 freq 列时，补一列 canonical freq，使内容 hash 与
+    # 带 freq 列的采集批次一致（多 freq 缺列由 apply 提前 ReanchorBlocked）。
+    minute_df = fresh_minutes
+    if "freq" not in minute_df.columns and len(freqs) == 1:
+        minute_df = minute_df.copy()
+        minute_df["freq"] = _canon_minute_freq(list(freqs)[0])
+    d_start = int(fresh_daily["time"].min()) if len(fresh_daily) else None
+    d_end = int(fresh_daily["time"].max()) if len(fresh_daily) else None
+    m_start = int(minute_df["time"].min()) if len(minute_df) else None
+    m_end = int(minute_df["time"].max()) if len(minute_df) else None
+    daily_sha, minute_sha = _fresh_content_hashes(fresh_daily, minute_df)
+    action = resolve_fresh_capture(
+        conn, capture_id=capture_id, asset_type=asset_type, code=code, source=source,
+        daily_range_start=d_start, daily_range_end=d_end,
+        minute_range_start=m_start, minute_range_end=m_end,
+        daily_sha256=daily_sha, minute_sha256=minute_sha,
+        metadata_sha256=metadata_sha256)
+    rec = None
+    if action == CAPTURE_ACTION_NEW:
+        now = datetime.now()
+        rec = FreshCaptureRecord(
+            capture_id=capture_id, asset_type=asset_type, code=code, source=source,
+            daily_range_start=d_start, daily_range_end=d_end,
+            minute_range_start=m_start, minute_range_end=m_end,
+            daily_sha256=daily_sha, minute_sha256=minute_sha,
+            metadata_sha256=metadata_sha256,
+            daily_row_count=len(fresh_daily), minute_row_count=len(fresh_minutes),
+            status="captured", created_at=now, updated_at=now)
+        write_fresh_capture(conn, rec)
+    return rec, action
 
 
 def _record_failure_event(conn, *, event_id: str, asset_type: str, code: str,
@@ -1532,34 +1967,62 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
         raise ValueError(
             "model='ratio' 不接受 fresh_minutes（切换 fresh_staged 必须显式传 "
             "model='fresh_staged' 并提供 model_reason，禁止模糊语义/静默切换）")
-    if model == "fresh_staged":
+    if model in ("fresh_staged", "fresh_authoritative_rebase"):
         if not (model_reason and model_reason.strip()):
             raise ValueError(
-                "model='fresh_staged' 必须提供非空 model_reason（模型选择原因，"
+                f"model={model!r} 必须提供非空 model_reason（模型选择原因，"
                 "写入事件审计）")
         if fresh_minutes is None or len(fresh_minutes) == 0:
-            raise ValueError("model='fresh_staged' 必须提供非空 fresh_minutes")
+            raise ValueError(f"model={model!r} 必须提供非空 fresh_minutes")
         # 第七轮审计阻断 1：来源字段强制（事务外 ValueError，不写价格/事件/anchor）。
         # 此段位于 try/BEGIN 之前，缺任一项直接抛错，绝不进入事务、不落 event/anchor。
         if not (fresh_source and str(fresh_source).strip()):
             raise ValueError(
-                "model='fresh_staged' 必须提供非空 fresh_source（fresh 数据来源，"
+                f"model={model!r} 必须提供非空 fresh_source（fresh 数据来源，"
                 "写入事件审计）")
         if not (fresh_capture_id and str(fresh_capture_id).strip()):
             raise ValueError(
-                "model='fresh_staged' 必须提供非空 fresh_capture_id（采集批次 id，"
+                f"model={model!r} 必须提供非空 fresh_capture_id（采集批次 id，"
                 "写入事件审计）")
         if not _is_valid_sha256(fresh_metadata_sha256):
             raise ValueError(
-                "model='fresh_staged' 必须提供合法 64 位 hex 的 fresh_metadata_sha256"
+                f"model={model!r} 必须提供合法 64 位 hex 的 fresh_metadata_sha256"
                 f"（收到 {fresh_metadata_sha256!r}）")
         if not freqs:
-            raise ValueError("model='fresh_staged' 必须提供非空 freqs")
+            raise ValueError(f"model={model!r} 必须提供非空 freqs")
         # freqs 必须 canonical（拒绝非分钟/别名混淆）；事件 freqs 使用 canonical 去重列表
         for _f in freqs:
             _canon_minute_freq(_f)   # 非分钟 freq → ValueError（事务外）
     asset_type = _normalize_asset_type(asset_type)
     code = _normalize_code(code)
+    # —— 崩溃恢复幂等 + capture 不可变契约（R2 §3）——
+    # 仅 fresh_staged / fresh_authoritative_rebase 启用 capture 契约。在 BEGIN 之前完成：
+    # NEW 写 capture（plain INSERT，不可变）后继续；ALREADY_COMMITTED 幂等返回（不重复写价、
+    # 不推进 anchor）；RECOVER_APPLIED_NO_EVENT 进入异常恢复（不静默跳过）；
+    # RECOLLECT_OK 继续 apply。
+    _capture_action = None
+    if model in ("fresh_staged", "fresh_authoritative_rebase") and fresh_capture_id:
+        _cap_rec, _capture_action = _resolve_capture_contract(
+            conn, asset_type=asset_type, code=code, source=fresh_source,
+            capture_id=fresh_capture_id, metadata_sha256=fresh_metadata_sha256,
+            fresh_daily=fresh_daily, fresh_minutes=fresh_minutes, freqs=freqs)
+        if _capture_action == CAPTURE_ACTION_ALREADY_COMMITTED:
+            # 幂等返回：不重复写价、不推进 anchor，直接给出已 committed 结果
+            _idem = ReanchorResult(
+                status="committed", event_id="<idempotent>",
+                asset_type=asset_type, code=code, model=model,
+                block_reason="already_committed",
+                postchecks={"status": "already_committed",
+                            "capture_id": fresh_capture_id})
+            _idem.anchor_version = _anchor_version_of(
+                conn, asset_type=asset_type, code=code)
+            return _idem
+        if _capture_action == CAPTURE_ACTION_RECOVER_APPLIED_NO_EVENT:
+            # 异常恢复路径：不静默跳过，标记需人工/下轮处置（整券 BLOCK）
+            raise ReanchorBlocked(
+                "capture_recover_applied_no_event",
+                f"capture_id={fresh_capture_id} 已 applied 但无 committed event "
+                f"（崩溃窗口：价格已写但事件丢失）→ 进入异常恢复，禁止静默重复写价")
     ev_id = event_id or uuid.uuid4().hex
     started_at = datetime.now()
     result = ReanchorResult(status="pending", event_id=ev_id,
@@ -1595,8 +2058,13 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
                 canon_freqs.append(fc)
         audit_ctx["freqs"] = canon_freqs
         conn.execute("BEGIN")
-        staged = stage_fresh_daily(conn, asset_type, code, fresh_daily, tol,
-                                   model=model)
+        if model == "fresh_authoritative_rebase":
+            # rebase：日线严格覆盖 + raw 逐 bar 对齐（无乘法/加法比例校验）
+            staged = stage_fresh_authoritative(
+                conn, asset_type, code, fresh_daily, fresh_minutes, canon_freqs, tol, calendar)
+        else:
+            staged = stage_fresh_daily(conn, asset_type, code, fresh_daily, tol,
+                                       model=model)
         pre_counts = collect_row_counts(conn, asset_type, code, canon_freqs)
 
         all_dispersion = 0.0
@@ -1606,6 +2074,24 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
         if model == "fresh_staged":
             # —— B-1：staged fresh minute → precheck（raw 逐 bar 一致 + 完整
             #    覆盖）→ 逐值 UPDATE 四 front 列（同一事务；不算 R、不抽黄金）——
+            for freq_c in canon_freqs:
+                fm = fresh_minutes
+                if "freq" in fm.columns:
+                    fm = fm[fm["freq"].astype(str).map(
+                        lambda f: _canon_minute_freq(f) if f else "") == freq_c]
+                elif len(canon_freqs) > 1:
+                    raise ReanchorBlocked(
+                        "fresh_minutes_missing_cols",
+                        f"多 freq（{canon_freqs}）时 fresh_minutes 必须含 freq 列")
+                sm = stage_fresh_minutes(conn, asset_type, code, freq_c, fm, tol,
+                                         calendar=calendar)
+                staged_min_tables[freq_c] = sm
+                result.minute_coverage[freq_c] = apply_fresh_minute_staged(
+                    conn, asset_type, code, freq_c, sm, tol)
+        elif model == "fresh_authoritative_rebase":
+            # —— rebase：复用 stage_fresh_minutes（A 基本 + 构建 STAGED_MINUTE）
+            #    + apply_fresh_minute_staged（B 覆盖 + C raw 对齐已在 stage_fresh_authoritative
+            #    预检；此处复核并写 front 四列。写后一致由 UPDATE 只触碰 front 四列保证）——
             for freq_c in canon_freqs:
                 fm = fresh_minutes
                 if "freq" in fm.columns:
@@ -1667,7 +2153,7 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
         plan_payload["model"] = model
         plan_payload["model_reason"] = model_reason
         plan_payload["model_audit"] = dict(audit_ctx)
-        if model == "fresh_staged":
+        if model in ("fresh_staged", "fresh_authoritative_rebase"):
             plan_payload["minute_coverage"] = result.minute_coverage
         plan_json = json.dumps(plan_payload, ensure_ascii=False)
         _insert_event_on_conn(
@@ -1686,6 +2172,10 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
             event_id=ev_id,
             last_ex_date=max((int(x) for x in ex_dates_ms), default=None))
         conn.execute("COMMIT")
+        # —— capture 标记 applied（R2 §3：与价格修正同一成功事实）——
+        if (model in ("fresh_staged", "fresh_authoritative_rebase")
+                and fresh_capture_id):
+            FreshCapture(cfg=None).mark_applied(conn, fresh_capture_id)
         result.status = "committed"
         return result
     except ReanchorBlocked as e:

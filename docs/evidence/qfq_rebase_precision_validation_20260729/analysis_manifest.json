@@ -1,0 +1,13 @@
+{
+  "analyzed_at": "2026-07-29T23:25:55+08:00",
+  "overall_stats": {
+    "total_observations": 65292,
+    "total_over_tick": 13676,
+    "weighted_false_positive_pct": 20.95,
+    "unweighted_security_mean_pct": 23.14
+  },
+  "summary_sha": "e293ec110d374851e0418fdd451685b5187cc17ac355583ec4b61bd3f787494a",
+  "fault_sha": "ed7afee349a5da71d64d74bad3e9ad8f4d8a064c3be29ee4c6e79b625653e1aa",
+  "completed_samples": 8,
+  "requested_samples": 8
+}

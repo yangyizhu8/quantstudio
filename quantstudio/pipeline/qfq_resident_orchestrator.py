@@ -46,7 +46,8 @@ from quantstudio.pipeline.qfq_orchestrator_types import (
     WatermarkIntentStatus, ReanchorOutcome, event_id_of, QFQConfigError,
 )
 from quantstudio.pipeline.qfq_event_discovery import EventDiscovery
-from quantstudio.pipeline.qfq_fresh_capture import FreshCapture, FreshFetcher
+from quantstudio.pipeline.qfq_fresh_capture import FreshCapture, FreshFetcher, CaptureContentConflict
+from quantstudio.pipeline.qfq_reanchor_engine import ReanchorBlocked
 
 logger = logging.getLogger(__name__)
 
@@ -344,9 +345,11 @@ class QFQResidentOrchestrator:
     def _reanchor_security(self, conn, *, run_id: str, asset_type: str, code: str,
                            trigger_ids: List[str], effective_dates: List[int],
                            attempt: int, fetcher: FreshFetcher) -> ReanchorOutcome:
-        """事务外 fresh 采集 + 单证券短事务 apply（fresh_staged）。
+        """事务外 fresh 采集 + 单证券短事务 apply（fresh_authoritative_rebase）。
 
-        崩溃幂等：若 trigger 已有 committed event → 只补写状态，不重算/不重推进 anchor。
+        显式选择 authoritative rebase 模型（precheck + postcheck + 捕获不可变契约 +
+        事务回滚 + 崩溃恢复）。崩溃幂等：若 trigger 已有 committed event → 只补写状态，
+        不重算/不重推进 anchor。
         """
         # 合并 trigger 取主 id（用于事件/回溯）
         primary_tid = trigger_ids[0]
@@ -361,9 +364,13 @@ class QFQResidentOrchestrator:
 
         daily_range, minute_range = self._security_range(conn, asset_type, code)
         cap = FreshCapture(self.cfg)
+        # 编排器只负责「计算证据 + 采集 fresh」，捕获落库交由引擎的不可变契约
+        # （resolve_fresh_capture → NEW 时 write_fresh_capture plain INSERT）完成，
+        # 避免在编排器侧用 INSERT OR REPLACE 覆盖已提交捕获（write=False）。
         record, fresh_daily, fresh_minute = cap.capture(
             conn, asset_type=asset_type, code=code, run_id=run_id,
-            daily_range_ms=daily_range, minute_range_ms=minute_range, fetcher=fetcher)
+            daily_range_ms=daily_range, minute_range_ms=minute_range, fetcher=fetcher,
+            write=False)
         capture_id = record.capture_id
         event_id = event_id_of(primary_tid, attempt, capture_id)
         # 崩溃恢复关键：apply 前把本次 event_id 预写入全部 trigger（与引擎同事务/
@@ -380,8 +387,8 @@ class QFQResidentOrchestrator:
                 fresh_daily=fresh_daily, calendar=self.calendar,
                 freqs=("1min",),
                 ex_dates_ms=tuple(effective_dates),
-                model="fresh_staged",
-                model_reason="resident corporate-action/factor-change reconciliation",
+                model="fresh_authoritative_rebase",
+                model_reason="resident corporate-action/factor-change authoritative rebase",
                 fresh_minutes=fresh_minute,
                 fresh_source="xtquant",
                 fresh_capture_id=capture_id,
@@ -394,8 +401,14 @@ class QFQResidentOrchestrator:
             return ReanchorOutcome(trigger_id=primary_tid, asset_type=asset_type,
                                    code=code, status=status, event_id=res.event_id,
                                    error=getattr(res, "error", None))
-        except Exception as e:  # 引擎以外异常 → 记 failed
+        except Exception as e:  # 引擎以外异常 → 记 failed / blocked
             logger.exception(f"[qfq_orch] {code} apply 异常: {e}")
+            # 捕获不可变契约冲突 / 引擎明确 BLOCK（如 RECOVER_APPLIED_NO_EVENT）：
+            # 映射为 blocked，绝不静默跳过、绝不推进 anchor（gate 会据此 hold 水位）。
+            if isinstance(e, (ReanchorBlocked, CaptureContentConflict)):
+                return ReanchorOutcome(trigger_id=primary_tid, asset_type=asset_type,
+                                       code=code, status="blocked",
+                                       error=f"{type(e).__name__}: {e}")
             return ReanchorOutcome(trigger_id=primary_tid, asset_type=asset_type,
                                    code=code, status="failed", error=f"{type(e).__name__}: {e}")
 

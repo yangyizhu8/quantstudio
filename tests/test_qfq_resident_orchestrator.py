@@ -309,8 +309,8 @@ def test_e2e_commit_flow(tmpdir_path, monkeypatch):
     assert conn.execute(
         "SELECT status FROM qfq_reanchor_event WHERE event_id=?", [ev]
     ).fetchone()[0] == "committed"
-    # 引擎收到 fresh_staged 全套凭据 + resident trigger_surface
-    assert calls[0]["model"] == "fresh_staged"
+    # 阶段4：编排器显式选择 authoritative rebase 模型 + 传递 capture 审计二元组 + resident trigger_surface
+    assert calls[0]["model"] == "fresh_authoritative_rebase"
     assert calls[0]["fresh_source"] == "xtquant"
     assert calls[0]["trigger_surface"] == "resident_v2"
     assert calls[0]["fresh_capture_id"]
