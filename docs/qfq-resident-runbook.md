@@ -1,12 +1,12 @@
 # QFQ 常驻编排器运维手册（Runbook）
 
-> **状态**：框架代码已完成并通过审核（PR #6/#7/#8），staging 演练首轮通过。
-> **生产配置仍关闭**：`qfq_orchestrator.enabled=false`、`factor_refresh_enabled=false`。
-> **日期**：2026-07-29
+> **状态**：常驻编排器 + authoritative rebase 引擎 + 阶段6A 粒度修复全部完成并通过验收。
+> R3 真实 staging 验收 committed>0 证实功能可用。**生产配置仍关闭**：`qfq_orchestrator.enabled=false`、
+> `factor_refresh_enabled=false`。**日期**：2026-07-30
 
 > ⚠️ 本 runbook 覆盖常驻 QFQ 编排器的运维操作：启用前检查、bootstrap、日常协调、
 > degraded 处置、故障排查、回退。**生产启用必须取得用户明确部署确认**，且须先通过
-> staging 演练 + 全量回归。在确认前禁止把 `enabled` 设为 true。
+> staging 演练 + 全量回归 + 部署门控。在确认前禁止把 `enabled` 设为 true。
 
 ## 1. 架构概览
 
@@ -34,17 +34,57 @@
 stock_daily / stock_minutes / etf_daily / etf_minutes。水位在协调周期 gate 通过后
 统一提交，未通过则 hold（`qfq_cycle_run.detector_degraded=1`）。
 
-## 2. 启用前检查清单
+## 1.5 重锚模型：ratio / fresh_staged / fresh_authoritative_rebase
 
-生产启用前**必须全部满足**：
+重锚引擎（`qfq_reanchor_engine.apply_reanchor_for_security`）支持三种模型：
+
+| 模型 | 用途 | 状态 |
+|------|------|------|
+| `ratio` | 传统比例复权（历史基准） | 生产在用 |
+| `fresh_staged` | 单证券 fresh_staged 重锚（合成自洽验证） | 已实现/验证 |
+| `fresh_authoritative_rebase` | 权威 oracle 重基（xtquant front 为权威） | 阶段1-6 完成，未生产启用 |
+
+### authoritative rebase 信任边界
+- xtquant `get_kline` 返回的 `front` 字段作为**权威 oracle**。
+- 引擎不通过经验复权公式重新证明源端 front 的经济语义，只验证：
+  - raw 与 fresh oracle 逐 bar 对齐（同名 OHLC/V/AMT）；
+  - 写后 front 与 fresh oracle 逐 bar 一致；
+  - 行数 / 主键 / `*_back` / volume / amount 守恒。
+- **不检测源端语义**：fresh capture 阶段形成的同步 front 污染（同步偏移）无法被确定性条件检测。
+  这是信任边界核心风险，接受以 xtquant front 为权威前提（独立 oracle 见 design spec §8）。
+
+### trigger 粒度（增量重基）
+- 编排器按 ex_date 拆 trigger；`_claim_and_merge` 按 `(asset_type, code)` 合并为一个工作单元。
+- 阶段6A 修复后，`_reanchor_security` 在 rebase 模式下**从 `stock_dividend` + `factor_observation`
+  取该证券全量 ex_dates**（而非仅本轮领取的 pending trigger 子集），保证增量轮次一次性全历史
+  重基，不丢历史除权日。仅影响 rebase 模式（`ratio`/`fresh_staged` 逐位不变）。
+
+### R3 真实 staging 验收结论
+- 2.1 单证券直接 apply（全 ex_dates）→ 4/4 committed（000012 多次分红 / 002864 送转 / 510300 ETF
+  / 600000 银行分红），front 调整比率与 xtquant 前复权逐日一致（机器精度 ~1e-16），raw/back/行数守恒。
+- 2.2 编排器 reconcile-once → `committed=6/7 单元`（ETF 无 ex_date 不入队），正式库 SHA 不变。
+- 对比 fresh_staged 演练 `committed=0` 被乘法校验 BLOCK → **committed>0 证实 rebase 功能可用**。
+- 证据：`output/qfq_rebase_r3_20260730/`。
+
+## 2. 部署门控（生产启用前必须全部满足）
+
+> 当前 `enabled=false`。**取得用户明确部署确认**前禁止启用。以下任一项不满足则保持关闭。
 
 - [ ] 全量回归 0 failed（`pytest tests/`）
-- [ ] staging 演练通过（`python scripts/qfq_staging_rehearsal.py`，核心守恒闭环 ✓）
-- [ ] front 修正语义验证通过（`python scripts/qfq_front_fix_verification.py`，committed ✓）
-- [ ] miniQMT 客户端可用（XtquantFreshFetcher 能连接）
-- [ ] trade_calendar 完整（CalendarService 能判定交易日）
+- [ ] R3 staging 验收 `committed>0` + 守恒通过（`output/qfq_rebase_r3_20260730/`）
+- [ ] trigger 粒度修复测试通过（阶段6A：3 用例，全量 qfq 回归 214 passed）
+- [ ] miniQMT 可用 + `trade_calendar` 完整
 - [ ] daemon 已停止（无 `collector_run.lock`）
+- [ ] 全市场 raw 准入预检（扩到 5202 股票 + 1605 ETF，差异率可接受）
+- [ ] `dead_letter` 清零 + `pending_backfill` 无超期
+- [ ] 至少一个真实除权事件 committed
+- [ ] 多日常驻运行稳定
 - [ ] 取得用户明确部署确认
+
+### 三步启用（渐进，降低爆炸半径）
+1. **observation / dry-run**：只发现事件 + 生成计划，不写价（`reconcile-once` 不加 `--execute`）
+2. **canary 少量证券写入**：`bootstrap-plan` 仅含少量证券 → `bootstrap-run --execute`
+3. **全市场扩展**：确认 canary 稳定后放开全量 `bootstrap-plan` + `bootstrap-run`
 
 > ts_code 转换：QFQFactorRefresher + daemon._fetch_adj_factor 均用 resolve_ts_codes
 > （元数据优先，资产感知前缀 fallback）。ETF 裸码不再误判 BJ。

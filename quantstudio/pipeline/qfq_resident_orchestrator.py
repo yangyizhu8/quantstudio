@@ -382,11 +382,20 @@ class QFQResidentOrchestrator:
                 "WHERE trigger_id=?", [event_id, _now_ts(), tid])
         try:
             from quantstudio.pipeline.qfq_reanchor_engine import apply_reanchor_for_security
+            # R4/6A 修复：rebase 必须传该证券「全部已知除权日」，而非仅本轮领取的
+            # trigger 子集。增量轮次下，同券部分 trigger 已 committed、本轮只领到新增
+            # pending trigger → unit["effective_dates"] 仅含新增 ex_date → 传引擎的
+            # ex_dates_ms 不全 → 局部重基（旧 ex_date 被忽略）。改为从 stock_dividend +
+            # factor_observation 取该证券全量 ex_dates（与触发源一致，独立于 trigger
+            # 领取状态）。仅影响 rebase 模式（ratio/fresh_staged 不走此路径）。
+            ex_dates_ms = tuple(self._security_effective_dates(conn, asset_type, code))
+            if not ex_dates_ms:
+                ex_dates_ms = tuple(effective_dates)  # 降级：保持原 trigger 子集语义
             res = apply_reanchor_for_security(
                 conn, asset_type=asset_type, code=code,
                 fresh_daily=fresh_daily, calendar=self.calendar,
                 freqs=("1min",),
-                ex_dates_ms=tuple(effective_dates),
+                ex_dates_ms=ex_dates_ms,
                 model="fresh_authoritative_rebase",
                 model_reason="resident corporate-action/factor-change authoritative rebase",
                 fresh_minutes=fresh_minute,

@@ -1,6 +1,7 @@
 # fresh_authoritative_rebase 模式设计（权威 fresh 全历史重基准）
 
-> **状态**：设计阶段（待用户确认后进入实现）。不碰生产配置、不直接改代码。
+> **状态**：R1-R4 + 阶段6A 全部实现完成并通过验收（2026-07-30）。**生产配置仍关闭**：
+> `qfq_orchestrator.enabled=false`。功能进入"待生产启用"状态，启用需用户按 runbook 部署门控确认。
 > **日期**：2026-07-29
 > **性质**：回测框架数据语义与正确性变更（非配置调整、非纯性能优化）。
 > **前置**：常驻 QFQ 编排器已落地（PR #6/#7/#8），但真实全历史重锚被 precheck BLOCK。
@@ -191,30 +192,43 @@ MODELS: Tuple[str, ...] = ("ratio", "fresh_staged", "fresh_authoritative_rebase"
 
 ## 5. 实现范围（分阶段）
 
-### 阶段 R1：模型注册 + precheck（stage_fresh_authoritative）
+### 阶段 R1：模型注册 + precheck（stage_fresh_authoritative）✅ 已完成
 - MODELS 增加 fresh_authoritative_rebase
 - apply_reanchor_for_security 增加 rebase 分支（显式模型选择 + 防呆）
 - stage_fresh_authoritative：基本校验 + 完整覆盖 + raw 对齐（删除比例校验）
 - 单元测试：raw 对齐 / 覆盖 / K线关系 / 故障注入
 
-### 阶段 R2：postcheck（移除乘法假设，确定性校验）
+### 阶段 R2：postcheck（移除乘法假设，确定性校验）✅ 已完成
 - run_postchecks 增加 rebase 分支：移除 scale_consistency（乘法）和 front_chain（乘法/加法收益）
 - 保留 daily_staged_match（写后 front==staged 精确一致）、kline_relation、row_conservation、
   cross_table_overlap、minute_* 四项
 - 不引入因子链分段检查或 k×D（已证伪，见 §3.4 + 验证报告）
 - 单元测试：写后一致 / 守恒 / 跨表边界 / 故障注入（结构/对齐/写入三类，源端语义类不要求检测）
 
-### 阶段 R3：真实数据验收
-- staging 副本上对 000012 等真实证券全历史重基准
-- 干净副本全量重建对照（黄金基准）
-- 策略信号/订单/净值一致性
-- 故障注入全套
+### 阶段 R3：真实数据验收 ✅ 已完成
+- `scripts/qfq_rebase_r3_staging.py`：staging 副本（9 证券含 4 代表）对真实证券全历史重基准
+- **结论**：2.1 单证券直接 apply（全 ex_dates 一次性）→ 4/4 committed，front 调整比率与
+  xtquant 前复权逐日一致（机器精度 ~1e-16），raw/back/行数守恒；2.2 编排器 reconcile-once
+  → `committed=6/7 单元`（ETF 无 ex_date 不入队），正式库 SHA 不变。**committed>0 成立**
+  （对比 fresh_staged 演练 committed=0 被乘法校验 BLOCK），证实 rebase 功能可用。
+- 证据：`output/qfq_rebase_r3_20260730/`（direct_apply_results.json / reconcile_summary.json /
+  r3_conclusion.txt）
 
-### 阶段 R4：文档 + 上线门控
+### 阶段 R4：文档 + 上线门控 ✅ 已完成
 - README / strategy_toolbox / prompt_engineering / runbook / fix report 更新
 - 汇报代码改动、数据语义、测试证据、风险、回退
 - 用户明确确认后才 stage/commit/push/PR
 - 真实 staging 全 committed 且守恒通过前，保持 enabled=false
+
+### 阶段 6A：trigger 粒度修复（增量轮次全量 ex_dates）✅ 已完成
+- **问题**：`_claim_and_merge` 按 (asset_type, code) 合并，但 `unit["effective_dates"]` 仅含
+  本轮领取的 pending trigger 子集。增量轮次下，同券部分 trigger 已 committed、仅新增 pending
+  被领取 → 传给引擎的 `ex_dates_ms` 不全 → 局部重基（旧 ex_date 被忽略）。
+- **修复（方案 A）**：`qfq_resident_orchestrator._reanchor_security` 在 rebase 模式下改从
+  `stock_dividend + factor_observation` 取该证券**全量** ex_dates（`_security_effective_dates`），
+  而非仅 trigger 子集。仅影响 rebase 模式（ratio/fresh_staged 不走此路径），签名不变。
+- **测试**：3 新增用例（增量子集→全量 / 多 trigger 合并 e2e / rebase BLOCK→水位 held），
+  全量 qfq 回归 214 passed（原 211 + 3）。
 
 ## 6. 不变项（铁律）
 - ratio / fresh_staged 模式逐位不变（rebase 是独立新增，不改既有模型行为）。
@@ -227,9 +241,14 @@ MODELS: Tuple[str, ...] = ("ratio", "fresh_staged", "fresh_authoritative_rebase"
 - **源端语义故障不可检测**（信任边界核心风险）：fresh front 同步偏移污染无法被确定性条件
   检测。C 方案以"xtquant front 为权威 oracle"为前提接受此风险；若不接受，需独立 oracle（§8）。
 - **raw 逐 bar 一致的全市场覆盖率未验证**：预检仅抽样 000012/510300（daily，0 差异），
-  全市场（5202 股票 + 1605 ETF）+ minute raw 的差异率待扩大预检。若部分证券 raw 不一致，
-  需 BLOCK 或先 raw 迁移。
+  全市场（5202 股票 + 1605 ETF）+ minute raw 的差异率待扩大预检（**生产启用前必做**，见 runbook 门控）。
+  若部分证券 raw 不一致，需 BLOCK 或先 raw 迁移。
+- **trigger 粒度（增量重基）已修复**：阶段 6A 保证 rebase 永远传全量 ex_dates，增量轮次不再丢
+  历史除权日。但**部分码失败不 degraded**（runbook 风险2）仍保留现状：某证券部分码失败可能用旧
+  快照，是否升级为"任意单码失败即 degraded"另立后续正确性变更审核。
 - 全历史 fresh 下载耗时：2076+ 行 daily + 数万行 minute 的 xtquant 全量下载，需评估性能。
+- **R3 验收结论**：真实 staging 上 rebase 端到端 committed>0（对比 fresh_staged committed=0），
+  front 调整比率与 xtquant 前复权逐日一致（~1e-16）；功能可用，仅待生产启用门控。
 - ~~factor_drift_tol / 因子链分段检查~~ —— 已证伪，移入 §8 未来研究，不列入实现。
 
 ## 8. 未来研究：独立语义 oracle（不在当前实现范围）

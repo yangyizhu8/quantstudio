@@ -459,3 +459,71 @@ def test_bootstrap_plan_run_completes(tmpdir_path, monkeypatch):
     audit = orch.bootstrap_audit(conn, run_id)
     assert audit["clean"] is True
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# R4/6A：rebase 模式传全量 ex_dates（增量轮次不丢历史除权日）
+# ---------------------------------------------------------------------------
+def test_reanchor_full_ex_dates_incremental_subset(tmpdir_path, monkeypatch):
+    """增量轮次：本轮只领到新增 pending trigger（effective_dates=子集），
+    引擎仍须收到该证券『全部』已知除权日，而非仅子集（否则旧 ex_date 局部重基）。"""
+    import quantstudio.pipeline.qfq_reanchor_engine as eng
+    calls = []
+    monkeypatch.setattr(eng, "apply_reanchor_for_security",
+                        _fake_engine_factory("committed", calls))
+    conn = _new_conn()
+    orch = _orch(_cfg(), tmpdir_path)
+    d1, d2, d3 = _ms("2026-05-10"), _ms("2026-06-10"), _ms("2026-07-10")
+    for d in (d1, d2, d3):
+        _insert_dividend(conn, ex_ms=d)
+    # 模拟增量：d1/d2 已 committed，本轮仅领到 d3 一个 pending trigger
+    outcome = orch._reanchor_security(
+        conn, run_id="r6a", asset_type="STOCK", code="600000",
+        trigger_ids=["t_d3"], effective_dates=[d3], attempt=1, fetcher=_fetcher())
+    assert outcome.status == "committed"
+    # 引擎收到全量 3 个 ex_dates，而非仅本轮子集 [d3]
+    assert tuple(calls[0]["ex_dates_ms"]) == (d1, d2, d3)
+    conn.close()
+
+
+def test_e2e_multi_exdates_merged_full(tmpdir_path, monkeypatch):
+    """同券多 trigger（按 ex_date 拆分）→ 合并为 1 单元 → rebase 传全部 ex_dates。"""
+    import quantstudio.pipeline.qfq_reanchor_engine as eng
+    calls = []
+    monkeypatch.setattr(eng, "apply_reanchor_for_security",
+                        _fake_engine_factory("committed", calls))
+    conn = _new_conn()
+    orch = _orch(_cfg(), tmpdir_path)
+    d1, d2 = _ms("2026-05-10"), _ms("2026-06-10")
+    for d in (d1, d2):
+        _insert_dividend(conn, ex_ms=d)
+    cid = orch.begin_cycle(conn)
+    s = orch.run_post_ingest(conn, cycle_id=cid, run_id="r6a2", as_of_ms=AS_OF_MS)
+    assert s.triggers_found == 2          # 两分红 → 两 trigger
+    assert s.claimed == 1                 # 同券合并为 1 单元
+    assert s.committed == 1
+    assert tuple(calls[0]["ex_dates_ms"]) == (d1, d2)  # 全量，非单 ex_date
+    conn.close()
+
+
+def test_rebase_block_holds_watermark(tmpdir_path, monkeypatch):
+    """失败路径红线：rebase BLOCK → trigger retry → gate 不过 → 水位 held，绝不推进 anchor。"""
+    import quantstudio.pipeline.qfq_reanchor_engine as eng
+    monkeypatch.setattr(eng, "apply_reanchor_for_security",
+                        _fake_engine_factory("blocked"))
+    conn = _new_conn()
+    orch = _orch(_cfg(retry_max=5), tmpdir_path)
+    _insert_dividend(conn)
+    cid = orch.begin_cycle(conn)
+    orch.defer_watermark(conn, cycle_id=cid, source="tushare", table="stock_daily",
+                         freq="daily", candidate_watermark=_ms("2026-07-28"))
+    s = orch.run_post_ingest(conn, cycle_id=cid, run_id="r6a3", as_of_ms=AS_OF_MS)
+    assert s.retryable_failed == 1
+    assert s.status == "finalized_held"
+    assert s.watermarks_held == 1
+    assert conn.execute("SELECT COUNT(*) FROM source_watermark").fetchone()[0] == 0
+    # 失败路径绝不推进 anchor（无 committed 事件）
+    assert conn.execute(
+        "SELECT COUNT(*) FROM qfq_reanchor_event WHERE status='committed'"
+    ).fetchone()[0] == 0
+    conn.close()
