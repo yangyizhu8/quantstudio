@@ -210,7 +210,7 @@
 
 ---
 
-## 4. QFQ 重锚引擎（pipeline 级，fresh_staged / ratio 双模型）
+## 4. QFQ 重锚引擎（pipeline 级，ratio / fresh_staged / fresh_authoritative_rebase 三模型）
 
 > 模块：`quantstudio.pipeline.qfq_reanchor_engine`。**这是 pipeline 编排层 API，不是注入策略的 API**——
 > 策略代码不应直接调用。本节供 pipeline 调用方 / Agent 编排重锚任务时参考（门禁要求记录）。
@@ -235,7 +235,7 @@ apply_reanchor_for_security(
     event_id: Optional[str] = None,
     list_date_ms: Optional[int] = None,
     # —— 模型选择（B-1 批准边界，铁律）——
-    model: str = "ratio",             # "ratio" | "fresh_staged"，必须显式
+    model: str = "ratio",             # "ratio" | "fresh_staged" | "fresh_authoritative_rebase"，必须显式
     model_reason: Optional[str] = None,   # fresh_staged 必填；写入事件审计
     fresh_minutes: Optional[pd.DataFrame] = None,  # fresh_staged 必填
     fresh_source: Optional[str] = None,        # 事件审计：如 "xtquant"
@@ -249,7 +249,13 @@ apply_reanchor_for_security(
 - **`ratio`**（默认）：方法 B（按 freq 独立、OHLC 交叉验证、稳定簇）+ 方法 A 黄金抽验（3 日 × 5 bar，09:30 不计入）。原行为逐位不变；**禁止**传 `fresh_minutes`（防呆：`ValueError`）。
 - **`fresh_staged`**：fresh xtquant 分钟前复权**逐值写入**四 `*_front` 列。必须提供 `fresh_minutes`
   （列 = `code/time/freq?` + OHLC raw + 四 `*_front`；多 freq 须含 `freq` 列），且 `model_reason` 必填。
-- 引擎**不存在**「ratio BLOCK → fresh_staged 静默回退」路径；切换模型必须由调用方显式改写 `model` 并书面留痕 `model_reason`。
+- **`fresh_authoritative_rebase`**（新增）：权威全历史重基准。将 frozen xtquant front 作为
+  权威 oracle，全历史 daily+minute 覆盖 + raw 逐 bar 对齐 + 写后精确一致 + capture 不可变契约。
+  **移除**理想化乘法/加法 precheck 假设（真实 xtquant 前复权不严格满足纯乘法或纯加法）。
+  信任边界：不独立证明 oracle 的经济复权语义（需独立 oracle）。`fresh_minutes`、`model_reason`、
+  审计三元组（`fresh_capture_id`/`fresh_metadata_sha256`/`fresh_source`）均必填。详见
+  [`docs/superpowers/specs/2026-07-29-fresh-authoritative-rebase-design.md`](../superpowers/specs/2026-07-29-fresh-authoritative-rebase-design.md)。
+- 引擎**不存在**任何 BLOCK 后静默回退路径；切换模型必须由调用方显式改写 `model` 并书面留痕 `model_reason`。
 
 ### 4.3 事务与四态事件审计
 

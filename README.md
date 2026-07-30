@@ -144,23 +144,30 @@ python -m quantstudio.backtest.run_ptrade_strategy strategy.py 2026-01-01 2026-0
 
 ---
 
-## QFQ 重锚引擎（fresh_staged / ratio 双模型）
+## QFQ 重锚引擎（ratio / fresh_staged / fresh_authoritative_rebase 三模型）
 
 > 模块：`quantstudio.pipeline.qfq_reanchor_engine`。负责把日线/分钟前复权（QFQ）价格
-> 从「比例锚（ratio）」修正升级到「fresh xtquant 逐值写入（fresh_staged，B-1，2026-07-27 批准）」。
+> 从「比例锚（ratio）」修正升级到「fresh xtquant 逐值写入（fresh_staged）」和
+> 「权威全历史重基准（fresh_authoritative_rebase）」。
 > 本文档仅记语义边界，完整 API 见 [`docs/strategy_toolbox.md`](docs/strategy_toolbox.md) 第 4 节。
 
-### 双模型选择语义（铁律）
+### 三模型选择语义（铁律）
 
 `apply_reanchor_for_security(conn, *, asset_type, code, fresh_daily, calendar, ...,
 model="ratio", model_reason=None, fresh_minutes=None, fresh_source=None,
 fresh_capture_id=None, fresh_metadata_sha256=None)`：
 
-- **`model` 必须显式传入**，引擎内**不存在**「ratio BLOCK → fresh_staged 静默回退」路径。
+- **`model` 必须显式传入**，引擎内**不存在**任何 BLOCK 后静默回退路径。
 - **`ratio`**（默认）：方法 B + 方法 A 黄金抽验，原行为逐位不变；**禁止**传 `fresh_minutes`（防呆）。
 - **`fresh_staged`**：fresh xtquant 分钟前复权逐值写入。必须提供 `fresh_minutes`
   （列 = `code/time/freq?` + OHLC raw + 四 `*_front`；多 freq 须含 `freq` 列），且
   **`model_reason` 必填**（写入事件审计，留痕为何切换模型）。
+- **`fresh_authoritative_rebase`**（新增）：权威全历史重基准。将 frozen xtquant front
+  作为权威 oracle，全历史覆盖 + raw 逐 bar 对齐 + 写后精确一致 + capture 不可变契约。
+  **移除**理想化乘法/加法 precheck 假设（真实 xtquant 前复权不严格满足纯乘法或纯加法，
+  旧假设会导致真实除权场景 BLOCK）。信任边界：框架不独立证明 oracle 的经济复权语义
+  正确性（需独立 oracle，属未来研究）。详见
+  [`docs/superpowers/specs/2026-07-29-fresh-authoritative-rebase-design.md`](docs/superpowers/specs/2026-07-29-fresh-authoritative-rebase-design.md)。
 - 切换模型必须由调用方显式改写 `model` 并给出书面 `model_reason`，**禁止静默切换**。
 
 ### 事务与四态事件审计

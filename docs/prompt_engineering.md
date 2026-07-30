@@ -249,9 +249,11 @@ def handle_data(context, data):
 
 若 Agent 负责编排 QFQ 重锚任务（如写回测后处理 / 数据管线），必须遵守以下铁律：
 
-- **模型必须显式**：调用 `apply_reanchor_for_security(..., model="ratio"|"fresh_staged", model_reason=...)`，
-  引擎**不存在**「ratio BLOCK → fresh_staged 静默回退」路径，**禁止静默切换模型**。
+- **模型必须显式**：调用 `apply_reanchor_for_security(..., model="ratio"|"fresh_staged"|"fresh_authoritative_rebase", model_reason=...)`，
+  引擎**不存在**任何 BLOCK 后静默回退路径，**禁止静默切换模型**。
 - **`fresh_staged` 必填 `model_reason`**（书面留痕为何切换），且必传 `fresh_minutes` + 审计三元组
+- **`fresh_authoritative_rebase` 必填 `model_reason` + `fresh_minutes` + 审计三元组**：权威全历史重基准，
+  raw 逐 bar 对齐 + 全覆盖 + 写后一致 + capture 不可变；移除乘法/加法假设；不证明 oracle 经济语义。
   （`fresh_source` / `fresh_capture_id` / `fresh_metadata_sha256`）。
 - **`tick_size` 按资产路由**：`STOCK=0.01` / `ETF=0.001`，不得写死 0.01。
 - **`fresh_minutes` 须过交易日历校验**：每个自然日 `CalendarService.is_trading_day`，周末/未知日整券 BLOCK。
