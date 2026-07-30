@@ -129,6 +129,21 @@ _RAW_MATCH_EPS = 1e-9
 # ReanchorTolerances.tick_size=None 时按此表路由；显式设置则覆盖。
 _TICK_SIZE_BY_ASSET: Dict[str, float] = {"STOCK": 0.01, "ETF": 0.001}
 
+# —— raw 逐 bar 对齐容差路由（批次2：ETF 分钟 tick 噪声，2026-07-30）——
+# STOCK/日线保持严格 _RAW_MATCH_EPS=1e-9（真实数据差异远大于此阈）；
+# ETF 分钟放宽到 1 个 tick（0.001）——已全市场预检确认 277 只 BLOCK 全是
+# ETF 1min tick 级舍入噪声（max diff ≤ 0.008，零只 > 0.01），非真实数据源不一致。
+# 放宽仅作用于分钟 raw 对齐（precheck + B-1 precheck + 写后 postcheck 三处一致），
+# 不影响 daily（日线差异为 0）与 STOCK（保持严格）。
+_RAW_MATCH_EPS_ETF_MINUTE = 1e-3
+
+
+def _raw_match_eps_minute(asset_type: str) -> float:
+    """分钟 raw 逐 bar 对齐容差：ETF 分钟放宽到 1 个 tick（0.001），其余严格。"""
+    if _normalize_asset_type(asset_type) == "ETF":
+        return _RAW_MATCH_EPS_ETF_MINUTE
+    return _RAW_MATCH_EPS
+
 
 def resolve_tick_size(asset_type: str, tol: "Optional[ReanchorTolerances]" = None) -> float:
     """解析实际 tick_size：显式 tol.tick_size 优先，否则按资产类型路由。"""
@@ -926,6 +941,8 @@ def _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol):
             f"rebase 分钟 freq={mfreq} 覆盖不全：缺 {missing_target}/多 {extra} 行"
             f"（要求全历史严格一致）")
     # C raw 逐 bar 对齐（同 postcheck minute_raw_match 口径）
+    # ETF 分钟放宽到 1 个 tick（0.001）；STOCK/日线严格。
+    _eps = _raw_match_eps_minute(asset_type)
     view2 = f"_qfq_raw_m_{code}_{mfreq}"
     conn.register(view2, fm[["code", "time"] + list(RAW_COLS)])
     try:
@@ -934,7 +951,7 @@ def _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol):
             f"s.{c} IS NULL OR NOT isfinite(s.{c}) OR s.{c} <= 0"
             for c in RAW_COLS)
         raw_pred = " OR ".join(
-            f"ABS(t.{c} - s.{c}) > {_RAW_MATCH_EPS!r}" for c in RAW_COLS)
+            f"ABS(t.{c} - s.{c}) > {_eps!r}" for c in RAW_COLS)
         n_invalid = int(conn.execute(
             f"SELECT COUNT(*) FROM {minute_table} t JOIN {view2} s "
             f"ON t.code=s.code AND t.time=s.time AND t.freq=? "
@@ -953,7 +970,7 @@ def _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol):
     if n_raw:
         raise ReanchorBlocked("minute_raw_mismatch",
             f"rebase 分钟 freq={mfreq} raw OHLC 共 {n_raw} 行与库内不一致"
-            f"（|Δ|>{_RAW_MATCH_EPS}）；fresh raw 与库内 raw 未对齐")
+            f"（|Δ|>{_eps!r}）；fresh raw 与库内 raw 未对齐")
 
 
 def stage_fresh_authoritative(conn, asset_type, code, fresh_daily, fresh_minutes,
@@ -1056,8 +1073,9 @@ def apply_fresh_minute_staged(conn, asset_type: str, code: str, freq: str,
             f"freq={freq_c} stored raw OHLC 存在 NULL/非 finite>0 共 {null_raw} 根"
             f"——无法完成 raw 一致性验证，整券 BLOCK",
             coverage=coverage, phase="precheck", freq=freq_c)
+    _eps = _raw_match_eps_minute(asset_type)
     raw_pred = " OR ".join(
-        f"ABS(t.{c} - s.{c}) > {_RAW_MATCH_EPS!r}" for c in RAW_COLS)
+        f"ABS(t.{c} - s.{c}) > {_eps!r}" for c in RAW_COLS)
     mism = conn.execute(
         f"SELECT COUNT(*), MIN(t.time) FROM {minute_table} t "
         f"JOIN {staged_minute} s ON t.time = s.time "
@@ -1070,7 +1088,7 @@ def apply_fresh_minute_staged(conn, asset_type: str, code: str, freq: str,
             "minute_raw_mismatch",
             f"freq={freq_c} stored raw OHLC vs fresh(dividend_type=none) raw "
             f"逐 bar 不一致 {raw_mismatch} 根（首例 time={int(mism[1])}，"
-            f"eps={_RAW_MATCH_EPS:.0e}）——同源前提不成立，整券 BLOCK",
+            f"eps={_eps:.0e}）——同源前提不成立，整券 BLOCK",
             coverage=coverage, phase="precheck", freq=freq_c)
 
     # —— 逐值 UPDATE：仅四个 front 列 ——
@@ -1677,8 +1695,9 @@ def _run_minute_staged_postchecks(conn, *, asset_type: str, code: str,
             f"t.{c} IS NULL OR NOT isfinite(t.{c}) OR t.{c} <= 0 OR "
             f"s.{c} IS NULL OR NOT isfinite(s.{c}) OR s.{c} <= 0"
             for c in RAW_COLS)
+        _eps = _raw_match_eps_minute(asset_type)
         raw_pred = " OR ".join(
-            f"ABS(t.{c} - s.{c}) > {_RAW_MATCH_EPS!r}" for c in RAW_COLS)
+            f"ABS(t.{c} - s.{c}) > {_eps!r}" for c in RAW_COLS)
         n_invalid = int(conn.execute(
             f"SELECT COUNT(*) FROM {minute_table} t JOIN {sm} s "
             f"ON t.time = s.time WHERE t.code=? AND t.freq=? AND ({raw_invalid})",

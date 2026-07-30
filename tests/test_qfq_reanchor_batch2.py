@@ -59,7 +59,10 @@ from quantstudio.pipeline.qfq_calendar import CalendarService, _at, TZ
 from quantstudio.pipeline.writers import DDL_DUCKDB as PRICE_DDL
 from quantstudio.pipeline.qfq_reanchor_engine import (
     FRONT_COLS,
+    ReanchorBlocked,
     ReanchorTolerances,
+    _check_minute_cov_raw,
+    _raw_match_eps_minute,
     apply_reanchor_for_security,
 )
 
@@ -2608,3 +2611,136 @@ class TestRound7AuditBlockers:
         assert cov["missing_staged"] > 0        # fresh 缺 bar → staged 侧缺失
         assert plan["precheck_phase"] == "precheck"
         assert res.minute_coverage["1min"]["missing_staged"] > 0
+
+
+# ===========================================================================
+# 12. 批次2 前置项：引擎 ETF 分钟 raw 对齐 eps 路由（2026-07-30）
+# 预检 raw 对齐容差：ETF 分钟放宽到 1 个 tick（1e-3），STOCK/日线严格 1e-9。
+# 验证 92 只 ADMISSIBLE_TICK_TOLERANCE ETF 在引擎内可被 committed；
+# 真实不一致（>1 分钱）与 STOCK（严格）仍 BLOCK。
+# ===========================================================================
+
+class TestEtfMinuteRawEps:
+    """引擎 ETF 分钟 tick eps 路由（批次2 前置项，2026-07-30）。
+
+    预检 raw 逐 bar 对齐容差按资产路由：ETF 分钟 1e-3（1 tick），STOCK/日线严格 1e-9。
+    该容差在「权威路径 _check_minute_cov_raw」与「B-1 fresh_staged 路径
+    apply_fresh_minute_staged precheck + postcheck」三处一致生效。
+
+    说明：权威路径的 fm 由 stored raw 重建，无法在测试内注入独立差异，故其 eps 路由
+    用直接单测 _check_minute_cov_raw 覆盖；端到端（fresh_staged）用独立 fresh_minutes
+    注入差异，是 92 只 ADMISSIBLE_TICK_TOLERANCE ETF 的生产实际路径（B-1）。
+    """
+
+    # ---- 单元级：路由 helper ----
+    def test_raw_match_eps_minute_routing(self):
+        assert _raw_match_eps_minute("ETF") == 1e-3
+        assert _raw_match_eps_minute("etf") == 1e-3   # 大小写归一
+        assert _raw_match_eps_minute("STOCK") == 1e-9
+        assert _raw_match_eps_minute("stock") == 1e-9
+
+    # ---- 直接单元：权威路径 _check_minute_cov_raw 的 eps 路由 ----
+    def test_check_minute_cov_raw_etf_1tick_passes(self, env):
+        """ETF 分钟 fresh raw 注入 0.5 tick（0.0005）< 1e-3 → 不抛 ReanchorBlocked。"""
+        conn, cal = env.conn, env.calendar
+        code = "510300"
+        _seed_security(conn, code, asset="ETF")
+        fm = _snap(conn, "etf_minutes").copy()
+        fm["close"] = fm["close"] + 0.0005
+        fm["high"] = fm["high"] + 0.0005
+        _check_minute_cov_raw(conn, "ETF", code, "1min", fm, None)   # 不抛即通过
+
+    def test_check_minute_cov_raw_etf_gt_1cent_raises(self, env):
+        """ETF 分钟 fresh raw 注入 >1 分钱（0.05）> 1e-3 → 抛 ReanchorBlocked。"""
+        conn, cal = env.conn, env.calendar
+        code = "510300"
+        _seed_security(conn, code, asset="ETF")
+        fm = _snap(conn, "etf_minutes").copy()
+        fm["close"] = fm["close"] + 0.05
+        with pytest.raises(ReanchorBlocked):
+            _check_minute_cov_raw(conn, "ETF", code, "1min", fm, None)
+
+    def test_check_minute_cov_raw_stock_1e6_raises(self, env):
+        """STOCK 分钟 fresh raw 注入 1e-6（> 严格 1e-9）→ 抛 ReanchorBlocked。"""
+        conn, cal = env.conn, env.calendar
+        code = "600875"
+        _seed_security(conn, code)
+        fm = _snap(conn, "stock_minutes").copy()
+        fm["close"] = fm["close"] + 1e-6
+        with pytest.raises(ReanchorBlocked):
+            _check_minute_cov_raw(conn, "STOCK", code, "1min", fm, None)
+
+    # ---- 端到端（B-1 fresh_staged，92 只 ETF 生产实际路径）----
+    def test_etf_minute_raw_1tick_admitted_fresh_staged(self, env):
+        """ETF 分钟 fresh raw 注入 0.5 tick（0.0005）< 1e-3 → fresh_staged 不 BLOCK。"""
+        conn, cal = env.conn, env.calendar
+        code = "510300"
+        _seed_security(conn, code, asset="ETF")
+        scales = _scales_exd5(F_600875)
+        fm = _fresh_minutes_syn(code, scales)
+        fm.loc[7, "close"] = float(fm.loc[7, "close"]) + 0.0005   # 0.5 tick
+        res = apply_reanchor_for_security(
+            conn, asset_type="ETF", code=code,
+            fresh_daily=_fresh_daily(code, scales), calendar=cal,
+            freqs=("1min",), ex_dates_ms=(D5,), list_date_ms=D1,
+            model="fresh_staged", model_reason=_B1_REASON,
+            fresh_minutes=fm, **_AUDIT_KW)
+        assert res.status == "committed"
+
+    def test_etf_minute_raw_gt_1cent_blocked(self, env):
+        """ETF 分钟 fresh raw 注入 >1 分钱（0.05）→ 仍 BLOCK（真实不一致）。"""
+        conn, cal = env.conn, env.calendar
+        code = "510300"
+        _seed_security(conn, code, asset="ETF")
+        pre_m = _snap(conn, "etf_minutes")
+        scales = _scales_exd5(F_600875)
+        fm = _fresh_minutes_syn(code, scales)
+        fm.loc[7, "close"] = float(fm.loc[7, "close"]) + 0.05
+        res = apply_reanchor_for_security(
+            conn, asset_type="ETF", code=code,
+            fresh_daily=_fresh_daily(code, scales), calendar=cal,
+            freqs=("1min",), ex_dates_ms=(D5,), list_date_ms=D1,
+            model="fresh_staged", model_reason=_B1_REASON,
+            fresh_minutes=fm, **_AUDIT_KW)
+        assert res.status == "blocked"
+        assert res.block_reason == "minute_raw_mismatch"
+        pd.testing.assert_frame_equal(pre_m, _snap(conn, "etf_minutes"))
+
+    def test_stock_minute_raw_1e6_still_blocked(self, env):
+        """STOCK 分钟 fresh raw 注入 1e-6（> 严格 1e-9）→ 仍 BLOCK（保持严格）。"""
+        conn, cal = env.conn, env.calendar
+        code = "600875"
+        _seed_security(conn, code)
+        pre_m = _snap(conn, "stock_minutes")
+        scales = _scales_exd5(F_600875)
+        fm = _fresh_minutes_syn(code, scales)
+        fm.loc[7, "close"] = float(fm.loc[7, "close"]) + 1e-6
+        res = apply_reanchor_for_security(
+            conn, asset_type="STOCK", code=code,
+            fresh_daily=_fresh_daily(code, scales), calendar=cal,
+            freqs=("1min",), ex_dates_ms=(D5,), list_date_ms=D1,
+            model="fresh_staged", model_reason=_B1_REASON,
+            fresh_minutes=fm, **_AUDIT_KW)
+        assert res.status == "blocked"
+        assert res.block_reason == "minute_raw_mismatch"
+        pd.testing.assert_frame_equal(pre_m, _snap(conn, "stock_minutes"))
+
+    def test_stock_minute_raw_1tick_still_blocked(self, env):
+        """对照：STOCK 即便仅 1 tick（0.0005）注入也 BLOCK——证明 STOCK 保持严格，
+        而 ETF 分钟同等 1 tick 则放行（路由确实按资产区分）。"""
+        conn, cal = env.conn, env.calendar
+        code = "600875"
+        _seed_security(conn, code)
+        pre_m = _snap(conn, "stock_minutes")
+        scales = _scales_exd5(F_600875)
+        fm = _fresh_minutes_syn(code, scales)
+        fm.loc[7, "close"] = float(fm.loc[7, "close"]) + 0.0005
+        res = apply_reanchor_for_security(
+            conn, asset_type="STOCK", code=code,
+            fresh_daily=_fresh_daily(code, scales), calendar=cal,
+            freqs=("1min",), ex_dates_ms=(D5,), list_date_ms=D1,
+            model="fresh_staged", model_reason=_B1_REASON,
+            fresh_minutes=fm, **_AUDIT_KW)
+        assert res.status == "blocked"
+        assert res.block_reason == "minute_raw_mismatch"
+        pd.testing.assert_frame_equal(pre_m, _snap(conn, "stock_minutes"))
