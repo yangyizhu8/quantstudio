@@ -116,6 +116,7 @@ result, output_dir = payload
 - 数据 100% 来自 DuckDB（QuantStudio 数据管线产出），策略禁止直连数据库（强制隔离）。
 - 框架取数（注入 API 与底层数据适配层）默认前复权（`fq='pre'`）：策略不传 `fq` 即获得前复权价；需不复权请显式 `fq=None`。
 - **撮合/估值链路与取数链路前复权闭环**：引擎每日全市场快照（`query_daily_snapshot`，成交价、持仓估值、`data[code].price`、涨跌停比较价的唯一来源）OHLC 统一映射前复权列（`*_front`，缺失回退原始价），`preClose` 按 `close_front/close` 同因子缩放。信号价、成交价、持仓估值同一连续口径，ETF 份额拆分/股票分红除权日不再产生原始价缺口导致的虚假盈亏（分红等价于自动再投资，前复权回测标准口径）。`pctChg`/`volume`/`amount` 保持原始口径。
+- **成交额列双端契约（B1，返回端逆映射）**：DB 物理列为 `amount`，Ptrade 官方契约列名为 `money`。`get_history`/`get_price` 返回的 DataFrame 在含 `amount` 列时**同步追加同值 `money` 列**（追加在列尾，`amount` 保留、数值不变）；请求 `fields=['money']` 时也正确返回 `money` 列。**双端/PTrade 目标策略必须只读 `money`**（读 `amount`/`close_front` 等本地物理列名会被 Validator 以 `PTRADE-LOCAL-COLUMN` 规则阻断）；本地单端策略读 `amount` 仍兼容。该映射为纯返回端别名，黄金回归证明对回测数值零影响。
 - **Agent-first 唯一价格契约**：`market_data_contract.signal_price_adjustment="pre"` 且 `execution_price_basis="pre_adjusted_price"`。`raw_trade_price` 已从新设计 Schema 中移除；旧 raw 设计必须回到 R2 迁移并重新通过 R2.5/R4/R5。
 - **统一证券元数据（F2）**：`get_stock_info` 股票行为与历史完全一致（名称=裸码、上市日=行情首根K线），仅扩展 ETF（真实名称、`stock_type='etf'`、上市/退市日 `YYYY-MM-DD`，fallback 显式标记）；未知代码保持兼容空值。本地 ETF 元数据支持 ≠ PTrade 真实 ETF 支持（未验证）。
 - **指数成分严格 PIT（F3）**：`get_index_stocks(date)` 只取不晚于该日的最近 `complete` 快照——非历史并集、无未来泄漏、无快照返回空；完整性由 `index_constituents_snapshot_meta` 批次契约（expected_count/status）在打点判定，不依赖未来数据；回测中不传 date 自动用当前回测日期。
