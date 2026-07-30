@@ -2,7 +2,7 @@
 
 > 文档版本：2026-07-31
 > 适用范围：全市场 raw 准入（B 档，5487 只）后的 QFQ 重锚（rebase）生产启用。
-> 强约束：**生产启用必须用户明确确认；本阶段只准备启用条件 + 监控框架，不擅自开 `enabled=true`。daemon 停止/启动由用户控制；正式库变更前必须备份；不 commit / push（与批次2 eps 调整一起，全部通过后统一提交）。**
+> 强约束（2026-07-31 更新）：**`enabled=true` 已于本日经用户明确确认开启，进入三步渐进【步骤A observation】期**（daemon 每轮 fail-closed，不写生产价格）。daemon 停止/启动由用户控制；**涉及 `--allow-production` 的写库命令（bootstrap / reconcile）须逐步骤显式确认**；正式库变更前必须备份；本步配置改动已先提交 GitHub（铁律：生产配置变更先同步再启用）。**
 
 ---
 
@@ -49,15 +49,16 @@
 ## 2. 三步渐进启用方案（操作手册）
 
 ### 步骤 A：Observation（dry-run，1-2 个交易日）
-- **操作**：`enabled=true`，但 **post-ingest 不 execute**（或仅用 CLI 只读命令观察，如 `status` / `show-pending` / `bootstrap-plan`）。
-- **观察**：事件发现（discovery 产出 trigger）+ trigger 生成（trigger_queue 增长）+ 无异常。
-- **通过条件**：`triggers_found > 0` + `dead_letter = 0`。
+- **操作**：`enabled=true` + `require_bootstrap=true`（无 completed bootstrap）。daemon 启动后惰性建 qfq 表，每轮 `run_post_ingest` **fail-closed**（连 discovery 都不执行，直接结束本轮），不写生产价格。仅用 CLI 只读命令观察（`status` / `show-pending` / `bootstrap-audit`）。
+- **观察**：daemon 与编排器集成无回归（连续多轮 fail-closed 干净、无崩溃/异常、qfq 表正常建出）+ 无 dead_letter / 水位异常。
+- **重要修正（实测 2026-07-31）**：fail-closed 发生在 discovery **之前**，故 Step A 期间**看不到 `triggers_found > 0`**（trigger_queue 不会增长）。`triggers_found > 0` 的实际可见时点是 Step B 建完 completed bootstrap 之后。Step A 的真正价值 = 验证 daemon 与 QFQ 编排器集成稳定、无回归。
+- **通过条件**：daemon 连续 N 轮（跨 1-2 交易日）fail-closed 干净、qfq 表已建、`dead_letter = 0`、无异常日志。
 
 ### 步骤 B：Canary（10-20 只证券，2-3 个交易日）
-- **操作**：准入名单内 10-20 只证券启用 rebase（含 TICK_TOLERANCE 代表 + 常规 ETF/股票基线）。
-- **顺序**：先 `bootstrap-run`（建基线，0 blocked）→ 再 `reconcile-once` 增量。
-- **观察**：committed + 守恒（etf_minutes / stock_minutes `*_front` 不变）+ 无 dead_letter。
-- **通过条件**：准入名单内证券 **100% committed** + **raw/back 守恒** + dead_letter=0。
+- **canary 子集机制（2026-07-31 确定）**：`config/qfq_canary_securities.json`（10-20 只代表性 code，含 TICK_TOLERANCE 代表 + 常规 ETF/股票基线；**须排除精度探针 159915**）。`bootstrap-plan` 经 `--codes` 过滤只处理该名单（详见 §7）。
+- **操作顺序**：`bootstrap-plan`（dry 确认候选）→ `bootstrap-run --execute --allow-production`（建基线，**必须 0 blocked**）→ `reconcile-once --execute --allow-production` 增量。bootstrap 必须先于 reconcile（否则 fail-closed）。
+- **观察**：committed + 守恒（`*_front` 列不变）+ 无 dead_letter。
+- **通过条件**：canary 名单内证券 **100% committed** + **raw/back 守恒** + dead_letter=0。
 
 ### 步骤 C：全市场（准入名单全部 5487 只）
 - **操作**：放开准入名单全部证券，持续监控。
@@ -95,7 +96,7 @@
 2. `scripts/qfq_batch2_multiround.py` — staging 多轮验证（bootstrap→增量→空闲）
 3. `data/staging_batch2_20260730/batch2_multiround_report.json` — 多轮验证报告
 4. 本文档 `docs/qfq-production-enablement-checklist.md` — checklist + 三步启用手册 + 回退方案
-5. **明确声明：`enabled=false`，等待用户最终确认后（且仅在用户确认后）才改 `collector_tasks.json` 并启动 daemon。**
+5. **状态声明（2026-07-31 更新）**：`qfq_orchestrator.enabled` 已按用户确认改为 `true`，进入【步骤A observation】期（daemon 每轮 fail-closed，不写生产价格）。该配置改动已先提交 GitHub（铁律：生产配置变更先同步再启用）。Step A 由用户启动 daemon 观察；Step B 起涉及 `--allow-production` 写库命令，须逐步骤显式确认。**
 
 ---
 
@@ -119,3 +120,28 @@
 > 说明：本工作区 QFQ 编排器此前从未初始化（`data/quantstudio.db` 无 `qfq_*` 表），故
 > 多轮验证在 staging 副本（仅含 canary ETF + 近期窗口 + 已填充 `trade_calendar`）上跑真实
 > 编排路径（`bootstrap-run` / `reconcile-once` + 真实 xtquant 取数）。门控与生产代码为同一份。
+
+---
+
+## 7. Canary 子集与 `--codes` 过滤（Step B 准备，2026-07-31 确定）
+
+### 7.1 子集名单文件
+在 `config/` 下生成 `qfq_canary_securities.json`：
+```json
+{ "codes": ["510300", "159919", "510500", "512100", "159205", "159215", "159218", "588200", "159740"] }
+```
+（10-20 只代表性证券：含 TICK_TOLERANCE 代表 + 常规 ETF/股票基线；**须排除精度探针 159915**，
+因其有 1 行 |Δ|>0.001 真实差异会被 blocked，导致 bootstrap 整条 fail-closed。）
+
+### 7.2 范围限定机制
+- `bootstrap_plan` 当前候选来源 = `stock_dividend(div_proc='实施')` + `qfq_factor_observation`（aux），
+  **无内建 code 过滤参数**。
+- Step B 准备阶段需给 `bootstrap-plan` / `bootstrap-run` 增加 `--codes` 开关（或读取
+  `qfq_canary_securities.json`）以只处理 canary 名单内的 code；该过滤为纯子集裁剪（不改变引擎 /
+  门控语义），属最小、可逆实现，单独评估后实施，不混入其他改动。
+- Step C 扩展时只需将名单换为全量准入（`config/qfq_rebase_admissible_securities.json`，5487 只），
+  其余命令不变。
+
+### 7.3 为何不能「全局 enabled 后靠准入名单自动限范围」
+`bootstrap_plan` 枚举的是「有除权/因子观察的证券」，不读准入名单文件；若不加 `--codes` 过滤，
+bootstrap 会覆盖全市场候选（数千只），违背 Step B 的 canary 隔离意图。故必须显式子集过滤。

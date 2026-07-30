@@ -582,7 +582,7 @@
     "rebuild_on_gap": true
   },
   "qfq_orchestrator": {
-    "enabled": false,
+    "enabled": true,
     "require_bootstrap": true,
     "price_source": "xtquant",
     "stock_factor_detector": "tushare_adj_factor",
@@ -606,7 +606,7 @@
       "dead_letter_max": 0
     },
     "bootstrap": {"batch_size": 50, "max_parallel_securities": 8},
-    "_note": "生产启用前必须：①bootstrap 完成且写 completed；②用户明确确认部署。启用后四张价格表（stock_daily/stock_minutes/etf_daily/etf_minutes）水位延迟到协调周期结束统一提交，未通过 QFQ 质量门控不推进。price_source 锁 xtquant 单源（禁止 Tushare/AkShare/Baostock 价格）。watermark_policy 仅允许 hold_until_consistent。"
+    "_note": "已按 docs/qfq-production-enablement-checklist.md 经用户确认于 2026-07-31 启用 enabled=true，进入三步渐进【步骤A observation】期。daemon 每轮 fail-closed（require_bootstrap=true 且无 completed bootstrap），不写生产价格；待 bootstrap-run（0 blocked，须排除精度探针 159915）完成后才进入 B/C 重锚。启用后四张价格表（stock_daily/stock_minutes/etf_daily/etf_minutes）水位延迟到协调周期结束统一提交，未通过 QFQ 质量门控不推进。price_source 锁 xtquant 单源。watermark_policy 仅 hold_until_consistent。"
   },
   "health_check": {
     "stale_alert_hours": 30,
