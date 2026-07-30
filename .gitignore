@@ -57,3 +57,13 @@ Thumbs.db
 # 内部 AI agent 交接文档（不对外交付）
 HANDOFF_ZCODE.md
 ZCODE_START_HERE.md
+
+# 本地 agent 记忆/状态（与 .claude/.codebuddy 同类，不入仓库）
+.workbuddy/
+
+# 回测/基准临时产物（bench 调试残留，非交付物）
+bench_artifacts/
+
+# staging 批次产物（含大库 quantstudio.db，绝不提交；data/*.db 仅锚定根目录，子目录需显式忽略）
+# 覆盖所有 staging_* 子目录（如 staging_batch2_*、staging_fin_growth_dividend_* 等）
+data/staging_*/
