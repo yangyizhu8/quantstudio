@@ -1,0 +1,53 @@
+{
+  "design_version": "2.0",
+  "strategy_id": "v_acceptance_probe",
+  "strategy_name": "Phase-2 Step 5 acceptance probe (dual-target blocking)",
+  "asset_class": "stock",
+  "targets": ["quantstudio", "ptrade"],
+  "engine_profile": {
+    "profile_id": "daily-bar-v1",
+    "bar_frequency": "1d",
+    "match_price_mode": "close"
+  },
+  "market_data_contract": {
+    "signal_price_adjustment": "pre",
+    "execution_price_basis": "pre_adjusted_price"
+  },
+  "strategy_semantics": {
+    "universe": "CSI300 / CSI500 constituent ETF pool",
+    "entry_rules": ["bear-signal entry"],
+    "exit_rules": ["recovery exit"],
+    "portfolio_rules": ["equal weight"],
+    "risk_rules": ["half position in bear regime"]
+  },
+  "timing": {
+    "signal_data_cutoff": "current_bar",
+    "decision_events": [
+      {"name": "handle_data", "lifecycle": "handle_data", "purpose": "daily rebalance"}
+    ],
+    "holding_semantics": "overnight"
+  },
+  "components": {
+    "lifecycle_hooks": ["initialize", "handle_data"],
+    "api_groups": ["history", "order"],
+    "required_apis": []
+  },
+  "constraints": {
+    "hard_filters": [],
+    "no_lookahead": true,
+    "portable_source_required": true,
+    "runtime_state_guard_required": true
+  },
+  "approximations": [
+    {"id": "price_basis", "description": "front-adjusted price basis (fq='pre')", "confirmed": true}
+  ],
+  "open_questions": [],
+  "user_confirmations": {
+    "strategy_semantics": true,
+    "execution_approximations": true,
+    "component_plan": true
+  },
+  "output": {
+    "overwrite": true
+  }
+}
