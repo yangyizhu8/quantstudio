@@ -123,7 +123,9 @@ def test_np_asarray_normalization_passes():
         "            log.info(str(closes[-1]))"
     )
     report = validate_strategy(design(), source_with_body(body), target_profile="ptrade")
-    assert report["status"] == "PASS", report
+    assert report["status"] == "BLOCKED", report
+    blocked_rule_ids = {item["rule_id"] for item in report["issues"] if item["severity"] == "BLOCK"}
+    assert "PTRADE-IS-DICT-BAN" in blocked_rule_ids
 
 
 def test_hasattr_guarded_normalization_passes():
@@ -137,7 +139,9 @@ def test_hasattr_guarded_normalization_passes():
         "            log.info(str(closes[-1]))"
     )
     report = validate_strategy(design(), source_with_body(body), target_profile="ptrade")
-    assert report["status"] == "PASS", report
+    assert report["status"] == "BLOCKED", report
+    blocked_rule_ids = {item["rule_id"] for item in report["issues"] if item["severity"] == "BLOCK"}
+    assert "PTRADE-IS-DICT-BAN" in blocked_rule_ids
 
 
 def test_extract_history_field_helper_passes():
@@ -161,7 +165,9 @@ def test_extract_history_field_helper_passes():
     )
     report = validate_strategy(
         design(), source_with_body(body, prefix=helper), target_profile="ptrade")
-    assert report["status"] == "PASS", report
+    assert report["status"] == "BLOCKED", report
+    blocked_rule_ids = {item["rule_id"] for item in report["issues"] if item["severity"] == "BLOCK"}
+    assert "PTRADE-IS-DICT-BAN" in blocked_rule_ids
 
 
 def test_subscripted_history_item_is_tracked():
@@ -299,7 +305,9 @@ def test_design_22_with_standard_helper_passes():
     )
     report = validate_strategy(
         _design_22(), source_22(body, prefix=helper), target_profile="ptrade")
-    assert report["status"] == "PASS", report
+    assert report["status"] == "BLOCKED", report
+    blocked_rule_ids = {item["rule_id"] for item in report["issues"] if item["severity"] == "BLOCK"}
+    assert "PTRADE-IS-DICT-BAN" in blocked_rule_ids
 
 
 def test_audit_markers_in_comments_do_not_fool_the_gate():
