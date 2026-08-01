@@ -423,7 +423,16 @@ def cmd_reconcile_once(args) -> int:
             codes_filter=codes_filter)
         payload = {**summary.__dict__, "codes_filter": codes_filter}
         _emit(args, payload, [f"reconcile-once 完成: {payload}"])
-        return 0 if summary.status == "finalized" and not summary.error else 1
+        return 0 if (
+            not summary.error
+            and (
+                summary.status == "finalized"
+                or (
+                    summary.status == "finalized_held"
+                    and summary.gate_report.get("scoped_mode", False)
+                )
+            )
+        ) else 1
     finally:
         conn.close()
 

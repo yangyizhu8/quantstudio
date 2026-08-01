@@ -65,6 +65,41 @@ def test_reconcile_once_parser_accepts_codes():
     assert args.codes == "600001,159215"
 
 
+def test_reconcile_once_scoped_held_returns_success(env, monkeypatch):
+    from types import SimpleNamespace
+
+    summary = SimpleNamespace(
+        status="finalized_held", error=None,
+        gate_report={"scoped_mode": True})
+    monkeypatch.setattr(cli, "_make_orchestrator", lambda *args, **kwargs: SimpleNamespace(
+        init_schema=lambda conn: None,
+        begin_cycle=lambda conn: "cyc_scoped",
+        run_post_ingest=lambda *args, **kwargs: summary,
+    ))
+
+    rc = cli.main(_base_args(
+        env, "--override", "enabled=true", "--execute",
+        "reconcile-once", "--codes", "600000"))
+    assert rc == 0
+
+
+def test_reconcile_once_full_held_returns_failure(env, monkeypatch):
+    from types import SimpleNamespace
+
+    summary = SimpleNamespace(
+        status="finalized_held", error=None,
+        gate_report={"scoped_mode": False})
+    monkeypatch.setattr(cli, "_make_orchestrator", lambda *args, **kwargs: SimpleNamespace(
+        init_schema=lambda conn: None,
+        begin_cycle=lambda conn: "cyc_full",
+        run_post_ingest=lambda *args, **kwargs: summary,
+    ))
+
+    rc = cli.main(_base_args(
+        env, "--override", "enabled=true", "--execute", "reconcile-once"))
+    assert rc == 1
+
+
 def _make_ohlc(index_dates, prices):
     idx = pd.to_datetime(index_dates)
     rows = [{"open": o, "high": h, "low": l, "close": c} for (o, h, l, c) in prices]
