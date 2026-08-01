@@ -119,6 +119,55 @@ def test_bootstrap_plan_only_stale_enqueued(orch_env):
     assert {r[0] for r in items} == {"600001"}
 
 
+def test_bootstrap_plan_filters_stock_and_etf_candidates(orch_env):
+    dconn, orch = orch_env
+    dconn.execute(
+        "INSERT INTO stock_daily (code, time) VALUES "
+        "('600001', 1700000000000), ('600002', 1700000000000)"
+    )
+    dconn.execute(
+        "INSERT INTO stock_dividend (code, ex_date, div_proc) VALUES "
+        "('600001','20260108','实施'), ('600002','20260108','实施')"
+    )
+    dconn.execute(
+        "INSERT INTO etf_daily (code, time) VALUES "
+        "('159215', 1700000000000), ('159218', 1700000000000)"
+    )
+    aconn = sqlite3.connect(str(orch.aux_db), timeout=30)
+    try:
+        aconn.executemany(
+            "INSERT INTO qfq_factor_observation "
+            "(asset_type, code, factor_time, factor_value, revision_no, "
+            "first_seen_run_id, last_seen_run_id, first_seen_at, last_seen_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            [
+                ("ETF", "159215", 1700000000000, 1.0, 1,
+                 "run-test", "run-test", "2026-07-31 00:00:00", "2026-07-31 00:00:00"),
+                ("ETF", "159218", 1700000000000, 1.0, 1,
+                 "run-test", "run-test", "2026-07-31 00:00:00", "2026-07-31 00:00:00"),
+            ],
+        )
+        aconn.commit()
+    finally:
+        aconn.close()
+
+    plan = orch.bootstrap_plan(
+        dconn, as_of_ms=1700000000000, codes_filter=["600001", "159215"])
+
+    assert set(plan.items) == {("STOCK", "600001"), ("ETF", "159215")}
+    rows = dconn.execute(
+        "SELECT asset_type, code FROM qfq_bootstrap_item WHERE bootstrap_run_id=?",
+        [plan.run_id],
+    ).fetchall()
+    assert set(rows) == {("STOCK", "600001"), ("ETF", "159215")}
+
+
+def test_bootstrap_plan_rejects_empty_codes_filter(orch_env):
+    dconn, orch = orch_env
+    with pytest.raises(ValueError, match="codes_filter 不能为空"):
+        orch.bootstrap_plan(dconn, as_of_ms=1700000000000, codes_filter=[])
+
+
 def test_bootstrap_completed_true_when_all_terminal(orch_env):
     dconn, orch = orch_env
     dconn.execute(

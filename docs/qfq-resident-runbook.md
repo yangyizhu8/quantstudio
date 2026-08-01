@@ -128,23 +128,40 @@ python -m quantstudio.pipeline.qfq_orchestrator_cli \
 
 ### Bootstrap（首次部署建立基线）
 ```bash
-# 1. 生成计划（stale-only：只入队需重锚的证券）
+# 1. Step B canary 计划（严格限定配置中的 6 位裸码）
 python -m quantstudio.pipeline.qfq_orchestrator_cli --db <DB> --aux-db <AUX> \
-  --override enabled=true bootstrap-plan
+  --override enabled=true --execute --allow-production \
+  bootstrap-plan --codes config/qfq_canary_securities.json
 
 # 2. 分批重锚（真实 xtquant 取数，每批 bootstrap_batch_size 个）
 python -m quantstudio.pipeline.qfq_orchestrator_cli --db <DB> --aux-db <AUX> \
-  --override enabled=true --execute bootstrap-run
+  --override enabled=true --execute --allow-production bootstrap-run
 
 # 3. 审计（completed 须 pending/in_progress/blocked/failed/dead_letter 全 0）
 python -m quantstudio.pipeline.qfq_orchestrator_cli --db <DB> bootstrap-audit
 ```
 
+`bootstrap-plan` 默认扫描全量候选。Step B 必须使用 `--codes`；该参数接受逗号分隔
+的 6 位裸码，或 JSON 数组/包含 `codes` 数组的 JSON 文件。空名单和非法代码会
+直接拒绝，避免意外退化为全量 bootstrap。计划生成后确认其中无 `159915`，执行
+结果须 `blocked=0`。
+
 ### 手动协调一轮（紧急/调试）
 ```bash
+# Canary / 指定证券：恢复、发现、领取、gate 均只处理名单内代码
+python -m quantstudio.pipeline.qfq_orchestrator_cli --db <DB> --aux-db <AUX> \
+  --override enabled=true --execute reconcile-once \
+  --codes config/qfq_canary_securities.json
+
+# 全市场：仅 Step C 明确放开后省略 --codes
 python -m quantstudio.pipeline.qfq_orchestrator_cli --db <DB> --aux-db <AUX> \
   --override enabled=true --execute reconcile-once
 ```
+
+`reconcile-once --codes` 与 `bootstrap-plan --codes` 使用相同的 6 位裸码解析规则。
+指定范围时，仅恢复、晋升、发现、领取和 gate 检查名单内证券；范围外队列不变。
+Scoped reconcile 无论名单内 gate 是否通过，均强制 hold 全局水位，避免局部结果被误判为
+全库已完成。只有不传 `--codes` 的全量周期可以提交全局水位。
 
 ### 恢复（stale in_progress / retry 到期 / scheduled 晋升）
 ```bash

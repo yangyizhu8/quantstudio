@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -31,6 +32,37 @@ def _ms(s: str) -> int:
 
 
 EX_PAST_MS = _ms("2026-07-10")
+
+
+def test_parse_codes_filter_accepts_csv_and_json(tmp_path):
+    assert cli._parse_codes_filter("600001,159215,600001") == ["159215", "600001"]
+
+    path = tmp_path / "canary.json"
+    path.write_text(
+        json.dumps({"codes": ["600002", "159218", "600002"]}),
+        encoding="utf-8",
+    )
+    assert cli._parse_codes_filter(str(path)) == ["159218", "600002"]
+
+
+def test_parse_codes_filter_rejects_empty_or_invalid(tmp_path):
+    with pytest.raises(SystemExit, match="不能为空"):
+        cli._parse_codes_filter("")
+    with pytest.raises(SystemExit, match="6 位裸码"):
+        cli._parse_codes_filter("600001.SH")
+
+    path = tmp_path / "canary.json"
+    path.write_text(json.dumps({"securities": ["600001"]}), encoding="utf-8")
+    with pytest.raises(SystemExit, match="codes 数组"):
+        cli._parse_codes_filter(str(path))
+
+
+def test_reconcile_once_parser_accepts_codes():
+    args = cli.build_parser().parse_args([
+        "--db", "staging.db", "reconcile-once", "--codes", "600001,159215"
+    ])
+    assert args.cmd == "reconcile-once"
+    assert args.codes == "600001,159215"
 
 
 def _make_ohlc(index_dates, prices):

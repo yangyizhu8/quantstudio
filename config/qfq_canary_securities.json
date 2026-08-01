@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "purpose": "QFQ Step B production canary bootstrap and reconcile",
+  "codes": [
+    "000006",
+    "000007",
+    "001201",
+    "002005",
+    "002006",
+    "300001",
+    "301000",
+    "600004",
+    "601002",
+    "603000",
+    "605001",
+    "688001"
+  ],
+  "by_asset": {
+    "STOCK": [
+      "000006",
+      "000007",
+      "001201",
+      "002005",
+      "002006",
+      "300001",
+      "301000",
+      "600004",
+      "601002",
+      "603000",
+      "605001",
+      "688001"
+    ],
+    "ETF": []
+  },
+  "excluded_codes": [
+    "159915"
+  ],
+  "selection_notes": [
+    "Use six-digit bare security codes to match QFQ storage contracts.",
+    "All codes are present in the production implemented-dividend candidate set and the STOCK admissible set at generation time.",
+    "No production ETF factor-observation candidate currently intersects the ETF admissible set, so this canary does not include synthetic or ineligible ETF candidates.",
+    "Exclude 159915 from all Step B canary operations."
+  ]
+}

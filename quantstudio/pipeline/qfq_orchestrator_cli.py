@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -67,6 +68,34 @@ def _now_ms() -> int:
 
 def _now_ts() -> str:
     return datetime.now(BJ_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse_codes_filter(raw: Optional[str]) -> Optional[List[str]]:
+    if raw is None:
+        return None
+    source = raw.strip()
+    if not source:
+        raise SystemExit("--codes 不能为空")
+    path = Path(source)
+    if path.suffix.lower() == ".json":
+        if not path.is_file():
+            raise SystemExit(f"--codes JSON 文件不存在: {path}")
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise SystemExit(f"--codes JSON 文件读取失败: {path}: {exc}") from exc
+        values = payload.get("codes") if isinstance(payload, dict) else payload
+        if not isinstance(values, list):
+            raise SystemExit("--codes JSON 必须是数组，或包含 codes 数组")
+    else:
+        values = source.split(",")
+    codes = sorted({str(value).strip() for value in values if str(value).strip()})
+    invalid = [code for code in codes if not re.fullmatch(r"\d{6}", code)]
+    if invalid:
+        raise SystemExit(f"--codes 含非法证券代码（必须为 6 位裸码）: {invalid}")
+    if not codes:
+        raise SystemExit("--codes 解析后为空，拒绝退化为全量 bootstrap")
+    return codes
 
 
 def _production_db_path() -> Path:
@@ -302,19 +331,23 @@ def cmd_bootstrap_plan(args) -> int:
     db = _resolve_db(args)
     _guard_mutating(args, db)
     cfg = _load_cfg(args)
+    codes_filter = _parse_codes_filter(args.codes)
+    scope = f"指定 {len(codes_filter)} 只证券" if codes_filter is not None else "全量候选"
     if not args.execute:
-        print("[dry-run] 将扫描 stock_dividend(实施) + qfq_factor_observation 生成候选，"
-              "写入 qfq_bootstrap_run/qfq_bootstrap_item(pending)。加 --execute 执行。")
+        print(f"[dry-run] 将按{scope}扫描 stock_dividend(实施) + "
+              "qfq_factor_observation 生成候选，写入 "
+              "qfq_bootstrap_run/qfq_bootstrap_item(pending)。加 --execute 执行。")
         return 0
     conn = _connect(db, read_only=False)
     try:
         orch = _make_orchestrator(cfg, db, args, with_fetcher=False)
         orch.init_schema(conn)
-        plan = orch.bootstrap_plan(conn, as_of_ms=_now_ms())
+        plan = orch.bootstrap_plan(
+            conn, as_of_ms=_now_ms(), codes_filter=codes_filter)
         payload = {"run_id": plan.run_id, "total": plan.total,
-                   "sample": plan.items[:20]}
+                   "codes_filter": codes_filter, "sample": plan.items[:20]}
         _emit(args, payload, [
-            f"bootstrap plan 生成: run_id={plan.run_id} total={plan.total}",
+            f"bootstrap plan 生成: run_id={plan.run_id} total={plan.total} scope={scope}",
             f"样例(≤20): {plan.items[:20]}",
             f"下一步: bootstrap-run --run-id {plan.run_id} --execute"])
         return 0
@@ -369,11 +402,13 @@ def cmd_reconcile_once(args) -> int:
     db = _resolve_db(args)
     _guard_mutating(args, db)
     cfg = _load_cfg(args)
+    codes_filter = _parse_codes_filter(args.codes)
+    scope = f"指定 {len(codes_filter)} 只证券" if codes_filter is not None else "全量证券"
     if not cfg.enabled:
         raise SystemExit("qfq_orchestrator.enabled=false：reconcile-once 拒绝执行"
                          "（紧急回退开关语义；--override enabled=true 可覆盖，仅限 staging）")
     if not args.execute:
-        print("[dry-run] 将执行一轮 post-ingest 协调周期："
+        print(f"[dry-run] 将按{scope}执行一轮 post-ingest 协调周期："
               "recover→discover→claim→fresh(xtquant)→reanchor→gate→水位延迟提交。"
               "加 --execute 执行。")
         return 0
@@ -383,9 +418,10 @@ def cmd_reconcile_once(args) -> int:
         orch.init_schema(conn)
         run_id = f"cli_{uuid.uuid4().hex[:8]}"
         cycle_id = orch.begin_cycle(conn)
-        summary = orch.run_post_ingest(conn, cycle_id=cycle_id, run_id=run_id,
-                                       as_of_ms=_now_ms())
-        payload = summary.__dict__
+        summary = orch.run_post_ingest(
+            conn, cycle_id=cycle_id, run_id=run_id, as_of_ms=_now_ms(),
+            codes_filter=codes_filter)
+        payload = {**summary.__dict__, "codes_filter": codes_filter}
         _emit(args, payload, [f"reconcile-once 完成: {payload}"])
         return 0 if summary.status == "finalized" and not summary.error else 1
     finally:
@@ -477,7 +513,10 @@ def build_parser() -> argparse.ArgumentParser:
     ba = sub.add_parser("bootstrap-audit", help="bootstrap run 审计（只读）")
     ba.add_argument("--run-id", default=None, help="缺省取最近一个 run")
 
-    sub.add_parser("bootstrap-plan", help="生成 bootstrap 计划（写 run/item）")
+    bp = sub.add_parser("bootstrap-plan", help="生成 bootstrap 计划（写 run/item）")
+    bp.add_argument(
+        "--codes", default=None,
+        help="限定 6 位裸码：逗号分隔列表，或 JSON 文件（数组/含 codes 数组）")
 
     for name in ("bootstrap-run", "bootstrap-resume"):
         br = sub.add_parser(name, help="执行 bootstrap 批次（xtquant 真实取数）")
@@ -485,7 +524,10 @@ def build_parser() -> argparse.ArgumentParser:
         br.add_argument("--max-batches", type=int, default=1,
                         help="本次最多执行批次数（每批 bootstrap_batch_size 个证券）")
 
-    sub.add_parser("reconcile-once", help="手动执行一轮 post-ingest 协调周期")
+    rc = sub.add_parser("reconcile-once", help="手动执行一轮 post-ingest 协调周期")
+    rc.add_argument(
+        "--codes", default=None,
+        help="限定 6 位裸码：逗号分隔列表，或 JSON 文件（数组/含 codes 数组）")
 
     sub.add_parser("retry-due", help="stale/retry/scheduled 三类恢复")
 

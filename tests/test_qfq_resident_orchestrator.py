@@ -275,6 +275,73 @@ def test_recover_stale_and_retry_due(tmpdir_path):
     conn.close()
 
 
+def test_claim_and_merge_respects_codes_filter(tmpdir_path):
+    conn = _new_conn()
+    orch = _orch(_cfg(), tmpdir_path)
+    now = datetime.now(BJ_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    for trigger_id, code in [("t_target", "600000"), ("t_other", "600001")]:
+        conn.execute(
+            "INSERT INTO qfq_trigger_queue (trigger_id, asset_type, code, trigger_type, "
+            " detection_source, effective_date, status, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?, 'pending', ?, ?)",
+            [trigger_id, "STOCK", code, "stock_dividend", "stock_dividend",
+             EX_PAST_MS, now, now])
+
+    units = orch._claim_and_merge(
+        conn, cycle_id="cyc_scope", run_id="r_scope", as_of_ms=AS_OF_MS,
+        codes_filter=["600000"])
+
+    assert [unit["code"] for unit in units] == ["600000"]
+    states = dict(conn.execute(
+        "SELECT trigger_id, status FROM qfq_trigger_queue ORDER BY trigger_id"
+    ).fetchall())
+    assert states == {"t_other": "pending", "t_target": "in_progress"}
+    conn.close()
+
+
+def test_run_post_ingest_propagates_codes_filter(tmpdir_path, monkeypatch):
+    conn = _new_conn()
+    orch = _orch(_cfg(), tmpdir_path)
+    cid = orch.begin_cycle(conn)
+    seen = {}
+
+    def record(name, result):
+        def wrapped(*args, **kwargs):
+            seen[name] = kwargs.get("codes_filter")
+            return result
+        return wrapped
+
+    monkeypatch.setattr(orch, "recover_stale_in_progress", record("stale", 0))
+    monkeypatch.setattr(orch, "recover_pending_due", record("retry", 0))
+    monkeypatch.setattr(orch, "promote_scheduled_due", record("scheduled", 0))
+    monkeypatch.setattr(orch, "_discover", record("discover", []))
+    monkeypatch.setattr(orch, "_claim_and_merge", record("claim", []))
+    monkeypatch.setattr(
+        orch, "_qfq_gate",
+        lambda *args, **kwargs: (
+            seen.__setitem__("gate", kwargs.get("codes_filter")) or True,
+            {"passed": True, "reasons": []},
+        ),
+    )
+
+    summary = orch.run_post_ingest(
+        conn, cycle_id=cid, run_id="r_scope", as_of_ms=AS_OF_MS,
+        codes_filter=["600000", "600000"])
+
+    assert seen == {
+        "stale": ("600000",),
+        "retry": ("600000",),
+        "scheduled": ("600000",),
+        "discover": ("600000",),
+        "claim": ("600000",),
+        "gate": ("600000",),
+    }
+    assert summary.status == "finalized_held"
+    assert summary.gate_report["scoped_gate_passed"] is True
+    assert summary.gate_report["passed"] is False
+    conn.close()
+
+
 # ---------------------------------------------------------------------------
 # e2e：发现 → 领取 → fake 引擎 committed → 水位提交
 # ---------------------------------------------------------------------------

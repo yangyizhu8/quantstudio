@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from quantstudio.pipeline.qfq_orchestrator_types import (
     QFQOrchestratorConfig,
@@ -109,7 +109,8 @@ class EventDiscovery:
     # 1. stock_dividend 全表哈希扫描 → trigger（DuckDB 主库）
     # ------------------------------------------------------------------
     def scan_stock_dividend(self, conn, *, as_of_ms: int, run_id: str,
-                            bootstrap: bool = False) -> List[TriggerRecord]:
+                            bootstrap: bool = False,
+                            codes_filter: Optional[Sequence[str]] = None) -> List[TriggerRecord]:
         """扫描 stock_dividend（div_proc='实施' 且 ex_date 非空）生成 STOCK 分红 trigger。
 
         - 全表扫描（约 5 万行），不依赖日期 cursor —— 防晚到修订漏检。
@@ -145,9 +146,15 @@ class EventDiscovery:
         _where = "ex_date IS NOT NULL"
         if "div_proc" in present:
             _where = f"div_proc='实施' AND {_where}"
+        _params: List[object] = []
+        if codes_filter:
+            placeholders = ", ".join(["?"] * len(codes_filter))
+            _where += f" AND code IN ({placeholders})"
+            _params.extend(codes_filter)
         rows = conn.execute(
             "SELECT {cols} FROM stock_dividend WHERE {where}".format(
-                cols=", ".join(_sel), where=_where)
+                cols=", ".join(_sel), where=_where),
+            _params,
         ).fetchall()
 
         new_records: List[TriggerRecord] = []
@@ -212,7 +219,8 @@ class EventDiscovery:
     # ------------------------------------------------------------------
     def _observe_factors(self, conn, *, as_of_ms: int, run_id: str,
                          bootstrap: bool, asset_type: str, table: str,
-                         detector_name: str) -> ObservationResult:
+                         detector_name: str,
+                         codes_filter: Optional[Sequence[str]] = None) -> ObservationResult:
         """读 qfq_aux.db 的因子快照表 → record_observations；更新观测游标。
 
         bootstrap 时仍记录 observation（首次 revision_no=1，不产生 alert，正好建立基线）。
@@ -234,8 +242,13 @@ class EventDiscovery:
             aux_conn.execute("PRAGMA busy_timeout=30000")
             init_sqlite_schema(aux_conn)
 
-            factor_rows = aux_conn.execute(
-                f"SELECT code, time, adj_factor FROM {table}").fetchall()
+            factor_sql = f"SELECT code, time, adj_factor FROM {table}"
+            factor_params: List[object] = []
+            if codes_filter:
+                placeholders = ", ".join(["?"] * len(codes_filter))
+                factor_sql += f" WHERE code IN ({placeholders})"
+                factor_params.extend(codes_filter)
+            factor_rows = aux_conn.execute(factor_sql, factor_params).fetchall()
             observations = [
                 (asset_type, str(code), int(time), float(adj_factor))
                 for code, time, adj_factor in factor_rows
@@ -250,9 +263,10 @@ class EventDiscovery:
         finally:
             aux_conn.close()
 
-        # 更新检测游标
-        self._upsert_cursor(conn, detector_name, asset_type, as_of_ms, run_id,
-                            status="ok")
+        # 局部代码扫描不能推进全局检测游标，否则后续全量周期可能漏检。
+        if not codes_filter:
+            self._upsert_cursor(conn, detector_name, asset_type, as_of_ms, run_id,
+                                status="ok")
         return result
 
     # ------------------------------------------------------------------
@@ -289,26 +303,29 @@ class EventDiscovery:
                     f"({fn.asset_type} {fn.code} @ {fn.factor_time})")
 
     def observe_stock_adj_factor(self, conn, *, as_of_ms: int, run_id: str,
-                                 bootstrap: bool = False) -> ObservationResult:
+                                 bootstrap: bool = False,
+                                 codes_filter: Optional[Sequence[str]] = None) -> ObservationResult:
         """股票 adj_factor 快照 → 版本化 observation。"""
         return self._observe_factors(
             conn, as_of_ms=as_of_ms, run_id=run_id, bootstrap=bootstrap,
             asset_type="STOCK", table=ADJ_FACTOR_TABLE,
-            detector_name="stock_adj_factor")
+            detector_name="stock_adj_factor", codes_filter=codes_filter)
 
     def observe_etf_fund_adj(self, conn, *, as_of_ms: int, run_id: str,
-                             bootstrap: bool = False) -> ObservationResult:
+                             bootstrap: bool = False,
+                             codes_filter: Optional[Sequence[str]] = None) -> ObservationResult:
         """ETF fund_adj 快照 → 版本化 observation。"""
         return self._observe_factors(
             conn, as_of_ms=as_of_ms, run_id=run_id, bootstrap=bootstrap,
             asset_type="ETF", table=FUND_ADJ_TABLE,
-            detector_name="etf_fund_adj")
+            detector_name="etf_fund_adj", codes_filter=codes_filter)
 
     # ------------------------------------------------------------------
     # 4. 消费 revision alert outbox → DuckDB trigger（幂等）
     # ------------------------------------------------------------------
     def consume_revision_alerts(self, conn, *, run_id: str,
-                                as_of_ms: int) -> List[TriggerRecord]:
+                                as_of_ms: int,
+                                codes_filter: Optional[Sequence[str]] = None) -> List[TriggerRecord]:
         """把 pending revision alert 幂等转成 DuckDB trigger。
 
         顺序（崩溃可重放）：先幂等落 DuckDB trigger，再 acknowledge_alert（SQLite）。
@@ -325,9 +342,12 @@ class EventDiscovery:
             init_sqlite_schema(aux_conn)
 
             alerts = self.obs_store.list_pending_alerts(conn=aux_conn)
+            allowed_codes = set(codes_filter or ())
             for alert in alerts:
                 asset_type = alert["asset_type"]
                 code = alert["code"]
+                if allowed_codes and code not in allowed_codes:
+                    continue
                 factor_time = int(alert["factor_time"])
                 revision_no = int(alert["revision_no"])
 

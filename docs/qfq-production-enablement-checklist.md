@@ -54,10 +54,10 @@
 - **重要修正（实测 2026-07-31）**：fail-closed 发生在 discovery **之前**，故 Step A 期间**看不到 `triggers_found > 0`**（trigger_queue 不会增长）。`triggers_found > 0` 的实际可见时点是 Step B 建完 completed bootstrap 之后。Step A 的真正价值 = 验证 daemon 与 QFQ 编排器集成稳定、无回归。
 - **通过条件**：daemon 连续 N 轮（跨 1-2 交易日）fail-closed 干净、qfq 表已建、`dead_letter = 0`、无异常日志。
 
-### 步骤 B：Canary（10-20 只证券，2-3 个交易日）
-- **canary 子集机制（2026-07-31 确定）**：`config/qfq_canary_securities.json`（10-20 只代表性 code，含 TICK_TOLERANCE 代表 + 常规 ETF/股票基线；**须排除精度探针 159915**）。`bootstrap-plan` 经 `--codes` 过滤只处理该名单（详见 §7）。
-- **操作顺序**：`bootstrap-plan`（dry 确认候选）→ `bootstrap-run --execute --allow-production`（建基线，**必须 0 blocked**）→ `reconcile-once --execute --allow-production` 增量。bootstrap 必须先于 reconcile（否则 fail-closed）。
-- **观察**：committed + 守恒（`*_front` 列不变）+ 无 dead_letter。
+### 步骤 B：Canary（12 只证券，2-3 个交易日）
+- **canary 子集机制（2026-07-31 已实现）**：`config/qfq_canary_securities.json` 包含 12 只正式库中实际存在的实施分红候选，均属于 STOCK 准入集，并明确排除精度探针 `159915`。当前正式库不存在“ETF 因子观察候选 ∩ ETF 准入集”，因此不以无效 ETF 凑数；ETF 过滤路径由单元测试覆盖。
+- **操作顺序**：备份正式库 → `bootstrap-plan --codes config/qfq_canary_securities.json --execute --allow-production` → `bootstrap-run --execute --allow-production`（建基线，**必须 0 blocked**）→ `reconcile-once --codes config/qfq_canary_securities.json --execute --allow-production` 增量。bootstrap 必须先于 reconcile（否则 fail-closed）。Scoped reconcile 仅处理名单内证券并强制 hold 全局水位；Step C 全量周期才允许省略 `--codes`。
+- **观察**：committed + raw/back 守恒 + 无 dead_letter。
 - **通过条件**：canary 名单内证券 **100% committed** + **raw/back 守恒** + dead_letter=0。
 
 ### 步骤 C：全市场（准入名单全部 5487 只）
@@ -123,25 +123,51 @@
 
 ---
 
-## 7. Canary 子集与 `--codes` 过滤（Step B 准备，2026-07-31 确定）
+## 7. Canary 子集与 `--codes` 过滤（Step B 准备，2026-07-31 已完成）
 
 ### 7.1 子集名单文件
-在 `config/` 下生成 `qfq_canary_securities.json`：
+`config/qfq_canary_securities.json` 当前包含 12 只 6 位裸码：
+
 ```json
-{ "codes": ["510300", "159919", "510500", "512100", "159205", "159215", "159218", "588200", "159740"] }
+{
+  "codes": [
+    "000001", "000002", "000012", "002864", "300750", "600000",
+    "600016", "600085", "600519", "600875", "601318", "601607"
+  ]
+}
 ```
-（10-20 只代表性证券：含 TICK_TOLERANCE 代表 + 常规 ETF/股票基线；**须排除精度探针 159915**，
-因其有 1 行 |Δ|>0.001 真实差异会被 blocked，导致 bootstrap 整条 fail-closed。）
+
+上述代码在生成时均满足“正式库实施分红候选 ∩ STOCK 准入集”，并明确排除
+精度探针 `159915`。当前正式库不存在“ETF 因子观察候选 ∩ ETF 准入集”，因此
+本轮生产 canary 不加入不会进入 bootstrap 计划的 ETF；ETF 分支仍有过滤单测覆盖。
 
 ### 7.2 范围限定机制
-- `bootstrap_plan` 当前候选来源 = `stock_dividend(div_proc='实施')` + `qfq_factor_observation`（aux），
-  **无内建 code 过滤参数**。
-- Step B 准备阶段需给 `bootstrap-plan` / `bootstrap-run` 增加 `--codes` 开关（或读取
-  `qfq_canary_securities.json`）以只处理 canary 名单内的 code；该过滤为纯子集裁剪（不改变引擎 /
-  门控语义），属最小、可逆实现，单独评估后实施，不混入其他改动。
-- Step C 扩展时只需将名单换为全量准入（`config/qfq_rebase_admissible_securities.json`，5487 只），
-  其余命令不变。
+- `bootstrap_plan(conn, as_of_ms=..., codes_filter=...)` 在 DuckDB 的
+  `stock_dividend(div_proc='实施')` 和 SQLite 的 `qfq_factor_observation` 两类候选查询中
+  使用参数化 `code IN (...)`，只将指定代码固化为 bootstrap item。
+- CLI `bootstrap-plan --codes` 接受逗号分隔的 6 位裸码，或 JSON 数组/包含 `codes`
+  数组的 JSON 文件；空名单和非法代码 fail-closed，拒绝退化为全量计划。
+- `bootstrap-run` 按 `run_id` 执行已固化的 item，无需也不应再次解释 `--codes`。
+- Step C 不传 `--codes` 即恢复原有全量候选语义；公共返回结构、重锚门控和撮合逻辑不变。
 
-### 7.3 为何不能「全局 enabled 后靠准入名单自动限范围」
-`bootstrap_plan` 枚举的是「有除权/因子观察的证券」，不读准入名单文件；若不加 `--codes` 过滤，
-bootstrap 会覆盖全市场候选（数千只），违背 Step B 的 canary 隔离意图。故必须显式子集过滤。
+### 7.3 Step B 命令
+```bash
+# 先备份 data/quantstudio.db 与 data/qfq_aux.db
+python -m quantstudio.pipeline.qfq_orchestrator_cli \
+  --db data/quantstudio.db --aux-db data/qfq_aux.db \
+  --override enabled=true --execute --allow-production \
+  bootstrap-plan --codes config/qfq_canary_securities.json
+
+python -m quantstudio.pipeline.qfq_orchestrator_cli \
+  --db data/quantstudio.db --aux-db data/qfq_aux.db \
+  --override enabled=true --execute --allow-production bootstrap-run
+
+python -m quantstudio.pipeline.qfq_orchestrator_cli \
+  --db data/quantstudio.db --aux-db data/qfq_aux.db \
+  --override enabled=true --execute --allow-production reconcile-once \
+  --codes config/qfq_canary_securities.json
+```
+
+计划和执行验收：12 只候选、无 `159915`、`blocked=0`；scoped reconcile 仅处理
+名单内证券并保持全局水位 held。随后检查 committed、raw/back 守恒和 `dead_letter=0`；
+Step C 执行全量 reconcile 时才省略 `--codes`。

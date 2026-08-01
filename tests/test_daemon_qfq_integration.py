@@ -377,12 +377,14 @@ class TestConfigLintQfq:
         assert any("watermark_polcy" in w for w in warnings)
 
     def test_production_config_lints_clean(self):
-        """正式 config/collector_tasks.json 的 qfq 块必须通过 lint（enabled=false）。"""
-        cfg_path = _ROOT / "config" / "collector_tasks.json"
-        tasks_cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        """正式 qfq 与数据源配置组合必须通过 lint。"""
+        tasks_cfg = json.loads(
+            (_ROOT / "config" / "collector_tasks.json").read_text(encoding="utf-8"))
+        sources_cfg = json.loads(
+            (_ROOT / "config" / "sources_config.json").read_text(encoding="utf-8"))
         block = tasks_cfg.get("qfq_orchestrator")
-        assert block is not None and block.get("enabled") is False  # 安全默认
-        errors, _ = self._lint(block)
+        assert block is not None
+        errors, _ = self._lint(block, sources_cfg.get("sources"))
         assert errors == []
 
 

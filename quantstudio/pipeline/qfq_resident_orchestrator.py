@@ -191,14 +191,21 @@ class QFQResidentOrchestrator:
     # ------------------------------------------------------------------
     # 重启恢复
     # ------------------------------------------------------------------
-    def recover_stale_in_progress(self, conn, run_id: str) -> int:
+    def recover_stale_in_progress(self, conn, run_id: str,
+                                  codes_filter: Optional[Sequence[str]] = None) -> int:
         """回收 lease 超时的 in_progress trigger → 回到 pending/retryable_failed。"""
         lease = self.cfg.claim_lease_sec
         cutoff = (_now_iso_ts() - timedelta(seconds=lease)).isoformat(timespec="seconds")
-        rows = conn.execute(
+        sql = (
             "SELECT trigger_id, attempt_count FROM qfq_trigger_queue "
-            "WHERE status='in_progress' AND claimed_at IS NOT NULL AND claimed_at < ?",
-            [cutoff]).fetchall()
+            "WHERE status='in_progress' AND claimed_at IS NOT NULL AND claimed_at < ?"
+        )
+        params: List[object] = [cutoff]
+        if codes_filter:
+            placeholders = ", ".join(["?"] * len(codes_filter))
+            sql += f" AND code IN ({placeholders})"
+            params.extend(codes_filter)
+        rows = conn.execute(sql, params).fetchall()
         n = 0
         for tid, attempt in rows:
             if (attempt or 0) > 0:
@@ -220,15 +227,23 @@ class QFQResidentOrchestrator:
             logger.info(f"[qfq_orch] 回收 {n} 个 stale in_progress（lease={lease}s）")
         return n
 
-    def promote_scheduled_due(self, conn, *, as_of_ms: int) -> int:
+    def promote_scheduled_due(self, conn, *, as_of_ms: int,
+                              codes_filter: Optional[Sequence[str]] = None) -> int:
         """future 事件到期（effective_date <= as_of）→ scheduled 晋升 pending。
 
         没有这步，除权日尚未到达时登记的 scheduled trigger 会永久搁置（红线）。
         """
-        rows = conn.execute(
+        sql = (
             "SELECT trigger_id FROM qfq_trigger_queue "
             "WHERE status='scheduled' AND effective_date IS NOT NULL "
-            "AND effective_date <= ?", [as_of_ms]).fetchall()
+            "AND effective_date <= ?"
+        )
+        params: List[object] = [as_of_ms]
+        if codes_filter:
+            placeholders = ", ".join(["?"] * len(codes_filter))
+            sql += f" AND code IN ({placeholders})"
+            params.extend(codes_filter)
+        rows = conn.execute(sql, params).fetchall()
         n = 0
         for (tid,) in rows:
             conn.execute(
@@ -239,14 +254,21 @@ class QFQResidentOrchestrator:
             logger.info(f"[qfq_orch] {n} 个 scheduled trigger 到期晋升 pending")
         return n
 
-    def recover_pending_due(self, conn, run_id: str) -> int:
+    def recover_pending_due(self, conn, run_id: str,
+                            codes_filter: Optional[Sequence[str]] = None) -> int:
         """retryable_failed 且到达 next_retry_at → 回到 pending 供本轮领取。"""
         now_iso = _now_iso_ts().isoformat(timespec="seconds")
-        rows = conn.execute(
+        sql = (
             "SELECT trigger_id FROM qfq_trigger_queue "
             "WHERE status='retryable_failed' AND next_retry_at IS NOT NULL "
-            "AND next_retry_at <= ?",
-            [now_iso]).fetchall()
+            "AND next_retry_at <= ?"
+        )
+        params: List[object] = [now_iso]
+        if codes_filter:
+            placeholders = ", ".join(["?"] * len(codes_filter))
+            sql += f" AND code IN ({placeholders})"
+            params.extend(codes_filter)
+        rows = conn.execute(sql, params).fetchall()
         n = 0
         for (tid,) in rows:
             conn.execute(
@@ -260,31 +282,43 @@ class QFQResidentOrchestrator:
     # ------------------------------------------------------------------
     # 事件发现
     # ------------------------------------------------------------------
-    def _discover(self, conn, *, run_id: str, as_of_ms: int) -> List[TriggerRecord]:
+    def _discover(self, conn, *, run_id: str, as_of_ms: int,
+                  codes_filter: Optional[Sequence[str]] = None) -> List[TriggerRecord]:
         new: List[TriggerRecord] = []
         disc = self.discovery
-        new += disc.scan_stock_dividend(conn, as_of_ms=as_of_ms, run_id=run_id)
-        disc.observe_stock_adj_factor(conn, as_of_ms=as_of_ms, run_id=run_id)
-        disc.observe_etf_fund_adj(conn, as_of_ms=as_of_ms, run_id=run_id)
-        new += disc.consume_revision_alerts(conn, run_id=run_id, as_of_ms=as_of_ms)
+        new += disc.scan_stock_dividend(
+            conn, as_of_ms=as_of_ms, run_id=run_id, codes_filter=codes_filter)
+        disc.observe_stock_adj_factor(
+            conn, as_of_ms=as_of_ms, run_id=run_id, codes_filter=codes_filter)
+        disc.observe_etf_fund_adj(
+            conn, as_of_ms=as_of_ms, run_id=run_id, codes_filter=codes_filter)
+        new += disc.consume_revision_alerts(
+            conn, run_id=run_id, as_of_ms=as_of_ms, codes_filter=codes_filter)
         return new
 
     # ------------------------------------------------------------------
     # 领取 + 合并
     # ------------------------------------------------------------------
     def _claim_and_merge(self, conn, *, cycle_id: str, run_id: str,
-                         as_of_ms: int) -> List[Dict]:
+                         as_of_ms: int,
+                         codes_filter: Optional[Sequence[str]] = None) -> List[Dict]:
         """领取到期 trigger（pending / retryable_failed 已回到 pending），同券合并。"""
         now_dt = _now_iso_ts()
         now_iso = now_dt.isoformat(timespec="seconds")
-        rows = conn.execute(
+        sql = (
             "SELECT trigger_id, asset_type, code, trigger_type, effective_date, "
             " payload_hash, factor_old, factor_new, factor_revision, status, attempt_count "
             " FROM qfq_trigger_queue "
             " WHERE status='pending' AND effective_date IS NOT NULL "
-            " AND effective_date <= ? "
-            " ORDER BY asset_type, code",
-            [as_of_ms]).fetchall()
+            " AND effective_date <= ?"
+        )
+        params: List[object] = [as_of_ms]
+        if codes_filter:
+            placeholders = ", ".join(["?"] * len(codes_filter))
+            sql += f" AND code IN ({placeholders})"
+            params.extend(codes_filter)
+        sql += " ORDER BY asset_type, code"
+        rows = conn.execute(sql, params).fetchall()
         # 领取（乐观）：标记 in_progress
         claimed_ids = [r[0] for r in rows]
         if claimed_ids:
@@ -521,7 +555,8 @@ class QFQResidentOrchestrator:
     # 质量门控（编排级）
     # ------------------------------------------------------------------
     def _qfq_gate(self, conn, cycle_id: str, claimed_units: List[Dict],
-                  run_id: str) -> Tuple[bool, Dict]:
+                  run_id: str,
+                  codes_filter: Optional[Sequence[str]] = None) -> Tuple[bool, Dict]:
         """编排级 gate：决定本轮水位是否可提交。
 
         通过条件：
@@ -532,17 +567,28 @@ class QFQResidentOrchestrator:
         report: Dict = {"passed": True, "reasons": []}
         # orphan in_progress（lease 内）
         cutoff = (_now_iso_ts() - timedelta(seconds=self.cfg.claim_lease_sec)).isoformat(timespec="seconds")
-        orphan = conn.execute(
+        orphan_sql = (
             "SELECT COUNT(*) FROM qfq_trigger_queue "
-            "WHERE status='in_progress' AND (claimed_at IS NULL OR claimed_at >= ?)",
-            [cutoff]).fetchone()[0]
+            "WHERE status='in_progress' AND (claimed_at IS NULL OR claimed_at >= ?)"
+        )
+        orphan_params: List[object] = [cutoff]
+        if codes_filter:
+            placeholders = ", ".join(["?"] * len(codes_filter))
+            orphan_sql += f" AND code IN ({placeholders})"
+            orphan_params.extend(codes_filter)
+        orphan = conn.execute(orphan_sql, orphan_params).fetchone()[0]
         if orphan > 0:
             report["passed"] = False
             report["reasons"].append(f"orphan in_progress={orphan}")
         # dead letter（阈值 = quality_thresholds.dead_letter_max，默认 0 = 零容忍）
         dl_max = int(self.cfg.quality_thresholds.get("dead_letter_max", 0))
-        dl = conn.execute(
-            "SELECT COUNT(*) FROM qfq_trigger_queue WHERE status='dead_letter'").fetchone()[0]
+        dl_sql = "SELECT COUNT(*) FROM qfq_trigger_queue WHERE status='dead_letter'"
+        dl_params: List[object] = []
+        if codes_filter:
+            placeholders = ", ".join(["?"] * len(codes_filter))
+            dl_sql += f" AND code IN ({placeholders})"
+            dl_params.extend(codes_filter)
+        dl = conn.execute(dl_sql, dl_params).fetchone()[0]
         if dl > dl_max:
             report["passed"] = False
             report["reasons"].append(f"dead_letter={dl} 超过阈值 {dl_max}")
@@ -725,15 +771,28 @@ class QFQResidentOrchestrator:
             return "consistent"
         return "stale"
 
-    def bootstrap_plan(self, conn, *, as_of_ms: int) -> BootstrapPlan:
+    def bootstrap_plan(self, conn, *, as_of_ms: int,
+                       codes_filter: Optional[Sequence[str]] = None) -> BootstrapPlan:
         """候选 = 有股票分红(实施) 或 有因子观察的证券；仅 'stale' 入队重锚（任务6.1）。"""
         candidates: List[Tuple[str, str]] = []
+        codes = sorted({str(code).strip() for code in (codes_filter or []) if str(code).strip()})
+        where_sql = ""
+        params: List[str] = []
+        if codes_filter is not None:
+            if not codes:
+                raise ValueError("codes_filter 不能为空")
+            placeholders = ",".join("?" for _ in codes)
+            where_sql = f" AND code IN ({placeholders})"
+            params = codes
         sd = conn.execute(
-            "SELECT DISTINCT code FROM stock_dividend WHERE div_proc='实施'").fetchall()
+            "SELECT DISTINCT code FROM stock_dividend WHERE div_proc='实施'" + where_sql,
+            params).fetchall()
         for (code,) in sd:
             candidates.append(("STOCK", code))
-        obs = self._aux_query(
-            "SELECT DISTINCT asset_type, code FROM qfq_factor_observation")
+        obs_sql = "SELECT DISTINCT asset_type, code FROM qfq_factor_observation"
+        if codes_filter is not None:
+            obs_sql += f" WHERE code IN ({','.join('?' for _ in codes)})"
+        obs = self._aux_query(obs_sql, params)
         for at, code in obs:
             candidates.append((at, code))
         # 去重
@@ -876,7 +935,8 @@ class QFQResidentOrchestrator:
     # ------------------------------------------------------------------
     def run_post_ingest(self, conn, *, cycle_id: str, run_id: str,
                         as_of_ms: int, fetcher: Optional[FreshFetcher] = None,
-                        detector_degraded: bool = False) -> CycleSummary:
+                        detector_degraded: bool = False,
+                        codes_filter: Optional[Sequence[str]] = None) -> CycleSummary:
         """daemon 在普通增量任务 + 水位延迟写完后调用。
 
         流程：recover → discover → claim/merge → reanchor → gate → commit/hold watermarks。
@@ -885,6 +945,7 @@ class QFQResidentOrchestrator:
         detector_degraded: 由 daemon 调用方传入，表示本轮因子刷新失败/缺失，
             检测器不可信 → 四价格表水位强制 hold（仍跑 discover，但 gate 不通过）。
         """
+        scope = tuple(dict.fromkeys(codes_filter or ())) or None
         fetcher = fetcher or self.fetcher
         summary = CycleSummary(cycle_id=cycle_id)
         if not self.cfg.enabled:
@@ -912,17 +973,20 @@ class QFQResidentOrchestrator:
             return summary
         try:
             self._set_cycle_phase(conn, cycle_id, "recovering")
-            self.recover_stale_in_progress(conn, run_id)
-            self.recover_pending_due(conn, run_id)
-            self.promote_scheduled_due(conn, as_of_ms=as_of_ms)
+            self.recover_stale_in_progress(conn, run_id, codes_filter=scope)
+            self.recover_pending_due(conn, run_id, codes_filter=scope)
+            self.promote_scheduled_due(
+                conn, as_of_ms=as_of_ms, codes_filter=scope)
 
             self._set_cycle_phase(conn, cycle_id, "observing")
-            new_triggers = self._discover(conn, run_id=run_id, as_of_ms=as_of_ms)
+            new_triggers = self._discover(
+                conn, run_id=run_id, as_of_ms=as_of_ms, codes_filter=scope)
             summary.triggers_found = len(new_triggers)
 
             self._set_cycle_phase(conn, cycle_id, "fetching")
-            units = self._claim_and_merge(conn, cycle_id=cycle_id, run_id=run_id,
-                                          as_of_ms=as_of_ms)
+            units = self._claim_and_merge(
+                conn, cycle_id=cycle_id, run_id=run_id, as_of_ms=as_of_ms,
+                codes_filter=scope)
             summary.claimed = len(units)
 
             self._set_cycle_phase(conn, cycle_id, "applying")
@@ -935,7 +999,16 @@ class QFQResidentOrchestrator:
                                             outcome=outcome, fetcher=fetcher, summary=summary)
 
             self._set_cycle_phase(conn, cycle_id, "gating")
-            passed, report = self._qfq_gate(conn, cycle_id, units, run_id)
+            passed, report = self._qfq_gate(
+                conn, cycle_id, units, run_id, codes_filter=scope)
+            if scope:
+                scoped_passed = passed
+                passed = False
+                report["scoped_codes"] = list(scope)
+                report["scoped_gate_passed"] = scoped_passed
+                report["passed"] = False
+                report.setdefault("reasons", []).append(
+                    "scoped reconcile: 全局水位强制 hold")
             if detector_degraded:
                 # 因子检测器本轮不可信（刷新失败/缺失）→ 四价格表水位强制 hold：
                 # 仍跑 discover，但 gate 不通过，避免基于不可信因子重锚推进水位。
