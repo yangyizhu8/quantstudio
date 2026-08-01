@@ -1,0 +1,90 @@
+{
+  "_meta": {
+    "schema_version": "1.0-draft",
+    "round": "round1-P0-P1B",
+    "generated_by": "scripts/p0_baseline_inventory.py (READ-ONLY)",
+    "baseline_commit": "da2dace",
+    "description": "P0 双库基线覆盖矩阵 + QuestDB 源表映射草案。供 B 阶段起草 MCP 数据集契约。",
+    "code_format_note": "DuckDB=裸数字(600063) 无后缀; QuestDB=SYMBOL带后缀(600063.SH)。转换在MCP客户端完成。"
+  },
+  "coverage_matrix": {
+    "Q1_astock_daily": {
+      "duckdb_table": "stock_daily",
+      "duckdb_rows": 8960000,
+      "questdb_source_table": "stock_daily",
+      "questdb_rows": 14233566,
+      "questdb_columns": ["ts_code", "trade_date", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "vol", "amount", "adj_factor", "is_qfq"],
+      "authority": "xtquant",
+      "adj_policy": "raw + adj_factor (客户端复权)",
+      "gap": "none"
+    },
+    "Q2_astock_minutes": {
+      "duckdb_table": "stock_minutes",
+      "duckdb_rows": 28790000,
+      "questdb_source_table": "stock_minutes",
+      "questdb_rows": 478535169,
+      "questdb_columns": ["ts_code", "trade_time", "freq", "open", "high", "low", "close", "vol", "amount", "adj_factor", "is_qfq"],
+      "authority": "xtquant",
+      "adj_policy": "raw + adj_factor (客户端复权)",
+      "pagination": "4.78亿行需 Parquet 分片 + 游标分页 (B3)",
+      "gap": "none"
+    },
+    "Q3_etf_daily": {
+      "duckdb_table": "etf_daily",
+      "duckdb_rows": 1320000,
+      "questdb_source_table": "etf_daily",
+      "questdb_rows": 2417403,
+      "questdb_columns": ["ts_code", "trade_date", "pre_close", "open", "high", "low", "close", "change", "pct_chg", "vol", "amount", "adj_factor", "is_qfq"],
+      "authority": "xtquant",
+      "adj_policy": "raw + adj_factor",
+      "gap": "none"
+    },
+    "Q4_etf_minutes": {
+      "duckdb_table": "etf_minutes",
+      "duckdb_rows": 49910000,
+      "questdb_source_table": "etf_minutes",
+      "questdb_rows": 119877256,
+      "questdb_columns": ["ts_code", "trade_time", "freq", "open", "high", "low", "close", "vol", "amount", "adj_factor", "is_qfq"],
+      "authority": "xtquant",
+      "adj_policy": "raw + adj_factor",
+      "gap": "none"
+    },
+    "Q5_fundamentals": {
+      "duckdb_tables": ["balance_statement", "income_statement", "cashflow_statement", "fin_indicator", "stock_daily_valuation"],
+      "questdb_source_tables": ["balance_statement", "income_statement", "cashflow_statement", "fin_indicator", "stock_daily_valuation"],
+      "authority": "xtquant + tushare (双源, xtquant 主)",
+      "gap": "local 9000 未建财务表 → 以云端 C0 校验报告为准"
+    },
+    "Q6_reference": {
+      "duckdb_tables": ["stock_basic", "index_daily", "sw_classify", "ths_member", "hm_list", "limit_list_d", "trade_calendar"],
+      "questdb_source_tables": ["stock_basic", "index_daily", "sw_classify", "ths_member", "hm_list", "limit_list_d"],
+      "authority": "tushare / 第三方",
+      "gap": "trade_calendar 云端109表缺失 → 客户端 fallback DuckDB 本地表"
+    },
+    "Q7_research": {
+      "duckdb_tables": ["ai_research_snapshot", "block_trade", "broker_recommend", "cninfo_first_rating", "cry_search"],
+      "questdb_source_tables": ["ai_research_snapshot", "block_trade", "broker_recommend", "cninfo_first_rating"],
+      "authority": "混合",
+      "gap": "cry_search 云端未建 → fallback 本地"
+    }
+  },
+  "questdb_source_tables": {
+    "count": 109,
+    "list_file": "output/mcp_migration/P0_baseline/questdb_109_tables.txt",
+    "code_format": "symbol_with_suffix",
+    "time_type": "TIMESTAMP(UTC)",
+    "designated_timestamp": {"daily": "trade_date", "minutes": "trade_time"},
+    "canonical_examples": {
+      "stock_daily": {"rows": 14233566, "adj_factor": true, "is_qfq": true},
+      "stock_minutes": {"rows": 478535169, "adj_factor": true},
+      "etf_daily": {"rows": 2417403},
+      "etf_minutes": {"rows": 119877256}
+    }
+  },
+  "client_side_contract": {
+    "code_normalization": "strip_suffix(.SH/.SZ) for DuckDB; keep_suffix for QuestDB",
+    "adj_rule": "adjusted_price = raw_price * adj_factor (禁止信任云端 open_back/close_back 前端复权列)",
+    "pit_rule": "以 trade_date/trade_time 为基准，禁止未来数据泄漏",
+    "write_rule": "MCP server 只读返回; 本地写库由 QuantStudio 客户端负责"
+  }
+}
