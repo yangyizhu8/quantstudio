@@ -30,7 +30,7 @@ def main():
         batch_audit_path=str(DATA_ROOT / "batch_audit.db"),
     )
 
-    window = MainWindow(db_helper=db_helper, config_dir=ROOT / "config")
+    window = MainWindow(db_helper=db_helper, config_dir=ROOT / "config" / "profiles" / "mcp_only")
     window.show()
     sys.exit(app.exec())
 

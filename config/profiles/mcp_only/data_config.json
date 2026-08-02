@@ -1,12 +1,13 @@
 {
   "type": "duckdb",
-  "path": "data/staging/mcp_only_quantstudio.db",
-  "_note": "mcp_only 独立 staging DuckDB，不碰正式库 data/quantstudio.db。路径相对项目根，由 _paths.get_data_root() 锚定。",
+  "path": "data/quantstudio.db",
+  "_note": "MCP模式采集与回测统一使用正式库 data/quantstudio.db（upsert幂等，MCP数据与旧源数据不冲突）。P3验证期间曾用staging库隔离，验证通过后回归正式库。",
   "quarantine": {
-    "path": "data/staging/mcp_only_quarantine.db",
+    "path": "data/quarantine.db",
     "retention_days": 7,
     "auto_archive": true,
     "max_rows": 500000,
-    "rate_alert_threshold": 1000
+    "rate_alert_threshold": 1000,
+    "_note": "与默认config共用同一隔离区（同库，不分离）"
   }
 }

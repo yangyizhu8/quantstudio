@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidgetItem,
     QHeaderView, QLabel, QMessageBox, QAbstractItemView)
 from qfluentwidgets import (
-    PushButton, TableWidget, GroupHeaderCardWidget, StateToolTip)
+    PushButton, TableWidget, GroupHeaderCardWidget, StateToolTip, ComboBox)
 
 from ..workers import LockedTaskWorker, LockedRunAllWorker
 from ..daemon_process import (
@@ -18,7 +18,6 @@ from ..daemon_process import (
     request_graceful_stop, force_kill_daemon, read_bootstrap_log_tail,
     check_db_openable,
 )
-from quantstudio._paths import db_path
 from quantstudio.pipeline.source_capabilities import capability_matrix
 
 logger = logging.getLogger(__name__)
@@ -72,6 +71,27 @@ class TaskTab(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
 
+        # ---- 数据源模式（profile）切换行 ----
+        # 全应用唯一真源入口，切换 config_dir（MCP默认 ↔ 传统多源）。
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("数据源模式："))
+        self.data_source_combo = ComboBox()
+        for value, label in self.mw.profile_options():
+            self.data_source_combo.addItem(label, userData=value)
+        # 设置默认选中为当前模式
+        cur = self.mw.current_profile
+        idx = self.data_source_combo.findData(cur)
+        if idx >= 0:
+            self.data_source_combo.setCurrentIndex(idx)
+        self.data_source_combo.currentIndexChanged.connect(self._on_data_source_changed)
+        mode_row.addWidget(self.data_source_combo)
+        self.mode_hint_label = QLabel("")
+        self.mode_hint_label.setText(
+            "统一正式库：data/quantstudio.db（采集与QFQ同库）")
+        mode_row.addWidget(self.mode_hint_label)
+        mode_row.addStretch()
+        layout.addLayout(mode_row)
+
         # 顶部工具栏
         toolbar = QHBoxLayout()
         # ★ 常驻增量拉取开关（状态切换按钮）
@@ -123,6 +143,11 @@ class TaskTab(QWidget):
         self.audit_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         audit_layout.addWidget(self.audit_table)
         layout.addWidget(audit_group, 2)
+
+    def _on_data_source_changed(self, index: int):
+        """数据源模式下拉变化 → 委托 MainWindow 执行切换（含守卫+确认+刷新）。"""
+        value = self.data_source_combo.itemData(index)
+        self.mw.apply_data_source_mode(value, self.data_source_combo)
 
     def _load_tasks(self):
         """读 collector_tasks.json 的 tasks 数组"""
@@ -278,6 +303,12 @@ class TaskTab(QWidget):
         """切换常驻进程 开/停（基于实际 status 而非内存变量）。"""
         if self._daemon_state in ("starting", "stop_requested", "force_stopping"):
             return  # 过渡态，忽略点击
+        # 守卫：重置水印进行中禁止启停（与 MainWindow.toggle_daemon 一致）
+        if self.mw._reset_in_progress:
+            QMessageBox.warning(self, "操作进行中",
+                                f"正在执行重置水印（模式：{self.mw._reset_mode}），"
+                                "请等待重置完成后再操作守护进程。")
+            return
         if self._daemon_state == "running":
             self._stop_daemon()
         else:
@@ -666,22 +697,94 @@ class TaskTab(QWidget):
                 self._collect_tooltip = None
 
     def _reset_watermark(self):
-        """重置水位线（下次全量拉取）"""
+        """重置水位线（下次全量拉取）。
+
+        P0 约束：
+        1. 按 source 过滤 DELETE（动态收集当前可见任务的 source 集合），
+           绝对不能全表 DELETE（避免误清其它数据源水位）。
+        2. 统一正式库：路径取自当前 config_dir 的 data_config.json（data/quantstudio.db），
+           锚定项目根，不随 config_dir 变。
+        3. 空库兜底：表不存在 / 库不可开 → 友好提示，不崩。
+        4. 守卫：重置进行中或 daemon 运行中禁止（防配置与运行实例冲突）。
+        """
+        # ---- 守卫 ----
+        if self.mw._reset_in_progress:
+            QMessageBox.warning(self, "操作进行中",
+                                f"正在执行重置水印（模式：{self.mw._reset_mode}），请稍候。")
+            return
+        if self.mw._daemon_running_in_config(self.mw.config_dir):
+            QMessageBox.warning(self, "禁止操作",
+                                "采集守护进程正在运行，请先「停止采集」后再重置水位，"
+                                "避免造脏数据。")
+            return
+
         reply = QMessageBox.question(
             self, "确认重置水位",
-            "重置后下次采集将从 2020-01-01 全量拉取，确认？",
+            "将按当前数据源模式可见任务的【源集合】重置水位线，"
+            "下次采集从该源全量拉取。确认？\n\n"
+            "（仅清除当前模式涉及的源，不影响其它模式水位。）",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply != QMessageBox.StandardButton.Yes:
             return
+
+        # ---- 解析统一正式库路径（当前 config_dir 的 data_config.json）----
+        try:
+            dc = json.loads((self.mw.config_dir / "data_config.json")
+                            .read_text(encoding="utf-8"))
+            rel = dc.get("path", "data/quantstudio.db")
+            db_file = (self.mw.app_root / rel).resolve() if not Path(rel).is_absolute() \
+                else Path(rel).resolve()
+        except Exception as e:
+            QMessageBox.critical(self, "配置读取失败",
+                                 f"无法读取 {self.mw.config_dir}/data_config.json：{e}")
+            return
+
+        if not db_file.exists():
+            QMessageBox.information(self, "空库",
+                                    f"数据库文件尚不存在：{db_file}\n"
+                                    "首次启动无需重置水位（采集将从全量开始）。")
+            return
+
+        # ---- 动态收集 source 集合（仅当前可见任务涉及的源）----
+        sources = sorted({t.get("source") for t in self.tasks
+                          if t.get("source")})
+        if not sources:
+            QMessageBox.information(self, "无源", "当前模式无可见采集任务，无需重置。")
+            return
+
+        # ---- 执行：按 source 过滤 DELETE（绝不全表）----
         try:
             import duckdb
-            db_path_str = str(db_path())
-            with duckdb.connect(db_path_str) as conn:
-                conn.execute("DELETE FROM source_watermark")
-            logger.info("水位线已重置（下次全量拉取）")
+            self.mw._reset_in_progress = True
+            self.mw._reset_mode = self.mw.current_profile
+            self.mw._reset_sources = sources
+            self.mw.show_reset_progress("重置水印中", f"正在清除源：{', '.join(sources)}")
+            with duckdb.connect(str(db_file), read_only=False) as conn:
+                # 空库兜底：表不存在则视为已重置（无需操作）
+                tbl = conn.execute(
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema='main' AND table_name='source_watermark'"
+                ).fetchall()
+                if not tbl:
+                    logger.info("source_watermark 表不存在（空库），无需重置")
+                else:
+                    for src in sources:
+                        conn.execute(
+                            "DELETE FROM source_watermark WHERE source = ?", [src])
+                    logger.info(f"水位线已重置（按源过滤）: {sources}")
+            self.mw._reset_in_progress = False
+            self.mw._reset_mode = None
+            self.mw._reset_sources = []
+            QMessageBox.information(
+                self, "重置完成",
+                f"已按源重置水位线：{', '.join(sources)}\n下次采集将从该源全量拉取。")
             self.refresh()
         except Exception as e:
+            self.mw._reset_in_progress = False
+            self.mw._reset_mode = None
+            self.mw._reset_sources = []
             logger.error(f"重置水位失败: {e}")
+            QMessageBox.critical(self, "重置失败", f"重置水位失败：{e}")
 
     def refresh(self):
         """刷新任务列表（重新从 collector_tasks.json 加载配置 + 水位线 + 批次审计 + 按钮状态）"""

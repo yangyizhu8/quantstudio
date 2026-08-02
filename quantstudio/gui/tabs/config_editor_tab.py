@@ -220,6 +220,13 @@ class ConfigEditorTab(QWidget):
         self.db_archive_combo.addItems(["true", "false"])
         form.addWidget(self.db_archive_combo, 3, 1)
 
+        # 统一正式库（验收 #13：采集与 QFQ 同库共存）显式展示
+        form.addWidget(QLabel("统一正式库(QFQ同库):"), 4, 0)
+        self.db_unified_label = QLabel("—")
+        self.db_unified_label.setStyleSheet("color:#7fd1ff;")
+        self.db_unified_label.setWordWrap(True)
+        form.addWidget(self.db_unified_label, 4, 1)
+
         layout.addLayout(form)
         layout.addStretch()
 
@@ -240,8 +247,14 @@ class ConfigEditorTab(QWidget):
             q = cfg.get("quarantine", {})
             self.db_retention_spin.setValue(q.get("retention_days", 30))
             self.db_archive_combo.setCurrentText(str(q.get("auto_archive", True)).lower())
+            # 展示统一正式库绝对路径（采集与 QFQ 同库，验收 #13）
+            rel = cfg.get("path", "data/quantstudio.db")
+            unified = (self.mw.app_root / rel).resolve() if not Path(rel).is_absolute() \
+                else Path(rel).resolve()
+            self.db_unified_label.setText(str(unified))
         except Exception as e:
             logger.warning(f"加载 data_config.json 失败: {e}")
+            self.db_unified_label.setText("（加载失败）")
 
     def _browse_db_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "选择数据库文件", "", "数据库文件 (*.db *.duckdb);;所有文件 (*)")
@@ -255,6 +268,16 @@ class ConfigEditorTab(QWidget):
             edit_widget.setText(path)
 
     def _save_db_config(self):
+        # 守卫：重置水印进行中 / 守护进程运行 → 禁止写配置（防配置与实例冲突）
+        if self.mw._reset_in_progress:
+            QMessageBox.warning(self, "操作进行中",
+                                f"正在执行重置水印（模式：{self.mw._reset_mode}），"
+                                "请等待完成后再保存。")
+            return
+        if self.mw._daemon_running_in_config(self.mw.config_dir):
+            QMessageBox.warning(self, "禁止保存",
+                                "采集守护进程正在运行，请先「停止采集」后再保存数据库配置。")
+            return
         cfg = {
             "type": self.db_type_combo.currentText(),
             "path": self.db_path_edit.text().strip(),
@@ -347,6 +370,15 @@ class ConfigEditorTab(QWidget):
         return page
 
     def _save_sources_config(self):
+        if self.mw._reset_in_progress:
+            QMessageBox.warning(self, "操作进行中",
+                                f"正在执行重置水印（模式：{self.mw._reset_mode}），"
+                                "请等待完成后再保存。")
+            return
+        if self.mw._daemon_running_in_config(self.mw.config_dir):
+            QMessageBox.warning(self, "禁止保存",
+                                "采集守护进程正在运行，请先「停止采集」后再保存数据源凭证。")
+            return
         for name, widgets in self.source_widgets.items():
             cfg = self._sources_cfg["sources"].get(name, {})
             cfg["enabled"] = widgets["enabled"].currentText() == "true"
@@ -563,6 +595,16 @@ class ConfigEditorTab(QWidget):
         return frame
 
     def _save_tasks_config(self):
+        # 守卫：重置中 / 守护进程运行 → 禁止写配置
+        if self.mw._reset_in_progress:
+            QMessageBox.warning(self, "操作进行中",
+                                f"正在执行重置水印（模式：{self.mw._reset_mode}），"
+                                "请等待完成后再保存。")
+            return
+        if self.mw._daemon_running_in_config(self.mw.config_dir):
+            QMessageBox.warning(self, "禁止保存",
+                                "采集守护进程正在运行，请先「停止采集」后再保存采集任务配置。")
+            return
         # 全局配置
         self._tasks_cfg["daemon_schedule"] = {
             "daily_time": self.tasks_daily_time.text().strip() or "17:00",

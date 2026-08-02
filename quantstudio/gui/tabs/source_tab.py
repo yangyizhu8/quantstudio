@@ -41,8 +41,19 @@ class SourceTab(QWidget):
         self.scroll_content.setObjectName("sourceScrollContent")
         self.inner_layout = QVBoxLayout(self.scroll_content)
 
+        # 当前数据源模式提示（MCP默认 ↔ 传统多源）
+        mode_label = QLabel(
+            f"当前数据源模式：{self.mw._current_label()}　"
+            f"配置目录：{self.mw.config_dir}\n"
+            f"统一正式库：data/quantstudio.db（采集与QFQ同库）"
+        )
+        mode_label.setStyleSheet("color:#7fd1ff; font-weight:bold;")
+        self.inner_layout.addWidget(mode_label)
+
         # 各源的配置（label, credential_field）
+        # MCP 为统一权威源（默认模式），无需 API key，走 MCP server 端点。
         self.source_defs = [
+            ("mcp", "MCP 权威源（统一入口，默认模式）", None),
             ("tushare", "Tushare Pro（付费，标准源）", "token"),
             ("baostock", "Baostock（免费，无QMT首选）", "user"),
             ("akshare", "Akshare（免费，东方财富）", None),
@@ -72,7 +83,11 @@ class SourceTab(QWidget):
             self._widgets[source] = {"enabled": enabled_cb, "cred": cred_edit}
 
         # 说明
-        note = QLabel("注：${ENV_VAR} 占位符表示从环境变量读取，不写入明文。")
+        note = QLabel(
+            "注：${ENV_VAR} 占位符表示从环境变量读取，不写入明文。\n"
+            "MCP 权威源（默认）无需 API key，凭证由 MCP server 统一提供；"
+            "切换数据源模式请用「采集任务」Tab 顶部下拉。"
+        )
         self.inner_layout.addWidget(note)
 
         # 保存按钮
@@ -106,6 +121,17 @@ class SourceTab(QWidget):
                     w["cred"].setText(str(sc[cf]))
 
     def _save_config(self):
+        # 守卫：重置水印进行中 / 守护进程运行 → 禁止写配置（防配置与实例冲突）
+        if self.mw._reset_in_progress:
+            QMessageBox.warning(self, "操作进行中",
+                                f"正在执行重置水印（模式：{self.mw._reset_mode}），"
+                                "请等待完成后再保存。")
+            return
+        if self.mw._daemon_running_in_config(self.mw.config_dir):
+            QMessageBox.warning(self, "禁止保存",
+                                "采集守护进程正在运行，请先「停止采集」后再保存配置，"
+                                "避免运行实例读到半写配置。")
+            return
         try:
             with self.config_path.open("r", encoding="utf-8") as f:
                 cfg = json.load(f)
