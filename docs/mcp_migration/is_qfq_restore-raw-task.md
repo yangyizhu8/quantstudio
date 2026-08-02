@@ -129,14 +129,29 @@ P3 当时管线拿到的是 qfq 价，`front = qfq × adj_i/adj_latest` 已经�
 **问题**：50.989 这种三位小数价格说明 2063 只代码的 is_qfq=False 行未必是真 raw。
 若是其他复权口径，直通就是另一种污染。
 
+**【2026-08-03 实测定论：is_qfq=False 行也是前复权，不是 raw，必须走还原公式】**
+
+抽样 300182.SZ（历史多次高送转）实测证据：
+- **除权日 price gap 消失**：2011-05-09 除权，Tushare raw close 从 66.5 跳到 32.9，
+  但 QuestDB is_qfq=False 的 close 从 2.15 平滑过渡到 2.14（无除权缺口）→ 已前复权。
+- **adj_factor 翻倍时 close 不腰斩**：is_qfq=False 区间内 adj_factor 从 1.0→2.015→30.689，
+  close 曲线连续；若是真 raw，adj 翻倍那天 close 应大致腰斩，实际没有 → 已是 qfq。
+- **本质**：is_qfq=False 行是**用"写入时当时最新的 adj_factor"算的前复权**（旧基准），
+  而非用当前全局最新 adj_factor。qfq_aux.db 里 300182 因子最早只到 2018-01-02(30.689)，
+  全局最新 30.863——旧基准与新基准不同 → 旧 batch 的 qfq 与新 batch 的 qfq **不在同一尺度**。
+
+**结论**：is_qfq=False 直通会把旧基准的前复权数据混进新数据，在多次除权且 adj_factor 被
+retroactive 更新的股票上产生**跨批次尺度断层**（如历史出现的 108x 断层）。**必须走还原公式
+重新归一化到当前全局最新 adj_factor**，与 is_qfq=True 行完全相同的处理路径。
+
 **硬要求**：
-- **先抽样 10-20 只** is_qfq=False 的代码（覆盖 stock_minutes 的 2063 只），
-  与 DuckDB/xtquant 真值比对价格。
-- 抽样通过（确认是真 raw）→ 这些代码直通；抽样不通过 → 这些代码也走还原路径或标记为可疑跳过。
-- **抽样结果写进验收报告**，含每只代码的对照表（云端 close vs DuckDB close vs 差异）。
-- **默认安全策略**：抽样结论未出前，is_qfq=False 行**不得直通**，按 is_qfq=True 同样还原
-  （还原真 raw 时 `adj_factor_i == adj_latest_global` ⇒ raw = qfq，数学等价，安全）。
-  即：**统一全部走还原公式**，把"是否直通"作为优化项延后，不在本次任务实现。
+- **is_qfq=False 行不得直通**，与 is_qfq=True 行一样走 `raw = qfq × adj_latest_global / adj_factor_i`。
+  （还原真 raw 时 `adj_factor_i == adj_latest_global` ⇒ ratio=1 ⇒ raw=qfq，数学等价安全；
+  但对"旧基准前复权"行，必须重新归一化才能对齐当前全局最新基准，消除跨批次尺度断层。）
+- **统一全部行走还原公式**，不区分 is_qfq 真假——这是唯一能消除跨批次尺度断层的处理。
+- is_qfq 列仅作 metadata 追溯（original_is_qfq_ratio），**不参与是否还原的决策**。
+- 抽样对照（10-20 只，覆盖 2063 只代码）仍需做，但**目的从"判定是否直通"改为"验证还原后
+  与 DuckDB raw 一致"**，抽样结果（含每只代码对照表）写进验收报告。
 
 ---
 
