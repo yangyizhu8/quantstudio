@@ -46,6 +46,16 @@
 还原后管线（aligner / qfq_fresh_capture / orchestrator）按既有逻辑消费 raw + adj_factor，
 走 aligner tushare 计算路径：`front = raw × adj_i / adj_latest`。
 
+> 【入库语义·ZCode 核实 2026-08-03】还原只改变"送进管线的是什么"（从 qfq 变回 raw），
+> **不改 aligner 的复权输出**。入库时 aligner._apply_qfq 一并计算并落库 **3 种口径**：
+> - **不复权 raw**（`open/high/low/close`，必填）
+> - **前复权 front**（`*_front` = `raw × adj_i / adj_latest`，基准=最新）
+> - **后复权 back**（`*_back` = `raw × adj_i / adj_earliest`，基准=最早）
+>
+> 即：**前复权 + 后复权一并入库**（外加 raw 本身），三种口径并存。
+> 等比复权（`*_front_ratio` / `*_back_ratio` 共 8 列）Phase 2 填 NULL，Phase 4 才实现。
+> 这是 aligner 既有行为，本任务不动它（见 §3.3 / §5）。
+
 **备选路径否决理由**（codex 确认）：
 - ❌ qfq 直接当 front 写、跳过管线复权 → 破坏 12 模块 QFQ 闭环前提（raw_unchanged 门控、事件驱动重锚）
 - ❌ 生产端补写 raw 分钟表（4.8 亿行重写）→ 根治但不现实
@@ -241,6 +251,8 @@ def _restore_to_raw(self, df: pd.DataFrame, table: str, freq: str) -> Tuple[pd.D
 
 - `_apply_qfq` 不动：还原后的 raw 走 front = `raw × adj_i/adj_latest`，与既有逻辑一致。
 - adj_latest_map 快照来源仍是 qfq_aux.db（云端系列），与传统模式的 tushare 快照隔离。
+- **入库语义不变**（见 §1 方案段引注）：`_apply_qfq` 仍一并计算并落库 raw + front + back
+  三种口径（前复权 + 后复权并存），本任务不改变这一行为，仅改变 aligner 的输入（qfq→raw）。
 
 ### 3.4 `scripts/verify_mcp_qfq_restore.py`（新增）
 
