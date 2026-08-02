@@ -5,6 +5,9 @@ data/*.db-journal
 data/*.db.wal
 data/*.sqlite
 data/*.sqlite3
+# DB 备份副本（如 qfq_aux.db.bak.etf_cleanup_20260803_040147，清理操作留的安全网）
+data/*.db.bak*
+data/*.bak*
 # DuckDB shared-memory / write-ahead-log sidecar files (qfq_aux.db-shm, qfq_aux.db-wal)
 data/*.db-shm
 data/*.db-wal
@@ -53,6 +56,8 @@ data/logs/
 Thumbs.db
 .vscode/
 .idea/
+# Windows 保留名误创建（0字节垃圾文件，常规命令无法删除）
+nul
 
 # 内部 AI agent 交接文档（不对外交付）
 HANDOFF_ZCODE.md
