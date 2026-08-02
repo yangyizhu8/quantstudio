@@ -37,10 +37,16 @@
 ### 1.4 关键启用约束（来自多轮验证实测，务必遵守）
 - **启用顺序：必须先 `bootstrap-run` 建基线，再 `reconcile-once` 做增量。**
   `reconcile-once` 在 `require_bootstrap=true` 且无可匹配 completed bootstrap 时 **fail-closed**（不处理 trigger、不推进水位）。
-- **bootstrap 基线必须 0 blocked 项。** `bootstrap_completed` 判定要求证券级状态机
+- **bootstrap 基线必须完整覆盖准入名单且 0 blocked 项。**
+  `bootstrap-plan --admissible` 必须按 `by_asset` 将 5487 只 STOCK/ETF 全部直接写为
+  `pending`，不依赖分红/因子候选表。`bootstrap_completed` 判定要求本轮证券级状态机
   `pending/in_progress/blocked/failed/dead_letter` 计数全为 0；任一 blocked 项都会让
-  整条 reconcile 流水线 fail-closed。因此批次2 的精度探针 159915（已知 blocked）
-  **不得进入生产 bootstrap 名单**——它属于「观测/排查」对象，不应放入准入名单。
+  整条 reconcile 流水线 fail-closed。`excluded` 是名单外旧候选的合法审计终态，
+  不阻止完成，但只允许由 `bootstrap-plan --admissible` 以
+  `block_reason=NOT_ADMISSIBLE` 生成，不得用于掩盖准入证券的执行失败。明确废弃的历史
+  run 可标记为 `superseded`，但当前 run 的 blocked/failed 禁止这样处置。因此批次2的
+  精度探针 159915（已知 blocked）**不得进入生产 bootstrap 名单**——它属于
+  「观测/排查」对象，不应放入准入名单。
 - **版本标识**：`bootstrap_run.schema_version` 必须 = 当前 `SCHEMA_VERSION`（reanchor-2.0），
   `config_hash`/`baseline_version` 落库为 NULL 可跳过对应校验。
 

@@ -874,7 +874,17 @@ class QFQResidentOrchestrator:
             excluded=len(excluded_items))
 
     def supersede_bootstrap_runs(self, conn, run_ids: Sequence[str]) -> Dict[str, int]:
-        """将明确废弃的旧 bootstrap run 及其非成功 item 标记为 superseded。"""
+        """将明确废弃的旧 bootstrap run 的非成功 item 标记为 superseded。
+
+        Bug 修复（方案 Y）：supersede 的语义是“人工确认处置异常项”，
+        不应连带把已完成的 run 整体标为 superseded——否则 bootstrap_completed
+        的 fail-closed 判定（只认 status='completed'）会误判为未完成，死锁 reconcile。
+
+        - item：仅把 blocked 项标为 superseded（completed/excluded/superseded 不动）；
+        - run：仅当 run 当前状态 **不是** completed（如 planned/running/failed）
+          时才标 superseded 废弃未完成的 run；已完成（completed）的 run 保持原状，
+          使 bootstrap_completed 仍能查到 completed run 并放行 fail-closed。
+        """
         ids = sorted({str(run_id).strip() for run_id in run_ids if str(run_id).strip()})
         if not ids:
             raise ValueError("run_ids 不能为空")
@@ -887,18 +897,22 @@ class QFQResidentOrchestrator:
         if missing:
             raise ValueError(f"bootstrap run 不存在: {missing}")
         now = _now_ts()
+        # 仅 blocked 项转为 superseded（人工确认暂缓重锚，维持旧 front）
         item_count = conn.execute(
             f"SELECT COUNT(*) FROM qfq_bootstrap_item "
-            f"WHERE bootstrap_run_id IN ({placeholders}) "
-            "AND status NOT IN ('completed','excluded','superseded')", ids).fetchone()[0]
+            f"WHERE bootstrap_run_id IN ({placeholders}) AND status='blocked'",
+            ids).fetchone()[0]
         conn.execute(
             f"UPDATE qfq_bootstrap_item SET status='superseded', updated_at=? "
-            f"WHERE bootstrap_run_id IN ({placeholders}) "
-            "AND status NOT IN ('completed','excluded','superseded')", [now, *ids])
-        conn.execute(
+            f"WHERE bootstrap_run_id IN ({placeholders}) AND status='blocked'",
+            [now, *ids])
+        # 仅废弃“未处于 completed 状态”的 run；completed run 保持，放行 fail-closed
+        run_count = conn.execute(
             f"UPDATE qfq_bootstrap_run SET status='superseded', updated_at=? "
-            f"WHERE bootstrap_run_id IN ({placeholders})", [now, *ids])
-        return {"runs": len(ids), "items": int(item_count)}
+            f"WHERE bootstrap_run_id IN ({placeholders}) AND status <> 'completed'",
+            [now, *ids])
+        return {"runs": int(getattr(run_count, "rowcount", len(ids))),
+                "items": int(item_count)}
 
     def bootstrap_run(self, conn, *, run_id: str, as_of_ms: int,
                       fetcher: FreshFetcher, resume: bool = False) -> Dict:
