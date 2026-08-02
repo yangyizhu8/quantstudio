@@ -32,6 +32,7 @@ import pandas as pd
 
 from quantstudio.pipeline.sources.base import BaseSourceAdapter
 from quantstudio.pipeline.mcp import MCPClient
+from quantstudio.pipeline.mcp.client import load_mcp_api_key
 from quantstudio.pipeline.mcp.errors import MCPClientError, MCPToolError
 from quantstudio.pipeline.qfq_reanchor_schema import aux_db_path
 
@@ -41,6 +42,10 @@ logger = logging.getLogger(__name__)
 # 覆盖矩阵（基于 P2-0 探针 + 任务书 §4）
 # MCP server 支持的全表矩阵。supports_freq / supports_task 据此声明。
 # 注意：MCP server 当前支持股票/ETF 行情 + 除权除息；不支持财务/指数/行业等。
+#
+# 【扩展点】新增表流程（修复3）：先跑 scripts/mcp_probe_tables.py 探测云端真实
+# QuestDB 源表名 → 回填下列两处 + mcp_only/collector_tasks.json + alignment_rules.json
+# → ConfigLint 通过。未探测确认的表不激活，避免 ConfigLint 因云端无此表失败。
 # ---------------------------------------------------------------------------
 _MCP_SUPPORTED: Dict[Tuple[str, str], str] = {
     ("stock_daily", "daily"): "stock_daily",
@@ -126,7 +131,8 @@ class MCPAdapter(BaseSourceAdapter):
             "landing_subdir": "mcp_landing" # Raw Landing 子目录（相对 DATA_ROOT）
         }
 
-    MCP_API_KEY 从环境变量读取（绝不回显），缺失即 fail-fast（见 MCPClient）。
+    MCP_API_KEY 解析链：构造参数 → config/secrets.env（GUI 写入，不进 git）
+    → 环境变量（见 MCPClient.load_mcp_api_key），缺失即 fail-fast。
     """
 
     def __init__(self, config: Dict):
@@ -150,9 +156,12 @@ class MCPAdapter(BaseSourceAdapter):
     @property
     def client(self) -> MCPClient:
         if self._client is None:
+            # 修复2：构造时从 config/secrets.env（GUI 写入）读取 API Key 注入，
+            # 不从环境变量隐式依赖，避免 key 泄露到 git 配置。
             self._client = MCPClient(
                 endpoint=self.endpoint,
                 tls_verify=self.tls_verify,
+                api_key=load_mcp_api_key(),
             )
             self._client.handshake()  # 建立 session（initialize→mcp-session-id→notifications/initialized）
         return self._client

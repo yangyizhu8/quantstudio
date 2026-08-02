@@ -4,7 +4,8 @@
 SHA256 对账 + Parquet 解码 + TLS 双模式 + Header 脱敏。
 
 关键约束（铁律）：
-- key 仅从环境变量 ``MCP_API_KEY`` 读取；缺失 fail-fast；绝不回显/记日志/落盘。
+- key 解析链：构造参数 api_key（GUI 注入） → 项目 config/secrets.env（GUI 写入，不进 git）
+  → 环境变量 ``MCP_API_KEY``（兼容原链路，缺失 fail-fast）。绝不回显/记日志/落盘。
 - HTTP 头 ``X-MCP-Key`` / ``Authorization`` 在任何日志中脱敏为 ``***``。
 - 复权不在 client 内完成（因子随行返回，由上层按 raw×adj_factor 计算）。
 - 不改默认生产配置；TLS 双模式由构造参数控制。
@@ -27,9 +28,12 @@ import os
 import re
 import threading
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+
+from quantstudio._paths import _ROOT as PROJECT_ROOT
 
 try:
     import pyarrow.parquet as pq
@@ -79,6 +83,40 @@ def _require_key() -> str:
     return key
 
 
+def load_mcp_api_key(
+    *, api_key: Optional[str] = None, secrets_path: Optional[Union[str, Path]] = None
+) -> Optional[str]:
+    """解析 MCP API Key（注入优先级）：
+
+    1. 显式构造参数 api_key（最高优先，由 GUI/MCP adapter 传入）
+    2. 项目 config/secrets.env 中的 MCP_API_KEY（GUI 写入，不进 git）
+    3. 环境变量 MCP_API_KEY（兼容原 fail-fast 链路）
+
+    注意：仅在未显式给 api_key 时回退到 secrets.env / 环境变量，
+    且 key 绝不以明文出现在日志（脱敏由 _build_headers/mask 负责）。
+    """
+    if api_key:
+        return api_key
+    # 2) config/secrets.env（手工解析 MCP_API_KEY=xxx，不依赖 dotenv）
+    if secrets_path is None:
+        secrets_path = PROJECT_ROOT / "config" / "secrets.env"
+    p = Path(secrets_path)
+    if p.exists():
+        try:
+            for line in p.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("MCP_API_KEY="):
+                    val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    if val:
+                        return val
+        except Exception as e:
+            logger.warning(f"读取 secrets.env 失败: {e}")
+    # 3) 环境变量
+    return os.environ.get("MCP_API_KEY") or None
+
+
 class MCPClient:
     """MCP server 客户端。
 
@@ -100,7 +138,14 @@ class MCPClient:
         retry_max: int = 5,
         backoff_sec: Tuple[int, ...] = (30, 60, 120, 240, 480),
         rate_per_min: int = 200,
+        api_key: Optional[str] = None,
+        secrets_path: Optional[Union[str, Path]] = None,
     ):
+        # MCP API Key 解析链（修复2）：构造参数 → config/secrets.env → 环境变量
+        # api_key 显式传入则优先；否则从 secrets.env / 环境变量读取（缺省 None，
+        # 真正 fail-fast 推迟到首次 _build_headers 调用 _require_key）。
+        self._api_key: Optional[str] = load_mcp_api_key(
+            api_key=api_key, secrets_path=secrets_path)
         self.endpoint = endpoint
         self.tls_verify = bool(tls_verify)
         self.call_timeout = float(call_timeout)
@@ -161,7 +206,8 @@ class MCPClient:
         h = {
             "Content-Type": "application/json",
             "Accept": f"application/json, {_SSE_CT}",
-            "X-MCP-Key": _require_key(),  # 从环境变量读，绝不回显
+            # 优先注入的 api_key/secrets.env，回退到环境变量（_require_key fail-fast）
+            "X-MCP-Key": self._api_key or _require_key(),
         }
         if self._session_id:
             h["Mcp-Session-Id"] = self._session_id

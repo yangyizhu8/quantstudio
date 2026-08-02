@@ -1,0 +1,54 @@
+{
+  "stock_daily_valuation": {
+    "status": "EXISTS",
+    "questdb_table": "stock_daily_basic",
+    "sample_rows": 1
+  },
+  "index_constituents": {
+    "status": "EXISTS",
+    "questdb_table": "index_weight",
+    "sample_rows": 1
+  },
+  "sw_industry": {
+    "status": "EXISTS",
+    "questdb_table": "sw_daily",
+    "sample_rows": 1
+  },
+  "industry_classification": {
+    "status": "EXISTS",
+    "questdb_table": "sw_classify",
+    "sample_rows": 1
+  },
+  "industry_membership": {
+    "status": "EXISTS",
+    "questdb_table": "sw_weight",
+    "sample_rows": 1
+  },
+  "stock_float_share": {
+    "status": "MISSING",
+    "questdb_table": null,
+    "similar": [
+      "stock_daily_basic",
+      "stock_suspend_d",
+      "stock_cashflow"
+    ]
+  },
+  "stock_namechange": {
+    "status": "MISSING",
+    "questdb_table": null,
+    "similar": [
+      "stock_daily_basic",
+      "stock_suspend_d",
+      "stock_cashflow"
+    ]
+  },
+  "stock_delist": {
+    "status": "MISSING",
+    "questdb_table": null,
+    "similar": [
+      "stock_daily_basic",
+      "stock_suspend_d",
+      "stock_cashflow"
+    ]
+  }
+}

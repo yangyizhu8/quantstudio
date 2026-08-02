@@ -1,5 +1,6 @@
 """Tab7: 配置编辑器（结构化表单，替代原始 JSON 编辑）
-左侧 4 个区域导航 → 右侧对应表单：数据库配置 / 数据源凭证 / 采集任务 / 字段对齐规则
+左侧 3 个区域导航 → 右侧对应表单：数据库配置 / 数据源凭证 / 采集任务
+（字段对齐规则 alignment_rules.json 由近端 Schema 校验 + ConfigLint 保证，不在此 GUI 编辑）
 """
 from __future__ import annotations
 
@@ -149,7 +150,6 @@ class ConfigEditorTab(QWidget):
             ("db", "🗄️ 数据库配置"),
             ("sources", "🔌 数据源凭证"),
             ("tasks", "📋 采集任务"),
-            ("alignment", "📐 字段对齐规则"),
         ]
         for key, label in items:
             item = QListWidgetItem(label)
@@ -162,16 +162,14 @@ class ConfigEditorTab(QWidget):
         from PyQt6.QtWidgets import QStackedWidget
         self.stack = QStackedWidget()
 
-        # 构建 4 个页面
+        # 构建 3 个页面（字段对齐规则页不展示，由 Schema/ConfigLint 保证）
         self.db_page = self._build_db_page()
         self.sources_page = self._build_sources_page()
         self.tasks_page = self._build_tasks_page()
-        self.alignment_page = self._build_alignment_page()
 
         self.stack.addWidget(self.db_page)
         self.stack.addWidget(self.sources_page)
         self.stack.addWidget(self.tasks_page)
-        self.stack.addWidget(self.alignment_page)
 
         layout.addWidget(self.stack, 1)
 

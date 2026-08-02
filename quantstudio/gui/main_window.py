@@ -22,21 +22,23 @@ from qfluentwidgets import (
 )
 
 from .log_handler import GuiLogHandler
+from quantstudio._paths import _ROOT as PROJECT_ROOT
 
 # ============================================================
 # 数据源模式（profile）定义
 # config_dir 切换 = 切换采集配置集（collector_tasks / sources / data / alignment）。
 # 注意：mcp 与 legacy 两 profile 的 data_config.json 都指向 data/quantstudio.db
 # （统一正式库），故切换 profile 不切库、QFQ 与采集同库共存（验收 #13）。
+# subdir 以项目根（PROJECT_ROOT）为锚点，均带 "config/" 前缀。
 # ============================================================
 PROFILES = {
     "mcp": {
-        "subdir": "profiles/mcp_only",
+        "subdir": "config/profiles/mcp_only",
         "label": "MCP权威源（默认）",
         "tip": "统一正式库 data/quantstudio.db，QFQ闭环由MCP驱动",
     },
     "legacy": {
-        "subdir": "",
+        "subdir": "config",
         "label": "传统多源（xtquant/tushare等）",
         "tip": "默认 config/ 目录：xtquant+tushare+akshare 混合多源",
     },
@@ -70,8 +72,9 @@ class MainWindow(FluentWindow):
     def __init__(self, db_helper, config_dir: Path):
         super().__init__()
         self.db_helper = db_helper
-        # app_root 固定为项目根（config_dir 的祖父目录或父目录，取决于 profile 子目录深度）
-        self.app_root = self._resolve_app_root(Path(config_dir))
+        # app_root 固定为项目根（取自 quantstudio._paths._ROOT，与 config_dir 无关，
+        # 修复 root_path 连环雷：不再从 config_dir 反向解析，避免 subdir 深度误判）。
+        self.app_root = PROJECT_ROOT
         # config_dir 初始值由调用方传入（main_gui.py 传入 default profile 路径），
         # 但最终以持久化的 profile 状态为准（见 _load_profile_state）。
         self._config_dir_default = Path(config_dir)
@@ -102,27 +105,12 @@ class MainWindow(FluentWindow):
     # ------------------------------------------------------------------
     # 数据源模式（profile）管理
     # ------------------------------------------------------------------
-    @staticmethod
-    def _resolve_app_root(config_dir: Path) -> Path:
-        """项目根 = config_dir 解析去除 'profiles/<name>' 段后的目录。
-
-        固定不随 config_dir 切换而变，确保 DbHelper 的 root_path、导出、
-        QFQ 维护等工作目录始终锚定项目根（提醒 #4）。
-        """
-        parts = config_dir.resolve().parts
-        # 找到 'profiles' 段并截断其后内容
-        if "profiles" in parts:
-            idx = parts.index("profiles")
-            return Path(*parts[:idx])
-        return config_dir.resolve().parent
-
     def _profile_subdir(self, profile: str) -> str:
         return PROFILES.get(profile, PROFILES[DEFAULT_PROFILE])["subdir"]
 
     def _resolve_config_dir(self, profile: str) -> Path:
+        """config_dir = 项目根 / subdir（subdir 均带 config/ 前缀，见 PROFILES）。"""
         sub = self._profile_subdir(profile)
-        if not sub:
-            return self.app_root / "config"
         return self.app_root / sub
 
     def _load_profile_state(self):
