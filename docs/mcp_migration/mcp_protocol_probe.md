@@ -275,6 +275,33 @@ query_snapshot({dataset_id:"qdb.stock_daily", columns:["ts_code","trade_date","c
 5. authority：`mcp`=传输通道；`xtquant`=上游权威（仅 P3 lineage 对拍时参照）。mcp_only 日常运行
    不依赖 xtquant 在线。
 
+### 7.4 线1：is_qfq 还原 raw（adapter 侧还原，已落地 2026-08-03）
+
+> 任务书：`docs/mcp_migration/is_qfq_restore-raw-task.md`。验收报告：`docs/evidence/mcp_qfq_restore_verify_2026-08-03.md`。
+
+**问题**：QuestDB 云端存的是 **qfq（前复权价）** 而非 raw。若 MCP 管线直接把 qfq 当 raw 喂进 aligner
+的 `front = raw × adj_i / adj_latest`，会**二次复权（双重复权）**，300750 4-22 正确 front=226.312、
+错误 front=222.017。
+
+**方案**：adapter 取数后立即在本地还原 raw：
+```
+raw_i = qfq_i × adj_latest_global / adj_factor_i
+adj_latest_global = qfq_aux.db(adj_factor/fund_adj) 完整历史的 ORDER BY time DESC LIMIT 1  # 300750=1.9495
+```
+还原后管线永远吃 raw + adj_factor，走 aligner 标准路径（front=raw×adj_i/adj_latest），与 tushare 同源。
+
+**关键不变量 / 护栏（codex P0-① + 正确性护栏）**：
+- `adj_latest_global` **绝不**取本次 export 分片末行：历史窗口误用偏差可达 8.67 元（2024-06-03 正确 202.5001 vs 误用分片末行 193.8267，见任务书附录 C.3）。
+- 缺因子 → **fail-fast**（禁止把 qfq 当 raw 写库污染）。
+- 因子锚过期（`adj_factor_i > adj_latest_global`，本地快照落后于云端）→ **fail-fast**（需先同步 qfq_aux.db）。
+- 仅还原价格列（open/high/low/close/pre_close）；vol/amount/pct_chg 原样保留。
+- 有 `is_qfq` 列时只还原 `is_qfq=True` 行；`is_qfq=False` 本就是 raw，原样保留。
+
+**已知限制（设计内，须记录）**：
+- **front 锚不同（~1.6%）**：MCP 还原走 qfq_aux.db **云端因子系列**（latest=1.9495），tushare 系列 latest=1.9816，差 ~1.6%。两系列均合法，但 MCP 路径产出的 `*_front` 与 tushare 路径 front **不会 tick 一致**；跨源比较 front 须注意锚差异（验收#2 已记录差异预期）。
+- **ETF fund_adj 缺口**：qfq_aux.db `fund_adj` 当前为空，ETF 还原首次需触发全历史冷启动灌库（一次性重操作）；灌库前 ETF 还原 fail-fast。代码路径已具备（`_inject_adjfactor` 正确路由 `etf*`→`fund_adj`）。
+- 不影响策略 API：`get_history` 等注入 API 仍默认 `fq='pre'`，本修复是管线内部（adapter 侧），策略层无感。
+
 ---
 
 ## 8. P2-0 通过判据

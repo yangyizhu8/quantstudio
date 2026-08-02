@@ -143,6 +143,14 @@ class MCPAdapter(BaseSourceAdapter):
         self.enable_qfq_injection = bool(config.get("enable_qfq_injection", True))
         self.main_db = config.get("main_db")
         self.landing_subdir = config.get("landing_subdir", "mcp_landing")
+        # 线1：is_qfq 还原 raw 开关（默认开；关闭仅用于对照实验，生产不得关）
+        self.enable_qfq_restore = bool(config.get("enable_qfq_restore", True))
+        # 线1：因子冷启动（qfq_aux.db 未覆盖的 code → 全历史导出注入）
+        self.enable_adj_coldstart = bool(config.get("enable_adj_coldstart", True))
+        # 全局最新因子缓存：{asset_type: {裸码: adj_latest}}；每进程每资产类型只查一次
+        self._adj_latest_cache: Dict[str, Dict[str, float]] = {}
+        # 已执行过冷启动的资产类型（避免同一进程内重复全历史导出）
+        self._coldstart_done: set = set()
         self._client: Optional[MCPClient] = None
         self._landing_root = _resolve_data_root() / self.landing_subdir
         try:
@@ -272,6 +280,40 @@ class MCPAdapter(BaseSourceAdapter):
                     lambda v: "实施" if (v is not None and str(v).strip() != "") else None)
                 logger.info(f"[MCPAdapter] stock_dividend(ws_exdiv) 派生 div_proc='实施' "
                              f"→ {int(df['div_proc'].notna().sum())} 行")
+
+        # === codex 审计 TD-15：industry_classification 常量注入 + L1 过滤 + 去重 ===
+        # 云端 sw_classify 含 L1/L2/L3，canonical 只需 L1（对齐 tushare
+        # SW2021_L1_EXPECTED_COUNT=31 门控）。常量列 classification_system='SW'/
+        # effective_from=0/effective_to=None 由 adapter 补（column_map 无法注入常量）。
+        # 实测云端 L1 有重复行（同 index_code 多次 ingest， QuestDB 累积），
+        # 按 industry_code 去重保留首行（canonical PK 含 industry_code）。
+        if table == "industry_classification" and len(df) > 0:
+            if "level" in df.columns:
+                before = len(df)
+                df = df[df["level"].astype(str).str.upper() == "L1"].reset_index(drop=True)
+                if len(df) < before:
+                    logger.info(f"[MCPAdapter] industry_classification L1 过滤 "
+                                f"{before}→{len(df)} 行")
+            if "industry_code" in df.columns:
+                before = len(df)
+                df = df.drop_duplicates(subset=["industry_code"], keep="first").reset_index(drop=True)
+                if len(df) < before:
+                    logger.info(f"[MCPAdapter] industry_classification 去重 "
+                                f"{before}→{len(df)} 行（按 industry_code）")
+            df["classification_system"] = "SW"
+            df["effective_from"] = 0
+            df["effective_to"] = None
+            logger.info(f"[MCPAdapter] industry_classification 注入常量列 "
+                        f"(classification_system=SW/effective_from=0) → {len(df)} 行")
+
+        # === 线1：is_qfq 还原 raw（与 _fetch_export 对称接入）===
+        # 当前四张行情表都走 export 路径；此处接入是防御性对称——若将来某张
+        # 行情表降级为 snapshot 路径，还原逻辑不会被绕过。非行情表由
+        # _restore_to_raw 内部按 _RESTORE_TABLES 白名单自动跳过。
+        restore_meta: Dict = {}
+        if self.enable_qfq_restore:
+            df, restore_meta = self._restore_to_raw(df, table, freq)
+
         meta = {
             "source": "mcp",
             "freq": freq,
@@ -287,6 +329,7 @@ class MCPAdapter(BaseSourceAdapter):
             },
             "rows": len(df),
             "is_qfq_capable": has_adj,
+            **restore_meta,          # 线1 追溯字段（codex P1-⑥）
         }
         logger.info(f"[MCPAdapter] {table}/{freq} 小表拉取 {len(df)} 行 "
                     f"(adj_factor={has_adj})")
@@ -363,6 +406,15 @@ class MCPAdapter(BaseSourceAdapter):
             else:
                 logger.warning(f"[MCPAdapter] 无 code 类列可过滤 codes，返回全量 {len(raw_df)} 行")
 
+        # === 线1：is_qfq 还原 raw ===
+        # 云端存 qfq，而 adapter 契约是"只返回 raw"（复权由 aligner 统一负责）。
+        # 必须在返回前还原，否则 aligner 会二次复权。注意：必须放在日期/codes
+        # 过滤之后，但还原用的 adj_latest 来自 qfq_aux.db 全量因子历史，
+        # **与本次窗口无关**（codex P0-①）。
+        restore_meta: Dict = {}
+        if self.enable_qfq_restore:
+            raw_df, restore_meta = self._restore_to_raw(raw_df, table, freq)
+
         meta = {
             "source": "mcp",
             "freq": freq,
@@ -381,6 +433,7 @@ class MCPAdapter(BaseSourceAdapter):
             "rows": len(raw_df),
             "raw_landing_dir": str(self._landing_root / job_id),
             "is_qfq_capable": True,  # 分钟表含 adj_factor 列（原样返回）
+            **restore_meta,          # 线1 追溯字段（codex P1-⑥）
         }
         logger.info(f"[MCPAdapter] {table}/{freq} 大表拉取 {len(raw_df)} 行 "
                     f"(Raw Landing: {meta['raw_landing_dir']})")
@@ -390,6 +443,301 @@ class MCPAdapter(BaseSourceAdapter):
         d = self._landing_root / job_id
         d.mkdir(parents=True, exist_ok=True)
         return d / f"{shard_name}.parquet"
+
+    # ==================================================================
+    # 线1：is_qfq 还原 raw —— raw_i = qfq_i × adj_latest_global / adj_i
+    # ==================================================================
+    @staticmethod
+    def _bare_code(v) -> str:
+        """600063.SH / 300750.SZ → 裸码（与 qfq_aux.db、discovery 口径一致）。"""
+        return str(v).split(".")[0].strip()
+
+    @staticmethod
+    def _asset_type_of(table: str) -> str:
+        return "ETF" if str(table).startswith("etf") else "STOCK"
+
+    def _get_adj_latest_global(self, codes, asset_type: str = "STOCK") -> Dict[str, float]:
+        """取每个 code 的**全局最新** adj_factor（codex P0-① 的关键实现）。
+
+        真相源：qfq_aux.db 的 adj_factor(STOCK) / fund_adj(ETF) 表，
+        它保存的是该证券的**完整因子历史**，因此 `ORDER BY time DESC LIMIT 1`
+        得到的就是全局最新因子（1.9495 for 300750），与本次 export 的
+        日期窗口无关。
+
+        **绝不可**改成从传入的分片 DataFrame 里取 max(time) 那行的因子——
+        历史窗口拉取时分片末行远早于今天，会算出严重错误的 raw
+        （300750 2024-06：202.5001 → 193.8267，差 8.67 元）。
+
+        Args:
+            codes: 代码可迭代对象，可带 .SH/.SZ 后缀（内部转裸码）
+            asset_type: "STOCK" → adj_factor 表；"ETF" → fund_adj 表
+        Returns:
+            {裸码: adj_latest_global}；查不到的 code 不出现在返回值中
+            （由调用方按 _RESTORE_MISSING_FACTOR_FAIL_FAST 决定处理方式）
+        """
+        want = {self._bare_code(c) for c in codes if str(c).strip() != ""}
+        if not want:
+            return {}
+        cache = self._adj_latest_cache.setdefault(asset_type, {})
+        missing = sorted(want - set(cache.keys()))
+        if missing:
+            found = self._query_adj_latest(missing, asset_type)
+            cache.update(found)
+            still = sorted(set(missing) - set(found.keys()))
+            # 冷启动：qfq_aux.db 未覆盖的新 code → 全历史因子导出注入后重查
+            if still and self.enable_adj_coldstart and asset_type not in self._coldstart_done:
+                logger.warning(
+                    f"[MCPAdapter] 线1 因子冷启动触发（asset_type={asset_type}）："
+                    f"{len(still)} 个 code 在 qfq_aux.db 无因子历史，"
+                    f"示例={still[:5]}")
+                try:
+                    self._coldstart_adj_factors(asset_type)
+                finally:
+                    self._coldstart_done.add(asset_type)
+                found2 = self._query_adj_latest(still, asset_type)
+                cache.update(found2)
+        return {c: cache[c] for c in want if c in cache}
+
+    def _query_adj_latest(self, codes: List[str], asset_type: str) -> Dict[str, float]:
+        """从 qfq_aux.db 批量读取全局最新因子（按 (code, MAX(time)) 取值）。"""
+        if self.main_db is None:
+            logger.warning("[MCPAdapter] main_db 未配置，无法读取 qfq_aux.db 因子快照")
+            return {}
+        aux = aux_db_path(self.main_db)
+        if not Path(str(aux)).exists():
+            logger.warning(f"[MCPAdapter] qfq_aux.db 不存在: {aux}")
+            return {}
+        table = "fund_adj" if asset_type == "ETF" else "adj_factor"
+        out: Dict[str, float] = {}
+        try:
+            conn = sqlite3.connect(f"file:{aux}?mode=ro", uri=True, timeout=30)
+        except Exception as e:
+            logger.warning(f"[MCPAdapter] 打开 qfq_aux.db 失败: {e}")
+            return {}
+        try:
+            conn.execute("PRAGMA busy_timeout=30000")
+            # SQLite 变量上限（旧版 999）→ 分批 IN 查询
+            batch = 900
+            for i in range(0, len(codes), batch):
+                chunk = codes[i:i + batch]
+                marks = ",".join(["?"] * len(chunk))
+                sql = (
+                    f"SELECT a.code, a.adj_factor FROM {table} a "
+                    f"JOIN (SELECT code, MAX(time) AS mt FROM {table} "
+                    f"      WHERE code IN ({marks}) GROUP BY code) m "
+                    f"  ON a.code = m.code AND a.time = m.mt")
+                for code, adj in conn.execute(sql, chunk).fetchall():
+                    if adj is None:
+                        continue
+                    try:
+                        val = float(adj)
+                    except (TypeError, ValueError):
+                        continue
+                    if val > 0:
+                        out[str(code)] = val
+        except sqlite3.Error as e:
+            logger.warning(f"[MCPAdapter] 查询 {table} 全局最新因子失败: {e}")
+        finally:
+            conn.close()
+        return out
+
+    def _coldstart_adj_factors(self, asset_type: str) -> None:
+        """冷启动：全历史导出行情表的 adj_factor 并注入 qfq_aux.db。
+
+        实现约束（ZCode 实现提示，已核对 client.py）：
+        - `export_dataset` **不支持列选择**（client.py:656 签名无 columns 参数），
+          只能全列导出后由 `normalize_mcp_adj_factor_df` 提取因子三元组。
+        - `fetch_page`(client.py:531) 虽有 columns 参数可做列裁剪，但该方法在
+          当前生产代码中**从未被调用/验证**（返回结构、cursor 语义均未探测），
+          按项目铁律不得把生产路径建立在未验证 API 上，故此处不采用；
+          待 P2-0 类探针验证后可作为性能优化单独立项。
+        - qfq_aux.db 已有 2.3GB 因子快照（STOCK 5793 码），冷启动实际只对未覆盖
+          的资产类型触发（当前 fund_adj 为空 → ETF 必触发一次）。
+        """
+        table = "etf_daily" if asset_type == "ETF" else "stock_daily"
+        qdb_tbl = table
+        # 全历史窗口（起点取足够早的日期，终点取明天以含当日）
+        t0 = "1990-01-01T00:00:00"
+        t1 = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00")
+        logger.warning(
+            f"[MCPAdapter] 线1 冷启动开始：全历史导出 {qdb_tbl} 提取 adj_factor "
+            f"（asset_type={asset_type}，此操作较重，每进程每类型仅执行一次）")
+        try:
+            artifacts = self.client.export_dataset(
+                dataset_id=qdb_tbl, page_size=50_000,
+                time_start=t0, time_end=t1, row_limit=None)
+        except Exception as e:
+            logger.error(f"[MCPAdapter] 线1 冷启动导出失败({qdb_tbl}): "
+                         f"{type(e).__name__}: {e}")
+            return
+        total = 0
+        for art in artifacts:
+            try:
+                local_parquet = self._landing_path(
+                    f"coldstart_adj_{asset_type.lower()}",
+                    art.artifact_id.replace("/", "_"))
+                local_parquet.write_bytes(art.parquet_bytes)
+                df_shard = pd.read_parquet(local_parquet)
+                if "adj_factor" not in df_shard.columns:
+                    continue
+                # 复用既有注入逻辑（内部做 normalize + INSERT OR REPLACE）
+                self._inject_adjfactor(df_shard, "daily", table)
+                total += len(df_shard)
+            except Exception as e:
+                logger.warning(f"[MCPAdapter] 线1 冷启动分片处理失败 "
+                               f"{art.artifact_id}: {e}")
+        logger.warning(f"[MCPAdapter] 线1 冷启动完成：{qdb_tbl} 处理 {total} 行 "
+                       f"→ qfq_aux.db({'fund_adj' if asset_type == 'ETF' else 'adj_factor'})")
+
+    def _restore_to_raw(self, df: pd.DataFrame, table: str,
+                        freq: str) -> Tuple[pd.DataFrame, Dict]:
+        """把云端 qfq 价格列还原为 raw：raw_i = qfq_i × adj_latest_global / adj_i。
+
+        - 只作用于 _RESTORE_TABLES 四张行情表的价格列（OHLC + pre_close）；
+          vol / amount / pct_chg 等非价格列原样保留。
+        - **全部行走还原公式，不按 is_qfq 分流**（P1-③ 2026-08-03 实测定论，
+          commit f7df29c）：is_qfq=False 行并非真 raw，而是「写入时当时最新
+          adj_factor」算出的旧基准前复权，直通会把旧基准 qfq 与新数据（全局最新
+          基准）混在一起产生跨批次尺度断层（如 300182.SZ 实测 108x）。
+          故一律 raw_i = qfq_i × adj_latest_global / adj_i 归一化到全局最新基准：
+            · 真 raw 行（adj_i == adj_latest_global）ratio=1 → raw=qfq，数学等价安全；
+            · 旧基准前复权行重新归一化到全局最新基准，消除尺度断层。
+          is_qfq 列只进 metadata（original_is_qfq_ratio = True 行占比）作追溯，
+          不参与「是否还原」的决策。
+          无 is_qfq 列时按云端语义默认整批为前复权（日线实测 100% True），
+          metadata 标记 is_qfq_col_present=False 供追溯。
+        - adj_latest 一律走 `_get_adj_latest_global`（全局最新，见 P0-①）。
+
+        Returns:
+            (还原后的 df, restore_meta)。restore_meta 含 is_qfq_restored /
+            restored_rows / adj_latest_source 等追溯字段（codex P1-⑥）。
+        """
+        meta: Dict = {
+            "is_qfq_restored": False,
+            "restored_rows": 0,
+            "restored_codes": 0,
+            "adj_latest_source": "qfq_aux.db:adj_factor(global_latest)",
+            "restore_formula": "raw = qfq * adj_latest_global / adj_factor_i",
+            "is_qfq_col_present": False,
+            "original_is_qfq_ratio": None,
+            "skipped_rows_no_factor": 0,
+            "missing_factor_codes": [],
+            "restored_price_cols": [],
+        }
+        if df is None or len(df) == 0:
+            meta["restore_skip_reason"] = "empty_df"
+            return df, meta
+        if str(table) not in _RESTORE_TABLES:
+            meta["restore_skip_reason"] = f"table_not_in_restore_scope:{table}"
+            return df, meta
+        if "adj_factor" not in df.columns:
+            # 无因子列 = 无法还原。若该表本应带因子，属云端契约变更，必须显性失败。
+            meta["restore_skip_reason"] = "no_adj_factor_column"
+            logger.error(f"[MCPAdapter] 线1 还原失败：{table}/{freq} 缺 adj_factor 列，"
+                         f"列={list(df.columns)[:12]}")
+            if _RESTORE_MISSING_FACTOR_FAIL_FAST:
+                raise ValueError(
+                    f"[MCPAdapter] 线1 还原required：{table}/{freq} 云端返回缺少 "
+                    f"adj_factor 列，无法把 qfq 还原为 raw。直接放行会导致双重复权，"
+                    f"故 fail-fast。")
+            return df, meta
+
+        asset_type = self._asset_type_of(table)
+        meta["adj_latest_source"] = (
+            f"qfq_aux.db:{'fund_adj' if asset_type == 'ETF' else 'adj_factor'}"
+            f"(global_latest)")
+
+        code_col = next((c for c in ("ts_code", "code", "stock_code")
+                         if c in df.columns), None)
+        if code_col is None:
+            meta["restore_skip_reason"] = "no_code_column"
+            logger.error(f"[MCPAdapter] 线1 还原失败：{table}/{freq} 无 code 类列")
+            if _RESTORE_MISSING_FACTOR_FAIL_FAST:
+                raise ValueError(
+                    f"[MCPAdapter] 线1 还原 required：{table}/{freq} 缺 code 列，"
+                    f"无法定位每只证券的全局最新因子。")
+            return df, meta
+
+        price_cols = [c for c in _RESTORE_PRICE_COLS if c in df.columns]
+        if not price_cols:
+            meta["restore_skip_reason"] = "no_price_column"
+            return df, meta
+
+        out = df  # 原地改列（调用方已持有本次取数的独立 DataFrame）
+        bare = out[code_col].map(self._bare_code)
+
+        # === P1-③（2026-08-03 实测定论）：不分流，全部行走还原公式 =========
+        # is_qfq 列只作追溯，不参与「是否还原」的决策。
+        if "is_qfq" in out.columns:
+            meta["is_qfq_col_present"] = True
+            is_qfq_bool = out["is_qfq"].map(_as_bool_qfq)
+            qfq_true = int(is_qfq_bool.fillna(False).astype(bool).sum())
+            meta["original_is_qfq_ratio"] = (qfq_true / len(out)) if len(out) else 0.0
+        else:
+            logger.warning(
+                f"[MCPAdapter] 线1 {table}/{freq} 云端返回无 is_qfq 列，"
+                f"按云端语义默认整批为前复权（日线实测 is_qfq=True 占比 100%）")
+            meta["original_is_qfq_ratio"] = 1.0
+
+        adj_i = pd.to_numeric(out["adj_factor"], errors="coerce")
+        # 全部 code（含 is_qfq=False）都要查全局最新因子：旧基准前复权行必须用
+        # 全局最新基准还原，否则直通会和新数据产生尺度断层。
+        latest_map = self._get_adj_latest_global(
+            bare.unique().tolist(), asset_type=asset_type)
+        adj_latest = bare.map(latest_map)
+
+        valid = adj_i.notna() & (adj_i > 0) & adj_latest.notna() & (adj_latest > 0)
+        bad = ~valid
+        if bool(bad.any()):
+            bad_codes = sorted(bare[bad].unique().tolist())
+            meta["skipped_rows_no_factor"] = int(bad.sum())
+            meta["missing_factor_codes"] = bad_codes[:50]
+            msg = (f"[MCPAdapter] 线1 还原缺因子：{table}/{freq} "
+                   f"{int(bad.sum())} 行无法还原，涉及 {len(bad_codes)} 个 code，"
+                   f"示例={bad_codes[:5]}")
+            if _RESTORE_MISSING_FACTOR_FAIL_FAST:
+                logger.error(msg)
+                raise ValueError(
+                    msg + "。放行会把 qfq 当 raw 写入主库造成双重复权，故 fail-fast。")
+            logger.warning(msg)
+
+        # --- 护栏：aux 因子锚落后于云端的检测 ---------------------------------
+        # 前复权因子随除权累积**单调递增**，故任何 adj_i > adj_latest_global 都
+        # 意味着 qfq_aux.db 的因子历史落后于云端（云端已按更新的锚重算了 qfq）。
+        # 此时继续用过期 adj_latest 还原，会产生系统性偏差且难以事后发现，
+        # 必须显性暴露而不是静默算错。
+        stale = valid & (adj_i > adj_latest * (1.0 + 1e-9))
+        if bool(stale.any()):
+            worst = float((adj_i / adj_latest)[stale].max())
+            stale_codes = sorted(bare[stale].unique().tolist())
+            meta["stale_anchor_rows"] = int(stale.sum())
+            meta["stale_anchor_codes"] = stale_codes[:50]
+            msg = (f"[MCPAdapter] 线1 因子锚过期：{table}/{freq} 有 {int(stale.sum())} 行的"
+                   f" adj_factor 超过 qfq_aux.db 全局最新因子（最大超出比 {worst:.6f}），"
+                   f"说明云端因子已前进而本地快照未同步，涉及 {len(stale_codes)} 个 code，"
+                   f"示例={stale_codes[:5]}")
+            if _RESTORE_MISSING_FACTOR_FAIL_FAST:
+                logger.error(msg)
+                raise ValueError(
+                    msg + "。继续还原会用过期锚产生系统性偏差，故 fail-fast；"
+                          "请先同步因子快照（冷启动/因子注入）后重试。")
+            logger.warning(msg)
+
+        ratio = (adj_latest / adj_i).where(valid, 1.0)
+        for col in price_cols:
+            out[col] = pd.to_numeric(out[col], errors="coerce") * ratio
+
+        meta.update({
+            "is_qfq_restored": True,
+            "restored_rows": int(valid.sum()),
+            "restored_codes": int(bare[valid].nunique()),
+            "restored_price_cols": price_cols,
+        })
+        logger.info(
+            f"[MCPAdapter] 线1 还原 {table}/{freq}: {meta['restored_rows']} 行 / "
+            f"{meta['restored_codes']} 码 → raw（列={price_cols}，"
+            f"锚={meta['adj_latest_source']}）")
+        return out, meta
 
     # ------------------------------------------------------------------
     # get_last_date（基类要求；daemon 实际用 writer.get_last_date 决定水位）
@@ -541,6 +889,31 @@ class MCPAdapter(BaseSourceAdapter):
 _CST = timezone(timedelta(hours=8))  # Asia/Shanghai 固定偏移（复权连接用，无需历史时区库）
 
 
+def _as_bool_qfq(v) -> Optional[bool]:
+    """把云端 is_qfq 字段归一为 bool。
+
+    QuestDB/Parquet 往返后该列可能是 bool / 0-1 / 'true' / 'True' / 't'，
+    统一归一；无法判定返回 None（调用方按"默认视为 qfq"兜底，见 _restore_to_raw）。
+    """
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        try:
+            if pd.isna(v):
+                return None
+        except (TypeError, ValueError):
+            pass
+        return bool(int(v))
+    s = str(v).strip().lower()
+    if s in ("true", "t", "1", "yes", "y"):
+        return True
+    if s in ("false", "f", "0", "no", "n"):
+        return False
+    return None
+
+
 def _mcp_time_to_utc_ms(val, freq: str) -> Optional[int]:
     """把 MCP 的时间字段归一为 UTC epoch 毫秒（aligner._apply_qfq 以 utc=True 解析）。
 
@@ -658,3 +1031,31 @@ if __name__ == "__main__":
         print(df.head() if len(df) else "（无数据）")
     finally:
         adapter.close()
+
+
+# ===========================================================================
+# 线1：is_qfq 还原 raw（adapter 侧还原）
+# ---------------------------------------------------------------------------
+# 云端 QuestDB 存的是**前复权价**（is_qfq=True，日线实测 100%），锚点为云端因子
+# 系列的全局最新因子：
+#     qfq_i = raw_i × adj_factor_i / adj_factor_latest_global
+# 而本框架契约要求 adapter 只返回 raw（复权统一由 aligner._apply_qfq 负责）。
+# 若把 qfq 直接当 raw 交给 aligner，会再算一次 front = qfq × adj_i/adj_latest
+# → **双重复权**（实测 300750 4-22：正确 226.312 vs 错误 222.017）。
+# 故在 adapter 侧反解还原：
+#     raw_i = qfq_i × adj_factor_latest_global / adj_factor_i
+#
+# 【codex P0-①，最易错】adj_factor_latest_global 必须取自 qfq_aux.db 的**完整
+# 因子历史**（全局最新），绝不能用本次 export 分片内最后一行的因子。
+# 实测 300750 2024-06-03：用全局 latest(1.9495) 还原 = 202.5001；
+# 误用 2024-06 分片末行(1.8660) = 193.8267，**差 8.67 元**。
+#
+# 还原只作用于价格列；vol/amount/pct_chg 等非价格列原样保留
+# （amount 成交额与复权无关，pct_chg 为比率不变量）。
+_RESTORE_PRICE_COLS = ("open", "high", "low", "close", "pre_close")
+# 需要还原的四张行情表（与 _QFQ_ADJFACTOR_TABLES 同源，按 canonical 表名去重）
+_RESTORE_TABLES = frozenset({"stock_daily", "etf_daily",
+                             "stock_minutes", "etf_minutes"})
+# 因子缺失时的兜底策略：fail-fast。静默放行 = 把 qfq 当 raw 写进主库 = 数据污染，
+# 比取数失败严重得多，故宁可让本次任务失败。
+_RESTORE_MISSING_FACTOR_FAIL_FAST = True

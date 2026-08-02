@@ -66,6 +66,31 @@ is_qfq BOOLEAN  -- true 表示已是前复权基准序列，仍须以 adj_factor
 | qdb.index_daily | index_daily | 126,435 | trade_date | — |
 | qdb.sw_classify | sw_classify | 511 | ingest_time | — |
 
+### B2.4 `fetch_table` 返回 metadata 契约（线1 is_qfq 还原 raw）
+
+> 任务：`docs/mcp_migration/is_qfq_restore-raw-task.md`。QuestDB 云端存 qfq（前复权价）而非
+> raw；adapter 侧还原 `raw_i = qfq_i × adj_latest_global / adj_factor_i` 后入库。下列字段由
+> `MCPAdapter._restore_to_raw` 写入 `fetch_table` 返回 dict 的 `metadata`，供 `batch_audit`
+> 追溯（P1-⑥）。未触发还原时这些字段仍存在，值为默认（如 `restored_rows: 0`）。
+
+| metadata 字段 | 类型 | 含义 |
+|---------------|------|------|
+| `is_qfq_restored` | bool | 本次取数是否执行了 qfq→raw 还原 |
+| `restored_rows` | int | 实际执行还原的行数（= `is_qfq=True` 且因子齐备的行数） |
+| `restored_codes` | int | 涉及还原的证券数 |
+| `adj_latest_source` | str | 全局最新因子来源：`qfq_aux.db:adj_factor(global_latest)` 或 `qfq_aux.db:fund_adj(global_latest)`（ETF） |
+| `restore_formula` | str | `raw = qfq * adj_latest_global / adj_factor_i` |
+| `is_qfq_col_present` | bool | 云端是否返回 `is_qfq` 列（无则默认整批为前复权） |
+| `skipped_rows_no_factor` | int | 因缺因子未还原的 qfq 行数（fail-fast 前计数） |
+| `missing_factor_codes` | list | 缺因子的 code 列表 |
+| `restored_price_cols` | list | 被还原的价格列（open/high/low/close/pre_close） |
+| `stale_anchor_rows` / `stale_anchor_codes` | int/list | 因子锚过期（本地快照落后于云端）触发的 fail-fast 行/码 |
+
+**约束（P0-① / 护栏）**：
+- `adj_latest_global` 一律取自 qfq_aux.db 完整因子历史的 `ORDER BY time DESC LIMIT 1`，**绝不用本次 export 分片末行**（历史窗口误用偏差可达 8.67 元，见任务书附录 C.3）。
+- 缺因子 → fail-fast（禁止把 qfq 当 raw 写库导致双重复权）。
+- 因子锚过期（`adj_factor_i > adj_latest_global`）→ fail-fast（本地快照落后于云端，需先同步）。
+
 ---
 
 ## B3. 大批量 Manifest 规范（Parquet 工件）

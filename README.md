@@ -85,6 +85,16 @@ GUI 中的“全量拉取”“增量拉取”“进程常驻增量拉取”调�
 
 指数日线（F5）：`index_daily` 任务的正式动态宇宙（`get_index_daily_universe`）统一覆盖普通指数与 31 个 SW2021 L1 申万行业指数，full/incremental/resident 同一路径——tushare 普通指数走 `index_daily` 接口、申万指数走 `sw_daily` 正式接口，同一 canonical schema（股/元）；`industry_classification` / `industry_membership` 任务维护正式 SW2021 行业分类与 PIT 成员历史（tushare `index_classify`/`index_member`），旧 `sw_industry` 仅为审计快照。契约详见 `docs/data-pipeline-contract.md`。
 
+### MCP 数据源与 is_qfq 还原（线1）
+
+MCP（QuestDB 云端）作为数据源时，云端存的是 **前复权价（qfq）** 而非 raw。为避免 aligner 二次复权（双重复权），`MCPAdapter` 在取数后**本地还原 raw**：`raw_i = qfq_i × adj_latest_global / adj_factor_i`，其中 `adj_latest_global` 取自 `qfq_aux.db` 完整因子历史的全局最新值（绝不取本次 export 分片末行）。还原后管线吃 raw + adj_factor，走 aligner 标准 `front = raw × adj_i / adj_latest` 路径，与传统 tushare 同源。
+
+- 仅还原价格列（OHLC + pre_close），非价格列原样保留；`is_qfq=False` 行本就是 raw，不还原。
+- 缺因子 / 因子锚过期（本地快照落后于云端）→ fail-fast，禁止把 qfq 当 raw 写库。
+- **已知限制**：MCP 还原走云端因子系列（latest≈1.9495），tushare 系列≈1.9816，差 ~1.6%，故 MCP 路径 `*_front` 与 tushare 路径 front 不会 tick 一致（跨源比较须注意锚差异）；ETF 还原依赖 `fund_adj`，首次需冷启动灌库。
+- 该还原是管线内部（adapter 侧）行为，策略注入 API（`get_history` 等）仍默认 `fq='pre'`，策略层无感。
+- 细节：`docs/mcp_migration/is_qfq_restore-raw-task.md`、`docs/mcp_migration/mcp_protocol_probe.md` §7.4、验收 `docs/evidence/mcp_qfq_restore_verify_2026-08-03.md`。
+
 ## 策略回测
 
 ```python

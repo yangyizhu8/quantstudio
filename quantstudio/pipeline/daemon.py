@@ -573,7 +573,7 @@ class ResidentCollector:
                         raw_codes = raw_df[code_col].unique().tolist()
                 is_etf = (table in ("etf_daily", "etf_minutes"))
                 adj_factor_df = self._fetch_adj_factor(adapter, raw_codes, start, end, is_etf=is_etf)
-            elif (source == "mcp" and table in ("stock_daily", "stock_minutes", "etf_daily")
+            elif (source == "mcp" and table in ("stock_daily", "stock_minutes", "etf_daily", "etf_minutes")
                   and "adj_factor" in raw_df.columns):
                 # P2-4 §7.2-B 补齐：普通模式（指定 codes）与 per_stock 路径对称。
                 # raw_df 已含 adj_factor 列（原样返回），直接提取并标准化为 aligner 期望格式，
@@ -683,10 +683,15 @@ class ResidentCollector:
                         f"passed={rows_passed} rejected={rows_rejected} written={rows_written} "
                         f"(new {write_new} + upd {write_updated}) "
                         f"watermark→{new_watermark}")
+            # P1-⑥ 追溯：MCP qfq→raw 还原行数并入 rows_fixed（metadata.restored_rows 由
+            # mcp_adapter._restore_to_raw 产出；非 MCP 源该键缺省为 0，等价于原 res.fixed_count）。
+            # 与现有 validator 修正计数叠加，避免回退路径（tushare/baostock）丢失 fixed_count。
+            _restored = int(metadata.get("restored_rows", 0) or 0)
             self.batch_audit.record(batch_id, name, source, table, freq,
                                     rows_raw, rows_aligned, rows_passed, rows_rejected,
                                     rows_written, "success", None, started_at,
-                                    rows_new=write_new, rows_updated=write_updated, rows_fixed=res.fixed_count)
+                                    rows_new=write_new, rows_updated=write_updated,
+                                    rows_fixed=(res.fixed_count or 0) + _restored)
             return True
 
         except Exception as e:
@@ -1172,6 +1177,7 @@ class ResidentCollector:
         total_passed = [0]
         total_rejected = [0]
         total_fixed = [0]
+        total_restored = [0]  # 本批次 MCP qfq→raw 还原行数聚合（P1-⑥ 追溯）
         total_written = [0]  # 用 list 包装以便线程内修改
         total_new = [0]      # 真实新增行数（审计准确性）
         total_updated = [0]  # upsert 更新行数
@@ -1182,7 +1188,7 @@ class ResidentCollector:
         def process_one(code):
             """单只股票：拉取→对齐→校验→入库（线程安全写入）"""
             try:
-                raw_df, _ = adapter.fetch_table(table, start, end, freq=freq, codes=[code])
+                raw_df, meta = adapter.fetch_table(table, start, end, freq=freq, codes=[code])
                 if len(raw_df) == 0:
                     return 0
                 # tushare 需要拉复权因子计算复权价；baostock 直通（adapter 已提供）
@@ -1212,6 +1218,8 @@ class ResidentCollector:
                     total_passed[0] += len(res.passed_df)
                     total_rejected[0] += len(res.rejected_rows)
                     total_fixed[0] += int(getattr(res, "fixed_count", 0))
+                    # P1-⑥ 追溯：聚合本只股票的 MCP qfq→raw 还原行数
+                    total_restored[0] += int(meta.get("restored_rows", 0) or 0)
                 if len(res.passed_df) > 0:
                     with write_lock:  # 线程安全写库
                         n = self._stamp_and_write(res, table, batch_id, source)
@@ -1294,10 +1302,12 @@ class ResidentCollector:
             f"failed={fail_count[0]}/{done_count[0]} rate={failure_rate:.8f} "
             f"rejected={total_rejected[0]}/{total_raw[0]} reject_rate={reject_rate:.8f} "
             f"threshold={threshold:.8f} written={total_written[0]}")
+        # P1-⑥ 追溯：rows_fixed 含本批次 MCP qfq→raw 还原行数聚合（total_restored[0]）
         self.batch_audit.record(batch_id, name, source, table, freq,
                                 total_raw[0], total_raw[0], total_passed[0], total_rejected[0],
                                 total_written[0], audit_status, error,
-                                started_at, rows_new=total_new[0], rows_updated=total_updated[0], rows_fixed=total_fixed[0])
+                                started_at, rows_new=total_new[0], rows_updated=total_updated[0],
+                                rows_fixed=total_fixed[0] + total_restored[0])
         return task_ok
 
     # ---------------- 事件循环（统一每日调度）----------------
