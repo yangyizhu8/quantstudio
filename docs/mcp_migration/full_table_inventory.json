@@ -1,0 +1,1280 @@
+[
+  {
+    "questdb_table": "ai_research_snapshot",
+    "canonical": "ai_research_snapshot",
+    "category": "B_passthrough",
+    "rows": 8613,
+    "ncols": 23,
+    "path": "snapshot",
+    "sample_cols": [
+      "scan_date",
+      "scan_time",
+      "skill_version",
+      "llm_model",
+      "raw_sources"
+    ]
+  },
+  {
+    "questdb_table": "block_trade",
+    "canonical": "block_trade",
+    "category": "B_passthrough",
+    "rows": 61195,
+    "ncols": 7,
+    "path": "snapshot",
+    "sample_cols": [
+      "trade_date",
+      "ts_code",
+      "price",
+      "vol",
+      "amount"
+    ]
+  },
+  {
+    "questdb_table": "broker_monthly",
+    "canonical": "broker_monthly",
+    "category": "B_passthrough",
+    "rows": 365,
+    "ncols": 5,
+    "path": "snapshot",
+    "sample_cols": [
+      "month",
+      "broker",
+      "ts_code",
+      "name",
+      "inserted_at"
+    ]
+  },
+  {
+    "questdb_table": "broker_recommend",
+    "canonical": "broker_recommend",
+    "category": "B_passthrough",
+    "rows": 13326,
+    "ncols": 4,
+    "path": "snapshot",
+    "sample_cols": [
+      "timestamp",
+      "broker",
+      "ts_code",
+      "name"
+    ]
+  },
+  {
+    "questdb_table": "cninfo_first_rating",
+    "canonical": "cninfo_first_rating",
+    "category": "B_passthrough",
+    "rows": 551008,
+    "ncols": 12,
+    "path": "snapshot",
+    "sample_cols": [
+      "stock_code",
+      "stock_name",
+      "publish_date",
+      "org_name",
+      "researcher"
+    ]
+  },
+  {
+    "questdb_table": "cnthesims_events",
+    "canonical": "cnthesims_events",
+    "category": "B_passthrough",
+    "rows": 86866,
+    "ncols": 13,
+    "path": "snapshot",
+    "sample_cols": [
+      "event_time",
+      "ts_code",
+      "event_type",
+      "source_id",
+      "title"
+    ]
+  },
+  {
+    "questdb_table": "cnthesims_factors",
+    "canonical": "cnthesims_factors",
+    "category": "B_passthrough",
+    "rows": 59796,
+    "ncols": 11,
+    "path": "snapshot",
+    "sample_cols": [
+      "trade_date",
+      "ts_code",
+      "earn_surprise",
+      "earn_surprise_mean",
+      "survey_count"
+    ]
+  },
+  {
+    "questdb_table": "cyq_chips",
+    "canonical": "cyq_chips",
+    "category": "B_passthrough",
+    "rows": 90000267,
+    "ncols": 4,
+    "path": "export",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "price",
+      "percent"
+    ]
+  },
+  {
+    "questdb_table": "cyq_perf",
+    "canonical": "cyq_perf",
+    "category": "B_passthrough",
+    "rows": 3185045,
+    "ncols": 11,
+    "path": "export",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "his_low",
+      "his_high",
+      "cost_5pct"
+    ]
+  },
+  {
+    "questdb_table": "daily_info",
+    "canonical": "daily_info",
+    "category": "B_passthrough",
+    "rows": 36658,
+    "ncols": 14,
+    "path": "snapshot",
+    "sample_cols": [
+      "trade_date",
+      "ts_code",
+      "ts_name",
+      "com_count",
+      "total_share"
+    ]
+  },
+  {
+    "questdb_table": "em_first_cover_rating",
+    "canonical": "em_first_cover_rating",
+    "category": "B_passthrough",
+    "rows": 8873,
+    "ncols": 12,
+    "path": "snapshot",
+    "sample_cols": [
+      "stock_code",
+      "stock_name",
+      "rating",
+      "rating_code",
+      "publish_date"
+    ]
+  },
+  {
+    "questdb_table": "etf_adj_factor",
+    "canonical": "etf_adj_factor",
+    "category": "B_passthrough",
+    "rows": 1554470,
+    "ncols": 3,
+    "path": "export",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "adj_factor"
+    ]
+  },
+  {
+    "questdb_table": "etf_basic",
+    "canonical": "etf_basic",
+    "category": "A_mapped",
+    "rows": 1622,
+    "ncols": 14,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "name",
+      "extname",
+      "fullname",
+      "index_code"
+    ]
+  },
+  {
+    "questdb_table": "etf_daily",
+    "canonical": "etf_daily",
+    "category": "A_mapped",
+    "rows": 2417403,
+    "ncols": 13,
+    "path": "export",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "pre_close",
+      "open",
+      "high"
+    ]
+  },
+  {
+    "questdb_table": "etf_minutes",
+    "canonical": "etf_minutes",
+    "category": "A_mapped",
+    "rows": 120270809,
+    "ncols": 11,
+    "path": "export",
+    "sample_cols": [
+      "ts_code",
+      "trade_time",
+      "freq",
+      "open",
+      "high"
+    ]
+  },
+  {
+    "questdb_table": "etf_sentiment_daily",
+    "canonical": "etf_sentiment_daily",
+    "category": "B_passthrough",
+    "rows": 15,
+    "ncols": 6,
+    "path": "snapshot",
+    "sample_cols": [
+      "etf_code",
+      "trade_date",
+      "avg_sentiment",
+      "stocks_count",
+      "stocks_with_data"
+    ]
+  },
+  {
+    "questdb_table": "etf_share_size",
+    "canonical": "etf_share_size",
+    "category": "B_passthrough",
+    "rows": 1905514,
+    "ncols": 8,
+    "path": "export",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "etf_name",
+      "total_share",
+      "total_size"
+    ]
+  },
+  {
+    "questdb_table": "factor_value",
+    "canonical": "factor_value",
+    "category": "B_passthrough",
+    "rows": 5740,
+    "ncols": 39,
+    "path": "snapshot",
+    "sample_cols": [
+      "datetime",
+      "code",
+      "name",
+      "close",
+      "volume"
+    ]
+  },
+  {
+    "questdb_table": "forecast_vip",
+    "canonical": "forecast_vip",
+    "category": "B_passthrough",
+    "rows": 66686,
+    "ncols": 13,
+    "path": "snapshot",
+    "sample_cols": [
+      "ann_date",
+      "ts_code",
+      "end_date",
+      "type",
+      "p_change_min"
+    ]
+  },
+  {
+    "questdb_table": "gisisi_daily",
+    "canonical": "gisisi_daily",
+    "category": "B_passthrough",
+    "rows": 812,
+    "ncols": 5,
+    "path": "snapshot",
+    "sample_cols": [
+      "trade_date",
+      "gisisi",
+      "signal",
+      "threshold",
+      "window"
+    ]
+  },
+  {
+    "questdb_table": "hm_detail",
+    "canonical": "hm_detail",
+    "category": "B_passthrough",
+    "rows": 25390,
+    "ncols": 9,
+    "path": "snapshot",
+    "sample_cols": [
+      "trade_date",
+      "ts_code",
+      "ts_name",
+      "buy_amount",
+      "sell_amount"
+    ]
+  },
+  {
+    "questdb_table": "hm_list",
+    "canonical": "hm_list",
+    "category": "B_passthrough",
+    "rows": 3192,
+    "ncols": 5,
+    "path": "snapshot",
+    "sample_cols": [
+      "name",
+      "desc_text",
+      "orgs",
+      "ingest_time",
+      "desc"
+    ]
+  },
+  {
+    "questdb_table": "idx_anns",
+    "canonical": "idx_anns",
+    "category": "B_passthrough",
+    "rows": 1026,
+    "ncols": 5,
+    "path": "snapshot",
+    "sample_cols": [
+      "ann_date",
+      "title",
+      "url",
+      "source",
+      "type"
+    ]
+  },
+  {
+    "questdb_table": "idx_factor_pro",
+    "canonical": "idx_factor_pro",
+    "category": "B_passthrough",
+    "rows": 6126997,
+    "ncols": 89,
+    "path": "export",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "open",
+      "high",
+      "low"
+    ]
+  },
+  {
+    "questdb_table": "index_classify",
+    "canonical": "index_classify",
+    "category": "B_passthrough",
+    "rows": 7885,
+    "ncols": 13,
+    "path": "snapshot",
+    "sample_cols": [
+      "l1_code",
+      "l1_name",
+      "l2_code",
+      "l2_name",
+      "l3_code"
+    ]
+  },
+  {
+    "questdb_table": "index_daily",
+    "canonical": "index_daily",
+    "category": "A_mapped",
+    "rows": 126466,
+    "ncols": 11,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "open",
+      "high",
+      "low"
+    ]
+  },
+  {
+    "questdb_table": "index_weight",
+    "canonical": "index_constituents",
+    "category": "A_mapped",
+    "rows": 245979,
+    "ncols": 4,
+    "path": "snapshot",
+    "sample_cols": [
+      "index_code",
+      "ts_code",
+      "trade_date",
+      "weight"
+    ]
+  },
+  {
+    "questdb_table": "inst_survey",
+    "canonical": "inst_survey",
+    "category": "B_passthrough",
+    "rows": 67085,
+    "ncols": 10,
+    "path": "snapshot",
+    "sample_cols": [
+      "surv_date",
+      "ts_code",
+      "name",
+      "fund_visitors",
+      "rece_place"
+    ]
+  },
+  {
+    "questdb_table": "limit_cpt_list",
+    "canonical": "limit_cpt_list",
+    "category": "B_passthrough",
+    "rows": 13214,
+    "ncols": 9,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "name",
+      "trade_date",
+      "days",
+      "up_stat"
+    ]
+  },
+  {
+    "questdb_table": "limit_list_d",
+    "canonical": "limit_list_d",
+    "category": "B_passthrough",
+    "rows": 162517,
+    "ncols": 21,
+    "path": "snapshot",
+    "sample_cols": [
+      "trade_date",
+      "ts_code",
+      "industry",
+      "name",
+      "close"
+    ]
+  },
+  {
+    "questdb_table": "limit_list_ths",
+    "canonical": "limit_list_ths",
+    "category": "B_passthrough",
+    "rows": 52469,
+    "ncols": 24,
+    "path": "snapshot",
+    "sample_cols": [
+      "trade_date",
+      "ts_code",
+      "name",
+      "price",
+      "pct_chg"
+    ]
+  },
+  {
+    "questdb_table": "limit_step",
+    "canonical": "limit_step",
+    "category": "B_passthrough",
+    "rows": 13376,
+    "ncols": 4,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "name",
+      "trade_date",
+      "nums"
+    ]
+  },
+  {
+    "questdb_table": "llm_text_events",
+    "canonical": "llm_text_events",
+    "category": "B_passthrough",
+    "rows": 129977,
+    "ncols": 28,
+    "path": "snapshot",
+    "sample_cols": [
+      "publish_time",
+      "fetch_time",
+      "source_type",
+      "source_name",
+      "source_priority"
+    ]
+  },
+  {
+    "questdb_table": "llm_text_events_enriched",
+    "canonical": "llm_text_events_enriched",
+    "category": "B_passthrough",
+    "rows": 129977,
+    "ncols": 33,
+    "path": "snapshot",
+    "sample_cols": [
+      "publish_time",
+      "fetch_time",
+      "source_type",
+      "source_name",
+      "source_priority"
+    ]
+  },
+  {
+    "questdb_table": "llm_text_raw_feed",
+    "canonical": "llm_text_raw_feed",
+    "category": "B_passthrough",
+    "rows": 129977,
+    "ncols": 16,
+    "path": "snapshot",
+    "sample_cols": [
+      "publish_time",
+      "fetch_time",
+      "source_type",
+      "source_name",
+      "raw_id"
+    ]
+  },
+  {
+    "questdb_table": "margin",
+    "canonical": "margin",
+    "category": "B_passthrough",
+    "rows": 4990,
+    "ncols": 9,
+    "path": "snapshot",
+    "sample_cols": [
+      "trade_date",
+      "exchange_id",
+      "rzye",
+      "rzmre",
+      "rzche"
+    ]
+  },
+  {
+    "questdb_table": "margin_detail",
+    "canonical": "margin_detail",
+    "category": "B_passthrough",
+    "rows": 5579390,
+    "ncols": 11,
+    "path": "export",
+    "sample_cols": [
+      "trade_date",
+      "ts_code",
+      "name",
+      "rzye",
+      "rqye"
+    ]
+  },
+  {
+    "questdb_table": "margin_secs",
+    "canonical": "margin_secs",
+    "category": "B_passthrough",
+    "rows": 6804940,
+    "ncols": 4,
+    "path": "export",
+    "sample_cols": [
+      "trade_date",
+      "ts_code",
+      "name",
+      "exchange"
+    ]
+  },
+  {
+    "questdb_table": "market_breadth_daily",
+    "canonical": "market_breadth_daily",
+    "category": "B_passthrough",
+    "rows": 4025,
+    "ncols": 12,
+    "path": "snapshot",
+    "sample_cols": [
+      "trade_date",
+      "stock_n",
+      "up_count",
+      "down_count",
+      "flat_count"
+    ]
+  },
+  {
+    "questdb_table": "moneyflow_cnt_ths",
+    "canonical": "moneyflow_cnt_ths",
+    "category": "B_passthrough",
+    "rows": 176194,
+    "ncols": 12,
+    "path": "snapshot",
+    "sample_cols": [
+      "trade_date",
+      "ts_code",
+      "name",
+      "lead_stock",
+      "close_price"
+    ]
+  },
+  {
+    "questdb_table": "moneyflow_ind_ths",
+    "canonical": "moneyflow_ind_ths",
+    "category": "B_passthrough",
+    "rows": 40860,
+    "ncols": 12,
+    "path": "snapshot",
+    "sample_cols": [
+      "trade_date",
+      "ts_code",
+      "industry",
+      "lead_stock",
+      "close"
+    ]
+  },
+  {
+    "questdb_table": "moneyflow_ths",
+    "canonical": "moneyflow_ths",
+    "category": "B_passthrough",
+    "rows": 1983043,
+    "ncols": 13,
+    "path": "export",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "name",
+      "pct_change",
+      "latest"
+    ]
+  },
+  {
+    "questdb_table": "news_sentiment",
+    "canonical": "news_sentiment",
+    "category": "B_passthrough",
+    "rows": 77651,
+    "ncols": 10,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "news_date",
+      "title",
+      "source"
+    ]
+  },
+  {
+    "questdb_table": "report_rc",
+    "canonical": "report_rc",
+    "category": "B_passthrough",
+    "rows": 2864114,
+    "ncols": 23,
+    "path": "export",
+    "sample_cols": [
+      "report_date",
+      "ts_code",
+      "name",
+      "report_title",
+      "report_type"
+    ]
+  },
+  {
+    "questdb_table": "rsshub_raw",
+    "canonical": "rsshub_raw",
+    "category": "B_passthrough",
+    "rows": 23947,
+    "ncols": 8,
+    "path": "snapshot",
+    "sample_cols": [
+      "source_name",
+      "category",
+      "title",
+      "summary",
+      "link"
+    ]
+  },
+  {
+    "questdb_table": "sector_top300_daily",
+    "canonical": "sector_top300_daily",
+    "category": "B_passthrough",
+    "rows": 6000,
+    "ncols": 17,
+    "path": "snapshot",
+    "sample_cols": [
+      "trade_date",
+      "concept_code",
+      "concept_name",
+      "rank",
+      "pct_change"
+    ]
+  },
+  {
+    "questdb_table": "sentiment_factor_daily",
+    "canonical": "sentiment_factor_daily",
+    "category": "B_passthrough",
+    "rows": 9728,
+    "ncols": 4,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "factor_name",
+      "factor_value"
+    ]
+  },
+  {
+    "questdb_table": "slb_len",
+    "canonical": "slb_len",
+    "category": "B_passthrough",
+    "rows": 1834,
+    "ncols": 6,
+    "path": "snapshot",
+    "sample_cols": [
+      "trade_date",
+      "ob",
+      "auc_amount",
+      "repo_amount",
+      "repay_amount"
+    ]
+  },
+  {
+    "questdb_table": "stk_auction",
+    "canonical": "stk_auction",
+    "category": "B_passthrough",
+    "rows": 2013031,
+    "ncols": 9,
+    "path": "export",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "vol",
+      "price",
+      "amount"
+    ]
+  },
+  {
+    "questdb_table": "stk_factor_pro",
+    "canonical": "stk_factor_pro",
+    "category": "B_passthrough",
+    "rows": 14470590,
+    "ncols": 261,
+    "path": "export",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "open_qfq",
+      "close_qfq",
+      "high_qfq"
+    ]
+  },
+  {
+    "questdb_table": "stk_limit",
+    "canonical": "stk_limit",
+    "category": "B_passthrough",
+    "rows": 16756567,
+    "ncols": 5,
+    "path": "export",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "pre_close",
+      "up_limit",
+      "down_limit"
+    ]
+  },
+  {
+    "questdb_table": "stock_balancesheet",
+    "canonical": "balance_statement",
+    "category": "A_mapped",
+    "rows": 212140,
+    "ncols": 158,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "ann_date",
+      "f_ann_date",
+      "end_date",
+      "report_type"
+    ]
+  },
+  {
+    "questdb_table": "stock_basic",
+    "canonical": "stock_basic",
+    "category": "A_mapped",
+    "rows": 5222,
+    "ncols": 17,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "symbol",
+      "name",
+      "area",
+      "industry"
+    ]
+  },
+  {
+    "questdb_table": "stock_cashflow",
+    "canonical": "cashflow_statement",
+    "category": "A_mapped",
+    "rows": 212265,
+    "ncols": 97,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "ann_date",
+      "f_ann_date",
+      "end_date",
+      "comp_type"
+    ]
+  },
+  {
+    "questdb_table": "stock_daily",
+    "canonical": "stock_daily",
+    "category": "A_mapped",
+    "rows": 14233623,
+    "ncols": 13,
+    "path": "export",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "open",
+      "high",
+      "low"
+    ]
+  },
+  {
+    "questdb_table": "stock_daily_basic",
+    "canonical": "stock_daily_valuation",
+    "category": "A_mapped",
+    "rows": 14116189,
+    "ncols": 18,
+    "path": "export",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "close",
+      "turnover_rate",
+      "turnover_rate_f"
+    ]
+  },
+  {
+    "questdb_table": "stock_fina_indicator",
+    "canonical": "fin_indicator",
+    "category": "A_mapped",
+    "rows": 232987,
+    "ncols": 107,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "ann_date",
+      "end_date",
+      "eps",
+      "dt_eps"
+    ]
+  },
+  {
+    "questdb_table": "stock_income",
+    "canonical": "income_statement",
+    "category": "A_mapped",
+    "rows": 211949,
+    "ncols": 94,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "ann_date",
+      "f_ann_date",
+      "end_date",
+      "report_type"
+    ]
+  },
+  {
+    "questdb_table": "stock_minutes",
+    "canonical": "stock_minutes",
+    "category": "A_mapped",
+    "rows": 479483022,
+    "ncols": 11,
+    "path": "export",
+    "sample_cols": [
+      "ts_code",
+      "trade_time",
+      "freq",
+      "open",
+      "high"
+    ]
+  },
+  {
+    "questdb_table": "stock_suspend_d",
+    "canonical": "stock_suspend_d",
+    "category": "A_mapped",
+    "rows": 110515,
+    "ncols": 4,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "suspend_timing",
+      "suspend_type"
+    ]
+  },
+  {
+    "questdb_table": "style_cross_section_daily",
+    "canonical": "style_cross_section_daily",
+    "category": "B_passthrough",
+    "rows": 4025,
+    "ncols": 17,
+    "path": "snapshot",
+    "sample_cols": [
+      "trade_date",
+      "small_cap_return",
+      "large_cap_return",
+      "size_spread",
+      "value_return"
+    ]
+  },
+  {
+    "questdb_table": "survey_sentiment",
+    "canonical": "survey_sentiment",
+    "category": "B_passthrough",
+    "rows": 59,
+    "ncols": 12,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "name",
+      "surv_date",
+      "source",
+      "sentiment_score"
+    ]
+  },
+  {
+    "questdb_table": "sw_classify",
+    "canonical": "industry_classification",
+    "category": "A_mapped",
+    "rows": 511,
+    "ncols": 8,
+    "path": "snapshot",
+    "sample_cols": [
+      "index_code",
+      "industry_name",
+      "industry_code",
+      "parent_code",
+      "level"
+    ]
+  },
+  {
+    "questdb_table": "sw_daily",
+    "canonical": "sw_industry",
+    "category": "A_mapped",
+    "rows": 1502846,
+    "ncols": 15,
+    "path": "export",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "name",
+      "open",
+      "low"
+    ]
+  },
+  {
+    "questdb_table": "sw_weight",
+    "canonical": "industry_membership",
+    "category": "A_mapped",
+    "rows": 4178628,
+    "ncols": 4,
+    "path": "export",
+    "sample_cols": [
+      "index_code",
+      "ts_code",
+      "trade_date",
+      "weight"
+    ]
+  },
+  {
+    "questdb_table": "tdx_theme_etf_overlay",
+    "canonical": "tdx_theme_etf_overlay",
+    "category": "B_passthrough",
+    "rows": 859,
+    "ncols": 10,
+    "path": "snapshot",
+    "sample_cols": [
+      "trade_date",
+      "theme",
+      "etf_code",
+      "etf_name",
+      "sentiment"
+    ]
+  },
+  {
+    "questdb_table": "tdx_theme_llm_scores",
+    "canonical": "tdx_theme_llm_scores",
+    "category": "B_passthrough",
+    "rows": 12343,
+    "ncols": 5,
+    "path": "snapshot",
+    "sample_cols": [
+      "doc_id",
+      "sentiment_score",
+      "sentiment_label",
+      "nlp_model",
+      "scored_at"
+    ]
+  },
+  {
+    "questdb_table": "tdx_theme_news",
+    "canonical": "tdx_theme_news",
+    "category": "B_passthrough",
+    "rows": 7938,
+    "ncols": 13,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts",
+      "theme",
+      "category",
+      "source",
+      "ingest_batch"
+    ]
+  },
+  {
+    "questdb_table": "tdx_theme_sentiment_daily",
+    "canonical": "tdx_theme_sentiment_daily",
+    "category": "B_passthrough",
+    "rows": 6786,
+    "ncols": 4,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "factor_name",
+      "factor_value"
+    ]
+  },
+  {
+    "questdb_table": "ths_daily",
+    "canonical": "ths_daily",
+    "category": "B_passthrough",
+    "rows": 2595962,
+    "ncols": 14,
+    "path": "export",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "open",
+      "high",
+      "low"
+    ]
+  },
+  {
+    "questdb_table": "ths_hot",
+    "canonical": "ths_hot",
+    "category": "B_passthrough",
+    "rows": 350001,
+    "ncols": 11,
+    "path": "snapshot",
+    "sample_cols": [
+      "trade_date",
+      "data_type",
+      "ts_code",
+      "ts_name",
+      "rank"
+    ]
+  },
+  {
+    "questdb_table": "ths_index",
+    "canonical": "ths_index",
+    "category": "B_passthrough",
+    "rows": 1433,
+    "ncols": 6,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "name",
+      "count",
+      "exchange",
+      "list_date"
+    ]
+  },
+  {
+    "questdb_table": "ths_member",
+    "canonical": "ths_member",
+    "category": "B_passthrough",
+    "rows": 2437592,
+    "ncols": 8,
+    "path": "export",
+    "sample_cols": [
+      "ts_code",
+      "con_code",
+      "con_name",
+      "weight",
+      "in_date"
+    ]
+  },
+  {
+    "questdb_table": "top_inst",
+    "canonical": "top_inst",
+    "category": "B_passthrough",
+    "rows": 68907,
+    "ncols": 10,
+    "path": "snapshot",
+    "sample_cols": [
+      "trade_date",
+      "ts_code",
+      "exalter",
+      "side",
+      "buy"
+    ]
+  },
+  {
+    "questdb_table": "top_list",
+    "canonical": "top_list",
+    "category": "B_passthrough",
+    "rows": 102690,
+    "ncols": 15,
+    "path": "snapshot",
+    "sample_cols": [
+      "trade_date",
+      "ts_code",
+      "name",
+      "close",
+      "pct_change"
+    ]
+  },
+  {
+    "questdb_table": "trade_cal",
+    "canonical": "trade_calendar",
+    "category": "A_mapped",
+    "rows": 13162,
+    "ncols": 4,
+    "path": "snapshot",
+    "sample_cols": [
+      "exchange",
+      "cal_date",
+      "is_open",
+      "pretrade_date"
+    ]
+  },
+  {
+    "questdb_table": "ws_asfund",
+    "canonical": "ws_asfund",
+    "category": "B_passthrough",
+    "rows": 42974,
+    "ncols": 28,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "main_net_flow",
+      "main_in_flow",
+      "main_out_flow"
+    ]
+  },
+  {
+    "questdb_table": "ws_blocktrade",
+    "canonical": "ws_blocktrade",
+    "category": "B_passthrough",
+    "rows": 2773,
+    "ncols": 11,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "price",
+      "volume",
+      "amount"
+    ]
+  },
+  {
+    "questdb_table": "ws_etf_holders",
+    "canonical": "ws_etf_holders",
+    "category": "B_passthrough",
+    "rows": 3132,
+    "ncols": 11,
+    "path": "snapshot",
+    "sample_cols": [
+      "etf_code",
+      "report_date",
+      "holder_account",
+      "individual_share",
+      "individual_ratio"
+    ]
+  },
+  {
+    "questdb_table": "ws_etf_holdings",
+    "canonical": "ws_etf_holdings",
+    "category": "B_passthrough",
+    "rows": 12356,
+    "ncols": 5,
+    "path": "snapshot",
+    "sample_cols": [
+      "etf_code",
+      "hold_date",
+      "stock_code",
+      "stock_name",
+      "ratio"
+    ]
+  },
+  {
+    "questdb_table": "ws_exdiv",
+    "canonical": "stock_dividend",
+    "category": "A_mapped",
+    "rows": 2181,
+    "ncols": 9,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "ex_div_date",
+      "pay_date",
+      "report_end_date",
+      "dividend_per_share"
+    ]
+  },
+  {
+    "questdb_table": "ws_ipo",
+    "canonical": "ws_ipo",
+    "category": "B_passthrough",
+    "rows": 3427,
+    "ncols": 10,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "subscribe_date",
+      "list_date",
+      "issue_price",
+      "stage"
+    ]
+  },
+  {
+    "questdb_table": "ws_lhb",
+    "canonical": "ws_lhb",
+    "category": "B_passthrough",
+    "rows": 8496,
+    "ncols": 14,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "close_price",
+      "change_pct",
+      "reason"
+    ]
+  },
+  {
+    "questdb_table": "ws_margintrade",
+    "canonical": "ws_margintrade",
+    "category": "B_passthrough",
+    "rows": 14361,
+    "ncols": 22,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "close_price",
+      "change_pct",
+      "finance_value"
+    ]
+  },
+  {
+    "questdb_table": "ws_reserve",
+    "canonical": "ws_reserve",
+    "category": "B_passthrough",
+    "rows": 5278,
+    "ncols": 7,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "report_end_date",
+      "disclosure_end_date",
+      "disclosure_date",
+      "disclosure_desc"
+    ]
+  },
+  {
+    "questdb_table": "xueqiu_sentiment",
+    "canonical": "xueqiu_sentiment",
+    "category": "B_passthrough",
+    "rows": 1133,
+    "ncols": 13,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "trade_date",
+      "post_id",
+      "title",
+      "raw_content"
+    ]
+  }
+]

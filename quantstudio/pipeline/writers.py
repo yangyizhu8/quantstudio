@@ -430,11 +430,22 @@ class DuckDBWriter(BaseWriter):
         m = re.search(rf"\b{re.escape(col)}\s+(BIGINT|INTEGER|DOUBLE|VARCHAR|BOOLEAN|TIMESTAMP)", ddl, re.IGNORECASE)
         return m.group(1).upper() if m else "VARCHAR"
 
-    def write(self, df: pd.DataFrame, table: str, batch_id: str) -> int:
-        """幂等防重复写入：主键冲突时 UPDATE（upsert），重放同一批次不产生重复行。"""
+    def write(self, df: pd.DataFrame, table: str, batch_id: str,
+              passthrough: bool = False) -> int:
+        """幂等防重复写入：主键冲突时 UPDATE（upsert），重放同一批次不产生重复行。
+
+        passthrough=True（类别B 同名 passthrough 表）：
+          - 按 DataFrame dtypes 自动 CREATE TABLE IF NOT EXISTS（表不存在时）；
+          - 全量覆盖（CREATE OR REPLACE TABLE），不 upsert、不按 DDL 裁剪列、
+            不做类型归一、不推进水位；
+          - DuckDB 表名/列名 = QuestDB 原样（ts_code/trade_date 等保留）。
+        """
         if df is None or len(df) == 0:
             logger.info(f"[DuckDBWriter] {table} batch={batch_id}: 0 rows (skip)")
             return 0
+        if passthrough:
+            written = self._write_passthrough(df, table, batch_id)
+            return written
         # 入库前再去重一次（双保险：validator 已去重，这里再保险）
         cols_in_ddl = self._table_columns(table)
         df = df[[c for c in cols_in_ddl if c in df.columns]].copy()
@@ -568,6 +579,53 @@ class DuckDBWriter(BaseWriter):
                     f"(新增 {new_rows} + 更新 {updated_rows}) 防重复 upsert")
         # 返回 WriteResult：作为 int = 提交行数（向后兼容），.new/.updated 供审计使用
         return WriteResult(len(df), new_rows, updated_rows)
+
+    # ------------------------------------------------------------------
+    # 类别B passthrough 同名表：CREATE OR REPLACE TABLE 全量覆盖
+    # ------------------------------------------------------------------
+    def _write_passthrough(self, df: pd.DataFrame, table: str, batch_id: str) -> int:
+        """passthrough 表全量覆盖写：DuckDB 表名/列名 = QuestDB 原样。
+
+        - 表不存在：按 DataFrame dtypes 自动 CREATE TABLE IF NOT EXISTS；
+        - 存在：CREATE OR REPLACE TABLE 全量覆盖（不 upsert，不按 DDL 裁剪列）；
+        - 不做数值类型归一（保留源原始字符串/数值类型）；
+        - 不推进 source_watermark（passthrough 表无增量水位）。
+        """
+        import duckdb  # 类型映射需要，顶部已 import，这里局部引用保险
+        # 类型映射：object→VARCHAR，其余按 numpy dtype 推断
+        _TYPE_MAP = {
+            "int64": "BIGINT", "int32": "INTEGER", "int16": "SMALLINT",
+            "int8": "SMALLINT", "uint64": "UBIGINT", "uint32": "UINTEGER",
+            "float64": "DOUBLE", "float32": "FLOAT", "bool": "BOOLEAN",
+        }
+
+        def _col_sql(col: str, dtype) -> str:
+            col_q = f'"{col}"'
+            if str(dtype) == "object":
+                return f"{col_q} VARCHAR"
+            return f"{col_q} {_TYPE_MAP.get(str(dtype), 'VARCHAR')}"
+
+        col_defs = ", ".join(_col_sql(c, df[c].dtype) for c in df.columns)
+        create_sql = f'CREATE TABLE IF NOT EXISTS "{table}" ({col_defs})'
+        with self._conn_lock:
+            conn = self._conn()
+            try:
+                conn.execute(create_sql)
+                # 全量覆盖：建临时表→REPLACE→DROP 临时（DuckDB 无原生 CREATE OR REPLACE
+                # 对含数据的表，用事务内 建临时+原子替换 实现等价语义）
+                tmp = f"_pt_tmp_{table}"
+                conn.execute(f'DROP TABLE IF EXISTS "{tmp}"')
+                conn.execute(f'CREATE TABLE "{tmp}" AS SELECT * FROM "{table}" LIMIT 0')
+                conn.register("_pt_src", df)
+                conn.execute(f'INSERT INTO "{tmp}" SELECT * FROM _pt_src')
+                conn.unregister("_pt_src")
+                conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+                conn.execute(f'ALTER TABLE "{tmp}" RENAME TO "{table}"')
+            finally:
+                conn.close()
+        logger.info(f"[DuckDBWriter] {table} passthrough 全量覆盖 {len(df)} 行 "
+                    f"(列原样: {list(df.columns)[:8]}{'...' if len(df.columns) > 8 else ''})")
+        return len(df)
 
     def get_last_date(self, source: str, table: str, freq: str = "daily") -> Optional[str]:
         with self._conn_lock:

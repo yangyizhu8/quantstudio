@@ -71,6 +71,87 @@ _MCP_SUPPORTED: Dict[Tuple[str, str], str] = {
     ("etf_basic", "daily"): "etf_basic",
     ("trade_calendar", "daily"): "trade_calendar",
     ("index_daily", "daily"): "index_daily",
+    # 【codex审计】stock_suspend_d 停更（语义错配：云端是每日停牌状态，canonical 是停牌区间表，
+    #   且停牌判定走 volume==0→suspendFlag，不消费此表）。已移除。
+    # === 类别A 全量扩展：新增映射表（含 namechange）===
+    # stock_daily_valuation→stock_daily_basic / index_constituents→index_weight /
+    # industry_classification→sw_classify / stock_namechange→stock_namechange(同名)
+    # 【codex审计】sw_industry(←sw_daily 行业指数行情)、industry_membership(←sw_weight 权重快照)
+    #   语义错配已停更；sw_daily/sw_weight 改 passthrough 本名直通（见类别B）。
+    ("stock_daily_valuation", "daily"): "stock_daily_basic",
+    ("index_constituents", "daily"): "index_weight",
+    ("industry_classification", "daily"): "sw_classify",
+    ("stock_namechange", "daily"): "stock_namechange",
+    # === 类别B：67 张 passthrough 同名表（全部 daily，直接同名建 DuckDB 表）===
+    ("ai_research_snapshot", "daily"): "ai_research_snapshot",
+    ("block_trade", "daily"): "block_trade",
+    ("broker_monthly", "daily"): "broker_monthly",
+    ("broker_recommend", "daily"): "broker_recommend",
+    ("cninfo_first_rating", "daily"): "cninfo_first_rating",
+    ("cnthesims_events", "daily"): "cnthesims_events",
+    ("cnthesims_factors", "daily"): "cnthesims_factors",
+    ("cyq_chips", "daily"): "cyq_chips",
+    ("cyq_perf", "daily"): "cyq_perf",
+    ("daily_info", "daily"): "daily_info",
+    ("em_first_cover_rating", "daily"): "em_first_cover_rating",
+    ("etf_adj_factor", "daily"): "etf_adj_factor",
+    ("etf_sentiment_daily", "daily"): "etf_sentiment_daily",
+    ("etf_share_size", "daily"): "etf_share_size",
+    ("factor_value", "daily"): "factor_value",
+    ("forecast_vip", "daily"): "forecast_vip",
+    ("gisisi_daily", "daily"): "gisisi_daily",
+    ("hm_detail", "daily"): "hm_detail",
+    ("hm_list", "daily"): "hm_list",
+    ("idx_anns", "daily"): "idx_anns",
+    ("idx_factor_pro", "daily"): "idx_factor_pro",
+    ("index_classify", "daily"): "index_classify",
+    ("inst_survey", "daily"): "inst_survey",
+    ("limit_cpt_list", "daily"): "limit_cpt_list",
+    ("limit_list_d", "daily"): "limit_list_d",
+    ("limit_list_ths", "daily"): "limit_list_ths",
+    ("limit_step", "daily"): "limit_step",
+    ("llm_text_events", "daily"): "llm_text_events",
+    ("llm_text_events_enriched", "daily"): "llm_text_events_enriched",
+    ("llm_text_raw_feed", "daily"): "llm_text_raw_feed",
+    ("margin", "daily"): "margin",
+    ("margin_detail", "daily"): "margin_detail",
+    ("margin_secs", "daily"): "margin_secs",
+    ("market_breadth_daily", "daily"): "market_breadth_daily",
+    ("moneyflow_cnt_ths", "daily"): "moneyflow_cnt_ths",
+    ("moneyflow_ind_ths", "daily"): "moneyflow_ind_ths",
+    ("moneyflow_ths", "daily"): "moneyflow_ths",
+    ("news_sentiment", "daily"): "news_sentiment",
+    ("report_rc", "daily"): "report_rc",
+    ("rsshub_raw", "daily"): "rsshub_raw",
+    ("sector_top300_daily", "daily"): "sector_top300_daily",
+    ("sentiment_factor_daily", "daily"): "sentiment_factor_daily",
+    ("slb_len", "daily"): "slb_len",
+    ("stk_auction", "daily"): "stk_auction",
+    ("stk_factor_pro", "daily"): "stk_factor_pro",
+    ("stk_limit", "daily"): "stk_limit",
+    ("style_cross_section_daily", "daily"): "style_cross_section_daily",
+    ("survey_sentiment", "daily"): "survey_sentiment",
+    ("sw_daily", "daily"): "sw_daily",         # codex审计：行业指数行情（原 sw_industry 错配，改 passthrough）
+    ("sw_weight", "daily"): "sw_weight",       # codex审计：L1 指数权重快照（原 industry_membership 错配，改 passthrough）
+    ("tdx_theme_etf_overlay", "daily"): "tdx_theme_etf_overlay",
+    ("tdx_theme_llm_scores", "daily"): "tdx_theme_llm_scores",
+    ("tdx_theme_news", "daily"): "tdx_theme_news",
+    ("tdx_theme_sentiment_daily", "daily"): "tdx_theme_sentiment_daily",
+    ("ths_daily", "daily"): "ths_daily",
+    ("ths_hot", "daily"): "ths_hot",
+    ("ths_index", "daily"): "ths_index",
+    ("ths_member", "daily"): "ths_member",
+    ("top_inst", "daily"): "top_inst",
+    ("top_list", "daily"): "top_list",
+    ("ws_asfund", "daily"): "ws_asfund",
+    ("ws_blocktrade", "daily"): "ws_blocktrade",
+    ("ws_etf_holders", "daily"): "ws_etf_holders",
+    ("ws_etf_holdings", "daily"): "ws_etf_holdings",
+    ("ws_ipo", "daily"): "ws_ipo",
+    ("ws_lhb", "daily"): "ws_lhb",
+    ("ws_margintrade", "daily"): "ws_margintrade",
+    ("ws_reserve", "daily"): "ws_reserve",
+    ("xueqiu_sentiment", "daily"): "xueqiu_sentiment",
 }
 
 # 行情大表（日线 + 分钟线）：走 export_dataset 落 Raw Landing（支持日期范围 + 分片）。
@@ -90,6 +171,12 @@ _SNAPSHOT_TABLES = {("stock_dividend", "daily")}
 
 # QuantStudio canonical 表名 → QuestDB 源表名映射
 # 大部分表名一致，以下是需要映射的例外
+#
+# 【codex 全量审计 2026-08-03 修订】：
+#   - sw_industry(←sw_daily)、industry_membership(←sw_weight)、stock_suspend_d(←stock_suspend)
+#     三张表语义错配/模型不匹配，已停更（collector_tasks.json enabled=false），
+#     故从本映射移除；其 QuestDB 源表 sw_daily/sw_weight 改为 passthrough 同名直通。
+#   - sw_daily / sw_weight 有独立价值（行业指数行情 / L1 指数权重快照），作 passthrough。
 _CANONICAL_TO_QUESTDB = {
     "balance_statement": "stock_balancesheet",
     "income_statement": "stock_income",
@@ -97,7 +184,73 @@ _CANONICAL_TO_QUESTDB = {
     "fin_indicator": "stock_fina_indicator",
     "trade_calendar": "trade_cal",
     "stock_dividend": "ws_exdiv",
+    # === 类别A 全量扩展：新增映射表（含 namechange 同名）===
+    "stock_daily_valuation": "stock_daily_basic",   # 估值表无 OHLCV，UnitCheck 不拦
+    "index_constituents": "index_weight",
+    "industry_classification": "sw_classify",        # codex审计：补 column_map + adapter L1 过滤
+    "stock_namechange": "stock_namechange",          # 同名（云端 ETL 新建表），DuckDB schema: code/change_date/status_after/name_before/name_after
 }
+
+# === 类别B：passthrough 同名表（不走 aligner / validator / source_watermark）===
+# DuckDB 表名/列名 = QuestDB 原样（ts_code/trade_date 等保留）。
+#
+# 【codex 全量审计 2026-08-03 修订】：
+#   - sw_daily（行业指数行情）、sw_weight（L1 指数权重快照）从原类别A 错配映射改为
+#     passthrough 本名直通（有独立价值，但与 canonical sw_industry/industry_membership
+#     语义不同，不再强行映射）。
+_PASSTHROUGH_TABLES = frozenset({
+    "ai_research_snapshot", "block_trade", "broker_monthly", "broker_recommend",
+    "cninfo_first_rating", "cnthesims_events", "cnthesims_factors", "cyq_chips",
+    "cyq_perf", "daily_info", "em_first_cover_rating", "etf_adj_factor",
+    "etf_sentiment_daily", "etf_share_size", "factor_value", "forecast_vip",
+    "gisisi_daily", "hm_detail", "hm_list", "idx_anns", "idx_factor_pro",
+    "index_classify", "inst_survey",     "limit_cpt_list", "limit_list_d", "limit_list_ths",
+    "limit_step", "llm_text_events", "llm_text_events_enriched", "llm_text_raw_feed",
+    "margin", "margin_detail", "margin_secs", "market_breadth_daily",
+    "moneyflow_cnt_ths", "moneyflow_ind_ths", "moneyflow_ths", "news_sentiment",
+    "report_rc", "rsshub_raw", "sector_top300_daily", "sentiment_factor_daily",
+    "slb_len", "stk_auction", "stk_factor_pro", "stk_limit",
+    "style_cross_section_daily", "survey_sentiment", "sw_daily", "sw_weight",
+    "tdx_theme_etf_overlay", "tdx_theme_llm_scores", "tdx_theme_news",
+    "tdx_theme_sentiment_daily", "ths_daily", "ths_hot", "ths_index", "ths_member",
+    "top_inst", "top_list", "ws_asfund", "ws_blocktrade", "ws_etf_holders",
+    "ws_etf_holdings", "ws_ipo", "ws_lhb", "ws_margintrade", "ws_reserve",
+    "xueqiu_sentiment",
+})
+
+# 大表（>100万行）：首拉 1亿行量级，默认 disabled，需客户手动启用
+_PASSTHROUGH_BIG_TABLES = frozenset({
+    "cyq_chips", "cyq_perf", "etf_adj_factor", "etf_share_size", "idx_factor_pro",
+    "margin_detail", "margin_secs", "moneyflow_ths", "report_rc", "stk_auction",
+    "stk_factor_pro", "stk_limit", "ths_daily", "ths_member",
+})
+
+# ===========================================================================
+# 线1：is_qfq 还原 raw（adapter 侧还原）
+# ---------------------------------------------------------------------------
+# 云端 QuestDB 存的是**前复权价**（is_qfq=True，日线实测 100%），锚点为云端因子
+# 系列的全局最新因子：
+#     qfq_i = raw_i × adj_factor_i / adj_factor_latest_global
+# 而本框架契约要求 adapter 只返回 raw（复权统一由 aligner._apply_qfq 负责）。
+# 若把 qfq 直接当 raw 交给 aligner，会再算一次 front = qfq × adj_i/adj_latest
+# → **双重复权**（实测 300750 4-22：正确 226.312 vs 错误 222.017）。
+# 故在 adapter 侧反解还原：
+#     raw_i = qfq_i × adj_factor_latest_global / adj_factor_i
+#
+# 【codex P0-①，最易错】adj_factor_latest_global 必须取自 qfq_aux.db 的**完整
+# 因子历史**（全局最新），绝不能用本次 export 分片内最后一行的因子。
+# 实测 300750 2024-06-03：用全局 latest(1.9495) 还原 = 202.5001；
+# 误用 2024-06 分片末行(1.8660) = 193.8267，**差 8.67 元**。
+#
+# 还原只作用于价格列；vol/amount/pct_chg 等非价格列原样保留
+# （amount 成交额与复权无关，pct_chg 为比率不变量）。
+_RESTORE_PRICE_COLS = ("open", "high", "low", "close", "pre_close")
+# 需要还原的四张行情表（与 _QFQ_ADJFACTOR_TABLES 同源，按 canonical 表名去重）
+_RESTORE_TABLES = frozenset({"stock_daily", "etf_daily",
+                             "stock_minutes", "etf_minutes"})
+# 因子缺失时的兜底策略：fail-fast。静默放行 = 把 qfq 当 raw 写进主库 = 数据污染，
+# 比取数失败严重得多，故宁可让本次任务失败。
+_RESTORE_MISSING_FACTOR_FAIL_FAST = True
 
 _QFQ_DIVIDEND_TABLE = ("stock_dividend", "daily")
 _QFQ_ADJFACTOR_TABLES = {("stock_daily", "daily"), ("etf_daily", "daily"),
@@ -202,6 +355,11 @@ class MCPAdapter(BaseSourceAdapter):
         return (False, f"mcp 不支持表/频率组合 ({table},{freq})，"
                        f"矩阵: {sorted(_MCP_SUPPORTED)}")
 
+    @staticmethod
+    def is_passthrough(table: str) -> bool:
+        """类别B 同名 passthrough 表判定（不走 aligner/validator/watermark）。"""
+        return table in _PASSTHROUGH_TABLES
+
     # ------------------------------------------------------------------
     # 核心：fetch_table
     # ------------------------------------------------------------------
@@ -222,6 +380,13 @@ class MCPAdapter(BaseSourceAdapter):
                 f"[MCPAdapter] 不支持的表/频率: ({table},{freq})，"
                 f"MCP 支持矩阵: {sorted(_MCP_SUPPORTED)}")
 
+        # === 类别B passthrough：直接 query_snapshot 取 raw，不做 column_map/
+        #     不 normalize_adj_factor / 不走 aligner / 不注入 QFQ ===
+        if table in _PASSTHROUGH_TABLES:
+            raw_df, meta = self._fetch_passthrough(table, freq, start, end, codes)
+            meta["passthrough"] = True
+            return raw_df, meta
+
         key = (table, freq)
         if key in _EXPORT_TABLES:
             raw_df, meta = self._fetch_export(table, freq, start, end, codes)
@@ -233,6 +398,59 @@ class MCPAdapter(BaseSourceAdapter):
             self._inject_qfq_inputs(table, freq, raw_df, meta)
 
         return raw_df, meta
+
+    # ------------------------------------------------------------------
+    # 类别B passthrough：直接 query_snapshot 全量取 raw（原样返回，不做任何映射/归一）
+    # ------------------------------------------------------------------
+    def _fetch_passthrough(self, table: str, freq: str, start: str, end: str,
+                           codes: Optional[List[str]]) -> Tuple[pd.DataFrame, Dict]:
+        """passthrough 同名表：query_snapshot 全量返回原始 DataFrame。
+
+        - 列名/表名 = QuestDB 原样（ts_code/trade_date 等保留），不做 column_map
+        - 不做 normalize_adj_factor / code_format 归一（无 aligner 消费）
+        - 仅做（可选）日期/codes 过滤以便增量范围裁剪，不改列
+        - 不触发 §7.2-A QFQ 注入
+        """
+        qdb_table = _CANONICAL_TO_QUESTDB.get(table, table)
+        # passthrough 全量拉取：用较大 limit 覆盖 <100万 行小表；
+        # 大表（>100万）在 collector_tasks 中 enabled=false，不会进入本路径。
+        page = self.client.query_snapshot(dataset_id=qdb_table, limit=10_000_000)
+        all_rows = page.rows
+        df = pd.DataFrame(all_rows, columns=page.columns) if all_rows else pd.DataFrame()
+        # 仅做日期窗口裁剪（不改变列），MCP 列名可能是 date/trade_date
+        def _norm_date(v):
+            s = str(v).strip()
+            if len(s) >= 10 and s[4] == "-":
+                s = s[:10].replace("-", "")
+            return s[:8]
+        date_col = next((c for c in ("date", "trade_date") if c in df.columns), None)
+        if len(df) and date_col:
+            dcol = df[date_col].map(_norm_date)
+            s8, e8 = _norm_date(start), _norm_date(end)
+            df = df[(dcol >= s8) & (dcol <= e8)].reset_index(drop=True)
+        if codes and len(df):
+            want = {str(c) for c in codes}
+            code_col = next((c for c in ("ts_code", "code", "stock_code")
+                             if c in df.columns), None)
+            if code_col:
+                df = df[df[code_col].astype(str).isin(want)].reset_index(drop=True)
+        meta = {
+            "source": "mcp",
+            "freq": freq,
+            "table": table,
+            "passthrough": True,
+            "upstream_authority": "xtquant",
+            "lineage": {
+                "upstream_authority": "xtquant",
+                "transport": "mcp_streamable_http",
+                "server": self.endpoint,
+                "passthrough": True,
+            },
+            "rows": len(df),
+        }
+        logger.info(f"[MCPAdapter] {table}/{freq} passthrough 拉取 {len(df)} 行 "
+                    f"(列原样: {list(df.columns)[:8]}{'...' if len(df.columns) > 8 else ''})")
+        return df, meta
 
     # ------------------------------------------------------------------
     # 小表：query_snapshot
@@ -555,7 +773,7 @@ class MCPAdapter(BaseSourceAdapter):
           的资产类型触发（当前 fund_adj 为空 → ETF 必触发一次）。
         """
         table = "etf_daily" if asset_type == "ETF" else "stock_daily"
-        qdb_tbl = table
+        qdb_tbl = _CANONICAL_TO_QUESTDB.get(table, table)
         # 全历史窗口（起点取足够早的日期，终点取明天以含当日）
         t0 = "1990-01-01T00:00:00"
         t1 = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00")
@@ -1031,31 +1249,3 @@ if __name__ == "__main__":
         print(df.head() if len(df) else "（无数据）")
     finally:
         adapter.close()
-
-
-# ===========================================================================
-# 线1：is_qfq 还原 raw（adapter 侧还原）
-# ---------------------------------------------------------------------------
-# 云端 QuestDB 存的是**前复权价**（is_qfq=True，日线实测 100%），锚点为云端因子
-# 系列的全局最新因子：
-#     qfq_i = raw_i × adj_factor_i / adj_factor_latest_global
-# 而本框架契约要求 adapter 只返回 raw（复权统一由 aligner._apply_qfq 负责）。
-# 若把 qfq 直接当 raw 交给 aligner，会再算一次 front = qfq × adj_i/adj_latest
-# → **双重复权**（实测 300750 4-22：正确 226.312 vs 错误 222.017）。
-# 故在 adapter 侧反解还原：
-#     raw_i = qfq_i × adj_factor_latest_global / adj_factor_i
-#
-# 【codex P0-①，最易错】adj_factor_latest_global 必须取自 qfq_aux.db 的**完整
-# 因子历史**（全局最新），绝不能用本次 export 分片内最后一行的因子。
-# 实测 300750 2024-06-03：用全局 latest(1.9495) 还原 = 202.5001；
-# 误用 2024-06 分片末行(1.8660) = 193.8267，**差 8.67 元**。
-#
-# 还原只作用于价格列；vol/amount/pct_chg 等非价格列原样保留
-# （amount 成交额与复权无关，pct_chg 为比率不变量）。
-_RESTORE_PRICE_COLS = ("open", "high", "low", "close", "pre_close")
-# 需要还原的四张行情表（与 _QFQ_ADJFACTOR_TABLES 同源，按 canonical 表名去重）
-_RESTORE_TABLES = frozenset({"stock_daily", "etf_daily",
-                             "stock_minutes", "etf_minutes"})
-# 因子缺失时的兜底策略：fail-fast。静默放行 = 把 qfq 当 raw 写进主库 = 数据污染，
-# 比取数失败严重得多，故宁可让本次任务失败。
-_RESTORE_MISSING_FACTOR_FAIL_FAST = True

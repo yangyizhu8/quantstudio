@@ -150,7 +150,9 @@ def _lint_one_task(task: Dict, name: str, schemas: Dict, sources: Dict,
             f"task '{name}': 候选链中无已启用且支持 {table}/{freq} 的数据源 ({chain})")
 
     # 第 2 项：table 必须在 schemas 定义
-    if table and table not in schemas:
+    # 类别B passthrough 表：同名建 DuckDB，无 alignment_rules schema，跳过 schema 存在性检查
+    is_passthrough = bool(task.get("passthrough"))
+    if table and table not in schemas and not is_passthrough:
         errors.append(
             f"task '{name}': table='{table}' 在 alignment_rules.schemas 中未定义")
 
@@ -158,6 +160,9 @@ def _lint_one_task(task: Dict, name: str, schemas: Dict, sources: Dict,
     _lint_codes(name, chain[0] if chain else "", codes, errors, warnings)
 
     # 权威源校验：authoritative_source 必须已启用且支持该 task 的 table/freq
+    # passthrough 表：无权威源概念（全量覆盖，不进入增量水位/权威源对账体系），跳过
+    if is_passthrough:
+        return
     authoritative = task.get("authoritative_source")
     if authoritative:
         ok, reason = supports_task(authoritative, table, freq)

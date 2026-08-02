@@ -550,6 +550,14 @@ class ResidentCollector:
 
             codes = task.get("codes")
             adapter.configure_execution(task)
+
+            # === 类别B passthrough 路由：跳过权威源守卫/aligner/validator/watermark ===
+            # task 配置 passthrough=true（collector_tasks.json）即路由到专用路径，
+            # 直接 query_snapshot 取 raw → CREATE OR REPLACE TABLE 全量覆盖 → 不推进水位。
+            if task.get("passthrough"):
+                return self._run_passthrough_task(
+                    task, batch_id, source, started_at, adapter)
+
             raw_df, metadata = adapter.fetch_table(table, start, end, freq=freq, codes=codes)
             rows_raw = len(raw_df)
             if rows_raw == 0:
@@ -700,6 +708,52 @@ class ResidentCollector:
                                     rows_raw, rows_aligned, rows_passed, rows_rejected,
                                     rows_written, "failed", str(e), started_at)
             return False  # 不推进水位，下周期重试
+
+    def _run_passthrough_task(self, task: Dict, batch_id: str, source: str,
+                              started_at: str, adapter) -> bool:
+        """类别B passthrough 同名表专用路径：跳过权威源守卫/aligner/validator/watermark。
+
+        语义：query_snapshot 全量 → DuckDB CREATE OR REPLACE TABLE（全量覆盖，不 upsert）
+        → 不推进 source_watermark（passthrough 表不进入增量水位体系）。
+        DuckDB 表名/列名 = QuestDB 原样（ts_code/trade_date 等保留）。
+        """
+        name = task.get("name", task.get("table"))
+        table = task["table"]
+        freq = task.get("freq", "daily")
+        mode = task.get("mode", "full_range")
+        if mode == "full_range":
+            start = task.get("start_date", "2018-01-01")
+            end = task.get("end_date") or datetime.now().strftime("%Y-%m-%d")
+        else:
+            start = task.get("start_date", "2018-01-01")
+            end = task.get("end_date") or datetime.now().strftime("%Y-%m-%d")
+        codes = task.get("codes")
+        logger.info(f"[{batch_id}] PASSTHROUGH {name}: {table} {start}→{end} (source={source})")
+
+        try:
+            raw_df, metadata = adapter.fetch_table(table, start, end, freq=freq, codes=codes)
+            rows_raw = len(raw_df)
+            if rows_raw == 0:
+                logger.info(f"[{batch_id}] passthrough no data, skip")
+                self.batch_audit.record(batch_id, name, source, table, freq,
+                                        0, 0, 0, 0, 0, "empty", None, started_at)
+                return True
+            # 全量覆盖写入（CREATE OR REPLACE TABLE），不走 aligner/validator upsert
+            written = self.writer.write(raw_df, table, batch_id, passthrough=True)
+            rows_written = written if isinstance(written, int) else len(raw_df)
+            # passthrough 表：不推进 source_watermark（全量覆盖语义，无增量水位）
+            logger.info(f"[{batch_id}] ✅ passthrough raw={rows_raw} written={rows_written} "
+                        f"(CREATE OR REPLACE, 不推进水位)")
+            self.batch_audit.record(batch_id, name, source, table, freq,
+                                    rows_raw, rows_raw, rows_written, 0,
+                                    rows_written, "success", None, started_at,
+                                    rows_new=rows_written, rows_updated=0)
+            return True
+        except Exception as e:
+            logger.error(f"[{batch_id}] ❌ PASSTHROUGH FAILED: {e}", exc_info=True)
+            self.batch_audit.record(batch_id, name, source, table, freq,
+                                    0, 0, 0, 0, 0, "failed", str(e), started_at)
+            return False
 
     def _execute_task_per_trade_date(self, task: Dict, batch_id: str, started_at: str,
                                   source: str = "tushare") -> bool:
