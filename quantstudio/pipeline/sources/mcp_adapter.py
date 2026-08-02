@@ -556,38 +556,75 @@ class MCPAdapter(BaseSourceAdapter):
     # ------------------------------------------------------------------
     # 行情大表：export_dataset 落 Raw Landing + 分片读取 + 本地日期/codes 过滤
     # ------------------------------------------------------------------
+    # 服务端 export_dataset 默认 row_limit=200万行截断（取最老数据）。
+    # 全历史行情表（stock_daily 1400万行 / stock_minutes 4.8亿行）必须分批拉取，
+    # 每批控制在安全阈值内（日线 ~12个月/批，分钟 ~10天/批），避免截断丢数据。
+    _EXPORT_SAFE_ROWS = 1_500_000   # 安全阈值（200万服务端上限留 25% 余量）
+    _EXPORT_DAILY_WINDOW_DAYS = 365  # 日线表每批最大窗口（~120万行/年）
+    _EXPORT_MINUTE_WINDOW_DAYS = 10  # 分钟表每批最大窗口（~6000万行/年，10天~160万行）
+
+    def _export_batches(self, start: str, end: str, is_minute: bool) -> List[Tuple[str, str]]:
+        """按时间窗口切分 export 批次，避免服务端 200 万行截断。
+
+        日线表（~120万行/年）：每批最多 365 天 → 约 120 万行 < 200 万安全。
+        分钟表（~6000万行/年）：每批最多 10 天 → 约 160 万行 < 200 万安全。
+        返回 [(batch_start, batch_end), ...] 列表，覆盖 start~end 闭区间。
+        """
+        s = datetime.strptime(str(start).strip()[:10], "%Y-%m-%d")
+        e = datetime.strptime(str(end).strip()[:10], "%Y-%m-%d")
+        window = self._EXPORT_MINUTE_WINDOW_DAYS if is_minute else self._EXPORT_DAILY_WINDOW_DAYS
+        batches = []
+        cur = s
+        while cur <= e:
+            nxt = min(cur + timedelta(days=window), e)
+            batches.append((cur.strftime("%Y-%m-%d"), nxt.strftime("%Y-%m-%d")))
+            cur = nxt + timedelta(days=1)  # 下一批从次日开始（避免重叠）
+        return batches
+
+
+
     def _fetch_export(self, table: str, freq: str, start: str, end: str,
                       codes: Optional[List[str]]) -> Tuple[pd.DataFrame, Dict]:
         """行情大表（日线/分钟）：导出落 Raw Landing，分片读取避免全量驻留。
 
         export_dataset 已内部跑完 create_export_job → get_manifest → 逐 shard
         get_artifact（含 SHA256 对账），返回 Artifact 列表。这里落盘 + 分片读回。
-        server 的 export 不接收日期/codes 参数（全量导出），故过滤在 adapter 侧完成。
+        server 的 export 不接收 codes 参数（全量导出），codes 过滤在 adapter 侧完成。
+        时间范围下推到服务端（time_start/time_end），但服务端有 200 万行截断，
+        故对超长范围自动分批（_export_batches 切分时间窗口）。
         """
-        # 服务端时间范围下推（ISO 格式 + 闭区间 end 加 1 天，避免漏当天）
-        def _to_iso(d: str) -> str:
-            s = str(d).strip()[:10]
-            return datetime.strptime(s, "%Y-%m-%d").strftime("%Y-%m-%dT00:00:00")
-        time_start_iso = _to_iso(start)
-        time_end_iso = (datetime.strptime(str(end).strip()[:10], "%Y-%m-%d")
-                        + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00")
-        # 分钟大表服务端强制要求 row_limit
         _is_big = "minutes" in table
-        try:
-            qdb_tbl = _CANONICAL_TO_QUESTDB.get(table, table)
-            artifacts = self.client.export_dataset(
-                dataset_id=qdb_tbl, page_size=50_000,
-                time_start=time_start_iso, time_end=time_end_iso,
-                row_limit=5_000_000 if _is_big else None)
-        except Exception as _e:
-            logger.error(f"[_fetch_export] export_dataset 异常: "
-                         f"type={type(_e).__name__} msg={_e} "
-                         f"endpoint={self.endpoint}")
-            raise
-        job_id = (artifacts[0].raw.get("job_id")
-                  if artifacts and artifacts[0].raw.get("job_id")
-                  else "export")
-        logger.info(f"[MCPAdapter] {table}/{freq} export 分片数={len(artifacts)}")
+        qdb_tbl = _CANONICAL_TO_QUESTDB.get(table, table)
+
+        # === 自动分批：按时间窗口切分，避免服务端 200 万行截断 ===
+        batches = self._export_batches(start, end, _is_big)
+        all_artifacts = []
+        job_ids = []
+        for i, (bs, be) in enumerate(batches):
+            def _to_iso(d: str) -> str:
+                s = str(d).strip()[:10]
+                return datetime.strptime(s, "%Y-%m-%d").strftime("%Y-%m-%dT00:00:00")
+            ts_iso = _to_iso(bs)
+            te_iso = (datetime.strptime(str(be).strip()[:10], "%Y-%m-%d")
+                      + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00")
+            try:
+                if len(batches) > 1:
+                    logger.info(f"[MCPAdapter] {table}/{freq} export 批次 {i+1}/{len(batches)}: "
+                                f"{bs} → {be}")
+                arts = self.client.export_dataset(
+                    dataset_id=qdb_tbl, page_size=50_000,
+                    time_start=ts_iso, time_end=te_iso,
+                    row_limit=5_000_000 if _is_big else None)
+                all_artifacts.extend(arts)
+                jid = (arts[0].raw.get("job_id") if arts and arts[0].raw.get("job_id") else f"export_{i}")
+                job_ids.append(jid)
+            except Exception as _e:
+                logger.error(f"[_fetch_export] export_dataset 异常(批次{i+1}): "
+                             f"type={type(_e).__name__} msg={_e}")
+                raise
+        artifacts = all_artifacts
+        job_id = job_ids[0] if job_ids else "export"
+        logger.info(f"[MCPAdapter] {table}/{freq} export 分批={len(batches)} 总分片={len(artifacts)}")
 
         frames: List[pd.DataFrame] = []
         for art in artifacts:
@@ -978,6 +1015,74 @@ class MCPAdapter(BaseSourceAdapter):
         except MCPClientError as e:
             logger.warning(f"[MCPAdapter] get_last_date({table},{freq}) 失败: {e}")
         return None
+
+    # ------------------------------------------------------------------
+    # 全市场代码列表（daemon per_stock 路径要求）
+    # ------------------------------------------------------------------
+    def get_all_stock_codes(self) -> List[str]:
+        """获取全市场 A 股股票代码（tushare 格式 600000.SH），对齐 tushare adapter。
+
+        从云端 stock_basic 表 query_snapshot 拉取，过滤沪深主板/创业板/科创板/北交所。
+        daemon 的 _execute_task_per_stock 路径要求此方法（codes=ALL 时获取代码列表逐只拉取）。
+        """
+        try:
+            page = self.client.query_snapshot(dataset_id="stock_basic", limit=200_000)
+            if not page.rows:
+                logger.warning("[MCPAdapter] get_all_stock_codes: stock_basic 无数据")
+                return []
+            import re
+            a_share_re = re.compile(r"^\d{6}\.(SH|SZ|BJ)$")
+            codes = [str(r.get("ts_code", "")) for r in page.rows
+                     if a_share_re.match(str(r.get("ts_code", "")))]
+            logger.info(f"[MCPAdapter] 全市场 A 股: {len(codes)} 只")
+            return codes
+        except Exception as e:
+            logger.error(f"[MCPAdapter] get_all_stock_codes 失败: {e}")
+            return []
+
+    def get_etf_codes(self) -> List[str]:
+        """获取全市场 ETF 基金代码（tushare 格式 510050.SH / 159919.SZ），对齐 tushare adapter。
+
+        从云端 etf_basic 表 query_snapshot 拉取，过滤上市状态。
+        """
+        try:
+            page = self.client.query_snapshot(dataset_id="etf_basic", limit=200_000)
+            if not page.rows:
+                logger.warning("[MCPAdapter] get_etf_codes: etf_basic 无数据")
+                return []
+            import re
+            etf_re = re.compile(r"^\d{6}\.(SH|SZ)$")
+            codes = [str(r.get("ts_code", "")) for r in page.rows
+                     if etf_re.match(str(r.get("ts_code", "")))]
+            logger.info(f"[MCPAdapter] 全市场 ETF: {len(codes)} 只")
+            return codes
+        except Exception as e:
+            logger.error(f"[MCPAdapter] get_etf_codes 失败: {e}")
+            return []
+
+    def get_index_codes(self) -> List[str]:
+        """获取指数代码列表（用于 index_daily 任务的 per_stock 路径）。
+
+        从云端 index_daily 表 query_snapshot 去重取 ts_code。
+        """
+        try:
+            page = self.client.query_snapshot(dataset_id="index_daily", limit=200_000)
+            if not page.rows:
+                logger.warning("[MCPAdapter] get_index_codes: index_daily 无数据")
+                return []
+            seen = set()
+            codes = []
+            for r in page.rows:
+                tc = str(r.get("ts_code", ""))
+                if tc and tc not in seen:
+                    seen.add(tc)
+                    codes.append(tc)
+            logger.info(f"[MCPAdapter] 指数: {len(codes)} 个")
+            return codes
+        except Exception as e:
+            logger.error(f"[MCPAdapter] get_index_codes 失败: {e}")
+            return []
+
 
     # ------------------------------------------------------------------
     # §7.2-A QFQ 数据注入：驱动 qfq_event_discovery

@@ -480,10 +480,14 @@ class ResidentCollector:
         # baostock/akshare/xtquant: 按股票遍历（每只一次API）
         # tushare 日线 + 流通股本: 按交易日遍历（每天一次全市场），效率高 10 倍
         # ETF 日线（fund_daily）: 按 ts_code 遍历（trade_date 全市场模式有权限限制），走 per_stock
+        # 【MCP 例外】：MCP 的 export_dataset 是全量导出模型（一次按时间范围拉全市场），
+        # 逐只拉取会有 5000+ 次 job 创建开销（单只~100s，全市场 18 小时，不可接受）。
+        # 故 MCP 行情表跳过 per_stock，走下面的普通全量路径（fetch_table codes=None）。
         is_all_market = codes_cfg == ["ALL"] or codes_cfg == "ALL" or codes_cfg is None
         if is_all_market and source == "tushare" and table in ("stock_daily", "stock_float_share", "stock_daily_valuation"):
             return self._execute_task_per_trade_date(task, batch_id, started_at, source)
-        if is_all_market and table in ("stock_daily", "stock_minutes", "index_daily", "etf_daily", "etf_minutes", "fin_indicator", "stock_daily_valuation", "stock_dividend"):
+        if (is_all_market and source != "mcp"
+                and table in ("stock_daily", "stock_minutes", "index_daily", "etf_daily", "etf_minutes", "fin_indicator", "stock_daily_valuation", "stock_dividend")):
             return self._execute_task_per_stock(task, batch_id, started_at, source)
 
         # 普通模式（指定 codes 或非全市场）
