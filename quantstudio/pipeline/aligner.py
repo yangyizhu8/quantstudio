@@ -411,6 +411,15 @@ class FieldAligner:
         if "update_time" in schema["columns"] and "update_time" not in df.columns:
             df["update_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        # ---- 附加：etf_daily isST 兜底 [P3-3 修复] ----
+        # ETF 无 ST 概念（恒 0）。xtquant/tushare adapter 在 fetch 时补 isST=0，
+        # 但 MCP adapter 不补，且 _derive_st_status 仅对 stock_daily 推导。
+        # 为全源一致，此处对 etf_daily 兜底填充 isST=0（schema 定义 required=false，
+        # 但 validator/回测层期望该列存在）。
+        if table == "etf_daily" and "isST" not in df.columns:
+            df["isST"] = 0
+            applied_steps.append("etf_isST_zero")
+
         metadata = {
             "schema_version": schema.get("schema_version", self.schema_version),
             "table": table,

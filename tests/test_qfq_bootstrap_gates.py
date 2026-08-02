@@ -14,7 +14,9 @@
 注：本文件只测测试，不触碰任何生产代码。
 """
 
+import json
 import sqlite3
+from pathlib import Path
 
 import duckdb
 import pytest
@@ -168,6 +170,95 @@ def test_bootstrap_plan_rejects_empty_codes_filter(orch_env):
         orch.bootstrap_plan(dconn, as_of_ms=1700000000000, codes_filter=[])
 
 
+def test_bootstrap_plan_admissible_directly_enqueues_full_typed_list(orch_env, monkeypatch):
+    dconn, orch = orch_env
+    dconn.execute(
+        "INSERT INTO stock_dividend (code, ex_date, div_proc) VALUES "
+        "('600001','20260108','实施'), ('600002','20260108','实施')"
+    )
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("admissible 模式不应调用 _classify_bootstrap_security")
+
+    monkeypatch.setattr(orch, "_classify_bootstrap_security", fail_if_called)
+    plan = orch.bootstrap_plan(
+        dconn,
+        as_of_ms=1700000000000,
+        admissible_codes=[("STOCK", "600001"), ("ETF", "510300")],
+    )
+
+    assert plan.total == 3
+    assert plan.items == [("ETF", "510300"), ("STOCK", "600001")]
+    assert plan.excluded == 1
+    rows = dconn.execute(
+        "SELECT asset_type, code, status, block_reason FROM qfq_bootstrap_item "
+        "WHERE bootstrap_run_id=? ORDER BY asset_type, code", [plan.run_id]
+    ).fetchall()
+    assert rows == [
+        ("ETF", "510300", "pending", None),
+        ("STOCK", "600001", "pending", None),
+        ("STOCK", "600002", "excluded", "NOT_ADMISSIBLE"),
+    ]
+
+
+def test_bootstrap_plan_full_production_admissible_manifest(orch_env, monkeypatch):
+    dconn, orch = orch_env
+    manifest_path = (
+        Path(__file__).resolve().parents[1]
+        / "config" / "qfq_rebase_admissible_securities.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    admissible = [
+        (asset_type, code)
+        for asset_type, codes in manifest["by_asset"].items()
+        for code in codes
+    ]
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("admissible 模式不应调用 _classify_bootstrap_security")
+
+    monkeypatch.setattr(orch, "_classify_bootstrap_security", fail_if_called)
+    plan = orch.bootstrap_plan(
+        dconn, as_of_ms=1700000000000, admissible_codes=admissible)
+
+    assert plan.total == 5487
+    assert len(plan.items) == 5487
+    assert plan.excluded == 0
+    assert dconn.execute(
+        "SELECT asset_type, status, COUNT(1) FROM qfq_bootstrap_item "
+        "WHERE bootstrap_run_id=? GROUP BY asset_type, status "
+        "ORDER BY asset_type, status", [plan.run_id]
+    ).fetchall() == [
+        ("ETF", "pending", 1197),
+        ("STOCK", "pending", 4290),
+    ]
+
+
+def test_supersede_bootstrap_runs_clears_old_blocked(orch_env):
+    dconn, orch = orch_env
+    dconn.execute(
+        "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, status) "
+        "VALUES ('old_run','blocked')"
+    )
+    dconn.execute(
+        "INSERT INTO qfq_bootstrap_item "
+        "(bootstrap_run_id, asset_type, code, status, block_reason, updated_at) VALUES "
+        "('old_run','STOCK','600001','blocked','OLD_BLOCK',CURRENT_TIMESTAMP),"
+        "('old_run','ETF','510300','completed',NULL,CURRENT_TIMESTAMP)"
+    )
+
+    result = orch.supersede_bootstrap_runs(dconn, ["old_run"])
+
+    assert result == {"runs": 1, "items": 1}
+    assert dconn.execute(
+        "SELECT status FROM qfq_bootstrap_run WHERE bootstrap_run_id='old_run'"
+    ).fetchone()[0] == "superseded"
+    assert dconn.execute(
+        "SELECT code, status FROM qfq_bootstrap_item "
+        "WHERE bootstrap_run_id='old_run' ORDER BY code"
+    ).fetchall() == [("510300", "completed"), ("600001", "superseded")]
+
+
 def test_bootstrap_completed_true_when_all_terminal(orch_env):
     dconn, orch = orch_env
     dconn.execute(
@@ -197,6 +288,26 @@ def test_bootstrap_completed_blocking_state_false(orch_env, bad_status):
         "'2026-01-08 00:00:00')", [bad_status]
     )
     assert orch.bootstrap_completed(dconn) is False
+
+
+def test_bootstrap_completed_excluded_does_not_block(orch_env):
+    dconn, orch = orch_env
+    dconn.execute(
+        "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, status, schema_version, "
+        "config_hash, baseline_version) VALUES ('br_excluded','completed',?,NULL,NULL)",
+        [SCHEMA_VERSION]
+    )
+    dconn.execute(
+        "INSERT INTO qfq_bootstrap_item (bootstrap_run_id, asset_type, code, status, "
+        "block_reason, updated_at) VALUES "
+        "('br_excluded','STOCK','600001','completed',NULL,'2026-01-08 00:00:00'),"
+        "('br_excluded','STOCK','600002','excluded','NOT_ADMISSIBLE',"
+        "'2026-01-08 00:00:00')"
+    )
+    assert orch.bootstrap_completed(dconn) is True
+    audit = orch.bootstrap_audit(dconn, "br_excluded")
+    assert audit["excluded"] == 1
+    assert audit["clean"] is True
 
 
 def test_bootstrap_completed_blocked_false(orch_env):

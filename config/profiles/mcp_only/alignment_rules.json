@@ -1265,6 +1265,26 @@
         "update_time": {
           "type": "str",
           "required": false
+        },
+        "f_ann_date": {
+          "type": "int",
+          "required": false,
+          "unit": "毫秒时间戳"
+        },
+        "report_type": {
+          "type": "str",
+          "required": false,
+          "unit": "报告类型编码（如 Q1/Q2/Q3/QC/FY，区分同一报告期多版本）"
+        },
+        "comp_type": {
+          "type": "str",
+          "required": false,
+          "unit": "公司类型（1=合并/2=母公司）"
+        },
+        "end_type": {
+          "type": "str",
+          "required": false,
+          "unit": "报告期类型"
         }
       },
       "available_at_field": "ann_date"
@@ -2676,8 +2696,7 @@
       }
     },
     "mcp": {
-      "_note": "MCP 全数据源（P2-3 注册）：代码 600063.SH（tushare 格式，code_format=tushare_to_raw）；列名按任务书 §5 映射 ts_code→code, trade_date/trade_time→time, vol→volume, pre_close→preClose, pct_chg→pctChg。MCP 数据源自 QuestDB，vol 已是股/份单位（无需 ×100，P3-2 修复：原 ×100 导致 UnitCheck 误拒）。adj_factor 不在此映射，由 daemon 经 normalize_mcp_adj_factor_df 单独提取复权。",
-      "_comment_P2_4": "adj_factor 标准化（SH/SZ后缀、UTC→Asia/Shanghai、分钟按交易日连接）在 P2-4 daemon 协同完成，Adapter 先原样返回。",
+      "_note": "MCP 全数据源（P2-3 注册）：代码 600063.SH（tushare 格式，code_format=tushare_to_raw）；列名按任务书 §5 映射。vol 单位暂按 xtquant 同口径，待 P2-4 联调核实。MCP 原样返回 adj_factor 列（不复权，交给 aligner）。",
       "stock_daily": {
         "column_map": {
           "ts_code": "code",
@@ -2704,7 +2723,7 @@
         },
         "time_to_ms": true,
         "pctchg_source": "official",
-        "_note": "adj_factor 不在此映射（P3-2 修复）：MCP 原样返回的 adj_factor 由 daemon 经 normalize_mcp_adj_factor_df 单独提取传给 aligner 复权，不走 column_map，避免 _apply_qfq merge 列名冲突。"
+        "_note": "adj_factor 不在此映射（P3-2 修复）：MCP 原样返回的 adj_factor 由 daemon 经 normalize_mcp_adj_factor_df 单独提取传给 aligner 计算复权，不经过 column_map，避免 _apply_qfq merge 列名冲突。"
       },
       "stock_minutes": {
         "column_map": {
@@ -2769,31 +2788,41 @@
       "stock_dividend": {
         "column_map": {
           "ts_code": "code",
-          "ex_date": "ex_date",
-          "record_date": "record_date",
-          "ann_date": "ann_date",
-          "end_date": "end_date",
-          "cash_div_before_tax": "cash_div_before_tax",
-          "cash_div_after_tax": "cash_div_after_tax",
-          "cash_div": "cash_div",
-          "stk_div": "stk_div",
-          "stk_bo_rate": "stk_bo_rate",
-          "stk_co_rate": "stk_co_rate",
-          "div_rat": "div_rat",
-          "div_proc": "div_proc",
+          "ex_div_date": "ex_date",
+          "dividend_per_share": "cash_div_before_tax",
+          "dividend_plan": "_ws_divplan",
           "update_time": "update_time",
-          "data_source": "data_source",
           "code": "_ws_orig_code",
           "name": "_ws_name",
-          "dividend_plan": "_ws_divplan",
           "currency": "_ws_currency",
           "pay_date": "_ws_pay_date",
           "report_end_date": "_ws_report_end"
         },
         "code_format": "tushare_to_raw",
+        "unit_conversions": {
+          "cash_div_before_tax": {
+            "factor": 10,
+            "_note": "ws_exdiv.dividend_per_share 为每股分红，×10 转每10股税前红利（对齐 tushare bonus 口径）"
+          }
+        },
+        "time_to_ms": true,
+        "_note": "除权除息表（P3-7 修复）：云端 QuestDB 表名 ws_exdiv（经 _CANONICAL_TO_QUESTDB 映射）。ws_exdiv 仅含现金分红（ts_code/ex_div_date/dividend_per_share/dividend_plan），无送股/配股列→对应 DuckDB 列留 NULL（不影响 event_discovery，其只看 ex_date+div_proc='实施'）。div_proc 由 adapter 从 dividend_plan 非空派生'实施'。"
+      },
+      "balance_statement": {
+        "column_map": {
+          "ts_code": "code",
+          "ann_date": "ann_date",
+          "f_ann_date": "f_ann_date",
+          "end_date": "end_date",
+          "report_type": "report_type",
+          "comp_type": "comp_type",
+          "end_type": "end_type",
+          "update_time": "update_time"
+        },
+        "code_format": "tushare_to_raw",
         "unit_conversions": {},
         "time_to_ms": true,
-        "_note": "除权除息表：驱动 qfq_event_discovery.scan_stock_dividend（§7.2-A 注入 DuckDB 主库）。"
+        "_note": "资产负债表（P3-5 新增 mcp 映射）：云端 QuestDB 列名与 tushare 段一致。仅映射 PIT 元数据列（ann_date/f_ann_date/end_date/report_type/comp_type/end_type），科目列由下游按需扩展。time_to_ms 将 YYYYMMDD 时间列转毫秒；f_ann_date 经 schema 定义转毫秒。"
       }
     }
   },

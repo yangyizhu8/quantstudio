@@ -368,13 +368,18 @@ def _to_fresh_frame(
 # FreshCapture —— 采集 + 证据 hash + 落元数据表
 # ---------------------------------------------------------------------------
 class FreshCapture:
-    """QFQ fresh 采集器（单源锁定 xtquant；只落 qfq_fresh_capture 元数据表）。"""
+    """QFQ fresh 采集器（价格源锁定 xtquant/mcp；只落 qfq_fresh_capture 元数据表）。
+
+    P2-4：放开到 mcp（MCP 作传输通道，上游权威 xtquant，由 orchestrator price_source
+    声明）。默认生产配置仍用 xtquant（不受影响）。
+    """
 
     def __init__(self, cfg: QFQOrchestratorConfig):
-        # 单源锁定：配置价格源必须为 xtquant（fail-fast，与 orchestrator 校验一致）。
-        if cfg is not None and getattr(cfg, "price_source", "xtquant") != "xtquant":
+        # 单源锁定：配置价格源必须为 xtquant 或 mcp（fail-fast，与 orchestrator 校验一致）。
+        _ps = getattr(cfg, "price_source", "xtquant")
+        if _ps not in ("xtquant", "mcp"):
             raise ValueError(
-                f"FreshCapture 价格源必须锁定 xtquant，收到 {cfg.price_source!r}")
+                f"FreshCapture 价格源必须锁定 xtquant/mcp，收到 {_ps!r}")
         self.cfg = cfg
 
     # —— 周期映射（复用 adapter 的 TABLE_PERIOD 单一真相源）——
@@ -405,13 +410,13 @@ class FreshCapture:
             run_id: 本轮运行 id（参与 capture_id 确定性）。
             daily_range_ms: (start_ms, end_ms) 日线区间（epoch-ms）。
             minute_range_ms: (start_ms, end_ms) 分钟区间（epoch-ms）。
-            fetcher: 可注入的 FreshFetcher（生产用 XtquantFreshFetcher，测试用 Fake）。
-            source: 价格源标识（锁定 'xtquant'）。
+            fetcher: 可注入的 FreshFetcher（生产用 XtquantFreshFetcher/McpFreshFetcher，测试用 Fake）。
+            source: 价格源标识（锁定 'xtquant' / 'mcp'）。
         Returns:
             (FreshCaptureRecord, fresh_daily, fresh_minute)
         """
-        if source != "xtquant":
-            raise ValueError(f"FreshCapture 价格源必须锁定 xtquant，收到 {source!r}")
+        if source not in ("xtquant", "mcp"):
+            raise ValueError(f"FreshCapture 价格源必须锁定 xtquant/mcp，收到 {source!r}")
 
         # 裸码 → xtquant 格式
         xt_code = raw_to_xtquant(code)
@@ -633,3 +638,88 @@ def write_fresh_capture(conn, rec: "FreshCaptureRecord") -> None:
     conn.execute(
         f"INSERT INTO qfq_fresh_capture ({', '.join(cols)}) VALUES ({placeholders})",
         vals)
+
+
+# ---------------------------------------------------------------------------
+# P2-4 McpFreshFetcher：MCP 全数据源价格拉取（替代 XtquantFreshFetcher）
+# ---------------------------------------------------------------------------
+_PERIOD_TO_MCP_FREQ = {"1d": "daily", "1m": "1min", "5m": "5min",
+                       "15m": "15min", "30m": "30min", "60m": "60min"}
+
+
+class McpFreshFetcher(FreshFetcher):
+    """MCP 源 fresh fetcher（P2-4 §7.2-C）。
+
+    用 MCP adapter 拉价格（含 adj_factor），计算 none（未复权）与 front（前复权）：
+        front = raw × (adj_i / adj_latest)
+    替代 xtquant 三段式。MCP 是传输通道，上游权威 xtquant（由 price_source=mcp 声明）。
+
+    惰性构造 MCP adapter（首次 fetch 才建连接），模块加载不触发网络。
+    """
+
+    def __init__(self, mcp_cfg: Optional[Dict] = None, adapter=None):
+        self._mcp_cfg = mcp_cfg or {}
+        self._adapter = adapter
+        self._connected = False
+
+    def _ensure(self):
+        if not self._connected:
+            if self._adapter is None:
+                from .sources import create_adapter
+                self._adapter = create_adapter("mcp", self._mcp_cfg)
+            self._connected = True
+
+    @staticmethod
+    def _to_period_table(asset_type: str, freq: str) -> Tuple[str, str]:
+        """(asset_type, freq) → (MCP table, xt period)。"""
+        if asset_type == "ETF":
+            table = "etf_minutes" if freq != "daily" else "etf_daily"
+            period = "1m" if freq != "daily" else "1d"
+        else:
+            table = "stock_minutes" if freq != "daily" else "stock_daily"
+            period = "1m" if freq != "daily" else "1d"
+        return table, period
+
+    def fetch_none_front(
+        self,
+        asset_type: str,
+        xt_code: str,
+        period: str,
+        start_yyyymmdd: str,
+        end_yyyymmdd: str,
+    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """返回 (none_df, front_df)；index=DatetimeIndex(bar 时间)，列 open/high/low/close。
+
+        MCP 返回 raw（含 adj_factor），none=raw OHLC，front=raw×(adj_i/adj_latest)。
+        """
+        self._ensure()
+        mcp_freq = _PERIOD_TO_MCP_FREQ.get(period, "daily")
+        table, _ = self._to_period_table(asset_type, mcp_freq)
+        raw_df, _ = self._adapter.fetch_table(
+            table, start_yyyymmdd, end_yyyymmdd, freq=mcp_freq, codes=[xt_code])
+        if len(raw_df) == 0:
+            empty = pd.DataFrame(columns=["open", "high", "low", "close"])
+            return empty, empty.copy()
+        # 时间 index：MCP raw 含 time(ms) 或 trade_date(YYYYMMDD)
+        if "time" in raw_df.columns:
+            idx = pd.to_datetime(raw_df["time"], unit="ms", utc=True).dt.tz_convert("Asia/Shanghai")
+        elif "trade_date" in raw_df.columns:
+            idx = pd.to_datetime(raw_df["trade_date"].astype(str), format="%Y%m%d")
+        else:
+            idx = pd.RangeIndex(len(raw_df))
+        # none_df
+        none_df = pd.DataFrame({
+            "open": pd.to_numeric(raw_df["open"], errors="coerce"),
+            "high": pd.to_numeric(raw_df["high"], errors="coerce"),
+            "low": pd.to_numeric(raw_df["low"], errors="coerce"),
+            "close": pd.to_numeric(raw_df["close"], errors="coerce"),
+        }, index=idx)
+        # front_df：前复权 = raw × (adj_i / adj_latest)
+        if "adj_factor" in raw_df.columns:
+            adj = pd.to_numeric(raw_df["adj_factor"], errors="coerce").fillna(1.0)
+            adj_latest = adj.iloc[-1] if adj.iloc[-1] > 0 else 1.0
+            ratio = adj / adj_latest if adj_latest > 0 else 1.0
+            front_df = none_df.mul(ratio, axis=0)
+        else:
+            front_df = none_df.copy()
+        return none_df, front_df

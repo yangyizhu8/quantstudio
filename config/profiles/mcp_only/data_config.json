@@ -1,0 +1,12 @@
+{
+  "type": "duckdb",
+  "path": "data/staging/mcp_only_quantstudio.db",
+  "_note": "mcp_only 独立 staging DuckDB，不碰正式库 data/quantstudio.db。路径相对项目根，由 _paths.get_data_root() 锚定。",
+  "quarantine": {
+    "path": "data/staging/mcp_only_quarantine.db",
+    "retention_days": 7,
+    "auto_archive": true,
+    "max_rows": 500000,
+    "rate_alert_threshold": 1000
+  }
+}

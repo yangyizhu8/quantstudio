@@ -220,12 +220,20 @@ class ResidentCollector:
         """惰性构造编排器（xtquant fetcher 惰性连接；calendar 走主库交易日历）。"""
         if self._qfq_orch is None:
             from .qfq_resident_orchestrator import QFQResidentOrchestrator
-            from .qfq_fresh_capture import XtquantFreshFetcher
+            from .qfq_fresh_capture import XtquantFreshFetcher, McpFreshFetcher
             from .qfq_calendar import CalendarService
             cfg = self._qfq_config()
+            # P2-4：fresh fetcher 按 price_source 决定（mcp 作传输通道，上游权威 xtquant）
+            if cfg.price_source == "mcp":
+                mcp_cfg = (self.sources_cfg.get("sources", {}).get("mcp")
+                           or self.sources_cfg.get("mcp", {}))
+                fetcher = McpFreshFetcher(mcp_cfg=mcp_cfg)   # 惰性：首次取数才建 MCP 连接
+                logger.info("[qfq] 编排器使用 McpFreshFetcher（price_source=mcp）")
+            else:
+                fetcher = XtquantFreshFetcher()   # 惰性：首次取数才 import/连 xtquant
             self._qfq_orch = QFQResidentOrchestrator(
                 cfg, main_db=str(self.writer.db_path),
-                fetcher=XtquantFreshFetcher(),   # 惰性：首次取数才 import/连 xtquant
+                fetcher=fetcher,
                 calendar=CalendarService(main_db=self.writer.db_path),
                 watermark_advancer=self.writer.advance_watermark)
         return self._qfq_orch
@@ -417,33 +425,38 @@ class ResidentCollector:
         freq = task.get("freq", "daily")
         codes_cfg = task.get("codes")
 
-        # PR 分钟源切换守卫（复权一致性，2026-07-21 用户批准）：
-        # 分钟表（stock_minutes/etf_minutes）权威源锁定 xtquant 单源。
-        # xtquant 三段式复权（none/front/back）与 tushare adj_factor 归一化算法不同，
-        # 若同表混用两源，front 列复权基准不一致会静默污染回测。
+        # P2-4 权威源守卫（复权一致性，2026-07-21 用户批准，扩展支持 MCP 传输通道）：
+        # 区分 transport_source（传输通道：xtquant/tushare/mcp）与 upstream_authority
+        # （上游数据权威：xtquant）。MCP 仅作传输通道，其上游权威声明在 sources_config
+        # （mcp.upstream_authority，默认 xtquant）。仅当声明的上游权威命中权威集才放行，
+        # 绝不简单用 source in ("xtquant","mcp") 而不核查上游权威 lineage。
+        # 分钟表权威上游=xtquant（三段式复权基准敏感）；日线权威上游=xtquant/tushare。
         # 显式能力错误（缺数据停更）优于混源静默污染（不可检测的错误答案）。
-        # 若需 tushare 回填历史深度缺口，是一次性显式运维 + 重建全表复权列，绝不作日常 fallback。
-        MINUTE_AUTHORITY = {"stock_minutes": "xtquant", "etf_minutes": "xtquant"}
-        if table in MINUTE_AUTHORITY and source != MINUTE_AUTHORITY[table]:
-            logger.error(
-                f"[task={name}] 分钟表 {table} 权威源锁定为 {MINUTE_AUTHORITY[table]}"
-                f"（复权一致性决策 2026-07-21），拒绝用 {source} 写入（避免跨源复权基准不一致）。"
-                f"若需历史回填，请显式运维操作并重建全表复权列，单独过审批。")
-            return False
+        # 若需历史回填，是一次性显式运维 + 重建全表复权列，绝不作日常 fallback。
+        def _declared_upstream(src: str) -> str:
+            if src != "mcp":
+                return src  # xtquant/tushare 自身即上游权威
+            sc = self.sources_cfg.get("sources", {}).get("mcp") or self.sources_cfg.get("mcp", {})
+            return sc.get("upstream_authority", "xtquant")
 
-        # 日线源切换守卫（复权一致性，2026-07-21 用户批准，对称 MINUTE_AUTHORITY）：
-        # stock_daily/etf_daily 权威源锁定 xtquant 单源。复权基准虽语义一致（都以最新交易日为锚），
-        # 但 xtquant passthrough 与 tushare _apply_qfq 算法精度不同（xtquant 逐日累计 vs tushare adj_factor 段常数），
-        # 同表混用会在切换边界产生轻微台阶（Fidelity 门禁 ±1 元容差敏感）。
-        # 守卫防止 source_priority 回退链在 xtquant 失败时静默写入 tushare 数据污染复权基准。
-        # miniQMT 不可用期间日线停更（data_status 如实反映），优于不可检测的混源污染。
-        DAILY_AUTHORITY = {"stock_daily": "xtquant", "etf_daily": "xtquant"}
-        if table in DAILY_AUTHORITY and source != DAILY_AUTHORITY[table]:
-            logger.error(
-                f"[task={name}] 日线表 {table} 权威源锁定为 {DAILY_AUTHORITY[table]}"
-                f"（复权一致性决策 2026-07-21），拒绝用 {source} 写入（避免跨源复权基准台阶）。"
-                f"若需历史回填，请显式运维操作并重建全表复权列，单独过审批。")
-            return False
+        MINUTE_UPSTREAM = {"xtquant"}
+        DAILY_UPSTREAM = {"xtquant", "tushare"}
+        if table in ("stock_minutes", "etf_minutes"):
+            up = _declared_upstream(source)
+            if up not in MINUTE_UPSTREAM:
+                logger.error(
+                    f"[task={name}] 分钟表 {table} 上游权威必须=xtquant"
+                    f"（transport={source}，declared_upstream={up}，复权一致性决策 2026-07-21），"
+                    f"拒绝写入以避免跨源复权基准漂移。若需历史回填请显式运维并重建全表复权列。")
+                return False
+        elif table in ("stock_daily", "etf_daily"):
+            up = _declared_upstream(source)
+            if up not in DAILY_UPSTREAM:
+                logger.error(
+                    f"[task={name}] 日线表 {table} 上游权威必须∈{{xtquant,tushare}}"
+                    f"（transport={source}，declared_upstream={up}，复权一致性决策 2026-07-21），"
+                    f"拒绝写入以避免跨源复权基准台阶。若需历史回填请显式运维并重建全表复权列。")
+                return False
 
         # 通用权威源守卫（task 级 authoritative_source 声明，覆盖所有表类型）
         authoritative = task.get("authoritative_source")
@@ -560,6 +573,36 @@ class ResidentCollector:
                         raw_codes = raw_df[code_col].unique().tolist()
                 is_etf = (table in ("etf_daily", "etf_minutes"))
                 adj_factor_df = self._fetch_adj_factor(adapter, raw_codes, start, end, is_etf=is_etf)
+            elif (source == "mcp" and table in ("stock_daily", "stock_minutes", "etf_daily")
+                  and "adj_factor" in raw_df.columns):
+                # P2-4 §7.2-B 补齐：普通模式（指定 codes）与 per_stock 路径对称。
+                # raw_df 已含 adj_factor 列（原样返回），直接提取并标准化为 aligner 期望格式，
+                # 走 aligner tushare 计算路径（front=raw×adj_i/adj_latest, back=raw×adj_i/adj_earliest）。
+                from .sources.mcp_adapter import normalize_mcp_adj_factor_df
+                asset_type = "ETF" if table.startswith("etf") else "STOCK"
+                adj_factor_df = normalize_mcp_adj_factor_df(raw_df, freq, asset_type)
+                # 严格对齐 aligner._apply_qfq 期望的列名（code / time / adj_factor），
+                # 避免 merge 时列名不匹配导致 KeyError（P3-2 第8个 bug 防御）。
+                tk = self.aligner.schemas[table].get("time_key", "time")
+                rename_map = {}
+                if "time" in adj_factor_df.columns and tk != "time":
+                    rename_map["time"] = tk
+                if "code" not in adj_factor_df.columns and adj_factor_df.columns[0] != "code":
+                    rename_map[adj_factor_df.columns[0]] = "code"
+                if rename_map:
+                    adj_factor_df = adj_factor_df.rename(columns=rename_map)
+                if len(adj_factor_df) == 0:
+                    logger.warning(f"[{batch_id}] MCP adj_factor 标准化后为空（表={table}），"
+                                   f"复权字段将留 NULL")
+                # P3-2 第8个 bug 根因修复：raw_df 仍含原始 adj_factor 列（MCP 原样返回），
+                # 而 aligner._apply_qfq 的 merge(right=adj_factor_df 也含 adj_factor) 会产生
+                # adj_factor_x/adj_factor_y 列名冲突 → merged["adj_factor"] KeyError。
+                # daemon 已单独提取 adj_factor_df（不走 aligner 字段映射），此处从 raw_df 显式
+                # drop 原始 adj_factor 列，确保 df(left) 不含该列，merge 不冲突。
+                # 注：aligner._map_columns 用 rename（不删列），故仅删 column_map 条目不足以去列，
+                # 必须在此处 drop。
+                if "adj_factor" in raw_df.columns:
+                    raw_df = raw_df.drop(columns=["adj_factor"]).reset_index(drop=True)
             # Step 5：stock_float_share 补算 circ_mv 需要收盘价（从 stock_daily 查）
             close_df = None
             if table == "stock_float_share":
@@ -1143,11 +1186,23 @@ class ResidentCollector:
                 if len(raw_df) == 0:
                     return 0
                 # tushare 需要拉复权因子计算复权价；baostock 直通（adapter 已提供）
-                # ETF 用 fund_adj（is_etf=True），股票用 adj_factor
+                # MCP（P2-4 §7.2-B）：raw_df 已含 adj_factor 列（原样返回），直接提取并
+                # 标准化为 aligner 期望格式（SH/SZ 后缀、UTC→Asia/Shanghai、交易日连接、
+                # 去重、清洗），走 aligner tushare 计算路径
+                # （_apply_qfq: front=raw×adj_i/adj_latest, back=raw×adj_i/adj_earliest）。
+                # ETF 用 fund_adj 口径（asset_type=ETF），股票用 adj_factor。
                 adj_factor_df = None
                 if source == "tushare" and table in ("stock_daily", "stock_minutes", "etf_daily", "etf_minutes"):
                     adj_factor_df = self._fetch_adj_factor(adapter, [code], start, end,
                                                            is_etf=(table in ("etf_daily", "etf_minutes")))
+                elif source == "mcp" and "adj_factor" in raw_df.columns \
+                        and table in ("stock_daily", "stock_minutes", "etf_daily", "etf_minutes"):
+                    from .sources.mcp_adapter import normalize_mcp_adj_factor_df
+                    asset_type = "ETF" if table.startswith("etf") else "STOCK"
+                    adj_factor_df = normalize_mcp_adj_factor_df(raw_df, freq, asset_type)
+                    if len(adj_factor_df) == 0:
+                        logger.warning(f"[{code}] MCP adj_factor 标准化后为空（表={table}），"
+                                       f"复权字段将留 NULL")
                 std_df, _ = self.aligner.align(raw_df, table, source, adj_factor_df=adj_factor_df,
                                                namechange_df=namechange_df, valuation_df=valuation_df,
                                                freq=freq)

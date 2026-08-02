@@ -11,9 +11,11 @@
 """
 from __future__ import annotations
 
+import csv
 import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import duckdb
 import pandas as pd
@@ -55,6 +57,69 @@ def test_parse_codes_filter_rejects_empty_or_invalid(tmp_path):
     path.write_text(json.dumps({"securities": ["600001"]}), encoding="utf-8")
     with pytest.raises(SystemExit, match="codes 数组"):
         cli._parse_codes_filter(str(path))
+
+
+def test_parse_admissible_codes_accepts_default_and_validates_count(tmp_path):
+    path = tmp_path / "qfq_rebase_admissible_securities.json"
+    path.write_text(json.dumps({
+        "total_admissible": 2,
+        "by_asset": {"STOCK": ["600001"], "ETF": ["159215"]},
+    }), encoding="utf-8")
+    assert cli._parse_admissible_codes("", config_dir=str(tmp_path)) == [
+        ("ETF", "159215"), ("STOCK", "600001")]
+
+    path.write_text(json.dumps({
+        "total_admissible": 3,
+        "by_asset": {"STOCK": ["600001"], "ETF": ["159215"]},
+    }), encoding="utf-8")
+    with pytest.raises(SystemExit, match="唯一证券数=2"):
+        cli._parse_admissible_codes("", config_dir=str(tmp_path))
+
+
+def test_bootstrap_plan_parser_accepts_admissible_default():
+    args = cli.build_parser().parse_args([
+        "--db", "staging.db", "bootstrap-plan", "--admissible"])
+    assert args.cmd == "bootstrap-plan"
+    assert args.admissible == ""
+
+
+def test_repository_loose_admissible_manifest_matches_evidence():
+    root = Path(__file__).resolve().parents[1]
+    config = json.loads((
+        root / "config/qfq_rebase_admissible_securities.json"
+    ).read_text(encoding="utf-8"))
+    evidence_dir = (
+        root / "docs/evidence/qfq_raw_admission_fullmarket_20260730")
+    with (evidence_dir / "admission_summary.csv").open(
+            encoding="utf-8-sig", newline="") as handle:
+        summary_rows = list(csv.DictReader(handle))
+    with (evidence_dir / "block_tick_tolerance_downgraded.csv").open(
+            encoding="utf-8-sig", newline="") as handle:
+        downgraded_rows = list(csv.DictReader(handle))
+
+    by_asset = config["by_asset"]
+    manifest_codes = set(by_asset["STOCK"]) | set(by_asset["ETF"])
+    downgraded = {row["code"] for row in downgraded_rows}
+    summary_by_code = {}
+    for row in summary_rows:
+        summary_by_code.setdefault(row["code"], set()).add(row["status"])
+    strict = manifest_codes - downgraded
+
+    assert config["total_admissible"] == 5487
+    assert config["codes"] == sorted(manifest_codes)
+    assert len(manifest_codes) == 5487
+    assert len(strict) == 5395
+    assert len(downgraded) == 92
+    assert all(
+        row["verdict"] == "ADMISSIBLE_TICK_TOLERANCE"
+        for row in downgraded_rows)
+    assert all("ADMISSIBLE" in summary_by_code.get(code, set()) for code in strict)
+    assert all(code in summary_by_code for code in downgraded)
+    assert manifest_codes == strict | downgraded
+    assert config["status_summary"] == {
+        "ADMISSIBLE": 5395,
+        "ADMISSIBLE_TICK_TOLERANCE": 92,
+    }
 
 
 def test_reconcile_once_parser_accepts_codes():
@@ -307,6 +372,40 @@ def test_bootstrap_plan_and_audit(env, capsys):
     rc = cli.main(_base_args(env, "bootstrap-audit"))
     assert rc == 1
     assert "'remaining': 1" in capsys.readouterr().out
+
+
+def test_bootstrap_plan_admissible_default_excludes_out_of_scope(env, capsys):
+    manifest = {
+        "total_admissible": 1,
+        "by_asset": {"STOCK": ["600000"], "ETF": []},
+    }
+    config_dir = Path(env["db"]).parent
+    (config_dir / "qfq_rebase_admissible_securities.json").write_text(
+        json.dumps(manifest), encoding="utf-8")
+    conn = duckdb.connect(env["db"])
+    conn.execute(
+        "INSERT INTO stock_dividend (code, ex_date, cash_div, stk_div, "
+        "div_rat, div_proc) VALUES "
+        "('600000', ?, 0.5, 0, 0, '实施'), "
+        "('600001', ?, 0.5, 0, 0, '实施')",
+        [EX_PAST_MS, EX_PAST_MS])
+    conn.close()
+
+    rc = cli.main(_base_args(
+        env, "--config-dir", str(config_dir), "--execute",
+        "bootstrap-plan", "--admissible"))
+
+    assert rc == 0
+    assert "pending=1 excluded=1" in capsys.readouterr().out
+    conn = duckdb.connect(env["db"], read_only=True)
+    rows = conn.execute(
+        "SELECT code, status, block_reason FROM qfq_bootstrap_item ORDER BY code"
+    ).fetchall()
+    conn.close()
+    assert rows == [
+        ("600000", "pending", None),
+        ("600001", "excluded", "NOT_ADMISSIBLE"),
+    ]
 
 
 def test_reconcile_once_e2e(env, monkeypatch, capsys):

@@ -67,7 +67,7 @@ _CODE_PATTERNS = {
     "_default": re.compile(r"^\d{6}$"),
 }
 
-_REGISTERED_ADAPTERS = {"tushare", "baostock", "akshare", "xtquant", "a_stock_data"}
+_REGISTERED_ADAPTERS = {"tushare", "baostock", "akshare", "xtquant", "a_stock_data", "mcp"}
 
 
 def lint_configs(data_cfg: Dict, sources_cfg: Dict,
@@ -273,13 +273,19 @@ def _lint_qfq_orchestrator(tasks_cfg: Dict, sources: Dict,
             errors.append(
                 f"qfq_orchestrator: enabled=true 但价格修正源 "
                 f"'{cfg.price_source}' 未在 sources_config 启用（编排器将 fail-closed）")
-        # 因子发现源：stock/etf detector 目前均为 tushare_*（qfq_event_discovery 契约）
+        # 因子发现源：stock/etf detector 前缀（tushare/mcp）对应的源需在 sources 启用
         for det in (cfg.stock_factor_detector, cfg.etf_factor_detector):
             if det.startswith("tushare") and not sources.get(
                     "tushare", {}).get("enabled", False):
                 errors.append(
                     f"qfq_orchestrator: enabled=true 且 detector '{det}' 需要 "
                     f"tushare，但 tushare 未在 sources_config 启用")
+                break
+            if det.startswith("mcp") and not sources.get(
+                    "mcp", {}).get("enabled", False):
+                errors.append(
+                    f"qfq_orchestrator: enabled=true 且 detector '{det}' 需要 "
+                    f"mcp，但 mcp 未在 sources_config 启用")
                 break
 
 
