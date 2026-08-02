@@ -146,6 +146,43 @@ python -m quantstudio.pipeline.qfq_orchestrator_cli --db <DB> bootstrap-audit
 直接拒绝，避免意外退化为全量 bootstrap。计划生成后确认其中无 `159915`，执行
 结果须 `blocked=0`。
 
+Step C 全市场生产基线必须显式使用准入名单：
+
+```bash
+python -m quantstudio.pipeline.qfq_orchestrator_cli --db <DB> --aux-db <AUX> \
+  --config-dir config --override enabled=true --execute --allow-production \
+  bootstrap-plan --admissible
+```
+
+`--admissible` 不带路径时读取
+`config/qfq_rebase_admissible_securities.json`；也可显式传入其他同格式文件。
+准入名单本身是完整 bootstrap 工作集：计划按 `by_asset` 遍历名单内全部 STOCK/ETF，
+直接写为 `pending`，不依赖 `stock_dividend(实施)` / `qfq_factor_observation` 候选发现，
+也不调用 `_classify_bootstrap_security` 二次分类。名单外的旧候选写为 `excluded` 且
+`block_reason=NOT_ADMISSIBLE`，保留审计但不进入 fresh 下载/rebase。
+`excluded` 是合法终态，不阻止 `bootstrap_completed`；`blocked` 仍表示本轮准入证券
+处理失败，必须处置到 0，禁止用 excluded 掩盖执行失败。未传 `--admissible` 时保持
+原 `stock_dividend(实施) + qfq_factor_observation` 候选分类行为。
+
+> **D 方案 partial deferred（2026-08-02 批准）**：生产 bootstrap / resident 重锚传
+> `allow_partial_minute=True`。分钟历史缺失（`fresh ⊃ target`，库内已有行全匹配）时
+> 不 BLOCK，降级为 `partial`（`status=committed`，不 INSERT 新行，只 UPDATE 共有区间
+> 分钟 `*_front`），审计 `minute_front_coverage='partial'` 标记历史 front 不完整。
+> `partial` **不计入 blocked**，但必须审计可见；`fresh` 自身缺行仍严格 `blocked`。
+> 适用于 `config/collector_tasks.json` 的 1m 任务 `start_date` 偏晚导致的分钟历史缺口；
+> 分钟历史完整回填（C 方案）后应撤除 partial。
+
+明确废弃的历史 run 可受控标记为 `superseded`：
+
+```bash
+python -m quantstudio.pipeline.qfq_orchestrator_cli --db <DB> --aux-db <AUX> \
+  --config-dir config --override enabled=true --execute --allow-production \
+  bootstrap-supersede --run-id <OLD_RUN_ID>
+```
+
+该命令只更新指定历史 run 及其未成功 item 的编排状态，不触碰价格表；不得用于处置
+当前 run 的 `blocked` / `failed`。
+
 ### 手动协调一轮（紧急/调试）
 ```bash
 # Canary / 指定证券：恢复、发现、领取、gate 均只处理名单内代码

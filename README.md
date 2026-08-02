@@ -169,6 +169,13 @@ fresh_capture_id=None, fresh_metadata_sha256=None)`：
   旧假设会导致真实除权场景 BLOCK）。信任边界：框架不独立证明 oracle 的经济复权语义
   正确性（需独立 oracle，属未来研究）。详见
   [`docs/superpowers/specs/2026-07-29-fresh-authoritative-rebase-design.md`](docs/superpowers/specs/2026-07-29-fresh-authoritative-rebase-design.md)。
+- **`allow_partial_minute`（D 方案，2026-08-02 批准）**：`fresh_authoritative_rebase` /
+  resident 重锚调用可传 `allow_partial_minute=True`。当库内分钟历史缺失（`fresh ⊃ target`，
+  即 fresh 多出历史行、库内已有行全部与 fresh 对齐）时，不再 BLOCK，而是降级为
+  **partial deferred**：仅对共有区间 UPDATE 分钟 `*_front`（不 INSERT 新行，契约不变），
+  审计写 `minute_front_coverage='partial'` 标记历史 front 不完整。日线 rebase 行为完全不变。
+  此路径用于分钟采集缺口（`collector_tasks.json` 的 1m 任务 `start_date` 偏晚导致库内分钟
+  历史不全）下的全市场日线 rebase 推进；分钟历史完整回填后（C 方案）应撤除 partial 走全量。
 - 切换模型必须由调用方显式改写 `model` 并给出书面 `model_reason`，**禁止静默切换**。
 
 ### 事务与四态事件审计
@@ -244,6 +251,15 @@ fresh_capture_id=None, fresh_metadata_sha256=None)`：
   > `market_of_code()`，可能错误推导 `.BJ`，作为独立残余风险）。
 - **职责分离**：Tushare 负责因子（`adj_factor`/`fund_adj`），xtquant 负责价格
   （fresh_capture 单源锁定）；两者来源隔离，因子刷新不触碰价格表。
+- **生产 bootstrap 准入门禁**：Step C 必须执行
+  `qfq_orchestrator_cli bootstrap-plan --admissible`，消费
+  `config/qfq_rebase_admissible_securities.json` 的 5487 只 loose 名单。名单外候选记录为
+  `excluded/NOT_ADMISSIBLE`，不进入 fresh 下载/rebase，也不阻止
+  `bootstrap_completed`；准入证券执行产生的 `blocked` 仍是硬阻塞，必须为 0。
+  （分钟历史缺失在 `allow_partial_minute=True` 下记为 `partial` deferred、`status=committed`，
+  **不计入 blocked**，但其 `minute_front_coverage='partial'` 须审计可见；`fresh` 自身缺行
+  `missing_target>0` 仍严格 BLOCK。）
+  完整操作见 [`docs/qfq-resident-runbook.md`](docs/qfq-resident-runbook.md)。
 
 ---
 

@@ -910,11 +910,18 @@ def _fresh_minutes_basic_light(fm, code, freq_c):
                 f"freq={freq_c} 列 {c} 存在 NULL/非 finite>0（首例 time={t_bad}）")
 
 
-def _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol):
+def _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol,
+                          allow_partial: bool = False):
     """rebase 分钟预检 B+C：全历史严格覆盖（缺/多/重复 0）+ raw 逐 bar 对齐。
 
     fresh_staged 的覆盖/raw 对齐在 apply_fresh_minute_staged（B 部分）与 postcheck
     minute_raw_match 中；rebase 跳过后检，故在此预检显式承担（§3.C 核心安全网）。
+
+    ``allow_partial=True``（仅 fresh_authoritative_rebase 在 bootstrap/存量重锚场景启用）：
+    当 fresh ⊃ target（fresh 多出历史行 = 库内 minutes 历史缺失，属采集配置缺口而非
+    数据不可信）时，**不 BLOCK**，返回 coverage dict 携带 ``partial=True``，仅对共有
+    区间做 raw 对齐与后续 front UPDATE；库内已有行必须全部匹配（missing_target==0），
+    否则仍 BLOCK（fresh 自身缺失不可信）。日线覆盖检查不受影响（始终严格）。
     """
     _, minute_table = _tables_of(asset_type)
     mfreq = _canon_minute_freq(freq_c)
@@ -936,12 +943,24 @@ def _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol):
             f"rebase 分钟 freq={mfreq} (code,time,freq) 重复")
     missing_target = target_count - matched
     extra = staged_count - matched
-    if missing_target != 0 or extra != 0:
+    cov = None
+    if missing_target == 0 and extra == 0:
+        cov = {"partial": False, "freq": mfreq,
+               "target_count": target_count, "staged_count": staged_count,
+               "matched": matched, "missing_target": 0, "extra": 0}
+    elif allow_partial and missing_target == 0 and extra > 0 and target_count > 0:
+        # 库内历史缺失（fresh 多出行），降级为 partial deferred：只 UPDATE 共有区间。
+        cov = {"partial": True, "freq": mfreq,
+               "target_count": target_count, "staged_count": staged_count,
+               "matched": matched, "missing_target": 0, "extra": extra}
+    else:
+        # 缺行/重复/或 allow_partial=False 时的多行 → 严格 BLOCK
         raise ReanchorBlocked("minute_coverage_mismatch",
             f"rebase 分钟 freq={mfreq} 覆盖不全：缺 {missing_target}/多 {extra} 行"
-            f"（要求全历史严格一致）")
+            f"（要求全历史严格一致；allow_partial={allow_partial}）")
     # C raw 逐 bar 对齐（同 postcheck minute_raw_match 口径）
-    # ETF 分钟放宽到 1 个 tick（0.001）；STOCK/日线严格。
+    # ETF 分钟放宽到 1 个 tick（0.001）；STOCK/日线严格。JOIN 仅覆盖共有区间，
+    # partial 场景也仅对共有区间校验（缺失历史行不参与，符合 deferred 语义）。
     _eps = _raw_match_eps_minute(asset_type)
     view2 = f"_qfq_raw_m_{code}_{mfreq}"
     conn.register(view2, fm[["code", "time"] + list(RAW_COLS)])
@@ -971,16 +990,23 @@ def _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol):
         raise ReanchorBlocked("minute_raw_mismatch",
             f"rebase 分钟 freq={mfreq} raw OHLC 共 {n_raw} 行与库内不一致"
             f"（|Δ|>{_eps!r}）；fresh raw 与库内 raw 未对齐")
+    return cov
 
 
 def stage_fresh_authoritative(conn, asset_type, code, fresh_daily, fresh_minutes,
-                               canon_freqs, tol, calendar):
+                               canon_freqs, tol, calendar,
+                               allow_partial_minute: bool = False):
     """rebase 模型预检（A-D）→ 构建 STAGED_DAILY（分钟构建在 apply 循环内完成）。
 
     - 日线：A 基本 + B 全历史严格覆盖 + C raw 逐 bar 对齐（**删除乘法/加法比例校验**）。
     - 分钟：freq 集合必须与 canon_freqs 完全一致；逐 freq 做 C raw 逐 bar 对齐 +
       B 全历史严格覆盖（A 基本由 apply 内 stage_fresh_minutes 复核）。
-    返回 STAGED_DAILY 临时表名。
+
+    ``allow_partial_minute``：仅 fresh_authoritative_rebase 在 bootstrap/存量重锚场景
+    启用。当某分钟 freq 库内历史缺失（fresh ⊃ target）时，_check_minute_cov_raw 返回
+    partial 信号而非 BLOCK；该信号汇总进返回值 dict 的 ``minute_partial`` 字段，供
+    apply_fresh_minute_staged 与 postcheck 仅对共有区间做 front UPDATE（不 INSERT）。
+    返回结构：{staged_daily, minute_partial: {freq: coverage}}。
     """
     staged_daily = _stage_fresh_daily_rebase(
         conn, asset_type, code, fresh_daily, tol, calendar)
@@ -989,6 +1015,7 @@ def stage_fresh_authoritative(conn, asset_type, code, fresh_daily, fresh_minutes
         raise ReanchorBlocked("minute_freq_mismatch",
             f"fresh_minutes freq 集合 {sorted(actual_freqs)} 与预期 "
             f"{sorted(canon_freqs)} 不一致（不得缺频/多频）")
+    minute_partial: dict = {}
     for freq_c in canon_freqs:
         fm = fresh_minutes
         if "freq" in fm.columns:
@@ -998,26 +1025,36 @@ def stage_fresh_authoritative(conn, asset_type, code, fresh_daily, fresh_minutes
             raise ReanchorBlocked("fresh_minutes_missing_cols",
                 f"多 freq（{canon_freqs}）时 fresh_minutes 必须含 freq 列")
         _fresh_minutes_basic_light(fm, code, freq_c)
-        _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol)
-    return staged_daily
+        cov = _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol,
+                                    allow_partial=allow_partial_minute)
+        if cov.get("partial"):
+            minute_partial[freq_c] = cov
+    return {"staged_daily": staged_daily, "minute_partial": minute_partial}
 
 
 def apply_fresh_minute_staged(conn, asset_type: str, code: str, freq: str,
                               staged_minute: str,
-                              tol: Optional[ReanchorTolerances] = None) -> Dict:
+                              tol: Optional[ReanchorTolerances] = None,
+                              allow_partial: bool = False) -> Dict:
     """B-1 precheck + 逐值 UPDATE：staged fresh 分钟 front → 存量分钟表四个 front 列。
 
     precheck（任一失败抛 ReanchorBlocked，整券回滚）：
     - **raw 逐 bar 一致**：stored open/high/low/close vs staged raw 逐 bar
       |Δ| ≤ _RAW_MATCH_EPS；stored raw 存在 NULL/非 finite → BLOCK（无法验证）；
-    - **完整覆盖**：staged_count == target_count == matched_count，
+    - **完整覆盖**（默认）：staged_count == target_count == matched_count，
       missing_target / missing_staged / duplicates / raw_mismatch 全 0。
+
+    ``allow_partial=True``（仅 fresh_authoritative_rebase 存量/重锚场景）：当 fresh ⊃
+    target（库内分钟历史缺失，采配缺口）时降级为 partial——只要求库内已有行全匹配
+    （missing_target==0 且 duplicates==0），不要求 staged==target；UPDATE 仅触及共有
+    区间（JOIN 天然如此），**不 INSERT 新行**（契约不变）。
 
     UPDATE 契约：按 (code,freq,time) 对齐，**仅** UPDATE 四个 front 列；不触碰
     raw OHLC、volume/amount/preClose/*_back/update_time/data_source；不 DELETE、
     不 INSERT、不重建。
 
-    返回覆盖统计 dict（写入事件审计与 postcheck minute_coverage）。
+    返回覆盖统计 dict（写入事件审计与 postcheck minute_coverage）；partial 模式附
+    ``partial=True``。
     """
     tol = tol or ReanchorTolerances()
     asset_type = _normalize_asset_type(asset_type)
@@ -1052,8 +1089,13 @@ def apply_fresh_minute_staged(conn, asset_type: str, code: str, freq: str,
         "missing_target": missing_target, "missing_staged": missing_staged,
         "duplicates": dup_target,
     }
-    if not (staged_count == target_count == matched_count
-            and missing_target == 0 and missing_staged == 0 and dup_target == 0):
+    if allow_partial and target_count > 0 and matched_count == target_count \
+            and missing_staged == 0 and dup_target == 0:
+        # partial 模式：库内已有行全匹配（matched==target），fresh ⊃ target
+        # 多出的历史行（missing_target>0）属采集缺口，可接受；只 UPDATE 共有区间。
+        coverage["partial"] = True
+    elif not (staged_count == target_count == matched_count
+              and missing_target == 0 and missing_staged == 0 and dup_target == 0):
         raise ReanchorBlocked(
             "minute_coverage_incomplete",
             f"freq={freq_c} 覆盖不完整 {coverage}（B-1 要求 staged==target=="
@@ -1264,7 +1306,8 @@ def run_postchecks(conn, *, asset_type: str, code: str,
                    tol: Optional[ReanchorTolerances] = None,
                    list_date_ms: Optional[int] = None,
                    model: str = "ratio",
-                   staged_minutes: Optional[Dict[str, str]] = None) -> Dict:
+                   staged_minutes: Optional[Dict[str, str]] = None,
+                   allow_partial_minute: bool = False) -> Dict:
     """全部 COMMIT 前硬门禁。任一失败抛 PostcheckFailed（调用方 ROLLBACK）。
 
     检查项（ratio 模式，原六项逐位不变）：daily_staged_match /
@@ -1419,7 +1462,8 @@ def run_postchecks(conn, *, asset_type: str, code: str,
             d_sm, d_rm, d_cov, _ = _run_minute_staged_postchecks(
                 conn, asset_type=asset_type, code=code, freqs=freqs,
                 staged_minutes=staged_minutes, minute_table=minute_table,
-                tick=tick, include_tick_error=False)
+                tick=tick, include_tick_error=False,
+                allow_partial_minute=allow_partial_minute)  # noqa
             details["minute_staged_match"] = d_sm
             details["minute_raw_match"] = d_rm
             details["minute_coverage"] = d_cov
@@ -1645,7 +1689,8 @@ def _run_minute_staged_postchecks(conn, *, asset_type: str, code: str,
                                   freqs: Sequence[str],
                                   staged_minutes: Dict[str, str],
                                   minute_table: str, tick: float,
-                                  include_tick_error: bool):
+                                  include_tick_error: bool,
+                                  allow_partial_minute: bool = False):
     """B-1 写后逐 bar 一致校验（§3.4），供 fresh_staged 与 fresh_authoritative_rebase 共用。
 
     返回 (d_staged_match, d_raw_match, d_coverage, d_tick)。
@@ -1729,11 +1774,18 @@ def _run_minute_staged_postchecks(conn, *, asset_type: str, code: str,
                "matched_count": n_match,
                "missing_target": staged_count - n_match,
                "missing_staged": target_count - n_match}
-        d_coverage[freq_c] = cov
-        if not (staged_count == target_count == n_match):
+        # partial 模式（allow_partial_minute）：库内分钟历史缺失时，fresh ⊃ target
+        # 属采集缺口而非数据污染——仅对共有区间做 front UPDATE 即通过；记录 partial。
+        if allow_partial_minute and target_count > 0 and target_count < staged_count \
+                and target_count - n_match == 0:
+            # partial：库内已有行全匹配（target==n_match），fresh 多出历史行
+            # （staged>target）属采集缺口；只 UPDATE 共有区间即通过。
+            cov["partial"] = True
+        elif not (staged_count == target_count == n_match):
             raise PostcheckFailed(
                 "minute_coverage",
                 f"freq={freq_c} 覆盖不完整 {cov}")
+        d_coverage[freq_c] = cov
         # (10) minute_tick_error：写入后四 front 列 vs fresh 逐 bar ≤1 tick
         #      （NULL/NaN/Inf/<=0 显式计入超差——不借三值逻辑漏检；
         #      tick 按资产路由，见 resolve_tick_size）
@@ -1962,6 +2014,7 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
                                 fresh_source: Optional[str] = None,
                                 fresh_capture_id: Optional[str] = None,
                                 fresh_metadata_sha256: Optional[str] = None,
+                                allow_partial_minute: bool = False,
                                 ) -> ReanchorResult:
     """单证券 QFQ 重锚修正（第二批编排入口，仅接受调用方显式连接）。
 
@@ -2080,7 +2133,8 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
         if model == "fresh_authoritative_rebase":
             # rebase：日线严格覆盖 + raw 逐 bar 对齐（无乘法/加法比例校验）
             staged = stage_fresh_authoritative(
-                conn, asset_type, code, fresh_daily, fresh_minutes, canon_freqs, tol, calendar)
+                conn, asset_type, code, fresh_daily, fresh_minutes, canon_freqs, tol, calendar,
+                allow_partial_minute=allow_partial_minute)
         else:
             staged = stage_fresh_daily(conn, asset_type, code, fresh_daily, tol,
                                        model=model)
@@ -2105,6 +2159,7 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
                 sm = stage_fresh_minutes(conn, asset_type, code, freq_c, fm, tol,
                                          calendar=calendar)
                 staged_min_tables[freq_c] = sm
+                # fresh_staged 必须严格覆盖（不接受 partial）
                 result.minute_coverage[freq_c] = apply_fresh_minute_staged(
                     conn, asset_type, code, freq_c, sm, tol)
         elif model == "fresh_authoritative_rebase":
@@ -2124,7 +2179,8 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
                                          calendar=calendar)
                 staged_min_tables[freq_c] = sm
                 result.minute_coverage[freq_c] = apply_fresh_minute_staged(
-                    conn, asset_type, code, freq_c, sm, tol)
+                    conn, asset_type, code, freq_c, sm, tol,
+                    allow_partial=allow_partial_minute)
         else:
             for freq_c in canon_freqs:
                 segments, bars_df = compute_method_b_segments(
@@ -2151,15 +2207,17 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
         result.golden_report = golden_all
 
         # UPDATE daily 四个 *_front（staged fresh 逐值覆盖，不乘 R）
+        staged_daily_tbl = staged["staged_daily"] if isinstance(staged, dict) else staged
         result.daily_rows_updated = update_daily_front_from_staged(
-            conn, asset_type, code, staged)
+            conn, asset_type, code, staged_daily_tbl)
 
         # COMMIT 前全部硬门禁（fresh_staged 额外四项 minute_* postcheck）
         result.postchecks = run_postchecks(
-            conn, asset_type=asset_type, code=code, staged_table=staged,
+            conn, asset_type=asset_type, code=code, staged_table=staged_daily_tbl,
             freqs=canon_freqs, calendar=calendar, pre_counts=pre_counts, tol=tol,
             list_date_ms=list_date_ms, model=model,
-            staged_minutes=staged_min_tables or None)
+            staged_minutes=staged_min_tables or None,
+            allow_partial_minute=allow_partial_minute)
         result.rows = result.postchecks.get("row_conservation", {}).get("post", {})
 
         plan_payload: Dict = {f: [s.to_dict() for s in segs]
@@ -2171,6 +2229,11 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
         # 统一嵌在 model_audit 键下——不污染 plan 顶层 freq 键空间）
         plan_payload["model"] = model
         plan_payload["model_reason"] = model_reason
+        # D 方案审计：分钟历史缺失（partial）显式标记，供排障可见
+        if allow_partial_minute and any(
+                isinstance(c, dict) and c.get("partial")
+                for c in result.minute_coverage.values()):
+            audit_ctx["minute_front_coverage"] = "partial"
         plan_payload["model_audit"] = dict(audit_ctx)
         if model in ("fresh_staged", "fresh_authoritative_rebase"):
             plan_payload["minute_coverage"] = result.minute_coverage

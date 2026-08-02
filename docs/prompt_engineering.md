@@ -259,6 +259,12 @@ def handle_data(context, data):
 - **`tick_size` 按资产路由**：`STOCK=0.01` / `ETF=0.001`，不得写死 0.01。
 - **`fresh_minutes` 须过交易日历校验**：每个自然日 `CalendarService.is_trading_day`，周末/未知日整券 BLOCK。
 - 失败事件（blocked/rolled_back/failed/committed）均带 `model` / `model_reason` / `model_audit` 审计，绝不静默遗漏。
+- **`allow_partial_minute`（D 方案，2026-08-02 批准）**：`fresh_authoritative_rebase` / resident
+  重锚可传 `allow_partial_minute=True`。库内分钟历史缺失（`fresh ⊃ target`，库内已有行全匹配）
+  时降级为 **partial deferred**：仅 UPDATE 共有区间分钟 `*_front`，**不 INSERT 新行**，审计写
+  `minute_front_coverage='partial'`。`fresh` 自身缺行仍严格 `blocked`。日线 rebase 行为不受影响。
+  用于分钟采集缺口（见 `config/collector_tasks.json` 的 1m `start_date` 偏晚）下推进全市场日线
+  rebase；分钟历史完整回填后应撤除。
 
 若 Agent 编排常驻 QFQ 编排器的**主动因子刷新**（`QFQFactorRefresher.refresh`），追加铁律：
 
@@ -281,6 +287,15 @@ def handle_data(context, data):
   股票转换异常不得阻断 ETF 刷新（跨资产类别隔离）。
 - **职责分离**：Tushare 只负责因子（`adj_factor`/`fund_adj`，写 SQLite），xtquant 只负责
   价格（fresh_capture 单源锁定）。因子刷新绝不触碰四价格表。
+- **生产 bootstrap 必须消费完整准入名单**：Step C 使用
+  `qfq_orchestrator_cli bootstrap-plan --admissible` 读取
+  `config/qfq_rebase_admissible_securities.json`，并按 `by_asset` 将名单内全部 STOCK/ETF
+  直接写为 `pending`，不再依赖 `stock_dividend` / `qfq_factor_observation` 候选发现，
+  也不再二次调用分类器。名单外的旧候选只能由计划阶段记录为
+  `excluded/NOT_ADMISSIBLE`，不得进入 fresh 下载/rebase；`excluded` 不阻止完成，
+  但准入证券执行产生的 `blocked` 仍必须为 0，禁止用 excluded 掩盖失败。明确废弃的
+  历史 run 可用 `bootstrap-supersede --run-id <id>` 标记为 `superseded`；不得用于处置
+  当前 run 的执行失败。
 
 ---
 

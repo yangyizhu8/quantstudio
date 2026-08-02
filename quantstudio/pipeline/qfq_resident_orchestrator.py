@@ -93,8 +93,9 @@ class CycleSummary:
 @dataclass
 class BootstrapPlan:
     total: int = 0
-    items: List[Tuple[str, str]] = field(default_factory=list)  # (asset_type, code)
+    items: List[Tuple[str, str]] = field(default_factory=list)  # pending (asset_type, code)
     run_id: str = ""  # qfq_bootstrap_run 主键（CLI/运维需要，不能只留在表里）
+    excluded: int = 0
 
 
 class QFQResidentOrchestrator:
@@ -404,6 +405,7 @@ class QFQResidentOrchestrator:
         record, fresh_daily, fresh_minute = cap.capture(
             conn, asset_type=asset_type, code=code, run_id=run_id,
             daily_range_ms=daily_range, minute_range_ms=minute_range, fetcher=fetcher,
+            source=self.cfg.price_source,  # P2-4：xtquant/mcp 由 price_source 驱动
             write=False)
         capture_id = record.capture_id
         event_id = event_id_of(primary_tid, attempt, capture_id)
@@ -433,11 +435,12 @@ class QFQResidentOrchestrator:
                 model="fresh_authoritative_rebase",
                 model_reason="resident corporate-action/factor-change authoritative rebase",
                 fresh_minutes=fresh_minute,
-                fresh_source="xtquant",
+                fresh_source=self.cfg.price_source,  # P2-4：放开到 mcp（price_source 驱动）
                 fresh_capture_id=capture_id,
                 fresh_metadata_sha256=record.metadata_sha256,
                 event_id=event_id,
                 trigger_surface="resident_v2",
+                allow_partial_minute=True,
             )
             status = res.status  # committed / blocked / rolled_back / failed
             cap.mark_applied(conn, capture_id)
@@ -772,10 +775,34 @@ class QFQResidentOrchestrator:
         return "stale"
 
     def bootstrap_plan(self, conn, *, as_of_ms: int,
-                       codes_filter: Optional[Sequence[str]] = None) -> BootstrapPlan:
-        """候选 = 有股票分红(实施) 或 有因子观察的证券；仅 'stale' 入队重锚（任务6.1）。"""
+                       codes_filter: Optional[Sequence[str]] = None,
+                       admissible_codes: Optional[Sequence[Tuple[str, str]]] = None
+                       ) -> BootstrapPlan:
+        """构建 bootstrap 计划；准入模式直接以完整名单为工作集。"""
         candidates: List[Tuple[str, str]] = []
         codes = sorted({str(code).strip() for code in (codes_filter or []) if str(code).strip()})
+        admissible = None
+        if admissible_codes is not None:
+            normalized_admissible = []
+            for item in admissible_codes:
+                if isinstance(item, str):
+                    normalized_admissible.append(("STOCK", item))
+                else:
+                    normalized_admissible.append((item[0], item[1]))
+            admissible = {
+                (str(asset_type).strip().upper(), str(code).strip())
+                for asset_type, code in normalized_admissible
+                if str(asset_type).strip() and str(code).strip()
+            }
+            if not admissible:
+                raise ValueError("admissible_codes 不能为空")
+            invalid_assets = sorted({at for at, _ in admissible if at not in ASSET_PRICE_TABLES})
+            if invalid_assets:
+                raise ValueError(f"admissible_codes 含非法资产类型: {invalid_assets}")
+            if codes_filter is not None:
+                admissible = {(at, code) for at, code in admissible if code in codes}
+                if not admissible:
+                    raise ValueError("codes_filter 与 admissible_codes 无交集")
         where_sql = ""
         params: List[str] = []
         if codes_filter is not None:
@@ -795,23 +822,16 @@ class QFQResidentOrchestrator:
         obs = self._aux_query(obs_sql, params)
         for at, code in obs:
             candidates.append((at, code))
-        # 去重
-        seen = set()
-        uniq = []
-        for at, code in candidates:
-            k = (at, code)
-            if k in seen:
-                continue
-            seen.add(k)
-            uniq.append(k)
-        # 任务6.1：分类后仅 stale 入队重锚队列
-        stale_items: List[Tuple[str, str]] = []
-        classify: Dict[str, int] = {}
-        for at, code in uniq:
-            cat = self._classify_bootstrap_security(conn, at, code)
-            classify[cat] = classify.get(cat, 0) + 1
-            if cat == "stale":
-                stale_items.append((at, code))
+        candidate_set = {
+            (str(at).strip().upper(), str(code).strip()) for at, code in candidates
+        }
+        if admissible is None:
+            work_items = sorted(candidate_set)
+            excluded_items: List[Tuple[str, str]] = []
+        else:
+            work_items = sorted(admissible)
+            excluded_items = sorted(candidate_set - admissible)
+        all_items = work_items + excluded_items
         run_id = f"bs_{uuid.uuid4().hex[:10]}"
         # 任务6.3：落盘版本标识，供 bootstrap_completed 做 fail-closed 校验
         _schema_v = SCHEMA_VERSION
@@ -822,20 +842,63 @@ class QFQResidentOrchestrator:
             " completed_count, blocked_count, failed_count, status, "
             " schema_version, config_hash, baseline_version, started_at, updated_at) "
             "VALUES (?,?,0,0,0,'planned',?,?,?,?,?)",
-            [run_id, len(uniq), _schema_v, _config_h, _baseline_v,
+            [run_id, len(all_items), _schema_v, _config_h, _baseline_v,
              _now_ts(), _now_ts()])
-        for at, code in stale_items:
+        pending_items: List[Tuple[str, str]] = []
+        classify: Dict[str, int] = {}
+        for at, code in excluded_items:
+            conn.execute(
+                "INSERT INTO qfq_bootstrap_item (bootstrap_run_id, asset_type, code, "
+                " status, block_reason, updated_at) "
+                "VALUES (?,?,?,'excluded','NOT_ADMISSIBLE',?) "
+                "ON CONFLICT (bootstrap_run_id, asset_type, code) DO NOTHING",
+                [run_id, at, code, _now_ts()])
+        for at, code in work_items:
+            if admissible is None:
+                cat = self._classify_bootstrap_security(conn, at, code)
+                classify[cat] = classify.get(cat, 0) + 1
+                if cat != "stale":
+                    continue
             conn.execute(
                 "INSERT INTO qfq_bootstrap_item (bootstrap_run_id, asset_type, code, "
                 " status, updated_at) VALUES (?,?,?,'pending',?) "
                 "ON CONFLICT (bootstrap_run_id, asset_type, code) DO NOTHING",
                 [run_id, at, code, _now_ts()])
-        # 分类计数作为可观测性日志（不影响持久化结构）
-        if classify:
-            logger.info(
-                f"[qfq_orch] bootstrap 候选分类 {classify}；"
-                f"入队 stale={len(stale_items)}/{len(uniq)}")
-        return BootstrapPlan(total=len(uniq), items=stale_items, run_id=run_id)
+            pending_items.append((at, code))
+        logger.info(
+            f"[qfq_orch] bootstrap 候选分类 {classify}；"
+            f"入队 pending={len(pending_items)}/{len(all_items)} "
+            f"excluded={len(excluded_items)}")
+        return BootstrapPlan(
+            total=len(all_items), items=pending_items, run_id=run_id,
+            excluded=len(excluded_items))
+
+    def supersede_bootstrap_runs(self, conn, run_ids: Sequence[str]) -> Dict[str, int]:
+        """将明确废弃的旧 bootstrap run 及其非成功 item 标记为 superseded。"""
+        ids = sorted({str(run_id).strip() for run_id in run_ids if str(run_id).strip()})
+        if not ids:
+            raise ValueError("run_ids 不能为空")
+        placeholders = ",".join("?" for _ in ids)
+        found = conn.execute(
+            f"SELECT bootstrap_run_id FROM qfq_bootstrap_run "
+            f"WHERE bootstrap_run_id IN ({placeholders})", ids).fetchall()
+        found_ids = {row[0] for row in found}
+        missing = sorted(set(ids) - found_ids)
+        if missing:
+            raise ValueError(f"bootstrap run 不存在: {missing}")
+        now = _now_ts()
+        item_count = conn.execute(
+            f"SELECT COUNT(*) FROM qfq_bootstrap_item "
+            f"WHERE bootstrap_run_id IN ({placeholders}) "
+            "AND status NOT IN ('completed','excluded','superseded')", ids).fetchone()[0]
+        conn.execute(
+            f"UPDATE qfq_bootstrap_item SET status='superseded', updated_at=? "
+            f"WHERE bootstrap_run_id IN ({placeholders}) "
+            "AND status NOT IN ('completed','excluded','superseded')", [now, *ids])
+        conn.execute(
+            f"UPDATE qfq_bootstrap_run SET status='superseded', updated_at=? "
+            f"WHERE bootstrap_run_id IN ({placeholders})", [now, *ids])
+        return {"runs": len(ids), "items": int(item_count)}
 
     def bootstrap_run(self, conn, *, run_id: str, as_of_ms: int,
                       fetcher: FreshFetcher, resume: bool = False) -> Dict:
@@ -923,10 +986,17 @@ class QFQResidentOrchestrator:
         dead = conn.execute(
             "SELECT COUNT(*) FROM qfq_bootstrap_item WHERE bootstrap_run_id=? "
             "AND status='failed'", [run_id]).fetchone()[0]
+        excluded = conn.execute(
+            "SELECT COUNT(*) FROM qfq_bootstrap_item WHERE bootstrap_run_id=? "
+            "AND status='excluded'", [run_id]).fetchone()[0]
+        superseded = conn.execute(
+            "SELECT COUNT(*) FROM qfq_bootstrap_item WHERE bootstrap_run_id=? "
+            "AND status='superseded'", [run_id]).fetchone()[0]
         return {
             "run_id": run_id, "total": row[0], "completed": row[1],
-            "blocked": row[2], "failed": row[3], "status": row[4],
-            "remaining": remaining, "dead_letter_items": dead,
+            "blocked": row[2], "failed": row[3], "excluded": excluded,
+            "superseded": superseded,
+            "status": row[4], "remaining": remaining, "dead_letter_items": dead,
             "clean": (remaining == 0 and dead == 0),
         }
 

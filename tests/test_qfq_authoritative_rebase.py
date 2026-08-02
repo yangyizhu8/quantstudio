@@ -37,6 +37,7 @@ from tests.test_qfq_reanchor_batch2 import (
     _seed_security, _fresh_daily, _fresh_minutes_syn, _AUDIT_KW,
     _scales_exd5, F_600875, DAY_MS, OPEN_DAYS, D1, D2, D3, D5, BAR_CLOCKS,
     _snap, _minute_front, _assert_nonfront_unchanged, _make_env,
+    RAW_CLOSE, _day_str,
 )
 
 REBASE = "fresh_authoritative_rebase"
@@ -255,6 +256,80 @@ class TestRebasePrecheckBlocks:
         fm = fm[fm["time"] < D3].reset_index(drop=True)
         res = _rebase_call(conn, cal, fresh_daily=fd, fresh_minutes=fm,
                            freqs=("1min",))
+        assert res.status == "blocked"
+        assert res.block_reason == "minute_coverage_mismatch"
+        assert _anchor_version(conn, "600875") == 0
+
+
+# ===========================================================================
+# 2b. D 方案：allow_partial_minute —— 存量证券分钟历史缺失(fresh ⊃ target)→
+#     committed(partial)，只 UPDATE 共有区间 front，不 INSERT 新行，日线不变
+# ===========================================================================
+class TestRebasePartialMinuteDeferred:
+    def test_partial_minute_committed_not_blocked(self, env):
+        """seed 日线完整(D1-D5)，但 seed 分钟只 D2-D5（D1 历史缺失）；
+        fresh_minutes 完整(D1-D5)。allow_partial_minute=True → 应 committed。
+        """
+        conn, cal = env.conn, env.calendar
+        # 完整 seed（日线 D1-D5 + 分钟 D1-D5），再 DELETE 分钟 D1 模拟库内历史缺失
+        _seed_security(conn, "600875", days=DAY_MS)
+        conn.execute(
+            "DELETE FROM stock_minutes WHERE code=? AND time >= ? AND time < ?",
+            ["600875", DAY_MS[0], DAY_MS[1]])
+        _seed_anchor(conn, "600875", version=0)
+        scales = _scales_exd5(F_600875)
+        fm_full = _fresh_minutes_syn("600875", scales)  # 完整 D1-D5
+        pre_m = _snap(conn, "stock_minutes")
+        pre_m_count = len(pre_m)
+
+        res = apply_reanchor_for_security(
+            conn, asset_type="STOCK", code="600875",
+            fresh_daily=_fresh_daily("600875", scales), calendar=cal,
+            freqs=("1min",), ex_dates_ms=(D5,), list_date_ms=D1,
+            model=REBASE, model_reason=REBASE_REASON, fresh_minutes=fm_full,
+            allow_partial_minute=True, **_AUDIT_KW)
+
+        # —— committed（非 blocked）——
+        assert res.status == "committed"
+        assert res.minute_coverage["1min"].get("partial") is True
+        # 日线正常 UPDATE（5 天）
+        assert res.daily_rows_updated == 5
+        # 分钟只 UPDATE 共有区间：行数不变（未 INSERT D1）
+        post_m = _snap(conn, "stock_minutes")
+        assert len(post_m) == pre_m_count
+        # 共有区间(D2-D5) front 已更新为 staged fresh：逐 bar 比对 fm_full 的
+        # close_front（rebase front 值含 D5 除息调整链，不应自行重算）
+        fmap = _minute_front(conn, "stock_minutes", "600875")
+        fm_close_front = dict(
+            zip(fm_full["time"].tolist(), fm_full["close_front"].tolist()))
+        seen_days = set()
+        for t, front in fmap.items():
+            assert front[3] == pytest.approx(fm_close_front[t], rel=1e-9)
+            day = next(d for d in DAY_MS[1:] if _day_str(d) == _day_str(t))
+            seen_days.add(day)
+        # D1 不在库内（未 INSERT 历史缺失行）
+        assert DAY_MS[0] not in seen_days
+        # 缺失历史 D1 仍无行
+        assert all(_day_str(t) != _day_str(DAY_MS[0]) for t in fmap)
+        # anchor 推进
+        assert _anchor_version(conn, "600875") == 1
+
+    def test_partial_minute_default_false_still_blocks(self, env):
+        """默认 allow_partial_minute=False：相同历史缺失 → 仍 BLOCK（回归保护）。"""
+        conn, cal = env.conn, env.calendar
+        _seed_security(conn, "600875", days=DAY_MS)
+        conn.execute(
+            "DELETE FROM stock_minutes WHERE code=? AND time >= ? AND time < ?",
+            ["600875", DAY_MS[0], DAY_MS[1]])
+        _seed_anchor(conn, "600875", version=0)
+        scales = _scales_exd5(F_600875)
+        fm_full = _fresh_minutes_syn("600875", scales)
+        res = apply_reanchor_for_security(
+            conn, asset_type="STOCK", code="600875",
+            fresh_daily=_fresh_daily("600875", scales), calendar=cal,
+            freqs=("1min",), ex_dates_ms=(D5,), list_date_ms=D1,
+            model=REBASE, model_reason=REBASE_REASON, fresh_minutes=fm_full,
+            **_AUDIT_KW)
         assert res.status == "blocked"
         assert res.block_reason == "minute_coverage_mismatch"
         assert _anchor_version(conn, "600875") == 0

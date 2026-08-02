@@ -258,6 +258,14 @@ apply_reanchor_for_security(
   审计三元组（`fresh_capture_id`/`fresh_metadata_sha256`/`fresh_source`）均必填。详见
   [`docs/superpowers/specs/2026-07-29-fresh-authoritative-rebase-design.md`](../superpowers/specs/2026-07-29-fresh-authoritative-rebase-design.md)。
 - 引擎**不存在**任何 BLOCK 后静默回退路径；切换模型必须由调用方显式改写 `model` 并书面留痕 `model_reason`。
+- **`allow_partial_minute`**（`bool`，默认 `False`，2026-08-02 D 方案批准）：仅对
+  `fresh_authoritative_rebase` / resident 重锚有效。当库内分钟历史缺失（`fresh ⊃ target`：
+  fresh 多出历史行，库内已有行 `matched==target` 全部与 fresh 对齐）时，跳过 BLOCK，降级为
+  **partial deferred**——仅对共有区间 UPDATE 分钟 `*_front`，**不 INSERT 新行**（契约不变），
+  审计写 `minute_front_coverage='partial'`。`fresh` 自身缺行（`matched<target`，
+  `missing_target>0`）仍严格 BLOCK（partial 仅容忍库内缺历史行，不容忍 fresh 缺行）。
+  日线 rebase 行为完全不受此开关影响。生产 bootstrap 传 `True` 用于分钟采集缺口下推进全市场
+  日线 rebase；分钟历史完整回填后（C 方案）应撤除。
 
 ### 4.3 事务与四态事件审计
 
@@ -281,7 +289,7 @@ apply_reanchor_for_security(
 - **`minute_raw_match`**：先显式拦截 raw 一侧 `IS NULL OR NOT isfinite() OR <=0`（SQL 三值逻辑陷阱：
   `ABS(NULL-x)>eps` 结果为 NULL，WHERE 按非真过滤会**静默漏检**），再比逐 bar abs diff；`n_invalid>0` 直接抛 `minute_raw_match` 并整券回滚。
 - **`minute_tick_error`**：同样先拦截 NULL/NaN/Inf/≤0，再比 `ABS(diff) <= tick_size`。
-- 覆盖率（coverage）：`fresh_minutes` 须覆盖目标 freq 全交易日，缺失即 BLOCK；结果 `ReanchorResult.minute_coverage` 写入事件审计。
+- 覆盖率（coverage）：`fresh_minutes` 须覆盖目标 freq 全交易日，缺失即 BLOCK；结果 `ReanchorResult.minute_coverage` 写入事件审计。`allow_partial_minute=True` 时若 `target < staged` 且库内已有行全匹配（`target==n_match`，fresh 只多出历史行）则降级为 `partial`（`status=committed`，不 BLOCK），审计写 `minute_front_coverage='partial'`；若 `staged < target`（fresh 缺行）仍 BLOCK。
 
 ### 4.5 tick_size 资产路由（第六轮阻断 4）
 
@@ -345,6 +353,17 @@ apply_reanchor_for_security(
 
 **职责分离**：Tushare 负责因子（`adj_factor`/`fund_adj`），xtquant 负责价格
 （fresh_capture 单源锁定）；因子刷新只写 SQLite 因子表，绝不触碰四价格表。
+
+**生产 bootstrap 准入门禁**：这是 pipeline 运维契约，不是策略注入 API。Step C
+必须通过 `qfq_orchestrator_cli bootstrap-plan --admissible` 消费
+`config/qfq_rebase_admissible_securities.json`，按 `by_asset` 将名单内全部 STOCK/ETF
+直接写为 `pending`；该路径不依赖 `stock_dividend` / `qfq_factor_observation` 候选发现，
+也不调用二次分类器。名单外旧候选仅记录为 `excluded/NOT_ADMISSIBLE`，不进入 fresh
+下载/rebase，也不阻止 `bootstrap_completed`；名单内执行产生的 `blocked` 仍是硬阻塞，
+必须为 0。（分钟历史缺失在 `allow_partial_minute=True` 下记为 `partial` deferred、
+`status=committed`，**不计入 blocked**，但 `minute_front_coverage='partial'` 须审计可见；
+`fresh` 自身缺行仍严格 `blocked`。）`bootstrap-supersede --run-id <id>` 只允许废弃明确指定的
+历史 run，禁止用来掩盖当前 run 失败。策略代码不得读取、修改或绕过准入名单和 bootstrap 状态表。
 
 > 本框架未内置缠论工具箱（分型/笔段），如需可在策略层用 MyTT 自行实现。
 
