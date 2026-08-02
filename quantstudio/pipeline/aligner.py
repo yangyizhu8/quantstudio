@@ -283,11 +283,19 @@ class FieldAligner:
         schema = self.schemas[table]
         applied_steps = []
 
-        # etf_basic is a Tushare fund_basic reference snapshot. Normalize it to
-        # the current DuckDB baseline contract before the generic alignment steps.
-        if table == "etf_basic" and source == "tushare":
-            from .etf_basic_standardizer import build_payload
-            raw_df = build_payload(raw_df, daily_bounds=etf_daily_bounds_df)
+        # etf_basic is a Tushare fund_basic / MCP QuestDB etf_basic reference
+        # snapshot. Normalize it to the current DuckDB baseline contract before
+        # the generic alignment steps.
+        # 【codex 审计 TD-15 etf_basic 专项 2026-08-03】：放宽到 source in (tushare, mcp)，
+        # MCP 走 build_payload_mcp（形状适配云端列名后复用同一套 classify_etf 逻辑）。
+        # 边界：本行 + etf_basic_standardizer.py + alignment_rules.json 均不在线1改动范围。
+        if table == "etf_basic" and source in ("tushare", "mcp"):
+            if source == "mcp":
+                from .etf_basic_standardizer import build_payload_mcp
+                raw_df = build_payload_mcp(raw_df, daily_bounds=etf_daily_bounds_df)
+            else:
+                from .etf_basic_standardizer import build_payload
+                raw_df = build_payload(raw_df, daily_bounds=etf_daily_bounds_df)
             applied_steps.append("etf_basic_baseline_standardize")
         time_to_ms = mapping.get("time_to_ms", False)
 
