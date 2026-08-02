@@ -4,7 +4,7 @@
 
 ## 快速开始（客户上手）
 
-> 下面是一段**可直接复制给智能体的完整部署提示词**。你不需要懂编程——把它整段发给任意 AI 编程助手，它会替你从 GitHub 拉代码、装依赖、配好凭证，并启动 PyQt 回测界面，最后教你在界面上跑回测。
+> 下面是一段**可直接复制给智能体的完整部署提示词**。你不需要懂编程——把它整段发给任意 AI 编程助手，它会替你从 GitHub 拉代码、装依赖、配好 MCP 数据源凭证，并启动 PyQt 回测界面，最后教你在界面上跑回测。
 
 把下面整段（从【部署提示词开始】到【部署提示词结束】）复制，连同你的任何额外需求，一起发给智能体：
 
@@ -15,22 +15,21 @@
 
 1. 获取代码：从 GitHub 仓库 https://github.com/yangyizhu8/quantstudio 克隆到本机一个好找的目录（例如 D:/QuantStudio），然后进入该目录。
 2. 安装依赖：在该目录下执行 `pip install -e ".[all]"` 安装全部依赖（纯 Python + 预编译包，无需本地编译）。如果遇到报错，用通俗语言告诉我原因和解决办法，不要跳过。
-3. 配置凭证：
-   - 先询问我是否有 Tushare Pro 的 token。如果我有，请让我提供，然后做三件事：把 `TUSHARE_TOKEN=我的token` 写入 `config/secrets.env`（若文件不存在，先 `cp config/secrets.env.example config/secrets.env` 创建）；把同样的 `TUSHARE_TOKEN` 写入 `config/secrets.env.example`；并把 `TUSHARE_TOKEN` 加入我的系统环境变量。如果我【没有】Tushare token，这一步直接跳过，不要报错或中断。
-   - 再询问我 miniQMT 客户端的本地目录路径（例如 `D:/国金QMT/userdata_mini`）。如果有，把 `QMT_PATH=该路径` 同样写入 `config/secrets.env` 与 `config/secrets.env.example`，并加入系统环境变量；如果我没有或暂时不需要，也跳过。
-   - 说明：以上配置无需我手动 `source` 或 `export`，程序启动时会自动读取 `config/secrets.env`。
-4. 准备数据库：明确提醒我把回测数据库文件 `quantstudio.db`（约 12GB，不随 git 分发，需我自行获取）放进项目的 `data/` 目录。等我确认文件已经放好后，才进行下一步。
+3. 配置 MCP 数据源凭证：本项目默认使用云端 MCP server 作为权威数据源（无需自备 Tushare token 或 miniQMT 客户端）。请向我询问 MCP API Key（项目方提供）。拿到后，把它写入 `config/secrets.env`（若文件不存在，先 `cp config/secrets.env.example config/secrets.env` 创建），格式为 `MCP_API_KEY=我的key`，并加入系统环境变量。说明：程序启动时会自动读取 `config/secrets.env`，无需我手动 `source` 或 `export`。
+4. 首次拉取数据：数据库无需预置大文件——首次启动采集后，数据会通过 MCP server 自动拉取入库到 `data/quantstudio.db`。在 GUI「数据采集」模块勾选需要的表（或保持默认），点击「全量拉取」即可（首次全量拉取行情表耗时较长，请耐心等待）。
 5. 启动界面：运行 `python main_gui.py` 启动 PyQt 控制台。启动成功后，告诉我在界面里如何操作：进入「策略回测」模块 → 在策略文件栏选中一个策略 → 设置起止日期和初始资金 → 点击「运行回测」，即可可视化查看收益曲线、持仓和成交记录。
 
-注意：整个过程你只负责把环境搭好并启动界面，**不要替我跑回测**；回测由我在界面上自己点。如果某一步卡住（例如缺数据库文件、网络失败、依赖装不上），请用通俗语言告诉我原因和下一步该怎么办。
+注意：整个过程你只负责把环境搭好并启动界面，**不要替我跑回测**；回测由我在界面上自己点。如果某一步卡住（例如 MCP Key 无效、网络失败、依赖装不上），请用通俗语言告诉我原因和下一步该怎么办。
 
 【部署提示词结束】
 ```
 
 要点（给智能体参考）：
 - 依赖通过 pip 安装（纯 Python + 预编译 wheel，无需本地编译）。
+- 默认数据源是 **MCP server**（云端权威源），客户只需一个 `MCP_API_KEY`，无需自备 Tushare token / miniQMT / 预置大数据库。
 - `secrets.env` 在程序启动时**自动加载**，无需手动 `source` / `export`。
-- 数据库需单独获取并放到 `data/quantstudio.db`，否则回测/采集无数据可读（详见 `data/README.md`）。
+- 数据通过 MCP 首次拉取入库，无需单独获取 `quantstudio.db` 大文件。
+- 传统多源（Tushare/xtquant）仍可在「数据源模式」切换后使用（需额外配置对应凭证），见下文「凭证配置」。
 
 ## 架构保证
 
@@ -57,9 +56,10 @@ pip install -e ".[all]"
    ```bash
    cp config/secrets.env.example config/secrets.env
    ```
-   - `TUSHARE_TOKEN`：Tushare Pro 付费 token（采集 / 回测数据源）
+   - `MCP_API_KEY`：**MCP server API Key（默认数据源必需）**。项目方提供，客户唯一必需凭证。配置后即可通过云端 MCP server 拉取全量行情/财务/基础数据，无需自备 Tushare token 或 miniQMT。
+   - `TUSHARE_TOKEN`：Tushare Pro 付费 token（**仅切换到「传统多源」模式时需要**，MCP 默认模式下可留空）
    - `JQ_TOKEN`：聚宽 token（可选）
-   - `QMT_PATH`：miniQMT 客户端目录（如实盘 / xtquant 数据源需要，如 `D:/国金QMT/userdata_mini`）
+   - `QMT_PATH`：miniQMT 客户端目录（**仅传统模式 xtquant 数据源需要**，如 `D:/国金QMT/userdata_mini`）
    - `CUSTOM_API_KEY` / `ALERT_WEBHOOK`：自定义 API / 告警 webhook（可选）
 
 2. `${ENV_VAR}` 占位符：`config/sources_config.json` 中可写 `${TUSHARE_TOKEN}`、`${QMT_PATH}` 等，
@@ -67,6 +67,8 @@ pip install -e ".[all]"
 
 3. 优先级：**进程已有环境变量 > secrets.env**。若你已 `export` 同名变量，或在测试中以
    `monkeypatch` 注入，则文件中的值不会覆盖它们。
+
+> **数据源模式切换**：GUI 默认 MCP 模式（只需 `MCP_API_KEY`）。如需使用传统多源（Tushare/xtquant），在 GUI「数据源」模块切换到「传统多源」模式，并配置对应凭证。
 
 ## 数据采集
 
@@ -89,7 +91,7 @@ GUI 中的“全量拉取”“增量拉取”“进程常驻增量拉取”调�
 
 MCP（QuestDB 云端）作为数据源时，云端存的是 **前复权价（qfq）** 而非 raw。为避免 aligner 二次复权（双重复权），`MCPAdapter` 在取数后**本地还原 raw**：`raw_i = qfq_i × adj_latest_global / adj_factor_i`，其中 `adj_latest_global` 取自 `qfq_aux.db` 完整因子历史的全局最新值（绝不取本次 export 分片末行）。还原后管线吃 raw + adj_factor，走 aligner 标准 `front = raw × adj_i / adj_latest` 路径，与传统 tushare 同源。
 
-- 仅还原价格列（OHLC + pre_close），非价格列原样保留；`is_qfq=False` 行本就是 raw，不还原。
+- 仅还原价格列（OHLC + pre_close），非价格列原样保留。**全部行统一走还原公式**（`is_qfq=False` 行并非真 raw，而是"写入时当时最新 adj_factor"算的旧基准前复权，直通会导致跨批次尺度断层），`is_qfq` 列只进 metadata 作追溯，不参与是否还原的决策。
 - 缺因子 / 因子锚过期（本地快照落后于云端）→ fail-fast，禁止把 qfq 当 raw 写库。
 - **已知限制**：MCP 还原走云端因子系列（latest≈1.9495），tushare 系列≈1.9816，差 ~1.6%，故 MCP 路径 `*_front` 与 tushare 路径 front 不会 tick 一致（跨源比较须注意锚差异）；ETF 还原依赖 `fund_adj`，首次需冷启动灌库。
 - 该还原是管线内部（adapter 侧）行为，策略注入 API（`get_history` 等）仍默认 `fq='pre'`，策略层无感。
