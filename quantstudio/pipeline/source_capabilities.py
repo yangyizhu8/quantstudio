@@ -9,6 +9,7 @@ from .sources.astockdata_adapter import AStockDataAdapter
 from .sources.baostock_adapter import BaostockAdapter
 from .sources.tushare_adapter import TushareAdapter
 from .sources.xtquant_adapter import XtquantAdapter
+from .sources.mcp_adapter import MCPAdapter
 
 ADAPTER_CLASSES = {
     "tushare": TushareAdapter,
@@ -16,11 +17,14 @@ ADAPTER_CLASSES = {
     "akshare": AkshareAdapter,
     "xtquant": XtquantAdapter,
     "a_stock_data": AStockDataAdapter,
+    "mcp": MCPAdapter,
 }
 KNOWN_SOURCES: Tuple[str, ...] = tuple(ADAPTER_CLASSES)
 KNOWN_TABLE_FREQS: Tuple[Tuple[str, str], ...] = (
     ("stock_daily", "daily"), ("stock_minutes", "1min"),
-    ("stock_minutes", "5min"), ("tick", "tick"),
+    ("stock_minutes", "5min"), ("stock_minutes", "15min"),
+    ("stock_minutes", "30min"), ("stock_minutes", "60min"),
+    ("tick", "tick"),
     ("stock_float_share", "daily"), ("stock_daily_valuation", "daily"),
     ("index_constituents", "daily"), ("fin_indicator", "daily"),
     ("index_daily", "daily"), ("etf_daily", "daily"),
@@ -28,6 +32,8 @@ KNOWN_TABLE_FREQS: Tuple[Tuple[str, str], ...] = (
     ("balance_statement", "daily"), ("income_statement", "daily"),
     ("cashflow_statement", "daily"), ("stock_dividend", "daily"),
     ("sw_industry", "daily"), ("etf_minutes", "1min"),
+    ("etf_minutes", "5min"), ("etf_minutes", "15min"),
+    ("etf_minutes", "30min"), ("etf_minutes", "60min"),
     ("industry_classification", "daily"), ("industry_membership", "daily"),
     ("stock_namechange", "daily"), ("stock_delist", "daily"),
 )

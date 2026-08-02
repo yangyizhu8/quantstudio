@@ -8,9 +8,10 @@ from .baostock_adapter import BaostockAdapter
 from .akshare_adapter import AkshareAdapter
 from .xtquant_adapter import XtquantAdapter
 from .astockdata_adapter import AStockDataAdapter
+from .mcp_adapter import MCPAdapter
 
 __all__ = ["BaseSourceAdapter", "TushareAdapter", "BaostockAdapter", "AkshareAdapter",
-           "XtquantAdapter", "AStockDataAdapter", "create_adapter"]
+           "XtquantAdapter", "AStockDataAdapter", "MCPAdapter", "create_adapter"]
 
 
 def create_adapter(source: str, config: dict) -> BaseSourceAdapter:
@@ -21,6 +22,7 @@ def create_adapter(source: str, config: dict) -> BaseSourceAdapter:
         "akshare": AkshareAdapter,
         "xtquant": XtquantAdapter,
         "a_stock_data": AStockDataAdapter,
+        "mcp": MCPAdapter,
     }
     if source not in registry:
         raise ValueError(f"未知数据源: {source}（已注册: {list(registry)})")

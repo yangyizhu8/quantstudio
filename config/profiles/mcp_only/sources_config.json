@@ -1,0 +1,32 @@
+{
+  "_note": "mcp_only 独立源配置：仅启用 mcp，禁止 xtquant/tushare（避免跨源复权基准污染）。",
+  "sources": {
+    "mcp": {
+      "enabled": true,
+      "name": "mcp",
+      "base_url": "https://124.223.159.234/mcp",
+      "tls_verify": false,
+      "enable_qfq_injection": true,
+      "landing_subdir": "mcp_landing",
+      "_note": "MCP_API_KEY 从环境变量读取（绝不回显），缺失即 fail-fast（见 MCPClient）。main_db 由 daemon 按 data_config.path 注入。"
+    },
+    "xtquant": {
+      "enabled": false,
+      "_note": "mcp_only 禁止 xtquant（跨源复权基准不一致防御）"
+    },
+    "tushare": {
+      "enabled": false,
+      "_note": "mcp_only 禁止 tushare（QFQ 闭环改用 mcp 驱动 discovery）"
+    },
+    "baostock": {
+      "enabled": false
+    },
+    "akshare": {
+      "enabled": false
+    },
+    "a_stock_data": {
+      "enabled": false
+    }
+  },
+  "default_source_priority": ["mcp"]
+}

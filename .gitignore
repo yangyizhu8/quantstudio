@@ -67,3 +67,8 @@ bench_artifacts/
 # staging 批次产物（含大库 quantstudio.db，绝不提交；data/*.db 仅锚定根目录，子目录需显式忽略）
 # 覆盖所有 staging_* 子目录（如 staging_batch2_*、staging_fin_growth_dividend_* 等）
 data/staging_*/
+
+# MCP staging + landing (运行时产物)
+data/staging/
+data/mcp_landing/
+data/quantstudio.zip

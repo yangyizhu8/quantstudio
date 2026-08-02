@@ -364,9 +364,9 @@ class QFQOrchestratorConfig:
 
     def validate(self) -> None:
         """fail-fast 校验（config_lint 复用同一逻辑）。"""
-        if self.price_source != "xtquant":
+        if self.price_source not in ("xtquant", "mcp"):
             raise QFQConfigError(
-                f"qfq_orchestrator.price_source 必须为 xtquant（价格修正源单源锁定），"
+                f"qfq_orchestrator.price_source 必须为 xtquant 或 mcp（价格修正源合法源），"
                 f"收到 {self.price_source!r}")
         if "1min" not in self.freqs:
             raise QFQConfigError(

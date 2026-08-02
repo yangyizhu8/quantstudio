@@ -1,0 +1,195 @@
+{
+  "_note": "mcp_only 独立任务配置：全部表 source=mcp 单源，QFQ 闭环 price_source/fresh_source 放开到 mcp。不改默认 config/collector_tasks.json。",
+  "daemon_schedule": {
+    "daily_time": "21:00",
+    "check_interval_sec": 300
+  },
+  "tasks": [
+    {
+      "name": "kline_1d",
+      "enabled": true,
+      "source": "mcp",
+      "table": "stock_daily",
+      "freq": "daily",
+      "start_date": "2018-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "max_workers": 8,
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 60,
+        "wait_on_429": true
+      },
+      "source_priority": [
+        "mcp"
+      ],
+      "_note": "mcp_only：MCP 单源，含 adj_factor 原样返回（复权交给 aligner/P2-4）。"
+    },
+    {
+      "name": "kline_1m",
+      "enabled": true,
+      "source": "mcp",
+      "table": "stock_minutes",
+      "freq": "1min",
+      "codes": [
+        "ALL"
+      ],
+      "max_workers": 4,
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 1,
+        "wait_on_429": true
+      },
+      "source_priority": [
+        "mcp"
+      ],
+      "_note": "mcp_only：MCP 分钟线单源，含 adj_factor 原样返回。"
+    },
+    {
+      "name": "etf_kline_1d",
+      "enabled": true,
+      "source": "mcp",
+      "table": "etf_daily",
+      "freq": "daily",
+      "start_date": "2018-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "max_workers": 8,
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 60,
+        "wait_on_429": true
+      },
+      "source_priority": [
+        "mcp"
+      ]
+    },
+    {
+      "name": "etf_kline_1m",
+      "enabled": true,
+      "source": "mcp",
+      "table": "etf_minutes",
+      "freq": "1min",
+      "codes": [
+        "ALL"
+      ],
+      "max_workers": 4,
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 1,
+        "wait_on_429": true
+      },
+      "source_priority": [
+        "mcp"
+      ]
+    },
+    {
+      "name": "stock_dividend",
+      "enabled": true,
+      "source": "mcp",
+      "table": "stock_dividend",
+      "freq": "daily",
+      "start_date": "2018-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "max_workers": 4,
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 30,
+        "wait_on_429": true
+      },
+      "source_priority": [
+        "mcp"
+      ],
+      "_note": "§7.2-A：MCP 除权除息写入 DuckDB 主库驱动 qfq_event_discovery。"
+    },
+    {
+      "name": "balance_statement_mcp",
+      "enabled": true,
+      "source": "mcp",
+      "table": "balance_statement",
+      "freq": "daily",
+      "start_date": "2018-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "mode": "full_range",
+      "_note": "P3-5: 财务PIT验证（balance_statement）"
+    }
+  ],
+  "qfq_maintenance": {
+    "enabled": true,
+    "rebuild_on_gap": true
+  },
+  "qfq_orchestrator": {
+    "enabled": true,
+    "require_bootstrap": true,
+    "price_source": "mcp",
+    "stock_factor_detector": "mcp_factor_detector",
+    "etf_factor_detector": "mcp_factor_detector",
+    "freqs": [
+      "1min"
+    ],
+    "factor_overlap_lookback_days": 30,
+    "fresh_fetch_workers": 4,
+    "claim_lease_sec": 600,
+    "retry_max": 5,
+    "retry_backoff_sec": [
+      60,
+      120,
+      240,
+      480,
+      960
+    ],
+    "watermark_policy": "hold_until_consistent",
+    "_note": "P2-3：QFQ 闭环全部切到 mcp（price_source/fresh_source=mcp，detector=mcp_factor_detector）。mcp_factor_detector 由 P2-4 实现。"
+  }
+}

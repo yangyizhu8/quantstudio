@@ -98,6 +98,43 @@ def _parse_codes_filter(raw: Optional[str]) -> Optional[List[str]]:
     return codes
 
 
+def _parse_admissible_codes(
+        raw: Optional[str], *, config_dir: str
+) -> Optional[List[tuple[str, str]]]:
+    """读取 QFQ 准入名单，保留 ``by_asset`` 中的资产类型。"""
+    if raw is None:
+        return None
+    path = Path(raw) if raw else Path(config_dir) / "qfq_rebase_admissible_securities.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"读取 --admissible 文件失败: {path}: {exc}") from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("by_asset"), dict):
+        raise SystemExit("--admissible JSON 必须包含 by_asset 对象")
+    by_asset = payload["by_asset"]
+    unknown_assets = set(by_asset) - {"STOCK", "ETF"}
+    if unknown_assets:
+        raise SystemExit(f"--admissible 含未知资产类型: {sorted(unknown_assets)}")
+    values: List[tuple[str, str]] = []
+    for asset_type in ("STOCK", "ETF"):
+        codes = by_asset.get(asset_type, [])
+        if not isinstance(codes, list):
+            raise SystemExit(f"--admissible by_asset.{asset_type} 必须是数组")
+        values.extend(
+            (asset_type, str(code).strip()) for code in codes if str(code).strip())
+    unique = sorted(set(values))
+    invalid = [code for _, code in unique if not re.fullmatch(r"\d{6}", code)]
+    if invalid:
+        raise SystemExit(f"--admissible 含非法证券代码（必须为 6 位裸码）: {invalid}")
+    if not unique:
+        raise SystemExit("--admissible 名单不能为空")
+    declared = payload.get("total_admissible")
+    if declared is not None and declared != len(unique):
+        raise SystemExit(
+            f"--admissible total_admissible={declared} 与唯一证券数={len(unique)} 不一致")
+    return unique
+
+
 def _production_db_path() -> Path:
     from quantstudio._paths import db_path
     return Path(db_path()).resolve()
@@ -332,22 +369,36 @@ def cmd_bootstrap_plan(args) -> int:
     _guard_mutating(args, db)
     cfg = _load_cfg(args)
     codes_filter = _parse_codes_filter(args.codes)
+    admissible_codes = _parse_admissible_codes(
+        args.admissible, config_dir=args.config_dir)
     scope = f"指定 {len(codes_filter)} 只证券" if codes_filter is not None else "全量候选"
+    if admissible_codes is not None:
+        scope += f"，准入名单 {len(admissible_codes)} 只"
     if not args.execute:
-        print(f"[dry-run] 将按{scope}扫描 stock_dividend(实施) + "
-              "qfq_factor_observation 生成候选，写入 "
-              "qfq_bootstrap_run/qfq_bootstrap_item(pending)。加 --execute 执行。")
+        if admissible_codes is not None:
+            print(f"[dry-run] 将把准入名单全部 {len(admissible_codes)} 只证券直接写入 "
+                  "qfq_bootstrap_item(pending)；名单外的 stock_dividend(实施) + "
+                  "qfq_factor_observation 候选记录为 excluded。加 --execute 执行。")
+        else:
+            print(f"[dry-run] 将按{scope}扫描 stock_dividend(实施) + "
+                  "qfq_factor_observation，并仅将 stale 候选写入 "
+                  "qfq_bootstrap_item(pending)。加 --execute 执行。")
         return 0
     conn = _connect(db, read_only=False)
     try:
         orch = _make_orchestrator(cfg, db, args, with_fetcher=False)
         orch.init_schema(conn)
         plan = orch.bootstrap_plan(
-            conn, as_of_ms=_now_ms(), codes_filter=codes_filter)
+            conn, as_of_ms=_now_ms(), codes_filter=codes_filter,
+            admissible_codes=admissible_codes)
         payload = {"run_id": plan.run_id, "total": plan.total,
+                   "pending": len(plan.items), "excluded": plan.excluded,
+                   "admissible_count": (len(admissible_codes)
+                                        if admissible_codes is not None else None),
                    "codes_filter": codes_filter, "sample": plan.items[:20]}
         _emit(args, payload, [
-            f"bootstrap plan 生成: run_id={plan.run_id} total={plan.total} scope={scope}",
+            f"bootstrap plan 生成: run_id={plan.run_id} total={plan.total} "
+            f"pending={len(plan.items)} excluded={plan.excluded} scope={scope}",
             f"样例(≤20): {plan.items[:20]}",
             f"下一步: bootstrap-run --run-id {plan.run_id} --execute"])
         return 0
@@ -489,6 +540,29 @@ def cmd_reopen(args) -> int:
         conn.close()
 
 
+def cmd_bootstrap_supersede(args) -> int:
+    db = _resolve_db(args)
+    _guard_mutating(args, db)
+    run_ids = sorted({str(run_id).strip() for run_id in (args.run_id or [])
+                      if str(run_id).strip()})
+    if not run_ids:
+        raise SystemExit("bootstrap-supersede 必须至少指定一个 --run-id")
+    if not args.execute:
+        print(f"[dry-run] 将把旧 bootstrap run 标记为 superseded: {run_ids}。"
+              "加 --execute 执行。")
+        return 0
+    cfg = _load_cfg(args)
+    conn = _connect(db, read_only=False)
+    try:
+        orch = _make_orchestrator(cfg, db, args, with_fetcher=False)
+        result = orch.supersede_bootstrap_runs(conn, run_ids)
+        payload = {"run_ids": run_ids, **result}
+        _emit(args, payload, [f"bootstrap supersede 完成: {payload}"])
+        return 0
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
@@ -526,6 +600,14 @@ def build_parser() -> argparse.ArgumentParser:
     bp.add_argument(
         "--codes", default=None,
         help="限定 6 位裸码：逗号分隔列表，或 JSON 文件（数组/含 codes 数组）")
+    bp.add_argument(
+        "--admissible", nargs="?", const="", default=None,
+        help=("将准入名单全部证券直接写为 pending，名单外候选记录为 excluded；"
+              "不带路径时读取 config/qfq_rebase_admissible_securities.json"))
+
+    bs = sub.add_parser("bootstrap-supersede", help="将明确废弃的旧 bootstrap run 标记为 superseded")
+    bs.add_argument("--run-id", action="append", default=[],
+                    help="待废弃的旧 run_id，可重复指定")
 
     for name in ("bootstrap-run", "bootstrap-resume"):
         br = sub.add_parser(name, help="执行 bootstrap 批次（xtquant 真实取数）")
@@ -551,6 +633,7 @@ DISPATCH = {
     "show-dead-letter": cmd_show_dead_letter,
     "bootstrap-audit": cmd_bootstrap_audit,
     "bootstrap-plan": cmd_bootstrap_plan,
+    "bootstrap-supersede": cmd_bootstrap_supersede,
     "bootstrap-run": cmd_bootstrap_run,
     "bootstrap-resume": cmd_bootstrap_resume,
     "reconcile-once": cmd_reconcile_once,
