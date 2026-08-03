@@ -819,11 +819,16 @@ class MCPAdapter(BaseSourceAdapter):
             for i in range(0, len(codes), batch):
                 chunk = codes[i:i + batch]
                 marks = ",".join(["?"] * len(chunk))
+                # 修复（2026-08-03 缩股乱序误报）：部分 code 前复权因子不单调
+                # （缩股/合并导致因子降，如 920130 2021-06 max=2.0511 vs
+                # 2026-07 latest=1.0263），MAX(time) 的 latest 不是真正"全局最新"。
+                # 还原基准应为**全局最大因子**（MAX(adj_factor)），对单调递增 code
+                # 与 MAX(time) 一致，对缩股 code 取历史 max（正确基准，不误报 stale）。
                 sql = (
                     f"SELECT a.code, a.adj_factor FROM {table} a "
-                    f"JOIN (SELECT code, MAX(time) AS mt FROM {table} "
+                    f"JOIN (SELECT code, MAX(adj_factor) AS maf FROM {table} "
                     f"      WHERE code IN ({marks}) GROUP BY code) m "
-                    f"  ON a.code = m.code AND a.time = m.mt")
+                    f"  ON a.code = m.code AND a.adj_factor = m.maf")
                 for code, adj in conn.execute(sql, chunk).fetchall():
                     if adj is None:
                         continue
@@ -1022,7 +1027,13 @@ class MCPAdapter(BaseSourceAdapter):
         # 意味着 qfq_aux.db 的因子历史落后于云端（云端已按更新的锚重算了 qfq）。
         # 此时继续用过期 adj_latest 还原，会产生系统性偏差且难以事后发现，
         # 必须显性暴露而不是静默算错。
-        stale = valid & (adj_i > adj_latest * (1.0 + 1e-9))
+        #
+        # 【修复（2026-08-03 浮点精度误报）】：qfq_aux.db 的 adj_factor 序列存在
+        # 浮点精度噪声（如 22.4083 vs 22.408，差 0.0003），导致"全局最新"可能比
+        # 某历史行小 0.0003，原容差 1e-9 会误报 stale。放宽容差到相对 1e-3
+        # （0.1%），容忍浮点精度噪声，仍能拦截真实因子过期（超出比>1%）。
+        _STALE_TOL = 1e-3  # 相对容差 0.1%（容忍浮点精度噪声）
+        stale = valid & (adj_i > adj_latest * (1.0 + _STALE_TOL))
         if bool(stale.any()):
             worst = float((adj_i / adj_latest)[stale].max())
             stale_codes = sorted(bare[stale].unique().tolist())
