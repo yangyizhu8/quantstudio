@@ -1981,37 +1981,6 @@
           "unit": "milliseconds at Asia/Shanghai 00:00"
         }
       }
-    },
-    "stock_suspend_d": {
-      "_note": "停牌股明细（类别A 映射表，全量配置补 schema）。QuestDB 源表 stock_suspend。",
-      "schema_version": "stock-suspend-v1",
-      "primary_key": [
-        "code",
-        "suspend_date"
-      ],
-      "time_key": "suspend_date",
-      "freq": "daily",
-      "columns": {
-        "code": {
-          "type": "str",
-          "required": true,
-          "regex": "^\\d{6}$"
-        },
-        "suspend_date": {
-          "type": "int",
-          "required": true,
-          "unit": "milliseconds at Asia/Shanghai 00:00"
-        },
-        "resume_date": {
-          "type": "int",
-          "required": false,
-          "unit": "milliseconds at Asia/Shanghai 00:00"
-        },
-        "suspend_reason": {
-          "type": "str",
-          "required": false
-        }
-      }
     }
   },
   "source_mappings": {
