@@ -2100,6 +2100,12 @@ class ResidentCollector:
         daemon 的 0.01% 拒绝率阈值把这些正常隔离当任务失败，触发无意义的
         源切换链 + 不推进 watermark（导致下次全量重拉）。
 
+        【修复（2026-08-03 MCP 拒绝率放宽）】：MCP 的拒绝率对 source 放宽到 1%。
+        原因：QuestDB 数据本身有少量异常行（如 159300 的 amount 数据错误、
+        反向拆分后的价格异常），UnitCheck 正确拦截这些异常行属正常数据质量
+        过滤，daemon 的 0.01% 阈值把这些正常隔离当任务失败。MCP 数据量巨大
+        （stock_daily 960万行/etf_daily 209万行），0.01% 阈值过于严格。
+
         拉取失败率（is_reject=False）保持 0.01% 严格——那是真正的拉取失败，
         不是数据质量过滤。
         """
@@ -2108,6 +2114,9 @@ class ResidentCollector:
         # 拒绝率对 xtquant 放宽（AdjustmentFactorConsistency 算法固有微差）
         if is_reject and source == "xtquant":
             threshold = max(threshold, float(cfg.get("max_reject_rate_xtquant", 0.01)))
+        # 拒绝率对 mcp 放宽（QuestDB 数据异常行属正常质量过滤）
+        if is_reject and source == "mcp":
+            threshold = max(threshold, float(cfg.get("max_reject_rate_mcp", 0.01)))
         threshold = max(0.0, threshold)
         rate = (failed / attempted) if attempted > 0 else 0.0
         return rate <= threshold, rate, threshold
