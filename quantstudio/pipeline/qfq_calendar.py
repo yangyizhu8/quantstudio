@@ -185,7 +185,8 @@ class CalendarService:
         for cal_date, is_open in rows:
             conn.execute(
                 "INSERT OR REPLACE INTO trade_calendar "
-                "(cal_date, is_open, source, updated_at) VALUES (?, ?, ?, ?)",
+                "(cal_date, is_open, exchange, source, updated_at) "
+                "VALUES (?, ?, 'SSE', ?, ?)",
                 [cal_date, is_open, src, ts],
             )
             n += 1
@@ -209,7 +210,8 @@ class CalendarService:
         for d in natural:
             conn.execute(
                 "INSERT OR REPLACE INTO trade_calendar "
-                "(cal_date, is_open, source, updated_at) VALUES (?, ?, ?, ?)",
+                "(cal_date, is_open, exchange, source, updated_at) "
+                "VALUES (?, ?, 'SSE', ?, ?)",
                 [d, d in open_ms, src, ts])
         return sorted(open_ms)
 

@@ -445,3 +445,5 @@ staging 回填工具 `scripts/backfill_fin_growth_dividend_staging.py` 提供 `p
 backlog**：小市值与双均线真实策略 `get_history` 命中均为 0；`PtradeAPI.get_history()` 已有
 `_query_cache` 层；synthetic 86× 不构成生产收益证据；4096 条目上限是条目数而非字节内存上限；
 后续实施须满足 byte-bounded LRU + 真实生产命中证据。
+
+> **Full-database audit reference-table contract (2026-08-03)**: MCP `stock_basic` and the shared MCP/QFQ `trade_calendar` are writer-managed canonical tables. `trade_calendar` keeps its original `cal_date` single primary key and QFQ behavior; `exchange/pretrade_date` are compatibility metadata. Enum auditing uses native typed values, and QFQ pending SLA uses the current-state update time.

@@ -32,3 +32,11 @@ GUI “统一契约审计”显示同一份报告，额外的快速 SQL 项用�
 - 逐笔信号、持仓、净值和有效费率。
 
 使用 `FidelityComparator` 的 L1-L4 报告进行验证；成本项按有效费率（费用/成交额）比较，避免跨源整手数量差异造成假阳性。
+
+## Reference-table and QFQ audit contract (2026-08-03)
+
+- `stock_basic` is a canonical reference table created and migrated by `DuckDBWriter`. MCP preserves authoritative `ts_code`, derives the six-digit `code` from `symbol`, and stores `list_status`/`data_source` for metadata APIs.
+- `trade_calendar` is shared by MCP and QFQ. It retains the existing single `cal_date` primary key and BOOLEAN `is_open`; `exchange='SSE'` and `pretrade_date` are metadata columns and do not change QFQ calendar queries or lifecycle behavior.
+- Persisted enum checks compare native DuckDB values through bound parameters. BOOLEAN values therefore satisfy a schema enum of `[0, 1]` without text-cast false positives.
+- `QfqPendingSla` measures how long the row has remained in its current state using `COALESCE(updated_at, created_at)`, not the original event creation time.
+- QFQ queue errors must be repaired through the orchestrator CLI (`retry-due`, then reviewed `reopen` operations). Deleting queue rows or raising thresholds to hide failures is prohibited.

@@ -277,10 +277,11 @@ class DataQualityAuditor:
             count = conn.execute(sql).fetchone()[0]
             self._add(report, "CodeFormat", table, count, "error", col)
         if spec.get("enum"):
-            values = ",".join("'" + str(v).replace("'", "''") + "'" for v in spec["enum"])
+            enum_values = list(spec["enum"])
+            placeholders = ",".join("?" for _ in enum_values)
             sql = (f'SELECT COUNT(*) FROM "{table}" WHERE {qcol} IS NOT NULL '
-                   f'AND CAST({qcol} AS VARCHAR) NOT IN ({values})')
-            count = conn.execute(sql).fetchone()[0]
+                   f'AND {qcol} NOT IN ({placeholders})')
+            count = conn.execute(sql, enum_values).fetchone()[0]
             self._add(report, "EnumCheck", table, count, "error", col)
         if "gt" in spec:
             count = conn.execute(
@@ -478,7 +479,8 @@ class DataQualityAuditor:
             overdue = conn.execute(
                 "SELECT COUNT(*) FROM qfq_trigger_queue "
                 "WHERE status IN ('pending','retryable_failed') "
-                f"AND created_at < NOW() - INTERVAL {sla_h} HOUR").fetchone()[0]
+                f"AND COALESCE(updated_at, created_at) < "
+                f"NOW() - INTERVAL {sla_h} HOUR").fetchone()[0]
             self._add(report, "QfqPendingSla", "qfq_trigger_queue", overdue, "error",
                       f"pending/retryable_failed 停留超 {sla_h}h（SLA）")
             stale_ip = conn.execute(

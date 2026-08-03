@@ -1892,7 +1892,7 @@
       }
     },
     "stock_basic": {
-      "_note": "股票基础信息快照（类别A 映射表，全量配置补 schema）。",
+      "_note": "MCP stock_basic snapshot: preserve ts_code and derive the six-digit canonical code from symbol.",
       "schema_version": "stock-basic-v1",
       "primary_key": [
         "code"
@@ -1944,14 +1944,30 @@
           "type": "str",
           "required": false,
           "unit": "SSE/SZSE/BSE"
+        },
+        "list_status": {
+          "type": "str",
+          "required": true,
+          "enum": [
+            "L",
+            "D",
+            "P"
+          ]
+        },
+        "update_time": {
+          "type": "str",
+          "required": false
+        },
+        "data_source": {
+          "type": "str",
+          "required": false
         }
       }
     },
     "trade_calendar": {
-      "_note": "交易日历（类别A 映射表，全量配置补 schema）。",
+      "_note": "MCP SSE calendar shared with QFQ; keep the existing single cal_date primary key and QFQ behavior.",
       "schema_version": "trade-cal-v1",
       "primary_key": [
-        "exchange",
         "cal_date"
       ],
       "time_key": "cal_date",
@@ -1979,8 +1995,17 @@
           "type": "int",
           "required": false,
           "unit": "milliseconds at Asia/Shanghai 00:00"
+        },
+        "source": {
+          "type": "str",
+          "required": false
+        },
+        "updated_at": {
+          "type": "str",
+          "required": false
         }
-      }
+      },
+      "code_field": null
     }
   },
   "source_mappings": {
@@ -2962,12 +2987,13 @@
         "_note": "简称变更历史（类别A 新增，同名表）：云端 QuestDB 源表 stock_namechange（7451行）。字段 code/change_date/status_after/name_before/name_after 与 schema 一致。change_date 由 aligner time_to_ms 转上海午夜毫秒。"
       },
       "stock_basic": {
-        "column_map": {
-          "ts_code": "code"
-        },
-        "code_format": "tushare_to_raw",
+        "column_map": {},
+        "code_format": "identity",
         "time_to_ms": true,
-        "_note": "股票基础信息（codex审计TD-15配置级修复）：identity 模式不派生 code（aligner L458 强制 code_format=identity），改为 column_map ts_code→code + code_format=tushare_to_raw。其余列(symbol/name/area/industry/market/list_date/delist_date/exchange)同名直通（_map_columns 是 rename，未映射列原样保留）。注意：rename 后 ts_code 列名变为 code，canonical schema 的 ts_code 列将留 NULL（可接受，code 是主键，ts_code 冗余）。"
+        "_note": "Copy source symbol to canonical code while preserving symbol and authoritative ts_code. Keep list_status/data_source for metadata APIs.",
+        "copy_columns": {
+          "symbol": "code"
+        }
       },
       "trade_calendar": {
         "column_map": {
@@ -2978,7 +3004,7 @@
         },
         "code_format": "identity",
         "time_to_ms": true,
-        "_note": "交易日历（类别A 映射表）：云端 QuestDB 源表 trade_cal。cal_date/pretrade_date 转毫秒。"
+        "_note": "Fetch cloud trade_cal (SSE) through query_snapshot; convert cal_date/pretrade_date to Shanghai-midnight epoch ms and retain QFQ single-calendar compatibility."
       },
       "etf_basic": {
         "identity": true,

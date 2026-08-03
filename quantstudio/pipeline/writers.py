@@ -141,6 +141,26 @@ DDL_DUCKDB = {
             isST INTEGER, dividend_type VARCHAR, update_time VARCHAR,
             PRIMARY KEY(code, time)
         )""",
+    "stock_basic": """
+        CREATE TABLE IF NOT EXISTS stock_basic (
+            code VARCHAR PRIMARY KEY,
+            ts_code VARCHAR NOT NULL,
+            symbol VARCHAR, name VARCHAR NOT NULL,
+            area VARCHAR, industry VARCHAR, market VARCHAR,
+            list_status VARCHAR NOT NULL,
+            list_date BIGINT, delist_date BIGINT, exchange VARCHAR,
+            update_time VARCHAR, data_source VARCHAR
+        )""",
+    "trade_calendar": """
+        CREATE TABLE IF NOT EXISTS trade_calendar (
+            cal_date BIGINT NOT NULL,
+            is_open BOOLEAN NOT NULL,
+            exchange VARCHAR,
+            pretrade_date BIGINT,
+            source VARCHAR,
+            updated_at TIMESTAMP,
+            PRIMARY KEY (cal_date)
+        )""",
     "etf_basic": """
         CREATE TABLE IF NOT EXISTS etf_basic (
             code VARCHAR PRIMARY KEY,
@@ -418,6 +438,11 @@ class DuckDBWriter(BaseWriter):
                             logger.info(f"[DuckDBWriter] 迁移: {table}.ADD {col} {col_type}")
                         except Exception as e:
                             logger.warning(f"[DuckDBWriter] 迁移失败 {table}.{col}: {e}")
+                if table == "trade_calendar" and "exchange" in expected:
+                    # Legacy QFQ rows are the SSE calendar. This fills only the
+                    # new metadata column; cal_date/is_open/PK are unchanged.
+                    conn.execute(
+                        "UPDATE trade_calendar SET exchange='SSE' WHERE exchange IS NULL")
         except Exception as e:
             logger.warning(f"[DuckDBWriter] _migrate_add_columns 异常（跳过）: {e}")
 
@@ -459,6 +484,8 @@ class DuckDBWriter(BaseWriter):
                 "stock_daily_valuation": ["code", "time"],
                 "etf_daily": ["code", "time"],
                 "etf_basic": ["code"],
+                "stock_basic": ["code"],
+                "trade_calendar": ["cal_date"],
                 "stock_float_share": ["code", "end_date", "ann_date"],
                 "index_constituents": ["index_code", "code", "time"],
                 "index_constituents_snapshot_meta": ["index_code", "time"],
@@ -507,7 +534,8 @@ class DuckDBWriter(BaseWriter):
                     "index_code", "industry_code", "industry_name", "industry_level",
                     "name_before", "name_after", "status_after", "market",
                     "is_st_reliable_source", "is_delisting_risk_source",
-                    "ts_code", "name", "exchange", "etf_type", "tracking_index",
+                    "ts_code", "symbol", "name", "area", "industry", "exchange",
+                    "list_status", "source", "etf_type", "tracking_index",
                     "status", "fund_type", "invest_type", "type",
                     "classification_system", "parent_industry_code",
                     "classification_method", "classification_version",
@@ -538,6 +566,8 @@ class DuckDBWriter(BaseWriter):
                     "stock_daily_valuation": "(code, time)",
                     "etf_daily": "(code, time)",
                     "etf_basic": "(code)",
+                    "stock_basic": "(code)",
+                    "trade_calendar": "(cal_date)",
                     "stock_float_share": "(code, end_date, ann_date)",
                     "index_constituents": "(index_code, code, time)",
                     "index_constituents_snapshot_meta": "(index_code, time)",
@@ -874,6 +904,11 @@ class DuckDBWriter(BaseWriter):
                           "open_front_ratio", "high_front_ratio", "low_front_ratio", "close_front_ratio",
                           "open_back_ratio", "high_back_ratio", "low_back_ratio", "close_back_ratio",
                           "isST", "dividend_type", "update_time", "data_source"],
+            "stock_basic": ["code", "ts_code", "symbol", "name", "area", "industry",
+                            "market", "list_status", "list_date", "delist_date", "exchange",
+                            "update_time", "data_source"],
+            "trade_calendar": ["cal_date", "is_open", "exchange", "pretrade_date",
+                               "source", "updated_at"],
             "etf_basic": ["code", "ts_code", "name", "exchange",
                           "list_date", "delist_date", "etf_type", "tracking_index",
                           "is_cross_border", "status", "fund_type", "invest_type",

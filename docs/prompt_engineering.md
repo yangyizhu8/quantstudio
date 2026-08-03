@@ -410,3 +410,7 @@ run_strategy(
 本次 `quantstudio/backtest/ptrade_api.py`、`quantstudio/backtest/backtest_engine.py` 新增 DataDict/BacktestEngine 当日 DataFrame 的 `{raw_code: first_iloc}` 实例代码索引，将 `df['code'] == bare` 的 O(N) 布尔过滤替换为 O(1) 索引查找；`None`（无法构建）时严格回退原布尔过滤。
 
 **AGENTS.md 框架铁律适用**：本变更为纯性能优化，已审阅确认未改变任何公共/注入 API 签名、返回结构、数据语义或回测行为，也未涉及 `StrategyIsolationGuard` 文件 I/O 禁令等约束变更。因此本文档中策略生成/隔离守卫相关表述不受影响，无需修改。
+
+## Data-quality dependency note (2026-08-03)
+
+Strategy API behavior is unchanged by the full-database audit repair. Reference-data consumers may rely on writer-managed `stock_basic` and on the shared single-key `trade_calendar`; QFQ calendar timing, PIT semantics, order matching, positions, cash, and generated-strategy contracts are unchanged. Operational details are documented in `docs/data-quality-checks.md`.

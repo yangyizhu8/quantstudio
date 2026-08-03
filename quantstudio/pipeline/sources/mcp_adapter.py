@@ -174,7 +174,8 @@ _EXPORT_TABLES = {
     ("cashflow_statement", "daily"),
     ("fin_indicator", "daily"),
     ("income_statement", "daily"),
-    ("trade_calendar", "daily"),
+    # trade_cal has no ts_code column, while the generic export path currently
+    # orders by ts_code. The source has exactly 10,000 rows and fits snapshot.
     # 小表（stock_dividend 等千行级）仍走 query_snapshot（更快，无截断）
 }
 # 小表（走 query_snapshot 内存路径）
@@ -434,7 +435,7 @@ class MCPAdapter(BaseSourceAdapter):
             if len(s) >= 10 and s[4] == "-":
                 s = s[:10].replace("-", "")
             return s[:8]
-        date_col = next((c for c in ("date", "trade_date") if c in df.columns), None)
+        date_col = next((c for c in ("date", "trade_date", "cal_date") if c in df.columns), None)
         if len(df) and date_col:
             dcol = df[date_col].map(_norm_date)
             s8, e8 = _norm_date(start), _norm_date(end)
@@ -485,7 +486,7 @@ class MCPAdapter(BaseSourceAdapter):
             if len(s) >= 10 and s[4] == "-":
                 s = s[:10].replace("-", "")
             return s[:8]
-        date_col = next((c for c in ("date", "trade_date") if c in df.columns), None)
+        date_col = next((c for c in ("date", "trade_date", "cal_date") if c in df.columns), None)
         if len(df) and date_col:
             dcol = df[date_col].map(_norm_date)
             s8, e8 = _norm_date(start), _norm_date(end)
@@ -520,6 +521,15 @@ class MCPAdapter(BaseSourceAdapter):
         # effective_from=0/effective_to=None 由 adapter 补（column_map 无法注入常量）。
         # 实测云端 L1 有重复行（同 index_code 多次 ingest， QuestDB 累积），
         # 按 industry_code 去重保留首行（canonical PK 含 industry_code）。
+        # Complete reference-table shape without discarding source fields.
+        if table == "stock_basic" and len(df) > 0:
+            if "symbol" in df.columns and "code" not in df.columns:
+                df["code"] = df["symbol"]
+        if table == "trade_calendar" and len(df) > 0:
+            # Do not synthesize updated_at here: the host clock can cross the
+            # authoritative reporting date. Source lineage is sufficient.
+            df["source"] = "mcp"
+
         if table == "industry_classification" and len(df) > 0:
             if "level" in df.columns:
                 before = len(df)

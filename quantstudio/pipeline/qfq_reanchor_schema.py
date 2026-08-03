@@ -306,10 +306,12 @@ DDL_DUCKDB: Dict[str, str] = {
     # ---- 交易日历持久缓存（v5 §1.4 + 阻断1 完整覆盖：含 source/updated_at）----
     "trade_calendar": """
         CREATE TABLE IF NOT EXISTS trade_calendar (
-            cal_date   BIGINT  NOT NULL,
-            is_open    BOOLEAN NOT NULL,
-            source     VARCHAR,
-            updated_at TIMESTAMP,
+            cal_date      BIGINT  NOT NULL,
+            is_open       BOOLEAN NOT NULL,
+            exchange      VARCHAR,
+            pretrade_date BIGINT,
+            source        VARCHAR,
+            updated_at    TIMESTAMP,
             PRIMARY KEY (cal_date)
         )""",
     # ---- 编排器每轮运行（resident orchestrator v2：六状态机 + 计数）----
@@ -553,7 +555,8 @@ DUCKDB_COLS: Dict[str, List[str]] = {
         "bootstrap_run_id", "asset_type", "code", "status", "attempt_count",
         "block_reason", "last_error", "started_at", "finished_at", "updated_at",
     ],
-    "trade_calendar": ["cal_date", "is_open", "source", "updated_at"],
+    "trade_calendar": ["cal_date", "is_open", "exchange", "pretrade_date",
+                       "source", "updated_at"],
 }
 
 

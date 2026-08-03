@@ -313,7 +313,10 @@ class FieldAligner:
         # ---- Step 2: 代码格式统一（裸 6 位码）----
         # code_col 可由映射显式声明（如 industry_classification 主键首列是
         # classification_system 而非证券代码）；未声明时按 schema 主键首列推断。
-        code_col = mapping.get("code_col") or self._find_code_col(df, schema)
+        if "code_field" in schema and schema["code_field"] is None:
+            code_col = None
+        else:
+            code_col = mapping.get("code_col") or self._find_code_col(df, schema)
         if code_col is not None:
             fmt = mapping.get("code_format", "identity")
             df[code_col] = df[code_col].apply(lambda c: normalize_code(c, fmt))
@@ -477,12 +480,18 @@ class FieldAligner:
         return m
 
     def _map_columns(self, df: pd.DataFrame, mapping: Dict) -> pd.DataFrame:
+        out = df.copy()
+        # Derive a canonical field without discarding the source field.
+        # Unconfigured tables keep the previous behavior.
+        for source_col, target_col in mapping.get("copy_columns", {}).items():
+            if source_col in out.columns and target_col not in out.columns:
+                out[target_col] = out[source_col]
         column_map = mapping.get("column_map", {})
         if not column_map:
-            return df.copy()
-        # 仅映射存在的列
-        rename = {k: v for k, v in column_map.items() if k in df.columns}
-        return df.rename(columns=rename).copy()
+            return out
+        # 仅映射当前数据中实际存在的列。
+        rename = {k: v for k, v in column_map.items() if k in out.columns}
+        return out.rename(columns=rename).copy()
 
     def _find_code_col(self, df: pd.DataFrame, schema: Dict) -> Optional[str]:
         # 主键第一个通常是 code
