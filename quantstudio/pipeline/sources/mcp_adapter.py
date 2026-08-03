@@ -439,7 +439,9 @@ class MCPAdapter(BaseSourceAdapter):
             dcol = df[date_col].map(_norm_date)
             s8, e8 = _norm_date(start), _norm_date(end)
             df = df[(dcol >= s8) & (dcol <= e8)].reset_index(drop=True)
-        if codes and len(df):
+        # codes 过滤（识别 daemon 的 'ALL' 全市场标记，跳过过滤）
+        _is_all = codes and (len(codes) == 1 and str(codes[0]).upper() == "ALL")
+        if codes and not _is_all and len(df):
             want = {str(c) for c in codes}
             code_col = next((c for c in ("ts_code", "code", "stock_code")
                              if c in df.columns), None)
@@ -490,7 +492,9 @@ class MCPAdapter(BaseSourceAdapter):
             mask = (dcol >= s8) & (dcol <= e8)
             df = df[mask].reset_index(drop=True)
         # codes 过滤（MCP 返回 ts_code 列，格式 600063.SH；部分源也可能是 code 列）
-        if codes and len(df):
+        # 识别 daemon 的 'ALL' 全市场标记，跳过过滤
+        _is_all = codes and (len(codes) == 1 and str(codes[0]).upper() == "ALL")
+        if codes and not _is_all and len(df):
             want = {str(c) for c in codes}
             code_col = next((c for c in ("ts_code", "code", "stock_code")
                              if c in df.columns), None)
@@ -680,7 +684,10 @@ class MCPAdapter(BaseSourceAdapter):
             s8, e8 = _norm_date(start), _norm_date(end)
             raw_df = raw_df[(dcol >= s8) & (dcol <= e8)].reset_index(drop=True)
         # codes 过滤（MCP 返回 ts_code 列，格式 600063.SH）
-        if codes and len(raw_df):
+        # 修复：daemon 全量任务传 codes=['ALL']（全市场标记），需识别并跳过过滤
+        # （'ALL' 不是具体代码，isin 会把数据全滤为 0 行）。
+        _is_all = codes and (len(codes) == 1 and str(codes[0]).upper() == "ALL")
+        if codes and not _is_all and len(raw_df):
             want = {str(c) for c in codes}
             code_col = next((c for c in ("ts_code", "code", "stock_code")
                              if c in raw_df.columns), None)
