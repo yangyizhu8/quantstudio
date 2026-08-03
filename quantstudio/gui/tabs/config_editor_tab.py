@@ -537,8 +537,11 @@ class ConfigEditorTab(QWidget):
         # start_date / end_date（mode 已移除：全量/增量改由采集任务 Tab 的按钮决定）
         fl.addWidget(QLabel("开始日期 *:"), row, 0)
         start_edit = LineEdit()
-        start_edit.setText(task.get("start_date", "2018-01-01"))
-        start_edit.setPlaceholderText("必填，全量拉取起始日（如 2018-01-01）")
+        # 默认值按 freq 区分：日线(daily)→2018-01-01，分钟线(1min/5min等)→2025-01-01
+        _freq = task.get("freq", "daily")
+        _default_start = "2025-01-01" if _freq != "daily" else "2018-01-01"
+        start_edit.setText(task.get("start_date", _default_start))
+        start_edit.setPlaceholderText(f"必填，全量拉取起始日（{_freq}默认 {_default_start}）")
         fl.addWidget(start_edit, row, 1)
         row += 1
 
