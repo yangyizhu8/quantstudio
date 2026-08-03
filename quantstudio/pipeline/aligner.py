@@ -374,8 +374,13 @@ class FieldAligner:
         applied_steps.append("round_fields")
 
         # ---- Step 4.5 [补丁3]: suspendFlag 推导（volume==0 → 1，否则 0）----
+        # 修复（2026-08-03 stock_daily_valuation 报错）：volume 全 NA 时
+        # (pd.to_numeric==0).astype(int) 对 NA 报 "cannot convert NA to integer"。
+        # 处理：NA 视为非停牌（suspendFlag=0，估值表/无停牌概念的表安全默认）。
         if "suspendFlag" not in df.columns and "volume" in df.columns:
-            df["suspendFlag"] = (pd.to_numeric(df["volume"], errors="coerce") == 0).astype(int)
+            vol_num = pd.to_numeric(df["volume"], errors="coerce")
+            # NA → suspendFlag=0（非停牌）；volume==0 → 1（停牌）；volume>0 → 0
+            df["suspendFlag"] = (vol_num == 0).fillna(False).astype(int)
             applied_steps.append("derive_suspendFlag")
         else:
             applied_steps.append("suspendFlag_skip")
