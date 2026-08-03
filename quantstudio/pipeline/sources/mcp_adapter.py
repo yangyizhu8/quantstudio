@@ -165,6 +165,17 @@ _EXPORT_TABLES = {
     ("stock_minutes", "60min"), ("etf_minutes", "1min"),
     ("etf_minutes", "5min"), ("etf_minutes", "15min"),
     ("etf_minutes", "30min"), ("etf_minutes", "60min"),
+    # === 快照大表改走 export（绕开 query_snapshot 1万行硬上限）===
+    # 这些表 20万~25万行，query_snapshot 服务端硬上限 1 万行（limit>10000 无效），
+    # 只能拉到 ~5% 数据。export_dataset 无 1 万限制（只有 200 万 row_limit，这些表
+    # 远低于，单次 export 即可完整覆盖）。_export_batches 对它们返回单批（全历史一次）。
+    ("index_constituents", "daily"),
+    ("balance_statement", "daily"),
+    ("cashflow_statement", "daily"),
+    ("fin_indicator", "daily"),
+    ("income_statement", "daily"),
+    ("trade_calendar", "daily"),
+    # 小表（stock_dividend 等千行级）仍走 query_snapshot（更快，无截断）
 }
 # 小表（走 query_snapshot 内存路径）
 _SNAPSHOT_TABLES = {("stock_dividend", "daily")}
@@ -563,23 +574,40 @@ class MCPAdapter(BaseSourceAdapter):
     _EXPORT_DAILY_WINDOW_DAYS = 365  # 日线表每批最大窗口（~120万行/年）
     _EXPORT_MINUTE_WINDOW_DAYS = 10  # 分钟表每批最大窗口（~6000万行/年，10天~160万行）
 
-    def _export_batches(self, start: str, end: str, is_minute: bool) -> List[Tuple[str, str]]:
+    def _export_batches(self, start: str, end: str, is_minute: bool,
+                        est_rows: int = None) -> List[Tuple[str, str]]:
         """按时间窗口切分 export 批次，避免服务端 200 万行截断。
 
-        日线表（~120万行/年）：每批最多 365 天 → 约 120 万行 < 200 万安全。
-        分钟表（~6000万行/年）：每批最多 10 天 → 约 160 万行 < 200 万安全。
-        返回 [(batch_start, batch_end), ...] 列表，覆盖 start~end 闭区间。
+        行数估算驱动：est_rows < _EXPORT_SAFE_ROWS（<200万）时返回单批（全历史一次，
+        不切碎）；否则按窗口切分。
+        日线行情（~120万行/年）：365天/批；分钟表（~6000万行/年）：10天/批。
+        快照大表（财务/指数成分等，<200万行全历史）：单批。
         """
         s = datetime.strptime(str(start).strip()[:10], "%Y-%m-%d")
         e = datetime.strptime(str(end).strip()[:10], "%Y-%m-%d")
+        # 估算行数 < 安全阈值 → 单批（不切碎，减少 job 开销）
+        if est_rows is not None and est_rows < self._EXPORT_SAFE_ROWS:
+            return [(s.strftime("%Y-%m-%d"), e.strftime("%Y-%m-%d"))]
         window = self._EXPORT_MINUTE_WINDOW_DAYS if is_minute else self._EXPORT_DAILY_WINDOW_DAYS
         batches = []
         cur = s
         while cur <= e:
             nxt = min(cur + timedelta(days=window), e)
             batches.append((cur.strftime("%Y-%m-%d"), nxt.strftime("%Y-%m-%d")))
-            cur = nxt + timedelta(days=1)  # 下一批从次日开始（避免重叠）
+            cur = nxt + timedelta(days=1)
         return batches
+
+    # 各表数据规模估算（行数，用于 _export_batches 决定是否分批）
+    # 来源：docs/mcp_migration/full_table_inventory.json 实测云端行数
+    _EXPORT_ROW_ESTIMATE = {
+        "stock_daily": 14_000_000, "etf_daily": 2_400_000,
+        "stock_minutes": 480_000_000, "etf_minutes": 120_000_000,
+        "stock_daily_valuation": 14_000_000,
+        # 快照大表（<200万，单批）
+        "index_constituents": 250_000, "balance_statement": 210_000,
+        "cashflow_statement": 210_000, "fin_indicator": 230_000,
+        "income_statement": 210_000, "trade_calendar": 15_000,
+    }
 
 
 
@@ -597,7 +625,8 @@ class MCPAdapter(BaseSourceAdapter):
         qdb_tbl = _CANONICAL_TO_QUESTDB.get(table, table)
 
         # === 自动分批：按时间窗口切分，避免服务端 200 万行截断 ===
-        batches = self._export_batches(start, end, _is_big)
+        batches = self._export_batches(start, end, _is_big,
+                                       est_rows=self._EXPORT_ROW_ESTIMATE.get(table))
         all_artifacts = []
         job_ids = []
         for i, (bs, be) in enumerate(batches):
