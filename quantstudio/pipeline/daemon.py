@@ -668,7 +668,11 @@ class ResidentCollector:
             res = self.validator.validate(std_df, table, batch_id, source, expected_freq=freq)
             rows_passed = len(res.passed_df)
             rows_rejected = len(res.rejected_rows)
-            accepted, reject_rate, threshold = self._failure_gate(task, rows_rejected, rows_raw)
+            # 修复（2026-08-03 _run_with_source 拒绝率阈值）：之前没传 is_reject=True 和 source，
+            # 导致拒绝率用拉取失败率阈值（0.01%）而非拒绝率阈值（应放宽）。MCP/xtquant
+            # 的拒绝率应放宽到 1%（QuestDB/xtquant 数据异常行属正常质量过滤）。
+            accepted, reject_rate, threshold = self._failure_gate(
+                task, rows_rejected, rows_raw, source=source, is_reject=True)
             if not accepted or (rows_raw > 0 and rows_passed == 0):
                 raise RuntimeError(
                     f"校验拒绝率超限或无可入库数据: rejected={rows_rejected}/{rows_raw} "
