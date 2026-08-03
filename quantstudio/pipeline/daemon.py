@@ -695,15 +695,16 @@ class ResidentCollector:
                         f"passed={rows_passed} rejected={rows_rejected} written={rows_written} "
                         f"(new {write_new} + upd {write_updated}) "
                         f"watermark→{new_watermark}")
-            # P1-⑥ 追溯：MCP qfq→raw 还原行数并入 rows_fixed（metadata.restored_rows 由
-            # mcp_adapter._restore_to_raw 产出；非 MCP 源该键缺省为 0，等价于原 res.fixed_count）。
-            # 与现有 validator 修正计数叠加，避免回退路径（tushare/baostock）丢失 fixed_count。
-            _restored = int(metadata.get("restored_rows", 0) or 0)
+            # P1-⑥ 追溯：MCP qfq→raw 还原行数 metadata.restored_rows（由
+            # mcp_adapter._restore_to_raw 产出）仅作 metadata 追溯，**不并入 rows_fixed**。
+            # rows_fixed 的语义是 validator 的修正计数（res.fixed_count），
+            # 而 restored_rows 是全部数据的还原总量（960 万），相加会导致
+            # StageCountConservation 校验失败（aligned != passed+rejected+fixed）。
             self.batch_audit.record(batch_id, name, source, table, freq,
                                     rows_raw, rows_aligned, rows_passed, rows_rejected,
                                     rows_written, "success", None, started_at,
                                     rows_new=write_new, rows_updated=write_updated,
-                                    rows_fixed=(res.fixed_count or 0) + _restored)
+                                    rows_fixed=res.fixed_count or 0)
             return True
 
         except Exception as e:
