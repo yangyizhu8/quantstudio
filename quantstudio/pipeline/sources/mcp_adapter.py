@@ -697,6 +697,21 @@ class MCPAdapter(BaseSourceAdapter):
             else:
                 logger.warning(f"[MCPAdapter] 无 code 类列可过滤 codes，返回全量 {len(raw_df)} 行")
 
+        # === 测试代码过滤（云端数据卫生）===
+        # 云端 stock_daily/etf_daily 等含 TEST* 测试代码（如 TEST999.SH），
+        # adj_factor=NaN（无因子），导致线1还原缺因子 fail-fast。
+        # 过滤掉非标准代码（不是 6位数字.SH/.SZ/.BJ 格式），保留真实证券。
+        code_col = next((c for c in ("ts_code", "code") if c in raw_df.columns), None)
+        if code_col and len(raw_df):
+            import re
+            std_re = re.compile(r"^\d{6}\.(SH|SZ|BJ)$")
+            mask = raw_df[code_col].astype(str).map(lambda x: bool(std_re.match(x)))
+            n_filtered = (~mask).sum()
+            if n_filtered > 0:
+                test_codes = raw_df[~mask][code_col].unique().tolist()
+                logger.info(f"[MCPAdapter] 过滤非标准代码 {n_filtered} 行（示例={test_codes[:5]}）")
+                raw_df = raw_df[mask].reset_index(drop=True)
+
         # === 线1：is_qfq 还原 raw ===
         # 云端存 qfq，而 adapter 契约是"只返回 raw"（复权由 aligner 统一负责）。
         # 必须在返回前还原，否则 aligner 会二次复权。注意：必须放在日期/codes
