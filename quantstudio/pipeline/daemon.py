@@ -1718,6 +1718,11 @@ class ResidentCollector:
                 else:
                     cfg[k] = v
             cfg["name"] = source
+            # 修复（2026-08-03 main_db 未配置）：MCP 需 main_db 定位 qfq_aux.db
+            # （线1还原依赖因子快照）。daemon 按 data_config.path（writer.db_path）注入，
+            # 与 sources_config.json 的注释约定一致。
+            if source == "mcp" and "main_db" not in cfg:
+                cfg["main_db"] = str(self.writer.db_path)
             self._adapters[source] = create_adapter(source, cfg)
         adapter = self._adapters[source]
         if task is not None:
