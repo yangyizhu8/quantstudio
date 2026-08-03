@@ -702,8 +702,15 @@ class MCPAdapter(BaseSourceAdapter):
         # 必须在返回前还原，否则 aligner 会二次复权。注意：必须放在日期/codes
         # 过滤之后，但还原用的 adj_latest 来自 qfq_aux.db 全量因子历史，
         # **与本次窗口无关**（codex P0-①）。
+        #
+        # 【修复（2026-08-03 因子锚过期）】：export 数据的 adj_factor 列是云端
+        # 最新状态（含新除权重锚），但 qfq_aux.db 快照可能滞后（静态灌库）。
+        # 在还原前先用本次 export 的 adj_factor 增量注入 qfq_aux.db，保持快照
+        # 跟上云端动态重锚——这不是"取分片末行"（codex P0-①），而是增量同步
+        # 快照到云端最新状态。还原检查用的仍是 qfq_aux.db 全局最新因子。
         restore_meta: Dict = {}
         if self.enable_qfq_restore:
+            self._sync_factor_snapshot(raw_df, table, freq)
             raw_df, restore_meta = self._restore_to_raw(raw_df, table, freq)
 
         meta = {
@@ -831,6 +838,24 @@ class MCPAdapter(BaseSourceAdapter):
         finally:
             conn.close()
         return out
+
+    def _sync_factor_snapshot(self, df: pd.DataFrame, table: str, freq: str) -> None:
+        """增量同步因子快照：用本次 export 数据的 adj_factor 更新 qfq_aux.db。
+
+        解决因子锚过期问题（2026-08-03）：qfq_aux.db 快照是静态灌库，跟不上云端
+        stock_daily 的动态重锚（新除权时历史行因子更新）。每次 export 后，用本次
+        数据的 adj_factor 增量注入 qfq_aux.db，保持快照跟上云端最新状态。
+        这不是"取分片末行"（codex P0-①），而是增量同步快照到云端最新状态——
+        还原检查用的仍是 qfq_aux.db 全局最新因子（MAX(time) 对应值）。
+        """
+        if self.main_db is None or "adj_factor" not in df.columns:
+            return
+        asset_type = "ETF" if table.startswith("etf") else "STOCK"
+        try:
+            self._inject_adjfactor(df, freq, table)
+            logger.debug(f"[MCPAdapter] 因子快照增量同步（asset_type={asset_type}）")
+        except Exception as e:
+            logger.warning(f"[MCPAdapter] 因子快照增量同步失败（不影响还原）: {e}")
 
     def _coldstart_adj_factors(self, asset_type: str) -> None:
         """冷启动：全历史导出行情表的 adj_factor 并注入 qfq_aux.db。
