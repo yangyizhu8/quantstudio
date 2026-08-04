@@ -2,7 +2,7 @@
 
 - **Date**: 2026-08-04
 - **Scope**: QFQ routing isolation, complete cursor pagination, composite index-constituent codes, and nullable timestamp normalization
-- **Git state**: local validation only; no stage, commit, or push
+- **Git state**: framework/config/test/documentation repair committed and pushed to `origin/main` as `fed25dcc5caff15dfe1f0e9f83d64ff0d26810af`; remote SHA verified
 
 ## Repairs
 
@@ -31,4 +31,4 @@
 
 - Passthrough still returns a complete DataFrame before full replacement. `sw_weight` is about 4.18 million rows and `sw_daily` about 1.50 million rows. Cursor pagination prevents truncation but retains memory/latency risk. This repair does not change the public adapter/writer contract or reject valid data with a hard row cap.
 - Invalid source values remain in quarantine. The repair does not invent prices, dates, or PIT availability, and does not relax rejection thresholds.
-- No formal database write, Git stage, commit, or push was performed. GitHub synchronization remains behind explicit post-repair user confirmation.
+- No formal production database write was performed. After explicit post-repair user confirmation, the coordinated framework/config/test/documentation scope was committed and pushed to `origin/main` as `fed25dcc5caff15dfe1f0e9f83d64ff0d26810af`; `quantstudio/test_n8n.py` was explicitly excluded and remains untracked.
