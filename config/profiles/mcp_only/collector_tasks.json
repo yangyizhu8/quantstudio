@@ -11,6 +11,7 @@
       "source": "mcp",
       "table": "etf_basic",
       "freq": "daily",
+      "dataset_kind": "snapshot",
       "start_date": "2018-01-01",
       "codes": [
         "ALL"
