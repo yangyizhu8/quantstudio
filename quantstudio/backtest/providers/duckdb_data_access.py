@@ -330,10 +330,21 @@ class DuckDBDataAccess:
             logger.warning(f"[DuckDB] 日线快照区间预取失败 [{start_ms},{end_ms}]: {e}")
         self._daily_snapshot_loaded = True
 
-    def query_bars_by_range(self, code, start_ms, end_ms) -> pd.DataFrame:
+    def query_bars_by_range(self, code, start_ms, end_ms, use_qfq: bool = False) -> pd.DataFrame:
         """迁移自 PtradeAPI.get_price() 的条件分支 (ptrade_api.py:1373-1384)
 
         start_ms / end_ms 任一为 None 时对应的时间下界/上界条件不生效。
+
+        [R1-A] 新增 use_qfq 参数，使日线区间查询行为与 count 路径
+        (query_bars_by_count*) 一致：fq='pre'/'dypre' 返回前复权 OHLC，
+        fq=None/'none' 返回 raw OHLC。默认 use_qfq=False 保持历史 raw 行为，
+        不破坏旧调用方。
+
+        返回列式与修复前一致（仅 OHLC 列值因 use_qfq 变化）：
+        code, time, open, high, low, close, volume, amount,
+        preClose, pctChg, turn, peTTM, pbMRQ
+        按契约要求，区间路径不向公共列集新增 *_front 列，
+        前复用 `open_front AS open` 等别名在 SELECT 内就地替换列值。
         """
         conn = self._get_conn()
         if conn is None:
@@ -344,8 +355,13 @@ class DuckDBDataAccess:
         if end_ms is not None:
             conditions.append(f"time <= {end_ms}")
         where = " AND ".join(conditions)
+        if use_qfq:
+            # 前复权：用 *_front 列替换公共 OHLC 列值，保持公共列集不变
+            ohlc = "open_front AS open, high_front AS high, low_front AS low, close_front AS close"
+        else:
+            ohlc = "open, high, low, close"
         return conn.execute(f"""
-            SELECT code, time, open, high, low, close, volume, amount,
+            SELECT code, time, {ohlc}, volume, amount,
                    preClose, pctChg, turn, peTTM, pbMRQ
             FROM stock_daily WHERE {where} ORDER BY time
         """).fetchdf()

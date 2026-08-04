@@ -33,7 +33,6 @@
       "source_priority": [
         "mcp"
       ],
-      "mode": "full_range",
       "_note": "类别A 映射表（align→validate→write）"
     },
     {
@@ -64,7 +63,6 @@
       "source_priority": [
         "mcp"
       ],
-      "mode": "full_range",
       "_note": "类别A 映射表（align→validate→write）"
     },
     {
@@ -73,7 +71,7 @@
       "source": "mcp",
       "table": "etf_minutes",
       "freq": "1min",
-      "start_date": "2018-01-01",
+      "start_date": "2025-01-01",
       "codes": [
         "ALL"
       ],
@@ -95,7 +93,6 @@
       "source_priority": [
         "mcp"
       ],
-      "mode": "full_range",
       "_note": "类别A 映射表（align→validate→write）"
     },
     {
@@ -126,7 +123,6 @@
       "source_priority": [
         "mcp"
       ],
-      "mode": "full_range",
       "_note": "类别A 映射表（align→validate→write）"
     },
     {
@@ -157,7 +153,6 @@
       "source_priority": [
         "mcp"
       ],
-      "mode": "full_range",
       "_note": "类别A 映射表（align→validate→write）"
     },
     {
@@ -188,7 +183,6 @@
       "source_priority": [
         "mcp"
       ],
-      "mode": "full_range",
       "_note": "类别A 映射表（align→validate→write）"
     },
     {
@@ -219,7 +213,6 @@
       "source_priority": [
         "mcp"
       ],
-      "mode": "full_range",
       "_note": "类别A 映射表（align→validate→write）"
     },
     {
@@ -250,7 +243,6 @@
       "source_priority": [
         "mcp"
       ],
-      "mode": "full_range",
       "_note": "类别A 映射表（align→validate→write）"
     },
     {
@@ -281,7 +273,6 @@
       "source_priority": [
         "mcp"
       ],
-      "mode": "full_range",
       "_note": "类别A 映射表（align→validate→write）"
     },
     {
@@ -312,7 +303,6 @@
       "source_priority": [
         "mcp"
       ],
-      "mode": "full_range",
       "_note": "类别A 映射表（align→validate→write）"
     },
     {
@@ -343,7 +333,6 @@
       "source_priority": [
         "mcp"
       ],
-      "mode": "full_range",
       "_note": "类别A 映射表（align→validate→write）"
     },
     {
@@ -374,7 +363,6 @@
       "source_priority": [
         "mcp"
       ],
-      "mode": "full_range",
       "_note": "类别A 映射表（align→validate→write）"
     },
     {
@@ -383,7 +371,7 @@
       "source": "mcp",
       "table": "stock_minutes",
       "freq": "1min",
-      "start_date": "2018-01-01",
+      "start_date": "2025-01-01",
       "codes": [
         "ALL"
       ],
@@ -405,7 +393,6 @@
       "source_priority": [
         "mcp"
       ],
-      "mode": "full_range",
       "_note": "类别A 映射表（align→validate→write）"
     },
     {
@@ -436,7 +423,6 @@
       "source_priority": [
         "mcp"
       ],
-      "mode": "full_range",
       "_note": "类别A 映射表（align→validate→write）"
     },
     {
@@ -449,7 +435,7 @@
       "codes": [
         "ALL"
       ],
-      "max_workers": 8,
+      "max_workers": 7,
       "retry": {
         "max": 5,
         "backoff_sec": [
@@ -467,7 +453,6 @@
       "source_priority": [
         "mcp"
       ],
-      "mode": "full_range",
       "_note": "类别A 映射表（align→validate→write）"
     },
     {
@@ -498,7 +483,6 @@
       "source_priority": [
         "mcp"
       ],
-      "mode": "full_range",
       "_note": "类别A 映射表（align→validate→write）"
     },
     {
@@ -527,8 +511,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_block_trade_pt",
@@ -556,8 +542,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_broker_monthly_pt",
@@ -585,8 +573,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_broker_recommend_pt",
@@ -607,15 +597,17 @@
         ]
       },
       "rate_limit": {
-        "calls_per_min": 30,
+        "calls_per_min": 26,
         "wait_on_429": true
       },
       "source_priority": [
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_cninfo_first_rating_pt",
@@ -643,8 +635,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_cnthesims_events_pt",
@@ -672,8 +666,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_cnthesims_factors_pt",
@@ -701,8 +697,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_cyq_chips_pt",
@@ -730,8 +728,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_cyq_perf_pt",
@@ -759,8 +759,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_daily_info_pt",
@@ -788,8 +790,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_em_first_cover_rating_pt",
@@ -817,8 +821,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_etf_adj_factor_pt",
@@ -846,8 +852,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_etf_sentiment_daily_pt",
@@ -875,8 +883,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_etf_share_size_pt",
@@ -904,8 +914,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_factor_value_pt",
@@ -933,8 +945,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_forecast_vip_pt",
@@ -962,8 +976,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_gisisi_daily_pt",
@@ -991,8 +1007,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_hm_detail_pt",
@@ -1020,8 +1038,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_hm_list_pt",
@@ -1049,8 +1069,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_idx_anns_pt",
@@ -1078,8 +1100,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_idx_factor_pro_pt",
@@ -1107,8 +1131,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_index_classify_pt",
@@ -1136,8 +1162,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_inst_survey_pt",
@@ -1165,8 +1193,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_limit_cpt_list_pt",
@@ -1194,8 +1224,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_limit_list_d_pt",
@@ -1223,8 +1255,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_limit_list_ths_pt",
@@ -1252,8 +1286,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_limit_step_pt",
@@ -1281,8 +1317,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_llm_text_events_pt",
@@ -1310,8 +1348,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_llm_text_events_enriched_pt",
@@ -1339,8 +1379,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_llm_text_raw_feed_pt",
@@ -1368,8 +1410,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_margin_pt",
@@ -1397,8 +1441,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_margin_detail_pt",
@@ -1426,8 +1472,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_margin_secs_pt",
@@ -1455,8 +1503,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_market_breadth_daily_pt",
@@ -1484,8 +1534,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_moneyflow_cnt_ths_pt",
@@ -1513,8 +1565,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_moneyflow_ind_ths_pt",
@@ -1542,8 +1596,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_moneyflow_ths_pt",
@@ -1571,8 +1627,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_news_sentiment_pt",
@@ -1600,8 +1658,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_report_rc_pt",
@@ -1629,8 +1689,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_rsshub_raw_pt",
@@ -1658,8 +1720,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_sector_top300_daily_pt",
@@ -1687,8 +1751,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_sentiment_factor_daily_pt",
@@ -1716,8 +1782,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_slb_len_pt",
@@ -1745,8 +1813,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_stk_auction_pt",
@@ -1774,8 +1844,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_stk_factor_pro_pt",
@@ -1803,8 +1875,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_stk_limit_pt",
@@ -1832,8 +1906,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_style_cross_section_daily_pt",
@@ -1861,8 +1937,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_survey_sentiment_pt",
@@ -1890,8 +1968,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_tdx_theme_etf_overlay_pt",
@@ -1919,8 +1999,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_tdx_theme_llm_scores_pt",
@@ -1948,8 +2030,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_tdx_theme_news_pt",
@@ -1977,8 +2061,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_tdx_theme_sentiment_daily_pt",
@@ -2006,8 +2092,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_ths_daily_pt",
@@ -2035,8 +2123,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_ths_hot_pt",
@@ -2064,8 +2154,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_ths_index_pt",
@@ -2093,8 +2185,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_ths_member_pt",
@@ -2122,8 +2216,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark） [大表>100万行，默认disabled，需手动启用]",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_top_inst_pt",
@@ -2151,8 +2247,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_top_list_pt",
@@ -2180,8 +2278,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_ws_asfund_pt",
@@ -2209,8 +2309,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_ws_blocktrade_pt",
@@ -2238,8 +2340,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_ws_etf_holders_pt",
@@ -2267,8 +2371,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_ws_etf_holdings_pt",
@@ -2296,8 +2402,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_ws_ipo_pt",
@@ -2325,8 +2433,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_ws_lhb_pt",
@@ -2354,8 +2464,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_ws_margintrade_pt",
@@ -2383,8 +2495,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_ws_reserve_pt",
@@ -2412,8 +2526,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_xueqiu_sentiment_pt",
@@ -2441,8 +2557,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）"
+      "_note": "类别B passthrough 同名表（全量覆盖，不映射/不validate/不watermark）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_sw_daily_pt",
@@ -2470,8 +2588,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough（codex审计：原 sw_industry 错配，sw_daily 行业指数行情改本名直通）"
+      "_note": "类别B passthrough（codex审计：原 sw_industry 错配，sw_daily 行业指数行情改本名直通）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_sw_weight_pt",
@@ -2499,8 +2619,10 @@
         "mcp"
       ],
       "passthrough": true,
-      "mode": "full_range",
-      "_note": "类别B passthrough（codex审计：原 industry_membership 错配，sw_weight L1指数权重快照改本名直通。注意：仅31个L1指数，2024-01起）"
+      "_note": "类别B passthrough（codex审计：原 industry_membership 错配，sw_weight L1指数权重快照改本名直通。注意：仅31个L1指数，2024-01起）",
+      "codes": [
+        "ALL"
+      ]
     },
     {
       "name": "mcp_stock_namechange",
@@ -2530,7 +2652,6 @@
       "source_priority": [
         "mcp"
       ],
-      "mode": "full_range",
       "_note": "类别A 映射表（codex审计：云端已建 stock_namechange 表7451行，is_st_reliable 唯一权威源。前置：sync_to_cloud 须覆盖此表=第110张）"
     }
   ],

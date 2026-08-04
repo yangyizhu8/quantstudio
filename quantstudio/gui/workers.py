@@ -78,34 +78,84 @@ class LockedTaskWorker(BaseWorker):
         try:
             lock.acquire()
         except Timeout:
-            self.finished_err.emit("定时采集正在运行，请稍后重试")
+            self.finished_err.emit("\u5b9a\u65f6\u91c7\u96c6\u6b63\u5728\u8fd0\u884c\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5")
             return
+
         collector = None
+        outcome_kind = "error"
+        outcome_payload = None
         try:
-            self.progress.emit(f"开始({self.mode}): {self.task['name']}")
-            # 锁内首次 from_configs（_init_tables 安全）
+            self.progress.emit(
+                f"\u5f00\u59cb({self.mode}): {self.task['name']}")
             collector = ResidentCollector.from_configs(
                 self.config_dir / "data_config.json",
                 self.config_dir / "sources_config.json",
                 self.config_dir / "collector_tasks.json",
                 self.config_dir / "alignment_rules.json")
-            # 预检查（resolve_source_chain）在 worker 线程内（评审 2）
             chain = collector.resolve_source_chain(self.task)
             if not chain:
-                self.finished_err.emit(
-                    f"任务 {self.task.get('name','?')} 没有已启用且支持该任务的数据源")
-                return
-            ok = collector.execute_task(
-                self.task, mode=self.mode,
-                run_quality_audit=self.run_quality_audit)
-            if ok:
-                self.finished_ok.emit({"task": self.task["name"], "mode": self.mode})
+                outcome_payload = (
+                    f"\u4efb\u52a1 {self.task.get('name', '?')} "
+                    f"\u6ca1\u6709\u5df2\u542f\u7528\u4e14\u652f\u6301\u8be5\u4efb\u52a1\u7684\u6570\u636e\u6e90")
             else:
-                self.finished_err.emit(f"任务失败: {self.task['name']}")
+                task_ok = False
+                task_error = None
+                try:
+                    task_ok = collector.execute_task(
+                        self.task, mode=self.mode, run_quality_audit=False)
+                except Exception as e:
+                    task_error = e
+
+                audit_ran = bool(self.run_quality_audit)
+                audit_ok = None
+                audit_error = None
+                if audit_ran:
+                    self.progress.emit(
+                        f"{self.task['name']} \u62c9\u53d6\u7ed3\u675f\uff0c"
+                        f"\u6267\u884c\u5168\u5e93\u8d28\u91cf\u5ba1\u8ba1...")
+                    try:
+                        audit_ok = bool(collector._run_full_quality_audit())
+                    except Exception as e:
+                        audit_ok = False
+                        audit_error = f"{type(e).__name__}: {e}"
+                    if not audit_ok:
+                        self.progress.emit(
+                            f"\u26a0\ufe0f {self.task['name']} "
+                            f"\u62c9\u53d6\u7ed3\u679c\u5df2\u72ec\u7acb\u5224\u5b9a\uff1b"
+                            f"\u5168\u5e93\u5ba1\u8ba1\u672a\u901a\u8fc7\uff0c"
+                            f"\u8bf7\u67e5\u770b\u8d28\u91cf\u5ba1\u8ba1\u9875/\u65e5\u5fd7")
+
+                if task_error is not None:
+                    raise task_error
+
+                result = {
+                    "task": self.task["name"],
+                    "mode": self.mode,
+                    "task_ok": bool(task_ok),
+                    "quality_audit_ran": audit_ran,
+                    "quality_audit_ok": audit_ok,
+                }
+                if audit_error is not None:
+                    result["quality_audit_error"] = audit_error
+
+                if task_ok:
+                    outcome_kind = "success"
+                    outcome_payload = result
+                else:
+                    suffix = ""
+                    if audit_ran and audit_ok is False:
+                        suffix = (
+                            "\uff1b\u5168\u5e93\u8d28\u91cf\u5ba1\u8ba1\u540c\u65f6\u672a\u901a\u8fc7\uff0c"
+                            "\u8bf7\u67e5\u770b\u8d28\u91cf\u5ba1\u8ba1\u9875/\u65e5\u5fd7")
+                    outcome_payload = (
+                        f"\u4efb\u52a1\u62c9\u53d6\u5931\u8d25: "
+                        f"{self.task['name']}{suffix}")
         except Exception as e:
-            self.finished_err.emit(f"{type(e).__name__}: {e}")
+            outcome_kind = "error"
+            outcome_payload = f"{type(e).__name__}: {e}"
         finally:
-            # 关键：释放 _shared_conn（评审 1.4）
+            # The GUI may query DuckDB immediately after the final signal. Close the collector and
+            # release the cross-process lock before emitting that signal.
             if collector is not None:
                 try:
                     collector.close()
@@ -115,6 +165,11 @@ class LockedTaskWorker(BaseWorker):
                 lock.release()
             except Exception:
                 pass
+
+        if outcome_kind == "success":
+            self.finished_ok.emit(outcome_payload)
+        else:
+            self.finished_err.emit(str(outcome_payload))
 
 
 class LockedRunAllWorker(BaseWorker):
@@ -212,13 +267,38 @@ class TaskWorker(BaseWorker):
     def run(self):
         try:
             self.progress.emit(f"开始({self.mode}): {self.task['name']}")
-            ok = self.collector.execute_task(
-                self.task, mode=self.mode,
-                run_quality_audit=self.run_quality_audit)
-            if ok:
-                self.finished_ok.emit({"task": self.task["name"], "mode": self.mode})
+            task_ok = False
+            task_error = None
+            try:
+                task_ok = self.collector.execute_task(
+                    self.task, mode=self.mode, run_quality_audit=False)
+            except Exception as e:
+                task_error = e
+            audit_ran = bool(self.run_quality_audit)
+            audit_ok = None
+            audit_error = None
+            if audit_ran:
+                try:
+                    audit_ok = bool(self.collector._run_full_quality_audit())
+                except Exception as e:
+                    audit_ok = False
+                    audit_error = f"{type(e).__name__}: {e}"
+            if task_error is not None:
+                raise task_error
+
+            result = {
+                "task": self.task["name"],
+                "mode": self.mode,
+                "task_ok": bool(task_ok),
+                "quality_audit_ran": audit_ran,
+                "quality_audit_ok": audit_ok,
+            }
+            if audit_error is not None:
+                result["quality_audit_error"] = audit_error
+            if task_ok:
+                self.finished_ok.emit(result)
             else:
-                self.finished_err.emit(f"任务失败: {self.task['name']}")
+                self.finished_err.emit(f"??????: {self.task['name']}")
         except Exception as e:
             self.finished_err.emit(f"{type(e).__name__}: {e}")
 

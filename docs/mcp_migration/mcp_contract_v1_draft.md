@@ -1,4 +1,4 @@
-# QuantStudio MCP 数据集服务契约 v1（草案 / DRAFT）
+﻿# QuantStudio MCP 数据集服务契约 v1（草案 / DRAFT）
 
 > 阶段：Round 1 — P1B（契约草案，非实现）
 > 基线 commit：`da2dace`
@@ -84,12 +84,11 @@ is_qfq BOOLEAN  -- true 表示已是前复权基准序列，仍须以 adj_factor
 | `skipped_rows_no_factor` | int | 因缺因子未还原的 qfq 行数（fail-fast 前计数） |
 | `missing_factor_codes` | list | 缺因子的 code 列表 |
 | `restored_price_cols` | list | 被还原的价格列（open/high/low/close/pre_close） |
-| `stale_anchor_rows` / `stale_anchor_codes` | int/list | 因子锚过期（本地快照落后于云端）触发的 fail-fast 行/码 |
 
 **约束（P0-① / 护栏）**：
-- `adj_latest_global` 一律取自 qfq_aux.db 完整因子历史的 `ORDER BY time DESC LIMIT 1`，**绝不用本次 export 分片末行**（历史窗口误用偏差可达 8.67 元，见任务书附录 C.3）。
+- `adj_latest_global` must be the factor associated with the greatest timestamp in the complete qfq_aux history (`ORDER BY time DESC LIMIT 1` / `MAX(time)`). Never use the export-window tail and never use `MAX(adj_factor)`: ETF split/consolidation may make the factor decrease.
 - 缺因子 → fail-fast（禁止把 qfq 当 raw 写库导致双重复权）。
-- 因子锚过期（`adj_factor_i > adj_latest_global`）→ fail-fast（本地快照落后于云端，需先同步）。
+- Before restore, every export batch must synchronize its factor snapshot; zero-row writes or write failures are fail-fast. Factor magnitude is not a freshness test because valid non-monotonic history may have `adj_factor_i > adj_latest_global`.
 
 ---
 

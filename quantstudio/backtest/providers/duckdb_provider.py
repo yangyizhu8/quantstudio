@@ -57,9 +57,12 @@ class DuckDBMarketDataProvider(MarketDataProvider):
                  bar_cutoff_ms=None):
         # PR3: frequency="1d"（默认）走原日线路径，字节级不变。
         if frequency == "1d":
+            # [R1-A] 区间路径与 count 路径契约一致：fq='pre'/'dypre' 返回前复权 OHLC
+            use_qfq = str(fq).lower() in ("pre", "dypre")
             result = {}
             for code in codes:
-                df = self._data.query_bars_by_range(code, _start_ms(start_date), _end_ms(end_date))
+                df = self._data.query_bars_by_range(
+                    code, _start_ms(start_date), _end_ms(end_date), use_qfq)
                 if not df.empty: result[code] = _fields(df, fields)
             return result
         # 分钟路径：绝不进入日线 fallback 链

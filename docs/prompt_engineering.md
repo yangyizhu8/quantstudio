@@ -1,4 +1,4 @@
-# QuantStudio 策略生成提示词工程（V1）
+﻿# QuantStudio 策略生成提示词工程（V1）
 
 
 ## R0-VALIDATION-OWNER：回测执行方
@@ -65,9 +65,10 @@ QuantStudio 本地注入 API / 指标 / 全局对象（g、log、pd、np、MyTT�
 - get_history(security,count,unit='1d',fields,fq='pre',include=False,is_dict=False)：单标的历史，索引 -count..0。
 - get_price(security,start,end,frequency='1d',fields,fq='pre',count,is_dict=False)
 - ⚠️ **成交额列名双端契约（B1）**：成交额的 Ptrade 契约名为 `money`（DB 物理列 `amount`）。`get_history`/`get_price` 返回的 DataFrame 含 `amount` 时同步追加同值 `money` 列，`fields=['money']` 请求正确返回。**双端/PTrade 目标代码只读 `money`**——读 `amount`/`close_front`/`volume_front`/`open_front` 等本地列名会被 Validator 以 `PTRADE-LOCAL-COLUMN` 阻断；本地单端策略读 `amount` 仍兼容。
-- ⚠️ **取数默认前复权（fq='pre'）**：框架 API 与底层数据适配层默认均为前复权；生成策略取历史/行情务必使用 `fq='pre'`（不复权才显式传 `fq=None`）。**切勿依赖不复权价格做回测**（除权缺口会导致信号与收益失真）。即便省略 fq 也已是前复权，但建议显式写出 `fq='pre'` 以表意清晰。
+- ⚠️ **取数默认前复权（fq='pre'）**：框架 API 与底层数据适配层默认均为前复权；生成策略取历史/行情务必使用 `fq='pre'`（不复权才显式传 `fq=None`）。**日期区间路径（`get_price`/`get_bars` 的 `start_date`/`end_date`）与 count 路径（`count`/`get_bars_by_count`）前复权行为一致——同一代码、同一区间、同一 fq 返回逐值一致的前复权价**（R1-A 已修复区间路径曾错误返回 raw 价的缺陷）。**切勿依赖不复权价格做回测**（除权缺口会导致信号与收益失真）。即便省略 fq 也已是前复权，但建议显式写出 `fq='pre'` 以表意清晰。
 - ⚠️ **撮合/估值同为前复权口径（前复权闭环）**：成交价、持仓估值、`data[code].price` 均来自引擎前复权快照（OHLC 映射 `*_front`，`preClose` 同因子缩放），与信号价同一连续口径；ETF 拆分/分红除权无价格缺口、无虚假盈亏（分红等价于自动再投资）。策略可直接比较 `data[code].price` 与 `get_history(fq='pre')` 序列。
 - ⚠️ **设计契约强制值**：`signal_price_adjustment="pre"`、`execution_price_basis="pre_adjusted_price"`。生成器不得输出 `raw_trade_price`；旧设计需迁移后重新确认和回测。
+- ?? **MCP ETF data invariant**: the framework restores cloud qfq to raw with the factor at `MAX(time)`, not `MAX(adj_factor)`. ETF factors may decrease after split/consolidation. Strategy code must use injected APIs and must never rescale or bypass provider-side raw/front semantics.
 - get_fundamentals(security|QueryBuilder, table, fields, date)：valuation 完整可用；eps/profit_ability/
   growth_ability 等可用；balance/income/cashflow 三张报表【返回空 DataFrame】。
 - query(valuation.market_cap).filter(...).order_by(...).limit(n) 后 get_fundamentals(q)
@@ -411,6 +412,17 @@ run_strategy(
 
 **AGENTS.md 框架铁律适用**：本变更为纯性能优化，已审阅确认未改变任何公共/注入 API 签名、返回结构、数据语义或回测行为，也未涉及 `StrategyIsolationGuard` 文件 I/O 禁令等约束变更。因此本文档中策略生成/隔离守卫相关表述不受影响，无需修改。
 
+> **GUI evidence rule**: distinguish `task_ok` (the selected collection task) from `quality_audit_ok` (the whole database). A successful task with a failed global audit is `success with audit warning`, not a task failure; the audit must still be reported.
+
 ## Data-quality dependency note (2026-08-03)
 
 Strategy API behavior is unchanged by the full-database audit repair. Reference-data consumers may rely on writer-managed `stock_basic` and on the shared single-key `trade_calendar`; QFQ calendar timing, PIT semantics, order matching, positions, cash, and generated-strategy contracts are unchanged. Operational details are documented in `docs/data-quality-checks.md`.
+
+## MCP pipeline prompt constraints (2026-08-04)
+
+For MCP framework work, prompts must state all of the following:
+
+- Only explicit stock/ETF K-line `(table, freq)` entries may synchronize QFQ factors and restore qfq to raw. Financial, valuation, index-constituent, and other export datasets never become QFQ-capable merely because they use export transport.
+- Every non-export production pull must consume `fetch_page` cursors to exhaustion. `query_snapshot` has a 10,000-row server cap and is only a small-window probe.
+- Composite-key datasets must declare all security/index code columns through `code_cols`/`code_fields`. `NaT` and other missing dates flow to the existing required/PIT gates rather than crashing timestamp conversion.
+- Never hide source defects by relaxing rejection thresholds, deleting quarantine rows, fabricating dates/prices, or widening a canonical regex without an approved contract change.

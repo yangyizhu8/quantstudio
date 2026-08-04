@@ -680,20 +680,40 @@ class TaskTab(QWidget):
 
     def _on_task_done(self, task: dict, ok: bool, result):
         task_name = task.get("name", "")
+        audit_warning = (
+            ok and isinstance(result, dict)
+            and result.get("quality_audit_ran") is True
+            and result.get("quality_audit_ok") is False
+        )
         if ok:
-            logger.info(f"任务 {task_name} 完成: {result}")
+            if audit_warning:
+                logger.warning(
+                    f"\u4efb\u52a1 {task_name} \u62c9\u53d6/\u5199\u5e93\u6210\u529f\uff0c"
+                    f"\u4f46\u5168\u5e93\u8d28\u91cf\u5ba1\u8ba1\u672a\u901a\u8fc7: {result}")
+            else:
+                logger.info(f"\u4efb\u52a1 {task_name} \u5b8c\u6210: {result}")
         else:
-            logger.error(f"任务 {task_name} 失败: {result}")
-        self.status_label.setText(f"{'✅' if ok else '❌'} {task_name}")
-        # 清除运行态：refresh() 重建按钮时该任务恢复可点击
+            logger.error(f"\u4efb\u52a1 {task_name} \u5931\u8d25: {result}")
+
+        if audit_warning:
+            final_text = (
+                f"\u26a0\ufe0f {task_name} \u62c9\u53d6\u6210\u529f\uff1b"
+                f"\u5168\u5e93\u8d28\u91cf\u5ba1\u8ba1\u672a\u901a\u8fc7")
+            task_status = "\u6210\u529f\uff08\u5ba1\u8ba1\u544a\u8b66\uff09"
+        elif ok:
+            final_text = f"\u2705 {task_name}"
+            task_status = "\u6210\u529f"
+        else:
+            final_text = f"\u274c {task_name}"
+            task_status = "\u5931\u8d25"
+        self.status_label.setText(final_text)
+
         self._running_tasks.pop(task_name, None)
-        self._set_task_status(task_name, "成功" if ok else "失败")
+        self._set_task_status(task_name, task_status)
         self.refresh()
-        # 所有任务完成后关闭加载提示（无运行中任务 + 无队列残留）
         if not self._running_tasks and not getattr(self, '_task_queue', None):
             if hasattr(self, '_collect_tooltip') and self._collect_tooltip:
-                self._collect_tooltip.setContent(
-                    f"{'✅' if ok else '❌'} {task_name} 完成")
+                self._collect_tooltip.setContent(final_text)
                 self._collect_tooltip = None
 
     def _reset_watermark(self):

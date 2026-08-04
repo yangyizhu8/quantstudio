@@ -383,22 +383,24 @@ def case_a6b(res: Results, adapter) -> None:
 
 
 def case_a9(res: Results, adapter) -> None:
-    """[护栏] adj_i > adj_latest_global 说明本地因子快照落后于云端，必须显性失败。"""
-    cid, name = "A9", "[护栏] 因子锚过期(adj_i>全局最新) 触发 fail-fast"
-    if not has_method(adapter, "_restore_to_raw"):
-        res.add(cid, name, "FAIL", "MCPAdapter._restore_to_raw 未实现（RED）")
-        return
-    # 2.05 > 1.9495：模拟云端已除权前进、qfq_aux.db 未同步
-    df = make_daily_df([(20260801, 100.0, 2.05)])
+    """Non-monotonic ETF factors must use the factor at the latest timestamp."""
+    cid, name = "A9", "[guard] non-monotonic ETF anchor uses latest time, not maximum factor"
     try:
-        out, _meta = adapter._restore_to_raw(df.copy(), "stock_daily", "daily")
-        res.add(cid, name, "FAIL",
-                f"未拦截过期锚！还原后 close={float(out.iloc[0]['close']):.4f}\n"
-                f"（继续放行会用过期锚产生系统性偏差）")
-    except ValueError as e:
-        res.add(cid, name, "PASS", f"已 fail-fast: {str(e)[:170]}")
+        code = "510500"
+        latest = adapter._get_adj_latest_global([code], asset_type="ETF").get(code)
+        if latest is None:
+            res.add(cid, name, "FAIL", "510500 latest factor unavailable")
+            return
+        aux = str(Path(adapter.main_db).parent / "qfq_aux.db")
+        with sqlite3.connect(f"file:{aux}?mode=ro", uri=True) as con:
+            max_factor = con.execute(
+                "SELECT MAX(adj_factor) FROM fund_adj WHERE code=?", (code,)
+            ).fetchone()[0]
+        ok = float(latest) < float(max_factor) and abs(float(latest) - 0.3401) < 1e-6
+        res.add(cid, name, "PASS" if ok else "FAIL",
+                f"latest_by_time={latest}, historical_max={max_factor}")
     except Exception as e:
-        res.add(cid, name, "FAIL", f"异常类型不符: {type(e).__name__}: {e}")
+        res.add(cid, name, "FAIL", f"{type(e).__name__}: {e}")
 
 
 def case_a6(res: Results, adapter, main_db: str, sample_n: int,
@@ -427,8 +429,10 @@ def case_a6(res: Results, adapter, main_db: str, sample_n: int,
         return
     try:
         rows = con.execute(
-            "SELECT code, date, close FROM stock_daily "
-            "WHERE date = 20250421 AND close IS NOT NULL AND close > 0 "
+            "SELECT code, close FROM stock_daily "
+            "WHERE CAST(to_timestamp(time / 1000.0) AT TIME ZONE 'Asia/Shanghai' "
+            "AS DATE) = DATE '2025-04-21' "
+            "AND close IS NOT NULL AND close > 0 "
             "ORDER BY code LIMIT ?", [int(sample_n)]).fetchall()
     except Exception as e:
         res.add(cid, name, "FAIL", f"查询 DuckDB 失败: {type(e).__name__}: {e}")
@@ -444,9 +448,11 @@ def case_a6(res: Results, adapter, main_db: str, sample_n: int,
         res.add(cid, name, "FAIL", "DuckDB 未取到样本行")
         return
 
+    # [R1-A] trade_date 固定为上海交易日 20250421，不依赖不存在的 date 列
+    TRADE_DATE = 20250421
     codes = [str(r[0]) for r in rows]
     latest = adapter._get_adj_latest_global(codes, asset_type="STOCK")
-    # 取样本日因子
+    # 取样本日因子（adj_factor.time = 上海自然日 00:00 毫秒）
     import sqlite3 as _sq
     aux = str(Path(main_db).parent / "qfq_aux.db")
     day_ms = int(_dt.datetime(2025, 4, 21, tzinfo=CST).timestamp() * 1000)
@@ -457,13 +463,13 @@ def case_a6(res: Results, adapter, main_db: str, sample_n: int,
             f"WHERE time=? AND code IN ({marks})", [day_ms] + codes).fetchall()}
 
     recs, skipped = [], []
-    for code, date, close in rows:
+    for code, close in rows:
         ai, al = adj_i_map.get(str(code)), latest.get(str(code))
         if not ai or not al:
             skipped.append(str(code))
             continue
         recs.append({
-            "ts_code": str(code), "trade_date": int(date),
+            "ts_code": str(code), "trade_date": TRADE_DATE,
             "open": close * ai / al, "high": close * ai / al,
             "low": close * ai / al, "close": close * ai / al,
             "pre_close": close * ai / al,

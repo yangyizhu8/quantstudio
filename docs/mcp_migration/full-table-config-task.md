@@ -1,4 +1,4 @@
-# 全量表采集配置任务书（CodeBuddy 执行）
+﻿# 全量表采集配置任务书（CodeBuddy 执行）
 
 > **版本**：v1（2026-08-02）
 > **前置**：完整清单已落盘(docs/mcp_migration/full_table_inventory.json)，scope=['*']实测通过
@@ -160,3 +160,9 @@ cyq_chips(9000万)/stk_limit(1676万)/stk_factor_pro(1447万)/margin_secs(680万
 
 ## 7. 分支
 feat/full-table-config（独立分支）
+
+## 8. Routing contract addendum (2026-08-04)
+
+- `index_constituents` uses the `index_weight` export dataset and is not in the QFQ whitelist.
+- Every non-export dataset uses complete `fetch_page` pagination; the 10,000-row `query_snapshot` result is never a production completeness signal.
+- Passthrough datasets still skip aligner/validator and keep source columns unchanged during full replacement. Pagination fixes completeness only; it does not change the passthrough storage contract.

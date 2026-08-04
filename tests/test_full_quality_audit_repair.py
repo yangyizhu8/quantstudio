@@ -175,22 +175,28 @@ def test_trade_calendar_profile_aligns_and_validates_without_treating_date_as_co
 def test_reference_table_adapter_shape_completion_preserves_symbol_and_stamps_calendar():
     from quantstudio.pipeline.sources.mcp_adapter import MCPAdapter
 
-    class Page:
-        def __init__(self, columns, rows):
-            self.columns = columns
-            self.rows = rows
-
     class Client:
-        def query_snapshot(self, dataset_id, limit):
+        def fetch_page(self, dataset_id, cursor="", page_size=50_000):
+            assert cursor == ""
             if dataset_id == "stock_basic":
-                return Page(
-                    ["ts_code", "symbol", "name", "exchange", "list_status"],
-                    [["000001.SZ", "000001", "Ping An Bank", "SZSE", "L"]],
-                )
-            return Page(
-                ["exchange", "cal_date", "is_open", "pretrade_date"],
-                [["SSE", "2026-08-03T00:00:00", 1, "2026-07-31T00:00:00"]],
-            )
+                rows = [{
+                    "ts_code": "000001.SZ",
+                    "symbol": "000001",
+                    "name": "Ping An Bank",
+                    "exchange": "SZSE",
+                    "list_status": "L",
+                }]
+            else:
+                rows = [{
+                    "exchange": "SSE",
+                    "cal_date": "2026-08-03T00:00:00",
+                    "is_open": 1,
+                    "pretrade_date": "2026-07-31T00:00:00",
+                }]
+            return {"rows": rows, "next_cursor": None}
+
+        def query_snapshot(self, *args, **kwargs):
+            raise AssertionError("reference tables must use cursor pagination")
 
     adapter = MCPAdapter({"base_url": "https://example.invalid", "enable_qfq_injection": False})
     adapter._client = Client()

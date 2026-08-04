@@ -33,6 +33,10 @@ GUI “统一契约审计”显示同一份报告，额外的快速 SQL 项用�
 
 使用 `FidelityComparator` 的 L1-L4 报告进行验证；成本项按有效费率（费用/成交额）比较，避免跨源整手数量差异造成假阳性。
 
+## GUI task result versus full-database audit
+
+A manual PyQt task has two independent results: the selected task's fetch/align/validate/write result and the post-run full-database `DataQualityAuditor` result. A successful task with an unrelated global audit error is displayed as **success with audit warning**; a real task failure remains a failure. The audit is never skipped.
+
 ## Reference-table and QFQ audit contract (2026-08-03)
 
 - `stock_basic` is a canonical reference table created and migrated by `DuckDBWriter`. MCP preserves authoritative `ts_code`, derives the six-digit `code` from `symbol`, and stores `list_status`/`data_source` for metadata APIs.
@@ -40,3 +44,15 @@ GUI “统一契约审计”显示同一份报告，额外的快速 SQL 项用�
 - Persisted enum checks compare native DuckDB values through bound parameters. BOOLEAN values therefore satisfy a schema enum of `[0, 1]` without text-cast false positives.
 - `QfqPendingSla` measures how long the row has remained in its current state using `COALESCE(updated_at, created_at)`, not the original event creation time.
 - QFQ queue errors must be repaired through the orchestrator CLI (`retry-due`, then reviewed `reopen` operations). Deleting queue rows or raising thresholds to hide failures is prohibited.
+
+## MCP completeness and normalization checks (2026-08-04)
+
+1. **Routing gate**: only exact `(table, freq)` entries in `MCPAdapter._QFQ_ADJFACTOR_TABLES` may synchronize factors and restore qfq prices.
+2. **Completeness gate**: non-export pulls must report `fetch_mode=fetch_page` and `lineage.pages`; large mapped datasets must report `fetch_mode=export` plus Raw Landing shards. Never treat `query_snapshot(limit>10000)` as complete.
+3. **Composite-code gate**: aligned `index_constituents.index_code` and member `code` must both be six-digit raw codes. Metadata must record filtered out-of-contract `Hxxxxx.CSI` rows.
+4. **Nullable-time gate**: `NaT`/missing timestamps become null and are handled row by row by `RequiredValueNull`, `DateValid`, and PIT rules. The conversion helper must not abort the batch, and no synthetic date is allowed.
+5. **GUI result boundary**: the collection result and the subsequent full-database QualityAudit are separate outcomes. Audit warnings cannot overwrite a real task failure or be reported as collection success.
+
+Evidence: `docs/evidence/mcp_pipeline_routing_repair_2026-08-04.md`.
+
+Post-repair formal read-only audit: **315 checks / 0 errors / 9 warning classes**. Warnings remain visible and are not treated as collection success or silently cleared.

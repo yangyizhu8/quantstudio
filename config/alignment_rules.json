@@ -759,7 +759,11 @@
           "unit": "%"
         }
       },
-      "available_at_field": "time"
+      "available_at_field": "time",
+      "code_fields": [
+        "index_code",
+        "code"
+      ]
     },
     "fin_indicator": {
       "_note": "财务指标表，PIT 打标 available_at=ann_date [E-1]。pe_ttm/pb/ps_ttm 为 legacy 兼容列，正式估值走 valuation 数据链。",
@@ -2005,7 +2009,11 @@
         },
         "code_format": "tushare_to_raw",
         "unit_conversions": {},
-        "time_to_ms": true
+        "time_to_ms": true,
+        "code_cols": [
+          "index_code",
+          "code"
+        ]
       },
       "etf_daily": {
         "column_map": {
@@ -2469,7 +2477,11 @@
         },
         "code_format": "identity",
         "unit_conversions": {},
-        "_note": "akshare index_stock_cons_csindex 成分股，无 weight 留 NULL"
+        "_note": "akshare index_stock_cons_csindex 成分股，无 weight 留 NULL",
+        "code_cols": [
+          "index_code",
+          "code"
+        ]
       },
       "etf_minutes": {
         "column_map": {

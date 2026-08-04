@@ -1,4 +1,4 @@
-"""
+﻿"""
 FieldAligner — 字段对齐引擎（Phase 1.1 核心）
 
 6 步流水线：列名映射 → 代码统一 → 日期统一 → 单位换算 → QFQ前复权 → pct_chg透传
@@ -151,8 +151,17 @@ def to_ms_timestamp(val: Any) -> Optional[int]:
     """统一任意日期/时间格式到毫秒时间戳 INTEGER（统一口径）
     兼容：20260713 / 2026-07-13 / 2026-07-13 09:30:00 / datetime / Timestamp / 秒/毫秒数字
     """
-    if val is None or (isinstance(val, float) and np.isnan(val)):
+    if val is None or val is pd.NaT:
         return None
+    # pandas datetime columns represent missing values as NaT rather than float NaN.
+    # Treat every scalar pandas/NumPy missing marker as an absent timestamp, then let
+    # the existing schema-required/PIT rules decide whether that row is quarantined.
+    try:
+        missing = pd.isna(val)
+        if isinstance(missing, (bool, np.bool_)) and missing:
+            return None
+    except (TypeError, ValueError):
+        pass
     if isinstance(val, bool):
         return None
     # int / numpy integer
@@ -310,16 +319,22 @@ class FieldAligner:
                 f"Duplicate column names after mapping for {table}/{source}: {dup_cols}"
             )
 
-        # ---- Step 2: 代码格式统一（裸 6 位码）----
-        # code_col 可由映射显式声明（如 industry_classification 主键首列是
-        # classification_system 而非证券代码）；未声明时按 schema 主键首列推断。
-        if "code_field" in schema and schema["code_field"] is None:
-            code_col = None
-        else:
-            code_col = mapping.get("code_col") or self._find_code_col(df, schema)
-        if code_col is not None:
-            fmt = mapping.get("code_format", "identity")
-            df[code_col] = df[code_col].apply(lambda c: normalize_code(c, fmt))
+        # ---- Step 2: normalize code columns to six-digit raw codes ----
+        # Composite-key tables may declare multiple security/index code columns
+        # with mapping.code_cols; absent that key, preserve the legacy single-column inference.
+        code_cols = mapping.get("code_cols")
+        if code_cols is None:
+            if "code_field" in schema and schema["code_field"] is None:
+                code_cols = []
+            else:
+                inferred = mapping.get("code_col") or self._find_code_col(df, schema)
+                code_cols = [inferred] if inferred is not None else []
+        elif isinstance(code_cols, str):
+            code_cols = [code_cols]
+        fmt = mapping.get("code_format", "identity")
+        for code_col in code_cols:
+            if code_col in df.columns:
+                df[code_col] = df[code_col].apply(lambda c: normalize_code(c, fmt))
         applied_steps.append("code_normalize")
 
         # ---- Step 3: 时间统一到毫秒时间戳（统一time 字段，INTEGER ms）----

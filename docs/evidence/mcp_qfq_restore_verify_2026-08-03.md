@@ -1,4 +1,4 @@
-# 线1：is_qfq 还原 raw 方案 — 验收报告
+﻿# 线1：is_qfq 还原 raw 方案 — 验收报告
 
 - **日期**：2026-08-03
 - **任务书**：`docs/mcp_migration/is_qfq_restore-raw-task.md`
@@ -127,3 +127,19 @@
 2. 审核通过后更新 `实时进度报告.md`（铁律#4，含 §6.4 P3 结论重审、§6.2 fund_adj 技术债）。
 3. 汇报用户 → **用户明确确认后**才 commit/push GitHub（铁律#1，包含 README + docs/strategy_toolbox.md + docs/prompt_engineering.md 同步；本次 strategy_toolbox/prompt_engineering 复权口径表述未受本修复影响，无需改动，已核对）。
 4. 待 DuckDB 主库空闲后重跑 A6 全市场往返对照，补齐 P1-③ 全量证据。
+
+
+## 2026-08-03 ETF non-monotonic-factor correction (PyQt full pull)
+
+- Batch `mcp_etf_daily_mcp_20260803_234326_0b47a6` downloaded, restored, and aligned 2,093,147 rows, but validation rejected 100,501 rows (4.801431%).
+- Root cause was not PyQt or MCP transport. Commit `a6fef1b` changed the restore anchor from the factor at `MAX(time)` to historical `MAX(adj_factor)`. For 510500, latest=0.3401 while historical max=1.0, inflating current raw price by about 2.94x.
+- Repair: restore the factor at `MAX(time)`; remove the invalid monotonicity assumption; fail fast when factor-snapshot synchronization cannot write; keep UnitCheck on canonical raw close rather than `close_front`.
+- Full 2,093,147-row Parquet analysis: historical-max anchor caused 28,871 UnitCheck anomalies; correct latest-time anchor leaves 1,973 genuine anomalies (0.0943%, below the 1% gate). Real first/last samples for 510500/560010/563330/511030 have unit ratios in [0.9950, 1.0047].
+
+## 7. Routing/pagination/normalization addendum (2026-08-04)
+
+This addendum belongs to the same MCP framework repair work package. Detailed evidence is in `docs/evidence/mcp_pipeline_routing_repair_2026-08-04.md`.
+
+- The isolated `index_constituents` pipeline fetched 251,947 rows, filtered 27,740 out-of-contract `Hxxxxx.CSI` rows, and wrote 224,207 canonical rows without QFQ factor access.
+- The isolated `index_daily` and `block_trade` pipelines wrote 64,373 and 61,195 rows, proving the production path no longer stops at the 10,000-row snapshot cap.
+- `fin_indicator` no longer aborts on `NaT`: 135,840 rows were written and 111 invalid source rows were quarantined by `DateValid`/`RequiredValueNull`.

@@ -1,4 +1,4 @@
-# QuantStudio 策略工具箱（PTrade 兼容回测 API）
+﻿# QuantStudio 策略工具箱（PTrade 兼容回测 API）
 
 本框架在 QuantStudio 本地回测引擎上对齐**已登记并验证的 PTrade 回测公共 API 子集**，同时提供明确标记的 QuantStudio 本地扩展。
 只有通过 PTrade Profile Validator 的策略才可声明可移植；本地运行成功不等于真实平台兼容。数据 100% 来自 DuckDB（QuantStudio 数据管线产出），不依赖任何外部
@@ -72,6 +72,9 @@
 
 > 前复权为框架默认：注入 API（`get_history`/`get_price`/`get_history_batch`）与底层数据适配层（`providers.get_bars`/`get_bars_by_count`）默认均为 `fq='pre'`；策略不传 `fq` 即获前复权价，需不复权须显式 `fq=None`。
 >
+> **日线日期区间与 count 形式前复权行为一致（R1-A 修复后契约）**：`get_bars` 的日期区间路径（`start_date`/`end_date`）与 `get_bars_by_count`（`count`）路径**均遵守同一 fq 契约**——`fq='pre'`/`fq='dypre'` 返回前复权 OHLC（`*_front` 列值），`fq=None`/`fq='none'` 返回 raw OHLC；两者对同一区间、同一代码、同一 fq 返回**逐值一致**的前复权价。底层 `query_bars_by_range` 与 `query_bars_by_range_batch` 经 R1-A 增加 `use_qfq` 参数后与 count 路径的 `use_qfq` 语义对齐（默认 `use_qfq=False` 保持历史 raw 行为，不破坏旧调用）。**区间路径不向公共返回列集新增 `*_front` 列**（前复权通过 `open_front AS open` 等别名就地替换公共 OHLC 列值实现）。
+> **MCP ETF raw landing contract (2026-08-03 repair)**: qfq-to-raw restoration uses the adjustment factor at the greatest factor timestamp (`MAX(time)`), never the historical maximum factor value. ETF split/consolidation can make factors decrease. UnitCheck continues to validate canonical raw `amount/(close*volume)` and must not substitute `close_front`; this keeps provider errors visible instead of masking them in strategy-facing prices.
+>
 > **撮合/估值同为前复权口径（前复权闭环）**：引擎每日全市场快照 `query_daily_snapshot`（成交价、持仓估值、`data[code].price`、`BarData` OHLC 的唯一来源）将 OHLC 映射为前复权列（`*_front`，缺失回退原始价），`preClose` 按 `close_front/close` 同因子缩放，保证 `(close-preClose)/preClose` 与真实日收益一致。因此 ETF 份额拆分、股票分红除权不会产生价格缺口与虚假盈亏；代价是成交价为前复权价（分红等价于自动再投资，前复权回测标准口径）。`pctChg`/`volume`/`amount` 保持原始口径。
 >
 > **成交额列双端契约（B1，返回端逆映射）**：DB 物理列为 `amount`，Ptrade 官方契约列名为 `money`。`get_history`/`get_price` 返回的 DataFrame 在含 `amount` 列时同步追加**同值 `money` 列**（列尾追加，`amount` 保留、数值不变）；请求 `fields=['money']` 时也正确返回 `money` 列。双端/PTrade 目标策略**必须只读 `money`**（读 `amount`/`close_front`/`volume_front`/`open_front` 等本地物理列名会被 Validator 以 `PTRADE-LOCAL-COLUMN` 规则阻断）；本地单端策略读 `amount` 仍兼容。纯返回端别名，黄金回归已证明对回测数值零影响。
@@ -82,7 +85,7 @@
 |------|------|
 | `get_history(...)` | 获取历史 K 线，**双签名兼容**：`get_history(security,count,unit='1d',fields=...,fq='pre',include=False)` 与 Ptrade 官方 `get_history(count,frequency='1d',field='close',security_list=...,fq='pre',include=False)`。**fq 默认 `'pre'`（前复权）**。支持 `is_dict=True` 返回 `{code:DataFrame}`（本地适配层）。**PTrade Profile 1.8.0 返回形状契约**：真实平台上 `is_dict=True` 的 mapping item 可能是 pandas DataFrame / NumPy structured array / recarray，`item[field]` 可能是 Series 或 ndarray；双端/PTrade 源码必须先 `np.asarray(item[field], dtype=float)`（或 `hasattr(values,'values')` 守卫的 helper）归一化再参与数值计算，对 history item 的无保护 `.values`/`.iloc`/`.loc`/`.to_numpy()`/`.columns`/`.index`/`.empty` 访问会被 Validator 阻断。字段映射 `money→amount`、`price→close`、`factor→pctChg`；**B1 返回端逆映射**：返回 DataFrame 含 `amount` 列时同步追加同值 `money` 列（Ptrade 契约名，双端策略只读 `money`）。**`include` 控制历史数据可见边界（防未来函数）**：`include=False` 截止 `previous_date`（不含当前交易日），`include=True` 延伸至 `current_date`（含当前交易日）。**不同 `include` 值不会共享历史查询缓存（缓存键含 `include`）**，混合调用须分别取数。**多表路由（F5/F6）**：普通股票→`stock_daily`，ETF→`etf_daily`，普通指数与申万行业指数（801xxx）→统一 `index_daily`（指数历史不足时按既有契约用 `INDEX_ETF_MAP` 跟踪 ETF 代理，如 000300→510300）；`fq='pre'` 对指数回退原始 OHLC（指数无复权列，绝不套用 ETF 前复权逻辑）。 |
 | `get_history_batch(sec_list,count,unit='1d',fields=...,fq='pre',include=...)` | **QuantStudio 本地扩展**：强制 list 入参 + 返回 `CodeDict`，消除策略侧逐只 N+1 调用；**复用 `get_history` 的 `get_bars_by_count` 活跃路径**（不读取已停用的 `_preload_daily` 全市场缓存，当前底层仍按代码逐只查询，并非单次批量扫描）。仅本地单端策略允许；双端/PTrade 目标由 Validator 阻断。**fq 默认 `'pre'`**。 |
-| `get_price(security,start_date,end_date,frequency='1d',fields,fq='pre',count,is_dict)` | 按日期区间/数量取历史行情，返回 DataFrame 或 `CodeDict`。**fq 默认 `'pre'`（前复权）**。**B1 返回端逆映射**：支持 `fields=['money']` 请求成交额；返回含 `amount` 列时同步追加同值 `money` 列（Ptrade 契约名）。 |
+| `get_price(security,start_date,end_date,frequency='1d',fields,fq='pre',count,is_dict)` | 按日期区间/数量取历史行情，返回 DataFrame 或 `CodeDict`。**fq 默认 `'pre'（前复权）`**。**日期区间路径与 `count` 路径前复权行为一致（R1-A 修复前区间路径曾错误返回 raw 价，已修复）**：`start_date`/`end_date` 区间取数与 `count` 取数对同一代码、同一 fq 返回逐值一致的前复权价。**B1 返回端逆映射**：支持 `fields=['money']` 请求成交额；返回含 `amount` 列时同步追加同值 `money` 列（Ptrade 契约名）。 |
 | `attribute_history(security,count,unit='1d',fields)` | 取历史数据最近一行（单列 Series）。 |
 | `current_price(security)` | 当前价。 |
 | `get_current_data()` | 当日全市场行情 dict（`code→BarData`）。 |
@@ -451,6 +454,14 @@ def after_trading_end(context):
 
 **AGENTS.md 框架铁律适用**：本变更为纯性能优化，已审阅确认未改变 `data[code]`（DataDict）、`get_current_price`、`is_halted`、`pct_chg` 等任何接口的函数名、签名、返回类型、返回字段、空值/异常行为或兼容行为；未改变数据语义或回测行为。因此本文档第 3 节 DataDict/`BarData`/`Position` 等条目不受影响，无需修改。
 
+> **GUI collection status boundary**: a manual data task and the subsequent full-database audit are separate results. Audit warnings never change strategy-facing data semantics and remain visible in the quality page/log.
+
 ## Data-quality dependency note (2026-08-03)
 
 Strategy API behavior is unchanged by the full-database audit repair. Reference-data consumers may rely on writer-managed `stock_basic` and on the shared single-key `trade_calendar`; QFQ calendar timing, PIT semantics, order matching, positions, cash, and generated-strategy contracts are unchanged. Operational details are documented in `docs/data-quality-checks.md`.
+
+## MCP collection boundary (2026-08-04)
+
+Cursor pagination, export artifacts, the QFQ whitelist, composite-code normalization, and nullable-time handling are internal data-pipeline contracts. Strategy injection APIs, `get_index_stocks` PIT semantics, matching, positions, cash, and backtest result shapes are unchanged. `index_constituents` exposes only canonical six-digit index/member codes; out-of-contract CSI alphanumeric indices are not fabricated into valid codes.
+
+Strategy prompts must not read MCP large datasets through `query_snapshot`, bypass `FieldAligner`/`PreIngestValidator`, or reconstruct index constituents and financial availability dates directly. Use the canonical DuckDB tables and existing PIT APIs.

@@ -1,4 +1,4 @@
-"""
+﻿"""
 PreIngestValidator — 入库前置校验 [E-2]
 
 强制原则（基线 §1.2 第2条 + §1.2 第5条）：
@@ -139,19 +139,27 @@ class PreIngestValidator:
                     bad = is_null
                 reject_mask_batch("RequiredValueNull", col, bad, s)
 
-        # ---- 2. CodeFormat：代码格式正则（统一裸码 ^\d{6}$）----
-        # code_field 可由 schema 显式声明（如 industry_classification 主键首列是
-        # classification_system 而非证券代码）；未声明时按主键首列推断（既有行为）。
+        # ---- 2. CodeFormat: validate every declared code column ----
+        # Composite-code schemas may declare schema.code_fields; absent that key,
+        # preserve the legacy code_field / primary-key-first-column behavior.
         pk = schema.get("primary_key", ["code"])
-        code_col = (schema["code_field"] if "code_field" in schema
-                    else (pk[0] if pk else "code"))
-        if code_col is not None and code_col in df.columns:
+        code_fields = schema.get("code_fields")
+        if code_fields is None:
+            code_field = (schema["code_field"] if "code_field" in schema
+                          else (pk[0] if pk else "code"))
+            code_fields = [code_field] if code_field is not None else []
+        elif isinstance(code_fields, str):
+            code_fields = [code_fields]
+        for code_col in code_fields:
+            if code_col not in df.columns:
+                continue
             code_re = schema["columns"].get(code_col, {}).get("regex", r"^\d{6}$")
             pat = re.compile(code_re)
             s = df[code_col]
-            # 统一转 Python str（兼容 pandas str dtype / object dtype）
+            # Normalize to Python strings for pandas string/object dtypes.
             s_str = s.astype("string").fillna("")
-            matched = s_str.map(lambda v: bool(pat.match(v)) if isinstance(v, str) else False)
+            matched = s_str.map(
+                lambda v: bool(pat.match(v)) if isinstance(v, str) else False)
             bad = (~matched).to_numpy()
             reject_mask_batch("CodeFormat", code_col, bad, s)
 
@@ -207,6 +215,9 @@ class PreIngestValidator:
                 logger.debug(f"[Validator] {table}: 跳过 UnitCheck（close.unit='{close_unit}'，非'元'口径）")
         elif all(c in df.columns for c in ["amount", "close", "volume"]):
             amt = pd.to_numeric(df["amount"], errors="coerce")
+            # UnitCheck validates the canonical raw OHLCV/amount unit contract and must use
+            # raw close. A derived adjusted column cannot substitute for this invariant; doing so
+            # masks upstream qfq-to-raw anchor errors and expands false rejection.
             cls = pd.to_numeric(df["close"], errors="coerce")
             vol = pd.to_numeric(df["volume"], errors="coerce")
             valid = (amt > 0) & (cls > 0) & (vol > 0)

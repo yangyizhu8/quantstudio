@@ -759,7 +759,11 @@
           "unit": "%"
         }
       },
-      "available_at_field": "time"
+      "available_at_field": "time",
+      "code_fields": [
+        "index_code",
+        "code"
+      ]
     },
     "fin_indicator": {
       "_note": "财务指标表，PIT 打标 available_at=ann_date [E-1]。pe_ttm/pb/ps_ttm 为 legacy 兼容列，正式估值走 valuation 数据链。",
@@ -2141,7 +2145,11 @@
         },
         "code_format": "tushare_to_raw",
         "unit_conversions": {},
-        "time_to_ms": true
+        "time_to_ms": true,
+        "code_cols": [
+          "index_code",
+          "code"
+        ]
       },
       "etf_daily": {
         "column_map": {
@@ -2605,7 +2613,11 @@
         },
         "code_format": "identity",
         "unit_conversions": {},
-        "_note": "akshare index_stock_cons_csindex 成分股，无 weight 留 NULL"
+        "_note": "akshare index_stock_cons_csindex 成分股，无 weight 留 NULL",
+        "code_cols": [
+          "index_code",
+          "code"
+        ]
       },
       "etf_minutes": {
         "column_map": {
@@ -2830,11 +2842,11 @@
         "unit_conversions": {
           "volume": {
             "factor": 100,
-            "_note": "手→股 ×100（QuestDB 继承自 Tushare，vol 为手单位；P3-2 修正：原误判为股改 1，实测为手）"
+            "_note": "手→股 ×100（QuestDB vol 为手单位）"
           },
           "amount": {
             "factor": 1000,
-            "_note": "千元→元 ×1000（QuestDB 继承自 Tushare，amount 为千元）"
+            "_note": "千元→元 ×1000（QuestDB amount 为千元）"
           }
         },
         "time_to_ms": true,
@@ -2875,11 +2887,11 @@
         "unit_conversions": {
           "volume": {
             "factor": 100,
-            "_note": "手→份 ×100（QuestDB 继承自 Tushare，vol 为手单位；P3-2 修正）"
+            "_note": "手→股 ×100（QuestDB vol 为手单位）"
           },
           "amount": {
             "factor": 1000,
-            "_note": "千元→元 ×1000（QuestDB 继承自 Tushare，amount 为千元）"
+            "_note": "千元→元 ×1000（QuestDB amount 为千元）"
           }
         },
         "time_to_ms": true,
@@ -2965,7 +2977,11 @@
         "code_format": "tushare_to_raw",
         "unit_conversions": {},
         "time_to_ms": true,
-        "_note": "指数成分股（类别A 新增）：云端 QuestDB 源表 index_weight。 [codex审计P1-6修复：stock_code→ts_code]"
+        "_note": "指数成分股（类别A 新增）：云端 QuestDB 源表 index_weight。 [codex审计P1-6修复：stock_code→ts_code]",
+        "code_cols": [
+          "index_code",
+          "code"
+        ]
       },
       "industry_classification": {
         "column_map": {
@@ -3004,7 +3020,7 @@
         },
         "code_format": "identity",
         "time_to_ms": true,
-        "_note": "Fetch cloud trade_cal (SSE) through query_snapshot; convert cal_date/pretrade_date to Shanghai-midnight epoch ms and retain QFQ single-calendar compatibility."
+        "_note": "Fetch cloud trade_cal (SSE) through fetch_page cursor pagination; convert cal_date/pretrade_date to Shanghai-midnight epoch ms and retain QFQ single-calendar compatibility."
       },
       "etf_basic": {
         "identity": true,

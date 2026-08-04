@@ -1,4 +1,4 @@
-# MCP 协议探针报告（P2-0 门禁产物）
+﻿# MCP 协议探针报告（P2-0 门禁产物）
 
 - 目标 endpoint：`https://124.223.159.234/mcp`（IP 先行，备案后切域名）
 - 探针日期：2026-08-02
@@ -286,14 +286,14 @@ query_snapshot({dataset_id:"qdb.stock_daily", columns:["ts_code","trade_date","c
 **方案**：adapter 取数后立即在本地还原 raw：
 ```
 raw_i = qfq_i × adj_latest_global / adj_factor_i
-adj_latest_global = qfq_aux.db(adj_factor/fund_adj) 完整历史的 ORDER BY time DESC LIMIT 1  # 300750=1.9495
+adj_latest_global = qfq_aux complete history factor at MAX(time)  # never MAX(adj_factor); non-monotonic ETF factors are valid
 ```
 还原后管线永远吃 raw + adj_factor，走 aligner 标准路径（front=raw×adj_i/adj_latest），与 tushare 同源。
 
 **关键不变量 / 护栏（codex P0-① + 正确性护栏）**：
 - `adj_latest_global` **绝不**取本次 export 分片末行：历史窗口误用偏差可达 8.67 元（2024-06-03 正确 202.5001 vs 误用分片末行 193.8267，见任务书附录 C.3）。
 - 缺因子 → **fail-fast**（禁止把 qfq 当 raw 写库污染）。
-- 因子锚过期（`adj_factor_i > adj_latest_global`，本地快照落后于云端）→ **fail-fast**（需先同步 qfq_aux.db）。
+- Before qfq restore, synchronize the batch factor snapshot and fail fast if it cannot be written. Do not infer staleness from factor magnitude; ETF split/consolidation makes factors legitimately non-monotonic.
 - 仅还原价格列（open/high/low/close/pre_close）；vol/amount/pct_chg 原样保留。
 - 有 `is_qfq` 列时只还原 `is_qfq=True` 行；`is_qfq=False` 本就是 raw，原样保留。
 
@@ -319,3 +319,10 @@ adj_latest_global = qfq_aux.db(adj_factor/fund_adj) 完整历史的 ORDER BY tim
 - P2-4：显式 source 分支守卫（禁止 mcp 任务路由到 per_trade_date / qfq_orchestrator）。
 - P3-1~P3-6：staging DuckDB + 对账 + lineage。
 - **P3-7（最高优先级）**：新增 `McpFreshFetcher(FreshFetcher)`，`fresh_source/price_source` 配置放开到 `mcp`，用冻结快照对拍验证 MCP 闭环复权结果与 xtquant 闭环在 tick 容差内一致。
+
+## 7.5 Production collection routing repair (2026-08-04)
+
+- QFQ restore is controlled by an explicit `(table, freq)` whitelist, not by export transport or an `adj_factor`-like column.
+- Every non-export production dataset uses `fetch_page` cursor pagination. Export datasets use Raw Landing artifacts. Metadata records `fetch_mode`.
+- `index_constituents` normalizes and validates both `index_code` and member `code`; out-of-contract `Hxxxxx.CSI` indices are counted and filtered before alignment.
+- `NaT` values become null and continue to Validator/PIT gates instead of aborting the batch.

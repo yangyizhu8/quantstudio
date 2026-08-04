@@ -63,6 +63,8 @@ def test_code_and_time():
     assert market_of_code("000001") == "SZ"
     t1 = to_ms_timestamp("20260713")
     t2 = to_ms_timestamp("2026-07-13")
+    assert to_ms_timestamp(pd.NaT) is None
+    assert to_ms_timestamp(pd.Timestamp("NaT")) is None
     assert t1 == t2, f"日期解析不一致: {t1} vs {t2}"
     assert isinstance(t1, int) and t1 > 1e12, f"应为毫秒时间戳: {t1}"
     print(f"  代码: 600000.SH→600000, sh.600000→600000 ✅")

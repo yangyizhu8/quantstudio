@@ -1,4 +1,4 @@
-"""MCP 数据源适配器（P2-2：MCPSourceAdapter）
+﻿"""MCP 数据源适配器（P2-2：MCPSourceAdapter）
 
 按任务书 §4 + P2-0 协议探针结论 + QFQ 设计 §7.2 实现。
 
@@ -154,12 +154,13 @@ _MCP_SUPPORTED: Dict[Tuple[str, str], str] = {
     ("xueqiu_sentiment", "daily"): "xueqiu_sentiment",
 }
 
-# 行情大表（日线 + 分钟线）：走 export_dataset 落 Raw Landing（支持日期范围 + 分片）。
+# 大型映射表：走 export_dataset 落 Raw Landing（支持日期范围 + 分片）。
 # 原因：stock_daily 约 1400 万行，query_snapshot(limit=N) 只返回「最新 N 行」无法覆盖
 # 历史日期范围；export_dataset 导出全量分片后由 adapter 侧按日期+codes 过滤。
-# 小表（stock_dividend 等千行级）仍走 query_snapshot。
+# 其余映射表与 passthrough 表走 fetch_page cursor 分页，禁止 query_snapshot 截断。
 _EXPORT_TABLES = {
     ("stock_daily", "daily"), ("etf_daily", "daily"),
+    ("stock_daily_valuation", "daily"),
     ("stock_minutes", "1min"), ("stock_minutes", "5min"),
     ("stock_minutes", "15min"), ("stock_minutes", "30min"),
     ("stock_minutes", "60min"), ("etf_minutes", "1min"),
@@ -175,11 +176,9 @@ _EXPORT_TABLES = {
     ("fin_indicator", "daily"),
     ("income_statement", "daily"),
     # trade_cal has no ts_code column, while the generic export path currently
-    # orders by ts_code. The source has exactly 10,000 rows and fits snapshot.
-    # 小表（stock_dividend 等千行级）仍走 query_snapshot（更快，无截断）
+    # orders by ts_code. It therefore uses cursor pagination like other
+    # non-export mapped tables.
 }
-# 小表（走 query_snapshot 内存路径）
-_SNAPSHOT_TABLES = {("stock_dividend", "daily")}
 
 # QuantStudio canonical 表名 → QuestDB 源表名映射
 # 大部分表名一致，以下是需要映射的例外
@@ -380,9 +379,10 @@ class MCPAdapter(BaseSourceAdapter):
                     codes: Optional[List[str]] = None) -> Tuple[pd.DataFrame, Dict]:
         """拉取单表数据，返回 (raw_df, metadata)。
 
-        - 行情大表（stock_daily/etf_daily/分钟）：client.export_dataset 落 Raw Landing
-          → 分片读取 → concat（server 不接日期参数，由 adapter 侧按日期+codes 过滤）
-        - 小表（stock_dividend 等）：client.query_snapshot
+        - 大型映射表（股票/ETF K 线、估值、财务、指数成分）：
+          client.export_dataset 落 Raw Landing → 分片读取 → concat
+        - 其余映射表与 passthrough 表：client.fetch_page cursor 完整分页；
+          禁止 query_snapshot 的 10,000 行静默截断进入生产采集路径
         - 返回 raw OHLC（+adj_factor 列原样），不做复权
         - §7.2-A：取 stock_dividend / 含 adj_factor 表时写 DB 驱动 discovery
         """
@@ -392,7 +392,7 @@ class MCPAdapter(BaseSourceAdapter):
                 f"[MCPAdapter] 不支持的表/频率: ({table},{freq})，"
                 f"MCP 支持矩阵: {sorted(_MCP_SUPPORTED)}")
 
-        # === 类别B passthrough：直接 query_snapshot 取 raw，不做 column_map/
+        # === 类别B passthrough：通过 fetch_page 完整分页取 raw，不做 column_map/
         #     不 normalize_adj_factor / 不走 aligner / 不注入 QFQ ===
         if table in _PASSTHROUGH_TABLES:
             raw_df, meta = self._fetch_passthrough(table, freq, start, end, codes)
@@ -411,12 +411,43 @@ class MCPAdapter(BaseSourceAdapter):
 
         return raw_df, meta
 
+    def _fetch_all_pages(self, dataset_id: str,
+                         page_size: int = 50_000) -> Tuple[pd.DataFrame, int]:
+        """通过已验证的 cursor API 完整拉取一个 MCP 数据集。
+
+        服务端 `query_snapshot` 存在 10,000 行硬上限，即使请求更大的 limit
+        也会静默截断；因此所有非 export 管线表都必须通过 fetch_page 分页。
+        """
+        rows: List[Dict] = []
+        cursor = ""
+        seen_cursors = set()
+        pages = 0
+        while True:
+            payload = self.client.fetch_page(
+                dataset_id=dataset_id, cursor=cursor, page_size=page_size)
+            page_rows = payload.get("rows", []) or []
+            rows.extend(page_rows)
+            pages += 1
+            next_cursor = payload.get("next_cursor")
+            if not next_cursor:
+                break
+            next_cursor = str(next_cursor)
+            if next_cursor == cursor or next_cursor in seen_cursors:
+                raise ValueError(
+                    f"[MCPAdapter] fetch_page cursor did not advance for "
+                    f"{dataset_id}: {next_cursor!r}")
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+        logger.info(f"[MCPAdapter] fetch_page complete: {dataset_id} "
+                    f"pages={pages} rows={len(rows)}")
+        return pd.DataFrame(rows), pages
+
     # ------------------------------------------------------------------
-    # 类别B passthrough：直接 query_snapshot 全量取 raw（原样返回，不做任何映射/归一）
+    # 类别B passthrough：分页全量取 raw（原样返回，不做任何映射/归一）
     # ------------------------------------------------------------------
     def _fetch_passthrough(self, table: str, freq: str, start: str, end: str,
                            codes: Optional[List[str]]) -> Tuple[pd.DataFrame, Dict]:
-        """passthrough 同名表：query_snapshot 全量返回原始 DataFrame。
+        """passthrough 同名表：fetch_page 分页全量返回原始 DataFrame。
 
         - 列名/表名 = QuestDB 原样（ts_code/trade_date 等保留），不做 column_map
         - 不做 normalize_adj_factor / code_format 归一（无 aligner 消费）
@@ -424,11 +455,7 @@ class MCPAdapter(BaseSourceAdapter):
         - 不触发 §7.2-A QFQ 注入
         """
         qdb_table = _CANONICAL_TO_QUESTDB.get(table, table)
-        # passthrough 全量拉取：用较大 limit 覆盖 <100万 行小表；
-        # 大表（>100万）在 collector_tasks 中 enabled=false，不会进入本路径。
-        page = self.client.query_snapshot(dataset_id=qdb_table, limit=10_000_000)
-        all_rows = page.rows
-        df = pd.DataFrame(all_rows, columns=page.columns) if all_rows else pd.DataFrame()
+        df, page_count = self._fetch_all_pages(qdb_table)
         # 仅做日期窗口裁剪（不改变列），MCP 列名可能是 date/trade_date
         def _norm_date(v):
             s = str(v).strip()
@@ -452,6 +479,7 @@ class MCPAdapter(BaseSourceAdapter):
             "source": "mcp",
             "freq": freq,
             "table": table,
+            "fetch_mode": "fetch_page",
             "passthrough": True,
             "upstream_authority": "xtquant",
             "lineage": {
@@ -459,6 +487,7 @@ class MCPAdapter(BaseSourceAdapter):
                 "transport": "mcp_streamable_http",
                 "server": self.endpoint,
                 "passthrough": True,
+                "pages": page_count,
             },
             "rows": len(df),
         }
@@ -467,17 +496,14 @@ class MCPAdapter(BaseSourceAdapter):
         return df, meta
 
     # ------------------------------------------------------------------
-    # 小表：query_snapshot
+    # 非 export 映射表：fetch_page cursor 分页
     # ------------------------------------------------------------------
     def _fetch_small_table(self, table: str, freq: str, start: str, end: str,
                            codes: Optional[List[str]]) -> Tuple[pd.DataFrame, Dict]:
-        # 注意：server 的 query_snapshot 仅支持 dataset_id + limit（无日期/codes 过滤），
-        # 全量行 JSON 已在 rows 中。日期/codes 过滤在 adapter 侧完成（保持与原 source 一致）。
-        # canonical→questdb表名映射
+        # fetch_page 只负责全量分页；日期/codes 过滤仍在 adapter 侧完成，
+        # 保持与其他 source adapter 的 fetch_table 契约一致。
         qdb_table = _CANONICAL_TO_QUESTDB.get(table, table)
-        page = self.client.query_snapshot(dataset_id=qdb_table, limit=200_000)
-        all_rows = page.rows
-        df = pd.DataFrame(all_rows, columns=page.columns) if all_rows else pd.DataFrame()
+        df, page_count = self._fetch_all_pages(qdb_table)
         # 日期窗口过滤（daemon 传入 start/end 为 YYYY-MM-DD；
         # MCP 列名可能是 date/trade_date，值格式可能是 YYYYMMDD 或 YYYY-MM-DD）
         # 统一归一化为 YYYYMMDD 8位字符串再比较，避免格式不匹配导致全滤为 0
@@ -553,14 +579,16 @@ class MCPAdapter(BaseSourceAdapter):
         # 当前四张行情表都走 export 路径；此处接入是防御性对称——若将来某张
         # 行情表降级为 snapshot 路径，还原逻辑不会被绕过。非行情表由
         # _restore_to_raw 内部按 _RESTORE_TABLES 白名单自动跳过。
-        restore_meta: Dict = {}
-        if self.enable_qfq_restore:
-            df, restore_meta = self._restore_to_raw(df, table, freq)
+        # === 线1：is_qfq 还原 raw（与 _fetch_export 对称接入）===
+        # 若将来 QFQ K 线降级为 snapshot，仍执行同一显式白名单与同步门禁；
+        # 非 QFQ 表只记录跳过原因，不接触因子库。
+        df, restore_meta = self._restore_qfq_if_required(df, table, freq)
 
         meta = {
             "source": "mcp",
             "freq": freq,
             "table": table,
+            "fetch_mode": "fetch_page",
             "code_format": "tushare_to_raw",  # 600063.SH → 裸码（aligner 归一）
             "date_format": "YYYYMMDD",
             "units": {"vol": "股", "amount": "元", "pct_chg": "%"},
@@ -569,6 +597,7 @@ class MCPAdapter(BaseSourceAdapter):
                 "upstream_authority": "xtquant",
                 "transport": "mcp_streamable_http",
                 "server": self.endpoint,
+                "pages": page_count,
             },
             "rows": len(df),
             "is_qfq_capable": has_adj,
@@ -680,6 +709,26 @@ class MCPAdapter(BaseSourceAdapter):
 
         raw_df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
+        # index_weight contains both six-digit exchange indices and Hxxxxx.CSI indices.
+        # The current QuantStudio canonical contract supports six-digit index_code values;
+        # filter out-of-contract source rows before alignment instead of converting them
+        # to NULL and sending them to the quality quarantine. Member ts_code is normalized by aligner.
+        filtered_out_of_contract = 0
+        filtered_index_codes: List[str] = []
+        if table == "index_constituents" and len(raw_df) and "index_code" in raw_df.columns:
+            import re
+            index_mask = raw_df["index_code"].astype(str).map(
+                lambda value: bool(re.match(r"^\d{6}\.(SH|SZ|BJ|SI)$", value)))
+            filtered_out_of_contract = int((~index_mask).sum())
+            if filtered_out_of_contract:
+                filtered_index_codes = sorted(
+                    raw_df.loc[~index_mask, "index_code"].astype(str).unique().tolist())
+                logger.warning(
+                    f"[MCPAdapter] index_constituents filtered out-of-contract indices "
+                    f"rows={filtered_out_of_contract} codes={len(filtered_index_codes)} "
+                    f"sample={filtered_index_codes[:5]}")
+                raw_df = raw_df[index_mask].reset_index(drop=True)
+
         # 日期窗口过滤（daemon 传入 YYYY-MM-DD；MCP 列可能是 date/trade_date，
         # 值格式可能是 YYYYMMDD 或 YYYY-MM-DD，统一归一化为 8 位比较）
         def _norm_date(v):
@@ -733,15 +782,18 @@ class MCPAdapter(BaseSourceAdapter):
         # 在还原前先用本次 export 的 adj_factor 增量注入 qfq_aux.db，保持快照
         # 跟上云端动态重锚——这不是"取分片末行"（codex P0-①），而是增量同步
         # 快照到云端最新状态。还原检查用的仍是 qfq_aux.db 全局最新因子。
-        restore_meta: Dict = {}
-        if self.enable_qfq_restore:
-            self._sync_factor_snapshot(raw_df, table, freq)
-            raw_df, restore_meta = self._restore_to_raw(raw_df, table, freq)
+        # === 线1：is_qfq 还原 raw ===
+        # 只有显式登记在 _QFQ_ADJFACTOR_TABLES 的股票/ETF K 线才允许进入
+        # 因子同步与 qfq→raw 还原。export 只是传输方式：指数成分、财务、估值、
+        # 指数行情等表即使也走 export，也绝不能据此被当作可复权行情。
+        # 真正的 QFQ 表仍保持严格 fail-fast：同步失败时禁止把 qfq 当 raw 放行。
+        raw_df, restore_meta = self._restore_qfq_if_required(raw_df, table, freq)
 
         meta = {
             "source": "mcp",
             "freq": freq,
             "table": table,
+            "fetch_mode": "export",
             "code_format": "tushare_to_raw",
             "date_format": "YYYYMMDD",
             "units": {"vol": "股", "amount": "元", "pct_chg": "%"},
@@ -755,7 +807,9 @@ class MCPAdapter(BaseSourceAdapter):
             },
             "rows": len(raw_df),
             "raw_landing_dir": str(self._landing_root / job_id),
-            "is_qfq_capable": True,  # 分钟表含 adj_factor 列（原样返回）
+            "is_qfq_capable": (table, freq) in _QFQ_ADJFACTOR_TABLES,
+            "filtered_out_of_contract_rows": filtered_out_of_contract,
+            "filtered_out_of_contract_codes": filtered_index_codes[:50],
             **restore_meta,          # 线1 追溯字段（codex P1-⑥）
         }
         logger.info(f"[MCPAdapter] {table}/{freq} 大表拉取 {len(raw_df)} 行 "
@@ -778,6 +832,42 @@ class MCPAdapter(BaseSourceAdapter):
     @staticmethod
     def _asset_type_of(table: str) -> str:
         return "ETF" if str(table).startswith("etf") else "STOCK"
+
+    @staticmethod
+    def _requires_qfq_restore(table: str, freq: str) -> bool:
+        """Return whether this exact canonical table/frequency carries cloud qfq."""
+        return (str(table), str(freq)) in _QFQ_ADJFACTOR_TABLES
+
+    def _restore_qfq_if_required(self, df: pd.DataFrame, table: str,
+                                 freq: str) -> Tuple[pd.DataFrame, Dict]:
+        """Synchronize factors and restore raw only for explicit QFQ price tables.
+
+        Export routing is intentionally irrelevant: non-price datasets can use
+        export_dataset for completeness without touching the factor snapshot.
+        """
+        if not self.enable_qfq_restore:
+            return df, {
+                "is_qfq_restored": False,
+                "restored_rows": 0,
+                "restore_skip_reason": "qfq_restore_disabled",
+            }
+        if not self._requires_qfq_restore(table, freq):
+            return df, {
+                "is_qfq_restored": False,
+                "restored_rows": 0,
+                "restore_skip_reason": f"table_freq_not_in_qfq_scope:{table}/{freq}",
+            }
+        if df is None or len(df) == 0:
+            return df, {
+                "is_qfq_restored": False,
+                "restored_rows": 0,
+                "restore_skip_reason": "empty_df",
+            }
+        if not self._sync_factor_snapshot(df, table, freq):
+            raise ValueError(
+                f"[MCPAdapter] {table}/{freq} factor snapshot synchronization failed; "
+                f"refusing qfq restore with a potentially stale anchor")
+        return self._restore_to_raw(df, table, freq)
 
     def _get_adj_latest_global(self, codes, asset_type: str = "STOCK") -> Dict[str, float]:
         """取每个 code 的**全局最新** adj_factor（codex P0-① 的关键实现）。
@@ -844,16 +934,15 @@ class MCPAdapter(BaseSourceAdapter):
             for i in range(0, len(codes), batch):
                 chunk = codes[i:i + batch]
                 marks = ",".join(["?"] * len(chunk))
-                # 修复（2026-08-03 缩股乱序误报）：部分 code 前复权因子不单调
-                # （缩股/合并导致因子降，如 920130 2021-06 max=2.0511 vs
-                # 2026-07 latest=1.0263），MAX(time) 的 latest 不是真正"全局最新"。
-                # 还原基准应为**全局最大因子**（MAX(adj_factor)），对单调递增 code
-                # 与 MAX(time) 一致，对缩股 code 取历史 max（正确基准，不误报 stale）。
+                # The restore anchor is the factor at the latest time, not the historical maximum.
+                # Adjustment factors can decrease after ETF share split/consolidation (for example,
+                # 510500 latest=0.3401 while historical max=1.0). MAX(adj_factor) would inflate
+                # current raw prices by about 2.94x and cause mass UnitCheck rejection.
                 sql = (
                     f"SELECT a.code, a.adj_factor FROM {table} a "
-                    f"JOIN (SELECT code, MAX(adj_factor) AS maf FROM {table} "
+                    f"JOIN (SELECT code, MAX(time) AS mt FROM {table} "
                     f"      WHERE code IN ({marks}) GROUP BY code) m "
-                    f"  ON a.code = m.code AND a.adj_factor = m.maf")
+                    f"  ON a.code = m.code AND a.time = m.mt")
                 for code, adj in conn.execute(sql, chunk).fetchall():
                     if adj is None:
                         continue
@@ -869,7 +958,7 @@ class MCPAdapter(BaseSourceAdapter):
             conn.close()
         return out
 
-    def _sync_factor_snapshot(self, df: pd.DataFrame, table: str, freq: str) -> None:
+    def _sync_factor_snapshot(self, df: pd.DataFrame, table: str, freq: str) -> bool:
         """增量同步因子快照：用本次 export 数据的 adj_factor 更新 qfq_aux.db。
 
         解决因子锚过期问题（2026-08-03）：qfq_aux.db 快照是静态灌库，跟不上云端
@@ -879,13 +968,21 @@ class MCPAdapter(BaseSourceAdapter):
         还原检查用的仍是 qfq_aux.db 全局最新因子（MAX(time) 对应值）。
         """
         if self.main_db is None or "adj_factor" not in df.columns:
-            return
+            return False
         asset_type = "ETF" if table.startswith("etf") else "STOCK"
         try:
-            self._inject_adjfactor(df, freq, table)
-            logger.debug(f"[MCPAdapter] 因子快照增量同步（asset_type={asset_type}）")
+            written = self._inject_adjfactor(df, freq, table)
+            if len(df) > 0 and written <= 0:
+                logger.error(f"[MCPAdapter] factor snapshot sync wrote no rows "
+                             f"(asset_type={asset_type})")
+                return False
+            self._adj_latest_cache.pop(asset_type, None)
+            logger.debug(f"[MCPAdapter] factor snapshot synced "
+                         f"(asset_type={asset_type}, rows={written})")
+            return True
         except Exception as e:
-            logger.warning(f"[MCPAdapter] 因子快照增量同步失败（不影响还原）: {e}")
+            logger.error(f"[MCPAdapter] factor snapshot sync failed: {e}")
+            return False
 
     def _coldstart_adj_factors(self, asset_type: str) -> None:
         """冷启动：全历史导出行情表的 adj_factor 并注入 qfq_aux.db。
@@ -1047,33 +1144,11 @@ class MCPAdapter(BaseSourceAdapter):
                     msg + "。放行会把 qfq 当 raw 写入主库造成双重复权，故 fail-fast。")
             logger.warning(msg)
 
-        # --- 护栏：aux 因子锚落后于云端的检测 ---------------------------------
-        # 前复权因子随除权累积**单调递增**，故任何 adj_i > adj_latest_global 都
-        # 意味着 qfq_aux.db 的因子历史落后于云端（云端已按更新的锚重算了 qfq）。
-        # 此时继续用过期 adj_latest 还原，会产生系统性偏差且难以事后发现，
-        # 必须显性暴露而不是静默算错。
-        #
-        # 【修复（2026-08-03 浮点精度误报）】：qfq_aux.db 的 adj_factor 序列存在
-        # 浮点精度噪声（如 22.4083 vs 22.408，差 0.0003），导致"全局最新"可能比
-        # 某历史行小 0.0003，原容差 1e-9 会误报 stale。放宽容差到相对 1e-3
-        # （0.1%），容忍浮点精度噪声，仍能拦截真实因子过期（超出比>1%）。
-        _STALE_TOL = 1e-3  # 相对容差 0.1%（容忍浮点精度噪声）
-        stale = valid & (adj_i > adj_latest * (1.0 + _STALE_TOL))
-        if bool(stale.any()):
-            worst = float((adj_i / adj_latest)[stale].max())
-            stale_codes = sorted(bare[stale].unique().tolist())
-            meta["stale_anchor_rows"] = int(stale.sum())
-            meta["stale_anchor_codes"] = stale_codes[:50]
-            msg = (f"[MCPAdapter] 线1 因子锚过期：{table}/{freq} 有 {int(stale.sum())} 行的"
-                   f" adj_factor 超过 qfq_aux.db 全局最新因子（最大超出比 {worst:.6f}），"
-                   f"说明云端因子已前进而本地快照未同步，涉及 {len(stale_codes)} 个 code，"
-                   f"示例={stale_codes[:5]}")
-            if _RESTORE_MISSING_FACTOR_FAIL_FAST:
-                logger.error(msg)
-                raise ValueError(
-                    msg + "。继续还原会用过期锚产生系统性偏差，故 fail-fast；"
-                          "请先同步因子快照（冷启动/因子注入）后重试。")
-            logger.warning(msg)
+        # Adjustment-factor histories are not guaranteed to be monotonic. ETF share
+        # splits/consolidations and some capital restructurings can leave historical adj_i above
+        # the factor at the latest time. Therefore factor magnitude is not a valid stale-anchor
+        # test. The production export path synchronizes the batch factor snapshot before restore
+        # and fails fast if that synchronization cannot write the snapshot.
 
         ratio = (adj_latest / adj_i).where(valid, 1.0)
         for col in price_cols:
@@ -1106,7 +1181,8 @@ class MCPAdapter(BaseSourceAdapter):
             # get_last_date 仅作能力探测，退化为返回 None，由 daemon 用 writer 水位。
             return None
         try:
-            snap = self.client.query_snapshot(dataset_id=table, limit=1)
+            dataset_id = _CANONICAL_TO_QUESTDB.get(table, table)
+            snap = self.client.query_snapshot(dataset_id=dataset_id, limit=1)
             if snap.rows:
                 return snap.rows[0].get("date") or snap.rows[0].get("trade_date")
         except MCPClientError as e:
@@ -1119,17 +1195,18 @@ class MCPAdapter(BaseSourceAdapter):
     def get_all_stock_codes(self) -> List[str]:
         """获取全市场 A 股股票代码（tushare 格式 600000.SH），对齐 tushare adapter。
 
-        从云端 stock_basic 表 query_snapshot 拉取，过滤沪深主板/创业板/科创板/北交所。
+        从云端 stock_basic 表通过 cursor 分页完整拉取，过滤沪深主板/创业板/科创板/北交所。
         daemon 的 _execute_task_per_stock 路径要求此方法（codes=ALL 时获取代码列表逐只拉取）。
         """
         try:
-            page = self.client.query_snapshot(dataset_id="stock_basic", limit=200_000)
-            if not page.rows:
+            df, _ = self._fetch_all_pages("stock_basic")
+            rows = df.to_dict("records")
+            if not rows:
                 logger.warning("[MCPAdapter] get_all_stock_codes: stock_basic 无数据")
                 return []
             import re
             a_share_re = re.compile(r"^\d{6}\.(SH|SZ|BJ)$")
-            codes = [str(r.get("ts_code", "")) for r in page.rows
+            codes = [str(r.get("ts_code", "")) for r in rows
                      if a_share_re.match(str(r.get("ts_code", "")))]
             logger.info(f"[MCPAdapter] 全市场 A 股: {len(codes)} 只")
             return codes
@@ -1140,16 +1217,17 @@ class MCPAdapter(BaseSourceAdapter):
     def get_etf_codes(self) -> List[str]:
         """获取全市场 ETF 基金代码（tushare 格式 510050.SH / 159919.SZ），对齐 tushare adapter。
 
-        从云端 etf_basic 表 query_snapshot 拉取，过滤上市状态。
+        从云端 etf_basic 表通过 cursor 分页完整拉取，过滤上市状态。
         """
         try:
-            page = self.client.query_snapshot(dataset_id="etf_basic", limit=200_000)
-            if not page.rows:
+            df, _ = self._fetch_all_pages("etf_basic")
+            rows = df.to_dict("records")
+            if not rows:
                 logger.warning("[MCPAdapter] get_etf_codes: etf_basic 无数据")
                 return []
             import re
             etf_re = re.compile(r"^\d{6}\.(SH|SZ)$")
-            codes = [str(r.get("ts_code", "")) for r in page.rows
+            codes = [str(r.get("ts_code", "")) for r in rows
                      if etf_re.match(str(r.get("ts_code", "")))]
             logger.info(f"[MCPAdapter] 全市场 ETF: {len(codes)} 只")
             return codes
@@ -1160,16 +1238,17 @@ class MCPAdapter(BaseSourceAdapter):
     def get_index_codes(self) -> List[str]:
         """获取指数代码列表（用于 index_daily 任务的 per_stock 路径）。
 
-        从云端 index_daily 表 query_snapshot 去重取 ts_code。
+        从云端 index_daily 表通过 cursor 分页完整拉取并去重取 ts_code。
         """
         try:
-            page = self.client.query_snapshot(dataset_id="index_daily", limit=200_000)
-            if not page.rows:
+            df, _ = self._fetch_all_pages("index_daily")
+            rows = df.to_dict("records")
+            if not rows:
                 logger.warning("[MCPAdapter] get_index_codes: index_daily 无数据")
                 return []
             seen = set()
             codes = []
-            for r in page.rows:
+            for r in rows:
                 tc = str(r.get("ts_code", ""))
                 if tc and tc not in seen:
                     seen.add(tc)
@@ -1265,7 +1344,7 @@ class MCPAdapter(BaseSourceAdapter):
         except Exception as e:
             logger.warning(f"[MCPAdapter] stock_dividend 写入失败: {e}")
 
-    def _inject_adjfactor(self, df: pd.DataFrame, freq: str, table: str) -> None:
+    def _inject_adjfactor(self, df: pd.DataFrame, freq: str, table: str) -> int:
         """标准化 MCP adj_factor 并写入 qfq_aux.db 的 adj_factor(股票)/fund_adj(ETF) 表。
 
         这是 qfq_event_discovery._observe_factors 读取的因子快照表（裸码口径，
@@ -1273,12 +1352,12 @@ class MCPAdapter(BaseSourceAdapter):
         """
         if self.main_db is None:
             logger.debug("[MCPAdapter] main_db 未配置，跳过 adj_factor 注入")
-            return
+            return 0
         asset_type = "ETF" if table.startswith("etf") else "STOCK"
         norm = normalize_mcp_adj_factor_df(df, freq, asset_type)
         if len(norm) == 0:
             logger.debug(f"[MCPAdapter] adj_factor 标准化为空（表={table}），跳过注入")
-            return
+            return 0
         aux = aux_db_path(self.main_db)
         target = "fund_adj" if asset_type == "ETF" else "adj_factor"
         rows = [(str(r["code"]), int(r["time"]), float(r["adj_factor"]))
@@ -1297,10 +1376,12 @@ class MCPAdapter(BaseSourceAdapter):
                 aconn.commit()
                 logger.info(f"[MCPAdapter] §7.2-A 注入 {target} {len(rows)} 行 "
                             f"→ {aux} (asset_type={asset_type})")
+                return len(rows)
             finally:
                 aconn.close()
         except Exception as e:
             logger.warning(f"[MCPAdapter] {target} 写入失败: {e}")
+            return 0
 
 
 # ----------------------------------------------------------------------

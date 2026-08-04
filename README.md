@@ -1,4 +1,4 @@
-# QuantStudio
+﻿# QuantStudio
 
 统一数据管线 + PTrade 兼容量化回测框架。
 
@@ -89,10 +89,12 @@ GUI 中的“全量拉取”“增量拉取”“进程常驻增量拉取”调�
 
 ### MCP 数据源与 is_qfq 还原（线1）
 
-MCP（QuestDB 云端）作为数据源时，云端存的是 **前复权价（qfq）** 而非 raw。为避免 aligner 二次复权（双重复权），`MCPAdapter` 在取数后**本地还原 raw**：`raw_i = qfq_i × adj_latest_global / adj_factor_i`，其中 `adj_latest_global` 取自 `qfq_aux.db` 完整因子历史的全局最新值（绝不取本次 export 分片末行）。还原后管线吃 raw + adj_factor，走 aligner 标准 `front = raw × adj_i / adj_latest` 路径，与传统 tushare 同源。
+MCP cloud data stores qfq rather than canonical raw prices. To prevent double adjustment, `MCPAdapter` restores `raw_i = qfq_i ? adj_latest_global / adj_factor_i`. The anchor is the factor at the greatest timestamp in `qfq_aux.db` (`MAX(time)`), never the export-window tail and never historical `MAX(adj_factor)`. ETF split/consolidation can make factors decrease, so the historical maximum is not the latest anchor. The restored raw prices then follow the standard aligner `front = raw ? adj_i / adj_latest` path.
 
 - 仅还原价格列（OHLC + pre_close），非价格列原样保留。**全部行统一走还原公式**（`is_qfq=False` 行并非真 raw，而是"写入时当时最新 adj_factor"算的旧基准前复权，直通会导致跨批次尺度断层），`is_qfq` 列只进 metadata 作追溯，不参与是否还原的决策。
-- 缺因子 / 因子锚过期（本地快照落后于云端）→ fail-fast，禁止把 qfq 当 raw 写库。
+- Missing factors or failure to synchronize the current batch factor snapshot is fail-fast. Do not classify `adj_factor_i > adj_latest_global` as stale: valid non-monotonic ETF history can be above the factor at the latest timestamp.
+- **MCP collection routing (2026-08-04)**: QFQ restore is an explicit `(table, freq)` whitelist for stock/ETF K-line tables only. Non-QFQ export tables such as `index_constituents`, financial tables, and valuation tables never touch the factor snapshot. All non-export mapped and passthrough tables use verified `fetch_page` cursor pagination rather than `query_snapshot` (which has a 10,000-row server cap); metadata records `fetch_mode=export|fetch_page`.
+- `index_constituents` keeps the canonical six-digit index/member-code contract. Out-of-contract `Hxxxxx.CSI` source indices are counted and recorded in metadata before alignment; composite code columns are normalized through explicit `code_cols`/`code_fields` rules. Nullable `NaT` dates are preserved as null and evaluated by the existing required/PIT gates instead of crashing the batch.
 - **已知限制**：MCP 还原走云端因子系列（latest≈1.9495），tushare 系列≈1.9816，差 ~1.6%，故 MCP 路径 `*_front` 与 tushare 路径 front 不会 tick 一致（跨源比较须注意锚差异）；ETF 还原依赖 `fund_adj`，首次需冷启动灌库。
 - 该还原是管线内部（adapter 侧）行为，策略注入 API（`get_history` 等）仍默认 `fq='pre'`，策略层无感。
 - 细节：`docs/mcp_migration/is_qfq_restore-raw-task.md`、`docs/mcp_migration/mcp_protocol_probe.md` §7.4、验收 `docs/evidence/mcp_qfq_restore_verify_2026-08-03.md`。
@@ -126,7 +128,7 @@ result, output_dir = payload
 - PTrade Profile 1.8.0 登记 `get_history(..., is_dict=True)` 返回形状契约：mapping item 可能是 pandas DataFrame / NumPy structured array / recarray。提取字段必须先 `np.asarray(...)` 归一化再参与数值计算；对 history item 的无保护 `.values`/`.iloc`/`.to_numpy()` 等 pandas 专属访问会被 Validator 阻断，并须通过 agent-first 运行时形状 fixture（`validate_runtime_shapes.py`）。
 - `get_stock_status` 的可移植 `query_type` 仅为 `ST` / `HALT` / `DELISTING`；`DELISTING_SORTING` 仅是 `filter_stock_by_status` 的过滤类型及本地向后兼容别名。
 - 数据 100% 来自 DuckDB（QuantStudio 数据管线产出），策略禁止直连数据库（强制隔离）。
-- 框架取数（注入 API 与底层数据适配层）默认前复权（`fq='pre'`）：策略不传 `fq` 即获得前复权价；需不复权请显式 `fq=None`。
+- 框架取数（注入 API 与底层数据适配层）默认前复权（`fq='pre'`）：策略不传 `fq` 即获得前复权价；需不复权请显式 `fq=None`。**日线日期区间路径（`start_date`/`end_date`）与 count 路径（`count`）前复权行为一致**——同一代码、同一区间、同一 fq 返回逐值一致的前复权价（R1-A 已修复区间路径曾错误返回 raw 价的缺陷）。
 - **撮合/估值链路与取数链路前复权闭环**：引擎每日全市场快照（`query_daily_snapshot`，成交价、持仓估值、`data[code].price`、涨跌停比较价的唯一来源）OHLC 统一映射前复权列（`*_front`，缺失回退原始价），`preClose` 按 `close_front/close` 同因子缩放。信号价、成交价、持仓估值同一连续口径，ETF 份额拆分/股票分红除权日不再产生原始价缺口导致的虚假盈亏（分红等价于自动再投资，前复权回测标准口径）。`pctChg`/`volume`/`amount` 保持原始口径。
 - **成交额列双端契约（B1，返回端逆映射）**：DB 物理列为 `amount`，Ptrade 官方契约列名为 `money`。`get_history`/`get_price` 返回的 DataFrame 在含 `amount` 列时**同步追加同值 `money` 列**（追加在列尾，`amount` 保留、数值不变）；请求 `fields=['money']` 时也正确返回 `money` 列。**双端/PTrade 目标策略必须只读 `money`**（读 `amount`/`close_front` 等本地物理列名会被 Validator 以 `PTRADE-LOCAL-COLUMN` 规则阻断）；本地单端策略读 `amount` 仍兼容。该映射为纯返回端别名，黄金回归证明对回测数值零影响。
 - **Agent-first 唯一价格契约**：`market_data_contract.signal_price_adjustment="pre"` 且 `execution_price_basis="pre_adjusted_price"`。`raw_trade_price` 已从新设计 Schema 中移除；旧 raw 设计必须回到 R2 迁移并重新通过 R2.5/R4/R5。
@@ -445,5 +447,7 @@ staging 回填工具 `scripts/backfill_fin_growth_dividend_staging.py` 提供 `p
 backlog**：小市值与双均线真实策略 `get_history` 命中均为 0；`PtradeAPI.get_history()` 已有
 `_query_cache` 层；synthetic 86× 不构成生产收益证据；4096 条目上限是条目数而非字节内存上限；
 后续实施须满足 byte-bounded LRU + 真实生产命中证据。
+
+> **PyQt single-task result contract (2026-08-03)**: manual task status is determined by that task's fetch?align?validate?write result. Full-database `QualityAudit` still runs afterward, but unrelated-table failures are displayed as `success (audit warning)` rather than falsely marking the data pull as failed. Real task failures remain failures.
 
 > **Full-database audit reference-table contract (2026-08-03)**: MCP `stock_basic` and the shared MCP/QFQ `trade_calendar` are writer-managed canonical tables. `trade_calendar` keeps its original `cal_date` single primary key and QFQ behavior; `exchange/pretrade_date` are compatibility metadata. Enum auditing uses native typed values, and QFQ pending SLA uses the current-state update time.
