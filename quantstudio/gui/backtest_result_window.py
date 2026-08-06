@@ -255,6 +255,7 @@ class BacktestResultWindow(QMainWindow):
         
         # 基本信息面板
         info_group = QGroupBox("基本信息")
+        self.info_group = info_group
         info_group.setStyleSheet(f"""
             QGroupBox {{
                 font-size: {int(16 * self.font_scale)}px;
@@ -401,6 +402,7 @@ class BacktestResultWindow(QMainWindow):
         
         # 下部分：Tab页面
         tab_widget = QTabWidget()
+        self.tab_widget = tab_widget
         tab_widget.setStyleSheet(f"""
             QTabWidget::pane {{
                 border: 2px solid #404040;
@@ -1519,31 +1521,104 @@ class BacktestResultWindow(QMainWindow):
             # 重绘图表
             self.chart_view.draw()
 
-            # 将收益曲线图保存为 PNG，与回测结果 CSV 放在同一目录
-            self.save_chart_image()
-
         except Exception as e:
             print(f"更新图表时出错: {str(e)}")
             import traceback
             print(traceback.format_exc())
 
-    def save_chart_image(self):
-        """将当前收益曲线图保存为 PNG 图片，与回测结果 CSV 放在同一目录。
+    def _result_save_dir(self):
+        """回测结果目录（绝对路径）；目录不存在时返回 None。"""
+        if not self.backtest_dir:
+            return None
+        save_dir = os.path.abspath(self.backtest_dir)
+        return save_dir if os.path.isdir(save_dir) else None
 
-        保存失败不影响窗口展示（仅打印告警）。
+    def export_report_images(self):
+        """将结果窗口中的全部可视化内容导出为 PNG，与回测结果 CSV 同一目录。
+
+        产出文件:
+            回测收益曲线.png              — 主收益曲线（含回撤/日盈亏/成交记录）
+            基本信息.png                  — 基本信息面板
+            交易记录.png                  — 交易记录表格（完整内容）
+            日收益.png                    — 每日净值/收益表格（完整内容）
+            绩效分析-收益分布.png         — 收益分布直方图
+            绩效分析-月度收益热力图.png   — 月度收益热力图
+
+        单个文件导出失败不影响其它文件（各自 try/except）。
+        需在窗口 show() 之后调用，确保控件已完成布局。
+        """
+        save_dir = self._result_save_dir()
+        if save_dir is None:
+            return
+
+        # 1) 主收益曲线图
+        self._save_figure(self.chart_view.figure, save_dir, "回测收益曲线.png")
+
+        # 2) 绩效分析里的两张 matplotlib 图
+        for name, fig in (
+                ("绩效分析-收益分布", self.returns_dist_figure),
+                ("绩效分析-月度收益热力图", self.monthly_returns_figure)):
+            self._save_figure(fig, save_dir, f"{name}.png")
+
+        # 3) 控件抓图：基本信息面板 + 交易记录表 + 日收益表
+        from PyQt6.QtWidgets import QApplication
+        for name, widget, tab_idx in (
+                ("基本信息", getattr(self, 'info_group', None), None),
+                ("交易记录", getattr(self, 'trades_table', None), 0),
+                ("日收益", getattr(self, 'daily_stats_table', None), 1)):
+            if widget is None:
+                continue
+            try:
+                # 表格在 Tab 页中，先切到当前页确保布局已激活，抓图内容才完整
+                if tab_idx is not None and getattr(self, 'tab_widget', None) is not None:
+                    self.tab_widget.setCurrentIndex(tab_idx)
+                    QApplication.processEvents()
+                pix = self._grab_widget_full(widget)
+                if pix is None:
+                    continue
+                path = os.path.join(save_dir, f"{name}.png")
+                pix.save(path, "PNG")
+                print(f"[导出] {path}")
+            except Exception as e:
+                print(f"[导出] {name} 失败: {str(e)}")
+
+    def _save_figure(self, fig, save_dir, filename):
+        """把 matplotlib Figure 保存为 PNG（失败只告警，不影响其它导出）。"""
+        try:
+            path = os.path.join(save_dir, filename)
+            fig.savefig(path, dpi=150, bbox_inches='tight', facecolor='#2d2d2d')
+            print(f"[导出] {path}")
+        except Exception as e:
+            print(f"[导出] {filename} 失败: {str(e)}")
+
+    def _grab_widget_full(self, widget):
+        """将 widget（信息面板/表格）完整内容渲染为 QPixmap（含未滚动区域）。
+
+        表格会临时撑大到能容纳全部行/列，抓完恢复原尺寸。
         """
         try:
-            if not self.backtest_dir:
-                return
-            save_dir = os.path.abspath(self.backtest_dir)
-            if not os.path.isdir(save_dir):
-                return
-            save_path = os.path.join(save_dir, "回测收益曲线.png")
-            self.chart_view.figure.savefig(
-                save_path, dpi=150, bbox_inches='tight', facecolor='#2d2d2d')
-            print(f"收益曲线图已保存: {save_path}")
+            widget.ensurePolished()
+            if isinstance(widget, QTableWidget):
+                old_w, old_h = widget.width(), widget.height()
+                try:
+                    header = widget.horizontalHeader()
+                    header_h = header.height() if header else 0
+                    total_h = header_h + sum(
+                        widget.rowHeight(r) for r in range(widget.rowCount())) + 10
+                    total_w = sum(
+                        widget.columnWidth(c) for c in range(widget.columnCount())) + 10
+                    if total_h > old_h or total_w > old_w:
+                        widget.resize(max(total_w, 1), max(total_h, 1))
+                        widget.update()
+                        from PyQt6.QtWidgets import QApplication
+                        QApplication.processEvents()
+                    return widget.grab()
+                finally:
+                    widget.resize(old_w, old_h)
+            return widget.grab()
         except Exception as e:
-            print(f"保存收益曲线图失败: {str(e)}")
+            print(f"抓取控件图像失败: {str(e)}")
+            return None
 
     def hover(self, event):
         """处理鼠标悬停事件，显示垂直参考线和数据点"""

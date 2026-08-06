@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-"""BacktestResultWindow 保存收益曲线图为 PNG 的回归测试。
+"""BacktestResultWindow 导出回测可视化图片的回归测试。
 
-验证: 构造结果窗口加载回测结果后，会在回测结果目录下生成
-`回测收益曲线.png`（与 daily_stats.csv / trades.csv 等结果文件同目录）。
+验证: 回测完成 → 结果窗口 show → export_report_images() 后，会在回测结果
+目录下生成 6 张 PNG（收益曲线 / 基本信息 / 交易记录 / 日收益 / 绩效分析两张），
+且均非空、尺寸正常（与 daily_stats.csv 等结果文件同目录）。
 """
 import os
+import struct
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -24,6 +26,16 @@ from quantstudio.gui.backtest_result_window import BacktestResultWindow
 def app():
     instance = QApplication.instance() or QApplication([])
     yield instance
+
+
+def _png_size(path):
+    """读取 PNG 文件头的宽高（无需 PIL）。返回 (width, height) 或 None。"""
+    with open(path, "rb") as f:
+        head = f.read(24)
+    if head[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    width, height = struct.unpack(">II", head[16:24])
+    return width, height
 
 
 def _write_backtest_dir(backtest_dir):
@@ -69,12 +81,29 @@ def _write_backtest_dir(backtest_dir):
     ]).to_csv(backtest_dir / "trades.csv", index=False, encoding='utf-8-sig')
 
 
-def test_result_window_saves_equity_curve_png(app, tmp_path):
+def test_result_window_exports_report_images(app, tmp_path):
     _write_backtest_dir(tmp_path)
     win = BacktestResultWindow(str(tmp_path))
     try:
-        img = tmp_path / "回测收益曲线.png"
-        assert img.exists(), f"未生成收益曲线图片: {img}"
-        assert img.stat().st_size > 0, f"收益曲线图片为空: {img}"
+        win.show()
+        QApplication.processEvents()
+        win.export_report_images()
+
+        expected = [
+            "回测收益曲线.png",
+            "基本信息.png",
+            "交易记录.png",
+            "日收益.png",
+            "绩效分析-收益分布.png",
+            "绩效分析-月度收益热力图.png",
+        ]
+        for name in expected:
+            path = tmp_path / name
+            assert path.exists(), f"未生成图片: {path}"
+            size = _png_size(path)
+            assert size is not None, f"不是合法 PNG: {path}"
+            w, h = size
+            assert w >= 50 and h >= 50, f"图片尺寸异常 ({w}x{h}): {path}"
+            assert path.stat().st_size > 0, f"图片为空: {path}"
     finally:
         win.close()

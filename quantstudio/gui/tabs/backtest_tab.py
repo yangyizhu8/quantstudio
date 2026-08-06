@@ -5,7 +5,7 @@ import json
 import logging
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
     QMessageBox)
@@ -220,6 +220,9 @@ class BacktestTab(QWidget):
             # 主窗口最大化时新窗口可能被盖在后面，显式置顶。
             self._result_window.raise_()
             self._result_window.activateWindow()
+            # 窗口显示并完成布局后，把结果窗口的全部可视化内容导出为图片，
+            # 与回测结果 CSV 放到同一目录（基本信息/交易记录/日收益/绩效分析等）。
+            QTimer.singleShot(0, self._result_window.export_report_images)
         except Exception as e:
             logger.error(f"打开结果窗口失败: {e}", exc_info=True)
             QMessageBox.warning(self, "回测完成（窗口打开失败）",
