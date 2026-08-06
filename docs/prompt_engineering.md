@@ -426,3 +426,18 @@ For MCP framework work, prompts must state all of the following:
 - Every non-export production pull must consume `fetch_page` cursors to exhaustion. `query_snapshot` has a 10,000-row server cap and is only a small-window probe.
 - Composite-key datasets must declare all security/index code columns through `code_cols`/`code_fields`. `NaT` and other missing dates flow to the existing required/PIT gates rather than crashing timestamp conversion.
 - Never hide source defects by relaxing rejection thresholds, deleting quarantine rows, fabricating dates/prices, or widening a canonical regex without an approved contract change.
+
+## MCP cutover B-4 prompt constraints（2026-08-05）
+
+当提示词要求执行或审核 B-4 时，必须写明：
+
+- 只允许“生产执行前检查点 + staging 副本演练”；不得写正式库、不得激活 cutover、不得 stage/commit/push/PR。
+- 使用 `scripts/qfq_b4_staging_drill.py`；默认 preflight 零数据库写、零 run-dir 写，只有显式 `--execute` 才创建 output 下全量副本。
+- 必须验证正常迁移、COMMIT 前回滚、COMMIT 后中断与新 report already-current 恢复、MCP 配置离线 bootstrap/首轮 discover、静态 pre-cutover 哨兵和正式库四项不变证据。
+- 不得混入 B-5 的全链路 SQL 世代过滤/RETURNING/discovery-baseline CAS，也不得混入 B-6 的历史退役、active pointer 或 mcp-gen1 激活。
+- 当前 pre-B-5 dividend discovery 为全表内容 hash 扫描：bootstrap 不灌 trigger；首轮新增应记录；立即重放必须为 0。不能把未来 B-5 的“baseline 后首轮净新增 0”倒灌为 B-4 验收条件。
+- 演练报告必须保留 `production_ready=false` 与 `git_sync_authorized=false`，独立复审前只能写“本地完成待复审”。
+
+### B-4 hard-crash prompt rule
+
+要求验证 COMMIT 后崩溃时，提示词必须指定故障点为“durable COMMIT 后、正常 connection cleanup/report 前”，并要求 Windows 子进程测试串行运行、严格断言 exit 92。禁止把 `0xC0000005` 加入允许值或用重试掩盖；正常路径/受控异常仍必须关闭连接。

@@ -40,6 +40,7 @@ def _make_mini_db() -> str:
         CREATE TABLE IF NOT EXISTS source_watermark (
             source VARCHAR, table_name VARCHAR, freq VARCHAR,
             last_date BIGINT, last_batch_id VARCHAR, updated_at TIMESTAMP,
+            source_generation VARCHAR NOT NULL, cutover_id VARCHAR NOT NULL,
             PRIMARY KEY(source, table_name, freq)
         )
     """)
@@ -992,9 +993,9 @@ def _setup_full_staging(tmp_p: Path, db_path: str,
                 conn.execute("DELETE FROM source_watermark WHERE table_name IN ('fin_indicator','stock_dividend')")
                 conn.execute(
                     "INSERT INTO source_watermark (source, table_name, freq, last_date,"
-                    " last_batch_id, updated_at) VALUES "
-                    "('tushare','fin_indicator','daily',20240130,'b1','2026-07-28'),"
-                    "('tushare','stock_dividend','daily',20240130,'b2','2026-07-28')"
+                    " last_batch_id, updated_at, source_generation, cutover_id) VALUES "
+                    "('tushare','fin_indicator','daily',20240130,'b1','2026-07-28','not-qfq-managed','not-applicable'),"
+                    "('tushare','stock_dividend','daily',20240130,'b2','2026-07-28','not-qfq-managed','not-applicable')"
                 )
             conn.close()
         except Exception:
@@ -2316,9 +2317,9 @@ class TestFullDualTaskE2E:
                 conn.execute("DELETE FROM source_watermark WHERE table_name IN ('fin_indicator','stock_dividend')")
                 conn.execute(
                     "INSERT INTO source_watermark (source, table_name, freq, last_date,"
-                    " last_batch_id, updated_at) VALUES "
-                    "('tushare','fin_indicator','daily',20240130,'b1','2026-07-28'),"
-                    "('tushare','stock_dividend','daily',20240130,'b2','2026-07-28')")
+                    " last_batch_id, updated_at, source_generation, cutover_id) VALUES "
+                    "('tushare','fin_indicator','daily',20240130,'b1','2026-07-28','not-qfq-managed','not-applicable'),"
+                    "('tushare','stock_dividend','daily',20240130,'b2','2026-07-28','not-qfq-managed','not-applicable')")
             conn.close()
 
             with patch("quantstudio.pipeline.quality_audit.DataQualityAuditor.__init__",

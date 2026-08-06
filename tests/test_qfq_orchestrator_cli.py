@@ -191,11 +191,8 @@ def _seed_db(path: str) -> None:
     conn.execute("CREATE TABLE stock_minutes (code VARCHAR, time BIGINT)")
     conn.execute("CREATE TABLE etf_daily (code VARCHAR, time BIGINT)")
     conn.execute("CREATE TABLE etf_minutes (code VARCHAR, time BIGINT)")
-    conn.execute("""
-        CREATE TABLE source_watermark (
-            source VARCHAR, table_name VARCHAR, freq VARCHAR,
-            last_date BIGINT, last_batch_id VARCHAR, updated_at TIMESTAMP,
-            PRIMARY KEY(source, table_name, freq))""")
+    # v2.4 B-3a：source_watermark 现由 init_duckdb_schema 建立（8 列含
+    # source_generation/cutover_id NOT NULL），此处不再重复 CREATE（已致 Catalog 冲突）。
     conn.execute("""
         CREATE TABLE stock_dividend (
             code VARCHAR, ex_date BIGINT, record_date BIGINT, ann_date BIGINT,
@@ -241,7 +238,13 @@ def _insert_trigger(db, trigger_id, status, **cols):
     base = {
         "trigger_id": trigger_id, "asset_type": "STOCK", "code": "600000",
         "trigger_type": "stock_dividend", "detection_source": "tushare_dividend",
-        "status": status, "attempt_count": 0, "created_at": now, "updated_at": now,
+        "status": status, "attempt_count": 0,
+        # v2.4 B-3a：qfq_trigger_queue 新增 NOT NULL 列（pre-cutover 静态值）。
+        "trigger_id_version": 1,
+        "price_source": "xtquant",
+        "source_generation": "xtquant-legacy",
+        "cutover_id": "legacy-xtquant-pre-cutover",
+        "created_at": now, "updated_at": now,
     }
     base.update(cols)
     keys = list(base.keys())
@@ -419,9 +422,12 @@ def test_reconcile_once_e2e(env, monkeypatch, capsys):
         now = datetime.now(BJ_TZ).strftime("%Y-%m-%d %H:%M:%S")
         conn.execute(
             "INSERT OR IGNORE INTO qfq_reanchor_event "
-            "(event_id, event_type, asset_type, code, status, trigger_surface, "
-            " created_at, first_seen_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?)",
-            [event_id, "reanchor", asset_type, code, "committed",
+            "(event_id, event_type, asset_type, code, source_generation, "
+            "cutover_id, status, trigger_surface, "
+            " created_at, first_seen_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            [event_id, "reanchor", asset_type, code,
+             "xtquant-legacy", "legacy-xtquant-pre-cutover",
+             "committed",
              kw.get("trigger_surface", "resident_v2"), now, now, now])
         return SimpleNamespace(status="committed", event_id=event_id, error=None)
 

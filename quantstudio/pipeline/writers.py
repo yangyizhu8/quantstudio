@@ -46,6 +46,71 @@ class WriteResult(int):
 
 # 各表的建表 DDL（DuckDB 方言，统一口径 v2.0）
 # time 用 BIGINT（毫秒时间戳），volume=股，amount=元，code=裸6位码
+# v2.4 B-3a：source_watermark DDL 改用共享单一真相源 SOURCE_WATERMARK_2_1_DDL
+# （审计列 source_generation/cutover_id NOT NULL 无 DEFAULT；PK 不变）。
+from quantstudio.pipeline.qfq_schema_contracts import (  # noqa: E402
+    SOURCE_WATERMARK_2_1_DDL, pre_cutover_generation,
+    TARGET_SOURCE_WATERMARK_2_1_FINGERPRINT, verify_fingerprint, _table_exists)
+
+
+class _WriterSchemaMigrationRequired(RuntimeError):
+    """DuckDBWriter 初始化遇版本化旧/错误共享表时写前 fail-fast。"""
+
+
+def _assert_source_watermark_init_safe(conn) -> None:
+    """v2.4 B-3a P0-2：DuckDBWriter._init_tables 第一条 DDL 前的共享表安全闸。
+
+    source_watermark 状态 → writer init 行为：
+    - 不存在 → 允许（DDL_DUCKDB 含 SOURCE_WATERMARK_2_1_DDL 会创建 target 8 列）；
+    - 完整 target 8 列 → 允许继续；
+    - 旧 6 列 / partial / 错误结构 → 抛 ``_WriterSchemaMigrationRequired`` 写前 fail-fast
+      （明确 migration-required，而非等到运行时 advance_watermark 才 BinderException）。
+
+    该门禁不通过 ``--allow-production`` 绕过（writer 不接受该开关；硬门禁）。
+    """
+    if not _table_exists(conn, "source_watermark"):
+        return  # 不存在 → 放行（将创建 target）
+    if verify_fingerprint(conn, {"source_watermark": TARGET_SOURCE_WATERMARK_2_1_FINGERPRINT},
+                          reject_extra=True):
+        return  # 完整 target 8 列 → 放行
+    # 旧/partial/错误 → fail-fast
+    raise _WriterSchemaMigrationRequired(
+        "[DuckDBWriter] source_watermark 为旧 6 列 / partial / 错误结构，"
+        "禁止 writer init（会到运行时 advance_watermark 才崩溃）。"
+        "该库需显式 migration runner 升级到 2.1（B-3b 范围）。")
+
+
+def _assert_qfq_schema_init_safe(conn) -> None:
+    """v2.4 B-3a.3 P0-1：DuckDBWriter._init_tables 第一条 DDL 前的**完整主库状态预检**。
+
+    复用 ``qfq_schema_status.detect_schema_status`` 五态判定。仅 ``EMPTY_OR_NEW`` /
+    ``COMPLETE_2_1`` 放行；``COMPLETE_2_0`` / ``PARTIAL_OR_MIXED`` / ``UNKNOWN`` 全部
+    抛 ``_WriterSchemaMigrationRequired`` 写前 fail-fast。
+
+    这阻止"数据库已处于 partial/完整旧 2.0（如仅一张 qfq_trigger_queue）时，writer 在
+    QFQ init 安全闸执行前创建大量框架表，数据库被进一步修改"的违规。
+
+    | 状态 | writer init |
+    |---|---|
+    | EMPTY_OR_NEW | 允许创建框架表 |
+    | COMPLETE_2_1 | 允许继续初始化非 QFQ 框架表 |
+    | COMPLETE_2_0 | migration-required（写前拒绝）|
+    | PARTIAL_OR_MIXED | fail-closed（写前拒绝）|
+    | UNKNOWN | fail-closed（写前拒绝）|
+
+    不通过 ``--allow-production`` 绕过（硬门禁）。
+    """
+    from quantstudio.pipeline.qfq_schema_status import (
+        detect_schema_status, SchemaStatus)
+    status = detect_schema_status(conn)
+    if status in (SchemaStatus.EMPTY_OR_NEW, SchemaStatus.COMPLETE_2_1):
+        return  # 放行
+    raise _WriterSchemaMigrationRequired(
+        f"[DuckDBWriter] 主库处于 {status.value} 状态，禁止 writer init（会在 QFQ init 安全闸"
+        f"执行前创建框架表，进一步修改数据库）。仅 EMPTY_OR_NEW/COMPLETE_2_1 放行。"
+        f"该库需显式 migration runner 升级到 2.1（B-3b 范围）。")
+
+
 DDL_DUCKDB = {
     "stock_daily": """
         CREATE TABLE IF NOT EXISTS stock_daily (
@@ -155,10 +220,10 @@ DDL_DUCKDB = {
         CREATE TABLE IF NOT EXISTS trade_calendar (
             cal_date BIGINT NOT NULL,
             is_open BOOLEAN NOT NULL,
-            exchange VARCHAR,
-            pretrade_date BIGINT,
             source VARCHAR,
             updated_at TIMESTAMP,
+            exchange VARCHAR,
+            pretrade_date BIGINT,
             PRIMARY KEY (cal_date)
         )""",
     "etf_basic": """
@@ -269,12 +334,7 @@ DDL_DUCKDB = {
             PRIMARY KEY (classification_system, classification_version,
                          industry_level, industry_code, code, effective_from)
         )""",
-    "source_watermark": """
-        CREATE TABLE IF NOT EXISTS source_watermark (
-            source VARCHAR, table_name VARCHAR, freq VARCHAR,
-            last_date BIGINT, last_batch_id VARCHAR, updated_at TIMESTAMP,
-            PRIMARY KEY(source, table_name, freq)
-        )""",
+    "source_watermark": SOURCE_WATERMARK_2_1_DDL,  # v2.4 B-3a：共享 DDL 单一真相源（8列，审计列 NOT NULL）
     "stock_namechange": """
         CREATE TABLE IF NOT EXISTS stock_namechange (
             code VARCHAR, change_date BIGINT,
@@ -402,6 +462,11 @@ class DuckDBWriter(BaseWriter):
         with self._conn_lock:
             conn = self._conn()
             try:
+                # v2.4 B-3a.3 P0-1：完整主库状态预检（不仅是 source_watermark 子契约）。
+                # 必须在 writer 第一条 DDL 前。仅 EMPTY_OR_NEW/COMPLETE_2_1 放行；
+                # COMPLETE_2_0/PARTIAL_OR_MIXED/UNKNOWN 全部写前 fail-fast（writer 层
+                # _WriterSchemaMigrationRequired），不得让普通 writer 自动升级或修补 QFQ schema。
+                _assert_qfq_schema_init_safe(conn)
                 for ddl in DDL_DUCKDB.values():
                     conn.execute(ddl)
                 # 存量表结构迁移：检测并自动 ALTER TABLE 补齐新增列
@@ -677,12 +742,20 @@ class DuckDBWriter(BaseWriter):
         with self._conn_lock:
             conn = self._conn()
             try:
+                # v2.4 B-3a：8 列显式 INSERT。审计列 source_generation/cutover_id 经
+                # pre_cutover_generation 提供 pre-cutover 静态哨兵（QFQ 价格表→legacy；
+                # 非 QFQ 表→not-qfq-managed）。source 保留真实值不改写。B-5 替换为动态
+                # active generation/cutover；B-6 激活 mcp/mcp-gen1/<active>。
+                gen, cutover = pre_cutover_generation(table, source)
                 conn.execute(
-                    "INSERT INTO source_watermark VALUES (?,?,?,?,?,?) "
+                    "INSERT INTO source_watermark "
+                    "(source, table_name, freq, last_date, last_batch_id, updated_at, "
+                    " source_generation, cutover_id) VALUES (?,?,?,?,?,?,?,?) "
                     "ON CONFLICT (source, table_name, freq) DO UPDATE SET "
                     "last_date=EXCLUDED.last_date, last_batch_id=EXCLUDED.last_batch_id, "
-                    "updated_at=EXCLUDED.updated_at",
-                    [source, table, freq, last_date, batch_id, now])
+                    "updated_at=EXCLUDED.updated_at, "
+                    "source_generation=EXCLUDED.source_generation, cutover_id=EXCLUDED.cutover_id",
+                    [source, table, freq, last_date, batch_id, now, gen, cutover])
             finally:
                 conn.close()
 
@@ -704,12 +777,17 @@ class DuckDBWriter(BaseWriter):
         同一 updated_at 口径），仅事务边界交由调用方。
         """
         now = datetime.now().isoformat()
+        # v2.4 B-3a：8 列显式 INSERT + pre-cutover 静态哨兵（见公共 advance_watermark 注释）
+        gen, cutover = pre_cutover_generation(table, source)
         conn.execute(
-            "INSERT INTO source_watermark VALUES (?,?,?,?,?,?) "
+            "INSERT INTO source_watermark "
+            "(source, table_name, freq, last_date, last_batch_id, updated_at, "
+            " source_generation, cutover_id) VALUES (?,?,?,?,?,?,?,?) "
             "ON CONFLICT (source, table_name, freq) DO UPDATE SET "
             "last_date=EXCLUDED.last_date, last_batch_id=EXCLUDED.last_batch_id, "
-            "updated_at=EXCLUDED.updated_at",
-            [source, table, freq, last_date, batch_id, now])
+            "updated_at=EXCLUDED.updated_at, "
+            "source_generation=EXCLUDED.source_generation, cutover_id=EXCLUDED.cutover_id",
+            [source, table, freq, last_date, batch_id, now, gen, cutover])
 
     def _upsert_pending_backfill_on_conn(self, conn, *, asset_type: str, code: str,
                                          table_name: str, freq: str,
@@ -717,7 +795,9 @@ class DuckDBWriter(BaseWriter):
                                          reason: str, anchor_version=None,
                                          status: str = "pending",
                                          now: Optional[str] = None,
-                                         reopen: bool = False) -> None:
+                                         reopen: bool = False,
+                                         price_source: str = "xtquant",
+                                         source_generation: str = "xtquant-legacy") -> None:
         """在给定连接/事务内登记「被过滤证券」的精确欠账区间（设计 v4 §1.1）。不 commit。
 
         幂等语义（阻断 4 修复）：
@@ -800,11 +880,17 @@ class DuckDBWriter(BaseWriter):
         ts = now or datetime.now().isoformat()
 
         # —— 条件重开：resolved 且未显式 reopen → 保持 resolved，不重开 ——
+        # v2.4 B-3a：pending_backfill 新 PK 含 price_source/source_generation（8 列）。
+        # price_source 由调用方传入（默认 xtquant 保持兼容；MCP 路径显式传 cfg.price_source=mcp）；
+        # source_generation 默认 pre-cutover 哨兵。不查 active cutover（B-5/B-6 范围）。
+        _bf_price_source = price_source
+        _bf_gen = source_generation
         row = conn.execute(
             "SELECT status, resolved_at, last_error, attempt_count FROM qfq_pending_backfill "
             "WHERE asset_type=? AND code=? AND table_name=? AND freq=? "
-            "AND range_start=? AND range_end=?",
-            [asset_type, code, table_name, freq_canonical, rs, re_]).fetchone()
+            "AND range_start=? AND range_end=? AND price_source=? AND source_generation=?",
+            [asset_type, code, table_name, freq_canonical, rs, re_,
+             _bf_price_source, _bf_gen]).fetchone()
 
         # —— 阻断 3：普通 upsert（欠账登记）禁止创建/变更终态或处理中态 ——
         # resolved / in_progress 必须由专用状态机方法（如 _resolve_backfill_on_conn /
@@ -837,15 +923,18 @@ class DuckDBWriter(BaseWriter):
 
         conn.execute(
             "INSERT INTO qfq_pending_backfill "
-            "(asset_type, code, table_name, freq, range_start, range_end, reason, "
+            "(asset_type, code, table_name, freq, range_start, range_end, "
+            " price_source, source_generation, reason, "
             " anchor_version, status, attempt_count, last_error, created_at, updated_at, resolved_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-            "ON CONFLICT (asset_type, code, table_name, freq, range_start, range_end) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT (asset_type, code, table_name, freq, range_start, range_end, "
+            "            price_source, source_generation) "
             "DO UPDATE SET reason=EXCLUDED.reason, anchor_version=EXCLUDED.anchor_version, "
             "status=EXCLUDED.status, updated_at=EXCLUDED.updated_at, "
             "resolved_at=EXCLUDED.resolved_at, last_error=EXCLUDED.last_error, "
             "attempt_count=EXCLUDED.attempt_count",
             [asset_type, code, table_name, freq_canonical, rs, re_,
+             _bf_price_source, _bf_gen,
              reason, anchor_version, upsert_status, attempt_count_val,
              last_error_val, ts, ts, resolved_at_val])
 
@@ -907,8 +996,8 @@ class DuckDBWriter(BaseWriter):
             "stock_basic": ["code", "ts_code", "symbol", "name", "area", "industry",
                             "market", "list_status", "list_date", "delist_date", "exchange",
                             "update_time", "data_source"],
-            "trade_calendar": ["cal_date", "is_open", "exchange", "pretrade_date",
-                               "source", "updated_at"],
+            "trade_calendar": ["cal_date", "is_open", "source", "updated_at",
+                               "exchange", "pretrade_date"],
             "etf_basic": ["code", "ts_code", "name", "exchange",
                           "list_date", "delist_date", "etf_type", "tracking_index",
                           "is_cross_border", "status", "fund_type", "invest_type",

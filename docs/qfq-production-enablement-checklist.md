@@ -1,7 +1,7 @@
-# QFQ Rebase 生产启用 Checklist 与三步渐进启用手册
+﻿# QFQ Rebase 生产启用 Checklist 与三步渐进启用手册
 
 > 文档版本：2026-07-31
-> 适用范围：全市场 raw 准入（B 档，5487 只）后的 QFQ 重锚（rebase）生产启用。
+> 适用范围：全市场 raw 准入（- 档，5487 只）后的 QFQ 重锚（rebase）生产启用。
 > 强约束（2026-07-31 更新）：**`enabled=true` 已于本日经用户明确确认开启，进入三步渐进【步骤A observation】期**（daemon 每轮 fail-closed，不写生产价格）。daemon 停止/启动由用户控制；**涉及 `--allow-production` 的写库命令（bootstrap / reconcile）须逐步骤显式确认**；正式库变更前必须备份；本步配置改动已先提交 GitHub（铁律：生产配置变更先同步再启用）。**
 
 ---
@@ -24,13 +24,13 @@
 
 ### 1.2 功能验证
 - [ ] **全量回归 0 failed**（含批次2 eps 测试，当前 222 passed）
-- [ ] **全市场 raw 准入预检完成**（B 档 5487 只，批次2 准入清单就绪）
+- [ ] **全市场 raw 准入预检完成**（- 档 5487 只，批次2 准入清单就绪）
 - [ ] **dry-run 事件发现正常**（编排器 discovery 在 dry-run 下产出 trigger_queue，0 dead_letter）
 - [ ] **canary committed + 守恒**（批次2 结论）
 - [ ] **多日常驻稳定**（staging 多轮验证，见 §6）
 
 ### 1.3 配置准备
-- [ ] **准入名单配置就绪**（`config/qfq_rebase_admissible_securities.json` 等，B 档 5487 只）
+- [ ] **准入名单配置就绪**（`config/qfq_rebase_admissible_securities.json` 等，- 档 5487 只）
 - [ ] **`collector_tasks.json` 的 `qfq_orchestrator` 块 ready**（`enabled` 默认 `false`，待用户确认后改 `true`）
 - [ ] **bootstrap_plan 生成**（首次启用前必须跑一次 `bootstrap-plan` 确认候选范围，再 `bootstrap-run` 建基线）
 
@@ -43,12 +43,15 @@
   `pending/in_progress/blocked/failed/dead_letter` 计数全为 0；任一 blocked 项都会让
   整条 reconcile 流水线 fail-closed。`excluded` 是名单外旧候选的合法审计终态，
   不阻止完成，但只允许由 `bootstrap-plan --admissible` 以
-  `block_reason=NOT_ADMISSIBLE` 生成，不得用于掩盖准入证券的执行失败。明确废弃的历史
+  `block_reason=NOT_ADMISSI-LE` 生成，不得用于掩盖准入证券的执行失败。明确废弃的历史
   run 可标记为 `superseded`，但当前 run 的 blocked/failed 禁止这样处置。因此批次2的
   精度探针 159915（已知 blocked）**不得进入生产 bootstrap 名单**——它属于
   「观测/排查」对象，不应放入准入名单。
-- **版本标识**：`bootstrap_run.schema_version` 必须 = 当前 `SCHEMA_VERSION`（reanchor-2.0），
+- **版本标识**：`bootstrap_run.schema_version` 必须 = 当前 `SCHEMA_VERSION`（**reanchor-2.1**，v2.4 B-3a 升级；存量 2.0 bootstrap 判不匹配 → fail-closed 重建，由 B-3b 显式 migration runner `quantstudio.pipeline.qfq_schema_migration` 处理：`python -m quantstudio.pipeline.qfq_schema_migration --db <staging> --allowed-root <root> [--apply]`，默认 dry-run，正式库硬拒绝），
   `config_hash`/`baseline_version` 落库为 NULL 可跳过对应校验。
+- **B-3b.3 migration report contract**: the final report path is reserved with `O_CREAT|O_EXCL` before any database read-write access; no temporary publish file and no `os.replace` are used.
+  Report states are `PENDING`, `DRY_RUN_COMPLETE`, `ROLLED_BACK`, `MIGRATION_COMMITTED`, `ALREADY_CURRENT`, and `FAILED_PRECHECK`.
+  If report/audit processing fails after COMMIT, the runner raises `MigrationCommittedReportError`; do not retry apply blindly. Reopen the database and generate a fresh report through the COMPLETE_2_1 already-current audit path.
 
 ---
 
@@ -57,10 +60,10 @@
 ### 步骤 A：Observation（dry-run，1-2 个交易日）
 - **操作**：`enabled=true` + `require_bootstrap=true`（无 completed bootstrap）。daemon 启动后惰性建 qfq 表，每轮 `run_post_ingest` **fail-closed**（连 discovery 都不执行，直接结束本轮），不写生产价格。仅用 CLI 只读命令观察（`status` / `show-pending` / `bootstrap-audit`）。
 - **观察**：daemon 与编排器集成无回归（连续多轮 fail-closed 干净、无崩溃/异常、qfq 表正常建出）+ 无 dead_letter / 水位异常。
-- **重要修正（实测 2026-07-31）**：fail-closed 发生在 discovery **之前**，故 Step A 期间**看不到 `triggers_found > 0`**（trigger_queue 不会增长）。`triggers_found > 0` 的实际可见时点是 Step B 建完 completed bootstrap 之后。Step A 的真正价值 = 验证 daemon 与 QFQ 编排器集成稳定、无回归。
+- **重要修正（实测 2026-07-31）**：fail-closed 发生在 discovery **之前**，故 Step A 期间**看不到 `triggers_found > 0`**（trigger_queue 不会增长）。`triggers_found > 0` 的实际可见时点是 Step - 建完 completed bootstrap 之后。Step A 的真正价值 = 验证 daemon 与 QFQ 编排器集成稳定、无回归。
 - **通过条件**：daemon 连续 N 轮（跨 1-2 交易日）fail-closed 干净、qfq 表已建、`dead_letter = 0`、无异常日志。
 
-### 步骤 B：Canary（12 只证券，2-3 个交易日）
+### 步骤 -：Canary（12 只证券，2-3 个交易日）
 - **canary 子集机制（2026-07-31 已实现）**：`config/qfq_canary_securities.json` 包含 12 只正式库中实际存在的实施分红候选，均属于 STOCK 准入集，并明确排除精度探针 `159915`。当前正式库不存在“ETF 因子观察候选 ∩ ETF 准入集”，因此不以无效 ETF 凑数；ETF 过滤路径由单元测试覆盖。
 - **操作顺序**：备份正式库 → `bootstrap-plan --codes config/qfq_canary_securities.json --execute --allow-production` → `bootstrap-run --execute --allow-production`（建基线，**必须 0 blocked**）→ `reconcile-once --codes config/qfq_canary_securities.json --execute --allow-production` 增量。bootstrap 必须先于 reconcile（否则 fail-closed）。Scoped reconcile 仅处理名单内证券并强制 hold 全局水位；Step C 全量周期才允许省略 `--codes`。
 - **观察**：committed + raw/back 守恒 + 无 dead_letter。
@@ -102,7 +105,7 @@
 2. `scripts/qfq_batch2_multiround.py` — staging 多轮验证（bootstrap→增量→空闲）
 3. `data/staging_batch2_20260730/batch2_multiround_report.json` — 多轮验证报告
 4. 本文档 `docs/qfq-production-enablement-checklist.md` — checklist + 三步启用手册 + 回退方案
-5. **状态声明（2026-07-31 更新）**：`qfq_orchestrator.enabled` 已按用户确认改为 `true`，进入【步骤A observation】期（daemon 每轮 fail-closed，不写生产价格）。该配置改动已先提交 GitHub（铁律：生产配置变更先同步再启用）。Step A 由用户启动 daemon 观察；Step B 起涉及 `--allow-production` 写库命令，须逐步骤显式确认。**
+5. **状态声明（2026-07-31 更新）**：`qfq_orchestrator.enabled` 已按用户确认改为 `true`，进入【步骤A observation】期（daemon 每轮 fail-closed，不写生产价格）。该配置改动已先提交 GitHub（铁律：生产配置变更先同步再启用）。Step A 由用户启动 daemon 观察；Step - 起涉及 `--allow-production` 写库命令，须逐步骤显式确认。**
 
 ---
 
@@ -129,7 +132,7 @@
 
 ---
 
-## 7. Canary 子集与 `--codes` 过滤（Step B 准备，2026-07-31 已完成）
+## 7. Canary 子集与 `--codes` 过滤（Step - 准备，2026-07-31 已完成）
 
 ### 7.1 子集名单文件
 `config/qfq_canary_securities.json` 当前包含 12 只 6 位裸码：
@@ -156,7 +159,7 @@
 - `bootstrap-run` 按 `run_id` 执行已固化的 item，无需也不应再次解释 `--codes`。
 - Step C 不传 `--codes` 即恢复原有全量候选语义；公共返回结构、重锚门控和撮合逻辑不变。
 
-### 7.3 Step B 命令
+### 7.3 Step - 命令
 ```bash
 # 先备份 data/quantstudio.db 与 data/qfq_aux.db
 python -m quantstudio.pipeline.qfq_orchestrator_cli \
@@ -177,3 +180,39 @@ python -m quantstudio.pipeline.qfq_orchestrator_cli \
 计划和执行验收：12 只候选、无 `159915`、`blocked=0`；scoped reconcile 仅处理
 名单内证券并保持全局水位 held。随后检查 committed、raw/back 守恒和 `dead_letter=0`；
 Step C 执行全量 reconcile 时才省略 `--codes`。
+
+## 8. MCP cutover B-4 staging 副本演练（2026-08-05，本地完成，CodeBuddy 独立复审通过）
+
+### 8.1 命令与安全门
+
+```powershell
+python scripts/qfq_b4_staging_drill.py --run-id b4_preflight_20260805
+python scripts/qfq_b4_staging_drill.py --run-id b4_20260805_final --execute
+```
+
+- 默认 preflight 0 数据库写、0 run-dir 写；全量执行只写 `output/mcp_migration/b4_20260805_final/`。
+- 副本复制窗口同时持有 `.daemon.lock` / `.collector_run.lock`；正式库 migration runner 继续绝对硬拒绝生产路径。
+- 需要保守磁盘预留：`5 × main size + aux size + 10 Gi-`，用于 baseline、normal/recovery 迁移分支和 shadow/checkpoint 增长。
+- 用户已明确接受 TD-42：COMMIT 后 report 灾难中断时，以 D- 物理 schema 为权威，使用新 report 路径执行 COMPLETE_2_1 already-current 审计恢复。
+
+### 8.2 全量结果
+
+- 运行目录：`output/mcp_migration/b4_20260805_final/`，总计约 43.657 Gi-（单次 run 近似值）。
+- baseline：COMPLETE_2_0；normal：COMPLETE_2_1；recovery：COMPLETE_2_1。
+- normal report 状态：DRY_RUN_COMPLETE / ROLLED_BACK / DRY_RUN_COMPLETE / MIGRATION_COMMITTED / ALREADY_CURRENT。
+- recovery：`after_commit_before_report` 后 D- 已为 COMPLETE_2_1；新 report 路径恢复为 ALREADY_CURRENT。
+- MCP 离线 bootstrap：trigger 数不增加；因子首轮新增/修订均为 0。
+- pre-B-5 dividend discover：首轮新增 2181，立即重放新增 0。此为全表 hash 扫描真实基线；B-5 discovery-baseline/CAS 尚未实施。
+- `qfq_active_cutover=0`；10 张含 generation 的表中 `mcp-gen1` 全为 0；未越过 B-6。
+- 正式主库与 aux 的 size/mtime_ns/SHA-256 前后完全一致。
+
+### 8.3 当前门禁
+
+B-4 已于 2026-08-06 经 CodeBuddy 独立复审通过（P0=0/P1=0），允许进入 B-5 本地实施。报告中的 `production_ready=false`、`git_sync_authorized=false` 仍有效：正式库迁移及 GitHub 同步必须另行取得明确确认。
+
+### 8.4 Windows hard-crash 回归纪律
+
+- `after_commit_before_report` 位于 durable COMMIT 后、正常 connection cleanup/report 前。
+- Windows 真实 `os._exit(92)` 测试必须严格串行；不得与另一 DuckDB pytest 进程并发。
+- exit code 必须精确为 92；`0xC0000005` 不可接受，不得放宽。
+- 最终串行证据：原始测试 20/20；migration+B-4 87 passed/1 skipped；扩展回归 827 passed/1 skipped。

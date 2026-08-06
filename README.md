@@ -451,3 +451,25 @@ backlog**：小市值与双均线真实策略 `get_history` 命中均为 0；`Pt
 > **PyQt single-task result contract (2026-08-03)**: manual task status is determined by that task's fetch?align?validate?write result. Full-database `QualityAudit` still runs afterward, but unrelated-table failures are displayed as `success (audit warning)` rather than falsely marking the data pull as failed. Real task failures remain failures.
 
 > **Full-database audit reference-table contract (2026-08-03)**: MCP `stock_basic` and the shared MCP/QFQ `trade_calendar` are writer-managed canonical tables. `trade_calendar` keeps its original `cal_date` single primary key and QFQ behavior; `exchange/pretrade_date` are compatibility metadata. Enum auditing uses native typed values, and QFQ pending SLA uses the current-state update time.
+
+## MCP cutover B-4 staging 演练（本地完成，CodeBuddy 独立复审通过）
+
+> B-4 实施证据归档日：2026-08-05；CodeBuddy 独立复审通过日：2026-08-06。原始演练时间戳按证据文件保留。
+
+`scripts/qfq_b4_staging_drill.py` 是生产 cutover 前的独立演练工具，不在 daemon 生产调用链中。默认仅执行零数据库写、零 run-dir 写的 preflight；只有显式传 `--execute` 才会在 `output/mcp_migration/<run-id>/` 创建全量 staging 副本并执行迁移/恢复演练。复制正式库时同时持有 `.daemon.lock` 与 `.collector_run.lock`，并在演练前后比较正式主库与 aux 的 canonical path、size、mtime_ns、SHA-256。
+
+```powershell
+# 零写前置检查
+python scripts/qfq_b4_staging_drill.py --run-id b4_preflight_20260805
+
+# 全量 staging 演练；只写 output 下副本，不写正式库
+python scripts/qfq_b4_staging_drill.py --run-id b4_20260805_final --execute
+```
+
+B-4 全量实测结果：baseline=`COMPLETE_2_0`，normal/recovery=`COMPLETE_2_1`；正常分支覆盖 `DRY_RUN_COMPLETE → ROLLED_BACK → MIGRATION_COMMITTED → ALREADY_CURRENT`，恢复分支覆盖 COMMIT 后中断后用新 report 执行 `ALREADY_CURRENT` 审计恢复。MCP 配置的离线 bootstrap 不灌历史 trigger；当前 **pre-B-5** `stock_dividend` discovery 仍是全表内容 hash 扫描，所以首轮实测新增 2181 个 dividend trigger，立即原样重放新增为 0。此数字是 B-5 discovery-baseline/CAS 实施前的真实基线，不能误写成“首轮 discover 必须为 0”。演练保持 `qfq_active_cutover=0`、所有表 `mcp-gen1=0`，未激活 B-6。
+
+证据：`output/mcp_migration/b4_20260805_final/b4_drill_report.json`。该报告明确 `production_ready=false`、`git_sync_authorized=false`；B-4 已通过独立复审，B-5 可进入本地实施；B-6、正式库迁移及 GitHub 同步均未获授权。
+
+### B-4 Windows COMMIT 后 hard-crash 边界补修
+
+最终串行验收前曾出现预期 `os._exit(92)`、实际 Windows `0xC0000005`。未放宽断言，也未接受 access violation。最小修复将 `after_commit_before_report` 故障点移动到 durable COMMIT 成功且 `committed=True` 之后、正常 DuckDB connection cleanup/report 更新之前；正常和受控异常路径仍由 `finally` 关闭连接。严格串行验证：直接 `os._exit` 30/30、原始 pytest 20/20、migration+B-4 87 passed/1 skipped、扩展回归 827 passed/1 skipped。并行启动多个 DuckDB pytest 进程可能产生 Windows native 干扰，因此该 crash suite 必须串行运行。

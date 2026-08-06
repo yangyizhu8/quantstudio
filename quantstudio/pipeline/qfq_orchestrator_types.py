@@ -62,6 +62,7 @@ class TriggerStatus(str, Enum):
     RETRYABLE_FAILED = "retryable_failed"
     BLOCKED = "blocked"
     DEAD_LETTER = "dead_letter"
+    SUPERSEDED = "superseded"  # v2.4 B-3：与 schema TRIGGER_STATUS 逐字对齐（legacy xtquant trigger 退役终态）
 
 
 class CyclePhase(str, Enum):
@@ -93,14 +94,57 @@ class FreshCaptureStatus(str, Enum):
 # 确定性 ID / hash 生成器（幂等、可重放）
 # ---------------------------------------------------------------------------
 
-def trigger_id_of(asset_type: str, code: str, effective_date_ms: int,
-                  detection_source: str, payload_hash: str) -> str:
-    """确定性 trigger_id = sha1(asset_type|code|effective_date|detector|payload_hash)。
+# v2.4 B-2：trigger_id 显式算法版本。MCP 生产路径唯一可用 v2（纳入 price_source/
+# source_generation），使同一分红事件跨世代生成不同 ID，不被旧 xtquant trigger 的
+# INSERT OR IGNORE 跳过。v1 仅历史行 sha1 不重算/审计比对用。
+TRIGGER_ID_VERSION = 2
 
-    相同语义事件永远生成同一 ID → 天然去重 + 崩溃可重放（崩溃后下一轮识别已存在 trigger）。
+
+def trigger_id_v1(asset_type: str, code: str, effective_date_ms: int,
+                  detection_source: str, payload_hash: str) -> str:
+    """历史算法 v1 = sha1(asset_type|code|effective_date|detector|payload_hash)。
+
+    仅供历史行 sha1 不重算/审计比对；**MCP 生产路径禁用**（不含世代 → 跨世代 ID 冲突）。
     """
     raw = f"{asset_type}|{code}|{int(effective_date_ms)}|{detection_source}|{payload_hash}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def trigger_id_v2(asset_type: str, code: str, effective_date_ms: int,
+                  detection_source: str, payload_hash: str,
+                  price_source: str, source_generation: str) -> str:
+    """生产算法 v2 = sha1(v2|asset_type|code|effective_date|detector|payload_hash|price_source|source_generation)。
+
+    纳入 price_source/source_generation → 同一分红事件跨世代生成不同 ID。
+    相同语义事件（同世代内）仍生成同一 ID → 天然去重 + 崩溃可重放。
+    **MCP 生产路径唯一可用此算法**（v2.4 设计 §3.2.2）。
+    """
+    raw = (f"v2|{asset_type}|{code}|{int(effective_date_ms)}|{detection_source}"
+           f"|{payload_hash}|{price_source}|{source_generation}")
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def trigger_id_of(asset_type: str, code: str, effective_date_ms: int,
+                  detection_source: str, payload_hash: str) -> str:
+    """兼容别名（= trigger_id_v1）。
+
+    v2.4 B-2 保留为历史路径入口（xtquant 世代、尚未接入世代的旧调用点）。
+    **新生产路径应显式选择 trigger_id_v1（xtquant 历史行）或 trigger_id_v2（MCP 生产）**，
+    不依赖此别名做隐式世代判定。B-5 全链路 SQL 世代过滤时将替换所有调用点。
+    """
+    return trigger_id_v1(asset_type, code, effective_date_ms, detection_source, payload_hash)
+
+
+def alert_id_v2(asset_type: str, code: str, factor_time: int, revision_no: int,
+                source_generation: str) -> str:
+    """生产算法 v2 = sha1(asset_type|code|factor_time|revision_no|source_generation)。
+
+    纳入 source_generation → 防跨世代 alert_id 冲突（v2.4 设计 §3.3 P0-4）。
+    与 trigger_id_v2 同理，MCP 世代独立基线不与旧 xtquant observation 比较产生伪 revision。
+    """
+    raw = f"{asset_type}|{code}|{int(factor_time)}|{int(revision_no)}|{source_generation}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
 
 
 def payload_hash_of(fields: Sequence) -> str:
@@ -161,6 +205,21 @@ class TriggerRecord:
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     completed_at: Optional[str] = None
+    # v2.4 B-3a：trigger_id 算法版本（1=历史 v1/xtquant 世代，2=MCP 生产 v2/含世代）。
+    # 持久化契约（B-3a 冻结）：新库 2.1 契约启用后，legacy/pre-cutover trigger 显式
+    # 持久化 version=1；B-5 MCP v2 路径显式写 version=2。已纳入 COLS/as_insert_params
+    # （B-3a schema 列已就绪）。
+    # 理由：不能仅靠 ID 字符串猜测算法版本；同一队列将并存 v1/v2 行；历史审计与迁移需明确版本；
+    # source_generation 不能完全替代算法版本（同一世代内理论上也可能有多种算法）。
+    trigger_id_version: int = 1
+    # v2.4 B-3a：世代隔离列（持久化）。pre-cutover 静态值由写入方提供
+    # （price_source=真实配置值；source_generation=xtquant-legacy；cutover_id=哨兵）。
+    # B-5 替换为动态 active generation/cutover；B-6 激活 mcp/mcp-gen1/<active>。
+    price_source: str = "xtquant"
+    source_generation: str = "xtquant-legacy"
+    cutover_id: str = "legacy-xtquant-pre-cutover"
+    retired_at: Optional[str] = None
+    retire_reason: Optional[str] = None
     # 非持久字段：本轮合并进来的其它相关事件日期（仅用于 fresh 拉取 ex_dates_ms）
     merged_effective_dates: List[int] = field(default_factory=list)
 
@@ -168,8 +227,11 @@ class TriggerRecord:
         "trigger_id", "asset_type", "code", "trigger_type", "detection_source",
         "source_key", "effective_date", "payload_hash", "factor_old", "factor_new",
         "factor_revision", "status", "attempt_count", "next_retry_at", "claimed_by",
-        "claimed_at", "last_event_id", "last_error", "created_at", "updated_at",
-        "completed_at",
+        "claimed_at", "last_event_id", "last_error", "completed_at",
+        # v2.4 B-3a 新增持久化列（与 DUCKDB_COLS 顺序一致，省略 dead_letter_at 不在 COLS）
+        "trigger_id_version", "price_source", "source_generation", "cutover_id",
+        "retired_at", "retire_reason",
+        "created_at", "updated_at",
     ]
 
     def as_insert_params(self):
@@ -201,6 +263,12 @@ class CycleRun:
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
     error: Optional[str] = None
+    # v2.4 B-3a：世代隔离列（持久化）。pre-cutover 静态值由写入方提供（见
+    # qfq_resident_orchestrator.begin_cycle）。B-5 替换为动态；B-6 激活。
+    # 字段顺序与 DDL 列顺序一致（detector_degraded 之后、updated_at 之前）。
+    price_source: str = "xtquant"
+    source_generation: str = "xtquant-legacy"
+    cutover_id: str = "legacy-xtquant-pre-cutover"
     updated_at: Optional[str] = None
 
 
@@ -225,6 +293,10 @@ class FreshCaptureRecord:
     metadata_sha256: Optional[str] = None
     download_trace: Optional[str] = None
     status: str = "captured"
+    # v2.4 B-3a：世代隔离列（持久化）。pre-cutover 静态值由写入方提供（见
+    # qfq_fresh_capture.write_fresh_capture）。B-5 替换为动态；B-6 激活。
+    source_generation: str = "xtquant-legacy"
+    cutover_id: str = "legacy-xtquant-pre-cutover"
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -235,8 +307,15 @@ class WatermarkIntent:
     source: str
     table_name: str
     freq: str
-    old_watermark: Optional[str]
-    candidate_watermark: Optional[str]
+    # v2.4 B-3a：世代隔离列（持久化）。pre-cutover 静态值由写入方提供（见
+    # qfq_resident_orchestrator.defer_watermark）。B-5 替换为动态；B-6 激活。
+    # 字段顺序与 DDL 列顺序一致（freq 之后、old_watermark 之前）。
+    # old_watermark / candidate_watermark 显式给 None 默认值以保持 dataclass
+    # 字段顺序合法（带默认字段后不能再有无默认字段）。
+    source_generation: str = "xtquant-legacy"
+    cutover_id: str = "legacy-xtquant-pre-cutover"
+    old_watermark: Optional[str] = None
+    candidate_watermark: Optional[str] = None
     status: str = "pending"
     hold_reason: Optional[str] = None
     committed_at: Optional[str] = None
@@ -287,12 +366,35 @@ DEFAULT_ORCHESTRATOR_CFG: Dict = {
 }
 
 
+def _parse_identifier(cfg: Dict, key: str, default: str) -> str:
+    """解析世代/cutover 标识符，fail-fast 拒绝空串/None/非字符串（v2.4 B-2.1）。
+
+    数据库层虽 NOT NULL，但语义无效（空串/None→'None'/空白）仍须在此拦截，避免
+    无效标识进入 trigger_id_v2 / 审计逻辑。要求：必须是字符串、strip() 后非空、
+    禁止 'None' 字面量、禁止纯空白。
+    """
+    raw = cfg.get(key, default)
+    if not isinstance(raw, str):
+        raise QFQConfigError(f"{key} 必须为非空字符串，收到 {type(raw).__name__}: {raw!r}")
+    value = raw.strip()
+    if not value or value.lower() == "none":
+        raise QFQConfigError(f"{key} 必须为非空有效标识，收到 {raw!r}")
+    return value
+
+
 @dataclass
 class QFQOrchestratorConfig:
     enabled: bool = False
     factor_refresh_enabled: bool = False  # 任务2.2：主动因子刷新（默认关闭，独立 opt-in）
     require_bootstrap: bool = True
     price_source: str = "xtquant"
+    # v2.4 B-2：数据源世代隔离字段。
+    # 默认值保守（xtquant-legacy / legacy-xtquant-pre-cutover 哨兵），确保：
+    # (1) 旧配置文件不传这两个字段时 daemon 行为与 B-1 完全一致（不自动进 MCP 世代）；
+    # (2) 在 B-3 schema 与 active-cutover 契约落地前，现有 daemon 不会进入 mcp-gen1 生产处理。
+    # MCP 世代需在 B-6 cutover 激活后由配置显式传 source_generation='mcp-gen1' + 实际 cutover_id。
+    source_generation: str = "xtquant-legacy"
+    cutover_id: str = "legacy-xtquant-pre-cutover"
     stock_factor_detector: str = "tushare_adj_factor"
     etf_factor_detector: str = "tushare_fund_adj"
     freqs: List[str] = field(default_factory=lambda: ["1min"])
@@ -344,6 +446,8 @@ class QFQOrchestratorConfig:
             factor_refresh_enabled=bool(cfg.get("factor_refresh_enabled", False)),
             require_bootstrap=bool(cfg.get("require_bootstrap", True)),
             price_source=str(cfg.get("price_source", "xtquant")),
+            source_generation=_parse_identifier(cfg, "source_generation", "xtquant-legacy"),
+            cutover_id=_parse_identifier(cfg, "cutover_id", "legacy-xtquant-pre-cutover"),
             stock_factor_detector=str(cfg.get("stock_factor_detector", "tushare_adj_factor")),
             etf_factor_detector=str(cfg.get("etf_factor_detector", "tushare_fund_adj")),
             freqs=list(cfg.get("freqs", ["1min"])),

@@ -465,3 +465,19 @@ Strategy API behavior is unchanged by the full-database audit repair. Reference-
 Cursor pagination, export artifacts, the QFQ whitelist, composite-code normalization, and nullable-time handling are internal data-pipeline contracts. Strategy injection APIs, `get_index_stocks` PIT semantics, matching, positions, cash, and backtest result shapes are unchanged. `index_constituents` exposes only canonical six-digit index/member codes; out-of-contract CSI alphanumeric indices are not fabricated into valid codes.
 
 Strategy prompts must not read MCP large datasets through `query_snapshot`, bypass `FieldAligner`/`PreIngestValidator`, or reconstruct index constituents and financial availability dates directly. Use the canonical DuckDB tables and existing PIT APIs.
+
+## MCP cutover B-4 运维演练边界（pipeline 级）
+
+B-4 使用 `scripts/qfq_b4_staging_drill.py` 在正式生产操作前验证 2.0→2.1 schema 迁移和恢复契约。它不是策略注入 API，策略文件不得调用。
+
+- 默认 preflight 零数据库写、零 run-dir 写；`--execute` 仅写 `output/mcp_migration/<run-id>/` 下的 staging 副本。
+- 制作一致性副本时同时持有 daemon/collector 两把锁；正式主库与 aux 在演练前后必须满足 path/size/mtime_ns/SHA-256 逐项一致。
+- normal 分支验证 dry-run、COMMIT 前回滚、正常迁移、幂等 already-current；recovery 分支验证用户已接受的 TD-42 契约：DB 物理 schema 为权威，弃用不完整旧 report，以新路径执行 COMPLETE_2_1 already-current 审计。
+- 离线 MCP bootstrap/discover 只验证当前静态 pre-cutover 桥；禁止动态 generation SQL、trigger 退役、active pointer 或 `mcp-gen1` 激活，这些分别属于 B-5/B-6。
+- 当前 pre-B-5 dividend discovery 是全表 hash 扫描。B-4 要求 bootstrap 不灌 trigger、首轮结果完整记录、立即重放新增为 0；不得提前宣称已有 B-5 discovery-baseline/CAS 的“首轮净新增 0”语义。
+
+2026-08-05 全量 staging 证据：`output/mcp_migration/b4_20260805_final/b4_drill_report.json`，baseline=COMPLETE_2_0、normal/recovery=COMPLETE_2_1、首轮 dividend=2181、立即重放=0、active cutover=0、全表 mcp-gen1=0。状态为本地完成，CodeBuddy 独立复审通过，不代表生产就绪或 Git 同步授权。
+
+### B-4 hard-crash 测试执行约束
+
+`after_commit_before_report` 故障点必须位于 durable COMMIT 之后、正常连接清理/report 更新之前。Windows 下该真实 `os._exit` 子进程测试必须串行执行；不得以并行 pytest 的 `0xC0000005` 干扰为理由放宽 exit 92 断言。此约束仅用于迁移崩溃恢复验收，不改变策略 API 或生产正常路径。

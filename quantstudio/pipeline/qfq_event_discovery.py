@@ -35,6 +35,8 @@ from quantstudio.pipeline.qfq_orchestrator_types import (
 )
 from quantstudio.pipeline.qfq_observation import ObservationResult, ObservationStore
 from quantstudio.pipeline.qfq_reanchor_schema import init_sqlite_schema
+# v2.4 B-1：分红 payload hash 单一真相源（中立模块，防 scan/establish 漂移 + 防循环 import）
+from quantstudio.pipeline.qfq_dividend_payload import dividend_payload_hash, norm_div_val
 
 logger = logging.getLogger(__name__)
 
@@ -56,16 +58,12 @@ def _now_ts() -> str:
 
 
 def _norm_div_val(v):
-    """任务4：统一规范化分红字段——None/NaN → ''；字符串数值 → strip。保证 hash 稳定。"""
-    if v is None:
-        return ""
-    try:
-        import math as _math
-        if isinstance(v, float) and _math.isnan(v):
-            return ""
-    except TypeError:
-        pass
-    return str(v).strip()
+    """兼容别名（v2.4 B-1：生产路径已改用 ``qfq_dividend_payload.norm_div_val``）。
+
+    保留此名仅为旧测试/外部导入兼容；指向中立模块的单一实现，**不**允许生产路径
+    继续使用两套实现。迁移完成后可移除。
+    """
+    return norm_div_val(v)
 
 
 class EventDiscovery:
@@ -97,12 +95,18 @@ class EventDiscovery:
     def _upsert_cursor(self, conn, detector_name: str, asset_type: str,
                        cursor_as_of: Optional[int], run_id: str,
                        status: str = "ok") -> None:
+        from quantstudio.pipeline.qfq_schema_contracts import pre_cutover_qfq_identity
         now = _now_ts()
+        # v2.4 B-3a.3 P0-2：统一静态 pre-cutover identity（price_source=真实值；
+        # generation/cutover 固定 legacy 哨兵，不读 cfg.source_generation/cutover_id）。
+        ident = pre_cutover_qfq_identity(self.cfg.price_source)
         conn.execute(
             "INSERT OR REPLACE INTO qfq_observation_cursor "
-            "(detector_name, asset_type, cursor_as_of, last_run_id, status, updated_at) "
-            "VALUES (?,?,?,?,?,?)",
-            [detector_name, asset_type, cursor_as_of, run_id, status, now],
+            "(detector_name, asset_type, price_source, source_generation, "
+            " cursor_as_of, last_run_id, status, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            [detector_name, asset_type, ident["price_source"], ident["source_generation"],
+             cursor_as_of, run_id, status, now],
         )
 
     # ------------------------------------------------------------------
@@ -132,6 +136,9 @@ class EventDiscovery:
         present = {str(r[0]).lower() for r in conn.execute("DESCRIBE stock_dividend").fetchall()}
         if "ex_date" not in present:
             return []
+        # v2.4 B-3a.3 P0-2：统一静态 pre-cutover identity（generation/cutover 固定 legacy 哨兵）
+        from quantstudio.pipeline.qfq_schema_contracts import pre_cutover_qfq_identity
+        _ident = pre_cutover_qfq_identity(self.cfg.price_source)
         _wanted = ["code", "ex_date", "record_date", "ann_date", "end_date",
                    "cash_div_before_tax", "cash_div_after_tax", "cash_div",
                    "stk_div", "stk_bo_rate", "stk_co_rate", "div_rat", "div_proc"]
@@ -171,20 +178,11 @@ class EventDiscovery:
                 continue  # bootstrap：跳过 INSERT，只记录 cursor
 
             effective_date = ex_date
-            # 任务4：完整业务字段 hash（旧/新 schema 共用；update_time 不进 hash）
-            payload_hash = payload_hash_of([
-                code, ex_date, record_date,
-                int(ann_date) if ann_date is not None else None,
-                int(end_date) if end_date is not None else None,
-                _norm_div_val(cash_div_before_tax),
-                _norm_div_val(cash_div_after_tax),
-                _norm_div_val(cash_div),
-                _norm_div_val(stk_div),
-                _norm_div_val(stk_bo_rate),
-                _norm_div_val(stk_co_rate),
-                _norm_div_val(div_rat),
-                _norm_div_val(div_proc),
-            ])
+            # v2.4 B-1：payload hash 经共享函数（与 establish_discovery_baseline 共用单一真相源，防漂移）
+            payload_hash = dividend_payload_hash(
+                code, ex_date, record_date, ann_date, end_date,
+                cash_div_before_tax, cash_div_after_tax, cash_div,
+                stk_div, stk_bo_rate, stk_co_rate, div_rat, div_proc)
             trigger_id = trigger_id_of(
                 "STOCK", code, ex_date, "stock_dividend", payload_hash)
             status = "scheduled" if ex_date > as_of_ms else "pending"
@@ -196,16 +194,23 @@ class EventDiscovery:
             conn.execute(
                 "INSERT OR IGNORE INTO qfq_trigger_queue "
                 "(trigger_id, asset_type, code, trigger_type, detection_source, source_key, "
-                " effective_date, payload_hash, status, created_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                " effective_date, payload_hash, status, trigger_id_version, price_source, "
+                " source_generation, cutover_id, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [trigger_id, "STOCK", code, "stock_dividend", "stock_dividend",
-                 str(ex_date), effective_date, payload_hash, status, now, now])
+                 str(ex_date), effective_date, payload_hash, status,
+                 1, _ident["price_source"], _ident["source_generation"], _ident["cutover_id"],
+                 now, now])
             if not existed:
                 new_records.append(TriggerRecord(
                     trigger_id=trigger_id, asset_type="STOCK", code=code,
                     trigger_type="stock_dividend", detection_source="stock_dividend",
                     source_key=str(ex_date), effective_date=effective_date,
                     payload_hash=payload_hash, status=status,
+                    trigger_id_version=1,
+                    price_source=_ident["price_source"],
+                    source_generation=_ident["source_generation"],
+                    cutover_id=_ident["cutover_id"],
                     created_at=now, updated_at=now,
                 ))
 
@@ -279,6 +284,8 @@ class EventDiscovery:
         trigger_type = factor_new；trigger_id 确定性；future factor_time → scheduled。
         """
         now = _now_ts()
+        from quantstudio.pipeline.qfq_schema_contracts import pre_cutover_qfq_identity
+        _ident = pre_cutover_qfq_identity(self.cfg.price_source)
         for fn in factor_new_list:
             ds = "tushare_fund_adj_new" if fn.asset_type == "ETF" else "tushare_adj_factor_new"
             payload_hash = payload_hash_of(
@@ -292,11 +299,14 @@ class EventDiscovery:
                 "INSERT OR IGNORE INTO qfq_trigger_queue "
                 "(trigger_id, asset_type, code, trigger_type, detection_source, source_key, "
                  " effective_date, payload_hash, factor_old, factor_new, factor_revision, "
-                 " status, created_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                 " status, trigger_id_version, price_source, source_generation, "
+                 " cutover_id, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [trigger_id, fn.asset_type, fn.code, "factor_new", ds,
                  str(fn.factor_time), fn.factor_time, payload_hash,
-                 fn.previous_value, fn.current_value, None, status, now, now])
+                 fn.previous_value, fn.current_value, None, status,
+                 1, _ident["price_source"], _ident["source_generation"], _ident["cutover_id"],
+                 now, now])
             if not existed:
                 logger.info(
                     f"[qfq_event] factor_new trigger {trigger_id} "
@@ -336,6 +346,8 @@ class EventDiscovery:
         """
         aux_conn = sqlite3.connect(str(self.aux_db), timeout=30)
         new_records: List[TriggerRecord] = []
+        from quantstudio.pipeline.qfq_schema_contracts import pre_cutover_qfq_identity
+        _ident = pre_cutover_qfq_identity(self.cfg.price_source)
         try:
             aux_conn.execute("PRAGMA journal_mode=WAL")
             aux_conn.execute("PRAGMA busy_timeout=30000")
@@ -392,11 +404,14 @@ class EventDiscovery:
                     "INSERT OR IGNORE INTO qfq_trigger_queue "
                     "(trigger_id, asset_type, code, trigger_type, detection_source, source_key, "
                     " effective_date, payload_hash, factor_old, factor_new, factor_revision, "
-                    " status, created_at, updated_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " status, trigger_id_version, price_source, source_generation, "
+                    " cutover_id, created_at, updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     [trigger_id, asset_type, code, trigger_type, detection_source,
                      str(factor_time), factor_time, payload_hash, old_factor,
-                     new_factor_value, revision_no, "pending", now, now])
+                     new_factor_value, revision_no, "pending",
+                     1, _ident["price_source"], _ident["source_generation"], _ident["cutover_id"],
+                     now, now])
                 if not existed:
                     new_records.append(TriggerRecord(
                         trigger_id=trigger_id, asset_type=asset_type, code=code,
@@ -404,7 +419,11 @@ class EventDiscovery:
                         source_key=str(factor_time), effective_date=factor_time,
                         payload_hash=payload_hash, factor_old=old_factor,
                         factor_new=new_factor_value, factor_revision=revision_no,
-                        status="pending", created_at=now, updated_at=now,
+                        status="pending", trigger_id_version=1,
+                        price_source=_ident["price_source"],
+                        source_generation=_ident["source_generation"],
+                        cutover_id=_ident["cutover_id"],
+                        created_at=now, updated_at=now,
                     ))
 
                 # 再 ack（崩溃可重放：上一步已落地，ack 失败下一轮重放不重复）

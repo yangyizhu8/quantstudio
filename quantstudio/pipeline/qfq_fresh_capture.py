@@ -615,26 +615,30 @@ def resolve_fresh_capture(conn, *, capture_id: str, asset_type: str, code: str,
 
 
 def write_fresh_capture(conn, rec: "FreshCaptureRecord") -> None:
-    """写入一条全新 capture（**INSERT，非 INSERT OR REPLACE**）。
+    """Insert one immutable fresh-capture record using the frozen column contract.
 
-    与 resolve_fresh_capture 配合：仅当 resolve 返回 CAPTURE_ACTION_NEW 时调用。
-    若 capture_id 已存在（违反契约），INSERT 主键冲突抛错（数据库层兜底，杜绝静默覆盖）。
+    ``FRESH_CAPTURE_COLS`` is the single source of truth, so download_trace,
+    min/max timestamps, generation fields, and all other record fields are
+    persisted together. Duplicate capture_id values fail through the PK.
     """
-    cols = [
-        "capture_id", "asset_type", "code", "source", "daily_range_start",
-        "daily_range_end", "minute_range_start", "minute_range_end",
-        "daily_sha256", "minute_sha256", "metadata_sha256", "status",
-        "daily_row_count", "minute_row_count", "created_at", "updated_at",
-    ]
+    cols = list(FRESH_CAPTURE_COLS)
+    now = _now_ts()
+    # Compatibility: older internal callers may pass record-like objects that
+    # omit newly frozen optional columns. Use FreshCaptureRecord defaults for
+    # optional fields while keeping the three required identity fields strict.
+    required = ("capture_id", "asset_type", "code")
+    for col in required:
+        if not hasattr(rec, col):
+            raise AttributeError(f"fresh capture record missing required field: {col}")
+    defaults = FreshCaptureRecord(
+        capture_id=rec.capture_id, asset_type=rec.asset_type, code=rec.code)
+    vals = []
+    for col in cols:
+        value = getattr(rec, col, getattr(defaults, col))
+        if col in ("created_at", "updated_at") and value is None:
+            value = now
+        vals.append(value)
     placeholders = ", ".join(["?"] * len(cols))
-    vals = [
-        rec.capture_id, rec.asset_type, rec.code, rec.source,
-        rec.daily_range_start, rec.daily_range_end,
-        rec.minute_range_start, rec.minute_range_end,
-        rec.daily_sha256, rec.minute_sha256, rec.metadata_sha256,
-        rec.status, rec.daily_row_count, rec.minute_row_count,
-        rec.created_at or _now_ts(), rec.updated_at or _now_ts(),
-    ]
     conn.execute(
         f"INSERT INTO qfq_fresh_capture ({', '.join(cols)}) VALUES ({placeholders})",
         vals)

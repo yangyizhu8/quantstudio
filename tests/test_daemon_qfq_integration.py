@@ -67,14 +67,11 @@ class _FakeCalendar:
 
 
 def _qfq_conn():
-    """内存 DuckDB + QFQ schema + source_watermark 表。"""
+    """内存 DuckDB + QFQ schema（source_watermark 由 init_duckdb_schema 建立）。"""
     conn = duckdb.connect(":memory:")
     init_duckdb_schema(conn)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS source_watermark (
-            source VARCHAR, table_name VARCHAR, freq VARCHAR,
-            last_date BIGINT, last_batch_id VARCHAR, updated_at TIMESTAMP,
-            PRIMARY KEY(source, table_name, freq))""")
+    # v2.4 B-3a：source_watermark 现由 init_duckdb_schema 建立（8 列含
+    # source_generation/cutover_id NOT NULL），此处不再重复 CREATE。
     # 事件发现扫描依赖（空表即可，不注入分红 → post-ingest 零 trigger）
     conn.execute("""
         CREATE TABLE IF NOT EXISTS stock_dividend (
@@ -209,17 +206,23 @@ class TestCycleLifecycle:
         # 残留 1：归属周期不存在（qfq_cycle_run 无记录 = 建表前崩溃）
         conn.execute(
             "INSERT INTO qfq_watermark_intent (cycle_id, source, table_name, freq, "
-            " candidate_watermark, status) VALUES ('cyc_dead1','xtquant',"
-            " 'stock_daily','daily', ?, 'pending')", [str(WM)])
+            " source_generation, cutover_id, candidate_watermark, status) "
+            "VALUES ('cyc_dead1','xtquant',"
+            " 'stock_daily','daily','xtquant-legacy','legacy-xtquant-pre-cutover',"
+            " ?, 'pending')", [str(WM)])
         # 残留 2：归属周期已 failed
         now = datetime.now(BJ_TZ).strftime("%Y-%m-%d %H:%M:%S")
         conn.execute(
-            "INSERT INTO qfq_cycle_run (cycle_id, phase, status, started_at, updated_at) "
-            "VALUES ('cyc_dead2','post_ingest','failed', ?, ?)", [now, now])
+            "INSERT INTO qfq_cycle_run (cycle_id, phase, status, started_at, "
+            " price_source, source_generation, cutover_id, updated_at) "
+            "VALUES ('cyc_dead2','post_ingest','failed', ?, "
+            " 'xtquant','xtquant-legacy','legacy-xtquant-pre-cutover', ?)", [now, now])
         conn.execute(
             "INSERT INTO qfq_watermark_intent (cycle_id, source, table_name, freq, "
-            " candidate_watermark, status) VALUES ('cyc_dead2','xtquant',"
-            " 'etf_daily','daily', ?, 'pending')", [str(WM)])
+            " source_generation, cutover_id, candidate_watermark, status) "
+            "VALUES ('cyc_dead2','xtquant',"
+            " 'etf_daily','daily','xtquant-legacy','legacy-xtquant-pre-cutover',"
+            " ?, 'pending')", [str(WM)])
         cid = c.qfq_begin_cycle()
         assert cid is not None
         stale = conn.execute(
@@ -263,14 +266,18 @@ def _audit_db(tmp_path, dead_letter=0, held=0):
         conn.execute(
             "INSERT INTO qfq_trigger_queue (trigger_id, asset_type, code, "
             " trigger_type, detection_source, effective_date, status, "
+            " trigger_id_version, price_source, source_generation, cutover_id, "
             " created_at, updated_at) "
             "VALUES (?, 'STOCK','600000','stock_dividend','stock_dividend',"
-            " 0,'dead_letter', ?, ?)", [f"t_dl{i}", now, now])
+            " 0,'dead_letter', 1,'xtquant','xtquant-legacy',"
+            "'legacy-xtquant-pre-cutover', ?, ?)", [f"t_dl{i}", now, now])
     for i in range(held):
         conn.execute(
             "INSERT INTO qfq_watermark_intent (cycle_id, source, table_name, "
-            " freq, candidate_watermark, status, hold_reason) "
-            "VALUES (?, 'xtquant','stock_daily','daily','1','held','gate')",
+            " freq, source_generation, cutover_id, candidate_watermark, status, "
+            " hold_reason) "
+            "VALUES (?, 'xtquant','stock_daily','daily',"
+            "'xtquant-legacy','legacy-xtquant-pre-cutover','1','held','gate')",
             [f"cyc_h{i}"])
     conn.execute("CREATE TABLE sample (code VARCHAR PRIMARY KEY)")
     conn.execute("INSERT INTO sample VALUES ('600000')")

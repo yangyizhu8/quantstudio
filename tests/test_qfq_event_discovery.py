@@ -310,10 +310,12 @@ def test_crash_replay_no_duplicate(env):
         "INSERT OR IGNORE INTO qfq_trigger_queue "
         "(trigger_id, asset_type, code, trigger_type, detection_source, source_key, "
         " effective_date, payload_hash, factor_old, factor_new, factor_revision, "
-        " status, created_at, updated_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " status, trigger_id_version, price_source, source_generation, cutover_id, "
+        " created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [tid, "STOCK", "600000", "factor_revision", "tushare_adj_factor",
          str(FT), FT, ph, 1.0, 2.0, 2, "pending",
+         1, "xtquant", "xtquant-legacy", "legacy-xtquant-pre-cutover",
          "2024-01-02 00:00:00", "2024-01-02 00:00:00"])
 
     # 重放 consume：INSERT OR IGNORE 不重复，new_count==0，但 alert 被 ack

@@ -65,15 +65,10 @@ def _make_dividend_row(code: str, ex_date_str: str, cash_before: float = 0.5,
 
 def _make_mini_db(db_path: str):
     """Create a temp DuckDB with source_watermark + stock_dividend tables."""
+    from quantstudio.pipeline.qfq_schema_contracts import SOURCE_WATERMARK_2_1_DDL
     conn = duckdb.connect(db_path)
-    # source_watermark
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS source_watermark (
-            source VARCHAR, table_name VARCHAR, freq VARCHAR,
-            last_date BIGINT, last_batch_id VARCHAR, updated_at TIMESTAMP,
-            PRIMARY KEY(source, table_name, freq)
-        )
-    """)
+    # source_watermark（v2.4 B-3a：用共享 2.1 DDL 单一真相源——8 列含审计列 NOT NULL）
+    conn.execute(SOURCE_WATERMARK_2_1_DDL)
     # stock_dividend (includes data_source column for writer compatibility)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS stock_dividend (

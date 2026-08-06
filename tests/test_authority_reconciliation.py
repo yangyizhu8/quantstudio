@@ -35,10 +35,12 @@ def _make_staging_db(tmp: Path) -> Path:
         "CREATE TABLE source_watermark ("
         " source VARCHAR, table_name VARCHAR, freq VARCHAR, last_date BIGINT, "
         " last_batch_id VARCHAR, updated_at TIMESTAMP, "
+        " source_generation VARCHAR NOT NULL, cutover_id VARCHAR NOT NULL, "
         " PRIMARY KEY(source, table_name, freq))")
+    # stock_dividend 为非 QFQ 价格表 → not-qfq-managed/not-applicable 哨兵
     c.execute("INSERT INTO source_watermark VALUES "
-              "('tushare','stock_dividend','daily',20240103,'b1','2026-07-28'),"
-              "('akshare','stock_dividend','daily',20240105,'b2','2026-07-28')")
+              "('tushare','stock_dividend','daily',20240103,'b1','2026-07-28','not-qfq-managed','not-applicable'),"
+              "('akshare','stock_dividend','daily',20240105,'b2','2026-07-28','not-qfq-managed','not-applicable')")
     c.close()
     return db
 
@@ -158,8 +160,10 @@ class TestAuthorityReconcileConditions:
             db = _make_staging_db(tmp_p)
             # add an unrelated table watermark
             c = duckdb.connect(str(db))
+            # stock_daily 为 QFQ 价格表 → xtquant-legacy/legacy-xtquant-pre-cutover 哨兵
             c.execute("INSERT INTO source_watermark VALUES "
-                      "('xtquant','stock_daily','daily',20240107,'bx','2026-07-28')")
+                      "('xtquant','stock_daily','daily',20240107,'bx','2026-07-28',"
+                      "'xtquant-legacy','legacy-xtquant-pre-cutover')")
             c.close()
             coll, w = _make_collector(db, tmp_p)
             task = {

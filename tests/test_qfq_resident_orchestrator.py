@@ -85,11 +85,8 @@ def _new_conn():
     conn.execute("CREATE TABLE stock_minutes (code VARCHAR, time BIGINT)")
     conn.execute("CREATE TABLE etf_daily (code VARCHAR, time BIGINT)")
     conn.execute("CREATE TABLE etf_minutes (code VARCHAR, time BIGINT)")
-    conn.execute("""
-        CREATE TABLE source_watermark (
-            source VARCHAR, table_name VARCHAR, freq VARCHAR,
-            last_date BIGINT, last_batch_id VARCHAR, updated_at TIMESTAMP,
-            PRIMARY KEY(source, table_name, freq))""")
+    # v2.4 B-3a：source_watermark 现由 init_duckdb_schema 建立（8 列含
+    # source_generation/cutover_id NOT NULL），此处不再重复 CREATE（已致 Catalog 冲突）。
     conn.execute("""
         CREATE TABLE stock_dividend (
             code VARCHAR, ex_date BIGINT, record_date BIGINT, ann_date BIGINT,
@@ -154,10 +151,13 @@ def _fake_engine_factory(status="committed", calls=None):
             now = datetime.now(BJ_TZ).strftime("%Y-%m-%d %H:%M:%S")
             conn.execute(
                 "INSERT OR IGNORE INTO qfq_reanchor_event "
-                "(event_id, event_type, asset_type, code, status, "
+                "(event_id, event_type, asset_type, code, source_generation, "
+                "cutover_id, status, "
                 " trigger_surface, created_at, first_seen_at, last_seen_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
-                [event_id, "reanchor", asset_type, code, "committed",
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                [event_id, "reanchor", asset_type, code,
+                 "xtquant-legacy", "legacy-xtquant-pre-cutover",
+                 "committed",
                  kw.get("trigger_surface", "resident_v2"), now, now, now])
         return SimpleNamespace(status=status, event_id=event_id, error=(
             None if status == "committed" else f"fake_{status}"))
@@ -228,9 +228,11 @@ def test_promote_scheduled_due(tmpdir_path):
     for tid, eff in [("t_due", EX_PAST_MS), ("t_future", EX_FUTURE_MS)]:
         conn.execute(
             "INSERT INTO qfq_trigger_queue (trigger_id, asset_type, code, trigger_type, "
-            " detection_source, effective_date, status, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?, 'scheduled', ?, ?)",
-            [tid, "STOCK", "600000", "stock_dividend", "stock_dividend", eff, now, now])
+            " detection_source, effective_date, status, trigger_id_version, "
+            " price_source, source_generation, cutover_id, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?, 'scheduled', ?, 'xtquant', 'xtquant-legacy', "
+            " 'legacy-xtquant-pre-cutover', ?, ?)",
+            [tid, "STOCK", "600000", "stock_dividend", "stock_dividend", eff, 1, now, now])
     n = orch.promote_scheduled_due(conn, as_of_ms=AS_OF_MS)
     assert n == 1
     assert conn.execute("SELECT status FROM qfq_trigger_queue WHERE trigger_id='t_due'"
@@ -253,10 +255,12 @@ def test_recover_stale_and_retry_due(tmpdir_path):
         conn.execute(
             "INSERT INTO qfq_trigger_queue (trigger_id, asset_type, code, trigger_type, "
             " detection_source, effective_date, status, attempt_count, claimed_by, "
-            " claimed_at, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?, 'in_progress', ?, 'dead_run', ?, ?, ?)",
+            " claimed_at, trigger_id_version, price_source, source_generation, "
+            " cutover_id, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?, 'in_progress', ?, 'dead_run', ?, "
+            " ?, 'xtquant', 'xtquant-legacy', 'legacy-xtquant-pre-cutover', ?, ?)",
             [tid, "STOCK", "600000", "stock_dividend", "stock_dividend",
-             EX_PAST_MS, att, stale_at, now, now])
+             EX_PAST_MS, att, stale_at, 1, now, now])
     n = orch.recover_stale_in_progress(conn, "r2")
     assert n == 2
     st0, nr0 = conn.execute(
@@ -282,10 +286,12 @@ def test_claim_and_merge_respects_codes_filter(tmpdir_path):
     for trigger_id, code in [("t_target", "600000"), ("t_other", "600001")]:
         conn.execute(
             "INSERT INTO qfq_trigger_queue (trigger_id, asset_type, code, trigger_type, "
-            " detection_source, effective_date, status, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?, 'pending', ?, ?)",
+            " detection_source, effective_date, status, trigger_id_version, "
+            " price_source, source_generation, cutover_id, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?, 'pending', ?, 'xtquant', 'xtquant-legacy', "
+            " 'legacy-xtquant-pre-cutover', ?, ?)",
             [trigger_id, "STOCK", code, "stock_dividend", "stock_dividend",
-             EX_PAST_MS, now, now])
+             EX_PAST_MS, 1, now, now])
 
     units = orch._claim_and_merge(
         conn, cycle_id="cyc_scope", run_id="r_scope", as_of_ms=AS_OF_MS,
@@ -357,8 +363,10 @@ def test_e2e_commit_flow(tmpdir_path, monkeypatch):
     now = datetime.now(BJ_TZ).strftime("%Y-%m-%d %H:%M:%S")
     conn.execute(
         "INSERT INTO qfq_pending_backfill (asset_type, code, table_name, freq, "
-        " range_start, range_end, reason, status, created_at, updated_at) "
-        "VALUES ('STOCK','600000','stock_daily','daily',?,?,'test','pending',?,?)",
+        " range_start, range_end, price_source, source_generation, "
+        " reason, status, created_at, updated_at) "
+        "VALUES ('STOCK','600000','stock_daily','daily',?,?,"
+        " 'xtquant','xtquant-legacy','test','pending',?,?)",
         [EX_PAST_MS, EX_PAST_MS, now, now])
     cid = orch.begin_cycle(conn)
     orch.defer_watermark(conn, cycle_id=cid, source="tushare", table="stock_daily",
@@ -479,15 +487,17 @@ def test_crash_recovery_skips_engine(tmpdir_path, monkeypatch):
     # 模拟：上一轮引擎已 committed（事件在库），trigger 状态未更新即崩溃
     conn.execute(
         "INSERT INTO qfq_reanchor_event (event_id, event_type, asset_type, code, "
-        " status, trigger_surface, created_at, first_seen_at, last_seen_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
+        " source_generation, cutover_id, status, trigger_surface, "
+        " created_at, first_seen_at, last_seen_at) "
+        "VALUES (?,?,?,?, 'xtquant-legacy','legacy-xtquant-pre-cutover',?,?,?,?,?)",
         [ev, "reanchor", "STOCK", "600000", "committed", "resident_v2", now, now, now])
     conn.execute(
         "INSERT INTO qfq_trigger_queue (trigger_id, asset_type, code, trigger_type, "
         " detection_source, effective_date, payload_hash, status, last_event_id, "
+        " trigger_id_version, price_source, source_generation, cutover_id, "
         " created_at, updated_at) "
         "VALUES ('t_crash','STOCK','600000','stock_dividend','stock_dividend',?,"
-        " 'ph','pending',?,?,?)",
+        " 'ph','pending',?, 1,'xtquant','xtquant-legacy','legacy-xtquant-pre-cutover',?,?)",
         [EX_PAST_MS, ev, now, now])
     cid = orch.begin_cycle(conn)
     s = orch.run_post_ingest(conn, cycle_id=cid, run_id="r6", as_of_ms=AS_OF_MS)

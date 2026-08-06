@@ -148,12 +148,18 @@ def _atomic_swap(conn, watermark_ms: int, batch_id: str,
         for j, official in enumerate(STAGING):
             if fail_inject == "watermark_mid" and j == 1:
                 raise InjectedSwapFailure("injected watermark failure")
+            # v2.4 B-3a：source_watermark 8 列显式 INSERT。行业表为非 QFQ 数据集 →
+            # 用哨兵 not-qfq-managed / not-applicable（不污染 QFQ 价格源审计）。
             conn.execute(
-                "INSERT INTO source_watermark VALUES (?,?,?,?,?,?) "
+                "INSERT INTO source_watermark "
+                "(source, table_name, freq, last_date, last_batch_id, updated_at, "
+                " source_generation, cutover_id) VALUES (?,?,?,?,?,?,?,?) "
                 "ON CONFLICT (source, table_name, freq) DO UPDATE SET "
                 "last_date=EXCLUDED.last_date, last_batch_id=EXCLUDED.last_batch_id, "
-                "updated_at=EXCLUDED.updated_at",
-                ["tushare", official, "daily", watermark_ms, batch_id, now])
+                "updated_at=EXCLUDED.updated_at, "
+                "source_generation=EXCLUDED.source_generation, cutover_id=EXCLUDED.cutover_id",
+                ["tushare", official, "daily", watermark_ms, batch_id, now,
+                 "not-qfq-managed", "not-applicable"])
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")

@@ -191,8 +191,13 @@ def _make_orchestrator(cfg, db: Path, args, *, with_fetcher: bool):
     from quantstudio.pipeline.qfq_calendar import CalendarService
     fetcher = None
     if with_fetcher:
-        from quantstudio.pipeline.qfq_fresh_capture import XtquantFreshFetcher
-        fetcher = XtquantFreshFetcher()  # 惰性连接：首次取数才 import/连 xtquant
+        # v2.4 P0-1：fresh fetcher 经共享工厂构造（按 cfg.price_source，与 daemon 一致，防漂移）
+        # CLI 不再硬编码 XtquantFreshFetcher；MCP 模式下不 import xtquant、不连 QMT
+        from quantstudio.pipeline.qfq_fresh_fetcher_factory import (
+            build_qfq_fresh_fetcher, load_sources_cfg)
+        sources_dir = getattr(args, "sources_dir", None) or args.config_dir
+        sources_cfg = load_sources_cfg(sources_dir)
+        fetcher = build_qfq_fresh_fetcher(cfg, sources_cfg, str(db))
     calendar = CalendarService(main_db=db)
     return QFQResidentOrchestrator(
         cfg, main_db=str(db), aux_db=args.aux_db,
@@ -575,6 +580,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--aux-db", default=None, help="SQLite 辅助库路径（默认按主库派生）")
     p.add_argument("--config-dir", default=None,
                    help="含 collector_tasks.json 的配置目录（读 qfq_orchestrator 块）")
+    p.add_argument("--sources-dir", default=None,
+                   help="含 sources_config.json 的配置目录；缺省与 --config-dir 相同")
     p.add_argument("--override", action="append", default=[],
                    help="覆盖配置项 key=value（value 按 JSON 解析），可重复")
     p.add_argument("--json", action="store_true", help="以 JSON 输出结果")

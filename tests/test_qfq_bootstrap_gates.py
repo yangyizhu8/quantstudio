@@ -87,8 +87,10 @@ def test_classify_consistent(orch_env):
     )
     dconn.execute(
         "INSERT INTO qfq_trigger_queue (trigger_id, asset_type, code, trigger_type, "
-        "detection_source, status, created_at, updated_at) VALUES "
+        "detection_source, status, trigger_id_version, price_source, "
+        "source_generation, cutover_id, created_at, updated_at) VALUES "
         "('t1','STOCK','600002','stock_dividend','stock_dividend','committed',"
+        "1,'xtquant','xtquant-legacy','legacy-xtquant-pre-cutover',"
         "'2026-01-08 00:00:00','2026-01-08 00:00:00')"
     )
     assert orch._classify_bootstrap_security(dconn, "STOCK", "600002") == "consistent"
@@ -108,8 +110,10 @@ def test_bootstrap_plan_only_stale_enqueued(orch_env):
     )
     dconn.execute(
         "INSERT INTO qfq_trigger_queue (trigger_id, asset_type, code, trigger_type, "
-        "detection_source, status, created_at, updated_at) VALUES "
+        "detection_source, status, trigger_id_version, price_source, "
+        "source_generation, cutover_id, created_at, updated_at) VALUES "
         "('t1','STOCK','600002','stock_dividend','stock_dividend','committed',"
+        "1,'xtquant','xtquant-legacy','legacy-xtquant-pre-cutover',"
         "'2026-01-08 00:00:00','2026-01-08 00:00:00')"
     )
     plan = orch.bootstrap_plan(dconn, as_of_ms=1700000000000)
@@ -237,8 +241,10 @@ def test_bootstrap_plan_full_production_admissible_manifest(orch_env, monkeypatc
 def test_supersede_bootstrap_runs_clears_old_blocked(orch_env):
     dconn, orch = orch_env
     dconn.execute(
-        "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, status) "
-        "VALUES ('old_run','blocked')"
+        "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, status, price_source, "
+        "source_generation, cutover_id) "
+        "VALUES ('old_run','blocked','xtquant','xtquant-legacy',"
+        "'legacy-xtquant-pre-cutover')"
     )
     dconn.execute(
         "INSERT INTO qfq_bootstrap_item "
@@ -263,7 +269,9 @@ def test_bootstrap_completed_true_when_all_terminal(orch_env):
     dconn, orch = orch_env
     dconn.execute(
         "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, status, schema_version, "
-        "config_hash, baseline_version) VALUES ('br_ok','completed',?,NULL,NULL)",
+        "config_hash, baseline_version, price_source, source_generation, "
+        "cutover_id) VALUES ('br_ok','completed',?,NULL,NULL,"
+        "'xtquant','xtquant-legacy','legacy-xtquant-pre-cutover')",
         [SCHEMA_VERSION]
     )
     dconn.execute(
@@ -279,7 +287,9 @@ def test_bootstrap_completed_blocking_state_false(orch_env, bad_status):
     dconn, orch = orch_env
     dconn.execute(
         "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, status, schema_version, "
-        "config_hash, baseline_version) VALUES ('br','completed',?,NULL,NULL)",
+        "config_hash, baseline_version, price_source, source_generation, "
+        "cutover_id) VALUES ('br','completed',?,NULL,NULL,"
+        "'xtquant','xtquant-legacy','legacy-xtquant-pre-cutover')",
         [SCHEMA_VERSION]
     )
     dconn.execute(
@@ -294,7 +304,9 @@ def test_bootstrap_completed_excluded_does_not_block(orch_env):
     dconn, orch = orch_env
     dconn.execute(
         "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, status, schema_version, "
-        "config_hash, baseline_version) VALUES ('br_excluded','completed',?,NULL,NULL)",
+        "config_hash, baseline_version, price_source, source_generation, "
+        "cutover_id) VALUES ('br_excluded','completed',?,NULL,NULL,"
+        "'xtquant','xtquant-legacy','legacy-xtquant-pre-cutover')",
         [SCHEMA_VERSION]
     )
     dconn.execute(
@@ -314,7 +326,9 @@ def test_bootstrap_completed_blocked_false(orch_env):
     dconn, orch = orch_env
     dconn.execute(
         "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, status, schema_version, "
-        "config_hash, baseline_version) VALUES ('br','completed',?,NULL,NULL)",
+        "config_hash, baseline_version, price_source, source_generation, "
+        "cutover_id) VALUES ('br','completed',?,NULL,NULL,"
+        "'xtquant','xtquant-legacy','legacy-xtquant-pre-cutover')",
         [SCHEMA_VERSION]
     )
     dconn.execute(
@@ -329,7 +343,9 @@ def test_bootstrap_completed_schema_mismatch_false(orch_env):
     dconn, orch = orch_env
     dconn.execute(
         "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, status, schema_version, "
-        "config_hash, baseline_version) VALUES ('br','completed','0.0.0',NULL,NULL)"
+        "config_hash, baseline_version, price_source, source_generation, "
+        "cutover_id) VALUES ('br','completed','0.0.0',NULL,NULL,"
+        "'xtquant','xtquant-legacy','legacy-xtquant-pre-cutover')"
     )
     assert orch.bootstrap_completed(dconn) is False
 

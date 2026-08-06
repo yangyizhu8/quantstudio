@@ -108,6 +108,10 @@ class QFQResidentOrchestrator:
                  calendar=None,
                  watermark_advancer: Optional[Callable] = None):
         self.cfg = cfg
+        # v2.4 B-3a.3 P0-2：统一静态 pre-cutover identity（generation/cutover 固定 legacy 哨兵，
+        # 不读 cfg.source_generation/cutover_id；B-5 动态、B-6 激活）
+        from quantstudio.pipeline.qfq_schema_contracts import pre_cutover_qfq_identity
+        self._ident = pre_cutover_qfq_identity(cfg.price_source)
         if not cfg.enabled:
             logger.info("[qfq_orch] enabled=False，编排器为 no-op（daemon 走旧路径）")
         self.main_db = main_db
@@ -143,10 +147,11 @@ class QFQResidentOrchestrator:
             "INSERT INTO qfq_cycle_run "
             "(cycle_id, business_date, trigger_surface, config_hash, schema_hash, "
              " phase, discovered_count, executed_count, success_count, failed_count, "
-             " pending_count, status, started_at, updated_at, detector_degraded) "
-            "VALUES (?,?,?,?,?, 'started', 0,0,0,0,0, 'started', ?, ?, 0)",
+             " pending_count, status, started_at, updated_at, detector_degraded, "
+             " price_source, source_generation, cutover_id) "
+            "VALUES (?,?,?,?,?, 'started', 0,0,0,0,0, 'started', ?, ?, 0, ?, ?, ?)",
             [cycle_id, business_date_ms, "resident_v2", config_hash, schema_hash,
-             now, now])
+             now, now, self._ident["price_source"], self._ident["source_generation"], self._ident["cutover_id"]])
         return cycle_id
 
     def supersede_stale_intents(self, conn) -> int:
@@ -435,6 +440,7 @@ class QFQResidentOrchestrator:
                 model="fresh_authoritative_rebase",
                 model_reason="resident corporate-action/factor-change authoritative rebase",
                 fresh_minutes=fresh_minute,
+                price_source=self.cfg.price_source,  # v2.4 B-3a P0-3：MCP 不改写，event/anchor 落真实 price_source
                 fresh_source=self.cfg.price_source,  # P2-4：放开到 mcp（price_source 驱动）
                 fresh_capture_id=capture_id,
                 fresh_metadata_sha256=record.metadata_sha256,
@@ -543,16 +549,18 @@ class QFQResidentOrchestrator:
             status = "dead_letter" if dead_letter else "retryable_failed"
             dl_at = now_iso if dead_letter else None
             conn.execute(
-                "INSERT INTO qfq_pending_backfill "
-                "(asset_type, code, table_name, freq, range_start, range_end, reason, "
-                " status, trigger_id, last_event_id, dead_letter_at, created_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
-                "ON CONFLICT (asset_type, code, table_name, freq, range_start, range_end) "
+                "Insert INTO qfq_pending_backfill "
+                "(asset_type, code, table_name, freq, range_start, range_end, price_source, "
+                " source_generation, reason, status, trigger_id, last_event_id, "
+                " dead_letter_at, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT (asset_type, code, table_name, freq, range_start, range_end, "
+                " price_source, source_generation) "
                 "DO UPDATE SET status=excluded.status, trigger_id=excluded.trigger_id, "
                 " last_event_id=excluded.last_event_id, dead_letter_at=excluded.dead_letter_at, "
                 " updated_at=excluded.updated_at",
-                [asset_type, code, t, freq, rs, re, reason, status, trigger_id,
-                 event_id, dl_at, now, now])
+                [asset_type, code, t, freq, rs, re, self._ident["price_source"], self._ident["source_generation"],
+                 reason, status, trigger_id, event_id, dl_at, now, now])
 
     # ------------------------------------------------------------------
     # 质量门控（编排级）
@@ -621,12 +629,15 @@ class QFQResidentOrchestrator:
         old = self._read_watermark(conn, source, table, freq)
         conn.execute(
             "INSERT INTO qfq_watermark_intent "
-            "(cycle_id, source, table_name, freq, old_watermark, candidate_watermark, status, "
-            " hold_reason, committed_at) VALUES (?,?,?,?,?,?,'pending',NULL,NULL) "
-            "ON CONFLICT (cycle_id, source, table_name, freq) DO UPDATE SET "
+            "(cycle_id, source, table_name, freq, source_generation, cutover_id, "
+            " old_watermark, candidate_watermark, status, "
+            " hold_reason, committed_at) VALUES (?,?,?,?,?,?,?,?,'pending',NULL,NULL) "
+            "ON CONFLICT (cycle_id, source, table_name, freq, source_generation, cutover_id) "
+            "DO UPDATE SET "
             " candidate_watermark=excluded.candidate_watermark, status='pending', "
             " hold_reason=NULL, committed_at=NULL",
-            [cycle_id, source, table, freq, old, candidate_watermark])
+            [cycle_id, source, table, freq, "xtquant-legacy",
+             "legacy-xtquant-pre-cutover", old, candidate_watermark])
 
     def _read_watermark(self, conn, source: str, table: str, freq: str):
         row = conn.execute(
@@ -660,14 +671,19 @@ class QFQResidentOrchestrator:
         if self.watermark_advancer is not None:
             self.watermark_advancer(source, table, freq, new_watermark, batch_id)
             return
-        # 回退：直接 upsert source_watermark（与 writer.advance_watermark 同表）
+        # 回退：直接 upsert source_watermark（与 writer.advance_watermark 同表）。
+        # v2.4 B-3a：8 列显式 INSERT + pre-cutover 静态哨兵（source 保留真实值不改写）。
+        from quantstudio.pipeline.qfq_schema_contracts import pre_cutover_generation
+        gen, cutover = pre_cutover_generation(table, source)
         conn.execute(
             "INSERT INTO source_watermark (source, table_name, freq, last_date, "
-            " last_batch_id, updated_at) VALUES (?,?,?,?,?,?) "
+            " last_batch_id, updated_at, source_generation, cutover_id) "
+            "VALUES (?,?,?,?,?,?,?,?) "
             "ON CONFLICT (source, table_name, freq) DO UPDATE SET "
             " last_date=excluded.last_date, last_batch_id=excluded.last_batch_id, "
-            " updated_at=excluded.updated_at",
-            [source, table, freq, new_watermark, batch_id, _now_ts()])
+            " updated_at=excluded.updated_at, "
+            " source_generation=excluded.source_generation, cutover_id=excluded.cutover_id",
+            [source, table, freq, new_watermark, batch_id, _now_ts(), gen, cutover])
 
     # ------------------------------------------------------------------
     # bootstrap（首次部署）
@@ -840,9 +856,11 @@ class QFQResidentOrchestrator:
         conn.execute(
             "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, total_count, "
             " completed_count, blocked_count, failed_count, status, "
-            " schema_version, config_hash, baseline_version, started_at, updated_at) "
-            "VALUES (?,?,0,0,0,'planned',?,?,?,?,?)",
+            " schema_version, config_hash, baseline_version, price_source, "
+            " source_generation, cutover_id, started_at, updated_at) "
+            "VALUES (?,?,0,0,0,'planned',?,?,?,?,?,?,?,?)",
             [run_id, len(all_items), _schema_v, _config_h, _baseline_v,
+             self._ident["price_source"], self._ident["source_generation"], self._ident["cutover_id"],
              _now_ts(), _now_ts()])
         pending_items: List[Tuple[str, str]] = []
         classify: Dict[str, int] = {}
@@ -907,12 +925,17 @@ class QFQResidentOrchestrator:
             f"WHERE bootstrap_run_id IN ({placeholders}) AND status='blocked'",
             [now, *ids])
         # 仅废弃“未处于 completed 状态”的 run；completed run 保持，放行 fail-closed
+        # DuckDB UPDATE cursor.rowcount is -1, so compute the affected count with
+        # the exact UPDATE predicate before executing the update.
         run_count = conn.execute(
+            f"SELECT COUNT(*) FROM qfq_bootstrap_run "
+            f"WHERE bootstrap_run_id IN ({placeholders}) AND status <> 'completed'",
+            ids).fetchone()[0]
+        conn.execute(
             f"UPDATE qfq_bootstrap_run SET status='superseded', updated_at=? "
             f"WHERE bootstrap_run_id IN ({placeholders}) AND status <> 'completed'",
             [now, *ids])
-        return {"runs": int(getattr(run_count, "rowcount", len(ids))),
-                "items": int(item_count)}
+        return {"runs": int(run_count), "items": int(item_count)}
 
     def bootstrap_run(self, conn, *, run_id: str, as_of_ms: int,
                       fetcher: FreshFetcher, resume: bool = False) -> Dict:

@@ -143,12 +143,14 @@ def _rebase_call(conn, cal, *, fresh_daily, fresh_minutes=None, freqs=("1min",))
 
 def _seed_anchor(conn, code="600875", version=0):
     # apply_reanchor_for_security 默认 price_source="xtquant"（与引擎一致）
+    # v2.4 B-3a：PK 扩为 (asset_type, code, price_source, source_generation)，
+    # source_generation NOT NULL（pre-cutover 静态值 "xtquant-legacy"）。
     conn.execute(
         "INSERT INTO qfq_anchor_state (asset_type, code, price_source, "
-        "anchor_version, status, updated_at) VALUES ('STOCK', ?, "
-        "'xtquant', ?, 'ok', ?) "
-        "ON CONFLICT (asset_type, code, price_source) DO UPDATE SET "
-        "anchor_version=excluded.anchor_version",
+        "source_generation, anchor_version, status, updated_at) "
+        "VALUES ('STOCK', ?, 'xtquant', 'xtquant-legacy', ?, 'ok', ?) "
+        "ON CONFLICT (asset_type, code, price_source, source_generation) "
+        "DO UPDATE SET anchor_version=excluded.anchor_version",
         [code, version, datetime.now()])
 
 
@@ -448,6 +450,8 @@ def _cap_rec(capture_id, *, code="600875", status="captured",
         daily_sha256=daily_sha, minute_sha256=minute_sha,
         metadata_sha256=meta_sha, status=status,
         daily_row_count=0, minute_row_count=0,
+        source_generation="xtquant-legacy",
+        cutover_id="legacy-xtquant-pre-cutover",
         created_at=now, updated_at=now)
 
 
@@ -459,10 +463,12 @@ def _insert_event_committed(conn, capture_id, code="600875"):
     now = datetime.now()
     conn.execute(
         "INSERT INTO qfq_reanchor_event (event_id, event_type, asset_type, code, "
-        "price_source, daily_method, minute_ratio_plan, status, created_at, "
+        "price_source, source_generation, cutover_id, daily_method, "
+        "minute_ratio_plan, status, created_at, "
         "first_seen_at, last_seen_at, occurrence_count) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [f"ev-{capture_id}", "reanchor", "STOCK", code, "xtquant_front",
+         "xtquant-legacy", "legacy-xtquant-pre-cutover",
          "staged_fresh_update", plan, "committed",
          now, now, now, 1])
 

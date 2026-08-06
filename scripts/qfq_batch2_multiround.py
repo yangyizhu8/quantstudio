@@ -108,7 +108,10 @@ def insert_bootstrap(staging_main: Path, run_id: str) -> None:
             "INSERT INTO qfq_bootstrap_run "
             "(bootstrap_run_id, asset_type, total_count, completed_count, blocked_count, "
              " failed_count, status, schema_version, config_hash, baseline_version, "
-             " started_at, updated_at) VALUES (?, 'ETF', ?, 0, 0, 0, 'planned', ?, NULL, NULL, ?, ?)",
+             " price_source, source_generation, cutover_id, "
+             " started_at, updated_at) "
+            "VALUES (?, 'ETF', ?, 0, 0, 0, 'planned', ?, NULL, NULL, "
+             " 'xtquant', 'xtquant-legacy', 'legacy-xtquant-pre-cutover', ?, ?)",
             [run_id, len(CANARY_ALL), SCHEMA_VERSION, now, now])
         for code in CANARY_ALL:
             conn.execute(
@@ -134,8 +137,11 @@ def inject_triggers(staging_main: Path) -> int:
             conn.execute(
                 "INSERT OR IGNORE INTO qfq_trigger_queue "
                 "(trigger_id, asset_type, code, trigger_type, detection_source, "
-                 " source_key, effective_date, payload_hash, status, created_at, updated_at) "
-                "VALUES (?, 'ETF', ?, 'factor_new', 'tushare_fund_adj_new', ?, ?, ?, 'pending', ?, ?)",
+                 " source_key, effective_date, payload_hash, status, "
+                 " trigger_id_version, price_source, source_generation, cutover_id, "
+                 " created_at, updated_at) "
+                "VALUES (?, 'ETF', ?, 'factor_new', 'tushare_fund_adj_new', ?, ?, ?, 'pending', "
+                 " 1, 'xtquant', 'xtquant-legacy', 'legacy-xtquant-pre-cutover', ?, ?)",
                 [tid, code, str(eff), eff, payload, now_iso, now_iso])
             n += 1
         return n

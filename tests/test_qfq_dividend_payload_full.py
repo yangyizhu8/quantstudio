@@ -182,3 +182,94 @@ def test_business_revision_changes_trigger_id(env):
     assert len(rows) == 2
     hashes = {r[1] for r in rows}
     assert len(hashes) == 2  # payload_hash 不同 → 两个不同 trigger
+
+
+# ---------------- v2.4 B-1：旧手写算法 vs 新共享函数黄金一致性 ----------------
+
+from quantstudio.pipeline.qfq_dividend_payload import (
+    dividend_payload_hash as _shared_hash, norm_div_val,
+)
+
+
+def _legacy_handwritten_hash(code, ex_date, record_date, ann_date, end_date,
+                              cash_div_before_tax, cash_div_after_tax, cash_div,
+                              stk_div, stk_bo_rate, stk_co_rate, div_rat, div_proc):
+    """复刻 scan_stock_dividend 旧手写算法（payload_hash_of + _norm_div_val 13 字段），
+    作为黄金基准，与新共享函数逐项比对。"""
+    return payload_hash_of([
+        code, ex_date, record_date,
+        int(ann_date) if ann_date is not None else None,
+        int(end_date) if end_date is not None else None,
+        norm_div_val(cash_div_before_tax),
+        norm_div_val(cash_div_after_tax),
+        norm_div_val(cash_div),
+        norm_div_val(stk_div),
+        norm_div_val(stk_bo_rate),
+        norm_div_val(stk_co_rate),
+        norm_div_val(div_rat),
+        norm_div_val(div_proc),
+    ])
+
+
+@pytest.mark.parametrize("label,kwargs", [
+    ("全字段正常", dict(code="600000", ex_date=20260108, record_date="20260107",
+                        ann_date="20260105", end_date="20251231",
+                        cash_div_before_tax="0.5", cash_div_after_tax="0.425",
+                        cash_div="0.5", stk_div="0", stk_bo_rate="0", stk_co_rate="0",
+                        div_rat="1.0", div_proc="实施")),
+    ("None/NaN 规范化", dict(code="000001", ex_date=20260108, record_date=None,
+                             ann_date=None, end_date=None,
+                             cash_div_before_tax=None, cash_div_after_tax=float("nan"),
+                             cash_div="", stk_div=None, stk_bo_rate=None, stk_co_rate=None,
+                             div_rat=None, div_proc="实施")),
+    ("字符串数字 strip", dict(code="510050", ex_date=20260108, record_date=" 20260107 ",
+                              ann_date=" 20260105 ", end_date=" 20251231 ",
+                              cash_div_before_tax=" 0.5 ", cash_div_after_tax=" 0.425 ",
+                              cash_div=" 0.5 ", stk_div=" 0 ", stk_bo_rate=" 0 ",
+                              stk_co_rate=" 0 ", div_rat=" 1.0 ", div_proc=" 实施 ")),
+])
+def test_shared_hash_equals_legacy_handwritten(label, kwargs):
+    """新共享函数与旧手写算法对相同输入产生相同 hash（防口径漂移）。"""
+    legacy = _legacy_handwritten_hash(**kwargs)
+    shared = _shared_hash(**kwargs)
+    assert legacy == shared, f"[{label}] hash 不一致: legacy={legacy} shared={shared}"
+
+
+def test_field_order_matters():
+    """字段顺序敏感：交换 cash_div_before_tax 与 cash_div_after_tax 应改变 hash。"""
+    base = dict(code="600000", ex_date=20260108, record_date=None, ann_date=None,
+                end_date=None, cash_div="0.5", stk_div="0", stk_bo_rate="0",
+                stk_co_rate="0", div_rat="1.0", div_proc="实施")
+    h1 = _shared_hash(cash_div_before_tax="0.5", cash_div_after_tax="0.425", **base)
+    h2 = _shared_hash(cash_div_before_tax="0.425", cash_div_after_tax="0.5", **base)
+    assert h1 != h2
+
+
+def test_update_time_not_in_hash():
+    """update_time 不进 hash（非业务字段）—— 共享函数签名不含 update_time。"""
+    import inspect
+    sig = inspect.signature(_shared_hash)
+    assert "update_time" not in sig.parameters
+
+
+def test_no_circular_import():
+    """确认无循环 import：qfq_dividend_payload 不反向依赖 qfq_event_discovery。
+
+    检查 import 语句（非全文文本，因 docstring 描述来源会提到该名）。
+    """
+    import ast
+    import quantstudio.pipeline.qfq_dividend_payload as mod
+    tree = ast.parse(open(mod.__file__, encoding="utf-8").read())
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module)
+        elif isinstance(node, ast.Import):
+            for n in node.names:
+                imported.add(n.name)
+    assert not any("qfq_event_discovery" in m for m in imported), \
+        f"qfq_dividend_payload 不得 import qfq_event_discovery（循环依赖），实际 import: {imported}"
+    # 唯一允许的上游依赖是 qfq_orchestrator_types（底层）
+    qfq_deps = {m for m in imported if m.startswith("quantstudio.pipeline.qfq")}
+    assert qfq_deps == {"quantstudio.pipeline.qfq_orchestrator_types"}, \
+        f"qfq_dividend_payload 只允许依赖 qfq_orchestrator_types，实际: {qfq_deps}"

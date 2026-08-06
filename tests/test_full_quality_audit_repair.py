@@ -38,29 +38,35 @@ def test_boolean_enum_audit_accepts_zero_one_contract(tmp_path):
     assert report.passed
 
 
-def test_writer_migrates_legacy_calendar_without_changing_single_pk(tmp_path):
+def test_writer_rejects_legacy_calendar_partial_db(tmp_path):
+    """v2.4 B-3a.3 P0-1：DuckDBWriter 不再迁移旧 trade_calendar——旧/共享表 partial 库
+    必须在 writer init 第一条 DDL 前 fail-fast（_WriterSchemaMigrationRequired），
+    不得让普通 writer 自动升级或修补 QFQ schema。
+
+    （原 test_writer_migrates_legacy_calendar_without_changing_single_pk 测的"writer
+    自动迁移旧 calendar"行为已被 P0-1 明确移除：partial 库禁止 writer init。）
+    """
+    import pytest
+    from quantstudio.pipeline.writers import _WriterSchemaMigrationRequired
     db = tmp_path / "legacy.db"
     with duckdb.connect(str(db)) as conn:
+        # 旧 4 列 trade_calendar（缺 exchange/pretrade_date）→ 与 target 不符 → partial
         conn.execute(
             "CREATE TABLE trade_calendar("
             "cal_date BIGINT NOT NULL, is_open BOOLEAN NOT NULL, "
             "source VARCHAR, updated_at TIMESTAMP, PRIMARY KEY(cal_date))"
         )
         conn.execute("INSERT INTO trade_calendar VALUES (1, TRUE, 'legacy', CURRENT_TIMESTAMP)")
+        before = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
 
-    writer = DuckDBWriter({"type": "duckdb", "path": str(db)})
-    writer.close()
+    # writer init 必须写前 fail-fast（旧 calendar → partial_or_mixed）
+    with pytest.raises(_WriterSchemaMigrationRequired):
+        DuckDBWriter({"type": "duckdb", "path": str(db)})
 
+    # 表集合不变（0 DDL）
     with duckdb.connect(str(db), read_only=True) as conn:
-        cols = [r[1] for r in conn.execute("PRAGMA table_info('trade_calendar')").fetchall()]
-        pk_cols = [r[1] for r in conn.execute("PRAGMA table_info('trade_calendar')").fetchall() if r[5]]
-        row = conn.execute(
-            "SELECT cal_date, is_open, exchange, pretrade_date, source "
-            "FROM trade_calendar"
-        ).fetchone()
-    assert cols == ["cal_date", "is_open", "source", "updated_at", "exchange", "pretrade_date"]
-    assert pk_cols == ["cal_date"]
-    assert row == (1, True, "SSE", None, "legacy")
+        after = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
+    assert before == after
 
 
 def test_stock_basic_profile_preserves_ts_code_and_writer_contract(tmp_path):

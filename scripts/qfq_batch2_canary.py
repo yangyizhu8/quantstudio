@@ -92,11 +92,16 @@ def _conserved(before: dict, after: dict, rel_tol: float = 1e-6) -> bool:
 
 def insert_bootstrap(conn, run_id: str) -> None:
     now = _now_ts()
+    # v2.4 B-3a：bootstrap_run 含 price_source/source_generation/cutover_id NOT NULL 新列。
+    # canary 走 xtquant QFQ 路径 → pre-cutover 哨兵。
     conn.execute(
         "INSERT INTO qfq_bootstrap_run "
         "(bootstrap_run_id, asset_type, total_count, completed_count, blocked_count, "
         " failed_count, status, schema_version, config_hash, baseline_version, "
-        " started_at, updated_at) VALUES (?, 'ETF', ?, 0, 0, 0, 'planned', '0', '0', '0', ?, ?)",
+        " price_source, source_generation, cutover_id, "
+        " started_at, updated_at) "
+        "VALUES (?, 'ETF', ?, 0, 0, 0, 'planned', '0', '0', '0', "
+        " 'xtquant', 'xtquant-legacy', 'legacy-xtquant-pre-cutover', ?, ?)",
         [run_id, len(CANARY_ALL), now, now])
     for code in CANARY_ALL:
         conn.execute(

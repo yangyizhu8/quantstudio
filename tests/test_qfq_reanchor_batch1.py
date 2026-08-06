@@ -149,22 +149,48 @@ class TestSchemaDDL:
         assert SCHEMA.aux_db_path(tmp_path / "other.db").name == "qfq_aux.db"
 
     def test_migrate_adds_missing_column(self, tmp_path):
-        """存量库缺列 → init 时自动 ALTER 补全（幂等迁移）。"""
+        """``_migrate_duckdb_columns`` 工具对缺列旧表自动 ALTER 补全（幂等迁移）。
+
+        v2.4 B-3a 修订：普通 ``init_duckdb_schema`` 不再对版本化/部分 schema 调用
+        ``_migrate_duckdb_columns``（写前 fail-fast，提示用显式 migration runner
+        B-3b）。但 ``_migrate_duckdb_columns`` 作为**独立的 schema 演进通用补列工具**
+        保留其行为（B-3R §4：无非 B-3 的特殊兼容用途）。本测试：
+        (1) 用全量 DDL 建全表后 DROP 几列模拟旧表缺列；
+        (2) 直接调 ``_migrate_duckdb_columns`` 工具验证补全（不经普通 init 闸门）；
+        (3) 断言普通 init 对「只有部分表」的库写前 fail-fast。
+        """
         import duckdb
+        from quantstudio.pipeline.qfq_schema_status import (
+            detect_schema_status, SchemaStatus, QfqSchemaMigrationRequired)
         main = tmp_path / "quantstudio.db"
         d = duckdb.connect(str(main))
-        # 建一个缺 v5 新列的旧结构（除 trade_calendar 外的表）
-        d.execute("CREATE TABLE qfq_anchor_state (asset_type VARCHAR, code VARCHAR, "
-                  "price_source VARCHAR, status VARCHAR, updated_at TIMESTAMP, "
-                  "PRIMARY KEY(asset_type, code, price_source))")
+        # 先用全量 DDL 建全表
+        for ddl in SCHEMA.DDL_DUCKDB.values():
+            d.execute(ddl)
+        # 模拟旧表缺 v5 新列：DROP anchor_state 的几列
+        d.execute("ALTER TABLE qfq_anchor_state DROP COLUMN probe_fail_count")
+        d.execute("ALTER TABLE qfq_anchor_state DROP COLUMN last_stale_probe_at")
+        d.execute("ALTER TABLE qfq_anchor_state DROP COLUMN anchor_version")
         d.commit()
-        SCHEMA.init_duckdb_schema(d)  # 触发迁移（fail-fast，合法类型不报错）
+        # _migrate_duckdb_columns 工具补列（独立工具，fail-fast，合法类型不报错）
+        SCHEMA._migrate_duckdb_columns(d)
         d.commit()
         actual = {r[0] for r in d.execute("DESCRIBE qfq_anchor_state").fetchall()}
-        d.close()
         for c in ("probe_fail_count", "last_stale_probe_at", "last_stale_probe_error",
                   "anchor_version", "retry_count"):
             assert c in actual, f"迁移未补全 {c}"
+        d.close()
+
+        # (3) 普通 init 对「只有部分表」的库写前 fail-fast（B-3a 闸门）
+        d2 = duckdb.connect(str(tmp_path / "partial.db"))
+        d2.execute("CREATE TABLE qfq_anchor_state (asset_type VARCHAR, code VARCHAR, "
+                   "price_source VARCHAR, status VARCHAR, updated_at TIMESTAMP, "
+                   "PRIMARY KEY(asset_type, code, price_source))")
+        d2.commit()
+        assert detect_schema_status(d2) == SchemaStatus.PARTIAL_OR_MIXED
+        with pytest.raises(QfqSchemaMigrationRequired):
+            SCHEMA.init_duckdb_schema(d2)
+        d2.close()
 
     # ---- 阻断 3 新增测试 ----
     def test_aux_db_path_custom_main_derives_sibling_aux(self, tmp_path):
@@ -197,16 +223,23 @@ class TestSchemaDDL:
     # ---- 可靠性（阻断 5）新增测试 ----
     def test_schema_migration_failure_is_not_silently_ignored(self, tmp_path):
         import duckdb
+        from quantstudio.pipeline.qfq_schema_status import (
+            detect_schema_status, SchemaStatus, QfqSchemaMigrationRequired)
         main = tmp_path / "quantstudio.db"
         d = duckdb.connect(str(main))
         d.execute("CREATE TABLE qfq_anchor_state (asset_type VARCHAR, code VARCHAR, "
                   "price_source VARCHAR, status VARCHAR, updated_at TIMESTAMP, "
                   "PRIMARY KEY(asset_type, code, price_source))")
         d.commit()
-        # ALTER 类型不可解析 → 迁移必须抛 RuntimeError（不再静默吞掉）
+        # v2.4 B-3a：普通 init 对该部分库写前 fail-fast（不再走 _migrate 路径）
+        assert detect_schema_status(d) == SchemaStatus.PARTIAL_OR_MIXED
+        with pytest.raises(QfqSchemaMigrationRequired):
+            SCHEMA.init_duckdb_schema(d)
+        # 直接调 _migrate_duckdb_columns 工具：ALTER 类型不可解析 → 抛 RuntimeError
+        # （不再静默吞掉；独立工具行为保留，B-3R §4）
         with mock.patch.object(SCHEMA, "_infer_col_type", return_value="NONSENSE_TYPE"):
             with pytest.raises(RuntimeError):
-                SCHEMA.init_duckdb_schema(d)
+                SCHEMA._migrate_duckdb_columns(d)
         d.close()
 
     def test_schema_init_verifies_required_columns(self, tmp_path):

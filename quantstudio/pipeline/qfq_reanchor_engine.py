@@ -1855,12 +1855,13 @@ def _insert_event_on_conn(conn, *, event_id: str, event_type: str, asset_type: s
     now = datetime.now()
     conn.execute(
         "INSERT INTO qfq_reanchor_event (event_id, event_type, asset_type, code, "
-        "price_source, daily_method, minute_ratio_plan, ratio_dispersion, "
-        "ratio_cluster_count, golden_check, status, block_reason, error, "
-        "postcheck_summary, rows_detail, trigger_surface, started_at, finished_at, "
-        "created_at, first_seen_at, last_seen_at, occurrence_count) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
+        "price_source, source_generation, cutover_id, daily_method, minute_ratio_plan, "
+        "ratio_dispersion, ratio_cluster_count, golden_check, status, block_reason, "
+        "error, postcheck_summary, rows_detail, trigger_surface, started_at, "
+        "finished_at, created_at, first_seen_at, last_seen_at, occurrence_count) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
         [event_id, event_type, asset_type, code, price_source,
+         "xtquant-legacy", "legacy-xtquant-pre-cutover",
          "staged_fresh_update", minute_ratio_plan, ratio_dispersion,
          ratio_cluster_count, golden_check, status, block_reason, error,
          postcheck_summary, rows_detail, trigger_surface,
@@ -1878,14 +1879,15 @@ def _advance_anchor_on_conn(conn, *, asset_type: str, code: str, price_source: s
     new_version = int(row[0] or 0) + 1 if row else 1
     now = datetime.now()
     conn.execute(
-        "INSERT INTO qfq_anchor_state (asset_type, code, price_source, anchor_version, "
-        "status, last_event_id, last_ex_date, updated_at) VALUES (?,?,?,?,?,?,?,?) "
-        "ON CONFLICT (asset_type, code, price_source) DO UPDATE SET "
+        "INSERT INTO qfq_anchor_state (asset_type, code, price_source, source_generation, "
+        "anchor_version, status, last_event_id, last_ex_date, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT (asset_type, code, price_source, source_generation) DO UPDATE SET "
         "anchor_version=EXCLUDED.anchor_version, status=EXCLUDED.status, "
         "last_event_id=EXCLUDED.last_event_id, last_ex_date=EXCLUDED.last_ex_date, "
         "updated_at=EXCLUDED.updated_at",
-        [asset_type, code, price_source, new_version, "ok", event_id,
-         last_ex_date, now])
+        [asset_type, code, price_source, "xtquant-legacy", new_version, "ok",
+         event_id, last_ex_date, now])
     return new_version
 
 

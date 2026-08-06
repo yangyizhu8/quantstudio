@@ -217,20 +217,16 @@ class ResidentCollector:
         return bool(self._qfq_config().enabled)
 
     def _qfq_orchestrator(self):
-        """惰性构造编排器（xtquant fetcher 惰性连接；calendar 走主库交易日历）。"""
+        """惰性构造编排器（fresh fetcher 按 price_source 经共享工厂构造；calendar 走主库交易日历）。"""
         if self._qfq_orch is None:
             from .qfq_resident_orchestrator import QFQResidentOrchestrator
-            from .qfq_fresh_capture import XtquantFreshFetcher, McpFreshFetcher
+            from .qfq_fresh_fetcher_factory import build_qfq_fresh_fetcher
             from .qfq_calendar import CalendarService
             cfg = self._qfq_config()
-            # P2-4：fresh fetcher 按 price_source 决定（mcp 作传输通道，上游权威 xtquant）
+            # v2.4 P0-1：fresh fetcher 经共享工厂构造（daemon 与 CLI 共用，防漂移）
+            fetcher = build_qfq_fresh_fetcher(cfg, self.sources_cfg, str(self.writer.db_path))
             if cfg.price_source == "mcp":
-                mcp_cfg = (self.sources_cfg.get("sources", {}).get("mcp")
-                           or self.sources_cfg.get("mcp", {}))
-                fetcher = McpFreshFetcher(mcp_cfg=mcp_cfg)   # 惰性：首次取数才建 MCP 连接
                 logger.info("[qfq] 编排器使用 McpFreshFetcher（price_source=mcp）")
-            else:
-                fetcher = XtquantFreshFetcher()   # 惰性：首次取数才 import/连 xtquant
             self._qfq_orch = QFQResidentOrchestrator(
                 cfg, main_db=str(self.writer.db_path),
                 fetcher=fetcher,
