@@ -523,3 +523,18 @@ formal paths, and writes a new marker plus copy manifest without overwriting.
 `mcp/mcp-gen1/cutover` identity, preserves the discovery baseline, creates no
 new mcp trigger or intent, and forces global watermark hold even when the scoped
 gate passes.
+
+## B-6 WP6/WP7 formal cutover runner (2026-08-07)
+
+The formal cutover runner is the only authorized path to the formal production
+main/aux databases.  It reuses the shared activation core `_do_activate_in_txn`
+(same six-point fault matrix as staging) behind an authorization + dual-lock +
+backup chain (`qfq_formal_authorization`, `qfq_formal_cutover`,
+`qfq_formal_cutover_cli`).  The staging-only guard is unchanged and keeps
+refusing formal paths.  WP7 post-cutover audit, held-canary and observation
+hard-count rules are implemented (`qfq_formal_postcutever_audit`,
+`qfq_formal_canary`, `qfq_formal_observation`).  Formal migration, `mcp-gen1`
+activation, formal canary and formal watermark release remain unauthorized
+pending G2 and a separate explicit user authorization.  This formal runner does
+not change the strategy toolbox API, strategy signal/selection/rebalance/order
+semantics, or any回测 engine behavior; it is a data-layer cutover tool only.

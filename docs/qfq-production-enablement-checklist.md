@@ -272,3 +272,59 @@ Before any future B-6 activation, verify the following on a staging copy only:
   validation, and performs staging-only abort recovery before canary execution.
 - Formal main/aux migration and formal `mcp-gen1`/active activation remain
   prohibited regardless of `--allow-production`.
+
+
+## B-6 WP6/WP7 formal cutover runner gate (2026-08-07)
+
+The B-6 WP6/WP7 **formal** cutover runner is the only authorized path to the
+formal production main/aux databases.  It is a sibling of the staging runner
+(`activate_cutover_staging`); both reuse the shared policy-free activation core
+`_do_activate_in_txn` so the six-point fault matrix is byte-for-byte equivalent,
+but the formal wrapper substitutes the staging-only guard with the full
+authorization + dual-lock + backup chain.
+
+- **Authorization contract** (`qfq_formal_authorization.py`): a one-time
+  tamper-evident manifest, hashed over raw bytes before JSON parse, with the
+  expected SHA-256 supplied out-of-band via CLI `--authorization-sha256`.  The
+  manifest pins `watermark_release_authorized=false` and one independent nonce
+  per grant (`wp6_formal_cutover` / `wp7_held_canary`).  A cross-run-dir nonce
+  ledger (`<auth_root>/consumed/<grant>/<nonce>.json`) burns each nonce via
+  `O_CREAT|O_EXCL`, and an immutable `index.json` digest chain detects marker
+  deletion/tampering (ACL is not the sole defense).
+- **Disk formula** (P2-2): `compute_required_free_bytes = 5*main + 2*aux +
+  max(10 GiB, ceil(0.20*(main+aux)))`, shared by runner/tests/runbook; the
+  frozen-baseline reference value is `91004735488` bytes (recomputed at runtime,
+  never hardcoded).
+- **Formal prod-guard** (P2-1): `_assert_production_authorized_which_matches_manifest`
+  is an independent re-implementation (`os.path.samefile` + case-fold + explicit
+  symlink/junction/hardlink detection + main+aux).  It does **not** import any
+  private (`_`-prefixed) state-machine symbol from `qfq_schema_migration`; the
+  migration module is left untouched so its staging guard keeps refusing formal
+  paths unconditionally.
+- **Schema migration** (method 2): the formal runner self-writes the
+  `COMPLETE_2_0 -> COMPLETE_2_1` sequence (shadow create -> copy -> validate ->
+  new tables -> swap -> legacy cleanup -> fingerprint re-read -> COMMIT ->
+  audit), reusing only read-only migration helpers/constants.  It never imports
+  `_do_migrate_in_txn` / `_ReportReservation` / `_assert_not_production` /
+  `_assert_allowed_root`.
+- **Hard boundaries**: the formal runner never imports
+  `ResidentCollector.run_once` / `execute_task`, `qfq_run_post_ingest`, or
+  `writer.advance_watermark`.  The only allowed watermark-release entry point is
+  the existing production CLI `daemon.py --mode once --task ... --pull-mode
+  incremental --quality-audit full` (four fixed QFQ tasks, serial).
+- **handoff / exit evidence**: WP6 publishes `formal_cutover_handoff.json`
+  while the child still holds both locks (`locks_release_pending=true`); the
+  supervisor publishes `formal_runner_exit_evidence.json` after the child exits
+  and independently recomputes the handoff raw SHA.  WP7-E1/E2 verify both and
+  recompute the handoff SHA.
+- **Observation gate** (P2-3): `complete_post_close_cycles_success >= 2` AND
+  `incremental_replay_cycles_success >= 2`, counted by successful cycle (not
+  calendar day); non-trading days never count; half-day markets count only when
+  all completeness conditions hold; a failed cycle auto-extends the window;
+  there is no "time elapsed => pass".
+
+Formal main/aux migration, formal `mcp-gen1` activation, formal canary and
+formal watermark release remain **unauthorized** pending G2 and a separate
+explicit user authorization.  See `docs/mcp_migration/b6-formal-cutover-runbook.md`
+and `docs/mcp_migration/b6-post-cutover-observation-runbook.md` for the full
+operation contracts.

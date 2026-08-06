@@ -268,31 +268,29 @@ def _fault(fault_at: Optional[str], point: str) -> None:
         raise RuntimeError(f"B-6 fault injection: {point}")
 
 
-def activate_cutover_staging(conn, *, cutover_id: str, price_source: str,
-                              expected_old: Optional[str], main_db_path: str | Path,
-                              fault_at: Optional[str] = None,
-                              verified_evidence: Optional[dict] = None) -> dict:
-    """Atomically activate a verified staging cutover and retire legacy work.
+def _do_activate_in_txn(conn, *, cutover_id: str, price_source: str,
+                        expected_old: Optional[str], fault_at: Optional[str],
+                        pre_wm: Mapping, committed_before: int,
+                        current_id: Optional[str]) -> dict:
+    """Activation transaction core (policy-free, shared by staging and formal runners).
 
-    ``verified_evidence`` is an internal rehearsal optimization: callers may
-    pass the exact payload returned by one successful verification when running
-    multiple rollback fault points against an otherwise unchanged staging copy.
-    The normal CLI path leaves it unset and verifies afresh.
+    Runs the BEGIN/COMMIT/ROLLBACK transaction: legacy retirement, expected-old
+    active-pointer CAS, new cutover status CAS, active-pointer insert, and the
+    three postconditions.  The six activation fault points
+    (after_retirement/after_pointer_delete/after_new_status/after_pointer_insert/
+    before_commit/after_commit_before_report) are injected here verbatim.
+
+    ``conn`` is an already-open, already-guarded connection supplied by the
+    caller; this core never opens or closes connections and contains no
+    staging-only or formal-only authorization logic.  ``pre_wm`` and
+    ``committed_before`` are the pre-transaction snapshots captured by the
+    caller for the unchanged-source_watermark and committed-count postconditions.
+    ``current_id`` is the pre-BEGIN active-pointer value captured by the caller
+    (the original code read it once before BEGIN and reused it inside the txn);
+    passing it in keeps the ``after_retirement`` fault semantics identical.
+    Returns the same activation-result dict shape the staging entry point has
+    always returned (without the evidence hash, which the caller appends).
     """
-    evidence = verified_evidence or verify_cutover_evidence(
-        conn, cutover_id=cutover_id, main_db_path=main_db_path)
-    rec = _record(conn, cutover_id)
-    current = conn.execute("SELECT cutover_id FROM qfq_active_cutover WHERE price_source=?", [price_source]).fetchone()
-    current_id = current[0] if current else None
-    if current_id != expected_old:
-        raise CutoverCASFailed(f"active={current_id!r} != expected_old={expected_old!r}")
-    # An existing lease means the owner may still be alive; never infer staleness from timestamps alone.
-    lease = conn.execute("SELECT COUNT(*) FROM qfq_cycle_lease WHERE price_source=? AND source_generation=?",
-                         [LEGACY_SOURCE, LEGACY_GENERATION]).fetchone()[0]
-    if lease:
-        raise CutoverPreconditionFailed("legacy cycle lease exists; refuse to kill a possible owner")
-    pre_wm = table_evidence(conn, "source_watermark")
-    committed_before = conn.execute("SELECT COUNT(*) FROM qfq_trigger_queue WHERE status='committed'").fetchone()[0]
     conn.execute("BEGIN TRANSACTION")
     try:
         row = conn.execute("SELECT status FROM qfq_source_cutover WHERE cutover_id=?", [cutover_id]).fetchone()
@@ -355,5 +353,43 @@ def activate_cutover_staging(conn, *, cutover_id: str, price_source: str,
     return {"cutover_id": cutover_id, "price_source": price_source,
             "status": "active", "expected_old": expected_old,
             "interrupted_cycles": len(interrupted), "superseded_intents": len(intents),
-            "retired_triggers": len(retired), "dead_letter_preserved": True,
-            "evidence_manifest_sha256": evidence["manifest_sha256"]}
+            "retired_triggers": len(retired), "dead_letter_preserved": True}
+
+
+def activate_cutover_staging(conn, *, cutover_id: str, price_source: str,
+                              expected_old: Optional[str], main_db_path: str | Path,
+                              fault_at: Optional[str] = None,
+                              verified_evidence: Optional[dict] = None) -> dict:
+    """Atomically activate a verified staging cutover and retire legacy work.
+
+    ``verified_evidence`` is an internal rehearsal optimization: callers may
+    pass the exact payload returned by one successful verification when running
+    multiple rollback fault points against an otherwise unchanged staging copy.
+    The normal CLI path leaves it unset and verifies afresh.
+
+    This staging entry point owns the staging-only guard (``_assert_staging_db``
+    via ``verify_cutover_evidence``) and the pre-transaction snapshots; the
+    transaction itself runs in the policy-free shared core
+    ``_do_activate_in_txn`` so the formal runner can reuse identical fault-matrix
+    semantics without weakening any staging guard.
+    """
+    evidence = verified_evidence or verify_cutover_evidence(
+        conn, cutover_id=cutover_id, main_db_path=main_db_path)
+    rec = _record(conn, cutover_id)
+    current = conn.execute("SELECT cutover_id FROM qfq_active_cutover WHERE price_source=?", [price_source]).fetchone()
+    current_id = current[0] if current else None
+    if current_id != expected_old:
+        raise CutoverCASFailed(f"active={current_id!r} != expected_old={expected_old!r}")
+    # An existing lease means the owner may still be alive; never infer staleness from timestamps alone.
+    lease = conn.execute("SELECT COUNT(*) FROM qfq_cycle_lease WHERE price_source=? AND source_generation=?",
+                         [LEGACY_SOURCE, LEGACY_GENERATION]).fetchone()[0]
+    if lease:
+        raise CutoverPreconditionFailed("legacy cycle lease exists; refuse to kill a possible owner")
+    pre_wm = table_evidence(conn, "source_watermark")
+    committed_before = conn.execute("SELECT COUNT(*) FROM qfq_trigger_queue WHERE status='committed'").fetchone()[0]
+    result = _do_activate_in_txn(conn, cutover_id=cutover_id, price_source=price_source,
+                                 expected_old=expected_old, fault_at=fault_at,
+                                 pre_wm=pre_wm, committed_before=committed_before,
+                                 current_id=current_id)
+    result["evidence_manifest_sha256"] = evidence["manifest_sha256"]
+    return result

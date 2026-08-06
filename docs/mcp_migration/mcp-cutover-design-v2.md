@@ -1202,3 +1202,51 @@ B-4 最终回归将 `after_commit_before_report` 冻结为：`COMMIT` durable �
 B-5 local implementation passed independent final review (P0=0/P1=0/P2=3) and remains staging-only; B-6 activation is not included. It implements the frozen dynamic-generation boundary: two-phase discovery-baseline CAS for dividend logical keys, full resident generation/cutover predicates, immutable cutover-to-aux routing, explicit auxiliary initialization, generation-scoped quality audits, deterministic snapshot evidence, and a cutover state machine that refuses plain `active` transitions.
 
 The implementation deliberately does not activate `mcp-gen1`, create an active pointer, migrate the formal database, or push framework changes to GitHub. The legacy pre-cutover path remains the compatibility default, and the pre-B-5 dividend evidence (first pass 2181, immediate replay 0) remains historical evidence rather than a new B-5 assertion.
+
+
+## 10.3 B-6 WP6/WP7 formal cutover runner design (2026-08-07)
+
+The B-6 WP6/WP7 formal cutover runner is the only authorized path to the formal
+production main/aux databases.  Its design follows the G0-approved plan and the
+CodeBuddy v2 review (no P0/P1/P2 outstanding).
+
+### Architecture: shared activation core + sibling wrappers
+
+The policy-free activation transaction body was extracted from
+`activate_cutover_staging` into a shared core `_do_activate_in_txn(conn, ...)` in
+`qfq_cutover_activation.py` (the only existing framework file modified; minimal,
+semantically-equivalent, reversible).  Both the staging entry point and the
+formal runner call this core, so the six activation fault points
+(`after_retirement` / `after_pointer_delete` / `after_new_status` /
+`after_pointer_insert` / `before_commit` / `after_commit_before_report`) are
+byte-for-byte equivalent.  The staging-only guard (`_assert_staging_db`) is
+unchanged and keeps refusing formal paths; the formal wrapper substitutes the
+full authorization + dual-lock + backup chain.
+
+### Schema migration integration (method 2)
+
+The formal runner self-writes the `COMPLETE_2_0 -> COMPLETE_2_1` migration
+sequence, reusing only read-only migration helpers/constants
+(`detect_schema_status`, `_snapshot`, `verify_fingerprint`, fingerprint
+constants, `REBUILD_*` / `NEW_TABLES`, SQL-construction helpers).  It does
+**not** import the migration private state-machine symbols
+(`_do_migrate_in_txn`, `_ReportReservation`, `_assert_not_production`,
+`_assert_allowed_root`); the migration module is left untouched.  G1 evidence
+requires the formal migration's post-state to equal the staging migration's
+post-state (`_snapshot` / `verify_fingerprint` / shadow-residue), with a
+per-statement SQL diff against `_do_migrate_in_txn`.
+
+### Formal production guard (P2-1)
+
+`_assert_production_authorized_which_matches_manifest` is an independent
+re-implementation: `os.path.samefile` + case-fold fallback + explicit
+`is_symlink`/junction/hardlink detection + main+aux.  It positively authorizes
+only the manifest's canonical formal main/aux, and rejects any alias.
+
+### P2 status
+
+| P2 | 状态 | 期限 |
+|---|---|---|
+| P2-1 双 aux 并存治理 | implemented_pending_evidence（路由/拒绝 fallback/监控规则已实现；退役结论 G3 前） | 设计 G1 前 ✓；结论 G3 前 |
+| P2-2 磁盘保守公式 | implemented_pending_evidence（`compute_required_free_bytes` 单一函数 runner/test/runbook 共用，冻结基线 91004735488 验证） | G1 前 ✓ |
+| P2-3 观察期硬计数 | implemented_pending_evidence（2+2 硬计数规则 + Run Card 模板已实现；实证 G3 前） | 规则 G1 前 ✓；实证 G3 前 |

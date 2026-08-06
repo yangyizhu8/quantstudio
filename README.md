@@ -551,3 +551,21 @@ sequence; it never creates evidence or starts a transaction.
 `cutover-canary` recovers staging-only aborted cycles (`started` to
 `interrupted`, SQLite integrity/WAL checkpoint) before running the bounded
 scoped dynamic-identity canary.
+
+### B-6 WP6/WP7 formal cutover runner (2026-08-07)
+
+The **formal** cutover runner (`quantstudio.pipeline.qfq_formal_cutover`,
+`qfq_formal_cutover_cli`, `qfq_formal_authorization`,
+`qfq_formal_postcutever_audit`, `qfq_formal_canary`, `qfq_formal_observation`)
+is the only authorized path to the formal production main/aux databases.  It
+reuses the shared policy-free activation core `_do_activate_in_txn` (extracted
+from `activate_cutover_staging`) so its six-point fault matrix is byte-for-byte
+equivalent to staging, while substituting the staging-only guard with the full
+authorization + dual-lock + backup chain.  The staging guard
+(`_assert_staging_db`, `_assert_not_formal`, `_assert_staging_aux`) and the
+migration guard (`_assert_not_production`) are unchanged and keep refusing
+formal paths unconditionally.  Formal migration, `mcp-gen1` activation, formal
+canary and formal watermark release remain unauthorized pending G2 and a
+separate explicit user authorization.  See
+`docs/mcp_migration/b6-formal-cutover-runbook.md` and
+`docs/mcp_migration/b6-post-cutover-observation-runbook.md`.

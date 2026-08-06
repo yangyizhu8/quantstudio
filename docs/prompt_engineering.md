@@ -479,3 +479,37 @@ Prompts requesting WP4 must require:
 - `cutover-prep-staging` to require explicit staging/hermetic source paths, hold `.daemon.lock` plus `.collector_run.lock`, reject non-empty WAL/journal sidecars, and refuse the configured formal main/aux;
 - `cutover-canary` to run only against an active staging identity, preserve the 2181 discovery baseline/replay-0 invariant, force global watermark hold for scoped validation, and recover aborted staging cycles with SQLite integrity/WAL checkpoint;
 - no command may switch the formal active pointer, activate formal `mcp-gen1`, or use `--allow-production` to bypass the staging guard.
+
+
+## MCP cutover B-6 WP6/WP7 formal runner prompt constraints (2026-08-07)
+
+Prompts requesting the **formal** cutover runner (WP6) or the WP7 post-cutover
+audit/held-canary/observation tools must require:
+
+- the formal runner to start only under a one-time, tamper-evident
+  authorization manifest whose raw-byte SHA-256 is supplied out-of-band via
+  `--authorization` and `--authorization-sha256` (the expected hash is never
+  read from the manifest body or any sibling file); the manifest must pin
+  `watermark_release_authorized=false` and one independent nonce per grant;
+- the formal production guard to be an independent re-implementation that does
+  **not** import any private (`_`-prefixed) state-machine symbol from
+  `qfq_schema_migration`; the migration module's staging guard must keep
+  refusing formal paths unconditionally;
+- the schema migration to be self-written using only read-only migration
+  helpers/constants, never importing `_do_migrate_in_txn` /
+  `_ReportReservation` / `_assert_not_production` / `_assert_allowed_root`;
+- the formal runner to never import `ResidentCollector.run_once` /
+  `execute_task`, `qfq_run_post_ingest`, or `writer.advance_watermark`; the
+  only allowed watermark-release entry point is the existing production
+  `daemon.py --mode once --task ... --pull-mode incremental --quality-audit full`
+  (four fixed QFQ tasks, serial);
+- WP7-E1 audit and WP7-E2 held-canary to verify both `formal_cutover_handoff.json`
+  and `formal_runner_exit_evidence.json`, independently recomputing the handoff
+  raw SHA; the held-canary must enforce global watermark hold and treat any
+  unexpected trigger/intent or source-watermark change as a P0;
+- the observation gate to require `complete_post_close_cycles_success >= 2` AND
+  `incremental_replay_cycles_success >= 2`, counted by successful cycle (not
+  calendar day), with no "time elapsed => pass" rule;
+- no formal main/aux read-write, no formal `mcp-gen1` activation, no formal
+  canary, no formal watermark advance, and no Git stage/commit/push until G1
+  PASS and a separate explicit user authorization.
