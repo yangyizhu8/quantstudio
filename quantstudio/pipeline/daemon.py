@@ -123,6 +123,12 @@ class ResidentCollector:
     _qfq_cfg_obj = None      # QFQOrchestratorConfig（惰性加载）
     _qfq_orch = None         # QFQResidentOrchestrator（惰性构造）
     _qfq_cycle_id = None     # 当前活跃协调周期
+    # Read-only metadata from the latest public execute_task call. GUI-only;
+    # it never changes data, gate, or watermark decisions.
+    _last_qfq_cycle_summary = None
+    _last_task_actual_source = None
+    _last_task_watermark_candidate_created = False
+    _last_task_qfq_managed = False
 
     def __init__(self, data_cfg: Dict, sources_cfg: Dict, tasks_cfg: Dict,
                  aligner: FieldAligner, validator: PreIngestValidator,
@@ -145,6 +151,10 @@ class ResidentCollector:
         self._qfq_cfg_obj = None      # QFQOrchestratorConfig（惰性加载）
         self._qfq_orch = None         # QFQResidentOrchestrator（惰性构造）
         self._qfq_cycle_id: Optional[str] = None  # 当前活跃协调周期
+        self._last_qfq_cycle_summary = None
+        self._last_task_actual_source: Optional[str] = None
+        self._last_task_watermark_candidate_created = False
+        self._last_task_qfq_managed = False
 
     def close(self):
         """v3：释放所有持连接子组件（主要是 writer._shared_conn）。
@@ -333,6 +343,9 @@ class ResidentCollector:
         cfg = self._qfq_config()
         if cfg.can_coordinate_watermark(table):
             if self._qfq_cycle_id is not None:
+                # Record that the public task produced a watermark candidate.
+                # Diagnostic metadata only; defer/commit/hold semantics are unchanged.
+                self._last_task_watermark_candidate_created = True
                 orch = self._qfq_orchestrator()
                 orch.defer_watermark(
                     self.writer.shared_conn(), cycle_id=self._qfq_cycle_id,
@@ -373,6 +386,7 @@ class ResidentCollector:
             try:
                 ok = self._run_with_source(task, source, batch_id, started_at)
                 if ok:
+                    self._last_task_actual_source = source
                     if source != chain[0]:
                         logger.warning(f"[task={name}] ⚠️ 权威源回退生效：首选 {chain[0]} 不可用，"
                                        f"改用 {source}")
@@ -425,6 +439,12 @@ class ResidentCollector:
         audit_ok = True
         owns_qfq_cycle = False
         self._last_qfq_cycle_summary = None
+        self._last_task_actual_source = None
+        self._last_task_watermark_candidate_created = False
+        self._last_task_qfq_managed = bool(
+            self.qfq_enabled()
+            and self._qfq_config().can_coordinate_watermark(
+                str(run_task.get("table", ""))))
         try:
             if self._needs_manual_qfq_cycle(run_task):
                 owns_qfq_cycle = self.qfq_begin_cycle() is not None

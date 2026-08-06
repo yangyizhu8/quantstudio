@@ -237,6 +237,14 @@ Before any future B-6 activation, verify the following on a staging copy only:
   coordination cycle; direct watermark advancement is prohibited. A passed
   post-ingest gate commits the candidate; a held/failed gate leaves the old
   watermark and emits a GUI warning.
+- GUI Run All retains the same result per task, releases the collector and
+  `.collector_run.lock` before signaling completion, and names held/failed QFQ
+  tasks. A produced candidate without a committed/held terminal intent is a
+  warning; an empty pull without a candidate is not.
+- The watermark column prefers the configured source but falls back to the
+  newest matching actual-source row when necessary, with the source identified
+  in the tooltip. Acceptance must cover all four price tables, full/incremental,
+  commit/hold, run-all, terminal-intent anomaly, and fallback display.
 - `cutover-evidence` freezes immutable main/aux table evidence. Full-table hashing is streamed in bounded batches; it must not materialize multi-gigabyte price tables in Python. Re-running with
   identical content is idempotent; a changed evidence payload cannot overwrite
   the manifest.

@@ -466,6 +466,9 @@ Prompts that request B-5 work must state:
 
 - An explicit non-legacy `source_generation` implies `generation_mode=dynamic` when omitted; prompts must not combine a non-legacy generation with `pre_cutover`.
 - **PyQt manual full pulls must use a QFQ cycle**: direct GUI execution of any of the four price tables opens a one-task coordination cycle and runs the post-ingest gate; never repair a missing watermark by calling `writer.advance_watermark` directly. A failed gate keeps the old watermark and shows a warning.
+- **Run All must not drop QFQ outcomes**: prompts must require per-task `qfq_cycle`, actual-source, and candidate metadata; collector close plus `.collector_run.lock` release must occur before the final GUI signal; the aggregate status must name held/failed tasks.
+- **Do not confuse empty pulls with broken terminal intents**: a zero-candidate empty/no-new-data task may finish normally, but a produced candidate with zero committed and zero held intents is a watermark-contract warning.
+- **Watermark display must be source-aware**: prefer the configured source row; when it is absent after an allowed fallback, display the newest matching actual-source watermark and identify that source instead of showing a false `none`.
 
 
 ## MCP cutover B-6 WP4 prompt constraints (2026-08-06)

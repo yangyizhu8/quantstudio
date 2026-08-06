@@ -3,11 +3,11 @@
 > **版本**：v2.4（修订版，回应 v2.3 复核的两阶段 CAS 新事件边界遗漏 + 2 文字修正）
 > **日期**：2026-08-05
 > **性质**：QuantStudio 本地回测框架层正确性变更
-> **Status**: B-5 local implementation and independent final review PASS on 2026-08-06 (P0=0/P1=0/P2=3); B-6 is not started. GitHub synchronization was explicitly authorized for the complete B-5 code/test/config/document set; formal database migration and mcp-gen1 activation remain blocked.
+> **Status**: B-6 WP1-WP5 local/staging work is complete through the read-only formal-readiness gate on 2026-08-06. The PyQt watermark-closure follow-up is implemented locally and under final validation. Formal database migration, formal active-pointer switching, and formal `mcp-gen1` activation remain blocked.
 > **canonical path**：本文档固定路径为 `docs/mcp_migration/mcp-cutover-design-v2.md`，**不随小版本改名**
 > **v2.3 复核结论**：架构层通过，5 项机械核验通过；只剩两阶段 CAS 引入的新事件边界遗漏（P0）+ 2 文字修正
 > **v2.4 修订**：v2.3 复核 P0（新 logical key 无法进 baseline + 占位/trigger 未同事务）+ `_norm_div_val` 函数名 + deferred 不持久化
-> **Current delivery scope**: B-5 framework code, tests, configuration, and all related documentation are synchronized together only after explicit post-repair confirmation. No formal database migration or active cutover is included.
+> **Current delivery scope**: local framework/UI completion for manual and Run All watermark reporting, actual-source-aware rendering, tests, and documentation. This scope does not include formal database writes or activation, and it must not be staged/committed/pushed before explicit post-repair confirmation.
 
 ## v2.4 变更摘要（相对 v2.3）
 

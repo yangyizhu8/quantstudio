@@ -491,7 +491,14 @@ The safe staging sequence is: create a planned cutover with an immutable `aux_db
 For PyQt manual full pulls, the framework owns a one-task QFQ cycle for the
 four QFQ-managed price tables. The normal gate, rather than a direct writer
 call, decides whether the candidate watermark is committed. A gate hold keeps
-the old watermark and is surfaced as a GUI warning.
+the old watermark and is surfaced as a GUI warning. Run All must preserve the
+same per-task result contract: capture each cycle result before the next task,
+close the collector and release `.collector_run.lock` before the final signal,
+and name every held/failed task in the aggregate status. A generated candidate
+with no committed/held terminal intent is an anomaly; an empty pull with no
+candidate is not. If the configured source has no watermark but an allowed
+fallback source does, render the latest matching actual-source row and expose
+that source in the tooltip.
 
 B-6 local/staging commands freeze and verify immutable main/aux evidence before
 Large-table evidence is streamed in bounded batches; do not replace this with an all-rows Python materialization.

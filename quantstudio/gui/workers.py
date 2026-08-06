@@ -58,11 +58,24 @@ def _qfq_cycle_result(collector) -> dict | None:
     summary = getattr(collector, "_last_qfq_cycle_summary", None)
     if summary is None:
         return None
+    gate_report = getattr(summary, "gate_report", {}) or {}
     return {
         "status": getattr(summary, "status", None),
         "error": getattr(summary, "error", None),
+        "gate_reasons": list(gate_report.get("reasons", []) or []),
         "watermarks_committed": int(getattr(summary, "watermarks_committed", 0) or 0),
         "watermarks_held": int(getattr(summary, "watermarks_held", 0) or 0),
+    }
+
+
+def _task_runtime_result(collector) -> dict:
+    """Return GUI-only metadata from the latest public execute_task call."""
+    return {
+        "qfq_cycle": _qfq_cycle_result(collector),
+        "qfq_managed": bool(getattr(collector, "_last_task_qfq_managed", False)),
+        "watermark_candidate_created": bool(
+            getattr(collector, "_last_task_watermark_candidate_created", False)),
+        "actual_source": getattr(collector, "_last_task_actual_source", None),
     }
 
 
@@ -147,7 +160,7 @@ class LockedTaskWorker(BaseWorker):
                     "task_ok": bool(task_ok),
                     "quality_audit_ran": audit_ran,
                     "quality_audit_ok": audit_ok,
-                    "qfq_cycle": _qfq_cycle_result(collector),
+                    **_task_runtime_result(collector),
                 }
                 if audit_error is not None:
                     result["quality_audit_error"] = audit_error
@@ -207,10 +220,13 @@ class LockedRunAllWorker(BaseWorker):
         try:
             lock.acquire()
         except Timeout:
-            self.finished_err.emit("定时采集正在运行，请稍后重试")
+            self.finished_err.emit("\u5b9a\u65f6\u91c7\u96c6\u6b63\u5728\u8fd0\u884c\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5")
             return
+
         collector = None
         results = []
+        outcome_kind = "error"
+        outcome_payload = None
         try:
             collector = ResidentCollector.from_configs(
                 self.config_dir / "data_config.json",
@@ -220,37 +236,49 @@ class LockedRunAllWorker(BaseWorker):
             total = len(self.tasks)
             for i, task in enumerate(self.tasks):
                 if self._cancelled:
-                    self.progress.emit("已取消")
+                    self.progress.emit("\u5df2\u53d6\u6d88")
                     break
                 name = task.get("name", "?")
-                # 队列内跳过无可用数据源的任务（不抛错）
                 try:
                     chain = collector.resolve_source_chain(task)
                 except Exception:
                     chain = []
                 if not chain:
-                    self.progress.emit(f"⏭ 跳过 {name}（无可用数据源）({i+1}/{total})")
+                    self.progress.emit(
+                        f"\u23ed \u8df3\u8fc7 {name}\uff08\u65e0\u53ef\u7528\u6570\u636e\u6e90\uff09({i+1}/{total})")
                     results.append({"name": name, "ok": False, "skipped": True})
                     continue
-                self.progress.emit(f"执行 {name} ({i+1}/{total})")
+                self.progress.emit(f"\u6267\u884c {name} ({i+1}/{total})")
                 try:
                     ok = collector.execute_task(task, mode=self.mode,
                                                 run_quality_audit=False)
-                    results.append({"name": name, "ok": ok})
+                    results.append({"name": name, "ok": ok,
+                                    **_task_runtime_result(collector)})
                 except Exception as e:
-                    results.append({"name": name, "ok": False, "error": str(e)})
-                    self.progress.emit(f"❌ {name}: {e}")
-            # 队列结束后统一审计
+                    results.append({"name": name, "ok": False, "error": str(e),
+                                    **_task_runtime_result(collector)})
+                    self.progress.emit(f"\u274c {name}: {e}")
+
+            audit_ok = None
+            audit_error = None
             try:
-                collector._run_full_quality_audit()
+                audit_ok = bool(collector._run_full_quality_audit())
             except Exception as e:
-                self.progress.emit(f"质量审计异常: {e}")
+                audit_ok = False
+                audit_error = f"{type(e).__name__}: {e}"
+                self.progress.emit(f"\u8d28\u91cf\u5ba1\u8ba1\u5f02\u5e38: {e}")
             ok_count = sum(1 for r in results if r.get("ok"))
-            self.finished_ok.emit({"results": results, "ok_count": ok_count,
-                                   "total": len(results)})
+            outcome_kind = "success"
+            outcome_payload = {"results": results, "ok_count": ok_count,
+                               "total": len(results),
+                               "quality_audit_ok": audit_ok}
+            if audit_error is not None:
+                outcome_payload["quality_audit_error"] = audit_error
         except Exception as e:
-            self.finished_err.emit(f"{type(e).__name__}: {e}")
+            outcome_payload = f"{type(e).__name__}: {e}"
         finally:
+            # Match LockedTaskWorker: the GUI refreshes DuckDB after the final
+            # signal, so close the writer and release the cross-process lock first.
             if collector is not None:
                 try:
                     collector.close()
@@ -260,6 +288,11 @@ class LockedRunAllWorker(BaseWorker):
                 lock.release()
             except Exception:
                 pass
+
+        if outcome_kind == "success":
+            self.finished_ok.emit(outcome_payload)
+        else:
+            self.finished_err.emit(str(outcome_payload))
 
 
 class TaskWorker(BaseWorker):
@@ -306,7 +339,7 @@ class TaskWorker(BaseWorker):
                 "task_ok": bool(task_ok),
                 "quality_audit_ran": audit_ran,
                 "quality_audit_ok": audit_ok,
-                "qfq_cycle": _qfq_cycle_result(collector),
+                **_task_runtime_result(self.collector),
             }
             if audit_error is not None:
                 result["quality_audit_error"] = audit_error

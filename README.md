@@ -492,7 +492,20 @@ which the write succeeded but no cycle existed, so the fail-closed watermark
 helper discarded the candidate and `source_watermark` stayed absent/stale.
 There is no direct watermark bypass: a passed gate commits the watermark; a
 held/failed gate leaves it unchanged and the GUI reports a watermark-gate
-warning.
+warning. The same contract now covers GUI **Run All**: each task carries its
+QFQ cycle result, the collector connection and cross-process lock are released
+before the final signal, and held/failed tasks are named in the aggregate GUI
+warning. A successful task that produced a candidate but has neither a
+committed nor held terminal intent is reported as a watermark-contract anomaly;
+a true empty/no-new-data pull remains a normal zero-candidate completion.
+
+Watermark rendering prefers the configured source, but if that source has no
+row after an allowed fallback, the GUI displays the newest matching actual
+source watermark and identifies that source in the tooltip instead of showing
+a false `none`. Database-backed tests cover all four QFQ price tables in both
+`full_range` and `incremental` modes, plus commit, hold, run-all, no-intent, and
+fallback-source display behavior. Formal database migration and formal PyQt
+execution remain separately gated.
 
 ### MCP cutover B-6 local/staging implementation (2026-08-06)
 

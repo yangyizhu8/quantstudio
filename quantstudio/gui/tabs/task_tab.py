@@ -184,9 +184,18 @@ class TaskTab(QWidget):
             table_name = task.get("table", "")
             self.task_table.setItem(i, 2, QTableWidgetItem(table_name))
             self.task_table.setItem(i, 3, QTableWidgetItem(task.get("freq", "daily")))
-            # 水位线（从缓存的 wms 查）
-            wm = self._get_watermark_cached(wms, effective_source, table_name, task.get("freq","daily"))
-            self.task_table.setItem(i, 4, QTableWidgetItem(wm))
+            # Prefer the configured source; fall back to the latest real source watermark.
+            wm, wm_source = self._resolve_watermark_cached(
+                wms, effective_source, table_name, task.get("freq", "daily"))
+            wm_item = QTableWidgetItem(wm)
+            if wm_source and wm_source != effective_source:
+                wm_item.setToolTip(
+                    f"\u914d\u7f6e\u9996\u9009\u6e90: {effective_source}\n"
+                    f"\u5b9e\u9645\u6c34\u4f4d\u6e90: {wm_source}")
+                source_item.setToolTip(
+                    source_item.toolTip()
+                    + f"\n\u5f53\u524d\u663e\u793a\u7684\u6c34\u4f4d\u6765\u81ea\u56de\u9000\u6e90 {wm_source}\u3002")
+            self.task_table.setItem(i, 4, wm_item)
             task_name = task.get("name", "")
             running_mode = self._running_tasks.get(task_name)
             status_text = self._get_status_text(task_name, running_mode)
@@ -271,19 +280,43 @@ class TaskTab(QWidget):
         else:
             item.setText(status_text)
 
-    def _get_watermark_cached(self, wms, source, table, freq) -> str:
-        """从已查的水位 DataFrame 取值（不再每行查 DuckDB）"""
+    def _resolve_watermark_cached(self, wms, source, table, freq) -> tuple[str, str | None]:
+        """Return display date and the source row actually used.
+
+        Prefer the configured source. If it has no watermark but a fallback
+        source does, use the most recently updated matching row so the GUI does
+        not incorrectly display ``\u65e0`` after a successful fallback run.
+        """
         try:
             if len(wms) == 0:
-                return "无"
-            row = wms[(wms["source"]==source) & (wms["table_name"]==table) & (wms["freq"]==freq)]
-            if len(row) == 0:
-                return "无"
+                return "\u65e0", None
+            matches = wms[(wms["table_name"] == table) & (wms["freq"] == freq)]
+            if len(matches) == 0:
+                return "\u65e0", None
+            exact = matches[matches["source"] == source]
+            if len(exact) > 0:
+                chosen = exact.iloc[0]
+            else:
+                if "updated_at" in matches.columns:
+                    import pandas as pd
+                    ranked = matches.copy()
+                    ranked["__wm_updated"] = pd.to_datetime(
+                        ranked["updated_at"], errors="coerce")
+                    ranked = ranked.sort_values("__wm_updated", ascending=False,
+                                                na_position="last")
+                    chosen = ranked.iloc[0]
+                else:
+                    chosen = matches.iloc[0]
             import datetime
-            ts = int(row.iloc[0]["last_date"])
-            return datetime.datetime.fromtimestamp(ts/1000).strftime("%Y-%m-%d")
+            ts = int(chosen["last_date"])
+            return (datetime.datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d"),
+                    str(chosen["source"]))
         except Exception:
-            return "?"
+            return "?", None
+
+    def _get_watermark_cached(self, wms, source, table, freq) -> str:
+        """Backward-compatible date-only wrapper for tests and callers."""
+        return self._resolve_watermark_cached(wms, source, table, freq)[0]
 
     def _get_collector(self):
         """延迟初始化 ResidentCollector（首次执行时创建）"""
@@ -650,25 +683,83 @@ class TaskTab(QWidget):
             self.status_label.setText(f"❌ 启动失败: {e}")
             QMessageBox.critical(self, "启动失败", f"全部执行启动失败：\n\n{type(e).__name__}: {e}")
 
+    @staticmethod
+    def _qfq_warning_from_result(result: dict) -> tuple[bool, str | None]:
+        """Classify QFQ watermark outcomes without treating empty pulls as errors."""
+        if not isinstance(result, dict) or not result.get("ok", result.get("task_ok", True)):
+            return False, None
+        cycle = result.get("qfq_cycle")
+        managed = bool(result.get("qfq_managed") or cycle is not None)
+        if not managed:
+            return False, None
+        if cycle is None:
+            return True, "missing_qfq_cycle_result"
+        status = cycle.get("status")
+        committed = int(cycle.get("watermarks_committed", 0) or 0)
+        held = int(cycle.get("watermarks_held", 0) or 0)
+        if status != "finalized":
+            reasons = cycle.get("gate_reasons") or []
+            return True, str("; ".join(map(str, reasons))
+                             or cycle.get("error") or status
+                             or "qfq_gate_not_finalized")
+        if held > 0:
+            return True, "watermark_held"
+        if (result.get("watermark_candidate_created")
+                and committed == 0 and held == 0):
+            return True, "watermark_candidate_without_terminal_intent"
+        return False, None
+
     def _on_run_all_done(self, result: dict):
-        """全部执行完成的统一回调。"""
+        """Finalize run-all and surface per-task QFQ watermark gate outcomes."""
         for t in self.tasks:
             self._running_tasks.pop(t.get("name", ""), None)
         ok_count = result.get("ok_count", 0)
         total = result.get("total", 0)
         err = result.get("error")
+        entries = result.get("results", []) if isinstance(result, dict) else []
+        qfq_warnings = []
+        for entry in entries:
+            name = entry.get("name", "?")
+            warned, reason = TaskTab._qfq_warning_from_result(entry)
+            if entry.get("skipped"):
+                self._set_task_status(name, "\u8df3\u8fc7")
+            elif not entry.get("ok"):
+                self._set_task_status(name, "\u5931\u8d25")
+            elif warned:
+                self._set_task_status(name, "\u6210\u529f\uff08\u6c34\u4f4d\u95e8\u63a7\u544a\u8b66\uff09")
+                qfq_warnings.append((name, reason))
+            else:
+                self._set_task_status(name, "\u6210\u529f")
+
         self.run_all_btn.setEnabled(True)
-        self.run_all_btn.setText("▶ 全部执行")
+        self.run_all_btn.setText("\u25b6 \u5168\u90e8\u6267\u884c")
+        audit_warning = result.get("quality_audit_ok") is False
         if err:
-            self.status_label.setText(f"❌ 全部执行失败: {err}")
-            QMessageBox.warning(self, "全部执行", f"执行失败：\n\n{err}")
+            final_text = f"\u274c \u5168\u90e8\u6267\u884c\u5931\u8d25: {err}"
+            self.status_label.setText(final_text)
+            QMessageBox.warning(self, "\u5168\u90e8\u6267\u884c", f"\u6267\u884c\u5931\u8d25\uff1a\n\n{err}")
+        elif qfq_warnings or audit_warning:
+            parts = [f"{ok_count}/{total} \u62c9\u53d6\u6210\u529f"]
+            if qfq_warnings:
+                details = ", ".join(
+                    f"{name}({reason})" if reason else name
+                    for name, reason in qfq_warnings)
+                parts.append(
+                    f"{len(qfq_warnings)} \u4e2a QFQ \u4efb\u52a1\u6c34\u4f4d\u672a\u63d0\u4ea4: {details}")
+            if audit_warning:
+                parts.append("\u5168\u5e93\u8d28\u91cf\u5ba1\u8ba1\u672a\u901a\u8fc7")
+            final_text = "\u26a0 \u5168\u90e8\u6267\u884c\u5b8c\u6210\uff08" + "\uff1b".join(parts) + "\uff09"
+            self.status_label.setText(final_text)
         elif ok_count == total:
-            self.status_label.setText(f"✅ 全部执行完成（{ok_count}/{total}）")
+            final_text = f"\u2705 \u5168\u90e8\u6267\u884c\u5b8c\u6210\uff08{ok_count}/{total}\uff09"
+            self.status_label.setText(final_text)
         else:
-            self.status_label.setText(f"⚠ 全部执行完成（{ok_count}/{total} 成功，{total-ok_count} 失败）")
-        # 关闭加载提示
+            final_text = (
+                f"\u26a0 \u5168\u90e8\u6267\u884c\u5b8c\u6210\uff08{ok_count}/{total} \u6210\u529f\uff0c"
+                f"{total-ok_count} \u5931\u8d25\uff09")
+            self.status_label.setText(final_text)
         if hasattr(self, '_collect_tooltip') and self._collect_tooltip:
-            self._collect_tooltip.setContent(f"完成 {ok_count}/{total}")
+            self._collect_tooltip.setContent(final_text)
             self._collect_tooltip = None
         self.refresh()
 
@@ -685,8 +776,8 @@ class TaskTab(QWidget):
             and result.get("quality_audit_ran") is True
             and result.get("quality_audit_ok") is False
         )
-        qfq_cycle = result.get("qfq_cycle") if ok and isinstance(result, dict) else None
-        qfq_warning = bool(qfq_cycle and qfq_cycle.get("status") != "finalized")
+        qfq_warning, qfq_reason = TaskTab._qfq_warning_from_result(
+            result if ok and isinstance(result, dict) else {})
         if ok:
             if audit_warning or qfq_warning:
                 logger.warning(
@@ -699,7 +790,8 @@ class TaskTab(QWidget):
 
         warnings = []
         if qfq_warning:
-            warnings.append("QFQ \u95e8\u63a7\u672a\u63d0\u4ea4\u6c34\u4f4d\u7ebf")
+            detail = f" ({qfq_reason})" if qfq_reason else ""
+            warnings.append("QFQ \u95e8\u63a7\u672a\u63d0\u4ea4\u6c34\u4f4d\u7ebf" + detail)
         if audit_warning:
             warnings.append("\u5168\u5e93\u8d28\u91cf\u5ba1\u8ba1\u672a\u901a\u8fc7")
         if warnings:
