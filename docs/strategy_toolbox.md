@@ -488,4 +488,31 @@ B-5 is a framework/pipeline capability, not a strategy API. Local staging now pr
 
 The safe staging sequence is: create a planned cutover with an immutable `aux_db_path` ? explicitly run `aux-init` ? transition to `baseline_building` ? run `baseline-build` ? audit pending slots ? transition to `baseline_validated`. Plain status transition to `active` is blocked; active-pointer CAS and user confirmation remain B-6 gates.
 
+For PyQt manual full pulls, the framework owns a one-task QFQ cycle for the
+four QFQ-managed price tables. The normal gate, rather than a direct writer
+call, decides whether the candidate watermark is committed. A gate hold keeps
+the old watermark and is surfaced as a GUI warning.
+
+B-6 local/staging commands freeze and verify immutable main/aux evidence before
+Large-table evidence is streamed in bounded batches; do not replace this with an all-rows Python materialization.
+an expected-old active-pointer CAS. They interrupt stale legacy cycles,
+supersede legacy pending intents, retire legacy `scheduled`/`pending`/
+`in_progress`/`retryable_failed`/`blocked` triggers, and preserve `dead_letter`
+and `committed` history. Formal databases and real `mcp-gen1` activation remain
+out of scope.
+
 Dynamic staging fails closed when the configured auxiliary file is missing and never falls back to `qfq_aux.db`. The generation filters must remain in place for trigger, event, backfill, bootstrap, cycle, watermark-intent, and quality-audit queries.
+
+
+### B-6 WP4 command gate
+
+Use `cutover-activate --dry-run` to inspect the activation sequence with a
+read-only connection. It must report `transaction_started=false` and
+`evidence_created=false`; it must not be treated as an activation.
+`cutover-prep-staging` accepts explicit staging/hermetic source paths only,
+holds both framework locks, rejects non-empty transaction sidecars, refuses
+formal paths, and writes a new marker plus copy manifest without overwriting.
+`cutover-canary` is bounded and scoped: it resolves the active
+`mcp/mcp-gen1/cutover` identity, preserves the discovery baseline, creates no
+new mcp trigger or intent, and forces global watermark hold even when the scoped
+gate passes.

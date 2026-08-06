@@ -385,6 +385,23 @@ class ResidentCollector:
         logger.error(f"[task={name}] 所有候选源均失败: {chain}；last_err={last_err}")
         return False
 
+    def _needs_manual_qfq_cycle(self, task: Dict) -> bool:
+        """Whether a direct GUI/CLI price task must own a QFQ cycle.
+
+        Resident scheduling opens one cycle around the whole queue.  GUI and
+        ``run_once`` call :meth:`execute_task` directly; before this guard those
+        calls had no active cycle, so ``_advance_or_defer_watermark`` correctly
+        failed closed but silently discarded the candidate watermark.  The
+        manual task therefore wrote rows successfully while ``source_watermark``
+        stayed absent/stale.
+
+        Only QFQ-managed price tables are wrapped, and an already-open resident
+        cycle is never nested.
+        """
+        if self._qfq_cycle_id is not None or not self.qfq_enabled():
+            return False
+        return self._qfq_config().can_coordinate_watermark(str(task.get("table", "")))
+
     def execute_task(self, task: Dict, mode: Optional[str] = None,
                      run_quality_audit: bool = True) -> bool:
         """Public task entry shared by GUI, CLI and resident scheduling.
@@ -392,6 +409,12 @@ class ResidentCollector:
         The task is copied before the run so mode overrides cannot mutate the
         persisted/shared configuration. Every mode uses the same mandatory
         fetch -> align -> validate -> write pipeline.
+
+        Direct GUI/CLI execution of a QFQ-managed price table owns a one-task
+        coordination cycle.  This preserves the watermark gate instead of
+        bypassing it, while fixing the historical PyQt full-pull behaviour where
+        a successful write had no active cycle and therefore never created or
+        advanced its watermark.
         """
         if mode not in (None, "full_range", "incremental"):
             raise ValueError(f"unsupported collection mode: {mode!r}")
@@ -400,9 +423,16 @@ class ResidentCollector:
             run_task["mode"] = mode
         task_ok = False
         audit_ok = True
+        owns_qfq_cycle = False
+        self._last_qfq_cycle_summary = None
         try:
+            if self._needs_manual_qfq_cycle(run_task):
+                owns_qfq_cycle = self.qfq_begin_cycle() is not None
             task_ok = self._execute_task(run_task)
         finally:
+            if owns_qfq_cycle and self._qfq_cycle_id is not None:
+                run_id = f"manual_{run_task.get('name', 'task')}_{uuid.uuid4().hex[:12]}"
+                self._last_qfq_cycle_summary = self.qfq_run_post_ingest(run_id)
             if run_quality_audit:
                 audit_ok = self._run_full_quality_audit()
         return task_ok and audit_ok

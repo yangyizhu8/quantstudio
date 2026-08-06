@@ -481,3 +481,60 @@ B-5 local framework work is now scoped to staging primitives only. The resident 
 Generation-specific factor observations are physically routed by `AuxDbRouter`; a missing dynamic auxiliary file fails closed and is never replaced by the legacy `qfq_aux.db`. The CLI exposes `aux-init`, generation-filtered status/audit views, and `baseline-build`. A plain transition to `active` is blocked; active-pointer CAS and `mcp-gen1` activation remain B-6 gates. Formal database migration and mcp-gen1 activation remain unauthorized. The complete B-5 code/test/config/document set is synchronized only under the explicit post-repair confirmation received on 2026-08-06.
 
 Configuration note: an explicit non-legacy `source_generation` implies `generation_mode=dynamic` when omitted; `pre_cutover` with a non-legacy generation is rejected fail-fast.
+
+### PyQt manual full-pull watermark contract (2026-08-06)
+
+When QFQ coordination is enabled, a PyQt single-task pull of one of the four
+price tables (`stock_daily`, `stock_minutes`, `etf_daily`, `etf_minutes`) now
+opens a one-task coordination cycle before fetching and runs the normal
+post-ingest gate before releasing the worker. This fixes the previous path in
+which the write succeeded but no cycle existed, so the fail-closed watermark
+helper discarded the candidate and `source_watermark` stayed absent/stale.
+There is no direct watermark bypass: a passed gate commits the watermark; a
+held/failed gate leaves it unchanged and the GUI reports a watermark-gate
+warning.
+
+### MCP cutover B-6 local/staging implementation (2026-08-06)
+
+B-6 staging now provides immutable evidence freeze/verification,
+Evidence hashing streams sorted rows in bounded batches, so full-table staging evidence does not materialize multi-gigabyte price tables in Python memory.
+expected-old active-pointer CAS, legacy non-terminal trigger retirement
+(including `scheduled`), stale-cycle interruption, pending watermark-intent
+supersede, dead-letter preservation, and transaction fault-injection rollback.
+Use `cutover-evidence` followed by the staging-only `cutover-activate` CLI
+command. The activation command rejects the configured formal database even
+when `--allow-production` is supplied; no formal migration or real `mcp-gen1`
+activation is performed by this local implementation.
+
+
+### MCP cutover B-6 WP4 command gate (2026-08-06)
+
+WP4 freezes the pre-formal-cutover command surface without authorizing formal
+operations:
+
+```powershell
+# read-only activation plan; no BEGIN, writes, or evidence file
+python -m quantstudio.pipeline.qfq_orchestrator_cli --db <staging.db> --json `
+  cutover-activate --cutover-id <id> --expected-old <old-or-empty> --dry-run
+
+# copy only an explicit staging/hermetic source; formal main/aux are rejected
+python -m quantstudio.pipeline.qfq_orchestrator_cli --execute `
+  cutover-prep-staging --source-db <source-staging.db> `
+  --source-aux <source-staging-aux.db> --dest <new-staging-dir>
+
+# bounded post-activation canary; scoped gate holds global watermark by design
+python -m quantstudio.pipeline.qfq_orchestrator_cli --db <staging.db> --execute `
+  cutover-canary --aux-db <staging-aux.db> `
+  --codes 510500,159919,000001 --cutover-id <active-cutover-id> `
+  --output <staging-dir>/evidence/post_activation_canary.json
+```
+
+`cutover-prep-staging` holds `.daemon.lock` and `.collector_run.lock` during the
+copy, rejects non-empty WAL/journal sidecars, writes exclusive marker/manifest
+files, and refuses a source equal to the configured formal main/aux.
+`cutover-activate --dry-run` uses read-only SQL to print the expected-old CAS,
+legacy retirement, intent supersede, pointer transition, and postcondition
+sequence; it never creates evidence or starts a transaction.
+`cutover-canary` recovers staging-only aborted cycles (`started` to
+`interrupted`, SQLite integrity/WAL checkpoint) before running the bounded
+scoped dynamic-identity canary.

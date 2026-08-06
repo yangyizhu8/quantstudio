@@ -18,3 +18,14 @@ def test_snapshot_evidence_is_order_independent_and_null_stable():
     assert ea["content_sha256"] == eb["content_sha256"]
     assert ea["row_count"] == 2 and ea["min_time"] == "1" and ea["max_time"] == "2"
     assert database_evidence(a, ["t"])["manifest_sha256"] == database_evidence(b, ["t"])["manifest_sha256"]
+
+
+def test_sqlite_table_evidence_uses_pragma_fallback():
+    import sqlite3
+    c = sqlite3.connect(":memory:")
+    c.execute("CREATE TABLE t(code TEXT, factor_time INTEGER, value REAL)")
+    c.executemany("INSERT INTO t VALUES (?,?,?)", [("b", 2, 1.0), ("a", 1, 2.0)])
+    ev = table_evidence(c, "t")
+    assert ev["row_count"] == 2
+    assert ev["min_time"] == "1" and ev["max_time"] == "2"
+    assert len(ev["content_sha256"]) == 64

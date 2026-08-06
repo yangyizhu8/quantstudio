@@ -229,3 +229,38 @@ Before any future B-6 activation, verify the following on a staging copy only:
 - [ ] Trigger/cycle/bootstrap/watermark/backfill/event/capture audits are filtered to the same `(price_source, source_generation, cutover_id)`.
 - [ ] Legacy `xtquant-legacy` behavior and the frozen pre-B-5 dividend baseline (first pass 2181, immediate replay 0) remain unchanged.
 - [ ] No production main DB or production aux DB was opened read-write. GitHub synchronization is permitted only by the explicit post-repair confirmation recorded on 2026-08-06; it does not authorize production migration or mcp-gen1 activation.
+
+
+## B-6 local/staging implementation gate (2026-08-06)
+
+- PyQt manual full pulls of the four QFQ-managed price tables own a one-task
+  coordination cycle; direct watermark advancement is prohibited. A passed
+  post-ingest gate commits the candidate; a held/failed gate leaves the old
+  watermark and emits a GUI warning.
+- `cutover-evidence` freezes immutable main/aux table evidence. Full-table hashing is streamed in bounded batches; it must not materialize multi-gigabyte price tables in Python. Re-running with
+  identical content is idempotent; a changed evidence payload cannot overwrite
+  the manifest.
+- `cutover-activate` is staging-only and verifies evidence, expected-old
+  active-pointer CAS, legacy stale-cycle interruption, pending-intent
+  supersede, and retirement of all legacy non-terminal trigger states,
+  including `scheduled`. `dead_letter` and `committed` remain untouched.
+- Fault injection must prove that failures before COMMIT roll back the pointer,
+  cutover status, cycle, intent, and trigger changes as one transaction.
+- The command rejects the configured formal DB even with `--allow-production`;
+  no formal migration or real `mcp-gen1` activation is authorized by B-6 local
+  implementation.
+
+
+## B-6 WP4 command gate (2026-08-06)
+
+- `cutover-activate --dry-run` is read-only: `transaction_started=false`, no
+  evidence file, no database mutation, and no formal path bypass.
+- `cutover-prep-staging --source-db ... --source-aux ... --dest ...` requires
+  explicit staging/hermetic sources; it holds both framework locks, rejects
+  non-empty WAL/journal sidecars, verifies source/staging SHA-256, and writes
+  exclusive marker/manifest files.
+- `cutover-canary --codes 510500,159919,000001` resolves the active dynamic
+  identity, checks baseline/replay, forces global watermark hold for scoped
+  validation, and performs staging-only abort recovery before canary execution.
+- Formal main/aux migration and formal `mcp-gen1`/active activation remain
+  prohibited regardless of `--allow-production`.

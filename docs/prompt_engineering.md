@@ -442,6 +442,17 @@ For MCP framework work, prompts must state all of the following:
 
 要求验证 COMMIT 后崩溃时，提示词必须指定故障点为“durable COMMIT 后、正常 connection cleanup/report 前”，并要求 Windows 子进程测试串行运行、严格断言 exit 92。禁止把 `0xC0000005` 加入允许值或用重试掩盖；正常路径/受控异常仍必须关闭连接。
 
+## MCP cutover B-6 prompt constraints (2026-08-06)
+
+Prompts that request B-6 work must state:
+
+- scope is local/staging only until a separate user gate; formal migration and real `mcp-gen1` activation are forbidden;
+- freeze and verify immutable main/aux evidence before activation;
+- use expected-old active-pointer CAS and one transaction for legacy retirement plus pointer transition;
+- retire legacy non-terminal triggers including `scheduled`, interrupt stale cycles only when no lease proves an owner alive, supersede pending intents without advancing `source_watermark`, and preserve `dead_letter`/`committed` history;
+- test every pre-commit fault point and verify exact rollback; an after-COMMIT interruption must be recoverable by read-only status/evidence rather than replaying retirement blindly.
+- stream sorted full-table evidence in bounded batches; do not hash a multi-gigabyte price table by materializing all rows in Python.
+
 ## MCP cutover B-5 prompt constraints (2026-08-06)
 
 Prompts that request B-5 work must state:
@@ -454,3 +465,14 @@ Prompts that request B-5 work must state:
 - `baseline_validated -> active` is not a normal CLI transition; it requires the later B-6 active-pointer CAS and user confirmation.
 
 - An explicit non-legacy `source_generation` implies `generation_mode=dynamic` when omitted; prompts must not combine a non-legacy generation with `pre_cutover`.
+- **PyQt manual full pulls must use a QFQ cycle**: direct GUI execution of any of the four price tables opens a one-task coordination cycle and runs the post-ingest gate; never repair a missing watermark by calling `writer.advance_watermark` directly. A failed gate keeps the old watermark and shows a warning.
+
+
+## MCP cutover B-6 WP4 prompt constraints (2026-08-06)
+
+Prompts requesting WP4 must require:
+
+- `cutover-activate --dry-run` to use read-only SQL only, with no BEGIN, writes, or evidence creation; non-dry-run behavior must remain unchanged;
+- `cutover-prep-staging` to require explicit staging/hermetic source paths, hold `.daemon.lock` plus `.collector_run.lock`, reject non-empty WAL/journal sidecars, and refuse the configured formal main/aux;
+- `cutover-canary` to run only against an active staging identity, preserve the 2181 discovery baseline/replay-0 invariant, force global watermark hold for scoped validation, and recover aborted staging cycles with SQLite integrity/WAL checkpoint;
+- no command may switch the formal active pointer, activate formal `mcp-gen1`, or use `--allow-production` to bypass the staging guard.

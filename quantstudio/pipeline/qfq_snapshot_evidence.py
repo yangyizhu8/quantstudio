@@ -37,23 +37,57 @@ def _json_value(value):
     return str(value)
 
 
+def _canonical_row(columns: Sequence[str], row: Sequence) -> str:
+    payload = {str(c): _json_value(v) for c, v in zip(columns, row)}
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"),
+                      sort_keys=False)
+
+
 def canonical_rows(columns: Sequence[str], rows: Iterable[Sequence]) -> bytes:
-    payload = [{str(c): _json_value(v) for c, v in zip(columns, row)}
-               for row in rows]
-    return (json.dumps(payload, ensure_ascii=False, separators=(",", ":"),
-                       sort_keys=False) + "\n").encode("utf-8")
+    values = [_canonical_row(columns, row) for row in rows]
+    return ("[" + ",".join(values) + "]\n").encode("utf-8")
+
+
+def _columns(conn, table: str) -> list[str]:
+    """Return columns for DuckDB or SQLite without mutating the connection."""
+    try:
+        desc = conn.execute(f'DESCRIBE "{table}"').fetchall()
+        return [str(r[0]) for r in desc]
+    except Exception as describe_error:
+        try:
+            rows = conn.execute(f'PRAGMA table_info("{table}")').fetchall()
+        except Exception:
+            raise describe_error
+        if not rows:
+            raise ValueError(f"table not found or has no columns: {table}")
+        return [str(r[1]) for r in rows]
 
 
 def table_evidence(conn, table: str, *, order_by: Optional[Sequence[str]] = None) -> Dict:
     table = _ident(table)
-    desc = conn.execute(f'DESCRIBE "{table}"').fetchall()
-    columns = [str(r[0]) for r in desc]
+    columns = _columns(conn, table)
     order = list(order_by or columns)
     for c in order:
         _ident(c)
     order_sql = ", ".join(f'"{c}"' for c in order)
-    rows = conn.execute(f'SELECT * FROM "{table}" ORDER BY {order_sql}').fetchall()
-    blob = canonical_rows(columns, rows)
+    cursor = conn.execute(f'SELECT * FROM "{table}" ORDER BY {order_sql}')
+    # Stream the canonical JSON array so full-table B-6 evidence does not
+    # materialize a multi-gigabyte price table in Python memory.
+    digest = hashlib.sha256()
+    digest.update(b"[")
+    row_count = 0
+    first = True
+    while True:
+        batch = cursor.fetchmany(10_000)
+        if not batch:
+            break
+        for row in batch:
+            if not first:
+                digest.update(b",")
+            digest.update(_canonical_row(columns, row).encode("utf-8"))
+            first = False
+            row_count += 1
+    digest.update(b"]\n")
     times = [c for c in columns if c.lower() in {"time", "factor_time", "ex_date"}]
     time_min = time_max = None
     if times:
@@ -64,10 +98,10 @@ def table_evidence(conn, table: str, *, order_by: Optional[Sequence[str]] = None
     return {
         "table": table,
         "columns": columns,
-        "row_count": len(rows),
+        "row_count": row_count,
         "min_time": _json_value(time_min),
         "max_time": _json_value(time_max),
-        "content_sha256": hashlib.sha256(blob).hexdigest(),
+        "content_sha256": digest.hexdigest(),
     }
 
 

@@ -54,7 +54,9 @@ READONLY_CMDS = frozenset({"status", "show-pending", "show-dead-letter", "bootst
 #: 变更子命令集合（需 --execute；正式库需 --allow-production）
 MUTATING_CMDS = frozenset({"bootstrap-plan", "bootstrap-run", "bootstrap-resume",
                            "reconcile-once", "retry-due", "reopen", "cutover-init",
-                           "cutover-transition", "aux-init", "baseline-build"})
+                           "cutover-transition", "aux-init", "baseline-build",
+                           "cutover-evidence", "cutover-activate",
+                           "cutover-prep-staging", "cutover-canary"})
 #: 需要 enabled=true 才允许执行的变更命令（紧急回退开关语义）
 ENABLED_REQUIRED_CMDS = frozenset({"reconcile-once", "bootstrap-run", "bootstrap-resume"})
 
@@ -664,6 +666,129 @@ def cmd_baseline_build(args) -> int:
         conn.close()
 
 
+def cmd_cutover_evidence(args) -> int:
+    db = _resolve_db(args)
+    if not args.execute:
+        _emit(args, {"dry_run": True, "cutover_id": args.cutover_id,
+                     "output": str(Path(args.output).resolve())},
+              [f"[dry-run] freeze immutable B-6 evidence for {args.cutover_id}"])
+        return 0
+    _guard_mutating(args, db)
+    conn = _connect(db, read_only=False)
+    try:
+        from quantstudio.pipeline.qfq_cutover_activation import build_cutover_evidence
+        row = build_cutover_evidence(conn, cutover_id=args.cutover_id,
+                                     main_db_path=db, output_path=args.output)
+        _emit(args, row, [f"B-6 evidence frozen: {row['evidence_path']}"])
+        return 0
+    finally:
+        conn.close()
+
+
+def cmd_cutover_activate(args) -> int:
+    db = _resolve_db(args)
+    expected_old = args.expected_old or None
+    # B-6 is local/staging only.  --allow-production intentionally cannot
+    # override this boundary; formal activation remains separately gated.
+    try:
+        if db == _production_db_path():
+            raise SystemExit("B-6 cutover-activate is staging-only; formal activation is not authorized")
+    except SystemExit:
+        raise
+    if args.dry_run and args.execute:
+        raise SystemExit("cutover-activate --dry-run and --execute are mutually exclusive")
+    if args.dry_run or not args.execute:
+        conn = _connect(db, read_only=True)
+        try:
+            from quantstudio.pipeline.qfq_cutover_activation import activation_dry_run
+            plan = activation_dry_run(
+                conn, cutover_id=args.cutover_id, price_source=args.price_source,
+                expected_old=expected_old, main_db_path=db)
+        finally:
+            conn.close()
+        _emit(args, plan, [
+            f"[dry-run] staging-only activation plan for {args.cutover_id}",
+            *[f"  {index + 1}. {step}" for index, step in enumerate(plan["sequence"])],
+        ])
+        return 0
+    _guard_mutating(args, db)
+    from filelock import FileLock, Timeout
+    from .daemon_lifecycle import collector_run_lock_path
+    run_lock = FileLock(str(collector_run_lock_path()), timeout=0)
+    try:
+        run_lock.acquire()
+    except Timeout as exc:
+        raise SystemExit("collector/daemon is running; cannot safely perform B-6 activation") from exc
+    conn = None
+    try:
+        conn = _connect(db, read_only=False)
+        from quantstudio.pipeline.qfq_cutover_activation import activate_cutover_staging
+        row = activate_cutover_staging(conn, cutover_id=args.cutover_id,
+                                       price_source=args.price_source,
+                                       expected_old=expected_old,
+                                       main_db_path=db, fault_at=args.fault_at)
+        _emit(args, row, [f"B-6 staging activation complete: {row}"])
+        return 0
+    finally:
+        if conn is not None:
+            conn.close()
+        run_lock.release()
+
+
+def cmd_cutover_prep_staging(args) -> int:
+    if not args.execute:
+        payload = {"dry_run": True, "source_db": str(Path(args.source_db).resolve()),
+                   "source_aux": str(Path(args.source_aux).resolve()),
+                   "dest": str(Path(args.dest).resolve()), "writes_database": False}
+        _emit(args, payload, [f"[dry-run] prepare staging copy at {payload['dest']}"])
+        return 0
+    from quantstudio.pipeline.qfq_staging_prep import prepare_staging_copy
+    payload = prepare_staging_copy(
+        source_db=args.source_db, source_aux=args.source_aux, dest=args.dest)
+    _emit(args, payload, [f"staging copy prepared: {payload['root']}"])
+    return 0
+
+
+def cmd_cutover_canary(args) -> int:
+    db = _resolve_db(args)
+    if db == _production_db_path():
+        raise SystemExit("cutover-canary is staging-only; formal DB is rejected")
+    codes = _parse_codes_filter(args.codes)
+    if not args.execute:
+        payload = {"dry_run": True, "db": str(db),
+                   "aux_db": str(Path(args.aux_db).resolve()),
+                   "codes": codes, "cutover_id": args.cutover_id,
+                   "expected_baseline_rows": args.expected_baseline_rows}
+        _emit(args, payload, [f"[dry-run] scoped staging canary codes={codes}"])
+        return 0
+    from filelock import FileLock, Timeout
+    from .daemon_lifecycle import collector_run_lock_path
+    lock = FileLock(str(collector_run_lock_path()), timeout=0)
+    try:
+        lock.acquire()
+    except Timeout as exc:
+        raise SystemExit("collector/daemon is running; cannot safely run staging canary") from exc
+    try:
+        from quantstudio.pipeline.qfq_staging_canary import (
+            _write_exclusive, run_full_noop_with_timeout, run_scoped_canary)
+        full_noop = run_full_noop_with_timeout(
+            main_db=db, aux_db=args.aux_db, cutover_id=args.cutover_id,
+            timeout_sec=args.full_noop_timeout_sec)
+        payload = run_scoped_canary(
+            main_db=db, aux_db=args.aux_db, codes=codes,
+            cutover_id=args.cutover_id,
+            expected_baseline_rows=args.expected_baseline_rows,
+            output_path=None,
+            recover_aborted=(args.full_noop_timeout_sec <= 0))
+        payload["full_noop"] = full_noop
+        _write_exclusive(Path(args.output).resolve(), payload)
+        payload["output_path"] = str(Path(args.output).resolve())
+    finally:
+        lock.release()
+    _emit(args, payload, [f"staging canary complete: status={payload['summary']['status']}"])
+    return 0
+
+
 def cmd_aux_init(args) -> int:
     """Explicitly initialize the isolated auxiliary DB recorded by a cutover."""
     db = _resolve_db(args); cfg = _load_cfg(args)
@@ -766,6 +891,30 @@ def build_parser() -> argparse.ArgumentParser:
     ai.add_argument("--cutover-id", required=True)
     bb = sub.add_parser("baseline-build", help="build discovery baseline during baseline_building")
     bb.add_argument("--cutover-id", required=True)
+    ce = sub.add_parser("cutover-evidence", help="freeze immutable B-6 staging evidence")
+    ce.add_argument("--cutover-id", required=True)
+    ce.add_argument("--output", required=True)
+    ca = sub.add_parser("cutover-activate", help="staging-only B-6 active-pointer CAS")
+    ca.add_argument("--cutover-id", required=True)
+    ca.add_argument("--price-source", default="mcp")
+    ca.add_argument("--expected-old", default=None)
+    ca.add_argument("--dry-run", action="store_true",
+                    help="read-only activation plan; no BEGIN, writes, or evidence creation")
+    ca.add_argument("--fault-at", default=None,
+                    choices=["after_retirement", "after_pointer_delete", "after_pointer_insert",
+                             "after_new_status", "before_commit", "after_commit_before_report"])
+    ps = sub.add_parser("cutover-prep-staging", help="copy an explicit staging/hermetic source under dual locks")
+    ps.add_argument("--source-db", required=True)
+    ps.add_argument("--source-aux", required=True)
+    ps.add_argument("--dest", required=True)
+    cc = sub.add_parser("cutover-canary", help="scoped post-activation staging canary")
+    cc.add_argument("--aux-db", required=True)
+    cc.add_argument("--codes", default="510500,159919,000001")
+    cc.add_argument("--cutover-id", default="b6_mcp_gen1_20260806")
+    cc.add_argument("--expected-baseline-rows", type=int, default=2181)
+    cc.add_argument("--output", required=True)
+    cc.add_argument("--full-noop-timeout-sec", type=float, default=300.0,
+                    help="unscoped no-op timeout; timeout triggers staging recovery")
     return p
 
 
@@ -786,6 +935,10 @@ DISPATCH = {
     "cutover-transition": cmd_cutover_transition,
     "aux-init": cmd_aux_init,
     "baseline-build": cmd_baseline_build,
+    "cutover-evidence": cmd_cutover_evidence,
+    "cutover-activate": cmd_cutover_activate,
+    "cutover-prep-staging": cmd_cutover_prep_staging,
+    "cutover-canary": cmd_cutover_canary,
 }
 
 
