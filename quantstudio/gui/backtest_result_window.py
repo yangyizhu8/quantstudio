@@ -22,7 +22,6 @@ import os
 from datetime import datetime, timedelta
 import numpy as np
 import sys
-import time
 from quantstudio._paths import db_path
 
 # 设置matplotlib的字体和其他参数
@@ -686,8 +685,10 @@ class BacktestResultWindow(QMainWindow):
             # 构建配置文件路径
             config_path = os.path.join(backtest_dir, "config.csv")
 
-            time.sleep(1)
-            
+            # 注：不再 sleep。engine.run() 在返回前已同步调用 export_result 写完所有
+            # CSV（backtest_engine.run → export_result），文件必然已落盘。原 sleep(1)
+            # 会在回测完成时冻结 GUI 主线程 1 秒，造成"窗口好像没弹出来"的观感。
+
             # 打印调试信息
             print(f"尝试加载配置文件: {config_path}") 
             print(f"文件是否存在: {os.path.exists(config_path)}")
@@ -1517,11 +1518,32 @@ class BacktestResultWindow(QMainWindow):
             
             # 重绘图表
             self.chart_view.draw()
-            
+
+            # 将收益曲线图保存为 PNG，与回测结果 CSV 放在同一目录
+            self.save_chart_image()
+
         except Exception as e:
             print(f"更新图表时出错: {str(e)}")
             import traceback
             print(traceback.format_exc())
+
+    def save_chart_image(self):
+        """将当前收益曲线图保存为 PNG 图片，与回测结果 CSV 放在同一目录。
+
+        保存失败不影响窗口展示（仅打印告警）。
+        """
+        try:
+            if not self.backtest_dir:
+                return
+            save_dir = os.path.abspath(self.backtest_dir)
+            if not os.path.isdir(save_dir):
+                return
+            save_path = os.path.join(save_dir, "回测收益曲线.png")
+            self.chart_view.figure.savefig(
+                save_path, dpi=150, bbox_inches='tight', facecolor='#2d2d2d')
+            print(f"收益曲线图已保存: {save_path}")
+        except Exception as e:
+            print(f"保存收益曲线图失败: {str(e)}")
 
     def hover(self, event):
         """处理鼠标悬停事件，显示垂直参考线和数据点"""

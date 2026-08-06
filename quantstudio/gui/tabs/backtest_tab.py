@@ -209,14 +209,22 @@ class BacktestTab(QWidget):
         output_dir = result.get("output_dir", "")
         self.status_label.setText(f"✅ 回测完成: {output_dir}")
 
-        # 打开结果可视化窗口
+        # 打开结果可视化窗口。
+        # 注意：窗口构造/显示期间的任何异常都必须捕获并反馈。否则异常会从 Qt 槽
+        # 函数逸出，.show() 被跳过，导致"回测完成后窗口不自动弹出"且无任何提示。
         try:
             from ..backtest_result_window import BacktestResultWindow
-            self._result_window = BacktestResultWindow(output_dir, self.mw.root_path)
+            root_path = getattr(self.mw, 'root_path', None)
+            self._result_window = BacktestResultWindow(output_dir, root_path)
             self._result_window.show()
-        except ImportError:
-            QMessageBox.information(self, "回测完成",
-                f"回测完成！结果已导出:\n{output_dir}\n\n（结果可视化窗口待 G2 阶段实现）")
+            # 主窗口最大化时新窗口可能被盖在后面，显式置顶。
+            self._result_window.raise_()
+            self._result_window.activateWindow()
+        except Exception as e:
+            logger.error(f"打开结果窗口失败: {e}", exc_info=True)
+            QMessageBox.warning(self, "回测完成（窗口打开失败）",
+                f"回测已完成，结果已导出:\n{output_dir}\n\n"
+                f"但结果可视化窗口打开失败:\n{type(e).__name__}: {e}")
 
     def _on_error(self, err):
         """回测出错"""

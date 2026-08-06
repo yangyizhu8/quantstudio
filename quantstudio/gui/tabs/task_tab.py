@@ -685,21 +685,29 @@ class TaskTab(QWidget):
             and result.get("quality_audit_ran") is True
             and result.get("quality_audit_ok") is False
         )
+        qfq_cycle = result.get("qfq_cycle") if ok and isinstance(result, dict) else None
+        qfq_warning = bool(qfq_cycle and qfq_cycle.get("status") != "finalized")
         if ok:
-            if audit_warning:
+            if audit_warning or qfq_warning:
                 logger.warning(
                     f"\u4efb\u52a1 {task_name} \u62c9\u53d6/\u5199\u5e93\u6210\u529f\uff0c"
-                    f"\u4f46\u5168\u5e93\u8d28\u91cf\u5ba1\u8ba1\u672a\u901a\u8fc7: {result}")
+                    f"\u4f46\u540e\u7f6e\u95e8\u63a7\u6709\u544a\u8b66: {result}")
             else:
                 logger.info(f"\u4efb\u52a1 {task_name} \u5b8c\u6210: {result}")
         else:
             logger.error(f"\u4efb\u52a1 {task_name} \u5931\u8d25: {result}")
 
+        warnings = []
+        if qfq_warning:
+            warnings.append("QFQ \u95e8\u63a7\u672a\u63d0\u4ea4\u6c34\u4f4d\u7ebf")
         if audit_warning:
-            final_text = (
-                f"\u26a0\ufe0f {task_name} \u62c9\u53d6\u6210\u529f\uff1b"
-                f"\u5168\u5e93\u8d28\u91cf\u5ba1\u8ba1\u672a\u901a\u8fc7")
-            task_status = "\u6210\u529f\uff08\u5ba1\u8ba1\u544a\u8b66\uff09"
+            warnings.append("\u5168\u5e93\u8d28\u91cf\u5ba1\u8ba1\u672a\u901a\u8fc7")
+        if warnings:
+            final_text = f"\u26a0\ufe0f {task_name} \u62c9\u53d6\u6210\u529f\uff1b" + "\uff1b".join(warnings)
+            if qfq_warning:
+                task_status = "\u6210\u529f\uff08\u6c34\u4f4d\u95e8\u63a7\u544a\u8b66\uff09"
+            else:
+                task_status = "\u6210\u529f\uff08\u5ba1\u8ba1\u544a\u8b66\uff09"
         elif ok:
             final_text = f"\u2705 {task_name}"
             task_status = "\u6210\u529f"

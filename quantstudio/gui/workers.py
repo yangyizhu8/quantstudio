@@ -53,6 +53,19 @@ def _collector_run_lock_path() -> Path:
     return DATA_ROOT / ".collector_run.lock"
 
 
+def _qfq_cycle_result(collector) -> dict | None:
+    """Return the manual QFQ cycle outcome in a signal-safe shape."""
+    summary = getattr(collector, "_last_qfq_cycle_summary", None)
+    if summary is None:
+        return None
+    return {
+        "status": getattr(summary, "status", None),
+        "error": getattr(summary, "error", None),
+        "watermarks_committed": int(getattr(summary, "watermarks_committed", 0) or 0),
+        "watermarks_held": int(getattr(summary, "watermarks_held", 0) or 0),
+    }
+
+
 class LockedTaskWorker(BaseWorker):
     """v3：GUI 手动拉取单个任务的 Worker。
 
@@ -134,6 +147,7 @@ class LockedTaskWorker(BaseWorker):
                     "task_ok": bool(task_ok),
                     "quality_audit_ran": audit_ran,
                     "quality_audit_ok": audit_ok,
+                    "qfq_cycle": _qfq_cycle_result(collector),
                 }
                 if audit_error is not None:
                     result["quality_audit_error"] = audit_error
@@ -292,6 +306,7 @@ class TaskWorker(BaseWorker):
                 "task_ok": bool(task_ok),
                 "quality_audit_ran": audit_ran,
                 "quality_audit_ok": audit_ok,
+                "qfq_cycle": _qfq_cycle_result(collector),
             }
             if audit_error is not None:
                 result["quality_audit_error"] = audit_error
