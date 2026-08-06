@@ -46,6 +46,12 @@ from quantstudio.pipeline.qfq_orchestrator_types import (
     WatermarkIntentStatus, ReanchorOutcome, event_id_of, QFQConfigError,
 )
 from quantstudio.pipeline.qfq_event_discovery import EventDiscovery
+from quantstudio.pipeline.qfq_cutover import resolve_runtime_identity, runtime_cutover_record
+from quantstudio.pipeline.qfq_aux_router import AuxDbRouter
+from quantstudio.pipeline.qfq_discovery_baseline import (
+    audit_pending_slots, BaselineIdentity, commit_pending_slot,
+    logical_key_stock_dividend,
+)
 from quantstudio.pipeline.qfq_fresh_capture import FreshCapture, FreshFetcher, CaptureContentConflict
 from quantstudio.pipeline.qfq_reanchor_engine import ReanchorBlocked
 
@@ -106,27 +112,69 @@ class QFQResidentOrchestrator:
                  aux_db: Optional[str] = None,
                  fetcher: Optional[FreshFetcher] = None,
                  calendar=None,
-                 watermark_advancer: Optional[Callable] = None):
+                 watermark_advancer: Optional[Callable] = None,
+                 aux_router: Optional[AuxDbRouter] = None):
         self.cfg = cfg
-        # v2.4 B-3a.3 P0-2：统一静态 pre-cutover identity（generation/cutover 固定 legacy 哨兵，
-        # 不读 cfg.source_generation/cutover_id；B-5 动态、B-6 激活）
         from quantstudio.pipeline.qfq_schema_contracts import pre_cutover_qfq_identity
         self._ident = pre_cutover_qfq_identity(cfg.price_source)
         if not cfg.enabled:
             logger.info("[qfq_orch] enabled=False，编排器为 no-op（daemon 走旧路径）")
         self.main_db = main_db
-        self.aux_db = aux_db or (aux_db_path(main_db) if main_db else None)
+        self._explicit_aux_db = aux_db or (aux_db_path(main_db) if main_db else None)
+        self.aux_db = self._explicit_aux_db
+        self._aux_router = aux_router or AuxDbRouter(
+            main_db=main_db, explicit_default=self._explicit_aux_db)
         self.fetcher = fetcher
         self.calendar = calendar
-        self.watermark_advancer = watermark_advancer  # (source, table, freq, new_wm, batch_id)
-        self.discovery = EventDiscovery(cfg, aux_db=self.aux_db)
+        self.watermark_advancer = watermark_advancer
+        self.discovery = EventDiscovery(cfg, aux_db=self.aux_db, identity=self._ident)
+    def _resolve_dynamic_identity(self, conn, *, require_aux: bool = True) -> None:
+        """Resolve B-5 identity and route the generation-specific auxiliary DB."""
+        if getattr(self.cfg, "generation_mode", "pre_cutover") != "dynamic":
+            self.discovery.set_runtime(self._ident, aux_db=self.aux_db)
+            return
+        ident = resolve_runtime_identity(conn, self.cfg, allow_prepared=False)
+        record = runtime_cutover_record(conn, ident)
+        aux_path = record.get("aux_db_path")
+        if not aux_path:
+            raise RuntimeError(
+                f"dynamic cutover={ident['cutover_id']!r} has no immutable aux_db_path; fail-closed")
+        router = AuxDbRouter(
+            main_db=self.main_db, explicit_default=self._explicit_aux_db,
+            routes={ident["source_generation"]: aux_path})
+        resolved = router.path_for(
+            ident["source_generation"], require_exists=require_aux)
+        self._ident = dict(ident)
+        self._aux_router = router
+        self.aux_db = str(resolved)
+        self.discovery.set_runtime(self._ident, aux_db=self.aux_db)
+
+    def prepare_runtime(self, conn, *, require_aux: bool = True) -> dict:
+        self._resolve_dynamic_identity(conn, require_aux=require_aux)
+        return dict(self._ident)
+
+
+    def _generation_where(self, alias: str = "") -> Tuple[str, List[object]]:
+        prefix = f"{alias}." if alias else ""
+        return (f"{prefix}price_source=? AND {prefix}source_generation=? "
+                f"AND {prefix}cutover_id=?",
+                [self._ident["price_source"], self._ident["source_generation"],
+                 self._ident["cutover_id"]])
+
+    def _baseline_identity(self) -> BaselineIdentity:
+        return BaselineIdentity(**self._ident)
+
 
     # ------------------------------------------------------------------
     # schema / 初始化
     # ------------------------------------------------------------------
     def init_schema(self, duck_conn, sqlite_conn=None) -> None:
-        """幂等建全部 QFQ 表（DuckDB 主库 + SQLite 辅助库）。"""
+        """Initialize schema without implicitly creating a dynamic-generation aux DB."""
         init_duckdb_schema(duck_conn)
+        self.prepare_runtime(
+            duck_conn,
+            require_aux=(getattr(self.cfg, "generation_mode", "pre_cutover") == "dynamic"),
+        )
         if sqlite_conn is not None:
             init_sqlite_schema(sqlite_conn)
 
@@ -136,6 +184,7 @@ class QFQResidentOrchestrator:
     def begin_cycle(self, conn, *, business_date_ms: Optional[int] = None,
                     config_hash: Optional[str] = None,
                     schema_hash: Optional[str] = None) -> str:
+        self._resolve_dynamic_identity(conn)
         # 崩溃/中断恢复（restart 语义）：上一周期若在 finalize 前中断，
         # qfq_watermark_intent 会残留 status='pending'。这些 intent 永远不会
         # 被旧周期提交（水位从未推进，daemon 下轮会从旧水位幂等重拉），
@@ -155,135 +204,113 @@ class QFQResidentOrchestrator:
         return cycle_id
 
     def supersede_stale_intents(self, conn) -> int:
-        """把非活跃周期残留的 pending watermark intent 标为 superseded。
-
-        只处理归属周期已终结（finalized/failed/interrupted）或缺失 cycle_run
-        记录（begin_cycle 后进程崩溃）的 pending intent；水位本身从未推进，
-        superseded 仅是登记"该候选水位作废，由后续周期重新计算"。
-        """
         rows = conn.execute(
             "SELECT wi.cycle_id, wi.source, wi.table_name, wi.freq "
             "FROM qfq_watermark_intent wi "
-            "LEFT JOIN qfq_cycle_run cr ON cr.cycle_id = wi.cycle_id "
-            "WHERE wi.status='pending' AND (cr.cycle_id IS NULL "
-            " OR cr.status IN ('finalized','finalized_held','failed','interrupted'))"
+            "LEFT JOIN qfq_cycle_run cr ON cr.cycle_id=wi.cycle_id "
+            "AND cr.price_source=? AND cr.source_generation=? AND cr.cutover_id=? "
+            "WHERE wi.source_generation=? AND wi.cutover_id=? "
+            "AND wi.status='pending' AND (cr.cycle_id IS NULL "
+            "OR cr.status IN ('finalized','finalized_held','failed','interrupted'))",
+            [self._ident["price_source"], self._ident["source_generation"], self._ident["cutover_id"],
+             self._ident["source_generation"], self._ident["cutover_id"]],
         ).fetchall()
         for cyc, source, table, freq in rows:
             conn.execute(
                 "UPDATE qfq_watermark_intent SET status='superseded', "
-                " hold_reason='stale pending superseded by new cycle' "
-                " WHERE cycle_id=? AND source=? AND table_name=? AND freq=?",
-                [cyc, source, table, freq])
-        if rows:
-            logger.info(f"[qfq_orch] 清障 {len(rows)} 个崩溃残留 pending watermark intent"
-                        f"（标 superseded，水位未曾推进，安全）")
+                "hold_reason='stale pending superseded by new cycle' "
+                "WHERE cycle_id=? AND source=? AND table_name=? AND freq=? "
+                "AND source_generation=? AND cutover_id=?",
+                [cyc, source, table, freq, self._ident["source_generation"],
+                 self._ident["cutover_id"]])
         return len(rows)
 
     def _set_cycle_phase(self, conn, cycle_id: str, phase: str) -> None:
         conn.execute(
-            "UPDATE qfq_cycle_run SET phase=?, updated_at=? WHERE cycle_id=?",
-            [phase, _now_ts(), cycle_id])
+            "UPDATE qfq_cycle_run SET phase=?, updated_at=? WHERE cycle_id=? "
+            "AND price_source=? AND source_generation=? AND cutover_id=?",
+            [phase, _now_ts(), cycle_id, self._ident["price_source"],
+             self._ident["source_generation"], self._ident["cutover_id"]])
 
     def _finish_cycle(self, conn, cycle_id: str, status: str,
                       summary: CycleSummary) -> None:
         conn.execute(
             "UPDATE qfq_cycle_run SET phase=?, status=?, discovered_count=?, "
-            " executed_count=?, success_count=?, failed_count=?, pending_count=?, "
-            " finished_at=?, error=?, updated_at=? WHERE cycle_id=?",
+            "executed_count=?, success_count=?, failed_count=?, pending_count=?, "
+            "finished_at=?, error=?, updated_at=? WHERE cycle_id=? "
+            "AND price_source=? AND source_generation=? AND cutover_id=?",
             [phase_of(status), status, summary.triggers_found, summary.claimed,
              summary.committed, summary.retryable_failed + summary.dead_letter,
-             summary.pending_due, _now_ts(), summary.error, _now_ts(), cycle_id])
+             summary.pending_due, _now_ts(), summary.error, _now_ts(), cycle_id,
+             self._ident["price_source"], self._ident["source_generation"],
+             self._ident["cutover_id"]])
 
     # ------------------------------------------------------------------
     # 重启恢复
     # ------------------------------------------------------------------
     def recover_stale_in_progress(self, conn, run_id: str,
                                   codes_filter: Optional[Sequence[str]] = None) -> int:
-        """回收 lease 超时的 in_progress trigger → 回到 pending/retryable_failed。"""
         lease = self.cfg.claim_lease_sec
         cutoff = (_now_iso_ts() - timedelta(seconds=lease)).isoformat(timespec="seconds")
-        sql = (
-            "SELECT trigger_id, attempt_count FROM qfq_trigger_queue "
-            "WHERE status='in_progress' AND claimed_at IS NOT NULL AND claimed_at < ?"
-        )
-        params: List[object] = [cutoff]
+        gen_sql, gen_params = self._generation_where()
+        sql = ("SELECT trigger_id, attempt_count FROM qfq_trigger_queue "
+               "WHERE status='in_progress' AND claimed_at IS NOT NULL AND claimed_at < ? "
+               "AND " + gen_sql)
+        params: List[object] = [cutoff, *gen_params]
         if codes_filter:
-            placeholders = ", ".join(["?"] * len(codes_filter))
-            sql += f" AND code IN ({placeholders})"
+            sql += f" AND code IN ({', '.join(['?'] * len(codes_filter))})"
             params.extend(codes_filter)
         rows = conn.execute(sql, params).fetchall()
-        n = 0
         for tid, attempt in rows:
             if (attempt or 0) > 0:
-                # 已有失败历史 → retryable_failed，必须带 next_retry_at（立即到期，
-                # 由本轮 recover_pending_due 领回），否则会永久卡死。
                 now_retry = _now_iso_ts().isoformat(timespec="seconds")
                 conn.execute(
-                    "UPDATE qfq_trigger_queue SET status='retryable_failed', "
-                    " claimed_by=NULL, claimed_at=NULL, next_retry_at=?, updated_at=? "
-                    " WHERE trigger_id=?",
-                    [now_retry, _now_ts(), tid])
+                    "UPDATE qfq_trigger_queue SET status='retryable_failed', claimed_by=NULL, "
+                    "claimed_at=NULL, next_retry_at=?, updated_at=? WHERE trigger_id=? "
+                    "AND price_source=? AND source_generation=? AND cutover_id=?",
+                    [now_retry, _now_ts(), tid, *gen_params])
             else:
                 conn.execute(
                     "UPDATE qfq_trigger_queue SET status='pending', claimed_by=NULL, "
-                    " claimed_at=NULL, updated_at=? WHERE trigger_id=?",
-                    [_now_ts(), tid])
-            n += 1
-        if n:
-            logger.info(f"[qfq_orch] 回收 {n} 个 stale in_progress（lease={lease}s）")
-        return n
+                    "claimed_at=NULL, updated_at=? WHERE trigger_id=? "
+                    "AND price_source=? AND source_generation=? AND cutover_id=?",
+                    [_now_ts(), tid, *gen_params])
+        return len(rows)
 
     def promote_scheduled_due(self, conn, *, as_of_ms: int,
                               codes_filter: Optional[Sequence[str]] = None) -> int:
-        """future 事件到期（effective_date <= as_of）→ scheduled 晋升 pending。
-
-        没有这步，除权日尚未到达时登记的 scheduled trigger 会永久搁置（红线）。
-        """
-        sql = (
-            "SELECT trigger_id FROM qfq_trigger_queue "
-            "WHERE status='scheduled' AND effective_date IS NOT NULL "
-            "AND effective_date <= ?"
-        )
-        params: List[object] = [as_of_ms]
+        gen_sql, gen_params = self._generation_where()
+        sql = ("SELECT trigger_id FROM qfq_trigger_queue WHERE status='scheduled' "
+               "AND effective_date IS NOT NULL AND effective_date <= ? AND " + gen_sql)
+        params: List[object] = [as_of_ms, *gen_params]
         if codes_filter:
-            placeholders = ", ".join(["?"] * len(codes_filter))
-            sql += f" AND code IN ({placeholders})"
+            sql += f" AND code IN ({', '.join(['?'] * len(codes_filter))})"
             params.extend(codes_filter)
         rows = conn.execute(sql, params).fetchall()
-        n = 0
         for (tid,) in rows:
             conn.execute(
                 "UPDATE qfq_trigger_queue SET status='pending', updated_at=? "
-                "WHERE trigger_id=?", [_now_ts(), tid])
-            n += 1
-        if n:
-            logger.info(f"[qfq_orch] {n} 个 scheduled trigger 到期晋升 pending")
-        return n
+                "WHERE trigger_id=? AND price_source=? AND source_generation=? AND cutover_id=?",
+                [_now_ts(), tid, *gen_params])
+        return len(rows)
 
     def recover_pending_due(self, conn, run_id: str,
                             codes_filter: Optional[Sequence[str]] = None) -> int:
-        """retryable_failed 且到达 next_retry_at → 回到 pending 供本轮领取。"""
         now_iso = _now_iso_ts().isoformat(timespec="seconds")
-        sql = (
-            "SELECT trigger_id FROM qfq_trigger_queue "
-            "WHERE status='retryable_failed' AND next_retry_at IS NOT NULL "
-            "AND next_retry_at <= ?"
-        )
-        params: List[object] = [now_iso]
+        gen_sql, gen_params = self._generation_where()
+        sql = ("SELECT trigger_id FROM qfq_trigger_queue WHERE status='retryable_failed' "
+               "AND next_retry_at IS NOT NULL AND next_retry_at <= ? AND " + gen_sql)
+        params: List[object] = [now_iso, *gen_params]
         if codes_filter:
-            placeholders = ", ".join(["?"] * len(codes_filter))
-            sql += f" AND code IN ({placeholders})"
+            sql += f" AND code IN ({', '.join(['?'] * len(codes_filter))})"
             params.extend(codes_filter)
         rows = conn.execute(sql, params).fetchall()
-        n = 0
         for (tid,) in rows:
             conn.execute(
                 "UPDATE qfq_trigger_queue SET status='pending', updated_at=? "
-                "WHERE trigger_id=?", [_now_ts(), tid])
-            n += 1
-        if n:
-            logger.info(f"[qfq_orch] {n} 个 retryable_failed 到期回到 pending")
-        return n
+                "WHERE trigger_id=? AND price_source=? AND source_generation=? AND cutover_id=?",
+                [_now_ts(), tid, *gen_params])
+        return len(rows)
 
     # ------------------------------------------------------------------
     # 事件发现
@@ -308,41 +335,44 @@ class QFQResidentOrchestrator:
     def _claim_and_merge(self, conn, *, cycle_id: str, run_id: str,
                          as_of_ms: int,
                          codes_filter: Optional[Sequence[str]] = None) -> List[Dict]:
-        """领取到期 trigger（pending / retryable_failed 已回到 pending），同券合并。"""
-        now_dt = _now_iso_ts()
-        now_iso = now_dt.isoformat(timespec="seconds")
+        now_iso = _now_iso_ts().isoformat(timespec="seconds")
+        gen_sql, gen_params = self._generation_where()
         sql = (
-            "SELECT trigger_id, asset_type, code, trigger_type, effective_date, "
-            " payload_hash, factor_old, factor_new, factor_revision, status, attempt_count "
-            " FROM qfq_trigger_queue "
-            " WHERE status='pending' AND effective_date IS NOT NULL "
-            " AND effective_date <= ?"
-        )
-        params: List[object] = [as_of_ms]
+            "SELECT trigger_id, asset_type, code, trigger_type, source_key, effective_date, "
+            "payload_hash, factor_old, factor_new, factor_revision, status, attempt_count "
+            "FROM qfq_trigger_queue WHERE status='pending' AND effective_date IS NOT NULL "
+            "AND effective_date <= ? AND " + gen_sql)
+        params: List[object] = [as_of_ms, *gen_params]
         if codes_filter:
-            placeholders = ", ".join(["?"] * len(codes_filter))
-            sql += f" AND code IN ({placeholders})"
+            sql += f" AND code IN ({', '.join(['?'] * len(codes_filter))})"
             params.extend(codes_filter)
-        sql += " ORDER BY asset_type, code"
+        sql += " ORDER BY asset_type, code, trigger_id"
         rows = conn.execute(sql, params).fetchall()
-        # 领取（乐观）：标记 in_progress
         claimed_ids = [r[0] for r in rows]
         if claimed_ids:
-            ph = ", ".join(["?"] * len(claimed_ids))
-            conn.execute(
+            placeholders = ", ".join(["?"] * len(claimed_ids))
+            claimed = conn.execute(
                 f"UPDATE qfq_trigger_queue SET status='in_progress', claimed_by=?, "
-                f" claimed_at=?, updated_at=? WHERE trigger_id IN ({ph})",
-                [run_id, now_iso, _now_ts(), *claimed_ids])
-        # 同 (asset_type, code) 合并
+                f"claimed_at=?, updated_at=? WHERE trigger_id IN ({placeholders}) "
+                f"AND status='pending' AND price_source=? AND source_generation=? AND cutover_id=? "
+                f"RETURNING trigger_id",
+                [run_id, now_iso, _now_ts(), *claimed_ids, *gen_params]).fetchall()
+            if {r[0] for r in claimed} != set(claimed_ids):
+                raise RuntimeError("trigger claim CAS 失败；拒绝跨并发继续")
         units: Dict[Tuple[str, str], Dict] = {}
         for r in rows:
-            (tid, at, code, ttype, eff, phash, fold, fnew, frev, st, att) = r
-            key = (at, code)
-            u = units.setdefault(key, {
+            (tid, at, code, ttype, source_key, eff, phash,
+             fold, fnew, frev, st, att) = r
+            u = units.setdefault((at, code), {
                 "asset_type": at, "code": code, "triggers": [],
-                "effective_dates": [], "attempt": 0,
+                "trigger_records": [], "effective_dates": [], "attempt": 0,
             })
             u["triggers"].append(tid)
+            u["trigger_records"].append({
+                "trigger_id": tid, "trigger_type": ttype, "source_key": source_key,
+                "effective_date": int(eff) if eff is not None else None,
+                "payload_hash": phash,
+            })
             if eff is not None:
                 u["effective_dates"].append(int(eff))
             u["attempt"] = max(u["attempt"], int(att or 0))
@@ -366,21 +396,25 @@ class QFQResidentOrchestrator:
         return daily_range, minute_range
 
     def _already_committed(self, conn, trigger_id: str) -> Optional[str]:
-        """崩溃恢复：该 trigger 是否已有 committed event（engine 已落库）。
-
-        精确匹配：apply 前会把本次 event_id 预写入 trigger.last_event_id（与引擎
-        同事务提交）。若引擎 committed 后、trigger 状态更新前崩溃，下一轮据
-        last_event_id 反查 qfq_reanchor_event —— 只有**该 trigger 本次尝试**的
-        committed 事件才算，绝不会误匹配该券历史上其它 committed 事件。
-        """
-        row = conn.execute(
-            "SELECT e.event_id FROM qfq_reanchor_event e "
-            "JOIN qfq_trigger_queue t ON t.last_event_id = e.event_id "
-            "WHERE t.trigger_id = ? AND e.status = 'committed' LIMIT 1",
-            [trigger_id]).fetchone()
-        if row:
-            return row[0]
-        return None
+        if self._ident["source_generation"] == "xtquant-legacy":
+            row = conn.execute(
+                "SELECT e.event_id FROM qfq_reanchor_event e "
+                "JOIN qfq_trigger_queue t ON t.last_event_id=e.event_id "
+                "WHERE t.trigger_id=? AND t.price_source=? AND t.source_generation=? "
+                "AND t.cutover_id=? AND e.status='committed' LIMIT 1",
+                [trigger_id, self._ident["price_source"], self._ident["source_generation"],
+                 self._ident["cutover_id"]]).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT e.event_id FROM qfq_reanchor_event e "
+                "JOIN qfq_trigger_queue t ON t.last_event_id=e.event_id "
+                "WHERE t.trigger_id=? AND t.price_source=? AND t.source_generation=? "
+                "AND t.cutover_id=? AND e.price_source=? AND e.source_generation=? "
+                "AND e.cutover_id=? AND e.status='committed' LIMIT 1",
+                [trigger_id, self._ident["price_source"], self._ident["source_generation"],
+                 self._ident["cutover_id"], self._ident["price_source"],
+                 self._ident["source_generation"], self._ident["cutover_id"]]).fetchone()
+        return row[0] if row else None
 
     def _reanchor_security(self, conn, *, run_id: str, asset_type: str, code: str,
                            trigger_ids: List[str], effective_dates: List[int],
@@ -412,6 +446,8 @@ class QFQResidentOrchestrator:
             daily_range_ms=daily_range, minute_range_ms=minute_range, fetcher=fetcher,
             source=self.cfg.price_source,  # P2-4：xtquant/mcp 由 price_source 驱动
             write=False)
+        record.source_generation = self._ident["source_generation"]
+        record.cutover_id = self._ident["cutover_id"]
         capture_id = record.capture_id
         event_id = event_id_of(primary_tid, attempt, capture_id)
         # 崩溃恢复关键：apply 前把本次 event_id 预写入全部 trigger（与引擎同事务/
@@ -420,7 +456,9 @@ class QFQResidentOrchestrator:
         for tid in trigger_ids:
             conn.execute(
                 "UPDATE qfq_trigger_queue SET last_event_id=?, updated_at=? "
-                "WHERE trigger_id=?", [event_id, _now_ts(), tid])
+                "WHERE trigger_id=? AND price_source=? AND source_generation=? AND cutover_id=?",
+                [event_id, _now_ts(), tid, self._ident["price_source"],
+                 self._ident["source_generation"], self._ident["cutover_id"]])
         try:
             from quantstudio.pipeline.qfq_reanchor_engine import apply_reanchor_for_security
             # R4/6A 修复：rebase 必须传该证券「全部已知除权日」，而非仅本轮领取的
@@ -440,8 +478,10 @@ class QFQResidentOrchestrator:
                 model="fresh_authoritative_rebase",
                 model_reason="resident corporate-action/factor-change authoritative rebase",
                 fresh_minutes=fresh_minute,
-                price_source=self.cfg.price_source,  # v2.4 B-3a P0-3：MCP 不改写，event/anchor 落真实 price_source
-                fresh_source=self.cfg.price_source,  # P2-4：放开到 mcp（price_source 驱动）
+                price_source=self._ident["price_source"],
+                source_generation=self._ident["source_generation"],
+                cutover_id=self._ident["cutover_id"],
+                fresh_source=self._ident["price_source"],
                 fresh_capture_id=capture_id,
                 fresh_metadata_sha256=record.metadata_sha256,
                 event_id=event_id,
@@ -449,7 +489,9 @@ class QFQResidentOrchestrator:
                 allow_partial_minute=True,
             )
             status = res.status  # committed / blocked / rolled_back / failed
-            cap.mark_applied(conn, capture_id)
+            cap.mark_applied(
+                conn, capture_id, source_generation=self._ident["source_generation"],
+                cutover_id=self._ident["cutover_id"])
             return ReanchorOutcome(trigger_id=primary_tid, asset_type=asset_type,
                                    code=code, status=status, event_id=res.event_id,
                                    error=getattr(res, "error", None))
@@ -467,67 +509,96 @@ class QFQResidentOrchestrator:
     def _apply_trigger_outcome(self, conn, *, run_id: str, unit: Dict,
                                outcome: ReanchorOutcome, fetcher: FreshFetcher,
                                summary: CycleSummary) -> None:
-        """根据重锚结果更新 trigger / pending_backfill 状态机。"""
         now = _now_ts()
         now_iso = _now_iso_ts().isoformat(timespec="seconds")
         at, code = unit["asset_type"], unit["code"]
         tids = unit["triggers"]
-        st = outcome.status
-        # 精确欠账区间（按资产→表）
+        records = {r["trigger_id"]: r for r in unit.get("trigger_records", [])}
         tables = ASSET_TABLE_MAP.get(at, frozenset())
-        if st == "committed":
-            for tid in tids:
-                conn.execute(
-                    "UPDATE qfq_trigger_queue SET status='committed', last_event_id=?, "
-                    " completed_at=?, updated_at=? WHERE trigger_id=?",
-                    [outcome.event_id, now_iso, now, tid])
-            # 解决相关 pending_backfill（精确区间）
-            for t in tables:
-                conn.execute(
-                    "UPDATE qfq_pending_backfill SET status='resolved', resolved_at=?, "
-                    " updated_at=? WHERE asset_type=? AND code=? AND table_name=? "
-                    " AND status IN ('pending','retryable_failed','blocked')",
-                    [now_iso, now, at, code, t])
-            summary.committed += 1
-        elif st in ("blocked", "rolled_back", "failed"):
-            attempt = self._bump_attempt(conn, tids)
-            if attempt >= self.cfg.retry_max:
-                dead_status = "dead_letter"
-                # 登记死信 + 精确欠账
+        gen_params = [self._ident["price_source"], self._ident["source_generation"],
+                      self._ident["cutover_id"]]
+        conn.execute("BEGIN TRANSACTION")
+        try:
+            if outcome.status == "committed":
                 for tid in tids:
-                    self._enqueue_pending(conn, at, code, tables, reason=st,
-                                          trigger_id=tid, event_id=outcome.event_id,
-                                          dead_letter=True)
-                    conn.execute(
-                        "UPDATE qfq_trigger_queue SET status='dead_letter', "
-                        " last_error=?, next_retry_at=NULL, dead_letter_at=?, "
-                        " updated_at=? WHERE trigger_id=?",
-                        [outcome.error, now_iso, now, tid])
-                summary.dead_letter += 1
-            else:
-                backoff = self._backoff_sec(attempt)
-                next_retry = (_now_iso_ts() + timedelta(seconds=backoff)).isoformat(timespec="seconds")
+                    changed = conn.execute(
+                        "UPDATE qfq_trigger_queue SET status='committed', last_event_id=?, "
+                        "completed_at=?, updated_at=? WHERE trigger_id=? AND price_source=? "
+                        "AND source_generation=? AND cutover_id=? RETURNING trigger_id",
+                        [outcome.event_id, now_iso, now, tid, *gen_params]).fetchone()
+                    if changed is None:
+                        raise RuntimeError(f"trigger outcome 跨世代或缺失: {tid}")
+                    rec = records.get(tid)
+                    if (self._ident["source_generation"] != "xtquant-legacy" and rec
+                            and rec.get("trigger_type") == "stock_dividend"):
+                        ex_date = rec.get("effective_date") or rec.get("source_key")
+                        commit_pending_slot(
+                            conn, identity=self._baseline_identity(),
+                            event_logical_key=logical_key_stock_dividend(code, int(ex_date)),
+                            trigger_id=tid, payload_hash=rec.get("payload_hash"))
+                    if self._ident["source_generation"] == "xtquant-legacy":
+                        conn.execute(
+                            "UPDATE qfq_pending_backfill SET status='resolved', resolved_at=?, "
+                            "updated_at=? WHERE asset_type=? AND code=? AND price_source=? "
+                            "AND source_generation=? AND status IN "
+                            "('pending','retryable_failed','blocked','dead_letter')",
+                            [now_iso, now, at, code, self._ident["price_source"],
+                             self._ident["source_generation"]])
+                    else:
+                        conn.execute(
+                            "UPDATE qfq_pending_backfill SET status='resolved', resolved_at=?, "
+                            "updated_at=? WHERE trigger_id=? AND price_source=? "
+                            "AND source_generation=? AND status IN "
+                            "('pending','retryable_failed','blocked','dead_letter')",
+                            [now_iso, now, tid, self._ident["price_source"],
+                             self._ident["source_generation"]])
+                summary.committed += 1
+            elif outcome.status in ("blocked", "rolled_back", "failed"):
+                attempt = self._bump_attempt(conn, tids)
+                dead = attempt >= self.cfg.retry_max
+                next_retry = None if dead else (
+                    _now_iso_ts() + timedelta(seconds=self._backoff_sec(attempt))
+                ).isoformat(timespec="seconds")
                 for tid in tids:
-                    self._enqueue_pending(conn, at, code, tables, reason=st,
-                                          trigger_id=tid, event_id=outcome.event_id,
-                                          dead_letter=False)
-                    conn.execute(
-                        "UPDATE qfq_trigger_queue SET status='retryable_failed', "
-                        " last_error=?, next_retry_at=?, updated_at=? WHERE trigger_id=?",
-                        [outcome.error, next_retry, now, tid])
-                summary.retryable_failed += 1
+                    self._enqueue_pending(
+                        conn, at, code, tables, reason=outcome.status,
+                        trigger_id=tid, event_id=outcome.event_id, dead_letter=dead)
+                    if dead:
+                        conn.execute(
+                            "UPDATE qfq_trigger_queue SET status='dead_letter', last_error=?, "
+                            "next_retry_at=NULL, dead_letter_at=?, updated_at=? "
+                            "WHERE trigger_id=? AND price_source=? AND source_generation=? "
+                            "AND cutover_id=?",
+                            [outcome.error, now_iso, now, tid, *gen_params])
+                    else:
+                        conn.execute(
+                            "UPDATE qfq_trigger_queue SET status='retryable_failed', "
+                            "last_error=?, next_retry_at=?, updated_at=? WHERE trigger_id=? "
+                            "AND price_source=? AND source_generation=? AND cutover_id=?",
+                            [outcome.error, next_retry, now, tid, *gen_params])
+                if dead:
+                    summary.dead_letter += 1
+                else:
+                    summary.retryable_failed += 1
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
         # blocked 也记 pending_backfill 精确区间（已含在上一分支）
 
     def _bump_attempt(self, conn, tids: List[str]) -> int:
-        # 取当前最大 attempt_count 并 +1（统一推进）
-        rows = conn.execute(
-            f"SELECT MAX(attempt_count) FROM qfq_trigger_queue "
-            f"WHERE trigger_id IN ({','.join(['?']*len(tids))})", tids).fetchall()
-        cur = rows[0][0] or 0
-        new = cur + 1
+        placeholders = ','.join(['?'] * len(tids))
+        gen_params = [self._ident["price_source"], self._ident["source_generation"],
+                      self._ident["cutover_id"]]
+        cur = conn.execute(
+            f"SELECT MAX(attempt_count) FROM qfq_trigger_queue WHERE trigger_id IN "
+            f"({placeholders}) AND price_source=? AND source_generation=? AND cutover_id=?",
+            [*tids, *gen_params]).fetchone()[0] or 0
+        new = int(cur) + 1
         conn.execute(
-            f"UPDATE qfq_trigger_queue SET attempt_count=? WHERE trigger_id IN "
-            f"({','.join(['?']*len(tids))})", [new, *tids])
+            f"UPDATE qfq_trigger_queue SET attempt_count=? WHERE trigger_id IN ({placeholders}) "
+            f"AND price_source=? AND source_generation=? AND cutover_id=?",
+            [new, *tids, *gen_params])
         return new
 
     def _backoff_sec(self, attempt: int) -> int:
@@ -538,29 +609,32 @@ class QFQResidentOrchestrator:
 
     def _enqueue_pending(self, conn, asset_type: str, code: str, tables, *,
                          reason: str, trigger_id: str, event_id: Optional[str],
-                         dead_letter: bool) -> None:
+                         dead_letter: bool) -> List[Tuple]:
         now = _now_ts()
         now_iso = _now_iso_ts().isoformat(timespec="seconds")
-        daily_t, minute_t = ASSET_PRICE_TABLES[asset_type]
-        for t in tables:
-            freq = "1min" if t.endswith("minutes") else "daily"
-            rng = self._security_range(conn, asset_type, code)
-            rs, re = (rng[1] if freq == "1min" else rng[0])
+        ranges = self._security_range(conn, asset_type, code)
+        keys = []
+        for table in tables:
+            freq = "1min" if table.endswith("minutes") else "daily"
+            rs, re = ranges[1] if freq == "1min" else ranges[0]
             status = "dead_letter" if dead_letter else "retryable_failed"
             dl_at = now_iso if dead_letter else None
             conn.execute(
-                "Insert INTO qfq_pending_backfill "
+                "INSERT INTO qfq_pending_backfill "
                 "(asset_type, code, table_name, freq, range_start, range_end, price_source, "
-                " source_generation, reason, status, trigger_id, last_event_id, "
-                " dead_letter_at, created_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "source_generation, reason, status, trigger_id, last_event_id, dead_letter_at, "
+                "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT (asset_type, code, table_name, freq, range_start, range_end, "
-                " price_source, source_generation) "
-                "DO UPDATE SET status=excluded.status, trigger_id=excluded.trigger_id, "
-                " last_event_id=excluded.last_event_id, dead_letter_at=excluded.dead_letter_at, "
-                " updated_at=excluded.updated_at",
-                [asset_type, code, t, freq, rs, re, self._ident["price_source"], self._ident["source_generation"],
-                 reason, status, trigger_id, event_id, dl_at, now, now])
+                "price_source, source_generation) DO UPDATE SET reason=excluded.reason, "
+                "status=excluded.status, trigger_id=excluded.trigger_id, "
+                "last_event_id=excluded.last_event_id, dead_letter_at=excluded.dead_letter_at, "
+                "updated_at=excluded.updated_at",
+                [asset_type, code, table, freq, rs, re, self._ident["price_source"],
+                 self._ident["source_generation"], reason, status, trigger_id,
+                 event_id, dl_at, now, now])
+            keys.append((asset_type, code, table, freq, rs, re,
+                         self._ident["price_source"], self._ident["source_generation"]))
+        return keys
 
     # ------------------------------------------------------------------
     # 质量门控（编排级）
@@ -568,56 +642,50 @@ class QFQResidentOrchestrator:
     def _qfq_gate(self, conn, cycle_id: str, claimed_units: List[Dict],
                   run_id: str,
                   codes_filter: Optional[Sequence[str]] = None) -> Tuple[bool, Dict]:
-        """编排级 gate：决定本轮水位是否可提交。
-
-        通过条件：
-          - 无 lease-active in_progress（orphan）；
-          - dead_letter 数 == 0（或 <= config）；
-          - 本轮领取的全部 trigger 均 committed（无 retryable_failed/blocked 遗留）。
-        """
-        report: Dict = {"passed": True, "reasons": []}
-        # orphan in_progress（lease 内）
+        report: Dict = {"passed": True, "reasons": [], "identity": dict(self._ident)}
+        gen_sql, gen_params = self._generation_where()
         cutoff = (_now_iso_ts() - timedelta(seconds=self.cfg.claim_lease_sec)).isoformat(timespec="seconds")
-        orphan_sql = (
-            "SELECT COUNT(*) FROM qfq_trigger_queue "
-            "WHERE status='in_progress' AND (claimed_at IS NULL OR claimed_at >= ?)"
-        )
-        orphan_params: List[object] = [cutoff]
+        orphan_sql = ("SELECT COUNT(*) FROM qfq_trigger_queue WHERE status='in_progress' "
+                      "AND (claimed_at IS NULL OR claimed_at >= ?) AND " + gen_sql)
+        orphan_params: List[object] = [cutoff, *gen_params]
         if codes_filter:
-            placeholders = ", ".join(["?"] * len(codes_filter))
-            orphan_sql += f" AND code IN ({placeholders})"
+            orphan_sql += f" AND code IN ({', '.join(['?'] * len(codes_filter))})"
             orphan_params.extend(codes_filter)
         orphan = conn.execute(orphan_sql, orphan_params).fetchone()[0]
-        if orphan > 0:
+        if orphan:
             report["passed"] = False
             report["reasons"].append(f"orphan in_progress={orphan}")
-        # dead letter（阈值 = quality_thresholds.dead_letter_max，默认 0 = 零容忍）
-        dl_max = int(self.cfg.quality_thresholds.get("dead_letter_max", 0))
-        dl_sql = "SELECT COUNT(*) FROM qfq_trigger_queue WHERE status='dead_letter'"
-        dl_params: List[object] = []
+        dl_sql = "SELECT COUNT(*) FROM qfq_trigger_queue WHERE status='dead_letter' AND " + gen_sql
+        dl_params: List[object] = list(gen_params)
         if codes_filter:
-            placeholders = ", ".join(["?"] * len(codes_filter))
-            dl_sql += f" AND code IN ({placeholders})"
+            dl_sql += f" AND code IN ({', '.join(['?'] * len(codes_filter))})"
             dl_params.extend(codes_filter)
         dl = conn.execute(dl_sql, dl_params).fetchone()[0]
+        dl_max = int(self.cfg.quality_thresholds.get("dead_letter_max", 0))
         if dl > dl_max:
             report["passed"] = False
             report["reasons"].append(f"dead_letter={dl} 超过阈值 {dl_max}")
-        # 本轮领取单元是否全 committed
-        for u in claimed_units:
-            for tid in u["triggers"]:
+        for unit in claimed_units:
+            for tid in unit["triggers"]:
                 row = conn.execute(
-                    "SELECT status FROM qfq_trigger_queue WHERE trigger_id=?", [tid]).fetchone()
+                    "SELECT status FROM qfq_trigger_queue WHERE trigger_id=? "
+                    "AND price_source=? AND source_generation=? AND cutover_id=?",
+                    [tid, *gen_params]).fetchone()
                 if row is None or row[0] != "committed":
                     report["passed"] = False
-                    report["reasons"].append(f"trigger {tid} 未 committed（{row[0] if row else 'missing'}）")
+                    report["reasons"].append(
+                        f"trigger {tid} 未 committed（{row[0] if row else 'missing'}）")
                     break
-        # watermark intent 全部存在（四价格表）
         wi = conn.execute(
-            "SELECT COUNT(*) FROM qfq_watermark_intent WHERE cycle_id=?", [cycle_id]).fetchone()[0]
-        if wi == 0:
-            # 无价格任务延迟（可能本轮无价格增量）——不阻塞
-            pass
+            "SELECT COUNT(*) FROM qfq_watermark_intent WHERE cycle_id=? "
+            "AND source_generation=? AND cutover_id=?",
+            [cycle_id, self._ident["source_generation"], self._ident["cutover_id"]]).fetchone()[0]
+        report["watermark_intents"] = int(wi)
+        baseline = audit_pending_slots(conn, identity=self._baseline_identity())
+        report["discovery_baseline"] = baseline
+        if not baseline.get("passed", False):
+            report["passed"] = False
+            report["reasons"].append("discovery baseline pending-slot audit failed")
         return report["passed"], report
 
     # ------------------------------------------------------------------
@@ -625,24 +693,24 @@ class QFQResidentOrchestrator:
     # ------------------------------------------------------------------
     def defer_watermark(self, conn, *, cycle_id: str, source: str, table: str,
                         freq: str, candidate_watermark) -> None:
-        """四价格表写任务完成后，由 daemon 调用写入延迟水位意图（不立即推进）。"""
         old = self._read_watermark(conn, source, table, freq)
         conn.execute(
             "INSERT INTO qfq_watermark_intent "
             "(cycle_id, source, table_name, freq, source_generation, cutover_id, "
-            " old_watermark, candidate_watermark, status, "
-            " hold_reason, committed_at) VALUES (?,?,?,?,?,?,?,?,'pending',NULL,NULL) "
+            "old_watermark, candidate_watermark, status, hold_reason, committed_at) "
+            "VALUES (?,?,?,?,?,?,?,?,'pending',NULL,NULL) "
             "ON CONFLICT (cycle_id, source, table_name, freq, source_generation, cutover_id) "
-            "DO UPDATE SET "
-            " candidate_watermark=excluded.candidate_watermark, status='pending', "
-            " hold_reason=NULL, committed_at=NULL",
-            [cycle_id, source, table, freq, "xtquant-legacy",
-             "legacy-xtquant-pre-cutover", old, candidate_watermark])
+            "DO UPDATE SET candidate_watermark=excluded.candidate_watermark, "
+            "status='pending', hold_reason=NULL, committed_at=NULL",
+            [cycle_id, source, table, freq, self._ident["source_generation"],
+             self._ident["cutover_id"], old, candidate_watermark])
 
     def _read_watermark(self, conn, source: str, table: str, freq: str):
         row = conn.execute(
-            "SELECT last_date FROM source_watermark WHERE source=? AND table_name=? AND freq=?",
-            [source, table, freq]).fetchone()
+            "SELECT last_date FROM source_watermark WHERE source=? AND table_name=? AND freq=? "
+            "AND source_generation=? AND cutover_id=?",
+            [source, table, freq, self._ident["source_generation"],
+             self._ident["cutover_id"]]).fetchone()
         return row[0] if row else None
 
     def _commit_or_hold_watermarks(self, conn, *, cycle_id: str, passed: bool,
@@ -650,31 +718,36 @@ class QFQResidentOrchestrator:
                                    summary: CycleSummary) -> None:
         intents = conn.execute(
             "SELECT source, table_name, freq, candidate_watermark FROM qfq_watermark_intent "
-            "WHERE cycle_id=?", [cycle_id]).fetchall()
+            "WHERE cycle_id=? AND source_generation=? AND cutover_id=?",
+            [cycle_id, self._ident["source_generation"], self._ident["cutover_id"]]).fetchall()
         for source, table, freq, cand in intents:
             if passed:
                 self._advance_watermark(conn, source, table, freq, cand, run_id)
                 conn.execute(
                     "UPDATE qfq_watermark_intent SET status='committed', committed_at=?, "
-                    " hold_reason=NULL WHERE cycle_id=? AND source=? AND table_name=? AND freq=?",
-                    [_now_ts(), cycle_id, source, table, freq])
+                    "hold_reason=NULL WHERE cycle_id=? AND source=? AND table_name=? AND freq=? "
+                    "AND source_generation=? AND cutover_id=?",
+                    [_now_ts(), cycle_id, source, table, freq,
+                     self._ident["source_generation"], self._ident["cutover_id"]])
                 summary.watermarks_committed += 1
             else:
                 conn.execute(
                     "UPDATE qfq_watermark_intent SET status='held', hold_reason=? "
-                    " WHERE cycle_id=? AND source=? AND table_name=? AND freq=?",
-                    [reason, cycle_id, source, table, freq])
+                    "WHERE cycle_id=? AND source=? AND table_name=? AND freq=? "
+                    "AND source_generation=? AND cutover_id=?",
+                    [reason, cycle_id, source, table, freq,
+                     self._ident["source_generation"], self._ident["cutover_id"]])
                 summary.watermarks_held += 1
 
     def _advance_watermark(self, conn, source: str, table: str, freq: str,
                            new_watermark, batch_id: str) -> None:
-        if self.watermark_advancer is not None:
+        if (self.watermark_advancer is not None
+                and getattr(self.cfg, "generation_mode", "pre_cutover") != "dynamic"):
             self.watermark_advancer(source, table, freq, new_watermark, batch_id)
             return
         # 回退：直接 upsert source_watermark（与 writer.advance_watermark 同表）。
         # v2.4 B-3a：8 列显式 INSERT + pre-cutover 静态哨兵（source 保留真实值不改写）。
-        from quantstudio.pipeline.qfq_schema_contracts import pre_cutover_generation
-        gen, cutover = pre_cutover_generation(table, source)
+        gen, cutover = self._ident["source_generation"], self._ident["cutover_id"]
         conn.execute(
             "INSERT INTO source_watermark (source, table_name, freq, last_date, "
             " last_batch_id, updated_at, source_generation, cutover_id) "
@@ -702,7 +775,10 @@ class QFQResidentOrchestrator:
         run = conn.execute(
             "SELECT bootstrap_run_id, schema_version, config_hash, baseline_version "
             "FROM qfq_bootstrap_run WHERE status='completed' "
-            "ORDER BY started_at DESC LIMIT 1"
+            "AND price_source=? AND source_generation=? AND cutover_id=? "
+            "ORDER BY started_at DESC LIMIT 1",
+            [self._ident["price_source"], self._ident["source_generation"],
+             self._ident["cutover_id"]]
         ).fetchone()
         if run is None:
             return False
@@ -741,54 +817,48 @@ class QFQResidentOrchestrator:
         return True
 
     def _aux_query(self, sql: str, params: Sequence = ()) -> List[tuple]:
-        """在 SQLite 辅助库（qfq_aux.db）上执行只读查询。
-
-        qfq_factor_observation 等检测辅助表在 SQLite 侧（schema 分层契约），
-        **不能**在 DuckDB 主库连接上查。aux_db 未配置时返回空（degraded，记 warning）。
-        """
         if not self.aux_db:
+            if getattr(self.cfg, "generation_mode", "pre_cutover") == "dynamic":
+                raise RuntimeError("dynamic generation 未配置隔离 aux_db")
             logger.warning("[qfq_orch] aux_db 未配置，因子观察查询降级为空结果")
             return []
-        aconn = sqlite3.connect(str(self.aux_db), timeout=30)
+        try:
+            aconn = self._aux_router.connect(
+                source_generation=self._ident["source_generation"],
+                cutover_id=self._ident["cutover_id"], read_only=True,
+                require_exists=(getattr(self.cfg, "generation_mode", "pre_cutover") == "dynamic"),
+            )
+        except Exception:
+            if getattr(self.cfg, "generation_mode", "pre_cutover") == "dynamic":
+                raise
+            aconn = sqlite3.connect(str(self.aux_db), timeout=30)
         try:
             return aconn.execute(sql, params).fetchall()
-        except sqlite3.OperationalError as e:
-            logger.warning(f"[qfq_orch] 辅助库查询失败（视为空）: {e}")
+        except sqlite3.OperationalError as exc:
+            if getattr(self.cfg, "generation_mode", "pre_cutover") == "dynamic":
+                raise RuntimeError(f"dynamic aux 查询失败: {exc}") from exc
+            logger.warning(f"[qfq_orch] 辅助库查询失败（视为空）: {exc}")
             return []
         finally:
             aconn.close()
 
     def _classify_bootstrap_security(self, conn, asset_type: str, code: str) -> str:
-        """分类候选证券，仅 'stale' 进入重锚队列（任务6.1）。
-
-        类别（不引入新网络调用）：
-          - no_price_history：四价格表无该券历史 → 重锚无意义，跳过。
-          - unverifiable：既无分红也无因子观察（缺重锚依据，候选已保证其一，
-                          理论不可达）→ 跳过留待下轮。
-          - consistent：已有已提交重锚（qfq_trigger_queue 对应 trigger 已 committed）
-                        → front 价格已据此重锚，跳过。
-          - stale：有价格历史且有重锚依据，但无已提交重锚证据 → 进重锚队列。
-        """
         daily_t = ASSET_PRICE_TABLES[asset_type][0]
-        if not conn.execute(
-                f"SELECT 1 FROM {daily_t} WHERE code=? LIMIT 1", [code]).fetchone():
+        if not conn.execute(f"SELECT 1 FROM {daily_t} WHERE code=? LIMIT 1", [code]).fetchone():
             return "no_price_history"
-        has_div = conn.execute(
-            "SELECT 1 FROM stock_dividend WHERE code=?", [code]).fetchone()
+        has_div = conn.execute("SELECT 1 FROM stock_dividend WHERE code=?", [code]).fetchone()
         has_obs = self._aux_query(
-            "SELECT 1 FROM qfq_factor_observation "
-            "WHERE asset_type=? AND code=? LIMIT 1",
+            "SELECT 1 FROM qfq_factor_observation WHERE asset_type=? AND code=? LIMIT 1",
             [asset_type, code])
         if not has_div and not has_obs:
             return "unverifiable"
         committed = conn.execute(
-            "SELECT 1 FROM qfq_trigger_queue "
-            "WHERE asset_type=? AND code=? AND status='committed' "
-            "AND trigger_type IN ('stock_dividend', 'factor_new') LIMIT 1",
-            [asset_type, code]).fetchone()
-        if committed:
-            return "consistent"
-        return "stale"
+            "SELECT 1 FROM qfq_trigger_queue WHERE asset_type=? AND code=? "
+            "AND status='committed' AND trigger_type IN ('stock_dividend','factor_new') "
+            "AND price_source=? AND source_generation=? AND cutover_id=? LIMIT 1",
+            [asset_type, code, self._ident["price_source"],
+             self._ident["source_generation"], self._ident["cutover_id"]]).fetchone()
+        return "consistent" if committed else "stale"
 
     def bootstrap_plan(self, conn, *, as_of_ms: int,
                        codes_filter: Optional[Sequence[str]] = None,
@@ -892,59 +962,51 @@ class QFQResidentOrchestrator:
             excluded=len(excluded_items))
 
     def supersede_bootstrap_runs(self, conn, run_ids: Sequence[str]) -> Dict[str, int]:
-        """将明确废弃的旧 bootstrap run 的非成功 item 标记为 superseded。
-
-        Bug 修复（方案 Y）：supersede 的语义是“人工确认处置异常项”，
-        不应连带把已完成的 run 整体标为 superseded——否则 bootstrap_completed
-        的 fail-closed 判定（只认 status='completed'）会误判为未完成，死锁 reconcile。
-
-        - item：仅把 blocked 项标为 superseded（completed/excluded/superseded 不动）；
-        - run：仅当 run 当前状态 **不是** completed（如 planned/running/failed）
-          时才标 superseded 废弃未完成的 run；已完成（completed）的 run 保持原状，
-          使 bootstrap_completed 仍能查到 completed run 并放行 fail-closed。
-        """
         ids = sorted({str(run_id).strip() for run_id in run_ids if str(run_id).strip()})
         if not ids:
             raise ValueError("run_ids 不能为空")
         placeholders = ",".join("?" for _ in ids)
+        ident = [self._ident["price_source"], self._ident["source_generation"],
+                 self._ident["cutover_id"]]
         found = conn.execute(
-            f"SELECT bootstrap_run_id FROM qfq_bootstrap_run "
-            f"WHERE bootstrap_run_id IN ({placeholders})", ids).fetchall()
-        found_ids = {row[0] for row in found}
-        missing = sorted(set(ids) - found_ids)
+            f"SELECT bootstrap_run_id FROM qfq_bootstrap_run WHERE bootstrap_run_id IN "
+            f"({placeholders}) AND price_source=? AND source_generation=? AND cutover_id=?",
+            [*ids, *ident]).fetchall()
+        missing = sorted(set(ids) - {r[0] for r in found})
         if missing:
-            raise ValueError(f"bootstrap run 不存在: {missing}")
+            raise ValueError(f"bootstrap run 不存在或不属于当前世代: {missing}")
         now = _now_ts()
-        # 仅 blocked 项转为 superseded（人工确认暂缓重锚，维持旧 front）
         item_count = conn.execute(
-            f"SELECT COUNT(*) FROM qfq_bootstrap_item "
-            f"WHERE bootstrap_run_id IN ({placeholders}) AND status='blocked'",
-            ids).fetchone()[0]
+            f"SELECT COUNT(*) FROM qfq_bootstrap_item WHERE bootstrap_run_id IN "
+            f"({placeholders}) AND status='blocked'", ids).fetchone()[0]
         conn.execute(
             f"UPDATE qfq_bootstrap_item SET status='superseded', updated_at=? "
             f"WHERE bootstrap_run_id IN ({placeholders}) AND status='blocked'",
             [now, *ids])
-        # 仅废弃“未处于 completed 状态”的 run；completed run 保持，放行 fail-closed
-        # DuckDB UPDATE cursor.rowcount is -1, so compute the affected count with
-        # the exact UPDATE predicate before executing the update.
         run_count = conn.execute(
-            f"SELECT COUNT(*) FROM qfq_bootstrap_run "
-            f"WHERE bootstrap_run_id IN ({placeholders}) AND status <> 'completed'",
-            ids).fetchone()[0]
+            f"SELECT COUNT(*) FROM qfq_bootstrap_run WHERE bootstrap_run_id IN "
+            f"({placeholders}) AND status<>'completed' AND price_source=? "
+            f"AND source_generation=? AND cutover_id=?", [*ids, *ident]).fetchone()[0]
         conn.execute(
             f"UPDATE qfq_bootstrap_run SET status='superseded', updated_at=? "
-            f"WHERE bootstrap_run_id IN ({placeholders}) AND status <> 'completed'",
-            [now, *ids])
+            f"WHERE bootstrap_run_id IN ({placeholders}) AND status<>'completed' "
+            f"AND price_source=? AND source_generation=? AND cutover_id=?",
+            [now, *ids, *ident])
         return {"runs": int(run_count), "items": int(item_count)}
 
     def bootstrap_run(self, conn, *, run_id: str, as_of_ms: int,
                       fetcher: FreshFetcher, resume: bool = False) -> Dict:
-        """分批重锚存量 stale 证券；resume=True 继续 pending 项。"""
+        ident = [self._ident["price_source"], self._ident["source_generation"],
+                 self._ident["cutover_id"]]
+        owner = conn.execute(
+            "SELECT 1 FROM qfq_bootstrap_run WHERE bootstrap_run_id=? AND price_source=? "
+            "AND source_generation=? AND cutover_id=?", [run_id, *ident]).fetchone()
+        if owner is None:
+            raise ValueError(f"bootstrap run 不属于当前世代: {run_id}")
         batch = self.cfg.bootstrap_batch_size
         rows = conn.execute(
-            "SELECT asset_type, code FROM qfq_bootstrap_item "
-            "WHERE bootstrap_run_id=? AND status='pending' LIMIT ?",
-            [run_id, batch]).fetchall()
+            "SELECT asset_type, code FROM qfq_bootstrap_item WHERE bootstrap_run_id=? "
+            "AND status='pending' LIMIT ?", [run_id, batch]).fetchall()
         completed = blocked = failed = 0
         for at, code in rows:
             eff = self._security_effective_dates(conn, at, code)
@@ -955,46 +1017,42 @@ class QFQResidentOrchestrator:
             if outcome.status == "committed":
                 conn.execute(
                     "UPDATE qfq_bootstrap_item SET status='completed', finished_at=?, "
-                    " updated_at=? WHERE bootstrap_run_id=? AND asset_type=? AND code=?",
+                    "updated_at=? WHERE bootstrap_run_id=? AND asset_type=? AND code=?",
                     [_now_ts(), _now_ts(), run_id, at, code])
                 completed += 1
             elif outcome.status == "blocked":
                 conn.execute(
-                    "UPDATE qfq_bootstrap_item SET status='blocked', block_reason=?, "
-                    " updated_at=? WHERE bootstrap_run_id=? AND asset_type=? AND code=?",
+                    "UPDATE qfq_bootstrap_item SET status='blocked', block_reason=?, updated_at=? "
+                    "WHERE bootstrap_run_id=? AND asset_type=? AND code=?",
                     [outcome.error, _now_ts(), run_id, at, code])
                 blocked += 1
             else:
                 conn.execute(
-                    "UPDATE qfq_bootstrap_item SET status='failed', last_error=?, "
-                    " updated_at=? WHERE bootstrap_run_id=? AND asset_type=? AND code=?",
+                    "UPDATE qfq_bootstrap_item SET status='failed', last_error=?, updated_at=? "
+                    "WHERE bootstrap_run_id=? AND asset_type=? AND code=?",
                     [outcome.error, _now_ts(), run_id, at, code])
                 failed += 1
-        # run 级计数与状态推进（否则 bootstrap_completed 永远 False → fail-closed 死锁）
         conn.execute(
             "UPDATE qfq_bootstrap_run SET "
-            " completed_count=(SELECT COUNT(*) FROM qfq_bootstrap_item "
-            "   WHERE bootstrap_run_id=? AND status='completed'), "
-            " blocked_count=(SELECT COUNT(*) FROM qfq_bootstrap_item "
-            "   WHERE bootstrap_run_id=? AND status='blocked'), "
-            " failed_count=(SELECT COUNT(*) FROM qfq_bootstrap_item "
-            "   WHERE bootstrap_run_id=? AND status='failed'), "
-            " updated_at=? WHERE bootstrap_run_id=?",
-            [run_id, run_id, run_id, _now_ts(), run_id])
+            "completed_count=(SELECT COUNT(*) FROM qfq_bootstrap_item WHERE bootstrap_run_id=? AND status='completed'), "
+            "blocked_count=(SELECT COUNT(*) FROM qfq_bootstrap_item WHERE bootstrap_run_id=? AND status='blocked'), "
+            "failed_count=(SELECT COUNT(*) FROM qfq_bootstrap_item WHERE bootstrap_run_id=? AND status='failed'), "
+            "updated_at=? WHERE bootstrap_run_id=? AND price_source=? AND source_generation=? AND cutover_id=?",
+            [run_id, run_id, run_id, _now_ts(), run_id, *ident])
         remaining = self._bootstrap_remaining(conn, run_id)
         failed_total = conn.execute(
-            "SELECT COUNT(*) FROM qfq_bootstrap_item WHERE bootstrap_run_id=? "
-            "AND status='failed'", [run_id]).fetchone()[0]
+            "SELECT COUNT(*) FROM qfq_bootstrap_item WHERE bootstrap_run_id=? AND status='failed'",
+            [run_id]).fetchone()[0]
         if remaining == 0:
-            # 全部项终态：无 failed → completed；有 failed → failed（须人工处置后重跑）
-            new_status = "completed" if failed_total == 0 else "failed"
             conn.execute(
-                "UPDATE qfq_bootstrap_run SET status=?, updated_at=? "
-                "WHERE bootstrap_run_id=?", [new_status, _now_ts(), run_id])
+                "UPDATE qfq_bootstrap_run SET status=?, updated_at=? WHERE bootstrap_run_id=? "
+                "AND price_source=? AND source_generation=? AND cutover_id=?",
+                ["completed" if failed_total == 0 else "failed", _now_ts(), run_id, *ident])
         else:
             conn.execute(
-                "UPDATE qfq_bootstrap_run SET status='running', updated_at=? "
-                "WHERE bootstrap_run_id=? AND status='planned'", [_now_ts(), run_id])
+                "UPDATE qfq_bootstrap_run SET status='running', updated_at=? WHERE bootstrap_run_id=? "
+                "AND status='planned' AND price_source=? AND source_generation=? AND cutover_id=?",
+                [_now_ts(), run_id, *ident])
         return {"run_id": run_id, "completed": completed, "blocked": blocked,
                 "failed": failed, "remaining": remaining}
 
@@ -1018,24 +1076,23 @@ class QFQResidentOrchestrator:
     def bootstrap_audit(self, conn, run_id: str) -> Dict:
         row = conn.execute(
             "SELECT total_count, completed_count, blocked_count, failed_count, status "
-            "FROM qfq_bootstrap_run WHERE bootstrap_run_id=?", [run_id]).fetchone()
+            "FROM qfq_bootstrap_run WHERE bootstrap_run_id=? AND price_source=? "
+            "AND source_generation=? AND cutover_id=?",
+            [run_id, self._ident["price_source"], self._ident["source_generation"],
+             self._ident["cutover_id"]]).fetchone()
+        if row is None:
+            raise ValueError(f"bootstrap run 不存在或不属于当前世代: {run_id}")
         remaining = self._bootstrap_remaining(conn, run_id)
-        dead = conn.execute(
-            "SELECT COUNT(*) FROM qfq_bootstrap_item WHERE bootstrap_run_id=? "
-            "AND status='failed'", [run_id]).fetchone()[0]
-        excluded = conn.execute(
-            "SELECT COUNT(*) FROM qfq_bootstrap_item WHERE bootstrap_run_id=? "
-            "AND status='excluded'", [run_id]).fetchone()[0]
-        superseded = conn.execute(
-            "SELECT COUNT(*) FROM qfq_bootstrap_item WHERE bootstrap_run_id=? "
-            "AND status='superseded'", [run_id]).fetchone()[0]
-        return {
-            "run_id": run_id, "total": row[0], "completed": row[1],
-            "blocked": row[2], "failed": row[3], "excluded": excluded,
-            "superseded": superseded,
-            "status": row[4], "remaining": remaining, "dead_letter_items": dead,
-            "clean": (remaining == 0 and dead == 0),
-        }
+        def count(status):
+            return conn.execute(
+                "SELECT COUNT(*) FROM qfq_bootstrap_item WHERE bootstrap_run_id=? AND status=?",
+                [run_id, status]).fetchone()[0]
+        dead, excluded, superseded = count("failed"), count("excluded"), count("superseded")
+        return {"run_id": run_id, "total": row[0], "completed": row[1],
+                "blocked": row[2], "failed": row[3], "excluded": excluded,
+                "superseded": superseded, "status": row[4], "remaining": remaining,
+                "dead_letter_items": dead, "clean": (remaining == 0 and dead == 0),
+                "identity": dict(self._ident)}
 
     # ------------------------------------------------------------------
     # 主入口：post-ingest 阶段
@@ -1054,14 +1111,17 @@ class QFQResidentOrchestrator:
         """
         scope = tuple(dict.fromkeys(codes_filter or ())) or None
         fetcher = fetcher or self.fetcher
+        self._resolve_dynamic_identity(conn, require_aux=True)
         summary = CycleSummary(cycle_id=cycle_id)
         if not self.cfg.enabled:
             summary.error = "orchestrator disabled"
             return summary
         # 记录本轮因子检测器健康度（即使后续 discover 抛错也要落库，供审计/水位决策）
         conn.execute(
-            "UPDATE qfq_cycle_run SET detector_degraded=? WHERE cycle_id=?",
-            [1 if detector_degraded else 0, cycle_id])
+            "UPDATE qfq_cycle_run SET detector_degraded=? WHERE cycle_id=? "
+            "AND price_source=? AND source_generation=? AND cutover_id=?",
+            [1 if detector_degraded else 0, cycle_id, self._ident["price_source"],
+             self._ident["source_generation"], self._ident["cutover_id"]])
         if self.cfg.require_bootstrap and not self.bootstrap_completed(conn):
             summary.bootstrap_required = True
             summary.error = "require_bootstrap=true 且无可匹配 completed bootstrap，fail-closed"

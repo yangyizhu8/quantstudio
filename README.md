@@ -473,3 +473,11 @@ B-4 全量实测结果：baseline=`COMPLETE_2_0`，normal/recovery=`COMPLETE_2_1
 ### B-4 Windows COMMIT 后 hard-crash 边界补修
 
 最终串行验收前曾出现预期 `os._exit(92)`、实际 Windows `0xC0000005`。未放宽断言，也未接受 access violation。最小修复将 `after_commit_before_report` 故障点移动到 durable COMMIT 成功且 `committed=True` 之后、正常 DuckDB connection cleanup/report 更新之前；正常和受控异常路径仍由 `finally` 关闭连接。严格串行验证：直接 `os._exit` 30/30、原始 pytest 20/20、migration+B-4 87 passed/1 skipped、扩展回归 827 passed/1 skipped。并行启动多个 DuckDB pytest 进程可能产生 Windows native 干扰，因此该 crash suite 必须串行运行。
+
+### MCP cutover B-5 local staging (2026-08-06)
+
+B-5 local framework work is now scoped to staging primitives only. The resident QFQ orchestrator carries an explicit `(price_source, source_generation, cutover_id)` identity through discovery, trigger claiming, reanchor events, anchors, captures, backfills, bootstrap records, cycles, watermark intents, and quality audits. Dividend discovery uses a shared payload hash and two-phase baseline CAS; the pending baseline slot and trigger insert are one transaction, and new logical keys start with `applied_payload_hash=NULL`.
+
+Generation-specific factor observations are physically routed by `AuxDbRouter`; a missing dynamic auxiliary file fails closed and is never replaced by the legacy `qfq_aux.db`. The CLI exposes `aux-init`, generation-filtered status/audit views, and `baseline-build`. A plain transition to `active` is blocked; active-pointer CAS and `mcp-gen1` activation remain B-6 gates. Formal database migration and mcp-gen1 activation remain unauthorized. The complete B-5 code/test/config/document set is synchronized only under the explicit post-repair confirmation received on 2026-08-06.
+
+Configuration note: an explicit non-legacy `source_generation` implies `generation_mode=dynamic` when omitted; `pre_cutover` with a non-legacy generation is rejected fail-fast.

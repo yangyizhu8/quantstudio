@@ -271,3 +271,17 @@ python scripts/qfq_front_fix_verification.py
 ```
 
 证据输出到 `output/qfq_staging_rehearsal_<STAMP>/`（守恒报告、前后 CSV、迁移 trace）。
+
+## 9. MCP cutover B-5 local staging primitives (2026-08-06)
+
+B-5 local implementation passed independent final review (P0=0/P1=0/P2=3) and adds generation-aware staging behavior without activating `mcp-gen1` or touching a production database:
+
+- `qfq_discovery_baseline` uses two-phase DuckDB `RETURNING` CAS. New logical keys create a nullable-applied pending row; the pending slot and dividend trigger are committed in one explicit transaction.
+- Resident orchestration scopes trigger, cycle, bootstrap, watermark-intent, pending-backfill, event, anchor, and capture operations to `(price_source, source_generation, cutover_id)`. Legacy pre-cutover rows remain compatible.
+- `AuxDbRouter` routes a generation to the immutable `qfq_source_cutover.aux_db_path`; dynamic runtime refuses a missing auxiliary DB rather than creating an empty one. Use CLI `aux-init` explicitly.
+- `transition_cutover(..., new_status='active')` is blocked. Activation remains an explicit active-pointer CAS gate reserved for B-6.
+- `qfq_orchestrator_cli` adds read-scoped cutover status, explicit aux initialization, baseline build, and generation-filtered operational views. All mutating commands remain dry-run unless `--execute`; the production guard remains mandatory.
+
+The B-5 staging path is not production-ready.
+
+Configuration compatibility note: an explicit non-legacy `source_generation` now implies `generation_mode=dynamic` when the mode is omitted; explicitly pairing `generation_mode=pre_cutover` with a non-legacy generation is rejected. Do not set `generation_mode=dynamic` against a production path, do not activate a cutover, and do not run schema/data migration without a separate user authorization.

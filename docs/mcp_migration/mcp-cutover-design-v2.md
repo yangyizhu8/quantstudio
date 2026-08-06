@@ -3,11 +3,11 @@
 > **版本**：v2.4（修订版，回应 v2.3 复核的两阶段 CAS 新事件边界遗漏 + 2 文字修正）
 > **日期**：2026-08-05
 > **性质**：QuantStudio 本地回测框架层正确性变更
-> **状态**：阶段 B 本地实施中；B-3b.3 已独立复审通过，B-4 全量 staging 演练已本地完成，CodeBuddy 独立复审通过。正式库迁移与 Git 同步仍须分别明确确认。
+> **Status**: B-5 local implementation and independent final review PASS on 2026-08-06 (P0=0/P1=0/P2=3); B-6 is not started. GitHub synchronization was explicitly authorized for the complete B-5 code/test/config/document set; formal database migration and mcp-gen1 activation remain blocked.
 > **canonical path**：本文档固定路径为 `docs/mcp_migration/mcp-cutover-design-v2.md`，**不随小版本改名**
 > **v2.3 复核结论**：架构层通过，5 项机械核验通过；只剩两阶段 CAS 引入的新事件边界遗漏（P0）+ 2 文字修正
 > **v2.4 修订**：v2.3 复核 P0（新 logical key 无法进 baseline + 占位/trigger 未同事务）+ `_norm_div_val` 函数名 + deferred 不持久化
-> **本轮交付范围**：只修订本文档，不改代码/配置/数据库，不 stage/commit/push
+> **Current delivery scope**: B-5 framework code, tests, configuration, and all related documentation are synchronized together only after explicit post-repair confirmation. No formal database migration or active cutover is included.
 
 ## v2.4 变更摘要（相对 v2.3）
 
@@ -1195,3 +1195,10 @@ B-4 报告：`output/mcp_migration/b4_20260805_final/b4_drill_report.json`。其
 ### 10.1 Windows COMMIT 后 hard-crash 边界
 
 B-4 最终回归将 `after_commit_before_report` 冻结为：`COMMIT` durable 成功并设置 `committed=True` 后、正常 DuckDB connection cleanup 与首次 committed report 更新之前。真实 `os._exit` 因而模拟“进程在资源正常清理前终止”；正常/受控异常路径仍由 `finally` close。Windows crash 测试须串行、exit 严格为 92；禁止接受 `0xC0000005`。
+
+
+## 10.2 B-5 local implementation boundary (2026-08-06)
+
+B-5 local implementation passed independent final review (P0=0/P1=0/P2=3) and remains staging-only; B-6 activation is not included. It implements the frozen dynamic-generation boundary: two-phase discovery-baseline CAS for dividend logical keys, full resident generation/cutover predicates, immutable cutover-to-aux routing, explicit auxiliary initialization, generation-scoped quality audits, deterministic snapshot evidence, and a cutover state machine that refuses plain `active` transitions.
+
+The implementation deliberately does not activate `mcp-gen1`, create an active pointer, migrate the formal database, or push framework changes to GitHub. The legacy pre-cutover path remains the compatibility default, and the pre-B-5 dividend evidence (first pass 2181, immediate replay 0) remains historical evidence rather than a new B-5 assertion.

@@ -32,11 +32,16 @@ from quantstudio.pipeline.qfq_orchestrator_types import (
     TriggerRecord,
     payload_hash_of,
     trigger_id_of,
+    trigger_id_v2,
 )
 from quantstudio.pipeline.qfq_observation import ObservationResult, ObservationStore
 from quantstudio.pipeline.qfq_reanchor_schema import init_sqlite_schema
 # v2.4 B-1：分红 payload hash 单一真相源（中立模块，防 scan/establish 漂移 + 防循环 import）
 from quantstudio.pipeline.qfq_dividend_payload import dividend_payload_hash, norm_div_val
+from quantstudio.pipeline.qfq_discovery_baseline import (
+    BaselineIdentity, logical_key_stock_dividend, reserve_pending_slot,
+    assert_existing_trigger_matches_pending_slot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,12 +82,24 @@ class EventDiscovery:
         aux_db: qfq_aux.db 路径（None → 由 ObservationStore 推导；测试传临时库）。
     """
 
-    def __init__(self, cfg: QFQOrchestratorConfig, aux_db: Optional[str] = None):
+    def __init__(self, cfg: QFQOrchestratorConfig, aux_db: Optional[str] = None,
+                 identity: Optional[dict] = None):
         self.cfg = cfg
         self.aux_db = aux_db
+        if identity is None:
+            from quantstudio.pipeline.qfq_schema_contracts import pre_cutover_qfq_identity
+            self.identity = pre_cutover_qfq_identity(cfg.price_source)
+        else:
+            self.identity = dict(identity)
         self._obs_store: Optional[ObservationStore] = None
 
-    # —— 惰性 ObservationStore（管理 qfq_aux.db 的 observation / alert）——
+    def set_runtime(self, identity: dict, *, aux_db: Optional[str] = None) -> None:
+        """Atomically switch the discovery identity and isolated auxiliary DB route."""
+        self.identity = dict(identity)
+        if aux_db is not None and str(aux_db) != str(self.aux_db):
+            self.aux_db = str(aux_db)
+            self._obs_store = None
+
     @property
     def obs_store(self) -> ObservationStore:
         if self._obs_store is None:
@@ -95,11 +112,11 @@ class EventDiscovery:
     def _upsert_cursor(self, conn, detector_name: str, asset_type: str,
                        cursor_as_of: Optional[int], run_id: str,
                        status: str = "ok") -> None:
-        from quantstudio.pipeline.qfq_schema_contracts import pre_cutover_qfq_identity
+        _ident = self.identity
         now = _now_ts()
         # v2.4 B-3a.3 P0-2：统一静态 pre-cutover identity（price_source=真实值；
         # generation/cutover 固定 legacy 哨兵，不读 cfg.source_generation/cutover_id）。
-        ident = pre_cutover_qfq_identity(self.cfg.price_source)
+        ident = self.identity
         conn.execute(
             "INSERT OR REPLACE INTO qfq_observation_cursor "
             "(detector_name, asset_type, price_source, source_generation, "
@@ -136,9 +153,7 @@ class EventDiscovery:
         present = {str(r[0]).lower() for r in conn.execute("DESCRIBE stock_dividend").fetchall()}
         if "ex_date" not in present:
             return []
-        # v2.4 B-3a.3 P0-2：统一静态 pre-cutover identity（generation/cutover 固定 legacy 哨兵）
-        from quantstudio.pipeline.qfq_schema_contracts import pre_cutover_qfq_identity
-        _ident = pre_cutover_qfq_identity(self.cfg.price_source)
+        _ident = self.identity
         _wanted = ["code", "ex_date", "record_date", "ann_date", "end_date",
                    "cash_div_before_tax", "cash_div_after_tax", "cash_div",
                    "stk_div", "stk_bo_rate", "stk_co_rate", "div_rat", "div_proc"]
@@ -183,37 +198,70 @@ class EventDiscovery:
                 code, ex_date, record_date, ann_date, end_date,
                 cash_div_before_tax, cash_div_after_tax, cash_div,
                 stk_div, stk_bo_rate, stk_co_rate, div_rat, div_proc)
-            trigger_id = trigger_id_of(
-                "STOCK", code, ex_date, "stock_dividend", payload_hash)
             status = "scheduled" if ex_date > as_of_ms else "pending"
-
-            # 崩溃可重放：先判存在，再 INSERT OR IGNORE，仅把"本次新插入"计入返回
-            existed = conn.execute(
-                "SELECT 1 FROM qfq_trigger_queue WHERE trigger_id=?",
-                [trigger_id]).fetchone() is not None
-            conn.execute(
-                "INSERT OR IGNORE INTO qfq_trigger_queue "
-                "(trigger_id, asset_type, code, trigger_type, detection_source, source_key, "
-                " effective_date, payload_hash, status, trigger_id_version, price_source, "
-                " source_generation, cutover_id, created_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                [trigger_id, "STOCK", code, "stock_dividend", "stock_dividend",
-                 str(ex_date), effective_date, payload_hash, status,
-                 1, _ident["price_source"], _ident["source_generation"], _ident["cutover_id"],
-                 now, now])
-            if not existed:
-                new_records.append(TriggerRecord(
-                    trigger_id=trigger_id, asset_type="STOCK", code=code,
-                    trigger_type="stock_dividend", detection_source="stock_dividend",
-                    source_key=str(ex_date), effective_date=effective_date,
-                    payload_hash=payload_hash, status=status,
-                    trigger_id_version=1,
-                    price_source=_ident["price_source"],
-                    source_generation=_ident["source_generation"],
-                    cutover_id=_ident["cutover_id"],
-                    created_at=now, updated_at=now,
-                ))
-
+            if _ident["source_generation"] != "xtquant-legacy":
+                trigger_id = trigger_id_v2(
+                    "STOCK", code, ex_date, "stock_dividend", payload_hash,
+                    _ident["price_source"], _ident["source_generation"])
+                key = logical_key_stock_dividend(code, ex_date)
+                conn.execute("BEGIN TRANSACTION")
+                try:
+                    reserved = reserve_pending_slot(
+                        conn, identity=BaselineIdentity(**_ident),
+                        event_logical_key=key, trigger_id=trigger_id,
+                        payload_hash=payload_hash)
+                    if reserved:
+                        inserted = conn.execute(
+                            "INSERT OR IGNORE INTO qfq_trigger_queue "
+                            "(trigger_id, asset_type, code, trigger_type, detection_source, source_key, "
+                            " effective_date, payload_hash, status, trigger_id_version, price_source, "
+                            " source_generation, cutover_id, created_at, updated_at) "
+                            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING trigger_id",
+                            [trigger_id, "STOCK", code, "stock_dividend", "stock_dividend",
+                             str(ex_date), effective_date, payload_hash, status, 2,
+                             _ident["price_source"], _ident["source_generation"], _ident["cutover_id"],
+                             now, now]).fetchone()
+                        if inserted is None:
+                            assert_existing_trigger_matches_pending_slot(
+                                conn, identity=BaselineIdentity(**_ident),
+                                event_logical_key=key, trigger_id=trigger_id,
+                                payload_hash=payload_hash)
+                        if inserted is not None:
+                            new_records.append(TriggerRecord(
+                                trigger_id=trigger_id, asset_type="STOCK", code=code,
+                                trigger_type="stock_dividend", detection_source="stock_dividend",
+                                source_key=str(ex_date), effective_date=effective_date,
+                                payload_hash=payload_hash, status=status, trigger_id_version=2,
+                                price_source=_ident["price_source"],
+                                source_generation=_ident["source_generation"],
+                                cutover_id=_ident["cutover_id"], created_at=now, updated_at=now))
+                    conn.execute("COMMIT")
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    raise
+            else:
+                trigger_id = trigger_id_of(
+                    "STOCK", code, ex_date, "stock_dividend", payload_hash)
+                existed = self._trigger_exists(conn, trigger_id)
+                conn.execute(
+                    "INSERT OR IGNORE INTO qfq_trigger_queue "
+                    "(trigger_id, asset_type, code, trigger_type, detection_source, source_key, "
+                    " effective_date, payload_hash, status, trigger_id_version, price_source, "
+                    " source_generation, cutover_id, created_at, updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    [trigger_id, "STOCK", code, "stock_dividend", "stock_dividend",
+                     str(ex_date), effective_date, payload_hash, status, 1,
+                     _ident["price_source"], _ident["source_generation"], _ident["cutover_id"],
+                     now, now])
+                if not existed:
+                    new_records.append(TriggerRecord(
+                        trigger_id=trigger_id, asset_type="STOCK", code=code,
+                        trigger_type="stock_dividend", detection_source="stock_dividend",
+                        source_key=str(ex_date), effective_date=effective_date,
+                        payload_hash=payload_hash, status=status, trigger_id_version=1,
+                        price_source=_ident["price_source"],
+                        source_generation=_ident["source_generation"],
+                        cutover_id=_ident["cutover_id"], created_at=now, updated_at=now))
         # 无论 bootstrap 与否，更新检测游标（cursor_as_of = 最大 ex_date）
         self._upsert_cursor(
             conn, "stock_dividend", "STOCK", max_ex_date, run_id, status="ok")
@@ -260,7 +308,8 @@ class EventDiscovery:
             ]
 
             result = self.obs_store.record_observations(
-                observations, run_id, as_of_ms=as_of_ms, conn=aux_conn)
+                observations, run_id, as_of_ms=as_of_ms,
+                source_generation=self.identity["source_generation"], conn=aux_conn)
             # 任务3：相邻 factor_time 值变化检测 → factor_new trigger（DuckDB）
             if getattr(result, "factor_new", None):
                 self._emit_factor_new_triggers(conn, result.factor_new, run_id, as_of_ms)
@@ -277,6 +326,17 @@ class EventDiscovery:
     # ------------------------------------------------------------------
     # 3b. 相邻 factor_time 值变化 → factor_new trigger（DuckDB，幂等）
     # ------------------------------------------------------------------
+    def _trigger_exists(self, conn, trigger_id: str) -> bool:
+        ident = self.identity
+        return conn.execute(
+            "SELECT 1 FROM qfq_trigger_queue WHERE trigger_id=? AND price_source=? "
+            "AND source_generation=? AND cutover_id=?",
+            [trigger_id, ident["price_source"], ident["source_generation"],
+             ident["cutover_id"]]).fetchone() is not None
+
+    # Factor events intentionally do not use qfq_discovery_baseline: their baseline
+    # is the generation-isolated SQLite observation ledger. trigger_id_v2 plus the
+    # physically isolated outbox provides idempotence without sharing dividend CAS slots.
     def _emit_factor_new_triggers(self, conn, factor_new_list, run_id, as_of_ms):
         """任务3：把 record_observations 收集的 factor_new 候选幂等落地为 qfq_trigger_queue。
 
@@ -284,17 +344,19 @@ class EventDiscovery:
         trigger_type = factor_new；trigger_id 确定性；future factor_time → scheduled。
         """
         now = _now_ts()
-        from quantstudio.pipeline.qfq_schema_contracts import pre_cutover_qfq_identity
-        _ident = pre_cutover_qfq_identity(self.cfg.price_source)
+        _ident = self.identity
         for fn in factor_new_list:
             ds = "tushare_fund_adj_new" if fn.asset_type == "ETF" else "tushare_adj_factor_new"
             payload_hash = payload_hash_of(
                 [fn.code, fn.factor_time, fn.previous_value, fn.current_value])
-            trigger_id = trigger_id_of(fn.asset_type, fn.code, fn.factor_time, ds, payload_hash)
+            trigger_id = (trigger_id_v2(fn.asset_type, fn.code, fn.factor_time, ds,
+                                         payload_hash, _ident["price_source"],
+                                         _ident["source_generation"])
+                          if _ident["source_generation"] != "xtquant-legacy"
+                          else trigger_id_of(fn.asset_type, fn.code, fn.factor_time, ds,
+                                             payload_hash))
             status = "scheduled" if fn.factor_time > as_of_ms else "pending"
-            existed = conn.execute(
-                "SELECT 1 FROM qfq_trigger_queue WHERE trigger_id=?",
-                [trigger_id]).fetchone() is not None
+            existed = self._trigger_exists(conn, trigger_id)
             conn.execute(
                 "INSERT OR IGNORE INTO qfq_trigger_queue "
                 "(trigger_id, asset_type, code, trigger_type, detection_source, source_key, "
@@ -305,7 +367,8 @@ class EventDiscovery:
                 [trigger_id, fn.asset_type, fn.code, "factor_new", ds,
                  str(fn.factor_time), fn.factor_time, payload_hash,
                  fn.previous_value, fn.current_value, None, status,
-                 1, _ident["price_source"], _ident["source_generation"], _ident["cutover_id"],
+                     (2 if _ident["source_generation"] != "xtquant-legacy" else 1),
+                     _ident["price_source"], _ident["source_generation"], _ident["cutover_id"],
                  now, now])
             if not existed:
                 logger.info(
@@ -346,8 +409,7 @@ class EventDiscovery:
         """
         aux_conn = sqlite3.connect(str(self.aux_db), timeout=30)
         new_records: List[TriggerRecord] = []
-        from quantstudio.pipeline.qfq_schema_contracts import pre_cutover_qfq_identity
-        _ident = pre_cutover_qfq_identity(self.cfg.price_source)
+        _ident = self.identity
         try:
             aux_conn.execute("PRAGMA journal_mode=WAL")
             aux_conn.execute("PRAGMA busy_timeout=30000")
@@ -392,14 +454,15 @@ class EventDiscovery:
                     trigger_type = "factor_new" if revision_no == 1 else "factor_revision"
 
                 payload_hash = payload_hash_of([new_factor_value])
-                trigger_id = trigger_id_of(
-                    asset_type, code, factor_time, detection_source, payload_hash)
                 now = _now_ts()
-
+                trigger_id = (trigger_id_v2(
+                    asset_type, code, factor_time, detection_source, payload_hash,
+                    _ident["price_source"], _ident["source_generation"])
+                    if _ident["source_generation"] != "xtquant-legacy"
+                    else trigger_id_of(asset_type, code, factor_time,
+                                       detection_source, payload_hash))
                 # 先幂等落 DuckDB trigger
-                existed = conn.execute(
-                    "SELECT 1 FROM qfq_trigger_queue WHERE trigger_id=?",
-                    [trigger_id]).fetchone() is not None
+                existed = self._trigger_exists(conn, trigger_id)
                 conn.execute(
                     "INSERT OR IGNORE INTO qfq_trigger_queue "
                     "(trigger_id, asset_type, code, trigger_type, detection_source, source_key, "
@@ -410,7 +473,8 @@ class EventDiscovery:
                     [trigger_id, asset_type, code, trigger_type, detection_source,
                      str(factor_time), factor_time, payload_hash, old_factor,
                      new_factor_value, revision_no, "pending",
-                     1, _ident["price_source"], _ident["source_generation"], _ident["cutover_id"],
+                     (2 if _ident["source_generation"] != "xtquant-legacy" else 1),
+                     _ident["price_source"], _ident["source_generation"], _ident["cutover_id"],
                      now, now])
                 if not existed:
                     new_records.append(TriggerRecord(
@@ -419,7 +483,8 @@ class EventDiscovery:
                         source_key=str(factor_time), effective_date=factor_time,
                         payload_hash=payload_hash, factor_old=old_factor,
                         factor_new=new_factor_value, factor_revision=revision_no,
-                        status="pending", trigger_id_version=1,
+                        status="pending", trigger_id_version=(
+                            2 if _ident["source_generation"] != "xtquant-legacy" else 1),
                         price_source=_ident["price_source"],
                         source_generation=_ident["source_generation"],
                         cutover_id=_ident["cutover_id"],
@@ -455,7 +520,9 @@ class EventDiscovery:
 
         row = conn.execute(
             "SELECT cursor_as_of FROM qfq_observation_cursor "
-            "WHERE detector_name='stock_dividend' AND asset_type='STOCK'"
+            "WHERE detector_name='stock_dividend' AND asset_type='STOCK' "
+            "AND price_source=? AND source_generation=?",
+            [self.identity["price_source"], self.identity["source_generation"]]
         ).fetchone()
         cursor_as_of = int(row[0]) if row and row[0] is not None else 0
 

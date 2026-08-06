@@ -481,3 +481,11 @@ B-4 使用 `scripts/qfq_b4_staging_drill.py` 在正式生产操作前验证 2.0�
 ### B-4 hard-crash 测试执行约束
 
 `after_commit_before_report` 故障点必须位于 durable COMMIT 之后、正常连接清理/report 更新之前。Windows 下该真实 `os._exit` 子进程测试必须串行执行；不得以并行 pytest 的 `0xC0000005` 干扰为理由放宽 exit 92 断言。此约束仅用于迁移崩溃恢复验收，不改变策略 API 或生产正常路径。
+
+## MCP cutover B-5 staging boundary (2026-08-06)
+
+B-5 is a framework/pipeline capability, not a strategy API. Local staging now provides generation-aware discovery-baseline CAS, generation-filtered resident orchestration, isolated auxiliary routing, deterministic snapshot evidence, and a cutover state machine. Strategy code must not call these modules.
+
+The safe staging sequence is: create a planned cutover with an immutable `aux_db_path` ? explicitly run `aux-init` ? transition to `baseline_building` ? run `baseline-build` ? audit pending slots ? transition to `baseline_validated`. Plain status transition to `active` is blocked; active-pointer CAS and user confirmation remain B-6 gates.
+
+Dynamic staging fails closed when the configured auxiliary file is missing and never falls back to `qfq_aux.db`. The generation filters must remain in place for trigger, event, backfill, bootstrap, cycle, watermark-intent, and quality-audit queries.

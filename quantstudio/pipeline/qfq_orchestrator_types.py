@@ -342,6 +342,7 @@ DEFAULT_ORCHESTRATOR_CFG: Dict = {
     "factor_refresh_enabled": False,
     "require_bootstrap": True,
     "price_source": "xtquant",
+    "generation_mode": "pre_cutover",
     "stock_factor_detector": "tushare_adj_factor",
     "etf_factor_detector": "tushare_fund_adj",
     "freqs": ["1min"],
@@ -388,6 +389,7 @@ class QFQOrchestratorConfig:
     factor_refresh_enabled: bool = False  # 任务2.2：主动因子刷新（默认关闭，独立 opt-in）
     require_bootstrap: bool = True
     price_source: str = "xtquant"
+    generation_mode: str = "pre_cutover"
     # v2.4 B-2：数据源世代隔离字段。
     # 默认值保守（xtquant-legacy / legacy-xtquant-pre-cutover 哨兵），确保：
     # (1) 旧配置文件不传这两个字段时 daemon 行为与 B-1 完全一致（不自动进 MCP 世代）；
@@ -441,12 +443,17 @@ class QFQOrchestratorConfig:
         dl = cfg.get("dead_letter_policy", {}) or {}
         bs = cfg.get("bootstrap", {}) or {}
         qt = cfg.get("quality_thresholds", {}) or {}
+        source_generation = _parse_identifier(cfg, "source_generation", "xtquant-legacy")
+        requested_mode = cfg.get("generation_mode")
+        generation_mode = (str(requested_mode) if requested_mode is not None else
+                           ("dynamic" if source_generation != "xtquant-legacy" else "pre_cutover"))
         obj = cls(
             enabled=bool(cfg.get("enabled", False)),
             factor_refresh_enabled=bool(cfg.get("factor_refresh_enabled", False)),
             require_bootstrap=bool(cfg.get("require_bootstrap", True)),
             price_source=str(cfg.get("price_source", "xtquant")),
-            source_generation=_parse_identifier(cfg, "source_generation", "xtquant-legacy"),
+            generation_mode=generation_mode,
+            source_generation=source_generation,
             cutover_id=_parse_identifier(cfg, "cutover_id", "legacy-xtquant-pre-cutover"),
             stock_factor_detector=str(cfg.get("stock_factor_detector", "tushare_adj_factor")),
             etf_factor_detector=str(cfg.get("etf_factor_detector", "tushare_fund_adj")),
@@ -472,6 +479,13 @@ class QFQOrchestratorConfig:
             raise QFQConfigError(
                 f"qfq_orchestrator.price_source 必须为 xtquant 或 mcp（价格修正源合法源），"
                 f"收到 {self.price_source!r}")
+        if self.generation_mode not in ("pre_cutover", "dynamic"):
+            raise QFQConfigError("qfq_orchestrator.generation_mode must be pre_cutover or dynamic")
+        if self.generation_mode == "dynamic" and self.source_generation == "xtquant-legacy":
+            raise QFQConfigError("generation_mode=dynamic requires an explicit non-legacy source_generation")
+        if self.generation_mode == "pre_cutover" and self.source_generation != "xtquant-legacy":
+            raise QFQConfigError(
+                "generation_mode=pre_cutover requires source_generation=xtquant-legacy")
         if "1min" not in self.freqs:
             raise QFQConfigError(
                 f"qfq_orchestrator.freqs 必须含 '1min'（当前正式频率），收到 {self.freqs!r}")

@@ -126,9 +126,13 @@ def _validate_factor_time(ft) -> int:
     return _validate_epoch_ms(ft)
 
 
-def alert_id_of(asset_type: str, code: str, factor_time: int, revision_no: int) -> str:
-    """确定性 alert_id = sha1(asset_type|code|factor_time|revision_no)（v4 §3.1）。"""
-    raw = f"{asset_type}|{code}|{int(factor_time)}|{int(revision_no)}"
+def alert_id_of(asset_type: str, code: str, factor_time: int, revision_no: int,
+                source_generation: Optional[str] = None) -> str:
+    """Deterministic alert id; generation is included when supplied by B-5."""
+    if source_generation is None:
+        raw = f"{asset_type}|{code}|{int(factor_time)}|{int(revision_no)}"
+    else:
+        raw = f"{asset_type}|{code}|{int(factor_time)}|{int(revision_no)}|{source_generation}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
@@ -234,6 +238,7 @@ class ObservationStore:
         as_of_ms: Optional[int] = None,
         epsilon_abs: Optional[float] = None,
         epsilon_rel: Optional[float] = None,
+        source_generation: Optional[str] = None,
         conn: Optional[sqlite3.Connection] = None,
     ) -> ObservationResult:
         """版本化写入一批因子观测（v3 §3.2）+ revision alert outbox（v4 §3.1）。
@@ -358,7 +363,7 @@ class ObservationStore:
                     "VALUES (?,?,?,?,?,?,?,?,?)",
                     [asset_type, code, ft, fv, new_rev, run_id, run_id, now, now],
                 )
-                aid = alert_id_of(asset_type, code, ft, new_rev)
+                aid = alert_id_of(asset_type, code, ft, new_rev, source_generation)
                 c.execute(
                     "INSERT OR IGNORE INTO qfq_factor_revision_alert "
                     "(alert_id, asset_type, code, factor_time, revision_no, status, "

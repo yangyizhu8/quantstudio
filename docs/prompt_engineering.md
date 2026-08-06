@@ -441,3 +441,16 @@ For MCP framework work, prompts must state all of the following:
 ### B-4 hard-crash prompt rule
 
 要求验证 COMMIT 后崩溃时，提示词必须指定故障点为“durable COMMIT 后、正常 connection cleanup/report 前”，并要求 Windows 子进程测试串行运行、严格断言 exit 92。禁止把 `0xC0000005` 加入允许值或用重试掩盖；正常路径/受控异常仍必须关闭连接。
+
+## MCP cutover B-5 prompt constraints (2026-08-06)
+
+Prompts that request B-5 work must state:
+
+- Work is local/staging only; do not migrate the formal database, activate `mcp-gen1`, or synchronize GitHub without a separate explicit user gate.
+- Use the immutable `(price_source, source_generation, cutover_id)` identity on every QFQ state/query path. Do not use a global trigger count or a legacy auxiliary fallback as a substitute.
+- Build the dividend discovery baseline with the shared payload hash and two-phase CAS. New logical keys must enter with `applied_payload_hash=NULL`; pending-slot reservation and trigger insertion must share one explicit transaction.
+- The isolated generation auxiliary DB must be initialized explicitly and must fail closed when absent.
+- Quality gates must include orphan pending slots, cross-generation pending triggers, payload mismatch, dead letters, stale in-progress triggers, and held/stale watermark intents.
+- `baseline_validated -> active` is not a normal CLI transition; it requires the later B-6 active-pointer CAS and user confirmation.
+
+- An explicit non-legacy `source_generation` implies `generation_mode=dynamic` when omitted; prompts must not combine a non-legacy generation with `pre_cutover`.

@@ -202,13 +202,13 @@ python scripts/qfq_b4_staging_drill.py --run-id b4_20260805_final --execute
 - normal report 状态：DRY_RUN_COMPLETE / ROLLED_BACK / DRY_RUN_COMPLETE / MIGRATION_COMMITTED / ALREADY_CURRENT。
 - recovery：`after_commit_before_report` 后 D- 已为 COMPLETE_2_1；新 report 路径恢复为 ALREADY_CURRENT。
 - MCP 离线 bootstrap：trigger 数不增加；因子首轮新增/修订均为 0。
-- pre-B-5 dividend discover：首轮新增 2181，立即重放新增 0。此为全表 hash 扫描真实基线；B-5 discovery-baseline/CAS 尚未实施。
+- B-4 evidence-time pre-B-5 dividend discover: first pass 2181, immediate replay 0. This remains historical pre-B-5 evidence; the current B-5 discovery-baseline/CAS implementation has passed independent final review.
 - `qfq_active_cutover=0`；10 张含 generation 的表中 `mcp-gen1` 全为 0；未越过 B-6。
 - 正式主库与 aux 的 size/mtime_ns/SHA-256 前后完全一致。
 
 ### 8.3 当前门禁
 
-B-4 已于 2026-08-06 经 CodeBuddy 独立复审通过（P0=0/P1=0），允许进入 B-5 本地实施。报告中的 `production_ready=false`、`git_sync_authorized=false` 仍有效：正式库迁移及 GitHub 同步必须另行取得明确确认。
+B-4 evidence-time gate: B-4 review allowed local B-5 implementation. B-5 has now passed independent final review (P0=0/P1=0/P2=3), and GitHub synchronization has separate explicit post-repair confirmation. Formal migration and mcp-gen1 active activation remain unauthorized.
 
 ### 8.4 Windows hard-crash 回归纪律
 
@@ -216,3 +216,16 @@ B-4 已于 2026-08-06 经 CodeBuddy 独立复审通过（P0=0/P1=0），允许�
 - Windows 真实 `os._exit(92)` 测试必须严格串行；不得与另一 DuckDB pytest 进程并发。
 - exit code 必须精确为 92；`0xC0000005` 不可接受，不得放宽。
 - 最终串行证据：原始测试 20/20；migration+B-4 87 passed/1 skipped；扩展回归 827 passed/1 skipped。
+
+## B-5 local staging gate (2026-08-06)
+
+Before any future B-6 activation, verify the following on a staging copy only:
+
+- [ ] `qfq_source_cutover` is `baseline_building` or `baseline_validated`; it is not `active`.
+- [ ] `aux_db_path` is immutable and points to a generation-specific SQLite file. Initialize it only with `qfq_orchestrator_cli aux-init`; missing dynamic aux files must fail closed.
+- [ ] `baseline-build --execute` records the current `stock_dividend(div_proc='??', ex_date IS NOT NULL)` payload hashes and creates no triggers.
+- [ ] The first dynamic discover after baseline produces zero net historical dividend triggers; a true new logical key creates a nullable-applied pending row and a v2 trigger in one transaction.
+- [ ] Repeat discovery is idempotent; `audit_pending_slots` reports zero orphan, generation-mismatch, and payload-mismatch rows.
+- [ ] Trigger/cycle/bootstrap/watermark/backfill/event/capture audits are filtered to the same `(price_source, source_generation, cutover_id)`.
+- [ ] Legacy `xtquant-legacy` behavior and the frozen pre-B-5 dividend baseline (first pass 2181, immediate replay 0) remain unchanged.
+- [ ] No production main DB or production aux DB was opened read-write. GitHub synchronization is permitted only by the explicit post-repair confirmation recorded on 2026-08-06; it does not authorize production migration or mcp-gen1 activation.

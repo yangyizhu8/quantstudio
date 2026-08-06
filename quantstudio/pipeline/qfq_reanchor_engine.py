@@ -1840,7 +1840,8 @@ def collect_row_counts(conn, asset_type: str, code: str,
 # ---------------------------------------------------------------------------
 
 def _insert_event_on_conn(conn, *, event_id: str, event_type: str, asset_type: str,
-                          code: str, price_source: str, status: str,
+                          code: str, price_source: str, source_generation: str,
+                          cutover_id: str, status: str,
                           minute_ratio_plan: Optional[str] = None,
                           golden_check: Optional[str] = None,
                           postcheck_summary: Optional[str] = None,
@@ -1861,7 +1862,7 @@ def _insert_event_on_conn(conn, *, event_id: str, event_type: str, asset_type: s
         "finished_at, created_at, first_seen_at, last_seen_at, occurrence_count) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
         [event_id, event_type, asset_type, code, price_source,
-         "xtquant-legacy", "legacy-xtquant-pre-cutover",
+         source_generation, cutover_id,
          "staged_fresh_update", minute_ratio_plan, ratio_dispersion,
          ratio_cluster_count, golden_check, status, block_reason, error,
          postcheck_summary, rows_detail, trigger_surface,
@@ -1869,13 +1870,13 @@ def _insert_event_on_conn(conn, *, event_id: str, event_type: str, asset_type: s
 
 
 def _advance_anchor_on_conn(conn, *, asset_type: str, code: str, price_source: str,
-                            event_id: str,
+                             event_id: str, source_generation: str, cutover_id: str,
                             last_ex_date: Optional[int] = None) -> int:
     """事务内推进 anchor：anchor_version = 现值+1（无记录从 1 起），status='ok'。"""
     row = conn.execute(
         "SELECT anchor_version FROM qfq_anchor_state "
-        "WHERE asset_type=? AND code=? AND price_source=?",
-        [asset_type, code, price_source]).fetchone()
+        "WHERE asset_type=? AND code=? AND price_source=? AND source_generation=?",
+        [asset_type, code, price_source, source_generation]).fetchone()
     new_version = int(row[0] or 0) + 1 if row else 1
     now = datetime.now()
     conn.execute(
@@ -1886,18 +1887,19 @@ def _advance_anchor_on_conn(conn, *, asset_type: str, code: str, price_source: s
         "anchor_version=EXCLUDED.anchor_version, status=EXCLUDED.status, "
         "last_event_id=EXCLUDED.last_event_id, last_ex_date=EXCLUDED.last_ex_date, "
         "updated_at=EXCLUDED.updated_at",
-        [asset_type, code, price_source, "xtquant-legacy", new_version, "ok",
+        [asset_type, code, price_source, source_generation, new_version, "ok",
          event_id, last_ex_date, now])
     return new_version
 
 
 def _anchor_version_of(conn, *, asset_type: str, code: str,
-                       price_source: str = "xtquant") -> int:
+                       price_source: str = "xtquant",
+                       source_generation: str = "xtquant-legacy") -> int:
     """读当前 anchor_version（无记录返回 0）。"""
     row = conn.execute(
         "SELECT anchor_version FROM qfq_anchor_state "
-        "WHERE asset_type=? AND code=? AND price_source=?",
-        [asset_type, code, price_source]).fetchone()
+        "WHERE asset_type=? AND code=? AND price_source=? AND source_generation=?",
+        [asset_type, code, price_source, source_generation]).fetchone()
     return int(row[0] or 0) if row else 0
 
 
@@ -1918,6 +1920,7 @@ def _fresh_content_hashes(fresh_daily: pd.DataFrame,
 
 
 def _resolve_capture_contract(conn, *, asset_type: str, code: str, source: str,
+                              source_generation: str, cutover_id: str,
                               capture_id: str, metadata_sha256: str,
                               fresh_daily: pd.DataFrame, fresh_minutes: pd.DataFrame,
                               freqs: Sequence[str] = ()):
@@ -1946,7 +1949,8 @@ def _resolve_capture_contract(conn, *, asset_type: str, code: str, source: str,
         daily_range_start=d_start, daily_range_end=d_end,
         minute_range_start=m_start, minute_range_end=m_end,
         daily_sha256=daily_sha, minute_sha256=minute_sha,
-        metadata_sha256=metadata_sha256)
+        metadata_sha256=metadata_sha256, source_generation=source_generation,
+        cutover_id=cutover_id)
     rec = None
     if action == CAPTURE_ACTION_NEW:
         now = datetime.now()
@@ -1957,13 +1961,14 @@ def _resolve_capture_contract(conn, *, asset_type: str, code: str, source: str,
             daily_sha256=daily_sha, minute_sha256=minute_sha,
             metadata_sha256=metadata_sha256,
             daily_row_count=len(fresh_daily), minute_row_count=len(fresh_minutes),
-            status="captured", created_at=now, updated_at=now)
+            status="captured", source_generation=source_generation,
+            cutover_id=cutover_id, created_at=now, updated_at=now)
         write_fresh_capture(conn, rec)
     return rec, action
 
 
 def _record_failure_event(conn, *, event_id: str, asset_type: str, code: str,
-                          price_source: str, status: str,
+                           price_source: str, source_generation: str, cutover_id: str, status: str,
                           block_reason: Optional[str], error: Optional[str],
                           started_at: datetime,
                           minute_ratio_plan: Optional[str] = None,
@@ -1981,6 +1986,7 @@ def _record_failure_event(conn, *, event_id: str, asset_type: str, code: str,
         _insert_event_on_conn(
             conn, event_id=event_id, event_type="reanchor_apply",
             asset_type=asset_type, code=code, price_source=price_source,
+            source_generation=source_generation, cutover_id=cutover_id,
             status=status, block_reason=block_reason, error=error,
             minute_ratio_plan=minute_ratio_plan,
             postcheck_summary=postcheck_summary, rows_detail=rows_detail,
@@ -2007,6 +2013,8 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
                                 allow_multi_segment: bool = False,
                                 tol: Optional[ReanchorTolerances] = None,
                                 price_source: str = "xtquant",
+                                 source_generation: str = "xtquant-legacy",
+                                 cutover_id: str = "legacy-xtquant-pre-cutover",
                                 trigger_surface: str = "batch2",
                                 event_id: Optional[str] = None,
                                 list_date_ms: Optional[int] = None,
@@ -2078,6 +2086,7 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
     if model in ("fresh_staged", "fresh_authoritative_rebase") and fresh_capture_id:
         _cap_rec, _capture_action = _resolve_capture_contract(
             conn, asset_type=asset_type, code=code, source=fresh_source,
+            source_generation=source_generation, cutover_id=cutover_id,
             capture_id=fresh_capture_id, metadata_sha256=fresh_metadata_sha256,
             fresh_daily=fresh_daily, fresh_minutes=fresh_minutes, freqs=freqs)
         if _capture_action == CAPTURE_ACTION_ALREADY_COMMITTED:
@@ -2089,7 +2098,8 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
                 postchecks={"status": "already_committed",
                             "capture_id": fresh_capture_id})
             _idem.anchor_version = _anchor_version_of(
-                conn, asset_type=asset_type, code=code)
+                conn, asset_type=asset_type, code=code, price_source=price_source,
+                source_generation=source_generation)
             return _idem
         if _capture_action == CAPTURE_ACTION_RECOVER_APPLIED_NO_EVENT:
             # 异常恢复路径：不静默跳过，标记需人工/下轮处置（整券 BLOCK）
@@ -2243,6 +2253,7 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
         _insert_event_on_conn(
             conn, event_id=ev_id, event_type="reanchor_apply",
             asset_type=asset_type, code=code, price_source=price_source,
+            source_generation=source_generation, cutover_id=cutover_id,
             status="committed", minute_ratio_plan=plan_json,
             golden_check=json.dumps(golden_all, ensure_ascii=False, default=float),
             postcheck_summary=json.dumps(result.postchecks, ensure_ascii=False,
@@ -2253,6 +2264,7 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
             finished_at=datetime.now())
         _advance_anchor_on_conn(
             conn, asset_type=asset_type, code=code, price_source=price_source,
+            source_generation=source_generation, cutover_id=cutover_id,
             event_id=ev_id,
             last_ex_date=max((int(x) for x in ex_dates_ms), default=None))
         conn.execute("COMMIT")
@@ -2273,6 +2285,7 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
                 result.minute_coverage[fkey] = e.coverage
         _record_failure_event(conn, event_id=ev_id, asset_type=asset_type,
                               code=code, price_source=price_source,
+            source_generation=source_generation, cutover_id=cutover_id,
                               status="blocked", block_reason=e.reason,
                               error=e.detail or None, started_at=started_at,
                               minute_ratio_plan=_audit_json(phase=e.phase or e.reason))
@@ -2284,6 +2297,7 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
         conn.execute("ROLLBACK")
         _record_failure_event(conn, event_id=ev_id, asset_type=asset_type,
                               code=code, price_source=price_source,
+            source_generation=source_generation, cutover_id=cutover_id,
                               status="rolled_back", block_reason=e.check,
                               error=e.detail or None, started_at=started_at,
                               minute_ratio_plan=_audit_json(phase="postcheck"))
@@ -2298,6 +2312,7 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
             pass
         _record_failure_event(conn, event_id=ev_id, asset_type=asset_type,
                               code=code, price_source=price_source,
+            source_generation=source_generation, cutover_id=cutover_id,
                               status="failed", block_reason=None,
                               error=repr(e), started_at=started_at,
                               minute_ratio_plan=_audit_json())

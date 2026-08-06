@@ -528,13 +528,19 @@ class FreshCapture:
             return None
         return FreshCaptureRecord(**dict(zip(FRESH_CAPTURE_COLS, row)))
 
-    def mark_applied(self, conn, capture_id: str) -> None:
-        """标记该 capture 已被引擎应用（status='applied'）。"""
-        conn.execute(
-            "UPDATE qfq_fresh_capture SET status = ?, updated_at = ? "
-            "WHERE capture_id = ?",
-            ["applied", _now_ts(), capture_id],
-        )
+    def mark_applied(self, conn, capture_id: str, *,
+                     source_generation: Optional[str] = None,
+                     cutover_id: Optional[str] = None) -> None:
+        """Mark a capture applied, scoped to generation when supplied."""
+        sql = "UPDATE qfq_fresh_capture SET status=?, updated_at=? WHERE capture_id=?"
+        params = ["applied", _now_ts(), capture_id]
+        if source_generation is not None:
+            sql += " AND source_generation=?"
+            params.append(source_generation)
+        if cutover_id is not None:
+            sql += " AND cutover_id=?"
+            params.append(cutover_id)
+        conn.execute(sql, params)
 
 
 # ---------------------------------------------------------------------------
@@ -555,12 +561,25 @@ CAPTURE_ACTION_ALREADY_COMMITTED = "already_committed"  # 已存在、event 已�
 CAPTURE_ACTION_RECOVER_APPLIED_NO_EVENT = "recover_applied_no_event"  # 已 applied 但无 event，须显式恢复
 
 
-def _event_committed_for_capture(conn, capture_id: str) -> bool:
-    """capture 对应的 reanchor event 是否已 committed（写入 qfq_reanchor_event）。"""
-    n = conn.execute(
-        "SELECT COUNT(*) FROM qfq_reanchor_event WHERE status='committed' "
-        "AND json_extract_string(minute_ratio_plan, '$.model_audit.fresh_capture_id')=?",
-        [capture_id]).fetchone()[0]
+def _event_committed_for_capture(conn, capture_id: str, *,
+                                 source_generation: str, cutover_id: str) -> bool:
+    """Check committed evidence, tolerating a pre-2.1 legacy table only for legacy mode."""
+    event_cols = {str(r[0]).lower() for r in conn.execute(
+        "DESCRIBE qfq_reanchor_event").fetchall()}
+    if {"source_generation", "cutover_id"}.issubset(event_cols):
+        n = conn.execute(
+            "SELECT COUNT(*) FROM qfq_reanchor_event WHERE status='committed' "
+            "AND source_generation=? AND cutover_id=? "
+            "AND json_extract_string(minute_ratio_plan, '$.model_audit.fresh_capture_id')=?",
+            [source_generation, cutover_id, capture_id]).fetchone()[0]
+    elif source_generation == "xtquant-legacy":
+        n = conn.execute(
+            "SELECT COUNT(*) FROM qfq_reanchor_event WHERE status='committed' "
+            "AND json_extract_string(minute_ratio_plan, '$.model_audit.fresh_capture_id')=?",
+            [capture_id]).fetchone()[0]
+    else:
+        raise CaptureContentConflict(
+            "dynamic capture recovery requires qfq_reanchor_event generation columns")
     return int(n) > 0
 
 
@@ -568,7 +587,9 @@ def resolve_fresh_capture(conn, *, capture_id: str, asset_type: str, code: str,
                            source: str, daily_range_start, daily_range_end,
                            minute_range_start, minute_range_end,
                            daily_sha256: str, minute_sha256: str,
-                           metadata_sha256: str) -> str:
+                           metadata_sha256: str,
+                           source_generation: str = "xtquant-legacy",
+                           cutover_id: str = "legacy-xtquant-pre-cutover") -> str:
     """§3.5 capture 不可变契约：先查冲突，再决定动作。
 
     返回动作：
@@ -582,28 +603,39 @@ def resolve_fresh_capture(conn, *, capture_id: str, asset_type: str, code: str,
     冲突（已登记 source/code/asset_type/区间/SHA 与重新采集不一致）→ 抛
     CaptureContentConflict（禁止覆盖原元数据）。
     """
+    present = {str(r[0]).lower() for r in conn.execute(
+        "DESCRIBE qfq_fresh_capture").fetchall()}
+    base_cols = ["capture_id", "asset_type", "code", "source", "daily_range_start",
+                 "daily_range_end", "minute_range_start", "minute_range_end",
+                 "daily_sha256", "minute_sha256", "metadata_sha256", "status"]
+    has_identity = {"source_generation", "cutover_id"}.issubset(present)
+    if not has_identity and source_generation != "xtquant-legacy":
+        raise CaptureContentConflict(
+            "dynamic capture requires qfq_fresh_capture generation columns")
+    select_cols = base_cols + (["source_generation", "cutover_id"] if has_identity else [])
     row = conn.execute(
-        "SELECT capture_id, asset_type, code, source, daily_range_start, daily_range_end, "
-        "minute_range_start, minute_range_end, daily_sha256, minute_sha256, metadata_sha256, "
-        "status FROM qfq_fresh_capture WHERE capture_id=?", [capture_id]).fetchone()
+        f"SELECT {', '.join(select_cols)} FROM qfq_fresh_capture WHERE capture_id=?",
+        [capture_id]).fetchone()
     if row is None:
         return CAPTURE_ACTION_NEW
-    got = dict(zip(
-        ["capture_id", "asset_type", "code", "source", "daily_range_start",
-         "daily_range_end", "minute_range_start", "minute_range_end",
-         "daily_sha256", "minute_sha256", "metadata_sha256", "status"], row))
+    got = dict(zip(select_cols, row))
+    if not has_identity:
+        got["source_generation"] = "xtquant-legacy"
+        got["cutover_id"] = "legacy-xtquant-pre-cutover"
     expected = dict(
         asset_type=asset_type, code=code, source=source,
         daily_range_start=daily_range_start, daily_range_end=daily_range_end,
         minute_range_start=minute_range_start, minute_range_end=minute_range_end,
         daily_sha256=daily_sha256, minute_sha256=minute_sha256,
-        metadata_sha256=metadata_sha256)
+        metadata_sha256=metadata_sha256, source_generation=source_generation,
+        cutover_id=cutover_id)
     mismatch = [k for k in expected if str(got[k]) != str(expected[k])]
     if mismatch:
         raise CaptureContentConflict(
             f"capture_id={capture_id} 内容冲突（字段 {mismatch}）：已登记与重新采集不一致，"
             f"禁止 INSERT OR REPLACE 覆盖原 capture 元数据")
-    if _event_committed_for_capture(conn, capture_id):
+    if _event_committed_for_capture(
+            conn, capture_id, source_generation=source_generation, cutover_id=cutover_id):
         if got["status"] != "applied":
             conn.execute(
                 "UPDATE qfq_fresh_capture SET status='applied', updated_at=? "

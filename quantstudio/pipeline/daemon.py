@@ -248,11 +248,12 @@ class ResidentCollector:
         conn = self.writer.shared_conn()
         aux_conn = None
         try:
+            # B-5: resolve generation/cutover and its immutable aux route before opening SQLite.
+            orch.init_schema(conn)
             if orch.aux_db:
                 import sqlite3 as _sqlite3
                 aux_conn = _sqlite3.connect(str(orch.aux_db))
-            orch.init_schema(conn, aux_conn)
-            if aux_conn is not None:
+                orch.init_schema(conn, aux_conn)
                 aux_conn.commit()
         finally:
             if aux_conn is not None:

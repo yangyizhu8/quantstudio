@@ -1,0 +1,7 @@
+﻿{
+  "default": "../../../data/qfq_aux.db",
+  "generations": {
+    "xtquant-legacy": "../../../data/qfq_aux.db",
+    "mcp-gen1": "../../../data/qfq_aux_mcp_gen1.db"
+  }
+}

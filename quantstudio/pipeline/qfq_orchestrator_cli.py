@@ -50,10 +50,11 @@ logger = logging.getLogger(__name__)
 BJ_TZ = timezone(timedelta(hours=8))
 
 #: 只读子命令集合（用 read_only 连接）
-READONLY_CMDS = frozenset({"status", "show-pending", "show-dead-letter", "bootstrap-audit"})
+READONLY_CMDS = frozenset({"status", "show-pending", "show-dead-letter", "bootstrap-audit", "cutover-status"})
 #: 变更子命令集合（需 --execute；正式库需 --allow-production）
 MUTATING_CMDS = frozenset({"bootstrap-plan", "bootstrap-run", "bootstrap-resume",
-                           "reconcile-once", "retry-due", "reopen"})
+                           "reconcile-once", "retry-due", "reopen", "cutover-init",
+                           "cutover-transition", "aux-init", "baseline-build"})
 #: 需要 enabled=true 才允许执行的变更命令（紧急回退开关语义）
 ENABLED_REQUIRED_CMDS = frozenset({"reconcile-once", "bootstrap-run", "bootstrap-resume"})
 
@@ -233,133 +234,124 @@ def cmd_status(args) -> int:
     cfg = _load_cfg(args)
     conn = _connect(db, read_only=True)
     try:
-        trig = dict(_q(conn, "SELECT status, COUNT(*) FROM qfq_trigger_queue GROUP BY status"))
-        cycles = _q(conn,
-                    "SELECT cycle_id, phase, status, discovered_count, success_count, "
-                    "failed_count, started_at, finished_at FROM qfq_cycle_run "
-                    "ORDER BY started_at DESC LIMIT 5")
-        intents = _q(conn,
-                     "SELECT status, COUNT(*) FROM qfq_watermark_intent GROUP BY status")
-        held = _q(conn,
-                  "SELECT cycle_id, table_name, freq, hold_reason FROM qfq_watermark_intent "
-                  "WHERE status='held' ORDER BY cycle_id DESC LIMIT 10")
-        backfill = dict(_q(conn,
-                           "SELECT status, COUNT(*) FROM qfq_pending_backfill GROUP BY status"))
-        boots = _q(conn,
-                   "SELECT bootstrap_run_id, status, total_count, completed_count, "
-                   "blocked_count, failed_count FROM qfq_bootstrap_run "
-                   "ORDER BY started_at DESC LIMIT 5")
-        wm = _q(conn,
-                "SELECT source, table_name, freq, last_date FROM source_watermark "
-                "WHERE table_name IN ('stock_daily','stock_minutes','etf_daily','etf_minutes') "
-                "ORDER BY table_name, freq")
+        orch = _make_orchestrator(cfg, db, args, with_fetcher=False)
+        ident = orch.prepare_runtime(conn, require_aux=False)
+        gp = [ident["price_source"], ident["source_generation"], ident["cutover_id"]]
+        trig = dict(_q(conn, "SELECT status, COUNT(*) FROM qfq_trigger_queue "
+                            "WHERE price_source=? AND source_generation=? AND cutover_id=? "
+                            "GROUP BY status", gp))
+        cycles = _q(conn, "SELECT cycle_id, phase, status, discovered_count, success_count, "
+                          "failed_count, started_at, finished_at FROM qfq_cycle_run "
+                          "WHERE price_source=? AND source_generation=? AND cutover_id=? "
+                          "ORDER BY started_at DESC LIMIT 5", gp)
+        intents = _q(conn, "SELECT status, COUNT(*) FROM qfq_watermark_intent "
+                           "WHERE source_generation=? AND cutover_id=? GROUP BY status", gp[1:])
+        held = _q(conn, "SELECT cycle_id, table_name, freq, hold_reason FROM qfq_watermark_intent "
+                        "WHERE status='held' AND source_generation=? AND cutover_id=? "
+                        "ORDER BY cycle_id DESC LIMIT 10", gp[1:])
+        backfill = dict(_q(conn, "SELECT status, COUNT(*) FROM qfq_pending_backfill "
+                                "WHERE price_source=? AND source_generation=? GROUP BY status", gp[:2]))
+        boots = _q(conn, "SELECT bootstrap_run_id, status, total_count, completed_count, "
+                         "blocked_count, failed_count FROM qfq_bootstrap_run "
+                         "WHERE price_source=? AND source_generation=? AND cutover_id=? "
+                         "ORDER BY started_at DESC LIMIT 5", gp)
+        wm = _q(conn, "SELECT source, table_name, freq, last_date FROM source_watermark "
+                      "WHERE table_name IN ('stock_daily','stock_minutes','etf_daily','etf_minutes') "
+                      "AND source_generation=? AND cutover_id=? ORDER BY table_name, freq", gp[1:])
         payload = {
-            "db": str(db),
+            "db": str(db), "identity": ident,
             "config": {"enabled": cfg.enabled, "require_bootstrap": cfg.require_bootstrap,
-                       "price_source": cfg.price_source, "freqs": list(cfg.freqs),
-                       "retry_max": cfg.retry_max,
+                       "price_source": cfg.price_source, "generation_mode": cfg.generation_mode,
+                       "freqs": list(cfg.freqs), "retry_max": cfg.retry_max,
                        "watermark_policy": cfg.watermark_policy},
             "trigger_queue": trig,
-            "recent_cycles": [dict(zip(
-                ("cycle_id", "phase", "status", "discovered", "success", "failed",
-                 "started_at", "finished_at"), r)) for r in cycles],
+            "recent_cycles": [dict(zip(("cycle_id", "phase", "status", "discovered",
+                "success", "failed", "started_at", "finished_at"), r)) for r in cycles],
             "watermark_intents": dict(intents),
-            "held_intents": [dict(zip(("cycle_id", "table", "freq", "reason"), r))
-                             for r in held],
+            "held_intents": [dict(zip(("cycle_id", "table", "freq", "reason"), r)) for r in held],
             "pending_backfill": backfill,
-            "bootstrap_runs": [dict(zip(
-                ("run_id", "status", "total", "completed", "blocked", "failed"), r))
-                for r in boots],
-            "price_watermarks": [dict(zip(("source", "table", "freq", "last_date"), r))
-                                 for r in wm],
+            "bootstrap_runs": [dict(zip(("run_id", "status", "total", "completed",
+                "blocked", "failed"), r)) for r in boots],
+            "price_watermarks": [dict(zip(("source", "table", "freq", "last_date"), r)) for r in wm],
         }
-        lines = [
-            f"== QFQ orchestrator status @ {db}",
-            f"config: enabled={cfg.enabled} require_bootstrap={cfg.require_bootstrap} "
-            f"price_source={cfg.price_source} watermark_policy={cfg.watermark_policy}",
-            f"trigger_queue: {trig or '(空)'}",
-            f"pending_backfill: {backfill or '(空)'}",
-            f"watermark_intents: {dict(intents) or '(空)'}",
-        ]
-        if held:
-            lines.append("held intents（未提交水位）:")
-            lines += [f"  {r}" for r in held]
-        lines.append("recent cycles:")
-        lines += [f"  {r}" for r in cycles] or ["  (无)"]
-        lines.append("bootstrap runs:")
-        lines += [f"  {r}" for r in boots] or ["  (无)"]
-        lines.append("price watermarks:")
-        lines += [f"  {r}" for r in wm] or ["  (无)"]
-        _emit(args, payload, lines)
+        _emit(args, payload, [f"== QFQ orchestrator status @ {db}",
+                               f"config: enabled={cfg.enabled} require_bootstrap={cfg.require_bootstrap} "
+                               f"price_source={cfg.price_source} generation_mode={cfg.generation_mode}",
+                               f"identity: {ident}",
+                               f"trigger_queue: {trig or '(empty)'}",
+                               f"pending_backfill: {backfill or '(empty)'}"])
         return 0
     finally:
         conn.close()
 
 
 def cmd_show_pending(args) -> int:
-    db = _resolve_db(args)
+    db = _resolve_db(args); cfg = _load_cfg(args)
     conn = _connect(db, read_only=True)
     try:
+        orch = _make_orchestrator(cfg, db, args, with_fetcher=False)
+        ident = orch.prepare_runtime(conn, require_aux=False)
         rows = _q(conn,
-                  "SELECT asset_type, code, table_name, freq, range_start, range_end, "
-                  "reason, status, attempt_count, trigger_id, last_error, updated_at "
-                  "FROM qfq_pending_backfill WHERE status != 'resolved' "
-                  "ORDER BY updated_at DESC LIMIT ?", [args.limit])
+            "SELECT asset_type, code, table_name, freq, range_start, range_end, "
+            "reason, status, attempt_count, trigger_id, last_error, updated_at "
+            "FROM qfq_pending_backfill WHERE status<>'resolved' AND price_source=? "
+            "AND source_generation=? ORDER BY updated_at DESC LIMIT ?",
+            [ident["price_source"], ident["source_generation"], args.limit])
         cols = ("asset_type", "code", "table", "freq", "range_start", "range_end",
                 "reason", "status", "attempts", "trigger_id", "last_error", "updated_at")
-        payload = {"db": str(db), "count": len(rows),
+        payload = {"db": str(db), "identity": ident, "count": len(rows),
                    "rows": [dict(zip(cols, r)) for r in rows]}
-        lines = [f"== 未 resolved pending_backfill（{len(rows)} 条，limit={args.limit}）"]
-        lines += [f"  {r}" for r in rows] or ["  (空)"]
-        _emit(args, payload, lines)
+        _emit(args, payload, [f"== 未 resolved pending_backfill（{len(rows)} 条）",
+                              *([f"  {r}" for r in rows] or ["  (空)"])])
         return 0
     finally:
         conn.close()
 
 
 def cmd_show_dead_letter(args) -> int:
-    db = _resolve_db(args)
+    db = _resolve_db(args); cfg = _load_cfg(args)
     conn = _connect(db, read_only=True)
     try:
+        orch = _make_orchestrator(cfg, db, args, with_fetcher=False)
+        ident = orch.prepare_runtime(conn, require_aux=False)
         rows = _q(conn,
-                  "SELECT trigger_id, asset_type, code, trigger_type, attempt_count, "
-                  "last_error, dead_letter_at FROM qfq_trigger_queue "
-                  "WHERE status='dead_letter' ORDER BY dead_letter_at DESC LIMIT ?",
-                  [args.limit])
+            "SELECT trigger_id, asset_type, code, trigger_type, attempt_count, "
+            "last_error, dead_letter_at FROM qfq_trigger_queue WHERE status='dead_letter' "
+            "AND price_source=? AND source_generation=? AND cutover_id=? "
+            "ORDER BY dead_letter_at DESC LIMIT ?",
+            [ident["price_source"], ident["source_generation"], ident["cutover_id"], args.limit])
         cols = ("trigger_id", "asset_type", "code", "trigger_type", "attempts",
                 "last_error", "dead_letter_at")
-        payload = {"db": str(db), "count": len(rows),
+        payload = {"db": str(db), "identity": ident, "count": len(rows),
                    "rows": [dict(zip(cols, r)) for r in rows]}
-        lines = [f"== dead_letter triggers（{len(rows)} 条，limit={args.limit}）"]
-        lines += [f"  {r}" for r in rows] or ["  (空)"]
-        _emit(args, payload, lines)
+        _emit(args, payload, [f"== dead_letter triggers（{len(rows)} 条）",
+                              *([f"  {r}" for r in rows] or ["  (空)"])])
         return 0
     finally:
         conn.close()
 
 
 def cmd_bootstrap_audit(args) -> int:
-    db = _resolve_db(args)
-    cfg = _load_cfg(args)
+    db = _resolve_db(args); cfg = _load_cfg(args)
     conn = _connect(db, read_only=True)
     try:
         orch = _make_orchestrator(cfg, db, args, with_fetcher=False)
+        ident = orch.prepare_runtime(conn, require_aux=False)
         run_id = args.run_id
         if not run_id:
             row = _q(conn, "SELECT bootstrap_run_id FROM qfq_bootstrap_run "
-                           "ORDER BY started_at DESC LIMIT 1")
+                           "WHERE price_source=? AND source_generation=? AND cutover_id=? "
+                           "ORDER BY started_at DESC LIMIT 1",
+                     [ident["price_source"], ident["source_generation"], ident["cutover_id"]])
             if not row:
-                print("无 bootstrap run 记录")
+                print("当前世代无 bootstrap run 记录")
                 return 1
             run_id = row[0][0]
         audit = orch.bootstrap_audit(conn, run_id)
-        blocked = _q(conn,
-                     "SELECT asset_type, code, block_reason FROM qfq_bootstrap_item "
-                     "WHERE bootstrap_run_id=? AND status='blocked' LIMIT 20", [run_id])
-        audit["blocked_sample"] = [dict(zip(("asset_type", "code", "reason"), r))
-                                   for r in blocked]
-        lines = [f"== bootstrap audit {run_id}: {audit}"]
-        _emit(args, audit, lines)
+        blocked = _q(conn, "SELECT asset_type, code, block_reason FROM qfq_bootstrap_item "
+                           "WHERE bootstrap_run_id=? AND status='blocked' LIMIT 20", [run_id])
+        audit["blocked_sample"] = [dict(zip(("asset_type", "code", "reason"), r)) for r in blocked]
+        _emit(args, audit, [f"== bootstrap audit {run_id}: {audit}"])
         return 0 if audit.get("clean") else 1
     finally:
         conn.close()
@@ -516,30 +508,36 @@ def cmd_retry_due(args) -> int:
 
 
 def cmd_reopen(args) -> int:
-    db = _resolve_db(args)
+    db = _resolve_db(args); cfg = _load_cfg(args)
     _guard_mutating(args, db)
     if not args.trigger_id:
         raise SystemExit("reopen 必须指定 --trigger-id")
     conn = _connect(db, read_only=(not args.execute))
     try:
+        orch = _make_orchestrator(cfg, db, args, with_fetcher=False)
+        ident = orch.prepare_runtime(conn, require_aux=False)
+        gp = [ident["price_source"], ident["source_generation"], ident["cutover_id"]]
         row = conn.execute(
             "SELECT status, attempt_count, last_error FROM qfq_trigger_queue "
-            "WHERE trigger_id=?", [args.trigger_id]).fetchone()
+            "WHERE trigger_id=? AND price_source=? AND source_generation=? AND cutover_id=?",
+            [args.trigger_id, *gp]).fetchone()
         if not row:
-            raise SystemExit(f"trigger 不存在: {args.trigger_id}")
+            raise SystemExit(f"trigger 不存在或不属于当前世代: {args.trigger_id}")
         status, attempts, last_error = row
         if status != "dead_letter":
             raise SystemExit(f"仅允许 reopen dead_letter（当前 status={status}）")
         if not args.execute:
-            print(f"[dry-run] 将把 {args.trigger_id} 从 dead_letter 重开为 pending"
-                  f"（attempt_count 归零，清 dead_letter_at；原 attempts={attempts}，"
-                  f"last_error={last_error}）。加 --execute 执行。")
+            print(f"[dry-run] 将把 {args.trigger_id} 从 dead_letter 重开为 pending；"
+                  f"attempts={attempts}, last_error={last_error}")
             return 0
-        conn.execute(
+        changed = conn.execute(
             "UPDATE qfq_trigger_queue SET status='pending', attempt_count=0, "
             "next_retry_at=NULL, dead_letter_at=NULL, claimed_by=NULL, claimed_at=NULL, "
-            "updated_at=? WHERE trigger_id=?", [_now_ts(), args.trigger_id])
-        print(f"reopen 完成: {args.trigger_id} dead_letter→pending（下轮周期将重新领取）")
+            "updated_at=? WHERE trigger_id=? AND price_source=? AND source_generation=? "
+            "AND cutover_id=? RETURNING trigger_id", [_now_ts(), args.trigger_id, *gp]).fetchone()
+        if changed is None:
+            raise SystemExit("reopen CAS 失败")
+        print(f"reopen 完成: {args.trigger_id} dead_letter→pending")
         return 0
     finally:
         conn.close()
@@ -571,6 +569,131 @@ def cmd_bootstrap_supersede(args) -> int:
 # ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
+
+def cmd_cutover_status(args) -> int:
+    db = _resolve_db(args)
+    conn = _connect(db, read_only=True)
+    try:
+        cutovers = _q(conn, "SELECT cutover_id, price_source, source_generation, status, "
+                           "schema_version, baseline_version, aux_db_path, evidence_path, updated_at "
+                           "FROM qfq_source_cutover ORDER BY created_at DESC")
+        active = _q(conn, "SELECT price_source, cutover_id, activated_at FROM qfq_active_cutover")
+        payload = {"db": str(db), "cutovers": cutovers, "active": active}
+        _emit(args, payload, [f"cutovers={cutovers}", f"active={active}"])
+        return 0
+    finally:
+        conn.close()
+
+
+def cmd_cutover_init(args) -> int:
+    db = _resolve_db(args); cfg = _load_cfg(args)
+    if not args.execute:
+        _emit(args, {"dry_run": True, "cutover_id": args.cutover_id},
+              [f"[dry-run] create planned cutover {args.cutover_id}"])
+        return 0
+    _guard_mutating(args, db)
+    conn = _connect(db, read_only=False)
+    try:
+        from quantstudio.pipeline.qfq_cutover import create_cutover
+        if cfg.source_generation != "xtquant-legacy" and not args.aux_db:
+            raise SystemExit("dynamic cutover-init requires explicit --aux-db")
+        from quantstudio.pipeline.qfq_reanchor_schema import SCHEMA_VERSION, DETECTOR_BASELINE_VERSION
+        row = create_cutover(conn, cutover_id=args.cutover_id,
+            price_source=cfg.price_source, source_generation=cfg.source_generation,
+            schema_version=SCHEMA_VERSION, baseline_version=DETECTOR_BASELINE_VERSION,
+            aux_db_path=args.aux_db, evidence_path=args.evidence_path)
+        _emit(args, row, [f"cutover created: {row}"])
+        return 0
+    finally:
+        conn.close()
+
+
+def cmd_cutover_transition(args) -> int:
+    db = _resolve_db(args)
+    if not args.execute:
+        _emit(args, {"dry_run": True, "cutover_id": args.cutover_id,
+                     "from": args.expected_status, "to": args.new_status},
+              [f"[dry-run] {args.cutover_id}: {args.expected_status}->{args.new_status}"])
+        return 0
+    _guard_mutating(args, db)
+    conn = _connect(db, read_only=False)
+    try:
+        from quantstudio.pipeline.qfq_cutover import transition_cutover
+        row = transition_cutover(conn, cutover_id=args.cutover_id,
+                                 expected_status=args.expected_status,
+                                 new_status=args.new_status)
+        _emit(args, row, [f"cutover transitioned: {row}"])
+        return 0
+    finally:
+        conn.close()
+
+
+def cmd_baseline_build(args) -> int:
+    db = _resolve_db(args); cfg = _load_cfg(args)
+    if not args.execute:
+        _emit(args, {"dry_run": True, "cutover_id": args.cutover_id},
+              [f"[dry-run] build discovery baseline for {args.cutover_id}"])
+        return 0
+    _guard_mutating(args, db)
+    conn = _connect(db, read_only=False)
+    try:
+        from quantstudio.pipeline.qfq_discovery_baseline import BaselineIdentity, establish_discovery_baseline
+        from quantstudio.pipeline.qfq_dividend_payload import dividend_payload_hash
+        from quantstudio.pipeline.qfq_cutover import runtime_cutover_record
+        ident = {"cutover_id": args.cutover_id, "price_source": cfg.price_source,
+                 "source_generation": cfg.source_generation}
+        runtime_cutover_record(conn, ident)
+        rows = conn.execute(
+            "SELECT code, ex_date, record_date, ann_date, end_date, "
+            "cash_div_before_tax, cash_div_after_tax, cash_div, stk_div, stk_bo_rate, "
+            "stk_co_rate, div_rat, div_proc FROM stock_dividend "
+            "WHERE div_proc='实施' AND ex_date IS NOT NULL").fetchall()
+        conn.execute("BEGIN TRANSACTION")
+        try:
+            count = establish_discovery_baseline(
+                conn, identity=BaselineIdentity(**ident), rows=rows,
+                payload_hash=lambda row: dividend_payload_hash(*row))
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        payload = {"cutover_id": args.cutover_id, "rows": count, "identity": ident}
+        _emit(args, payload, [f"baseline rows={count}"])
+        return 0
+    finally:
+        conn.close()
+
+
+def cmd_aux_init(args) -> int:
+    """Explicitly initialize the isolated auxiliary DB recorded by a cutover."""
+    db = _resolve_db(args); cfg = _load_cfg(args)
+    if not args.execute:
+        _emit(args, {"dry_run": True, "cutover_id": args.cutover_id},
+              [f"[dry-run] initialize isolated aux DB for {args.cutover_id}"])
+        return 0
+    _guard_mutating(args, db)
+    conn = _connect(db, read_only=True)
+    try:
+        from quantstudio.pipeline.qfq_cutover import runtime_cutover_record
+        from quantstudio.pipeline.qfq_aux_router import AuxDbRouter
+        ident = {"cutover_id": args.cutover_id, "price_source": cfg.price_source,
+                 "source_generation": cfg.source_generation}
+        record = runtime_cutover_record(conn, ident)
+        if record["status"] not in ("prepared", "baseline_building"):
+            raise SystemExit(
+                f"aux-init requires prepared/baseline_building; current={record['status']!r}")
+        if not record.get("aux_db_path"):
+            raise SystemExit("cutover has no immutable aux_db_path")
+        router = AuxDbRouter(main_db=db, routes={cfg.source_generation: record["aux_db_path"]})
+        route = router.initialize_explicit(
+            source_generation=cfg.source_generation, cutover_id=args.cutover_id)
+        payload = {"cutover_id": args.cutover_id, "source_generation": cfg.source_generation,
+                   "aux_db": str(route.path), "exists": route.exists}
+        _emit(args, payload, [f"aux initialized: {payload}"])
+        return 0
+    finally:
+        conn.close()
+
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -631,6 +754,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     ro = sub.add_parser("reopen", help="dead_letter trigger 重开为 pending")
     ro.add_argument("--trigger-id", required=False, default=None)
+    sub.add_parser("cutover-status", help="read B-5 cutover status and active pointer")
+    ci = sub.add_parser("cutover-init", help="create a planned cutover; dry-run by default")
+    ci.add_argument("--cutover-id", required=True)
+    ci.add_argument("--evidence-path", default=None)
+    ct = sub.add_parser("cutover-transition", help="CAS transition cutover state without activation")
+    ct.add_argument("--cutover-id", required=True)
+    ct.add_argument("--expected-status", required=True)
+    ct.add_argument("--new-status", required=True)
+    ai = sub.add_parser("aux-init", help="explicitly initialize isolated generation aux DB")
+    ai.add_argument("--cutover-id", required=True)
+    bb = sub.add_parser("baseline-build", help="build discovery baseline during baseline_building")
+    bb.add_argument("--cutover-id", required=True)
     return p
 
 
@@ -646,6 +781,11 @@ DISPATCH = {
     "reconcile-once": cmd_reconcile_once,
     "retry-due": cmd_retry_due,
     "reopen": cmd_reopen,
+    "cutover-status": cmd_cutover_status,
+    "cutover-init": cmd_cutover_init,
+    "cutover-transition": cmd_cutover_transition,
+    "aux-init": cmd_aux_init,
+    "baseline-build": cmd_baseline_build,
 }
 
 
