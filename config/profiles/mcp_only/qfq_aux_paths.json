@@ -1,4 +1,4 @@
-﻿{
+{
   "default": "../../../data/qfq_aux.db",
   "generations": {
     "xtquant-legacy": "../../../data/qfq_aux.db",

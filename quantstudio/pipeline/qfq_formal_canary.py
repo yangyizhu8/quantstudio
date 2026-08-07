@@ -11,6 +11,7 @@ import json
 import sqlite3
 import time
 from datetime import datetime, timezone, timedelta
+import os
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -55,7 +56,10 @@ def _price_summaries(conn) -> dict:
 def run_held_canary(*, authorization_path: str, authorization_sha256: str,
                     handoff_dir: str | Path, config_dir: str | Path,
                     codes: Optional[Sequence[str]] = None,
-                    output_path: Optional[str | Path] = None) -> dict:
+                    output_path: Optional[str | Path] = None,
+                    dry_run: bool = False,
+                    main_db_override: Optional[str | Path] = None,
+                    staging_db_override: Optional[str | Path] = None) -> dict:
     """Run the formal held-canary with global watermark hold.
 
     The canary verifies the WP6 handoff + exit evidence, consumes the
@@ -65,6 +69,15 @@ def run_held_canary(*, authorization_path: str, authorization_sha256: str,
 
     Unexpected triggers/intents or a source-watermark change raise
     ``FormalCanaryP0``.
+
+    Three DB-resolution modes (mutually exclusive):
+      * default (both None) → ``_configured_formal_main()`` (formal production DB);
+      * ``main_db_override`` → dry-run ONLY (read-only snapshot); real execution
+        with this param raises;
+      * ``staging_db_override`` → staging real-orchestrator validation ONLY
+        (``dry_run=False``); the path must contain ``staging`` or ``output``
+        markers and must NOT equal the formal DB path.  All writes land on the
+        staging copy (independent file, never flows back to production).
     """
     manifest = load_and_verify_manifest(authorization_path, authorization_sha256)
     # Defense-in-depth: a WP7-E2 manifest must NEVER carry a watermark-release
@@ -84,9 +97,106 @@ def run_held_canary(*, authorization_path: str, authorization_sha256: str,
         raise FormalCanaryError("handoff raw SHA mismatch with exit evidence")
     if handoff.get("watermark_release_authorized") is not False:
         raise FormalCanaryError("handoff must pin watermark_release_authorized=false")
-    # Consume wp7 nonce (independent of wp6 nonce).  The authorization root for
-    # the cross-run-dir nonce ledger is the manifest file's parent directory,
-    # NOT the repo checkout root (same fix as the cutover runner).
+    if not exit_ev.get("locks_released_verified"):
+        raise FormalCanaryError("exit evidence reports locks NOT released")
+    canary_codes = tuple(codes) if codes else DEFAULT_CANARY_CODES
+    if not canary_codes:
+        raise FormalCanaryError("canary codes cannot be empty")
+    # main_db_override is ONLY for dry_run (staging copy).  Real execution must
+    # never redirect via this param — it always runs against the configured
+    # formal path under real authorization.
+    if main_db_override is not None and not dry_run:
+        raise FormalCanaryError(
+            "main_db_override is only allowed with dry_run=True; real held-canary "
+            "execution must run against the configured formal DB path")
+    # staging_db_override is ONLY for staging real-orchestrator validation
+    # (dry_run=False).  It must NOT be used with dry_run=True (use
+    # main_db_override for dry-runs).  The path must contain staging/output
+    # markers and must NOT equal the formal DB path.
+    if staging_db_override is not None and dry_run:
+        raise FormalCanaryError(
+            "staging_db_override is only for real execution (dry_run=False); "
+            "use main_db_override for dry-runs")
+    if main_db_override is not None and staging_db_override is not None:
+        raise FormalCanaryError(
+            "main_db_override and staging_db_override are mutually exclusive")
+    if staging_db_override is not None:
+        main_db = resolve_canonical(staging_db_override)
+        # Hard path-safety: the staging DB must NOT be the formal production DB.
+        formal_main = _configured_formal_main()
+        if str(main_db).lower() == str(formal_main).lower():
+            raise FormalCanaryError(
+                f"staging_db_override resolves to the formal production DB path: {main_db}; "
+                "staging validation must point at a copy, never at production")
+        try:
+            if main_db.exists() and formal_main.exists() and os.path.samefile(str(main_db), str(formal_main)):
+                raise FormalCanaryError(
+                    f"staging_db_override is the same file as the formal production DB: {main_db}")
+        except OSError:
+            pass
+        path_str = str(main_db).lower()
+        if "staging" not in path_str and "output" not in path_str:
+            raise FormalCanaryError(
+                f"staging_db_override path must contain 'staging' or 'output' marker: {main_db}")
+        print(f"*** STAGING VALIDATION: real orchestrator against override DB, NOT formal production ***",
+              file=__import__("sys").stderr)
+        print(f"*** staging_db_resolved: {main_db} ***", file=__import__("sys").stderr)
+    elif main_db_override is not None:
+        main_db = resolve_canonical(main_db_override)
+    else:
+        main_db = _configured_formal_main()
+    aux_db = _configured_formal_aux()
+    router = AuxDbRouter.from_config_dir(resolve_canonical(config_dir), main_db=main_db)
+    gen1_aux = router.path_for("mcp-gen1", require_exists=True)
+
+    # ---- dry_run: gates-only, read-only snapshot, no orchestrator, NO nonce burn ---
+    # dry_run must have ZERO irreversible side effects — including nonce burn.
+    # The nonce is consumed ONLY in the real execution path below, so a dry-run
+    # can be repeated without exhausting the manifest's single-use nonce.
+    if dry_run:
+        ro = duckdb.connect(str(main_db), read_only=True)
+        try:
+            before = {
+                "baseline": ro.execute(
+                    "SELECT COUNT(*) FROM qfq_discovery_baseline WHERE cutover_id=?",
+                    [manifest["cutover_id"]]).fetchone()[0],
+                "mcp_triggers": ro.execute(
+                    "SELECT COUNT(*) FROM qfq_trigger_queue WHERE source_generation='mcp-gen1'").fetchone()[0],
+                "mcp_intents": ro.execute(
+                    "SELECT COUNT(*) FROM qfq_watermark_intent WHERE source_generation='mcp-gen1'").fetchone()[0],
+                "watermark": ro.execute(
+                    "SELECT COUNT(*),COALESCE(SUM(CASE WHEN last_date IS NULL THEN 0 ELSE last_date END),0) "
+                    "FROM source_watermark").fetchone(),
+                "prices": _price_summaries(ro),
+            }
+        finally:
+            ro.close()
+        return {
+            "kind": "quantstudio-b6-wp7-held-canary-dry-run",
+            "dry_run": True,
+            "cutover_id": manifest["cutover_id"],
+            "main_db_resolved": str(main_db),
+            "canary_codes": list(canary_codes),
+            "gates_passed": {
+                "manifest_loaded": True,
+                "wp7_held_canary_grant": True,
+                "no_watermark_release_grant": True,
+                "handoff_exists": True,
+                "exit_evidence_exists": True,
+                "handoff_raw_sha_match": handoff_raw_sha == exit_ev.get("handoff_raw_sha256"),
+                "watermark_release_authorized_false": handoff.get("watermark_release_authorized") is False,
+                "locks_released_verified": exit_ev.get("locks_released_verified") is True,
+                "nonce_not_burned": True,
+            },
+            "before_snapshot": before,
+            "note": "dry_run: gates + read-only snapshot only; no orchestrator constructed, "
+                    "no run_post_ingest called, no nonce burned",
+            "ran_at": _now_ts(),
+        }
+
+    # ---- real path: nonce burn + orchestrator cycle --------------------------
+    # The nonce is consumed HERE (real execution only), not in dry_run, so a
+    # dry-run can be repeated without exhausting the manifest's single-use nonce.
     import os as _os
     from pathlib import Path as _Path
     nonce = manifest_grant_nonce(manifest, "wp7_held_canary")
@@ -96,13 +206,6 @@ def run_held_canary(*, authorization_path: str, authorization_sha256: str,
         manifest_raw_sha=authorization_sha256, cutover_id=manifest["cutover_id"],
         commit_sha=manifest["git_commit_sha"], pid=_os.getpid(),
         create_time=datetime.now(BJ_TZ).timestamp())
-    canary_codes = tuple(codes) if codes else DEFAULT_CANARY_CODES
-    if not canary_codes:
-        raise FormalCanaryError("canary codes cannot be empty")
-    main_db = _configured_formal_main()
-    aux_db = _configured_formal_aux()
-    router = AuxDbRouter.from_config_dir(resolve_canonical(config_dir), main_db=main_db)
-    gen1_aux = router.path_for("mcp-gen1", require_exists=True)
     conn = duckdb.connect(str(main_db), read_only=False)
     try:
         before = {
@@ -177,6 +280,7 @@ def run_held_canary(*, authorization_path: str, authorization_sha256: str,
     report = {
         "kind": "quantstudio-b6-wp7-held-canary",
         "cutover_id": manifest["cutover_id"],
+        "main_db_resolved": str(main_db),
         "runtime_identity": identity,
         "canary_codes": list(canary_codes),
         "before": before, "after": after,

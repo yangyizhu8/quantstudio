@@ -693,16 +693,20 @@ class McpFreshFetcher(FreshFetcher):
     惰性构造 MCP adapter（首次 fetch 才建连接），模块加载不触发网络。
     """
 
-    def __init__(self, mcp_cfg: Optional[Dict] = None, adapter=None):
+    def __init__(self, mcp_cfg: Optional[Dict] = None, adapter=None, main_db: Optional[str] = None):
         self._mcp_cfg = mcp_cfg or {}
         self._adapter = adapter
         self._connected = False
+        self._main_db = main_db
 
     def _ensure(self):
         if not self._connected:
             if self._adapter is None:
                 from .sources import create_adapter
-                self._adapter = create_adapter("mcp", self._mcp_cfg)
+                mcp_cfg = dict(self._mcp_cfg or {})
+                if self._main_db and "main_db" not in mcp_cfg:
+                    mcp_cfg["main_db"] = self._main_db
+                self._adapter = create_adapter("mcp", mcp_cfg)
             self._connected = True
 
     @staticmethod
@@ -736,25 +740,45 @@ class McpFreshFetcher(FreshFetcher):
         if len(raw_df) == 0:
             empty = pd.DataFrame(columns=["open", "high", "low", "close"])
             return empty, empty.copy()
-        # 时间 index：MCP raw 含 time(ms) 或 trade_date(YYYYMMDD)
+        # Deduplicate by trade_date before indexing (MCP export may return
+        # multiple rows for the same date due to shards or source corrections).
+        # Keep the last row (most recent correction) after sorting.
+        if "trade_date" in raw_df.columns:
+            raw_df = raw_df.sort_values("trade_date").drop_duplicates(
+                subset=["trade_date"], keep="last").reset_index(drop=True)
+        elif "time" in raw_df.columns:
+            raw_df = raw_df.sort_values("time").drop_duplicates(
+                subset=["time"], keep="last").reset_index(drop=True)
+        # 时间 index：MCP raw 含 time(ms) 或 trade_date(YYYYMMDD 或 YYYY-MM-DD)
         if "time" in raw_df.columns:
             idx = pd.to_datetime(raw_df["time"], unit="ms", utc=True).dt.tz_convert("Asia/Shanghai")
         elif "trade_date" in raw_df.columns:
-            idx = pd.to_datetime(raw_df["trade_date"].astype(str), format="%Y%m%d")
+            idx = pd.to_datetime(raw_df["trade_date"].astype(str), format="mixed", dayfirst=False)
         else:
             idx = pd.RangeIndex(len(raw_df))
         # none_df
+        # CRITICAL: use .to_numpy() to strip the Series index before constructing
+        # the DataFrame with a DatetimeIndex.  Using pd.to_numeric(Series) keeps
+        # the raw RangeIndex, which misaligns with idx → silent all-NaN.
         none_df = pd.DataFrame({
-            "open": pd.to_numeric(raw_df["open"], errors="coerce"),
-            "high": pd.to_numeric(raw_df["high"], errors="coerce"),
-            "low": pd.to_numeric(raw_df["low"], errors="coerce"),
-            "close": pd.to_numeric(raw_df["close"], errors="coerce"),
+            "open": pd.to_numeric(raw_df["open"], errors="coerce").to_numpy(),
+            "high": pd.to_numeric(raw_df["high"], errors="coerce").to_numpy(),
+            "low": pd.to_numeric(raw_df["low"], errors="coerce").to_numpy(),
+            "close": pd.to_numeric(raw_df["close"], errors="coerce").to_numpy(),
         }, index=idx)
         # front_df：前复权 = raw × (adj_i / adj_latest)
+        # CRITICAL: ratio must share the SAME index as none_df (idx, not RangeIndex
+        # from raw_df).  Using raw_df's RangeIndex for ratio causes silent all-NaN
+        # alignment when none_df has a DatetimeIndex (reasonix Bug 4 root cause).
         if "adj_factor" in raw_df.columns:
-            adj = pd.to_numeric(raw_df["adj_factor"], errors="coerce").fillna(1.0)
-            adj_latest = adj.iloc[-1] if adj.iloc[-1] > 0 else 1.0
-            ratio = adj / adj_latest if adj_latest > 0 else 1.0
+            adj = pd.to_numeric(raw_df["adj_factor"], errors="coerce")
+            # Take the last valid (non-NaN, > 0) adj_factor as the anchor,
+            # BEFORE fillna — otherwise NaN (suspended days) becomes 1.0 and
+            # is mistaken for a valid anchor (reasonix edge-case fix).
+            valid_adj = adj[adj.notna() & (adj > 0)]
+            adj_latest = valid_adj.iloc[-1] if len(valid_adj) > 0 else 1.0
+            adj = adj.fillna(1.0)
+            ratio = pd.Series((adj.to_numpy() / adj_latest), index=idx)
             front_df = none_df.mul(ratio, axis=0)
         else:
             front_df = none_df.copy()

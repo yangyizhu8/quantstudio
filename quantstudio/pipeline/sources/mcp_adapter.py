@@ -617,6 +617,18 @@ class MCPAdapter(BaseSourceAdapter):
     _EXPORT_DAILY_WINDOW_DAYS = 365  # 日线表每批最大窗口（~120万行/年）
     _EXPORT_MINUTE_WINDOW_DAYS = 10  # 分钟表每批最大窗口（~6000万行/年，10天~160万行）
 
+    @staticmethod
+    def _parse_flexible_date(s: str) -> datetime:
+        """Parse a date string that may be ``%Y-%m-%d`` (daemon collector) or
+        ``%Y%m%d`` (McpFreshFetcher bootstrap path).  Raises ValueError if
+        neither format matches."""
+        for fmt in ("%Y-%m-%d", "%Y%m%d"):
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                continue
+        raise ValueError(f"unrecognized date format: {s!r} (expected %Y-%m-%d or %Y%m%d)")
+
     def _export_batches(self, start: str, end: str, is_minute: bool,
                         est_rows: int = None) -> List[Tuple[str, str]]:
         """按时间窗口切分 export 批次，避免服务端 200 万行截断。
@@ -626,8 +638,8 @@ class MCPAdapter(BaseSourceAdapter):
         日线行情（~120万行/年）：365天/批；分钟表（~6000万行/年）：10天/批。
         快照大表（财务/指数成分等，<200万行全历史）：单批。
         """
-        s = datetime.strptime(str(start).strip()[:10], "%Y-%m-%d")
-        e = datetime.strptime(str(end).strip()[:10], "%Y-%m-%d")
+        s = self._parse_flexible_date(str(start).strip()[:10])
+        e = self._parse_flexible_date(str(end).strip()[:10])
         # 估算行数 < 安全阈值 → 单批（不切碎，减少 job 开销）
         if est_rows is not None and est_rows < self._EXPORT_SAFE_ROWS:
             return [(s.strftime("%Y-%m-%d"), e.strftime("%Y-%m-%d"))]

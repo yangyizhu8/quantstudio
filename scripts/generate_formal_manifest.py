@@ -31,6 +31,15 @@ Usage (two-step):
         --cutover-id b6_formal_20260807 \\
         --wp6-nonce "<your-random-32-char-string>"
 
+  For a WP7-E2 + WP7-E3 manifest (after WP6 cutover is done):
+
+      python scripts/generate_formal_manifest.py \\
+        --baseline baseline.json \\
+        --auth-root ".../formal_authorizations/b6_wp7_20260807" \\
+        --cutover-id b6_wp7_20260807 \\
+        --wp7-canary-nonce "<random-32-char>" \\
+        --wp7-release-nonce "<another-random-32-char>"
+
   The script prints:
     - the manifest file path (channel A — give this to ZCode in one message);
     - the manifest raw-byte SHA-256 (channel B — give this to ZCode in a
@@ -97,8 +106,17 @@ def main(argv=None) -> int:
     ap.add_argument("--auth-root", required=True,
                     help="authorization root directory (MUST be outside repo/data/output)")
     ap.add_argument("--cutover-id", required=True, help="e.g. b6_formal_20260807")
-    ap.add_argument("--wp6-nonce", required=True,
-                    help="random 32+ char string for wp6_formal_cutover grant (YOU generate)")
+    ap.add_argument("--wp6-nonce", default=None,
+                    help="random 32+ char string for wp6_formal_cutover grant (YOU generate). "
+                         "Omit for WP7-only manifests.")
+    ap.add_argument("--wp7-canary-nonce", default=None,
+                    help="random 32+ char string for wp7_held_canary grant (YOU generate). "
+                         "Optional; adds the canary grant to this manifest.")
+    ap.add_argument("--wp7-release-nonce", default=None,
+                    help="random 32+ char string for wp7_e3_watermark_release grant (YOU generate). "
+                         "Optional; adds the watermark-release grant. WARNING: a manifest carrying "
+                         "this grant is rejected by WP6/WP7-E2 loaders (G0 §3.1 item 20); only the "
+                         "WP7-E3 release entry point accepts it.")
     ap.add_argument("--price-source", default="mcp")
     ap.add_argument("--source-generation", default="mcp-gen1")
     ap.add_argument("--maintenance-window-id", default=None,
@@ -110,9 +128,22 @@ def main(argv=None) -> int:
     auth_root = Path(args.auth_root).resolve()
     _assert_auth_root_outside_repo(auth_root)
 
-    # Validate nonce length.
-    if not isinstance(args.wp6_nonce, str) or len(args.wp6_nonce) < 16:
-        raise SystemExit(f"ERROR: wp6 nonce must be at least 16 chars (you gave {len(args.wp6_nonce)})")
+    # Validate nonce lengths (each provided nonce must be >= 16 chars).
+    # At least one grant nonce must be provided (a manifest with zero grants is useless).
+    nonce_specs = [
+        ("wp6_formal_cutover", args.wp6_nonce),
+        ("wp7_held_canary", args.wp7_canary_nonce),
+        ("wp7_e3_watermark_release", args.wp7_release_nonce),
+    ]
+    grants = {}
+    for grant_name, nonce in nonce_specs:
+        if nonce is not None:
+            if not isinstance(nonce, str) or len(nonce) < 16:
+                raise SystemExit(
+                    f"ERROR: {grant_name} nonce must be at least 16 chars (you gave {len(nonce) if nonce else 0})")
+            grants[grant_name] = {"nonce": nonce}
+    if not grants:
+        raise SystemExit("ERROR: at least one of --wp6-nonce / --wp7-canary-nonce / --wp7-release-nonce is required")
 
     # Load baseline values (provided by ZCode's read-only review).
     baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8"))
@@ -157,9 +188,7 @@ def main(argv=None) -> int:
         "price_source": args.price_source,
         "source_generation": args.source_generation,
         "aux_db_path": aux_db_path,
-        "operation_grants": {
-            "wp6_formal_cutover": {"nonce": args.wp6_nonce},
-        },
+        "operation_grants": grants,
         "maintenance_window_id": args.maintenance_window_id or f"mw_{args.cutover_id}",
         "issuer": issuer,
         "approved_by": issuer,
@@ -197,6 +226,10 @@ def main(argv=None) -> int:
     print(f"  git commit SHA: {head}")
     print(f"  watermark_release_authorized: {manifest['watermark_release_authorized']}")
     print(f"  grants: {list(manifest['operation_grants'].keys())}")
+    if "wp7_e3_watermark_release" in grants:
+        print("  *** WARNING: this manifest carries wp7_e3_watermark_release. ***")
+        print("  *** It will be REJECTED by WP6/WP7-E2 loaders (G0 §3.1 item 20). ***")
+        print("  *** Only the WP7-E3 release entry point accepts this grant.      ***")
     print()
     print("SEND TO ZCode VIA TWO SEPARATE MESSAGES (independent channels):")
     print("-" * 72)

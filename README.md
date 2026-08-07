@@ -270,10 +270,14 @@ fresh_capture_id=None, fresh_metadata_sha256=None)`：
   `config/qfq_rebase_admissible_securities.json` 的 5487 只 loose 名单。名单外候选记录为
   `excluded/NOT_ADMISSIBLE`，不进入 fresh 下载/rebase，也不阻止
   `bootstrap_completed`；准入证券执行产生的 `blocked` 仍是硬阻塞，必须为 0。
-  （分钟历史缺失在 `allow_partial_minute=True` 下记为 `partial` deferred、`status=committed`，
-  **不计入 blocked**，但其 `minute_front_coverage='partial'` 须审计可见；`fresh` 自身缺行
-  `missing_target>0` 仍严格 BLOCK。）
+  （分钟线 partial 降级有**严格边界**：仅当库内分钟表**已有数据**（target>0）且
+  fresh ⊇ target（fresh 多出历史行 = 库内缺失）时才记为 `partial` deferred、
+  `status=committed`、**不计入 blocked**，其 `minute_front_coverage='partial'` 须审计
+  可见；库内行在 fresh 中缺失（`missing_staged>0`）或**库内分钟表为空（target=0）**
+  均严格 BLOCK（`minute_coverage_mismatch`）——故 bootstrap 前置必须先由 daemon
+  mcp 采集灌分钟表（近 3 个月起步，2026-08-08 决策），窗口 = 主库分钟表 MIN/MAX。）
   完整操作见 [`docs/qfq-resident-runbook.md`](docs/qfq-resident-runbook.md)。
+  2026-08-08 取数适配修复详见 [`docs/framework-fix-report-20260807.md`](docs/framework-fix-report-20260807.md)。
 
 ---
 

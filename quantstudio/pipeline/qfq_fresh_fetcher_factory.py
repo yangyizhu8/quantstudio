@@ -62,7 +62,7 @@ def build_qfq_fresh_fetcher(cfg: QFQOrchestratorConfig,
     if ps == "mcp":
         from quantstudio.pipeline.qfq_fresh_capture import McpFreshFetcher
         mcp_cfg = _resolve_mcp_cfg(sources_cfg)
-        return McpFreshFetcher(mcp_cfg=mcp_cfg)
+        return McpFreshFetcher(mcp_cfg=mcp_cfg, main_db=main_db)
     if ps == "xtquant":
         from quantstudio.pipeline.qfq_fresh_capture import XtquantFreshFetcher
         return XtquantFreshFetcher()
