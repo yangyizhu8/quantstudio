@@ -19,8 +19,9 @@ import duckdb
 from .qfq_aux_router import AuxDbRouter
 from .qfq_cutover_activation import LEGACY_GENERATION, LEGACY_SOURCE
 from .qfq_formal_authorization import (
-    AuthorizationError, hash_manifest_bytes, load_and_verify_manifest,
-    manifest_carry_grant, manifest_grant_nonce, reserve_nonce, resolve_canonical,
+    AuthorizationError, assert_no_watermark_release_grant, hash_manifest_bytes,
+    load_and_verify_manifest, manifest_carry_grant, manifest_grant_nonce,
+    reserve_nonce, resolve_canonical,
 )
 from .qfq_formal_cutover import (
     FormalCutoverError, _configured_formal_aux, _configured_formal_main,
@@ -66,6 +67,9 @@ def run_held_canary(*, authorization_path: str, authorization_sha256: str,
     ``FormalCanaryP0``.
     """
     manifest = load_and_verify_manifest(authorization_path, authorization_sha256)
+    # Defense-in-depth: a WP7-E2 manifest must NEVER carry a watermark-release
+    # grant (G0 §3.1 item 20).
+    assert_no_watermark_release_grant(manifest)
     if not manifest_carry_grant(manifest, "wp7_held_canary"):
         raise FormalCanaryError("manifest does not grant wp7_held_canary")
     hdir = resolve_canonical(handoff_dir)
@@ -80,11 +84,15 @@ def run_held_canary(*, authorization_path: str, authorization_sha256: str,
         raise FormalCanaryError("handoff raw SHA mismatch with exit evidence")
     if handoff.get("watermark_release_authorized") is not False:
         raise FormalCanaryError("handoff must pin watermark_release_authorized=false")
-    # Consume wp7 nonce (independent of wp6 nonce).
+    # Consume wp7 nonce (independent of wp6 nonce).  The authorization root for
+    # the cross-run-dir nonce ledger is the manifest file's parent directory,
+    # NOT the repo checkout root (same fix as the cutover runner).
     import os as _os
+    from pathlib import Path as _Path
     nonce = manifest_grant_nonce(manifest, "wp7_held_canary")
+    auth_root_for_ledger = _Path(authorization_path).resolve().parent
     marker_sha = reserve_nonce(
-        manifest["checkout_canonical_root"], "wp7_held_canary", nonce,
+        str(auth_root_for_ledger), "wp7_held_canary", nonce,
         manifest_raw_sha=authorization_sha256, cutover_id=manifest["cutover_id"],
         commit_sha=manifest["git_commit_sha"], pid=_os.getpid(),
         create_time=datetime.now(BJ_TZ).timestamp())

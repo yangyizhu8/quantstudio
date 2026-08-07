@@ -65,9 +65,30 @@ FORBIDDEN_AUTH_ROOT_ANCESTORS = (
     "output",               # run evidence dir name
 )
 
-#: Grant names allowed in an authorization manifest.  watermark release is
-#: intentionally NOT a grant; it must come from a separate future authorization.
+#: Grant names allowed in a WP6/WP7-E2 authorization manifest.  The watermark
+#: release grant is deliberately excluded here: per G0 §3.1 item 20, a manifest
+#: loaded by the WP6 formal runner or the WP7-E2 held-canary must NEVER carry
+#: the watermark-release grant.  ``WP7_E3_GRANT`` below is consumed only by the
+#: separate WP7-E3 release entry point (``qfq_formal_watermark_release``), which
+#: is a different process and a different authorization stage.
 ALLOWED_GRANTS = ("wp6_formal_cutover", "wp7_held_canary")
+
+#: The single grant consumed by the WP7-E3 watermark-release entry point.  It
+#: is intentionally NOT in ``ALLOWED_GRANTS`` so WP6/WP7-E2 loaders reject any
+#: manifest carrying it as an "unknown grant".  ``assert_no_watermark_release_grant``
+#: provides an additional explicit defense-in-depth guard.
+WP7_E3_GRANT = "wp7_e3_watermark_release"
+
+
+def assert_no_watermark_release_grant(manifest: Mapping[str, Any]) -> None:
+    """Explicit defense-in-depth: a manifest loaded by the WP6 formal runner or
+    the WP7-E2 held-canary must NEVER carry the watermark-release grant, even if
+    ``ALLOWED_GRANTS`` were ever widened by mistake.  Per G0 §3.1 item 20."""
+    grants = manifest.get("operation_grants", {})
+    if WP7_E3_GRANT in grants:
+        raise AuthorizationScopeError(
+            f"manifest carries {WP7_E3_GRANT!r}; WP6/WP7-E2 loaders must refuse "
+            "any watermark-release grant (G0 §3.1 item 20)")
 
 BJ_TZ = timezone(timedelta(hours=8))
 
@@ -229,13 +250,19 @@ def _read_raw_bytes(path: str | Path) -> bytes:
     return first
 
 
-def load_and_verify_manifest(path: str | Path, expected_sha256: str) -> dict:
+def load_and_verify_manifest(path: str | Path, expected_sha256: str,
+                             *, extra_allowed_grants: Sequence[str] = ()) -> dict:
     """Read raw bytes, verify SHA-256 against the externally-supplied expected
     hash, then parse JSON.  Any tamper (single byte, pre-SHA, self-declared hash)
     fails closed.
 
     ``expected_sha256`` must be a 64-char hex string supplied out-of-band (CLI).
     It is never read from the manifest body or any sibling file.
+
+    ``extra_allowed_grants`` lets a specific entry point accept additional grant
+    names beyond ``ALLOWED_GRANTS`` — used solely by the WP7-E3 release entry
+    point to accept ``wp7_e3_watermark_release``.  The default (empty) keeps
+    WP6/WP7-E2 loaders strict (only wp6_formal_cutover / wp7_held_canary).
     """
     if not isinstance(expected_sha256, str) or len(expected_sha256) != 64:
         raise AuthorizationError("expected authorization SHA-256 must be 64 hex chars supplied out-of-band")
@@ -254,14 +281,15 @@ def load_and_verify_manifest(path: str | Path, expected_sha256: str) -> dict:
         manifest = json.loads(raw.decode("utf-8"))
     except Exception as exc:
         raise AuthorizationTamperError(f"manifest is not valid JSON: {exc}") from exc
-    _validate_manifest_fields(manifest)
+    _validate_manifest_fields(manifest, extra_allowed_grants=extra_allowed_grants)
     # A self-declared hash inside the manifest must never satisfy the check.
     if manifest.get("self_declared_sha256") is not None:
         raise AuthorizationTamperError("manifest must not carry a self-declared hash")
     return manifest
 
 
-def _validate_manifest_fields(manifest: Mapping[str, Any]) -> None:
+def _validate_manifest_fields(manifest: Mapping[str, Any],
+                              *, extra_allowed_grants: Sequence[str] = ()) -> None:
     required = (
         "schema", "version", "git_commit_sha", "checkout_canonical_root",
         "formal_main_canonical_path", "formal_aux_canonical_path",
@@ -281,8 +309,9 @@ def _validate_manifest_fields(manifest: Mapping[str, Any]) -> None:
     grants = manifest["operation_grants"]
     if not isinstance(grants, dict) or not grants:
         raise AuthorizationScopeError("operation_grants must be a non-empty mapping")
+    accepted = set(ALLOWED_GRANTS) | set(extra_allowed_grants)
     for grant_name, grant in grants.items():
-        if grant_name not in ALLOWED_GRANTS:
+        if grant_name not in accepted:
             raise AuthorizationScopeError(f"unknown grant: {grant_name!r}")
         if not isinstance(grant, Mapping) or "nonce" not in grant:
             raise AuthorizationScopeError(f"grant {grant_name!r} missing nonce")
@@ -308,8 +337,10 @@ def manifest_grant_nonce(manifest: Mapping[str, Any], grant: str) -> str:
 # Cross-run-dir nonce ledger with deletion/tamper detection.
 # ---------------------------------------------------------------------------
 
-def _ledger_dir(authorization_root: str | Path, grant: str) -> Path:
-    if grant not in ALLOWED_GRANTS:
+def _ledger_dir(authorization_root: str | Path, grant: str,
+                *, extra_allowed_grants: Sequence[str] = ()) -> Path:
+    accepted = set(ALLOWED_GRANTS) | set(extra_allowed_grants)
+    if grant not in accepted:
         raise AuthorizationScopeError(f"unknown grant: {grant!r}")
     return resolve_canonical(authorization_root) / "consumed" / grant
 
@@ -320,7 +351,8 @@ def _now_ts() -> str:
 
 def reserve_nonce(authorization_root: str | Path, grant: str, nonce: str, *,
                   manifest_raw_sha: str, cutover_id: str, commit_sha: str,
-                  pid: int, create_time: float) -> str:
+                  pid: int, create_time: float,
+                  extra_allowed_grants: Sequence[str] = ()) -> str:
     """Atomically burn ``nonce`` for ``grant`` under the cross-run-dir ledger.
 
     Writes ``<root>/consumed/<grant>/<nonce>.json`` via ``O_CREAT|O_EXCL`` and
@@ -334,7 +366,7 @@ def reserve_nonce(authorization_root: str | Path, grant: str, nonce: str, *,
     """
     root = _assert_auth_root_outside_forbidden(authorization_root)
     _assert_path_not_link_to_forbidden(root, root)
-    ldir = _ledger_dir(root, grant)
+    ldir = _ledger_dir(root, grant, extra_allowed_grants=extra_allowed_grants)
     _assert_path_not_link_to_forbidden(ldir, root)
     ldir.mkdir(parents=True, exist_ok=True)
     marker = ldir / f"{nonce}.json"

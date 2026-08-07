@@ -125,10 +125,16 @@ def _assert_staging_db(main_db_path: str | Path) -> Path:
     return db
 
 
-def build_cutover_evidence(conn, *, cutover_id: str, main_db_path: str | Path,
-                           output_path: str | Path) -> dict:
-    """Freeze immutable main/aux snapshots for a baseline_validated cutover."""
-    _assert_staging_db(main_db_path)
+def _freeze_cutover_evidence_core(conn, *, cutover_id: str,
+                                  output_path: str | Path) -> dict:
+    """Policy-free cutover-evidence freeze core (shared by staging and formal).
+
+    Runs the immutable main/aux/baseline/watermark snapshot freeze and the
+    cutover-row evidence CAS update.  No staging/formal authorization logic;
+    callers decide which guard precedes this.  Mirrors the ``_do_activate_in_txn``
+    extraction so the formal runner can freeze evidence without weakening the
+    staging-only guard.
+    """
     rec = _record(conn, cutover_id)
     if rec["status"] != "baseline_validated":
         raise CutoverPreconditionFailed(f"evidence freeze requires baseline_validated, current={rec['status']!r}")
@@ -162,6 +168,17 @@ def build_cutover_evidence(conn, *, cutover_id: str, main_db_path: str | Path,
         raise CutoverCASFailed("cutover evidence update CAS failed")
     payload["evidence_path"] = str(out)
     return payload
+
+
+def build_cutover_evidence(conn, *, cutover_id: str, main_db_path: str | Path,
+                           output_path: str | Path) -> dict:
+    """Freeze immutable main/aux snapshots for a baseline_validated cutover.
+
+    Staging entry point: owns the staging-only guard ``_assert_staging_db`` and
+    delegates the actual freeze to ``_freeze_cutover_evidence_core``.
+    """
+    _assert_staging_db(main_db_path)
+    return _freeze_cutover_evidence_core(conn, cutover_id=cutover_id, output_path=output_path)
 
 
 def verify_cutover_evidence(conn, *, cutover_id: str, main_db_path: str | Path) -> dict:

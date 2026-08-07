@@ -49,12 +49,15 @@ from .daemon_lifecycle import (
     collector_run_lock_path, daemon_lock_path, read_daemon_status,
     verify_daemon_identity,
 )
-from .qfq_cutover import CutoverCASFailed, CutoverError
+from .qfq_aux_router import AuxDbRouter
+from .qfq_cutover import CutoverCASFailed, CutoverError, create_cutover, transition_cutover
 from .qfq_cutover_activation import (
-    LEGACY_GENERATION, LEGACY_SOURCE, _do_activate_in_txn, _record,
-    _write_exclusive_json,
+    LEGACY_GENERATION, LEGACY_SOURCE, _do_activate_in_txn, _freeze_cutover_evidence_core,
+    _record, build_cutover_evidence, verify_cutover_evidence, _write_exclusive_json,
 )
-from .qfq_discovery_baseline import audit_pending_slots
+from .qfq_discovery_baseline import (
+    BaselineIdentity, audit_pending_slots, establish_discovery_baseline,
+)
 from .qfq_formal_authorization import (
     ALLOWED_GRANTS, AuthorizationError, AuthorizationScopeError,
     AuthorizationTamperError, NonceReplayError, compute_required_free_bytes,
@@ -494,6 +497,121 @@ def make_fresh_backup(*, main_db: str | Path, aux_db: str | Path,
     _write_exclusive_json(bdir / "rollback_manifest.json", rollback_manifest)
     return {"backup_manifest": backup_manifest, "rollback_manifest": rollback_manifest,
             "main_backup": str(main_backup), "aux_backup": str(aux_backup)}
+
+
+def prepare_formal_baseline(*, main_db: str | Path, cutover_id: str,
+                            price_source: str, source_generation: str,
+                            aux_db_path: str | Path,
+                            evidence_output_path: str | Path,
+                            config_sha: Optional[str] = None) -> dict:
+    """WP6 steps 6-8: initialize the generation-specific aux, create/transition the
+    cutover record, build the discovery baseline from the formal DB's own
+    ``stock_dividend`` history, freeze immutable evidence, and verify immediate
+    replay produces zero new triggers and a clean pending-slot audit.
+
+    This reuses the existing reviewed B-5 primitives (``create_cutover`` /
+    ``transition_cutover`` / ``AuxDbRouter.initialize_explicit`` /
+    ``establish_discovery_baseline`` / ``dividend_payload_hash`` /
+    ``build_cutover_evidence`` / ``audit_pending_slots``) so the formal baseline
+    is built by the same code path the B-5 staging review audited.  It must run
+    AFTER the schema migration has reached COMPLETE_2_1 (the qfq_source_cutover /
+    qfq_discovery_baseline / qfq_active_cutover / qfq_cycle_lease tables must
+    exist), inside the dual-lock window.
+
+    The baseline rows come from the formal DB's own
+    ``stock_dividend WHERE div_proc='实施' AND ex_date IS NOT NULL`` — the same
+    source ``cmd_baseline_build`` uses.  No external data dependency.
+    """
+    from .qfq_dividend_payload import dividend_payload_hash
+    from .qfq_reanchor_schema import SCHEMA_VERSION, DETECTOR_BASELINE_VERSION
+
+    db = resolve_canonical(main_db)
+    aux_canon = resolve_canonical(aux_db_path)
+    identity = BaselineIdentity(cutover_id=cutover_id, price_source=price_source,
+                                source_generation=source_generation)
+
+    conn = duckdb.connect(str(db))
+    try:
+        # Step 7a: create the cutover record (planned) with the immutable aux path.
+        create_cutover(conn, cutover_id=cutover_id, price_source=price_source,
+                       source_generation=source_generation,
+                       schema_version=SCHEMA_VERSION,
+                       baseline_version=DETECTOR_BASELINE_VERSION,
+                       aux_db_path=str(aux_canon), config_hash=config_sha)
+        # Step 7b: planned -> prepared -> baseline_building
+        transition_cutover(conn, cutover_id=cutover_id, expected_status="planned",
+                           new_status="prepared")
+        transition_cutover(conn, cutover_id=cutover_id, expected_status="prepared",
+                           new_status="baseline_building")
+    finally:
+        conn.close()
+
+    # Step 6: initialize the isolated generation-specific aux DB (O_EXCL/empty).
+    # aux-init requires prepared/baseline_building; the cutover is now baseline_building.
+    router = AuxDbRouter(main_db=str(db), routes={source_generation: str(aux_canon)})
+    route = router.initialize_explicit(source_generation=source_generation,
+                                       cutover_id=cutover_id)
+    if not route.exists:
+        raise FormalCutoverError(f"aux initialization failed for {source_generation}: {route}")
+
+    conn = duckdb.connect(str(db))
+    try:
+        # Step 7c: build the discovery baseline from the formal DB's own stock_dividend.
+        rows = conn.execute(
+            "SELECT code, ex_date, record_date, ann_date, end_date, "
+            "cash_div_before_tax, cash_div_after_tax, cash_div, stk_div, stk_bo_rate, "
+            "stk_co_rate, div_rat, div_proc FROM stock_dividend "
+            "WHERE div_proc='实施' AND ex_date IS NOT NULL").fetchall()
+        conn.execute("BEGIN TRANSACTION")
+        try:
+            baseline_count = establish_discovery_baseline(
+                conn, identity=identity, rows=rows,
+                payload_hash=lambda row: dividend_payload_hash(*row))
+            conn.execute("COMMIT")
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+        # Step 7d: baseline_building -> baseline_validated, then freeze evidence.
+        transition_cutover(conn, cutover_id=cutover_id,
+                           expected_status="baseline_building",
+                           new_status="baseline_validated")
+        # Formal runner uses the policy-free evidence core (its own authorization
+        # chain already preceded this); the staging-only ``_assert_staging_db``
+        # inside ``build_cutover_evidence`` is NOT appropriate here.
+        evidence = _freeze_cutover_evidence_core(conn, cutover_id=cutover_id,
+                                                 output_path=evidence_output_path)
+    finally:
+        conn.close()
+
+    # Step 8: immediate replay verification — the baseline must cover all current
+    # historical dividend events, so an immediate re-discovery produces zero new
+    # mcp-gen1 triggers and a clean three-item pending-slot audit.
+    conn = duckdb.connect(str(db))
+    try:
+        new_triggers = conn.execute(
+            "SELECT COUNT(*) FROM qfq_trigger_queue WHERE source_generation='mcp-gen1'"
+        ).fetchone()[0]
+        slots = audit_pending_slots(conn, identity=identity)
+    finally:
+        conn.close()
+
+    if new_triggers != 0:
+        raise FormalCutoverError(
+            f"immediate baseline replay produced {new_triggers} mcp-gen1 triggers; "
+            "baseline did not cover all historical dividend events")
+    if not slots.get("passed"):
+        raise FormalCutoverError(
+            f"pending-slot audit not clean after baseline build: {slots}")
+
+    return {
+        "cutover_id": cutover_id, "baseline_rows": baseline_count,
+        "aux_db_path": str(aux_canon), "evidence_manifest_sha256": evidence["manifest_sha256"],
+        "immediate_replay_new_triggers": new_triggers,
+        "pending_slot_audit": slots,
+    }
 
 
 def _now_ts() -> str:
