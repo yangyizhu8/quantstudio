@@ -33,7 +33,7 @@ questdb = ["questdb>=1.0.0"]
 postgres = ["psycopg2-binary>=2.9"]
 mysql = ["pymysql>=1.1.0"]
 # GUI
-gui = ["PyQt6>=6.5.0", "PyQt6-Fluent-Widgets>=1.11"]
+gui = ["PyQt6>=6.5.0", "PyQt6-Fluent-Widgets>=1.11", "matplotlib>=3.5"]
 qfluentwidgets = ["PyQt6-Fluent-Widgets>=1.11"]
 # 全量
 all = [
@@ -43,6 +43,7 @@ all = [
     "duckdb>=1.5.5",
     "PyQt6>=6.5.0",
     "PyQt6-Fluent-Widgets>=1.11",
+    "matplotlib>=3.5",
 ]
 
 [project.scripts]
