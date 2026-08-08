@@ -706,6 +706,11 @@ class McpFreshFetcher(FreshFetcher):
                 mcp_cfg = dict(self._mcp_cfg or {})
                 if self._main_db and "main_db" not in mcp_cfg:
                     mcp_cfg["main_db"] = self._main_db
+                # WP7-E3 阶段 2A：bootstrap 链路开启 export 缓存 + 网格化批次。
+                # export_cache=True → _fetch_export 走缓存层 + _export_batches 网格化，
+                # 全证券共享批次边界，export 次数从 2181×N 降至 ~N。
+                # daemon 日常采集不经过 McpFreshFetcher → 默认 export_cache=false 行为不变。
+                mcp_cfg.setdefault("export_cache", True)
                 self._adapter = create_adapter("mcp", mcp_cfg)
             self._connected = True
 
@@ -749,9 +754,22 @@ class McpFreshFetcher(FreshFetcher):
         elif "time" in raw_df.columns:
             raw_df = raw_df.sort_values("time").drop_duplicates(
                 subset=["time"], keep="last").reset_index(drop=True)
-        # 时间 index：MCP raw 含 time(ms) 或 trade_date(YYYYMMDD 或 YYYY-MM-DD)
+        elif "trade_time" in raw_df.columns:
+            raw_df = raw_df.sort_values("trade_time").drop_duplicates(
+                subset=["trade_time"], keep="last").reset_index(drop=True)
+        # 时间 index：MCP raw 可能含 time(ms int) / trade_date(YYYYMMDD 或 YYYY-MM-DD)
+        # / trade_time(ms int, 分钟线专用)
         if "time" in raw_df.columns:
             idx = pd.to_datetime(raw_df["time"], unit="ms", utc=True).dt.tz_convert("Asia/Shanghai")
+        elif "trade_time" in raw_df.columns:
+            # MCP minutes returns trade_time as datetime64[ns] (naive, CST local).
+            # tz_localize to Asia/Shanghai (not unit='ms' which would misinterpret
+            # datetime values as epoch-ms integers, adding 8h offset on round-trip).
+            tt = pd.to_datetime(raw_df["trade_time"])
+            if tt.dt.tz is None:
+                idx = tt.dt.tz_localize("Asia/Shanghai")
+            else:
+                idx = tt.dt.tz_convert("Asia/Shanghai")
         elif "trade_date" in raw_df.columns:
             idx = pd.to_datetime(raw_df["trade_date"].astype(str), format="mixed", dayfirst=False)
         else:
@@ -760,11 +778,17 @@ class McpFreshFetcher(FreshFetcher):
         # CRITICAL: use .to_numpy() to strip the Series index before constructing
         # the DataFrame with a DatetimeIndex.  Using pd.to_numeric(Series) keeps
         # the raw RangeIndex, which misaligns with idx → silent all-NaN.
+        #
+        # Tick-precision contract: round OHLC to the same decimals as aligner
+        # (_round_fields: STOCK=2, ETF=3).  fetch_none_front bypasses the
+        # aligner, so without this round the MCP QFQ-restore math noise
+        # (1e-4 magnitude) would cause rebase precheck to BLOCK on every row.
+        price_decimals = 3 if asset_type == "ETF" else 2
         none_df = pd.DataFrame({
-            "open": pd.to_numeric(raw_df["open"], errors="coerce").to_numpy(),
-            "high": pd.to_numeric(raw_df["high"], errors="coerce").to_numpy(),
-            "low": pd.to_numeric(raw_df["low"], errors="coerce").to_numpy(),
-            "close": pd.to_numeric(raw_df["close"], errors="coerce").to_numpy(),
+            "open": pd.to_numeric(raw_df["open"], errors="coerce").to_numpy().round(price_decimals),
+            "high": pd.to_numeric(raw_df["high"], errors="coerce").to_numpy().round(price_decimals),
+            "low": pd.to_numeric(raw_df["low"], errors="coerce").to_numpy().round(price_decimals),
+            "close": pd.to_numeric(raw_df["close"], errors="coerce").to_numpy().round(price_decimals),
         }, index=idx)
         # front_df：前复权 = raw × (adj_i / adj_latest)
         # CRITICAL: ratio must share the SAME index as none_df (idx, not RangeIndex

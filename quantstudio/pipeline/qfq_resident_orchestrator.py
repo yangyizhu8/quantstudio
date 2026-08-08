@@ -1125,8 +1125,13 @@ class QFQResidentOrchestrator:
         if self.cfg.require_bootstrap and not self.bootstrap_completed(conn):
             summary.bootstrap_required = True
             summary.error = "require_bootstrap=true 且无可匹配 completed bootstrap，fail-closed"
-            logger.error(f"[qfq_orch] {summary.error}（本轮不推进水位、不处理 trigger）")
-            self._finish_cycle(conn, cycle_id, "failed", summary)
+            logger.warning(f"[qfq_orch] {summary.error}（本轮不推进水位、不处理 trigger；数据写入不受影响）")
+            # Data was already written by daemon's writer (execute_task → upsert)
+            # before run_post_ingest was called. The gate only blocks watermark
+            # advancement, not data collection. Use finalized_held (not failed)
+            # to reflect: data written OK, watermark intentionally held.
+            summary.status = "finalized_held"
+            self._finish_cycle(conn, cycle_id, "finalized_held", summary)
             return summary
         if fetcher is None:
             summary.error = "fetcher 未提供（xtquant 不可用）→ 保持水位"

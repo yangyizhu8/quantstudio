@@ -24,7 +24,7 @@ import json
 import logging
 import os
 import sqlite3
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -311,6 +311,11 @@ class MCPAdapter(BaseSourceAdapter):
         self.enable_qfq_restore = bool(config.get("enable_qfq_restore", True))
         # 线1：因子冷启动（qfq_aux.db 未覆盖的 code → 全历史导出注入）
         self.enable_adj_coldstart = bool(config.get("enable_adj_coldstart", True))
+        # WP7-E3 阶段 2A：export 缓存开关（仅 bootstrap 链路开启，daemon 默认 false）。
+        # 开启时 _export_batches 走网格化切分 + 全市场 export parquet 落盘级复用，
+        # 跨证券共享同一组缓存键 (table, grid_bs|grid_be)，export 次数从 2181×N 降至 ~N。
+        # daemon 日常采集路径不开启 → 每次 fetch 走真实 export_dataset，行为与修复前一致。
+        self.export_cache = bool(config.get("export_cache", False))
         # 全局最新因子缓存：{asset_type: {裸码: adj_latest}}；每进程每资产类型只查一次
         self._adj_latest_cache: Dict[str, Dict[str, float]] = {}
         # 已执行过冷启动的资产类型（避免同一进程内重复全历史导出）
@@ -630,13 +635,20 @@ class MCPAdapter(BaseSourceAdapter):
         raise ValueError(f"unrecognized date format: {s!r} (expected %Y-%m-%d or %Y%m%d)")
 
     def _export_batches(self, start: str, end: str, is_minute: bool,
-                        est_rows: int = None) -> List[Tuple[str, str]]:
+                        est_rows: int = None,
+                        grid_aligned: bool = False) -> List[Tuple[str, str]]:
         """按时间窗口切分 export 批次，避免服务端 200 万行截断。
 
         行数估算驱动：est_rows < _EXPORT_SAFE_ROWS（<200万）时返回单批（全历史一次，
         不切碎）；否则按窗口切分。
         日线行情（~120万行/年）：365天/批；分钟表（~6000万行/年）：10天/批。
         快照大表（财务/指数成分等，<200万行全历史）：单批。
+
+        grid_aligned=True（仅 bootstrap 链路开启）：窗口边界对齐到固定 epoch 网格
+        （日线 365 天 / 分钟 10 天），且**尾部批次不截断到 end**（nxt = cur + window）。
+        所有证券共享同一组批次边界 → export 缓存键 (table, bs|be) 全证券一致、命中率 100%。
+        语义等价：网格扩出的边界数据由 _fetch_export 的 _norm_date 日期裁剪兜底（已有逻辑），
+        最终 raw_df 与非网格路径逐值一致。默认 False（daemon 增量采集零影响）。
         """
         s = self._parse_flexible_date(str(start).strip()[:10])
         e = self._parse_flexible_date(str(end).strip()[:10])
@@ -644,6 +656,20 @@ class MCPAdapter(BaseSourceAdapter):
         if est_rows is not None and est_rows < self._EXPORT_SAFE_ROWS:
             return [(s.strftime("%Y-%m-%d"), e.strftime("%Y-%m-%d"))]
         window = self._EXPORT_MINUTE_WINDOW_DAYS if is_minute else self._EXPORT_DAILY_WINDOW_DAYS
+        if grid_aligned:
+            # epoch 天数网格对齐：起点向前对齐到网格边界（只扩不缩）
+            epoch = date(1970, 1, 1)
+            s_date = epoch + timedelta(days=((s.date() - epoch).days // window) * window)
+            e_date = e.date()
+            batches = []
+            cur = s_date
+            while cur <= e_date:
+                # 尾部不截断到 e：nxt = cur + window（完整网格边界），
+                # 服务端多导的几天由客户端 _norm_date 裁剪兜底。
+                nxt = cur + timedelta(days=window)
+                batches.append((cur.strftime("%Y-%m-%d"), nxt.strftime("%Y-%m-%d")))
+                cur = nxt + timedelta(days=1)
+            return batches
         batches = []
         cur = s
         while cur <= e:
@@ -680,44 +706,19 @@ class MCPAdapter(BaseSourceAdapter):
         qdb_tbl = _CANONICAL_TO_QUESTDB.get(table, table)
 
         # === 自动分批：按时间窗口切分，避免服务端 200 万行截断 ===
+        # grid_aligned 仅在 export_cache=True（bootstrap 链路）时启用：全证券共享网格边界。
+        _export_cache = getattr(self, "export_cache", False)
         batches = self._export_batches(start, end, _is_big,
-                                       est_rows=self._EXPORT_ROW_ESTIMATE.get(table))
-        all_artifacts = []
-        job_ids = []
-        for i, (bs, be) in enumerate(batches):
-            def _to_iso(d: str) -> str:
-                s = str(d).strip()[:10]
-                return datetime.strptime(s, "%Y-%m-%d").strftime("%Y-%m-%dT00:00:00")
-            ts_iso = _to_iso(bs)
-            te_iso = (datetime.strptime(str(be).strip()[:10], "%Y-%m-%d")
-                      + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00")
-            try:
-                if len(batches) > 1:
-                    logger.info(f"[MCPAdapter] {table}/{freq} export 批次 {i+1}/{len(batches)}: "
-                                f"{bs} → {be}")
-                arts = self.client.export_dataset(
-                    dataset_id=qdb_tbl, page_size=50_000,
-                    time_start=ts_iso, time_end=te_iso,
-                    row_limit=5_000_000 if _is_big else None)
-                all_artifacts.extend(arts)
-                jid = (arts[0].raw.get("job_id") if arts and arts[0].raw.get("job_id") else f"export_{i}")
-                job_ids.append(jid)
-            except Exception as _e:
-                logger.error(f"[_fetch_export] export_dataset 异常(批次{i+1}): "
-                             f"type={type(_e).__name__} msg={_e}")
-                raise
-        artifacts = all_artifacts
-        job_id = job_ids[0] if job_ids else "export"
-        logger.info(f"[MCPAdapter] {table}/{freq} export 分批={len(batches)} 总分片={len(artifacts)}")
+                                       est_rows=self._EXPORT_ROW_ESTIMATE.get(table),
+                                       grid_aligned=_export_cache)
 
         frames: List[pd.DataFrame] = []
-        for art in artifacts:
-            local_parquet = self._landing_path(job_id, art.artifact_id.replace("/", "_"))
-            local_parquet.write_bytes(art.parquet_bytes)
-            df_shard = pd.read_parquet(local_parquet)
-            frames.append(df_shard)
-            logger.debug(f"[MCPAdapter] 分片 {art.artifact_id} 读取 {len(df_shard)} 行 "
-                         f"→ Raw Landing {local_parquet.name}")
+        job_id = "export"
+        if _export_cache:
+            frames, job_id = self._fetch_export_cached(table, freq, batches, qdb_tbl, _is_big)
+        else:
+            frames, job_id = self._fetch_export_direct(table, freq, batches, qdb_tbl, _is_big)
+        logger.info(f"[MCPAdapter] {table}/{freq} export 分批={len(batches)} 总分片={len(frames)}")
 
         raw_df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
@@ -814,7 +815,7 @@ class MCPAdapter(BaseSourceAdapter):
                 "upstream_authority": "xtquant",
                 "transport": "mcp_streamable_http",
                 "export_job": job_id,
-                "shards": len(artifacts),
+                "shards": len(frames),
                 "server": self.endpoint,
             },
             "rows": len(raw_df),
@@ -834,6 +835,344 @@ class MCPAdapter(BaseSourceAdapter):
         return d / f"{shard_name}.parquet"
 
     # ==================================================================
+    # WP7-E3 阶段 2A：export 缓存（bootstrap 链路专用，daemon 默认不开启）
+    # ==================================================================
+    _EXPORT_CACHE_MANIFEST = "_export_cache_manifest.json"
+
+    def _cache_manifest_path(self) -> Path:
+        return self._landing_root / self._EXPORT_CACHE_MANIFEST
+
+    def _load_cache_manifest(self) -> Dict:
+        """读取 export 缓存 manifest；损坏/缺失返回 {} （调用方据此走未命中路径）。"""
+        p = self._cache_manifest_path()
+        if not p.exists():
+            return {}
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"[MCPAdapter] export_cache manifest 损坏，回退空 manifest: {e}")
+            return {}
+
+    def _save_cache_manifest(self, manifest: Dict) -> None:
+        """原子写 manifest（写临时文件后 replace，防半写）。"""
+        p = self._cache_manifest_path()
+        tmp = p.with_suffix(".json.tmp")
+        try:
+            tmp.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(p)
+        except OSError as e:  # pragma: no cover - 磁盘问题不阻断取数
+            logger.warning(f"[MCPAdapter] export_cache manifest 写入失败（不影响取数）: {e}")
+
+    @staticmethod
+    def _cache_key(table: str, bs: str, be: str) -> str:
+        """缓存键：table + 网格化批次边界。全证券共享（grid_aligned 保证边界一致）。"""
+        return f"{table}|{bs}|{be}"
+
+    def _fetch_export_direct(self, table: str, freq: str,
+                             batches: List[Tuple[str, str]],
+                             qdb_tbl: str,
+                             _is_big: bool) -> Tuple[List[pd.DataFrame], str]:
+        """直连路径（daemon 默认）：逐批 export_dataset → 落盘 → 分片读回。
+        与修复前 _fetch_export 行为逐行一致。"""
+        all_artifacts = []
+        job_ids = []
+        for i, (bs, be) in enumerate(batches):
+            def _to_iso(d: str) -> str:
+                s = str(d).strip()[:10]
+                return datetime.strptime(s, "%Y-%m-%d").strftime("%Y-%m-%dT00:00:00")
+            ts_iso = _to_iso(bs)
+            te_iso = (datetime.strptime(str(be).strip()[:10], "%Y-%m-%d")
+                      + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00")
+            try:
+                if len(batches) > 1:
+                    logger.info(f"[MCPAdapter] {table}/{freq} export 批次 {i+1}/{len(batches)}: "
+                                f"{bs} → {be}")
+                arts = self.client.export_dataset(
+                    dataset_id=qdb_tbl, page_size=50_000,
+                    time_start=ts_iso, time_end=te_iso,
+                    row_limit=5_000_000 if _is_big else None)
+                all_artifacts.extend(arts)
+                jid = (arts[0].raw.get("job_id") if arts and arts[0].raw.get("job_id") else f"export_{i}")
+                job_ids.append(jid)
+            except Exception as _e:
+                logger.error(f"[_fetch_export_direct] export_dataset 异常(批次{i+1}): "
+                             f"type={type(_e).__name__} msg={_e}")
+                raise
+        job_id = job_ids[0] if job_ids else "export"
+        frames: List[pd.DataFrame] = []
+        for art in all_artifacts:
+            local_parquet = self._landing_path(job_id, art.artifact_id.replace("/", "_"))
+            local_parquet.write_bytes(art.parquet_bytes)
+            df_shard = pd.read_parquet(local_parquet)
+            frames.append(df_shard)
+            logger.debug(f"[MCPAdapter] 分片 {art.artifact_id} 读取 {len(df_shard)} 行 "
+                         f"→ Raw Landing {local_parquet.name}")
+        return frames, job_id
+
+    def _fetch_export_cached(self, table: str, freq: str,
+                             batches: List[Tuple[str, str]],
+                             qdb_tbl: str,
+                             _is_big: bool) -> Tuple[List[pd.DataFrame], str]:
+        """缓存路径（仅 bootstrap 链路）：命中读本地 parquet 跳过 export_dataset；
+        未命中走 export → 落盘 → 写 manifest。命中失败自动回退直连。
+        缓存只存全市场 export 的 parquet（与 codes 无关），codes 过滤由调用方做。"""
+        manifest = self._load_cache_manifest()
+        table_cache: Dict = manifest.get(table, {})
+        frames: List[pd.DataFrame] = []
+        job_id = "export"
+        manifest_dirty = False
+        for bs, be in batches:
+            ckey = self._cache_key(table, bs, be)
+            entry = table_cache.get(ckey)
+            hit = False
+            if entry is not None:
+                # 逐文件 size 校验（防半写文件）；任一文件缺失/size 不符 → 回退直连
+                shards_info = entry.get("shards", [])
+                shard_sizes = entry.get("shard_sizes", {})
+                all_ok = True
+                shard_paths = []
+                for shard_name in shards_info:
+                    sp = self._landing_root / entry.get("job_id", "export") / f"{shard_name}.parquet"
+                    shard_paths.append(sp)
+                    if not sp.exists() or sp.stat().st_size != shard_sizes.get(shard_name, -1):
+                        all_ok = False
+                        break
+                if all_ok and shard_paths:
+                    for sp in shard_paths:
+                        frames.append(pd.read_parquet(sp))
+                    hit = True
+                    logger.info(f"[MCPAdapter] export_cache 命中 {ckey} "
+                                f"分片={len(shard_paths)}（跳过 export_dataset）")
+                else:
+                    logger.info(f"[MCPAdapter] export_cache 校验失败 {ckey}，回退直连")
+            if not hit:
+                # 未命中/校验失败 → 走直连（单批 export）
+                one_frames, one_job_id = self._fetch_export_direct(
+                    table, freq, [(bs, be)], qdb_tbl, _is_big)
+                frames.extend(one_frames)
+                # 记录本批的 parquet 文件到 manifest
+                jid_dir = self._landing_root / one_job_id
+                shard_files = sorted(jid_dir.glob("*.parquet")) if jid_dir.exists() else []
+                shards_info = [f.stem for f in shard_files]  # 去掉 .parquet 后缀
+                shard_sizes = {f.stem: f.stat().st_size for f in shard_files}
+                table_cache[ckey] = {
+                    "job_id": one_job_id,
+                    "shards": shards_info,
+                    "shard_sizes": shard_sizes,
+                    "bytes": sum(shard_sizes.values()),
+                    "rows": sum(len(f) for f in one_frames),
+                    "ts": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+                }
+                manifest_dirty = True
+                if job_id == "export":
+                    job_id = one_job_id
+        if manifest_dirty:
+            manifest[table] = table_cache
+            self._save_cache_manifest(manifest)
+        return frames, job_id
+
+    # ==================================================================
+    # WP7-E3 阶段 2B：流式分片处理（解决大表内存峰值）
+    # ==================================================================
+    # 行情大表可安全分片：aligner 复权逐行公式（传 adj_latest_map 快照）、
+    # validator 聚合计数、watermark max 聚合，均无跨行全局依赖。
+    # 因子注入时序（修正 2）：两遍流程——第一遍聚合全部分片 adj_factor 完成注入
+    # （等价直连 _sync_factor_snapshot 全量语义）→ 预取 adj_latest_map → 第二遍
+    # 逐片用同一快照还原 → yield。保证跨分片基准一致（铁律：与直连路径逐值等价）。
+
+    # 5 类行情大表（任务书 §2.2 已核对立即可分片）
+    _STREAMING_TABLES = frozenset({
+        "stock_daily", "etf_daily", "stock_daily_valuation",
+        "stock_minutes", "etf_minutes",
+    })
+
+    def fetch_table_streaming(self, table: str, start: str, end: str,
+                              freq: str = "daily",
+                              codes: Optional[List[str]] = None
+                              ) -> Tuple[Dict, "object"]:
+        """流式拉取单表数据，返回 (metadata, shard_iter)。
+
+        逐 shard yield DataFrame（不 concat），内存峰值 = 单分片量级（~200-300MB）
+        而非全量驻留（4.6 亿行 40GB+）。
+
+        - 行情大表（_STREAMING_TABLES）：两遍流程（因子注入→快照→逐片还原→yield）。
+        - 其余表：透传 fetch_table → yield 单片（无内存收益，API 一致性）。
+
+        metadata 与 fetch_table 对齐（source/freq/table/lineage 等），供 daemon 使用。
+        shard_iter yield 的每个 DataFrame 已完成 codes/日期过滤 + qfq 还原（行情表），
+        与 fetch_table 的 raw_df 语义一致——调用方（daemon aligner）零感知。
+        """
+        if table not in self._STREAMING_TABLES:
+            # 非行情大表：透传单 df（yield 一片）
+            raw_df, meta = self.fetch_table(table, start, end, freq=freq, codes=codes)
+            return meta, iter([raw_df])
+        # 行情大表：走流式两遍流程
+        return self._streaming_export(table, freq, start, end, codes)
+
+    def _streaming_export(self, table: str, freq: str, start: str, end: str,
+                          codes: Optional[List[str]]
+                          ) -> Tuple[Dict, "object"]:
+        """行情大表流式两遍流程。"""
+        _is_big = "minutes" in table
+        qdb_tbl = _CANONICAL_TO_QUESTDB.get(table, table)
+        _export_cache = getattr(self, "export_cache", False)
+        batches = self._export_batches(start, end, _is_big,
+                                       est_rows=self._EXPORT_ROW_ESTIMATE.get(table),
+                                       grid_aligned=_export_cache)
+        # 获取分片 parquet 路径列表（命中缓存或 export 落盘）
+        shard_paths, job_id = self._resolve_shard_paths(table, freq, batches,
+                                                        qdb_tbl, _is_big)
+        # codes 过滤辅助
+        _is_all = codes and (len(codes) == 1 and str(codes[0]).upper() == "ALL")
+        want_codes = None if _is_all else ({str(c) for c in codes} if codes else None)
+
+        # === 两遍流程（修正 2）===
+        needs_qfq = self._requires_qfq_restore(table, freq) and self.enable_qfq_restore
+        adj_latest_map: Optional[Dict[str, float]] = None
+        if needs_qfq:
+            # 第一遍：逐片只读 adj_factor 列 → 聚合 → _sync_factor_snapshot（全量注入）
+            adj_frames = []
+            for sp in shard_paths:
+                try:
+                    cols = ["adj_factor"] if self._parquet_has_column(sp, "adj_factor") else None
+                except Exception:
+                    cols = None
+                if cols is None:
+                    continue
+                sdf = pd.read_parquet(sp, columns=cols)
+                if len(sdf):
+                    adj_frames.append(sdf)
+            if adj_frames:
+                full_adj = pd.concat(adj_frames, ignore_index=True)
+                if not self._sync_factor_snapshot(full_adj, table, freq):
+                    raise ValueError(
+                        f"[MCPAdapter] streaming {table}/{freq} 第一遍因子同步失败")
+            # 预取全局最新因子快照（全量注入完成后 → 跨分片基准一致）
+            asset_type = self._asset_type_of(table)
+            all_codes = set()
+            for sp in shard_paths:
+                try:
+                    cc = next((c for c in ("ts_code", "code", "stock_code")), None)
+                    if cc and self._parquet_has_column(sp, cc):
+                        sdf = pd.read_parquet(sp, columns=[cc])
+                        all_codes.update(sdf[cc].map(self._bare_code).unique().tolist())
+                except Exception:
+                    pass
+            adj_latest_map = self._get_adj_latest_global(
+                sorted(all_codes), asset_type=asset_type) if all_codes else {}
+
+        def _shard_iter():
+            for sp in shard_paths:
+                df_shard = pd.read_parquet(sp)
+                if len(df_shard) == 0:
+                    continue
+                # 日期裁剪（与 _fetch_export 的 _norm_date 一致）
+                df_shard = self._filter_date_window(df_shard, start, end)
+                # codes 过滤
+                if want_codes is not None:
+                    df_shard = self._filter_codes(df_shard, want_codes)
+                # 非标准代码过滤（测试代码）
+                df_shard = self._filter_nonstandard_codes(df_shard)
+                # qfq 还原（第二遍：用预取快照，skip_sync=True）
+                if needs_qfq:
+                    df_shard, _rm = self._restore_qfq_if_required(
+                        df_shard, table, freq,
+                        adj_latest_map=adj_latest_map, skip_sync=True)
+                yield df_shard
+
+        meta = {
+            "source": "mcp",
+            "freq": freq,
+            "table": table,
+            "fetch_mode": "export_streaming",
+            "code_format": "tushare_to_raw",
+            "date_format": "YYYYMMDD",
+            "units": {"vol": "股", "amount": "元", "pct_chg": "%"},
+            "upstream_authority": "xtquant",
+            "lineage": {
+                "upstream_authority": "xtquant",
+                "transport": "mcp_streamable_http",
+                "export_job": job_id,
+                "shards": len(shard_paths),
+                "server": self.endpoint,
+                "streaming": True,
+            },
+            "rows": None,  # 流式未知总行数，daemon 累加
+            "raw_landing_dir": str(self._landing_root / job_id),
+            "is_qfq_capable": (table, freq) in _QFQ_ADJFACTOR_TABLES,
+        }
+        return meta, _shard_iter()
+
+    def _resolve_shard_paths(self, table: str, freq: str,
+                             batches: List[Tuple[str, str]],
+                             qdb_tbl: str,
+                             _is_big: bool) -> Tuple[List[Path], str]:
+        """获取分片 parquet 路径列表：命中缓存或 export 落盘。"""
+        _export_cache = getattr(self, "export_cache", False)
+        if _export_cache:
+            frames, job_id = self._fetch_export_cached(table, freq, batches, qdb_tbl, _is_big)
+            # frames 已读入（缓存层读的）；但流式需要路径——重新枚举 job 目录
+            jid_dir = self._landing_root / job_id
+            paths = sorted(jid_dir.glob("*.parquet")) if jid_dir.exists() else []
+            return paths, job_id
+        # 直连：export 落盘后枚举
+        frames, job_id = self._fetch_export_direct(table, freq, batches, qdb_tbl, _is_big)
+        jid_dir = self._landing_root / job_id
+        paths = sorted(jid_dir.glob("*.parquet")) if jid_dir.exists() else []
+        return paths, job_id
+
+    @staticmethod
+    def _parquet_has_column(path: Path, col: str) -> bool:
+        """检查 parquet 文件是否含指定列（用 pyarrow schema，不全量读）。"""
+        try:
+            import pyarrow.parquet as pq
+            schema = pq.read_schema(str(path))
+            return col in schema.names
+        except Exception:
+            return False
+
+    def _filter_date_window(self, df: pd.DataFrame, start: str, end: str) -> pd.DataFrame:
+        """日期窗口过滤（与 _fetch_export 的 _norm_date 逻辑一致）。"""
+        if len(df) == 0:
+            return df
+        def _norm_date(v):
+            s = str(v).strip()
+            if len(s) >= 10 and s[4] == "-":
+                s = s[:10].replace("-", "")
+            return s[:8]
+        date_col = next((c for c in ("date", "trade_date") if c in df.columns), None)
+        if date_col:
+            dcol = df[date_col].map(_norm_date)
+            s8, e8 = _norm_date(start), _norm_date(end)
+            df = df[(dcol >= s8) & (dcol <= e8)].reset_index(drop=True)
+        return df
+
+    def _filter_codes(self, df: pd.DataFrame, want: set) -> pd.DataFrame:
+        """codes 过滤（与 _fetch_export 逻辑一致）。"""
+        if len(df) == 0:
+            return df
+        code_col = next((c for c in ("ts_code", "code", "stock_code")
+                         if c in df.columns), None)
+        if code_col:
+            return df[df[code_col].astype(str).isin(want)].reset_index(drop=True)
+        return df
+
+    def _filter_nonstandard_codes(self, df: pd.DataFrame) -> pd.DataFrame:
+        """非标准代码过滤（剔除 TEST* 测试代码，与 _fetch_export 一致）。"""
+        if len(df) == 0:
+            return df
+        code_col = next((c for c in ("ts_code", "code") if c in df.columns), None)
+        if code_col is None:
+            return df
+        import re
+        std_re = re.compile(r"^\d{6}\.(SH|SZ|BJ)$")
+        mask = df[code_col].astype(str).map(lambda x: bool(std_re.match(x)))
+        n_filtered = (~mask).sum()
+        if n_filtered > 0:
+            df = df[mask].reset_index(drop=True)
+        return df
+
+    # ==================================================================
     # 线1：is_qfq 还原 raw —— raw_i = qfq_i × adj_latest_global / adj_i
     # ==================================================================
     @staticmethod
@@ -851,11 +1190,17 @@ class MCPAdapter(BaseSourceAdapter):
         return (str(table), str(freq)) in _QFQ_ADJFACTOR_TABLES
 
     def _restore_qfq_if_required(self, df: pd.DataFrame, table: str,
-                                 freq: str) -> Tuple[pd.DataFrame, Dict]:
+                                 freq: str,
+                                 adj_latest_map: Optional[Dict[str, float]] = None,
+                                 skip_sync: bool = False) -> Tuple[pd.DataFrame, Dict]:
         """Synchronize factors and restore raw only for explicit QFQ price tables.
 
         Export routing is intentionally irrelevant: non-price datasets can use
         export_dataset for completeness without touching the factor snapshot.
+
+        WP7-E3 阶段 2B 流式参数：
+        - adj_latest_map：预取的全局最新因子快照（两遍流程第二遍传入，跳过内部查询）。
+        - skip_sync：跳过 _sync_factor_snapshot（两遍流程第一遍已统一同步）。
         """
         if not self.enable_qfq_restore:
             return df, {
@@ -875,11 +1220,12 @@ class MCPAdapter(BaseSourceAdapter):
                 "restored_rows": 0,
                 "restore_skip_reason": "empty_df",
             }
-        if not self._sync_factor_snapshot(df, table, freq):
-            raise ValueError(
-                f"[MCPAdapter] {table}/{freq} factor snapshot synchronization failed; "
-                f"refusing qfq restore with a potentially stale anchor")
-        return self._restore_to_raw(df, table, freq)
+        if not skip_sync:
+            if not self._sync_factor_snapshot(df, table, freq):
+                raise ValueError(
+                    f"[MCPAdapter] {table}/{freq} factor snapshot synchronization failed; "
+                    f"refusing qfq restore with a potentially stale anchor")
+        return self._restore_to_raw(df, table, freq, adj_latest_map=adj_latest_map)
 
     def _get_adj_latest_global(self, codes, asset_type: str = "STOCK") -> Dict[str, float]:
         """取每个 code 的**全局最新** adj_factor（codex P0-① 的关键实现）。
@@ -1045,7 +1391,8 @@ class MCPAdapter(BaseSourceAdapter):
                        f"→ qfq_aux.db({'fund_adj' if asset_type == 'ETF' else 'adj_factor'})")
 
     def _restore_to_raw(self, df: pd.DataFrame, table: str,
-                        freq: str) -> Tuple[pd.DataFrame, Dict]:
+                        freq: str,
+                        adj_latest_map: Optional[Dict[str, float]] = None) -> Tuple[pd.DataFrame, Dict]:
         """把云端 qfq 价格列还原为 raw：raw_i = qfq_i × adj_latest_global / adj_i。
 
         - 只作用于 _RESTORE_TABLES 四张行情表的价格列（OHLC + pre_close）；
@@ -1137,8 +1484,12 @@ class MCPAdapter(BaseSourceAdapter):
         adj_i = pd.to_numeric(out["adj_factor"], errors="coerce")
         # 全部 code（含 is_qfq=False）都要查全局最新因子：旧基准前复权行必须用
         # 全局最新基准还原，否则直通会和新数据产生尺度断层。
-        latest_map = self._get_adj_latest_global(
-            bare.unique().tolist(), asset_type=asset_type)
+        # 流式两遍流程：第二遍传入预取快照（全量注入完成后），保证跨分片基准一致。
+        if adj_latest_map is not None:
+            latest_map = adj_latest_map
+        else:
+            latest_map = self._get_adj_latest_global(
+                bare.unique().tolist(), asset_type=asset_type)
         adj_latest = bare.map(latest_map)
 
         valid = adj_i.notna() & (adj_i > 0) & adj_latest.notna() & (adj_latest > 0)

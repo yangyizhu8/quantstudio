@@ -57,3 +57,44 @@ partial 语义只 UPDATE 共有区间，不 INSERT 新行）。决策：近 3 �
 - `config/profiles/mcp_only/qfq_aux_paths.json`
 - `scripts/generate_formal_manifest.py`
 - `tests/test_qfq_formal_canary_dry_run.py`（新增）
+
+---
+
+## 追加记录（2026-08-08 晚，阶段 1+2 全部完成，commit 待推送）
+
+### 阶段 1：bootstrap 链路全绿（7+1 bug + A1）
+
+新增 3 个修复（在已提交 301090b 的 5 个之上）：
+- **Bug 6 tick 精度契约**：fetch_none_front 出口 round(3 if ETF else 2)，与
+  aligner._round_fields 同契约——库内 2/3 位小数是项目价格契约而非精度不足；
+- **Bug 7 trade_time 时区**：tz_localize(Asia/Shanghai) 替代 unit=ms 误解析
+  （修复分钟 epoch-ms=0/覆盖缺 4727 行）；
+- **A1 postcheck skip**：cross_table_overlap 对缺 15:00 bar 的天跳过 + 审计
+  skipped_days/skipped_dates（用户批准，与 allow_partial_minute 同构，tol 不动）；
+- **A1 finalized_held**：require_bootstrap fail-closed 的 cycle 状态 failed →
+  finalized_held（数据写入成功但水位 held 的正确语义）。
+
+验证：STOCK 000001 + ETF 510050 冒烟 committed；10 证券扩展 completed=10/
+blocked=0/failed=0（bs_f2b4cd0c01，~2h14m）；skip 审计 3 天（云端缺口，
+A2 已修复）；67 回归 + 13 canary 全绿。
+
+### 阶段 2：分片化改造包（2A Raw Landing 复用 + 2B 流式分片）
+
+- **2A**：_export_batches grid_aligned（epoch 网格 365/10 天，尾部不截断 +
+  _norm_date 裁剪兜底）；export_cache 开关（仅 bootstrap 链路，daemon 默认
+  false）；_export_cache_manifest.json（shard_sizes 逐文件校验，失败回退直连）；
+- **2B**：fetch_table_streaming（通用入口，5 类行情大表流式两遍流程——第一遍
+  列投影聚合 adj_factor 全量注入 → 预取 adj_latest_map → 第二遍 skip_sync=True
+  逐片还原）；daemon _run_with_source_streaming 循环化（同事务语义 + 水位推进
+  时机不变 + 累计门禁）；
+- 测试：test_mcp_export_cache 7 + test_mcp_streaming 5 + 157 回归全绿；
+- 内存：流式 27.7MB vs 全量 237MB（143x），客户硬需求 ≤1GB 满足；
+- README 首次全量回填说明升级（1-2h + 流式 + 断点续传）。
+
+### 联动（跨仓库）
+
+- A2（trading-battle-back）：sync_to_cloud 水位越位修复 + 历史重采归零，
+  commit fb6c29eb（已推送）；
+- A3（trading-battle-back）：运维防漏加固 M1-M5，commit 56c4d864..f011400a
+  （已推送）；
+- 详见 docs/mcp_migration/wp7e3-*.md 任务书与执行计划。

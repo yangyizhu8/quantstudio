@@ -1434,7 +1434,10 @@ def run_postchecks(conn, *, asset_type: str, code: str,
             cont = mdf[_cont_mask(mdf["clock_min"], freq_c)]
             last_bar = cont.groupby("day").last()
             minute_days = {int(x) for x in mdf["day"].unique()}
+            # Determine the expected closing clock for this freq (e.g. 15:00 = 900 for 1min).
+            closing_clock = max(_cont_clock_set(freq_c))
             n_check, worst = 0, 0.0
+            skipped_days: List[int] = []
             for _, drow in daily_full.iterrows():
                 d = int(drow["time"])
                 if d not in minute_days:
@@ -1443,6 +1446,19 @@ def run_postchecks(conn, *, asset_type: str, code: str,
                     raise PostcheckFailed(
                         "cross_table_overlap",
                         f"freq={freq_c} day={d} 存在分钟行但无有效连续竞价 bar")
+                # Check whether this day's last continuous bar is the closing
+                # session bar (e.g. 15:00).  If not, the minutes data is
+                # truncated (missing closing-auction bar) — skip this day's
+                # cross-table check rather than BLOCK, because the last
+                # continuous-trading price naturally differs from the daily
+                # close (which includes closing auction).  Record in audit.
+                day_cont = cont[cont["day"] == d]
+                if len(day_cont) == 0:
+                    continue
+                day_last_clock = int(day_cont.iloc[-1]["clock_min"])
+                if day_last_clock < closing_clock:
+                    skipped_days.append(d)
+                    continue
                 dcf = drow["close_front"]
                 mcf = float(last_bar.loc[d, "close_front"])
                 if dcf is None or (isinstance(dcf, float) and math.isnan(dcf)):
@@ -1455,7 +1471,11 @@ def run_postchecks(conn, *, asset_type: str, code: str,
                         "cross_table_overlap",
                         f"freq={freq_c} day={d} 分钟末bar front={mcf} vs 日线 front="
                         f"{dcf} dev={dev:.2e} > {tol.tol_cross:.2e}")
-            cross[freq_c] = {"checked": n_check, "max_dev": worst}
+            cross[freq_c] = {
+                "checked": n_check, "max_dev": worst,
+                "skipped_days": len(skipped_days),
+                "skipped_dates": skipped_days[:20],  # cap for audit readability
+            }
         details["cross_table_overlap"] = cross
         # §3.4 R2：rebase 复用 fresh_staged 三项写后逐 bar 一致（不跑 ≤1 tick 理想校验）
         if staged_minutes:

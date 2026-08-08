@@ -609,6 +609,21 @@ class ResidentCollector:
                 return self._run_passthrough_task(
                     task, batch_id, source, started_at, adapter)
 
+            # === WP7-E3 阶段 2B：流式分片路径（仅 mcp 源 + 5 类行情大表）===
+            # 逐片 align→validate→write（累加计数器），循环外门禁一次 + 水位推进一次。
+            # 与普通路径语义等价：水位推进时机不变、门禁用累计计数、aligner/validator
+            # 调用方式不变。非 mcp 源或非行情大表 → 走原普通路径（零影响）。
+            from .sources.mcp_adapter import MCPAdapter
+            _use_streaming = (
+                source == "mcp"
+                and isinstance(adapter, MCPAdapter)
+                and table in MCPAdapter._STREAMING_TABLES
+                and hasattr(adapter, "fetch_table_streaming"))
+            if _use_streaming:
+                return self._run_with_source_streaming(
+                    task, source, batch_id, started_at, adapter,
+                    table, freq, codes, start, end)
+
             raw_df, metadata = adapter.fetch_table(table, start, end, freq=freq, codes=codes)
             rows_raw = len(raw_df)
             if rows_raw == 0:
@@ -764,6 +779,103 @@ class ResidentCollector:
                                     rows_raw, rows_aligned, rows_passed, rows_rejected,
                                     rows_written, "failed", str(e), started_at)
             return False  # 不推进水位，下周期重试
+
+    def _run_with_source_streaming(self, task: Dict, source: str, batch_id: str,
+                                    started_at: str, adapter,
+                                    table: str, freq: str, codes,
+                                    start: str, end: str) -> bool:
+        """WP7-E3 阶段 2B：行情大表流式分片路径（逐片 align→validate→write）。
+
+        与普通 _run_with_source 语义等价：
+        - 水位推进：全部片写完后一次（与普通路径一致，不改 A1 修复后语义）；
+        - 门禁：用累计 raw/rejected 计数一次判定（仿 per_trade_date 路径）；
+        - aligner/validator/writer：调用方式不变，只是每片调一次。
+        内存收益：fetch_table_streaming 逐片 yield 不 concat，峰值=单分片量级。
+        """
+        name = task.get("name", table)
+        rows_raw = rows_aligned = rows_passed = rows_rejected = rows_written = 0
+        write_new = write_updated = 0
+        last_passed_df = None
+        fixed_count = 0
+        try:
+            meta, shard_iter = adapter.fetch_table_streaming(
+                table, start, end, freq=freq, codes=codes)
+            for df_shard in shard_iter:
+                if len(df_shard) == 0:
+                    continue
+                rows_raw += len(df_shard)
+                # adj_factor 提取（与普通路径 636-652 一致）
+                adj_factor_df = None
+                if (source == "mcp" and table in ("stock_daily", "stock_minutes",
+                       "etf_daily", "etf_minutes") and "adj_factor" in df_shard.columns):
+                    from .sources.mcp_adapter import normalize_mcp_adj_factor_df
+                    asset_type = "ETF" if table.startswith("etf") else "STOCK"
+                    adj_factor_df = normalize_mcp_adj_factor_df(df_shard, freq, asset_type)
+                    tk = self.aligner.schemas[table].get("time_key", "time")
+                    rename_map = {}
+                    if "time" in adj_factor_df.columns and tk != "time":
+                        rename_map["time"] = tk
+                    if "code" not in adj_factor_df.columns and adj_factor_df.columns[0] != "code":
+                        rename_map[adj_factor_df.columns[0]] = "code"
+                    if rename_map:
+                        adj_factor_df = adj_factor_df.rename(columns=rename_map)
+                    # 从 raw_df 移除原始 adj_factor 列避免 merge 冲突（普通路径 659-664）
+                    if "adj_factor" in df_shard.columns:
+                        df_shard = df_shard.drop(columns=["adj_factor"])
+
+                std_df, align_meta = self.aligner.align(
+                    df_shard, table, source, adj_factor_df=adj_factor_df, freq=freq)
+                rows_aligned += len(std_df)
+                res = self.validator.validate(std_df, table, batch_id, source, expected_freq=freq)
+                rows_passed += len(res.passed_df)
+                rows_rejected += len(res.rejected_rows)
+                fixed_count += getattr(res, "fixed_count", 0) or 0
+                if len(res.passed_df) > 0:
+                    wr = self._stamp_and_write(res, table, batch_id, source, task=task)
+                    rows_written += wr
+                    write_new += getattr(wr, "new", 0)
+                    write_updated += getattr(wr, "updated", 0)
+                    last_passed_df = res.passed_df
+
+            if rows_raw == 0:
+                logger.info(f"[{batch_id}] no new data (streaming), skip")
+                self.batch_audit.record(batch_id, name, source, table, freq,
+                                        0, 0, 0, 0, 0, "empty", None, started_at)
+                return True
+
+            # 累计门禁一次判定
+            accepted, reject_rate, threshold = self._failure_gate(
+                task, rows_rejected, rows_raw, source=source, is_reject=True)
+            if not accepted or (rows_raw > 0 and rows_passed == 0):
+                raise RuntimeError(
+                    f"校验拒绝率超限或无可入库数据(streaming): rejected={rows_rejected}/{rows_raw} "
+                    f"rate={reject_rate:.6%}, threshold={threshold:.6%}")
+
+            # 水位推进（全部片写完后一次）
+            new_watermark = None
+            if task.get("dataset_kind") == "snapshot":
+                new_watermark = self._snapshot_watermark(end)
+            elif last_passed_df is not None:
+                new_watermark = self._max_date(last_passed_df, table)
+            if new_watermark:
+                self._advance_or_defer_watermark(source, table, freq, new_watermark, batch_id)
+
+            logger.info(f"[{batch_id}] ✅[streaming] raw={rows_raw} aligned={rows_aligned} "
+                        f"passed={rows_passed} rejected={rows_rejected} written={rows_written} "
+                        f"(new {write_new} + upd {write_updated}) watermark→{new_watermark}")
+            self.batch_audit.record(batch_id, name, source, table, freq,
+                                    rows_raw, rows_aligned, rows_passed, rows_rejected,
+                                    rows_written, "success", None, started_at,
+                                    rows_new=write_new, rows_updated=write_updated,
+                                    rows_fixed=fixed_count)
+            return True
+
+        except Exception as e:
+            logger.error(f"[{batch_id}] ❌ FAILED[streaming]: {e}", exc_info=True)
+            self.batch_audit.record(batch_id, name, source, table, freq,
+                                    rows_raw, rows_aligned, rows_passed, rows_rejected,
+                                    rows_written, "failed", str(e), started_at)
+            return False
 
     def _run_passthrough_task(self, task: Dict, batch_id: str, source: str,
                               started_at: str, adapter) -> bool:

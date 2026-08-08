@@ -83,7 +83,7 @@ def test_qfq_table_syncs_then_restores(monkeypatch):
         calls.append(("sync", table, freq, len(df)))
         return True
 
-    def restore(df, table, freq):
+    def restore(df, table, freq, **kwargs):
         calls.append(("restore", table, freq, len(df)))
         return df, {"is_qfq_restored": True, "restored_rows": len(df)}
 

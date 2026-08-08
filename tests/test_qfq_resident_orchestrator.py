@@ -212,8 +212,11 @@ def test_require_bootstrap_fail_closed(tmpdir_path):
         "SELECT status FROM qfq_watermark_intent WHERE cycle_id=?", [cid]
     ).fetchone()[0] == "pending"
     assert conn.execute("SELECT COUNT(*) FROM source_watermark").fetchone()[0] == 0
+    # Cycle status is finalized_held (not failed): data collection (execute_task)
+    # runs before run_post_ingest, so data may already be written; the gate only
+    # blocks watermark advancement. finalized_held = data OK, watermark held.
     assert conn.execute(
-        "SELECT status FROM qfq_cycle_run WHERE cycle_id=?", [cid]).fetchone()[0] == "failed"
+        "SELECT status FROM qfq_cycle_run WHERE cycle_id=?", [cid]).fetchone()[0] == "finalized_held"
     conn.close()
 
 
