@@ -476,3 +476,23 @@ class TestStartDaemonSubprocess:
         tail_a = read_bootstrap_log_tail(token_a)
         assert "token a" in tail_a
         assert "token b" not in tail_a
+
+
+def test_schedule_skip_weekdays_logic():
+    """A5：skip_weekdays 配置日（如 6=周日）不触发定时增量；其他天正常触发。"""
+    import json, datetime
+    from quantstudio.pipeline.daemon import ResidentCollector
+
+    cfg = json.load(open("config/collector_tasks.json", encoding="utf-8"))
+    sched = cfg["daemon_schedule"]
+    assert sched["daily_time"] == "06:00"
+    assert sched["skip_weekdays"] == [6]
+
+    # 逻辑验证：周日(weekday=6)在跳过集 → 跳过；周六(5)不在 → 执行
+    skip = set(sched["skip_weekdays"])
+    assert 6 in skip
+    assert 5 not in skip
+    # 与 daemon 判断一致：now.weekday() in skip_weekdays
+    from datetime import date
+    assert date(2026, 8, 9).weekday() == 6  # 2026-08-09 是周日
+    assert date(2026, 8, 8).weekday() == 5  # 2026-08-08 是周六

@@ -1569,8 +1569,11 @@ class ResidentCollector:
         sched_cfg = self.tasks_cfg.get("daemon_schedule", {})
         daily_time = sched_cfg.get("daily_time", "17:00")
         check_interval = sched_cfg.get("check_interval_sec", 300)
+        # A5 调度链：skip_weekdays 配置跳过日（如 [6]=周日，避免与云端全量推送竞态）
+        skip_weekdays = set(sched_cfg.get("skip_weekdays", []))
         logger.info(f"[Daemon] 启动。增量任务每天 {daily_time} 自动执行，"
-                    f"检查间隔 {check_interval}s。full_range 任务需手动触发。")
+                    f"检查间隔 {check_interval}s，跳过星期 {sorted(skip_weekdays) or '无'}。"
+                    f"full_range 任务需手动触发。")
 
         with lock:
             last_run_date = ""  # 记录上次自动执行的日期（防止同一天重复）
@@ -1580,10 +1583,16 @@ class ResidentCollector:
                 now_hm = now.strftime("%H:%M")
                 # 到达 daily_time 且今天还没执行过 → 执行所有 incremental 任务
                 if now_hm >= daily_time and last_run_date != today_str:
-                    logger.info(f"[Daemon] === 每日定时执行 {daily_time} 开始（{today_str}）===")
-                    self._run_incremental_cycle()
-                    last_run_date = today_str
-                    logger.info(f"[Daemon] === 每日定时执行完成 ===")
+                    if now.weekday() in skip_weekdays:
+                        # 跳过日（如周日）：记录防重复触发，不执行
+                        logger.info(f"[Daemon] {today_str} 为跳过日（skip_weekdays="
+                                    f"{sorted(skip_weekdays)}），跳过定时增量")
+                        last_run_date = today_str
+                    else:
+                        logger.info(f"[Daemon] === 每日定时执行 {daily_time} 开始（{today_str}）===")
+                        self._run_incremental_cycle()
+                        last_run_date = today_str
+                        logger.info(f"[Daemon] === 每日定时执行完成 ===")
                 # 健康检查
                 self._health_check()
                 # 睡眠等待下次检查

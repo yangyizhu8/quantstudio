@@ -1,7 +1,8 @@
 {
   "daemon_schedule": {
     "daily_time": "06:00",
-    "check_interval_sec": 300
+    "check_interval_sec": 300,
+    "skip_weekdays": [6]
   },
   "tasks": [
     {
