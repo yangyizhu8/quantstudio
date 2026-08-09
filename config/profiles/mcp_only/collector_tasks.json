@@ -1,7 +1,7 @@
 {
   "_note": "mcp_only 全量配置：19张映射表(类别A) + 67张passthrough同名表(类别B, 53小表enabled + 14大表disabled)。不改默认 config/。",
   "daemon_schedule": {
-    "daily_time": "07:00",
+    "daily_time": "06:00",
     "check_interval_sec": 300
   },
   "tasks": [
