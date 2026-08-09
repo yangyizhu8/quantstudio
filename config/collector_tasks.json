@@ -1,6 +1,6 @@
 {
   "daemon_schedule": {
-    "daily_time": "21:00",
+    "daily_time": "07:00",
     "check_interval_sec": 300
   },
   "tasks": [
