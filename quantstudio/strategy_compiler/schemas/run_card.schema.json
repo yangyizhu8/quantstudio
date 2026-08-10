@@ -10,7 +10,7 @@
     "strategy_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$"},
     "build_id": {"type": "string", "minLength": 1},
     "created_at": {"type": "string", "format": "date-time"},
-    "stage": {"enum": ["SPEC_ONLY", "STATIC_VALIDATED", "SMOKE_EXECUTED", "FIDELITY_COMPARED"]},
+    "stage": {"enum": ["SOURCE_IMPORTED", "SPEC_ONLY", "STATIC_VALIDATED", "SMOKE_EXECUTED", "FIDELITY_COMPARED"]},
     "status": {"enum": ["PASS", "PARTIAL", "BLOCKED", "FAILED"]},
     "contract_versions": {"$ref": "#/definitions/contractVersions"},
     "profile": {

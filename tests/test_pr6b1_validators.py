@@ -124,6 +124,33 @@ class TestValidatePtradePortability:
         assert not ok
         assert _has_block(violations, "PORTABILITY-FILE-DB-ACCESS")
 
+    def test_set_backtest_blocked(self, case1_ir):
+        """T3：本地自创 set_backtest 必须 BLOCK（上次真实平台 NameError 根因）。
+
+        旧 6 项 DENYLIST 之外的本地扩展 API 现由 portability_rules.denylist()
+        并集覆盖（T1 盘点 REMOVE 分类）。"""
+        code = render_ptrade(case1_ir)
+        code = code.replace(
+            "def handle_data",
+            "def _poison():\n    set_backtest(True)\n\ndef handle_data",
+            1,
+        )
+        ok, violations, _ = validate_ptrade_portability(code, case1_ir)
+        assert not ok, "set_backtest in PTrade must BLOCK (T3)"
+        assert _has_block(violations, "PORTABILITY-LOCAL-API")
+
+    def test_load_research_signals_blocked(self, case1_ir):
+        """T3：外部数据源 load_research_signals 必须 BLOCK（不在 1:1 承诺内）。"""
+        code = render_ptrade(case1_ir)
+        code = code.replace(
+            "def handle_data",
+            "def _poison():\n    rows = load_research_signals('x.csv')\n\ndef handle_data",
+            1,
+        )
+        ok, violations, _ = validate_ptrade_portability(code, case1_ir)
+        assert not ok
+        assert _has_block(violations, "PORTABILITY-LOCAL-API")
+
 
 # ---------------------------------------------------------------------------
 # compare_strategy_variants

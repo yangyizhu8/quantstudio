@@ -1,0 +1,43 @@
+{
+  "type": "object",
+  "required": ["report_version", "source_path", "strategy_id", "created_at",
+               "actions", "coverage", "warnings", "errors", "status"],
+  "properties": {
+    "report_version": {"const": "1.0"},
+    "source_path": {"type": "string"},
+    "strategy_id": {"type": "string"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["PASS", "BLOCKED", "PARTIAL"]},
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["action_type", "rule_id", "api_name", "line", "severity", "message"],
+        "properties": {
+          "action_type": {"enum": ["REMOVE", "DEGRADE", "REWRITE", "SHIM", "NORMALIZE", "INJECT", "KEEP_COMMENT"]},
+          "rule_id": {"type": "string"},
+          "api_name": {"type": "string"},
+          "line": {"type": "integer", "minimum": 1},
+          "severity": {"enum": ["BLOCK", "WARN", "INFO"]},
+          "old_text": {"type": "string"},
+          "new_text": {"type": "string"},
+          "message": {"type": "string"}
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["api_calls_seen", "denylist_hits", "normalized_params", "injected_helpers"],
+      "properties": {
+        "api_calls_seen": {"type": "integer"},
+        "denylist_hits": {"type": "integer"},
+        "normalized_params": {"type": "integer"},
+        "injected_helpers": {"type": "array", "items": {"type": "string"}},
+        "fq_warn_kept": {"type": "array", "items": {"type": "string"}},
+        "aliases_seen": {"type": "object"}
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "errors": {"type": "array", "items": {"type": "string"}}
+  }
+}

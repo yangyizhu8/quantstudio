@@ -56,6 +56,7 @@ from .validators.validate_ptrade_portability import validate_ptrade_portability
 # Stages (run_card.schema.json `stage` enum subset for PR6b-1; FIDELITY_COMPARED
 # is PR6b-2/PR7 scope — never produced here).
 _STAGE_SPEC_ONLY = "SPEC_ONLY"
+_STAGE_SOURCE_IMPORTED = "SOURCE_IMPORTED"  # T4: source entry 阶段
 _STAGE_STATIC_VALIDATED = "STATIC_VALIDATED"
 _STAGE_SMOKE_EXECUTED = "SMOKE_EXECUTED"
 
@@ -295,6 +296,194 @@ def orchestrate(
     return run_card
 
 
+def orchestrate_source(
+    source_path: str | Path,
+    *,
+    start: str | None = None,
+    end: str | None = None,
+    out_dir: Path | None = None,
+    run_smoke: bool = True,
+    strict: bool = True,
+) -> dict[str, Any]:
+    """Source entry 全流程：源码 → 转换 → 门禁 → round-trip 冒烟 → run_card（T4）。
+
+    与 orchestrate(spec) 平行：同样的校验器与单一 writer 原则（run_card 只由
+    本函数写）。stage 序列：SOURCE_IMPORTED → STATIC_VALIDATED → SMOKE_EXECUTED。
+    run_card_version = "1.1"（stage 枚举新增 SOURCE_IMPORTED，1.0 消费者不兼容）。
+
+    Args:
+        source_path: 本地策略 .py 路径（quantstudio/backtest/strategies/*.py）。
+        start, end: round-trip 冒烟回测窗口（YYYY-MM-DD）。
+        out_dir: 输出目录（默认 output/ptrade_export/<strategy_id>）。
+        run_smoke: False 时跳过冒烟（stage 停在 STATIC_VALIDATED）。
+        strict: True 时 BLOCK 动作即失败（一期固定 True）。
+
+    Returns:
+        run_card dict（已写盘）。
+
+    Raises:
+        GoldenProtectionError: strategy_id 命中 golden-protected 清单。
+        FileNotFoundError: source_path 不存在或不是 .py。
+        ContractValidationError: source_import_report 校验失败（BLOCK actions）。
+    """
+    from .source_import import convert_source
+
+    path = Path(source_path)
+    if not path.is_file() or path.suffix != ".py":
+        raise FileNotFoundError(f"source_path 必须是存在的 .py 文件: {source_path}")
+
+    created_at = datetime.datetime.now().astimezone().isoformat()
+    run_id = f"{path.stem}-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+    # 1) 转换
+    result = convert_source(path)
+    strategy_id = path.stem.replace("_quantstudio", "")
+    build_id = hashlib.sha256(result.converted_code.encode("utf-8")).hexdigest()[:12]
+
+    # Golden protection：写盘前检查（复用 render 的清单）
+    from .render import _assert_not_protected
+    _assert_not_protected(strategy_id)
+
+    # 输出目录：--out 视为父目录，内部拼 strategy_id（与 build_strategy_package 语义一致）
+    base_out = Path(out_dir) if out_dir else Path("output/ptrade_export")
+    out_dir = base_out / strategy_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    artifacts: list[dict[str, Any]] = []
+    known_limitations: list[str] = []
+    warnings_all = list(result.warnings)
+    validation: dict[str, str] = {
+        "schema": _CHECK_NOT_RUN, "timing": _CHECK_NOT_RUN,
+        "hard_filters": _CHECK_NOT_RUN, "api_portability": _CHECK_NOT_RUN,
+        "variant_consistency": _CHECK_NOT_RUN, "source_import": _CHECK_NOT_RUN,
+    }
+    stage = _STAGE_SOURCE_IMPORTED
+
+    # 2) 转换失败（BLOCK）→ 写最小 run_card，不产出半成品
+    if result.errors:
+        validation["source_import"] = _CHECK_BLOCKED
+        known_limitations.extend(result.errors)
+        report = _assemble_source_report(path, strategy_id, created_at, result, "BLOCKED")
+        run_card = _build_run_card(
+            run_id=run_id, strategy_id=strategy_id, build_id=build_id,
+            created_at=created_at, stage=stage, status="BLOCKED",
+            spec={"strategy_id": strategy_id, "contract_versions": {}}, ir=None,
+            profile_id="daily-bar-v1", ptrade_profile_id="ptrade-default",
+            execution_status="BLOCKED", artifacts=artifacts, validation=validation,
+            smoke_result=None, known_limitations=known_limitations,
+            warnings=warnings_all, start=start, end=end,
+        )
+        _write_run_card(run_card, out_dir)
+        return run_card
+
+    # 3) 落盘转换产物 + 报告
+    pt_path = out_dir / f"{strategy_id}_ptrade.py"
+    pt_path.write_text(result.converted_code, encoding="utf-8")
+    artifacts.append({"name": pt_path.name, "path": str(pt_path),
+                      "sha256": _sha256_file(pt_path)})
+
+    report = _assemble_source_report(path, strategy_id, created_at, result, "PASS")
+    from .contracts import ContractValidationError, validate_source_import_report
+    try:
+        validate_source_import_report(report)
+        validation["source_import"] = _CHECK_PASS
+    except ContractValidationError as e:
+        validation["source_import"] = _CHECK_BLOCKED
+        known_limitations.append(f"source_import_report 校验失败: {e}")
+    report_path = out_dir / "source_import_report.json"
+    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    artifacts.append({"name": "source_import_report.json", "path": str(report_path),
+                      "sha256": _sha256_file(report_path)})
+
+    # 4) 静态校验（复用现有校验器）
+    from .validators.validate_local_strategy import validate_local_strategy
+    from .validators.validate_ptrade_portability import validate_ptrade_portability
+    ok_qs, v_qs, w_qs = validate_local_strategy(
+        None, None, result.converted_code, "ptrade-default")
+    ok_port, v_port, w_port = validate_ptrade_portability(
+        result.converted_code, None, None)
+    port_ok = ok_qs and ok_port
+    validation["api_portability"] = _check_status_from_ok(port_ok)
+    warnings_all.extend([*w_qs, *w_port])
+    known_limitations.extend(_collect_violation_strs([*v_qs, *v_port]))
+    stage = _STAGE_STATIC_VALIDATED
+
+    # 5) capability + round-trip 冒烟
+    smoke_result: dict[str, Any] | None = None
+    execution_status_for_card = "BLOCKED"
+    if port_ok and run_smoke:
+        try:
+            capability_report = _inspect_capabilities(strategy_id, "ptrade-default")
+        except Exception as e:
+            capability_report = {"overall_execution_status": "BLOCKED",
+                                 "blockers": [f"capability inspection failed: {e}"]}
+            warnings_all.append(f"capability inspection error: {e}")
+        execution_status_for_card = capability_report.get("overall_execution_status", "BLOCKED")
+        cap_path = out_dir / "capability_report.json"
+        cap_path.write_text(json.dumps(capability_report, indent=2, ensure_ascii=False),
+                            encoding="utf-8")
+        artifacts.append({"name": "capability_report.json", "path": str(cap_path),
+                          "sha256": _sha256_file(cap_path)})
+        smoke_status, smoke_result, w_smoke = run_smoke_backtest(
+            pt_path, capability_report, start=start, end=end, profile_id="daily-bar-v1")
+        warnings_all.extend(w_smoke)
+        stage = _STAGE_SMOKE_EXECUTED
+    elif not port_ok:
+        known_limitations.append("smoke backtest skipped: static validation BLOCKED")
+
+    # 6) status 汇总（只检查实际运行的校验项；NOT_RUN 不计入失败）
+    checks_run = {k: v for k, v in validation.items() if v != _CHECK_NOT_RUN}
+    all_checks_pass = all(v == _CHECK_PASS for v in checks_run.values())
+    if not all_checks_pass:
+        overall_status = "BLOCKED"
+    elif smoke_result is None:
+        overall_status = "PARTIAL"
+    elif smoke_result.get("status") == "PASS":
+        overall_status = "PASS"
+    elif smoke_result.get("status") == "BLOCKED":
+        overall_status = "BLOCKED"
+    else:
+        overall_status = "FAILED"
+
+    run_card = _build_run_card(
+        run_id=run_id, strategy_id=strategy_id, build_id=build_id,
+        created_at=created_at, stage=stage, status=overall_status,
+        spec={"strategy_id": strategy_id, "contract_versions": {}}, ir=None,
+        profile_id="daily-bar-v1", ptrade_profile_id="ptrade-default",
+        execution_status=execution_status_for_card, artifacts=artifacts,
+        validation=validation, smoke_result=smoke_result,
+        known_limitations=known_limitations, warnings=warnings_all,
+        start=start, end=end,
+    )
+    _write_run_card(run_card, out_dir)
+    return run_card
+
+
+def _assemble_source_report(
+    source_path: Path, strategy_id: str, created_at: str,
+    result, status: str,
+) -> dict[str, Any]:
+    """把 SourceImportResult 组装为 source_import_report.schema.json 契约 dict。"""
+    return {
+        "report_version": "1.0",
+        "source_path": str(source_path),
+        "strategy_id": strategy_id,
+        "created_at": created_at,
+        "status": status,
+        "actions": [
+            {
+                "action_type": a.action_type, "rule_id": a.rule_id,
+                "api_name": a.api_name, "line": a.line, "severity": a.severity,
+                "old_text": a.old_text, "new_text": a.new_text, "message": a.message,
+            }
+            for a in result.actions
+        ],
+        "coverage": result.coverage,
+        "warnings": result.warnings,
+        "errors": result.errors,
+    }
+
+
 def _inspect_capabilities(strategy_id: str, profile_id: str) -> dict[str, Any]:
     """Run inspect_capabilities (Skill script) in-process to get capability_report.
 
@@ -336,7 +525,7 @@ def _build_run_card(
 
     import quantstudio
     return {
-        "run_card_version": "1.0",
+        "run_card_version": "1.1",
         "run_id": run_id,
         "strategy_id": strategy_id,
         "build_id": build_id,

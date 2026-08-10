@@ -234,6 +234,7 @@ class SourceConverter:
         self.actions: list[ConversionAction] = []
         self.warnings: list[str] = []
         self.errors: list[str] = []
+        self._set_backtest_body: Optional[str] = None  # T5: set_backtest 函数体（供调用点内联）
         self.coverage: dict[str, Any] = {
             "api_calls_seen": 0, "denylist_hits": 0, "normalized_params": 0,
             "injected_helpers": [], "fq_warn_kept": [], "aliases_seen": {},
@@ -325,15 +326,44 @@ class SourceConverter:
                 name = node.name
                 if name == "set_backtest":
                     sl, el = node.lineno, node.end_lineno
-                    start = self._line_start_abs(sl)
-                    end = self._line_end_abs(el)
-                    self._replacements.append((sl, 0, el, len(self._lines[el - 1].rstrip("\r\n")),
-                                               ""))
-                    self.actions.append(ConversionAction(
-                        action_type="REMOVE", rule_id="DENY-SET_BACKTEST",
-                        api_name="set_backtest", line=sl, severity="INFO",
-                        old_text=f"def set_backtest() 定义（行 {sl}-{el}）",
-                        message="本地自创 API 定义已整体删除（真实 PTrade 无此函数）"))
+                    # T5 修复：set_backtest 函数体可能含真实配置调用（set_limit_mode/
+                    # set_commission/set_slippage 等）。模块级提升时机过早（引擎未 attach
+                    # 时 set_commission 被忽略，实测默认 0.00035 未改为 0.00015）。
+                    # 正确做法：函数体存入 self._set_backtest_body，由调用点内联
+                    # （保持原 initialize 执行时机）；函数定义删除。
+                    body_src = ""
+                    for stmt in node.body:
+                        seg = ast.get_source_segment(self._src, stmt) or ""
+                        if seg:
+                            body_src += "\n" + seg
+                    stripped_body = body_src.strip()
+                    if stripped_body and stripped_body != "pass":
+                        lines = stripped_body.splitlines()
+                        indent = len(lines[0]) - len(lines[0].lstrip())
+                        self._set_backtest_body = "\n".join(
+                            (ln[indent:] if len(ln) >= indent else ln.lstrip())
+                            for ln in lines)
+                        self.actions.append(ConversionAction(
+                            action_type="REWRITE", rule_id="DENY-SET_BACKTEST-LIFT",
+                            api_name="set_backtest", line=sl, severity="WARN",
+                            old_text=f"def set_backtest() 定义（行 {sl}-{el}）",
+                            new_text=self._set_backtest_body[:80],
+                            message="set_backtest 定义已删除，函数体配置调用将由调用点内联"
+                                    "（保留 set_limit_mode/set_commission 语义与执行时机）"))
+                    self._replacements.append(
+                        (sl, 0, el, len(self._lines[el - 1].rstrip("\r\n")), ""))
+                    if stripped_body and stripped_body != "pass":
+                        self.actions.append(ConversionAction(
+                            action_type="REMOVE", rule_id="DENY-SET_BACKTEST",
+                            api_name="set_backtest", line=sl, severity="INFO",
+                            old_text=f"def set_backtest() 定义（行 {sl}-{el}）",
+                            message="本地自创 API 定义已删除（真实 PTrade 无此函数）"))
+                    elif stripped_body == "pass":
+                        self.actions.append(ConversionAction(
+                            action_type="REMOVE", rule_id="DENY-SET_BACKTEST",
+                            api_name="set_backtest", line=sl, severity="INFO",
+                            old_text=f"def set_backtest() 定义（行 {sl}-{el}）",
+                            message="本地自创 API 定义已整体删除（空函数体，真实 PTrade 无此函数）"))
                 elif name not in _LIFECYCLE:
                     # 策略自定义函数：保留（函数体内部调用在 _scan_calls 处理）
                     pass
@@ -405,6 +435,38 @@ class SourceConverter:
     # ------------------------------------------------------------------
     def _remove_call(self, node: ast.Call, name: str) -> None:
         line = _line_of(node)
+        # T5 修复：set_backtest 调用点内联函数体（配置调用保留原执行时机）。
+        # 原语义：initialize 内 `if not is_trade(): set_backtest()` 恒执行 → 配置生效。
+        if name == "set_backtest" and self._set_backtest_body:
+            replacement = ""
+            if _is_bare_expr_stmt(node, self._tree):
+                # 档 1：裸语句 → 内联配置（保持调用点缩进）
+                raw = self._lines[line - 1]
+                indent = raw[: len(raw) - len(raw.lstrip())]
+                inlined = "\n".join(indent + ln for ln in self._set_backtest_body.splitlines())
+                replacement = inlined + "\n"
+                self.actions.append(ConversionAction(
+                    action_type="REWRITE", rule_id="DENY-SET_BACKTEST-INLINE",
+                    api_name="set_backtest", line=line, severity="WARN",
+                    old_text=f"{name}(...) 调用",
+                    new_text=inlined[:80],
+                    message="set_backtest() 调用已内联为配置调用"
+                            "（set_limit_mode/set_commission 保留原执行时机）"))
+            else:
+                # 档 2：内嵌表达式 → None（配置调用丢弃，记 WARN）
+                self._replacements.append((
+                    node.lineno, node.col_offset, node.end_lineno, node.end_col_offset,
+                    "None"))
+                self.actions.append(ConversionAction(
+                    action_type="REWRITE", rule_id="DENY-SET_BACKTEST-INLINE",
+                    api_name="set_backtest", line=line, severity="WARN",
+                    old_text=f"{name}(...)",
+                    new_text="None",
+                    message="set_backtest() 内嵌于表达式，改写为 None；"
+                            "其函数体内的配置调用未保留（请人工核对）"))
+            self._replacements.append(
+                (line, 0, line, len(self._lines[line - 1].rstrip("\r\n")), replacement))
+            return
         if _is_bare_expr_stmt(node, self._tree):
             # 档 1：裸表达式语句 → 删整行（含缩进）；若父复合语句体仅此一条，
             # 替换为 pass 保缩进（防 "if x:\n  set_backtest()" 删除后空块语法错误）
@@ -543,14 +605,19 @@ class SourceConverter:
             return f'''{INJECTED_MARKER}
 def get_history_batch(security_list, count, unit='1d', fields=None, fq='pre',
                       include=False, is_dict=True, **kwargs):
-    """SHIM: 本地批量 API → 循环单调用（PTrade 兼容；返回 dict[code→DataFrame]）"""
+    """SHIM: 本地批量 API → 循环单调用（PTrade 兼容；返回 code→DataFrame 字典）。
+
+    与原生 B1 实现语义一致：is_dict=True 的 get_history 返回 code→DataFrame 字典，
+    此处解包出 DataFrame 再按 code 组装（T5 修复：禁止把整个 CodeDict 存入 result）。"""
     result = {{}}
     for code in security_list:
         try:
-            df = get_history(count, unit, field=fields, security_list=code,
-                             fq=fq, include=include, is_dict=True)
-            if df is not None:
-                result[code] = df
+            df_dict = get_history(security=[code], count=count, unit=unit,
+                                  fields=fields, fq=fq, include=include,
+                                  is_dict=True)
+            if isinstance(df_dict, dict):
+                for k, df in df_dict.items():
+                    result[k] = df
         except Exception as exc:
             log.warning('get_history_batch skip %s: %s' % (code, exc))
     return result

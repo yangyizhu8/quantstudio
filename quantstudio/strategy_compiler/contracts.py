@@ -112,6 +112,21 @@ def validate_strategy_spec(payload: Mapping[str, Any]) -> None:
                 )
 
 
+def validate_source_import_report(payload: Mapping[str, Any]) -> None:
+    """Validate Source Import Report v1 (fail-closed on BLOCK actions/errors).
+
+    T4: source entry 的转换报告契约（schemas/source_import_report.schema.json）。
+    """
+    _validate_schema("source_import_report.schema.json", payload)
+    if payload.get("errors") or any(
+        a["severity"] == "BLOCK" for a in payload.get("actions", [])
+    ):
+        raise ContractValidationError(
+            "source import report contains BLOCK-level actions/errors; "
+            "conversion must not be treated as PASS"
+        )
+
+
 def validate_capability_report(payload: Mapping[str, Any]) -> None:
     """Validate capability dimensions and forbid false READY claims."""
     _validate_schema("capability_report.schema.json", payload)

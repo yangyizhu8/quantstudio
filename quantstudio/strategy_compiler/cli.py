@@ -97,6 +97,40 @@ def cmd_package(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_import(args: argparse.Namespace) -> int:
+    """`import <strategy.py> [--out <dir>] [--start <date>] [--end <date>] [--no-smoke]`."""
+    source_path = Path(args.strategy)
+    if not source_path.exists():
+        print(f"ERROR: strategy file not found: {source_path}", file=sys.stderr)
+        return 2
+    if source_path.suffix != ".py":
+        print(f"ERROR: strategy file must be .py: {source_path}", file=sys.stderr)
+        return 2
+    from .orchestrator import orchestrate_source
+    try:
+        run_card = orchestrate_source(
+            source_path,
+            start=args.start, end=args.end,
+            out_dir=Path(args.out) if args.out else None,
+            run_smoke=not args.no_smoke,
+            strict=True,
+        )
+    except GoldenProtectionError as e:
+        print(f"ERROR: golden protection — {e}", file=sys.stderr)
+        return 3
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
+    base_out = Path(args.out) if args.out else Path("output/ptrade_export")
+    out_dir = base_out / run_card["strategy_id"]
+    print(f"run_card written: {out_dir / 'run_card.json'}")
+    print(f"  stage={run_card['stage']} status={run_card['status']}")
+    print(f"  validation={run_card['validation']}")
+    if run_card.get("smoke_backtest"):
+        print(f"  smoke={run_card['smoke_backtest']['status']}")
+    return 0 if run_card["status"] == "PASS" else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="qs-compile",
@@ -111,6 +145,14 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Directory with G2 frozen reference artifacts (4 files)")
     p_pkg.add_argument("--package-version", default="0.3.2-mvp", help="Package semver (default 0.3.2-mvp)")
     p_pkg.set_defaults(func=cmd_package)
+
+    p_imp = sub.add_parser("import", help="Convert a local strategy .py to PTrade (source entry)")
+    p_imp.add_argument("strategy", help="Path to local strategy .py (quantstudio/backtest/strategies/*.py)")
+    p_imp.add_argument("--out", default=None, help="Output directory (default: output/ptrade_export/<strategy_id>)")
+    p_imp.add_argument("--start", default=None, help="Round-trip smoke backtest start (YYYY-MM-DD)")
+    p_imp.add_argument("--end", default=None, help="Round-trip smoke backtest end (YYYY-MM-DD)")
+    p_imp.add_argument("--no-smoke", action="store_true", help="Skip the round-trip smoke backtest step")
+    p_imp.set_defaults(func=cmd_import)
     return parser
 
 

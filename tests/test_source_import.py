@@ -71,6 +71,32 @@ def handle_data(context, data):
     assert removed and removed[0].action_type == "REMOVE"
 
 
+def test_02b_set_backtest_config_lifted():
+    """T5 修复：set_backtest 函数体内的配置调用必须提升到模块级（不得丢失）。"""
+    code = '''
+def initialize(context):
+    g.security = '600570.SS'
+    if not is_trade():
+        set_backtest()  # 设置回测条件
+
+def set_backtest():
+    set_limit_mode('UNLIMITED')
+    set_commission(commission_ratio=0.00015, min_commission=5.0)
+
+def handle_data(context, data):
+    pass
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "def set_backtest" not in out
+    # 配置调用被提升到模块级（LIFT 动作）
+    assert "set_limit_mode('UNLIMITED')" in out
+    assert "set_commission(commission_ratio=0.00015, min_commission=5.0)" in out
+    lifted = [a for a in result.actions if a.rule_id == "DENY-SET_BACKTEST-LIFT"]
+    assert lifted, "应有 LIFT 动作"
+
+
 # ---------------------------------------------------------------------------
 # 测试 3：小市值策略ptrade.py（set_backtest 调用 + BOM）
 # ---------------------------------------------------------------------------
@@ -82,7 +108,10 @@ def test_03_bom_and_set_backtest_call():
     assert result.errors == [], result.errors
     code = result.converted_code
     assert "def set_backtest" not in code
-    assert "set_backtest(" not in code
+    # 只查代码正文（头部注释可含 API 名说明）
+    body = code[code.find("def initialize"):]
+    assert "set_backtest(" not in body
+    assert "set_limit_mode" in body  # 配置调用已内联（保留执行时机）
     ast.parse(code)
 
 
@@ -240,7 +269,9 @@ def handle_data(context, data):
     assert result.errors == [], result.errors
     out = result.converted_code
     assert "def get_history_batch" in out
-    assert "get_history(count, unit, field=fields" in out  # count-first 循环单调用
+    # T5 修复：shim 必须解包 is_dict=True 的返回（{code: DataFrame}），禁止整个 CodeDict 入 result
+    assert "df_dict" in out
+    assert "for k, df in df_dict.items()" in out
     assert any(a.action_type == "SHIM" for a in result.actions)
 
 

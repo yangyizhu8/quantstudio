@@ -22,21 +22,17 @@ import ast
 from typing import Any
 
 from ..ir_nodes import StrategyIR
+from ..portability_rules import DENY_SHIM, denylist
 from .scan_lookahead import Violation
 
-# PTrade-forbidden APIs (ptrade_import.py "第3批" + "第5批" local extensions).
-# These ARE in ptrade_import.py's injected set (so validate_local_strategy
-# whitelists them), but PTrade's public Profile forbids them.
-_PTRADE_DENYLIST: frozenset[str] = frozenset({
-    # Batch APIs (B1 perf optimization — local only)
-    "get_fundamentals_batch",
-    "get_history_batch",
-    # Local file-system / position import
-    "create_dir",
-    "get_trades_file",
-    "get_research_path",
-    "convert_position_from_csv",
+# T3 修订：DENYLIST 单一来源——并集引用 portability_rules.denylist()，
+# 转换器（source_import）与校验器共用同一清单，杜绝双边漂移。
+# 消息分类集合仅用于生成 rule_id（不改变判定本身）：
+_BATCH_APIS: frozenset[str] = frozenset(DENY_SHIM)  # get_fundamentals_batch / get_history_batch
+_FILE_DB_APIS: frozenset[str] = frozenset({
+    "create_dir", "get_trades_file", "get_research_path", "convert_position_from_csv",
 })
+# 其余 DENYLIST 项（本地自创 API / 外部数据源 / 成本模型）→ PORTABILITY-LOCAL-API
 
 
 def validate_ptrade_portability(
@@ -72,18 +68,22 @@ def validate_ptrade_portability(
             name = f.id
         elif isinstance(f, ast.Attribute):
             name = f.attr
-        if name in _PTRADE_DENYLIST:
-            # Classify: batch API vs file/DB access
-            if name in ("get_fundamentals_batch", "get_history_batch"):
+        if name in denylist():
+            # 分类：batch API vs 本地文件/DB 访问 vs 本地自创 API
+            if name in _BATCH_APIS:
                 rule_id = "PORTABILITY-LOCAL-EXTENSION-BAN"
                 msg = (f"PTrade code calls {name}() — batch perf API is local-only, "
                        f"forbidden in PTrade public Profile (ptrade-profile-contract.md §2). "
                        f"Must degrade to per-stock loop get_history/get_fundamentals.")
-            else:
+            elif name in _FILE_DB_APIS:
                 rule_id = "PORTABILITY-FILE-DB-ACCESS"
                 msg = (f"PTrade code calls {name}() — local file/DB/position access "
                        f"forbidden in PTrade public Profile (ptrade-profile-contract.md §2: "
                        f"不得访问 DuckDB/Provider/本地文件).")
+            else:
+                rule_id = "PORTABILITY-LOCAL-API"
+                msg = (f"PTrade code calls {name}() — local-only API (portability_rules "
+                       f"DENY_REMOVE/DENY_BLOCK), forbidden in PTrade public Profile.")
             violations.append(Violation(
                 rule_id=rule_id,
                 severity="BLOCK",
