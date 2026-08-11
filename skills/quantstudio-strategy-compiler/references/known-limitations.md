@@ -76,3 +76,20 @@ When a limitation is resolved (e.g. PR3.5 aggregation implemented, or PR6 render
 ## ETF metadata classification
 
 `get_etf_list_local(etf_type="equity")` depends on the synchronized `etf_basic` table. The current `etf-basic-v1` classification is auditable and sourced from Tushare `fund_basic`, with keyword/code rules for cross-border and commodity subclasses and `etf_daily` only for missing date completion. Classification defects must be repaired in the reusable metadata sync/overrides, never hidden in strategy logic.
+
+## Security code suffix contract (verified 2026-08-11)
+
+| Suffix | Style | Generated code | Why |
+|---|---|---|---|
+| .SS | PTrade (Shanghai) | ✅ REQUIRED | normalize_to_ptrade output; positions key format |
+| .SZ | PTrade (Shenzhen) | ✅ REQUIRED | normalize_to_ptrade output; positions key format |
+| .BJ | PTrade (Beijing) | ✅ REQUIRED | normalize_to_ptrade output; positions key format |
+| .XSHG | JoinQuant (Shanghai) | ❌ FORBIDDEN | positions exact-match fails; convert to .SS |
+| .XSHE | JoinQuant (Shenzhen) | ❌ FORBIDDEN | positions exact-match fails; convert to .SZ |
+| .SH | QMT (Shanghai) | ❌ FORBIDDEN | convert to .SS (source_import NORM-CODE-SUFFIX handles legacy) |
+
+Evidence chain:
+- DuckDB: bare codes (staging DB verified)
+- Data access output: .SS/.SZ (duckdb_data_access.py _to_ptrade_code)
+- Positions keys: .SS/.SZ exact dict (backtest_engine.py:2091-2108)
+- Platform proof: 09 report — .XSHE mix caused 6-month dead position

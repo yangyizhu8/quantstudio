@@ -347,7 +347,25 @@ In user-PyQt mode, R6 must verify the validated candidate still exists with the 
 - `set_backtest()` and `is_trade()` are LOCAL_ONLY extensions; they may be used in local strategy source (conversion strips/inlines them for PTrade). Do not wrap one local-only call with another.
 - Use `log.warning(...)`, never `log.warn(...)`, in portable source; real IQEngine `LogEngine` does not expose the alias.
 - Backtest/trading/research context availability is enforced separately.
-- Use PTrade `.SS/.SZ/.BJ` security suffixes in portable source and in local ETF-universe return values.
+- **Security suffix rule (HARD)**: All security code constants, variables,
+  and string literals in generated strategy source MUST use PTrade suffixes
+  `.SS` (Shanghai), `.SZ` (Shenzhen), `.BJ` (Beijing). NEVER use JoinQuant
+  aliases `.XSHG`/`.XSHE` or QMT alias `.SH` in generated code.
+  Rationale (verified 2026-08-11):
+  - DuckDB stores bare 6-digit codes; the data-access layer normalizes output
+    to `.SS/.SZ` via normalize_to_ptrade (duckdb_data_access.py:978,1008,1883).
+    Strategy code faces `.SS/.SZ` regardless of data source (xtquant/MCP).
+  - context.portfolio.positions keys are `.SS/.SZ` with EXACT dict membership
+    (backtest_engine.py:2091-2108 deliberately non-alias-aware). A strategy
+    using `.XSHE` for `code in positions` will silently fail branch logic
+    (verified: ETF动量 platform original died with .XSHE mix, 09 report).
+  - Do NOT assume "`.XSHE` works locally so it's fine" — the local engine
+    deliberately simulates the platform's exact-match behavior.
+  - If the customer's input uses JoinQuant/QMT suffixes (.XSHG/.XSHE/.SH),
+    normalize them to .SS/.SZ/.BJ in the generated source. Do not pass
+    through customer suffixes unchanged.
+    Example: customer says "159915.XSHE" → generate '159915.SZ'.
+    Example: customer says "510300.SH" → generate '510300.SS'.
 - Normalize comparison keys by bare six-digit code where API containers may differ.
 - Use NumPy/pandas or source-defined helpers for indicators unless the PTrade public profile explicitly lists the indicator. When used, import them explicitly (`import numpy as np`, `import pandas as pd`); real PTrade does not inject QuantStudio aliases.
 - Every `get_history`, `get_history_batch`, and `get_price` call used by generated backtest code must include the literal keyword `fq='pre'`; `dypre`, post-adjustment, missing/dynamic values, and `attribute_history` are blocked.
