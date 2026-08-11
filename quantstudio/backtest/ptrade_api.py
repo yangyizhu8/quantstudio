@@ -413,6 +413,9 @@ class PtradeAPI:
         self._benchmark = "000300"
         self._limit_mode = "LIMIT"
         self._prices = {}  # 当日价格字典（供即时执行用）
+        # Phase 4B：当日全 universe 分钟历史内存缓存（引擎 _run_minute_day 注入）。
+        self._day_minute_history = None   # 原始列（fq=None 未替换 OHLC）的当日分钟 DataFrame
+        self._day_minute_date = None      # 缓存对应的交易日 'YYYY-MM-DD'
 
     def reset_session(self):
         """清理一次策略运行的可变状态。"""
@@ -434,6 +437,9 @@ class PtradeAPI:
         self._reference = None
         self._calendar = None
         self._code_index = None       # 会话重置 → 失效索引缓存
+        # Phase 4B：清空当日分钟历史内存缓存
+        self._day_minute_history = None
+        self._day_minute_date = None
         g.__dict__.clear()
         g.__dict__.update(GlobalVars().__dict__)
 
@@ -465,6 +471,9 @@ class PtradeAPI:
         self._prices = prices or {}
         # 清空当日查询缓存（PIT 语义：每天重新查，不跨日复用）
         self._query_cache = {}
+        # Phase 4B：新交易日作废旧日分钟历史缓存（引擎随后重新注入当日数据）
+        self._day_minute_history = None
+        self._day_minute_date = None
         # PR4：分钟 Profile 的 current_bar_ts 每日重置（由 attach_bar 逐 bar 更新）
         self._current_bar_ts = None
         self._pct_chg_map = None
@@ -505,6 +514,19 @@ class PtradeAPI:
         self._query_cache = {}
         self._pct_chg_map = pct_chg_map   # 日级 pctChg（分钟涨跌停判断用）
         self._current_bar_ts = current_bar_ts   # 【修正缺口 1】
+
+    def attach_day_minute_history(self, df: pd.DataFrame, day_str: str):
+        """Phase 4B：注入当日全 universe 的全量分钟 bar（引擎 _run_minute_day 调用）。
+
+        契约（写死，勿改）：
+        - df 必须是 query_minute_bars_by_range_batch(..., fq=None) 的原始返回——
+          OHLC 未做 fq 替换（front/back 列完整保留）。get_history 内存切片时
+          按请求 fq 做替换（与 query_minute_bars_by_range 同一逻辑）；
+        - time 列为 epoch 毫秒 int，与 bar_cutoff_ms 可直接比较；
+        - 每日由引擎重新注入，前一日的缓存被替换，不跨日误用。
+        """
+        self._day_minute_history = df
+        self._day_minute_date = day_str
 
     def get_signals(self) -> list:
         """兼容旧接口（即时执行模式下返回空列表）"""
@@ -1156,13 +1178,61 @@ class PtradeAPI:
             cur_bar_ts = getattr(self, '_current_bar_ts', None)
             if cur_bar_ts is not None and unit != '1d':
                 bar_cutoff_ms = int(pd.Timestamp(cur_bar_ts).value // 10**6)
-            for bare, df in self._market.get_bars_by_count(
-                    bare_codes, count, anchor_date, None, fq, frequency=unit,
-                    bar_cutoff_ms=bar_cutoff_ms).items():
-                df = df.copy()
-                df.index = range(-len(df), 0)
-                df = _ensure_money_alias(df)
-                dfs[self._to_ptrade_code(bare)] = df
+            # ---- Phase 4B：当日分钟历史内存切片（零 DB 往返）----
+            # 命中条件：分钟路径 + 已有当前 bar 锚点（bar_cutoff_ms 非 None，防未来泄漏）
+            # + 引擎已注入当日缓存 + 缓存日期与 anchor_date（include=True=当日）匹配。
+            # 未命中（含 include=False 锚定前一日、日线 Profile）→ fallback SQL 路径。
+            # 命中但请求 code 不在缓存（当日无日线/停牌等）→ 对缺失 code 补查 SQL，
+            # 保持与无缓存路径完全一致的异常语义与数据完整性（铁律：不改变空值/异常行为）。
+            mem_sliced = False
+            if (unit != '1d' and bar_cutoff_ms is not None
+                    and self._day_minute_history is not None
+                    and self._day_minute_date == str(anchor_date)[:10]):
+                mem = self._day_minute_history
+                sliced = mem[(mem['code'].isin(bare_codes))
+                             & (mem['time'] <= bar_cutoff_ms)].copy()
+                found = set(sliced['code'].unique()) if len(sliced) > 0 else set()
+                missing = [c for c in bare_codes if c not in found]
+                if len(sliced) > 0:
+                    # fq 替换（与 query_minute_bars_by_range 一致；缓存为 fq=None 原始值）
+                    fq_norm = str(fq).lower() if fq else ""
+                    if fq_norm in ('pre', 'dypre'):
+                        for orig, qfq in [("open", "open_front"), ("high", "high_front"),
+                                          ("low", "low_front"), ("close", "close_front")]:
+                            if qfq in sliced.columns and sliced[qfq].notna().any():
+                                sliced[orig] = sliced[qfq]
+                    elif fq_norm in ('post', 'dyback', 'dy_post'):
+                        for orig, qfq in [("open", "open_back"), ("high", "high_back"),
+                                          ("low", "low_back"), ("close", "close_back")]:
+                            if qfq in sliced.columns and sliced[qfq].notna().any():
+                                sliced[orig] = sliced[qfq]
+                    for bare in bare_codes:
+                        sub = sliced[sliced['code'] == bare].tail(count)
+                        if not sub.empty:
+                            sub = sub.copy()
+                            sub.index = range(-len(sub), 0)
+                            sub = _ensure_money_alias(sub)
+                            dfs[self._to_ptrade_code(bare)] = sub
+                if missing:
+                    logger.debug(
+                        f"[4B] 内存缓存缺失 code={missing} date={self._day_minute_date}，"
+                        f"补查 SQL（保持与无缓存路径一致）")
+                    for bare, df in self._market.get_bars_by_count(
+                            missing, count, anchor_date, None, fq, frequency=unit,
+                            bar_cutoff_ms=bar_cutoff_ms).items():
+                        df = df.copy()
+                        df.index = range(-len(df), 0)
+                        df = _ensure_money_alias(df)
+                        dfs[self._to_ptrade_code(bare)] = df
+                mem_sliced = True
+            if not mem_sliced:
+                for bare, df in self._market.get_bars_by_count(
+                        bare_codes, count, anchor_date, None, fq, frequency=unit,
+                        bar_cutoff_ms=bar_cutoff_ms).items():
+                    df = df.copy()
+                    df.index = range(-len(df), 0)
+                    df = _ensure_money_alias(df)
+                    dfs[self._to_ptrade_code(bare)] = df
             if is_dict:
                 _result = CodeDict(dfs)
                 if hasattr(self, '_query_cache'): self._query_cache[cache_key] = _result

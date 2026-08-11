@@ -1940,7 +1940,10 @@ class BacktestEngine:
     def _load_minute_snapshots(self, day_str, daily_data):
         """PR4: 加载当日全 universe 的分钟 bar，按 bar timestamp 分组。
 
-        返回 [(bar_ts, bar_snapshot_df), ...] 按 time 升序。
+        返回 ([(bar_ts, bar_snapshot_df), ...], all_bars)：
+        - snapshots 按 time 升序；
+        - all_bars 为当日全 universe 的原始分钟 DataFrame（fq=None 未替换 OHLC，
+          time 列为 epoch 毫秒 int）——Phase 4B 供 ptrade_api 内存切片（零 DB 往返）。
         universe = daily_data 中的 code（当日有交易的证券）。
 
         真实数据修复（2026-07-22）：原逐 code 循环（5525 只 × 4 次 DB 调用）在真实全
@@ -1952,7 +1955,7 @@ class BacktestEngine:
         from .providers.frequency_labels import FrequencyCapabilityError
         import pandas as pd
         if daily_data is None or len(daily_data) == 0:
-            return []
+            return [], None
         codes = [str(c) for c in daily_data['code'].unique()]
         try:
             all_bars = self._providers.market._data.query_minute_bars_by_range_batch(
@@ -1972,7 +1975,8 @@ class BacktestEngine:
         for ts_ms, group in all_bars.groupby('time'):
             bar_ts = pd.Timestamp(ts_ms, unit='ms', tz='Asia/Shanghai')
             snapshots.append((bar_ts, group))
-        return snapshots
+        # Phase 4B：all_bars 原样返回（零拷贝），供 ptrade_api 当日分钟历史内存切片
+        return snapshots, all_bars
 
     def _run_minute_day(self, i, day, trade_days, benchmark_raw, first_bench):
         """PR4: 分钟事件驱动——一个交易日的完整生命周期（主计划 7.24）。
@@ -2034,7 +2038,12 @@ class BacktestEngine:
             logger.error(f"[PR4] before_trading_start 错误: {e}")
 
         # ⑤ 遍历当日所有分钟 bar（09:31-11:30, 13:01-15:00，含 15:00 收盘 bar）
-        bar_snapshots = self._load_minute_snapshots(day_str, daily_data)
+        bar_snapshots, all_bars = self._load_minute_snapshots(day_str, daily_data)
+        if all_bars is not None and len(all_bars) > 0:
+            # Phase 4B：把当日全 universe 分钟原始数据（fq=None 未替换 OHLC）注入
+            # ptrade_api，get_history(frequency='1m') 优先内存切片（零 DB 往返）；
+            # PIT 截断仍由调用侧 bar_cutoff_ms（当前 bar 时间戳）保证，语义与 SQL 路径一致。
+            _api.attach_day_minute_history(all_bars, day_str)
         scheduler = _MinuteScheduler(getattr(_api, '_daily_tasks', []))
         scheduler.reset_day()
         for bar_ts, bar_df in bar_snapshots:
