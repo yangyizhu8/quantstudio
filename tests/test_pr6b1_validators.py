@@ -29,6 +29,7 @@ from quantstudio.strategy_compiler.validators.check_hard_filters import check_ha
 from quantstudio.strategy_compiler.validators.compare_strategy_variants import compare_strategy_variants
 from quantstudio.strategy_compiler.validators.run_smoke_backtest import run_smoke_backtest
 from quantstudio.strategy_compiler.validators.scan_lookahead import Violation
+from quantstudio.strategy_compiler.validators.validate_local_strategy import validate_local_strategy
 from quantstudio.strategy_compiler.validators.validate_ptrade_portability import validate_ptrade_portability
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "quantstudio" / "strategy_compiler" / "examples"
@@ -222,3 +223,31 @@ class TestRunSmokeBacktest:
         _, result, _ = run_smoke_backtest("x.py", cap)
         assert set(result.keys()) == {"status", "command", "summary"}
         assert result["status"] in ("PASS", "BLOCKED", "FAILED")
+
+
+class TestXshgSubstringFalsePositive:
+    """2026-08-11 zcode 修复：子串匹配误伤 docstring 回归测试。"""
+
+    def test_docstring_with_xshg_text_not_blocked(self, case1_ir):
+        """docstring 里作为文字出现的 .XSHG（如"跨 .SS/.SZ/.XSHG/.SH 后缀比较"）不得 BLOCK。"""
+        code = render_ptrade(case1_ir)
+        code = code.replace(
+            "def handle_data",
+            '"""跨 .SS/.SZ/.XSHG/.SH 后缀比较（文档文字，非代码值）。"""' '\n'
+            "def handle_data",
+            1,
+        )
+        ok, violations, _ = validate_local_strategy(None, None, code, "ptrade-default")
+        assert ok, violations
+
+    def test_real_xshg_code_value_still_blocked(self, case1_ir):
+        """真正含 6 位数字.XSHG 代码值的字符串仍必须 BLOCK。"""
+        code = render_ptrade(case1_ir)
+        code = code.replace(
+            "def handle_data",
+            'def _poison():' '\n' '    g.code = "159915.XSHG"' '\n\n' 'def handle_data',
+            1,
+        )
+        ok, violations, _ = validate_local_strategy(None, None, code, "ptrade-default")
+        assert not ok
+        assert any(v.rule_id == "PORTFOLIO-POSITIONS-EXACT-MATCH" for v in violations)

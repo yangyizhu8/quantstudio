@@ -22,6 +22,7 @@ from __future__ import annotations
 import ast
 import builtins as _builtins
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -251,12 +252,17 @@ def _check_semantics_contract(
 
     # Detect explicit alias-key usage in positions access (XSHG/XSHE keys).
     # semantics.forbidden lists "XSHG/XSHE keys in the public portfolio container".
+    # 修复（2026-08-11，zcode）：子串匹配误伤 docstring/注释中的 ".XSHG" 文字
+    # （如 tech_etf_mvo_rotation docstring "跨 .SS/.SZ/.XSHG/.SH 后缀比较"）。
+    # 改为精确代码形态正则（6 位数字.XSHG/.XSHE），与转换器 _normalize_code_suffixes
+    # 的匹配口径一致。.SH 不在此拦（QMT 风格，由转换器规范化为 .SS）。
+    _XSHG_CODE_RE = re.compile(r"\b\d{6}\.(XSHG|XSHE)\b")
     forbidden_str = str(forbidden_behaviors).lower()
     xshg_forbidden = "xshg" in forbidden_str or "xshe" in forbidden_str
     if xshg_forbidden:
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                if any(s in node.value for s in (".XSHG", ".XSHE")):
+                if _XSHG_CODE_RE.search(node.value):
                     violations.append(Violation(
                         rule_id="PORTFOLIO-POSITIONS-EXACT-MATCH",
                         severity="BLOCK",
