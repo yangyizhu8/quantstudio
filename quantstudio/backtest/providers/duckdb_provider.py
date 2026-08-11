@@ -84,15 +84,71 @@ class DuckDBMarketDataProvider(MarketDataProvider):
             batch = self._data.query_bars_by_count_batch(codes, count, _end_ms(end_date), use_qfq)
             return {c: _fields(df, fields) for c, df in batch.items()}
         # 分钟路径
-        from .frequency_labels import api_to_storage
+        from .frequency_labels import api_to_storage, FrequencyCapabilityError
         storage_freq = api_to_storage(frequency)
         result = {}
-        for code in codes:
-            df = self._data.query_minute_bars_by_count(
-                code, count, end_date, storage_freq, fq, self._calendar,
+        # Phase 4A：一次批量 SQL 取全 codes 当日分钟数据（替代逐只 N 次 SQL），
+        # 再按 code 分组 + tail(count)——与 query_minute_bars_by_count 的
+        # "range 查询 + tail"语义一致（batch 内部 fq 替换/时段窗口/bar_cutoff_ms
+        # 与单只版逐行一致，见 duckdb_data_access.query_minute_bars_by_range_batch）。
+        try:
+            df_all = self._data.query_minute_bars_by_range_batch(
+                codes, end_date, end_date, storage_freq, fq, self._calendar,
                 bar_cutoff_ms=bar_cutoff_ms)   # PR4 缺口 1
-            if not df.empty: result[code] = _fields(df, fields)
+        except FrequencyCapabilityError:
+            # batch 内部以 TABLE_EMPTY 表达"整表缺 freq/表空"，而逐只版按 code 细分
+            # 为 FREQ_NOT_IN_TABLE / TABLE_EMPTY / TABLE_MISSING——catch 后逐 code
+            # 补检查，还原逐只版的精确异常类型与消息（铁律：不改变异常行为）。
+            for code in codes:
+                self._raise_minute_capability_gap(code, storage_freq)
+            return {}
+        if df_all is not None and not df_all.empty:
+            for c, sub in df_all.groupby("code", sort=False, as_index=False):
+                sub = sub.sort_values("time").tail(count).reset_index(drop=True)
+                if not sub.empty:
+                    result[c] = _fields(sub, fields)
+        # 异常语义补回（铁律：与逐只版一致）——batch 内部对"个别 code 无数据/
+        # 指数/可转债"静默跳过，而逐只版 raise TABLE_MISSING/TABLE_EMPTY/
+        # FREQ_NOT_IN_TABLE。对结果集缺失的 code 补做原语义检查；
+        # 正常场景（全部命中）零额外 SQL。
+        missing = [c for c in codes if c not in result]
+        for code in missing:
+            self._raise_minute_capability_gap(code, storage_freq)
         return result
+
+    def _raise_minute_capability_gap(self, code: str, storage_freq: str):
+        """Phase 4A：对批量结果集缺失的 code 补回逐只版 query_minute_bars_by_range
+        的 FrequencyCapabilityError 语义（TABLE_MISSING / TABLE_EMPTY / FREQ_NOT_IN_TABLE）。
+
+        code 有数据且有 freq 但当日窗口无 bar 时不 raise（与逐只版"跳过"一致）。
+        """
+        from .frequency_labels import (
+            FrequencyCapabilityError, ERR_TABLE_MISSING, ERR_TABLE_EMPTY, ERR_FREQ_NOT_IN_TABLE)
+        table = self._data._resolve_minute_table(code)
+        if table is None:
+            raise FrequencyCapabilityError(
+                ERR_TABLE_MISSING, api_freq=None,
+                table="index_minutes（指数无对应分钟表）",
+                detail=f"code={code} 是指数，无分钟表")
+        conn = self._data._get_conn()
+        if conn is None:
+            raise FrequencyCapabilityError(
+                ERR_TABLE_EMPTY, api_freq=None, table=table,
+                detail="DuckDB 连接不可用")
+        cnt_row = conn.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE code = ?", [code]).fetchone()
+        if not cnt_row or cnt_row[0] == 0:
+            raise FrequencyCapabilityError(
+                ERR_TABLE_EMPTY, api_freq=None, table=table,
+                detail=f"code={code} 在 {table} 中无数据")
+        avail = [r[0] for r in conn.execute(
+            f"SELECT DISTINCT freq FROM {table} WHERE code = ?", [code]).fetchall()]
+        if storage_freq not in avail:
+            raise FrequencyCapabilityError(
+                ERR_FREQ_NOT_IN_TABLE, api_freq=None, storage_freq=storage_freq,
+                table=table, available_freqs=avail,
+                detail=f"{table} 有数据但缺 freq={storage_freq}")
+
     def get_snapshot(self, date_or_dt, frequency="1d", fields=None):
         """PR3 补齐 5：日线快照（frequency="1d"）。分钟快照留待 PR4 引擎提供 _current_minute_data。"""
         from .frequency_labels import FrequencyCapabilityError, ERR_TABLE_EMPTY
