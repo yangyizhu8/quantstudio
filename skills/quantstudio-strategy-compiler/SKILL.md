@@ -259,6 +259,23 @@ Reason: real PTrade may continue later lifecycle calls after `initialize` raises
 
 The agent implements strategy logic with QuantStudio local extensions (e.g. `get_etf_list_local`, `get_history_batch`); the source must declare no PTrade portability (PTrade conversion is out of scope). Do not hand-maintain divergent local/PTrade business logic. Use only injected APIs for data; local execution must route those APIs to the selected project DuckDB provider rather than opening storage from strategy source. Every signal-price call must spell `fq='pre'` literally. Use raw current/snapshot prices only for execution checks, order sizing, fill reconciliation, cash, and valuation; never concatenate them into a front-adjusted indicator series.
 
+**R3 performance best practices (PR7):**
+- **Vectorized computation (RECOMMENDED)**: When computing cross-sectional
+  indicators (MA/momentum/rank) over a universe from `get_history_batch`,
+  prefer numpy 2D matrix operations over per-code loops:
+  1. Collect valid codes' arrays (after length/liquidity filters)
+  2. Right-align pad into a 2D matrix: `closes[i, -len(v):] = v`
+  3. Vectorize: `np.nanmean(closes[:, -N:], axis=1)`
+  This is semantically equivalent to per-code `np.nanmean` (verified) and
+  ~3x faster for 800+ code universes.
+- Cross-sectional percentile ranks via `pd.Series(...).rank(pct=True).values` (ties default
+  `average`, matching a helper `_pct_rank` defined as `s.rank(pct=True)`).
+- Keep per-code loops only where branch logic cannot be vectorized.
+
+Equivalence requirement: vectorized output must be bit-identical to the per-code version
+(`np.nanmean(axis=1)` per row equals per-row `np.nanmean`; `rank(pct=True)` on the same input
+is deterministic). Do not mix `dypre`/`pre` semantics; keep `fq='pre'` literal.
+
 **R3 exit gate:** complete canonical source with no scaffold markers.
 
 ## R4 - Separate static validation
