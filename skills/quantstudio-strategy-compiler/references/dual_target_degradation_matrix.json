@@ -1,5 +1,6 @@
 {
   "title": "双目标（QuantStudio + PTrade）铁律前置降级矩阵",
+  "DEPRECATED": "local-only 模式下不再使用（skill 默认 QS-only，PTrade 转换由 PyQt tab/CLI 承接），保留供历史审计",
   "applies_to": "dual-target strategy generation (QuantStudio local engine + real PTrade IQEngine)",
   "rule": "R0 渲染本矩阵；用户选双目标时自动套用，R2.5 不再就该点提问。所有降级以 PTrade 契约为不可变真相源（AGENTS.md 铁律#4）。",
   "source_taskbook": "PHASE1_TASKBOOK.md A2",

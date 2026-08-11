@@ -14,7 +14,7 @@
         "type": "object",
         "required": ["action_type", "rule_id", "api_name", "line", "severity", "message"],
         "properties": {
-          "action_type": {"enum": ["REMOVE", "DEGRADE", "REWRITE", "SHIM", "NORMALIZE", "INJECT", "KEEP_COMMENT"]},
+          "action_type": {"enum": ["REMOVE", "DEGRADE", "REWRITE", "SHIM", "NORMALIZE", "INJECT", "KEEP_COMMENT", "FREEZE"]},
           "rule_id": {"type": "string"},
           "api_name": {"type": "string"},
           "line": {"type": "integer", "minimum": 1},

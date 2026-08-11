@@ -36,6 +36,10 @@ PR0 只冻结结构；不存在的执行结果目录不得用空文件伪造成�
 
 `stage` 分为 `SPEC_ONLY`、`STATIC_VALIDATED`、`SMOKE_EXECUTED`、`FIDELITY_COMPARED`。
 
+> **v1.1（2026-08-11，source entry）**：`stage` 新增 `SOURCE_IMPORTED`（源码导入转换阶段）；
+> run_card_version 由 `1.0` bump 为 `1.1`。**1.1 不向后兼容**：旧消费者不识别新枚举值
+> 时必须显式拒绝（不得静默忽略）。source entry 不产生 `SPEC_ONLY`（无 spec 输入）。
+
 ## 4. Run Card Schema
 
 机器定义：`quantstudio/strategy_compiler/schemas/run_card.schema.json`

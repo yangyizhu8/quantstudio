@@ -152,7 +152,7 @@
     "runtime_state_policy": "Every lifecycle and scheduled callback calls an idempotent _ensure_runtime_state() as its first executable statement.",
     "local_backtest_data_priority": "<current-project>/data/quantstudio.db first; configured/external DuckDB only when absent or explicitly customer-approved.",
     "event_data_policy": "External event files are ingested into strategy_events by a generic importer; local-only strategies query them through get_strategy_events and never read files directly.",
-    "target_routing_policy": "R0 explicitly selects dual-target or QuantStudio-only. Dual ETF strategies use a user-confirmed static whitelist; QuantStudio-only ETF strategies may use get_etf_list_local and get_history_batch."
+    "target_routing_policy": "默认 QS-only（targets=[quantstudio]），PTrade 转换由 PyQt tab / CLI 承接，skill 不承担 dual target。ETF 策略用 get_etf_list_local 动态池（local-only）。"
   },
   "local_extension_groups": {
     "local_mytt_helpers": [

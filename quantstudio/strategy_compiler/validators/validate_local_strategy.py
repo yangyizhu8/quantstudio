@@ -20,9 +20,14 @@ scan_lookahead for uniform handling.
 from __future__ import annotations
 
 import ast
+import builtins as _builtins
 import json
 from dataclasses import dataclass
 from pathlib import Path
+
+# 动态 builtin 集合（2026-08-11 修复：硬编码白名单缺 all/any 等常见内置函数，
+# 导致合法策略（如 ETF动量.py 的 all(...)）被误 BLOCK）
+_BUILTIN_NAMES = frozenset(dir(_builtins))
 from typing import Any
 
 from ..ir_nodes import StrategyIR
@@ -159,10 +164,9 @@ def validate_local_strategy(
             if name in injected or name in local_funcs:
                 continue
             # Builtins / common safe names
-            if name in ("print", "len", "range", "round", "abs", "min", "max",
-                        "sum", "sorted", "list", "dict", "set", "tuple", "zip",
-                        "enumerate", "isinstance", "getattr", "setattr", "hasattr",
-                        "float", "int", "str", "bool"):
+            # 修复（2026-08-11）：硬编码白名单缺 all/any/filter/map 等常见 builtin，
+            # 导致合法策略（如 ETF动量.py 的 all(...)）被误 BLOCK。改为动态判断。
+            if name in _BUILTIN_NAMES:
                 continue
             violations.append(Violation(
                 rule_id="LOCAL-API-WHITELIST",

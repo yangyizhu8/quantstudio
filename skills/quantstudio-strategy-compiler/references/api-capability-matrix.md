@@ -41,13 +41,14 @@ Schema：`quantstudio/strategy_compiler/schemas/capability_report.schema.json`
 
 ## Target-aware ETF capabilities
 
-| Capability | Dual target | QuantStudio-only |
-|---|---:|---:|
-| `get_etf_list()` in backtest | BLOCK | BLOCK |
-| Customer-confirmed static ETF whitelist | REQUIRED for ETF strategies | OPTIONAL |
-| `get_etf_list_local()` PIT universe | BLOCK | READY when `etf_basic` metadata exists |
-| `get_history_batch()` | BLOCK | READY |
-| PTrade validation / dual consistency | REQUIRED | NOT_APPLICABLE |
+> PTrade 转换能力由 PyQt tab / CLI 提供（source_import 管线，静态池固化），不在本 skill 范围。
+
+| Capability | QuantStudio-only (default) |
+|---|---:|
+| `get_etf_list()` in backtest | BLOCK |
+| `get_etf_list_local()` PIT universe | READY when `etf_basic` metadata exists |
+| `get_history_batch()` | READY |
+| PTrade validation | NOT_APPLICABLE（转换由 PyQt tab / CLI 承接） |
 
 Local dynamic ETF readiness requires `etf_basic` classification/listing metadata and historical availability in `etf_daily`. Missing metadata is `DATA_BLOCKED`, not an implicit all-ETF fallback.
 
@@ -69,15 +70,15 @@ Local dynamic ETF readiness requires `etf_basic` classification/listing metadata
 profile PASS ≠ 真实 PTrade 运行验证；本地 ETF 元数据支持与 PTrade 真实 ETF
 支持分开标记；不得把本地数据库覆盖描述为 PTrade 平台保证。
 
-| Capability | Dual target | QuantStudio-only |
-|---|---:|---:|
-| `security_metadata_stock` (`get_stock_info` 股票，行为与历史一致) | READY（PTRADE_RUNTIME_UNVERIFIED） | READY |
-| `security_metadata_etf` (`get_stock_info` ETF 上市/退市) | PTRADE_RUNTIME_UNVERIFIED | READY when `etf_basic` metadata exists |
-| `index_constituents_pit` (`get_index_stocks(date)` 严格 as-of，完整性=snapshot_meta 批次契约) | PTRADE_RUNTIME_UNVERIFIED（平台成分历史深度按部署核实） | READY when complete snapshots + meta exist; 无快照/无 meta fail-closed 返回空 |
-| `index_constituents_history_coverage` | 按部署核实 | READY（覆盖起点/终点写入能力报告；partial 快照不计完整 PIT） |
-| `industry_classification_sw2021` (31 个 SW2021 L1) | PTRADE_RUNTIME_UNVERIFIED（平台分类版本按部署核实） | READY when `industry_classification` 就绪 |
-| `industry_membership_pit` (`get_industry` 历史归属；官方契约无冲突裁决，重叠按原始事实保留，歧义日期 fail-closed) | PTRADE_RUNTIME_UNVERIFIED（本地 shape 为直接 `{'sw_l1': ...}`/None，PTrade 真实 shape 未验证） | 存在歧义区间 → **APPROXIMATION_REQUIRES_CONFIRMATION / DATA_BLOCKED**（不得宣称正式 PIT READY）；正式表缺失 → DATA_BLOCKED（绝不回退 legacy `sw_industry`）。**F6 硬门禁**：`inspect_capabilities` 对同一 (code, 重叠区间) 用 `get_industry` 真实探针，必须抛 `ReferenceDataCapabilityError` 才能判定 fail-closed 成立（`provider_status=AVAILABLE` + message 含 “verified”）；若未抛错 / 抛错类型不正确 / 无 ambiguous_sample / 探针自身异常，则 `provider_status=BLOCKED`、`execution_status=BLOCKED`、message 明确声明 `contract BROKEN`，**绝不**出现未限定的 “fail-closed verified”。 |
-| `sw_l1_index_daily` (31 个行业指数日线，统一 `index_daily`) | BLOCK（PTrade 平台无申万指数日线保证） | READY when coverage 31/31 且 OHLC/金额门控通过 |
+| Capability | QuantStudio-only (default) |
+|---|---:|
+| `security_metadata_stock` (`get_stock_info` 股票，行为与历史一致) | READY |
+| `security_metadata_etf` (`get_stock_info` ETF 上市/退市) | READY when `etf_basic` metadata exists |
+| `index_constituents_pit` (`get_index_stocks(date)` 严格 as-of，完整性=snapshot_meta 批次契约) | READY when complete snapshots + meta exist; 无快照/无 meta fail-closed 返回空 |
+| `index_constituents_history_coverage` | READY（覆盖起点/终点写入能力报告；partial 快照不计完整 PIT） |
+| `industry_classification_sw2021` (31 个 SW2021 L1) | READY when `industry_classification` 就绪 |
+| `industry_membership_pit` (`get_industry` 历史归属；官方契约无冲突裁决，重叠按原始事实保留，歧义日期 fail-closed) | 存在歧义区间 → **APPROXIMATION_REQUIRES_CONFIRMATION / DATA_BLOCKED**（不得宣称正式 PIT READY）；正式表缺失 → DATA_BLOCKED（绝不回退 legacy `sw_industry`）。**F6 硬门禁**：`inspect_capabilities` 对同一 (code, 重叠区间) 用 `get_industry` 真实探针，必须抛 `ReferenceDataCapabilityError` 才能判定 fail-closed 成立（`provider_status=AVAILABLE` + message 含 “verified”）；若未抛错 / 抛错类型不正确 / 无 ambiguous_sample / 探针自身异常，则 `provider_status=BLOCKED`、`execution_status=BLOCKED`、message 明确声明 `contract BROKEN`，**绝不**出现未限定的 “fail-closed verified”。 |
+| `sw_l1_index_daily` (31 个行业指数日线，统一 `index_daily`) | READY when coverage 31/31 且 OHLC/金额门控通过 |
 | `gui_rebalance_mode` (PyQt rebalance_mode 透出，默认 legacy) | NOT_APPLICABLE | READY |
 | `callback_basket_pyqt` (PyQt 激活 `0.4.0-next_open_basket`) | NOT_APPLICABLE | READY 仅限 daily-bar-v1 + next_open；close/open 被 GUI 阻断；`run_daily` 永不进入 basket |
 

@@ -114,6 +114,8 @@ def cmd_import(args: argparse.Namespace) -> int:
             out_dir=Path(args.out) if args.out else None,
             run_smoke=not args.no_smoke,
             strict=True,
+            etf_pool_start_date=args.etf_pool_start_date,
+            db_path=Path(args.db_path) if args.db_path else None,
         )
     except GoldenProtectionError as e:
         print(f"ERROR: golden protection — {e}", file=sys.stderr)
@@ -152,6 +154,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_imp.add_argument("--start", default=None, help="Round-trip smoke backtest start (YYYY-MM-DD)")
     p_imp.add_argument("--end", default=None, help="Round-trip smoke backtest end (YYYY-MM-DD)")
     p_imp.add_argument("--no-smoke", action="store_true", help="Skip the round-trip smoke backtest step")
+    p_imp.add_argument("--etf-pool-start-date", default=None,
+                       help="ETF 静态池固化起始日 YYYY-MM-DD（策略含 get_etf_list_local 时必填，见 07 规格）")
+    p_imp.add_argument("--db-path", default=None,
+                       help="查 etf_basic 的库路径（默认 data/quantstudio.db；T5 staging 副本场景传副本路径）")
     p_imp.set_defaults(func=cmd_import)
     return parser
 

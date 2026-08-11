@@ -33,7 +33,6 @@ from .portability_rules import (
     PTRADE_PROFILE_MARKER,
     PTRADE_REGISTERED_WARN,
 )
-
 # ============================================================================
 # 数据结构（02 规格 §1）
 # ============================================================================
@@ -227,7 +226,11 @@ def _is_bare_expr_stmt(node: ast.AST, tree: ast.AST) -> bool:
 
 class SourceConverter:
     def __init__(self, *, strategy_id: Optional[str] = None, inject_helpers: bool = True,
-                 verbose: bool = True):
+                 verbose: bool = True,
+                 etf_pool_start_date: Optional[str] = None,
+                 db_path: Optional[str] = None,
+                 etf_type: str = "equity",
+                 active_only: bool = True):
         self.strategy_id = strategy_id
         self.inject_helpers = inject_helpers
         self.verbose = verbose
@@ -235,6 +238,15 @@ class SourceConverter:
         self.warnings: list[str] = []
         self.errors: list[str] = []
         self._set_backtest_body: Optional[str] = None  # T5: set_backtest 函数体（供调用点内联）
+        # 07 规格：ETF 动态池 FREEZE 固化
+        self._etf_pool_start_date = etf_pool_start_date
+        self._db_path = db_path
+        self._etf_type = etf_type
+        self._active_only = active_only
+        self._freeze_calls: list[ast.Call] = []
+        self._etf_pool_block: Optional[str] = None
+        self._etf_pool_meta: dict[str, Any] = {}
+        self._etf_frozen = False
         self.coverage: dict[str, Any] = {
             "api_calls_seen": 0, "denylist_hits": 0, "normalized_params": 0,
             "injected_helpers": [], "fq_warn_kept": [], "aliases_seen": {},
@@ -278,6 +290,12 @@ class SourceConverter:
 
         # 3) AST 全量扫描（别名归一化后匹配）
         self._scan_calls(tree)
+
+        # 3a) 代码后缀规范化（聚宽风格 XSHG/XSHE → PTrade SS/SZ，AST 字符串常量级）
+        self._normalize_code_suffixes(tree)
+
+        # 3b) ETF FREEZE 档（07 规格 §2）：get_etf_list_local → 静态池固化
+        self._freeze_etf_pool()
 
         # 4) 应用文本改写（从后往前）
         converted = _apply_replacements(source_code, self._replacements)
@@ -410,6 +428,9 @@ class SourceConverter:
 
             if name in _BLOCK_API_NO_FUNCTION:
                 self._block_call(node, name)
+            elif name == "get_etf_list_local":
+                # 07 规格：FREEZE 档（非 REMOVE）——收集调用点，由 _freeze_etf_pool 处理
+                self._freeze_calls.append(node)
             elif name in DENY_REMOVE:
                 self._remove_call(node, name)
             elif name in DENY_SHIM:
@@ -557,7 +578,198 @@ class SourceConverter:
                     break
 
     # ------------------------------------------------------------------
-    # 注入（helper / shim / MyTT / A股规则）
+    # 代码后缀规范化（聚宽风格 XSHG/XSHE/SH → PTrade SS/SZ）
+    # ------------------------------------------------------------------
+    # 证据（2026-08-11 评估结论 B）：
+    # - security_code_rules.py:156,201 —— PTrade 目标输出规范后缀为 .SS（SH/SS/XSHG 同组）
+    # - ptrade-profile-contract.md —— "策略代码后缀"为 PTrade 渲染检查项
+    # - 本地 index_daily code 为 bare 格式，.SH/.SS 经 bare_code 归一化后等价
+    # - T5 逐位断言用于验证规范化后回测数值逐位一致
+    _CODE_SUFFIX_RE = re.compile(r"^(\d{6})\.(XSHG|XSHE|SH)$")
+    _CODE_SUFFIX_MAP = {"XSHG": "SS", "XSHE": "SZ", "SH": "SS"}
+
+    def _normalize_code_suffixes(self, tree: ast.AST) -> None:
+        """把字符串常量中的 6 位代码 XSHG/XSHE 后缀规范化为 SS/SZ（PTrade 约定）。
+
+        背景：本地策略可用聚宽风格后缀（本地引擎 bare_code 规范化可跑，T5 证实）；
+        PTrade 公共契约用 .SS/.SZ/.BJ，且 validate_local_strategy 对 XSHG/XSHE
+        字符串常量 BLOCK（PORTFOLIO-POSITIONS-EXACT-MATCH）。转换时规范化，
+        产物才可通过校验并在 PTrade 平台使用。仅匹配精确 code 形态（6 位数字+后缀），
+        不误伤注释/日志文本。
+        """
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            val = node.value
+            if "." not in val:
+                continue
+            new_val = self._CODE_SUFFIX_RE.sub(
+                lambda m: f"{m.group(1)}.{self._CODE_SUFFIX_MAP[m.group(2)]}", val)
+            if new_val == val:
+                continue
+            self._replacements.append((
+                node.lineno, node.col_offset, node.end_lineno, node.end_col_offset,
+                repr(new_val)))
+            self.actions.append(ConversionAction(
+                action_type="NORMALIZE", rule_id="NORM-CODE-SUFFIX",
+                api_name="code_suffix", line=_line_of(node), severity="INFO",
+                old_text=val,
+                new_text=new_val,
+                message=f"代码后缀规范化：{val} → {new_val}（聚宽 XSHG/XSHE → PTrade SS/SZ）"))
+            self.coverage["normalized_params"] += 1
+
+    # ------------------------------------------------------------------
+    # ETF FREEZE 档（07 规格 §2）：get_etf_list_local → 静态池固化
+    # ------------------------------------------------------------------
+    def _freeze_etf_pool(self) -> None:
+        if not self._freeze_calls:
+            return
+        # 幂等（07 §6 测试 17）：产物已有静态池 → 不再 FREEZE
+        if "ETF_POOL_STATIC" in self._src:
+            self.coverage["idempotent_skip"] = True
+            return
+        if not self._etf_pool_start_date:
+            self.errors.append(
+                "策略使用 get_etf_list_local，需提供 --etf-pool-start-date 才能固化静态池")
+            for node in self._freeze_calls:
+                self.actions.append(ConversionAction(
+                    action_type="BLOCK", rule_id="FREEZE-MISSING-START-DATE",
+                    api_name="get_etf_list_local", line=_line_of(node), severity="BLOCK",
+                    old_text="get_etf_list_local(...)",
+                    message="需提供 --etf-pool-start-date 才能固化静态池"))
+            return
+        # 边界检测（07 §2.2 步骤 5）：len(pool) 直接参与时变判断 → BLOCK
+        for node in self._freeze_calls:
+            parent = self._find_parent(node)
+            if isinstance(parent, ast.Call) and isinstance(parent.func, ast.Name) \
+                    and parent.func.id == "len":
+                self.errors.append(
+                    "该策略依赖动态池时变性（len(pool) 直接计算），不适合转 PTrade（无法静态固化）")
+                self.actions.append(ConversionAction(
+                    action_type="BLOCK", rule_id="FREEZE-LEN-TIMEVARY",
+                    api_name="get_etf_list_local", line=_line_of(node), severity="BLOCK",
+                    message="len(get_etf_list_local(...)) 依赖池子大小随时间变化，无法静态固化"))
+                return
+        # 快照查询（前置检查 + DATA_BLOCKED，07 §2.2 步骤 4a）
+        pool, meta = self._query_etf_snapshot()
+        if pool is None:
+            return  # errors 已记录 DATA_BLOCKED
+        # 后缀转换（07 §2.3）：.SH → .SS 等 PTrade 约定
+        from ..backtest.libs.security_code_rules import normalize_to_ptrade
+        ptrade_pool = [normalize_to_ptrade(c) for c in pool]
+        # 注入静态池定义（07 §2.2 步骤 4e）
+        pool_literal = ",\n        ".join(f'"{c}"' for c in ptrade_pool)
+        n = len(ptrade_pool)
+        m = meta.get("new_listed_excluded", [])
+        k = meta.get("delisted_included", [])
+        lines = [
+            f"{INJECTED_MARKER}",
+            f"# PTrade 静态 ETF 池（起始日 {self._etf_pool_start_date} 快照，共 {n} 只）",
+            "# 本地版用 get_etf_list_local 动态池，PTrade 版固化为静态",
+            f"# 不含起始日后新上市（{len(m)} 只：{('、'.join(m[:10]) + ('...' if len(m) > 10 else '')) if m else '无'}）",
+            f"# 仍含起始日后退市（{len(k)} 只：{('、'.join(k[:10]) + ('...' if len(k) > 10 else '')) if k else '无'}；撮合拒单不影响持仓）",
+            "ETF_POOL_STATIC = [",
+            pool_literal,
+            "]",
+        ]
+        self._etf_pool_block = "\n".join(lines) + "\n\n"
+        self._etf_frozen = True
+        self._etf_pool_meta = meta
+        # 调用点替换为 ETF_POOL_STATIC（07 §2.2 步骤 4f）
+        for node in self._freeze_calls:
+            self._replacements.append((
+                node.lineno, node.col_offset, node.end_lineno, node.end_col_offset,
+                "ETF_POOL_STATIC"))
+            self.actions.append(ConversionAction(
+                action_type="FREEZE", rule_id="FREEZE-STATIC-POOL",
+                api_name="get_etf_list_local", line=_line_of(node), severity="WARN",
+                old_text="get_etf_list_local(...)",
+                new_text="ETF_POOL_STATIC",
+                message=f"get_etf_list_local() 已固化为静态池 ETF_POOL_STATIC"
+                        f"（起始日 {self._etf_pool_start_date} 快照，{n} 只）"))
+        # 提示文案（07 §2.4）
+        self.warnings.append(
+            f"PTrade 版基于回测起始日 {self._etf_pool_start_date} 的 ETF 池快照生成，共 {n} 只。\n"
+            f"- 不含起始日后新上市的 ETF（{len(m)} 只）：{('、'.join(m[:10]) + ('...' if len(m) > 10 else '')) if m else '无'}\n"
+            f"- 仍含起始日后退市的 ETF（{len(k)} 只）：{('、'.join(k[:10]) + ('...' if len(k) > 10 else '')) if k else '无'}。\n"
+            f"  本地 PIT 版会在其退市后自动剔除；PTrade 静态版保留但撮合拒单，实际不持仓。\n"
+            f"  如需完全对齐本地版，可手动从池中移除。\n"
+            f"- 重要：在 PTrade 平台运行此代码时，回测起始日期不得早于 {self._etf_pool_start_date}。")
+
+    def _query_etf_snapshot(self) -> tuple[Optional[list[str]], dict[str, Any]]:
+        """07 §2.2 步骤 4a-4c：前置检查 + PIT 快照 + 差异计算。
+
+        Returns (pool, meta)；pool=None 表示 DATA_BLOCKED（errors 已记录）。
+        """
+        import duckdb
+        import pandas as pd
+        db_path = Path(self._db_path) if self._db_path else Path("data/quantstudio.db")
+        if not db_path.exists():
+            self.errors.append(f"DATA_BLOCKED: db_path 不存在: {db_path}")
+            return None, {}
+        try:
+            conn = duckdb.connect(str(db_path), read_only=True)
+        except Exception as e:
+            self.errors.append(f"DATA_BLOCKED: 无法打开 {db_path}: {e}")
+            return None, {}
+        try:
+            tables = {r[0] for r in conn.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'main'").fetchall()}
+            missing = {"etf_basic", "etf_daily"} - tables
+            if missing:
+                self.errors.append(
+                    f"DATA_BLOCKED: 缺表 {sorted(missing)}（请运行 scripts/sync_etf_basic.py 后重试）")
+                return None, {}
+            start_ms = int(pd.Timestamp(self._etf_pool_start_date).value // 10**6)
+            # 全量元数据（供差异计算）
+            rows = conn.execute(
+                "SELECT code, list_date, delist_date, etf_type, is_cross_border "
+                "FROM etf_basic").fetchall()
+            # 起始日 PIT 快照（07 §1.2 SQL 语义 + data_access equity 过滤）
+            type_pred = ("e.etf_type = ? AND COALESCE(e.is_cross_border, FALSE) = FALSE"
+                         if self._etf_type == "equity"
+                         else ("e.etf_type = ?" if self._etf_type != "all" else "TRUE"))
+            # 参数顺序必须与 SQL 谓词出现顺序一致：
+            # list_date(1) + EXISTS(1) + active(1) + type(1)
+            params: list[Any] = [start_ms, start_ms]
+            if self._active_only:
+                params.append(start_ms)
+            if self._etf_type != "all":
+                params.append(self._etf_type)
+            active_pred = ("(e.delist_date IS NULL OR e.delist_date > ?)" if self._active_only
+                           else "TRUE")
+            sql = f"""
+                SELECT e.code FROM etf_basic e
+                WHERE e.list_date IS NOT NULL
+                  AND e.list_date <= ?
+                  AND EXISTS (SELECT 1 FROM etf_daily d WHERE d.code = e.code AND d.time <= ?)
+                  AND {active_pred}
+                  AND {type_pred}
+                ORDER BY e.code
+            """
+            pool = sorted(r[0] for r in conn.execute(sql, params).fetchall())
+        except Exception as e:
+            self.errors.append(f"DATA_BLOCKED: etf_basic 查询失败: {e}")
+            return None, {}
+        finally:
+            conn.close()
+        if not pool:
+            self.errors.append(
+                f"DATA_BLOCKED: 起始日 {self._etf_pool_start_date} 的 ETF 快照为空"
+                f"（etf_basic/etf_daily 数据不足，不得退化为全 ETF 兜底）")
+            return None, {}
+        # 差异计算（07 §2.2 步骤 4c）
+        pool_set = set(pool)
+        new_listed = sorted(c for c, ld, dd, et, cb in rows
+                            if ld is not None and ld > start_ms)
+        delisted = sorted(c for c, ld, dd, et, cb in rows
+                          if c in pool_set and dd is not None and dd > start_ms)
+        meta = {"new_listed_excluded": new_listed, "delisted_included": delisted}
+        return pool, meta
+
+    # ------------------------------------------------------------------
+    # 注入（helper / shim / MyTT / A股规则 / ETF 静态池）
     # ------------------------------------------------------------------
     def _inject_all(self, code: str) -> str:
         # 幂等：产物已有注入标记则跳过（测试 9）
@@ -565,6 +777,10 @@ class SourceConverter:
             self.coverage["idempotent_skip"] = True
             return code
         blocks: list[str] = []
+        # ETF 静态池（07 规格：FREEZE 固化产物，放在注入块最前）
+        if self._etf_pool_block:
+            blocks.append(self._etf_pool_block)
+            self.coverage["injected_helpers"].append("ETF_POOL_STATIC")
         # helper 总是注入（防御函数，模板同款）
         blocks.append(_PTRADE_HELPERS.format(marker=INJECTED_MARKER))
         self.coverage["injected_helpers"].extend(
@@ -761,8 +977,16 @@ def convert_source(
     strategy_id: str | None = None,
     inject_helpers: bool = True,
     verbose: bool = True,
+    etf_pool_start_date: str | None = None,   # 07 规格：ETF 静态池固化起始日 "YYYY-MM-DD"
+    db_path: str | Path | None = None,        # 07 规格：查 etf_basic 的库路径（默认 data/quantstudio.db）
+    etf_type: str = "equity",
+    active_only: bool = True,
 ) -> SourceImportResult:
-    """把本地策略 .py 转换为 PTrade 代码。不写盘（写盘由编排层负责）。"""
+    """把本地策略 .py 转换为 PTrade 代码。不写盘（写盘由编排层负责）。
+
+    etf_pool_start_date：策略含 get_etf_list_local 时必须提供，否则 BLOCK
+    （07-ETF动态池固化补充规格.md §2）。
+    """
     path = Path(source_path)
     # N1：统一 utf-8-sig（BOM 文件兼容，小市值策略ptrade.py 实锤）
     try:
@@ -775,5 +999,10 @@ def convert_source(
             return result
     if strategy_id is None:
         strategy_id = path.stem.replace("_quantstudio", "")
-    conv = SourceConverter(strategy_id=strategy_id, inject_helpers=inject_helpers, verbose=verbose)
+    conv = SourceConverter(
+        strategy_id=strategy_id, inject_helpers=inject_helpers, verbose=verbose,
+        etf_pool_start_date=etf_pool_start_date,
+        db_path=str(db_path) if db_path else None,
+        etf_type=etf_type, active_only=active_only,
+    )
     return conv.convert(source_code, source_path=str(path))

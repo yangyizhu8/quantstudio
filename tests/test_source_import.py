@@ -4,13 +4,14 @@
 运行：python -m pytest tests/test_source_import.py -v
 """
 import ast
+import pathlib
 import sys
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
 from quantstudio.strategy_compiler.source_import import convert_source  # noqa: E402
 
 STRATEGIES_DIR = Path(__file__).resolve().parents[1] / "quantstudio" / "backtest" / "strategies"
@@ -311,3 +312,247 @@ def test_12_bom_file(tmp_path):
     result = convert_source(p)
     assert result.errors == [], result.errors
     assert "def initialize" in result.converted_code
+
+
+# ---------------------------------------------------------------------------
+# ETF FREEZE 档（07 规格 §6 测试 11-17）
+# ---------------------------------------------------------------------------
+import duckdb as _duckdb
+
+
+def _make_etf_db(tmp_path: pathlib.Path) -> pathlib.Path:
+    """构造最小 etf_basic/etf_daily 测试库（自包含，不依赖 staging 副本）。"""
+    db = tmp_path / "etf_test.db"
+    conn = _duckdb.connect(str(db))
+    conn.execute("CREATE TABLE etf_basic (code VARCHAR, ts_code VARCHAR, name VARCHAR, "
+                 "exchange VARCHAR, list_date BIGINT, delist_date BIGINT, etf_type VARCHAR, "
+                 "tracking_index VARCHAR, is_cross_border BOOLEAN)")
+    ms = lambda d: int(pd.Timestamp(d).value // 10**6)  # noqa: E731
+    rows = [
+        # (code, list_date, delist_date, etf_type)
+        ("510300", ms("2020-01-01"), None, "equity"),   # 起始日前已上市，活跃
+        ("159001", ms("2020-01-01"), None, "equity"),   # 深市
+        ("588000", ms("2020-01-01"), ms("2023-06-01"), "equity"),  # 起始日后退市
+        ("159915", ms("2023-01-01"), None, "equity"),   # 起始日后新上市
+        ("511880", ms("2020-01-01"), None, "money"),    # 货币 ETF（equity 过滤应排除）
+    ]
+    conn.executemany("INSERT INTO etf_basic VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)",
+                     [(c, c, c, "X", ld, dd, et) for c, ld, dd, et in rows])
+    conn.execute("CREATE TABLE etf_daily (code VARCHAR, time BIGINT)")
+    for c, ld, dd, et in rows:
+        conn.execute("INSERT INTO etf_daily VALUES (?, ?)", [c, ms("2021-06-30")])
+    conn.close()
+    return db
+
+
+def test_11_freeze_basic(tmp_path):
+    """含 get_etf_list_local + 传起始日 → ETF_POOL_STATIC 注入 + 调用点替换。"""
+    db = _make_etf_db(tmp_path)
+    code = '''
+def initialize(context):
+    g.pool = get_etf_list_local(context.current_dt)
+
+def handle_data(context, data):
+    pass
+'''
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        p = pathlib.Path(td) / "etf_strategy.py"
+        p.write_text(code, encoding="utf-8")
+        r = convert_source(p, etf_pool_start_date="2022-01-04", db_path=db)
+    assert r.errors == [], r.errors
+    out = r.converted_code
+    assert "ETF_POOL_STATIC" in out
+    assert "g.pool = ETF_POOL_STATIC" in out          # 调用点替换
+    assert "510300.SS" in out and "159001.SZ" in out  # 后缀转换
+    # 静态池列表本身不含起始日后新上市（注释文案可列出代码，属 07 §2.4 知情信息）
+    pool_block = out[out.find("ETF_POOL_STATIC = ["):]
+    pool_block = pool_block[:pool_block.find("]")]
+    assert "159915" not in pool_block
+    assert "511880" not in pool_block                 # money 类型被 equity 过滤
+    frozen = [a for a in r.actions if a.action_type == "FREEZE"]
+    assert frozen, "应有 FREEZE 动作"
+
+
+def test_12_freeze_missing_start_block(tmp_path):
+    """含 get_etf_list_local + 不传起始日 → BLOCK。"""
+    code = '''
+def initialize(context):
+    g.pool = get_etf_list_local(context.current_dt)
+
+def handle_data(context, data):
+    pass
+'''
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        p = pathlib.Path(td) / "etf_strategy.py"
+        p.write_text(code, encoding="utf-8")
+        r = convert_source(p)  # 不传 etf_pool_start_date
+    assert r.errors, "应当 BLOCK"
+    assert any("etf-pool-start-date" in e for e in r.errors)
+
+
+def test_13_freeze_no_etf_basic_block(tmp_path):
+    """etf_basic 缺失 → DATA_BLOCKED（禁止全 ETF 兜底）。"""
+    empty_db = tmp_path / "empty.db"
+    _duckdb.connect(str(empty_db)).close()  # 空库，无 etf_basic
+    code = '''
+def initialize(context):
+    g.pool = get_etf_list_local(context.current_dt)
+
+def handle_data(context, data):
+    pass
+'''
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        p = pathlib.Path(td) / "etf_strategy.py"
+        p.write_text(code, encoding="utf-8")
+        r = convert_source(p, etf_pool_start_date="2022-01-04", db_path=empty_db)
+    assert r.errors, "应当 DATA_BLOCKED"
+    assert any("DATA_BLOCKED" in e for e in r.errors)
+
+
+def test_14_freeze_warning_text(tmp_path):
+    """转换后 warnings 含 07 §2.4 三段文案。"""
+    db = _make_etf_db(tmp_path)
+    code = '''
+def initialize(context):
+    g.pool = get_etf_list_local(context.current_dt)
+
+def handle_data(context, data):
+    pass
+'''
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        p = pathlib.Path(td) / "etf_strategy.py"
+        p.write_text(code, encoding="utf-8")
+        r = convert_source(p, etf_pool_start_date="2022-01-04", db_path=db)
+    assert r.errors == [], r.errors
+    txt = "\n".join(r.warnings)
+    assert "PTrade 版基于回测起始日 2022-01-04 的 ETF 池快照生成，共 3 只" in txt
+    assert "不含起始日后新上市的 ETF（1 只）" in txt and "159915" in txt
+    assert "仍含起始日后退市的 ETF（1 只）" in txt and "588000" in txt
+    assert "回测起始日期不得早于 2022-01-04" in txt
+
+
+def test_15_freeze_suffix_conversion(tmp_path):
+    """本地 bare 码 → PTrade 后缀（.SH→.SS、.SZ、.BJ 规则）。"""
+    db = _make_etf_db(tmp_path)
+    code = '''
+def initialize(context):
+    g.pool = get_etf_list_local(context.current_dt)
+
+def handle_data(context, data):
+    pass
+'''
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        p = pathlib.Path(td) / "etf_strategy.py"
+        p.write_text(code, encoding="utf-8")
+        r = convert_source(p, etf_pool_start_date="2022-01-04", db_path=db)
+    assert r.errors == [], r.errors
+    pool_block = r.converted_code[r.converted_code.find("ETF_POOL_STATIC = ["):]
+    pool_block = pool_block[:pool_block.find("]")]
+    assert ".SS" in pool_block and ".SZ" in pool_block
+    assert ".SH" not in pool_block  # PTrade 禁止 .SH 后缀
+
+
+def test_16_no_etf_no_calendar(tmp_path):
+    """不含 get_etf_list_local → 不触发 FREEZE（无静态池、无 FREEZE 动作）。"""
+    code = '''
+def initialize(context):
+    g.security = '600570.SS'
+
+def handle_data(context, data):
+    pass
+'''
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        p = pathlib.Path(td) / "plain_strategy.py"
+        p.write_text(code, encoding="utf-8")
+        r = convert_source(p, etf_pool_start_date="2022-01-04",
+                           db_path=pathlib.Path(tmp_path) / "nope.db")
+    assert r.errors == [], r.errors
+    assert "ETF_POOL_STATIC" not in r.converted_code
+    assert not any(a.action_type == "FREEZE" for a in r.actions)
+
+
+def test_17_freeze_idempotent(tmp_path):
+    """转换产物再次转换 → 不重复 FREEZE（幂等）。"""
+    db = _make_etf_db(tmp_path)
+    code = '''
+def initialize(context):
+    g.pool = get_etf_list_local(context.current_dt)
+
+def handle_data(context, data):
+    pass
+'''
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        p = pathlib.Path(td) / "etf_strategy.py"
+        p.write_text(code, encoding="utf-8")
+        r1 = convert_source(p, etf_pool_start_date="2022-01-04", db_path=db)
+    assert r1.errors == [], r1.errors
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as td2:
+        p2 = pathlib.Path(td2) / "etf_converted.py"
+        p2.write_text(r1.converted_code, encoding="utf-8")
+        r2 = convert_source(p2, etf_pool_start_date="2022-01-04", db_path=db)
+    assert r2.errors == [], r2.errors
+    assert r2.coverage.get("idempotent_skip", False), "二次转换应跳过 FREEZE"
+    assert not any(a.action_type == "FREEZE" for a in r2.actions)
+
+
+# ---------------------------------------------------------------------------
+# 代码后缀规范化（聚宽 XSHG/XSHE → PTrade SS/SZ）
+# ---------------------------------------------------------------------------
+def test_18_code_suffix_normalization():
+    """本地策略用聚宽风格 .XSHE/.XSHG → 转换产物用 .SZ/.SS（PTrade 约定）。
+
+    背景（2026-08-11 实测）：ETF动量.py 用 .XSHE 后缀，转换产物被
+    validate_local_strategy 的 PORTFOLIO-POSITIONS-EXACT-MATCH BLOCK。
+    """
+    code = """
+def initialize(context):
+    g.fund_list = ['159770.XSHE', '510300.XSHG', '510500.SH']
+
+def handle_data(context, data):
+    pass
+"""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        p2 = pathlib.Path(td) / "suffix_strategy.py"
+        p2.write_text(code, encoding="utf-8")
+        r = convert_source(p2)
+    assert r.errors == [], r.errors
+    out = r.converted_code
+    assert "159770.XSHE" not in out
+    assert "159770.SZ" in out
+    assert "510300.XSHG" not in out
+    assert "510300.SS" in out
+    # 评估结论 B（2026-08-11）：.SH 也规范化为 .SS（security_code_rules PTrade 目标=SS）
+    assert "510500.SH" not in out
+    assert "510500.SS" in out
+    norm = [a for a in r.actions if a.rule_id == "NORM-CODE-SUFFIX"]
+    assert len(norm) == 3, norm
+
+
+def test_18b_index_code_suffix_normalization():
+    """指数代码 .SH 同样规范化（bbi_etf_rotation 场景：000001.SH 等宽基指数）。"""
+    code = """
+def initialize(context):
+    g.index_list = ['000001.SH', '000852.SH', '399001.SZ']
+
+def handle_data(context, data):
+    pass
+"""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        p2 = pathlib.Path(td) / "index_suffix_strategy.py"
+        p2.write_text(code, encoding="utf-8")
+        r = convert_source(p2)
+    assert r.errors == [], r.errors
+    out = r.converted_code
+    assert "000001.SH" not in out and "000001.SS" in out
+    assert "000852.SH" not in out and "000852.SS" in out
+    assert "399001.SZ" in out  # 深市后缀保持不变

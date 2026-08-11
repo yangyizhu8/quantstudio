@@ -58,6 +58,7 @@ _NAV_ITEMS = [
     ("导出",     FluentIcon.SHARE,             NavigationItemPosition.TOP),
     ("配置编辑", FluentIcon.EDIT,              NavigationItemPosition.TOP),
     ("策略回测", FluentIcon.GAME,              NavigationItemPosition.TOP),
+    ("导出PTrade", FluentIcon.SEND,            NavigationItemPosition.TOP),
 ]
 
 
@@ -177,6 +178,9 @@ class MainWindow(FluentWindow):
             elif row == 7:
                 from .tabs.backtest_tab import BacktestTab
                 return BacktestTab(self)
+            elif row == 8:
+                from .tabs.ptrade_export_tab import PtradeExportTab
+                return PtradeExportTab(self)
         except Exception as e:
             logger.error(f"加载 Tab {row} 失败: {e}", exc_info=True)
             label = QLabel(f"加载失败: {e}")

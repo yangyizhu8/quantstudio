@@ -1,6 +1,6 @@
 ---
 name: quantstudio-strategy-compiler
-description: Strict target-aware agent-first strategy engineering for QuantStudio and optional PTrade delivery. Use when an agent must convert a strategy idea or research specification through mandatory R0-R6 customer interaction, explicit dual-vs-local target selection, capability inspection, confirmed design, lifecycle/API composition, local backtesting, target-applicable validation, consistency checks, and gated publication. Never skip stages or use strategy-specific renderer templates.
+description: Local-only QuantStudio strategy engineering (agent-first R0-R6 pipeline). PTrade conversion is handled by a separate PyQt tab / CLI, not by this skill. Use when an agent must convert a strategy idea or research specification through mandatory R0-R6 customer interaction, capability inspection, confirmed design, lifecycle/API composition, local backtesting, validation, and gated publication. Never skip stages or use strategy-specific renderer templates.
 ---
 
 # QuantStudio Agent-first Strategy Engineering
@@ -19,19 +19,19 @@ Treat the calling agent as the strategy author. Constrain it with project lifecy
 2. Never combine, infer-complete, retroactively mark, or silently skip a stage. Each stage's entry and exit must be materially performed, not asserted.
 3. At every stage, show the customer the stage output and unresolved decisions. Stop when customer confirmation is required. R0 must separately confirm target platforms and who executes R5 backtesting.
 4. Do not generate executable strategy code before R2.5 explicit confirmation.
-5. Do not publish formal targets before the selected target-mode gates pass: every mode requires R4 validation and hash-bound R5 backtest PASS; dual mode additionally requires PTrade-profile validation and post-generation dual consistency. A user-PyQt candidate is temporary, not a formal publication.
+5. Do not publish before the local gate passes: R4 validation and hash-bound R5 backtest PASS are required. A user-PyQt candidate is temporary, not a formal publication.
 6. Persist stage/evidence in `agent_workspace/workspace_state.json`. Resume from this ledger; do not rely on conversational memory alone.
 7. If any gate is BLOCKED, remain at that stage. Do not weaken requirements, substitute strategy semantics, or advance the ledger.
-8. R0 must explicitly select one target mode. Dual mode targets the **PTrade backtest public API subset** and forbids local extensions. QuantStudio-only mode may use registered local extensions but must never claim PTrade portability.
+8. The skill is local-only: `targets=["quantstudio"]`. Registered local extensions are allowed; the source must never claim PTrade portability (PTrade conversion is handled by the PyQt tab / CLI).
 9. R0 and R2.5 are real conversational stop points. The calling agent must not self-confirm, infer consent from silence, reuse an unrelated prior confirmation, or continue in the same turn without the customer's explicit answer.
 10. Local backtests obtain data through QuantStudio providers. Prefer `<current-project>/data/quantstudio.db`; use a configured/external database only when the project-local database is absent or the customer explicitly approves the override. Strategy source must never open DuckDB itself.
-11. In dual mode, customer-provided PTrade runtime failures invalidate the previous PTrade PASS and R6 publication. Return to R1/R4, repair the reusable profile/adapter/Skill rule, regenerate both targets, and repeat post-generation consistency checks.
+11. NOT_APPLICABLE (local-only skill; no PTrade target is produced). If a later PyQt-tab conversion fails on the real platform, the conversion pipeline (source_import) is repaired — not this skill.
 12. Signal, execution and valuation use one front-adjusted price basis. Indicator/ranking/entry/exit/risk OHLC must come from an injected history/price API with literal `fq='pre'`; engine matching, fills, cash, position valuation, `data[code].price` and BarData OHLC use the front-adjusted snapshot (`*_front`, raw fallback only when adjusted data is unavailable). `raw_trade_price` is not an allowed Agent-first execution contract.
-13. `set_backtest()` and `is_trade()` are QuantStudio-local extensions. Any dual/PTrade source that calls them is BLOCKED; remove the backtest-only switch from the PTrade target rather than relying on a local guard. PTrade logging uses `log.debug/info/warning/error/critical`; `log.warn` is BLOCKED.
-14. PTrade does not inject QuantStudio-local `np`/`pd` aliases. Dual/PTrade source using NumPy or pandas must explicitly declare `import numpy as np` and/or `import pandas as pd`; only storage/internal imports remain forbidden. Unimported calculation aliases are BLOCKED.
-15. Dual/PTrade validation is fail-closed for injected APIs. Every external top-level call and every `components.required_apis` entry must exist in `ptrade-api-signatures.json`; an unprofiled call is `MISSING_REUSABLE_API` at R1 and `BLOCK` at validation, never an approximation that the customer can waive.
+13. `set_backtest()` and `is_trade()` are QuantStudio-local extensions and may appear in local strategy source (the source_import conversion pipeline strips or inlines them for PTrade). PTrade logging uses `log.debug/info/warning/error/critical`; `log.warn` is BLOCKED.
+14. Source using NumPy or pandas must explicitly declare `import numpy as np` and/or `import pandas as pd`; only storage/internal imports remain forbidden. Unimported calculation aliases are BLOCKED.
+15. Validation is fail-closed for injected APIs. Every external top-level call and every `components.required_apis` entry must exist in the API signature registry; an unprofiled call is `MISSING_REUSABLE_API` at R1 and `BLOCK` at validation, never an approximation that the customer can waive.
 16. The registered stock-core portable subset includes `set_benchmark`, `run_daily`, `get_Ashares`, `get_index_stocks`, `get_stock_status`, `get_positions`, `get_position`, `get_trade_days`, and `get_fundamentals`. `get_stock_status` uses `query_type='ST'|'HALT'|'DELISTING'`; `DELISTING_SORTING` belongs only to `filter_stock_by_status`.
-17. `get_history(..., is_dict=True)` returns a mapping whose per-security item may be a pandas DataFrame, a NumPy structured array, or a recarray; `item[field]` may be a Series or an ndarray. Generated code must normalize extracted fields with `np.asarray(item[field], dtype=float)` (or a `hasattr(values, 'values')` guarded helper such as `_extract_history_field`) before any numerical use. Unguarded `.values`, `.iloc`, `.loc`, `.to_numpy()`, `.columns`, `.index`, `.empty` on history items/fields are BLOCKED. Design 2.2 dual strategies using `is_dict=True` must define the standard `_extract_history_field(history_item, field, dtype=float)` helper and route every extraction through it, so the agent-first runtime-shape fixture executes the exact production extraction code. The fixture is a hard gate inside `prepare_user_backtest_candidate.py` and is re-verified by hash at publication — it is not a manual step; the legacy renderer/Jinja fixture is not a substitute.
+17. `get_history(..., is_dict=True)` returns a mapping whose per-security item may be a pandas DataFrame, a NumPy structured array, or a recarray; `item[field]` may be a Series or an ndarray. Generated code must normalize extracted fields with `np.asarray(item[field], dtype=float)` (or a `hasattr(values, 'values')` guarded helper such as `_extract_history_field`) before any numerical use. Unguarded `.values`, `.iloc`, `.loc`, `.to_numpy()`, `.columns`, `.index`, `.empty` on history items/fields are BLOCKED. Design 2.2 strategies using `is_dict=True` must define the standard `_extract_history_field(history_item, field, dtype=float)` helper and route every extraction through it, so the agent-first runtime-shape fixture executes the exact production extraction code. The fixture is a hard gate inside `prepare_user_backtest_candidate.py` and is re-verified by hash at publication — it is not a manual step; the legacy renderer/Jinja fixture is not a substitute.
 18. Design capital and backtest capital must be one machine-checkable contract. `portfolio_contract.sizing_mode=runtime_total_value` derives per-position targets from the runtime portfolio value and forbids hardcoded `g.capital`/`g.per_target`/fixed positive `order_target_value` amounts; `fixed_notional` binds `required_initial_cash` and `fixed_target_value`, and R5 BLOCKs any run whose actual `init_capital` differs. `order_target_value(code, 0)` is a liquidation and is always allowed.
 19. Rebalance funding must follow `references/execution-funding-matrix.md`: `close`/`open` + `run_daily` executes immediately (same-batch sell proceeds may fund buys); `next_open` + `run_daily`/`before_trading_start` is legacy pending (same-batch proceeds are unavailable); `next_open` + `handle_data` + basket uses basket-atomic sell-first **only when** `engine_profile.profile_id='daily-bar-v1'` and `engine_profile.rebalance_mode='callback_basket'` are also declared (engine semantics `0.4.0-next_open_basket`, re-verified from config.csv at R5); unknown combinations are BLOCKED. A cash buffer only covers fees/lot-rounding/minor drift — never claim it solves full-turnover funding under legacy pending; use basket or two-phase rebalancing instead. Never hardcode `0.85` or any fixed exposure as a universal template.
 20. R5 PASS requires hash-bound real artifacts, not self-reported booleans: `result_dir` plus SHA-256-bound `config.csv`, `daily_stats.csv`, `trades.csv` and run log. The reviewer verifies the hashes and then analyzes **exactly those verified files** — the CSV paths must equal `result_dir/<canonical name>`, all paths must be absolute and traversal-free, and `config.csv` must match the declared window, candidate/strategy identity, match mode and `expected_engine_semantics_version`. Deployment invariants are enforced **per rebalance** from the `QS_REBALANCE_AUDIT`/`QS_PORTFOLIO_AUDIT` lines (positions/fill/exposure/cash at each rebalance date), never from a historical max or whole-period average. A finished, exception-free backtest that never deployed the designed capital BLOCKs (`capital_contract_mismatch` / `deployment_invariant_failed` / `execution_funding_failed` / `artifact_*`). `runtime_checks=true` is informational only. A legitimate `signal_dependent` no-trade run may bind `trades_csv=null` with a clean completion log; strict-target strategies must always bind a real `trades.csv`.
@@ -50,7 +50,7 @@ Treat the calling agent as the strategy author. Constrain it with project lifecy
 - A-share status, T+1, lot, cost and execution boundaries;
 - local adapter compatibility with real PTrade signatures;
 - static validation, local backtesting, PTrade-profile validation;
-- target-aware generation: dual mode emits both files and post-generation consistency evidence; QuantStudio-only mode emits one local file and records PTrade/consistency as `NOT_APPLICABLE`.
+- local-only generation: skill emits one local QuantStudio file into `quantstudio/backtest/strategies/`; PTrade conversion is out of scope (handled by the PyQt "转 PTrade" tab / CLI `qs-compile import`).
 
 ### Calling agent owns
 
@@ -78,18 +78,15 @@ Local injected symbols or successful local execution are not proof of PTrade sup
 
 ## R0 - Customer strategy semantics and generation target
 
-### R0-TARGET - mandatory first question
+### R0-TARGET - default local-only generation target
 
-Before discussing implementation, ask the customer to explicitly choose:
+The skill is local-only by default: `targets=["quantstudio"]`. PTrade conversion is out of scope —
+it is handled by the PyQt "转 PTrade" tab or the CLI `qs-compile import`. There is **no dual/QS-only
+selection question** in R0. For ETF strategies:
 
-1. **Dual target (recommended): QuantStudio local + PTrade**
-2. **QuantStudio-only local backtest**
-
-Do not infer the answer. Record it as `targets` plus `user_confirmations.generation_target=true` only after the customer replies. For ETF strategies:
-
-- dual target uses one customer-confirmed static ETF whitelist in both files; `get_etf_list()` and every local-only API are forbidden;
-- QuantStudio-only uses `get_etf_list_local(query_date, etf_type, active_only)` for a PIT dynamic ETF universe and may combine it with `get_history_batch`;
-- `get_etf_list()` remains the PTrade-named API and is unavailable in the PTrade backtest profile. Never use it as a dynamic-backtest substitute.
+- the strategy uses `get_etf_list_local(query_date, etf_type, active_only)` for a PIT dynamic ETF universe and may combine it with `get_history_batch`;
+- `get_etf_list()` remains the PTrade-named API and is unavailable in the PTrade backtest profile. Never use it as a dynamic-backtest substitute;
+- a later PTrade conversion freezes the dynamic pool into a static `ETF_POOL_STATIC` at the customer-confirmed backtest start date (see 07-ETF动态池固化补充规格 §2).
 
 Present and confirm:
 
@@ -114,7 +111,7 @@ After the customer has explicitly completed R0, inspect only capabilities requir
 - resolve the local backtest database in this order: `<current-project>/data/quantstudio.db`, then an explicitly approved configured/external DuckDB; record the absolute path, existence, selected tables, row/date coverage and resolution reason;
 - tables, columns, PIT anchors and date coverage through the adapter/provider layer, including non-null `*_front` OHLC coverage for every required asset/frequency;
 - local engine profile and lifecycle;
-- PTrade backtest/trade context availability when `ptrade` is a selected target; otherwise record it as `NOT_APPLICABLE`;
+- PTrade backtest/trade context availability: `NOT_APPLICABLE` (local-only skill; PTrade conversion is out of scope);
 - exact function signatures and permitted keyword names for the selected targets;
 - data return shapes and code suffixes;
 - for local dynamic ETF universes, `etf_basic` existence, classification version/source, listing/delisting coverage, `etf_daily` history coverage, and PIT checks at pre-listing/post-listing/post-delisting dates;
@@ -137,8 +134,7 @@ For every API planned for generated code, check `ptrade-api-signatures.json`. Ex
 - use `get_stock_info(..., field=['listed_date'])`, not local `get_security_info()`;
 - do not use `get_snapshot` or `check_limit` in PTrade backtest code; `get_open_orders(security=None)` is allowed but must use its documented signature;
 - do not assume locally injected MyTT names such as `EMA` exist on PTrade; use NumPy/pandas or define a portable helper;
-- dual ETF mode: block `get_etf_list`, `get_etf_list_local`, and `get_history_batch`; require the confirmed static whitelist;
-- QuantStudio-only ETF mode: allow registered local extensions `get_etf_list_local` and `get_history_batch`, but do not run or claim PTrade validation.
+- ETF mode (default local-only): allow registered local extensions `get_etf_list_local` and `get_history_batch`; do not run or claim PTrade validation (PTrade conversion by the tab/CLI freezes the pool later).
 
 Do not let strategy source import `duckdb`, `quantstudio._paths`, or provider modules. The framework selects DuckDB; the strategy calls injected public APIs.
 
@@ -160,11 +156,10 @@ The contract records natural-language semantics, lifecycle callbacks, public API
   "signal_price_adjustment": "pre",
   "execution_price_basis": "pre_adjusted_price"
 },
-"targets": ["quantstudio", "ptrade"],
+"targets": ["quantstudio"],
 "universe_contract": {
-  "mode": "static_whitelist",
-  "local_dynamic_api_allowed": false,
-  "static_etf_whitelist": ["510050.SS", "510300.SS"]
+  "mode": "dynamic_local",
+  "local_dynamic_api": "get_etf_list_local"
 },
 "constraints": {
   "runtime_state_guard_required": true,
@@ -173,7 +168,7 @@ The contract records natural-language semantics, lifecycle callbacks, public API
 }
 ```
 
-Do not encode a renderer pattern or fixed strategy kind. For QuantStudio-only ETF mode set `targets=["quantstudio"]`, `portable_source_required=false`, and `universe_contract.mode="dynamic_local"` with `local_dynamic_api="get_etf_list_local"`.
+Do not encode a renderer pattern or fixed strategy kind. The skill always emits `targets=["quantstudio"]`; ETF strategies use `universe_contract.mode="dynamic_local"` with `local_dynamic_api="get_etf_list_local"`. PTrade conversion happens later via the PyQt tab / CLI (static pool freeze).
 
 Design 2.2 additionally requires these machine-checkable contracts (schema-validated and cross-checked for contradictions):
 
@@ -230,13 +225,12 @@ Require:
     "generation_target": true,
     "strategy_semantics": true,
     "execution_approximations": true,
-    "component_plan": true,
-    "static_etf_whitelist": true
+    "component_plan": true
   }
 }
 ```
 
-All approximations require `confirmed=true`. `static_etf_whitelist` is required only for dual ETF mode, but when required it must reflect the customer-confirmed codes rather than an agent-inferred list.
+All approximations require `confirmed=true`. (No `static_etf_whitelist` confirmation: local-only skill uses the dynamic `get_etf_list_local` pool; static freeze happens at PTrade conversion time.)
 
 Design 2.2 also requires verbatim `confirmation_evidence` entries (customer_text + timezone-aware confirmed_at + source=customer_reply) for `generation_target`, `strategy_semantics`, `portfolio_contract`, `rebalance_funding_contract`, and `r5_deployment_invariants`; the boolean flags alone are not accepted.
 
@@ -263,25 +257,21 @@ It must use `hasattr`/missing-field checks and never reset existing state. It mu
 
 Reason: real PTrade may continue later lifecycle calls after `initialize` raises. State safety cannot depend on successful initialization.
 
-In dual mode, the agent implements strategy logic using the PTrade backtest public subset and the confirmed static ETF whitelist. In QuantStudio-only mode, the agent may use registered local extensions such as `get_etf_list_local` and `get_history_batch`, and the source must declare no PTrade portability. Do not hand-maintain divergent local/PTrade business logic. Use only injected APIs for data; local execution must route those APIs to the selected project DuckDB provider rather than opening storage from strategy source. Every signal-price call must spell `fq='pre'` literally. Use raw current/snapshot prices only for execution checks, order sizing, fill reconciliation, cash, and valuation; never concatenate them into a front-adjusted indicator series.
+The agent implements strategy logic with QuantStudio local extensions (e.g. `get_etf_list_local`, `get_history_batch`); the source must declare no PTrade portability (PTrade conversion is out of scope). Do not hand-maintain divergent local/PTrade business logic. Use only injected APIs for data; local execution must route those APIs to the selected project DuckDB provider rather than opening storage from strategy source. Every signal-price call must spell `fq='pre'` literally. Use raw current/snapshot prices only for execution checks, order sizing, fill reconciliation, cash, and valuation; never concatenate them into a front-adjusted indicator series.
 
 **R3 exit gate:** complete canonical source with no scaffold markers.
 
 ## R4 - Separate static validation
 
-Run validation according to the confirmed target mode:
+Run validation for the local-only target:
 
 ```powershell
-# every mode
 python scripts/validate_agent_strategy.py strategy.py --design agent_strategy_design.json --target-profile quantstudio
-
-# dual mode only
-python scripts/validate_agent_strategy.py strategy.py --design agent_strategy_design.json --target-profile ptrade
 ```
 
-QuantStudio validation must pass in every mode. In dual mode, PTrade validation must also pass and checks real keyword names for every profiled API, rejects unverifiable `**kwargs`, checks context availability, local-only symbols, state-guard idempotence, lifecycle, timing, PIT, portability, the mandatory literal `fq='pre'` signal-price contract, and the `get_history(is_dict=True)` return-shape contract (unguarded pandas-only access on history items is BLOCKED). A permissive local adapter signature is never accepted as platform evidence.
+QuantStudio validation must pass. `PTrade validation: NOT_APPLICABLE` (local-only skill; PTrade conversion is handled by the PyQt tab / CLI `qs-compile import`).
 
-For dual mode strategies that consume `get_history(is_dict=True)`, the agent-first runtime-shape fixture is a **mandatory third R4 gate**, enforced inside `scripts/prepare_user_backtest_candidate.py` (candidate generation BLOCKs on fixture FAIL) and re-verified by `scripts/publish_agent_strategy.py`: the recorded `runtime_shape_fixture_source_sha256` must equal the canonical hash being published (canonical edits make the old fixture PASS stale), and `runtime_shape_fixture_report.json` must still exist, match its recorded SHA-256, still record `status=PASS`, and reference the same canonical source file. It executes the strategy's standard `_extract_history_field` helper against DataFrame/Series/structured-array/recarray/empty/missing-field fixtures and requires DataFrame/recarray result equality plus fail-soft empties. The legacy renderer/Jinja runtime fixture does not cover agent-first source and is not a substitute. It may still be run standalone:
+For strategies that consume `get_history(is_dict=True)`, the agent-first runtime-shape fixture remains available (enforced inside `scripts/prepare_user_backtest_candidate.py` / `scripts/publish_agent_strategy.py` when configured): the recorded `runtime_shape_fixture_source_sha256` must equal the canonical hash being published, and `runtime_shape_fixture_report.json` must still exist, match its recorded SHA-256, still record `status=PASS`, and reference the same canonical source file. It may also be run standalone:
 
 ```powershell
 python scripts/validate_runtime_shapes.py strategy.py
@@ -291,7 +281,7 @@ R4 reports distinguish static and runtime truth: `profile_validation_status=PASS
 
 Repair reusable incompatibilities in the adapter/profile/Skill first. Regenerate strategy output under the corrected rules; do not hand-patch only one target file.
 
-**R4 exit gate:** dual mode = QuantStudio static PASS + PTrade static PASS + agent-first runtime-shape fixture PASS (when the source consumes `get_history(is_dict=True)`); QuantStudio-only mode = QuantStudio PASS + `PTrade validation: NOT_APPLICABLE`. Reports remain separate and auditable.
+**R4 exit gate:** QuantStudio static PASS + agent-first runtime-shape fixture PASS (when the source consumes `get_history(is_dict=True)`); `PTrade validation: NOT_APPLICABLE`. Reports remain separate and auditable.
 
 ## R5 - Backtest execution and evidence review
 
@@ -335,29 +325,16 @@ Every repair invalidates old R4/R5 hashes. Regenerate the candidate after the ne
 
 `publish_agent_strategy.py` must branch from the confirmed `targets` contract.
 
-### Dual mode
+### Local-only mode
 
 1. verify the workflow ledger and local backtest PASS;
-2. generate both target files into staging;
-3. validate the QuantStudio staging file;
-4. validate the PTrade staging file against real public signatures/context;
-5. run `validate_dual_consistency.py` only after both files physically exist;
-6. publish atomically only when all checks PASS;
-7. write both files to the default paths:
-   - `quantstudio/backtest/strategies/<strategy_id>_quantstudio.py`
-   - `ptrade/<strategy_id>_ptrade.py`
-
-Never claim dual delivery from a pre-generation comparison or from comparing the canonical input with itself. The report must state `comparison_phase=post_generation_staging`.
-
-### QuantStudio-only mode
-
-1. verify the workflow ledger and local backtest PASS;
-2. generate and validate only the QuantStudio staging file;
+2. generate and validate the QuantStudio staging file;
 3. publish only `quantstudio/backtest/strategies/<strategy_id>_quantstudio.py`;
 4. do not create an empty or placeholder PTrade file;
 5. record exactly:
    - `PTrade validation: NOT_APPLICABLE`
    - `Dual consistency: NOT_APPLICABLE`
+   - `PTrade conversion: out of scope (PyQt tab / CLI qs-compile import)`
    - `PTrade output: NOT_GENERATED`
 
 In user-PyQt mode, R6 must verify the validated candidate still exists with the same hash, generate fresh formal staging files from the canonical source, validate/compare them, atomically write formal targets, then remove the `__candidate` file. Record `candidate_status=PROMOTED` and `candidate_removed=true`. Never promote an edited candidate.
@@ -367,7 +344,7 @@ In user-PyQt mode, R6 must verify the validated candidate still exists with the 
 # PTrade compatibility rules
 
 - API keyword names must match the platform exactly. Python acceptance through local `**kwargs` is forbidden as compatibility evidence.
-- `set_backtest()` and `is_trade()` are LOCAL_ONLY and forbidden in dual/PTrade backtest source. Do not wrap one local-only call with another.
+- `set_backtest()` and `is_trade()` are LOCAL_ONLY extensions; they may be used in local strategy source (conversion strips/inlines them for PTrade). Do not wrap one local-only call with another.
 - Use `log.warning(...)`, never `log.warn(...)`, in portable source; real IQEngine `LogEngine` does not expose the alias.
 - Backtest/trading/research context availability is enforced separately.
 - Use PTrade `.SS/.SZ/.BJ` security suffixes in portable source and in local ETF-universe return values.
@@ -378,8 +355,8 @@ In user-PyQt mode, R6 must verify the validated candidate still exists with the 
 - A current completed minute may use `get_history(..., frequency='1m', fq='pre', include=True)` only in a confirmed scheduled minute callback with an explicit current-bar cutoff.
 - `get_snapshot` and `check_limit` are not allowed in PTrade backtest source. `get_open_orders(security=None)` is allowed in backtest and trade contexts.
 - `filter_stock_by_status` is called only from `before_trading_start`; scheduled callbacks use `get_stock_status` for current status checks. Portable status checks use only `query_type='ST'`, `'HALT'`, or `'DELISTING'`; never pass `DELISTING_SORTING` to `get_stock_status`.
-- Stock-core dual strategies may use the registered signatures for `set_benchmark`, `run_daily`, `get_Ashares`, `get_index_stocks`, `get_stock_status`, `get_positions`, `get_position`, `get_trade_days`, and `get_fundamentals`. Any other injected top-level API remains BLOCKED until its exact public signature, context and return shape are added to the profile and local adapter regression tests.
-- `get_etf_list()` is blocked in backtest source. Dual ETF strategies use the customer-confirmed static whitelist; QuantStudio-only ETF strategies use `get_etf_list_local()` through the provider/data-adapter chain.
+- Stock-core strategies may use the registered signatures for `set_benchmark`, `run_daily`, `get_Ashares`, `get_index_stocks`, `get_stock_status`, `get_positions`, `get_position`, `get_trade_days`, and `get_fundamentals`. Any other injected top-level API remains BLOCKED until its exact public signature, context and return shape are added to the profile and local adapter regression tests.
+- `get_etf_list()` is blocked in backtest source. ETF strategies use `get_etf_list_local()` through the provider/data-adapter chain (dynamic PIT pool); PTrade conversion later freezes the pool into a static `ETF_POOL_STATIC`.
 - `get_etf_list_local()` returns metadata/PIT/code-format results only; MA, momentum, liquidity, abnormal-volume and ranking rules remain in strategy source.
 - For customer-requested QuantStudio-only event strategies, external CSV/event data is ingested by the generic `strategy_events` adapter and queried with local extension `get_strategy_events`; set targets to `quantstudio` only and never claim PTrade portability.
 - Use order rejection and documented price fields for backtest limit behavior; trading-only checks may be used only in a separately validated trading profile.
@@ -393,7 +370,7 @@ When a customer supplies a real PTrade exception:
 3. repair the local adapter signature/shape only so that local acceptance matches PTrade, and repair the Skill/profile/validator so future agents generate portable calls;
 4. do not add a strategy ID, strategy-name branch, one-off template, or one-target hotfix;
 5. regenerate the canonical output under the corrected generic rules;
-6. rerun QuantStudio validation, PTrade validation, local backtest, physical dual-target generation, and post-generation consistency;
+6. rerun QuantStudio validation, local backtest, and (for conversions) the source_import round-trip;
 7. report the old and new hashes and explicitly confirm the old upload artifact stayed retired.
 
 # Prohibited behavior
@@ -412,11 +389,10 @@ When a customer supplies a real PTrade exception:
 - adding strategy IDs/names to Skill, Compiler, Renderer or templates;
 - selecting an external database while `<current-project>/data/quantstudio.db` exists without explicit customer approval;
 - patching only the currently failing strategy or only one target copy instead of repairing the reusable contract and regenerating all selected outputs;
-- calling `get_etf_list_local` or `get_history_batch` in dual/PTrade targets;
 - calling `get_etf_list` in any backtest target;
-- generating a dual ETF strategy before the static whitelist is explicitly confirmed;
-- reporting PTrade PASS or dual-consistency PASS for a QuantStudio-only strategy;
+- reporting PTrade PASS for a local-only strategy;
 - treating a PyQt candidate as a formal/PTrade upload artifact;
+- producing PTrade code during strategy development (PTrade conversion is owned by the PyQt "转 PTrade" tab / CLI `qs-compile import`);
 - accepting user backtest claims without candidate-hash, data-source, window and completion evidence;
 - accepting self-reported `runtime_checks=true` booleans as R5 PASS evidence instead of hash-bound real artifacts;
 - claiming R5 PASS for a backtest that finished without exceptions but never deployed the designed capital/positions;
@@ -436,7 +412,7 @@ When a customer supplies a real PTrade exception:
 - scaffold: `scripts/create_agent_workspace.py`
 - profile validation: `scripts/validate_agent_strategy.py`
 - agent-first runtime-shape fixture: `scripts/validate_runtime_shapes.py`
-- consistency: `scripts/validate_dual_consistency.py`
+- PTrade conversion: out of scope (PyQt "转 PTrade" tab / CLI `qs-compile import`)
 - user-PyQt candidate: `scripts/prepare_user_backtest_candidate.py`
 - artifact analysis: `scripts/analyze_backtest_artifacts.py`
 - user evidence review: `scripts/review_user_backtest_evidence.py`
