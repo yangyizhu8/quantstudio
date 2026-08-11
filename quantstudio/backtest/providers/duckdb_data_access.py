@@ -36,6 +36,26 @@ def _require_valid_identifier(name: str, where: str) -> str:
 
 logger = logging.getLogger(__name__)
 
+
+def _build_trade_date_map(time_series: pd.Series) -> pd.Series:
+    """性能优化（2026-08-12，zcode+reasonix 联合定稿）：唯一 time 值 → 日期字符串
+    map，再广播回全列（~10x 加速，逐位等价）。
+
+    等价性：
+    - pd.Timestamp(t, unit="ms").tz_localize("UTC").tz_convert("Asia/Shanghai")
+      ≡ pd.to_datetime(t, unit="ms", utc=True).tz_convert("Asia/Shanghai")
+      （同一 epoch-ms → 同一 UTC aware → 同一 +8 日期字符串；Asia/Shanghai 无 DST，
+      跨日边界转换稳定）
+    - time 列无 NaN（主键语义），map 不产生缺失键。
+    """
+    _unique_times = time_series.unique()
+    _td_map = {
+        int(t): pd.Timestamp(int(t), unit="ms").tz_localize("UTC")
+        .tz_convert("Asia/Shanghai").strftime("%Y-%m-%d")
+        for t in _unique_times
+    }
+    return time_series.map(_td_map)
+
 # 日线快照前复权 OHLC / preClose 缩放口径（方案A，2026-07-25 决策），供 query_daily_snapshot
 # 与 preload_daily_snapshots 共用，保证 per-day 查询与全期预取结果字节级一致。
 _ADJ_OHLC_SQL = """
@@ -73,6 +93,17 @@ class DuckDBDataAccess:
         # _preload_listing[code==x] 的 O(N) 布尔扫描（get_security_info 全市场万次
         # 调用→新 N+1）。取首行出现（等价原 iloc[0]）。
         self._preload_listing_by_code: Optional[dict] = None
+        # ---- PR7 性能优化：bars 全历史内存缓存（query_bars_by_count_batch 预加载路径）----
+        # (table, code) -> 全历史 DataFrame（原始列，未做 qfq/trade_date 后处理——后处理统一走 _post）
+        # key 含表名：同一 code 跨表不可命中（如 510300 只属 etf_daily，若被 stock_daily
+        # 循环误命中会跨表 concat 导致 NULL 字面量列的 dtype 提升——Int32 全 NA 列被
+        # float64 合并，破坏与 SQL 路径逐表 fetchdf 的 dtype 一致性）。
+        # 惰性按需加载：首次调用批量查一次 SQL，后续纯内存切片（time<=before_ms + tail(count)）。
+        # 等价性：缓存数据来自同一 DB 同一 SELECT 列集；切片逻辑与 SQL
+        # WHERE code IN(...) AND time<=? QUALIFY ROW_NUMBER(...)<=count 逐行一致。
+        self._bars_history_cache: Dict[tuple, pd.DataFrame] = {}
+        # 实例级开关：True 走原 SQL 路径（等价性对比测试/回滚用），False（默认）走内存缓存路径。
+        self._use_sql_path = False
         self._preload_fs: Optional[pd.DataFrame] = None
         self._preload_fs_month: Optional[str] = None
         # 纯性能优化：日线快照内存缓存（query_daily_snapshot 结果）。
@@ -422,6 +453,28 @@ class DuckDBDataAccess:
             df['trade_date'] = pd.to_datetime(df['time'], unit='ms', utc=True).dt.tz_convert('Asia/Shanghai').dt.strftime('%Y-%m-%d')
         return df
 
+    def _ensure_bars_in_cache(self, codes, table, cols) -> None:
+        """PR7：确保 codes 的全历史数据在 _bars_history_cache 中（惰性批量加载）。
+
+        只查未命中的 code（一条 SQL，参数化占位），加载后按 (code, time) 升序缓存。
+        缓存保存原始列（未做 qfq/trade_date 后处理），后处理统一由
+        query_bars_by_count_batch 的 _post 完成——与 SQL 路径共享同一后处理逻辑。
+        """
+        missing = [c for c in codes if (table, c) not in self._bars_history_cache]
+        if not missing:
+            return
+        conn = self._get_conn()
+        if conn is None:
+            return
+        placeholders = ", ".join(["?"] * len(missing))
+        df = conn.execute(
+            f"SELECT {cols} FROM {table} WHERE code IN ({placeholders})", missing).fetchdf()
+        if df is None or df.empty:
+            return
+        df = df.sort_values(["code", "time"]).reset_index(drop=True)
+        for c, sub in df.groupby("code", sort=False):
+            self._bars_history_cache[(table, c)] = sub.reset_index(drop=True)
+
     def query_bars_by_count_batch(self, codes, count, before_ms, use_qfq: bool = False) -> Dict[str, pd.DataFrame]:
         """阶段1 批量化：与 query_bars_by_count_multi_table 逐只调用字节级等价，
         但用单次/少量批量 SQL 取代 N 次单码 SQL（O(N) -> O(1)）。
@@ -477,7 +530,7 @@ class DuckDBDataAccess:
                         # per-code 守卫：该 code 的 qfq 列任意非空 -> 整列替换原始列。
                         grp = df[qfq].notna().groupby(df["code"]).transform("max")
                         df.loc[grp, orig] = df.loc[grp, qfq]
-            df["trade_date"] = pd.to_datetime(df["time"], unit="ms", utc=True).dt.tz_convert("Asia/Shanghai").dt.strftime("%Y-%m-%d")
+            df["trade_date"] = _build_trade_date_map(df["time"])
             return df
 
         # ---- 逐表优先级 stock -> etf -> index，与单码版完全一致（一只代码只取一张表）----
@@ -487,36 +540,75 @@ class DuckDBDataAccess:
             remaining = [c for c in codes if c not in result]
             if not remaining:
                 break
-            placeholders = ", ".join(["?"] * len(remaining))
-            # QUALIFY 直接写法（等价原「子查询 + 外层 WHERE _rn<=N」，但允许 DuckDB
-            # 优化器下推窗口函数，只取每只最近 N 根，避免大表上先取全量历史再过滤）。
-            # 参数顺序不变：code IN(...) + before_ms(time<=?) + count(QUALIFY<=?)。
-            sql = (f"SELECT {cols} FROM {tbl} "
-                   f"WHERE code IN ({placeholders}) AND time <= ? "
-                   f"QUALIFY ROW_NUMBER() OVER (PARTITION BY code ORDER BY time DESC) <= ?")
-            df = conn.execute(sql, remaining + [before_ms, count]).fetchdf()
-            if df is None or df.empty:
-                continue
-            df = _post(df, use_qfq)  # 整表向量化后处理
-            for c, sub in df.groupby("code", sort=False):
-                result[c] = sub.reset_index(drop=True)
+            if self._use_sql_path:
+                # ---- 原 SQL 路径（保留：等价性对比 / 回滚）----
+                placeholders = ", ".join(["?"] * len(remaining))
+                # QUALIFY 直接写法（等价原「子查询 + 外层 WHERE _rn<=N」，但允许 DuckDB
+                # 优化器下推窗口函数，只取每只最近 N 根，避免大表上先取全量历史再过滤）。
+                # 参数顺序不变：code IN(...) + before_ms(time<=?) + count(QUALIFY<=?)。
+                sql = (f"SELECT {cols} FROM {tbl} "
+                       f"WHERE code IN ({placeholders}) AND time <= ? "
+                       f"QUALIFY ROW_NUMBER() OVER (PARTITION BY code ORDER BY time DESC) <= ?")
+                df = conn.execute(sql, remaining + [before_ms, count]).fetchdf()
+                if df is None or df.empty:
+                    continue
+                df = _post(df, use_qfq)  # 整表向量化后处理
+                for c, sub in df.groupby("code", sort=False):
+                    result[c] = sub.reset_index(drop=True)
+            else:
+                # ---- PR7 内存缓存路径：全历史预加载 + time<=before 切片 + tail(count) ----
+                # 与 SQL 路径逐行等价：缓存来自同一 SELECT 列集；每组取
+                # time<=before_ms 的最近 count 根（缓存已按 (code,time) 升序），
+                # 后处理统一走 _post（排序/qfq 替换/trade_date 与 SQL 版完全一致）。
+                self._ensure_bars_in_cache(remaining, tbl, cols)
+                slices = []
+                for c in remaining:
+                    full = self._bars_history_cache.get((tbl, c))
+                    if full is None:
+                        continue
+                    sub = full[full["time"] <= before_ms]
+                    if sub.empty:
+                        continue
+                    slices.append(sub.tail(count))
+                if not slices:
+                    continue
+                df = _post(pd.concat(slices, ignore_index=True), use_qfq)
+                for c, sub in df.groupby("code", sort=False):
+                    result[c] = sub.reset_index(drop=True)
 
         # ---- INDEX_ETF_MAP fallback：仍未命中的指数代码用跟踪 ETF 代理批量查一次 ----
         missing = [c for c in codes if c not in result and c in INDEX_ETF_MAP]
         if missing:
             proxy_map = {INDEX_ETF_MAP[c]: c for c in missing}  # proxy_code -> 原 index code
             proxies = list(proxy_map.keys())
-            placeholders = ", ".join(["?"] * len(proxies))
-            # QUALIFY 直接写法（与循环体同款优化；参数顺序不变：code IN(...) + before_ms + count）。
-            sql = (f"SELECT {ETF_FALLBACK_COLS} FROM etf_daily "
-                   f"WHERE code IN ({placeholders}) AND time <= ? "
-                   f"QUALIFY ROW_NUMBER() OVER (PARTITION BY code ORDER BY time DESC) <= ?")
-            df = conn.execute(sql, proxies + [before_ms, count]).fetchdf()
-            if df is not None and not df.empty:
-                df = _post(df, use_qfq)  # 整表向量化后处理
-                for proxy_code, sub in df.groupby("code", sort=False):
-                    # 以原 index code 为 key（单码版 df.code=proxy 但 result key=原 index code）
-                    result[proxy_map[proxy_code]] = sub.reset_index(drop=True)
+            if self._use_sql_path:
+                placeholders = ", ".join(["?"] * len(proxies))
+                # QUALIFY 直接写法（与循环体同款优化；参数顺序不变：code IN(...) + before_ms + count）。
+                sql = (f"SELECT {ETF_FALLBACK_COLS} FROM etf_daily "
+                       f"WHERE code IN ({placeholders}) AND time <= ? "
+                       f"QUALIFY ROW_NUMBER() OVER (PARTITION BY code ORDER BY time DESC) <= ?")
+                df = conn.execute(sql, proxies + [before_ms, count]).fetchdf()
+                if df is not None and not df.empty:
+                    df = _post(df, use_qfq)  # 整表向量化后处理
+                    for proxy_code, sub in df.groupby("code", sort=False):
+                        # 以原 index code 为 key（单码版 df.code=proxy 但 result key=原 index code）
+                        result[proxy_map[proxy_code]] = sub.reset_index(drop=True)
+            else:
+                # PR7 内存缓存路径：代理 ETF 同样从全历史缓存切片（复用 etf_daily 缓存）。
+                self._ensure_bars_in_cache(proxies, "etf_daily", ETF_FALLBACK_COLS)
+                slices = []
+                for p in proxies:
+                    full = self._bars_history_cache.get(("etf_daily", p))
+                    if full is None:
+                        continue
+                    sub = full[full["time"] <= before_ms]
+                    if sub.empty:
+                        continue
+                    slices.append(sub.tail(count))
+                if slices:
+                    df = _post(pd.concat(slices, ignore_index=True), use_qfq)
+                    for proxy_code, sub in df.groupby("code", sort=False):
+                        result[proxy_map[proxy_code]] = sub.reset_index(drop=True)
         return result
 
     # ===================== PR3: 分钟 bar 查询 =====================
