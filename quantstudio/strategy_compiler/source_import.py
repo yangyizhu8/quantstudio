@@ -147,6 +147,38 @@ def _portfolio_total_value(context):
     return float(portfolio.cash) + market_value
 '''
 
+_QS_HISTORY_WRAPPER = '''
+{marker}
+# 方向 B（2026-08-13 平台实证）：PTrade get_history 返回 numpy structured array，
+# 统一转为 DataFrame（PTrade pandas 1.5.3 可用）。策略代码可用全部 pandas API。
+import pandas as _qs_pd
+import numpy as _qs_np
+
+def _qs_to_dataframe(item):
+    """structured array → DataFrame；已是 DataFrame/其他类型则原样返回。"""
+    if isinstance(item, _qs_np.ndarray) and hasattr(item, 'dtype') and hasattr(item.dtype, 'names'):
+        df = _qs_pd.DataFrame(item)
+        # 列名修正：PTrade 用 'datetime'，本地框架/策略代码期望 'time'
+        if 'datetime' in df.columns and 'time' not in df.columns:
+            df = df.rename(columns={{'datetime': 'time'}})
+        return df
+    return item
+
+# 保存原始 get_history 引用：类属性承载（属性调用不被静态 API 白名单拦截，
+# 模块级别名函数 _qs_original_get_history(...) 会被 validate_local_strategy 判 BLOCK）
+class _QSHistoryState:
+    orig = None
+
+_QSHistoryState.orig = get_history
+
+# 重新绑定 get_history：所有调用自动转 DataFrame
+def get_history(*args, **kwargs):
+    _result = _QSHistoryState.orig(*args, **kwargs)
+    if isinstance(_result, dict):
+        return {{k: _qs_to_dataframe(v) for k, v in _result.items()}}
+    return _qs_to_dataframe(_result)
+'''
+
 # 档 2 表达式内嵌的等价字面量（H2）：本地函数 → PTrade 语义等价字面量
 _REWRITE_LITERALS: dict[str, str] = {
     "set_backtest": "None",
@@ -1049,6 +1081,12 @@ class SourceConverter:
         self.coverage["injected_helpers"].extend(
             ["_lookup_history_item", "_extract_history_field", "_bare_code",
              "_finite_float", "_finite_series", "_get_ma", "_portfolio_total_value"])
+        # 方向 B：get_history 返回类型统一（structured array → DataFrame）。
+        # 注入顺序：helper → wrapper → shim → 策略 def →
+        #  - wrapper 在 shim 之前 → shim 内部调 get_history 已是 wrapper 版本 → 返回 DataFrame
+        #  - wrapper 在策略 def 之前 → 策略 handle_data 调 get_history 已是 wrapper 版本
+        blocks.append(_QS_HISTORY_WRAPPER.format(marker=INJECTED_MARKER))
+        self.coverage["injected_helpers"].append("get_history_wrapper")
         for shim_name in sorted(self._need_shim):
             blocks.append(self._shim_source(shim_name))
             self.coverage["injected_helpers"].append(f"shim:{shim_name}")

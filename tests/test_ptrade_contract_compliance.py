@@ -256,6 +256,74 @@ def handle_data(context, data):
 
 
 # ---------------------------------------------------------------------------
+# 修复 7：get_history 返回类型统一 wrapper（方向 B，structured array → DataFrame）
+# ---------------------------------------------------------------------------
+
+def _wrapper_ns(history_return):
+    """exec _QS_HISTORY_WRAPPER 注入区 → 命名空间（含 _qs_to_dataframe / wrapper get_history）。"""
+    import numpy as np
+    import quantstudio.strategy_compiler.source_import as si
+
+    def _fake_get_history(*args, **kwargs):
+        return history_return
+
+    ns = {"get_history": _fake_get_history}
+    exec(si._QS_HISTORY_WRAPPER.format(marker="# wrapper"), ns)
+    return ns
+
+
+def test_history_wrapper_converts_structured_array():
+    """structured array → DataFrame（datetime → time 列名映射，数据逐元素保留）。"""
+    import numpy as np
+    import pandas as pd
+    arr = np.array([(20230413, 10.35), (20230414, 10.50)],
+                   dtype=[("datetime", "i8"), ("close", "f8")])
+    ns = _wrapper_ns(arr)
+    df = ns["_qs_to_dataframe"](arr)
+    assert isinstance(df, pd.DataFrame)
+    assert "time" in df.columns and "datetime" not in df.columns
+    assert "close" in df.columns
+    assert df["close"].tolist() == [10.35, 10.50]
+
+
+def test_history_wrapper_passes_dataframe():
+    """已 DataFrame → 原样返回（不重复转换）。"""
+    import pandas as pd
+    ns = _wrapper_ns(None)
+    df = pd.DataFrame({"time": [20230413], "close": [10.35]})
+    assert ns["_qs_to_dataframe"](df) is df
+
+
+def test_history_wrapper_passes_dict():
+    """get_history wrapper：dict（多标的）逐元素转 DataFrame。"""
+    import numpy as np
+    import pandas as pd
+    arr = np.array([(20230413, 10.35)],
+                   dtype=[("datetime", "i8"), ("close", "f8")])
+    ns = _wrapper_ns({"510300.SS": arr})
+    out = ns["get_history"](20, frequency="1d", field=["close"],
+                            security_list="510300.SS", fq="pre")
+    assert isinstance(out, dict)
+    df = out["510300.SS"]
+    assert isinstance(df, pd.DataFrame)
+    assert "time" in df.columns
+
+
+def test_history_wrapper_idempotent():
+    """产物已有 wrapper → 二次转换不重复注入（INJECTED_MARKER 幂等）。"""
+    r = _convert("""
+def initialize(context):
+    pool = ['600570.SS']
+    h = get_history_batch(pool, 20, '1d', fields=['close'], fq='pre')
+""")
+    assert r.errors == []
+    assert r.converted_code.count("def _qs_to_dataframe(item):") == 1
+    r2 = _convert(r.converted_code, name="t2.py")
+    assert r2.errors == []
+    assert r2.converted_code.count("def _qs_to_dataframe(item):") == 1
+
+
+# ---------------------------------------------------------------------------
 # 整策略验收
 # ---------------------------------------------------------------------------
 
@@ -280,6 +348,10 @@ def test_fall_reversal_full_contract():
     # 5) 行情字段 .values 访问归一化（平台返回 structured array，无 .values 属性）
     assert "np.asarray(df['close']).astype(float)" in body
     assert "df['close'].values" not in body
+    # 6) 方向 B：get_history 返回类型统一 wrapper（structured array → DataFrame）
+    assert "def _qs_to_dataframe(item):" in body
+    assert "class _QSHistoryState:" in body
+    assert "_QSHistoryState.orig = get_history" in body
 
 
 def test_etf_theme_rotation_shim_contract():
