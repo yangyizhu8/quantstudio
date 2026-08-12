@@ -1,0 +1,25 @@
+{
+  "ok": true,
+  "violations": [],
+  "warnings": [
+    "Dimension 13 (成本滑点) GAP: Spec.costs not propagated to rendered .py. PR6b-2 will add set_commission/set_slippage passthrough.",
+    "QS rendered code has unexpected calls not in PTrade: ['array', 'concatenate', 'get_ma', 'list', 'order_value']. Only batch APIs (get_history_batch/get_fundamentals_batch) are expected QS-only."
+  ],
+  "dimensions": {
+    "1_strategy_params": "IDENTICAL_BY_CONSTRUCTION",
+    "2_stock_pool": "IDENTICAL_BY_CONSTRUCTION",
+    "3_hard_filters": "IDENTICAL_BY_CONSTRUCTION",
+    "4_indicator_params": "IDENTICAL_BY_CONSTRUCTION",
+    "5_buy_conditions": "IDENTICAL_BY_CONSTRUCTION",
+    "6_sell_conditions": "IDENTICAL_BY_CONSTRUCTION",
+    "7_rebalance_frequency": "IDENTICAL_BY_CONSTRUCTION",
+    "8_position_count": "IDENTICAL_BY_CONSTRUCTION",
+    "9_position_sizing": "IDENTICAL_BY_CONSTRUCTION",
+    "11_signal_cutoff": "IDENTICAL_BY_CONSTRUCTION",
+    "12_execution_timing": "IDENTICAL_BY_CONSTRUCTION",
+    "10_stop_loss_take_profit": "EMPTY",
+    "13_costs_slippage": "GAP",
+    "14_api_capability_diff": "DIFF_OK"
+  },
+  "summary": null
+}
