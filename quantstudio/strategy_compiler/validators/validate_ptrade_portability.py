@@ -58,6 +58,15 @@ def validate_ptrade_portability(
         ))
         return False, violations, warnings
 
+    # 收集产物中定义的函数名（含注入的 shim：def get_history_batch 等）。
+    # 若 DENY_SHIM 类 API 在产物中有同名 def 定义，说明转换器已注入 shim
+    # （Python 模块级 LEGB 查找，调用绑定到注入的 shim 而非本地扩展）→ 放行。
+    # 修复（2026-08-12，zcode）：etf_theme_rotation 转换产物含注入 shim 仍被误 BLOCK。
+    _defined_names = {
+        node.name for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+    }
+
     # AST scan for DENYLIST calls
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -69,6 +78,12 @@ def validate_ptrade_portability(
         elif isinstance(f, ast.Attribute):
             name = f.attr
         if name in denylist():
+            # 例外：DENY_SHIM 类 API（get_history_batch / get_fundamentals_batch）
+            # 若产物中已有同名 def（注入的 shim），调用绑定到 shim 函数（shim 内部
+            # 循环调 get_history/get_fundamentals 公共 API），语义已降级 → 放行。
+            # DENY_REMOVE / DENY_BLOCK 类不适用此例外（产物中不会有其 def 定义）。
+            if name in _BATCH_APIS and name in _defined_names:
+                continue
             # 分类：batch API vs 本地文件/DB 访问 vs 本地自创 API
             if name in _BATCH_APIS:
                 rule_id = "PORTABILITY-LOCAL-EXTENSION-BAN"

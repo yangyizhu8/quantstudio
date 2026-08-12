@@ -556,3 +556,45 @@ def handle_data(context, data):
     assert "000001.SH" not in out and "000001.SS" in out
     assert "000852.SH" not in out and "000852.SS" in out
     assert "399001.SZ" in out  # 深市后缀保持不变
+
+
+# ---------------------------------------------------------------------------
+# 测试 19：shim 注入后的 get_history_batch 调用不再被校验器误 BLOCK（zcode 2026-08-12）
+# ---------------------------------------------------------------------------
+def test_19_shim_passes_portability():
+    """含 get_history_batch 调用的策略 → 转换产物含 shim def → validate PASS（不 BLOCK）。"""
+    from quantstudio.strategy_compiler.validators.validate_ptrade_portability import (
+        validate_ptrade_portability,
+    )
+    code = '''
+def initialize(context):
+    pass
+
+def handle_data(context, data):
+    df = get_history_batch(['600570.SS', '600000.SS'], 20, '1d', fields=['close'])
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "def get_history_batch" in out  # shim 已注入
+    ok, violations, _ = validate_ptrade_portability(out, None, None)
+    assert ok, violations
+    assert not any(v.rule_id == "PORTABILITY-LOCAL-EXTENSION-BAN" for v in violations)
+
+
+def test_20_shim_exception_not_for_deny_remove():
+    """shim 例外只限 DENY_SHIM 类：set_backtest（DENY_REMOVE）即使有 def 定义仍 BLOCK。"""
+    from quantstudio.strategy_compiler.validators.validate_ptrade_portability import (
+        validate_ptrade_portability,
+    )
+    # 构造"产物里定义并调用 set_backtest"（转换器正常会移除，此处模拟未移除的坏产物）
+    code = '''
+def set_backtest(start, end):
+    pass
+
+def initialize(context):
+    set_backtest('2024-01-01', '2024-06-30')
+'''
+    ok, violations, _ = validate_ptrade_portability(code, None, None)
+    assert not ok
+    assert any(v.rule_id == "PORTABILITY-LOCAL-API" for v in violations)
