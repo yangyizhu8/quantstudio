@@ -260,15 +260,20 @@ def handle_data(context, data):
 # ---------------------------------------------------------------------------
 
 def _wrapper_ns(history_return):
-    """exec _QS_HISTORY_WRAPPER 注入区 → 命名空间（含 _qs_to_dataframe / wrapper get_history）。"""
+    """exec _QS_HISTORY_WRAPPER 注入区 → 命名空间（含 _qs_to_dataframe / wrapper get_history）。
+    ns['_captured'] 记录 wrapper 传给原始 get_history 的 kwargs（用于字段映射断言）。"""
     import numpy as np
     import quantstudio.strategy_compiler.source_import as si
 
+    captured = {}
+
     def _fake_get_history(*args, **kwargs):
+        captured["kwargs"] = kwargs
         return history_return
 
     ns = {"get_history": _fake_get_history}
     exec(si._QS_HISTORY_WRAPPER.format(marker="# wrapper"), ns)
+    ns["_captured"] = captured
     return ns
 
 
@@ -321,6 +326,51 @@ def initialize(context):
     r2 = _convert(r.converted_code, name="t2.py")
     assert r2.errors == []
     assert r2.converted_code.count("def _qs_to_dataframe(item):") == 1
+
+
+# ---------------------------------------------------------------------------
+# 修复 8：get_history 字段名统一映射（wrapper 运行时中枢，双向）
+# ---------------------------------------------------------------------------
+
+def test_field_mapping_amount_to_money():
+    """请求字段映射：amount → money（wrapper 运行时中枢，不改 AST 规则）。"""
+    ns = _wrapper_ns(None)
+    ns["get_history"](20, frequency="1d", field=["close", "amount"],
+                      security_list="510300.SS", fq="pre")
+    assert ns["_captured"]["kwargs"]["field"] == ["close", "money"]
+
+
+def test_field_mapping_passthrough():
+    """请求字段映射：一致字段不改动（close/volume 原样传递）。"""
+    ns = _wrapper_ns(None)
+    ns["get_history"](20, frequency="1d", field=["close", "volume"],
+                      security_list="510300.SS", fq="pre")
+    assert ns["_captured"]["kwargs"]["field"] == ["close", "volume"]
+
+
+def test_qs_to_dataframe_col_rename_all():
+    """返回列名统一映射：datetime/money/preclose → time/amount/preClose。"""
+    import numpy as np
+    import pandas as pd
+    arr = np.array([(20230413, 10.35, 1.23e8, 10.20)],
+                   dtype=[("datetime", "i8"), ("close", "f8"),
+                          ("money", "f8"), ("preclose", "f8")])
+    ns = _wrapper_ns(None)
+    df = ns["_qs_to_dataframe"](arr)
+    assert list(df.columns) == ["time", "close", "amount", "preClose"]
+
+
+def test_wrapper_end_to_end():
+    """双向映射完整链路：请求 amount→money，返回 money→amount。"""
+    import numpy as np
+    import pandas as pd
+    arr = np.array([(20230413, 10.35, 1.23e8)],
+                   dtype=[("datetime", "i8"), ("close", "f8"), ("money", "f8")])
+    ns = _wrapper_ns(arr)
+    out = ns["get_history"](20, frequency="1d", field=["close", "amount"],
+                            security_list="510300.SS", fq="pre")
+    assert ns["_captured"]["kwargs"]["field"] == ["close", "money"]
+    assert list(out.columns) == ["time", "close", "amount"]
 
 
 # ---------------------------------------------------------------------------

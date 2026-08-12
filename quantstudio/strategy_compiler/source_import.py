@@ -151,16 +151,33 @@ _QS_HISTORY_WRAPPER = '''
 {marker}
 # 方向 B（2026-08-13 平台实证）：PTrade get_history 返回 numpy structured array，
 # 统一转为 DataFrame（PTrade pandas 1.5.3 可用）。策略代码可用全部 pandas API。
+# 字段名中枢（2026-08-13 平台实证 etf_theme_rotation：invalid field ['amount'],
+# valid fields 含 'money' 无 'amount'（成交额）；preClose → preclose 前收大小写）：
+# 请求时 本地 → PTrade，返回时 PTrade → 本地，双向映射策略代码零改动。
 import pandas as _qs_pd
 import numpy as _qs_np
+
+# 本地字段名 → PTrade 字段名（请求时映射）
+_QS_FIELD_TO_PTRADE = {{
+    'amount': 'money',
+    'preClose': 'preclose',
+}}
+# PTrade 列名 → 本地列名（返回时映射，含 datetime→time）
+_QS_COL_TO_LOCAL = {{
+    'datetime': 'time',
+    'money': 'amount',
+    'preclose': 'preClose',
+}}
 
 def _qs_to_dataframe(item):
     """structured array → DataFrame；已是 DataFrame/其他类型则原样返回。"""
     if isinstance(item, _qs_np.ndarray) and hasattr(item, 'dtype') and hasattr(item.dtype, 'names'):
         df = _qs_pd.DataFrame(item)
-        # 列名修正：PTrade 用 'datetime'，本地框架/策略代码期望 'time'
-        if 'datetime' in df.columns and 'time' not in df.columns:
-            df = df.rename(columns={{'datetime': 'time'}})
+        # 列名统一映射：PTrade → 本地（datetime→time / money→amount / preclose→preClose）
+        _rename = {{k: v for k, v in _QS_COL_TO_LOCAL.items()
+                    if k in df.columns and v not in df.columns}}
+        if _rename:
+            df = df.rename(columns=_rename)
         return df
     return item
 
@@ -171,8 +188,17 @@ class _QSHistoryState:
 
 _QSHistoryState.orig = get_history
 
-# 重新绑定 get_history：所有调用自动转 DataFrame
+# 重新绑定 get_history：请求前字段名映射（本地 → PTrade）+ 返回转 DataFrame
 def get_history(*args, **kwargs):
+    _field = kwargs.get('field') or kwargs.get('fields')
+    if _field:
+        _is_list = isinstance(_field, list)
+        _items = _field if _is_list else [_field]
+        _mapped = [_QS_FIELD_TO_PTRADE.get(f, f) for f in _items]
+        if 'field' in kwargs:
+            kwargs['field'] = _mapped if _is_list else _mapped[0]
+        if 'fields' in kwargs:
+            kwargs['fields'] = _mapped if _is_list else _mapped[0]
     _result = _QSHistoryState.orig(*args, **kwargs)
     if isinstance(_result, dict):
         return {{k: _qs_to_dataframe(v) for k, v in _result.items()}}
@@ -185,6 +211,7 @@ _REWRITE_LITERALS: dict[str, str] = {
     "is_trade": "False",
 }
 
+# 行情字段名映射中枢在 _QS_HISTORY_WRAPPER 内（请求本地→PTrade / 返回 PTrade→本地）
 # DENY_REMOVE 中允许档 2 改写的函数；其余 DENY_REMOVE 档 2 → BLOCK
 _REMOVE_ALLOW_INLINE: frozenset[str] = frozenset(_REWRITE_LITERALS.keys())
 
