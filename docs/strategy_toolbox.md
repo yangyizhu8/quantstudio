@@ -42,7 +42,7 @@
 | `context.portfolio` | `cash`、`positions`（dict，键为 Ptrade 格式代码）、`market_value`、`total_value`；**PTrade 标准属性**：`portfolio_value`（= 组合总净值，同 `total_value`）、`positions_value`（= 持仓市值，同 `market_value`）。 |
 | `data`（DataDict） | `data[code]` → `BarData`。支持 `.SS/.XSHG/.SZ/.XSHE/裸码` 互通取值；惰性构建。 |
 | `BarData` | `open`/`high`/`low`/`close`/`price`(=close)/`volume`/`preclose`/`high_limit`/`low_limit`（涨跌停价由 A股规则精确计算）。 |
-| `Position` | `sid`/`amount`/`enable_amount`(可卖，T+1 由引擎控)/`cost_basis`/`last_sale_price`/`avg_cost`/`market_value`。 |
+| `Position` | `sid`/`amount`/`enable_amount`(可卖，T+1 由引擎控)/`cost_basis`/`last_sale_price`/`avg_cost`/`market_value`。**持仓量字段为 `amount`（对齐 PTrade 契约）；禁止用 `volume`——`volume` 是引擎内部 Position 字段，不暴露给策略侧（策略误用 `getattr(pos, 'volume', 0)` 会恒取到 0）。** |
 | `CodeDict` | 归一化查值的 dict 子类，用于 `get_history(is_dict=True)`/`get_price(is_dict=True)`/`check_limit` 等返回，任意后缀键均可取值。 |
 
 ---

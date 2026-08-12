@@ -54,6 +54,8 @@
    - 务必检查 order.status（'filled'/'open'/'rejected'）与 order.reason，处理涨跌停拒单。
 4) 账户/组合：context.portfolio.positions / positions_value / portfolio_value / cash 原样保留；
    get_positions / get_position 原样保留。
+   ⚠️ Position 对象持仓量字段为 `amount`（PTrade 契约，勿用 `volume`——`volume` 仅存在于
+   本地引擎内部 Position，不暴露给策略侧，`getattr(pos, 'volume', 0)` 恒为 0）。
 5) 选股/状态：get_index_stocks / get_Ashares / get_fundamentals / query(valuation...) / check_limit /
    filter_stock_by_status / get_trade_days 原样保留。
 6) 日志：log.info/debug/warning/error/critical 原样保留；若原 PTrade 用了 log.warn，改为 log.warning。
