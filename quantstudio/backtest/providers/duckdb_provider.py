@@ -232,6 +232,14 @@ class DuckDBReferenceDataProvider(ReferenceDataProvider):
         # 同一 listing_ms 在全市场多只跨天重复（同一股票 2 天各调一次）→ O(1) 查表。
         # 纯 memoization：同 ms 同输出，返回类型/值/时区逐值不变。
         self._ms_dt_cache: dict = {}
+        # Phase 4.5：get_stock_status 按 date_ms 缓存当日快照（纯内部缓存，语义不变）。
+        # 策略链每次调用都执行 query_daily_for_status（当日全市场快照，无索引全表扫描，
+        # 实测 ~140ms/次 × 1982 次/4 天 = 282s）——同日内结果确定不变（回测只读），
+        # 按 date 缓存后每日仅查 1 次；date 变化自动换缓存（key=当日 00:00 epoch ms），
+        # 无需 attach_day 显式失效；provider 实例生命周期 = 一次回测，跨 run 自动释放。
+        self._status_cache_key = None
+        self._status_source = None
+        self._status_source_by_code: dict = {}
     def preload(self):
         if self._data._preload_listing is None:
             self._data._preload_listing = self._data.query_listing_dates()
@@ -373,16 +381,26 @@ class DuckDBReferenceDataProvider(ReferenceDataProvider):
             cache[ms] = v
         return v
     def get_stock_status(self, codes, date):
-        source = self._data.query_daily_for_status(_start_ms(date))
-        # 阶段 B(a)：一次性将全市场 source 预构建为 {code: 字段字典}，循环内 O(1) 取行，
-        # 消除原 source[source['code']==code] 的 O(N²) 逐只布尔扫描（get_stock_status
-        # 全市场调用时 cumtime ~14.7s）。每个 code 在当日快照中唯一（日线一行一码），
-        # 故无需 iloc[0] 取首行语义；'code' 缺失回退空字典（等价原空匹配）。row.get(...)
-        # 对 dict / Series 等价。
-        if 'code' in source.columns:
-            source_by_code = source.set_index('code').to_dict('index')
-        else:
-            source_by_code = {}
+        # Phase 4.5：按 date_ms 缓存当日快照与 {code: 字段字典}（见 __init__ 注释）。
+        # key = 当日 00:00 epoch ms（_start_ms 归一化，同日不同日期格式同 key）；
+        # date 变化自动重新查询，无需显式失效。语义与原实现逐位一致：
+        # source 为同一 query_daily_for_status 返回，source_by_code 转换确定性。
+        key = _start_ms(date)
+        if self._status_cache_key != key:
+            source = self._data.query_daily_for_status(key)
+            # 阶段 B(a)：一次性将全市场 source 预构建为 {code: 字段字典}，循环内 O(1) 取行，
+            # 消除原 source[source['code']==code] 的 O(N²) 逐只布尔扫描（get_stock_status
+            # 全市场调用时 cumtime ~14.7s）。每个 code 在当日快照中唯一（日线一行一码），
+            # 故无需 iloc[0] 取首行语义；'code' 缺失回退空字典（等价原空匹配）。row.get(...)
+            # 对 dict / Series 等价。
+            if 'code' in source.columns:
+                source_by_code = source.set_index('code').to_dict('index')
+            else:
+                source_by_code = {}
+            self._status_source = source
+            self._status_source_by_code = source_by_code
+            self._status_cache_key = key
+        source_by_code = self._status_source_by_code
         rows = []
         for code in codes:
             row = source_by_code.get(code)
