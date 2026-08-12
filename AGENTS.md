@@ -13,8 +13,10 @@
 ### 必须执行的流程
 
 1. **先本地修复，后等待确认**：修复完成后，**绝不擅自**提交或推送到 GitHub。必须向用户汇报修复内容，**经过用户明确同意确认之后**，才能执行同步提交。
-2. **同步目标仓库**：https://github.com/yangyizhu8/quantstudio-plus
-   （2026-08-10 起：原仓库 yangyizhu8/quantstudio 已冻结为 public 只读归档，不再接收同步推送）
+2. **同步目标仓库**（双仓库同步，2026-08-12 起）：
+   - https://github.com/yangyizhu8/quantstudio-plus
+   - https://github.com/yangyizhu8/quantstudio
+   （`git push origin` 配置了多 push URL，一次推送同时同步两个仓库）
 3. **同步内容必须完整**，包括：
    - 相关框架代码文件的更新；
    - `README.md` 中涉及这些修复的相关内容（策略工具箱、提示词工程等章节）；
