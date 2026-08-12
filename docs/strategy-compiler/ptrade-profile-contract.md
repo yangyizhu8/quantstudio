@@ -74,3 +74,21 @@ A QuantStudio `__candidate` file is never a PTrade artifact. PTrade formal outpu
 - 源表 `stock_dividend`（tushare 权威源，`allow_fallback=false`）。schema 兼容旧列 `cash_div`，自动检测 `cash_div_before_tax` 存在性。
 - 受 Tushare 接口频率限制（~200 次/分钟），批量调用需间隔。
 - PTrade 平台除权除息字段映射与字段准确性按部署核实（`PTRADE_RUNTIME_UNVERIFIED`）。
+
+## 2026-08-11 平台读写格式不对称实证（ETF动量平台对比）
+
+> 来源：`私募工作文件/QuantStudio本地策略转ptrade模块开发/09-ETF动量平台对比报告.md`
+> （2026-08-11 真实 PTrade 平台回测实证，对照组=平台原版代码，实验组=source_import 转换产物）
+> **草稿状态：待用户确认后随框架层流程同步 GitHub（未 commit/push）。**
+
+- **新事实（有平台实证）**：PTrade 平台**订单/成交显示代码**用 `XSHG/XSHE` 风格
+  （日志实证：`股票代码：515880.XSHG`、`159870.XSHE`），但**策略上下文
+  （`context.portfolio.positions` 容器 key 匹配、`g.last_traded in positions` 判断）
+  需用 `.SS/.SZ` 规范后缀**——读写格式不对称。
+- **后果（实测）**：策略代码混用 `.SS` + `.XSHE` 时，`.XSHE` 标的的持仓 key 匹配失效：
+  "继续持有/卖出"分支不可达 → 委托数量为 0 取消 → 换仓时资金不足下单失败 →
+  死持仓单票 6 个月（平台原版 3 笔成交 vs 转换版 30 笔完整轮动；转换版 0 WARNING）。
+- **契约要求**：PTrade 策略源码中代码后缀必须统一 `.SS/.SZ/.BJ`（禁止混用 `.XSHE/.XSHG`）。
+  source_import 的 `NORM-CODE-SUFFIX` 规则（`.XSHG/.XSHE/.SH → .SS/.SZ`）为此实证背书。
+- 遗留标注：`.SH` 同族后缀在真实平台的直接实证仍无（`PTRADE_RUNTIME_UNVERIFIED`），
+  由 .XSHE 间接实证支撑（同族 key 匹配失效机理）。
