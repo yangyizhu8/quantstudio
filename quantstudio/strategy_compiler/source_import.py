@@ -618,6 +618,8 @@ class SourceConverter:
                 self._rewrite_benchmark_suffix(node)
             elif name == "get_stock_status":
                 self._rewrite_stock_status_keywords(node)
+        # 独立 pass：X['col'].values 是 Attribute 模式（非 Call），单独遍历
+        self._rewrite_values_access(tree)
 
     # ---- 修复 1：get_Ashares(date) 日期格式 YYYY-MM-DD → YYYYmmdd ----
     def _rewrite_asharess_date(self, node: ast.Call) -> None:
@@ -795,6 +797,48 @@ class SourceConverter:
                     old_text=repr(kw.value.value), new_text=new_text,
                     message="get_stock_status query_date 改为 YYYYmmdd（PTrade 契约）"))
                 self.coverage["normalized_params"] += 1
+
+    # ---- 修复 6：行情字段 `.values` 访问归一化（返回类型兼容）----
+    # 证据（2026-08-13 fall_reversal 平台第二次报错）：
+    # - PTrade get_history 返回 numpy structured_array/recarray（非 pandas DataFrame），
+    #   平台日志：AttributeError: 'numpy.ndarray' object has no attribute 'values'
+    # - 源策略 `df['close'].values` 是 pandas DataFrame 专属写法，直接透传必崩
+    # - 契约档案 get_history.return_contract.normalization 要求数值使用前归一化：
+    #   "np.asarray(item[field], dtype=float).reshape(-1) or an equivalent
+    #    hasattr(values, 'values') guarded helper"
+    # 改写：X['col'].values → np.asarray(X['col'])（保持 dtype 语义，两边通用）
+    #   - pandas DataFrame：np.asarray(Series) 等价 Series.values（保持 dtype）
+    #   - numpy structured array：np.asarray(ndarray) 恒等（保持 dtype）
+    # 不匹配场景（安全）：
+    #   - .values() 方法调用（dict.values() 等）：node 是 Call 而非 Attribute
+    #   - 非字符串下标（x[0].values 等）：下标限定 str 常量或 str 列表
+    # 幂等：改写后无 `[...].values` 形态，二次转换不重复处理。
+    def _rewrite_values_access(self, tree: ast.AST) -> None:
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Attribute) or node.attr != "values":
+                continue
+            sub = node.value
+            if not isinstance(sub, ast.Subscript):
+                continue
+            if isinstance(sub.slice, ast.Constant) and isinstance(sub.slice.value, str):
+                pass  # 单列 X['col'].values
+            elif isinstance(sub.slice, ast.List) and sub.slice.elts and all(
+                    isinstance(e, ast.Constant) and isinstance(e.value, str)
+                    for e in sub.slice.elts):
+                pass  # 多列 X[['a','b']].values
+            else:
+                continue
+            new_text = f"np.asarray({ast.unparse(sub)})"
+            self._replacements.append(
+                (node.lineno, node.col_offset, node.end_lineno, node.end_col_offset,
+                 new_text))
+            self.actions.append(ConversionAction(
+                action_type="NORMALIZE", rule_id="NORM-HIST-VALUES",
+                api_name="get_history", line=_line_of(node), severity="WARN",
+                old_text=ast.unparse(node), new_text=new_text,
+                message="行情字段 .values 访问改为 np.asarray(...)（PTrade get_history 返回"
+                        " structured array 非 DataFrame；契约 return_contract.normalization）"))
+            self.coverage["normalized_params"] += 1
 
     # ------------------------------------------------------------------
     # 代码后缀规范化（聚宽风格 XSHG/XSHE/SH → PTrade SS/SZ）

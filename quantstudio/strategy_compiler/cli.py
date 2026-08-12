@@ -165,8 +165,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    # ensure --out is a Path
-    if hasattr(args, "out"):
+    # ensure --out is a Path（None → 由 cmd_import 使用默认 output/ptrade_export/<strategy_id>）
+    if hasattr(args, "out") and args.out is not None:
         args.out = Path(args.out)
     return args.func(args)
 

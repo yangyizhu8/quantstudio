@@ -86,6 +86,13 @@ Generated PTrade code must pass:
   - **agent-first source runtime-shape fixture** — `scripts/validate_runtime_shapes.py` extracts the strategy's own helper and runs it against DataFrame/Series/structured-array/recarray/None/empty/missing-field/NaN-inf fixtures, requiring DataFrame/recarray result equality and fail-soft empties.
 - "structured-array fixture covered" may only be claimed when the agent-first validator actually ran the new fixture.
 
+## Profile correction 1.8.1 — source_import rewrites unguarded `.values` field access
+
+- Real broker failure evidence (2026-08-13, fall_reversal): PTrade IQEngine raised `AttributeError: 'numpy.ndarray' object has no attribute 'values'` in generated code `df['close'].values.astype(float)` — `get_history` returned a `numpy.structured_array`, not a pandas DataFrame.
+- Root cause: 1.8.0's normalization contract was enforced only by validators/renderers; the `source_import.py` import pipeline passed the strategy's unguarded `.values` through unchanged.
+- Fix (`quantstudio/strategy_compiler/source_import.py`): new `_rewrite_values_access` pass (`NORM-HIST-VALUES`) rewrites `X['col'].values` → `np.asarray(X['col'])` and multi-column `X[['a','b']].values` → `np.asarray(X[['a','b']])` for string-literal subscripts only. `np.asarray` keeps dtype semantics on both shapes (Series `.values` equivalent for DataFrame; identity for structured array). Method calls (`dict.values()`) and non-string subscripts are untouched. Re-runs are idempotent.
+- The generated strategy's own `_extract_history_field` helper (guarded by `hasattr(values, 'values')`) already conforms and is left intact.
+
 ## Skill correction 0.6.0 — runtime-shape and capital gates
 
 - Design 2.2 adds machine-checkable `portfolio_contract`, `rebalance_funding_contract`, `history_coverage_contract`, `r5_deployment_invariants`, and verbatim `confirmation_evidence`. Contradictory capital math (e.g. 20 x 5% = 100% plus a 15% cash buffer) BLOCKs at design time.
