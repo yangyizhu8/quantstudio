@@ -1,0 +1,178 @@
+[
+  {
+    "strategy": "__init__.py",
+    "classification": "忽略（非策略文件）",
+    "error": "AttributeError: 'str' object has no attribute 'get'"
+  },
+  {
+    "strategy": "ashare_manual_pool_2d_momentum_top2_quantstudio.py",
+    "etf_pool": false,
+    "source_import": "PASS",
+    "portability": "PASS",
+    "classification": "可转换",
+    "known_limitations": [],
+    "stage": "STATIC_VALIDATED",
+    "status": "PARTIAL"
+  },
+  {
+    "strategy": "bbi_etf_rotation_quantstudio.py",
+    "etf_pool": false,
+    "source_import": "PASS",
+    "portability": "PASS",
+    "classification": "可转换",
+    "known_limitations": [],
+    "stage": "STATIC_VALIDATED",
+    "status": "PARTIAL"
+  },
+  {
+    "strategy": "etf_theme_rotation_quantstudio.py",
+    "etf_pool": true,
+    "source_import": "PASS",
+    "portability": "PASS",
+    "classification": "可转换",
+    "known_limitations": [],
+    "stage": "STATIC_VALIDATED",
+    "status": "PARTIAL"
+  },
+  {
+    "strategy": "ETF动量.py",
+    "etf_pool": false,
+    "source_import": "PASS",
+    "portability": "PASS",
+    "classification": "可转换",
+    "known_limitations": [],
+    "stage": "STATIC_VALIDATED",
+    "status": "PARTIAL"
+  },
+  {
+    "strategy": "ETF平滑动量轮动.py",
+    "etf_pool": false,
+    "source_import": "PASS",
+    "portability": "PASS",
+    "classification": "可转换",
+    "known_limitations": [],
+    "stage": "STATIC_VALIDATED",
+    "status": "PARTIAL"
+  },
+  {
+    "strategy": "ETF轮动.py",
+    "etf_pool": false,
+    "source_import": "PASS",
+    "portability": "PASS",
+    "classification": "可转换",
+    "known_limitations": [],
+    "stage": "STATIC_VALIDATED",
+    "status": "PARTIAL"
+  },
+  {
+    "strategy": "fall_reversal_quantstudio.py",
+    "etf_pool": false,
+    "source_import": "PASS",
+    "portability": "PASS",
+    "classification": "可转换",
+    "known_limitations": [],
+    "stage": "STATIC_VALIDATED",
+    "status": "PARTIAL"
+  },
+  {
+    "strategy": "first_board_pullback_daily__candidate_quantstudio.py",
+    "etf_pool": false,
+    "source_import": "PASS",
+    "portability": "PASS",
+    "classification": "可转换",
+    "known_limitations": [],
+    "stage": "STATIC_VALIDATED",
+    "status": "PARTIAL"
+  },
+  {
+    "strategy": "first_cover_event_daily_quantstudio.py",
+    "etf_pool": false,
+    "source_import": "PASS",
+    "portability": "PASS",
+    "classification": "可转换",
+    "known_limitations": [],
+    "stage": "STATIC_VALIDATED",
+    "status": "PARTIAL"
+  },
+  {
+    "strategy": "smallcap_overnight_scalp_7_quantstudio.py",
+    "etf_pool": false,
+    "source_import": "PASS",
+    "portability": "PASS",
+    "classification": "可转换",
+    "known_limitations": [],
+    "stage": "STATIC_VALIDATED",
+    "status": "PARTIAL"
+  },
+  {
+    "strategy": "sw_industry_etf_rotation_8f__candidate_quantstudio.py",
+    "classification": "可转换",
+    "source_import": "PASS",
+    "portability": "BLOCKED",
+    "known_limitations": [
+      "[BLOCK] LOCAL-API-WHITELIST @ line 531: calls unknown API '_is_halt' — not in ptrade_import injected set, not a local helper, not a builtin, not an imported-module method. Strategy may only use injected API.",
+      "[BLOCK] LOCAL-API-WHITELIST @ line 520: calls unknown API '_is_halt' — not in ptrade_import injected set, not a local helper, not a builtin, not an imported-module method. Strategy may only use injected API.",
+      "smoke backtest skipped: static validation BLOCKED"
+    ]
+  },
+  {
+    "strategy": "tech_etf_mvo_rotation_quantstudio.py",
+    "etf_pool": false,
+    "source_import": "PASS",
+    "portability": "PASS",
+    "classification": "可转换",
+    "known_limitations": [],
+    "stage": "STATIC_VALIDATED",
+    "status": "PARTIAL"
+  },
+  {
+    "strategy": "二八轮动策略.py",
+    "etf_pool": false,
+    "source_import": "PASS",
+    "portability": "PASS",
+    "classification": "可转换",
+    "known_limitations": [],
+    "stage": "STATIC_VALIDATED",
+    "status": "PARTIAL"
+  },
+  {
+    "strategy": "双均线策略.py",
+    "etf_pool": false,
+    "source_import": "PASS",
+    "portability": "PASS",
+    "classification": "可转换",
+    "known_limitations": [],
+    "stage": "STATIC_VALIDATED",
+    "status": "PARTIAL"
+  },
+  {
+    "strategy": "小市值策略2.py",
+    "classification": "可转换",
+    "source_import": "PASS",
+    "portability": "BLOCKED",
+    "known_limitations": [
+      "[BLOCK] LOCAL-API-WHITELIST @ line 149: calls unknown API 'timedelta' — not in ptrade_import injected set, not a local helper, not a builtin, not an imported-module method. Strategy may only use injected API.",
+      "smoke backtest skipped: static validation BLOCKED"
+    ]
+  },
+  {
+    "strategy": "小市值策略ptrade.py",
+    "etf_pool": false,
+    "source_import": "PASS",
+    "portability": "PASS",
+    "classification": "可转换",
+    "known_limitations": [],
+    "stage": "STATIC_VALIDATED",
+    "status": "PARTIAL"
+  },
+  {
+    "strategy": "首次覆盖事件驱动策略.py",
+    "classification": "BLOCK",
+    "portability": "NOT_RUN",
+    "known_limitations": [
+      "BLOCK: load_research_signals()（行 8539）无法自动转换，需人工改用 PTrade 等价数据源",
+      "转换产物 SyntaxError（转换器 bug）: unindent does not match any outer indentation level (<unknown>, line 8620)"
+    ],
+    "block_reason": "load_research_signals（本地文件读取 API，DENY_BLOCK 档 3，T2 已知）"
+  }
+]
