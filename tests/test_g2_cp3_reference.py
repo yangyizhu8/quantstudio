@@ -263,7 +263,7 @@ class TestRunCardClosure:
     def _minimal_run_card(self):
         """A pre-G2 run_card (no reference_closure) — must still validate after schema update."""
         return {
-            "run_card_version": "1.0", "run_id": "rc_test", "strategy_id": "etf_regression_rotation_v1",
+            "run_card_version": "1.1", "run_id": "rc_test", "strategy_id": "etf_regression_rotation_v1",
             "build_id": "b1", "created_at": "2026-07-23T00:00:00+08:00", "stage": "STATIC_VALIDATED",
             "status": "PASS",
             "contract_versions": {"strategy_spec_version": "1.0.0", "engine_semantics_version": "0.4.0-next_open_basket",

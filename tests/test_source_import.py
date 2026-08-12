@@ -598,3 +598,29 @@ def initialize(context):
     ok, violations, _ = validate_ptrade_portability(code, None, None)
     assert not ok
     assert any(v.rule_id == "PORTABILITY-LOCAL-API" for v in violations)
+
+def test_21_ashares_date_idempotent():
+    """get_Ashares 变量形态二次转换不重复包装（幂等）。"""
+    from quantstudio.strategy_compiler.source_import import convert_source
+    import pathlib, tempfile
+    code = """
+def initialize(context):
+    all_codes = get_Ashares(context.current_dt.strftime('%Y-%m-%d'))
+
+def handle_data(context, data):
+    pass
+"""
+    with tempfile.TemporaryDirectory() as td:
+        p = pathlib.Path(td) / 't.py'
+        p.write_text(code, encoding='utf-8')
+        r1 = convert_source(p)
+        assert r1.errors == [], r1.errors
+        p2 = pathlib.Path(td) / 't2.py'
+        p2.write_text(r1.converted_code, encoding='utf-8')
+        r2 = convert_source(p2)
+        assert r2.errors == [], r2.errors
+        # strftime 内联形态：一次转换直接改写为 %Y%m%d（无 isinstance 包装）
+        assert "strftime('%Y%m%d')" in r1.converted_code
+        # 幂等：二次转换不重复改写/包装
+        assert r2.converted_code.count("strftime('%Y%m%d')") == r1.converted_code.count("strftime('%Y%m%d')")
+        assert r2.converted_code.count('isinstance') <= r1.converted_code.count('isinstance')

@@ -294,6 +294,10 @@ class SourceConverter:
         # 3a) 代码后缀规范化（聚宽风格 XSHG/XSHE → PTrade SS/SZ，AST 字符串常量级）
         self._normalize_code_suffixes(tree)
 
+        # 3a2) PTrade 契约合规改写（get_Ashares 日期 / get_history 签名 B /
+        #       set_benchmark 后缀 / get_stock_status 关键字）
+        self._normalize_ptrade_contract_calls(tree)
+
         # 3b) ETF FREEZE 档（07 规格 §2）：get_etf_list_local → 静态池固化
         self._freeze_etf_pool()
 
@@ -449,7 +453,10 @@ class SourceConverter:
                 # KEEP-WARN：保留调用；参数级归一化/删除单独处理
                 self._normalize_call(node, name)
             elif name in ("get_history", "get_price"):
-                self._normalize_call(node, name)
+                # get_history 的 fq 归一化与签名 A→B 改写由 _normalize_ptrade_contract_calls
+                # 统一处理（同一调用内避免替换区域重叠）；get_price 仍走参数删除
+                if name == "get_price":
+                    self._normalize_call(node, name)
 
     # ------------------------------------------------------------------
     # DENY_REMOVE 分档（H2）
@@ -576,6 +583,218 @@ class SourceConverter:
                             message=f"{param}={old_v} 保留原值：本地 {old_v} 与 {new_v} 语义不等价"
                                     f"（G1），该策略不进入 1:1 复刻清单"))
                     break
+
+    # ------------------------------------------------------------------
+    # PTrade 契约合规改写（2026-08-12，fall_reversal 平台零交易根因 4 处）
+    # ------------------------------------------------------------------
+    # 契约证据（skills/quantstudio-strategy-compiler/references/ptrade-api-signatures.json）：
+    # - get_Ashares: notes "date uses YYYYmmdd when supplied"（示例 get_Ashares('20260724')）
+    # - get_history: count-first（示例 get_history(60, frequency='1d', field=['close'],
+    #   security_list='600000.SS', fq='pre', include=False, is_dict=True)）
+    # - set_benchmark: 带后缀（示例 set_benchmark('000300.SS')）
+    # - get_stock_status: 关键字 stocks/query_type/query_date（示例 query_type='ST',
+    #   query_date='20260724'）
+    # 本地等价性（改写产物在本地引擎语义不变）：
+    # - get_history 双签名：本地首参 int → count-first（PR4 接受 frequency/field/security_list）
+    # - set_benchmark：本地 bare_code 剥离后缀
+    # - get_Ashares：本地 _end_ms → pd.Timestamp('YYYYmmdd') 可解析
+    # - get_stock_status：本地签名 (stocks, query_type='ST', query_date=None) 关键字兼容
+    # 幂等：count-first 形态（首参 int 常量或 count/frequency/security_list 关键字）跳过。
+    # fq 归一化（NORMALIZE 档）并入签名改写（同一调用内避免替换区域重叠）。
+
+    def _normalize_ptrade_contract_calls(self, tree: ast.AST) -> None:
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            if not isinstance(f, ast.Name):
+                continue
+            name = self._aliases.get(f.id, f.id)
+            if name == "get_Ashares":
+                self._rewrite_asharess_date(node)
+            elif name == "get_history":
+                self._rewrite_history_signature(node)
+            elif name == "set_benchmark":
+                self._rewrite_benchmark_suffix(node)
+            elif name == "get_stock_status":
+                self._rewrite_stock_status_keywords(node)
+
+    # ---- 修复 1：get_Ashares(date) 日期格式 YYYY-MM-DD → YYYYmmdd ----
+    def _rewrite_asharess_date(self, node: ast.Call) -> None:
+        arg = None
+        if node.args:
+            arg = node.args[0]
+        else:
+            for kw in node.keywords:
+                if kw.arg == "date":
+                    arg = kw.value
+        if arg is None:
+            return  # get_Ashares() 无参：平台默认当天
+        new_text = None
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and "-" in arg.value:
+            new_text = repr(arg.value.replace("-", ""))
+        elif (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute)
+                and arg.func.attr == "strftime" and arg.args
+                and isinstance(arg.args[0], ast.Constant)
+                and arg.args[0].value == "%Y-%m-%d"):
+            new_text = f"{ast.unparse(arg.func)}('%Y%m%d')"
+        elif (isinstance(arg, ast.IfExp) and isinstance(arg.test, ast.Call)
+                and isinstance(arg.test.func, ast.Name)
+                and arg.test.func.id == "isinstance"):
+            return  # 已包装（幂等：二次转换不重复包装）
+        elif (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute)
+                and arg.func.attr == "strftime" and arg.args
+                and isinstance(arg.args[0], ast.Constant)
+                and "-" not in str(arg.args[0].value)):
+            return  # 已是 YYYYmmdd 形态（幂等：strftime('%Y%m%d') 不再改写/包装）
+        else:
+            expr = ast.unparse(arg)
+            new_text = (f"({expr}.replace('-', '') if isinstance({expr}, str) "
+                        f"else {expr}.strftime('%Y%m%d'))")
+        self._replacements.append(
+            (arg.lineno, arg.col_offset, arg.end_lineno, arg.end_col_offset, new_text))
+        self.actions.append(ConversionAction(
+            action_type="NORMALIZE", rule_id="NORM-ASHARES-DATE",
+            api_name="get_Ashares", line=_line_of(node), severity="WARN",
+            old_text=ast.unparse(arg), new_text=new_text,
+            message="get_Ashares date 改为 YYYYmmdd（PTrade 契约；本地 pd.Timestamp 兼容解析）"))
+        self.coverage["normalized_params"] += 1
+
+    # ---- 修复 2：get_history 签名 A（security-first）→ B（count-first）----
+    def _rewrite_history_signature(self, node: ast.Call) -> None:
+        kw_names = {kw.arg for kw in node.keywords if kw.arg}
+        if node.args and isinstance(node.args[0], ast.Constant) \
+                and isinstance(node.args[0].value, int):
+            return  # count-first（首参 int）：已符合 PTrade 契约，不动
+        if "security_list" in kw_names or "frequency" in kw_names:
+            return  # count-first 关键字形态（security_list/frequency 为 B 独有）：不动
+        if not node.args and not ("security" in kw_names or "unit" in kw_names
+                                  or "fields" in kw_names):
+            return  # get_history() 无参或无法判定：跳过
+        # 其余（含 security/unit/fields 任一关键字，或位置参数非 int）→ 签名 A，改写
+        # fq 归一化（NORMALIZE 档）——count-first 形态也在此处理（见 _scan_calls 改动）
+        fq = ast.Constant(value="pre")
+        include = ast.Constant(value=False)
+        is_dict = ast.Constant(value=False)
+        for kw in node.keywords:
+            if kw.arg == "fq":
+                fq = kw.value
+            elif kw.arg == "include":
+                include = kw.value
+            elif kw.arg == "is_dict":
+                is_dict = kw.value
+        if isinstance(fq, ast.Constant) and isinstance(fq.value, str):
+            for api, p, old_v, new_v, rule_id, grade in NORMALIZE_RULES:
+                if api == "get_history" and p == "fq" \
+                        and str(fq.value).lower() == str(old_v).lower() \
+                        and grade == "NORMALIZE":
+                    fq = ast.Constant(value=new_v)
+                    self.actions.append(ConversionAction(
+                        action_type="NORMALIZE", rule_id=rule_id, api_name="get_history",
+                        line=_line_of(node), severity="INFO",
+                        old_text=f"fq={old_v}", new_text=f"fq={new_v}",
+                        message=f"G1 证据（provider 同分支）：{old_v}≡{new_v}，已归一化"))
+                    self.coverage["normalized_params"] += 1
+                    break
+        # 签名 A 提取：位置 (security, count, unit, fields) 或关键字
+        def take(index, key, default):
+            if node.args and len(node.args) > index:
+                return node.args[index]
+            for kw in node.keywords:
+                if kw.arg == key:
+                    return kw.value
+            return default
+        security = take(0, "security", None)
+        count = take(1, "count", None)
+        unit = take(2, "unit", ast.Constant(value="1d"))
+        fields = take(3, "fields", None)
+        if security is None or count is None:
+            return  # 参数不全：不改写（交给校验器）
+        sec_expr = security
+        if isinstance(security, ast.List) and len(security.elts) == 1:
+            sec_expr = security.elts[0]  # 单只列表拆包为标量（PTrade 契约示例形态）
+        new_call = ast.Call(
+            func=ast.Name(id="get_history"),
+            args=[count],
+            keywords=[
+                ast.keyword(arg="frequency", value=unit),
+                ast.keyword(arg="security_list", value=sec_expr),
+                ast.keyword(arg="fq", value=fq),
+                ast.keyword(arg="include", value=include),
+                ast.keyword(arg="is_dict", value=is_dict),
+            ])
+        if fields is not None:
+            new_call.keywords.insert(1, ast.keyword(arg="field", value=fields))
+        new_text = ast.unparse(new_call)
+        self._replacements.append(
+            (node.lineno, node.col_offset, node.end_lineno, node.end_col_offset, new_text))
+        self.actions.append(ConversionAction(
+            action_type="REWRITE", rule_id="NORM-GETHISTORY-SIG",
+            api_name="get_history", line=_line_of(node), severity="WARN",
+            old_text=ast.unparse(node), new_text=new_text,
+            message="get_history 签名 A→B（count-first，PTrade 契约；本地双签名兼容）"))
+        self.coverage["normalized_params"] += 1
+
+    # ---- 修复 4：set_benchmark 裸码补后缀 ----
+    def _rewrite_benchmark_suffix(self, node: ast.Call) -> None:
+        if not node.args:
+            return
+        arg = node.args[0]
+        if not (isinstance(arg, ast.Constant) and isinstance(arg.value, str)):
+            return
+        code = arg.value
+        if not re.fullmatch(r"\d{6}", code):
+            return
+        # 指数优先（set_benchmark 语义=基准指数；000xxx 与深市个股代码重叠，
+        # 静态无法区分 → 按指数处理。契约示例 set_benchmark('000300.SS')）：
+        # 000xxx → .SS（上证指数系列：上证指数/沪深300/中证系列）
+        # 399xxx → .SZ（深证指数系列）
+        # 其余 6 位裸码 → security_code_rules.normalize_to_ptrade（股票/ETF 规则）
+        if re.fullmatch(r"000\d{3}", code):
+            new_text = repr(f"{code}.SS")
+        elif re.fullmatch(r"399\d{3}", code):
+            new_text = repr(f"{code}.SZ")
+        else:
+            from quantstudio.backtest.libs.security_code_rules import normalize_to_ptrade
+            new_text = repr(normalize_to_ptrade(code))
+        self._replacements.append(
+            (arg.lineno, arg.col_offset, arg.end_lineno, arg.end_col_offset, new_text))
+        self.actions.append(ConversionAction(
+            action_type="NORMALIZE", rule_id="NORM-BENCHMARK-SUFFIX",
+            api_name="set_benchmark", line=_line_of(node), severity="WARN",
+            old_text=repr(code), new_text=new_text,
+            message=f"set_benchmark 裸码 {code} 补后缀（PTrade 契约；本地 bare_code 剥离等价）"))
+        self.coverage["normalized_params"] += 1
+
+    # ---- 修复 5：get_stock_status 位置传参 → 关键字 query_type ----
+    def _rewrite_stock_status_keywords(self, node: ast.Call) -> None:
+        kw_names = {kw.arg for kw in node.keywords if kw.arg}
+        if "query_type" not in kw_names and len(node.args) >= 2:
+            qtype = node.args[1]
+            new_text = f"query_type={ast.unparse(qtype)}"
+            self._replacements.append(
+                (qtype.lineno, qtype.col_offset, qtype.end_lineno, qtype.end_col_offset,
+                 new_text))
+            self.actions.append(ConversionAction(
+                action_type="REWRITE", rule_id="NORM-STOCKSTATUS-KW",
+                api_name="get_stock_status", line=_line_of(node), severity="WARN",
+                old_text=ast.unparse(qtype), new_text=new_text,
+                message="get_stock_status 位置传参改为关键字 query_type=（PTrade 契约）"))
+            self.coverage["normalized_params"] += 1
+        # query_date：策略已有该关键字且值为含 '-' 常量 → 转 YYYYmmdd；无则不注入
+        for kw in node.keywords:
+            if kw.arg == "query_date" and isinstance(kw.value, ast.Constant) \
+                    and isinstance(kw.value.value, str) and "-" in kw.value.value:
+                new_text = repr(kw.value.value.replace("-", ""))
+                self._replacements.append(
+                    (kw.value.lineno, kw.value.col_offset,
+                     kw.value.end_lineno, kw.value.end_col_offset, new_text))
+                self.actions.append(ConversionAction(
+                    action_type="NORMALIZE", rule_id="NORM-STOCKSTATUS-DATE",
+                    api_name="get_stock_status", line=_line_of(node), severity="WARN",
+                    old_text=repr(kw.value.value), new_text=new_text,
+                    message="get_stock_status query_date 改为 YYYYmmdd（PTrade 契约）"))
+                self.coverage["normalized_params"] += 1
 
     # ------------------------------------------------------------------
     # 代码后缀规范化（聚宽风格 XSHG/XSHE/SH → PTrade SS/SZ）
@@ -828,8 +1047,8 @@ def get_history_batch(security_list, count, unit='1d', fields=None, fq='pre',
     result = {{}}
     for code in security_list:
         try:
-            df_dict = get_history(security=[code], count=count, unit=unit,
-                                  fields=fields, fq=fq, include=include,
+            df_dict = get_history(count, frequency=unit, field=fields,
+                                  security_list=code, fq=fq, include=include,
                                   is_dict=True)
             if isinstance(df_dict, dict):
                 for k, df in df_dict.items():

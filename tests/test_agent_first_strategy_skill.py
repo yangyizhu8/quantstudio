@@ -262,7 +262,9 @@ def test_skill_prompt_enforces_customer_stops_data_priority_and_post_generation_
     assert "R0 and R2.5 are real conversational stop points" in skill
     assert "must not self-confirm" in skill
     assert "<current-project>/data/quantstudio.db" in skill
-    assert "comparison_phase=post_generation_staging" in skill
+    # B.3（2026-08-11）local-only 改造后：PTrade 转换职责移交 PyQt tab / CLI，
+    # skill 不再产出 PTrade 代码（旧断言 comparison_phase=post_generation_staging 已随 R6 改写删除）。
+    assert "PTrade conversion is handled by a separate PyQt tab / CLI" in skill
     assert "patching only the currently failing strategy" in skill
     assert "literal keyword `fq='pre'`" in skill
     assert "signal_price_adjustment" in skill
