@@ -1168,16 +1168,28 @@ class PtradeAPI:
                 return {} if is_dict else pd.DataFrame()
             dfs = {}
             bare_codes = [bare_code(sec) for sec in sec_list]
-            # PTrade include semantics: include=False stops at previous_date;
-            # include=True extends the window through current_date.
-            anchor_date = ((self._current_date or self._prev_date) if include
-                           else (self._prev_date or self._current_date))
-            # PR4 缺口 1：分钟 Profile 下锚定到 _current_bar_ts（防未来 bar 泄漏）。
-            # _current_bar_ts 由 attach_bar 注入；日线 Profile 为 None（走 PR3 原全天窗口）。
-            bar_cutoff_ms = None
+            # 分钟 include 语义修正（2026-08-13，PTrade 分钟实测确认）：
+            # - 分钟 include=False 锚定当天 + 排除当前 bar（前一 bar 及之前，PIT 正确语义）
+            # - 分钟 include=True 锚定当天 + 含当前 bar（不变）
+            # - 日线 include 不变（False=prev_date 前一交易日, True=current_date）
+            # bar 时间戳为 end-labeled（bar 结束时刻）→ 减 interval 即前一 bar 结束时刻。
             cur_bar_ts = getattr(self, '_current_bar_ts', None)
-            if cur_bar_ts is not None and unit != '1d':
+            if unit != '1d' and cur_bar_ts is not None:
+                anchor_date = (self._current_date or self._prev_date)
                 bar_cutoff_ms = int(pd.Timestamp(cur_bar_ts).value // 10**6)
+                if not include:
+                    _bar_interval_ms = {
+                        '1m': 60000, '5m': 300000, '15m': 900000,
+                        '30m': 1800000, '60m': 3600000,
+                    }.get(unit, 60000)
+                    bar_cutoff_ms -= _bar_interval_ms
+            else:
+                # 日线模式（或分钟无 bar 锚点）：保持原逻辑
+                # PTrade include semantics: include=False stops at previous_date;
+                # include=True extends the window through current_date.
+                anchor_date = ((self._current_date or self._prev_date) if include
+                               else (self._prev_date or self._current_date))
+                bar_cutoff_ms = None
             # ---- Phase 4B：当日分钟历史内存切片（零 DB 往返）----
             # 命中条件：分钟路径 + 已有当前 bar 锚点（bar_cutoff_ms 非 None，防未来泄漏）
             # + 引擎已注入当日缓存 + 缓存日期与 anchor_date（include=True=当日）匹配。
