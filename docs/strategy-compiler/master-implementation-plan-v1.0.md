@@ -1242,7 +1242,7 @@ MarketImpactNode
 静态检查与语义检查共同覆盖：
 
 - `before_trading_start` 使用当日完整 close；
-- T 日 close 形成信号并以同一 close 成交；
+- T 日 close 形成信号并以同一 close 成交（2026-08-13 起：日线信号必须 include=False，仅用 T-1 及之前数据；next_open 撮合已废弃，统一 close 撮合）；
 - 使用当前完整日线的 high/low 判断盘中触发；
 - 排名或基本面使用当前日未来可得数据；
 - `include=True` 使用不当；

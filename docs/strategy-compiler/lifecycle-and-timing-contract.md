@@ -33,7 +33,7 @@ Renderer 必须依据目标 Profile 生成生命周期，不得假设所有券�
 下列情况必须阻断：
 
 1. 盘前读取当日完整 close/high/low 并用于交易。
-2. T 日完整 close 形成信号并以同一 close 成交。
+2. T 日完整 close 形成信号并以同一 close 成交（日线 `include=True` 即此形态：信号含 T-day close，同 close 成交 = lookahead 循环）。日线信号必须 `include=False`（仅 T-1 及之前数据）；T-day close 仅作为 close 撮合成交价是安全的，因为信号不含当日 close。
 3. 当前完整日线 high/low 被用来判断已发生的盘中触发。
 4. 财务数据未按公告日 PIT。
 5. `next_open` 在 T 日提前改变现金、持仓或净值。

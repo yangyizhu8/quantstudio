@@ -85,7 +85,7 @@ QuantStudio 本地注入 API / 指标 / 全局对象（g、log、pd、np、MyTT�
 
 【撮合机制（理解即可，代码写法与模式无关）】
 - 默认即时撮合（close 模式）：order_* 在当前交易日收盘/当前价成交，持仓瞬时刷新。
-- 可选 next_open 模式：订单排队至下一交易日开盘成交（T+1 卖出、预占资金）。
+- 可选 next_open 模式：订单排队至下一交易日开盘成交（T+1 卖出、预占资金）。[DEPRECATED 2026-08-13：next_open 撮合已废弃（严格 PIT——T+1 开盘价在 T 日时间切片属未来信息）。新策略一律 close 模式（当日收盘成交）；order_target_value_next_open 等仅存量策略兼容，不再用于新策略生成。]
 - T+1：只能卖 enabled_amount（可卖持仓）；买入随时可。
 - 涨跌停：买涨停股 / 卖跌停股会被拒（订单 status='rejected'，含 reason），先 check_limit 规避。
 - 买/卖必须为整百股（A股/ETF 100 整数倍，可转债 10 张）。优先用 order_target_value 做目标权重，引擎容错。

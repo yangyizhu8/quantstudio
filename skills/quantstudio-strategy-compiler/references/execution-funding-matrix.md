@@ -1,5 +1,12 @@
 # Execution Funding Matrix（执行资金可用性矩阵）
 
+## DEPRECATION NOTICE (2026-08-13)
+
+`next_open` match_price_mode is deprecated. All strategies must use `close`
+mode. The next_open funding rules below are retained for historical audit only
+and must not be used in new strategy generation — `next_open` introduces T+1
+data (next-day open) into the T-day time slice, violating strict PIT semantics.
+
 > 固化当前本地引擎的**真实语义**，供 R2/R2.5 设计与 R4 校验交叉核对。
 > 本矩阵是验证输入，不是引擎修改请求；任何语义变化都必须走独立的框架行为变更流程。
 

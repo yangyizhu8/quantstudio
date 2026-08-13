@@ -157,7 +157,7 @@
 
 成交价模式 `match_price_mode`：
 - `close`/`open`：**即时执行**，调用后账户立即更新，下一行可见最新状态。
-- `next_open`：T 日入队 + 预扣，T+1 开盘成交（避免穿越）。
+- `next_open`：T 日入队 + 预扣，T+1 开盘成交（避免穿越）。[DEPRECATED 2026-08-13：next_open 撮合已废弃（严格 PIT——T+1 开盘价在 T 日时间切片属未来信息）。新策略一律 `close` 模式（当日收盘成交）；`callback_basket` 一并废弃。本条目保留仅用于审计存量策略。]
 
 调仓模式 `rebalance_mode`（F1，`EngineConfig.rebalance_mode` 单一配置路径）：
 - `legacy`（默认）：现有单订单/pending 行为，修复前后结果逐项一致。
