@@ -624,3 +624,120 @@ def handle_data(context, data):
         # 幂等：二次转换不重复改写/包装
         assert r2.converted_code.count("strftime('%Y%m%d')") == r1.converted_code.count("strftime('%Y%m%d')")
         assert r2.converted_code.count('isinstance') <= r1.converted_code.count('isinstance')
+
+
+# ---------------------------------------------------------------------------
+# 测试 22-27：include=False → include=True 映射（NORM-INCLUDE-PTRADE，PTrade 平台实测 2026-08-13）
+# PTrade include=True ≡ 本地 include=False（两者都返回前一交易日 T-1，不含当日 bar）
+# ---------------------------------------------------------------------------
+def test_22_include_false_to_true_signature_a():
+    """签名 A 形态（security-first）+ include=False → 产物 include=True（经整段签名改写）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def handle_data(context, data):
+    h = get_history(security='510300.SS', count=20, include=False)
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "include=True" in out
+    assert "include=False" not in out
+    inc = [a for a in result.actions if a.rule_id == "NORM-INCLUDE-PTRADE"]
+    assert inc, "应有 NORM-INCLUDE-PTRADE action"
+    assert inc[0].old_text == "include=False" and inc[0].new_text == "include=True"
+    assert "NORM-GETHISTORY-SIG" in [a.rule_id for a in result.actions]  # 签名改写同时发生
+    assert result.coverage.get("normalized_params", 0) >= 1
+
+
+def test_23_include_false_to_true_count_first():
+    """count-first 形态 + include=False → include=True（文本替换，不改签名）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def handle_data(context, data):
+    h = get_history(20, frequency='1d', security_list='510300.SS', include=False)
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "include=True" in out
+    assert "include=False" not in out
+    assert any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in result.actions)
+
+
+def test_24_include_true_unchanged():
+    """include=True → 产物 include=True（不重复改写，无 NORM-INCLUDE-PTRADE action）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def handle_data(context, data):
+    h = get_history(20, frequency='1d', security_list='510300.SS', include=True)
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "include=True" in out
+    assert not any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in result.actions)
+
+
+def test_25_no_include_unchanged():
+    """无 include 参数 → 不改（无 NORM-INCLUDE-PTRADE action，不引入 include 参数）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def handle_data(context, data):
+    h = get_history(20, frequency='1d', security_list='510300.SS')
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert not any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in result.actions)
+    tree = ast.parse(out)
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+             and isinstance(n.func, ast.Name) and n.func.id == "get_history"]
+    assert calls, "产物应有 get_history 调用"
+    assert not any(kw.arg == "include" for kw in calls[0].keywords)
+
+
+def test_26_include_idempotent():
+    """二次转换（产物再转）→ 不重复改写 include（幂等）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def handle_data(context, data):
+    h = get_history(20, frequency='1d', security_list='510300.SS', include=False)
+'''
+    first = _convert_code(code)
+    assert first.errors == [], first.errors
+    assert "include=True" in first.converted_code
+    import tempfile, pathlib
+    with tempfile.TemporaryDirectory() as td:
+        p = pathlib.Path(td) / "idem_include.py"
+        p.write_text(first.converted_code, encoding="utf-8")
+        second = convert_source(p)
+    assert second.errors == [], second.errors
+    assert not any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in second.actions)
+
+
+def test_27_shim_default_include_true():
+    """get_history_batch shim 默认参数 include=True（PTrade 默认语义对齐）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def handle_data(context, data):
+    df = get_history_batch(['510300.SS', '510500.SS'], 20, '1d', fields=['close'])
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "def get_history_batch" in out
+    assert "include=True" in out
+    assert "include=False" not in out
+    assert any(a.action_type == "SHIM" for a in result.actions)

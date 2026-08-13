@@ -722,12 +722,40 @@ class SourceConverter:
         self.coverage["normalized_params"] += 1
 
     # ---- 修复 2：get_history 签名 A（security-first）→ B（count-first）----
+    def _map_include_false_to_true(self, node: ast.Call, api_name: str) -> None:
+        """NORM-INCLUDE-PTRADE：include=False → include=True（文本替换路径）。
+
+        背景（PTrade 平台实测确认 2026-08-13）：PTrade 在 handle_data（15:00 收盘）时
+        不把当天 bar 算作已完成的 history——即使 include=True 也不含当天。
+        PTrade include=True 返回前一交易日 T-1，等价于本地 include=False。
+        因此转换时把本地 include=False 改写为 PTrade include=True，两端看到同一天数据。
+
+        本方法用于"不改签名"的形态（count-first / security_list / frequency 关键字）：
+        显式 include=False 常量 → 文本替换 include=False → include=True。
+        无 include 参数时不做任何改动（PTrade 默认行为不变，shim 默认参数兜底）。"""
+        for kw in node.keywords:
+            if kw.arg == "include" and isinstance(kw.value, ast.Constant) \
+                    and kw.value.value is False:
+                self._replacements.append(
+                    (kw.value.lineno, kw.value.col_offset,
+                     kw.value.end_lineno, kw.value.end_col_offset, "True"))
+                self.actions.append(ConversionAction(
+                    action_type="NORMALIZE", rule_id="NORM-INCLUDE-PTRADE",
+                    api_name=api_name, line=_line_of(node), severity="INFO",
+                    old_text="include=False", new_text="include=True",
+                    message=("include=False → include=True（PTrade include=True ≡ 本地 "
+                             "include=False：两者都返回前一交易日 T-1，不含当日 bar。"
+                             "PTrade 平台实测确认 2026-08-13）")))
+                self.coverage["normalized_params"] += 1
+
     def _rewrite_history_signature(self, node: ast.Call) -> None:
         kw_names = {kw.arg for kw in node.keywords if kw.arg}
         if node.args and isinstance(node.args[0], ast.Constant) \
                 and isinstance(node.args[0].value, int):
+            self._map_include_false_to_true(node, "get_history")  # 不改签名，只映射 include
             return  # count-first（首参 int）：已符合 PTrade 契约，不动
         if "security_list" in kw_names or "frequency" in kw_names:
+            self._map_include_false_to_true(node, "get_history")  # 不改签名，只映射 include
             return  # count-first 关键字形态（security_list/frequency 为 B 独有）：不动
         if not node.args and not ("security" in kw_names or "unit" in kw_names
                                   or "fields" in kw_names):
@@ -744,6 +772,20 @@ class SourceConverter:
                 include = kw.value
             elif kw.arg == "is_dict":
                 is_dict = kw.value
+        # NORM-INCLUDE-PTRADE（并入签名改写整段 replacement）：
+        # include 常量 False（显式 include=False 或未写 include 的本地默认值）→ True。
+        # PTrade include=True ≡ 本地 include=False（均返回前一交易日 T-1；平台实测 2026-08-13）。
+        # 显式 include=True 保持不动。
+        if isinstance(include, ast.Constant) and include.value is False:
+            include = ast.Constant(value=True)
+            self.actions.append(ConversionAction(
+                action_type="NORMALIZE", rule_id="NORM-INCLUDE-PTRADE",
+                api_name="get_history", line=_line_of(node), severity="INFO",
+                old_text="include=False", new_text="include=True",
+                message=("include=False → include=True（PTrade include=True ≡ 本地 "
+                         "include=False：两者都返回前一交易日 T-1，不含当日 bar。"
+                         "PTrade 平台实测确认 2026-08-13）")))
+            self.coverage["normalized_params"] += 1
         if isinstance(fq, ast.Constant) and isinstance(fq.value, str):
             for api, p, old_v, new_v, rule_id, grade in NORMALIZE_RULES:
                 if api == "get_history" and p == "fq" \
@@ -1148,7 +1190,7 @@ class SourceConverter:
         if name == "get_history_batch":
             return f'''{INJECTED_MARKER}
 def get_history_batch(security_list, count, unit='1d', fields=None, fq='pre',
-                      include=False, is_dict=True, **kwargs):
+                      include=True, is_dict=True, **kwargs):
     """SHIM: 本地批量 API → 循环单调用（PTrade 兼容；返回 code→DataFrame 字典）。
 
     与原生 B1 实现语义一致：is_dict=True 的 get_history 返回 code→DataFrame 字典，

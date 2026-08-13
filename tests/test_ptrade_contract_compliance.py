@@ -107,7 +107,7 @@ def initialize(context):
 """)
     assert r.errors == []
     body = r.converted_code
-    assert "get_history(20, frequency='1d', field=['close'], security_list=code, fq='pre', include=False, is_dict=False)" in body
+    assert "get_history(20, frequency='1d', field=['close'], security_list=code, fq='pre', include=True, is_dict=False)" in body
 
 
 def test_history_count_first_untouched_idempotent():
