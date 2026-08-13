@@ -9,7 +9,7 @@ The following patterns leak future information into a decision and **MUST block*
 ## Hard blocks (6, from lifecycle contract §3)
 
 1. **Pre-open read of same-day full close/high/low for trading.** `before_trading_start` must not see current-day close.
-2. **T-day close must NOT form the signal.** `get_history` must use `include=False` (daily) — signal uses T-1 and earlier data only. Execution at T-day close price (close mode) is safe because the signal does not contain T-day close. `next_open` execution mode is DEPRECATED (2026-08-13) — it introduces T+1 data into the T-day time slice, violating strict PIT semantics.
+2. **T-day close must NOT form the signal.** `get_history` must use `include=False` (daily and minute) — signal uses T-1 and earlier data only (daily) / previous bar and earlier (minute). Execution at T-day close price (close mode) is safe because the signal does not contain T-day close. `next_open` execution mode is DEPRECATED (2026-08-13) — it introduces T+1 data into the T-day time slice, violating strict PIT semantics.
 3. **Using current complete daily high/low to judge intraday triggers that already happened.** Intraday triggers must use intraday data, not daily H/L after the fact.
 4. **Fundamentals not PIT by announcement date.** Financial data must use `ann_date` (announcement), not `end_date` (report period), for point-in-time correctness.
 5. **`next_open` order changing cash/positions/NAV on T-day.** next_open execution settles at T+1 open; T-day NAV must not reflect it.

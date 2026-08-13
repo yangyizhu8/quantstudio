@@ -627,11 +627,12 @@ def handle_data(context, data):
 
 
 # ---------------------------------------------------------------------------
-# 测试 22-27：include=False → include=True 映射（NORM-INCLUDE-PTRADE，PTrade 平台实测 2026-08-13）
-# PTrade include=True ≡ 本地 include=False（两者都返回前一交易日 T-1，不含当日 bar）
+# 测试 22-27：include 不映射（PTrade include 语义与本地一致，2026-08-13 第二次实测确认）
+# PTrade include=True 含当天 / include=False 到前一交易日（日线）或前一 bar（分钟），
+# 与本地完全一致——转换管线透传 include，不做任何改写（NORM-INCLUDE-PTRADE 已删除）。
 # ---------------------------------------------------------------------------
-def test_22_include_false_to_true_signature_a():
-    """签名 A 形态（security-first）+ include=False → 产物 include=True（经整段签名改写）。"""
+def test_22_include_false_signature_a_unchanged():
+    """签名 A 形态（security-first）+ include=False → 产物 include=False 保留（不改）。"""
     code = '''
 def initialize(context):
     pass
@@ -642,17 +643,14 @@ def handle_data(context, data):
     result = _convert_code(code)
     assert result.errors == [], result.errors
     out = result.converted_code
-    assert "include=True" in out
-    assert "include=False" not in out
-    inc = [a for a in result.actions if a.rule_id == "NORM-INCLUDE-PTRADE"]
-    assert inc, "应有 NORM-INCLUDE-PTRADE action"
-    assert inc[0].old_text == "include=False" and inc[0].new_text == "include=True"
-    assert "NORM-GETHISTORY-SIG" in [a.rule_id for a in result.actions]  # 签名改写同时发生
+    assert "include=False" in out
+    assert "include=True" not in out
+    assert "NORM-GETHISTORY-SIG" in [a.rule_id for a in result.actions]  # 签名改写仍发生
     assert result.coverage.get("normalized_params", 0) >= 1
 
 
-def test_23_include_false_to_true_count_first():
-    """count-first 形态 + include=False → include=True（文本替换，不改签名）。"""
+def test_23_include_false_count_first_unchanged():
+    """count-first 形态 + include=False → include=False 保留（不改签名、不改 include）。"""
     code = '''
 def initialize(context):
     pass
@@ -663,13 +661,12 @@ def handle_data(context, data):
     result = _convert_code(code)
     assert result.errors == [], result.errors
     out = result.converted_code
-    assert "include=True" in out
-    assert "include=False" not in out
-    assert any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in result.actions)
+    assert "include=False" in out
+    assert "include=True" not in out
 
 
 def test_24_include_true_unchanged():
-    """include=True → 产物 include=True（不重复改写，无 NORM-INCLUDE-PTRADE action）。"""
+    """include=True → 产物 include=True（透传不改）。"""
     code = '''
 def initialize(context):
     pass
@@ -681,11 +678,10 @@ def handle_data(context, data):
     assert result.errors == [], result.errors
     out = result.converted_code
     assert "include=True" in out
-    assert not any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in result.actions)
 
 
 def test_25_no_include_unchanged():
-    """无 include 参数 → 不改（无 NORM-INCLUDE-PTRADE action，不引入 include 参数）。"""
+    """无 include 参数 → 不改（不引入 include 参数）。"""
     code = '''
 def initialize(context):
     pass
@@ -696,7 +692,6 @@ def handle_data(context, data):
     result = _convert_code(code)
     assert result.errors == [], result.errors
     out = result.converted_code
-    assert not any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in result.actions)
     tree = ast.parse(out)
     calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
              and isinstance(n.func, ast.Name) and n.func.id == "get_history"]
@@ -704,8 +699,8 @@ def handle_data(context, data):
     assert not any(kw.arg == "include" for kw in calls[0].keywords)
 
 
-def test_26_include_idempotent():
-    """二次转换（产物再转）→ 不重复改写 include（幂等）。"""
+def test_26_include_false_idempotent():
+    """include=False 二次转换仍保留 False（透传幂等）。"""
     code = '''
 def initialize(context):
     pass
@@ -715,18 +710,18 @@ def handle_data(context, data):
 '''
     first = _convert_code(code)
     assert first.errors == [], first.errors
-    assert "include=True" in first.converted_code
+    assert "include=False" in first.converted_code
     import tempfile, pathlib
     with tempfile.TemporaryDirectory() as td:
         p = pathlib.Path(td) / "idem_include.py"
         p.write_text(first.converted_code, encoding="utf-8")
         second = convert_source(p)
     assert second.errors == [], second.errors
-    assert not any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in second.actions)
+    assert "include=False" in second.converted_code
 
 
-def test_27_shim_default_include_true():
-    """get_history_batch shim 默认参数 include=True（PTrade 默认语义对齐）。"""
+def test_27_shim_default_include_false():
+    """get_history_batch shim 默认参数 include=False（两端 include 语义一致）。"""
     code = '''
 def initialize(context):
     pass
@@ -738,18 +733,17 @@ def handle_data(context, data):
     assert result.errors == [], result.errors
     out = result.converted_code
     assert "def get_history_batch" in out
-    assert "include=True" in out
-    assert "include=False" not in out
+    assert "include=False" in out
+    assert "include=True" not in out
     assert any(a.action_type == "SHIM" for a in result.actions)
 
 
 # ---------------------------------------------------------------------------
-# 测试 28-33：NORM-INCLUDE-PTRADE 频率分流（2026-08-13 PTrade 分钟实测）
-# 分钟频率不改（PTrade 分钟 include 语义与本地一致：True 含当前 bar / False 到前一 bar）；
-# 只有日线频率做 include=False → include=True（PTrade 日线差一天）。
+# 测试 28-33：include 不映射（所有频率透传，PTrade include 语义与本地一致，
+# 2026-08-13 第二次实测含日期戳确认；NORM-INCLUDE-PTRADE 已删除）
 # ---------------------------------------------------------------------------
 def test_28_include_mapping_minute_1m_unchanged():
-    """count-first frequency='1m' + include=False → 不改（无 NORM-INCLUDE-PTRADE action）。"""
+    """count-first frequency='1m' + include=False → 不改。"""
     code = '''
 def initialize(context):
     pass
@@ -761,7 +755,6 @@ def handle_data(context, data):
     assert result.errors == [], result.errors
     out = result.converted_code
     assert "include=False" in out
-    assert not any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in result.actions)
 
 
 def test_29_include_mapping_minute_5m_unchanged():
@@ -776,7 +769,6 @@ def handle_data(context, data):
     result = _convert_code(code)
     assert result.errors == [], result.errors
     assert "include=False" in result.converted_code
-    assert not any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in result.actions)
 
 
 def test_30_include_mapping_signature_a_minute_unchanged():
@@ -792,7 +784,6 @@ def handle_data(context, data):
     assert result.errors == [], result.errors
     out = result.converted_code
     assert "include=False" in out
-    assert not any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in result.actions)
 
 
 def test_31_include_mapping_unknown_freq_unchanged():
@@ -809,11 +800,10 @@ def handle_data(context, data):
     assert result.errors == [], result.errors
     out = result.converted_code
     assert "include=False" in out
-    assert not any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in result.actions)
 
 
 def test_32_include_mapping_signature_a_daily_explicit_unit():
-    """签名 A 显式 unit='1d' + include=False → include=True（日线映射保持）。"""
+    """签名 A 显式 unit='1d' + include=False → include=False 保留（不映射）。"""
     code = '''
 def initialize(context):
     pass
@@ -824,13 +814,12 @@ def handle_data(context, data):
     result = _convert_code(code)
     assert result.errors == [], result.errors
     out = result.converted_code
-    assert "include=True" in out
-    assert "include=False" not in out
-    assert any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in result.actions)
+    assert "include=False" in out
+    assert "include=True" not in out
 
 
 def test_33_include_mapping_count_first_positional_daily():
-    """count-first 位置参数形态 get_history(count, '1d', ...) + include=False → 映射。"""
+    """count-first 位置参数形态 get_history(count, '1d', ...) + include=False → 不映射。"""
     code = '''
 def initialize(context):
     pass
@@ -841,6 +830,39 @@ def handle_data(context, data):
     result = _convert_code(code)
     assert result.errors == [], result.errors
     out = result.converted_code
+    assert "include=False" in out
+    assert "include=True" not in out
+
+
+def test_34_include_no_mapping_all_freqs():
+    """日线 + 分钟 + 5m 的 include=False → 产物全部保留 include=False（不映射）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def handle_data(context, data):
+    h1 = get_history(20, frequency='1d', security_list='510300.SS', include=False)
+    h2 = get_history(20, frequency='1m', security_list='510300.SS', include=False)
+    h3 = get_history(20, frequency='5m', security_list='510300.SS', include=False)
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert out.count("include=False") == 3
+    assert "include=True" not in out
+
+
+def test_35_include_true_no_mapping():
+    """include=True → 产物 include=True（透传不改）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def handle_data(context, data):
+    h = get_history(20, frequency='1d', security_list='510300.SS', include=True)
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
     assert "include=True" in out
     assert "include=False" not in out
-    assert any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in result.actions)

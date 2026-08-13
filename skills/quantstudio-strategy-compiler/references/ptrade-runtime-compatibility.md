@@ -116,14 +116,13 @@ Generated PTrade code must pass:
 
 结论：PTrade 分钟 include 是"标准"语义（True=含当前 bar，False=不含），
 与本地框架一致（本地引擎 2026-08-13 修复后：分钟 include=False 锚定当天 +
-排除当前 bar）。与 PTrade 日线 include 语义不同（日线差一天：include=True
-到 T-1、include=False 到 T-2）。
+排除当前 bar）。PTrade 日线 include 语义与本地一致（include=True 含当天 T、
+include=False 到前一交易日 T-1）——2026-08-13 第二次实测确认（含日期戳），
+修正先前仅凭 close 值推断的错误结论。
 
 转换映射结论：
-- 日线：include=False → include=True（PTrade 日线差一天，source_import
-  NORM-INCLUDE-PTRADE 按频率分流后仅日线映射）
-- 分钟：不改（两端语义一致；对分钟做 False→True 会在 PTrade 侧制造同 bar
-  lookahead——PTrade 分钟 include=True 含当前 bar close）
+- 所有频率（日线+分钟）：不映射（两端 include 语义完全一致）。
+  NORM-INCLUDE-PTRADE 已删除（2026-08-13 第二次实测推翻先前结论）。
 
 ## 技术债：分钟 include=True 策略迁移（待执行）
 
@@ -140,3 +139,16 @@ Generated PTrade code must pass:
 
 迁移前提：引擎分钟 include=False 修复完成（ptrade_api.py，2026-08-13）。
 迁移验证：迁移前后 T5 逐位断言（行为变更，需用户确认）。
+
+## CORRECTION (2026-08-13 re-test with date stamps)
+
+先前结论（仅看 close 值推断）"PTrade 日线 include=True 不含当天"是错误的。
+
+重新实测（07-03 handle_data，打印每根 bar 日期 + close）：
+- include=True  最后一根 = date=20260703（当天 07-03）→ 含当天
+- include=False 最后一根 = date=20260702（前一交易日）→ 不含当天
+
+因子得分交叉验证：PTrade 07-01 159995 得分 18.263 ≈ 本地含当天 18.363
+（差异 0.5%），远≠本地不含当天 8.137（差异 56%）。
+
+结论：PTrade 日线+分钟 include 语义均与本地一致——所有频率都不需要映射。
