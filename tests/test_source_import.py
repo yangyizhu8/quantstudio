@@ -741,3 +741,106 @@ def handle_data(context, data):
     assert "include=True" in out
     assert "include=False" not in out
     assert any(a.action_type == "SHIM" for a in result.actions)
+
+
+# ---------------------------------------------------------------------------
+# 测试 28-33：NORM-INCLUDE-PTRADE 频率分流（2026-08-13 PTrade 分钟实测）
+# 分钟频率不改（PTrade 分钟 include 语义与本地一致：True 含当前 bar / False 到前一 bar）；
+# 只有日线频率做 include=False → include=True（PTrade 日线差一天）。
+# ---------------------------------------------------------------------------
+def test_28_include_mapping_minute_1m_unchanged():
+    """count-first frequency='1m' + include=False → 不改（无 NORM-INCLUDE-PTRADE action）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def handle_data(context, data):
+    h = get_history(20, frequency='1m', security_list='510300.SS', include=False)
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "include=False" in out
+    assert not any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in result.actions)
+
+
+def test_29_include_mapping_minute_5m_unchanged():
+    """count-first frequency='5m' + include=False → 不改。"""
+    code = '''
+def initialize(context):
+    pass
+
+def handle_data(context, data):
+    h = get_history(20, frequency='5m', security_list='510300.SS', include=False)
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    assert "include=False" in result.converted_code
+    assert not any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in result.actions)
+
+
+def test_30_include_mapping_signature_a_minute_unchanged():
+    """签名 A unit='1m' + include=False → 不改（include=False 保留，无映射 action）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def handle_data(context, data):
+    h = get_history(security='510300.SS', count=20, unit='1m', include=False)
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "include=False" in out
+    assert not any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in result.actions)
+
+
+def test_31_include_mapping_unknown_freq_unchanged():
+    """频率为变量 → 无法确定 → 保守不改（禁止行为 7）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def handle_data(context, data):
+    freq = '1d' if context.run_params.frequency else '1m'
+    h = get_history(20, frequency=freq, security_list='510300.SS', include=False)
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "include=False" in out
+    assert not any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in result.actions)
+
+
+def test_32_include_mapping_signature_a_daily_explicit_unit():
+    """签名 A 显式 unit='1d' + include=False → include=True（日线映射保持）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def handle_data(context, data):
+    h = get_history(security='510300.SS', count=20, unit='1d', include=False)
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "include=True" in out
+    assert "include=False" not in out
+    assert any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in result.actions)
+
+
+def test_33_include_mapping_count_first_positional_daily():
+    """count-first 位置参数形态 get_history(count, '1d', ...) + include=False → 映射。"""
+    code = '''
+def initialize(context):
+    pass
+
+def handle_data(context, data):
+    h = get_history(20, '1d', ['close'], '510300.SS', include=False)
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "include=True" in out
+    assert "include=False" not in out
+    assert any(a.rule_id == "NORM-INCLUDE-PTRADE" for a in result.actions)
