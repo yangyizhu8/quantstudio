@@ -1,0 +1,234 @@
+{
+  "design_version": "2.2",
+  "strategy_id": "etf_theme_rotation",
+  "strategy_name": "ETF 热门主题五层轮动（动态池 + 次日开盘 basket 调仓）",
+  "asset_class": "etf",
+  "targets": [
+    "quantstudio"
+  ],
+  "engine_profile": {
+    "profile_id": "daily-bar-v1",
+    "bar_frequency": "1d",
+    "match_price_mode": "next_open",
+    "rebalance_mode": "callback_basket",
+    "expected_engine_semantics_version": "0.4.0-next_open_basket"
+  },
+  "market_data_contract": {
+    "signal_price_adjustment": "pre",
+    "execution_price_basis": "pre_adjusted_price"
+  },
+  "strategy_semantics": {
+    "universe": "通过 get_etf_list_local(query_date, etf_type='equity', active_only=True) 取 PIT 权益类 ETF 动态池（框架 equity 已内置 is_cross_border=false，即仅剔跨境；因数据层无行业/宽基/主题细分字段，宽基与行业 ETF 一并纳入）；再剔除近 20 日日均成交额(amount)<1e6 的冷门 ETF。",
+    "entry_rules": [
+      "层2 动量打分：对池内每只 ETF 计算 5/10/20 日收益率，分别做横截面百分位 rank(0..1)，三者等权平均得 momentum_score。",
+      "层3 均线多头：计算 MA5/MA10/MA20/MA60，满足条件 MA5>MA10>MA20>MA60 时 trend_score=1，否则 0。",
+      "层4 综合得分：composite = 0.6*momentum_score + 0.4*trend_score；按 composite 降序取前 5 名进入买入名单。",
+      "信号价与均线均使用 fq='pre' 前复权收盘价。"
+    ],
+    "exit_rules": [
+      "卖出条件1：持仓 ETF 在当期综合得分排名中跌出前 5 名（不在买入名单内）→ 清仓。",
+      "卖出条件2：持仓 ETF 均线走坏，即 MA5 < MA10（短期均线下穿）→ 清仓。",
+      "满足任一即执行卖出；未触发卖出条件的持仓保留。"
+    ],
+    "portfolio_rules": [
+      "等权持有最多 5 只 ETF，每只目标权重约 1/5。",
+      "初始资金 100000 元（required_initial_cash=100000）。",
+      "总仓位目标 gross_exposure=0.95，保留 5% 现金缓冲以吸收废单/取整误差。",
+      "调仓在 handle_data 内通过 order_target_value 实现，由引擎 callback_basket 收集为原子先卖后买。"
+    ],
+    "risk_rules": [
+      "流动性过滤：近 20 日日均成交额<1e6 的 ETF 不进入候选。",
+      "趋势门槛：不满足 MA5>MA10>MA20>MA60 的 ETF trend_score=0，仅靠动量分(<=0.6)难进前5，天然降低弱势标的占比。",
+      "纪律化止损：触发卖出条件即清仓，不摊平、不止损加仓。"
+    ]
+  },
+  "timing": {
+    "signal_data_cutoff": "前收盘（handle_data 内取 fq='pre' 历史，不含当日未来数据）",
+    "holding_semantics": "T 日 handle_data 决策，T+1 next_open 以开盘价（引擎前复权快照）成交；basket 原子先卖后买，卖出款同日供买入。",
+    "decision_events": [
+      {
+        "name": "rebalance",
+        "lifecycle": "handle_data",
+        "purpose": "每日评估五层筛选并执行 basket 调仓（先卖后买）。"
+      }
+    ]
+  },
+  "components": {
+    "lifecycle_hooks": [
+      "initialize",
+      "handle_data"
+    ],
+    "api_groups": [
+      "quantstudio_local_etf",
+      "ptrade_compat_signals"
+    ],
+    "required_apis": [
+      "get_etf_list_local",
+      "get_history_batch",
+      "order_target_value",
+      "set_benchmark",
+      "set_commission",
+      "log"
+    ],
+    "implementation_notes": [
+      "initialize 内设置 universe 占位、参数、set_benchmark('000300.SH')、set_commission(type='ETF')、g 字段初始化。",
+      "handle_data 内：先 get_etf_list_local 取当日动态池 + 流动性过滤；get_history_batch 取 close(>=60 日, fq='pre')；向量化算动量 rank 与均线；合成综合得分；与当前持仓对比生成卖/买指令；全部经 order_target_value 交给 basket。",
+      "get_history_batch 返回 CodeDict{code: DataFrame}，按 df['close'] 取序列，fq='pre' 必须显式传递。",
+      "排名用 scipy.stats.rankdata 或 pandas rank(pct=True) 做横截面百分位，避免未来函数（只用历史收盘）。",
+      "MA5/MA10/MA20/MA60 用 numpy mean 窗口，长度不足 60 Bar 的 ETF 跳过。",
+      "不再写 before_trading_start/after_trading_end（无额外逻辑），保持 lifecycle_hooks 最小化。"
+    ]
+  },
+  "constraints": {
+    "hard_filters": [
+      "仅权益类 ETF（etf_type='equity'），排除债券/货币/商品/黄金/QDII。",
+      "流动性硬过滤：近 20 日日均 amount<1e6 剔除。",
+      "均线多头硬条件：MA5>MA10>MA20>MA60 才计 trend_score=1。"
+    ],
+    "no_lookahead": true,
+    "portable_source_required": false,
+    "runtime_state_guard_required": true
+  },
+  "approximations": [
+    {
+      "id": "momentum_rank_pct",
+      "description": "5/10/20 日收益横截面百分位 rank 作为动量打分（0..1），等价衡量相对强弱，非绝对收益。",
+      "confirmed": true
+    },
+    {
+      "id": "trend_binary",
+      "description": "均线多头排列计为二值 0/1，再与动量分加权合成。",
+      "confirmed": true
+    },
+    {
+      "id": "gross_exposure_0_95",
+      "description": "总仓位 0.95 留 5% 现金缓冲，规避废单/取整导致全仓失败；非满仓。",
+      "confirmed": true
+    }
+  ],
+  "open_questions": [],
+  "user_confirmations": {
+    "strategy_semantics": true,
+    "execution_approximations": true,
+    "component_plan": true,
+    "generation_target": true,
+    "backtest_validation_mode": true
+  },
+  "output": {
+    "overwrite": true,
+    "quantstudio_path": "quantstudio/backtest/strategies/etf_theme_rotation_quantstudio.py"
+  },
+  "universe_contract": {
+    "mode": "dynamic_local",
+    "local_dynamic_api_allowed": true,
+    "local_dynamic_api": "get_etf_list_local",
+    "etf_type": "equity",
+    "active_only": true
+  },
+  "portfolio_contract": {
+    "sizing_mode": "fixed_notional",
+    "required_initial_cash": 100000,
+    "fixed_target_value": 100000,
+    "allocation_mode": "equal_weight",
+    "allocation_denominator": "configured_target_count",
+    "target_holdings": 5,
+    "gross_exposure_target": 0.95,
+    "cash_buffer_ratio": 0.05,
+    "per_position_target_weight": 0.19,
+    "max_single_weight": 0.2,
+    "allow_leverage": false
+  },
+  "rebalance_funding_contract": {
+    "requires_same_cycle_sell_proceeds": true,
+    "implementation_mode": "basket_atomic_sell_first",
+    "cash_only_for_new_buys": false
+  },
+  "history_coverage_contract": {
+    "lookback_bars": 60,
+    "frequency": "1d",
+    "history_required_before_first_decision": true,
+    "backtest_start_does_not_truncate_provider_history": true,
+    "minimum_candidates_with_full_history": 10
+  },
+  "r5_deployment_invariants": {
+    "holding_count_mode": "strict_target_when_candidates_available",
+    "target_holdings": 5,
+    "minimum_fill_ratio": 0.8,
+    "minimum_gross_exposure": 0.8,
+    "maximum_cash_ratio_after_rebalance": 0.2,
+    "maximum_insufficient_cash_rejections": 0,
+    "require_at_least_one_rebalance": true
+  },
+  "confirmation_evidence": {
+    "r0_q1_holding_count": {
+      "confirmed": true,
+      "customer_text": "B（持有5只等权）",
+      "confirmed_at": "2026-08-11",
+      "source": "customer_reply"
+    },
+    "r0_q2_score_synthesis": {
+      "confirmed": true,
+      "customer_text": "B（动量+趋势加权合成，默认动量0.6/趋势0.4）",
+      "confirmed_at": "2026-08-11",
+      "source": "customer_reply"
+    },
+    "r0_q3_timing": {
+      "confirmed": true,
+      "customer_text": "A（次日next_open调仓 + run_daily评估）",
+      "confirmed_at": "2026-08-11",
+      "source": "customer_reply"
+    },
+    "r0_q4_exit_rank": {
+      "confirmed": true,
+      "customer_text": "A（跌出当期前N名即卖，均线走坏取MA5下穿MA10）",
+      "confirmed_at": "2026-08-11",
+      "source": "customer_reply"
+    },
+    "r1_execution_mode": {
+      "confirmed": true,
+      "customer_text": "方案 X（basket 原子先卖后买，handle_data + callback_basket + 0.4.0-next_open_basket）",
+      "confirmed_at": "2026-08-11",
+      "source": "customer_reply"
+    },
+    "generation_target": {
+      "confirmed": true,
+      "customer_text": "本地 QuantStudio-only（本次未要求 PTrade 转换；skill 默认 quantstudio target）",
+      "confirmed_at": "2026-08-12T15:00:00+08:00",
+      "source": "customer_reply"
+    },
+    "strategy_semantics": {
+      "confirmed": true,
+      "customer_text": "ETF五层筛选主题轮动：层1动态池get_etf_list_local(equity,active_only)仅剔跨境+日均成交>=1e6；层2动量5/10/20日rank权重0.6；层3 MA5>MA10>MA20>MA60权重0.4；层4综合得分前5名；层5跌出前5或MA5<MA10卖出；next_open+callback_basket原子先卖后买；fq=pre",
+      "confirmed_at": "2026-08-12T15:00:00+08:00",
+      "source": "customer_reply"
+    },
+    "portfolio_contract": {
+      "confirmed": true,
+      "customer_text": "fixed_notional 初始资金10万；equal_weight 等权；target_holdings=5；gross_exposure_target=0.95；cash_buffer 0.05；max_single_weight 0.2；allow_leverage=false",
+      "confirmed_at": "2026-08-12T15:00:00+08:00",
+      "source": "customer_reply"
+    },
+    "rebalance_funding_contract": {
+      "confirmed": true,
+      "customer_text": "basket_atomic_sell_first 原子先卖后买；requires_same_cycle_sell_proceeds=true；卖出款同日供买入；cash_only_for_new_buys=false",
+      "confirmed_at": "2026-08-12T15:00:00+08:00",
+      "source": "customer_reply"
+    },
+    "r5_deployment_invariants": {
+      "confirmed": true,
+      "customer_text": "agent_managed 回测；窗口2026-01-01~2026-08-10（缩短仅验证skill功能）；require_at_least_one_rebalance=true；maximum_cash_ratio_after_rebalance=0.2；minimum_gross_exposure=0.8；minimum_fill_ratio=0.8；target_holdings=5",
+      "confirmed_at": "2026-08-12T15:00:00+08:00",
+      "source": "customer_reply"
+    }
+  },
+  "validation_execution": {
+    "mode": "agent_managed",
+    "require_hash_bound_evidence": true,
+    "formal_publish_requires_backtest_pass": true
+  },
+  "backtest_window_contract": {
+    "strategy_must_not_hardcode_backtest_dates": true,
+    "agent_must_not_start_unconfirmed_backtest": true,
+    "actual_window_selected_by": "customer_confirmed_agent_run"
+  }
+}

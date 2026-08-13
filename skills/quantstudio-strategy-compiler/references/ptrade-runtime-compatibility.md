@@ -104,3 +104,39 @@ Generated PTrade code must pass:
 - QuantStudio's implemented engine profile uses the front-adjusted daily/minute snapshot for matching, fills, cash, valuation, `data[code].price`, and BarData OHLC.
 - Agent-first designs now require `execution_price_basis=pre_adjusted_price`; raw execution declarations are blocked as incompatible with the selected local engine profile.
 - This is a design/profile contract correction. It does not claim that a broker PTrade runtime internally values positions with QuantStudio's adjusted snapshot; dual validation proves source/API portability while local backtest evidence records the QuantStudio execution basis.
+
+## 2026-08-13 PTrade 分钟 include 语义实测
+
+检测方法：PTrade 平台分钟回测（1min 频率），09:35（第 5 根 bar）handle_data
+中调 get_history(5, frequency='1m', include=True/False)。
+
+结果：
+- include=True  最后一根 = 09:35 当前 bar（含当天）
+- include=False 最后一根 = 09:34 前一 bar（不含当天）
+
+结论：PTrade 分钟 include 是"标准"语义（True=含当前 bar，False=不含），
+与本地框架一致（本地引擎 2026-08-13 修复后：分钟 include=False 锚定当天 +
+排除当前 bar）。与 PTrade 日线 include 语义不同（日线差一天：include=True
+到 T-1、include=False 到 T-2）。
+
+转换映射结论：
+- 日线：include=False → include=True（PTrade 日线差一天，source_import
+  NORM-INCLUDE-PTRADE 按频率分流后仅日线映射）
+- 分钟：不改（两端语义一致；对分钟做 False→True 会在 PTrade 侧制造同 bar
+  lookahead——PTrade 分钟 include=True 含当前 bar close）
+
+## 技术债：分钟 include=True 策略迁移（待执行）
+
+以下策略当前使用分钟 include=True（取当前 bar close 做信号 + close 撮合），
+存在同 bar lookahead 风险。引擎修复后（分钟 include=False 锚定前一 bar，
+2026-08-13），应迁移到 include=False：
+
+- smallcap_overnight_scalp_7_quantstudio.py（line 636-642）：
+  get_history(1, frequency='1m', include=True) → values[-1] = 当前 bar close
+  迁移后：include=False → values[-1] = 前一 bar close（无 lookahead）
+- first_cover_event_daily_quantstudio.py（line 2706-2712）：
+  读 09:31 已完成分钟 bar → include=True
+  迁移后：include=False → 读 09:30 bar（引擎修复后 09:31 决策看到 09:30）
+
+迁移前提：引擎分钟 include=False 修复完成（ptrade_api.py，2026-08-13）。
+迁移验证：迁移前后 T5 逐位断言（行为变更，需用户确认）。

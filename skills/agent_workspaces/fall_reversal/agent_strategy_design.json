@@ -1,0 +1,233 @@
+{
+  "design_version": "2.2",
+  "strategy_id": "fall_reversal",
+  "strategy_name": "跌幅榜反转 / 价值修复（全A剔除ST + 长档3年跌幅 + next_open basket 调仓）",
+  "asset_class": "stock",
+  "targets": [
+    "quantstudio"
+  ],
+  "engine_profile": {
+    "profile_id": "daily-bar-v1",
+    "bar_frequency": "1d",
+    "match_price_mode": "next_open",
+    "rebalance_mode": "callback_basket",
+    "expected_engine_semantics_version": "0.4.0-next_open_basket"
+  },
+  "market_data_contract": {
+    "signal_price_adjustment": "pre",
+    "execution_price_basis": "pre_adjusted_price"
+  },
+  "strategy_semantics": {
+    "universe": "通过 get_Ashares(date) 取全A股列表（来自 stock_daily 活跃品种），再剔除 is_st_stock(code) 返回 True 的标的（框架内置 ST/*ST/退市整理判断，比手工解析 name 前缀更可靠）；已退市/长期停牌标的在回测日 get_history_batch 返回空 DataFrame，自然剔除（无 PIT 退市标记 API，空历史即等于无数据不可交易）。",
+    "entry_rules": [
+      "跌幅计算：对池内每只股票取过去 N=3 年（约 756 个交易日，N*252）fq='pre' 前复权收盘价序列，跌幅 = close[-1]/close[0] - 1（负值越大跌越多）。",
+      "排名筛选：按跌幅升序（即跌得最多者排最前）取前 18 只进入买入名单（15~20 中值）。",
+      "信号价与跌幅均使用 fq='pre' 前复权收盘价。"
+    ],
+    "exit_rules": [
+      "卖出条件1（回弹换出）：持仓股票自其持仓区间最低价反弹 >= 25% → 清仓（断皮筋修复信号）。",
+      "卖出条件2（到期强制换出）：单只持仓满 12 个月（约 252 个交易日）仍未触发回弹 → 清仓，腾出额度给新跌标的。",
+      "满足任一即执行卖出；未触发卖出条件的持仓保留。"
+    ],
+    "portfolio_rules": [
+      "等权持有最多 18 只股票，每只目标权重约 1/18。",
+      "初始资金 1000000 元（required_initial_cash=1000000）。",
+      "总仓位目标 gross_exposure=0.88，保留 12% 现金缓冲以吸收整手取整+佣金导致的 basket 原子拒单风险。",
+      "单只仓位上限 max_single_weight=0.08（约 8%，对应上限约 8 万）。",
+      "调仓在 handle_data 内通过 order_target_value 实现，由引擎 callback_basket 收集为原子先卖后买。"
+    ],
+    "risk_rules": [
+      "ST 过滤：name 前缀 'ST' 剔除，规避退市风险/基本面塌陷标的。",
+      "退市/停牌过滤：get_history_batch 返回空或长度不足者跳过，不进入候选。",
+      "回弹纪律：触发回弹或到期即清仓，不摊平、不止损加仓。",
+      "流动性隐式约束：选取全A活跃品种（stock_daily 有数据者），天然排除长期无交易标的。"
+    ]
+  },
+  "timing": {
+    "signal_data_cutoff": "前收盘（handle_data 内取 fq='pre' 历史，不含当日未来数据）",
+    "holding_semantics": "T 日 handle_data 决策，T+1 next_open 以开盘价（引擎前复权快照）成交；basket 原子先卖后买，卖出款同日供买入。",
+    "decision_events": [
+      {
+        "name": "rebalance",
+        "lifecycle": "handle_data",
+        "purpose": "评估跌幅排名并执行 basket 调仓（先卖后买），每月末触发全量重排 + 每日评估回弹/到期换出。"
+      }
+    ]
+  },
+  "components": {
+    "lifecycle_hooks": [
+      "initialize",
+      "handle_data"
+    ],
+    "api_groups": [
+      "quantstudio_local_stock",
+      "ptrade_compat_signals"
+    ],
+    "required_apis": [
+      "get_Ashares",
+      "get_stock_status",
+      "get_history_batch",
+      "order_target_value",
+      "set_benchmark",
+      "set_commission",
+      "log"
+    ],
+    "implementation_notes": [
+      "initialize 内设置 universe 占位、参数（N_YEARS=3, TOP_N=18, REBOUND_PCT=0.25, MAX_HOLD_DAYS=252, GROSS_EXPOSURE=0.95, MAX_SINGLE_WEIGHT=0.08）、set_benchmark('000300')、set_commission(type='stock')、g 字段初始化（g.hold_since 记录每只建仓交易日索引）。",
+      "handle_data 内：",
+      "  (a) 每月末（或首日）执行全量重排：get_Ashares 取池 → 剔 ST → get_history_batch(close, N*252, fq='pre') → 算跌幅 → 取前 18；",
+      "  (b) 每日评估持有标的：对持仓取近 20 日 close，算从持仓区间最低价反弹幅度，>=25% 或持有满 252 日 → 标记卖出；",
+      "  (c) 新跌补入：重排选出的 18 只中当前未持有的，按等权重补入（受单只上限与总仓位约束）；",
+      "  (d) 全部经 order_target_value 交给 basket（先卖后买）。",
+      "get_history_batch 返回 CodeDict{code: DataFrame}，按 df['close'] 取序列，fq='pre' 必须显式传递。",
+      "回弹判定用持仓成本基准：记录建仓日 close 作为成本，反弹 % = (cur_close / min_since_entry - 1)；为简化用近 20 日最低价近似持仓区间低点。",
+      "g.hold_since 用回测交易日序号（g.trade_day_count 自增）记录建仓日，持有天数 = 当前序号 - hold_since。"
+    ]
+  },
+  "constraints": {
+    "hard_filters": [
+      "仅 A 股（get_Ashares 返回），排除 ETF/债券/基金。",
+      "ST 过滤：is_st_stock(code) 返回 True 的标的剔除，规避退市风险/基本面塌陷标的。",
+      "数据完整性：get_history_batch 返回空或长度 < N*252 的标的跳过。"
+    ],
+    "no_lookahead": true,
+    "portable_source_required": false,
+    "runtime_state_guard_required": true
+  },
+  "approximations": [
+    {
+      "id": "rebound_basis_20d_low",
+      "description": "回弹判定用近 20 日最低价近似持仓区间低点（而非精确持仓区间最低），降低计算量；阈值 25% 为经验值。",
+      "confirmed": true
+    },
+    {
+      "id": "gross_exposure_0_95",
+      "description": "总仓位 0.95 留 5% 现金缓冲，规避废单/取整导致全仓失败；非满仓。",
+      "confirmed": true
+    },
+    {
+      "id": "top_n_18",
+      "description": "提示词 15~20 只取中值 18 只，等权每只约 1/18。",
+      "confirmed": true
+    }
+  ],
+  "open_questions": [],
+  "user_confirmations": {
+    "strategy_semantics": true,
+    "execution_approximations": true,
+    "component_plan": true,
+    "generation_target": true,
+    "backtest_validation_mode": true
+  },
+  "output": {
+    "overwrite": true,
+    "quantstudio_path": "quantstudio/backtest/strategies/fall_reversal_quantstudio.py"
+  },
+  "universe_contract": {
+    "mode": "portable_public_api",
+    "local_dynamic_api_allowed": false,
+    "local_dynamic_api": "get_etf_list_local",
+    "st_filter": "get_stock_status_api",
+    "delist_filter": "history_empty_natural"
+  },
+  "portfolio_contract": {
+    "sizing_mode": "fixed_notional",
+    "required_initial_cash": 1000000,
+    "fixed_target_value": 1000000,
+    "allocation_mode": "equal_weight",
+    "allocation_denominator": "configured_target_count",
+    "target_holdings": 18,
+    "gross_exposure_target": 0.88,
+    "cash_buffer_ratio": 0.12,
+    "per_position_target_weight": 0.0488,
+    "max_single_weight": 0.08,
+    "allow_leverage": false
+  },
+  "rebalance_funding_contract": {
+    "requires_same_cycle_sell_proceeds": true,
+    "implementation_mode": "basket_atomic_sell_first",
+    "cash_only_for_new_buys": false
+  },
+  "history_coverage_contract": {
+    "lookback_bars": 756,
+    "frequency": "1d",
+    "history_required_before_first_decision": true,
+    "backtest_start_does_not_truncate_provider_history": true,
+    "minimum_candidates_with_full_history": 18
+  },
+  "r5_deployment_invariants": {
+    "holding_count_mode": "strict_target_when_candidates_available",
+    "target_holdings": 18,
+    "minimum_fill_ratio": 0.8,
+    "minimum_gross_exposure": 0.8,
+    "maximum_cash_ratio_after_rebalance": 0.2,
+    "maximum_insufficient_cash_rejections": 0,
+    "require_at_least_one_rebalance": true
+  },
+  "confirmation_evidence": {
+    "r0_asset_class": {
+      "confirmed": true,
+      "customer_text": "A股全市场剔除ST（默认方案）",
+      "confirmed_at": "2026-08-12T16:00:00+08:00",
+      "source": "customer_reply"
+    },
+    "r0_time_horizon": {
+      "confirmed": true,
+      "customer_text": "长档3~5年价值修复（取N=3年）",
+      "confirmed_at": "2026-08-12T16:00:00+08:00",
+      "source": "customer_reply"
+    },
+    "r0_selection_count": {
+      "confirmed": true,
+      "customer_text": "15~20取中值18只等权",
+      "confirmed_at": "2026-08-12T16:00:00+08:00",
+      "source": "customer_reply"
+    },
+    "r0_rebalance_exit": {
+      "confirmed": true,
+      "customer_text": "每月末重排 + 从低点反弹25%换出 + 最长持有12个月强制换出",
+      "confirmed_at": "2026-08-12T16:00:00+08:00",
+      "source": "customer_reply"
+    },
+    "generation_target": {
+      "confirmed": true,
+      "customer_text": "本地 QuantStudio-only（本次未要求 PTrade 转换；skill 默认 quantstudio target）",
+      "confirmed_at": "2026-08-12T16:00:00+08:00",
+      "source": "customer_reply"
+    },
+    "strategy_semantics": {
+      "confirmed": true,
+      "customer_text": "全A剔除ST(前缀ST) + get_history_batch空值自然剔退市；N=3年(756日)fq=pre跌幅排名取前18；回弹>=25%或持仓满252日换出；每月末全量重排+新跌补入；next_open+callback_basket原子先卖后买；fq=pre；初始100万；基准000300",
+      "confirmed_at": "2026-08-12T16:00:00+08:00",
+      "source": "customer_reply"
+    },
+    "portfolio_contract": {
+      "confirmed": true,
+      "customer_text": "fixed_notional 初始资金100万；equal_weight 等权；target_holdings=18；gross_exposure_target=0.95；cash_buffer 0.05；max_single_weight 0.08；allow_leverage=false",
+      "confirmed_at": "2026-08-12T16:00:00+08:00",
+      "source": "customer_reply"
+    },
+    "rebalance_funding_contract": {
+      "confirmed": true,
+      "customer_text": "basket_atomic_sell_first 原子先卖后买；requires_same_cycle_sell_proceeds=true；卖出款同日供买入；cash_only_for_new_buys=false",
+      "confirmed_at": "2026-08-12T16:00:00+08:00",
+      "source": "customer_reply"
+    },
+    "r5_deployment_invariants": {
+      "confirmed": true,
+      "customer_text": "agent_managed 回测；窗口2026-01-01~2026-08-10（缩短仅验证skill功能）；require_at_least_one_rebalance=true；maximum_cash_ratio_after_rebalance=0.2；minimum_gross_exposure=0.8；minimum_fill_ratio=0.8；target_holdings=18",
+      "confirmed_at": "2026-08-12T16:00:00+08:00",
+      "source": "customer_reply"
+    }
+  },
+  "validation_execution": {
+    "mode": "agent_managed",
+    "require_hash_bound_evidence": true,
+    "formal_publish_requires_backtest_pass": true
+  },
+  "backtest_window_contract": {
+    "strategy_must_not_hardcode_backtest_dates": true,
+    "agent_must_not_start_unconfirmed_backtest": true,
+    "actual_window_selected_by": "customer_confirmed_agent_run"
+  }
+}

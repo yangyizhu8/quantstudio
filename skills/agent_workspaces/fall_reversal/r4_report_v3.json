@@ -1,0 +1,13 @@
+{
+  "report_version": "2.1",
+  "strategy_id": "fall_reversal",
+  "source": "quantstudio\\backtest\\strategies\\fall_reversal_quantstudio.py",
+  "target_profile": "quantstudio",
+  "status": "PASS",
+  "profile_validation_status": "PASS",
+  "runtime_validation_status": "NOT_VERIFIED",
+  "deployment_status": "NOT_DEPLOYABLE",
+  "block_count": 0,
+  "warning_count": 0,
+  "issues": []
+}

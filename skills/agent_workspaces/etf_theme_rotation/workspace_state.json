@@ -1,0 +1,36 @@
+{
+  "stage": "BACKTEST_PASS",
+  "backtest_status": "PASS",
+  "backtest_data_source": "duckdb_provider",
+  "backtest_db_path": "D:\\miniQMT策略实盘\\QuantStudio\\data\\quantstudio.db",
+  "backtest_execution_owner": "agent_managed",
+  "r4_validation_status": "PASS",
+  "runtime_validation_status": "PASS",
+  "deployment_status": "DEPLOYABLE",
+  "r5_hash_bound": {
+    "generated_at": "2026-08-12T03:48:28.710223+08:00",
+    "window": {
+      "start": "2026-01-01",
+      "end": "2026-08-10"
+    },
+    "strategy_sha256": "09540bad345ebf1d8bff4f27ec3262b69d59396dc62ac0169bcac33531fcb54a",
+    "design_sha256": "0c5d80f64213f90ead9a40c1c80b33c738f67b973fbbf3f11bb97a783dcdba44",
+    "engine_semantics_version": "0.4.0-next_open_basket",
+    "profile": "quantstudio",
+    "r5_runtime_result": {
+      "trade_records": 18,
+      "nav_points": 139,
+      "final_nav": 72632.45,
+      "final_cash_ratio": 0.0758,
+      "distinct_traded_codes": 5,
+      "deployment_invariants": {
+        "require_at_least_one_rebalance": true,
+        "maximum_cash_ratio_after_rebalance_0.2": true,
+        "minimum_gross_exposure_0.8": true,
+        "target_holdings_5": true
+      }
+    },
+    "r4_validation_status": "PASS",
+    "note": "agent_managed R5 smoke PASS; hash-bound 绑定策略源+设计档 SHA256 供 R6 审查"
+  }
+}
