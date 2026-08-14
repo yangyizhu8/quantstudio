@@ -567,6 +567,12 @@ class DaemonLifecycle:
             )
             # 增量开始前消费 stop（用户可能在 from_configs 期间点了停止）
             _check_stop_at_boundary("pre_cycle")
+            # 工作包 D 防线 3：采集轮启动黄金行冒烟自检（不匹配仅告警，不阻断）。
+            # getattr 防御：兼容旧版/mock collector（观测缺位不阻断采集轮）。
+            try:
+                getattr(collector, "qfq_golden_row_smoke", lambda: None)()
+            except Exception as e:
+                logger.warning(f"[DaemonLifecycle] QFQ 黄金行冒烟异常（不阻断）: {e}")
             # —— QFQ 协调周期开启（resident orchestrator v2）——
             # enabled=false（默认）→ qfq_begin_cycle 返回 None，不写任何 qfq 字段，
             # 后续水位推进走旧路径，本函数行为与接入前逐位一致（紧急回退开关）。
@@ -681,6 +687,15 @@ class DaemonLifecycle:
             except Exception as e:
                 logger.error(f"[DaemonLifecycle] 质量审计失败: {e}", exc_info=True)
                 quality_audit_ok = False
+            # 工作包 D 防线 2.1（补充 A）：因子完整性扫描挂必然执行点——与
+            # _run_full_quality_audit 并列（finally 必跑），不挂 qfq_run_post_ingest
+            # （编排器 disabled 时 post_ingest 是 no-op，因子监测不应依赖编排器开关）。
+            # getattr 防御：兼容旧版/mock collector（观测缺位不阻断审计收尾）。
+            try:
+                getattr(collector, "_audit_qfq_factor_integrity", lambda: None)()
+            except Exception as e:
+                logger.warning(f"[DaemonLifecycle] QFQ 因子完整性扫描异常（不阻断）: {e}",
+                               exc_info=True)
             # Review FIX-1：质量审计完成后消费 stop
             _check_stop_at_boundary("post_quality_audit")
         except Exception as e:

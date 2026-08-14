@@ -22,9 +22,15 @@ def test_minute_bars_join_daily_adjustment_factor_by_trading_day():
     adj = pd.DataFrame({"code": ["600000", "600000"],
                         "time": [to_ms_timestamp("2026-01-02"), to_ms_timestamp("2026-01-05")],
                         "adj_factor": [1.0, 2.0]})
-    out = a._apply_qfq(bars, adj, "stock_minutes")
+    out = a._apply_qfq(bars, adj, "stock_minutes",
+                       adj_latest_map={"600000": 2.0},
+                       adj_earliest_map={"600000": 1.0})
     assert out["close_front"].tolist() == [5.0, 12.0]
     assert out["close_back"].tolist() == [10.0, 24.0]
+    # fail-fast 契约：无全局快照必须 raise（2026-08-14 修复，防止分片内基准再写坏 front）
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        a._apply_qfq(bars, adj, "stock_minutes")
 
 
 def test_adjustment_anchors_follow_time_not_numeric_min_max():
@@ -34,9 +40,14 @@ def test_adjustment_anchors_follow_time_not_numeric_min_max():
                          "close": [10.0, 10.0, 10.0]})
     adj = pd.DataFrame({"code": ["600000"] * 3, "time": bars["time"],
                         "adj_factor": [2.0, 1.0, 1.5]})
-    out = a._apply_qfq(bars, adj, "stock_daily")
+    out = a._apply_qfq(bars, adj, "stock_daily",
+                       adj_latest_map={"600000": 1.5},
+                       adj_earliest_map={"600000": 2.0})
     assert out["close_front"].tolist() == [10 * 2 / 1.5, 10 / 1.5, 10.0]
     assert out["close_back"].tolist() == [10.0, 5.0, 7.5]
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        a._apply_qfq(bars, adj, "stock_daily")
 
 
 def test_native_adjustment_source_does_not_apply_factor_twice():

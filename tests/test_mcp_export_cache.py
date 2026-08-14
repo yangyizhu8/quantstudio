@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import json
+from collections import OrderedDict
+
 import pandas as pd
 import pytest
 
@@ -50,6 +52,8 @@ def _bare_adapter(client=None, export_cache=False, landing_root=None):
     adapter.enable_qfq_restore = False  # skip qfq restore for cache tests
     adapter.export_cache = export_cache
     adapter._landing_root = landing_root  # caller must provide tmp_path
+    adapter._shard_table_cache = OrderedDict()   # 优化 A：裸实例补属性（绕过 __init__）
+    adapter._SHARD_CACHE_MAX = 30
     return adapter
 
 
@@ -143,24 +147,25 @@ def test_manifest_corruption_fallback(tmp_path, monkeypatch):
 # Test 4: 网格化批次边界一致性（同一网格单元内的不同 start → 同一边界）
 # ---------------------------------------------------------------------------
 def test_grid_aligned_batch_boundaries():
-    """同一 10 天网格单元内的不同 start（07-01 vs 07-03）→ 对齐到同一网格边界。
+    """同一网格单元内的不同 start → 对齐到同一网格边界。
 
-    跨网格单元的 start（07-01 vs 07-08）→ 不同边界（验证网格化生效，非恒等）。
+    跨网格单元的 start → 不同边界（验证网格化生效，非恒等）。
     这是缓存命中率的核心：同一单元内的证券共享缓存键。
+    用日线（365 天网格，稳定）测试边界一致性。
     """
     adapter = MCPAdapter.__new__(MCPAdapter)
-    # 同一网格单元（10 天）：07-01 和 07-03 落在同一 epoch-10day 格子
-    batches_a = adapter._export_batches("2026-07-01", "2026-07-05", is_minute=True,
+    # 同一网格单元（365 天）：07-01 和 10-01 落在同一年
+    batches_a = adapter._export_batches("2026-07-01", "2026-07-05", is_minute=False,
                                         grid_aligned=True)
-    batches_b = adapter._export_batches("2026-07-03", "2026-07-05", is_minute=True,
+    batches_b = adapter._export_batches("2026-10-01", "2026-10-05", is_minute=False,
                                         grid_aligned=True)
     first_bs_a = batches_a[0][0]
     first_bs_b = batches_b[0][0]
     assert first_bs_a == first_bs_b, (
         f"同一网格单元内的 start 应对齐到同一边界: A={first_bs_a} B={first_bs_b}")
 
-    # 跨网格单元：07-01 vs 07-08（中间有 10 天边界）→ 不同边界
-    batches_c = adapter._export_batches("2026-07-08", "2026-07-10", is_minute=True,
+    # 跨网格单元：2026 vs 2025 → 不同边界
+    batches_c = adapter._export_batches("2025-07-01", "2025-07-05", is_minute=False,
                                         grid_aligned=True)
     assert batches_c[0][0] != first_bs_a, (
         "跨网格单元的 start 应对齐到不同边界")
@@ -245,3 +250,83 @@ def test_daemon_path_unaffected(tmp_path, monkeypatch):
     # 无 manifest 文件
     manifest_path = tmp_path / MCPAdapter._EXPORT_CACHE_MANIFEST
     assert not manifest_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# Test 8: 缓存命中 codes 过滤读回（修复 bug：全量 concat OOM）
+# ---------------------------------------------------------------------------
+def test_cache_hit_codes_filter_not_full_concat(tmp_path, monkeypatch):
+    """缓存命中时 codes 过滤读回：只返回目标证券行，不全量 concat。
+
+    修复前 bug：命中时 pd.read_parquet 全量读回 → concat OOM（4.6 亿行）。
+    修复后：命中逐片读 → codes 过滤 → 只保留目标行。
+    """
+    # 两个证券的全市场数据
+    df = _make_daily_df(["000001.SZ", "000002.SZ"], ["2026-07-01", "2026-07-02"])
+    client = _ExportClient(df)
+    adapter = _bare_adapter(client, export_cache=True, landing_root=tmp_path)
+    monkeypatch.setattr(pd, "read_parquet", lambda path: df.copy())
+
+    # 第一次：落盘全市场 + 写 manifest
+    adapter._fetch_export("stock_daily", "daily", "2026-07-01", "2026-07-02", ["000001.SZ"])
+    assert len(client.export_calls) == 1
+
+    # 第二次：命中缓存，只取 000002.SZ
+    frame, _ = adapter._fetch_export("stock_daily", "daily", "2026-07-01", "2026-07-02", ["000002.SZ"])
+    assert len(client.export_calls) == 1  # 命中，未新增 export
+    # 结果只含 000002.SZ（codes 过滤生效）
+    assert "000002.SZ" in frame["ts_code"].values
+    assert "000001.SZ" not in frame["ts_code"].values
+
+
+# ---------------------------------------------------------------------------
+# Test 9: 唯一 job_id 目录（修复 bug：旧文件混入 manifest）
+# ---------------------------------------------------------------------------
+def test_unique_job_id_directory(tmp_path, monkeypatch):
+    """_resolve_shard_paths 用唯一 job_id 目录，不同 export 不混入同一目录。
+
+    修复前 bug：job_id 固定为 "export_0"，旧 parquet 混入新 manifest。
+    修复后：job_id = exp_{table}_{uuid8}，每次 export 独立目录。
+    """
+    df = _make_daily_df(["000001.SZ"], ["2026-07-01"])
+    client = _ExportClient(df)
+    adapter = _bare_adapter(client, export_cache=False, landing_root=tmp_path)
+
+    # 调 _resolve_shard_paths（直连路径，export_cache=False）
+    batches = adapter._export_batches("2026-07-01", "2026-07-02", is_minute=False,
+                                      grid_aligned=False)
+    paths, job_id = adapter._resolve_shard_paths(
+        "stock_daily", "daily", batches, "stock_daily", False)
+
+    # job_id 应是唯一前缀（exp_stock_daily_xxxxxxxx）
+    assert job_id.startswith("exp_"), f"job_id 应以 exp_ 开头: {job_id}"
+    assert "stock_daily" in job_id
+
+
+# ---------------------------------------------------------------------------
+# Test 10: manifest 精确记录本次 shard（修复 bug：glob 全目录混旧文件）
+# ---------------------------------------------------------------------------
+def test_manifest_records_only_current_shards(tmp_path, monkeypatch):
+    """manifest 只记录本次 export 的 shard，不用 glob 全目录（防旧文件混入）。
+
+    修复前 bug：manifest 用 jid_dir.glob('*.parquet') 枚举全目录（含旧文件）。
+    """
+    df = _make_daily_df(["000001.SZ"], ["2026-07-01"])
+    client = _ExportClient(df)
+    adapter = _bare_adapter(client, export_cache=True, landing_root=tmp_path)
+    monkeypatch.setattr(pd, "read_parquet", lambda path: df.copy())
+
+    # 第一次 export
+    adapter._fetch_export("stock_daily", "daily", "2026-07-01", "2026-07-02", ["000001.SZ"])
+
+    # 读 manifest，检查 shards 只含本次的
+    import json
+    manifest_path = tmp_path / MCPAdapter._EXPORT_CACHE_MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for ckey, entry in manifest.get("stock_daily", {}).items():
+        shards = entry.get("shards", [])
+        job_id = entry.get("job_id", "")
+        # 每个 shard 应实际存在于 job_id 目录
+        for s in shards:
+            sp = tmp_path / job_id / f"{s}.parquet"
+            assert sp.exists(), f"manifest 记录的 shard 不存在: {sp}"

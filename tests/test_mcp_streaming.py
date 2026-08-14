@@ -191,3 +191,39 @@ def test_streaming_metadata_flag(tmp_path):
         "index_constituents", "2026-07-01", "2026-07-01", freq="daily")
     # 透传用的是 fetch_table 的 meta，无 streaming 字段
     assert meta_p.get("lineage", {}).get("streaming", False) is False
+
+
+# ---------------------------------------------------------------------------
+# Test 6: 流式第一遍列投影包含因子标准化所需的全部列（修复 bug：缺列）
+# ---------------------------------------------------------------------------
+def test_streaming_factor_sync_includes_required_columns(tmp_path):
+    """第一遍列投影必须含 adj_factor + ts_code + trade_date/trade_time。
+
+    修复前 bug：只读 ['adj_factor'] → normalize_mcp_adj_factor_df 缺 code/time 列 →
+    因子同步失败（written=0 → ValueError）。
+    修复后：列投影动态包含全部所需列。
+    """
+    import pyarrow as pa, pyarrow.parquet as pq
+    # 构造含全部列的 parquet（模拟真实 MCP 返回，trade_date 用 YYYYMMDD）
+    df = _make_daily_df(["000001.SZ"], ["20260701", "20260702", "20260703"])
+    landing = tmp_path / "exp_test_12345678"
+    landing.mkdir(parents=True)
+    pq.write_table(pa.Table.from_pandas(df), str(landing / "shard0.parquet"))
+
+    # 用 _parquet_has_column 验证列检测
+    assert MCPAdapter._parquet_has_column(landing / "shard0.parquet", "adj_factor")
+    assert MCPAdapter._parquet_has_column(landing / "shard0.parquet", "ts_code")
+    assert MCPAdapter._parquet_has_column(landing / "shard0.parquet", "trade_date")
+
+    # 列投影读回应含全部所需列
+    proj = []
+    for c in ("adj_factor", "ts_code", "trade_date", "trade_time"):
+        if MCPAdapter._parquet_has_column(landing / "shard0.parquet", c):
+            proj.append(c)
+    assert "adj_factor" in proj
+    assert "ts_code" in proj
+    sdf = pd.read_parquet(landing / "shard0.parquet", columns=proj)
+    # normalize 应能成功（不返回空）
+    from quantstudio.pipeline.sources.mcp_adapter import normalize_mcp_adj_factor_df
+    norm = normalize_mcp_adj_factor_df(sdf, "daily", "STOCK")
+    assert len(norm) > 0, "列投影后 normalize 不应为空"

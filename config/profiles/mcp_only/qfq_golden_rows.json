@@ -1,0 +1,10 @@
+[
+  {
+    "code": "159995",
+    "table": "etf_daily",
+    "date": "2026-05-26",
+    "close_front_expected": 1.3539738908618015,
+    "anchor_version": "v6.7.52",
+    "note": "QFQ bug 修复验收黄金行（bak_c4merge 验收锚存储值：raw 2.707 × adj_i / latest 精确值，勿舍入）。锚变更时由 reanchor committed 事件自动刷新并递增 anchor_version（qfq_invariant.refresh_golden_rows_for_code），禁止人工硬编码"
+  }
+]

@@ -129,6 +129,14 @@ class ResidentCollector:
     _last_task_actual_source = None
     _last_task_watermark_candidate_created = False
     _last_task_qfq_managed = False
+    # —— 工作包 D（防线 1）：QFQ 写入自检状态（类级缺省 None，惰性初始化，
+    #    兼容 ResidentCollector.__new__() 构造路径；线程安全见 _qfq_inv_state）。
+    #    注意（任务书补充 B）：这里存的是告警升级计数，不是快照——快照必须
+    #    用调用栈局部变量沿调用链传入（per_date/per_stock 多线程，实例级
+    #    缓存快照会竞争错配），禁止把 adj_latest_map 存到实例上。 ——
+    _qfq_inv_lock = None          # threading.Lock（惰性创建）
+    _qfq_bad_streaks = None       # {table: 连续 bad 批数}（告警升级链，N=3 阻断）
+    _qfq_blocked_tables = None    # set[table]（达到阻断阈值后拦下一轮该表任务）
 
     def __init__(self, data_cfg: Dict, sources_cfg: Dict, tasks_cfg: Dict,
                  aligner: FieldAligner, validator: PreIngestValidator,
@@ -144,6 +152,11 @@ class ResidentCollector:
 
         self._running = True
         self._adapters: Dict[str, object] = {}  # source → adapter 实例（复用连接）
+
+        # —— A4 变更检测器（UpdateDetector，默认 Mock 零行为变化）——
+        # MCP server 工具上线后，在 _get_adapter 后替换为 MCPUpdateDetector。
+        from .update_detector import MockUpdateDetector
+        self._update_detector = MockUpdateDetector()
 
         # —— QFQ 常驻编排器（resident orchestrator v2）——
         # enabled=false（默认）时以下三个字段全程保持 None/未用，
@@ -374,6 +387,12 @@ class ResidentCollector:
         name = task["name"]
         table = task.get("table")
         freq = task.get("freq", "daily")
+        # 工作包 D 防线 1 告警升级链（任务书 §1.4）：该表连续 N=3 批自洽偏离或
+        # 单批偏离率 >5% → 阻断下一轮任务（标记 failed，水位不推进）。
+        if table and self.qfq_invariant_should_block(table):
+            logger.error(f"[task={name}] QFQ 写入自检阻断（{table} 连续偏离达阈值），"
+                         f"本轮跳过，水位不推进。请排查 [QFQ-Invariant] 告警后重启 daemon 解除。")
+            return False
         chain = self._resolve_source_chain(task)
         if not chain:
             logger.error(f"[task={name}] 无可用数据源（{table}/{freq}）："
@@ -562,6 +581,11 @@ class ResidentCollector:
 
             # 2. 拉取
             adapter = self._get_adapter(source, task)
+
+            # A4 变更检测：增量模式 + MCP 源时，拉取前检测云端更新并局部重拉
+            if mode != "full_range":
+                self._check_cloud_updates_and_repull(source, table, freq, adapter, batch_id)
+
             # stock_daily 任务：自动先拉依赖表 stock_daily_valuation
             # 范围跟随 stock_daily：start 前推 30 自然日（≈20交易日），满足回测/采集期
             # 近20日 circ_mv 回看，避免 stock_daily 最早一段 is_delisting_risk 退化为 close<1 兜底
@@ -717,13 +741,17 @@ class ResidentCollector:
             etf_daily_bounds_df = None
             if table == "etf_basic":
                 etf_daily_bounds_df = self._prepare_etf_daily_bounds()
+            # 工作包 D（R3/补充 B）：快照先存调用栈局部变量，同一份同时供 align
+            # 与写入自检（防线 1 口径 A）；禁止实例级缓存（多线程竞争）。
+            _qfq_snap = self._qfq_snapshot_kwargs(table, batch_id)
             std_df, align_meta = self.aligner.align(raw_df, table, source,
                                                      adj_factor_df=adj_factor_df,
                                                      close_df=close_df,
                                                      namechange_df=namechange_df,
                                                      valuation_df=valuation_df,
                                                      etf_daily_bounds_df=etf_daily_bounds_df,
-                                                     freq=freq)
+                                                     freq=freq,
+                                                     **_qfq_snap)
             rows_aligned = len(std_df)
 
             # 4. 校验（硬编码 + 失败进 Quarantine [E-2]）
@@ -743,7 +771,8 @@ class ResidentCollector:
             # 5. 入库（幂等）
             write_new = write_updated = 0
             if rows_passed > 0:
-                wr = self._stamp_and_write(res, table, batch_id, source, task=task)
+                wr = self._stamp_and_write(res, table, batch_id, source, task=task,
+                                           adj_latest_map=_qfq_snap.get("adj_latest_map"))
                 rows_written = wr
                 write_new = getattr(wr, "new", 0)
                 write_updated = getattr(wr, "updated", 0)
@@ -771,6 +800,13 @@ class ResidentCollector:
                                     rows_written, "success", None, started_at,
                                     rows_new=write_new, rows_updated=write_updated,
                                     rows_fixed=res.fixed_count or 0)
+            # A4：增量拉取成功后持久化 last_sync 基准（按 table 粒度）
+            if mode != "full_range":
+                try:
+                    from .update_detector import save_last_sync
+                    save_last_sync(self.writer.shared_conn(), table)
+                except Exception:
+                    pass  # last_sync 持久化失败不影响采集
             return True
 
         except Exception as e:
@@ -779,6 +815,82 @@ class ResidentCollector:
                                     rows_raw, rows_aligned, rows_passed, rows_rejected,
                                     rows_written, "failed", str(e), started_at)
             return False  # 不推进水位，下周期重试
+
+    # ------------------------------------------------------------------
+    # QFQ 复权基准 bug 修复（2026-08-14）：全局因子快照统一构建
+    # ------------------------------------------------------------------
+    _QFQ_PRICE_TABLES = frozenset({"stock_daily", "stock_minutes",
+                                    "etf_daily", "etf_minutes"})
+
+    def _load_qfq_global_snapshot(self, table: str):
+        """从 qfq_aux.db 实时读取全局因子基准（adj_latest / adj_earliest per code）。
+
+        QFQ 复权基准 bug 修复：aligner._apply_qfq 现要求调用方必须传入全局快照，
+        禁止批次内 groupby 作基准（流式分片窗口不含最新因子时 front 会被错算成 raw，
+        实测 1442 万行被破坏——2026-08-14）。
+
+        - ETF 表读 fund_adj，STOCK 表读 adj_factor（修复 ETF 读错表缺陷）；
+        - 实时读 qfq_aux.db（不依赖 adj_factor_snapshot 缓存，修复快照陈旧风险）；
+        - 非价格表返回 (None, None)（aligner 直通，不触发 QFQ）。
+
+        Returns:
+            (adj_latest_map, adj_earliest_map)：{裸码: 因子值}；非价格表返回 (None, None)。
+        """
+        if table not in self._QFQ_PRICE_TABLES:
+            return None, None
+        from pathlib import Path as _P
+        from quantstudio.pipeline.qfq_reanchor_schema import aux_db_path as _aux_path
+        main_db = getattr(self.writer, "db_path", None)
+        if not main_db:
+            return None, None
+        aux = _aux_path(str(main_db))
+        if not _P(str(aux)).exists():
+            logger.warning(f"[QFQ] qfq_aux.db 不存在: {aux}，无法构建全局因子快照")
+            return None, None
+        aux_table = "fund_adj" if table.startswith("etf_") else "adj_factor"
+        import sqlite3 as _sq
+        conn = None
+        try:
+            conn = _sq.connect(f"file:{aux}?mode=ro", uri=True, timeout=30)
+            # GROUP BY + JOIN 走 (code, time) 索引——相关子查询在 880 万行上需 50s+
+            rows = conn.execute(
+                f"SELECT f.code, f.adj_factor FROM {aux_table} f "
+                f"JOIN (SELECT code, MAX(time) AS mt FROM {aux_table} "
+                f"GROUP BY code) m ON f.code = m.code AND f.time = m.mt").fetchall()
+            latest_map = {r[0]: float(r[1]) for r in rows if r[1] is not None}
+            rows_e = conn.execute(
+                f"SELECT f.code, f.adj_factor FROM {aux_table} f "
+                f"JOIN (SELECT code, MIN(time) AS mt FROM {aux_table} "
+                f"GROUP BY code) m ON f.code = m.code AND f.time = m.mt").fetchall()
+            earliest_map = {r[0]: float(r[1]) for r in rows_e if r[1] is not None}
+            logger.info(
+                f"[QFQ] {table} 全局因子快照已构建（实时读 {aux_table}）："
+                f"{len(latest_map)} code")
+            return latest_map, earliest_map
+        except Exception as exc:
+            logger.error(f"[QFQ] 全局因子快照构建失败（{table}）: {exc}")
+            return None, None
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def _qfq_snapshot_kwargs(self, table: str, batch_id: str = "") -> Dict:
+        """价格表 align 调用的全局快照 kwargs（非价格表返回空 dict 直通）。
+
+        用法：self.aligner.align(..., **self._qfq_snapshot_kwargs(table, batch_id))
+        自动展开为 adj_latest_map=..., adj_earliest_map=...（价格表）或 {}（非价格表）。
+        """
+        if table not in self._QFQ_PRICE_TABLES:
+            return {}
+        latest, earliest = self._load_qfq_global_snapshot(table)
+        if latest is None:
+            # qfq_aux.db 不可读 → 传空 dict 会触发 aligner fail-fast（正确行为：
+            # 宁可任务失败也不写坏 front）
+            logger.error(
+                f"[{batch_id}] [QFQ] {table} 无法构建全局因子快照，"
+                f"align 将 fail-fast（防止批次内基准写坏 front）")
+            return {"adj_latest_map": {}, "adj_earliest_map": {}}
+        return {"adj_latest_map": latest, "adj_earliest_map": earliest}
 
     def _run_with_source_streaming(self, task: Dict, source: str, batch_id: str,
                                     started_at: str, adapter,
@@ -797,6 +909,9 @@ class ResidentCollector:
         write_new = write_updated = 0
         last_passed_df = None
         fixed_count = 0
+        # QFQ 快照优化：流式路径入口预查一次全局快照（循环内复用，避免每分片
+        # 重复查 SQLite——实测每分片 8s × 200 分片 = 28min 纯开销）
+        _qfq_snap = self._qfq_snapshot_kwargs(table, batch_id)
         try:
             meta, shard_iter = adapter.fetch_table_streaming(
                 table, start, end, freq=freq, codes=codes)
@@ -824,14 +939,16 @@ class ResidentCollector:
                         df_shard = df_shard.drop(columns=["adj_factor"])
 
                 std_df, align_meta = self.aligner.align(
-                    df_shard, table, source, adj_factor_df=adj_factor_df, freq=freq)
+                    df_shard, table, source, adj_factor_df=adj_factor_df, freq=freq,
+                    **_qfq_snap)
                 rows_aligned += len(std_df)
                 res = self.validator.validate(std_df, table, batch_id, source, expected_freq=freq)
                 rows_passed += len(res.passed_df)
                 rows_rejected += len(res.rejected_rows)
                 fixed_count += getattr(res, "fixed_count", 0) or 0
                 if len(res.passed_df) > 0:
-                    wr = self._stamp_and_write(res, table, batch_id, source, task=task)
+                    wr = self._stamp_and_write(res, table, batch_id, source, task=task,
+                                               adj_latest_map=_qfq_snap.get("adj_latest_map"))
                     rows_written += wr
                     write_new += getattr(wr, "new", 0)
                     write_updated += getattr(wr, "updated", 0)
@@ -868,6 +985,13 @@ class ResidentCollector:
                                     rows_written, "success", None, started_at,
                                     rows_new=write_new, rows_updated=write_updated,
                                     rows_fixed=fixed_count)
+            # A4：增量拉取成功后持久化 last_sync 基准（按 table 粒度）
+            if task.get("mode", "incremental") != "full_range":
+                try:
+                    from .update_detector import save_last_sync
+                    save_last_sync(self.writer.shared_conn(), table)
+                except Exception:
+                    pass
             return True
 
         except Exception as e:
@@ -1213,17 +1337,21 @@ class ResidentCollector:
                         })
                 except Exception:
                     pass
-                # 传入快照 map（如果有），让 aligner 用全量快照替代批次内 groupby
+                # 传入快照 map（QFQ bug 修复：改为实时读 qfq_aux.db，不再依赖
+                # adj_factor_snapshot 缓存——缓存快照陈旧时增量行同样会算错 front）
+                # 工作包 D（R3/补充 B）：快照局部变量化，同一份供 align 与写入自检
+                _qfq_snap = self._qfq_snapshot_kwargs(table, batch_id)
                 # namechange_df + valuation_df 用于推导 is_st_reliable + is_delisting_risk
                 std_df, _ = self.aligner.align(raw_df, table, source, adj_factor_df=adj_df,
-                                               adj_latest_map=adj_latest_map, adj_earliest_map=adj_earliest_map,
+                                               **_qfq_snap,
                                                namechange_df=namechange_df, valuation_df=valuation_df,
                                                freq=freq)
                 res = self.validator.validate(std_df, table, batch_id, source, expected_freq=freq)
                 record_validation(len(std_df), res)
                 if len(res.passed_df) > 0:
                     with write_lock:
-                        wr = self._stamp_and_write(res, table, batch_id, source)
+                        wr = self._stamp_and_write(res, table, batch_id, source,
+                                                   adj_latest_map=_qfq_snap.get("adj_latest_map"))
                         total_new[0] += getattr(wr, "new", 0)
                         total_updated[0] += getattr(wr, "updated", 0)
                         return wr
@@ -1431,9 +1559,12 @@ class ResidentCollector:
                     if len(adj_factor_df) == 0:
                         logger.warning(f"[{code}] MCP adj_factor 标准化后为空（表={table}），"
                                        f"复权字段将留 NULL")
+                # 工作包 D（R3/补充 B）：快照局部变量化，同一份供 align 与写入自检
+                _qfq_snap = self._qfq_snapshot_kwargs(table, batch_id)
                 std_df, _ = self.aligner.align(raw_df, table, source, adj_factor_df=adj_factor_df,
                                                namechange_df=namechange_df, valuation_df=valuation_df,
-                                               freq=freq)
+                                               freq=freq,
+                                               **_qfq_snap)
                 res = self.validator.validate(std_df, table, batch_id, source, expected_freq=freq)
                 with write_lock:
                     total_raw[0] += len(std_df)
@@ -1444,7 +1575,8 @@ class ResidentCollector:
                     total_restored[0] += int(meta.get("restored_rows", 0) or 0)
                 if len(res.passed_df) > 0:
                     with write_lock:  # 线程安全写库
-                        n = self._stamp_and_write(res, table, batch_id, source)
+                        n = self._stamp_and_write(res, table, batch_id, source,
+                                                  adj_latest_map=_qfq_snap.get("adj_latest_map"))
                         total_new[0] += getattr(n, "new", 0)
                         total_updated[0] += getattr(n, "updated", 0)
                         return n
@@ -1897,6 +2029,10 @@ class ResidentCollector:
             if source == "mcp" and "main_db" not in cfg:
                 cfg["main_db"] = str(self.writer.db_path)
             self._adapters[source] = create_adapter(source, cfg)
+            # A4：MCP adapter 创建时，切换 UpdateDetector 为 MCP 后端
+            if source == "mcp":
+                from .update_detector import MCPUpdateDetector
+                self._update_detector = MCPUpdateDetector(self._adapters[source].client)
         adapter = self._adapters[source]
         if task is not None:
             adapter.configure_execution(task)
@@ -1963,6 +2099,60 @@ class ResidentCollector:
                 f"不在可用源链 {out} 中（源可能未启用或不支持 {table}/{freq}）")
         return out
 
+    def _check_cloud_updates_and_repull(self, source: str, table: str, freq: str,
+                                         adapter, batch_id: str) -> int:
+        """A4 变更检测：增量拉取前查云端 cloud_updated_log，对 repair/full 类
+        更新局部重拉（DEDUP 幂等覆盖）。
+
+        仅对 MCP 源生效（tushare 源无云端更新概念，跳过）。
+        无 last_sync 基准（首次）→ 跳过检测（不阻塞）。
+        detector 返回空 → 零额外开销。
+
+        Returns: 局部重拉的窗口数（0 = 无更新或跳过）。
+        """
+        if source != "mcp":
+            return 0  # 修正 2：仅 MCP 源接入
+        try:
+            from .update_detector import load_last_sync
+            conn = self.writer.shared_conn()
+            last_sync = load_last_sync(conn, table)
+            if last_sync is None:
+                logger.info(f"[{batch_id}] A4 跳过检测：{table} 无 last_sync 基准（首次/升级后）")
+                return 0
+            updates = self._update_detector.query_updated_since(last_sync)
+            if not updates:
+                logger.debug(f"[{batch_id}] A4 无云端更新（{table} since {last_sync}）")
+                return 0
+            # 只处理当前 table + repair/full 类更新
+            repull_dates = []
+            for u in updates:
+                if u.get("table_name") == table and u.get("update_source") in ("repair", "full"):
+                    repull_dates.append(str(u.get("trade_date", ""))[:10])
+            if not repull_dates:
+                logger.info(f"[{batch_id}] A4 有更新但无需重拉（{table} 无 repair/full）")
+                return 0
+            logger.info(f"[{batch_id}] A4 检测到 {table} 有 {len(repull_dates)} 个 "
+                        f"repair/full 更新窗口，开始局部重拉: {repull_dates[:5]}")
+            # 逐日局部重拉（全市场单日，DEDUP 幂等）
+            for trade_date in repull_dates:
+                try:
+                    raw_df, _ = adapter.fetch_table(
+                        table, trade_date, trade_date, freq=freq, codes=["ALL"])
+                    if len(raw_df) == 0:
+                        continue
+                    std_df, _ = self.aligner.align(raw_df, table, source, freq=freq)
+                    res = self.validator.validate(std_df, table, batch_id, source, expected_freq=freq)
+                    if len(res.passed_df) > 0:
+                        self._stamp_and_write(res, table, batch_id, source)
+                    logger.info(f"[{batch_id}] A4 重拉 {table}/{trade_date}: "
+                                f"{len(res.passed_df)} 行入库（幂等覆盖）")
+                except Exception as e:
+                    logger.warning(f"[{batch_id}] A4 重拉 {table}/{trade_date} 失败（不影响增量）: {e}")
+            return len(repull_dates)
+        except Exception as e:
+            logger.warning(f"[{batch_id}] A4 变更检测异常（降级跳过，不影响增量）: {e}")
+            return 0
+
     def _get_safe_watermark(self, source: str, table: str, freq: str) -> Optional[str]:
         """读取水位，并在其领先于 Canonical 实际数据时回退到表内最大日期。"""
         stored = self.writer.get_last_date(source, table, freq)
@@ -2025,9 +2215,323 @@ class ResidentCollector:
             logger.error(f"[Watermark] 推进 {source}/{table}/{freq} 失败: {e}", exc_info=True)
         return None
 
+    # —— 工作包 D 防线 1：写入后精确自洽（观测，不承担 fail-fast 职责）——
+
+    def _qfq_inv_state(self):
+        """防线 1 告警升级状态（惰性初始化；锁保护，per_date/per_stock 多线程安全）。
+
+        D 修复：streak 按 distinct batch_id 聚合（_qfq_bad_streaks: {table: [batch_id,
+        ...]} 有序去重）——流式每分片/per_stock 每 code/per_date 每交易日各调一次
+        _stamp_and_write，同一坏批次散到多片不得重复计数，否则 1 个坏批误触
+        "连续 3 批"阻断。good 批清空 streak 并自动解除 blocked（此前仅重启解除）。
+        存的是告警计数，不是快照——快照必须调用栈局部变量沿调用链传入
+        （任务书补充 B：禁实例级缓存快照）。
+        """
+        import threading
+        if self._qfq_inv_lock is None:
+            self._qfq_inv_lock = threading.Lock()
+            self._qfq_bad_streaks = {}      # {table: [batch_id, ...]} distinct 有序
+            self._qfq_blocked_tables = set()
+        return self._qfq_inv_lock, self._qfq_bad_streaks, self._qfq_blocked_tables
+
+    def _qfq_selfcheck_log(self, table: str, batch_id: str, result: Dict,
+                           status: str = "checked") -> None:
+        """自检审计落库（append-only，写 batch_audit.db 独立表，G 修复）。
+
+        G 修复：此前写 qfq_aux.db（因子库应保持只读，且写的还是 legacy 路径）。
+        改写到 BatchAudit 同库（data_cfg.batch_audit_path，默认 batch_audit.db）
+        的独立 append 表——同库同域满足任务书 §1.4"落审计计数"，不污染
+        per-batch REPLACE 语义的 batch_audit 主表，也不碰任何因子库。
+        供防线 2.1 周期扫描汇总（S1：含 skipped_no_snapshot 健康计数）。
+        """
+        try:
+            import sqlite3
+            from quantstudio._paths import db_path as _dbp
+            audit_path = self.data_cfg.get(
+                "batch_audit_path", str(_dbp("batch_audit.db")))
+            with sqlite3.connect(audit_path, timeout=30) as conn:
+                conn.execute("PRAGMA busy_timeout=30000")
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS qfq_selfcheck_log (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ts TEXT, batch_id TEXT, table_name TEXT, status TEXT,
+                        sampled INTEGER, bad INTEGER, skipped INTEGER,
+                        missing_factor_rows INTEGER, detail TEXT)""")
+                conn.execute(
+                    "INSERT INTO qfq_selfcheck_log "
+                    "(ts, batch_id, table_name, status, sampled, bad, skipped, "
+                    " missing_factor_rows, detail) VALUES (?,?,?,?,?,?,?,?,?)",
+                    [datetime.now().isoformat(timespec="seconds"), batch_id, table,
+                     status, int(result.get("sampled", 0)), int(result.get("bad", 0)),
+                     int(result.get("skipped", 0)), int(result.get("missing_factor_rows", 0)),
+                     json.dumps(result.get("bad_detail", [])[:20], ensure_ascii=False,
+                                default=float)])
+                conn.commit()
+        except Exception as exc:
+            logger.warning(f"[QFQ-Invariant] 自检审计落库失败（不影响写入）: {exc}")
+
+    def _qfq_align_aux_path(self):
+        """防线 1 的因子库路径——必须与 adj_latest_map 的来源库严格同源（A 修复）。
+
+        依据（代码事实，2026-08-15 核实）：MCP 采集因子注入（mcp_adapter §7.2-A，
+        `aux = aux_db_path(self.main_db)`）与 Phase 3 全局快照加载
+        （_load_qfq_global_snapshot → qfq_reanchor_schema.aux_db_path）当前都写/
+        读 legacy qfq_aux.db。防线 1 的 adj_i 必须查同一库，否则自检锚与因子
+        不同源自洽（口径 A 退化）。
+        技术债 T-D2：未来采集因子库切换 mcp-gen1（qfq_aux_mcp_gen1.db）时，
+        本方法与 mcp_adapter §7.2-A、_load_qfq_global_snapshot 三处必须同步切换
+        （进度报告登记）。
+        """
+        from .qfq_reanchor_schema import aux_db_path as _aux_path
+        return _aux_path(str(self.writer.db_path))
+
+    def _qfq_aux_db_routed(self):
+        """防线 2.1/3 的因子库路径——跟随编排器动态路由（A 修复）。
+
+        优先取已构造编排器解析出的 self.aux_db（generation_mode=dynamic 时按
+        qfq_aux_paths.json 路由到世代库，如 mcp-gen1 → qfq_aux_mcp_gen1.db）；
+        编排器未构造（enabled=false 或 lazy 未触发）时回退 _qfq_align_aux_path()。
+        因子完整性扫描与黄金行冒烟监测的是**权威因子源**，⑤ 水位释放后
+        mcp-gen1 成为权威，必须跟随路由而非各自 DATA_ROOT 推导。
+        """
+        try:
+            orch = self._qfq_orch
+            if orch is not None and getattr(orch, "aux_db", None):
+                return orch.aux_db
+        except Exception:
+            pass
+        return self._qfq_align_aux_path()
+
+    def _qfq_invariant_after_align(self, df, table: str, batch_id: str, source: str,
+                                   adj_latest_map=None) -> None:
+        """写入前自洽自检（_filter_unchanged 之后对最终写入 df 做；告警优先不阻断）。
+
+        口径 A（R3）：优先用调用链传入的本批 align 实际使用的 adj_latest_map；
+        不可得时兜底重新加载并落 warning（自检锚可能与写入锚不一致）。
+        仅守 MCP 权威源（tushare/xtquant 保留待废弃，不做废弃源维护面——
+        任务书 §1.3 用户澄清，R1 撤回）。
+        """
+        try:
+            if table not in self._QFQ_PRICE_TABLES or source != "mcp":
+                return
+            if df is None or len(df) == 0:
+                return
+            latest = adj_latest_map
+            if not latest:
+                latest, _earliest = self._load_qfq_global_snapshot(table)  # 兜底
+                if latest:
+                    logger.warning(
+                        f"[QFQ-Invariant] {table} {batch_id} 自检锚缺失，回退重新加载"
+                        f"（可能与写入锚不一致，R3 兜底路径）")
+            if not latest:
+                # S1 防线健康监控：快照不可得 → 记 skipped 计数（防静默空转）
+                self._qfq_selfcheck_log(table, batch_id, {}, status="skipped_no_snapshot")
+                return
+            from .qfq_invariant import check_qfq_invariant
+            r = check_qfq_invariant(df, table, latest,
+                                    aux_path=self._qfq_align_aux_path(),
+                                    source=source)
+            if r["bad"] > 0 or r["sampled"] > 0 or r["skipped"] > 0:
+                self._qfq_selfcheck_log(table, batch_id, r)
+            # 告警升级链（任务书 §1.4，D 修复：streak 按 distinct batch_id）：
+            # 连续 N=3 个不同批次 bad>0，或单批偏离率 >5% → 阻断下一轮该表任务；
+            # good 批清空 streak 并自动解除 blocked。
+            if r["bad"] > 0:
+                rate = r["bad"] / max(r["sampled"], 1)
+                logger.error(
+                    f"[QFQ-Invariant] {table} {batch_id} 自洽偏离 {r['bad']}/{r['sampled']}"
+                    f" 行（rate={rate:.2%}）例: {r['bad_detail'][:3]}")
+                lock, streaks, blocked = self._qfq_inv_state()
+                with lock:
+                    batches = streaks.setdefault(table, [])
+                    if batch_id not in batches:
+                        batches.append(batch_id)
+                    if len(batches) >= 3 or rate > 0.05:
+                        blocked.add(table)
+                        logger.critical(
+                            f"[QFQ-Invariant] {table} 连续 {len(batches)} 个批次自洽偏离"
+                            f"（或单批偏离率 {rate:.2%}>5%）→ 阻断下一轮该表任务"
+                            f"（水位不推进，任务书 §1.4；good 批自动解除）")
+            else:
+                lock, streaks, blocked = self._qfq_inv_state()
+                with lock:
+                    streaks[table] = []
+                    blocked.discard(table)   # D 修复：good 批自动解除阻断
+        except Exception as exc:
+            # 自检是观测：任何内部异常不得影响写入主流程
+            logger.warning(f"[QFQ-Invariant] {table} {batch_id} 自检异常（不影响写入）: {exc}")
+
+    def qfq_invariant_should_block(self, table: str) -> bool:
+        """任务执行入口检查：该表是否已被防线 1 阻断（连续 N 批偏离）。"""
+        try:
+            lock, _streaks, blocked = self._qfq_inv_state()
+            with lock:
+                return table in blocked
+        except Exception:
+            return False
+
+    # —— 工作包 D 防线 2.1：因子表完整性扫描（必然执行点调用，不依赖编排器）——
+
+    def _make_tushare_cross_fn(self):
+        """构造独立交叉源抽核函数（tushare 官方 adj_factor/fund_adj）。
+
+        独立性以 MCP 为唯一权威因子源的终态为前提（R2）：库内因子来自聚源、
+        核验来自 tushare，两源不同。过渡期 tushare 历史因子被抽中为同源核验
+        （已知可接受，终态由 MCP 全量覆盖后消除）。构造失败返回 None（不阻断）。
+
+        C 修复：真实配置结构为 sources_config.json 的 sources.tushare 嵌套
+        （顶层是 _note/sources/default_source_priority），此前读顶层 .get("tushare")
+        恒为空 → 交叉核验为死代码。mcp_only profile 中 tushare enabled=false 且
+        无 token（QFQ 闭环改用 mcp 驱动 discovery）→ 明确 warning 后跳过。
+        """
+        try:
+            import tushare as ts
+            # C 修复：读 sources.tushare 嵌套（真实结构），并尊重 enabled 开关
+            src_cfg = (self.sources_cfg.get("sources", {})
+                       .get("tushare", {})) or {}
+            if not src_cfg.get("enabled", False):
+                logger.warning("[QFQ-FactorAudit] 交叉源 tushare enabled=false"
+                               "（mcp_only 禁用），独立交叉源抽核不可用——"
+                               "因子源错只能靠防线 1+缺日/跳变/突增监测兜底")
+                return None
+            tok = src_cfg.get("token") or os.environ.get("TUSHARE_TOKEN")
+            if not tok:
+                logger.warning("[QFQ-FactorAudit] 交叉源 tushare 无 token，抽核跳过")
+                return None
+            pro = ts.pro_api(tok)
+
+            def _cross(code: str):
+                from .aligner import normalize_code
+                bare = normalize_code(str(code), "tushare_to_raw") or str(code)
+                suffix = ".SH" if bare.startswith(("5", "6", "9")) else ".SZ"
+                api_name = "fund_adj" if bare.startswith(("5", "1")) else "adj_factor"
+                api = getattr(pro, api_name)
+                df = api(ts_code=f"{bare}{suffix}",
+                         start_date="20200101",
+                         end_date=datetime.now().strftime("%Y%m%d"))
+                if df is None or len(df) == 0:
+                    return None
+                return float(df.sort_values("trade_date")["adj_factor"].iloc[-1])
+            return _cross
+        except Exception as exc:
+            logger.warning(f"[QFQ-FactorAudit] 交叉源构造失败（抽核跳过）: {exc}")
+            return None
+
+    def _audit_qfq_factor_integrity(self, cross_source_fn=None) -> Dict:
+        """因子表完整性扫描（只读扫 qfq_aux.db，产出告警，不写库）。
+
+        挂点（任务书 §2.1 补充 A）：由 daemon_lifecycle 在常驻轮次末尾
+        _run_full_quality_audit（finally 必跑）的并列位置调用——编排器
+        disabled 时 post_ingest 是 no-op，而因子监测不应依赖编排器开关。
+        同时汇总 S1 防线健康计数（qfq_selfcheck_log 近 24h skipped_no_snapshot）。
+        """
+        from .qfq_invariant import audit_factor_integrity, open_ro_sqlite
+        aux_conn = None
+        cal_conn = None
+        try:
+            # A 修复：跟随编排器动态路由（orch.aux_db 优先：dynamic 模式下
+            # mcp-gen1 → qfq_aux_mcp_gen1.db；未构造回退 legacy）——权威因子源监测
+            aux_conn = open_ro_sqlite(self._qfq_aux_db_routed())
+            try:
+                import duckdb
+                cal_conn = duckdb.connect(str(self.writer.db_path), read_only=True)
+            except Exception as exc:
+                logger.debug(f"[QFQ-FactorAudit] 主库只读打开失败（缺日检查跳过）: {exc}")
+                cal_conn = None
+            cross_cfg = False
+            try:
+                cross_cfg = bool(getattr(self._qfq_config(),
+                                         "factor_cross_check_enabled", False))
+            except Exception:
+                cross_cfg = False
+            fn = cross_source_fn
+            if fn is None and cross_cfg:
+                fn = self._make_tushare_cross_fn()
+            r = audit_factor_integrity(aux_conn, cal_conn, cross_source_fn=fn)
+            for w in r.get("warnings", []):
+                logger.warning(f"[QFQ-FactorAudit] {w}")
+            for e in r.get("errors", []):
+                logger.error(f"[QFQ-FactorAudit][ERROR] {e}")
+            # S1：防线自身健康监控——近 24h 快照不可得导致自检跳过的计数
+            # （G 修复后日志在 batch_audit.db，不在因子库查）
+            try:
+                import sqlite3 as _sq
+                from quantstudio._paths import db_path as _dbp
+                _audit_db = self.data_cfg.get(
+                    "batch_audit_path", str(_dbp("batch_audit.db")))
+                with _sq.connect(_audit_db, timeout=10) as _ac:
+                    since = (datetime.now() - timedelta(hours=24)).isoformat(timespec="seconds")
+                    row = _ac.execute(
+                        "SELECT COUNT(*) FROM qfq_selfcheck_log "
+                        "WHERE status='skipped_no_snapshot' AND ts >= ?",
+                        [since]).fetchone()
+                    n_skip = int(row[0]) if row else 0
+                if n_skip > 0:
+                    logger.warning(f"[QFQ-FactorAudit] 防线1健康监控：近24h 自检因快照"
+                                   f"不可得跳过 {n_skip} 批（aux 库可能故障，S1）")
+                    r["selfcheck_skipped_24h"] = n_skip
+            except Exception:
+                pass  # 表不存在（自检从未运行）→ 正常
+            self._qfq_selfcheck_log("factor_audit", "lifecycle",
+                                    {"sampled": 0, "bad": len(r.get("errors", [])),
+                                     "skipped": 0, "missing_factor_rows": 0,
+                                     "bad_detail": r.get("errors", [])[:20]},
+                                    status="factor_audit")
+            return r
+        except Exception as exc:
+            logger.warning(f"[QFQ-FactorAudit] 因子完整性扫描异常（不阻断）: {exc}")
+            return {"warnings": [f"扫描异常: {exc}"], "errors": [], "stats": {}}
+        finally:
+            try:
+                if aux_conn is not None:
+                    aux_conn.close()
+            except Exception:
+                pass
+            try:
+                if cal_conn is not None:
+                    cal_conn.close()
+            except Exception:
+                pass
+
+    # —— 工作包 D 防线 3：黄金行启动冒烟（不阻断启动）——
+
+    def qfq_golden_row_smoke(self) -> Dict:
+        """启动黄金行冒烟自检（定位：冒烟测试，非防线；不匹配仅告警）。
+
+        A 修复：aux 路径跟随编排器动态路由（_qfq_aux_db_routed）；主库连接用
+        writer.shared_conn()（F 修复：不自开 read_only 连接，避免与 writer 的
+        read_write 并发 different-configuration 冲突；调用方负责借用生命周期）。
+        """
+        from .qfq_invariant import check_golden_rows
+        conn = None
+        try:
+            conn = self.writer.shared_conn()
+            r = check_golden_rows(main_conn=conn,
+                                  aux_path=self._qfq_aux_db_routed())
+            if r.get("mismatched", 0) > 0:
+                logger.error(f"[QFQ-Golden] 黄金行冒烟不匹配 {r['mismatched']}/{r['checked']}："
+                             f"{[d for d in r['details'] if d.get('mismatch')]}")
+            elif r.get("checked", 0) > 0:
+                logger.info(f"[QFQ-Golden] 黄金行冒烟通过 {r['checked']}/{r['checked']}")
+            for d in r.get("details", []):
+                if d.get("error"):
+                    logger.warning(f"[QFQ-Golden] 黄金行 {d.get('code')}@{d.get('date')}: {d['error']}")
+            return r
+        except Exception as exc:
+            logger.warning(f"[QFQ-Golden] 黄金行冒烟异常（不阻断启动）: {exc}")
+            return {"checked": 0, "mismatched": 0, "details": [], "skipped": 0}
+
+
     def _stamp_and_write(self, res, table: str, batch_id: str, source: str,
-                         task: Optional[Dict] = None):
-        """Stamp provenance, then write only changed rows for snapshot datasets."""
+                         task: Optional[Dict] = None,
+                         adj_latest_map: Optional[Dict] = None):
+        """Stamp provenance, then write only changed rows for snapshot datasets.
+
+        工作包 D 防线 1：可选参数 adj_latest_map = 本批 align 实际使用的全局快照
+        （口径 A，沿调用链传入的调用栈局部变量；任务书 R3/补充 B）。自检点在
+        _filter_unchanged_snapshot_rows 之后、writer.write 之前——对最终要写入的
+        df 做（skip_unchanged 过滤后 df 才与实际写入行一致）。
+        """
         task = task or {}
         df = res.passed_df
         if df is not None and len(df) > 0:
@@ -2039,6 +2543,9 @@ class ResidentCollector:
                 and task.get("skip_unchanged", False)):
             df = self._filter_unchanged_snapshot_rows(
                 df, table, exclude=task.get("change_compare_exclude", ["update_time"]))
+        # —— 防线 1：写入前自洽自检（只读观测；bad 落审计+告警，不阻断本次写入）——
+        self._qfq_invariant_after_align(df, table, batch_id, source,
+                                        adj_latest_map=adj_latest_map)
         result = self.writer.write(df, table, batch_id)
         if table == "index_constituents" and df is not None and len(df) > 0:
             # F3 修订：成分批次写入后立即打 snapshot_meta 完整性契约
@@ -2120,13 +2627,16 @@ class ResidentCollector:
         try:
             qfq.fetch_adj_factor(adapter, tushare_codes, start, end, is_etf=is_etf)
             # 从 qfq_aux.db 读回当前 code 的数据（而非全表，性能优化）
+            # QFQ bug 修复（2026-08-14）：ETF 因子写入 fund_adj 表，必须分表读——
+            # 原固定 SELECT FROM adj_factor 导致 ETF 路径读空/读残留错因子。
+            aux_tbl = "fund_adj" if is_etf else "adj_factor"
             import sqlite3
             import pandas as pd
             codes_in = "','".join(bare_codes)
             with sqlite3.connect(qfq.db_path, timeout=30) as conn:
                 conn.execute("PRAGMA busy_timeout=30000")
                 adj_df = pd.read_sql_query(
-                    f"SELECT * FROM adj_factor WHERE code IN ('{codes_in}')", conn)
+                    f"SELECT * FROM {aux_tbl} WHERE code IN ('{codes_in}')", conn)
             if len(adj_df) == 0:
                 return None
             logger.debug(f"[QFQ] adj_factor 准备就绪: {len(adj_df)} 行")

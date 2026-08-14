@@ -322,6 +322,149 @@ def test_bootstrap_completed_excluded_does_not_block(orch_env):
     assert audit["clean"] is True
 
 
+# ---------------------------------------------------------------------------
+# A+ dead_letter 批准机制测试
+# ---------------------------------------------------------------------------
+
+def test_bootstrap_completed_failed_unapproved_blocks(orch_env):
+    """未批准的 failed 阻塞 bootstrap_completed（原有行为不变）。"""
+    dconn, orch = orch_env
+    dconn.execute(
+        "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, status, schema_version, "
+        "config_hash, baseline_version, price_source, source_generation, "
+        "cutover_id) VALUES ('br_fail','completed',?,NULL,NULL,"
+        "'xtquant','xtquant-legacy','legacy-xtquant-pre-cutover')",
+        [SCHEMA_VERSION]
+    )
+    dconn.execute(
+        "INSERT INTO qfq_bootstrap_item (bootstrap_run_id, asset_type, code, status, "
+        "updated_at) VALUES ('br_fail','STOCK','600001','failed','2026-01-08 00:00:00')"
+    )
+    assert orch.bootstrap_completed(dconn) is False
+
+
+def test_bootstrap_completed_failed_approved_passes(orch_env):
+    """已批准的 failed 不阻塞 bootstrap_completed（A+ 核心行为）。"""
+    dconn, orch = orch_env
+    dconn.execute(
+        "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, status, schema_version, "
+        "config_hash, baseline_version, price_source, source_generation, "
+        "cutover_id) VALUES ('br_appr','completed',?,NULL,NULL,"
+        "'xtquant','xtquant-legacy','legacy-xtquant-pre-cutover')",
+        [SCHEMA_VERSION]
+    )
+    # 一个 completed + 一个 approved failed
+    dconn.execute(
+        "INSERT INTO qfq_bootstrap_item (bootstrap_run_id, asset_type, code, status, "
+        "approved, approved_reason, updated_at) VALUES "
+        "('br_appr','STOCK','600001','completed',FALSE,NULL,'2026-01-08 00:00:00'),"
+        "('br_appr','STOCK','600002','failed',TRUE,'Tushare daily/minute API 固有差异',"
+        "'2026-01-08 00:00:00')"
+    )
+    assert orch.bootstrap_completed(dconn) is True
+
+
+def test_bootstrap_completed_blocked_not_approvable(orch_env):
+    """blocked 即使 approved 也仍阻塞（blocked 不可批准）。"""
+    dconn, orch = orch_env
+    dconn.execute(
+        "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, status, schema_version, "
+        "config_hash, baseline_version, price_source, source_generation, "
+        "cutover_id) VALUES ('br_blk','completed',?,NULL,NULL,"
+        "'xtquant','xtquant-legacy','legacy-xtquant-pre-cutover')",
+        [SCHEMA_VERSION]
+    )
+    dconn.execute(
+        "INSERT INTO qfq_bootstrap_item (bootstrap_run_id, asset_type, code, status, "
+        "approved, updated_at) VALUES "
+        "('br_blk','STOCK','600001','blocked',TRUE,'2026-01-08 00:00:00')"
+    )
+    assert orch.bootstrap_completed(dconn) is False
+
+
+def test_approve_bootstrap_items_marks_approved(orch_env):
+    """approve_bootstrap_items 将 failed 标记为 approved，返回正确计数。"""
+    dconn, orch = orch_env
+    dconn.execute(
+        "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, status, schema_version, "
+        "config_hash, baseline_version, price_source, source_generation, "
+        "cutover_id) VALUES ('br_apv','completed',?,NULL,NULL,"
+        "'xtquant','xtquant-legacy','legacy-xtquant-pre-cutover')",
+        [SCHEMA_VERSION]
+    )
+    dconn.execute(
+        "INSERT INTO qfq_bootstrap_item (bootstrap_run_id, asset_type, code, status, "
+        "updated_at) VALUES "
+        "('br_apv','STOCK','600001','completed','2026-01-08 00:00:00'),"
+        "('br_apv','STOCK','600002','failed','2026-01-08 00:00:00'),"
+        "('br_apv','ETF','159220','failed','2026-01-08 00:00:00')"
+    )
+    # 批准前：bootstrap_completed = False
+    assert orch.bootstrap_completed(dconn) is False
+
+    # 批准所有 failed
+    result = orch.approve_bootstrap_items(
+        dconn, run_id="br_apv", reason="Tushare daily vs minute API 固有差异（Trae 实测确认）")
+    assert result["approved"] == 2
+    assert result["total_failed"] == 2
+    assert result["total_approved"] == 2
+
+    # 批准后：bootstrap_completed = True
+    assert orch.bootstrap_completed(dconn) is True
+
+    # 审计字段已写入
+    row = dconn.execute(
+        "SELECT approved, approved_reason FROM qfq_bootstrap_item "
+        "WHERE bootstrap_run_id='br_apv' AND code='159220'").fetchone()
+    assert row[0] is True
+    assert "Tushare" in row[1]
+
+
+def test_approve_requires_reason(orch_env):
+    """approve 必须提供 reason（审计理由）。"""
+    dconn, orch = orch_env
+    dconn.execute(
+        "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, status, schema_version, "
+        "config_hash, baseline_version, price_source, source_generation, "
+        "cutover_id) VALUES ('br_reason','completed',?,NULL,NULL,"
+        "'xtquant','xtquant-legacy','legacy-xtquant-pre-cutover')",
+        [SCHEMA_VERSION]
+    )
+    dconn.execute(
+        "INSERT INTO qfq_bootstrap_item (bootstrap_run_id, asset_type, code, status, "
+        "updated_at) VALUES ('br_reason','STOCK','600001','failed','2026-01-08 00:00:00')"
+    )
+    import pytest
+    with pytest.raises(ValueError, match="reason"):
+        orch.approve_bootstrap_items(dconn, run_id="br_reason", reason="")
+
+
+def test_approve_only_failed_not_completed(orch_env):
+    """approve 只作用于 failed/dead_letter，不影响 completed。"""
+    dconn, orch = orch_env
+    dconn.execute(
+        "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, status, schema_version, "
+        "config_hash, baseline_version, price_source, source_generation, "
+        "cutover_id) VALUES ('br_only','completed',?,NULL,NULL,"
+        "'xtquant','xtquant-legacy','legacy-xtquant-pre-cutover')",
+        [SCHEMA_VERSION]
+    )
+    dconn.execute(
+        "INSERT INTO qfq_bootstrap_item (bootstrap_run_id, asset_type, code, status, "
+        "updated_at) VALUES "
+        "('br_only','STOCK','600001','completed','2026-01-08 00:00:00'),"
+        "('br_only','STOCK','600002','failed','2026-01-08 00:00:00')"
+    )
+    result = orch.approve_bootstrap_items(
+        dconn, run_id="br_only", reason="test")
+    assert result["approved"] == 1  # 只有 600002 被批准
+    # completed 的 item 不受影响
+    appr = dconn.execute(
+        "SELECT approved FROM qfq_bootstrap_item "
+        "WHERE bootstrap_run_id='br_only' AND code='600001'").fetchone()
+    assert appr[0] is not True
+
+
 def test_bootstrap_completed_blocked_false(orch_env):
     dconn, orch = orch_env
     dconn.execute(

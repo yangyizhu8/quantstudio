@@ -1,4 +1,4 @@
-﻿# QuantStudio
+# QuantStudio
 
 统一数据管线 + PTrade 兼容量化回测框架。
 
@@ -279,6 +279,27 @@ fresh_capture_id=None, fresh_metadata_sha256=None)`：
   mcp 采集灌分钟表（近 3 个月起步，2026-08-08 决策），窗口 = 主库分钟表 MIN/MAX。）
   完整操作见 [`docs/qfq-resident-runbook.md`](docs/qfq-resident-runbook.md)。
   2026-08-08 取数适配修复详见 [`docs/framework-fix-report-20260807.md`](docs/framework-fix-report-20260807.md)。
+
+### QFQ 数据质量三道防线（2026-08-15）
+
+> 模块：`quantstudio.pipeline.qfq_invariant`。针对 QFQ 前复权基准 bug（某写入路径批次内
+> `groupby().last()` 作 adj_latest → 分片窗口不含最新因子时 front 被错算成 raw，1442 万行
+> 被破坏却未被现有 2% 近似审计发现）补的**精确复权自洽**防线。管线内置观测，策略层无感。
+
+- **aligner fail-fast（Phase 3）**：`_apply_qfq` 无全局快照（`adj_latest_map` /
+  `adj_earliest_map`）时直接 `raise`，禁止批次内基准——宁可任务失败也不静默写错 front。
+- **防线 1 · 写入自洽（口径 A）**：`_stamp_and_write` 落库前对抽样行精确校验
+  `front == raw × adj_i / adj_latest`；快照沿调用链从四路径（per_date / per_stock /
+  普通 / 流式）传入，同批写入锚与自检锚一致。
+- **防线 2 · 因子完整性扫描**：常驻轮次末尾（与 `_run_full_quality_audit` 并列、不依赖
+  编排器开关）扫 `qfq_aux.db` 的缺日 / 异常跳变 / 单日突增 / 独立交叉源抽核；交叉源在
+  `mcp_only` profile 下为禁用态（tushare enabled=false）。
+- **防线 3 · 黄金行启动冒烟**：启动时重算黄金行（159995@2026-05-26 = 1.3539738908618015），
+  `anchor_version` 由 reanchor committed 事件自动刷新（S2）。
+- **告警升级链**：单批偏离告警；连续 3 个批 / 单批偏离率 >5% 阻断该表下一轮（good 批自动
+  解除）；审计计数落 `batch_audit.db.qfq_selfcheck_log`。
+- **TD-D2（⑤ C-6 释放前置）**：`_load_qfq_global_snapshot` / `mcp_adapter` 因子注入 /
+  防线 1 三处当前仍走 legacy `qfq_aux.db`；⑤ 后 mcp-gen1 成权威，须三处同步切换。
 
 ---
 

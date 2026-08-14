@@ -77,3 +77,6 @@ data/staging_*/
 data/staging/
 data/mcp_landing/
 data/quantstudio.zip
+
+# 第三方项目源码（本地参考用，不纳入本仓库 push）
+/qlib/

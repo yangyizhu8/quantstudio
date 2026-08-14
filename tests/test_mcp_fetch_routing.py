@@ -1,6 +1,8 @@
 ﻿"""Regression tests for MCP fetch completeness and QFQ routing isolation."""
 from __future__ import annotations
 
+from collections import OrderedDict
+
 import pandas as pd
 import pytest
 
@@ -26,6 +28,8 @@ def _bare_adapter(client=None):
     adapter._client = client
     adapter.endpoint = "https://example.invalid/mcp"
     adapter.enable_qfq_restore = True
+    adapter._shard_table_cache = OrderedDict()   # 优化 A：测试裸实例需补（绕过 __init__）
+    adapter._SHARD_CACHE_MAX = 30
     return adapter
 
 

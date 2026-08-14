@@ -30,7 +30,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -56,6 +58,10 @@ from quantstudio.pipeline.qfq_fresh_capture import FreshCapture, FreshFetcher, C
 from quantstudio.pipeline.qfq_reanchor_engine import ReanchorBlocked
 
 logger = logging.getLogger(__name__)
+
+# Phase 1 profiling 开关（QFQ_PROFILE=1 启用，默认关闭）
+_QFQ_PROFILE = bool(os.environ.get("QFQ_PROFILE", ""))
+_profile_logger = logging.getLogger("qfq_profile")
 
 BJ_TZ = timezone(timedelta(hours=8))
 
@@ -436,16 +442,25 @@ class QFQResidentOrchestrator:
                                    code=code, status="committed", event_id=existing_event,
                                    reason="crash_recovery_skip")
 
+        _t_total = time.perf_counter() if _QFQ_PROFILE else 0
+        _t_steps = {} if _QFQ_PROFILE else None
+
+        _t0 = time.perf_counter() if _QFQ_PROFILE else 0
         daily_range, minute_range = self._security_range(conn, asset_type, code)
+        if _QFQ_PROFILE: _t_steps["1_security_range"] = time.perf_counter() - _t0
+
         cap = FreshCapture(self.cfg)
         # 编排器只负责「计算证据 + 采集 fresh」，捕获落库交由引擎的不可变契约
         # （resolve_fresh_capture → NEW 时 write_fresh_capture plain INSERT）完成，
         # 避免在编排器侧用 INSERT OR REPLACE 覆盖已提交捕获（write=False）。
+        _t0 = time.perf_counter() if _QFQ_PROFILE else 0
         record, fresh_daily, fresh_minute = cap.capture(
             conn, asset_type=asset_type, code=code, run_id=run_id,
             daily_range_ms=daily_range, minute_range_ms=minute_range, fetcher=fetcher,
             source=self.cfg.price_source,  # P2-4：xtquant/mcp 由 price_source 驱动
             write=False)
+        if _QFQ_PROFILE: _t_steps["2_fetch_capture"] = time.perf_counter() - _t0
+
         record.source_generation = self._ident["source_generation"]
         record.cutover_id = self._ident["cutover_id"]
         capture_id = record.capture_id
@@ -461,15 +476,14 @@ class QFQResidentOrchestrator:
                  self._ident["source_generation"], self._ident["cutover_id"]])
         try:
             from quantstudio.pipeline.qfq_reanchor_engine import apply_reanchor_for_security
-            # R4/6A 修复：rebase 必须传该证券「全部已知除权日」，而非仅本轮领取的
-            # trigger 子集。增量轮次下，同券部分 trigger 已 committed、本轮只领到新增
-            # pending trigger → unit["effective_dates"] 仅含新增 ex_date → 传引擎的
-            # ex_dates_ms 不全 → 局部重基（旧 ex_date 被忽略）。改为从 stock_dividend +
-            # factor_observation 取该证券全量 ex_dates（与触发源一致，独立于 trigger
-            # 领取状态）。仅影响 rebase 模式（ratio/fresh_staged 不走此路径）。
+
+            _t0 = time.perf_counter() if _QFQ_PROFILE else 0
             ex_dates_ms = tuple(self._security_effective_dates(conn, asset_type, code))
+            if _QFQ_PROFILE: _t_steps["3_effective_dates"] = time.perf_counter() - _t0
             if not ex_dates_ms:
                 ex_dates_ms = tuple(effective_dates)  # 降级：保持原 trigger 子集语义
+
+            _t0 = time.perf_counter() if _QFQ_PROFILE else 0
             res = apply_reanchor_for_security(
                 conn, asset_type=asset_type, code=code,
                 fresh_daily=fresh_daily, calendar=self.calendar,
@@ -488,10 +502,58 @@ class QFQResidentOrchestrator:
                 trigger_surface="resident_v2",
                 allow_partial_minute=True,
             )
+            # 工作包 D §2.2.4（口径 B 重锚后自洽）+ §3.4（S2 黄金行自动刷新）：
+            # committed 后追加只读校验——用本次重锚的新锚对该 code 日线全历史
+            # front 精确校验（锚刚更新、front 刚被重锚，用新锚校验无基准演进行
+            # 误报）。S3 前置核实结论：引擎现有 postcheck 是"front vs fresh 源
+            # 逐 bar"校验，未含本口径 B 全历史自洽 → 此处为新增，不改引擎逻辑。
+            # 分钟表由引擎自身 staged 契约校验 + postcheck（front vs fresh 逐bar）
+            # 覆盖，本处只查日线表（实施记录注明）。
+            if res.status == "committed":
+                try:
+                    from quantstudio.pipeline.qfq_invariant import (
+                        verify_reanchor_selfcheck, refresh_golden_rows_for_code,
+                        open_ro_sqlite)
+                    # A 修复：口径 B 必须与本次重锚用同一辅助库（self.aux_db，
+                    # dynamic 模式下已解析为世代库如 qfq_aux_mcp_gen1.db）——
+                    # 此前 default_aux_path() 固定 legacy，同一代码块内重锚与
+                    # 自检查的是两个库（审核阻断项 A）。
+                    _aux = open_ro_sqlite(self.aux_db)
+                    try:
+                        _daily_tbl = ("etf_daily" if str(asset_type).upper() == "ETF"
+                                      else "stock_daily")
+                        vr = verify_reanchor_selfcheck(
+                            conn, _aux, code=code, table=_daily_tbl)
+                        if vr.get("bad", 0) > 0:
+                            logger.error(
+                                f"[QFQ-ReanchorCheck] {code}/{_daily_tbl} 重锚后自洽偏离 "
+                                f"{vr['bad']}/{vr.get('rows', 0)} 行（口径B）例: "
+                                f"{vr.get('bad_detail', [])[:3]}")
+                        else:
+                            logger.info(f"[QFQ-ReanchorCheck] {code}/{_daily_tbl} "
+                                        f"重锚后自洽通过 ({vr.get('rows', 0)} 行)")
+                        # S2：黄金行期望值自动刷新（只写清单 json，不写主库）
+                        refresh_golden_rows_for_code(code, _daily_tbl, conn, _aux)
+                    finally:
+                        _aux.close()
+                except Exception as _e:
+                    logger.warning(f"[QFQ-ReanchorCheck] {code} committed 后自洽/黄金行"
+                                   f"刷新异常（不影响重锚结果）: {_e}")
+            if _QFQ_PROFILE: _t_steps["4_reanchor_apply"] = time.perf_counter() - _t0
+
             status = res.status  # committed / blocked / rolled_back / failed
             cap.mark_applied(
                 conn, capture_id, source_generation=self._ident["source_generation"],
                 cutover_id=self._ident["cutover_id"])
+
+            if _QFQ_PROFILE:
+                _t_total_elapsed = time.perf_counter() - _t_total
+                _t_steps["total"] = _t_total_elapsed
+                _profile_logger.info(
+                    f"PROFILE {asset_type} {code} total={_t_total_elapsed:.3f}s " +
+                    " ".join(f"{k}={v:.3f}s" for k, v in sorted(_t_steps.items(), key=lambda x: -x[1]))
+                )
+
             return ReanchorOutcome(trigger_id=primary_tid, asset_type=asset_type,
                                    code=code, status=status, event_id=res.event_id,
                                    error=getattr(res, "error", None))
@@ -804,16 +866,32 @@ class QFQResidentOrchestrator:
                 f"({baseline_v} != {cur_bl})")
             return False
 
-        # 任务6.2：证券级状态机全清才视为完成（blocked 不得解锁）
+        # 任务6.2：证券级状态机全清才视为完成（blocked/pending/in_progress 不得解锁）
+        # A+ 批准机制：failed/dead_letter 中已批准（approved=TRUE）的不阻塞——
+        # 用于受控接受数据源固有差异（如 Tushare daily vs minute API 偏差），
+        # 审计透明（approved_reason 记录根因），不绕过 fail-closed 设计。
         counts = conn.execute(
             "SELECT status, COUNT(*) FROM qfq_bootstrap_item "
             "WHERE bootstrap_run_id=? GROUP BY status", [run_id]).fetchall()
         by_status = {r[0]: r[1] for r in counts}
-        for bad in ("pending", "in_progress", "blocked", "failed", "dead_letter"):
+        # 不可批准的状态：任何存在都阻塞
+        for bad in ("pending", "in_progress", "blocked"):
             if by_status.get(bad, 0) > 0:
                 logger.warning(
                     f"[qfq_orch] bootstrap 未完成：存在 {bad}={by_status.get(bad, 0)}")
                 return False
+        # 可批准的状态（failed/dead_letter）：只有未批准的才阻塞
+        unapproved = conn.execute(
+            "SELECT COUNT(*) FROM qfq_bootstrap_item "
+            "WHERE bootstrap_run_id=? AND status IN ('failed','dead_letter') "
+            "AND (approved IS NULL OR approved = FALSE)", [run_id]).fetchone()[0]
+        if unapproved > 0:
+            total_fail = by_status.get("failed", 0) + by_status.get("dead_letter", 0)
+            approved = total_fail - unapproved
+            logger.warning(
+                f"[qfq_orch] bootstrap 未完成：存在未批准 failed/dead_letter="
+                f"{unapproved}（已批准 {approved}）")
+            return False
         return True
 
     def _aux_query(self, sql: str, params: Sequence = ()) -> List[tuple]:
@@ -993,6 +1071,77 @@ class QFQResidentOrchestrator:
             f"AND price_source=? AND source_generation=? AND cutover_id=?",
             [now, *ids, *ident])
         return {"runs": int(run_count), "items": int(item_count)}
+
+    def approve_bootstrap_items(self, conn, *, run_id: str,
+                                codes: Optional[Sequence[str]] = None,
+                                asset_type: Optional[str] = None,
+                                reason: str = "") -> Dict[str, int]:
+        """A+ 批准机制：将 failed/dead_letter 的 bootstrap_item 标记为 approved。
+
+        用于受控接受数据源固有差异（如 Tushare daily vs minute API 偏差），
+        使 bootstrap_completed() 不再阻塞——批准后水位可释放。
+
+        约束：
+        - 只批准 status IN ('failed','dead_letter') 的 item；blocked 不可批准；
+        - 必须提供 reason（审计理由，记录根因结论）；
+        - 幂等：已 approved 的重复批准不报错。
+
+        Args:
+            run_id: bootstrap run id。
+            codes: 待批准的证券代码列表（裸码）。None=批准该 run 下所有 failed/dead_letter。
+            asset_type: 可选过滤（STOCK/ETF）。None=不限。
+            reason: 审计理由（必填）。
+        Returns:
+            {"approved": N}（本次新批准的 item 数）。
+        """
+        if not reason or not reason.strip():
+            raise ValueError("approve 必须提供 reason（审计理由，记录根因结论）")
+        ident = [self._ident["price_source"], self._ident["source_generation"],
+                 self._ident["cutover_id"]]
+        found = conn.execute(
+            "SELECT bootstrap_run_id FROM qfq_bootstrap_run WHERE bootstrap_run_id=? "
+            "AND price_source=? AND source_generation=? AND cutover_id=?",
+            [run_id, *ident]).fetchone()
+        if not found:
+            raise ValueError(f"bootstrap run 不存在或不属于当前世代: {run_id}")
+        now = _now_ts()
+        sql = ("UPDATE qfq_bootstrap_item SET approved=TRUE, "
+               "approved_reason=?, approved_at=?, updated_at=? "
+               "WHERE bootstrap_run_id=? AND status IN ('failed','dead_letter') "
+               "AND (approved IS NULL OR approved = FALSE)")
+        params = [reason.strip(), now, now, run_id]
+        if codes:
+            ph = ",".join("?" for _ in codes)
+            sql += f" AND code IN ({ph})"
+            params.extend(codes)
+        if asset_type:
+            sql += " AND asset_type=?"
+            params.append(asset_type)
+        # DuckDB 的 UPDATE 返回影响行数（rowcount）
+        before = conn.execute(
+            "SELECT COUNT(*) FROM qfq_bootstrap_item WHERE bootstrap_run_id=? "
+            "AND status IN ('failed','dead_letter') "
+            "AND (approved IS NULL OR approved = FALSE)",
+            [run_id]).fetchone()[0]
+        conn.execute(sql, params)
+        after = conn.execute(
+            "SELECT COUNT(*) FROM qfq_bootstrap_item WHERE bootstrap_run_id=? "
+            "AND status IN ('failed','dead_letter') "
+            "AND (approved IS NULL OR approved = FALSE)",
+            [run_id]).fetchone()[0]
+        approved_count = before - after
+        total_failed = conn.execute(
+            "SELECT COUNT(*) FROM qfq_bootstrap_item WHERE bootstrap_run_id=? "
+            "AND status IN ('failed','dead_letter')", [run_id]).fetchone()[0]
+        total_approved = conn.execute(
+            "SELECT COUNT(*) FROM qfq_bootstrap_item WHERE bootstrap_run_id=? "
+            "AND status IN ('failed','dead_letter') AND approved = TRUE",
+            [run_id]).fetchone()[0]
+        logger.info(
+            f"[qfq_orch] bootstrap approve: run={run_id} 新批准={approved_count} "
+            f"总failed={total_failed} 总已批准={total_approved} reason={reason.strip()[:80]}")
+        return {"approved": int(approved_count), "total_failed": int(total_failed),
+                "total_approved": int(total_approved)}
 
     def bootstrap_run(self, conn, *, run_id: str, as_of_ms: int,
                       fetcher: FreshFetcher, resume: bool = False) -> Dict:

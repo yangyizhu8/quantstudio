@@ -378,7 +378,7 @@ class MCPClient:
                 # 对传输层错误（MCPTransportError/网络异常），重试前重置连接并重握手，
                 # 使后续重试走全新 session。这不改变任何数据语义/API 契约。
                 if attempt + 1 < self.retry_max:  # 还有重试机会才重置
-                    from .exceptions import MCPTransportError as _TE
+                    from .errors import MCPTransportError as _TE
                     if isinstance(e, (_TE,)) or isinstance(e, requests.RequestException):
                         try:
                             self._reset_connection()
@@ -540,6 +540,25 @@ class MCPClient:
         if columns:
             args["columns"] = list(columns)
         return self._call_with_retry(self._call_tool, "fetch_page", args)
+
+    def query_updated_since(self, since: str,
+                            table: Optional[str] = None) -> List[Dict[str, Any]]:
+        """A4 变更检测：查询自 since（ISO 8601 UTC）以来的云端更新记录。
+
+        返回 [{"table_name", "trade_date", "last_update_time",
+               "update_source", "rows_pushed"}, ...]。
+        空结果返回 []；表不存在返回 []。
+        """
+        args: Dict[str, Any] = {"since": since}
+        if table:
+            args["table"] = table
+        d = self._call_with_retry(self._call_tool, "query_updated_since", args)
+        # server 返回 {"updates": [...], "count": N}
+        if isinstance(d, dict):
+            return d.get("updates", [])
+        if isinstance(d, list):
+            return d
+        return []
 
     # ----- 大表导出作业路径 -----
     def create_export_job(self, dataset_id: str, page_size: int = 50000,

@@ -1,4 +1,4 @@
-﻿# QuantStudio 策略工具箱（PTrade 兼容回测 API）
+# QuantStudio 策略工具箱（PTrade 兼容回测 API）
 
 本框架在 QuantStudio 本地回测引擎上对齐**已登记并验证的 PTrade 回测公共 API 子集**，同时提供明确标记的 QuantStudio 本地扩展。
 只有通过 PTrade Profile Validator 的策略才可声明可移植；本地运行成功不等于真实平台兼容。数据 100% 来自 DuckDB（QuantStudio 数据管线产出），不依赖任何外部
@@ -380,6 +380,20 @@ apply_reanchor_for_security(
 | `get_price_limit_pct(code)` | 涨跌幅限制（主板10%/创业板20%/科创板20%/北交所30%/ST5%）。 |
 | `is_star_market(code)` / `is_chinext_market(code)` / `is_bse_market(code)` | 板块判定。 |
 | `is_st_stock(code)` | 是否 ST/*ST。 |
+
+### 4.9 QFQ 数据质量三道防线（管线内置观测，2026-08-15）
+
+> 模块：`quantstudio.pipeline.qfq_invariant`。面向**管线调用方 / Agent 编排**参考：
+> 防线是数据适配层内置观测，**无需人工巡检**；策略注入 API 无感，策略层不自行复算校验。
+
+- **防线 1 写入自洽（口径 A）**：`_stamp_and_write` 落库前对抽样行校验
+  `front == raw × adj_i / adj_latest`，快照沿调用链传四路径（per_date/per_stock/普通/流式）。
+- **防线 2 因子完整性扫描**：常驻轮末（与 `_run_full_quality_audit` 并列）扫因子库
+  缺日/跳变/突增/交叉源；交叉源 mcp_only 下禁用。
+- **防线 3 黄金行冒烟**：启动重算黄金行，S2 自动刷 anchor_version。
+- **告警升级链 + 审计**：连续 3 批或单批>5% 阻断该表，good 批解除；
+  审计计数在 `batch_audit.db.qfq_selfcheck_log`。
+- **fail-fast**：`_apply_qfq` 无全局快照直接 `raise`，禁止批次内基准。
 
 ---
 

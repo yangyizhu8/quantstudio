@@ -1,4 +1,4 @@
-﻿# QuantStudio 策略生成提示词工程（V1）
+# QuantStudio 策略生成提示词工程（V1）
 
 
 ## R0-VALIDATION-OWNER：回测执行方
@@ -68,6 +68,7 @@ QuantStudio 本地注入 API / 指标 / 全局对象（g、log、pd、np、MyTT�
 - ⚠️ **取数默认前复权（fq='pre'）**：框架 API 与底层数据适配层默认均为前复权；生成策略取历史/行情务必使用 `fq='pre'`（不复权才显式传 `fq=None`）。**日期区间路径（`get_price`/`get_bars` 的 `start_date`/`end_date`）与 count 路径（`count`/`get_bars_by_count`）前复权行为一致——同一代码、同一区间、同一 fq 返回逐值一致的前复权价**（R1-A 已修复区间路径曾错误返回 raw 价的缺陷）。**切勿依赖不复权价格做回测**（除权缺口会导致信号与收益失真）。即便省略 fq 也已是前复权，但建议显式写出 `fq='pre'` 以表意清晰。
 - ⚠️ **撮合/估值 raw 口径、信号前复权（2026-08-14 PTrade 实证对齐）**：成交价、持仓估值、`data[code].price` 均来自引擎原始价快照（raw OHLC，不复权）——PTrade 平台实证撮合价 = raw close（日线 5/5、分钟 6/6 精确）。信号取数保持前复权（`fq='pre'`）。两条链路分离：策略信号序列（`get_history(fq='pre')`）与撮合价（raw close）口径不同是**预期行为**，除权日两者差异即复权因子；比较成交记录与信号价时须注意口径差异。
 - ⚠️ **设计契约强制值**：`signal_price_adjustment="pre"`、`execution_price_basis="raw_trade_price"`。生成器不得输出 `pre_adjusted_price`；旧前复权执行契约设计需迁移后重新确认和回测。
+- ⚠️ **QFQ front 质量由管线三道防线保障（2026-08-15）**：写入自洽、因子完整性扫描、黄金行冒烟均内建于数据适配层（`qfq_invariant`），无需人工巡检。**生成策略时不要在策略代码里自行复算/校验 front 自洽**——管线已内建（连续 3 批或单批>5% 会阻断），策略层重复校验属反模式。
 - ?? **MCP ETF data invariant**: the framework restores cloud qfq to raw with the factor at `MAX(time)`, not `MAX(adj_factor)`. ETF factors may decrease after split/consolidation. Strategy code must use injected APIs and must never rescale or bypass provider-side raw/front semantics.
 - get_fundamentals(security|QueryBuilder, table, fields, date)：valuation 完整可用；eps/profit_ability/
   growth_ability 等可用；balance/income/cashflow 三张报表【返回空 DataFrame】。

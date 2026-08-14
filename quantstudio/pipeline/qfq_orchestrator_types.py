@@ -340,6 +340,8 @@ class ReanchorOutcome:
 DEFAULT_ORCHESTRATOR_CFG: Dict = {
     "enabled": False,
     "factor_refresh_enabled": False,
+    # 工作包 D 防线 2.1（C 修复）：独立交叉源抽核开关（默认关闭，独立 opt-in）
+    "factor_cross_check_enabled": False,
     "require_bootstrap": True,
     "price_source": "xtquant",
     "generation_mode": "pre_cutover",
@@ -387,6 +389,9 @@ def _parse_identifier(cfg: Dict, key: str, default: str) -> str:
 class QFQOrchestratorConfig:
     enabled: bool = False
     factor_refresh_enabled: bool = False  # 任务2.2：主动因子刷新（默认关闭，独立 opt-in）
+    # 工作包 D 防线 2.1（C 修复）：独立交叉源抽核开关（默认关闭，独立 opt-in）。
+    # 此前 daemon getattr 恒 False，交叉核验为死代码（审核阻断项 C）。
+    factor_cross_check_enabled: bool = False
     require_bootstrap: bool = True
     price_source: str = "xtquant"
     generation_mode: str = "pre_cutover"
@@ -450,6 +455,8 @@ class QFQOrchestratorConfig:
         obj = cls(
             enabled=bool(cfg.get("enabled", False)),
             factor_refresh_enabled=bool(cfg.get("factor_refresh_enabled", False)),
+            # 工作包 D 防线 2.1（C 修复）：from_dict 接线（此前字段缺失恒 False）
+            factor_cross_check_enabled=bool(cfg.get("factor_cross_check_enabled", False)),
             require_bootstrap=bool(cfg.get("require_bootstrap", True)),
             price_source=str(cfg.get("price_source", "xtquant")),
             generation_mode=generation_mode,

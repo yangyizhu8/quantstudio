@@ -318,6 +318,9 @@ DDL_DUCKDB: Dict[str, str] = {
             started_at       TIMESTAMP,
             finished_at      TIMESTAMP,
             updated_at       TIMESTAMP NOT NULL,
+            approved         BOOLEAN,
+            approved_reason  VARCHAR,
+            approved_at      TIMESTAMP,
             PRIMARY KEY (bootstrap_run_id, asset_type, code)
         )""",
     # ---- 交易日历持久缓存（B-3 不涉及；P1-3：列顺序=正式库实际 introspection 顺序）----

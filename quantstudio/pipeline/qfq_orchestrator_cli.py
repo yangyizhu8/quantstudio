@@ -568,6 +568,32 @@ def cmd_bootstrap_supersede(args) -> int:
         conn.close()
 
 
+def cmd_bootstrap_approve(args) -> int:
+    db = _resolve_db(args)
+    _guard_mutating(args, db)
+    run_id = args.run_id
+    codes = None
+    if args.codes:
+        codes = [c.strip() for c in args.codes.split(",") if c.strip()]
+    if not args.execute:
+        target = f"codes={codes}" if codes else "全部 failed/dead_letter"
+        print(f"[dry-run] 将批准 run {run_id} 的 {target}（reason={args.reason}）。"
+              "加 --execute 执行。")
+        return 0
+    cfg = _load_cfg(args)
+    conn = _connect(db, read_only=False)
+    try:
+        orch = _make_orchestrator(cfg, db, args, with_fetcher=False)
+        result = orch.approve_bootstrap_items(
+            conn, run_id=run_id, codes=codes,
+            asset_type=args.asset_type, reason=args.reason)
+        payload = {"run_id": run_id, "reason": args.reason, **result}
+        _emit(args, payload, [f"bootstrap approve 完成: {payload}"])
+        return 0
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
@@ -864,6 +890,16 @@ def build_parser() -> argparse.ArgumentParser:
     bs.add_argument("--run-id", action="append", default=[],
                     help="待废弃的旧 run_id，可重复指定")
 
+    ba = sub.add_parser("bootstrap-approve",
+                        help="A+ 批准 failed/dead_letter 的 bootstrap_item（受控接受数据源固有差异）")
+    ba.add_argument("--run-id", required=True, help="bootstrap run id")
+    ba.add_argument("--codes", default=None,
+                    help="待批准的证券代码（逗号分隔裸码），不传则批准该 run 下所有 failed")
+    ba.add_argument("--asset-type", default=None, choices=["STOCK", "ETF"],
+                    help="可选过滤（STOCK/ETF）")
+    ba.add_argument("--reason", required=True,
+                    help="审计理由（必填，记录根因结论）")
+
     for name in ("bootstrap-run", "bootstrap-resume"):
         br = sub.add_parser(name, help="执行 bootstrap 批次（xtquant 真实取数）")
         br.add_argument("--run-id", required=False, default=None)
@@ -925,6 +961,7 @@ DISPATCH = {
     "bootstrap-audit": cmd_bootstrap_audit,
     "bootstrap-plan": cmd_bootstrap_plan,
     "bootstrap-supersede": cmd_bootstrap_supersede,
+    "bootstrap-approve": cmd_bootstrap_approve,
     "bootstrap-run": cmd_bootstrap_run,
     "bootstrap-resume": cmd_bootstrap_resume,
     "reconcile-once": cmd_reconcile_once,

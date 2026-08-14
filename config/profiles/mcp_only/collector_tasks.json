@@ -3,7 +3,9 @@
   "daemon_schedule": {
     "daily_time": "06:00",
     "check_interval_sec": 300,
-    "skip_weekdays": [6]
+    "skip_weekdays": [
+      6
+    ]
   },
   "tasks": [
     {
@@ -73,7 +75,7 @@
       "source": "mcp",
       "table": "etf_minutes",
       "freq": "1min",
-      "start_date": "2025-01-01",
+      "start_date": "2026-06-14",
       "codes": [
         "ALL"
       ],
@@ -253,7 +255,7 @@
       "source": "mcp",
       "table": "stock_daily",
       "freq": "daily",
-      "start_date": "2018-01-01",
+      "start_date": "2026-06-14",
       "codes": [
         "ALL"
       ],
@@ -373,7 +375,7 @@
       "source": "mcp",
       "table": "stock_minutes",
       "freq": "1min",
-      "start_date": "2025-01-01",
+      "start_date": "2026-06-14",
       "codes": [
         "ALL"
       ],
@@ -2682,6 +2684,8 @@
       960
     ],
     "watermark_policy": "hold_until_consistent",
-    "_note": "P2-3：QFQ 闭环全部切到 mcp。mcp_factor_detector 由 P2-4 实现。"
+    "_note": "P2-3：QFQ 闭环全部切到 mcp。mcp_factor_detector 由 P2-4 实现。",
+    "generation_mode": "dynamic",
+    "source_generation": "mcp-gen1"
   }
 }

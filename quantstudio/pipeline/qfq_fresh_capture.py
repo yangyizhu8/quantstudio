@@ -27,6 +27,8 @@ import abc
 import hashlib
 import json
 import logging
+import os
+import time
 from datetime import datetime
 from typing import Dict, Optional, Tuple
 
@@ -45,6 +47,9 @@ from quantstudio.pipeline.sources.xtquant_adapter import TABLE_PERIOD
 from quantstudio.pipeline.aligner import to_ms_timestamp
 
 logger = logging.getLogger(__name__)
+
+_QFQ_PROFILE = bool(os.environ.get("QFQ_PROFILE", ""))
+_profile_logger = logging.getLogger("qfq_profile")
 
 # qfq_fresh_capture 列顺序（与 schema 单一真相源 DUCKDB_COLS 逐字对齐）
 FRESH_CAPTURE_COLS = DUCKDB_COLS["qfq_fresh_capture"]
@@ -440,6 +445,7 @@ class FreshCapture:
         fresh_minute = _to_fresh_frame(none_m, front_m, asset_type, code, freq="1min")
 
         # —— 证据 hash（必须来自真实数据内容）——
+        _t_sha = time.perf_counter() if _QFQ_PROFILE else 0
         daily_csv = fresh_daily[
             ["time", "open", "high", "low", "close"] + _FRONT_PRICE_COLS
         ].to_csv(index=False)
@@ -454,6 +460,10 @@ class FreshCapture:
             f"{daily_sha256}|{minute_sha256}|{source}|{asset_type}|{code}|"
             f"{daily_range_ms}|{minute_range_ms}"
         )
+        if _QFQ_PROFILE:
+            _profile_logger.info(
+                f"PROFILE_2c sha256 {asset_type} {code} daily_rows={len(fresh_daily)} "
+                f"minute_rows={len(fresh_minute)} time={time.perf_counter() - _t_sha:.3f}s")
 
         capture_id = capture_id_of(asset_type, code, run_id)
 

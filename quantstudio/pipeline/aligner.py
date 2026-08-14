@@ -953,13 +953,21 @@ class FieldAligner:
             logger.warning(f"[QFQ] {n_miss} rows missing adj_factor, 复权价留 NULL")
 
         # 按 code 分组求 latest/earliest adj_factor
-        # 如果传入了快照 map（全量模式），用快照替代批次内 groupby（修复 per_trade_date 复权失效）
+        # QFQ 复权基准 bug 修复（2026-08-14）：调用方必须传入全局快照（adj_latest_map/
+        # adj_earliest_map，来自 qfq_aux.db 实时读取）。禁止批次内 groupby 作基准——
+        # 流式分片窗口不含最新因子日期时，front 会被错算成 raw（实测 1442 万行被破坏）。
         if adj_latest_map and adj_earliest_map:
             merged["_adj_latest"] = merged[code_col].map(adj_latest_map)
             merged["_adj_earliest"] = merged[code_col].map(adj_earliest_map)
-            # 快照里没有的 code，回退到批次内 max/min
+            # 快照里没有的 code，回退到批次内 max/min（记 warning 供追溯）
             anchors = (adj.sort_values(time_field).groupby(code_col)["adj_factor"]
                        .agg(adj_earliest="first", adj_latest="last"))
+            _fallback_latest = merged["_adj_latest"].isna() & merged[code_col].map(
+                anchors["adj_latest"]).notna()
+            if bool(_fallback_latest.any()):
+                logger.warning(
+                    f"[QFQ] {int(_fallback_latest.sum())} 行 code 不在全局快照中，"
+                    f"回退批次内基准（这些 code 的 front 可能不准确）")
             merged["_adj_latest"] = merged["_adj_latest"].fillna(
                 merged[code_col].map(anchors["adj_latest"]))
             merged["_adj_earliest"] = merged["_adj_earliest"].fillna(
@@ -967,10 +975,12 @@ class FieldAligner:
             adj_latest = merged["_adj_latest"]
             adj_earliest = merged["_adj_earliest"]
         else:
-            anchors = (adj.sort_values(time_field).groupby(code_col)["adj_factor"]
-                       .agg(adj_earliest="first", adj_latest="last"))
-            adj_latest = merged[code_col].map(anchors["adj_latest"])
-            adj_earliest = merged[code_col].map(anchors["adj_earliest"])
+            # fail-fast：无全局快照时拒绝计算（2026-08-14 bug 修复，防再次写坏）
+            raise ValueError(
+                "[QFQ] _apply_qfq 未收到 adj_latest_map/adj_earliest_map 全局快照——"
+                "流式/增量路径必须从 qfq_aux.db 实时读取全局因子基准传入，"
+                "禁止批次内 groupby 作基准（分片窗口不含最新因子时 front 会被错算成 raw）。"
+                f"table={table}，请检查 daemon 调用链是否传入快照。")
 
         # front: price × adj_i / adj_latest（前复权，基准=最新）
         for c in available:
