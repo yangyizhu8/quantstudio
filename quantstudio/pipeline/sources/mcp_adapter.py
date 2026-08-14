@@ -315,6 +315,10 @@ class MCPAdapter(BaseSourceAdapter):
         self.enable_qfq_restore = bool(config.get("enable_qfq_restore", True))
         # 线1：因子冷启动（qfq_aux.db 未覆盖的 code → 全历史导出注入）
         self.enable_adj_coldstart = bool(config.get("enable_adj_coldstart", True))
+        # TD-D2 统一路由：daemon 在 _get_adapter 每次注入 resolved 路径
+        # （qfq_aux_paths.json released + active cutover 双条件；None → 兜底
+        # aux_db_path(main_db) 推导，仅独立 CLI/测试场景使用）
+        self.qfq_aux_override = None
         # WP7-E3 阶段 2A：export 缓存开关（仅 bootstrap 链路开启，daemon 默认 false）。
         # 开启时 _export_batches 走网格化切分 + 全市场 export parquet 落盘级复用，
         # 跨证券共享同一组缓存键 (table, grid_bs|grid_be)，export 次数从 2181×N 降至 ~N。
@@ -341,6 +345,18 @@ class MCPAdapter(BaseSourceAdapter):
             self._landing_root.mkdir(parents=True, exist_ok=True)
         except Exception as e:  # pragma: no cover - 目录权限问题不阻断构造
             logger.warning(f"[MCPAdapter] 创建 Raw Landing 目录失败（取数时再试）: {e}")
+
+    def _qfq_aux_path(self):
+        """TD-D2：adapter 内唯一的因子库路径解析点（三处注入/读取共用）。
+
+        daemon 注入 qfq_aux_override（与 daemon._qfq_aux_path() 同源，双条件
+        统一路由）；未注入时兜底 legacy 推导（独立 CLI/测试场景）。
+        grep 审计（tests/test_qfq_aux_route.py）：aux_db_path( 在本文件
+        仅允许出现在此方法内。
+        """
+        if self.qfq_aux_override is not None:
+            return Path(self.qfq_aux_override)
+        return aux_db_path(self.main_db)
 
     # ------------------------------------------------------------------
     # 连接管理
@@ -1153,7 +1169,7 @@ class MCPAdapter(BaseSourceAdapter):
             # 全部片写完后统一 commit。N 次连接/事务 → 1 次。
             _aux_conn = None
             if self.main_db is not None:
-                aux_p = aux_db_path(self.main_db)
+                aux_p = self._qfq_aux_path()   # TD-D2 统一路由
                 _target_tbl = "fund_adj" if asset_type == "ETF" else "adj_factor"
                 _aux_conn = sqlite3.connect(str(aux_p), timeout=30)
                 _aux_conn.execute("PRAGMA journal_mode=WAL")
@@ -1446,7 +1462,7 @@ class MCPAdapter(BaseSourceAdapter):
         if self.main_db is None:
             logger.warning("[MCPAdapter] main_db 未配置，无法读取 qfq_aux.db 因子快照")
             return {}
-        aux = aux_db_path(self.main_db)
+        aux = self._qfq_aux_path()   # TD-D2 统一路由
         if not Path(str(aux)).exists():
             logger.warning(f"[MCPAdapter] qfq_aux.db 不存在: {aux}")
             return {}
@@ -1902,7 +1918,7 @@ class MCPAdapter(BaseSourceAdapter):
         if len(norm) == 0:
             logger.debug(f"[MCPAdapter] adj_factor 标准化为空（表={table}），跳过注入")
             return 0
-        aux = aux_db_path(self.main_db)
+        aux = self._qfq_aux_path()   # TD-D2 统一路由
         target = "fund_adj" if asset_type == "ETF" else "adj_factor"
 
         # 优化 2：分钟线按 (code, 自然日) 去重，保留首 bar 的 time。

@@ -298,8 +298,14 @@ fresh_capture_id=None, fresh_metadata_sha256=None)`：
   `anchor_version` 由 reanchor committed 事件自动刷新（S2）。
 - **告警升级链**：单批偏离告警；连续 3 个批 / 单批偏离率 >5% 阻断该表下一轮（good 批自动
   解除）；审计计数落 `batch_audit.db.qfq_selfcheck_log`。
-- **TD-D2（⑤ C-6 释放前置）**：`_load_qfq_global_snapshot` / `mcp_adapter` 因子注入 /
-  防线 1 三处当前仍走 legacy `qfq_aux.db`；⑤ 后 mcp-gen1 成权威，须三处同步切换。
+- **TD-D2 因子库统一路由（2026-08-15 实施，⑤ C-6 释放前置）**：写入锚/读取锚/防线监测/
+  refresher 全部收敛到 `qfq_aux_router.resolve_runtime_aux_path()` 单一入口，代码中不存在
+  第二处 aux 路径推导（grep 审计测试锁定）。切换双条件齐备才指向 mcp-gen1 世代库
+  （`qfq_aux_mcp_gen1.db`）：① 主库 `qfq_active_cutover` 存在记录（实查，当前
+  b6_formal_20260807_v2 已 active）；② `qfq_aux_paths.json` 顶层 `"released": true`
+  （⑤ 释放门，当前 false）。任一不满足 → fail-secure legacy。**⑤ 释放时切配置不切代码**：
+  释放流程完成后置 released=true 即完成切换。分支 A 决策（同值性抽核 165,486 个
+  (code,day) 对比点逐日差=0）：存量 front 与 gen1 锚自洽，切换无需全量重锚。
 
 ---
 

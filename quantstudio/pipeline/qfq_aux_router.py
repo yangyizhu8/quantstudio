@@ -146,3 +146,66 @@ class AuxDbRouter:
     @property
     def routes(self) -> Dict[str, Path]:
         return dict(self._routes)
+
+
+# ===========================================================================
+# TD-D2 统一运行时路由（docs/mcp_migration/wp7e3-TD-D2-task.md v1.1 §2.1）
+# ===========================================================================
+def resolve_runtime_aux_path(*, main_db, duckdb_read=None,
+                             price_source: str = "mcp",
+                             config_path=None,
+                             logger=None) -> tuple:
+    """统一 QFQ 因子库路由：写入锚/读取锚/防线监测/refresher 全部走这里。
+
+    双条件（全部满足才返回世代库，任一不满足/不可判定 → fail-secure legacy）：
+
+      ① ⑤ 释放门：qfq_aux_paths.json 顶层 ``"released": true``
+         （缺省/缺文件/解析异常 → false）。
+         信号形式说明（任务书 §3 步骤 2 前置核实结论）：release_watermark 的
+         授权证据当前落 evidence 文件、无主库可查询信号，故按任务书退化方案
+         采用显式配置开关——⑤ 释放流程完成后置 ``released: true``，
+         仍满足"切配置不切代码"。
+      ② active cutover：主库 ``qfq_active_cutover`` 存在记录（经 duckdb_read
+         执行只读 SQL；无回调/查询异常 → 不可判定 → legacy）。
+         ⚠️ 当前真实态（2026-08-15）：b6_formal_20260807_v2 已 active
+         （v6.7.43），条件②为真——因此条件①是防误切的必要条件，缺它
+         路由会立即指向空 gen1 库（0 行因子 → align fail-fast / 防线退化）。
+
+    防仅凭配置误切：即使有人误置 released=true，只要主库无 active cutover
+    记录仍返回 legacy（两条件独立相与）。
+
+    返回 (path, reason)：reason 供审计日志（"gen1:<generation>" /
+    "legacy:released=false" / "legacy:no_active_cutover" / "legacy:fail-secure:<why>"）。
+    """
+    from quantstudio.pipeline.qfq_reanchor_schema import aux_db_path as _legacy
+    legacy = _legacy(main_db)
+    try:
+        cfg = Path(config_path) if config_path else None
+        if cfg is None or not cfg.exists():
+            return legacy, "legacy:fail-secure:no_aux_paths_config"
+        doc = json.loads(cfg.read_text(encoding="utf-8"))
+        released = bool(doc.get("released", False)) if isinstance(doc, dict) else False
+        if not released:
+            return legacy, "legacy:released=false"
+        if duckdb_read is None:
+            return legacy, "legacy:fail-secure:no_duckdb_read"
+        try:
+            rows = duckdb_read(
+                "SELECT a.cutover_id, c.source_generation FROM qfq_active_cutover a "
+                "JOIN qfq_source_cutover c ON c.cutover_id=a.cutover_id "
+                "WHERE a.price_source=? LIMIT 1", [str(price_source)])
+        except Exception as exc:
+            if logger:
+                logger.warning(f"[QFQ-AuxRoute] active cutover 查询失败，fail-secure "
+                               f"回 legacy: {exc}")
+            return legacy, f"legacy:fail-secure:cutover_query_error"
+        if not rows:
+            return legacy, "legacy:no_active_cutover"
+        generation = str(rows[0][1])
+        router = AuxDbRouter(main_db=main_db, config_path=cfg)
+        path = router.path_for(generation)
+        return path, f"gen1:{generation}"
+    except Exception as exc:
+        if logger:
+            logger.warning(f"[QFQ-AuxRoute] 路由解析异常，fail-secure 回 legacy: {exc}")
+        return legacy, "legacy:fail-secure:exception"

@@ -255,6 +255,10 @@ class ResidentCollector:
                 fetcher=fetcher,
                 calendar=CalendarService(main_db=self.writer.db_path),
                 watermark_advancer=self.writer.advance_watermark)
+            # TD-D2 阻断修复：orchestrator 内部 aux 路由与 daemon 同一 released 门
+            # （_resolve_dynamic_identity → resolve_runtime_aux_path 同源）
+            self._qfq_orch.qfq_aux_paths_config = getattr(
+                self, "qfq_aux_paths_config", None)
         return self._qfq_orch
 
     def qfq_begin_cycle(self) -> Optional[str]:
@@ -839,11 +843,10 @@ class ResidentCollector:
         if table not in self._QFQ_PRICE_TABLES:
             return None, None
         from pathlib import Path as _P
-        from quantstudio.pipeline.qfq_reanchor_schema import aux_db_path as _aux_path
         main_db = getattr(self.writer, "db_path", None)
         if not main_db:
             return None, None
-        aux = _aux_path(str(main_db))
+        aux = self._qfq_aux_path()   # TD-D2：统一路由（双条件，fail-secure legacy）
         if not _P(str(aux)).exists():
             logger.warning(f"[QFQ] qfq_aux.db 不存在: {aux}，无法构建全局因子快照")
             return None, None
@@ -1129,7 +1132,8 @@ class ResidentCollector:
         adj_earliest_map = None
         if table == "stock_daily":
             from .qfq_maintenance import QFQMaintenance
-            qfq = QFQMaintenance(self.db_path if hasattr(self, 'db_path') else self.writer.db_path)
+            # TD-D2：因子库路径统一路由（不再经主库路径推导）
+            qfq = QFQMaintenance(self._qfq_aux_path())
             if mode == "full_range":
                 # 优化：不再把 2067×全市场(约千万行) 全部拼进内存再 iterrows 落盘
                 # （原实现会吃到 3GB+ 内存、且 concat+iterrows+executemany 全程无日志，易被误判为卡死）。
@@ -2034,6 +2038,13 @@ class ResidentCollector:
                 from .update_detector import MCPUpdateDetector
                 self._update_detector = MCPUpdateDetector(self._adapters[source].client)
         adapter = self._adapters[source]
+        # TD-D2：MCP adapter 因子库路径统一路由注入（每次获取刷新——daemon 长跑中
+        # ⑤ 释放（released 置 true）后路由结果变化，缓存 adapter 的 override 必须跟随）
+        if source == "mcp":
+            try:
+                adapter.qfq_aux_override = self._qfq_aux_path()
+            except Exception as exc:
+                logger.warning(f"[QFQ-AuxRoute] MCP adapter 路由注入失败（保留默认）: {exc}")
         if task is not None:
             adapter.configure_execution(task)
         return adapter
@@ -2270,37 +2281,47 @@ class ResidentCollector:
         except Exception as exc:
             logger.warning(f"[QFQ-Invariant] 自检审计落库失败（不影响写入）: {exc}")
 
-    def _qfq_align_aux_path(self):
-        """防线 1 的因子库路径——必须与 adj_latest_map 的来源库严格同源（A 修复）。
+    def _qfq_aux_path(self):
+        """TD-D2 统一 QFQ 因子库路由：写入锚/读取锚/防线监测全部走这里（无参）。
 
-        依据（代码事实，2026-08-15 核实）：MCP 采集因子注入（mcp_adapter §7.2-A，
-        `aux = aux_db_path(self.main_db)`）与 Phase 3 全局快照加载
-        （_load_qfq_global_snapshot → qfq_reanchor_schema.aux_db_path）当前都写/
-        读 legacy qfq_aux.db。防线 1 的 adj_i 必须查同一库，否则自检锚与因子
-        不同源自洽（口径 A 退化）。
-        技术债 T-D2：未来采集因子库切换 mcp-gen1（qfq_aux_mcp_gen1.db）时，
-        本方法与 mcp_adapter §7.2-A、_load_qfq_global_snapshot 三处必须同步切换
-        （进度报告登记）。
+        双条件（resolve_runtime_aux_path，任务书 v1.1 §2.1）：
+          ① ⑤ 释放门 qfq_aux_paths.json "released": true（当前 false）；
+          ② 主库 qfq_active_cutover 存在记录（writer.execute_read 只读查询）。
+        任一不满足/不可判定 → fail-secure legacy。
+        ⚠️ 当前真实态：b6_formal_20260807_v2 已 active（v6.7.43）但 ⑤ 未释放
+        （released=false）→ 必须仍走 legacy；此方法同时修复工作包 D 遗留的
+        分叉（防线 2/3 曾经 orch.aux_db 优先 → dynamic 解析指向空 gen1 库）。
+        路由结果带 reason 随 _qfq_aux_route_reason 可查（审计日志用）。
         """
-        from .qfq_reanchor_schema import aux_db_path as _aux_path
-        return _aux_path(str(self.writer.db_path))
+        from .qfq_aux_router import resolve_runtime_aux_path
+        try:
+            ps = self._qfq_config().price_source
+        except Exception:
+            ps = "mcp"   # 防御：无 tasks_cfg 的构造路径（测试/mock）→ mcp 缺省
+        path, reason = resolve_runtime_aux_path(
+            main_db=self.writer.db_path,
+            # getattr 防御：兼容旧版/mock writer（无 execute_read → 条件②不可判定
+            # → fail-secure legacy，不阻断采集）
+            duckdb_read=getattr(self.writer, "execute_read", None),
+            price_source=ps,
+            config_path=getattr(self, "qfq_aux_paths_config", None),
+            logger=logger)
+        self._qfq_aux_route_reason = reason
+        return path
+
+    _qfq_aux_route_reason = "unresolved"
+
+    def _qfq_align_aux_path(self):
+        """TD-D2 收敛后保留的兼容别名（防线 1 调用点）——统一走 _qfq_aux_path()。"""
+        return self._qfq_aux_path()
 
     def _qfq_aux_db_routed(self):
-        """防线 2.1/3 的因子库路径——跟随编排器动态路由（A 修复）。
+        """TD-D2 收敛后保留的兼容别名（防线 2.1/3 调用点）——统一走 _qfq_aux_path()。
 
-        优先取已构造编排器解析出的 self.aux_db（generation_mode=dynamic 时按
-        qfq_aux_paths.json 路由到世代库，如 mcp-gen1 → qfq_aux_mcp_gen1.db）；
-        编排器未构造（enabled=false 或 lazy 未触发）时回退 _qfq_align_aux_path()。
-        因子完整性扫描与黄金行冒烟监测的是**权威因子源**，⑤ 水位释放后
-        mcp-gen1 成为权威，必须跟随路由而非各自 DATA_ROOT 推导。
+        原实现（orch.aux_db 优先）已废弃：dynamic 模式下 orch.aux_db 会被解析为
+        世代库（当前空 gen1），导致防线 2/3 读空库分叉——统一路由双条件修复此问题。
         """
-        try:
-            orch = self._qfq_orch
-            if orch is not None and getattr(orch, "aux_db", None):
-                return orch.aux_db
-        except Exception:
-            pass
-        return self._qfq_align_aux_path()
+        return self._qfq_aux_path()
 
     def _qfq_invariant_after_align(self, df, table: str, batch_id: str, source: str,
                                    adj_latest_map=None) -> None:
@@ -2610,7 +2631,7 @@ class ResidentCollector:
         复权因子存 SQLite（qfq_aux.db），避免重复拉取。is_etf=True 时用 fund_adj 接口。"""
         from .qfq_maintenance import QFQMaintenance, resolve_ts_codes
         from .aligner import normalize_code, to_ms_timestamp
-        qfq = QFQMaintenance(self.writer.db_path)
+        qfq = QFQMaintenance(self._qfq_aux_path())   # TD-D2：统一路由
         # codes 可能是裸码或带后缀；统一用 resolve_ts_codes 解析为 Tushare ts_code
         # （元数据优先，资产类型感知前缀 fallback）。修复：market_of_code 对 ETF
         # 裸码（5/1 开头）会误判 BJ，改用 resolve_ts_codes 保证 daemon 与

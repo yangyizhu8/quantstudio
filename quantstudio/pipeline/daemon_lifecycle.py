@@ -565,6 +565,10 @@ class DaemonLifecycle:
                 self.config_dir / "collector_tasks.json",
                 self.config_dir / "alignment_rules.json",
             )
+            # TD-D2 统一路由：把 qfq_aux_paths.json 路径交给 collector
+            # （released 释放门开关在该文件；缺失 → fail-secure legacy）
+            _aux_cfg = self.config_dir / "qfq_aux_paths.json"
+            collector.qfq_aux_paths_config = _aux_cfg if _aux_cfg.exists() else None
             # 增量开始前消费 stop（用户可能在 from_configs 期间点了停止）
             _check_stop_at_boundary("pre_cycle")
             # 工作包 D 防线 3：采集轮启动黄金行冒烟自检（不匹配仅告警，不阻断）。
@@ -796,6 +800,9 @@ class DaemonLifecycle:
                 self.config_dir / "collector_tasks.json",
                 self.config_dir / "alignment_rules.json",
             )
+            # TD-D2 统一路由：qfq_aux_paths.json 路径交给 collector（缺省 fail-secure）
+            _aux_cfg2 = self.config_dir / "qfq_aux_paths.json"
+            collector.qfq_aux_paths_config = _aux_cfg2 if _aux_cfg2.exists() else None
             collector._health_check()
         except Exception as e:
             logger.debug(f"[DaemonLifecycle] 健康检查异常: {e}")

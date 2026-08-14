@@ -152,7 +152,31 @@ class QFQResidentOrchestrator:
             ident["source_generation"], require_exists=require_aux)
         self._ident = dict(ident)
         self._aux_router = router
-        self.aux_db = str(resolved)
+        # —— TD-D2 阻断修复：aux 路径选择纳入 released 门（与 daemon._qfq_aux_path
+        #    同一个 resolve_runtime_aux_path，消除"orchestrator 与 daemon 各解一次
+        #    路由"的分叉）。⚠️ 仅影响 aux 路径：ident/世代身份解析不变（trigger
+        #    队列/事件表的世代隔离语义不受 released 门影响）。
+        #    released=false（⑤ 未释放）→ aux 用 legacy（当前真权威；防 active
+        #    cutover 已存在（b6_formal_20260807_v2）即把口径 B/S2/discovery/
+        #    refresher 指向空 gen1 库静默失效）；
+        #    released=true（⑤ 已释放）→ 世代库 resolved（gen1）。
+        from quantstudio.pipeline.qfq_aux_router import resolve_runtime_aux_path
+        _cfg_path = getattr(self, "qfq_aux_paths_config", None)
+
+        def _db_read(sql, params=None):
+            return conn.execute(sql, list(params or [])).fetchall()
+        _p, _reason = resolve_runtime_aux_path(
+            main_db=self.main_db, duckdb_read=_db_read,
+            price_source=ident["price_source"],
+            config_path=_cfg_path, logger=logger)
+        if "legacy" in _reason:
+            # legacy 分支尊重显式传入的 aux（测试/hermetic 语义）：
+            _p = self._explicit_aux_db or _p
+        if str(_p) != str(resolved):
+            logger.info(
+                f"[qfq_orch] TD-D2 released 门生效：aux={_p}（reason={_reason}，"
+                f"cutover 世代库={resolved} 未启用）——⑤ 释放置 released=true 后切换")
+        self.aux_db = str(_p)
         self.discovery.set_runtime(self._ident, aux_db=self.aux_db)
 
     def prepare_runtime(self, conn, *, require_aux: bool = True) -> dict:
