@@ -312,6 +312,7 @@ class SourceConverter:
             "mytt_used": [], "ashare_used": [], "inject_libs": [],
         }
         self._replacements: list[tuple[int, int, int, int, str]] = []
+        self._fq_injected_nodes: set[int] = set()  # P3-1：fq 被注入/归一化的 node id
         self._mytt_needed: set[str] = set()
         self._ashare_needed: set[str] = set()
         self._need_shim: set[str] = set()
@@ -669,6 +670,15 @@ class SourceConverter:
             if not isinstance(f, ast.Name):
                 continue
             name = self._aliases.get(f.id, f.id)
+            # P3-1：对 get_history/get_price 注入 fq='pre'（必须在签名改写之前）
+            # PTrade 默认 fq=不复权（实证 2026-08-14），不注入会导致两端信号不一致
+            if name in ("get_history", "get_price"):
+                self._inject_fq_pre(node)
+                # get_price 不走 _rewrite_history_signature，需在此创建 replacement
+                if name == "get_price" and id(node) in self._fq_injected_nodes:
+                    new_text = ast.unparse(node)
+                    self._replacements.append(
+                        (node.lineno, node.col_offset, node.end_lineno, node.end_col_offset, new_text))
             if name == "get_Ashares":
                 self._rewrite_asharess_date(node)
             elif name == "get_history":
@@ -679,6 +689,44 @@ class SourceConverter:
                 self._rewrite_stock_status_keywords(node)
         # 独立 pass：X['col'].values 是 Attribute 模式（非 Call），单独遍历
         self._rewrite_values_access(tree)
+
+    # ---- P3-1：fq='pre' 注入（确保 PTrade 端信号前复权一致）----
+    def _inject_fq_pre(self, node: ast.Call) -> None:
+        """对没有 fq 参数的 get_history/get_price 注入 fq='pre'。
+
+        PTrade 平台 get_history 默认 fq=不复权（实证 2026-08-14），
+        本地引擎默认 fq='pre'（前复权）。不注入会导致两端信号不一致。
+        - 无 fq 参数 → 注入 fq='pre'
+        - fq='none' → 归一化为 fq=None（PTrade fq='none' 返回空数据）
+        - fq='pre' / fq=None → 不变
+        """
+        modified = False
+        has_fq = False
+        for kw in node.keywords:
+            if kw.arg == "fq":
+                has_fq = True
+                if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str) \
+                        and kw.value.value.lower() == "none":
+                    kw.value = ast.Constant(value=None)
+                    self.actions.append(ConversionAction(
+                        action_type="NORMALIZE", rule_id="NORM-FQ-NONE",
+                        api_name="get_history", line=_line_of(node), severity="WARN",
+                        old_text="fq='none'", new_text="fq=None",
+                        message="fq='none' PTrade 不支持（返回空），归一化为 fq=None"))
+                    self.coverage["normalized_params"] += 1
+                    modified = True
+                break
+        if not has_fq:
+            node.keywords.append(ast.keyword(arg="fq", value=ast.Constant(value="pre")))
+            self.actions.append(ConversionAction(
+                action_type="INJECT", rule_id="INJECT-FQ-PRE",
+                api_name="get_history", line=_line_of(node), severity="INFO",
+                old_text="(no fq)", new_text="fq='pre'",
+                message="P3-1: PTrade 默认 fq=不复权，注入 fq='pre' 确保信号前复权一致"))
+            self.coverage["normalized_params"] += 1
+            modified = True
+        if modified:
+            self._fq_injected_nodes.add(id(node))
 
     # ---- 修复 1：get_Ashares(date) 日期格式 YYYY-MM-DD → YYYYmmdd ----
     def _rewrite_asharess_date(self, node: ast.Call) -> None:
@@ -726,8 +774,18 @@ class SourceConverter:
         kw_names = {kw.arg for kw in node.keywords if kw.arg}
         if node.args and isinstance(node.args[0], ast.Constant) \
                 and isinstance(node.args[0].value, int):
+            # P3-1：签名 B 不改写签名，但 fq 可能已被 _inject_fq_pre 注入 → 创建 replacement
+            if id(node) in self._fq_injected_nodes:
+                new_text = ast.unparse(node)
+                self._replacements.append(
+                    (node.lineno, node.col_offset, node.end_lineno, node.end_col_offset, new_text))
             return  # count-first（首参 int）：已符合 PTrade 契约，不动（include 不映射）
         if "security_list" in kw_names or "frequency" in kw_names:
+            # P3-1：同上，签名 B 关键字形态
+            if id(node) in self._fq_injected_nodes:
+                new_text = ast.unparse(node)
+                self._replacements.append(
+                    (node.lineno, node.col_offset, node.end_lineno, node.end_col_offset, new_text))
             return  # count-first 关键字形态（security_list/frequency 为 B 独有）：不动
         if not node.args and not ("security" in kw_names or "unit" in kw_names
                                   or "fields" in kw_names):

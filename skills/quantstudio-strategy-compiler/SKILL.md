@@ -26,7 +26,7 @@ Treat the calling agent as the strategy author. Constrain it with project lifecy
 9. R0 and R2.5 are real conversational stop points. The calling agent must not self-confirm, infer consent from silence, reuse an unrelated prior confirmation, or continue in the same turn without the customer's explicit answer.
 10. Local backtests obtain data through QuantStudio providers. Prefer `<current-project>/data/quantstudio.db`; use a configured/external database only when the project-local database is absent or the customer explicitly approves the override. Strategy source must never open DuckDB itself.
 11. NOT_APPLICABLE (local-only skill; no PTrade target is produced). If a later PyQt-tab conversion fails on the real platform, the conversion pipeline (source_import) is repaired — not this skill.
-12. Signal, execution and valuation use one front-adjusted price basis. Indicator/ranking/entry/exit/risk OHLC must come from an injected history/price API with literal `fq='pre'`; engine matching, fills, cash, position valuation, `data[code].price` and BarData OHLC use the front-adjusted snapshot (`*_front`, raw fallback only when adjusted data is unavailable). `raw_trade_price` is not an allowed Agent-first execution contract.
+12. Signal and execution/valuation use separated price bases (PTrade platform audit 2026-08-14). Indicator/ranking/entry/exit/risk OHLC must come from an injected history/price API with literal `fq='pre'` (pre-adjusted, continuous series); engine matching, fills, cash, position valuation, `data[code].price` and BarData OHLC use the raw snapshot (raw close/open — PTrade fills at raw close, 5/5 daily + 6/6 minute exact match; raw OHLC is the only allowed Agent-first execution contract: `execution_price_basis=raw_trade_price`). PTrade's own default fq is unadjusted, so source_import injects `fq='pre'` into converted get_history/get_price calls to keep the signal basis identical on both ends.
 13. `set_backtest()` and `is_trade()` are QuantStudio-local extensions and may appear in local strategy source (the source_import conversion pipeline strips or inlines them for PTrade). PTrade logging uses `log.debug/info/warning/error/critical`; `log.warn` is BLOCKED.
 14. Source using NumPy or pandas must explicitly declare `import numpy as np` and/or `import pandas as pd`; only storage/internal imports remain forbidden. Unimported calculation aliases are BLOCKED.
 15. Validation is fail-closed for injected APIs. Every external top-level call and every `components.required_apis` entry must exist in the API signature registry; an unprofiled call is `MISSING_REUSABLE_API` at R1 and `BLOCK` at validation, never an approximation that the customer can waive.
@@ -98,7 +98,7 @@ Present and confirm:
 - maximum simultaneous holdings, overlap, cash and leverage policy;
 - order rejection, suspension and limit-state handling;
 - costs, slippage and benchmark;
-- the fixed price-basis contract: signal OHLC, execution, fills and valuation all use the front-adjusted engine snapshot; strategy history calls use literal `fq='pre'`.
+- the fixed price-basis contract: signal OHLC uses the front-adjusted engine snapshot via literal `fq='pre'` strategy history calls; execution, fills, cash and valuation use the raw engine snapshot (`execution_price_basis=raw_trade_price`, PTrade platform audit 2026-08-14).
 
 Identify contradictions with concrete examples. Do not choose a material interpretation for the customer.
 
@@ -154,7 +154,7 @@ The contract records natural-language semantics, lifecycle callbacks, public API
 ```json
 "market_data_contract": {
   "signal_price_adjustment": "pre",
-  "execution_price_basis": "pre_adjusted_price"
+  "execution_price_basis": "raw_trade_price"
 },
 "targets": ["quantstudio"],
 "universe_contract": {
@@ -387,6 +387,7 @@ In user-PyQt mode, R6 must verify the validated candidate still exists with the 
 - Use NumPy/pandas or source-defined helpers for indicators unless the PTrade public profile explicitly lists the indicator. When used, import them explicitly (`import numpy as np`, `import pandas as pd`); real PTrade does not inject QuantStudio aliases.
 - Every `get_history`, `get_history_batch`, and `get_price` call used by generated backtest code must include the literal keyword `fq='pre'` AND `include=False` (both daily and minute frequency). `include=True` is FORBIDDEN in generated backtest code — it leaks the current bar into the signal, creating a lookahead bias (signal contains the current bar's close while execution occurs at that same close price in close mode = circular). `dypre`, post-adjustment, missing/dynamic values, and `attribute_history` are blocked.
 - Daily-frequency rationale (verified 2026-08-13): strict PIT semantics require signal computation using only completed bars (T-1 and earlier); execution at T-day close is the only price known within the T-day time slice. PTrade platform confirmed 2026-08-13 (re-verified with date stamps): PTrade include semantics are identical to local for ALL frequencies — include=True contains current-day bar, include=False stops at previous trading day (daily) or previous bar (minute). No mapping needed; source_import passes include through unchanged.
+- PTrade platform match-price audit 2026-08-14 (4-probe, real platform): daily fill = T-day raw close (5/5 exact match); minute fill = bar raw close (6/6 exact match); `fq='pre'` returns pre-adjusted prices (10/10 match local close_front); PTrade default fq returns raw (≠ local default `fq='pre'`) — hence source_import injects `fq='pre'` on conversion. Execution/valuation basis is raw (`execution_price_basis=raw_trade_price`); signal basis stays front-adjusted via literal `fq='pre'`.
 - A field extracted from `get_history(..., is_dict=True)` must be normalized with `np.asarray(...)` before numerical use. Do not unconditionally use `.values`, `.iloc`, `.loc`, `.to_numpy()`, `.columns`, `.index` or `.empty` on a per-security history item or extracted field; the item may be a DataFrame, structured array, or recarray.
 - Minute-frequency `get_history` must also use `include=False`. At 9:35 handle_data, the strategy may only see bars up to 9:34 — the current 9:35 bar is not yet completed and must not form the signal. The current bar's close is the execution price (close mode), and using it as signal input is a lookahead bias. Engine fix verified (2026-08-13): minute include=False correctly anchors to previous bar (not previous trading day). PTrade platform confirmed: ALL frequencies (daily + minute) include semantics match local — no mapping needed for any frequency.
 - `get_snapshot` and `check_limit` are not allowed in PTrade backtest source. `get_open_orders(security=None)` is allowed in backtest and trade contexts.

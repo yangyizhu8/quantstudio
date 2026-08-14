@@ -37,7 +37,7 @@ For dual targets, every planned API must have a verified entry in `ptrade-api-si
 
 ### R2 - Draft design contract
 
-Write `agent_strategy_design.json` using `schemas/agent_strategy_design.schema.json`. Keep rules in clear natural language. Set `market_data_contract.signal_price_adjustment` to `pre` and `execution_price_basis` to `pre_adjusted_price`. Signal history, engine matching, fills, cash, valuation, `data[code].price`, and BarData OHLC use the same front-adjusted snapshot contract. Select lifecycle and API components, but do not encode strategy logic as a renderer pattern.
+Write `agent_strategy_design.json` using `schemas/agent_strategy_design.schema.json`. Keep rules in clear natural language. Set `market_data_contract.signal_price_adjustment` to `pre` and `execution_price_basis` to `raw_trade_price`. Signal history OHLC uses the front-adjusted snapshot (literal `fq='pre'`); engine matching, fills, cash, valuation, `data[code].price`, and BarData OHLC use the raw snapshot (PTrade match-price audit 2026-08-14: daily fill = raw close 5/5, minute fill = bar raw close 6/6). Select lifecycle and API components, but do not encode strategy logic as a renderer pattern.
 
 Design 2.2 additionally requires machine-checkable contracts: `portfolio_contract` (sizing mode, target holdings, exposure/cash/weight bounds), `rebalance_funding_contract` (checked against `references/execution-funding-matrix.md`), `history_coverage_contract` (lookback coverage, not window truncation), `r5_deployment_invariants` (deployment thresholds R5 verifies from real artifacts), and verbatim `confirmation_evidence`. Self-contradictory capital math (20 x 5% + 15% cash buffer) BLOCKs at design time, never reaches R3.
 

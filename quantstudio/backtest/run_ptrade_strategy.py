@@ -26,6 +26,61 @@ def load_strategy(strategy_path: str) -> dict:
     return _load_strategy(strategy_path)
 
 
+def run_backtest(strategy_path, start, end, *,
+                 db_path=None, capital=100_000,
+                 match_price_mode='close', engine_profile='daily-bar-v1',
+                 etf_t0=False, cost=None, rebalance_mode='legacy',
+                 progress_callback=None):
+    """CLI 和 GUI 共用的回测入口。统一所有默认值，确保双端口径一致。
+
+    所有默认值对齐 PTrade 平台实证（2026-08-14）：
+      - match_price_mode='close'（PTrade 日线/分钟均用 close 撮合）
+      - engine_profile='daily-bar-v1'（默认日线）
+      - cost=DEFAULT_TRADE_COST（滑点 0.0、佣金万3.5、印花税千1）
+      - capital=100_000（对齐 PTrade 回测初始资金）
+
+    返回 (result, output_dir, engine) 三元组。
+    """
+    if db_path is None:
+        db_path = _default_db_path()
+    db_path = Path(db_path)
+    if cost is None:
+        cost = DEFAULT_TRADE_COST
+
+    strategy_funcs, _ = load_strategy(strategy_path)
+
+    config = EngineConfig(
+        db_path=db_path,
+        output_dir=ROOT / "output",
+        research_dir=ROOT / "output" / "research",
+        rebalance_mode=rebalance_mode,
+    )
+
+    engine = BacktestEngine(
+        db_path=str(db_path),
+        config=config,
+        strategy=strategy_funcs,
+        start=start,
+        end=end,
+        capital=capital,
+        cost=cost,
+        strategy_type="ptrade",
+        match_price_mode=match_price_mode,
+        engine_profile=engine_profile,
+        etf_t0=etf_t0,
+        progress_callback=progress_callback,
+    )
+    engine._strategy_name = Path(strategy_path).stem
+
+    result, output_dir = engine.run()
+    return result, output_dir, engine
+
+
+def _default_db_path():
+    """获取默认数据库路径（延迟导入避免循环依赖）"""
+    return db_path()
+
+
 def _parse_flag(argv, flag_name, default=None, has_value=True):
     """解析 --flag value 或 --flag=value（返回值；has_value=False 时返回 bool）"""
     if not has_value:
@@ -150,14 +205,6 @@ def main():
         sys.exit(3)
 
     print(f"加载策略: {strategy_path}")
-    strategy_funcs, strategy_module = load_strategy(strategy_path)
-
-    # A1：入口显式构造 EngineConfig 传入引擎，源码可移植（迁移机器只改这里）
-    config = EngineConfig(
-        db_path=db,
-        output_dir=ROOT / "output",
-        research_dir=ROOT / "output" / "research",
-    )
 
     # 成本模型：默认 DEFAULT_TRADE_COST；--slippage 用于对齐 Ptrade 平台默认 0 滑点
     cost = DEFAULT_TRADE_COST
@@ -168,23 +215,15 @@ def main():
         except (TypeError, ValueError):
             print(f"⚠️ --slippage 解析失败: {slippage!r}，退回默认滑点")
 
-    engine = BacktestEngine(
-        db_path=str(db),       # 保留向后兼容；config 优先级更高
-        config=config,
-        strategy=strategy_funcs,
-        start=start,
-        end=end,
-        capital=100_000,  # 对齐 Ptrade 平台回测初始资金 10 万
-        cost=cost,  # 统一成本常量（与所有入口共用，保证口径一致）
-        strategy_type="ptrade",
-        match_price_mode=match_price_mode,  # A2：默认 close，对照验证时可切 next_open
-        engine_profile=engine_profile,  # PR4：默认 daily-bar-v1，分钟策略用 minute-bar-v1
-        etf_t0=etf_t0,  # PR4 决策 4：ETF T+0（仅 minute-bar-v1 生效）
+    # P2：通过共用入口 run_backtest 确保双端口径一致
+    result, output_dir, engine = run_backtest(
+        strategy_path, start, end,
+        db_path=db,
+        match_price_mode=match_price_mode,
+        engine_profile=engine_profile,
+        etf_t0=etf_t0,
+        cost=cost,
     )
-
-    engine._strategy_name = Path(strategy_path).stem
-
-    result, output_dir = engine.run()
     result.report()
     print(f"\n结果导出: {output_dir}")
 

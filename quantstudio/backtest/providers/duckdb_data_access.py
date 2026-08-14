@@ -56,17 +56,23 @@ def _build_trade_date_map(time_series: pd.Series) -> pd.Series:
     }
     return time_series.map(_td_map)
 
-# 日线快照前复权 OHLC / preClose 缩放口径（方案A，2026-07-25 决策），供 query_daily_snapshot
+# 日线快照原始价口径（方案A逆转，2026-08-14 PTrade 实证决策），供 query_daily_snapshot
 # 与 preload_daily_snapshots 共用，保证 per-day 查询与全期预取结果字节级一致。
+#
+# PTrade 平台实证（2026-08-13/14，4 次真实回测）：
+#   日线成交价 = raw close（5/5 精确匹配）；分钟成交价 = bar raw close（6/6 精确匹配）；
+#   持仓估值 last_price = raw close。撮合/估值链路必须用原始价对齐 PTrade。
+#
+# preClose 在行情源/入库数据中已是除权参考价语义（16 标的多板块抽查验证 2026-08-14）：
+#   除权日 preClose = 前日 close × 复权因子；非除权日 preClose = 前日 raw close。
+#   (raw close - preClose) / preClose 在所有日期（含除权日）均正确。
+#
+# 信号计算（get_history fq='pre'）独立走 query_bars_by_range（查 *_front 列），
+# 不经过此快照 SQL，前复权信号不受影响。
 _ADJ_OHLC_SQL = """
-               COALESCE(open_front, open)   AS open,
-               COALESCE(high_front, high)   AS high,
-               COALESCE(low_front, low)     AS low,
-               COALESCE(close_front, close) AS close,"""
+               open, high, low, close,"""
 _ADJ_PRECLOSE_SQL = """
-               CASE WHEN close > 0 AND close_front IS NOT NULL AND close_front > 0
-                    THEN preClose * (close_front / close)
-                    ELSE preClose END AS preClose,"""
+               preClose,"""
 
 
 class DuckDBDataAccess:
@@ -272,14 +278,14 @@ class DuckDBDataAccess:
 
         【前复权撮合口径（方案A，2026-07-25 决策）】
         本快照是引擎撮合/估值链路（链路②）的唯一价格来源：成交价、持仓估值、
-        data[code].price、check_limit 比较价均取自这里。为与策略取数链路（链路①，
-        get_history/get_price 默认 fq='pre'）保持同一连续价格口径，OHLC 四价映射为
-        前复权列（*_front，缺失时回退原始价）；preClose 按 close_front/close 同因子
-        缩放，保证 (close-preClose)/preClose 与真实日收益一致。
-        效果：ETF 份额拆分/股票分红除权日的价格缺口被消除，不会再出现原始价口径下
-        的虚假巨亏/巨盈；代价是成交价为前复权价（前复权回测的标准做法，分红等价于
-        自动再投资）。volume/amount/pctChg 保持原始口径（pctChg 本身已是复权校正后
-        的真实涨跌幅）。
+        data[code].price、check_limit 比较价均取自这里。
+
+        【原始价撮合口径（2026-08-14 PTrade 实证决策，逆转方案A）】
+        OHLC 四价取原始价（raw），不再映射前复权列。PTrade 平台实证（4 次真实回测）
+        确认撮合/估值用 raw close。preClose 保持行情源标准语义（除权日=除权参考价），
+        (raw close - preClose)/preClose 在所有日期均正确（16 标的多板块抽查验证）。
+        信号取数链路（链路①，get_history fq='pre'）独立走 query_bars_by_range
+        查 *_front 列，不受此快照影响。volume/amount/pctChg 保持原始口径。
 
         纯性能优化：先查内存缓存（由 preload_daily_snapshots 一次性区间预取填充），
         未命中再回退到单日 per-day 查询；每次返回独立副本，避免跨日共享 DataFrame

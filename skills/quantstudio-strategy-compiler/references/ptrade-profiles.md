@@ -62,8 +62,8 @@ PTrade Renderer 输出必须通过：语法、生命周期、API 白名单、禁
 - Portable `get_stock_status` accepts `ST`, `HALT`, or `DELISTING`. `DELISTING_SORTING` is a `filter_stock_by_status` filter type and a local backward-compatible alias only.
 - Static Profile PASS proves conformance to the registered default subset, not successful execution on every broker/IQEngine deployment.
 
-## 2026-07-26 Agent-first execution-price contract
+## 2026-07-26 Agent-first execution-price contract（2026-08-14 修订：raw 口径）
 
-- The selected QuantStudio backtest engine profile uses `pre_adjusted_price` for matching, fills, cash, valuation, `data[code].price`, and BarData OHLC.
-- Agent-first designs must declare `signal_price_adjustment=pre` and `execution_price_basis=pre_adjusted_price`; `raw_trade_price` is rejected.
+- The selected QuantStudio backtest engine profile uses `raw_trade_price` for matching, fills, cash, valuation, `data[code].price`, and BarData OHLC — revised 2026-08-14 by real-PTrade match-price audit (daily fill = T-day raw close 5/5; minute fill = bar raw close 6/6; valuation last_price = raw close).
+- Agent-first designs must declare `signal_price_adjustment=pre` (front-adjusted signal OHLC via literal `fq='pre'`) and `execution_price_basis=raw_trade_price`; `pre_adjusted_price` is rejected (superseded 2026-08-14).
 - PTrade public-API validation remains a portability gate and does not redefine the broker runtime's internal valuation basis.

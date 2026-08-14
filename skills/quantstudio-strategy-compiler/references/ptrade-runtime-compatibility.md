@@ -99,11 +99,11 @@ Generated PTrade code must pass:
 - R5 PASS is bound to hash-verified real artifacts (`config.csv`/`daily_stats.csv`/`trades.csv`/run log); self-reported `runtime_checks` booleans are no longer authoritative. A finished exception-free backtest that never deployed the designed capital BLOCKs.
 - Static PTrade PASS is reported as `PTRADE_PROFILE_PASS` with runtime `NOT_VERIFIED` / deployment `NOT_DEPLOYABLE`; a real broker runtime failure retires all old evidence via `scripts/retire_ptrade_runtime_evidence.py`.
 
-## Skill correction 0.5.4 — pre-adjusted execution contract
+## Skill correction 0.5.4 — pre-adjusted execution contract（2026-08-14 修订：raw 口径）
 
-- QuantStudio's implemented engine profile uses the front-adjusted daily/minute snapshot for matching, fills, cash, valuation, `data[code].price`, and BarData OHLC.
-- Agent-first designs now require `execution_price_basis=pre_adjusted_price`; raw execution declarations are blocked as incompatible with the selected local engine profile.
-- This is a design/profile contract correction. It does not claim that a broker PTrade runtime internally values positions with QuantStudio's adjusted snapshot; dual validation proves source/API portability while local backtest evidence records the QuantStudio execution basis.
+- QuantStudio's implemented engine profile now uses the raw daily/minute snapshot for matching, fills, cash, valuation, `data[code].price`, and BarData OHLC — revised 2026-08-14 by real-PTrade match-price audit (daily fill = T-day raw close 5/5; minute fill = bar raw close 6/6).
+- Agent-first designs now require `execution_price_basis=raw_trade_price`; pre-adjusted execution declarations are blocked as incompatible with the selected local engine profile. Signal basis stays `signal_price_adjustment=pre`.
+- This is a design/profile contract correction. It does not claim that a broker PTrade runtime internally values positions with QuantStudio's snapshot; dual validation proves source/API portability while local backtest evidence records the QuantStudio execution basis.
 
 ## 2026-08-13 PTrade 分钟 include 语义实测
 

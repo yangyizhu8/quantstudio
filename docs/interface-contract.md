@@ -18,11 +18,13 @@
 |---|---|---|---|
 | `"close"`（默认） | 当日收盘价 | 策略当天决策、当天收盘价成交 | 兼容历史回测结果 |
 | `"open"` | 当日开盘价 | 策略当天决策、当天开盘价成交 | 部分缓解未来函数 |
-| `"next_open"` | 次日开盘价 | 策略 T 日决策、T+1 开盘成交 | **Ptrade 对齐对照推荐** |
+| `"next_open"` | 次日开盘价 | 策略 T 日决策、T+1 开盘成交 | [DEPRECATED 2026-08-14: PTrade 实证确认平台用 close 撮合（日线 5/5、分钟 6/6 精确匹配 raw close），next_open 非对齐模式] |
+
+> **Ptrade 对齐口径（2026-08-14 实证）**：PTrade 平台撮合价 = raw close（不复权原始收盘价），日线 = T 日 close、分钟 = 下单 bar close；持仓估值 last_price = raw close。本地引擎撮合/估值链路同样使用 raw close（`execution_price_basis=raw_trade_price`）。信号计算（`get_history`/`get_price`）保持 `fq='pre'` 前复权口径，与撮合/估值分离；转换到 PTrade 时由 source_import 自动注入 `fq='pre'` 保证两端信号一致。
 
 ```bash
 # CLI 切换模式
-python -m quantstudio.backtest.run_ptrade_strategy 策略.py 2026-01-01 2026-07-13 --match-price next_open
+python -m quantstudio.backtest.run_ptrade_strategy 策略.py 2026-01-01 2026-07-13 --match-price close
 ```
 
 ### ⚠️ 未来函数警告（必读）
@@ -33,7 +35,7 @@ python -m quantstudio.backtest.run_ptrade_strategy 策略.py 2026-01-01 2026-07-
 - 这会让回测收益虚高（"上帝视角"）
 
 **如何避免**：
-1. **对照 Ptrade 平台时**：用 `--match-price next_open`（最贴实盘语义）
+1. **对照 Ptrade 平台时**：用 `--match-price close`（PTrade 实证确认 = close 撮合，2026-08-14）
 2. **若坚持用 close 模式**：策略的信号应基于**前一日数据**（`context.previous_date`、`get_history` 不含当日），不要在 `before_trading_start` 里读 `data[stock].close` 用于下单决策
 
 ### 记账价 vs 撮合价（分离设计）

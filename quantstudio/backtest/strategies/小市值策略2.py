@@ -207,7 +207,7 @@ def get_market_strength(context):
     """
     try:
         # 使用MA20更敏感地捕捉短期强势
-        close_data = get_history(21, '1d', 'close', '000300.XSHG', fq='pre', include=True)
+        close_data = get_history(21, '1d', 'close', '000300.XSHG', fq='pre', include=False)
         if close_data is None or close_data.empty or len(close_data) < 21:
             return 'bull'
         
@@ -255,7 +255,7 @@ def score_stocks(stock_list, context, data):
                 continue
 
             # --- 反转因子（过去20日收益率） ---
-            close_data = get_history(21, '1d', 'close', [stock], fq='pre', include=True)
+            close_data = get_history(21, '1d', 'close', [stock], fq='pre', include=False)
             if close_data is None or close_data.empty or len(close_data) < 21:
                 continue
             past_20d_return = (close_data['close'].iloc[-1] / close_data['close'].iloc[0] - 1)

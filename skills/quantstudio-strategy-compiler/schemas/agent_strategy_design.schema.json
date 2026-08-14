@@ -116,8 +116,8 @@
           "description": "All OHLC inputs used by indicators, ranking, entry/exit signals and risk thresholds must be front-adjusted via fq='pre'."
         },
         "execution_price_basis": {
-          "const": "pre_adjusted_price",
-          "description": "撮合、现金、成交、持仓估值、data[code].price 和 BarData OHLC 统一使用引擎前复权快照（*_front，缺失时回退原始价）。该口径与信号 fq=pre 构成前复权闭环；raw_trade_price 不再是 Agent-first 设计允许的执行契约。"
+          "const": "raw_trade_price",
+          "description": "撮合、现金、成交、持仓估值、data[code].price 和 BarData OHLC 统一使用原始价（raw，不复权）快照——PTrade 平台实证 2026-08-14：日线成交价 = T 日 raw close（5/5 精确）、分钟 = bar raw close（6/6 精确）、估值 last_price = raw close。信号 fq='pre' 前复权与执行 raw 口径分离；pre_adjusted_price 不再是 Agent-first 设计允许的执行契约。"
         }
       },
       "additionalProperties": false

@@ -416,52 +416,35 @@ class BacktestWorker(BaseWorker):
             _root = _Path(__file__).resolve().parent.parent.parent
             if str(_root) not in _sys.path:
                 _sys.path.insert(0, str(_root))
-            from quantstudio.backtest.run_ptrade_strategy import load_strategy
-            from quantstudio.backtest.backtest_engine import BacktestEngine, TradeCost, EngineConfig
-            from quantstudio.backtest import ptrade_api
+            from quantstudio.backtest.run_ptrade_strategy import run_backtest
+            from quantstudio.backtest.backtest_engine import TradeCost
 
-            # 1. 加载策略
+            # 1. 加载策略 + 2. 构建引擎 + 3. 运行 → 全部通过共用入口
             self.progress.emit(f"加载策略: {Path(self.strategy_path).name}")
-            funcs, module = load_strategy(self.strategy_path)
 
-            # 2. initialize 由 engine.run() 内部统一调用（避免重复）
-
-            # 3. 构建引擎
+            # 成本模型：从 params 构建（控件预设值已与 DEFAULT_TRADE_COST 对齐）
             cost = TradeCost(
-                commission_rate=self.params.get('commission', 0.00025),
+                commission_rate=self.params.get('commission', 0.00035),
                 min_commission=5.0,
-                stamp_tax_rate=self.params.get('stamp_tax', 0.0005),
+                stamp_tax_rate=self.params.get('stamp_tax', 0.001),
                 transfer_fee_rate=0.00001,
-                slippage_rate=self.params.get('slippage', 0.001),
+                slippage_rate=self.params.get('slippage', 0.0),
             )
-            # A1：GUI 入口显式构造 EngineConfig（db_path 用用户配置，output/research 用 default 兜底）
-            _user_db = Path(self.params['db_path'])
-            _base_cfg = EngineConfig.default()
-            gui_config = EngineConfig(
-                db_path=_user_db,
-                output_dir=_base_cfg.output_dir,
-                research_dir=_base_cfg.research_dir,
-                # F1: rebalance_mode 单一配置路径 — 只通过 EngineConfig 传入，
-                # 不在 BacktestEngine 构造函数中重复传递第二份值。
-                rebalance_mode=self.params.get('rebalance_mode', 'legacy'),
-            )
-            engine = BacktestEngine(
-                db_path=self.params['db_path'],  # 向后兼容
-                config=gui_config,
-                strategy=funcs,
-                start=self.params['start'],
-                end=self.params['end'],
-                capital=self.params.get('capital', 1000000),
-                cost=cost,
-                strategy_type="ptrade",
+
+            self.progress.emit("开始回测...")
+            result, output_dir, engine = run_backtest(
+                self.strategy_path,
+                self.params['start'],
+                self.params['end'],
+                db_path=self.params['db_path'],
+                capital=self.params.get('capital', 100_000),
                 match_price_mode=self.params.get('match_price_mode', 'close'),
+                engine_profile=self.params.get('engine_profile', 'daily-bar-v1'),
+                etf_t0=self.params.get('etf_t0', False),
+                cost=cost,
+                rebalance_mode=self.params.get('rebalance_mode', 'legacy'),
                 progress_callback=self._on_engine_progress,
             )
-            engine._strategy_name = Path(self.strategy_path).stem
-
-            # 4. 运行
-            self.progress.emit("开始回测...")
-            result, output_dir = engine.run()
 
             self.progress.emit(f"回测完成: {output_dir}")
             self.finished_ok.emit({

@@ -15,7 +15,7 @@
   },
   "market_data_contract": {
     "signal_price_adjustment": "pre",
-    "execution_price_basis": "pre_adjusted_price"
+    "execution_price_basis": "raw_trade_price"
   },
   "strategy_semantics": {
     "universe": "通过 get_Ashares(date) 取全A股列表（来自 stock_daily 活跃品种），再剔除 is_st_stock(code) 返回 True 的标的（框架内置 ST/*ST/退市整理判断，比手工解析 name 前缀更可靠）；已退市/长期停牌标的在回测日 get_history_batch 返回空 DataFrame，自然剔除（无 PIT 退市标记 API，空历史即等于无数据不可交易）。",

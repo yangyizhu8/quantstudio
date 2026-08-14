@@ -38,9 +38,22 @@ MA_L = 20
 MA_XL = 60
 
 
+def _ensure_runtime_state():
+    """幂等运行期状态守卫（R3 强制）：仅初始化缺失字段，绝不重置既有状态。
+    PTrade 可能在 initialize 抛错后继续 later lifecycle，状态安全不能依赖初始化成功。"""
+    if not hasattr(g, 'target_list'):
+        g.target_list = []
+    if not hasattr(g, 'universe_etf'):
+        g.universe_etf = []
+    if not hasattr(g, 'rebalance_count'):
+        g.rebalance_count = 0
+
+
 def initialize(context):
-    # 基准：沪深300（set_benchmark 内部 bare_code 化）
-    set_benchmark('000300.SH')
+    # 幂等状态守卫必须最先执行
+    _ensure_runtime_state()
+    # 基准：沪深300（set_benchmark 内部 bare_code 化，传裸码规避 PTrade 后缀校验）
+    set_benchmark('000300')
     # ETF 交易口径：关闭印花税/过户费，仅佣金
     set_commission(type='ETF', commission_ratio=0.0003, min_commission=0.1)
     # 运行期状态（策略内部持仓缓存，引擎不自动提供）
@@ -58,6 +71,8 @@ def _pct_rank(x):
 
 
 def handle_data(context, data):
+    # 幂等状态守卫必须最先执行（R3）
+    _ensure_runtime_state()
     # ---------- 层1: 动态池 + 权益类过滤 ----------
     today = context.current_dt.strftime('%Y-%m-%d')
     universe = get_etf_list_local(query_date=today, etf_type='equity', active_only=True)
@@ -160,3 +175,17 @@ def handle_data(context, data):
     for code in target_codes:
         order_target_value(code, per_value)
         log.info('BUY/TARGET: %s value=%.0f' % (code, per_value))
+
+    # 运行期状态：记录本次目标名单 + 调仓计数（R5 部署不变量 require_at_least_one_rebalance）
+    g.target_list = list(target_codes)
+    g.rebalance_count += 1
+
+    # R5 机器可解析审计行（契约 R5-AUDIT-LOG）：每个 rebalance 唯一 rebalance_id 一对一
+    rid = '%s_%d' % (today.replace('-', ''), g.rebalance_count)
+    log.info('QS_REBALANCE_AUDIT rebalance_id=%s date=%s selected=%d tradable=%d '
+             'sell_submitted=%d buy_submitted=%d history_eligible_count=%d'
+             % (rid, today, len(valid_codes), len(valid_codes),
+                len(holding) - len(target_set & set(holding.keys())),
+                len(target_codes), len(valid_codes)))
+    log.info('QS_PORTFOLIO_AUDIT rebalance_id=%s date=%s positions=%d gross_exposure=%.3f'
+             % (rid, today, len(target_codes), GROSS_EXPOSURE))

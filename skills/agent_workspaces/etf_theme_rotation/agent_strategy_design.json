@@ -15,7 +15,7 @@
   },
   "market_data_contract": {
     "signal_price_adjustment": "pre",
-    "execution_price_basis": "pre_adjusted_price"
+    "execution_price_basis": "raw_trade_price"
   },
   "strategy_semantics": {
     "universe": "通过 get_etf_list_local(query_date, etf_type='equity', active_only=True) 取 PIT 权益类 ETF 动态池（框架 equity 已内置 is_cross_border=false，即仅剔跨境；因数据层无行业/宽基/主题细分字段，宽基与行业 ETF 一并纳入）；再剔除近 20 日日均成交额(amount)<1e6 的冷门 ETF。",

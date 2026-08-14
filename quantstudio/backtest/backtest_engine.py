@@ -225,7 +225,7 @@ class TradeCost:
     min_commission: float = 5.0        # 最低佣金
     stamp_tax_rate: float = 0.001      # 印花税（卖出单向，千1，对齐 Ptrade）
     transfer_fee_rate: float = 0.00001 # 过户费（万0.1）
-    slippage_rate: float = 0.001       # 滑点
+    slippage_rate: float = 0.0         # 滑点（对齐 PTrade 实证：0 滑点）
     fixed_slippage: float = 0.0        # absolute yuan/share slippage
 
 
@@ -776,12 +776,24 @@ class BacktestEngine:
         transfer_fee = cost_amount * self.cost.transfer_fee_rate
         total_cost = cost_amount + commission + transfer_fee
 
-        # Ptrade 语义：资金不足时直接拒单，不做“缩单后部分成交”。
-        # 这能避免轮动/ETF 动量类策略在同一 bar 内因为旧仓未卖出而用残余现金误买出一个很小的仓位，
-        # 从而破坏平台行为一致性。显式股数单与目标市值单统一按拒单处理。
+        # 取整边界溢出（差额 < 一手总成本含费用）→ 减一手重试
+        # 真实资金不足（差额 ≥ 一手总成本）→ 整单拒单（保留 PTrade 语义，防碎仓）
         if total_cost > self.account.cash:
-            logger.warning(f"当前账户资金不足，{code}下单失败")
-            return 0, fill_price
+            one_lot_cost = 100 * fill_price
+            one_lot_total = (one_lot_cost
+                             + max(one_lot_cost * self.cost.commission_rate,
+                                   self.cost.min_commission)
+                             + one_lot_cost * self.cost.transfer_fee_rate)
+            if target_vol >= 200 and total_cost - self.account.cash < one_lot_total:
+                target_vol -= 100
+                cost_amount = target_vol * fill_price
+                commission = max(cost_amount * self.cost.commission_rate,
+                                 self.cost.min_commission)
+                transfer_fee = cost_amount * self.cost.transfer_fee_rate
+                total_cost = cost_amount + commission + transfer_fee
+            if target_vol < 100 or total_cost > self.account.cash:
+                logger.warning("当前账户资金不足，%s下单失败" % code)
+                return 0, fill_price
 
         self.account.cash -= total_cost
         pos = self.account.positions.get(code)
@@ -869,7 +881,11 @@ class BacktestEngine:
         return built
 
     def _get_pct_chg(self, code, curr_data, date):
-        """获取当日涨跌幅"""
+        """获取当日涨跌幅。
+
+        优先使用管线预计算的 pctChg 列（除权日正确，已是复权校正后真实涨跌幅），
+        回退才用 (close - preClose) / preClose（preClose 为除权参考价语义，同样正确）。
+        """
         if curr_data is None:
             return 0.0
         bare = code.split(".")[0] if "." in code else code
@@ -879,22 +895,33 @@ class BacktestEngine:
         if idx is not None:
             i = idx.get(bare)
             if i is not None:
-                close = curr_data.iloc[i].get('close', 0)
-                preclose = curr_data.iloc[i].get('preClose', 0)
+                row = curr_data.iloc[i]
+                pctchg = row.get('pctChg')
+                if pctchg is not None and pctchg == pctchg:  # not NaN
+                    return pctchg / 100.0
+                close = row.get('close', 0)
+                preclose = row.get('preClose', 0)
                 if preclose and preclose > 0:
                     return (close - preclose) / preclose
             return 0.0
         # 索引不可用 → 回退原布尔过滤
         row = curr_data[curr_data['code'] == bare]
         if len(row) > 0:
-            close = row.iloc[0].get('close', 0)
-            preclose = row.iloc[0].get('preClose', 0)
+            r0 = row.iloc[0]
+            pctchg = r0.get('pctChg')
+            if pctchg is not None and pctchg == pctchg:
+                return pctchg / 100.0
+            close = r0.get('close', 0)
+            preclose = r0.get('preClose', 0)
             if preclose and preclose > 0:
                 return (close - preclose) / preclose
         return 0.0
 
     def _get_open_pct_chg(self, code, curr_data, open_price):
-        """Return T+1 opening gap versus T-1 close for pending-open checks."""
+        """Return T+1 opening gap versus T-1 close for pending-open checks.
+
+        优先使用管线预计算的 pctChg 列判断涨跌停基准，回退才用 preClose 手算。
+        """
         if curr_data is None or not open_price or open_price <= 0:
             return 0.0
         bare = code.split(".")[0] if "." in code else code

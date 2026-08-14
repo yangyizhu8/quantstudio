@@ -563,7 +563,7 @@ class PtradeAPI:
             self._engine.cost.stamp_tax_rate = 0.0
             self._engine.cost.transfer_fee_rate = 0.0
 
-    def set_slippage(self, slippage=0.1):
+    def set_slippage(self, slippage=0.0):
         """Set proportional slippage with the real PTrade call signature.
 
         PTrade accepts ``set_slippage(slippage=...)`` or one positional value.
@@ -574,7 +574,7 @@ class PtradeAPI:
         self._engine.cost.slippage_rate = max(0.0, float(slippage or 0.0))
         self._engine.cost.fixed_slippage = 0.0
 
-    def set_fixed_slippage(self, fixedslippage=0.1):
+    def set_fixed_slippage(self, fixedslippage=0.0):
         """Set fixed yuan-per-share slippage with the PTrade signature."""
         if self._engine is None or not hasattr(self._engine, "cost"):
             return

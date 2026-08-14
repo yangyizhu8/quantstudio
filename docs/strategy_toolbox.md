@@ -75,11 +75,11 @@
 > **日线日期区间与 count 形式前复权行为一致（R1-A 修复后契约）**：`get_bars` 的日期区间路径（`start_date`/`end_date`）与 `get_bars_by_count`（`count`）路径**均遵守同一 fq 契约**——`fq='pre'`/`fq='dypre'` 返回前复权 OHLC（`*_front` 列值），`fq=None`/`fq='none'` 返回 raw OHLC；两者对同一区间、同一代码、同一 fq 返回**逐值一致**的前复权价。底层 `query_bars_by_range` 与 `query_bars_by_range_batch` 经 R1-A 增加 `use_qfq` 参数后与 count 路径的 `use_qfq` 语义对齐（默认 `use_qfq=False` 保持历史 raw 行为，不破坏旧调用）。**区间路径不向公共返回列集新增 `*_front` 列**（前复权通过 `open_front AS open` 等别名就地替换公共 OHLC 列值实现）。
 > **MCP ETF raw landing contract (2026-08-03 repair)**: qfq-to-raw restoration uses the adjustment factor at the greatest factor timestamp (`MAX(time)`), never the historical maximum factor value. ETF split/consolidation can make factors decrease. UnitCheck continues to validate canonical raw `amount/(close*volume)` and must not substitute `close_front`; this keeps provider errors visible instead of masking them in strategy-facing prices.
 >
-> **撮合/估值同为前复权口径（前复权闭环）**：引擎每日全市场快照 `query_daily_snapshot`（成交价、持仓估值、`data[code].price`、`BarData` OHLC 的唯一来源）将 OHLC 映射为前复权列（`*_front`，缺失回退原始价），`preClose` 按 `close_front/close` 同因子缩放，保证 `(close-preClose)/preClose` 与真实日收益一致。因此 ETF 份额拆分、股票分红除权不会产生价格缺口与虚假盈亏；代价是成交价为前复权价（分红等价于自动再投资，前复权回测标准口径）。`pctChg`/`volume`/`amount` 保持原始口径。
+> **撮合/估值 raw 口径、信号前复权（2026-08-14 PTrade 实证对齐）**：引擎每日全市场快照 `query_daily_snapshot`（成交价、持仓估值、`data[code].price`、`BarData` OHLC 的唯一来源）OHLC 使用**原始价（raw，不复权）**——PTrade 平台实证：日线成交价 = T 日 raw close（5/5 精确）、分钟 = bar raw close（6/6 精确）、估值 last_price = raw close。`preClose` 为行情源除权参考价语义（除权日 = 前收 × 复权因子），`(close-preClose)/preClose` 在所有日期均正确。信号取数链路独立保持前复权（`get_history`/`get_price` 默认 `fq='pre'` 走 `*_front` 列），两条链路 SQL 独立互不影响；`pctChg`/`volume`/`amount` 保持原始口径。
 >
 > **成交额列双端契约（B1，返回端逆映射）**：DB 物理列为 `amount`，Ptrade 官方契约列名为 `money`。`get_history`/`get_price` 返回的 DataFrame 在含 `amount` 列时同步追加**同值 `money` 列**（列尾追加，`amount` 保留、数值不变）；请求 `fields=['money']` 时也正确返回 `money` 列。双端/PTrade 目标策略**必须只读 `money`**（读 `amount`/`close_front`/`volume_front`/`open_front` 等本地物理列名会被 Validator 以 `PTRADE-LOCAL-COLUMN` 规则阻断）；本地单端策略读 `amount` 仍兼容。纯返回端别名，黄金回归已证明对回测数值零影响。
 
-> Agent-first `agent_strategy_design.json` 只允许 `execution_price_basis="pre_adjusted_price"`；信号、撮合、成交、现金和估值不得声明为 raw 口径。
+> Agent-first `agent_strategy_design.json` 只允许 `signal_price_adjustment="pre"` + `execution_price_basis="raw_trade_price"`：信号用前复权（`fq='pre'`），撮合、成交、现金和估值用原始价（raw，PTrade 实证对齐）；`pre_adjusted_price` 已从 Schema 移除。
 
 | 函数 | 说明 |
 |------|------|
