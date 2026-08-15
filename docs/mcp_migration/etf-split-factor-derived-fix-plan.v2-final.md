@@ -207,10 +207,10 @@ def _apply_factor_derived_split(self, curr_data, prev_data, day_str):
 
 ### 3.6 阶段 2：ETF 现金分红精确入账（依赖管线 etf_dividend 表，独立小步）
 
-> **状态（2026-08-16）：已实施**——etf_dividend 表落地（882 行，510500 div_cash 与 tushare 逐分吻合）后按本节实施完成；实现：`duckdb_data_access.query_etf_dividends(date_ms)`（div_proc='实施' 过滤 + 表缺失返回空）、`DuckDBReferenceDataProvider.get_etf_dividends(date)`、引擎 `_apply_etf_cash_dividends(day_str)`（主循环 `_apply_corporate_actions` 之后调用，策略前入账）；`already_handled` 排除 `etf_cash_dividend` 类型——同日分红+送股**不互斥**（审核要点）。测试：tests/test_etf_cash_dividends.py 8 例（免税全额/股票零触碰/no-op×3/510500 除息日净值连续/同日分红+送股/精确记录仍阻止反推）。
+> **状态（2026-08-16）：已实施 + PTrade 实测修正（0.8 口径）**——etf_dividend 表落地（882 行，510500 div_cash 与 tushare 逐分吻合）后按本节实施；**2026-08-16 PTrade 平台实证（div_tax_probe 策略，Log.txt 现金增量逐分核对）**：ETF 现金分红与股票**统一按税前 × 0.80 入账**（600000 11500×0.42×0.8=3864.00；510500 10800×0.149×0.8=1287.36，全额口径 1609.2 被排除；平台除息价=税前口径 8.413−0.149=8.264，确认平台"除息按税前、入账扣 20%"）——**公募税法免税与平台实现不一致，回测以平台实测为准**，本节"全额入账"表述按实证修订为 `div_cash × 0.80`（`tax_policy='etf_pre_tax_x_0.80'`，与股票同口径）。实现：`duckdb_data_access.query_etf_dividends(date_ms)`（div_proc='实施' 过滤 + 表缺失返回空）、`DuckDBReferenceDataProvider.get_etf_dividends(date)`、引擎 `_apply_etf_cash_dividends(day_str)`（主循环 `_apply_corporate_actions` 之后调用，策略前入账）；`already_handled` 排除 `etf_cash_dividend` 类型——同日分红+送股**不互斥**。测试：tests/test_etf_cash_dividends.py 10 例（0.8 口径/PTrade 实测对照 3864.00 与 1287.36/股票零触碰/no-op×3/510500 除息日净值缺口 0.2×div×vol/同日分红+送股/精确记录仍阻止反推）。
 
 - 新增 `duckdb_data_access.query_etf_dividends(date_ms)`：`SELECT code, div_cash FROM etf_dividend WHERE ex_date = ?`（div_proc='实施'）；
-- 新增 provider 方法 + 引擎 `_apply_etf_cash_dividends(day_str)`：对持仓 ETF，`cash += volume × div_cash`（**全额入账**——公募基金分红对个人投资者免征所得税，与股票 20% 短持税口径不同；以 PTrade 实测对齐为准），并记录 corporate_actions（type='etf_cash_dividend'）；
+- 新增 provider 方法 + 引擎 `_apply_etf_cash_dividends(day_str)`：对持仓 ETF，`cash += volume × div_cash × 0.80`（**0.8 入账——2026-08-16 PTrade 实测修订**：平台对 ETF 分红与股票统一扣 20%，600000/510500 现金增量逐分吻合；原"全额入账（公募免税）"假设与平台实现不符，以平台实测为准，与股票 20% 短持税同口径），并记录 corporate_actions（type='etf_cash_dividend'）；
 - 表不存在/未落地 → **no-op 跳过**（阶段 2 前不影响阶段 1）；
 - 与阶段 1 的关系：现金分红带（1.01~1.10）阶段 1 跳过 + WARN 的兜底逻辑**保留**（etf_dividend 覆盖不全时 518880/159915 类缺口仍由 fund_adj/preClose 检测告警）。
 
@@ -237,7 +237,7 @@ def _apply_factor_derived_split(self, curr_data, prev_data, day_str):
 | 除权送股 | 30100→60200 | 30100→60200（preClose 反推+吸附） | ✅ 本方案 |
 | avg_cost | 3.321→1.661 | ÷2.0 一致 | ✅ 本方案 |
 | 净值连续性 | -0.27% | -0.23%（|Δ|≤0.1pp） | ✅ 本方案 |
-| 现金分红 | 自动入账 | 阶段 2：etf_dividend.div_cash 全额入账（管线落地后） | ⏳ 阶段 2 |
+| 现金分红 | 自动入账 | 阶段 2：etf_dividend.div_cash × 0.80 入账（**PTrade 实测 0.8 口径**，2026-08-16 已实施） | ✅ 阶段 2 |
 
 ---
 

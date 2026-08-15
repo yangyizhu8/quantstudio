@@ -882,10 +882,13 @@ class BacktestEngine:
                         f"{old_volume}→{new_volume} (ratio={ratio:.4f}, preClose反推)")
 
     def _apply_etf_cash_dividends(self, day_str: str) -> None:
-        """ETF 现金分红入账（阶段 2，v2-final §3.6）：etf_dividend.div_cash × volume 全额入账。
+        """ETF 现金分红入账（阶段 2，v2-final §3.6）：etf_dividend.div_cash × volume × 0.80。
 
-        公募基金分红对个人投资者**免征所得税**——与股票 20% 短持红利税（
-        `_apply_corporate_actions` 的 pre_tax × 0.80）口径不同，此处**全额入账**（不乘 0.80）。
+        **0.8 口径（2026-08-16 PTrade 实测修正）**：PTrade 平台对 ETF 现金分红与股票统一
+        按税前 × 0.80（扣 20%）入账——实测 600000 11500×0.42×0.8=3864.00、
+        510500 10800×0.149×0.8=1287.36，与平台现金增量逐分吻合；公募基金税法免税与平台
+        实现不一致，回测目标是复刻平台行为，**以平台实测为准**（与股票 `pre_tax × 0.80`
+        同口径，tax_policy='etf_pre_tax_x_0.80'）。
         与阶段 1（`_apply_factor_derived_split`）**不互斥**：同日分红+送股同时发生；
         already_handled 只防同一路径重复触发，不阻止两路径并行。
         etf_dividend 表不存在/无记录 → no-op（不阻塞回测，缺口由阶段 1 现金分红带
@@ -911,18 +914,18 @@ class BacktestEngine:
             div_cash = float(row.get("div_cash", 0.0) or 0.0)
             if div_cash <= 0:
                 continue
-            # 全额入账：公募基金分红对个人投资者免征所得税（与股票 pre_tax×0.80 区分）
-            credit = pos.volume * div_cash
+            # 0.8 入账：PTrade 实测（2026-08-16）ETF 分红同样扣 20%（与股票 pre_tax×0.80 同口径）
+            credit = pos.volume * div_cash * 0.80
             self.account.cash += credit
             self.result.corporate_actions.append({
                 "date": day_str, "code": code,
                 "type": "etf_cash_dividend",
                 "div_cash": div_cash,
                 "cash_credit_net": credit,
-                "tax_policy": "etf_exempt",
+                "tax_policy": "etf_pre_tax_x_0.80",
             })
             logger.info(f"[ETF Dividend] {code} {day_str} 现金分红入账: "
-                        f"{pos.volume}×{div_cash}={credit:.2f}（公募免税）")
+                        f"{pos.volume}×{div_cash}×0.80={credit:.2f}（PTrade 实测口径）")
 
     def _apply_slippage(self, price: float, direction: str) -> float:
         """Apply strategy-configured slippage below the public API boundary."""
