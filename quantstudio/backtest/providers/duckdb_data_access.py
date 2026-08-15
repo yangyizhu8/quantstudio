@@ -1797,6 +1797,24 @@ class DuckDBDataAccess:
         """
         return conn.execute(sql, params).fetchdf()
 
+    def query_etf_fund_types(self) -> dict:
+        """per-code ETF T+0 分类装载（etf_basic.fund_type，仅上市状态）。
+
+        引擎 per-code T+0（PR4 决策4 扩展）的唯一数据通道，与 get_etf_list_local
+        同一数据源。返回 {code: fund_type}（fund_type 归一化为小写；缺失为空串）。
+        连接不可用返回 {}；表缺失/查询异常向上抛出，由调用方 fail-closed（全 T+1 + warning）。
+        """
+        conn = self._get_conn()
+        if conn is None:
+            return {}
+        rows = conn.execute(
+            "SELECT code, fund_type FROM etf_basic WHERE status = 'L'"
+        ).fetchall()
+        out: dict = {}
+        for code, ftype in rows:
+            out[str(code)] = str(ftype).strip().lower() if ftype is not None else ""
+        return out
+
     def query_cb_list_active(self) -> pd.DataFrame:
         """迁移自 PtradeAPI.get_cb_list() (ptrade_api.py:1689-1695)"""
         conn = self._get_conn()

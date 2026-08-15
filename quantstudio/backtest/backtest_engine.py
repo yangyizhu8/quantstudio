@@ -26,6 +26,11 @@ import numpy as np
 logger = logging.getLogger(__name__)
 from quantstudio._paths import db_path
 
+# PR4 决策4（per-code 扩展，docs/etf-t0-per-code-design.md §4）：
+# etf_basic.fund_type ∈ T0_FUND_TYPES → ETF T+0（买入当日可卖）；equity → T+1；
+# 未知代码（不在 etf_basic，如 LOF）→ fail-closed T+1。
+T0_FUND_TYPES = frozenset({"qdii", "gold", "commodity", "bond", "money"})
+
 
 def _prefer_project_data_db(project_root: Path, configured_db: Path) -> Path:
     """Prefer the current project's DuckDB for local backtests.
@@ -388,9 +393,12 @@ class BacktestEngine:
         if resolved_rebalance_mode == "callback_basket" and engine_profile == "minute-bar-v1":
             raise ValueError("minute-bar-v1 不支持 callback_basket（分钟即时撮合模型，无跨日 basket 语义）")
         self.rebalance_mode = resolved_rebalance_mode
-        # PR4 决策 4：ETF T+0 只挂分钟 Profile。日线 Profile 强制 False（守护黄金基线 87,752.56）。
-        # is_etf 判定走 PR1 的 security_code_rules（不新写分类逻辑）。
+        # PR4 决策 4（per-code）：ETF T+0 只挂分钟 Profile。日线 Profile 强制 False（守护黄金基线 87,752.56）。
+        # etf_t0=True 时按 etf_basic.fund_type 做 per-code 分类（_is_t0 懒装载，fail-closed T+1）；
+        # etf_t0=False（默认）恒 T+1，不触达数据装载（零查询零 warning）。
         self.etf_t0 = bool(etf_t0) if engine_profile == "minute-bar-v1" else False
+        # per-code T+0 分类缓存：None=未装载；dict={code: is_t0}（仅 etf_t0=True 时懒装载）
+        self._t0_cache: Optional[dict] = None
         self.account = Account(cash=capital)
         self.result = BacktestResult()
         if providers is None:
@@ -758,6 +766,39 @@ class BacktestEngine:
             return max(0.0, price * (1 + ratio) + fixed)
         return max(0.0, price * (1 - ratio) - fixed)
 
+    def _load_etf_t0_cache(self) -> None:
+        """装载 etf_basic.fund_type → {code: is_t0} 缓存（per-code T+0，PR4 决策4 扩展）。
+
+        仅当 minute-bar-v1 and etf_t0 时被 _is_t0 懒调用；数据经 provider/数据访问层
+        （与 get_etf_list_local 同一数据源），引擎内不裸 SQL。任何失败 → 空缓存 + warning
+        （fail-closed 全 T+1），绝不静默放行。etf_t0=False / daily profile 路径不触达本方法。
+        """
+        self._t0_cache = {}
+        try:
+            market = getattr(self._providers, "market", None)
+            data = getattr(market, "_data", None)
+            if data is None or not hasattr(data, "query_etf_fund_types"):
+                logger.warning("ETF T+0 分类数据源不可用，全部按 T+1（fail-closed）")
+                return
+            fund_types = data.query_etf_fund_types()
+            for code, ftype in fund_types.items():
+                self._t0_cache[code] = ftype in T0_FUND_TYPES
+            if not self._t0_cache:
+                logger.warning("ETF T+0 分类装载结果为空，全部按 T+1（fail-closed）")
+        except Exception as e:
+            logger.warning("ETF T+0 分类装载失败，全部按 T+1（fail-closed）: %s", e)
+
+    def _is_t0(self, code: str) -> bool:
+        """per-code ETF T+0 判定：fund_type ∈ T0_FUND_TYPES → True；未知代码 → False（T+1）。
+
+        入参为 QMT 格式（如 159870.SZ，见 _immediate_execute 的 _to_qmt），
+        归一化为裸码后查 etf_basic.fund_type 缓存（缓存键为裸码）。
+        """
+        if self._t0_cache is None:
+            self._load_etf_t0_cache()
+        bare = str(code).split(".")[0]
+        return self._t0_cache.get(bare, False)
+
     def _execute_buy(self, code, price, buy_value=None, buy_shares=None, date="", curr_data=None):
         """即时买入。返回成交股数（0 表示未成交），供 _immediate_execute 构造 Order。"""
         from .libs.shared_ashare_rules import round_to_lot
@@ -797,9 +838,10 @@ class BacktestEngine:
 
         self.account.cash -= total_cost
         pos = self.account.positions.get(code)
-        # PR4 决策 4：ETF T+0（仅分钟 Profile + etf_t0=True）。is_etf 走 PR1 security_code_rules。
+        # PR4 决策 4（per-code）：ETF T+0 按 etf_basic.fund_type 分类（_is_t0）。
+        # etf_t0=True → 按分类解锁 can_sell；False（默认）→ 全 T+1，且短路不触达数据装载。
         # 清理项：盘前解锁全证券一致；T+0 差异只在这里——买入后立即解锁（含昨日存量+今日新买）。
-        is_etf_t0 = self.etf_t0 and _is_etf_code(code)
+        is_etf_t0 = self.etf_t0 and self._is_t0(code)
         if pos:
             new_total = pos.volume + target_vol
             pos.avg_cost = (pos.avg_cost * pos.volume + fill_price * target_vol) / new_total
