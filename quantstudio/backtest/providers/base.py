@@ -170,6 +170,12 @@ class ReferenceDataProvider(ABC):
     def get_exrights(self, code: str, date: Optional[str] = None) -> Optional[pd.DataFrame]: return None
     def get_corporate_actions(self, date: str) -> pd.DataFrame:
         return pd.DataFrame(columns=["code", "cash_div", "stk_div", "div_rat"])
+    def get_etf_dividends(self, date: str) -> pd.DataFrame:
+        """ETF 现金分红（阶段 2，v2-final §3.6）：etf_dividend.div_cash 每股派息。
+
+        默认实现返回空 DataFrame（表未落地/无数据时引擎 no-op）。
+        """
+        return pd.DataFrame(columns=["code", "div_cash"])
     def get_blocks(self, code: str) -> Optional[dict]: return None
     def get_industry_stocks(self, industry_code: str) -> List[str]: return []
     def get_etf_stock_list(self, etf_code: str) -> List[str]: return []

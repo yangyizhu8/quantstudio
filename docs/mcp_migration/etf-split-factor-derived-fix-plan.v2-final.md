@@ -207,6 +207,8 @@ def _apply_factor_derived_split(self, curr_data, prev_data, day_str):
 
 ### 3.6 阶段 2：ETF 现金分红精确入账（依赖管线 etf_dividend 表，独立小步）
 
+> **状态（2026-08-16）：已实施**——etf_dividend 表落地（882 行，510500 div_cash 与 tushare 逐分吻合）后按本节实施完成；实现：`duckdb_data_access.query_etf_dividends(date_ms)`（div_proc='实施' 过滤 + 表缺失返回空）、`DuckDBReferenceDataProvider.get_etf_dividends(date)`、引擎 `_apply_etf_cash_dividends(day_str)`（主循环 `_apply_corporate_actions` 之后调用，策略前入账）；`already_handled` 排除 `etf_cash_dividend` 类型——同日分红+送股**不互斥**（审核要点）。测试：tests/test_etf_cash_dividends.py 8 例（免税全额/股票零触碰/no-op×3/510500 除息日净值连续/同日分红+送股/精确记录仍阻止反推）。
+
 - 新增 `duckdb_data_access.query_etf_dividends(date_ms)`：`SELECT code, div_cash FROM etf_dividend WHERE ex_date = ?`（div_proc='实施'）；
 - 新增 provider 方法 + 引擎 `_apply_etf_cash_dividends(day_str)`：对持仓 ETF，`cash += volume × div_cash`（**全额入账**——公募基金分红对个人投资者免征所得税，与股票 20% 短持税口径不同；以 PTrade 实测对齐为准），并记录 corporate_actions（type='etf_cash_dividend'）；
 - 表不存在/未落地 → **no-op 跳过**（阶段 2 前不影响阶段 1）；

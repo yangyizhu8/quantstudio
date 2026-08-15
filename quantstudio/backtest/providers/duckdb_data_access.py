@@ -925,6 +925,25 @@ class DuckDBDataAccess:
                 [int(date_ms)],
             ).fetchdf()
 
+    def query_etf_dividends(self, date_ms: int) -> pd.DataFrame:
+        """Return ETF cash dividends (div_cash per share) for an ex-date.
+
+        阶段 2（引擎方案 v2-final §3.6）：etf_dividend 表（tushare fund_div，管线方案产出）。
+        表不存在/无数据 → 空 DataFrame（no-op 设计，引擎侧不抛异常、不阻塞回测）。
+        Returns: code, div_cash（每股派息，元/份；div_proc='实施' 过滤）。
+        """
+        conn = self._get_conn()
+        if conn is None:
+            return pd.DataFrame(columns=["code", "div_cash"])
+        tables = self._existing_tables()
+        if "etf_dividend" not in tables:
+            return pd.DataFrame(columns=["code", "div_cash"])
+        return conn.execute(
+            """SELECT code, div_cash FROM etf_dividend
+               WHERE ex_date = ? AND div_proc = '实施'""",
+            [int(date_ms)],
+        ).fetchdf()
+
     def query_stock_exrights(self, code: str, date_ms: int) -> Optional[pd.DataFrame]:
         """Query stock_dividend for ex-rights information on a given date.
 

@@ -350,6 +350,9 @@ class DuckDBReferenceDataProvider(ReferenceDataProvider):
         }}
     def get_corporate_actions(self, date):
         return self._data.query_corporate_actions(_start_ms(str(date)[:10]))
+    def get_etf_dividends(self, date):
+        """ETF 现金分红（阶段 2，v2-final §3.6）：etf_dividend.div_cash 每股派息。"""
+        return self._data.query_etf_dividends(_start_ms(str(date)[:10]))
     def get_exrights(self, code, date=None):
         """Return ex-rights info for a single code on a given date.
 

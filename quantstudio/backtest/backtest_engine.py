@@ -512,6 +512,8 @@ class BacktestEngine:
             if self._progress_callback:
                 self._progress_callback(i + 1, total_days, day_str)
             self._apply_corporate_actions(day_str)
+            # 阶段 2（v2-final §3.6）：ETF 现金分红入账（公募免税全额；与送股反推不互斥）
+            self._apply_etf_cash_dividends(day_str)
 
             # PR4: 分钟 Profile 走分钟事件循环（独立方法，日线循环逐行不变）
             if self.engine_profile == "minute-bar-v1":
@@ -779,9 +781,12 @@ class BacktestEngine:
         from .libs.shared_ashare_rules import round_to_lot
         from .libs.security_code_rules import is_etf
         # 【P0-1 修订】裸码统一：corporate_actions 的 code 是 QMT 格式（'600000.SH'）
+        # 【阶段 2 协调】排除 etf_cash_dividend：同日 ETF 现金分红不阻止送股反推
+        # （分红+送股同日可同时发生，already_handled 只防同一路径重复触发）。
         already_handled = {str(a.get('code', '')).split('.')[0]
                            for a in self.result.corporate_actions
-                           if a.get('date') == day_str}
+                           if a.get('date') == day_str
+                           and a.get('type') != 'etf_cash_dividend'}
         prev_close_map = {}
         if 'code' in prev_data.columns:
             for _, row in prev_data.iterrows():
@@ -875,6 +880,49 @@ class BacktestEngine:
             })
             logger.info(f"[Split] {code} {day_str} 因子反推送股: "
                         f"{old_volume}→{new_volume} (ratio={ratio:.4f}, preClose反推)")
+
+    def _apply_etf_cash_dividends(self, day_str: str) -> None:
+        """ETF 现金分红入账（阶段 2，v2-final §3.6）：etf_dividend.div_cash × volume 全额入账。
+
+        公募基金分红对个人投资者**免征所得税**——与股票 20% 短持红利税（
+        `_apply_corporate_actions` 的 pre_tax × 0.80）口径不同，此处**全额入账**（不乘 0.80）。
+        与阶段 1（`_apply_factor_derived_split`）**不互斥**：同日分红+送股同时发生；
+        already_handled 只防同一路径重复触发，不阻止两路径并行。
+        etf_dividend 表不存在/无记录 → no-op（不阻塞回测，缺口由阶段 1 现金分红带
+        WARN 兜底检测）。
+        """
+        if not self.account.positions:
+            return
+        reference = getattr(self._providers, "reference", None)
+        if reference is None or not hasattr(reference, "get_etf_dividends"):
+            return
+        try:
+            df = reference.get_etf_dividends(day_str)
+        except Exception as e:
+            logger.debug(f"[ETF Dividend] 查询失败（etf_dividend 未落地）: {e}")
+            return
+        if df is None or len(df) == 0:
+            return
+        for _, row in df.iterrows():
+            code = self._to_qmt(str(row.get("code", "")))
+            pos = self.account.positions.get(code)
+            if pos is None or pos.volume <= 0:
+                continue
+            div_cash = float(row.get("div_cash", 0.0) or 0.0)
+            if div_cash <= 0:
+                continue
+            # 全额入账：公募基金分红对个人投资者免征所得税（与股票 pre_tax×0.80 区分）
+            credit = pos.volume * div_cash
+            self.account.cash += credit
+            self.result.corporate_actions.append({
+                "date": day_str, "code": code,
+                "type": "etf_cash_dividend",
+                "div_cash": div_cash,
+                "cash_credit_net": credit,
+                "tax_policy": "etf_exempt",
+            })
+            logger.info(f"[ETF Dividend] {code} {day_str} 现金分红入账: "
+                        f"{pos.volume}×{div_cash}={credit:.2f}（公募免税）")
 
     def _apply_slippage(self, price: float, direction: str) -> float:
         """Apply strategy-configured slippage below the public API boundary."""
