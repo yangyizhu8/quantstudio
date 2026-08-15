@@ -538,6 +538,9 @@ class BacktestEngine:
                 logger.debug(f"[Backtest] {day_str} no data, skipped")
                 continue
 
+            # ETF 除权补正兜底：preClose 反推（ETF-only，stock_dividend 无 ETF 记录时）
+            self._apply_factor_derived_split(curr_data, prev_data, day_str)
+
             match_prices = self._build_match_prices(curr_data, trade_days, i)
             prices = {self._to_qmt(c): v for c, v in zip(curr_data['code'], curr_data['close'])}
 
@@ -757,6 +760,121 @@ class BacktestEngine:
                 "added_shares": added,
                 "tax_policy": "pre_tax_x_0.80",
             })
+
+    def _apply_factor_derived_split(self, curr_data, prev_data, day_str):
+        """ETF 除权补正兜底：preClose 反推除权比例（仅 ETF，stock_dividend 无 ETF 记录时）。
+
+        带区规则（v2-final §3.2）：
+          ratio < 0.99      份额合并 → 对称处理（吸附 0.5 倍数，未吸附 WARN+跳过）【P1-4】
+          0.99~1.01         非除权 → 跳过
+          1.01 < ratio < 1.10 现金分红带 → 跳过 + WARN（阶段2 etf_dividend 精确入账）【P0-2】
+          ratio >= 1.10     送股/折算 → 吸附 0.5 倍数（容差 0.5%），未吸附按原值 + WARN【P1-3】
+        仅 is_etf 生效（股票走 stock_dividend 精确路径，行为零变化）【P1-5】。
+        already_handled 用裸码比对（corporate_actions code 为 QMT 格式）【P0-1】。
+        """
+        if not self.account.positions:
+            return
+        if curr_data is None or prev_data is None:
+            return
+        from .libs.shared_ashare_rules import round_to_lot
+        from .libs.security_code_rules import is_etf
+        # 【P0-1 修订】裸码统一：corporate_actions 的 code 是 QMT 格式（'600000.SH'）
+        already_handled = {str(a.get('code', '')).split('.')[0]
+                           for a in self.result.corporate_actions
+                           if a.get('date') == day_str}
+        prev_close_map = {}
+        if 'code' in prev_data.columns:
+            for _, row in prev_data.iterrows():
+                prev_close_map[str(row['code'])] = row.get('close', 0)
+        for code, pos in self.account.positions.items():
+            if pos.volume <= 0:
+                continue
+            bare = code.split('.')[0] if '.' in code else code
+            # 【P1-5 修订】仅 ETF 走反推；股票由 stock_dividend 精确路径处理
+            if not is_etf(bare):
+                continue
+            if bare in already_handled:
+                continue  # 已有精确记录（stock_dividend/现金入账）→ 不重复处理
+            prev_close = prev_close_map.get(bare, 0)
+            if prev_close <= 0:
+                continue
+            row = curr_data[curr_data['code'] == bare]
+            if len(row) == 0:
+                continue
+            preclose = row.iloc[0].get('preClose', 0)
+            if preclose <= 0:
+                continue
+            ratio = prev_close / preclose
+
+            # ---- 带区规则（v2-final §3.2）----
+            if ratio < 0.99:
+                # 【P1-4 修订】份额合并：对称处理（吸附 0.5 倍数）
+                snapped = round(ratio * 2) / 2
+                if snapped > 0 and abs(ratio - snapped) / snapped < 0.005:
+                    ratio = snapped
+                else:
+                    logger.warning(f"[Split] {code} {day_str} 疑似份额合并 ratio={ratio:.4f} "
+                                   f"未吸附，跳过（数据异常/非 0.5 倍数）")
+                    continue
+                old_volume = int(pos.volume)
+                new_total = int(round(old_volume * ratio))
+                # 【P1-4 执行修正】round_to_lot 对负值截 0（max(raw/100*100, 0)，A股订单语义），
+                # 合并为负向变化会恒得 0 → 合并永不生效（v2-final §3.5 代码缺陷，与 §3.2 表格/
+                # §六 测试 7 矛盾）。此处按 §3.2 "volume ×= ratio（整手向下取整）"直接对乘积取整手。
+                new_volume = int(new_total / 100) * 100
+                added = new_volume - old_volume
+                if added >= 0 or new_volume <= 0:
+                    continue  # 合并且无净减少/合并到 0 股（数值异常）→ 跳过
+                new_volume = old_volume + added
+                pos.avg_cost = pos.avg_cost * old_volume / new_volume
+                pos.volume = new_volume
+                pos.can_sell += added
+                self.result.corporate_actions.append({
+                    'date': day_str, 'code': bare,
+                    'type': 'factor_derived_merge',
+                    'ratio': ratio, 'old_volume': old_volume,
+                    'new_volume': new_volume, 'added': added,
+                    'note': 'preClose反推合并（stock_dividend无记录）',
+                })
+                logger.info(f"[Split] {code} {day_str} 因子反推合并: "
+                            f"{old_volume}→{new_volume} (ratio={ratio:.4f})")
+                continue
+
+            if ratio <= 1.01:
+                continue  # 非除权日
+
+            if ratio < 1.10:
+                # 【P0-2 修订】现金分红带：不送股、不改成本（阶段2 由 etf_dividend 精确入账）
+                logger.warning(f"[Split] {code} {day_str} 现金分红带 ratio={ratio:.4f} "
+                               f"（收益率 {1-1/ratio:.2%}），跳过送股（TD-ETF-DIV/阶段2）")
+                continue
+
+            # ratio >= 1.10：送股/份额折算
+            snapped = round(ratio * 2) / 2
+            if snapped > 0 and abs(ratio - snapped) / snapped < 0.005:
+                ratio = snapped  # 吸附命中（1.9993→2.0）
+            else:
+                logger.warning(f"[Split] {code} {day_str} 非 0.5 倍数折算 ratio={ratio:.4f}，"
+                               f"按原值送股")  # 【P1-3】512890≈2.0462 等真实折算
+
+            old_volume = int(pos.volume)
+            new_total = int(round(old_volume * ratio))
+            added = round_to_lot(new_total - old_volume, 100)
+            if added <= 0:
+                continue
+            new_volume = old_volume + added
+            pos.avg_cost = pos.avg_cost * old_volume / new_volume
+            pos.volume = new_volume
+            pos.can_sell += added
+            self.result.corporate_actions.append({
+                'date': day_str, 'code': bare,
+                'type': 'factor_derived_split',
+                'ratio': ratio, 'old_volume': old_volume,
+                'new_volume': new_volume, 'added': added,
+                'note': 'preClose反推（stock_dividend无记录）',
+            })
+            logger.info(f"[Split] {code} {day_str} 因子反推送股: "
+                        f"{old_volume}→{new_volume} (ratio={ratio:.4f}, preClose反推)")
 
     def _apply_slippage(self, price: float, direction: str) -> float:
         """Apply strategy-configured slippage below the public API boundary."""
