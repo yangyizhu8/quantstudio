@@ -118,6 +118,17 @@
         "execution_price_basis": {
           "const": "raw_trade_price",
           "description": "撮合、现金、成交、持仓估值、data[code].price 和 BarData OHLC 统一使用原始价（raw，不复权）快照——PTrade 平台实证 2026-08-14：日线成交价 = T 日 raw close（5/5 精确）、分钟 = bar raw close（6/6 精确）、估值 last_price = raw close。信号 fq='pre' 前复权与执行 raw 口径分离；pre_adjusted_price 不再是 Agent-first 设计允许的执行契约。"
+        },
+        "etf_t0_enforcement": {
+          "type": "string",
+          "enum": ["engine_per_code", "all_t1"],
+          "default": "all_t1",
+          "description": "ETF T+0/T+1 执行口径（docs/etf-t0-per-code-design.md §4/§6.2）：engine_per_code=按 etf_basic.fund_type 逐码分类（{qdii,gold,commodity,bond,money}→T+0，equity→T+1，未知→fail-closed T+1，仅 minute-bar-v1+etf_t0=true 生效）；all_t1=全部按 T+1（默认，与引擎现状一致）。声明 engine_per_code 的策略必须同时声明 stop_deferral_semantics。"
+        },
+        "stop_deferral_semantics": {
+          "type": "string",
+          "enum": ["trigger_lock_defer_next_sellable_day"],
+          "description": "止损顺延语义：触发即锁（不因价格回升撤销）；当日可卖（T+0 或非当日买入）当日成交；当日不可卖（T+1 当日买入）顺延至次日首个可卖窗口成交。实现采用'尝试卖出→持仓对账→未成交挂起→次日重试'模式，不查询 ETF 类别、不读取订单返回值的本地字段。"
         }
       },
       "additionalProperties": false

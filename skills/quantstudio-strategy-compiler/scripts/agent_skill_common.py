@@ -270,6 +270,41 @@ def execution_funding_errors(design: dict[str, Any]) -> list[dict[str, str]]:
     return issues
 
 
+ETF_T0_ENFORCEMENTS = ("engine_per_code", "all_t1")
+STOP_DEFERRAL_SEMANTICS = ("trigger_lock_defer_next_sellable_day",)
+
+
+def etf_t0_contract_errors(design: dict[str, Any]) -> list[dict[str, str]]:
+    """Cross-check the per-code ETF T+0 contract（docs/etf-t0-per-code-design.md §6）。
+
+    - etf_t0_enforcement 取值必须在枚举内；
+    - engine_per_code（按 fund_type 逐码分类）必须同时声明 stop_deferral_semantics
+      （止损顺延语义），否则 BLOCK——分钟级止损策略不得默认"当日必卖"。
+    """
+    issues: list[dict[str, str]] = []
+    contract = design.get("market_data_contract")
+    if not isinstance(contract, dict):
+        return issues
+
+    def add(rule: str, message: str) -> None:
+        issues.append({"rule_id": rule, "message": message})
+
+    enforcement = contract.get("etf_t0_enforcement")
+    deferral = contract.get("stop_deferral_semantics")
+    if enforcement is not None and enforcement not in ETF_T0_ENFORCEMENTS:
+        add("ETF-T0-ENFORCEMENT-ENUM",
+            f"etf_t0_enforcement={enforcement!r} 不在枚举 {ETF_T0_ENFORCEMENTS} 内")
+    if enforcement == "engine_per_code" and deferral != STOP_DEFERRAL_SEMANTICS[0]:
+        add("STOP-DEFERRAL-SEMANTICS-MISSING",
+            "etf_t0_enforcement='engine_per_code' 必须同时声明 "
+            f"stop_deferral_semantics={STOP_DEFERRAL_SEMANTICS[0]!r}（止损触发即锁、"
+            "T+1 当日买入顺延次日首个可卖窗口成交，见 references/etf-t0-rules.md）")
+    if deferral is not None and deferral not in STOP_DEFERRAL_SEMANTICS:
+        add("STOP-DEFERRAL-SEMANTICS-ENUM",
+            f"stop_deferral_semantics={deferral!r} 不在枚举 {STOP_DEFERRAL_SEMANTICS} 内")
+    return issues
+
+
 def function_map(tree: ast.AST) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
     return {
         node.name: node

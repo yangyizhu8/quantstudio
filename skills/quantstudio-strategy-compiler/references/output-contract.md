@@ -30,6 +30,12 @@
 - Run Card 记录 Spec/IR/代码/报告路径及 SHA-256（产物存在后）。
 - 保存所有契约版本、Profile、数据区间、Python/QuantStudio 版本、随机种子和数据指纹。
 - 相同输入、数据和版本应生成相同业务代码；时间戳等运行元数据不得进入业务逻辑。
+- **运行层复现性（G3.5，R5 门禁）**：相同策略产物必须在两个独立进程各跑一遍
+  （同一窗口/资金/配置，`PYTHONHASHSEED` 固定或随机种子记录）；证据必须绑定两次运行的
+  `config.csv`/`daily_stats.csv`/`trades.csv`（`user_backtest_evidence` 2.1 的
+  `artifacts` + `reproducibility_artifacts`），两侧三件套 SHA-256 **逐位一致**才 R5 PASS；
+  不一致即 R5 FAIL 并归因（策略非确定性——dict/set 迭代顺序/随机数——或数据漂移或环境差异）。
+  运行日志因含时间戳不参与跨运行比对。
 
 ## 3. 状态语义
 

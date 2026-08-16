@@ -23,12 +23,13 @@
     "match_price_mode",
     "log_excerpt",
     "result_dir",
-    "artifacts"
+    "artifacts",
+    "reproducibility_artifacts"
   ],
   "properties": {
     "evidence_version": {
-      "const": "2.0",
-      "description": "2.0 binds real run artifacts with SHA-256. Self-reported runtime_checks booleans are informational only and are never authoritative PASS evidence. Evidence 1.0 submissions are rejected as EVIDENCE_INCOMPLETE."
+      "const": "2.1",
+      "description": "2.1 binds real run artifacts with SHA-256 AND requires the R5 reproducibility gate (G3.5): the same strategy must be run twice in independent processes; reproducibility_artifacts' config/daily_stats/trades SHA-256 must equal the main run's, otherwise R5 FAIL. Self-reported runtime_checks booleans are informational only. Evidence 1.0/2.0 submissions are rejected as EVIDENCE_INCOMPLETE."
     },
     "strategy_id": {
       "type": "string",
@@ -146,6 +147,35 @@
       },
       "additionalProperties": false
     },
+    "reproducibility_artifacts": {
+      "type": "object",
+      "required": [
+        "config_csv",
+        "daily_stats_csv",
+        "trades_csv"
+      ],
+      "properties": {
+        "config_csv": {
+          "$ref": "#/definitions/artifact"
+        },
+        "daily_stats_csv": {
+          "$ref": "#/definitions/artifact"
+        },
+        "trades_csv": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/artifact"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "May be null only when the main run is a signal_dependent no-trade run."
+        }
+      },
+      "additionalProperties": false,
+      "description": "G3.5 R5 复现性门禁：同一策略产物在第二个独立进程重跑的 config/daily_stats/trades 三件套（hash 绑定）。与主运行三件套 SHA-256 逐位一致才 PASS；不一致即 R5 FAIL 并归因。log 因含时间戳不参与跨运行比对。"
+    },
     "log_path": {
       "type": [
         "string",
@@ -170,7 +200,9 @@
         "execution_funding_failed",
         "artifact_missing",
         "artifact_hash_mismatch",
-        "artifact_contract_mismatch"
+        "artifact_contract_mismatch",
+        "reproducibility_evidence_missing",
+        "reproducibility_mismatch"
       ]
     },
     "external_db_override_confirmed": {

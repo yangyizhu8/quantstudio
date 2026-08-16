@@ -24,7 +24,7 @@ def design() -> dict:
         "engine_profile": {"profile_id": "minute-bar-v1", "bar_frequency": "1m", "match_price_mode": "close"},
         "market_data_contract": {
             "signal_price_adjustment": "pre",
-            "execution_price_basis": "pre_adjusted_price",
+            "execution_price_basis": "raw_trade_price",
         },
         "strategy_semantics": {"universe": "manual", "entry_rules": [], "exit_rules": [], "portfolio_rules": [], "risk_rules": []},
         "timing": {
@@ -221,3 +221,71 @@ def test_publisher_blocks_skipped_backtest_stage(tmp_path):
         assert "not publishable" in str(exc) or "backtest" in str(exc)
     else:
         raise AssertionError("publisher must block a skipped R5 backtest stage")
+
+
+# ---------------------------------------------------------------------------
+# per-code ETF T+0 契约（docs/etf-t0-per-code-design.md §6.3 / references/etf-t0-rules.md §6）
+# ---------------------------------------------------------------------------
+
+def _t0_design(**mdc_overrides) -> dict:
+    d = design()
+    mdc = dict(d["market_data_contract"])
+    mdc.update(mdc_overrides)
+    d["market_data_contract"] = mdc
+    return d
+
+
+def test_etf_t0_engine_per_code_requires_stop_deferral_semantics():
+    """engine_per_code 未声明 stop_deferral_semantics → BLOCK"""
+    blocks = block_rules(valid_source())
+    assert "STOP-DEFERRAL-SEMANTICS-MISSING" not in blocks  # 未声明 enforcement 不触发
+    d = _t0_design(etf_t0_enforcement="engine_per_code")
+    report = validate_strategy(d, valid_source(), target_profile="ptrade")
+    rule_ids = {item["rule_id"] for item in report["issues"] if item["severity"] == "BLOCK"}
+    assert "STOP-DEFERRAL-SEMANTICS-MISSING" in rule_ids
+
+
+def test_etf_t0_engine_per_code_accepts_stop_deferral_declared():
+    """engine_per_code + stop_deferral_semantics 声明 → 不再 BLOCK"""
+    d = _t0_design(etf_t0_enforcement="engine_per_code",
+                   stop_deferral_semantics="trigger_lock_defer_next_sellable_day")
+    report = validate_strategy(d, valid_source(), target_profile="ptrade")
+    rule_ids = {item["rule_id"] for item in report["issues"] if item["severity"] == "BLOCK"}
+    assert "STOP-DEFERRAL-SEMANTICS-MISSING" not in rule_ids
+
+
+def test_etf_t0_enforcement_enum_rejected():
+    """etf_t0_enforcement 不在枚举 → BLOCK"""
+    d = _t0_design(etf_t0_enforcement="all_t0")
+    report = validate_strategy(d, valid_source(), target_profile="ptrade")
+    rule_ids = {item["rule_id"] for item in report["issues"] if item["severity"] == "BLOCK"}
+    assert "ETF-T0-ENFORCEMENT-ENUM" in rule_ids
+
+
+def test_validator_blocks_order_return_field_read():
+    """读取订单返回值的本地字段 .status/.reason → BLOCK（可移植策略）"""
+    src = valid_source(extra_rebalance="    o = order('600000.SS', 100)\n"
+                                       "    if o.status == 'filled':\n"
+                                       "        log.info('ok')")
+    report = validate_strategy(_t0_design(), src, target_profile="ptrade")
+    rule_ids = {item["rule_id"] for item in report["issues"] if item["severity"] == "BLOCK"}
+    assert "ORDER-RETURN-FIELD-READ" in rule_ids
+
+
+def test_validator_blocks_set_iteration():
+    """set()/frozenset() → BLOCK（哈希迭代顺序跨进程不稳定，T3）"""
+    src = valid_source(extra_rebalance="    for c in set(g.pool):\n"
+                                       "        log.info('c=%s' % c)")
+    report = validate_strategy(_t0_design(), src, target_profile="ptrade")
+    rule_ids = {item["rule_id"] for item in report["issues"] if item["severity"] == "BLOCK"}
+    assert "NONDETERMINISTIC-ITERATION" in rule_ids
+
+
+def test_validator_accepts_deterministic_sorted_iteration():
+    """list + sorted 迭代不触发 T3 BLOCK"""
+    src = valid_source(extra_rebalance="    pool = list(g.pool)\n"
+                                       "    for c in sorted(pool):\n"
+                                       "        log.info('c=%s' % c)")
+    report = validate_strategy(_t0_design(), src, target_profile="ptrade")
+    rule_ids = {item["rule_id"] for item in report["issues"] if item["severity"] == "BLOCK"}
+    assert "NONDETERMINISTIC-ITERATION" not in rule_ids

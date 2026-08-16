@@ -11,8 +11,8 @@ from typing import Any
 
 from agent_skill_common import load_json, skill_root, write_json
 from analyze_backtest_artifacts import (
-    analyze_verified, artifact_path_binding_problems, verified_artifact_paths,
-    verify_artifact_hashes,
+    REPRODUCIBILITY_FILES, analyze_verified, artifact_path_binding_problems,
+    verified_artifact_paths, verify_artifact_hashes, verify_reproducibility,
 )
 from user_backtest_flow import (
     USER_MODE, ensure_candidate_path_is_safe, load_workflow_state, sha256_path,
@@ -31,6 +31,8 @@ RETURN_STAGE = {
     "artifact_missing": "R5",
     "artifact_hash_mismatch": "R5",
     "artifact_contract_mismatch": "R5",
+    "reproducibility_evidence_missing": "R5",
+    "reproducibility_mismatch": "R5",
 }
 
 
@@ -270,6 +272,17 @@ def _artifact_bound_checks(design: dict[str, Any], evidence: dict[str, Any],
         failures.append((failure_class, problem))
     for problem in artifact_path_binding_problems(evidence):
         failures.append(("artifact_contract_mismatch", problem))
+    if failures:
+        return failures, None
+
+    # G3.5 R5 复现性门禁：两独立进程双跑，三件套 SHA-256 一致才 PASS
+    repro_problems = verify_reproducibility(evidence)
+    for problem in repro_problems:
+        if "missing" in problem or "must be null" in problem or "does not exist" in problem:
+            failure_class = "reproducibility_evidence_missing"
+        else:
+            failure_class = "reproducibility_mismatch"
+        failures.append((failure_class, problem))
     if failures:
         return failures, None
 

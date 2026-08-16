@@ -64,7 +64,9 @@ Run `scripts/validate_agent_strategy.py`. Repair BLOCK findings in strategy code
 
 Run the declared daily/minute profile. Review orders, holdings, trigger times, empty-universe behavior, insufficient history, suspended/limit states, and position/cash invariants. Strategy-specific failures are fixed by the calling agent.
 
-R5 PASS is artifact-bound (evidence 2.0): the reviewer re-parses hash-verified `config.csv`/`daily_stats.csv`/`trades.csv`/run log and enforces the `portfolio_contract` capital check and `r5_deployment_invariants`. "回测跑完、无异常" is not PASS — the strategy must have actually deployed the designed capital (positions, exposure, cash ratio, zero excess insufficient-cash rejections). Strategies with `r5_deployment_invariants` must emit `QS_REBALANCE_AUDIT`/`QS_PORTFOLIO_AUDIT` key=value log lines.
+R5 PASS is artifact-bound (evidence 2.1): the reviewer re-parses hash-verified `config.csv`/`daily_stats.csv`/`trades.csv`/run log and enforces the `portfolio_contract` capital check and `r5_deployment_invariants`. "回测跑完、无异常" is not PASS — the strategy must have actually deployed the designed capital (positions, exposure, cash ratio, zero excess insufficient-cash rejections). Strategies with `r5_deployment_invariants` must emit `QS_REBALANCE_AUDIT`/`QS_PORTFOLIO_AUDIT` key=value log lines.
+
+**R5 复现性门禁（G3.5，硬前提）**：同一策略产物必须在两个独立进程各跑一遍（agent-managed：两次 CLI 运行；user-PyQt：两次 GUI 运行；同一窗口/资金/配置，`PYTHONHASHSEED` 固定或记录随机种子）。证据必须同时绑定两次运行的 `config.csv`/`daily_stats.csv`/`trades.csv`（`artifacts` + `reproducibility_artifacts`，证据 2.1），两侧三件套 SHA-256 **逐位一致**才 PASS；缺失第二跑 → `reproducibility_evidence_missing`（EVIDENCE_INCOMPLETE）；不一致 → `reproducibility_mismatch`（R5 FAIL 并归因：策略非确定性——dict/set 迭代顺序/随机数——或数据漂移或环境差异）。运行日志因含时间戳不参与跨运行比对。
 
 ### R6 - Target-aware publish
 

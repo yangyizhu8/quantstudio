@@ -33,9 +33,16 @@ def _etf_daily():
 # ========== 黄金 1：09:35 买、14:55 卖 ETF ==========
 
 def test_minute_buy_sell_etf_at_scheduled_times(build_db, cal):
-    """09:35 买入按 09:35 bar.close 成交；14:55 卖出按 14:55 bar.close 成交"""
+    """09:35 买入按 09:35 bar.close 成交；14:55 卖出按 14:55 bar.close 成交
+
+    注（per-code T+0 契约，docs/etf-t0-per-code-design.md）：etf_t0=True 现为按
+    fund_type 分类；159870 需在 etf_basic 中声明 T+0 类型才能当日卖（本测试验证
+    撮合价而非 T+0 语义，故补 gold 分类保持原意图）。
+    """
     from quantstudio.backtest.backtest_engine import BacktestEngine
-    db = build_db(etf_minutes=_etf_bars(), etf_daily=_etf_daily())
+    from tests.conftest import etf_basic_row
+    db = build_db(etf_minutes=_etf_bars(), etf_daily=_etf_daily(),
+                  etf_basic=[etf_basic_row("159870", "gold")])
     state = {'bought_price': None, 'sold_price': None}
 
     def handle_data(context, data):

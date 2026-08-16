@@ -149,7 +149,7 @@
 
 | 函数 | 说明 |
 |------|------|
-| `order(security,amount,limit_price)` | 按股数下单：`amount>0`买、`amount<0`卖。**返回 Order 对象**（可查 `.status` 感知涨跌停阻断/资金不足）。 |
+| `order(security,amount,limit_price)` | 按股数下单：`amount>0`买、`amount<0`卖。**返回 Order 对象**。**读取边界（2026-08-16，ZCode 修订4）**：本地专用策略可查 `.status`/`.reason`（感知涨跌停阻断/资金不足）；**skill 生成的 PTrade 可移植策略禁止读取订单返回字段**（Validator `ORDER-RETURN-FIELD-READ` BLOCK），只做真值判断 + `get_position()` 持仓对账——PTrade 拒单返回 None，本地 `Order.__bool__ = filled>0`（拒单/零成交为 falsy），布尔真值语义等价；"受理但未成交"两端真值不一致（PTrade truthy / 本地 falsy），**必须以持仓对账为唯一事实**。 |
 | `order_target(security,target_amount,limit_price)` | 调仓到目标股数（绝对）。 |
 | `order_value(security,value,limit_price)` | 按金额下单（**增量**：`value>0`加仓、`value<0`减仓）。 |
 | `order_target_value(security,value,limit_price)` | 调仓到目标市值（`value=0`全卖）。 |
@@ -175,6 +175,22 @@
 | `get_open_orders(security)` | 未成交订单（`next_open` 模式返回 pending 队列，即时模式为空）。 |
 | `get_order(order_id)` | 按 id 查订单。 |
 | `cancel_order(order_param)` | 撤单（`next_open` 模式移除 pending + 归还预扣；即时模式 no-op）。 |
+
+### 3.7.1 ETF T+0/T+1 按代码分类（per-code，2026-08-16）
+
+仅 `engine_profile='minute-bar-v1'` + `etf_t0=True`（CLI `--etf-t0 true` / GUI 勾选）生效；`daily-bar-v1` 与 `etf_t0=False`（默认）行为逐位不变。
+
+| 分类 | 规则 |
+|---|---|
+| `fund_type ∈ {qdii, gold, commodity, bond, money}` | **T+0**：当日买入即时解锁可卖 |
+| `fund_type = equity` | **T+1**：当日新买 `can_sell=0`，当日卖出成交 0 股（falsy），次日盘前解锁 |
+| 未知代码（不在 `etf_basic`，如 LOF） | **T+1**（fail-closed，宁可保守拒绝） |
+
+- 分类缓存经 provider 层装载（与 `get_etf_list_local` 同源）；查询失败/表缺失 → 全 T+1 + warning，绝不静默放行。
+- **`--etf-t0 true` 语义重定义（行为变更，带理由）**：由"全部 ETF T+0"改为"按分类"——旧语义允许实盘不存在的国内股票型 ETF 同日买卖；CLI 侧旧模式不可达；GUI 布尔 `etf_t0` 默认 False=全部T+1（与 CLI 一致），True=按分类；"全部T+0 研究模式"未实现（降级说明见 `docs/etf-t0-per-code-design.md` §13 T2）。
+- **平台差异**（2026-08-15 PTrade 探针实测，24 只 × 2 轮）：520830/LOF 平台回测按 T+1 拒单（真实规则 T+0）；513100 平台分钟 bar 交易量=0 无法成交（本地零量 bar 仍成交 = 已知撮合近似）。策略用**拒绝处理模式**自动吸收：止损"触发即锁→尝试卖出→成交 0 股（falsy）→次日首个可卖窗口顺延"，每事件 ≤1 次被拒；不查 ETF 类别、不读订单返回字段。
+- **T3 确定性**：skill 生成策略禁止依赖 dict/set 迭代顺序（`NONDETERMINISTIC-ITERATION` BLOCK）——跨进程结果可复现是 R5 证据 2.1 双跑门禁的前提。
+- 详情：`skills/quantstudio-strategy-compiler/references/etf-t0-rules.md`、`docs/etf-t0-per-code-design.md`。
 
 ### 3.8 技术指标（get_* 封装，底层 MyTT）
 

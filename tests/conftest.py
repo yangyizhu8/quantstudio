@@ -63,6 +63,25 @@ def daily_row(code, day, close, open_p=None, high=None, low=None, preclose=None,
     }
 
 
+def etf_basic_row(code, fund_type, etf_type=None, is_cross_border=False, status='L',
+                  list_date=0):
+    """生成一行完整 etf_basic（真实 DDL 列，NOT NULL 字段全填）。
+
+    fund_type/etf_type 默认同值（与生产库实测一致：0 行不一致）。
+    """
+    ftype = fund_type if etf_type is None else etf_type
+    suffix = '.SH' if str(code).startswith(('5', '6', '9')) else '.SZ'
+    return {
+        'code': code, 'ts_code': f"{code}{suffix}", 'name': f'test-{code}',
+        'exchange': '', 'list_date': list_date, 'delist_date': None,
+        'etf_type': ftype, 'tracking_index': None,
+        'is_cross_border': is_cross_border, 'status': status,
+        'fund_type': fund_type, 'invest_type': None, 'type': None,
+        'classification_method': 'test', 'classification_version': 'test',
+        'update_time': '', 'data_source': 'test',
+    }
+
+
 @pytest.fixture
 def build_db(tmp_path):
     """工厂 fixture：构造完整临时 DuckDB。
@@ -71,15 +90,17 @@ def build_db(tmp_path):
         def test_x(build_db):
             db = build_db(stock_minutes=[minute_row(...)], etf_daily=[daily_row(...)])
     """
-    def _impl(stock_minutes=None, etf_minutes=None, stock_daily=None, etf_daily=None):
+    def _impl(stock_minutes=None, etf_minutes=None, stock_daily=None, etf_daily=None,
+              etf_basic=None):
         from quantstudio.pipeline.writers import DDL_DUCKDB
         db_path = tmp_path / "test.duckdb"
         con = duckdb.connect(str(db_path))
-        for tbl in ("stock_daily", "etf_daily", "stock_minutes", "etf_minutes"):
+        for tbl in ("stock_daily", "etf_daily", "stock_minutes", "etf_minutes", "etf_basic"):
             if tbl in DDL_DUCKDB:
                 con.execute(DDL_DUCKDB[tbl])
         for tbl, rows in (("stock_minutes", stock_minutes), ("etf_minutes", etf_minutes),
-                          ("stock_daily", stock_daily), ("etf_daily", etf_daily)):
+                          ("stock_daily", stock_daily), ("etf_daily", etf_daily),
+                          ("etf_basic", etf_basic)):
             if rows:
                 df = pd.DataFrame(rows)
                 # 只插入 df 与表共有的列（stock_daily 41 列 vs etf_daily 30 列结构不同）

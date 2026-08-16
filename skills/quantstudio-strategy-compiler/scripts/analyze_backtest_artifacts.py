@@ -289,6 +289,63 @@ def verified_artifact_paths(evidence: dict[str, Any]) -> dict[str, Path | None]:
     return resolved
 
 
+# G3.5 R5 复现性门禁：跨进程双跑的三件套文件名（log 因时间戳不参与比对）
+REPRODUCIBILITY_FILES = ("config_csv", "daily_stats_csv", "trades_csv")
+
+
+def verify_reproducibility(evidence: dict[str, Any]) -> list[str]:
+    """R5 复现性门禁（G3.5，docs/etf-t0-per-code-design.md §11 G3.5 / references/etf-t0-rules.md §6）。
+
+    同一策略产物必须在两个独立进程各跑一遍；本函数校验第二次运行（reproducibility_artifacts）
+    的 hash 绑定，并要求 config/daily_stats/trades 三件套与主运行 SHA-256 逐位一致。
+    返回空列表 = 复现性通过；非空 = R5 FAIL 并附归因（哪个文件、两侧 hash、路径）。
+    """
+    problems: list[str] = []
+    main_artifacts = evidence.get("artifacts", {})
+    repro = evidence.get("reproducibility_artifacts")
+    if not isinstance(repro, dict):
+        return [
+            "reproducibility_artifacts is missing: R5 证据必须包含第二次独立进程运行的产物"
+            "（同一窗口/资金/配置重跑，config/daily_stats/trades 三件套 SHA-256 与主运行一致才 PASS）"
+        ]
+    for name in REPRODUCIBILITY_FILES:
+        main_entry = main_artifacts.get(name)
+        repro_entry = repro.get(name)
+        if main_entry is None and name == "trades_csv":
+            if repro_entry is not None:
+                problems.append(
+                    "reproducibility_artifacts.trades_csv must be null when the main run is a "
+                    "no-trade run (signal_dependent)")
+            continue
+        if not isinstance(repro_entry, dict):
+            problems.append(f"reproducibility_artifacts.{name} is missing")
+            continue
+        raw_path = str(repro_entry.get("path", ""))
+        path = Path(raw_path)
+        if not path.is_absolute():
+            problems.append(f"reproducibility_artifacts.{name}.path must be an absolute path: {raw_path}")
+            continue
+        resolved = path.resolve()
+        if resolved != path.parent.resolve() / path.name or ".." in path.parts:
+            problems.append(f"reproducibility_artifacts.{name}.path must not contain traversal: {raw_path}")
+            continue
+        if not resolved.exists():
+            problems.append(f"reproducibility_artifacts.{name}.path does not exist: {resolved}")
+            continue
+        actual = sha256_path(resolved)
+        if actual != repro_entry.get("sha256"):
+            problems.append(
+                f"reproducibility_artifacts.{name} sha256 mismatch (file changed after evidence)")
+            continue
+        main_sha = main_entry.get("sha256") if isinstance(main_entry, dict) else None
+        if actual != main_sha:
+            problems.append(
+                f"reproducibility mismatch: {name} 两次独立进程运行 SHA-256 不一致"
+                f"（run1={main_sha} run2={actual}，path={resolved}）——R5 FAIL，须归因："
+                "策略非确定性（dict/set 迭代顺序/随机数）或数据漂移或环境差异")
+    return problems
+
+
 def artifact_path_binding_problems(evidence: dict[str, Any]) -> list[str]:
     """Ensure the hash-bound CSV artifacts are exactly result_dir/<canonical name>.
 

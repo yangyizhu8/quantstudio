@@ -206,11 +206,12 @@ def handle_data(context, data):
 | **撮合模式** | 引擎 `match_price_mode`：默认即时（close / 当前价），或 `next_open`（下一交易日开盘）。**策略代码写法一致**，只是成交时点不同。 |
 | **即时成交** | `order` / `order_value` / `order_target` / `order_target_value` 在当前交易日收盘/当前价成交，组合持仓**瞬时刷新**（回测态）。 |
 | **T+1 卖出** | 卖出数量受 `enabled_amount`（可卖持仓）约束，`can_sell()` 校验；买入不受限。 |
+| **ETF T+0 分类（per-code，2026-08-16）** | 仅 `minute-bar-v1` + `--etf-t0 true`（GUI 勾选）生效：`fund_type ∈ {qdii,gold,commodity,bond,money}` → 当日买入可卖（T+0）；`equity`/未知（LOF）→ T+1（当日新买 `can_sell=0`，当日卖出成交 0 股，次日盘前解锁）。**含止损的策略**必须用"触发即锁→尝试卖出→成交 0 股→次日顺延"拒绝处理模式（每事件 ≤1 次被拒），不得假设"当日必卖"；不查类别、不读订单返回字段。 |
 | **涨跌停** | 买涨停股 / 卖跌停股返回 `Order(status='rejected', reason=...)`。`check_limit(code)` 先判：`1`涨停 / `-1`跌停 / `0`其它。 |
 | **整手约束** | A股/ETF 100 股整数倍，可转债 10 张。推荐用 `order_target_value`（目标权重）让引擎容错；按股数下单须自行整除 100。 |
 | **篮子再平衡** | `order_in_basket`（G1-I 强制先卖后买）用于特殊场景，普通策略用 `order_target_value` 即可完成换仓。 |
 | **调仓模式** | `rebalance_mode`（F1）：默认 `legacy`；`callback_basket` 仅 daily-bar-v1 + `next_open` 激活（导出记录 `engine_semantics_version=0.4.0-next_open_basket`），分钟 Profile 拒绝；`run_daily`/`before_trading_start` 订单永不进入 basket，需要 basket 的策略须把调仓下单放入 `handle_data`。PyQt 面板有通用下拉框透出，`close`/`open + callback_basket` 会被 GUI 阻断。 |
-| **订单返回** | 所有 `order_*` 返回 `Order` 对象；务必检查 `order.status`（'filled'/'open'/'rejected'）与 `order.reason`。 |
+| **订单返回** | 所有 `order_*` 返回 `Order` 对象。**读取边界（2026-08-16）**：本地专用策略可检查 `order.status`（'filled'/'open'/'rejected'）与 `order.reason`；**PTrade 可移植 / skill 生成策略禁止读取订单返回字段**（Validator `ORDER-RETURN-FIELD-READ` BLOCK），只做真值判断 + `get_position()` 持仓对账——PTrade 拒单返回 None、本地拒单/零成交为 falsy（语义等价）；"受理但未成交"两端真值不一致，**必须以持仓对账为唯一事实**。 |
 
 **典型稳健写法**：
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -131,9 +132,10 @@ def _artifact_entry(path: Path) -> dict:
 
 
 def evidence_payload(report: dict, db: Path, result_dir: Path, *, status="PASS",
-                     failure_class=None, init_cash=100000.0, trades_null=False) -> dict:
+                     failure_class=None, init_cash=100000.0, trades_null=False,
+                     repro_dir: Path | None = None) -> dict:
     payload = {
-        "evidence_version": "2.0",
+        "evidence_version": "2.1",
         "strategy_id": "dual_user_pyqt_etf",
         "candidate_path": report["candidate_path"],
         "candidate_sha256": report["candidate_sha256"],
@@ -163,6 +165,20 @@ def evidence_payload(report: dict, db: Path, result_dir: Path, *, status="PASS",
             "trades_csv": (None if trades_null else _artifact_entry(result_dir / "trades.csv")),
             "log_file": _artifact_entry(result_dir / "backtest.log"),
         },
+    }
+    # G3.5 R5 复现性门禁：默认用第二目录复制同一三件套（内容一致→hash 一致）；
+    # 传 repro_dir 可注入"不同内容"的第二跑以测试 mismatch。
+    if repro_dir is None:
+        repro_dir = result_dir.parent / (result_dir.name + "_repro")
+        repro_dir.mkdir(parents=True, exist_ok=True)
+        for f in ("config.csv", "daily_stats.csv", "trades.csv"):
+            src = result_dir / f
+            if src.exists():
+                shutil.copy2(src, repro_dir / f)
+    payload["reproducibility_artifacts"] = {
+        "config_csv": _artifact_entry(repro_dir / "config.csv"),
+        "daily_stats_csv": _artifact_entry(repro_dir / "daily_stats.csv"),
+        "trades_csv": (None if trades_null else _artifact_entry(repro_dir / "trades.csv")),
     }
     if failure_class:
         payload["failure_class"] = failure_class
@@ -857,3 +873,60 @@ def test_publish_blocked_when_fixture_report_status_flipped(tmp_path):
     state_path.write_text(json.dumps(state), encoding="utf-8")
     with pytest.raises(ValueError, match="no longer records PASS"):
         publish(strategy_path, design_path, project)
+
+
+# ---------------------------------------------------------------------------
+# G3.5 R5 复现性门禁：两独立进程双跑，三件套 SHA-256 一致才 PASS
+# ---------------------------------------------------------------------------
+
+def _review_ready(tmp_path):
+    project, workspace, db, design, design_path, strategy_path = setup_workspace(tmp_path)
+    candidate = prepare_candidate(strategy_path, design_path, project)
+    return workspace, db, strategy_path, design_path, project, candidate
+
+
+def test_reproducibility_evidence_missing_blocks_r5(tmp_path):
+    """证据缺少第二跑（reproducibility_artifacts）→ EVIDENCE_INCOMPLETE"""
+    workspace, db, strategy_path, design_path, project, candidate = _review_ready(tmp_path)
+    result_dir = write_artifacts(workspace / "result", init_capital=100000.0,
+                                 positions=(2, 2, 2), buys=2, exposure=0.98)
+    payload = evidence_payload(candidate, db, result_dir)
+    del payload["reproducibility_artifacts"]
+    evidence_path = workspace / "evidence.json"
+    evidence_path.write_text(json.dumps(payload), encoding="utf-8")
+    report = review_evidence(strategy_path, design_path, evidence_path, project)
+    assert report["status"] == "EVIDENCE_INCOMPLETE"
+    assert any("reproducibility" in issue for issue in report["issues"])
+
+
+def test_reproducibility_mismatch_blocks_r5(tmp_path):
+    """第二跑 trades.csv 与主运行不一致 → R5 FAIL（reproducibility_mismatch）"""
+    workspace, db, strategy_path, design_path, project, candidate = _review_ready(tmp_path)
+    result_dir = write_artifacts(workspace / "result", init_capital=100000.0,
+                                 positions=(2, 2, 2), buys=2, exposure=0.98)
+    bad_dir = workspace / "result_repro_bad"
+    bad_dir.mkdir(exist_ok=True)
+    for f in ("config.csv", "daily_stats.csv"):
+        shutil.copy2(result_dir / f, bad_dir / f)
+    (bad_dir / "trades.csv").write_text("datetime,code,action,volume,price\n2026-07-20,159915.SZ,buy,1,1.0\n",
+                                        encoding="utf-8")  # 与主运行 trades 内容不同
+    payload = evidence_payload(candidate, db, result_dir, repro_dir=bad_dir)
+    evidence_path = workspace / "evidence.json"
+    evidence_path.write_text(json.dumps(payload), encoding="utf-8")
+    report = review_evidence(strategy_path, design_path, evidence_path, project)
+    assert report["status"] == "FAIL"
+    assert report.get("failure_class") == "reproducibility_mismatch"
+    assert any("SHA-256 不一致" in issue for issue in report["issues"])
+
+
+def test_reproducibility_matching_passes_r5(tmp_path):
+    """双跑三件套一致 → 复现性门禁通过，正常 PASS"""
+    workspace, db, strategy_path, design_path, project, candidate = _review_ready(tmp_path)
+    result_dir = write_artifacts(workspace / "result", init_capital=100000.0,
+                                 positions=(2, 2, 2), buys=2, exposure=0.98)
+    payload = evidence_payload(candidate, db, result_dir)   # 默认 repro 目录复制同内容
+    evidence_path = workspace / "evidence.json"
+    evidence_path.write_text(json.dumps(payload), encoding="utf-8")
+    report = review_evidence(strategy_path, design_path, evidence_path, project)
+    assert report["status"] == "PASS"
+    assert not any("reproducibility" in issue for issue in report["issues"])

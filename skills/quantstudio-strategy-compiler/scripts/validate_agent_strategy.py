@@ -12,8 +12,9 @@ from typing import Any
 
 from agent_skill_common import (
     call_name, confirmation_errors, confirmation_evidence_errors, constant_value,
-    execution_funding_errors, function_map, is_placeholder_function, load_catalog,
-    load_json, portfolio_contract_errors, skill_root, validate_design, write_json,
+    etf_t0_contract_errors, execution_funding_errors, function_map,
+    is_placeholder_function, load_catalog, load_json, portfolio_contract_errors,
+    skill_root, validate_design, write_json,
 )
 
 
@@ -855,6 +856,8 @@ def validate_strategy(
         issues.append(_issue(item["rule_id"], "BLOCK", item["message"]))
     for item in execution_funding_errors(design):
         issues.append(_issue(item["rule_id"], "BLOCK", item["message"]))
+    for item in etf_t0_contract_errors(design):
+        issues.append(_issue(item["rule_id"], "BLOCK", item["message"]))
     if target_profile not in {"canonical", "quantstudio", "ptrade"}:
         issues.append(_issue("TARGET-PROFILE", "BLOCK", f"unknown target profile {target_profile!r}"))
 
@@ -1154,6 +1157,29 @@ def validate_strategy(
         issues.append(_issue("AGENT-IMPLEMENTATION-MISSING", "BLOCK", "strategy source still contains scaffold implementation markers"))
     if "strategy_pattern" in source:
         issues.append(_issue("NO-STRATEGY-PATTERN", "BLOCK", "strategy source must not depend on strategy_pattern dispatch"))
+
+    # ---- per-code ETF T+0 契约（docs/etf-t0-per-code-design.md §6.3 / §7 / §8.2）----
+    # 1) 订单返回值本地字段读取禁令（仅限 skill 生成的 PTrade 可移植策略；本地专用策略
+    #    不受限——引擎 Order docstring 允许检查 status，边界以 README/strategy_toolbox 为准）
+    for m in re.finditer(r"\.(?:status|reason)\b", source):
+        if m:
+            issues.append(_issue(
+                "ORDER-RETURN-FIELD-READ", "BLOCK",
+                "skill 生成的 PTrade 可移植策略不得读取订单返回值的本地字段 "
+                "(.status/.reason)——本地返回 Order 对象、PTrade 返回 order_id/None，"
+                "仅允许真值判断 + get_position 持仓对账（references/etf-t0-rules.md §3）",
+                source[:m.start()].count("\n") + 1))
+            break
+    # 2) 非确定性迭代禁令（T3，G2 回归发现存量策略 dict/set 迭代顺序跨进程不稳定）
+    #    盲区说明：set 字面量迭代（for x in {'a','b'}）本规则拦不住（哈希顺序同样不稳定），
+    #    由契约文本约束（references/etf-t0-rules.md §3-5）+ R5 复现性双跑门禁（G3.5）兜底；
+    #    .status/.reason 正则会误伤同名属性（不限于订单返回值）——宁可误拦，申诉走人工 review。
+    for m in re.finditer(r"\b(?:set|frozenset)\s*\(", source):
+        issues.append(_issue(
+            "NONDETERMINISTIC-ITERATION", "BLOCK",
+            "禁止在生成策略中使用 set()/frozenset()：哈希迭代顺序随进程随机（PYTHONHASHSEED），"
+            "会导致决策与回测结果跨进程不稳定；使用 list + sorted() 等确定性容器",
+            source[:m.start()].count("\n") + 1))
 
     if strict_ptrade:
         _validate_history_shape_safety(tree, parents, issues)
