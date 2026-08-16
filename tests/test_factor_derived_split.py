@@ -395,6 +395,56 @@ def test_nav_continuity_on_ex_date(build_db):
     assert nav_chg == pytest.approx(-0.00233, abs=0.001)
 
 
+def _run_profile_nav_test(build_db, engine_profile):
+    """159995 折算日（07-07）在指定 profile 下送股生效、净值不跳水（v2-final 分钟挂钩）。"""
+    from tests.conftest import minute_row
+
+    rows = [daily_row("159995", day, close, preclose=preclose, pctchg=pctchg)
+            for day, close, preclose, pctchg in _159995_BARS]
+    # 分钟数据仅 07-01（买入日）两根 bar；中间日/除息日无分钟 bar → 策略无操作但挂钩仍执行
+    mrows = [minute_row("159995", "2026-07-01", 9, 31, 3.321, preclose=3.391),
+             minute_row("159995", "2026-07-01", 15, 0, 3.321, preclose=3.391)]
+    db = build_db(etf_daily=rows, etf_minutes=mrows)
+    cal = _make_fixed_cal(_ETF_DAYS)
+    providers = make_providers(db, cal)
+
+    def initialize(context):
+        pass
+    def handle_data(context, data):
+        if not getattr(g, "bought", False):
+            order("159995.SZ", 30100)
+            g.bought = True
+    eng = BacktestEngine(str(db), {"initialize": initialize, "handle_data": handle_data},
+                         start="2026-07-01", end="2026-07-08",
+                         match_price_mode="close", engine_profile=engine_profile,
+                         providers=providers)
+    eng.run()
+
+    nav = {d["date"]: d["nav"] for d in eng.result.nav_history}
+    assert "2026-07-06" in nav and "2026-07-07" in nav
+    # 挂钩证据：07-07 送股（原缺口：分钟 profile 不执行反推 → 无事件、净值腰斩）
+    evts = [a for a in eng.result.corporate_actions
+            if a.get("date") == "2026-07-07" and a.get("type") == "factor_derived_split"]
+    assert len(evts) == 1, f"{engine_profile} 未挂钩除权补正"
+    assert evts[0]["added"] == 30100
+    assert eng.account.positions["159995.SZ"].volume == 60200
+    # 净值连续（非 -50% 腰斩）
+    chg = nav["2026-07-07"] / nav["2026-07-06"] - 1.0
+    assert chg > -0.30, f"{engine_profile} 除权日净值跳变: {chg:.2%}"
+    assert abs(chg - (-0.27 / 100.0)) <= 0.001
+    return eng
+
+
+def test_minute_profile_hooks_split(build_db):
+    """minute-bar-v1 挂钩：159995 07-07 折算日送股生效、净值不跳水。"""
+    _run_profile_nav_test(build_db, "minute-bar-v1")
+
+
+def test_daily_open_close_proxy_profile_hooks_split(build_db):
+    """daily-open-close-proxy-v1 挂钩：同场景送股生效、净值不跳水。"""
+    _run_profile_nav_test(build_db, "daily-open-close-proxy-v1")
+
+
 # =====================================================================
 # 10. 回归
 # =====================================================================

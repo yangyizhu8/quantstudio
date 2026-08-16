@@ -2101,6 +2101,10 @@ class BacktestEngine:
         self._current_date_str = day_str
         self._proxy_intraday_bars = []
 
+        # 【v2-final 分钟挂钩（2026-08-16）】ETF 除权补正与日线主循环一致：
+        # daily_data/prev_data 已加载（行 2094-2096），策略执行前完成送股/折算/合并补正。
+        self._apply_factor_derived_split(daily_data, prev_data, day_str)
+
         for pos in self.account.positions.values():
             pos.can_sell = pos.volume
 
@@ -2248,6 +2252,11 @@ class BacktestEngine:
         prev_data = self._last_curr_data if getattr(self, '_last_curr_data', None) is not None \
             else self._get_daily_data(prev_day)
         self._last_curr_data = daily_data
+
+        # 【v2-final 分钟挂钩（2026-08-16）】ETF 除权补正与日线主循环一致：
+        # daily_data/prev_data 已加载（行 2244-2249），策略执行前完成送股/折算/合并补正
+        # （_apply_corporate_actions/_apply_etf_cash_dividends 已在主循环行 514-516 生效）。
+        self._apply_factor_derived_split(daily_data, prev_data, day_str)
 
         # 【修正缺口 2】_prices 用昨日收盘价（before_trading_start 在 09:31 前，不见当日收盘）
         prev_close_prices = {self._to_qmt(c): v
