@@ -417,3 +417,143 @@ def test_etf_theme_rotation_shim_contract():
     body = r.converted_code
     assert "df_dict = get_history(count, frequency=unit, field=fields," in body
     assert "security=[code]" not in body
+
+
+# ---------------------------------------------------------------------------
+# trade_date 门控扩展（2026-08-19，框架方案 source_import-ptrade-history-translation-design）
+# A/B：trade_date 合成/剔除；R1：is_dict 逐码；R3：合成格式与本地 provider 逐字符一致；门控纯增益
+# ---------------------------------------------------------------------------
+
+def _wrapper_ext_ns(history_return):
+    """exec 旧 wrapper + trade_date 扩展 → 命名空间；_captured 记录原生 get_history kwargs。"""
+    import numpy as np
+    import quantstudio.strategy_compiler.source_import as si
+
+    captured = []
+
+    def _fake_get_history(*args, **kwargs):
+        captured.append(dict(kwargs))
+        return history_return
+
+    ns = {"get_history": _fake_get_history}
+    exec(si._QS_HISTORY_WRAPPER.format(marker="# m"), ns)
+    exec(si._QS_HISTORY_TRADE_DATE_EXT.format(marker="# m"), ns)
+    ns["_captured"] = captured
+    return ns
+
+
+def test_trade_date_gate_literals():
+    """门控字面量探测：trade_date 字符串 → True；缺省 → False。"""
+    import quantstudio.strategy_compiler.source_import as si
+    assert si._source_uses_trade_date('_extract_history_field(h, "trade_date", dtype=str)') is True
+    assert si._source_uses_trade_date("field=['close','trade_date']") is True
+    assert si._source_uses_trade_date("field=['close']") is False
+    assert si._source_uses_trade_date("h = get_history(20)") is False
+
+
+def test_trade_date_ext_not_injected_when_unused():
+    """纯增益：不使用 trade_date 的策略转换输出只有旧 wrapper（拓展不注入，逐字节不变）。"""
+    r = _convert("""
+def initialize(context):
+    h = get_history(count=20, frequency='1d', field=['close'],
+                    security_list=['600519.SS'], fq='pre')
+""")
+    assert r.errors == [], r.errors
+    assert "_qs_synthesize_trade_date" not in r.converted_code
+    assert r.converted_code.count("def _qs_to_dataframe(item):") == 1
+
+
+def test_trade_date_ext_injected_when_used():
+    """使用 trade_date 的策略 → 注入扩展（重定义 _qs_to_dataframe + get_history）。"""
+    r = _convert("""
+def initialize(context):
+    h = get_history(count=20, frequency='1d', field=['close', 'trade_date'],
+                    security_list=['600519.SS'], fq='pre')
+""")
+    assert r.errors == [], r.errors
+    assert "_qs_synthesize_trade_date" in r.converted_code
+    assert "_QS_SYNTHETIC_FIELDS" in r.converted_code
+    assert r.converted_code.count("def _qs_to_dataframe(item):") == 2
+
+
+def test_trade_date_ext_matches_local_provider_format():
+    """R3：PTrade 返回合成 trade_date 与本地 provider 同日期输出逐字符一致。
+
+    基准 = 本地推导式（time 毫秒 → Asia/Shanghai strftime('%Y-%m-%d')），
+    不以文档假设为准。
+    """
+    import numpy as np
+    import pandas as pd
+    ns = _wrapper_ext_ns(None)
+    ms = 1785340800000  # 2026-07-30
+    expected = str(pd.to_datetime(ms, unit="ms", utc=True)
+                   .tz_convert("Asia/Shanghai").strftime("%Y-%m-%d"))
+    # 本地形状：time 为 ms int
+    arr = np.array([(ms, 10.0)], dtype=[("time", "i8"), ("close", "f8")])
+    df = ns["_qs_to_dataframe"](arr)
+    assert df["trade_date"].tolist() == [expected]
+    # PTrade 形状：datetime 列（改名 time 后再合成）
+    arr2 = np.array([(np.datetime64("2026-07-30T15:00:00"), 10.0)],
+                    dtype=[("datetime", "M8[ns]"), ("close", "f8")])
+    df2 = ns["_qs_to_dataframe"](arr2)
+    assert "time" in df2.columns and "datetime" not in df2.columns
+    assert df2["trade_date"].tolist() == [expected]
+
+
+def test_trade_date_ext_removes_synthetic_field():
+    """A/B：请求侧剔除 trade_date（不传 PTrade），返回侧补齐 trade_date 列。"""
+    import numpy as np
+    arr = np.array([(np.datetime64("2026-07-30T15:00:00"), 10.0)],
+                   dtype=[("datetime", "M8[ns]"), ("close", "f8")])
+    ns = _wrapper_ext_ns(arr)
+    df = ns["get_history"](count=5, frequency="1d", field=["close", "trade_date"],
+                           security_list=["000300.SS"], fq="pre", include=False)
+    kw = ns["_captured"][-1]
+    assert kw.get("field") == ["close"]
+    assert "trade_date" in df.columns
+    assert df["trade_date"].tolist() == ["2026-07-30"]
+
+
+def test_trade_date_ext_non_dict_passes_security_list():
+    """非 dict 模式下 security_list 必须透传给原始 get_history（如单市场 σ 计算）。"""
+    import numpy as np
+    arr = np.array([(np.datetime64("2026-07-30T15:00:00"), 10.0)],
+                   dtype=[("datetime", "M8[ns]"), ("close", "f8")])
+    ns = _wrapper_ext_ns(arr)
+    df = ns["get_history"](count=5, frequency="1d", field=["close", "trade_date"],
+                           security_list=["000300.SS"], fq="pre", include=False)
+    kw = ns["_captured"][-1]
+    assert kw.get("security_list") == ["000300.SS"]
+    assert "trade_date" in df.columns
+    assert df["trade_date"].tolist() == ["2026-07-30"]
+
+
+def test_trade_date_ext_synthesizes_from_index():
+    """PTrade 返回 DataFrame 且日期在 index 时，仍能从 index 合成 trade_date。"""
+    import pandas as pd
+    ns = _wrapper_ext_ns(None)
+    df = pd.DataFrame(
+        {"code": ["510300.SS"], "close": [5.345]},
+        index=pd.to_datetime(["2026-07-30"]),
+    )
+    out = ns["_qs_to_dataframe"](df)
+    assert "trade_date" in out.columns
+    assert out["trade_date"].tolist() == ["2026-07-30"]
+
+
+def test_trade_date_ext_is_dict_per_code():
+    """R1：is_dict=True + security_list → 逐码调用原 get_history，拼 {code: df}。"""
+    import numpy as np
+    arr = np.array([(np.datetime64("2026-07-30T15:00:00"), 10.0)],
+                   dtype=[("datetime", "M8[ns]"), ("close", "f8")])
+    ns = _wrapper_ext_ns(arr)
+    out = ns["get_history"](count=10, frequency="1d", field=["close", "trade_date"],
+                            security_list=["600519.SS", "000001.SZ"], fq="pre",
+                            include=False, is_dict=True)
+    assert sorted(out.keys()) == ["000001.SZ", "600519.SS"]
+    assert all("trade_date" in out[k].columns for k in out)
+    # 原生被逐码调用两次，每次 security_list 单元素，且 is_dict 已摘除
+    assert len(ns["_captured"]) == 2
+    assert all(len(c["security_list"]) == 1 for c in ns["_captured"])
+    assert all("is_dict" not in c for c in ns["_captured"])
+    assert all(c["field"] == ["close"] for c in ns["_captured"])

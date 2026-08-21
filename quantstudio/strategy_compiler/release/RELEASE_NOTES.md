@@ -1,5 +1,16 @@
 # QuantStudio Strategy Compiler ? Release Notes
 
+## unreleased-source_import-ptrade-history-translation (2026-08-19)
+
+- **source_import PTrade 行情翻译缺口修复**（框架方案 `docs/source_import-ptrade-history-translation-design.md`，真实平台冒烟通过）：
+  - `get_history` wrapper 请求侧剔除本地合成伪列 `trade_date`，返回侧由 `datetime/time` 列或 DataFrame index 合成 `trade_date`（先改名再合成，`YYYY-MM-DD`）；
+  - `is_dict=True` 走逐码路径（不依赖多标的返回形态契约），拼 `{code: df}`；
+  - 非 dict 模式 `security_list`/`security` 透传原始 API（修复真实 PTrade「未订阅股票池时 security_list 不能为空」）；
+  - 门控：仅显式使用 `trade_date` 的策略注入新 wrapper，存量转换输出逐字节不变（纯增益）。
+- 验收：`tests/test_ptrade_contract_compliance.py` + `tests/test_source_import.py` 74 PASS（含 `test_trade_date_ext_non_dict_passes_security_list` / `test_trade_date_ext_synthesizes_from_index` 新回归）；真实 PTrade 冒烟（vol_regime_mom_rev）全月跑通。
+- 关联：D4-S2（市价单 5 万股上限）/ D4-S3（退市强平 is expired）为双端平台语义差，登记表 pending，不影响本发布。
+- 探针：`ptrade/probe_expired_close_ptrade.py`（D4-S3 强平成交明细取证）。
+
 ## 0.7.3-backtest-show-tables-cache (2026-07-28 门 1 收敛整改)
 
 - SHOW TABLES 表集合缓存落地（仅 1 项语义等价优化）：`_existing_tables()` 缓存 `SHOW TABLES`

@@ -205,6 +205,115 @@ def get_history(*args, **kwargs):
     return _qs_to_dataframe(_result)
 '''
 
+# source_import trade_date 门控扩展（2026-08-19，框架层方案 source_import-ptrade-history-translation-design.md）
+# 仅当源策略显式使用 trade_date（本地 provider 合成伪列）时注入本扩展；不使用 trade_date 的
+# 策略转换输出与改造前逐字节一致（纯增益）。扩展重定义 _qs_to_dataframe（改名后再合成 trade_date，
+# R3 格式以本地实测为准：object、'YYYY-MM-DD'、Asia/Shanghai strftime）与 get_history
+# （请求侧剔除合成字段 trade_date、is_dict=True 走逐码路径——契约无关，R1）。
+_QS_HISTORY_TRADE_DATE_EXT = '''
+{marker}
+# [qs-import-generated] trade_date 合成 + is_dict 逐码（source_import 门控扩展，2026-08-19）
+# trade_date 是本地 provider 合成伪列（object 类型 'YYYY-MM-DD' 字符串）；PTrade 无此字段，
+# 由返回体的 datetime/time 派生。请求侧剔除该合成字段（只传真实字段），返回侧补齐。
+_QS_SYNTHETIC_FIELDS = {{'trade_date'}}
+
+
+def _qs_synthesize_trade_date(df):
+    if 'trade_date' in df.columns:
+        return df
+    src = None
+    for _col in ('time', 'datetime'):
+        if _col in df.columns:
+            src = df[_col]
+            break
+    # PTrade 返回 DataFrame 时日期常在 index（无 time/datetime 列）
+    if src is None:
+        idx = df.index
+        if hasattr(idx, 'dtype') and _qs_np.issubdtype(idx.dtype, _qs_np.datetime64):
+            src = _qs_pd.Series(idx, index=idx)
+        elif len(idx) > 0:
+            try:
+                _ = _qs_pd.to_datetime(idx)
+                src = _qs_pd.Series(idx, index=idx)
+            except Exception:
+                pass
+    if src is None:
+        return df
+    try:
+        if hasattr(src, 'dtype') and _qs_np.issubdtype(src.dtype, _qs_np.integer):
+            _ts = _qs_pd.to_datetime(src, unit='ms', utc=True).dt.tz_convert('Asia/Shanghai')
+        else:
+            _ts = _qs_pd.to_datetime(src)
+            if getattr(_ts.dt, 'tz', None) is not None:
+                _ts = _ts.dt.tz_convert('Asia/Shanghai')
+        df['trade_date'] = _ts.dt.strftime('%Y-%m-%d')
+    except Exception:
+        pass
+    return df
+
+
+def _qs_to_dataframe(item):
+    if isinstance(item, _qs_np.ndarray) and hasattr(item, 'dtype') and hasattr(item.dtype, 'names'):
+        df = _qs_pd.DataFrame(item)
+        _rename = {{k: v for k, v in _QS_COL_TO_LOCAL.items()
+                    if k in df.columns and v not in df.columns}}
+        if _rename:
+            df = df.rename(columns=_rename)
+        # R3：先改名（datetime→time），再合成 trade_date
+        return _qs_synthesize_trade_date(df)
+    if isinstance(item, _qs_pd.DataFrame):
+        return _qs_synthesize_trade_date(item)
+    return item
+
+
+def get_history(*args, **kwargs):
+    _field = kwargs.get('field') or kwargs.get('fields')
+    if _field:
+        _is_list = isinstance(_field, list)
+        _items = _field if _is_list else [_field]
+        _mapped = [_QS_FIELD_TO_PTRADE.get(f, f) for f in _items
+                   if f not in _QS_SYNTHETIC_FIELDS]
+        if not _mapped:
+            _mapped = ['close']
+        if 'field' in kwargs:
+            kwargs['field'] = _mapped if _is_list else _mapped[0]
+        if 'fields' in kwargs:
+            kwargs['fields'] = _mapped if _is_list else _mapped[0]
+    _is_dict = bool(kwargs.pop('is_dict', False))
+    _secs = kwargs.pop('security_list', None)
+    if _secs is None:
+        _secs = kwargs.pop('security', None)
+    if _is_dict and _secs:
+        # R1：契约无关——不依赖多标的返回形态，逐码调用（单证券返回风险最小）拼成 dict（code -> df）
+        result = {{}}
+        for _s in _secs:
+            _kw = dict(kwargs)
+            _kw['security_list'] = [_s]
+            try:
+                _item = _QSHistoryState.orig(*args, **_kw)
+            except (TypeError, ValueError):
+                _kw2 = dict(kwargs)
+                _kw2['security'] = _s
+                _item = _QSHistoryState.orig(*args, **_kw2)
+            result[_s] = _qs_to_dataframe(_item)
+        return result
+    if _secs:
+        # 非 dict 模式仍需把 security_list/security 传回原始 API（如单市场 σ 计算）
+        _kw = dict(kwargs)
+        _kw['security_list'] = _secs
+        try:
+            _result = _QSHistoryState.orig(*args, **_kw)
+        except (TypeError, ValueError):
+            _kw2 = dict(kwargs)
+            _kw2['security'] = _secs
+            _result = _QSHistoryState.orig(*args, **_kw2)
+    else:
+        _result = _QSHistoryState.orig(*args, **kwargs)
+    if isinstance(_result, dict):
+        return {{k: _qs_to_dataframe(v) for k, v in _result.items()}}
+    return _qs_to_dataframe(_result)
+'''
+
 # 档 2 表达式内嵌的等价字面量（H2）：本地函数 → PTrade 语义等价字面量
 _REWRITE_LITERALS: dict[str, str] = {
     "set_backtest": "None",
@@ -214,6 +323,16 @@ _REWRITE_LITERALS: dict[str, str] = {
 # 行情字段名映射中枢在 _QS_HISTORY_WRAPPER 内（请求本地→PTrade / 返回 PTrade→本地）
 # DENY_REMOVE 中允许档 2 改写的函数；其余 DENY_REMOVE 档 2 → BLOCK
 _REMOVE_ALLOW_INLINE: frozenset[str] = frozenset(_REWRITE_LITERALS.keys())
+
+
+def _source_uses_trade_date(source: str) -> bool:
+    """门控：源策略是否显式使用本地合成伪列 trade_date（而非调用它在 PTrade 上会被拒）。
+
+    判定 = 源码文本出现 trade_date 字面量（get_history 的 field 列表或
+    _extract_history_field(..., 'trade_date') 提取调用）。用双/单引号两种字面量探测，
+    覆盖策略源码两种写法；不使用则注入旧 wrapper（输出与改造前逐字节一致）。
+    """
+    return "'trade_date'" in source or '"trade_date"' in source
 
 # ============================================================================
 # 工具
@@ -1175,6 +1294,10 @@ class SourceConverter:
         #  - wrapper 在策略 def 之前 → 策略 handle_data 调 get_history 已是 wrapper 版本
         blocks.append(_QS_HISTORY_WRAPPER.format(marker=INJECTED_MARKER))
         self.coverage["injected_helpers"].append("get_history_wrapper")
+        # trade_date 门控扩展：仅当源策略显式使用 trade_date 时追加（旧 wrapper 保持逐字节不变）
+        if _source_uses_trade_date(code):
+            blocks.append(_QS_HISTORY_TRADE_DATE_EXT.format(marker=INJECTED_MARKER))
+            self.coverage["injected_helpers"].append("trade_date_synth")
         for shim_name in sorted(self._need_shim):
             blocks.append(self._shim_source(shim_name))
             self.coverage["injected_helpers"].append(f"shim:{shim_name}")
