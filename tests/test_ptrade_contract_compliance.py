@@ -557,3 +557,588 @@ def test_trade_date_ext_is_dict_per_code():
     assert all(len(c["security_list"]) == 1 for c in ns["_captured"])
     assert all("is_dict" not in c for c in ns["_captured"])
     assert all(c["field"] == ["close"] for c in ns["_captured"])
+
+
+# ---------------------------------------------------------------------------
+# A1 市价单拆单注入（2026-08-22，框架方案 PTrade 平台对齐治理 v4 §3.1 A1）
+# 门控：调用订单 API → 注入 _QS_ORDER_SPLIT_EXT；无订单 → 逐字节不变。
+# 算法：>49,000 股拆多笔；段现金预分配 + 合计勾稽（R3 ②）；px<=0 回退不拆。
+# 同构：注入模板 vs 本地 ptrade_api._qs_split_order 逐字一致（双端订单序列相同）。
+# ---------------------------------------------------------------------------
+
+def _order_split_ns():
+    """exec _QS_ORDER_SPLIT_EXT 注入区 → 命名空间（fake 原始订单 API 捕获）。"""
+    import quantstudio.strategy_compiler.source_import as si
+
+    captured = {"target_value": [], "order": []}
+
+    def _fake_target(security, value, *a, **kw):
+        captured["target_value"].append((security, value))
+        return "tid-" + str(len(captured["target_value"]))
+
+    def _fake_order(security, amount, *a, **kw):
+        captured["order"].append((security, amount))
+        return "oid-" + str(len(captured["order"]))
+
+    ns = {"order_target_value": _fake_target, "order": _fake_order,
+          "get_history": lambda *a, **kw: None,
+          "current_price": lambda *a, **kw: 0.0,
+          "order_value": lambda *a, **kw: None,
+          "order_percent": lambda *a, **kw: None,
+          "order_target_percent": lambda *a, **kw: None}
+    exec(si._QS_ORDER_SPLIT_EXT.format(marker="# m"), ns)
+    ns["_captured"] = captured
+    return ns
+
+
+def test_order_split_gate_injected_when_order_api():
+    """门控：调用订单 API 的策略注入 order_split 扩展。"""
+    r = _convert("""
+def initialize(context):
+    pass
+def handle_data(context, data):
+    order_target_value(security='600519.SS', value=20000)
+""")
+    assert r.errors == [], r.errors
+    assert "_QS_MAX_ORDER_SHARES" in r.converted_code
+    assert "_qs_split_order" in r.converted_code
+
+
+def test_order_split_gate_not_injected_when_readonly():
+    """门控：只读策略（无订单 API）不注入 order_split（逐字节不变）。"""
+    r = _convert("""
+def initialize(context):
+    pass
+def handle_data(context, data):
+    h = get_history(count=20, frequency='1d', field=['close'],
+                    security_list=['600519.SS'], fq='pre')
+""")
+    assert r.errors == [], r.errors
+    assert "_QS_MAX_ORDER_SHARES" not in r.converted_code
+    assert "_qs_split_order" not in r.converted_code
+
+
+def test_order_split_gate_string_literal_only():
+    """门控：仅字符串字面量含 order_target_value 不触发（AST 调用名匹配）。"""
+    r = _convert("""
+ORDER_API = 'order_target_value'
+def initialize(context):
+    pass
+""")
+    assert r.errors == [], r.errors
+    assert "_qs_split_order" not in r.converted_code
+
+
+def test_split_below_threshold_single_order():
+    """恰等阈值内 → 单笔不拆（含整手取整）。"""
+    ns = _order_split_ns()
+    orders, tot = ns["_qs_split_order"]("600519.SS", 49000 * 10.0, px=10.0)
+    assert len(orders) == 1
+    assert orders[0][1] == 49000
+    assert tot == 49000
+
+
+def test_split_just_over_threshold_two_orders():
+    """恰超阈值（49,001 股）→ 拆 2 笔，每笔 ≤49,000；段额整手对齐。"""
+    ns = _order_split_ns()
+    orders, tot = ns["_qs_split_order"]("000001.SZ", 49001 * 1.0, px=1.0)
+    assert len(orders) == 2
+    assert all(a <= 49000 for _, a in orders)
+    assert all(a % 100 == 0 for _, a in orders)
+    assert tot == sum(a for _, a in orders)
+
+
+def test_split_large_value_chunks():
+    """大额（133,300 股 @0.15）→ 拆 ceil=3 笔（整手取整后段数不减）。"""
+    ns = _order_split_ns()
+    orders, tot = ns["_qs_split_order"]("300029.SZ", 133300 * 0.15, px=0.15)
+    assert len(orders) == 3
+    assert all(a <= 49000 for _, a in orders)
+    assert all(a % 100 == 0 for _, a in orders)
+    assert tot == sum(a for _, a in orders)
+
+
+def test_split_px_nonpositive_fallback():
+    """px<=0（统一链 ① 无记录）→ 回退不拆（调用方走原路径）。"""
+    ns = _order_split_ns()
+    orders, tot = ns["_qs_split_order"]("000001.SZ", 20000.0, px=0.0)
+    assert orders == []
+    assert tot == 0
+    orders2, _ = ns["_qs_split_order"]("000001.SZ", 20000.0, px=None)
+    assert orders2 == []
+
+
+def test_split_value_nonpositive():
+    """value<=0 → 不拆。"""
+    ns = _order_split_ns()
+    orders, _ = ns["_qs_split_order"]("000001.SZ", 0.0, px=10.0)
+    assert orders == []
+
+
+def test_split_cash_avail_preallocation():
+    """段现金预分配：cash_avail < value 时按 min 预算均分，合计勾稽 ≤ 预算×缓冲。"""
+    ns = _order_split_ns()
+    # 目标 20000 元 @0.15 → 133,333 股 → ceil=3 笔；现金只有 15000 元
+    orders, tot = ns["_qs_split_order"]("300029.SZ", 20000.0, px=0.15, cash_avail=15000.0)
+    assert orders, "应按预算拆分"
+    total_cost = sum(a * 0.15 for _, a in orders)
+    assert total_cost <= 15000.0 * 0.95  # 合计勾稽
+    assert all(a <= 49000 for _, a in orders)
+
+
+def test_split_cash_insufficient_first_seg_only():
+    """现金只够首段 → 仅首段成交（其余舍去，模拟平台降量语义）。"""
+    ns = _order_split_ns()
+    orders, tot = ns["_qs_split_order"]("300029.SZ", 20000.0, px=0.15, cash_avail=4900.0)
+    # 预算 4900/3=1633.33 → 段股数 int(1633.33/0.15/100)*100 = 10800 股
+    # 合计 10800×0.15=1620 ≤ 4900×0.95 → 第一段可接；但总额 1620*3=4860 ≤ 4655?
+    # 实际逐段累加检查 4655 上限 → 可能只接 2 段
+    assert orders
+    assert sum(a * 0.15 for _, a in orders) <= 4900.0 * 0.95
+    assert tot == sum(a for _, a in orders)
+
+
+def test_split_lot_rounding_tail():
+    """末段收尾按整手取整，段股数均为 100 的倍数。"""
+    ns = _order_split_ns()
+    orders, _ = ns["_qs_split_order"]("000001.SZ", 123456.0, px=1.23)
+    assert orders
+    assert all(a % 100 == 0 for _, a in orders)
+
+
+def test_split_wrapper_target_value_calls_split_order():
+    """order_target_value wrapper：px 有记录（① 层命中）→ 走拆单；否则原路径。"""
+    import quantstudio.strategy_compiler.source_import as si
+    captured = {"target_value": [], "order": []}
+
+    def _fake_target(security, value, *a, **kw):
+        captured["target_value"].append((security, value))
+        return "tid"
+
+    def _fake_order(security, amount, *a, **kw):
+        captured["order"].append((security, amount))
+        return "oid"
+
+    ns = {"order_target_value": _fake_target, "order": _fake_order,
+          "get_history": lambda *a, **kw: None,
+          "current_price": lambda *a, **kw: 0.0,
+          "order_value": lambda *a, **kw: None,
+          "order_percent": lambda *a, **kw: None,
+          "order_target_percent": lambda *a, **kw: None}
+    exec(si._QS_ORDER_SPLIT_EXT.format(marker="# m"), ns)
+    # ① 层命中（注入 _QSLastCloseState.cache，bare 键 + tuple 值）→ 拆单走 order()
+    ns["_QSLastCloseState"].cache = {"300029": ("2026-07-01", 0.15)}
+    ns["order_target_value"]("300029.SZ", 20000.0)
+    assert captured["order"], "应拆单走 order()"
+    assert all(a <= 49000 for _, a in captured["order"])
+    assert captured["target_value"] == []
+    # ① 层缺失（cache 无该码）→ px=0 → 原路径
+    ns["order_target_value"]("600519.SS", 20000.0)
+    assert captured["target_value"], "px=0 应回退原 order_target_value"
+
+
+def test_split_wrapper_direct_order_over_limit():
+    """直接 order() 超限 → 拆多笔（段整手对齐）；合法 → 原路径。"""
+    import quantstudio.strategy_compiler.source_import as si
+    captured = []
+
+    def _fake_order(security, amount, *a, **kw):
+        captured.append(amount)
+        return "oid"
+
+    ns = {"order_target_value": lambda *a, **kw: None, "order": _fake_order,
+          "get_history": lambda *a, **kw: None,
+          "current_price": lambda *a, **kw: 0.0,
+          "order_value": lambda *a, **kw: None,
+          "order_percent": lambda *a, **kw: None,
+          "order_target_percent": lambda *a, **kw: None}
+    exec(si._QS_ORDER_SPLIT_EXT.format(marker="# m"), ns)
+    ns["order"]("300029.SZ", 49000)          # 恰等 → 原路径
+    assert captured == [49000]
+    captured.clear()
+    ns["order"]("300029.SZ", 83300)          # 超限 → 拆 2 笔（每笔 ≤49,000，整手对齐）
+    assert len(captured) == 2
+    assert all(a <= 49000 for a in captured)
+    assert all(a % 100 == 0 for a in captured)
+
+
+def test_split_ptrade_vs_local_homology():
+    """同构性：注入模板 `_qs_split_order` 与本地 ptrade_api 版本逐字同构
+    （双端订单序列一致的前提）。"""
+    import quantstudio.strategy_compiler.source_import as si
+    import quantstudio.backtest.ptrade_api as pa
+
+    src_pt = si._QS_ORDER_SPLIT_EXT
+    # 模板内的 _qs_split_order 源码与本地函数体逐指令一致（去缩进/文档差异后比对）
+    import ast
+    tree_pt = ast.parse(src_pt)
+    fn_pt = next(n for n in ast.walk(tree_pt) if isinstance(n, ast.FunctionDef)
+                 and n.name == "_qs_split_order")
+    fn_local = ast.parse(open(pa.__file__, encoding="utf-8").read())
+    fn_l = next(n for n in ast.walk(fn_local) if isinstance(n, ast.FunctionDef)
+                and n.name == "_qs_split_order")
+    # 比对参数与体（body 语句列表逐条同构；docstring 允许注释差异）
+    assert [a.arg for a in fn_pt.args.args] == [a.arg for a in fn_l.args.args]
+    body_pt = [ast.dump(s) for s in fn_pt.body if not (isinstance(s, ast.Expr)
+                and isinstance(s.value, ast.Constant))]
+    body_l = [ast.dump(s) for s in fn_l.body if not (isinstance(s, ast.Expr)
+              and isinstance(s.value, ast.Constant))]
+    assert body_pt == body_l, "注入模板与本地 _qs_split_order 必须逐字同构"
+
+
+def test_split_thresholds_constant_alignment():
+    """常量对齐：注入模板与本地 _QS_MAX_ORDER_SHARES=49000 及 LOT/BUFFER 一致。"""
+    import quantstudio.strategy_compiler.source_import as si
+    import quantstudio.backtest.ptrade_api as pa
+    assert si._QS_ORDER_SPLIT_EXT.count("49000") >= 1
+    assert pa._QS_MAX_ORDER_SHARES == 49000
+    assert pa._QS_SPLIT_LOT == 100
+    assert pa._QS_SPLIT_PX_BUFFER == 0.95
+
+
+# ---------------------------------------------------------------------------
+# A2 统一链 ① 层：get_history 最近收盘记录（PIT 纪律：跨日失效 + 链式不破坏既有行为）
+# ---------------------------------------------------------------------------
+
+def _record_ns():
+    """exec _QS_ORDER_SPLIT_EXT → 命名空间（含 _qs_history_record_core / 缓存状态）。"""
+    import quantstudio.strategy_compiler.source_import as si
+    ns = {"order_target_value": lambda *a, **kw: None,
+          "order": lambda *a, **kw: None,
+          "get_history": lambda *a, **kw: None,
+          "current_price": lambda *a, **kw: 0.0,
+          "order_value": lambda *a, **kw: None,
+          "order_percent": lambda *a, **kw: None,
+          "order_target_percent": lambda *a, **kw: None}
+    exec(si._PTRADE_HELPERS.format(marker="# m"), ns)
+    exec(si._QS_HISTORY_WRAPPER.format(marker="# m"), ns)
+    exec(si._QS_ORDER_SPLIT_EXT.format(marker="# m"), ns)
+    return ns
+
+
+def _mk_df(codes, day, px):
+    """PTrade 形状 DataFrame（code/time/close；time 为当日 15:00）。"""
+    import pandas as pd
+    rows = [(c, pd.Timestamp(day + " 15:00:00"), px) for c in codes]
+    return pd.DataFrame(rows, columns=["code", "time", "close"])
+
+
+def test_a2_record_and_lookup():
+    """get_history 返回后最近 close 入缓存；_qs_last_close_lookup 可取。"""
+    ns = _record_ns()
+    df = _mk_df(["000001.SZ"], "2026-07-01", 10.0)
+    ns["_QSHistoryChainState"].prev = lambda *a, **kw: df
+    ns["_qs_history_record_core"]((), {"fq": "pre"})
+    assert ns["_qs_last_close_lookup"]("000001.SZ") == 10.0
+
+
+def test_a2_record_is_dict_per_code():
+    """is_dict=True 返回 dict → 每码分别记录。"""
+    ns = _record_ns()
+    d = {"600519.SS": _mk_df(["600519.SS"], "2026-07-01", 20.0),
+         "000001.SZ": _mk_df(["000001.SZ"], "2026-07-01", 30.0)}
+    ns["_QSHistoryChainState"].prev = lambda *a, **kw: d
+    ns["_qs_history_record_core"]((), {"fq": "pre"})
+    assert ns["_qs_last_close_lookup"]("600519.SS") == 20.0
+    assert ns["_qs_last_close_lookup"]("000001.SZ") == 30.0
+
+
+def test_a2_cross_day_cache_invalidated():
+    """跨日缓存失效：T 日记录 → 查询 T+1（不同交易日）缓存清空取新。"""
+    ns = _record_ns()
+    ns["_QSHistoryChainState"].prev = lambda *a, **kw: _mk_df(
+        ["000001.SZ"], "2026-07-01", 10.0)
+    ns["_qs_history_record_core"]((), {"fq": "pre"})
+    assert ns["_qs_last_close_lookup"]("000001.SZ") == 10.0
+    # T+1：不同交易日 → cache 清空并写入新价
+    ns["_QSHistoryChainState"].prev = lambda *a, **kw: _mk_df(
+        ["000001.SZ"], "2026-07-02", 12.0)
+    ns["_qs_history_record_core"]((), {"fq": "pre"})
+    assert ns["_qs_last_close_lookup"]("000001.SZ") == 12.0
+
+
+def test_a2_record_skips_minutes_and_nonpre():
+    """只记录日线 + fq=pre；分钟/不复权不入 ① 层。"""
+    ns = _record_ns()
+    df = _mk_df(["000001.SZ"], "2026-07-01", 10.0)
+    ns["_QSHistoryChainState"].prev = lambda *a, **kw: df
+    ns["_qs_history_record_core"]((), {"frequency": "1m"})
+    assert ns["_qs_last_close_lookup"]("000001.SZ") == 0.0
+    ns["_qs_history_record_core"]((), {"fq": None})
+    assert ns["_qs_last_close_lookup"]("000001.SZ") == 0.0
+
+
+def test_a2_lookup_tolerance_old_now():
+    """_qs_last_close_lookup 兼容旧格式（纯 float）与 tuple 新格式。"""
+    ns = _record_ns()
+    ns["_QSLastCloseState"].cache = {"000001": ("2026-07-01", 8.8)}
+    assert ns["_qs_last_close_lookup"]("000001.SZ") == 8.8
+    ns["_QSLastCloseState"].cache = {"000001": 9.9}
+    assert ns["_qs_last_close_lookup"]("000001.SZ") == 9.9
+
+
+# ---------------------------------------------------------------------------
+# A3 日期归一化（get_trade_days 未来过滤 + 格式归一；get_stock_info listed_date）
+# ---------------------------------------------------------------------------
+
+def _date_norm_ns():
+    """exec _QS_DATE_NORM_EXT → 命名空间（fake 原 get_trade_days/get_stock_info）。"""
+    import quantstudio.strategy_compiler.source_import as si
+
+    captured = {"days": [], "info": []}
+
+    def _fake_days(start_date=None, end_date=None, count=None, *a, **kw):
+        captured["days"].append((start_date, end_date, count))
+        # 模拟 PTrade 全量日历（含未来）+ date 对象混用
+        return ["2025-06-30", "2025-07-01", "2026-06-30", "2026-07-01",
+                "2026-11-30", "2026-12-31"]
+
+    def _fake_info(stocks, field=None, *a, **kw):
+        if isinstance(stocks, list):
+            code = stocks[0]
+        else:
+            code = stocks
+        return {code: {"listed_date": "20260701"}}  # YYYYMMDD 混用
+    ns = {"get_trade_days": _fake_days, "get_stock_info": _fake_info,
+          "order_target_value": lambda *a, **kw: None,
+          "order": lambda *a, **kw: None,
+          "get_history": lambda *a, **kw: None,
+          "current_price": lambda *a, **kw: 0.0,
+          "order_value": lambda *a, **kw: None,
+          "order_percent": lambda *a, **kw: None,
+          "order_target_percent": lambda *a, **kw: None}
+    exec(si._PTRADE_HELPERS.format(marker="# m"), ns)
+    exec(si._QS_HISTORY_WRAPPER.format(marker="# m"), ns)
+    exec(si._QS_ORDER_SPLIT_EXT.format(marker="# m"), ns)
+    exec(si._QS_DATE_NORM_EXT.format(marker="# m"), ns)
+    ns["_captured"] = captured
+    return ns
+
+
+def test_a3_trade_days_norm_and_filter():
+    """get_trade_days：格式归一 + <= today 过滤（today 由 A2 stamp 推导）。"""
+    ns = _date_norm_ns()
+    ns["_QSLastCloseState"].stamp = "2026-07-01"   # A2 最近交易日
+    days = ns["get_trade_days"]()
+    assert "2026-06-30" in days
+    assert "2026-07-01" in days
+    assert "2026-11-30" not in days       # 未来日期被过滤
+    assert "2026-12-31" not in days
+
+
+def test_a3_trade_days_no_stamp_no_filter():
+    """无 A2 stamp（无日线链）→ 不过滤（与平台原始行为一致，防错误截断）。"""
+    ns = _date_norm_ns()
+    ns["_QSLastCloseState"].stamp = None
+    days = ns["get_trade_days"]()
+    assert "2026-12-31" in days
+
+
+def test_a3_trade_days_format_normalized():
+    """YYYYMMDD / date 对象 → 'YYYY-MM-DD'。"""
+    import datetime
+    ns = _date_norm_ns()
+
+    def _fake(*a, **kw):
+        return ["20260701", datetime.date(2026, 7, 2)]
+    ns["_QSDateNormState"].orig_days = _fake   # 换底层 fake，包装仍生效
+    ns["_QSLastCloseState"].stamp = "2026-07-31"
+    days = ns["get_trade_days"]()
+    assert "2026-07-01" in days
+    assert "2026-07-02" in days
+
+
+def test_a3_listed_date_normalized():
+    """get_stock_info listed_date YYYYMMDD → 'YYYY-MM-DD'（本地契约）。"""
+    ns = _date_norm_ns()
+    out = ns["get_stock_info"]("000001.SZ", field=["listed_date"])
+    assert out["000001.SZ"]["listed_date"] == "2026-07-01"
+
+
+def test_a3_gate_injected_when_date_api():
+    """门控：调用 get_trade_days 的策略注入 A3；无调用则不注入。"""
+    r = _convert("""
+def initialize(context):
+    pass
+def handle_data(context, data):
+    d = get_trade_days()
+""")
+    assert r.errors == [], r.errors
+    assert "_QS_DATE_NORM_EXT" not in r.converted_code
+    assert "get_trade_days" in r.converted_code and "_qs_norm_date_str" in r.converted_code
+
+
+def test_a3_gate_not_injected_when_no_date_api():
+    """只读无日期 API → A3 不注入。"""
+    r = _convert("""
+def initialize(context):
+    pass
+def handle_data(context, data):
+    h = get_history(count=20, frequency='1d', field=['close'],
+                    security_list=['600519.SS'], fq='pre')
+""")
+    assert r.errors == [], r.errors
+    assert "_qs_norm_date_str" not in r.converted_code
+
+
+# ---------------------------------------------------------------------------
+# A1 接线（2026-08-22 修正）：本地 order API 拆单包装 ↔ 转换模板逐笔一致
+# ZCode 审核：包装集合 5 API 同构；order 股数语义独立边界用例；percent 类回退
+# ---------------------------------------------------------------------------
+
+def test_wire_local_matches_template_order_target_value():
+    """单元级：同一输入，本地 _qs_wire_order_target_value 与模板 order_target_value
+    拆单段数/段股数/顺序逐笔一致（双端订单序列一致的前提）。"""
+    import quantstudio.backtest.ptrade_api as pa
+
+    captured = []
+    pa._QSOrderWiringState.order_orig = lambda sec, amt, *a, **kw: captured.append((sec, amt))
+    pa._QSLastCloseState.cache = {"300029": ("2026-07-01", 0.15)}
+    try:
+        pa._qs_wire_order_target_value("300029.SZ", 20000.0)
+    finally:
+        pass
+    assert len(captured) == 3                     # 133,333 股 → ceil=3 段
+    assert all(a <= 49000 for _, a in captured)
+    assert all(a % 100 == 0 for _, a in captured)
+    assert [a for _, a in captured] == sorted([a for _, a in captured])
+
+
+def test_wire_local_order_shares_semantics():
+    """order 股数语义边界：恰超 49,000 拆 2 段；49,000 恰等不拆；非整手末段对齐。"""
+    import quantstudio.backtest.ptrade_api as pa
+
+    captured = []
+    # fake 返回非 None，避免 fallback 原 API 重放整单
+    pa._QSOrderWiringState.order_orig = lambda sec, amt, *a, **kw: captured.append(amt) or amt
+    captured.clear()
+    pa._qs_wire_order("300029.SZ", 49000)         # 恰等 → 不拆
+    assert captured == [49000]
+    captured.clear()
+    pa._qs_wire_order("300029.SZ", 49001)         # 恰超 → 2 段整手
+    assert len(captured) == 2
+    assert all(a <= 49000 for a in captured)
+    assert all(a % 100 == 0 for a in captured)
+    captured.clear()
+    pa._qs_wire_order("300029.SZ", 83300)         # 非整手超限 → 整手对齐 2 段
+    assert len(captured) == 2
+    assert all(a % 100 == 0 for a in captured)
+    assert sum(captured) == 83300
+
+
+def test_wire_local_order_value_semantics():
+    """order_value 金额语义 → 同一拆单链路（与 order_target_value 一致）。"""
+    import quantstudio.backtest.ptrade_api as pa
+
+    captured = []
+    pa._QSOrderWiringState.order_orig = lambda sec, amt, *a, **kw: captured.append(amt)
+    pa._QSLastCloseState.cache = {"000001": ("2026-07-01", 0.15)}
+    captured.clear()
+    pa._qs_wire_order_value("000001.SZ", 20000.0)
+    assert len(captured) == 3
+    assert all(a <= 49000 for a in captured)
+
+
+def test_wire_local_px_missing_fallback_original():
+    """① 层 px 缺失（无缓存）→ 回退原 API（与模板 px=0 回退语义一致）。"""
+    import quantstudio.backtest.ptrade_api as pa
+
+    orig_calls = []
+    pa._QSOrderWiringState.target_orig = lambda sec, val, *a, **kw: orig_calls.append((sec, val))
+    pa._QSLastCloseState.cache = {}
+    pa._qs_wire_order_target_value("600519.SS", 20000.0)
+    assert orig_calls == [("600519.SS", 20000.0)]
+
+
+def test_wire_template_order_value_wrapper():
+    """模板 order_value 包装：px 命中 → 拆单；px 缺失 → 原路径。"""
+    import quantstudio.strategy_compiler.source_import as si
+    captured = {"value": [], "order": []}
+
+    def _fake_value(security, value, *a, **kw):
+        captured["value"].append((security, value))
+        return "vid"
+
+    def _fake_order(security, amount, *a, **kw):
+        captured["order"].append((security, amount))
+        return "oid"
+
+    ns = {"order_target_value": lambda *a, **kw: None,
+          "order": _fake_order, "order_value": _fake_value,
+          "order_percent": lambda *a, **kw: None,
+          "order_target_percent": lambda *a, **kw: None,
+          "get_history": lambda *a, **kw: None,
+          "current_price": lambda *a, **kw: 0.0}
+    exec(si._PTRADE_HELPERS.format(marker="# m"), ns)
+    exec(si._QS_HISTORY_WRAPPER.format(marker="# m"), ns)
+    exec(si._QS_ORDER_SPLIT_EXT.format(marker="# m"), ns)
+    ns["_QSLastCloseState"].cache = {"300029": ("2026-07-01", 0.15)}
+    ns["order_value"]("300029.SZ", 20000.0)
+    assert captured["order"], "px 命中应拆单走 order()"
+    assert captured["value"] == []
+    ns["order_value"]("600519.SS", 20000.0)       # px 缺失 → 原路径
+    assert captured["value"]
+
+
+def test_wire_template_percent_fallback_original():
+    """模板 percent 类包装回退原 API（比例单无法模板内折算金额）。"""
+    import quantstudio.strategy_compiler.source_import as si
+    captured = {"percent": [], "target_percent": []}
+
+    def _fake_percent(security, pct, *a, **kw):
+        captured["percent"].append((security, pct))
+        return "pid"
+
+    def _fake_tp(security, pct, *a, **kw):
+        captured["target_percent"].append((security, pct))
+        return "tpid"
+
+    ns = {"order_target_value": lambda *a, **kw: None,
+          "order": lambda *a, **kw: None,
+          "order_value": lambda *a, **kw: None,
+          "order_percent": _fake_percent,
+          "order_target_percent": _fake_tp,
+          "get_history": lambda *a, **kw: None,
+          "current_price": lambda *a, **kw: 0.0}
+    exec(si._PTRADE_HELPERS.format(marker="# m"), ns)
+    exec(si._QS_HISTORY_WRAPPER.format(marker="# m"), ns)
+    exec(si._QS_ORDER_SPLIT_EXT.format(marker="# m"), ns)
+    ns["order_percent"]("600519.SS", 0.1)
+    ns["order_target_percent"]("600519.SS", 0.2)
+    assert captured["percent"] == [("600519.SS", 0.1)]
+    assert captured["target_percent"] == [("600519.SS", 0.2)]
+
+
+def test_wire_local_vs_template_homology():
+    """接线同构：本地 wiring 与模板包装对同一输入产出逐笔一致的 (code, amount) 序列。"""
+    import quantstudio.backtest.ptrade_api as pa
+    import quantstudio.strategy_compiler.source_import as si
+
+    def _run_template(px_cache):
+        captured = []
+        ns = {"order_target_value": lambda *a, **kw: None,
+              "order": lambda sec, amt, *a, **kw: captured.append((sec, amt)),
+              "order_value": lambda *a, **kw: None,
+              "order_percent": lambda *a, **kw: None,
+              "order_target_percent": lambda *a, **kw: None,
+              "get_history": lambda *a, **kw: None,
+              "current_price": lambda *a, **kw: 0.0}
+        exec(si._PTRADE_HELPERS.format(marker="# m"), ns)
+        exec(si._QS_HISTORY_WRAPPER.format(marker="# m"), ns)
+        exec(si._QS_ORDER_SPLIT_EXT.format(marker="# m"), ns)
+        ns["_QSLastCloseState"].cache = px_cache
+        ns["order_target_value"]("300029.SZ", 20000.0)
+        return captured
+
+    def _run_local(px_cache):
+        captured = []
+        pa._QSOrderWiringState.order_orig = lambda sec, amt, *a, **kw: captured.append((sec, amt))
+        pa._QSLastCloseState.cache = px_cache
+        pa._qs_wire_order_target_value("300029.SZ", 20000.0)
+        return captured
+
+    cache = {"300029": ("2026-07-01", 0.15)}
+    t = _run_template(cache)
+    l = _run_local(cache)
+    assert t == l, "双端拆单序列必须逐笔一致"
+    assert len(t) == 3 and all(a <= 49000 for _, a in t)

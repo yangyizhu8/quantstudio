@@ -70,8 +70,6 @@ def _ensure_runtime_state():
         g.listing_date = {}
     if not hasattr(g, 'rebalance_seq'):
         g.rebalance_seq = 0
-    if not hasattr(g, 'last_close'):
-        g.last_close = {}
 
 
 def _ymd(value):
@@ -111,28 +109,6 @@ def _month_offset(ym_str, offset):
     m = int(ym_str[5:7])
     total = y * 12 + (m - 1) + offset
     return '%04d-%02d' % (total // 12, total % 12 + 1)
-
-
-def _normalize_date_str(value):
-    """把 PTrade/QuantStudio 各种日期返回（str、date、datetime、YYYYMMDD）统一成 'YYYY-MM-DD'。"""
-    if value is None:
-        return ""
-    # date/datetime 对象
-    if hasattr(value, 'year') and hasattr(value, 'month') and hasattr(value, 'day'):
-        return "%04d-%02d-%02d" % (value.year, value.month, value.day)
-    text = str(value)
-    # 已是 YYYY-MM-DD
-    if len(text) == 10 and text[4] == '-' and text[7] == '-':
-        return text
-    # YYYYMMDD 数字或字符串
-    digits = "".join(ch for ch in text if ch.isdigit())
-    if len(digits) == 8:
-        return "%s-%s-%s" % (digits[:4], digits[4:6], digits[6:8])
-    # 兜底：尝试 pandas 解析
-    try:
-        return str(pd.to_datetime(text).date())
-    except Exception:
-        return text
 
 
 def _extract_history_field(item, field, dtype=float):
@@ -326,7 +302,8 @@ def _ensure_listing_dates(codes):
         infos = {}
     for code in codes:
         rec = infos.get(code) or {}
-        g.listing_date[code] = _normalize_date_str(rec.get("listed_date"))
+        # listed_date 双端均为 'YYYY-MM-DD'（本地 F2 契约；PTrade 侧由转换管线 A3 归一）
+        g.listing_date[code] = rec.get("listed_date")
 
 
 def _selected_targets(context, regime):
@@ -358,15 +335,14 @@ def _selected_targets(context, regime):
     today_str = "%04d-%02d-%02d" % (today.year, today.month, today.day)
     try:
         # 先尝试带 end_date 的调用（部分 PTrade 支持）；失败则退化为无参调用。
+        # 日期格式双端统一 'YYYY-MM-DD'（本地契约；PTrade 转换侧由 A3 归一）。
         try:
             raw = get_trade_days(end_date=today.strftime("%Y%m%d"))
         except Exception:
             raw = get_trade_days()
-        trade_days = [_normalize_date_str(x) for x in raw] if raw is not None else []
-        # 关键防御：无论平台是否支持 end_date，都在策略内过滤掉晚于当前回测日的日期。
-        # 真实 PTrade 无 end_date 时返回全量交易日历（含未来），会导致月份锚点指向
-        # 未来日期、所有候选算不出收益；本地引擎语义本就是「截至 current_date」，
-        # 过滤对本地是空操作（行为不变）。
+        trade_days = [str(x) for x in raw] if raw is not None else []
+        # 防御过滤（双端安全）：排除晚于当前回测日的日期——真实 PTrade 无 end_date 时
+        # 可能返回全量日历含未来（转换侧 A3 已兜底，此处为保单双保险）；本地为空操作。
         trade_days = [d for d in trade_days if d and d <= today_str]
     except Exception as exc:
         log.warning("get_trade_days failed: %s" % (exc,))
@@ -419,7 +395,6 @@ def _selected_targets(context, regime):
             getattr(getattr(_sample_df, 'index', None), 'dtype', 'N/A'),
         ))
 
-    g.last_close = {}
     picked = []
     for code, df in hist.items():
         try:
@@ -455,12 +430,6 @@ def _selected_targets(context, regime):
                     continue
                 ret = c_T / c_1 - 1.0
             picked.append((float(ret), code))
-            # 记录最近收盘价（PTrade current_price 不可用时，买卖预筛用现成日线收盘）
-            if closes.size > 0:
-                try:
-                    g.last_close[code] = float(closes[-1])
-                except Exception:
-                    pass
         except Exception:
             continue
 
@@ -479,39 +448,6 @@ def _selected_targets(context, regime):
 
 
 # ---------------- 调仓 ----------------
-
-def _current_raw_price(code):
-    """执行口径现价（原始快照价）。失败返回 0（调用方据此跳过）。
-
-    优先级：① 选股时记录的最近日线收盘（g.last_close，PTrade 通用）
-          ② current_price API（本地可用；真实 PTrade 可能返回 0）
-          ③ get_history 最近一根日线收盘（兜底）
-    """
-    try:
-        lc = getattr(g, 'last_close', {}) or {}
-        p = lc.get(code, 0.0)
-        if p and p > 0:
-            return float(p)
-    except Exception:
-        pass
-    try:
-        p = current_price(code)
-        if p is not None and p > 0:
-            return float(p)
-    except Exception:
-        pass
-    try:
-        h = get_history(count=1, frequency="1d", field=["close"],
-                        security_list=[code], fq="pre", include=False)
-        c = _extract_history_field(h, "close")
-        if c.size > 0:
-            v = float(c[-1])
-            if v > 0:
-                return v
-    except Exception:
-        pass
-    return 0.0
-
 
 def monthly_rebalance(context):
     """Scheduled: 波动率区制判定 + 动量/反转选5 + 等权清旧买新 + QA 审计。
@@ -588,7 +524,10 @@ def monthly_rebalance(context):
         for _ in range(5):
             keep = []
             for code in buildable_new:
-                px = _current_raw_price(code)
+                try:
+                    px = float(current_price(code) or 0)
+                except Exception:
+                    px = 0.0
                 if px > 0 and px * _LOT <= per * _PX_BUFFER:
                     keep.append(code)
                 else:

@@ -87,7 +87,7 @@
 | `get_history_batch(sec_list,count,unit='1d',fields=...,fq='pre',include=...)` | **QuantStudio 本地扩展**：强制 list 入参 + 返回 `CodeDict`，消除策略侧逐只 N+1 调用；**复用 `get_history` 的 `get_bars_by_count` 活跃路径**（不读取已停用的 `_preload_daily` 全市场缓存）。**日线路径已批量化**（单条 SQL：`code IN(...)` + ROW_NUMBER，见 PR7 内存缓存）；**分钟路径已批量化 + 当日内存预加载（Phase 4）**：分钟 `get_bars_by_count` 走单次批量 SQL（`query_minute_bars_by_range_batch`，一次 SQL per 表）再按 code 分组取 tail(count)；分钟 Profile 下 `get_history(frequency='1m', include=True)` 优先从引擎注入的当日全量分钟历史（`attach_day_minute_history`，fq=None 原始值）内存切片，零 DB 往返，PIT 截断仍由 `bar_cutoff_ms`（当前 bar 时间戳）保证；请求 code 不在当日缓存时补查 SQL，异常语义与逐只路径一致（`TABLE_MISSING`/`TABLE_EMPTY`/`FREQ_NOT_IN_TABLE`）。仅本地单端策略允许；双端/PTrade 目标由 Validator 阻断。**fq 默认 `'pre'`**。 |
 | `get_price(security,start_date,end_date,frequency='1d',fields,fq='pre',count,is_dict)` | 按日期区间/数量取历史行情，返回 DataFrame 或 `CodeDict`。**fq 默认 `'pre'（前复权）`**。**日期区间路径与 `count` 路径前复权行为一致（R1-A 修复前区间路径曾错误返回 raw 价，已修复）**：`start_date`/`end_date` 区间取数与 `count` 取数对同一代码、同一 fq 返回逐值一致的前复权价。**B1 返回端逆映射**：支持 `fields=['money']` 请求成交额；返回含 `amount` 列时同步追加同值 `money` 列（Ptrade 契约名）。 |
 | `attribute_history(security,count,unit='1d',fields)` | 取历史数据最近一行（单列 Series）。 |
-| `current_price(security)` | 当前价。 |
+| `current_price(security)` | 当前价。**统一链（2026-08-22，A2）**：① 前收（框架 `_qs_last_close_lookup` 缓存，get_history 链自动记录，跨日失效）→ ② 原 API（仅本地 QuantStudio 有，日线=当日 close / 分钟=最近 bar close）→ ③ get_history 兜底；**真实 PTrade 无 `current_price` API**（模块加载期引用即 NameError，平台实证），PTrade 转换侧统一链只含 ①③。策略层**禁止手写兜底**（Validator `PTRADE-PLATFORM-FALLBACK-BAN`）。 |
 | `get_current_data()` | 当日全市场行情 dict（`code→BarData`）。 |
 | `get_snapshot(security,frequency='1d')` | 实时快照（回测返回当日 bar）。 |
 | `get_Ashares(date=None)` | **PTrade Profile 1.7.0 已登记**。全 A 股列表；传日期时双端源码统一使用 `YYYYmmdd` 字符串。 |
@@ -138,7 +138,7 @@
 | 函数 | 说明 |
 |------|------|
 | `get_trading_day(day=0)` | 交易日偏移：`day>0`未来 N 天，`day<0`过去 N 天，返回 `datetime.date`（支持 `.strftime()`/日期减法）。 |
-| `get_trade_days(start,end,count)` | 交易日列表，返回 ndarray。 |
+| `get_trade_days(start,end,count)` | 交易日列表，返回 ndarray。**本地契约 'YYYY-MM-DD' 且缺省 end 时仅至当前回测日；PTrade 转换侧自动归一 'YYYY-MM-DD' + 过滤未来日期（A3，2026-08-22）**。 |
 | `get_all_trades_days(date)` | 全部交易日，返回 ndarray。 |
 | `get_trading_day_by_date(query_date,day=0)` | 按日期取对应交易日。 |
 | `get_current_kline_count()` | 当前交易日分钟 bar 数（日线回测为当日序号，收盘=240）。 |
@@ -152,7 +152,7 @@
 | `order(security,amount,limit_price)` | 按股数下单：`amount>0`买、`amount<0`卖。**返回 Order 对象**。**读取边界（2026-08-16，ZCode 修订4）**：本地专用策略可查 `.status`/`.reason`（感知涨跌停阻断/资金不足）；**skill 生成的 PTrade 可移植策略禁止读取订单返回字段**（Validator `ORDER-RETURN-FIELD-READ` BLOCK），只做真值判断 + `get_position()` 持仓对账——PTrade 拒单返回 None，本地 `Order.__bool__ = filled>0`（拒单/零成交为 falsy），布尔真值语义等价；"受理但未成交"两端真值不一致（PTrade truthy / 本地 falsy），**必须以持仓对账为唯一事实**。 |
 | `order_target(security,target_amount,limit_price)` | 调仓到目标股数（绝对）。 |
 | `order_value(security,value,limit_price)` | 按金额下单（**增量**：`value>0`加仓、`value<0`减仓）。 |
-| `order_target_value(security,value,limit_price)` | 调仓到目标市值（`value=0`全卖）。 |
+| `order_target_value(security,value,limit_price)` | 调仓到目标市值（`value=0`全卖）。**PTrade 转换侧自动拆单（2026-08-22，A1）**：目标金额换算股数 >49,000 股（`_QS_MAX_ORDER_SHARES`）时拆多笔 `order()`，规避创业板/科创板市价单 50,000 股上限（超限整单取消）；本地同构 → 双端订单序列一致。策略层零改动。 |
 | `run_daily(context,func,time='9:31',reference_security=None)` | **PTrade Profile 1.7.0 已登记**，仅在 `initialize` 注册。日线 Profile 的精确盘中时刻不可证明，`09:31` 等盘中调度必须选择分钟 Profile。 |
 
 成交价模式 `match_price_mode`：

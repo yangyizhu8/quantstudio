@@ -22,6 +22,21 @@
 
 > **Ptrade 对齐口径（2026-08-14 实证）**：PTrade 平台撮合价 = raw close（不复权原始收盘价），日线 = T 日 close、分钟 = 下单 bar close；持仓估值 last_price = raw close。本地引擎撮合/估值链路同样使用 raw close（`execution_price_basis=raw_trade_price`）。信号计算（`get_history`/`get_price`）保持 `fq='pre'` 前复权口径，与撮合/估值分离；转换到 PTrade 时由 source_import 自动注入 `fq='pre'` 保证两端信号一致。
 
+> **平台差异吸收契约（2026-08-22，A1-A3）**：以下平台差异由框架/转换管线吸收，策略层零平台知识——
+
+| API | 平台差异 | 吸收机制 |
+|---|---|---|
+| `order_target_value` 等订单 API | 市价单单笔上限：创业板/科创板 50,000 股（51,000 拒）、沪深主板 ≥86,900；超限整单取消 | 转换管线自动拆单（>49,000 股拆多笔，`_qs_split_order`，阈值 `_QS_MAX_ORDER_SHARES=49000`） |
+| `current_price(security)` | **非真实 PTrade API**（官方文档全文无此 API；真实平台模块加载期引用 NameError，2026-08-22 双证）；统一链 PTrade 侧 = ① 前收（框架 `_qs_last_close_lookup`）→ ③ get_history 兜底；本地侧另有 ② 原 API | QuantStudio 本地扩展；双端/PTrade 目标策略由 Validator `TARGET-LOCAL-EXTENSION-BAN` BLOCK（profile local_only_symbols 已登记） |
+| `get_current_data()` | **非真实 PTrade API**（文档全文零出现；本地扩展） | QuantStudio 本地扩展；双端/PTrade 目标同理 BLOCK |
+| 回测取当前价（平台官方方式） | `data[code].price`（当前周期最新价）/ `get_history` 最新 bar / `get_price` | 平台文档 L151-154/5913；`get_snapshot` 仅交易场景（回测不可用） |
+| `get_trade_days()` | 无 end_date 返回全量日历（含未来）；YYYYMMDD/date 混用 | 转换侧 `_qs_norm_date_str` 归一 'YYYY-MM-DD' + `<= 当日` 过滤 |
+| `get_stock_info(listed_date)` | 格式混用 | 转换侧归一 'YYYY-MM-DD' |
+| 退市强平（D4-S3） | T 日按当日 last 全额强平、T+1 现金落账 | 引擎层（B 组，数据前提已 PASS，独立流水线） |
+| 资金不足三态（D4-S4） | 超限取消/可负担降量/买不起一手失败 | 登记为语义差，不建模（对齐判据配对） |
+
+队策略代码**禁止手写平台兜底**（`def _normalize_date_str`/`def _current_raw_price`/`g.last_close` 自维护 → Validator `PTRADE-PLATFORM-FALLBACK-BAN` BLOCK）。费用：平台最低佣金 ≈5 元/笔，与本地 `min_commission=5.0` 同构（拆单双端对称）。
+
 ```bash
 # CLI 切换模式
 python -m quantstudio.backtest.run_ptrade_strategy 策略.py 2026-01-01 2026-07-13 --match-price close

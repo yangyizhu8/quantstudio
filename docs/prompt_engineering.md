@@ -73,9 +73,10 @@ QuantStudio 本地注入 API / 指标 / 全局对象（g、log、pd、np、MyTT�
 - get_fundamentals(security|QueryBuilder, table, fields, date)：valuation 完整可用；eps/profit_ability/
   growth_ability 等可用；balance/income/cashflow 三张报表【返回空 DataFrame】。
 - query(valuation.market_cap).filter(...).order_by(...).limit(n) 后 get_fundamentals(q)
-- get_current_data()→{code:BarData}；data[code].price / current_price(code) 取当日价
+- get_current_data()→{code:BarData}（**QuantStudio 本地扩展，非 PTrade API**）；data[code].price 取当日价（平台官方回测取现价方式；`current_price(code)` 同为本地扩展）
 - PTrade Profile 1.10.0 已登记股票核心：`set_benchmark`、`run_daily`、`get_Ashares`、`get_index_stocks`（含严格 PIT/date 契约）、`get_stock_status`、`get_positions`、`get_position`、`get_trade_days`、`get_fundamentals`、`get_industry`、`get_stock_exrights`（分红除权数据，portable 模式 date 必填）。未登记顶层 API 在双端模式默认 BLOCK。
 - ⚠️ **get_history(is_dict=True) 返回形状契约（Profile 1.8.0）**：真实平台 mapping item 可能是 pandas DataFrame / NumPy structured array / recarray。双端/PTrade 源码对 history item 提取字段后必须先 `np.asarray(item[field], dtype=float)`（或 `hasattr(values,'values')` 守卫的 helper）归一化再做数值计算；禁止无保护地使用 `.values`/`.iloc`/`.loc`/`.to_numpy()`/`.columns`/`.index`/`.empty`。
+- ⚠️ **平台差异由框架吸收，禁止手写兜底（2026-08-22）**：市价单单笔上限（创业板/科创板 50,000 股，超限整单取消）由转换管线自动拆单（>49,000 股拆多笔）；`current_price`/`get_current_data` **非真实 PTrade API**（官方文档全文核实 + 模块加载期 NameError，双证）——双端/PTrade 目标禁止调用（Validator `TARGET-LOCAL-EXTENSION-BAN` BLOCK），平台取现价用 `data[code].price`/`get_history` 最新 bar/`get_price`；`get_trade_days` 全量日历/格式混用由转换侧归一；`get_snapshot` 仅交易场景（回测不可用）。策略生成**禁止**自带 `_normalize_date_str`/`_current_raw_price`/`g.last_close` 等兜底（Validator `PTRADE-PLATFORM-FALLBACK-BAN` BLOCK）。
 - QuantStudio 本地扩展：get_etf_list_local(query_date=None, etf_type="equity", active_only=True)、get_history_batch(...)；仅当生成目标不包含 PTrade 时允许
 - check_limit(code)→{code:1涨/-1跌/0平}；filter_stock_by_status(stocks,filter_type=[...])
 - get_stock_status(stocks, query_type='ST'|'HALT'|'DELISTING', query_date='YYYYmmdd')；`DELISTING_SORTING` 只用于 filter_stock_by_status

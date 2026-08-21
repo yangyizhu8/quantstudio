@@ -2238,18 +2238,205 @@ filter_stock_by_status = _api.filter_stock_by_status
 check_limit = _api.check_limit
 get_positions = _api.get_positions
 get_position = _api.get_position
-order_target_value = _api.order_target_value
-order = _api.order
 order_at_price = _api.order_at_price
-order_value = _api.order_value
 order_target = _api.order_target
+# A1 本地拆单接线（2026-08-22，与转换侧注入模板同构）：订单 API 金额语义按统一链
+# ① 层 px 拆（>49,000 股拆多笔），使双端订单序列/费用逐笔一致。
+# 注：本地 PtradeAPI 无 order_target_percent/order_percent 方法（percent 类为平台语义，
+# 本地不支持 → 双端无分叉）；本地接线覆盖 order_target_value/order/order_value 三入口，
+# 与模板的 percent 回退原 API 语义自然一致。原 API 引用经 class 属性承载（与模板一致）。
+class _QSOrderWiringState:
+    target_orig = None
+    order_orig = None
+    value_orig = None
+
+
+def _qs_wire_order_target_value(security, value, *args, **kwargs):
+    px = _qs_last_close_lookup(security)
+    orders, _tot = _qs_split_order(security, value, px)
+    if not orders:
+        return _QSOrderWiringState.target_orig(security, value, *args, **kwargs)
+    ids = []
+    for code, amt in orders:
+        ids.append(_qs_wire_order(code, amt))
+    return ids[-1] if ids else None
+
+
+def _qs_wire_order(security, amount, *args, **kwargs):
+    if amount is None or amount <= 0 or amount <= _QS_MAX_ORDER_SHARES:
+        return _QSOrderWiringState.order_orig(security, amount, *args, **kwargs)
+    k = int((amount + _QS_MAX_ORDER_SHARES - 1) // _QS_MAX_ORDER_SHARES)
+    per = int((amount // k) / _QS_SPLIT_LOT) * _QS_SPLIT_LOT
+    if per <= 0:
+        return _QSOrderWiringState.order_orig(security, amount, *args, **kwargs)
+    oid = None
+    placed = 0
+    for i in range(k):
+        seg = per if i < k - 1 else amount - placed
+        seg = int(seg / _QS_SPLIT_LOT) * _QS_SPLIT_LOT
+        if seg <= 0:
+            break
+        oid = _QSOrderWiringState.order_orig(security, seg, *args, **kwargs)
+        placed += seg
+    return oid if oid is not None else _QSOrderWiringState.order_orig(
+        security, amount, *args, **kwargs)
+
+
+def _qs_wire_order_value(security, value, *args, **kwargs):
+    px = _qs_last_close_lookup(security)
+    orders, _tot = _qs_split_order(security, value, px)
+    if not orders:
+        return _QSOrderWiringState.value_orig(security, value, *args, **kwargs)
+    ids = []
+    for code, amt in orders:
+        ids.append(_qs_wire_order(code, amt))
+    return ids[-1] if ids else None
+
+
+_QSOrderWiringState.target_orig = _api.order_target_value
+_QSOrderWiringState.order_orig = _api.order
+_QSOrderWiringState.value_orig = _api.order_value
+order_target_value = _qs_wire_order_target_value
+order = _qs_wire_order
+order_value = _qs_wire_order_value
 get_history = _api.get_history
+# A2 统一链 ① 层：get_history 最近收盘自动记录（PIT 纪律：cache 带日期戳每日重置）。
+# 代理绑定使所有策略调用路径（ptrade_import 注入的模块级名）都经由此记录。
+_QSHistoryRecordState = type("_QSHistoryRecordState", (),
+                             {"orig": None, "day": None})
+
+
+def _qs_record_trade_day(df):
+    """从 get_history 返回体最后一行推断交易日（'YYYY-MM-DD'）。"""
+    if df is None or not hasattr(df, 'iloc') or len(df) == 0:
+        return ''
+    try:
+        r = df.iloc[-1]
+        for col in ('trade_date', 'time', 'datetime'):
+            if col in df.columns:
+                v = r.get(col)
+                if v is None:
+                    continue
+                s = str(v)
+                if s and s != 'nan':
+                    return s[:10]
+        idx = df.index
+        if len(idx) > 0:
+            s = str(idx[-1])
+            if s and s != 'nan':
+                return s[:10]
+    except Exception:
+        pass
+    return ''
+
+
+def _qs_history_record_wrapper(*args, **kwargs):
+    """调用原 get_history 后，提取每码最近一根已完成日线 close 写入
+    _QSLastCloseState.cache（仅当日有效；stamp 跨日失效，PIT 纪律）。"""
+    result = _QSHistoryRecordState.orig(*args, **kwargs)
+    try:
+        unit = kwargs.get('frequency') or kwargs.get('unit') or '1d'
+        if str(unit) != '1d':
+            return result  # 只记录日线（分钟 close 语义不同，不入统一链 ①）
+        fq = kwargs.get('fq')
+        if fq is None or str(fq) not in ('pre',):
+            return result  # ① 层 = 前复权信号链（与撮合 raw 分离），仅记录 pre
+        import pandas as _pd
+        sample = result if not isinstance(result, dict) else (
+            next(iter(result.values()), None))
+        day = _qs_record_trade_day(sample)
+        if not day:
+            return result
+        cache = _QSLastCloseState.cache
+        if _QSLastCloseState.stamp != day:
+            if cache is None:
+                cache = {}
+                _QSLastCloseState.cache = cache
+            else:
+                cache.clear()          # PIT 纪律：跨日失效，不复用陈旧前收
+            _QSLastCloseState.stamp = day
+        if isinstance(result, dict):
+            for code, df in result.items():
+                if df is None or not hasattr(df, 'iloc') or len(df) == 0:
+                    continue
+                try:
+                    v = float(df.iloc[-1].get('close', 0))
+                except Exception:
+                    v = 0.0
+                if v and v > 0:
+                    cache[bare_code(str(code))] = (day, v)
+        else:
+            df = result
+            if df is not None and hasattr(df, 'iloc') and len(df) > 0:
+                try:
+                    codes = df['code'].values if 'code' in df.columns else None
+                except Exception:
+                    codes = None
+                if codes is not None:
+                    for i in range(len(df)):
+                        try:
+                            v = float(df.iloc[i].get('close', 0))
+                        except Exception:
+                            v = 0.0
+                        if v and v > 0:
+                            cache[bare_code(str(codes[i]))] = (day, v)
+                else:
+                    try:
+                        v = float(df.iloc[-1].get('close', 0))
+                    except Exception:
+                        v = 0.0
+                    if v and v > 0:
+                        # 单码返回：无法从数据取 code → 尝试从 kwargs 取
+                        sec = (kwargs.get('security_list') or kwargs.get('security')
+                               or (args[0] if args else None))
+                        if sec is not None:
+                            if isinstance(sec, (list, tuple)):
+                                sec = sec[0]
+                            cache[bare_code(str(sec))] = (day, v)
+    except Exception:
+        pass
+    return result
+
+
+_QSHistoryRecordState.orig = get_history
+get_history = _qs_history_record_wrapper
 get_price = _api.get_price
 attribute_history = _api.attribute_history
 # B1 批量取数 API（模块级绑定，供 ptrade_import 注入）
 get_fundamentals_batch = _api.get_fundamentals_batch
 get_history_batch = _api.get_history_batch
-current_price = _api.current_price
+# A2 统一链 current_price：① 前收(_qs_last_close_lookup) → ② 原语义(当日/最近bar) → ③ get_history 兜底。
+# 原 API 语义不变（_api.current_price 直调可仍返回 0=当日缺失）；模块级名供策略用统一链。
+class _QSPriceState:
+    """原始 current_price 引用（class 属性，与注入模板同构）。"""
+    orig = None
+
+
+_QSPriceState.orig = _api.current_price
+
+
+def current_price(security):
+    v = _qs_last_close_lookup(security)
+    if v and v > 0:
+        return v
+    try:
+        p = _QSPriceState.orig(security)
+        if p is not None and p > 0:
+            return float(p)
+    except Exception:
+        pass
+    try:
+        df = get_history(count=1, frequency="1d", field=["close"],
+                         security_list=security, fq="pre", include=False)
+        if df is not None and hasattr(df, "iloc") and len(df) > 0:
+            c = float(df.iloc[-1].get("close", 0) or 0)
+            if c > 0:
+                return c
+    except Exception:
+        pass
+    return 0.0
+
+
 get_current_data = _api.get_current_data
 get_trading_day = _api.get_trading_day
 get_trade_days = _api.get_trade_days
@@ -2278,6 +2465,64 @@ get_KDJ = _api.get_KDJ
 get_RSI = _api.get_RSI
 get_CCI = _api.get_CCI
 is_trade = lambda: False  # 回测模式返回 False（Ptrade 语义）
+
+# ===== A1 市价单拆单（本地同构 helper，2026-08-22）=====
+# 与 source_import._QS_ORDER_SPLIT_EXT 注入模板同构（同常量同算法）→
+# 本地与 PTrade 转换产物订单序列逐笔一致。平台实测（测试456/908）：
+# 创业板/科创板市价单单笔上限 50,000 股（51,000 拒），沪深主板 ≥86,900 通过；
+# 超限 = 整单取消。拆单把 >49,000 股目标拆多笔，全板规避上限。
+_QS_MAX_ORDER_SHARES = 49000      # 单笔安全上限（低于创业板/科创板 50,000；主板远高）
+_QS_SPLIT_LOT = 100               # A股整手
+_QS_SPLIT_PX_BUFFER = 0.95        # 整手可负担预筛缓冲
+
+# 框架级最近收盘缓存（统一链 ① 层，A2 由 get_history 链记录）
+# 格式 {bare_code: (day, close)}；stamp = 最近记录交易日（PIT：每日失效，不复用陈旧前收）
+_QSLastCloseState = type("_QSLastCloseState", (), {"cache": None, "stamp": None})
+
+
+def _qs_last_close_lookup(code):
+    """统一链 ① 层（前收）：_qs_last_close 框架缓存。"""
+    try:
+        cache = _QSLastCloseState.cache or {}
+        v = cache.get(bare_code(str(code)), 0.0)
+        if isinstance(v, (tuple, list)) and len(v) == 2:
+            return float(v[1])
+        if v and v > 0:
+            return float(v)
+    except Exception:
+        pass
+    return 0.0
+
+
+def _qs_split_order(security, value, px, cash_avail=None):
+    """把目标金额拆成 ≤_QS_MAX_ORDER_SHARES 股的多笔 order(amount=...)。
+
+    与 source_import 注入模板 `_QS_ORDER_SPLIT_EXT` 中的实现逐字同构
+    （双端订单序列一致）。返回 (order_list, total_shares)；无法拆返回 ([], 0)。
+    """
+    if px is None or px <= 0 or value is None or value <= 0:
+        return [], 0
+    n = value / px
+    if n <= _QS_MAX_ORDER_SHARES:
+        amount = int(n / _QS_SPLIT_LOT) * _QS_SPLIT_LOT
+        return ([(security, amount)], amount) if amount > 0 else ([], 0)
+    k = int((n + _QS_MAX_ORDER_SHARES - 1) // _QS_MAX_ORDER_SHARES)  # ceil
+    budget = min(cash_avail, value) if cash_avail is not None else value
+    use_buffer = cash_avail is not None
+    per = budget / k
+    orders = []
+    total_cost = 0.0
+    for _i in range(k):
+        seg_amount = int(per / px / _QS_SPLIT_LOT) * _QS_SPLIT_LOT
+        if seg_amount <= 0:
+            seg_amount = _QS_SPLIT_LOT
+        seg_amount = min(seg_amount, _QS_MAX_ORDER_SHARES)
+        cost = seg_amount * px
+        if use_buffer and total_cost + cost > budget * _QS_SPLIT_PX_BUFFER:
+            break
+        orders.append((security, seg_amount))
+        total_cost += cost
+    return (orders, sum(a for _, a in orders)) if orders else ([], 0)
 
 # ===== 第2批新增：财务/除权/板块/行业/ETF/可转债 =====
 get_stock_exrights = _api.get_stock_exrights

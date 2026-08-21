@@ -522,7 +522,9 @@
     "return_shape": "pandas.Series or pandas.DataFrame"
   },
   "current_price": {
-    "contexts": ["backtest", "trade"],
+    "contexts": ["quantstudio_local_backtest"],
+    "unsupported_on_ptrade": true,
+    "replacement_for": "No native PTrade API (verified 2026-08-22: module-level reference raises NameError on real platform; docs list data[code].price / get_snapshot last_px / get_history latest-price as the only price sources). QuantStudio-local only. Converted PTrade code gets a framework-injected unified chain (1) prev-close cache -> 3) get_history) instead; dual-target strategies must not call current_price.",
     "max_positional": 1,
     "allowed_keywords": ["security"],
     "examples": ["current_price('600000.SS')"],
@@ -748,6 +750,7 @@
     "get_fundamentals_batch",
     "get_security_info",
     "get_current_data",
+    "current_price",
     "EMA",
     "MA",
     "SMA",
@@ -776,6 +779,7 @@
     "PTrade does not inject numpy/pandas aliases. If source uses np/pd/numpy/pandas, it must explicitly import the corresponding module.",
     "Use numpy/pandas or locally defined helpers for indicators unless the PTrade public API explicitly supplies the function.",
     "Backtest code must not call get_snapshot or check_limit; those are trading-context APIs. get_open_orders is available in backtest and trade contexts.",
+    "current_price / get_current_data are QuantStudio-local extensions, NOT real PTrade APIs (verified 2026-08-22: module-level NameError on real platform). Dual-target/PTrade code must obtain current price from data[code].price, get_history latest bar, or get_price; validator BLOCKS these names for dual-target profiles (PTRADE-DESIGN-LOCAL-API).",
     "Use get_stock_info(..., field=['listed_date']) for listing dates.",
     "For a confirmed current completed minute bar, use get_history(..., frequency='1m', include=True) only inside the scheduled minute callback and document the cutoff.",
     "Date arguments passed to PTrade APIs should be normalized to YYYYmmdd strings unless the platform documents a date object.",

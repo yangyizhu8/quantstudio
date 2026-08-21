@@ -11,6 +11,22 @@
 5. Normalize output codes per platform (`.SH` QuantStudio, `.SS` PTrade) and compare history/positions by bare six-digit code to prevent alias-key misses.
 6. Use `order_target_value` for target weights. Sell non-selected holdings, then target each selected security to total portfolio value divided by `max_positions`.
 
+## Platform differences absorbed by framework (2026-08-22, PTrade alignment v4)
+
+> 策略层零平台知识：以下差异由 source_import 转换管线/本地注入 API 吸收，策略不得手写兜底
+> （validator `PTRADE-PLATFORM-FALLBACK-BAN`）。
+
+| P-ID | 平台实测行为 | 吸收机制 | 策略层残留 |
+|---|---|---|---|
+| P-D2 | 市价单单笔上限：创业板/科创板 50,000 股（51,000 拒）、沪深主板 ≥86,900 通过；超限**整单取消** | 转换管线拆单（>49,000 股拆多笔，`_qs_split_order`，阈值 `_QS_MAX_ORDER_SHARES=49000`） | 零 |
+| P-D3 | `current_price` **非真实 PTrade API**（官方文档全文无此 API；模块加载期 NameError，2026-08-22 双证）。`get_current_data` 同样非平台 API | 统一链 PTrade 侧 ① 前收(`_qs_last_close_lookup`)→③ get_history 兜底（本地侧另有 ② 原 API）；profile `local_only_symbols` 已登记 → Validator `TARGET-LOCAL-EXTENSION-BAN` BLOCK 双端/PTrade 策略使用 | 零 |
+| P-D4 | `get_trade_days()` 无 end_date 返回全量日历（含未来）；YYYYMMDD/date 混用 | 转换侧 `_qs_norm_date_str` 归一 + `<= 当日` 过滤（当日由 A2 stamp 推导） | 零 |
+| P-D4b | `get_stock_info(listed_date)` 格式混用 | 转换侧归一 'YYYY-MM-DD' | 零 |
+| P-D5 | 退市强平 is expired：T 日按当日 last 全额强平、T+1 现金落账（D4-S3） | 引擎层（B 组，数据前提已 PASS） | 零（另案） |
+| P-D6 | 资金不足三态：超限取消/可负担降量成交/买不起一手失败（D4-S4） | 登记为语义差不建模（对齐判据配对） | 零 |
+
+**费用模型实证（2026-08-22）**：平台最低佣金 ≈5 元/笔（与本地 `min_commission=5.0` 同构）→ 拆单双端费用对称。
+
 ## Fail-soft policy
 
 - A single unsupported security must not terminate the strategy.

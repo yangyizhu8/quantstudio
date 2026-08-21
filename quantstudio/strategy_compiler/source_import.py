@@ -314,6 +314,396 @@ def get_history(*args, **kwargs):
     return _qs_to_dataframe(_result)
 '''
 
+
+# source_import 市价单拆单注入（2026-08-22，框架方案 PTrade 平台对齐治理 v4 §3.1 A1）
+# 平台实测（测试456/908）：创业板/科创板市价单单笔上限 50,000 股（51,000 拒），沪深主板 ≥86,900 通过；
+# 超限 = 整单取消（无订单号、仓位缺口）。拆单注入把 >49,000 股的目标拆成多笔 ≤49,000 股，
+# 全板规避上限；本地注入同构 helper → 双端订单序列逐笔一致。
+# 设计约束（R3）：
+#  ① px 基准写死 = 统一链 ① 层前收（_qs_last_close，A2 提供）；px<=0 时回退下单不拆（与现行为一致）；
+#  ② 段级独立现金检查：段额预分配 min(可用现金,目标)/N（vol_regime per_new 预算模型通用化），
+#     合计勾稽 Σ(段股数×px) + 预留 ≤ 可用现金（_PX_BUFFER 同类缓冲语义）；
+#  ③ 费用前置门已实证：平台最低佣金 ≈5 元/笔（probe_commission 2026-08-22），与本地同构 → 拆单双端对称。
+_QS_ORDER_SPLIT_EXT = '''
+{marker}
+# [qs-import-generated] 市价单拆单注入（source_import 门控扩展，2026-08-22）
+# 平台分板市价单上限（创业板/科创板 50,000 股）→ >49,000 股目标自动拆多笔。
+# 与本地 ptrade_api._qs_split_order 同构（同常量同算法）→ 双端订单序列逐笔一致。
+_QS_MAX_ORDER_SHARES = 49000      # 单笔安全上限（低于创业板/科创板 50,000；主板远高）
+_QS_SPLIT_LOT = 100               # A股整手
+_QS_SPLIT_PX_BUFFER = 0.95        # 整手可负担预筛缓冲（执行价上浮 5% 仍可建仓）
+
+
+class _QSOrderRefState:
+    """捕获平台原始订单 API（class 属性承载——平台静态白名单识别 class 语句，
+    变量持函数引用后调用会被 LOCAL-API-WHITELIST BLOCK，2026-08-22 平台实证）。"""
+    target_orig = None
+    order_orig = None
+    value_orig = None
+    target_percent_orig = None
+    percent_orig = None
+
+
+_QSOrderRefState.target_orig = order_target_value
+_QSOrderRefState.order_orig = order
+_QSOrderRefState.value_orig = order_value
+_QSOrderRefState.target_percent_orig = order_target_percent
+_QSOrderRefState.percent_orig = order_percent
+
+
+def _qs_split_order(security, value, px, cash_avail=None):
+    """把目标金额拆成 ≤_QS_MAX_ORDER_SHARES 股的多笔 order(amount=...)。
+
+    - value: 目标金额（order_target_value 语义）；px: 现价（统一链 ① 层前收；<=0 回退）；
+    - cash_avail: 可用现金；None 时以 value 为预算上界（不放大，段额不超目标）。
+    - 返回 (order_list, total_shares)；order_list = [(code, amount), ...]；
+      无法拆（px<=0 / amount<=0 / 预算不足以买 1 手）返回 ([], 0)，调用方走原路径。
+    """
+    if px is None or px <= 0 or value is None or value <= 0:
+        return [], 0
+    n = value / px
+    if n <= _QS_MAX_ORDER_SHARES:
+        # 不超限：保持单笔（含整手取整，语义与不注入版一致）
+        amount = int(n / _QS_SPLIT_LOT) * _QS_SPLIT_LOT
+        return ([(security, amount)], amount) if amount > 0 else ([], 0)
+    k = int((n + _QS_MAX_ORDER_SHARES - 1) // _QS_MAX_ORDER_SHARES)  # ceil
+    # 段额预分配（R3 ②）：目标金额均分 k 段；cash_avail 提供时改按 min(现金,目标)/k
+    # 分配（现金不足则收缩段额），并启用合计勾稽 Σ(amount×px) ≤ min(cash,value)×缓冲。
+    budget = min(cash_avail, value) if cash_avail is not None else value
+    use_buffer = cash_avail is not None
+    per = budget / k
+    orders = []
+    total_cost = 0.0
+    for _i in range(k):
+        seg_amount = int(per / px / _QS_SPLIT_LOT) * _QS_SPLIT_LOT
+        if seg_amount <= 0:
+            seg_amount = _QS_SPLIT_LOT
+        seg_amount = min(seg_amount, _QS_MAX_ORDER_SHARES)
+        cost = seg_amount * px
+        if use_buffer and total_cost + cost > budget * _QS_SPLIT_PX_BUFFER:
+            # 合计勾稽：超出可用现金缓冲 → 舍去本段（与平台"资金不足降量"同语义）
+            break
+        orders.append((security, seg_amount))
+        total_cost += cost
+    return (orders, sum(a for _, a in orders)) if orders else ([], 0)
+
+
+# 订单 API 拆单包装：order_target_value 系列按统一链 ① 层 px 拆分；
+# 策略代码零改动（调用语句不变，由 wrapper 收口）。
+
+
+def order_target_value(security, value, *args, **kwargs):
+    _px = _qs_last_close_lookup(security)
+    orders, _tot = _qs_split_order(security, value, _px)
+    if not orders:
+        return _QSOrderRefState.target_orig(security, value, *args, **kwargs)
+    _ids = []
+    for _code, _amt in orders:
+        _ids.append(order(_code, _amt))
+    return _ids[-1] if _ids else None
+
+
+def order(security, amount, *args, **kwargs):
+    if amount is None or amount <= 0 or amount <= _QS_MAX_ORDER_SHARES:
+        return _QSOrderRefState.order_orig(security, amount, *args, **kwargs)
+    # 直接 order() 超限：同样拆（amount 已是股数，无需 px）；末段整手对齐。
+    k = int((amount + _QS_MAX_ORDER_SHARES - 1) // _QS_MAX_ORDER_SHARES)
+    per = int((amount // k) / _QS_SPLIT_LOT) * _QS_SPLIT_LOT
+    if per <= 0:
+        return _QSOrderRefState.order_orig(security, amount, *args, **kwargs)
+    _id = None
+    _placed = 0
+    for _i in range(k):
+        _seg = per if _i < k - 1 else amount - _placed
+        _seg = int(_seg / _QS_SPLIT_LOT) * _QS_SPLIT_LOT
+        if _seg <= 0:
+            break
+        _id = _QSOrderRefState.order_orig(security, _seg, *args, **kwargs)
+        _placed += _seg
+    return _id if _id is not None else _QSOrderRefState.order_orig(security, amount, *args, **kwargs)
+
+
+def order_value(security, value, *args, **kwargs):
+    """order_value 拆单包装：金额语义 → 统一链 ① 层 px 拆（与 order_target_value 同链路）。"""
+    _px = _qs_last_close_lookup(security)
+    orders, _tot = _qs_split_order(security, value, _px)
+    if not orders:
+        return _QSOrderRefState.value_orig(security, value, *args, **kwargs)
+    _ids = []
+    for _code, _amt in orders:
+        _ids.append(order(_code, _amt))
+    return _ids[-1] if _ids else None
+
+
+def order_target_percent(security, percent, *args, **kwargs):
+    """order_target_percent 包装：比例语义的目标仓——无法在模板内可靠取组合总值
+    （依赖运行时 context），保守回退原 API（平台 percent 单按当前市值折算，超限风险低，
+    与 px=0 回退同语义）；保留入口覆盖保证双端 API 集合一致。"""
+    return _QSOrderRefState.target_percent_orig(security, percent, *args, **kwargs)
+
+
+def order_percent(security, percent, *args, **kwargs):
+    """order_percent 包装：同 order_target_percent，回退原 API（见上）。"""
+    return _QSOrderRefState.percent_orig(security, percent, *args, **kwargs)
+
+
+def _qs_last_close_lookup(code):
+    """统一链 ① 层（前收）：优先 _qs_last_close 框架缓存（A2 由 get_history 链记录）。
+
+    缓存格式 {{bare_code: (day, close)}}：返回当日记录的最近日均线 close；
+    跨日由记录 hook 的 stamp 校验自动失效（PIT 纪律）。
+    """
+    try:
+        cache = _QSLastCloseState.cache or {{}}
+        v = cache.get(_qs_bare(str(code)), 0.0)
+        if isinstance(v, (tuple, list)) and len(v) == 2:
+            return float(v[1])
+        if v and v > 0:
+            return float(v)
+    except Exception:
+        pass
+    return 0.0
+
+
+class _QSLastCloseState:
+    cache = None  # {{code: (day, close)}}；stamp = 最近记录交易日（PIT：跨日失效）
+    stamp = None
+
+
+def _qs_record_trade_day(df):
+    """从 get_history 返回体最后一行推断交易日（'YYYY-MM-DD'）。
+
+    优先 trade_date 列（扩展合成列），其次 time/datetime，最后 index。
+    """
+    if df is None or not hasattr(df, 'iloc') or len(df) == 0:
+        return ''
+    try:
+        r = df.iloc[-1]
+        for col in ('trade_date', 'time', 'datetime'):
+            if col in df.columns:
+                v = r.get(col)
+                if v is None:
+                    continue
+                s = str(v)
+                if s and s != 'nan':
+                    return s[:10]
+        idx = df.index
+        if len(idx) > 0:
+            s = str(idx[-1])
+            if s and s != 'nan':
+                return s[:10]
+    except Exception:
+        pass
+    return ''
+
+
+def _qs_history_record_core(args, kwargs):
+    """调用前一版 get_history（_QSHistoryChainState.prev），提取最近一根已完成日线
+    close 写入缓存（PIT 纪律）。"""
+    result = _QSHistoryChainState.prev(*args, **kwargs)
+    try:
+        unit = kwargs.get('frequency') or kwargs.get('unit') or '1d'
+        if str(unit) != '1d':
+            return result
+        fqv = kwargs.get('fq')
+        if fqv is None or str(fqv) not in ('pre',):
+            return result
+        day = _qs_record_trade_day(result if not isinstance(result, dict)
+                                   else next(iter(result.values()), None))
+        if not day:
+            return result
+        if _QSLastCloseState.stamp != day:
+            if _QSLastCloseState.cache is None:
+                _QSLastCloseState.cache = {{}}
+            else:
+                _QSLastCloseState.cache.clear()
+            _QSLastCloseState.stamp = day
+        cache = _QSLastCloseState.cache
+        if isinstance(result, dict):
+            for code, df in result.items():
+                if df is None or not hasattr(df, 'iloc') or len(df) == 0:
+                    continue
+                try:
+                    v = float(df.iloc[-1].get('close', 0))
+                except Exception:
+                    v = 0.0
+                if v and v > 0:
+                    cache[_qs_bare(str(code))] = (day, v)
+        else:
+            df = result
+            if df is not None and hasattr(df, 'iloc') and len(df) > 0:
+                try:
+                    codes = df['code'].values if 'code' in df.columns else None
+                except Exception:
+                    codes = None
+                if codes is not None:
+                    for i in range(len(df)):
+                        try:
+                            v = float(df.iloc[i].get('close', 0))
+                        except Exception:
+                            v = 0.0
+                        if v and v > 0:
+                            cache[_qs_bare(str(codes[i]))] = (day, v)
+                else:
+                    try:
+                        v = float(df.iloc[-1].get('close', 0))
+                    except Exception:
+                        v = 0.0
+                    if v and v > 0:
+                        sec = (kwargs.get('security_list') or kwargs.get('security')
+                               or (args[0] if args else None))
+                        if sec is not None:
+                            if isinstance(sec, (list, tuple)):
+                                sec = sec[0]
+                            cache[_qs_bare(str(sec))] = (day, v)
+    except Exception:
+        pass
+    return result
+
+
+def _qs_bare(code):
+    return str(code).strip().upper().split('.')[0]
+
+
+class _QSHistoryChainState:
+    """前一版 get_history 引用（class 属性承载——平台白名单识别 class，2026-08-22）。"""
+    prev = None
+
+
+_QSHistoryChainState.prev = get_history
+
+
+def get_history(*args, **kwargs):
+    return _qs_history_record_core(args, kwargs)
+
+
+def current_price(security):
+    """统一链 current_price（PTrade 转换侧）。
+
+    平台实证（2026-08-22 冒烟）：**current_price 不是真实 PTrade API**——模块加载期
+    引用即 NameError（平台仅注入 order/get_history/get_trade_days 等标准 API；此前
+    策略运行 current_price 返回 0 正是 NameError 被 try/except 吞掉）。故本侧统一链
+    只含 ① 前收（框架缓存）→ ③ get_history 兜底；本地 QuantStudio 侧另有模块级
+    注入的统一链（含 ② 原 API 语义，ptrade_api 内）。返回 0 = 不可得（与旧行为一致）。
+    """
+    v = _qs_last_close_lookup(security)
+    if v and v > 0:
+        return v
+    try:
+        df = get_history(count=1, frequency="1d", field=["close"],
+                         security_list=security, fq="pre", include=False)
+        if df is not None and hasattr(df, "iloc") and len(df) > 0:
+            c = float(df.iloc[-1].get("close", 0) or 0)
+            if c > 0:
+                return c
+    except Exception:
+        pass
+    return 0.0
+'''
+
+
+# source_import 日期归一化注入（2026-08-22，框架方案 PTrade 平台对齐治理 v4 §3.1 A3）
+# 平台实测（测试456/908）：PTrade get_trade_days() 无 end_date 返回全量日历（含未来），
+# 且日期格式混用 YYYYMMDD / datetime.date / 'YYYY-MM-DD'；本地 get_trade_days 已实现
+# 'YYYY-MM-DD' ndarray + 缺省过滤至当前回测日（ptrade_api.py:1486-1497，不改）。
+# A3 = PTrade 转换侧注入：格式归一 + 未来过滤（与本地同语义），策略层零自维护兜底。
+# 补充：get_stock_info 返回的 listed_date 一并归一化（本地 'YYYY-MM-DD' string 契约）。
+_QS_DATE_NORM_EXT = '''
+{marker}
+# [qs-import-generated] 交易日历/上市日归一化注入（source_import 门控扩展，2026-08-22）
+# get_trade_days：PTrade 无 end_date 返回全量日历（含未来）+ 格式混用 → 归一 'YYYY-MM-DD' + <= today 过滤
+# get_stock_info(listed_date)：统一 'YYYY-MM-DD'（与本地契约一致）
+class _QSDateNormState:
+    """原始 get_trade_days/get_stock_info 引用。
+
+    class 属性承载（平台白名单识别 class 语句）。捕获时机 = 本模板 def 之前
+    （此刻 get_trade_days/get_stock_info 仍是平台注入原函数，def 之后会被包装
+    覆盖——若在 def 后惰性 globals() 解析会拿到包装自身 → 递归，2026-08-22 实证）。
+    get_trade_days/get_stock_info 是真实 PTrade API（冒烟调用成功），顶层引用安全；
+    非平台 API（如 current_price）才必须在顶层避免引用（见 A2 说明）。
+    """
+    orig_days = None
+    orig_info = None
+
+
+_QSDateNormState.orig_days = get_trade_days
+_QSDateNormState.orig_info = get_stock_info
+
+
+def _qs_norm_date_str(value):
+    """把 PTrade 各种日期返回（str/date/datetime/YYYYMMDD）统一成 'YYYY-MM-DD'。"""
+    if value is None:
+        return ""
+    if hasattr(value, 'year') and hasattr(value, 'month') and hasattr(value, 'day'):
+        return "%04d-%02d-%02d" % (value.year, value.month, value.day)
+    text = str(value)
+    if len(text) == 10 and text[4] == '-' and text[7] == '-':
+        return text
+    digits = "".join(ch for ch in text if ch.isdigit())
+    if len(digits) == 8:
+        return "%s-%s-%s" % (digits[:4], digits[4:6], digits[6:8])
+    return text
+
+
+def get_trade_days(start_date=None, end_date=None, count=None, *args, **kwargs):
+    """本地同语义包装：'YYYY-MM-DD' 列表 + 缺省 end_date 时过滤至当前回测日。"""
+    result = _QSDateNormState.orig_days(start_date, end_date, count, *args, **kwargs)
+    days = [_qs_norm_date_str(x) for x in result] if result is not None else []
+    today = _qs_today_str()
+    if end_date is None and today:
+        days = [d for d in days if d and d <= today]
+    return days
+
+
+def get_stock_info(stocks, field=None, *args, **kwargs):
+    """listed_date 归一化包装（'YYYY-MM-DD'，与本地契约一致）。"""
+    result = _QSDateNormState.orig_info(stocks, field, *args, **kwargs)
+    if field is None or 'listed_date' in (field if isinstance(field, (list, tuple)) else [field]):
+        try:
+            if isinstance(result, dict):
+                for code in result:
+                    rec = result[code]
+                    if rec is not None and hasattr(rec, 'get'):
+                        rec['listed_date'] = _qs_norm_date_str(rec.get('listed_date'))
+        except Exception:
+            pass
+    return result
+
+
+def _qs_today_str():
+    """当前回测日（'YYYY-MM-DD'）。
+
+    优先取 A2 统一链的最近交易日 stamp（由 get_history 数据流推导，PIT 正确）；
+    无记录时返回 ''（不过滤——保持与平台原始行为一致，避免错误截断）。
+    """
+    try:
+        s = _QSLastCloseState.stamp
+        if s:
+            return str(s)[:10]
+    except Exception:
+        pass
+    try:
+        ctx = _QSContextHolder.ctx
+        dt = getattr(ctx, 'current_dt', None)
+        if dt is not None:
+            return str(dt.date() if hasattr(dt, 'date') else dt)[:10]
+    except Exception:
+        pass
+    return ''
+
+
+class _QSContextHolder:
+    ctx = None
+
+
+def _qs_ctx_holder():
+    return _QSContextHolder.ctx
+
+
+def _qs_set_context(ctx):
+    _QSContextHolder.ctx = ctx
+'''
+
 # 档 2 表达式内嵌的等价字面量（H2）：本地函数 → PTrade 语义等价字面量
 _REWRITE_LITERALS: dict[str, str] = {
     "set_backtest": "None",
@@ -333,6 +723,49 @@ def _source_uses_trade_date(source: str) -> bool:
     覆盖策略源码两种写法；不使用则注入旧 wrapper（输出与改造前逐字节一致）。
     """
     return "'trade_date'" in source or '"trade_date"' in source
+
+
+_ORDER_APIS = ("order_target_value", "order_target_percent", "order_value",
+               "order_percent", "order")
+
+
+def _source_uses_order_api(source: str) -> bool:
+    """门控：源策略是否调用任一订单 API（是 → 注入拆单 wrapper）。
+
+    判定 = AST 调用名匹配（import 语句除外），避免字符串字面量误伤。
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        # 无法解析时退化文本探测（只在调用语境出现才命中）
+        return any(("(%s" % name) in source for name in _ORDER_APIS)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            fn = node.func
+            if isinstance(fn, ast.Name) and fn.id in _ORDER_APIS:
+                return True
+            if isinstance(fn, ast.Attribute) and fn.attr in _ORDER_APIS:
+                return True
+    return False
+
+
+_DATE_APIS = ("get_trade_days", "get_stock_info")
+
+
+def _source_uses_date_api(source: str) -> bool:
+    """门控：源策略调用 get_trade_days / get_stock_info → 注入 A3 归一化包装。"""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return any(("(%s" % name) in source for name in _DATE_APIS)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            fn = node.func
+            if isinstance(fn, ast.Name) and fn.id in _DATE_APIS:
+                return True
+            if isinstance(fn, ast.Attribute) and fn.attr in _DATE_APIS:
+                return True
+    return False
 
 # ============================================================================
 # 工具
@@ -1298,6 +1731,16 @@ class SourceConverter:
         if _source_uses_trade_date(code):
             blocks.append(_QS_HISTORY_TRADE_DATE_EXT.format(marker=INJECTED_MARKER))
             self.coverage["injected_helpers"].append("trade_date_synth")
+        # 市价单拆单门控扩展（A1）：仅当源策略调用订单 API 时注入（无订单 = 逐字节不变）
+        if _source_uses_order_api(code):
+            blocks.append(_QS_ORDER_SPLIT_EXT.format(marker=INJECTED_MARKER))
+            self.coverage["injected_helpers"].extend(
+                ["order_split", "_qs_split_order", "order_target_value_wrapper"])
+        # 日期归一化门控扩展（A3）：仅当源策略调用 get_trade_days/get_stock_info 时注入
+        if _source_uses_date_api(code):
+            blocks.append(_QS_DATE_NORM_EXT.format(marker=INJECTED_MARKER))
+            self.coverage["injected_helpers"].extend(
+                ["date_norm", "get_trade_days_wrapper", "get_stock_info_wrapper"])
         for shim_name in sorted(self._need_shim):
             blocks.append(self._shim_source(shim_name))
             self.coverage["injected_helpers"].append(f"shim:{shim_name}")

@@ -950,6 +950,7 @@ def validate_strategy(
     if strict_ptrade:
         _validate_dual_target_field_names(tree, issues, parents)
         _validate_is_dict_usage(tree, issues)
+        _validate_platform_fallback_handwritten(tree, issues)
 
     target_set = set(design.get("targets", []))
     local_only_symbols = set(ptrade_profile.get("local_only_symbols", []))
@@ -1011,6 +1012,7 @@ def validate_strategy(
         issues.append(_issue(
             "LOCAL-ONLY-PTRADE-CLAIM", "BLOCK",
             "QuantStudio-only source must not claim PTrade validation PASS."))
+
 
     scheduled_times = {callback: schedule for callback, schedule, _ in schedules if callback}
 
@@ -1230,4 +1232,45 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def _validate_platform_fallback_handwritten(tree, issues):
+    """R5（2026-08-22，PTrade 平台对齐治理 v4 C 组）：禁止策略手写平台差异兜底。
+
+    平台差异（市价单上限/current_price/交易日历/listed_date）由框架与转换管线吸收，
+    策略层零平台知识。拦截以下历史反例（函数定义级，防裸词误伤）：
+      - def _normalize_date_str / def _current_raw_price（历史自维护兜底函数名）
+      - g.last_close 自维护字典赋值模式（g.last_close = {...} / g.last_close[code] = ...）
+    禁止裸词匹配 last_close（实证误伤：first_cover_event_daily 的 g.last_close_date
+    是无关业务字段——2026-08-22 核实）。
+    """
+    blocked_fns = {"_normalize_date_str", "_current_raw_price"}
+
+    def _visit(node):
+        # 函数定义级
+        if isinstance(node, ast.FunctionDef) and node.name in blocked_fns:
+            issues.append(_issue(
+                "PTRADE-PLATFORM-FALLBACK-BAN", "BLOCK",
+                f"手写平台差异兜底函数 {node.name}() 禁止：平台差异（市价单上限/current_price/"
+                f"交易日历）由框架与转换管线吸收，策略层零平台知识", node.lineno))
+        # g.last_close 自维护赋值模式（Attribute 名恰为 last_close，排除 last_close_date 等无关字段）
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Attribute) and t.attr == "last_close" \
+                        and isinstance(t.value, ast.Attribute) and t.value.attr == "g":
+                    issues.append(_issue(
+                        "PTRADE-PLATFORM-FALLBACK-BAN", "BLOCK",
+                        "g.last_close 自维护字典赋值禁止：最近收盘由框架统一链 ① 层提供"
+                        "（_qs_last_close_lookup），策略层零平台知识", node.lineno))
+                if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Attribute) \
+                        and t.value.attr == "last_close" and isinstance(t.value.value, ast.Name) \
+                        and t.value.value.id == "g":
+                    issues.append(_issue(
+                        "PTRADE-PLATFORM-FALLBACK-BAN", "BLOCK",
+                        "g.last_close[...] 自维护赋值禁止：最近收盘由框架统一链 ① 层提供"
+                        "（_qs_last_close_lookup），策略层零平台知识", node.lineno))
+
+    for n in ast.walk(tree):
+        _visit(n)
+
 
