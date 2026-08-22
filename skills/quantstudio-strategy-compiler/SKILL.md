@@ -5,7 +5,7 @@ description: Local-only QuantStudio strategy engineering (agent-first R0-R6 pipe
 
 # QuantStudio Agent-first Strategy Engineering
 
-Skill release: `0.7.0-framework-repair-f1-f6` (built on the `0.3.2-mvp` compiler/package baseline).
+Skill release: `0.7.1-r0-workflow-review` (built on `0.7.0-framework-repair-f1-f6`; compiler/package baseline `0.3.2-mvp` unchanged).
 
 Contract versions at this release: agent design `2.2`, PTrade profile `1.10.0`, user backtest evidence `2.1`, validation report `2.1`. Design `2.1` artifacts must not be auto-migrated to PASS; regenerate the design under 2.2 and repeat the R2.5 confirmation.
 
@@ -17,7 +17,7 @@ Treat the calling agent as the strategy author. Constrain it with project lifecy
 
 1. Execute stages strictly in order: `R0 -> R1 -> R2 -> R2.5 -> R3 -> R4 -> R5 -> R6`.
 2. Never combine, infer-complete, retroactively mark, or silently skip a stage. Each stage's entry and exit must be materially performed, not asserted.
-3. At every stage, show the customer the stage output and unresolved decisions. Stop when customer confirmation is required. R0 must separately confirm target platforms and who executes R5 backtesting.
+3. At every stage, show the customer the stage output and unresolved decisions. Stop when customer confirmation is required. R0 must separately confirm target platforms and who executes R5 backtesting. R0 opens with the R0-WORKFLOW flowchart review (below) before the semantic contradiction table.
 4. Do not generate executable strategy code before R2.5 explicit confirmation.
 5. Do not publish before the local gate passes: R4 validation and hash-bound R5 backtest PASS are required. A user-PyQt candidate is temporary, not a formal publication.
 6. Persist stage/evidence in `agent_workspace/workspace_state.json`. Resume from this ledger; do not rely on conversational memory alone.
@@ -88,6 +88,44 @@ selection question** in R0. For ETF strategies:
 - the strategy uses `get_etf_list_local(query_date, etf_type, active_only)` for a PIT dynamic ETF universe and may combine it with `get_history_batch`;
 - `get_etf_list()` remains the PTrade-named API and is unavailable in the PTrade backtest profile. Never use it as a dynamic-backtest substitute;
 - a later PTrade conversion freezes the dynamic pool into a static `ETF_POOL_STATIC` at the customer-confirmed backtest start date (see 07-ETF动态池固化补充规格 §2).
+
+### R0-WORKFLOW - strategy workflow diagram generation and review
+
+Before producing the semantic contradiction table, generate and show the customer a
+strategy workflow flowchart derived from the customer's original prompt, and require an
+explicit review. This is the first interactive sub-step of R0; it does not replace or
+weaken the R0 hard stop below.
+
+1. **Diagram generation**: render a vertical mermaid `flowchart TD` of the strategy's
+   control flow — universe/data preparation → signal computation → screening/ranking →
+   entry decision → position sizing/stop-loss → holding tracking → exit decision →
+   record & review, plus any risk-control/rebalance stages named in the prompt. Rounded
+   rectangles = process steps; diamonds = decision points; loop arrows = daily/weekly
+   iterations (mirroring the reference style).
+2. **Syntax contract (mandatory)**: every node uses `id["label"]` — unique ASCII ids
+   with the label wrapped in double quotes; no unquoted half-width parentheses/colons/
+   commas in node labels (prefer full-width Chinese punctuation). Self-check the block
+   before showing it so it renders without syntax errors in any mermaid renderer.
+3. **Pending branches (mandatory)**: any branch, parameter, or rule the prompt does not
+   define must be drawn as an explicit `❓待定：<question>` dashed node. Never silently
+   choose a path — this preserves the rule *Do not choose a material interpretation for
+   the customer*.
+4. **Diagram disclaimer (mandatory)**: annotate the diagram with — 本图为理解辅助件，
+   非设计合同；权威语义以 R0 审核表与 R2.5 design JSON 为准；R1 能力探查可能使结构
+   变化，本图届时自动失效。
+5. **Review loop (cap 3 rounds)**: the customer confirms or requests corrections; redraw
+   per feedback at most 3 rounds. Beyond the cap, stop redrawing and convert every open
+   disagreement into a literal review-list item for the R0 hard stop to adjudicate.
+6. **Closure invariant (mandatory)**: every `❓待定` node must map to a pending item in
+   the "Present and confirm" list / contradiction table below
+   (`图中❓节点数 ≤ 后续确认清单待定项数`). Diagram confirmation never substitutes for
+   the R0 hard-stop confirmation.
+7. **Recording**: record the customer's confirmations/corrections in the workspace ledger
+   (session notes backfilled into `workspace_state.json` at scaffold time). No new
+   `user_confirmations` field and no contract version bump.
+
+Only after the customer has reviewed and confirmed the workflow diagram, present the
+semantic contradiction table and the full R0 review package below.
 
 Present and confirm:
 

@@ -4,6 +4,8 @@
 ## R0-VALIDATION-OWNER：回测执行方
 
 R0除目标平台外，还必须询问：由Agent运行R5，还是在R4后生成 `__candidate_quantstudio.py` 供用户在PyQt自行回测。用户模式下，实际日期只能由用户在PyQt设置；Agent仅给出ETF最晚上市日和完整暖机日建议。用户提交的证据（2.0）必须绑定候选文件SHA-256、数据库路径、日期、资金、Profile、完成状态，以及**真实回测产物**：结果目录 + `config.csv`/`daily_stats.csv`/`trades.csv`/运行日志及各自 SHA-256；review 脚本自动解析实际本金、持仓部署与拒单计数，自报 `runtime_checks` 布尔值不再作为 PASS 依据。设计本金、仓位计算本金与实际回测本金必须一致（`portfolio_contract`），"回测跑完无异常但仓位未部署"判 `deployment_invariant_failed`。PASS后R6重新生成正式双端文件并删除候选文件；失败按策略逻辑/部署不变量→R3、框架/数据/API→R1、Profile/Validator→R4、本金不符/产物问题→R5回退。
+
+R0 出口前先展示策略工作流图（mermaid，节点 `id["文本"]` 双引号包裹、id 唯一 ASCII；未定义分叉画为 `❓待定` 虚线节点；修改上限 3 轮）供用户审核，确认结构后才给出语义矛盾表与 R0 审核表——见下节 R0-TARGET。
 ## 0. 生成目标必须先确认（Agent-first R0-TARGET）
 
 在任何策略设计或代码生成之前，提示词必须要求用户明确选择：
@@ -26,6 +28,8 @@ R0 首先询问并记录生成目标：双端或仅 QuantStudio 本地。
 仅本地 ETF 策略使用 get_etf_list_local 做 PIT 动态池；PTrade 验证和双端一致性为 NOT_APPLICABLE。
 策略不得直接访问 DuckDB；动态池必须经过注入 API → ReferenceDataProvider → DuckDB 数据适配层。
 ```
+
+- **R0 工作流图审核（2026-08-22 起）**：R0 先根据用户提示词生成策略工作流图（mermaid 垂直流程：数据/股票池准备→信号→筛选排序→入场→头寸/止损→跟踪→退出→记录复盘；节点 `id["文本"]` 双引号包裹、id 唯一 ASCII；未定义分叉画为 `❓待定` 虚线节点；修改上限 3 轮）供用户审核；确认结构后才输出语义矛盾表与 R0 审核表。**闭环规则**：图上每个 `❓待定` 节点必须对应审核清单中的一条待决项（图中❓数 ≤ 清单待定项数），流程图确认不替代 R0 hard stop 最终确认。
 
 
 > 本文档用于**引导一个智能体（AI Agent）为 QuantStudio 本地量化回测框架生成可运行的策略代码**。
