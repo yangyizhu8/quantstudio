@@ -1321,3 +1321,30 @@ def test_pd9_batch_prefetch_writes_cache():
     assert out == ["600000.SS"]
     assert len(batch_calls) == 1, "批量预取应恰好一次多码调用"
     assert single_calls == [], "缓存命中后不应有逐码单次调用"
+
+
+def test_pd9_validator_blocks_handwritten_delisting_fallback():
+    """C 组闭环增量（ZCode 终审建议）：策略手写 def _is_delisting_risk 被
+    PTRADE-PLATFORM-FALLBACK-BAN BLOCK（转换侧已注入同名函数，手写即重复兜底）。"""
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "skills"
+                           / "quantstudio-strategy-compiler" / "scripts"))
+    import validate_agent_strategy as vas
+    import ast
+
+    src = """
+def _is_delisting_risk(code):
+    return current_price(code) < 1.0
+"""
+    issues = []
+    vas._validate_platform_fallback_handwritten(ast.parse(src), issues)
+    assert any(i.get("rule_id") == "PTRADE-PLATFORM-FALLBACK-BAN" for i in issues), \
+        "手写 _is_delisting_risk 应被 BLOCK"
+    # 反例：非兜底函数名不误伤
+    src2 = """
+def _score_momentum(code):
+    return 0.5
+"""
+    issues2 = []
+    vas._validate_platform_fallback_handwritten(ast.parse(src2), issues2)
+    assert not issues2, "正常函数名不应误伤"
