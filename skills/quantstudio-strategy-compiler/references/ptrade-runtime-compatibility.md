@@ -22,6 +22,7 @@
 | P-D3 | `current_price` **非真实 PTrade API**（官方文档全文无此 API；模块加载期 NameError，2026-08-22 双证）。`get_current_data` 同样非平台 API | 统一链 PTrade 侧 ① 前收(`_qs_last_close_lookup`)→③ get_history 兜底（本地侧另有 ② 原 API）；profile `local_only_symbols` 已登记 → Validator `TARGET-LOCAL-EXTENSION-BAN` BLOCK 双端/PTrade 策略使用 | 零 |
 | P-D4 | `get_trade_days()` 无 end_date 返回全量日历（含未来）；YYYYMMDD/date 混用 | 转换侧 `_qs_norm_date_str` 归一 + `<= 当日` 过滤（当日由 A2 stamp 推导） | 零 |
 | P-D4b | `get_stock_info(listed_date)` 格式混用 | 转换侧归一 'YYYY-MM-DD' | 零 |
+| P-D9 | `filter_stock_by_status('ST')` **转换语义不一致**：本地含退市风险兜底（is_delisting_risk=close<1 OR circ_mv<5亿）、平台仅官方 ST 标记（仙股留池）→ 候选池分叉（反转策略选股 1/5 重合根因） | 转换侧 `_QS_FILTER_STATUS_EXT` 注入：原生过滤后补 close<1 剔除（price-only，circ_mv 平台不可得实证降级 + 本地零触发）；批量预取+幸存者兜底+当日缓存；fail-open | 零 |
 | P-D5 | 退市强平 is expired：T 日按当日 last 全额强平、T+1 现金落账（D4-S3） | 引擎层（B 组，数据前提已 PASS） | 零（另案） |
 | P-D6 | 资金不足三态：超限取消/可负担降量成交/买不起一手失败（D4-S4） | 登记为语义差不建模（对齐判据配对） | 零 |
 

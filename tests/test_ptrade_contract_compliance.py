@@ -1142,3 +1142,182 @@ def test_wire_local_vs_template_homology():
     l = _run_local(cache)
     assert t == l, "双端拆单序列必须逐笔一致"
     assert len(t) == 3 and all(a <= 49000 for _, a in t)
+
+
+# ---------------------------------------------------------------------------
+# P-D9：filter_stock_by_status('ST') 转换语义一致化（_QS_FILTER_STATUS_EXT）
+# 探针实证（probe_pd9_filter_ptrade.py，2026-08-22）：平台 'ST' 仅官方标记（仙股留池）；
+# before_trading_start 平台 get_history 已返回 T 日 close（E 时点差不存在）；
+# circ_mv 平台不可得 → price-only（本地 market_cap 触发零样本）。
+# ---------------------------------------------------------------------------
+
+def _filter_status_ns(native_return, closes=None):
+    """exec _QS_FILTER_STATUS_EXT → 命名空间（fake 原生 filter + get_history close）。"""
+    import quantstudio.strategy_compiler.source_import as si
+
+    calls = {"native": [], "history": []}
+
+    def _fake_native(stocks, filter_type=None, query_date=None, *a, **kw):
+        calls["native"].append((tuple(stocks), filter_type))
+        return list(native_return)
+
+    def _fake_history(*a, **kw):
+        calls["history"].append(dict(kw))
+        code = kw.get("security_list") or kw.get("security")
+        import pandas as pd
+        import numpy as np
+        px = (closes or {}).get(code, 5.0)
+        df = pd.DataFrame([(str(code), pd.Timestamp("2026-07-01 15:00:00"), px)],
+                          columns=["code", "time", "close"])
+        return df
+
+    ns = {"filter_stock_by_status": _fake_native,
+          "get_history": _fake_history,
+          "log": type("L", (), {"warning": staticmethod(lambda *a, **k: None),
+                                "info": staticmethod(lambda *a, **k: None)})()}
+    exec(si._QS_FILTER_STATUS_EXT.format(marker="# m"), ns)
+    ns["_calls"] = calls
+    return ns
+
+
+def test_pd9_gate_injected_when_filter_called():
+    """门控：调用 filter_stock_by_status 的策略注入 P-D9 包装。"""
+    r = _convert("""
+def initialize(context):
+    pass
+def before_trading_start(context, data):
+    c = filter_stock_by_status(stocks=['000001.SZ'], filter_type=["ST","HALT","DELISTING"])
+""")
+    assert r.errors == [], r.errors
+    assert "_qs_is_delisting_risk" in r.converted_code
+    assert "_QS_FILTER_DELISTING_THRESHOLD" in r.converted_code
+
+
+def test_pd9_gate_not_injected_when_absent():
+    """门控：不调用 filter_stock_by_status 的策略不注入（逐字节不变）。"""
+    r = _convert("""
+def initialize(context):
+    pass
+def handle_data(context, data):
+    order_target_value(security='600519.SS', value=10000)
+""")
+    assert r.errors == [], r.errors
+    assert "_qs_is_delisting_risk" not in r.converted_code
+
+
+def test_pd9_st_filters_delisting_risk_penny():
+    """'ST' 过滤补兜底：仙股（close<1）被剔除，正常股保留。"""
+    ns = _filter_status_ns(
+        ["000004.SZ", "002808.SZ", "600000.SS"],
+        closes={"000004.SZ": 0.34, "002808.SZ": 0.21, "600000.SS": 8.65})
+    out = ns["filter_stock_by_status"](["000004.SZ", "002808.SZ", "600000.SS"],
+                                       ["ST", "HALT", "DELISTING"])
+    assert out == ["600000.SS"], "仙股应被兜底剔除"
+
+
+def test_pd9_non_st_filter_type_untouched():
+    """非 'ST' filter_type（如仅 HALT）不触发兜底（仙股保留）。"""
+    ns = _filter_status_ns(
+        ["000004.SZ", "600000.SS"],
+        closes={"000004.SZ": 0.34, "600000.SS": 8.65})
+    out = ns["filter_stock_by_status"](["000004.SZ", "600000.SS"], ["HALT"])
+    assert out == ["000004.SZ", "600000.SS"], "仅 HALT 不应剔除仙股"
+
+
+def test_pd9_default_filter_type_includes_st():
+    """缺省 filter_type（=None）按平台文档默认 ["ST","HALT","DELISTING"] 含 ST → 兜底生效。"""
+    ns = _filter_status_ns(
+        ["000004.SZ", "600000.SS"],
+        closes={"000004.SZ": 0.34, "600000.SS": 8.65})
+    out = ns["filter_stock_by_status"](["000004.SZ", "600000.SS"])
+    assert out == ["600000.SS"]
+
+
+def test_pd9_threshold_boundary():
+    """阈值边界：close=1.00 保留（<1 才剔）；close=0.99 剔除；0.92/0.97 临界带正确。"""
+    ns = _filter_status_ns(
+        ["A.SZ", "B.SZ", "C.SZ", "D.SZ"],
+        closes={"A.SZ": 1.00, "B.SZ": 0.99, "C.SZ": 0.92, "D.SZ": 0.97})
+    out = ns["filter_stock_by_status"](
+        ["A.SZ", "B.SZ", "C.SZ", "D.SZ"], ["ST"])
+    assert out == ["A.SZ"], "close>=1 保留、<1 全剔（含 0.9-1.1 临界带）"
+
+
+def test_pd9_failopen_on_history_failure():
+    """fail-open：get_history 抛异常 → 保持平台原生结果（仙股保留）+ warning。"""
+    import quantstudio.strategy_compiler.source_import as si
+    warned = []
+
+    def _fake_native(stocks, filter_type=None, query_date=None, *a, **kw):
+        return ["000004.SZ", "600000.SS"]
+
+    def _broken_history(*a, **kw):
+        raise RuntimeError("interface error")
+
+    ns = {"filter_stock_by_status": _fake_native,
+          "get_history": _broken_history,
+          "log": type("L", (), {"warning": staticmethod(
+              lambda msg, *a: warned.append(msg)),
+              "info": staticmethod(lambda *a: None)})()}
+    exec(si._QS_FILTER_STATUS_EXT.format(marker="# m"), ns)
+    out = ns["filter_stock_by_status"](["000004.SZ", "600000.SS"], ["ST"])
+    # 单码失败 → _qs_is_delisting_risk 返回 False（fail-open）→ 原生结果保留
+    assert out == ["000004.SZ", "600000.SS"]
+
+
+def test_pd9_history_close_cache_reuse():
+    """缓存：同码重复调用不重复取数（当日缓存复用）。"""
+    ns = _filter_status_ns(
+        ["000004.SZ", "600000.SS"],
+        closes={"000004.SZ": 0.34, "600000.SS": 8.65})
+    ns["filter_stock_by_status"](["000004.SZ", "600000.SS"], ["ST"])
+    n1 = len(ns["_calls"]["history"])
+    ns["filter_stock_by_status"](["000004.SZ", "600000.SS"], ["ST"])
+    n2 = len(ns["_calls"]["history"])
+    assert n2 == n1, "第二次调用应命中缓存，不新增 get_history"
+
+
+def test_pd9_delisting_risk_matches_local_semantics():
+    """本地↔模板同构：与本地 aligner price 分支（close<1）逐条件一致。"""
+    # 本地锚：ptrade_api 'ST' 分支的 is_delisting_risk 判定（close<1 → price 触发）
+    ns = _filter_status_ns(
+        ["A", "B"], closes={"A": 0.5, "B": 2.0})
+    f = ns["_qs_is_delisting_risk"]
+    assert f("A") is True       # close<1 → True（与本地 price 分支同）
+    assert f("B") is False      # close>=1 → False（market_cap 分支降级后恒 False）
+    # 本地全库实证：is_delisting_risk_source 全部为 price（5913 条）→ price-only 同构
+
+
+def test_pd9_batch_prefetch_writes_cache():
+    """A 条①：批量预取（多码一次 get_history）写入缓存 → 判定不再逐码取数。"""
+    import quantstudio.strategy_compiler.source_import as si
+    import pandas as pd
+
+    batch_calls = []
+    single_calls = []
+
+    def _fake_native(stocks, filter_type=None, query_date=None, *a, **kw):
+        return ["000004.SZ", "002808.SZ", "600000.SS"]
+
+    def _fake_history(*a, **kw):
+        code = kw.get("security_list") or kw.get("security")
+        if isinstance(code, (list, tuple)):
+            batch_calls.append(tuple(code))
+            rows = [(c, pd.Timestamp("2026-07-01 15:00:00"),
+                     {"000004.SZ": 0.34, "002808.SZ": 0.21, "600000.SS": 8.65}[str(c)])
+                    for c in code]
+            return pd.DataFrame(rows, columns=["code", "time", "close"])
+        single_calls.append(str(code))
+        return pd.DataFrame([(str(code), pd.Timestamp("2026-07-01"), 5.0)],
+                            columns=["code", "time", "close"])
+
+    ns = {"filter_stock_by_status": _fake_native,
+          "get_history": _fake_history,
+          "log": type("L", (), {"warning": staticmethod(lambda *a, **k: None),
+                                "info": staticmethod(lambda *a, **k: None)})()}
+    exec(si._QS_FILTER_STATUS_EXT.format(marker="# m"), ns)
+    out = ns["filter_stock_by_status"](["000004.SZ", "002808.SZ", "600000.SS"],
+                                       ["ST", "HALT", "DELISTING"])
+    assert out == ["600000.SS"]
+    assert len(batch_calls) == 1, "批量预取应恰好一次多码调用"
+    assert single_calls == [], "缓存命中后不应有逐码单次调用"

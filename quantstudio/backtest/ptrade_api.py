@@ -817,9 +817,11 @@ class PtradeAPI:
           - is_delisting_risk: 退市风险兜底（close<1 OR 近20日 circ_mv<5亿）
           - is_delisting_risk_source: 'price'|'market_cap'|'both'|'none'
 
-        filter_type 语义（与 Ptrade 官方对齐）：
+        filter_type 语义（与 Ptrade 官方对齐，2026-08-22 实证修正）：
           - 'ST': is_st_reliable==True OR is_delisting_risk==True
-                  （Ptrade 实际行为：ST 股票和退市风险股都不该买）
+                  （实证修正：真实 PTrade 平台 'ST' 仅官方 ST 标记——退市整理期仙股无 ST
+                  标记会留池；本地为正确性扩展（退市风险兜底 close<1 OR circ_mv<5亿），
+                  等价实现由转换侧 _QS_FILTER_STATUS_EXT 注入（P-D9，2026-08-22））
           - 'HALT': suspendFlag==1 OR volume==0（停牌）
           - 'DELISTING': 前一日无数据行（已退市）
           - 'DELISTING_SORTING': is_delisting_risk==True（退市整理期）

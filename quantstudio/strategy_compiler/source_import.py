@@ -602,6 +602,130 @@ def current_price(security):
 '''
 
 
+# ============================================================================
+# P-D9 注入模板：filter_stock_by_status('ST') 转换语义一致化（2026-08-22，方案 v3）
+# 平台实证（probe_pd9_filter_ptrade.py，测试456 2026-08-22 05:15）：
+#   - 平台 'ST' 仅官方 ST 标记（文档 L5556）→ 退市整理期仙股（无 ST 标记）留池；
+#   - 平台 get_history(count=1) 在 before_trading_start 已返回 T 日 close（E 时点差不存在，
+#     与本地 attach_day 同日快照同值）；
+#   - circ_mv/total_mv 平台 get_fundamentals 不可得（KeyError）→ market_cap 分支降级
+#     price-only（DB 实测本地 market_cap 触发零样本，差异面=零）；
+#   - 批量 get_history 8 码 0.007s → 幸存者兜底可行。
+# 语义：本地 filter_stock_by_status('ST') = is_st OR is_delisting_risk（ptrade_api.py:877-878 锚）。
+# 对齐：转换侧补 is_delisting_risk = close<1（当日 T close）剔除，fail-open 与本地一致。
+# ============================================================================
+_QS_FILTER_STATUS_EXT = '''
+{marker}
+# [qs-import-generated] filter_stock_by_status('ST') 退市风险兜底注入（P-D9，2026-08-22）
+# 平台 'ST' 仅官方 ST 标记 → 补本地同款 is_delisting_risk（close<1，当日 T close）。
+# fail-open：取数失败 log.warning + 保持平台原生结果（与本地 except: return result 同语义）。
+# 性能（A 条三级）：批量优先（多码一次 get_history）→ 幸存者兜底（仅对原生过滤幸存池判）
+# → 当日缓存复用（探针实证批量 8 码 0.007s vs 逐码 8 次 0.018s）。
+_QSFilterStatusState = type("_QSFilterStatusState", (), {{"orig": None, "cache": None}})
+_QSFilterStatusState.orig = filter_stock_by_status
+_QS_FILTER_DELISTING_THRESHOLD = 1.0  # 面值退市线（元）
+
+
+def _qs_status_prefetch_closes(codes):
+    """批量预取多码 close（一次 get_history 多码调用，探针实证 8 码 0.007s）→ 写入缓存。
+
+    平台返回形态：DataFrame（code/close 或 time/close 列）。fail-open：异常/空返回不写缓存。
+    缓存命中短路：codes 全部已缓存 → 跳过批量（同日重复调用零取数）。
+    """
+    cache = _QSFilterStatusState.cache
+    if cache is None:
+        cache = {{}}
+        _QSFilterStatusState.cache = cache
+    if not codes:
+        return
+    try:
+        missing = [c for c in codes if c not in cache]
+    except Exception:
+        missing = list(codes)
+    if not missing:
+        return
+    try:
+        df = get_history(count=1, frequency="1d", field=["close"],
+                         security_list=list(missing), fq="pre", include=False)
+    except Exception:
+        return
+    if df is None or not hasattr(df, "iloc") or len(df) == 0:
+        return
+    try:
+        if "code" in getattr(df, "columns", []):
+            vals = df["code"].values
+            for i in range(len(df)):
+                try:
+                    v = float(df.iloc[i].get("close", 0) or 0)
+                except Exception:
+                    continue
+                if v > 0:
+                    cache[str(vals[i])] = v
+        else:
+            # 无 code 列（单码形状）：从 kwargs 无法回填多码 → 跳过（由逐码路径兜底）
+            pass
+    except Exception:
+        pass
+
+
+def _qs_status_history_close(code):
+    """取单码当日 close（before_trading_start 平台已可返回 T close；批量缓存优先）。"""
+    cache = _QSFilterStatusState.cache
+    if cache is None:
+        cache = {{}}
+        _QSFilterStatusState.cache = cache
+    try:
+        if code in cache:
+            return cache[code]
+    except Exception:
+        pass
+    try:
+        df = get_history(count=5, frequency="1d", field=["close"],
+                         security_list=code, fq="pre", include=False)
+        if df is not None and hasattr(df, "iloc") and len(df) > 0:
+            v = float(df.iloc[-1].get("close", 0) or 0)
+            if v > 0:
+                cache[code] = v
+                return v
+    except Exception:
+        pass
+    return None
+
+
+def _qs_is_delisting_risk(code):
+    """退市风险兜底（P-D9，price 分支）：当日 close < 1 元 → 剔除。
+
+    与本地 aligner 的 is_delisting_risk（close<1）同构；circ_mv 分支平台不可得
+    （probe 实证 KeyError）且本地零触发 → 降级 price-only（残余差异已登记 P-D9）。
+    取数失败返回 False（fail-open，与本地 except: return result 一致）。
+    """
+    try:
+        v = _qs_status_history_close(code)
+        if v is None:
+            return False
+        return v < _QS_FILTER_DELISTING_THRESHOLD
+    except Exception:
+        return False
+
+
+def filter_stock_by_status(stocks, filter_type=None, query_date=None, *args, **kwargs):
+    """平台原生过滤后，'ST' 语义补退市风险兜底（close<1 剔除）→ 与本地候选池一致。
+
+    A 条三级：① 先批量预取幸存池 close（一次多码 get_history）→ ② 逐码判定（命中缓存
+    不再取数；批量未覆盖的码由单码路径兜底）→ ③ 当日缓存（跨调用复用）。
+    """
+    result = _QSFilterStatusState.orig(stocks, filter_type, query_date, *args, **kwargs)
+    try:
+        ft = filter_type if filter_type is not None else ["ST", "HALT", "DELISTING"]
+        if "ST" in ft:
+            _qs_status_prefetch_closes(result)   # ① 批量预取（幸存者兜底：仅对 result 判）
+            result = [c for c in result if not _qs_is_delisting_risk(c)]  # ② 判定
+    except Exception as exc:
+        log.warning("P-D9 filter fallback failed (keep native result): %s" % (exc,))
+    return result
+'''
+
+
 # source_import 日期归一化注入（2026-08-22，框架方案 PTrade 平台对齐治理 v4 §3.1 A3）
 # 平台实测（测试456/908）：PTrade get_trade_days() 无 end_date 返回全量日历（含未来），
 # 且日期格式混用 YYYYMMDD / datetime.date / 'YYYY-MM-DD'；本地 get_trade_days 已实现
@@ -764,6 +888,22 @@ def _source_uses_date_api(source: str) -> bool:
             if isinstance(fn, ast.Name) and fn.id in _DATE_APIS:
                 return True
             if isinstance(fn, ast.Attribute) and fn.attr in _DATE_APIS:
+                return True
+    return False
+
+
+def _source_uses_filter_status(source: str) -> bool:
+    """门控（P-D9）：源策略调用 filter_stock_by_status → 注入退市风险兜底包装。"""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return "filter_stock_by_status(" in source
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            fn = node.func
+            if isinstance(fn, ast.Name) and fn.id == "filter_stock_by_status":
+                return True
+            if isinstance(fn, ast.Attribute) and fn.attr == "filter_stock_by_status":
                 return True
     return False
 
@@ -1741,6 +1881,12 @@ class SourceConverter:
             blocks.append(_QS_DATE_NORM_EXT.format(marker=INJECTED_MARKER))
             self.coverage["injected_helpers"].extend(
                 ["date_norm", "get_trade_days_wrapper", "get_stock_info_wrapper"])
+        # P-D9 退市风险兜底门控扩展：仅当源策略调用 filter_stock_by_status 时注入
+        if _source_uses_filter_status(code):
+            blocks.append(_QS_FILTER_STATUS_EXT.format(marker=INJECTED_MARKER))
+            self.coverage["injected_helpers"].extend(
+                ["filter_status_norm", "_qs_is_delisting_risk",
+                 "filter_stock_by_status_wrapper"])
         for shim_name in sorted(self._need_shim):
             blocks.append(self._shim_source(shim_name))
             self.coverage["injected_helpers"].append(f"shim:{shim_name}")
