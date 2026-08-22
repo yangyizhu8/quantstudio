@@ -5,7 +5,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from agent_skill_common import confirmation_errors, load_json, validate_design, write_json
+from agent_skill_common import (
+    confirmation_errors, load_json, strategy_name_conflict_errors,
+    validate_design, write_json,
+)
 from validate_agent_strategy import validate_strategy
 from validate_runtime_shapes import requires_runtime_shape_fixture, validate_runtime_shapes
 from user_backtest_flow import (
@@ -23,6 +26,15 @@ def prepare_candidate(strategy_path: Path, design_path: Path, project_root: Path
     if validation_mode(design) != USER_MODE:
         raise ValueError("candidate publication is only valid for validation_execution.mode='user_pyqt'")
 
+    # Chinese naming contract: front-load the stem-conflict check against every
+    # existing strategy file (legacy ASCII, hand-written Chinese) instead of
+    # failing only at publish time.
+    strategies_dir = Path(project_root) / "quantstudio" / "backtest" / "strategies"
+    conflicts = strategy_name_conflict_errors(design, strategies_dir)
+    if conflicts:
+        raise ValueError(
+            "design gate failed: " + "; ".join(item["message"] for item in conflicts))
+
     state_path, state = load_workflow_state(strategy_path)
     if state.get("stage") not in R4_PASS_STAGES:
         raise ValueError(
@@ -34,7 +46,8 @@ def prepare_candidate(strategy_path: Path, design_path: Path, project_root: Path
     canonical_source = canonical_payload.decode("utf-8-sig")
     strategy_id = design["strategy_id"]
     local_validation = validate_strategy(
-        design, canonical_source, str(strategy_path), "quantstudio")
+        design, canonical_source, str(strategy_path), "quantstudio",
+        strategies_dir=strategies_dir)
     ptrade_validation = validate_strategy(
         design, canonical_source, str(strategy_path), "ptrade")
     write_json(strategy_path.parent / "local_validation_report.json", local_validation)
@@ -63,7 +76,7 @@ def prepare_candidate(strategy_path: Path, design_path: Path, project_root: Path
                 "agent-first runtime-shape fixture must PASS before candidate "
                 f"generation: {fixture_report.get('failures') or fixture_report.get('error')}")
 
-    output = candidate_path(project_root, strategy_id)
+    output = candidate_path(project_root, strategy_id, design.get("strategy_name"))
     if output.exists() and not overwrite:
         raise FileExistsError(f"candidate exists; use --overwrite after a new R4 PASS: {output}")
     payload = candidate_payload(canonical_payload, strategy_id, canonical_hash)
@@ -73,6 +86,7 @@ def prepare_candidate(strategy_path: Path, design_path: Path, project_root: Path
     state.update({
         "stage": "AWAITING_USER_BACKTEST",
         "validation_execution_mode": USER_MODE,
+        "strategy_name": design["strategy_name"],
         "candidate_status": "AWAITING_USER_BACKTEST",
         "candidate_path": str(output.resolve()),
         "candidate_sha256": candidate_hash,

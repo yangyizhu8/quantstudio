@@ -69,7 +69,7 @@ def setup_workspace(tmp_path: Path):
 def write_artifacts(result_dir: Path, *, init_capital=100000.0, match_mode="close",
                     positions=(2, 2, 2), buys=2, sells=0, exposure=0.85,
                     insufficient_cash=0,
-                    strategy_name="dual_user_pyqt_etf__candidate_quantstudio",
+                    strategy_name="本地动态ETF轮动策略__candidate_quantstudio",
                     engine_semantics="0.1.0-legacy",
                     audit: list[dict] | None = None,
                     portfolio_audit: list[dict] | None = None,
@@ -189,7 +189,7 @@ def test_user_mode_candidate_then_evidence_then_formal_promotion(tmp_path):
     project, workspace, db, design, design_path, strategy_path = setup_workspace(tmp_path)
     candidate = prepare_candidate(strategy_path, design_path, project)
     candidate_path = Path(candidate["candidate_path"])
-    assert candidate_path.name == "dual_user_pyqt_etf__candidate_quantstudio.py"
+    assert candidate_path.name == "本地动态ETF轮动策略__candidate_quantstudio.py"
     assert candidate_path.exists()
     assert "NOT_FOR_PTRADE_UPLOAD=true" in candidate_path.read_text(encoding="utf-8")
 
@@ -206,7 +206,7 @@ def test_user_mode_candidate_then_evidence_then_formal_promotion(tmp_path):
     assert result["candidate_promotion"]["candidate_removed"] is True
     assert not candidate_path.exists()
     assert (project / "quantstudio" / "backtest" / "strategies"
-            / "dual_user_pyqt_etf_quantstudio.py").exists()
+            / "本地动态ETF轮动策略.py").exists()
     assert (project / "ptrade" / "dual_user_pyqt_etf_ptrade.py").exists()
 
 

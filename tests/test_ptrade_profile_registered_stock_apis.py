@@ -20,7 +20,7 @@ def _design() -> dict:
     return {
         "design_version": "2.1",
         "strategy_id": "portable_stock_api_probe",
-        "strategy_name": "Portable Stock API Probe",
+        "strategy_name": "可移植股票API探针策略",
         "asset_class": "stock",
         "targets": ["quantstudio", "ptrade"],
         "engine_profile": {
@@ -30,7 +30,10 @@ def _design() -> dict:
         },
         "market_data_contract": {
             "signal_price_adjustment": "pre",
-            "execution_price_basis": "pre_adjusted_price",
+            # 存量修复（2026-08-22，与中文命名改动无关但同为本次测试更新收口）：
+            # fixture 仍用已废弃的 pre_adjusted_price，违反 schema 常量
+            # raw_trade_price（2026-08-14 平台审计契约，先于本次改动已提交）。
+            "execution_price_basis": "raw_trade_price",
         },
         "strategy_semantics": {
             "universe": "Previous-day A-share universe",
@@ -267,6 +270,6 @@ def test_registered_stock_api_source_publishes_identical_dual_targets(tmp_path):
     result = publish(strategy_path, design_path, project)
     assert result["identical_source"] is True
     assert result["validated_after_target_generation"] is True
-    local = project / "quantstudio" / "backtest" / "strategies" / "portable_stock_api_probe_quantstudio.py"
+    local = project / "quantstudio" / "backtest" / "strategies" / "可移植股票API探针策略.py"
     ptrade = project / "ptrade" / "portable_stock_api_probe_ptrade.py"
     assert local.read_bytes() == ptrade.read_bytes() == strategy_path.read_bytes()

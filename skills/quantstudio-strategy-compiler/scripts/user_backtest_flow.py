@@ -47,9 +47,18 @@ def validation_mode(design: dict) -> str:
     return design.get("validation_execution", {}).get("mode", "")
 
 
-def candidate_path(project_root: str | Path, strategy_id: str) -> Path:
+def candidate_path(project_root: str | Path, strategy_id: str,
+                   strategy_name: str | None = None) -> Path:
+    """Candidate file path under quantstudio/backtest/strategies/.
+
+    Chinese naming contract (2026-08-22): the base name is the Chinese
+    ``strategy_name`` when available (``<strategy_name>__candidate_quantstudio.py``);
+    the ASCII ``strategy_id`` remains as the legacy fallback for callers that
+    have not been migrated yet.
+    """
+    base = strategy_name.strip() if strategy_name else strategy_id
     return (Path(project_root) / "quantstudio" / "backtest" / "strategies"
-            / f"{strategy_id}{CANDIDATE_SUFFIX}")
+            / f"{base}{CANDIDATE_SUFFIX}")
 
 
 def candidate_payload(canonical_payload: bytes, strategy_id: str,
@@ -67,9 +76,11 @@ def candidate_payload(canonical_payload: bytes, strategy_id: str,
 
 
 def ensure_candidate_path_is_safe(path: str | Path, project_root: str | Path,
-                                  strategy_id: str) -> Path:
+                                  strategy_id: str,
+                                  strategy_name: str | None = None) -> Path:
     selected = Path(path).resolve()
-    expected = candidate_path(project_root, strategy_id).resolve()
+    expected = candidate_path(
+        project_root, strategy_id, strategy_name).resolve()
     if selected != expected:
         raise ValueError(f"candidate path mismatch: expected {expected}, got {selected}")
     return selected

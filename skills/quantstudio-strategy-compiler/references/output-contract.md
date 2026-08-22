@@ -56,17 +56,17 @@
 
 Skill 当前版本（PR5）停在 Spec：Run Card `stage = SPEC_ONLY`、`status = PARTIAL`。`SMOKE_EXECUTED`/`FIDELITY_COMPARED` 需要 PR6 渲染产物（`.py`/`strategy_ir.json`/`local_backtest/`/`fidelity/`）实际存在后才能填入，PR5 不得伪造这些阶段或目录。
 
-## 6. Stable target-aware publish paths (0.4.0)
+## 6. Stable target-aware publish paths (0.4.0; Chinese naming since 2026-08-22)
 
 After validation and package creation, publish entry points to:
 
 ```text
-<project-root>/quantstudio/backtest/strategies/<strategy_id>_quantstudio.py
+<project-root>/quantstudio/backtest/strategies/<strategy_name>.py
 <project-root>/ptrade/<strategy_id>_ptrade.py
 ```
 
-The QuantStudio directory is the exact directory scanned by the PyQt backtest strategy selector. Dual mode writes both paths after local validation, PTrade validation, and post-generation consistency. QuantStudio-only mode writes only the first path, creates no PTrade placeholder, and records PTrade validation / dual consistency as `NOT_APPLICABLE` plus PTrade output as `NOT_GENERATED`. If a different file already exists and `output.overwrite=false`, publishing fails closed.
+The QuantStudio target uses the **Chinese `strategy_name`** as the filename (no ASCII suffix, per the Chinese naming contract 2026-08-22): at least one CJK character, filename-safe (no leading `_`/whitespace, no trailing `.`/whitespace, no `\ / : * ? " < > |`, ≤50 chars), and stem-conflict-checked against every existing strategy file at R4/candidate/publish (`STRATEGY-NAME-CONTRACT` / `STRATEGY-NAME-CONFLICT` BLOCK; `design.output.overwrite=true` is the explicit overwrite consent). `strategy_id` stays the lowercase-ASCII machine identifier. The QuantStudio directory is the exact directory scanned by the PyQt backtest strategy selector. Dual mode writes both paths after local validation, PTrade validation, and post-generation consistency. QuantStudio-only mode writes only the first path, creates no PTrade placeholder, and records PTrade validation / dual consistency as `NOT_APPLICABLE` plus PTrade output as `NOT_GENERATED`. If a different file already exists and `output.overwrite=false`, publishing fails closed.
 
-## Candidate and promotion paths (0.5.0)
+## Candidate and promotion paths (0.5.0; Chinese naming since 2026-08-22)
 
-User-PyQt mode exposes only `<project-root>/quantstudio/backtest/strategies/<strategy_id>__candidate_quantstudio.py` after R4 PASS. It is explicitly not a formal or PTrade upload artifact. After hash-bound R5 PASS, R6 writes formal QuantStudio/PTrade targets and removes the candidate. Candidate retention after promotion is a publication failure.
+User-PyQt mode exposes only `<project-root>/quantstudio/backtest/strategies/<strategy_name>__candidate_quantstudio.py`（中文策略名候选） after R4 PASS. It is explicitly not a formal or PTrade upload artifact. After hash-bound R5 PASS, R6 writes formal QuantStudio/PTrade targets and removes the candidate. Candidate retention after promotion is a publication failure.

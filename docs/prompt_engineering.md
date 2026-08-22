@@ -16,7 +16,7 @@ R0除目标平台外，还必须询问：由Agent运行R5，还是在R4后生成
 - **双端 ETF 策略**：禁止 `get_etf_list()`、`get_etf_list_local()`、`get_history_batch()`；将用户确认的静态 ETF 白名单写入 R2 设计合同和两端同一策略源，R2.5 再次确认。
 - **仅本地 ETF 策略**：允许 `get_etf_list_local()` 按回测日期从 `etf_basic` + `etf_daily` 动态构建 PIT ETF 池，可结合 `get_history_batch()`；不得宣称 PTrade PASS。
 - **验证分流**：双端执行 QuantStudio + PTrade + 双端一致性；仅本地把 PTrade validation、Dual consistency 记为 `NOT_APPLICABLE`。
-- **输出分流**：本地文件固定落入 `quantstudio/backtest/strategies/<strategy_id>_quantstudio.py` 供 PyQt 下拉列表读取；PTrade 文件仅在双端模式生成到 `ptrade/<strategy_id>_ptrade.py`，本地模式不创建占位文件。
+- **输出分流**：本地文件固定落入 `quantstudio/backtest/strategies/<strategy_name>.py`（**中文名，2026-08-22 中文命名契约**：`strategy_name` 即发布文件名，至少一个汉字、不以 `_`/空白开头、不以 `.`/空白结尾、不含 `\ / : * ? " < > |`、≤50 字符、与现存策略 stem 不冲突；`strategy_id` 保持 ASCII 内部标识）供 PyQt 下拉列表读取；PTrade 文件仅在双端模式生成到 `ptrade/<strategy_id>_ptrade.py`，本地模式不创建占位文件。
 
 可直接加入提示词的硬约束：
 
@@ -113,8 +113,8 @@ QuantStudio 本地注入 API / 指标 / 全局对象（g、log、pd、np、MyTT�
 生成完毕后，必须把完整策略代码【写入】项目策略目录：
      <PROJECT_ROOT>/quantstudio/backtest/strategies/<策略名>.py
 其中 <PROJECT_ROOT> 为 QuantStudio 项目根目录（即含 main_gui.py 的目录）。
-- 文件名为 ASCII 或中文描述性名称，【不得以下划线 _ 开头】（否则 PyQt 回测面板下拉框不显示）。
-- 不得覆盖已有策略文件；新策略请取唯一文件名。
+- 文件名为中文描述性名称（经 quantstudio-strategy-compiler skill 生成的策略**一律中文名**，2026-08-22 中文命名契约），【不得以下划线 _ 开头】（否则 PyQt 回测面板下拉框不显示），亦不得以 `.` 或空白结尾、不含 `\ / : * ? " < > |`。
+- 不得覆盖已有策略文件；新策略请取唯一文件名（与现存策略文件 stem 冲突会被 skill 校验 `STRATEGY-NAME-CONFLICT` BLOCK）。
 - 写入后向用户报告：文件绝对路径，以及如何在 PyQt「策略回测」模块的策略文件栏选中并可视化回测。
 
 【输出格式】（注意：策略逻辑是【用户】的输入需求，不是你凭空创作的。请先复述确认，再产出代码）
@@ -364,7 +364,7 @@ def handle_data(context, data):
 **智能体必须遵循的落盘规则**：
 
 1. 生成完毕后，把**完整策略代码写入** `<PROJECT_ROOT>/quantstudio/backtest/strategies/<策略名>.py`。
-2. `<策略名>.py`：**不得以下划线 `_` 开头**（否则不显示在下拉框）；建议 ASCII 或中文描述性名称，如 `动量轮动策略.py`。
+2. `<策略名>.py`：**不得以下划线 `_` 开头**（否则不显示在下拉框）；一律采用中文描述性名称（如 `动量轮动策略.py`；经 quantstudio-strategy-compiler skill 生成的策略按 2026-08-22 中文命名契约强制中文名），且不得以 `.` 或空白结尾、不含 `\ / : * ? " < > |`。
 3. **不要覆盖**已有策略；新策略用唯一文件名（若重名应先询问用户）。
 4. 写入后向用户回报：① 文件绝对路径；② 在 PyQt 启动后进入「策略回测」模块 → 策略文件栏即可看到该文件 → 配置起止日期/初始资金 → 点击「运行回测」进行可视化回测。
 5. 也可 CLI 运行（见第 9 节），但落盘到上述目录是让 GUI 直接可选中的前提。

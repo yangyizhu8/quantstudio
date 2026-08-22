@@ -39,6 +39,7 @@ Treat the calling agent as the strategy author. Constrain it with project lifecy
 22. Design 2.2 confirmations require verbatim evidence in `confirmation_evidence`: `confirmed=true`, non-empty `customer_text`, timezone-aware ISO `confirmed_at`, `source=customer_reply` for `generation_target`, `strategy_semantics`, `portfolio_contract`, `rebalance_funding_contract`, and `r5_deployment_invariants`. A bare boolean is not evidence.
 23. Static PTrade validation PASS is reported as `PTRADE_PROFILE_PASS` with `runtime_validation_status=NOT_VERIFIED` and `deployment_status=NOT_DEPLOYABLE`. It must never be phrased as "PTrade 可上线/已验证/部署通过". Broker runtime PASS requires customer-supplied real-platform evidence; a later real runtime failure makes all old evidence `STALE` via `scripts/retire_ptrade_runtime_evidence.py`.
 24. `history_coverage_contract.lookback_bars` is an indicator lookback, not a demand that the selected backtest window be preceded by that many in-window trading days; provider history before the window start remains available. R1 checks full-history candidate counts at the first possible decision date; R5 reads `history_eligible_count` from the first rebalance audit and classifies shortfalls as DATA_BLOCKED or the confirmed fail-soft rule — never as a guessed "start date too late".
+26. **中文命名契约（2026-08-22，硬约束）**: 每个由本 skill 生成的本地回测策略，`strategy_name` 必须是**中文策略名**并同时作为发布文件名：正式发布 `quantstudio/backtest/strategies/<strategy_name>.py`（纯中文、无 ASCII 后缀），user-PyQt 候选 `quantstudio/backtest/strategies/<strategy_name>__candidate_quantstudio.py`。`strategy_name` 必须满足：至少一个汉字；不以 `_` 或空白开头（PyQt 面板不显示 `_` 开头文件，前导空白被 Windows 不一致剥离）；不以 `.` 或空白结尾（Windows 静默剥离尾点/尾空格，破坏哈希绑定路径一致性）；不含 `\ / : * ? " < > |`；≤50 字符；且不得与 strategies 目录**任何现存文件**（ASCII 存量、手工中文策略）stem 冲突（`design.output.overwrite=true` 为客户确认的显式覆盖豁免）。`strategy_id` 保持小写 ASCII 内部标识（workspace 目录、`STRATEGY_ID`、run_id、hash 链路），不得中文化。校验为 fail-closed：schema pattern + `STRATEGY-NAME-CONTRACT` / `STRATEGY-NAME-CONFLICT` 在 R2/R4/候选/发布四处 BLOCK（`validate_agent_strategy.py --project-root` 或调用方传入 strategies 目录时执行冲突检查）。R2 展示与 R0 客户确认中必须包含中文策略名。
 
 ## Responsibility boundary
 
@@ -212,6 +213,8 @@ Design 2.2 additionally requires these machine-checkable contracts (schema-valid
 
 The cross-checks BLOCK self-contradicting capital math before R3: `gross_exposure_target + cash_buffer_ratio <= 1`, `target_holdings x per_position_target_weight <= gross_exposure_target`, `per_position_target_weight <= max_single_weight`, `fixed_notional` must bind `required_initial_cash`/`fixed_target_value`, and `runtime_total_value` must not carry fixed amounts. A design claiming 20 x 5% = 100% deployment plus a 15% cash buffer is a contradiction (`PORTFOLIO-CASH-BUFFER-CONTRADICTION`), not an approximation. `rebalance_funding_contract` must be compatible with the confirmed `match_price_mode` and decision lifecycle per `references/execution-funding-matrix.md`.
 
+The design must also carry the Chinese naming contract (absolute rule 26): `strategy_name` is the Chinese published filename (`quantstudio/backtest/strategies/<strategy_name>.py`, no ASCII suffix), schema-pattern-validated for filename safety — at least one CJK character, no leading `_`/whitespace, no trailing `.`/whitespace (Windows filename stripping), no `\ / : * ? " < > |`, at most 50 characters — and stem-conflict-checked against every existing strategy file at R4/candidate/publish (`STRATEGY-NAME-CONTRACT` / `STRATEGY-NAME-CONFLICT` BLOCK; `design.output.overwrite=true` is the explicit overwrite consent). `strategy_id` stays the lowercase-ASCII machine identifier and must not be sinicized. The R2 customer review package must show the Chinese strategy name.
+
 **R2 exit gate:** schema PASS and complete customer review package.
 
 ## R2.5 - Explicit customer hard confirmation
@@ -315,7 +318,7 @@ Run only the customer-confirmed window/profile. Record provider/database provena
 After R4 PASS, run `scripts/prepare_user_backtest_candidate.py`. It must:
 
 1. revalidate the canonical source for every selected target;
-2. write only `quantstudio/backtest/strategies/<strategy_id>__candidate_quantstudio.py`;
+2. write only `quantstudio/backtest/strategies/<strategy_name>__candidate_quantstudio.py`（中文策略名，见绝对规则 26）;
 3. prepend a comment-only `UNVALIDATED_BY_BACKTEST / NOT_FOR_PTRADE_UPLOAD` marker;
 4. record canonical and candidate SHA-256 hashes;
 5. set `stage=AWAITING_USER_BACKTEST`, `formal_publish_allowed=false`;
@@ -348,7 +351,7 @@ Every repair invalidates old R4/R5 hashes. Regenerate the candidate after the ne
 
 1. verify the workflow ledger and local backtest PASS;
 2. generate and validate the QuantStudio staging file;
-3. publish only `quantstudio/backtest/strategies/<strategy_id>_quantstudio.py`;
+3. publish only `quantstudio/backtest/strategies/<strategy_name>.py`（中文策略名，无 ASCII 后缀，见绝对规则 26）;
 4. do not create an empty or placeholder PTrade file;
 5. record exactly:
    - `PTrade validation: NOT_APPLICABLE`

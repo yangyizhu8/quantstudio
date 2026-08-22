@@ -37,13 +37,25 @@ def retire_ptrade_runtime_evidence(strategy_path: Path, project_root: Path,
                                    reason: str) -> dict:
     state_path, state = load_workflow_state(strategy_path)
     strategy_id = state.get("strategy_id") or strategy_path.parent.name
+    # Chinese naming contract (2026-08-22): candidate filenames carry the
+    # Chinese strategy_name. Resolve it from the workspace state first, then
+    # the co-located design JSON; fall back to the ASCII strategy_id.
+    strategy_name = state.get("strategy_name")
+    if not strategy_name:
+        design_path = strategy_path.parent / "agent_strategy_design.json"
+        if design_path.exists():
+            try:
+                strategy_name = load_json(design_path).get("strategy_name")
+            except Exception:
+                strategy_name = None
 
     retired: list[str] = []
     raw_candidate = state.get("candidate_path")
     if raw_candidate:
         # The candidate path comes from workspace state; re-validate it against
         # the expected project candidate location before touching any file.
-        safe_candidate = ensure_candidate_path_is_safe(raw_candidate, project_root, strategy_id)
+        safe_candidate = ensure_candidate_path_is_safe(
+            raw_candidate, project_root, strategy_id, strategy_name)
         result = retire_artifact(safe_candidate, must_be_under=safe_candidate.parent)
         if result is not None:
             retired.append(str(result))

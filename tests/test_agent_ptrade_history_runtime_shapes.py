@@ -26,7 +26,7 @@ def design() -> dict:
     return {
         "design_version": "2.0",
         "strategy_id": "history_shape_test",
-        "strategy_name": "History Shape Test",
+        "strategy_name": "历史形态测试策略",
         "asset_class": "stock",
         "targets": ["quantstudio", "ptrade"],
         "engine_profile": {"profile_id": "minute-bar-v1", "bar_frequency": "1m", "match_price_mode": "close"},

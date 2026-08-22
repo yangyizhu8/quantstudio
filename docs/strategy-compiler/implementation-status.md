@@ -758,3 +758,16 @@ Second-round independent review reproduced two residual bypasses and one audit-c
 - **Fixture report audit closure at publish.** `publish_agent_strategy.py` additionally requires `runtime_shape_fixture_report.json` to exist, match its recorded SHA-256, still record `status=PASS`, and reference the canonical source being published. Deleted/tampered/sha-mismatched/status-flipped reports all BLOCK.
 - New regression tests: shared/late/backfilling portfolio audits, duplicate and orphan rebalance ids, matching-id pass (same-day and next-day), basket semantics at design and R5 level, and the four fixture-report publish blocks.
 - Synchronization status: local repair only until post-repair customer confirmation.
+
+## Agent-first Skill 中文命名契约（2026-08-22）
+
+本地回测策略名称一律采用中文名称（用户批准的命名契约，方案审计通过后实施）：
+
+- 正式发布 quantstudio/backtest/strategies/<strategy_name>.py（纯中文、无 ASCII 后缀）；user-PyQt 候选 <strategy_name>__candidate_quantstudio.py。
+- strategy_name schema 强制：至少一个汉字；不以 _/空白开头（PyQt 面板过滤 + Windows 前导空白剥离）；不以 ./空白结尾（Windows 尾点/尾空格静默剥离，破坏哈希绑定路径一致性）；不含 `\ / : * ? " < > |`；≤50 字符。
+- stem 冲突前置检查（STRATEGY-NAME-CONFLICT）：新中文名与 strategies 目录任何现存文件（ASCII 存量、手工中文策略）冲突即 R4/候选/发布 BLOCK；design.output.overwrite=true 为客户确认的显式覆盖豁免。
+- strategy_id 保持小写 ASCII 内部标识（workspace 目录/STRATEGY_ID/run_id/hash 链路），不得中文化。
+- 改动面：schemas/agent_strategy_design.schema.json、scripts/agent_skill_common.py（strategy_naming_errors / published_quantstudio_filename / strategy_name_conflict_errors）、create_agent_workspace.py、user_backtest_flow.py、prepare_user_backtest_candidate.py、publish_agent_strategy.py、alidate_agent_strategy.py（新增 --project-root）、
+eview_user_backtest_evidence.py（identity 集合加 strategy_name）、SKILL.md（绝对规则 26）、references（agent-first-workflow/output-contract）、README、docs/strategy_toolbox.md、docs/prompt_engineering.md。
+- 范围：仅 agent-first skill 路径；遗留 Spec/IR 编译器（quantstudio/strategy_compiler/）命名保持现状；存量 ASCII 已发布策略不迁移。
+- Synchronization status: local repair only until post-repair customer confirmation.

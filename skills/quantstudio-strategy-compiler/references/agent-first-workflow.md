@@ -71,7 +71,7 @@ R5 PASS is artifact-bound (evidence 2.1): the reviewer re-parses hash-verified `
 ### R6 - Target-aware publish
 
 Run `scripts/publish_agent_strategy.py`. It validates then publishes the exact same canonical strategy source to:
-- `quantstudio/backtest/strategies/<strategy_id>_quantstudio.py`
+- `quantstudio/backtest/strategies/<strategy_name>.py`（中文策略名，无 ASCII 后缀——中文命名契约 2026-08-22；`strategy_name` 即发布文件名，schema 强制中文 + 文件名安全 + stem 冲突检查）
 - `ptrade/<strategy_id>_ptrade.py`
 
 Platform headers may differ; executable strategy content must have the same SHA-256 digest.
@@ -90,4 +90,4 @@ A new strategy normally adds only its design/workspace/output files. A project s
 
 ## User-PyQt candidate branch
 
-R0 independently records `validation_execution.mode=agent_managed|user_pyqt`. In user-PyQt mode, R4 PASS creates only `<strategy_id>__candidate_quantstudio.py` with canonical/candidate hashes and `formal_publish_allowed=false`. The user chooses dates in PyQt and submits complete evidence. Hash drift returns R4; strategy failures return R3; framework/data/API failures return R1; profile/validator failures return R4. R6 regenerates formal artifacts, removes the candidate, and records promotion evidence.
+R0 independently records `validation_execution.mode=agent_managed|user_pyqt`. In user-PyQt mode, R4 PASS creates only `<strategy_name>__candidate_quantstudio.py`（中文策略名候选文件） with canonical/candidate hashes and `formal_publish_allowed=false`. The user chooses dates in PyQt and submits complete evidence. Hash drift returns R4; strategy failures return R3; framework/data/API failures return R1; profile/validator failures return R4. R6 regenerates formal artifacts, removes the candidate, and records promotion evidence.

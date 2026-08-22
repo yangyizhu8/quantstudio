@@ -20,7 +20,7 @@ def confirmed_design() -> dict:
     return {
         "design_version": "2.0",
         "strategy_id": "agent_generic_rotation",
-        "strategy_name": "Agent Generic Rotation",
+        "strategy_name": "智能体通用轮动策略",
         "asset_class": "stock",
         "targets": ["quantstudio", "ptrade"],
         "engine_profile": {
@@ -173,7 +173,7 @@ def test_agent_implemented_strategy_validates_and_publishes_identical_source(tmp
     assert result["validated_after_target_generation"] is True
     assert result["dual_consistency"]["comparison_phase"] == "post_generation_staging"
     assert result["dual_consistency"]["staged_targets_exist_before_comparison"] is True
-    local = project / "quantstudio" / "backtest" / "strategies" / "agent_generic_rotation_quantstudio.py"
+    local = project / "quantstudio" / "backtest" / "strategies" / "智能体通用轮动策略.py"
     ptrade = project / "ptrade" / "agent_generic_rotation_ptrade.py"
     assert local.read_bytes() == ptrade.read_bytes() == strategy_path.read_bytes()
 

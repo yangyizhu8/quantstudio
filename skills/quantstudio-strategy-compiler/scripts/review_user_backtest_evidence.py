@@ -360,13 +360,19 @@ def _artifact_bound_checks(design: dict[str, Any], evidence: dict[str, Any],
     config_stem = Path(str(config.get("strategy_file") or "")).stem
     candidate_stem = candidate.stem if candidate is not None else ""
     if config_stem and strategy_id:
+        # Chinese naming contract (2026-08-22): the candidate/formal filenames
+        # carry the Chinese strategy_name; strategy_id stays the ASCII
+        # machine identifier. Both identities are accepted.
         accepted = {strategy_id, candidate_stem}
+        strategy_name = design.get("strategy_name")
+        if isinstance(strategy_name, str) and strategy_name.strip():
+            accepted.add(strategy_name.strip())
         if config_stem not in accepted:
             failures.append((
                 "artifact_contract_mismatch",
                 f"ARTIFACT-STRATEGY-MISMATCH: config.csv strategy_file={config_stem!r} "
-                f"matches neither the candidate {candidate_stem!r} nor strategy_id "
-                f"{strategy_id!r}"))
+                f"matches neither the candidate {candidate_stem!r}, strategy_name "
+                f"{strategy_name!r} nor strategy_id {strategy_id!r}"))
 
     expected_semantics = design.get("engine_profile", {}).get("expected_engine_semantics_version")
     if expected_semantics and config.get("engine_semantics_version") != expected_semantics:
@@ -399,7 +405,8 @@ def review_evidence(strategy_path: Path, design_path: Path, evidence_path: Path,
     source_drift = False
     try:
         candidate = ensure_candidate_path_is_safe(
-            evidence.get("candidate_path", ""), project_root, strategy_id)
+            evidence.get("candidate_path", ""), project_root, strategy_id,
+            design.get("strategy_name"))
         if not candidate.exists():
             issues.append(f"candidate file does not exist: {candidate}")
         else:

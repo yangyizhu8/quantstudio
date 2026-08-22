@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -272,6 +273,107 @@ def execution_funding_errors(design: dict[str, Any]) -> list[dict[str, str]]:
 
 ETF_T0_ENFORCEMENTS = ("engine_per_code", "all_t1")
 STOP_DEFERRAL_SEMANTICS = ("trigger_lock_defer_next_sellable_day",)
+
+
+# ---------------------------------------------------------------------------
+# Chinese naming contract (2026-08-22): every skill-generated local strategy
+# publishes as quantstudio/backtest/strategies/<strategy_name>.py with a
+# Chinese name; strategy_id stays the ASCII machine identifier.
+# ---------------------------------------------------------------------------
+STRATEGY_NAME_MAX_LEN = 50
+STRATEGY_NAME_PATTERN = re.compile(
+    r"^(?![_\s])(?!.*[.\s]$)(?=.*[\u4e00-\u9fa5])[^\\/:*?\"<>|]{1,50}$"
+)
+
+
+def strategy_naming_errors(design: dict[str, Any]) -> list[dict[str, str]]:
+    """The local strategy name must be a Chinese, filename-safe string.
+
+    The name doubles as the published filename
+    ``quantstudio/backtest/strategies/<strategy_name>.py`` shown in the PyQt
+    strategy selector, so Windows filename traps apply: no leading ``_`` or
+    whitespace (the PyQt selector hides ``_``-prefixed files; leading spaces
+    are stripped inconsistently across Windows layers), no trailing ``.`` or
+    whitespace (Windows silently strips them, breaking hash-bound path
+    identity), no ``\\/:*?"<>|`` characters, at most 50 characters, and at
+    least one CJK character. Mirrors the schema pattern as a second,
+    better-diagnosed gate.
+    """
+    issues: list[dict[str, str]] = []
+    name = design.get("strategy_name")
+
+    def add(message: str) -> None:
+        issues.append({"rule_id": "STRATEGY-NAME-CONTRACT", "message": message})
+
+    if not isinstance(name, str) or not name:
+        add("strategy_name is required and must be a non-empty string")
+        return issues
+    if name != name.strip():
+        add(f"strategy_name {name!r} must not start or end with whitespace")
+    if len(name) > STRATEGY_NAME_MAX_LEN:
+        add(
+            f"strategy_name must be at most {STRATEGY_NAME_MAX_LEN} characters, "
+            f"got {len(name)}"
+        )
+    if STRATEGY_NAME_PATTERN.fullmatch(name) is None:
+        add(
+            f"strategy_name {name!r} 必须为中文策略名（至少一个汉字）且文件名安全："
+            "不得以 _ 或空白开头、不得以 . 或空白结尾（Windows 文件名限制）、"
+            '不得包含 \\ / : * ? " < > | 等非法字符、'
+            f"长度 ≤ {STRATEGY_NAME_MAX_LEN}；该名称即发布文件名 "
+            "quantstudio/backtest/strategies/<strategy_name>.py"
+        )
+    return issues
+
+
+def published_quantstudio_filename(design: dict[str, Any]) -> str:
+    """Chinese published filename: ``<strategy_name>.py`` (no ASCII suffix).
+
+    Single derivation point shared by the workspace ledger, the user-PyQt
+    candidate path and the R6 formal publish target so the three can never
+    drift apart.
+    """
+    return f"{design['strategy_name'].strip()}.py"
+
+
+def strategy_name_conflict_errors(
+    design: dict[str, Any],
+    strategies_dir: str | Path | None,
+) -> list[dict[str, str]]:
+    """Block names colliding with any existing strategy file stem.
+
+    The Chinese name space is far smaller than ASCII; generic names such as
+    双均线策略 collide with hand-written or legacy ASCII strategies easily.
+    Front-load the detection at R4/candidate/publish instead of failing only
+    at publish time. ``design.output.overwrite=true`` is the explicit consent
+    aligned with the existing publish overwrite semantics. A missing or
+    unlocatable strategies directory simply means there is nothing to collide
+    with and never blocks.
+    """
+    issues: list[dict[str, str]] = []
+    name = design.get("strategy_name")
+    if not isinstance(name, str) or not name.strip():
+        return issues
+    if design.get("output", {}).get("overwrite") is True:
+        return issues
+    if strategies_dir is None:
+        return issues
+    directory = Path(strategies_dir)
+    if not directory.is_dir():
+        return issues
+    target = name.strip()
+    for existing in sorted(directory.glob("*.py")):
+        if existing.stem == target:
+            issues.append({
+                "rule_id": "STRATEGY-NAME-CONFLICT",
+                "message": (
+                    f"strategy_name {target!r} 与现存策略文件 {existing.name!r} 同名"
+                    "（stem 冲突）；请更换中文名，或经客户确认后在 design.output "
+                    "设置 overwrite=true 显式覆盖"
+                ),
+            })
+            break
+    return issues
 
 
 def etf_t0_contract_errors(design: dict[str, Any]) -> list[dict[str, str]]:

@@ -18,7 +18,7 @@ def local_etf_design() -> dict:
     return {
         "design_version": "2.1",
         "strategy_id": "local_dynamic_etf",
-        "strategy_name": "Local Dynamic ETF",
+        "strategy_name": "本地动态ETF轮动策略",
         "asset_class": "etf",
         "targets": ["quantstudio"],
         "engine_profile": {
@@ -192,7 +192,9 @@ def test_local_only_publish_generates_no_ptrade_placeholder(tmp_path):
     }), encoding="utf-8")
 
     report = publish(strategy_path, design_path, project)
-    local_file = project / "quantstudio" / "backtest" / "strategies" / "local_dynamic_etf_quantstudio.py"
+    # Chinese naming contract (2026-08-22): the formal local file is
+    # <strategy_name>.py with the Chinese name, no ASCII suffix.
+    local_file = project / "quantstudio" / "backtest" / "strategies" / "本地动态ETF轮动策略.py"
     ptrade_file = project / "ptrade" / "local_dynamic_etf_ptrade.py"
     assert local_file.exists()
     assert not ptrade_file.exists()

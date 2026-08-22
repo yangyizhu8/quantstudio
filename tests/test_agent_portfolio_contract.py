@@ -40,7 +40,7 @@ def design(contract: dict | None) -> dict:
     result = {
         "design_version": "2.0",
         "strategy_id": "portfolio_contract_test",
-        "strategy_name": "Portfolio Contract Test",
+        "strategy_name": "组合契约测试策略",
         "asset_class": "stock",
         "targets": ["quantstudio", "ptrade"],
         "engine_profile": {"profile_id": "minute-bar-v1", "bar_frequency": "1m", "match_price_mode": "close"},

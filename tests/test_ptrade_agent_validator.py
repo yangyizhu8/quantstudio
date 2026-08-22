@@ -18,7 +18,7 @@ def design() -> dict:
     return {
         "design_version": "2.0",
         "strategy_id": "portable_validation_test",
-        "strategy_name": "Portable Validation Test",
+        "strategy_name": "可移植校验测试策略",
         "asset_class": "stock",
         "targets": ["quantstudio", "ptrade"],
         "engine_profile": {"profile_id": "minute-bar-v1", "bar_frequency": "1m", "match_price_mode": "close"},

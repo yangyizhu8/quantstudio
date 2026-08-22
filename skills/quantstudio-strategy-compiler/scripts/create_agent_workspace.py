@@ -5,11 +5,15 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from agent_skill_common import confirmation_errors, load_json, validate_design, write_json
+from agent_skill_common import (
+    confirmation_errors, load_json, published_quantstudio_filename,
+    validate_design, write_json,
+)
 
 
 def _render_strategy(design: dict) -> str:
     strategy_id = design["strategy_id"]
+    strategy_name = design["strategy_name"].strip()
     hooks = list(dict.fromkeys(["initialize", *design["components"].get("lifecycle_hooks", [])]))
     events = design["timing"].get("decision_events", [])
     scheduled = [event for event in events if event.get("lifecycle") == "run_daily"]
@@ -28,7 +32,10 @@ def _render_strategy(design: dict) -> str:
 
     lines = [
         '"""',
-        f'{strategy_id}.py - agent-authored {scope_label} strategy.',
+        f'{strategy_name}（{strategy_id}）.py - agent-authored {scope_label} strategy.',
+        '',
+        f'Chinese published filename: {strategy_name}.py '
+        '(quantstudio/backtest/strategies/<strategy_name>.py).',
         '',
         'This file is intentionally a lifecycle/API scaffold, not a strategy template.',
         'Implement strategy-specific universe, indicators, signals, state and risk below.',
@@ -37,6 +44,7 @@ def _render_strategy(design: dict) -> str:
         '"""',
         '',
         f"STRATEGY_ID = {strategy_id!r}",
+        f"STRATEGY_NAME = {strategy_name!r}",
         f"DESIGN_VERSION = {design['design_version']!r}",
         '',
         '',
@@ -187,8 +195,9 @@ def create_workspace(design_path: Path, out_dir: Path, overwrite: bool = False) 
         "backtest_window_contract": design.get("backtest_window_contract", {}),
         "agent_implementation_required": True,
         "canonical_source": "strategy.py",
+        "strategy_name": design["strategy_name"],
         "quantstudio_output": (
-            f"quantstudio/backtest/strategies/{design['strategy_id']}_quantstudio.py"
+            f"quantstudio/backtest/strategies/{published_quantstudio_filename(design)}"
             if "quantstudio" in design.get("targets", []) else "NOT_GENERATED"
         ),
         "ptrade_output": (

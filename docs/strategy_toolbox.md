@@ -474,7 +474,7 @@ def after_trading_end(context):
 
 ## 用户PyQt候选文件
 
-`<strategy_id>__candidate_quantstudio.py` 只用于R4后由用户在PyQt执行R5。它必须带有非正式/禁止上传PTrade标记和候选哈希。策略内不得写死回测日期；实际区间由用户设置。R5 证据 2.0 必须绑定真实回测产物：结果目录 + `config.csv`/`daily_stats.csv`/`trades.csv`/运行日志及各自 SHA-256；review 脚本自动解析实际本金、match mode、调仓后持仓数、资金暴露/现金占比、买卖笔数与 `insufficient_cash` 等拒单计数，并对照设计中的 `portfolio_contract` 与 `r5_deployment_invariants`——本金不符（`capital_contract_mismatch`）或仓位未按设计部署（`deployment_invariant_failed`，例如目标20只实际只持有2只）即使回测无异常跑完也一律 BLOCK。自报的 `runtime_checks` 布尔值不再作为 PASS 权威依据。证据审核PASS后，R6生成正式文件并删除候选文件。真实 PTrade 运行失败后，旧候选/上传文件会被重命名为 `*.RETIRED_DO_NOT_UPLOAD` 并作废旧哈希，必须重新生成。
+`<strategy_name>__candidate_quantstudio.py`（中文策略名候选文件，2026-08-22 中文命名契约：`strategy_name` 即文件名，至少一个汉字、文件名安全、与现存策略 stem 不冲突；`strategy_id` 保持 ASCII 内部标识）只用于R4后由用户在PyQt执行R5。它必须带有非正式/禁止上传PTrade标记和候选哈希。策略内不得写死回测日期；实际区间由用户设置。R5 证据 2.0 必须绑定真实回测产物：结果目录 + `config.csv`/`daily_stats.csv`/`trades.csv`/运行日志及各自 SHA-256；review 脚本自动解析实际本金、match mode、调仓后持仓数、资金暴露/现金占比、买卖笔数与 `insufficient_cash` 等拒单计数，并对照设计中的 `portfolio_contract` 与 `r5_deployment_invariants`——本金不符（`capital_contract_mismatch`）或仓位未按设计部署（`deployment_invariant_failed`，例如目标20只实际只持有2只）即使回测无异常跑完也一律 BLOCK。自报的 `runtime_checks` 布尔值不再作为 PASS 权威依据。证据审核PASS后，R6生成正式文件（`quantstudio/backtest/strategies/<strategy_name>.py`，中文名）并删除候选文件。真实 PTrade 运行失败后，旧候选/上传文件会被重命名为 `*.RETIRED_DO_NOT_UPLOAD` 并作废旧哈希，必须重新生成。
 
 > **`etf_basic` freshness:** metadata is maintained by the enabled `etf_basic` collector task with Tushare as the single authority. Full, incremental, and resident collection share the same baseline normalization and changed-row upsert path. The compatibility command `scripts/sync_etf_basic.py` uses the same contract. Restart a resident collector after deploying task/config changes。
 

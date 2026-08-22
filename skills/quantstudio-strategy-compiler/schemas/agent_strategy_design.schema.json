@@ -35,7 +35,9 @@
     },
     "strategy_name": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "pattern": "^(?![_\\s])(?!.*[.\\s]$)(?=.*[\\u4e00-\\u9fa5])[^\\\\/:*?\"<>|]{1,50}$",
+      "description": "中文策略名（2026-08-22 命名契约）：必须至少含一个汉字，同时是发布到 quantstudio/backtest/strategies/<strategy_name>.py 的文件名。文件名安全约束：不得以 _ 或空白开头（PyQt 面板不显示 _ 开头文件；前导空白被 Windows 不同层不一致剥离）；不得以 . 或空白结尾（Windows 静默剥离尾点/尾空格，破坏哈希绑定路径一致性）；不得包含 \\/:*?\"<>|；长度 ≤ 50。strategy_id 保持小写 ASCII 内部标识（workspace 目录/STRATEGY_ID/run_id/hash 链路）。"
     },
     "asset_class": {
       "enum": [

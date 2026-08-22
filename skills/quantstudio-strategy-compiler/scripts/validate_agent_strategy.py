@@ -14,7 +14,8 @@ from agent_skill_common import (
     call_name, confirmation_errors, confirmation_evidence_errors, constant_value,
     etf_t0_contract_errors, execution_funding_errors, function_map,
     is_placeholder_function, load_catalog, load_json, portfolio_contract_errors,
-    skill_root, validate_design, write_json,
+    skill_root, strategy_name_conflict_errors, strategy_naming_errors,
+    validate_design, write_json,
 )
 
 
@@ -844,6 +845,7 @@ def validate_strategy(
     source: str,
     source_name: str = "strategy.py",
     target_profile: str = "canonical",
+    strategies_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     issues: list[dict[str, Any]] = []
     for message in validate_design(design):
@@ -857,6 +859,13 @@ def validate_strategy(
     for item in execution_funding_errors(design):
         issues.append(_issue(item["rule_id"], "BLOCK", item["message"]))
     for item in etf_t0_contract_errors(design):
+        issues.append(_issue(item["rule_id"], "BLOCK", item["message"]))
+    # Chinese naming contract (2026-08-22): the design name must be a
+    # filename-safe Chinese name, and must not collide with any existing
+    # strategy file stem when the strategies directory is locatable.
+    for item in strategy_naming_errors(design):
+        issues.append(_issue(item["rule_id"], "BLOCK", item["message"]))
+    for item in strategy_name_conflict_errors(design, strategies_dir):
         issues.append(_issue(item["rule_id"], "BLOCK", item["message"]))
     if target_profile not in {"canonical", "quantstudio", "ptrade"}:
         issues.append(_issue("TARGET-PROFILE", "BLOCK", f"unknown target profile {target_profile!r}"))
@@ -1214,16 +1223,41 @@ def _report(design: dict[str, Any], source_name: str, target_profile: str,
     }
 
 
+def _discover_strategies_dir(strategy_path: Path, project_root: str | None) -> Path | None:
+    """Locate quantstudio/backtest/strategies for the name-conflict check.
+
+    An explicit --project-root wins; otherwise walk up from the strategy file
+    (agent workspaces live under the project root); finally try the cwd. A
+    directory that cannot be located simply means there is nothing to collide
+    with and never blocks validation.
+    """
+    if project_root:
+        candidate = Path(project_root).resolve() / "quantstudio" / "backtest" / "strategies"
+        return candidate if candidate.is_dir() else None
+    resolved = strategy_path.resolve()
+    for base in (*resolved.parents, Path.cwd()):
+        candidate = base / "quantstudio" / "backtest" / "strategies"
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Validate agent-authored strategy code")
     parser.add_argument("strategy", help="Strategy Python source")
     parser.add_argument("--design", required=True, help="agent_strategy_design.json")
     parser.add_argument("--target-profile", choices=["canonical", "quantstudio", "ptrade"], default="canonical")
+    parser.add_argument("--project-root", default=None,
+                        help="QuantStudio project root locating quantstudio/backtest/strategies "
+                             "for the Chinese-name stem-conflict check (auto-discovered from "
+                             "the strategy file location when omitted)")
     parser.add_argument("--out", help="Write validation report JSON")
     args = parser.parse_args(argv)
     design = load_json(args.design)
     source = Path(args.strategy).read_text(encoding="utf-8-sig")
-    report = validate_strategy(design, source, str(args.strategy), args.target_profile)
+    strategies_dir = _discover_strategies_dir(Path(args.strategy), args.project_root)
+    report = validate_strategy(design, source, str(args.strategy), args.target_profile,
+                               strategies_dir=strategies_dir)
     if args.out:
         write_json(args.out, report)
     print(json.dumps(report, ensure_ascii=False, indent=2))

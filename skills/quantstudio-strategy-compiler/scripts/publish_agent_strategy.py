@@ -8,7 +8,10 @@ import os
 import tempfile
 from pathlib import Path
 
-from agent_skill_common import load_json, write_json
+from agent_skill_common import (
+    load_json, published_quantstudio_filename, strategy_name_conflict_errors,
+    write_json,
+)
 from validate_agent_strategy import validate_strategy
 from validate_dual_consistency import compare_sources
 from validate_runtime_shapes import requires_runtime_shape_fixture
@@ -70,7 +73,8 @@ def _validate_user_managed_publish(design: dict, state: dict,
     if not raw_candidate or not expected_hash:
         raise ValueError("candidate path/hash evidence is missing from workspace state")
     candidate = ensure_candidate_path_is_safe(
-        raw_candidate, project_root, design["strategy_id"])
+        raw_candidate, project_root, design["strategy_id"],
+        design.get("strategy_name"))
     if not candidate.exists():
         raise ValueError(f"validated candidate no longer exists: {candidate}")
     actual_hash = sha256_path(candidate)
@@ -158,11 +162,18 @@ def publish(strategy_path: Path, design_path: Path, project_root: Path,
                 f"not the canonical source {strategy_path}")
 
     final_targets: dict[str, Path] = {}
+    strategies_dir = project_root / "quantstudio" / "backtest" / "strategies"
     if "quantstudio" in design["targets"]:
+        # Chinese naming contract (2026-08-22): the formal local file is
+        # <strategy_name>.py (Chinese, no ASCII suffix); strategy_id remains
+        # the ASCII machine identifier.
         final_targets["quantstudio"] = (
-            project_root / "quantstudio" / "backtest" / "strategies"
-            / f"{strategy_id}_quantstudio.py"
+            strategies_dir / published_quantstudio_filename(design)
         )
+        conflicts = strategy_name_conflict_errors(design, strategies_dir)
+        if conflicts:
+            raise ValueError(
+                "design gate failed: " + "; ".join(item["message"] for item in conflicts))
     if "ptrade" in design["targets"]:
         final_targets["ptrade"] = project_root / "ptrade" / f"{strategy_id}_ptrade.py"
 
@@ -191,7 +202,8 @@ def publish(strategy_path: Path, design_path: Path, project_root: Path,
         local_source = local_path.read_text(encoding="utf-8-sig")
 
         local_validation = validate_strategy(
-            design, local_source, str(local_path), "quantstudio")
+            design, local_source, str(local_path), "quantstudio",
+            strategies_dir=strategies_dir)
         write_json(strategy_path.parent / "local_validation_report.json", local_validation)
         if local_validation["status"] != "PASS":
             raise ValueError(
@@ -201,7 +213,8 @@ def publish(strategy_path: Path, design_path: Path, project_root: Path,
         if ptrade_path is not None:
             ptrade_source = ptrade_path.read_text(encoding="utf-8-sig")
             ptrade_validation = validate_strategy(
-                design, ptrade_source, str(ptrade_path), "ptrade")
+                design, ptrade_source, str(ptrade_path), "ptrade",
+                strategies_dir=strategies_dir)
             if ptrade_validation["status"] != "PASS":
                 raise ValueError(
                     "PTrade generated-target validation blocked publication with "
