@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 from qfluentwidgets import (
     FluentWindow, FluentIcon, NavigationItemPosition,
     setTheme, Theme, InfoBar, InfoBarPosition,
-    PushButton, PlainTextEdit, ComboBox,
+    PushButton, PlainTextEdit, ComboBox, MessageBox,
 )
 
 from .log_handler import GuiLogHandler
