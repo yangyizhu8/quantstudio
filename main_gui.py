@@ -16,13 +16,13 @@ def main():
     from PyQt6.QtWidgets import QApplication
     from quantstudio.gui.main_window import MainWindow
     from quantstudio.gui.db_helper import DbHelper
-    from qfluentwidgets import setTheme, Theme
+    from quantstudio.gui.skin import apply_app_skin
 
     app = QApplication(sys.argv)
     app.setApplicationName("QuantStudio 控制台")
 
-    # 强制深色主题（Fluent Design 暗色风格）
-    setTheme(Theme.DARK)
+    # 皮肤：暗色主题 + GitHub Dark 蓝色调 + app 级 QSS（见 quantstudio/gui/skin.py）
+    apply_app_skin(app)
 
     db_helper = DbHelper(
         duckdb_path=str(db_path()),

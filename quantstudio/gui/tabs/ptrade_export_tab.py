@@ -22,6 +22,8 @@ from qfluentwidgets import (
     BodyLabel, PrimaryPushButton, InfoBar, InfoBarPosition, CalendarPicker,
 )
 
+from ..skin import PageHeader
+
 logger = logging.getLogger(__name__)
 
 _STRATEGIES_DIR = Path(__file__).resolve().parents[2] / "backtest" / "strategies"
@@ -110,6 +112,11 @@ class PtradeExportTab(QWidget):
     # ------------------------------------------------------------------
     def _setup_ui(self):
         layout = QVBoxLayout(self)
+
+        # 页面头（参考效果图风格）
+        layout.addWidget(PageHeader(
+            "PTRADE EXPORT", "导出 PTrade 策略",
+            "源码转换 · 门禁检查 · 冒烟回测 · run_card 报告"))
 
         # 策略文件选择
         grp_src = GroupHeaderCardWidget()

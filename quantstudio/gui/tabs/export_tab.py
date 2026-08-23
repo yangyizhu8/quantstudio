@@ -8,9 +8,10 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QFileDialog, QMessageBox)
 from qfluentwidgets import (
-    LineEdit, PushButton, CheckBox, GroupHeaderCardWidget)
+    LineEdit, PushButton, PrimaryPushButton, CheckBox, GroupHeaderCardWidget)
 
 from ..workers import ExportWorker
+from ..skin import PageHeader
 from quantstudio._paths import db_path, DATA_ROOT
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,11 @@ class ExportTab(QWidget):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
+
+        # 页面头（参考效果图风格）
+        layout.addWidget(PageHeader(
+            "KLINE EXPORT", "K线分库导出",
+            "按代码与频率导出独立 .db 文件（供 QMT/PTrade 客户端挂载）"))
 
         # 源库路径
         src_group = GroupHeaderCardWidget()
@@ -84,7 +90,7 @@ class ExportTab(QWidget):
 
         # 导出按钮 + 状态
         btn_bar = QHBoxLayout()
-        self.export_btn = PushButton("📤 导出")
+        self.export_btn = PrimaryPushButton("📤 导出")
         self.export_btn.clicked.connect(self._do_export)
         btn_bar.addWidget(self.export_btn)
         btn_bar.addStretch()

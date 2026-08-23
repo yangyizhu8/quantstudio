@@ -23,7 +23,9 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidgetItem,
     QHeaderView, QLabel)
 from qfluentwidgets import (
-    TableWidget, PushButton, GroupHeaderCardWidget)
+    TableWidget, PushButton, PrimaryPushButton, GroupHeaderCardWidget)
+
+from ..skin import PageHeader
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +57,13 @@ class QualityTab(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
 
+        # 页面头（参考效果图风格）
+        layout.addWidget(PageHeader(
+            "QUALITY CHECK", "质量检查",
+            "全库契约审计 · 行情/估值/报表一致性体检"))
+
         btn_bar = QHBoxLayout()
-        self.run_btn = PushButton("▶ 执行全部检查")
+        self.run_btn = PrimaryPushButton("▶ 执行全部检查")
         self.run_btn.clicked.connect(self._run_all_checks)
         btn_bar.addWidget(self.run_btn)
         btn_bar.addStretch()
@@ -70,6 +77,8 @@ class QualityTab(QWidget):
         self.check_table.setHorizontalHeaderLabels(["#", "检查项", "结果", "详情"])
         self.check_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.check_table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
+        self.check_table.setBorderVisible(True)
+        self.check_table.setBorderRadius(6)
         glayout.addWidget(self.check_table)
         layout.addWidget(group, 2)
 

@@ -10,7 +10,10 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidgetItem,
     QHeaderView, QLabel, QMessageBox, QAbstractItemView)
 from qfluentwidgets import (
-    PushButton, TableWidget, GroupHeaderCardWidget, StateToolTip, ComboBox)
+    PushButton, PrimaryPushButton, TableWidget, GroupHeaderCardWidget,
+    StateToolTip, ComboBox)
+
+from ..skin import PageHeader
 
 from ..workers import LockedTaskWorker, LockedRunAllWorker
 from ..daemon_process import (
@@ -71,6 +74,11 @@ class TaskTab(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
 
+        # 页面头（参考效果图：英文 eyebrow + 中文标题 + 描述）
+        layout.addWidget(PageHeader(
+            "TASK CONSOLE", "采集任务",
+            "数据源模式切换 · 任务执行 · 常驻增量拉取 · 批次审计"))
+
         # ---- 数据源模式（profile）切换行 ----
         # 全应用唯一真源入口，切换 config_dir（MCP默认 ↔ 传统多源）。
         mode_row = QHBoxLayout()
@@ -102,7 +110,7 @@ class TaskTab(QWidget):
         toolbar.addStretch()
         self.refresh_btn = PushButton("🔄 刷新")
         self.refresh_btn.clicked.connect(self.refresh)
-        self.run_all_btn = PushButton("▶ 全部执行")
+        self.run_all_btn = PrimaryPushButton("▶ 全部执行")
         self.run_all_btn.clicked.connect(self._run_all)
         self.reset_wm_btn = PushButton("⏮ 重置水位")
         self.reset_wm_btn.clicked.connect(self._reset_watermark)
@@ -128,6 +136,8 @@ class TaskTab(QWidget):
         self.task_table.setColumnWidth(6, 240)
         self.task_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.task_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.task_table.setBorderVisible(True)
+        self.task_table.setBorderRadius(6)
         task_layout.addWidget(self.task_table)
         layout.addWidget(task_group, 3)
 
@@ -141,6 +151,8 @@ class TaskTab(QWidget):
             ["批次ID", "任务", "源", "raw", "passed", "written", "状态"])
         self.audit_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.audit_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.audit_table.setBorderVisible(True)
+        self.audit_table.setBorderRadius(6)
         audit_layout.addWidget(self.audit_table)
         layout.addWidget(audit_group, 2)
 

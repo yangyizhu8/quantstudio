@@ -9,7 +9,9 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QHeaderView, QFileDialog, QSplitter,
     QAbstractItemView)
 from qfluentwidgets import (
-    ListWidget, PlainTextEdit, PushButton, TableView)
+    ListWidget, PlainTextEdit, PushButton, PrimaryPushButton, TableView)
+
+from ..skin import PageHeader
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,11 @@ class BrowserTab(QWidget):
         # 右侧
         right = QVBoxLayout()
 
+        # 页面头（参考效果图风格）
+        right.addWidget(PageHeader(
+            "DATA BROWSER", "数据浏览",
+            "DuckDB SQL 查询 · 表结构浏览 · 结果导出 CSV"))
+
         # SQL 编辑器
         sql_label = QLabel("SQL 查询：")
         right.addWidget(sql_label)
@@ -87,7 +94,7 @@ class BrowserTab(QWidget):
 
         # 按钮栏
         btn_bar = QHBoxLayout()
-        self.run_btn = PushButton("▶ 执行")
+        self.run_btn = PrimaryPushButton("▶ 执行")
         self.run_btn.clicked.connect(self._run_query)
         self.export_btn = PushButton("📤 导出 CSV")
         self.export_btn.clicked.connect(self._export_csv)

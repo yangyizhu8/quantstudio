@@ -19,6 +19,7 @@ from qfluentwidgets import (
 from PyQt6.QtCore import Qt
 from quantstudio._paths import db_path
 from quantstudio.pipeline.source_capabilities import capability_matrix
+from ..skin import PageHeader, BG_PAGE, BG_CARD, BORDER, TEXT_1, ACCENT
 
 
 def _disable_combo_wheel(combo):
@@ -34,20 +35,24 @@ DB_TYPES = ["duckdb", "sqlite", "questdb", "mysql"]
 # 采集任务能力矩阵（从 task_tab 复制，避免循环导入）
 SOURCE_CAPABILITY = capability_matrix()
 
-_DARK_CONFIG_STYLE = """
+_DARK_CONFIG_STYLE = f"""
 QWidget#sourcesScrollContent,
 QWidget#tasksScrollContent,
 QWidget#alignmentScrollContent,
-QFrame#taskCard {
-    background-color: #202020;
-    color: #ffffff;
-}
+QFrame#taskCard {{
+    background-color: {BG_PAGE};
+    color: {TEXT_1};
+}}
 QWidget#sourcesScrollContent QLabel,
 QWidget#tasksScrollContent QLabel,
-QWidget#alignmentScrollContent QLabel,
-QFrame#taskCard QLabel {
-    color: #ffffff;
-}
+QWidget#alignmentScrollContent QLabel {{
+    color: {TEXT_1};
+}}
+QFrame#taskCard {{
+    background-color: {BG_CARD};
+    border: 1px solid {BORDER};
+    border-radius: 8px;
+}}
 """
 
 # 各表的默认数据源（GUI 取消数据源下拉框后，框架按此映射自动决定源）。
@@ -141,7 +146,15 @@ class ConfigEditorTab(QWidget):
         self._setup_ui()
 
     def _setup_ui(self):
-        layout = QHBoxLayout(self)
+        outer = QVBoxLayout(self)
+
+        # 页面头（参考效果图风格）
+        outer.addWidget(PageHeader(
+            "CONFIG EDITOR", "配置编辑",
+            "数据库 · 数据源凭证 · 采集任务（字段对齐规则由 Schema 校验保证）"))
+
+        layout = QHBoxLayout()
+        outer.addLayout(layout, 1)
 
         # 左侧导航
         self.nav_list = ListWidget()
@@ -221,7 +234,7 @@ class ConfigEditorTab(QWidget):
         # 统一正式库（验收 #13：采集与 QFQ 同库共存）显式展示
         form.addWidget(QLabel("统一正式库(QFQ同库):"), 4, 0)
         self.db_unified_label = QLabel("—")
-        self.db_unified_label.setStyleSheet("color:#7fd1ff;")
+        self.db_unified_label.setStyleSheet(f"color:{ACCENT};")
         self.db_unified_label.setWordWrap(True)
         form.addWidget(self.db_unified_label, 4, 1)
 

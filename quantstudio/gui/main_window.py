@@ -22,6 +22,9 @@ from qfluentwidgets import (
 )
 
 from .log_handler import GuiLogHandler
+from .skin import (
+    apply_window_skin, colorize_log_line, LOG_PANEL_QSS, LOG_TEXT_QSS,
+)
 from quantstudio._paths import _ROOT as PROJECT_ROOT
 
 # ============================================================
@@ -93,12 +96,12 @@ class MainWindow(FluentWindow):
         self.setWindowTitle("QuantStudio 数据管线控制台")
         self.resize(1320, 820)
 
-        # 启用亚克力/Mica 模糊背景（Windows 11 风格）
-        self.setMicaEffectEnabled(True)
-
         self._setup_navigation()
         self._integrate_log_panel()
         self._install_log_handler()
+
+        # 皮肤：平铺深色底 + 侧边栏/内容区/日志面板（所有 Tab 创建后调用一次）
+        apply_window_skin(self)
 
         # 默认打开第一个 Tab 时触发刷新
         self._refresh_tab(0)
@@ -243,26 +246,36 @@ class MainWindow(FluentWindow):
         right_layout.addWidget(splitter)
 
     def _create_log_panel(self) -> QWidget:
-        """创建底部日志面板：工具栏 + 文本区域"""
+        """创建底部日志面板：卡片容器 + eyebrow 头部 + 等宽彩色日志区"""
         panel = QWidget()
+        panel.setObjectName("logPanel")
+        panel.setStyleSheet(LOG_PANEL_QSS)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(4, 2, 4, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(10, 6, 10, 8)
+        layout.setSpacing(6)
 
-        # 工具栏
-        toolbar = QHBoxLayout()
+        # 头部：eyebrow + 标题 + 清空按钮（功能不变）
+        header = QHBoxLayout()
+        eyebrow = QLabel("SYSTEM LOG")
+        eyebrow.setObjectName("logEyebrow")
+        title = QLabel("运行日志")
+        title.setObjectName("logTitle")
+        header.addWidget(eyebrow)
+        header.addSpacing(8)
+        header.addWidget(title)
+        header.addStretch()
         clear_btn = PushButton("清空日志")
         clear_btn.setFixedWidth(80)
         clear_btn.clicked.connect(self._clear_log)
-        toolbar.addWidget(clear_btn)
-        toolbar.addStretch()
-        layout.addLayout(toolbar)
+        header.addWidget(clear_btn)
+        layout.addLayout(header)
 
-        # 日志文本区域
+        # 日志文本区域（等宽 + 深底；着色见 _append_log）
         self.log_text = PlainTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setMaximumBlockCount(5000)
         self.log_text.setFont(QFont("Cascadia Code", 10))
+        self.log_text.setStyleSheet(LOG_TEXT_QSS)
         layout.addWidget(self.log_text)
 
         return panel
@@ -283,7 +296,7 @@ class MainWindow(FluentWindow):
     def _install_log_handler(self):
         """安装日志桥接：root logger → GUI 日志面板"""
         self.log_handler = GuiLogHandler()
-        self.log_handler.log_signal.connect(self.log_text.appendPlainText)
+        self.log_handler.log_signal.connect(self._append_log)
         root_logger = logging.getLogger()
         root_logger.addHandler(self.log_handler)
         root_logger.setLevel(logging.INFO)
@@ -294,6 +307,10 @@ class MainWindow(FluentWindow):
             "%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S"))
         root_logger.addHandler(console)
         logger.info("GUI 日志桥接已安装（Fluent Design）")
+
+    def _append_log(self, text: str):
+        """日志行着色追加（时间戳灰 · 级别彩色；纯展示，信号路径不变）"""
+        self.log_text.appendHtml(colorize_log_line(text))
 
     # ------------------------------------------------------------------
     # 公共方法（Tab 调用）

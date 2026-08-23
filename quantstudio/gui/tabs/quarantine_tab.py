@@ -10,6 +10,8 @@ from PyQt6.QtWidgets import (
 from qfluentwidgets import (
     PushButton, TableWidget, ComboBox, PlainTextEdit, GroupHeaderCardWidget)
 
+from ..skin import PageHeader
+
 logger = logging.getLogger(__name__)
 from quantstudio._paths import quarantine_db_path
 
@@ -24,6 +26,11 @@ class QuarantineTab(QWidget):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
+
+        # 页面头（参考效果图风格）
+        layout.addWidget(PageHeader(
+            "QUARANTINE", "隔离区",
+            "脏数据隔离 · 修复标记 · 归档管理"))
 
         # 统计标签
         self.stats_label = QLabel("统计: 加载中...")
@@ -54,6 +61,8 @@ class QuarantineTab(QWidget):
             ["ID", "批次ID", "表", "源", "失败规则", "状态", "入隔时间"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setBorderVisible(True)
+        self.table.setBorderRadius(6)
         self.table.itemSelectionChanged.connect(self._on_select)
         glayout.addWidget(self.table)
 

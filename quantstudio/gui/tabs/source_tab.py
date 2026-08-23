@@ -7,18 +7,20 @@ import logging
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QFormLayout, QLabel, QMessageBox)
 from qfluentwidgets import (
-    GroupHeaderCardWidget, CheckBox, LineEdit, PushButton, ScrollArea)
+    GroupHeaderCardWidget, CheckBox, LineEdit, PrimaryPushButton, ScrollArea)
+
+from ..skin import PageHeader, BG_PAGE, TEXT_1, ACCENT, WARNING, BG_CARD, BORDER
 
 logger = logging.getLogger(__name__)
 
-_SOURCE_SCROLL_STYLE = """
-QWidget#sourceScrollContent {
-    background-color: #202020;
-    color: #ffffff;
-}
-QWidget#sourceScrollContent QLabel {
-    color: #ffffff;
-}
+_SOURCE_SCROLL_STYLE = f"""
+QWidget#sourceScrollContent {{
+    background-color: {BG_PAGE};
+    color: {TEXT_1};
+}}
+QWidget#sourceScrollContent QLabel {{
+    color: {TEXT_1};
+}}
 """
 
 
@@ -41,13 +43,18 @@ class SourceTab(QWidget):
         self.scroll_content.setObjectName("sourceScrollContent")
         self.inner_layout = QVBoxLayout(self.scroll_content)
 
+        # 页面头（参考效果图风格）
+        self.inner_layout.addWidget(PageHeader(
+            "DATA SOURCES", "数据源凭证",
+            "启用状态与 API 凭证管理 · 切换数据源模式请用「采集任务」Tab"))
+
         # 当前数据源模式提示（MCP默认 ↔ 传统多源）
         mode_label = QLabel(
             f"当前数据源模式：{self.mw._current_label()}　"
             f"配置目录：{self.mw.config_dir}\n"
             f"统一正式库：data/quantstudio.db（采集与QFQ同库）"
         )
-        mode_label.setStyleSheet("color:#7fd1ff; font-weight:bold;")
+        mode_label.setStyleSheet(f"color:{ACCENT}; font-weight:bold;")
         self.inner_layout.addWidget(mode_label)
 
         # 各源的配置（label, credential_field）
@@ -83,7 +90,7 @@ class SourceTab(QWidget):
                     # 验收#10：缺 key 时 GUI 卡片提示
                     hint = QLabel("⚠ 若此处留空，采集将因缺少 API Key 失败："
                                   "请在此填写 MCP API Key（存 config/secrets.env，不进 git）")
-                    hint.setStyleSheet("color:#ffcc66;")
+                    hint.setStyleSheet(f"color:{WARNING};")
                     layout.addRow("", hint)
             self.inner_layout.addWidget(group)
             self._widgets[source] = {"enabled": enabled_cb, "cred": cred_edit}
@@ -97,7 +104,7 @@ class SourceTab(QWidget):
         self.inner_layout.addWidget(note)
 
         # 保存按钮
-        self.save_btn = PushButton("💾 保存配置")
+        self.save_btn = PrimaryPushButton("💾 保存配置")
         self.save_btn.clicked.connect(self._save_config)
         self.inner_layout.addWidget(self.save_btn)
         self.inner_layout.addStretch()

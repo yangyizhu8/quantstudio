@@ -159,15 +159,15 @@ def test_source_tab_dark_scroll_content_uses_dark_background_and_white_text(
 
         assert tab.scroll_content.objectName() == "sourceScrollContent"
         assert tab.scroll_area.widget() is tab.scroll_content
-        assert tab.scroll_content.palette().color(QPalette.ColorRole.Window).name() == "#202020"
-        assert tab.scroll_content.palette().color(QPalette.ColorRole.WindowText).name() == "#ffffff"
+        assert tab.scroll_content.palette().color(QPalette.ColorRole.Window).name() == "#0d1117"
+        assert tab.scroll_content.palette().color(QPalette.ColorRole.WindowText).name() == "#e6edf3"
         assert tab.scroll_content.findChild(QLabel).palette().color(
             QPalette.ColorRole.WindowText
-        ).name() == "#ffffff"
+        ).name() == "#e6edf3"
 
         rendered = tab.scroll_content.grab().toImage()
         background = rendered.pixelColor(rendered.width() - 2, rendered.height() - 2)
-        assert background.name() == "#202020"
+        assert background.name() == "#0d1117"
     finally:
         if tab is not None:
             tab.close()
@@ -220,8 +220,8 @@ def test_config_editor_pages_use_scoped_dark_scroll_panels(
     assert content.objectName() == object_name
     style = page.styleSheet()
     assert f"#{object_name}" in style
-    assert "#202020" in style
-    assert "#ffffff" in style
+    assert "#0d1117" in style
+    assert "#e6edf3" in style
 
 
 def test_config_editor_task_frame_has_scoped_object_name(app, config_editor_config):

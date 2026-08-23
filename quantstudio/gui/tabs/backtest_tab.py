@@ -10,10 +10,11 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
     QMessageBox)
 from qfluentwidgets import (
-    ComboBox, LineEdit, PushButton, ProgressBar,
+    ComboBox, LineEdit, PushButton, PrimaryPushButton, ProgressBar,
     GroupHeaderCardWidget, DoubleSpinBox, SpinBox)
 
 from ..workers import BacktestWorker
+from ..skin import PageHeader
 from quantstudio._paths import db_path
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,11 @@ class BacktestTab(QWidget):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
+
+        # 页面头（参考效果图风格）
+        layout.addWidget(PageHeader(
+            "BACKTEST CONSOLE", "策略回测",
+            "选择策略 · 设置参数 · 运行与结果查看"))
 
         # 1. 策略选择区
         strat_group = GroupHeaderCardWidget()
@@ -100,9 +106,16 @@ class BacktestTab(QWidget):
 
         layout.addWidget(param_group)
 
-        # 3. 按钮区
+        # 3. 运行控制区（D2：按钮+状态+进度收进「运行控制」卡片，仅容器调整）
+        run_group = GroupHeaderCardWidget()
+        run_group.setTitle("运行控制 RUN CONTROL")
+        inner_run = QWidget()
+        run_layout = QVBoxLayout(inner_run)
+        run_layout.setContentsMargins(0, 4, 0, 4)
+        run_group.layout().addWidget(inner_run)
+
         btn_bar = QHBoxLayout()
-        self.run_btn = PushButton("▶ 启动回测")
+        self.run_btn = PrimaryPushButton("▶ 启动回测")
         self.run_btn.clicked.connect(self._on_run)
         self.stop_btn = PushButton("⏹ 停止")
         self.stop_btn.setEnabled(False)
@@ -112,12 +125,14 @@ class BacktestTab(QWidget):
         btn_bar.addStretch()
         self.status_label = QLabel("")
         btn_bar.addWidget(self.status_label)
-        layout.addLayout(btn_bar)
+        run_layout.addLayout(btn_bar)
 
         # 4. 进度条
         self.progress_bar = ProgressBar()
         self.progress_bar.setVisible(False)
-        layout.addWidget(self.progress_bar)
+        run_layout.addWidget(self.progress_bar)
+
+        layout.addWidget(run_group)
 
         self._refresh_strategies()
 

@@ -21,6 +21,16 @@ logger = logging.getLogger(__name__)
 
 plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
+# 皮肤调色板对齐（GitHub Dark 系，与 GUI 主界面一致）
+plt.rcParams['figure.facecolor'] = '#161b22'
+plt.rcParams['axes.facecolor'] = '#161b22'
+plt.rcParams['savefig.facecolor'] = '#161b22'
+plt.rcParams['text.color'] = '#e6edf3'
+plt.rcParams['axes.labelcolor'] = '#8b949e'
+plt.rcParams['xtick.color'] = '#8b949e'
+plt.rcParams['ytick.color'] = '#8b949e'
+plt.rcParams['grid.color'] = '#30363d'
+plt.rcParams['axes.edgecolor'] = '#30363d'
 
 
 class KlineViewer(QMainWindow):
