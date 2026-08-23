@@ -247,6 +247,24 @@ class TestValidateLocalNegative:
             f"alias-aware positions 未命中 semantics: {v}"
         )
 
+    def test_len_on_positions_is_read_only(self, case1_spec, case1_ir):
+        """len(context.portfolio.positions) is a read-only builtin — must NOT fire
+        PORTFOLIO-POSITIONS-EXACT-MATCH (2026-08-22 false-positive fix; audit
+        docs/evidence/validator-len-false-positive-20260822.md)."""
+        code = (
+            "import numpy as np\n"
+            "def initialize(context):\n    g.security = '600570.SH'\n"
+            "def before_trading_start(context, data):\n"
+            "    h = get_history(20, '1d', field=['close'], security_list=g.security, fq='dypre', include=False, is_dict=True)\n"
+            "def handle_data(context, data):\n"
+            "    n = len(context.portfolio.positions)\n"
+        )
+        ok, v, _ = validate_local_strategy(case1_spec, case1_ir, code, "quantstudio")
+        assert ok is True, f"len(positions) 被误拦: {v}"
+        assert not _has_block(v, "PORTFOLIO-POSITIONS-EXACT-MATCH"), (
+            f"len() 是只读内置，不得触发 exact_key_match 包装拦截: {v}"
+        )
+
     def test_xshg_key_rejected(self, case1_spec, case1_ir):
         """XSHG/XSHE suffix in code -> PORTFOLIO-POSITIONS-EXACT-MATCH (forbidden behavior)."""
         code = (

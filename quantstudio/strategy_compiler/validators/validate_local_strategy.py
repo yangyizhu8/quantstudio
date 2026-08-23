@@ -234,9 +234,13 @@ def _check_semantics_contract(
         if isinstance(node, ast.Call):
             name = _call_name(node)
             # If a call takes context.portfolio.positions as arg and the called
-            # name is NOT a plain builtin container, flag it (alias-aware wrapping).
-            if name in ("dict", "list", "set", "tuple"):
-                continue  # plain builtin re-wrap is fine
+            # name is NOT a plain builtin container or a read-only builtin, flag it
+            # (alias-aware wrapping). len() is read-only and cannot wrap/alias the
+            # container, so it must not trip this gate.
+            # 修复（2026-08-22）：白名单补 len —— 只读内置 len(context.portfolio.positions)
+            # 被误 BLOCK，属校验器误报（证据 docs/evidence/validator-len-false-positive-20260822.md）。
+            if name in ("dict", "list", "set", "tuple", "len"):
+                continue  # plain builtin re-wrap / read-only builtin is fine
             for arg in node.args:
                 if _is_positions_attr(arg):
                     # Calling a non-builtin on positions = potential alias wrapping
