@@ -163,3 +163,26 @@ def _qapplication_session_keepalive():
     if instance is not None and instance not in _QAPP_SESSION_KEEPALIVE:
         _QAPP_SESSION_KEEPALIVE.append(instance)
     yield
+
+
+# ---------------------------------------------------------------------------
+# O1 QMessageBox 模态兜底（P3 根因加固，2026-08-23 批准随测试修复 commit）
+# offscreen 下未被 mock 的原生 QMessageBox 静态弹窗会打开模态对话框并
+# 永久阻塞事件循环（曾致 test_backtest_finished_does_not_repeat… 挂死）。
+# 默认将静态方法 no-op；显式断言弹窗行为的测试自带 monkeypatch，
+# 后设者生效、覆盖本兜底。PyQt6 不可导入时零副作用。
+# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _qmessagebox_modal_guard(monkeypatch):
+    try:
+        from PyQt6.QtWidgets import QMessageBox
+    except ImportError:
+        yield
+        return
+
+    def _noop(*args, **kwargs):
+        return None
+
+    for _name in ("information", "warning", "critical", "question", "about"):
+        monkeypatch.setattr(QMessageBox, _name, _noop)
+    yield

@@ -88,11 +88,30 @@ class EmptyStackedWidget:
 
 
 class DummyMainWindow:
+    """测试夹具：对齐 Tab 实际使用的 MainWindow 公共面。
+
+    P2 修复：生产代码演进后 SourceTab/ConfigEditorTab 引用了
+    _current_label / _reset_in_progress / _daemon_running_in_config / app_root，
+    夹具此前未跟进，导致 4 条测试在构造期 AttributeError（未测到真实断言）。
+    """
+
     def __init__(self, config_dir):
         self.config_dir = config_dir
         self.root_path = config_dir.parent if config_dir is not None else None
+        self.app_root = config_dir.parent if config_dir is not None else None
         self.stackedWidget = EmptyStackedWidget()
         self._tabs = {}
+        # 守卫状态（与 MainWindow 默认态一致）
+        self.current_profile = "mcp"
+        self._reset_in_progress = False
+        self._reset_mode = None
+        self._reset_sources = []
+
+    def _current_label(self) -> str:
+        return "MCP权威源（测试）"
+
+    def _daemon_running_in_config(self, config_dir) -> bool:
+        return False
 
 
 def test_main_window_expands_navigation_without_animation(
@@ -161,7 +180,16 @@ def test_source_tab_dark_scroll_content_uses_dark_background_and_white_text(
         assert tab.scroll_area.widget() is tab.scroll_content
         assert tab.scroll_content.palette().color(QPalette.ColorRole.Window).name() == "#0d1117"
         assert tab.scroll_content.palette().color(QPalette.ColorRole.WindowText).name() == "#e6edf3"
-        assert tab.scroll_content.findChild(QLabel).palette().color(
+        # P2b：皮肤 PageHeader 引入自带样式标签后，findChild(QLabel) 会先命中
+        # eyebrow 标签（自定义 #6e7681）。断言目标改为「无自定义样式且非 fluent
+        # 卡片头（objectName=headerLabel）」的普通标签（如"注：…"note 标签），
+        # 其文字色由 #sourceScrollContent 的 QLabel 规则给到 #e6edf3。
+        plain_labels = [
+            l for l in tab.scroll_content.findChildren(QLabel)
+            if not l.styleSheet() and l.objectName() != "headerLabel"
+        ]
+        assert plain_labels, "scroll_content 内应存在无自定义样式的普通标签"
+        assert plain_labels[0].palette().color(
             QPalette.ColorRole.WindowText
         ).name() == "#e6edf3"
 
@@ -180,12 +208,9 @@ def test_source_tab_dark_scroll_content_uses_dark_background_and_white_text(
     [
         ("sources_page", "sources_scroll", "sources_scroll_content", "sourcesScrollContent"),
         ("tasks_page", "tasks_scroll", "tasks_scroll_content", "tasksScrollContent"),
-        (
-            "alignment_page",
-            "alignment_scroll",
-            "alignment_scroll_content",
-            "alignmentScrollContent",
-        ),
+        # P2c：alignment 页已从 GUI 摘除（字段对齐规则改由 Schema 校验 +
+        # ConfigLint 保证，_build_alignment_page 为死代码，周一解冻后另行
+        # 清理——O2 裁定单列），此处移除对应参数项。
     ],
 )
 def test_config_editor_pages_use_scoped_dark_scroll_panels(
@@ -282,10 +307,19 @@ def test_backtest_finished_does_not_repeat_completion_log(
         def show(self):
             pass
 
+        def export_report_images(self):
+            # P3：_on_finished 内 QTimer.singleShot(0, ...export_report_images)
+            # 会立即求值该属性；缺失会抛 AttributeError 落入 except 分支，
+            # 调用真实 QMessageBox.warning 模态弹窗 → offscreen 永久阻塞。
+            pass
+
     monkeypatch.setattr(
         "quantstudio.gui.backtest_result_window.BacktestResultWindow",
         StubBacktestResultWindow,
     )
+    # P3 兜底：即便出现其它异常路径，也不允许真实模态弹窗挂死测试
+    monkeypatch.setattr(qt_widgets.QMessageBox, "warning", lambda *a, **k: None)
+    monkeypatch.setattr(qt_widgets.QMessageBox, "critical", lambda *a, **k: None)
     message = "回测完成: output/run-1"
 
     with caplog.at_level(logging.INFO, logger="quantstudio.gui.tabs.backtest_tab"):

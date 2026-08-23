@@ -130,7 +130,14 @@ def test_gui_blocks_callback_basket_with_open(backtest_tab, monkeypatch):
 
 
 def _run_worker_with_params(monkeypatch, params):
-    """同步执行 BacktestWorker.run()，捕获构造 BacktestEngine 时的 config。"""
+    """同步执行 BacktestWorker.run()，捕获引擎构造 kwargs 与 run_backtest 直传 kwargs。
+
+    P4 修复：BacktestWorker 改走 run_ptrade_strategy.run_backtest 共用入口，
+    引擎在 run_ptrade_strategy 命名空间内构造（L19 from-import 为导入期绑定）。
+    原补丁点 backtest_engine.BacktestEngine 改的是源模块属性，不影响调用方
+    命名空间里已绑定的名字 → StubEngine 永不构造（KeyError engine_kwargs），
+    且补丁失效后真实路径可能触碰生产库。补丁点迁至调用点命名空间。
+    """
     captured = {}
 
     def fake_load_strategy(path):
@@ -148,7 +155,17 @@ def _run_worker_with_params(monkeypatch, params):
         "quantstudio.backtest.run_ptrade_strategy.load_strategy",
         fake_load_strategy)
     monkeypatch.setattr(
-        "quantstudio.backtest.backtest_engine.BacktestEngine", StubEngine)
+        "quantstudio.backtest.run_ptrade_strategy.BacktestEngine", StubEngine)
+
+    # O3：spy 记录 worker → run_backtest 的直传 kwargs（rebalance_mode 等）
+    import quantstudio.backtest.run_ptrade_strategy as _rps
+    _real_run_backtest = _rps.run_backtest
+
+    def _spy_run_backtest(*args, **kwargs):
+        captured["run_kwargs"] = kwargs
+        return _real_run_backtest(*args, **kwargs)
+
+    monkeypatch.setattr(_rps, "run_backtest", _spy_run_backtest)
 
     worker = workers_mod.BacktestWorker("demo.py", params)
     worker.run()
@@ -174,6 +191,9 @@ def test_worker_passes_rebalance_mode_into_engine_config(monkeypatch):
     captured = _run_worker_with_params(
         monkeypatch, _base_params(rebalance_mode="callback_basket",
                                   match_price_mode="next_open"))
+    # O3：worker → run_backtest 直传链显式断言
+    assert captured["run_kwargs"]["rebalance_mode"] == "callback_basket"
+    assert captured["run_kwargs"]["match_price_mode"] == "next_open"
     config = captured["engine_kwargs"]["config"]
     assert isinstance(config, EngineConfig)
     assert config.rebalance_mode == "callback_basket"
@@ -181,6 +201,8 @@ def test_worker_passes_rebalance_mode_into_engine_config(monkeypatch):
 
 def test_worker_defaults_to_legacy_without_param(monkeypatch):
     captured = _run_worker_with_params(monkeypatch, _base_params())
+    # O3：未提供参数时 worker 侧默认 legacy
+    assert captured["run_kwargs"]["rebalance_mode"] == "legacy"
     config = captured["engine_kwargs"]["config"]
     assert config.rebalance_mode == "legacy"
 
