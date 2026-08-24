@@ -723,6 +723,15 @@ This supersedes the PR2 Commit 1 / audit-fix / audit-fix2 FAIL entries while ret
 - Existing raw-price design artifacts are stale and must return to R2, receive a fresh R2.5 confirmation, then repeat R4/R5 before publication.
 - This correction aligns the design contract with the already implemented `query_daily_snapshot` front-adjusted matching/valuation path; it does not change engine order matching code in this patch.
 
+## PTrade match-price audit — raw execution basis (2026-08-14, supersedes the 0.5.4 contract)
+
+- Real-PTrade 4-probe audit proved the platform matches at raw close: daily fill = T-day raw close (5/5 exact), minute fill = bar raw close (6/6 exact), valuation last_price = raw close.
+- Schema correction: `market_data_contract.execution_price_basis` is now constant `raw_trade_price`; `pre_adjusted_price` is rejected. Signal basis stays `signal_price_adjustment=pre` (front-adjusted via `fq='pre'`).
+- Engine change: `query_daily_snapshot` OHLC/preClose switched from `*_front` mapping to raw columns; `_get_pct_chg` prefers the pipeline `pctChg` column; signal path (`query_bars_by_range` with `fq='pre'`) is untouched and independent.
+- `preClose` is exchange adjustment-reference semantics at source (ex-date preClose = prev close × factor), so raw `(close-preClose)/preClose` and limit-price math stay correct on ex-dividend days.
+- Existing pre-adjusted-execution design artifacts are stale and must return to R2, receive a fresh R2.5 confirmation, then repeat R4/R5 before publication.
+- Companion changes: slippage defaults unified to 0.0 (PTrade audit shows zero slippage); `source_import` injects `fq='pre'` into converted `get_history`/`get_price` calls and normalizes `fq='none'`→`fq=None` (PTrade default fq is unadjusted).
+
 ## Agent-first Skill 0.6.0 runtime-shape & capital gates (2026-07-26)
 
 - Trigger: real PTrade IQEngine runtime failure on the contrarian loser-reversal strategy — `get_history(..., is_dict=True)` returned a NumPy structured array and `df["close"].values` raised; the design also hardcoded 1,000,000 capital while the user ran 100,000, deployed only 2 of 20 target holdings, and the R5 review still passed on self-reported booleans; `next_open` legacy pending made same-cycle sell proceeds unavailable.
@@ -767,7 +776,15 @@ Second-round independent review reproduced two residual bypasses and one audit-c
 - strategy_name schema 强制：至少一个汉字；不以 _/空白开头（PyQt 面板过滤 + Windows 前导空白剥离）；不以 ./空白结尾（Windows 尾点/尾空格静默剥离，破坏哈希绑定路径一致性）；不含 `\ / : * ? " < > |`；≤50 字符。
 - stem 冲突前置检查（STRATEGY-NAME-CONFLICT）：新中文名与 strategies 目录任何现存文件（ASCII 存量、手工中文策略）冲突即 R4/候选/发布 BLOCK；design.output.overwrite=true 为客户确认的显式覆盖豁免。
 - strategy_id 保持小写 ASCII 内部标识（workspace 目录/STRATEGY_ID/run_id/hash 链路），不得中文化。
-- 改动面：schemas/agent_strategy_design.schema.json、scripts/agent_skill_common.py（strategy_naming_errors / published_quantstudio_filename / strategy_name_conflict_errors）、create_agent_workspace.py、user_backtest_flow.py、prepare_user_backtest_candidate.py、publish_agent_strategy.py、alidate_agent_strategy.py（新增 --project-root）、
-eview_user_backtest_evidence.py（identity 集合加 strategy_name）、SKILL.md（绝对规则 26）、references（agent-first-workflow/output-contract）、README、docs/strategy_toolbox.md、docs/prompt_engineering.md。
+- 改动面：schemas/agent_strategy_design.schema.json、scripts/agent_skill_common.py（strategy_naming_errors / published_quantstudio_filename / strategy_name_conflict_errors）、create_agent_workspace.py、user_backtest_flow.py、prepare_user_backtest_candidate.py、publish_agent_strategy.py、alidate_agent_strategy.py（新增 --project-root）、eview_user_backtest_evidence.py（identity 集合加 strategy_name）、SKILL.md（绝对规则 26）、references（agent-first-workflow/output-contract）、README、docs/strategy_toolbox.md、docs/prompt_engineering.md。
 - 范围：仅 agent-first skill 路径；遗留 Spec/IR 编译器（quantstudio/strategy_compiler/）命名保持现状；存量 ASCII 已发布策略不迁移。
 - Synchronization status: local repair only until post-repair customer confirmation.
+
+## P-D10 get_fundamentals contract closure (2026-08-24)
+
+- **状态**：已完成并通过平台实测验证。
+- **问题**：PTrade 转换产物中 `get_fundamentals_batch` 返回 `dict[code→DataFrame]`，与本地 B1 DataFrame 契约不符，导致 `AttributeError: 'dict' object has no attribute 'index'`；平台 `end_date/publ_date` 为字符串对象，`growth_ability` 表无本地字段名 `or_yoy`。
+- **修复**：`quantstudio/strategy_compiler/source_import.py` 注入 `_QS_FUNDAMENTALS_EXT` wrapper，统一返回 `DataFrame(index=code, columns=fields)`；日期归一为数值；增加 `or_yoy → operating_revenue_grow_rate` 字段名映射；`get_fundamentals_batch` shim 委托 wrapper；补全 `SHIM_CONTRACT_REGISTRY` 与 validator 门禁；新增 19 个 P-D10 契约测试。
+- **验证**：`test_ptrade_contract_compliance.py` 94 passed + `test_source_import.py` 40 passed；week10 平台冒烟 2026-07 双端漏斗 L4≈10%×L3v、L5=30、R_selected=10；vol_regime 辅验 5 只全月无换手。
+- **证据文档**：`docs/evidence/p-d10-gf-contract-20260822.md`。
+- **同步状态**：待双仓推送。

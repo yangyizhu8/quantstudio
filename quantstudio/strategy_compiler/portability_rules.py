@@ -27,11 +27,121 @@ DENY_REMOVE: frozenset[str] = frozenset({
 # ============================================================================
 # 分类 2：本地批量性能 API（B1，本地优化）→ SHIM
 #   注入同名 shim 函数：循环单调用 + 原返回形状拼接（02 规格 §2 步骤 7）
+#   P-D10（2026-08-22）：shim 返回形状必须与本地 B1 契约逐字段一致——
+#   get_fundamentals_batch 本地契约为合并 DataFrame（index=code, columns=fields，
+#   ptrade_api.py:1421-1442，平台原生 list 单调用 + 列筛选 + end_date/publ_date 数值归一）；
+#   get_history_batch 本地契约为 dict[code→DataFrame]（ptrade_api.py:1444-1476）。
+#   契约唯一真相见 SHIM_CONTRACT_REGISTRY（下方），校验器据此对产物中未登记
+#   的注入 shim/wrapper def 施 BLOCK（PORTABILITY-UNREGISTERED-SHIM）。
 # ============================================================================
 DENY_SHIM: frozenset[str] = frozenset({
-    "get_fundamentals_batch",  # shim 形状：dict[code→DataFrame]（与 get_fundamentals is_dataframe=True 一致）
+    "get_fundamentals_batch",  # shim 形状：DataFrame（index=code, columns=fields，本地 B1 契约）
     "get_history_batch",       # shim 形状：dict[code→DataFrame]（与 get_history is_dict=True 一致）
 })
+
+# 注入同名 wrapper 的平台登记 API 名（策略代码零改动，转换侧包装平台行为）
+# 与 DENY_SHIM 并集 = SHIM_CONTRACT_REGISTRY 的键集合（测试断言集合相等，防双边漂移）
+INJECTED_WRAPPER_NAMES: frozenset[str] = frozenset({
+    "get_history",              # 方向B：structured array → DataFrame + 字段双向映射
+    "get_fundamentals",         # P-D10：list 单调用 + 列筛选 + end_date/publ_date 数值归一
+    "filter_stock_by_status",   # P-D9：'ST' 语义补退市风险兜底
+    "get_trade_days",           # A3：日历格式归一 + 未来过滤
+    "get_stock_info",           # A3：listed_date 归一
+})
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class ShimContractSpec:
+    """注入 shim/wrapper 必须满足的本地契约（四要素：type/index/columns/空行为）。
+
+    P-D10 三道防线之①（机器门禁）：校验器对产物中出现的注入 def，
+    若不在 SHIM_CONTRACT_REGISTRY 内 → BLOCK（PORTABILITY-UNREGISTERED-SHIM）。
+    新增任何注入模板必须先在本注册表登记 + 补四要素同构测试，否则校验失败。
+    """
+    api_name: str
+    contract_type: str       # DataFrame / dict[code→DataFrame] / list / ...
+    contract_index: str      # index 契约（ptrade_code / code→DataFrame / n/a）
+    contract_columns: str    # columns 契约（fields 请求字段 / 字段映射 / n/a）
+    contract_empty: str      # 空行为契约
+    contract_source: str     # 契约出处（ptrade_api.py 等行号）
+    template_location: str   # source_import 模板常量名
+    homology_test: str       # 四要素同构测试名（tests/test_ptrade_contract_compliance.py）
+
+
+SHIM_CONTRACT_REGISTRY: dict[str, ShimContractSpec] = {
+    "get_fundamentals": ShimContractSpec(
+        api_name="get_fundamentals",
+        contract_type="DataFrame",
+        contract_index="ptrade_code",
+        contract_columns="fields（按请求字段筛选；end_date/publ_date 归一为数值 YYYYMMDD；or_yoy→operating_revenue_grow_rate 字段名映射）",
+        contract_empty="空 DataFrame(columns=fields)，不抛错；请求字段缺失 → QS_SHIM_FIELD_MISSING 显性警报",
+        contract_source="ptrade_api.py:698-772 / 1421-1442",
+        template_location="_QS_FUNDAMENTALS_EXT",
+        homology_test="test_p10_wrapper_native_list_index_preserved",
+    ),
+    "get_fundamentals_batch": ShimContractSpec(
+        api_name="get_fundamentals_batch",
+        contract_type="DataFrame",
+        contract_index="ptrade_code",
+        contract_columns="fields（按请求字段筛选）",
+        contract_empty="空 DataFrame(columns=fields)，不抛错",
+        contract_source="ptrade_api.py:1421-1442",
+        template_location="_shim_source('get_fundamentals_batch')",
+        homology_test="test_p10_batch_shim_returns_dataframe_index_code",
+    ),
+    "get_history": ShimContractSpec(
+        api_name="get_history",
+        contract_type="DataFrame（单标的）/ dict[code→DataFrame]（is_dict）",
+        contract_index="平台原生（日期可能入 index）",
+        contract_columns="字段双向映射（amount↔money/preClose↔preclose）+ trade_date 合成",
+        contract_empty="空 DataFrame / 空 dict，不抛错",
+        contract_source="ptrade_api.py:1516-1520 附近 get_history + 方向B 实证 2026-08-13",
+        template_location="_QS_HISTORY_WRAPPER / _QS_HISTORY_TRADE_DATE_EXT",
+        homology_test="test_history_wrapper_passes_dict",
+    ),
+    "get_history_batch": ShimContractSpec(
+        api_name="get_history_batch",
+        contract_type="dict[code→DataFrame]",
+        contract_index="code→DataFrame",
+        contract_columns="fields（请求字段映射）",
+        contract_empty="空 dict（无数据不报错）",
+        contract_source="ptrade_api.py:1444-1476",
+        template_location="_shim_source('get_history_batch')",
+        homology_test="test_history_wrapper_idempotent",
+    ),
+    "filter_stock_by_status": ShimContractSpec(
+        api_name="filter_stock_by_status",
+        contract_type="list[str]",
+        contract_index="n/a",
+        contract_columns="n/a",
+        contract_empty="空 list（无幸存）",
+        contract_source="ptrade_api.py:746-780 附近 + P-D9 方案 v3",
+        template_location="_QS_FILTER_STATUS_EXT",
+        homology_test="test_pd9_st_filters_delisting_risk_penny",
+    ),
+    "get_trade_days": ShimContractSpec(
+        api_name="get_trade_days",
+        contract_type="list[str]",
+        contract_index="n/a",
+        contract_columns="n/a",
+        contract_empty="空 list",
+        contract_source="ptrade_api.py:1486-1497",
+        template_location="_QS_DATE_NORM_EXT",
+        homology_test="test_trade_date_ext_removes_synthetic_field",
+    ),
+    "get_stock_info": ShimContractSpec(
+        api_name="get_stock_info",
+        contract_type="dict[code→dict]",
+        contract_index="code→dict",
+        contract_columns="n/a（listed_date 归一 'YYYY-MM-DD'）",
+        contract_empty="空 dict / None 值",
+        contract_source="ptrade_api.py:get_stock_info（A3 归一契约）",
+        template_location="_QS_DATE_NORM_EXT",
+        homology_test="test_a3_listed_date_normalized",
+    ),
+}
 
 # ============================================================================
 # 分类 3：无法自动处理、必须人工 → BLOCK（fail-closed；不在 1:1 承诺内）

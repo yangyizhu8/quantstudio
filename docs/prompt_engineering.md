@@ -27,6 +27,7 @@ R0 首先询问并记录生成目标：双端或仅 QuantStudio 本地。
 双端 ETF 策略只能使用用户确认的静态白名单，禁止所有 local-only API。
 仅本地 ETF 策略使用 get_etf_list_local 做 PIT 动态池；PTrade 验证和双端一致性为 NOT_APPLICABLE。
 策略不得直接访问 DuckDB；动态池必须经过注入 API → ReferenceDataProvider → DuckDB 数据适配层。
+get_fundamentals / get_fundamentals_batch 按本地字段名书写（如 growth_ability 的 or_yoy），转换器会在 PTrade 侧自动映射到平台字段名（如 operating_revenue_grow_rate）；不得假设平台字段名与本地相同，也不得绕过转换器直接请求平台私有字段名。
 ```
 
 - **R0 工作流图审核（2026-08-22 起）**：R0 先根据用户提示词生成策略工作流图（mermaid 垂直流程：数据/股票池准备→信号→筛选排序→入场→头寸/止损→跟踪→退出→记录复盘；节点 `id["文本"]` 双引号包裹、id 唯一 ASCII；未定义分叉画为 `❓待定` 虚线节点；修改上限 3 轮）供用户审核；确认结构后才输出语义矛盾表与 R0 审核表。**闭环规则**：图上每个 `❓待定` 节点必须对应审核清单中的一条待决项（图中❓数 ≤ 清单待定项数），流程图确认不替代 R0 hard stop 最终确认。
@@ -199,6 +200,7 @@ def handle_data(context, data):
 - **get_history 多表路由（F5/F6）**：股票→`stock_daily`，ETF→`etf_daily`，普通指数与申万行业指数（801xxx）→统一 `index_daily`；`fq='pre'` 对指数回退原始 OHLC。
 - `get_history(security, count, include=False)`：默认 `include=False` 表示含当前交易日但历史截止前一交易日，**不会泄露当日未来 bar**（分钟 Profile 由 `bar_cutoff_ms` 截断当前 bar 后半段）。
 - 估值表 `valuation` 字段完整（float_value / a_floats / pe_ratio / pb_ratio …）；三大财务报表（balance/income/cashflow）当前返回空 DataFrame，财务因子请优先用 `eps` / `profit_ability` / `growth_ability` / `operating_ability` / `debt_paying_ability` 等已落地表。
+- **市值/股本因子数据源约束（2026-08-16）**：涉及流通市值（float_value）、总市值（total_value）、流通股本（a_floats）的因子计算，**必须**通过 `get_fundamentals(table='valuation', fields=[...])` 获取，**禁止**自行用 `close × 假设股本` 或 `get_price` 取价后手动乘以股本。底层数据源 `stock_float_share.free_share`（MCP 权威源 `qdb.stock_daily_basic`）保证与 PTrade 聚源精确对齐（误差 < 0.001%），绕过会导致两端排名边界翻转。
 
 ---
 
@@ -217,6 +219,7 @@ def handle_data(context, data):
 | **篮子再平衡** | `order_in_basket`（G1-I 强制先卖后买）用于特殊场景，普通策略用 `order_target_value` 即可完成换仓。 |
 | **调仓模式** | `rebalance_mode`（F1）：默认 `legacy`；`callback_basket` 仅 daily-bar-v1 + `next_open` 激活（导出记录 `engine_semantics_version=0.4.0-next_open_basket`），分钟 Profile 拒绝；`run_daily`/`before_trading_start` 订单永不进入 basket，需要 basket 的策略须把调仓下单放入 `handle_data`。PyQt 面板有通用下拉框透出，`close`/`open + callback_basket` 会被 GUI 阻断。 |
 | **订单返回** | 所有 `order_*` 返回 `Order` 对象。**读取边界（2026-08-16）**：本地专用策略可检查 `order.status`（'filled'/'open'/'rejected'）与 `order.reason`；**PTrade 可移植 / skill 生成策略禁止读取订单返回字段**（Validator `ORDER-RETURN-FIELD-READ` BLOCK），只做真值判断 + `get_position()` 持仓对账——PTrade 拒单返回 None、本地拒单/零成交为 falsy（语义等价）；"受理但未成交"两端真值不一致，**必须以持仓对账为唯一事实**。 |
+| **回测审计行（2026-08-17）** | 本地引擎日末输出 `QS_FILL_AUDIT`（`sell_filled/buy_filled/sell_rejected/buy_rejected/positions_total/rejected_detail`），与策略层 `QS_REBALANCE_AUDIT`（计划）配对即"计划 vs 实际"；全部拒单路径（no_price / 涨跌停 / halted / 资金不足/整手不足）集中采集，有拒单 WARNING。**R5 证据 review 可直接解析 FILL 行做拒单计数与持仓对账**（替代解析 `insufficient_cash` 等散落 WARNING）；本地回测与 PTrade 日志逐日对齐时，FILL 行是拒单差异的唯一事实来源。详见 `docs/strategy_toolbox.md` §3.7.2。 |
 
 **典型稳健写法**：
 

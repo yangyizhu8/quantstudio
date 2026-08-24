@@ -259,6 +259,15 @@ def handle_data(context, data):
 # 修复 7：get_history 返回类型统一 wrapper（方向 B，structured array → DataFrame）
 # ---------------------------------------------------------------------------
 
+def _shape_check_def():
+    """从 _PTRADE_HELPERS 提取真实 _qs_shape_check 定义源码（各 ns 复用，保证自检测试走真实现）。"""
+    import quantstudio.strategy_compiler.source_import as si
+    src = si._PTRADE_HELPERS
+    i = src.index("def _qs_shape_check(")
+    j = src.rfind("'''", i)
+    return src[i:j]
+
+
 def _wrapper_ns(history_return):
     """exec _QS_HISTORY_WRAPPER 注入区 → 命名空间（含 _qs_to_dataframe / wrapper get_history）。
     ns['_captured'] 记录 wrapper 传给原始 get_history 的 kwargs（用于字段映射断言）。"""
@@ -271,7 +280,10 @@ def _wrapper_ns(history_return):
         captured["kwargs"] = kwargs
         return history_return
 
-    ns = {"get_history": _fake_get_history}
+    ns = {"get_history": _fake_get_history,
+          "log": type("L", (), {"warning": staticmethod(lambda *a, **k: None),
+                                "info": staticmethod(lambda *a, **k: None)})()}
+    exec(_shape_check_def(), ns)
     exec(si._QS_HISTORY_WRAPPER.format(marker="# wrapper"), ns)
     ns["_captured"] = captured
     return ns
@@ -435,7 +447,10 @@ def _wrapper_ext_ns(history_return):
         captured.append(dict(kwargs))
         return history_return
 
-    ns = {"get_history": _fake_get_history}
+    ns = {"get_history": _fake_get_history,
+          "log": type("L", (), {"warning": staticmethod(lambda *a, **k: None),
+                                "info": staticmethod(lambda *a, **k: None)})()}
+    exec(_shape_check_def(), ns)
     exec(si._QS_HISTORY_WRAPPER.format(marker="# m"), ns)
     exec(si._QS_HISTORY_TRADE_DATE_EXT.format(marker="# m"), ns)
     ns["_captured"] = captured
@@ -1175,6 +1190,7 @@ def _filter_status_ns(native_return, closes=None):
           "get_history": _fake_history,
           "log": type("L", (), {"warning": staticmethod(lambda *a, **k: None),
                                 "info": staticmethod(lambda *a, **k: None)})()}
+    exec(_shape_check_def(), ns)
     exec(si._QS_FILTER_STATUS_EXT.format(marker="# m"), ns)
     ns["_calls"] = calls
     return ns
@@ -1259,6 +1275,7 @@ def test_pd9_failopen_on_history_failure():
           "log": type("L", (), {"warning": staticmethod(
               lambda msg, *a: warned.append(msg)),
               "info": staticmethod(lambda *a: None)})()}
+    exec(_shape_check_def(), ns)
     exec(si._QS_FILTER_STATUS_EXT.format(marker="# m"), ns)
     out = ns["filter_stock_by_status"](["000004.SZ", "600000.SS"], ["ST"])
     # 单码失败 → _qs_is_delisting_risk 返回 False（fail-open）→ 原生结果保留
@@ -1315,6 +1332,7 @@ def test_pd9_batch_prefetch_writes_cache():
           "get_history": _fake_history,
           "log": type("L", (), {"warning": staticmethod(lambda *a, **k: None),
                                 "info": staticmethod(lambda *a, **k: None)})()}
+    exec(_shape_check_def(), ns)
     exec(si._QS_FILTER_STATUS_EXT.format(marker="# m"), ns)
     out = ns["filter_stock_by_status"](["000004.SZ", "002808.SZ", "600000.SS"],
                                        ["ST", "HALT", "DELISTING"])
@@ -1348,3 +1366,269 @@ def _score_momentum(code):
     issues2 = []
     vas._validate_platform_fallback_handwritten(ast.parse(src2), issues2)
     assert not issues2, "正常函数名不应误伤"
+
+
+# ---------------------------------------------------------------------------
+# P-D10 get_fundamentals 契约对齐（2026-08-22，方案 docs/p-d10-gf-contract-design.md）
+# 探针实证（测试123）：list 原生接受 index=code；end_date/publ_date 为 'YYYY-MM-DD' 字符串；
+# 平台忽略 fields 列过滤；or_yoy 缺失 KeyError 吞错返回空 df → 写死微调清单四条。
+# ---------------------------------------------------------------------------
+
+def _fund_ns(platform_ret=None, raise_on_list=False, single_results=None):
+    """exec _QS_FUNDAMENTALS_EXT → 命名空间（真实 _qs_shape_check + 记录 calls/warnings）。"""
+    import quantstudio.strategy_compiler.source_import as si
+
+    warnings = []
+    calls = {"list": [], "single": []}
+
+    def _fake_fund(*args, **kwargs):
+        secs = args[0]
+        if isinstance(secs, (list, tuple)) and len(secs) > 1:
+            calls["list"].append((args, kwargs))
+            if raise_on_list:
+                raise RuntimeError("platform list unsupported")
+            return platform_ret
+        calls["single"].append((args, kwargs))
+        if single_results is not None:
+            return single_results.get(secs)
+        return platform_ret
+
+    log = type("L", (), {"warning": staticmethod(lambda *a, **k: warnings.append((a, k))),
+                          "info": staticmethod(lambda *a, **k: None)})()
+    ns = {"get_fundamentals": _fake_fund, "log": log}
+    exec(_shape_check_def(), ns)
+    exec(si._QS_FUNDAMENTALS_EXT.format(marker="# p10"), ns)
+    ns["_calls"] = calls
+    ns["_warnings"] = warnings
+    return ns
+
+
+def test_p10_fundamentals_gate_injected_when_used():
+    """门控：策略调用 get_fundamentals → 注入契约包装 + 形状自检 helper。"""
+    r = _convert("""
+def initialize(context):
+    pass
+def before_trading_start(context, data):
+    v = get_fundamentals(['000001.SZ'], 'valuation', fields=['float_value'])
+""")
+    assert r.errors == [], r.errors
+    assert "_QSFundState" in r.converted_code
+    assert "get_fundamentals(security, table='valuation'" in r.converted_code
+    assert "_qs_shape_check('get_fundamentals', 'dataframe'" in r.converted_code
+
+
+def test_p10_fundamentals_batch_shim_delegates():
+    """门控：调用 get_fundamentals_batch → 同时注入 wrapper（shim 委托契约 DataFrame）。"""
+    r = _convert("""
+def initialize(context):
+    pass
+def before_trading_start(context, data):
+    v = get_fundamentals_batch(['000001.SZ'], 'valuation', fields=['float_value'])
+""")
+    assert r.errors == [], r.errors
+    assert "_QSFundState" in r.converted_code
+    assert "def get_fundamentals_batch" in r.converted_code
+    # shim 委托 get_fundamentals（wrapper 版本），不再 dict 拼装
+    assert "get_fundamentals(security_list, table, fields=fields" in r.converted_code
+
+
+def test_p10_gate_not_injected_when_absent():
+    """门控：不调用 fundamentals 的策略不注入（逐字节不变）。"""
+    r = _convert("""
+def initialize(context):
+    pass
+def handle_data(context, data):
+    h = get_history(20, frequency='1d', field=['close'], security_list='000001.SZ')
+""")
+    assert r.errors == [], r.errors
+    assert "_QSFundState" not in r.converted_code
+
+
+def test_p10_batch_shim_returns_dataframe_index_code():
+    """shim → wrapper：平台 RangeIndex 返回 → 本地契约 DataFrame（index=code）。"""
+    import pandas as pd
+    import numpy as np
+    import quantstudio.strategy_compiler.source_import as si
+
+    ns = _fund_ns(pd.DataFrame(
+        {"trading_day": [20260630, 20260630], "total_value": [1e9, 2e9],
+         "float_value": [1.3e8, 2.1e8]},
+        index=pd.RangeIndex(2)))
+    exec(si.SourceConverter._shim_source(None, "get_fundamentals_batch"), ns)
+    out = ns["get_fundamentals_batch"](["000001.SZ", "600000.SS"], "valuation",
+                                       fields=["float_value"], date="20260630")
+    assert isinstance(out, pd.DataFrame)
+    assert list(out.index) == ["000001.SZ", "600000.SS"]
+    assert list(out.columns) == ["float_value"]
+
+
+def test_p10_wrapper_native_list_index_preserved():
+    """探针 U1/U2：平台 list 原生返回 index=code → 原样保留（不重写）。"""
+    import pandas as pd
+    ns = _fund_ns(pd.DataFrame(
+        {"trading_day": [20260630, 20260630], "total_value": [1e9, 2e9],
+         "float_value": [1.3e8, 2.1e8]},
+        index=["000001.SZ", "600000.SS"]))
+    out = ns["get_fundamentals"](["000001.SZ", "600000.SS"], "valuation",
+                                 fields=["float_value"], date="20260630")
+    assert list(out.index) == ["000001.SZ", "600000.SS"]
+    assert list(out.columns) == ["float_value"]
+    assert ns["_calls"]["list"], "应走平台原生 list 单调用"
+
+
+def test_p10_wrapper_column_filter():
+    """探针 U3：平台返回固定列集 → 按请求 fields 列筛选。"""
+    import pandas as pd
+    ns = _fund_ns(pd.DataFrame(
+        {"trading_day": [20260630], "total_value": [1e9], "float_value": [1.3e8]},
+        index=["000001.SZ"]))
+    out = ns["get_fundamentals"]("000001.SZ", "valuation", fields=["float_value"],
+                                 date="20260630")
+    assert list(out.columns) == ["float_value"]
+    assert out.loc["000001.SZ", "float_value"] == 1.3e8
+
+
+def test_p10_wrapper_date_norm():
+    """探针 U2 第二炸点：'YYYY-MM-DD' → YYYYMMDD 数值（与本地 fin_indicator 排序语义一致）。"""
+    import pandas as pd
+    import numpy as np
+    ns = _fund_ns(pd.DataFrame(
+        {"eps": [0.75, 0.60], "publ_date": ["2026-04-25", "2025-04-25"],
+         "end_date": ["2026-03-31", "2025-03-31"]},
+        index=["000001.SZ", "000001.SZ"]))
+    out = ns["get_fundamentals"](["000001.SZ"], "eps",
+                                 fields=["eps", "publ_date", "end_date"])
+    assert np.asarray(out["end_date"], dtype=float).tolist() == [20260331.0, 20250331.0]
+    assert np.asarray(out["publ_date"], dtype=float).tolist() == [20260425.0, 20250425.0]
+
+
+def test_p10_wrapper_field_missing_alarm():
+    """必查项①：请求字段不在平台返回列集 → QS_SHIM_FIELD_MISSING 显性警报 + 空 DataFrame。"""
+    import pandas as pd
+    ns = _fund_ns(pd.DataFrame())  # 平台对 or_yoy 吞错返回 (0,0) 空 df
+    out = ns["get_fundamentals"](["000001.SZ"], "growth_ability",
+                                 fields=["or_yoy", "publ_date", "end_date"])
+    assert isinstance(out, pd.DataFrame)
+    assert list(out.columns) == ["or_yoy", "publ_date", "end_date"]
+    assert len(out) == 0
+    joined = " ".join(str(w[0]) for w in ns["_warnings"])
+    assert "QS_SHIM_FIELD_MISSING" in joined
+    assert "or_yoy" in joined
+
+
+def test_p10_wrapper_list_fallback_per_code():
+    """防御路径：list 调用失败 → 逐码循环退化（语义等价重建）。"""
+    import pandas as pd
+
+    def mk(code):
+        return pd.DataFrame({"trading_day": [20260630], "total_value": [1e9],
+                             "float_value": [1.3e8]}, index=[code])
+
+    single = {"000001.SZ": mk("000001.SZ"), "600000.SS": mk("600000.SS")}
+    ns = _fund_ns(raise_on_list=True, single_results=single)
+    out = ns["get_fundamentals"](["000001.SZ", "600000.SS"], "valuation",
+                                 fields=["float_value"], date="20260630")
+    assert sorted(out.index) == ["000001.SZ", "600000.SS"]
+    assert list(out.columns) == ["float_value"]
+    assert len(ns["_calls"]["single"]) == 2
+
+
+def test_p10_shape_check_violation_alarm():
+    """自检（防线③）：契约外返回形态 → QS_SHIM_SHAPE_VIOLATION 警报（不抛错不阻断）。"""
+    ns = _fund_ns(None)
+    assert ns["_qs_shape_check"]("get_fundamentals", "dataframe", 42) is False
+    joined = " ".join(str(w[0]) for w in ns["_warnings"])
+    assert "QS_SHIM_SHAPE_VIOLATION get_fundamentals expected=dataframe actual=int" in joined
+    # 契约内形态 → 静默通过
+    assert ns["_qs_shape_check"]("get_fundamentals", "dataframe",
+                                 ns["_qs_pd"].DataFrame()) is True
+
+
+def test_p10_field_map_request_translated():
+    """探针二/三结论：or_yoy → operating_revenue_grow_rate（请求翻译 + 返回列名逆翻译）。"""
+    import pandas as pd
+    ns = _fund_ns(pd.DataFrame(
+        {"operating_revenue_grow_rate": [4.6516], "end_date": ["2026-03-31"],
+         "publ_date": ["2026-04-25"]}, index=["000001.SZ"]))
+    out = ns["get_fundamentals"](["000001.SZ", "600000.SS"], "growth_ability",
+                                 fields=["or_yoy", "publ_date", "end_date"])
+    assert list(out.columns) == ["or_yoy", "publ_date", "end_date"]
+    assert out.loc["000001.SZ", "or_yoy"] == 4.6516
+    plat_fields = ns["_calls"]["list"][0][1].get("fields")
+    assert plat_fields == ["operating_revenue_grow_rate", "publ_date", "end_date"]
+
+
+def test_p10_field_map_only_growth_ability():
+    """映射仅作用于 growth_ability（valuation 请求不翻译）。"""
+    import pandas as pd
+    ns = _fund_ns(pd.DataFrame({"trading_day": [20260630], "float_value": [1.3e8]},
+                               index=["000001.SZ"]))
+    ns["get_fundamentals"](["000001.SZ", "600000.SS"], "valuation", fields=["float_value"])
+    plat_fields = ns["_calls"]["list"][0][1].get("fields")
+    assert plat_fields == ["float_value"]
+
+
+def test_p10_field_map_unmapped_field_passthrough():
+    """未映射字段（np_yoy）原样请求；平台缺失 → FIELD_MISSING 用本地名报告。"""
+    import pandas as pd
+    ns = _fund_ns(pd.DataFrame())
+    ns["get_fundamentals"](["000001.SZ", "600000.SS"], "growth_ability",
+                           fields=["np_yoy", "publ_date", "end_date"])
+    plat_fields = ns["_calls"]["list"][0][1].get("fields")
+    assert plat_fields == ["np_yoy", "publ_date", "end_date"]
+    joined = " ".join(str(w[0]) for w in ns["_warnings"])
+    assert "QS_SHIM_FIELD_MISSING" in joined and "np_yoy" in joined
+
+
+def test_p10_registry_contract_complete():
+    """登记表完整性：键集合 == INJECTED_WRAPPER_NAMES ∪ DENY_SHIM（防双边漂移）。"""
+    from quantstudio.strategy_compiler.portability_rules import (
+        DENY_SHIM, INJECTED_WRAPPER_NAMES, SHIM_CONTRACT_REGISTRY)
+    assert set(SHIM_CONTRACT_REGISTRY) == set(INJECTED_WRAPPER_NAMES) | set(DENY_SHIM)
+    for spec in SHIM_CONTRACT_REGISTRY.values():
+        assert spec.contract_type and spec.contract_index
+        assert spec.contract_columns and spec.contract_empty
+        assert spec.template_location and spec.homology_test
+        assert spec.contract_source
+
+
+def test_p10_registry_homology_matrix():
+    """同构矩阵（防线②）：每条登记契约 → 模板存在于 source_import + 同名同构测试存在。"""
+    import quantstudio.strategy_compiler.source_import as si
+    from quantstudio.strategy_compiler.portability_rules import SHIM_CONTRACT_REGISTRY
+
+    for api, spec in SHIM_CONTRACT_REGISTRY.items():
+        for loc in spec.template_location.split("/"):
+            loc = loc.strip()
+            if loc.startswith("_shim_source("):
+                shim_name = loc.split("'")[1]
+                assert f"def {api}(" in si.SourceConverter._shim_source(None, shim_name), \
+                    f"{api} shim 模板缺失"
+            else:
+                assert hasattr(si, loc), f"{api} 模板 {loc} 缺失"
+        assert callable(globals()[spec.homology_test]), \
+            f"{api} 同构测试 {spec.homology_test} 缺失"
+
+
+def test_p10_registry_gate_blocks_unregistered():
+    """门禁（防线①）：未登记注入 def → PORTABILITY-UNREGISTERED-SHIM BLOCK。"""
+    import quantstudio.strategy_compiler.portability_rules as pr
+    import quantstudio.strategy_compiler.validators.validate_ptrade_portability as vp
+
+    orig = pr.SHIM_CONTRACT_REGISTRY
+    try:
+        stripped = {k: v for k, v in orig.items() if k != "get_fundamentals_batch"}
+        pr.SHIM_CONTRACT_REGISTRY = stripped
+        vp.SHIM_CONTRACT_REGISTRY = stripped
+        # 模拟未来某次注入未登记的形状（现有模板均登记 → 用 stripped 模拟增量遗漏）
+        ok, violations, _ = vp.validate_ptrade_portability("""
+def get_fundamentals_batch(security_list, table='valuation', fields=None, date=None):
+    return {}
+def initialize(context):
+    pass
+""")
+        assert not ok
+        assert any(v.rule_id == "PORTABILITY-UNREGISTERED-SHIM" for v in violations)
+    finally:
+        pr.SHIM_CONTRACT_REGISTRY = orig
+        vp.SHIM_CONTRACT_REGISTRY = orig

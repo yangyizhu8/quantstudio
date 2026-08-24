@@ -145,6 +145,34 @@ def _portfolio_total_value(context):
         for position in portfolio.positions.values()
     )
     return float(portfolio.cash) + market_value
+
+
+def _qs_shape_check(api_name, expected, actual):
+    """P-D10 运行时首调形状自检（三道防线③）：返回形态不符 → QS_SHIM_SHAPE_VIOLATION
+    显性警报（log 不抛错不阻断），封"平台日后行为漂移"场景。所有注入 wrapper/shim
+    首调用点挂接；expected: dataframe / dict / list / df_or_dict。"""
+    _ok = False
+    try:
+        if expected == 'dataframe':
+            _ok = hasattr(actual, 'columns') and hasattr(actual, 'index')
+        elif expected == 'dict':
+            _ok = isinstance(actual, dict)
+        elif expected == 'list':
+            _ok = isinstance(actual, (list, tuple))
+        elif expected == 'df_or_dict':
+            _ok = ((hasattr(actual, 'columns') and hasattr(actual, 'index'))
+                   or isinstance(actual, dict))
+        else:
+            _ok = True
+    except Exception:
+        _ok = False
+    if not _ok:
+        try:
+            log.warning('QS_SHIM_SHAPE_VIOLATION %s expected=%s actual=%s'
+                        % (api_name, expected, type(actual).__name__))
+        except Exception:
+            pass
+    return _ok
 '''
 
 _QS_HISTORY_WRAPPER = '''
@@ -201,8 +229,11 @@ def get_history(*args, **kwargs):
             kwargs['fields'] = _mapped if _is_list else _mapped[0]
     _result = _QSHistoryState.orig(*args, **kwargs)
     if isinstance(_result, dict):
-        return {{k: _qs_to_dataframe(v) for k, v in _result.items()}}
-    return _qs_to_dataframe(_result)
+        _out = {{k: _qs_to_dataframe(v) for k, v in _result.items()}}
+    else:
+        _out = _qs_to_dataframe(_result)
+    _qs_shape_check('get_history', 'df_or_dict', _out)
+    return _out
 '''
 
 # source_import trade_date 门控扩展（2026-08-19，框架层方案 source_import-ptrade-history-translation-design.md）
@@ -296,6 +327,7 @@ def get_history(*args, **kwargs):
                 _kw2['security'] = _s
                 _item = _QSHistoryState.orig(*args, **_kw2)
             result[_s] = _qs_to_dataframe(_item)
+        _qs_shape_check('get_history', 'df_or_dict', result)
         return result
     if _secs:
         # 非 dict 模式仍需把 security_list/security 传回原始 API（如单市场 σ 计算）
@@ -310,8 +342,11 @@ def get_history(*args, **kwargs):
     else:
         _result = _QSHistoryState.orig(*args, **kwargs)
     if isinstance(_result, dict):
-        return {{k: _qs_to_dataframe(v) for k, v in _result.items()}}
-    return _qs_to_dataframe(_result)
+        _out = {{k: _qs_to_dataframe(v) for k, v in _result.items()}}
+    else:
+        _out = _qs_to_dataframe(_result)
+    _qs_shape_check('get_history', 'df_or_dict', _out)
+    return _out
 '''
 
 
@@ -722,6 +757,7 @@ def filter_stock_by_status(stocks, filter_type=None, query_date=None, *args, **k
             result = [c for c in result if not _qs_is_delisting_risk(c)]  # ② 判定
     except Exception as exc:
         log.warning("P-D9 filter fallback failed (keep native result): %s" % (exc,))
+    _qs_shape_check('filter_stock_by_status', 'list', result)
     return result
 '''
 
@@ -776,6 +812,7 @@ def get_trade_days(start_date=None, end_date=None, count=None, *args, **kwargs):
     today = _qs_today_str()
     if end_date is None and today:
         days = [d for d in days if d and d <= today]
+    _qs_shape_check('get_trade_days', 'list', days)
     return days
 
 
@@ -791,6 +828,7 @@ def get_stock_info(stocks, field=None, *args, **kwargs):
                         rec['listed_date'] = _qs_norm_date_str(rec.get('listed_date'))
         except Exception:
             pass
+    _qs_shape_check('get_stock_info', 'dict', result)
     return result
 
 
@@ -826,6 +864,155 @@ def _qs_ctx_holder():
 
 def _qs_set_context(ctx):
     _QSContextHolder.ctx = ctx
+'''
+
+# P-D10 get_fundamentals 契约对齐注入（2026-08-22，框架方案 docs/p-d10-gf-contract-design.md）
+# 平台探针实证（probe_gf_contract_ptrade.py，测试123 2026-08-22）：
+#   U1: 平台 get_fundamentals 原生接受 list —— 单次调用返回 index=股票代码 的合并 DataFrame；
+#   U2: 返回 index=code ✓；end_date/publ_date 为 object 'YYYY-MM-DD' 字符串（本地为数值时间戳，
+#       策略 _latest_by_code 以 dtype=float 强转+数值排序 → 必须归一为 YYYYMMDD 数值，否则 ValueError）；
+#   U3: 平台返回固定列集（fields 不做列过滤）→ 按请求 fields 列筛选（本地 ptrade_api available 同构）；
+#       请求字段不在返回列集 → 平台吞错返回空 df → 识别为 QS_SHIM_FIELD_MISSING 显性失败（必查项①，
+#       不得当正常空处理）；date 'YYYYMMDD'/'YYYY-MM-DD'/None 均可用；is_dataframe kwarg 三形态同值（透传）。
+# 注入模板铁律（既有三条）：class 属性承载 / def 前捕获 / 非平台 API 顶层禁引
+# （get_fundamentals 是真实平台 API，def 前捕获安全）。批量 shim 走本 wrapper（DF 拼装，本地 B1 契约）。
+_QS_FUNDAMENTALS_EXT = '''
+{marker}
+# [qs-import-generated] get_fundamentals 契约对齐包装（P-D10，2026-08-22）
+# list 原生单调用 + 列筛选 + end_date/publ_date 数值归一 + 形状自检（QS_SHIM_SHAPE_VIOLATION）
+import pandas as _qs_pd
+import numpy as _qs_np
+
+
+class _QSFundState:
+    orig = None
+
+
+_QSFundState.orig = get_fundamentals
+
+
+# 本地→平台 字段名映射（P-D10 探针二/三结论：growth_ability 表平台自有命名。
+# or_yoy → operating_revenue_grow_rate 数值对照实证：000001.SZ/600000.SS @2026-03-31
+# 平台值 == 本地 or_yoy（4.6516 / 1.4176，Δ=0.0000，同百分点单位同符号）。
+# np_yoy 不映射（600000 Δ=0.72pct 口径差，无策略消费）；映射只翻译列名，不代理本地契约。
+_QS_GF_FIELD_MAP = {{'or_yoy': 'operating_revenue_grow_rate'}}
+_QS_GF_FIELD_MAP_REV = {{v: k for k, v in _QS_GF_FIELD_MAP.items()}}
+
+
+def _qs_norm_report_date(value):
+    """'YYYY-MM-DD' → YYYYMMDD 数值（与本地 fin_indicator 数值排序语义一致）。"""
+    try:
+        text = str(value).strip()
+        if len(text) == 10 and text[4] == '-' and text[7] == '-':
+            return float(text[:4] + text[5:7] + text[8:10])
+        if len(text) == 8 and text.isdigit():
+            return float(text)
+    except Exception:
+        pass
+    return value
+
+
+def _qs_norm_fund_dates(df):
+    """end_date/publ_date 归一为数值（平台 'YYYY-MM-DD' object → YYYYMMDD float）。"""
+    for _col in ('end_date', 'publ_date'):
+        if _col not in df.columns:
+            continue
+        try:
+            if df[_col].dtype == object:
+                df[_col] = df[_col].map(_qs_norm_report_date)
+        except Exception:
+            pass
+    return df
+
+
+def _qs_fund_select_fields(df, fields):
+    """按请求 fields 列筛选（本地 ptrade_api.py:763-768 available 同构）。
+    请求字段不在返回列集 → QS_SHIM_FIELD_MISSING 显性警报 + 计数（P-D10 必查项①：
+    平台吞错返回空 df 必须与正常空结果区分，不得静默）。"""
+    if not fields:
+        return df
+    field_list = [fields] if isinstance(fields, str) else list(fields)
+    available = [f for f in field_list if f in df.columns]
+    missing = [f for f in field_list if f not in df.columns]
+    for _f in missing:
+        log.warning('QS_SHIM_FIELD_MISSING get_fundamentals field=%s '
+                    '(requested but absent in platform return; contract gap)' % (_f,))
+    if available:
+        return df[available]
+    # 全部字段缺失 → 平台吞错返回空 DataFrame（growth_ability 无 or_yoy 实证）：
+    # 显性失败，返回空 DataFrame(columns=fields)，由策略完整性过滤自然剔除
+    return _qs_pd.DataFrame(columns=field_list)
+
+
+def _qs_frame_to_contract(df, secs, fields, table):
+    """平台原始返回 → 本地契约：index=code 防御 + 字段名逆翻译 + 列筛选 + 日期数值归一 + 空行为。"""
+    if df is None or not hasattr(df, 'columns') or not hasattr(df, 'index'):
+        return _qs_fund_select_fields(_qs_pd.DataFrame(), fields)
+    # 字段名逆翻译（平台列名 → 本地列名；growth_ability 表 + 映射命中才 rename）
+    if table == 'growth_ability':
+        try:
+            df = df.rename(columns=_QS_GF_FIELD_MAP_REV)
+        except Exception:
+            pass
+    if not len(df):
+        return _qs_fund_select_fields(df, fields)
+    _idx = df.index
+    is_code_index = False
+    try:
+        _s = str(_idx[0])
+        is_code_index = bool(_s) and ('.' in _s or (_s.isdigit() and len(_s) >= 5))
+    except Exception:
+        is_code_index = False
+    if not is_code_index:
+        # 防御路径：平台返回 RangeIndex 等非代码 index → 用 code 列/行序重建（探针实证平台返回 code index）
+        if 'code' in df.columns:
+            df = df.set_index(df['code'].astype(str))
+            df = df.drop(columns=['code'])
+        elif len(df) == len(secs) and df.index.equals(_qs_pd.RangeIndex(len(df))):
+            df = df.copy()
+            df.index = [str(c) for c in secs]
+    df = _qs_norm_fund_dates(df)
+    return _qs_fund_select_fields(df, fields)
+
+
+def get_fundamentals(security, table='valuation', fields=None, date=None,
+                     is_dataframe=True, *args, **kwargs):
+    """本地契约包装：list 原生单调用 → DataFrame(index=code, columns=fields)。
+
+    返回结构与本地 get_fundamentals（ptrade_api.py:698-772 / 1421-1442）一致：
+    index=ptrade_code、columns=fields（筛选后）、end_date/publ_date 数值归一、
+    空 → 空 DataFrame(columns=fields) 不抛错。防御路径：list 调用失败 → 逐码循环退化。
+    本地→平台字段名映射：请求 fields 按 _QS_GF_FIELD_MAP 翻译（or_yoy→operating_revenue_grow_rate），
+    返回列名逆翻译回本地名（_qs_frame_to_contract 内 rename）；策略按本地列名消费。"""
+    _secs = security if isinstance(security, (list, tuple)) else [security]
+    _field_list = [fields] if isinstance(fields, str) else (list(fields) if fields else None)
+    _plat_fields = ([_QS_GF_FIELD_MAP.get(f, f) for f in _field_list]
+                    if _field_list is not None else None)
+    try:
+        _df = _QSFundState.orig(_secs, table, fields=_plat_fields, date=date,
+                                is_dataframe=is_dataframe, *args, **kwargs)
+        _df = _qs_frame_to_contract(_df, _secs, fields, table)
+    except Exception as exc:
+        log.warning('GF-FAILOPEN get_fundamentals list-call %s: %s' % (type(exc).__name__, exc))
+        _frames = []
+        for _code in _secs:
+            try:
+                _one = _QSFundState.orig(_code, table, fields=_plat_fields, date=date,
+                                         is_dataframe=is_dataframe, *args, **kwargs)
+                if _one is None or not hasattr(_one, 'columns'):
+                    continue
+                _one = _qs_frame_to_contract(_one, [_code], fields, table)
+                if len(_one) > 0:
+                    _frames.append(_one)
+            except Exception as exc2:
+                log.warning('GF-FAILOPEN get_fundamentals %s %s: %s' % (_code, type(exc2).__name__, exc2))
+        if not _frames:
+            _df = _qs_pd.DataFrame(columns=[fields] if isinstance(fields, str)
+                                   else (fields or []))
+        else:
+            _df = _qs_pd.concat(_frames)
+    _qs_shape_check('get_fundamentals', 'dataframe', _df)
+    return _df
 '''
 
 # 档 2 表达式内嵌的等价字面量（H2）：本地函数 → PTrade 语义等价字面量
@@ -904,6 +1091,22 @@ def _source_uses_filter_status(source: str) -> bool:
             if isinstance(fn, ast.Name) and fn.id == "filter_stock_by_status":
                 return True
             if isinstance(fn, ast.Attribute) and fn.attr == "filter_stock_by_status":
+                return True
+    return False
+
+
+def _source_uses_fundamentals(source: str) -> bool:
+    """门控（P-D10）：源策略调用 get_fundamentals / get_fundamentals_batch →
+    注入契约对齐包装（list 单调用 + 列筛选 + 日期归一 + 形状自检）。"""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return ("get_fundamentals(" in source) or ("get_fundamentals_batch(" in source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            fn = node.func
+            name = fn.id if isinstance(fn, ast.Name) else (fn.attr if isinstance(fn, ast.Attribute) else "")
+            if name in ("get_fundamentals", "get_fundamentals_batch"):
                 return True
     return False
 
@@ -1887,6 +2090,13 @@ class SourceConverter:
             self.coverage["injected_helpers"].extend(
                 ["filter_status_norm", "_qs_is_delisting_risk",
                  "filter_stock_by_status_wrapper"])
+        # P-D10 契约对齐门控扩展：源策略调用 get_fundamentals/get_fundamentals_batch 时注入
+        # （在 shim 之前 → shim 内部调 get_fundamentals 已是 wrapper 版本 → 返回本地契约 DataFrame）
+        if _source_uses_fundamentals(code):
+            blocks.append(_QS_FUNDAMENTALS_EXT.format(marker=INJECTED_MARKER))
+            self.coverage["injected_helpers"].extend(
+                ["fundamentals_wrapper", "_qs_norm_fund_dates",
+                 "_qs_fund_select_fields", "get_fundamentals_wrapper"])
         for shim_name in sorted(self._need_shim):
             blocks.append(self._shim_source(shim_name))
             self.coverage["injected_helpers"].append(f"shim:{shim_name}")
@@ -1937,21 +2147,21 @@ def get_history_batch(security_list, count, unit='1d', fields=None, fq='pre',
                     result[k] = df
         except Exception as exc:
             log.warning('get_history_batch skip %s: %s' % (code, exc))
+    _qs_shape_check('get_history_batch', 'dict', result)
     return result
 '''
         if name == "get_fundamentals_batch":
             return f'''{INJECTED_MARKER}
 def get_fundamentals_batch(security_list, table='valuation', fields=None,
                            date=None, is_dataframe=True, **kwargs):
-    """SHIM: 本地批量 API → 循环单调用（PTrade 兼容；返回 dict[code→DataFrame]）"""
-    result = {{}}
-    for code in security_list:
-        try:
-            df = get_fundamentals(code, table, fields=fields, date=date,
-                                  is_dataframe=is_dataframe)
-            result[code] = df
-        except Exception as exc:
-            log.warning('get_fundamentals_batch skip %s: %s' % (code, exc))
+    """SHIM: 本地批量 API → 平台原生 list 单调用（P-D10）。
+
+    返回合并 DataFrame（index=code, columns=fields），与本地 B1 契约
+    （ptrade_api.py:1421-1442）逐字段一致；委托 get_fundamentals wrapper
+    （列筛选 + end_date/publ_date 数值归一 + QS_SHIM_FIELD_MISSING 显性警报）。"""
+    result = get_fundamentals(security_list, table, fields=fields, date=date,
+                              is_dataframe=is_dataframe, **kwargs)
+    _qs_shape_check('get_fundamentals_batch', 'dataframe', result)
     return result
 '''
         return ""

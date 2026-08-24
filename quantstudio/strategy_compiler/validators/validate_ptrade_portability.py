@@ -22,7 +22,12 @@ import ast
 from typing import Any
 
 from ..ir_nodes import StrategyIR
-from ..portability_rules import DENY_SHIM, denylist
+from ..portability_rules import (
+    DENY_SHIM,
+    INJECTED_WRAPPER_NAMES,
+    SHIM_CONTRACT_REGISTRY,
+    denylist,
+)
 from .scan_lookahead import Violation
 
 # T3 修订：DENYLIST 单一来源——并集引用 portability_rules.denylist()，
@@ -66,6 +71,26 @@ def validate_ptrade_portability(
         node.name for node in ast.walk(tree)
         if isinstance(node, ast.FunctionDef)
     }
+    _defined_locs: dict[str, int] = {}
+    for _node in ast.walk(tree):
+        if isinstance(_node, ast.FunctionDef):
+            _defined_locs.setdefault(_node.name, _node.lineno)
+
+    # P-D10 三道防线①（机器门禁）：注入 shim/wrapper def 必须登记于
+    # SHIM_CONTRACT_REGISTRY（本地契约四要素唯一真相），防第四例漏形状。
+    _registered_injected = frozenset(SHIM_CONTRACT_REGISTRY)
+    _injectable_names = frozenset(INJECTED_WRAPPER_NAMES) | frozenset(DENY_SHIM)
+    for _n in sorted(_defined_names):
+        if _n in _injectable_names and _n not in _registered_injected:
+            violations.append(Violation(
+                rule_id="PORTABILITY-UNREGISTERED-SHIM",
+                severity="BLOCK",
+                message=(f"PTrade code defines injected shim/wrapper {_n}() not registered in "
+                         f"SHIM_CONTRACT_REGISTRY (portability_rules.py). P-D10: every injected "
+                         f"shim/wrapper must register its local-contract four elements "
+                         f"(type/index/columns/empty) before injection."),
+                location=f"line {_defined_locs.get(_n, '?')}",
+            ))
 
     # AST scan for DENYLIST calls
     for node in ast.walk(tree):

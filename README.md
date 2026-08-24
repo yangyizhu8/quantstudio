@@ -39,6 +39,7 @@
 - **策略完全解耦**：策略只写 PTrade 生命周期并调用注入的数据、指标和交易 API；provider/adapter/DuckDB 均位于策略边界以下。
 - **底层集中修复**：数据或平台语义问题修复在 adapter/aligner/provider/PtradeAPI/engine，不要求修改具体策略。
 - **PTrade 保真验证**：内置 PTrade 导出导入器和 L1-L4 fidelity comparator。
+- **get_fundamentals 字段名映射（2026-08-24 P-D10）**：`growth_ability` 等财务表在转 PTrade 时自动完成本地→平台字段名映射（如 `or_yoy → operating_revenue_grow_rate`），策略仍按本地字段名书写；缺失字段触发 `QS_SHIM_FIELD_MISSING` 显性警报，不静默返回空。
 
 详细合规结果见 `docs/architecture-compliance-audit-20260720.md`。
 
@@ -140,6 +141,7 @@ result, output_dir = payload
 - **行业归属 APPROXIMATION_REQUIRES_CONFIRMATION（F4，非 PIT READY）**：`get_industry` 按当前回测日期 as-of 查正式 SW2021 成员表（`industry_classification`/`industry_membership`）。**关键语义边界**：官方 `index_member` 仅给 `in_date`/`out_date`，无冲突裁决规则；canonical 表**原样保留重叠区间**（如 SW2021 重新分类），**不应用自定义“生效日较新者胜”裁决**，每日唯一门控不再要求为 0。重叠命中时 `get_industry` 抛 `ReferenceDataCapabilityError`（fail-closed），绝不返回任意自定义裁决近似；能力标注 APPROXIMATION_REQUIRES_CONFIRMATION（因 canonical 表原样保留重叠区间、非 PIT READY，但运行时重叠一律 fail-closed）。无有效历史归属返回 `None`；正式表缺失 fail-closed；旧 `sw_industry` 仅为审计快照。
 - **申万行业指数日线（F5）**：31 个 SW2021 L1 行业指数与普通指数统一入 `index_daily`（tushare `sw_daily` 路由，股/元单位）；`get_history` 对 801xxx 走 index_daily，`fq='pre'` 回退原始 OHLC。
 - **调仓模式（F1）**：PyQt 回测面板透出 `rebalance_mode`（默认 `legacy`；`callback_basket` 仅 daily-bar-v1+next_open，导出 `engine_semantics_version=0.4.0-next_open_basket`，close/open 被 GUI 阻断；`run_daily` 订单永不进入 basket）。
+- **回测审计行（计划 vs 实际，2026-08-17）**：策略层 `QS_REBALANCE_AUDIT`/`QS_PORTFOLIO_AUDIT`（计划）由策略打印；引擎层日末新增 `QS_FILL_AUDIT`（实际成交：`sell_filled/buy_filled/sell_rejected/buy_rejected/positions_total/rejected_detail`，有拒单 WARNING）。全部拒单路径集中采集（no_price / 涨跌停 / halted / 资金不足/整手不足），`no_price` 等拒单从此可见（原零日志）。回测后对照两条审计行即可发现"策略想买 5 只、实际只成交 3 只"类静默扭曲，并可与 PTrade 日志逐日机械对齐。详见 `docs/strategy_toolbox.md` §3.7.2 与 `docs/backtest-align-diagnosability-design.md`。
 - 读取**外部文件数据**（研报 CSV、信号表等）必须经由框架注入 API，例如 `load_research_signals(csv_path, fallback=...)`，文件 I/O 逻辑下沉到框架侧 `ptrade_api`；策略内直接 `open()` / `read_csv()` 会被 `StrategyIsolationGuard` 静态拦截并抛 `StrategyIsolationError`。
 
 > **让 AI 帮你写策略**：想把策略需求交给其他智能体、自动产出可运行策略并落入 GUI 可选目录？参见 **[`docs/prompt_engineering.md`](docs/prompt_engineering.md)**。Agent-first 流程会在 R0 先根据你的提示词生成一张策略工作流图（mermaid）供你审核，确认结构后再给出语义矛盾表与审核表——提示词未定义的分支会以「❓待定」节点标出并进入确认清单；随后再分别确认目标平台，以及R5由Agent执行还是由用户在PyQt执行；双端 ETF 策略固化用户确认的静态白名单，本地单端 ETF 策略才允许动态调用 `get_etf_list_local()`。**中文命名契约（2026-08-22）**：skill 生成的本地回测策略一律采用中文策略名——`strategy_name` 即发布文件名（至少一个汉字、文件名安全：不以 `_`/空白开头、不以 `.`/空白结尾、不含 `\ / : * ? " < > |`、≤50 字符，且与现存策略文件 stem 不得冲突），`strategy_id` 保持 ASCII 内部标识。用户PyQt模式在R4后只生成 `quantstudio/backtest/strategies/<strategy_name>__candidate_quantstudio.py`，用户自行选择回测日期并提交日志；R5 证据 2.0 要求绑定真实回测产物（`config.csv`/`daily_stats.csv`/`trades.csv`/运行日志及各自 SHA-256），由 review 脚本自动解析实际本金、持仓部署与拒单计数——"回测跑完无异常"不再是 PASS 依据；证据PASS后，R6生成正式文件并删除临时候选文件。默认正式输出分别为 `quantstudio/backtest/strategies/<strategy_name>.py`（中文名）与（仅双端）`ptrade/<strategy_id>_ptrade.py`。

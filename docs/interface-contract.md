@@ -33,6 +33,7 @@
 | `get_trade_days()` | 无 end_date 返回全量日历（含未来）；YYYYMMDD/date 混用 | 转换侧 `_qs_norm_date_str` 归一 'YYYY-MM-DD' + `<= 当日` 过滤 |
 | `get_stock_info(listed_date)` | 格式混用 | 转换侧归一 'YYYY-MM-DD' |
 | `filter_stock_by_status('ST')` | **转换语义不一致（P-D9）**：本地 'ST' = is_st_reliable OR is_delisting_risk（close<1 OR circ_mv<5亿 退市风险兜底）；平台仅官方 ST 标记（仙股留池） | 转换侧 `_QS_FILTER_STATUS_EXT` 注入：原生过滤后补 `close<1` 剔除（price-only；circ_mv 平台不可得 KeyError 实证 + 本地零触发降级）；fail-open 与本地一致 |
+| `get_fundamentals` / `get_fundamentals_batch` | **返回形状不一致 + 字段名不一致（P-D10）**：平台 `growth_ability` 无 `or_yoy` 而使用 `operating_revenue_grow_rate`；`end_date/publ_date` 为字符串对象；批量返回 dict[code→DataFrame] | 转换侧 `_QS_FUNDAMENTALS_EXT` 注入：统一返回 `DataFrame(index=code, columns=fields)`；本地→平台字段名自动映射；日期归一数值；缺失字段 `QS_SHIM_FIELD_MISSING` 显性警报 |
 | 退市强平（D4-S3） | T 日按当日 last 全额强平、T+1 现金落账 | 引擎层（B 组，数据前提已 PASS，独立流水线） |
 | 资金不足三态（D4-S4） | 超限取消/可负担降量/买不起一手失败 | 登记为语义差，不建模（对齐判据配对） |
 

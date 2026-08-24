@@ -53,10 +53,11 @@ A QuantStudio `__candidate` file is never a PTrade artifact. PTrade formal outpu
 - Portable `get_stock_status` accepts `ST`, `HALT`, or `DELISTING`. `DELISTING_SORTING` is a `filter_stock_by_status` filter type and a local backward-compatible alias only.
 - Static Profile PASS proves conformance to the registered default subset, not successful execution on every broker/IQEngine deployment.
 
-## 2026-07-26 Agent-first execution-price contract
+## 2026-07-26 Agent-first execution-price contract（2026-08-14 修订：raw 口径）
 
-- The selected QuantStudio backtest engine profile uses `pre_adjusted_price` for matching, fills, cash, valuation, `data[code].price`, and BarData OHLC.
-- Agent-first designs must declare `signal_price_adjustment=pre` and `execution_price_basis=pre_adjusted_price`; `raw_trade_price` is rejected.
+- The selected QuantStudio backtest engine profile uses `raw_trade_price` for matching, fills, cash, valuation, `data[code].price`, and BarData OHLC — revised 2026-08-14 by real-PTrade match-price audit (daily fill = T-day raw close 5/5; minute fill = bar raw close 6/6; valuation last_price = raw close).
+- Agent-first designs must declare `signal_price_adjustment=pre` (front-adjusted signal OHLC) and `execution_price_basis=raw_trade_price`; `pre_adjusted_price` is rejected (superseded 2026-08-14).
+- Signal history calls keep literal `fq='pre'`; source_import injects `fq='pre'` on PTrade conversion because PTrade's own default fq is unadjusted.
 - PTrade public-API validation remains a portability gate and does not redefine the broker runtime's internal valuation basis.
 
 ## 2026-07-27 PTrade Profile 1.9.0 industry + PIT contract closure (F1-F6)
@@ -92,3 +93,10 @@ A QuantStudio `__candidate` file is never a PTrade artifact. PTrade formal outpu
   source_import 的 `NORM-CODE-SUFFIX` 规则（`.XSHG/.XSHE/.SH → .SS/.SZ`）为此实证背书。
 - 遗留标注：`.SH` 同族后缀在真实平台的直接实证仍无（`PTRADE_RUNTIME_UNVERIFIED`），
   由 .XSHE 间接实证支撑（同族 key 匹配失效机理）。
+
+## 2026-08-24 PTrade Profile 1.11.0 get_fundamentals contract closure (P-D10)
+
+- `get_fundamentals(security, table, fields=None, date=None)` 与 `get_fundamentals_batch(sec_list, table, fields, date)` 统一登记为 **DataFrame 契约**：返回 `pd.DataFrame(index=code, columns=fields)`，空结果返回空 DataFrame（不抛异常）。
+- 本地→平台字段名映射由转换器在注入阶段处理（例：`growth_ability.or_yoy → operating_revenue_grow_rate`），策略源码仍按本地字段名消费；平台无等价字段时返回空 DataFrame 并触发 `QS_SHIM_FIELD_MISSING` 显性警报（非静默空）。
+- 日期列 `end_date`/`publ_date` 在平台侧为 `'YYYY-MM-DD'` object，转换器归一为数值 YYYYMMDD 以保持与本地 `fin_indicator` 排序语义一致。
+- 该契约通过 `SHIM_CONTRACT_REGISTRY` 机器门禁、`test_ptrade_contract_compliance.py` 同构矩阵与运行时 `_qs_shape_check` 三道防线守住。平台实测（week10 2026-07）双端漏斗 L4≈10%×L3v、L5=30、R_selected=10，验证通过。

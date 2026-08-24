@@ -98,8 +98,8 @@
 |------|------|
 | `query(*fields)` | Ptrade ORM 入口：`query(valuation.code, valuation.market_cap)` → `QueryBuilder`。 |
 | `valuation` | ORM 表描述符：`valuation.code/market_cap/circulating_market_cap/pe_ratio/pb_ratio/ps_ratio/turnover_ratio` 等。 |
-| `get_fundamentals(security,table='valuation',fields,date,...)` | 财务/估值数据。支持 10 张表（Ptrade 口径）：`valuation`(完整可用)、`balance/income/cashflow_statement`(暂无源表→返回带字段名的**空 DataFrame**)、`eps`/`profit_ability`/`growth_ability`(`fin_indicator` 部分字段)、`operating_ability`/`debt_paying_ability`(暂无源表→空)。 |
-| `get_fundamentals_batch(sec_list,table,fields,date)` | B1 批量取数：强制 list，走预加载内存路径。 |
+| `get_fundamentals(security,table='valuation',fields,date,...)` | 财务/估值数据。返回 `DataFrame(index=code, columns=fields)`（P-D10 修复后统一契约）。`growth_ability` 等表存在本地→平台字段名映射（如 `or_yoy → operating_revenue_grow_rate`），转换器自动翻译，策略仍按本地字段名消费；缺失字段走 `QS_SHIM_FIELD_MISSING` 显性警报而非静默空。 |
+| `get_fundamentals_batch(sec_list,table,fields,date)` | B1 批量取数：返回合并 `DataFrame(index=code, columns=fields)`；底层委托 `get_fundamentals` 原生 list 调用。 |
 
 > 估值字段单位：市值类（market_cap/circ_mv/total_mv）为**亿元**。
 
@@ -191,6 +191,20 @@
 - **平台差异**（2026-08-15 PTrade 探针实测，24 只 × 2 轮）：520830/LOF 平台回测按 T+1 拒单（真实规则 T+0）；513100 平台分钟 bar 交易量=0 无法成交（本地零量 bar 仍成交 = 已知撮合近似）。策略用**拒绝处理模式**自动吸收：止损"触发即锁→尝试卖出→成交 0 股（falsy）→次日首个可卖窗口顺延"，每事件 ≤1 次被拒；不查 ETF 类别、不读订单返回字段。
 - **T3 确定性**：skill 生成策略禁止依赖 dict/set 迭代顺序（`NONDETERMINISTIC-ITERATION` BLOCK）——跨进程结果可复现是 R5 证据 2.1 双跑门禁的前提。
 - 详情：`skills/quantstudio-strategy-compiler/references/etf-t0-rules.md`、`docs/etf-t0-per-code-design.md`。
+
+### 3.7.2 拒单采集与日末审计行（QS_FILL_AUDIT，2026-08-17）
+
+本地引擎对全部拒单路径做**集中采集**（设计文档 `docs/backtest-align-diagnosability-design.md` §2.1/2.2）：`_immediate_execute` 单出口（no_price / limit_up_blocked / limit_down_blocked / halted / insufficient_cash_or_rounding）与 next_open `_drain_pending_orders` 出口统一写入当日拒单清单；`below_rebalance_threshold`（微调跳过）属正常语义不采集。每交易日日末（日线 Profile）输出一行实际成交审计行：
+
+```
+QS_FILL_AUDIT date=2026-07-01 sell_filled=0 buy_filled=3 sell_rejected=0 buy_rejected=2 positions_total=3 rejected_detail=[588710:no_price,560780:no_price]
+```
+
+- 与策略层 `QS_REBALANCE_AUDIT`（计划：submitted/positions=目标仓数）配对即"计划 vs 实际"；有拒单 WARNING、无拒单 INFO。
+- `positions_total` = 当日收盘实际持仓数（volume>0），与 `QS_REBALANCE_AUDIT.positions`（目标仓数）**口径不同，不可直接相减**（清仓单、未变动持仓均造成口径差）。
+- `rejected_detail` 最多 10 条，超出输出 `...(+N more)`。
+- 单笔拒单为 DEBUG 级（no_price/halted 原零日志，已补 DEBUG）；`no_price` 拒单的 `Order.direction` 按 target_value/shares 符号归类（buy/sell），不再恒为 unknown。
+- 用途：回测后核对"计划 vs 实际"、与 PTrade 日志机械对齐（PTrade 端订单除 0 股取消外全部成交，其 `WARNING 委托数量为0, 委托取消` 明示）。
 
 ### 3.8 技术指标（get_* 封装，底层 MyTT）
 
