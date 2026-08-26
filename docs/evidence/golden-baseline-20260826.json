@@ -1,0 +1,54 @@
+{
+  "golden_baseline": {
+    "date": "2026-08-26",
+    "window": [
+      "2026-07-01",
+      "2026-07-31"
+    ],
+    "db": "SNAP_20260825_003_81260e83 快照副本（QUANTSTUDIO_DATA_ROOT 指向，§109 bind 语义）",
+    "strategies": {
+      "etf_theme_rotation_quantstudio.py": {
+        "profile": "daily-bar-v1",
+        "verdict": "PASS",
+        "dirs": [
+          "20260826_103504",
+          "20260826_103612"
+        ],
+        "content_sha256": "07cfabc923c6",
+        "runs": 2,
+        "byte_identical": true
+      },
+      "小市值策略ptrade.py": {
+        "profile": "daily-bar-v1",
+        "verdict": "PASS",
+        "dirs": [
+          "20260826_103626",
+          "20260826_103639"
+        ],
+        "content_sha256": "a11cdbad0d2f",
+        "runs": 2,
+        "byte_identical": true
+      },
+      "smallcap_overnight_scalp_7_quantstudio.py": {
+        "profile": "minute-bar-v1",
+        "verdict": "PASS",
+        "dirs": [
+          "r2=20260826_114011",
+          "r3=20260826_121805"
+        ],
+        "content_sha256": "2e29a9532f1f",
+        "runs": "r1 被已裁定误杀事故硬杀（11:04 案卷已结）；r2/r3 干净双跑",
+        "byte_identical": true
+      }
+    },
+    "rollback_point": "git stash create 595a9c464eaf346ed8fcc8093705b7d44da4aa65",
+    "bind": {
+      "snapshot": "SNAP_20260825_003_81260e83",
+      "bound_at": "2026-08-26T12:19:00",
+      "result_dir": "output/golden_baseline/baseline_runs_20260826",
+      "meta": "snapshot_meta.json"
+    },
+    "verdict": "PASS（三策略双跑逐字节一致，黄金基线建立，绑定 SNAP_003）",
+    "closed_at": "2026-08-26T12:19:27.486359"
+  }
+}

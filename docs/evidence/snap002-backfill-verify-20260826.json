@@ -1,0 +1,18 @@
+{
+  "purpose": "批2 gate exception 独立分片 verify 回填（关闭 2026-08-19 v1.17 例外的遗留承诺）",
+  "snapshot_id": "SNAP_20260818_002_1f745d17",
+  "verify": {
+    "status": "PASS",
+    "verified_at": "2026-08-26T03:38:57.235620+08:00",
+    "recomputed_sha256": "1f745d177fb7f098d4023150d55f21f521faa21a664cbd9b967ffd182b85d595",
+    "manifest_sha256": "1f745d177fb7f098d4023150d55f21f521faa21a664cbd9b967ffd182b85d595",
+    "match": true,
+    "impl": "sharded hash v4 + A-豁免（verify-only yield）"
+  },
+  "entry_evidence_cross_check": {
+    "note": "v1.17 入口证据=create 三 hash 一致 + 表级交叉 19/20 同；本次独立 verify PASS 与其互证",
+    "create_total": "1f745d177fb7f098d4023150d55f21f521faa21a664cbd9b967ffd182b85d595"
+  },
+  "stdout": "output/golden_baseline/snap002_backfill_verify_20260826.stdout",
+  "generated_at": "2026-08-26T03:39:24.309519"
+}

@@ -1,0 +1,115 @@
+{
+  "snapshot_id": "SNAP_20260825_003_81260e83",
+  "created_at": "2026-08-25T10:44:26.412671+08:00",
+  "duration_s": 37887.1,
+  "triple_hash": {
+    "pre": "81260e83befccf24",
+    "post": "81260e83befccf24",
+    "copy": "81260e83befccf24",
+    "all_equal": true
+  },
+  "verify": {
+    "status": "PASS",
+    "verified_at": "2026-08-26T01:40:10.879239+08:00",
+    "recomputed_sha256": "81260e83befccf2451c5605d0b652e120e144bce83d74f6220020ada287b992c",
+    "manifest_sha256": "81260e83befccf2451c5605d0b652e120e144bce83d74f6220020ada287b992c",
+    "match": true,
+    "impl": "sharded hash v4 (A-exemption yield verify-only, 总调度 2026-08-25 批准)"
+  },
+  "protect": {
+    "protected": true,
+    "protected_at": "2026-08-26T01:40:34.823898+08:00",
+    "protect_log": "data/snapshots/protect.log 2026-08-26T01:40:34 bind --protect user_approved",
+    "index_protected": true,
+    "snapshot_meta": {
+      "snapshot_id": "SNAP_20260825_003_81260e83",
+      "logical_total_sha256": "81260e83befccf2451c5605d0b652e120e144bce83d74f6220020ada287b992c",
+      "verify_status": "PASS",
+      "protected": true,
+      "bound_at": "2026-08-26T01:40:34.826403+08:00"
+    }
+  },
+  "per_table": {
+    "etf_basic": {
+      "hash": "823da24a00ea87b1",
+      "rows": 1606
+    },
+    "etf_daily": {
+      "hash": "6718628d3dbcfd6d",
+      "rows": 2111790
+    },
+    "etf_dividend": {
+      "hash": "0cc26908b67d325a",
+      "rows": 882
+    },
+    "etf_minutes": {
+      "hash": "cdcd26fe44da2fab",
+      "rows": 87495628
+    },
+    "fin_indicator": {
+      "hash": "9e10d9a66ca7b6b3",
+      "rows": 135840
+    },
+    "index_constituents": {
+      "hash": "662a4498388f94b7",
+      "rows": 224207
+    },
+    "index_constituents_snapshot_meta": {
+      "hash": "0613346dd9ea1976",
+      "rows": 603
+    },
+    "index_daily": {
+      "hash": "a32793368ecd4382",
+      "rows": 10000
+    },
+    "industry_classification": {
+      "hash": "dbc1798fdb75bf08",
+      "rows": 31
+    },
+    "industry_membership": {
+      "hash": "e3b0c44298fc1c14",
+      "rows": 0
+    },
+    "stock_basic": {
+      "hash": "9d5a38d5649c77c0",
+      "rows": 5222
+    },
+    "stock_daily": {
+      "hash": "4572c4c54ae47bfd",
+      "rows": 9642826
+    },
+    "stock_daily_valuation": {
+      "hash": "a337e7090e4c7ca0",
+      "rows": 9563357
+    },
+    "stock_dividend": {
+      "hash": "920bf7b837537598",
+      "rows": 54023
+    },
+    "stock_float_share": {
+      "hash": "0c0be66e8c089708",
+      "rows": 744067
+    },
+    "stock_minutes": {
+      "hash": "468d4f45ccc9c4b7",
+      "rows": 44207227
+    },
+    "strategy_events": {
+      "hash": "55973f9176cb8470",
+      "rows": 2654
+    },
+    "sw_industry": {
+      "hash": "e3b0c44298fc1c14",
+      "rows": 0
+    },
+    "aux:adj_factor": {
+      "hash": "cf4a4b7cf8d5b7a0",
+      "rows": 18956689
+    },
+    "aux:fund_adj": {
+      "hash": "b8d09060bfebb6a3",
+      "rows": 8959582
+    }
+  },
+  "generated_at": "2026-08-26T01:40:50.522098"
+}
