@@ -152,7 +152,8 @@
     "runtime_state_policy": "Every lifecycle and scheduled callback calls an idempotent _ensure_runtime_state() as its first executable statement.",
     "local_backtest_data_priority": "<current-project>/data/quantstudio.db first; configured/external DuckDB only when absent or explicitly customer-approved.",
     "event_data_policy": "External event files are ingested into strategy_events by a generic importer; local-only strategies query them through get_strategy_events and never read files directly.",
-    "target_routing_policy": "默认 QS-only（targets=[quantstudio]），PTrade 转换由 PyQt tab / CLI 承接，skill 不承担 dual target。ETF 策略用 get_etf_list_local 动态池（local-only）。"
+    "target_routing_policy": "默认 QS-only（targets=[quantstudio]），PTrade 转换由 PyQt tab / CLI 承接，skill 不承担 dual target。ETF 策略用 get_etf_list_local 动态池（local-only）。",
+    "fundamental_latest_value_policy": "P-A3 (2026-08-25): per-code latest-row helpers on fundamentals (e.g. _latest_by_code) MUST pick the latest NON-NULL value row — filter NaN values before sorting, so NULL latest announcement rows fall back to the latest valued report period (platform 'latest valued row' semantics; new-IPO pre-listing report rows stay excluded). Validation rule FUNDAMENTAL-LATEST-VALUE enforces this; strategies replicating the old 'latest row including NULL' idiom are blocked."
   },
   "local_extension_groups": {
     "local_mytt_helpers": [

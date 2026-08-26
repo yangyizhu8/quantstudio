@@ -906,6 +906,23 @@ def validate_strategy(
     ptrade_profile = _load_ptrade_profile()
     strict_ptrade = target_profile in {"canonical", "ptrade"} and "ptrade" in design.get("targets", [])
     functions = function_map(tree)
+    # P-A3 FUNDAMENTAL-LATEST-VALUE（2026-08-25）：per-code 最新行 helper 必须采用
+    # 「最新有值行」口径——过滤 NaN/NULL value 后再排序（次新股上市前报告期/跨表缺口
+    # 未被回补时自动回退到上一有值期，对齐平台语义；catalog fundamental_latest_value_policy）。
+    # 检测 `_latest_by_code` 定义：函数体含 isnan/notna/dropna 过滤即通过，否则 BLOCK。
+    for _fn_name, _node in sorted(functions.items()):
+        if _fn_name == "_latest_by_code" and isinstance(_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            _has_nan_filter = any(
+                isinstance(_n, ast.Attribute)
+                and _n.attr in {"isnan", "notna", "dropna"}
+                for _n in ast.walk(_node)
+            )
+            if not _has_nan_filter:
+                issues.append(_issue(
+                    "FUNDAMENTAL-LATEST-VALUE", "BLOCK",
+                    "_latest_by_code must filter NaN/NULL values before sorting "
+                    "(latest-valued-row semantics; see catalog fundamental_latest_value_policy)",
+                    _node.lineno))
     parents = _parent_map(tree)
     defined_names = _defined_or_imported_names(tree)
     if strict_ptrade:

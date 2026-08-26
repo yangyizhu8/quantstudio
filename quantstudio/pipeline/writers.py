@@ -12,6 +12,7 @@ from __future__ import annotations
 import abc
 import json
 import logging
+import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +22,21 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 from quantstudio._paths import db_path
+from quantstudio.pipeline.snapshot_lock import (ensure_write_lock,
+                                                release_write_lock,
+                                                WriteLockHeld)
+from quantstudio.pipeline.eps_backfill import backfill_eps_gap  # P-A3 写后回补
+
+
+def _is_writer_auto_backfill_enabled() -> bool:
+    """P-A3 feature gate：writer 写后自动 eps 回补默认关闭，显式开启才生效。
+
+    fail-closed：仅环境变量 QS_AUTO_BACKFILL_EPS 为 "1"/"true"/"on"（不区分大小写）
+    时开启；未设置、"0"、"false"、"off"、空字符串、其他任意值一律关闭。
+    CLI --apply 直接调用 backfill_eps_gap(conn)，不受此 gate 影响。
+    """
+    v = os.environ.get("QS_AUTO_BACKFILL_EPS", "").strip().lower()
+    return v in ("1", "true", "on")
 
 
 class WriteResult(int):
@@ -175,6 +191,7 @@ DDL_DUCKDB = {
             pe_ttm DOUBLE, pb DOUBLE, ps_ttm DOUBLE,
             np_yoy DOUBLE, or_yoy DOUBLE, tr_yoy DOUBLE,
             update_flag INTEGER,
+            backfill_eps_source VARCHAR,
             PRIMARY KEY(code, end_date, ann_date)
         )""",
     "index_daily": """
@@ -304,6 +321,17 @@ DDL_DUCKDB = {
             stk_bo_rate DOUBLE, stk_co_rate DOUBLE,
             div_rat DOUBLE, div_proc VARCHAR,
             update_time VARCHAR,
+            PRIMARY KEY(code, ex_date)
+        )""",
+    # ---- ETF 基金分红（tushare fund_div；管线方案 etf-dividend 任务）----
+    "etf_dividend": """
+        CREATE TABLE IF NOT EXISTS etf_dividend (
+            code VARCHAR, ex_date BIGINT, record_date BIGINT,
+            ann_date BIGINT, imp_anndate BIGINT, base_date BIGINT,
+            div_proc VARCHAR, pay_date BIGINT, earpay_date BIGINT,
+            net_ex_date BIGINT, div_cash DOUBLE, base_unit DOUBLE,
+            ear_distr DOUBLE, ear_amount DOUBLE, account_date BIGINT,
+            base_year VARCHAR, update_time VARCHAR,
             PRIMARY KEY(code, ex_date)
         )""",
     # ---- 申万行业分类（LEGACY 快照，仅审计；正式能力见下两张表 F4）----
@@ -530,6 +558,15 @@ class DuckDBWriter(BaseWriter):
             不做类型归一、不推进水位；
           - DuckDB 表名/列名 = QuestDB 原样（ts_code/trade_date 等保留）。
         """
+        ensure_write_lock(f"writers:write:{table}:{batch_id}")  # 3A 写锁（操作粒度）
+        try:
+            return self._write_locked(df, table, batch_id, passthrough)
+        finally:
+            release_write_lock()
+
+    def _write_locked(self, df: pd.DataFrame, table: str, batch_id: str,
+                      passthrough: bool = False) -> int:
+        """write() 的锁内实现（3A 重构：原 write 主体平移，逻辑零改动）。"""
         if df is None or len(df) == 0:
             logger.info(f"[DuckDBWriter] {table} batch={batch_id}: 0 rows (skip)")
             return 0
@@ -558,6 +595,7 @@ class DuckDBWriter(BaseWriter):
                 "income_statement": ["code", "end_date", "ann_date"],
                 "cashflow_statement": ["code", "end_date", "ann_date"],
                 "stock_dividend": ["code", "ex_date"],
+                "etf_dividend": ["code", "ex_date"],
                 "sw_industry": ["code", "industry_code"],
                 "industry_classification": ["classification_system", "classification_version",
                                             "industry_level", "industry_code", "effective_from"],
@@ -640,6 +678,7 @@ class DuckDBWriter(BaseWriter):
                     "income_statement": "(code, end_date, ann_date)",
                     "cashflow_statement": "(code, end_date, ann_date)",
                     "stock_dividend": "(code, ex_date)",
+                    "etf_dividend": "(code, ex_date)",
                     "sw_industry": "(code, industry_code)",
                     "industry_classification": "(classification_system, classification_version, industry_level, industry_code, effective_from)",
                     "industry_membership": "(classification_system, classification_version, industry_level, industry_code, code, effective_from)",
@@ -668,6 +707,22 @@ class DuckDBWriter(BaseWriter):
                 # new/updated 审计：updated = 写前已存在的行数；new = 本批其余
                 # （精度：本批内主键重复已由 validator 去重，故 new + updated = len(df)）
                 new_rows = max(0, len(df) - updated_rows)
+                # P-A3：fin_indicator 写后跨表回补（eps ← income_statement.basic_eps）。
+                # 默认关闭，需显式设置 QS_AUTO_BACKFILL_EPS=1/true/on 才触发；
+                # CLI --apply 保持人工独立执行，不受此 gate 影响；
+                # 只 UPDATE eps IS NULL 且 income 同 key basic_eps 非空的行——无缺口库零行为；
+                # 幂等；异常 log-error 不阻断 write（失败由 quality_audit EpsBackfillGap 兜底）。
+                # 水位/写锁/batch_audit 语义零变化（回补是 UPDATE 非拉取，不推进 watermark）。
+                if table == "fin_indicator" and _is_writer_auto_backfill_enabled():
+                    try:
+                        backfill_eps_gap(conn)
+                    except Exception as exc:
+                        logger.error(f"[DuckDBWriter] {table} 写后回补失败（门禁将告警）: {exc}")
+                elif table == "fin_indicator":
+                    logger.debug(
+                        "[DuckDBWriter] fin_indicator 写后自动回补已关闭 "
+                        "(QS_AUTO_BACKFILL_EPS 未显式开启)"
+                    )
             finally:
                 conn.close()
         logger.info(f"[DuckDBWriter] {table} batch={batch_id}: wrote {len(df)} rows "
@@ -738,6 +793,15 @@ class DuckDBWriter(BaseWriter):
 
     def advance_watermark(self, source: str, table: str, freq: str,
                           last_date: str, batch_id: str):
+        # 3A 写锁（操作粒度）：水位表 INSERT 属写路径（writers:764）
+        ensure_write_lock(f"writers:watermark:{table}:{batch_id}")
+        try:
+            return self._advance_watermark_locked(source, table, freq, last_date, batch_id)
+        finally:
+            release_write_lock()
+
+    def _advance_watermark_locked(self, source: str, table: str, freq: str,
+                                  last_date: str, batch_id: str):
         now = datetime.now().isoformat()
         with self._conn_lock:
             conn = self._conn()
@@ -980,7 +1044,7 @@ class DuckDBWriter(BaseWriter):
             "fin_indicator": ["code", "ann_date", "end_date", "eps", "diluted_eps", "bps", "roe",
                               "pe_ttm", "pb", "ps_ttm",
                               "np_yoy", "or_yoy", "tr_yoy", "update_flag",
-                              "data_source"],
+                              "backfill_eps_source", "data_source"],
             "index_daily": ["code", "time", "open", "high", "low", "close",
                             "pctChg", "volume", "amount", "data_source"],
             "stock_daily_valuation": ["code", "time", "circ_mv", "total_mv",
@@ -1033,6 +1097,11 @@ class DuckDBWriter(BaseWriter):
                                "cash_div_before_tax", "cash_div_after_tax",
                                "cash_div", "stk_div", "stk_bo_rate", "stk_co_rate",
                                "div_rat", "div_proc", "update_time", "data_source"],
+            "etf_dividend": ["code", "ex_date", "record_date", "ann_date",
+                             "imp_anndate", "base_date", "div_proc", "pay_date",
+                             "earpay_date", "net_ex_date", "div_cash", "base_unit",
+                             "ear_distr", "ear_amount", "account_date", "base_year",
+                             "update_time", "data_source"],
             "sw_industry": ["code", "industry_code", "industry_name", "industry_level", "update_time", "data_source"],
             "industry_classification": ["classification_system", "classification_version",
                                         "industry_code", "industry_name", "industry_level",

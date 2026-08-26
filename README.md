@@ -40,6 +40,8 @@
 - **底层集中修复**：数据或平台语义问题修复在 adapter/aligner/provider/PtradeAPI/engine，不要求修改具体策略。
 - **PTrade 保真验证**：内置 PTrade 导出导入器和 L1-L4 fidelity comparator。
 - **get_fundamentals 字段名映射（2026-08-24 P-D10）**：`growth_ability` 等财务表在转 PTrade 时自动完成本地→平台字段名映射（如 `or_yoy → operating_revenue_grow_rate`），策略仍按本地字段名书写；缺失字段触发 `QS_SHIM_FIELD_MISSING` 显性警报，不静默返回空。
+- **PTrade 保真模式（2026-08-24 P-A0/P-A1/P-A2，默认关闭）**：可选对齐开关，使本地回测在验证转换产物时与平台行为一致——`fidelity_ashares_snapshot`（A 股池用平台快照 parquet）、`fidelity_st_filter`（ST 过滤仅按平台 close<1 口径）、`fidelity_eps_basis`（eps 表请求按双端实证映射到平台 `basic_eps`/`diluted_eps`，本地 eps 语义锚；双端缺失档位显性报错，禁止静默单端 fallback）。默认全部关闭时本地是正确语义锚、不做任何平台迁就；产物默认逐字节不变（哈希级验收）。
+- **eps 跨表回补（2026-08-25 P-A3，管线级免疫）**：fin_indicator.eps 与 income_statement.basic_eps 为同源复制列（历史对账 98.1% 精确相等）。MCP 源端回填错位造成 fin_indicator.eps NULL 而 income_statement.basic_eps 已有值时，写路径自动跨表回补（同 (code,end_date)、ann_date 取两表较大者=PIT 保守、新增 `backfill_eps_source` 打标列可审计、幂等可逆、无缺口库零行为）。质量门禁 `EpsBackfillGap` 每日防再发；消费侧 `_latest_by_code` 改为「最新有值行」口径（最新公告行 NULL 时回退上一有值报告期，对齐平台语义；次新上市前报告期因 income 无行保持 NULL——不造数据）。diluted_eps/or_yoy 因 source 无对应列显式排除，保持 NULL。详见 `docs/p-a3-eps-backfill-design.md`。
 
 详细合规结果见 `docs/architecture-compliance-audit-20260720.md`。
 

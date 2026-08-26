@@ -98,7 +98,7 @@
 |------|------|
 | `query(*fields)` | Ptrade ORM 入口：`query(valuation.code, valuation.market_cap)` → `QueryBuilder`。 |
 | `valuation` | ORM 表描述符：`valuation.code/market_cap/circulating_market_cap/pe_ratio/pb_ratio/ps_ratio/turnover_ratio` 等。 |
-| `get_fundamentals(security,table='valuation',fields,date,...)` | 财务/估值数据。返回 `DataFrame(index=code, columns=fields)`（P-D10 修复后统一契约）。`growth_ability` 等表存在本地→平台字段名映射（如 `or_yoy → operating_revenue_grow_rate`），转换器自动翻译，策略仍按本地字段名消费；缺失字段走 `QS_SHIM_FIELD_MISSING` 显性警报而非静默空。 |
+| `get_fundamentals(security,table='valuation',fields,date,...)` | 财务/估值数据。返回 `DataFrame(index=code, columns=fields)`（P-D10 修复后统一契约）。`growth_ability` 等表存在本地→平台字段名映射（如 `or_yoy → operating_revenue_grow_rate`），转换器自动翻译，策略仍按本地字段名消费；缺失字段走 `QS_SHIM_FIELD_MISSING` 显性警报而非静默空。**eps 表保真映射（2026-08-24 P-A2，opt-in）**：设 `SourceConverter(fidelity_eps_basis='basic'/'diluted')` 后，转 PTrade 产物请求平台 `basic_eps`/`diluted_eps` 列（本地 eps 语义锚，探针实证双端数值一致），返回列逆翻译回 `eps`/`diluted_eps` 名，策略无感知；默认 `passthrough` 时产物逐字节不变。**eps 跨表回补（2026-08-25 P-A3）**：fin_indicator.eps 与 income_statement.basic_eps 为同源复制列（对账 98.1% 相等）；源端回填错位造成 eps NULL 时，写路径自动以同 (code,end_date) basic_eps 回补（ann_date 取两表较大者 PIT 保守；`backfill_eps_source` 打标列可审计；幂等可逆；无缺口库零行为）。门禁 `EpsBackfillGap` 每日检查防再发。**注意：回补是数据层行为，策略层仍禁止手工补救 NULL（见 3.5 authority-locked 规则）**。 |
 | `get_fundamentals_batch(sec_list,table,fields,date)` | B1 批量取数：返回合并 `DataFrame(index=code, columns=fields)`；底层委托 `get_fundamentals` 原生 list 调用。 |
 
 > 估值字段单位：市值类（market_cap/circ_mv/total_mv）为**亿元**。
@@ -476,6 +476,7 @@ def after_trading_end(context):
 策略生成与回测**只能依赖 canonical data pipeline 的最终已通过数据契约**，不得绕过：
 
 - **authority-locked 表（fin_indicator / stock_dividend）**：最终 `data_source` 集合必须恰好为 `{tushare}`（`allow_fallback=false`）。经 W2 全量回填 + authority reconciliation 后，旧 NULL/akshare 历史行已被清理。**策略代码不得在表内手工补救 NULL 或混源数据**——若发现 NULL/混源，说明数据契约未通过，应报告数据问题而非在策略层打补丁。
+- **P-A3 跨表回补属于数据层免疫（2026-08-25），不改变上述策略层禁令**：fin_indicator.eps 缺口的回补由管线写路径自动完成（同 (code,end_date) income_statement.basic_eps 非空时，ann_date 取较大者，`backfill_eps_source` 打标），策略层依旧只读、不得手工 UPDATE/DELETE；`data_source` 权威守卫不再因回补被触碰（回补只写 eps/ann_date/backfill_eps_source 列）。
 - **不得在策略内手工 DELETE/UPDATE 修复数据**：数据修复必须经 canonical pipeline（staging → audit → promotion），策略层只读已通过审计的数据。
 - **依赖字段（np_yoy/or_yoy/tr_yoy/diluted_eps/cash_div_before_tax/cash_div_after_tax/div_proc）**：这些字段的存在与有效非零是回填有效性门控的结果（`baseline_delta_passed=true`，目标表零 error）。策略应假设它们已就绪；若回测报字段缺失/全 NULL，先查 staging audit 是否通过，而非改策略。
 - **div_proc 口径**：stock_dividend 仅保留 `div_proc='实施'` 的记录（adapter 过滤 + writer DDL 类型保护，确保 VARCHAR 值不被 numeric coercion 吞掉）。

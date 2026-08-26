@@ -27,7 +27,7 @@ R0 首先询问并记录生成目标：双端或仅 QuantStudio 本地。
 双端 ETF 策略只能使用用户确认的静态白名单，禁止所有 local-only API。
 仅本地 ETF 策略使用 get_etf_list_local 做 PIT 动态池；PTrade 验证和双端一致性为 NOT_APPLICABLE。
 策略不得直接访问 DuckDB；动态池必须经过注入 API → ReferenceDataProvider → DuckDB 数据适配层。
-get_fundamentals / get_fundamentals_batch 按本地字段名书写（如 growth_ability 的 or_yoy），转换器会在 PTrade 侧自动映射到平台字段名（如 operating_revenue_grow_rate）；不得假设平台字段名与本地相同，也不得绕过转换器直接请求平台私有字段名。
+get_fundamentals / get_fundamentals_batch 按本地字段名书写（如 growth_ability 的 or_yoy），转换器会在 PTrade 侧自动映射到平台字段名（如 operating_revenue_grow_rate）；不得假设平台字段名与本地相同，也不得绕过转换器直接请求平台私有字段名。eps 表同理：默认转换器透传本地 `eps` 字段（容忍平台加权口径差异）；如需平台产物向本地 eps 语义收敛（平台 `basic_eps`/`diluted_eps` == 本地 `eps`/`diluted_eps`，探针实证），转换器可设 `fidelity_eps_basis='basic'`/`'diluted'`（P-A2，2026-08-24）。**eps 数据完整性（P-A3，2026-08-25）**：fin_indicator.eps 与 income_statement.basic_eps 同源（对账 98.1% 相等），源端回填错位造成的 eps NULL 由管线写路径自动跨表回补（ann_date 取两表较大者 PIT 保守，`backfill_eps_source` 打标可审计，幂等可逆）；消费时逐码取「最新有值行」（最新公告行 NULL 回退上一有值期）。次新上市前报告期（income 无行）与 diluted_eps/or_yoy（source 无对应列）保持 NULL——不造数据。
 ```
 
 - **R0 工作流图审核（2026-08-22 起）**：R0 先根据用户提示词生成策略工作流图（mermaid 垂直流程：数据/股票池准备→信号→筛选排序→入场→头寸/止损→跟踪→退出→记录复盘；节点 `id["文本"]` 双引号包裹、id 唯一 ASCII；未定义分叉画为 `❓待定` 虚线节点；修改上限 3 轮）供用户审核；确认结构后才输出语义矛盾表与 R0 审核表。**闭环规则**：图上每个 `❓待定` 节点必须对应审核清单中的一条待决项（图中❓数 ≤ 清单待定项数），流程图确认不替代 R0 hard stop 最终确认。
@@ -351,7 +351,7 @@ def handle_data(context, data):
 | 7 | 文件名非 `_` 开头 | PyQt 回测面板只列出该目录下非下划线 `.py`（见第 8 节） |
 | 8 | 禁止自定义与框架 API / 生命周期【同名】函数；可自定义其它辅助函数（不与框架 API/生命周期同名） | 防止覆盖引擎注入、破坏隔离与一致性 |
 | 9 | 只落盘策略代码，不自行回测 | 回测交由用户在 PyQt 自行运行，保证策略生成高效 |
-| 10 | **不得绕过 canonical data pipeline，不得在策略内手工补救 NULL/混源数据（W2-0.9）** | authority-locked 表（fin_indicator/stock_dividend）的 `data_source` 必须经 pipeline 收敛为 `{tushare}` 单源；策略只能依赖最终已通过 `baseline_delta_audit` 的数据契约。发现 NULL/混源应报告数据问题（重跑 pipeline），而非在策略层 DELETE/UPDATE/打补丁。依赖字段（np_yoy/or_yoy/tr_yoy/diluted_eps/cash_div_before_tax/cash_div_after_tax/div_proc）的就绪性是回填有效性门控的结果，不是策略层职责。 |
+| 10 | **不得绕过 canonical data pipeline，不得在策略内手工补救 NULL/混源数据（W2-0.9）** | authority-locked 表（fin_indicator/stock_dividend）的 `data_source` 必须经 pipeline 收敛为 `{tushare}` 单源；策略只能依赖最终已通过 `baseline_delta_audit` 的数据契约。发现 NULL/混源应报告数据问题（重跑 pipeline），而非在策略层 DELETE/UPDATE/打补丁。依赖字段（np_yoy/or_yoy/tr_yoy/diluted_eps/cash_div_before_tax/cash_div_after_tax/div_proc）的就绪性是回填有效性门控的结果，不是策略层职责。**P-A3 例外说明（2026-08-25）**：fin_indicator.eps 的跨表回补由管线写路径自动完成（数据层免疫，`backfill_eps_source` 打标），不构成策略层手工补救；策略层禁令语义不变。 |
 
 ---
 

@@ -38,7 +38,9 @@ class DataQualityAuditor:
                  shared_conn=None,
                  authority_rules: Optional[Dict] = None,
                  qfq_thresholds: Optional[Dict] = None,
-                  qfq_identity: Optional[Dict] = None):
+                  qfq_identity: Optional[Dict] = None,
+                 qfq_aux_override: Optional[str | Path] = None,
+                 qfq_aux_paths_config: Optional[str | Path] = None):
         """shared_conn: 可选，外部传入的持久 read_write 连接（采集流程内复用 writer 连接，
         避免开 read_only 与 write 并发触发「different configuration」冲突）。
         不传则自开 read_only 短连接（CLI/独立运行场景）。
@@ -57,6 +59,14 @@ class DataQualityAuditor:
         self._authority_rules = authority_rules
         self._qfq_thresholds = qfq_thresholds
         self._qfq_identity = dict(qfq_identity) if qfq_identity else None
+        # A1/A2 因子巡检（mcp-minute-front-anchor-design.md §4 阶段1）：
+        # qfq_aux_override 显式注入（测试/hermetic 用）；qfq_aux_paths_config 为
+        # qfq_aux_paths.json 路径，缺省 None → resolve_runtime_aux_path fail-secure
+        # legacy（aux_db_path(main_db)）。因子取数必须跟随运行时路由（ZCode 执行
+        # 注记 2：G2b 释放后路由切 gen1，巡检与重锚不得使用不同因子源）。
+        self.qfq_aux_override = Path(qfq_aux_override) if qfq_aux_override else None
+        self.qfq_aux_paths_config = Path(qfq_aux_paths_config) if qfq_aux_paths_config else None
+        self._price_source = str((self._qfq_identity or {}).get("price_source", "mcp"))
 
     @classmethod
     def from_config(cls, db_path: str | Path, rules_path: str | Path,
@@ -148,6 +158,15 @@ class DataQualityAuditor:
                         if or_null == tushare_rows:
                             self._add(report, "GrowthFieldAllNull", table, tushare_rows, "error",
                                       "or_yoy is 100% NULL for tushare-sourced data")
+                # P-A3：同源复制列跨表一致性门禁（eps ← income_statement.basic_eps）。
+                # gap>0 = 回补规则未生效/漏跑/源端 schema 变化（新缺口入库未免疫）→ error。
+                # income_statement 表缺失时跳过（不引用不存在表）。
+                if table == "fin_indicator" and "eps" in columns and "income_statement" in tables:
+                    from quantstudio.pipeline.eps_backfill import check_eps_backfill_gap
+                    gap = check_eps_backfill_gap(conn)
+                    if gap > 0:
+                        self._add(report, "EpsBackfillGap", table, gap, "error",
+                                  "eps NULL 但 income_statement 同 key basic_eps 非空（回补未生效或源 schema 变化）")
                 # Dividend field validation (stock_dividend)
                 if table == "stock_dividend" and {"cash_div_before_tax", "cash_div_after_tax"} <= columns:
                     # Both columns populated is normal (Tushare provides both pre-tax and post-tax)
@@ -185,6 +204,10 @@ class DataQualityAuditor:
                 self._audit_watermarks(conn, report, tables)
             if self._qfq_thresholds is not None:
                 self._audit_qfq_orchestration(conn, report, tables)
+            # A1：分钟 front 锚点漂移巡检（mcp-minute-front-anchor-design.md §4 阶段1）
+            self._audit_minute_anchor_drift(conn, report, tables)
+            # A2：因子序列非单调告警（同上）
+            self._audit_factor_monotonicity(conn, report)
         finally:
             if own_conn is not None:
                 own_conn.close()
@@ -522,6 +545,232 @@ class DataQualityAuditor:
                 intent_params).fetchone()[0]
             self._add(report, "QfqWatermarkHeld", "qfq_watermark_intent", held,
                       "warning", "watermark held by hold_until_consistent gate")
+
+    # ===========================================================================
+    # A1 / A2：分钟 front 锚点漂移 + 因子非单调巡检
+    # （docs/mcp-minute-front-anchor-design.md §4 阶段1；实测依据
+    #   docs/mcp-minute-caliber-audit-20260816.md §3.5/§3.6/§5 V2/V4）
+    # ===========================================================================
+    # 判别公式（V2 实测成立）：front = raw × adj_i / adj_latest
+    #   actual = close_front/close；expect = adj_i/adj_latest
+    #   dev = |actual/expect - 1|；>0.3% WARN；>0.5% FAIL（R6 阈值）
+    _ANCHOR_DRIFT_WARN = 0.003
+    _ANCHOR_DRIFT_FAIL = 0.005
+    # A1 除权候选窗口：除权日 ∈ [now-120d, now+7d]（覆盖 ETF/股票分红季）
+    _DIV_WINDOW_BACK_DAYS = 120
+    _DIV_WINDOW_FWD_DAYS = 7
+    # 因子值变化点采样：变化点前 90 天内、每日 14:59-15:01 的收盘 bar
+    # （time 为 epoch 毫秒，%86400000 得 UTC 时刻；15:00 CST = 07:00 UTC）
+    _DRIFT_LOOKBACK_DAYS = 90
+    _BAR_CLOSE_MS_LO = 6 * 3600_000 + 59 * 60_000      # 06:59 UTC（14:59 CST）
+    _BAR_CLOSE_MS_HI = 7 * 3600_000 + 1 * 60_000       # 07:01 UTC（15:01 CST）
+
+    def _resolve_aux_path(self, conn) -> Optional[Path]:
+        """解析因子库路径（跟随运行时路由，ZCode 执行注记 2）。
+
+        override（测试注入）优先；否则 resolve_runtime_aux_path（双条件：
+        released=true + active cutover → gen1；否则 fail-secure legacy）。
+        """
+        if self.qfq_aux_override is not None:
+            return self.qfq_aux_override if self.qfq_aux_override.is_file() else None
+        try:
+            from quantstudio.pipeline.qfq_aux_router import resolve_runtime_aux_path
+            path, _reason = resolve_runtime_aux_path(
+                main_db=str(self.db_path), duckdb_read=conn.execute,
+                price_source=self._price_source,
+                config_path=self.qfq_aux_paths_config)
+            return path if path.is_file() else None
+        except Exception:
+            return None
+
+    def _read_factor_table(self, aux_path: Path, factor_tbl: str,
+                           codes: list) -> Optional[list]:
+        """从 aux 因子库读 (code, time, adj_factor) 三元组（仅候选 code）。"""
+        import sqlite3
+        if not codes:
+            return None
+        try:
+            conn = sqlite3.connect(str(aux_path), timeout=30)
+            try:
+                conn.execute("PRAGMA query_only=ON")
+                rows = conn.execute(
+                    f"SELECT code, time, adj_factor FROM {factor_tbl} "
+                    f"WHERE code IN ({','.join('?' * len(codes))})",
+                    list(codes)).fetchall()
+            finally:
+                conn.close()
+            return rows
+        except sqlite3.Error:
+            return None
+
+    def _audit_minute_anchor_drift(self, conn, report, tables):
+        """A1：除权候选标的的分钟 front 锚点漂移检测（AdjustmentAnchorDrift）。
+
+        候选 = 除权表（stock_dividend/etf_dividend）ex_date ∈ [now-120d, now+7d]；
+        判别 bar = 因子值变化点前 90 天内每日 14:59-15:01 收盘 bar（采样）；
+        每 code 取最大偏差：>0.5% → error；0.3%-0.5% → warning（R6）。
+        """
+        if "stock_minutes" not in tables and "etf_minutes" not in tables:
+            return
+        aux_path = self._resolve_aux_path(conn)
+        if aux_path is None:
+            self._add(report, "AnchorDriftAuxUnavailable", "__qfq__", 1, "warning",
+                      "因子库不可用（override 缺失或路由解析失败），A1 锚点漂移巡检跳过")
+            return
+        import pandas as pd
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        lo = int((now - timedelta(days=self._DIV_WINDOW_BACK_DAYS)).timestamp() * 1000)
+        hi = int((now + timedelta(days=self._DIV_WINDOW_FWD_DAYS)).timestamp() * 1000)
+        for minute_tbl, div_tbl, factor_tbl in (
+                ("stock_minutes", "stock_dividend", "adj_factor"),
+                ("etf_minutes", "etf_dividend", "fund_adj")):
+            if minute_tbl not in tables or div_tbl not in tables:
+                continue
+            try:
+                codes = [str(r[0]) for r in conn.execute(
+                    f"SELECT DISTINCT code FROM {div_tbl} "
+                    "WHERE ex_date BETWEEN ? AND ?", [lo, hi]).fetchall()]
+            except Exception:
+                continue  # 除权表结构异常 → 跳过（不阻断其余审计）
+            if not codes:
+                continue
+            factors = self._read_factor_table(aux_path, factor_tbl, codes)
+            if not factors:
+                self._add(report, "AnchorDriftFactorMissing", factor_tbl, len(codes),
+                          "warning", f"候选 {len(codes)} code 无因子数据")
+                continue
+            fdf = pd.DataFrame(factors, columns=["code", "time", "adj_factor"])
+            fdf["time"] = pd.to_numeric(fdf["time"], errors="coerce")
+            fdf["adj_factor"] = pd.to_numeric(fdf["adj_factor"], errors="coerce")
+            fdf = fdf.dropna(subset=["time", "adj_factor"])
+            if fdf.empty:
+                continue
+            # 因子序列预处理：同值段合并 + 污染尖刺剔除
+            # （实测：因子表存在世代切换污染尖刺，如 2026-07-01 批量归 1.0、次日恢复
+            #   ——merge_asof 取到污染行会使 A1 判别失真，先剔除再判别）
+            fdf = self._clean_factor_segments(fdf)
+            # 每 code 因子值变化点（相邻值不同；分钟冗余同值行自然合并）
+            changes = []
+            for code, g in fdf.sort_values("time").groupby("code"):
+                vals = g["adj_factor"].to_numpy()
+                ts = g["time"].to_numpy()
+                if len(vals) < 2:
+                    continue
+                diff = vals[1:] != vals[:-1]
+                for t in ts[1:][diff]:
+                    changes.append((str(code), int(t)))
+            if not changes:
+                continue  # 无因子变化（从未除权）→ 无漂移可能
+            # 判别窗口：所有变化点前 90 天 → 最晚变化点
+            w_lo = min(int(t) for _, t in changes) - self._DRIFT_LOOKBACK_DAYS * 86400_000
+            w_hi = max(int(t) for _, t in changes)
+            placeholders = ",".join("?" * len(codes))
+            bars = conn.execute(
+                f"SELECT code, time, close, close_front FROM {minute_tbl} "
+                f"WHERE code IN ({placeholders}) AND time >= ? AND time < ? "
+                f"AND (time % 86400000) BETWEEN ? AND ? AND close > 0 "
+                f"AND close_front IS NOT NULL",
+                codes + [w_lo, w_hi, self._BAR_CLOSE_MS_LO, self._BAR_CLOSE_MS_HI]).fetchall()
+            if not bars:
+                continue
+            bdf = pd.DataFrame(bars, columns=["code", "time", "close", "close_front"])
+            bdf["time"] = pd.to_numeric(bdf["time"], errors="coerce")
+            bdf["close"] = pd.to_numeric(bdf["close"], errors="coerce")
+            bdf["close_front"] = pd.to_numeric(bdf["close_front"], errors="coerce")
+            bdf = bdf.dropna(subset=["time", "close", "close_front"])
+            if bdf.empty:
+                continue
+            # 因子最新值（每 code 最大 time）与 merge_asof 逐 bar 因子
+            latest = fdf.sort_values("time").groupby("code").tail(1).set_index("code")["adj_factor"]
+            fdf_s = fdf.sort_values(["code", "time"])
+            merged = pd.merge_asof(
+                bdf.sort_values("time"), fdf_s.sort_values("time"),
+                on="time", by="code", direction="backward")
+            merged = merged.dropna(subset=["adj_factor"])
+            if merged.empty:
+                continue
+            adj_latest = merged["code"].map(latest)
+            expect = merged["adj_factor"] / adj_latest
+            actual = merged["close_front"] / merged["close"]
+            merged["dev"] = (actual / expect - 1).abs()
+            per_code = merged.groupby("code")["dev"].max()
+            fails = per_code[per_code > self._ANCHOR_DRIFT_FAIL]
+            warns = per_code[(per_code > self._ANCHOR_DRIFT_WARN)
+                             & (per_code <= self._ANCHOR_DRIFT_FAIL)]
+            if len(fails):
+                self._add(report, "AdjustmentAnchorDrift", minute_tbl, len(fails), "error",
+                          f"FAIL>0.5%: {sorted(fails.index)[:10]} (max={per_code.max():.4f})")
+            if len(warns):
+                self._add(report, "AdjustmentAnchorDrift", minute_tbl, len(warns), "warning",
+                          f"WARN 0.3-0.5%: {sorted(warns.index)[:10]}")
+
+    def _clean_factor_segments(self, fdf: pd.DataFrame) -> pd.DataFrame:
+        """同值段合并 + 污染尖刺剔除。
+
+        - 同值段：连续同 adj_factor 的时间戳合并为一段（**段值从段首 time 生效**，
+          返回 time = 段首 start——merge_asof backward 以 start 为生效点，保证
+          时间连续性；若取段末，长段在时间轴上只剩一个点，历史 bar 会错误匹配
+          到更早的旧段，产生假阳性 dev）；
+        - 尖刺：段跨度 < 1 天 且 与前一/后一段的比值差异 > 50%（如世代切换
+          批量归 1.0 的临时行）→ 整段剔除；
+        - 返回（code, time, adj_factor）干净序列（time 取段首时间戳）。
+        """
+        import numpy as np
+        import pandas as pd
+        out = []
+        for code, g in fdf.sort_values("time").groupby("code"):
+            ts = g["time"].to_numpy()
+            vals = g["adj_factor"].to_numpy()
+            segs = []
+            start = 0
+            for i in range(1, len(vals) + 1):
+                if i == len(vals) or vals[i] != vals[i - 1]:
+                    segs.append((int(ts[start]), int(ts[i - 1]), float(vals[start])))
+                    start = i
+            for idx, (st, en, v) in enumerate(segs):
+                is_spike = ((en - st) < 86_400_000 and 0 < idx < len(segs) - 1
+                            and (v / segs[idx - 1][2] < 0.5 or v / segs[idx - 1][2] > 2.0))
+                if not is_spike:
+                    out.append((code, st, v))
+        if not out:
+            return pd.DataFrame(columns=["code", "time", "adj_factor"])
+        return pd.DataFrame(out, columns=["code", "time", "adj_factor"])
+
+    def _audit_factor_monotonicity(self, conn, report):
+        """A2：因子序列非单调告警（FactorMonotonicity，warning 级，不阻断）。
+
+        对 aux 因子表（adj_factor/fund_adj）按 code LAG 扫描，回落 > 1e-9 即计数。
+        现状（实测）：股票 83.3%、ETF 12.4% 非单调——告警先行，治理归阶段 3。
+        """
+        aux_path = self._resolve_aux_path(conn)
+        if aux_path is None:
+            return
+        import sqlite3
+        try:
+            conn = sqlite3.connect(str(aux_path), timeout=30)
+            try:
+                conn.execute("PRAGMA query_only=ON")
+                tables = {r[0] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+                for factor_tbl in ("adj_factor", "fund_adj"):
+                    if factor_tbl not in tables:
+                        continue
+                    bad = conn.execute(
+                        f"WITH x AS (SELECT code, adj_factor, "
+                        f"LAG(adj_factor) OVER (PARTITION BY code ORDER BY time) AS prev "
+                        f"FROM {factor_tbl}) "
+                        f"SELECT DISTINCT code FROM x WHERE prev IS NOT NULL "
+                        f"AND adj_factor < prev - 1e-9").fetchall()
+                    if bad:
+                        self._add(report, "FactorMonotonicity", factor_tbl, len(bad),
+                                  "warning",
+                                  f"非单调 {len(bad)} code（世代混存/修正痕迹，治理见阶段3），"
+                                  f"sample={[b[0] for b in bad[:10]]}")
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            return
 
     @staticmethod
     def _add(report, check, table, count, severity, detail=""):
