@@ -306,6 +306,7 @@ def orchestrate_source(
     strict: bool = True,
     etf_pool_start_date: str | None = None,   # 07 规格：ETF 静态池固化起始日 "YYYY-MM-DD"
     db_path: str | Path | None = None,        # 07 规格：查 etf_basic 的库路径（默认 data/quantstudio.db）
+    exclude_bse: bool = False,                # P-D13 C1b：北交所过滤（对齐平台口径）
 ) -> dict[str, Any]:
     """Source entry 全流程：源码 → 转换 → 门禁 → round-trip 冒烟 → run_card（T4）。
 
@@ -337,9 +338,9 @@ def orchestrate_source(
     created_at = datetime.datetime.now().astimezone().isoformat()
     run_id = f"{path.stem}-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
 
-    # 1) 转换（07 规格：ETF FREEZE 参数透传）
+    # 1) 转换（07 规格：ETF FREEZE 参数透传；P-D13 C1b exclude_bse 透传）
     result = convert_source(path, etf_pool_start_date=etf_pool_start_date,
-                            db_path=db_path)
+                            db_path=db_path, exclude_bse=exclude_bse)
     strategy_id = path.stem.replace("_quantstudio", "")
     build_id = hashlib.sha256(result.converted_code.encode("utf-8")).hexdigest()[:12]
 

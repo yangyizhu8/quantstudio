@@ -1267,6 +1267,20 @@ class PtradeAPI:
                     # B1：唯一闸门——选列后含 'amount' 即补同值 'money'（含请求 fields=['money'] 场景）
                     df0 = _ensure_money_alias(df0)
             if hasattr(self, '_query_cache'): self._query_cache[cache_key] = df0
+            if hasattr(self, '_query_cache'): self._query_cache[cache_key] = df0
+            # P-D13 C3a：窗口审计行（count≥100 才输出——vol_regime q 分位差定位器，
+            # log.info 级直接可见：QS_HISTORY_WINDOW code count actual first last）
+            try:
+                _req_count = int(count or 0)
+                if _req_count >= 100 and hasattr(df0, '__len__') and len(df0) > 0:
+                    _first = str(df0.index[0])[:10] if len(df0.index) > 0 else '?'
+                    _last = str(df0.index[-1])[:10] if len(df0.index) > 0 else '?'
+                    _codes = [str(s) for s in sec_list[:3]]
+                    logger.info("QS_HISTORY_WINDOW codes=%s count=%d actual=%d "
+                                "first=%s last=%s",
+                                _codes, _req_count, len(df0), _first, _last)
+            except Exception:
+                pass
             return df0
         except FrequencyCapabilityError:
             # PR3: 能力错误必须上抛，不静默吞成空 DataFrame（否则策略会把"无分钟数据"当"无信号"，
@@ -1541,19 +1555,39 @@ class PtradeAPI:
                 return v
         return None
 
-    def get_Ashares(self, date=None):
-        """获取全 A 股列表"""
+    def get_Ashares(self, date=None, exclude_bse=None):
+        """获取全 A 股列表
+
+        P-D13 C1a/C1b（2026-08-27）：
+        - 板块统计审计行（QS_ASHARES_BREAKDOWN，log.debug 级——定位宇宙差用）；
+        - exclude_bse 参数（默认 None=不动现状含北交所；True=过滤 920xxx/BSE legacy
+          ——对齐平台 5205 口径，转换产物验证用）。P-D9 纪律：本地语义权威默认不变。
+        """
         try:
             if self._reference is None or not (self._current_date or date):
                 return []
-            return [self._to_ptrade_code(code) for code in
-                    self._reference.get_all_stocks(date or self._current_date)]
+            codes = [self._to_ptrade_code(code) for code in
+                     self._reference.get_all_stocks(date or self._current_date)]
+            # P-D13 C1a：板块统计审计行（定位宇宙差——322 北交所 vs 0）
+            try:
+                from .libs.security_code_rules import is_bse_market
+                _bse = sum(1 for c in codes if is_bse_market(c))
+                logger.debug("QS_ASHARES_BREAKDOWN total=%d bse=%d non_bse=%d",
+                             len(codes), _bse, len(codes) - _bse)
+            except Exception:
+                pass
+            # P-D13 C1b：exclude_bse 过滤（显式 opt-in，对齐平台口径）
+            if exclude_bse is None:
+                fidelity = getattr(self, '_fidelity', None)
+                exclude_bse = (fidelity is not None
+                               and getattr(fidelity, 'fidelity_exclude_bse', False))
+            if exclude_bse:
+                from .libs.security_code_rules import is_bse_market
+                codes = [c for c in codes if not is_bse_market(c)]
+            return codes
         except Exception as e:
             logger.debug(f"get_Ashares 失败: {e}")
             return []
-
-    # ===================== 第2批新增 API =====================
-
     def get_stock_exrights(self, security, date=None):
         """获取证券除权除息信息（对应 Ptrade get_stock_exrights）
         返回 DataFrame（index=date，列: allotted_ps/rationed_ps/rationed_px/

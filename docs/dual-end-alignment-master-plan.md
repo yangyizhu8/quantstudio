@@ -157,7 +157,8 @@ Phase 3：WP-D + WP-F
 | WP-A 平台验收 | ✅ 审核通过（2026-08-26） | 证据落盘 §5.1~5.4：CANSLIM 止损 6/6 逐日对齐（basis 恢复）+ 周频止损机制恢复（0→12 笔平仓）+ 判据修正链完整（300930 本地 07-20）；复检落盘 §5.4：收益差 CANSLIM -9.61→-3.12pp、周频 -5.73→-4.16pp，残余 100% 已登记归因（C1/C2/D3/B3/F7）。Step 5 ✅ 用户确认（授权推送） |
 | WP-A 推送 | ✅ Step 6 完成（f0c0bd7，2026-08-26） | 独立 commit `f0c0bd7`（13 文件：3 tracked + 10 untracked 精确 add，零他线混入）；双远程核对一致（plus main == qs main == f0c0bd7）；回退点 `a0fb83f`。**WP-A 正式关闭** |
 | WP-B 设计 | ✅ Step 2 审计通过（2026-08-26，两处细化并入） | `docs/pd12-target-value-semantics-design.md`（B1+B2+B3：双端接线层 delta 修复同构方案；D1~D8 + T13 三面等价 + D5 fail-open 继承语义登记） |
-| WP-B 实施 | ✅ Step 3-4 完成（2026-08-27，审核通过） | `docs/evidence/pd12-implementation-acceptance-20260827.md`：B2+B1+B3 双端 delta 修复；本地四套件 132/132 + WP-A 回归 19/19；tech_etf 平台验收**通过**（金字塔双端消除/降仓 50% 生效/B3 上下文/收益差 -6.89→-1.37pp）；周频零影响确认（本地逐笔一致 + 代码等价分析）；D5 fail-open 继承语义已显式登记。回退点 `ae2594a`。**Step 5 用户确认待明示** |
+| WP-B 实施 | ✅ Step 3-6 全部完成（2026-08-27，**WP-B 关闭**） | `docs/evidence/pd12-implementation-acceptance-20260827.md`：B2+B1+B3 双端 delta 修复；本地 132/132 + tech_etf 平台验收通过（金字塔消除/降仓 50%/B3 上下文/收益差 -6.89→-1.37pp）+ 周频零影响；**commit `8e543fd`（7 文件 +901/-7，ptrade_api hunk 级选择性暂存——slippage 九块零进入）双远程推送一致**；回退点 `ae2594a`；他线 slippage 工作树改动完整保留 |
+| WP-C 设计 | ✅ Step 1 起草完成 → 待 ZCode 审计 | `docs/pd13-data-alignment-design.md`（C1 宇宙差三件套：板块统计/exclude_bse 开关/仅平台 16 只登记；C2 eps→basic 默认激活 + PIT 巡检报告（P-A3 已覆盖回填勿重复）；C3 分位窗口审计行 + 复权快照巡检；C4 停牌/退市保真开关默认关 + 退市校验只告警。8 决策 D1~D8 + 14 用例矩阵。**D2 默认变更纳入合并基线重验**） |
 | P-POS-2 探针 | ✅ 脚本就绪（2026-08-26）→ 待平台执行（与 tech_etf 验收同场） | `ptrade/probe_portfolio_positions_ptrade.py`（容器键格式/字段/残影/membership/get_positions diff 五项目标；D1 股票+ETF 双标的 / D2 dump+交叉 / D3 清仓 / D4 残影四阶段） |
 
 ### 合规记录（2026-08-26）

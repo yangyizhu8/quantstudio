@@ -116,6 +116,7 @@ def cmd_import(args: argparse.Namespace) -> int:
             strict=True,
             etf_pool_start_date=args.etf_pool_start_date,
             db_path=Path(args.db_path) if args.db_path else None,
+            exclude_bse=getattr(args, 'exclude_bse', False),  # P-D13 C1b
         )
     except GoldenProtectionError as e:
         print(f"ERROR: golden protection — {e}", file=sys.stderr)
@@ -158,6 +159,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="ETF 静态池固化起始日 YYYY-MM-DD（策略含 get_etf_list_local 时必填，见 07 规格）")
     p_imp.add_argument("--db-path", default=None,
                        help="查 etf_basic 的库路径（默认 data/quantstudio.db；T5 staging 副本场景传副本路径）")
+    p_imp.add_argument("--exclude-bse", action="store_true", default=False,
+                       help="北交所过滤（对齐平台 get_Ashares 不含 920xxx 口径；P-D13 C1b）")  # P-D13
     p_imp.set_defaults(func=cmd_import)
     return parser
 

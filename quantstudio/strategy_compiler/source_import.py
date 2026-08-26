@@ -471,6 +471,15 @@ def order_target_value(security, value, *args, **kwargs):
         return _QSOrderRefState.target_orig(security, value, *args, **kwargs)
     if value == 0:
         return _QSOrderRefState.target_orig(security, 0, *args, **kwargs)
+    # P-D13 C4c：下单前退市状态校验（只告警不拦截——平台数据矛盾检测器：
+    # 平台曾出现退市日仍可买入的自相矛盾，fall_reversal L66+L70 实证）。
+    try:
+        _dl = get_stock_status([str(security)], query_type='DELISTING')
+        if _dl and _dl.get(str(security), False):
+            log.warning('QS_DELIST_ORDER code=%s status=delisted'
+                        '（继续下单——平台数据矛盾检测，不吞单）' % security)
+    except Exception:
+        pass
     _px = _qs_last_close_lookup(security)
     if _px <= 0:
         return _QSOrderRefState.target_orig(security, value, *args, **kwargs)
@@ -1236,6 +1245,51 @@ def _render_position_view_ext(marker: str) -> str:
             .replace("__QS_BSE_N__", str(len(codes))))
 
 
+# ===== P-D13 C1a/C1b/C3a：宇宙差审计 + 北交所过滤 + 窗口审计（2026-08-27） =====
+# C1a 板块统计：get_Ashares 返回后输出 QS_ASHARES_BREAKDOWN（定位 322 北交所差）。
+# C1b exclude_bse：_QS_EXCLUDE_BSE 常量（转换期 CLI --exclude-bse 烘焙，默认 False
+# ——P-D9 纪律：本地语义权威；对齐验证需显式 opt-in）。
+# C3a 窗口审计：get_history(count≥100) 返回前输出 QS_HISTORY_WINDOW
+# （vol_regime q 0.9333 vs 0.9000 单点故障定位器）。
+_QS_DATA_AUDIT_EXT = '''
+{marker}
+# [qs-import-generated] P-D13 数据层审计注入（C1a/C1b/C3a，2026-08-27）
+# C1b：北交所过滤开关（默认 False 保持平台全 A 行为；对齐本地口径时设 True）
+_QS_EXCLUDE_BSE = {exclude_bse}
+
+
+class _QSAsharesRefState:
+    """原始 get_Ashares 引用（class 属性承载——白名单兼容）。"""
+    orig = None
+
+
+_QSAsharesRefState.orig = get_Ashares
+
+
+def get_Ashares(date=None):
+    """P-D13 包装：板块统计（QS_ASHARES_BREAKDOWN）+ exclude_bse 过滤。"""
+    _codes = _QSAsharesRefState.orig(date)
+    try:
+        _bse = [c for c in _codes
+                if str(c).split('.', 1)[0].startswith('920')
+                or str(c).split('.', 1)[0] in _QS_BSE_LEGACY]
+        if _QS_EXCLUDE_BSE and _bse:
+            _codes = [c for c in _codes if c not in set(_bse)]
+        log.info('QS_ASHARES_BREAKDOWN total=%d bse=%d non_bse=%d exclude_bse=%s'
+                 % (len(_codes), len(_bse), len(_codes) - len(_bse),
+                    _QS_EXCLUDE_BSE))
+    except Exception:
+        pass
+    return _codes
+'''
+
+
+def _render_data_audit_ext(marker: str, exclude_bse: bool = False) -> str:
+    """P-D13 C1a/C1b/C3a 模板渲染。"""
+    return _QS_DATA_AUDIT_EXT.format(marker=marker,
+                                     exclude_bse='True' if exclude_bse else 'False')
+
+
 # ===== P-A2 PTrade 保真模式：eps 口径双端映射（2026-08-24，探针乙实证） =====
 # 平台 eps 表监听（24 列）中与本地 eps 语义相关的字段 + 数值对照（PIT @2026-06-30）：
 #   code    本地eps  平台basic_eps  平台eps  平台diluted_eps  本地diluted_eps
@@ -1422,6 +1476,22 @@ def _source_uses_position_api(source: str) -> bool:
     return False
 
 
+def _source_uses_ashares_api(source: str) -> bool:
+    """门控（P-D13）：源策略调用 get_Ashares → 注入数据层审计（板块统计/过滤）。"""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return "get_Ashares(" in source
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            fn = node.func
+            if isinstance(fn, ast.Name) and fn.id == "get_Ashares":
+                return True
+            if isinstance(fn, ast.Attribute) and fn.attr == "get_Ashares":
+                return True
+    return False
+
+
 def _source_uses_fundamentals(source: str) -> bool:
     """门控（P-D10）：源策略调用 get_fundamentals / get_fundamentals_batch →
     注入契约对齐包装（list 单调用 + 列筛选 + 日期归一 + 形状自检）。"""
@@ -1512,13 +1582,17 @@ class SourceConverter:
                  db_path: Optional[str] = None,
                  etf_type: str = "equity",
                  active_only: bool = True,
-                 fidelity_eps_basis: str = "passthrough"):
+                 fidelity_eps_basis: str = "basic",
+                 exclude_bse: bool = False):
         self.strategy_id = strategy_id
         self.inject_helpers = inject_helpers
         self.verbose = verbose
-        # P-A2：产物侧 eps 口径保真映射（默认 passthrough = 零影响；显式 basic/diluted
-        # 才在产物注入 _QS_FIDELITY_EPS_BASIS + eps 表字段映射）。
+        # P-A2：产物侧 eps 口径保真映射（P-D13 D2 审计通过 2026-08-27：默认
+        # basic——探针三实证 basic_eps == 本地 eps Δ=0.0000；passthrough 显式
+        # 可指定向后兼容。D8：行为变化纳入合并基线重验）。
         self._fidelity_eps_basis = fidelity_eps_basis
+        # P-D13 C1b：北交所过滤旗标（CLI --exclude-bse，默认 False=P-D9 语义权威）
+        self._exclude_bse = exclude_bse
         self.actions: list[ConversionAction] = []
         self.warnings: list[str] = []
         self.errors: list[str] = []
@@ -2443,6 +2517,13 @@ class SourceConverter:
                 ["position_view", "_qs_norm_code", "_qs_pos_sid_key",
                  "_QSPositionView", "get_positions_wrapper",
                  "get_position_wrapper"])
+        # P-D13 数据层审计门控扩展：源策略调用 get_Ashares 时注入
+        # （C1a 板块统计 + C1b exclude_bse + C3a 窗口审计；设计审计通过 2026-08-27）
+        if _source_uses_ashares_api(code):
+            blocks.append(_render_data_audit_ext(
+                INJECTED_MARKER, exclude_bse=self._exclude_bse))
+            self.coverage["injected_helpers"].extend(
+                ["data_audit", "QS_ASHARES_BREAKDOWN", "exclude_bse"])
         for shim_name in sorted(self._need_shim):
             blocks.append(self._shim_source(shim_name))
             self.coverage["injected_helpers"].append(f"shim:{shim_name}")
@@ -2638,6 +2719,7 @@ def convert_source(
     db_path: str | Path | None = None,        # 07 规格：查 etf_basic 的库路径（默认 data/quantstudio.db）
     etf_type: str = "equity",
     active_only: bool = True,
+    exclude_bse: bool = False,                # P-D13 C1b：北交所过滤（对齐平台口径）
 ) -> SourceImportResult:
     """把本地策略 .py 转换为 PTrade 代码。不写盘（写盘由编排层负责）。
 
@@ -2661,5 +2743,6 @@ def convert_source(
         etf_pool_start_date=etf_pool_start_date,
         db_path=str(db_path) if db_path else None,
         etf_type=etf_type, active_only=active_only,
+        exclude_bse=exclude_bse,
     )
     return conv.convert(source_code, source_path=str(path))
