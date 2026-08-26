@@ -134,6 +134,14 @@ def validate_local_strategy(
     injected = _load_injected_names()
     # Local helper functions defined in the strategy are allowed to be called
     local_funcs = defined_funcs
+    # P-D11（2026-08-26）：本地定义的 class 实例化调用与本地函数同安全层级
+    # （白名单目的是拦截未注入的平台 API，非本地构造）。此前仅收 FunctionDef，
+    # 导致注入模板的视图类实例化被误 BLOCK（既有模板被迫用 type() 体操规避）。
+    defined_classes = {
+        n.name for n in ast.iter_child_nodes(tree)
+        if isinstance(n, ast.ClassDef)
+    }
+    local_calls_ok = local_funcs | defined_classes
     # Identify imported module aliases (e.g. `import numpy as np` -> np) so that
     # attribute calls like np.concatenate / pd.DataFrame / log.info are recognized
     # as calls on allowed modules, not unknown bare names.
@@ -162,7 +170,7 @@ def validate_local_strategy(
             name = _call_name(node)
             if not name:
                 continue
-            if name in injected or name in local_funcs:
+            if name in injected or name in local_calls_ok:
                 continue
             # Builtins / common safe names
             # 修复（2026-08-11）：硬编码白名单缺 all/any/filter/map 等常见 builtin，

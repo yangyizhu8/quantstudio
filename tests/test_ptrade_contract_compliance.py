@@ -1001,14 +1001,16 @@ def handle_data(context, data):
 # ZCode 审核：包装集合 5 API 同构；order 股数语义独立边界用例；percent 类回退
 # ---------------------------------------------------------------------------
 
-def test_wire_local_matches_template_order_target_value():
+def test_wire_local_matches_template_order_target_value(monkeypatch):
     """单元级：同一输入，本地 _qs_wire_order_target_value 与模板 order_target_value
     拆单段数/段股数/顺序逐笔一致（双端订单序列一致的前提）。"""
     import quantstudio.backtest.ptrade_api as pa
 
     captured = []
-    pa._QSOrderWiringState.order_orig = lambda sec, amt, *a, **kw: captured.append((sec, amt))
-    pa._QSLastCloseState.cache = {"300029": ("2026-07-01", 0.15)}
+    monkeypatch.setattr(pa._QSOrderWiringState, "order_orig",
+                        lambda sec, amt, *a, **kw: captured.append((sec, amt)))
+    monkeypatch.setattr(pa._QSLastCloseState, "cache",
+                        {"300029": ("2026-07-01", 0.15)})
     try:
         pa._qs_wire_order_target_value("300029.SZ", 20000.0)
     finally:
@@ -1019,13 +1021,14 @@ def test_wire_local_matches_template_order_target_value():
     assert [a for _, a in captured] == sorted([a for _, a in captured])
 
 
-def test_wire_local_order_shares_semantics():
+def test_wire_local_order_shares_semantics(monkeypatch):
     """order 股数语义边界：恰超 49,000 拆 2 段；49,000 恰等不拆；非整手末段对齐。"""
     import quantstudio.backtest.ptrade_api as pa
 
     captured = []
     # fake 返回非 None，避免 fallback 原 API 重放整单
-    pa._QSOrderWiringState.order_orig = lambda sec, amt, *a, **kw: captured.append(amt) or amt
+    monkeypatch.setattr(pa._QSOrderWiringState, "order_orig",
+                        lambda sec, amt, *a, **kw: captured.append(amt) or amt)
     captured.clear()
     pa._qs_wire_order("300029.SZ", 49000)         # 恰等 → 不拆
     assert captured == [49000]
@@ -1041,26 +1044,29 @@ def test_wire_local_order_shares_semantics():
     assert sum(captured) == 83300
 
 
-def test_wire_local_order_value_semantics():
+def test_wire_local_order_value_semantics(monkeypatch):
     """order_value 金额语义 → 同一拆单链路（与 order_target_value 一致）。"""
     import quantstudio.backtest.ptrade_api as pa
 
     captured = []
-    pa._QSOrderWiringState.order_orig = lambda sec, amt, *a, **kw: captured.append(amt)
-    pa._QSLastCloseState.cache = {"000001": ("2026-07-01", 0.15)}
+    monkeypatch.setattr(pa._QSOrderWiringState, "order_orig",
+                        lambda sec, amt, *a, **kw: captured.append(amt))
+    monkeypatch.setattr(pa._QSLastCloseState, "cache",
+                        {"000001": ("2026-07-01", 0.15)})
     captured.clear()
     pa._qs_wire_order_value("000001.SZ", 20000.0)
     assert len(captured) == 3
     assert all(a <= 49000 for a in captured)
 
 
-def test_wire_local_px_missing_fallback_original():
+def test_wire_local_px_missing_fallback_original(monkeypatch):
     """① 层 px 缺失（无缓存）→ 回退原 API（与模板 px=0 回退语义一致）。"""
     import quantstudio.backtest.ptrade_api as pa
 
     orig_calls = []
-    pa._QSOrderWiringState.target_orig = lambda sec, val, *a, **kw: orig_calls.append((sec, val))
-    pa._QSLastCloseState.cache = {}
+    monkeypatch.setattr(pa._QSOrderWiringState, "target_orig",
+                        lambda sec, val, *a, **kw: orig_calls.append((sec, val)))
+    monkeypatch.setattr(pa._QSLastCloseState, "cache", {})
     pa._qs_wire_order_target_value("600519.SS", 20000.0)
     assert orig_calls == [("600519.SS", 20000.0)]
 
@@ -1124,7 +1130,7 @@ def test_wire_template_percent_fallback_original():
     assert captured["target_percent"] == [("600519.SS", 0.2)]
 
 
-def test_wire_local_vs_template_homology():
+def test_wire_local_vs_template_homology(monkeypatch):
     """接线同构：本地 wiring 与模板包装对同一输入产出逐笔一致的 (code, amount) 序列。"""
     import quantstudio.backtest.ptrade_api as pa
     import quantstudio.strategy_compiler.source_import as si
@@ -1147,8 +1153,9 @@ def test_wire_local_vs_template_homology():
 
     def _run_local(px_cache):
         captured = []
-        pa._QSOrderWiringState.order_orig = lambda sec, amt, *a, **kw: captured.append((sec, amt))
-        pa._QSLastCloseState.cache = px_cache
+        monkeypatch.setattr(pa._QSOrderWiringState, "order_orig",
+                            lambda sec, amt, *a, **kw: captured.append((sec, amt)))
+        monkeypatch.setattr(pa._QSLastCloseState, "cache", px_cache)
         pa._qs_wire_order_target_value("300029.SZ", 20000.0)
         return captured
 

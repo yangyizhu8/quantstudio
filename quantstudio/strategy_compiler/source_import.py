@@ -1015,6 +1015,251 @@ def get_fundamentals(security, table='valuation', fields=None, date=None,
     return _df
 '''
 
+# ===== P-D11 持仓视图归一（2026-08-26，P-POS 平台实证 docs/evidence/pd11-pos-probe-20260826.md） =====
+# 平台实证契约事实（F1~F7）：
+#   F1 get_positions() 键 = XSHG/XSHE 四位后缀，而 get_Ashares() = .SS/.SZ 两位
+#      （同平台双后缀体系并存）→ 策略侧裸串匹配持仓键恒 False（CANSLIM basis=-1.0000、
+#      周频三层 tier1 静默、fall_reversal positions 虚报的共同根因，双端对齐分析闭环）；
+#   F2 Position.sid = '.SS' 两位形（输出键归一主锚点，恒存在）；
+#   F4 残影行：卖出当日 amount=0 行仍在（次日清理）→ amount>0 过滤；
+#   F5 get_position('.SH') 平台内部崩溃（NoneType.asset）、裸码返回 cost_basis=None
+#      空壳 → 输入必须归一；未持仓返回 amount=0 空仓对象（与本地契约一致）；
+#   F3 字段集与本地 ptrade_api.Position 同构（缺 avg_cost → cost_basis 别名；
+#      含费口径差 F7 已登记，本注入只对形状不动数值语义）。
+# 设计：docs/pd11-position-view-normalization-design.md（v1.2 审定冻结）。
+# 归一规则 = 本地权威 security_code_rules.exchange() 五分支序逐字镜像
+# （BSE 精确表(920*/legacy 表) → 后缀 → 可转债段 → 5/6/9|0/1/2/3 前缀 → SS 兜底），
+# 等价性由 tests/test_pd11_position_view.py T11 差分测试永久钉死；
+# _QS_BSE_LEGACY 为转换期烘焙快照（__QS_BSE_SET__/__QS_BSE_N__ 占位，渲染后替换）。
+_QS_POSITION_VIEW_EXT = '''
+{marker}
+# [qs-import-generated] 持仓视图归一注入（P-D11，2026-08-26）
+# 输出契约 = 本地 ptrade_api.Position：键 .SS/.SZ/.BJ、无残影行、
+# sid/amount/enable_amount/cost_basis/last_sale_price/market_value + avg_cost 别名。
+class _QSPositionState:
+    """平台原始持仓 API 引用（class 属性承载过平台 LOCAL-API-WHITELIST，
+    模块级变量持函数引用再调用会被 BLOCK，2026-08-22 平台实证同款）。"""
+    get_positions_orig = None
+    get_position_orig = None
+
+
+_QSPositionState.get_positions_orig = get_positions
+_QSPositionState.get_position_orig = get_position
+
+# 北交所存量映射烘焙快照（来源 security_code_rules.BSE_LEGACY_TO_920，
+# n=__QS_BSE_N__ 条；官方稳定映射转换期固化；模板自包含——平台无 quantstudio 可导入）。
+_QS_BSE_LEGACY = __QS_BSE_SET__
+
+
+def _qs_norm_code(code):
+    """代码归一 → .SS/.SZ/.BJ；本地权威 exchange() 分支序逐字镜像（T11 钉死）：
+    ① BSE 精确表（startswith 920 或 ∈ legacy 表）——权威同序，优先于后缀判定
+    ② 入参后缀（.SH/.SS/.XSHG→SS；.SZ/.XSHE→SZ；.BJ/.XBJ/.XBSE→BJ）
+    ③ 可转债段（110/111/113/118→SS；123/127/128→SZ）
+    ④ 前缀（5/6/9→SS；0/1/2/3→SZ；startswith 语义，空串安全）
+    ⑤ SS 兜底（权威 unknown 回退=SH）。"""
+    s = str(code).strip().upper()
+    bare = s.split(".", 1)[0]
+    if bare.startswith("920") or bare in _QS_BSE_LEGACY:
+        return bare + ".BJ"
+    if "." in s:
+        suf = s.split(".", 1)[1]
+        if suf in ("SH", "SS", "XSHG"):
+            return bare + ".SS"
+        if suf in ("SZ", "XSHE"):
+            return bare + ".SZ"
+        if suf in ("BJ", "XBJ", "XBSE"):
+            return bare + ".BJ"
+        # 未知后缀：剥除走裸码规则
+    if bare.startswith(("110", "111", "113", "118")):
+        return bare + ".SS"
+    if bare.startswith(("123", "127", "128")):
+        return bare + ".SZ"
+    if bare.startswith(("5", "6", "9")):
+        return bare + ".SS"
+    if bare.startswith(("0", "1", "2", "3")):
+        return bare + ".SZ"
+    return bare + ".SS"
+
+
+def _qs_pos_sid_key(pos, raw_key):
+    """输出键归一：主锚 pos.sid（实证 '.SS' 形）；缺失/异常回退 _qs_norm_code(raw_key)。"""
+    sid = getattr(pos, "sid", None)
+    if sid:
+        s = str(sid).upper()
+        if s.endswith((".SS", ".SZ", ".BJ")):
+            return s
+        return _qs_norm_code(s)
+    return _qs_norm_code(raw_key)
+
+
+class _QSPositionView:
+    """平台 Position → 本地 ptrade_api.Position 契约视图（透传 + avg_cost 别名）。"""
+
+    def __init__(self, p, key):
+        self._p = p
+        self._key = key
+
+    def __getattr__(self, name):
+        p = object.__getattribute__(self, "_p")
+        if name == "sid":
+            return object.__getattribute__(self, "_key")
+        if name == "avg_cost":
+            # 平台无 avg_cost → cost_basis 别名（含费口径差 F7 已登记，不动数值语义）
+            return getattr(p, "cost_basis", 0.0)
+        if name in ("amount", "enable_amount"):
+            return getattr(p, name, 0)
+        return getattr(p, name, 0.0)
+
+
+def get_positions(security=None):
+    """键归一 + 残影过滤（amount>0）+ 契约视图；平台返回形态漂移 fail-loud。"""
+    raw = _QSPositionState.get_positions_orig()
+    if raw is None:
+        return {{}}
+    try:
+        items = list(raw.items())
+    except AttributeError:
+        raise ValueError("QS_POS_VIEW_VIOLATION get_positions 返回非 dict（%s）"
+                         % type(raw).__name__)
+    out = {{}}
+    for k, p in items:
+        try:
+            amt = float(getattr(p, "amount", 0) or 0)
+        except (TypeError, ValueError):
+            amt = 0.0
+        if amt <= 0:
+            continue
+        key = _qs_pos_sid_key(p, k)
+        out[key] = _QSPositionView(p, key)
+    if security is not None:
+        tgt = _qs_norm_code(security)
+        return {{tgt: out[tgt]}} if tgt in out else {{}}
+    _qs_shape_check("get_positions", "dict", out)
+    return out
+
+
+def get_position(security):
+    """输入归一（防 .SH 平台崩溃/裸码空壳）+ 契约视图；空仓语义 amount=0（F5）。"""
+    code = _qs_norm_code(security)
+    p = _QSPositionState.get_position_orig(code)
+    return _QSPositionView(p, code)
+'''
+
+# P-D11 渲染：{marker} format + BSE 烘焙快照替换（占位符在 format 之后 replace，
+# 避免 248 条映射字面量进入 format 花括号扫描域）。
+
+
+def _bse_legacy_bare_codes() -> frozenset:
+    """权威 BSE legacy 裸码集（security_code_rules.BSE_LEGACY_TO_920 键集）。
+
+    fail-loud：同包内权威文件不可读属环境损坏，静默烘焙空集会让 BJ 判定
+    退化为仅 920* 前缀（违反 v1.2 审定「精确表优先」），故显性报错。"""
+    try:
+        from quantstudio.backtest.libs.security_code_rules import BSE_LEGACY_TO_920
+    except Exception as exc:  # pragma: no cover - 环境损坏防护
+        raise ValueError(
+            "P-D11 BSE 权威映射不可导入（security_code_rules）： %r" % (exc,))
+    if not BSE_LEGACY_TO_920:
+        raise ValueError(
+            "P-D11 BSE 权威映射为空（bse_legacy_code_mapping.json 缺失/损坏）"
+            "—— 禁止烘焙空集（fail-loud，见 pd11 设计 v1.2 必改②）")
+    return frozenset(str(k).split(".")[0] for k in BSE_LEGACY_TO_920)
+
+
+def _render_position_view_ext(marker: str) -> str:
+    """P-D11 模板渲染：format(marker) → 替换 BSE 烘焙字面量与条数注记。"""
+    codes = sorted(_bse_legacy_bare_codes())
+    literal = "{%s}" % ", ".join("'%s'" % c for c in codes)
+    return (_QS_POSITION_VIEW_EXT.format(marker=marker)
+            .replace("__QS_BSE_SET__", literal)
+            .replace("__QS_BSE_N__", str(len(codes))))
+
+
+# ===== P-A2 PTrade 保真模式：eps 口径双端映射（2026-08-24，探针乙实证） =====
+# 平台 eps 表监听（24 列）中与本地 eps 语义相关的字段 + 数值对照（PIT @2026-06-30）：
+#   code    本地eps  平台basic_eps  平台eps  平台diluted_eps  本地diluted_eps
+#   000001  0.67     0.67          0.75     0.67             0.67
+#   600000  0.52     0.52          0.54     0.52             0.52
+# → 本地 eps 语义 == 平台 basic_eps/diluted_eps（逐位一致）；平台默认 eps 是加权口径
+#   （+12%/+3.8% 偏差源，P-D10 归因核对）。
+# fidelity_eps_basis（产物侧固化常量，平台运行时零环境变量）决定 get_fundamentals
+# 请求 eps 表时向平台请求的列，使平台产物向本地正确语义锚收敛：
+#   'passthrough'（默认）：请求平台 eps 列（现状，容忍平台加权口径差异）；
+#   'basic'：请求平台 basic_eps 列（本地 eps 语义）；
+#   'diluted'：请求平台 diluted_eps 列（本地 diluted_eps 语义）。
+# 平台返回的 basic_eps/diluted_eps 列经 _QS_FIDELITY_EPS_FIELD_MAP_REV 逆翻译回本地
+# 'eps'/'diluted_eps' 名 → 策略按本地列名消费、数值与本地一致（平台产物向本地收敛）。
+# 双端校验（审计 v2 收尾项）：basic/diluted 均已由探针实证双端列存在方可激活；
+# 任一端缺失（ttm/bps/weighted）→ 转换期显性报错或降级 passthrough + WARNING（见
+# fidelity_config.resolve_eps_basis 与 qs-compile 调用链），禁止静默单端 fallback。
+# 本常量段**门控注入**：仅 fidelity_eps_basis != 'passthrough' 时追加（默认产物逐字节不变）。
+_QS_FIDELITY_EPS_EXT = '''
+{marker}
+# [qs-import-generated] P-A2 eps 口径保真映射（fidelity_eps_basis={eps_basis}，2026-08-24）
+# 覆写 P-D10 get_fundamentals wrapper：eps 表请求字段 eps→basic_eps/diluted_eps，
+# 返回列逆翻译回 eps/diluted_eps（本地语义锚，策略无感知）；其余行为与 P-D10 逐位一致。
+_QS_FIDELITY_EPS_BASIS = '{eps_basis}'
+_QS_FIDELITY_EPS_FIELD_MAP = {{'passthrough': {{}}, 'basic': {{'eps': 'basic_eps'}},
+                               'diluted': {{'eps': 'diluted_eps'}}}}
+_QS_FIDELITY_EPS_FIELD_MAP_REV = {{
+    plat: loc for _basis, _m in _QS_FIDELITY_EPS_FIELD_MAP.items() for loc, plat in _m.items()}}
+if _QS_FIDELITY_EPS_BASIS not in ('passthrough', 'basic', 'diluted'):
+    raise RuntimeError('_QS_FIDELITY_EPS_BASIS=%r 非法（允许 passthrough/basic/diluted）'
+                       % (_QS_FIDELITY_EPS_BASIS,))
+
+
+def get_fundamentals(security, table='valuation', fields=None, date=None,
+                     is_dataframe=True, *args, **kwargs):
+    """P-A2 覆写：P-D10 契约 + eps 口径双端映射（eps→平台 basic_eps/diluted_eps）。
+
+    - 请求翻译：eps 表且 basis 命中 → fields 中 eps→basic_eps/diluted_eps
+      （_QS_FIDELITY_EPS_FIELD_MAP）；growth_ability 仍走 _QS_GF_FIELD_MAP。
+    - 返回逆翻译：平台 basic_eps/diluted_eps 列 → 本地 eps/diluted_eps 名
+      （_QS_FIDELITY_EPS_FIELD_MAP_REV，在 _qs_frame_to_contract 后二次 rename）。
+    其余（list 原生调用/列筛选/end_date 归一/空行为/逐码退化）与 P-D10 逐位一致。
+    """
+    _secs = security if isinstance(security, (list, tuple)) else [security]
+    _field_list = [fields] if isinstance(fields, str) else (list(fields) if fields else None)
+    if _field_list is not None and table == 'eps' and _QS_FIDELITY_EPS_BASIS != 'passthrough':
+        _m = _QS_FIDELITY_EPS_FIELD_MAP.get(_QS_FIDELITY_EPS_BASIS, {{}})
+        _plat_fields = [_m.get(f, f) for f in _field_list]
+    else:
+        _plat_fields = ([_QS_GF_FIELD_MAP.get(f, f) for f in _field_list]
+                        if _field_list is not None else None)
+    try:
+        _df = _QSFundState.orig(_secs, table, fields=_plat_fields, date=date,
+                                is_dataframe=is_dataframe, *args, **kwargs)
+        _df = _qs_frame_to_contract(_df, _secs, fields, table)
+    except Exception as exc:
+        log.warning('GF-FAILOPEN get_fundamentals list-call %s: %s' % (type(exc).__name__, exc))
+        _frames = []
+        for _code in _secs:
+            try:
+                _one = _QSFundState.orig(_code, table, fields=_plat_fields, date=date,
+                                         is_dataframe=is_dataframe, *args, **kwargs)
+                if _one is None or not hasattr(_one, 'columns'):
+                    continue
+                _one = _qs_frame_to_contract(_one, [_code], fields, table)
+                if len(_one) > 0:
+                    _frames.append(_one)
+            except Exception as exc2:
+                log.warning('GF-FAILOPEN get_fundamentals %s %s: %s' % (_code, type(exc2).__name__, exc2))
+        if not _frames:
+            _df = _qs_pd.DataFrame(columns=[fields] if isinstance(fields, str)
+                                   else (fields or []))
+        else:
+            _df = _qs_pd.concat(_frames)
+    # P-A2 返回逆翻译：平台 basic_eps/diluted_eps 列 → 本地 eps/diluted_eps 名
+    if table == 'eps' and _QS_FIDELITY_EPS_BASIS != 'passthrough' and _df is not None:
+        try:
+            _df = _df.rename(columns=_QS_FIDELITY_EPS_FIELD_MAP_REV)
+        except Exception:
+            pass
+    _qs_shape_check('get_fundamentals', 'dataframe', _df)
+    return _df
+'''
+
 # 档 2 表达式内嵌的等价字面量（H2）：本地函数 → PTrade 语义等价字面量
 _REWRITE_LITERALS: dict[str, str] = {
     "set_backtest": "None",
@@ -1091,6 +1336,28 @@ def _source_uses_filter_status(source: str) -> bool:
             if isinstance(fn, ast.Name) and fn.id == "filter_stock_by_status":
                 return True
             if isinstance(fn, ast.Attribute) and fn.attr == "filter_stock_by_status":
+                return True
+    return False
+
+
+_POSITION_APIS = ("get_positions", "get_position")
+
+
+def _source_uses_position_api(source: str) -> bool:
+    """门控（P-D11）：源策略调用 get_positions / get_position → 注入持仓视图归一。
+
+    判定 = AST 调用名匹配（import/字符串字面量不触发），与 _source_uses_order_api
+    同款；退化路径只在调用语境出现才命中。"""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return any(("(%s" % name) in source for name in _POSITION_APIS)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            fn = node.func
+            if isinstance(fn, ast.Name) and fn.id in _POSITION_APIS:
+                return True
+            if isinstance(fn, ast.Attribute) and fn.attr in _POSITION_APIS:
                 return True
     return False
 
@@ -1184,10 +1451,14 @@ class SourceConverter:
                  etf_pool_start_date: Optional[str] = None,
                  db_path: Optional[str] = None,
                  etf_type: str = "equity",
-                 active_only: bool = True):
+                 active_only: bool = True,
+                 fidelity_eps_basis: str = "passthrough"):
         self.strategy_id = strategy_id
         self.inject_helpers = inject_helpers
         self.verbose = verbose
+        # P-A2：产物侧 eps 口径保真映射（默认 passthrough = 零影响；显式 basic/diluted
+        # 才在产物注入 _QS_FIDELITY_EPS_BASIS + eps 表字段映射）。
+        self._fidelity_eps_basis = fidelity_eps_basis
         self.actions: list[ConversionAction] = []
         self.warnings: list[str] = []
         self.errors: list[str] = []
@@ -2097,6 +2368,21 @@ class SourceConverter:
             self.coverage["injected_helpers"].extend(
                 ["fundamentals_wrapper", "_qs_norm_fund_dates",
                  "_qs_fund_select_fields", "get_fundamentals_wrapper"])
+            # P-A2 保真映射门控注入：仅 fidelity_eps_basis != passthrough 时追加
+            # （默认产物逐字节不变；basic/diluted 显式 opt-in 才带 _QS_FIDELITY_* 常量）
+            if self._fidelity_eps_basis in ("basic", "diluted"):
+                blocks.append(_QS_FIDELITY_EPS_EXT.format(
+                    marker=INJECTED_MARKER, eps_basis=self._fidelity_eps_basis))
+                self.coverage["injected_helpers"].extend(
+                    ["fidelity_eps_basis", "_qs_fidelity_eps_basis"])
+        # P-D11 持仓视图归一门控扩展：源策略调用 get_positions/get_position 时注入
+        # （键 .SS/.SZ/.BJ 归一 + 残影过滤 + 本地 Position 契约视图；设计 v1.2 审定）
+        if _source_uses_position_api(code):
+            blocks.append(_render_position_view_ext(INJECTED_MARKER))
+            self.coverage["injected_helpers"].extend(
+                ["position_view", "_qs_norm_code", "_qs_pos_sid_key",
+                 "_QSPositionView", "get_positions_wrapper",
+                 "get_position_wrapper"])
         for shim_name in sorted(self._need_shim):
             blocks.append(self._shim_source(shim_name))
             self.coverage["injected_helpers"].append(f"shim:{shim_name}")

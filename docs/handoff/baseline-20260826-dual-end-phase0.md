@@ -1,0 +1,347 @@
+﻿# 会话基线快照 — 双端对齐修复 Phase 0 启动（2026-08-26 01:5x）
+
+- 记录：DSH（双端对齐修复计划 v2 · Phase 0）
+- HEAD: a5399c600c6971da619f8c799ae72480518d8b48
+- 门禁核验：quantstudio-plus main == quantstudio main == HEAD == a5399c6（交付推送完成，双仓库一致）
+- 本轮写入策略：**仅新建文件**（master-plan / 探针脚本 / 复现测试），不触碰任何 M/D 状态文件
+- 注意事项：工作树 backtest_engine.py / ptrade_api.py / source_import.py 已被其他会话修改——B2 复现测试针对工作树现状运行，结论以运行时代码为准
+- 回退点：本轮零框架代码改动，无需 stash；后续每 WP 实施前再建（计划 §8）
+
+## git status --porcelain
+
+ M AGENTS.md
+ M README.md
+ M config/alignment_rules.json
+ M config/profiles/mcp_only/alignment_rules.json
+ M config/profiles/mcp_only/collector_tasks.json
+ M docs/mcp_migration/full_table_inventory.json
+ M docs/prompt_engineering.md
+ M docs/strategy_toolbox.md
+ M quantstudio/backtest/backtest_engine.py
+ M quantstudio/backtest/events.py
+ M quantstudio/backtest/ptrade_api.py
+ M quantstudio/backtest/run_ptrade_strategy.py
+ D quantstudio/backtest/strategies/first_board_pullback_daily__candidate_quantstudio.py
+ D quantstudio/backtest/strategies/sw_industry_etf_rotation_8f__candidate_quantstudio.py
+ M quantstudio/gui/tabs/backtest_tab.py
+ M quantstudio/gui/tabs/config_editor_tab.py
+ M quantstudio/gui/tabs/task_tab.py
+ M quantstudio/gui/workers.py
+ M quantstudio/pipeline/config_lint.py
+ M quantstudio/pipeline/daemon.py
+ M quantstudio/pipeline/qfq_aux_router.py
+ M quantstudio/pipeline/qfq_calendar.py
+ M quantstudio/pipeline/qfq_event_discovery.py
+ M quantstudio/pipeline/qfq_formal_canary.py
+ M quantstudio/pipeline/qfq_formal_cutover.py
+ M quantstudio/pipeline/qfq_formal_cutover_cli.py
+ M quantstudio/pipeline/qfq_formal_postcutever_audit.py
+ M quantstudio/pipeline/qfq_invariant.py
+ M quantstudio/pipeline/qfq_maintenance.py
+ M quantstudio/pipeline/qfq_observation.py
+ M quantstudio/pipeline/qfq_orchestrator_cli.py
+ M quantstudio/pipeline/qfq_reanchor_schema.py
+ M quantstudio/pipeline/qfq_resident_orchestrator.py
+ M quantstudio/pipeline/qfq_revision.py
+ M quantstudio/pipeline/qfq_schema_migration.py
+ M quantstudio/pipeline/quality_audit.py
+ M quantstudio/pipeline/source_capabilities.py
+ M quantstudio/pipeline/sources/mcp_adapter.py
+ M quantstudio/pipeline/writers.py
+ M quantstudio/strategy_compiler/source_import.py
+ M skills/quantstudio-strategy-compiler/SKILL.md
+ M skills/quantstudio-strategy-compiler/references/component-catalog.json
+ M skills/quantstudio-strategy-compiler/scripts/validate_agent_strategy.py
+ M tests/test_agent_first_strategy_skill.py
+ M tests/test_agent_portfolio_contract.py
+ M tests/test_qfq_reanchor_batch1.py
+ M tests/test_target_aware_strategy_skill.py
+?? .dsh-vision-toolkit/
+?? .reasonix/
+?? =
+?? _blobs_tmp.txt
+?? _blobs_tmp2.txt
+?? _cand1.py
+?? _cand2.py
+?? _check_etf_basic.py
+?? _commit_msg1.txt
+?? _commit_msg2.txt
+?? _daemon3.err
+?? _mcp_with_3a.bak
+?? _orc_3a.bak
+?? _patch_evidence.py
+?? _probe_split.py
+?? _qs_cat_enum.txt
+?? _qs_probe2.txt
+?? _qs_r1_probe.py
+?? _qs_static_pool_draft.md
+?? _r1_probe_db.py
+?? _r4_out.txt
+?? _r5_out.txt
+?? _r6_out.txt
+?? _ras_3a.bak
+?? _res_3a.bak
+?? _scan_ok.bak
+?? _sync_skill_check.py
+?? agent_workspace/
+?? config/profiles/mcp_only/qfq_rebase_admissible_securities.json
+?? config/profiles/mcp_only/qfq_resume_1897.json
+?? config/profiles/mcp_only/qfq_resume_1975.json
+?? data/minute_fix_ratio_etf_minutes.csv
+?? data/minute_fix_ratio_stock_minutes.csv
+?? data/ptrade_fidelity/
+?? data/snapshots/
+?? data/wp2_release/
+?? design/
+?? docs/backtest-align-diagnosability-design.md
+?? docs/cloud-source-quality-audit-plan-20260817.md
+?? docs/cloud-source-repair-plan-20260817.md
+?? docs/evidence/backtest-align-golden-20260817.md
+?? docs/evidence/backup-disable-authorization-20260824.md
+?? docs/evidence/cloud-source-quality-audit-20260817.md
+?? docs/evidence/disk_cleanup_manifest_20260819.md
+?? docs/evidence/dual-end-alignment-20260818.md
+?? docs/evidence/final-snapshot-20260822-briefing.md
+?? docs/evidence/g2a-candidates-20260816.txt
+?? docs/evidence/g2a-prefetch-failure-20260817.md
+?? docs/evidence/g2a-tiering-20260817.txt
+?? docs/evidence/g2a-tiering-final-20260817.md
+?? docs/evidence/g2a-tiering-final-pass-20260817.txt
+?? docs/evidence/mcp-minute-anchor-g1-20260816.md
+?? docs/evidence/mcp-minute-anchor-g2a-preflight-20260816.md
+?? docs/evidence/p-a3-eps-backfill-acceptance-20260825.md
+?? docs/evidence/ptrade-fidelity-20260824.md
+?? docs/evidence/session_transcript_extract.md
+?? docs/evidence/snap002-backfill-verify-20260826.json
+?? docs/evidence/snap003-acceptance-20260825-template.md
+?? docs/evidence/snap003-fullchain-evidence-index-20260826.md
+?? docs/evidence/snap003-verify-20260826.json
+?? docs/evidence/snap003-verify-protect-checklist-20260825.md
+?? docs/governance-3a-write-lock-design.md
+?? docs/governance-guard-system-proc-design.md
+?? docs/governance-qfq-invariant-param-spec.md
+?? docs/governance-sharded-hash-spec.md
+?? docs/governance-snapshot-design.md
+?? docs/governance-step1-callchain.md
+?? docs/governance-step2-audit.md
+?? docs/governance-step2-gates.md
+?? docs/governance-step3-audit.md
+?? docs/handoff/20260817_qfq_canary_pipeline_session.md
+?? docs/handoff/_session_ws_baseline_20260817.txt
+?? docs/handoff/backtest-align-20260817-handoff.md
+?? docs/handoff/backup-config_editor_tab-20260823-204717.py
+?? docs/handoff/backup-task_tab-20260823-204717.py
+?? docs/handoff/baseline-20260826-dual-end-phase0.md
+?? docs/handoff/baseline_20260821_0040_dispatch.md
+?? docs/handoff/baseline_20260825_1215_regression_window.txt
+?? docs/handoff/draft_mcp_progress_addendum_20260821.md
+?? docs/handoff/gui-skin-diffstat-20260823-204717.txt
+?? docs/handoff/gui-skin-status-20260823-204717.txt
+?? docs/handoff/pending-followups-strategy-name-chinese-20260822.md
+?? docs/mcp-minute-caliber-audit-20260816.md
+?? docs/mcp-minute-front-anchor-design.md
+?? docs/mcp_migration/engine-v2final-execution-prompt.md
+?? docs/mcp_migration/etf-split-factor-derived-fix-plan.md
+?? docs/mcp_migration/etf-split-factor-derived-fix-plan.review.md
+?? docs/mcp_migration/pipeline-etf-dividend-integration-plan.md
+?? docs/mcp_migration/questdb-etf-dividend-supplement-task.md
+?? docs/p-a3-eps-backfill-design.md
+?? docs/p-a3-writer-auto-backfill-gate-design.md
+?? docs/project-stabilization-plan.md
+?? docs/ptrade-conversion-tab-spec.md
+?? probe_sig_tmp.py
+?? ptrade/fq_compare_probe_ptrade.py
+?? ptrade/match_price_probe_minute_ptrade.py
+?? ptrade/match_price_probe_ptrade.py
+?? ptrade/probe_commission_ptrade.py
+?? ptrade/probe_fidelity_ashares_ptrade.py
+?? ptrade/probe_fidelity_eps_ptrade.py
+?? ptrade/probe_gf_contract_ptrade.py
+?? ptrade/probe_gf_contract_v2_ptrade.py
+?? ptrade/probe_gf_contract_v3_ptrade.py
+?? ptrade/probe_order_limit_ptrade.py
+?? "ptrade/ptrade\346\265\213\350\257\225\346\227\245\345\277\227.md"
+?? ptrade/smallcap_diff_probe_ptrade.py
+?? ptrade/smallcap_diff_probe_v2_ptrade.py
+?? "ptrade/\346\222\256\345\220\210\346\234\272\345\210\266\345\256\236\350\257\201\344\270\216\344\277\256\345\244\215\346\226\271\346\241\210.md"
+?? "ptrade/\346\222\256\345\220\210\346\234\272\345\210\266\345\256\236\350\257\201\344\270\216\344\277\256\345\244\215\346\226\271\346\241\210_v2.md"
+?? quantstudio/backtest/fidelity_config.py
+?? "quantstudio/backtest/strategies/CANSLIM\347\252\201\347\240\264\346\210\220\351\225\277\351\200\211\350\202\241\347\255\226\347\225\245.py"
+?? quantstudio/backtest/strategies/weekly_smallcap_growth_momentum_10_quantstudio.py
+?? "quantstudio/backtest/strategies/\345\221\250\351\242\221\345\260\217\345\270\202\345\200\274\346\210\220\351\225\277\345\212\250\351\207\217\357\274\210\344\270\211\345\261\202\346\255\242\346\215\237\357\274\211.py"
+?? quantstudio/pipeline/eps_backfill.py
+?? quantstudio/pipeline/snapshot_lock.py
+?? quantstudio/pipeline/sources/consume_whitelist_guard.py
+?? quantstudio/test_n8n.py
+?? reasonix.toml
+?? scripts/_acceptance_hash_compare.py
+?? scripts/_c4resume_stop_watcher.py
+?? scripts/_check_qfq_tables_tmp.py
+?? scripts/_cleanup_tmp.py
+?? scripts/_dbg_600519_0618.py
+?? scripts/_dbg_601628.py
+?? scripts/_dbg_aux_factor.py
+?? scripts/_dbg_cache.py
+?? scripts/_dbg_cache601628.py
+?? scripts/_dbg_cache_vs_db.py
+?? scripts/_dbg_canary215.py
+?? scripts/_dbg_canary_state.py
+?? scripts/_dbg_compare_601628.py
+?? scripts/_dbg_deadletter.py
+?? scripts/_dbg_dl118.py
+?? scripts/_dbg_etf510500.py
+?? scripts/_dbg_export.py
+?? scripts/_dbg_export2.py
+?? scripts/_dbg_factor.py
+?? scripts/_dbg_fresh_601628.py
+?? scripts/_dbg_fresh_full.py
+?? scripts/_dbg_front_cols.py
+?? scripts/_dbg_lastbar.py
+?? scripts/_dbg_overwrite_link.py
+?? scripts/_dbg_overwrite_small.py
+?? scripts/_dbg_pattern.py
+?? scripts/_dbg_pattern2.py
+?? scripts/_dbg_qfq_state.py
+?? scripts/_dbg_qfq_state2.py
+?? scripts/_dbg_retry5.py
+?? scripts/_dbg_scope.py
+?? scripts/_dbg_time_format.py
+?? scripts/_dbg_weird.py
+?? scripts/_float_share_backfill.py
+?? scripts/_float_share_backfill_2018.py
+?? scripts/_fullrun_watcher.py
+?? scripts/_git_add2.txt
+?? scripts/_git_commit.txt
+?? scripts/_git_push.txt
+?? scripts/_git_status.txt
+?? scripts/_p0_out.txt
+?? scripts/_phase4_golden_verify.py
+?? scripts/_probe2_tmp.py
+?? scripts/_probe3_tmp.py
+?? scripts/_probe_duckdb_tmp.py
+?? scripts/_probe_qdb2_tmp.py
+?? scripts/_probe_qdb3_tmp.py
+?? scripts/_probe_qdb_tmp.py
+?? scripts/_qdb2_out.txt
+?? scripts/_qdb3_out.txt
+?? scripts/_qdb_out.txt
+?? scripts/_qdb_tables.txt
+?? scripts/_rewrite_runstate_tmp.py
+?? scripts/_scan_front_corruption.py
+?? scripts/_smallcap_diff_probe.py
+?? scripts/_tdd2_migrate_gen1.py
+?? scripts/_tdd2_probe.py
+?? scripts/_verify_canary_front.py
+?? scripts/_verify_factor_lookup_equiv.py
+?? scripts/_verify_front_fix.py
+?? scripts/_verify_minutes_fix.py
+?? scripts/_verify_qfq_caliber.py
+?? scripts/audit_etf_corporate_actions.py
+?? scripts/backfill_eps_gap.py
+?? scripts/batch1_reanchor_stale_daily_front.py
+?? scripts/batch2_sync_recovery.py
+?? scripts/c4_merge_staging_to_main.py
+?? scripts/etf_minute_reanchor.py
+?? scripts/final_snapshot_orchestrator.py
+?? scripts/final_snapshot_orchestrator_monday.py
+?? scripts/fix_minutes_pollution.py
+?? scripts/frontfix.py
+?? scripts/frontfix_backup.py
+?? scripts/frontfix_check_etfm.py
+?? scripts/frontfix_check_pollution.py
+?? scripts/frontfix_csvrow.py
+?? scripts/frontfix_diag.py
+?? scripts/frontfix_final_verify.py
+?? scripts/frontfix_idxprobe.py
+?? scripts/frontfix_missdiag.py
+?? scripts/frontfix_missdiag2.py
+?? scripts/frontfix_monitor.py
+?? scripts/frontfix_preflight.py
+?? scripts/frontfix_proc.py
+?? scripts/frontfix_progress.py
+?? scripts/frontfix_reverify.py
+?? scripts/frontfix_timeprobe.py
+?? scripts/frontfix_verify_etf.py
+?? scripts/governance_d2_gate.py
+?? scripts/governance_snapshot.py
+?? scripts/governance_snapshot.py.bak_h3_20260819
+?? scripts/governance_write_conn_scan.py
+?? scripts/overwrite_minutes_from_cloud.py
+?? scripts/probe_platform_ashares.py
+?? scripts/purge_stock_minutes_cache.py
+?? scripts/reopen_deadletter.py
+?? scripts/restore_minutes_frontback.py
+?? scripts/restore_minutes_raw.py
+?? scripts/verify_pipeline_after_pull.py
+?? tests/test_3a_equivalence.py
+?? tests/test_consume_whitelist_guard.py
+?? tests/test_eps_backfill.py
+?? tests/test_fill_audit.py
+?? tests/test_governance_d2_gate_boundary.py
+?? tests/test_governance_snapshot.py
+?? tests/test_governance_snapshot_audit_fixes.py
+?? tests/test_governance_snapshot_protect_transaction.py
+?? tests/test_governance_snapshot_terminal_fixes.py
+?? tests/test_governance_snapshot_unprotect_journal.py
+?? tests/test_guard_extension_anchor.py
+?? tests/test_guard_qdb_domain_marker.py
+?? tests/test_ptrade_fidelity_config.py
+?? tests/test_quality_audit_anchor.py
+?? tests/test_sharded_hash_v4.py
+?? tests/test_snapshot_lock.py
+?? tests/test_verify_yield_exemption.py
+?? tmp_p10_local_run.py
+?? widget-result.json
+?? worktable/
+?? "\351\230\273\346\226\255 adj_factor \351\231\215\347\272\247\345\206\231\345\205\245 1.0 \342\200\224 \345\256\236\346\226\275\346\226\271\346\241\210.md"
+
+## git diff --stat
+
+ AGENTS.md                                          |   75 +-
+ README.md                                          |    2 +
+ config/alignment_rules.json                        |  137 ++-
+ config/profiles/mcp_only/alignment_rules.json      |  152 ++-
+ config/profiles/mcp_only/collector_tasks.json      |   59 +-
+ docs/mcp_migration/full_table_inventory.json       |   44 +-
+ docs/prompt_engineering.md                         |    4 +-
+ docs/strategy_toolbox.md                           |    3 +-
+ quantstudio/backtest/backtest_engine.py            |  162 ++-
+ quantstudio/backtest/events.py                     |   21 +
+ quantstudio/backtest/ptrade_api.py                 |   60 +-
+ quantstudio/backtest/run_ptrade_strategy.py        |   55 +-
+ ..._board_pullback_daily__candidate_quantstudio.py | 1054 --------------------
+ ...ustry_etf_rotation_8f__candidate_quantstudio.py |  519 ----------
+ quantstudio/gui/tabs/backtest_tab.py               |   48 +-
+ quantstudio/gui/tabs/config_editor_tab.py          |    5 +-
+ quantstudio/gui/tabs/task_tab.py                   |   12 +
+ quantstudio/gui/workers.py                         |    1 +
+ quantstudio/pipeline/config_lint.py                |    1 +
+ quantstudio/pipeline/daemon.py                     |   10 +-
+ quantstudio/pipeline/qfq_aux_router.py             |   26 +-
+ quantstudio/pipeline/qfq_calendar.py               |   14 +-
+ quantstudio/pipeline/qfq_event_discovery.py        |    6 +-
+ quantstudio/pipeline/qfq_formal_canary.py          |   10 +-
+ quantstudio/pipeline/qfq_formal_cutover.py         |   28 +-
+ quantstudio/pipeline/qfq_formal_cutover_cli.py     |   14 +
+ .../pipeline/qfq_formal_postcutever_audit.py       |    6 +-
+ quantstudio/pipeline/qfq_invariant.py              |   26 +-
+ quantstudio/pipeline/qfq_maintenance.py            |   14 +-
+ quantstudio/pipeline/qfq_observation.py            |   22 +-
+ quantstudio/pipeline/qfq_orchestrator_cli.py       |   15 +
+ quantstudio/pipeline/qfq_reanchor_schema.py        |    6 +-
+ quantstudio/pipeline/qfq_resident_orchestrator.py  |   14 +-
+ quantstudio/pipeline/qfq_revision.py               |   14 +-
+ quantstudio/pipeline/qfq_schema_migration.py       |   14 +
+ quantstudio/pipeline/quality_audit.py              |  251 ++++-
+ quantstudio/pipeline/source_capabilities.py        |    1 +
+ quantstudio/pipeline/sources/mcp_adapter.py        |   82 +-
+ quantstudio/pipeline/writers.py                    |   71 +-
+ quantstudio/strategy_compiler/source_import.py     |   97 +-
+ skills/quantstudio-strategy-compiler/SKILL.md      |   10 +
+ .../references/component-catalog.json              |    3 +-
+ .../scripts/validate_agent_strategy.py             |   17 +
+ tests/test_agent_first_strategy_skill.py           |    8 +-
+ tests/test_agent_portfolio_contract.py             |    2 +-
+ tests/test_qfq_reanchor_batch1.py                  |   21 +-
+ tests/test_target_aware_strategy_skill.py          |    2 +-
+ 47 files changed, 1486 insertions(+), 1732 deletions(-)
