@@ -298,7 +298,21 @@ class DuckDBDataAccess:
         if conn is None:
             return pd.DataFrame()
         try:
-            df = conn.execute(self._snapshot_sql(f"time = {date_ms}")).fetchdf()
+            # P-D14 D3（2026-08-27 审计通过）：单日查询精确匹配 → 当日窗口匹配。
+            # 根因：etf_daily 07-01 存在双 time 值（00:00 组 73 行 + 08:00 组 1974 行含
+            # 515050/511260），time=精确匹配漏掉 08:00 组 → 首日 ETF no_price 拒单。
+            # 窗口 [date_ms, date_ms+86_399_999] 与 preload 的 BETWEEN 契约对齐（保证
+            # 两路径字节级一致）；08:00 在内、次日 00:00 恰好差 1ms 排除（不串日）。
+            # 审计细化①：同 code 去重护栏——取最大 time 行（防未来批次异常双行），
+            # 与窗口吸收的双值组共存安全（实证 07-01 双 time 重复 code 数=0，护栏为防御）。
+            df = conn.execute(
+                self._snapshot_sql(
+                    f"time >= {date_ms} AND time <= {date_ms + 86_399_999}")
+            ).fetchdf()
+            if not df.empty:
+                df = (df.sort_values('time')
+                        .groupby('code', as_index=False, sort=False)
+                        .tail(1))
         except Exception as e:
             logger.warning(f"[DuckDB] 日线快照查询失败 date_ms={date_ms}: {e}")
             return pd.DataFrame()
@@ -358,8 +372,19 @@ class DuckDBDataAccess:
                 self._snapshot_sql(f"time BETWEEN {start_ms} AND {end_ms}")
             ).fetchdf()
             if not df.empty:
-                for t, grp in df.groupby("time"):
-                    self._daily_snapshot_cache[int(t)] = grp.reset_index(drop=True)
+                # P-D14 D3（2026-08-27）：预取缓存按【当日窗口】聚合键（与单日
+                # 窗口匹配语义一致）——原实现按 time 精确值分组缓存，08:00 组
+                # 作为独立键导致单日查询（time=当日00:00 键）命中不到 08:00 组
+                # （T6 实证：预取 5584 行 vs 单日 7558 行，字节级一致契约被破坏）。
+                # 修复：08:00 组并入当日 00:00 键（与 query_daily_snapshot 窗口
+                # 语义对齐）；去重护栏同单日路径（同日同 code 取最大 time 行）。
+                df = df.assign(_day=df['time'] // 86_400_000 * 86_400_000)
+                df = (df.sort_values('time')
+                        .groupby(['_day', 'code'], as_index=False, sort=False)
+                        .tail(1))
+                for day, grp in df.groupby("_day"):
+                    self._daily_snapshot_cache[int(day)] = (
+                        grp.drop(columns=['_day']).reset_index(drop=True))
                 keys = list(self._daily_snapshot_cache.keys())
                 self._cached_min_ms = min(min(keys), start_ms)
                 self._cached_max_ms = max(max(keys), end_ms)
