@@ -425,16 +425,76 @@ def _qs_split_order(security, value, px, cash_avail=None):
 
 # 订单 API 拆单包装：order_target_value 系列按统一链 ① 层 px 拆分；
 # 策略代码零改动（调用语句不变，由 wrapper 收口）。
+#
+# P-D12（2026-08-26）：order_target_value 恢复目标市值语义——delta 修复（B1，
+# 与本地 ptrade_api._qs_wire_order_target_value 同构）。分支序：清仓保底 →
+# px 缺失回退 → 现值/delta → 微调跳过（0.5%，与引擎 min_rebalance_pct 一致）
+# → 减仓走原生命令 → 加仓对 delta 拆单 → delta<1 手告警 no-op。
+# 现值入口（D1/D6）：get_position(_qs_norm_code(security)).amount × T-1 px
+# ——_qs_norm_code 由 P-D11 持仓视图块提供（策略不调 position API 时该块不注入，
+# 此处内嵌兜底归一：_qs_norm_code 名字存在性惰性检查）。
+
+_QS_MIN_REBALANCE_PCT = 0.005   # P-D12 D7：与引擎 min_rebalance_pct 默认一致（T10 钉死）
+
+
+def _qs_pos_amount(security):
+    """P-D12 D6：平台侧现值查询——get_position(.SS/.SZ 内联归一).amount（异常视为空仓=D5）。
+
+    自包含归一（不依赖 P-D11 _qs_norm_code——该块可能未注入，跨模板引用会
+    被 LOCAL-API-WHITELIST 拦截）；订单场景最小集：5/6/9→.SS 其余→.SZ。"""
+    try:
+        _s = str(security).strip().upper()
+        _bare = _s.split('.', 1)[0]
+        _code = _bare + ('.SS' if _bare[:1] in ('5', '6', '9') else '.SZ')
+        _pos = get_position(_code)
+        return float(getattr(_pos, 'amount', 0) or 0)
+    except Exception:
+        return 0.0
+
+
+def _qs_noop_target(security, delta, reason):
+    """P-D12：no-op 返回（None 语义=未成交；平台无 Order 对象，log 显式告知）。"""
+    try:
+        log.warning('QS_NOOP_ORDER api=order_target_value code=%s delta=%.1f'
+                    ' reason=%s' % (security, float(delta or 0), reason))
+    except Exception:
+        pass
+    return None
 
 
 def order_target_value(security, value, *args, **kwargs):
-    _px = _qs_last_close_lookup(security)
-    orders, _tot = _qs_split_order(security, value, _px)
-    if not orders:
+    if value is None:
         return _QSOrderRefState.target_orig(security, value, *args, **kwargs)
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return _QSOrderRefState.target_orig(security, value, *args, **kwargs)
+    if value == 0:
+        return _QSOrderRefState.target_orig(security, 0, *args, **kwargs)
+    _px = _qs_last_close_lookup(security)
+    if _px <= 0:
+        return _QSOrderRefState.target_orig(security, value, *args, **kwargs)
+    _amt = _qs_pos_amount(security)
+    _current = _amt * _px
+    _delta = value - _current
+    if _current > 0 and abs(_delta) / _current < _QS_MIN_REBALANCE_PCT:
+        return _qs_noop_target(security, _delta, 'below_rebalance_threshold')
+    if _delta <= 0:
+        if _current > 0:
+            return _QSOrderRefState.target_orig(security, value, *args, **kwargs)
+        return _qs_noop_target(security, 0.0, 'already_flat')
+    orders, _tot = _qs_split_order(security, _delta, _px)
+    if not orders:
+        try:
+            log.warning('QS_ZERO_ORDER api=order_target_value code=%s delta=%.1f'
+                        ' px=%.4f one_lot_value=%.1f reason=delta_below_one_lot'
+                        % (security, _delta, _px, _px * 100))
+        except Exception:
+            pass
+        return _qs_noop_target(security, _delta, 'delta_below_one_lot')
     _ids = []
-    for _code, _amt in orders:
-        _ids.append(order(_code, _amt))
+    for _code, _amt2 in orders:
+        _ids.append(order(_code, _amt2))
     return _ids[-1] if _ids else None
 
 

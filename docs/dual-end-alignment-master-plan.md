@@ -154,7 +154,11 @@ Phase 3：WP-D + WP-F
 | C2 PIT 巡检 | ✅ | `scripts/c2_pit_inspect.py` + `docs/evidence/c2-pit-inspect-20260826.md`（L6 多剔主因=Q1 缺口+负年报回退，7/16 缺 Q1、3/16 负 eps；eps↔basic_eps 三方一致；仅平台 16 只=行情侧缺口） |
 | WP-A 设计 | ✅ v1.2（v1.1 实质审核+复核通过；v1.2=复核两必改并入+自查 CB 段，增量待审计确认） | `docs/pd11-position-view-normalization-design.md`（六步 Step 1；两条件维持；v1.2：SZ 补 "2"、BJ 精确表优先（920 前缀收紧）、CB 段 110/111/113/118↔123/127/128、后缀优先序、T11 差分防漂移闸） |
 | WP-A 实施 | ✅ Step 3-4 完成（2026-08-26） | `docs/evidence/pd11-implementation-acceptance-20260826.md`：2 tracked（source_import.py 注入模板+门控 BSE 烘焙；validate_local_strategy.py 本地 ClassDef 放行）；6 策略重转 api_portability 全 PASS；pd11 19 项 + compliance 94 项全绿；全量 2665/19 经 HEAD-worktree 归因无一源于本 WP |
-| WP-A 平台验收 | ✅ 审核通过（2026-08-26） | 证据落盘 §5.1~5.4：CANSLIM 止损 6/6 逐日对齐（basis 恢复）+ 周频止损机制恢复（0→12 笔平仓）+ 判据修正链完整（300930 本地 07-20）；复检落盘 §5.4：收益差 CANSLIM -9.61→-3.12pp、周频 -5.73→-4.16pp，残余 100% 已登记归因（C1/C2/D3/B3/F7）。**Step 5 用户确认待用户明示；Step 6 推送纪律：stash 回退点→独立 commit（3 tracked+新增测试/证据，逐文件精确 add，与他线 M 隔离）→双远程核对回报 SHA** |
+| WP-A 平台验收 | ✅ 审核通过（2026-08-26） | 证据落盘 §5.1~5.4：CANSLIM 止损 6/6 逐日对齐（basis 恢复）+ 周频止损机制恢复（0→12 笔平仓）+ 判据修正链完整（300930 本地 07-20）；复检落盘 §5.4：收益差 CANSLIM -9.61→-3.12pp、周频 -5.73→-4.16pp，残余 100% 已登记归因（C1/C2/D3/B3/F7）。Step 5 ✅ 用户确认（授权推送） |
+| WP-A 推送 | ✅ Step 6 完成（f0c0bd7，2026-08-26） | 独立 commit `f0c0bd7`（13 文件：3 tracked + 10 untracked 精确 add，零他线混入）；双远程核对一致（plus main == qs main == f0c0bd7）；回退点 `a0fb83f`。**WP-A 正式关闭** |
+| WP-B 设计 | ✅ Step 2 审计通过（2026-08-26，两处细化并入） | `docs/pd12-target-value-semantics-design.md`（B1+B2+B3：双端接线层 delta 修复同构方案；D1~D8 + T13 三面等价 + D5 fail-open 继承语义登记） |
+| WP-B 实施 | ✅ Step 3-4 完成（2026-08-27，审核通过） | `docs/evidence/pd12-implementation-acceptance-20260827.md`：B2+B1+B3 双端 delta 修复；本地四套件 132/132 + WP-A 回归 19/19；tech_etf 平台验收**通过**（金字塔双端消除/降仓 50% 生效/B3 上下文/收益差 -6.89→-1.37pp）；周频零影响确认（本地逐笔一致 + 代码等价分析）；D5 fail-open 继承语义已显式登记。回退点 `ae2594a`。**Step 5 用户确认待明示** |
+| P-POS-2 探针 | ✅ 脚本就绪（2026-08-26）→ 待平台执行（与 tech_etf 验收同场） | `ptrade/probe_portfolio_positions_ptrade.py`（容器键格式/字段/残影/membership/get_positions diff 五项目标；D1 股票+ETF 双标的 / D2 dump+交叉 / D3 清仓 / D4 残影四阶段） |
 
 ### 合规记录（2026-08-26）
 

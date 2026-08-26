@@ -2242,22 +2242,96 @@ get_positions = _api.get_positions
 get_position = _api.get_position
 order_at_price = _api.order_at_price
 order_target = _api.order_target
+order_target = _api.order_target
 # A1 本地拆单接线（2026-08-22，与转换侧注入模板同构）：订单 API 金额语义按统一链
 # ① 层 px 拆（>49,000 股拆多笔），使双端订单序列/费用逐笔一致。
 # 注：本地 PtradeAPI 无 order_target_percent/order_percent 方法（percent 类为平台语义，
 # 本地不支持 → 双端无分叉）；本地接线覆盖 order_target_value/order/order_value 三入口，
 # 与模板的 percent 回退原 API 语义自然一致。原 API 引用经 class 属性承载（与模板一致）。
+#
+# P-D12（2026-08-26，docs/pd12-target-value-semantics-design.md）：order_target_value
+# 恢复目标市值语义——delta = value − amount×T-1px；加仓对 delta 走拆单、减仓走原生
+# 命令、清仓保底、微调跳过（阈值=引擎 min_rebalance_pct 0.005，T10 防漂移）、
+# delta<1 手显式告警（B3）。根因=E-2（双端同构接线把 target 降级为全额买入，
+# 引擎原生 delta 本身正确——B2 复现对照组绿）。
 class _QSOrderWiringState:
     target_orig = None
     order_orig = None
     value_orig = None
 
 
+# P-D12：微调跳过阈值——与 backtest_engine.BacktestEngine(min_rebalance_pct=0.005)
+# 默认值一致（独立常量：转换模板自包含需要；T10 差分测试钉死防漂移）。
+_QS_MIN_REBALANCE_PCT = 0.005
+
+
+def _qs_current_value(security, px):
+    """P-D12 D1：接线层现值 = amount × 统一链 ① 层前收（T-1 px）。
+
+    不用 get_position().market_value——本地 _get_ptrade_positions(prices={}) 的
+    current_price 回退 avg_cost（成本价），会低估减仓 delta；T-1 px 与决策时钟
+    一致（PIT）且双端同源。异常视为空仓（D5：fail-open 继承现状语义——
+    现值不可得 → delta=全额买入，与修复前行为等价，非新增设计）。"""
+    try:
+        pos = _api.get_position(security)
+        amt = getattr(pos, 'amount', 0) or 0
+        if amt <= 0 or px <= 0:
+            return 0.0
+        return float(amt) * float(px)
+    except Exception:
+        return 0.0
+
+
+def _qs_warn_zero_order(api, security, value, px, reason):
+    """P-D12 B3：0 股委托显式告警（不吞单不静默；含代码/目标金额/参考价/1 手价值）。"""
+    try:
+        logger.warning(
+            "QS_ZERO_ORDER api=%s code=%s delta=%.1f px=%.4f one_lot_value=%.1f"
+            " reason=%s", api, security, float(value or 0), float(px or 0),
+            float(px or 0) * 100, reason)
+    except Exception:
+        pass
+
+
+def _qs_noop_target(security, delta, reason):
+    """P-D12：接线层 no-op Order（对齐引擎原生 below_rebalance_threshold 形态——
+    status='rejected'+reason，bool(filled)==False，策略可感知跳过）。"""
+    from .backtest_engine import Order
+    return Order(order_id="noop_%s" % security, security=security,
+                 direction="buy" if (delta or 0) > 0 else "sell",
+                 target=abs(delta or 0), status="rejected", reason=reason)
+
+
 def _qs_wire_order_target_value(security, value, *args, **kwargs):
-    px = _qs_last_close_lookup(security)
-    orders, _tot = _qs_split_order(security, value, px)
-    if not orders:
+    """P-D12：target 语义恢复（delta 修复）。
+
+    分支序：value=0 清仓保底 → px 缺失回退原生 → 现值/delta → 微调跳过（0.5%）
+    → 减仓走原生（D3：卖出无 49k 分板上限，引擎原生含涨跌停/停牌防护）
+    → 加仓对 delta 拆单（B1 同构）→ delta<1 手告警 no-op（B3）。"""
+    if value is None:
         return _QSOrderWiringState.target_orig(security, value, *args, **kwargs)
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return _QSOrderWiringState.target_orig(security, value, *args, **kwargs)
+    if value == 0:
+        return _QSOrderWiringState.target_orig(security, 0, *args, **kwargs)
+    px = _qs_last_close_lookup(security)
+    if px <= 0:
+        return _QSOrderWiringState.target_orig(security, value, *args, **kwargs)
+    current = _qs_current_value(security, px)
+    delta = value - current
+    if current > 0 and abs(delta) / current < _QS_MIN_REBALANCE_PCT:
+        return _qs_noop_target(security, delta, 'below_rebalance_threshold')
+    if delta <= 0:
+        if current > 0:
+            return _QSOrderWiringState.target_orig(security, value, *args, **kwargs)
+        return _qs_noop_target(security, 0.0, 'already_flat')
+    orders, _tot = _qs_split_order(security, delta, px)
+    if not orders:
+        _qs_warn_zero_order('order_target_value', security, delta, px,
+                            reason='delta_below_one_lot')
+        return _qs_noop_target(security, delta, 'delta_below_one_lot')
     ids = []
     for code, amt in orders:
         ids.append(_qs_wire_order(code, amt))
