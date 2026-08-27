@@ -2350,6 +2350,13 @@ def _qs_wire_order_target_value(security, value, *args, **kwargs):
         return _QSOrderWiringState.target_orig(security, value, *args, **kwargs)
     if value == 0:
         return _QSOrderWiringState.target_orig(security, 0, *args, **kwargs)
+    # D4-S6（拆分换算价修复，2026-08-27，docs/bbrev-pd12-split-px-design.md v3）：
+    # 换算价用 ② 层原语义（_QSPriceState.orig = _api.current_price，close 模式=当日收盘），
+    # 与引擎成交基准一致，消除长假缺口价差（超支/拒单）。delta 保持 ① 层
+    # （目标市值语义，_qs_current_value PIT 理由在案）——新仓 amount=0 → delta=value。
+    px_exec = _QSPriceState.orig(security)
+    if px_exec <= 0:
+        return _QSOrderWiringState.target_orig(security, value, *args, **kwargs)
     px = _qs_last_close_lookup(security)
     if px <= 0:
         return _QSOrderWiringState.target_orig(security, value, *args, **kwargs)
@@ -2361,9 +2368,12 @@ def _qs_wire_order_target_value(security, value, *args, **kwargs):
         if current > 0:
             return _QSOrderWiringState.target_orig(security, value, *args, **kwargs)
         return _qs_noop_target(security, 0.0, 'already_flat')
-    orders, _tot = _qs_split_order(security, delta, px)
+    cash_avail = getattr(getattr(_api, '_engine', None), 'account', None)
+    orders, _tot = _qs_split_order(
+        security, delta, px_exec,
+        cash_avail=(float(cash_avail.cash) if cash_avail is not None else None))
     if not orders:
-        _qs_warn_zero_order('order_target_value', security, delta, px,
+        _qs_warn_zero_order('order_target_value', security, delta, px_exec,
                             reason='delta_below_one_lot')
         return _qs_noop_target(security, delta, 'delta_below_one_lot')
     ids = []
@@ -2393,8 +2403,14 @@ def _qs_wire_order(security, amount, *args, **kwargs):
 
 
 def _qs_wire_order_value(security, value, *args, **kwargs):
-    px = _qs_last_close_lookup(security)
-    orders, _tot = _qs_split_order(security, value, px)
+    """order_value 拆单包装：金额语义 → ② 层换算价（D4-S6 修复，与 order_target_value 同链路）。"""
+    px_exec = _QSPriceState.orig(security)
+    if px_exec <= 0:
+        return _QSOrderWiringState.value_orig(security, value, *args, **kwargs)
+    cash_avail = getattr(getattr(_api, '_engine', None), 'account', None)
+    orders, _tot = _qs_split_order(
+        security, value, px_exec,
+        cash_avail=(float(cash_avail.cash) if cash_avail is not None else None))
     if not orders:
         return _QSOrderWiringState.value_orig(security, value, *args, **kwargs)
     ids = []
@@ -2583,7 +2599,10 @@ is_trade = lambda: False  # 回测模式返回 False（Ptrade 语义）
 # 超限 = 整单取消。拆单把 >49,000 股目标拆多笔，全板规避上限。
 _QS_MAX_ORDER_SHARES = 49000      # 单笔安全上限（低于创业板/科创板 50,000；主板远高）
 _QS_SPLIT_LOT = 100               # A股整手
-_QS_SPLIT_PX_BUFFER = 0.95        # 整手可负担预筛缓冲
+# D4-S6 修复后（2026-08-27）：换算价=②层当日撮合价，价差已消除 → buffer=1.0 不再降档
+# （审计 R1 裁定：0.95 会在多笔拆单引入 5% 系统性低配，超出修复范围；可负担性由引擎
+#  _execute_buy 既有单手回退兜底）。保留参数位置/命名以维持双端模板同构。
+_QS_SPLIT_PX_BUFFER = 1.0        # 整手可负担预筛缓冲（价差归零后仅兜多笔竞对边角）
 
 # 框架级最近收盘缓存（统一链 ① 层，A2 由 get_history 链记录）
 # 格式 {bare_code: (day, close)}；stamp = 最近记录交易日（PIT：每日失效，不复用陈旧前收）

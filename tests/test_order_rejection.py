@@ -94,7 +94,9 @@ def test_immediate_execute_buy_success_returns_filled_order():
                                       prices=prices, date="2026-01-05", curr_data=curr_data)
     assert order.status == "filled"
     assert order.filled_amount > 0
-    assert order.price > 10.0  # 含买入滑点 (10 * 1.001)
+    # 引擎默认滑点=0（PTrade 实证对齐：DEFAULT_TRADE_COST.slippage_rate=0.0）；
+    # 旧断言 price>10.0 期望 1.001 滑点是历史测试滞后（2026-08-27 与新铁律一并修正）
+    assert order.price == 10.0
     assert order.direction == "buy"
 
 

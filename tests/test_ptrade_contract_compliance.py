@@ -697,7 +697,7 @@ def test_split_cash_avail_preallocation():
     orders, tot = ns["_qs_split_order"]("300029.SZ", 20000.0, px=0.15, cash_avail=15000.0)
     assert orders, "应按预算拆分"
     total_cost = sum(a * 0.15 for _, a in orders)
-    assert total_cost <= 15000.0 * 0.95  # 合计勾稽
+    assert total_cost <= 15000.0  # 合计勾稽（D4-S6 后 buffer=1.0：预算内尽量成交，无 5% 低配）
     assert all(a <= 49000 for _, a in orders)
 
 
@@ -706,10 +706,10 @@ def test_split_cash_insufficient_first_seg_only():
     ns = _order_split_ns()
     orders, tot = ns["_qs_split_order"]("300029.SZ", 20000.0, px=0.15, cash_avail=4900.0)
     # 预算 4900/3=1633.33 → 段股数 int(1633.33/0.15/100)*100 = 10800 股
-    # 合计 10800×0.15=1620 ≤ 4900×0.95 → 第一段可接；但总额 1620*3=4860 ≤ 4655?
-    # 实际逐段累加检查 4655 上限 → 可能只接 2 段
+    # 合计 10800×0.15=1620 ≤ 4900×1.0 → 第一段可接；但总额 1620*3=4860 ≤ 4900?
+    # 实际逐段累加检查 4900 上限 → 可能只接 2 段
     assert orders
-    assert sum(a * 0.15 for _, a in orders) <= 4900.0 * 0.95
+    assert sum(a * 0.15 for _, a in orders) <= 4900.0
     assert tot == sum(a for _, a in orders)
 
 
@@ -734,20 +734,23 @@ def test_split_wrapper_target_value_calls_split_order():
         captured["order"].append((security, amount))
         return "oid"
 
+    px_state = {"v": 0.0}
     ns = {"order_target_value": _fake_target, "order": _fake_order,
           "get_history": lambda *a, **kw: None,
-          "current_price": lambda *a, **kw: 0.0,
+          "current_price": lambda *a, **kw: px_state["v"],
           "order_value": lambda *a, **kw: None,
           "order_percent": lambda *a, **kw: None,
           "order_target_percent": lambda *a, **kw: None}
     exec(si._QS_ORDER_SPLIT_EXT.format(marker="# m"), ns)
-    # ① 层命中（注入 _QSLastCloseState.cache，bare 键 + tuple 值）→ 拆单走 order()
+    # D4-S6：换算价走 current_price（② 层语义：当日撮合价）→ 命中 → 拆单走 order()
+    px_state["v"] = 0.15
     ns["_QSLastCloseState"].cache = {"300029": ("2026-07-01", 0.15)}
     ns["order_target_value"]("300029.SZ", 20000.0)
     assert captured["order"], "应拆单走 order()"
     assert all(a <= 49000 for _, a in captured["order"])
     assert captured["target_value"] == []
-    # ① 层缺失（cache 无该码）→ px=0 → 原路径
+    # ② 层缺失（current_price=0）→ px=0 → 原路径
+    px_state["v"] = 0.0
     ns["order_target_value"]("600519.SS", 20000.0)
     assert captured["target_value"], "px=0 应回退原 order_target_value"
 
@@ -808,7 +811,8 @@ def test_split_thresholds_constant_alignment():
     assert si._QS_ORDER_SPLIT_EXT.count("49000") >= 1
     assert pa._QS_MAX_ORDER_SHARES == 49000
     assert pa._QS_SPLIT_LOT == 100
-    assert pa._QS_SPLIT_PX_BUFFER == 0.95
+    assert pa._QS_SPLIT_PX_BUFFER == 1.0   # D4-S6 审计 R1 裁定 0.95→1.0（换算价归零价差）
+    assert si._QS_ORDER_SPLIT_EXT.count("_QS_SPLIT_PX_BUFFER = 1.0") >= 1  # 双端同构
 
 
 # ---------------------------------------------------------------------------
@@ -1011,6 +1015,9 @@ def test_wire_local_matches_template_order_target_value(monkeypatch):
                         lambda sec, amt, *a, **kw: captured.append((sec, amt)))
     monkeypatch.setattr(pa._QSLastCloseState, "cache",
                         {"300029": ("2026-07-01", 0.15)})
+    # D4-S6：换算价走 ② 层原语义（current_price）；无引擎环境 stub 当日价 0.15
+    monkeypatch.setattr(pa._QSPriceState, "orig",
+                        lambda sec: 0.15)
     try:
         pa._qs_wire_order_target_value("300029.SZ", 20000.0)
     finally:
@@ -1053,6 +1060,9 @@ def test_wire_local_order_value_semantics(monkeypatch):
                         lambda sec, amt, *a, **kw: captured.append(amt))
     monkeypatch.setattr(pa._QSLastCloseState, "cache",
                         {"000001": ("2026-07-01", 0.15)})
+    # D4-S6：换算价走 ② 层原语义；无引擎环境 stub 当日价 0.15
+    monkeypatch.setattr(pa._QSPriceState, "orig",
+                        lambda sec: 0.15)
     captured.clear()
     pa._qs_wire_order_value("000001.SZ", 20000.0)
     assert len(captured) == 3
@@ -1060,13 +1070,14 @@ def test_wire_local_order_value_semantics(monkeypatch):
 
 
 def test_wire_local_px_missing_fallback_original(monkeypatch):
-    """① 层 px 缺失（无缓存）→ 回退原 API（与模板 px=0 回退语义一致）。"""
+    """② 层 px（current_price）缺失 → 回退原 API（与模板 px=0 回退语义一致）。"""
     import quantstudio.backtest.ptrade_api as pa
 
     orig_calls = []
     monkeypatch.setattr(pa._QSOrderWiringState, "target_orig",
                         lambda sec, val, *a, **kw: orig_calls.append((sec, val)))
     monkeypatch.setattr(pa._QSLastCloseState, "cache", {})
+    monkeypatch.setattr(pa._QSPriceState, "orig", lambda sec: 0.0)   # ② 层缺失
     pa._qs_wire_order_target_value("600519.SS", 20000.0)
     assert orig_calls == [("600519.SS", 20000.0)]
 
@@ -1143,7 +1154,7 @@ def test_wire_local_vs_template_homology(monkeypatch):
               "order_percent": lambda *a, **kw: None,
               "order_target_percent": lambda *a, **kw: None,
               "get_history": lambda *a, **kw: None,
-              "current_price": lambda *a, **kw: 0.0}
+              "current_price": lambda *a, **kw: 0.15}   # D4-S6：② 层换算价（当日撮合价）
         exec(si._PTRADE_HELPERS.format(marker="# m"), ns)
         exec(si._QS_HISTORY_WRAPPER.format(marker="# m"), ns)
         exec(si._QS_ORDER_SPLIT_EXT.format(marker="# m"), ns)
@@ -1156,6 +1167,8 @@ def test_wire_local_vs_template_homology(monkeypatch):
         monkeypatch.setattr(pa._QSOrderWiringState, "order_orig",
                             lambda sec, amt, *a, **kw: captured.append((sec, amt)))
         monkeypatch.setattr(pa._QSLastCloseState, "cache", px_cache)
+        # D4-S6：本地 ② 层换算价与模板 current_price 同值（当日撮合价）
+        monkeypatch.setattr(pa._QSPriceState, "orig", lambda sec: 0.15)
         pa._qs_wire_order_target_value("300029.SZ", 20000.0)
         return captured
 

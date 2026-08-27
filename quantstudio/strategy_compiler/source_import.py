@@ -366,7 +366,8 @@ _QS_ORDER_SPLIT_EXT = '''
 # 与本地 ptrade_api._qs_split_order 同构（同常量同算法）→ 双端订单序列逐笔一致。
 _QS_MAX_ORDER_SHARES = 49000      # 单笔安全上限（低于创业板/科创板 50,000；主板远高）
 _QS_SPLIT_LOT = 100               # A股整手
-_QS_SPLIT_PX_BUFFER = 0.95        # 整手可负担预筛缓冲（执行价上浮 5% 仍可建仓）
+_QS_SPLIT_PX_BUFFER = 1.0        # 整手可负担预筛缓冲（D4-S6 换算价=当日撮合价后价差归零，
+                                 #  审计 R1 裁定 0.95→1.0：消除多笔拆单 5% 系统性低配；仅兜竞对边角）
 
 
 class _QSOrderRefState:
@@ -480,7 +481,15 @@ def order_target_value(security, value, *args, **kwargs):
                         '（继续下单——平台数据矛盾检测，不吞单）' % security)
     except Exception:
         pass
-    _px = _qs_last_close_lookup(security)
+    # D4-S6（2026-08-27，与本地 ptrade_api 同链修复）：换算价改当日撮合价语义。
+    # 平台无 current_price（NameError 实证，见本模板 current_price 注释）→ 统一链
+    # current_price(security) = ① 前收 → ③ get_history(count=1) 当日 close 兜底；
+    # 平台 get_history(count=1) 在 before_trading_start 已返回 T 日 close（P-D9 实证）→
+    # px_exec=当日 close，与本地 ② 层（_api.current_price 原语义）两端等价。
+    _px_exec = current_price(security)     # 换算价（当日撮合价语义）
+    if _px_exec <= 0:
+        return _QSOrderRefState.target_orig(security, value, *args, **kwargs)
+    _px = _qs_last_close_lookup(security)  # ① 层：仅用于现值/delta（P-D12 目标市值语义）
     if _px <= 0:
         return _QSOrderRefState.target_orig(security, value, *args, **kwargs)
     _amt = _qs_pos_amount(security)
@@ -492,12 +501,12 @@ def order_target_value(security, value, *args, **kwargs):
         if _current > 0:
             return _QSOrderRefState.target_orig(security, value, *args, **kwargs)
         return _qs_noop_target(security, 0.0, 'already_flat')
-    orders, _tot = _qs_split_order(security, _delta, _px)
+    orders, _tot = _qs_split_order(security, _delta, _px_exec)
     if not orders:
         try:
             log.warning('QS_ZERO_ORDER api=order_target_value code=%s delta=%.1f'
                         ' px=%.4f one_lot_value=%.1f reason=delta_below_one_lot'
-                        % (security, _delta, _px, _px * 100))
+                        % (security, _delta, _px_exec, _px_exec * 100))
         except Exception:
             pass
         return _qs_noop_target(security, _delta, 'delta_below_one_lot')
@@ -528,9 +537,11 @@ def order(security, amount, *args, **kwargs):
 
 
 def order_value(security, value, *args, **kwargs):
-    """order_value 拆单包装：金额语义 → 统一链 ① 层 px 拆（与 order_target_value 同链路）。"""
-    _px = _qs_last_close_lookup(security)
-    orders, _tot = _qs_split_order(security, value, _px)
+    """order_value 拆单包装：金额语义 → ② 层换算价（D4-S6 修复，与 order_target_value 同链路）。"""
+    _px_exec = current_price(security)     # 当日撮合价语义（统一链 ①→③ 兜底）
+    if _px_exec <= 0:
+        return _QSOrderRefState.value_orig(security, value, *args, **kwargs)
+    orders, _tot = _qs_split_order(security, value, _px_exec)
     if not orders:
         return _QSOrderRefState.value_orig(security, value, *args, **kwargs)
     _ids = []
