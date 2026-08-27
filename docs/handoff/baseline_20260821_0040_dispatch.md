@@ -653,3 +653,9 @@
 # 【序6完成：临时件清理】
 - 73件临时调试/探针/输出件归档/tmp/cleanup_archive_20260827（非删除，可找回）；gitignore补模式（根级_、scripts _dbg/_probe_tmp/_git/_qdb_out）防复发，commit ae76a12推送。
 - untracked 292→218（剩余=证据/文档/工具/探针正式件，待序5归档commit处理）。
+
+# 【序5'完成：全周期证据归档入库（75ddffd）】
+- 140文件+42,422行：证据24/设计16/handoff18/scripts51/tests12/ptrade探针15/config3/worktable1。
+- untracked 218→80（剩余=output产物/缓存/agent_workspace/快照数据类,按设计不入git）。
+- 清账累计推送:1fb7607(3A)/af79b64(fidelity)/828b58c(MCP-v2)/d41c0ed(引擎)/6fb67c2(配套)/7166480(qfq_invariant)/ae76a12(gitignore)/75ddffd(归档)=8笔。
+- M簇38→2(source_import D4-S7待申报/SKILL mermaid小hunk)。
