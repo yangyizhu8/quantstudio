@@ -198,15 +198,22 @@ _QS_COL_TO_LOCAL = {{
 }}
 
 def _qs_to_dataframe(item):
-    """structured array → DataFrame；已是 DataFrame/其他类型则原样返回。"""
+    """structured array / DataFrame → 本地列名（money→amount、preclose→preClose 等）。
+    D4-S7（2026-08-27 平台实证）：get_history 可能直接返回带日期 index 的 DataFrame，
+    DataFrame 分支同样必须做列名映射，否则策略 _extract_history_field 取列得到空数组。
+    """
+    _df = None
     if isinstance(item, _qs_np.ndarray) and hasattr(item, 'dtype') and hasattr(item.dtype, 'names'):
-        df = _qs_pd.DataFrame(item)
+        _df = _qs_pd.DataFrame(item)
+    elif isinstance(item, _qs_pd.DataFrame):
+        _df = item
+    if _df is not None:
         # 列名统一映射：PTrade → 本地（datetime→time / money→amount / preclose→preClose）
         _rename = {{k: v for k, v in _QS_COL_TO_LOCAL.items()
-                    if k in df.columns and v not in df.columns}}
+                    if k in _df.columns and v not in _df.columns}}
         if _rename:
-            df = df.rename(columns=_rename)
-        return df
+            _df = _df.rename(columns=_rename)
+        return _df
     return item
 
 # 保存原始 get_history 引用：类属性承载（属性调用不被静态 API 白名单拦截，
@@ -243,14 +250,23 @@ def get_history(*args, **kwargs):
 # （请求侧剔除合成字段 trade_date、is_dict=True 走逐码路径——契约无关，R1）。
 _QS_HISTORY_TRADE_DATE_EXT = '''
 {marker}
-# [qs-import-generated] trade_date 合成 + is_dict 逐码（source_import 门控扩展，2026-08-19）
+# [qs-import-generated] trade_date / pctChg 合成 + is_dict 逐码（source_import 门控扩展，2026-08-19/27）
 # trade_date 是本地 provider 合成伪列（object 类型 'YYYY-MM-DD' 字符串）；PTrade 无此字段，
-# 由返回体的 datetime/time 派生。请求侧剔除该合成字段（只传真实字段），返回侧补齐。
-_QS_SYNTHETIC_FIELDS = {{'trade_date'}}
+# 由返回体的 datetime/time 派生。请求侧剔除合成字段（只传真实字段），返回侧补齐。
+# pctChg（涨跌幅百分比）D4-S7 增补（2026-08-27 平台实证：PTrade get_history 合法字段无 pctChg，
+# 由 close/preClose 合成 (close/preClose−1)×100）。
+_QS_SYNTHETIC_FIELDS = {{'trade_date', 'pctChg'}}
+# 合成意图状态（get_history 设置，_qs_to_dataframe 消费；None=全合成，集合=仅请求字段）
+_QS_REQUESTED_SYNTH = None
 
 
-def _qs_synthesize_trade_date(df):
+def _qs_synthesize_trade_date(df, requested=True):
+    """trade_date 合成（透传优先/合成兜底，D4-S7 M3 裁定）：
+    requested 仅作延伸语义标记：默认 True（调用方需要则合成）；
+    返回体已有 trade_date（本地形态透传）则原样保留（任何 requested 下均优先生成）。"""
     if 'trade_date' in df.columns:
+        return df
+    if not requested:
         return df
     src = None
     for _col in ('time', 'datetime'):
@@ -283,25 +299,57 @@ def _qs_synthesize_trade_date(df):
     return df
 
 
+def _qs_synthesize_pct_chg(df, requested=True):
+    """pctChg 合成（D4-S7，2026-08-27 平台实证：PTrade get_history 合法字段无 pctChg）：
+    默认合成（调用方需要 pctChg 时）；仅当 close/preClose 两基列可用时合成 (close/preClose−1)×100。
+    fail-soft：异常/缺基列 → 保留空（策略侧按数据不足跳过）。即返回已有 pctChg 则透传保留。"""
+    if 'pctChg' in df.columns:
+        return df
+    if not requested:
+        return df
+    if 'close' in df.columns and 'preClose' in df.columns:
+        try:
+            _prec = df['preClose'].astype(float)
+            _ok = _prec > 0
+            _pct = _qs_pd.Series(_qs_np.nan, index=df.index)
+            _pct[_ok] = (df.loc[_ok, 'close'].astype(float) / _prec[_ok] - 1.0) * 100.0
+            df['pctChg'] = _pct
+        except Exception:
+            pass
+    return df
+
+
 def _qs_to_dataframe(item):
+    """ndarray / DataFrame 双形态统一：列名映射 + trade_date/pctChg 合成（D4-S7 #1/#3/#4）。
+    合成意图由模块状态 _QS_REQUESTED_SYNTH（get_history 设置）决定；单参签名保持模板契约。"""
+    _df = None
     if isinstance(item, _qs_np.ndarray) and hasattr(item, 'dtype') and hasattr(item.dtype, 'names'):
-        df = _qs_pd.DataFrame(item)
+        _df = _qs_pd.DataFrame(item)
+    elif isinstance(item, _qs_pd.DataFrame):
+        _df = item
+    if _df is not None:
+        # 列名统一映射：PTrade → 本地（datetime→time / money→amount / preclose→preClose）
         _rename = {{k: v for k, v in _QS_COL_TO_LOCAL.items()
-                    if k in df.columns and v not in df.columns}}
+                    if k in _df.columns and v not in _df.columns}}
         if _rename:
-            df = df.rename(columns=_rename)
-        # R3：先改名（datetime→time），再合成 trade_date
-        return _qs_synthesize_trade_date(df)
-    if isinstance(item, _qs_pd.DataFrame):
-        return _qs_synthesize_trade_date(item)
+            _df = _df.rename(columns=_rename)
+        # 合成（透传优先：返回已有列则保留；requested 空集=全不合成、None=全合成、集合=仅请求字段）
+        _req = _QS_REQUESTED_SYNTH
+        _want_td = _req is None or ('trade_date' in _req)
+        _want_pct = _req is None or ('pctChg' in _req)
+        _df = _qs_synthesize_trade_date(_df, requested=_want_td)
+        return _qs_synthesize_pct_chg(_df, requested=_want_pct)
     return item
 
 
 def get_history(*args, **kwargs):
+    global _QS_REQUESTED_SYNTH
     _field = kwargs.get('field') or kwargs.get('fields')
+    _requested = []
     if _field:
         _is_list = isinstance(_field, list)
         _items = _field if _is_list else [_field]
+        _requested = list(_items)                       # 原始请求字段（含合成字段，供返回侧合成判断）
         _mapped = [_QS_FIELD_TO_PTRADE.get(f, f) for f in _items
                    if f not in _QS_SYNTHETIC_FIELDS]
         if not _mapped:
@@ -310,10 +358,26 @@ def get_history(*args, **kwargs):
             kwargs['field'] = _mapped if _is_list else _mapped[0]
         if 'fields' in kwargs:
             kwargs['fields'] = _mapped if _is_list else _mapped[0]
+    # 合成意图：trade_date 恒合成（本地引擎返回体常含 trade_date，策略可能取未请求的该列——
+    # 原生语义依赖；平台无该列则从索引合成）；pctChg 仅当请求含它时合成（需 close/preClose 基列）。
+    _want_td = True
+    _want_pct = 'pctChg' in _requested
+    _QS_REQUESTED_SYNTH = set()
+    if _want_td:
+        _QS_REQUESTED_SYNTH.add('trade_date')
+    if _want_pct:
+        _QS_REQUESTED_SYNTH.add('pctChg')
+    if not _QS_REQUESTED_SYNTH:
+        _QS_REQUESTED_SYNTH = None
     _is_dict = bool(kwargs.pop('is_dict', False))
     _secs = kwargs.pop('security_list', None)
     if _secs is None:
         _secs = kwargs.pop('security', None)
+    # D4-S7 #6（2026-08-27 本地引擎实证）：security_list 可能是裸字符串（如 '000852.SS'）
+    # 而非 list——逐码路径按可迭代拆分会把字符串逐字符拆（'0','8','5','2','.','S'）。
+    # 统一归一为单元素 list（本地/平台契约均按证券列表处理）。
+    if isinstance(_secs, str):
+        _secs = [_secs]
     if _is_dict and _secs:
         # R1：契约无关——不依赖多标的返回形态，逐码调用（单证券返回风险最小）拼成 dict（code -> df）
         result = {{}}
@@ -383,8 +447,16 @@ class _QSOrderRefState:
 _QSOrderRefState.target_orig = order_target_value
 _QSOrderRefState.order_orig = order
 _QSOrderRefState.value_orig = order_value
-_QSOrderRefState.target_percent_orig = order_target_percent
-_QSOrderRefState.percent_orig = order_percent
+# D4-S7（2026-08-27 平台冒烟取证）：percent API 按策略使用裁剪注入——未注入时
+# 赋值引用不存在的名字（NameError，产物加载即崩）。防御式绑定（存在才绑，否则 None）。
+try:
+    _QSOrderRefState.target_percent_orig = order_target_percent
+except NameError:
+    _QSOrderRefState.target_percent_orig = None
+try:
+    _QSOrderRefState.percent_orig = order_percent
+except NameError:
+    _QSOrderRefState.percent_orig = None
 
 
 def _qs_split_order(security, value, px, cash_avail=None):
@@ -399,7 +471,11 @@ def _qs_split_order(security, value, px, cash_avail=None):
         return [], 0
     n = value / px
     if n <= _QS_MAX_ORDER_SHARES:
-        # 不超限：保持单笔（含整手取整，语义与不注入版一致）
+        # D4-S7 #9（2026-08-28，与本地 ptrade_api._qs_split_order 同构修复）：
+        # 单笔分支同样应用 cash_avail 钳制（此前只在拆单分支生效）。budget=min(cash,value) 无折扣。
+        _budget = min(cash_avail, value) if cash_avail is not None else value
+        if _budget < value:
+            n = _budget / px
         amount = int(n / _QS_SPLIT_LOT) * _QS_SPLIT_LOT
         return ([(security, amount)], amount) if amount > 0 else ([], 0)
     k = int((n + _QS_MAX_ORDER_SHARES - 1) // _QS_MAX_ORDER_SHARES)  # ceil
@@ -463,6 +539,102 @@ def _qs_noop_target(security, delta, reason):
     return None
 
 
+# cash_avail 一次性告警状态（D4-S7 M2 fail-open：取数不可得只告警一次，钳制不生效）
+# 注：本模板字符串经 .format 渲染，字面量花括号须双写转义。
+_QS_CASH_WARNED_STATE = {{'v': False}}
+# D4-S7 #5 接线（ZCode 方案 A，2026-08-27）：handle_data 入口经 _qs_capture_ctx 捕获 context，
+# 平台探针实证 context.portfolio.cash=100000 可用（与本地 engine.account.cash 同源）。None=未捕获
+# （不注入/注入失败）→ fail-open 兜底路径，行为与 B 方案等同。
+_QS_RUNTIME_CTX = None
+
+
+def _qs_capture_ctx(context):
+    """D4-S7 #5：handle_data 入口捕获 context（转换管线注入一行）。"""
+    global _QS_RUNTIME_CTX
+    _QS_RUNTIME_CTX = context
+
+
+def _qs_px_exec(security):
+    """D4-S7 #8（2026-08-27 ZCode 裁定）：订单换算价 = 当日撮合价优先（与本地 D4-S6 ②层镜像）。
+
+    当日取法双端差异（2026-08-27 实证）：
+    - 本地引擎 get_history(count=1, include=False) = T-1 前收；include=True = 当日收盘（6.57 实证）；
+    - 平台 get_history(count=1) 在 before_trading_start 已返回 T 日 close（P-D9 L872-875 实证，include 语义不同）。
+    故优先 include=True（当日），平台不支持时回退 include=False（平台下仍=当日），再退 ① 层前收，
+    ≤0 返回 0（调用方 fail-open 原生）。current_price 函数本体零改动。
+    """
+    for _inc in (True, False):
+        try:
+            _df = get_history(count=1, frequency="1d", field=["close"],
+                              security_list=security, fq="pre", include=_inc)
+            if _df is not None and hasattr(_df, "iloc") and len(_df) > 0:
+                _c = float(_df.iloc[-1].get("close", 0) or 0)
+                if _c > 0:
+                    return _c
+        except Exception:
+            pass
+    _v = _qs_last_close_lookup(security)
+    if _v and _v > 0:
+        return _v
+    return 0.0
+
+
+def _qs_cash_avail():
+    """D4-S7 #5：平台可用资金取数（fail-open）。
+    优先：_QS_RUNTIME_CTX.portfolio.cash（平台探针实证可用，2026-08-27）；
+    次选：平台 API get_positions()/get_position() 四字段探测（available_cash/available/cash/avail_cash）；
+    全不可得 → 返回 None（钳制不生效，保持平台现状全额下单）+ 一次性告警 QS_CASH_AVAIL_UNAVAILABLE。
+    禁止：取不到禁下单 / 静默逐笔告警 / 引用未登记平台 API（portability BLOCK）。"""
+    # 路径 1：注入的 context.portfolio.cash（平台实证）
+    try:
+        _ctx = _QS_RUNTIME_CTX
+        if _ctx is not None:
+            _cash = float(getattr(getattr(_ctx, 'portfolio', None), 'cash', 0) or 0)
+            if _cash > 0:
+                return _cash
+    except Exception:
+        pass
+    # 路径 2：平台 API 探测（兜底）
+    _obj = None
+    try:
+        _obj = get_positions()
+    except Exception:
+        pass
+    if _obj is None:
+        try:
+            _obj = get_position()          # 部分平台实现 get_position() 无参返回全部持仓
+        except Exception:
+            pass
+    if _obj is not None:
+        for _field in ('available_cash', 'available', 'cash', 'avail_cash'):
+            try:
+                _cash = float(getattr(_obj, _field, 0) or 0)
+                if _cash > 0:
+                    return _cash
+            except Exception:
+                continue
+        try:
+            # 兜底：list/iterable 形态（逐仓位对象找现金字段）
+            for _it in _obj:
+                for _field in ('available_cash', 'available', 'cash', 'avail_cash'):
+                    try:
+                        _cash = float(getattr(_it, _field, 0) or 0)
+                        if _cash > 0:
+                            return _cash
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+    if not _QS_CASH_WARNED_STATE['v']:
+        _QS_CASH_WARNED_STATE['v'] = True
+        try:
+            log.warning('QS_CASH_AVAIL_UNAVAILABLE api=order cash_avail=unavailable'
+                        '（钳制不生效，维持平台全额下单语义——仅告警一次）')
+        except Exception:
+            pass
+    return None
+
+
 def order_target_value(security, value, *args, **kwargs):
     if value is None:
         return _QSOrderRefState.target_orig(security, value, *args, **kwargs)
@@ -481,12 +653,11 @@ def order_target_value(security, value, *args, **kwargs):
                         '（继续下单——平台数据矛盾检测，不吞单）' % security)
     except Exception:
         pass
-    # D4-S6（2026-08-27，与本地 ptrade_api 同链修复）：换算价改当日撮合价语义。
-    # 平台无 current_price（NameError 实证，见本模板 current_price 注释）→ 统一链
-    # current_price(security) = ① 前收 → ③ get_history(count=1) 当日 close 兜底；
-    # 平台 get_history(count=1) 在 before_trading_start 已返回 T 日 close（P-D9 实证）→
-    # px_exec=当日 close，与本地 ② 层（_api.current_price 原语义）两端等价。
-    _px_exec = current_price(security)     # 换算价（当日撮合价语义）
+    # D4-S6（2026-08-27）+ D4-S7 #8（2026-08-27）：换算价 = 当日撮合价语义。
+    # 平台无 current_price（NameError 实证，见本模板 current_price 注释）→ 订单换算点
+    # 用 _qs_px_exec（当日 close 优先——平台 get_history(count=1) 已返 T 日 close，P-D9 实证；
+    #  ① 前收回退；≤0 fail-open 原生），与本地 D4-S6 ② 层（_api.current_price 原语义）镜像。
+    _px_exec = _qs_px_exec(security)     # 当日撮合价（D4-S7 #8：不再①优先）
     if _px_exec <= 0:
         return _QSOrderRefState.target_orig(security, value, *args, **kwargs)
     _px = _qs_last_close_lookup(security)  # ① 层：仅用于现值/delta（P-D12 目标市值语义）
@@ -501,7 +672,11 @@ def order_target_value(security, value, *args, **kwargs):
         if _current > 0:
             return _QSOrderRefState.target_orig(security, value, *args, **kwargs)
         return _qs_noop_target(security, 0.0, 'already_flat')
-    orders, _tot = _qs_split_order(security, _delta, _px_exec)
+    # D4-S7 #5（2026-08-27 ZCode 定谳）：平台可透支 vs 本地现金硬约束 → 模板侧可负担钳制。
+    # 系数 1.0（M1：与本地 D4-S6 buffer=1.0 同构，budget=min(cash_avail, value) 无折扣）；
+    # fail-open（M2）：cash_avail 取数不可得 → None → 钳制不生效（平台现状全额下单）+ 一次性告警。
+    _cash = _qs_cash_avail()
+    orders, _tot = _qs_split_order(security, _delta, _px_exec, cash_avail=_cash)
     if not orders:
         try:
             log.warning('QS_ZERO_ORDER api=order_target_value code=%s delta=%.1f'
@@ -537,11 +712,13 @@ def order(security, amount, *args, **kwargs):
 
 
 def order_value(security, value, *args, **kwargs):
-    """order_value 拆单包装：金额语义 → ② 层换算价（D4-S6 修复，与 order_target_value 同链路）。"""
-    _px_exec = current_price(security)     # 当日撮合价语义（统一链 ①→③ 兜底）
+    """order_value 拆单包装：金额语义 → ② 层换算价（D4-S6/D4-S7 #8 修复，与 order_target_value 同链路）。"""
+    _px_exec = _qs_px_exec(security)     # 当日撮合价（D4-S7 #8：不再①优先）
     if _px_exec <= 0:
         return _QSOrderRefState.value_orig(security, value, *args, **kwargs)
-    orders, _tot = _qs_split_order(security, value, _px_exec)
+    # D4-S7 #5：现金钳制（与 order_target_value 同链，M1 系数 1.0 / M2 fail-open）
+    _cash = _qs_cash_avail()
+    orders, _tot = _qs_split_order(security, value, _px_exec, cash_avail=_cash)
     if not orders:
         return _QSOrderRefState.value_orig(security, value, *args, **kwargs)
     _ids = []
@@ -2491,8 +2668,10 @@ class SourceConverter:
             blocks.append(_QS_HISTORY_TRADE_DATE_EXT.format(marker=INJECTED_MARKER))
             self.coverage["injected_helpers"].append("trade_date_synth")
         # 市价单拆单门控扩展（A1）：仅当源策略调用订单 API 时注入（无订单 = 逐字节不变）
+        _order_ext_injected = False
         if _source_uses_order_api(code):
             blocks.append(_QS_ORDER_SPLIT_EXT.format(marker=INJECTED_MARKER))
+            _order_ext_injected = True
             self.coverage["injected_helpers"].extend(
                 ["order_split", "_qs_split_order", "order_target_value_wrapper"])
         # 日期归一化门控扩展（A3）：仅当源策略调用 get_trade_days/get_stock_info 时注入
@@ -2563,7 +2742,43 @@ class SourceConverter:
         if not blocks:
             return code
         injected = "\n".join(blocks) + "\n\n"
-        return self._insert_before_first_def(code, injected)
+        out = self._insert_before_first_def(code, injected)
+        # D4-S7 #5 接线（ZCode 方案 A，2026-08-27）：订单扩展注入时，在 handle_data 入口
+        # 注入 _qs_capture_ctx(context)。机械安全：仅当存在 def handle_data 且签名含 context
+        # 时注入一行；任何不匹配（无 handle_data / 签名异常 / 多重歧义）→ 不注入 + 告警，
+        # 钳制沿用 fail-open（与不接线等价的现状），禁止半注入。
+        if _order_ext_injected:
+            out = self._inject_handle_data_capture(out)
+        return out
+
+    def _inject_handle_data_capture(self, code: str) -> str:
+        """D4-S7 #5：在 handle_data 入口注入 _qs_capture_ctx(context)（方案 A 机械安全门控）。"""
+        import re as _re
+        # 匹配 def handle_data(context, data): 或带任意参数但首参位 context 的签名
+        _m = _re.search(
+            r'^def handle_data\(\s*(context)\s*[,)]', code, _re.MULTILINE)
+        if not _m:
+            self.warnings.append(
+                "D4-S7 #5: handle_data 入口捕获未注入（无 def handle_data(context,...)"
+                "——钳制沿用 fail-open，QS_CASH_AVAIL_UNAVAILABLE 一次性告警不变）")
+            return code
+        # 定位函数体首行（def 行后第一个缩进行）
+        _def_end = code.index('\n', _m.start())
+        _body_prefix = '\n'
+        _body = code[_def_end + 1:]
+        _m2 = _re.match(r'(\s+)\S', _body)
+        if not _m2:
+            self.warnings.append(
+                "D4-S7 #5: handle_data 函数体为空/异常——不注入（fail-open）")
+            return code
+        _indent = _m2.group(1)
+        _capture_line = _indent + '_qs_capture_ctx(context)\n'
+        # 幂等：已有捕获行则跳过
+        if '_qs_capture_ctx(context)' in _body.split('\n', 1)[0]:
+            return code
+        out = code[:_def_end + 1] + _capture_line + _body
+        self.coverage["injected_helpers"].append("handle_data_capture_ctx")
+        return out
 
     def _shim_source(self, name: str) -> str:
         if name == "get_history_batch":

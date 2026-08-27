@@ -105,22 +105,62 @@ log = LogWrapper()
 # ==================== Context / Data 对象 ====================
 
 class Portfolio:
-    """模拟 Ptrade 的 context.portfolio"""
+    """模拟 Ptrade 的 context.portfolio。
+
+    D4-S7 Portfolio 活属性（方案 portfolio-live-cash-design.md v2，2026-08-28 ZCode 批准）：
+    cash/market_value/total_value/portfolio_value/positions 全部委托引擎 account
+    （单一真源：_api._engine.account），引擎成交直接改 account 后实时可读，与平台
+    context.portfolio 实时语义对齐。构造期/断链（_api._engine 未 attach）回退初始化快照。
+    """
+
     def __init__(self, cash: float, positions: dict):
-        self.cash = cash
-        # PTrade exposes portfolio position keys with the two-letter exchange
-        # suffixes (.SS/.SZ).  Raw ``in portfolio.positions`` membership is exact:
-        # platform strategies that mix .XSHE/.XSHG with .SZ/.SS observe the same
-        # behavior locally.  Alias-aware lookup remains available through
-        # get_position()/DataDict/CodeDict where the platform APIs normalize it.
-        self.positions = dict(positions or {})
-        # 兼容 Position 对象和 dict
-        self.market_value = sum(
+        self._init_cash = float(cash)
+        self._init_positions = dict(positions or {})
+        # 无引擎场景（构造期/单测/非 ptrade 模式）快照：market_value 从传入 positions 推算
+        self._snapshot_market_value = sum(
             (p.last_sale_price if hasattr(p, 'last_sale_price') else p.get('current_price', 0))
             * (p.amount if hasattr(p, 'amount') else p.get('volume', 0))
-            for p in self.positions.values()
+            for p in self._init_positions.values()
         )
-        self.total_value = self.cash + self.market_value
+
+    def _engine_account(self):
+        """回测运行时委托引擎 account（单一真源）；无 engine → None（快照兜底）。"""
+        try:
+            from quantstudio.backtest.ptrade_api import _api
+            eng = getattr(_api, "_engine", None)
+            if eng is not None and getattr(eng, "account", None) is not None:
+                return eng.account
+        except Exception:
+            pass
+        return None
+
+    @property
+    def cash(self) -> float:
+        acc = self._engine_account()
+        return acc.cash if acc is not None else self._init_cash
+
+    @property
+    def market_value(self) -> float:
+        acc = self._engine_account()
+        if acc is not None:
+            try:
+                prices = getattr(_api, "_prices", None) or {}
+                return acc.market_value_at_price(prices)
+            except Exception:
+                pass
+        return self._snapshot_market_value
+
+    @property
+    def total_value(self) -> float:
+        return self.cash + self.market_value
+
+    @property
+    def positions(self) -> dict:
+        """D2：只读快照（copy）——策略改返回 dict 不得影响引擎持仓（平台 get_positions 快照语义）。"""
+        acc = self._engine_account()
+        if acc is not None:
+            return dict(acc.positions)
+        return dict(self._init_positions)
 
     @property
     def portfolio_value(self):
@@ -2688,6 +2728,11 @@ def _qs_split_order(security, value, px, cash_avail=None):
         return [], 0
     n = value / px
     if n <= _QS_MAX_ORDER_SHARES:
+        # D4-S7 #9（2026-08-28）：单笔分支同样应用 cash_avail 钳制（此前只在拆单分支生效，
+        # 现金竞对日超买——4b 单测暴露）。budget = min(cash, value)，无折扣（M1 系数 1.0）。
+        _budget = min(cash_avail, value) if cash_avail is not None else value
+        if _budget < value:
+            n = _budget / px
         amount = int(n / _QS_SPLIT_LOT) * _QS_SPLIT_LOT
         return ([(security, amount)], amount) if amount > 0 else ([], 0)
     k = int((n + _QS_MAX_ORDER_SHARES - 1) // _QS_MAX_ORDER_SHARES)  # ceil
