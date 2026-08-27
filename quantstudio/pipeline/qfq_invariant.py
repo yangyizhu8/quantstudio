@@ -258,11 +258,16 @@ def _load_factor_lookup(aux_conn: sqlite3.Connection, adj_table: str,
     except sqlite3.Error as exc:
         logger.warning(f"[QFQ-Invariant] 因子表 {adj_table} 查询失败: {exc}")
         return lookup
+    # 向量化（性能修复 v6.7.53）：原实现对每行因子单独 pd.to_datetime(pd.Series([单行]))
+    # （~1ms/行），stock_minutes 时间切片批次抽样 ~555 code × 全历史 ~150 万行
+    # → ~24 分钟/片。改为先过滤 NULL（保留原过滤分支语义）后一次性批量转换，
+    # 同一 _bar_day_from_ms、同一口径，输出逐键一致（等价性经真实 aux 10 万行验证）。
+    valid = [(c, t, f) for c, t, f in rows if f is not None and t is not None]
+    if not valid:
+        return lookup
+    days = _bar_day_from_ms(pd.Series([int(t) for _, t, _ in valid], dtype="int64"))
     best: Dict[Tuple[str, str], Tuple[int, float]] = {}
-    for code, t_ms, factor in rows:
-        if factor is None or t_ms is None:
-            continue
-        day = _bar_day_from_ms(pd.Series([int(t_ms)])).iloc[0]
+    for (code, t_ms, factor), day in zip(valid, days):
         key = (str(code), day)
         prev = best.get(key)
         if prev is None or int(t_ms) > prev[0]:
@@ -439,7 +444,8 @@ def check_golden_rows(golden_rows: Optional[List[Dict[str, Any]]] = None,
                       aux_conn: Optional[sqlite3.Connection] = None,
                       aux_path=None,
                       adj_latest_map: Optional[Dict[str, float]] = None,
-                      golden_path=None) -> Dict[str, Any]:
+                      golden_path=None,
+                      main_db_path=None) -> Dict[str, Any]:
     """黄金行冒烟自检（定位：冒烟测试，非防线——只能证明这几个具体值对不对）。
 
     每行黄金行重算 close_front = raw_close × adj_i / adj_latest，
@@ -448,7 +454,8 @@ def check_golden_rows(golden_rows: Optional[List[Dict[str, Any]]] = None,
 
     参数：
         golden_rows / golden_path 二选一（前者优先，便于测试）；
-        main_conn  主库连接（读 raw close；None → 用 duckdb 只读打开 DATA_ROOT 主库）；
+        main_conn  主库连接（读 raw close；None → 用 duckdb 只读打开主库，
+                   路径 = main_db_path 或默认 db_path()）；
         aux_conn / aux_path  因子库（读 adj_i）；
         adj_latest_map  全局锚（None → 从 aux 独立取 per-code 最新因子）。
     """
@@ -472,7 +479,12 @@ def check_golden_rows(golden_rows: Optional[List[Dict[str, Any]]] = None,
     try:
         if main_conn is None:
             import duckdb
-            main_conn = duckdb.connect(str(DATA_ROOT / "quantstudio.db"), read_only=True)
+            from quantstudio._paths import db_path  # 治理方案第3步前置（记录项B）：
+            # 快照副本巡检支持。默认 db_path() ≡ DATA_ROOT/"quantstudio.db"（_paths.py:53-55），
+            # 不传 main_db_path 时行为与旧硬编码逐字符等价。
+            main_conn = duckdb.connect(
+                str(Path(main_db_path) if main_db_path is not None else db_path()),
+                read_only=True)
             own_main = True  # 自开连接必须自关（F：连接泄漏修复）
         codes = sorted({str(g["code"]) for g in golden_rows})
         latest_map = adj_latest_map or {}
