@@ -660,6 +660,28 @@ class ResidentCollector:
                                         0, 0, 0, 0, 0, "empty", None, started_at)
                 return True
 
+            # P-D14b（K-001 防复发）：日线表写入点 trade_date 归零归一。
+            # 根因（探针 P1，2026-08-27）：MCP 补拉（日线）trade_date 可能为
+            # 含 08:00:00 时刻的 datetime64/字符串，经 aligner.to_ms_timestamp 的
+            # pd.Timestamp 路径（保留时刻）→ 08:00 CST（=UTC 日界，%86400000=0），
+            # 与正常 00:00（%86400000=57600000）形成双 time 值（K-001 范围审计批准：
+            # 覆盖 etf_daily 8244 + stock_daily 16619 行——同一 MCP 补拉路径）。
+            # 修复：在 align 前把日线表日期列统一归零为纯日期（含时刻只取日期）。
+            # 不动全局 to_ms_timestamp（分钟数据依赖时刻）。
+            if table in ("stock_daily", "etf_daily"):
+                _date_cols = [c for c in ("trade_date", "date") if c in raw_df.columns]
+                if _date_cols:
+                    _c = _date_cols[0]
+                    try:
+                        _arr = raw_df[_c].astype(str).str.strip()
+                        _arr = _arr.str.replace(r"\s.*$", "", regex=True)  # 去时刻（含 08:00:00）
+                        _arr = _arr.str.replace("-", "")
+                        raw_df[_c] = _arr
+                    except Exception as _e:
+                        logger.warning(
+                            f"[{batch_id}] {table} trade_date 归零失败（跳过，K-001 防复发）: {_e}")
+
+
             # 3. 对齐（硬编码，不可跳过）
             # 日线/分钟任务：自动拉取 adj_factor 传给 aligner 计算 8 个复权字段
             # baostock 路径：adapter 已提供 front/back（3 次 adjustflag），不需 adj_factor
