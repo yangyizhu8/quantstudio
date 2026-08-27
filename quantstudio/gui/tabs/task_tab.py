@@ -885,6 +885,16 @@ class TaskTab(QWidget):
             return
 
         # ---- 执行：按 source 过滤 DELETE（绝不全表）----
+        # 3A 写锁（task_tab:882 GUI 重置水印写路径）：操作即持锁；失败弹窗提示持有者（禁止静默）
+        try:
+            from quantstudio.pipeline.snapshot_lock import acquire_write_lock, WriteLockHeld
+            _lk = acquire_write_lock("gui_task_reset", timeout_s=5)
+        except WriteLockHeld as e:
+            QMessageBox.warning(
+                self, "写锁被占用",
+                "无法重置水位线：另一写任务正持有写锁。\n{}\n\n"
+                "请等待该任务完成后重试。".format(e))
+            return
         try:
             import duckdb
             self.mw._reset_in_progress = True
@@ -917,6 +927,8 @@ class TaskTab(QWidget):
             self.mw._reset_sources = []
             logger.error(f"重置水位失败: {e}")
             QMessageBox.critical(self, "重置失败", f"重置水位失败：{e}")
+        finally:
+            _lk.release()  # 3A 写锁随操作结束释放
 
     def refresh(self):
         """刷新任务列表（重新从 collector_tasks.json 加载配置 + 水位线 + 批次审计 + 按钮状态）"""

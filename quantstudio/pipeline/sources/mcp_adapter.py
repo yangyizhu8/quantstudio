@@ -1,4 +1,4 @@
-﻿"""MCP 数据源适配器（P2-2：MCPSourceAdapter）
+"""MCP 数据源适配器（P2-2：MCPSourceAdapter）
 
 按任务书 §4 + P2-0 协议探针结论 + QFQ 设计 §7.2 实现。
 
@@ -67,6 +67,10 @@ _MCP_SUPPORTED: Dict[Tuple[str, str], str] = {
     ("etf_minutes", "30min"): "etf_minutes_30min",
     ("etf_minutes", "60min"): "etf_minutes_60min",
     ("stock_dividend", "daily"): "stock_dividend",
+    # ETF 基金分红（tushare fund_div，管线方案 etf-dividend 任务）
+    ("etf_dividend", "daily"): "etf_dividend",
+    # 股本结构（daily_basic 派生：float_share/free_share/total_share，精确股本数据源）
+    ("stock_float_share", "daily"): "stock_float_share",
     # 财务表（P3-5起支持）
     ("balance_statement", "daily"): "balance_statement",
     ("income_statement", "daily"): "income_statement",
@@ -200,7 +204,12 @@ _CANONICAL_TO_QUESTDB = {
     "cashflow_statement": "stock_cashflow",
     "fin_indicator": "stock_fina_indicator",
     "trade_calendar": "trade_cal",
-    "stock_dividend": "ws_exdiv",
+    # 【管线方案 v2】stock_dividend 源切换：ws_exdiv（westock 遗留，仅 2026 现金、单位缺陷 ×100）
+    # → stock_dividend_full（tushare dividend 全历史，每股口径含送转）。旧源废弃不维护。
+    "stock_dividend": "stock_dividend_full",
+    "etf_dividend": "etf_dividend",
+    # 股本结构：MCP 唯一权威源（stock_daily_basic 派生，含精确 float_share/free_share）
+    "stock_float_share": "stock_daily_basic",
     # === 类别A 全量扩展：新增映射表（含 namechange 同名）===
     "stock_daily_valuation": "stock_daily_basic",   # 估值表无 OHLCV，UnitCheck 不拦
     "index_constituents": "index_weight",
@@ -552,10 +561,16 @@ class MCPAdapter(BaseSourceAdapter):
         # 统一归一化为 YYYYMMDD 8位字符串再比较，避免格式不匹配导致全滤为 0
         def _norm_date(v):
             s = str(v).strip()
+            if s.isdigit() and len(s) == 13:          # epoch 毫秒（防御：云端返回 ms 数值）
+                s = datetime.fromtimestamp(int(s) / 1000).strftime("%Y%m%d")
+                return s
             if len(s) >= 10 and s[4] == "-":
                 s = s[:10].replace("-", "")
             return s[:8]
-        date_col = next((c for c in ("date", "trade_date", "cal_date") if c in df.columns), None)
+        # 【管线方案 v2】日期列候选新增 ex_date：etf_dividend / stock_dividend_full 的
+        # designated timestamp 是 ex_date（除息日），否则增量窗口过滤失效退化为全表重拉。
+        date_col = next((c for c in ("date", "trade_date", "cal_date", "ex_date")
+                         if c in df.columns), None)
         if len(df) and date_col:
             dcol = df[date_col].map(_norm_date)
             s8, e8 = _norm_date(start), _norm_date(end)
@@ -574,15 +589,43 @@ class MCPAdapter(BaseSourceAdapter):
             else:
                 logger.warning(f"[MCPAdapter] 无 code 类列可过滤 codes，返回全量 {len(df)} 行")
         has_adj = "adj_factor" in df.columns
-        # ws_exdiv 适配（P3-7）：云端除权除息表 ws_exdiv 无 div_proc 列，
-        # 仅 dividend_plan（如 "10派6.180元"）描述方案。event_discovery 要求
-        # div_proc='实施' 才生成 trigger，故 dividend_plan 非空即视为已实施。
+        # 【管线方案 v2】stock_dividend 归一化（替代原 ws_exdiv div_proc 派生 hack）：
+        # 新源 stock_dividend_full = tushare dividend 字段（每股口径）。
+        # - cash_div_tax→cash_div_before_tax（税前每股）、cash_div→cash_div_after_tax（税后每股）；
+        # - 仅保留 div_proc='实施' 且 ex_date 非空（与 tushare adapter _fetch_dividend 同语义）；
+        # - 同 (ts_code, ex_date) 去重（fund_div/dividend 接口重复行防御）。
+        # 【R-3】以下 ws_exdiv 兼容分支（dividend_plan 派生 div_proc）为防御性代码：
+        # 源切换后预期永不命中（新源自带 div_proc），保留仅为回退期兼容；单测断言其不命中。
         if table == "stock_dividend":
+            if "cash_div_tax" in df.columns and "cash_div_before_tax" not in df.columns:
+                df = df.rename(columns={"cash_div_tax": "cash_div_before_tax"})
+            if "cash_div" in df.columns and "cash_div_after_tax" not in df.columns:
+                df = df.rename(columns={"cash_div": "cash_div_after_tax"})
             if "div_proc" not in df.columns and "dividend_plan" in df.columns:
                 df["div_proc"] = df["dividend_plan"].apply(
                     lambda v: "实施" if (v is not None and str(v).strip() != "") else None)
-                logger.info(f"[MCPAdapter] stock_dividend(ws_exdiv) 派生 div_proc='实施' "
-                             f"→ {int(df['div_proc'].notna().sum())} 行")
+                logger.info(f"[MCPAdapter] stock_dividend(ws_exdiv 兼容) 派生 div_proc='实施' "
+                            f"→ {int(df['div_proc'].notna().sum())} 行")
+            if "div_proc" in df.columns:
+                before = len(df)
+                df = df[df["div_proc"].astype(str) == "实施"].reset_index(drop=True)
+                if len(df) < before:
+                    logger.info(f"[MCPAdapter] stock_dividend 过滤 div_proc=实施 "
+                                f"{before}→{len(df)} 行")
+            if "ex_date" in df.columns:
+                before = len(df)
+                df = df[df["ex_date"].notna()].reset_index(drop=True)
+                if len(df) < before:
+                    logger.info(f"[MCPAdapter] stock_dividend 过滤 ex_date 非空 "
+                                f"{before}→{len(df)} 行")
+            if "ts_code" in df.columns and "ex_date" in df.columns:
+                before = len(df)
+                df = (df.sort_values("cash_div_before_tax", na_position="last")
+                        .drop_duplicates(subset=["ts_code", "ex_date"], keep="first")
+                        .reset_index(drop=True))
+                if len(df) < before:
+                    logger.info(f"[MCPAdapter] stock_dividend (ts_code,ex_date) 去重 "
+                                f"{before}→{len(df)} 行")
 
         # === codex 审计 TD-15：industry_classification 常量注入 + L1 过滤 + 去重 ===
         # 云端 sw_classify 含 L1/L2/L3，canonical 只需 L1（对齐 tushare

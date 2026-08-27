@@ -76,6 +76,7 @@ DEFAULT_SOURCE_MAP = {
     "income_statement":     "xtquant",
     "cashflow_statement":   "xtquant",
     "stock_dividend":       "tushare",
+    "etf_dividend":         "mcp",
     "sw_industry":          "tushare",
     "industry_classification": "tushare",  # F4 正式分类定义（SW2021 L1）
     "industry_membership":  "tushare",     # F4 正式成员历史 PIT
@@ -99,6 +100,7 @@ CODES_ALL_HINT = {
     "income_statement": "ALL = 全部 A 股",
     "cashflow_statement": "ALL = 全部 A 股",
     "stock_dividend": "ALL = 全部 A 股",
+    "etf_dividend": "ALL = 全部 ETF",
     "sw_industry": "ALL = 全部股票行业",
     "industry_classification": "ALL = 全部申万一级行业定义",
     "industry_membership": "ALL = 全部申万一级行业成员历史",
@@ -119,6 +121,7 @@ TABLE_DESCRIPTION = {
     "income_statement": "利润表",
     "cashflow_statement": "现金流量表",
     "stock_dividend": "除权除息记录",
+    "etf_dividend": "ETF基金分红记录（每份派息）",
     "sw_industry": "申万行业分类（legacy 快照，仅审计）",
     "industry_classification": "行业分类定义（SW2021 L1 正式）",
     "industry_membership": "行业成员历史（PIT 正式）",
@@ -131,7 +134,7 @@ TABLE_CATEGORIES = {
     "估值股本": ["stock_float_share", "stock_daily_valuation", "fin_indicator"],
     "指数成分": ["index_constituents"],
     "三大报表": ["balance_statement", "income_statement", "cashflow_statement"],
-    "除权行业": ["stock_dividend", "sw_industry"],
+    "除权行业": ["stock_dividend", "etf_dividend", "sw_industry"],
     "行业分类": ["industry_classification", "industry_membership"],
     "其他": [],  # 未归类的表放这里
 }

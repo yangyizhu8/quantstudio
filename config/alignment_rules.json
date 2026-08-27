@@ -627,7 +627,7 @@
       "available_at_field": "time"
     },
     "stock_float_share": {
-      "_note": "流通股本表（按财报/公告日，与三大报表同构）。end_date=报告期末日, ann_date=公告日, free_share=流通股本(股), total_share=总股本(股), circ_mv=流通市值(元), total_mv=总市值(元)。PIT 由 AnnDateLogic 校验 + 回测取数层按 ann_date 过滤",
+      "_note": "流通股本表（MCP 权威源 stock_daily_basic：每日精确股本）。end_date=交易日, ann_date=NULL, free_share=流通股本(万股), total_share=总股本(万股), circ_mv=流通市值(万元), total_mv=总市值(万元)。",
       "schema_version": "2.0",
       "primary_key": [
         "code",
@@ -635,7 +635,7 @@
         "ann_date"
       ],
       "time_key": "end_date",
-      "freq": "quarterly",
+      "freq": "daily",
       "columns": {
         "code": {
           "type": "str",
@@ -1500,6 +1500,86 @@
           "required": false,
           "unit": "%",
           "_note": "legacy 兼容；非 Tushare dividend 有效返回字段"
+        },
+        "update_time": {
+          "type": "str",
+          "required": false
+        }
+      }
+    },
+    "etf_dividend": {
+      "_note": "ETF 基金分红（tushare fund_div）。div_cash=每股派息（元），ex_date=除息日（毫秒）。",
+      "schema_version": "2.1",
+      "primary_key": [
+        "code",
+        "ex_date"
+      ],
+      "time_key": "ex_date",
+      "columns": {
+        "code": {
+          "type": "str",
+          "required": true
+        },
+        "ex_date": {
+          "type": "int",
+          "required": true
+        },
+        "record_date": {
+          "type": "int",
+          "required": false
+        },
+        "ann_date": {
+          "type": "int",
+          "required": false
+        },
+        "imp_anndate": {
+          "type": "int",
+          "required": false
+        },
+        "base_date": {
+          "type": "int",
+          "required": false
+        },
+        "div_proc": {
+          "type": "str",
+          "required": false
+        },
+        "pay_date": {
+          "type": "int",
+          "required": false
+        },
+        "earpay_date": {
+          "type": "int",
+          "required": false
+        },
+        "net_ex_date": {
+          "type": "int",
+          "required": false
+        },
+        "div_cash": {
+          "type": "float",
+          "required": false,
+          "unit": "元/份"
+        },
+        "base_unit": {
+          "type": "float",
+          "required": false
+        },
+        "ear_distr": {
+          "type": "float",
+          "required": false
+        },
+        "ear_amount": {
+          "type": "float",
+          "required": false
+        },
+        "account_date": {
+          "type": "int",
+          "required": false
+        },
+        "base_year": {
+          "type": "str",
+          "required": false
         },
         "update_time": {
           "type": "str",
@@ -2791,21 +2871,52 @@
           "stk_div": "stk_div",
           "stk_bo_rate": "stk_bo_rate",
           "stk_co_rate": "stk_co_rate",
-          "div_rat": "div_rat",
           "div_proc": "div_proc",
-          "update_time": "update_time",
-          "data_source": "data_source",
-          "code": "_ws_orig_code",
-          "name": "_ws_name",
-          "dividend_plan": "_ws_divplan",
-          "currency": "_ws_currency",
-          "pay_date": "_ws_pay_date",
-          "report_end_date": "_ws_report_end"
+          "update_time": "update_time"
         },
         "code_format": "tushare_to_raw",
         "unit_conversions": {},
         "time_to_ms": true,
-        "_note": "除权除息表：驱动 qfq_event_discovery.scan_stock_dividend（§7.2-A 注入 DuckDB 主库）。"
+        "_note": "股票除权除息（tushare dividend 全字段，源表 stock_dividend_full）；adapter 侧已归一化 cash_div_tax→cash_div_before_tax 并过滤 div_proc=实施 + ex_date 非空 + (ts_code,ex_date) 去重。驱动 qfq_event_discovery.scan_stock_dividend。"
+      },
+      "etf_dividend": {
+        "column_map": {
+          "ts_code": "code",
+          "ex_date": "ex_date",
+          "ann_date": "ann_date",
+          "imp_anndate": "imp_anndate",
+          "base_date": "base_date",
+          "div_proc": "div_proc",
+          "record_date": "record_date",
+          "pay_date": "pay_date",
+          "earpay_date": "earpay_date",
+          "net_ex_date": "net_ex_date",
+          "div_cash": "div_cash",
+          "base_unit": "base_unit",
+          "ear_distr": "ear_distr",
+          "ear_amount": "ear_amount",
+          "account_date": "account_date",
+          "base_year": "base_year",
+          "update_time": "update_time"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "_note": "ETF 基金分红（fund_div）；adapter 侧已过滤 div_proc=实施 + ex_date 非空 + (code,ex_date) 去重"
+      },
+      "stock_float_share": {
+        "column_map": {
+          "ts_code": "code",
+          "trade_date": "end_date",
+          "float_share": "free_share",
+          "total_share": "total_share",
+          "circ_mv": "circ_mv",
+          "total_mv": "total_mv"
+        },
+        "code_format": "tushare_to_raw",
+        "time_to_ms": true,
+        "unit_conversions": {},
+        "_note": "MCP 唯一权威源（stock_daily_basic 派生）：float_share→free_share（万股），circ_mv/total_mv（万元）。ann_date 无对应（日频）→ NULL。"
       }
     }
   },

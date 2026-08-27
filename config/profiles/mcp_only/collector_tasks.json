@@ -465,7 +465,7 @@
       "source": "mcp",
       "table": "stock_dividend",
       "freq": "daily",
-      "start_date": "2018-01-01",
+      "start_date": "1990-01-01",
       "codes": [
         "ALL"
       ],
@@ -488,6 +488,36 @@
         "mcp"
       ],
       "_note": "类别A 映射表（align→validate→write）"
+    },
+    {
+      "name": "mcp_etf_dividend",
+      "enabled": true,
+      "source": "mcp",
+      "table": "etf_dividend",
+      "freq": "daily",
+      "start_date": "2005-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "max_workers": 8,
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 30,
+        "wait_on_429": true
+      },
+      "source_priority": [
+        "mcp"
+      ],
+      "_note": "类别A 映射表：ETF 基金分红（fund_div），align→validate→write"
     },
     {
       "name": "mcp_ai_research_snapshot_pt",
@@ -2657,6 +2687,33 @@
         "mcp"
       ],
       "_note": "类别A 映射表（codex审计：云端已建 stock_namechange 表7451行，is_st_reliable 唯一权威源。前置：sync_to_cloud 须覆盖此表=第110张）"
+    },
+    {
+      "name": "mcp_stock_float_share",
+      "enabled": true,
+      "source": "mcp",
+      "table": "stock_float_share",
+      "freq": "daily",
+      "start_date": "2005-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "max_workers": 8,
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 30,
+        "wait_on_429": true
+      },
+      "_note": "股本结构（MCP 权威源 stock_daily_basic 派生：每日精确 float_share/free_share/total_share）"
     }
   ],
   "qfq_maintenance": {

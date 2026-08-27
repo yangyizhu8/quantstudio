@@ -1200,7 +1200,49 @@
       "pay_date",
       "report_end_date",
       "dividend_per_share"
-    ]
+    ],
+    "_note": "westock 遗留源（仅 2026 现金、单位缺陷 ×100）。管线方案 v2 起 QuantStudio 侧不再消费（源切换至 stock_dividend_full），云端保留不删。"
+  },
+  {
+    "questdb_table": "stock_dividend_full",
+    "canonical": "stock_dividend",
+    "category": "A_mapped",
+    "rows": null,
+    "ncols": null,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "ex_date",
+      "record_date",
+      "ann_date",
+      "end_date",
+      "stk_div",
+      "stk_bo_rate",
+      "stk_co_rate",
+      "cash_div",
+      "cash_div_tax",
+      "div_proc"
+    ],
+    "_note": "股票除权除息全历史（tushare dividend 每股口径含送转，Trae 回填+同步）。管线方案 v2 起为 stock_dividend canonical 的 MCP 源表。"
+  },
+  {
+    "questdb_table": "etf_dividend",
+    "canonical": "etf_dividend",
+    "category": "A_mapped",
+    "rows": null,
+    "ncols": null,
+    "path": "snapshot",
+    "sample_cols": [
+      "ts_code",
+      "ex_date",
+      "record_date",
+      "ann_date",
+      "imp_anndate",
+      "div_proc",
+      "pay_date",
+      "div_cash"
+    ],
+    "_note": "ETF 基金分红（tushare fund_div，Trae 回填+同步）。div_cash=每股派息（元）；fund_div 覆盖不全（518880/159915 无记录），缺口由 fund_adj/preClose 检测兜底。"
   },
   {
     "questdb_table": "ws_ipo",
