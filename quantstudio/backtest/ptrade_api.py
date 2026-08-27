@@ -398,13 +398,17 @@ class PtradeAPI:
     """Ptrade API 兼容层。所有 Ptrade 策略调用的函数在这里实现。
     数据来自 DuckDB，通过 _engine 注入。"""
 
-    def __init__(self, market=None, fundamental=None, reference=None, calendar=None):
+    def __init__(self, market=None, fundamental=None, reference=None, calendar=None,
+                 fidelity_config=None):
         self._engine = None  # BacktestEngine 引用
         self._cfg = None     # EngineConfig（A1：由 attach 从 engine.config 注入，消除 19 处硬编码）
         self._market = market
         self._fundamental = fundamental
         self._reference = reference
         self._calendar = calendar
+        # P-A0/P-A2：PTrade 保真模式配置（None = 全关，本地正确语义锚；opt-in 验证用途）
+        self._fidelity = fidelity_config
+        self._fidelity_ashare_codes = None  # P-A0 快照裸码缓存（首次 get_Ashares 惰性加载）
         self._current_day_data = None  # 当日全市场数据
         self._code_index = None        # 实例私有按日索引缓存；attach_day/attach_bar/reset_session 失效
         self._prev_day_data = None     # 前一日全市场数据
@@ -436,12 +440,25 @@ class PtradeAPI:
         self._fundamental = None
         self._reference = None
         self._calendar = None
+        # P-A0/P-A2：保真配置是引擎级运行配置（跨日持久），reset_session 不清除；
+        # 仅清派生缓存（快照裸码需在下次 attach 后惰性重载）。调用方在 run 前
+        # set_fidelity_config(cfg) 或经 engine.config.fidelity_config 注入。
+        self._fidelity_ashare_codes = None
         self._code_index = None       # 会话重置 → 失效索引缓存
         # Phase 4B：清空当日分钟历史内存缓存
         self._day_minute_history = None
         self._day_minute_date = None
         g.__dict__.clear()
         g.__dict__.update(GlobalVars().__dict__)
+
+    def set_fidelity_config(self, fidelity_config):
+        """P-A0/P-A2：注入 PTrade 保真模式配置（opt-in，验证转换产物用）。
+
+        调用时机：run 之前（reset_session 不清除本配置，跨日持久）。
+        配置为 None/默认全关时，本地保持正确语义锚（P-D9 裁定），零行为影响。
+        """
+        self._fidelity = fidelity_config
+        self._fidelity_ashare_codes = None  # 配置变更 → 失效快照缓存
 
     def attach(self, engine, curr_data: pd.DataFrame, prev_data: pd.DataFrame,
                curr_date: str, prev_date: str, prices: dict = None):
@@ -463,6 +480,10 @@ class PtradeAPI:
         self._engine = engine
         # A1：从 engine 注入 EngineConfig，替代散落的 19 处硬编码绝对路径
         self._cfg = getattr(engine, 'config', None)
+        # P-A0/P-A2：fidelity 配置兜底注入（set_fidelity_config 优先；engine.config
+        # 若未来携带 fidelity_config 字段则自动拾取，保持向后兼容）。
+        if self._fidelity is None and self._cfg is not None:
+            self._fidelity = getattr(self._cfg, 'fidelity_config', None)
         self._current_day_data = curr_data
         self._prev_day_data = prev_data
         self._code_index = None       # 每日 DataFrame 切换 → 失效索引缓存
@@ -844,12 +865,21 @@ class PtradeAPI:
                                 (data.get('volume', 0) == 0) |
                                 data.get('is_halt', False)),
                     'is_delisting_risk': data.get('is_delisting_risk', False),
+                    'is_delisting_risk_source': data.get('is_delisting_risk_source', 'none'),
                     'is_delisted': data.get('is_delisted', False),
                 })
             elif status is None:
                 return result
             if status is None or len(status) == 0:
                 return result
+
+            # P-A1 保真模式：fidelity_st_filter=True 时，退市风险兜底仅平台口径有效
+            # （platform get_Ashares 与 filter 均无 circ_mv 分支；本地为对齐把扩展
+            #  分支降到 price 语义：source in ('price','both') 才视为有效）。
+            # 默认关闭 → 保持本地现状（circ_mv 扩展保留，本地正确语义锚）。
+            fidelity = getattr(self, '_fidelity', None)
+            strict_platform = bool(
+                fidelity is not None and getattr(fidelity, 'fidelity_st_filter', False))
 
             # 纯性能优化：将全市场 status 预构建为 {code: 字段字典}（一次性向量化），
             # 循环内改为 O(1) 查找，消除原 status[status['code']==bare] 的 O(N²) 布尔扫描。
@@ -876,8 +906,14 @@ class PtradeAPI:
                 r = row
                 if "DELISTING" in filter_type and bool(r.get('is_delisted', False)): continue
                 if "HALT" in filter_type and bool(r.get('is_halt', False)): continue
-                if "ST" in filter_type and bool(
-                        r.get('is_st', False) or r.get('is_delisting_risk', False)): continue
+                if "ST" in filter_type:
+                    st_flag = bool(r.get('is_st', False))
+                    dr_flag = bool(r.get('is_delisting_risk', False))
+                    if strict_platform and dr_flag:
+                        # P-A1：仅 price/both 有效（平台口径无 circ_mv 分支）
+                        dr_flag = r.get('is_delisting_risk_source', 'none') in ('price', 'both')
+                    if st_flag or dr_flag:
+                        continue
                 if "DELISTING_SORTING" in filter_type and bool(
                         r.get('is_delisting_risk', False)): continue
                 filtered.append(stock)
@@ -1267,7 +1303,6 @@ class PtradeAPI:
                     # B1：唯一闸门——选列后含 'amount' 即补同值 'money'（含请求 fields=['money'] 场景）
                     df0 = _ensure_money_alias(df0)
             if hasattr(self, '_query_cache'): self._query_cache[cache_key] = df0
-            if hasattr(self, '_query_cache'): self._query_cache[cache_key] = df0
             # P-D13 C3a：窗口审计行（count≥100 才输出——vol_regime q 分位差定位器，
             # log.info 级直接可见：QS_HISTORY_WINDOW code count actual first last）
             try:
@@ -1564,6 +1599,11 @@ class PtradeAPI:
           ——对齐平台 5205 口径，转换产物验证用）。P-D9 纪律：本地语义权威默认不变。
         """
         try:
+            # P-A0 保真模式：fidelity_ashares_snapshot=True 时用平台快照（2026-07-01）
+            # 替代本地全市场股池（模拟平台候选池，仅转换产物对账验证用途）。
+            fidelity = getattr(self, '_fidelity', None)
+            if fidelity is not None and getattr(fidelity, 'fidelity_ashares_snapshot', False):
+                return self._fidelity_ashares(date)
             if self._reference is None or not (self._current_date or date):
                 return []
             codes = [self._to_ptrade_code(code) for code in
@@ -1588,6 +1628,22 @@ class PtradeAPI:
         except Exception as e:
             logger.debug(f"get_Ashares 失败: {e}")
             return []
+
+    def _fidelity_ashares(self, date=None):
+        """P-A0：平台 A 股池快照消费（裸码 → Ptrade 格式 .SZ/.SS，惰性加载缓存）。
+
+        PIT 门禁由 fidelity_config.resolve(backtest_start_date) 在注入前执行
+        （回测起点 < 快照日 → ValueError fail-closed；超龄 >30 天 WARNING）。
+        快照文件缺失 → FileNotFoundError fail-closed（不得静默退回本地池）。
+        """
+        fidelity = self._fidelity
+        if self._fidelity_ashare_codes is None:
+            # 惰性加载：读 parquet（构建器 probe_platform_ashares.py 产，sha256 已校验落盘）
+            self._fidelity_ashare_codes = fidelity.load_ashare_snapshot()
+        return [self._to_ptrade_code(code) for code in self._fidelity_ashare_codes]
+
+    # ===================== 第2批新增 API =====================
+
     def get_stock_exrights(self, security, date=None):
         """获取证券除权除息信息（对应 Ptrade get_stock_exrights）
         返回 DataFrame（index=date，列: allotted_ps/rationed_ps/rationed_px/
@@ -2275,7 +2331,6 @@ check_limit = _api.check_limit
 get_positions = _api.get_positions
 get_position = _api.get_position
 order_at_price = _api.order_at_price
-order_target = _api.order_target
 order_target = _api.order_target
 # A1 本地拆单接线（2026-08-22，与转换侧注入模板同构）：订单 API 金额语义按统一链
 # ① 层 px 拆（>49,000 股拆多笔），使双端订单序列/费用逐笔一致。

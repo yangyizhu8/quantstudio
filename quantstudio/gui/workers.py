@@ -452,6 +452,7 @@ class BacktestWorker(BaseWorker):
                 etf_t0=self.params.get('etf_t0', False),
                 cost=cost,
                 rebalance_mode=self.params.get('rebalance_mode', 'legacy'),
+                fidelity_config=self.params.get('fidelity_config', None),
                 progress_callback=self._on_engine_progress,
             )
 
