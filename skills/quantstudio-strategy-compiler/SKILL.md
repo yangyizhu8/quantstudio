@@ -129,6 +129,15 @@ weaken the R0 hard stop below.
 7. **Recording**: record the customer's confirmations/corrections in the workspace ledger
    (session notes backfilled into `workspace_state.json` at scaffold time). No new
    `user_confirmations` field and no contract version bump.
+8. **Output deliverables (mandatory)**: the diagram is delivered in three forms —
+   ① the mermaid source **must be wrapped in a ` ```mermaid ` fenced code block**
+   (never bare text), so any renderer-capable interface can auto-render it;
+   ② persist a self-contained `flowchart.html` into the workspace directory
+   (mermaid.js via CDN, dark-friendly, double-click to view in a browser) and attach
+   its path in the message — the customer must be able to see the diagram without
+   pasting code anywhere; ③ if the chat interface supports image attachments, also
+   attach a rendered PNG. The HTML/PNG are presentation aids only; the fenced mermaid
+   block remains the single source of truth.
 
 Only after the customer has reviewed and confirmed the workflow diagram, present the
 semantic contradiction table and the full R0 review package below.
@@ -514,3 +523,4 @@ When a customer supplies a real PTrade exception:
 - Skill validation: `scripts/quick_validate.py`
 
 Legacy Spec/IR/Jinja compilation is used only when the customer explicitly requests legacy reproduction. It is never the default path for a new strategy.
+25. **Market-value and share-count factor data source (2026-08-16)**: All strategies computing circulating market value (`float_value`), total market value (`total_value`), free-float shares (`a_floats`), or total shares must obtain these fields exclusively via `get_fundamentals(table='valuation', fields=[...])`. **Never** manually compute market value as `close × assumed_share_count` or fetch prices via `get_price`/`get_history` and multiply by a hardcoded or estimated share count — the underlying provider (`stock_float_share.free_share`, MCP authoritative source from `qdb.stock_daily_basic`) guarantees precision alignment with the PTrade platform (Juyuan). Manual computation bypasses the precise data source and will cause ranking divergence between local and PTrade backtests. Strategies that only need ranking (e.g., small-cap sorting) are equally affected because ranking boundary cases flip with even 0.001% share-count differences.
