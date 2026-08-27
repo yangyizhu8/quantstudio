@@ -139,6 +139,12 @@ class PTradeFidelityConfig:
 
     fidelity_ashares_snapshot: bool = False
     fidelity_st_filter: bool = False
+    # P-D13b C4a/C4b（2026-08-27 解锁实施，opt-in 默认关）：停牌撤单/退市强平保真开关。
+    # 对齐平台行为：halt（volume==0/suspendFlag）下单撤单 reason='halted'；
+    # delist（当日无行情持仓）模拟平台 is expired 强平（审计行 fidelity_delist 标记）。
+    # 默认 False = 本地语义锚不动（P-D9 裁定）；开启仅经显式 fidelity 配置。
+    fidelity_halt_reject: bool = False
+    fidelity_delist_force_close: bool = False
     # P-D13 D2（2026-08-27 审计通过）：eps 口径对齐默认——'basic'（探针三实证
     # 平台 basic_eps == 本地 eps Δ=0.0000；passthrough 容忍加权口径差异 = L6 分叉
     # 的口径分量持续存在）。'passthrough' 仍可显式指定（向后兼容）。

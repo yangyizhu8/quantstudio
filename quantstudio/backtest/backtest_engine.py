@@ -543,6 +543,9 @@ class BacktestEngine:
                 prev_data = self._get_daily_data(prev_day)
             curr_data = self._get_daily_data(day)
             self._last_curr_data = curr_data
+            # P-D13b C4b：退市强平保真开关（默认关 opt-in；开时对齐平台 is expired 强平）。
+            # 审计条件②：强平审计行带 fidelity_delist 标记（与普通卖出可区分——防对账混入策略行为）。
+            self._apply_delist_force_close(day_str, curr_data, prev_data)
             if len(curr_data) == 0:
                 logger.debug(f"[Backtest] {day_str} no data, skipped")
                 continue
@@ -658,6 +661,22 @@ class BacktestEngine:
             return self._finalize_immediate(
                 Order(order_id=f"ord_{code}_{date}", security=security, direction=direction,
                       status="rejected", reason="no_price", created_dt=date), code)
+
+        # P-D13b C4a：停牌撤单保真开关（默认关 opt-in；开时对齐平台 bar.volume==0 撤单）。
+        # reason 语义区分（审计条件①）：halted 唯一对应停牌撤单——可区分于 no_price/limit 类。
+        try:
+            from .ptrade_api import _api as _ptrade_api
+            _fid = getattr(_ptrade_api, "_fidelity", None)
+            if _fid is not None and getattr(_fid, "fidelity_halt_reject", False):
+                _row = curr_data is not None and self._lookup_curr_row(curr_data, code)
+                if _row is not None and (
+                        float(_row.get("volume", 0) or 0) == 0
+                        or int(_row.get("suspendFlag", 0) or 0) == 1):
+                    return self._finalize_immediate(
+                        Order(order_id=f"ord_{code}_{date}", security=security, direction=direction,
+                              status="rejected", reason="halted", created_dt=date), code)
+        except Exception:
+            pass  # 防护：读配置/查行异常不阻断（默认关行为保持）
 
         # 无指令保护（原分支语义保留：价格检查之后、涨跌停检查之前）。
         if target_value is None and shares is None:
@@ -2531,6 +2550,63 @@ class BacktestEngine:
         """Normalize any supported alias to the engine's QMT-style suffix."""
         from .libs.security_code_rules import normalize_to_qmt
         return normalize_to_qmt(bare_code)
+
+    @staticmethod
+    def _lookup_curr_row(curr_data, code: str):
+        """P-D13b C4a：curr_data（当日快照 DataFrame）按 code 匹配行（归一对照）。
+
+        返回 dict（row）或 None；code 支持裸码/QMT 后缀/平台后缀任一形态。
+        """
+        if curr_data is None or not hasattr(curr_data, "columns"):
+            return None
+        try:
+            target = BacktestEngine._to_qmt(str(code).split(".")[0])
+            for _, row in curr_data.iterrows():
+                if BacktestEngine._to_qmt(str(row.get("code", ""))[:10]) == target:
+                    return row.to_dict()
+        except Exception:
+            pass
+        return None
+
+    def _apply_delist_force_close(self, day_str, curr_data, prev_data):
+        """P-D13b C4b：退市强平保真开关（默认关；开时对齐平台 is expired 强平）。
+
+        检测：持仓 code 不在当日快照 code 集（当日无行情）→ 按最后已知价强平。
+        审计：强平行 log 带 `fidelity_delist` 标记（验收②：与普通卖出可区分）。
+        强平复用 _execute_sell（费用/滑点/记账同构），不新造卖出路径。
+        """
+        try:
+            from .ptrade_api import _api as _ptrade_api
+            _fid = getattr(_ptrade_api, "_fidelity", None)
+            if _fid is None or not getattr(_fid, "fidelity_delist_force_close", False):
+                return
+            day_codes = set()
+            if curr_data is not None and hasattr(curr_data, "columns"):
+                for c in curr_data.get("code", []):
+                    try:
+                        day_codes.add(self._to_qmt(str(c)[:10]))
+                    except Exception:
+                        pass
+            last_prices = {}
+            if prev_data is not None and hasattr(prev_data, "columns"):
+                for c, p in zip(prev_data.get("code", []), prev_data.get("close", [])):
+                    try:
+                        last_prices[self._to_qmt(str(c)[:10])] = float(p)
+                    except Exception:
+                        pass
+            for code, pos in list(self.account.positions.items()):
+                if pos.volume <= 0:
+                    continue
+                norm = self._to_qmt(str(code).split(".")[0])
+                if norm not in day_codes and norm in last_prices:
+                    price = last_prices[norm]
+                    logger.warning(
+                        f"[fidelity_delist] date={day_str} code={code} "
+                        f"force_close volume={pos.volume} @ {price}（当日无行情=平台 is expired 强平）")
+                    self._execute_sell(code, price, sell_all=True,
+                                       date=day_str, curr_data=prev_data)
+        except Exception:
+            pass  # 防护：强平异常不阻断回测（默认关行为保持）
 
 
 def _is_etf_code(code: str) -> bool:
