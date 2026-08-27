@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QMessageBox)
 from qfluentwidgets import (
     ComboBox, LineEdit, PushButton, PrimaryPushButton, ProgressBar,
-    GroupHeaderCardWidget, DoubleSpinBox, SpinBox)
+    GroupHeaderCardWidget, DoubleSpinBox, SpinBox, CheckBox)
 
 from ..workers import BacktestWorker
 from ..skin import PageHeader
@@ -99,6 +99,24 @@ class BacktestTab(QWidget):
         self.match_price_combo.addItem("next_open (anti-lookahead)", userData="next_open")
         param_form.addRow("Match price:", self.match_price_combo)
 
+        # P-A0/P-A1/P-A2: PTrade 保真模式（验证用）勾选项。默认 OFF = 本地语义锚（P-D9）。
+        # 勾选后按平台行为模拟（A股池快照 / ST过滤 close<1 口径 / eps 双端映射），
+        # 仅供转换产物验证；严禁用于实盘前评估。快照日动态取自最新 meta.json（快照
+        # 刷新后 tooltip 自动跟随，不硬编码日期——2026-08-25 修正）。
+        try:
+            from quantstudio.backtest.fidelity_config import latest_snapshot_meta
+            _snap_date = str(latest_snapshot_meta()["snapshot_date"])
+        except Exception:
+            _snap_date = "（见 data/ptrade_fidelity/ 最新快照）"
+        self.fidelity_ck = CheckBox("PTrade 保真模式（验证用）")
+        self.fidelity_ck.setToolTip(
+            "仅用于转换产物验证：模拟平台行为（A股池快照 / ST过滤 close<1 口径 / "
+            "eps 双端映射 basic_eps/diluted_eps）。\n"
+            "⚠ 严禁实盘前评估：本地默认是正确语义锚，勾选后本地向平台行为迁就（P-D9 裁定）。\n"
+            f"⚠ 回测起始日期必须 ≥ {_snap_date}（当前快照日，随快照刷新前滚），"
+            "否则启动时显性报错（PIT 门禁）。")
+        param_form.addRow(self.fidelity_ck)
+
         # F1: rebalance_mode 通用配置透出。内部值固定为引擎契约字符串，
         # 显示文本仅用于展示，绝不作为引擎参数。
         self.rebalance_mode_combo = ComboBox()
@@ -169,6 +187,33 @@ class BacktestTab(QWidget):
         match_price_mode = self.match_price_combo.currentData()
         rebalance_mode = self.rebalance_mode_combo.currentData()
 
+        # P-A0/P-A1/P-A2: 保真模式勾选 → 构造 PTradeFidelityConfig（opt-in，默认全关）。
+        # resolve() 的 PIT 门禁（起始 >= 快照日 2026-07-01）在 run_backtest 注入前执行 →
+        # 早于快照日的回测以 ValueError fail-closed，不静默。
+        fidelity_config = None
+        if self.fidelity_ck.isChecked():
+            start_text = self.start_edit.text().strip()
+            from quantstudio.backtest.fidelity_config import PTradeFidelityConfig
+            try:
+                fidelity_config = PTradeFidelityConfig(
+                    fidelity_ashares_snapshot=True,
+                    fidelity_st_filter=True,
+                    fidelity_eps_basis="basic",
+                )
+                fidelity_config.resolve(start_text)  # PIT 门禁 + eps 双端校验（早失败）
+            except ValueError as e:
+                QMessageBox.warning(
+                    self, "保真模式校验失败",
+                    f"PTrade 保真模式（验证用）配置校验失败：{e}\n\n"
+                    "提示：A股池快照日为 2026-07-01，回测起始日期必须 ≥ 2026-07-01。")
+                return
+            except FileNotFoundError as e:
+                QMessageBox.warning(
+                    self, "保真模式快照缺失",
+                    f"PTrade 保真模式快照文件缺失：{e}\n\n"
+                    "请在 data/ptrade_fidelity/ 放置平台探针快照 parquet。")
+                return
+
         # F1 组合校验：callback_basket 仅适用于 daily-bar-v1 + next_open。
         # 当前 PyQt 回测入口是日线引擎（daily-bar-v1），分钟引擎不支持 basket。
         if rebalance_mode == "callback_basket" and match_price_mode != "next_open":
@@ -188,6 +233,7 @@ class BacktestTab(QWidget):
             'slippage': self.slippage_spin.value(),
             'match_price_mode': match_price_mode,
             'rebalance_mode': rebalance_mode,
+            'fidelity_config': fidelity_config,  # None = 默认全关（本地语义锚）
         }
 
         # 创建 Worker
@@ -266,14 +312,21 @@ class BacktestTab(QWidget):
                 f"但结果可视化窗口打开失败:\n{type(e).__name__}: {e}")
 
     def _on_error(self, err):
-        """回测出错（计时定格幂等：手动停止路径已定格则保持按时刻；否则取当前用时）"""
+        """回测失败/取消（定格幂等；取消=结构化 BacktestCancelled 判定，非字符串嗅探）"""
+        from ..workers import BacktestCancelled
+        is_cancel = isinstance(err, BacktestCancelled)
         self.run_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.progress_bar.setVisible(False)
-        self._freeze()
+        self._freeze()  # 计时停止并定格（幂等：手动停止路径已定格则保持按时刻）
+        if is_cancel:
+            # 取消 = 主动用户动作，非失败：info 无弹窗，定格文案"已取消于"
+            logger.info("用户取消回测")
+            self.status_label.setText(f"⏹ 已取消于 {getattr(self, '_freeze_text', '')}")
+            return
         self.status_label.setText("❌ 回测失败")
         logger.error(err)
-        QMessageBox.critical(self, "回测错误", err[:500])
+        QMessageBox.critical(self, "回测错误", str(err)[:500])
 
     @staticmethod
     def _fmt_elapsed(ms: int) -> str:

@@ -4,11 +4,20 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from filelock import FileLock, Timeout
 
 
+class BacktestCancelled(RuntimeError):
+    """用户主动取消回测（结构化信号，取代字符串嗅探——文案即接口=脆弱）。
+
+    取消路径：_on_stop → worker.cancel()（_cancelled=True）→ 下一进度回调
+    raise BacktestCancelled → run() except 捕获 → finished_err.emit(异常对象)
+    → 槽内 isinstance(err, BacktestCancelled) 判定（非字符串匹配）。
+    """
+
+
 class BaseWorker(QThread):
     """Worker 基类。子类实现 run()，完成时必须 emit finished_ok 或 finished_err。"""
     progress = pyqtSignal(str)      # 进度消息
     finished_ok = pyqtSignal(dict)  # 成功结果
-    finished_err = pyqtSignal(str)  # 错误消息
+    finished_err = pyqtSignal(object)  # 错误（str 或异常对象——取消=结构化 BacktestCancelled）
 
     def __init__(self):
         super().__init__()
@@ -454,10 +463,15 @@ class BacktestWorker(BaseWorker):
             })
         except Exception as e:
             import traceback
-            self.finished_err.emit(f"{type(e).__name__}: {e}\n{traceback.format_exc()}")
+            # 结构化取消：BacktestCancelled 原样传递（槽内 isinstance 判定），
+            # 真错误携带 traceback 文本（保持现状）。
+            if isinstance(e, BacktestCancelled):
+                self.finished_err.emit(e)
+            else:
+                self.finished_err.emit(f"{type(e).__name__}: {e}\n{traceback.format_exc()}")
 
     def _on_engine_progress(self, current, total, date_str):
         if self._cancelled:
-            raise RuntimeError("用户取消回测")
+            raise BacktestCancelled("用户取消回测")
         self.day_progress.emit(current, total, date_str)
         self.progress.emit(f"[{current}/{total}] {date_str}")
