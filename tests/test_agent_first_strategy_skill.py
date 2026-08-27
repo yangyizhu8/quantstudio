@@ -30,7 +30,7 @@ def confirmed_design() -> dict:
         },
         "market_data_contract": {
             "signal_price_adjustment": "pre",
-            "execution_price_basis": "pre_adjusted_price",
+            "execution_price_basis": "raw_trade_price",
         },
         "strategy_semantics": {
             "universe": "All A-shares as of previous trading day, then confirmed status filters",
@@ -111,12 +111,12 @@ def implemented_source() -> str:
     ])
 
 
-def test_design_schema_requires_pre_adjusted_execution_basis():
+def test_design_schema_requires_raw_execution_basis():
     design = confirmed_design()
-    design["market_data_contract"]["execution_price_basis"] = "pre_adjusted_price"
+    design["market_data_contract"]["execution_price_basis"] = "raw_trade_price"
     assert validate_strategy(design, implemented_source(), target_profile="ptrade")["status"] == "PASS"
 
-    design["market_data_contract"]["execution_price_basis"] = "raw_trade_price"
+    design["market_data_contract"]["execution_price_basis"] = "pre_adjusted_price"
     report = validate_strategy(design, implemented_source(), target_profile="ptrade")
     assert report["status"] == "BLOCKED"
     assert any(item["rule_id"] == "DESIGN-SCHEMA" for item in report["issues"])

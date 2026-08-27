@@ -46,7 +46,7 @@ def design(contract: dict | None) -> dict:
         "engine_profile": {"profile_id": "minute-bar-v1", "bar_frequency": "1m", "match_price_mode": "close"},
         "market_data_contract": {
             "signal_price_adjustment": "pre",
-            "execution_price_basis": "pre_adjusted_price",
+            "execution_price_basis": "raw_trade_price",
         },
         "strategy_semantics": {"universe": "manual", "entry_rules": [], "exit_rules": [], "portfolio_rules": [], "risk_rules": []},
         "timing": {

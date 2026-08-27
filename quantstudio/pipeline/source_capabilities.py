@@ -31,6 +31,7 @@ KNOWN_TABLE_FREQS: Tuple[Tuple[str, str], ...] = (
     ("etf_basic", "daily"),
     ("balance_statement", "daily"), ("income_statement", "daily"),
     ("cashflow_statement", "daily"), ("stock_dividend", "daily"),
+    ("etf_dividend", "daily"),
     ("sw_industry", "daily"), ("etf_minutes", "1min"),
     ("etf_minutes", "5min"), ("etf_minutes", "15min"),
     ("etf_minutes", "30min"), ("etf_minutes", "60min"),

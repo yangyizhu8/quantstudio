@@ -28,7 +28,7 @@ def local_etf_design() -> dict:
         },
         "market_data_contract": {
             "signal_price_adjustment": "pre",
-            "execution_price_basis": "pre_adjusted_price",
+            "execution_price_basis": "raw_trade_price",
         },
         "strategy_semantics": {
             "universe": "PIT domestic equity ETF universe from local metadata",

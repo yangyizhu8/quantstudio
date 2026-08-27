@@ -49,6 +49,7 @@ _WRITER_PK_REFERENCE = {
     "income_statement": ["code", "end_date", "ann_date"],
     "cashflow_statement": ["code", "end_date", "ann_date"],
     "stock_dividend": ["code", "ex_date"],
+    "etf_dividend": ["code", "ex_date"],
     "sw_industry": ["code", "industry_code"],
     "industry_classification": ["classification_system", "classification_version",
                                 "industry_level", "industry_code", "effective_from"],
