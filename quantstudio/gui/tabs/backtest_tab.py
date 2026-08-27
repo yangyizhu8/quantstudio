@@ -5,7 +5,7 @@ import json
 import logging
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QElapsedTimer
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
     QMessageBox)
@@ -28,6 +28,11 @@ class BacktestTab(QWidget):
         self.mw = main_window
         self._worker = None
         self._result_window = None
+        self._clock = QElapsedTimer()   # 单调钟：回测计时（零漂移）
+        self._tick = QTimer(self)       # 1s 刷新计时显示（UI 线程，与引擎线程无耦合）
+        self._tick.setInterval(1000)
+        self._tick.timeout.connect(self._update_time_label)
+        self._freeze_text = None        # 定格文本缓存（幂等：以首次定格时刻为准）
         self._setup_ui()
 
     def _setup_ui(self):
@@ -122,6 +127,9 @@ class BacktestTab(QWidget):
         self.stop_btn.clicked.connect(self._on_stop)
         btn_bar.addWidget(self.run_btn)
         btn_bar.addWidget(self.stop_btn)
+        self.time_label = QLabel("⏱ 已用时 00:00:00")
+        self.time_label.setStyleSheet("color: #8b949e;")  # GitHub Dark 皮肤浅灰
+        btn_bar.addWidget(self.time_label)
         btn_bar.addStretch()
         self.status_label = QLabel("")
         btn_bar.addWidget(self.status_label)
@@ -195,14 +203,26 @@ class BacktestTab(QWidget):
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
 
+        # 计时：归零并开始（回测完成/出错/手动停止时由 _freeze() 停止并定格）
+        self._freeze_text = None
+        self._clock.restart()
+        self.time_label.setText("⏱ 已用时 00:00:00")
+        self._tick.start()
+
         # 启动
         self.mw.hold_worker(self._worker)
         self._worker.start()
 
     def _on_stop(self):
-        """停止回测"""
+        """停止回测（计时定格：最终用时以按下时刻为准——此处即 stop tick + 定格）。
+
+        取消路径（已实证）：worker.cancel() → BacktestWorker._on_engine_progress 检测
+        _cancelled → raise RuntimeError("用户取消回测") → finished_err → _on_error；
+        _freeze() 幂等（已有定格文本不覆盖），故 _on_error 定格不会改写下按时刻。
+        """
         if self._worker:
             self._worker.cancel()
+            self._freeze()
             self.status_label.setText("正在停止...")
 
     def _on_progress(self, msg):
@@ -220,6 +240,7 @@ class BacktestTab(QWidget):
         self.run_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.progress_bar.setValue(100)
+        self._freeze()  # 计时停止并定格（手动停止后此处幂等，不覆盖按时刻）
 
         output_dir = result.get("output_dir", "")
         self.status_label.setText(f"✅ 回测完成: {output_dir}")
@@ -245,13 +266,39 @@ class BacktestTab(QWidget):
                 f"但结果可视化窗口打开失败:\n{type(e).__name__}: {e}")
 
     def _on_error(self, err):
-        """回测出错"""
+        """回测出错（计时定格幂等：手动停止路径已定格则保持按时刻；否则取当前用时）"""
         self.run_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.progress_bar.setVisible(False)
-        self.status_label.setText(f"❌ 回测失败")
+        self._freeze()
+        self.status_label.setText("❌ 回测失败")
         logger.error(err)
         QMessageBox.critical(self, "回测错误", err[:500])
+
+    @staticmethod
+    def _fmt_elapsed(ms: int) -> str:
+        """毫秒 → HH:MM:SS（纯函数；>99h 自然进位不截断）"""
+        total_s = max(0, int(ms // 1000))
+        h, rem = divmod(total_s, 3600)
+        m, s = divmod(rem, 60)
+        return f"{h:02d}:{m:02d}:{s:02d}"
+
+    def _update_time_label(self):
+        """QTimer(1s) 触发：按单调钟重算显示，杜绝 tick 累积漂移"""
+        if self._clock.isValid():
+            self.time_label.setText(
+                f"⏱ 已用时 {self._fmt_elapsed(self._clock.elapsed())}")
+
+    def _freeze(self):
+        """停止计时并定格当前用时（幂等：已有定格文本不覆盖——手动停止后以按时刻为准）。
+
+        终态三路（完成/出错/手动停止）均经 _freeze() 收敛；_tick.stop() 幂等。
+        """
+        if getattr(self, "_freeze_text", None) is None:
+            ms = self._clock.elapsed() if self._clock.isValid() else 0
+            self._freeze_text = f"⏱ 用时 {self._fmt_elapsed(ms)}"
+        self._tick.stop()
+        self.time_label.setText(self._freeze_text)
 
     def refresh(self):
         self._refresh_strategies()
