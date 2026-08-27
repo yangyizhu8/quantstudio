@@ -166,6 +166,8 @@ Phase 3：WP-D + WP-F
 | **P-D14b 实施** | ✅ Step 3-6 完成（2026-08-27，**P-D14b 关闭**） | `docs/evidence/pd14b-implementation-acceptance-20260827.md`：写入点归零双表（daemon）+ 存量清洗 etf 8244/stock 16619（time-28800000，备份表照建）+ 正向断言（distinct_mods=1 @57600000）+ D3 6/6 + P-D14b 8/8 + 相关 124/124 + 回滚可行；技术债门禁 S1（时间戳归一）落地、S2/S3 登记。**commit `a310ee0` 双远程一致**。回退点 `6666cb0` |
 | **WP-E 设计** | ✅ Step 1 起草完成 → 待 ZCode 审计 | `docs/wp-e-audit-reconcile-design.md`（差异化定位：E1 QS_FILL_AUDIT 已在 08-17 方案落地——实施+单测实证；本 WP 聚焦 **E2 统一公式对账** `scripts/dual_end_reconcile.py`（胜率平仓口径/盈亏比修正/年化/索提诺 + 差异归因分解 `[未解释]` 标记驱动修复）+ **E3 归档规范**（--check-archive 校验齐全+时间戳同批）+ E1 完成度核验（实现/单测 ✅ 已实证，运行输出待 T8 实测）。5 决策 D1~D5 + 8 用例矩阵） |
 | **WP-E 实施** | ✅ Step 3-4 完成（2026-08-27，审计条件并入） | `docs/evidence/wp-e-implementation-acceptance-20260827.md`：E2 reconcile（**复用引擎 ptrade_metrics 公式**——T9 逐位一致）+ E3 --check-archive；测试 9/9；真实 tech_etf 目录 ARCHIVE-PASS + 报告产出（Δ-2.46pp 全归因）；纯新增零框架改动。**Step 5 用户确认待明示** |
+| **WP-F 设计** | ✅ Step 1 起草完成 → 待 ZCode 审计 | `docs/wp-f-skill-template-design.md`（F1 六项+B4 归并）：①止损 cost_basis 优先+close 兜底 ②halt 防御性卖出通道 ③审计三件套（已固化 0.7.1——验收复核）④资金常量 context 派生（R18 已有补强）⑤换仓缓冲带 3%（不宣称 full-turnover）⑥补差语义默认（**B1/B2 交付可依赖——T9 同构保证三侧一致**）+ B4 计数并入 REBALANCE witness。版本化 0.7.1→0.8.0 + **存量零触碰**（6 策略不重渲）+ README/toolbox/prompt 同步义务。8 决策 D1~D8 + 8 用例 T1~T8 |
+| **WP-F 实施** | ✅ Step 3-4 完成（2026-08-27，两验收要求并入） | `docs/evidence/wp-f-implementation-acceptance-20260827.md`：SKILL 0.8.0 + R27-32 F1 六项；双模板（skill+包内副本）同步——**发现 `_PKG_TEMPLATES` 优先未同步缺口并修复**；真实 IR 双端渲染 F1 全 PASS（端到端冒烟=验收主体）；③模板缺口小修注释框架/④已满足复核证据；185/186 回归；toolbox 同步。**Step 5 用户确认待明示** |
 
 ### 合规记录（2026-08-26）
 

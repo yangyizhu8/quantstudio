@@ -9,6 +9,14 @@ engine_semantics_version: {{ contract_versions.engine_semantics_version }}
 renderer_version: {{ contract_versions.renderer_version }}
 match_price_mode: {{ exec_match_price_mode }}
 
+WP-F F1 六项行为框架（SKILL R27-32，0.8.0）：
+  [F1①] 止损基准 = get_position(code).cost_basis 优先，close 末值兜底
+  [F1②] halt 冻结期间买入冻结 + 防御性卖出通道（enable_amount>0 仍可卖）
+  [F1③] 审计行 QS_REBALANCE_AUDIT/QS_PORTFOLIO_AUDIT（设计层 R21）+ QS_FILL_AUDIT（引擎）
+        + B4 order_stats 并入 REBALANCE witness 字段
+  [F1④] 资金 = context.portfolio.total_value 派生（禁止 hardcoded g.capital/固定 target）
+  [F1⑤] 换仓缓冲带 target × (1 - 0.03)（不宣称覆盖 full-turnover）
+  [F1⑥] order_target_value(code, target) 补差语义（B1/B2 交付，T9 同构保证）
 Golden protection: if this strategy_id is golden-protected, render() would have
 raised before reaching this template. This file is safe to overwrite only for
 non-protected strategy_ids.

@@ -8,6 +8,14 @@ renderer_version: {{ contract_versions.renderer_version }}
 match_price_mode: {{ exec_match_price_mode }}
 rebalance_time: {{ ptrade_rebalance_time }}
 
+WP-F F1 行为框架（SKILL R27-32，0.8.0）：
+  [F1①] 止损基准 = get_position(code).cost_basis 优先，close 末值兜底（双端 Position 有 cost_basis）
+  [F1②] halt 冻结买入冻结 + 防御性卖出通道（enable_amount>0 仍可卖）
+  [F1③] 审计 QS_REBALANCE_AUDIT/QS_PORTFOLIO_AUDIT + QS_FILL_AUDIT + B4 order_stats witness
+  [F1④] 资金 = context.portfolio.total_value 派生（禁 hardcoded capital/固定 target）
+  [F1⑤] 换仓缓冲带 target × (1 - 0.03)（不宣称覆盖 full-turnover）
+  [F1⑥] order_target_value 补差语义（B1/B2 交付，T9 同构保证——增量加仓/减仓/清仓）
+
 Runtime compatibility guarantees:
 - get_history may return pandas objects or NumPy structured arrays.
 - unsupported/empty securities are skipped instead of crashing the strategy.

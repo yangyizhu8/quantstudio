@@ -1,5 +1,17 @@
 # QuantStudio 策略工具箱（PTrade 兼容回测 API）
 
+## WP-F F1 六项策略生成默认（2026-08-27，skill 0.8.0）
+
+由 `quantstudio-strategy-compiler` skill 生成的新策略默认获得（SKILL R27-32）：
+- **F1① 止损基准**：`get_position(code).cost_basis` 优先，close 末值兜底（双端可移植——PTrade Position 有 cost_basis，P-POS F3 实证）；
+- **F1② halt 防御卖出**：冻结期买入冻结 + 防御性卖出通道（enable_amount>0 仍可卖）；
+- **F1③ 审计三件套**：QS_REBALANCE_AUDIT/QS_PORTFOLIO_AUDIT（设计层 R21）+ QS_FILL_AUDIT（引擎）；B4 order_stats 并入 REBALANCE witness；
+- **F1④ 资金派生**：目标值 = context.portfolio.total_value × 权重（禁止 hardcoded capital/固定 target）；
+- **F1⑤ 换仓缓冲带**：target × (1-0.03)（不宣称覆盖 full-turnover）；
+- **F1⑥ 补差语义**：`order_target_value` 默认 delta 补差（B1/B2 交付，T9 三侧同构保证——加仓补差/减仓卖出/清仓保底）。
+
+存量策略零触碰（不重渲）；仅影响新生成策略。
+
 本框架在 QuantStudio 本地回测引擎上对齐**已登记并验证的 PTrade 回测公共 API 子集**，同时提供明确标记的 QuantStudio 本地扩展。
 只有通过 PTrade Profile Validator 的策略才可声明可移植；本地运行成功不等于真实平台兼容。数据 100% 来自 DuckDB（QuantStudio 数据管线产出），不依赖任何外部
 回测平台。

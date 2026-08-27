@@ -5,7 +5,7 @@ description: Local-only QuantStudio strategy engineering (agent-first R0-R6 pipe
 
 # QuantStudio Agent-first Strategy Engineering
 
-Skill release: `0.7.1-r0-workflow-review` (built on `0.7.0-framework-repair-f1-f6`; compiler/package baseline `0.3.2-mvp` unchanged).
+Skill release: `0.8.0-f1-six-fold` (built on `0.7.1-r0-workflow-review`; WP-F F1 六项 + B4: cost_basis 止损基准 / halt 防御卖出通道 / 审计三件套复核 / 资金 context 派生 / 换仓缓冲带 / order_target_value 补差语义默认；compiler/package baseline `0.3.2-mvp` unchanged).
 
 Contract versions at this release: agent design `2.2`, PTrade profile `1.10.0`, user backtest evidence `2.1`, validation report `2.1`. Design `2.1` artifacts must not be auto-migrated to PASS; regenerate the design under 2.2 and repeat the R2.5 confirmation.
 
@@ -40,6 +40,12 @@ Treat the calling agent as the strategy author. Constrain it with project lifecy
 23. Static PTrade validation PASS is reported as `PTRADE_PROFILE_PASS` with `runtime_validation_status=NOT_VERIFIED` and `deployment_status=NOT_DEPLOYABLE`. It must never be phrased as "PTrade 可上线/已验证/部署通过". Broker runtime PASS requires customer-supplied real-platform evidence; a later real runtime failure makes all old evidence `STALE` via `scripts/retire_ptrade_runtime_evidence.py`.
 24. `history_coverage_contract.lookback_bars` is an indicator lookback, not a demand that the selected backtest window be preceded by that many in-window trading days; provider history before the window start remains available. R1 checks full-history candidate counts at the first possible decision date; R5 reads `history_eligible_count` from the first rebalance audit and classifies shortfalls as DATA_BLOCKED or the confirmed fail-soft rule — never as a guessed "start date too late".
 26. **中文命名契约（2026-08-22，硬约束）**: 每个由本 skill 生成的本地回测策略，`strategy_name` 必须是**中文策略名**并同时作为发布文件名：正式发布 `quantstudio/backtest/strategies/<strategy_name>.py`（纯中文、无 ASCII 后缀），user-PyQt 候选 `quantstudio/backtest/strategies/<strategy_name>__candidate_quantstudio.py`。`strategy_name` 必须满足：至少一个汉字；不以 `_` 或空白开头（PyQt 面板不显示 `_` 开头文件，前导空白被 Windows 不一致剥离）；不以 `.` 或空白结尾（Windows 静默剥离尾点/尾空格，破坏哈希绑定路径一致性）；不含 `\ / : * ? " < > |`；≤50 字符；且不得与 strategies 目录**任何现存文件**（ASCII 存量、手工中文策略）stem 冲突（`design.output.overwrite=true` 为客户确认的显式覆盖豁免）。`strategy_id` 保持小写 ASCII 内部标识（workspace 目录、`STRATEGY_ID`、run_id、hash 链路），不得中文化。校验为 fail-closed：schema pattern + `STRATEGY-NAME-CONTRACT` / `STRATEGY-NAME-CONFLICT` 在 R2/R4/候选/发布四处 BLOCK（`validate_agent_strategy.py --project-root` 或调用方传入 strategies 目录时执行冲突检查）。R2 展示与 R0 客户确认中必须包含中文策略名。
+27. **止损基准 cost_basis 优先（WP-F F1①，2026-08-27）**: 任何含止损的策略，止损基准价 = `get_position(code).cost_basis`（持仓成本，双端可移植——PTrade Position 有 cost_basis，P-POS F3 实证）**优先**；无持仓或 cost_basis 缺失时兜底 = 最近 `get_history(fq='pre').close` 末值。禁止用不存在于 API 的估算基准。
+28. **halt 冻结防御性卖出通道（WP-F F1②）**: 标的冻结（`get_stock_status(query_type='HALT')` 或行情缺失）期间——买入冻结（禁止建立新仓）；若止损已触发且 `get_position().enable_amount > 0`（可卖），**保留防御性卖出通道**（尝试卖出，不因冻结静默放弃）。P-D13b 引擎保真开关另路；本规则为策略侧防御 hook。
+29. **审计三件套（WP-F F1③复核，2026-08-27）**: R21 已固化 `QS_REBALANCE_AUDIT`/`QS_PORTFOLIO_AUDIT`（设计层）+ 引擎 `QS_FILL_AUDIT`（撮合层）。**B4 审计计数归并**：每期调仓 order_stats 记账（下单笔数/金额/拒绝数）并入 `QS_REBALANCE_AUDIT` 的 `witness=...` 字段（不新增独立行，防日志膨胀）。模板未内置审计行 = 缺口小修（见 template 注释框架）。
+30. **资金常量 context 派生（WP-F F1④复核，2026-08-27）**: `portfolio_contract.sizing_mode=runtime_total_value`（R18 已固化）——禁止 hardcoded `g.capital`/`g.per_target`/固定正 `order_target_value` 金额；目标值一律 = 运行时 `context.portfolio.total_value` × 目标权重。R5 BLOCK 任何 init_capital 与 required_initial_cash 不一致的运行。
+31. **换仓缓冲带（WP-F F1⑤）**: 调仓对净换仓金额留缓冲带 `target_position_value × (1 - buffer_pct)`，`buffer_pct` 默认 **0.03**（覆盖费用/整手取整/一级估值差）。**不得宣称缓冲带解决 full-turnover 融资**（R19 纪律：full turnaround 用 basket 或两段；close 模式同日资金可用）。
+32. **order_target_value 补差语义默认（WP-F F1⑥ + B4，依赖 B1/B2 已交付）**: 调仓调 `order_target_value(code, target_value)`——默认**补差语义**（接线层/转换模板/引擎三侧一致，P-D12 的 T9/T13 同构保证：target = value − amount×T-1px，加仓补差/减仓卖出/清仓保底）。生成代码禁止手写"全额折股再 order()"（那是 P-D12 修复前的损害模式）。
 
 ## Responsibility boundary
 
