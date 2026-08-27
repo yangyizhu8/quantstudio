@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>QuantStudio 工作台 · 窗口1</title>
+<!-- 工作台原生皮肤：可用则加载（本环境 template 路由为 SPA fallback，缺省时下方
+     内联 GitHub Dark 令牌兜底，二者共存的页面观感一致、无死链影响） -->
+<link rel="stylesheet" href="/worktable/template/dshell.css" />
+<style>
+  :root {
+    --bg-page: #0d1117;
+    --bg-sidebar: #0f141a;
+    --bg-card: #161b22;
+    --bg-elevated: #1c2128;
+    --border: #30363d;
+    --text-1: #e6edf3;
+    --text-2: #8b949e;
+    --text-3: #6e7681;
+    --accent: #2f81f7;
+    --accent-hover: #388bfd;
+    --success: #3fb950;
+    --warning: #d29922;
+    --danger: #f85149;
+    --mono: "Cascadia Code", Consolas, "SFMono-Regular", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg-page);
+    color: var(--text-1);
+    font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 20px 24px 40px;
+    max-width: 1080px;
+    margin: 0 auto;
+  }
+  .wrap { display: flex; flex-direction: column; gap: 16px; }
+  header {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap;
+    border-bottom: 1px solid var(--border); padding-bottom: 12px;
+  }
+  header h1 { font-size: 20px; font-weight: 600; letter-spacing: .3px; }
+  header h1 .sep { color: var(--text-3); font-weight: 400; margin: 0 6px; }
+  header .meta { color: var(--text-3); font-family: var(--mono); font-size: 12px; }
+  .eyebrow {
+    color: var(--text-3); text-transform: uppercase; letter-spacing: 1.5px;
+    font-size: 11px; margin-bottom: 4px;
+  }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .tabs button {
+    appearance: none; border: none; background: transparent; color: var(--text-2);
+    padding: 8px 16px; cursor: pointer; font-size: 14px;
+    border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0;
+  }
+  .tabs button:hover { color: var(--text-1); background: rgba(255,255,255,.04); }
+  .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .panes { display: none; }
+  .panes.active { display: block; }
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    margin-bottom: 14px;
+  }
+  .card h3 { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+  .stat {
+    background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .stat .label { color: var(--text-3); font-size: 12px; }
+  .stat .value { font-family: var(--mono); font-size: 20px; margin-top: 4px; color: var(--text-1); }
+  .stat .value.good { color: var(--success); }
+  .stat .value.warn { color: var(--warning); }
+  .stat .value.bad { color: var(--danger); }
+  .stat .value.acc { color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-3); font-weight: 500; font-size: 12px; }
+  td code, .code { font-family: var(--mono); font-size: 12.5px; }
+  .sha { color: var(--accent); }
+  .tag {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    font-size: 11.5px; border: 1px solid var(--border); color: var(--text-2);
+  }
+  .tag.ok { color: var(--success); border-color: rgba(63,185,80,.5); }
+  .tag.warn { color: var(--warning); border-color: rgba(210,153,34,.5); }
+  ul.plain { list-style: none; }
+  ul.plain li { padding: 6px 0; border-bottom: 1px dashed var(--border); }
+  ul.plain li:last-child { border-bottom: none; }
+  a { color: var(--accent-hover); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+  .swatch {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 10px; font-family: var(--mono); font-size: 12px;
+  }
+  .swatch i { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--border); display: inline-block; }
+  .foot { color: var(--text-3); font-size: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+  .hint { color: var(--text-3); font-size: 12.5px; }
+  dialog::backdrop { background: rgba(0,0,0,.5); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="eyebrow">QuantStudio · WorkTable</div>
+      <h1>回测系统工作台<span class="sep">/</span>窗口1</h1>
+    </div>
+    <div class="meta">HEAD 5f2fad1 · main · <span id="clock">--:--:--</span></div>
+  </header>
+
+  <div class="tabs" role="tablist">
+    <button class="active" data-tab="overview">概览</button>
+    <button data-tab="commits">提交</button>
+    <button data-tab="quality">测试与质量</button>
+    <button data-tab="skin">皮肤令牌</button>
+    <button data-tab="links">快捷入口</button>
+  </div>
+
+  <!-- ============ 概览 ============ -->
+  <section class="panes active" id="pane-overview">
+    <div class="card">
+      <h3>项目状态</h3>
+      <div class="grid">
+        <div class="stat"><div class="label">当前分支</div><div class="value acc">main</div></div>
+        <div class="stat"><div class="label">HEAD</div><div class="value" style="font-size:14px">5f2fad1</div></div>
+        <div class="stat"><div class="label">状态</div><div class="value good">已推送双仓库</div></div>
+        <div class="stat"><div class="label">GUI 皮肤</div><div class="value" style="font-size:15px">GitHub Dark</div></div>
+      </div>
+      <p class="hint" style="margin-top:10px">
+        最近提交链：<span class="code">5f2fad1 <span class="sha">test(gui)</span> ← 9014056 <span class="sha">fix(validator)</span> ← 41ba586 <span class="sha">style(gui)</span> ← 84702d9 <span class="sha">fix(gui)</span></span>
+      </p>
+    </div>
+    <div class="card">
+      <h3>推送队列（周一 01:05 解冻后已闭环）</h3>
+      <table>
+        <thead><tr><th>项</th><th>SHA</th><th>状态</th></tr></thead>
+        <tbody>
+          <tr><td>len 修复（先行）</td><td class="code sha">9014056</td><td><span class="tag ok">已推送</span></td></tr>
+          <tr><td>P2-P4 测试修复（test.gui）</td><td class="code sha">5f2fad1</td><td><span class="tag ok">已推送</span></td></tr>
+          <tr><td>O2 死代码清理（config_editor alignment）</td><td class="code">—</td><td><span class="tag warn">待评估</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 提交 ============ -->
+  <section class="panes" id="pane-commits">
+    <div class="card">
+      <h3>最近提交（本地与双远程一致）</h3>
+      <table>
+        <thead><tr><th>SHA</th><th>说明</th><th>类型</th></tr></thead>
+        <tbody>
+          <tr><td class="code sha">5f2fad1</td><td>test(gui): O1 模态兜底 + P2 夹具属性跟进 + P4 补丁点迁移（严格 3 文件）</td><td><span class="tag">test</span></td></tr>
+          <tr><td class="code sha">9014056</td><td>fix(validator): PORTFOLIO-POSITIONS-EXACT-MATCH len() 误报修复（13→14 负例全绿）</td><td><span class="tag ok">fix</span></td></tr>
+          <tr><td class="code sha">41ba586</td><td>style(gui): GitHub Dark 皮肤对齐参考效果图（深色 Web 控制台风格）</td><td><span class="tag">style</span></td></tr>
+          <tr><td class="code sha">84702d9</td><td>fix(gui): import MessageBox 防 NameError</td><td><span class="tag ok">fix</span></td></tr>
+          <tr><td class="code sha">996bbac</td><td>skill(quantstudio-strategy-compiler): R0 策略工作流图审核步骤</td><td><span class="tag">skill</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 测试与质量 ============ -->
+  <section class="panes" id="pane-quality">
+    <div class="card">
+      <h3>GUI 测试验收（2026-08-23 深夜 · 修复后）</h3>
+      <div class="grid">
+        <div class="stat"><div class="label">4 文件整跑</div><div class="value good">31 / 31</div></div>
+        <div class="stat"><div class="label">连跑 2 次</div><div class="value good">无 flake</div></div>
+        <div class="stat"><div class="label">耗时</div><div class="value" style="font-size:17px">4.27s / 3.76s</div></div>
+        <div class="stat"><div class="label">P4 隔离旁证</div><div class="value good">31s → 4s</div></div>
+      </div>
+      <p class="hint" style="margin-top:10px">
+        覆盖：test_gui_dark_panels · test_gui_rebalance_mode · test_gui_task_audit_separation · test_backtest_result_window_savefig。
+        修复前基线：7 失败 + 1 挂起；修复后全部转绿（含原挂起项 test_backtest_finished…）。
+      </p>
+    </div>
+    <div class="card">
+      <h3>启动 GUI（本地）</h3>
+      <p class="code" style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;padding:10px 12px;">
+        cd D:\miniQMT策略实盘\QuantStudio<br />
+        python -m quantstudio.gui.main_gui
+      </p>
+      <p class="hint" style="margin-top:8px">GUI 皮肤由 <span class="code">quantstudio/gui/skin.py</span> 提供（GitHub Dark 令牌 + Fusion 深色 QPalette + 各面板 QSS）。</p>
+    </div>
+  </section>
+
+  <!-- ============ 皮肤令牌 ============ -->
+  <section class="panes" id="pane-skin">
+    <div class="card">
+      <h3>GitHub Dark 令牌（quantstudio/gui/skin.py）</h3>
+      <div class="swatches">
+        <div class="swatch"><i style="background:#0d1117"></i>BG_PAGE #0d1117</div>
+        <div class="swatch"><i style="background:#0f141a"></i>BG_SIDEBAR #0f141a</div>
+        <div class="swatch"><i style="background:#161b22"></i>BG_CARD #161b22</div>
+        <div class="swatch"><i style="background:#1c2128"></i>BG_ELEVATED #1c2128</div>
+        <div class="swatch"><i style="background:#30363d"></i>BORDER #30363d</div>
+        <div class="swatch"><i style="background:#e6edf3"></i>TEXT_1 #e6edf3</div>
+        <div class="swatch"><i style="background:#8b949e"></i>TEXT_2 #8b949e</div>
+        <div class="swatch"><i style="background:#6e7681"></i>TEXT_3 #6e7681</div>
+        <div class="swatch"><i style="background:#2f81f7"></i>ACCENT #2f81f7</div>
+        <div class="swatch"><i style="background:#3fb950"></i>SUCCESS #3fb950</div>
+        <div class="swatch"><i style="background:#d29922"></i>WARNING #d29922</div>
+        <div class="swatch"><i style="background:#f85149"></i>DANGER #f85149</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 快捷入口 ============ -->
+  <section class="panes" id="pane-links">
+    <div class="card">
+      <h3>项目文件</h3>
+      <ul class="plain">
+        <li><a>quantstudio/gui/skin.py</a> <span class="hint">— 全局皮肤（令牌 + QSS + 深色 QPalette）</span></li>
+        <li><a>quantstudio/gui/main_window.py</a> <span class="hint">— 主窗口（日志面板 · 消息框导入修复）</span></li>
+        <li><a>quantstudio/gui/tabs/backtest_tab.py</a> <span class="hint">— 回测标签页（RUN CONTROL 卡片）</span></li>
+        <li><a>docs/evidence/gui-skin-20260823.md</a> <span class="hint">— 皮肤验收证据文档</span></li>
+        <li><a>docs/handoff/gui-skin-baseline-20260823.md</a> <span class="hint">— 皮肤/测试漂移基线（P2-P4 根因）</span></li>
+        <li><a>tests/test_gui_dark_panels.py</a> <span class="hint">— GUI 皮肤与暗色面板测试</span></li>
+        <li><a>tests/test_gui_rebalance_mode.py</a> <span class="hint">— rebalance_mode 透出测试（P4 补丁点迁移）</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <div class="foot">
+    生成于 2026-08-24 01:2x · dsh-worktable · 窗口1 · 数据为静态快照（生成时点）· 主题可再调整
+  </div>
+</div>
+
+<script>
+  // 标签页切换（本地交互，零依赖）
+  var tabs = document.querySelectorAll('.tabs button');
+  var panes = document.querySelectorAll('.panes');
+  tabs.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      tabs.forEach(function (b) { b.classList.remove('active'); });
+      panes.forEach(function (p) { p.classList.remove('active'); });
+      btn.classList.add('active');
+      document.getElementById('pane-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+
+  // 本地时钟
+  function tick() {
+    var d = new Date();
+    var p = function (n) { return (n < 10 ? '0' : '') + n; };
+    document.getElementById('clock').textContent =
+      p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+  tick();
+  setInterval(tick, 1000);
+
+  // 页面内打开项目文件：若插件提供文件预览将以 iframe 呈现（.md/.txt/.html 等）
+  document.querySelectorAll('#pane-links a').forEach(function (a) {
+    a.addEventListener('click', function () {
+      var name = this.textContent.trim();
+      var hint = this.parentElement.querySelector('.hint');
+      alert('「' + name + '」请在窗口的资源管理器/文件预览中打开查看（本窗口为概览看板）。');
+    });
+  });
+</script>
+</body>
+</html>

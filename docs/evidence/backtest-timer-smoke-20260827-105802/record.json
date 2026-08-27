@@ -1,0 +1,15 @@
+{
+  "strategy": "二八轮动策略.py",
+  "range": "2026-01-01..2026-07-13",
+  "wall_seconds": 69.52,
+  "frame1_label": "⏱ 用时 00:01:08",
+  "frame1_time_label_running": null,
+  "frame2_label": "⏱ 用时 00:01:08",
+  "frame2_status": "✅ 回测完成: output\\backtest_results\\20260827_105913_二八轮动策略",
+  "tick_active_after_finish": false,
+  "freeze_text": "⏱ 用时 00:01:08",
+  "worker_finished": true,
+  "frame1": "D:\\miniQMT策略实盘\\QuantStudio\\docs\\evidence\\backtest-timer-smoke-20260827-105802\\frame1-running.png",
+  "frame2": "D:\\miniQMT策略实盘\\QuantStudio\\docs\\evidence\\backtest-timer-smoke-20260827-105802\\frame2-frozen.png",
+  "out_dir": "D:\\miniQMT策略实盘\\QuantStudio\\docs\\evidence\\backtest-timer-smoke-20260827-105802"
+}
