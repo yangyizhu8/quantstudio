@@ -80,3 +80,10 @@ data/quantstudio.zip
 
 # 第三方项目源码（本地参考用，不纳入本仓库 push）
 /qlib/
+
+# 临时调试/探针脚本（总调度清账序6，2026-08-27）
+/_*
+/scripts/_dbg_*
+/scripts/_probe*_tmp*
+/scripts/_git_*.txt
+/scripts/_qdb*_out.txt
