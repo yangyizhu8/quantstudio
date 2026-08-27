@@ -71,6 +71,10 @@ def run_held_canary(*, authorization_path: str, authorization_sha256: str,
     ``FormalCanaryP0``.
 
     Three DB-resolution modes (mutually exclusive):
+      # 3A 写锁（qfq_formal_canary:209）：全程持锁（引用计数，嵌套安全）
+      from quantstudio.pipeline.snapshot_lock import (ensure_write_lock,
+                                                      release_write_lock)
+      ensure_write_lock('formal_canary')
       * default (both None) → ``_configured_formal_main()`` (formal production DB);
       * ``main_db_override`` → dry-run ONLY (read-only snapshot); real execution
         with this param raises;
@@ -206,7 +210,10 @@ def run_held_canary(*, authorization_path: str, authorization_sha256: str,
         manifest_raw_sha=authorization_sha256, cutover_id=manifest["cutover_id"],
         commit_sha=manifest["git_commit_sha"], pid=_os.getpid(),
         create_time=datetime.now(BJ_TZ).timestamp())
-    conn = duckdb.connect(str(main_db), read_only=False)
+    from quantstudio.pipeline.snapshot_lock import locked_connect
+    _lctx = locked_connect(lambda: duckdb.connect(str(main_db), read_only=False),
+                           "formal_canary")  # 3A 写锁（qfq_formal_canary:209）
+    conn = _lctx.__enter__()
     try:
         before = {
             "baseline": conn.execute(
@@ -260,6 +267,7 @@ def run_held_canary(*, authorization_path: str, authorization_sha256: str,
         }
     finally:
         conn.close()
+        _lctx.__exit__(None, None, None)  # 3A 写锁随连接释放
     assertions = {
         "dynamic_identity_active": identity.get("price_source") == "mcp"
             and identity.get("source_generation") == "mcp-gen1"

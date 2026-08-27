@@ -36,6 +36,8 @@ cycle_business_date/first_seen_at/last_seen_at、last_stale_probe_*/probe_fail_c
 """
 from __future__ import annotations
 
+from quantstudio.pipeline.snapshot_lock import locked_connect  # 3A 写锁收口
+
 import logging
 import re
 import sqlite3
@@ -960,7 +962,8 @@ def init_all_from_paths(main_db: Optional[str | Path] = None,
     finally:
         dconn.close()
 
-    sconn = sqlite3.connect(str(aux_path), timeout=30)
+    _lc = locked_connect(lambda: sqlite3.connect(str(aux_path), timeout=30), "reanchor_schema:963")  # 3A 写锁
+    sconn = _lc.__enter__()
     try:
         sconn.execute("PRAGMA journal_mode=WAL")
         sconn.execute("PRAGMA busy_timeout=30000")
@@ -969,6 +972,7 @@ def init_all_from_paths(main_db: Optional[str | Path] = None,
         _verify_sqlite_contract(sconn)     # 回读校验完整契约（含 PK 顺序）
     finally:
         sconn.close()
+        _lc.__exit__(None, None, None)  # 3A 写锁随连接释放
 
     logger.info(f"[qfq_schema] 初始化完成 duckdb={main_path} sqlite={aux_path}")
     return {"duckdb": str(main_path), "sqlite": str(aux_path)}

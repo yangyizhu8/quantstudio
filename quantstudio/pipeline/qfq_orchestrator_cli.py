@@ -983,6 +983,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
                         datefmt="%H:%M:%S")
+    # 3A 写锁入口守卫（qfq_orchestrator_cli:172，rw 能力入口）
+    from quantstudio.pipeline.snapshot_lock import acquire_write_lock, WriteLockHeld
+    try:
+        _lk = acquire_write_lock("orchestrator_cli", timeout_s=30)
+    except WriteLockHeld as e:
+        print(f"[snapshot_lock] {e}；提示：等待当前写任务后重试，或用 "
+              "python -m quantstudio.pipeline.snapshot_lock run 包裹", file=sys.stderr)
+        return 2
+    try:
+        return _main_locked(argv)
+    finally:
+        _lk.release()
+
+
+def _main_locked(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     return DISPATCH[args.cmd](args)
 

@@ -23,6 +23,8 @@ adj_factor_snapshot / stock_daily / etf_daily / Canonical front-back 字段 / so
 """
 from __future__ import annotations
 
+from quantstudio.pipeline.snapshot_lock import locked_connect  # 3A 写锁收口
+
 import logging
 import math
 import sqlite3
@@ -310,7 +312,7 @@ class RevisionStore:
         *_at=ISO 字符串；event UNIQUE(run_id,asset_type,code,factor_time)。
         """
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(str(self.db_path), timeout=30) as conn:
+        with locked_connect(lambda: sqlite3.connect(str(self.db_path), timeout=30), "qfq_revision:conn") as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=30000")
             self._ddl(conn)
@@ -464,7 +466,8 @@ class RevisionStore:
         as_of_v = int(as_of_ms)
         started_at = datetime.now(BJ_TZ).isoformat(timespec="seconds")
 
-        conn = sqlite3.connect(str(self.db_path), timeout=30)
+        _lc = locked_connect(lambda: sqlite3.connect(str(self.db_path), timeout=30), "qfq_revision:assign")  # 3A 写锁
+        conn = _lc.__enter__()
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=30000")
         try:
@@ -563,6 +566,7 @@ class RevisionStore:
             raise
         finally:
             conn.close()
+            _lc.__exit__(None, None, None)  # 3A 写锁随连接释放
 
     def record_failed_run(self, run_id: str, asset_type: str, as_of_ms: int,
                           epsilon: float, error: str,
@@ -582,7 +586,7 @@ class RevisionStore:
         eps = _validate_epsilon(epsilon)  # 二次显式（_validate_run_inputs 内已校验，保持冗余清晰）
         as_of_v = _valid_factor_time(as_of_ms)
         started_at = datetime.now(BJ_TZ).isoformat(timespec="seconds")
-        with sqlite3.connect(str(self.db_path), timeout=30) as conn:
+        with locked_connect(lambda: sqlite3.connect(str(self.db_path), timeout=30), "qfq_revision:conn") as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=30000")
             self._ddl(conn)
@@ -624,7 +628,8 @@ class RevisionStore:
                 baseline_available=False, baseline_seeded=False,
                 observed_count=0, new_count=0, unchanged_count=0, revised_count=0,
                 future_excluded_count=0, events=[])
-        conn = sqlite3.connect(str(self.db_path), timeout=30)
+        _lc = locked_connect(lambda: sqlite3.connect(str(self.db_path), timeout=30), "qfq_revision:assign")  # 3A 写锁
+        conn = _lc.__enter__()
         conn.execute("PRAGMA busy_timeout=30000")
         try:
             baseline, table_exists = self.load_baseline(asset_type, conn=conn)
@@ -635,3 +640,4 @@ class RevisionStore:
                 baseline_available=table_exists and bool(baseline))
         finally:
             conn.close()
+            _lc.__exit__(None, None, None)  # 3A 写锁随连接释放

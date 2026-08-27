@@ -924,6 +924,7 @@ class QFQResidentOrchestrator:
                 raise RuntimeError("dynamic generation 未配置隔离 aux_db")
             logger.warning("[qfq_orch] aux_db 未配置，因子观察查询降级为空结果")
             return []
+        _resident_lock_held = False  # 3A：fallback 直连持锁标记
         try:
             aconn = self._aux_router.connect(
                 source_generation=self._ident["source_generation"],
@@ -933,7 +934,16 @@ class QFQResidentOrchestrator:
         except Exception:
             if getattr(self.cfg, "generation_mode", "pre_cutover") == "dynamic":
                 raise
-            aconn = sqlite3.connect(str(self.aux_db), timeout=30)
+            # 3A 写锁（resident_orch:936）：fallback 直连分支具备写能力，直连期间持锁
+            from quantstudio.pipeline.snapshot_lock import (ensure_write_lock,
+                                                            release_write_lock)
+            ensure_write_lock("resident_orch:fallback")
+            try:
+                aconn = sqlite3.connect(str(self.aux_db), timeout=30)
+            except BaseException:
+                release_write_lock()
+                raise
+            _resident_lock_held = True
         try:
             return aconn.execute(sql, params).fetchall()
         except sqlite3.OperationalError as exc:
@@ -943,6 +953,8 @@ class QFQResidentOrchestrator:
             return []
         finally:
             aconn.close()
+            if _resident_lock_held:
+                release_write_lock()  # 3A 写锁随 fallback 连接释放
 
     def _classify_bootstrap_security(self, conn, asset_type: str, code: str) -> str:
         daily_t = ASSET_PRICE_TABLES[asset_type][0]

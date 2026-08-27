@@ -22,6 +22,8 @@ observation 写入 ``qfq_factor_observation``（qfq_observation.ObservationStore
 """
 from __future__ import annotations
 
+from quantstudio.pipeline.snapshot_lock import locked_connect  # 3A 写锁收口
+
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -289,7 +291,8 @@ class EventDiscovery:
         Returns:
             ObservationResult。
         """
-        aux_conn = sqlite3.connect(str(self.aux_db), timeout=30)
+        _lc = locked_connect(lambda: sqlite3.connect(str(self.aux_db), timeout=30), "event_discovery:292")  # 3A 写锁
+        aux_conn = _lc.__enter__()
         try:
             aux_conn.execute("PRAGMA journal_mode=WAL")
             aux_conn.execute("PRAGMA busy_timeout=30000")
@@ -316,6 +319,7 @@ class EventDiscovery:
             aux_conn.commit()
         finally:
             aux_conn.close()
+            _lc.__exit__(None, None, None)  # 3A 写锁随连接释放
 
         # 局部代码扫描不能推进全局检测游标，否则后续全量周期可能漏检。
         if not codes_filter:

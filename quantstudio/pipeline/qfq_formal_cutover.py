@@ -361,7 +361,11 @@ def run_formal_schema_migration(main_db: str | Path, *,
         ro.close()
 
     txn_validation: list = []
-    conn = duckdb.connect(str(db))
+    # 3A 写锁（qfq_formal_cutover:364/533/557/592）：与 cutover 内部 dual_locks 叠加
+    # （dual_locks 管内部双库一致性，.write_lock 管全局写者/快照互斥，职责不同）
+    from quantstudio.pipeline.snapshot_lock import locked_connect
+    _lc = locked_connect(lambda: duckdb.connect(str(db)), "formal_cutover")
+    conn = _lc.__enter__()
     committed = False
     try:
         conn.execute("BEGIN TRANSACTION")
@@ -391,6 +395,7 @@ def run_formal_schema_migration(main_db: str | Path, *,
             raise
     finally:
         conn.close()
+        _lc.__exit__(None, None, None)  # 3A 写锁随连接释放
 
     # Post-commit read-only audit (content equivalence vs staging).
     post = duckdb.connect(str(db), read_only=True)
@@ -530,7 +535,11 @@ def prepare_formal_baseline(*, main_db: str | Path, cutover_id: str,
     identity = BaselineIdentity(cutover_id=cutover_id, price_source=price_source,
                                 source_generation=source_generation)
 
-    conn = duckdb.connect(str(db))
+    # 3A 写锁（qfq_formal_cutover:364/533/557/592）：与 cutover 内部 dual_locks 叠加
+    # （dual_locks 管内部双库一致性，.write_lock 管全局写者/快照互斥，职责不同）
+    from quantstudio.pipeline.snapshot_lock import locked_connect
+    _lc = locked_connect(lambda: duckdb.connect(str(db)), "formal_cutover")
+    conn = _lc.__enter__()
     try:
         # Step 7a: create the cutover record (planned) with the immutable aux path.
         create_cutover(conn, cutover_id=cutover_id, price_source=price_source,
@@ -545,6 +554,7 @@ def prepare_formal_baseline(*, main_db: str | Path, cutover_id: str,
                            new_status="baseline_building")
     finally:
         conn.close()
+        _lc.__exit__(None, None, None)  # 3A 写锁随连接释放
 
     # Step 6: initialize the isolated generation-specific aux DB (O_EXCL/empty).
     # aux-init requires prepared/baseline_building; the cutover is now baseline_building.
@@ -554,7 +564,11 @@ def prepare_formal_baseline(*, main_db: str | Path, cutover_id: str,
     if not route.exists:
         raise FormalCutoverError(f"aux initialization failed for {source_generation}: {route}")
 
-    conn = duckdb.connect(str(db))
+    # 3A 写锁（qfq_formal_cutover:364/533/557/592）：与 cutover 内部 dual_locks 叠加
+    # （dual_locks 管内部双库一致性，.write_lock 管全局写者/快照互斥，职责不同）
+    from quantstudio.pipeline.snapshot_lock import locked_connect
+    _lc = locked_connect(lambda: duckdb.connect(str(db)), "formal_cutover")
+    conn = _lc.__enter__()
     try:
         # Step 7c: build the discovery baseline from the formal DB's own stock_dividend.
         rows = conn.execute(
@@ -585,11 +599,16 @@ def prepare_formal_baseline(*, main_db: str | Path, cutover_id: str,
                                                  output_path=evidence_output_path)
     finally:
         conn.close()
+        _lc.__exit__(None, None, None)  # 3A 写锁随连接释放
 
     # Step 8: immediate replay verification — the baseline must cover all current
     # historical dividend events, so an immediate re-discovery produces zero new
     # mcp-gen1 triggers and a clean three-item pending-slot audit.
-    conn = duckdb.connect(str(db))
+    # 3A 写锁（qfq_formal_cutover:364/533/557/592）：与 cutover 内部 dual_locks 叠加
+    # （dual_locks 管内部双库一致性，.write_lock 管全局写者/快照互斥，职责不同）
+    from quantstudio.pipeline.snapshot_lock import locked_connect
+    _lc = locked_connect(lambda: duckdb.connect(str(db)), "formal_cutover")
+    conn = _lc.__enter__()
     try:
         new_triggers = conn.execute(
             "SELECT COUNT(*) FROM qfq_trigger_queue WHERE source_generation='mcp-gen1'"
@@ -597,6 +616,7 @@ def prepare_formal_baseline(*, main_db: str | Path, cutover_id: str,
         slots = audit_pending_slots(conn, identity=identity)
     finally:
         conn.close()
+        _lc.__exit__(None, None, None)  # 3A 写锁随连接释放
 
     if new_triggers != 0:
         raise FormalCutoverError(

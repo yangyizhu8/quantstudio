@@ -20,6 +20,8 @@
 
 from __future__ import annotations
 
+from quantstudio.pipeline.snapshot_lock import locked_connect  # 3A 写锁收口
+
 import json
 import logging
 import os
@@ -1171,7 +1173,8 @@ class MCPAdapter(BaseSourceAdapter):
             if self.main_db is not None:
                 aux_p = self._qfq_aux_path()   # TD-D2 统一路由
                 _target_tbl = "fund_adj" if asset_type == "ETF" else "adj_factor"
-                _aux_conn = sqlite3.connect(str(aux_p), timeout=30)
+                _lc = locked_connect(lambda: sqlite3.connect(str(aux_p), timeout=30), "mcp:1217")  # 3A 写锁
+                _aux_conn = _lc.__enter__()
                 _aux_conn.execute("PRAGMA journal_mode=WAL")
                 _aux_conn.execute("PRAGMA busy_timeout=30000")
                 _aux_conn.execute(
@@ -1202,6 +1205,10 @@ class MCPAdapter(BaseSourceAdapter):
             if _aux_conn is not None:
                 _aux_conn.commit()
                 _aux_conn.close()
+                try:
+                    _lc.__exit__(None, None, None)  # 3A 写锁随连接释放
+                except NameError:
+                    pass  # 连接复用路径（非 own 创建）无锁
             # 清缓存：逐片注入后 _adj_latest_cache 可能含中间状态，清空确保预取最新
             self._adj_latest_cache.pop(asset_type, None)
             if total_injected <= 0 and len(shard_paths) > 0:
@@ -1854,6 +1861,10 @@ class MCPAdapter(BaseSourceAdapter):
         out["code"] = out["code"].astype(str).str.split(".").str[0]  # 裸码
         out["data_source"] = out.get("data_source", "mcp")
         db_path = str(self.main_db)
+        # 3A 写锁接入（mcp_adapter:1902 MAIN 写路径 stock_dividend upsert）
+        from quantstudio.pipeline.snapshot_lock import (ensure_write_lock,
+                                                        release_write_lock)
+        ensure_write_lock(f"mcp:inject_dividend")
         try:
             import duckdb
             con = duckdb.connect(db_path, read_only=False)
@@ -1894,6 +1905,8 @@ class MCPAdapter(BaseSourceAdapter):
                 con.close()
         except Exception as e:
             logger.warning(f"[MCPAdapter] stock_dividend 写入失败: {e}")
+        finally:
+            release_write_lock()
 
     def _inject_adjfactor(self, df: pd.DataFrame, freq: str, table: str,
                           conn=None) -> int:
@@ -1936,7 +1949,8 @@ class MCPAdapter(BaseSourceAdapter):
         own_conn = conn is None
         try:
             if own_conn:
-                conn = sqlite3.connect(str(aux), timeout=30)
+                _lc2 = locked_connect(lambda: sqlite3.connect(str(aux), timeout=30), "mcp:1982")  # 3A 写锁
+                conn = _lc2.__enter__()
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("PRAGMA busy_timeout=30000")
                 conn.execute(
@@ -1956,6 +1970,11 @@ class MCPAdapter(BaseSourceAdapter):
         finally:
             if own_conn and conn is not None:
                 conn.close()
+            if own_conn:
+                try:
+                    _lc2.__exit__(None, None, None)  # 3A 写锁随连接释放
+                except NameError:
+                    pass
 
 
 # ----------------------------------------------------------------------

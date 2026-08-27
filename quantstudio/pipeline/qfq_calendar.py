@@ -159,9 +159,17 @@ class CalendarService:
 
     # ---- DuckDB 连接（短连接；避免长期占用被 daemon 持有的主库）----
     def _connect(self):
-        import duckdb
-        conn = duckdb.connect(str(self.main_db))
-        conn.execute(_TRADE_CALENDAR_DDL)  # 幂等确保表存在
+        # 3A 写锁（qfq_calendar:163，含幂等 DDL 的写能力连接）
+        from quantstudio.pipeline.snapshot_lock import (ensure_write_lock,
+                                                        release_write_lock)
+        ensure_write_lock("qfq_calendar:_connect")
+        try:
+            import duckdb
+            conn = duckdb.connect(str(self.main_db))
+            conn.execute(_TRADE_CALENDAR_DDL)  # 幂等确保表存在
+            _conn_lock_token = True
+        finally:
+            release_write_lock()
         return conn
 
     # ---- trade_calendar 持久化（完整自然日：开市 + 闭市）----

@@ -6,6 +6,8 @@ into the held-canary (G0 §4.1).
 """
 from __future__ import annotations
 
+from quantstudio.pipeline.snapshot_lock import locked_connect  # 3A 写锁收口
+
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -99,11 +101,13 @@ def audit_immediate(*, handoff_dir: str | Path, config_dir: str | Path) -> dict:
     finally:
         ro.close()
     # aux integrity
-    ac = sqlite3.connect(str(gen1_aux))
+    _lc = locked_connect(lambda: sqlite3.connect(str(gen1_aux)), "postcutever_audit:102")  # 3A 写锁
+    ac = _lc.__enter__()
     try:
         integrity = ac.execute("PRAGMA quick_check").fetchone()[0]
     finally:
         ac.close()
+        _lc.__exit__(None, None, None)  # 3A 写锁随连接释放
     if integrity != "ok":
         raise PostCutoverAuditError(f"mcp-gen1 aux integrity failed: {integrity}")
     report = {

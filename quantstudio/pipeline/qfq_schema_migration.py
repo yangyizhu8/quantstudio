@@ -1088,6 +1088,20 @@ def _report_to_dict(report: MigrationReport) -> Dict:
 
 
 def _cli_main(argv: Optional[List[str]] = None) -> int:
+    # 3A 写锁入口守卫（qfq_schema_migration:853）
+    from quantstudio.pipeline.snapshot_lock import acquire_write_lock, WriteLockHeld
+    try:
+        _lk = acquire_write_lock("schema_migration", timeout_s=30)
+    except WriteLockHeld as e:
+        print(f"[snapshot_lock] {e}", file=sys.stderr)
+        return 2
+    try:
+        return _cli_main_locked(argv)
+    finally:
+        _lk.release()
+
+
+def _cli_main_locked(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m quantstudio.pipeline.qfq_schema_migration",
         description="QFQ reanchor 显式 2.0→2.1 migration runner（B-3b）。默认 dry-run。")

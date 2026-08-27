@@ -294,6 +294,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    # 3A 写锁入口守卫（formal_cutover 写路径 364/533/557/592 经此 CLI 覆盖）
+    from quantstudio.pipeline.snapshot_lock import acquire_write_lock, WriteLockHeld
+    try:
+        _lk = acquire_write_lock("formal_cutover_cli", timeout_s=30)
+    except WriteLockHeld as e:
+        print(f"[snapshot_lock] {e}", file=sys.stderr)
+        return 2
+    try:
+        return _main_locked(argv)
+    finally:
+        _lk.release()
+
+
+def _main_locked(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "watermark-release":
         # WP7-E3 is a separate entry point; it must NOT run as a spawned child.

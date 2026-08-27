@@ -19,6 +19,8 @@ ResidentCollector — 常驻采集进程（Layer 1 模块⑤，Phase 2 核心）
 """
 from __future__ import annotations
 
+from quantstudio.pipeline.snapshot_lock import locked_connect  # 3A 写锁收口
+
 import argparse
 import json
 import logging
@@ -279,12 +281,14 @@ class ResidentCollector:
             orch.init_schema(conn)
             if orch.aux_db:
                 import sqlite3 as _sqlite3
-                aux_conn = _sqlite3.connect(str(orch.aux_db))
+                _lc = locked_connect(lambda: _sqlite3.connect(str(orch.aux_db)), "daemon:282")  # 3A 写锁
+                aux_conn = _lc.__enter__()
                 orch.init_schema(conn, aux_conn)
                 aux_conn.commit()
         finally:
             if aux_conn is not None:
                 aux_conn.close()
+                _lc.__exit__(None, None, None)  # 3A 写锁随连接释放
         self._qfq_cycle_id = orch.begin_cycle(conn)
         logger.info(f"[qfq] 协调周期开启 cycle_id={self._qfq_cycle_id}"
                     f"（四价格表水位延迟到周期结束统一提交）")
@@ -680,7 +684,6 @@ class ResidentCollector:
                     except Exception as _e:
                         logger.warning(
                             f"[{batch_id}] {table} trade_date 归零失败（跳过，K-001 防复发）: {_e}")
-
 
             # 3. 对齐（硬编码，不可跳过）
             # 日线/分钟任务：自动拉取 adj_factor 传给 aligner 计算 8 个复权字段
@@ -1164,7 +1167,8 @@ class ResidentCollector:
                 from .aligner import normalize_code, to_ms_timestamp
                 logger.info(f"[{batch_id}] 预拉全量 adj_factor（{len(trade_days)} 天，逐日增量写盘）...")
                 _adj_t0 = _time.time()
-                conn = sqlite3.connect(qfq.db_path, timeout=30)
+                _lc = locked_connect(lambda: sqlite3.connect(qfq.db_path, timeout=30), "daemon:1145")  # 3A 写锁
+                conn = _lc.__enter__()
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("PRAGMA busy_timeout=30000")
                 conn.execute("DELETE FROM adj_factor")  # 全量重拉，先清旧
@@ -1210,6 +1214,7 @@ class ResidentCollector:
                      for _, row in _snap.iterrows()])
                 conn.commit()
                 conn.close()
+                _lc.__exit__(None, None, None)  # 3A 写锁随连接释放
                 adj_latest_map, adj_earliest_map = qfq.load_snapshot()
                 logger.info(f"[{batch_id}] adj_factor 快照已构建: {len(adj_latest_map) if adj_latest_map else 0} 只股票（入库 {_rows_total} 行）")
             else:

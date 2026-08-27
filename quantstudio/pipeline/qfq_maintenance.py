@@ -13,6 +13,8 @@ QFQ 维护模块 [E-3] — adj_factor 增量拉取 + 批次边界复权跳变检
 """
 from __future__ import annotations
 
+from quantstudio.pipeline.snapshot_lock import locked_connect  # 3A 写锁收口
+
 import json
 import logging
 import re
@@ -64,7 +66,7 @@ class QFQMaintenance:
         self._init_tables()
 
     def _init_tables(self):
-        with sqlite3.connect(self.db_path, timeout=30) as conn:
+        with locked_connect(lambda: sqlite3.connect(self.db_path, timeout=30), "qfq_maintenance.py:67") as conn:
             # WAL 模式 + busy_timeout（减少多线程并发写锁冲突）
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=30000")
@@ -139,7 +141,7 @@ class QFQMaintenance:
         # 任务1.2：股票写 adj_factor；ETF 写 fund_adj。两张表彻底隔离，
         # 不得再把 ETF 因子写入 adj_factor。
         table = "fund_adj" if is_etf else "adj_factor"
-        with sqlite3.connect(self.db_path, timeout=30) as conn:
+        with locked_connect(lambda: sqlite3.connect(self.db_path, timeout=30), "qfq_maintenance.py:142") as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=30000")
             conn.executemany(
@@ -163,7 +165,7 @@ class QFQMaintenance:
         latest.columns = ["code", "adj_latest"]
         snapshot = earliest.merge(latest, on="code", how="outer")
         snapshot["snapshot_date"] = snapshot_date
-        with sqlite3.connect(self.db_path, timeout=30) as conn:
+        with locked_connect(lambda: sqlite3.connect(self.db_path, timeout=30), "qfq_maintenance.py:166") as conn:
             conn.execute("DELETE FROM adj_factor_snapshot")  # 清旧快照
             conn.executemany(
                 "INSERT OR REPLACE INTO adj_factor_snapshot VALUES (?,?,?,?)",
@@ -174,7 +176,7 @@ class QFQMaintenance:
     def load_snapshot(self) -> tuple:
         """读取快照，返回 (adj_latest_map, adj_earliest_map) 两个 dict。
         全量拉取前调用，如果无快照返回 (None, None)。"""
-        with sqlite3.connect(self.db_path, timeout=30) as conn:
+        with locked_connect(lambda: sqlite3.connect(self.db_path, timeout=30), "qfq_maintenance.py:187") as conn:
             df = pd.read_sql_query("SELECT code, adj_latest, adj_earliest FROM adj_factor_snapshot", conn)
         if len(df) == 0:
             return None, None
@@ -490,7 +492,7 @@ def migrate_split_etf_factors(aux_db_path, etf_universe=None, *, dry_run=True):
     if aux_db_path.name == "quantstudio.db":
         aux_db_path = aux_db_path.parent / "qfq_aux.db"
     etf_set = _resolve_etf_universe(aux_db_path, etf_universe)
-    with sqlite3.connect(aux_db_path, timeout=30) as conn:
+    with locked_connect(lambda: sqlite3.connect(aux_db_path, timeout=30), "qfq_maintenance.py:493") as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         rows = conn.execute(
             "SELECT code, time, adj_factor FROM adj_factor").fetchall()
@@ -533,7 +535,7 @@ if __name__ == "__main__":
     t1 = to_ms_timestamp("2026-07-07")
     t2 = to_ms_timestamp("2026-07-08")
     t3 = to_ms_timestamp("2026-07-09")
-    with duckdb.connect(tmp) as conn:
+    with locked_connect(lambda: duckdb.connect(tmp), "qfq_maintenance.py:536") as conn:
         conn.execute("""CREATE TABLE stock_daily(
             code VARCHAR, time BIGINT, open DOUBLE, high DOUBLE,
             low DOUBLE, close DOUBLE, pctChg DOUBLE, volume DOUBLE, amount DOUBLE)""")

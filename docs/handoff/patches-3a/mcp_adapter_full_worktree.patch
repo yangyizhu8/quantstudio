@@ -1,0 +1,174 @@
+diff --git a/quantstudio/pipeline/sources/mcp_adapter.py b/quantstudio/pipeline/sources/mcp_adapter.py
+index e9cc08a..29f22ed 100644
+--- a/quantstudio/pipeline/sources/mcp_adapter.py
++++ b/quantstudio/pipeline/sources/mcp_adapter.py
+@@ -1,4 +1,4 @@
+-﻿"""MCP 数据源适配器（P2-2：MCPSourceAdapter）
++"""MCP 数据源适配器（P2-2：MCPSourceAdapter）
+ 
+ 按任务书 §4 + P2-0 协议探针结论 + QFQ 设计 §7.2 实现。
+ 
+@@ -20,6 +20,8 @@
+ 
+ from __future__ import annotations
+ 
++from quantstudio.pipeline.snapshot_lock import locked_connect  # 3A 写锁收口
++
+ import json
+ import logging
+ import os
+@@ -65,6 +67,10 @@ _MCP_SUPPORTED: Dict[Tuple[str, str], str] = {
+     ("etf_minutes", "30min"): "etf_minutes_30min",
+     ("etf_minutes", "60min"): "etf_minutes_60min",
+     ("stock_dividend", "daily"): "stock_dividend",
++    # ETF 基金分红（tushare fund_div，管线方案 etf-dividend 任务）
++    ("etf_dividend", "daily"): "etf_dividend",
++    # 股本结构（daily_basic 派生：float_share/free_share/total_share，精确股本数据源）
++    ("stock_float_share", "daily"): "stock_float_share",
+     # 财务表（P3-5起支持）
+     ("balance_statement", "daily"): "balance_statement",
+     ("income_statement", "daily"): "income_statement",
+@@ -198,7 +204,12 @@ _CANONICAL_TO_QUESTDB = {
+     "cashflow_statement": "stock_cashflow",
+     "fin_indicator": "stock_fina_indicator",
+     "trade_calendar": "trade_cal",
+-    "stock_dividend": "ws_exdiv",
++    # 【管线方案 v2】stock_dividend 源切换：ws_exdiv（westock 遗留，仅 2026 现金、单位缺陷 ×100）
++    # → stock_dividend_full（tushare dividend 全历史，每股口径含送转）。旧源废弃不维护。
++    "stock_dividend": "stock_dividend_full",
++    "etf_dividend": "etf_dividend",
++    # 股本结构：MCP 唯一权威源（stock_daily_basic 派生，含精确 float_share/free_share）
++    "stock_float_share": "stock_daily_basic",
+     # === 类别A 全量扩展：新增映射表（含 namechange 同名）===
+     "stock_daily_valuation": "stock_daily_basic",   # 估值表无 OHLCV，UnitCheck 不拦
+     "index_constituents": "index_weight",
+@@ -550,10 +561,16 @@ class MCPAdapter(BaseSourceAdapter):
+         # 统一归一化为 YYYYMMDD 8位字符串再比较，避免格式不匹配导致全滤为 0
+         def _norm_date(v):
+             s = str(v).strip()
++            if s.isdigit() and len(s) == 13:          # epoch 毫秒（防御：云端返回 ms 数值）
++                s = datetime.fromtimestamp(int(s) / 1000).strftime("%Y%m%d")
++                return s
+             if len(s) >= 10 and s[4] == "-":
+                 s = s[:10].replace("-", "")
+             return s[:8]
+-        date_col = next((c for c in ("date", "trade_date", "cal_date") if c in df.columns), None)
++        # 【管线方案 v2】日期列候选新增 ex_date：etf_dividend / stock_dividend_full 的
++        # designated timestamp 是 ex_date（除息日），否则增量窗口过滤失效退化为全表重拉。
++        date_col = next((c for c in ("date", "trade_date", "cal_date", "ex_date")
++                         if c in df.columns), None)
+         if len(df) and date_col:
+             dcol = df[date_col].map(_norm_date)
+             s8, e8 = _norm_date(start), _norm_date(end)
+@@ -572,15 +589,43 @@ class MCPAdapter(BaseSourceAdapter):
+             else:
+                 logger.warning(f"[MCPAdapter] 无 code 类列可过滤 codes，返回全量 {len(df)} 行")
+         has_adj = "adj_factor" in df.columns
+-        # ws_exdiv 适配（P3-7）：云端除权除息表 ws_exdiv 无 div_proc 列，
+-        # 仅 dividend_plan（如 "10派6.180元"）描述方案。event_discovery 要求
+-        # div_proc='实施' 才生成 trigger，故 dividend_plan 非空即视为已实施。
++        # 【管线方案 v2】stock_dividend 归一化（替代原 ws_exdiv div_proc 派生 hack）：
++        # 新源 stock_dividend_full = tushare dividend 字段（每股口径）。
++        # - cash_div_tax→cash_div_before_tax（税前每股）、cash_div→cash_div_after_tax（税后每股）；
++        # - 仅保留 div_proc='实施' 且 ex_date 非空（与 tushare adapter _fetch_dividend 同语义）；
++        # - 同 (ts_code, ex_date) 去重（fund_div/dividend 接口重复行防御）。
++        # 【R-3】以下 ws_exdiv 兼容分支（dividend_plan 派生 div_proc）为防御性代码：
++        # 源切换后预期永不命中（新源自带 div_proc），保留仅为回退期兼容；单测断言其不命中。
+         if table == "stock_dividend":
++            if "cash_div_tax" in df.columns and "cash_div_before_tax" not in df.columns:
++                df = df.rename(columns={"cash_div_tax": "cash_div_before_tax"})
++            if "cash_div" in df.columns and "cash_div_after_tax" not in df.columns:
++                df = df.rename(columns={"cash_div": "cash_div_after_tax"})
+             if "div_proc" not in df.columns and "dividend_plan" in df.columns:
+                 df["div_proc"] = df["dividend_plan"].apply(
+                     lambda v: "实施" if (v is not None and str(v).strip() != "") else None)
+-                logger.info(f"[MCPAdapter] stock_dividend(ws_exdiv) 派生 div_proc='实施' "
+-                             f"→ {int(df['div_proc'].notna().sum())} 行")
++                logger.info(f"[MCPAdapter] stock_dividend(ws_exdiv 兼容) 派生 div_proc='实施' "
++                            f"→ {int(df['div_proc'].notna().sum())} 行")
++            if "div_proc" in df.columns:
++                before = len(df)
++                df = df[df["div_proc"].astype(str) == "实施"].reset_index(drop=True)
++                if len(df) < before:
++                    logger.info(f"[MCPAdapter] stock_dividend 过滤 div_proc=实施 "
++                                f"{before}→{len(df)} 行")
++            if "ex_date" in df.columns:
++                before = len(df)
++                df = df[df["ex_date"].notna()].reset_index(drop=True)
++                if len(df) < before:
++                    logger.info(f"[MCPAdapter] stock_dividend 过滤 ex_date 非空 "
++                                f"{before}→{len(df)} 行")
++            if "ts_code" in df.columns and "ex_date" in df.columns:
++                before = len(df)
++                df = (df.sort_values("cash_div_before_tax", na_position="last")
++                        .drop_duplicates(subset=["ts_code", "ex_date"], keep="first")
++                        .reset_index(drop=True))
++                if len(df) < before:
++                    logger.info(f"[MCPAdapter] stock_dividend (ts_code,ex_date) 去重 "
++                                f"{before}→{len(df)} 行")
+ 
+         # === codex 审计 TD-15：industry_classification 常量注入 + L1 过滤 + 去重 ===
+         # 云端 sw_classify 含 L1/L2/L3，canonical 只需 L1（对齐 tushare
+@@ -1171,7 +1216,8 @@ class MCPAdapter(BaseSourceAdapter):
+             if self.main_db is not None:
+                 aux_p = self._qfq_aux_path()   # TD-D2 统一路由
+                 _target_tbl = "fund_adj" if asset_type == "ETF" else "adj_factor"
+-                _aux_conn = sqlite3.connect(str(aux_p), timeout=30)
++                _lc = locked_connect(lambda: sqlite3.connect(str(aux_p), timeout=30), "mcp:1217")  # 3A 写锁
++                _aux_conn = _lc.__enter__()
+                 _aux_conn.execute("PRAGMA journal_mode=WAL")
+                 _aux_conn.execute("PRAGMA busy_timeout=30000")
+                 _aux_conn.execute(
+@@ -1202,6 +1248,10 @@ class MCPAdapter(BaseSourceAdapter):
+             if _aux_conn is not None:
+                 _aux_conn.commit()
+                 _aux_conn.close()
++                try:
++                    _lc.__exit__(None, None, None)  # 3A 写锁随连接释放
++                except NameError:
++                    pass  # 连接复用路径（非 own 创建）无锁
+             # 清缓存：逐片注入后 _adj_latest_cache 可能含中间状态，清空确保预取最新
+             self._adj_latest_cache.pop(asset_type, None)
+             if total_injected <= 0 and len(shard_paths) > 0:
+@@ -1854,6 +1904,10 @@ class MCPAdapter(BaseSourceAdapter):
+         out["code"] = out["code"].astype(str).str.split(".").str[0]  # 裸码
+         out["data_source"] = out.get("data_source", "mcp")
+         db_path = str(self.main_db)
++        # 3A 写锁接入（mcp_adapter:1902 MAIN 写路径 stock_dividend upsert）
++        from quantstudio.pipeline.snapshot_lock import (ensure_write_lock,
++                                                        release_write_lock)
++        ensure_write_lock(f"mcp:inject_dividend")
+         try:
+             import duckdb
+             con = duckdb.connect(db_path, read_only=False)
+@@ -1894,6 +1948,8 @@ class MCPAdapter(BaseSourceAdapter):
+                 con.close()
+         except Exception as e:
+             logger.warning(f"[MCPAdapter] stock_dividend 写入失败: {e}")
++        finally:
++            release_write_lock()
+ 
+     def _inject_adjfactor(self, df: pd.DataFrame, freq: str, table: str,
+                           conn=None) -> int:
+@@ -1936,7 +1992,8 @@ class MCPAdapter(BaseSourceAdapter):
+         own_conn = conn is None
+         try:
+             if own_conn:
+-                conn = sqlite3.connect(str(aux), timeout=30)
++                _lc2 = locked_connect(lambda: sqlite3.connect(str(aux), timeout=30), "mcp:1982")  # 3A 写锁
++                conn = _lc2.__enter__()
+                 conn.execute("PRAGMA journal_mode=WAL")
+                 conn.execute("PRAGMA busy_timeout=30000")
+                 conn.execute(
+@@ -1956,6 +2013,11 @@ class MCPAdapter(BaseSourceAdapter):
+         finally:
+             if own_conn and conn is not None:
+                 conn.close()
++            if own_conn:
++                try:
++                    _lc2.__exit__(None, None, None)  # 3A 写锁随连接释放
++                except NameError:
++                    pass
+ 
+ 
+ # ----------------------------------------------------------------------

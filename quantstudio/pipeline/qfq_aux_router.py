@@ -7,6 +7,8 @@ cutover/bootstrap action so a typo cannot silently produce an empty baseline.
 """
 from __future__ import annotations
 
+from quantstudio.pipeline.snapshot_lock import locked_connect  # 3A 写锁收口
+
 import json
 import sqlite3
 from dataclasses import dataclass
@@ -117,6 +119,12 @@ class AuxDbRouter:
 
     def connect(self, *, source_generation: str, cutover_id: str,
                 read_only: bool = False, require_exists: bool = True) -> sqlite3.Connection:
+        """3A 硬约束（DSH 拆分审计）：read_only=True 为纯读（锁豁免，返回裸连接）；
+        read_only=False 一律 raise（写路径结构性消除旁路）——写态必须用 connect_locked()。"""
+        if not read_only:
+            raise AuxRouteError(
+                "connect(read_only=False) 已被禁止（3A 写锁收口硬约束）："
+                "写态请使用 connect_locked() 上下文（with router.connect_locked(...) as conn）")
         route = self.resolve(source_generation=source_generation,
                              cutover_id=cutover_id, require_exists=require_exists)
         try:
@@ -129,17 +137,33 @@ class AuxDbRouter:
         conn.execute("PRAGMA busy_timeout=30000")
         return conn
 
+    def connect_locked(self, *, source_generation: str, cutover_id: str,
+                       require_exists: bool = True):
+        """3A 写锁上下文（aux_router:127 拆分）：写态打开的锁生命周期=连接生命周期。
+        用法：with router.connect_locked(...) as conn: ..."""
+        from quantstudio.pipeline.snapshot_lock import locked_connect
+        route = self.resolve(source_generation=source_generation,
+                             cutover_id=cutover_id, require_exists=require_exists)
+        def _open():
+            conn = sqlite3.connect(str(route.path), timeout=30,
+                                   uri=False, check_same_thread=False)
+            conn.execute("PRAGMA busy_timeout=30000")
+            return conn
+        return locked_connect(_open, f"aux_router:write:{route.path.name}")
+
     def initialize_explicit(self, *, source_generation: str, cutover_id: str) -> AuxRoute:
         """Explicitly create/init a generation database; never called implicitly."""
         route = self.resolve(source_generation=source_generation,
                              cutover_id=cutover_id, require_exists=False)
         route.path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(route.path), timeout=30)
+        _lc = locked_connect(lambda: sqlite3.connect(str(route.path), timeout=30), "aux_router:init")  # 3A 写锁
+        conn = _lc.__enter__()
         try:
             init_sqlite_schema(conn)
             conn.commit()
         finally:
             conn.close()
+            _lc.__exit__(None, None, None)  # 3A 写锁随连接释放
         return self.resolve(source_generation=source_generation,
                             cutover_id=cutover_id, require_exists=True)
 

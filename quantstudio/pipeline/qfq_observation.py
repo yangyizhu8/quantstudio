@@ -184,7 +184,10 @@ class ObservationStore:
         self.epsilon_abs, self.epsilon_rel = _validate_epsilon_pair(epsilon_abs, epsilon_rel)
 
     # ---- 连接（自管理时用；保证 schema 存在）----
-    def _connect(self) -> sqlite3.Connection:
+    def __connect(self) -> sqlite3.Connection:
+        """3A 硬约束（DSH 拆分审计）：内部裸工厂（含 init_sqlite_schema DDL），
+        类外调用一律 AttributeError（name-mangling 私有化）——
+        外部唯一合法入口是 _connect_locked() 上下文。"""
         self.aux_db.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self.aux_db), timeout=30)
         conn.execute("PRAGMA journal_mode=WAL")
@@ -192,6 +195,11 @@ class ObservationStore:
         init_sqlite_schema(conn)
         conn.commit()
         return conn
+
+    def _connect_locked(self):
+        """3A 写锁上下文（observation:190 拆分）：锁生命周期严格等于连接生命周期。"""
+        from quantstudio.pipeline.snapshot_lock import locked_connect
+        return locked_connect(self._ObservationStore__connect, "observation:own_conn")
 
     # ---- 同批预归一化 + 冲突检测（阻断 2）----
     def _preprocess(self, observations, as_of_ms, epsilon_abs, epsilon_rel):
@@ -284,7 +292,8 @@ class ObservationStore:
         result.future_excluded = future_excluded
 
         own = conn is None
-        c = self._connect() if own else conn
+        _lctx = self._connect_locked() if own else None  # 3A 写锁
+        c = _lctx.__enter__() if own else conn
         try:
             if own:
                 c.execute("BEGIN IMMEDIATE")
@@ -386,6 +395,7 @@ class ObservationStore:
         finally:
             if own:
                 c.close()
+                _lctx.__exit__(None, None, None)  # 3A 写锁随连接释放
 
         if result.revised_count:
             logger.info(
@@ -398,7 +408,8 @@ class ObservationStore:
     def list_pending_alerts(self, conn: Optional[sqlite3.Connection] = None) -> List[Dict]:
         """列出全部 status='pending' 的 alert（供消费侧写 DuckDB anchor 前读取）。"""
         own = conn is None
-        c = self._connect() if own else conn
+        _lctx = self._connect_locked() if own else None  # 3A 写锁
+        c = _lctx.__enter__() if own else conn
         try:
             rows = c.execute(
                 "SELECT alert_id, asset_type, code, factor_time, revision_no, "
@@ -408,6 +419,7 @@ class ObservationStore:
         finally:
             if own:
                 c.close()
+                _lctx.__exit__(None, None, None)  # 3A 写锁随连接释放
         cols = ["alert_id", "asset_type", "code", "factor_time", "revision_no",
                 "first_seen_run_id", "created_at"]
         return [dict(zip(cols, r)) for r in rows]
@@ -417,7 +429,8 @@ class ObservationStore:
         """将 alert 标记为 acknowledged（消费侧成功写 DuckDB anchor 后调用，幂等）。"""
         ts = at or _now_iso()
         own = conn is None
-        c = self._connect() if own else conn
+        _lctx = self._connect_locked() if own else None  # 3A 写锁
+        c = _lctx.__enter__() if own else conn
         try:
             c.execute(
                 "UPDATE qfq_factor_revision_alert "
@@ -428,3 +441,4 @@ class ObservationStore:
         finally:
             if own:
                 c.close()
+                _lctx.__exit__(None, None, None)  # 3A 写锁随连接释放
