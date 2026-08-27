@@ -25,6 +25,15 @@ from unittest import mock
 
 import pandas as pd
 import pytest
+@pytest.fixture(autouse=True)
+def _clean_write_lock():
+    """3A 锁卫生：清理陈锁文件（被杀测试进程残留），防止 30s 超时串扰。"""
+    from pathlib import Path as _P
+    lk = _P(__file__).resolve().parent.parent / "data" / "snapshots" / ".write_lock"
+    lk.unlink(missing_ok=True)
+    yield
+    lk.unlink(missing_ok=True)
+
 
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
@@ -595,7 +604,7 @@ class TestObservationStore:
 
     def test_non_finite_rejected_and_rolled_back(self, tmp_path):
         store = self._store(tmp_path)
-        store._connect().close()  # 确保 schema 存在（拒绝路径不触达 _connect）
+        store._connect_locked().__enter__().__exit__(None, None, None)  # 3A 私有化后走锁上下文  # 确保 schema 存在（拒绝路径不触达 _connect）
         with pytest.raises(ValueError):
             store.record_observations([("STOCK", "000002", FT1, float("nan"))], run_id="r6")
         c = sqlite3.connect(str(store.aux_db))
@@ -605,7 +614,7 @@ class TestObservationStore:
 
     def test_external_conn_atomic_rollback(self, tmp_path):
         store = self._store(tmp_path)
-        store._connect().close()  # 确保 schema 已建
+        store._connect_locked().__enter__().__exit__(None, None, None)  # 3A 私有化后走锁上下文  # 确保 schema 已建
         c = sqlite3.connect(str(store.aux_db)); c.execute("PRAGMA busy_timeout=30000")
         c.execute("BEGIN IMMEDIATE")
         store.record_observations([("STOCK", "600036", FT1, 5.0)], run_id="tx", conn=c)
@@ -627,7 +636,7 @@ class TestObservationStore:
     # ---- 阻断 2 新增测试 ----
     def test_observation_rejects_zero_factor(self, tmp_path):
         store = self._store(tmp_path)
-        store._connect().close()
+        store._connect_locked().__enter__().__exit__(None, None, None)  # 3A 私有化后走锁上下文
         with pytest.raises(ValueError):
             store.record_observations([("STOCK", "600519", FT1, 0.0)], run_id="r")
         c = sqlite3.connect(str(store.aux_db))
@@ -636,7 +645,7 @@ class TestObservationStore:
 
     def test_observation_rejects_negative_factor(self, tmp_path):
         store = self._store(tmp_path)
-        store._connect().close()
+        store._connect_locked().__enter__().__exit__(None, None, None)  # 3A 私有化后走锁上下文
         with pytest.raises(ValueError):
             store.record_observations([("STOCK", "600519", FT1, -1.0)], run_id="r")
         c = sqlite3.connect(str(store.aux_db))
@@ -687,7 +696,7 @@ class TestObservationStore:
 
     def test_same_run_duplicate_conflicting_value_rolls_back(self, tmp_path):
         store = self._store(tmp_path)
-        store._connect().close()
+        store._connect_locked().__enter__().__exit__(None, None, None)  # 3A 私有化后走锁上下文
         with pytest.raises(ValueError):
             store.record_observations(
                 [("STOCK", "600000", FT1, 1.0), ("STOCK", "600000", FT1, 1.1)], run_id="r")
@@ -757,7 +766,7 @@ class TestObservationStore:
 
     def test_observation_rejects_nonpositive_stored_baseline(self, tmp_path):
         store = self._store(tmp_path)
-        store._connect().close()  # 确保 schema 存在
+        store._connect_locked().__enter__().__exit__(None, None, None)  # 3A 私有化后走锁上下文  # 确保 schema 存在
         # 直接写入一个非法零基线（绕过输入校验），模拟旧库损坏数据
         c = sqlite3.connect(str(store.aux_db))
         c.execute("INSERT INTO qfq_factor_observation "

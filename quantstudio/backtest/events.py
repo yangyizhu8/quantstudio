@@ -80,6 +80,27 @@ def import_strategy_event_csv(
     encoding: str = "utf-8-sig",
     replace_event_type: bool = True,
 ) -> dict:
+    """3A 写锁接入（events.py:107 MAIN 写路径）：导入期间持锁，失败即拒绝。"""
+    from quantstudio.pipeline.snapshot_lock import (ensure_write_lock,
+                                                    release_write_lock)
+    ensure_write_lock(f"events:import:{Path(db_path).name}")
+    try:
+        return _import_strategy_event_csv_impl(
+            db_path, csv_path, event_type, column_map,
+            encoding=encoding, replace_event_type=replace_event_type)
+    finally:
+        release_write_lock()
+
+
+def _import_strategy_event_csv_impl(
+    db_path: str | Path,
+    csv_path: str | Path,
+    event_type: str,
+    column_map: Mapping[str, str],
+    *,
+    encoding: str = "utf-8-sig",
+    replace_event_type: bool = True,
+) -> dict:
     """Import a CSV into the generic strategy_events table.
 
     ``column_map`` maps canonical fields (event_date, code, signal, name,

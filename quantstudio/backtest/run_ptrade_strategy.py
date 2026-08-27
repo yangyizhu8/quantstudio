@@ -30,7 +30,7 @@ def run_backtest(strategy_path, start, end, *,
                  db_path=None, capital=100_000,
                  match_price_mode='close', engine_profile='daily-bar-v1',
                  etf_t0=False, cost=None, rebalance_mode='legacy',
-                 progress_callback=None):
+                 fidelity_config=None, progress_callback=None):
     """CLI 和 GUI 共用的回测入口。统一所有默认值，确保双端口径一致。
 
     所有默认值对齐 PTrade 平台实证（2026-08-14）：
@@ -38,6 +38,12 @@ def run_backtest(strategy_path, start, end, *,
       - engine_profile='daily-bar-v1'（默认日线）
       - cost=DEFAULT_TRADE_COST（滑点 0.0、佣金万3.5、印花税千1）
       - capital=100_000（对齐 PTrade 回测初始资金）
+
+    fidelity_config（P-A0/P-A1/P-A2，2026-08-24）：PTrade 保真模式配置
+    （opt-in，验证转换产物用）。非 None 时在 engine.run() 前注入
+    ptrade_api（set_fidelity_config），并执行 resolve(backtest_start_date)
+    PIT 门禁校验（回测起点 >= 快照日否则 ValueError fail-closed）。
+    默认 None = 本地保持正确语义锚（P-D9 裁定），零行为影响。
 
     返回 (result, output_dir, engine) 三元组。
     """
@@ -72,6 +78,23 @@ def run_backtest(strategy_path, start, end, *,
     )
     engine._strategy_name = Path(strategy_path).stem
 
+    # P-A0/P-A1/P-A2：保真模式注入（opt-in）。resolve() 做 PIT 门禁 + eps 双端校验；
+    # 校验失败（如回测起点 < 快照日 / eps basis 单端缺失）→ 显性 ValueError fail-closed。
+    if fidelity_config is not None:
+        from quantstudio.backtest.ptrade_api import _api as _ptrade_api
+        from quantstudio.backtest.fidelity_config import PTradeFidelityConfig
+        if not isinstance(fidelity_config, PTradeFidelityConfig):
+            raise TypeError(
+                "fidelity_config 必须是 PTradeFidelityConfig 实例，got %r"
+                % (type(fidelity_config).__name__,))
+        fidelity_config.resolve(str(start))  # PIT 门禁 + 超龄告警 + eps 双端校验
+        _ptrade_api.set_fidelity_config(fidelity_config)
+        if fidelity_config.fidelity_ashares_snapshot:
+            print(f"⚡ PTrade 保真模式 ON（验证用）: "
+                  f"ashares快照={fidelity_config.fidelity_ashares_snapshot} "
+                  f"st_filter={fidelity_config.fidelity_st_filter} "
+                  f"eps_basis={fidelity_config.fidelity_eps_basis}")
+
     result, output_dir = engine.run()
     return result, output_dir, engine
 
@@ -94,7 +117,8 @@ def _parse_flag(argv, flag_name, default=None, has_value=True):
 
 
 # 带值的 flag 列表（用于过滤位置参数时跳过这些 flag 的值）
-_VALUE_FLAGS = {'--match-price', '--ptrade-dir', '--output', '--output-report', '--slippage', '--profile', '--etf-t0'}
+_VALUE_FLAGS = {'--match-price', '--ptrade-dir', '--output', '--output-report', '--slippage', '--profile', '--etf-t0',
+                '--fidelity', '--eps-basis'}
 
 
 def _is_flag_value(argv, token):
@@ -178,11 +202,27 @@ def main():
     # PR4: 引擎 Profile 选择（daily-bar-v1 / minute-bar-v1）+ ETF T+0 开关
     engine_profile = _parse_flag(sys.argv[1:], '--profile', 'daily-bar-v1')
     etf_t0_flag = _parse_flag(sys.argv[1:], '--etf-t0', 'false')
+    # P-A0/P-A1/P-A2: 保真模式旗标（opt-in，验证转换产物用；默认全关 = 本地语义锚）
+    fidelity_flag = _parse_flag(sys.argv[1:], '--fidelity', '')
+    eps_basis_flag = _parse_flag(sys.argv[1:], '--eps-basis', 'passthrough')
     if match_price_mode not in ("close", "open", "next_open"):
         print(f"❌ --match-price 必须是 close/open/next_open，got {match_price_mode!r}")
         sys.exit(1)
     if engine_profile not in ("daily-bar-v1", "minute-bar-v1", "daily-open-close-proxy-v1"):
         print(f"❌ --profile 必须是 daily-bar-v1/minute-bar-v1/daily-open-close-proxy-v1，got {engine_profile!r}")
+        sys.exit(1)
+    # 保真旗标校验（非法值 fail-closed，禁止静默忽略）
+    _FIDELITY_OPTS = {"ashares", "st_filter"}
+    if fidelity_flag:
+        fid_parts = {p.strip() for p in fidelity_flag.replace('+', ',').split(',') if p.strip()}
+        unknown = fid_parts - _FIDELITY_OPTS
+        if unknown:
+            print(f"❌ --fidelity 只接受 ashares/st_filter（逗号或+分隔），got 未知项 {sorted(unknown)!r}")
+            sys.exit(1)
+    else:
+        fid_parts = set()
+    if eps_basis_flag not in ("passthrough", "basic", "diluted"):
+        print(f"❌ --eps-basis 必须是 passthrough/basic/diluted，got {eps_basis_flag!r}")
         sys.exit(1)
     # PR4 决策 4：etf_t0 只在 minute-bar-v1 生效（日线 Profile 强制 False）
     etf_t0 = (etf_t0_flag.lower() == 'true') and (engine_profile == 'minute-bar-v1')
@@ -215,6 +255,16 @@ def main():
         except (TypeError, ValueError):
             print(f"⚠️ --slippage 解析失败: {slippage!r}，退回默认滑点")
 
+    # P-A0/P-A1/P-A2: 保真模式配置（opt-in；空 → None = 默认全关本地语义锚）
+    fidelity_config = None
+    if fid_parts or eps_basis_flag != "passthrough":
+        from quantstudio.backtest.fidelity_config import PTradeFidelityConfig
+        fidelity_config = PTradeFidelityConfig(
+            fidelity_ashares_snapshot=("ashares" in fid_parts),
+            fidelity_st_filter=("st_filter" in fid_parts),
+            fidelity_eps_basis=eps_basis_flag,
+        )
+
     # P2：通过共用入口 run_backtest 确保双端口径一致
     result, output_dir, engine = run_backtest(
         strategy_path, start, end,
@@ -223,6 +273,7 @@ def main():
         engine_profile=engine_profile,
         etf_t0=etf_t0,
         cost=cost,
+        fidelity_config=fidelity_config,
     )
     result.report()
     print(f"\n结果导出: {output_dir}")

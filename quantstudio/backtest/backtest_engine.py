@@ -429,6 +429,11 @@ class BacktestEngine:
         # 实例私有按日索引缓存（纯性能优化）：FIFO，固定上限 4；缓存项存 (df, index)，
         # 命中时验证 entry_df is df 防止 id 复用读到脏索引。不缓存构建失败的 None。
         self._df_index_cache: list = []
+        # 拒单采集（QS_FILL_AUDIT 口径，设计文档 backtest-align-diagnosability-design §2.1）：
+        # 元素 (code, direction, reason)；每交易日循环起点重置，日末由 _emit_fill_audit 消费。
+        # 覆盖 no_price / limit_up(down)_blocked / halted / insufficient_cash_or_rounding；
+        # below_rebalance_threshold 属正常微调跳过，不采集。
+        self._day_rejections: list = []
 
     @property
     def engine_semantics_version(self) -> str:
@@ -511,6 +516,8 @@ class BacktestEngine:
             day_str = day.strftime('%Y-%m-%d')
             if self._progress_callback:
                 self._progress_callback(i + 1, total_days, day_str)
+            # 拒单采集每日起点重置（QS_FILL_AUDIT 口径，设计文档 §2.1）
+            self._day_rejections = []
             self._apply_corporate_actions(day_str)
             # 阶段 2（v2-final §3.6）：ETF 现金分红入账（公募免税全额；与送股反推不互斥）
             self._apply_etf_cash_dividends(day_str)
@@ -589,6 +596,9 @@ class BacktestEngine:
                 except Exception as e:
                     logger.debug(f"[Ptrade] after_trading_end error: {e}")
 
+            # 日末实际成交审计行（QS_FILL_AUDIT，引擎层，设计文档 §2.2；仅日线 Profile 输出）
+            self._emit_fill_audit(day_str)
+
             nav = self.account.total_asset_at_price(prices)
             bench_close = benchmark_raw.get(day_str, first_bench)
             bench_nav = bench_close / first_bench * 100 if first_bench else 100.0
@@ -630,15 +640,9 @@ class BacktestEngine:
         # 裸码 → QMT 格式
         bare = str(security).split(".")[0]
         code = self._to_qmt(bare)
-        price = (prices or {}).get(code, 0)
-        if price <= 0:
-            return Order(order_id=f"ord_{code}_{date}", security=security, direction="unknown",
-                         status="rejected", reason="no_price", created_dt=date)
 
-        # 涨跌停检查（使用 shared_ashare_rules 精确规则）
-        # is_price_limit_blocked 的 direction 参数：1=买入(查涨停阻断)，0/其他=卖出(查跌停阻断)
-        from .libs.shared_ashare_rules import is_price_limit_blocked, round_to_lot
-        pct_chg = self._get_pct_chg(code, curr_data, date)
+        # 方向判定上移（设计文档 §2.1 修订①）：target_value/shares 的符号在价格检查前
+        # 即可得，no_price 等拒单据此归类 buy/sell（仅无任何指令时为 unknown）。
         if target_value is not None:
             direction_int = 1 if target_value > 0 else 0
             direction = "buy" if target_value > 0 else "sell"
@@ -646,20 +650,39 @@ class BacktestEngine:
             direction_int = 1 if shares > 0 else 0
             direction = "buy" if shares > 0 else "sell"
         else:
-            return Order(order_id=f"ord_{code}_{date}", security=security, direction="unknown",
-                         status="rejected", reason="no_instruction", created_dt=date)
+            direction_int = 0
+            direction = "unknown"
+
+        price = (prices or {}).get(code, 0)
+        if price <= 0:
+            return self._finalize_immediate(
+                Order(order_id=f"ord_{code}_{date}", security=security, direction=direction,
+                      status="rejected", reason="no_price", created_dt=date), code)
+
+        # 无指令保护（原分支语义保留：价格检查之后、涨跌停检查之前）。
+        if target_value is None and shares is None:
+            return self._finalize_immediate(
+                Order(order_id=f"ord_{code}_{date}", security=security, direction="unknown",
+                      status="rejected", reason="no_instruction", created_dt=date), code)
+
+        # 涨跌停检查（使用 shared_ashare_rules 精确规则）
+        # is_price_limit_blocked 的 direction 参数：1=买入(查涨停阻断)，0/其他=卖出(查跌停阻断)
+        from .libs.shared_ashare_rules import is_price_limit_blocked, round_to_lot
+        pct_chg = self._get_pct_chg(code, curr_data, date)
         if is_price_limit_blocked(code, direction_int, pct_chg):
             reason = "limit_up_blocked" if direction_int == 1 else "limit_down_blocked"
             action = "买入涨停" if direction_int == 1 else "卖出跌停"
             logger.debug(f"[即时执行] {code} {action}被阻断 (pct_chg={pct_chg:.4f})")
-            return Order(order_id=f"ord_{code}_{date}", security=security, direction=direction,
-                         status="rejected", reason=reason, created_dt=date)
+            return self._finalize_immediate(
+                Order(order_id=f"ord_{code}_{date}", security=security, direction=direction,
+                      status="rejected", reason=reason, created_dt=date), code)
 
         # PR4: 停牌检查（仅分钟 Profile；日线保持现状避免影响黄金基线）。
         # 分钟即时撮合应拒停牌单（suspendFlag==1 OR volume==0）。
         if self.engine_profile == "minute-bar-v1" and self._is_halted_at(code, curr_data):
-            return Order(order_id=f"ord_{code}_{date}", security=security, direction=direction,
-                         status="rejected", reason="halted", created_dt=date)
+            return self._finalize_immediate(
+                Order(order_id=f"ord_{code}_{date}", security=security, direction=direction,
+                      status="rejected", reason="halted", created_dt=date), code)
 
         # 执行交易
         filled_vol = 0
@@ -678,9 +701,10 @@ class BacktestEngine:
                         logger.debug(f"[即时执行] 跳过微调: {code} delta={delta:.0f} "
                                      f"({abs(delta)/current_value*100:.2f}% < {self.min_rebalance_pct*100}%)")
                         # 微调跳过视为未成交（非失败，策略可据此判断）
-                        return Order(order_id=f"ord_{code}_{date}", security=security, direction=direction,
-                                     target=abs(delta), status="rejected", reason="below_rebalance_threshold",
-                                     created_dt=date)
+                        return self._finalize_immediate(
+                            Order(order_id=f"ord_{code}_{date}", security=security, direction=direction,
+                                  target=abs(delta), status="rejected", reason="below_rebalance_threshold",
+                                  created_dt=date), code)
                 if delta > 0:
                     filled_vol, fill_price = self._execute_buy(code, price, buy_value=delta, date=date, curr_data=curr_data)
                 elif delta < 0 and pos and pos.can_sell > 0:
@@ -694,19 +718,74 @@ class BacktestEngine:
         # 构造返回 Order
         status = "filled" if filled_vol > 0 else "rejected"
         reason = "" if filled_vol > 0 else "insufficient_cash_or_rounding"
-        return Order(
-            order_id=f"ord_{code}_{date}",
-            security=security,
-            direction=direction,
-            target=abs(target_value) if target_value else 0.0,
-            filled=filled_vol * fill_price,
-            target_amount=abs(shares) if shares else 0,
-            filled_amount=filled_vol,
-            price=fill_price,
-            status=status,
-            reason=reason,
-            created_dt=date,
-        )
+        return self._finalize_immediate(
+            Order(
+                order_id=f"ord_{code}_{date}",
+                security=security,
+                direction=direction,
+                target=abs(target_value) if target_value else 0.0,
+                filled=filled_vol * fill_price,
+                target_amount=abs(shares) if shares else 0,
+                filled_amount=filled_vol,
+                price=fill_price,
+                status=status,
+                reason=reason,
+                created_dt=date,
+            ), code)
+
+    def _finalize_immediate(self, order: Order, code: str) -> Order:
+        """即时执行单出口（设计文档 §2.1 修订②）：拒单集中采集（QS_FILL_AUDIT 口径）。
+
+        一处覆盖全部现在和未来的拒单路径：no_price / limit_up_blocked /
+        limit_down_blocked / halted（分钟 Profile）/ insufficient_cash_or_rounding
+        （含整手取整不足 100 股与资金不足兜底）。
+        below_rebalance_threshold 属正常微调跳过（非拒单），不采集。
+        纯日志/内存采集，不改变订单、资金、持仓语义（行为等价）。
+        """
+        if order.status == "rejected" and order.reason != "below_rebalance_threshold":
+            self._day_rejections.append((code, order.direction, order.reason))
+            if order.reason in ("no_price", "halted"):
+                # no_price 原零日志（修订②：至少补 DEBUG，与其他拒单分支对齐）；
+                # halted（分钟 Profile）同样零日志，一并补 DEBUG。
+                logger.debug(f"[即时执行] {code} 拒单: reason={order.reason} "
+                             f"direction={order.direction}")
+        return order
+
+    def _emit_fill_audit(self, day_str: str) -> None:
+        """日末实际成交审计行（QS_FILL_AUDIT，引擎层，设计文档 §2.2）。
+
+        与策略层 QS_REBALANCE_AUDIT（计划）配对：submitted vs filled/rejected 即"计划 vs 实际"，
+        供两端（本地/PTrade）日志机械对齐。
+        - sell_filled/buy_filled：当日 trade_records 计数（close/open 同日归账；
+          next_open 按 T+1 成交日归账，drain 成交 date=T+1）
+        - sell_rejected/buy_rejected：当日拒单按方向计数（_day_rejections）
+        - positions_total：当日收盘实际持仓数（volume>0 计数）；与 QS_REBALANCE_AUDIT 的
+          positions（目标仓数）口径不同，不可直接相减（清仓单、未变动持仓均造成口径差）
+        - rejected_detail：code:reason 明细，最多 10 条，超出输出 ...(+N more)
+        有拒单 → WARNING，无拒单 → INFO。
+        """
+        buy_filled = sell_filled = 0
+        for r in self.result.trade_records:
+            if r.get('date') != day_str:
+                continue
+            if r.get('action') == 'buy':
+                buy_filled += 1
+            elif r.get('action') == 'sell':
+                sell_filled += 1
+        sell_rejected = sum(1 for _, d, _ in self._day_rejections if d == 'sell')
+        buy_rejected = sum(1 for _, d, _ in self._day_rejections if d == 'buy')
+        total_rejected = len(self._day_rejections)
+        detail = ",".join(f"{c}:{r}" for c, _, r in self._day_rejections[:10])
+        if total_rejected > 10:
+            detail += f"...(+{total_rejected - 10} more)"
+        positions_total = len([p for p in self.account.positions.values() if p.volume > 0])
+        msg = (f"QS_FILL_AUDIT date={day_str} sell_filled={sell_filled} buy_filled={buy_filled} "
+               f"sell_rejected={sell_rejected} buy_rejected={buy_rejected} "
+               f"positions_total={positions_total} rejected_detail=[{detail}]")
+        if total_rejected:
+            logger.warning(msg)
+        else:
+            logger.info(msg)
 
     def _stamp_tax_rate(self, date: str) -> float:
         """Historical A-share sell stamp duty (halved from 2023-08-28)."""
@@ -972,7 +1051,6 @@ class BacktestEngine:
         """即时买入。返回成交股数（0 表示未成交），供 _immediate_execute 构造 Order。"""
         from .libs.shared_ashare_rules import round_to_lot
         fill_price = self._apply_slippage(price, "buy")
-
         if buy_shares is not None:
             target_vol = round_to_lot(buy_shares, 100)
         else:
@@ -1791,6 +1869,16 @@ class BacktestEngine:
         po.status = status
         po.reason = reason
 
+    def _reject_drain(self, po: PendingOrder, reason: str):
+        """PR2 drain 拒单公共路径（设计文档 §2.1）：归还预扣 + 拒单采集（QS_FILL_AUDIT 口径）。
+
+        与 _finalize_immediate 同一排除规则：below_rebalance_threshold 属正常微调跳过，不采集。
+        """
+        self._reject_pending(po, "rejected", reason)
+        if reason != "below_rebalance_threshold":
+            self._day_rejections.append((po.code, po.direction, reason))
+        self._today_orders.append(self._po_to_order(po, filled=False))
+
     def _cancel_pending_order(self, order_id: str):
         """PR2: cancel_order 按 order_id 精确移除目标单 + 归还预扣。
         多日重复挂单允许累积，本方法只处理指定单。"""
@@ -1904,14 +1992,12 @@ class BacktestEngine:
 
             t1_open = t1_open_prices.get(po.code, 0)
             if t1_open <= 0:
-                self._reject_pending(po, "rejected", "no_price")
-                self._today_orders.append(self._po_to_order(po, filled=False))
+                self._reject_drain(po, "no_price")
                 continue
 
             # 停牌检查（suspendFlag==1 OR volume==0）
             if self._is_halted_at(po.code, t1_data):
-                self._reject_pending(po, "rejected", "halted")
-                self._today_orders.append(self._po_to_order(po, filled=False))
+                self._reject_drain(po, "halted")
                 continue
 
             # 涨跌停检查（用 T+1 当日 pct_chg）
@@ -1919,15 +2005,13 @@ class BacktestEngine:
             direction_int = 1 if po.direction == "buy" else 0
             if is_price_limit_blocked(po.code, direction_int, pct_chg):
                 reason = "limit_up_blocked" if po.direction == "buy" else "limit_down_blocked"
-                self._reject_pending(po, "rejected", reason)
-                self._today_orders.append(self._po_to_order(po, filled=False))
+                self._reject_drain(po, reason)
                 continue
 
             # 延迟解析：用 T+1 价 + T+1 持仓重算
             actual_shares, actual_value, skip_reason = self._resolve_at_t1(po, t1_open)
             if skip_reason:
-                self._reject_pending(po, "rejected", skip_reason)
-                self._today_orders.append(self._po_to_order(po, filled=False))
+                self._reject_drain(po, skip_reason)
                 continue
 
             # 释放预扣（防 double-count）
@@ -1958,6 +2042,7 @@ class BacktestEngine:
                 # 资金不足/整手为 0 → 整单拒单（不缩单，与 _execute_buy 现有 PTrade 语义一致）
                 po.status = "rejected"
                 po.reason = "insufficient_cash_or_rounding"
+                self._day_rejections.append((po.code, po.direction, po.reason))
                 self._today_orders.append(self._po_to_order(po, filled=False))
             else:
                 po.status = "filled"
