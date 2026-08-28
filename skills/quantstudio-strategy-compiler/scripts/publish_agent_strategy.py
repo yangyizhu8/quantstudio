@@ -61,6 +61,46 @@ def _load_workflow_state(strategy_path: Path) -> tuple[Path, dict]:
         raise ValueError(
             f"R5.5 robustness stage {rob_stage!r} is not publishable; required PASS or "
             "EXEMPTED (exemption needs verbatim customer confirmation in the design)")
+    # R5.4 parameter-optimization gates (design doc parameter-optimization-design.md
+    # §3.4/§3.5; M2 lifecycle tail-end enforcement). Legacy ledgers without an
+    # "optimization" field: a design 2.2/neutral contract means the study was never
+    # required (no error); an ENABLED contract demands an explicit study outcome.
+    design = None
+    design_path = strategy_path.parent / "agent_strategy_design.json"
+    if design_path.exists():
+        try:
+            design = load_json(design_path)
+        except Exception:
+            design = None
+    contract = (design or {}).get("parameter_optimization_contract") or {}
+    optimization_required = bool(contract.get("enabled") is True
+                                 and contract.get("search_space"))
+    opt = state.get("optimization")
+    if optimization_required:
+        if not isinstance(opt, dict) or not opt:
+            raise ValueError(
+                "R5.4 optimization study was authorized by the design contract but no "
+                "study outcome is recorded in the ledger: run "
+                "scripts/run_optimization_study.py, or record a verbatim customer "
+                "decline before publishing")
+        opt_status = opt.get("status")
+        if opt_status == "PROPOSAL_ACCEPTED":
+            accepted = opt.get("accepted_params") or {}
+            strategy_source = strategy_path.read_text(encoding="utf-8")
+            for name, value in accepted.items():
+                marker_variants = (f"{name!r}, {value!r}", f'"{name}", {value!r}',
+                                   f"{name!r},{value!r}", f'"{name}",{value!r}')
+                if not any(v in strategy_source for v in marker_variants):
+                    raise ValueError(
+                        f"accepted optimization proposal param {name!r}={value!r} is not "
+                        f"reflected in the published source; regenerate the strategy from "
+                        f"the accepted design defaults before publishing")
+    overrides = strategy_path.parent / "param_overrides.json"
+    if overrides.exists():
+        raise ValueError(
+            "param_overrides.json found next to the strategy (M2 lifecycle invariant): "
+            "override files exist only inside the R5.4 study window and must never "
+            "cross R6; delete it and regenerate before publishing")
     return state_path, state
 
 

@@ -25,9 +25,10 @@
       "enum": [
         "2.0",
         "2.1",
-        "2.2"
+        "2.2",
+        "2.3"
       ],
-      "description": "2.0 is the legacy dual-target contract; 2.1 adds explicit target and ETF-universe routing; 2.2 adds machine-checkable portfolio/execution-funding/history-coverage/R5-invariant contracts and verbatim confirmation evidence. 2.1 artifacts must not be auto-migrated to 2.2 PASS."
+      "description": "2.0 is the legacy dual-target contract; 2.1 adds explicit target and ETF-universe routing; 2.2 adds machine-checkable portfolio/execution-funding/history-coverage/R5-invariant contracts and verbatim confirmation evidence; 2.3 adds the optional parameter_optimization_contract (absent/neutral = optimization disabled = Phase 1 behavior; 2.2 artifacts remain valid and are treated as optimization-disabled). 2.1 artifacts must not be auto-migrated to 2.2/2.3 PASS."
     },
     "strategy_id": {
       "type": "string",
@@ -608,6 +609,81 @@
       },
       "additionalProperties": true
     },
+    "parameter_optimization_contract": {
+      "type": "object",
+      "description": "design 2.3 optional (absent or enabled=false = optimization disabled = Phase 1 behavior; 2.2 artifacts are valid and treated as optimization-disabled). R5.4 authorization requires a verbatim confirmation_evidence entry keyed parameter_optimization_contract at R2.5 (search space + cost formula + objective shown to the customer). Fail-closed constraints: <=6 tunable params; grid product <=50; types int|float|categorical; n_trials <=50; timeout_seconds required when engine=optuna; inner_folds in {1,2,3}; objective pinned to mean_daily_excess_return. Enforced by agent_skill_common.parameter_optimization_errors + validate_agent_strategy lint (only declared keys checked).",
+      "required": [
+        "enabled",
+        "engine",
+        "search_space"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "engine": {
+          "enum": [
+            "grid",
+            "optuna"
+          ]
+        },
+        "n_trials": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 60
+        },
+        "inner_folds": {
+          "type": "integer",
+          "enum": [
+            1,
+            2,
+            3
+          ]
+        },
+        "objective": {
+          "const": "mean_daily_excess_return"
+        },
+        "search_space": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 6,
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "enum": [
+                  "int",
+                  "float",
+                  "categorical"
+                ]
+              },
+              "low": {
+                "type": "number"
+              },
+              "high": {
+                "type": "number"
+              },
+              "step": {
+                "type": "number"
+              },
+              "choices": {
+                "type": "array",
+                "minItems": 2
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "confirmation_evidence": {
       "type": "object",
       "description": "Design 2.2 verbatim customer confirmation records. Bare booleans are not evidence; required keys and field-level checks are enforced by agent_skill_common.confirmation_evidence_errors.",
@@ -767,7 +843,8 @@
           "design_version": {
             "enum": [
               "2.1",
-              "2.2"
+              "2.2",
+              "2.3"
             ]
           }
         }
@@ -807,7 +884,8 @@
           "design_version": {
             "enum": [
               "2.1",
-              "2.2"
+              "2.2",
+              "2.3"
             ]
           },
           "targets": {
@@ -867,7 +945,8 @@
           "design_version": {
             "enum": [
               "2.1",
-              "2.2"
+              "2.2",
+              "2.3"
             ]
           },
           "targets": {
@@ -907,7 +986,8 @@
           "design_version": {
             "enum": [
               "2.1",
-              "2.2"
+              "2.2",
+              "2.3"
             ]
           },
           "targets": {
@@ -935,7 +1015,8 @@
           "design_version": {
             "enum": [
               "2.1",
-              "2.2"
+              "2.2",
+              "2.3"
             ]
           },
           "targets": {
@@ -987,7 +1068,8 @@
           "design_version": {
             "enum": [
               "2.1",
-              "2.2"
+              "2.2",
+              "2.3"
             ]
           },
           "validation_execution": {
@@ -1041,7 +1123,8 @@
           "design_version": {
             "enum": [
               "2.1",
-              "2.2"
+              "2.2",
+              "2.3"
             ]
           },
           "validation_execution": {
@@ -1086,6 +1169,24 @@
         "properties": {
           "design_version": {
             "const": "2.2"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "portfolio_contract",
+          "rebalance_funding_contract",
+          "history_coverage_contract",
+          "r5_deployment_invariants",
+          "confirmation_evidence"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "design_version": {
+            "const": "2.3"
           }
         }
       },

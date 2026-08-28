@@ -5,9 +5,9 @@ description: Local-only QuantStudio strategy engineering (agent-first R0-R6 pipe
 
 # QuantStudio Agent-first Strategy Engineering
 
-Skill release: `0.9.0-r55-robustness` (built on `0.8.0-f1-six-fold`; new R5.5 statistical robustness stage: WF 5-fold + MC n=1000 + gates G1-G6 + iteration cap 2, design doc `docs/strategy-compiler/robustness-gates-design.md`, new contract `robustness_report 1.0`; compiler/package baseline `0.3.2-mvp` unchanged).
+Skill release: `1.0.0-r54-optimize` (built on `0.9.0-r55-robustness`; new optional R5.4 parameter optimization stage: authorized grid/Optuna search + nested walk-forward + majority-vote proposal + verbatim re-confirmation, design doc `docs/strategy-compiler/parameter-optimization-design.md`, new contract `optimization_study_report 1.0`, agent design schema 2.3; compiler/package baseline `0.3.2-mvp` unchanged).
 
-Contract versions at this release: agent design `2.2`, PTrade profile `1.10.0`, user backtest evidence `2.1`, validation report `2.1`, robustness report `1.0`. Design `2.1` artifacts must not be auto-migrated to PASS; regenerate the design under 2.2 and repeat the R2.5 confirmation.
+Contract versions at this release: agent design `2.3`, PTrade profile `1.10.0`, user backtest evidence `2.1`, validation report `2.1`, robustness report `1.0`, optimization study report `1.0`. Design `2.1` artifacts must not be auto-migrated to PASS; regenerate the design under 2.2/2.3 and repeat the R2.5 confirmation.
 
 Treat the calling agent as the strategy author. Constrain it with project lifecycle, data, timing, PTrade public API, validation, and delivery gates. Never implement a strategy by adding its name or shape to Compiler/Renderer/Jinja branches.
 
@@ -50,6 +50,10 @@ Treat the calling agent as the strategy author. Constrain it with project lifecy
 33. **R5.5 统计鲁棒性验证强制（2026-08-28，robustness_report 1.0）**: R5 PASS 之后、R6 之前必须运行 R5.5（`scripts/run_robustness_suite.py`）：WF 5 折（时序连续不重叠、余数归最早折、折配置从哈希验证后的 config.csv 程序化派生仅换日期、折内零交易标 NO_TRADE 不入 G5 分母、有效折 <3 → INSUFFICIENT_SAMPLES）+ MC n=1000（对主运行超额日收益做块自助法，块长 21、p=(1+#{≤0})/(1+1000)，0 次引擎重跑）+ 门控 G1-G6（阈值照 simple-quant-factory 原版固定：G1 年化>0 / G2 回撤<25% / G3 夏普>0.5（ETF 池 0.25）/ G4 round-trip 胜率>40%（<10 回合 INSUFFICIENT_SAMPLES）/ G5 正窗口≥60% / G6 p<0.01）。**入口哈希预验 fail-closed**：三件套重算哈希与 R5 绑定哈希任一不匹配 → EVIDENCE_INCOMPLETE，不启动、不出报告。豁免唯一通道 = design `validation_contract.robustness_gates.enabled=false` + R2.5 verbatim 确认 → 台账 EXEMPTED。
 34. **G6 超额维度 vs G1-G3 绝对维度独立评估（M2）**: G6 检验对基准超额日收益均值的统计显著性；G1-G3 为绝对收益指标。策略绝对收益为负但跑赢基准时 G1 FAIL 而 G6 可能 PASS——属设计语义，两门独立呈现，不得合并解读或互相"修复"。
 35. **R5.5 迭代上限 2 轮（防自适应过拟合）**: 初评 FAIL → 回 R3 修复（修复使 R4/R5 哈希失效，重走 R4→R5→R5.5）→ iteration_count+1；**第 3 次评估仍 FAIL → stage=ROBUSTNESS_FAILED，formal_publish_allowed=false，终止**，禁止第三轮迭代。全部历史评估入台账（workspace_state.json.robustness）。
+36. **R5.4 参数寻优为可选研究阶段（design 2.3）**: 启用三缺一不可——design 2.3 `parameter_optimization_contract.enabled=true` + 搜索空间非空 + R2.5 verbatim 确认（confirmation_evidence 键 `parameter_optimization_contract`，含搜索空间/成本公式/目标函数）；缺省或禁用 → `NOT_APPLICABLE`，管线与 Phase 1 逐位一致。fail-closed：可调参数 ≤6；网格组合数 ≤50（超出 BLOCK 不截断）；engine=optuna 必须带 timeout_seconds 且 optuna 未安装 → BLOCK（不新增硬依赖）；目标函数钉死 `mean_daily_excess_return`。
+37. **WF 嵌套纪律（M1）**: 外层折 k 训练区 = 窗口起点至折 k 起点（前闭后开）；折 1 为种子折（区间空，非 OOS 点）；外层 OOS = 折 2..5；训练区 < inner_folds×20 日 → 该折 SKIP 不计入多数票分母；**禁止全程调参再回测**（内搜外验）。聚合 = 非 SKIP 折内层最优值逐参数多数票，无多数或有效折 <2 → 保持设计默认标 UNRESOLVED。
+38. **调参提案必须再确认**: 研究完成 ≠ 发布许可——提案（params diff vs 设计默认）须经客户 verbatim 再确认：接受 → design 默认值更新 → 重走 R3 重生成 → R4 → R5 → R5.5；拒绝 → 原参数直接进 R5.5。**每管线周期研究 ≤1 次**，门控 FAIL 后的新研究须全新 R2.5 授权（封堵"调到过验"）。
+39. **param_overrides.json 生命周期不变量（M2）**: 该文件仅存在于 R5.4 研究运行窗口内，R5.4 收尾（接受/拒绝两路）一律删除，任何状态不得跨越 R6（publish 门检③末端执法）；生命周期事件入报告与台账。钩子纪律：可调参数必须经 P(name, default) 读取（R4 lint `OPTIMIZATION-PARAM-NOT-VIA-HOOK` 仅查声明键）；覆写文件含未声明键 → 运行期 fail-closed RuntimeError。
 
 ## Responsibility boundary
 
@@ -400,6 +404,18 @@ Every repair invalidates old R4/R5 hashes. Regenerate the candidate after the ne
 
 **R5 exit gate:** hash-bound runtime evidence PASS for the exact candidate source, regardless of who executed the backtest.
 
+## R5.4 - Parameter optimization study (optional; grid/Optuna + nested walk-forward)
+
+Trigger: R5 PASS, and ONLY when design 2.3 `parameter_optimization_contract.enabled=true` with a non-empty search space AND verbatim R2.5 confirmation (confirmation_evidence key `parameter_optimization_contract` showing the space, the cost formula and the objective). Otherwise `NOT_APPLICABLE` — the pipeline is bit-identical to Phase 1. Method/budget authority: `references/parameter-optimization.md`; design doc: `docs/strategy-compiler/parameter-optimization-design.md`. Run `scripts/run_optimization_study.py --design <design json> --evidence <r5 evidence json> --workspace <workspace>`.
+
+Nested walk-forward (M1): outer folds reuse the Phase 1 five-fold splitter; fold k's training region = window start .. fold k start (exclusive); fold 1 is the seed fold (empty train region, not an OOS point); outer OOS validation = folds 2..5; a train region shorter than inner_folds×20 trading days marks the fold SKIPped (excluded from the majority-vote denominator). Inner objective = mean daily excess return on inner validation slices (benchmark = daily_stats `benchmark` column). Budgets fail closed: ≤6 tunable params, grid product ≤50, optuna n_trials ≤50 + timeout_seconds (sqlite study storage preserves completed trials across interruptions; timeout → INCOMPLETE_TIMEOUT). Proposal = per-parameter majority vote across non-SKIP outer folds; no majority or <2 valid folds → keep design default, UNRESOLVED.
+
+**Completion is not permission**: the proposal (params diff vs design defaults) requires verbatim customer re-confirmation — accept → update design defaults → re-walk R3 regenerate → R4 → R5 → R5.5; decline → proceed to R5.5 with the original parameters. At most ONE study per pipeline cycle; a study after a gates failure needs fresh R2.5 authorization.
+
+**param_overrides.json lifecycle (M2)**: the file exists only inside the R5.4 study window; it is deleted at R5.4 completion on every outcome path and never crosses R6 (publish gate enforces). The scaffold hook `P(name, default)` is injected only for designs with an enabled contract; absent overrides file → design defaults (bit-identical behavior); undeclared keys → fail-closed RuntimeError at load.
+
+**R5.4 exit gate:** study report produced (schema-validated, status COMPLETED or INCOMPLETE_TIMEOUT) with the proposal recorded for customer confirmation — or NOT_APPLICABLE/declined recorded; the overrides file deleted.
+
 ## R5.5 - Statistical robustness validation (WF + MC + Gates G1-G6)
 
 Trigger: R5 PASS. Method/threshold authority: `references/robustness-gates.md`; design doc: `docs/strategy-compiler/robustness-gates-design.md`. Run `scripts/run_robustness_suite.py --evidence <r5 evidence json> --workspace <agent workspace>`.
@@ -532,7 +548,11 @@ When a customer supplies a real PTrade exception:
 - skipping R5.5 when `validation_contract.robustness_gates.enabled` is true, or publishing without R5.5 PASS/EXEMPTED evidence in the ledger;
 - entering a 3rd R5.5 iteration after two failed evaluations (ROBUSTNESS_FAILED is terminal), or "iterating until gates pass" beyond the cap;
 - treating G6 excess-dimension results as validating the absolute dimension (G1-G3), or merging/interpreting gate results across dimensions;
-- counting NO_TRADE folds into the G5 positive-window denominator.
+- counting NO_TRADE folds into the G5 positive-window denominator;
+- running a parameter optimization study without an authorized search space + verbatim R2.5 confirmation, or publishing tuned parameters that were never verbatim-confirmed by the customer;
+- tuning on the full window and calling it OOS (nested WF is mandatory: inner folds search, outer folds validate), or counting SKIPped outer folds into the majority-vote denominator;
+- letting param_overrides.json cross R6 (it must be deleted at R5.4 completion on every outcome path), or publishing from a directory that still contains one;
+- entering a second optimization study within the same pipeline cycle after its gates failed (fresh R2.5 authorization is required).
 
 # Commands
 
@@ -545,6 +565,8 @@ When a customer supplies a real PTrade exception:
 - user evidence review: `scripts/review_user_backtest_evidence.py`
 - R5.5 robustness suite: `scripts/run_robustness_suite.py`
 - R5.5 selftest: `scripts/robustness_selftest.py --all`
+- R5.4 optimization study: `scripts/run_optimization_study.py`
+- R5.4 selftest: `scripts/optimization_selftest.py --all`
 - PTrade runtime-failure retirement: `scripts/retire_ptrade_runtime_evidence.py`
 - gated formal publish: `scripts/publish_agent_strategy.py`
 - Skill validation: `scripts/quick_validate.py`

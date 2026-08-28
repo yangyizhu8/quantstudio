@@ -1,0 +1,195 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://quantstudio.local/schemas/optimization_study_report.schema.json",
+  "title": "QuantStudio Strategy Compiler Optimization Study Report v1 (R5.4)",
+  "type": "object",
+  "required": [
+    "optimization_study_report_version",
+    "strategy_id",
+    "created_at",
+    "status",
+    "contract",
+    "cost",
+    "outer_folds",
+    "aggregation",
+    "proposal",
+    "seeds",
+    "lifecycle"
+  ],
+  "properties": {
+    "optimization_study_report_version": {"const": "1.0"},
+    "strategy_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["COMPLETED", "INCOMPLETE_TIMEOUT", "FAILED", "BLOCKED"]},
+    "contract": {
+      "type": "object",
+      "required": ["engine", "inner_folds", "objective", "search_space"],
+      "properties": {
+        "engine": {"enum": ["grid", "optuna"]},
+        "n_trials": {"type": ["integer", "null"]},
+        "timeout_seconds": {"type": ["integer", "null"]},
+        "inner_folds": {"type": "integer", "minimum": 1, "maximum": 3},
+        "objective": {"const": "mean_daily_excess_return"},
+        "search_space": {"type": "object", "minProperties": 1}
+      },
+      "additionalProperties": false
+    },
+    "input_binding": {
+      "type": "object",
+      "required": ["config_csv_sha256", "daily_stats_csv_sha256", "trades_csv_sha256"],
+      "properties": {
+        "config_csv_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "daily_stats_csv_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "trades_csv_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "primary_result_dir": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "cost": {
+      "type": "object",
+      "required": ["engine_runs_planned", "engine_runs_executed", "wall_seconds"],
+      "properties": {
+        "engine_runs_planned": {"type": "integer", "minimum": 0},
+        "engine_runs_executed": {"type": "integer", "minimum": 0},
+        "wall_seconds": {"type": "number", "minimum": 0},
+        "timed_out": {"type": "boolean"},
+        "pruned_trials": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "outer_folds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["fold_index", "role", "train_region"],
+        "properties": {
+          "fold_index": {"type": "integer", "minimum": 1, "maximum": 5},
+          "role": {"enum": ["seed", "oos", "skipped"]},
+          "train_region": {
+            "type": "object",
+            "required": ["start", "end", "trade_days"],
+            "properties": {
+              "start": {"type": ["string", "null"], "format": "date"},
+              "end": {"type": ["string", "null"], "format": "date"},
+              "trade_days": {"type": "integer", "minimum": 0}
+            },
+            "additionalProperties": false
+          },
+          "inner_best_params": {"type": ["object", "null"]},
+          "inner_best_objective": {"type": ["number", "null"]},
+          "oos_excess_mean": {"type": ["number", "null"]},
+          "oos_result_dir": {"type": ["string", "null"]},
+          "oos_artifacts": {
+            "type": "object",
+            "properties": {
+              "config_csv_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "daily_stats_csv_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "trades_csv_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+            },
+            "additionalProperties": false
+          },
+          "skip_reason": {"type": ["string", "null"]},
+          "trials": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["params", "objective"],
+              "properties": {
+                "params": {"type": "object"},
+                "objective": {"type": ["number", "null"]},
+                "state": {"enum": ["COMPLETE", "PRUNED", "FAILED"]},
+                "config_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                "overrides_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "aggregation": {
+      "type": "object",
+      "required": ["per_parameter"],
+      "properties": {
+        "per_parameter": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["param", "votes", "decision"],
+            "properties": {
+              "param": {"type": "string"},
+              "votes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["fold_index", "value"],
+                  "properties": {
+                    "fold_index": {"type": "integer"},
+                    "value": {}
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "majority_value": {},
+              "design_default": {},
+              "decision": {"enum": ["PROPOSED", "KEEP_DEFAULT", "UNRESOLVED"]},
+              "detail": {"type": "string"}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "proposal": {
+      "type": "object",
+      "required": ["params", "diff_vs_design", "awaiting_customer_confirmation"],
+      "properties": {
+        "params": {"type": "object"},
+        "diff_vs_design": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["param", "design_default", "proposed"],
+            "properties": {
+              "param": {"type": "string"},
+              "design_default": {},
+              "proposed": {},
+              "decision": {"enum": ["PROPOSED", "KEEP_DEFAULT", "UNRESOLVED"]}
+            },
+            "additionalProperties": false
+          }
+        },
+        "awaiting_customer_confirmation": {"type": "boolean"},
+        "accepted": {"type": ["boolean", "null"]},
+        "confirmation_evidence_ref": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "seeds": {
+      "type": "object",
+      "required": ["optuna_seed_source", "optuna_seed_hex"],
+      "properties": {
+        "optuna_seed_source": {"const": "sha256(trades_csv+config_csv)[:8]"},
+        "optuna_seed_hex": {"type": "string", "pattern": "^[a-f0-9]{8}$"},
+        "python_hashseed": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "lifecycle": {
+      "type": "object",
+      "description": "M2: param_overrides.json lifecycle invariant — created/overwritten/deleted events; the file must NOT survive R5.4 completion under any outcome.",
+      "required": ["overrides_file_created", "overrides_file_deleted_at_completion"],
+      "properties": {
+        "overrides_file_created": {"type": "boolean"},
+        "overrides_write_events": {"type": "integer", "minimum": 0},
+        "overrides_file_deleted_at_completion": {"type": "boolean"},
+        "optuna_storage_path": {"type": ["string", "null"]},
+        "optuna_completed_trials_at_close": {"type": ["integer", "null"]}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -46,6 +46,51 @@ def _render_strategy(design: dict) -> str:
         f"STRATEGY_ID = {strategy_id!r}",
         f"STRATEGY_NAME = {strategy_name!r}",
         f"DESIGN_VERSION = {design['design_version']!r}",
+    ]
+
+    # R5.4 parameter-override hook (Phase 2, design doc parameter-optimization-design.md):
+    # only injected when the design authorizes a search space; inert (bit-identical
+    # behavior) unless a param_overrides.json sits next to this strategy file.
+    opt_contract = design.get("parameter_optimization_contract") or {}
+    if opt_contract.get("enabled") is True and opt_contract.get("search_space"):
+        declared = ", ".join(repr(k) for k in sorted(opt_contract["search_space"]))
+        lines += [
+            '',
+            '# --- R5.4 parameter-override hook (declared tunable params only) ---',
+            '# Tunable params declared in parameter_optimization_contract MUST be read',
+            '# via P(name, default): absent param_overrides.json -> design default',
+            '# (bit-identical); keys outside the declared space -> RuntimeError (fail-closed).',
+            'import json as _json',
+            'import os as _os',
+            '',
+            f'_DECLARED_OPT_PARAMS = ({declared},)',
+            '',
+            'def _load_param_overrides():',
+            '    """Read param_overrides.json next to this file; {} when absent."""',
+            '    _f = globals().get("__file__")',
+            '    if not _f:',
+            '        return {}',
+            '    _p = _os.path.join(_os.path.dirname(_os.path.abspath(_f)),',
+            '                       "param_overrides.json")',
+            '    if not _os.path.exists(_p):',
+            '        return {}',
+            '    with open(_p, "r", encoding="utf-8") as _f:',
+            '        _data = _json.load(_f)',
+            '    _undeclared = sorted(set(_data) - set(_DECLARED_OPT_PARAMS))',
+            '    if _undeclared:',
+            '        raise RuntimeError(',
+            '            "param_overrides.json contains undeclared keys: %r" % _undeclared)',
+            '    return _data',
+            '',
+            '_PARAM_OVERRIDES = _load_param_overrides()',
+            '',
+            'def P(name, default):',
+            '    """Design-default parameter, overridable ONLY via an authorized',
+            '    param_overrides.json (R5.4 study window). Absent override -> default."""',
+            '    return _PARAM_OVERRIDES.get(name, default)',
+        ]
+
+    lines += [
         '',
         '',
         'def _ensure_runtime_state():',

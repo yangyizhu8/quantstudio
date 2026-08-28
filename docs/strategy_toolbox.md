@@ -21,6 +21,14 @@ R5 证据 PASS 后、R6 发布前的强制阶段（`scripts/run_robustness_suite
 - **G1-G6 门控**（阈值照 simple-quant-factory 原版固定）：年化>0 / 回撤<25% / 夏普>0.5（ETF 池 0.25）/ round-trip 胜率>40%（<10 回合 INSUFFICIENT_SAMPLES）/ 正窗口≥60% / p<0.01；三态 PASS/FAIL/INSUFFICIENT_SAMPLES；G6 检验超额维度、G1-G3 绝对维度，独立评估；
 - **迭代上限**：FAIL 回 R3 重走，最多 2 轮，第 3 轮 FAIL → ROBUSTNESS_FAILED 终止（防自适应过拟合）；豁免需 verbatim 确认。
 
+## R5.4 参数寻优（2026-08-28，skill 1.0.0-r54-optimize，可选阶段）
+
+R5 证据 PASS 后、R5.5 之前的可选研究阶段（`scripts/run_optimization_study.py`；设计文档 `docs/strategy-compiler/parameter-optimization-design.md`）。三重启用条件：design 2.3 `parameter_optimization_contract.enabled=true` + 搜索空间非空 + R2.5 verbatim 确认（含成本公式展示）；缺省 → NOT_APPLICABLE，管线与既往逐位一致。
+- **WF 嵌套（M1）**：折 k 训练区 = 窗口起点至折 k 起点（折 1 为种子折非 OOS 点）；外层 OOS = 折 2..5；训练区 < inner_folds×20 日 → SKIP 不计多数票分母；内层目标 = 超额日收益均值；
+- **预算 fail-closed**：可调参数 ≤6、网格组合 ≤50（超限 BLOCK 不截断）、optuna n_trials ≤50 + timeout 双熔断（sqlite 持久化——中断后已完成试验落盘可审计）；
+- **提案纪律**：逐参数多数票聚合（无多数 → UNRESOLVED 保持设计默认）；提案须客户 verbatim 再确认后重走 R3→R4→R5→R5.5 门控；每管线周期研究 ≤1 次；
+- **生命周期（M2）**：param_overrides.json 仅存于研究窗口内，收尾必删、不跨越 R6（publish 门检执法）；钩子 P(name, default) 无覆写文件时行为逐位不变；未声明键运行期 fail-closed。
+
 本框架在 QuantStudio 本地回测引擎上对齐**已登记并验证的 PTrade 回测公共 API 子集**，同时提供明确标记的 QuantStudio 本地扩展。
 只有通过 PTrade Profile Validator 的策略才可声明可移植；本地运行成功不等于真实平台兼容。数据 100% 来自 DuckDB（QuantStudio 数据管线产出），不依赖任何外部
 回测平台。

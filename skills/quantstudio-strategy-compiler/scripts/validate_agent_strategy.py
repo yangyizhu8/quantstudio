@@ -13,9 +13,9 @@ from typing import Any
 from agent_skill_common import (
     call_name, confirmation_errors, confirmation_evidence_errors, constant_value,
     etf_t0_contract_errors, execution_funding_errors, function_map,
-    is_placeholder_function, load_catalog, load_json, portfolio_contract_errors,
-    skill_root, strategy_name_conflict_errors, strategy_naming_errors,
-    validate_design, write_json,
+    is_placeholder_function, load_catalog, load_json, parameter_optimization_hook_errors,
+    portfolio_contract_errors, skill_root, strategy_name_conflict_errors,
+    strategy_naming_errors, validate_design, write_json,
 )
 
 
@@ -901,6 +901,12 @@ def validate_strategy(
     except SyntaxError as exc:
         issues.append(_issue("PYTHON-SYNTAX", "BLOCK", str(exc), exc.lineno))
         return _report(design, source_name, target_profile, issues)
+
+    # R5.4 lint (Phase 2): declared tunable params must be read via the P() hook.
+    # Fires only when parameter_optimization_contract.enabled=true; only declared
+    # keys are checked (fail-narrow, non-declared params are never scanned).
+    for item in parameter_optimization_hook_errors(design, tree):
+        issues.append(_issue(item["rule_id"], "BLOCK", item["message"]))
 
     catalog = load_catalog()
     ptrade_profile = _load_ptrade_profile()
