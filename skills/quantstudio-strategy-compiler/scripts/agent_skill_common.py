@@ -443,3 +443,38 @@ def is_placeholder_function(node: ast.FunctionDef | ast.AsyncFunctionDef) -> boo
         if isinstance(exc, ast.Name) and exc.id == "NotImplementedError":
             return True
     return False
+
+
+def parameter_optimization_hook_errors(
+    design: dict[str, Any], tree: ast.AST
+) -> list[dict[str, str]]:
+    """R5.4 lint (Phase 2): when parameter_optimization_contract is enabled, every
+    declared tunable parameter MUST be read via the P(name, default) hook somewhere
+    in the strategy source; otherwise the optimization study would silently tune a
+    parameter the strategy never consults. Only DECLARED keys are checked — other
+    parameters, and disabled/absent contracts, are never scanned (fail-narrow).
+    """
+    contract = design.get("parameter_optimization_contract") or {}
+    if contract.get("enabled") is not True:
+        return []
+    space = contract.get("search_space") or {}
+    if not space:
+        return []
+    hooked: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and call_name(node) == "P":
+            first = node.args[0] if node.args else None
+            value = constant_value(first) if first is not None else None
+            if isinstance(value, str):
+                hooked.add(value)
+    issues = []
+    for name in sorted(space):
+        if name not in hooked:
+            issues.append({
+                "rule_id": "OPTIMIZATION-PARAM-NOT-VIA-HOOK",
+                "message": (
+                    f"parameter_optimization_contract declares {name!r} as tunable, "
+                    f"but the strategy never reads it via P({name!r}, <default>); the "
+                    f"R5.4 study would tune a parameter the strategy ignores"),
+            })
+    return issues
