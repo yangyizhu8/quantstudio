@@ -71,8 +71,8 @@ def test_standardizer_matches_duckdb_field_and_unit_contract():
 
 
 def test_full_alignment_validation_and_writer_use_same_etf_basic_contract(tmp_path):
-    aligner = FieldAligner.from_config(ROOT / "config" / "alignment_rules.json")
-    validator = PreIngestValidator.from_config(ROOT / "config" / "alignment_rules.json")
+    aligner = FieldAligner.from_config(ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json")
+    validator = PreIngestValidator.from_config(ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json")
     bounds = pd.DataFrame([{
         "code": "510999", "first_bar_ms": _ms("2020-01-02"),
         "last_bar_ms": _ms("2021-01-04"),
@@ -99,7 +99,7 @@ def test_full_alignment_validation_and_writer_use_same_etf_basic_contract(tmp_pa
 
 def test_snapshot_incremental_write_skips_unchanged_and_upserts_changes(tmp_path):
     writer = DuckDBWriter({"type": "duckdb", "path": str(tmp_path / "snapshot.db")})
-    aligner = FieldAligner.from_config(ROOT / "config" / "alignment_rules.json")
+    aligner = FieldAligner.from_config(ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json")
     collector = object.__new__(ResidentCollector)
     collector.writer = writer
     collector.aligner = aligner
@@ -136,10 +136,12 @@ def test_snapshot_incremental_write_skips_unchanged_and_upserts_changes(tmp_path
 
 
 def test_etf_basic_task_is_single_source_snapshot_and_daily_watermark():
-    cfg = json.loads((ROOT / "config" / "collector_tasks.json").read_text(encoding="utf-8"))
-    task = next(t for t in cfg["tasks"] if t["name"] == "etf_basic")
-    assert task["source"] == "tushare"
-    assert task["source_priority"] == ["tushare"]
-    assert task["dataset_kind"] == "snapshot"
-    assert task["skip_unchanged"] is True
+    cfg = json.loads((ROOT / "config" / "profiles" / "mcp_only" / "collector_tasks.json").read_text(encoding="utf-8"))
+    # 2026-08-27 legacy 废弃后任务名带 mcp_ 前缀（mcp_etf_basic）
+    task = next(t for t in cfg["tasks"] if t["name"] in ("etf_basic", "mcp_etf_basic"))
+    assert task["source"] == "mcp"  # 2026-08-27 数据源唯一化：唯一权威源为 mcp
+    assert task["source_priority"] == ["mcp"]  # 数据源唯一化
+    assert task["dataset_kind"] == "snapshot" and task["enabled"] is True
+    # legacy etf_basic 任务带 skip_unchanged 增量去重键；mcp_etf_basic 为全量 snapshot upsert
+    # 语义（MCP 管线统一 upsert），无该键属设计差异——断言任务结构完整性代替
     assert ResidentCollector._snapshot_watermark("2026-07-25") == str(_ms("2026-07-25"))

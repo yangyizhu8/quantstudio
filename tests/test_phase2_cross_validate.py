@@ -48,7 +48,7 @@ def fetch_tushare():
     try:
         df, _ = a.fetch_table("stock_daily", TEST_DATES[0], TEST_DATES[-1],
                               codes=[TEST_CODE])
-        aligner = FieldAligner.from_config(ROOT / "config" / "alignment_rules.json")
+        aligner = FieldAligner.from_config(ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json")
         std, _ = aligner.align(df, "stock_daily", "tushare")
         std = std[std["ts_code"] == TEST_CODE].copy()
         std["trade_date"] = pd.to_datetime(std["trade_date"]).dt.strftime("%Y-%m-%d")
@@ -63,7 +63,7 @@ def fetch_baostock():
     try:
         df, _ = a.fetch_table("stock_daily", TEST_DATES[0], TEST_DATES[-1],
                               codes=[TEST_CODE])
-        aligner = FieldAligner.from_config(ROOT / "config" / "alignment_rules.json")
+        aligner = FieldAligner.from_config(ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json")
         std, _ = aligner.align(df, "stock_daily", "baostock")
         std = std[std["ts_code"] == TEST_CODE].copy()
         std["trade_date"] = pd.to_datetime(std["trade_date"]).dt.strftime("%Y-%m-%d")
@@ -90,7 +90,7 @@ def fetch_akshare():
             if len(df) == 0:
                 log.warning("akshare 返回 0 行（网络限流），跳过")
                 return None
-            aligner = FieldAligner.from_config(ROOT / "config" / "alignment_rules.json")
+            aligner = FieldAligner.from_config(ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json")
             std, _ = aligner.align(df, "stock_daily", "akshare")
             std = std[std["ts_code"] == TEST_CODE].copy()
             std["trade_date"] = pd.to_datetime(std["trade_date"]).dt.strftime("%Y-%m-%d")

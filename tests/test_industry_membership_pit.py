@@ -361,7 +361,7 @@ def test_aligner_identity_mapping(tmp_path):
     """alignment_rules.json 中 tushare 对两张正式表的映射可用且产出 canonical 列。"""
     from quantstudio.pipeline.aligner import FieldAligner
 
-    aligner = FieldAligner.from_config("config/alignment_rules.json")
+    aligner = FieldAligner.from_config("config/profiles/mcp_only/alignment_rules.json")
     mem = pd.DataFrame(MEMBERSHIP_ROWS, columns=[
         "classification_system", "classification_version", "industry_level",
         "industry_code", "code", "effective_from", "effective_to",

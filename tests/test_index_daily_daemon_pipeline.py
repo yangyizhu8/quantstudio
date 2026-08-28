@@ -166,9 +166,9 @@ def test_empty_single_industry_fail_closed_all_or_nothing(monkeypatch):
 @pytest.fixture
 def daemon(tmp_path, adapter):
     writer = DuckDBWriter({"type": "duckdb", "path": str(tmp_path / "q.duckdb")})
-    aligner = FieldAligner.from_config("config/alignment_rules.json")
+    aligner = FieldAligner.from_config("config/profiles/mcp_only/alignment_rules.json")
     quarantine = Quarantine(str(tmp_path / "quarantine.db"))
-    validator = PreIngestValidator.from_config("config/alignment_rules.json", quarantine)
+    validator = PreIngestValidator.from_config("config/profiles/mcp_only/alignment_rules.json", quarantine)
     batch_audit = BatchAudit(tmp_path / "audit.db")
     tasks_cfg = {"tasks": [{
         "name": "index_daily", "enabled": True, "source": "tushare",
@@ -244,9 +244,9 @@ def test_daemon_resident_entry_same_path(daemon):
 
 def _make_daemon(tmp_path, adapter, table="index_daily"):
     writer = DuckDBWriter({"type": "duckdb", "path": str(tmp_path / "q3.duckdb")})
-    aligner = FieldAligner.from_config("config/alignment_rules.json")
+    aligner = FieldAligner.from_config("config/profiles/mcp_only/alignment_rules.json")
     quarantine = Quarantine(str(tmp_path / "q3q.db"))
-    validator = PreIngestValidator.from_config("config/alignment_rules.json", quarantine)
+    validator = PreIngestValidator.from_config("config/profiles/mcp_only/alignment_rules.json", quarantine)
     tasks_cfg = {"tasks": [{
         "name": table, "enabled": True, "source": "tushare",
         "table": table, "freq": "daily", "codes": ["ALL"],
@@ -353,9 +353,9 @@ def test_daemon_index_constituents_writes_snapshot_meta(tmp_path, monkeypatch):
     monkeypatch.setattr(ts, "pro_api", lambda *a, **k: fake_cls())
     adapter = TushareAdapter({"name": "tushare", "token": "test-token"})
     writer = DuckDBWriter({"type": "duckdb", "path": str(tmp_path / "q2.duckdb")})
-    aligner = FieldAligner.from_config("config/alignment_rules.json")
+    aligner = FieldAligner.from_config("config/profiles/mcp_only/alignment_rules.json")
     quarantine = Quarantine(str(tmp_path / "quarantine2.db"))
-    validator = PreIngestValidator.from_config("config/alignment_rules.json", quarantine)
+    validator = PreIngestValidator.from_config("config/profiles/mcp_only/alignment_rules.json", quarantine)
     tasks_cfg = {"tasks": [{
         "name": "index_constituents", "enabled": True, "source": "tushare",
         "table": "index_constituents", "freq": "daily", "codes": ["000300"],

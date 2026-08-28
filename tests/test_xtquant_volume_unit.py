@@ -29,7 +29,7 @@ from quantstudio.pipeline.aligner import FieldAligner
 from quantstudio.pipeline.validator import PreIngestValidator
 
 HERE = Path(__file__).resolve().parent.parent
-RULES_PATH = HERE / "config" / "alignment_rules.json"
+RULES_PATH = HERE / "config" / "profiles" / "mcp_only" / "alignment_rules.json"
 RULES = json.loads(RULES_PATH.read_text(encoding="utf-8"))
 SCHEMAS = RULES["schemas"]
 

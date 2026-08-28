@@ -18,7 +18,8 @@ from quantstudio.pipeline.validator import PreIngestValidator
 
 
 HERE = Path(__file__).resolve().parent.parent
-SCHEMAS = json.loads((HERE / "config" / "alignment_rules.json").read_text(encoding="utf-8"))["schemas"]
+# 2026-08-27 legacy profile 废弃后，权威 alignment_rules 迁至 mcp_only profile
+SCHEMAS = json.loads((HERE / "config" / "profiles" / "mcp_only" / "alignment_rules.json").read_text(encoding="utf-8"))["schemas"]
 
 
 @pytest.fixture

@@ -30,7 +30,7 @@ from quantstudio._paths import _ROOT as PROJECT_ROOT
 # ============================================================
 # 数据源模式（profile）定义
 # config_dir 切换 = 切换采集配置集（collector_tasks / sources / data / alignment）。
-# 注意：mcp 与 legacy 两 profile 的 data_config.json 都指向 data/quantstudio.db
+# 注意（2026-08-27 数据源唯一化）：legacy profile 已废弃，唯一 profile = mcp（云端 MCP 权威源）。
 # （统一正式库），故切换 profile 不切库、QFQ 与采集同库共存（验收 #13）。
 # subdir 以项目根（PROJECT_ROOT）为锚点，均带 "config/" 前缀。
 # ============================================================
@@ -40,11 +40,8 @@ PROFILES = {
         "label": "MCP权威源（默认）",
         "tip": "统一正式库 data/quantstudio.db，QFQ闭环由MCP驱动",
     },
-    "legacy": {
-        "subdir": "config",
-        "label": "传统多源（xtquant/tushare等）",
-        "tip": "默认 config/ 目录：xtquant+tushare+akshare 混合多源",
-    },
+    # "legacy" profile（传统多源 xtquant/tushare/akshare）已于 2026-08-27 彻底废弃：
+    # 用户裁定数据源唯一化，消除混源隐患；原 config/ 目录保留为归档，不再激活。
 }
 PROFILE_STATE_FILE = "gui_profile_state.json"
 DEFAULT_PROFILE = "mcp"
@@ -89,7 +86,7 @@ class MainWindow(FluentWindow):
         self.current_profile = DEFAULT_PROFILE
         self._profile_dirty = False          # 下拉已选但与 current_profile 不同（未应用）
         self._reset_in_progress = False      # 重置水印进行中（守护：禁止切源/启停）
-        self._reset_mode = None              # 重置的目标模式（'mcp'/'legacy'）
+        self._reset_mode = None              # 重置的目标模式（唯一 'mcp'；legacy 已废弃）
         self._reset_sources: list = []       # 重置影响的源集合（按 source 过滤）
         self._load_profile_state()
 
