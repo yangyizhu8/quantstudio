@@ -17,7 +17,7 @@
     "lifecycle"
   ],
   "properties": {
-    "optimization_study_report_version": {"const": "1.0"},
+    "optimization_study_report_version": {"const": "1.1"},
     "strategy_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$"},
     "created_at": {"type": "string", "format": "date-time"},
     "status": {"enum": ["COMPLETED", "INCOMPLETE_TIMEOUT", "FAILED", "BLOCKED"]},
@@ -47,13 +47,29 @@
     },
     "cost": {
       "type": "object",
-      "required": ["engine_runs_planned", "engine_runs_executed", "wall_seconds"],
+      "required": [
+        "inner_runs_planned",
+        "inner_runs_executed",
+        "oos_runs_planned",
+        "oos_runs_executed",
+        "total_engine_runs",
+        "wall_seconds"
+      ],
+      "description": "Cost counters, one coherent accounting model (audit rev 1, 2026-08-28, report 1.1): inner_* counts in-fold candidate evaluations (planned = valid folds x trials-per-fold x inner_folds; executed = actual inner engine runs); oos_* counts outer OOS evaluations (planned == executed here: one per valid fold with a chosen inner-best params set); total_engine_runs = inner_executed + oos_executed (the actual wall-clock engine runs); planned aggregates derive from the two planned columns. timed_out / pruned_trials / optuna_completed_trials_at_close (inner_executed // inner_folds for optuna, null for grid) remain available.",
       "properties": {
-        "engine_runs_planned": {"type": "integer", "minimum": 0},
-        "engine_runs_executed": {"type": "integer", "minimum": 0},
+        "inner_runs_planned": {"type": "integer", "minimum": 0},
+        "inner_runs_executed": {"type": "integer", "minimum": 0},
+        "oos_runs_planned": {"type": "integer", "minimum": 0},
+        "oos_runs_executed": {"type": "integer", "minimum": 0},
+        "total_engine_runs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "inner_runs_executed + oos_runs_executed (actual engine runs)"
+        },
         "wall_seconds": {"type": "number", "minimum": 0},
         "timed_out": {"type": "boolean"},
-        "pruned_trials": {"type": "integer", "minimum": 0}
+        "pruned_trials": {"type": "integer", "minimum": 0},
+        "optuna_completed_trials_at_close": {"type": ["integer", "null"], "minimum": 0}
       },
       "additionalProperties": false
     },
@@ -185,8 +201,7 @@
         "overrides_file_created": {"type": "boolean"},
         "overrides_write_events": {"type": "integer", "minimum": 0},
         "overrides_file_deleted_at_completion": {"type": "boolean"},
-        "optuna_storage_path": {"type": ["string", "null"]},
-        "optuna_completed_trials_at_close": {"type": ["integer", "null"]}
+        "optuna_storage_path": {"type": ["string", "null"]}
       },
       "additionalProperties": false
     }

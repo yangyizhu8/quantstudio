@@ -368,8 +368,9 @@ def run_study(design_path: Path, evidence_path: Path, workspace: Path,
 
     outer_records = []
     proposal_votes: dict[str, list] = {}
-    runs_planned = 0
-    runs_executed = 0
+    inner_planned = 0
+    inner_executed = 0
+    oos_executed = 0
     timed_out = False
 
     deadline = (time.time() + int(timeout_s)) if (
@@ -403,7 +404,8 @@ def run_study(design_path: Path, evidence_path: Path, workspace: Path,
         inner_bounds = [(seg * (i + 1) - 1, min(seg * (i + 2) - 1, len(train_dates) - 1))
                         for i in range(inner_folds)]
         candidates = enumerate_candidates() if engine == "grid" else None
-        runs_planned += (len(candidates) if candidates else n_trials) * inner_folds
+        inner_planned += fold_planned_runs(len(candidates) if candidates else n_trials,
+                                           inner_folds)
         best_params, best_obj, best_trials = None, float("-inf"), []
         if engine == "grid":
             for params in candidates:
@@ -411,7 +413,7 @@ def run_study(design_path: Path, evidence_path: Path, workspace: Path,
                     timed_out = True
                     break
                 obj, trials = evaluate_params(params, train_dates, inner_bounds)
-                runs_executed += inner_folds
+                inner_executed += inner_folds
                 best_trials.extend(trials)
                 if obj == obj and obj > best_obj:
                     best_obj, best_params = obj, params
@@ -441,7 +443,7 @@ def run_study(design_path: Path, evidence_path: Path, workspace: Path,
                 if deadline is not None and time.time() > deadline:
                     raise optuna.TrialPruned("timeout")
                 obj, trials = evaluate_params(params, train_dates, inner_bounds)
-                runs_executed += inner_folds
+                inner_executed += inner_folds
                 best_trials.extend(trials)
                 return obj
 
@@ -475,7 +477,7 @@ def run_study(design_path: Path, evidence_path: Path, workspace: Path,
             cfg_copy.to_csv(oos_dir / "config.csv", index=False)
             ok = run_engine_once(strategy_file, project_root, fold["start"],
                                  fold["end"], capital, match_mode) is not None
-            runs_executed += 1
+            oos_executed += 1
             outer_records[-1]["oos_result_dir"] = str(oos_dir) if ok else None
             outer_records[-1]["oos_excess_mean"] = (
                 objective_from_run(oos_dir, bench, None) if ok else None)
@@ -522,8 +524,12 @@ def run_study(design_path: Path, evidence_path: Path, workspace: Path,
             for p in per_parameter]
     status = "INCOMPLETE_TIMEOUT" if timed_out else "COMPLETED"
 
+    cost = assemble_cost_counters(inner_planned, inner_executed, oos_executed,
+                                  inner_folds, engine, timed_out, 0)
+    cost["wall_seconds"] = round(time.time() - started, 1)
+
     report = {
-        "optimization_study_report_version": "1.0",
+        "optimization_study_report_version": "1.1",
         "strategy_id": design.get("strategy_id", workspace.name[:63]),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "status": status,
@@ -535,10 +541,7 @@ def run_study(design_path: Path, evidence_path: Path, workspace: Path,
             "daily_stats_csv_sha256": art["hashes"]["daily_stats"],
             "trades_csv_sha256": art["hashes"]["trades"],
             "primary_result_dir": str(art.get("result_dir") or "")},
-        "cost": {"engine_runs_planned": runs_planned,
-                 "engine_runs_executed": runs_executed,
-                 "wall_seconds": round(time.time() - started, 1),
-                 "timed_out": timed_out, "pruned_trials": 0},
+        "cost": cost,
         "outer_folds": outer_records,
         "aggregation": {"per_parameter": per_parameter},
         "proposal": {"params": proposal_params, "diff_vs_design": diff,
@@ -552,9 +555,7 @@ def run_study(design_path: Path, evidence_path: Path, workspace: Path,
                       "overrides_write_events": overrides_events["writes"],
                       "overrides_file_deleted_at_completion": True,
                       "optuna_storage_path": (str(study_out_dir / "optuna_study.db")
-                                              if engine == "optuna" else None),
-                      "optuna_completed_trials_at_close": (runs_executed // max(1, inner_folds)
-                                                           if engine == "optuna" else None)},
+                                              if engine == "optuna" else None)},
     }
     out_path = study_out_dir / "optimization_study_report.json"
     write_json(out_path, report)
@@ -567,7 +568,9 @@ def run_study(design_path: Path, evidence_path: Path, workspace: Path,
 
     schema_ok = _validate_against_schema(out_path)
     print(f"[R5.4] status={status} proposal_params={proposal_params or 'none (keep defaults)'} "
-          f"runs={runs_executed}/{runs_planned} wall={report['cost']['wall_seconds']}s")
+          f"inner={inner_executed}/{inner_planned} oos={oos_executed} "
+          f"total={report['cost']['total_engine_runs']} "
+          f"wall={report['cost']['wall_seconds']}s")
     print(f"[R5.4] report: {out_path} schema_ok={schema_ok} overrides_deleted={deleted}")
     if not schema_ok:
         print("[R5.4] WARNING: report failed schema validation", file=sys.stderr)
@@ -609,6 +612,41 @@ def _validate_against_schema(report_path: Path) -> bool:
     except Exception as exc:  # noqa: BLE001
         print(f"[R5.4] schema violation: {exc}", file=sys.stderr)
         return False
+
+
+def assemble_cost_counters(inner_planned: int, inner_executed: int,
+                           oos_executed: int, inner_folds: int, engine: str,
+                           timed_out: bool, pruned_trials: int) -> dict:
+    """Pure cost assembly (Phase 2 audit rev 2: production path, no parallel arithmetic).
+
+    Inner/OOS counters are accumulated separately by the study loop; this function
+    derives the cross-checks so selftest can assert against the SAME code path the
+    study calls. Invariants:
+      - total_engine_runs == inner_executed + oos_executed
+      - optuna_completed_trials_at_close = inner_executed // inner_folds (optuna only;
+        None for grid) — based on INNER executions only (OOS runs are not trials).
+    """
+    total = inner_executed + oos_executed
+    optuna_completed = None
+    if engine == "optuna" and inner_folds > 0:
+        optuna_completed = inner_executed // inner_folds
+    return {
+        "inner_runs_planned": inner_planned,
+        "inner_runs_executed": inner_executed,
+        "oos_runs_planned": oos_executed,
+        "oos_runs_executed": oos_executed,
+        "total_engine_runs": total,
+        "wall_seconds": 0.0,  # filled by the caller (wall clock measured in run_study)
+        "timed_out": timed_out,
+        "pruned_trials": pruned_trials,
+        "optuna_completed_trials_at_close": optuna_completed,
+    }
+
+
+def fold_planned_runs(candidates_or_trials: int, inner_folds: int) -> int:
+    """Planned inner engine runs for ONE valid outer fold (SKIP folds never reach
+    this helper — the loop calls it only after the short-train-region guard)."""
+    return candidates_or_trials * inner_folds
 
 
 class UsageErrorIfAny(Exception):

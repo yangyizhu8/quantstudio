@@ -156,6 +156,47 @@ def check_hook_equivalence() -> bool:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def check_cost_counters() -> bool:
+    """Audit rev 2: assert the PRODUCTION pure helpers (assemble_cost_counters /
+    fold_planned_runs), not a re-implementation. Covers audit-pinned semantics:
+      - total_engine_runs == inner_executed + oos_executed (invariant)
+      - optuna_completed_trials_at_close = inner_executed // inner_folds (optuna);
+        None for grid
+      - concrete array 4 folds x 2 candidates x inner=1 + 4 OOS -> inner 8/8, oos 4/4,
+        total 12
+      - fold_planned_runs used by the loop for the per-valid-fold planned count
+        (SKIP folds never reach it — the loop guards on the short train region first)
+    """
+    from run_optimization_study import assemble_cost_counters, fold_planned_runs
+
+    # concrete scenario (audit-pinned numbers)
+    c = assemble_cost_counters(inner_planned=8, inner_executed=8, oos_executed=4,
+                               inner_folds=1, engine="grid", timed_out=False,
+                               pruned_trials=0)
+    ok_values = (c["inner_runs_planned"] == 8 and c["inner_runs_executed"] == 8
+                 and c["oos_runs_planned"] == 4 and c["oos_runs_executed"] == 4
+                 and c["total_engine_runs"] == 12)
+    # invariant: total == inner + oos over a range of counter values
+    ok_invariant = True
+    for i in range(0, 5):
+        for o in range(0, 4):
+            d = assemble_cost_counters(i * 2, i, o, 2, "grid", False, 0)
+            if d["total_engine_runs"] != (d["inner_runs_executed"]
+                                          + d["oos_runs_executed"]):
+                ok_invariant = False
+    # optuna completed = inner_executed // inner_folds; grid -> None
+    o1 = assemble_cost_counters(10, 10, 4, 2, "optuna", False, 0)
+    ok_optuna = o1["optuna_completed_trials_at_close"] == 5  # 10 // 2
+    ok_grid_none = c["optuna_completed_trials_at_close"] is None
+    # fold_planned_runs (production per-valid-fold planned count)
+    ok_fold_planned = fold_planned_runs(2, 1) == 2 and fold_planned_runs(30, 3) == 90
+    ok = ok_values and ok_invariant and ok_optuna and ok_grid_none and ok_fold_planned
+    print(f"[cost-counters] values {ok_values}; invariant {ok_invariant}; "
+          f"optuna_completed {ok_optuna} (5=10//2); grid_none {ok_grid_none}; "
+          f"fold_planned {ok_fold_planned}")
+    return ok
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--all", action="store_true")
@@ -169,6 +210,7 @@ def main(argv=None) -> int:
         "overrides_lifecycle": check_overrides_lifecycle_and_undeclared(),
         "aggregation_skip": check_aggregation_with_skip(),
         "hook_equivalence": check_hook_equivalence(),
+        "cost_counters": check_cost_counters(),
     }
     all_ok = all(results.values())
     print(f"[selftest] {'ALL GREEN' if all_ok else 'FAILURES'}: {results}")
