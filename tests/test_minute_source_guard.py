@@ -16,44 +16,62 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-# ========== daemon 守卫：拒绝非 xtquant 源写入分钟表 ==========
+# ========== daemon 守卫：数据源唯一化（2026-08-28）——唯一权威源 mcp ==========
+
+def _bare_daemon():
+    """最小 daemon 实例（__new__ 绕过 __init__；补齐 _run_with_source 前置属性——
+    含他线 S1-6 的 writer/events 早期引用与水位读取链）。"""
+    from quantstudio.pipeline.daemon import ResidentCollector
+    daemon = ResidentCollector.__new__(ResidentCollector)
+    daemon.writer = type("W", (), {
+        "get_last_date": staticmethod(lambda *a, **k: None),
+        "execute_read": staticmethod(lambda *a, **k: []),
+        "advance_watermark": staticmethod(lambda *a, **k: None),
+    })()
+    daemon.events = None
+    daemon.tasks_cfg = {"tasks": []}
+    daemon.sources_cfg = {"sources": {}, "default_source_priority": []}
+    daemon.aligner = None
+    daemon.batch_audit = None
+    daemon._adapters = {}   # 工厂缓存（唯一化后 create_adapter 对非 mcp raise）
+    return daemon
+
 
 def test_guard_rejects_tushare_for_stock_minutes():
-    """守卫拒绝 tushare 写入 stock_minutes（复权一致性）"""
-    from quantstudio.pipeline.daemon import ResidentCollector
-    # 构造最小 daemon 实例（不连 DB）
-    daemon = ResidentCollector.__new__(ResidentCollector)
+    """唯一化后 tushare 写 stock_minutes 被拒——工厂层即拒（RuntimeError：源未启用）"""
+    import pytest
+    daemon = _bare_daemon()
     task = {"name": "kline_1m", "table": "stock_minutes", "freq": "1min"}
-    result = daemon._run_with_source(task, "tushare", "test_batch", "2026-07-21T00:00:00")
-    assert result is False   # 拒绝
+    with pytest.raises(RuntimeError, match="数据源 tushare 未启用"):
+        daemon._run_with_source(task, "tushare", "test_batch", "2026-07-21T00:00:00")
 
 
 def test_guard_rejects_tushare_for_etf_minutes():
-    """守卫拒绝 tushare 写入 etf_minutes"""
-    from quantstudio.pipeline.daemon import ResidentCollector
-    daemon = ResidentCollector.__new__(ResidentCollector)
+    """唯一化后 tushare 写 etf_minutes 被拒（工厂层 RuntimeError）"""
+    import pytest
+    daemon = _bare_daemon()
     task = {"name": "etf_minutes", "table": "etf_minutes", "freq": "1min"}
-    result = daemon._run_with_source(task, "tushare", "test_batch", "2026-07-21T00:00:00")
-    assert result is False
+    with pytest.raises(RuntimeError, match="数据源 tushare 未启用"):
+        daemon._run_with_source(task, "tushare", "test_batch", "2026-07-21T00:00:00")
 
 
-def test_guard_allows_xtquant_for_stock_minutes():
-    """守卫允许 xtquant 写入 stock_minutes（不被守卫拦截；后续逻辑由 _execute_task_per_stock 处理）"""
-    from quantstudio.pipeline.daemon import ResidentCollector
-    daemon = ResidentCollector.__new__(ResidentCollector)
-    # daemon 需要一些属性才能继续到 per_stock（守卫之后会因缺属性失败，但守卫本身放行）
-    daemon.tasks_cfg = {"tasks": []}
-    daemon.sources_cfg = {"sources": {}, "default_source_priority": []}
-    daemon.writer = None
-    daemon.aligner = None
-    daemon.batch_audit = None
+def test_guard_rejects_xtquant_for_stock_minutes():
+    """唯一化后 xtquant 同样被拒（工厂层 RuntimeError）"""
+    import pytest
+    daemon = _bare_daemon()
+    task = {"name": "kline_1m", "table": "stock_minutes", "freq": "1min"}
+    with pytest.raises(RuntimeError, match="数据源 xtquant 未启用"):
+        daemon._run_with_source(task, "xtquant", "test_batch", "2026-07-21T00:00:00")
+
+
+def test_guard_allows_mcp_for_stock_minutes():
+    """守卫允许 mcp 写入 stock_minutes（唯一权威源；后续逻辑由 MCP 流水线处理）"""
+    daemon = _bare_daemon()
     task = {"name": "kline_1m", "table": "stock_minutes", "freq": "1min",
             "codes": ["ALL"], "max_workers": 1, "mode": "incremental"}
-    # 守卫放行后会在 _execute_task_per_stock 里因缺真实 adapter 失败，但不会在守卫处返回 False
     try:
-        result = daemon._run_with_source(task, "xtquant", "test_batch", "2026-07-21T00:00:00")
+        result = daemon._run_with_source(task, "mcp", "test_batch", "2026-07-21T00:00:00")
     except Exception:
-        # 守卫放行后任何异常都说明守卫没拦截（预期行为）
         result = "passed_guard"
     assert result is not False   # 守卫没拒绝（可能是 True 或异常）
 
@@ -77,14 +95,12 @@ def test_guard_does_not_affect_daily_tables():
 
 # ========== GUI DEFAULT_SOURCE_MAP 与守卫一致 ==========
 
-def test_gui_default_source_map_minute_tables_use_xtquant():
-    """GUI DEFAULT_SOURCE_MAP 分钟表默认源 = xtquant（采集路径必要条件，与守卫同批交付）"""
+def test_gui_default_source_map_minute_tables_use_mcp():
+    """GUI DEFAULT_SOURCE_MAP 分钟表默认源 = mcp（数据源唯一化 2026-08-28）"""
     config_tab = ROOT / "quantstudio" / "gui" / "tabs" / "config_editor_tab.py"
     content = config_tab.read_text(encoding="utf-8")
-    # 解析 DEFAULT_SOURCE_MAP（用 exec 安全方式：直接检查字符串）
-    # stock_minutes 和 etf_minutes 的值应为 xtquant
-    assert '"stock_minutes":        "xtquant"' in content or '"stock_minutes": "xtquant"' in content
-    assert '"etf_minutes":          "xtquant"' in content or '"etf_minutes": "xtquant"' in content
+    assert '"stock_minutes":        "mcp"' in content or '"stock_minutes": "mcp"' in content
+    assert '"etf_minutes":          "mcp"' in content or '"etf_minutes": "mcp"' in content
 
 
 def test_quality_tab_expected_empty_excludes_minute_tables():
@@ -96,24 +112,22 @@ def test_quality_tab_expected_empty_excludes_minute_tables():
     assert 'EXPECTED_EMPTY = {"tick", "etf_minutes"' not in content
 
 
-# ========== collector_tasks.json source_priority ==========
+# ========== collector_tasks.json source（mcp_only 唯一化） ==========
 
-def test_collector_tasks_kline_1m_source_priority_xtquant():
-    """kline_1m source_priority = ["xtquant"]（单源锁定）"""
-    tasks_file = ROOT / "config" / "collector_tasks.json"
+def test_collector_tasks_stock_minutes_source_mcp():
+    """mcp_stock_minutes source = mcp（唯一源锁定；任务名 mcp_ 前缀）"""
+    tasks_file = ROOT / "config" / "profiles" / "mcp_only" / "collector_tasks.json"
     tasks = json.loads(tasks_file.read_text(encoding="utf-8"))
-    kline_1m = next(t for t in tasks["tasks"] if t["name"] == "kline_1m")
-    assert kline_1m["source_priority"] == ["xtquant"]
-    assert kline_1m["source"] == "xtquant"
+    t = next(t for t in tasks["tasks"] if t["name"] == "mcp_stock_minutes")
+    assert t["source"] == "mcp"
 
 
-def test_collector_tasks_etf_minutes_source_priority_xtquant():
-    """etf_minutes source_priority = ["xtquant"]（单源锁定）"""
-    tasks_file = ROOT / "config" / "collector_tasks.json"
+def test_collector_tasks_etf_minutes_source_mcp():
+    """mcp_etf_minutes source = mcp（唯一源锁定）"""
+    tasks_file = ROOT / "config" / "profiles" / "mcp_only" / "collector_tasks.json"
     tasks = json.loads(tasks_file.read_text(encoding="utf-8"))
-    etf_min = next(t for t in tasks["tasks"] if t["name"] == "etf_minutes")
-    assert etf_min["source_priority"] == ["xtquant"]
-    assert etf_min["source"] == "xtquant"
+    t = next(t for t in tasks["tasks"] if t["name"] == "mcp_etf_minutes")
+    assert t["source"] == "mcp"
 
 
 # ========== xtquant adapter 分窗逻辑 ==========

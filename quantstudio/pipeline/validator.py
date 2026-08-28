@@ -43,7 +43,7 @@ class PreIngestValidator:
     """入库前置校验器
 
     使用：
-        v = PreIngestValidator.from_config("config/alignment_rules.json", quarantine)
+        v = PreIngestValidator.from_config("config/profiles/mcp_only/alignment_rules.json", quarantine)
         result = v.validate(std_df, table="stock_daily", batch_id="batch_xxx", source="baostock")
         writer.write(result.passed_df, ...)   # 仅通过的入库
     """

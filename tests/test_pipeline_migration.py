@@ -35,7 +35,7 @@ logging.basicConfig(level=logging.WARNING)
 def test_schema_fields():
     """① schema 字段数正确（含 is_st_reliable / is_delisting_risk 等ST状态字段）"""
     print("\n[①] schema 字段数验证")
-    a = FieldAligner.from_config(ROOT / "config" / "alignment_rules.json")
+    a = FieldAligner.from_config(ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json")
     daily_n = len(a.schemas["stock_daily"]["columns"])
     minute_n = len(a.schemas["stock_minutes"]["columns"])
     tick_n = len(a.schemas["tick"]["columns"])
@@ -75,7 +75,7 @@ def test_code_and_time():
 def test_unit_conversion():
     """③ 单位转换：模拟 tushare raw → 统一 aligned"""
     print("\n[③] 单位转换验证")
-    a = FieldAligner.from_config(ROOT / "config" / "alignment_rules.json")
+    a = FieldAligner.from_config(ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json")
     # tushare raw（vol 手, amount 千元）
     raw = pd.DataFrame({
         "ts_code": ["600000.SH"], "trade_date": ["20260710"],
@@ -99,7 +99,7 @@ def test_unit_conversion():
 def test_suspend_flag():
     """⑥ suspendFlag 推导 [补丁3]"""
     print("\n[⑥] suspendFlag 推导验证")
-    a = FieldAligner.from_config(ROOT / "config" / "alignment_rules.json")
+    a = FieldAligner.from_config(ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json")
     raw = pd.DataFrame({
         "ts_code": ["600000.SH", "600000.SH"],
         "trade_date": ["20260710", "20260711"],
@@ -121,8 +121,8 @@ def test_quarantine_replay():
     print("\n[⑦] Quarantine 修复重放验证")
     tmp = Path(tempfile.mkdtemp())
     q = Quarantine(tmp / "q.db")
-    a = FieldAligner.from_config(ROOT / "config" / "alignment_rules.json")
-    v = PreIngestValidator.from_config(ROOT / "config" / "alignment_rules.json", q)
+    a = FieldAligner.from_config(ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json")
+    v = PreIngestValidator.from_config(ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json", q)
     w = DuckDBWriter({"type": "duckdb", "path": str(tmp / "main.db")})
     # 脏数据（代码错 + OHLC 错）
     dirty = pd.DataFrame({

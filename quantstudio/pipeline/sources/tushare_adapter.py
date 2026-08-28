@@ -717,7 +717,7 @@ class TushareAdapter(BaseSourceAdapter):
         # 我们需要原始字段名去拉取（反向取 keys）
         import json
         from pathlib import Path
-        rules_p = Path("config/alignment_rules.json")
+        rules_p = Path("config/profiles/mcp_only/alignment_rules.json")
         with rules_p.open("r", encoding="utf-8") as f:
             rules = json.load(f)
         col_map = rules["source_mappings"]["tushare"][table]["column_map"]

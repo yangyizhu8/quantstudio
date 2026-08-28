@@ -22,7 +22,7 @@ from pathlib import Path
 
 # quantstudio/_paths.py -> 项目根
 _ROOT = Path(__file__).resolve().parent.parent
-_CONFIG_PATH = _ROOT / "config" / "data_config.json"
+_CONFIG_PATH = _ROOT / "config" / "profiles" / "mcp_only" / "data_config.json"
 
 
 def get_data_root() -> Path:

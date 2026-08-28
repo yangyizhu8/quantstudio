@@ -99,8 +99,8 @@ def env(tmp_path):
         "effective_from": _ms("2018-01-01"), "effective_to": None,
         "update_time": "marker", "data_source": "marker"}]),
         "industry_membership", "seed")
-    aligner = FieldAligner.from_config("config/alignment_rules.json")
-    validator = PreIngestValidator.from_config("config/alignment_rules.json")
+    aligner = FieldAligner.from_config("config/profiles/mcp_only/alignment_rules.json")
+    validator = PreIngestValidator.from_config("config/profiles/mcp_only/alignment_rules.json")
     yield db, writer, aligner, validator
     writer.close()
 

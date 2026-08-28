@@ -185,7 +185,7 @@ class TestPrepareOtherTasks:
             staging_root = tmp_p / "staging"
 
             # Read production config to learn original start_date values
-            prod_tasks_path = _PROJECT_ROOT / "config" / "collector_tasks.json"
+            prod_tasks_path = _PROJECT_ROOT / "config" / "profiles" / "mcp_only" / "collector_tasks.json"
             prod_tasks = json.loads(prod_tasks_path.read_text(encoding="utf-8"))
             original_start_dates = {}
             for t in prod_tasks.get("tasks", []):

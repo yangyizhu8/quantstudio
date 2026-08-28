@@ -139,26 +139,30 @@ def test_profile_consistency():
 
 
 def test_collector_tasks_authority_config():
-    """fin_indicator + stock_dividend 权威源配置正确"""
-    config = json.loads(Path("config/collector_tasks.json").read_text(encoding="utf-8"))
+    """数据源唯一化（2026-08-28）：唯一 mcp 源——全任务 source=mcp，
+    无需 authoritative_source 声明（唯一源即权威；旧 tushare 声明契约废止）"""
+    config = json.loads(
+        Path("config/profiles/mcp_only/collector_tasks.json").read_text(encoding="utf-8"))
     tasks = config.get("tasks", [])
     found = 0
     for t in tasks:
         if isinstance(t, dict) and t.get("table") in ("fin_indicator", "stock_dividend"):
-            assert t.get("authoritative_source") == "tushare"
-            assert t.get("allow_fallback") is False
+            assert t.get("source") == "mcp"
             found += 1
     assert found >= 2
 
 
 def test_build_authority_rules_from_daemon():
-    """直接导入 build_authority_rules 并测试"""
+    """唯一化后：mcp_only 任务无 authoritative_source → build_authority_rules 不产出
+    旧 tushare 规则（唯一源即权威，声明契约废止）"""
     from quantstudio.pipeline.daemon import build_authority_rules
 
-    config = json.loads(Path("config/collector_tasks.json").read_text(encoding="utf-8"))
+    config = json.loads(
+        Path("config/profiles/mcp_only/collector_tasks.json").read_text(encoding="utf-8"))
     rules = build_authority_rules(config)
-    assert "fin_indicator" in rules
-    assert "stock_dividend" in rules
-    assert rules["fin_indicator"]["authoritative_source"] == "tushare"
-    assert rules["fin_indicator"]["allow_fallback"] is False
-    assert rules["stock_dividend"]["allow_fallback"] is False
+    # 旧契约（tushare 权威声明）已废止——不再产出 tushare 规则
+    fin_rule = rules.get("fin_indicator")
+    if fin_rule is not None:
+        assert fin_rule.get("authoritative_source") != "tushare"
+    assert rules.get("stock_dividend") is None or \
+        rules["stock_dividend"].get("authoritative_source") != "tushare"

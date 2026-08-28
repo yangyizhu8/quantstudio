@@ -626,7 +626,7 @@ def _build_default_xtquant_etf_provider():
     import os
     try:
         import json
-        cfg_path = _ROOT / "config" / "sources_config.json"
+        cfg_path = _ROOT / "config" / "profiles" / "mcp_only" / "sources_config.json"
         cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
         sources = cfg.get("sources", {})
         # 权威 schema: dict（key 为源名）。与 daemon._get_adapter 一致。

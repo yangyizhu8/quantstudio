@@ -158,7 +158,7 @@ def test_aligner_sw_rows_to_canonical_index_daily(monkeypatch):
     _mock_pro(monkeypatch)
     adapter = _make_adapter()
     df, _ = adapter._fetch_index_daily("2026-07-01", "2026-07-24", ["801010"])
-    aligner = FieldAligner.from_config("config/alignment_rules.json")
+    aligner = FieldAligner.from_config("config/profiles/mcp_only/alignment_rules.json")
     std, meta = aligner.align(df, "index_daily", "tushare")
     row = std.sort_values("time").iloc[0]
     assert row["code"] == "801010"

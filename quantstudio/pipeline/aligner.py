@@ -219,7 +219,7 @@ class FieldAligner:
     """字段对齐引擎：读取 alignment_rules.json，把任意源数据转为 tushare 标准格式。
 
     使用：
-        aligner = FieldAligner.from_config("config/alignment_rules.json")
+        aligner = FieldAligner.from_config("config/profiles/mcp_only/alignment_rules.json")
         std_df, meta = aligner.align(raw_df, table="stock_daily", source="baostock")
     """
 

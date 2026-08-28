@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def _make_validator(table='balance_statement'):
     """构造 validator（用项目真实 alignment_rules.json）"""
     from quantstudio.pipeline.validator import PreIngestValidator
-    return PreIngestValidator.from_config(ROOT / "config" / "alignment_rules.json")
+    return PreIngestValidator.from_config(ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json")
 
 
 # ========== AnnDateLogic 规则存在性 ==========
@@ -261,7 +261,7 @@ def test_extreme_pe_warned_not_rejected():
 def test_stock_float_share_schema_has_anndate():
     """schema 已含 ann_date + end_date，主键改为 (code,end_date,ann_date)"""
     import json
-    rules = json.load(open(ROOT / "config" / "alignment_rules.json", encoding="utf-8"))
+    rules = json.load(open(ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json", encoding="utf-8"))
     s = rules['schemas']['stock_float_share']
     assert 'ann_date' in s['columns']
     assert 'end_date' in s['columns']

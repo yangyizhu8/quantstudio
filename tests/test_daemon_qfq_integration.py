@@ -386,9 +386,9 @@ class TestConfigLintQfq:
     def test_production_config_lints_clean(self):
         """正式 qfq 与数据源配置组合必须通过 lint。"""
         tasks_cfg = json.loads(
-            (_ROOT / "config" / "collector_tasks.json").read_text(encoding="utf-8"))
+            (_ROOT / "config" / "profiles" / "mcp_only" / "collector_tasks.json").read_text(encoding="utf-8"))
         sources_cfg = json.loads(
-            (_ROOT / "config" / "sources_config.json").read_text(encoding="utf-8"))
+            (_ROOT / "config" / "profiles" / "mcp_only" / "sources_config.json").read_text(encoding="utf-8"))
         block = tasks_cfg.get("qfq_orchestrator")
         assert block is not None
         errors, _ = self._lint(block, sources_cfg.get("sources"))

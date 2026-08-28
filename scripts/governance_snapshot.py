@@ -44,7 +44,7 @@ PROTECT_LOG = SNAP_DIR / "protect.log"
 PROTECT_JOURNAL = SNAP_DIR / "protect.pending.json"
 AUX_DB = ROOT / "data" / "qfq_aux.db"
 MAIN_DB = ROOT / "data" / "quantstudio.db"
-DATA_CONFIG = ROOT / "config" / "data_config.json"
+DATA_CONFIG = ROOT / "config" / "profiles" / "mcp_only" / "data_config.json"
 
 BJ_TZ = timezone(timedelta(hours=8))
 NULL_SENTINEL = "\\N"

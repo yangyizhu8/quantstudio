@@ -1,5 +1,5 @@
 {
-  "_note": "mcp_only 独立源配置：仅启用 mcp，禁止 xtquant/tushare（避免跨源复权基准污染）。",
+  "_note": "数据源唯一化终态（2026-08-28）：全项目唯一权威源 = MCP（transport 与 upstream_authority 合一）。非 MCP 源（xtquant/tushare/baostock/akshare/a_stock_data）已全部停用并从配置移除——adapter 文件留盘停用，工厂不再注册。原 legacy 约定见 config_legacy_deprecated/。",
   "sources": {
     "mcp": {
       "enabled": true,
@@ -8,24 +8,8 @@
       "tls_verify": false,
       "enable_qfq_injection": true,
       "landing_subdir": "mcp_landing",
-      "_note": "MCP_API_KEY 从环境变量读取（绝不回显），缺失即 fail-fast（见 MCPClient）。main_db 由 daemon 按 data_config.path 注入。"
-    },
-    "xtquant": {
-      "enabled": false,
-      "_note": "mcp_only 禁止 xtquant（跨源复权基准不一致防御）"
-    },
-    "tushare": {
-      "enabled": false,
-      "_note": "mcp_only 禁止 tushare（QFQ 闭环改用 mcp 驱动 discovery）"
-    },
-    "baostock": {
-      "enabled": false
-    },
-    "akshare": {
-      "enabled": false
-    },
-    "a_stock_data": {
-      "enabled": false
+      "upstream_authority": "mcp",
+      "_note": "MCP_API_KEY 从环境变量读取（绝不回显），缺失即 fail-fast（见 MCPClient）。main_db 由 daemon 按 data_config.path 注入。upstream_authority=mcp：transport 与上游权威合一（2026-07-21 分离契约随唯一化废止）。"
     }
   },
   "default_source_priority": ["mcp"]

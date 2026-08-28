@@ -42,9 +42,9 @@ def check_gate_7_quarantine_replay():
     print("\n[门禁⑦] Quarantine 修复重放真实场景")
     tmp_dir = Path(tempfile.mkdtemp())
     q = Quarantine(tmp_dir / "q.db")
-    aligner = FieldAligner.from_config(ROOT / "config" / "alignment_rules.json")
+    aligner = FieldAligner.from_config(ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json")
     validator = PreIngestValidator.from_config(
-        ROOT / "config" / "alignment_rules.json", q)
+        ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json", q)
     writer = DuckDBWriter({"type": "duckdb", "path": str(tmp_dir / "main.db")})
 
     # ① 喂入含脏代码的数据（1 行正常 + 1 行代码错 + 1 行 OHLC 错）

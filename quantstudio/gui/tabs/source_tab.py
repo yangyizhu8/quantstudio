@@ -58,17 +58,11 @@ class SourceTab(QWidget):
         self.inner_layout.addWidget(mode_label)
 
         # 各源的配置（label, credential_field）
-        # MCP 为统一权威源（默认模式），无需 API key，走 MCP server 端点。
+        # 数据源唯一化（2026-08-28 收敛）：全项目唯一权威源 = MCP。
+        # tushare/baostock/akshare/xtquant/a_stock_data/efinance/joinquant/custom_api
+        # 已全部停用（adapter 留盘停用不删，工厂不再注册）；GUI 只留 MCP 一卡。
         self.source_defs = [
-            ("mcp", "MCP 权威源（统一入口，默认模式）", "api_key"),
-            ("tushare", "Tushare Pro（付费，标准源）", "token"),
-            ("baostock", "Baostock（免费，无QMT首选）", "user"),
-            ("akshare", "Akshare（免费，东方财富）", None),
-            ("xtquant", "xtquant（需 miniQMT 客户端运行）", "qmt_path"),
-            ("a_stock_data", "a-stock-data（免费，基于mootdx，无需注册）", None),
-            ("efinance", "efinance（免费备选）", None),
-            ("joinquant", "聚宽 JoinQuant", "token"),
-            ("custom_api", "自定义 API", "api_key"),
+            ("mcp", "MCP 权威源（唯一权威源，默认模式）", "api_key"),
         ]
 
         for source, label, cred_field in self.source_defs:
@@ -135,13 +129,7 @@ class SourceTab(QWidget):
                             w["cred"].setText(k)
                     except Exception:
                         pass
-                else:
-                    cred_field_map = {"tushare": "token", "baostock": "user",
-                                      "xtquant": "qmt_path", "joinquant": "token",
-                                      "custom_api": "api_key"}
-                    cf = cred_field_map.get(source)
-                    if cf and cf in sc:
-                        w["cred"].setText(str(sc[cf]))
+                # 数据源唯一化（2026-08-28）：非 MCP 源已停用，无其他 cred 回填分支
 
     def _save_config(self):
         # 守卫：重置水印进行中 / 守护进程运行 → 禁止写配置（防配置与实例冲突）
@@ -161,9 +149,7 @@ class SourceTab(QWidget):
         except Exception:
             cfg = {"sources": {}}
         sources = cfg.setdefault("sources", {})
-        cred_field_map = {"tushare": "token", "baostock": "user",
-                          "xtquant": "qmt_path", "joinquant": "token",
-                          "custom_api": "api_key"}
+        # 数据源唯一化（2026-08-28）：唯一 mcp 源；非 MCP cred_field_map 已删（源停用）
         for source, w in self._widgets.items():
             sc = sources.setdefault(source, {})
             sc["enabled"] = w["enabled"].isChecked()
@@ -180,10 +166,7 @@ class SourceTab(QWidget):
                             "否则采集将因鉴权失败。")
                     if key:
                         self._write_mcp_secret(key)
-                else:
-                    cf = cred_field_map.get(source)
-                    if cf:
-                        sc[cf] = w["cred"].text()
+                # 数据源唯一化（2026-08-28）：非 MCP 源已停用——无 else cred 写入分支
         with self.config_path.open("w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2, ensure_ascii=False)
         logger.info(f"数据源配置已保存: {self.config_path}")

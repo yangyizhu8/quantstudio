@@ -82,10 +82,10 @@ def mock_dirty_daily():
 
 def main():
     cleanup()
-    aligner = FieldAligner.from_config(ROOT / "config" / "alignment_rules.json")
+    aligner = FieldAligner.from_config(ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json")
     quarantine = Quarantine(quarantine_db_path())
     validator = PreIngestValidator.from_config(
-        ROOT / "config" / "alignment_rules.json", quarantine)
+        ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json", quarantine)
     writer = DuckDBWriter({"type": "duckdb", "path": str(db_path())})
 
     print("=" * 70)

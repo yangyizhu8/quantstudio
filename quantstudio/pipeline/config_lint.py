@@ -349,10 +349,13 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     root = Path(__file__).resolve().parent.parent.parent
 
-    data_cfg = json.loads((root / "config" / "data_config.json").read_text(encoding="utf-8"))
-    sources_cfg = json.loads((root / "config" / "sources_config.json").read_text(encoding="utf-8"))
-    tasks_cfg = json.loads((root / "config" / "collector_tasks.json").read_text(encoding="utf-8"))
-    align_rules = json.loads((root / "config" / "alignment_rules.json").read_text(encoding="utf-8"))
+    # 数据源唯一化（2026-08-28）：唯一 profile = mcp_only（根 config/ 四件已归档
+    # config_legacy_deprecated/——lint 自检同步指向唯一权威配置目录）。
+    cfg_dir = root / "config" / "profiles" / "mcp_only"
+    data_cfg = json.loads((cfg_dir / "data_config.json").read_text(encoding="utf-8"))
+    sources_cfg = json.loads((cfg_dir / "sources_config.json").read_text(encoding="utf-8"))
+    tasks_cfg = json.loads((cfg_dir / "collector_tasks.json").read_text(encoding="utf-8"))
+    align_rules = json.loads((cfg_dir / "alignment_rules.json").read_text(encoding="utf-8"))
 
     errors, warnings = lint_configs(data_cfg, sources_cfg, tasks_cfg, align_rules)
     print(f"\n=== 校验结果: {len(errors)} 错误, {len(warnings)} 警告 ===")

@@ -113,8 +113,8 @@ class ResidentCollector:
         collector = ResidentCollector.from_configs(
             ROOT/"config/data_config.json",
             ROOT/"config/sources_config.json",
-            ROOT/"config/collector_tasks.json",
-            ROOT/"config/alignment_rules.json")
+            ROOT/"config/profiles/mcp_only/collector_tasks.json",
+            ROOT/"config/profiles/mcp_only/alignment_rules.json")
         collector.run_forever()
     """
 
@@ -325,7 +325,14 @@ class ResidentCollector:
             from .qfq_factor_refresh import QFQFactorRefresher
             from .qfq_maintenance import get_stock_universe, get_etf_universe
             refresher = QFQFactorRefresher(aux_db=orch.aux_db)
-            adapter = self._get_adapter("tushare", None)
+            # 数据源唯一化（2026-08-28，对拍定谳）：MCP 架构下因子随行情任务常态注入
+            # （mcp_adapter._QFQ_ADJFACTOR_TABLES 覆盖全部行情表 → _upsert_adj_factors
+            # 每次拉取自动写 qfq_aux.db）——refresher 的"主动独立拉取"职责已被架构性
+            # 吸收，MCP 下短路返回 False（非 degraded；tushare 独立 API 路径随其停用废止）。
+            adapter = self._get_adapter("mcp", None)
+            if isinstance(adapter, __import__("quantstudio.pipeline.sources.mcp_adapter", fromlist=["MCPAdapter"]).MCPAdapter):
+                logger.info("[qfq] MCP 唯一源：因子随行情任务常态注入，refresher 短路（非 degraded）")
+                return False
             main_db = str(self.writer.db_path)
             stock_universe = get_stock_universe(main_db)
             etf_universe = get_etf_universe(main_db)
@@ -386,9 +393,10 @@ class ResidentCollector:
     def _execute_task(self, task: Dict) -> bool:
         """回退调度器：按 source_priority 依次尝试候选源，首个成功（含空数据）即止。
 
-        这是「xtquant 未来可能被取消」的弹性入口：取消/替换某权威源只需在
-        sources_config.json 置 enabled=false，或把它从 task 的 source_priority 移除，
-        无需改动管线逻辑（拉取→对齐→校验→入库保持不变）。
+        数据源唯一化（2026-08-28）终态：唯一候选 = mcp。弹性入口保留（回退链/
+        enabled 过滤逻辑不变），但唯一化后非 mcp 源在工厂即拒——如未来恢复某源，
+        属显式运维决策（从 git 历史恢复 sources/__init__.py registry 并重估
+        跨源复权基准一致性）。
         回退链优先级：task.source_priority > task.source > 全局 default_source_priority，
         每个候选再经「已启用 + supports_task(table,freq)」过滤。
         """
@@ -507,29 +515,33 @@ class ResidentCollector:
         # 分钟表权威上游=xtquant（三段式复权基准敏感）；日线权威上游=xtquant/tushare。
         # 显式能力错误（缺数据停更）优于混源静默污染（不可检测的错误答案）。
         # 若需历史回填，是一次性显式运维 + 重建全表复权列，绝不作日常 fallback。
+        #
+        # 数据源唯一化（2026-08-28）：唯一权威源 = MCP——transport 与 upstream_authority
+        # 合一（2026-07-21"transport≠upstream"分离契约随唯一化废止，此为复权一致性
+        # 契约变更留痕）。守卫收敛为单值集合；若现"生产写者被拒"意外（如某写者仍报
+        # 旧身份），回退 = 恢复旧声明（git 历史）+ 登记，不在现场调参。
         def _declared_upstream(src: str) -> str:
-            if src != "mcp":
-                return src  # xtquant/tushare 自身即上游权威
-            sc = self.sources_cfg.get("sources", {}).get("mcp") or self.sources_cfg.get("mcp", {})
-            return sc.get("upstream_authority", "xtquant")
+            return "mcp"  # 唯一权威源
 
-        MINUTE_UPSTREAM = {"xtquant"}
-        DAILY_UPSTREAM = {"xtquant", "tushare"}
+        MINUTE_UPSTREAM = {"mcp"}
+        DAILY_UPSTREAM = {"mcp"}
         if table in ("stock_minutes", "etf_minutes"):
             up = _declared_upstream(source)
             if up not in MINUTE_UPSTREAM:
                 logger.error(
-                    f"[task={name}] 分钟表 {table} 上游权威必须=xtquant"
-                    f"（transport={source}，declared_upstream={up}，复权一致性决策 2026-07-21），"
-                    f"拒绝写入以避免跨源复权基准漂移。若需历史回填请显式运维并重建全表复权列。")
+                    f"[task={name}] 分钟表 {table} 上游权威必须=mcp"
+                    f"（transport={source}，declared_upstream={up}，数据源唯一化 2026-08-28——"
+                    f"2026-07-21 分离契约已废止），拒绝写入以避免跨源复权基准漂移。"
+                    f"若需历史回填请显式运维并重建全表复权列。")
                 return False
         elif table in ("stock_daily", "etf_daily"):
             up = _declared_upstream(source)
             if up not in DAILY_UPSTREAM:
                 logger.error(
-                    f"[task={name}] 日线表 {table} 上游权威必须∈{{xtquant,tushare}}"
-                    f"（transport={source}，declared_upstream={up}，复权一致性决策 2026-07-21），"
-                    f"拒绝写入以避免跨源复权基准台阶。若需历史回填请显式运维并重建全表复权列。")
+                    f"[task={name}] 日线表 {table} 上游权威必须=mcp"
+                    f"（transport={source}，declared_upstream={up}，数据源唯一化 2026-08-28——"
+                    f"2026-07-21 分离契约已废止），拒绝写入以避免跨源复权基准台阶。"
+                    f"若需历史回填请显式运维并重建全表复权列。")
                 return False
 
         # 通用权威源守卫（task 级 authoritative_source 声明，覆盖所有表类型）
@@ -558,6 +570,8 @@ class ResidentCollector:
         # 逐只拉取会有 5000+ 次 job 创建开销（单只~100s，全市场 18 小时，不可接受）。
         # 故 MCP 行情表跳过 per_stock，走下面的普通全量路径（fetch_table codes=None）。
         is_all_market = codes_cfg == ["ALL"] or codes_cfg == "ALL" or codes_cfg is None
+        # 数据源唯一化（2026-08-28）：以下 tushare/per_stock 分支不可达（source 恒=mcp，
+        # 工厂仅注册 mcp）——保留作历史路径文档；恢复属显式运维决策。
         if is_all_market and source == "tushare" and table in ("stock_daily", "stock_float_share", "stock_daily_valuation"):
             return self._execute_task_per_trade_date(task, batch_id, started_at, source)
         if (is_all_market and source != "mcp"

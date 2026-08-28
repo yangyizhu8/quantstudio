@@ -336,10 +336,10 @@ class TaskTab(QWidget):
             from quantstudio.pipeline.daemon import ResidentCollector
             ROOT = self.mw.root_path
             self.collector = ResidentCollector.from_configs(
-                ROOT / "config" / "data_config.json",
-                ROOT / "config" / "sources_config.json",
-                ROOT / "config" / "collector_tasks.json",
-                ROOT / "config" / "alignment_rules.json")
+                ROOT / "config" / "profiles" / "mcp_only" / "data_config.json",
+                ROOT / "config" / "profiles" / "mcp_only" / "sources_config.json",
+                ROOT / "config" / "profiles" / "mcp_only" / "collector_tasks.json",
+                ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json")
             logger.info("ResidentCollector 初始化完成")
         return self.collector
 

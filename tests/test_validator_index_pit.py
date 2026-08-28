@@ -12,7 +12,7 @@ from quantstudio.pipeline.validator import PreIngestValidator, ValidationResult
 
 
 def _make_validator():
-    rules_path = "config/alignment_rules.json"
+    rules_path = "config/profiles/mcp_only/alignment_rules.json"
     schemas = json.loads(Path(rules_path).read_text(encoding="utf-8"))["schemas"]
     return PreIngestValidator(schemas)
 

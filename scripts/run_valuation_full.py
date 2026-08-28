@@ -30,13 +30,13 @@ def main():
     from quantstudio.pipeline.daemon import ResidentCollector
 
     collector = ResidentCollector.from_configs(
-        str(ROOT / "config" / "data_config.json"),
-        str(ROOT / "config" / "sources_config.json"),
-        str(ROOT / "config" / "collector_tasks.json"),
-        str(ROOT / "config" / "alignment_rules.json"),
+        str(ROOT / "config" / "profiles" / "mcp_only" / "data_config.json"),
+        str(ROOT / "config" / "profiles" / "mcp_only" / "sources_config.json"),
+        str(ROOT / "config" / "profiles" / "mcp_only" / "collector_tasks.json"),
+        str(ROOT / "config" / "profiles" / "mcp_only" / "alignment_rules.json"),
     )
 
-    tasks = json.loads((ROOT / "config" / "collector_tasks.json").read_text(encoding="utf-8"))
+    tasks = json.loads((ROOT / "config" / "profiles" / "mcp_only" / "collector_tasks.json").read_text(encoding="utf-8"))
     val_task = next((t for t in tasks["tasks"] if t.get("table") == "stock_daily_valuation"), None)
     if not val_task:
         print("ERROR: valuation_daily task not found")

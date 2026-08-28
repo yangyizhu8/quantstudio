@@ -60,29 +60,30 @@ QFrame#taskCard {{
 # akshare 用于 ST 历史（hidden 联动）和退市名单（用户可见）。
 # 用户在 GUI 不再选数据源，框架内部按需混合多源打补丁。
 # 分钟表（stock_minutes/etf_minutes）权威源=xtquant，单源锁定（复权一致性决策 2026-07-21 用户批准）：
-# xtquant 三段式复权原生直通 aligner passthrough，禁止 tushare 兜底避免跨源复权基准不一致。
-# daemon 分钟表权威源守卫会拒绝非 xtquant 源写入，故 GUI 默认源必须与此一致。
+# 数据源唯一化（2026-08-28）：全项目唯一权威源 = MCP（transport 与 upstream 合一，
+# 2026-07-21 分离契约废止）。全表默认源统一 mcp；旧多源映射见 git 历史。
+# daemon 分钟/日线上游守卫同样收敛为 mcp——GUI 默认源与守卫一致。
 DEFAULT_SOURCE_MAP = {
-    "stock_daily":          "xtquant",   # xtquant 骨架权威源
-    "stock_minutes":        "xtquant",   # 复权一致性单源锁定（2026-07-21）
-    "etf_daily":            "xtquant",   # 复权一致性单源锁定（2026-07-21，与 stock_daily 同款）
-    "etf_minutes":          "xtquant",   # 复权一致性单源锁定（2026-07-21）
-    "index_daily":          "tushare",
-    "index_constituents":   "akshare",
-    "stock_float_share":    "xtquant",   # 报告期股本，xtquant Capital 为权威源
-    "stock_daily_valuation":"tushare",   # 每日估值，xtquant 不提供，独立补充表
-    "fin_indicator":        "tushare",
-    "balance_statement":    "xtquant",
-    "income_statement":     "xtquant",
-    "cashflow_statement":   "xtquant",
-    "stock_dividend":       "tushare",
+    "stock_daily":          "mcp",
+    "stock_minutes":        "mcp",
+    "etf_daily":            "mcp",
+    "etf_minutes":          "mcp",
+    "index_daily":          "mcp",
+    "index_constituents":   "mcp",
+    "stock_float_share":    "mcp",
+    "stock_daily_valuation":"mcp",
+    "fin_indicator":        "mcp",
+    "balance_statement":    "mcp",
+    "income_statement":     "mcp",
+    "cashflow_statement":   "mcp",
+    "stock_dividend":       "mcp",
     "etf_dividend":         "mcp",
-    "sw_industry":          "tushare",
-    "industry_classification": "tushare",  # F4 正式分类定义（SW2021 L1）
-    "industry_membership":  "tushare",     # F4 正式成员历史 PIT
-    "tick":                 "xtquant",
-    "stock_namechange":     "akshare",   # hidden 联动任务（stock_daily 前置依赖）
-    "stock_delist":         "akshare",   # 沪深退市名单（用户可见）
+    "sw_industry":          "mcp",
+    "industry_classification": "mcp",
+    "industry_membership":  "mcp",
+    "tick":                 "mcp",
+    "stock_namechange":     "mcp",   # hidden 联动任务（stock_daily 前置依赖）
+    "stock_delist":         "mcp",   # 沪深退市名单（用户可见）
 }
 
 # codes 字段的 ALL 含义提示
@@ -536,7 +537,7 @@ class ConfigEditorTab(QWidget):
         # 数据源：展示 collector_tasks.json 中真实生效配置（框架实际按 source_priority > source 决定权威源）。
         # 不再使用硬编码 DEFAULT_SOURCE_MAP 显示，避免与磁盘配置不一致、误导用户以为权威源是 xtquant。
         pri = task.get("source_priority") or []
-        effective_source = (pri[0] if pri else None) or task.get("source") or DEFAULT_SOURCE_MAP.get(table_name, "tushare")
+        effective_source = (pri[0] if pri else None) or task.get("source") or DEFAULT_SOURCE_MAP.get(table_name, "mcp")
         fl.addWidget(QLabel("数据源:"), row, 0)
         source_text = f"{effective_source}（配置生效）"
         if pri:
