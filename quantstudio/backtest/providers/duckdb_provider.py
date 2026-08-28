@@ -215,6 +215,41 @@ class DuckDBFundamentalDataProvider(FundamentalDataProvider):
             if selected: df = df[selected]
         return df
 
+    # ---- 三大报表（income/balance/cashflow）PIT 接线（D4 修复，design v2）----
+
+    _STATEMENT_TABLES = ("income_statement", "balance_statement", "cashflow_statement")
+
+    def _get_statement(self, code, table, date, fields=None, start_year=None,
+                       end_year=None, report_types=None):
+        """共用实现：PIT 窗口全报告期行 → DataFrame(index=code, 契约列名 + end_date)。"""
+        codes = code if isinstance(code, list) else [code]
+        bare = [str(c).split('.')[0] for c in codes]
+        df = self._data.query_statement_table(
+            table, bare, _end_ms(date), fields, start_year, end_year, report_types)
+        if df.empty:
+            return pd.DataFrame(columns=self.FUND_TABLES.get(table, []))
+        df = df.set_index('code')
+        if fields:
+            selected = [f for f in fields if f in df.columns]
+            if selected:
+                df = df[selected]
+        return df
+
+    def get_income_statement(self, code, date, fields=None, start_year=None,
+                             end_year=None, report_types=None):
+        return self._get_statement(code, "income_statement", date, fields,
+                                   start_year, end_year, report_types)
+
+    def get_balance_statement(self, code, date, fields=None, start_year=None,
+                              end_year=None, report_types=None):
+        return self._get_statement(code, "balance_statement", date, fields,
+                                   start_year, end_year, report_types)
+
+    def get_cashflow_statement(self, code, date, fields=None, start_year=None,
+                               end_year=None, report_types=None):
+        return self._get_statement(code, "cashflow_statement", date, fields,
+                                   start_year, end_year, report_types)
+
 
 class DuckDBReferenceDataProvider(ReferenceDataProvider):
     def __init__(self, db_path: Path):

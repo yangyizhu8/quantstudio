@@ -1388,6 +1388,67 @@ class DuckDBDataAccess:
             ORDER BY f.code, f.end_date
         """).fetchdf()
 
+    def query_statement_table(self, table, codes, ann_date_ms, fields,
+                              start_year=None, end_year=None, report_types=None) -> pd.DataFrame:
+        """三大报表 PIT 窗口查询（D4 修复 fundamentals-statement-wiring-design.md v2）。
+
+        - table: income_statement / balance_statement / cashflow_statement
+        - 返回 **PIT 窗口内全部报告期行**（ann_date <= ann_date_ms 且报告期在 [start_year, end_year]），
+          支撑 F-Score 同比两期取数（策略层自取本期/去年同期）。
+        - 列名契约归一：ann_date → publ_date（数值毫秒时间戳，与 fin_indicator 同构）。
+        - report_types 默认合并报表（月=12 年报/季报按端日过滤；'合并'/'single' 仅日志提示不阻断）。
+        - 缺列：请求字段不在表中 → log.warning（表名+缺失清单），返回缺列（NaN）。
+        """
+        conn = self._get_conn()
+        if conn is None:
+            return pd.DataFrame()
+        actual_cols = {row[0] for row in conn.execute(f"DESCRIBE {table}").fetchall()}
+        codes_in = "','".join(codes)
+        want = list(dict.fromkeys((fields or []) + ["code", "end_date"]))
+        select_cols, missing = [], []
+        for f in want:
+            if f == "code":
+                select_cols.append("code")
+            elif f == "publ_date":
+                select_cols.append("ann_date AS publ_date")
+            elif f in actual_cols:
+                select_cols.append(f)
+            else:
+                missing.append(f)
+        # end_date 恒返回（策略层定位报告期）；缺的请求列以 NULL 占位（fail-open + 告警）
+        for f in set(want) - {"code", "publ_date"} - set(actual_cols):
+            select_cols.append(f"CAST(NULL AS DOUBLE) AS {f}")
+        if "end_date" not in select_cols:
+            select_cols.append("end_date")
+        where_date = f"ann_date <= {ann_date_ms}"
+        where_year = ""
+        if start_year and end_year:
+            sy_ms = int(pd.Timestamp(f"{start_year}-01-01", tz="Asia/Shanghai").timestamp() * 1000)
+            ey_ms = int(pd.Timestamp(f"{end_year}-12-31", tz="Asia/Shanghai").timestamp() * 1000)
+            where_year = f"AND end_date BETWEEN {sy_ms} AND {ey_ms}"
+        rt_cond = ""
+        if report_types:
+            rt_map = {'1': 3, '2': 6, '3': 9, '4': 12}
+            if str(report_types) in rt_map:
+                m_end = rt_map[str(report_types)]
+                rt_cond = (f"AND (CAST(strftime('%m', make_timestamp(end_date*1000)) "
+                           f"AS INTEGER) = {m_end})")
+        df = conn.execute(f"""
+            SELECT {','.join(select_cols)}
+            FROM {table}
+            WHERE code IN ('{codes_in}')
+              AND {where_date} {where_year} {rt_cond}
+            ORDER BY code, end_date
+        """).fetchdf()
+        if missing:
+            try:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "query_statement_table %s 缺列: %s（已置 NULL）", table, missing)
+            except Exception:
+                pass
+        return df
+
     # ===================== 统一证券元数据（F2） =====================
 
     #: query_security_metadata 统一内部字段（列顺序固定，属数据契约）

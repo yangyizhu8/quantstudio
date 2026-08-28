@@ -818,6 +818,15 @@ class PtradeAPI:
                 if len(df) > 0:
                     df = df.copy()
                     df.index = [self._to_ptrade_code(code) for code in df.index]
+            elif table in ("income_statement", "balance_statement", "cashflow_statement"):
+                # D4 修复（2026-08-28，fundamentals-statement-wiring-design.md v2）：
+                # 三大报表 PIT 接线（此前恒返回空表）——F-Score 类策略依赖。PIT 窗口全报告期行
+                # （ann_date <= qd 23:59:59），策略层自取本期/去年同期（D3 同比口径）。
+                df = getattr(self._fundamental, "get_" + table)(
+                    bare_codes, qd, fields, start_year, end_year, report_types)
+                if len(df) > 0:
+                    df = df.copy()
+                    df.index = [self._to_ptrade_code(code) for code in df.index]
             else:
                 df = pd.DataFrame(columns=self._FUND_TABLES[table])
 
