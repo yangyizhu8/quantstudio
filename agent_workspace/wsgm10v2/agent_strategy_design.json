@@ -1,0 +1,329 @@
+{
+  "design_version": "2.2",
+  "strategy_id": "weekly_smallcap_growth_momentum_10_v2",
+  "strategy_name": "周频小市值增长动量十股策略 v2（三层止损版，本地QuantStudio）",
+  "asset_class": "stock",
+  "targets": [
+    "quantstudio"
+  ],
+  "engine_profile": {
+    "profile_id": "daily-bar-v1",
+    "bar_frequency": "1d",
+    "match_price_mode": "close"
+  },
+  "market_data_contract": {
+    "signal_price_adjustment": "pre",
+    "execution_price_basis": "raw_trade_price"
+  },
+  "factor_definitions": {
+    "provenance_note": "因子定义（客户文档口径）与标准化/合成方式（本设计选择）分开声明；v2 与 v1 完全一致，无改动",
+    "customer_documented_definitions": {
+      "MC112": {
+        "source": "customer_reply_2026-08-19",
+        "raw_formula": "MC112_raw = close_front[T-1] / close_front[T-113] - 1（112 个交易日窗口；客户判定 MC1120 为 112 日笔误）",
+        "price_basis": "前复权收盘价 fq='pre'",
+        "update_time": "每交易日收盘后计算；选股使用上一交易日（T-1）因子值"
+      },
+      "MC20": {
+        "source": "customer_reply_2026-08-19",
+        "raw_formula": "MC20_raw = close_front[T-1] / close_front[T-21] - 1（版本A）",
+        "price_basis": "前复权收盘价 fq='pre'",
+        "update_time": "同 MC112"
+      }
+    },
+    "design_choice_standardization": {
+      "winsorize": "经典 Winsorize（scipy mstats 语义）：每侧替换 k=int(n*0.01) 个极端值；n<100 时 k=0 恒等无操作；rank 对单调变换不变",
+      "rank_mapping": "rank(pct=True)*2-1 映射 [-1,1]，ties=average",
+      "neutralization": "不做行业/市值中性（v1 R2.5-1 已确认）",
+      "composition": "TotalScore = 0.4*Norm(MC112) + 0.1*Norm(MC20)"
+    }
+  },
+  "strategy_semantics": {
+    "universe": "与 v1 完全一致：全A PIT 快照 + L0 数据完整性 + L1 次新25自然日 + L2 剔科创/北交所 + L3 ST/HALT/DELISTING + L4 or_yoy 前10% + L5 float_value 升序30 + L6 eps>0（30之后应用）",
+    "entry_rules": [
+      "漏斗与动量排序与 v1 逐字相同（含确定性 tie-break：总分降序→市值升序→代码升序）",
+      "v2 新增排除：①硬止损标记中的持仓与③时间止损标记的持仓不进入新目标名单（正在退出中）",
+      "②组合档位调制买入规模：tier=normal 全额 min(TV/10, cash/slots)；tier=half 半额（×0.5）；tier=halt 跳过全部新买入（卖出照常、留任持仓不动）"
+    ],
+    "exit_rules": [
+      "v1 规则保留：每周 ISO 首交易日重算名单；不在新名单即卖；跌停/停牌卖单跳过留至下个调仓日",
+      "①硬止损 -20%：每日盘前（before_trading_start）用 T-1 收盘（data[code].preclose，交易所原始价）对比摊薄成本 avg_cost，跌幅<=-20% 即标记；标记日恰为调仓日当天卖出，否则下个调仓日卖出；【补充条款①】标记卖出遇跌停/停牌失败时，标记持续有效，此后每个交易日（handle_data）重试卖出直至成交，不等下个调仓日",
+      "②组合回撤档位：基准=日终 total_asset 历史峰值（after_trading_end 记录，仅用已完成交易日）；调仓日盘前评估 DD=1-prev_day_TV/peak：DD>=15% → tier=halt（暂停新买）；12%<=DD<15% → tier=half（新买半额）；DD<12% → tier=normal；只控新仓规模，绝不强制卖旧仓",
+      "③时间止损 42 自然日：调仓日盘前检查，自买入首成交日（策略自维护账本 g.buy_dates）起 >=42 自然日 且 T-1 收盘 < avg_cost（亏损）→ 标记强制除名（从目标名单剔除、当日正常卖出路径；卖不出按 v1 顺延至下个调仓日——补充条款①的每日重试仅适用于①硬止损）"
+    ],
+    "portfolio_rules": [
+      "与 v1 一致：固定 10 只、runtime_total_value 定-size、留任不动、卖先买后同批、不加杠杆",
+      "v2：tier=half 时新买目标价值 = min(TV/10, cash/slots) × 0.5；tier=halt 时新买全部跳过"
+    ],
+    "risk_rules": [
+      "v1 保留：涨停不买（资金顺延下一名候选）、fail-soft（可排名候选<10 跳过该周）、单票漂移上限 0.15（被动保护）",
+      "v2 三层止损：-20% 个股硬止损（每日监控、每日重试直至卖出）/-12%+/-15% 组合档位（滞回、只控新买）/42 自然日亏损强制除名；参数全部冻结零寻优（REQ-1 延续）"
+    ]
+  },
+  "timing": {
+    "signal_data_cutoff": "与 v1 一致（T-1 截止）；v2 止损监控同样仅用 T-1 收盘（preclose）与已完成日终净值，无当日未来数据",
+    "holding_semantics": "与 v1 一致（T+1 引擎强制；close 模式卖先买后同批）",
+    "decision_events": [
+      {
+        "name": "daily_stop_monitor",
+        "lifecycle": "before_trading_start",
+        "purpose": "每日：①硬止损标记检查（T-1 preclose vs avg_cost）；调仓日：漏斗选股 + ②档位评估 + ③42天亏损标记 + QS_STOP_AUDIT / QS_FUNNEL_AUDIT 发射"
+      },
+      {
+        "name": "weekly_execution_and_stop_retry",
+        "lifecycle": "handle_data",
+        "purpose": "调仓日：卖先买后（含①③标记退出与②档位调制）；非调仓日：仅执行①硬止损每日重试卖出 + QS_STOP_RETRY 审计行"
+      },
+      {
+        "name": "peak_tracking",
+        "lifecycle": "after_trading_end",
+        "purpose": "每日记录日终 total_asset 并更新②的高水位峰值（仅已完成日）"
+      }
+    ]
+  },
+  "components": {
+    "lifecycle_hooks": [
+      "initialize",
+      "before_trading_start",
+      "handle_data",
+      "after_trading_end"
+    ],
+    "api_groups": [
+      "benchmark",
+      "universe",
+      "status_filter",
+      "fundamentals",
+      "history",
+      "portfolio",
+      "ordering",
+      "logging"
+    ],
+    "required_apis": [
+      "set_benchmark",
+      "get_Ashares",
+      "get_stock_info",
+      "filter_stock_by_status",
+      "get_fundamentals",
+      "get_fundamentals_batch",
+      "get_history_batch",
+      "get_position",
+      "order_target_value",
+      "log"
+    ],
+    "implementation_notes": [
+      "v1 全部纯函数原样继承（_iso_week_key/_extract_history_field/_winsorize/_rank_norm/_latest_by_code/_mc_from_closes/_select_weekly_targets 增加排除集参数）",
+      "v2 新增状态：g.stop_marks {code:(dd, mark_date)}、g.buy_dates {code:date}、g.exit_pending {code:reason}、g.peak_tv、g.prev_day_tv、g.tier",
+      "止损审计行（补充条款②）：QS_STOP_AUDIT rebalance_id=... date=... tier1_marked=<n> tier1_detail=<code:-x.x%,...> tier2_dd=<0.xxxx> tier2_tier=<normal|half|halt> tier3_flagged=<n> tier3_detail=<code:wW,...>；非调仓日重试：QS_STOP_RETRY date=... attempts=<n> filled=<n> pending=<n>",
+      "R5 对比协议（Q5）：v2 A/B×2 + v1 已 hash 绑定证据（96bf3c7c 系）直引对比；归因表：最大回撤/连续亏损收窄幅度 vs 换手/滑点增量 + 三层触发/执行/顺延次数统计",
+      "参数冻结（REQ-1 延续）：STOP_LOSS_PCT=-0.20 / TIER_HALF_DD=0.12 / TIER_HALT_DD=0.15 / TIME_STOP_DAYS=42，客户指定常规值，零寻优"
+    ]
+  },
+  "constraints": {
+    "hard_filters": [
+      "exclude_missing_basics (L0)",
+      "exclude_listed_lt_25d (L1)",
+      "exclude_star_688 (L2)",
+      "exclude_bj_920 (L2b)",
+      "exclude_st (L3)",
+      "exclude_delisting (L3)",
+      "eps_positive (L6)",
+      "block_limit_up_buy (执行层)",
+      "block_limit_down_sell (执行层)",
+      "enforce_t1 (引擎)",
+      "round_lot (引擎)",
+      "halt_no_price (引擎)",
+      "v2: exclude_stop_marked_from_targets",
+      "v2: portfolio_tier_modulates_new_buys_only"
+    ],
+    "no_lookahead": true,
+    "portable_source_required": false,
+    "runtime_state_guard_required": true
+  },
+  "universe_contract": {
+    "mode": "portable_public_api",
+    "local_dynamic_api_allowed": false
+  },
+  "portfolio_contract": {
+    "sizing_mode": "runtime_total_value",
+    "required_initial_cash": null,
+    "fixed_target_value": null,
+    "allocation_mode": "equal_weight",
+    "allocation_denominator": "configured_target_count",
+    "target_holdings": 10,
+    "gross_exposure_target": 1.0,
+    "cash_buffer_ratio": 0.0,
+    "per_position_target_weight": 0.1,
+    "max_single_weight": 0.15,
+    "allow_leverage": false
+  },
+  "rebalance_funding_contract": {
+    "requires_same_cycle_sell_proceeds": true,
+    "implementation_mode": "sell_then_buy_immediate",
+    "cash_only_for_new_buys": false
+  },
+  "history_coverage_contract": {
+    "lookback_bars": 113,
+    "frequency": "1d",
+    "history_required_before_first_decision": true,
+    "backtest_start_does_not_truncate_provider_history": true,
+    "minimum_candidates_with_full_history": 20
+  },
+  "r5_deployment_invariants": {
+    "holding_count_mode": "strict_target_when_candidates_available",
+    "target_holdings": 10,
+    "minimum_fill_ratio": 0.8,
+    "minimum_gross_exposure": 0.7,
+    "maximum_cash_ratio_after_rebalance": 0.3,
+    "maximum_insufficient_cash_rejections": 2,
+    "require_at_least_one_rebalance": true
+  },
+  "comparison_protocol_v1_v2": {
+    "v1_evidence": "strategy sha256 96bf3c7c... A/B groups G3.5-verified, result_dirs 20260822_201825/202216/202608/203007, r5_analysis.json overall PASS",
+    "v2_runs": "same window 2025-04-08..2026-07-30, same capital 100000, A(slippage 0)/B(fixed 0.02) x 2 independent processes (G3.5)",
+    "attribution_focus": [
+      "max_drawdown narrowing",
+      "consecutive-loss narrowing",
+      "single_max_loss change",
+      "turnover increment",
+      "slippage cost increment",
+      "per-layer trigger/execution/deferral counts from QS_STOP_* lines"
+    ],
+    "baseline_note": "v1 metrics: return 68.37/64.18, MDD 27.45/26.52, consec losses 10, avg weekly turnover 47.6%, annual single-side 20.9x, slippage drag -4188 CNY"
+  },
+  "approximations": [
+    {
+      "id": "A-SL-1",
+      "description": "①硬止损与③亏损判定基准 = 引擎 Position.avg_cost（成交价加权摊薄成本，不含佣金/过户费，费用单独扣现金；除权除息日引擎自动调整）。与客户'含费用'表述的偏差 ≈0.04%/边（佣金万3.5+过户费万0.1），方向为成本略低估→触发略晚→换手略保守，对 -20% 阈值影响不可观测量级",
+      "confirmed": true
+    },
+    {
+      "id": "A-SL-2",
+      "description": "①监控价格 = T-1 交易所原始 preClose（before_trading_start 内 data[code].preclose），与引擎维护的 avg_cost 同为原始价格空间（引擎在除权日同步调整 avg_cost），避免与前复权信号空间混用；除息日两者调整公式或有毫级差异，远小于 20% 阈值",
+      "confirmed": true
+    },
+    {
+      "id": "A-SL-3",
+      "description": "③时间止损卖不出（跌停/停牌）按 v1 顺延至下个调仓日（标记持续有效）；补充条款①的每日重试仅适用于①硬止损（客户条款原文限定）",
+      "confirmed": true
+    },
+    {
+      "id": "A-SL-4",
+      "description": "买入日期 = 策略自维护账本 g.buy_dates 的首次成交日（引擎 Position 无 buy_date；买单受理未成交时以实际成交日为准——以调仓日 T 记账，T 日 close 模式即时成交，二者一致）",
+      "confirmed": true
+    },
+    {
+      "id": "A-SL-5",
+      "description": "②峰值 = 日终 total_asset 高水位（after_trading_end 记录，仅已完成交易日）；调仓日档位用 T-1 日终净值评估；首日峰值=初始资金 100000",
+      "confirmed": true
+    },
+    {
+      "id": "A-SL-6",
+      "description": "①③标记中的持仓被排除出新目标名单（退出中不可再买）；退出成交后标记清除，下周期可按 Q4 无冷却期规则重新入选",
+      "confirmed": true
+    },
+    {
+      "id": "A-1",
+      "description": "同 v1（周一收盘成交、信号 T-1，间隔一个交易日，偏差方向对回测偏保守——2026-08-22 客户确认维持并修正表述）",
+      "confirmed": true
+    },
+    {
+      "id": "A-2",
+      "description": "同 v1（MC1120=112日窗口、MC20版本A、缩尾+rank、不做中性化）",
+      "confirmed": true
+    },
+    {
+      "id": "A-3",
+      "description": "同 v1（25 自然日、listed_date=首根K线日口径）",
+      "confirmed": true
+    },
+    {
+      "id": "A-4",
+      "description": "同 v1（买入定-size min(TV/10, cash/slots)；v2 在 tier=half 时乘 0.5）",
+      "confirmed": true
+    },
+    {
+      "id": "A-5",
+      "description": "同 v1（策略层 raw bar 预过滤 + 引擎拒单兜底）",
+      "confirmed": true
+    },
+    {
+      "id": "A-6",
+      "description": "同 v1（or_yoy/eps PIT ann_date<=T-1 逐码最新报告期）",
+      "confirmed": true
+    },
+    {
+      "id": "A-7",
+      "description": "同 v1（窗口 2025-04-08..2026-07-30 基准数据约束）",
+      "confirmed": true
+    },
+    {
+      "id": "A-8",
+      "description": "同 v1（EPS>0 于30只后应用；可排名候选<10 fail-soft 跳过该周——v2 下 fail-soft 周不产生买卖但①硬止损重试仍每日执行）",
+      "confirmed": true
+    }
+  ],
+  "open_questions": [],
+  "user_confirmations": {
+    "generation_target": true,
+    "strategy_semantics": true,
+    "execution_approximations": true,
+    "component_plan": true,
+    "backtest_validation_mode": true
+  },
+  "confirmation_evidence": {
+    "generation_target": {
+      "confirmed": true,
+      "customer_text": "不接受'无保护'归档——另立需求：三层止损……R0 起新走流水线，R5 同窗口重跑与无止损版对比归因（v2 目标仍为 QuantStudio 本地）",
+      "confirmed_at": "2026-08-22T21:05:00+08:00",
+      "source": "customer_reply"
+    },
+    "backtest_validation_mode": {
+      "confirmed": true,
+      "customer_text": "R5 同窗口重跑与无止损版对比归因（重点看最大回撤/连续亏损收窄幅度与换手/滑点增量）——Agent 托管延续",
+      "confirmed_at": "2026-08-22T21:05:00+08:00",
+      "source": "customer_reply"
+    },
+    "strategy_semantics": {
+      "confirmed": true,
+      "customer_text": "确认全部（A-SL-1/3/4/5/6、A-4/A-8 均按你的方案执行）。 执行 R3（T6-T11 单测先于回测，期望值来自契约口径手工计算，延续 REQ 纪律）→ R4 → R5 四跑 + v1/v2 对比归因（重点核对：最大回撤/连亏收窄幅度、三层触发/执行/顺延计数、换手/滑点增量）→ R6 发布 v2。",
+      "confirmed_at": "2026-08-22T22:05:00+08:00",
+      "source": "customer_reply"
+    },
+    "portfolio_contract": {
+      "confirmed": true,
+      "customer_text": "确认全部（A-SL-1/3/4/5/6、A-4/A-8 均按你的方案执行）。 执行 R3（T6-T11 单测先于回测，期望值来自契约口径手工计算，延续 REQ 纪律）→ R4 → R5 四跑 + v1/v2 对比归因（重点核对：最大回撤/连亏收窄幅度、三层触发/执行/顺延计数、换手/滑点增量）→ R6 发布 v2。",
+      "confirmed_at": "2026-08-22T22:05:00+08:00",
+      "source": "customer_reply"
+    },
+    "rebalance_funding_contract": {
+      "confirmed": true,
+      "customer_text": "确认全部（A-SL-1/3/4/5/6、A-4/A-8 均按你的方案执行）。 执行 R3（T6-T11 单测先于回测，期望值来自契约口径手工计算，延续 REQ 纪律）→ R4 → R5 四跑 + v1/v2 对比归因（重点核对：最大回撤/连亏收窄幅度、三层触发/执行/顺延计数、换手/滑点增量）→ R6 发布 v2。",
+      "confirmed_at": "2026-08-22T22:05:00+08:00",
+      "source": "customer_reply"
+    },
+    "r5_deployment_invariants": {
+      "confirmed": true,
+      "customer_text": "确认全部（A-SL-1/3/4/5/6、A-4/A-8 均按你的方案执行）。 执行 R3（T6-T11 单测先于回测，期望值来自契约口径手工计算，延续 REQ 纪律）→ R4 → R5 四跑 + v1/v2 对比归因（重点核对：最大回撤/连亏收窄幅度、三层触发/执行/顺延计数、换手/滑点增量）→ R6 发布 v2。",
+      "confirmed_at": "2026-08-22T22:05:00+08:00",
+      "source": "customer_reply"
+    }
+  },
+  "validation_execution": {
+    "mode": "agent_managed",
+    "require_hash_bound_evidence": true,
+    "formal_publish_requires_backtest_pass": true
+  },
+  "backtest_window_contract": {
+    "strategy_must_not_hardcode_backtest_dates": true,
+    "agent_must_not_start_unconfirmed_backtest": true,
+    "recommended_start_date": "2025-04-08",
+    "recommended_end_date_as_of_local_data": "2026-07-30",
+    "actual_window_selected_by": "customer_confirmed_agent_run",
+    "required_close_bars": 113,
+    "lookback_trading_days": 113
+  },
+  "output": {
+    "overwrite": true,
+    "quantstudio_path": "quantstudio/backtest/strategies/weekly_smallcap_growth_momentum_10_v2_quantstudio.py"
+  }
+}
