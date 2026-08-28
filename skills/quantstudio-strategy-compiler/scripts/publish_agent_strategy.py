@@ -40,6 +40,27 @@ def _load_workflow_state(strategy_path: Path) -> tuple[Path, dict]:
         raise ValueError(
             "a real PTrade runtime failure retired the old evidence; repair the reusable "
             "profile/adapter/Skill rule and regenerate fresh hashes before publishing")
+    # R5.5 statistical robustness gate (design doc robustness-gates-design.md §3, M4 compat):
+    # legacy ledgers without a "robustness" field are treated as "not yet entered R5.5"
+    # (read-compatible, no error) — but publishing still requires the gate to be satisfied,
+    # otherwise the stage could be silently skipped.
+    rob = state.get("robustness")
+    if not isinstance(rob, dict) or not rob:
+        raise ValueError(
+            "R5.5 robustness evidence missing from the ledger (stage never entered): run "
+            "scripts/run_robustness_suite.py, or record a verbatim-confirmed exemption "
+            "(design.validation_contract.robustness_gates.enabled=false) before publishing")
+    rob_stage = rob.get("stage")
+    if rob.get("exempted") is True:
+        pass  # verbatim-confirmed exemption recorded — R6 releases
+    elif rob_stage == "ROBUSTNESS_FAILED" or rob.get("terminal") is True:
+        raise ValueError(
+            "R5.5 robustness terminated (ROBUSTNESS_FAILED): iteration cap reached with "
+            "failing gates; formal publication is permanently blocked for this attempt")
+    elif rob_stage != "PASS":
+        raise ValueError(
+            f"R5.5 robustness stage {rob_stage!r} is not publishable; required PASS or "
+            "EXEMPTED (exemption needs verbatim customer confirmation in the design)")
     return state_path, state
 
 

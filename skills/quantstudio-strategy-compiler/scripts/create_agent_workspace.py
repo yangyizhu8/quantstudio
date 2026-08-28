@@ -191,6 +191,12 @@ def create_workspace(design_path: Path, out_dir: Path, overwrite: bool = False) 
         "validation_execution_mode": design.get("validation_execution", {}).get("mode", "agent_managed"),
         "candidate_status": "NOT_GENERATED",
         "backtest_evidence_status": "NOT_APPLICABLE" if design.get("validation_execution", {}).get("mode") != "user_pyqt" else "PENDING",
+        "robustness": {
+            "stage": "PENDING",
+            "iteration_count": 0,
+            "exempted": False,
+            "history": [],
+        },
         "formal_publish_allowed": False,
         "backtest_window_contract": design.get("backtest_window_contract", {}),
         "agent_implementation_required": True,

@@ -1,0 +1,185 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://quantstudio.local/schemas/robustness_report.schema.json",
+  "title": "QuantStudio Strategy Compiler Robustness Report v1 (R5.5)",
+  "type": "object",
+  "required": [
+    "robustness_report_version",
+    "strategy_id",
+    "created_at",
+    "input_binding",
+    "window",
+    "wf",
+    "mc",
+    "gates",
+    "overall",
+    "iteration",
+    "seeds"
+  ],
+  "properties": {
+    "robustness_report_version": {"const": "1.0"},
+    "strategy_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "input_binding": {
+      "type": "object",
+      "required": ["config_csv_sha256", "daily_stats_csv_sha256", "trades_csv_sha256"],
+      "properties": {
+        "config_csv_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "daily_stats_csv_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "trades_csv_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "primary_result_dir": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "window": {
+      "type": "object",
+      "required": ["start", "end", "trading_days", "benchmark_source"],
+      "properties": {
+        "start": {"type": "string", "format": "date"},
+        "end": {"type": "string", "format": "date"},
+        "trading_days": {"type": "integer", "minimum": 0},
+        "benchmark_source": {"enum": ["daily_stats_benchmark_column", "design_declared", "default_000300"]}
+      },
+      "additionalProperties": false
+    },
+    "wf": {
+      "type": "object",
+      "required": ["folds", "valid_folds", "positive_folds", "positive_ratio", "skipped"],
+      "properties": {
+        "skipped": {"type": "boolean"},
+        "skip_reason": {"type": ["string", "null"]},
+        "folds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "fold_index",
+              "fold_window",
+              "trade_days",
+              "round_trips",
+              "no_trade_flag",
+              "excess_return",
+              "positive"
+            ],
+            "properties": {
+              "fold_index": {"type": "integer", "minimum": 1, "maximum": 5},
+              "fold_window": {
+                "type": "object",
+                "required": ["start", "end"],
+                "properties": {
+                  "start": {"type": "string", "format": "date"},
+                  "end": {"type": "string", "format": "date"}
+                },
+                "additionalProperties": false
+              },
+              "trade_days": {"type": "integer", "minimum": 0},
+              "round_trips": {"type": "integer", "minimum": 0},
+              "no_trade_flag": {"type": "boolean"},
+              "strategy_return": {"type": ["number", "null"]},
+              "benchmark_return": {"type": ["number", "null"]},
+              "excess_return": {"type": ["number", "null"]},
+              "positive": {"type": ["boolean", "null"]},
+              "artifacts": {
+                "type": "object",
+                "required": ["config_csv_sha256", "daily_stats_csv_sha256", "trades_csv_sha256", "round_trips_csv_sha256"],
+                "properties": {
+                  "config_csv_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                  "daily_stats_csv_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                  "trades_csv_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                  "round_trips_csv_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                  "result_dir": {"type": "string"}
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "valid_folds": {"type": "integer", "minimum": 0, "maximum": 5},
+        "positive_folds": {"type": "integer", "minimum": 0, "maximum": 5},
+        "positive_ratio": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+      },
+      "additionalProperties": false
+    },
+    "mc": {
+      "type": "object",
+      "required": ["n", "block_length", "method", "p_value", "observed_mean_excess", "null_quantiles"],
+      "properties": {
+        "n": {"const": 1000},
+        "block_length": {"const": 21},
+        "method": {"const": "stationary_block_bootstrap_on_excess_daily_returns"},
+        "p_value": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "observed_mean_excess": {"type": ["number", "null"]},
+        "null_quantiles": {
+          "type": "object",
+          "required": ["q05", "q50", "q95"],
+          "properties": {
+            "q05": {"type": "number"},
+            "q50": {"type": "number"},
+            "q95": {"type": "number"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "gates": {
+      "type": "object",
+      "required": ["G1", "G2", "G3", "G4", "G5", "G6"],
+      "properties": {
+        "G1": {"$ref": "#/definitions/gateResult"},
+        "G2": {"$ref": "#/definitions/gateResult"},
+        "G3": {"$ref": "#/definitions/gateResult"},
+        "G4": {"$ref": "#/definitions/gateResult"},
+        "G5": {"$ref": "#/definitions/gateResult"},
+        "G6": {"$ref": "#/definitions/gateResult"}
+      },
+      "additionalProperties": false
+    },
+    "overall": {"enum": ["PASS", "FAILED", "EXEMPTED"]},
+    "iteration": {
+      "type": "object",
+      "required": ["iteration_count", "terminal"],
+      "properties": {
+        "iteration_count": {"type": "integer", "minimum": 0, "maximum": 2},
+        "terminal": {"type": "boolean"},
+        "history_entry": {
+          "type": "object",
+          "required": ["date", "overall"],
+          "properties": {
+            "date": {"type": "string", "format": "date-time"},
+            "overall": {"enum": ["PASS", "FAILED"]},
+            "gates_summary": {"type": "string"},
+            "report_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "seeds": {
+      "type": "object",
+      "required": ["mc_seed_source", "mc_seed_hex"],
+      "properties": {
+        "mc_seed_source": {"const": "sha256(trades_csv+config_csv)[:8]"},
+        "mc_seed_hex": {"type": "string", "pattern": "^[a-f0-9]{8}$"},
+        "python_hashseed": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    }
+  },
+  "definitions": {
+    "gateResult": {
+      "type": "object",
+      "required": ["result", "value", "threshold", "dimension"],
+      "properties": {
+        "result": {"enum": ["PASS", "FAIL", "INSUFFICIENT_SAMPLES"]},
+        "value": {"type": ["number", "null"]},
+        "threshold": {"type": ["number", "null"]},
+        "dimension": {"enum": ["absolute", "excess", "trade_level", "fold_level"]},
+        "detail": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

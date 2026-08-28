@@ -5,9 +5,9 @@ description: Local-only QuantStudio strategy engineering (agent-first R0-R6 pipe
 
 # QuantStudio Agent-first Strategy Engineering
 
-Skill release: `0.8.0-f1-six-fold` (built on `0.7.1-r0-workflow-review`; WP-F F1 六项 + B4: cost_basis 止损基准 / halt 防御卖出通道 / 审计三件套复核 / 资金 context 派生 / 换仓缓冲带 / order_target_value 补差语义默认；compiler/package baseline `0.3.2-mvp` unchanged).
+Skill release: `0.9.0-r55-robustness` (built on `0.8.0-f1-six-fold`; new R5.5 statistical robustness stage: WF 5-fold + MC n=1000 + gates G1-G6 + iteration cap 2, design doc `docs/strategy-compiler/robustness-gates-design.md`, new contract `robustness_report 1.0`; compiler/package baseline `0.3.2-mvp` unchanged).
 
-Contract versions at this release: agent design `2.2`, PTrade profile `1.10.0`, user backtest evidence `2.1`, validation report `2.1`. Design `2.1` artifacts must not be auto-migrated to PASS; regenerate the design under 2.2 and repeat the R2.5 confirmation.
+Contract versions at this release: agent design `2.2`, PTrade profile `1.10.0`, user backtest evidence `2.1`, validation report `2.1`, robustness report `1.0`. Design `2.1` artifacts must not be auto-migrated to PASS; regenerate the design under 2.2 and repeat the R2.5 confirmation.
 
 Treat the calling agent as the strategy author. Constrain it with project lifecycle, data, timing, PTrade public API, validation, and delivery gates. Never implement a strategy by adding its name or shape to Compiler/Renderer/Jinja branches.
 
@@ -47,6 +47,9 @@ Treat the calling agent as the strategy author. Constrain it with project lifecy
 30. **资金常量 context 派生（WP-F F1④复核，2026-08-27）**: `portfolio_contract.sizing_mode=runtime_total_value`（R18 已固化）——禁止 hardcoded `g.capital`/`g.per_target`/固定正 `order_target_value` 金额；目标值一律 = 运行时 `context.portfolio.total_value` × 目标权重。R5 BLOCK 任何 init_capital 与 required_initial_cash 不一致的运行。
 31. **换仓缓冲带（WP-F F1⑤）**: 调仓对净换仓金额留缓冲带 `target_position_value × (1 - buffer_pct)`，`buffer_pct` 默认 **0.03**（覆盖费用/整手取整/一级估值差）。**不得宣称缓冲带解决 full-turnover 融资**（R19 纪律：full turnaround 用 basket 或两段；close 模式同日资金可用）。
 32. **order_target_value 补差语义默认（WP-F F1⑥ + B4，依赖 B1/B2 已交付）**: 调仓调 `order_target_value(code, target_value)`——默认**补差语义**（接线层/转换模板/引擎三侧一致，P-D12 的 T9/T13 同构保证：target = value − amount×T-1px，加仓补差/减仓卖出/清仓保底）。生成代码禁止手写"全额折股再 order()"（那是 P-D12 修复前的损害模式）。
+33. **R5.5 统计鲁棒性验证强制（2026-08-28，robustness_report 1.0）**: R5 PASS 之后、R6 之前必须运行 R5.5（`scripts/run_robustness_suite.py`）：WF 5 折（时序连续不重叠、余数归最早折、折配置从哈希验证后的 config.csv 程序化派生仅换日期、折内零交易标 NO_TRADE 不入 G5 分母、有效折 <3 → INSUFFICIENT_SAMPLES）+ MC n=1000（对主运行超额日收益做块自助法，块长 21、p=(1+#{≤0})/(1+1000)，0 次引擎重跑）+ 门控 G1-G6（阈值照 simple-quant-factory 原版固定：G1 年化>0 / G2 回撤<25% / G3 夏普>0.5（ETF 池 0.25）/ G4 round-trip 胜率>40%（<10 回合 INSUFFICIENT_SAMPLES）/ G5 正窗口≥60% / G6 p<0.01）。**入口哈希预验 fail-closed**：三件套重算哈希与 R5 绑定哈希任一不匹配 → EVIDENCE_INCOMPLETE，不启动、不出报告。豁免唯一通道 = design `validation_contract.robustness_gates.enabled=false` + R2.5 verbatim 确认 → 台账 EXEMPTED。
+34. **G6 超额维度 vs G1-G3 绝对维度独立评估（M2）**: G6 检验对基准超额日收益均值的统计显著性；G1-G3 为绝对收益指标。策略绝对收益为负但跑赢基准时 G1 FAIL 而 G6 可能 PASS——属设计语义，两门独立呈现，不得合并解读或互相"修复"。
+35. **R5.5 迭代上限 2 轮（防自适应过拟合）**: 初评 FAIL → 回 R3 修复（修复使 R4/R5 哈希失效，重走 R4→R5→R5.5）→ iteration_count+1；**第 3 次评估仍 FAIL → stage=ROBUSTNESS_FAILED，formal_publish_allowed=false，终止**，禁止第三轮迭代。全部历史评估入台账（workspace_state.json.robustness）。
 
 ## Responsibility boundary
 
@@ -397,13 +400,29 @@ Every repair invalidates old R4/R5 hashes. Regenerate the candidate after the ne
 
 **R5 exit gate:** hash-bound runtime evidence PASS for the exact candidate source, regardless of who executed the backtest.
 
+## R5.5 - Statistical robustness validation (WF + MC + Gates G1-G6)
+
+Trigger: R5 PASS. Method/threshold authority: `references/robustness-gates.md`; design doc: `docs/strategy-compiler/robustness-gates-design.md`. Run `scripts/run_robustness_suite.py --evidence <r5 evidence json> --workspace <agent workspace>`.
+
+Entry pre-verification (fail-closed, before any analysis): recompute SHA-256 of config.csv/daily_stats.csv/trades.csv and compare with the R5-bound hashes; any mismatch → `EVIDENCE_INCOMPLETE`, R5.5 not started, no report, ledger entry recorded.
+
+Scope (Phase 1): WF 5-fold — contiguous non-overlapping time-ordered folds derived from the primary run's daily_stats date axis, remainder days to the earliest folds, fold configs derived programmatically from the verified config.csv replacing ONLY start/end dates (no drift), per-fold `NO_TRADE` marking (round trips = 0) excluded from the G5 denominator, valid folds < 3 → G5 INSUFFICIENT_SAMPLES, OOS positive window = fold excess return (strategy − benchmark, benchmark from the primary daily_stats `benchmark` column) > 0, pass at ≥ 60% of valid folds; Monte Carlo n=1000 stationary block bootstrap (block 21) on primary-run excess daily returns, H0 mean ≤ 0, add-one p, pass at p < 0.01 (0 engine re-runs); gates G1-G6 at the simple-quant-factory thresholds (G3 0.25 for ETF-pool strategies; G4 round-trip win rate with <10 round trips → INSUFFICIENT_SAMPLES). Every gate is three-state: PASS / FAIL / INSUFFICIENT_SAMPLES (non-blocking, prominently reported). Fold reports carry the four mandatory fields (`fold_window`, `trade_days`, `round_trips`, `no_trade_flag`) plus per-fold artifact SHA-256.
+
+Dimension declaration: G6 tests the EXCESS dimension (statistical significance of mean excess daily return over benchmark); G1-G3 are ABSOLUTE dimensions. A strategy with negative absolute return that beats its benchmark can FAIL G1 while PASSING G6 — independent gates by design.
+
+Exemption: `design.validation_contract.robustness_gates.enabled=false` requires R2.5 verbatim confirmation (customer_text + timezone-aware confirmed_at + source=customer_reply) → ledger EXEMPTED, R6 releases; default enabled=true.
+
+Iteration: a FAILED evaluation returns to R3 (repairs invalidate R4/R5 hashes → full R4→R5→R5.5 repeat); iteration_count increments per repair; the 3rd failing evaluation terminates: `stage=ROBUSTNESS_FAILED`, `formal_publish_allowed=false`. All evaluations are recorded in the ledger history.
+
+**R5.5 exit gate:** report produced (schema-validated), no gate FAIL (INSUFFICIENT_SAMPLES allowed but prominently reported), iteration within cap — R5.5 PASS; or EXEMPTED with verbatim evidence recorded in the ledger.
+
 ## R6 - Target-aware generation, validation, and publication
 
 `publish_agent_strategy.py` must branch from the confirmed `targets` contract.
 
 ### Local-only mode
 
-1. verify the workflow ledger and local backtest PASS;
+1. verify the workflow ledger, local backtest PASS, **and R5.5 robustness PASS or EXEMPTED** (robustness report `overall=PASS` with iteration within cap, or ledger EXEMPTED with verbatim evidence; `ROBUSTNESS_FAILED`/missing → refuse to publish);
 2. generate and validate the QuantStudio staging file;
 3. publish only `quantstudio/backtest/strategies/<strategy_name>.py`（中文策略名，无 ASCII 后缀，见绝对规则 26）;
 4. do not create an empty or placeholder PTrade file;
@@ -508,7 +527,12 @@ When a customer supplies a real PTrade exception:
 - reusing old R4/R5 PASS, candidate, or staging files after a real PTrade runtime failure without regenerating fresh hashes;
 - interpreting `lookback_bars` as a requirement that the backtest window itself contain that many extra pre-start trading days;
 - keeping a `__candidate` file after successful formal promotion;
-- reusing R5 evidence after canonical/candidate source changes.
+- reusing R5 evidence after canonical/candidate source changes;
+- running R5.5 analysis on artifacts whose recomputed hashes do not match the R5-bound hashes, or producing a robustness report after EVIDENCE_INCOMPLETE;
+- skipping R5.5 when `validation_contract.robustness_gates.enabled` is true, or publishing without R5.5 PASS/EXEMPTED evidence in the ledger;
+- entering a 3rd R5.5 iteration after two failed evaluations (ROBUSTNESS_FAILED is terminal), or "iterating until gates pass" beyond the cap;
+- treating G6 excess-dimension results as validating the absolute dimension (G1-G3), or merging/interpreting gate results across dimensions;
+- counting NO_TRADE folds into the G5 positive-window denominator.
 
 # Commands
 
@@ -519,6 +543,8 @@ When a customer supplies a real PTrade exception:
 - user-PyQt candidate: `scripts/prepare_user_backtest_candidate.py`
 - artifact analysis: `scripts/analyze_backtest_artifacts.py`
 - user evidence review: `scripts/review_user_backtest_evidence.py`
+- R5.5 robustness suite: `scripts/run_robustness_suite.py`
+- R5.5 selftest: `scripts/robustness_selftest.py --all`
 - PTrade runtime-failure retirement: `scripts/retire_ptrade_runtime_evidence.py`
 - gated formal publish: `scripts/publish_agent_strategy.py`
 - Skill validation: `scripts/quick_validate.py`

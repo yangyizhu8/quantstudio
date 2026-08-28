@@ -12,6 +12,15 @@
 
 存量策略零触碰（不重渲）；仅影响新生成策略。
 
+## R5.5 统计鲁棒性验证（2026-08-28，skill 0.9.0-r55-robustness）
+
+R5 证据 PASS 后、R6 发布前的强制阶段（`scripts/run_robustness_suite.py`；设计文档 `docs/strategy-compiler/robustness-gates-design.md`）：
+- **入口哈希预验 fail-closed**：config/daily_stats/trades 三件套重算 SHA-256 与 R5 绑定哈希比对，任一不匹配 → EVIDENCE_INCOMPLETE 不启动；
+- **WF 5 折**：时序连续不重叠、余数归最早折；折配置从已验 config.csv 程序化派生仅换日期（杜绝折间漂移）；折内零交易 → NO_TRADE 不入正窗口分母（有效折 <3 → INSUFFICIENT_SAMPLES）；正窗口 = 折超额（策略−基准，基准取主运行 daily_stats `benchmark` 列）> 0，≥60% 过 G5；
+- **MC n=1000**：对主运行超额日收益做块自助法（块长 21，加一校正 p=(1+#{≤0})/(1+1000)，p<0.01 过 G6；0 次引擎重跑；seed 从工件哈希派生全记录）；
+- **G1-G6 门控**（阈值照 simple-quant-factory 原版固定）：年化>0 / 回撤<25% / 夏普>0.5（ETF 池 0.25）/ round-trip 胜率>40%（<10 回合 INSUFFICIENT_SAMPLES）/ 正窗口≥60% / p<0.01；三态 PASS/FAIL/INSUFFICIENT_SAMPLES；G6 检验超额维度、G1-G3 绝对维度，独立评估；
+- **迭代上限**：FAIL 回 R3 重走，最多 2 轮，第 3 轮 FAIL → ROBUSTNESS_FAILED 终止（防自适应过拟合）；豁免需 verbatim 确认。
+
 本框架在 QuantStudio 本地回测引擎上对齐**已登记并验证的 PTrade 回测公共 API 子集**，同时提供明确标记的 QuantStudio 本地扩展。
 只有通过 PTrade Profile Validator 的策略才可声明可移植；本地运行成功不等于真实平台兼容。数据 100% 来自 DuckDB（QuantStudio 数据管线产出），不依赖任何外部
 回测平台。
