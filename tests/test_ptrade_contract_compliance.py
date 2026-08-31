@@ -28,6 +28,16 @@ from quantstudio.strategy_compiler.source_import import convert_source  # noqa: 
 STRATEGIES = pathlib.Path(__file__).resolve().parents[1] / "quantstudio" / "backtest" / "strategies"
 
 
+
+def _ed_dstr(x):
+    """end_date ms epoch -> 'YYYY-MM-DD'（本地策略 np.datetime64(int(ed),'ms') 消费语义，
+    v8.7 契约：wrapper 归一 end_date 为 epoch 毫秒）。"""
+    import numpy as _np
+    try:
+        return str(_np.datetime64(int(float(x)), 'ms'))[:10]
+    except Exception:
+        return 'NA'  # NaN/None end_date 容错
+
 def _convert(code: str, name: str = "t.py"):
     import tempfile
     with tempfile.TemporaryDirectory() as td:
@@ -1417,7 +1427,7 @@ def _fund_ns(platform_ret=None, raise_on_list=False, single_results=None):
                           "info": staticmethod(lambda *a, **k: None)})()
     ns = {"get_fundamentals": _fake_fund, "log": log}
     exec(_shape_check_def(), ns)
-    exec(si._QS_FUNDAMENTALS_EXT.format(marker="# p10"), ns)
+    exec(si._QS_FUNDAMENTALS_EXT.format(marker="# p10", eps_basis="passthrough"), ns)
     ns["_calls"] = calls
     ns["_warnings"] = warnings
     return ns
@@ -1471,12 +1481,12 @@ def test_p10_batch_shim_returns_dataframe_index_code():
     import quantstudio.strategy_compiler.source_import as si
 
     ns = _fund_ns(pd.DataFrame(
-        {"trading_day": [20260630, 20260630], "total_value": [1e9, 2e9],
+        {"trading_day": ["2026-06-30", "2026-06-30"], "total_value": [1e9, 2e9],
          "float_value": [1.3e8, 2.1e8]},
         index=pd.RangeIndex(2)))
     exec(si.SourceConverter._shim_source(None, "get_fundamentals_batch"), ns)
     out = ns["get_fundamentals_batch"](["000001.SZ", "600000.SS"], "valuation",
-                                       fields=["float_value"], date="20260630")
+                                       fields=["float_value"], date="2026-06-30")
     assert isinstance(out, pd.DataFrame)
     assert list(out.index) == ["000001.SZ", "600000.SS"]
     assert list(out.columns) == ["float_value"]
@@ -1486,11 +1496,11 @@ def test_p10_wrapper_native_list_index_preserved():
     """探针 U1/U2：平台 list 原生返回 index=code → 原样保留（不重写）。"""
     import pandas as pd
     ns = _fund_ns(pd.DataFrame(
-        {"trading_day": [20260630, 20260630], "total_value": [1e9, 2e9],
+        {"trading_day": ["2026-06-30", "2026-06-30"], "total_value": [1e9, 2e9],
          "float_value": [1.3e8, 2.1e8]},
         index=["000001.SZ", "600000.SS"]))
     out = ns["get_fundamentals"](["000001.SZ", "600000.SS"], "valuation",
-                                 fields=["float_value"], date="20260630")
+                                 fields=["float_value"], date="2026-06-30")
     assert list(out.index) == ["000001.SZ", "600000.SS"]
     assert list(out.columns) == ["float_value"]
     assert ns["_calls"]["list"], "应走平台原生 list 单调用"
@@ -1500,10 +1510,10 @@ def test_p10_wrapper_column_filter():
     """探针 U3：平台返回固定列集 → 按请求 fields 列筛选。"""
     import pandas as pd
     ns = _fund_ns(pd.DataFrame(
-        {"trading_day": [20260630], "total_value": [1e9], "float_value": [1.3e8]},
+        {"trading_day": ["2026-06-30"], "total_value": [1e9], "float_value": [1.3e8]},
         index=["000001.SZ"]))
     out = ns["get_fundamentals"]("000001.SZ", "valuation", fields=["float_value"],
-                                 date="20260630")
+                                 date="2026-06-30")
     assert list(out.columns) == ["float_value"]
     assert out.loc["000001.SZ", "float_value"] == 1.3e8
 
@@ -1518,22 +1528,252 @@ def test_p10_wrapper_date_norm():
         index=["000001.SZ", "000001.SZ"]))
     out = ns["get_fundamentals"](["000001.SZ"], "eps",
                                  fields=["eps", "publ_date", "end_date"])
-    assert np.asarray(out["end_date"], dtype=float).tolist() == [20260331.0, 20250331.0]
+    assert [_ed_dstr(x) for x in out["end_date"]] == ["2026-03-31", "2025-03-31"]
     assert np.asarray(out["publ_date"], dtype=float).tolist() == [20260425.0, 20250425.0]
 
 
 def test_p10_wrapper_field_missing_alarm():
-    """必查项①：请求字段不在平台返回列集 → QS_SHIM_FIELD_MISSING 显性警报 + 空 DataFrame。"""
+    """必查项①：请求字段不在平台返回列集 → QS_SHIM_FIELD_MISSING 显性警报 + 1 行 NaN 契约 df。
+    （P-D10 v1.2／2026-08-31 B8/B2-⑦：全缺 → 1 行 NaN 而非空 columns-frame——
+    策略『无数据加分』分支（⑦ total_share 类 ts_now is None）不再误加分，
+    NaN 比较恒 False → 平台降级不判 RD-1；完整性过滤仍自然剔除。）"""
     import pandas as pd
+    import numpy as np
     ns = _fund_ns(pd.DataFrame())  # 平台对 or_yoy 吞错返回 (0,0) 空 df
     out = ns["get_fundamentals"](["000001.SZ"], "growth_ability",
                                  fields=["or_yoy", "publ_date", "end_date"])
     assert isinstance(out, pd.DataFrame)
     assert list(out.columns) == ["or_yoy", "publ_date", "end_date"]
-    assert len(out) == 0
+    assert len(out) == 1
+    assert np.isnan(out["or_yoy"].iloc[0])
     joined = " ".join(str(w[0]) for w in ns["_warnings"])
     assert "QS_SHIM_FIELD_MISSING" in joined
     assert "or_yoy" in joined
+
+
+def test_p10_wrapper_range_split_two_calls():
+    """B6c（2026-08-31 二轮复验修正）：date+start_year/end_year 并存 →
+    平台原生 range 多期透传（单次调用）+ MultiIndex(end_date,secu_code) 拍平 +
+    publ_date PIT 过滤；date-only 双查询已降级为异常回退（平台 date 查询为披露时点语义，
+    date=2025-03-31 取不到 2025 一季报 → 双查询恒缺同比期 → fscore 虚高 166 实证）。"""
+    import pandas as pd
+    import numpy as np
+    import quantstudio.strategy_compiler.source_import as si
+
+    calls = []
+
+    def fake(*a, **k):
+        calls.append(k)
+        idx = pd.MultiIndex.from_tuples(
+            [("2024-03-31", "000001.SZ"), ("2025-03-31", "000001.SZ"),
+             ("2026-03-31", "000001.SZ")], names=["end_date", "secu_code"])
+        return pd.DataFrame({"np_parent_company_owners": [1.0, 2.0, 3.0],
+                             "publ_date": ["2024-04-25", "2025-04-25", "2026-04-25"]},
+                            index=idx)
+
+    ns = {"get_fundamentals": fake,
+          "log": type("L", (), {"warning": staticmethod(lambda *a, **k: None),
+                                "info": staticmethod(lambda *a, **k: None)})()}
+    exec(_shape_check_def(), ns)
+    exec(si._QS_FUNDAMENTALS_EXT.format(marker="# b6c", eps_basis="passthrough"), ns)
+    out = ns["get_fundamentals"]("000001.SZ", "income_statement",
+                                 fields=["np_parent_company_owners", "publ_date", "end_date"],
+                                 date="20260701", start_year=2024, end_year=2026)
+    assert sorted(_ed_dstr(x) for x in out["end_date"]) == ["2024-03-31", "2025-03-31", "2026-03-31"], \
+        list(out["end_date"])
+    # 主路径：单次 range 透传（start_year/end_year 原样、无 date 拆分）
+    assert len(calls) == 1, calls
+    assert calls[0].get("start_year") == 2024 and calls[0].get("end_year") == 2026
+    assert "date" not in calls[0]
+    # 拍平：无 multi2 index（本地 _latest_statement 按 end_date 列消费）
+    assert not isinstance(out.index, pd.MultiIndex)
+    assert "end_date" in out.columns
+
+
+def test_b6c_pit_filter_drops_unpublished():
+    """B6c PIT（v8.5 位置修复）：PIT 过滤在字段筛选之前——策略请求 fields 不含
+    publ_date（_latest_statement 真实形态），过滤仍须生效（2026-06-30 未披露期剔除）；
+    publ_date 数值格式（20260425）兼容。"""
+    import pandas as pd
+    import numpy as np
+    import quantstudio.strategy_compiler.source_import as si
+
+    def fake(*a, **k):
+        idx = pd.MultiIndex.from_tuples(
+            [("2025-06-30", "000001.SZ"), ("2025-09-30", "000001.SZ"),
+             ("2025-12-31", "000001.SZ"), ("2026-03-31", "000001.SZ"),
+             ("2026-06-30", "000001.SZ")], names=["end_date", "secu_code"])
+        return pd.DataFrame({"np_parent_company_owners": [1, 2, 3, 4, 5],
+                             "publ_date": [20250825, 20251025, 20260320,
+                                           20260425, 20260825]}, index=idx)
+
+    ns = {"get_fundamentals": fake,
+          "log": type("L", (), {"warning": staticmethod(lambda *a, **k: None),
+                                "info": staticmethod(lambda *a, **k: None)})()}
+    exec(_shape_check_def(), ns)
+    exec(si._QS_FUNDAMENTALS_EXT.format(marker="# b6c-pit", eps_basis="passthrough"), ns)
+    # 2026-03-15 视角 + 请求 fields **不含 publ_date**（真实 _latest_statement 形态）：
+    # PIT 仍须生效（2025-12-31 期 03-20 披露 > 03-15 → 剔除；2026-03-31/06-30 未披露 → 剔除）
+    out = ns["get_fundamentals"]("000001.SZ", "income_statement",
+                                 fields=["np_parent_company_owners", "end_date"],
+                                 date="20260315", start_year=2025, end_year=2026)
+    eds = sorted(_ed_dstr(x) for x in out["end_date"] if _ed_dstr(x) != "NA")
+    assert "2026-03-31" not in eds, eds
+    assert "2026-06-30" not in eds, eds          # 中报 08-25 披露 → 03-15 未披露剔除
+    assert "2025-12-31" not in eds, eds          # 年报 03-20 披露 → 03-15 未披露剔除
+    assert eds == ["2025-06-30", "2025-09-30"], eds
+    # 2026-07-01 视角（正常调仓日）：仅 2026-06-30 中报未披露 → 剔除，其余保留
+    out2 = ns["get_fundamentals"]("000001.SZ", "income_statement",
+                                  fields=["np_parent_company_owners", "end_date"],
+                                  date="20260701", start_year=2025, end_year=2026)
+    eds2 = sorted(_ed_dstr(x) for x in out2["end_date"] if _ed_dstr(x) != "NA")
+    assert "2026-06-30" not in eds2, eds2
+    assert "2026-03-31" in eds2 and "2025-12-31" in eds2, eds2
+
+
+def test_p10_wrapper_gap_seed_shortcut_first_call():
+    """B8 seeds（探针 P2 实证，2026-08-31）：balance/income/valuation × 8 净资产/股本字段
+    平台全 EMPTY → 首调即短路 NaN 行（0 平台调用 0 告警），不再依赖运行时首调探测
+    ——v8/v8.1 实证 total_share 60+ 次/日刷屏根治。"""
+    import pandas as pd
+    import numpy as np
+    import quantstudio.strategy_compiler.source_import as si
+
+    calls = []
+    warns = []
+
+    def fake(*a, **k):
+        calls.append(k)
+        return pd.DataFrame()
+
+    log = type("L", (), {"warning": staticmethod(lambda *a, **k: warns.append((a, k))),
+                         "info": staticmethod(lambda *a, **k: None)})()
+    ns = {"get_fundamentals": fake, "log": log}  # 无 g：种子集独立生效
+    exec(_shape_check_def(), ns)
+    exec(si._QS_FUNDAMENTALS_EXT.format(marker="# b8seed", eps_basis="passthrough"), ns)
+    ns["_warnings"] = warns
+
+    out = ns["get_fundamentals"]("000001.SZ", "valuation", fields=["total_share"], date="20260701")
+    assert list(out.columns) == ["total_share"]
+    assert len(out) == 1
+    assert np.isnan(out["total_share"].iloc[0])
+    assert len(calls) == 0, "种子短路应 0 次平台调用"
+    assert sum(1 for w in warns if "QS_SHIM_FIELD_MISSING" in str(w[0])) == 0, "种子短路应 0 告警"
+
+
+def test_p10_wrapper_missing_field_nan_row():
+    """P-D10 v1.2 缺列降级（B5/B8/B2-⑦）：请求字段全缺 → 1 行 NaN 契约 df（不抛错）；
+    NaN 参与比较恒 False → ⑦『无增发』平台恒不判（RD-1 登记契约口径）。"""
+    import pandas as pd
+    import numpy as np
+    ns = _fund_ns(pd.DataFrame())
+    out = ns["get_fundamentals"](["000001.SZ"], "valuation", fields=["total_share"])
+    assert list(out.columns) == ["total_share"]
+    assert len(out) == 1
+    assert np.isnan(out["total_share"].iloc[0])
+
+
+def test_p10_wrapper_gap_shortcut_single_alarm():
+    """B8 一次性缺列告警 + 动态登记短路：非种子字段首次缺列 → 告警 1 次 + gap 登记，
+    二次同字段请求直接短路 NaN 行（0 平台调用、0 新增告警）。种子字段（探针 P2 实证）
+    首调即短路，见 test_p10_wrapper_gap_seed_shortcut_first_call。"""
+    import pandas as pd
+    import numpy as np
+    import quantstudio.strategy_compiler.source_import as si
+
+    calls = []
+    warns = []
+
+    def fake(*a, **k):
+        calls.append(k)
+        return pd.DataFrame()  # 平台对未知字段吞错返回空 df
+
+    log = type("L", (), {"warning": staticmethod(lambda *a, **k: warns.append((a, k))),
+                         "info": staticmethod(lambda *a, **k: None)})()
+    g = type("G", (), {})()
+    ns = {"get_fundamentals": fake, "log": log, "g": g}
+    exec(_shape_check_def(), ns)
+    exec(si._QS_FUNDAMENTALS_EXT.format(marker="# b8dyn", eps_basis="passthrough"), ns)
+    ns["_warnings"] = warns
+
+    out1 = ns["get_fundamentals"]("000001.SZ", "income_statement", fields=["ghost_field_zz"],
+                                  date="20260701")
+    assert list(out1.columns) == ["ghost_field_zz"]
+    assert np.isnan(out1["ghost_field_zz"].iloc[0])
+    assert sum(1 for w in warns if "QS_SHIM_FIELD_MISSING" in str(w[0])) == 1
+
+    n_calls = len(calls)
+    out2 = ns["get_fundamentals"]("000001.SZ", "income_statement", fields=["ghost_field_zz"],
+                                  date="20260701")
+    assert np.isnan(out2["ghost_field_zz"].iloc[0])
+    assert len(calls) == n_calls, "gap 短路应 0 次平台调用"
+    assert sum(1 for w in warns if "QS_SHIM_FIELD_MISSING" in str(w[0])) == 1, "无新增告警"
+
+
+def test_p10_wrapper_pit_filter():
+    """B-1（2026-08-31 探针 P1：publ_date≤date 过滤 12→9 行可复现）：_qs_gf_pit_filter 数值归一过滤。"""
+    import pandas as pd
+    ns = _fund_ns(pd.DataFrame())
+    df = pd.DataFrame({"end_date": ["2026-03-31", "2025-12-31"],
+                       "publ_date": [20260425.0, 20260214.0],
+                       "np": [1.0, 2.0]}, index=["000001.SZ", "000001.SZ"])
+    out = ns["_qs_gf_pit_filter"](df, "2026-03-31")
+    assert len(out) == 1
+    assert str(out["end_date"].iloc[0]) == "2025-12-31"
+
+
+def _ind_ns(members=None):
+    """exec _QS_INDUSTRY_EXT → 命名空间（真实 _qs_g_obj stub + 记录 get_industry_stocks 调用）。"""
+    import quantstudio.strategy_compiler.source_import as si
+
+    calls = []
+
+    def _fake_gs(ind):
+        calls.append(ind)
+        return (members or {}).get(ind)
+
+    log = type("L", (), {"warning": staticmethod(lambda *a, **k: None),
+                         "info": staticmethod(lambda *a, **k: None)})()
+    ns = {"get_industry_stocks": _fake_gs, "get_industry": lambda code: None,
+          "log": log, "_qs_g_obj": lambda: None}
+    exec(_shape_check_def(), ns)
+    src = (si._QS_INDUSTRY_EXT.format(marker="# b1")
+           .replace("__QS_INDUSTRY_CODES__",
+                    "('801780','801790','480000','490000')"))
+    exec(src, ns)
+    ns["_calls"] = calls
+    return ns
+
+
+def test_b1_industry_wrapper_pool_and_failopen():
+    """B1/B7（2026-08-31，探针 P4：480000.XBHS 银行 42 只实证）：反向金融池双码命中 →
+    池内股返回首个策略行业码（剔）、池外股返回哨兵 999999（fail-open 不剔）；
+    池无效（成员空）→ fail-open 哨兵，绝不全剔空仓（B1 初始 300 只根因）。"""
+    ns = _ind_ns(members={"480000.XBHS": ["002948.SZ", "601577.SS"]})
+    assert ns["get_industry"]("002948.SZ")["sw_l1"]["industry_code"] == "801780"
+    assert ns["get_industry"]("600519.SS")["sw_l1"]["industry_code"] == "999999"
+    assert "480000.XBHS" in ns["_calls"]
+    assert "801780" in ns["_calls"] and "801780.XBKS" in ns["_calls"]
+    # 池无效（无成员命中）→ fail-open 哨兵
+    ns2 = _ind_ns(members={})
+    assert ns2["get_industry"]("000001.SZ")["sw_l1"]["industry_code"] == "999999"
+
+
+def test_b1_gate_injected_when_industry_used():
+    """门控（B1）：策略调用 get_industry → 注入平台替代包装 + 行业码集烘焙。"""
+    r = _convert("""
+def _is_finance(code):
+    ind = get_industry(code)
+    ic = (ind.get('sw_l1') or {}).get('industry_code', '')
+    return ic in ('801780', '801790', '480000', '490000')
+def initialize(context):
+    pass
+""")
+    assert r.errors == [], r.errors
+    assert "_QSIndustryState" in r.converted_code
+    assert "def get_industry(" in r.converted_code
+    assert "480000" in r.converted_code
+    assert "999999" in r.converted_code
 
 
 def test_p10_wrapper_list_fallback_per_code():
@@ -1541,13 +1781,13 @@ def test_p10_wrapper_list_fallback_per_code():
     import pandas as pd
 
     def mk(code):
-        return pd.DataFrame({"trading_day": [20260630], "total_value": [1e9],
+        return pd.DataFrame({"trading_day": ["2026-06-30"], "total_value": [1e9],
                              "float_value": [1.3e8]}, index=[code])
 
     single = {"000001.SZ": mk("000001.SZ"), "600000.SS": mk("600000.SS")}
     ns = _fund_ns(raise_on_list=True, single_results=single)
     out = ns["get_fundamentals"](["000001.SZ", "600000.SS"], "valuation",
-                                 fields=["float_value"], date="20260630")
+                                 fields=["float_value"], date="2026-06-30")
     assert sorted(out.index) == ["000001.SZ", "600000.SS"]
     assert list(out.columns) == ["float_value"]
     assert len(ns["_calls"]["single"]) == 2
@@ -1581,7 +1821,7 @@ def test_p10_field_map_request_translated():
 def test_p10_field_map_only_growth_ability():
     """映射仅作用于 growth_ability（valuation 请求不翻译）。"""
     import pandas as pd
-    ns = _fund_ns(pd.DataFrame({"trading_day": [20260630], "float_value": [1.3e8]},
+    ns = _fund_ns(pd.DataFrame({"trading_day": ["2026-06-30"], "float_value": [1.3e8]},
                                index=["000001.SZ"]))
     ns["get_fundamentals"](["000001.SZ", "600000.SS"], "valuation", fields=["float_value"])
     plat_fields = ns["_calls"]["list"][0][1].get("fields")

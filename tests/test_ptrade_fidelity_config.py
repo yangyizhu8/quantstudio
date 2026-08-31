@@ -317,12 +317,14 @@ class TestConvertedArtifactFidelity:
         assert "'eps': 'basic_eps'" in out
 
     def test_artifact_explicit_passthrough_reverts_to_legacy(self):
-        # 显式 passthrough → P-A2 常量段门控不注入（产物无赋值语句）——向后兼容保留
+        # 显式 passthrough → eps 映射常量烘焙进统一 wrapper（v8.3 整合：单一
+        # get_fundamentals 定义，常量恒在、值为 passthrough）——向后兼容：eps 表请求
+        # 平台默认 eps 列（不翻译）；旧独立 _QS_FIDELITY_EPS_EXT def 已删除。
         src = ("def initialize(context):\n    pass\n\ndef handle_data(context, data):\n"
                "    df = get_fundamentals('000001.SZ', table='eps', fields=['eps'])\n")
         out = self._convert(src, eps_basis="passthrough")
-        assert "_QS_FIDELITY_EPS_BASIS =" not in out
-        assert "_QS_FIDELITY_EPS_EXT" not in out
+        assert "_QS_FIDELITY_EPS_BASIS = 'passthrough'" in out
+        assert "_QS_FIDELITY_EPS_EXT = '''" not in out  # 独立模板/def 已删除（v8.3 整合）
         # 且与默认（basic）不同——显式 passthrough 撤销默认注入
         default = self._convert(src)
         assert default != out

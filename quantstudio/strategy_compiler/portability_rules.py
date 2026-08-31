@@ -43,10 +43,11 @@ DENY_SHIM: frozenset[str] = frozenset({
 # 与 DENY_SHIM 并集 = SHIM_CONTRACT_REGISTRY 的键集合（测试断言集合相等，防双边漂移）
 INJECTED_WRAPPER_NAMES: frozenset[str] = frozenset({
     "get_history",              # 方向B：structured array → DataFrame + 字段双向映射
-    "get_fundamentals",         # P-D10：list 单调用 + 列筛选 + end_date/publ_date 数值归一
+    "get_fundamentals",         # P-D10：list 单调用 + 列筛选 + end_date/publ_date 数值归一 + B6 双查询分派 + B9 批量预取
     "filter_stock_by_status",   # P-D9：'ST' 语义补退市风险兜底
     "get_trade_days",           # A3：日历格式归一 + 未来过滤
     "get_stock_info",           # A3：listed_date 归一
+    "get_industry",             # B1：平台无 get_industry → 反向金融池（get_industry_stocks 双码）替代
 })
 
 from dataclasses import dataclass
@@ -76,8 +77,8 @@ SHIM_CONTRACT_REGISTRY: dict[str, ShimContractSpec] = {
         contract_type="DataFrame",
         contract_index="ptrade_code",
         contract_columns="fields（按请求字段筛选；end_date/publ_date 归一为数值 YYYYMMDD；or_yoy→operating_revenue_grow_rate 字段名映射）",
-        contract_empty="空 DataFrame(columns=fields)，不抛错；请求字段缺失 → QS_SHIM_FIELD_MISSING 显性警报",
-        contract_source="ptrade_api.py:698-772 / 1421-1442",
+        contract_empty="P-D10 v1.2（2026-08-31 B8/B2）：请求字段全缺 → 1 行 NaN 契约 DataFrame(columns=fields)，不抛错（策略无数据加分分支不再误加分，NaN 比较恒 False 降级不判）；字段部分缺失 → 存留列 + 缺失列 NaN；请求字段缺失 → QS_SHIM_FIELD_MISSING 显性警报；date+start_year 并存 → date-only 双查询多期（B6）",
+        contract_source="ptrade_api.py:698-772 / 1421-1442 + 探针 P1/P2（2026-08-31）",
         template_location="_QS_FUNDAMENTALS_EXT",
         homology_test="test_p10_wrapper_native_list_index_preserved",
     ),
@@ -86,10 +87,20 @@ SHIM_CONTRACT_REGISTRY: dict[str, ShimContractSpec] = {
         contract_type="DataFrame",
         contract_index="ptrade_code",
         contract_columns="fields（按请求字段筛选）",
-        contract_empty="空 DataFrame(columns=fields)，不抛错",
-        contract_source="ptrade_api.py:1421-1442",
+        contract_empty="空契约与 get_fundamentals 一致（全缺 → 1 行 NaN）；平台无 get_fundamentals_batch → shim 委托 get_fundamentals list 模式批量（P-D10 实证 500 码 0.05s）",
+        contract_source="ptrade_api.py:1421-1442 + B10（2026-08-31 平台 NameError 实证）",
         template_location="_shim_source('get_fundamentals_batch')",
         homology_test="test_p10_batch_shim_returns_dataframe_index_code",
+    ),
+    "get_industry": ShimContractSpec(
+        api_name="get_industry",
+        contract_type="dict",
+        contract_index="n/a（单码入参）",
+        contract_columns="{'sw_l1': {'industry_code': <6位行业码>}}（本地 get_industry 契约子集）",
+        contract_empty="平台无 get_industry → 反向金融池（get_industry_stocks 双码：裸/.XBHS/.XBKS 并集，行业码集转换期从策略源码烘焙）：池内命中 → 首个策略行业码；池外/池无效 → 非金融哨兵 '999999'（fail-open 不剔，RD-3 登记，防本地 fail-closed 全剔空仓）；绝不返回空 dict/抛错",
+        contract_source="本地 get_industry（ptrade_api）+ B1/B7（2026-08-28/31，探针 P4：480000.XBHS 银行 42 只实证）",
+        template_location="_QS_INDUSTRY_EXT",
+        homology_test="test_b1_industry_wrapper_pool_and_failopen",
     ),
     "get_history": ShimContractSpec(
         api_name="get_history",

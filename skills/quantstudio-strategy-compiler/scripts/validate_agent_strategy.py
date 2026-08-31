@@ -1187,6 +1187,19 @@ def validate_strategy(
             if re.fullmatch(r"\d{6}\.(SH|XSHG|XSHE)", value):
                 issues.append(_issue("SECURITY-CODE-PORTABILITY", "BLOCK", f"use PTrade suffix .SS/.SZ/.BJ, not {node.value!r}", node.lineno))
 
+    # ---- B2 RSRS 分位量纲校验（2026-08-28/31，fscore_rsrs 平台 0% 成交根因防再发）----
+    # RSRS 分位 pct 单位为 0-100，信号阈值（0.65/0.75 等）为 0-1 分数；
+    # 直接比较（pct > 0.65）恒 False → 平台永不成交。编写期 WARN（策略应 p_frac=pct/100 归一）。
+    for m in re.finditer(
+            r"\b([A-Za-z_][A-Za-z0-9_]*pct[A-Za-z0-9_]*)\s*(>=|<=|>|<)\s*(0\.[6-8]\d*)\b",
+            source):
+        issues.append(_issue(
+            "RSRS-DIMENSION-UNIT", "WARN",
+            f"RSRS 分位 {m.group(1)}（0-100 百分数）与分数阈值 {m.group(3)}（0-1）直接比较"
+            "量纲可疑：恒 False 会导致平台永不触发信号；应先 p_frac = pct/100 归一（rule B2）",
+            source[:m.start()].count("\n") + 1))
+        break
+
     if "AGENT_IMPLEMENTATION_REQUIRED" in source:
         issues.append(_issue("AGENT-IMPLEMENTATION-MISSING", "BLOCK", "strategy source still contains scaffold implementation markers"))
     if "strategy_pattern" in source:

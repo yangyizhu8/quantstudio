@@ -19,6 +19,7 @@ Returns (ok, violations, warnings) — same shape as PR6a validators.
 from __future__ import annotations
 
 import ast
+import re
 from typing import Any
 
 from ..ir_nodes import StrategyIR
@@ -134,6 +135,16 @@ def validate_ptrade_portability(
     # Header check: PTrade output should declare the profile
     if "ptrade-default" not in code[:500]:
         warnings.append("PTrade code header does not declare 'ptrade-default' profile")
+
+    # B2 (2026-08-28/31)：RSRS 量纲防再发——分位 pct（0-100）与分数阈值（0.65/0.75）
+    # 直接比较 = 量纲错误（fscore_rsrs 平台 0% 成交根因之一）；产物 p_frac=pct/100 归一后
+    # 不命中该模式（RHS 变 0.0x）。WARN 级（产物侧防线，策略编写期由 skill validator 兜底）。
+    for _m in re.finditer(
+            r"\b([A-Za-z_][A-Za-z0-9_]*pct[A-Za-z0-9_]*)\s*(>=|<=|>|<)\s*(0\.[6-8]\d*)\b",
+            code):
+        warnings.append(
+            f"B2-RSRS-DIMENSION: {_m.group(1)} 与分数阈值 {_m.group(3)} 直接比较"
+            "（RSRS 分位 0-100 vs 0-1 量纲可疑）；应先 p_frac=pct/100 归一（rule B2）")
 
     ok = not any(v.severity == "BLOCK" for v in violations)
     return ok, violations, warnings

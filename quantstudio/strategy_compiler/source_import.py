@@ -1135,10 +1135,24 @@ def _qs_set_context(ctx):
 # （get_fundamentals 是真实平台 API，def 前捕获安全）。批量 shim 走本 wrapper（DF 拼装，本地 B1 契约）。
 _QS_FUNDAMENTALS_EXT = '''
 {marker}
-# [qs-import-generated] get_fundamentals 契约对齐包装（P-D10，2026-08-22）
+# [qs-import-generated] get_fundamentals 契约对齐包装（P-D10，2026-08-22；
+# v8.3 整合：B6c range+PIT 主路径 / B8 缺列种子短路 / P-A2 eps 口径映射，2026-08-31）
 # list 原生单调用 + 列筛选 + end_date/publ_date 数值归一 + 形状自检（QS_SHIM_SHAPE_VIOLATION）
 import pandas as _qs_pd
 import numpy as _qs_np
+
+
+# P-A2 eps 口径保真常量（单一来源，v8.3 整合——旧版独立 _QS_FIDELITY_EPS_EXT 另含
+# def get_fundamentals，注入在后 → 同名覆盖本 wrapper 全部修复（B6c/seeds/PIT），
+# 平台复验 v8.0~v8.2 总根因）。此处直接烘焙，产物始终只有一个 get_fundamentals。
+_QS_FIDELITY_EPS_BASIS = '{eps_basis}'
+_QS_FIDELITY_EPS_FIELD_MAP = {{'passthrough': {{}}, 'basic': {{'eps': 'basic_eps'}},
+                               'diluted': {{'eps': 'diluted_eps'}}}}
+_QS_FIDELITY_EPS_FIELD_MAP_REV = {{
+    plat: loc for _basis, _m in _QS_FIDELITY_EPS_FIELD_MAP.items() for loc, plat in _m.items()}}
+if _QS_FIDELITY_EPS_BASIS not in ('passthrough', 'basic', 'diluted'):
+    raise RuntimeError('_QS_FIDELITY_EPS_BASIS=%r 非法（允许 passthrough/basic/diluted）'
+                       % (_QS_FIDELITY_EPS_BASIS,))
 
 
 class _QSFundState:
@@ -1157,7 +1171,33 @@ _QS_GF_FIELD_MAP_REV = {{v: k for k, v in _QS_GF_FIELD_MAP.items()}}
 
 
 def _qs_norm_report_date(value):
-    """'YYYY-MM-DD' → YYYYMMDD 数值（与本地 fin_indicator 数值排序语义一致）。"""
+    """'YYYY-MM-DD' / YYYYMMDD → epoch 毫秒（end_date 契约 v8.7）或 YYYYMMDD float（publ_date）。
+    本地策略以 np.datetime64(int(end_date),'ms') 消费（F-Score L86/92）与
+    pd.to_datetime(..., unit='ms', utc=True)（CANSLIM L391）——end_date 必须 epoch 毫秒，
+    数值 YYYYMMDD（20250331）会被当作 1970+20250331ms→1970-01-01 垃圾日期 → prev
+    同月日匹配崩 → 同比项恒加分 → fscore 虚高（v8.6 实跑 166 vs 探针复算 79 的残留根因）。"""
+    try:
+        import datetime as _qs_dt
+        text = str(value).strip()
+        if not text or text.lower() in ('nan', 'none', 'nat'):
+            return None
+        if len(text) == 10 and text[4] == '-' and text[7] == '-':
+            _t = text[:4] + text[5:7] + text[8:10]
+        else:
+            _t = text
+        if _t.isdigit() and len(_t) == 8:
+            _d = _qs_dt.datetime(int(_t[:4]), int(_t[4:6]), int(_t[6:8]))
+            return _d.replace(tzinfo=_qs_dt.timezone.utc).timestamp() * 1000.0
+        if _t.isdigit():
+            # 已是 epoch 毫秒（10+ 位）或本地原值 → 原样
+            return float(_t)
+        return None
+    except Exception:
+        return value
+
+
+def _qs_norm_publ_date(value):
+    """publ_date → YYYYMMDD float（PIT 过滤比较用，策略不消费）。"""
     try:
         text = str(value).strip()
         if len(text) == 10 and text[4] == '-' and text[7] == '-':
@@ -1170,49 +1210,76 @@ def _qs_norm_report_date(value):
 
 
 def _qs_norm_fund_dates(df):
-    """end_date/publ_date 归一为数值（平台 'YYYY-MM-DD' object → YYYYMMDD float）。"""
-    for _col in ('end_date', 'publ_date'):
-        if _col not in df.columns:
-            continue
-        try:
-            if df[_col].dtype == object:
-                df[_col] = df[_col].map(_qs_norm_report_date)
-        except Exception:
-            pass
+    """日期列归一（v8.7 契约：end_date → epoch 毫秒；publ_date → YYYYMMDD float）。"""
+    try:
+        if 'end_date' in df.columns:
+            df['end_date'] = [_qs_norm_report_date(x) for x in df['end_date']]
+    except Exception:
+        pass
+    try:
+        if 'publ_date' in df.columns:
+            df['publ_date'] = [_qs_norm_publ_date(x) for x in df['publ_date']]
+    except Exception:
+        pass
     return df
 
 
-def _qs_fund_select_fields(df, fields):
+def _qs_fund_select_fields(df, fields, table=None):
     """按请求 fields 列筛选（本地 ptrade_api.py:763-768 available 同构）。
-    请求字段不在返回列集 → QS_SHIM_FIELD_MISSING 显性警报 + 计数（P-D10 必查项①：
-    平台吞错返回空 df 必须与正常空结果区分，不得静默）。"""
+    请求字段不在返回列集 → QS_SHIM_FIELD_MISSING 一次性显性警报 + 登记 (table,field) gap
+    （B8：平台缺列确认后短路，不再逐次告警/平台调用刷屏——v8 平台 total_share 60+ 次/日
+    = 每次回退平台调用）；全部缺失 → 1 行 NaN 契约 DataFrame（P-D10 v1.2，⑦ 降级 RD-1）。"""
     if not fields:
         return df
     field_list = [fields] if isinstance(fields, str) else list(fields)
     available = [f for f in field_list if f in df.columns]
     missing = [f for f in field_list if f not in df.columns]
+    _gaps = _qs_gf_known_gaps()
     for _f in missing:
-        log.warning('QS_SHIM_FIELD_MISSING get_fundamentals field=%s '
-                    '(requested but absent in platform return; contract gap)' % (_f,))
+        if table and (table, _f) in _gaps:
+            continue  # 已登记缺口 → 不再告警
+        log.warning('QS_SHIM_FIELD_MISSING get_fundamentals table=%s field=%s '
+                    '(requested but absent in platform return; contract gap)'
+                    % (table or '?', _f))
+        if table:
+            _qs_gf_mark_gap(table, _f)
     if available:
-        return df[available]
-    # 全部字段缺失 → 平台吞错返回空 DataFrame（growth_ability 无 or_yoy 实证）：
-    # 显性失败，返回空 DataFrame(columns=fields)，由策略完整性过滤自然剔除
-    return _qs_pd.DataFrame(columns=field_list)
+        _out = df[available]
+        if missing:
+            # P-D10 v1.2：部分缺列 → 保留 available 值 + 缺失列补 NaN（策略 KeyError 免疫，
+            # NaN 数学比较恒 False → ⑦ 类判定自然降级；v7 _qs_fund_fields_merge 同款语义）
+            _out = _out.copy()
+            for _f in missing:
+                _out[_f] = float('nan')
+        return _out
+    # 全部字段缺失 → 平台吞错返回空 df（growth_ability 无 or_yoy 实证）：
+    # P-D10 v1.2 缺列降级语义（2026-08-31，B8/B2-⑦）：返回 1 行 NaN 契约 DataFrame，
+    # 而非空 columns-frame——策略"无数据加分"分支（如 ⑦ ts_now is None）不再误加分，
+    # NaN 比较恒 False → 平台降级不判（RD-1）；列契约保留，策略 KeyError 免疫；
+    # 完整性过滤仍自然剔除（NaN 参与数学比较恒 False）。显性警报先行（下方循环）。
+    _nan = _qs_pd.DataFrame([[float('nan')] * len(field_list)], columns=field_list)
+    return _nan
 
 
 def _qs_frame_to_contract(df, secs, fields, table):
     """平台原始返回 → 本地契约：index=code 防御 + 字段名逆翻译 + 列筛选 + 日期数值归一 + 空行为。"""
     if df is None or not hasattr(df, 'columns') or not hasattr(df, 'index'):
-        return _qs_fund_select_fields(_qs_pd.DataFrame(), fields)
+        return _qs_fund_select_fields(_qs_pd.DataFrame(), fields, table)
     # 字段名逆翻译（平台列名 → 本地列名；growth_ability 表 + 映射命中才 rename）
     if table == 'growth_ability':
         try:
             df = df.rename(columns=_QS_GF_FIELD_MAP_REV)
         except Exception:
             pass
+    # P-A2 返回逆翻译（v8.3 整合进统一 wrapper）：平台 basic_eps/diluted_eps 列 →
+    # 本地 eps/diluted_eps 名（策略无感知）；常量由 _QS_FIDELITY_EPS_EXT 提供。
+    if table == 'eps' and _QS_FIDELITY_EPS_BASIS != 'passthrough':
+        try:
+            df = df.rename(columns=_QS_FIDELITY_EPS_FIELD_MAP_REV)
+        except Exception:
+            pass
     if not len(df):
-        return _qs_fund_select_fields(df, fields)
+        return _qs_fund_select_fields(df, fields, table)
     _idx = df.index
     is_code_index = False
     try:
@@ -1229,23 +1296,143 @@ def _qs_frame_to_contract(df, secs, fields, table):
             df = df.copy()
             df.index = [str(c) for c in secs]
     df = _qs_norm_fund_dates(df)
-    return _qs_fund_select_fields(df, fields)
+    return _qs_fund_select_fields(df, fields, table)
 
 
 def get_fundamentals(security, table='valuation', fields=None, date=None,
-                     is_dataframe=True, *args, **kwargs):
+                     is_dataframe=True, start_year=None, end_year=None,
+                     report_types=None, *args, **kwargs):
     """本地契约包装：list 原生单调用 → DataFrame(index=code, columns=fields)。
 
     返回结构与本地 get_fundamentals（ptrade_api.py:698-772 / 1421-1442）一致：
     index=ptrade_code、columns=fields（筛选后）、end_date/publ_date 数值归一、
-    空 → 空 DataFrame(columns=fields) 不抛错。防御路径：list 调用失败 → 逐码循环退化。
+    空 → 1 行 NaN 契约 DataFrame(columns=fields) 不抛错（P-D10 v1.2，缺列降级）。
+    防御路径：list 调用失败 → 逐码循环退化。
     本地→平台字段名映射：请求 fields 按 _QS_GF_FIELD_MAP 翻译（or_yoy→operating_revenue_grow_rate），
-    返回列名逆翻译回本地名（_qs_frame_to_contract 内 rename）；策略按本地列名消费。"""
+    返回列名逆翻译回本地名（_qs_frame_to_contract 内 rename）；策略按本地列名消费。
+
+    B6 平台契约（2026-08-28，文档 L2335）：date 与 start_year/end_year 互斥。
+    date+range 并存（本地 provider 支持）→ 平台 date-only 双查询拆分（date / date-1年），
+    concat 返回多期；探针 P1（2026-08-31）：平台原生 start_year 多期返回
+    index=multi2(end_date, secu_code) 击穿本地 index=code 契约 → 并存绝不透传 start_year。
+    仅 start_year/end_year（无 date）→ 原样透传（平台原生多期，P1 实证 12 行）。
+    B9/B10（2026-08-31）：平台无 get_fundamentals_batch → 批量 = list 模式
+    （P-D10 实证 500 码 0.05s）；_qs_gf_maybe_prefetch 在 g.universe 全池就绪后
+    自动触发当月两期批量预取（破逐股流控卡死），失败静默回退逐股。"""
     _secs = security if isinstance(security, (list, tuple)) else [security]
     _field_list = [fields] if isinstance(fields, str) else (list(fields) if fields else None)
-    _plat_fields = ([_QS_GF_FIELD_MAP.get(f, f) for f in _field_list]
-                    if _field_list is not None else None)
+    # P-A2 eps 口径（2026-08-24，v8.3 整合）：eps 表且 basis 命中 → eps→basic_eps/diluted_eps
+    # 请求翻译；其余走 _QS_GF_FIELD_MAP。常量由 _QS_FIDELITY_EPS_EXT（注入在后，仅常量）
+    # 提供，函数体运行时解析（调用时不要求定义顺序）。
+    if _field_list is not None and table == 'eps' and _QS_FIDELITY_EPS_BASIS != 'passthrough':
+        _m = _QS_FIDELITY_EPS_FIELD_MAP.get(_QS_FIDELITY_EPS_BASIS, {{}})
+        _plat_fields = [_m.get(f, f) for f in _field_list]
+    else:
+        _plat_fields = ([_QS_GF_FIELD_MAP.get(f, f) for f in _field_list]
+                        if _field_list is not None else None)
+    # B6c 分派（2026-08-31 18:20，v8.1 平台复验二轮修正）：date 与 start_year/end_year 并存。
+    # 主路径 = 平台原生 range 多期透传（探针 P1 实证 start_year/end_year → 12 期季报齐全、
+    # index=multi2(end_date,secu_code)、含 publ_date 列、PIT 可复现 9/12）→ multi2 拍平 →
+    # publ_date<=date PIT 过滤（对齐本地『ann_date<=date 最新已披露』）→ 本地 _latest_statement
+    # 自取 cur(最新期)+prev(年-1 同月日) 两行。
+    # 否决 date-only 双查询（v8/v8.1 实证）：平台 date 查询为披露时点语义——date=2025-03-31
+    # 时 2025 一季报未披露 → 平台返回 2024-12-31，恒拿不到『cur 期年-1 同月日』期 →
+    # prev 恒 None → 同比项恒加分 → fscore_pass=166 稳定虚高（vs 本地 97）。
+    # multi2 由 _qs_multi_flat 拍平（审计 B-1 裁定击穿本地 index=code 契约 → wrapper 层修复，
+    # 不透传多级 index 给策略）。
+    if (date is not None) and (start_year is not None or end_year is not None):
+        try:
+            _qs_gf_progress(_secs, table, 'range:%s' % date)
+            _raw = _QSFundState.orig(_secs, table, fields=_plat_fields,
+                                     start_year=start_year, end_year=end_year,
+                                     is_dataframe=is_dataframe, *args, **kwargs)
+            _raw = _qs_multi_flat(_raw)
+            # v8.5 PIT 位置修复（2026-08-31 五次复验实证 fscore_pass=4）：PIT 过滤必须在
+            # _qs_frame_to_contract（字段筛选）之前——策略请求 fields 不含 publ_date，
+            # 放后面则 publ_date 已被丢弃 → 过滤恒不生效 → 平台 range 返回的未披露期
+            # （如 2026-06-30 中报，8 月底才披露）未被剔除 → cur 取错期（本地 2026-03-31
+            # vs 平台 2026-06-30）→ 数值/阈值判定全偏（fscore_pass 166→4）。
+            _raw = _qs_pit_filter(_raw, date)
+            _df = _qs_frame_to_contract(_raw, _secs, fields, table)
+            if report_types is not None:
+                _df = _qs_filter_report_types(_df, report_types)
+            if len(_df):
+                _qs_shape_check('get_fundamentals', 'dataframe', _df)
+                # v8.7c QS_GF_META：per-code cur/prev（income 表，边界复核）
+                # —— 与探针 P5-8 的 cur/prev 全比对，定位 35 vs 34 的"≤1 只"边界差
+                #    （2026-08-31 归因；候选疑点：002415/300750/603259/605499 的
+                #    cur=2026-06-30 特例——wrapper 端是否同取中报有值期）。
+                if table == 'income_statement':
+                    try:
+                        for _ci in _df.index:
+                            _rowsE = _df[_df.index == _ci]['end_date'].dropna()
+                            if not len(_rowsE):
+                                continue
+                            _edv = max(float(float(x)) for x in _rowsE)
+                            _ed = str(_qs_np.datetime64(int(_edv), 'ms'))[:10]
+                            _py = int(_ed[:4]) - 1
+                            _pr = '-'
+                            for _x2 in _rowsE:
+                                _s2 = str(_qs_np.datetime64(int(float(_x2)), 'ms'))[:10]
+                                if _s2[:4] == str(_py) and _s2[5:] == _ed[5:]:
+                                    _pr = _s2
+                                    break
+                            log.info('QS_GF_META code=%s cur=%s prev=%s' %
+                                     (_ci, _ed, _pr))
+                    except Exception:
+                        pass
+                return _df
+        except Exception as _exc:
+            log.warning('GF-RANGE-FAILOPEN get_fundamentals date+range %s: %s'
+                        % (type(_exc).__name__, _exc))
+        # 回退（B6b 保底）：date-only 双查询（cur + curED 年-1同月日窗口），平台披露时点
+        # 语义下命中率有限，仅防主路径异常时给出两期近似。
+        try:
+            _cur_raw = _QSFundState.orig(_secs, table, fields=_plat_fields, date=date,
+                                         is_dataframe=is_dataframe, *args, **kwargs)
+            _cur = _qs_frame_to_contract(_cur_raw, _secs, fields, table)
+            _prev_date = _qs_prev_window_date(_cur, date)
+            _prev_raw = _QSFundState.orig(_secs, table, fields=_plat_fields, date=_prev_date,
+                                          is_dataframe=is_dataframe, *args, **kwargs)
+            _prev = _qs_frame_to_contract(_prev_raw, _secs, fields, table)
+            _parts = [_f for _f in (_cur, _prev) if _f is not None and len(_f)]
+            if not _parts:
+                _df = _qs_fund_select_fields(_qs_pd.DataFrame(), fields, table)
+            else:
+                _df = _qs_pd.concat(_parts)
+                if report_types is not None:
+                    _df = _qs_filter_report_types(_df, report_types)
+            if len(_df):
+                _qs_shape_check('get_fundamentals', 'dataframe', _df)
+                return _df
+        except Exception as _exc:
+            log.warning('GF-RANGE-FAILOPEN2 get_fundamentals date+range %s: %s'
+                        % (type(_exc).__name__, _exc))
+    # B8 gap 短路（2026-08-31 v8 平台复验修正）：请求字段全部已确认缺列（g 缓存）→
+    # 直接返回 1 行 NaN 契约（免平台调用 + 免告警刷屏——v8 实证 total_share 60+ 次/日）。
     try:
+        if _field_list and set(_field_list) <= _qs_gf_gap_shortcut(table, _field_list):
+            _df = _qs_pd.DataFrame([[float('nan')] * len(_field_list)], columns=_field_list)
+            _qs_shape_check('get_fundamentals', 'dataframe', _df)
+            return _df
+    except Exception:
+        pass
+    # B9/B10：平台自动批量预取（纯增益；无池/失败静默回退逐股）
+    try:
+        _qs_gf_maybe_prefetch(_secs, table, _field_list, date)
+    except Exception:
+        pass
+    # 预取缓存命中（单码）→ 免平台调用（破流控）；未命中回退下方平台调用
+    if len(_secs) == 1:
+        try:
+            _cached = _qs_gf_auto_cache_get(_secs[0], table, date, _field_list)
+            if _cached is not None:
+                _qs_shape_check('get_fundamentals', 'dataframe', _cached)
+                return _cached
+        except Exception:
+            pass
+    try:
+        _qs_gf_progress(_secs, table, date)
         _df = _QSFundState.orig(_secs, table, fields=_plat_fields, date=date,
                                 is_dataframe=is_dataframe, *args, **kwargs)
         _df = _qs_frame_to_contract(_df, _secs, fields, table)
@@ -1270,6 +1457,416 @@ def get_fundamentals(security, table='valuation', fields=None, date=None,
             _df = _qs_pd.concat(_frames)
     _qs_shape_check('get_fundamentals', 'dataframe', _df)
     return _df
+
+
+def _qs_gf_progress(secs, table, date):
+    """v8.7b 可观测性：wrapper 平台原语调用进度日志（定位 v8.7 平台卡死点，
+    2026-08-31）——每表每月首 3 次 + 每 50 次打一行 QS_GF_CALL（table/date/序号）。
+    卡住时最后一条日志即平台挂起的死调用。"""
+    try:
+        _g = _qs_g_obj()
+        _n = 0
+        if _g is not None:
+            _c = getattr(_g, '_qs_gf_call_n', {{}})
+            _k = '%s|%s' % (table, str(date)[:7])
+            _n = _c.get(_k, 0) + 1
+            _c[_k] = _n
+            _g._qs_gf_call_n = _c
+        if _n <= 3 or _n % 50 == 0:
+            log.info('QS_GF_CALL n=%d table=%s date=%s secs=%d'
+                     % (_n, table, str(date)[:10], len(secs)))
+    except Exception:
+        pass
+
+
+def _qs_g_obj():
+    """平台全局 g 安全引用（策略平台 g 为全局 API；本地/测试无 g → None 不炸）。"""
+    try:
+        return g
+    except NameError:
+        return None
+
+
+def _qs_prev_window_date(cur_df, date):
+    """B6b 回退路径平台同比窗口日期：cur 最新 end_date（epoch 毫秒契约，v8.7）还原
+    'YYYY-MM-DD' 后反推（cur 年-1 + 同月日）。注：平台 date 查询为披露时点语义，
+    该窗口常取不到期（主路径已改 range 多期 + PIT）。"""
+    try:
+        if cur_df is not None and len(cur_df) and 'end_date' in cur_df.columns:
+            _ser = cur_df['end_date'].dropna()
+            if len(_ser):
+                _max = float(max(float(x) for x in _ser))
+                _s = str(_qs_np.datetime64(int(_max), 'ms'))[:10]
+                return str(int(_s[:4]) - 1) + _s[4:]
+    except Exception:
+        pass
+    return str(int(str(date)[:4]) - 1) + str(date)[4:]
+
+def _qs_multi_flat(df):
+    """平台 range 多期返回 index=multi2(end_date, secu_code) → 普通行拍平：
+    按 index 重建 end_date / code 列后 reset（探针 P1 实证，审计 B-1 裁定击穿本地
+    index=code 契约 → wrapper 层修复，不透传多级 index）。非 MultiIndex 原样返回。"""
+    if df is None or not hasattr(df, 'index'):
+        return df
+    try:
+        if df.index.nlevels < 2:
+            return df
+    except Exception:
+        return df
+    try:
+        _idx = list(df.index)
+        _out = df.copy()
+        _out['end_date'] = [str(_x[0]) for _x in _idx]
+        if 'code' not in _out.columns and 'secu_code' not in _out.columns:
+            _out['code'] = [(_x[1] if len(_x) > 1 else None) for _x in _idx]
+        _out = _out.reset_index(drop=True)
+        return _out
+    except Exception:
+        return df
+
+
+def _qs_pit_filter(df, date):
+    """平台 range 全期行过滤（对齐本地『ann_date<=date 最新已披露』）。PIT 判据
+    （v8.6，2026-08-31 P5-7 实证）：
+      1) 值域兜底：非 end_date/publ_date 数值列全 NaN（未披露占位，如 2026-06-30 中报
+         range 返回 NaN 行）→ 剔除（不问 publ_date——平台 list+range 模式 publ_date
+         全空，P5-1 empty=18 实证，仅靠 publ_date 无法剔占位期）
+      2) publ_date 有值且 > date → 剔除；缺失/空串 → 不据此剔除
+    关键：空串绝不能 astype(float)（P5-1 ValueError）→ 逐行安全比对。原始 BUG 链路：
+    空串 ValueError → wrapper FAILOPEN/整表放行 → NaN 占位期被 _latest_statement 取为
+    cur → fscore 实跑 3（P5-7 平台复算 79 的差异源，RD-4）。"""
+    if df is None or not len(df) or 'publ_date' not in df.columns:
+        return df
+    try:
+        import re as _qs_re
+        _dn = _qs_re.sub(r'\\D', '', str(date))[:8]
+        if not _dn.isdigit() or len(_dn) != 8:
+            return df
+        _dn = float(_dn)
+        _val_cols = [c for c in df.columns if c not in ("end_date", "publ_date", "code", "secu_code")]
+        keep = []
+        for _i in range(len(df)):
+            _row = df.iloc[_i]
+            # 1) 值域兜底：数值列全 NaN → 未披露占位剔除
+            _all_nan = True
+            for _c in _val_cols:
+                _v = _row.get(_c)
+                try:
+                    _vs = str(_v).strip() if _v is not None else ""
+                    if _vs and _vs.lower() not in ("nan", "none", "nat"):
+                        _all_nan = False
+                        break
+                except Exception:
+                    _all_nan = False
+                    break
+            if _all_nan:
+                keep.append(False)
+                continue
+            # 2) publ_date 判据
+            _s = str(_row.get('publ_date') or "").strip()
+            if not _s or _s.lower() in ("nan", "none", "nat"):
+                keep.append(True)          # 空/缺失 → 不据此剔除（平台 list+range 全空）
+                continue
+            _num = _qs_re.sub(r'\\D', '', _s)
+            if _num.isdigit() and len(_num) >= 8:
+                keep.append(float(_num[:8]) <= _dn)
+            else:
+                keep.append(True)
+        return df[[bool(b) for b in keep]]
+    except Exception:
+        return df
+
+# B8 缺列种子（探针 P2 实证，2026-08-31）：balance/income/valuation × 8 净资产/股本字段
+# 平台全 EMPTY（KeyError not in index）→ 首调即短路（免平台调用免告警刷屏，v8/v8.1 实证
+# total_share 60+ 次/日）。运行时动态 gap（_qs_gf_mark_gap）追加合并。
+_QS_GF_GAP_SEEDS = set()
+for _qs_gap_t in ('balance', 'income', 'valuation'):
+    for _qs_gap_f in ('total_equity', 'total_hldr_eqy', 'total_hldr_eqy_excl_min_int',
+                      'total_hldr_eqy_inc_min_int', 'total_share', 'total_shares',
+                      'capital_reserve', 'share_capital'):
+        _QS_GF_GAP_SEEDS.add((_qs_gap_t, _qs_gap_f))
+
+
+def _qs_gf_known_gaps():
+    """已知缺列集 = 探针实证种子 ∪ 运行时登记（g._qs_gf_field_gaps）；无 g/未登记 → 种子集。"""
+    _gaps = set(_QS_GF_GAP_SEEDS)
+    _g = _qs_g_obj()
+    if _g is not None:
+        _gaps.update(getattr(_g, '_qs_gf_field_gaps', None) or set())
+    return _gaps
+
+
+def _qs_gf_mark_gap(table, field):
+    """登记缺列（一次性告警 + 短路依据；B8 平台缺列确认后不再逐次平台调用/刷屏）。"""
+    _g = _qs_g_obj()
+    if _g is None or not table or not field:
+        return
+    _gaps = getattr(_g, '_qs_gf_field_gaps', None) or set()
+    _gaps.add((table, field))
+    _g._qs_gf_field_gaps = _gaps
+
+
+def _qs_gf_gap_shortcut(table, field_list):
+    """已确认缺列命中集（约束 wrapper：命中全部请求字段 → 直接 NaN 行短路）。
+    注：模板经 .format 渲染，禁止 set 推导式字面量（花括号括 f 遍历式会被当作占位符）。"""
+    _gaps = _qs_gf_known_gaps()
+    if not _gaps or not field_list:
+        return set()
+    _hit = set()
+    for _f in field_list:
+        if (table, _f) in _gaps:
+            _hit.add(_f)
+    return _hit
+
+
+_QS_REPORT_TYPE_MD = {{1: '0331', 2: '0630', 3: '0930', 4: '1231'}}
+
+
+def _qs_filter_report_types(df, report_types):
+    """B-1 report_types 多期过滤（2026-08-31 探针 P1：平台 report_types 为 start_year 模式
+    参数，date 模式不可传）→ 双查询返回后按 end_date 月日过滤（1/2/3/4 → 0331/0630/0930/1231）。
+    v8.7：end_date 为 epoch 毫秒契约——经 np.datetime64 还原 'MMDD'（YYYYMMDD 数值切片 [4:8]
+    对 ms epoch 失效，2026-08-31 v8.6 复验后修复）。"""
+    try:
+        _md = _QS_REPORT_TYPE_MD.get(int(report_types))
+        if _md and df is not None and len(df) and 'end_date' in df.columns:
+            def _mm(_v):
+                try:
+                    _t = str(_qs_np.datetime64(int(float(_v)), 'ms'))
+                    return _t[5:7] + _t[8:10]
+                except Exception:
+                    return ''
+            _ser = df['end_date'].map(_mm)
+            return df[_ser == _md]
+    except Exception:
+        pass
+    return df
+
+
+def _qs_gf_pit_filter(df, date):
+    """B-1 publ_date PIT 过滤（2026-08-31 探针 P1：publ_date≤date 过滤 12 行→9 行可复现）：
+    返回 publ_date 数值 ≤ date 数值 的行。本地 provider / 平台 date 模式均已 PIT，
+    本 helper 供多期查询/审计/未来显式语义使用。v8.7：日期归一用 _qs_norm_publ_date
+    （YYYYMMDD 比较语义）——_qs_norm_report_date 现为 end_date 契约（epoch 毫秒），
+    混用会把 publ_date（YYYYMMDD）误判（2026-08-31）。"""
+    if df is None or not len(df) or date is None or 'publ_date' not in df.columns:
+        return df
+    try:
+        _d = float(_qs_norm_publ_date(str(date)))
+        _ok = df['publ_date'].map(
+            lambda _x: (float(_qs_norm_publ_date(_x)) if _x == _x else _d) <= _d)
+        return df[_ok]
+    except Exception:
+        return df
+
+
+def _qs_gf_maybe_prefetch(secs, table, field_list, date):
+    """B9/B10 自动批量预取（2026-08-31，平台无 get_fundamentals_batch → list 模式，
+    P-D10 实证 500 码 0.05s FULL；破逐股 1488 次/日流控卡死）：
+    策略在 g.universe/g.candidates 设全池后，首个单码/小批 get_fundamentals 触发
+    该表当月两期（date / date-1年）全池 list 预取 → g._qs_gf_cache；后续单码命中
+    _qs_gf_auto_cache_get 免平台调用。纯增益：无池/失败静默回退逐股，不改变契约返回。
+    缓存按月幂等（g._qs_gf_prefetched[table] == 月 key）。"""
+    _g = _qs_g_obj()
+    _pool = None
+    try:
+        _pool = getattr(_g, 'universe', None) or getattr(_g, 'candidates', None)
+    except Exception:
+        _pool = None
+    if not _pool or date is None:
+        return
+    _dkey = str(date)[:10]
+    _mkey = _dkey[:7]
+    _done = getattr(_g, '_qs_gf_prefetched', {{}})
+    if _done.get(table) == _mkey:
+        return
+    if isinstance(secs, (list, tuple)) and len(secs) > 32:
+        return  # 已是批量调用 → 无需预取
+    # v8.4 平台卡死修复（2026-08-31 四次复验）：大池禁止批量 list 预取——fscore
+    # universe=300 时首个 ROE 单码触发 profit_ability 全池 list（2 期×300 码），
+    # 平台该表 list 批量未获探针实证（P-D10 仅 income/valuation 500 码 0.05s）、
+    # 实测挂起（日志停在 QS_GF_PREFETCH 后）。>32 码跳过批量预取 → 回退逐股
+    # （v7/v8.2 覆盖版同路径可跑完 07-01）；池 ≤32（小池策略）保留批量预取。
+    # SKIP 按月幂等（_done[table]=_mkey），避免后续单码每次重复打 SKIP 日志。
+    if len(_pool) > 32:
+        log.info('QS_GF_PREFETCH_SKIP date=%s table=%s pool=%d（>32 不批量预取，逐股回退）'
+                 % (_dkey, table, len(_pool)))
+        _done[table] = _mkey
+        _g._qs_gf_prefetched = _done
+        return
+    _mkey = _dkey[:7]
+    _done = getattr(_g, '_qs_gf_prefetched', {{}})
+    if _done.get(table) == _mkey:
+        return
+    _cache = getattr(_g, '_qs_gf_cache', None)
+    if _cache is None:
+        _cache = {{}}
+        _g._qs_gf_cache = _cache
+    _prev_date = str(int(_dkey[:4]) - 1) + _dkey[4:]
+    _flds = ['end_date'] + [f for f in (field_list or []) if f != 'end_date']
+    for _dk in (_dkey, _prev_date):
+        try:
+            _raw = _QSFundState.orig(_pool, table, fields=_plat_fields_of(_flds),
+                                     date=_dk, is_dataframe=True)
+            _df = _qs_frame_to_contract(_raw, _pool, _flds, table)
+        except Exception as _e:
+            log.warning('QS_GF_PREFETCH table=%s date=%s error=%s（回退逐股）'
+                        % (table, _dk, repr(_e)[:60]))
+            continue
+        if _df is None or not len(_df):
+            continue
+        _by_code = _cache.setdefault(table, {{}})
+        for _code in _pool:
+            try:
+                _r = _df.loc[_code] if _code in _df.index else None
+                if _r is None:
+                    continue
+                if getattr(_r, 'ndim', 1) > 1:
+                    _r = _r.sort_values('end_date').iloc[-1]
+                _by_code.setdefault(str(_code), {{}})[_dk] = _r
+            except Exception:
+                continue
+    _done[table] = _mkey
+    _g._qs_gf_prefetched = _done
+    log.info('QS_GF_PREFETCH date=%s table=%s pool=%d' % (_dkey, table, len(_pool)))
+
+
+def _qs_gf_auto_cache_get(code, table, date, field_list):
+    """单码预取缓存读（B9）：date 视角最近一期单行 → 本地契约 df(index=[code], cols=fields)。
+    未命中/无缓存 → None（调用方回退平台调用）。"""
+    _g = _qs_g_obj()
+    _cache = getattr(_g, '_qs_gf_cache', None)
+    if not _cache:
+        return None
+    _by_code = _cache.get(table)
+    if not _by_code:
+        return None
+    _rows = _by_code.get(str(code))
+    if not _rows:
+        return None
+    _dk = str(date)[:10]
+    _cand = [(_k, _sr) for (_k, _sr) in _rows.items() if _k and str(_k)[:10] == _dk]
+    if not _cand:
+        return None
+    _cand.sort(key=lambda _p: float(_p[1].get('end_date') or 0))
+    _sr = _cand[-1][1]
+    _flds = list(field_list) if field_list else [c for c in _sr.index if c != 'end_date']
+    _out = _qs_pd.DataFrame([[float(_sr.get(f)) for f in _flds]], columns=_flds)
+    _out.index = [code]
+    return _out
+
+
+def _plat_fields_of(flds):
+    """请求字段集 → 平台字段集（_QS_GF_FIELD_MAP 翻译；batch/list 预取同构）。"""
+    return [_QS_GF_FIELD_MAP.get(f, f) for f in (flds or [])]
+
+
+def _qs_equity_probe(code, date):
+    """B-2 净资产/总股本可用性一次性探测（2026-08-31 探针 P2：字段族全缺失）：
+    g 缓存一次判定；⑦ 平台恒降级由 NaN 缺列自动达成（RD-1），本函数供审计/策略显式用。"""
+    _g = _qs_g_obj()
+    if getattr(_g, '_qs_equity_checked', False):
+        return bool(getattr(_g, '_qs_equity_usable', False))
+    if _g is not None:
+        _g._qs_equity_checked = True
+    _usable = False
+    try:
+        _eqt = _QSFundState.orig([code], 'balance_statement', fields=['total_equity'],
+                                 date=date, is_dataframe=True)
+        _clean = _qs_frame_to_contract(_eqt, [code], ['total_equity'], 'balance_statement')
+        if _clean is not None and len(_clean) and 'total_equity' in _clean.columns:
+            _usable = bool(_clean['total_equity'].notna().any())
+    except Exception:
+        _usable = False
+    if _g is not None:
+        _g._qs_equity_usable = _usable
+    log.info('QS_EQUITY_PROBE date=%s equity_usable=%s' % (date, _usable))
+    return _usable
+'''
+
+# ===== B1/B7 get_industry 平台替代（2026-08-31，双端行业剔除对齐） =====
+# 平台探针 P4（probe v2.1b）：get_industry 不可用（LOCAL_ONLY）、
+# get_industry_stocks('480000.XBHS') 银行 42 只有效（480000 裸码/801780 全形态无效）→
+# 反向金融池双码方案（v7 产物实证 finance_pool=121 = 银行42+非银79）。
+# 行业码集 _QS_INDUSTRY_CODES 转换期从策略源码烘焙（6 位数字引号字面量，如
+# ('801780','801790','480000','490000')）——框架层通用，任意剔除行业语义自动生效。
+# 语义差异登记 RD-3：本地 fail-closed（无法确认行业→剔除）vs 平台 fail-open
+# （池外/池无效→非金融哨兵 999999→不剔），防平台全剔空仓（B1 初始 300 只根因）。
+_QS_INDUSTRY_EXT = '''
+{marker}
+# [qs-import-generated] get_industry 平台替代包装（B1/B7，2026-08-31）
+class _QSIndustryState:
+    """平台 get_industry_stocks / get_industry 引用（class 属性承载过平台
+    LOCAL-API-WHITELIST；模块级变量持函数引用再调用会被 BLOCK，2026-08-22 实证同款）。"""
+    get_industry_stocks_orig = None
+    get_industry_orig = None
+
+
+_QSIndustryState.get_industry_stocks_orig = get_industry_stocks
+try:
+    _QSIndustryState.get_industry_orig = get_industry
+except Exception:
+    _QSIndustryState.get_industry_orig = None
+
+# 转换期从策略源码烘焙的行业码集（__QS_INDUSTRY_CODES__ 占位，渲染后替换）
+_QS_INDUSTRY_CODES = __QS_INDUSTRY_CODES__
+
+
+def _qs_finance_pool():
+    """懒构建反向金融池（行业码双码尝试：裸/.XBHS/.XBKS；命中即停）；g 缓存一次。
+    返回 (pool, valid)。valid=False → 下游回退原生 get_industry + fail-open。"""
+    _g = _qs_g_obj()
+    _pool = getattr(_g, '_qs_finance_pool', None)
+    if _pool is not None:
+        return _pool, bool(getattr(_g, '_qs_finance_pool_valid', False))
+    _pool = []
+    _got = False
+    for _ind in _QS_INDUSTRY_CODES:
+        for _c in (_ind, _ind + '.XBHS', _ind + '.XBKS'):
+            try:
+                _members = _QSIndustryState.get_industry_stocks_orig(_c) or []
+            except Exception:
+                continue
+            if _members:
+                _got = True
+                for _m in _members:
+                    if _m not in _pool:
+                        _pool.append(_m)
+                break
+    if _g is not None:
+        _g._qs_finance_pool = _pool
+        _g._qs_finance_pool_valid = _got
+    log.info('QS_INDUSTRY_POOL industries=%s pool_size=%d valid=%s'
+             % (','.join(_QS_INDUSTRY_CODES), len(_pool), _got))
+    return _pool, _got
+
+
+def get_industry(code):
+    """平台替代：返回本地 get_industry 契约（{{'sw_l1': {{'industry_code': ...}}}}）。
+    - 池有效：code ∈ 池 → 首个策略行业码（∈ 策略剔除集 → 剔）；否则 → '999999'
+      （非金融哨兵，∉ 策略行业集 → 不剔，fail-open）；
+    - 池无效：回退原生 get_industry（如有）；无 → '999999' 不剔 + 一次性告警
+      QS_INDUSTRY_UNAVAILABLE（RD-3 降级登记，防本地 fail-closed 全剔空仓）。"""
+    _g = _qs_g_obj()
+    _pool, _valid = _qs_finance_pool()
+    if _valid:
+        if str(code) in _pool:
+            _hit = _QS_INDUSTRY_CODES[0] if _QS_INDUSTRY_CODES else '999999'
+            return {{'sw_l1': {{'industry_code': _hit}}}}
+        return {{'sw_l1': {{'industry_code': '999999'}}}}
+    if _QSIndustryState.get_industry_orig is not None:
+        try:
+            _ind = _QSIndustryState.get_industry_orig(code)
+            if _ind:
+                return _ind
+        except Exception:
+            pass
+    _flag = '_qs_industry_warned'
+    if _g is not None and not getattr(_g, _flag, False):
+        _g._qs_industry_warned = True
+        log.warning('QS_INDUSTRY_UNAVAILABLE get_industry 平台不可用且行业池无效'
+                    '（行业剔除降级 fail-open，登记 RD-3）')
+    return {{'sw_l1': {{'industry_code': '999999'}}}}
 '''
 
 # ===== P-D11 持仓视图归一（2026-08-26，P-POS 平台实证 docs/evidence/pd11-pos-probe-20260826.md） =====
@@ -1433,6 +2030,18 @@ def _render_position_view_ext(marker: str) -> str:
             .replace("__QS_BSE_N__", str(len(codes))))
 
 
+def _render_industry_ext(marker: str, industry_codes: tuple[str, ...]) -> str:
+    """B1 模板渲染：format(marker) → 替换 _QS_INDUSTRY_CODES 烘焙行业码字面量（tuple）。
+
+    industry_codes 为空 → 烘焙空 tuple（wrapper 池空 → fail-open + RD-3 告警，
+    转换器另有 warnings 条目；不抛错，保持转换可用）。
+    注意：必须渲染为 tuple（模板内 _QS_INDUSTRY_CODES[0] 下标、','.join 保序），
+    渲染为 set 会运行 TypeError。"""
+    literal = "(%s)" % ", ".join("'%s'" % c for c in industry_codes)
+    return (_QS_INDUSTRY_EXT.format(marker=marker)
+            .replace("__QS_INDUSTRY_CODES__", literal))
+
+
 # ===== P-D13 C1a/C1b/C3a：宇宙差审计 + 北交所过滤 + 窗口审计（2026-08-27） =====
 # C1a 板块统计：get_Ashares 返回后输出 QS_ASHARES_BREAKDOWN（定位 322 北交所差）。
 # C1b exclude_bse：_QS_EXCLUDE_BSE 常量（转换期 CLI --exclude-bse 烘焙，默认 False
@@ -1490,77 +2099,11 @@ def _render_data_audit_ext(marker: str, exclude_bse: bool = False) -> str:
 #   'passthrough'（默认）：请求平台 eps 列（现状，容忍平台加权口径差异）；
 #   'basic'：请求平台 basic_eps 列（本地 eps 语义）；
 #   'diluted'：请求平台 diluted_eps 列（本地 diluted_eps 语义）。
-# 平台返回的 basic_eps/diluted_eps 列经 _QS_FIDELITY_EPS_FIELD_MAP_REV 逆翻译回本地
-# 'eps'/'diluted_eps' 名 → 策略按本地列名消费、数值与本地一致（平台产物向本地收敛）。
-# 双端校验（审计 v2 收尾项）：basic/diluted 均已由探针实证双端列存在方可激活；
-# 任一端缺失（ttm/bps/weighted）→ 转换期显性报错或降级 passthrough + WARNING（见
-# fidelity_config.resolve_eps_basis 与 qs-compile 调用链），禁止静默单端 fallback。
-# 本常量段**门控注入**：仅 fidelity_eps_basis != 'passthrough' 时追加（默认产物逐字节不变）。
-_QS_FIDELITY_EPS_EXT = '''
-{marker}
-# [qs-import-generated] P-A2 eps 口径保真映射（fidelity_eps_basis={eps_basis}，2026-08-24）
-# 覆写 P-D10 get_fundamentals wrapper：eps 表请求字段 eps→basic_eps/diluted_eps，
-# 返回列逆翻译回 eps/diluted_eps（本地语义锚，策略无感知）；其余行为与 P-D10 逐位一致。
-_QS_FIDELITY_EPS_BASIS = '{eps_basis}'
-_QS_FIDELITY_EPS_FIELD_MAP = {{'passthrough': {{}}, 'basic': {{'eps': 'basic_eps'}},
-                               'diluted': {{'eps': 'diluted_eps'}}}}
-_QS_FIDELITY_EPS_FIELD_MAP_REV = {{
-    plat: loc for _basis, _m in _QS_FIDELITY_EPS_FIELD_MAP.items() for loc, plat in _m.items()}}
-if _QS_FIDELITY_EPS_BASIS not in ('passthrough', 'basic', 'diluted'):
-    raise RuntimeError('_QS_FIDELITY_EPS_BASIS=%r 非法（允许 passthrough/basic/diluted）'
-                       % (_QS_FIDELITY_EPS_BASIS,))
-
-
-def get_fundamentals(security, table='valuation', fields=None, date=None,
-                     is_dataframe=True, *args, **kwargs):
-    """P-A2 覆写：P-D10 契约 + eps 口径双端映射（eps→平台 basic_eps/diluted_eps）。
-
-    - 请求翻译：eps 表且 basis 命中 → fields 中 eps→basic_eps/diluted_eps
-      （_QS_FIDELITY_EPS_FIELD_MAP）；growth_ability 仍走 _QS_GF_FIELD_MAP。
-    - 返回逆翻译：平台 basic_eps/diluted_eps 列 → 本地 eps/diluted_eps 名
-      （_QS_FIDELITY_EPS_FIELD_MAP_REV，在 _qs_frame_to_contract 后二次 rename）。
-    其余（list 原生调用/列筛选/end_date 归一/空行为/逐码退化）与 P-D10 逐位一致。
-    """
-    _secs = security if isinstance(security, (list, tuple)) else [security]
-    _field_list = [fields] if isinstance(fields, str) else (list(fields) if fields else None)
-    if _field_list is not None and table == 'eps' and _QS_FIDELITY_EPS_BASIS != 'passthrough':
-        _m = _QS_FIDELITY_EPS_FIELD_MAP.get(_QS_FIDELITY_EPS_BASIS, {{}})
-        _plat_fields = [_m.get(f, f) for f in _field_list]
-    else:
-        _plat_fields = ([_QS_GF_FIELD_MAP.get(f, f) for f in _field_list]
-                        if _field_list is not None else None)
-    try:
-        _df = _QSFundState.orig(_secs, table, fields=_plat_fields, date=date,
-                                is_dataframe=is_dataframe, *args, **kwargs)
-        _df = _qs_frame_to_contract(_df, _secs, fields, table)
-    except Exception as exc:
-        log.warning('GF-FAILOPEN get_fundamentals list-call %s: %s' % (type(exc).__name__, exc))
-        _frames = []
-        for _code in _secs:
-            try:
-                _one = _QSFundState.orig(_code, table, fields=_plat_fields, date=date,
-                                         is_dataframe=is_dataframe, *args, **kwargs)
-                if _one is None or not hasattr(_one, 'columns'):
-                    continue
-                _one = _qs_frame_to_contract(_one, [_code], fields, table)
-                if len(_one) > 0:
-                    _frames.append(_one)
-            except Exception as exc2:
-                log.warning('GF-FAILOPEN get_fundamentals %s %s: %s' % (_code, type(exc2).__name__, exc2))
-        if not _frames:
-            _df = _qs_pd.DataFrame(columns=[fields] if isinstance(fields, str)
-                                   else (fields or []))
-        else:
-            _df = _qs_pd.concat(_frames)
-    # P-A2 返回逆翻译：平台 basic_eps/diluted_eps 列 → 本地 eps/diluted_eps 名
-    if table == 'eps' and _QS_FIDELITY_EPS_BASIS != 'passthrough' and _df is not None:
-        try:
-            _df = _df.rename(columns=_QS_FIDELITY_EPS_FIELD_MAP_REV)
-        except Exception:
-            pass
-    _qs_shape_check('get_fundamentals', 'dataframe', _df)
-    return _df
-'''
+# 平台返回的 basic_eps/diluted_eps 列经逆翻译回本地 'eps'/'diluted_eps' 名。
+# v8.3 整合（2026-08-31）：常量 + 请求/返回翻译全部并入 _QS_FUNDAMENTALS_EXT（唯一
+# wrapper、唯一 get_fundamentals 定义）——旧版 _QS_FIDELITY_EPS_EXT 独立 def 在后注入
+# 同名覆盖 B6c/seeds/PIT 全部修复（平台复验 v8.0~v8.2 总根因）已删除；eps_basis 由
+# 转换器经 _QS_FUNDAMENTALS_EXT.format(eps_basis=...) 烘焙进产物。
 
 # 档 2 表达式内嵌的等价字面量（H2）：本地函数 → PTrade 语义等价字面量
 _REWRITE_LITERALS: dict[str, str] = {
@@ -1682,7 +2225,7 @@ def _source_uses_ashares_api(source: str) -> bool:
 
 def _source_uses_fundamentals(source: str) -> bool:
     """门控（P-D10）：源策略调用 get_fundamentals / get_fundamentals_batch →
-    注入契约对齐包装（list 单调用 + 列筛选 + 日期归一 + 形状自检）。"""
+    注入契约对齐包装（list 单调用 + 列筛选 + 日期归一 + 形状自检 + B6 双查询分派 + 批量预取）。"""
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -1694,6 +2237,42 @@ def _source_uses_fundamentals(source: str) -> bool:
             if name in ("get_fundamentals", "get_fundamentals_batch"):
                 return True
     return False
+
+
+def _source_uses_industry_api(source: str) -> bool:
+    """门控（B1）：源策略调用 get_industry → 注入平台替代包装（反向金融池双码 + fail-open）。"""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return "get_industry(" in source
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            fn = node.func
+            if isinstance(fn, ast.Name) and fn.id == "get_industry":
+                return True
+            if isinstance(fn, ast.Attribute) and fn.attr == "get_industry":
+                return True
+    return False
+
+
+def _extract_industry_codes(source: str) -> tuple[str, ...]:
+    """从策略源码提取行业码集（6 位数字引号字面量，如 ('801780','801790','480000','490000')
+    的行业剔除判定集）→ 烘焙进 _QS_INDUSTRY_EXT 的 _QS_INDUSTRY_CODES。
+
+    AST 遍历全部字符串常量：纯 6 位数字即候选（行业码惯用 6 位；'000001' 类股票代码
+    一般 6/7 位带后缀不命中；日期/数字串有引号极少）。空 → 空元组（转换器告警，
+    行业剔除降级 fail-open 登记 RD-3）。"""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return ()
+    codes: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            v = node.value.strip()
+            if len(v) == 6 and v.isdigit() and v not in codes:
+                codes.append(v)
+    return tuple(codes)
 
 # ============================================================================
 # 工具
@@ -2687,18 +3266,30 @@ class SourceConverter:
                  "filter_stock_by_status_wrapper"])
         # P-D10 契约对齐门控扩展：源策略调用 get_fundamentals/get_fundamentals_batch 时注入
         # （在 shim 之前 → shim 内部调 get_fundamentals 已是 wrapper 版本 → 返回本地契约 DataFrame）
+        # v8.3 整合：eps 常量与映射烘焙进 _QS_FUNDAMENTALS_EXT（唯一 wrapper、唯一
+        # get_fundamentals 定义）——旧独立 _QS_FIDELITY_EPS_EXT def 覆盖（v8.0~v8.2
+        # 平台复验总根因）已删除，此处不再二次注入。
         if _source_uses_fundamentals(code):
-            blocks.append(_QS_FUNDAMENTALS_EXT.format(marker=INJECTED_MARKER))
+            blocks.append(_QS_FUNDAMENTALS_EXT.format(
+                marker=INJECTED_MARKER, eps_basis=self._fidelity_eps_basis))
             self.coverage["injected_helpers"].extend(
                 ["fundamentals_wrapper", "_qs_norm_fund_dates",
-                 "_qs_fund_select_fields", "get_fundamentals_wrapper"])
-            # P-A2 保真映射门控注入：仅 fidelity_eps_basis != passthrough 时追加
-            # （默认产物逐字节不变；basic/diluted 显式 opt-in 才带 _QS_FIDELITY_* 常量）
-            if self._fidelity_eps_basis in ("basic", "diluted"):
-                blocks.append(_QS_FIDELITY_EPS_EXT.format(
-                    marker=INJECTED_MARKER, eps_basis=self._fidelity_eps_basis))
-                self.coverage["injected_helpers"].extend(
-                    ["fidelity_eps_basis", "_qs_fidelity_eps_basis"])
+                 "_qs_fund_select_fields", "get_fundamentals_wrapper",
+                 "_qs_gf_maybe_prefetch", "_qs_gf_auto_cache_get",
+                 "_qs_gf_pit_filter", "_qs_equity_probe",
+                 "_qs_multi_flat", "_qs_pit_filter", "_QS_GF_GAP_SEEDS"])
+        # B1 get_industry 平台替代门控扩展：源策略调用 get_industry 时注入
+        # （反向金融池双码 + fail-open；行业码集从策略源码烘焙，框架层通用）
+        if _source_uses_industry_api(code):
+            _ind_codes = _extract_industry_codes(code)
+            blocks.append(_render_industry_ext(INJECTED_MARKER, _ind_codes))
+            self.coverage["injected_helpers"].extend(
+                ["industry_wrapper", "_qs_finance_pool", "get_industry_wrapper"])
+            if not _ind_codes:
+                self.warnings.append(
+                    "B1 行业码集未从策略源码提取到（无 6 位数字引号字面量）——"
+                    "get_industry 平台替代池为空，行业剔除降级 fail-open（RD-3 登记）；"
+                    "请确认策略行业剔除判定含 6 位行业码字面量")
         # P-D11 持仓视图归一门控扩展：源策略调用 get_positions/get_position 时注入
         # （键 .SS/.SZ/.BJ 归一 + 残影过滤 + 本地 Position 契约视图；设计 v1.2 审定）
         if _source_uses_position_api(code):
