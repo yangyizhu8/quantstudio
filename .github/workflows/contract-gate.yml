@@ -1,0 +1,47 @@
+name: contract-gate
+
+# QuantStudio 框架契约回归门（CI 一期，2026-08-31 基础设施落地）
+# 触发：push（main）+ PR → 自动跑 run_contract_gate.py（契约套件 + 矩阵哈希门 + 6 策略冒烟）
+# 门禁内容与本地 `python scripts/run_contract_gate.py` 完全一致（既有失败白名单同源；
+# 模板改动未复证 → 矩阵哈希失配 → FAIL）。
+#
+# 二期（另行排期）：coverage.py 对 wrapper 模板渲染后代码的分支覆盖率阈值——
+# wrapper 定义于 _QS_FUNDAMENTALS_EXT 模板字符串（exec 渲染），行号映射需专门
+# coveragerc 配置（source 重映射/产物级覆盖），当前契约套件已 18/18 分支审计命中，
+# 覆盖率补齐价值主要在 CI 追加维度，故放二期。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  contract-gate:
+    name: contract-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . pytest pytest-timeout
+
+      - name: Run contract gate
+        run: python scripts/run_contract_gate.py --strategies
+
+      - name: On failure（定位提示）
+        if: failure()
+        run: |
+          echo "CONTRACT GATE FAILED —— 检查："
+          echo "  1) 契约套件新失败（非白名单）→ 修复或登记；"
+          echo "  2) 矩阵哈希失配（wrapper 模板改动未 --reverify）→ 补契约测试后 scripts/check_fund_matrix.py --check --reverify；"
+          echo "  3) 既有失败白名单漂移 → scripts/run_contract_gate.py 内 KNOWN_FAILS 核对。"
