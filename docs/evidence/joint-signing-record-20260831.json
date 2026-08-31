@@ -1,0 +1,21 @@
+{
+  "signed_at": "2026-08-31T10:15:10.524631",
+  "signer": "用户（四方之首/拍板权）",
+  "co_signers": [
+    "总调度（终审）",
+    "稳定化域（实施+举证）",
+    "终极解决域（审计+数据侧）",
+    "线调度（知悉+零漂移佐证）"
+  ],
+  "document": "docs/handoff/project_closure_report_20260828.md",
+  "p1d_checklist": "docs/evidence/p1d-four-party-acceptance-checklist-20260827.md",
+  "wp8_judgment": "6/6 全绿",
+  "p1d_judgment": "7/7 PASS",
+  "unlock": "WP8 解禁正式生效（2026-08-31）",
+  "scope_exclusions": [
+    "旧交易执行链保留至M3完成",
+    "QuestDB权威源+16:00 ETL永久保留"
+  ],
+  "g_naming": "会签-G(P1-D)/核对-G(M3影子)/AQ-G(Agent-Quant)",
+  "discipline": "D2双会话共仓纪律生效"
+}
