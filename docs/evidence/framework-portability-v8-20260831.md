@@ -211,6 +211,22 @@ validator blocks=0 b2warn=0；契约+fidelity 146 passed）
   `_qs_pit_filter` publ_date 归一 YYYYMMDD 数值比较（兼容 '2026-04-25' / 20260425）。
 - 预期：cur=2026-03-31（本地同语义）、prev=2025-03-31 → fscore_pass 回落至 ≈本地 97。
 
+### v8.8 产物（十次平台复验）—— 噪音移除 + 大池分组预取（性能，行为等价）
+`output/ptrade_export/fscore_rsrs/F-Score选股RSRS择时_v88_framework/F-Score选股RSRS择时_ptrade.py`
+（len=81448 / 1980 行；唯一 wrapper；矩阵哈希门 d61c9eca2136；契约回归 480 passed）
+
+**背景**（用户 2026-08-31 反馈：平台跑打印噪音 + 回测慢）：v8.7c 审计日志（QS_GF_META 每码
+9 行 ≈2200+ 行）使命完成未清理；fscore 249 只 × 3 表 range + ROE 单码 ≈1000 次平台往返 ≈13-15 分钟。
+**改动**：
+1. **噪音**：QS_GF_META 退役（仅注释）；QS_GF_CALL 降频至每 200 次 1 行。
+2. **大池分组预取**（替代 >32 整体 SKIP）：首个 range 调用触发该表全池 **3 码/组 list range
+   预取**（探针 P5-7 实证安全）→ B6c 单码（str / 单元素 list 双形态）命中 `_qs_gf_range_cache`
+   免平台调用；幂等按 (表,月,字段族)；失败 fail-open 回退逐股。
+**平台复验**（21:21:22→21:27:11 ≈**5 分 49 秒**，v8.7c ≈13 分 44 秒 → **≈2.4 倍提速**）：
+fscore_pass=35、候选 8 只、rv_removed=6、roa_removed=15 与 v8.7c **逐项一致**（行为等价铁律 ✅）；
+`QS_GF_PREFETCH_RANGE ×3（pool=300→100 组）、无 META、QS_GF_CALL n=1/200`。
+可选 v8.9：profit_ability date 形态同款分组预取（ROE 249→83 次，预计再 /2）。
+
 ### v8.7 产物（八次平台复验）—— end_date epoch 毫秒契约（残留根因）
 `output/ptrade_export/fscore_rsrs/F-Score选股RSRS择时_v87_framework/F-Score选股RSRS择时_ptrade.py`
 （len=76762 / 1866 行；唯一 wrapper（defs=1）；注入 9/9 OK；validator blocks=0 b2warn=0；

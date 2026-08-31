@@ -1343,6 +1343,18 @@ def get_fundamentals(security, table='valuation', fields=None, date=None,
     if (date is not None) and (start_year is not None or end_year is not None):
         try:
             _qs_gf_progress(_secs, table, 'range:%s' % date)
+            # v8.8 B6c range 缓存读：命中免平台调用；miss 触发全池分组预取
+            _qs_gf_maybe_prefetch_range(_secs, table, fields, date, start_year, end_year)
+            _ckey = _qs_gf_range_cache_key(table, fields)
+            _cdf = None
+            if _secs is not None and (not isinstance(_secs, (list, tuple)) or len(_secs) == 1):
+                # v8.8：策略有多种传参形态（单码 str 或单元素 list）→ 单码一律走缓存
+                _hit_code = _secs[0] if isinstance(_secs, (list, tuple)) else _secs
+                _cdf = _qs_gf_range_cache_hit(_hit_code, table, fields)
+            if _cdf is not None and report_types is None:
+                # v8.8 缓存命中：预取 df 已是 contract 后多期形态（与逐码路径同构）
+                _qs_shape_check('get_fundamentals', 'dataframe', _cdf)
+                return _cdf
             _raw = _QSFundState.orig(_secs, table, fields=_plat_fields,
                                      start_year=start_year, end_year=end_year,
                                      is_dataframe=is_dataframe, *args, **kwargs)
@@ -1358,29 +1370,7 @@ def get_fundamentals(security, table='valuation', fields=None, date=None,
                 _df = _qs_filter_report_types(_df, report_types)
             if len(_df):
                 _qs_shape_check('get_fundamentals', 'dataframe', _df)
-                # v8.7c QS_GF_META：per-code cur/prev（income 表，边界复核）
-                # —— 与探针 P5-8 的 cur/prev 全比对，定位 35 vs 34 的"≤1 只"边界差
-                #    （2026-08-31 归因；候选疑点：002415/300750/603259/605499 的
-                #    cur=2026-06-30 特例——wrapper 端是否同取中报有值期）。
-                if table == 'income_statement':
-                    try:
-                        for _ci in _df.index:
-                            _rowsE = _df[_df.index == _ci]['end_date'].dropna()
-                            if not len(_rowsE):
-                                continue
-                            _edv = max(float(float(x)) for x in _rowsE)
-                            _ed = str(_qs_np.datetime64(int(_edv), 'ms'))[:10]
-                            _py = int(_ed[:4]) - 1
-                            _pr = '-'
-                            for _x2 in _rowsE:
-                                _s2 = str(_qs_np.datetime64(int(float(_x2)), 'ms'))[:10]
-                                if _s2[:4] == str(_py) and _s2[5:] == _ed[5:]:
-                                    _pr = _s2
-                                    break
-                            log.info('QS_GF_META code=%s cur=%s prev=%s' %
-                                     (_ci, _ed, _pr))
-                    except Exception:
-                        pass
+                # v8.8：QS_GF_META 审计已退役（边界复核定论，噪音移除）
                 return _df
         except Exception as _exc:
             log.warning('GF-RANGE-FAILOPEN get_fundamentals date+range %s: %s'
@@ -1472,7 +1462,7 @@ def _qs_gf_progress(secs, table, date):
             _n = _c.get(_k, 0) + 1
             _c[_k] = _n
             _g._qs_gf_call_n = _c
-        if _n <= 3 or _n % 50 == 0:
+        if _n <= 1 or _n % 200 == 0:
             log.info('QS_GF_CALL n=%d table=%s date=%s secs=%d'
                      % (_n, table, str(date)[:10], len(secs)))
     except Exception:
@@ -1658,6 +1648,85 @@ def _qs_gf_pit_filter(df, date):
         return df[_ok]
     except Exception:
         return df
+
+
+# v8.8（2026-08-31 批复）：大池分组预取 + B6c range 缓存——噪音/慢双修。
+# 平台单码 range（fscore 249 只 × 3 表 + ROE）≈1000 次往返 ≈15 分钟；
+# 3 码/组 list（P5-7 实证安全）→ ~332 次 ≈3 倍提速；行为等价（缓存同源同值）。
+def _qs_gf_range_cache_key(table, flds):
+    """B6c range 缓存 key 规范化：预取与命中必须同构（end_date/publ_date 恒入键，
+    否则 预取 key(含日期列) ≠ 命中 key(仅请求列) → 恒 miss）。v8.8。"""
+    _n = ["end_date", "publ_date"] + [f for f in (flds or [])
+                                      if f not in ("end_date", "publ_date")]
+    return "%s|%s" % (table, ",".join(sorted(_n)))
+
+
+def _qs_gf_range_cache_hit(code, table, flds):
+    """B6c range 预取缓存读：命中返回 contract 后多期 df（同单码 B6c 产物），
+    miss/无缓存 → None（调用方回退平台调用）。v8.8。"""
+    try:
+        _g = _qs_g_obj()
+        _c = getattr(_g, "_qs_gf_range_cache", None)
+        if not _c:
+            return None
+        return _c.get(_qs_gf_range_cache_key(table, flds), {{}}).get(str(code))
+    except Exception:
+        return None
+
+
+def _qs_gf_maybe_prefetch_range(secs, table, field_list, date, start_year, end_year):
+    """B6c range 全池分组预取（v8.8，替代 >32 整体 SKIP）：
+    首个 range 调用触发该表全池 3 码/组 list range 预取 → _qs_gf_range_cache；
+    后续同表同字段单码 B6c 命中缓存免平台调用。幂等按 (table,月,字段族)；
+    失败逐组 continue + 整表标 done（fail-open 回退逐股，防再挂）。
+    调用形态与探针 P5-7 分组 3 码实证一致（83 组跑通）。"""
+    _g = _qs_g_obj()
+    _pool = None
+    try:
+        _pool = getattr(_g, "universe", None) or getattr(_g, "candidates", None)
+    except Exception:
+        _pool = None
+    if not _pool or len(_pool) <= 1:
+        return
+    _mkey = str(date)[:7]
+    _k = "%s|%s|%s" % (table, _mkey, "|".join(sorted(field_list or [])))
+    _done = dict(getattr(_g, "_qs_gf_range_prefetched", {{}}))
+    if _done.get(_k):
+        _g._qs_gf_range_prefetched = _done
+        return
+    _flds = ["end_date", "publ_date"] + [f for f in (field_list or []) if f not in ("end_date", "publ_date")]
+    _plat = _plat_fields_of(_flds)
+    _cache = getattr(_g, "_qs_gf_range_cache", None)
+    if _cache is None:
+        _cache = {{}}
+        _g._qs_gf_range_cache = _cache
+    _ckey = _qs_gf_range_cache_key(table, _flds)
+    _by_key = _cache.setdefault(_ckey, {{}})
+    import numpy as _qs_np8
+    for _i in range(0, len(_pool), 3):
+        _grp = list(_pool[_i:_i + 3])
+        try:
+            _raw = _QSFundState.orig(_grp, table, fields=_plat,
+                                    start_year=start_year, end_year=end_year,
+                                    is_dataframe=True)
+        except Exception:
+            continue
+        if _raw is None or not len(_raw):
+            continue
+        try:
+            _dfp = _qs_multi_flat(_raw)
+            _dfp = _qs_pit_filter(_dfp, date)
+            _dfp = _qs_frame_to_contract(_dfp, _grp, _flds, table)
+            for _c2 in _grp:
+                _sub = _dfp[_dfp.index == _c2] if len(_dfp) else None
+                if _sub is not None and len(_sub):
+                    _by_key[str(_c2)] = _sub.copy()
+        except Exception:
+            continue
+    _done[_k] = 1
+    _g._qs_gf_range_prefetched = _done
+    log.info("QS_GF_PREFETCH_RANGE date=%s table=%s pool=%d groups=%d" % (
+        str(date)[:10], table, len(_pool), (len(_pool) + 2) // 3))
 
 
 def _qs_gf_maybe_prefetch(secs, table, field_list, date):
