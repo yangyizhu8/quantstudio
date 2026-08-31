@@ -359,9 +359,24 @@ GUARD_LOG = SNAP_DIR / "guard_refused.log"
 #   注意：powershell 不做 fail-closed —— QuestDB 看门狗（每 5min，SYSTEM
 #   powershell）会造成常驻误报；powershell 侧靠 pattern 匹配覆盖。
 SUSPECT_PROC_NAMES = {"python.exe", "pythonw.exe"}
-# shell 族进程仅当 cmdline 含 pat+".ps1" / pat+".py" 才命中（扩展名锚定），
-# 防止监控/巡检命令的内联文本自指误报（2026-08-20 DSH 审计修正）。
-SHELL_PROC_NAMES = {"powershell.exe", "pwsh.exe", "cmd.exe"}
+# shell 族进程仅当 cmdline 含 pat+扩展名锚（#8 扩族：.ps1/.py/.sh/.bash）才命中，
+# 防止监控/巡检/守护/历史命令的内联文本自指误报（2026-08-20 DSH 审计修正；
+# 2026-08-28 #8 扩族：bash/sh/wsl——08-24 事故 1/2 = bash 文本自指误报）。
+SHELL_PROC_NAMES = {"powershell.exe", "pwsh.exe", "cmd.exe",
+                    "bash.exe", "sh.exe", "wsl.exe", "zsh.exe", "fish.exe"}
+_SHELL_ANCHOR_EXTS = (".ps1", ".py", ".sh", ".bash")
+# 层二（#8）：非 shell 本体（python 等）词边界匹配（v1.1 U9 数值级断言覆盖），
+# 内嵌于更长标识符（my_run_cloud_sync_notes 等）不命中。惰性编译。
+_PAT_WORD_RES = None
+
+
+def _pat_word_res():
+    global _PAT_WORD_RES
+    if _PAT_WORD_RES is None:
+        import re
+        _PAT_WORD_RES = {pat: re.compile(r"\b" + re.escape(pat) + r"\b")
+                         for pat in DATA_SIDE_PATTERNS}
+    return _PAT_WORD_RES
 
 
 class GuardAbort(Exception):
@@ -414,18 +429,28 @@ def _data_side_tasks_running() -> list:
             pname = (p.info["name"] or "").lower()
             if cl:
                 if pname in SHELL_PROC_NAMES:
-                    # shell 族：扩展名锚定（防内联文本自指误报）
+                    # shell 族：扩展名锚定（防内联文本自指误报；#8 扩 .sh/.bash 锚）
                     matched = next(
                         (pat for pat in DATA_SIDE_PATTERNS
-                         if (pat + ".ps1") in cl or (pat + ".py") in cl), None)
+                         if any((pat + ext) in cl for ext in _SHELL_ANCHOR_EXTS)), None)
                 else:
-                    # python 等：原子串匹配（数据侧任务本体）
+                    # python 等：词边界匹配（#8 层二；原为原子串——文本自指误伤面）
+                    res = _pat_word_res()
                     matched = next(
-                        (pat for pat in DATA_SIDE_PATTERNS if pat in cl), None)
+                        (pat for pat in DATA_SIDE_PATTERNS
+                         if res[pat].search(cl)), None)
                 if matched:
                     hits.append({"pid": p.info["pid"], "cmd": cl[:120],
                                  "matched_pattern": matched})
             elif not cl and pname in SUSPECT_PROC_NAMES:
+                # #8 层三幻影过滤：pid<10 为 Windows 保留区（0=Idle/4=System），
+                # create_time 不可得者同列——不构成数据侧任务语义，不计入 fail_closed。
+                if p.info["pid"] < 10:
+                    continue
+                try:
+                    _ct = p.create_time()
+                except Exception:
+                    continue
                 # cmdline 不可读（SYSTEM 账户进程）→ fail-closed 疑似数据侧任务
                 # v1.1：先做 QDB 域 marker 归因（成功→重分类；失败→维持 fail_closed 红线）
                 attributed = _attribute_qdb_domain(p.info["pid"], markers, now_ts)
