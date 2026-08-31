@@ -48,6 +48,18 @@ KNOWN_FAILS = {
 }
 
 
+# 契约套件受控文件清单（CI 修复 2026-08-31）：只收集契约三件套，避免 pytest 扫描
+# tests/ 全目录——GUI/MCP/数据管线测试在 Linux CI 缺依赖（PyQt6 等）import 崩溃 →
+# collection error 中断整个 gate（本地 Windows 全环境不触发）。
+CONTRACT_FILES = [
+    "tests/test_fund_matrix_coverage.py",
+    "tests/test_ptrade_contract_compliance.py",
+    "tests/test_ptrade_fidelity_config.py",
+]
+PORTABILITY_K = "-k"
+PORTABILITY_KW = "portability or fm_ or fidelity"
+
+
 def run_pytest(cmd, label):
     print("\n== %s ==" % label)
     r = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
@@ -55,6 +67,14 @@ def run_pytest(cmd, label):
     failed = [ln.split("FAILED ", 1)[1].strip() for ln in tail.splitlines()
               if ln.strip().startswith("FAILED ")]
     new_fails = [f for f in failed if f not in KNOWN_FAILS]
+    if r.returncode != 0 and not failed:
+        # 收集阶段崩溃（collection error）→ 禁止误判 PASS（CI 32-error 教训）
+        print("pytest 退出码 %d 且无 FAILED 明细——疑似收集错误/插拔异常："
+              % r.returncode)
+        for ln in tail.splitlines():
+            if "ERROR" in ln or "error" in ln.lower():
+                print("  ", ln.strip()[:160])
+        return 1
     if not failed:
         print("全部通过；既有白名单无触发")
         return 0
@@ -94,12 +114,13 @@ def main():
         return 0
 
     code = 0
-    code |= run_pytest([PY, "-m", "pytest", "tests", K, CONTRACT_KW, "-q", "--tb=no"],
-                       "契约套件（pytest，既有失败白名单放行）")
+    code |= run_pytest([PY, "-m", "pytest", ] + CONTRACT_FILES + ["-q", "--tb=no"],
+                       "契约套件（pytest，受控文件清单 + 既有失败白名单放行）")
     if not args.skip_matrix:
         code |= run([PY, "scripts/check_fund_matrix.py", "--check"], "矩阵门禁（check_fund_matrix --check）")
     if args.strategies:
-        code |= run([PY, "-m", "pytest", "tests", K, "portability", "-q"], "6 策略 api_portability 冒烟")
+        code |= run_pytest([PY, "-m", "pytest"] + CONTRACT_FILES + [PORTABILITY_K, PORTABILITY_KW, "-q", "--tb=no"],
+                           "6 策略 api_portability 冒烟（同受控清单 -k 子集）")
     print("\n===== CONTRACT GATE : %s =====" % ("PASS" if code == 0 else "FAIL"))
     return code
 
