@@ -1,5 +1,7 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+# setuptools 锁 <77：≥77 强制 PEP 639 SPDX（Proprietary 非合法 SPDX id，构建失败）；
+# 68-76 接受 license table 格式，与本地 setuptools 65 语义一致（CI/本地构建行为统一）
+requires = ["setuptools>=68,<77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
