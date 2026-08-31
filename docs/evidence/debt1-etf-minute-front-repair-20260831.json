@@ -1,0 +1,49 @@
+{
+  "repair": "debt1 ETF minute front alignment",
+  "date": "2026-08-31",
+  "method": "sequential per-code per-day repair (factor = prev_day_close / current_day_open)",
+  "codes_affected": 220,
+  "code_days_repaired": 9739,
+  "code_days_skipped_factor_range": 3,
+  "backup_table": "etf_minutes_backup_debt1",
+  "backup_rows": 170242,
+  "verification": {
+    "before": 1066,
+    "after": 3,
+    "remaining_detail": [
+      {
+        "code": "159582",
+        "ratio": 0.0373,
+        "status": "review"
+      },
+      {
+        "code": "589020",
+        "ratio": 0.029,
+        "status": "known-noise (D2-F6)"
+      },
+      {
+        "code": "588920",
+        "ratio": 30.65,
+        "status": "review"
+      }
+    ]
+  },
+  "authorized_by": "用户 L2 授权 2026-08-31",
+  "stock_minutes": {
+    "codes_affected": 118,
+    "code_days_repaired": 1136,
+    "code_days_skipped": 4,
+    "backup_table": "stock_minutes_backup_debt1",
+    "backup_rows": 968934,
+    "remaining": 4
+  },
+  "total_summary": {
+    "etf_repaired": 9739,
+    "etf_remaining": 3,
+    "stock_repaired": 1136,
+    "stock_remaining": 4,
+    "total_repaired": 10875,
+    "total_remaining": 7,
+    "remaining_status": "7 code-day 极端比率（因子超范围跳过），登记技术债 #1-B 级后续处置"
+  }
+}
