@@ -175,6 +175,20 @@ def _qs_shape_check(api_name, expected, actual):
     return _ok
 '''
 
+
+
+# 公共 helper（无条件注入，2026-09-01）：行业段（_qs_finance_pool/get_industry）依赖
+# _qs_g_obj，但定义原在 fundamentals 段——策略不用 get_fundamentals 时注入缺失
+# → 产物调用悬空（PyQt 转 PTrade LOCAL-API-WHITELIST BLOCK）。移为无条件注入。
+_QS_COMMON_EXT = '''
+{marker_common}
+def _qs_g_obj():
+    """平台全局 g 安全引用（策略平台 g 为全局 API；本地/测试无 g → None 不炸）。"""
+    try:
+        return g
+    except NameError:
+        return None
+'''
 _QS_HISTORY_WRAPPER = '''
 {marker}
 # 方向 B（2026-08-13 平台实证）：PTrade get_history 返回 numpy structured array，
@@ -1467,14 +1481,6 @@ def _qs_gf_progress(secs, table, date):
                      % (_n, table, str(date)[:10], len(secs)))
     except Exception:
         pass
-
-
-def _qs_g_obj():
-    """平台全局 g 安全引用（策略平台 g 为全局 API；本地/测试无 g → None 不炸）。"""
-    try:
-        return g
-    except NameError:
-        return None
 
 
 def _qs_prev_window_date(cur_df, date):
@@ -3302,6 +3308,8 @@ class SourceConverter:
             self.coverage["injected_helpers"].append("ETF_POOL_STATIC")
         # helper 总是注入（防御函数，模板同款）
         blocks.append(_PTRADE_HELPERS.format(marker=INJECTED_MARKER))
+        blocks.append(_QS_COMMON_EXT.format(marker_common=INJECTED_MARKER))
+        self.coverage["injected_helpers"].append("_qs_g_obj")
         self.coverage["injected_helpers"].extend(
             ["_lookup_history_item", "_extract_history_field", "_bare_code",
              "_finite_float", "_finite_series", "_get_ma", "_portfolio_total_value"])

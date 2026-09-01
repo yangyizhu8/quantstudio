@@ -57,6 +57,9 @@ def _mk(platform_fake, eps_basis="passthrough", **g_attrs):
 
     ns = {"get_fundamentals": _fake, "log": log, "g": g}
     exec(_shape_check_def(), ns)
+    # 对齐实际注入链：公共段（_qs_g_obj 等，2026-09-01 起无条件注入）优先于 fundamentals 段
+    if hasattr(si, "_QS_COMMON_EXT"):
+        exec(si._QS_COMMON_EXT.format(marker_common="# fm"), ns)
     exec(si._QS_FUNDAMENTALS_EXT.format(marker="# fm", eps_basis=eps_basis), ns)
     ns["_g"] = g
     ns["_calls"] = calls

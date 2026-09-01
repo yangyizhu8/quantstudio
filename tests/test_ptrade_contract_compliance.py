@@ -1427,6 +1427,8 @@ def _fund_ns(platform_ret=None, raise_on_list=False, single_results=None):
                           "info": staticmethod(lambda *a, **k: None)})()
     ns = {"get_fundamentals": _fake_fund, "log": log}
     exec(_shape_check_def(), ns)
+    if hasattr(si, "_QS_COMMON_EXT"):
+        exec(si._QS_COMMON_EXT.format(marker_common="# p10"), ns)
     exec(si._QS_FUNDAMENTALS_EXT.format(marker="# p10", eps_basis="passthrough"), ns)
     ns["_calls"] = calls
     ns["_warnings"] = warnings
@@ -1575,6 +1577,8 @@ def test_p10_wrapper_range_split_two_calls():
           "log": type("L", (), {"warning": staticmethod(lambda *a, **k: None),
                                 "info": staticmethod(lambda *a, **k: None)})()}
     exec(_shape_check_def(), ns)
+    if hasattr(si, "_QS_COMMON_EXT"):
+        exec(si._QS_COMMON_EXT.format(marker_common="# b6c"), ns)
     exec(si._QS_FUNDAMENTALS_EXT.format(marker="# b6c", eps_basis="passthrough"), ns)
     out = ns["get_fundamentals"]("000001.SZ", "income_statement",
                                  fields=["np_parent_company_owners", "publ_date", "end_date"],
@@ -1611,6 +1615,8 @@ def test_b6c_pit_filter_drops_unpublished():
           "log": type("L", (), {"warning": staticmethod(lambda *a, **k: None),
                                 "info": staticmethod(lambda *a, **k: None)})()}
     exec(_shape_check_def(), ns)
+    if hasattr(si, "_QS_COMMON_EXT"):
+        exec(si._QS_COMMON_EXT.format(marker_common="# b6c-pit"), ns)
     exec(si._QS_FUNDAMENTALS_EXT.format(marker="# b6c-pit", eps_basis="passthrough"), ns)
     # 2026-03-15 视角 + 请求 fields **不含 publ_date**（真实 _latest_statement 形态）：
     # PIT 仍须生效（2025-12-31 期 03-20 披露 > 03-15 → 剔除；2026-03-31/06-30 未披露 → 剔除）
@@ -1650,6 +1656,8 @@ def test_p10_wrapper_gap_seed_shortcut_first_call():
                          "info": staticmethod(lambda *a, **k: None)})()
     ns = {"get_fundamentals": fake, "log": log}  # 无 g：种子集独立生效
     exec(_shape_check_def(), ns)
+    if hasattr(si, "_QS_COMMON_EXT"):
+        exec(si._QS_COMMON_EXT.format(marker_common="# b8seed"), ns)
     exec(si._QS_FUNDAMENTALS_EXT.format(marker="# b8seed", eps_basis="passthrough"), ns)
     ns["_warnings"] = warns
 
@@ -1693,6 +1701,8 @@ def test_p10_wrapper_gap_shortcut_single_alarm():
     g = type("G", (), {})()
     ns = {"get_fundamentals": fake, "log": log, "g": g}
     exec(_shape_check_def(), ns)
+    if hasattr(si, "_QS_COMMON_EXT"):
+        exec(si._QS_COMMON_EXT.format(marker_common="# b8dyn"), ns)
     exec(si._QS_FUNDAMENTALS_EXT.format(marker="# b8dyn", eps_basis="passthrough"), ns)
     ns["_warnings"] = warns
 
