@@ -210,6 +210,10 @@ _QS_COL_TO_LOCAL = {{
     'money': 'amount',
     'preclose': 'preClose',
 }}
+# pctChg 可移植（2026-09-01 平台实证回归）：PTrade 合法字段无 pctChg → 请求侧剔除、
+# 返回侧由 close/preClose 合成（与本地引擎 aligner 同口径 (close/preClose−1)×100）。
+# 标志记录本次请求是否含 pctChg（每次请求先复位，_qs_to_dataframe 消费）。
+_QS_REQ_PCT = False
 
 def _qs_to_dataframe(item):
     """structured array / DataFrame → 本地列名（money→amount、preclose→preClose 等）。
@@ -227,8 +231,68 @@ def _qs_to_dataframe(item):
                     if k in _df.columns and v not in _df.columns}}
         if _rename:
             _df = _df.rename(columns=_rename)
+        # pctChg 合成（2026-09-01 平台实证回归）：请求含 pctChg 且返回无此列时，
+        # 由 close/preClose 基列合成 (close/preClose−1)×100；fail-soft（异常/缺基列→不合成）。
+        if _QS_REQ_PCT and 'pctChg' not in _df.columns \
+                and 'close' in _df.columns and 'preClose' in _df.columns:
+            try:
+                _prec = _df['preClose'].astype(float)
+                _ok = _prec > 0
+                _pct = _qs_pd.Series(_qs_np.nan, index=_df.index)
+                _pct[_ok] = (_df.loc[_ok, 'close'].astype(float) / _prec[_ok] - 1.0) * 100.0
+                _df['pctChg'] = _pct
+            except Exception:
+                pass
         return _df
     return item
+
+# v3（2026-09-01 平台实证第三轮）：分钟频率平台不支持 preclose 字段（INFO 刷屏实证）
+# → 返回侧由日线昨收合成 preClose 列（include=False 日线末行 close = 上一交易日收盘，
+# 与本地分钟 preClose 语义一致）；本地/平台返回若已含 preClose → guard 短路零影响。
+# QS_MINUTE_DIAG：分钟路径首次调用打一条形状诊断（平台分钟数据可观测性）。
+_QS_REQ_PREC_MIN = False
+_QS_MINUTE_DIAG_DONE = False
+_QS_PREC_CACHE = {{}}
+
+
+def _qs_bar_date(v):
+    """bar 时间 → 'YYYYMMDD'（int/str/datetime 兼容，fail-soft None）。"""
+    try:
+        if hasattr(v, "strftime"):
+            return v.strftime("%Y%m%d")
+        _s = v if isinstance(v, str) else str(int(v))
+        _s = _s.replace("-", "").replace(" ", "").replace(":", "")
+        return _s[:8] or None
+    except Exception:
+        return None
+
+
+def _qs_synth_minute_preclose(df, code, fq):
+    """分钟 df 无 preClose 列时由日线昨收合成（fail-soft：任一步失败保持原 df）。"""
+    if df is None or not isinstance(df, _qs_pd.DataFrame) or "preClose" in df.columns \
+            or "close" not in df.columns or len(df) == 0:
+        return df
+    try:
+        _tvals = df["time"].values if "time" in df.columns else df.index.values
+        _ds = _qs_bar_date(_tvals[-1])
+        if not _ds:
+            return df
+        _key = (code, _ds)
+        if _key not in _QS_PREC_CACHE:
+            # 裸字符串形态（平台已实证唯一有效形态；security 关键字形态违反平台契约）
+            _dd = _QSHistoryState.orig(2, frequency="1d", field=["close"],
+                                       security_list=code, fq=fq, include=False)
+            _dd = _qs_to_dataframe(_dd)
+            if isinstance(_dd, dict):
+                _dd = _dd.get(code)
+            if _dd is None or not isinstance(_dd, _qs_pd.DataFrame) \
+                    or len(_dd) == 0 or "close" not in _dd.columns:
+                return df
+            _QS_PREC_CACHE[_key] = float(_dd["close"].iloc[-1])
+        df["preClose"] = float(_QS_PREC_CACHE[_key])
+    except Exception:
+        pass
+    return df
 
 # 保存原始 get_history 引用：类属性承载（属性调用不被静态 API 白名单拦截，
 # 模块级别名函数 _qs_original_get_history(...) 会被 validate_local_strategy 判 BLOCK）
@@ -239,20 +303,109 @@ _QSHistoryState.orig = get_history
 
 # 重新绑定 get_history：请求前字段名映射（本地 → PTrade）+ 返回转 DataFrame
 def get_history(*args, **kwargs):
+    global _QS_REQ_PCT, _QS_REQ_PREC_MIN, _QS_MINUTE_DIAG_DONE
     _field = kwargs.get('field') or kwargs.get('fields')
+    _QS_REQ_PCT = False
+    _QS_REQ_PREC_MIN = False
+    _freq = str(kwargs.get('frequency') or kwargs.get('unit') or '1d')
+    _is_minute = _freq in ('1m', '5m', '15m', '30m', '60m',
+                           '1min', '5min', '15min', '30min', '60min')
     if _field:
         _is_list = isinstance(_field, list)
         _items = _field if _is_list else [_field]
-        _mapped = [_QS_FIELD_TO_PTRADE.get(f, f) for f in _items]
+        _QS_REQ_PCT = 'pctChg' in _items
+        # 请求侧剔除平台合成字段 pctChg（PTrade 合法字段无 pctChg，返回侧再合成）；
+        # 剔除后为空 → 兜底 ['close']（与 trade_date 门控版同规则）
+        _mapped = [_QS_FIELD_TO_PTRADE.get(f, f) for f in _items if f != 'pctChg']
+        if not _mapped:
+            _mapped = ['close']
+        # 平台返回列 = 请求列（2026-09-01 平台实证）：pctChg 剔除后，须注入 preclose 基列
+        # 供返回侧由 close/preClose 合成 pctChg（本地引擎返回全列故本地不受影响）
+        if _QS_REQ_PCT and 'preclose' not in _mapped:
+            _mapped.append('preclose')
+        # 分钟频率请求 preclose：请求保持原样（零请求变更），返回侧由日线昨收合成（v3）
+        _QS_REQ_PREC_MIN = _is_minute and 'preclose' in _mapped
         if 'field' in kwargs:
             kwargs['field'] = _mapped if _is_list else _mapped[0]
         if 'fields' in kwargs:
             kwargs['fields'] = _mapped if _is_list else _mapped[0]
-    _result = _QSHistoryState.orig(*args, **kwargs)
-    if isinstance(_result, dict):
-        _out = {{k: _qs_to_dataframe(v) for k, v in _result.items()}}
+    # v4（2026-09-01 平台实证第四轮）：平台分钟 get_history 对「security_list 列表 + is_dict=True」
+    # 返回空 dict（QS_MINUTE_DIAG keys=0 实证），而「裸字符串 security_list + is_dict=True」
+    # 日线已实证有效（第一轮 hist 键正确）→ 与门控版 D4-S7 R1 同构：is_dict 走逐码路径
+    # （裸字符串形态），拼 code→DataFrame dict，策略代码零改动。
+    _is_dict = bool(kwargs.pop('is_dict', False))
+    _secs = kwargs.pop('security_list', None)
+    if _secs is None:
+        _secs = kwargs.pop('security', None)
+    if _secs is None and args and isinstance(args[0], (str, list, tuple)):
+        # 本地风格位置 security（策略零改动：get_history(codes, count=3, ...)）
+        _secs = args[0]
+        args = ()
+    if isinstance(_secs, str):
+        _secs = [_secs]
+    if _is_dict and _secs:
+        _out = {{}}
+        for _s in _secs:
+            _kw = dict(kwargs)
+            # 裸字符串形态（平台已实证唯一有效形态；security 关键字形态违反平台契约）
+            _kw['security_list'] = _s
+            try:
+                _item = _QSHistoryState.orig(*args, **_kw)
+            except Exception:
+                _item = None
+            _out[_s] = _qs_to_dataframe(_item)
+    elif _secs:
+        _kw = dict(kwargs)
+        _kw['security_list'] = _secs
+        _result = _QSHistoryState.orig(*args, **_kw)
+        if isinstance(_result, dict):
+            _out = {{k: _qs_to_dataframe(v) for k, v in _result.items()}}
+        else:
+            _out = _qs_to_dataframe(_result)
     else:
-        _out = _qs_to_dataframe(_result)
+        _result = _QSHistoryState.orig(*args, **kwargs)
+        if isinstance(_result, dict):
+            _out = {{k: _qs_to_dataframe(v) for k, v in _result.items()}}
+        else:
+            _out = _qs_to_dataframe(_result)
+    if _QS_REQ_PREC_MIN:
+        if not _QS_MINUTE_DIAG_DONE:
+            _QS_MINUTE_DIAG_DONE = True
+            try:
+                if isinstance(_out, dict):
+                    _k0 = next(iter(_out), None)
+                    _df0 = _out.get(_k0)
+                    # v5（2026-09-01 平台实证第五轮）：平台分钟逐码返回体可能是 OrderedDict
+                    # 形态（非 DataFrame/ndarray）→ 打印其键（字段名）供结构判定
+                    if _df0 is not None and hasattr(_df0, 'columns'):
+                        _desc = "cols=%s" % (list(_df0.columns),)
+                    elif _df0 is not None and hasattr(_df0, 'keys'):
+                        try:
+                            _desc = "omap_keys=%s" % (list(_df0.keys())[:8],)
+                        except Exception:
+                            _desc = "type=%s" % type(_df0).__name__
+                    else:
+                        _desc = "type=%s" % type(_df0).__name__
+                    log.info("QS_MINUTE_DIAG keys=%d %s" % (len(_out), _desc))
+                else:
+                    log.info("QS_MINUTE_DIAG single cols=%s" % (
+                        list(_out.columns) if hasattr(_out, 'columns')
+                        else type(_out).__name__))
+            except Exception:
+                pass
+        _fq = kwargs.get('fq', 'pre')
+        if isinstance(_out, dict):
+            for _k in list(_out.keys()):
+                _out[_k] = _qs_synth_minute_preclose(_out[_k], _k, _fq)
+        elif isinstance(_out, _qs_pd.DataFrame):
+            _code0 = kwargs.get('security_list')
+            if _code0 is None:
+                _code0 = kwargs.get('security')
+            if _code0 is None and args:
+                _code0 = args[0]
+            if isinstance(_code0, (list, tuple)):
+                _code0 = _code0[0] if len(_code0) else ''
+            _out = _qs_synth_minute_preclose(_out, _code0, _fq)
     _qs_shape_check('get_history', 'df_or_dict', _out)
     return _out
 '''
@@ -368,6 +521,9 @@ def get_history(*args, **kwargs):
                    if f not in _QS_SYNTHETIC_FIELDS]
         if not _mapped:
             _mapped = ['close']
+        # 平台返回列 = 请求列（2026-09-01 平台实证）：pctChg 剔除后注入 preclose 基列供返回侧合成
+        if 'pctChg' in _requested and 'preclose' not in _mapped:
+            _mapped.append('preclose')
         if 'field' in kwargs:
             kwargs['field'] = _mapped if _is_list else _mapped[0]
         if 'fields' in kwargs:

@@ -2,39 +2,29 @@
 # 来源: strategy.py
 # profile: ptrade-default (ptrade_profile_version 1.1.0-source-import)
 # 已知差异:
-#   (无)
-# PTRADE_RUNTIME_UNVERIFIED: 真实券商平台行为未验证，部署前须人工冒烟。
-
-
-# 断板反包策略_ptrade.py - 由 QuantStudio source_import 转换生成
-# 来源: 断板反包策略.py
-# profile: ptrade-default (ptrade_profile_version 1.1.0-source-import)
-# 已知差异:
+# - get_history_batch: get_history_batch() 为本地批量 API，将注入同名 shim（循环单调用）
 # - get_history: get_history 签名 A→B（count-first，PTrade 契约；本地双签名兼容）
 # - get_history: get_history 签名 A→B（count-first，PTrade 契约；本地双签名兼容）
 # PTRADE_RUNTIME_UNVERIFIED: 真实券商平台行为未验证，部署前须人工冒烟。
 
 
 # -*- coding: utf-8 -*-
-"""断板反包策略（broken_board_reversal）— QuantStudio 本地专用回测策略。
-
-形态（时序严格 T-2 → T-1 → T）：
-  T-2 涨停封板（首板或连板均可）
-  T-1 断板：不再涨停，收放量阴线（烂板回落/高开低走）
-  T   反包：收阳线，收盘价 ≥ T-1 阴线开盘价，量能在 T-1 量 0.8~1.2 倍带内
-
-硬性过滤：无量一字板炸板剔除 / T-1 涨跌幅 [-8%,-3%] / 量能带 / T-2~T 三日站上 MA20 /
-流动性（T-1 成交额 ≥ 5000 万元）/ T 日收盘涨停弃买 / 除权窗口弃号（宁缺勿假）。
-
-交易：T 日收盘确认信号并以收盘价买入（close 模式），T+2 日收盘卖出；
-最多同时持有 2 只、单只目标仓位 50%（runtime_total_value）；对标基准 000852（中证1000）。
-
-参数冻结（R0 客户裁决，禁止按回测结果回调）：
-  VOL_RATIO 0.8/1.2 · DROP_BAND [-8,-3] · NO_VOL_ONEWORD 0.5 · LIQ_AMT 5e7 · HOLD_DAYS 2
-
-targets: quantstudio 本地专用（不声明 PTrade 可移植性；PTrade 转换由 PyQt tab/CLI 承接）。
 """
+连板梯队龙头打板套利策略（lbdt_dalong）.py - agent-authored QuantStudio-only strategy.
+
+Chinese published filename: 连板梯队龙头打板套利策略.py (quantstudio/backtest/strategies/<strategy_name>.py).
+
+design 2.2（R2.5 客户确认 2026-08-31）；minute-bar-v1 / close 撮合 / T+1 引擎强制。
+窗口 2026-06-15~2026-08-13（stock_minutes 覆盖，C1-M 裁决）。
+四维筛选（量能/板块热度/市场情绪/梯队生态）→ 二进三打板（09:30-10:00 分钟窗口）→ T+1 开板/止损卖出。
+"""
+
+STRATEGY_ID = 'lbdt_dalong'
+STRATEGY_NAME = '连板梯队龙头打板套利策略'
+DESIGN_VERSION = '2.2'
+
 import numpy as np
+import pandas as pd
 
 # [qs-import-generated]
 def _lookup_history_item(history, code):
@@ -365,173 +355,6 @@ def get_history(*args, **kwargs):
             if isinstance(_code0, (list, tuple)):
                 _code0 = _code0[0] if len(_code0) else ''
             _out = _qs_synth_minute_preclose(_out, _code0, _fq)
-    _qs_shape_check('get_history', 'df_or_dict', _out)
-    return _out
-
-
-# [qs-import-generated]
-# [qs-import-generated] trade_date / pctChg 合成 + is_dict 逐码（source_import 门控扩展，2026-08-19/27）
-# trade_date 是本地 provider 合成伪列（object 类型 'YYYY-MM-DD' 字符串）；PTrade 无此字段，
-# 由返回体的 datetime/time 派生。请求侧剔除合成字段（只传真实字段），返回侧补齐。
-# pctChg（涨跌幅百分比）D4-S7 增补（2026-08-27 平台实证：PTrade get_history 合法字段无 pctChg，
-# 由 close/preClose 合成 (close/preClose−1)×100）。
-_QS_SYNTHETIC_FIELDS = {'trade_date', 'pctChg'}
-# 合成意图状态（get_history 设置，_qs_to_dataframe 消费；None=全合成，集合=仅请求字段）
-_QS_REQUESTED_SYNTH = None
-
-
-def _qs_synthesize_trade_date(df, requested=True):
-    """trade_date 合成（透传优先/合成兜底，D4-S7 M3 裁定）：
-    requested 仅作延伸语义标记：默认 True（调用方需要则合成）；
-    返回体已有 trade_date（本地形态透传）则原样保留（任何 requested 下均优先生成）。"""
-    if 'trade_date' in df.columns:
-        return df
-    if not requested:
-        return df
-    src = None
-    for _col in ('time', 'datetime'):
-        if _col in df.columns:
-            src = df[_col]
-            break
-    # PTrade 返回 DataFrame 时日期常在 index（无 time/datetime 列）
-    if src is None:
-        idx = df.index
-        if hasattr(idx, 'dtype') and _qs_np.issubdtype(idx.dtype, _qs_np.datetime64):
-            src = _qs_pd.Series(idx, index=idx)
-        elif len(idx) > 0:
-            try:
-                _ = _qs_pd.to_datetime(idx)
-                src = _qs_pd.Series(idx, index=idx)
-            except Exception:
-                pass
-    if src is None:
-        return df
-    try:
-        if hasattr(src, 'dtype') and _qs_np.issubdtype(src.dtype, _qs_np.integer):
-            _ts = _qs_pd.to_datetime(src, unit='ms', utc=True).dt.tz_convert('Asia/Shanghai')
-        else:
-            _ts = _qs_pd.to_datetime(src)
-            if getattr(_ts.dt, 'tz', None) is not None:
-                _ts = _ts.dt.tz_convert('Asia/Shanghai')
-        df['trade_date'] = _ts.dt.strftime('%Y-%m-%d')
-    except Exception:
-        pass
-    return df
-
-
-def _qs_synthesize_pct_chg(df, requested=True):
-    """pctChg 合成（D4-S7，2026-08-27 平台实证：PTrade get_history 合法字段无 pctChg）：
-    默认合成（调用方需要 pctChg 时）；仅当 close/preClose 两基列可用时合成 (close/preClose−1)×100。
-    fail-soft：异常/缺基列 → 保留空（策略侧按数据不足跳过）。即返回已有 pctChg 则透传保留。"""
-    if 'pctChg' in df.columns:
-        return df
-    if not requested:
-        return df
-    if 'close' in df.columns and 'preClose' in df.columns:
-        try:
-            _prec = df['preClose'].astype(float)
-            _ok = _prec > 0
-            _pct = _qs_pd.Series(_qs_np.nan, index=df.index)
-            _pct[_ok] = (df.loc[_ok, 'close'].astype(float) / _prec[_ok] - 1.0) * 100.0
-            df['pctChg'] = _pct
-        except Exception:
-            pass
-    return df
-
-
-def _qs_to_dataframe(item):
-    """ndarray / DataFrame 双形态统一：列名映射 + trade_date/pctChg 合成（D4-S7 #1/#3/#4）。
-    合成意图由模块状态 _QS_REQUESTED_SYNTH（get_history 设置）决定；单参签名保持模板契约。"""
-    _df = None
-    if isinstance(item, _qs_np.ndarray) and hasattr(item, 'dtype') and hasattr(item.dtype, 'names'):
-        _df = _qs_pd.DataFrame(item)
-    elif isinstance(item, _qs_pd.DataFrame):
-        _df = item
-    if _df is not None:
-        # 列名统一映射：PTrade → 本地（datetime→time / money→amount / preclose→preClose）
-        _rename = {k: v for k, v in _QS_COL_TO_LOCAL.items()
-                    if k in _df.columns and v not in _df.columns}
-        if _rename:
-            _df = _df.rename(columns=_rename)
-        # 合成（透传优先：返回已有列则保留；requested 空集=全不合成、None=全合成、集合=仅请求字段）
-        _req = _QS_REQUESTED_SYNTH
-        _want_td = _req is None or ('trade_date' in _req)
-        _want_pct = _req is None or ('pctChg' in _req)
-        _df = _qs_synthesize_trade_date(_df, requested=_want_td)
-        return _qs_synthesize_pct_chg(_df, requested=_want_pct)
-    return item
-
-
-def get_history(*args, **kwargs):
-    global _QS_REQUESTED_SYNTH
-    _field = kwargs.get('field') or kwargs.get('fields')
-    _requested = []
-    if _field:
-        _is_list = isinstance(_field, list)
-        _items = _field if _is_list else [_field]
-        _requested = list(_items)                       # 原始请求字段（含合成字段，供返回侧合成判断）
-        _mapped = [_QS_FIELD_TO_PTRADE.get(f, f) for f in _items
-                   if f not in _QS_SYNTHETIC_FIELDS]
-        if not _mapped:
-            _mapped = ['close']
-        # 平台返回列 = 请求列（2026-09-01 平台实证）：pctChg 剔除后注入 preclose 基列供返回侧合成
-        if 'pctChg' in _requested and 'preclose' not in _mapped:
-            _mapped.append('preclose')
-        if 'field' in kwargs:
-            kwargs['field'] = _mapped if _is_list else _mapped[0]
-        if 'fields' in kwargs:
-            kwargs['fields'] = _mapped if _is_list else _mapped[0]
-    # 合成意图：trade_date 恒合成（本地引擎返回体常含 trade_date，策略可能取未请求的该列——
-    # 原生语义依赖；平台无该列则从索引合成）；pctChg 仅当请求含它时合成（需 close/preClose 基列）。
-    _want_td = True
-    _want_pct = 'pctChg' in _requested
-    _QS_REQUESTED_SYNTH = set()
-    if _want_td:
-        _QS_REQUESTED_SYNTH.add('trade_date')
-    if _want_pct:
-        _QS_REQUESTED_SYNTH.add('pctChg')
-    if not _QS_REQUESTED_SYNTH:
-        _QS_REQUESTED_SYNTH = None
-    _is_dict = bool(kwargs.pop('is_dict', False))
-    _secs = kwargs.pop('security_list', None)
-    if _secs is None:
-        _secs = kwargs.pop('security', None)
-    # D4-S7 #6（2026-08-27 本地引擎实证）：security_list 可能是裸字符串（如 '000852.SS'）
-    # 而非 list——逐码路径按可迭代拆分会把字符串逐字符拆（'0','8','5','2','.','S'）。
-    # 统一归一为单元素 list（本地/平台契约均按证券列表处理）。
-    if isinstance(_secs, str):
-        _secs = [_secs]
-    if _is_dict and _secs:
-        # R1：契约无关——不依赖多标的返回形态，逐码调用（单证券返回风险最小）拼成 dict（code -> df）
-        result = {}
-        for _s in _secs:
-            _kw = dict(kwargs)
-            _kw['security_list'] = [_s]
-            try:
-                _item = _QSHistoryState.orig(*args, **_kw)
-            except (TypeError, ValueError):
-                _kw2 = dict(kwargs)
-                _kw2['security'] = _s
-                _item = _QSHistoryState.orig(*args, **_kw2)
-            result[_s] = _qs_to_dataframe(_item)
-        _qs_shape_check('get_history', 'df_or_dict', result)
-        return result
-    if _secs:
-        # 非 dict 模式仍需把 security_list/security 传回原始 API（如单市场 σ 计算）
-        _kw = dict(kwargs)
-        _kw['security_list'] = _secs
-        try:
-            _result = _QSHistoryState.orig(*args, **_kw)
-        except (TypeError, ValueError):
-            _kw2 = dict(kwargs)
-            _kw2['security'] = _secs
-            _result = _QSHistoryState.orig(*args, **_kw2)
-    else:
-        _result = _QSHistoryState.orig(*args, **kwargs)
-    if isinstance(_result, dict):
-        _out = {k: _qs_to_dataframe(v) for k, v in _result.items()}
-    else:
-        _out = _qs_to_dataframe(_result)
     _qs_shape_check('get_history', 'df_or_dict', _out)
     return _out
 
@@ -1006,428 +829,516 @@ def current_price(security):
 
 
 # [qs-import-generated]
-# [qs-import-generated] filter_stock_by_status('ST') 退市风险兜底注入（P-D9，2026-08-22）
-# 平台 'ST' 仅官方 ST 标记 → 补本地同款 is_delisting_risk（close<1，当日 T close）。
-# fail-open：取数失败 log.warning + 保持平台原生结果（与本地 except: return result 同语义）。
-# 性能（A 条三级）：批量优先（多码一次 get_history）→ 幸存者兜底（仅对原生过滤幸存池判）
-# → 当日缓存复用（探针实证批量 8 码 0.007s vs 逐码 8 次 0.018s）。
-_QSFilterStatusState = type("_QSFilterStatusState", (), {"orig": None, "cache": None})
-_QSFilterStatusState.orig = filter_stock_by_status
-_QS_FILTER_DELISTING_THRESHOLD = 1.0  # 面值退市线（元）
+# [qs-import-generated] get_industry 平台替代包装（B1/B7，2026-08-31）
+class _QSIndustryState:
+    """平台 get_industry_stocks / get_industry 引用（class 属性承载过平台
+    LOCAL-API-WHITELIST；模块级变量持函数引用再调用会被 BLOCK，2026-08-22 实证同款）。"""
+    get_industry_stocks_orig = None
+    get_industry_orig = None
 
 
-def _qs_status_prefetch_closes(codes):
-    """批量预取多码 close（一次 get_history 多码调用，探针实证 8 码 0.007s）→ 写入缓存。
+_QSIndustryState.get_industry_stocks_orig = get_industry_stocks
+try:
+    _QSIndustryState.get_industry_orig = get_industry
+except Exception:
+    _QSIndustryState.get_industry_orig = None
 
-    平台返回形态：DataFrame（code/close 或 time/close 列）。fail-open：异常/空返回不写缓存。
-    缓存命中短路：codes 全部已缓存 → 跳过批量（同日重复调用零取数）。
-    """
-    cache = _QSFilterStatusState.cache
-    if cache is None:
-        cache = {}
-        _QSFilterStatusState.cache = cache
-    if not codes:
-        return
-    try:
-        missing = [c for c in codes if c not in cache]
-    except Exception:
-        missing = list(codes)
-    if not missing:
-        return
-    try:
-        df = get_history(count=1, frequency="1d", field=["close"],
-                         security_list=list(missing), fq="pre", include=False)
-    except Exception:
-        return
-    if df is None or not hasattr(df, "iloc") or len(df) == 0:
-        return
-    try:
-        if "code" in getattr(df, "columns", []):
-            vals = df["code"].values
-            for i in range(len(df)):
-                try:
-                    v = float(df.iloc[i].get("close", 0) or 0)
-                except Exception:
-                    continue
-                if v > 0:
-                    cache[str(vals[i])] = v
-        else:
-            # 无 code 列（单码形状）：从 kwargs 无法回填多码 → 跳过（由逐码路径兜底）
+# 转换期从策略源码烘焙的行业码集（() 占位，渲染后替换）
+_QS_INDUSTRY_CODES = ()
+
+
+def _qs_finance_pool():
+    """懒构建反向金融池（行业码双码尝试：裸/.XBHS/.XBKS；命中即停）；g 缓存一次。
+    返回 (pool, valid)。valid=False → 下游回退原生 get_industry + fail-open。"""
+    _g = _qs_g_obj()
+    _pool = getattr(_g, '_qs_finance_pool', None)
+    if _pool is not None:
+        return _pool, bool(getattr(_g, '_qs_finance_pool_valid', False))
+    _pool = []
+    _got = False
+    for _ind in _QS_INDUSTRY_CODES:
+        for _c in (_ind, _ind + '.XBHS', _ind + '.XBKS'):
+            try:
+                _members = _QSIndustryState.get_industry_stocks_orig(_c) or []
+            except Exception:
+                continue
+            if _members:
+                _got = True
+                for _m in _members:
+                    if _m not in _pool:
+                        _pool.append(_m)
+                break
+    if _g is not None:
+        _g._qs_finance_pool = _pool
+        _g._qs_finance_pool_valid = _got
+    log.info('QS_INDUSTRY_POOL industries=%s pool_size=%d valid=%s'
+             % (','.join(_QS_INDUSTRY_CODES), len(_pool), _got))
+    return _pool, _got
+
+
+def get_industry(code):
+    """平台替代：返回本地 get_industry 契约（{'sw_l1': {'industry_code': ...}}）。
+    - 池有效：code ∈ 池 → 首个策略行业码（∈ 策略剔除集 → 剔）；否则 → '999999'
+      （非金融哨兵，∉ 策略行业集 → 不剔，fail-open）；
+    - 池无效：回退原生 get_industry（如有）；无 → '999999' 不剔 + 一次性告警
+      QS_INDUSTRY_UNAVAILABLE（RD-3 降级登记，防本地 fail-closed 全剔空仓）。"""
+    _g = _qs_g_obj()
+    _pool, _valid = _qs_finance_pool()
+    if _valid:
+        if str(code) in _pool:
+            _hit = _QS_INDUSTRY_CODES[0] if _QS_INDUSTRY_CODES else '999999'
+            return {'sw_l1': {'industry_code': _hit}}
+        return {'sw_l1': {'industry_code': '999999'}}
+    if _QSIndustryState.get_industry_orig is not None:
+        try:
+            _ind = _QSIndustryState.get_industry_orig(code)
+            if _ind:
+                return _ind
+        except Exception:
             pass
-    except Exception:
-        pass
-
-
-def _qs_status_history_close(code):
-    """取单码当日 close（before_trading_start 平台已可返回 T close；批量缓存优先）。"""
-    cache = _QSFilterStatusState.cache
-    if cache is None:
-        cache = {}
-        _QSFilterStatusState.cache = cache
-    try:
-        if code in cache:
-            return cache[code]
-    except Exception:
-        pass
-    try:
-        df = get_history(count=5, frequency="1d", field=["close"],
-                         security_list=code, fq="pre", include=False)
-        if df is not None and hasattr(df, "iloc") and len(df) > 0:
-            v = float(df.iloc[-1].get("close", 0) or 0)
-            if v > 0:
-                cache[code] = v
-                return v
-    except Exception:
-        pass
-    return None
-
-
-def _qs_is_delisting_risk(code):
-    """退市风险兜底（P-D9，price 分支）：当日 close < 1 元 → 剔除。
-
-    与本地 aligner 的 is_delisting_risk（close<1）同构；circ_mv 分支平台不可得
-    （probe 实证 KeyError）且本地零触发 → 降级 price-only（残余差异已登记 P-D9）。
-    取数失败返回 False（fail-open，与本地 except: return result 一致）。
-    """
-    try:
-        v = _qs_status_history_close(code)
-        if v is None:
-            return False
-        return v < _QS_FILTER_DELISTING_THRESHOLD
-    except Exception:
-        return False
-
-
-def filter_stock_by_status(stocks, filter_type=None, query_date=None, *args, **kwargs):
-    """平台原生过滤后，'ST' 语义补退市风险兜底（close<1 剔除）→ 与本地候选池一致。
-
-    A 条三级：① 先批量预取幸存池 close（一次多码 get_history）→ ② 逐码判定（命中缓存
-    不再取数；批量未覆盖的码由单码路径兜底）→ ③ 当日缓存（跨调用复用）。
-    """
-    result = _QSFilterStatusState.orig(stocks, filter_type, query_date, *args, **kwargs)
-    try:
-        ft = filter_type if filter_type is not None else ["ST", "HALT", "DELISTING"]
-        if "ST" in ft:
-            _qs_status_prefetch_closes(result)   # ① 批量预取（幸存者兜底：仅对 result 判）
-            result = [c for c in result if not _qs_is_delisting_risk(c)]  # ② 判定
-    except Exception as exc:
-        log.warning("P-D9 filter fallback failed (keep native result): %s" % (exc,))
-    _qs_shape_check('filter_stock_by_status', 'list', result)
-    return result
+    _flag = '_qs_industry_warned'
+    if _g is not None and not getattr(_g, _flag, False):
+        _g._qs_industry_warned = True
+        log.warning('QS_INDUSTRY_UNAVAILABLE get_industry 平台不可用且行业池无效'
+                    '（行业剔除降级 fail-open，登记 RD-3）')
+    return {'sw_l1': {'industry_code': '999999'}}
 
 
 # [qs-import-generated]
-# [qs-import-generated] 持仓视图归一注入（P-D11，2026-08-26）
-# 输出契约 = 本地 ptrade_api.Position：键 .SS/.SZ/.BJ、无残影行、
-# sid/amount/enable_amount/cost_basis/last_sale_price/market_value + avg_cost 别名。
-class _QSPositionState:
-    """平台原始持仓 API 引用（class 属性承载过平台 LOCAL-API-WHITELIST，
-    模块级变量持函数引用再调用会被 BLOCK，2026-08-22 平台实证同款）。"""
-    get_positions_orig = None
-    get_position_orig = None
+# [qs-import-generated] P-D13 数据层审计注入（C1a/C1b/C3a，2026-08-27）
+# C1b：北交所过滤开关（默认 False 保持平台全 A 行为；对齐本地口径时设 True）
+_QS_EXCLUDE_BSE = False
 
 
-_QSPositionState.get_positions_orig = get_positions
-_QSPositionState.get_position_orig = get_position
-
-# 北交所存量映射烘焙快照（来源 security_code_rules.BSE_LEGACY_TO_920，
-# n=248 条；官方稳定映射转换期固化；模板自包含——平台无 quantstudio 可导入）。
-_QS_BSE_LEGACY = {'430017', '430047', '430090', '430139', '430198', '430300', '430418', '430425', '430476', '430478', '430489', '430510', '430556', '430564', '430685', '430718', '830779', '830799', '830809', '830832', '830839', '830879', '830896', '830946', '830964', '830974', '831010', '831039', '831087', '831152', '831167', '831175', '831195', '831278', '831304', '831305', '831370', '831396', '831445', '831526', '831627', '831641', '831689', '831726', '831768', '831832', '831834', '831855', '831856', '831906', '831961', '832000', '832023', '832089', '832110', '832145', '832149', '832171', '832175', '832225', '832278', '832419', '832469', '832471', '832491', '832522', '832566', '832651', '832662', '832735', '832786', '832802', '832876', '832885', '832978', '832982', '833030', '833075', '833171', '833230', '833266', '833284', '833346', '833394', '833427', '833429', '833454', '833455', '833509', '833523', '833533', '833575', '833580', '833751', '833781', '833819', '833873', '833914', '833943', '834014', '834021', '834033', '834058', '834062', '834261', '834407', '834415', '834475', '834599', '834639', '834682', '834765', '834770', '834950', '835174', '835179', '835184', '835185', '835207', '835237', '835305', '835368', '835438', '835508', '835579', '835640', '835670', '835857', '835892', '835985', '836077', '836149', '836208', '836221', '836239', '836247', '836260', '836263', '836270', '836395', '836414', '836419', '836422', '836433', '836504', '836547', '836675', '836699', '836717', '836720', '836807', '836826', '836871', '836892', '836942', '836957', '836961', '837006', '837023', '837046', '837092', '837174', '837212', '837242', '837344', '837403', '837592', '837663', '837748', '837821', '838030', '838163', '838171', '838227', '838262', '838275', '838402', '838670', '838701', '838810', '838837', '838924', '838971', '839167', '839273', '839371', '839493', '839680', '839719', '839725', '839729', '839790', '839792', '839946', '870199', '870204', '870299', '870357', '870436', '870508', '870656', '870726', '870866', '870976', '871245', '871263', '871396', '871478', '871553', '871634', '871642', '871694', '871753', '871857', '871970', '871981', '872190', '872351', '872374', '872392', '872541', '872808', '872895', '872925', '872931', '872953', '873001', '873122', '873132', '873152', '873167', '873169', '873223', '873305', '873339', '873527', '873570', '873576', '873593', '873665', '873679', '873690', '873693', '873703', '873706', '873726', '873806', '873833'}
+class _QSAsharesRefState:
+    """原始 get_Ashares 引用（class 属性承载——白名单兼容）。"""
+    orig = None
 
 
-def _qs_norm_code(code):
-    """代码归一 → .SS/.SZ/.BJ；本地权威 exchange() 分支序逐字镜像（T11 钉死）：
-    ① BSE 精确表（startswith 920 或 ∈ legacy 表）——权威同序，优先于后缀判定
-    ② 入参后缀（.SH/.SS/.XSHG→SS；.SZ/.XSHE→SZ；.BJ/.XBJ/.XBSE→BJ）
-    ③ 可转债段（110/111/113/118→SS；123/127/128→SZ）
-    ④ 前缀（5/6/9→SS；0/1/2/3→SZ；startswith 语义，空串安全）
-    ⑤ SS 兜底（权威 unknown 回退=SH）。"""
-    s = str(code).strip().upper()
-    bare = s.split(".", 1)[0]
-    if bare.startswith("920") or bare in _QS_BSE_LEGACY:
-        return bare + ".BJ"
-    if "." in s:
-        suf = s.split(".", 1)[1]
-        if suf in ("SH", "SS", "XSHG"):
-            return bare + ".SS"
-        if suf in ("SZ", "XSHE"):
-            return bare + ".SZ"
-        if suf in ("BJ", "XBJ", "XBSE"):
-            return bare + ".BJ"
-        # 未知后缀：剥除走裸码规则
-    if bare.startswith(("110", "111", "113", "118")):
-        return bare + ".SS"
-    if bare.startswith(("123", "127", "128")):
-        return bare + ".SZ"
-    if bare.startswith(("5", "6", "9")):
-        return bare + ".SS"
-    if bare.startswith(("0", "1", "2", "3")):
-        return bare + ".SZ"
-    return bare + ".SS"
+_QSAsharesRefState.orig = get_Ashares
 
 
-def _qs_pos_sid_key(pos, raw_key):
-    """输出键归一：主锚 pos.sid（实证 '.SS' 形）；缺失/异常回退 _qs_norm_code(raw_key)。"""
-    sid = getattr(pos, "sid", None)
-    if sid:
-        s = str(sid).upper()
-        if s.endswith((".SS", ".SZ", ".BJ")):
-            return s
-        return _qs_norm_code(s)
-    return _qs_norm_code(raw_key)
-
-
-class _QSPositionView:
-    """平台 Position → 本地 ptrade_api.Position 契约视图（透传 + avg_cost 别名）。"""
-
-    def __init__(self, p, key):
-        self._p = p
-        self._key = key
-
-    def __getattr__(self, name):
-        p = object.__getattribute__(self, "_p")
-        if name == "sid":
-            return object.__getattribute__(self, "_key")
-        if name == "avg_cost":
-            # 平台无 avg_cost → cost_basis 别名（含费口径差 F7 已登记，不动数值语义）
-            return getattr(p, "cost_basis", 0.0)
-        if name in ("amount", "enable_amount"):
-            return getattr(p, name, 0)
-        return getattr(p, name, 0.0)
-
-
-def get_positions(security=None):
-    """键归一 + 残影过滤（amount>0）+ 契约视图；平台返回形态漂移 fail-loud。"""
-    raw = _QSPositionState.get_positions_orig()
-    if raw is None:
-        return {}
+def get_Ashares(date=None):
+    """P-D13 包装：板块统计（QS_ASHARES_BREAKDOWN）+ exclude_bse 过滤。"""
+    _codes = _QSAsharesRefState.orig(date)
     try:
-        items = list(raw.items())
-    except AttributeError:
-        raise ValueError("QS_POS_VIEW_VIOLATION get_positions 返回非 dict（%s）"
-                         % type(raw).__name__)
-    out = {}
-    for k, p in items:
+        _bse = [c for c in _codes
+                if str(c).split('.', 1)[0].startswith('920')
+                or str(c).split('.', 1)[0] in _QS_BSE_LEGACY]
+        if _QS_EXCLUDE_BSE and _bse:
+            _codes = [c for c in _codes if c not in set(_bse)]
+        log.info('QS_ASHARES_BREAKDOWN total=%d bse=%d non_bse=%d exclude_bse=%s'
+                 % (len(_codes), len(_bse), len(_codes) - len(_bse),
+                    _QS_EXCLUDE_BSE))
+    except Exception:
+        pass
+    return _codes
+
+# [qs-import-generated]
+def get_history_batch(security_list, count, unit='1d', fields=None, fq='pre',
+                      include=False, is_dict=True, **kwargs):
+    """SHIM: 本地批量 API → 循环单调用（PTrade 兼容；返回 code→DataFrame 字典）。
+
+    与原生 B1 实现语义一致：is_dict=True 的 get_history 返回 code→DataFrame 字典，
+    此处解包出 DataFrame 再按 code 组装（T5 修复：禁止把整个 CodeDict 存入 result）。"""
+    result = {}
+    for code in security_list:
         try:
-            amt = float(getattr(p, "amount", 0) or 0)
-        except (TypeError, ValueError):
-            amt = 0.0
-        if amt <= 0:
-            continue
-        key = _qs_pos_sid_key(p, k)
-        out[key] = _QSPositionView(p, key)
-    if security is not None:
-        tgt = _qs_norm_code(security)
-        return {tgt: out[tgt]} if tgt in out else {}
-    _qs_shape_check("get_positions", "dict", out)
-    return out
+            df_dict = get_history(count, frequency=unit, field=fields,
+                                  security_list=code, fq=fq, include=include,
+                                  is_dict=True)
+            if isinstance(df_dict, dict):
+                for k, df in df_dict.items():
+                    result[k] = df
+        except Exception as exc:
+            log.warning('get_history_batch skip %s: %s' % (code, exc))
+    _qs_shape_check('get_history_batch', 'dict', result)
+    return result
 
 
-def get_position(security):
-    """输入归一（防 .SH 平台崩溃/裸码空壳）+ 契约视图；空仓语义 amount=0（F5）。"""
-    code = _qs_norm_code(security)
-    p = _QSPositionState.get_position_orig(code)
-    return _QSPositionView(p, code)
 
+# ---- 参数（客户指定常规值，零寻优）----
+MAX_HOLDINGS = 2
+POSITION_WEIGHT = 0.50
+STOP_LOSS_PCT = 0.95
+VOL_RATIO_GE2 = 1.20
+VOL_RATIO_5D = 1.50
+SECTOR_ZT_MIN = 3
+SECTOR_RANK_TOP = 3
+MKT_ZT_MIN = 40
+PROMO_RATE_MIN = 0.15
+ZP_RATE_MAX = 0.35
+MAX_LADDER_MIN = 2          # 最高连板高度 >= 2（2026-08-31 客户裁决 3->2；弱市空仓纪律保留）
+PLAY_END = "10:00"
+
+
+def _ensure_runtime_state():
+    """幂等创建 g 字段（任何 callback 首行调用；hasattr 保护不重置既有状态）。"""
+    for k, v in [("prepped", False), ("candidates", []), ("sentiment_ok", False),
+                 ("port", {}), ("pending_reb", []), ("day_did", ""),
+                 ("trade_days", []), ("zt_counts", {"total": 0, "promo": 0.0,
+                                                    "zp_rate": 0.0, "max_ladder": 0}),
+                 ("sector_zt", {}), ("sector_gain", {}), ("prev_close", {}),
+                 ("day_codes", [])]:
+        if not hasattr(g, k):
+            setattr(g, k, v)
+
+
+def _extract_history_field(history_item, field, dtype=float):
+    """get_history(is_dict=True) 返回项字段归一（DataFrame / structured array / recarray 兼容）。"""
+    if history_item is None:
+        return None
+    try:
+        col = history_item[field]
+    except Exception:
+        return None
+    if col is None:
+        return None
+    if hasattr(col, "values"):
+        col = col.values
+    return np.asarray(col, dtype=dtype)
+
+
+def _limit_threshold(code, is_st=False):
+    """涨停阈值近似：ST 5%、688/689 与 300/301 20%、北交(8/4/92) 30%、其余 10%。"""
+    c6 = code.split(".")[0] if code else ""
+    if is_st:
+        return 1.05
+    if c6.startswith(("688", "689", "300", "301")):
+        return 1.20
+    if c6.startswith(("8", "4", "92")):
+        return 1.30
+    return 1.10
+
+
+def _is_limit_up(pct_chg, code, is_st=False):
+    if pct_chg is None or pct_chg != pct_chg:
+        return False
+    return pct_chg + 0.01 >= (_limit_threshold(code, is_st) - 1.0) * 100.0
+
+
+def _limit_price(prev_close, code, is_st=False):
+    if prev_close is None or prev_close != prev_close:
+        return None
+    return round(float(prev_close) * _limit_threshold(code, is_st), 2)
+
+
+def _is_one_line(row):
+    o, h, l, c = row.get("open"), row.get("high"), row.get("low"), row.get("close")
+    if None in (o, h, l, c) or any(x != x for x in (o, h, l, c)):
+        return False
+    return abs(float(o) - float(h)) < 1e-6 and abs(float(h) - float(l)) < 1e-6 \
+        and abs(float(l) - float(c)) < 1e-6
+
+
+def _ind_l1(ind):
+    """get_industry 返回 {'sw_l1': {'industry_code': '801780', ...}}（2026-09-01 探针实证）。
+    安全取 L1 行业码；非预期结构返回 None（该码不参与板块滤网）。"""
+    try:
+        if not isinstance(ind, dict):
+            return None
+        sw = ind.get("sw_l1") or {}
+        code = sw.get("industry_code") if isinstance(sw, dict) else None
+        return str(code) if code else None
+    except Exception:
+        return None
 
 
 def initialize(context):
+    """首语句 _ensure_runtime_state（状态安全不依赖 initialize 成功）；
+    真实 PTrade 可能在 initialize 抛错后继续回调——全部 g 字段由 guard 兜底。"""
     _ensure_runtime_state()
-    set_benchmark(INDEX_CODE)
-    log.info('断板反包策略 initialized: benchmark=%s hold_days=%d max_holdings=%d '
-             'per_position=%.2f' % (INDEX_CODE, HOLD_DAYS, MAX_HOLDINGS,
-                                    PER_POSITION_WEIGHT))
+    set_benchmark("000300.SS")
+    # 引擎以独立 globals 执行 handle_data：模块级 str 常量不可见（PLAY_START NameError
+    # 教训，2026-09-01）→ 打板窗口边界走 g 字段
+    g.play_start = "09:31"
+    g.play_end = "10:00"
 
 
 def before_trading_start(context, data):
     _ensure_runtime_state()
-    members = get_index_stocks(INDEX_CODE)          # 回测注入当日，PIT 月度 complete 快照
-    members = sorted(members) if members else []
-    # 状态硬过滤（执行层边界，非形态规则）：默认 ST/HALT/DELISTING
-    filtered = filter_stock_by_status(members)
-    g.universe = sorted(filtered) if filtered else []
-    log.debug('universe %d -> %d after status filter' % (len(members), len(g.universe)))
+    g.prepped = False
+    g.day_did = ""
+    g.pending_reb = []
+    g.candidates = []
 
 
 def handle_data(context, data):
     _qs_capture_ctx(context)
     _ensure_runtime_state()
-    today = context.current_dt.strftime('%Y-%m-%d')
-    funnel = {'scanned': 0, 'e0': 0, 'e1': 0, 'e2': 0, 'e3': 0, 'e4': 0, 'e5': 0,
-              'e6': 0, 'e7': 0, 'e8': 0, 'e9': 0}
+    today = str(context.current_dt.date())
+    now = context.current_dt.time().strftime("%H:%M")
 
-    # ---- 市场基准日（000852 指数前两交易日，停牌缺口防御锚）----
-    mkt = get_history(2, frequency='1d', field=['trade_date'], security_list=INDEX_CODE, fq='pre', include=False, is_dict=True)
-    mkt_values = list(mkt.values()) if mkt else []
-    if not mkt_values:
-        return
-    mkt_td = _extract_history_field(mkt_values[0], 'trade_date', dtype=str)
-    if mkt_td.shape[0] < 2:
-        return
-    t1_date, t2_date = str(mkt_td[-1])[:10], str(mkt_td[-2])[:10]
+    if not g.prepped:
+        _screen_market(context, today)
 
-    # ---- 批量取史（前复权信号基准；include=False 截至 T-1）----
-    hist = get_history(HIST_COUNT, frequency='1d', field=FIELDS, security_list=g.universe, fq='pre', include=False, is_dict=True)
-    if not hist:
-        return
+    # 分钟打板窗口 09:31-10:00（T-1 已筛候选；未封板即打板失败放弃）
+    if g.sentiment_ok and g.play_start <= now <= g.play_end and g.day_did != today:
+        _try_play_window(context, today, now)
+        if now >= g.play_end:
+            g.day_did = today
 
-    candidates = []
-    for code in g.universe:
-        if code in g.holdings:                       # E10 已持仓忽略（不加仓）
+    # T+1 起持仓每 bar 监控（开板=炸板/断板 → 卖出；止损 -5%）
+    _holdings_monitor(context, today, now)
+
+    if now >= "15:00":
+        _emit_portfolio_audit(context, today)
+
+
+def _screen_market(context, today):
+    """T-1 收盘态全市场日线聚合（当日内一次）：情绪/晋级率/炸板率/板块热度/候选二进三。"""
+    g.prepped = True
+    try:
+        all_codes = sorted(get_Ashares() or [])
+    except Exception:
+        all_codes = []
+    if not all_codes:
+        g.sentiment_ok = False
+        return
+    g.day_codes = all_codes
+    try:
+        hist = get_history_batch(all_codes, count=8, unit="1d",
+                                 fields=["open", "high", "low", "close",
+                                         "volume", "pctChg"],
+                                 fq="pre", include=False) or {}
+    except Exception:
+        return
+    tbl = {}
+    for c, item in hist.items():
+        clc = _extract_history_field(item, "close")
+        if clc is None or len(clc) < 4:
             continue
-        item = hist.get(code)
-        if item is None:
-            continue
-        funnel['scanned'] += 1
+        tbl[c] = {
+            "clc": clc,
+            "vol": _extract_history_field(item, "volume"),
+            "pct": _extract_history_field(item, "pctChg"),
+            "opn": _extract_history_field(item, "open"),
+            "hig": _extract_history_field(item, "high"),
+            "low": _extract_history_field(item, "low"),
+        }
+    if not tbl:
+        g.sentiment_ok = False
+        return
+
+    zt_lst, zt_t2 = [], []
+    promo_up, promo_base = 0, 0
+    zp_up, zp_base = 0, 0
+    for c, r in tbl.items():
+        pct = r["pct"]
+        up_t1 = len(pct) >= 2 and _is_limit_up(pct[-1], c)
+        up_t2 = len(pct) >= 3 and _is_limit_up(pct[-2], c)
+        if up_t1:
+            zt_lst.append(c)
+        if up_t2:
+            zt_t2.append(c)
+            promo_base += 1
+            if up_t1:
+                promo_up += 1
+        hi, cl = r["hig"], r["clc"]
+        if hi is not None and len(hi) >= 2 and cl is not None and len(cl) >= 2:
+            prev_c = float(cl[-2])
+            if prev_c == prev_c:
+                r["limit_price"] = _limit_price(prev_c, c)
+                if float(hi[-1]) >= r["limit_price"] - 1e-6:
+                    zp_base += 1
+                    if not _is_limit_up(pct[-1], c):
+                        zp_up += 1
+    g.zt_counts = {"total": len(zt_lst),
+                   "promo": (promo_up / promo_base) if promo_base else 0.0,
+                   "zp_rate": (zp_up / zp_base) if zp_base else 0.0,
+                   "max_ladder": _max_ladder(tbl)}
+    g.sentiment_ok = bool(
+        g.zt_counts["total"] > MKT_ZT_MIN
+        and g.zt_counts["promo"] > PROMO_RATE_MIN
+        and g.zt_counts["zp_rate"] < ZP_RATE_MAX
+        and g.zt_counts["max_ladder"] >= MAX_LADDER_MIN)
+    _emit_screen(today, 0, "ok" if g.sentiment_ok else "no")
+    if not g.sentiment_ok:
+        return
+
+    # 板块热度：对 T-1 涨停股取 SW2021 L1 归属（仅涨停股集合，≤数百次）
+    g.sector_zt, g.sector_gain = {}, {}
+    for c in zt_lst:
         try:
-            arr_open = _extract_history_field(item, 'open')      # front（前复权）
-            arr_high = _extract_history_field(item, 'high')      # front
-            arr_close = _extract_history_field(item, 'close')    # front
-            arr_vol = _extract_history_field(item, 'volume')     # raw
-            arr_amt = _extract_history_field(item, 'amount')     # raw（元）
-            arr_pct = _extract_history_field(item, 'pctChg')     # 百分比
-            arr_prec = _extract_history_field(item, 'preClose')  # raw
-            arr_td = _extract_history_field(item, 'trade_date', dtype=str)
+            ind = get_industry(c) or {}
+        except Exception:
+            ind = {}
+        l1 = _ind_l1(ind)
+        if not l1:
+            continue
+        g.sector_zt[l1] = g.sector_zt.get(l1, 0) + 1
+        pct = tbl[c]["pct"]
+        if pct is not None and len(pct):
+            g.sector_gain[l1] = g.sector_gain.get(l1, 0.0) + float(pct[-1])
+    for k in g.sector_gain:
+        g.sector_gain[k] = g.sector_gain[k] / max(1, g.sector_zt.get(k, 0))
+    top3 = [k for k, _ in sorted(g.sector_gain.items(), key=lambda kv: -kv[1])[:SECTOR_RANK_TOP]]
+
+    g.candidates = []
+    for c, r in tbl.items():
+        pct, v = r["pct"], r["vol"]
+        if pct is None or v is None or len(pct) < 4 or len(v) < 6:
+            continue
+        if not (_is_limit_up(pct[-2], c) and _is_limit_up(pct[-1], c)):
+            continue
+        if not (float(v[-2]) > 0 and float(v[-1]) / float(v[-2]) > VOL_RATIO_GE2):
+            continue
+        avg5 = float(np.nanmean(v[-6:-1]))
+        if avg5 <= 0 or float(v[-1]) < avg5 * VOL_RATIO_5D:
+            continue
+        try:
+            ind = get_industry(c) or {}
+        except Exception:
+            ind = {}
+        l1 = _ind_l1(ind)
+        if not l1 or g.sector_zt.get(l1, 0) < SECTOR_ZT_MIN or l1 not in top3:
+            continue
+        one = {"open": float(r["opn"][-1]) if r["opn"] is not None and len(r["opn"]) else None,
+               "high": float(r["hig"][-1]) if r["hig"] is not None and len(r["hig"]) else None,
+               "low": float(r["low"][-1]) if r["low"] is not None and len(r["low"]) else None,
+               "close": float(r["clc"][-1])}
+        if _is_one_line(one):
+            continue
+        g.candidates.append(c)
+    # 公共 status API：ST 剔除（数据近似 AP-8 之外，公共签名兜底）
+    try:
+        st_map = get_stock_status(g.candidates, query_type="ST") or {}
+        g.candidates = [c for c in g.candidates if not st_map.get(c, False)]
+    except Exception:
+        pass
+    _emit_screen(today, len(g.candidates), "ok")
+
+
+def _max_ladder(tbl):
+    best = 0
+    for c, r in tbl.items():
+        pct = r.get("pct")
+        if pct is None:
+            continue
+        streak = 0
+        for p in pct[::-1]:
+            if _is_limit_up(p, c):
+                streak += 1
+            else:
+                break
+        best = max(best, streak)
+    return best
+
+
+
+def _portfolio_total_value(context):
+    """runtime 总资产（sizing_mode=runtime_total_value）：portfolio.total_value 优先，
+    兼容 total_asset / portfolio_value；取不到回退 cash。"""
+    p = getattr(context, "portfolio", None)
+    if p is not None:
+        for f in ("total_value", "total_asset", "portfolio_value"):
+            v = getattr(p, f, None)
+            if v is not None:
+                try:
+                    fv = float(v)
+                except Exception:
+                    continue
+                if fv == fv and fv > 0:
+                    return fv
+    return float(getattr(context, "cash", 0.0) or 0.0)
+
+def _try_play_window(context, today, now):
+    """打板窗口：候选中上一已完成分钟 bar 封板（close ≥ 涨停价近似）→ 买入（每码每日一次）。"""
+    codes = [c for c in g.candidates if c not in g.port and c not in g.pending_reb]
+    if not codes or len(g.port) >= MAX_HOLDINGS:
+        return
+    try:
+        mh = get_history(3, frequency='1m', field=['close', 'preClose'], security_list=codes, fq='pre', include=False, is_dict=True) or {}
+    except Exception:
+        return
+    for c in codes:
+        if len(g.port) >= MAX_HOLDINGS:
+            break
+        item = mh.get(c)
+        closes = _extract_history_field(item, "close")
+        pres = _extract_history_field(item, "preClose")
+        if closes is None or len(closes) == 0:
+            continue
+        last_close = float(closes[-1])
+        prev_close = None
+        if pres is not None and len(pres) and float(pres[-1]) == float(pres[-1]):
+            prev_close = float(pres[-1])
+        if prev_close is None:
+            prev_close = g.prev_close.get(c)
+        if prev_close is None:
+            continue
+        lp = _limit_price(prev_close, c)
+        if lp is None or last_close + 1e-6 < lp:
+            continue  # 未封板 → 打板失败，放弃
+        eq = _portfolio_total_value(context)
+        target = eq * POSITION_WEIGHT
+        if target <= 100:
+            continue
+        g.pending_reb.append(c)
+        g.port[c] = {"buy_date": today, "cost": last_close, "value": target}
+        order_target_value(c, target)
+        log.info("QS_REBALANCE_AUDIT rebalance_id=lbdt-%s-%s date=%s selected=%d "
+                 "tradable=%d sell_submitted=0 buy_submitted=1" % (
+                     today.replace("-", ""), str(context.current_dt.time()).replace(":", ""),
+                     today, len(g.port), len(g.port)))
+
+
+def _holdings_monitor(context, today, now):
+    """T+1 起每 bar：bar close < 涨停价（开板）或 < 成本×0.95（止损）→ 卖出。"""
+    for c in list(g.port.keys()):
+        p = g.port[c]
+        if today <= str(p.get("buy_date") or ""):
+            continue
+        try:
+            mh = get_history(2, frequency='1m', field=['close', 'preClose'], security_list=c, fq='pre', include=False, is_dict=True) or {}
         except Exception:
             continue
-        # ---- E0 数据完整性：≥22 根、日期对齐市场基准日、T 日 bar 有效 ----
-        if arr_close.shape[0] < 22:
+        item = mh.get(c)
+        closes = _extract_history_field(item, "close")
+        pres = _extract_history_field(item, "preClose")
+        if closes is None or len(closes) == 0:
             continue
-        bar = data[code]
-        if (str(arr_td[-1])[:10] != t1_date or str(arr_td[-2])[:10] != t2_date
-                or bar.volume <= 0 or bar.close <= 0 or bar.open <= 0):
+        last_close = float(closes[-1])
+        cost = float(p.get("cost") or 0.0)
+        if cost <= 0 or last_close != last_close:
             continue
-        if np.isnan(arr_close[-21:]).any() or np.isnan(arr_pct[-2:]).any():
+        if last_close < cost * STOP_LOSS_PCT:
+            order_target_value(c, 0)
+            del g.port[c]
+            log.info("QS_REBALANCE_AUDIT rebalance_id=lbdt-%s-%s date=%s selected=%d "
+                     "tradable=%d sell_submitted=1 buy_submitted=0" % (
+                         today.replace("-", ""), str(context.current_dt.time()).replace(":", ""),
+                         today, len(g.port), len(g.port)))
             continue
-        funnel['e0'] += 1
+        if pres is not None and len(pres) and float(pres[-1]) == float(pres[-1]):
+            lp = _limit_price(float(pres[-1]), c)
+            if lp is not None and last_close + 1e-6 < lp:
+                order_target_value(c, 0)  # 开板（炸板/断板）→ 卖出
+                del g.port[c]
+                log.info("QS_REBALANCE_AUDIT rebalance_id=lbdt-%s-%s date=%s selected=%d "
+                         "tradable=%d sell_submitted=1 buy_submitted=0" % (
+                             today.replace("-", ""), str(context.current_dt.time()).replace(":", ""),
+                             today, len(g.port), len(g.port)))
 
-        pct2, pct1 = float(arr_pct[-2]), float(arr_pct[-1])
-        vol2, vol1 = float(arr_vol[-2]), float(arr_vol[-1])
-        amt1 = float(arr_amt[-1])
-        prec1 = float(arr_prec[-1])
-        limit = _limit_pct(code)
 
-        # ---- E1 T-2 涨停封板（pctChg ≥ 板块幅度 − 0.1pct，收盘封板近似）----
-        if not (pct2 >= limit * 100.0 - 0.1):
-            continue
-        funnel['e1'] += 1
+def _emit_screen(today, n_cand, state):
+    log.info("QS_SCREEN_AUDIT date=%s candidates=%d sentiment=%s promo=%.3f "
+             "zp_rate=%.3f max_ladder=%d mkt_zt=%d" % (
+                 today, n_cand, state, g.zt_counts["promo"],
+                 g.zt_counts["zp_rate"], g.zt_counts["max_ladder"],
+                 g.zt_counts["total"]))
 
-        # ---- E2 T-1 断板放量阴线：跌幅带 + 收阴 + 较涨停日放量 ----
-        if not (DROP_MIN_PCT <= pct1 <= DROP_MAX_PCT
-                and arr_close[-1] < arr_open[-1]
-                and vol1 > vol2):
-            continue
-        funnel['e2'] += 1
 
-        # ---- E3 无量一字板炸板剔除 ----
-        f1 = float(arr_close[-1]) / (prec1 * (1.0 + pct1 / 100.0))   # T-1 复权因子
-        close_raw1 = prec1 * (1.0 + pct1 / 100.0)                    # T-1 原始收盘
-        open_raw1 = float(arr_open[-1]) / f1                         # T-1 原始开盘
-        high_limit1 = round(prec1 * (1.0 + limit), 2)                # T-1 涨停价
-        if (open_raw1 >= high_limit1 - 0.01
-                and close_raw1 < high_limit1
-                and vol1 < NO_VOL_ONEWORD_RATIO * vol2):
-            continue
-        funnel['e3'] += 1
-
-        # ---- E4 T 反包阳线：收盘 ≥ 开盘 且 收盘 ≥ T-1 开盘（原始价）----
-        if not (bar.close >= bar.open and bar.close >= open_raw1):
-            continue
-        funnel['e4'] += 1
-
-        # ---- E5 T 量能带 [0.8, 1.2] × volume(T-1) ----
-        if not (VOL_RATIO_MIN * vol1 <= bar.volume <= VOL_RATIO_MAX * vol1):
-            continue
-        funnel['e5'] += 1
-
-        # ---- E6 MA20 三日过滤（前复权收盘、含当日滚动）----
-        closes = arr_close[-21:]                                     # T-21..T-1
-        ma_t2 = float(np.mean(closes[:20]))                          # T-21..T-2
-        ma_t1 = float(np.mean(closes[1:]))                           # T-20..T-1
-        # T 为除权日时 E9 已弃号；无除权则 front 连续：close_front(T)=close_front(T-1)×close_T/preClose_T
-        close_front_t = float(closes[-1]) * bar.close / bar.preclose
-        ma_t0 = (float(np.sum(closes[2:])) + close_front_t) / 20.0   # T-19..T
-        if not (float(closes[-2]) > ma_t2 and float(closes[-1]) > ma_t1
-                and close_front_t > ma_t0):
-            continue
-        funnel['e6'] += 1
-
-        # ---- E7 流动性：T-1 成交额 ≥ 5000 万元 ----
-        if not (amt1 >= LIQ_AMT_MIN):
-            continue
-        funnel['e7'] += 1
-
-        # ---- E8 T 日收盘涨停 → 放弃买入（买不进按现实模拟）----
-        if bar.close >= bar.high_limit - 0.001:
-            continue
-        funnel['e8'] += 1
-
-        # ---- E9 除权防御（宁缺勿假）：量比/反包比较跨除权即弃 ----
-        f2 = float(arr_close[-2]) / (float(arr_prec[-2]) * (1.0 + pct2 / 100.0))
-        if (abs(f2 - f1) > F_TOL
-                or abs(bar.preclose - close_raw1) > 0.001 * close_raw1):
-            continue
-        funnel['e9'] += 1
-
-        # ---- 完全反包标记（排序优先），进入候选 ----
-        fully_covered = bar.close >= float(arr_high[-2]) / f1        # T 收 ≥ T-1 最高
-        candidates.append((0 if fully_covered else 1, -amt1, code))
-
-    # ---- 排序：完全反包优先 → T-1 成交额降序 → code 升序（确定性）----
-    candidates.sort()
-
-    # ---- 先卖（T+2 到期，close 即时撮合，卖出款同周期可用）----
-    g.rebalance_seq += 1
-    rid = 'bbrev-%s-%04d' % (today.replace('-', ''), g.rebalance_seq)
-    sell_submitted = 0
-    for code in sorted(g.holdings.keys()):
-        if g.holdings[code]['days_held'] >= HOLD_DAYS:
-            order_target_value(code, 0)
-            sell_submitted += 1
-            pos = get_position(code)
-            if getattr(pos, 'amount', 0) <= 0:
-                g.holdings.pop(code, None)             # X3 对账：已清仓移除账本
-
-    # ---- 后买（最多补满 2 只，runtime_total_value × 0.5；P1 设计契约）----
-    # D4-S6 框架修复已落定（ptrade_api 接线层换算价=②层当日撮合价，2026-08-27），
-    # order_target_value 现按当日收盘精确核算，回归标准实现（不再需要显式股数自保）。
-    buy_submitted = 0
-    slots = MAX_HOLDINGS - len(g.holdings)
-    for _rank, _neg_amt, code in candidates:
-        if buy_submitted >= slots:
-            break
-        target_value = context.portfolio.total_value * PER_POSITION_WEIGHT
-        order_target_value(code, target_value)
-        buy_submitted += 1
-        g.holdings[code] = {'buy_dt': today, 'days_held': 0}
-        pos = get_position(code)
-        if getattr(pos, 'amount', 0) <= 0:              # 受理未成交（如边界拒单）回滚账本
-            g.holdings.pop(code, None)
-            buy_submitted -= 1
-
-    # ---- 审计行（R5 部署不变量 + 信号漏斗，rebalance_id 1:1）----
-    log.info('QS_REBALANCE_AUDIT rebalance_id=%s date=%s selected=%d tradable=%d '
-             'sell_submitted=%d buy_submitted=%d'
-             % (rid, today, len(candidates), funnel['e9'],
-                sell_submitted, buy_submitted))
-    tv = context.portfolio.total_value
-    cash_ratio = context.portfolio.cash / tv if tv > 0 else 0.0
-    gross = context.portfolio.market_value / tv if tv > 0 else 0.0
-    log.info('QS_PORTFOLIO_AUDIT rebalance_id=%s date=%s positions=%d '
-             'cash_ratio=%.4f gross_exposure=%.4f'
-             % (rid, today, len(g.holdings), cash_ratio, gross))
-    log.info('QS_SIGNAL_AUDIT date=%s scanned=%d e0=%d e1=%d e2=%d e3=%d e4=%d '
-             'e5=%d e6=%d e7=%d e8=%d e9=%d signals=%d buys=%d sells=%d'
-             % (today, funnel['scanned'], funnel['e0'], funnel['e1'], funnel['e2'],
-                funnel['e3'], funnel['e4'], funnel['e5'], funnel['e6'], funnel['e7'],
-                funnel['e8'], funnel['e9'], len(candidates), buy_submitted,
-                sell_submitted))
+def _emit_portfolio_audit(context, today):
+    cash = float(getattr(context, "cash", 0.0) or 0.0)
+    eq = float(getattr(getattr(context, "portfolio", None), "total_value", None) or cash)
+    ratio = (cash / eq) if eq else 0.0
+    log.info("QS_PORTFOLIO_AUDIT rebalance_id=lbdt-%s date=%s positions=%d "
+             "cash_ratio=%.4f gross_exposure=%.4f" % (
+                 today.replace("-", ""), today, len(g.port), ratio, 1.0 - ratio))
 
 
 def after_trading_end(context, data):
     _ensure_runtime_state()
-    for code in sorted(g.holdings.keys()):
-        g.holdings[code]['days_held'] += 1
-        pos = get_position(code)
-        if getattr(pos, 'amount', 0) <= 0:              # 外部强平/退市对账清理
-            g.holdings.pop(code, None)
+    today = str(context.current_dt.date())
+    _emit_portfolio_audit(context, today)
