@@ -1,0 +1,223 @@
+{
+  "campaign": "week10_R5_main",
+  "strategy_id": "weekly_smallcap_growth_momentum_10_v2",
+  "strategy_name": "周频小市值成长动量（三层止损）",
+  "design_version": "2.2",
+  "window": [
+    "2025-01-01",
+    "2025-12-31"
+  ],
+  "capital": 100000,
+  "match_price_mode": "close",
+  "engine_profile": "daily-bar-v1",
+  "pipeline_note": "最新转换管线（pctChg v7.3 + 数据源唯一化 7a1a1e4）",
+  "canonical_source_sha256": "3e3bbdedc1a9bf6c0d239f52a5a61ede7529ce06fd696b05be990ea4ebe00b08",
+  "groups": {
+    "A": {
+      "window": [
+        "2025-01-01",
+        "2025-12-31"
+      ],
+      "runs": [
+        {
+          "tag": "run2",
+          "result_dir": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260902_233431_strategy",
+          "strategy_sha256": "3e3bbdedc1a9bf6c0d239f52a5a61ede7529ce06fd696b05be990ea4ebe00b08",
+          "artifacts": {
+            "config.csv": {
+              "path": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260902_233431_strategy\\config.csv",
+              "sha256": "c4be6762693258290f4cb27e515ad068866c78e008c13bb3330a10bd6d7910b7"
+            },
+            "daily_stats.csv": {
+              "path": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260902_233431_strategy\\daily_stats.csv",
+              "sha256": "a4df80dd390fb004552afe3a4823324df24e2b00d734dc3f43ff64f6517060bf"
+            },
+            "trades.csv": {
+              "path": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260902_233431_strategy\\trades.csv",
+              "sha256": "ad662890cb6819202e535efa8fd63f5599a6d5a54ec794d5849f4e8e4a8926cd"
+            }
+          },
+          "run_log": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\wsgm10v2\\r5_logs\\w10_A_run1.log",
+          "run_log_sha256": "e382d128bce2da5e1f0959cc419548ea935f09a25871c8166cac1cbe63ca386a",
+          "metrics_summary": {
+            "strategy_name": "strategy",
+            "start_date": "2025-01-02",
+            "end_date": "2025-12-31",
+            "trade_days": 243,
+            "benchmark_code": "000300",
+            "strategy_return_pct": 54.517093976,
+            "max_drawdown_pct": 9.91407074609738,
+            "win_rate_pct": 58.82352941176471,
+            "benchmark_return_pct": 17.66317399889705,
+            "annual_return_pct": 56.466115289314445,
+            "profit_loss_ratio_pct": 443.79388481945784,
+            "alpha_ratio": 0.4373003547424771,
+            "benchmark_annual_return_pct": 18.215785600587566,
+            "profit_count": 30,
+            "beta_ratio": 0.5161542631720698,
+            "excess_return_pct": 33.32716621974412,
+            "loss_count": 21,
+            "sharpe_ratio": 2.6268087160528952,
+            "annual_excess_return_pct": 34.43647860797545,
+            "information_ratio": 1.254528352272241,
+            "sortino_ratio": 4.0579282198839595,
+            "daily_win_rate_pct": 54.73251028806584,
+            "avg_hold_days": 26.862745098039216
+          }
+        },
+        {
+          "tag": "run2",
+          "result_dir": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260902_233811_strategy",
+          "strategy_sha256": "3e3bbdedc1a9bf6c0d239f52a5a61ede7529ce06fd696b05be990ea4ebe00b08",
+          "artifacts": {
+            "config.csv": {
+              "path": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260902_233811_strategy\\config.csv",
+              "sha256": "c4be6762693258290f4cb27e515ad068866c78e008c13bb3330a10bd6d7910b7"
+            },
+            "daily_stats.csv": {
+              "path": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260902_233811_strategy\\daily_stats.csv",
+              "sha256": "a4df80dd390fb004552afe3a4823324df24e2b00d734dc3f43ff64f6517060bf"
+            },
+            "trades.csv": {
+              "path": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260902_233811_strategy\\trades.csv",
+              "sha256": "ad662890cb6819202e535efa8fd63f5599a6d5a54ec794d5849f4e8e4a8926cd"
+            }
+          },
+          "run_log": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\wsgm10v2\\r5_logs\\w10_A_run2.log",
+          "run_log_sha256": "22d4c89f5ea1ddb7ab88c4ed081224631f078cde2c1bf945a87b5293af4334c7",
+          "metrics_summary": {
+            "strategy_name": "strategy",
+            "start_date": "2025-01-02",
+            "end_date": "2025-12-31",
+            "trade_days": 243,
+            "benchmark_code": "000300",
+            "strategy_return_pct": 54.517093976,
+            "max_drawdown_pct": 9.91407074609738,
+            "win_rate_pct": 58.82352941176471,
+            "benchmark_return_pct": 17.66317399889705,
+            "annual_return_pct": 56.466115289314445,
+            "profit_loss_ratio_pct": 443.79388481945784,
+            "alpha_ratio": 0.4373003547424771,
+            "benchmark_annual_return_pct": 18.215785600587566,
+            "profit_count": 30,
+            "beta_ratio": 0.5161542631720698,
+            "excess_return_pct": 33.32716621974412,
+            "loss_count": 21,
+            "sharpe_ratio": 2.6268087160528952,
+            "annual_excess_return_pct": 34.43647860797545,
+            "information_ratio": 1.254528352272241,
+            "sortino_ratio": 4.0579282198839595,
+            "daily_win_rate_pct": 54.73251028806584,
+            "avg_hold_days": 26.862745098039216
+          }
+        }
+      ],
+      "g35_reproducibility": "PASS"
+    },
+    "B": {
+      "window": [
+        "2025-01-01",
+        "2025-12-31"
+      ],
+      "runs": [
+        {
+          "tag": "run2",
+          "result_dir": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260902_234157_strategy",
+          "strategy_sha256": "3e3bbdedc1a9bf6c0d239f52a5a61ede7529ce06fd696b05be990ea4ebe00b08",
+          "artifacts": {
+            "config.csv": {
+              "path": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260902_234157_strategy\\config.csv",
+              "sha256": "0f07253a2d6d292f00184ad08d7808383055024a01fdde9fd0230a3f5ef104f4"
+            },
+            "daily_stats.csv": {
+              "path": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260902_234157_strategy\\daily_stats.csv",
+              "sha256": "6ebdb8591b124d4521bf719492b7fba939403008e99ac2b5c3caac2fc2552e0e"
+            },
+            "trades.csv": {
+              "path": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260902_234157_strategy\\trades.csv",
+              "sha256": "57dc220ca6abc8cb0b1bfcd15cb6c23dadc9264dfcac951b6e957bb7a90941dc"
+            }
+          },
+          "run_log": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\wsgm10v2\\r5_logs\\w10_B_run1.log",
+          "run_log_sha256": "caba33d6113084d4366a2573287840d62e155a6190b9776eb669da6260e6536a",
+          "metrics_summary": {
+            "strategy_name": "strategy",
+            "start_date": "2025-01-02",
+            "end_date": "2025-12-31",
+            "trade_days": 243,
+            "benchmark_code": "000300",
+            "strategy_return_pct": 53.20627243799998,
+            "max_drawdown_pct": 10.062063169676938,
+            "win_rate_pct": 56.86274509803921,
+            "benchmark_return_pct": 17.66317399889705,
+            "annual_return_pct": 55.10069026835682,
+            "profit_loss_ratio_pct": 413.9716426397184,
+            "alpha_ratio": 0.42318428739236347,
+            "benchmark_annual_return_pct": 18.215785600587566,
+            "profit_count": 29,
+            "beta_ratio": 0.518602567730188,
+            "excess_return_pct": 32.0163446817441,
+            "loss_count": 22,
+            "sharpe_ratio": 2.55439508537836,
+            "annual_excess_return_pct": 33.07686944506272,
+            "information_ratio": 1.2173173839687517,
+            "sortino_ratio": 3.940035542799038,
+            "daily_win_rate_pct": 54.32098765432099,
+            "avg_hold_days": 26.862745098039216
+          }
+        },
+        {
+          "tag": "run2",
+          "result_dir": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260902_234536_strategy",
+          "strategy_sha256": "3e3bbdedc1a9bf6c0d239f52a5a61ede7529ce06fd696b05be990ea4ebe00b08",
+          "artifacts": {
+            "config.csv": {
+              "path": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260902_234536_strategy\\config.csv",
+              "sha256": "0f07253a2d6d292f00184ad08d7808383055024a01fdde9fd0230a3f5ef104f4"
+            },
+            "daily_stats.csv": {
+              "path": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260902_234536_strategy\\daily_stats.csv",
+              "sha256": "6ebdb8591b124d4521bf719492b7fba939403008e99ac2b5c3caac2fc2552e0e"
+            },
+            "trades.csv": {
+              "path": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260902_234536_strategy\\trades.csv",
+              "sha256": "57dc220ca6abc8cb0b1bfcd15cb6c23dadc9264dfcac951b6e957bb7a90941dc"
+            }
+          },
+          "run_log": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\wsgm10v2\\r5_logs\\w10_B_run2.log",
+          "run_log_sha256": "adbf239ef29cded433f45d697fffd0826142fb8fa7b5e125a25437706bf85d3a",
+          "metrics_summary": {
+            "strategy_name": "strategy",
+            "start_date": "2025-01-02",
+            "end_date": "2025-12-31",
+            "trade_days": 243,
+            "benchmark_code": "000300",
+            "strategy_return_pct": 53.20627243799998,
+            "max_drawdown_pct": 10.062063169676938,
+            "win_rate_pct": 56.86274509803921,
+            "benchmark_return_pct": 17.66317399889705,
+            "annual_return_pct": 55.10069026835682,
+            "profit_loss_ratio_pct": 413.9716426397184,
+            "alpha_ratio": 0.42318428739236347,
+            "benchmark_annual_return_pct": 18.215785600587566,
+            "profit_count": 29,
+            "beta_ratio": 0.518602567730188,
+            "excess_return_pct": 32.0163446817441,
+            "loss_count": 22,
+            "sharpe_ratio": 2.55439508537836,
+            "annual_excess_return_pct": 33.07686944506272,
+            "information_ratio": 1.2173173839687517,
+            "sortino_ratio": 3.940035542799038,
+            "daily_win_rate_pct": 54.32098765432099,
+            "avg_hold_days": 26.862745098039216
+          }
+        }
+      ],
+      "g35_reproducibility": "PASS"
+    }
+  },
+  "evidence_files": [
+    "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260902_233431_strategy",
+    "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260902_234157_strategy"
+  ]
+}

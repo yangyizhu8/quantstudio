@@ -313,9 +313,11 @@ def run_suite(evidence_path: Path, workspace: Path, project_root: Path,
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             fold_dir = run_root / f"{stamp}_r55_fold{fold['fold_index']}"
             fold_cfg = derive_fold_config(cfg_csv, fold, fold_dir)
-            fold_result = _run_engine(fold_cfg, fold_dir, project_root)
-            fold_ds = fold_dir / "daily_stats.csv"
-            fold_rt = fold_dir / "round_trips.csv"
+            # R5.5 修复②：真实 output_dir 由 run_backtest 返回（fold_dir 仅落 fold config）
+            fold_result, real_out = _run_engine(fold_cfg, fold_dir, project_root,
+                                                workspace=workspace)
+            fold_ds = (real_out / "daily_stats.csv") if real_out else (fold_dir / "daily_stats.csv")
+            fold_rt = (real_out / "round_trips.csv") if real_out else (fold_dir / "round_trips.csv")
             if not fold_result or not fold_ds.exists():
                 folds_out.append(_failed_fold(fold, "engine run failed"))
                 continue
@@ -501,22 +503,41 @@ def _winrate_from_round_trips(rt_csv: Path):
     return wins / len(rt)
 
 
-def _run_engine(fold_cfg: Path, fold_dir: Path, project_root: Path) -> bool:
-    """Drive the shared engine entry (same path as GUI BacktestWorker)."""
+def _run_engine(fold_cfg: Path, fold_dir: Path, project_root: Path,
+                workspace: Path | None = None):
+    """Drive the shared engine entry (same path as GUI BacktestWorker).
+
+    R5.5 fold 链双修复（2026-08-28/30，docs/r55-fold-chain-fix-design.md）：
+    - 修复①：strategy_file 裸名/相对路径锚定 workspace → project_root（主运行
+      config.csv 导出时 basename 化，fold runner 原 cwd 相对解析 FileNotFoundError）；
+    - 修复②：run_backtest 的输出目录由其内部生成（{stamp}_strategy），非调用方
+      fold_dir——改为返回真实 output_dir，orchestrator 从真实目录读产物。
+    返回 (ok, output_dir_or_None)。
+    """
     sys.path.insert(0, str(project_root))
     try:
         cfg = pd.read_csv(fold_cfg, dtype=str).iloc[0]
+        sf = Path(cfg["strategy_file"])
+        if not sf.is_absolute():
+            for base in (workspace, project_root):
+                if base is None:
+                    continue
+                cand = base / sf
+                if cand.exists():
+                    sf = cand
+                    break
         from quantstudio.backtest.run_ptrade_strategy import run_backtest
-        run_backtest(cfg["strategy_file"], cfg["start_time"], cfg["end_time"],
-                     db_path=None, capital=float(cfg["init_capital"]),
-                     match_price_mode=cfg["match_price_mode"],
-                     engine_profile="daily-bar-v1", etf_t0=False, cost=None,
-                     rebalance_mode="legacy", progress_callback=None)
-        return True
+        result, output_dir, engine = run_backtest(
+            str(sf), cfg["start_time"], cfg["end_time"],
+            db_path=None, capital=float(cfg["init_capital"]),
+            match_price_mode=cfg["match_price_mode"],
+            engine_profile="daily-bar-v1", etf_t0=False, cost=None,
+            rebalance_mode="legacy", progress_callback=None)
+        return True, Path(output_dir)
     except Exception as exc:  # noqa: BLE001 - fold failure is a recorded outcome
         print(f"[R5.5] fold engine run failed: {type(exc).__name__}: {exc}",
               file=sys.stderr)
-        return False
+        return False, None
 
 
 def _load_design(workspace: Path) -> dict:

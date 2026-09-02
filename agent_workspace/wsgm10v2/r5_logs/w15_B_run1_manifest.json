@@ -1,0 +1,65 @@
+{
+  "group": "B",
+  "tag": "run1",
+  "campaign": "week15_R5_main_ext",
+  "strategy": "v2",
+  "strategy_source": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\wsgm10v2\\strategy.py",
+  "strategy_sha256": "3e3bbdedc1a9bf6c0d239f52a5a61ede7529ce06fd696b05be990ea4ebe00b08",
+  "result_dir": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260903_001739_strategy",
+  "window": [
+    "2025-01-01",
+    "2026-03-31"
+  ],
+  "capital": 100000,
+  "match_price_mode": "close",
+  "engine_profile": "daily-bar-v1",
+  "cost": {
+    "commission_rate": 0.00035,
+    "min_commission": 5.0,
+    "stamp_tax_rate": 0.001,
+    "transfer_fee_rate": 1e-05,
+    "slippage_rate": 0.0,
+    "fixed_slippage": 0.02
+  },
+  "artifacts": {
+    "config.csv": {
+      "path": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260903_001739_strategy\\config.csv",
+      "sha256": "237d0217ad59e034bf08f3ad196e923d815ab50e6b4da2b706da521ada74b3c5"
+    },
+    "daily_stats.csv": {
+      "path": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260903_001739_strategy\\daily_stats.csv",
+      "sha256": "502e98066de23dd53182b8c7a61f7ba0bb4a623553bc875a82cd9b4a24c8faf4"
+    },
+    "trades.csv": {
+      "path": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260903_001739_strategy\\trades.csv",
+      "sha256": "9386cb3336fade46307935163f1693fc4d5cc3dcf76958e335ff045d0bbac1bf"
+    }
+  },
+  "run_log": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\wsgm10v2\\r5_logs\\w15_B_run1.log",
+  "run_log_sha256": "f12876dd96cb713b565441ee9c9e6351d3822dcf22ea1ae2d274e9135869acca",
+  "metrics_summary": {
+    "strategy_name": "strategy",
+    "start_date": "2025-01-02",
+    "end_date": "2026-03-31",
+    "trade_days": 299,
+    "benchmark_code": "000300",
+    "strategy_return_pct": 74.44389754800001,
+    "max_drawdown_pct": 11.9067260338109,
+    "win_rate_pct": 57.14285714285714,
+    "benchmark_return_pct": 13.091531953716862,
+    "annual_return_pct": 59.24042534361826,
+    "profit_loss_ratio_pct": 394.3653369055343,
+    "alpha_ratio": 0.5014228422607426,
+    "benchmark_annual_return_pct": 10.834249763922731,
+    "profit_count": 32,
+    "beta_ratio": 0.5750166875723242,
+    "excess_return_pct": 57.9626390410374,
+    "loss_count": 24,
+    "sharpe_ratio": 2.6315651314116297,
+    "annual_excess_return_pct": 46.55997037506485,
+    "information_ratio": 1.6440948119345749,
+    "sortino_ratio": 3.9909848416862572,
+    "daily_win_rate_pct": 54.84949832775919,
+    "avg_hold_days": 27.071428571428573
+  }
+}
