@@ -85,7 +85,7 @@ R5 证据 PASS 后、R5.5 之前的可选研究阶段（`scripts/run_optimizatio
 | `set_benchmark(sids)` | **PTrade Profile 1.7.0 已登记**。设置基准指数；双端源码使用 PTrade 后缀，例如 `set_benchmark('000300.SS')`。 |
 | `set_limit_mode(mode)` | 设置限价模式（`'LIMIT'`）。 |
 | `set_universe(security_list)` | 设置股票池（DuckDB 模式无需订阅，空实现）。 |
-| `set_commission(**kw)` | 设置佣金：`commission_ratio`/`min_commission`；`type='ETF'` 时关闭印花税与过户费。 |
+| `set_commission(**kw)` | 设置佣金：`commission_ratio`/`min_commission`；`type='ETF'` 时关闭印花税与过户费。**平台值域吸收（2026-09-03）**：平台 arg_checker 要求佣金费率/最低佣金均 >0（IQInvalidArgument 实证）——转 PTrade 时常量 ≤0 吸收为可表达下限（min_commission 0.01 / commission_ratio 1e-6）、动态表达式 → `max(expr, floor)`（仅改 kwarg 值区间，无关调用逐字节不变）；校验器 `PORTABILITY-COMMISSION-MIN-ZERO`/`PORTABILITY-COMMISSION-POSITIONAL` BLOCK 防复发。 |
 | `set_slippage(slippage=0.1)` | 设置比例滑点（Ptrade 签名 `set_slippage(slippage=...)`）。 |
 | `set_fixed_slippage(fixedslippage=0.1)` | 设置每股固定滑点（Ptrade 签名）。 |
 | `set_backtest(*a, **kw)` | **QuantStudio 本地扩展**（回测空实现）。真实 PTrade/IQEngine 无此公共 API；双端/PTrade Validator 阻断。 |
@@ -119,7 +119,7 @@ R5 证据 PASS 后、R5.5 之前的可选研究阶段（`scripts/run_optimizatio
 | `current_price(security)` | 当前价。**统一链（2026-08-22，A2）**：① 前收（框架 `_qs_last_close_lookup` 缓存，get_history 链自动记录，跨日失效）→ ② 原 API（仅本地 QuantStudio 有，日线=当日 close / 分钟=最近 bar close）→ ③ get_history 兜底；**真实 PTrade 无 `current_price` API**（模块加载期引用即 NameError，平台实证），PTrade 转换侧统一链只含 ①③。策略层**禁止手写兜底**（Validator `PTRADE-PLATFORM-FALLBACK-BAN`）。 |
 | `get_current_data()` | 当日全市场行情 dict（`code→BarData`）。 |
 | `get_snapshot(security,frequency='1d')` | 实时快照（回测返回当日 bar）。 |
-| `get_Ashares(date=None)` | **PTrade Profile 1.7.0 已登记**。全 A 股列表；传日期时双端源码统一使用 `YYYYmmdd` 字符串。 |
+| `get_Ashares(date=None)` | **PTrade Profile 1.7.0 已登记**。全 A 股列表；传日期时双端源码统一使用 `YYYYmmdd` 字符串。**本地扩展参数 exclude_bse（2026-09-03 平台吸收）**：仅本地 QuantStudio 有（剔北交所）；转 PTrade 调用点剥离 kwarg，过滤按源语义烘焙 `_QS_EXCLUDE_BSE`（源常量/模块常量解析；动态表达式回退 CLI + WARN 不掩差异）；产物侧 shim 过滤 920/北交所 legacy，探针实证与本地 `is_bse_market` 宇宙一致。校验器 `PORTABILITY-ASHARES-EXCLUDE_BSE` BLOCK 防复发。 |
 
 ### 3.3 财务 / 估值（ORM + 多表）
 

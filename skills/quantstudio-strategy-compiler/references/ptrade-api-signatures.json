@@ -169,6 +169,9 @@
         "commission_ratio",
         "min_commission",
         "type"
+      ],
+      "notes": [
+        "min_commission and commission_ratio must be > 0 on the platform (IQInvalidArgument otherwise, verified 2026-09-03). Conversion absorbs constant <=0 to the expressible floor (min_commission 0.01 / commission_ratio 1e-6) and wraps dynamic expressions with max(expr, floor); local QuantStudio semantics may keep min_commission=0."
       ]
     },
     "order": {
@@ -271,7 +274,8 @@
       ],
       "return_shape": "list[str] using .SS/.SZ suffixes",
       "notes": [
-        "date uses YYYYmmdd when supplied."
+        "date uses YYYYmmdd when supplied.",
+        "exclude_bse is a QuantStudio-local extension parameter (P-D13 C1b). Conversion strips the kwarg at call sites and bakes the value into the injected _QS_EXCLUDE_BSE constant (source semantics authority)."
       ]
     },
     "get_index_stocks": {

@@ -866,3 +866,220 @@ def handle_data(context, data):
     out = result.converted_code
     assert "include=True" in out
     assert "include=False" not in out
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-03 平台吸收（docs/strategy-compiler/ptrade-platform-absorptions-design.md）
+# T1-T7：source_import R1/R2 吸收规则；T8：校验器配套 BLOCK（审计 P2-1/P2-4）
+# ---------------------------------------------------------------------------
+from quantstudio.strategy_compiler.validators.validate_ptrade_portability import (  # noqa: E402
+    validate_ptrade_portability,
+)
+
+_ASHARES_SRC = '''
+_EXCLUDE_BSE = True
+
+def initialize(context):
+    pass
+
+def before_trading_start(context, data):
+    codes = get_Ashares(exclude_bse=_EXCLUDE_BSE)
+'''
+
+
+def test_36_ashares_exclude_bse_constant_stripped_and_baked_true():
+    """T1：常量 True → 调用点无 kwarg + _QS_EXCLUDE_BSE = True 烘焙 + NORM 审计。"""
+    code = '''
+def initialize(context):
+    pass
+
+def before_trading_start(context, data):
+    codes = get_Ashares(exclude_bse=True)
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "get_Ashares(exclude_bse=" not in out
+    assert "_QS_EXCLUDE_BSE = True" in out
+    assert any(a.rule_id == "NORM-ASHARES-EXCLUDE_BSE" for a in result.actions)
+    ast.parse(out)
+
+
+def test_37_ashares_exclude_bse_module_const_resolved():
+    """T2：模块常量 _EXCLUDE_BSE=True 引用 → 解析烘焙 True（P2-2：末次赋值语义）。"""
+    result = _convert_code(_ASHARES_SRC)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "get_Ashares(exclude_bse=" not in out
+    assert "_QS_EXCLUDE_BSE = True" in out
+    assert any(a.rule_id == "NORM-ASHARES-EXCLUDE_BSE" for a in result.actions)
+
+
+def test_38_ashares_exclude_bse_false_bake():
+    """T3：exclude_bse=False → 剥离 + 烘焙 False（源值权威）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def before_trading_start(context, data):
+    codes = get_Ashares(exclude_bse=False)
+'''
+    result = _convert_code(code)
+    out = result.converted_code
+    assert "get_Ashares(exclude_bse=" not in out
+    assert "_QS_EXCLUDE_BSE = False" in out
+
+
+def test_39_ashares_exclude_bse_dynamic_expr_failsoft_warn():
+    """T3b：动态表达式 → 剥离 + 回退 CLI(False) + WARN（不静默丢语义）。"""
+    code = '''
+_G = {'exclude_bse': True}
+
+def initialize(context):
+    pass
+
+def before_trading_start(context, data):
+    codes = get_Ashares(exclude_bse=_G['exclude_bse'])
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "get_Ashares(exclude_bse=" not in out
+    assert any("不可静态解析" in w for w in result.warnings), result.warnings
+
+
+def test_40_set_commission_min_floor_absorb():
+    """T4：min_commission=0 → 0.01；5.0 → 原样；表达式 → max(expr, 0.01)。"""
+    code = '''
+def initialize(context):
+    set_commission(commission_ratio=0.0003, min_commission=0)
+    set_commission(type='ETF', commission_ratio=0.00005, min_commission=0.5)
+    set_commission(commission_ratio=CR, min_commission=MIN_COMMISSION)
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "min_commission=0.01" in out          # 0 → 0.01
+    assert "min_commission=0.5" in out           # >0 原样（纯增益）
+    assert "max(MIN_COMMISSION, 0.01)" in out    # 动态表达式包装
+    assert any(a.rule_id == "NORM-COMMISSION-MIN-FLOOR" for a in result.actions)
+    ast.parse(out)
+
+
+def test_41_ashares_date_plus_exclude_bse_combined():
+    """T5：date+exclude_bse 组合 → 单次整重建：date 归一 + kwarg 剥离，无范围重叠损坏。"""
+    code = '''
+def initialize(context):
+    pass
+
+def before_trading_start(context, data):
+    codes = get_Ashares(date='2021-01-04', exclude_bse=True)
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "get_Ashares('20210104')" in out or "get_Ashares(date='20210104')" in out
+    assert "get_Ashares(exclude_bse=" not in out  # 精确调用点形态（shim 日志串含 exclude_bse=%s 属正常）
+    assert "_QS_EXCLUDE_BSE = True" in out
+    ast.parse(out)  # 结构完整（防重叠损坏）
+
+
+def test_42_absorption_idempotent():
+    """T6：二次转换不嵌套（max 不再包裹、kwarg 不复发、烘焙常量稳定）。"""
+    src = '''
+_EXCLUDE_BSE = True
+
+def initialize(context):
+    set_commission(commission_ratio=0.0003, min_commission=0)
+
+def before_trading_start(context, data):
+    codes = get_Ashares(exclude_bse=_EXCLUDE_BSE)
+'''
+    r1 = _convert_code(src)
+    assert r1.errors == [], r1.errors
+    r2 = _convert_code(r1.converted_code, strategy_id="test_strategy_2")
+    assert r2.errors == [], r2.errors
+    out2 = r2.converted_code
+    assert "max(max(" not in out2 and "max(0.01," not in out2
+    assert "get_Ashares(exclude_bse=" not in out2
+    assert ast.parse(out2)
+
+
+def test_43_golden_unaffected_strategies_unchanged():
+    """T7：新规则未触发 = 吸收改动对未受影响策略零介入（纯增益语义证明）。
+
+    HEAD 逐字节 golden 在共享工作区不可信：git status 显示 source_import.py 在我改动
+    前即为 M（其他会话未提交平台实证：get_history include/preclose v7-v9、QSPROBE），
+    其注入 shim 文本变化会使 HEAD 结论失真。本用例改为语义断言（对我的改动有效）：
+    ①转换无错；②两条新规则零触发（无 NORM-ASHARES-EXCLUDE_BSE / NORM-COMMISSION-MIN-FLOOR）；
+    ③关键锚点 verbatim 保留；④产物 AST 合法。逐字节 golden 待共享工作区冲突解决后
+    以「改动前自基线」固化（验收证据已记录该移交条件）。
+    """
+    anchors = {
+        "bbi_etf_rotation_quantstudio.py": "min_commission=5.0",
+        "ETF动量.py": "min_commission=0.5",
+        "二八轮动策略.py": "min_commission=5.0",
+    }
+    for name, anchor in anchors.items():
+        p = STRATEGIES_DIR / name
+        if not p.exists():
+            pytest.skip(f"策略文件不存在 {name}")
+        r = convert_source(p)
+        assert r.errors == [], (name, r.errors)
+        out = r.converted_code
+        assert not any(a.rule_id in ("NORM-ASHARES-EXCLUDE_BSE", "NORM-COMMISSION-MIN-FLOOR")
+                       for a in r.actions), name
+        assert "get_Ashares(exclude_bse=" not in out, name
+        assert anchor in out, name
+        ast.parse(out)
+
+
+def test_45_dynamic_date_expr_wrap_no_crash():
+    """T9：动态 date 表达式 → 包装 replace/strftime 三元（fall_reversal 触发路径，防
+    ast.Call 缺 keywords 的 AttributeError 复发），产物 AST 合法、幂等可再转。"""
+    code = '''
+def initialize(context):
+    pass
+
+def before_trading_start(context, data):
+    codes = get_Ashares(_qs_day())
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert ".replace('-', '')" in out and "strftime('%Y%m%d')" in out
+    ast.parse(out)
+    r2 = _convert_code(out, strategy_id="test_strategy_2")
+    assert r2.errors == [], r2.errors  # 幂等（已包装跳过）
+    ast.parse(r2.converted_code)
+
+
+def test_44_ptrade_portability_guards_positive_negative():
+    """T8（P2-1/P2-4）：校验器三条新 BLOCK 正反用例。"""
+    # 正例：min_commission=0 → BLOCK PORTABILITY-COMMISSION-MIN-ZERO
+    ok, viols, _ = validate_ptrade_portability(
+        "def initialize(context):\n    set_commission(commission_ratio=0.0003, min_commission=0)\n")
+    assert not ok
+    assert any(v.rule_id == "PORTABILITY-COMMISSION-MIN-ZERO" for v in viols)
+    # 反例：min_commission=5.0 → 无该 rule（也整体无 BLOCK 时需 MANY 断言——只查 rule 缺失）
+    ok2, viols2, _ = validate_ptrade_portability(
+        "def initialize(context):\n    set_commission(commission_ratio=0.0003, min_commission=5.0)\n")
+    assert not any(v.rule_id == "PORTABILITY-COMMISSION-MIN-ZERO" for v in viols2)
+    # 正例：exclude_bse kwarg → BLOCK PORTABILITY-ASHARES-EXCLUDE_BSE
+    ok3, viols3, _ = validate_ptrade_portability(
+        "def before_trading_start(context, data):\n    get_Ashares(exclude_bse=True)\n")
+    assert not ok3
+    assert any(v.rule_id == "PORTABILITY-ASHARES-EXCLUDE_BSE" for v in viols3)
+    # 反例：get_Ashares() 无参 → 无该 rule
+    ok4, viols4, _ = validate_ptrade_portability(
+        "def before_trading_start(context, data):\n    get_Ashares()\n")
+    assert not any(v.rule_id == "PORTABILITY-ASHARES-EXCLUDE_BSE" for v in viols4)
+    # P2-4：set_commission 位置参数 → BLOCK PORTABILITY-COMMISSION-POSITIONAL
+    ok5, viols5, _ = validate_ptrade_portability(
+        "def initialize(context):\n    set_commission('ETF', 0.0001, 0)\n")
+    assert not ok5
+    assert any(v.rule_id == "PORTABILITY-COMMISSION-POSITIONAL" for v in viols5)
+    # P2-4 反例：关键字调用 → 无 positional rule
+    ok6, viols6, _ = validate_ptrade_portability(
+        "def initialize(context):\n    set_commission(type='ETF', commission_ratio=0.0003, min_commission=0.5)\n")
+    assert not any(v.rule_id == "PORTABILITY-COMMISSION-POSITIONAL" for v in viols6)

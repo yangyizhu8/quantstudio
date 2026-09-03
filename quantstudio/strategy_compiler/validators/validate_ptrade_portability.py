@@ -136,6 +136,57 @@ def validate_ptrade_portability(
     if "ptrade-default" not in code[:500]:
         warnings.append("PTrade code header does not declare 'ptrade-default' profile")
 
+    # 2026-09-03 平台吸收配套（docs/strategy-compiler/ptrade-platform-absorptions-design.md §B）：
+    # 转换产物已被吸收（正常产物不命中）；以下规则防 PTrade 直产/未吸收产物再犯（审计 P2-1/P2-4）：
+    #   PORTABILITY-COMMISSION-MIN-ZERO      — set_commission 常量 ≤0（平台 IQInvalidArgument 实证）
+    #   PORTABILITY-COMMISSION-POSITIONAL    — set_commission 位置参数（注册表 max_positional=0）
+    #   PORTABILITY-ASHARES-EXCLUDE_BSE      — get_Ashares 携带本地扩展参数 exclude_bse
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        name = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else "")
+        if name == "set_commission":
+            if node.args:
+                violations.append(Violation(
+                    rule_id="PORTABILITY-COMMISSION-POSITIONAL",
+                    severity="BLOCK",
+                    message="set_commission 平台契约为关键字调用（注册表 max_positional=0）；"
+                            "位置参数（如 set_commission('ETF', 0.0001, 0)）平台解析错位",
+                    location=f"line {node.lineno}"))
+            for kw in node.keywords:
+                if kw.arg not in ("min_commission", "commission_ratio"):
+                    continue
+                neg = None
+                if isinstance(kw.value, ast.Constant):
+                    try:
+                        neg = float(kw.value.value)
+                    except (TypeError, ValueError):
+                        neg = None
+                elif (isinstance(kw.value, ast.UnaryOp) and isinstance(kw.value.op, ast.USub)
+                        and isinstance(kw.value.operand, ast.Constant)):
+                    try:
+                        neg = -float(kw.value.operand.value)
+                    except (TypeError, ValueError):
+                        neg = None
+                if neg is not None and neg <= 0:
+                    violations.append(Violation(
+                        rule_id="PORTABILITY-COMMISSION-MIN-ZERO",
+                        severity="BLOCK",
+                        message=(f"set_commission {kw.arg}={neg} 平台 arg_checker 拒绝 ≤0"
+                                 "（IQInvalidArgument 实证 2026-09-03）；转换管线将吸收为可表达下限"
+                                 "（min_commission 0.01 / commission_ratio 1e-6）；PTrade 直产源码请直接写平台契约值"),
+                        location=f"line {node.lineno}"))
+        elif name == "get_Ashares":
+            for kw in node.keywords:
+                if kw.arg == "exclude_bse":
+                    violations.append(Violation(
+                        rule_id="PORTABILITY-ASHARES-EXCLUDE_BSE",
+                        severity="BLOCK",
+                        message="get_Ashares 的 exclude_bse 为本地扩展参数（平台仅接受 date）；"
+                                "转换管线将剥离并烘焙 _QS_EXCLUDE_BSE；PTrade 直产源码请勿携带",
+                        location=f"line {node.lineno}"))
+
     # B2 (2026-08-28/31)：RSRS 量纲防再发——分位 pct（0-100）与分数阈值（0.65/0.75）
     # 直接比较 = 量纲错误（fscore_rsrs 平台 0% 成交根因之一）；产物 p_frac=pct/100 归一后
     # 不命中该模式（RHS 变 0.0x）。WARN 级（产物侧防线，策略编写期由 skill validator 兜底）。
