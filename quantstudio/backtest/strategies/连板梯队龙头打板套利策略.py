@@ -201,6 +201,8 @@ def _qs_to_dataframe(item):
 # → 返回侧由日线昨收合成 preClose 列（include=False 日线末行 close = 上一交易日收盘，
 # 与本地分钟 preClose 语义一致）；本地/平台返回若已含 preClose → guard 短路零影响。
 # QS_MINUTE_DIAG：分钟路径首次调用打一条形状诊断（平台分钟数据可观测性）。
+# 版本自标识（2026-09-02：三次平台验证版本错位根治——diag 行内嵌版本号，平台日志直接可读）
+_QS_WRAPPER_VERSION = "20260902-v7.1"
 _QS_REQ_PREC_MIN = False
 _QS_MINUTE_DIAG_DONE = False
 _QS_PREC_CACHE = {}
@@ -272,8 +274,16 @@ def get_history(*args, **kwargs):
         # 供返回侧由 close/preClose 合成 pctChg（本地引擎返回全列故本地不受影响）
         if _QS_REQ_PCT and 'preclose' not in _mapped:
             _mapped.append('preclose')
-        # 分钟频率请求 preclose：请求保持原样（零请求变更），返回侧由日线昨收合成（v3）
+        # 分钟频率请求 preclose：v7（2026-09-02 平台实证第七轮 omap_keys=[] 定谳）——
+        # 平台分钟含不支持字段 preclose → 静默返回空 OrderedDict（日线含不支持字段则抛错
+        # skip）→ 分钟请求侧必须剥离 preclose（仅发 close），preClose 由 v3 日线昨收合成补回
         _QS_REQ_PREC_MIN = _is_minute and 'preclose' in _mapped
+        if _QS_REQ_PREC_MIN and 'preclose' in _mapped:
+            _mapped.remove('preclose')
+        # v9（2026-09-03 用户评审）：v8 曾将分钟 include 改写 True——存未来函数风险
+        # （平台 include=True 语义未实证：若返回当日含当前时点后 bar → 未来函数），
+        # **回退改写**（主请求保持 include=False，行为保守无风险）；
+        # 平台 include 语义改由 QSPROBE 探针实证（仅首调观测，双形态各一次）。
         if 'field' in kwargs:
             kwargs['field'] = _mapped if _is_list else _mapped[0]
         if 'fields' in kwargs:
@@ -327,7 +337,23 @@ def get_history(*args, **kwargs):
                     # v5（2026-09-01 平台实证第五轮）：平台分钟逐码返回体可能是 OrderedDict
                     # 形态（非 DataFrame/ndarray）→ 打印其键（字段名）供结构判定
                     if _df0 is not None and hasattr(_df0, 'columns'):
-                        _desc = "cols=%s" % (list(_df0.columns),)
+                        # v7.2/v7.3：末 bar 时间戳 + close 全数组（判定平台分钟 include 语义：
+                        # closes 序列=今日盘中价 → 语义正常；=昨日尾盘价 → include 错位实锤，
+                        # 由本地 stock_minutes 真实行情对照定谳）
+                        _last_t = None
+                        _last_c = None
+                        _closes = None
+                        try:
+                            if 'time' in _df0.columns:
+                                _last_t = _df0['time'].iloc[-1]
+                            if 'close' in _df0.columns:
+                                _last_c = _df0['close'].iloc[-1]
+                                _closes = [round(float(x), 3)
+                                           for x in _df0['close'].tolist()]
+                        except Exception:
+                            pass
+                        _desc = "cols=%s rows=%d last_t=%s last_close=%s closes=%s" % (
+                            list(_df0.columns), len(_df0), _last_t, _last_c, _closes)
                     elif _df0 is not None and hasattr(_df0, 'keys'):
                         try:
                             _desc = "omap_keys=%s" % (list(_df0.keys())[:8],)
@@ -335,7 +361,52 @@ def get_history(*args, **kwargs):
                             _desc = "type=%s" % type(_df0).__name__
                     else:
                         _desc = "type=%s" % type(_df0).__name__
-                    log.info("QS_MINUTE_DIAG keys=%d %s" % (len(_out), _desc))
+                    log.info("QS_MINUTE_DIAG v=%s code=%s keys=%d %s" % (
+                        _QS_WRAPPER_VERSION, _k0, len(_out), _desc))
+                    # v9 QSPROBE：分钟 include 语义双形态探针（仅首调一次、纯观测、不参与
+                    # 策略逻辑）——include=False 与 include=True 各发一次同参调用，打印返回
+                    # bars 的时间戳范围与列名，实证平台分钟 include 语义（含未来?/含今日?）。
+                    try:
+                        _kf = _freq if 'frequency' in kwargs or 'unit' in kwargs else '1m'
+                        _ksecs = _k0
+                        _probe_log = []
+                        for _inc in (False, True):
+                            try:
+                                _pr = _QSHistoryState.orig(
+                                    kwargs.get('count', 3), frequency=_kf,
+                                    field=['close'], security_list=_ksecs,
+                                    fq=kwargs.get('fq', 'pre'), include=_inc)
+                                _pr = _qs_to_dataframe(_pr)
+                                if isinstance(_pr, dict):
+                                    _pr = _pr.get(_ksecs)
+                                if _pr is not None and hasattr(_pr, 'columns'):
+                                    if 'time' in _pr.columns:
+                                        _ts = [str(x) for x in _pr['time'].tolist()]
+                                        _probe_log.append("%s:%s" % (_inc, _ts))
+                                    else:
+                                        # v9.1：补 close 值（无 time 列时靠值对照本地行情
+                                        # 判定 bar 归属——今日盘中价 vs 昨日封板价）
+                                        _cl = None
+                                        try:
+                                            if 'close' in _pr.columns:
+                                                _cl = [round(float(x), 3)
+                                                       for x in _pr['close'].tolist()]
+                                        except Exception:
+                                            pass
+                                        _probe_log.append(
+                                            "%s:notime rows=%d closes=%s" % (
+                                                _inc, len(_pr), _cl))
+                                elif _pr is not None and hasattr(_pr, 'keys'):
+                                    _probe_log.append("%s:omap_keys=%s" % (
+                                        _inc, list(_pr.keys())[:8]))
+                                else:
+                                    _probe_log.append("%s:type=%s" % (
+                                        _inc, type(_pr).__name__))
+                            except Exception as _e:
+                                _probe_log.append("%s:exc=%s" % (_inc, str(_e)[:60]))
+                        log.info("QSPROBE %s %s" % (_ksecs, " | ".join(_probe_log)))
+                    except Exception:
+                        pass
                 else:
                     log.info("QS_MINUTE_DIAG single cols=%s" % (
                         list(_out.columns) if hasattr(_out, 'columns')

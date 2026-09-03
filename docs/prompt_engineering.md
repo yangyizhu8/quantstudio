@@ -67,7 +67,7 @@ QuantStudio 本地注入 API / 指标 / 全局对象（g、log、pd、np、MyTT�
 - run_daily(context,f,time='9:31')：注册每日定时函数（日线回测中生效）。
 
 【数据层（全部来自 DuckDB，绝不直连 DB）】
-- get_history(security,count,unit='1d',fields,fq='pre',include=False,is_dict=False)：单标的历史，索引 -count..0。⚠️ **pctChg/preClose 可移植 v1-v5（2026-09-01~02 五轮平台实证回归）**：①平台无 `pctChg` 字段 → 转换器请求侧剔除、返回侧由 `close/preClose` 合成（本地同口径）；②平台返回列=请求列 → 自动注入 `preclose` 基列；③分钟频率不支持 preclose → 返回侧日线昨收合成 `preClose`；④分钟 is_dict 走逐码路径（列表形态平台返回空）；⑤`QS_MINUTE_DIAG` 形状诊断——策略可继续按本地习惯请求并读取这些字段，零改动。
+- get_history(security,count,unit='1d',fields,fq='pre',include=False,is_dict=False)：单标的历史，索引 -count..0。⚠️ **pctChg/preClose 可移植 v1-v9（2026-09-01~03 平台实证回归）**：①平台无 `pctChg` 字段 → 转换器请求侧剔除、返回侧由 `close/preClose` 合成（本地同口径）；②平台返回列=请求列 → 自动注入 `preclose` 基列；③分钟频率不支持 preclose → 请求剥离 + 返回侧日线昨收合成 `preClose`；④分钟 is_dict 走逐码路径（列表形态平台返回空）；⑤`QS_MINUTE_DIAG`/`QSPROBE` 诊断探针——策略可继续按本地习惯请求并读取这些字段，零改动。⚠️ **平台回测分钟 include 限制（known-limitation 2026-09-03）**：回测中 include=False 返回昨日 bar、True 含未来 bar，均不可用于"当日盘中 bar"判定（打板类盘中触发逻辑在平台回测降级，以模拟盘验证为准；实盘语义正确）。
 - get_price(security,start,end,frequency='1d',fields,fq='pre',count,is_dict=False)
 - ⚠️ **成交额列名双端契约（B1）**：成交额的 Ptrade 契约名为 `money`（DB 物理列 `amount`）。`get_history`/`get_price` 返回的 DataFrame 含 `amount` 时同步追加同值 `money` 列，`fields=['money']` 请求正确返回。**双端/PTrade 目标代码只读 `money`**——读 `amount`/`close_front`/`volume_front`/`open_front` 等本地列名会被 Validator 以 `PTRADE-LOCAL-COLUMN` 阻断；本地单端策略读 `amount` 仍兼容。
 - ⚠️ **取数默认前复权（fq='pre'）**：框架 API 与底层数据适配层默认均为前复权；生成策略取历史/行情务必使用 `fq='pre'`（不复权才显式传 `fq=None`）。**日期区间路径（`get_price`/`get_bars` 的 `start_date`/`end_date`）与 count 路径（`count`/`get_bars_by_count`）前复权行为一致——同一代码、同一区间、同一 fq 返回逐值一致的前复权价**（R1-A 已修复区间路径曾错误返回 raw 价的缺陷）。**切勿依赖不复权价格做回测**（除权缺口会导致信号与收益失真）。即便省略 fq 也已是前复权，但建议显式写出 `fq='pre'` 以表意清晰。

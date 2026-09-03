@@ -250,6 +250,8 @@ def _qs_to_dataframe(item):
 # → 返回侧由日线昨收合成 preClose 列（include=False 日线末行 close = 上一交易日收盘，
 # 与本地分钟 preClose 语义一致）；本地/平台返回若已含 preClose → guard 短路零影响。
 # QS_MINUTE_DIAG：分钟路径首次调用打一条形状诊断（平台分钟数据可观测性）。
+# 版本自标识（2026-09-02：三次平台验证版本错位根治——diag 行内嵌版本号，平台日志直接可读）
+_QS_WRAPPER_VERSION = "20260902-v7.1"
 _QS_REQ_PREC_MIN = False
 _QS_MINUTE_DIAG_DONE = False
 _QS_PREC_CACHE = {{}}
@@ -323,8 +325,16 @@ def get_history(*args, **kwargs):
         # 供返回侧由 close/preClose 合成 pctChg（本地引擎返回全列故本地不受影响）
         if _QS_REQ_PCT and 'preclose' not in _mapped:
             _mapped.append('preclose')
-        # 分钟频率请求 preclose：请求保持原样（零请求变更），返回侧由日线昨收合成（v3）
+        # 分钟频率请求 preclose：v7（2026-09-02 平台实证第七轮 omap_keys=[] 定谳）——
+        # 平台分钟含不支持字段 preclose → 静默返回空 OrderedDict（日线含不支持字段则抛错
+        # skip）→ 分钟请求侧必须剥离 preclose（仅发 close），preClose 由 v3 日线昨收合成补回
         _QS_REQ_PREC_MIN = _is_minute and 'preclose' in _mapped
+        if _QS_REQ_PREC_MIN and 'preclose' in _mapped:
+            _mapped.remove('preclose')
+        # v9（2026-09-03 用户评审）：v8 曾将分钟 include 改写 True——存未来函数风险
+        # （平台 include=True 语义未实证：若返回当日含当前时点后 bar → 未来函数），
+        # **回退改写**（主请求保持 include=False，行为保守无风险）；
+        # 平台 include 语义改由 QSPROBE 探针实证（仅首调观测，双形态各一次）。
         if 'field' in kwargs:
             kwargs['field'] = _mapped if _is_list else _mapped[0]
         if 'fields' in kwargs:
@@ -378,7 +388,23 @@ def get_history(*args, **kwargs):
                     # v5（2026-09-01 平台实证第五轮）：平台分钟逐码返回体可能是 OrderedDict
                     # 形态（非 DataFrame/ndarray）→ 打印其键（字段名）供结构判定
                     if _df0 is not None and hasattr(_df0, 'columns'):
-                        _desc = "cols=%s" % (list(_df0.columns),)
+                        # v7.2/v7.3：末 bar 时间戳 + close 全数组（判定平台分钟 include 语义：
+                        # closes 序列=今日盘中价 → 语义正常；=昨日尾盘价 → include 错位实锤，
+                        # 由本地 stock_minutes 真实行情对照定谳）
+                        _last_t = None
+                        _last_c = None
+                        _closes = None
+                        try:
+                            if 'time' in _df0.columns:
+                                _last_t = _df0['time'].iloc[-1]
+                            if 'close' in _df0.columns:
+                                _last_c = _df0['close'].iloc[-1]
+                                _closes = [round(float(x), 3)
+                                           for x in _df0['close'].tolist()]
+                        except Exception:
+                            pass
+                        _desc = "cols=%s rows=%d last_t=%s last_close=%s closes=%s" % (
+                            list(_df0.columns), len(_df0), _last_t, _last_c, _closes)
                     elif _df0 is not None and hasattr(_df0, 'keys'):
                         try:
                             _desc = "omap_keys=%s" % (list(_df0.keys())[:8],)
@@ -386,7 +412,52 @@ def get_history(*args, **kwargs):
                             _desc = "type=%s" % type(_df0).__name__
                     else:
                         _desc = "type=%s" % type(_df0).__name__
-                    log.info("QS_MINUTE_DIAG keys=%d %s" % (len(_out), _desc))
+                    log.info("QS_MINUTE_DIAG v=%s code=%s keys=%d %s" % (
+                        _QS_WRAPPER_VERSION, _k0, len(_out), _desc))
+                    # v9 QSPROBE：分钟 include 语义双形态探针（仅首调一次、纯观测、不参与
+                    # 策略逻辑）——include=False 与 include=True 各发一次同参调用，打印返回
+                    # bars 的时间戳范围与列名，实证平台分钟 include 语义（含未来?/含今日?）。
+                    try:
+                        _kf = _freq if 'frequency' in kwargs or 'unit' in kwargs else '1m'
+                        _ksecs = _k0
+                        _probe_log = []
+                        for _inc in (False, True):
+                            try:
+                                _pr = _QSHistoryState.orig(
+                                    kwargs.get('count', 3), frequency=_kf,
+                                    field=['close'], security_list=_ksecs,
+                                    fq=kwargs.get('fq', 'pre'), include=_inc)
+                                _pr = _qs_to_dataframe(_pr)
+                                if isinstance(_pr, dict):
+                                    _pr = _pr.get(_ksecs)
+                                if _pr is not None and hasattr(_pr, 'columns'):
+                                    if 'time' in _pr.columns:
+                                        _ts = [str(x) for x in _pr['time'].tolist()]
+                                        _probe_log.append("%s:%s" % (_inc, _ts))
+                                    else:
+                                        # v9.1：补 close 值（无 time 列时靠值对照本地行情
+                                        # 判定 bar 归属——今日盘中价 vs 昨日封板价）
+                                        _cl = None
+                                        try:
+                                            if 'close' in _pr.columns:
+                                                _cl = [round(float(x), 3)
+                                                       for x in _pr['close'].tolist()]
+                                        except Exception:
+                                            pass
+                                        _probe_log.append(
+                                            "%s:notime rows=%d closes=%s" % (
+                                                _inc, len(_pr), _cl))
+                                elif _pr is not None and hasattr(_pr, 'keys'):
+                                    _probe_log.append("%s:omap_keys=%s" % (
+                                        _inc, list(_pr.keys())[:8]))
+                                else:
+                                    _probe_log.append("%s:type=%s" % (
+                                        _inc, type(_pr).__name__))
+                            except Exception as _e:
+                                _probe_log.append("%s:exc=%s" % (_inc, str(_e)[:60]))
+                        log.info("QSPROBE %s %s" % (_ksecs, " | ".join(_probe_log)))
+                    except Exception:
+                        pass
                 else:
                     log.info("QS_MINUTE_DIAG single cols=%s" % (
                         list(_out.columns) if hasattr(_out, 'columns')
@@ -2273,6 +2344,13 @@ def _render_industry_ext(marker: str, industry_codes: tuple[str, ...]) -> str:
             .replace("__QS_INDUSTRY_CODES__", literal))
 
 
+# 2026-09-03 平台吸收（docs/strategy-compiler/ptrade-platform-absorptions-design.md）：
+# set_commission 值域下限——平台 arg_checker 要求佣金费率与最低佣金均 >0（IQInvalidArgument 实证）。
+# 本地权威语义（min_commission=0 等）由转换层映射到平台可表达下限；常量单点可调（平台实证如不同）。
+_COMMISSION_MIN_FLOOR = 0.01        # 平台可表达的下限（≈无最低佣金，F-2 语义忠实，经济影响 <0.01 元/笔）
+_COMMISSION_RATIO_FLOOR = 1e-6      # commission_ratio 对称下限（正常策略 ≥万3，不触发）
+
+
 # ===== P-D13 C1a/C1b/C3a：宇宙差审计 + 北交所过滤 + 窗口审计（2026-08-27） =====
 # C1a 板块统计：get_Ashares 返回后输出 QS_ASHARES_BREAKDOWN（定位 322 北交所差）。
 # C1b exclude_bse：_QS_EXCLUDE_BSE 常量（转换期 CLI --exclude-bse 烘焙，默认 False
@@ -2591,6 +2669,12 @@ class SourceConverter:
         self._fidelity_eps_basis = fidelity_eps_basis
         # P-D13 C1b：北交所过滤旗标（CLI --exclude-bse，默认 False=P-D9 语义权威）
         self._exclude_bse = exclude_bse
+        # 2026-09-03 平台吸收（ptrade-platform-absorptions-design.md）：
+        # exclude_bse 源语义解析（多调用点并集；None=不可静态解析 → 回退 CLI）
+        self._asharess_exclude_bse_resolved: Optional[bool] = None
+        self._asharess_exclude_bse_source_seen = False
+        # R1 整节点重建（date+exclude_bse 组合）已处理的调用点 id——date 规则跳过防范围重叠
+        self._rewritten_call_ids: set[int] = set()
         self.actions: list[ConversionAction] = []
         self.warnings: list[str] = []
         self.errors: list[str] = []
@@ -2979,12 +3063,15 @@ class SourceConverter:
                         (node.lineno, node.col_offset, node.end_lineno, node.end_col_offset, new_text))
             if name == "get_Ashares":
                 self._rewrite_asharess_date(node)
+                self._rewrite_asharess_exclude_bse(node)
             elif name == "get_history":
                 self._rewrite_history_signature(node)
             elif name == "set_benchmark":
                 self._rewrite_benchmark_suffix(node)
             elif name == "get_stock_status":
                 self._rewrite_stock_status_keywords(node)
+            elif name == "set_commission":
+                self._rewrite_commission_value_domain(node)
         # 独立 pass：X['col'].values 是 Attribute 模式（非 Call），单独遍历
         self._rewrite_values_access(tree)
 
@@ -3028,36 +3115,15 @@ class SourceConverter:
 
     # ---- 修复 1：get_Ashares(date) 日期格式 YYYY-MM-DD → YYYYmmdd ----
     def _rewrite_asharess_date(self, node: ast.Call) -> None:
-        arg = None
-        if node.args:
-            arg = node.args[0]
-        else:
-            for kw in node.keywords:
-                if kw.arg == "date":
-                    arg = kw.value
+        if id(node) in self._rewritten_call_ids:
+            return  # R1 已整节点重建（date+exclude_bse 组合），防范围重叠损坏
+        arg = self._asharess_call_arg(node)
         if arg is None:
             return  # get_Ashares() 无参：平台默认当天
-        new_text = None
-        if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and "-" in arg.value:
-            new_text = repr(arg.value.replace("-", ""))
-        elif (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute)
-                and arg.func.attr == "strftime" and arg.args
-                and isinstance(arg.args[0], ast.Constant)
-                and arg.args[0].value == "%Y-%m-%d"):
-            new_text = f"{ast.unparse(arg.func)}('%Y%m%d')"
-        elif (isinstance(arg, ast.IfExp) and isinstance(arg.test, ast.Call)
-                and isinstance(arg.test.func, ast.Name)
-                and arg.test.func.id == "isinstance"):
-            return  # 已包装（幂等：二次转换不重复包装）
-        elif (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute)
-                and arg.func.attr == "strftime" and arg.args
-                and isinstance(arg.args[0], ast.Constant)
-                and "-" not in str(arg.args[0].value)):
-            return  # 已是 YYYYmmdd 形态（幂等：strftime('%Y%m%d') 不再改写/包装）
-        else:
-            expr = ast.unparse(arg)
-            new_text = (f"({expr}.replace('-', '') if isinstance({expr}, str) "
-                        f"else {expr}.strftime('%Y%m%d'))")
+        new_value, changed = self._asharess_date_normalized_value(arg)
+        if not changed:
+            return
+        new_text = ast.unparse(new_value)
         self._replacements.append(
             (arg.lineno, arg.col_offset, arg.end_lineno, arg.end_col_offset, new_text))
         self.actions.append(ConversionAction(
@@ -3066,6 +3132,127 @@ class SourceConverter:
             old_text=ast.unparse(arg), new_text=new_text,
             message="get_Ashares date 改为 YYYYmmdd（PTrade 契约；本地 pd.Timestamp 兼容解析）"))
         self.coverage["normalized_params"] += 1
+
+    def _asharess_call_arg(self, node: ast.Call):
+        """get_Ashares 的 date 参数节点（位置 0 或关键字 date），无 → None。"""
+        if node.args:
+            return node.args[0]
+        for kw in node.keywords:
+            if kw.arg == "date":
+                return kw.value
+        return None
+
+    def _asharess_date_normalized_value(self, arg):
+        """返回 (归一后的值节点 or None, 是否变化)。与旧 date 规则行为逐位等价：
+        常量"YYYY-MM-DD"→剥离"-"；strftime('%Y-%m-%d')→'%Y%m%d'；IfExp 已包装/strftime
+        无"-"→不变（幂等）；其余动态表达式→包装 replace/strftime 三元。"""
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and "-" in arg.value:
+            return ast.Constant(value=arg.value.replace("-", "")), True
+        if (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute)
+                and arg.func.attr == "strftime" and arg.args
+                and isinstance(arg.args[0], ast.Constant)
+                and arg.args[0].value == "%Y-%m-%d"):
+            return (ast.Call(func=arg.func, args=[ast.Constant(value="%Y%m%d")], keywords=[]), True)
+        if (isinstance(arg, ast.IfExp) and isinstance(arg.test, ast.Call)
+                and isinstance(arg.test.func, ast.Name)
+                and arg.test.func.id == "isinstance"):
+            return None, False  # 已包装（幂等：二次转换不重复包装）
+        if (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute)
+                and arg.func.attr == "strftime" and arg.args
+                and isinstance(arg.args[0], ast.Constant)
+                and "-" not in str(arg.args[0].value)):
+            return None, False  # 已是 YYYYmmdd 形态（幂等）
+        wrapped = ast.IfExp(
+            test=ast.Call(func=ast.Name(id="isinstance"), args=[arg, ast.Name(id="str")],
+                          keywords=[]),
+            body=ast.Call(func=ast.Attribute(value=arg, attr="replace"),
+                          args=[ast.Constant(value="-"), ast.Constant(value="")],
+                          keywords=[]),
+            orelse=ast.Call(func=ast.Attribute(value=arg, attr="strftime"),
+                            args=[ast.Constant(value="%Y%m%d")], keywords=[]))
+        return wrapped, True
+
+    # ---- 2026-09-03 平台吸收 R1：get_Ashares exclude_bse 剥离 + 语义烘焙 ----
+    def _rewrite_asharess_exclude_bse(self, node: ast.Call) -> None:
+        """剥离 exclude_bse（本地扩展参数，平台 get_Ashares 仅接受 date）。
+
+        烘焙语义：源常量值 → 多调用点并集；不可静态解析（条件分支/前向引用/动态表达式）
+        → fail-soft：剥离 kwarg + 烘焙回退 CLI(--exclude-bse) + WARN（不静默丢语义，
+        已知差异登记见验收证据）。date+exclude_bse 组合在此单次整节点重建（date 规则跳过）。
+        """
+        kw = None
+        for candidate in node.keywords:
+            if candidate.arg == "exclude_bse":
+                kw = candidate
+                break
+        if kw is None:
+            return  # 幂等：无该 kwarg
+        self._asharess_exclude_bse_source_seen = True
+        resolved = self._resolve_exclude_bse_value(kw.value)
+        if resolved is None:
+            self.warnings.append(
+                "get_Ashares(exclude_bse=<动态表达式>)：值不可静态解析，已剥离 kwarg；"
+                "北交所过滤回退 CLI(--exclude-bse)，与本地动态语义可能存在池构成差异"
+                "（验收证据登记为已知差异，不掩差异）")
+        elif self._asharess_exclude_bse_resolved is None:
+            self._asharess_exclude_bse_resolved = resolved
+        elif resolved:
+            self._asharess_exclude_bse_resolved = True  # 并集：任一调用点要求过滤 → 过滤（保守）
+        new_call = ast.Call(
+            func=node.func,
+            args=list(node.args),
+            keywords=[k for k in node.keywords if k.arg != "exclude_bse"])
+        date_arg = self._asharess_call_arg(new_call)
+        if date_arg is not None:
+            new_val, changed = self._asharess_date_normalized_value(date_arg)
+            if changed:
+                if new_call.args:
+                    new_call.args[0] = new_val
+                else:
+                    for k in new_call.keywords:
+                        if k.arg == "date":
+                            k.value = new_val
+        new_text = ast.unparse(new_call)
+        self._replacements.append(
+            (node.lineno, node.col_offset, node.end_lineno, node.end_col_offset, new_text))
+        self._rewritten_call_ids.add(id(node))
+        self.actions.append(ConversionAction(
+            action_type="NORMALIZE", rule_id="NORM-ASHARES-EXCLUDE_BSE",
+            api_name="get_Ashares", line=_line_of(node), severity="WARN",
+            old_text=ast.unparse(node), new_text=new_text,
+            message="exclude_bse 为本地扩展参数（平台仅接受 date），已剥离；"
+                    "北交所过滤由转换侧 _QS_EXCLUDE_BSE 烘焙（源语义优先，CLI 显式覆盖）"))
+        self.coverage["normalized_params"] += 1
+
+    def _resolve_exclude_bse_value(self, value_node) -> Optional[bool]:
+        """解析 exclude_bse 常量值：ast.Constant → 直取；ast.Name → 模块级**最后一次**
+        同值 bool 赋值（P2-2 钉死：与 Python 执行语义一致）；其余 → None（不可静态解析
+        → 调用方走 fail-soft 路径）。"""
+        if isinstance(value_node, ast.Constant):
+            v = value_node.value
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, int) and v in (0, 1):
+                return bool(v)
+            return None
+        if isinstance(value_node, ast.Name):
+            src = getattr(self, "_src", None)
+            if not src:
+                return None
+            try:
+                tree = ast.parse(src)
+            except Exception:
+                return None
+            hit: list[bool] = []
+            for top in tree.body:
+                if (isinstance(top, ast.Assign) and len(top.targets) == 1
+                        and isinstance(top.targets[0], ast.Name)
+                        and top.targets[0].id == value_node.id
+                        and isinstance(top.value, ast.Constant)
+                        and isinstance(top.value.value, bool)):
+                    hit.append(top.value.value)
+            return hit[-1] if hit else None  # 最后一次赋值（P2-2）
+        return None
 
     # ---- 修复 2：get_history 签名 A（security-first）→ B（count-first）----
     def _rewrite_history_signature(self, node: ast.Call) -> None:
@@ -3185,6 +3372,63 @@ class SourceConverter:
             old_text=repr(code), new_text=new_text,
             message=f"set_benchmark 裸码 {code} 补后缀（PTrade 契约；本地 bare_code 剥离等价）"))
         self.coverage["normalized_params"] += 1
+
+    # ---- 2026-09-03 平台吸收 R2：set_commission 值域下限 ----
+    def _rewrite_commission_value_domain(self, node: ast.Call) -> None:
+        """平台 arg_checker 要求 set_commission 佣金费率/最低佣金均 >0（IQInvalidArgument
+        实证 2026-09-03）。常量 ≤0 → 平台可表达下限；动态表达式 → max(expr, floor)（已为
+        max 形态 → 幂等跳过）。仅替换对应 kwarg.value 源码区间——无关调用逐字节不变（纯增益）。"""
+        for kw in node.keywords:
+            if kw.arg is None:
+                continue
+            if kw.arg == "min_commission":
+                floor = _COMMISSION_MIN_FLOOR
+            elif kw.arg == "commission_ratio":
+                floor = _COMMISSION_RATIO_FLOOR
+            else:
+                continue
+            new_text = self._commission_floor_text(kw.value, floor)
+            if new_text is None:
+                continue
+            if getattr(kw.value, "lineno", None) is None:
+                self.warnings.append(
+                    "set_commission %s 值节点无源码区间（合成节点），跳过值域吸收" % kw.arg)
+                continue
+            self._replacements.append(
+                (kw.value.lineno, kw.value.col_offset,
+                 kw.value.end_lineno, kw.value.end_col_offset, new_text))
+            self.actions.append(ConversionAction(
+                action_type="NORMALIZE", rule_id="NORM-COMMISSION-MIN-FLOOR",
+                api_name="set_commission", line=_line_of(node), severity="WARN",
+                old_text=ast.unparse(kw.value), new_text=new_text,
+                message="平台 arg_checker 要求佣金费率/最低佣金 >0（IQInvalidArgument 实证）；"
+                        "≤0 吸收为可表达下限（min_commission=0.01 忠实「无最低佣金」语义，"
+                        "经济影响 <0.01 元/笔；commission_ratio=1e-6）"))
+            self.coverage["normalized_params"] += 1
+
+    def _commission_floor_text(self, value_node, floor: float) -> Optional[str]:
+        """返回替换文本；None = 无需改写（>0 常量 / 已 max 形态 → 幂等 P2-4）。"""
+        if isinstance(value_node, ast.Constant):
+            try:
+                v = float(value_node.value)
+            except (TypeError, ValueError):
+                return None
+            if v > 0:
+                return None
+            return repr(floor)
+        if (isinstance(value_node, ast.UnaryOp) and isinstance(value_node.op, ast.USub)
+                and isinstance(value_node.operand, ast.Constant)):
+            try:
+                v = -float(value_node.operand.value)
+            except (TypeError, ValueError):
+                return None
+            if v > 0:
+                return None
+            return repr(floor)
+        if (isinstance(value_node, ast.Call) and isinstance(value_node.func, ast.Name)
+                and value_node.func.id == "max"):
+            return None  # 幂等：已是 max(...) 形态（两种参数顺序均跳过，P2-4）
+        return "max(%s, %r)" % (ast.unparse(value_node), floor)
 
     # ---- 修复 5：get_stock_status 位置传参 → 关键字 query_type ----
     def _rewrite_stock_status_keywords(self, node: ast.Call) -> None:
@@ -3534,8 +3778,16 @@ class SourceConverter:
         # P-D13 数据层审计门控扩展：源策略调用 get_Ashares 时注入
         # （C1a 板块统计 + C1b exclude_bse + C3a 窗口审计；设计审计通过 2026-08-27）
         if _source_uses_ashares_api(code):
+            bake = self._asharess_exclude_bse_resolved
+            if bake is None:
+                bake = self._exclude_bse  # 无源语义（未调用 exclude_bse 或不可静态解析）→ CLI 覆盖/默认
+            elif bake != self._exclude_bse:
+                self.warnings.append(
+                    "get_Ashares(exclude_bse=<源常量>)：北交所过滤按源语义烘焙 "
+                    "_QS_EXCLUDE_BSE=%s（源语义权威 > CLI --exclude-bse=%s）"
+                    % (bake, self._exclude_bse))
             blocks.append(_render_data_audit_ext(
-                INJECTED_MARKER, exclude_bse=self._exclude_bse))
+                INJECTED_MARKER, exclude_bse=bake))
             self.coverage["injected_helpers"].extend(
                 ["data_audit", "QS_ASHARES_BREAKDOWN", "exclude_bse"])
         for shim_name in sorted(self._need_shim):
