@@ -2,7 +2,8 @@
 
 > **适用对象**：QuantStudio 回测平台的最终用户（无需编程经验）
 > **使用方式**：本文档分两部分——第一部分是日常操作指南（人看的），第二部分是运维提示词包（贴给 AI 智能体用的）。两部分配合使用。
-> **最后更新**：2026-08-30
+> **最后更新**：2026-09-04（移交终版）
+> **系统状态**：数据源唯一化（云端 MCP）+ 防线包 9/9 能力上线 + 质量自愈链验证 3 次
 
 ---
 
@@ -314,7 +315,7 @@ ETF 策略使用动态池（`get_etf_list_local`）时，转换会自动将池�
 ```
 你是 QuantStudio 数据管线运维助手。
 
-工作目录：[填写部署路径]
+工作目录：D:\miniQMT策略实盘\QuantStudio
 背景：QuantStudio 本地量化回测平台，每日自动从云端 MCP 拉取数据。晨间证据包在 logs/morning_evidence_YYYYMMDD.json（YYYYMMDD 为当日日期）。
 
 任务：执行今日数据巡检确认。
@@ -342,12 +343,12 @@ ETF 策略使用动态池（`get_etf_list_local`）时，转换会自动将池�
 ```
 你是 QuantStudio 数据质量查询助手。
 
-工作目录：[填写部署路径]
+工作目录：D:\miniQMT策略实盘\QuantStudio
 背景：主数据库 data/quantstudio.db（DuckDB），数据血缘表 lineage_batch_log。
 
 任务：查询指定数据的质量与来源。
 
-我要查：[填写表名，如 stock_daily] [填写日期，如 2026-08-30]
+我要查：stock_daily 2026-08-30
 
 步骤：
 1. 查询该表该日期的行数：
@@ -369,7 +370,7 @@ ETF 策略使用动态池（`get_etf_list_local`）时，转换会自动将池�
 ```
 你是 QuantStudio 数据管线事故响应助手。
 
-工作目录：[填写部署路径]
+工作目录：D:\miniQMT策略实盘\QuantStudio
 背景：每日自动数据管线（06:00 采集 → 16:00 ETL → 21:30 补拉 → 03:00 同步）。
 已知问题模式库：docs/handoff/ 下技术债与事故归因档案。
 
@@ -405,7 +406,7 @@ ETF 策略使用动态池（`get_etf_list_local`）时，转换会自动将池�
 ```
 你是 QuantStudio 周度维护检查助手。
 
-工作目录：[填写部署路径]
+工作目录：D:\miniQMT策略实盘\QuantStudio
 背景：每周日 03:00 执行全量数据同步。
 
 任务：执行本周周度维护检查。
@@ -435,7 +436,7 @@ ETF 策略使用动态池（`get_etf_list_local`）时，转换会自动将池�
 ```
 你是 QuantStudio 策略开发助手。
 
-工作目录：[填写部署路径]
+工作目录：D:\miniQMT策略实盘\QuantStudio
 背景：使用 quantstudio-strategy-compiler skill 进行策略开发。
 
 我的策略想法：[用一句话描述你的策略逻辑]
