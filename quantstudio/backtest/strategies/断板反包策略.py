@@ -212,10 +212,156 @@ def _qs_to_dataframe(item):
 # 与本地分钟 preClose 语义一致）；本地/平台返回若已含 preClose → guard 短路零影响。
 # QS_MINUTE_DIAG：分钟路径首次调用打一条形状诊断（平台分钟数据可观测性）。
 # 版本自标识（2026-09-02：三次平台验证版本错位根治——diag 行内嵌版本号，平台日志直接可读）
-_QS_WRAPPER_VERSION = "20260902-v7.1"
+_QS_WRAPPER_VERSION = "20260903-v10.4"
 _QS_REQ_PREC_MIN = False
 _QS_MINUTE_DIAG_DONE = False
+_QS_MINUTE_SYNTH_LOGGED = False
 _QS_PREC_CACHE = {}
+_QS_LAST_SYNTH_INFO = {}
+
+# v10（2026-09-03 立项方案 data[code] 分钟 bar 捕获与合成）：
+# 平台回测分钟 include 双模式均不可安全表达"上一已完成 bar"（False=昨日 bar /
+# True=含未来 bar，known-limitation 实证定谳）→ handle_data 回调参数 data[code]
+# 是唯一正确的"当前已完成 bar"来源（触发时点=当前 bar 刚完成，天然无未来函数，
+# 本地 DataDict 与平台 BarData 语义同构）→ 捕获 data 引用，wrapper 分钟路径
+# 返回侧合成"当前 bar"追加至返回体，策略 closes[-1]=今日盘中价，源码零改动。
+_QSRuntimeDataState = type("_QSRuntimeDataState", (), {"data": None})
+
+
+def _qs_capture_data(*rt_args):
+    """handle_data 入口捕获 data（及可选 context）引用（O(1)，每回调刷新）。
+
+    v10.3：签名 (context, data) / (data) 双兼容——注入行传 (context, data)；
+    context 同时落 _QS_RUNTIME_CTX（订单扩展未注入捕获行时兜底，供合成日期守卫）。
+    """
+    try:
+        if len(rt_args) >= 2:
+            _ctx, _dt = rt_args[0], rt_args[1]
+        elif rt_args and rt_args[0] is not None and hasattr(rt_args[0], "keys"):
+            _ctx, _dt = None, rt_args[0]
+        else:
+            _ctx, _dt = (rt_args[0], None) if rt_args else (None, None)
+        if _dt is not None:
+            _QSRuntimeDataState.data = _dt
+        if _ctx is not None:
+            global _QS_RUNTIME_CTX
+            _QS_RUNTIME_CTX = _ctx
+    except Exception:
+        pass
+
+
+def _qs_synth_minute_bar_from_data(code, df):
+    """v10：分钟返回体合成"当前已完成 bar"（来源=捕获的 data[code]，本地 DataDict /
+    平台 BarData 双端同构；逐属性 fail-soft 探测，缺失置 NA）。
+
+    去重：返回体末 bar 时间 == data bar 时间 → 已含今日 bar，跳过（本地引擎
+    include 语义正确时自然短路，零行为变化）。
+    根因叙事（第二十一轮三元组定谳，权威口径）：第二十轮假阳性的真根因是
+    平台 BarData.preclose 返回 0.0 伪值（穿透策略 g.prev_close 回退 → lp=0.0 →
+    恒真触发）；data[code] 本身提供**今日** bar（t=2026-07-01 09:31 三元组实证，
+    close=今日盘中价）——早期"昨日 stale bar"假说已被本轮证据推翻。
+    v10.3 日期守卫定位=防御性（防数据面未来任何滞后/漂移形态回归，当前平台
+    实证不触发）；已实证修复=合成行 omit preClose（见 v10.4 注释）。
+    守卫：bar 日期 == 当前交易日（_QS_RUNTIME_CTX.current_dt）才合成；stale bar
+    拒绝（fail-open 返回体保持原样）。返回 (df, flag)，
+    flag ∈ True / False / 'stale-bar'。
+    """
+    if df is None or not isinstance(df, _qs_pd.DataFrame):
+        return df, False
+    _rt = _QSRuntimeDataState.data
+    if _rt is None:
+        return df, False
+    try:
+        _bar = None
+        try:
+            _bar = _rt[code]
+        except Exception:
+            _bare = str(code).split(".")[0]
+            for _k in _rt.keys():
+                if str(_k).split(".")[0] == _bare:
+                    _bar = _rt[_k]
+                    break
+        if _bar is None:
+            return df, False
+        # 逐属性 fail-soft 探测（本地 BarData 属性 / 平台 BarData 属性 / dict 键）
+        def _attr(obj, names):
+            for n in names:
+                try:
+                    v = getattr(obj, n, None)
+                    if v is None and hasattr(obj, "get"):
+                        v = obj.get(n, None)
+                    if v is not None:
+                        return v
+                except Exception:
+                    pass
+            return None
+        _c = _attr(_bar, ("close", "price"))
+        if _c is None:
+            return df, False
+        try:
+            _c = float(_c)
+        except Exception:
+            return df, False
+        if _c != _c or _c <= 0:
+            return df, False
+        _t = _attr(_bar, ("dt", "time", "day_str"))
+        # v10.3 日期守卫：bar 日期 ≠ 当前交易日 → stale bar 拒绝合成（fail-open）
+        _cur_d = None
+        try:
+            _cdt = getattr(_QS_RUNTIME_CTX, "current_dt", None)
+            if _cdt is not None:
+                _cur_d = _qs_bar_date(_cdt)
+        except Exception:
+            pass
+        _bar_d = _qs_bar_date(_t) if _t is not None else None
+        if _cur_d and _bar_d and _bar_d != _cur_d:
+            return df, "stale-bar"
+        # 去重：返回体末 bar 时间与 data bar 时间一致 → 已含今日 bar，短路
+        if "time" in df.columns and len(df) > 0:
+            try:
+                _lt = df["time"].iloc[-1]
+                _lt_s = str(int(_lt)) if not isinstance(_lt, str) else _lt.replace("-", "").replace(" ", "").replace(":", "")
+                _t_s = str(_t)
+                _t_s = _t_s.replace("-", "").replace(" ", "").replace(":", "")
+                if _t_s[:8] == _lt_s[:8]:
+                    return df, False  # 末 bar 已是当日（引擎 include 语义正确）→ 短路
+            except Exception:
+                pass
+        _row = {"close": _c}
+        for _nm, _al in (("open", ("open",)), ("high", ("high",)),
+                         ("low", ("low",)), ("volume", ("volume",))):
+            _v = _attr(_bar, _al)
+            if _v is not None:
+                try:
+                    _row[_nm] = float(_v)
+                except Exception:
+                    pass
+        # v10.4（第二十一轮三元组定谳）：**omit preClose**——平台 BarData.preclose 返回
+        # 0.0 伪值（preclose=0.0 实证），写入合成行 → prev_close=0.0 穿透 g.prev_close
+        # 回退 → lp=0.0 → last_close>=0 恒真 → 无条件假阳性触发。omit 后由 v3 日线
+        # 昨收合成统一填充（6.12 → lp=6.73 → 全部候选 last_close < lp → 负向正确；
+        # v3 日线窗口双态均安全：06-30 close=6.12 或含今日 07-01 close=6.08 都 ≥ 涨停
+        # 基准所需，不会触发）。
+        if _t is not None:
+            _row["time"] = _t
+        # 三元组审计（v10.3，审核定位要求 1）：合成成功时记录 close/preclose/time
+        try:
+            _pv = _row.get("preClose")
+            _QS_LAST_SYNTH_INFO[code] = (str(_t), _c, _pv)
+        except Exception:
+            pass
+        df = pd_concat_one(df, _row)
+        return df, True
+    except Exception:
+        return df, False
+
+
+def pd_concat_one(df, row):
+    """向 DataFrame 追加一行（dict），保持列并集；ignore_index。"""
+    try:
+        return _qs_pd.concat([df, _qs_pd.DataFrame([row])], ignore_index=True)
+    except Exception:
+        return df
 
 
 def _qs_bar_date(v):
@@ -264,7 +410,7 @@ _QSHistoryState.orig = get_history
 
 # 重新绑定 get_history：请求前字段名映射（本地 → PTrade）+ 返回转 DataFrame
 def get_history(*args, **kwargs):
-    global _QS_REQ_PCT, _QS_REQ_PREC_MIN, _QS_MINUTE_DIAG_DONE
+    global _QS_REQ_PCT, _QS_REQ_PREC_MIN, _QS_MINUTE_DIAG_DONE, _QS_MINUTE_SYNTH_LOGGED
     _field = kwargs.get('field') or kwargs.get('fields')
     _QS_REQ_PCT = False
     _QS_REQ_PREC_MIN = False
@@ -421,6 +567,48 @@ def get_history(*args, **kwargs):
                     log.info("QS_MINUTE_DIAG single cols=%s" % (
                         list(_out.columns) if hasattr(_out, 'columns')
                         else type(_out).__name__))
+            except Exception:
+                pass
+        # v10：分钟返回体合成"当前已完成 bar"（来源=捕获的 data[code]，双端同构；
+        # 平台回测 include=False 只返回昨日 bar / True 含未来 bar——known-limitation）
+        _synth_flags = {}
+        if isinstance(_out, dict):
+            for _k in list(_out.keys()):
+                _out[_k], _synth_flags[_k] = _qs_synth_minute_bar_from_data(
+                    _k, _out[_k])
+        elif isinstance(_out, _qs_pd.DataFrame):
+            _code0 = kwargs.get('security_list')
+            if _code0 is None:
+                _code0 = kwargs.get('security')
+            if _code0 is None and args:
+                _code0 = args[0]
+            if isinstance(_code0, (list, tuple)):
+                _code0 = _code0[0] if len(_code0) else ''
+            _out, _synth_flags[''] = _qs_synth_minute_bar_from_data(
+                _code0, _out)
+        # v10.4.1：SYNTH 打点按日一次（审核前置 1——逐日 watchlist 观测）
+        _today_d = None
+        try:
+            _cdt = getattr(_QS_RUNTIME_CTX, "current_dt", None)
+            if _cdt is not None:
+                _today_d = _qs_bar_date(_cdt)
+        except Exception:
+            pass
+        if not _QS_MINUTE_SYNTH_LOGGED or _QS_MINUTE_SYNTH_LOGGED != _today_d:
+            _QS_MINUTE_SYNTH_LOGGED = _today_d
+            try:
+                # 三元组审计（v10.3 审核定位要求 1）：每码合成行 time/close/preclose——
+                # 定谳"合成 close 错 / 涨停基准错 / 平台 stale bar"三假说
+                _trip = []
+                for _ck, _cf in _synth_flags.items():
+                    _ti = _QS_LAST_SYNTH_INFO.get(_ck)
+                    if _ti:
+                        _trip.append("%s=%s[close=%s preclose=%s t=%s]" % (
+                            _ck, _cf, _ti[1], _ti[2], str(_ti[0])[:19]))
+                    else:
+                        _trip.append("%s=%s" % (_ck, _cf))
+                log.info("QS_MINUTE_SYNTH v=%s %s" % (
+                    _QS_WRAPPER_VERSION, " ".join(_trip) or "no-codes"))
             except Exception:
                 pass
         _fq = kwargs.get('fq', 'pre')

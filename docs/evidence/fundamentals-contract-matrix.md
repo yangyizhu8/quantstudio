@@ -4,7 +4,7 @@
 
 > 状态：✅ tested/probed 均真；🔶 单侧；○ 缺口（probed 或 tested 假）。RD-1/2/3 为 known-difference 固化断言（不计缺口）。
 
-> wrapper 模板哈希：`11da6b6e6868`；最后复证：`2026-08-31`
+> wrapper 模板哈希：`d1c47919cf69`；最后复证：`2026-08-31`
 
 ## 一、形态矩阵（YAML 行）
 
