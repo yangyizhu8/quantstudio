@@ -111,18 +111,19 @@ def validate_local_strategy(
         return False, violations, warnings
 
     # 2. Lifecycle completeness
-    defined_funcs = {
+    # 顶层函数集（生命周期语义：required 生命周期必须是顶层定义）
+    top_level_funcs = {
         n.name for n in ast.iter_child_nodes(tree)
         if isinstance(n, ast.FunctionDef)
     }
     for req in _LIFECYCLE_REQUIRED:
-        if req not in defined_funcs:
+        if req not in top_level_funcs:
             violations.append(Violation(
                 rule_id="LOCAL-LIFECYCLE",
                 severity="BLOCK",
                 message=f"required lifecycle function {req!r} missing",
             ))
-    unknown = defined_funcs - _LIFECYCLE_KNOWN
+    unknown = top_level_funcs - _LIFECYCLE_KNOWN
     # Helper functions (non-lifecycle) are allowed; only flag if a name looks
     # like a lifecycle misspelling. For PR6a we allow any non-lifecycle helper.
     # (strategy_runner.StrategySpec.validate actually rejects unknown top-level
@@ -133,7 +134,13 @@ def validate_local_strategy(
     # 3. API whitelist
     injected = _load_injected_names()
     # Local helper functions defined in the strategy are allowed to be called
-    local_funcs = defined_funcs
+    # 2026-09-03 修复：全深度收集（ast.walk）——嵌套 def（注入模板的 helper，如
+    # position-view 的 `def _attr`）同样是文件内本地 helper，仅收顶层会误 BLOCK。
+    # 纯增益：只把「文件内真实 def」加入白名单，不新增任何外部 API 放行面。
+    local_funcs = {
+        n.name for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef)
+    }
     # P-D11（2026-08-26）：本地定义的 class 实例化调用与本地函数同安全层级
     # （白名单目的是拦截未注入的平台 API，非本地构造）。此前仅收 FunctionDef，
     # 导致注入模板的视图类实例化被误 BLOCK（既有模板被迫用 type() 体操规避）。
@@ -146,7 +153,7 @@ def validate_local_strategy(
     # attribute calls like np.concatenate / pd.DataFrame / log.info are recognized
     # as calls on allowed modules, not unknown bare names.
     imported_modules: set[str] = set()
-    for node in ast.iter_child_nodes(tree):
+    for node in ast.walk(tree):  # 2026-09-03：全深度（嵌套 import 别名同被识别，纯增益）
         if isinstance(node, ast.Import):
             for alias in node.names:
                 imported_modules.add((alias.asname or alias.name).split(".")[0])

@@ -1054,6 +1054,159 @@ def before_trading_start(context, data):
     ast.parse(r2.converted_code)
 
 
+def test_46_gf_date_synthesis_injected():
+    """T10（gf-date-synthesis-design.md）：date=None 财务表调用 → 产物注入前一交易日
+    拼接（_qs_prev_trade_day_str / QS_GF_DATE_SYNTH / 白名单表常量）；显式 date 调用
+    不在调用点被改写（wrapper 内零触发）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def before_trading_start(context, data):
+    f = get_fundamentals(['600000.SS'], 'income_statement',
+                         fields=['operating_revenue', 'end_date', 'publ_date'],
+                         report_types='4')
+    g2 = get_fundamentals(['600000.SS'], 'valuation', fields=['float_value'],
+                          date='20210101')
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "_qs_prev_trade_day_str" in out
+    assert "QS_GF_DATE_SYNTH" in out
+    assert "_QS_GF_DATE_SYNTH_TABLES" in out
+    assert "date='20210101'" in out  # 显式 date 调用点未被改写（拼接在 wrapper 内触发）
+    ast.parse(out)
+
+
+def test_47_local_strategy_nested_helper_and_import_whitelist():
+    """T11：LOCAL-API-WHITELIST 全深度收集（2026-09-03 转换失败实证：position-view 嵌套
+    `_attr` helper 与 gf 合成别名导入双双被误 BLOCK）。正反例：
+    ① 嵌套 def helper 可调用、嵌套模块导入的属性调用可通过；② 真实未知 API 仍被 BLOCK（防放宽过度）。"""
+    from quantstudio.strategy_compiler.validators.validate_local_strategy import validate_local_strategy
+    from quantstudio.strategy_compiler.ir_nodes import StrategyIR
+    src = '''
+def initialize(context):
+    pass
+
+def handle_data(context, data):
+    import datetime
+    d = datetime.timedelta(days=1)
+    return nested_only(context)
+
+def nested_only(obj):
+    def inner(x):
+        return x
+    return inner(obj)
+'''
+    ok, viols, _ = validate_local_strategy({}, StrategyIR(strategy_id="t", nodes=[]), src, "quantstudio")
+    assert not any(v.rule_id == "LOCAL-API-WHITELIST" for v in viols), [v.message for v in viols]
+    bad = "def initialize(context):\n    pass\n\ndef handle_data(context, data):\n    get_unknown_plat_api()\n"
+    ok2, viols2, _ = validate_local_strategy({}, StrategyIR(strategy_id="t", nodes=[]), bad, "quantstudio")
+    assert any(v.rule_id == "LOCAL-API-WHITELIST" and "get_unknown_plat_api" in v.message for v in viols2)
+
+
+def test_48_gf_list_chunk_dispatch():
+    """T12：wrapper 超限自递归分块（_QS_GF_LIST_CHUNK，平台 800 码空返回实证规避）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def before_trading_start(context, data):
+    f = get_fundamentals(['600000.SS', '000001.SZ'], 'income_statement',
+                         fields=['operating_revenue', 'end_date'], report_types='4')
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "_QS_GF_LIST_CHUNK" in out
+    assert "len(_secs) > _QS_GF_LIST_CHUNK" in out
+    ast.parse(out)
+
+
+def test_49_gf_statement_range_routing():
+    """T13：报表表（income_statement 等）→ range 形态路由（_QS_GF_STATEMENT_RANGE；
+    平台 date 形态单期、P1 range 实证多期）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def before_trading_start(context, data):
+    f = get_fundamentals(['600000.SS'], 'income_statement',
+                         fields=['operating_revenue', 'end_date'], report_types='4')
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "_QS_GF_STATEMENT_TABLES" in out and "_QS_GF_STATEMENT_RANGE_YEARS" in out
+    assert "QS_GF_STATEMENT_RANGE" in out
+    ast.parse(out)
+
+
+def test_50_gf_pit_publdate_epoch_ms():
+    """T14：_qs_pit_filter publ_date 数值优先（epoch 毫秒 → YYYYMMDD；str(digits) 尾 0 爆表
+    2456 实证修复标记：abs(_f) >= 1e11 / utcfromtimestamp）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def before_trading_start(context, data):
+    f = get_fundamentals(['600000.SS'], 'income_statement',
+                         fields=['operating_revenue', 'end_date'], report_types='4')
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "abs(_f) >= 1e11" in out and "utcfromtimestamp" in out
+    ast.parse(out)
+
+
+def test_51_gf_range_local_retry():
+    """T15/T16：year-only range 全链自愈标记——数值优先 publ 判据（abs(_f) >= 1e11）、
+    report_types +8h UTC 偏移（+ 8 * 3600 * 1000）、allnan 重试（_qs_gf_value_cols_allnan）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def before_trading_start(context, data):
+    f = get_fundamentals(['600000.SS'], 'income_statement',
+                         fields=['operating_revenue', 'end_date'], report_types='4')
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "_qs_gf_value_cols_allnan" in out and "QS_GF_RANGE_LOCAL_RETRY" in out
+    assert "abs(_f) >= 1e11" in out and "+ 8 * 3600 * 1000" in out
+    ast.parse(out)
+
+
+def test_52_gf_valuation_field_map_and_probe():
+    """T16：valuation 表平台列名映射 + 逆翻译 + 全 NaN 重试与列名探针（§16）。"""
+    code = '''
+def initialize(context):
+    pass
+
+def before_trading_start(context, data):
+    v = get_fundamentals(['600000.SS'], 'valuation',
+                         fields=['pe_ratio', 'float_value', 'turnover_ratio'])
+'''
+    result = _convert_code(code)
+    assert result.errors == [], result.errors
+    out = result.converted_code
+    assert "_QS_VAL_PLATFORM_MAP" in out and "_QS_VAL_PLATFORM_REV" in out
+    assert "_qs_gf_plat_field" in out and "QS_SHIM_VAL_COLS" in out
+    assert "QS_SHIM_VAL_FALLBACK" in out and "_qs_val_map_enabled" in out
+    # §17 实证版：判据 pe_ratio 缺失 + turnover 合成兜底 + circ_mv 推断版作废（不掩差异）
+    assert "'pe_ratio' not in _cols" in out
+    assert "QS_VAL_TRU_SYNTH" in out
+    assert "'float_value': 'circ_mv'" not in out
+    # §18：turnover_rate 直映（平台原生列实证）+ 合成诊断计数
+    assert "'turnover_ratio': 'turnover_rate'" in out
+    assert "'turnover_rate': 'turnover_ratio'" in out
+    assert "vhit=%d chit=%d" in out
+    ast.parse(out)
+
+
 def test_44_ptrade_portability_guards_positive_negative():
     """T8（P2-1/P2-4）：校验器三条新 BLOCK 正反用例。"""
     # 正例：min_commission=0 → BLOCK PORTABILITY-COMMISSION-MIN-ZERO

@@ -404,7 +404,9 @@
       "return_shape": "pandas.DataFrame in date-query mode",
       "notes": [
         "date-query and start_year/end_year query modes are mutually exclusive; merge_type=None is required for PIT-safe backtests unless the design explicitly proves another mode."
-      ]
+,
+        "date=None on the platform: statement tables require an explicit PIT date; income_statement list call without date returned empty on the real platform (verified 2026-09-03). conversion wrapper synthesizes the previous trading day (QS_GF_DATE_SYNTH) to align with local prev_date semantics.",
+        "valuation table platform columns are gild short names (pe_ttm/pe_dynamic/pe_static/pb/ps/pcf/turnover_rate/float_value/total_value/a_floats/total_shares + share-class cols); pe_ratio and turnover_ratio do NOT exist natively; conversion wrapper maps locally via runtime QS_VAL_MODE column-set probe (2026-09-04 platform probe evidence)."      ]
     },
     "get_strategy_events": {
       "contexts": [

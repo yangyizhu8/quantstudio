@@ -251,10 +251,156 @@ def _qs_to_dataframe(item):
 # 与本地分钟 preClose 语义一致）；本地/平台返回若已含 preClose → guard 短路零影响。
 # QS_MINUTE_DIAG：分钟路径首次调用打一条形状诊断（平台分钟数据可观测性）。
 # 版本自标识（2026-09-02：三次平台验证版本错位根治——diag 行内嵌版本号，平台日志直接可读）
-_QS_WRAPPER_VERSION = "20260902-v7.1"
+_QS_WRAPPER_VERSION = "20260903-v10.4"
 _QS_REQ_PREC_MIN = False
 _QS_MINUTE_DIAG_DONE = False
+_QS_MINUTE_SYNTH_LOGGED = False
 _QS_PREC_CACHE = {{}}
+_QS_LAST_SYNTH_INFO = {{}}
+
+# v10（2026-09-03 立项方案 data[code] 分钟 bar 捕获与合成）：
+# 平台回测分钟 include 双模式均不可安全表达"上一已完成 bar"（False=昨日 bar /
+# True=含未来 bar，known-limitation 实证定谳）→ handle_data 回调参数 data[code]
+# 是唯一正确的"当前已完成 bar"来源（触发时点=当前 bar 刚完成，天然无未来函数，
+# 本地 DataDict 与平台 BarData 语义同构）→ 捕获 data 引用，wrapper 分钟路径
+# 返回侧合成"当前 bar"追加至返回体，策略 closes[-1]=今日盘中价，源码零改动。
+_QSRuntimeDataState = type("_QSRuntimeDataState", (), {{"data": None}})
+
+
+def _qs_capture_data(*rt_args):
+    """handle_data 入口捕获 data（及可选 context）引用（O(1)，每回调刷新）。
+
+    v10.3：签名 (context, data) / (data) 双兼容——注入行传 (context, data)；
+    context 同时落 _QS_RUNTIME_CTX（订单扩展未注入捕获行时兜底，供合成日期守卫）。
+    """
+    try:
+        if len(rt_args) >= 2:
+            _ctx, _dt = rt_args[0], rt_args[1]
+        elif rt_args and rt_args[0] is not None and hasattr(rt_args[0], "keys"):
+            _ctx, _dt = None, rt_args[0]
+        else:
+            _ctx, _dt = (rt_args[0], None) if rt_args else (None, None)
+        if _dt is not None:
+            _QSRuntimeDataState.data = _dt
+        if _ctx is not None:
+            global _QS_RUNTIME_CTX
+            _QS_RUNTIME_CTX = _ctx
+    except Exception:
+        pass
+
+
+def _qs_synth_minute_bar_from_data(code, df):
+    """v10：分钟返回体合成"当前已完成 bar"（来源=捕获的 data[code]，本地 DataDict /
+    平台 BarData 双端同构；逐属性 fail-soft 探测，缺失置 NA）。
+
+    去重：返回体末 bar 时间 == data bar 时间 → 已含今日 bar，跳过（本地引擎
+    include 语义正确时自然短路，零行为变化）。
+    根因叙事（第二十一轮三元组定谳，权威口径）：第二十轮假阳性的真根因是
+    平台 BarData.preclose 返回 0.0 伪值（穿透策略 g.prev_close 回退 → lp=0.0 →
+    恒真触发）；data[code] 本身提供**今日** bar（t=2026-07-01 09:31 三元组实证，
+    close=今日盘中价）——早期"昨日 stale bar"假说已被本轮证据推翻。
+    v10.3 日期守卫定位=防御性（防数据面未来任何滞后/漂移形态回归，当前平台
+    实证不触发）；已实证修复=合成行 omit preClose（见 v10.4 注释）。
+    守卫：bar 日期 == 当前交易日（_QS_RUNTIME_CTX.current_dt）才合成；stale bar
+    拒绝（fail-open 返回体保持原样）。返回 (df, flag)，
+    flag ∈ True / False / 'stale-bar'。
+    """
+    if df is None or not isinstance(df, _qs_pd.DataFrame):
+        return df, False
+    _rt = _QSRuntimeDataState.data
+    if _rt is None:
+        return df, False
+    try:
+        _bar = None
+        try:
+            _bar = _rt[code]
+        except Exception:
+            _bare = str(code).split(".")[0]
+            for _k in _rt.keys():
+                if str(_k).split(".")[0] == _bare:
+                    _bar = _rt[_k]
+                    break
+        if _bar is None:
+            return df, False
+        # 逐属性 fail-soft 探测（本地 BarData 属性 / 平台 BarData 属性 / dict 键）
+        def _attr(obj, names):
+            for n in names:
+                try:
+                    v = getattr(obj, n, None)
+                    if v is None and hasattr(obj, "get"):
+                        v = obj.get(n, None)
+                    if v is not None:
+                        return v
+                except Exception:
+                    pass
+            return None
+        _c = _attr(_bar, ("close", "price"))
+        if _c is None:
+            return df, False
+        try:
+            _c = float(_c)
+        except Exception:
+            return df, False
+        if _c != _c or _c <= 0:
+            return df, False
+        _t = _attr(_bar, ("dt", "time", "day_str"))
+        # v10.3 日期守卫：bar 日期 ≠ 当前交易日 → stale bar 拒绝合成（fail-open）
+        _cur_d = None
+        try:
+            _cdt = getattr(_QS_RUNTIME_CTX, "current_dt", None)
+            if _cdt is not None:
+                _cur_d = _qs_bar_date(_cdt)
+        except Exception:
+            pass
+        _bar_d = _qs_bar_date(_t) if _t is not None else None
+        if _cur_d and _bar_d and _bar_d != _cur_d:
+            return df, "stale-bar"
+        # 去重：返回体末 bar 时间与 data bar 时间一致 → 已含今日 bar，短路
+        if "time" in df.columns and len(df) > 0:
+            try:
+                _lt = df["time"].iloc[-1]
+                _lt_s = str(int(_lt)) if not isinstance(_lt, str) else _lt.replace("-", "").replace(" ", "").replace(":", "")
+                _t_s = str(_t)
+                _t_s = _t_s.replace("-", "").replace(" ", "").replace(":", "")
+                if _t_s[:8] == _lt_s[:8]:
+                    return df, False  # 末 bar 已是当日（引擎 include 语义正确）→ 短路
+            except Exception:
+                pass
+        _row = {{"close": _c}}
+        for _nm, _al in (("open", ("open",)), ("high", ("high",)),
+                         ("low", ("low",)), ("volume", ("volume",))):
+            _v = _attr(_bar, _al)
+            if _v is not None:
+                try:
+                    _row[_nm] = float(_v)
+                except Exception:
+                    pass
+        # v10.4（第二十一轮三元组定谳）：**omit preClose**——平台 BarData.preclose 返回
+        # 0.0 伪值（preclose=0.0 实证），写入合成行 → prev_close=0.0 穿透 g.prev_close
+        # 回退 → lp=0.0 → last_close>=0 恒真 → 无条件假阳性触发。omit 后由 v3 日线
+        # 昨收合成统一填充（6.12 → lp=6.73 → 全部候选 last_close < lp → 负向正确；
+        # v3 日线窗口双态均安全：06-30 close=6.12 或含今日 07-01 close=6.08 都 ≥ 涨停
+        # 基准所需，不会触发）。
+        if _t is not None:
+            _row["time"] = _t
+        # 三元组审计（v10.3，审核定位要求 1）：合成成功时记录 close/preclose/time
+        try:
+            _pv = _row.get("preClose")
+            _QS_LAST_SYNTH_INFO[code] = (str(_t), _c, _pv)
+        except Exception:
+            pass
+        df = pd_concat_one(df, _row)
+        return df, True
+    except Exception:
+        return df, False
+
+
+def pd_concat_one(df, row):
+    """向 DataFrame 追加一行（dict），保持列并集；ignore_index。"""
+    try:
+        return _qs_pd.concat([df, _qs_pd.DataFrame([row])], ignore_index=True)
+    except Exception:
+        return df
 
 
 def _qs_bar_date(v):
@@ -305,7 +451,7 @@ _QSHistoryState.orig = get_history
 
 # 重新绑定 get_history：请求前字段名映射（本地 → PTrade）+ 返回转 DataFrame
 def get_history(*args, **kwargs):
-    global _QS_REQ_PCT, _QS_REQ_PREC_MIN, _QS_MINUTE_DIAG_DONE
+    global _QS_REQ_PCT, _QS_REQ_PREC_MIN, _QS_MINUTE_DIAG_DONE, _QS_MINUTE_SYNTH_LOGGED
     _field = kwargs.get('field') or kwargs.get('fields')
     _QS_REQ_PCT = False
     _QS_REQ_PREC_MIN = False
@@ -462,6 +608,48 @@ def get_history(*args, **kwargs):
                     log.info("QS_MINUTE_DIAG single cols=%s" % (
                         list(_out.columns) if hasattr(_out, 'columns')
                         else type(_out).__name__))
+            except Exception:
+                pass
+        # v10：分钟返回体合成"当前已完成 bar"（来源=捕获的 data[code]，双端同构；
+        # 平台回测 include=False 只返回昨日 bar / True 含未来 bar——known-limitation）
+        _synth_flags = {{}}
+        if isinstance(_out, dict):
+            for _k in list(_out.keys()):
+                _out[_k], _synth_flags[_k] = _qs_synth_minute_bar_from_data(
+                    _k, _out[_k])
+        elif isinstance(_out, _qs_pd.DataFrame):
+            _code0 = kwargs.get('security_list')
+            if _code0 is None:
+                _code0 = kwargs.get('security')
+            if _code0 is None and args:
+                _code0 = args[0]
+            if isinstance(_code0, (list, tuple)):
+                _code0 = _code0[0] if len(_code0) else ''
+            _out, _synth_flags[''] = _qs_synth_minute_bar_from_data(
+                _code0, _out)
+        # v10.4.1：SYNTH 打点按日一次（审核前置 1——逐日 watchlist 观测）
+        _today_d = None
+        try:
+            _cdt = getattr(_QS_RUNTIME_CTX, "current_dt", None)
+            if _cdt is not None:
+                _today_d = _qs_bar_date(_cdt)
+        except Exception:
+            pass
+        if not _QS_MINUTE_SYNTH_LOGGED or _QS_MINUTE_SYNTH_LOGGED != _today_d:
+            _QS_MINUTE_SYNTH_LOGGED = _today_d
+            try:
+                # 三元组审计（v10.3 审核定位要求 1）：每码合成行 time/close/preclose——
+                # 定谳"合成 close 错 / 涨停基准错 / 平台 stale bar"三假说
+                _trip = []
+                for _ck, _cf in _synth_flags.items():
+                    _ti = _QS_LAST_SYNTH_INFO.get(_ck)
+                    if _ti:
+                        _trip.append("%s=%s[close=%s preclose=%s t=%s]" % (
+                            _ck, _cf, _ti[1], _ti[2], str(_ti[0])[:19]))
+                    else:
+                        _trip.append("%s=%s" % (_ck, _cf))
+                log.info("QS_MINUTE_SYNTH v=%s %s" % (
+                    _QS_WRAPPER_VERSION, " ".join(_trip) or "no-codes"))
             except Exception:
                 pass
         _fq = kwargs.get('fq', 'pre')
@@ -1408,6 +1596,134 @@ _QSFundState.orig = get_fundamentals
 # 平台值 == 本地 or_yoy（4.6516 / 1.4176，Δ=0.0000，同百分点单位同符号）。
 # np_yoy 不映射（600000 Δ=0.72pct 口径差，无策略消费）；映射只翻译列名，不代理本地契约。
 _QS_GF_FIELD_MAP = {{'or_yoy': 'operating_revenue_grow_rate'}}
+# valuation 表列名映射（2026-09-04 §17 实证版；§16 推断版作废）：QS_VAL_MODE 探针实测
+# 平台估值列集 = a_floats/a_shares/b_floats/b_shares/dividend_ratio/float_value/h_shares/
+# naps/pb/pcf/pe_dynamic/pe_static/pe_ttm/ps/ps_ttm/roe/total_shares/total_value。
+# ① 平台无 pe_ratio（本地 pe_ratio≡s.pe_ttm 别名同源）→ pe_ratio↔pe_ttm；
+# ② pb_ratio/ps_ratio/pcf_ratio→pb/ps/pcf；total_share↔total_shares；
+# ③ float_value/total_value/a_floats 平台同名存在（circ_mv 推断作废）；
+# ④ 换手列平台名=turnover_rate（第八轮 cols 尾段 trading_day,turnove… 实证；§17「无换手
+#    列」系 170 字符探针截断误判，教训登记证据 §18）→ turnover_ratio↔turnover_rate
+#    直映（与本地 s.turnover_rate AS turnover_ratio 同源同量纲 %）；合成退居兜底。
+_QS_VAL_PLATFORM_MAP = {{'pe_ratio': 'pe_ttm', 'pe_ratio_lyr': 'pe_static',
+                         'pb_ratio': 'pb', 'ps_ratio': 'ps', 'pcf_ratio': 'pcf',
+                         'total_share': 'total_shares',
+                         'turnover_ratio': 'turnover_rate'}}
+_QS_VAL_PLATFORM_REV = {{'pe_ttm': 'pe_ratio', 'pe_static': 'pe_ratio_lyr',
+                         'pb': 'pb_ratio', 'ps': 'ps_ratio', 'pcf': 'pcf_ratio',
+                         'total_shares': 'total_share',
+                         'turnover_rate': 'turnover_ratio'}}
+
+
+# 2026-09-04 §17 get_history 末值提取（形态双兼容：平台宽表列=码 / 本地长表行=码，
+# §17 探针实证两端形状不同 → NaN 教训）。
+def _qs_gf_hist_last(hist, fld, secs):
+    out = dict()
+    try:
+        if hist is None or not len(hist):
+            return out
+        # 本地长表形态（§17 探针实证：多码 concat 行序≠secs 序、code 列被字段筛选丢弃
+        # → 位置对齐不可靠）→ 逐码单调用（仅小列表；平台宽表列=码永不走此分支，
+        # 单码 count=1 时 (1,1) 表亦天然正确）。
+        try:
+            if (hasattr(hist, 'columns') and fld in hist.columns
+                    and not any(c in hist.columns for c in secs)):
+                if len(secs) <= 8:
+                    for c in secs:
+                        try:
+                            _v1 = get_history(1, frequency='1d', field=[fld],
+                                              security_list=[c], fq=None, include=False)
+                            out[c] = float(_v1.iloc[-1][fld]) if (_v1 is not None and len(_v1)) else float('nan')
+                        except Exception:
+                            out[c] = float('nan')
+                    return out
+                return out
+        except Exception:
+            out = dict()
+        for c in secs:
+            val = float('nan')
+            try:
+                if hasattr(hist, 'columns') and c in hist.columns:
+                    _s = hist[c]
+                    if hasattr(_s, 'dropna'):
+                        _s = _s.dropna()
+                    if len(_s):
+                        val = float(_s.iloc[-1])
+            except Exception:
+                val = float('nan')
+            if val != val:
+                try:
+                    val = float(hist.iloc[-1][c])
+                except Exception:
+                    val = float('nan')
+            if val != val:
+                try:
+                    val = float(hist.loc[c, fld])
+                except Exception:
+                    val = float('nan')
+            out[c] = val
+    except Exception:
+        pass
+    return out
+
+
+# 2026-09-04 §16 估值自愈判据辅助：任一请求字段缺失/整列 NaN → 需回退重试
+def _qs_gf_val_missing_any(df, field_list):
+    try:
+        if df is None or not len(df) or not field_list:
+            return True
+        for f in field_list:
+            if f not in df.columns:
+                return True
+            try:
+                col = df[f]
+                ok = False
+                for v in col.tolist():
+                    sv = str(v).strip().lower()
+                    if sv and sv not in ('nan', 'none', 'nat'):
+                        ok = True
+                        break
+                if not ok:
+                    return True
+            except Exception:
+                return True
+        return False
+    except Exception:
+        return True
+
+
+def _qs_gf_plat_field(table, f):
+    """请求字段 → 平台字段（valuation 表按运行时列名判型映射，其余走 _QS_GF_FIELD_MAP）。"""
+    if table == 'valuation' and _qs_val_map_enabled() and f in _QS_VAL_PLATFORM_MAP:
+        return _QS_VAL_PLATFORM_MAP[f]
+    return _QS_GF_FIELD_MAP.get(f, f)
+
+
+def _qs_val_map_enabled():
+    """valuation 列名判型（2026-09-04 §17 实证版）：fields=None 探针取平台真实列集，
+    g 缓存（每次回测一次）。判别式（第七轮实证）：平台**无 pe_ratio**（pe 族只有
+    pe_ttm/pe_dynamic/pe_static）且**有 pb/ps/pcf 短名**；本地必有 pe_ratio
+    （pe_ttm 为共存别名，不可作判据——第六轮 float_value 判式误判教训）。
+    探针失败 → 保守本名列（与未映射旧行为一致，纯增益）。"""
+    try:
+        _g = _qs_g_obj()
+        if _g is not None:
+            m = getattr(_g, '_qs_val_cols_mode', None)
+            if m is not None:
+                return m == 'platform'
+        _probe = _QSFundState.orig(['600000.SS'], 'valuation', is_dataframe=True)
+        _cols = set(str(c) for c in _probe.columns) if _probe is not None and hasattr(_probe, 'columns') else set()
+        _mode = 'local'
+        if _cols and 'pe_ratio' not in _cols and (
+                'pe_ttm' in _cols or 'pb' in _cols or 'ps' in _cols):
+            _mode = 'platform'
+        log.info('QS_VAL_MODE %s cols=%s' % (_mode, ','.join(sorted(_cols))[:400]))
+        if _g is not None:
+            _g._qs_val_cols_mode = _mode
+        return _mode == 'platform'
+    except Exception as _e:
+        log.warning('QS_VAL_MODE probe fail %s（回退本名列）' % (type(_e).__name__,))
+        return False
 _QS_GF_FIELD_MAP_REV = {{v: k for k, v in _QS_GF_FIELD_MAP.items()}}
 
 
@@ -1512,6 +1828,12 @@ def _qs_frame_to_contract(df, secs, fields, table):
             df = df.rename(columns=_QS_GF_FIELD_MAP_REV)
         except Exception:
             pass
+    # valuation 逆翻译（2026-09-04 §16）：平台 pe_ttm/circ_mv/turnover_rate → 本地名
+    if table == 'valuation':
+        try:
+            df = df.rename(columns=_QS_VAL_PLATFORM_REV)
+        except Exception:
+            pass
     # P-A2 返回逆翻译（v8.3 整合进统一 wrapper）：平台 basic_eps/diluted_eps 列 →
     # 本地 eps/diluted_eps 名（策略无感知）；常量由 _QS_FIDELITY_EPS_EXT 提供。
     if table == 'eps' and _QS_FIDELITY_EPS_BASIS != 'passthrough':
@@ -1540,6 +1862,83 @@ def _qs_frame_to_contract(df, secs, fields, table):
     return _qs_fund_select_fields(df, fields, table)
 
 
+# ---- 2026-09-03 平台吸收（docs/strategy-compiler/gf-date-synthesis-design.md）----
+# date=None 的白名单财务表调用 → 拼接前一日 PIT（对齐本地 get_fundamentals date=None →
+# prev_date 语义；平台 get_fundamentals 仅 date 形态 list 批量已被 P-D10 探针实证，
+# date=None 形态 income_statement 实测空返回 P2=0）。调用方显式传 date 时零影响（纯增益）。
+# 顶层 import datetime（嵌套 import 别名会被 LOCAL-API-WHITELIST 误 BLOCK，2026-09-03 转换实证；
+# 顶层模块名 + 属性调用为校验器已承认形态）。
+import datetime
+_QS_GF_DATE_SYNTH_TABLES = (
+    'income_statement', 'balance_statement', 'cashflow_statement',
+    'valuation', 'eps', 'profit_ability', 'growth_ability')
+# 平台 list 单调用码数上限规避（P-D10 实证 500 码 OK；800 码空返回实证 2026-09-03）
+_QS_GF_LIST_CHUNK = 500
+# 报表表 range 路由（2026-09-03 §14）：平台 income_statement date 形态为披露时点单期语义
+# （v8/v8.1 实证：date=2025-03-31 时返回 2024-12-31）——策略需 ≥2 年报期计算 CAGR → P2=0；
+# P1 探针实证报表走 start_year/end_year range（12 期季报+PIT 可复现）。窗口 5 年覆盖 L-4 基期。
+_QS_GF_STATEMENT_TABLES = ('income_statement', 'balance_statement', 'cashflow_statement')
+_QS_GF_STATEMENT_RANGE_YEARS = 5
+
+
+def _qs_gf_value_cols_allnan(df):
+    """range 结果值域全空检测（2026-09-03 §15）：元数据列（end/publ/code/secu）之外全部
+    None/NaN → True（本地引擎 years-only 形态值域空实证；平台 years-only 数值齐全 → False）。"""
+    try:
+        _vc = [c for c in df.columns if c not in ('end_date', 'publ_date', 'code', 'secu_code')]
+        if not _vc or not len(df):
+            return False
+        for _i in range(min(len(df), 3)):
+            _row = df.iloc[_i]
+            for _c in _vc:
+                _v = _row.get(_c)
+                if _v is not None:
+                    _vs = str(_v).strip().lower()
+                    if _vs and _vs not in ('nan', 'none', 'nat'):
+                        return False
+        return True
+    except Exception:
+        return False
+
+
+def _qs_prev_trade_day_str():
+    """前一交易日 'YYYY-MM-DD'（gf-date-synthesis-design.md）。
+
+    链：① captured ctx.previous_date（平台/本地标准属性）→ ② ctx.current_dt-1 →
+    ③ _qs_today_str()-1 → ④ None（fail-open，调用方回退原 date=None，不阻断）。
+    """
+    _ctx = None
+    try:
+        _ctx = _QS_RUNTIME_CTX
+    except Exception:
+        _ctx = None
+    if _ctx is None:
+        try:
+            _ctx = _QSContextHolder.ctx
+        except Exception:
+            _ctx = None
+    try:
+        if _ctx is not None:
+            _pd = getattr(_ctx, 'previous_date', None)
+            if _pd is not None:
+                _s = str(_pd)[:10]
+                if len(_s) == 10 and '-' in _s:
+                    return _s
+            _cd = getattr(_ctx, 'current_dt', None)
+            if _cd is not None:
+                try:
+                    _d = _cd - datetime.timedelta(days=1)
+                    return str(_d)[:10]
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    # ③ 回退链终点：不再依赖 _qs_today_str（该 helper 属 date-norm ext，随 get_trade_days/
+    # get_stock_info 门控注入；funds wrapper 单独注入时不可用——2026-09-03 CANSLIM 实证
+    # 悬空引用 NameError + LOCAL-API-WHITELIST 双重失败）。ctx 不可得 → None（fail-open）。
+    return None
+
+
 def get_fundamentals(security, table='valuation', fields=None, date=None,
                      is_dataframe=True, start_year=None, end_year=None,
                      report_types=None, *args, **kwargs):
@@ -1561,6 +1960,26 @@ def get_fundamentals(security, table='valuation', fields=None, date=None,
     （P-D10 实证 500 码 0.05s）；_qs_gf_maybe_prefetch 在 g.universe 全池就绪后
     自动触发当月两期批量预取（破逐股流控卡死），失败静默回退逐股。"""
     _secs = security if isinstance(security, (list, tuple)) else [security]
+    # 2026-09-03 平台吸收（gf-date-synthesis-design.md 追加 §13）：平台 get_fundamentals
+    # list 单调用存在码数上限——P-D10 实证 500 码 OK，本策略 800 码（本地批 800）平台
+    # 空返回 P2=0（date 形态已实证仍空 → 码数上限）。→ 超限自递归分块（≤500/块，语义
+    # 等价：分块独立走完整下游并 concat，index=code 唯一、列契约一致；本地无此限制亦
+    # 行为不变）。常量单点可调。
+    if len(_secs) > _QS_GF_LIST_CHUNK:
+        _chunk_frames = []
+        for _ci in range(0, len(_secs), _QS_GF_LIST_CHUNK):
+            _sub = get_fundamentals(
+                _secs[_ci:_ci + _QS_GF_LIST_CHUNK], table, fields, date,
+                is_dataframe=is_dataframe, start_year=start_year, end_year=end_year,
+                report_types=report_types, *args, **kwargs)
+            if _sub is not None and len(_sub):
+                _chunk_frames.append(_sub)
+        if not _chunk_frames:
+            _df = _qs_pd.DataFrame()
+        else:
+            _df = _qs_pd.concat(_chunk_frames)
+        _qs_shape_check('get_fundamentals', 'dataframe', _df)
+        return _df
     _field_list = [fields] if isinstance(fields, str) else (list(fields) if fields else None)
     # P-A2 eps 口径（2026-08-24，v8.3 整合）：eps 表且 basis 命中 → eps→basic_eps/diluted_eps
     # 请求翻译；其余走 _QS_GF_FIELD_MAP。常量由 _QS_FIDELITY_EPS_EXT（注入在后，仅常量）
@@ -1569,8 +1988,35 @@ def get_fundamentals(security, table='valuation', fields=None, date=None,
         _m = _QS_FIDELITY_EPS_FIELD_MAP.get(_QS_FIDELITY_EPS_BASIS, {{}})
         _plat_fields = [_m.get(f, f) for f in _field_list]
     else:
-        _plat_fields = ([_QS_GF_FIELD_MAP.get(f, f) for f in _field_list]
+        _plat_fields = ([_qs_gf_plat_field(table, f) for f in _field_list]
                         if _field_list is not None else None)
+    # §18：turnover_ratio 经 _QS_VAL_PLATFORM_MAP 直映 turnover_rate（平台原生存在），
+    # §17 的「请求剔除+合成」不再需要；合成块退居兜底（仅当映射后列仍缺失/全 NaN 才触发）。
+    # 2026-09-03 平台吸收（gf-date-synthesis-design.md）：date=None + 白名单财务表 →
+    # 拼接前一日 PIT（本地 date=None → prev_date 语义）；platform 仅 date 形态实证。
+    if date is None and table in _QS_GF_DATE_SYNTH_TABLES:
+        _eff = _qs_prev_trade_day_str()
+        if _eff:
+            date = _eff
+            log.info('QS_GF_DATE_SYNTH table=%s prev=%s（date=None → 前日 PIT）'
+                     % (table, _eff))
+        else:
+            log.warning('QS_GF_DATE_SYNTH table=%s FAIL（前日不可合成，回退 date=None）'
+                        % table)
+    # 2026-09-03 平台吸收（gf-date-synthesis-design.md §14）：报表表 → range 形态路由。
+    # 平台 income_statement date 形态 = 披露时点单期（v8/v8.1 实证），策略需 ≥2 年报期 →
+    # P2=0；P1 实证 range（start_year/end_year）返回 12 期季报 + PIT 可复现。仅当调用方
+    # 未显式传 start_year/end_year 且 date 已就绪时补窗口；显式传参路径零影响（纯增益）。
+    if (table in _QS_GF_STATEMENT_TABLES and date is not None
+            and start_year is None and end_year is None):
+        try:
+            _sy = int(str(date)[:4]) - _QS_GF_STATEMENT_RANGE_YEARS
+            _ey = int(str(date)[:4])
+            start_year, end_year = _sy, _ey
+            log.info('QS_GF_STATEMENT_RANGE table=%s date=%s years=%d-%d'
+                     % (table, str(date)[:10], _sy, _ey))
+        except Exception:
+            pass
     # B6c 分派（2026-08-31 18:20，v8.1 平台复验二轮修正）：date 与 start_year/end_year 并存。
     # 主路径 = 平台原生 range 多期透传（探针 P1 实证 start_year/end_year → 12 期季报齐全、
     # index=multi2(end_date,secu_code)、含 publ_date 列、PIT 可复现 9/12）→ multi2 拍平 →
@@ -1599,6 +2045,22 @@ def get_fundamentals(security, table='valuation', fields=None, date=None,
             _raw = _QSFundState.orig(_secs, table, fields=_plat_fields,
                                      start_year=start_year, end_year=end_year,
                                      is_dataframe=is_dataframe, *args, **kwargs)
+            # 2026-09-03 自愈（§15）：years-only range 结果「行在但值域全空」（本地引擎
+            # years-only 形态：end/publ_date 元数据在、operating_revenue 等全 None 实证——
+            # 须在 pit 之前检测，pit 会把空值行剔光致后置检测失明）→ 以 date+years 重试
+            # （本地引擎该形态数值齐全实证）；平台 P1 实证 years-only 数值齐全 → 不触发，
+            # 零影响（纯增益）。
+            if (len(_raw) and table in _QS_GF_STATEMENT_TABLES
+                    and _qs_gf_value_cols_allnan(_raw)):
+                try:
+                    _raw = _QSFundState.orig(
+                        _secs, table, fields=_plat_fields,
+                        date=date, start_year=start_year, end_year=end_year,
+                        is_dataframe=is_dataframe, *args, **kwargs)
+                    log.info('QS_GF_RANGE_LOCAL_RETRY table=%s date=%s years=%d-%d'
+                             % (table, str(date)[:10], start_year, end_year))
+                except Exception:
+                    pass
             _raw = _qs_multi_flat(_raw)
             # v8.5 PIT 位置修复（2026-08-31 五次复验实证 fscore_pass=4）：PIT 过滤必须在
             # _qs_frame_to_contract（字段筛选）之前——策略请求 fields 不含 publ_date，
@@ -1686,6 +2148,71 @@ def get_fundamentals(security, table='valuation', fields=None, date=None,
                                    else (fields or []))
         else:
             _df = _qs_pd.concat(_frames)
+    # 2026-09-04 §18 兜底合成（主路径=turnover_rate 直映；仅映射后列仍缺失/全 NaN 才到这里）：
+    # tv% = volume×close/float_value×100（量纲自洽：三量同环境单位互消，wan-yuan/yuan
+    # 歧义由中值数量级带自动校准 [med>200→/1e4；med<0.005→×1e4]，平台/本地通吃）。
+    # 失败 → 保 NaN + vhit/chit 命中计数审计（策略 L423 自然降级仅 CV 判定，不掩差异）。形态双兼容：平台宽表（列=码）/本地长表（行=码）。
+    if (table == 'valuation' and _field_list and 'turnover_ratio' in _field_list
+            and len(_df) and _qs_val_map_enabled()
+            and _qs_gf_val_missing_any(_df, ['turnover_ratio'])):
+        try:
+            _vmap = _qs_gf_hist_last(get_history(
+                1, frequency='1d', field=['volume'], security_list=list(_secs),
+                fq=None, include=False), 'volume', _secs)
+            _cmap = _qs_gf_hist_last(get_history(
+                1, frequency='1d', field=['close'], security_list=list(_secs),
+                fq=None, include=False), 'close', _secs)
+            if 'float_value' in _df.columns:
+                _raw_tv = []
+                for _code in _df.index:
+                    _vv = _vmap.get(_code, float('nan'))
+                    _cc = _cmap.get(_code, float('nan'))
+                    try:
+                        _fv = float(_df.loc[_code, 'float_value'])
+                    except Exception:
+                        _fv = float('nan')
+                    _raw_tv.append(_vv * _cc / _fv * 100.0
+                                   if (_fv == _fv and _fv > 0 and _vv == _vv and _cc == _cc)
+                                   else float('nan'))
+                _srt = sorted(v for v in _raw_tv if v == v and v > 0)
+                _scale = 1.0
+                if _srt:
+                    _med = _srt[len(_srt) // 2]
+                    if _med > 200.0:
+                        _scale = 1e-4
+                    elif _med < 0.005:
+                        _scale = 1e4
+                _df['turnover_ratio'] = [v * _scale if v == v else v for v in _raw_tv]
+                _vh = sum(1 for _x in _vmap.values() if _x == _x)
+                _chg = sum(1 for _x in _cmap.values() if _x == _x)
+                log.info('QS_VAL_TRU_SYNTH n=%d med=%s scale=%g vhit=%d chit=%d'
+                         % (len(_raw_tv), ('%.4f' % _med) if _srt else 'na',
+                            _scale, _vh, _chg))
+            else:
+                log.warning('QS_VAL_TRU_SYNTH fail float_value missing')
+        except Exception as _te:
+            log.warning('QS_VAL_TRU_SYNTH exc %s' % (type(_te).__name__,))
+    # 2026-09-04 §16 valuation 自愈（try/except 汇合后，覆盖异常与全 NaN 两路）：
+    # 映射名取回空/全 NaN → 原生命名重试（本地引擎形态）；仍失败 → 列名探针一次性
+    # 打印平台真实列（QS_SHIM_VAL_COLS，一轮收敛，不掩差异）。平台正常返回 → 不触发。
+    if (table == 'valuation' and _field_list
+            and any(f in _QS_VAL_PLATFORM_MAP for f in _field_list)
+            and (not len(_df) or _qs_gf_value_cols_allnan(_df))):
+        try:
+            _fb = _QSFundState.orig(_secs, table, fields=_field_list, date=date,
+                                    is_dataframe=is_dataframe, *args, **kwargs)
+            _fb = _qs_frame_to_contract(_fb, _secs, fields, table)
+            if len(_fb) and not _qs_gf_value_cols_allnan(_fb):
+                _df = _fb
+            elif len(_secs):
+                # 第七轮实证：date=date 形态 fields=None 返回空列集 → 探针必须不带 date
+                _probe = _QSFundState.orig(_secs[:2], table, is_dataframe=True)
+                if _probe is not None and hasattr(_probe, 'columns'):
+                    _cl = ','.join([str(c) for c in _probe.columns][:40])
+                    log.info('QS_SHIM_VAL_COLS %s' % (_cl[:220],))
+        except Exception as _fe:
+            log.warning('QS_SHIM_VAL_FALLBACK %s: %s'
+                        % (type(_fe).__name__, str(_fe)[:100]))
     _qs_shape_check('get_fundamentals', 'dataframe', _df)
     return _df
 
@@ -1785,16 +2312,30 @@ def _qs_pit_filter(df, date):
             if _all_nan:
                 keep.append(False)
                 continue
-            # 2) publ_date 判据
+            # 2) publ_date 判据（2026-09-03：数值单元先按数值处理——np.float64(…ms) 经 str() 拼
+            # digits 会多尾 0（1535558400000.0 → 14 位）→ /1000 后年份爆表 2456 → 全剔；
+            # 数值直取 [ms→YYYYMMDD] / [YYYYMMDD float]，平台字符串形态回退）
             _s = str(_row.get('publ_date') or "").strip()
             if not _s or _s.lower() in ("nan", "none", "nat"):
                 keep.append(True)          # 空/缺失 → 不据此剔除（平台 list+range 全空）
                 continue
-            _num = _qs_re.sub(r'\\D', '', _s)
-            if _num.isdigit() and len(_num) >= 8:
-                keep.append(float(_num[:8]) <= _dn)
+            _pnum = None
+            try:
+                _f = float(_s)
+                if _f == _f and _f != 0:
+                    if abs(_f) >= 1e11:    # epoch 毫秒（本地引擎 publ_date=ann_date ms 实证）
+                        _pnum = float(datetime.datetime.utcfromtimestamp(
+                            _f / 1000.0 + 8 * 3600).strftime('%Y%m%d'))
+                    elif _f >= 1e7:        # YYYYMMDD float
+                        _pnum = float(str(int(_f))[:8])
+            except (TypeError, ValueError):
+                _num = _qs_re.sub(r'\\D', '', _s)
+                if len(_num) == 8:
+                    _pnum = float(_num)
+            if _pnum is not None:
+                keep.append(_pnum <= _dn)
             else:
-                keep.append(True)
+                keep.append(True)          # 无法判定 → 不据此剔除（值域兜底已挡占位期）
         return df[[bool(b) for b in keep]]
     except Exception:
         return df
@@ -1849,13 +2390,15 @@ def _qs_filter_report_types(df, report_types):
     """B-1 report_types 多期过滤（2026-08-31 探针 P1：平台 report_types 为 start_year 模式
     参数，date 模式不可传）→ 双查询返回后按 end_date 月日过滤（1/2/3/4 → 0331/0630/0930/1231）。
     v8.7：end_date 为 epoch 毫秒契约——经 np.datetime64 还原 'MMDD'（YYYYMMDD 数值切片 [4:8]
-    对 ms epoch 失效，2026-08-31 v8.6 复验后修复）。"""
+    对 ms epoch 失效，2026-08-31 v8.6 复验后修复）。
+    2026-09-03 §15：UTC 截断偏移——本地报告期零点为北京时间，UTC 取 'MMDD' 整体早一天
+    （12-31 → '1230'）致年报行漏配；+8h 后还原。"""
     try:
         _md = _QS_REPORT_TYPE_MD.get(int(report_types))
         if _md and df is not None and len(df) and 'end_date' in df.columns:
             def _mm(_v):
                 try:
-                    _t = str(_qs_np.datetime64(int(float(_v)), 'ms'))
+                    _t = str(_qs_np.datetime64(int(float(_v)) + 8 * 3600 * 1000, 'ms'))
                     return _t[5:7] + _t[8:10]
                 except Exception:
                     return ''
@@ -1928,7 +2471,7 @@ def _qs_gf_maybe_prefetch_range(secs, table, field_list, date, start_year, end_y
         _g._qs_gf_range_prefetched = _done
         return
     _flds = ["end_date", "publ_date"] + [f for f in (field_list or []) if f not in ("end_date", "publ_date")]
-    _plat = _plat_fields_of(_flds)
+    _plat = _plat_fields_of(_flds, table)
     _cache = getattr(_g, "_qs_gf_range_cache", None)
     if _cache is None:
         _cache = {{}}
@@ -2008,7 +2551,7 @@ def _qs_gf_maybe_prefetch(secs, table, field_list, date):
     _flds = ['end_date'] + [f for f in (field_list or []) if f != 'end_date']
     for _dk in (_dkey, _prev_date):
         try:
-            _raw = _QSFundState.orig(_pool, table, fields=_plat_fields_of(_flds),
+            _raw = _QSFundState.orig(_pool, table, fields=_plat_fields_of(_flds, table),
                                      date=_dk, is_dataframe=True)
             _df = _qs_frame_to_contract(_raw, _pool, _flds, table)
         except Exception as _e:
@@ -2058,9 +2601,12 @@ def _qs_gf_auto_cache_get(code, table, date, field_list):
     return _out
 
 
-def _plat_fields_of(flds):
-    """请求字段集 → 平台字段集（_QS_GF_FIELD_MAP 翻译；batch/list 预取同构）。"""
-    return [_QS_GF_FIELD_MAP.get(f, f) for f in (flds or [])]
+def _plat_fields_of(flds, table='valuation'):
+    """请求字段集 → 平台字段集（_QS_GF_FIELD_MAP 翻译；batch/list 预取同构）。
+
+    table 感知（2026-09-04 §16）：valuation 表用平台聚源列名映射（与主调用一致，
+    避免预取路径 KeyError/空值）。"""
+    return [_qs_gf_plat_field(table, f) for f in (flds or [])]
 
 
 def _qs_equity_probe(code, date):
@@ -2435,6 +2981,34 @@ def _source_uses_trade_date(source: str) -> bool:
     return "'trade_date'" in source or '"trade_date"' in source
 
 
+_MINUTE_FREQ_SET = ("'1m'", '"1m"', "'5m'", '"5m"', "'15m'", '"15m"',
+                    "'30m'", '"30m"', "'60m'", '"60m"')
+
+
+def _source_uses_minute_history(source: str) -> bool:
+    """门控（v10）：源策略是否调用分钟频率行情（get_history/get_price unit/frequency）。
+
+    判定 = AST 扫描 get_history*/get_price 调用的 unit/frequency 关键字字面量 ∈
+    分钟集合；AST 失败时退化为分钟字面量文本探测。命中 → 注入 data 捕获行与
+    分钟 bar 合成（known-limitation：平台回测分钟 include 双模式不可安全表达
+    上一已完成 bar，v1.1 立项方案 §3.2）。
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return any(f in source for f in _MINUTE_FREQ_SET)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id in ("get_history", "get_history_batch", "get_price"):
+            for kw in node.keywords:
+                if kw.arg in ("unit", "frequency") and \
+                        isinstance(kw.value, ast.Constant) and \
+                        isinstance(kw.value.value, str) and \
+                        ("'%s'" % kw.value.value) in _MINUTE_FREQ_SET:
+                    return True
+    return False
+
+
 _ORDER_APIS = ("order_target_value", "order_target_percent", "order_value",
                "order_percent", "order")
 
@@ -2669,6 +3243,8 @@ class SourceConverter:
         self._fidelity_eps_basis = fidelity_eps_basis
         # P-D13 C1b：北交所过滤旗标（CLI --exclude-bse，默认 False=P-D9 语义权威）
         self._exclude_bse = exclude_bse
+        # v10（data[code] 分钟 bar 捕获与合成）：分钟策略检测命中 → 注入捕获行
+        self._minute_synth_injected = False
         # 2026-09-03 平台吸收（ptrade-platform-absorptions-design.md）：
         # exclude_bse 源语义解析（多调用点并集；None=不可静态解析 → 回退 CLI）
         self._asharess_exclude_bse_resolved: Optional[bool] = None
@@ -2745,6 +3321,9 @@ class SourceConverter:
 
         # 4) 应用文本改写（从后往前）
         converted = _apply_replacements(source_code, self._replacements)
+
+        # v10 门控检测（data[code] 分钟 bar 捕获与合成）：分钟策略 → 注入捕获行
+        self._minute_synth_injected = _source_uses_minute_history(source_code)
 
         # 5) 注入（helper / shim / MyTT / A股规则）
         if self.inject_helpers:
@@ -3825,6 +4404,38 @@ class SourceConverter:
         # 钳制沿用 fail-open（与不接线等价的现状），禁止半注入。
         if _order_ext_injected:
             out = self._inject_handle_data_capture(out)
+        # v10（data[code] 分钟 bar 捕获与合成）：分钟策略在 handle_data 入口注入
+        # _qs_capture_data(data)（O(1) 引用捕获，wrapper 分钟合成数据来源）。
+        # 机械安全门控同 D4-S7 #5：无 def handle_data(context, data) → 不注入 + 告警。
+        if self._minute_synth_injected:
+            out = self._inject_data_capture(out)
+        return out
+
+    def _inject_data_capture(self, code: str) -> str:
+        """v10：在 handle_data 入口注入 _qs_capture_data(data)（机械安全门控，幂等）。"""
+        import re as _re
+        _m = _re.search(
+            r'^def handle_data\(\s*context\s*,\s*data\s*[,)]', code, _re.MULTILINE)
+        if not _m:
+            self.warnings.append(
+                "v10: handle_data data 捕获未注入（无 def handle_data(context, data)"
+                "）——分钟 bar 合成降级 fail-open（返回体保持原样）")
+            return code
+        _def_end = code.index('\n', _m.start())
+        _body = code[_def_end + 1:]
+        _m2 = _re.match(r'(\s+)\S', _body)
+        if not _m2:
+            self.warnings.append(
+                "v10: handle_data 函数体为空/异常——不注入（fail-open）")
+            return code
+        _indent = _m2.group(1)
+        # 幂等：已有捕获行则跳过（v10.3：同时捕获 context——合成日期守卫数据源）
+        _first_line = _body.split('\n', 1)[0]
+        if '_qs_capture_data(' in _first_line:
+            return code
+        _capture_line = _indent + '_qs_capture_data(context, data)\n'
+        out = code[:_def_end + 1] + _capture_line + _body
+        self.coverage["injected_helpers"].append("handle_data_capture_data")
         return out
 
     def _inject_handle_data_capture(self, code: str) -> str:

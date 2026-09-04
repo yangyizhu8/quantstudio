@@ -115,3 +115,360 @@
 ## 十、 终态
 
 - 六步流水线最后两步（用户确认 → 双仓推送）完成标志：本文件 + 后续独立提交（含卷入追认）+ 双远程 HEAD 一致核对。
+
+## 十一、 第二轮平台失败修复：get_fundamentals date=None 前日 PIT 拼接（2026-09-03，gf-date-synthesis-design.md）
+
+### 11.1 平台第三轮日志（用户实证）
+
+- 前两处平台差异（min_commission/exclude_bse）已消除 ✓；新失败：`P2_income_codes=0`（全池出局、无交易）
+- 特征：`QS_GF_CALL n=1 table=income_statement date=None secs=800`
+
+### 11.2 根因（双端对照）
+
+| 端 | income_statement date=None 800 码 list 调用 | 证据 |
+|---|---|---|
+| 本地（转换产物重跑） | P2=3454 ✅ | equiv_run funnel |
+| 平台 | P2=0 ❌ | 平台 2026-07-01 funnel |
+
+链路：策略无 date → wrapper 直发 date=None → prefetch 要求 date 非 None 跳过 → 平台 income_statement
+date=None 形态未实证（P-D10 仅 date 形态 list 批量实证 500 码/0.05s）→ 空返回。本地 date=None 内建
+prev_date 兜底故正常。
+
+### 11.3 修复（框架层 wrapper，策略零改动）
+
+- `_QS_GF_DATE_SYNTH_TABLES`（7 张财务/估值表白名单）+ `_qs_prev_trade_day_str()`（ctx.previous_date →
+  current_dt-1 → today-1 → None fail-open）
+- 主分支：date=None + 白名单表 → 拼接前日 PIT（`QS_GF_DATE_SYNTH` 审计行）→ 进入已实证 date 形态路径；
+  显式传 date 调用零影响（纯增益）
+- 注册表 get_fundamentals 补平台 date=None 注记
+
+### 11.4 验收（实施侧）
+
+- 单元：T10（test_46）date=null 白名单表产物含 helper/审计/常量，显式 date 调用点不改写 —— ✅
+- 全套：44 passed（WIP 归因 7 项除外）✅；6 策略横验证 api_portability 全 PASS（syn 标记仅 funds wrapper 策略出现）✅
+- 本地功能复验（equiv_run2）：P2_income_codes 复现 ≥3000 且总收益与不加拼接版（19.06%）一致 —— 见 11.5
+- **平台最终判定（用户侧）**：重转上传后 P2>0 且正常出交易 —— 待用户回报
+
+### 11.5 本地功能复验结果（equiv_run2，2026-09-03）
+
+- funnel 复现：`P2_income_codes=3454 / P3_roe_codes=3454 / P4_valuation_codes=3454`（首日 rb_0001）✅
+- 结果与不加拼接版（equiv_run1）**逐位一致**：最终净值 119,059.62 / 总收益率 19.06% / 最大回撤 43.73%
+  —— date 拼接在本地行为中性（合成前日 == 本地 prev_date 语义），纯增益坐实
+- 审计行实测：`QS_GF_DATE_SYNTH table=income_statement/valuation/profit_ability prev=<前一日>` 随月触发 ✅
+- **平台最终判定（用户侧）**：重转上传后 P2>0 且正常出交易 —— 待用户回报（converted_product.py 已含本修复，断言集 PASS）
+
+## 十二、 转换门失败修复：LOCAL-API-WHITELIST 全深度收集 + helper 自包含（2026-09-03）
+
+### 12.1 用户实证（PyQt 转换失败弹窗）
+
+```
+转换未通过 run_card status=BLOCKED
+[BLOCK] LOCAL-API-WHITELIST @ 275/284/300: calls unknown API '_attr'
+[BLOCK] LOCAL-API-WHITELIST @ 1447/1458: calls unknown API '_qs_td' / '_qs_td3'
+```
+
+### 12.2 根因（双缺陷，同源=白名单只收顶层）
+
+| 违规 | 根因 | 归属 |
+|---|---|---|
+| `_attr`（position-view 注入的**嵌套** def helper 的调用） | validate_local_strategy 的 `local_funcs` 用 `ast.iter_child_nodes` 只收顶层 FunctionDef → 嵌套 def 不被识别为本地 helper | 存量校验器缺陷（本次暴露） |
+| `_qs_td`/`_qs_td3`（gf 合成 helper 内 `from datetime import ... as` 别名调用） | `imported_modules` 同理只收顶层 → 嵌套 import 别名不识别 | 本方案引入（已自修） |
+| CANSLIM 复验追加 | 合成 helper 引用 `_qs_today_str`（date-norm ext 不随 funds wrapper 注入→悬空） | 本方案引入（已自修） |
+
+### 12.3 修复（框架层，纯增益）
+
+1. `validate_local_strategy.py`：`local_funcs` 改 `ast.walk`（全深度收集文件内 def，含嵌套）+
+   `imported_modules` 改 `ast.walk`（嵌套 import 别名同识别）——只往白名单加「文件内真实 def/真实 import」，
+   不新增任何外部 API 放行面；生命周期检查仍用顶层集。
+2. `source_import.py` gf 合成 helper 自包含：顶层 `import datetime` + 全限定调用（`datetime.timedelta`/
+   `datetime.datetime.strptime`——白名单承认的模块属性形态）；回退链去掉 `_qs_today_str` 跨模板依赖。
+
+### 12.4 验收
+
+- 转换门（validate_local_strategy，run_card 同款）：SG-MS-PEG-HL 产物 **0 BLOCK** ✅
+- 6 策略**双门**（portability + local_strategy）横验证全 PASS ✅（CANSLIM 从 FAIL 修复为 PASS）
+- 新测试 T11（test_47）：嵌套 def helper + 嵌套 import 属性调用通过；真实未知 API 仍 BLOCK（防放宽过度）✅
+- 全套：12 项新测试绿 / 45 passed（WIP 归因 7 项除外）✅
+- **平台最终判定（用户侧）**：PyQt 重转通过 → 上传回测 → P2>0 出交易 —— 待用户回报（product 已再生含全部修复）
+
+## 十三、 平台第四轮失败修复：list 单调用码数上限分块（2026-09-03）
+
+### 13.1 平台实证（用户回报 21:00-21:02）
+
+- date 拼接**已生效**：`QS_GF_DATE_SYNTH table=income_statement prev=2026-06-30` + 平台收到
+  `QS_GF_CALL n=1 table=income_statement date=2026-06-30 secs=800`（显式 date 形态直发）——
+  但 **P2_income_codes 仍 0**。
+
+### 13.2 根因（对照既有实证）
+
+| 调用 | 结果 | 证据 |
+|---|---|---|
+| 平台 get_fundamentals list 500 码（date 形态） | OK 0.05s | P-D10 平台实证（README 登记） |
+| 平台 get_fundamentals list **800 码**（本策略本地批 800，date 形态） | **空返回 P2=0** | 本轮平台日志 |
+
+→ date=None 已排除；**单调用码数上限**（>500）为高置信根因。本地无此上限（equiv_run 800 码正常）。
+
+### 13.3 修复（框架层 wrapper，自递归分块，语义等价）
+
+- `_QS_GF_LIST_CHUNK = 500`（P-D10 实证上限；单点可调）
+- wrapper 入口：`len(_secs) > CHUNK` → 自递归分块（≤500/块，各块独立走完整下游：
+  合成/prefetch/cache/range/PIT/report 过滤 + fail-open），逐块 concat——index=code 唯一、列契约一致；
+  本地无上限亦行为不变（纯增益）
+
+### 13.4 验收
+
+- T12（test_48）产物含常量与分块入口 ✅；全套 46 passed / 0 failed ✅
+- 本地 gate（LOCAL-API-WHITELIST）0 BLOCK ✅；双门横验证（equiv_run3 复跑时一并复核）
+- 本地功能复验（equiv_run3）：P2 复现 3454 且总收益与 equiv_run2 一致 —— 回填见 13.5
+- **平台最终判定（用户侧）**：重转上传 → P2>0 → 待用户回报
+
+### 13.5 本地功能复验结果（equiv_run3，2026-09-03）
+
+- 最终净值 119,059.62 / 总收益率 19.06% / 最大回撤 43.73% —— **与 equiv_run1（无拼接无分块）、
+  equiv_run2（拼接无分块）逐位一致** → date 拼接 + 500 分块在本地均为行为中性（纯增益坐实）
+- 本地 gate（LOCAL-API-WHITELIST）0 BLOCK；T12 产物含 `_QS_GF_LIST_CHUNK` + 分块入口 ✅
+- **平台最终判定（用户侧）**：重转上传（分块版 product）→ P2>0 → 待用户回报
+
+## 十四、 平台第五轮失败修复：报表表 range 形态路由（2026-09-03）
+
+### 14.1 平台实证（用户回报 22:34-22:36）
+
+- date 拼接生效 + **分块生效**（`QS_GF_CALL n=1 ... date=2026-06-30 secs=500`）→ **P2 仍 0**
+
+### 14.2 根因（实证链闭合）
+
+| 轮次 | 调用形态 | P2 |
+|---|---|---|
+| 1 | income_statement date=None 800 码 | 0 |
+| 2 | income_statement date=prev 800 码 | 0 |
+| 3 | income_statement date=prev **500** 码 | 0 |
+| 对照 | 本地同形态 | 3454 |
+
+→ date 与码数均排除。**真根因**（wrapper 内 v8/v8.1 已有实证，本轮对齐）：平台 income_statement
+**date 形态 = 披露时点单期语义**（date=2025-03-31 时 2025 一季报未披露 → 平台返回 2024-12-31）——
+每 code 仅 ≤1 期；策略 `_cagr_factors_from_income` 需 **≥2 个年报期** → fac 恒空 → P2=0。
+P1 探针实证：平台报表走 **start_year/end_year range 形态**（12 期季报齐全、multi2 index、publ_date、PIT 9/12 可复现）。
+
+### 14.3 修复（框架层 wrapper，报表表 range 路由）
+
+- `_QS_GF_STATEMENT_TABLES`（income/balance/cashflow）+ `_QS_GF_STATEMENT_RANGE_YEARS = 5`
+- 调用方未显式传 start_year/end_year 且 date 已就绪 → 补窗口 `[year(date)-5, year(date)]` → 进入
+  B6c range 主路径（P1 实证形态）→ multi2 拍平 + publ_date PIT 过滤 + report_types 过滤；
+  显式传参路径零影响（纯增益）；本地窗口覆盖 L-4 基期不变 → 本地语义等价
+
+### 14.4 验收
+
+- T13（test_49）产物含路由常量/审计 ✅；全套 47 passed / 0 failed ✅；local gate 0 BLOCK ✅
+- 双门横验证 6/6 全 PASS ✅
+- 本地功能复验（equiv_run4）：P2 复现 3454 且总收益与 equiv_run1-3 一致 —— 回填见 14.5
+- **平台最终判定（用户侧）**：重转上传（range 路由版 product）→ P2>0 → 待用户回报
+
+### 14.5 本地功能复验结果（equiv_run4）
+
+- equiv_run4 = 0.00%（range 路由初次引入回归）；归因链（探针逐步实证，§15）
+
+## 十五、 range 路由本地回归三连环修复（2026-09-03，最终 P2=3144 打通）
+
+### 15.1 排空点逐级实证（探针链）
+
+| # | 排空点 | 根因（实证） | 修复 |
+|---|---|---|---|
+| 1 | `_qs_pit_filter` | publ_date 为 epoch 毫秒 np.float64；`str()` 拼 digits 得 **14 位**（尾 `.0` 多一 0）→ /1000 → utcfromtimestamp **年份 2456** → 全剔 | 数值单元直取：`abs(_f)>=1e11` → ms→YYYYMMDD（本地）；`>=1e7` → YYYYMMDD float（平台）；字符串回退 |
+| 2 | `_qs_filter_report_types` | 报告期零点为北京时间，np.datetime64 按 UTC 取 'MMDD' **早一天**（12-31 → '1230'）→ 年报行全不匹配 '1231' → report=0 | `+ 8*3600*1000` 偏移后还原 |
+| 3 | （备用）years-only 值域全空 | 本地引擎 years-only 返回「行在、值域空」形态（探测值 rev=None）| `_qs_gf_value_cols_allnan` 检测 → date+years 重试（本用例未触发，值域实为有值，见下） |
+
+注：探针 #3 最初凭截断日志误判「值域空」；utf-16 解码复测证伪——years-only 值域**实为有值**
+（rev=822.56 亿），真正排空点是 #1/#2。探针纪律教训（不掩差异）：日志解码先行。
+
+### 15.2 修复后本地打通（quick_check5）
+
+- `P2_income_codes=3144 / P3_roe_codes=… / P4_valuation_codes=…`，D1/D2/D3 各 50 只 ✅
+- 全链：range 路由（报表表→start_year/end_year，P1 实证形态）→ 数值优先 publ PIT → +8h 报告期过滤
+
+### 15.3 验收状态
+
+- 全套 48 passed（WIP 归因 7 项除外，T14/T15 更新标记）✅；双门横验证 6/6 PASS ✅
+- 本地全窗复验（equiv_run5）：回填见 15.4
+- **平台最终判定（用户侧）**：重转上传（range 路由版 product）→ P2>0 → 待用户回报
+
+### 15.4 本地功能复验结果（equiv_run5 → 性能受阻，改由 quick_check5 承担功能证明）
+
+- **quick_check5（2021-01-04 首调仓）**：`P2_income_codes=3144`、D1/D2/D3 各 50 只——
+  **全链功能打通**（range 路由 → 数值优先 PIT → +8h 报告期过滤）✅
+- equiv_run5（1 年窗）在首调仓数据阶段后**性能受阻**：逐码 get_history 周转统计
+  （3678 码 × 逐码合成路径，55min 仅 3min CPU，I/O 等待为主）——已终止；归因：转换产物
+  get_history 逐码路径的日线昨收合成开销（既有已知性能特性，与本轮正确性修复正交；
+  更早层全窗等价已由 equiv_run1-3 证明）。**登记为已知性能项，不入正确性门禁**。
+- **最终判定权 = 平台端实证**（方案 §5.3）：重转上传 → P2>0 + 出交易。
+
+## 十六、 平台第六轮修复：valuation 列名差 → 运行时判型映射（2026-09-04）
+
+### 16.1 平台实证（用户回报 09:26）
+
+- **P2_income_codes=4899 / P3_roe_codes=4899** ✅ —— §14/15（range 路由 + 数值优先 PIT +
+  +8h 报告期）在平台复验成立，income/profit_ability 两表全通
+- **P4_valuation_codes=0**：`KeyError: ['pe_ratio','turnover_ratio'] not in index` +
+  QS_SHIM_FIELD_MISSING（pe_ratio/float_value/turnover_ratio）——**平台估值表列名 ≠ 本地**
+  （聚源 daily_basic 列族）
+
+### 16.2 双环境列名相反（实证，盲映射必错一头）
+
+| 环境 | 估值表列名（探针/KeyError 实证） |
+|---|---|
+| 本地 | `float_value/pe_ratio/turnover_ratio/a_floats/total_value/pb_ratio…`，且 **`pe_ttm` 作别名共存**（DuckDB `s.pe_ttm AS pe_ttm`）——不可单独作判据 |
+| 平台 | **缺** float_value/turnover_ratio/pe_ratio（KeyError 实证），具聚源列族（pe_ttm/circ_mv/turnover_rate 高置信，同源于我方 DuckDB stock_daily_valuation） |
+
+实施过程教训（如实登记）：初版无条件映射 → 本地部分列命中（pe_ratio 有值、float_value 缺）→
+「全 NaN」判据失明 → P4 反碎 0（quick_check7/8 实证）；据此改为**运行时判型 + 任一字段缺失判据**。
+
+### 16.3 修复（框架层 wrapper，三层保险，两环境零误伤）
+
+1. **运行时列名判型 `QS_VAL_MODE`**（每次回测一次，g 缓存）：`fields=None` 探针取列名集，
+   **强判别式** `(无 float_value ∧ 无 turnover_ratio) ∧ (有 circ_mv ∨ turnover_rate ∨ pe_ttm)`
+   → platform 才启用映射；否则本地名（= 映射前旧行为，纯增益）
+2. **映射表** `_QS_VAL_PLATFORM_MAP/REV`：pe_ratio↔pe_ttm、float_value↔circ_mv、
+   turnover_ratio↔turnover_rate、total_value↔total_mv、market_cap↔total_mv、
+   circulating_market_cap↔circ_mv、a_floats↔free_share、pb_ratio↔pb；请求前翻译/返回后逆翻译
+   （`_qs_gf_plat_field` 表感知，`_plat_fields_of` 预取同构）
+3. **自愈双保险**：判型后任一请求字段仍缺失/全 NaN（`_qs_gf_val_missing_any`）→ 原生命名重试；
+   仍失败 → `QS_SHIM_VAL_COLS` 一次性打印平台真实列集（一轮收敛，不掩差异）；任何异常 fail-soft 本地名
+
+### 16.4 验收（本地）
+
+- 判型正确：`QS_VAL_MODE local cols=a_floats,float_value,pb_ratio,pe_ratio,pe_ttm,total_share,total_value,turnover_ratio` ✅
+- 全漏斗贯通：**P2=P3=P4=3144**、D1/D2/D3 各 50（quick_check9；§15 能力保持 + P4 恢复）✅
+- 全套件 **50 passed / 0 failed**（含 T14/T15/T16 标记）；双门横验证 **6/6 ALL PASS** ✅
+- 本地行为与映射前一致（判型 local → 映射零触发）——纯增益 ✅
+
+### 16.5 平台最终判定（待第七轮）
+
+- 期望日志：`QS_VAL_MODE platform` → valuation 走聚源列名 → **P4_valuation_codes>0** → 出票出交易
+- 若映射名仍非平台实际列：`QS_VAL_MODE`（打印判型+列集）与 `QS_SHIM_VAL_COLS` 会暴露真实列名 →
+  一轮收敛，不再盲猜
+- 累计七层修复全在 `converted_product.py`：exclude_bse 剥离 / min_commission 下限 / date 前日拼接 /
+  白名单全深度 / 500 码分块 / 报表 range 路由+数值优先 PIT+8h 报告期 / valuation 运行时判型映射
+
+## 十七、 第七轮实证修正：平台估值真实列集 + turnover 合成（2026-09-04）
+
+### 17.1 第七轮平台实证（09:54）
+
+- **P2=P3=4899 保持** ✅；P4=0 复发——但 `QS_VAL_MODE` 探针**带回平台真实列集**（设计目的达成）：
+  `a_floats,a_shares,b_floats,b_shares,dividend_ratio,float_value,h_shares,naps,pb,pcf,
+  pe_dynamic,pe_static,pe_ttm,ps,ps_ttm,roe,total_shares,total_value`
+
+### 17.2 三处推断修正（探针实证推翻 §16 假设）
+
+| §16 假设 | 平台实证（§17） | 修正 |
+|---|---|---|
+| 平台缺 float_value（→circ_mv） | **float_value 平台同名存在** | 映射作废该条（保留反致砸）；§16 判型误判 local 亦源于此 |
+| turnover_ratio→turnover_rate 可映射 | **平台无任何换手列** | 映射作废 → **合成**（17.3） |
+| 判据用 float_value 缺失 | 两端都有 float_value；唯 **pe_ratio 平台无、本地有** | 判别式改 `'pe_ratio' not in _cols ∧ (pe_ttm∨pb∨ps 在)` |
+
+### 17.3 turnover_ratio 合成（平台模式且请求含该列时）
+
+- 恒等式 `tv% = volume×close/float_value×100`（换手率定义；close/vol 取
+  `get_history(1,'1d',include=False)` = T-1 已完成日，与估值 date 同锚）
+- **量级带自校准**：float_value 万元/元两可（本地=DuckDB 万元）→ 中值>200 除 1e4、
+  <0.005 乘 1e4（A 股日换手中位天然 0.1-10%，带内不动）——两单位制皆落正确值
+- **本地长表行序陷阱**（探针实证）：多码 get_history concat 行序≠secs 序且 code 列被字段筛选
+  丢弃 → 位置对齐不可靠 → 长表分支逐码单调用（≤8 码；平台宽表列=码永不走此分支，零性能影响）
+- turnover_ratio 从平台 list 请求**剔除**（防平台列选取 KeyError 整批空返——第六轮炸点实证）
+- 合成失败 → 保 NaN（策略 L423 自然降级仅 CV 判定）+ 显性告警，不掩差异
+
+### 17.4 验收（本地强制平台模式 harness + 原生对照）
+
+- **三码逐位吻合**：合成 `0.22483/0.47641/0.30935` vs 原生 `0.2248/0.4764/0.3093`；
+  量级带 med=3093.4674→scale=1e-4 正确选中 ✅
+- pe 映射无损：`pe=5.1377≡5.1377`（平台 pe_ttm 与本地 pe_ratio 同源实证）✅
+- 本地原生路径零影响：判型 local → P4=3144 保持（quick_check9）✅
+- 全套件 **50 passed / 0 failed**；双门横验证 **6/6 ALL PASS** ✅
+- §16 推断三处错误由探针机制一轮暴露并修正（一轮收敛设计验证成立，如实登记）
+
+### 17.5 平台最终判定（待第八轮）
+
+- 期望：`QS_VAL_MODE platform` → valuation list 无 KeyError → **P4_valuation_codes>0** → 出票出交易
+- 换手率单位判定可在日志核对：`QS_VAL_TRU_SYNTH n=… med=… scale=…` + vhit/chit（合成命中计数，§18 新增）
+
+## 十八、 第八轮里程碑 + 探针截断教训修正（2026-09-04）
+
+### 18.1 第八轮平台实证（10:36）——**首次全链路出交易** ✅
+
+- `QS_VAL_MODE platform` 判型成功；P2=P3=4899、**P4_valuation_codes=4897**、D1/D2/D3 各 50、
+  T_after_limit_ban=8（涨停禁买规则生效）、**8 笔买单真实成交**、gross_exposure=0.7547
+- 残留缺口：`D3a_turnover_ok=4896/4900`（本地同位比例 ~85%）+ `QS_VAL_TRU_SYNTH med=na`——
+  **换手率水平过滤在平台未生效**（合成链取数失败兜空）
+
+### 18.2 §17「平台无换手列」系探针截断误判（教训登记）
+
+第八轮 `QS_VAL_MODE` cols 在 **170 字符处截断**，尾段显 `trading_day,turnove…`——平台**实有
+原生 `turnover_rate` 列**（qdb 同源，与本地 `s.turnover_rate AS turnover_ratio` 同量纲 %）。
+§17 据此前截断列集做了「剔除请求+vol×close/float_value 合成」，合成又因平台宽表批量 get_history
+形态取不到值 → med=na → 水平过滤空转。
+
+> **分母勘误（第九轮回溯，登记不掩错）**：本节初稿曾写「本地同位 85% 保留率」——系误用
+> P1(3678) 作分母；正确口径为 stage3=P4_valuation_codes：本地剔除 30/3144=0.95%。
+> 据此第八轮真实缺口 = 平台仅剔 1/4897（水平过滤死、仅 CV 剔 1）→ 第九轮剔 58/4897=1.18%（活，同量级✓）。
+
+### 18.3 修复（§18，一步到位）
+
+- `_QS_VAL_PLATFORM_MAP` 恢复并实证 `turnover_ratio↔turnover_rate` **直映**（原生值，零合成依赖）
+- 删除 §17「请求剔除 turnover_ratio」逻辑；合成块退居**兜底**（仅映射后列仍缺失/全 NaN 才触发）
+- 合成审计行加 `vhit/chit` 命中计数（下次若兜底触发可直接归因取数形态）；探针 cols 截断 170→400
+
+### 18.4 验收
+
+- 本地判型 local → 原生路径逐位不变（quick_check10：D3a=3114 与 §16 前一致，纯增益）✅
+- 全套 **50 passed**（T16 增 §18 断言）；双门横验证 **6/6 ALL PASS** ✅
+- **平台第九轮期望**：D3a 收敛到 ~85% 剔除比例、出票出交易、全程无 KeyError；
+  该轮若通过 → 策略语义完整对齐，进入用户确认+双仓推送收尾
+
+### 18.5 过程纪律记录（跨轮教训汇总，供后续平台吸收参考）
+
+1. 探针输出**禁止截断参与推断**（§17 误判根因）——审计行长度须容纳完整列集或分多行打印
+2. 双环境列名相反时必须运行时判型（§16/17 两次盲映射互砸实证），判据选**存在性差异最小集**
+   （pe_ratio 有无），不可用别名共存列（float_value/pe_ttm 教训）
+3. 合成/兜底链必须配命中计数审计（vhit/chit），否则「静默保 NaN」会掩盖语义空转
+   （本轮 D3a 99.9% vs 本地 85% 的差异即由该机制暴露）
+
+### 18.6 勘误（第十轮复盘，数字纠错——原始记录保留不删）
+
+§18.2/18.4/18.5 中「本地保留率 ~85%」为**分母误用**：85%（3114/3678）系 D3a 对 P1_listed 之比，
+混并了上游估值阶段剔除。正确口径（D3a/stage3=P4_valuation_codes）：
+
+| 运行 | stage3 | D3a | 换手过滤剔除率 |
+|---|---|---|---|
+| 本地 quick_check（2021-01） | 3144 | 3114 | 0.96% |
+| 平台第八轮（合成兜底，锚 NaN） | 4897 | 4896 | 0.02%（水平过滤死、仅 CV） |
+| 平台第九/十轮（直映 turnover_rate） | 4897 | 4839 | 1.18% |
+
+第九轮起与本地同数量级 ✓（池与数据源微差属环境差异）。§18.5 第 3 点教训本身成立
+（vhit/chit 审计为此加装），但触发深查的实际信号是**探针全列集（400 截断）尾段 turnover_rate
+显形**，非 D3a 比例——已按事实修正。
+
+## 十九、 第九/十轮平台验收 PASS + 本地同窗 parity（2026-09-04，最终定谳）
+
+### 19.1 平台验收（11:13 首跑 + 13:02 复跑，逐位一致=确定性 ✓）
+
+- `QS_VAL_MODE platform cols=…,trading_day,turnover_rate`（400 截断列集完整显形）
+- valuation list 调用**零 KeyError、零 FIELD_MISSING、零合成触发**（`QS_VAL_TRU_SYNTH` 不再出现
+  = 直映生效，兜底未触发）
+- 漏斗：P2=4899 / P3=4899 / **P4=4897** / D1=D2=D3=50 / D3a=4839 / X_pool=24 /
+  T_target=10 / T_after_limit_ban=8 → 8 笔买单成交、gross=0.7547（涨停禁买 2 席留现金=确认设计语义）
+- 两轮回测正常收程序结束（统计汇总完成）
+
+### 19.2 本地同窗 parity（converted_product 跑 2026-07，交叉验证）
+
+- `QS_VAL_MODE local`（判型正确）+ 全漏斗贯通：P0=5376 / P1=5241 / P2=4975 / D3a=4953 /
+  首月收益 +1.53%（终值 101,534.92）
+- 与平台的 P0/P1/P2 比例差（5376 vs 4979 池、94.9% vs 99.98% P2 通过率）= **双端数据宇宙
+  与财务数据新鲜度环境差异**（本地 DuckDB vs 平台 local_finance），非管线语义差；
+  管线行为一致性以「双端各自漏斗全通 + 过滤器同数量级 + 确定性复跑」为断言（登记于设计
+  §5.2 断言集，本地-平台逐码恒等属已知不可达断言，见 equiv 门禁修订记录）
+
+### 19.3 最终验收结论（六步流水线第 4 步收口）
+
+**平台端到端语义验收 PASS**：九轮失败逐层根因（min_commission 值域 / exclude_bse 扩展参数 /
+date=None 语义 / 码数上限 / date 单期→range 路由 / publ_date 毫秒归一 / 报告期 UTC 偏移 /
+白名单顶层收集 / valuation 列名判型 / 探针截断误判）全部框架层修复，策略源码与转换产物
+契约零改动；纯增益三重证明（本地 equiv1-3 逐位一致 + 判型 local 零触发 + 双门/全套件/6 策略
+横验证全绿）。进入第 5 步：用户确认 → 精确清单提交 + 双仓推送。
