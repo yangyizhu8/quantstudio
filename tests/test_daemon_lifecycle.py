@@ -483,7 +483,7 @@ def test_schedule_skip_weekdays_logic():
     import json, datetime
     from quantstudio.pipeline.daemon import ResidentCollector
 
-    cfg = json.load(open("config/collector_tasks.json", encoding="utf-8"))
+    cfg = json.load(open("config/profiles/mcp_only/collector_tasks.json", encoding="utf-8"))
     sched = cfg["daemon_schedule"]
     assert sched["daily_time"] == "06:00"
     assert sched["skip_weekdays"] == [6]

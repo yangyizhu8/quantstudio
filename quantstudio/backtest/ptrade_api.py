@@ -774,8 +774,10 @@ class PtradeAPI:
         返回：DataFrame，索引为 Ptrade 格式代码。无数据时返回空 DataFrame（Ptrade 语义）。
         """
         # ---- 当日查询缓存（同一天内相同参数只查一次，大幅加速 score_stocks 等逐只查询场景）----
+        # D4 修复（2026-08-28）：缓存键须含 start_year/end_year/report_types——
+        # 否则不同过滤参数（如同比两期 vs 单期）互相污染命中早前空结果（F-Score 取数 bug）。
         cache_key = ("fund", tuple(sorted([str(s) for s in (security if isinstance(security, list) else [security])])),
-                     str(table), str(fields), str(date))
+                     str(table), str(fields), str(date), str(start_year), str(end_year), str(report_types))
         if hasattr(self, '_query_cache') and cache_key in self._query_cache:
             return self._query_cache[cache_key]
 
@@ -1371,7 +1373,20 @@ class PtradeAPI:
             # 违反主计划 7.19 "严禁频率缺失时回退到日线；数据缺失返回结构化能力错误"）。
             raise
         except Exception as e:
-            logger.debug(f"get_history 失败: {e}")
+            # F-LOCAL-MIN（B2 辅修复，2026-09-05）：静默消音——原 logger.debug 默认不可见，
+            # 「分钟链 TypeError」被吞成空返回（B1 定谳，docs/evidence/f-local-min-b1-verdict-20260905.md）。
+            # 改为限频 warning：每类异常文本首条全量告警 + 计数聚合；返回契约不变（仍空返回）。
+            _err_key = type(e).__name__ + ": " + str(e)[:120]
+            _n = getattr(self, "_qs_hist_fail_counts", None)
+            if _n is None:
+                _n = self._qs_hist_fail_counts = {}
+            _c = _n.get(_err_key, 0) + 1
+            _n[_err_key] = _c
+            if _c == 1:
+                logger.warning("QS_HIST_FAIL %s | args: count=%s unit=%s fields=%s secs=%d",
+                               _err_key, count, unit, fields, len(sec_list))
+            else:
+                logger.debug("QS_HIST_FAIL(occurrence #%d) %s", _c, _err_key)
             return {} if is_dict else pd.DataFrame()
 
     def attribute_history(self, security, count, unit='1d', fields=None) -> pd.Series:

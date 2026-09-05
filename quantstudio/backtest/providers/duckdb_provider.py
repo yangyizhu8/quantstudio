@@ -87,18 +87,19 @@ class DuckDBMarketDataProvider(MarketDataProvider):
         from .frequency_labels import api_to_storage, FrequencyCapabilityError
         storage_freq = api_to_storage(frequency)
         result = {}
-        # Phase 4A：一次批量 SQL 取全 codes 当日分钟数据（替代逐只 N 次 SQL），
-        # 再按 code 分组 + tail(count)——与 query_minute_bars_by_count 的
-        # "range 查询 + tail"语义一致（batch 内部 fq 替换/时段窗口/bar_cutoff_ms
-        # 与单只版逐行一致，见 duckdb_data_access.query_minute_bars_by_range_batch）。
+        # F-LOCAL-MIN/B2'（2026-09-06）：count 语义跨日修复——原 Phase 4A 以
+        # (end_date, end_date) 单日 range 实现（当日时段内 ≤cutoff 的 bar 不足 N 根时
+        # 返回合法空，跨日「最近 N 根」语义缺失，见 B1 定谳第二层/b3_v17 实证）。
+        # 改用窗口函数批量版：每码 time <= cutoff 的最近 N 根（可跨日），
+        # cutoff 由 bar_cutoff_ms（include 语义折算）或 end_date 日末控制。
+        # FrequencyCapabilityError 三分类语义保持（新方法内部同款预检 + 下方
+        # missing 补检查逻辑不变——铁律：不改变异常行为）。
         try:
-            df_all = self._data.query_minute_bars_by_range_batch(
-                codes, end_date, end_date, storage_freq, fq, self._calendar,
-                bar_cutoff_ms=bar_cutoff_ms)   # PR4 缺口 1
+            df_all = self._data.query_minute_bars_by_count_batch(
+                codes, count, end_date, storage_freq, fq,
+                bar_cutoff_ms=bar_cutoff_ms)
         except FrequencyCapabilityError:
-            # batch 内部以 TABLE_EMPTY 表达"整表缺 freq/表空"，而逐只版按 code 细分
-            # 为 FREQ_NOT_IN_TABLE / TABLE_EMPTY / TABLE_MISSING——catch 后逐 code
-            # 补检查，还原逐只版的精确异常类型与消息（铁律：不改变异常行为）。
+            # 同既有：逐 code 补检查，还原逐只版的精确异常类型与消息
             for code in codes:
                 self._raise_minute_capability_gap(code, storage_freq)
             return {}

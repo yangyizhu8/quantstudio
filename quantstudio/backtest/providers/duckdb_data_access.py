@@ -14,7 +14,10 @@ CalendarProvider 抽象接口，并把本类作为 DuckDB 实现委托。
 from __future__ import annotations
 
 import logging
+import os
 import re
+import threading
+import time
 from typing import Dict, List, Optional, Any
 
 import pandas as pd
@@ -35,6 +38,25 @@ def _require_valid_identifier(name: str, where: str) -> str:
 
 
 logger = logging.getLogger(__name__)
+
+# ---- F-DUCKDB-LOCK（A2，2026-09-05，设计 docs/duckdb-lock-timeout-design.md）----
+# per-statement 观测超时预算（秒）。语义钉死：单语句预算，绝非回测级总预算——
+# 分片加载总耗时超预算被杀 = 新造「静默空数据出回测」事故（A1 复核硬性要求①）。
+_DEFAULT_QUERY_BUDGET_S = 30.0
+# P1 等价分片：每片码数（只切 WHERE code IN 的码集，不改列集/排序/后处理）。
+_BARS_CACHE_CHUNK_DEFAULT = 200
+
+
+def _env_pos_float(name: str, default: float) -> float:
+    """读正浮点环境变量；缺省/非法回退 default（观测参数，绝不改变取数语义）。"""
+    raw = os.environ.get(name, "")
+    if not raw:
+        return default
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return v if v > 0 else default
 
 
 def _build_trade_date_map(time_series: pd.Series) -> pd.Series:
@@ -118,6 +140,10 @@ class DuckDBDataAccess:
         self._daily_snapshot_loaded = False
         self._cached_min_ms = None
         self._cached_max_ms = None
+        # ---- F-DUCKDB-LOCK（A2）：实例级诊断事件采集（源点落账，不依赖错误传播）----
+        # 明细上限 50 条 + 计数器聚合；经 qs_diagnostics() 由引擎 run() 收尾无条件汇总输出。
+        self._qs_diag_events: List[dict] = []
+        self._qs_diag_counts: Dict[str, int] = {}
 
     # ===================== 连接管理 =====================
 
@@ -125,6 +151,10 @@ class DuckDBDataAccess:
         """懒创建持久只读 DuckDB 连接（回测期间复用，性能优化）。
 
         迁移自 PtradeAPI._get_ro_conn() (ptrade_api.py:341-353)
+
+        F-DUCKDB-LOCK（A2-P3 静默消音）：连接失败仍返回 None（返回契约不变），
+        但首次失败发 QS_DUCKDB_CONN_UNAVAILABLE WARNING（db_path + 真实异常文本），
+        同类后续计数聚合——杜绝「连接不可得 → 引擎带空数据静默跑」的事故模式。
         """
         if self._ro_conn is not None:
             return self._ro_conn
@@ -133,9 +163,97 @@ class DuckDBDataAccess:
             if self._db_path and self._db_path.exists():
                 self._ro_conn = _ddb.connect(str(self._db_path), read_only=True)
                 return self._ro_conn
-        except Exception:
-            pass
+        except Exception as e:
+            self._qs_record_diag("QS_DUCKDB_CONN_UNAVAILABLE", {
+                "db_path": str(self._db_path),
+                "error": type(e).__name__ + ": " + str(e)[:200],
+            }, warn_first_only=True)
         return None
+
+    # ===================== F-DUCKDB-LOCK（A2）：诊断采集与超时执行 =====================
+
+    def _qs_record_diag(self, kind: str, payload: dict, warn_first_only: bool = False) -> None:
+        """诊断事件源点落账：明细上限 50 条 + 每类计数聚合（qs_diagnostics 汇总输出）。
+
+        warn_first_only=True（连接失败类）：仅首次告警+落明细，后续只计数；
+        超时类事件每次落账+告警（稀有且关键）。
+        """
+        n = self._qs_diag_counts.get(kind, 0) + 1
+        self._qs_diag_counts[kind] = n
+        first = (n == 1)
+        if first or not warn_first_only:
+            if len(self._qs_diag_events) < 50:
+                ev = {"kind": kind}
+                ev.update(payload)
+                self._qs_diag_events.append(ev)
+        if first:
+            logger.warning("%s %s", kind, payload)
+
+    def qs_diagnostics(self) -> List[dict]:
+        """回测期诊断事件汇总（引擎 run() 收尾无条件调用输出，事后可检）。"""
+        out = [dict(ev) for ev in self._qs_diag_events]
+        for kind, count in sorted(self._qs_diag_counts.items()):
+            if count > 1:
+                out.append({"kind": kind, "occurrences": count})
+        return out
+
+    def _execute_with_timeout(self, conn, sql: str, params=None):
+        """P2（A1 设计）：execute+fetchdf 的 per-statement 观测超时（看门狗 + conn.interrupt）。
+
+        语义钉死：超时 = 单语句预算 QS_DUCKDB_QUERY_TIMEOUT_S（默认 30s），绝非回测级
+        总预算；健康分片（单语句 P99 << 预算）永不挨刀。
+        机制（duckdb 1.5.5 实测，agent_workspace/a1_interrupt_probe.py）：预算到点调
+        conn.interrupt() → duckdb.InterruptException（"INTERRUPT Error: Interrupted!"），
+        中断后连接仍可复用（后续 SELECT 正常）。
+        超时处置：首次超时落账 QS_DUCKDB_QUERY_TIMEOUT（SQL 片段+预算+耗时+码数+attempt）
+        并单次重试同语句（覆盖 CHECKPOINT 类瞬态窗口，重试计入事件；连接可复用已实证）；
+        二次超时抛 RuntimeError 带归因（显式失败，禁止静默 None）。
+        非超时异常原样透传（不改变异常行为契约）。
+        """
+        budget = _env_pos_float("QS_DUCKDB_QUERY_TIMEOUT_S", _DEFAULT_QUERY_BUDGET_S)
+        sql_head = re.sub(r"\s+", " ", str(sql))[:80]
+        n_params = len(params) if params is not None else 0
+        attempt = 0
+        while True:
+            attempt += 1
+            box: dict = {}
+
+            def _run():
+                try:
+                    if params is not None:
+                        box["df"] = conn.execute(sql, params).fetchdf()
+                    else:
+                        box["df"] = conn.execute(sql).fetchdf()
+                except BaseException as e:  # 含 InterruptException；超时与否由存活判定区分
+                    box["err"] = e
+
+            th = threading.Thread(target=_run, daemon=True)
+            t0 = time.time()
+            th.start()
+            th.join(budget)
+            if th.is_alive():
+                try:
+                    conn.interrupt()
+                except Exception:
+                    pass
+                th.join(10.0)
+                elapsed = round(time.time() - t0, 3)
+                self._qs_record_diag("QS_DUCKDB_QUERY_TIMEOUT", {
+                    "sql": sql_head, "budget_s": budget, "elapsed_s": elapsed,
+                    "codes_in_params": n_params, "attempt": attempt,
+                    "worker_still_alive": th.is_alive(),
+                })
+                logger.warning(
+                    "QS_DUCKDB_QUERY_TIMEOUT attempt=%d elapsed=%.1fs budget=%.1fs codes=%d sql=%s",
+                    attempt, elapsed, budget, n_params, sql_head)
+                if attempt == 1 and not th.is_alive():
+                    continue  # 单次重试（同语句同预算）
+                raise RuntimeError(
+                    "QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget "
+                    f"twice (budget={budget}s, last={elapsed}s, codes={n_params}, sql={sql_head!r})")
+            if "err" in box:
+                raise box["err"]  # 非超时异常原样透传
+            return box["df"]
 
     def available(self) -> bool:
         """数据库文件是否可访问（替代原 self._cfg.db_path.exists() 直接判断）。"""
@@ -487,9 +605,22 @@ class DuckDBDataAccess:
     def _ensure_bars_in_cache(self, codes, table, cols) -> None:
         """PR7：确保 codes 的全历史数据在 _bars_history_cache 中（惰性批量加载）。
 
-        只查未命中的 code（一条 SQL，参数化占位），加载后按 (code, time) 升序缓存。
+        只查未命中的 code（参数化占位），加载后按 (code, time) 升序缓存。
         缓存保存原始列（未做 qfq/trade_date 后处理），后处理统一由
         query_bars_by_count_batch 的 _post 完成——与 SQL 路径共享同一后处理逻辑。
+
+        F-DUCKDB-LOCK（A2-P1/P2，2026-09-05）：
+        - 等价分片：missing 码集按 QS_BARS_CACHE_CHUNK_SIZE（默认 200 码/片）切片，
+          逐片 WHERE code IN 加载——只切码集，不改 SELECT 列集/排序/后处理。
+          等价性论证：分片按码集划分，任一 code 的全部行必然落在同一片内，
+          每片独立 sort_values(["code","time"]) 后 groupby 的组内行序与单条 SQL
+          一致（bar 主键 (code,time) 唯一 → 组内排序确定）；缓存按键 (table,code)
+          读取，填充顺序无语义。A2 单测含分片 vs 单条逐行等价断言。
+        - 超时保护：每片经 _execute_with_timeout（per-statement 预算）——消除
+          「大 IN 全历史 SELECT 分钟级无输出 → 被观测为挂起 → 40min 清理器终止」
+          的 F-DUCKDB-LOCK 主因；超时显式归因失败（禁止静默 None）。
+        - 进度心跳：总耗时 >1s 或多片时输出 QS_BARS_CACHE_PROGRESS
+          （loaded/总码数 + 片数 + 耗时——A1 复核要求的进度信息）。
         """
         missing = [c for c in codes if (table, c) not in self._bars_history_cache]
         if not missing:
@@ -497,14 +628,29 @@ class DuckDBDataAccess:
         conn = self._get_conn()
         if conn is None:
             return
-        placeholders = ", ".join(["?"] * len(missing))
-        df = conn.execute(
-            f"SELECT {cols} FROM {table} WHERE code IN ({placeholders})", missing).fetchdf()
-        if df is None or df.empty:
-            return
-        df = df.sort_values(["code", "time"]).reset_index(drop=True)
-        for c, sub in df.groupby("code", sort=False):
-            self._bars_history_cache[(table, c)] = sub.reset_index(drop=True)
+        chunk_size = max(1, int(_env_pos_float(
+            "QS_BARS_CACHE_CHUNK_SIZE", _BARS_CACHE_CHUNK_DEFAULT)))
+        t0 = time.time()
+        loaded = 0
+        for i in range(0, len(missing), chunk_size):
+            part = missing[i:i + chunk_size]
+            placeholders = ", ".join(["?"] * len(part))
+            df = self._execute_with_timeout(
+                conn,
+                f"SELECT {cols} FROM {table} WHERE code IN ({placeholders})",
+                part)
+            if df is None or df.empty:
+                continue
+            df = df.sort_values(["code", "time"]).reset_index(drop=True)
+            for c, sub in df.groupby("code", sort=False):
+                self._bars_history_cache[(table, c)] = sub.reset_index(drop=True)
+                loaded += 1
+        elapsed = time.time() - t0
+        if elapsed > 1.0 or len(missing) > chunk_size:
+            logger.info(
+                "QS_BARS_CACHE_PROGRESS table=%s loaded=%d/%d chunks=%d elapsed=%.1fs",
+                table, loaded, len(missing),
+                (len(missing) + chunk_size - 1) // chunk_size, elapsed)
 
     def query_bars_by_count_batch(self, codes, count, before_ms, use_qfq: bool = False) -> Dict[str, pd.DataFrame]:
         """阶段1 批量化：与 query_bars_by_count_multi_table 逐只调用字节级等价，
@@ -676,7 +822,8 @@ class DuckDBDataAccess:
         from .frequency_labels import (
             FrequencyCapabilityError, ERR_TABLE_MISSING, ERR_TABLE_EMPTY,
             ERR_FREQ_NOT_IN_TABLE, api_to_storage)
-        from .intraday_windows import build_intraday_sql_conditions, iter_trading_days_in_range
+        from .intraday_windows import (
+            _as_date_str, build_intraday_sql_conditions, iter_trading_days_in_range)
 
         table = self._resolve_minute_table(code)
         if table is None:
@@ -711,7 +858,10 @@ class DuckDBDataAccess:
                 detail=f"{table} 有数据但缺 freq={storage_freq}")
 
         # 时段窗口（本轮修正：Python 侧生成 epoch 毫秒区间）
-        day_strs = iter_trading_days_in_range(start_date, end_date, calendar_provider)
+        # F-LOCAL-MIN（B2 双保险）：调用方可能传 pd.Timestamp（ptrade_api anchor_date），
+        # 先归一为 'YYYY-MM-DD'（B1 定谳根因：Timestamp 切片 TypeError 被上层吞成静默空）。
+        day_strs = iter_trading_days_in_range(
+            _as_date_str(start_date), _as_date_str(end_date), calendar_provider)
         # PR4 缺口 1：分钟 Profile 传 bar_cutoff_ms（当前 bar 的 epoch 毫秒），
         # 当日窗口截断到此值（含当前 bar，end-labeled 下已完成是可见历史）；
         # None 时走 PR3 原逻辑（end_date 当天 23:59:59 截断，日级全天窗口）。
@@ -761,7 +911,8 @@ class DuckDBDataAccess:
         - 指数/可转债 code（_resolve_minute_table=None）自动跳过，不报错
         """
         from .frequency_labels import FrequencyCapabilityError, ERR_TABLE_EMPTY
-        from .intraday_windows import build_intraday_sql_conditions, iter_trading_days_in_range
+        from .intraday_windows import (
+            _as_date_str, build_intraday_sql_conditions, iter_trading_days_in_range)
         import pandas as pd
 
         codes = [str(c) for c in (codes or []) if c is not None and str(c).strip()]
@@ -785,7 +936,9 @@ class DuckDBDataAccess:
                 ERR_TABLE_EMPTY, api_freq=None, table="stock_minutes/etf_minutes",
                 detail="DuckDB 连接不可用")
 
-        day_strs = iter_trading_days_in_range(start_date, end_date, calendar_provider)
+        # F-LOCAL-MIN（B2 双保险）：同上，入参归一防 Timestamp 契约违约。
+        day_strs = iter_trading_days_in_range(
+            _as_date_str(start_date), _as_date_str(end_date), calendar_provider)
         end_cutoff_ms = bar_cutoff_ms if bar_cutoff_ms is not None else self._end_ms(end_date)
         where_clause, win_params = build_intraday_sql_conditions(day_strs, end_cutoff_ms)
 
@@ -855,6 +1008,92 @@ class DuckDBDataAccess:
         if len(df) > count:
             df = df.tail(count).reset_index(drop=True)
         return df
+
+    def query_minute_bars_by_count_batch(
+        self, codes, count: int, end_date: str, storage_freq: str,
+        fq: Optional[str] = None, calendar_provider=None,
+        bar_cutoff_ms: Optional[int] = None,
+    ) -> pd.DataFrame:
+        """F-LOCAL-MIN/B2'（2026-09-06）：分钟 count 查询跨日语义批量版。
+
+        语义（平台 QSPROBE 定谳）：截止当前 bar（time <= cutoff）的最近 N 根，可跨交易日。
+        与日线 query_bars_by_count_batch 同款窗口函数模式（QUALIFY ROW_NUMBER ... <= N），
+        单 SQL、天然 PIT（time <= cutoff 天然排除未来 bar）。
+
+        - cutoff：bar_cutoff_ms 非 None 时用之（分钟 Profile 含/不含当前 bar 由调用方
+          按 include 语义折算——ptrade_api L1266-1281 既有逻辑不变）；None 时用
+          end_date 当日 23:59:59.999（等价 PR3 原口径）。
+        - freq 缺失/表缺失语义：复用既有三分类预检（_resolve_minute_table + 表级 freq
+          检查），FrequencyCapabilityError 原样抛出（行为契约不变）。
+        - 分片：沿用 A2 等价分片纪律（200 码/片 + _execute_with_timeout + 心跳）——
+          本方法码集即分片（codes 全量入单 SQL 的 QUALIFY 窗口，缺失码自然不在结果集，
+          与 Phase 4A「个别 code 无数据跳过」一致）。
+        - 曝光于既有欠账：单只版 query_minute_bars_by_count（L994-1010，docstring 自认
+          「不跨日回溯，跨日语义留待真实数据校准」）——本方法即该欠账的清偿（B2'），
+          单只版保留不动（既有调用方行为不变），新调用方应使用本方法。
+        """
+        from .frequency_labels import FrequencyCapabilityError, ERR_TABLE_EMPTY
+        from .intraday_windows import _as_date_str
+        codes = [str(c) for c in (codes or []) if c is not None and str(c).strip()]
+        if not codes:
+            return pd.DataFrame()
+        conn = self._get_conn()
+        if conn is None:
+            raise FrequencyCapabilityError(
+                ERR_TABLE_EMPTY, api_freq=None, table="stock_minutes/etf_minutes",
+                detail="DuckDB 连接不可用")
+        cutoff_ms = (bar_cutoff_ms if bar_cutoff_ms is not None
+                     else self._end_ms(_as_date_str(end_date)))
+        # 按表分组（同 Phase 4A：stock/etf 路由；指数/可转债 None 跳过）
+        table_codes = {}
+        for code in codes:
+            table = self._resolve_minute_table(code)
+            if table is None:
+                continue
+            table_codes.setdefault(table, []).append(code)
+        if not table_codes:
+            return pd.DataFrame()
+        parts = []
+        for table, tbl_codes in table_codes.items():
+            placeholders = ", ".join(["?"] * len(tbl_codes))
+            sql = (
+                f"SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, "
+                f"preClose, open_front, high_front, low_front, close_front, open_back, high_back, "
+                f"low_back, close_back FROM {table} "
+                f"WHERE freq = ? AND time <= ? AND code IN ({placeholders}) "
+                f"QUALIFY ROW_NUMBER() OVER (PARTITION BY code ORDER BY time DESC) <= {int(count)}) "
+                f"ORDER BY code, time")
+            params = [storage_freq, cutoff_ms] + tbl_codes
+            df = self._execute_with_timeout(conn, sql, params)
+            if df is None or df.empty:
+                # 表级 freq 缺失 → FREQ_NOT_IN_TABLE（三分类语义保持：与单只版 L853-857 一致）
+                freq_check = conn.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE freq = ? AND code IN "
+                    f"(SELECT unnest([{', '.join(['?'] * len(tbl_codes))}]))",
+                    [storage_freq] + tbl_codes).fetchone()
+                if freq_check[0] == 0:
+                    from .frequency_labels import ERR_FREQ_NOT_IN_TABLE
+                    raise FrequencyCapabilityError(
+                        ERR_FREQ_NOT_IN_TABLE, api_freq=None, storage_freq=storage_freq,
+                        table=table, detail=f"{table} 有数据但缺 freq={storage_freq}")
+                continue  # 有此 freq 但窗口内无 bar（合法空）
+            parts.append(df)
+        if not parts:
+            return pd.DataFrame()
+        result = pd.concat(parts, ignore_index=True)
+        # fq 替换（与 query_minute_bars_by_range(_batch) 一致口径）
+        fq_norm = str(fq).lower() if fq else ""
+        if fq_norm in ('pre', 'dypre'):
+            for orig, qfq in [("open", "open_front"), ("high", "high_front"),
+                              ("low", "low_front"), ("close", "close_front")]:
+                if qfq in result.columns and result[qfq].notna().any():
+                    result[orig] = result[qfq]
+        elif fq_norm in ('post', 'dyback', 'dy_post'):
+            for orig, qfq in [("open", "open_back"), ("high", "high_back"),
+                              ("low", "low_back"), ("close", "close_back")]:
+                if qfq in result.columns and result[qfq].notna().any():
+                    result[orig] = result[qfq]
+        return result.sort_values(["code", "time"]).reset_index(drop=True)
 
     @staticmethod
     def _end_ms(date: str) -> int:

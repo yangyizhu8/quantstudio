@@ -80,6 +80,26 @@ def build_intraday_sql_conditions(
 _TRADING_DAYS_CACHE = {}  # (start, end, provider_id) -> List[str]
 
 
+def _as_date_str(value) -> str:
+    """F-LOCAL-MIN（B2，2026-09-05）日期契约归一：本函数按 'YYYY-MM-DD' 字符串切片消费
+    日期（L98/105/109），但调用方（ptrade_api anchor_date）会传 pd.Timestamp——
+    Timestamp[:10] 抛 TypeError 被上层吞成静默空（B1 定谳根因）。
+
+    归一：str 原样截前 10 位（兼容带时刻串）；Timestamp/datetime/date 走 strftime；
+    epoch-ms 数值容错转换；不可识别形态原样返回（不在本层新造失败，保持既有异常行为）。
+    """
+    if isinstance(value, str):
+        return value[:10]
+    strftime = getattr(value, "strftime", None)
+    if strftime is not None:
+        return value.strftime("%Y-%m-%d")
+    try:
+        import pandas as pd
+        return pd.Timestamp(int(value), unit="ms").strftime("%Y-%m-%d")
+    except Exception:
+        return value
+
+
 def iter_trading_days_in_range(
     start_date: str,
     end_date: str,
@@ -94,7 +114,13 @@ def iter_trading_days_in_range(
     原实现每次调用都查 calendar_provider，而 _load_minute_snapshots 全 universe
     批量化前会逐 code 调用，导致同一日历区间被重复查询数千次（叠加 GIL 崩溃）。
     日历区间结果在进程内确定（交易日固定），缓存安全。
+
+    F-LOCAL-MIN（B2，2026-09-05）：入口日期契约归一（_as_date_str）——调用方传
+    pd.Timestamp（ptrade_api anchor_date）时不再抛 'Timestamp' not subscriptable
+    （B1 定谳根因，docs/evidence/f-local-min-b1-verdict-20260905.md）。
     """
+    start_date = _as_date_str(start_date)
+    end_date = _as_date_str(end_date)
     cache_key = (start_date[:10], end_date[:10], id(calendar_provider))
     cached = _TRADING_DAYS_CACHE.get(cache_key)
     if cached is not None:

@@ -628,6 +628,23 @@ class BacktestEngine:
         self.result.metrics_summary = metrics.summary
         self.result.round_trips = metrics.round_trips
 
+        # F-DUCKDB-LOCK（A2-P2/P3，2026-09-05）：数据层诊断事件回测收尾无条件汇总输出
+        # （审核附加条：不依赖错误状态，事后可检——防「空数据静默出回测」事故模式）。
+        # getattr 守卫同 L2490 既有模式：mock provider / 不支持诊断 → 零行为变更。
+        try:
+            _dda = getattr(getattr(self._providers, "market", None),
+                           "_data", None) if self._providers is not None else None
+            _diag_fn = getattr(_dda, "qs_diagnostics", None)
+            if callable(_diag_fn):
+                _diag_events = _diag_fn() or []
+                for _ev in _diag_events:
+                    logger.warning("QS_DIAG %s" % _ev)
+                if _diag_events:
+                    logger.warning("QS_DIAG summary: %d data-layer diagnostic event(s) this run"
+                                   % len(_diag_events))
+        except Exception:
+            pass  # 诊断汇总自身异常不得引入新失败路径（同 L2498 既有守卫原则）
+
         from .result_exporter import export_result
         output_dir = export_result(self.result, self)
         logger.info(f"[Backtest] result exported: {output_dir}")

@@ -102,6 +102,8 @@
 
 1. **任何批量/破坏性 git 操作（checkout -- / reset / revert / clean / stash pop 冲突覆盖）前，
    必须先建零副作用回退点**：`git stash create -u -m "baseline-<时间戳>"`（只建对象不动工作区），
+   **随即 `git stash store <hash>` 持久化**（create 产出的对象无引用、可被 `git gc` 清理；
+   store 固定进 stash 引用后才防丢，2026-09-04 v10 线实操确认纳入），
    将返回的 commit hash 记入会话记录或登记表；误操作后 `git reset --hard <hash>` 找回。
 2. **操作前核对目标文件状态**：`git status --porcelain` 确认待回退文件是否含**其他会话的
    未提交改动**（非本会话创建的 M 文件一律视为他人工作，禁止盲回退）。
@@ -230,7 +232,8 @@ QuantStudio MCP 全数据源替代项目（含云端数据基础设施、同步�
 
 1. 涉及 `quantstudio/strategy_compiler/source_import.py`、`quantstudio/backtest/ptrade_api.py`、
    `quantstudio/backtest/backtest_engine.py` 等**共享核心文件**的改动，提交前必须：
-   ① `git stash create -u -m "baseline-<时间戳>"` 建立零副作用回退点（只建对象不动工作区）；
+   ① `git stash create -u -m "baseline-<时间戳>"` 建立零副作用回退点（只建对象不动工作区），
+      **随即 `git stash store <hash>` 持久化**（防未引用对象被 GC 清理，与铁律③写前快照细则同款）；
    ② `git status --porcelain` 核对待提交**精确文件清单**只含本会话改动；
    ③ **提交信息自查不含他人改动内容**（2026-09-03 事故：本会话 source_import 吸收规则
    改动被其他会话整体提交卷入 commit 0321364 推送，事后追认——禁止重演）。
