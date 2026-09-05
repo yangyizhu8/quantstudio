@@ -2213,6 +2213,58 @@ def get_fundamentals(security, table='valuation', fields=None, date=None,
         except Exception as _fe:
             log.warning('QS_SHIM_VAL_FALLBACK %s: %s'
                         % (type(_fe).__name__, str(_fe)[:100]))
+    # 2026-09-04 §21 ROE 覆盖确认探针（诊断注入，行为零改动；双端对齐差异分析裁定项③）。
+    # 【重建记录】初版于 2026-09-04 被共享核心文件叠加写覆盖丢失（v10 线 c9a20ab 提交吞没
+    # 未提交改动），本版为修正重建：触发判据改「roe 列缺失/整列 NULL」（平台 1-4 月 P3<P2
+    # 实证形态是行在而 roe=NULL，非缺行——初版仅判缺行致探针哑火，第九轮平台日志无探针行）。
+    # 每 run 一次性 dump roe 空值码清单 + 首个空值码全列探测（fields=None 不带 date——第七轮
+    # 实证 date+fields=None 返回空列集）→ 判「永久缺列 vs 期间(季报)roe 空」。fail-soft 仅日志。
+    if (table == 'profit_ability' and _field_list and 'roe' in _field_list
+            and len(_secs) > 1 and _df is not None and len(_df) > 0
+            and _qs_gf_val_missing_any(_df, ['roe'])):
+        try:
+            _g = _qs_g_obj()
+            if _g is not None and getattr(_g, '_qs_roe_probed', False):
+                pass
+            else:
+                if _g is not None:
+                    _g._qs_roe_probed = True
+                _missing = []
+                for _c in _secs:
+                    try:
+                        _v = float(_df.loc[_c, 'roe'])
+                        if _v != _v:
+                            _missing.append(str(_c))
+                    except Exception:
+                        _missing.append(str(_c))
+                if _missing:
+                    log.info('QS_ROE_PROBE missing=%d/%d list=%s'
+                             % (len(_missing), len(_secs), ','.join(_missing[:10])))
+                    _mc = _missing[0]
+                    _full = _QSFundState.orig([_mc], 'profit_ability', is_dataframe=True)
+                    if _full is not None and hasattr(_full, 'columns') and len(_full):
+                        _eds = None
+                        try:
+                            if 'end_date' in _full.columns:
+                                _eds = [str(_qs_np.datetime64(int(float(x)) + 8 * 3600 * 1000, 'ms'))[:10]
+                                        for x in _full['end_date'].tolist()[:8]
+                                        if x is not None and str(x) not in ('nan', 'None')]
+                        except Exception:
+                            _eds = None
+                        log.info('QS_ROE_PROBE detail code=%s cols=%s rows=%d ends=%s roecol=%s'
+                                 % (_mc, ','.join([str(c) for c in _full.columns])[:150],
+                                    len(_full), (_eds or [])[:8],
+                                    'roe' in [str(c) for c in _full.columns]))
+                    else:
+                        log.info('QS_ROE_PROBE detail code=%s EMPTY（无任何行=覆盖缺失）' % (_mc,))
+                    _inc = _QSFundState.orig([_mc], 'income_statement', date=date,
+                                             is_dataframe=True)
+                    log.info('QS_ROE_PROBE income-ref code=%s rows=%d'
+                             % (_mc, len(_inc) if _inc is not None and hasattr(_inc, '__len__') else -1))
+                else:
+                    log.info('QS_ROE_PROBE roe-null set empty（全部有值）')
+        except Exception as _re:
+            log.warning('QS_ROE_PROBE exc %s' % (type(_re).__name__,))
     _qs_shape_check('get_fundamentals', 'dataframe', _df)
     return _df
 
