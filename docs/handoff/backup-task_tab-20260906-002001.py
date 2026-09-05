@@ -53,9 +53,6 @@ class TaskTab(QWidget):
         self._running_tasks = {}
         # 任务状态集合：{任务名: 状态文案}，用于状态列展示“就绪/执行中/成功/失败”
         self._task_status = {}
-        # 批量执行模式守卫：None=空闲；'incremental'/'full_range'=批跑中
-        # 作用：双批跑钮互斥（禁用互锁之外的第二道防线）+ 完成回调取模式标签。
-        self._run_all_active_mode = None
         self._setup_ui()
         self._load_tasks()
         # v3：低频状态同步 QTimer（3s 轮询 daemon status）
@@ -103,9 +100,8 @@ class TaskTab(QWidget):
         mode_row.addStretch()
         layout.addLayout(mode_row)
 
-        # 顶部工具栏（同批次双钮：增量=主色 Primary，全量=次级 PushButton）
+        # 顶部工具栏
         toolbar = QHBoxLayout()
-        toolbar.setSpacing(8)
         # ★ 常驻增量拉取开关（状态切换按钮）
         self.daemon_btn = PushButton("🔴 进程常驻增量拉取：打开")
         self.daemon_btn.clicked.connect(self._toggle_daemon)
@@ -114,25 +110,14 @@ class TaskTab(QWidget):
         toolbar.addStretch()
         self.refresh_btn = PushButton("🔄 刷新")
         self.refresh_btn.clicked.connect(self.refresh)
-        # 批量执行×2：增量（原"全部执行"，功能不变）+ 全量（新增）。
-        # clicked 信号携带 checked 参数，参数化槽必须经 lambda 传 mode。
-        self.run_all_btn = PrimaryPushButton("▶ 全部执行（增量）")
-        self.run_all_btn.setToolTip("遍历所有启用任务，逐个执行增量拉取（水位线→今天）")
-        self.run_all_btn.clicked.connect(lambda: self._run_all("incremental"))
-        self.run_all_full_btn = PushButton("▶▶ 全部执行（全量）")
-        self.run_all_full_btn.setToolTip(
-            "遍历所有启用任务，逐个执行全量拉取（配置 start_date~end_date，忽略水位线）；耗时长，请谨慎触发")
-        self.run_all_full_btn.clicked.connect(lambda: self._run_all("full_range"))
+        self.run_all_btn = PrimaryPushButton("▶ 全部执行")
+        self.run_all_btn.clicked.connect(self._run_all)
         self.reset_wm_btn = PushButton("⏮ 重置水位")
         self.reset_wm_btn.clicked.connect(self._reset_watermark)
         toolbar.addWidget(self.refresh_btn)
         toolbar.addWidget(self.run_all_btn)
-        toolbar.addWidget(self.run_all_full_btn)
         toolbar.addWidget(self.reset_wm_btn)
-        # 最小宽兜底：长状态文本时优先裁剪 label（配合 _set_status_text 的
-        # tooltip 全文可悬停查看），而不是挤压按钮/撑爆窗口。
         self.status_label = QLabel("")
-        self.status_label.setMinimumWidth(80)
         toolbar.addWidget(self.status_label)
         layout.addLayout(toolbar)
 
@@ -307,27 +292,6 @@ class TaskTab(QWidget):
         else:
             item.setText(status_text)
 
-    def _set_status_text(self, msg: str):
-        """顶部状态栏统一写入口：setText + setToolTip。
-
-        status_label 设了 setMinimumWidth(80)，长状态文本会被裁剪；
-        tooltip 保留全文供悬停查看，信息不丢失。
-        """
-        self._set_status_text(msg)
-        self.status_label.setToolTip(msg)
-
-    def _reset_run_all_buttons(self):
-        """两颗批量执行钮统一复原（文案 + 可用态 + 模式守卫清零）。
-
-        供 _run_all 异常分支与 _on_run_all_done 共用；恢复文案与触发模式无关，
-        两钮一律还原默认。
-        """
-        self.run_all_btn.setText("▶ 全部执行（增量）")
-        self.run_all_btn.setEnabled(True)
-        self.run_all_full_btn.setText("▶▶ 全部执行（全量）")
-        self.run_all_full_btn.setEnabled(True)
-        self._run_all_active_mode = None
-
     def _resolve_watermark_cached(self, wms, source, table, freq) -> tuple[str, str | None]:
         """Return display date and the source row actually used.
 
@@ -439,7 +403,7 @@ class TaskTab(QWidget):
             self._handshake_timer.stop()
             self._daemon_state = "running"
             self._update_daemon_btn()
-            self._set_status_text("🟢 常驻采集进程已启动")
+            self.status_label.setText("🟢 常驻采集进程已启动")
             self._daemon_poll_timer.start()
             return
         # 超时 30s
@@ -484,7 +448,7 @@ class TaskTab(QWidget):
             self._daemon_token = None
             self._daemon_proc = None
             self._update_daemon_btn()
-            self._set_status_text("🔴 常驻采集进程已停止")
+            self.status_label.setText("🔴 常驻采集进程已停止")
             self._daemon_poll_timer.stop()
             return
         if self._stop_wait_elapsed >= 30:  # 60s 超时
@@ -513,7 +477,7 @@ class TaskTab(QWidget):
             self._daemon_token = None
             self._daemon_proc = None
             self._update_daemon_btn()
-            self._set_status_text("⚠ 常驻进程已被强制终止")
+            self.status_label.setText("⚠ 常驻进程已被强制终止")
             self._daemon_poll_timer.stop()
             # 强制停止后检查 DB 可打开性
             db_ok, db_msg = check_db_openable()
@@ -534,7 +498,7 @@ class TaskTab(QWidget):
                 self._daemon_proc = None
                 self._update_daemon_btn()
                 self._daemon_poll_timer.stop()
-                self._set_status_text("⚠ 常驻进程异常退出")
+                self.status_label.setText("⚠ 常驻进程异常退出")
 
     def _sync_daemon_state(self):
         """从 status 文件同步 daemon 状态（GUI 启动时 + refresh 时）。
@@ -600,7 +564,7 @@ class TaskTab(QWidget):
         self._apply_all_task_buttons_state()
 
         mode_label = "全量" if mode == "full_range" else "增量"
-        self._set_status_text(f"执行中({mode_label}): {task['name']}...")
+        self.status_label.setText(f"执行中({mode_label}): {task['name']}...")
         # 加载提示弹出（数据采集后台运行中）
         if not hasattr(self, '_collect_tooltip') or self._collect_tooltip is None:
             self._collect_tooltip = StateToolTip(
@@ -621,7 +585,7 @@ class TaskTab(QWidget):
             self._running_tasks.pop(task_name, None)
             self._set_task_status(task_name, "失败")
             self._apply_all_task_buttons_state()
-            self._set_status_text(f"❌ 启动失败: {task_name}")
+            self.status_label.setText(f"❌ 启动失败: {task_name}")
             QMessageBox.critical(self, "启动失败", f"任务 '{task_name}' 启动失败：\n\n{type(e).__name__}: {e}")
 
     def _get_source_config(self, source: str) -> dict:
@@ -689,59 +653,32 @@ class TaskTab(QWidget):
                 return i
         return None
 
-    def _run_all(self, mode: str = "incremental"):
+    def _run_all(self):
         """全部执行（v3：单 LockedRunAllWorker 持锁跑完整个队列 + 末尾审计）。
 
         评审 1：不每任务单独拿锁，防 daemon 插入队列中间。
-        mode：'incremental'（增量，水位线→今天）/ 'full_range'（全量，配置日期），
-        遍历所有 enabled 任务逐个执行，主线程零 collector 调用。
-        全量路径启动前弹确认框（缺 start_date 的任务按框架默认 2018-01-01 起拉）。
+        默认增量模式，主线程零 collector 调用。
         """
         if not self.tasks:
             return
-        if self._run_all_active_mode is not None:  # 重入守卫（按钮禁用外的双保险）
-            return
-        mode_label = "全量" if mode == "full_range" else "增量"
-        if mode == "full_range":
-            missing = [t.get("name", "?") for t in self.tasks
-                       if not str(t.get("start_date", "")).strip()]
-            msg = (f"即将对 {len(self.tasks)} 个启用任务执行全量拉取\n"
-                   f"（按各自配置 start_date~end_date 重拉，忽略水位线），\n"
-                   f"耗时与流量远高于增量。")
-            if missing:
-                msg += ("\n\n以下任务未配置 start_date，"
-                        f"将按框架默认 2018-01-01 起拉：\n" + "、".join(missing))
-            msg += "\n\n确定继续？"
-            reply = QMessageBox.question(
-                self, "全部执行（全量）", msg,
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No)
-            if reply != QMessageBox.StandardButton.Yes:
-                return  # 无副作用返回：不启动、不改任何按钮态
-        self._run_all_active_mode = mode
-        # 触发的那颗显示运行文案，另一颗仅禁用（复原由 _reset_run_all_buttons 统一处理）
-        active_btn = self.run_btn_for_mode(mode)
-        active_btn.setEnabled(False)
-        active_btn.setText(f"⏳ 全部执行中（{mode_label}）...")
-        other_btn = self.run_all_full_btn if mode == "incremental" else self.run_all_btn
-        other_btn.setEnabled(False)
-        # 登记所有任务为运行态（按钮互禁），状态列口径与单任务路径一致
+        self.run_all_btn.setEnabled(False)
+        self.run_all_btn.setText("⏳ 全部执行中...")
+        # 登记所有任务为运行态（按钮互禁）
         for t in self.tasks:
             name = t.get("name", "")
             if name:
-                self._running_tasks[name] = mode
-                self._set_task_status(name, self._get_status_text(name, mode))
+                self._running_tasks[name] = "incremental"
+                self._set_task_status(name, "增量执行中")
         self._apply_all_task_buttons_state()
         # 加载提示
         if not hasattr(self, '_collect_tooltip') or self._collect_tooltip is None:
             self._collect_tooltip = StateToolTip(
-                f"全部执行（{mode_label}）进行中",
-                f"正在执行 {len(self.tasks)} 个任务...", self)
+                "全部执行进行中", f"正在执行 {len(self.tasks)} 个任务...", self)
             self._collect_tooltip.show()
         try:
             worker = LockedRunAllWorker(
                 tasks=list(self.tasks), config_dir=self.mw.config_dir,
-                mode=mode)
+                mode="incremental")
             worker.progress.connect(self._on_collect_progress)
             worker.finished_ok.connect(self._on_run_all_done)
             worker.finished_err.connect(lambda err: self._on_run_all_done(
@@ -749,19 +686,14 @@ class TaskTab(QWidget):
             self.mw.hold_worker(worker)
             worker.start()
         except Exception as e:
-            logger.exception("全部执行(%s)启动失败: %s", mode_label, e)
+            logger.exception("全部执行启动失败: %s", e)
             for t in self.tasks:
                 self._running_tasks.pop(t.get("name", ""), None)
             self._apply_all_task_buttons_state()
-            self._reset_run_all_buttons()
-            self._set_status_text(f"❌ 启动失败: {e}")
-            QMessageBox.critical(
-                self, "启动失败",
-                f"全部执行（{mode_label}）启动失败：\n\n{type(e).__name__}: {e}")
-
-    def run_btn_for_mode(self, mode: str):
-        """返回对应模式的批量执行按钮（incremental→增量钮，full_range→全量钮）。"""
-        return self.run_all_btn if mode == "incremental" else self.run_all_full_btn
+            self.run_all_btn.setEnabled(True)
+            self.run_all_btn.setText("▶ 全部执行")
+            self.status_label.setText(f"❌ 启动失败: {e}")
+            QMessageBox.critical(self, "启动失败", f"全部执行启动失败：\n\n{type(e).__name__}: {e}")
 
     @staticmethod
     def _qfq_warning_from_result(result: dict) -> tuple[bool, str | None]:
@@ -796,9 +728,6 @@ class TaskTab(QWidget):
         ok_count = result.get("ok_count", 0)
         total = result.get("total", 0)
         err = result.get("error")
-        # 先取触发模式算标签，再统一复原两钮（_reset_run_all_buttons 会清守卫）
-        mode = getattr(self, "_run_all_active_mode", None) or "incremental"
-        mode_label = "全量" if mode == "full_range" else "增量"
         entries = result.get("results", []) if isinstance(result, dict) else []
         qfq_warnings = []
         for entry in entries:
@@ -814,14 +743,13 @@ class TaskTab(QWidget):
             else:
                 self._set_task_status(name, "\u6210\u529f")
 
-        self._reset_run_all_buttons()
+        self.run_all_btn.setEnabled(True)
+        self.run_all_btn.setText("\u25b6 \u5168\u90e8\u6267\u884c")
         audit_warning = result.get("quality_audit_ok") is False
         if err:
-            final_text = f"\u274c \u5168\u90e8\u6267\u884c\uff08{mode_label}\uff09\u5931\u8d25: {err}"
-            self._set_status_text(final_text)
-            QMessageBox.warning(
-                self, f"\u5168\u90e8\u6267\u884c\uff08{mode_label}\uff09",
-                f"\u6267\u884c\u5931\u8d25\uff1a\n\n{err}")
+            final_text = f"\u274c \u5168\u90e8\u6267\u884c\u5931\u8d25: {err}"
+            self.status_label.setText(final_text)
+            QMessageBox.warning(self, "\u5168\u90e8\u6267\u884c", f"\u6267\u884c\u5931\u8d25\uff1a\n\n{err}")
         elif qfq_warnings or audit_warning:
             parts = [f"{ok_count}/{total} \u62c9\u53d6\u6210\u529f"]
             if qfq_warnings:
@@ -832,19 +760,16 @@ class TaskTab(QWidget):
                     f"{len(qfq_warnings)} \u4e2a QFQ \u4efb\u52a1\u6c34\u4f4d\u672a\u63d0\u4ea4: {details}")
             if audit_warning:
                 parts.append("\u5168\u5e93\u8d28\u91cf\u5ba1\u8ba1\u672a\u901a\u8fc7")
-            final_text = ("\u26a0 \u5168\u90e8\u6267\u884c\uff08" + mode_label
-                          + "\uff09\u5b8c\u6210\uff08" + "\uff1b".join(parts) + "\uff09")
-            self._set_status_text(final_text)
+            final_text = "\u26a0 \u5168\u90e8\u6267\u884c\u5b8c\u6210\uff08" + "\uff1b".join(parts) + "\uff09"
+            self.status_label.setText(final_text)
         elif ok_count == total:
-            final_text = (f"\u2705 \u5168\u90e8\u6267\u884c\uff08{mode_label}\uff09"
-                          f"\u5b8c\u6210\uff08{ok_count}/{total}\uff09")
-            self._set_status_text(final_text)
+            final_text = f"\u2705 \u5168\u90e8\u6267\u884c\u5b8c\u6210\uff08{ok_count}/{total}\uff09"
+            self.status_label.setText(final_text)
         else:
             final_text = (
-                f"\u26a0 \u5168\u90e8\u6267\u884c\uff08{mode_label}\uff09\u5b8c\u6210"
-                f"\uff08{ok_count}/{total} \u6210\u529f\uff0c"
+                f"\u26a0 \u5168\u90e8\u6267\u884c\u5b8c\u6210\uff08{ok_count}/{total} \u6210\u529f\uff0c"
                 f"{total-ok_count} \u5931\u8d25\uff09")
-            self._set_status_text(final_text)
+            self.status_label.setText(final_text)
         if hasattr(self, '_collect_tooltip') and self._collect_tooltip:
             self._collect_tooltip.setContent(final_text)
             self._collect_tooltip = None
@@ -852,7 +777,7 @@ class TaskTab(QWidget):
 
     def _on_collect_progress(self, msg):
         """采集进度更新（同时更新 status_label + StateToolTip）。"""
-        self._set_status_text(msg)
+        self.status_label.setText(msg)
         if hasattr(self, '_collect_tooltip') and self._collect_tooltip:
             self._collect_tooltip.setContent(msg)
 
@@ -893,7 +818,7 @@ class TaskTab(QWidget):
         else:
             final_text = f"\u274c {task_name}"
             task_status = "\u5931\u8d25"
-        self._set_status_text(final_text)
+        self.status_label.setText(final_text)
 
         self._running_tasks.pop(task_name, None)
         self._set_task_status(task_name, task_status)

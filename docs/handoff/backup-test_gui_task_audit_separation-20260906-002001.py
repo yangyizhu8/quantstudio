@@ -142,10 +142,6 @@ class DummyTab:
     def _set_task_status(self, name, status):
         self.statuses.append((name, status))
 
-    def _set_status_text(self, msg):
-        self.status_label.setText(msg)
-        self.status_label.tooltip = msg
-
     def refresh(self):
         self.refresh_calls += 1
 
@@ -254,8 +250,6 @@ class DummyRunAllTab:
         self.tasks = [{"name": "ok_price"}, {"name": "held_price"}]
         self._running_tasks = {"ok_price": "incremental", "held_price": "incremental"}
         self.run_all_btn = DummyButton()
-        self.run_all_full_btn = DummyButton()
-        self._run_all_active_mode = "incremental"
         self.status_label = DummyLabel()
         self._collect_tooltip = DummyTooltip()
         self.statuses = []
@@ -263,17 +257,6 @@ class DummyRunAllTab:
 
     def _set_task_status(self, name, status):
         self.statuses.append((name, status))
-
-    def _set_status_text(self, msg):
-        self.status_label.setText(msg)
-        self.status_label.tooltip = msg
-
-    def _reset_run_all_buttons(self):
-        self.run_all_btn.setText("▶ 全部执行（增量）")
-        self.run_all_btn.setEnabled(True)
-        self.run_all_full_btn.setText("▶▶ 全部执行（全量）")
-        self.run_all_full_btn.setEnabled(True)
-        self._run_all_active_mode = None
 
     def refresh(self):
         self.refresh_calls += 1
@@ -301,37 +284,6 @@ def test_run_all_tab_surfaces_held_watermark_task():
     assert ("held_price", "\u6210\u529f\uff08\u6c34\u4f4d\u95e8\u63a7\u544a\u8b66\uff09") in tab.statuses
     assert tab.refresh_calls == 1
     assert tab._collect_tooltip is None
-
-
-def test_run_all_done_restores_both_buttons():
-    tab = DummyRunAllTab()
-    result = {"ok_count": 2, "total": 2, "quality_audit_ok": True,
-              "results": [
-                  {"name": "ok_price", "ok": True},
-                  {"name": "held_price", "ok": True},
-              ]}
-
-    TaskTab._on_run_all_done(tab, result)
-
-    assert tab.run_all_btn.text == "\u25b6 \u5168\u90e8\u6267\u884c\uff08\u589e\u91cf\uff09"
-    assert tab.run_all_btn.enabled is True
-    assert tab.run_all_full_btn.text == "\u25b6\u25b6 \u5168\u90e8\u6267\u884c\uff08\u5168\u91cf\uff09"
-    assert tab.run_all_full_btn.enabled is True
-    assert tab._run_all_active_mode is None
-
-
-def test_run_all_done_full_mode_labels_status():
-    tab = DummyRunAllTab()
-    tab._run_all_active_mode = "full_range"
-    result = {"ok_count": 1, "total": 1, "quality_audit_ok": True,
-              "results": [{"name": "ok_price", "ok": True}]}
-
-    TaskTab._on_run_all_done(tab, result)
-
-    assert "\u5168\u91cf" in tab.status_label.text
-    assert "1/1" in tab.status_label.text
-    assert "\u589e\u91cf" not in tab.status_label.text
-    assert tab._run_all_active_mode is None
 
 
 def test_watermark_display_falls_back_to_latest_actual_source():
