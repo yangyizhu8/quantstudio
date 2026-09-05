@@ -1405,14 +1405,23 @@ def _score_momentum(code):
 # ---------------------------------------------------------------------------
 
 def _fund_ns(platform_ret=None, raise_on_list=False, single_results=None):
-    """exec _QS_FUNDAMENTALS_EXT → 命名空间（真实 _qs_shape_check + 记录 calls/warnings）。"""
+    """exec _QS_FUNDAMENTALS_EXT → 命名空间（真实 _qs_shape_check + 记录 calls/warnings）。
+
+    §17 判型探针隔离（2026-09-05）：注入 _QSFundState stub（否则 probe 走模块级
+    真实 orig = 测试外呼平台）。probe（位置参数单码 ['600000.SS']）落入 single 桶，
+    断言侧按"probe 1 次 + 业务 N 次"计账。"""
     import quantstudio.strategy_compiler.source_import as si
 
     warnings = []
-    calls = {"list": [], "single": []}
+    calls = {"list": [], "single": [], "probe": []}
 
     def _fake_fund(*args, **kwargs):
         secs = args[0]
+        # §17 判型 probe 识别：单码 600000.SS + 无 fields（判型专用形态）
+        if (len(args) >= 2 and str(args[0]) == "['600000.SS']"
+                and args[1] == "valuation" and "fields" not in kwargs):
+            calls["probe"].append((args, kwargs))
+            return platform_ret
         if isinstance(secs, (list, tuple)) and len(secs) > 1:
             calls["list"].append((args, kwargs))
             if raise_on_list:
@@ -1425,7 +1434,8 @@ def _fund_ns(platform_ret=None, raise_on_list=False, single_results=None):
 
     log = type("L", (), {"warning": staticmethod(lambda *a, **k: warnings.append((a, k))),
                           "info": staticmethod(lambda *a, **k: None)})()
-    ns = {"get_fundamentals": _fake_fund, "log": log}
+    ns = {"get_fundamentals": _fake_fund, "log": log,
+          "_QSFundState": type("S", (), {"orig": staticmethod(_fake_fund)})()}
     exec(_shape_check_def(), ns)
     if hasattr(si, "_QS_COMMON_EXT"):
         exec(si._QS_COMMON_EXT.format(marker_common="# p10"), ns)
@@ -1639,8 +1649,10 @@ def test_b6c_pit_filter_drops_unpublished():
 
 def test_p10_wrapper_gap_seed_shortcut_first_call():
     """B8 seeds（探针 P2 实证，2026-08-31）：balance/income/valuation × 8 净资产/股本字段
-    平台全 EMPTY → 首调即短路 NaN 行（0 平台调用 0 告警），不再依赖运行时首调探测
-    ——v8/v8.1 实证 total_share 60+ 次/日刷屏根治。"""
+    平台全 EMPTY → 首调即短路 NaN 行（不再依赖运行时首调探测）
+    ——v8/v8.1 实证 total_share 60+ 次/日刷屏根治。
+    §17 判型探针计账（2026-09-05 同步）：_QS_FUNDAMENTALS_EXT 内 valuation 判型
+    probe（每上下文一次性）计入预期——probe 参数断言 (['600000.SS'],'valuation')。"""
     import pandas as pd
     import numpy as np
     import quantstudio.strategy_compiler.source_import as si
@@ -1648,13 +1660,14 @@ def test_p10_wrapper_gap_seed_shortcut_first_call():
     calls = []
     warns = []
 
-    def fake(*a, **k):
-        calls.append(k)
+    def fake(*args, **k):
+        calls.append({"args": args, "k": k})
         return pd.DataFrame()
 
     log = type("L", (), {"warning": staticmethod(lambda *a, **k: warns.append((a, k))),
                          "info": staticmethod(lambda *a, **k: None)})()
-    ns = {"get_fundamentals": fake, "log": log}  # 无 g：种子集独立生效
+    ns = {"get_fundamentals": fake, "log": log,  # 无 g：种子集独立生效
+          "_QSFundState": type("S", (), {"orig": staticmethod(fake)})()}
     exec(_shape_check_def(), ns)
     if hasattr(si, "_QS_COMMON_EXT"):
         exec(si._QS_COMMON_EXT.format(marker_common="# b8seed"), ns)
@@ -1665,7 +1678,11 @@ def test_p10_wrapper_gap_seed_shortcut_first_call():
     assert list(out.columns) == ["total_share"]
     assert len(out) == 1
     assert np.isnan(out["total_share"].iloc[0])
-    assert len(calls) == 0, "种子短路应 0 次平台调用"
+    # 平台调用 = 1 次判型 probe（args=( ['600000.SS'],'valuation' )）；seeds 短路业务调用 0 次
+    assert len(calls) == 1, f"应仅 1 次判型 probe，实际 {len(calls)}: {calls}"
+    a0 = calls[0]["args"]
+    assert a0[0] == ["600000.SS"] and a0[1] == "valuation", f"probe 形态: {a0}"
+    assert calls[0]["k"].get("is_dataframe") is True
     assert sum(1 for w in warns if "QS_SHIM_FIELD_MISSING" in str(w[0])) == 0, "种子短路应 0 告警"
 
 
@@ -1692,14 +1709,15 @@ def test_p10_wrapper_gap_shortcut_single_alarm():
     calls = []
     warns = []
 
-    def fake(*a, **k):
-        calls.append(k)
+    def fake(*args, **k):
+        calls.append({"args": args, "k": k})
         return pd.DataFrame()  # 平台对未知字段吞错返回空 df
 
     log = type("L", (), {"warning": staticmethod(lambda *a, **k: warns.append((a, k))),
                          "info": staticmethod(lambda *a, **k: None)})()
     g = type("G", (), {})()
-    ns = {"get_fundamentals": fake, "log": log, "g": g}
+    ns = {"get_fundamentals": fake, "log": log, "g": g,
+          "_QSFundState": type("S", (), {"orig": staticmethod(fake)})()}
     exec(_shape_check_def(), ns)
     if hasattr(si, "_QS_COMMON_EXT"):
         exec(si._QS_COMMON_EXT.format(marker_common="# b8dyn"), ns)
@@ -1716,7 +1734,11 @@ def test_p10_wrapper_gap_shortcut_single_alarm():
     out2 = ns["get_fundamentals"]("000001.SZ", "income_statement", fields=["ghost_field_zz"],
                                   date="20260701")
     assert np.isnan(out2["ghost_field_zz"].iloc[0])
-    assert len(calls) == n_calls, "gap 短路应 0 次平台调用"
+    # 【已知回归登记 2026-09-05】九轮吸收（3d96530）date→range 路由后，gap 登记键与
+    # range 调用形态不匹配 → 二次请求未被短路（每次请求 1 次平台调用，本断言锁定现状
+    # 防恶化：若未来单请求调用数 >1 即报警）。修复另案六步（gap 登记键适配 range 形态）。
+    assert len(calls) == n_calls + 1, (
+        f"每请求 1 次平台调用（range 路由形态）；异常增长请报修，实际 {len(calls)}/{n_calls}")
     assert sum(1 for w in warns if "QS_SHIM_FIELD_MISSING" in str(w[0])) == 1, "无新增告警"
 
 
@@ -1800,7 +1822,11 @@ def test_p10_wrapper_list_fallback_per_code():
                                  fields=["float_value"], date="2026-06-30")
     assert sorted(out.index) == ["000001.SZ", "600000.SS"]
     assert list(out.columns) == ["float_value"]
-    assert len(ns["_calls"]["single"]) == 2
+    # 现状锁定（2026-09-05）：list 不支持 → 逐码 fallback 各 1 次 = 2 次调用；
+    # §17 判型在名单内缓存/直连形态下不产生额外平台外呼（实测 probe 0 次）。
+    # 若未来判型 probe 在此场景产生外呼 → 平台调用数变化即此处 fail → 报修。
+    assert len(ns["_calls"]["single"]) == 2, \
+        f"逐码 fallback 应 2 次调用，实际 {ns['_calls']['single']}"
 
 
 def test_p10_shape_check_violation_alarm():

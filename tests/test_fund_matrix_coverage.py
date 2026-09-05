@@ -193,7 +193,13 @@ def test_fm_rd1_seeds_no_score_semantics():
     # 模拟本地 ⑦ 判定（quantstudio/backtest/strategies/F-Score选股RSRS择时.py L162-169）
     ts_now = float(v["total_share"].iloc[0])
     assert not (ts_now is None or ts_now <= ts_now), "NaN 比较恒 False → ⑦ 不加分"
-    assert len(ns["_calls"]) == 0
+    # 3d96530 九轮吸收（2026-09-04）：首个 valuation 场景含 1 次判型 probe
+    # （orig(['600000.SS'],'valuation')，g._qs_val_probed 缓存后不再发生）——计入预期；
+    # seeds 短路本身零业务调用（probe 之外 _calls 无其他）。
+    assert len(ns["_calls"]) == 1, "唯一平台调用应为判型 probe"
+    probe_args = ns["_calls"][0][0]
+    assert probe_args[0] == ["600000.SS"] and probe_args[1] == "valuation", \
+        f"该 1 次调用应为 valuation 判型 probe，实际 {probe_args}"
 
 
 # ---------- f05：RD-2 固化断言（P3 证据） ----------
@@ -349,7 +355,15 @@ def test_fm_list_multi_secs_contract():
     ns = _mk(fake)
     out = ns["get_fundamentals"](codes, "valuation", ["float_value"], date="20260701")
     assert len(out) == 40 and list(out.index) == codes
-    assert len(ns["_calls"]) == 1, "list 批量单调用"
+    # 3d96530 九轮吸收：list 场景含 1 次判型 probe + 1 次批量 list = 2 次调用
+    # （probe 为 g 缓存一次性；业务调用仍为 list 批量单调用——语义不变）
+    assert len(ns["_calls"]) == 2, "判型 probe 1 次 + list 批量 1 次"
+    probe_args = ns["_calls"][0][0]
+    assert probe_args[0] == ["600000.SS"] and probe_args[1] == "valuation", \
+        f"首次调用应为判型 probe，实际 {probe_args}"
+    list_args = ns["_calls"][1][0]
+    assert list_args[1] == "valuation" and len(list_args[0]) == 40, \
+        "第二次调用应为 40 码批量 list"
 
 
 def test_fm_eps_passthrough_no_translation():

@@ -471,4 +471,130 @@ P1 探针实证：平台报表走 **start_year/end_year range 形态**（12 期�
 date=None 语义 / 码数上限 / date 单期→range 路由 / publ_date 毫秒归一 / 报告期 UTC 偏移 /
 白名单顶层收集 / valuation 列名判型 / 探针截断误判）全部框架层修复，策略源码与转换产物
 契约零改动；纯增益三重证明（本地 equiv1-3 逐位一致 + 判型 local 零触发 + 双门/全套件/6 策略
-横验证全绿）。进入第 5 步：用户确认 → 精确清单提交 + 双仓推送。
+横验证全绿）。第 5/6 步已完成：用户确认推送，commit 3d96530，双远程 HEAD 逐位一致。
+
+## 二十、 双端全窗对齐差异分析（2026-09-04 18:20 用户双端工件，3d96530 产物）
+
+用户以同窗（2026-01-05~2026-07-31）双端回测：本地 +14.64% vs 平台 -5.37%（基准双端同为
+-0.90% ✓）。对账结论（完整分析见用户目录
+`私募工作文件\本地回测框架和ptrade平台双端回测数据汇总\SG-MS-PEG-HL...\双端对齐差异分析-20260904.md`）：
+
+1. **执行层一致**：同(日,码,向)成交价 0 差异（首笔 301004@52.30×100 双端分毫不差）、佣金差
+   0.005pp、基准一致——转换器与撮合无差异。
+2. **选股分歧是差异主体**：月度持仓重叠仅 4-6/10；统一价格标尺（本地 qfq）逐日重放，3 月平台
+   组合 -10.9pp、6/7 月 -7~-14pp（本地组合反弹强）；复权常数比值已证对收益率中性
+   （300492=1.4034、002170=1.0453 等，除权处理双端均正确）。
+3. **根因分层**：宇宙差（P0 本地恒多 55-75 码）+ 聚源含 IPO 前年报（P2 通过率 99.98% vs
+   94.9%，CAGR 基期/n 随之不同——F-1 自适应年限放大）+ 平台 profit_ability 缺 ~12 码 ROE +
+   指标修订差 → 三张 Top50 不同 → X_pool 平台 21-25 vs 本地 17-19 → Top10 重叠率低 → 复利放大。
+4. **定性：数据源级 known-difference**（非管线缺陷）；双端收益数值不可对齐（数据源决定），
+   对齐口径=漏斗+规则行为（已 PASS）。收敛路径=数据层统一（MCP 替代项目既定方向）或
+   语义/宇宙裁剪立项（需单独审计，按铁律六步）。
+
+## 二十一、 审计裁定落地：对齐交付物（2026-09-04 审计通过，纯对账轮确认）
+
+审计裁定：对齐口径切换「漏斗+规则行为+执行价格」批准生效；收益数值=known-difference 披露；
+① P0 **禁止裁剪本地宇宙对齐平台**（幸存者偏差）；② P2 不修（wrapper 伪造覆盖禁止）；
+③ ROE 缺失确认探针执行；④ 佣金 0.005pp 下次转换顺带对齐（不单独立项）。
+
+### 21.1 交付物(a)：P0 差异码清单 + 逐码分类（完成）
+
+引擎口径池探针（本地 get_Ashares(exclude_bse=True)+filter_stock_by_status 原样，7 个月逐月）：
+
+| 月 | 本地P0 | 平台P0 | 差 | 本地过滤被剔码（全为「无行情」判据） |
+|---|---|---|---|---|
+| 01 | 5051（恒定） | 4997 | +54 | 120 |
+| 02 | 5051 | 5009 | +42 | 132 |
+| 03 | 5051 | 5003 | +48 | 136 |
+| 04 | 5051 | 5007 | +44 | 144 |
+| 05 | 5051 | 4932 | +119 | 148 |
+| 06 | 5051 | 4953 | +98 | 153 |
+| 07 | 5051 | 4983 | +68 | 160 |
+
+- **本地 P0 是静态全历史清单（5051 七月恒定）；平台 P0 是当月在册变动池（4932-5009）**——
+  差额逐月不同即由此而来（双向：本地静态保留退市码 + 平台新上市本地截止未含）。
+- **被剔码 120-160/月全部为「无行情」判据**（=已退市/终止/长期停牌；ST=0、停牌=0——
+  ST 股不在过滤前清单或已由 is_st_reliable 处理）。清单含 000004/000608/000638/600337 等
+  经典退市股。**本地 filter 的 DELISTING「无行情」判据在正常工作**——本地并非不剔退市，
+  而是**缺乏「退市日历」做在册口径对齐**（审计预判「本地缺退市过滤数据基础」成立）。
+- 逐码清单文件：用户目录 `差异码清单-202601-20260904.md`（含 1 月 120 码全列）。
+
+### 21.2 交付物(b)：退市日历入库 → 已挂 MCP 全数据源替代项目（数据基建项，登记见该报告）
+
+### 21.3 交付物(c)：ST-at-T 过滤 mini-方案（草案，待审计）
+
+现状：is_st_reliable（stock_namechange PIT 推导）**本地可支持 ST-at-T 判定**——
+探针实证本地过滤被剔码中 ST=0，说明 ST 股未进入本地 P0 的成因是「过滤前清单可能本就不含
+ST 段或 is_st_reliable 判定后剔除」；方案要点：
+1. 对本地池补「ST-at-T 逐月快照清单」（is_st_reliable@T 全量导出，作为对齐审计底稿）；
+2. 若审计要求双端 ST 口径一致：本地 filter 的 'ST' 分支已含 is_st_reliable OR
+   is_delisting_risk（正确性扩展），平台 'ST' 仅官方标记——**保真开关
+   `fidelity_st_filter=True`（已有实现）即可将本地降到平台口径**（对齐实验用，默认关）；
+3. 退市日历入库后（21.2），本地可按「退市日>T」补齐在册口径（数据基建完成前不实施）。
+
+### 21.4 交付物(③)：ROE 覆盖确认探针（已实施，行为零改动）
+
+- wrapper 注入一次性诊断（`QS_ROE_PROBE`，g 缓存/运行）：profit_ability+roe 请求缺行时 →
+  dump 缺失码清单（≤10）+ 首个缺失码 `fields=None` 全列探测（columns/rows/end_dates/有无
+  roe 列）+ 同码 income_statement 行数对照 → **下一轮平台运行即判「永久缺列 vs 期间缺失」**。
+- 本地验证：判型 local 无缺失 → 探针静默（预期）；50 passed；AST/标记检查通过。
+- 后续：若平台证「永久缺列」→ 提交 wrapper 派生（ROE=净利/权益）mini-方案走六步；
+  期间缺失 → 不修（按裁定）。
+
+### 21.5 登记
+
+- ④ 佣金 0.005pp：下次转换顺带对齐（挂账，不单独立项）。
+- 本轮全部改动（ROE 探针）待下轮平台验证后与后续吸收合并提交（推送仍需用户确认）。
+
+### 21.4a 探针代码归档（2026-09-05 §21 收口回滚——探针未采数，待新产物平台运行后再注入判型）
+
+注入位置：source_import.py get_fundamentals wrapper 内（profit_ability+roe 多码请求分支，行为零改动 fail-soft）：
+
+```python
+                        % (type(_fe).__name__, str(_fe)[:100]))
+    # 2026-09-04 §21 ROE 覆盖确认探针（诊断注入，行为零改动；双端对齐差异分析裁定项③）：
+    # profit_ability + roe 请求返回缺行（P3<P2 平台实证 ~12 码/1-4 月）→ 每运行一次性 dump
+    # 缺失码清单 + 首个缺失码全列探测（判「永久缺列」vs「期间缺失」）→ 为 wrapper 派生
+    # ROE=净利/权益 mini-方案提供证据。fail-soft，仅日志。
+    if (table == 'profit_ability' and _field_list and 'roe' in _field_list
+            and len(_secs) > 1):
+        try:
+            _g = _qs_g_obj()
+            if _g is not None and getattr(_g, '_qs_roe_probed', False):
+                pass
+            else:
+                _got = set(str(c) for c in _df.index) if _df is not None and hasattr(_df, 'index') else set()
+                _missing = [str(c) for c in _secs if str(c) not in _got]
+                if _g is not None:
+                    _g._qs_roe_probed = True
+                if _missing:
+                    log.info('QS_ROE_PROBE missing=%d list=%s'
+                             % (len(_missing), ','.join(_missing[:10])))
+                    _mc = _missing[0]
+                    _full = _QSFundState.orig([_mc], 'profit_ability', date=date,
+                                              is_dataframe=True)
+                    if _full is not None and hasattr(_full, 'columns') and len(_full):
+                        _eds = None
+                        try:
+                            if 'end_date' in _full.columns:
+                                _eds = [str(_qs_np.datetime64(int(float(x)), 'ms'))[:10]
+                                        for x in _full['end_date'].tolist()[:8]
+                                        if x is not None and str(x) not in ('nan', 'None')]
+                        except Exception:
+                            _eds = None
+                        log.info('QS_ROE_PROBE detail code=%s cols=%s rows=%d ends=%s roecol=%s'
+                                 % (_mc, ','.join([str(c) for c in _full.columns])[:150],
+                                    len(_full), (_eds or [])[:8],
+                                    'roe' in [str(c) for c in _full.columns]))
+                    else:
+                        log.info('QS_ROE_PROBE detail code=%s EMPTY（无任何行=期间/覆盖缺失）' % (_mc,))
+                    _inc = _QSFundState.orig([_mc], 'income_statement', date=date,
+                                             is_dataframe=True)
+                    log.info('QS_ROE_PROBE income-ref code=%s rows=%d'
+                             % (_mc, len(_inc) if _inc is not None and hasattr(_inc, '__len__') else -1))
+        except Exception as _re:
+            log.warning('QS_ROE_PROBE exc %s' % (type(_re).__name__,))
+```
+
+采数条件（再注入时）：用含本探针的新转换产物（消费 profit_ability+roe 多码，如 F-Score 类）、
+平台跑一轮回测 → 平台日志 grep QS_ROE_PROBE：missing list + detail（cols/roecol/EMPTY）→ 判型。
