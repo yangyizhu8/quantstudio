@@ -2003,6 +2003,18 @@ def get_fundamentals(security, table='valuation', fields=None, date=None,
         else:
             log.warning('QS_GF_DATE_SYNTH table=%s FAIL（前日不可合成，回退 date=None）'
                         % table)
+    # P-D13b-B（任务一 2026-09-06）：gap 短路【上移】至 range 路由之前——
+    # 失配定谳（w15 实测 + 代码结构核验）：原 gap 短路位于 range 主路径之后，
+    # range 每次先外呼 → gap 登记永不生效（income ghost 二次请求仍 1 次平台调用，
+    # "每请求 1 次调用"现状锁定断言在卷）。上移后：已登记 gap 命中 → 直接 NaN 契约行，
+    # 免 range 外呼（恢复 v8.1 "二次短路 0 调用"契约）。
+    try:
+        if _field_list and set(_field_list) <= _qs_gf_gap_shortcut(table, _field_list):
+            _df = _qs_pd.DataFrame([[float('nan')] * len(_field_list)], columns=_field_list)
+            _qs_shape_check('get_fundamentals', 'dataframe', _df)
+            return _df
+    except Exception:
+        pass
     # 2026-09-03 平台吸收（gf-date-synthesis-design.md §14）：报表表 → range 形态路由。
     # 平台 income_statement date 形态 = 披露时点单期（v8/v8.1 实证），策略需 ≥2 年报期 →
     # P2=0；P1 实证 range（start_year/end_year）返回 12 期季报 + PIT 可复现。仅当调用方

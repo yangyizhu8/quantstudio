@@ -1073,6 +1073,11 @@ class ResidentCollector:
                                         0, 0, 0, 0, 0, "empty", None, started_at)
                 return True
             # 全量覆盖写入（CREATE OR REPLACE TABLE），不走 aligner/validator upsert
+            # 【PASSTHROUGH-CHANNEL 通道契约声明】（任务一 A2.2，2026-09-06）：
+            # 全量覆盖语义（CREATE OR REPLACE TABLE）/ 无增量水位（不推进 source_watermark）/
+            # 独立于 stamp 通道（不走 aligner/validator upsert 与 QFQ 自检——快照类表专用）。
+            # 写入通道契约：全管线 writer.write 仅此 passthrough 通道与 _stamp_and_write
+            # （stamp 主通道）两处合法——禁止第三条裸 write 路径（tests/test_writer_channel_contract.py 锁定）。
             written = self.writer.write(raw_df, table, batch_id, passthrough=True)
             rows_written = written if isinstance(written, int) else len(raw_df)
             # passthrough 表：不推进 source_watermark（全量覆盖语义，无增量水位）

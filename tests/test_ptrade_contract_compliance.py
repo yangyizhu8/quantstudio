@@ -1734,11 +1734,12 @@ def test_p10_wrapper_gap_shortcut_single_alarm():
     out2 = ns["get_fundamentals"]("000001.SZ", "income_statement", fields=["ghost_field_zz"],
                                   date="20260701")
     assert np.isnan(out2["ghost_field_zz"].iloc[0])
-    # 【已知回归登记 2026-09-05】九轮吸收（3d96530）date→range 路由后，gap 登记键与
-    # range 调用形态不匹配 → 二次请求未被短路（每次请求 1 次平台调用，本断言锁定现状
-    # 防恶化：若未来单请求调用数 >1 即报警）。修复另案六步（gap 登记键适配 range 形态）。
-    assert len(calls) == n_calls + 1, (
-        f"每请求 1 次平台调用（range 路由形态）；异常增长请报修，实际 {len(calls)}/{n_calls}")
+    # P-D13b-B 修复后语义（2026-09-06，gap 短路上移至 range 路由之前）：
+    # 首次请求登记 gap → 二次请求短路 0 平台调用（v8.1 "二次短路 0 调用"契约恢复）。
+    # 首次请求的 1 次调用含 §17 判型 probe + range 路由各形态——登记后二次归零。
+    assert len(calls) == n_calls, (
+        f"gap 已登记 → 二次请求应 0 次平台调用（短路恢复），实际 "
+        f"{len(calls)}/{n_calls}")
     assert sum(1 for w in warns if "QS_SHIM_FIELD_MISSING" in str(w[0])) == 1, "无新增告警"
 
 
