@@ -1654,13 +1654,18 @@ class PtradeAPI:
                 return v
         return None
 
-    def get_Ashares(self, date=None, exclude_bse=None):
+    def get_Ashares(self, date=None, exclude_bse=None, include_delisted=None):
         """获取全 A 股列表
 
-        P-D13 C1a/C1b（2026-08-27）：
-        - 板块统计审计行（QS_ASHARES_BREAKDOWN，log.debug 级——定位宇宙差用）；
-        - exclude_bse 参数（默认 None=不动现状含北交所；True=过滤 920xxx/BSE legacy
-          ——对齐平台 5205 口径，转换产物验证用）。P-D9 纪律：本地语义权威默认不变。
+        任务一（2026-09-06，总调度批复①②③）：数据源唯一化口径升级——
+        - 默认**排除北交所**（920 前缀 + BSE legacy + 4xx/8xx 全段 blanket，
+          is_bje_excluded 谓词；用户拍板"沪深 A 股不含北交"，P-D9 opt-in 约定
+          经用户授权推翻）；exclude_bse=False 显式回退旧含北交语义（逃生门）；
+        - PIT 退市过滤（批复③收窄版）：date 非空时按 stock_delist 过滤
+          「上市 ≤ T AND (退市 IS NULL OR 退市 > T)」；ST@T 为后续标记项。
+
+        P-D13 C1a/C1b 既有：板块统计审计行（QS_ASHARES_BREAKDOWN）+
+        fidelity_ashares_snapshot 保真模式（优先级最高，不受默认翻转影响）。
         """
         try:
             # P-A0 保真模式：fidelity_ashares_snapshot=True 时用平台快照（2026-07-01）
@@ -1680,18 +1685,73 @@ class PtradeAPI:
                              len(codes), _bse, len(codes) - _bse)
             except Exception:
                 pass
-            # P-D13 C1b：exclude_bse 过滤（显式 opt-in，对齐平台口径）
+            # 任务一（批复①②）：北交排除默认开（blanket 口径 is_bje_excluded）。
+            # exclude_bse=False 显式回退含北交旧语义（逃生门）；None=跟随默认排除。
+            from .libs.security_code_rules import is_bje_excluded
             if exclude_bse is None:
-                fidelity = getattr(self, '_fidelity', None)
-                exclude_bse = (fidelity is not None
-                               and getattr(fidelity, 'fidelity_exclude_bse', False))
+                exclude_bse = True  # 任务一默认翻转（用户口径 2026-09-06）
             if exclude_bse:
-                from .libs.security_code_rules import is_bse_market
-                codes = [c for c in codes if not is_bse_market(c)]
+                codes = [c for c in codes if not is_bje_excluded(c)]
+            # 任务一（批复③收窄版）：PIT 退市过滤——date 非空时按 stock_delist 过滤
+            # 「上市 ≤ T AND (退市 IS NULL OR 退市 > T)」；date=None 跳过（兼容）。
+            if include_delisted is None:
+                include_delisted = not (self._current_date or date)
+            if not include_delisted:
+                codes = self._filter_delisted_pit(
+                    codes, date or self._current_date)
             return codes
         except Exception as e:
             logger.debug(f"get_Ashares 失败: {e}")
             return []
+
+    def _filter_delisted_pit(self, codes, date_str):
+        """任务一批复③：PIT 退市过滤（stock_delist 334 条退市日历消费）。
+
+        规则：退市日 ≤ T 的码剔除（在册口径对齐平台当月池；上市日条件由
+        get_all_stocks 源头天然满足——入库行情即上市后）。
+        实现：stock_delist 全表**惰性一次性预载**内存 set（热路径零 DB 往返）；
+        防御式列名（delist_date/code 别名容错）；表不可用/加载失败 → 原样返回
+        （fail-open，P-D13b 同款防护语义）。date 为空不过滤。
+        """
+        if not date_str or not codes:
+            return codes
+        cached = getattr(self, '_delisted_set_cache', None)
+        if cached is None:
+            try:
+                import duckdb
+                db = (getattr(getattr(self, '_reference', None), 'db_path', None)
+                      or 'data/quantstudio.db')
+                conn = duckdb.connect(str(db), read_only=True)
+                rows = conn.execute(
+                    "SELECT code, delist_date FROM stock_delist "
+                    "WHERE delist_date IS NOT NULL").fetchall()
+                conn.close()
+                cached = set()
+                for code, dd in rows:
+                    bare = str(code).split('.')[0]
+                    # delist_date 兼容 ms epoch 数值 / 'YYYYMMDD' 字符串两种形态
+                    try:
+                        dd8 = str(int(float(dd)))[:8] if dd is not None else None
+                    except (TypeError, ValueError):
+                        dd8 = str(dd)[:8].replace('-', '') if dd else None
+                    if dd8:
+                        cached.add((bare, dd8))
+                self._delisted_set_cache = cached
+            except Exception as e:
+                logger.debug(f"PIT 退市集加载失败（fail-open 不过滤）: {e}")
+                self._delisted_set_cache = set()
+                return codes
+        t8 = str(date_str)[:10].replace('-', '')
+
+        def _delisted(code):
+            bare = str(code).split('.')[0]
+            return any(b == bare and dd <= t8 for b, dd in self._delisted_set_cache)
+
+        kept = [c for c in codes if not _delisted(c)]
+        dropped = len(codes) - len(kept)
+        if dropped:
+            logger.debug(f"PIT 退市过滤 {date_str}: 剔除 {dropped} 只已退市码")
+        return kept
 
     def _fidelity_ashares(self, date=None):
         """P-A0：平台 A 股池快照消费（裸码 → Ptrade 格式 .SZ/.SS，惰性加载缓存）。

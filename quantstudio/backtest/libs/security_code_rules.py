@@ -52,6 +52,21 @@ def is_bse_market(code: str) -> bool:
     return bare.startswith("920") or bare in BSE_LEGACY_TO_920
 
 
+@lru_cache(maxsize=65536)
+def is_bje_excluded(code: str) -> bool:
+    """北交所排除谓词（任务一 2026-09-06，总调度批复①：blanket 口径）。
+
+    用户拍板口径：沪深 A 股不含北交 920xxx/4xx/8xx——平台 get_Ashares 实况摄写。
+    覆盖：920 前缀 + BSE legacy 精确表（与 is_bse_market 同）+ 4xx/8xx 全段
+    （blanket——老三板/新三板/区域市场码不属沪深 A）。
+    is_bse_market 零改动（BSE 合法消费方不受污染）；本谓词仅供 get_Ashares
+    排除路径与契约测试消费。
+    """
+    bare = bare_code(code)
+    return (bare.startswith(("920", "4", "8"))
+            or bare in BSE_LEGACY_TO_920)
+
+
 def is_star_market(code: str) -> bool:
     return bare_code(code).startswith("688")
 
