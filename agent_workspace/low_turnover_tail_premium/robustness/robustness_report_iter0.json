@@ -1,0 +1,197 @@
+{
+  "robustness_report_version": "1.0",
+  "strategy_id": "low_turnover_tail_premium",
+  "created_at": "2026-09-06T17:39:55.013338+00:00",
+  "input_binding": {
+    "config_csv_sha256": "4cd18d0d5dcfb550540899789d4364b12dcc3e50b0ed2c52137da0f603b359d4",
+    "daily_stats_csv_sha256": "8d55065b5f3d6c078b56cc85f48a195aa7108c0816fb9b2902a975a35575bd61",
+    "trades_csv_sha256": "2bb3fa176993757f93705c17d8238e15bc089285913c467346a3fc53347d71b5",
+    "primary_result_dir": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260907_011931_strategy"
+  },
+  "window": {
+    "start": "2025-01-02",
+    "end": "2026-07-31",
+    "trading_days": 382,
+    "benchmark_source": "daily_stats_benchmark_column"
+  },
+  "wf": {
+    "folds": [
+      {
+        "fold_index": 1,
+        "fold_window": {
+          "start": "2025-01-02",
+          "end": "2025-04-29"
+        },
+        "trade_days": 77,
+        "round_trips": 0,
+        "no_trade_flag": true,
+        "strategy_return": null,
+        "benchmark_return": null,
+        "excess_return": null,
+        "positive": null,
+        "artifacts": {
+          "config_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "daily_stats_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "trades_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "round_trips_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "result_dir": "ENGINE_FAILED: engine run failed"
+        }
+      },
+      {
+        "fold_index": 2,
+        "fold_window": {
+          "start": "2025-04-30",
+          "end": "2025-08-20"
+        },
+        "trade_days": 77,
+        "round_trips": 0,
+        "no_trade_flag": true,
+        "strategy_return": null,
+        "benchmark_return": null,
+        "excess_return": null,
+        "positive": null,
+        "artifacts": {
+          "config_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "daily_stats_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "trades_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "round_trips_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "result_dir": "ENGINE_FAILED: engine run failed"
+        }
+      },
+      {
+        "fold_index": 3,
+        "fold_window": {
+          "start": "2025-08-21",
+          "end": "2025-12-12"
+        },
+        "trade_days": 76,
+        "round_trips": 0,
+        "no_trade_flag": true,
+        "strategy_return": null,
+        "benchmark_return": null,
+        "excess_return": null,
+        "positive": null,
+        "artifacts": {
+          "config_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "daily_stats_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "trades_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "round_trips_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "result_dir": "ENGINE_FAILED: engine run failed"
+        }
+      },
+      {
+        "fold_index": 4,
+        "fold_window": {
+          "start": "2025-12-15",
+          "end": "2026-04-10"
+        },
+        "trade_days": 76,
+        "round_trips": 0,
+        "no_trade_flag": true,
+        "strategy_return": null,
+        "benchmark_return": null,
+        "excess_return": null,
+        "positive": null,
+        "artifacts": {
+          "config_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "daily_stats_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "trades_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "round_trips_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "result_dir": "ENGINE_FAILED: engine run failed"
+        }
+      },
+      {
+        "fold_index": 5,
+        "fold_window": {
+          "start": "2026-04-13",
+          "end": "2026-07-31"
+        },
+        "trade_days": 76,
+        "round_trips": 0,
+        "no_trade_flag": true,
+        "strategy_return": null,
+        "benchmark_return": null,
+        "excess_return": null,
+        "positive": null,
+        "artifacts": {
+          "config_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "daily_stats_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "trades_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "round_trips_csv_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "result_dir": "ENGINE_FAILED: engine run failed"
+        }
+      }
+    ],
+    "valid_folds": 0,
+    "positive_folds": 0,
+    "positive_ratio": null,
+    "skipped": false,
+    "skip_reason": null
+  },
+  "mc": {
+    "n": 1000,
+    "block_length": 21,
+    "method": "stationary_block_bootstrap_on_excess_daily_returns",
+    "p_value": 0.7212787212787213,
+    "observed_mean_excess": -0.00041269278369660136,
+    "null_quantiles": {
+      "q05": -0.0013683343958747825,
+      "q50": -0.0004038643650338198,
+      "q95": 0.0007063584089575593
+    }
+  },
+  "gates": {
+    "G1": {
+      "result": "PASS",
+      "value": 0.02464152311218859,
+      "threshold": 0.0,
+      "dimension": "absolute",
+      "detail": ""
+    },
+    "G2": {
+      "result": "PASS",
+      "value": -0.15286478764512568,
+      "threshold": -0.25,
+      "dimension": "absolute",
+      "detail": ""
+    },
+    "G3": {
+      "result": "FAIL",
+      "value": 0.2635228145869861,
+      "threshold": 0.5,
+      "dimension": "absolute",
+      "detail": ""
+    },
+    "G4": {
+      "result": "PASS",
+      "value": 0.475,
+      "threshold": 0.4,
+      "dimension": "trade_level",
+      "detail": "round_trips=200"
+    },
+    "G5": {
+      "result": "INSUFFICIENT_SAMPLES",
+      "value": null,
+      "threshold": 0.6,
+      "dimension": "fold_level",
+      "detail": "valid folds 0<3 (NO_TRADE excluded, M1)"
+    },
+    "G6": {
+      "result": "FAIL",
+      "value": 0.7212787212787213,
+      "threshold": 0.01,
+      "dimension": "excess",
+      "detail": ""
+    }
+  },
+  "overall": "FAILED",
+  "iteration": {
+    "iteration_count": 0,
+    "terminal": false
+  },
+  "seeds": {
+    "mc_seed_source": "sha256(trades_csv+config_csv)[:8]",
+    "mc_seed_hex": "c938053e",
+    "python_hashseed": null
+  }
+}

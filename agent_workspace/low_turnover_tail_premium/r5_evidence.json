@@ -1,0 +1,89 @@
+{
+  "report_version": "2.1",
+  "strategy_id": "low_turnover_tail_premium",
+  "strategy_name": "低流动性溢价换手尾部极值多头",
+  "canonical_source": "agent_workspace/low_turnover_tail_premium/strategy.py",
+  "canonical_source_sha256": "6622166da7d9dff734ccb00fcd23f1b026ad52588f6faca93038a038e3cffe2d",
+  "engine_profile": "daily-bar-v1",
+  "match_price_mode": "close",
+  "window": [
+    "2025-01-02",
+    "2026-07-31"
+  ],
+  "capital": 100000,
+  "db_used": "data/quantstudio.db.bak.balance_refill (备用库, 用户裁定; 主库 mcp_stock_minutes 写锁)",
+  "r5_deployment_invariants": {
+    "holding_count_mode": "up_to_target_count",
+    "target_holdings": 12,
+    "minimum_fill_ratio": 0.7,
+    "minimum_gross_exposure": 0.8,
+    "maximum_cash_ratio_after_rebalance": 0.2,
+    "maximum_insufficient_cash_rejections": 2,
+    "require_at_least_one_rebalance": true
+  },
+  "groups": {
+    "A_main_slippage_0_001": {
+      "purpose": "主口径（R2.5⑧：commission 万3 + slippage 0.001）",
+      "reproducibility": "PASS (config/daily_stats/trades SHA-256 byte-identical; strategy hash 662216...ffe2d)",
+      "manifests": [
+        "agent_workspace/low_turnover_tail_premium/r5_logs/A_run1_manifest.json",
+        "agent_workspace/low_turnover_tail_premium/r5_logs/A_run2_manifest.json"
+      ],
+      "analysis": "agent_workspace/low_turnover_tail_premium/r5_logs/A_run1_analysis.json (overall PASS, 19 rebalances active, pairing 19:19:19, deployment_issues 0, insufficient_cash 0)"
+    },
+    "B_sensitivity_slippage_0_002": {
+      "purpose": "灵敏度对照（slippage 0.002）",
+      "reproducibility": "PASS (config/daily_stats/trades SHA-256 byte-identical)",
+      "manifests": [
+        "agent_workspace/low_turnover_tail_premium/r5_logs/B_run1_manifest.json",
+        "agent_workspace/low_turnover_tail_premium/r5_logs/B_run2_manifest.json"
+      ],
+      "analysis": "agent_workspace/low_turnover_tail_premium/r5_logs/B_run1_analysis.json (overall PASS)"
+    }
+  },
+  "primary_group": "A_main_slippage_0_001",
+  "performance_summary": {
+    "A": {
+      "strategy_return_pct": 3.5993,
+      "benchmark_return_pct": 16.6024,
+      "annual_return_pct": 2.3412,
+      "max_drawdown_pct": 15.2865,
+      "sharpe_ratio": -0.0573,
+      "excess_return_pct": -16.498,
+      "win_rate_pct": 47.5
+    },
+    "B": {
+      "strategy_return_pct": 0.6577,
+      "benchmark_return_pct": 16.6024,
+      "max_drawdown_pct": 16.055,
+      "sharpe_ratio": -0.2222
+    }
+  },
+  "core_validation": {
+    "method": "分段对照研究 segment_study.json（尾部/中间/高换手 同算法 L0-L5+L6 剔 L7 + 块自助 p）",
+    "result": {
+      "tail": {
+        "mean_monthly_excess": 0.0055,
+        "positive_ratio": 0.737,
+        "bootstrap_p": 0.147
+      },
+      "mid": {
+        "mean_monthly_excess": 0.0151,
+        "positive_ratio": 0.684,
+        "bootstrap_p": 0.162
+      },
+      "high": {
+        "mean_monthly_excess": -0.011,
+        "positive_ratio": 0.526,
+        "bootstrap_p": 0.762
+      }
+    },
+    "interpretation": "非线性形状部分成立（尾部+0.55%/月正超额、高换手-1.10%/月负超额），但中间组超额(+1.51%/月)最高且三组 p>0.01 不显著——2025-2026 窗口'仅尾部有 Alpha'强假设未获统计显著支持"
+  },
+  "evidence_files": [
+    "D:/miniQMT策略实盘/QuantStudio/output/backtest_results/20260907_011931_strategy/config.csv",
+    "D:/miniQMT策略实盘/QuantStudio/output/backtest_results/20260907_011931_strategy/daily_stats.csv",
+    "D:/miniQMT策略实盘/QuantStudio/output/backtest_results/20260907_011931_strategy/trades.csv"
+  ],
+  "result_dir": "D:/miniQMT策略实盘/QuantStudio/output/backtest_results/20260907_011931_strategy"
+}

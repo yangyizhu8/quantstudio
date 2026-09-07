@@ -1,0 +1,49 @@
+{
+  "window": [
+    "2025-01-02",
+    "2026-07-31"
+  ],
+  "cost": {
+    "commission": 0.0003,
+    "slippage": 0.001
+  },
+  "bands": [
+    {
+      "band": "tail",
+      "range": [
+        0.0,
+        0.1
+      ],
+      "n_months": 19,
+      "mean_monthly_excess": 0.005462459931844838,
+      "positive_ratio": 0.7368421052631579,
+      "bootstrap_p_H0_leq_0": 0.14685314685314685,
+      "significant": false
+    },
+    {
+      "band": "mid",
+      "range": [
+        0.45,
+        0.55
+      ],
+      "n_months": 19,
+      "mean_monthly_excess": 0.01505932771899684,
+      "positive_ratio": 0.6842105263157895,
+      "bootstrap_p_H0_leq_0": 0.16183816183816183,
+      "significant": false
+    },
+    {
+      "band": "high",
+      "range": [
+        0.9,
+        1.0
+      ],
+      "n_months": 19,
+      "mean_monthly_excess": -0.0110437554860328,
+      "positive_ratio": 0.5263157894736842,
+      "bootstrap_p_H0_leq_0": 0.7622377622377622,
+      "significant": false
+    }
+  ],
+  "method": "block bootstrap block=21 n=1000 add-one p, excess vs 000300"
+}

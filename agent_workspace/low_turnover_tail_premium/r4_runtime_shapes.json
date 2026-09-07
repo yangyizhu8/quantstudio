@@ -1,0 +1,58 @@
+{
+  "report_version": "1.0",
+  "source": "D:/miniQMT策略实盘/QuantStudio/agent_workspace/low_turnover_tail_premium/strategy.py",
+  "fixture_kind": "agent_first_source_runtime_shape",
+  "helper": "_extract_history_field",
+  "checks": [
+    {
+      "fixture": "dataframe",
+      "result_len": 5,
+      "result_kind": "ndarray",
+      "status": "PASS"
+    },
+    {
+      "fixture": "series_item_fail_soft",
+      "result_len": 0,
+      "result_kind": "ndarray",
+      "status": "PASS"
+    },
+    {
+      "fixture": "structured_array",
+      "result_len": 5,
+      "result_kind": "ndarray",
+      "status": "PASS"
+    },
+    {
+      "fixture": "recarray",
+      "result_len": 5,
+      "result_kind": "ndarray",
+      "status": "PASS"
+    },
+    {
+      "fixture": "none",
+      "result_len": 0,
+      "result_kind": "ndarray",
+      "status": "PASS"
+    },
+    {
+      "fixture": "empty_structured",
+      "result_len": 0,
+      "result_kind": "ndarray",
+      "status": "PASS"
+    },
+    {
+      "fixture": "missing_close_field",
+      "result_len": 0,
+      "result_kind": "ndarray",
+      "status": "PASS"
+    },
+    {
+      "fixture": "nan_inf_values",
+      "result_len": 3,
+      "result_kind": "ndarray",
+      "status": "PASS"
+    }
+  ],
+  "failures": [],
+  "status": "PASS"
+}

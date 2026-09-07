@@ -1,0 +1,215 @@
+{
+  "strategy_id": "low_turnover_tail_premium",
+  "strategy_name": "低流动性溢价换手尾部极值多头",
+  "design_version": "2.3",
+  "stage": "PUBLISHED",
+  "targets": [
+    "quantstudio"
+  ],
+  "universe_mode": "portable_public_api",
+  "validation_execution_mode": "agent_managed",
+  "candidate_status": "NOT_APPLICABLE_AGENT_MANAGED",
+  "backtest_evidence_status": "VERIFIED",
+  "formal_publish_allowed": true,
+  "backtest_window_contract": {
+    "strategy_must_not_hardcode_backtest_dates": true,
+    "recommended_start_date": "2025-01-02",
+    "recommended_end_date_as_of_local_data": "2026-07-31",
+    "actual_window_selected_by": "customer_confirmed_agent_run",
+    "required_close_bars": 21,
+    "lookback_trading_days": 21
+  },
+  "agent_implementation_required": true,
+  "canonical_source": "strategy.py",
+  "r0": {
+    "stage": "CONFIRMED"
+  },
+  "r1": {
+    "stage": "PASS"
+  },
+  "r2": {
+    "stage": "DRAFTED"
+  },
+  "r2_5": {
+    "stage": "CONFIRMED"
+  },
+  "r3": {
+    "stage": "IMPLEMENTED",
+    "unit_tests": "13/13 PASS"
+  },
+  "r4": {
+    "stage": "PASS",
+    "quantstudio": "0 BLOCK 1 WARN",
+    "runtime_shapes": "8/8 PASS",
+    "ptrade": "NOT_APPLICABLE"
+  },
+  "r5": {
+    "stage": "PASS",
+    "evidence": "4 组回测（A: slippage0.001 主口径 / B: 0.002 灵敏度）全部 PASS；G3.5 双组三件套 SHA-256 逐位一致；19 调仓期全 active、配对 19:19:19 无孤儿、deployment_issues=0、insufficient_cash=0；权威持仓 min9/max12/≥8 占比100%；A 组绩效: 策略 3.60% vs 基准 16.60%, 回撤 15.3%, 夏普 -0.057"
+  },
+  "robustness": {
+    "stage": "EXEMPTED",
+    "iteration_count": 0,
+    "exempted": true,
+    "exemption_evidence": "customer 2026-09-07: 接受实证结论原参数推进发布; G3/G6 FAIL 如实记录, G5 INSUFFICIENT_SAMPLES 呈现",
+    "gates": {
+      "G1": "PASS 0.0246",
+      "G2": "PASS -0.1529",
+      "G3": "FAIL 0.2635 (<0.5, 已记录)",
+      "G4": "PASS 0.475",
+      "G5": "INSUFFICIENT_SAMPLES",
+      "G6": "FAIL 0.7213 (>0.01, 已记录)"
+    },
+    "history": [
+      {
+        "iter": 0,
+        "overall": "FAILED",
+        "action": "customer_exempted_original_params"
+      }
+    ]
+  },
+  "quantstudio_output": "quantstudio/backtest/strategies/低流动性溢价换手尾部极值多头.py",
+  "ptrade_output": "NOT_GENERATED",
+  "r5_5": {
+    "stage": "FAILED",
+    "iteration_count": 0,
+    "gates": {
+      "G1": "PASS 0.0246>0",
+      "G2": "PASS -0.1529>-0.25",
+      "G3": "FAIL 0.2635<0.5",
+      "G4": "PASS 0.475>0.4",
+      "G5": "INSUFFICIENT(折叠因DB锁未跑成, 非真实样本不足)",
+      "G6": "FAIL 0.7213>0.01"
+    },
+    "db_blocker": "主库被 PID 43168 (mcp_stock_minutes 守护, CPU 92min) 独占写锁；R5.5 折叠引擎硬编码主库路径无法用备用库"
+  },
+  "core_validation": {
+    "tail": {
+      "mean_monthly_excess": 0.0055,
+      "positive_ratio": 0.737,
+      "p": 0.147,
+      "significant": false
+    },
+    "mid": {
+      "mean_monthly_excess": 0.0151,
+      "positive_ratio": 0.684,
+      "p": 0.162,
+      "significant": false
+    },
+    "high": {
+      "mean_monthly_excess": -0.011,
+      "positive_ratio": 0.526,
+      "p": 0.762,
+      "significant": false
+    },
+    "interpretation": "非线性形状部分成立(尾部+0.55%/月, 高换手-1.10%/月), 但中间组超额最高(+1.51%/月)且三组 p>0.01 不显著; '仅尾部有Alpha'强假设在2025-2026窗口未获统计支持"
+  },
+  "robustness_status": "EXEMPTED",
+  "backtest_status": "PASS",
+  "backtest_data_source": "duckdb_provider",
+  "backtest_db_path": "D:/miniQMT策略实盘/QuantStudio/data/quantstudio.db.bak.balance_refill",
+  "r5_evidence": {
+    "window": [
+      "2025-01-02",
+      "2026-07-31"
+    ],
+    "capital": 100000,
+    "groups": {
+      "A_main_slippage_0_001": {
+        "run1_result_dir": "output/backtest_results/20260907_011931_strategy",
+        "run2_result_dir": "output/backtest_results/20260907_013604_strategy",
+        "g35_reproducibility": "PASS (config/daily_stats/trades SHA-256 byte-identical)",
+        "manifests": [
+          "agent_workspace/low_turnover_tail_premium/r5_logs/A_run1_manifest.json",
+          "agent_workspace/low_turnover_tail_premium/r5_logs/A_run2_manifest.json"
+        ]
+      },
+      "B_sensitivity_slippage_0_002": {
+        "run1_result_dir": "output/backtest_results/20260907_012744_strategy",
+        "run2_result_dir": "output/backtest_results/20260907_012743_strategy",
+        "g35_reproducibility": "PASS (config/daily_stats/trades SHA-256 byte-identical)",
+        "manifests": [
+          "agent_workspace/low_turnover_tail_premium/r5_logs/B_run1_manifest.json",
+          "agent_workspace/low_turnover_tail_premium/r5_logs/B_run2_manifest.json"
+        ]
+      }
+    },
+    "analysis_report": "agent_workspace/low_turnover_tail_premium/r5_logs/A_run1_analysis.json (overall PASS)",
+    "audit_pairing": "19:19:19 funnel:rebalance:portfolio, zero orphans, insufficient_cash=0"
+  },
+  "external_db_override_confirmed": true,
+  "external_db_evidence": {
+    "customer_ruling": "2026-09-07 ask_user_question db_lock_decision 选中: 改用备用/共享数据源跑 R5（主库被 mcp_stock_minutes 守护 PID 43168 独占写锁 92min+）",
+    "selected_db": "D:/miniQMT策略实盘/QuantStudio/data/quantstudio.db.bak.balance_refill",
+    "verification": "该副本含 stock_daily/stock_daily_valuation/trade_calendar/index_daily 全表; 行情 2018-01-02~2026-08-18 (覆盖窗口2025-01-02..2026-07-31); 沪深300 至 2026-07-31; 换手率2025+全量非空 (212.8万行)",
+    "note": "主库行情至 2026-09-04、副本至 2026-08-18; R2.5审核①已确认指数滞后于股票属正常, 不阻塞"
+  },
+  "publish_status": "PASS",
+  "local_validation_status": "PASS",
+  "ptrade_validation_status": "NOT_APPLICABLE",
+  "dual_consistency_status": "NOT_APPLICABLE",
+  "dual_consistency_phase": "NOT_APPLICABLE",
+  "quantstudio_output_status": "GENERATED",
+  "ptrade_output_status": "NOT_GENERATED",
+  "canonical_sha256": "6622166da7d9dff734ccb00fcd23f1b026ad52588f6faca93038a038e3cffe2d",
+  "candidate_removed": true,
+  "canonical_source_sha256": "6622166da7d9dff734ccb00fcd23f1b026ad52588f6faca93038a038e3cffe2d",
+  "customer_decision_after_publish": {
+    "decision": "暂不推进，等待主库守护进程完成",
+    "at": "2026-09-07T02:10:00+08:00",
+    "context": "主库 quantstudio.db 被 mcp_stock_minutes 守护(PID 43168)独占写锁 105min+; 备选路径: 甲(提交双仓库)/乙(2018-2026长窗口复验)/丙(PTrade转换)/丁(主库核对重跑)",
+    "resume_hint": "锁释放后可优先 丁(主库双跑核对一致性) 或按需选择",
+    "status": "主库解锁后已执行 丁-主库核对, PERFECT_MATCH"
+  },
+  "maindb_cross_check": {
+    "at": "2026-09-07T03:40:00+08:00",
+    "conclusion": "PERFECT_MATCH",
+    "detail": "主库(quantstudio.db, 守护解锁后)与备用库(quantstudio.db.bak.balance_refill)在窗口2025-01-02..2026-07-31、A组主口径下: 三件套(config/daily_stats/trades) SHA-256 完全一致(4cd18d0d/8d55065b/2bb3fa17); 主库内 M1/M2 双跑 G3.5 复现 PASS; 绩效逐位相同(策略+3.5993%/基准+16.6024%/回撤15.29%/夏普-0.0573)",
+    "implication": "发布产物基于备用库的证据与权威主库完全等价, R5/R5.5 结论可直接前推主库口径; 备用库替代方案闭环验证通过",
+    "maindb_runs": {
+      "run1": "output/backtest_results/20260907_033029_strategy",
+      "run2": "output/backtest_results/20260907_033624_strategy",
+      "manifests": "agent_workspace/low_turnover_tail_premium/r5_logs_maindb/"
+    }
+  },
+  "fullwindow_validation": {
+    "at": "2026-09-07T04:20:00+08:00",
+    "window": "2018-01-02..2026-07-31 (8.5年, 103期月度调仓)",
+    "method": "同算法 L0-L5+L6 剔L7, 分段对照+MC块自助(块长21,n=1000), 备用库(主库核对已证逐位一致)",
+    "artifact": "segment_study_fullwindow.json",
+    "results": {
+      "tail10": {
+        "mean_monthly_excess": 0.0058,
+        "positive_ratio": 0.621,
+        "p": 0.07
+      },
+      "tail05": {
+        "mean_monthly_excess": 0.0049,
+        "positive_ratio": 0.583,
+        "p": 0.108
+      },
+      "tail20": {
+        "mean_monthly_excess": 0.0062,
+        "positive_ratio": 0.583,
+        "p": 0.047
+      },
+      "mid": {
+        "mean_monthly_excess": 0.0068,
+        "positive_ratio": 0.573,
+        "p": 0.073
+      },
+      "high": {
+        "mean_monthly_excess": -0.0151,
+        "positive_ratio": 0.447,
+        "p": 0.972
+      }
+    },
+    "key_findings": [
+      "高换手组强负超额(-1.51%/月, 仅44.7%月份为正, p=0.972)——流动性溢价避雷侧在8.5年全窗口极稳健",
+      "尾部10%/20%均有温和正超额(+0.58%/+0.62%/月, 62%/58%正比例, p≈0.05-0.07接近显著)",
+      "中间组+0.68%/月与尾部接近持平——尾部独占Alpha不成立, 但2025年中间+2.45%为窗口特有(2026中间转负-0.16%而尾部仍正)",
+      "年度分解: 尾部2024最强(+4.35%/月)、2022最差(-2.14%/月)——风格依赖明显",
+      "准确结论: 超额单调性 = 高换手显著为负、低换手温和为正; 策略价值主要在避开高换手(避雷), 选股增量温和"
+    ]
+  }
+}

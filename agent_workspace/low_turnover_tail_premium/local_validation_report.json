@@ -1,0 +1,19 @@
+{
+  "report_version": "2.1",
+  "strategy_id": "low_turnover_tail_premium",
+  "source": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\low_turnover_tail_premium\\.dual_target_stage_41obujey\\low_turnover_tail_premium_quantstudio.py",
+  "target_profile": "quantstudio",
+  "status": "PASS",
+  "profile_validation_status": "PASS",
+  "runtime_validation_status": "NOT_VERIFIED",
+  "deployment_status": "NOT_DEPLOYABLE",
+  "block_count": 0,
+  "warning_count": 1,
+  "issues": [
+    {
+      "rule_id": "HARDFILTER-LIMIT",
+      "severity": "WARN",
+      "message": "PTrade backtest has no public check_limit(); document that order rejection/price fields enforce limit behavior."
+    }
+  ]
+}
