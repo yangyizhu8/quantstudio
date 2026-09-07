@@ -738,6 +738,18 @@ class MCPAdapter(BaseSourceAdapter):
         if est_rows is not None and est_rows < self._EXPORT_SAFE_ROWS:
             return [(s.strftime("%Y-%m-%d"), e.strftime("%Y-%m-%d"))]
         window = self._EXPORT_MINUTE_WINDOW_DAYS if is_minute else self._EXPORT_DAILY_WINDOW_DAYS
+        # F-3 修复（2026-09-08）：直连路径（daemon 默认）同样按 row_limit 反算安全窗口。
+        # 实测全市场分钟 ~1.25M 行/交易日，10 天窗 ≈ 8 交易日 ≈ 10M 行 > row_limit=5M，
+        # 服务端按最老优先截断会静默丢弃批尾数日（阶段 1 五缺日根因）。
+        # 与 grid_aligned 路径统一公式：est_total 按全历史行数 ÷ 243 交易日折算日行数。
+        if is_minute:
+            est_total = est_rows or self._EXPORT_ROW_ESTIMATE.get("stock_minutes", 480_000_000)
+            daily_rows = est_total / 243
+            safe_window = max(1, int(self._EXPORT_ROW_LIMIT_BIG / (daily_rows * 1.2)))
+            window = min(window, safe_window)
+            logger.info(f"[MCPAdapter] 分钟安全窗口: {window}天 "
+                        f"(daily_rows≈{daily_rows:.0f}, row_limit={self._EXPORT_ROW_LIMIT_BIG}, "
+                        f"grid_aligned={grid_aligned}, est_total={est_total})")
         if grid_aligned:
             # Bug 2 修复：网格化窗口需适配 row_limit，避免服务端截断。
             # 全市场分钟数据 ~1200 万行/10天 > row_limit=5M → 窗口缩到安全值。
@@ -769,6 +781,10 @@ class MCPAdapter(BaseSourceAdapter):
             nxt = min(cur + timedelta(days=window), e)
             batches.append((cur.strftime("%Y-%m-%d"), nxt.strftime("%Y-%m-%d")))
             cur = nxt + timedelta(days=1)
+        # F-探针（F 方案 §3.1）：窗口切分结果留痕——切分输入/窗口/批次数可审计
+        logger.info(f"[F-探针] _export_batches: start={start} end={end} est_rows={est_rows} "
+                    f"is_minute={is_minute} window={window}天 batches={len(batches)} "
+                    f"首三批={[f'{b[0]}~{b[1]}' for b in batches[:3]]}")
         return batches
 
     # 各表数据规模估算（行数，用于 _export_batches 决定是否分批）
@@ -987,6 +1003,10 @@ class MCPAdapter(BaseSourceAdapter):
                 if len(batches) > 1:
                     logger.info(f"[MCPAdapter] {table}/{freq} export 批次 {i+1}/{len(batches)}: "
                                 f"{bs} → {be}")
+                # F-探针：请求参数全量留痕（time/row_limit 原文，防参数丢失类缺陷无迹可查）
+                logger.info(f"[F-探针] export 请求: dataset={qdb_tbl} "
+                            f"time_start={ts_iso} time_end={te_iso} "
+                            f"row_limit={5_000_000 if _is_big else None} page_size=50000")
                 arts = self.client.export_dataset(
                     dataset_id=qdb_tbl, page_size=50_000,
                     time_start=ts_iso, time_end=te_iso,
@@ -1004,6 +1024,12 @@ class MCPAdapter(BaseSourceAdapter):
             local_parquet = self._landing_path(job_id, art.artifact_id.replace("/", "_"))
             local_parquet.write_bytes(art.parquet_bytes)
             df_shard = pd.read_parquet(local_parquet)
+            # F-探针：分片日期落位留痕（判别法升级版数据源——首尾时间戳可暴露物理序错配）
+            _tcol = next((c for c in ("trade_time", "time", "trade_date", "date")
+                          if c in df_shard.columns), None)
+            if _tcol is not None and len(df_shard):
+                logger.info(f"[F-探针] 分片 {local_parquet.name}: rows={len(df_shard)} "
+                            f"时间首={df_shard[_tcol].iloc[0]} 时间尾={df_shard[_tcol].iloc[-1]}")
             frames.append(df_shard)
             logger.debug(f"[MCPAdapter] 分片 {art.artifact_id} 读取 {len(df_shard)} 行 "
                          f"→ Raw Landing {local_parquet.name}")

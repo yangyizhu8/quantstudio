@@ -45,6 +45,7 @@ from .errors import (
     MCPAuthError,
     MCPChecksumError,
     MCPClientError,
+    MCPExportBudgetError,
     MCPProtocolError,
     MCPToolError,
     MCPTransportError,
@@ -590,6 +591,15 @@ class MCPClient:
         if time_end is not None:
             args["time_end"] = time_end
         d = self._call_with_retry(self._call_tool, "create_export_job", args)
+        # F-4 修复（2026-09-08）：识别服务端结构化错误（60s 软超时等）——
+        # 抛携带 hint/suggested_shards 的专用异常，上层缩小窗口重试而非原样重发。
+        if d.get("error"):
+            raise MCPExportBudgetError(
+                f"create_export_job 服务端错误: {d.get('error')} hint={d.get('hint')}",
+                error_code=str(d.get("error", "")),
+                hint=str(d.get("hint", "")),
+                suggested_shards=d.get("suggested_shards"),
+                raw=d)
         ref = d.get("manifest_ref") or d.get("job_id")
         if not ref:
             raise MCPProtocolError(f"create_export_job 未返回 manifest_ref: {d}")
@@ -599,6 +609,14 @@ class MCPClient:
 
     def get_manifest(self, job_id: str) -> ExportManifest:
         d = self._call_with_retry(self._call_tool, "get_manifest", {"job_id": job_id})
+        # F-4 修复（2026-09-08）：P1-3 异步语义兼容——status 字段存在时校验，
+        # failed 即抛错、running 在同步路径属异常（防把半成品 manifest 当完整结果消费）。
+        _status = d.get("status")
+        if _status == "failed":
+            raise MCPProtocolError(f"export job {job_id} failed: {d.get('error')}")
+        if _status == "running":
+            raise MCPProtocolError(
+                f"export job {job_id} still running（同步路径不应出现，async_mode 未启用）")
         shards = [Shard(
             shard_id=s.get("shard_id", ""),
             row_start=int(s.get("row_start", 0) or 0),

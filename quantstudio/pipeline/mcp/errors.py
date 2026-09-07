@@ -46,3 +46,23 @@ class MCPToolError(MCPClientError):
 
 class MCPChecksumError(MCPClientError):
     """SHA256 对账失败（artifact vs manifest）。"""
+
+
+class MCPExportBudgetError(MCPClientError):
+    """服务端导出预算/结构化错误（F-4 修复，2026-09-08）。
+
+    服务端 60s 软超时等返回 {"error": ..., "hint": ..., "suggested_shards": [...]}
+    结构化错误时抛出。携带 hint 与分片建议，上层应缩小窗口重试而非原样重发。
+
+    attributes:
+        error_code: 服务端 error 字符串（如 export_exceeds_time_budget）
+        hint: 服务端提示
+        suggested_shards: 建议的分片窗口列表
+    """
+
+    def __init__(self, message: str, *, error_code: str = "",
+                 hint: str = "", suggested_shards: object = None, raw: object = None):
+        super().__init__(message, raw=raw)
+        self.error_code = error_code
+        self.hint = hint
+        self.suggested_shards = suggested_shards
