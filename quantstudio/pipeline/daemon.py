@@ -2156,6 +2156,9 @@ class ResidentCollector:
                 f"不在可用源链 {out} 中（源可能未启用或不支持 {table}/{freq}）")
         return out
 
+    # F-3.3：A4 熔断阈值（方案 §3.3——stale last_sync 积压征兆上限）
+    _A4_MAX_WINDOWS = 20
+
     def _check_cloud_updates_and_repull(self, source: str, table: str, freq: str,
                                          adapter, batch_id: str) -> int:
         """A4 变更检测：增量拉取前查云端 cloud_updated_log，对 repair/full 类
@@ -2188,9 +2191,20 @@ class ResidentCollector:
             if not repull_dates:
                 logger.info(f"[{batch_id}] A4 有更新但无需重拉（{table} 无 repair/full）")
                 return 0
+            # F-3.3 熔断（2026-09-08，方案 §3.3）：窗口数超阈值 → 申报跳过不逐日直跑。
+            # 实证：stale last_sync（历轮死于写回前）积压 365 窗口，逐日直跑在
+            # invalidated 毒化下全败且耗时数小时；窗口应由 last_sync 推进收敛或运维 runbook 处置。
+            if len(repull_dates) > self._A4_MAX_WINDOWS:
+                logger.warning(
+                    f"[{batch_id}] A4 熔断：{table} 检出 {len(repull_dates)} 个 repair/full "
+                    f"窗口 > 阈值 {self._A4_MAX_WINDOWS}（stale last_sync 积压征兆），"
+                    f"申报跳过逐日重拉——待 last_sync 推进收敛或人工处置: "
+                    f"{repull_dates[:5]}...{repull_dates[-3:]}")
+                return -1  # 负数 = 熔断跳过（区别于 0=无更新）
             logger.info(f"[{batch_id}] A4 检测到 {table} 有 {len(repull_dates)} 个 "
                         f"repair/full 更新窗口，开始局部重拉: {repull_dates[:5]}")
             # 逐日局部重拉（全市场单日，DEDUP 幂等）
+            _a4_invalidated = False
             for trade_date in repull_dates:
                 try:
                     raw_df, _ = adapter.fetch_table(
@@ -2204,7 +2218,22 @@ class ResidentCollector:
                     logger.info(f"[{batch_id}] A4 重拉 {table}/{trade_date}: "
                                 f"{len(res.passed_df)} 行入库（幂等覆盖）")
                 except Exception as e:
+                    # F-5 修复（2026-09-08，方案 §3.2）：invalidated/FATAL 属连接级毒化，
+                    # 继续"不影响增量"只会让剩余窗口全败+毒化主增量——首个即中止 A4 段。
+                    if "invalidated" in str(e).lower() or "Fatal" in str(e):
+                        _a4_invalidated = True
+                        logger.error(
+                            f"[{batch_id}] A4 中止（F-5）：{table}/{trade_date} 写入 "
+                            f"invalidated/FATAL（连接毒化），剩余窗口中止——主增量前重建连接: {e}")
+                        break
                     logger.warning(f"[{batch_id}] A4 重拉 {table}/{trade_date} 失败（不影响增量）: {e}")
+            # F-5：毒化后重建写连接，防主增量继承 invalidated 连接
+            if _a4_invalidated:
+                try:
+                    self.writer.reconnect()
+                    logger.info(f"[{batch_id}] A4 毒化后写连接已重建")
+                except Exception as re_conn:
+                    logger.error(f"[{batch_id}] A4 毒化后重连失败: {re_conn}")
             return len(repull_dates)
         except Exception as e:
             logger.warning(f"[{batch_id}] A4 变更检测异常（降级跳过，不影响增量）: {e}")

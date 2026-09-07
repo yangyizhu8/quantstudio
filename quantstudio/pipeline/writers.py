@@ -437,6 +437,24 @@ class DuckDBWriter(BaseWriter):
             self._shared_conn = self._duckdb.connect(str(self.db_path))
         return self._shared_conn
 
+    def reconnect(self):
+        """F-5 修复（2026-09-08）：关闭并重建持久写连接（invalidated 毒化后调用）。
+
+        关闭旧连接（毒化连接 close 可能抛异常，吞掉）→ 置 None → 下次
+        shared_conn()/write 时按需重建。调用方须在无并发写时调用（A4 中止后的
+        主增量前是安全点）。
+        """
+        with self._conn_lock:
+            old_conn = self._shared_conn
+            self._shared_conn = None
+            if old_conn is not None:
+                try:
+                    old_conn.close()
+                except Exception as close_err:  # 毒化连接 close 常抛，忽略
+                    pass
+            self._ensure_shared_conn()  # 立即重建，失败早暴露
+        return self._shared_conn
+
     def shared_conn(self):
         """返回持久 read_write 连接（复用单例，线程安全）。
 
