@@ -1613,6 +1613,10 @@ _QS_VAL_PLATFORM_REV = {{'pe_ttm': 'pe_ratio', 'pe_static': 'pe_ratio_lyr',
                          'pb': 'pb_ratio', 'ps': 'ps_ratio', 'pcf': 'pcf_ratio',
                          'total_shares': 'total_share',
                          'turnover_rate': 'turnover_ratio'}}
+# 语义澄清（2026-09-07 B8）：本表是「平台列 ↔ 本地主名」双射。逆翻译语义 = 平台列保留 +
+# 主名补充（非重命名覆盖）——消费方（_qs_frame_to_contract / _qs_fund_select_fields）以
+# 别名保留方式构造返回 DataFrame，使本地双列并存契约（主名 + 别名）在转换端完整还原。
+# 表内容不可重排/改键（正向 _QS_VAL_PLATFORM_MAP 与其互逆，双侧消费方依赖）。
 
 
 # 2026-09-04 §17 get_history 末值提取（形态双兼容：平台宽表列=码 / 本地长表行=码，
@@ -1717,6 +1721,18 @@ def _qs_val_map_enabled():
         if _cols and 'pe_ratio' not in _cols and (
                 'pe_ttm' in _cols or 'pb' in _cols or 'ps' in _cols):
             _mode = 'platform'
+        # B8 种子校准（2026-09-07）：判型 platform 即平台列集已实测（§17 QS_VAL_MODE
+        # 含 total_shares；total_share 经正向映射 _QS_VAL_PLATFORM_MAP 可达）→ gap 种子
+        # 中 v8 时代旧实证（total_share/total_shares 平台缺列）与事实矛盾 → 原位永久
+        # 剔除。否则 gap 短路先于别名保留构造执行，请求直接返回 NaN 契约行（PTrade
+        # 「测试1」total_shares 场景零交易同族根因）。判型 local（探针失败/本地）→
+        # 种子语义不变（保守，纯增益）。
+        if _mode == 'platform':
+            try:
+                _QS_GF_GAP_SEEDS.discard(('valuation', 'total_share'))
+                _QS_GF_GAP_SEEDS.discard(('valuation', 'total_shares'))
+            except Exception:
+                pass
         log.info('QS_VAL_MODE %s cols=%s' % (_mode, ','.join(sorted(_cols))[:400]))
         if _g is not None:
             _g._qs_val_cols_mode = _mode
@@ -1789,6 +1805,29 @@ def _qs_fund_select_fields(df, fields, table=None):
     if not fields:
         return df
     field_list = [fields] if isinstance(fields, str) else list(fields)
+    # B8 别名兜底（2026-09-07，valuation 逆翻译别名修复双保险）：请求字段不在返回列集
+    # 但存在别名（经 _QS_VAL_PLATFORM_REV 双向派生）时，从别名列复制填充——保证策略请求
+    # 任意名（本地主名或别名）都能取到值，杜绝 QS_SHIM_FIELD_MISSING 误报/误登记 gap。
+    # 钉死三点（审计§二.3）：① table=='valuation' 门控（别名表仅从 valuation REV 派生，
+    # 防跨表误吸收 eps/growth 语义）；② 必须在 available/missing 计算之前复制（先复制后判
+    # 缺失，否则 B8 known_gaps 会把 (valuation, pe_ttm) 永久登记短路）；③ 无别名的字段
+    # 缺列仍照常 alarm（真缺列语义不被吞掉，下方 missing 循环保留）。
+    if table == 'valuation' and df is not None and hasattr(df, 'columns') and len(df):
+        try:
+            df = df.copy()
+            _alias_pairs = []
+            for _pk, _lk in _QS_VAL_PLATFORM_REV.items():
+                _alias_pairs.append((_pk, _lk))
+                _alias_pairs.append((_lk, _pk))
+            for _f in field_list:
+                if _f in df.columns:
+                    continue
+                for _src, _dst in _alias_pairs:
+                    if _dst == _f and _src in df.columns:
+                        df[_f] = df[_src]
+                        break
+        except Exception:
+            pass
     available = [f for f in field_list if f in df.columns]
     missing = [f for f in field_list if f not in df.columns]
     _gaps = _qs_gf_known_gaps()
@@ -1828,10 +1867,21 @@ def _qs_frame_to_contract(df, secs, fields, table):
             df = df.rename(columns=_QS_GF_FIELD_MAP_REV)
         except Exception:
             pass
-    # valuation 逆翻译（2026-09-04 §16）：平台 pe_ttm/circ_mv/turnover_rate → 本地名
+    # valuation 逆翻译（2026-09-04 §16 + 2026-09-07 B8 别名修复）：平台 pe_ttm/circ_mv/
+    # turnover_rate → 本地名，采用「别名保留」而非「rename 覆盖」：保留平台原始列 + 新增
+    # 本地主名列（主名已存在则不覆盖、平台列不存在则跳过；赋值前 copy 防平台返回帧原位修改）。
+    # 本地 provider 双列并存（duckdb_data_access query_valuation_* :1422/1463 pe_ttm AS pe_ratio +
+    # pe_ttm 裸列），策略可请求任意名——rename 覆盖会使 pe_ttm 类别名列在转换端消失，
+    # 触发 QS_SHIM_FIELD_MISSING → 空池（PTrade 平台「测试1」零交易根因）。
     if table == 'valuation':
         try:
-            df = df.rename(columns=_QS_VAL_PLATFORM_REV)
+            df = df.copy()
+            for _plat_col, _loc_col in _QS_VAL_PLATFORM_REV.items():
+                if _plat_col not in df.columns:
+                    continue
+                if _loc_col in df.columns:
+                    continue
+                df[_loc_col] = df[_plat_col]
         except Exception:
             pass
     # P-A2 返回逆翻译（v8.3 整合进统一 wrapper）：平台 basic_eps/diluted_eps 列 →
@@ -2416,7 +2466,11 @@ for _qs_gap_t in ('balance', 'income', 'valuation'):
 
 
 def _qs_gf_known_gaps():
-    """已知缺列集 = 探针实证种子 ∪ 运行时登记（g._qs_gf_field_gaps）；无 g/未登记 → 种子集。"""
+    """已知缺列集 = 探针实证种子 ∪ 运行时登记（g._qs_gf_field_gaps）；无 g/未登记 → 种子集。
+
+    种子过时项校准（2026-09-07 B8）在 _qs_val_map_enabled 判型 platform 处原位执行
+    （probe 判型成功后 discard total_share/total_shares 两项）——本函数不触发判型 probe
+    （每次 known_gaps 调用都 probe 会破坏 probe 计数契约，test_p10_wrapper_* 基线）。"""
     _gaps = set(_QS_GF_GAP_SEEDS)
     _g = _qs_g_obj()
     if _g is not None:

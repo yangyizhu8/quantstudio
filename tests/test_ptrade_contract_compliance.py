@@ -1906,6 +1906,168 @@ def test_p10_registry_homology_matrix():
         assert callable(globals()[spec.homology_test]), \
             f"{api} 同构测试 {spec.homology_test} 缺失"
 
+# ===========================================================================
+# B8 valuation 逆翻译别名修复（2026-09-07）：验收用例分组 a-f（方案 v3，审计放行）
+# 根因：_QS_VAL_PLATFORM_REV 覆盖式 rename 使平台 pe_ttm 列改名 pe_ratio 后消失，
+# 策略请求别名 pe_ttm → QS_SHIM_FIELD_MISSING → L6_cross=0 → PTrade「测试1」零交易。
+# 修复：逆翻译「别名保留」（平台列保留 + 本地主名补充）+ select_fields 双向别名兜底。
+# ===========================================================================
+
+_VAL_PROBE_COLS = ["a_floats", "dividend_ratio", "float_value", "naps", "pb",
+                   "pcf", "pe_dynamic", "pe_static", "pe_ttm", "ps", "ps_ttm",
+                   "roe", "total_shares", "total_value", "trading_day",
+                   "turnover_rate"]
+
+
+def _val_platform_frame(cols=None):
+    """构造平台 valuation 返回（QS_VAL_MODE 实测列集形态，index=code）。"""
+    import pandas as pd
+    cols = cols if cols is not None else _VAL_PROBE_COLS
+    data = {c: [1.0] for c in cols}
+    return pd.DataFrame(data, index=["000001.SZ"])
+
+
+def _val_ns(platform_frame, history_stub=None):
+    """valuation 专用 ns：probe（判型）与业务 list 调用均返回同一平台帧。"""
+    ns = _fund_ns(platform_frame)
+    if history_stub is not None:
+        ns["get_history"] = history_stub
+    return ns
+
+
+def test_b8_valuation_rev_parametrized_alias_preserved():
+    """B8-(a)：REV 七键程序化参数化——平台名请求 → 双列并存且值一致。
+
+    参数化遍历 _QS_VAL_PLATFORM_REV.items()（禁手写硬编码用例）：未来 REV 扩键
+    本测试自动覆盖，杜绝别名覆盖类复发。
+    断言分两层：① 中间层 _qs_frame_to_contract（别名保留构造的核心语义：平台列
+    保留 + 本地主名补充，双列并存）；② 最终 get_fundamentals 输出按请求筛选
+    （本地 available 契约，ptrade_api.py:763-768 同构）——平台名请求零告警且有值。"""
+    import pandas as pd
+    ns = _val_ns(_val_platform_frame())
+    rev = dict(ns["_QS_VAL_PLATFORM_REV"])
+    assert rev, "REV 表为空（模板烘焙异常）"
+    for plat_name, local_name in rev.items():
+        # frame 用完整平台列集（QS_VAL_MODE 实测形态）：判型探针与平台返回形态一致，
+        # 隔离"仅单列 frame 判型失真"变量（真实平台 probe 恒为全列集）。
+        frame = _val_platform_frame()
+        # ① 中间层：别名保留构造（平台列 + 主名双列并存、同值）。
+        # fields 同时含平台名与主名——中间层末尾经 _qs_fund_select_fields 按请求
+        # 筛选（本地 available 契约），双列并存语义须以双列请求验证。
+        mid = ns["_qs_frame_to_contract"](frame.copy(), ["000001.SZ"],
+                                          [plat_name, local_name], "valuation")
+        assert plat_name in mid.columns, f"中间层平台列 {plat_name} 应保留"
+        assert local_name in mid.columns, f"中间层本地主名 {local_name} 应补充"
+        assert float(mid[plat_name].iloc[0]) == float(mid[local_name].iloc[0]), \
+            f"{plat_name}/{local_name} 双列应同值"
+        # ② 最终输出：主名+别名同时请求 → 双列命中且同值（策略混用名场景严格形式）
+        ns2 = _val_ns(_val_platform_frame())
+        out = ns2["get_fundamentals"](["000001.SZ"], "valuation",
+                                     fields=[plat_name, local_name])
+        assert plat_name in out.columns and local_name in out.columns, \
+            f"双列 {plat_name}/{local_name} 应同时命中"
+        assert float(out[plat_name].iloc[0]) == float(out[local_name].iloc[0]) == 1.0
+        joined = " ".join(str(w[0]) for w in ns2["_warnings"])
+        assert "QS_SHIM_FIELD_MISSING" not in joined, \
+            f"平台名 {plat_name} + 主名 {local_name} 请求不应告警"
+
+
+def test_b8_valuation_local_primary_name_regression():
+    """B8-(b)：主名请求回归（等价 test_52 语义）——pe_ratio 请求经正向映射
+    pe_ratio→pe_ttm，平台返回 pe_ttm，逆译后 pe_ratio 命中（主名路径行为不变）。"""
+    import pandas as pd
+    frame = _val_platform_frame(["float_value", "pe_ttm", "turnover_rate"])
+    ns = _val_ns(frame)
+    out = ns["get_fundamentals"](["000001.SZ"], "valuation",
+                                 fields=["pe_ratio", "float_value", "turnover_ratio"])
+    for col in ("pe_ratio", "float_value", "turnover_ratio"):
+        assert col in out.columns, f"主名 {col} 应命中"
+        assert float(out[col].iloc[0]) == 1.0
+    joined = " ".join(str(w[0]) for w in ns["_warnings"])
+    assert "QS_SHIM_FIELD_MISSING" not in joined
+
+
+def test_b8_published_strategy_mixed_fields_no_alarm():
+    """B8-(c)：已发布策略实际混用组合 → 零 SHIM 告警、全列有值。
+
+    组合即 低流动性溢价换手尾部极值多头.py:207 的实际请求。"""
+    import numpy as np
+    import pandas as pd
+    frame = _val_platform_frame(["float_value", "pe_ttm", "pb", "turnover_rate"])
+    ns = _val_ns(frame)
+    out = ns["get_fundamentals"](["000001.SZ"], "valuation",
+                                 fields=["turnover_ratio", "pe_ttm", "pb_ratio", "float_value"])
+    for col in ("turnover_ratio", "pe_ttm", "pb_ratio", "float_value"):
+        assert col in out.columns, f"请求列 {col} 应命中"
+        assert np.isfinite(float(out[col].iloc[0])), f"{col} 应有值（非 NaN）"
+    joined = " ".join(str(w[0]) for w in ns["_warnings"])
+    assert "QS_SHIM_FIELD_MISSING" not in joined
+
+
+def test_b8_true_missing_field_still_alarms():
+    """B8-(d)：无别名字段真缺列仍照常 alarm（p10 语义不被别名兜底吞掉）。"""
+    import pandas as pd
+    ns = _val_ns(_val_platform_frame(["float_value"]))
+    out = ns["get_fundamentals"](["000001.SZ"], "valuation",
+                                 fields=["float_value", "no_such_field"])
+    assert "no_such_field" in out.columns
+    assert out["no_such_field"].isna().all()
+    joined = " ".join(str(w[0]) for w in ns["_warnings"])
+    assert "QS_SHIM_FIELD_MISSING" in joined and "no_such_field" in joined
+
+
+def test_b8_turnover_synth_fallback_still_works():
+    """B8-(e)：平台返回无 turnover_rate 列 → §18 合成兜底（QS_VAL_TRU_SYNTH）仍生效。"""
+    import pandas as pd
+    # 完整平台列集（QS_VAL_MODE 实测形态）仅去掉 turnover_rate——保留 pe_ttm/pb/ps
+    # 判型列使 _qs_val_map_enabled 探针判 platform（合成块前置条件），隔离"仅换手列缺失"变量。
+    frame = _val_platform_frame([c for c in _VAL_PROBE_COLS if c != "turnover_rate"])
+    ns = _val_ns(frame)
+
+    def _hist_stub(count, frequency="1d", field=None, security_list=None,
+                   fq=None, include=False, *a, **k):
+        code = security_list[0] if isinstance(security_list, (list, tuple)) else security_list
+        return pd.DataFrame({field[0]: [1e6]}, index=[code])
+
+    ns["get_history"] = _hist_stub
+    out = ns["get_fundamentals"](["000001.SZ"], "valuation",
+                                 fields=["turnover_ratio", "float_value"])
+    assert "turnover_ratio" in out.columns
+    # 合成兜底生效断言（核心）：turnover_ratio 由 volume×close/float_value 合成出值，
+    # 平台缺 turnover_rate 列不阻断换手率因子（§18 语义保持——改动 1/2 不吞合成块）。
+    # 注：select_fields 阶段 turnover_ratio 缺列告警为既有语义（别名兜底无从复制
+    # 平台不存在的列），合成块在其后补列——本用例钉死合成结果可用性。
+    assert out["turnover_ratio"].notna().all(), "合成兜底应产出非 NaN turnover_ratio"
+
+
+def test_b8_local_alias_surface_full_coverage():
+    """B8-(f)：本地 valuation 别名面全覆盖（provider SQL 别名清单源）。
+
+    清单源 = duckdb_data_access.query_valuation_daily_pit / query_valuation_for_preload
+    SELECT 别名（:1422-1424 与 :1458-1465，双列并存契约）：float_value/total_value/
+    pe_ratio/pe_ttm/pb_ratio/turnover_ratio/total_share/a_floats。逐一在 wrapper
+    往返断言命中——防 provider 新增本地别名而转换端未跟进的复发路径。"""
+    import numpy as np
+    local_alias_surface = [
+        "float_value",     # provider :1422 s.circ_mv AS float_value（平台同名）
+        "total_value",     # provider :1422 s.total_mv AS total_value（平台同名）
+        "pe_ratio",        # provider :1462 s.pe_ttm AS pe_ratio（平台 pe_ttm）
+        "pe_ttm",          # provider :1463 s.pe_ttm（平台同名，别名）
+        "pb_ratio",        # provider :1464 s.pb AS pb_ratio（平台 pb）
+        "turnover_ratio",  # provider :1465 s.turnover_rate AS turnover_ratio（平台 turnover_rate）
+        "total_share",     # 本地契约名（平台 total_shares）
+        "a_floats",        # provider :1424 COALESCE 派生（平台同名）
+    ]
+    ns = _val_ns(_val_platform_frame())
+    for local_name in local_alias_surface:
+        out = ns["get_fundamentals"](["000001.SZ"], "valuation",
+                                     fields=[local_name])
+        assert local_name in out.columns, \
+            f"本地契约名 {local_name} 应在转换端命中（别名保留+兜底）"
+        joined = " ".join(str(w[0]) for w in ns["_warnings"])
+        assert "QS_SHIM_FIELD_MISSING" not in joined, \
+            f"本地契约名 {local_name} 请求不应告警"
+
 
 def test_p10_registry_gate_blocks_unregistered():
     """门禁（防线①）：未登记注入 def → PORTABILITY-UNREGISTERED-SHIM BLOCK。"""
