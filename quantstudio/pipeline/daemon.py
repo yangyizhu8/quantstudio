@@ -954,12 +954,28 @@ class ResidentCollector:
         # QFQ 快照优化：流式路径入口预查一次全局快照（循环内复用，避免每分片
         # 重复查 SQLite——实测每分片 8s × 200 分片 = 28min 纯开销）
         _qfq_snap = self._qfq_snapshot_kwargs(table, batch_id)
+        # CASE-003b（2026-09-08）：流式路径快照新鲜度——预查快照在拉取前构建，
+        # 全新机冷启动（首分片还原触发 aux 注入）发生在拉取中，预查快照陈旧为空
+        # → 对齐器按 2026-08-14 防线正确 fail-fast。修复：首分片处理时若快照为空
+        # 且为价格表，重建一次（此时冷启动注入已落库）；仍空则维持 fail-fast 语义。
+        _snap_refreshed = False
         try:
             meta, shard_iter = adapter.fetch_table_streaming(
                 table, start, end, freq=freq, codes=codes)
             for df_shard in shard_iter:
                 if len(df_shard) == 0:
                     continue
+                if (not _snap_refreshed and table in self._QFQ_PRICE_TABLES
+                        and not _qfq_snap.get("adj_latest_map")):
+                    _snap_refreshed = True  # 只重建一次，防循环内重复查
+                    _refreshed = self._qfq_snapshot_kwargs(
+                        table, batch_id + ":snap-refresh")
+                    if _refreshed.get("adj_latest_map"):
+                        _qfq_snap = _refreshed
+                        logger.info(
+                            f"[{batch_id}] [QFQ] 流式快照新鲜度重建：{table} 预查为空"
+                            f"（冷启动已注入），重建获 "
+                            f"{len(_refreshed['adj_latest_map'])} code")
                 rows_raw += len(df_shard)
                 # adj_factor 提取（与普通路径 636-652 一致）
                 adj_factor_df = None
