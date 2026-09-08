@@ -749,9 +749,24 @@
     "unsupported_on_ptrade": true,
     "replacement_for": "No native PTrade equivalent; reads a local research CSV under get_research_path.",
     "return_shape": "dict keyed by date/security with signal values"
+  },
+  "get_index_day_bar": {
+    "contexts": ["quantstudio_local_backtest"],
+    "max_positional": 3,
+    "allowed_keywords": ["security", "count", "fields"],
+    "examples": ["get_index_day_bar('000001.SS', count=2, fields=['pctChg'])"],
+    "return_shape": "pandas.DataFrame of completed index daily bars, time-ascending, index=trade_date",
+    "unsupported_on_ptrade": true,
+    "notes": [
+      "QuantStudio-local injected API (docs/get-index-day-bar-design.md 2026-09-08; six-step pipeline approved). Registered in local_only_symbols: conversion to PTrade is fail-closed BLOCKED until the platform probe (platform get_history index-code support + daily include=True semantics) passes; converter rewrite mapping (rewrite to platform get_history with injected include=True at the converter layer only) is registered as a follow-up item.",
+      "Exclusive index_daily routing: never enters stock/etf fallback, never substitutes via INDEX_ETF_MAP ETF proxy (bare 000001 is both SSE Composite and Ping An Bank - dedicated pin-table query).",
+      "Profile-aware completed-bar upper bound: daily-bar-v1 includes current backtest day T (close mode, bar completed); minute-bar-v1 never includes T; daily-open-close-proxy-v1 includes T only at the completed-close (15:00) clock, undeterminable clock fails closed to exclude T.",
+      "No fq parameter (index raw = contract); fields whitelist open/high/low/close/pctChg/volume/amount/trade_date; count bounded [1,250] with explicit ValueError; fail-closed empty DataFrame; emits QS_INDEX_BAR diagnostic line."
+    ]
   }
   },
   "local_only_symbols": [
+    "get_index_day_bar",
     "get_history_batch",
     "get_fundamentals_batch",
     "get_security_info",

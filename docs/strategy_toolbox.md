@@ -120,6 +120,7 @@ R5 证据 PASS 后、R5.5 之前的可选研究阶段（`scripts/run_optimizatio
 | `get_current_data()` | 当日全市场行情 dict（`code→BarData`）。 |
 | `get_snapshot(security,frequency='1d')` | 实时快照（回测返回当日 bar）。 |
 | `get_Ashares(date=None)` | **PTrade Profile 1.7.0 已登记**。全 A 股列表；传日期时双端源码统一使用 `YYYYmmdd` 字符串。**本地扩展参数 exclude_bse（2026-09-03 平台吸收）**：仅本地 QuantStudio 有（剔北交所）；转 PTrade 调用点剥离 kwarg，过滤按源语义烘焙 `_QS_EXCLUDE_BSE`（源常量/模块常量解析；动态表达式回退 CLI + WARN 不掩差异）；产物侧 shim 过滤 920/北交所 legacy，探针实证与本地 `is_bse_market` 宇宙一致。校验器 `PORTABILITY-ASHARES-EXCLUDE_BSE` BLOCK 防复发。 |
+| `get_index_day_bar(security,count=1,fields=None)` | **QuantStudio 本地注入 API（2026-09-08，docs/get-index-day-bar-design.md 六步流水线）**：返回已完成指数日线（DataFrame 时间升序、index=trade_date）。**独占 index_daily 路由**（裸码 000001 与平安银行 stock_daily 同码并存，绝不进 stock→etf fallback、绝不触发 INDEX_ETF_MAP ETF 代理替换）；profile-aware 已完成上界：daily-bar-v1 含当前回测日 T（close 模式 bar 已完成）/ minute-bar-v1 永不含 T / daily-open-close-proxy-v1 仅 15:00 完成日线时钟含 T、不可判 fail-closed 不含 T；count ∈ [1,250] 越界 ValueError（禁静默截断）；不暴露 fq（指数无复权，raw 即契约）；fields 白名单 open/high/low/close/pctChg/volume/amount/trade_date；空数据 fail-closed 空 DataFrame（策略侧 fail-soft + 审计行）；每次调用输出 `QS_INDEX_BAR` 诊断日志。校验器：`before_trading_start` 调用 → `PREOPEN-INDEX-BAR` BLOCK；minute-bar-v1 设计内调用 → `MINUTE-PROFILE-INDEX-BAR` BLOCK。已登记 local_only_symbols：PTrade 转换 fail-closed BLOCKED（converter 重写映射=平台 get_history include=True 注入 + 平台探针为 D4 后续项，探针未过前拒绝转换）。适用于同日指数状态读数的本地事件策略（尾盘确认事件驱动型等）。 |
 
 ### 3.3 财务 / 估值（ORM + 多表）
 

@@ -113,7 +113,8 @@
       "get_strategy_events"
     ],
     "local_execution": [
-      "order_at_price"
+      "order_at_price",
+      "get_index_day_bar"
     ]
   },
   "ptrade_forbidden_apis": [
@@ -187,7 +188,8 @@
       "get_strategy_events"
     ],
     "local_backtest_execution": [
-      "order_at_price"
+      "order_at_price",
+      "get_index_day_bar"
     ]
   },
   "ptrade_signature_profile": "references/ptrade-api-signatures.json",

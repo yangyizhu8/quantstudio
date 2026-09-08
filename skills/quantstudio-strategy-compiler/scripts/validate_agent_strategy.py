@@ -1110,6 +1110,28 @@ def validate_strategy(
             "before_trading_start must not read same-day data[code].open/high/low/close/volume",
             before_open.lineno))
 
+    # ---- get_index_day_bar 守卫（docs/get-index-day-bar-design.md，2026-09-08）----
+    # PREOPEN-INDEX-BAR：盘前读当日已完成指数日线 = 与 NO-LOOKAHEAD-PREOPEN 同型泄漏。
+    # MINUTE-PROFILE-INDEX-BAR：minute profile 永不含 T 的契约由 API 运行时保证，
+    # 设计层直接 BLOCK 作双保险（终审钉死）。
+    profile_id = str(design.get("engine_profile", {}).get("profile_id", "daily-bar-v1"))
+    for call, name, owner in calls:
+        if name != "get_index_day_bar":
+            continue
+        if owner == "before_trading_start":
+            issues.append(_issue(
+                "PREOPEN-INDEX-BAR", "BLOCK",
+                "before_trading_start must not read same-day completed index bars "
+                "(get_index_day_bar); move the read into handle_data/run_daily",
+                call.lineno))
+        elif profile_id == "minute-bar-v1":
+            issues.append(_issue(
+                "MINUTE-PROFILE-INDEX-BAR", "BLOCK",
+                "get_index_day_bar is blocked under minute-bar-v1 designs "
+                "(same-day EOD row is incomplete intraday; API excludes T and the "
+                "design layer blocks the call outright)",
+                call.lineno))
+
     cutoff_text = str(design.get("timing", {}).get("signal_data_cutoff", "")).lower()
     for call, name, owner in calls:
         if name in {"get_history", "attribute_history"}:

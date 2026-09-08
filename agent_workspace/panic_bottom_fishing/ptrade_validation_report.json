@@ -1,0 +1,11 @@
+{
+  "report_version": "2.1",
+  "strategy_id": "panic_bottom_fishing",
+  "source": "agent_workspace\\panic_bottom_fishing\\strategy.py",
+  "target_profile": "ptrade",
+  "status": "NOT_APPLICABLE",
+  "block_count": 0,
+  "warning_count": 0,
+  "reason": "design targets exclude ptrade; no PTrade artifact was generated",
+  "issues": []
+}

@@ -142,3 +142,26 @@ else:
 - `test_financial_dedup_same_ann_date_keeps_one`：同完整主键仅留 1 条（无 flag 保留最后一条 5.3e8）。
 - `test_financial_dedup_update_flag_priority`：`flag=1` 优先（5.25e8）；不同 ann_date 仍保留。
 - `test_financial_pit_asof_sees_correct_version`：as-of 两次公告之间见初版 5.2e8，之后见重述版 3.69e9。
+
+
+## wsgm10 产物-设计漂移（2026-09-08 登记 · 框架修复验收中独立发现项）
+
+- **状态**：REGISTERED → 处置待推进（与 get_index_day_bar 框架修复解耦，另行立项）
+- **位置**：agent_workspace/wsgm10/agent_strategy_design.json ↔ quantstudio/backtest/strategies/weekly_smallcap_growth_momentum_10_quantstudio.py
+- **症状**：validate_agent_strategy（design=wsgm10）BLOCK 4 规则：
+  - DESIGN-CODE-API / HARDFILTER-LIMIT / PORTFOLIO-CASH-BUFFER-CONTRADICTION / PORTFOLIO-EXPOSURE-CONTRADICTION
+  （设计 JSON 与策略文件契约脱节，含 PORTFOLIO 现金/敞口自相矛盾类规则）
+- **HEAD 一致证据**：HEAD 校验器对照逐字一致（4 规则同），归因既有；5 canonical 策略源码 get_index_day_bar 调用数=0 → 与本次框架修复零相关
+- **解除条件（二选一）**：
+  - 选项 A：以已 PASS 的 wsgm10v2（周频小市值成长动量（三层止损）.py）替代并退役 weekly_smallcap_growth_momentum_10_quantstudio.py 旧文件；
+  - 选项 B：对该文件重转/重生成修复 design 漂移（对齐 design 与源码契约），走自身验收（六步流水线或 legacy 管线对应流程）。
+- **推进归属**：本项与 get_index_day_bar 修复解耦，单独排期推进；推进完成前不得关闭本条。
+
+## D4 平台差异登记：get_index_day_bar 平台等价物探针（2026-09-08 登记）
+
+- **状态**：REGISTERED（本批不实施转换重写，探针门禁未过前含本 API 的源一律拒绝转换）
+- **D4 编号**：D4 登记序列新增条目（get_index_day_bar 平台等价物）
+- **探针项**：① 平台 get_history 对指数代码（000001.SS）的支持；② 平台日线 include=True 是否含当日
+- **重写映射（登记为后续项）**：converter 将 get_index_day_bar 重写为平台 get_history('000001.SS', count=N, frequency='1d', fields=[...], include=True, fq='pre')——重写仅发生在转换器层，策略源码永不出现 include=True，NO-LOOKAHEAD-INCLUDE 硬闸不破
+- **解除条件**：平台探针实证通过后，注册重写映射并解锁转换；探针未过前保持 local_only_symbols 封禁
+

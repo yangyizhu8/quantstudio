@@ -1829,6 +1829,113 @@ class PtradeAPI:
         )
         return [self._to_ptrade_code(code) for code in bare_codes]
 
+    def get_index_day_bar(self, security, count=1, fields=None):
+        """返回已完成指数日线（QuantStudio 本地专用 API，docs/get-index-day-bar-design.md 2026-09-08）。
+
+        本地扩展（平台无对应 API）：已登记 local_only_symbols，PTrade 目标
+        TARGET-LOCAL-EXTENSION-BAN fail-closed BLOCK；转换重写映射与平台探针
+        门禁见方案 §3.3（探针未过前含本 API 的源拒绝转换）。
+
+        契约（终审钉死）：
+        - 独占 index_daily 路由（绝不进 stock→etf fallback、绝不触发
+          INDEX_ETF_MAP ETF 代理替换）；security 经 bare_code 归一查询。
+        - profile-aware"已完成"上界：daily-bar-v1 含当前回测日 T；
+          daily-open-close-proxy-v1 以回调上下文判定时钟（15:00 完成日线快照含 T、
+          09:31 不含、无法可靠判定 fail-closed 不含 T 保守侧）；minute-bar-v1
+          永不含 T（上界=上一完整交易日）。
+        - 不暴露 fq（指数无复权，raw 即契约）；fields 枚举
+          open/high/low/close/pctChg/volume/amount/trade_date，None=全列。
+        - count 越界（<1 或 >250）显性 ValueError（禁止静默截断）。
+        - fail-closed：无连接/无数据 → 空 DataFrame（策略侧 fail-soft + 审计行）。
+        - 行序时间升序、index=trade_date；每次调用输出 QS_INDEX_BAR 诊断日志。
+        """
+        _INDEX_BAR_FIELDS = ("open", "high", "low", "close", "pctChg",
+                             "volume", "amount", "trade_date")
+        n = int(count)
+        if n < 1 or n > 250:
+            raise ValueError(
+                f"get_index_day_bar count must be in [1, 250], got {count!r}")
+        if fields is not None:
+            req = [fields] if isinstance(fields, str) else list(fields)
+            bad = [f for f in req if f not in _INDEX_BAR_FIELDS]
+            if bad:
+                raise ValueError(
+                    f"get_index_day_bar unsupported fields {bad!r}; "
+                    f"allowed: {list(_INDEX_BAR_FIELDS)!r}")
+        if self._market is None or self._engine is None:
+            return pd.DataFrame()
+        profile = getattr(self._engine, "engine_profile", "daily-bar-v1")
+        # ---- profile-aware "已完成"上界（end-of-day ms）----
+        current_date = self._current_date
+        if not current_date:
+            return pd.DataFrame()
+        day_end_ms = int((pd.Timestamp(str(current_date), tz="Asia/Shanghai")
+                          + pd.Timedelta(hours=23, minutes=59, seconds=59))
+                         .value // 10**6)
+        prev_day = None
+        try:
+            prev_day = self.get_trading_day(-1)
+        except Exception:
+            prev_day = None
+        # fail-closed 守卫：上一交易日不可得、或并非严格早于当前日（如 calendar 缺失时
+        # get_trading_day 回退 current_date 的兼容行为）→ excl_T 语义无法保证 → 空。
+        prev_day_valid = bool(prev_day) and str(prev_day)[:10] < str(current_date)[:10]
+        day_prev_end_ms = (
+            int((pd.Timestamp(str(prev_day), tz="Asia/Shanghai")
+                 + pd.Timedelta(hours=23, minutes=59, seconds=59)).value // 10**6)
+            if prev_day_valid else None)
+        if profile == "daily-bar-v1":
+            before_ms = day_end_ms
+            mode = "daily_incl_T"
+        elif profile == "minute-bar-v1":
+            if not prev_day_valid:
+                return pd.DataFrame()
+            before_ms = day_prev_end_ms
+            mode = "minute_excl_T"
+        elif profile == "daily-open-close-proxy-v1":
+            # 以引擎既有回调上下文判定当前时钟（ptrade_api.py:1159 同源判定先例）：
+            # _proxy_intraday_bars 的最后一条快照即当前已推进到的合成时钟。
+            include_t = False
+            try:
+                bars = getattr(self._engine, "_proxy_intraday_bars", []) or []
+                if bars:
+                    last_ts = int(bars[-1]["time"].iloc[0])
+                    last_hhmm = pd.Timestamp(last_ts, unit="ms", tz="UTC")\
+                        .tz_convert("Asia/Shanghai").strftime("%H:%M")
+                    include_t = (last_hhmm >= "15:00")
+            except Exception:
+                include_t = False
+            if not include_t:
+                if not prev_day_valid:
+                    return pd.DataFrame()
+                before_ms = day_prev_end_ms
+                mode = "proxy_excl_T_conservative"
+            else:
+                before_ms = day_end_ms
+                mode = "proxy_incl_T"
+        else:
+            # 未知 profile → 保守侧不含 T
+            if not prev_day_valid:
+                return pd.DataFrame()
+            before_ms = day_prev_end_ms
+            mode = "unknown_profile_excl_T"
+        bare = bare_code(security)
+        df = self._market.get_index_day_bars(bare, n, before_ms)
+        if df is None or df.empty:
+            logger.info("QS_INDEX_BAR code=%s date=%s rows=0 mode=%s",
+                        bare, current_date, mode)
+            return pd.DataFrame()
+        df = df.reset_index(drop=True)
+        df = df.set_index("trade_date")
+        if fields is not None:
+            keep = [f for f in (req if isinstance(req, list) else [req])
+                    if f in df.columns]
+            df = df[keep]
+        logger.info("QS_INDEX_BAR code=%s date=%s rows=%d mode=%s",
+                    bare, str(df.index[-1]) if len(df) else current_date,
+                    len(df), mode)
+        return df
+
     def get_etf_info(self, etf_code):
         """获取 ETF 信息（对应 Ptrade get_etf_info）
         返回 {code: {etf_redemption_code, publish, report_unit, ...}}。
@@ -2604,6 +2711,9 @@ _QSOrderWiringState.value_orig = _api.order_value
 order_target_value = _qs_wire_order_target_value
 order = _qs_wire_order
 order_value = _qs_wire_order_value
+# 2026-09-08 本地注入 API（已完成指数日线，docs/get-index-day-bar-design.md）：
+# 独占 index_daily 路由、profile-aware 已完成上界、count ValueError、QS_INDEX_BAR 日志。
+get_index_day_bar = _api.get_index_day_bar
 get_history = _api.get_history
 # A2 统一链 ① 层：get_history 最近收盘自动记录（PIT 纪律：cache 带日期戳每日重置）。
 # 代理绑定使所有策略调用路径（ptrade_import 注入的模块级名）都经由此记录。

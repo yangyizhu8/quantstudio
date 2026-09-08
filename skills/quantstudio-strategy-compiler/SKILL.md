@@ -497,6 +497,7 @@ In user-PyQt mode, R6 must verify the validated candidate still exists with the 
   - 订单返回值只做真值判断，**禁止读取 `.status`/`.reason` 等本地 Order 字段**（该禁令仅限 skill 生成的 PTrade 可移植策略；本地专用策略不受限），事实以 `get_position()` 对账为准（受理但未成交场景两平台返回值真值不一致）；
   - **禁止 `set()`/`frozenset()` 与依赖哈希迭代顺序的决策逻辑**（跨进程结果不稳定，校验器 BLOCK）。
 - For customer-requested QuantStudio-only event strategies, external CSV/event data is ingested by the generic `strategy_events` adapter and queried with local extension `get_strategy_events`; set targets to `quantstudio` only and never claim PTrade portability.
+- **`get_index_day_bar`（QuantStudio 本地注入 API，2026-09-08，docs/get-index-day-bar-design.md）**：返回已完成指数日线（独占 index_daily 路由，绝不进入 stock→etf fallback、绝不触发 INDEX_ETF_MAP ETF 代理替换）。profile-aware 已完成上界：daily-bar-v1 含当前回测日 T（close 模式 bar 已完成）；minute-bar-v1 永不含 T；daily-open-close-proxy-v1 仅 15:00 完成日线时钟含 T、不可判 fail-closed 不含 T。count 界 [1,250] 越界 ValueError；不暴露 fq（指数无复权，raw 即契约）；fields 白名单 open/high/low/close/pctChg/volume/amount/trade_date；空数据 fail-closed 返回空 DataFrame（策略侧 fail-soft + 审计行）；每次调用输出 QS_INDEX_BAR 诊断日志。校验器：before_trading_start 内调用 → PREOPEN-INDEX-BAR BLOCK；minute-bar-v1 设计内调用 → MINUTE-PROFILE-INDEX-BAR BLOCK。已登记 local_only_symbols：PTrade 转换 fail-closed BLOCKED（converter 重写映射为平台 get_history include=True 注入 + 平台探针为后续项，探针未过前拒绝转换）。适用于需同日指数状态的本地事件策略（如尾盘确认事件驱动型）。
 - Use order rejection and documented price fields for backtest limit behavior; trading-only checks may be used only in a separately validated trading profile.
 
 # Runtime failure repair protocol

@@ -1,0 +1,66 @@
+{
+  "report_version": "2.1",
+  "strategy_id": "panic_bottom_fishing",
+  "status": "PASS",
+  "ptrade_profile_validation_status": "NOT_APPLICABLE",
+  "ptrade_runtime_validation_status": "NOT_APPLICABLE",
+  "deployment_status": "NOT_DEPLOYABLE",
+  "canonical_sha256": "6ddae987bf8b0b6db4d0bf1489dbdcf79fb75cbdc21abca2cac5fbb81c18212d",
+  "identical_source": null,
+  "validated_after_target_generation": true,
+  "quantstudio_output_status": "GENERATED",
+  "ptrade_output_status": "NOT_GENERATED",
+  "candidate_promotion": {
+    "mode": "agent_managed",
+    "candidate_sha256": null,
+    "candidate_removed": false,
+    "status": "NOT_APPLICABLE"
+  },
+  "targets": [
+    {
+      "platform": "quantstudio",
+      "path": "quantstudio\\backtest\\strategies\\恐慌抄底事件驱动逆向策略.py",
+      "sha256": "6ddae987bf8b0b6db4d0bf1489dbdcf79fb75cbdc21abca2cac5fbb81c18212d"
+    }
+  ],
+  "local_validation": {
+    "report_version": "2.1",
+    "strategy_id": "panic_bottom_fishing",
+    "source": "agent_workspace\\panic_bottom_fishing\\.dual_target_stage_rg1a2w3l\\panic_bottom_fishing_quantstudio.py",
+    "target_profile": "quantstudio",
+    "status": "PASS",
+    "profile_validation_status": "PASS",
+    "runtime_validation_status": "NOT_VERIFIED",
+    "deployment_status": "NOT_DEPLOYABLE",
+    "block_count": 0,
+    "warning_count": 1,
+    "issues": [
+      {
+        "rule_id": "HARDFILTER-LIMIT",
+        "severity": "WARN",
+        "message": "PTrade backtest has no public check_limit(); document that order rejection/price fields enforce limit behavior."
+      }
+    ]
+  },
+  "ptrade_validation": {
+    "report_version": "2.1",
+    "strategy_id": "panic_bottom_fishing",
+    "source": "agent_workspace\\panic_bottom_fishing\\strategy.py",
+    "target_profile": "ptrade",
+    "status": "NOT_APPLICABLE",
+    "block_count": 0,
+    "warning_count": 0,
+    "reason": "design targets exclude ptrade; no PTrade artifact was generated",
+    "issues": []
+  },
+  "dual_consistency": {
+    "report_version": "1.1",
+    "strategy_id": "panic_bottom_fishing",
+    "status": "NOT_APPLICABLE",
+    "comparison_phase": "NOT_APPLICABLE",
+    "staged_targets_exist_before_comparison": true,
+    "reason": "single-target QuantStudio publication",
+    "issues": []
+  },
+  "workflow_stage": "PUBLISHED"
+}

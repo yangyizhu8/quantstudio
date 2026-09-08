@@ -1,0 +1,47 @@
+{
+  "strategy_id": "panic_bottom_fishing",
+  "stage": "PUBLISHED",
+  "targets": [
+    "quantstudio"
+  ],
+  "universe_mode": "portable_public_api",
+  "validation_execution_mode": "agent_managed",
+  "candidate_status": "NOT_GENERATED",
+  "backtest_evidence_status": "NOT_APPLICABLE",
+  "robustness": {
+    "stage": "EXEMPTED",
+    "exempted": true,
+    "reason": "design.validation_contract.robustness_gates.enabled=false + R2.5 C3 verbatim 确认（2026-09-08 会话回复 确认/继续 对应 C1-C5 五项含 C3 豁免）；2026 窗口仅 1 次触发，WF/MC 无统计样本",
+    "confirmation_evidence_key": "confirmation_evidence.robustness_exemption"
+  },
+  "formal_publish_allowed": false,
+  "backtest_window_contract": {
+    "strategy_must_not_hardcode_backtest_dates": true,
+    "agent_must_not_start_unconfirmed_backtest": true,
+    "recommended_start_date": "2026-01-01",
+    "recommended_end_date_as_of_local_data": "2026-09-04",
+    "actual_window_selected_by": "customer_confirmed_agent_run",
+    "required_close_bars": 5,
+    "lookback_trading_days": 5,
+    "index_watermark_note": "副本库 data/staging/prehandover_20260905-223621/quantstudio.db：index_daily 000001 最新 2026-09-04；R5 前复核水位，若主库解锁且指数已补齐 9 月数据由客户决定是否顺延"
+  },
+  "agent_implementation_required": true,
+  "canonical_source": "strategy.py",
+  "strategy_name": "恐慌抄底事件驱动逆向策略",
+  "quantstudio_output": "quantstudio/backtest/strategies/恐慌抄底事件驱动逆向策略.py",
+  "ptrade_output": "NOT_GENERATED",
+  "backtest_status": "PASS",
+  "backtest_data_source": "duckdb_provider",
+  "backtest_db_path": "D:\\miniQMT策略实盘\\QuantStudio\\data\\staging\\prehandover_20260905-223621\\quantstudio.db",
+  "external_db_override_confirmed": true,
+  "external_db_override_evidence": "客户 2026-09-08 明确指示\"使用数据库副本跑回测，继续\"（R1 阶段，主库 data/quantstudio.db 被采集 daemon PID 46500 独占锁定）",
+  "publish_status": "PASS",
+  "local_validation_status": "PASS",
+  "ptrade_validation_status": "NOT_APPLICABLE",
+  "dual_consistency_status": "NOT_APPLICABLE",
+  "dual_consistency_phase": "NOT_APPLICABLE",
+  "quantstudio_output_status": "GENERATED",
+  "ptrade_output_status": "NOT_GENERATED",
+  "canonical_sha256": "6ddae987bf8b0b6db4d0bf1489dbdcf79fb75cbdc21abca2cac5fbb81c18212d",
+  "candidate_removed": false
+}

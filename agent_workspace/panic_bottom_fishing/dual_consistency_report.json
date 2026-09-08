@@ -1,0 +1,9 @@
+{
+  "report_version": "1.1",
+  "strategy_id": "panic_bottom_fishing",
+  "status": "NOT_APPLICABLE",
+  "comparison_phase": "NOT_APPLICABLE",
+  "staged_targets_exist_before_comparison": true,
+  "reason": "single-target QuantStudio publication",
+  "issues": []
+}

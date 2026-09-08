@@ -602,6 +602,40 @@ class DuckDBDataAccess:
             df['trade_date'] = pd.to_datetime(df['time'], unit='ms', utc=True).dt.tz_convert('Asia/Shanghai').dt.strftime('%Y-%m-%d')
         return df
 
+    def query_index_day_bars(self, code, count, before_ms) -> pd.DataFrame:
+        """get_index_day_bar 专用查询（docs/get-index-day-bar-design.md，2026-09-08）。
+
+        与 query_bars_by_count_multi_table 的本质区别（该函数不可复用的根因）：
+        - **显式钉表 index_daily**：裸码 000001 在 stock_daily（平安银行）与
+          index_daily（上证指数）同期并存，multi_table 的 stock→etf→index
+          先命中即断 fallback 链会静默命中平安银行——指数分支不可达。
+        - **绝不触发 INDEX_ETF_MAP ETF 代理替换**："指数日线 API 永不静默
+          换 ETF 数据"（终审钉死）。
+        - 不做 qfq 列替换（指数无 *_front 列、无复权，raw 即契约）。
+
+        返回：截至 before_ms 的最近 count 根已完成指数日线，时间升序、
+        含 trade_date 列（与 multi_table 后处理口径一致）；无数据返回空 DataFrame。
+        """
+        conn = self._get_conn()
+        if conn is None:
+            return pd.DataFrame()
+        try:
+            df = self._execute_with_timeout(
+                conn,
+                "SELECT code, time, open, high, low, close, volume, amount, pctChg "
+                "FROM index_daily WHERE code = ? AND time <= ? "
+                "ORDER BY time DESC LIMIT ?",
+                [str(code), int(before_ms), int(count)])
+        except Exception as e:
+            logger.warning("QS_INDEX_BAR_QUERY_FAIL code=%s err=%s", code, e)
+            return pd.DataFrame()
+        if df is None or df.empty:
+            return pd.DataFrame()
+        df = df.sort_values('time').reset_index(drop=True)
+        df['trade_date'] = pd.to_datetime(df['time'], unit='ms', utc=True)\
+            .dt.tz_convert('Asia/Shanghai').dt.strftime('%Y-%m-%d')
+        return df
+
     def _ensure_bars_in_cache(self, codes, table, cols) -> None:
         """PR7：确保 codes 的全历史数据在 _bars_history_cache 中（惰性批量加载）。
 

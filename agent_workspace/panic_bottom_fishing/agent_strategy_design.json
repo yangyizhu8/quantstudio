@@ -1,0 +1,329 @@
+{
+  "design_version": "2.3",
+  "strategy_id": "panic_bottom_fishing",
+  "strategy_name": "恐慌抄底事件驱动逆向策略",
+  "asset_class": "stock",
+  "targets": [
+    "quantstudio"
+  ],
+  "engine_profile": {
+    "profile_id": "daily-bar-v1",
+    "bar_frequency": "1d",
+    "match_price_mode": "close"
+  },
+  "market_data_contract": {
+    "signal_price_adjustment": "pre",
+    "execution_price_basis": "raw_trade_price"
+  },
+  "factor_definitions": {
+    "provenance_note": "本策略为事件驱动型，无连续横截面因子，采用事件信号 + 截面排序选股。",
+    "signal_source": {
+      "source": "customer_prompt_2026-09-08 + R0 确认",
+      "raw_formula": "恐慌信号源 = 上证指数（000001）日涨跌幅 pctChg，连续两个交易日 pctChg 均 < -1.5%（即两日跌幅均 > 1.5%）→ 第二个信号日 T 触发",
+      "price_basis": "指数日线 close（指数无复权问题；index_daily 表 pctChg 字段直接使用）",
+      "update_time": "T 日收盘后确认；信号用 T-1、T 两日跌幅"
+    },
+    "selection": {
+      "source": "customer_prompt_2026-09-08 + R0 S2 确认",
+      "raw_formula": "中证500（000905）成分股 → 按流通市值 float_value（get_fundamentals valuation，T-1 PIT）降序取前 50 只 → 等权买入",
+      "price_basis": "流通市值走 get_fundamentals(table='valuation') 的 float_value（源列 circ_mv，PIT 每日重算），禁止 close×股本手算（skill 规则 25）",
+      "update_time": "信号日 T 的 T-1 快照"
+    }
+  },
+  "design_choice_standardization": {
+    "signal_threshold": "上证指数连续两日 pctChg < -1.5%（跌幅 > 1.5%）；用 pctChg 字段（R1 实测可用）",
+    "market_cap_metric": "流通市值 float_value（R0 S2 客户确认，get_fundamentals valuation）",
+    "top_n": "50 只（市值降序前 50）",
+    "weighting": "等权（总资产/50，runtime_total_value；实际可买 <50 时按实际数等权）",
+    "lock_days": "20 个交易日（T 日含起第 20 个交易日收盘全部清仓，R0 S5 客户确认）",
+    "no_stop_loss": "锁仓期内不做任何止损（客户硬约束）",
+    "empty_period": "无信号期间全程空仓（纯现金）",
+    "liquidity_threshold": "T-1 单日成交额 amount ≥ 3000 万元（R0 S3 建议默认，未收到客户修改即采纳）",
+    "limit_missing_rule": "涨停无法买入 → 跳过该标的、资金留现金；锁仓到期日跌停无法卖出 → 顺延至下一可卖交易日（R0 S9 建议默认）",
+    "cost_contract": "set_commission(commission_ratio=0.0003) 双边万3（最低5元）+ 引擎默认印花税（卖出单向，日期自动切换）+ 过户费万0.1 + set_slippage(slippage=0.001) 比例滑点",
+    "confirmation": "customer R0 reply 2026-09-08: 4 项裁决确认（close 近似/流通市值/锁仓口径/agent 托管）"
+  },
+  "strategy_semantics": {
+    "universe": "中证500（000905）成分股 PIT 动态池（get_index_stocks('000905') 注入当前回测日 as-of 快照，严格 PIT 无未来函数）。在此基础上：剔除 ST（isST）、停牌（suspendFlag）、流动性不足（T-1 成交额 < 3000 万）、科创板（688/689）、北交所（920/43/83/87）；保留流通市值最大的 50 只。",
+    "entry_rules": [
+      "恐慌信号：上证指数（000001）连续两个交易日 pctChg 均 < -1.5%（两日跌幅均 > 1.5%）",
+      "第二个信号日 T 为入场日：R0 确认采用 close 近似（14:55 尾盘 ≈ T 日收盘价成交）",
+      "入场选股：T-1 中证500 成分 PIT → 流通市值 float_value 降序前 50（剔除后）等权满仓买入",
+      "涨停无法成交（T 日 raw bar close >= high_limit）→ 跳过该标的、资金留现金，不递补",
+      "入场日为 T 日收盘（close 模式），T+1 引擎强制"
+    ],
+    "exit_rules": [
+      "锁仓 20 个交易日：T 日（含）起第 20 个交易日收盘全部清仓（R0 S5 确认）",
+      "锁仓期内不进行任何止损操作（客户硬约束，不因浮亏提前退出）",
+      "到期清仓日跌停无法卖出 → 顺延至下一可卖交易日，次日卖出（R0 S9 默认）",
+      "无信号期间全程空仓（无持仓、不交易）"
+    ],
+    "portfolio_rules": [
+      "初始本金 100 万，纯多头、无杠杆、不融资不做空",
+      "满仓入场：目标 50 只等权（每只约 2%，runtime_total_value 派生：目标 = 组合总值/50）；实际可买 <50 时按实际数 n 等权（1/n），多余资金留现金",
+      "卖先买后同批执行（close 模式即时成交，卖出所得立即可用）",
+      "现金缓冲带 buffer=0.03（覆盖费用/整手取整）",
+      "单票目标仓位 ≤ 2%（等权 50 只天然满足，无额外上限约束）"
+    ],
+    "risk_rules": [
+      "纯多头、无杠杆、不融资、不做空",
+      "无止损：锁仓期内浮亏风险完全暴露，R5 报告必须呈现锁仓期浮亏与回撤表现（客户校验重点②）",
+      "涨停不买（跳过留现金）；跌停到期日不卖（顺延）",
+      "严格规避未来函数：信号用 T-1、T 两日指数收盘 pctChg；选股市值/流动性/状态全部 T-1 快照；执行/涨跌停过滤用 T 日 raw bar（仅执行检查，不进信号）",
+      "低频触发：2026 窗口内信号触发仅 1 次（2026-07-16/17，R1 实测）——样本有效性为校验重点①，如实呈现不做虚构"
+    ]
+  },
+  "timing": {
+    "signal_data_cutoff": "信号：T-1、T 两日上证指数跌幅（get_index_day_bar('000001.SS', count=2, fields=['pctChg'])，T 日读数为当日已完成日线——daily-bar-v1 close 模式下 14:55≈收盘确认，R0 S1 客户确认近似）；选股/市值/流动性/状态：T-1 快照（get_fundamentals valuation date=T-1 PIT + get_index_stocks date=T-1）；执行/涨跌停过滤：T 日 raw bar（仅执行检查）。",
+    "holding_semantics": "锁仓 20 交易日持有（T 日含起第 20 个交易日收盘清仓），T+1 引擎强制；买卖同日 T close 撮合，卖出所得同批可用。",
+    "decision_events": [
+      {
+        "name": "signal_check",
+        "lifecycle": "handle_data",
+        "time": "14:55",
+        "purpose": "每日收盘前检查上证指数连续两日跌幅信号（T 日 14:55 ≈ T 日收盘确认，close 近似）；输出 QS_REBALANCE_AUDIT 信号行"
+      },
+      {
+        "name": "entry_or_hold",
+        "lifecycle": "handle_data",
+        "time": "14:55",
+        "purpose": "信号触发 → T 日收盘等权满仓买入 50 只（涨跌停跳过留现金）；已锁仓 → 不动；锁仓到期日 → 收盘全部清仓；输出 QS_REBALANCE_AUDIT + QS_PORTFOLIO_AUDIT（rule 21）"
+      }
+    ]
+  },
+  "components": {
+    "lifecycle_hooks": [
+      "initialize",
+      "handle_data",
+      "after_trading_end"
+    ],
+    "api_groups": [
+      "benchmark",
+      "universe",
+      "status_filter",
+      "fundamentals",
+      "history",
+      "portfolio",
+      "logging"
+    ],
+    "required_apis": [
+      "get_index_day_bar",
+      "set_benchmark",
+      "set_commission",
+      "set_slippage",
+      "get_index_stocks",
+      "get_fundamentals",
+      "order_target_value",
+      "log",
+      "get_stock_status",
+      "get_history_batch"
+    ],
+    "implementation_notes": [
+      "pure helpers: _extract_history_field(history_item, field, dtype) 硬门禁（rule 17）/ _ensure_runtime_state() 幂等状态守卫 / _lock_remaining_days() 锁仓剩余交易日计数（get_trade_days 未来交易日）",
+      "信号读数（A-11 框架修复后）：get_index_day_bar 为 QuantStudio 本地注入 API（local_only_symbols 已登记，PTrade 转换 fail-closed BLOCK；重写映射+平台探针为后续项 D4 编号另立）；count 越界 ValueError、无数据空 DataFrame → 策略 fail-soft 不触发信号并审计行记录",
+      "r5_deployment_invariants fail-soft 一致性（终审⑥）：入场日候选全部涨停时低 gross exposure 为合法状态（QS_REBALANCE_AUDIT note=limit_up_skip_all_low_exposure_legal），复核不判 deployment_invariant_failed",
+      "信号源实现（A-11）：T 日跌幅 = data['510760.SS'].close / data['510760.SS'].preclose - 1（上证综指ETF 当日快照，框架快照含 etf_daily）；T-1 跌幅 = get_history('000001.SS', 2, '1d', fields=['pctChg'], fq='pre', include=False)[-1]（指数日线，合规无循环）。R1 实测两口径 2026 年判定 0 分歧 0 误报",
+      "信号源指数：get_history('000001.SS', ..., fq='pre', include=False) 取 index_daily（数据层 stock→etf→index fallback 支持）；指数代码归一化为 000001.SS",
+      "选股：get_index_stocks('000905.SS', date=T-1) PIT 成分 → get_fundamentals(['...'], 'valuation', fields=['float_value'], date=T-1) 流通市值降序前 50（T-1 快照）",
+      "涨停判断：T 日 raw bar close vs high/low_limit（get_history fq 原始列或引擎注入）；get_stock_status 查 ST/HALT/DELISTING",
+      "锁仓计数：入场日 T 记 lock_start；get_trade_days(T, count=20) 推第 20 交易日；当日 == 到期日 → 清仓",
+      "禁止 set()/frozenset() 依赖哈希序决策；确定性破 tie：市值降序 → 代码升序",
+      "所有信号价格调用字面 fq='pre' + include=False；代码后缀统一 .SS/.SZ/.BJ",
+      "参数冻结声明（REQ-1）：SIGNAL_DROP=-1.5 / TOP_N=50 / LOCK_DAYS=20 / MIN_AMOUNT=3000万 / BUFFER=0.03 / COMMISSION=0.0003 / SLIPPAGE=0.001，全部来自客户提示词或 R0 确认，未做回测驱动寻优",
+      "成本契约：set_commission(0.0003) 双边万3最低5元 + 引擎默认印花税 + 过户费万0.1 + set_slippage(0.001)",
+      "低频校验（客户强制，R0 未否决）：R5 必须呈现触发次数、每次触发入场-锁仓-清仓全周期、锁仓期浮亏峰值与最大回撤；R5.5 因样本不足（2026 窗口 1 次触发）WF/MC 门控必然 INSUFFICIENT_SAMPLES——需 R2.5 客户确认 robustness_gates.enabled=false 通道"
+    ]
+  },
+  "constraints": {
+    "hard_filters": [
+      "exclude_st (T-1 isST)",
+      "exclude_halt (T-1 suspendFlag / 无当日 bar)",
+      "exclude_liquidity (T-1 成交额 < 3000 万)",
+      "exclude_star_market (688/689 科创板)",
+      "exclude_bse (920/43/83/87 北交所)",
+      "top50_float_value (中证500 内流通市值降序前 50)",
+      "block_limit_up_buy (T 日涨停不买，跳过留现金，不递补)",
+      "block_limit_down_sell (到期日跌停不卖，顺延下一可卖日)",
+      "enforce_t1 (引擎)",
+      "round_lot (引擎)",
+      "halt_no_price (引擎)",
+      "lock_20d_no_stop (锁仓 20 交易日无止损，客户硬约束)",
+      "empty_when_no_signal (无信号全空仓)"
+    ],
+    "no_lookahead": true,
+    "portable_source_required": false,
+    "runtime_state_guard_required": true
+  },
+  "universe_contract": {
+    "mode": "portable_public_api",
+    "local_dynamic_api_allowed": false
+  },
+  "portfolio_contract": {
+    "sizing_mode": "runtime_total_value",
+    "required_initial_cash": null,
+    "fixed_target_value": null,
+    "allocation_mode": "equal_weight",
+    "allocation_denominator": "actual_selected_count",
+    "target_holdings": 50,
+    "gross_exposure_target": 1.0,
+    "cash_buffer_ratio": 0.0,
+    "per_position_target_weight": 0.02,
+    "max_single_weight": 0.2,
+    "allow_leverage": false
+  },
+  "rebalance_funding_contract": {
+    "requires_same_cycle_sell_proceeds": true,
+    "implementation_mode": "sell_then_buy_immediate",
+    "cash_only_for_new_buys": false
+  },
+  "history_coverage_contract": {
+    "lookback_bars": 5,
+    "frequency": "1d",
+    "history_required_before_first_decision": true,
+    "backtest_start_does_not_truncate_provider_history": true,
+    "minimum_candidates_with_full_history": 40
+  },
+  "r5_deployment_invariants": {
+    "holding_count_mode": "signal_dependent",
+    "target_holdings": 50,
+    "minimum_fill_ratio": 0.6,
+    "minimum_gross_exposure": 0.7,
+    "maximum_cash_ratio_after_rebalance": 0.35,
+    "maximum_insufficient_cash_rejections": 2,
+    "require_at_least_one_rebalance": true,
+    "note": "signal_dependent 语义：入场日候选全部涨停时 gross_exposure 可低于 minimum_gross_exposure（合法状态，审计行 note=limit_up_skip_all_low_exposure_legal 标记），复核不得判 deployment_invariant_failed"
+  },
+  "validation_contract": {
+    "robustness_gates": {
+      "enabled": false
+    }
+  },
+  "approximations": [
+    {
+      "id": "A-1",
+      "description": "14:55 尾盘确认信号 ≈ T 日收盘确认+成交（close 模式；R0 S1 客户确认）。系统性偏差：14:55 盘中跌幅 vs 收盘跌幅的微小差异，R5 报告注明",
+      "confirmed": true
+    },
+    {
+      "id": "A-2",
+      "description": "流通市值口径 float_value（R0 S2 确认，get_fundamentals valuation，源列 circ_mv）",
+      "confirmed": true
+    },
+    {
+      "id": "A-3",
+      "description": "锁仓 20 交易日 = T 日（含）起第 20 个交易日收盘清仓（R0 S5 确认）",
+      "confirmed": true
+    },
+    {
+      "id": "A-4",
+      "description": "流动性不足阈值 = T-1 单日成交额 < 3000 万剔除（R0 S3 建议默认，客户未修改）",
+      "confirmed": true
+    },
+    {
+      "id": "A-5",
+      "description": "回测窗口 2026-01-01 ~ 2026-09-04（副本库 index_daily 最新 2026-09-04；R0 S6 建议，客户未修改终点）",
+      "confirmed": true
+    },
+    {
+      "id": "A-6",
+      "description": "涨跌停无法成交：涨停买入跳过留现金、到期日跌停卖出顺延（R0 S9 建议默认）",
+      "confirmed": true
+    },
+    {
+      "id": "A-7",
+      "description": "信号源上证指数用 index_daily 表 pctChg 字段（R1 实测 000001 覆盖 2018-2026）；指数代码归一化 000001.SS",
+      "confirmed": true
+    },
+    {
+      "id": "A-8",
+      "description": "成本 = set_commission(0.0003) + 引擎默认印花税 + 过户费 + set_slippage(0.001)",
+      "confirmed": true
+    },
+    {
+      "id": "A-9",
+      "description": "2026 窗口信号触发仅 1 次（2026-07-16/17，R1 实测）——低频样本校验重点；R2.5 C3 客户确认 robustness_gates.enabled=false 豁免（R5 以 hash 绑定三件套 + 复现门禁 + 单周期完整复盘作为验收证据）",
+      "confirmed": true
+    },
+    {
+      "id": "A-10",
+      "description": "选股池用 T-1 中证500 成分 PIT 快照（严格 as-of），市值/流动性/状态 T-1；执行用 T 日 raw bar",
+      "confirmed": true
+    },
+    {
+      "id": "A-11",
+      "description": "信号读数（框架修复合入后）：T日跌幅 = get_index_day_bar('000001.SS', count=2, fields=['pctChg'])[-1]，T-1 = [-2]——上证指数直接读数（独占 index_daily 路由，无 ETF 代理）。框架修复：新增本地注入 API get_index_day_bar（docs/get-index-day-bar-design.md，六步流水线方案+审计+实施，profile-aware 已完成上界、count ValueError fail-closed、QS_INDEX_BAR 诊断日志、PTrade local_only_symbols 封禁+探针门禁）。",
+      "confirmed": true
+    }
+  ],
+  "open_questions": [],
+  "user_confirmations": {
+    "generation_target": true,
+    "strategy_semantics": true,
+    "execution_approximations": true,
+    "component_plan": true,
+    "backtest_validation_mode": true
+  },
+  "confirmation_evidence": {
+    "generation_target": {
+      "confirmed": true,
+      "customer_text": "R0 确认第1项：S1 尾盘近似接受（14:55 ≈ T 日收盘 close 模式）；第4项 S10 agent 托管执行 R5 回测确认",
+      "confirmed_at": "2026-09-08T14:40:00+08:00",
+      "source": "customer_reply"
+    },
+    "strategy_semantics": {
+      "confirmed": true,
+      "customer_text": "R0 确认第2项：S2 市值口径 = 流通市值 float_value；第3项 S5 锁仓口径 = T 日（含）起第 20 个交易日收盘清仓确认",
+      "confirmed_at": "2026-09-08T14:40:00+08:00",
+      "source": "customer_reply"
+    },
+    "portfolio_contract": {
+      "confirmed": true,
+      "customer_text": "R0 确认第3项 S5 锁仓口径确认（T 日含起第 20 交易日清仓）；等权 50 只、满仓无杠杆、无信号空仓为提示词既有语义",
+      "confirmed_at": "2026-09-08T14:40:00+08:00",
+      "source": "customer_reply"
+    },
+    "rebalance_funding_contract": {
+      "confirmed": true,
+      "customer_text": "R0 确认第1项：close 模式（T 日收盘成交）确认——卖先买后同批、卖出所得立即可用",
+      "confirmed_at": "2026-09-08T14:40:00+08:00",
+      "source": "customer_reply"
+    },
+    "r5_deployment_invariants": {
+      "confirmed": true,
+      "customer_text": "R0 确认第4项：agent 托管执行 R5 回测确认；锁仓 20 日无止损为提示词硬约束",
+      "confirmed_at": "2026-09-08T14:40:00+08:00",
+      "source": "customer_reply"
+    },
+    "backtest_validation_mode": {
+      "confirmed": true,
+      "customer_text": "R0 确认第4项：agent-managed 回测确认；客户批准使用数据库副本跑回测（数据层主库被采集 daemon 独占锁定）",
+      "confirmed_at": "2026-09-08T14:40:00+08:00",
+      "source": "customer_reply"
+    },
+    "robustness_exemption": {
+      "confirmed": true,
+      "customer_text": "R2.5 五项确认（C1 流动性门槛3000万 / C2 回测终点2026-09-04 / C3 R5.5统计门控豁免 robustness_gates.enabled=false / C4 涨跌停跳过顺延 / C5 信号确认时点 close 近似）——客户回复原话：确认；继续",
+      "confirmed_at": "2026-09-08T15:05:00+08:00",
+      "source": "customer_reply"
+    }
+  },
+  "validation_execution": {
+    "mode": "agent_managed",
+    "require_hash_bound_evidence": true,
+    "formal_publish_requires_backtest_pass": true
+  },
+  "backtest_window_contract": {
+    "strategy_must_not_hardcode_backtest_dates": true,
+    "agent_must_not_start_unconfirmed_backtest": true,
+    "recommended_start_date": "2026-01-01",
+    "recommended_end_date_as_of_local_data": "2026-09-04",
+    "actual_window_selected_by": "customer_confirmed_agent_run",
+    "required_close_bars": 5,
+    "lookback_trading_days": 5,
+    "index_watermark_note": "副本库 data/staging/prehandover_20260905-223621/quantstudio.db：index_daily 000001 最新 2026-09-04；R5 前复核水位，若主库解锁且指数已补齐 9 月数据由客户决定是否顺延"
+  },
+  "output": {
+    "overwrite": true,
+    "quantstudio_path": "quantstudio/backtest/strategies/恐慌抄底事件驱动逆向策略.py"
+  }
+}

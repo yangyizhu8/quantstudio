@@ -117,6 +117,16 @@ class DuckDBMarketDataProvider(MarketDataProvider):
             self._raise_minute_capability_gap(code, storage_freq)
         return result
 
+    def get_index_day_bars(self, code, count, before_ms):
+        """get_index_day_bar 专用透传（docs/get-index-day-bar-design.md，2026-09-08）。
+
+        独占 index_daily 路由（经 DuckDBDataAccess.query_index_day_bars），
+        绝不进入 stock→etf fallback、绝不触发 INDEX_ETF_MAP ETF 代理替换。
+        before_ms 为已折算的 epoch 毫秒上界（profile-aware"已完成"判定由
+        ptrade_api.get_index_day_bar 负责，此处不再做日期→毫秒转换）。
+        """
+        return self._data.query_index_day_bars(code, count, int(before_ms))
+
     def _raise_minute_capability_gap(self, code: str, storage_freq: str):
         """Phase 4A：对批量结果集缺失的 code 补回逐只版 query_minute_bars_by_range
         的 FrequencyCapabilityError 语义（TABLE_MISSING / TABLE_EMPTY / FREQ_NOT_IN_TABLE）。

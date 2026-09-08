@@ -21,6 +21,7 @@ from .ptrade_api import (
     check_limit, get_positions, get_position,
     get_history, get_price, attribute_history,
     current_price, get_current_data, get_snapshot,
+    get_index_day_bar,  # 2026-09-08 本地注入 API（已完成指数日线，docs/get-index-day-bar-design.md）
     get_trading_day, get_trade_days, get_all_trades_days, get_trading_day_by_date,
     run_daily, get_Ashares, get_strategy_events,
     get_stock_name, get_stock_info, get_stock_status,

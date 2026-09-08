@@ -85,3 +85,8 @@ profile PASS ≠ 真实 PTrade 运行验证；本地 ETF 元数据支持与 PTra
 R1 判定规则：数据不存在 → `DATA_BLOCKED`；API 未注册 → `MISSING_REUSABLE_API`；
 本地支持但 PTrade 真实能力未验证 → 不得写“PTrade 已验证”；依赖历史指数成分
 但没有 PIT 覆盖 → BLOCK；依赖历史行业但只有当前快照 → BLOCK。
+
+
+## get_index_day_bar（2026-09-08 新增）
+
+QuantStudio 本地注入 API（contexts=quantstudio_local_backtest，unsupported_on_ptrade=true，已登记 local_only_symbols）。已完成指数日线读数：独占 index_daily 路由（无 stock/etf fallback、无 INDEX_ETF_MAP ETF 代理替换——000001 指数与平安银行 stock_daily 同码并存）；profile-aware 已完成上界：daily-bar-v1 含 T、minute-bar-v1 永不含 T、daily-open-close-proxy-v1 仅 15:00 完成日线时钟含 T（不可判 fail-closed 不含 T）；count ∈ [1,250] 越界 ValueError；fields 白名单 open/high/low/close/pctChg/volume/amount/trade_date；不暴露 fq；空数据 fail-closed；QS_INDEX_BAR 诊断日志。校验器双规则：PREOPEN-INDEX-BAR（before_trading_start 调用 BLOCK）、MINUTE-PROFILE-INDEX-BAR（minute 设计内调用 BLOCK）。PTrade 转换 fail-closed BLOCKED（converter 重写映射=平台 get_history include=True 注入 + 平台探针为 D4 后续项）。设计契约：docs/get-index-day-bar-design.md。
