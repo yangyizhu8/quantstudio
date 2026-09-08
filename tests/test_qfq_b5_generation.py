@@ -114,10 +114,16 @@ def test_cutover_state_machine_and_runtime_identity():
 
 
 def test_mcp_without_cutover_fails_closed_when_generation_is_explicit():
+    """B-5 存量债修复（2026-09-08）：补一条不匹配的记录后验 fail-closed。
+
+    原空DB场景已被 CASE-003 源粒度全新分支覆盖（返回哨兵不抛错）——
+    本用例改为验证保护边界的新位置：「有记录但 cutover_id 不匹配」仍 fail-closed。
+    """
     c = _conn()
+    _create(c, cut="cut_exists", status="baseline_validated")  # 有记录
     cfg = QFQOrchestratorConfig.from_dict({"enabled": True, "price_source": "mcp",
                                            "source_generation": "mcp-gen1",
-                                           "cutover_id": "cut_missing"})
+                                           "cutover_id": "cut_missing"})  # 不匹配
     with pytest.raises(CutoverError):
         resolve_runtime_identity(c, cfg, allow_prepared=True)
 
@@ -140,12 +146,28 @@ def test_aux_router_isolates_generation_and_requires_explicit_init(tmp_path):
 
 
 def test_dynamic_runtime_routes_aux_and_claims_only_current_generation(tmp_path):
+    """B-5 存量债修复（2026-09-08）：fixture 补 active cutover 记录。
+
+    TD-D2 released 门要求 qfq_active_cutover 有记录才走世代库路径——
+    原 fixture 仅有 baseline_validated（非 active），导致 released 门
+    fail-secure 回 legacy 路径。补 active 记录后测试原意恢复。
+    """
     main = tmp_path / "quantstudio.db"
     legacy = tmp_path / "legacy.db"
     mcp_aux = tmp_path / "mcp_aux.db"
     c = duckdb.connect(str(main))
     init_duckdb_schema(c)
     _create(c, cut="cut_dynamic", status="baseline_validated")
+    # B-5 修复：推进至 active + 写入 active 指针（TD-D2 条件②）
+    from quantstudio.pipeline.qfq_cutover import activate_cutover
+    activate_cutover(c, price_source="mcp", new_cutover_id="cut_dynamic",
+                     expected_old=None)
+    # B-5 修复：补 released=true 配置（TD-D2 条件①——生产环境 ⑤ 释放后此门通过）
+    _released_cfg = tmp_path / "qfq_aux_paths.json"
+    _released_cfg.write_text(json.dumps(
+        {"released": True, "default": str(legacy),
+         "generations": {"xtquant-legacy": str(legacy),
+                          "mcp-gen1": str(mcp_aux)}}), encoding="utf-8")
     from quantstudio.pipeline.qfq_aux_router import AuxDbRouter
     AuxDbRouter(routes={"mcp-gen1": mcp_aux}).initialize_explicit(
         source_generation="mcp-gen1", cutover_id="cut_dynamic")
@@ -159,6 +181,7 @@ def test_dynamic_runtime_routes_aux_and_claims_only_current_generation(tmp_path)
     })
     from quantstudio.pipeline.qfq_resident_orchestrator import QFQResidentOrchestrator
     orch = QFQResidentOrchestrator(cfg, main_db=str(main), aux_db=str(legacy))
+    orch.qfq_aux_paths_config = _released_cfg
     ident = orch.prepare_runtime(c, require_aux=True)
     assert ident == {"price_source": "mcp", "source_generation": "mcp-gen1",
                      "cutover_id": "cut_dynamic"}

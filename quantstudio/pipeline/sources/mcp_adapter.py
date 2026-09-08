@@ -224,6 +224,18 @@ _CANONICAL_TO_QUESTDB = {
 #   - sw_daily（行业指数行情）、sw_weight（L1 指数权重快照）从原类别A 错配映射改为
 #     passthrough 本名直通（有独立价值，但与 canonical sw_industry/industry_membership
 #     语义不同，不再强行映射）。
+# F-2（2026-09-08）：宽文本 passthrough 表——含长 STRING 字段（ocr_text/text 等）
+# 单行 ≈4KB → fetch_page 5 万行 JSON 页 ≈242MB（服务端 2×峰值=500MB）。
+# 这些表改走 create_export_job Parquet 分片（压缩后小一个量级）。
+# 与云端 _is_wide_table() 同口径（CASE-001 实测清单）。
+_WIDE_TEXT_PASSTHROUGH = frozenset({
+    "cnthesims_events",     # ocr_text/text 大字段，单行≈4KB，实测 242MB/5万行
+    "ai_research_snapshot", # 含长文本分析字段
+    "llm_text_events", "llm_text_events_enriched", "llm_text_raw_feed",
+    "rsshub_raw",
+    "tdx_theme_news",
+})
+
 _PASSTHROUGH_TABLES = frozenset({
     "ai_research_snapshot", "block_trade", "broker_monthly", "broker_recommend",
     "cninfo_first_rating", "cnthesims_events", "cnthesims_factors", "cyq_chips",
@@ -442,6 +454,21 @@ class MCPAdapter(BaseSourceAdapter):
         # === 类别B passthrough：通过 fetch_page 完整分页取 raw，不做 column_map/
         #     不 normalize_adj_factor / 不走 aligner / 不注入 QFQ ===
         if table in _PASSTHROUGH_TABLES:
+            # F-2 修复（2026-09-08，方案 §3.5）：宽文本表（含 STRING 大字段）
+            # 改走 export Parquet 路径——fetch_page 的 5 万行 JSON 页在宽文本表
+            # 达 242MB/页（CASE-001 根因 C），服务端内存 2×峰值。export 分片
+            # 经 Parquet 压缩小一个量级。路由判据：表在 _WIDE_TEXT_PASSTHROUGH
+            # 集合（云端 _is_wide_table 同口径）；配置可覆写（export_wide_text:
+            # false 强制走 fetch_page）。
+            if (table in _WIDE_TEXT_PASSTHROUGH
+                    and self._config.get("export_wide_text", True)):
+                logger.info(f"[F-2] 宽文本表 {table} 改走 export Parquet 路径"
+                            f"（fetch_page JSON 页宽文本可达 242MB，CASE-001）")
+                raw_df, meta = self._fetch_export_passthrough(
+                    table, freq, start, end)
+                meta["passthrough"] = True
+                meta["wide_text_export"] = True
+                return raw_df, meta
             raw_df, meta = self._fetch_passthrough(table, freq, start, end, codes)
             meta["passthrough"] = True
             return raw_df, meta
@@ -497,6 +524,27 @@ class MCPAdapter(BaseSourceAdapter):
     # ------------------------------------------------------------------
     # 类别B passthrough：分页全量取 raw（原样返回，不做任何映射/归一）
     # ------------------------------------------------------------------
+    def _fetch_export_passthrough(self, table: str, freq: str,
+                                    start: str, end: str) -> Tuple[pd.DataFrame, Dict]:
+        """F-2：宽文本 passthrough 表的 export 路径。
+
+        与 _fetch_passthrough 语义一致（原样返回、不映射/不注入 QFQ），
+        仅拉取通道从 fetch_page JSON 改为 export Parquet 分片。
+        """
+        qdb_table = _CANONICAL_TO_QUESTDB.get(table, table)
+        arts = self.client.export_dataset(
+            dataset_id=qdb_table, page_size=50_000,
+            time_start=None, time_end=None, row_limit=None)
+        frames = []
+        for art in arts:
+            local = self._landing_path(f"pt_export_{table}", art.artifact_id.replace("/", "_"))
+            local.write_bytes(art.parquet_bytes)
+            frames.append(pd.read_parquet(local))
+        raw_df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        meta = {"fetch_mode": "export_wide_text", "pages": len(arts),
+                "rows": len(raw_df)}
+        return raw_df, meta
+
     def _fetch_passthrough(self, table: str, freq: str, start: str, end: str,
                            codes: Optional[List[str]]) -> Tuple[pd.DataFrame, Dict]:
         """passthrough 同名表：fetch_page 分页全量返回原始 DataFrame。
@@ -2146,6 +2194,15 @@ def normalize_mcp_adj_factor_df(raw_df: pd.DataFrame, freq: str,
         df["time"] = df["trade_date"]
     # 1) code 去后缀
     df["code"] = df["code"].astype(str).str.split(".").str[0]
+    # 1.5) F-1 修复（2026-09-08，方案 §3.4）：过滤云端测试代码污染观测流
+    #      （如 FIXTEST*——CASE-003 证据：混入 adj_factor 观测致 QFQ gate failed，
+    #       水位被迫手工推进）。非标准六位数字 code 一律剔除（与主过滤同正则口径）。
+    _std_code = df["code"].astype(str).str.match(r"^\d{6}$")
+    _filtered = int((~_std_code).sum())
+    if _filtered > 0:
+        logger.info(f"[F-1] normalize_mcp_adj_factor_df 过滤非标准 code "
+                    f"{_filtered} 行（测试代码防护，如 FIXTEST）")
+        df = df[_std_code].reset_index(drop=True)
     # 2) 时间列选择
     time_col = None
     for cand in ("time", "trade_time", "trade_date"):
