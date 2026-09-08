@@ -139,6 +139,15 @@ class QFQResidentOrchestrator:
         if getattr(self.cfg, "generation_mode", "pre_cutover") != "dynamic":
             self.discovery.set_runtime(self._ident, aux_db=self.aux_db)
             return
+        # CASE-003（方案②补三）：源粒度全新 → 以构造期 pre-cutover 哨兵身份运行，
+        # 跳过 dynamic 路由——runtime_cutover_record 在全新机上查无哨兵记录属
+        # 预期（哨兵身份无实体记录），走默认 aux 路径。
+        from quantstudio.pipeline.qfq_cutover import is_fresh_source_for_qfq
+        if is_fresh_source_for_qfq(conn, self.cfg.price_source):
+            logger.info("[qfq_orch] CASE-003 源粒度全新：跳过 dynamic cutover "
+                        "路由，按 pre-cutover 哨兵身份 + 默认 aux 路径运行")
+            self.discovery.set_runtime(self._ident, aux_db=self.aux_db)
+            return
         ident = resolve_runtime_identity(conn, self.cfg, allow_prepared=False)
         record = runtime_cutover_record(conn, ident)
         aux_path = record.get("aux_db_path")
