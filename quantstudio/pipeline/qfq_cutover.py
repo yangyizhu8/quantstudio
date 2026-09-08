@@ -14,6 +14,10 @@ from quantstudio.pipeline.qfq_schema_contracts import (
     pre_cutover_qfq_identity,
 )
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 BJ_TZ = timezone(timedelta(hours=8))
 CUTOVER_STATUSES = {
     "planned", "prepared", "baseline_building", "baseline_validated",
@@ -53,6 +57,20 @@ class RuntimeIdentity:
 
 def _now_ts() -> str:
     return datetime.now(BJ_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def is_fresh_source_for_qfq(conn, price_source: str) -> bool:
+    """CASE-003（2026-09-08，方案②）：源粒度全新检测（只读）。
+
+    语义：该 price_source 在 qfq_source_cutover 中**零行**——机器从未经历该源
+    的任何迁移阶段。注意是「源的全新」而非「机器的全新」：换源场景（机器有
+    A 源历史、现配 B 源零记录）同样命中，对 QFQ 数据正确性无害（B 源本应
+    从预切换哨兵起步）。
+    """
+    row = conn.execute(
+        "SELECT count(*) FROM qfq_source_cutover WHERE price_source=?",
+        [price_source]).fetchone()
+    return bool(row and row[0] == 0)
 
 
 def read_active_cutover(conn, price_source: str) -> Optional[dict]:
@@ -99,6 +117,13 @@ def resolve_runtime_identity(conn, cfg, *, require_active: bool = False,
             "SELECT price_source, source_generation, status FROM qfq_source_cutover "
             "WHERE cutover_id=?", [cfg.cutover_id]).fetchone()
         if row is None or row[0] != ps or row[1] != cfg.source_generation:
+            # CASE-003 修复（方案②）：该源零记录 = 全新部署 → 预切换哨兵身份，
+            # 采集不阻断。有任一记录的机器（含 cfg 不匹配）维持原 fail-closed。
+            if row is None and is_fresh_source_for_qfq(conn, ps):
+                logger.info(
+                    "[qfq_cutover] 源粒度全新检测：price_source=%s 无任何 "
+                    "cutover 历史，按全新部署处理（pre-cutover 哨兵身份）", ps)
+                return pre_cutover_qfq_identity(ps)
             raise CutoverError(
                 f"MCP 配置未找到匹配的 staging cutover: {cfg.cutover_id!r}")
         if row[2] not in ({"planned", "prepared", "baseline_building", "baseline_validated"}

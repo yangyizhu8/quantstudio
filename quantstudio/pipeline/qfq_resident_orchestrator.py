@@ -847,6 +847,43 @@ class QFQResidentOrchestrator:
     # ------------------------------------------------------------------
     # bootstrap（首次部署）
     # ------------------------------------------------------------------
+    def _seed_fresh_deploy_bootstrap(self, conn) -> bool:
+        """CASE-003（方案②）：全新源零 bootstrap 记录 → 播种 completed 空基线。
+
+        全新机无可对账旧基线，bootstrap 语义为空集——自动播种一条 completed
+        记录（params 标记 fresh-deploy-auto 可追溯）使门槛通过、水位正常推进。
+        幂等：并发/重入时再次检测计数，非零即跳过（单实例锁 + 本重查双保险）。
+        仅当 is_fresh_source_for_qfq 为真时调用（调用方已保证）。
+        """
+        from quantstudio.pipeline.qfq_reanchor_schema import SCHEMA_VERSION
+        ident = self._ident
+        n = conn.execute(
+            "SELECT count(*) FROM qfq_bootstrap_run WHERE price_source=? "
+            "AND source_generation=? AND cutover_id=?",
+            [ident["price_source"], ident["source_generation"],
+             ident["cutover_id"]]).fetchone()
+        if n and n[0] > 0:
+            return False  # 已有记录（含 failed）——不播种，走原门槛语义
+        run_id = f"fresh_deploy_auto_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        conn.execute(
+            "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, asset_type, params, "
+            "resume_cursor, total_count, completed_count, blocked_count, failed_count, "
+            "status, schema_version, config_hash, baseline_version, price_source, "
+            "source_generation, cutover_id, started_at, updated_at) VALUES "
+            "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [run_id, None,
+             '{"source": "fresh-deploy-auto", "reason": "CASE-003: fresh source, '
+             'empty baseline by definition"}',
+             None, 0, 0, 0, 0, "completed", SCHEMA_VERSION,
+             getattr(self.cfg, "config_hash", None),
+             getattr(self.cfg, "detector_baseline_version", None),
+             ident["price_source"], ident["source_generation"],
+             ident["cutover_id"], datetime.now(), datetime.now()])
+        logger.info(
+            "[qfq_orch] CASE-003 全新源播种：completed 空基线 bootstrap run=%s "
+            "(identity=%s)", run_id, ident)
+        return True
+
     def bootstrap_completed(self, conn) -> bool:
         """任务6.2/6.3：bootstrap 完成态 fail-closed 判定。
 
@@ -1308,7 +1345,15 @@ class QFQResidentOrchestrator:
             [1 if detector_degraded else 0, cycle_id, self._ident["price_source"],
              self._ident["source_generation"], self._ident["cutover_id"]])
         if self.cfg.require_bootstrap and not self.bootstrap_completed(conn):
-            summary.bootstrap_required = True
+            # CASE-003（方案②）：全新源（零 cutover 历史）零 bootstrap 记录 →
+            # 播种 completed 空基线后重判（水位正常推进）；有记录的机器走原门槛。
+            from quantstudio.pipeline.qfq_cutover import is_fresh_source_for_qfq
+            if is_fresh_source_for_qfq(conn, self._ident["price_source"]):
+                self._seed_fresh_deploy_bootstrap(conn)
+            if self.bootstrap_completed(conn):
+                pass  # 播种成功（或并发已播种）→ 通过门槛，继续本轮
+            else:
+                summary.bootstrap_required = True
             summary.error = "require_bootstrap=true 且无可匹配 completed bootstrap，fail-closed"
             logger.warning(f"[qfq_orch] {summary.error}（本轮不推进水位、不处理 trigger；数据写入不受影响）")
             # Data was already written by daemon's writer (execute_task → upsert)
