@@ -43,5 +43,15 @@
   "quantstudio_output_status": "GENERATED",
   "ptrade_output_status": "NOT_GENERATED",
   "canonical_sha256": "6ddae987bf8b0b6db4d0bf1489dbdcf79fb75cbdc21abca2cac5fbb81c18212d",
-  "candidate_removed": false
+  "candidate_removed": false,
+  "push": {
+    "commit": "10ce73c8db77531d901725c75019e2c517b96d8a",
+    "pushed_at": "2026-09-08",
+    "remotes": {
+      "quantstudio-plus": "10ce73c8db77531d901725c75019e2c517b96d8a",
+      "quantstudio": "10ce73c8db77531d901725c75019e2c517b96d8a"
+    },
+    "dual_head_consistency": "PASS (本地/双远程逐位一致)",
+    "files": 29
+  }
 }
