@@ -1,3 +1,4 @@
+
 """Tab1: 采集任务（核心 Tab，80% 使用场景）"""
 from __future__ import annotations
 
@@ -119,15 +120,10 @@ class TaskTab(QWidget):
         self.run_all_btn = PrimaryPushButton("▶ 全部执行（增量）")
         self.run_all_btn.setToolTip("遍历所有启用任务，逐个执行增量拉取（水位线→今天）")
         self.run_all_btn.clicked.connect(lambda: self._run_all("incremental"))
-        self.run_all_full_btn = PushButton("▶▶ 全部执行（全量）")
-        self.run_all_full_btn.setToolTip(
-            "遍历所有启用任务，逐个执行全量拉取（配置 start_date~end_date，忽略水位线）；耗时长，请谨慎触发")
-        self.run_all_full_btn.clicked.connect(lambda: self._run_all("full_range"))
         self.reset_wm_btn = PushButton("⏮ 重置水位")
         self.reset_wm_btn.clicked.connect(self._reset_watermark)
         toolbar.addWidget(self.refresh_btn)
         toolbar.addWidget(self.run_all_btn)
-        toolbar.addWidget(self.run_all_full_btn)
         toolbar.addWidget(self.reset_wm_btn)
         # 最小宽兜底：长状态文本时优先裁剪 label（配合 _set_status_text 的
         # tooltip 全文可悬停查看），而不是挤压按钮/撑爆窗口。
@@ -324,8 +320,6 @@ class TaskTab(QWidget):
         """
         self.run_all_btn.setText("▶ 全部执行（增量）")
         self.run_all_btn.setEnabled(True)
-        self.run_all_full_btn.setText("▶▶ 全部执行（全量）")
-        self.run_all_full_btn.setEnabled(True)
         self._run_all_active_mode = None
 
     def _resolve_watermark_cached(self, wms, source, table, freq) -> tuple[str, str | None]:
@@ -723,8 +717,7 @@ class TaskTab(QWidget):
         active_btn = self.run_btn_for_mode(mode)
         active_btn.setEnabled(False)
         active_btn.setText(f"⏳ 全部执行中（{mode_label}）...")
-        other_btn = self.run_all_full_btn if mode == "incremental" else self.run_all_btn
-        other_btn.setEnabled(False)
+        # 全量按钮已移除（增量=全量在空表/水位回退下等价），无另一颗需禁用
         # 登记所有任务为运行态（按钮互禁），状态列口径与单任务路径一致
         for t in self.tasks:
             name = t.get("name", "")
@@ -760,8 +753,8 @@ class TaskTab(QWidget):
                 f"全部执行（{mode_label}）启动失败：\n\n{type(e).__name__}: {e}")
 
     def run_btn_for_mode(self, mode: str):
-        """返回对应模式的批量执行按钮（incremental→增量钮，full_range→全量钮）。"""
-        return self.run_all_btn if mode == "incremental" else self.run_all_full_btn
+        """返回批量执行按钮（全量按钮已移除，增量钮唯一）。"""
+        return self.run_all_btn
 
     @staticmethod
     def _qfq_warning_from_result(result: dict) -> tuple[bool, str | None]:
