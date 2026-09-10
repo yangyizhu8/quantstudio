@@ -326,6 +326,11 @@ def publish(strategy_path: Path, design_path: Path, project_root: Path,
         "canonical_sha256": digest,
         "candidate_status": ("PROMOTED" if candidate_to_retire is not None else state.get("candidate_status")),
         "candidate_removed": candidate_removed,
+        # 2026-09-09 台账一致性修复（终审补强 B / docs/design-metadata-auto-profile-design.md v4 §补强 B）：
+        # 正式发布完成后即解锁正式发布许可——此前仅 user_pyqt 模式在 review 置 True，agent-managed 发布
+        # 成功未同步置 True，导致可信 ledger 生命周期四字段不一致（panic 台账错误实证 6ddae987）。
+        # 幂等：user_pyqt 已在 review 置 True 时重复赋值无害。
+        "formal_publish_allowed": True,
     })
     write_json(state_path, state)
 

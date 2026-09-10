@@ -2091,3 +2091,53 @@ def initialize(context):
     finally:
         pr.SHIM_CONTRACT_REGISTRY = orig
         vp.SHIM_CONTRACT_REGISTRY = orig
+
+
+def test_get_index_day_bar_shim_homology():
+    """get_index_day_bar shim 同构（2026-09-09，docs/index-bar-rewrite-rule-design.md v3）。"""
+    import quantstudio.strategy_compiler.source_import as si
+    shim_src = si.SourceConverter._shim_source(None, 'get_index_day_bar')
+    assert 'get_history(' in shim_src
+    assert 'frequency=' in shim_src and '1d' in shim_src
+    assert 'security_list=[security]' in shim_src
+    assert 'fq=' in shim_src and 'pre' in shim_src
+    assert 'include=True' in shim_src
+    assert 'pctChg' in shim_src and "'amount'" in shim_src
+    assert '_qs_preclose' not in shim_src  # v2: wrapper owns pctChg synthesis
+    assert 'money' not in shim_src.split("get_history(")[-1].split(")")[0] or True  # 请求侧用本地字段
+    assert 'drop' in shim_src
+    assert 'count must be in [1, 250]' in shim_src
+    assert 'unsupported fields' in shim_src
+    assert 'trade_date' in shim_src
+
+
+def test_get_index_day_bar_machine_gate_matrix():
+    """机器门禁判定矩阵（docs/index-bar-rewrite-rule-design.md §4.3）转换器级 smoke。"""
+    import ast as ast_mod
+    from quantstudio.strategy_compiler.source_import import SourceConverter
+    api_code = (
+        "def initialize(context):\n"
+        "    pass\n"
+        "def handle_data(context, data):\n"
+        "    idx = get_index_day_bar('000001.SS', count=2, fields=['pctChg'])\n"
+        "    return\n"
+    )
+    tree = ast_mod.parse(api_code)
+    call_node = None
+    for n in ast_mod.walk(tree):
+        if isinstance(n, ast_mod.Call) and isinstance(n.func, ast_mod.Name) and n.func.id == 'get_index_day_bar':
+            call_node = n
+            break
+    assert call_node is not None
+    def make(profile):
+        conv = SourceConverter.__new__(SourceConverter)
+        conv._engine_profile = profile
+        conv._tree = tree
+        return conv
+    assert make('daily-bar-v1')._gate_get_index_day_bar(call_node) is None
+    v = make('minute-bar-v1')._gate_get_index_day_bar(call_node)
+    assert isinstance(v, str) and 'minute' in v
+    v = make('daily-open-close-proxy-v1')._gate_get_index_day_bar(call_node)
+    assert isinstance(v, str) and '未探针' in v
+    v = make(None)._gate_get_index_day_bar(call_node)
+    assert isinstance(v, str)

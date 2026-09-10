@@ -27,6 +27,7 @@ from .portability_rules import (
     DENY_SHIM,
     GET_PRICE_DROP_PARAMS,
     INJECTED_MARKER,
+    LOCAL_ONLY_PASSTHROUGH_BLOCK,
     MYTT_FUNCTIONS,
     ASHARE_RULES_FUNCTIONS,
     NORMALIZE_RULES,
@@ -61,6 +62,8 @@ class SourceImportResult:
     coverage: dict = field(default_factory=dict)
     reverse_spec: Optional[dict] = None
     spec_inference_notes: list[str] = field(default_factory=list)
+    # 2026-09-09 design_metadata 可信解析结果（docs/design-metadata-auto-profile-design.md v4）
+    design_metadata_resolution: Optional[dict] = None
 
 
 # ============================================================================
@@ -3303,6 +3306,57 @@ def _analyze_aliases(tree: ast.AST) -> dict[str, str]:
     return aliases
 
 
+def _collect_defined_names(tree: ast.AST) -> set[str]:
+    """收集源码内全部绑定名（2026-09-08 转换门禁通用 else 的排除集来源，终审补强 1 完整配方）。
+
+    配方：
+    - FunctionDef / AsyncFunctionDef / ClassDef 名；
+    - Import/ImportFrom 绑定：asname 或原名（点号导入无 asname 时取首段，import os.path → os）；
+    - 全部 Store 上下文的 ast.Name（一网打尽 Assign/For/With/walrus/except-as/推导式绑定目标）；
+    - 全部 ast.arg 形参名（含 lambda、*args/**kwargs）。
+
+    设计取舍：收集为全局集合、不做 per-scope 精确化——过近似（宁多排不误杀）是
+    转换门禁的正确方向（宁让个别未定义名漏过通用 else，也不误杀合法源码定义名）。
+    """
+    defined: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defined.add(node.name)
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                defined.add(a.asname or a.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for a in node.names:
+                defined.add(a.asname or a.name)
+        elif isinstance(node, ast.arg):
+            defined.add(node.arg)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            defined.add(node.id)
+    return defined
+
+
+def _collect_local_only_refs(tree: ast.AST, aliases: dict[str, str]) -> list[ast.AST]:
+    """收集本地专用 API 的全部 Load 上下文引用（终审补强 2 引用级拦截）。
+
+    不限 Call func 位置：调用/别名赋值（f = get_index_day_bar）/传参（df.apply(get_index_day_bar)）
+    任一引用形态均捕获——平台不存在的名字任何引用都通向 NameError，对 curated 集合
+    引用级拦截无误杀面。经别名归一化匹配（H3）。
+    """
+    refs: list[ast.AST] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            name = aliases.get(node.id, node.id)
+            if name in LOCAL_ONLY_PASSTHROUGH_BLOCK:
+                refs.append(node)
+    return refs
+
+
+def _else_block_excluded(defined_names: set[str]) -> set[str]:
+    """通用 else BLOCK 的排除集：Python builtins ∪ 源码定义名（含 import/赋值/形参）。"""
+    import builtins
+    return set(dir(builtins)) | defined_names
+
+
 def _apply_replacements(src: str, replacements: list[tuple[int, int, int, int, str]]) -> str:
     """按 (start_line, start_col, end_line, end_col, new_text)（1-based 行号、0-based 列）
     从后往前应用替换，避免行号/偏移漂移。"""
@@ -3351,10 +3405,20 @@ class SourceConverter:
                  etf_type: str = "equity",
                  active_only: bool = True,
                  fidelity_eps_basis: str = "basic",
-                 exclude_bse: bool = False):
+                 exclude_bse: bool = False,
+                 engine_profile: Optional[str] = None):
         self.strategy_id = strategy_id
         self.inject_helpers = inject_helpers
         self.verbose = verbose
+        # 2026-09-09 转换门禁：get_index_day_bar 生命周期/profile 判定输入
+        # （缺失/非法 → 该 API 调用 BLOCK，禁止默认 daily-bar-v1）
+        self._engine_profile = engine_profile
+        # 2026-09-09 design_metadata 解析结果（convert_source 构造前注入；无 design=legacy 时 None）
+        self.design_metadata_resolution: Optional[dict] = None
+        # 2026-09-08 转换门禁：名称绑定收集（通用 else 排除集）+ 本地专用引用级拦截去重
+        self._defined_names: set[str] = set()
+        self._local_only_refs: list[ast.AST] = []
+        self._ref_blocked_positions: set[tuple[int, int]] = set()
         # P-A2：产物侧 eps 口径保真映射（P-D13 D2 审计通过 2026-08-27：默认
         # basic——探针三实证 basic_eps == 本地 eps Δ=0.0000；passthrough 显式
         # 可指定向后兼容。D8：行为变化纳入合并基线重验）。
@@ -3424,8 +3488,18 @@ class SourceConverter:
         # 2) sklearn 检测（N2：WARN + PTRADE_RUNTIME_UNVERIFIED，不 BLOCK）
         self._check_third_party(tree)
 
+        # 2b) 名称绑定收集（2026-09-08 转换门禁）：defined_names 供通用 else 排除集；
+        #     local_only_refs 供本地专用 API 引用级拦截（终审补强 1/2）。
+        self._defined_names = _collect_defined_names(tree)
+        self._local_only_refs = _collect_local_only_refs(tree, self._aliases)
+
         # 3) AST 全量扫描（别名归一化后匹配）
         self._scan_calls(tree)
+
+        # 3a0) 本地专用 API 引用级拦截（终审补强 2）：调用之外的别名赋值/传参形态
+        #      （f = get_index_day_bar / df.apply(get_index_day_bar)）逐一 BLOCK。
+        for ref in self._local_only_refs:
+            self._block_call_ref(ref)
 
         # 3a) 代码后缀规范化（聚宽风格 XSHG/XSHE → PTrade SS/SZ，AST 字符串常量级）
         self._normalize_code_suffixes(tree)
@@ -3468,6 +3542,7 @@ class SourceConverter:
             warnings=self.warnings,
             errors=self.errors,
             coverage=self.coverage,
+            design_metadata_resolution=getattr(self, "design_metadata_resolution", None),
         )
 
     def _find_parent(self, node: ast.AST) -> Optional[ast.AST]:
@@ -3577,6 +3652,22 @@ class SourceConverter:
             elif name in DENY_REMOVE:
                 self._remove_call(node, name)
             elif name in DENY_SHIM:
+                # 2026-09-09 机器门禁：get_index_day_bar 生命周期/profile 判定
+                # （engine_profile 五层贯通 + 调用图可达性；判定矩阵见
+                #   docs/index-bar-rewrite-rule-design.md §4.3）。其余 DENY_SHIM API 不受影响。
+                if name == "get_index_day_bar":
+                    verdict = self._gate_get_index_day_bar(node)
+                    if verdict is not None:
+                        # 返回非 None = BLOCK（含原因）
+                        self._block_call(node, name, reason=verdict)
+                        continue
+                    self._need_shim.add(name)
+                    self.actions.append(ConversionAction(
+                        action_type="SHIM", rule_id="DENY-SHIM", api_name=name,
+                        line=_line_of(node), severity="WARN",
+                        message="get_index_day_bar() 将注入同名 shim（平台 get_history 重写实现；"
+                                "daily-bar-v1 收盘路径门禁通过）"))
+                    continue
                 self._need_shim.add(name)
                 self.actions.append(ConversionAction(
                     action_type="SHIM", rule_id="DENY-SHIM", api_name=name,
@@ -3596,6 +3687,20 @@ class SourceConverter:
                 # 统一处理（同一调用内避免替换区域重叠）；get_price 仍走参数删除
                 if name == "get_price":
                     self._normalize_call(node, name)
+            elif name in LOCAL_ONLY_PASSTHROUGH_BLOCK:
+                # 本地专用 API（人工 curated，无误杀风险）：裸 Name 与 Attribute 双形式均精确拦截。
+                # 经 _block_call_ref 统一通道（按 (lineno,col_offset) 跨 pass 去重——
+                # 直接调用在 _scan_calls 与 3a0 引用级 pass 各出现一次，去重防重复 BLOCK）。
+                self._block_call_ref(node.func if isinstance(node.func, ast.Name)
+                                     else node.func)
+            elif isinstance(node.func, ast.Name) and name not in _else_block_excluded(
+                    self._defined_names):
+                # 通用 fail-closed：裸 Name 且非 builtins/源码定义/import/赋值绑定/形参 → BLOCK
+                # （Attribute 形式 obj.method 不进此分支，维持现状——平台 NameError 仅存在于未定义裸名）
+                self._block_call(
+                    node, name,
+                    reason="未登记的平台 API 或本地专用 API（转换门禁 fail-closed；"
+                           "本地专用需平台探针+重写映射，D4 序列）")
 
     # ------------------------------------------------------------------
     # DENY_REMOVE 分档（H2）
@@ -3669,18 +3774,196 @@ class SourceConverter:
             # 档 3：无法确定等价语义 → BLOCK
             self._block_call(node, name)
 
-    def _block_call(self, node: ast.Call, name: str) -> None:
+    def _block_call(self, node: ast.Call, name: str, reason: str = "") -> None:
+        """BLOCK 转换。reason 非空时消息追加原因与指引；默认空 = 既有行为逐字不变。"""
         line = _line_of(node)
-        self.errors.append(f"BLOCK: {name}()（行 {line}）无法自动转换，需人工改用 PTrade 等价数据源")
+        base_msg = f"{name}() 无 PTrade 自动替代，转换失败（交人工）"
+        if reason:
+            base_msg = f"{name}() 无法自动转换：{reason}；需人工改用 PTrade 等价数据源或按 D4 序列登记平台探针+重写映射"
+        self.errors.append(f"BLOCK: {base_msg}（行 {line}）")
         self.actions.append(ConversionAction(
             action_type="BLOCK", rule_id=f"BLOCK-{name.upper()}", api_name=name,
             line=line, severity="BLOCK",
             old_text=f"{name}(...)",
-            message=f"{name}() 无 PTrade 自动替代，转换失败（交人工）"))
+            message=base_msg))
 
     # ------------------------------------------------------------------
     # 参数归一化（G1：只按 grade 执行）
     # ------------------------------------------------------------------
+    def _block_call_ref(self, ref: ast.AST) -> None:
+        """本地专用 API 引用级 BLOCK（终审补强 2）：别名赋值/传参等非 Call func 引用形态。
+
+        Call func 位置的引用已由 _scan_calls 的 LOCAL_ONLY 分支拦截；此处按 (lineno, col_offset)
+        去重，避免同一直接调用被重复 BLOCK（幂等）。
+        """
+        key = (getattr(ref, "lineno", 0), getattr(ref, "col_offset", 0))
+        blocked = getattr(self, "_ref_blocked_positions", set())
+        if key in blocked:
+            return
+        blocked.add(key)
+        self._ref_blocked_positions = blocked
+        # 兼容 Name（.id）与 Attribute（.attr）两种节点
+        name = getattr(ref, "id", "") or getattr(ref, "attr", "")
+        line = _line_of(ref)
+        base_msg = (f"{name}() 无法自动转换：QuantStudio 本地专用 API（PTrade 平台不存在；"
+                    "探针未过前禁止转换，D4 序列）；含间接引用（别名赋值/传参）")
+        self.errors.append(f"BLOCK: {base_msg}（行 {line}）")
+        self.actions.append(ConversionAction(
+            action_type="BLOCK", rule_id=f"BLOCK-{name.upper()}", api_name=name,
+            line=line, severity="BLOCK",
+            old_text=f"{name}(...)", message=base_msg))
+
+    # ------------------------------------------------------------------
+    # get_index_day_bar 机器门禁（2026-09-09，docs/index-bar-rewrite-rule-design.md §4）
+    # engine_profile 五层贯通 + 调用图可达性 + run_daily 时刻解析。
+    # 判定矩阵：§4.3 表。返回 None=放行 SHIM；返回 str=BLOCK 原因。
+    # ------------------------------------------------------------------
+    _IDX_GATE_LIFECYCLE_ENTRIES = ("initialize", "before_trading_start",
+                                   "handle_data", "after_trading_end")
+
+    def _build_call_graph(self, tree: ast.AST) -> tuple[dict, dict, list]:
+        """构建调用图：函数名→内部调用的函数名集合；生命周期入口；run_daily 注册。
+
+        返回 (call_edges, lifecycle_entries, run_daily_regs)：
+        - call_edges: {caller_name: set(callee_name)}（Name 调用 + self.method 调用）
+        - lifecycle_entries: {"initialize"/"before_trading_start"/"handle_data"/"after_trading_end": node}
+        - run_daily_regs: [{"func": 回调名, "time": "HH:MM" 或 None}]
+        """
+        call_edges: dict = {}
+        lifecycle_entries: dict = {}
+        run_daily_regs: list = []
+        func_nodes: dict = {}
+
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                func_nodes[node.name] = node
+                if node.name in self._IDX_GATE_LIFECYCLE_ENTRIES:
+                    lifecycle_entries[node.name] = node
+            elif isinstance(node, ast.ClassDef):
+                func_nodes[node.name] = node
+
+        def _calls_of(fn_node):
+            called = set()
+            for sub in ast.walk(fn_node):
+                if isinstance(sub, ast.Call):
+                    f = sub.func
+                    if isinstance(f, ast.Name):
+                        called.add(f.id)
+                    elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
+                        called.add(f.attr)   # self.helper() → helper
+            return called
+
+        for fname, fnode in func_nodes.items():
+            called = _calls_of(fnode)
+            # run_daily 注册解析（time 字面量）
+            for sub in ast.walk(fnode):
+                if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name) \
+                        and sub.func.id == "run_daily":
+                    cb_name = None
+                    tval = None
+                    for a in sub.args:
+                        if isinstance(a, ast.Name):
+                            cb_name = a.id
+                    for kw in sub.keywords:
+                        if kw.arg == "time" and isinstance(kw.value, ast.Constant):
+                            try:
+                                # 稳态字符串归一（'9:31'/'09:31:00' → 'HH:MM'），
+                                # 不经 pd.Timestamp（防环境差异静默吞异常）
+                                parts = str(kw.value.value).strip().split(":")
+                                hh = int(parts[0])
+                                mm = int(parts[1]) if len(parts) > 1 else 0
+                                tval = "%02d:%02d" % (hh, mm)
+                            except Exception:
+                                tval = None
+                    if cb_name is not None:
+                        run_daily_regs.append({"func": cb_name, "time": tval,
+                                               "registered_in": fname})
+                        # 注意：回调是独立入口（由 run_daily 时刻决定生命周期分类），
+                        # 不作为注册函数的调用边——否则 initialize 内注册盘前回调
+                        # 会被误判为 initialize 可达（f6 测试实证）。
+            call_edges[fname] = called
+        return call_edges, lifecycle_entries, run_daily_regs
+
+    def _gate_get_index_day_bar(self, node: ast.Call) -> Optional[str]:
+        """get_index_day_bar 生命周期/profile 门禁。返回 None=SHIM 放行；str=BLOCK 原因。
+
+        判定矩阵（docs/index-bar-rewrite-rule-design.md §4.3）：
+        profile 缺失/非法/minute/proxy → BLOCK；
+        daily-bar-v1 下：盘前类（initialize/before_trading_start/盘前 run_daily）可达 → BLOCK；
+        双路径可达 → BLOCK；仅 handle_data/收盘 run_daily（time>=14:55）可达 → SHIM。
+        """
+        profile = getattr(self, "_engine_profile", None)
+        if profile == "minute-bar-v1":
+            return "minute-bar-v1 下当日日线 bar 未完成（include 语义不含 T），平台重写不适用"
+        if profile == "daily-open-close-proxy-v1":
+            return "daily-open-close-proxy-v1 未探针（仅 daily-bar-v1 收盘路径解锁）"
+        if profile != "daily-bar-v1":
+            return (f"engine_profile={profile!r} 无法判定或未解锁"
+                    "（get_index_day_bar 重写 shim 仅适用日线收盘路径；"
+                    "转换需显式传入 engine_profile='daily-bar-v1'）")
+
+        call_edges, lifecycle_entries, run_daily_regs = self._build_call_graph(self._tree)
+
+        # 反向可达：从 get_index_day_bar 调用点所在函数向上？→ 正向：从入口 BFS，
+        # 判定哪些入口可达该 API。
+        # 找到本调用点所在函数（node.lineno 落入的 FunctionDef 区间）→ 从该函数名起。
+        caller_fn = self._find_enclosing_function(node)
+        if caller_fn is None:
+            return "get_index_day_bar 调用位于函数外（模块级），无法判定生命周期 → BLOCK"
+
+        # 正向 BFS：入口 → 可达函数集合
+        def reachable_from(entry: str) -> set:
+            seen = set()
+            stack = [entry]
+            while stack:
+                cur = stack.pop()
+                if cur in seen:
+                    continue
+                seen.add(cur)
+                for callee in call_edges.get(cur, set()):
+                    if callee not in seen:
+                        stack.append(callee)
+            return seen
+
+        premarket_reachable = ("get_index_day_bar" in reachable_from("initialize")
+                               or "get_index_day_bar" in reachable_from("before_trading_start"))
+        intraday_reachable = ("get_index_day_bar" in reachable_from("handle_data"))
+        close_rd_reachable = False
+        rd_pre = False
+        for reg in run_daily_regs:
+            if "get_index_day_bar" not in reachable_from(reg["func"]):
+                continue
+            t = reg.get("time")
+            if t is None:
+                rd_pre = True   # 时刻无法解析 → BLOCK
+            elif t >= "14:55":
+                close_rd_reachable = True
+            else:
+                rd_pre = True   # 盘前时刻 → BLOCK
+
+        if premarket_reachable or rd_pre:
+            return "盘前/初始化路径可达（before_trading_start/initialize/盘前 run_daily）——当日日线 bar 未完成，禁止读取"
+        if intraday_reachable or close_rd_reachable:
+            return None   # 收盘路径 SHIM 放行
+        if rd_pre and not intraday_reachable:
+            return "仅盘前 run_daily 可达，禁止读取"
+        # 双可达在上方已拦（premarket_reachable 覆盖盘前侧）；handle_data 与收盘 run_daily
+        # 同为收盘类，共存不阻断。
+        return "get_index_day_bar 不可从任何已登记生命周期入口到达（死代码或调用图盲区）→ BLOCK"
+
+    def _find_enclosing_function(self, node: ast.AST) -> Optional[str]:
+        """返回包含 node（按行号区间）的最内层 FunctionDef 名；找不到返回 None。"""
+        line = getattr(node, "lineno", 0)
+        best = None
+        for sub in ast.walk(self._tree):
+            if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                start = sub.lineno
+                end = getattr(sub, "end_lineno", start)
+                if start <= line <= end:
+                    if best is None or sub.lineno >= best[1]:
+                        best = (sub.name, sub.lineno)
+        return best[0] if best else None
+
     def _normalize_call(self, node: ast.Call, name: str) -> None:
         for kw in node.keywords:
             if kw.arg is None:
@@ -3767,6 +4050,8 @@ class SourceConverter:
                 self._rewrite_benchmark_suffix(node)
             elif name == "get_stock_status":
                 self._rewrite_stock_status_keywords(node)
+            elif name == "get_index_stocks":
+                self._rewrite_index_stocks_date(node)
             elif name == "set_commission":
                 self._rewrite_commission_value_domain(node)
         # 独立 pass：X['col'].values 是 Attribute 模式（非 Call），单独遍历
@@ -3828,6 +4113,49 @@ class SourceConverter:
             api_name="get_Ashares", line=_line_of(node), severity="WARN",
             old_text=ast.unparse(arg), new_text=new_text,
             message="get_Ashares date 改为 YYYYmmdd（PTrade 契约；本地 pd.Timestamp 兼容解析）"))
+        self.coverage["normalized_params"] += 1
+
+    def _rewrite_index_stocks_date(self, node: ast.Call) -> None:
+        """get_index_stocks date 参数归一 YYYY-MM-DD/date 对象 → YYYYmmdd（PTrade 契约）。
+
+        2026-09-09 平台实跑修复（恐慌抄底 07-17 选股空仓归因）：策略
+        get_index_stocks('000905.SS', date=prev) 中 prev=context.previous_date 为
+        datetime.date 对象，平台要求 YYYYmmdd → KeyError/异常 → except 吞掉 → L1=0。
+        复用 _asharess_date_normalized_value 模式（str → replace('-','')；date/datetime/动态
+        → strftime('%Y%m%d') 三元包装；已归一/已包装 → 幂等跳过）。
+        """
+        if id(node) in self._rewritten_call_ids:
+            return
+        arg = None
+        if node.args and len(node.args) >= 2:
+            arg = node.args[1]  # 位置形态 get_index_stocks(code, date)
+        else:
+            for kw in node.keywords:
+                if kw.arg == "date":
+                    arg = kw.value
+                    break
+        if arg is None:
+            return  # 无 date：平台回测注入当前日期（契约注释）
+        new_value, changed = self._asharess_date_normalized_value(arg)
+        if not changed:
+            return
+        new_text = ast.unparse(new_value)
+        if node.args and len(node.args) >= 2:
+            self._replacements.append(
+                (node.args[1].lineno, node.args[1].col_offset,
+                 node.args[1].end_lineno, node.args[1].end_col_offset, new_text))
+        else:
+            for kw in node.keywords:
+                if kw.arg == "date":
+                    self._replacements.append(
+                        (kw.value.lineno, kw.value.col_offset,
+                         kw.value.end_lineno, kw.value.end_col_offset, new_text))
+                    break
+        self.actions.append(ConversionAction(
+            action_type="NORMALIZE", rule_id="NORM-INDEX_STOCKS-DATE",
+            api_name="get_index_stocks", line=_line_of(node), severity="WARN",
+            old_text=ast.unparse(arg), new_text=new_text,
+            message="get_index_stocks date 改为 YYYYmmdd（PTrade 契约；date 对象/YYYY-MM-DD 兼容）"))
         self.coverage["normalized_params"] += 1
 
     def _asharess_call_arg(self, node: ast.Call):
@@ -4622,6 +4950,66 @@ def get_fundamentals_batch(security_list, table='valuation', fields=None,
     _qs_shape_check('get_fundamentals_batch', 'dataframe', result)
     return result
 '''
+        if name == "get_index_day_bar":
+            # 2026-09-09 重写解锁（D4 两轮平台探针 PRECLOSE_PATH_UNLOCK）
+            # platform contract: count-first / field / security_list / fq=pre / include=True
+            # 2026-09-09 platform fix v2: shim requests LOCAL fields (incl pctChg); the injected wrapper
+            # does amount->money mapping, pctChg strip + preclose injection, (close/preClose-1)*100 synthesis,
+            # column rename (money->amount, preclose->preClose). shim consumes normalized result only
+            # (audit: no second field-translation source).
+            return f'''{INJECTED_MARKER}
+def get_index_day_bar(security, count=1, fields=None):
+    """SHIM: completed index daily bars (local contract; platform get_history impl).
+
+    Contract (docs/index-bar-rewrite-rule-design.md §3.2):
+    - count in [1, 250] else ValueError; illegal fields ValueError;
+    - DataFrame index=trade_date (ascending, index.name='trade_date'),
+      canonical cols open/high/low/close/pctChg/volume/amount (fields=None full);
+    - fields=[] -> 0 data cols + date index; trade_date in fields -> index only;
+    - insufficient data -> actual rows; no data -> empty DataFrame.
+    """
+    n = int(count)
+    if n < 1 or n > 250:
+        raise ValueError('get_index_day_bar count must be in [1, 250], got %r' % (count,))
+    _CANONICAL = ['open', 'high', 'low', 'close', 'pctChg', 'volume', 'amount']
+    req = None
+    if fields is not None:
+        req = [fields] if isinstance(fields, str) else list(fields)
+        bad = [f for f in req if f != 'trade_date' and f not in _CANONICAL]
+        if bad:
+            raise ValueError('get_index_day_bar unsupported fields %r; allowed: %r' % (bad, _CANONICAL))
+    df = get_history(
+        n,
+        frequency='1d',
+        field=['open', 'high', 'low', 'close', 'pctChg', 'volume', 'amount'],
+        security_list=[security],
+        fq='pre',
+        include=True,
+    )
+    if df is None or len(df) == 0:
+        return pd.DataFrame()
+    # wrapper normalized columns + synthesized pctChg already
+    idx_vals = None
+    if 'trade_date' in df.columns:
+        idx_vals = [str(t)[:10] for t in df['trade_date']]
+    if idx_vals is None:
+        idx_vals = [str(ix)[:10] for ix in df.index]
+        if not all(v[:1].isdigit() and len(v) == 10 and v[4] == '-' for v in idx_vals):
+            if 'time' in df.columns:
+                idx_vals = [str(t)[:10] for t in df['time']]
+    out = df.copy()
+    out.index = idx_vals
+    out.index.name = 'trade_date'
+    out = out.drop(columns=[c for c in ('time', 'code', 'trade_date') if c in out.columns])
+    out = out.sort_index()
+    if req is None:
+        out = out[[_c for _c in _CANONICAL if _c in out.columns]]
+    else:
+        keep = [f for f in req if f != 'trade_date' and f in out.columns]
+        out = out[keep]
+    return out
+'''
+
         return ""
 
     def _extract_lib_functions(self, lib: str, needed: set[str], prefix: str) -> str:
@@ -4751,6 +5139,7 @@ def convert_source(
     etf_type: str = "equity",
     active_only: bool = True,
     exclude_bse: bool = False,                # P-D13 C1b：北交所过滤（对齐平台口径）
+    engine_profile: str | None = None,        # 2026-09-09 转换门禁：get_index_day_bar 生命周期/profile 判定输入
 ) -> SourceImportResult:
     """把本地策略 .py 转换为 PTrade 代码。不写盘（写盘由编排层负责）。
 
@@ -4769,11 +5158,33 @@ def convert_source(
             return result
     if strategy_id is None:
         strategy_id = path.stem.replace("_quantstudio", "")
+    # 2026-09-09 design_metadata 可信解析（docs/design-metadata-auto-profile-design.md v4）：
+    # 按消费者条件执法——仅当源码使用 profile-sensitive API（get_index_day_bar）时 engine_profile 才须可信；
+    # 不使用则 metadata 缺失/legacy 不阻断（纯增益 + 6 策略字节级一致的必要条件）。
+    # 可信 design 命中时 profile 为权威（显式冲突 -> BLOCK 由门禁报 ENGINE_PROFILE_METADATA_CONFLICT）；
+    # NOT_FOUND_LEGACY + 显式 profile 可用；其余异常状态记录进 resolution（不阻断无 API 策略）。
+    design_resolution = None
+    resolved_profile = engine_profile
+    try:
+        from quantstudio.strategy_compiler.design_metadata import find_design_for_strategy
+        design_resolution = find_design_for_strategy(path).to_dict()
+    except Exception:
+        design_resolution = {"status": "SCHEMA_UNAVAILABLE",
+                            "reason": "design_metadata resolution error (non-blocking)"}
+    if design_resolution is not None and design_resolution.get("status") == "RESOLVED":
+        resolved_profile = design_resolution.get("engine_profile")
+        if engine_profile is not None and engine_profile != resolved_profile:
+            design_resolution["status"] = "ENGINE_PROFILE_METADATA_CONFLICT"
+            design_resolution["reason"] = (f"explicit engine_profile={engine_profile!r} conflicts "
+                                           f"with trusted design {resolved_profile!r}")
+            resolved_profile = None  # 冲突 -> 门禁 BLOCK（可信 design 权威，防门禁绕过）
     conv = SourceConverter(
         strategy_id=strategy_id, inject_helpers=inject_helpers, verbose=verbose,
         etf_pool_start_date=etf_pool_start_date,
         db_path=str(db_path) if db_path else None,
         etf_type=etf_type, active_only=active_only,
         exclude_bse=exclude_bse,
+        engine_profile=resolved_profile,
     )
+    conv.design_metadata_resolution = design_resolution
     return conv.convert(source_code, source_path=str(path))

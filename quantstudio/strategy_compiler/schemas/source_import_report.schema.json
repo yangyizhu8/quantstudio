@@ -1,43 +1,206 @@
 {
   "type": "object",
-  "required": ["report_version", "source_path", "strategy_id", "created_at",
-               "actions", "coverage", "warnings", "errors", "status"],
+  "required": [
+    "report_version",
+    "source_path",
+    "strategy_id",
+    "created_at",
+    "actions",
+    "coverage",
+    "warnings",
+    "errors",
+    "status"
+  ],
   "properties": {
-    "report_version": {"const": "1.0"},
-    "source_path": {"type": "string"},
-    "strategy_id": {"type": "string"},
-    "created_at": {"type": "string", "format": "date-time"},
-    "status": {"enum": ["PASS", "BLOCKED", "PARTIAL"]},
+    "report_version": {
+      "const": "1.0"
+    },
+    "source_path": {
+      "type": "string"
+    },
+    "strategy_id": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "enum": [
+        "PASS",
+        "BLOCKED",
+        "PARTIAL"
+      ]
+    },
     "actions": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["action_type", "rule_id", "api_name", "line", "severity", "message"],
+        "required": [
+          "action_type",
+          "rule_id",
+          "api_name",
+          "line",
+          "severity",
+          "message"
+        ],
         "properties": {
-          "action_type": {"enum": ["REMOVE", "DEGRADE", "REWRITE", "SHIM", "NORMALIZE", "INJECT", "KEEP_COMMENT", "FREEZE"]},
-          "rule_id": {"type": "string"},
-          "api_name": {"type": "string"},
-          "line": {"type": "integer", "minimum": 1},
-          "severity": {"enum": ["BLOCK", "WARN", "INFO"]},
-          "old_text": {"type": "string"},
-          "new_text": {"type": "string"},
-          "message": {"type": "string"}
+          "action_type": {
+            "enum": [
+              "REMOVE",
+              "DEGRADE",
+              "REWRITE",
+              "SHIM",
+              "NORMALIZE",
+              "INJECT",
+              "KEEP_COMMENT",
+              "FREEZE"
+            ]
+          },
+          "rule_id": {
+            "type": "string"
+          },
+          "api_name": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "severity": {
+            "enum": [
+              "BLOCK",
+              "WARN",
+              "INFO"
+            ]
+          },
+          "old_text": {
+            "type": "string"
+          },
+          "new_text": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
         }
       }
     },
     "coverage": {
       "type": "object",
-      "required": ["api_calls_seen", "denylist_hits", "normalized_params", "injected_helpers"],
+      "required": [
+        "api_calls_seen",
+        "denylist_hits",
+        "normalized_params",
+        "injected_helpers"
+      ],
       "properties": {
-        "api_calls_seen": {"type": "integer"},
-        "denylist_hits": {"type": "integer"},
-        "normalized_params": {"type": "integer"},
-        "injected_helpers": {"type": "array", "items": {"type": "string"}},
-        "fq_warn_kept": {"type": "array", "items": {"type": "string"}},
-        "aliases_seen": {"type": "object"}
+        "api_calls_seen": {
+          "type": "integer"
+        },
+        "denylist_hits": {
+          "type": "integer"
+        },
+        "normalized_params": {
+          "type": "integer"
+        },
+        "injected_helpers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fq_warn_kept": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "aliases_seen": {
+          "type": "object"
+        }
       }
     },
-    "warnings": {"type": "array", "items": {"type": "string"}},
-    "errors": {"type": "array", "items": {"type": "string"}}
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "design_metadata_resolution": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "RESOLVED",
+            "NOT_FOUND_LEGACY",
+            "AMBIGUOUS",
+            "INVALID_JSON",
+            "HASH_MISMATCH",
+            "LEDGER_MISMATCH",
+            "INVALID_PROFILE",
+            "SCHEMA_UNAVAILABLE",
+            "UNSUPPORTED_DESIGN_VERSION",
+            "ENGINE_PROFILE_METADATA_CONFLICT"
+          ]
+        },
+        "design_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ledger_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "strategy_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "engine_profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "design_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "schema_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "source_sha256",
+        "reason"
+      ]
+    }
   }
 }

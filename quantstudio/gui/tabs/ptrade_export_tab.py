@@ -50,9 +50,11 @@ class PtradeExportWorker(QThread):
 
     def __init__(self, source_path: Path, start: str | None, end: str | None,
                  run_smoke: bool, etf_pool_start_date: str | None,
-                 db_path: str | None = None, parent=None):
+                 db_path: str | None = None, engine_profile: str | None = None,
+                 parent=None):
         super().__init__(parent)
         self.source_path = source_path
+        self.engine_profile = engine_profile
         # 注意：不能用 self.start/self.end —— 会遮蔽 QThread.start() 方法
         # （实例属性遮蔽 → 点击转换时 'str' object is not callable → PyQt 主线程
         # 槽内未捕获异常 → 整个进程 abort 闪退，2026-08-11 实测复现）
@@ -73,6 +75,7 @@ class PtradeExportWorker(QThread):
                 strict=True,
                 etf_pool_start_date=self.etf_pool_start_date,
                 db_path=self.db_path,
+                engine_profile=self.engine_profile,
             )
             status = run_card.get("status", "UNKNOWN")
             if status == "PASS":
@@ -151,6 +154,17 @@ class PtradeExportTab(QWidget):
         self.end_edit.setPlaceholderText("YYYY-MM-DD")
         self.end_edit.setFixedWidth(110)
         row.addWidget(self.end_edit)
+        row.addWidget(QLabel("引擎周期:"))
+        self.profile_combo = ComboBox()
+        self.profile_combo.addItems([
+            "daily-bar-v1", "minute-bar-v1",
+            "daily-open-close-proxy-v1", "未指定（含指数信号策略将被门禁拦截）",
+        ])
+        self.profile_combo.setCurrentIndex(3)  # 默认未指定（fail-closed）
+        self.profile_combo.setToolTip(
+            "回测引擎周期（get_index_day_bar 重写门禁判定输入）：\n"
+            "daily-bar-v1 收盘路径放行指数日线读取；其余/未指定 → 转换 BLOCK（禁默认）")
+        row.addWidget(self.profile_combo)
         row.addStretch(1)
         layout.addWidget(grp_cfg)
 
@@ -247,8 +261,24 @@ class PtradeExportTab(QWidget):
         self._last_out_dir = None
         self._run_btn_enabled(False)
         self.status_label.setText("正在转换...")
+        profile = self.profile_combo.currentText()
+        if profile == "未指定（含指数信号策略将被门禁拦截）":
+            profile = None   # 门禁 fail-closed：缺失 → BLOCK
+        # 2026-09-09 可信 design 自动解析：策略关联 design（ledger path+SHA 可信链）命中时
+        # 自动带出 profile（权威，防门禁绕过）；冲突/异常由转换器门禁 BLOCK（引擎周期下拉仅 legacy 手工用）
+        try:
+            from quantstudio.strategy_compiler.design_metadata import find_design_for_strategy
+            dm = find_design_for_strategy(src)
+            if dm.status == "RESOLVED":
+                profile = dm.engine_profile
+                self.status_label.setText(f"已自动识别引擎周期 {profile}（来源: {dm.design_path}）")
+            elif dm.status not in ("NOT_FOUND_LEGACY",):
+                self.status_label.setText(f"设计元数据异常: {dm.status}（{dm.reason[:60]}）——非 profile-sensitive 策略可继续")
+        except Exception:
+            pass   # 自动解析失败不影响转换（非 profile-sensitive 策略零影响）
         self._worker = PtradeExportWorker(
-            src, start, end, run_smoke, etf_pool_start_date=etf_start, parent=self)
+            src, start, end, run_smoke, etf_pool_start_date=etf_start,
+            engine_profile=profile, parent=self)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished_ok.connect(self._on_finished_ok)
         self._worker.finished_err.connect(self._on_finished_err)

@@ -122,7 +122,6 @@
       "pure helpers: _extract_history_field(history_item, field, dtype) 硬门禁（rule 17）/ _ensure_runtime_state() 幂等状态守卫 / _lock_remaining_days() 锁仓剩余交易日计数（get_trade_days 未来交易日）",
       "信号读数（A-11 框架修复后）：get_index_day_bar 为 QuantStudio 本地注入 API（local_only_symbols 已登记，PTrade 转换 fail-closed BLOCK；重写映射+平台探针为后续项 D4 编号另立）；count 越界 ValueError、无数据空 DataFrame → 策略 fail-soft 不触发信号并审计行记录",
       "r5_deployment_invariants fail-soft 一致性（终审⑥）：入场日候选全部涨停时低 gross exposure 为合法状态（QS_REBALANCE_AUDIT note=limit_up_skip_all_low_exposure_legal），复核不判 deployment_invariant_failed",
-      "信号源实现（A-11）：T 日跌幅 = data['510760.SS'].close / data['510760.SS'].preclose - 1（上证综指ETF 当日快照，框架快照含 etf_daily）；T-1 跌幅 = get_history('000001.SS', 2, '1d', fields=['pctChg'], fq='pre', include=False)[-1]（指数日线，合规无循环）。R1 实测两口径 2026 年判定 0 分歧 0 误报",
       "信号源指数：get_history('000001.SS', ..., fq='pre', include=False) 取 index_daily（数据层 stock→etf→index fallback 支持）；指数代码归一化为 000001.SS",
       "选股：get_index_stocks('000905.SS', date=T-1) PIT 成分 → get_fundamentals(['...'], 'valuation', fields=['float_value'], date=T-1) 流通市值降序前 50（T-1 快照）",
       "涨停判断：T 日 raw bar close vs high/low_limit（get_history fq 原始列或引擎注入）；get_stock_status 查 ST/HALT/DELISTING",

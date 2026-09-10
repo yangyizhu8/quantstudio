@@ -1045,12 +1045,15 @@ def before_trading_start(context, data):
     codes = get_Ashares(_qs_day())
 '''
     result = _convert_code(code)
-    assert result.errors == [], result.errors
+    # 2026-09-08 转换门禁 fail-closed：未定义裸名 _qs_day() → BLOCK（预期，非崩溃）。
+    # 断言放宽为：errors 仅含 _qs_day 的 BLOCK（无 SyntaxError 等其他错误）。
+    assert all("_qs_day" in err and err.startswith("BLOCK:") for err in result.errors), result.errors
     out = result.converted_code
     assert ".replace('-', '')" in out and "strftime('%Y%m%d')" in out
     ast.parse(out)
     r2 = _convert_code(out, strategy_id="test_strategy_2")
-    assert r2.errors == [], r2.errors  # 幂等（已包装跳过）
+    # 幂等（已包装跳过）；BLOCK 错误同上（fail-closed 契约）
+    assert all("_qs_day" in err and err.startswith("BLOCK:") for err in r2.errors), r2.errors
     ast.parse(r2.converted_code)
 
 

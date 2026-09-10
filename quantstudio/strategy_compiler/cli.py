@@ -117,6 +117,7 @@ def cmd_import(args: argparse.Namespace) -> int:
             etf_pool_start_date=args.etf_pool_start_date,
             db_path=Path(args.db_path) if args.db_path else None,
             exclude_bse=getattr(args, 'exclude_bse', False),  # P-D13 C1b
+            engine_profile=getattr(args, 'engine_profile', None),
         )
     except GoldenProtectionError as e:
         print(f"ERROR: golden protection — {e}", file=sys.stderr)
@@ -161,6 +162,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help="查 etf_basic 的库路径（默认 data/quantstudio.db；T5 staging 副本场景传副本路径）")
     p_imp.add_argument("--exclude-bse", action="store_true", default=False,
                        help="北交所过滤（对齐平台 get_Ashares 不含 920xxx 口径；P-D13 C1b）")  # P-D13
+    p_imp.add_argument("--engine-profile", default=None,
+                       help="回测引擎周期（daily-bar-v1/minute-bar-v1/daily-open-close-proxy-v1；"
+                            "get_index_day_bar 重写门禁判定输入，缺失→BLOCK 禁默认）")  # 2026-09-09
     p_imp.set_defaults(func=cmd_import)
     return parser
 

@@ -159,9 +159,27 @@ else:
 
 ## D4 平台差异登记：get_index_day_bar 平台等价物探针（2026-09-08 登记）
 
-- **状态**：REGISTERED（本批不实施转换重写，探针门禁未过前含本 API 的源一律拒绝转换）
+- **状态**：PROBE_COMPLETE(2026-09-09，两轮平台实证) → 重写规则实施中（docs/evidence/d4-index-bar-probe-evidence.md：首轮 23 日（指数支持/include 语义/双端一致）+ preclose 探针 v2 全 PASS（PRECLOSE_PATH_UNLOCK：P1 非空/P2 preclose==前日close 14 对精确/P3 双端 pctChg -1.8498 vs -1.8497、-3.0460 vs -3.046 MATCH）。重写映射钉死：平台 get_history(count,'1d',field=[open,high,low,close,volume,money,preclose],include=True) → wrapper pctChg 合成 → 本地 8 字段契约。实施=docs/index-bar-rewrite-rule-design.md v3（六步流水线）
 - **D4 编号**：D4 登记序列新增条目（get_index_day_bar 平台等价物）
 - **探针项**：① 平台 get_history 对指数代码（000001.SS）的支持；② 平台日线 include=True 是否含当日
 - **重写映射（登记为后续项）**：converter 将 get_index_day_bar 重写为平台 get_history('000001.SS', count=N, frequency='1d', fields=[...], include=True, fq='pre')——重写仅发生在转换器层，策略源码永不出现 include=True，NO-LOOKAHEAD-INCLUDE 硬闸不破
 - **解除条件**：平台探针实证通过后，注册重写映射并解锁转换；探针未过前保持 local_only_symbols 封禁
+
+
+
+## %s 日志格式平台差异（2026-09-08 登记 · 转换门禁修复验收中独立发现）
+
+- **状态**：REGISTERED → 排期推进（与转换门禁修复解耦，独立立项）
+- **症状**：真实 PTrade 平台 log 不兼容 printf 双参风格（log.info('fmt %s', arg)），%s 字面输出不替换
+- **影响**：日志可读性（不影响交易逻辑）；转换产物中策略源码的 %s 风格 log 调用未被改写
+- **建议修法**：转换器对策略源码 log 调用做格式改写（%s → f-string 或 str 拼接），或文档明确平台 log 约定要求策略源码用平台兼容写法
+- **关联证据**：恐慌抄底策略 PTrade 回测日志（2026-09-08 用户提交，QS_INDEX_BAR_FAIL code=%s err=%s 字面输出）
+
+## fail-soft except 吞 NameError 教训（2026-09-08 登记 · 转换门禁修复同源）
+
+- **状态**：REGISTERED → 立项评估（fail-loud 边界）
+- **教训**：恐慌抄底策略 _signal_fired 的 except Exception 把平台 NameError 静默转为 fail 降级，掩盖了转换缺陷（get_index_day_bar 透传）整窗空仓——契约违约被 fail-soft 吞掉一个月才发现
+- **评估方向**：本地专用 API 调用失败应 fail-loud（抛错/显式告警）而非静默降级；fail-soft 仅适用于数据缺失类（指数数据不足→不触发信号是合法 fail-soft），不适用于 API 契约违约
+- **关联**：本策略 _signal_fired fail-soft 设计（R2.5 确认时未被识别为掩盖风险）；转换门禁修复后该场景已从源头消除（转换即 BLOCK），本项评估为通用边界（其他策略的 fail-soft except 是否有同型掩盖）
+- **推进归属**：单独排期评估，不阻塞转换门禁修复
 

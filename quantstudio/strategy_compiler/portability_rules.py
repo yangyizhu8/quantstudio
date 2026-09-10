@@ -37,7 +37,22 @@ DENY_REMOVE: frozenset[str] = frozenset({
 DENY_SHIM: frozenset[str] = frozenset({
     "get_fundamentals_batch",  # shim 形状：DataFrame（index=code, columns=fields，本地 B1 契约）
     "get_history_batch",       # shim 形状：dict[code→DataFrame]（与 get_history is_dict=True 一致）
+    # 2026-09-09：get_index_day_bar 重写解锁（D4 两轮平台探针 PRECLOSE_PATH_UNLOCK）——
+    # shim 形状：DataFrame（index=trade_date 升序，8 字段契约，pctChg 由平台 close/preclose 合成）；
+    # 仅 daily-bar-v1 + handle_data/收盘 run_daily 可达路径放行（engine_profile 机器门禁），
+    # 其余生命周期/profile → 转换 BLOCK（source_import 调用图门禁）。
+    "get_index_day_bar",
 })
+
+# ============================================================================
+# 分类 0.5：QuantStudio 本地专用 API（PTrade 平台不存在且无重写映射）→ 转换 fail-closed BLOCK
+#   权威登记源：skills/quantstudio-strategy-compiler/references/ptrade-api-signatures.json
+#   local_only_symbols。任何引用形态（调用/别名赋值/传参）一律拦截——平台不存在的名字
+#   任何引用都通向 NameError。此集合为人工 curated（无误杀风险），故采用引用级拦截（非仅 Call func）。
+#   2026-09-09：get_index_day_bar 已迁移 DENY_SHIM（重写解锁），本集合当前为空——
+#   保留集合与分支作为未来本地 API 的门禁通道（新本地 API 未登记重写映射前在此拦截）。
+# ============================================================================
+LOCAL_ONLY_PASSTHROUGH_BLOCK: frozenset[str] = frozenset()
 
 # 注入同名 wrapper 的平台登记 API 名（策略代码零改动，转换侧包装平台行为）
 # 与 DENY_SHIM 并集 = SHIM_CONTRACT_REGISTRY 的键集合（测试断言集合相等，防双边漂移）
@@ -121,6 +136,18 @@ SHIM_CONTRACT_REGISTRY: dict[str, ShimContractSpec] = {
         contract_source="ptrade_api.py:1444-1476",
         template_location="_shim_source('get_history_batch')",
         homology_test="test_history_wrapper_idempotent",
+    ),
+    "get_index_day_bar": ShimContractSpec(
+        api_name="get_index_day_bar",
+        contract_type="DataFrame",
+        contract_index="trade_date（YYYY-MM-DD 升序，index.name='trade_date'）",
+        contract_columns="8 字段 canonical 序（open/high/low/close/pctChg/volume/amount + trade_date 索引）；"
+                         "pctChg 由平台 close/preclose 合成（D4 探针 P2/P3 实证）；money→amount 映射；preClose 中间列不泄漏",
+        contract_empty="无数据 → 空 DataFrame；count 数据不足 → 返回实际行数",
+        contract_source="ptrade/probe_get_index_day_bar_ptrade.py + probe_index_preclose_v2_ptrade.py"
+                        "（D4 两轮平台探针 2026-09-08/09，PRECLOSE_PATH_UNLOCK）",
+        template_location="_shim_source('get_index_day_bar')",
+        homology_test="test_get_index_day_bar_shim_homology",
     ),
     "filter_stock_by_status": ShimContractSpec(
         api_name="filter_stock_by_status",

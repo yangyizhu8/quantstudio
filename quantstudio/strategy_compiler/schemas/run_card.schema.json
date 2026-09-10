@@ -3,54 +3,479 @@
   "$id": "https://quantstudio.local/schemas/run_card.schema.json",
   "title": "QuantStudio Strategy Compiler Run Card v1",
   "type": "object",
-  "required": ["run_card_version", "run_id", "strategy_id", "build_id", "created_at", "stage", "status", "contract_versions", "profile", "data_window", "artifacts", "validation", "smoke_backtest", "fidelity", "approximations", "known_limitations", "reproducibility"],
+  "required": [
+    "run_card_version",
+    "run_id",
+    "strategy_id",
+    "build_id",
+    "created_at",
+    "stage",
+    "status",
+    "contract_versions",
+    "profile",
+    "data_window",
+    "artifacts",
+    "validation",
+    "smoke_backtest",
+    "fidelity",
+    "approximations",
+    "known_limitations",
+    "reproducibility"
+  ],
   "properties": {
-    "run_card_version": {"const": "1.1"},
-    "run_id": {"type": "string", "minLength": 1},
-    "strategy_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$"},
-    "build_id": {"type": "string", "minLength": 1},
-    "created_at": {"type": "string", "format": "date-time"},
-    "stage": {"enum": ["SOURCE_IMPORTED", "SPEC_ONLY", "STATIC_VALIDATED", "SMOKE_EXECUTED", "FIDELITY_COMPARED"]},
-    "status": {"enum": ["PASS", "PARTIAL", "BLOCKED", "FAILED"]},
-    "contract_versions": {"$ref": "#/definitions/contractVersions"},
+    "run_card_version": {
+      "const": "1.1"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strategy_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{2,63}$"
+    },
+    "build_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "stage": {
+      "enum": [
+        "SOURCE_IMPORTED",
+        "SPEC_ONLY",
+        "STATIC_VALIDATED",
+        "SMOKE_EXECUTED",
+        "FIDELITY_COMPARED"
+      ]
+    },
+    "status": {
+      "enum": [
+        "PASS",
+        "PARTIAL",
+        "BLOCKED",
+        "FAILED"
+      ]
+    },
+    "contract_versions": {
+      "$ref": "#/definitions/contractVersions"
+    },
     "profile": {
       "type": "object",
-      "required": ["engine_profile_id", "ptrade_profile_id", "execution_status"],
-      "properties": {"engine_profile_id": {"type": "string", "minLength": 1}, "ptrade_profile_id": {"type": "string", "minLength": 1}, "execution_status": {"enum": ["READY", "BLOCKED", "PLANNED", "UNSUPPORTED"]}},
+      "required": [
+        "engine_profile_id",
+        "ptrade_profile_id",
+        "execution_status"
+      ],
+      "properties": {
+        "engine_profile_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ptrade_profile_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "execution_status": {
+          "enum": [
+            "READY",
+            "BLOCKED",
+            "PLANNED",
+            "UNSUPPORTED"
+          ]
+        }
+      },
       "additionalProperties": false
     },
     "data_window": {
       "type": "object",
-      "required": ["start", "end", "as_of"],
-      "properties": {"start": {"type": ["string", "null"], "format": "date"}, "end": {"type": ["string", "null"], "format": "date"}, "as_of": {"type": ["string", "null"], "format": "date-time"}},
+      "required": [
+        "start",
+        "end",
+        "as_of"
+      ],
+      "properties": {
+        "start": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "end": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "as_of": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      },
       "additionalProperties": false
     },
-    "artifacts": {"type": "array", "items": {"type": "object", "required": ["name", "path", "sha256"], "properties": {"name": {"type": "string", "minLength": 1}, "path": {"type": "string", "minLength": 1}, "sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}}, "additionalProperties": false}},
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "sha256"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     "validation": {
       "type": "object",
-      "required": ["schema", "timing", "hard_filters", "api_portability", "variant_consistency"],
-      "properties": {"schema": {"$ref": "#/definitions/checkStatus"}, "timing": {"$ref": "#/definitions/checkStatus"}, "hard_filters": {"$ref": "#/definitions/checkStatus"}, "api_portability": {"$ref": "#/definitions/checkStatus"}, "variant_consistency": {"$ref": "#/definitions/checkStatus"}},
+      "required": [
+        "schema",
+        "timing",
+        "hard_filters",
+        "api_portability",
+        "variant_consistency"
+      ],
+      "properties": {
+        "schema": {
+          "$ref": "#/definitions/checkStatus"
+        },
+        "timing": {
+          "$ref": "#/definitions/checkStatus"
+        },
+        "hard_filters": {
+          "$ref": "#/definitions/checkStatus"
+        },
+        "api_portability": {
+          "$ref": "#/definitions/checkStatus"
+        },
+        "variant_consistency": {
+          "$ref": "#/definitions/checkStatus"
+        }
+      },
       "additionalProperties": false
     },
-    "smoke_backtest": {"oneOf": [{"type": "null"}, {"$ref": "#/definitions/smokeResult"}]},
-    "fidelity": {"oneOf": [{"type": "null"}, {"$ref": "#/definitions/fidelityResult"}]},
-    "approximations": {"type": "array", "items": {"type": "string"}},
-    "known_limitations": {"type": "array", "items": {"type": "string"}},
-    "reference_closure": {"oneOf": [{"type": "null"}, {"$ref": "#/definitions/referenceClosure"}]},
+    "smoke_backtest": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/definitions/smokeResult"
+        }
+      ]
+    },
+    "fidelity": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/definitions/fidelityResult"
+        }
+      ]
+    },
+    "approximations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "known_limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reference_closure": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/definitions/referenceClosure"
+        }
+      ]
+    },
     "reproducibility": {
       "type": "object",
-      "required": ["python_version", "quantstudio_version", "random_seed", "data_fingerprint"],
-      "properties": {"python_version": {"type": "string", "minLength": 1}, "quantstudio_version": {"type": "string", "minLength": 1}, "random_seed": {"type": ["integer", "null"]}, "data_fingerprint": {"type": ["string", "null"]}},
+      "required": [
+        "python_version",
+        "quantstudio_version",
+        "random_seed",
+        "data_fingerprint"
+      ],
+      "properties": {
+        "python_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quantstudio_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "random_seed": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "data_fingerprint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
       "additionalProperties": false
+    },
+    "design_metadata_resolution": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "RESOLVED",
+            "NOT_FOUND_LEGACY",
+            "AMBIGUOUS",
+            "INVALID_JSON",
+            "HASH_MISMATCH",
+            "LEDGER_MISMATCH",
+            "INVALID_PROFILE",
+            "SCHEMA_UNAVAILABLE",
+            "UNSUPPORTED_DESIGN_VERSION",
+            "ENGINE_PROFILE_METADATA_CONFLICT"
+          ]
+        },
+        "design_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ledger_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "strategy_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "engine_profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "design_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "schema_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "source_sha256",
+        "reason"
+      ]
     }
   },
   "definitions": {
-    "semver": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z._-]+)?$"},
-    "contractVersions": {"type": "object", "required": ["strategy_spec_version", "engine_semantics_version", "provider_contract_version", "security_code_rules_version", "ptrade_profile_version", "renderer_version", "skill_version"], "properties": {"strategy_spec_version": {"$ref": "#/definitions/semver"}, "engine_semantics_version": {"$ref": "#/definitions/semver"}, "provider_contract_version": {"$ref": "#/definitions/semver"}, "security_code_rules_version": {"$ref": "#/definitions/semver"}, "ptrade_profile_version": {"$ref": "#/definitions/semver"}, "renderer_version": {"$ref": "#/definitions/semver"}, "skill_version": {"$ref": "#/definitions/semver"}}, "additionalProperties": false},
-    "checkStatus": {"enum": ["PASS", "BLOCKED", "NOT_RUN", "FAILED"]},
-    "smokeResult": {"type": "object", "required": ["status", "command", "summary"], "properties": {"status": {"enum": ["PASS", "BLOCKED", "FAILED"]}, "command": {"type": "string"}, "summary": {"type": "string"}}, "additionalProperties": false},
-    "fidelityResult": {"type": "object", "required": ["status", "report_path", "summary"], "properties": {"status": {"enum": ["PASS", "PARTIAL", "FAILED"]}, "report_path": {"type": "string"}, "summary": {"type": "string"}}, "additionalProperties": false},
-    "referenceClosure": {"type": "object", "required": ["schema_version", "oracle_source_digest", "data_digest", "config_digest", "signals_path", "orders_path", "nav_path", "source_digest_path", "trigger_reason_taxonomy"], "properties": {"schema_version": {"const": "1.0"}, "oracle_source_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "data_digest": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}, "config_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "signals_path": {"type": "string", "minLength": 1}, "orders_path": {"type": "string", "minLength": 1}, "nav_path": {"type": "string", "minLength": 1}, "source_digest_path": {"type": "string", "minLength": 1}, "trigger_reason_taxonomy": {"type": "array", "items": {"type": "string"}}}, "additionalProperties": false}
+    "semver": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z._-]+)?$"
+    },
+    "contractVersions": {
+      "type": "object",
+      "required": [
+        "strategy_spec_version",
+        "engine_semantics_version",
+        "provider_contract_version",
+        "security_code_rules_version",
+        "ptrade_profile_version",
+        "renderer_version",
+        "skill_version"
+      ],
+      "properties": {
+        "strategy_spec_version": {
+          "$ref": "#/definitions/semver"
+        },
+        "engine_semantics_version": {
+          "$ref": "#/definitions/semver"
+        },
+        "provider_contract_version": {
+          "$ref": "#/definitions/semver"
+        },
+        "security_code_rules_version": {
+          "$ref": "#/definitions/semver"
+        },
+        "ptrade_profile_version": {
+          "$ref": "#/definitions/semver"
+        },
+        "renderer_version": {
+          "$ref": "#/definitions/semver"
+        },
+        "skill_version": {
+          "$ref": "#/definitions/semver"
+        }
+      },
+      "additionalProperties": false
+    },
+    "checkStatus": {
+      "enum": [
+        "PASS",
+        "BLOCKED",
+        "NOT_RUN",
+        "FAILED"
+      ]
+    },
+    "smokeResult": {
+      "type": "object",
+      "required": [
+        "status",
+        "command",
+        "summary"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "PASS",
+            "BLOCKED",
+            "FAILED"
+          ]
+        },
+        "command": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fidelityResult": {
+      "type": "object",
+      "required": [
+        "status",
+        "report_path",
+        "summary"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "PASS",
+            "PARTIAL",
+            "FAILED"
+          ]
+        },
+        "report_path": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "referenceClosure": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "oracle_source_digest",
+        "data_digest",
+        "config_digest",
+        "signals_path",
+        "orders_path",
+        "nav_path",
+        "source_digest_path",
+        "trigger_reason_taxonomy"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "oracle_source_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "data_digest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "config_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "signals_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "orders_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "nav_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_digest_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "trigger_reason_taxonomy": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

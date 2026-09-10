@@ -45,7 +45,7 @@
 
 ### 3.3 PTrade 转换对齐（三件事）
 ① get_index_day_bar 登记进 local_only_symbols → TARGET-LOCAL-EXTENSION-BAN 对 PTrade 目标 fail-closed BLOCK（杜绝 set_backtest NameError 同型事故）
-② 重写规则登记为后续项（本批不实施）：converter 重写为平台 get_history(..., include=True, fq='pre')，策略源码永不出现 include=True
+② 重写规则登记为后续项 + **转换门禁已落地（2026-09-08 修复，docs/conversion-local-only-gate-design.md）**：source_import 对本地专用 API 调用/引用 fail-closed BLOCK（LOCAL_ONLY_PASSTHROUGH_BLOCK + 未知裸名 else 兜底 + defined_names/引用级收集），转 PTrade 显式失败；converter 重写为平台 get_history(..., include=True, fq='pre') 保留为探针过后的解锁路径，策略源码永不出现 include=True
 ③ 平台探针项按 D4 平台差异登记序列落编号；探针未过前含本 API 的源一律拒绝转换；三条执行状态写入证据文档
 
 ### 3.4 策略管线续跑

@@ -307,6 +307,7 @@ def orchestrate_source(
     etf_pool_start_date: str | None = None,   # 07 规格：ETF 静态池固化起始日 "YYYY-MM-DD"
     db_path: str | Path | None = None,        # 07 规格：查 etf_basic 的库路径（默认 data/quantstudio.db）
     exclude_bse: bool = False,                # P-D13 C1b：北交所过滤（对齐平台口径）
+    engine_profile: str | None = None,        # 2026-09-09 转换门禁：get_index_day_bar 生命周期/profile 判定输入
 ) -> dict[str, Any]:
     """Source entry 全流程：源码 → 转换 → 门禁 → round-trip 冒烟 → run_card（T4）。
 
@@ -340,7 +341,8 @@ def orchestrate_source(
 
     # 1) 转换（07 规格：ETF FREEZE 参数透传；P-D13 C1b exclude_bse 透传）
     result = convert_source(path, etf_pool_start_date=etf_pool_start_date,
-                            db_path=db_path, exclude_bse=exclude_bse)
+                            db_path=db_path, exclude_bse=exclude_bse,
+                            engine_profile=engine_profile)
     strategy_id = path.stem.replace("_quantstudio", "")
     build_id = hashlib.sha256(result.converted_code.encode("utf-8")).hexdigest()[:12]
 
@@ -458,6 +460,7 @@ def orchestrate_source(
         validation=validation, smoke_result=smoke_result,
         known_limitations=known_limitations, warnings=warnings_all,
         start=start, end=end,
+        design_metadata_resolution=getattr(result, "design_metadata_resolution", None),
     )
     _write_run_card(run_card, out_dir)
     return run_card
@@ -485,6 +488,8 @@ def _assemble_source_report(
         "coverage": result.coverage,
         "warnings": result.warnings,
         "errors": result.errors,
+        # 2026-09-09 设计元数据解析（终审阻断 C：结构化记录，转换证据可追溯）
+        "design_metadata_resolution": getattr(result, "design_metadata_resolution", None),
     }
 
 
@@ -515,7 +520,7 @@ def _build_run_card(
     *, run_id, strategy_id, build_id, created_at, stage, status,
     spec, ir, profile_id, ptrade_profile_id, execution_status,
     artifacts, validation, smoke_result, known_limitations, warnings,
-    start, end,
+    start, end, design_metadata_resolution=None,
 ) -> dict[str, Any]:
     """Assemble the run_card.json dict (run_card.schema.json-conformant)."""
     cv = spec.get("contract_versions", {})
@@ -550,6 +555,8 @@ def _build_run_card(
             "ptrade_profile_id": ptrade_profile_id,
             "execution_status": execution_status,
         },
+        # 2026-09-09 设计元数据解析（终审阻断 C：run_card 记录解析状态与证据链）
+        "design_metadata_resolution": design_metadata_resolution,
         "data_window": {"start": dw_start, "end": dw_end, "as_of": as_of},
         "artifacts": artifacts,
         "validation": validation,

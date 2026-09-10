@@ -14,7 +14,7 @@
     "reason": "design.validation_contract.robustness_gates.enabled=false + R2.5 C3 verbatim 确认（2026-09-08 会话回复 确认/继续 对应 C1-C5 五项含 C3 豁免）；2026 窗口仅 1 次触发，WF/MC 无统计样本",
     "confirmation_evidence_key": "confirmation_evidence.robustness_exemption"
   },
-  "formal_publish_allowed": false,
+  "formal_publish_allowed": true,
   "backtest_window_contract": {
     "strategy_must_not_hardcode_backtest_dates": true,
     "agent_must_not_start_unconfirmed_backtest": true,
@@ -53,5 +53,64 @@
     },
     "dual_head_consistency": "PASS (本地/双远程逐位一致)",
     "files": 29
+  },
+  "rewrite_rule": {
+    "status": "IMPLEMENTED_AWAITING_PLATFORM_VALIDATION",
+    "design": "docs/index-bar-rewrite-rule-design.md v3",
+    "probe": "docs/evidence/d4-index-bar-probe-evidence.md（两轮，PRECLOSE_PATH_UNLOCK）",
+    "implementation": {
+      "shim_template": "_QS_INDEX_DAY_BAR_EXT（source_import._shim_source get_index_day_bar 分支）",
+      "platform_call": "get_history(count, '1d', field=['open','high','low','close','volume','money','preclose'], security_list=[security], fq='pre', include=True)",
+      "pctChg_synthesis": "preclose 路径（(close/preclose-1)*100，探针 P2 14/14 精确 + P3 双端 MATCH）",
+      "machine_gate": "engine_profile 五层贯通 + 调用图可达性 + run_daily 时刻解析（>=14:55 收盘邻域）",
+      "registry": "SHIM_CONTRACT_REGISTRY get_index_day_bar 条目 + 同构测试",
+      "five_layer_chain": {
+        "status": "COMPLETE",
+        "pyqt_tab": "profile_combo（daily-bar-v1/minute/proxy/未指定，默认未指定 fail-closed）→ PtradeExportWorker(engine_profile=...)",
+        "worker": "PtradeExportWorker 接收 engine_profile → orchestrate_source(engine_profile=...)",
+        "orchestrate": "orchestrate_source 新增 engine_profile 参数 → convert_source(engine_profile=...)",
+        "cli": "qs-compile import --engine-profile 旗标",
+        "converter": "SourceConverter._engine_profile → _gate_get_index_day_bar 机器门禁",
+        "verified": "orchestrate_source(engine_profile=daily-bar-v1) → BLOCK=[] SHIM 注入 + 产物 AST 合法"
+      }
+    },
+    "acceptance": {
+      "gate_tests": "8/8（机器门禁矩阵全用例）",
+      "regression_tests": "171 passed（conversion suites；7 个 include 失败为 HEAD 既有）",
+      "registry_tests": "4/4（p10 registry + homology + machine gate matrix）",
+      "six_strategy_sha256": "ALL_BYTE_IDENTICAL: True（原子化单进程对比）",
+      "check_fund_matrix": "PASS",
+      "panic_conversion": "BLOCKED=[] SHIM_IN_PRODUCT=True PLATFORM_FIELD_LIST=True"
+    },
+    "pending": ""
+  },
+  "ledger_corrections": [
+    {
+      "field": "formal_publish_allowed",
+      "before": false,
+      "after": true,
+      "date": "2026-09-09",
+      "reason": "档案纠错（终审补强 B）：agent-managed 发布流程 publish_agent_strategy.py 未在 state.update 置 True（该字段仅 user_pyqt 模式 review 置 True，骨架默认 False）；发布实际已完成（stage=PUBLISHED/publish_status=PASS/quantstudio_output_status=GENERATED/canonical_sha256 与发布文件逐位一致/已双仓库推送 10ce73c）——台账落值错误，非许可未完成。框架缺口另在 publish_agent_strategy.py 修复。",
+      "evidence": "canonical_sha256=6ddae987...==发布文件实际 SHA；push.commit=10ce73c8...（2026-09-08 双远程一致）"
+    }
+  ],
+  "ptrade_platform_validation": {
+    "status": "PASS",
+    "date": "2026-09-10",
+    "window": "2026-07-01~07-31（真实平台回测，策略\"测试1\"）",
+    "signal": "07-17 触发（指数日线 shim v2 正常）",
+    "select": "selected=50 tradable=50",
+    "entry": "buy_submitted=50 -> 成交 41 只（9 只 QS_ZERO_ORDER delta_below_one_lot 高价股不足一手）",
+    "positions_0717": "41 只，gross_exposure=0.7114（与本地 R5 41 只完全一致）",
+    "lock": "20 交易日锁仓纪律正确（到期才清）",
+    "liquidate": "07-20 sell_submitted=31 + 10 只跌停顺延 -> 07-21 全清 positions=0（与本地同构）",
+    "platform_diffs_fixed": [
+      "转换门禁（本地 API fail-closed BLOCK）",
+      "shim 消费 wrapper 归一（KeyError pctChg 修复）",
+      "get_index_stocks date 归一（YYYYmmdd）",
+      "回测资金 10万->100万（策略按 100 万设计，R0 确认）"
+    ],
+    "strategy_source_unchanged": true,
+    "evidence": "docs/evidence/design-metadata-acceptance.md（含 shim v2 + get_index_stocks 修复）"
   }
 }
