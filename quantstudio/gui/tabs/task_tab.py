@@ -309,7 +309,7 @@ class TaskTab(QWidget):
         status_label 设了 setMinimumWidth(80)，长状态文本会被裁剪；
         tooltip 保留全文供悬停查看，信息不丢失。
         """
-        self._set_status_text(msg)
+        self.status_label.setText(msg)
         self.status_label.setToolTip(msg)
 
     def _reset_run_all_buttons(self):
