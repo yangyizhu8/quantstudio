@@ -148,6 +148,13 @@ R5 证据 PASS 后、R5.5 之前的可选研究阶段（`scripts/run_optimizatio
 | `get_stock_exrights(security, date=None)` | **PTrade Profile 1.10.0 已登记**。获取证券除权除息信息。完整签名：`get_stock_exrights(security, date=None)`，contexts: research/backtest/trade。返回 DataFrame（date 索引，8 列 PTrade 兼容：allotted_ps/rationed_ps/rationed_px/bonus_ps/exer_forward_a/exer_backward_a/bexer_backward_a/b），或 `None`（无数据/缺表/`date=None`）。portable usage 必须显式传 `date`；源表 `stock_dividend`（tushare 权威源），schema 兼容旧列。受 Tushare 接口频率限制（~200 次/分钟），批量调用需间隔。 |
 | `get_stock_name(stocks)` | 股票名称（DuckDB 无名称字段时回退为代码）。 |
 
+**get_fundamentals(valuation) 的 `date` 分界（2026-09-04 修复，PTrade 原生 date 语义对齐）**：
+预加载快照锚点 = `prev_date`（T-1）；`date` 未传 / `>= T-1` → 快照路径（逐位不变），
+`date < T-1` → 真 as-of（`query_valuation_daily_pit`，此前静默返回快照数据）。
+provider 新增 `force_as_of` 开关（默认关闭）；**不新增注入 API**，历史估值/换手率序列由策略
+按日循环 `get_fundamentals(pool_list, 'valuation', fields, date=D_i)` 取得。
+设计 `docs/valuation-date-pit-fix-design.md`，证据 `docs/evidence/valuation-date-pit-acceptance.md`。
+
 ### 3.5 指数 / 板块 / ETF / 可转债 / REITs
 
 | 函数 | 说明（本地数据可用性） |

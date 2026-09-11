@@ -180,13 +180,25 @@ class DuckDBMarketDataProvider(MarketDataProvider):
 class DuckDBFundamentalDataProvider(FundamentalDataProvider):
     def __init__(self, db_path: Path): self._data = DuckDBDataAccess(db_path)
     def preload(self, date): self._data.preload_fundamentals_pit(_end_ms(date))
-    def get_valuation(self, codes, date, fields=None):
+    def get_valuation(self, codes, date, fields=None, force_as_of=False):
+        """估值查询。
+
+        force_as_of=False（默认）：优先命中预加载快照。快照锚点 = prev_date（T-1），
+        由 DuckDBDataAccess 的 query_valuation_for_preload(prev_ms) 构建，
+        命中即返回并忽略 date（实测定谳，见 docs/valuation-date-pit-fix-design.md）。
+        默认路径行为逐位不变。
+
+        force_as_of=True（B2 修复 2026-09-04）：跳过快照，直接走
+        query_valuation_daily_pit(codes, _end_ms(date)) 真 as-of。
+        仅供 PtradeAPI.get_fundamentals 在 date < T-1 时使用。
+        """
         query_ms = _end_ms(date)
-        df = self._data.get_fundamentals_from_preload(codes, fields)
-        if df is not None and not df.empty:
-            df = df.copy()
-            df.index = [str(code).split('.')[0] for code in df.index]
-            return df
+        if not force_as_of:
+            df = self._data.get_fundamentals_from_preload(codes, fields)
+            if df is not None and not df.empty:
+                df = df.copy()
+                df.index = [str(code).split('.')[0] for code in df.index]
+                return df
         df = self._data.query_valuation_daily_pit(codes, query_ms)
         if df.empty: df = self._data.query_valuation_monthly_fallback(codes, query_ms)
         if df.empty: return pd.DataFrame(columns=self.FUND_TABLES['valuation']).set_index('code')

@@ -447,6 +447,22 @@ W2-0.8 审核发现 9 项问题，W2-0.9 逐项关闭（详见 `docs/framework-f
 
 完整签名：`get_stock_exrights(security, date=None)`。contexts: research/backtest/trade。返回 DataFrame（date 索引, 8 列 PTrade 兼容）或 None。源表 `stock_dividend`（tushare 权威源），schema 兼容旧列 `cash_div`。portable usage 必须显式传 `date`；`date=None` 返回 `None`。受 Tushare 频率限制（~200/min），批量建议间隔。
 
+### get_fundamentals(valuation) date PIT 语义修复（2026-09-04）
+
+`get_fundamentals(security, table='valuation', fields=[...], date=D)` 的 `date` 分界修复：
+
+- **预加载快照锚点 = prev_date（T-1）**（实测：attach date=2026-07-30 / prev=2026-07-29 时，
+  600519 turnover_ratio 快照值 0.4986 = 07-29 真值，非 07-30 的 0.5749；流通市值同源吻合）。
+  默认路径命中预加载快照即返回。
+- `date` 未传 / `date >= T-1` → **快照路径，行为逐位不变**；
+- `date < T-1` → 走真 as-of（`query_valuation_daily_pit`），返回该日真实估值
+  —— 修复前该分支静默返回快照数据（错误数据，无任何策略依赖）。
+- provider 新增 `force_as_of` 开关（**默认关闭**，默认路径零改动）；
+  **不新增注入 API**：历史估值序列由策略按日循环
+  `get_fundamentals(pool_list, 'valuation', fields=[...], date=D_i)` 取得（list 批量、当日缓存已含 date 键）。
+- 设计文档 `docs/valuation-date-pit-fix-design.md`；验收证据 `docs/evidence/valuation-date-pit-acceptance.md`
+  （分界测试逐位一致 / as-of 对拍一致 / 6 策略转换产物逐位一致 / 回归零新增失败 / 黄金结果逐位一致）。
+
 ### W2-0.7B staging 安全闭环（2026-07-28）
 
 staging 回填工具 `scripts/backfill_fin_growth_dividend_staging.py` 提供 `prepare / run-task / audit / promote` 四阶段，全程只操作 staging 副本，绝不修改正式库；`--promote` 仅 dry-run（打印命令，不执行）。安全门控：

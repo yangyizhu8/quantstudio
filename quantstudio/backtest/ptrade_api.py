@@ -807,10 +807,27 @@ class PtradeAPI:
                 qd = self._prev_date or self._current_date
                 query_ms = int(pd.Timestamp(qd, tz='Asia/Shanghai').timestamp() * 1000) + 86_399_999
 
+            # B2 修复（2026-09-04，docs/valuation-date-pit-fix-design.md）：
+            # valuation 的 date 分界。预加载快照锚点 = prev_date（T-1，实测定谳）。
+            #   date 为空 / date >= T-1  -> 快照路径（逐位不变）
+            #   date <  T-1             -> 真 as-of（query_valuation_daily_pit）
+            # 归一化与既有 qd 同 canon（'YYYYMMDD'）后再比较，防格式差穿界；
+            # date 解析失败维持既有 pd.Timestamp 抛异常行为，不新增 fail-soft。
+            # 当日 _query_cache 于 attach/attach_bar 清空，故同日 force 判定稳定。
+            _force_as_of = False
+            if date:
+                _prev_qd = (pd.Timestamp(self._prev_date).strftime('%Y%m%d')
+                            if self._prev_date else None)
+                _force_as_of = bool(_prev_qd and qd < _prev_qd)
+
             if table == "valuation":
-                df = self._fundamental.get_valuation(bare_codes, qd, fields)
-                if len(df) == 0 and date:
-                    df = self._fundamental.get_valuation(bare_codes, self._current_date, fields)
+                if _force_as_of:
+                    df = self._fundamental.get_valuation(
+                        bare_codes, qd, fields, force_as_of=True)
+                else:
+                    df = self._fundamental.get_valuation(bare_codes, qd, fields)
+                    if len(df) == 0 and date:
+                        df = self._fundamental.get_valuation(bare_codes, self._current_date, fields)
                 if len(df) > 0:
                     df = df.copy()
                     df.index = [self._to_ptrade_code(code) for code in df.index]

@@ -97,7 +97,15 @@ class FundamentalDataProvider(ABC):
 
     @abstractmethod
     def get_valuation(self, codes: List[str], date: str,
-                      fields: Optional[List[str]] = None) -> pd.DataFrame: ...
+                      fields: Optional[List[str]] = None,
+                      force_as_of: bool = False) -> pd.DataFrame:
+        """估值查询。
+
+        force_as_of=False（默认）：既有行为逐位不变（可命中预加载快照）。
+        force_as_of=True：跳过快照、走真 as-of —— 仅 PtradeAPI.get_fundamentals
+        在 date < T-1 时使用（B2 修复，docs/valuation-date-pit-fix-design.md）。
+        """
+        ...
 
     @abstractmethod
     def get_valuation_query(self, filters: List[dict], order_by: List[dict],

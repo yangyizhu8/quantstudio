@@ -76,6 +76,21 @@ A QuantStudio `__candidate` file is never a PTrade artifact. PTrade formal outpu
 - 受 Tushare 接口频率限制（~200 次/分钟），批量调用需间隔。
 - PTrade 平台除权除息字段映射与字段准确性按部署核实（`PTRADE_RUNTIME_UNVERIFIED`）。
 
+## 2026-09-04 get_fundamentals(valuation) 的 date 分界契约
+
+- **预加载快照锚点 = `prev_date`（T-1）**，实测定谳（600519 turnover_ratio 快照 0.4986 = 07-29 真值；
+  流通市值 165,135,779.36 万元 = 07-29 `circ_mv`）。此前"命中快照即返回决策日估值"的描述不准确。
+- 分界语义（对齐 PTrade 原生 `date` 语义）：`date` 未传 / `date >= prev_date` → 快照路径（**逐位不变**，
+  覆盖未来日期，无未来函数泄漏）；`date < prev_date` → 真 as-of（`query_valuation_daily_pit`）。
+- `date` 归一化与既有 `qd` 同 canon（`'YYYYMMDD'`）后比较；`date` 解析失败维持抛异常，不新增 fail-soft。
+- provider `get_valuation(..., force_as_of=False)` 新增开关，**默认关闭**；默认路径零改动。
+- **不新增注入 API**（审计钉死 1）：历史序列由策略按日循环
+  `get_fundamentals(pool_list, 'valuation', fields, date=D_i)` 取得。
+- 影响面：存量 12 个使用 `get_fundamentals` 的策略中，传 `date=` 的仅 2 个
+  （`恐慌抄底事件驱动逆向策略` :142 `date=prev`；`smallcap_overnight_scalp_7_quantstudio` :315
+  `date=previous_date`），均为 T-1，路径不变；消费 `date < T-1` 的调用 0 处 → 纯增益。
+- 设计 `docs/valuation-date-pit-fix-design.md`；验收证据 `docs/evidence/valuation-date-pit-acceptance.md`。
+
 ## 2026-08-11 平台读写格式不对称实证（ETF动量平台对比）
 
 > 来源：`私募工作文件/QuantStudio本地策略转ptrade模块开发/09-ETF动量平台对比报告.md`
