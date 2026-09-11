@@ -38,14 +38,19 @@ ADJUDICATION = {
                            rationale='新闻发布日=业务键；增量按对齐交易日窗重拉（需 lookback，见 note）',
                            note='建议回填/增量窗口含 7 日 lookback 覆盖晚到新闻',
                            confidence='assumed'),
-    'llm_text_events': dict(date_basis='publish_time', watermark_basis='ingest_time',
-                            rationale='总调度预声明（2026-09-12）：通道止 5/7 按源内现状；水位按入库时间'),
-    'llm_text_events_enriched': dict(date_basis='publish_time', watermark_basis='ingest_time',
-                                     rationale='同 llm_text_events（同族派生表）'),
-    'llm_text_raw_feed': dict(date_basis='publish_time', watermark_basis='ingest_time',
-                              rationale='同 llm_text_events（同族原始流）'),
-    'report_rc': dict(date_basis='report_date', watermark_basis='create_time',
-                      rationale='研报发布日=业务键；重刷/晚到按创建时间追踪'),
+    # —— 2026-09-12 实测修正：ingest_time / create_time 在源表中**非空计数=0（全 NULL）**，
+    #    窗口过滤 wm >= start 会把全表排除（T2 首轮这 4 表 rows=0）。总调度对 llm_text 三表的
+    #    "watermark_basis=ingest_time" 预声明在此与"源内现状"冲突——源内现状即该列为空。
+    #    故 watermark_basis 回落到实际有值的事件时间列（date_basis 与 watermark_basis 合流）。
+    'llm_text_events': dict(date_basis='publish_time', watermark_basis='publish_time',
+                            rationale='源 ingest_time 全 NULL（实测非空=0）-> 水位回落事件时间；'
+                                      '通道止 5/7 按源内现状'),
+    'llm_text_events_enriched': dict(date_basis='publish_time', watermark_basis='publish_time',
+                                     rationale='同 llm_text_events（同族派生表；ingest_time 全 NULL）'),
+    'llm_text_raw_feed': dict(date_basis='publish_time', watermark_basis='publish_time',
+                              rationale='同 llm_text_events（同族原始流；ingest_time 全 NULL）'),
+    'report_rc': dict(date_basis='report_date', watermark_basis='report_date',
+                      rationale='源 create_time 全 NULL（实测非空=0）-> 水位回落研报日'),
 }
 
 # ── 单位字典（B1-4 纪律：每源声明单位；按列名解析，生成期固化）──────

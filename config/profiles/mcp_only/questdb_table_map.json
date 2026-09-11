@@ -2603,9 +2603,9 @@
    "dataset_kind": "passthrough",
    "task_name": "mcp_llm_text_events_pt",
    "date_basis": "publish_time",
-   "watermark_basis": "ingest_time",
+   "watermark_basis": "publish_time",
    "watermark_confidence": "derived",
-   "watermark_rationale": "总调度预声明（2026-09-12）：通道止 5/7 按源内现状；水位按入库时间",
+   "watermark_rationale": "源 ingest_time 全 NULL（实测非空=0）-> 水位回落事件时间；通道止 5/7 按源内现状",
    "dedup_keys": [
     "publish_time",
     "event_id"
@@ -2794,9 +2794,9 @@
    "dataset_kind": "passthrough",
    "task_name": "mcp_llm_text_events_enriched_pt",
    "date_basis": "publish_time",
-   "watermark_basis": "ingest_time",
+   "watermark_basis": "publish_time",
    "watermark_confidence": "derived",
-   "watermark_rationale": "同 llm_text_events（同族派生表）",
+   "watermark_rationale": "同 llm_text_events（同族派生表；ingest_time 全 NULL）",
    "dedup_keys": [
     "publish_time",
     "event_id"
@@ -3015,9 +3015,9 @@
    "dataset_kind": "passthrough",
    "task_name": "mcp_llm_text_raw_feed_pt",
    "date_basis": "publish_time",
-   "watermark_basis": "ingest_time",
+   "watermark_basis": "publish_time",
    "watermark_confidence": "derived",
-   "watermark_rationale": "同 llm_text_events（同族原始流）",
+   "watermark_rationale": "同 llm_text_events（同族原始流；ingest_time 全 NULL）",
    "dedup_keys": [
     "publish_time",
     "raw_id"
@@ -3817,9 +3817,9 @@
    "dataset_kind": "passthrough",
    "task_name": "mcp_report_rc_pt",
    "date_basis": "report_date",
-   "watermark_basis": "create_time",
+   "watermark_basis": "report_date",
    "watermark_confidence": "derived",
-   "watermark_rationale": "研报发布日=业务键；重刷/晚到按创建时间追踪",
+   "watermark_rationale": "源 create_time 全 NULL（实测非空=0）-> 水位回落研报日",
    "dedup_keys": [
     "report_date",
     "ts_code",

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple
@@ -153,6 +154,20 @@ class QuestDBAdapter(BaseSourceAdapter):
         meta = self._build_meta(spec, table, freq, start, end, codes)
         return meta, self._iter_shards(spec, start, end, codes)
 
+    def fetch_table_chunked(self, table: str, start: str, end: str,
+                            freq: str = "daily",
+                            codes: Optional[List[str]] = None
+                            ) -> Tuple[Dict, Iterator[Tuple[str, pd.DataFrame]]]:
+        """分片拉取（带确定性片键）：返回 (metadata, iter[(chunk_key, DataFrame)])。
+
+        chunk_key = 该片的 watermark_basis 日切片起点（如 '2026-09-11 00:00:00'），
+        确定性且可重放 —— 供 writers.write_passthrough_chunked 的分片 ledger 续写
+        （B+ 增补：崩溃/避让暂停后按片续插，不整表重跑）。
+        """
+        spec = self.spec(table)
+        meta = self._build_meta(spec, table, freq, start, end, codes)
+        return meta, self._iter_shards(spec, start, end, codes, with_key=True)
+
     # ── metadata（与 mcp_adapter 同构 + 双字段扩展）─────────────
     def _build_meta(self, spec: Dict, table: str, freq: str,
                     start: str, end: str, codes) -> Dict:
@@ -180,7 +195,7 @@ class QuestDBAdapter(BaseSourceAdapter):
 
     # ── 分页：watermark_basis 日切片 + 批内 keyset 翻页 ─────────
     def _iter_shards(self, spec: Dict, start: str, end: str,
-                     codes) -> Iterator[pd.DataFrame]:
+                     codes, with_key: bool = False):
         table = spec["source_table"]
         wm = spec["watermark_basis"]
         order_keys = [wm] + [k for k in (spec.get("dedup_keys") or []) if k != wm]
@@ -228,15 +243,40 @@ class QuestDBAdapter(BaseSourceAdapter):
                     sql = ("SELECT " + sel_sql + " FROM " + _quote(table) +
                            " WHERE " + where + " ORDER BY " + order_sql +
                            " LIMIT " + str(self._batch_size))
-                    cur.execute(sql, params)
-                    rows = cur.fetchall()
+                    # 连接自愈（2026-09-12 实测缺陷修复）：S5 避让暂停可达数十分钟，
+                    # 期间 PG 连接被服务端/中间层闲置断开 → 恢复后首查报
+                    # "could not receive data from server ... connection abort (10053)"。
+                    # 片键确定 ⇒ 重连重试同一片是幂等的（不会重复计入 staging）。
+                    rows, attempt = None, 0
+                    while rows is None:
+                        try:
+                            cur.execute(sql, params)
+                            rows = cur.fetchall()
+                        except Exception as e:  # noqa: BLE001
+                            attempt += 1
+                            if attempt > 3:
+                                raise
+                            logger.warning("[QuestDBAdapter] %s 查询失败（第 %d 次），重连重试 "
+                                           "slice=%s offset_key=%s: %s",
+                                           table, attempt, d0[:10], last_key, str(e)[:110])
+                            try:
+                                cur.close()
+                            except Exception:
+                                pass
+                            try:
+                                conn.close()
+                            except Exception:
+                                pass
+                            time.sleep(2 * attempt)
+                            conn = self._connect()
+                            cur = conn.cursor()
                     if not rows:
                         break
                     df = pd.DataFrame(rows, columns=sel_cols).rename(columns=ren)
                     total += len(df)
                     logger.info("[QuestDBAdapter] %s shard rows=%d slice=%s cum=%d",
                                 table, len(df), d0[:10], total)
-                    yield df
+                    yield (d0, df) if with_key else df
                     if len(rows) < self._batch_size:
                         break
                     last_key = [rows[-1][sel_cols.index(k)] for k in order_keys]

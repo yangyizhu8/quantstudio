@@ -795,6 +795,126 @@ class DuckDBWriter(BaseWriter):
                     f"(列原样: {list(df.columns)[:8]}{'...' if len(df.columns) > 8 else ''})")
         return len(df)
 
+    # ------------------------------------------------------------------
+    # 类别B passthrough 分片变体（B+ 增补，2026-09-12 总调度裁定）
+    # 属同一 passthrough 通道的内部实现优化（非第三通道）：
+    #   · staging 表跨尝试持久化（_pt_tmp_<table>）
+    #   · 分片 ledger（_pt_staging_ledger）记录每片键与行数
+    #   · 重试：ledger 累积行数 == staging 实际行数 -> 续插剩余片；不一致 -> drop 重建
+    #   · 全部片完成后原子换名（DROP 原表 + RENAME staging）——换名前最终表零触碰
+    #   · 不推进 source_watermark（与 _write_passthrough 同语义）
+    # 用途：大表（1.07 亿行级）分片入库，内存峰值 = 单分片；中途暂停/崩溃可续。
+    # ------------------------------------------------------------------
+    _PT_LEDGER_TABLE = '_pt_staging_ledger'
+
+    def _pt_ensure_ledger(self, conn):
+        conn.execute(
+            'CREATE TABLE IF NOT EXISTS "' + self._PT_LEDGER_TABLE + '" ('
+            ' table_name VARCHAR, chunk_no INTEGER, chunk_key VARCHAR,'
+            ' rows_written BIGINT, updated_at TIMESTAMP)')
+
+    def _pt_ledger_rows(self, conn, table):
+        cur = conn.execute(
+            'SELECT count(*), coalesce(sum(rows_written), 0) FROM "'
+            + self._PT_LEDGER_TABLE + '" WHERE table_name = ?', [table])
+        return cur.fetchone()
+
+    def _pt_ledger_keys(self, conn, table):
+        cur = conn.execute(
+            'SELECT chunk_key FROM "' + self._PT_LEDGER_TABLE
+            + '" WHERE table_name = ? ORDER BY chunk_no', [table])
+        return [r[0] for r in cur.fetchall()]
+
+    def _pt_clear_ledger(self, conn, table):
+        conn.execute('DELETE FROM "' + self._PT_LEDGER_TABLE
+                     + '" WHERE table_name = ?', [table])
+
+    @staticmethod
+    def _pt_staging_exists(conn, tmp: str) -> bool:
+        try:
+            conn.execute('SELECT 1 FROM "' + tmp + '" LIMIT 0')
+            return True
+        except Exception:
+            return False
+
+    def write_passthrough_chunked(self, table: str, batch_id: str,
+                                  chunks, resume: bool = True) -> Dict:
+        """passthrough 分片写（B+）：chunks 为 (chunk_key, DataFrame) 迭代器。
+
+        返回 {'written': n, 'chunks': k, 'resumed_from': m, 'rebuilt': bool}
+        """
+        _TYPE_MAP = {
+            'int64': 'BIGINT', 'int32': 'INTEGER', 'int16': 'SMALLINT',
+            'int8': 'SMALLINT', 'uint64': 'UBIGINT', 'uint32': 'UINTEGER',
+            'float64': 'DOUBLE', 'float32': 'FLOAT', 'bool': 'BOOLEAN',
+        }
+        tmp = '_pt_tmp_' + table
+        total = 0
+        n_chunks = 0
+        resumed_from = 0
+        rebuilt = False
+        with self._conn_lock:
+            conn = self._conn()
+            try:
+                self._pt_ensure_ledger(conn)
+                done_keys = set()
+                if resume and self._pt_staging_exists(conn, tmp):
+                    staging_rows = conn.execute(
+                        'SELECT count(*) FROM "' + tmp + '"').fetchone()[0]
+                    cnt, ledger_sum = self._pt_ledger_rows(conn, table)
+                    if cnt and ledger_sum == staging_rows:
+                        done_keys = set(self._pt_ledger_keys(conn, table))
+                        resumed_from = len(done_keys)
+                        logger.info('[DuckDBWriter] %s 断点续写：staging=%s 行 ledger=%s 片一致，'
+                                    '跳过已完成片', table, staging_rows, cnt)
+                    else:
+                        logger.warning('[DuckDBWriter] %s staging/ledger 不一致'
+                                       '（staging=%s ledger_sum=%s） -> drop 重建',
+                                       table, staging_rows, ledger_sum)
+                        conn.execute('DROP TABLE IF EXISTS "' + tmp + '"')
+                        self._pt_clear_ledger(conn, table)
+                        rebuilt = True
+                for key, df in chunks:
+                    if df is None or len(df) == 0:
+                        continue
+                    if key in done_keys:
+                        continue
+                    if not self._pt_staging_exists(conn, tmp):
+                        col_defs = ', '.join(
+                            '"' + c + '" ' + ('VARCHAR' if str(df[c].dtype) == 'object'
+                                              else _TYPE_MAP.get(str(df[c].dtype), 'VARCHAR'))
+                            for c in df.columns)
+                        conn.execute('CREATE TABLE "' + tmp + '" (' + col_defs + ')')
+                    conn.register('_pt_src_c', df)
+                    conn.execute('INSERT INTO "' + tmp + '" SELECT * FROM _pt_src_c')
+                    conn.unregister('_pt_src_c')
+                    n_chunks += 1
+                    total += len(df)
+                    conn.execute(
+                        'INSERT INTO "' + self._PT_LEDGER_TABLE + '" VALUES (?, ?, ?, ?, now())',
+                        [table, resumed_from + n_chunks, str(key), len(df)])
+                    logger.info('[DuckDBWriter] %s 分片 %s rows=%d cum=%d (staging)',
+                                table, key, len(df), total)
+                if not self._pt_staging_exists(conn, tmp):
+                    logger.warning('[DuckDBWriter] %s 无片可写（窗口空或全部已续）', table)
+                    return dict(written=0, chunks=0, resumed_from=resumed_from,
+                                rebuilt=rebuilt)
+                cnt, ledger_sum = self._pt_ledger_rows(conn, table)
+                final_rows = conn.execute('SELECT count(*) FROM "' + tmp + '"').fetchone()[0]
+                if ledger_sum != final_rows:
+                    raise RuntimeError(
+                        '%s staging(%s) 与 ledger(%s) 不一致，拒绝换名（防半表残留）'
+                        % (table, final_rows, ledger_sum))
+                conn.execute('DROP TABLE IF EXISTS "' + table + '"')
+                conn.execute('ALTER TABLE "' + tmp + '" RENAME TO "' + table + '"')
+                self._pt_clear_ledger(conn, table)
+                logger.info('[DuckDBWriter] %s passthrough 分片写完成 rows=%d chunks=%d '
+                            'resumed_from=%d', table, final_rows, n_chunks, resumed_from)
+                return dict(written=final_rows, chunks=n_chunks,
+                            resumed_from=resumed_from, rebuilt=rebuilt)
+            finally:
+                conn.close()
+
     def get_last_date(self, source: str, table: str, freq: str = "daily") -> Optional[str]:
         with self._conn_lock:
             conn = self._conn()

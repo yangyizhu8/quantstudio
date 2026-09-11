@@ -73,3 +73,46 @@ def test_a3_passthrough_channel_no_watermark():
     body = src[fn_start:fn_end if fn_end > 0 else len(src)]
     assert "advance_watermark" not in body, \
         "passthrough 通道不应推进 source_watermark（全量覆盖无增量水位语义）"
+
+
+# ── B+ 增补契约（2026-09-12 总调度裁定：passthrough 分片变体）──────────────
+WRITERS = ROOT / "quantstudio" / "pipeline" / "writers.py"
+
+
+def test_b1_chunked_variant_is_same_channel_not_third():
+    """契约4：分片变体属 passthrough 通道的**内部实现优化**，非第三通道。
+
+    锚：
+      - DuckDBWriter 必须有 write_passthrough_chunked 方法；
+      - 该方法体内不得推进 source_watermark（与 _write_passthrough 同语义）；
+      - 方法必须沿用 staging + 原子换名模式（换名前最终表零触碰）。
+    """
+    src = WRITERS.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    cls = next(n for n in ast.walk(tree)
+               if isinstance(n, ast.ClassDef) and n.name == "DuckDBWriter")
+    m = next((n for n in cls.body
+              if isinstance(n, ast.FunctionDef) and n.name == "write_passthrough_chunked"),
+             None)
+    assert m is not None, "DuckDBWriter 缺少 write_passthrough_chunked（B+ 分片变体）"
+    lines = src.split("\n")
+    body = "\n".join(lines[m.lineno - 1: m.end_lineno])
+    assert "advance_watermark" not in body, \
+        "分片变体不得推进 source_watermark（passthrough 通道语义锚）"
+    assert "_pt_tmp_" in body, "分片变体丢失 staging 表模式（_pt_tmp_<table>）"
+    assert "RENAME TO" in body, "分片变体丢失原子换名（防半表残留）"
+    assert "_pt_staging_ledger" in src, "分片 ledger 表定义丢失"
+
+
+def test_b2_ledger_guards_swap():
+    """契约5：换名前必须校验 staging 行数 == ledger 累积行数（防半表残留）。"""
+    src = WRITERS.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    cls = next(n for n in ast.walk(tree)
+               if isinstance(n, ast.ClassDef) and n.name == "DuckDBWriter")
+    m = next(n for n in cls.body
+             if isinstance(n, ast.FunctionDef) and n.name == "write_passthrough_chunked")
+    lines = src.split("\n")
+    body = "\n".join(lines[m.lineno - 1: m.end_lineno])
+    assert "拒绝换名" in body or "ledger_sum != final_rows" in body, \
+        "换名前缺少 staging/ledger 一致性校验（防半表残留）"
