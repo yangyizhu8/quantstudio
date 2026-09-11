@@ -155,6 +155,13 @@ provider 新增 `force_as_of` 开关（默认关闭）；**不新增注入 API**
 按日循环 `get_fundamentals(pool_list, 'valuation', fields, date=D_i)` 取得。
 设计 `docs/valuation-date-pit-fix-design.md`，证据 `docs/evidence/valuation-date-pit-acceptance.md`。
 
+**持仓视图契约（2026-09-04 修复）**：`context.portfolio.positions` / `get_positions()` / `get_position()`
+三入口统一返回 PTrade `Position`（`sid`/`amount`/`enable_amount`/`cost_basis`/`last_sale_price`/`avg_cost`/`market_value`），
+键 `.SS/.SZ/.BJ` 精确匹配（alias 故意不感知）。唯一适配器 = `BacktestEngine._get_ptrade_positions`。
+`enable_amount = can_sell − pending_sell_shares`（T+1 语义）；`last_sale_price` 取当日价，
+缺失仅在盘前/收盘后空窗或当日无行情时回退成本价。
+设计 `docs/portfolio-position-view-contract-design.md`，验收 `docs/evidence/portfolio-position-view-acceptance.md`。
+
 ### 3.5 指数 / 板块 / ETF / 可转债 / REITs
 
 | 函数 | 说明（本地数据可用性） |

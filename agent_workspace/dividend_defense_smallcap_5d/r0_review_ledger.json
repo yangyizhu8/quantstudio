@@ -1,0 +1,358 @@
+{
+  "strategy_id": "dividend_defense_smallcap_5d",
+  "strategy_name": "股息防守小市值五日轮动",
+  "skill_release": "1.0.0-r54-optimize",
+  "targets": [
+    "quantstudio"
+  ],
+  "created_at": "2026-09-04T00:00:00+08:00",
+  "r0": {
+    "status": "CLOSED",
+    "workflow_diagram": {
+      "path": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\dividend_defense_smallcap_5d\\flowchart.html",
+      "revision": 1,
+      "revisions": [
+        "P1 资金节点改为 runtime_total_value 口径：单只目标 = 运行时总资产 × 97% ÷ 5 ≈ 1.94 万元",
+        "审计节点 id A1 → AUD，避免与阻断项方案编号 A1/A2/A3 撞名",
+        "新增 X5 交易成本与滑点口径（待定 09）",
+        "新增 X6 涨跌停与停牌执行处理（映射 R2 执行层边界条款）",
+        "补强制免责声明"
+      ],
+      "status": "CLOSED_OUT_PASS",
+      "close_out_round": 1,
+      "close_out_note": "修订 1 通过，未触及 3 轮上限；PNG 豁免接受。X6 落点钉死为 R2.5 显式确认项。乙⑦ 核查顺序：先查 ptrade-api-signatures.json 与归档官方文档，仅当两者无法定谳才升级平台探针。"
+    },
+    "confirmation_evidence": {
+      "status": "ACTIVATED",
+      "source": "customer_reply",
+      "confirmed_at": "2026-09-04T00:00:00+08:00",
+      "generation_target": {
+        "confirmed": true,
+        "customer_text": "甲：确认。本地 QuantStudio 单目标、agent 托管执行 R5。",
+        "source": "customer_reply",
+        "confirmed_at": "2026-09-04T00:00:00+08:00"
+      },
+      "strategy_semantics": {
+        "confirmed": true,
+        "customer_text": "丙：01/02/03/04/05/06/08 确认，07 修改。01 确认（上市不足 3 个完整年报的公司因 CAGR 无法计算被数据性排除——这是规则 4 的忠实执行，不是逻辑修改）；02 确认（np_parent_company_owners 已核验存在）；03 确认；04 确认（20 个交易日换手率标准差，字段 turn/turnover_ratio 已核验多路径可用）；05 确认；06 确认（原文仅剔除科创板与北交所，创业板保留正确）；08 确认（附条件：R5 前复核所用副本库 000300 指数水位；若已补齐 8–9 月数据，窗口是否顺延由客户届时裁定）。09 采纳：set_commission(0.0003, 最低5元) 双边万3 + 引擎默认印花税/过户费 + set_slippage(0.001) 比例滑点。",
+        "source": "customer_reply",
+        "confirmed_at": "2026-09-04T00:00:00+08:00"
+      },
+      "portfolio_contract": {
+        "confirmed": true,
+        "customer_text": "07 修改：5 × 20,000 = 100,000 = 总资金的 100%，与“3% 缓冲带”自相矛盾（skill 的 PORTFOLIO-CASH-BUFFER-CONTRADICTION 交叉检查会直接 BLOCK）。改为 runtime_total_value：单只目标 = 运行时总资产 × (1 − 3%) ÷ 5 ≈ 19,400 元（每只 ≈19.4%，天然满足等权与 20% 内），gross_exposure_target=0.97、cash_buffer_ratio=0.03——与既有策略同构。若坚持字面“固定 2 万/只”，必须按 skill fixed_notional 契约显式申报（required_initial_cash=100000 绑定）且放弃缓冲带，买入费用将挤占现金、拒单风险自担——不推荐。",
+        "source": "customer_reply",
+        "confirmed_at": "2026-09-04T00:00:00+08:00"
+      },
+      "rebalance_funding_contract": {
+        "confirmed": true,
+        "customer_text": "调仓下单先卖后买，close 模式同日资金可用（R19 执行融资矩阵）。",
+        "source": "customer_reply",
+        "confirmed_at": "2026-09-04T00:00:00+08:00"
+      },
+      "r5_deployment_invariants": {
+        "confirmed": true,
+        "customer_text": "X6 落点钉死：R2.5 确认清单中显式列出该条款（涨停不买跳过留现金 / 跌停顺延下一可卖日 / 停牌防御性卖出通道，全部仅执行层、不进选股池与排序），作为客户确认项之一，不悬空映射。",
+        "source": "customer_reply",
+        "confirmed_at": "2026-09-04T00:00:00+08:00"
+      },
+      "strategy_name": {
+        "confirmed": true,
+        "customer_text": "丁：确认「股息防守小市值五日轮动」（已核验无文件名冲突）。",
+        "source": "customer_reply",
+        "confirmed_at": "2026-09-04T00:00:00+08:00"
+      },
+      "dividend_api_request": {
+        "confirmed": true,
+        "customer_text": "乙：选 A1（框架层可复用股息率 API，六步流水线），需要确认ptrade的回测api函数是否有同样的函数，若有，则需要实现本地api函数的签名和契约以及实现的功能完全对齐ptrade，方便转换。若无，以 A2 示例口径作为该 API 的契约草案：股息率 = 近 12 个月已实施税前现金分红合计 ÷ 决策日前复权收盘价。A1 设计文档必须钉死：① “已实施”判定优先 ex_date ≤ 决策日（div_proc 实施状态兜底），不把“已公告未实施”计入；② 计量单位（每股 vs 每10股）抽样对拍真实分红案例后定死；③ 价格基准 = T-1 前复权收盘价；④ 近 12 个月无分红 → 股息率 = 0 → 被“股息率>0”天然剔除，过滤与防守模式排序同口径；⑤ 注册为本地专用扩展（本策略 targets=quantstudio，不宣称 PTrade 可移植）；⑥ 落点建议二选一（新注入 API 或 valuation 提供方增加派生字段）由设计文档论证，均须带同构测试。A1 属框架层改动且与在途的 design_metadata/get_index_day_bar 重写共享核心文件，实施排程须经总调度协调避让。",
+        "source": "customer_reply",
+        "confirmed_at": "2026-09-04T00:00:00+08:00"
+      }
+    },
+    "closed_at": "2026-09-04T00:00:00+08:00",
+    "pending_items_confirmed": {
+      "01": "三年净利润复合增速：决策日 PIT 可见最近 3 个完整会计年度年报，CAGR=(NP_T/NP_T-3)^(1/3)-1，T 与 T-3 须同为正；上市不足 3 个完整年报者数据性排除",
+      "02": "净利润口径取 np_parent_company_owners",
+      "03": "净利润为正取决策日最近一期已披露定期报告归母净利润",
+      "04": "近 20 个交易日换手率标准差升序取最小 5 只",
+      "05": "回测窗口首个交易日为第 0 个调仓日，其后每 5 个交易日一次",
+      "06": "以调仓日所在自然月判定；仅剔除科创板与北交所，创业板保留",
+      "07": "runtime_total_value：单只目标=运行时总资产×(1-3%)÷5≈19,400 元；gross_exposure_target=0.97；cash_buffer_ratio=0.03",
+      "08": "样本内 2020-01-01 至 2024-12-31；样本外 2025-01-01 至 2026-07-30（R5 前复核 000300 水位，顺延由客户裁定）",
+      "09": "成本口径：双边佣金万三、最低 5 元；印花税与过户费按框架默认；比例滑点 0.001"
+    }
+  },
+  "r1": {
+    "status": "CLOSED",
+    "entered_at": "2026-09-04T00:00:00+08:00",
+    "report": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\dividend_defense_smallcap_5d\\r1_capability_report.md",
+    "evidence_scripts": [
+      "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\dividend_defense_smallcap_5d\\r1_capability_probe.py",
+      "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\dividend_defense_smallcap_5d\\r1_capability_probe_part2.py"
+    ],
+    "pass_items": 10,
+    "block_items": [
+      {
+        "id": "B1",
+        "kind": "MISSING_REUSABLE_API",
+        "title": "股息率聚合（近12个月已实施税前现金分红合计 ÷ T-1 前复权收盘价）",
+        "disposition": "并入 A1 框架工作流（客户已批准）"
+      },
+      {
+        "id": "B2",
+        "kind": "MISSING_REUSABLE_API",
+        "title": "换手率历史序列（近 N 交易日 stock_daily_valuation.turnover_rate）",
+        "disposition": "PENDING_CUSTOMER_DECISION",
+        "detail": "get_history 源列 stock_daily.turn 非空率 0.1%；get_fundamentals(valuation, date=) 被 preload 短路，date 实测失效（duckdb_provider.py:185）"
+      }
+    ],
+    "known_limitations": [
+      {
+        "id": "L1",
+        "title": "get_stock_info listed_date 对股票返回首根K线日而非真实上市日",
+        "impact": "回测窗口内新上市 1,971 只中仅 1 只偏差（301618，差 8 天）；2018 年前老股两口径同判 PASS，结果池不变",
+        "recommendation": "接受并写入设计 KNOWN_LIMITATION"
+      }
+    ],
+    "corrections": [
+      "000300 水位北京口径 = 2026-07-31（R0 报告中的 07-30 系 UTC 读法，更正）",
+      "待定 08 窗口终点由 2026-07-30 校正为 2026-07-31（基准可用上界）"
+    ],
+    "dividend_evidence": {
+      "unit": "元/股（税前）",
+      "unit_cases": [
+        "600519 2026-06-26 = 28.02423",
+        "600519 2024-06-18 = 30.876",
+        "601398 2024-07-15 = 0.3064",
+        "600036 2024-07-10 = 1.972"
+      ],
+      "distribution": "n=30501, median 0.00997, p99 0.06993, max 0.8046, 每10股口径条目数=0",
+      "pit_rule": "ex_date <= 决策日（div_proc 全为实施，无区分力，仅兜底）",
+      "window_20260730": "3,441 只 / 4,556 条"
+    },
+    "ptrade_api_alignment": {
+      "same_named_api_exists": true,
+      "api": "get_stock_exrights(security, date)",
+      "evidence": "references/ptrade-api-signatures.json:76-90；本地 ptrade_api.py:1771 已实现并实测可用",
+      "contract": "bonus_ps = 每股税前现金分红（cash_div_before_tax）；date 参数为可移植用法所必需",
+      "consequence": "乙⑦ 走「有同名」分支：本地实现与 PTrade 签名/契约/功能对齐"
+    },
+    "addendum": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\dividend_defense_smallcap_5d\\r1_addendum.md",
+    "exrights_benchmark": {
+      "per_call_ms": 1.55,
+      "single_date_semantics": "get_stock_exrights(security, date) 为单除权日精确匹配（WHERE code=? AND ex_date=?），非区间查询",
+      "cost_per_defensive_rebalance_pool300": "73,200 calls ~ 114 s",
+      "cost_full_backtest_uncached": "4.39M calls ~ 114 min",
+      "cost_full_backtest_with_cursor_cache": "~0.66M calls ~ 16 min",
+      "mandatory": "R2 设计须钉死：会话内游标增量 + 除权事件列表缓存"
+    },
+    "snapshot_anchor_ruling": {
+      "verdict": "预加载快照锚点 = prev_date（T-1），非决策日 T",
+      "evidence": "600519 turnover_ratio 快照 0.4986 = 07-29 真值（07-30 为 0.5749）；000060 2.2147 = 07-29；float_value 1.651358e8 万元 = 07-29 circ_mv",
+      "correction": "R1 报告中『返回决策日估值』措辞更正为『返回 T-1（prev_date）快照』"
+    },
+    "strategy_date_audit": {
+      "total_using_get_fundamentals": 12,
+      "passing_date": 2,
+      "entries": [
+        {
+          "strategy": "恐慌抄底事件驱动逆向策略.py",
+          "line": 142,
+          "expr": "date=prev",
+          "relation": "= T-1 -> 路径不变"
+        },
+        {
+          "strategy": "smallcap_overnight_scalp_7_quantstudio.py",
+          "line": 315,
+          "expr": "date=previous_date",
+          "relation": "= T-1 -> 路径不变"
+        }
+      ],
+      "date_lt_T_minus_1_consumers": 0
+    },
+    "customer_rulings": [
+      {
+        "id": "乙-修正",
+        "customer_text": "get_stock_exrights 为 PTrade 同名、本地已实现、注册表在案的可移植 API——乙⑦核查的“有同名”分支成立且无需任何框架新建。股息率改为纯策略层计算：股息率 = Σ bonus_ps（ex_date ∈ 近 12 个月且 ≤ 决策日）÷ T-1 前复权收盘价。原 A1 六步流水线（新建股息率 API）取消，公式落 R2 设计。",
+        "effect": "A1 新建 API 取消"
+      },
+      {
+        "id": "B2-裁定",
+        "customer_text": "乙-修正版（推荐）：修 get_fundamentals(valuation) 的 date 短路——date ≥ T-1 或未传 → 快照路径逐位不变；date < T-1 → 真 as-of 查询（provider 层已有 query_valuation_daily_pit 先例，补“近 N 交易日 × 批量池”序列原语）。定性：对齐 PTrade 原生 date 语义的正确性修复。",
+        "effect": "B2 独立六步流水线，方案 docs/valuation-date-pit-fix-design.md"
+      },
+      {
+        "id": "C2-采纳",
+        "customer_text": "样本内 2020-01-01 ~ 2024-12-31、样本外 2025-01-01 ~ 2026-07-31；R5 前水位复核，若 000300 已补齐 8–9 月，是否顺延由客户届时裁定。请把 08 修改作为 verbatim 补条落账。",
+        "effect": "待定 08 终点定稿 2026-07-31"
+      },
+      {
+        "id": "L1-接受",
+        "customer_text": "按 skill 定性为 APPROXIMATION_REQUIRES_CONFIRMATION，R2.5 verbatim 确认。",
+        "effect": "L1 收编进 R2 近似清单"
+      }
+    ],
+    "b2_capability_pass": {
+      "status": "PASS",
+      "checked_at": "2026-09-04T00:00:00+08:00",
+      "script": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\dividend_defense_smallcap_5d\\verify_turnover_series.py",
+      "method": "策略层按日循环 get_fundamentals(pool, 'valuation', fields=['turnover_ratio'], date=D_i)，i 遍历近 20 交易日（20260702-20260729）",
+      "result": "3/3 标的 20 日序列与 stock_daily_valuation.turnover_rate 逐值一致（600519 std=0.154076 首0.4069 末0.4986；000060 std=1.722596；000001 std=0.131192）",
+      "note": "B2 修复已在工作区生效；推送按客户裁定暂缓，不阻塞能力判定的技术结论"
+    },
+    "closed_at": "2026-09-04T00:00:00+08:00",
+    "close_note": "B2 框架修复已验收 + 已推送 + 同步门 PASS；R1 补记「换手率历史序列 PASS」（20 交易日逐值一致，见 verify_turnover_series.py）。"
+  },
+  "r2_preconditions": [
+    "R1 已关闭（2026-09-04）；B2 已推送（84dc335）且 trading 同步门 PASS（17ea19e）",
+    "R2 近似清单收编三项：L1 上市日基准（get_stock_info 对股票返回首根K线）/ TTM 送转期 per-share 口径 / 快照锚点 = T-1",
+    "R2 设计须含：执行层边界条款（X6：涨停不买跳过留现金 / 跌停顺延 / 停牌防御性卖出——仅执行层，不进选股与排序）",
+    "R2 设计须含：成本 09（双边佣金万三最低5元 + 框架默认印花税/过户费 + 比例滑点 0.001）",
+    "R2 设计须含：样本内 2020-01-01~2024-12-31 / 样本外 2025-01-01~2026-07-31（R5 前复核 000300 水位，顺延由客户裁定）",
+    "R2 设计须含：股息率策略层计算式 Σ bonus_ps（ex_date ∈ 近12个月且 ≤ 决策日，ex_date 为唯一已实施判据）÷ T-1 前复权收盘价",
+    "R2 设计须含：性能契约四钉死（游标增量等价性硬测 / 确定性禁哈希序 / 时长预算声明 / date=None 对齐台账）",
+    "【新增·审计要求】as-of 分支行序不保证稳定 → R3 实现必须按 trade_date/code 索引对齐取 20 日换手序列，禁止按位置取值",
+    "【新增·审计要求】round_trips 空输出疑点最小复现结论（见下）"
+  ],
+  "b2_fix": {
+    "status": "CLOSED_PUSHED_AND_SYNCED",
+    "design": "D:\\miniQMT策略实盘\\QuantStudio\\docs\\valuation-date-pit-fix-design.md",
+    "acceptance_evidence": "D:\\miniQMT策略实盘\\QuantStudio\\docs\\evidence\\valuation-date-pit-acceptance.md",
+    "baseline_stash": "bd03d51773a22eb58aed9c58f62713752d53ebb9",
+    "files": {
+      "quantstudio/backtest/ptrade_api.py": "7DF2444ABBA1F4BC",
+      "quantstudio/backtest/providers/duckdb_provider.py": "7C0D8A30F6C6C640",
+      "quantstudio/backtest/providers/base.py": "D248F2C6D9AB7AA2"
+    },
+    "acceptance": {
+      "1_boundary": "PASS - date None / T / T-1 逐位一致（hash 4eb582511d096bd5）",
+      "2_asof": "PASS - 2026-07-23 与 DB 真值逐值一致（0.2713 / 2.6914 / 0.5647）",
+      "3_series_api": "N/A - 按审计钉死 1 取消，不新增注入 API",
+      "4_conversion_sha": "PASS - 6/6 转换产物 .py 逐位一致；侧车 JSON 差异经同版本重复跑对照证明为固有时间戳",
+      "5_regression": "PASS - 零新增失败（9 项既有失败前后逐项一致）；contract gate PASS",
+      "6_golden": "PASS - smallcap 6/6 有效列 IDENTICAL（round_trips 空文件剔除）；恐慌抄底 staging 副本库 7/7 IDENTICAL（真实成交 82 笔/41 回合，daily_stats+trades 哈希与 R5 证据吻合）"
+    },
+    "note": "未经用户确认前不提交、不推送",
+    "push_hold": {
+      "customer_text": "先不急推送，等我本地回测验证和转换没问题后再推送。",
+      "recorded_at": "2026-09-04T00:00:00+08:00",
+      "release_condition": "客户本地回测验证 + 转换验证通过后解除；在此之前禁任何 git add/commit/push",
+      "working_tree_state": "九文件改动保留在工作区未提交，隔离于其他会话未提交改动",
+      "rollback": "git stash@{0} bd03d51773a22eb58aed9c58f62713752d53ebb9 / 会话内备份 %TEMP%/b2_verify/mine"
+    },
+    "corrections": [
+      "方案文档 §三 改动点 A 的『date 解析失败抛异常』措辞经实测更正为『吞异常 + warning + 空 DataFrame（fail-soft 早已存在）』"
+    ],
+    "audit_followups": {
+      "A1": {
+        "status": "CLOSED_OPTION_1",
+        "action": "在 staging 副本库 data/staging/prehandover_20260905-223621/quantstudio.db 上，用原窗口 2026-01-01~2026-09-04、capital=1,000,000 重跑恐慌抄底修复前后两侧",
+        "result": "7/7 逐位一致；trades.csv 83 行（82 笔）与 round_trips.csv 42 行（41 回合）非空；daily_stats.csv / trades.csv 哈希与 docs/evidence/panic-bottom-fishing-r5-evidence.md 记录逐位吻合",
+        "corrected": "作废「窗口未触发选股」错误表述；真实原因是旧比对用主库而非 R5 同源副本库",
+        "db_paths_recorded": true
+      },
+      "A2": {
+        "status": "CLOSED",
+        "file": "D:\\miniQMT策略实盘\\QuantStudio\\tests\\test_valuation_date_pit.py",
+        "result": "7 passed",
+        "covers": [
+          "分界三例逐位一致",
+          "date>T 落快照",
+          "date<T-1 真 as-of 对拍",
+          "判别式(日期再被丢弃即失败)",
+          "非法 date fail-soft 维持现状",
+          "空串等价未传",
+          "缓存键含 date 运行期断言"
+        ]
+      },
+      "小核对": {
+        "question": "round_trips.csv 同哈希成因",
+        "answer": "§7.1 四处 round_trips.csv 均为 5 字节空文件（仅换行）；其 IDENTICAL 判定无检出力，已从有效列剔除（有效列 6/6）。§7.2 重做后为 42 行实体数据，该列恢复有效",
+        "side_note": "smallcap 有 21 行成交却输出空 round_trips —— 引擎指标侧独立现象，另行登记待查，不在本批范围"
+      },
+      "流程告诫": "登记入证据文档 §十：黄金对比禁止在共享工作树内对共享核心文件批量 checkout；一律文件级 cp 备份/恢复或 git worktree 独立检出"
+    },
+    "push_manifest": {
+      "files": [
+        "quantstudio/backtest/ptrade_api.py",
+        "quantstudio/backtest/providers/duckdb_provider.py",
+        "quantstudio/backtest/providers/base.py",
+        "tests/test_valuation_date_pit.py",
+        "README.md",
+        "docs/strategy_toolbox.md",
+        "docs/prompt_engineering.md",
+        "docs/strategy-compiler/ptrade-profile-contract.md",
+        "docs/valuation-date-pit-fix-design.md",
+        "docs/evidence/valuation-date-pit-acceptance.md"
+      ],
+      "total": 10,
+      "excluded": [
+        "AGENTS.md（M 状态，范围外，不得卷入）",
+        "其他会话的未提交改动"
+      ],
+      "rule": "精确清单 add，禁 git add -A；推送后核对双远程 HEAD 逐位一致；推送后同工作周期执行 QuantStudio-trading 同步门"
+    },
+    "pushed": {
+      "commit": "84dc3352f3c3f9ac7718eb60680097af6c44319e",
+      "files": 10,
+      "remotes": {
+        "quantstudio-plus": "84dc3352f3c3f9ac7718eb60680097af6c44319e",
+        "quantstudio": "84dc3352f3c3f9ac7718eb60680097af6c44319e"
+      },
+      "identical": true
+    },
+    "trading_sync_gate": {
+      "status": "PASS",
+      "merge_commit": "17ea19e",
+      "conflicts": 0,
+      "check_drift": "PASS（九项排除后无共享层漂移）",
+      "ci_smoke": "ALL PASS（共享层回归子集 64 passed/1 skipped + 文档证据完整性 + agent-quant 78 passed）",
+      "ledger": "D:\\miniQMT策略实盘\\QuantStudio-trading\\docs\\sync-ledger.md",
+      "trading_baseline_stash": "6d80eb755349d4f9729c3a090142eb87000ffa5a"
+    }
+  },
+  "strategy_artifacts": {
+    "published_path": "D:\\miniQMT策略实盘\\QuantStudio\\quantstudio\\backtest\\strategies\\股息防守小市值五日轮动.py",
+    "candidate_path": "D:\\miniQMT策略实盘\\QuantStudio\\quantstudio\\backtest\\strategies\\股息防守小市值五日轮动__candidate_quantstudio.py",
+    "exists": {
+      "published": false,
+      "candidate": false
+    },
+    "name_conflict": "none（strategies 目录内无含「股息」的现存文件）",
+    "reason_not_generated": "管线尚未进入 R3。R0 已关闭；R1 能力探查完成、B2 阻断已修复并补 PASS；R2 设计 / R2.5 确认 / R3 生成尚未执行。skill 绝对规则 4：R2.5 明确确认前不得生成可执行策略代码。"
+  },
+  "round_trips_investigation": {
+    "status": "ROOT_CAUSE_CONFIRMED_REPRODUCIBLE_FIX_NOT_STARTED",
+    "conclusion": "round_trips 空 = trades 0 笔 sell；而 0 笔 sell 的根因是 context.portfolio.positions 元素类型违背 PTrade 契约（返回引擎 Position 而非 PTrade Position），策略侧 amount/enable_amount/cost_basis/last_sale_price 全部 MISSING→0，_held_bare_codes 恒判空仓。",
+    "attribution_correction": "『引擎指标侧缺陷』不成立：_pair_round_trips 行为正确，无 sell 即无回合。真实缺陷在持仓视图契约层。",
+    "evidence": "D:\\miniQMT策略实盘\\QuantStudio\\docs\\evidence\\portfolio-position-view-defect.md",
+    "repro_script": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\dividend_defense_smallcap_5d\\probe_position_view.py",
+    "linked_red_test": "tests/test_strategy_alignment_regressions.py::test_portfolio_position_suffixes_match_ptrade_exact_container_semantics（既有失败之一，本案根因同源）",
+    "blast_radius": "18 个策略引用 portfolio.positions；3 个直接按 PTrade 契约字段读取（smallcap_overnight 已实测失效）",
+    "next_step": "六步流水线：方案 docs/portfolio-position-view-contract-design.md → 审计 → 实施 → 验收 → 用户确认 → 双仓库推送",
+    "not_parked": "根因本周期内已证实并归档；修复启动于同一工作周期，按立项流程推进"
+  },
+  "position_view_fix": {
+    "status": "IMPLEMENTED_ACCEPTED_AWAITING_USER_CONFIRMATION_TO_PUSH",
+    "design": "D:\\miniQMT策略实盘\\QuantStudio\\docs\\portfolio-position-view-contract-design.md",
+    "acceptance": {
+      "1_red_tests": "PASS - 4 passed（修复前 2 failed / 2 passed）",
+      "2_probe": "PASS - 类型 ptrade_api.Position，六字段全命中，策略判定有持仓/可卖",
+      "3_golden": "PASS - smallcap buy 20/sell 0 -> buy 65/sell 63；round_trips 空 -> 64 行/63 回合；Post-close held=[] 23/23 -> 7/23",
+      "4_conversion": "PASS - 6/6 转换产物逐位一致",
+      "5_regression": "PASS - 零新增失败（7 项既有 source_import 失败逐项一致）；新测试 4+7 passed；CONTRACT GATE PASS",
+      "6_bench": "PASS - 只读快照保持；20 只 P50 33.7us vs get_positions 32.8us（+2.7%），未触发 2x 回退阈值"
+    },
+    "impact": "D:\\miniQMT策略实盘\\QuantStudio\\docs\\evidence\\portfolio-position-view-impact.md",
+    "defect_evidence": "D:\\miniQMT策略实盘\\QuantStudio\\docs\\evidence\\portfolio-position-view-defect.md",
+    "baseline_stash": "d479d95d3bc5ad1faa7a8f49bba4ff8350f2a68e",
+    "hashes": {
+      "quantstudio/backtest/ptrade_api.py": "ED093FC7CE55E705",
+      "quantstudio/backtest/backtest_engine.py": "98932494661B5935",
+      "tests/test_strategy_alignment_regressions.py": "081FE7EA31C56F60",
+      "tests/test_position_view_contract_parity.py": "B1A3930D3F3D63EF",
+      "tests/test_position_view_engine_contract.py": "0A7484B46F3C0F4E"
+    },
+    "note": "未经用户确认前不提交、不推送"
+  }
+}

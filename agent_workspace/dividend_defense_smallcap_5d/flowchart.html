@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>策略流程图 · 股息防守小市值五日轮动 · R0 修订 1</title>
+<style>
+body{margin:0;padding:32px;background:#F0F0EE;color:#1F1E1C;font-family:-apple-system,'Segoe UI','Microsoft YaHei',sans-serif}
+.wrap{max-width:1100px}
+h1{font-size:22px;font-weight:800;margin:0 0 6px}
+.hd{border-bottom:3px double #1F1E1C;padding-bottom:10px;margin-bottom:18px}
+.meta{font-size:10px;letter-spacing:.08em;color:#6B6A64;text-transform:uppercase}
+.note{background:#F9F8F5;border-left:4px solid #F5572F;padding:14px 16px;font-size:12.5px;line-height:1.7;margin-bottom:18px}
+.card{background:#F9F8F5;padding:20px;margin-bottom:18px}
+.src{border-top:1px solid #1F1E1C;padding-top:8px;font-size:9.5px;letter-spacing:.08em;color:#6B6A64;text-transform:uppercase}
+table{border-collapse:collapse;font-size:12.5px}
+td{border-bottom:1px solid #E4E3DC;padding:6px 14px 6px 0}
+pre.mermaid{background:#F9F8F5;padding:16px;font-size:11px;overflow:auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="hd">
+<h1>股息防守 · 小市值五日轮动</h1>
+<div class="meta">R0-WORKFLOW FLOWCHART · REVISION 1 · strategy_id=dividend_defense_smallcap_5d · targets=quantstudio</div>
+</div>
+<div class="note"><b>免责声明（强制）</b><br>本图为理解辅助件，非设计合同；权威语义以 R0 审核表与 R2.5 design JSON 为准；R1 能力探查可能使结构变化，本图届时自动失效。</div>
+<div class="card">
+<pre class="mermaid">
+flowchart TD
+    S0["回测开始 · 初始化"] --> S1["全 A 股初始池 · get_Ashares"]
+    S1 --> F0["前置过滤池 · 六条逐级筛选"]
+    F0 --> F1["剔除科创板与北交所"]
+    F1 --> F2["非 ST 股票"]
+    F2 --> F3["当前未停牌"]
+    F3 --> F4["上市满 1 年"]
+    F4 --> F5["流通市值 ＞ 5 亿"]
+    F5 --> F6["净利润为正"]
+    F6 --> F7["股息率 ＞ 0"]
+    F7 --> F8["近三年净利润复合增速 ＞ 15%"]
+    F8 --> J1{"是否调仓日 · 每 5 个交易日"}
+    J1 -->|"否"| H1["维持持仓 · 记录每日净值"]
+    H1 --> J1
+    J1 -->|"是"| J2{"调仓日所在月份"}
+    J2 -->|"1 月或 4 月"| M1["防守模式 · 按股息率降序取 Top10"]
+    J2 -->|"其余月份"| M2["进攻模式 · 按流通市值升序取 Top10"]
+    M1 --> N1["二次筛选 · 近 20 日换手率波动率升序取最小 5 只"]
+    M2 --> N1
+    N1 --> P1["等权分配 · 单只目标 ＝ 运行时总资产 × 97% ÷ 5 ≈ 1.94 万元"]
+    P1 --> P2["调仓下单 · 先卖后买"]
+    P2 --> AUD["审计记录 · QS_REBALANCE_AUDIT 与 QS_PORTFOLIO_AUDIT"]
+    AUD --> J1
+    X1["❓待定 · 股息率数据来源与口径"] -.-> F7
+    X2["❓待定 · 近三年净利润复合增速的年报口径"] -.-> F8
+    X3["❓待定 · 近 20 日换手率波动率的定义"] -.-> N1
+    X4["❓待定 · 回测窗口与样本内外划分"] -.-> S0
+    X5["❓待定 · 交易成本与滑点口径"] -.-> P2
+    X6["❓待定 · 涨跌停与停牌执行处理 · 仅执行层不入选股"] -.-> P2
+</pre>
+</div>
+<div class="card">
+<h2 style="font-size:14px;margin:0 0 10px">❓ 待定节点闭包映射</h2>
+<table>
+<tr><td><b>X1</b> 股息率数据来源与口径</td><td>→ 阻断项 · 乙＝A1（框架层可复用股息率 API）</td></tr>
+<tr><td><b>X2</b> 近三年净利润复合增速的年报口径</td><td>→ 待定 01 / 02 / 03（已确认）</td></tr>
+<tr><td><b>X3</b> 近 20 日换手率波动率的定义</td><td>→ 待定 04（已确认）</td></tr>
+<tr><td><b>X4</b> 回测窗口与样本内外划分</td><td>→ 待定 08（已确认 · 附 R5 前指数水位复核条件）</td></tr>
+<tr><td><b>X5</b> 交易成本与滑点口径</td><td>→ 待定 09（本轮新增）</td></tr>
+<tr><td><b>X6</b> 涨跌停与停牌执行处理</td><td>→ R2 执行层边界条款（约束承接 3 · 不进选股与排序）</td></tr>
+</table>
+</div>
+<div class="src">QuantStudio Strategy Wire · R0 Revision 1 · 本文件为理解辅助件，不构成设计合同</div>
+</div>
+<script type="module">
+try{const m=await import('https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs');m.default.initialize({startOnLoad:true,theme:'neutral'});}catch(e){document.querySelectorAll('pre.mermaid').forEach(function(p){p.style.whiteSpace='pre';});}
+</script>
+</body>
+</html>

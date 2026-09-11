@@ -123,15 +123,26 @@ class Portfolio:
             for p in self._init_positions.values()
         )
 
-    def _engine_account(self):
-        """回测运行时委托引擎 account（单一真源）；无 engine → None（快照兜底）。"""
+    @staticmethod
+    def _engine():
+        """单次解析引擎对象（唯一解引用点）。
+
+        positions / _engine_account 共用此入口，避免同一属性内二次解引用造成
+        状态漂移窗口（2026-09-04 持仓视图契约修复，终审打磨项②）。
+        """
         try:
             from quantstudio.backtest.ptrade_api import _api
-            eng = getattr(_api, "_engine", None)
-            if eng is not None and getattr(eng, "account", None) is not None:
-                return eng.account
+            return getattr(_api, "_engine", None)
         except Exception:
-            pass
+            return None
+
+    def _engine_account(self):
+        """回测运行时委托引擎 account（单一真源）；无 engine → None（快照兜底）。"""
+        eng = self._engine()
+        if eng is not None:
+            acc = getattr(eng, "account", None)
+            if acc is not None:
+                return acc
         return None
 
     @property
@@ -156,10 +167,22 @@ class Portfolio:
 
     @property
     def positions(self) -> dict:
-        """D2：只读快照（copy）——策略改返回 dict 不得影响引擎持仓（平台 get_positions 快照语义）。"""
-        acc = self._engine_account()
-        if acc is not None:
-            return dict(acc.positions)
+        """D2：只读快照（copy）——策略改返回 dict 不得影响引擎持仓（平台 get_positions 快照语义）。
+
+        契约（2026-09-04 持仓视图契约修复，docs/portfolio-position-view-contract-design.md）：
+        引擎在场时必须经**唯一适配器** BacktestEngine._get_ptrade_positions 产出
+        PTrade Position 契约对象（sid / amount / enable_amount / cost_basis /
+        last_sale_price / avg_cost，键 .SS/.SZ/.BJ 精确匹配）。
+
+        旧实现 `return dict(acc.positions)` 直吐引擎 dataclass（volume/can_sell），
+        使策略侧契约字段全部 MISSING→0（静默错误：判空仓、不可卖、零市值），已修复。
+        无引擎或无适配器时回退构造期快照，**形状与契约一致**（终审条件⑤）。
+        """
+        eng = self._engine()                     # 单次解析（与 _engine_account 同源）
+        if eng is not None and getattr(eng, "account", None) is not None:
+            getter = getattr(eng, "_get_ptrade_positions", None)
+            if getter is not None:
+                return getter(getattr(_api, "_prices", None) or {})
         return dict(self._init_positions)
 
     @property
@@ -180,10 +203,14 @@ class Portfolio:
 
 class Position:
     """模拟 Ptrade 的 position 对象"""
-    def __init__(self, sid: str, volume: int, avg_cost: float, current_price: float):
+    def __init__(self, sid: str, volume: int, avg_cost: float, current_price: float,
+                 enable_amount: int = None):
         self.sid = sid
         self.amount = volume
-        self.enable_amount = volume  # T+1: 实际可卖由引擎控制
+        # T+1 可卖量（2026-09-04 持仓视图契约修复）：
+        # 缺省回落 volume 以保持既有构造兼容；引擎适配器显式传入
+        # can_sell - pending_sell_shares（close/open 模式下 pending 恒为 0）。
+        self.enable_amount = volume if enable_amount is None else int(enable_amount)
         self.cost_basis = avg_cost
         self.last_sale_price = current_price
         self.avg_cost = avg_cost
@@ -1031,8 +1058,12 @@ class PtradeAPI:
 
     def get_positions(self, security=None) -> dict:
         """获取持仓（对应 Ptrade get_positions）
-        Ptrade 语义：两位/四位尾缀皆可作键取值。"""
-        positions = self._engine._get_ptrade_positions()
+        Ptrade 语义：两位/四位尾缀皆可作键取值。
+
+        2026-09-04 持仓视图契约修复：传入当日价字典，使 last_sale_price 实际命中
+        （此前不传价 → 一律回落 avg_cost，属契约违背）。take-price 命中/回退两态见
+        tests/test_position_view_engine_contract.py。"""
+        positions = self._engine._get_ptrade_positions(getattr(self, "_prices", None) or {})
         if security:
             pos = self._lookup_position(positions, security)
             return {security: pos} if pos is not None else {}
@@ -1650,8 +1681,10 @@ class PtradeAPI:
         """获取单只标的持仓（对应 Ptrade get_position）
 
         Ptrade 语义：两位/四位尾缀皆可作键取值；空仓返回 amount=0 的 Position（非 None），
-        策略常写 `get_position(code).amount == 0` 判断空仓，依赖此行为。"""
-        positions = self._engine._get_ptrade_positions()
+        策略常写 `get_position(code).amount == 0` 判断空仓，依赖此行为。
+
+        2026-09-04 持仓视图契约修复：传入当日价字典（同 get_positions）。"""
+        positions = self._engine._get_ptrade_positions(getattr(self, "_prices", None) or {})
         pos = self._lookup_position(positions, security)
         if pos is not None:
             return pos

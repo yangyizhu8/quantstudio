@@ -80,18 +80,30 @@ def test_portfolio_position_suffixes_match_ptrade_exact_container_semantics():
     ETF??????????????? PTrade ????????
     """
     from quantstudio.backtest.backtest_engine import Account, Position as EnginePosition
-    from quantstudio.backtest.ptrade_api import Portfolio
+    from quantstudio.backtest.ptrade_api import Portfolio, _api
 
     engine = object.__new__(BacktestEngine)
     engine.account = Account(cash=1000.0, positions={
         "002830.SZ": EnginePosition("002830.SZ", volume=100, avg_cost=10.0, can_sell=100)
     })
     positions = engine._get_ptrade_positions({"002830.SZ": 11.0})
-    portfolio = Portfolio(1000.0, positions)
-    assert list(portfolio.positions) == ["002830.SZ"]
-    assert "002830.SZ" in portfolio.positions
-    assert "002830.XSHE" not in portfolio.positions
-    assert portfolio.positions["002830.SZ"].sid == "002830.SZ"
+    # 测试隔离（2026-09-04 持仓视图契约修复配套）：_api 是模块级单例，其他测试会残留
+    # _engine/_prices；本用例必须使用自己的引擎，否则断言会被残留状态污染。
+    prev_engine, prev_prices = getattr(_api, "_engine", None), getattr(_api, "_prices", None)
+    _api._engine, _api._prices = engine, {"002830.SZ": 11.0}
+    try:
+        portfolio = Portfolio(1000.0, positions)
+        # 断言走属性委托路径（引擎在场 → 经唯一适配器产出契约对象）
+        assert list(portfolio.positions) == ["002830.SZ"]
+        assert "002830.SZ" in portfolio.positions
+        assert "002830.XSHE" not in portfolio.positions
+        assert portfolio.positions["002830.SZ"].sid == "002830.SZ"
+        # 契约字段（2026-09-04 修复）：不得再泄漏引擎 dataclass 的 volume/can_sell
+        p = portfolio.positions["002830.SZ"]
+        assert p.amount == 100 and p.enable_amount == 100 and p.cost_basis == 10.0
+        assert p.last_sale_price == 11.0
+    finally:
+        _api._engine, _api._prices = prev_engine, prev_prices
 
 
 def test_etf_momentum_keeps_ptrade_exact_membership_regression():
@@ -99,14 +111,22 @@ def test_etf_momentum_keeps_ptrade_exact_membership_regression():
     from quantstudio.backtest.backtest_engine import Account, Position as EnginePosition
     from quantstudio.backtest.ptrade_api import Portfolio
 
+    from quantstudio.backtest.ptrade_api import _api
+
     engine = object.__new__(BacktestEngine)
     engine.account = Account(cash=50.0, positions={
         "159870.SZ": EnginePosition("159870.SZ", volume=100, avg_cost=0.86, can_sell=100)
     })
-    portfolio = Portfolio(50.0, engine._get_ptrade_positions({"159870.SZ": 0.85}))
+    # 测试隔离（同上一用例）：使用本用例自己的引擎，避免 _api 单例残留污染。
+    prev_engine, prev_prices = getattr(_api, "_engine", None), getattr(_api, "_prices", None)
+    _api._engine, _api._prices = engine, {"159870.SZ": 0.85}
+    try:
+        portfolio = Portfolio(50.0, engine._get_ptrade_positions({"159870.SZ": 0.85}))
 
-    # ETF momentum stores the selected code as .XSHE, while real PTrade portfolio
-    # keys are .SZ. Exact membership must remain False; alias-aware conversion here
-    # changes the strategy from hold to active rotation and invalidates fidelity.
-    assert "159870.XSHE" not in portfolio.positions
-    assert "159870.SZ" in portfolio.positions
+        # ETF momentum stores the selected code as .XSHE, while real PTrade portfolio
+        # keys are .SZ. Exact membership must remain False; alias-aware conversion here
+        # changes the strategy from hold to active rotation and invalidates fidelity.
+        assert "159870.XSHE" not in portfolio.positions
+        assert "159870.SZ" in portfolio.positions
+    finally:
+        _api._engine, _api._prices = prev_engine, prev_prices

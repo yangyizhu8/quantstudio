@@ -3,8 +3,10 @@
 - 方案：`docs/valuation-date-pit-fix-design.md`（2026-09-04 审计通过 + 四项钉死）
 - 实施日期：2026-09-04
 - 写前快照（零副作用回退点）：`git stash create -u` -> `bd03d51773a22eb58aed9c58f62713752d53ebb9`，已 `git stash store` 持久化为 stash@{0}
-- 证据脚本：`agent_workspace/dividend_defense_smallcap_5d/verify_b2_local.py`（分界 + as-of 自断言）、
-  `verify_turnover_series.py`（近 20 日换手率序列可用性）、`%TEMP%/b2_verify/{b2_probe.py,conv6.py,panic_gold.py}`
+- 证据脚本（**全部归档于 `agent_workspace/dividend_defense_smallcap_5d/`，长期可溯**）：
+  `verify_b2_local.py`（分界 + as-of 自断言）、`verify_turnover_series.py`（近 20 日换手率序列可用性）、
+  `b2_probe.py`（修复前后分界对拍）、`conv6.py`（6 策略重转哈希对照）、`panic_gold.py`（黄金对比运行器）、
+  `golden2.ps1` / `golden3.ps1` / `golden4.ps1`（分阶段编排脚本）
 
 ## 零、数据源与运行环境（R5 级证据纪律：记录出处）
 

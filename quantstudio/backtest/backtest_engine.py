@@ -2472,6 +2472,14 @@ class BacktestEngine:
         membership semantics.  Four-letter aliases remain supported by get_position()
         and market-data containers, but making this mapping alias-aware changes real
         strategy control flow (notably the aligned ETF momentum strategy).
+
+        **唯一适配器契约（2026-09-04 持仓视图契约修复）**：本函数是 PTrade Position
+        契约的唯一产出点，三个本地持仓入口（Portfolio.positions /
+        get_positions() / get_position()）一律经此取值。字段映射：
+        键/sid←归一化代码；amount←volume；enable_amount←can_sell − pending_sell_shares；
+        cost_basis/avg_cost←avg_cost；last_sale_price←prices[engine_code]（缺失回退 avg_cost，
+        仅限盘前/收盘后空窗与该标的当日无行情，不得成为常态）。
+        见 docs/portfolio-position-view-contract-design.md。
         """
         from .ptrade_api import Position, _api
         positions = {}
@@ -2481,9 +2489,13 @@ class BacktestEngine:
                 bare = code.split(".")[0]
                 ptrade_code = _api._to_ptrade_code(bare)
                 current_price = prices.get(code, pos.avg_cost)
+                # T+1 可卖量（2026-09-04 持仓视图契约修复）：契约字段 enable_amount
+                # = can_sell - pending_sell_shares；与引擎 Position 注释（:88-92）对齐。
+                # close/open 模式下 pending_sell_shares 恒为 0（隔离契约）。
                 positions[ptrade_code] = Position(
                     sid=ptrade_code, volume=pos.volume, avg_cost=pos.avg_cost,
-                    current_price=current_price)
+                    current_price=current_price,
+                    enable_amount=int(pos.can_sell) - int(getattr(pos, "pending_sell_shares", 0) or 0))
         return positions
 
     # ===================== DuckDB 数据查询 =====================

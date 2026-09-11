@@ -447,6 +447,21 @@ W2-0.8 审核发现 9 项问题，W2-0.9 逐项关闭（详见 `docs/framework-f
 
 完整签名：`get_stock_exrights(security, date=None)`。contexts: research/backtest/trade。返回 DataFrame（date 索引, 8 列 PTrade 兼容）或 None。源表 `stock_dividend`（tushare 权威源），schema 兼容旧列 `cash_div`。portable usage 必须显式传 `date`；`date=None` 返回 `None`。受 Tushare 频率限制（~200/min），批量建议间隔。
 
+### 持仓视图契约修复（2026-09-04）
+
+`context.portfolio.positions` 在引擎在场时曾 `return dict(acc.positions)` —— 直吐引擎 dataclass
+（`volume`/`can_sell`），**绕过唯一适配器** `BacktestEngine._get_ptrade_positions`，导致策略侧
+`amount`/`enable_amount`/`cost_basis`/`last_sale_price`/`sid` 全部 MISSING→0（静默错误：判空仓、不可卖、市值记 0）。
+
+- **三个本地持仓入口统一契约**：`context.portfolio.positions` / `get_positions()` / `get_position()`
+  一律经 `_get_ptrade_positions` 产出 PTrade `Position`（键 `.SS/.SZ/.BJ` 精确匹配）；
+- 字段映射：`amount←volume`、`enable_amount←can_sell − pending_sell_shares`、
+  `cost_basis/avg_cost←avg_cost`、`last_sale_price←当日价`（缺失**仅**在盘前/收盘后空窗或当日无行情时回退 `avg_cost`）；
+- `get_positions()`/`get_position()` 现传入当日价字典（此前不传价 → `last_sale_price` 实际落 `avg_cost`）；
+- **不下沉、不触转换模板** → 转换产物零变化、矩阵哈希无需 reverify；
+- 设计 `docs/portfolio-position-view-contract-design.md`；验收 `docs/evidence/portfolio-position-view-acceptance.md`；
+  取证 `docs/evidence/portfolio-position-view-defect.md`；影响面 `docs/evidence/portfolio-position-view-impact.md`。
+
 ### get_fundamentals(valuation) date PIT 语义修复（2026-09-04）
 
 `get_fundamentals(security, table='valuation', fields=[...], date=D)` 的 `date` 分界修复：

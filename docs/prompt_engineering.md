@@ -81,6 +81,11 @@ QuantStudio 本地注入 API / 指标 / 全局对象（g、log、pd、np、MyTT�
 - get_current_data()→{code:BarData}（**QuantStudio 本地扩展，非 PTrade API**）；data[code].price 取当日价（平台官方回测取现价方式；`current_price(code)` 同为本地扩展）
 - get_index_day_bar(security,count=1,fields=None)（**QuantStudio 本地扩展，非 PTrade API**，2026-09-08）：已完成指数日线读数（DataFrame 升序 index=trade_date）；独占 index_daily 路由（无 stock/etf fallback、无 ETF 代理替换）；profile-aware 上界（daily 含 T / minute 永不含 T / proxy 仅 15:00 时钟含 T，不可判 fail-closed 不含 T）；count ∈ [1,250] 越界 ValueError；fields 白名单 open/high/low/close/pctChg/volume/amount/trade_date；空数据 fail-closed 空 DataFrame（策略 fail-soft + 审计行）；输出 QS_INDEX_BAR 日志；校验器 PREOPEN-INDEX-BAR / MINUTE-PROFILE-INDEX-BAR BLOCK；PTrade 转换 fail-closed BLOCKED（local_only_symbols）。设计 docs/get-index-day-bar-design.md。 转换门禁（2026-09-08）：转 PTrade fail-closed BLOCK（LOCAL_ONLY_PASSTHROUGH_BLOCK + 未知裸名 else 兜底）。 2026-09-09：engine_profile 可信 design 自动解析（design_metadata），skill 生成策略转换免手动选周期。
 - PTrade Profile 1.10.0 已登记股票核心：`set_benchmark`、`run_daily`、`get_Ashares`、`get_index_stocks`（含严格 PIT/date 契约）、`get_stock_status`、`get_positions`、`get_position`、`get_trade_days`、`get_fundamentals`、`get_industry`、`get_stock_exrights`（分红除权数据，portable 模式 date 必填）。未登记顶层 API 在双端模式默认 BLOCK。
+- **持仓读取（2026-09-04 契约修复）**：`context.portfolio.positions` / `get_positions()` / `get_position()`
+  一律返回 PTrade `Position`（`amount`/`enable_amount`/`cost_basis`/`last_sale_price`/`sid`/`market_value`），
+  键 `.SS/.SZ/.BJ` **精确匹配、非 alias-aware**。策略**禁止**再写 `amount or volume` / `getattr(pos,'volume',…)`
+  之类双形态兜底（契约已唯一，兜底只会掩盖问题）；也**禁止**用 `getattr(pos,'market_value',0)` 静默吞 0。
+  `enable_amount` 含 T+1 语义（当日买入为 0）。设计 `docs/portfolio-position-view-contract-design.md`。
 - **get_fundamentals(valuation) date 分界（2026-09-04 修复）**：预加载快照锚点 = `prev_date`（T-1）。
   `date` 未传 / `>= T-1` → 快照路径（逐位不变）；`date < T-1` → 真 as-of。
   策略取历史估值/换手率序列的正确写法是**按日循环** `get_fundamentals(pool_list, 'valuation', fields, date=D_i)`
