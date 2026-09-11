@@ -20,6 +20,13 @@ ResidentCollector — 常驻采集进程（Layer 1 模块⑤，Phase 2 核心）
 from __future__ import annotations
 
 from quantstudio.pipeline.snapshot_lock import locked_connect  # 3A 写锁收口
+from .task_resume import (  # 停止语义 v3.1：协作式停止 + 续传游标
+    UNIT_STOCK,
+    UNIT_TRADE_DATE,
+    TaskCancelled,
+    TaskResumeCursor,
+    next_trade_date_after,
+)
 
 import argparse
 import json
@@ -427,6 +434,9 @@ class ResidentCollector:
                                        f"改用 {source}")
                     return True
                 logger.warning(f"[task={name}] 源={source} 执行返回失败，尝试下一个候选 {chain[idx+1:]}")
+            except TaskCancelled:
+                # 用户停止：不得降级为「换源重试」（那等于把已停止的任务重新拉一遍）
+                raise
             except Exception as e:
                 last_err = e
                 logger.warning(f"[task={name}] 源={source} 执行异常: {type(e).__name__}: {e}，"
@@ -452,7 +462,8 @@ class ResidentCollector:
         return self._qfq_config().can_coordinate_watermark(str(task.get("table", "")))
 
     def execute_task(self, task: Dict, mode: Optional[str] = None,
-                     run_quality_audit: bool = True) -> bool:
+                     run_quality_audit: bool = True,
+                     cancel_check=None) -> bool:
         """Public task entry shared by GUI, CLI and resident scheduling.
 
         The task is copied before the run so mode overrides cannot mutate the
@@ -480,21 +491,134 @@ class ResidentCollector:
             self.qfq_enabled()
             and self._qfq_config().can_coordinate_watermark(
                 str(run_task.get("table", ""))))
+        # 停止语义 v3.1：协作式停止谓词 + 续传游标会话。仅在一次性任务下发
+        # cancel_check 时启用——常驻 daemon 链零变化（设计红线「零触碰 daemon 执行链」）。
+        self._task_cancel_check = cancel_check
+        self._task_cancelled = False
+        self._task_resume = None
         try:
             if self._needs_manual_qfq_cycle(run_task):
                 owns_qfq_cycle = self.qfq_begin_cycle() is not None
             task_ok = self._execute_task(run_task)
+        except TaskCancelled:
+            # 边界收口：本路径未到达任何水位提交点（水位保持）；QFQ cycle 悬置
+            # （不调 qfq_run_post_ingest——v2 定案：停止代码不读写 cycle 状态机）；
+            # 游标保留供下次续传（§9.2 R3）。
+            self._task_cancelled = True
+            _cursor = self._task_resume
+            if _cursor is not None:
+                try:
+                    _cursor.mark_stopped(getattr(self, "_qfq_cycle_id", None))
+                except Exception:
+                    pass
+            logger.info("[task=%s] 已按停止请求在边界收口（水位保持、游标保留）",
+                        run_task.get("name"))
+            raise
         finally:
-            if owns_qfq_cycle and self._qfq_cycle_id is not None:
+            _cancelled = bool(self._task_cancelled)
+            if (not _cancelled) and owns_qfq_cycle and self._qfq_cycle_id is not None:
                 run_id = f"manual_{run_task.get('name', 'task')}_{uuid.uuid4().hex[:12]}"
                 self._last_qfq_cycle_summary = self.qfq_run_post_ingest(run_id)
-            if run_quality_audit:
+            if run_quality_audit and not _cancelled:
                 audit_ok = self._run_full_quality_audit()
+            # R3 清除规则：自然成功完成 → 游标清除（官方水位已接管）。
+            if task_ok and not _cancelled and self._task_resume is not None:
+                self._task_resume.clear(reason="completed")
+            self._task_cancel_check = None
+            self._task_resume = None
         return task_ok and audit_ok
 
     def execute_task_with_quality(self, task: Dict) -> bool:
         """Backward-compatible alias for the public task entry."""
         return self.execute_task(task, mode=task.get("mode"), run_quality_audit=True)
+
+    # ---------------- 停止语义 v3.1：边界钩子 + 续传游标会话 ----------------
+    def _task_boundary(self, unit_type: str, value) -> None:
+        """日批/每股边界钩子：**先推进游标，再查取消**（§9.2 同一钩子两动作）。
+
+        validator PASS + 写入提交之后调用。命中取消 → raise TaskCancelled；
+        调用方负责 futures 收口（不派新 + 已运行等待）与水位不推进。
+        """
+        cursor = getattr(self, "_task_resume", None)
+        if cursor is not None:
+            cursor.advance(unit_type, value, getattr(self, "_qfq_cycle_id", None))
+        check = getattr(self, "_task_cancel_check", None)
+        if check is None:
+            return
+        try:
+            hit = bool(check())
+        except TaskCancelled:
+            raise
+        except Exception as e:
+            logger.warning("[stop] 取消谓词异常（按未命中处理）: %s", e)
+            hit = False
+        if hit:
+            raise TaskCancelled(
+                f"stop requested at boundary {unit_type}={value}")
+
+    def _open_day_resume(self, task: Dict, source: str, table: str, freq: str,
+                         start: str, end: str) -> str:
+        """日批路径游标会话 + R2 续传：命中则把 start 推进到 last_completed+1。
+
+        仅一次性任务（cancel_check 非 None）启用；任一环节失败 → 返回原 start
+        （v2 语义全窗执行，向安全侧降级）。
+        """
+        if getattr(self, "_task_cancel_check", None) is None:
+            return start
+        if not start or not end or str(start) > str(end):
+            return start
+        mode = task.get("mode", "incremental")
+        try:
+            wm = self._get_safe_watermark(source, table, freq)
+            cursor = TaskResumeCursor(task.get("name", table), mode, start, end, wm)
+        except Exception as e:
+            logger.warning("[resume] 游标会话创建失败（降级 v2 全窗执行）: %s", e)
+            return start
+        self._task_resume = cursor
+        try:
+            data = cursor.try_resume(wm)
+        except Exception as e:
+            logger.warning("[resume] 续传判定失败（降级 v2 全窗执行）: %s", e)
+            return start
+        if not data:
+            return start
+        last = (data.get("last_completed") or {}).get("value")
+        nxt = next_trade_date_after(str(last))
+        if nxt and str(nxt) > str(start):
+            logger.info("[resume] 续传生效: %s 从 %s 起拉（跳过 <= %s）", table, nxt, last)
+            return nxt
+        return start
+
+    def _open_stock_resume(self, task: Dict, source: str, table: str, freq: str,
+                           start: str, end: str, all_codes: list) -> list:
+        """per_stock 路径游标会话 + R2 续传：命中则裁剪已完成前缀（§8.1 每股粒度）。
+
+        游标 = 已完成证券的**连续前缀**末端，故绝不跳过未完成证券。
+        """
+        if getattr(self, "_task_cancel_check", None) is None:
+            return all_codes
+        mode = task.get("mode", "incremental")
+        try:
+            wm = self._get_safe_watermark(source, table, freq)
+            cursor = TaskResumeCursor(task.get("name", table), mode, start, end, wm)
+        except Exception as e:
+            logger.warning("[resume] 游标会话创建失败（降级 v2）: %s", e)
+            return all_codes
+        self._task_resume = cursor
+        try:
+            data = cursor.try_resume(wm)
+        except Exception as e:
+            logger.warning("[resume] 续传判定失败（降级 v2）: %s", e)
+            return all_codes
+        if not data:
+            return all_codes
+        last = str((data.get("last_completed") or {}).get("value") or "")
+        if last and last in all_codes:
+            idx = all_codes.index(last)
+            logger.info("[resume] 续传生效: %s 已完成前缀 %d 只（至 %s），从第 %d 只起拉",
+                        table, idx + 1, last, idx + 2)
+            return all_codes[idx + 1:]
+        return all_codes
 
     def _run_with_source(self, task: Dict, source: str,
                          batch_id: str, started_at: str) -> bool:
@@ -852,6 +976,9 @@ class ResidentCollector:
                     pass  # last_sync 持久化失败不影响采集
             return True
 
+        except TaskCancelled:
+            # 协作式停止：不记为批次失败、不改水位，向上抛给 execute_task 收口
+            raise
         except Exception as e:
             logger.error(f"[{batch_id}] ❌ FAILED: {e}", exc_info=True)
             self.batch_audit.record(batch_id, name, source, table, freq,
@@ -947,6 +1074,8 @@ class ResidentCollector:
         内存收益：fetch_table_streaming 逐片 yield 不 concat，峰值=单分片量级。
         """
         name = task.get("name", table)
+        # 停止语义 v3.1 R2：续传游标命中则把起点推进到 last_completed+1
+        start = self._open_day_resume(task, source, table, freq, start, end)
         rows_raw = rows_aligned = rows_passed = rows_rejected = rows_written = 0
         write_new = write_updated = 0
         last_passed_df = None
@@ -1011,6 +1140,11 @@ class ResidentCollector:
                     write_new += getattr(wr, "new", 0)
                     write_updated += getattr(wr, "updated", 0)
                     last_passed_df = res.passed_df
+                    # 停止语义 v3.1：日批边界（validator PASS + 写入提交之后）
+                    # → 同一钩子先推进续传游标，再查取消谓词（命中抛 TaskCancelled）
+                    _shard_unit = self._max_date(res.passed_df, table)
+                    if _shard_unit:
+                        self._task_boundary(UNIT_TRADE_DATE, _shard_unit)
 
             if rows_raw == 0:
                 logger.info(f"[{batch_id}] no new data (streaming), skip")
@@ -1052,6 +1186,9 @@ class ResidentCollector:
                     pass
             return True
 
+        except TaskCancelled:
+            # 协作式停止：流式路径不记失败、不推进水位（水位推进在其后，未到达）
+            raise
         except Exception as e:
             logger.error(f"[{batch_id}] ❌ FAILED[streaming]: {e}", exc_info=True)
             self.batch_audit.record(batch_id, name, source, table, freq,
@@ -1130,6 +1267,8 @@ class ResidentCollector:
         else:
             start = self._bump_date(last) or task.get("start_date", "2018-01-01")
             end = datetime.now().strftime("%Y-%m-%d")
+        # 停止语义 v3.1 R2：续传游标命中则从 last_completed+1 起拉（跳过已完成日批）
+        start = self._open_day_resume(task, source, table, freq, start, end)
         logger.info(f"[{batch_id}] PER_DATE(tushare全市场按天): {start} → {end} (last={last})")
         if self._date_range_empty(start, end):
             logger.info(f"[{batch_id}] 水位已追平，无需拉取: {start} > {end}")
@@ -1434,11 +1573,25 @@ class ResidentCollector:
             for i, day in enumerate(trade_days):
                 if not self._running:
                     break
+                if (getattr(self, "_task_cancel_check", None) is not None
+                        and self._task_cancel_check()):
+                    logger.info(f"[{batch_id}] 收到停止请求：停止派发新日批（L2 日批边界）")
+                    break
                 futures[pool.submit(process_one_day, day)] = i
 
             for f in as_completed(futures):
                 total_written[0] += f.result()
                 done_count[0] += 1
+                # 停止语义 v3.1：日批边界（该日 futures 完成 = 已写入提交）
+                try:
+                    self._task_boundary(UNIT_TRADE_DATE, trade_days[futures[f]])
+                except TaskCancelled:
+                    # §8.2：不再派发新 futures；未启动的走 cancel()；
+                    # 已运行的由 with 退出时 shutdown(wait=True) 有界收口（不 hang）
+                    for _fut in futures:
+                        if not _fut.done():
+                            _fut.cancel()
+                    raise
                 if done_count[0] % 20 == 0 or done_count[0] == total:
                     elapsed = _time.time() - t0
                     speed = done_count[0] / elapsed if elapsed > 0 else 0
@@ -1529,6 +1682,9 @@ class ResidentCollector:
             logger.error(f"[{batch_id}] {source} 不支持全市场获取")
             return False
 
+        # 停止语义 v3.1 R2：续传游标命中则裁剪「已完成证券前缀」（§8.1 每股粒度）
+        all_codes = self._open_stock_resume(
+            task, source, table, freq, start, end, all_codes)
         total = len(all_codes)
         logger.info(f"[{batch_id}] 全市场 {total} 只，{max_workers} 线程并行拉取")
 
@@ -1659,6 +1815,10 @@ class ResidentCollector:
             for i, code in enumerate(all_codes):
                 if not self._running:
                     break
+                if (getattr(self, "_task_cancel_check", None) is not None
+                        and self._task_cancel_check()):
+                    logger.info(f"[{batch_id}] 收到停止请求：停止派发新证券（L2 每股边界）")
+                    break
                 futures[pool.submit(process_one, code)] = i
             # 注：提交阶段不打进度日志（submit 是瞬时的，done_count≈0 无意义，
             # 真实进度在下方 as_completed 循环里按完成数打印）
@@ -1675,6 +1835,15 @@ class ResidentCollector:
                 for f in done:
                     total_written[0] += f.result()
                     done_count[0] += 1
+                    # 停止语义 v3.1：每股完成回收点 = 该路径的日批边界
+                    try:
+                        self._task_boundary(UNIT_STOCK, all_codes[futures[f]])
+                    except TaskCancelled:
+                        # §8.2：不再派发新 futures；未启动的走 cancel()；
+                        # 已运行的由 with 退出时 shutdown(wait=True) 有界收口（不 hang）
+                        for _fut in pending:
+                            _fut.cancel()
+                        raise
                 now = _time.time()
                 # 触发条件：完成数跨过 log_step 整数倍 / 全部完成 / 距上次打点超 30 秒
                 time_heartbeat = now - last_progress_ts >= 30.0

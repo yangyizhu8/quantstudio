@@ -51,6 +51,9 @@ data/daemon_run_state.json
 data/daemon_stop.request
 data/logs/
 
+# 一次性任务续传游标（停止语义 v3.1；本地运行态，不入库、不入客户包）
+data/task_resume/
+
 # OS/editor
 .DS_Store
 Thumbs.db

@@ -17,6 +17,7 @@ from qfluentwidgets import (
 from ..skin import PageHeader
 
 from ..workers import LockedTaskWorker, LockedRunAllWorker
+from quantstudio.pipeline.task_resume import TaskCancelled
 from ..daemon_process import (
     is_daemon_running, get_daemon_status, start_daemon_subprocess,
     request_graceful_stop, force_kill_daemon, read_bootstrap_log_tail,
@@ -57,6 +58,13 @@ class TaskTab(QWidget):
         # 批量执行模式守卫：None=空闲；'incremental'/'full_range'=批跑中
         # 作用：双批跑钮互斥（禁用互锁之外的第二道防线）+ 完成回调取模式标签。
         self._run_all_active_mode = None
+        # 停止语义 v3.1：状态机 running→stop_requested→stopping→stopped
+        #   _stop_requested = 协作式停止旗标（worker/collector 在日批边界查询）
+        #   _stop_state     = 界面态（驱动按钮文案与状态栏文案）
+        #   _active_worker  = 当前运行的一次性任务 Worker（停止谓词的目标）
+        self._stop_requested = False
+        self._stop_state = None
+        self._active_worker = None
         self._setup_ui()
         self._load_tasks()
         # v3：低频状态同步 QTimer（3s 轮询 daemon status）
@@ -124,6 +132,13 @@ class TaskTab(QWidget):
         self.reset_wm_btn.clicked.connect(self._reset_watermark)
         toolbar.addWidget(self.refresh_btn)
         toolbar.addWidget(self.run_all_btn)
+        # ★ 停止语义 v3.1：运行期唯一启用项（停止请求幂等，见 _request_stop）
+        self.stop_btn = PushButton("⏹ 停止")
+        self.stop_btn.setToolTip(
+            "协作式停止：当前日批完成后收口（已完成日批保留，水位保持，下次续传）")
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.clicked.connect(self._request_stop)
+        toolbar.addWidget(self.stop_btn)
         toolbar.addWidget(self.reset_wm_btn)
         # 最小宽兜底：长状态文本时优先裁剪 label（配合 _set_status_text 的
         # tooltip 全文可悬停查看），而不是挤压按钮/撑爆窗口。
@@ -312,6 +327,47 @@ class TaskTab(QWidget):
         self.status_label.setText(msg)
         self.status_label.setToolTip(msg)
 
+    # ---------------- 停止语义 v3.1（协作式停止，设计 §二 L2）----------------
+    def _stop_predicate(self) -> bool:
+        """传给 Worker/collector 的取消谓词。
+
+        由采集线程在日批/每股边界调用——只读旗标，不做任何 GUI 操作
+        （跨线程安全：布尔读写在 CPython 下原子）。
+        """
+        return bool(self._stop_requested)
+
+    def _begin_task_run(self, worker):
+        """任务/批跑启动：登记活动 Worker、复位停止态、放开停止按钮。"""
+        self._active_worker = worker
+        self._stop_requested = False
+        self._stop_state = "running"
+        self.stop_btn.setText("⏹ 停止")
+        self.stop_btn.setEnabled(True)
+
+    def _request_stop(self):
+        """⏹ 停止（幂等：重复点击无副作用）。
+
+        语义：置旗标 → 当前任务在**日批/每股边界**收口（不做日批内强停）→
+        已完成日批保留在库、官方水位不推进、续传游标保留 → 下次运行从游标续拉。
+        """
+        if self._active_worker is None or self._stop_requested:
+            return
+        self._stop_requested = True
+        self._stop_state = "stop_requested"
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.setText("⏳ 正在停止…")
+        self._set_status_text(
+            "停止已请求：当前日批完成后停止（分钟表最长约 20-30 分钟）")
+
+    def _finish_stop(self, status_text: str):
+        """停止收口：复位旗标与按钮态，落到 stopped 稳定态。"""
+        self._stop_state = "stopped"
+        self._stop_requested = False
+        self._active_worker = None
+        self.stop_btn.setText("⏹ 停止")
+        self.stop_btn.setEnabled(False)
+        self._set_status_text(status_text)
+
     def _reset_run_all_buttons(self):
         """两颗批量执行钮统一复原（文案 + 可用态 + 模式守卫清零）。
 
@@ -321,6 +377,13 @@ class TaskTab(QWidget):
         self.run_all_btn.setText("▶ 全部执行（增量）")
         self.run_all_btn.setEnabled(True)
         self._run_all_active_mode = None
+        # 停止语义 v3.1：批跑收口同时复位停止态（幂等）
+        self._stop_requested = False
+        self._stop_state = "stopped"
+        self._active_worker = None
+        if hasattr(self, "stop_btn"):
+            self.stop_btn.setText("⏹ 停止")
+            self.stop_btn.setEnabled(False)
 
     def _resolve_watermark_cached(self, wms, source, table, freq) -> tuple[str, str | None]:
         """Return display date and the source row actually used.
@@ -604,11 +667,12 @@ class TaskTab(QWidget):
             # v3：LockedTaskWorker 在线程内持锁、from_configs、execute、close
             worker = LockedTaskWorker(
                 task=task, config_dir=self.mw.config_dir, mode=mode,
-                run_quality_audit=True)
+                run_quality_audit=True, cancel_check=self._stop_predicate)
             worker.progress.connect(self._on_collect_progress)
             worker.finished_ok.connect(lambda res: self._on_task_done(task, True, res))
             worker.finished_err.connect(lambda err: self._on_task_done(task, False, err))
             self.mw.hold_worker(worker)
+            self._begin_task_run(worker)
             worker.start()
         except Exception as e:
             logger.exception("启动采集任务失败: %s", task_name)
@@ -695,6 +759,8 @@ class TaskTab(QWidget):
             return
         if self._run_all_active_mode is not None:  # 重入守卫（按钮禁用外的双保险）
             return
+        if self._stop_requested:  # L1 批间停止：旗标悬挂时不派发新批次
+            return
         mode_label = "全量" if mode == "full_range" else "增量"
         if mode == "full_range":
             missing = [t.get("name", "?") for t in self.tasks
@@ -734,12 +800,13 @@ class TaskTab(QWidget):
         try:
             worker = LockedRunAllWorker(
                 tasks=list(self.tasks), config_dir=self.mw.config_dir,
-                mode=mode)
+                mode=mode, cancel_check=self._stop_predicate)
             worker.progress.connect(self._on_collect_progress)
             worker.finished_ok.connect(self._on_run_all_done)
             worker.finished_err.connect(lambda err: self._on_run_all_done(
                 {"results": [], "ok_count": 0, "total": 0, "error": err}))
             self.mw.hold_worker(worker)
+            self._begin_task_run(worker)
             worker.start()
         except Exception as e:
             logger.exception("全部执行(%s)启动失败: %s", mode_label, e)
@@ -786,6 +853,18 @@ class TaskTab(QWidget):
         """Finalize run-all and surface per-task QFQ watermark gate outcomes."""
         for t in self.tasks:
             self._running_tasks.pop(t.get("name", ""), None)
+        if isinstance(result, dict) and (result.get("stopped") or result.get("cancelled")):
+            # L1/L2 停止收口：不再派发后续任务；已停止任务标「已停止」
+            for entry in (result.get("results") or []):
+                if entry.get("cancelled"):
+                    self._set_task_status(entry.get("name", ""), "已停止")
+            self._reset_run_all_buttons()
+            self._finish_stop("已停止（水位保持，下次续传）")
+            self.refresh()
+            if hasattr(self, '_collect_tooltip') and self._collect_tooltip:
+                self._collect_tooltip.setContent("已停止")
+                self._collect_tooltip = None
+            return
         ok_count = result.get("ok_count", 0)
         total = result.get("total", 0)
         err = result.get("error")
@@ -844,13 +923,32 @@ class TaskTab(QWidget):
         self.refresh()
 
     def _on_collect_progress(self, msg):
-        """采集进度更新（同时更新 status_label + StateToolTip）。"""
-        self._set_status_text(msg)
+        """采集进度更新（同时更新 status_label + StateToolTip）。
+
+        停止等待期（设计 §8.3）：文案改写为「正在停止…（进度）」——让用户看到
+        收口仍在推进（批跑路径即「执行 X (i/N)」= 已收口数），避免误判卡死。
+        """
+        if self._stop_state == "stop_requested":
+            self._stop_state = "stopping"
+            self._set_status_text(f"正在停止…（{msg}）")
+        else:
+            self._set_status_text(msg)
         if hasattr(self, '_collect_tooltip') and self._collect_tooltip:
             self._collect_tooltip.setContent(msg)
 
     def _on_task_done(self, task: dict, ok: bool, result):
         task_name = task.get("name", "")
+        if isinstance(result, TaskCancelled):
+            # 结构化取消（不是失败）：水位保持，下次从续传游标起点续拉
+            self._running_tasks.pop(task_name, None)
+            self._apply_all_task_buttons_state()
+            self._set_task_status(task_name, "已停止")
+            self._finish_stop("已停止（水位保持，下次续传）")
+            self.refresh()
+            if hasattr(self, '_collect_tooltip') and self._collect_tooltip:
+                self._collect_tooltip.setContent("已停止")
+                self._collect_tooltip = None
+            return
         audit_warning = (
             ok and isinstance(result, dict)
             and result.get("quality_audit_ran") is True

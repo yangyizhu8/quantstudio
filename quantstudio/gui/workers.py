@@ -3,6 +3,8 @@ from pathlib import Path
 from PyQt6.QtCore import QThread, pyqtSignal
 from filelock import FileLock, Timeout
 
+from quantstudio.pipeline.task_resume import TaskCancelled
+
 
 class BacktestCancelled(RuntimeError):
     """用户主动取消回测（结构化信号，取代字符串嗅探——文案即接口=脆弱）。
@@ -99,13 +101,17 @@ class LockedTaskWorker(BaseWorker):
     """
 
     def __init__(self, task: dict, config_dir: Path, mode: str = "incremental",
-                 run_quality_audit: bool = True, lock_timeout: int = 5):
+                 run_quality_audit: bool = True, lock_timeout: int = 5,
+                 cancel_check=None):
         super().__init__()
         self.task = task
         self.config_dir = Path(config_dir)
         self.mode = mode
         self.run_quality_audit = run_quality_audit
         self.lock_timeout = lock_timeout
+        # 停止语义 v3.1：协作式停止谓词，透传到 collector 的日批/每股边界。
+        # None = 现行为逐位一致（向后兼容；常驻链与旧调用方零变化）。
+        self._cancel_check = cancel_check
 
     def run(self):
         from quantstudio.pipeline.daemon import ResidentCollector
@@ -136,8 +142,15 @@ class LockedTaskWorker(BaseWorker):
                 task_ok = False
                 task_error = None
                 try:
+                    # V5 向后兼容：未下发取消谓词时按**原签名**调用（现行为逐位一致，
+                    # 既有调用方/测试替身零感知）；仅在停止能力启用时才传该可选参数。
+                    _extra = ({} if self._cancel_check is None
+                              else {"cancel_check": self._cancel_check})
                     task_ok = collector.execute_task(
-                        self.task, mode=self.mode, run_quality_audit=False)
+                        self.task, mode=self.mode, run_quality_audit=False, **_extra)
+                except TaskCancelled:
+                    # 停止：不跑全库质量审计（半程数据无审计意义），直接走取消收口
+                    raise
                 except Exception as e:
                     task_error = e
 
@@ -186,6 +199,10 @@ class LockedTaskWorker(BaseWorker):
                     outcome_payload = (
                         f"\u4efb\u52a1\u62c9\u53d6\u5931\u8d25: "
                         f"{self.task['name']}{suffix}")
+        except TaskCancelled as e:
+            # 结构化取消（不做字符串嗅探）：GUI 槽内 isinstance 判定 → 文案「已停止」
+            outcome_kind = "cancelled"
+            outcome_payload = e
         except Exception as e:
             outcome_kind = "error"
             outcome_payload = f"{type(e).__name__}: {e}"
@@ -204,6 +221,8 @@ class LockedTaskWorker(BaseWorker):
 
         if outcome_kind == "success":
             self.finished_ok.emit(outcome_payload)
+        elif outcome_kind == "cancelled":
+            self.finished_err.emit(outcome_payload)   # TaskCancelled 实例（结构化）
         else:
             self.finished_err.emit(str(outcome_payload))
 
@@ -216,12 +235,26 @@ class LockedRunAllWorker(BaseWorker):
     """
 
     def __init__(self, tasks: list, config_dir: Path,
-                 mode: str = "incremental", lock_timeout: int = 5):
+                 mode: str = "incremental", lock_timeout: int = 5,
+                 cancel_check=None):
         super().__init__()
         self.tasks = tasks
         self.config_dir = Path(config_dir)
         self.mode = mode
         self.lock_timeout = lock_timeout
+        # 停止语义 v3.1：L1 批间停止谓词（None = 现行为逐位一致）
+        self._cancel_check = cancel_check
+
+    def _stop_requested(self) -> bool:
+        """L1 批间停止判定：线程内 _cancelled 与 GUI 停止谓词取并集。"""
+        if self._cancelled:
+            return True
+        if self._cancel_check is None:
+            return False
+        try:
+            return bool(self._cancel_check())
+        except Exception:
+            return False
 
     def run(self):
         from quantstudio.pipeline.daemon import ResidentCollector
@@ -243,9 +276,11 @@ class LockedRunAllWorker(BaseWorker):
                 self.config_dir / "collector_tasks.json",
                 self.config_dir / "alignment_rules.json")
             total = len(self.tasks)
+            stopped = False
             for i, task in enumerate(self.tasks):
-                if self._cancelled:
-                    self.progress.emit("\u5df2\u53d6\u6d88")
+                if self._stop_requested():
+                    self.progress.emit("\u5df2\u505c\u6b62\uff1a\u4e0d\u518d\u6d3e\u53d1\u540e\u7eed\u4efb\u52a1\uff08L1 \u6279\u95f4\uff09")
+                    stopped = True
                     break
                 name = task.get("name", "?")
                 try:
@@ -259,10 +294,21 @@ class LockedRunAllWorker(BaseWorker):
                     continue
                 self.progress.emit(f"\u6267\u884c {name} ({i+1}/{total})")
                 try:
-                    ok = collector.execute_task(task, mode=self.mode,
-                                                run_quality_audit=False)
+                    # V5 向后兼容：未下发取消谓词时按原签名调用（见 LockedTaskWorker 同款）
+                    _extra = ({} if self._cancel_check is None
+                              else {"cancel_check": self._cancel_check})
+                    ok = collector.execute_task(
+                        task, mode=self.mode, run_quality_audit=False, **_extra)
                     results.append({"name": name, "ok": ok,
                                     **_task_runtime_result(collector)})
+                except TaskCancelled:
+                    # 停止当前任务（L2 边界收口）→ 本批不再派发后续任务
+                    results.append({"name": name, "ok": False, "cancelled": True,
+                                    **_task_runtime_result(collector)})
+                    self.progress.emit(
+                        f"\u23f9 {name}: \u5df2\u5728\u8fb9\u754c\u505c\u6b62\uff08\u6c34\u4f4d\u4fdd\u6301\uff09")
+                    stopped = True
+                    break
                 except Exception as e:
                     results.append({"name": name, "ok": False, "error": str(e),
                                     **_task_runtime_result(collector)})
@@ -270,17 +316,21 @@ class LockedRunAllWorker(BaseWorker):
 
             audit_ok = None
             audit_error = None
-            try:
-                audit_ok = bool(collector._run_full_quality_audit())
-            except Exception as e:
-                audit_ok = False
-                audit_error = f"{type(e).__name__}: {e}"
-                self.progress.emit(f"\u8d28\u91cf\u5ba1\u8ba1\u5f02\u5e38: {e}")
+            if not stopped:
+                # 停止后不跑全库质量审计（半程数据无审计意义；且避免阻塞停止收口）
+                try:
+                    audit_ok = bool(collector._run_full_quality_audit())
+                except Exception as e:
+                    audit_ok = False
+                    audit_error = f"{type(e).__name__}: {e}"
+                    self.progress.emit(f"\u8d28\u91cf\u5ba1\u8ba1\u5f02\u5e38: {e}")
             ok_count = sum(1 for r in results if r.get("ok"))
             outcome_kind = "success"
             outcome_payload = {"results": results, "ok_count": ok_count,
                                "total": len(results),
-                               "quality_audit_ok": audit_ok}
+                               "quality_audit_ok": audit_ok,
+                               "stopped": stopped,
+                               "cancelled": stopped}
             if audit_error is not None:
                 outcome_payload["quality_audit_error"] = audit_error
         except Exception as e:
