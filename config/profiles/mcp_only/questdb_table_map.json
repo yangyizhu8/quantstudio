@@ -1,0 +1,8013 @@
+{
+ "_comment": "QuestDB 合规源 → duckdb 映射表（64 表）。生成器 scripts/gen_questdb_table_map.py，结构来自 QuestDB SHOW CREATE TABLE（实测），双字段 date_basis/watermark_basis 见下。",
+ "schema_version": "1.0",
+ "source": "questdb",
+ "generated_at": "2026-09-12",
+ "conventions": {
+  "target_name": "identity（passthrough 表：duckdb 目标表名 = QuestDB 源表名）",
+  "column_mapping": "identity（列名原样；类型取 columns[].type）",
+  "time_unit": "QuestDB TIMESTAMP（微秒精度 UTC 存储，原样搬运不加换算）",
+  "code_unit": "裸 6 位码（QuestDB SYMBOL 原样）",
+  "unit_basis": "source_native + 逐列声明（B1-4 纪律）",
+  "date_vs_watermark": "date_basis=业务事件时间；watermark_basis=水位推进基准（对齐云端更新语义）",
+  "dedup_source": "QuestDB DEDUP UPSERT KEYS（DDL 实测）"
+ },
+ "adjudication_note": "9 张多时间列表的 watermark_basis 由 ETL 更新语义所有者裁定；confidence=assumed 者建议首次拉取时复核",
+ "tables": {
+  "cninfo_first_rating": {
+   "source_table": "cninfo_first_rating",
+   "target_table": "cninfo_first_rating",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_cninfo_first_rating_pt",
+   "date_basis": "publish_date",
+   "watermark_basis": "publish_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "stock_code",
+    "publish_date",
+    "org_name",
+    "researcher",
+    "rating"
+   ],
+   "qdb_rows": 551008,
+   "date_min": "2015-01-05",
+   "date_max": "2026-06-24",
+   "columns": [
+    {
+     "source": "stock_code",
+     "target": "stock_code",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "stock_name",
+     "target": "stock_name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "publish_date",
+     "target": "publish_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "org_name",
+     "target": "org_name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "researcher",
+     "target": "researcher",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "rating",
+     "target": "rating",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "is_first_rating",
+     "target": "is_first_rating",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "rating_change",
+     "target": "rating_change",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "prev_rating",
+     "target": "prev_rating",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "target_price_low",
+     "target": "target_price_low",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "target_price_high",
+     "target": "target_price_high",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ingest_date",
+     "target": "ingest_date",
+     "type": "STRING",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-06-24"
+  },
+  "cnthesims_events": {
+   "source_table": "cnthesims_events",
+   "target_table": "cnthesims_events",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_cnthesims_events_pt",
+   "date_basis": "event_time",
+   "watermark_basis": "event_time",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "event_time",
+    "ts_code",
+    "source_id"
+   ],
+   "qdb_rows": 102625,
+   "date_min": "2025-07-14",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "event_time",
+     "target": "event_time",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "event_type",
+     "target": "event_type",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "source_id",
+     "target": "source_id",
+     "type": "LONG",
+     "unit": "source_native"
+    },
+    {
+     "source": "title",
+     "target": "title",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "content",
+     "target": "content",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "tags",
+     "target": "tags",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "is_buy",
+     "target": "is_buy",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "price",
+     "target": "price",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "sentiment_score",
+     "target": "sentiment_score",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "image_urls",
+     "target": "image_urls",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "ocr_text",
+     "target": "ocr_text",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "text",
+     "target": "text",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "cnthesims_factors": {
+   "source_table": "cnthesims_factors",
+   "target_table": "cnthesims_factors",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_cnthesims_factors_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date",
+    "ts_code"
+   ],
+   "qdb_rows": 69029,
+   "date_min": "2025-07-14",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "earn_surprise",
+     "target": "earn_surprise",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "earn_surprise_mean",
+     "target": "earn_surprise_mean",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "survey_count",
+     "target": "survey_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "announce_count",
+     "target": "announce_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "research_count",
+     "target": "research_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "news_count",
+     "target": "news_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "event_total",
+     "target": "event_total",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "sentiment_score",
+     "target": "sentiment_score",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "hot_tag",
+     "target": "hot_tag",
+     "type": "STRING",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "cyq_chips": {
+   "source_table": "cyq_chips",
+   "target_table": "cyq_chips",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_cyq_chips_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "trade_date",
+    "price"
+   ],
+   "qdb_rows": 106802636,
+   "date_min": "2023-05-30",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "price",
+     "target": "price",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "percent",
+     "target": "percent",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "cyq_perf": {
+   "source_table": "cyq_perf",
+   "target_table": "cyq_perf",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_cyq_perf_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "trade_date"
+   ],
+   "qdb_rows": 3345767,
+   "date_min": "2024-03-21",
+   "date_max": "2026-09-10",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "his_low",
+     "target": "his_low",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "his_high",
+     "target": "his_high",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "cost_5pct",
+     "target": "cost_5pct",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "cost_15pct",
+     "target": "cost_15pct",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "cost_50pct",
+     "target": "cost_50pct",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "cost_85pct",
+     "target": "cost_85pct",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "cost_95pct",
+     "target": "cost_95pct",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "weight_avg",
+     "target": "weight_avg",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "winner_rate",
+     "target": "winner_rate",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-10"
+  },
+  "daily_info": {
+   "source_table": "daily_info",
+   "target_table": "daily_info",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_daily_info_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date",
+    "ts_code"
+   ],
+   "qdb_rows": 37016,
+   "date_min": "2018-01-02",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "ts_name",
+     "target": "ts_name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "com_count",
+     "target": "com_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "total_share",
+     "target": "total_share",
+     "type": "DOUBLE",
+     "unit": "股"
+    },
+    {
+     "source": "float_share",
+     "target": "float_share",
+     "type": "DOUBLE",
+     "unit": "股"
+    },
+    {
+     "source": "total_mv",
+     "target": "total_mv",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "float_mv",
+     "target": "float_mv",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "amount",
+     "target": "amount",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "vol",
+     "target": "vol",
+     "type": "DOUBLE",
+     "unit": "股"
+    },
+    {
+     "source": "trans_count",
+     "target": "trans_count",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "pe",
+     "target": "pe",
+     "type": "DOUBLE",
+     "unit": "倍"
+    },
+    {
+     "source": "tr",
+     "target": "tr",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "exchange",
+     "target": "exchange",
+     "type": "STRING",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "em_first_cover_rating": {
+   "source_table": "em_first_cover_rating",
+   "target_table": "em_first_cover_rating",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_em_first_cover_rating_pt",
+   "date_basis": "publish_date",
+   "watermark_basis": "publish_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "stock_code",
+    "publish_date",
+    "info_code"
+   ],
+   "qdb_rows": 9036,
+   "date_min": "2022-08-31",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "stock_code",
+     "target": "stock_code",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "stock_name",
+     "target": "stock_name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "rating",
+     "target": "rating",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "rating_code",
+     "target": "rating_code",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "publish_date",
+     "target": "publish_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "org_name",
+     "target": "org_name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "researcher",
+     "target": "researcher",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "industry",
+     "target": "industry",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "title",
+     "target": "title",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "market",
+     "target": "market",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "info_code",
+     "target": "info_code",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "ingest_date",
+     "target": "ingest_date",
+     "type": "STRING",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "etf_adj_factor": {
+   "source_table": "etf_adj_factor",
+   "target_table": "etf_adj_factor",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_etf_adj_factor_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "trade_date"
+   ],
+   "qdb_rows": 1618279,
+   "date_min": "2005-02-23",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "adj_factor",
+     "target": "adj_factor",
+     "type": "DOUBLE",
+     "unit": "倍(复权因子)"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "etf_sentiment_daily": {
+   "source_table": "etf_sentiment_daily",
+   "target_table": "etf_sentiment_daily",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_etf_sentiment_daily_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date"
+   ],
+   "qdb_rows": 230,
+   "date_min": "2026-07-24",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "etf_code",
+     "target": "etf_code",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "avg_sentiment",
+     "target": "avg_sentiment",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "stocks_count",
+     "target": "stocks_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "stocks_with_data",
+     "target": "stocks_with_data",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "covered_weight_pct",
+     "target": "covered_weight_pct",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "etf_share_size": {
+   "source_table": "etf_share_size",
+   "target_table": "etf_share_size",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_etf_share_size_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "trade_date"
+   ],
+   "qdb_rows": 1952321,
+   "date_min": "2010-01-04",
+   "date_max": "2026-09-10",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "etf_name",
+     "target": "etf_name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "total_share",
+     "target": "total_share",
+     "type": "DOUBLE",
+     "unit": "股"
+    },
+    {
+     "source": "total_size",
+     "target": "total_size",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "nav",
+     "target": "nav",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "close",
+     "target": "close",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "exchange",
+     "target": "exchange",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-10"
+  },
+  "factor_value": {
+   "source_table": "factor_value",
+   "target_table": "factor_value",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_factor_value_pt",
+   "date_basis": "datetime",
+   "watermark_basis": "datetime",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "datetime",
+    "code"
+   ],
+   "qdb_rows": 5740,
+   "date_min": "2018-01-03",
+   "date_max": "2026-04-23",
+   "columns": [
+    {
+     "source": "datetime",
+     "target": "datetime",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "code",
+     "target": "code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "close",
+     "target": "close",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "volume",
+     "target": "volume",
+     "type": "DOUBLE",
+     "unit": "股"
+    },
+    {
+     "source": "amount",
+     "target": "amount",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "turnover_rate",
+     "target": "turnover_rate",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "change_pct",
+     "target": "change_pct",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rsi_6",
+     "target": "rsi_6",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rsi_12",
+     "target": "rsi_12",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rsi_24",
+     "target": "rsi_24",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "macd",
+     "target": "macd",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "macd_signal",
+     "target": "macd_signal",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "macd_hist",
+     "target": "macd_hist",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "kdj_k",
+     "target": "kdj_k",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "kdj_d",
+     "target": "kdj_d",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "kdj_j",
+     "target": "kdj_j",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "boll_upper",
+     "target": "boll_upper",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "boll_mid",
+     "target": "boll_mid",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "boll_lower",
+     "target": "boll_lower",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "sar",
+     "target": "sar",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "adx",
+     "target": "adx",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "cci",
+     "target": "cci",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "willr",
+     "target": "willr",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mom_5",
+     "target": "mom_5",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mom_10",
+     "target": "mom_10",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mom_20",
+     "target": "mom_20",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rocr_5",
+     "target": "rocr_5",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rocr_10",
+     "target": "rocr_10",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rocr_20",
+     "target": "rocr_20",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "vr",
+     "target": "vr",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mfi",
+     "target": "mfi",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "trix_12",
+     "target": "trix_12",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dx",
+     "target": "dx",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "plus_di",
+     "target": "plus_di",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "minus_di",
+     "target": "minus_di",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "obv",
+     "target": "obv",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ad",
+     "target": "ad",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "timestamp",
+     "target": "timestamp",
+     "type": "LONG",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-04-23"
+  },
+  "forecast_vip": {
+   "source_table": "forecast_vip",
+   "target_table": "forecast_vip",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_forecast_vip_pt",
+   "date_basis": "ann_date",
+   "watermark_basis": "ann_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ann_date",
+    "ts_code",
+    "end_date"
+   ],
+   "qdb_rows": 66808,
+   "date_min": "2017-01-16",
+   "date_max": "2026-09-10",
+   "columns": [
+    {
+     "source": "ann_date",
+     "target": "ann_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "end_date",
+     "target": "end_date",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "type",
+     "target": "type",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "p_change_min",
+     "target": "p_change_min",
+     "type": "DOUBLE",
+     "unit": "%"
+    },
+    {
+     "source": "p_change_max",
+     "target": "p_change_max",
+     "type": "DOUBLE",
+     "unit": "%"
+    },
+    {
+     "source": "net_profit_min",
+     "target": "net_profit_min",
+     "type": "DOUBLE",
+     "unit": "万元"
+    },
+    {
+     "source": "net_profit_max",
+     "target": "net_profit_max",
+     "type": "DOUBLE",
+     "unit": "万元"
+    },
+    {
+     "source": "last_parent_net",
+     "target": "last_parent_net",
+     "type": "DOUBLE",
+     "unit": "万元"
+    },
+    {
+     "source": "first_ann_date",
+     "target": "first_ann_date",
+     "type": "STRING",
+     "unit": "日期"
+    },
+    {
+     "source": "summary",
+     "target": "summary",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "change_reason",
+     "target": "change_reason",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "update_flag",
+     "target": "update_flag",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-10"
+  },
+  "gisisi_daily": {
+   "source_table": "gisisi_daily",
+   "target_table": "gisisi_daily",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_gisisi_daily_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date"
+   ],
+   "qdb_rows": 812,
+   "date_min": "2011-01-07",
+   "date_max": "2026-07-24",
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "gisisi",
+     "target": "gisisi",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "signal",
+     "target": "signal",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "threshold",
+     "target": "threshold",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "window",
+     "target": "window",
+     "type": "INT",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-07-24"
+  },
+  "hm_detail": {
+   "source_table": "hm_detail",
+   "target_table": "hm_detail",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_hm_detail_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date",
+    "ts_code",
+    "hm_name"
+   ],
+   "qdb_rows": 30749,
+   "date_min": "2025-03-25",
+   "date_max": "2026-09-10",
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "ts_name",
+     "target": "ts_name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "buy_amount",
+     "target": "buy_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "sell_amount",
+     "target": "sell_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "net_amount",
+     "target": "net_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "hm_name",
+     "target": "hm_name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "hm_orgs",
+     "target": "hm_orgs",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "tag",
+     "target": "tag",
+     "type": "STRING",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-10"
+  },
+  "hm_list": {
+   "source_table": "hm_list",
+   "target_table": "hm_list",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_hm_list_pt",
+   "date_basis": "ingest_time",
+   "watermark_basis": "ingest_time",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "name",
+    "ingest_time"
+   ],
+   "qdb_rows": 6496,
+   "date_min": "2026-06-21",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "name",
+     "target": "name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "desc_text",
+     "target": "desc_text",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "orgs",
+     "target": "orgs",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "ingest_time",
+     "target": "ingest_time",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "desc",
+     "target": "desc",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "idx_anns": {
+   "source_table": "idx_anns",
+   "target_table": "idx_anns",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_idx_anns_pt",
+   "date_basis": "ann_date",
+   "watermark_basis": "ann_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ann_date",
+    "title"
+   ],
+   "qdb_rows": 1088,
+   "date_min": "2024-05-08",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "ann_date",
+     "target": "ann_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "title",
+     "target": "title",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "url",
+     "target": "url",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "source",
+     "target": "source",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "type",
+     "target": "type",
+     "type": "STRING",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "idx_factor_pro": {
+   "source_table": "idx_factor_pro",
+   "target_table": "idx_factor_pro",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_idx_factor_pro_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "trade_date"
+   ],
+   "qdb_rows": 6235737,
+   "date_min": "2018-01-02",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "open",
+     "target": "open",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "high",
+     "target": "high",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "low",
+     "target": "low",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "close",
+     "target": "close",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "pre_close",
+     "target": "pre_close",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "change",
+     "target": "change",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "pct_change",
+     "target": "pct_change",
+     "type": "DOUBLE",
+     "unit": "%"
+    },
+    {
+     "source": "vol",
+     "target": "vol",
+     "type": "DOUBLE",
+     "unit": "股"
+    },
+    {
+     "source": "amount",
+     "target": "amount",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "asi_bfq",
+     "target": "asi_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "asit_bfq",
+     "target": "asit_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "atr_bfq",
+     "target": "atr_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "bbi_bfq",
+     "target": "bbi_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "bias1_bfq",
+     "target": "bias1_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "bias2_bfq",
+     "target": "bias2_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "bias3_bfq",
+     "target": "bias3_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "boll_lower_bfq",
+     "target": "boll_lower_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "boll_mid_bfq",
+     "target": "boll_mid_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "boll_upper_bfq",
+     "target": "boll_upper_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "brar_ar_bfq",
+     "target": "brar_ar_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "brar_br_bfq",
+     "target": "brar_br_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "cci_bfq",
+     "target": "cci_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "cr_bfq",
+     "target": "cr_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dfma_dif_bfq",
+     "target": "dfma_dif_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dfma_difma_bfq",
+     "target": "dfma_difma_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dmi_adx_bfq",
+     "target": "dmi_adx_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dmi_adxr_bfq",
+     "target": "dmi_adxr_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dmi_mdi_bfq",
+     "target": "dmi_mdi_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dmi_pdi_bfq",
+     "target": "dmi_pdi_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "downdays",
+     "target": "downdays",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "updays",
+     "target": "updays",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "dpo_bfq",
+     "target": "dpo_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "madpo_bfq",
+     "target": "madpo_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_bfq_10",
+     "target": "ema_bfq_10",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_bfq_20",
+     "target": "ema_bfq_20",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_bfq_250",
+     "target": "ema_bfq_250",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_bfq_30",
+     "target": "ema_bfq_30",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_bfq_5",
+     "target": "ema_bfq_5",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_bfq_60",
+     "target": "ema_bfq_60",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_bfq_90",
+     "target": "ema_bfq_90",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "emv_bfq",
+     "target": "emv_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "maemv_bfq",
+     "target": "maemv_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "expma_12_bfq",
+     "target": "expma_12_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "expma_50_bfq",
+     "target": "expma_50_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "kdj_bfq",
+     "target": "kdj_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "kdj_d_bfq",
+     "target": "kdj_d_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "kdj_k_bfq",
+     "target": "kdj_k_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ktn_down_bfq",
+     "target": "ktn_down_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ktn_mid_bfq",
+     "target": "ktn_mid_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ktn_upper_bfq",
+     "target": "ktn_upper_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "lowdays",
+     "target": "lowdays",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "topdays",
+     "target": "topdays",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_bfq_10",
+     "target": "ma_bfq_10",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_bfq_20",
+     "target": "ma_bfq_20",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_bfq_250",
+     "target": "ma_bfq_250",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_bfq_30",
+     "target": "ma_bfq_30",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_bfq_5",
+     "target": "ma_bfq_5",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_bfq_60",
+     "target": "ma_bfq_60",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_bfq_90",
+     "target": "ma_bfq_90",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "macd_bfq",
+     "target": "macd_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "macd_dea_bfq",
+     "target": "macd_dea_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "macd_dif_bfq",
+     "target": "macd_dif_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mass_bfq",
+     "target": "mass_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_mass_bfq",
+     "target": "ma_mass_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mfi_bfq",
+     "target": "mfi_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mtm_bfq",
+     "target": "mtm_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mtmma_bfq",
+     "target": "mtmma_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "obv_bfq",
+     "target": "obv_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "psy_bfq",
+     "target": "psy_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "psyma_bfq",
+     "target": "psyma_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "roc_bfq",
+     "target": "roc_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "maroc_bfq",
+     "target": "maroc_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rsi_bfq_12",
+     "target": "rsi_bfq_12",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rsi_bfq_24",
+     "target": "rsi_bfq_24",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rsi_bfq_6",
+     "target": "rsi_bfq_6",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "taq_down_bfq",
+     "target": "taq_down_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "taq_mid_bfq",
+     "target": "taq_mid_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "taq_up_bfq",
+     "target": "taq_up_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "trix_bfq",
+     "target": "trix_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "trma_bfq",
+     "target": "trma_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "vr_bfq",
+     "target": "vr_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "wr_bfq",
+     "target": "wr_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "wr1_bfq",
+     "target": "wr1_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "xsii_td1_bfq",
+     "target": "xsii_td1_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "xsii_td2_bfq",
+     "target": "xsii_td2_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "xsii_td3_bfq",
+     "target": "xsii_td3_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "xsii_td4_bfq",
+     "target": "xsii_td4_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "index_classify": {
+   "source_table": "index_classify",
+   "target_table": "index_classify",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_index_classify_pt",
+   "date_basis": "in_date",
+   "watermark_basis": "ingest_time",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "成分类生效日=业务键；out_date 回填属晚到更新，按入库时间追踪",
+   "dedup_keys": [
+    "l3_code",
+    "ts_code",
+    "in_date"
+   ],
+   "qdb_rows": 7908,
+   "date_min": null,
+   "date_max": null,
+   "columns": [
+    {
+     "source": "l1_code",
+     "target": "l1_code",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "l1_name",
+     "target": "l1_name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "l2_code",
+     "target": "l2_code",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "l2_name",
+     "target": "l2_name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "l3_code",
+     "target": "l3_code",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "l3_name",
+     "target": "l3_name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "in_date",
+     "target": "in_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "out_date",
+     "target": "out_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "is_new",
+     "target": "is_new",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "src",
+     "target": "src",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "ingest_time",
+     "target": "ingest_time",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": null
+  },
+  "inst_survey": {
+   "source_table": "inst_survey",
+   "target_table": "inst_survey",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_inst_survey_pt",
+   "date_basis": "surv_date",
+   "watermark_basis": "surv_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "surv_date",
+    "ts_code",
+    "rece_mode",
+    "rece_org"
+   ],
+   "qdb_rows": 100056,
+   "date_min": "2021-08-05",
+   "date_max": "2026-09-10",
+   "columns": [
+    {
+     "source": "surv_date",
+     "target": "surv_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "fund_visitors",
+     "target": "fund_visitors",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "rece_place",
+     "target": "rece_place",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "rece_mode",
+     "target": "rece_mode",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "rece_org",
+     "target": "rece_org",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "org_type",
+     "target": "org_type",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "comp_rece",
+     "target": "comp_rece",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "content",
+     "target": "content",
+     "type": "STRING",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-10"
+  },
+  "limit_cpt_list": {
+   "source_table": "limit_cpt_list",
+   "target_table": "limit_cpt_list",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_limit_cpt_list_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "trade_date"
+   ],
+   "qdb_rows": 13815,
+   "date_min": "2023-11-13",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "days",
+     "target": "days",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "up_stat",
+     "target": "up_stat",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "cons_nums",
+     "target": "cons_nums",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "up_nums",
+     "target": "up_nums",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "pct_chg",
+     "target": "pct_chg",
+     "type": "DOUBLE",
+     "unit": "%"
+    },
+    {
+     "source": "rank",
+     "target": "rank",
+     "type": "STRING",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "limit_list_d": {
+   "source_table": "limit_list_d",
+   "target_table": "limit_list_d",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_limit_list_d_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date",
+    "ts_code",
+    "limit_type"
+   ],
+   "qdb_rows": 165588,
+   "date_min": "2019-11-28",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "industry",
+     "target": "industry",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "close",
+     "target": "close",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "close_qfq",
+     "target": "close_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "pct_chg",
+     "target": "pct_chg",
+     "type": "DOUBLE",
+     "unit": "%"
+    },
+    {
+     "source": "amount",
+     "target": "amount",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "limit_amount",
+     "target": "limit_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "float_mv",
+     "target": "float_mv",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "total_mv",
+     "target": "total_mv",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "turnover_ratio",
+     "target": "turnover_ratio",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "fd_amount",
+     "target": "fd_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "first_time",
+     "target": "first_time",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "last_time",
+     "target": "last_time",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "open_times",
+     "target": "open_times",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "up_stat",
+     "target": "up_stat",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "limit_times",
+     "target": "limit_times",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "limit_type",
+     "target": "limit_type",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "adj_factor",
+     "target": "adj_factor",
+     "type": "VARCHAR",
+     "unit": "倍(复权因子)"
+    },
+    {
+     "source": "limit",
+     "target": "limit",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "limit_list_ths": {
+   "source_table": "limit_list_ths",
+   "target_table": "limit_list_ths",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_limit_list_ths_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date",
+    "ts_code",
+    "limit_type"
+   ],
+   "qdb_rows": 54633,
+   "date_min": "2023-11-01",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "price",
+     "target": "price",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "pct_chg",
+     "target": "pct_chg",
+     "type": "DOUBLE",
+     "unit": "%"
+    },
+    {
+     "source": "open_num",
+     "target": "open_num",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "lu_desc",
+     "target": "lu_desc",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "limit_type",
+     "target": "limit_type",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "tag",
+     "target": "tag",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "status",
+     "target": "status",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "first_lu_time",
+     "target": "first_lu_time",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "last_lu_time",
+     "target": "last_lu_time",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "first_ld_time",
+     "target": "first_ld_time",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "last_ld_time",
+     "target": "last_ld_time",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "limit_order",
+     "target": "limit_order",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "limit_amount",
+     "target": "limit_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "turnover_rate",
+     "target": "turnover_rate",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "free_float",
+     "target": "free_float",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "lu_limit_order",
+     "target": "lu_limit_order",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "limit_up_suc_rate",
+     "target": "limit_up_suc_rate",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "turnover",
+     "target": "turnover",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "rise_rate",
+     "target": "rise_rate",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "sum_float",
+     "target": "sum_float",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "market_type",
+     "target": "market_type",
+     "type": "STRING",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "limit_step": {
+   "source_table": "limit_step",
+   "target_table": "limit_step",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_limit_step_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "trade_date",
+    "nums"
+   ],
+   "qdb_rows": 13809,
+   "date_min": "2023-11-13",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "nums",
+     "target": "nums",
+     "type": "STRING",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "llm_text_events": {
+   "source_table": "llm_text_events",
+   "target_table": "llm_text_events",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_llm_text_events_pt",
+   "date_basis": "publish_time",
+   "watermark_basis": "ingest_time",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "总调度预声明（2026-09-12）：通道止 5/7 按源内现状；水位按入库时间",
+   "dedup_keys": [
+    "publish_time",
+    "event_id"
+   ],
+   "qdb_rows": 129977,
+   "date_min": null,
+   "date_max": null,
+   "columns": [
+    {
+     "source": "publish_time",
+     "target": "publish_time",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "fetch_time",
+     "target": "fetch_time",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "source_type",
+     "target": "source_type",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "source_name",
+     "target": "source_name",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "source_priority",
+     "target": "source_priority",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "event_id",
+     "target": "event_id",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "dedup_hash",
+     "target": "dedup_hash",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "symbol",
+     "target": "symbol",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "symbol_name",
+     "target": "symbol_name",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "title",
+     "target": "title",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "content",
+     "target": "content",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "url",
+     "target": "url",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "event_type",
+     "target": "event_type",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "event_subtype",
+     "target": "event_subtype",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "sentiment",
+     "target": "sentiment",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "impact_scope",
+     "target": "impact_scope",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "horizon",
+     "target": "horizon",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "importance",
+     "target": "importance",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "confidence",
+     "target": "confidence",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "strength",
+     "target": "strength",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "tags",
+     "target": "tags",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "entities",
+     "target": "entities",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "themes",
+     "target": "themes",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "risk_flags",
+     "target": "risk_flags",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "batch_mode",
+     "target": "batch_mode",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "run_id",
+     "target": "run_id",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "source_watermark",
+     "target": "source_watermark",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ingest_time",
+     "target": "ingest_time",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": null
+  },
+  "llm_text_events_enriched": {
+   "source_table": "llm_text_events_enriched",
+   "target_table": "llm_text_events_enriched",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_llm_text_events_enriched_pt",
+   "date_basis": "publish_time",
+   "watermark_basis": "ingest_time",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "同 llm_text_events（同族派生表）",
+   "dedup_keys": [
+    "publish_time",
+    "event_id"
+   ],
+   "qdb_rows": 129977,
+   "date_min": null,
+   "date_max": null,
+   "columns": [
+    {
+     "source": "publish_time",
+     "target": "publish_time",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "fetch_time",
+     "target": "fetch_time",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "source_type",
+     "target": "source_type",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "source_name",
+     "target": "source_name",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "source_priority",
+     "target": "source_priority",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "event_id",
+     "target": "event_id",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "dedup_hash",
+     "target": "dedup_hash",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "symbol",
+     "target": "symbol",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "symbol_name",
+     "target": "symbol_name",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "title",
+     "target": "title",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "content",
+     "target": "content",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "url",
+     "target": "url",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "event_type",
+     "target": "event_type",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "event_subtype",
+     "target": "event_subtype",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "sentiment",
+     "target": "sentiment",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "impact_scope",
+     "target": "impact_scope",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "horizon",
+     "target": "horizon",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "importance",
+     "target": "importance",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "confidence",
+     "target": "confidence",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "strength",
+     "target": "strength",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "tags",
+     "target": "tags",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "entities",
+     "target": "entities",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "themes",
+     "target": "themes",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "risk_flags",
+     "target": "risk_flags",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "llm_labels_json",
+     "target": "llm_labels_json",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "llm_prompt_text",
+     "target": "llm_prompt_text",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "extraction_status",
+     "target": "extraction_status",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "llm_model_version",
+     "target": "llm_model_version",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "schema_version",
+     "target": "schema_version",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "batch_mode",
+     "target": "batch_mode",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "run_id",
+     "target": "run_id",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "source_watermark",
+     "target": "source_watermark",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ingest_time",
+     "target": "ingest_time",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": null
+  },
+  "llm_text_raw_feed": {
+   "source_table": "llm_text_raw_feed",
+   "target_table": "llm_text_raw_feed",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_llm_text_raw_feed_pt",
+   "date_basis": "publish_time",
+   "watermark_basis": "ingest_time",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "同 llm_text_events（同族原始流）",
+   "dedup_keys": [
+    "publish_time",
+    "raw_id"
+   ],
+   "qdb_rows": 129977,
+   "date_min": null,
+   "date_max": null,
+   "columns": [
+    {
+     "source": "publish_time",
+     "target": "publish_time",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "fetch_time",
+     "target": "fetch_time",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "source_type",
+     "target": "source_type",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "source_name",
+     "target": "source_name",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "raw_id",
+     "target": "raw_id",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "raw_hash",
+     "target": "raw_hash",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "symbol",
+     "target": "symbol",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "symbol_name",
+     "target": "symbol_name",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "title",
+     "target": "title",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "content",
+     "target": "content",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "url",
+     "target": "url",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "raw_json",
+     "target": "raw_json",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "batch_mode",
+     "target": "batch_mode",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "run_id",
+     "target": "run_id",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "source_watermark",
+     "target": "source_watermark",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ingest_time",
+     "target": "ingest_time",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": null
+  },
+  "margin": {
+   "source_table": "margin",
+   "target_table": "margin",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_margin_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date",
+    "exchange_id"
+   ],
+   "qdb_rows": 5079,
+   "date_min": "2018-01-02",
+   "date_max": "2026-09-10",
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "exchange_id",
+     "target": "exchange_id",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "rzye",
+     "target": "rzye",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rzmre",
+     "target": "rzmre",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rzche",
+     "target": "rzche",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rqye",
+     "target": "rqye",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rqmcl",
+     "target": "rqmcl",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rzrqye",
+     "target": "rzrqye",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rqyl",
+     "target": "rqyl",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-10"
+  },
+  "margin_detail": {
+   "source_table": "margin_detail",
+   "target_table": "margin_detail",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_margin_detail_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date",
+    "ts_code"
+   ],
+   "qdb_rows": 5710368,
+   "date_min": "2018-01-02",
+   "date_max": "2026-09-10",
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "rzye",
+     "target": "rzye",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rqye",
+     "target": "rqye",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rzmre",
+     "target": "rzmre",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rqyl",
+     "target": "rqyl",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rzche",
+     "target": "rzche",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rqchl",
+     "target": "rqchl",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rqmcl",
+     "target": "rqmcl",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rzrqye",
+     "target": "rzrqye",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-10"
+  },
+  "margin_secs": {
+   "source_table": "margin_secs",
+   "target_table": "margin_secs",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_margin_secs_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date",
+    "ts_code",
+    "exchange"
+   ],
+   "qdb_rows": 6935451,
+   "date_min": "2018-01-02",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "exchange",
+     "target": "exchange",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "market_breadth_daily": {
+   "source_table": "market_breadth_daily",
+   "target_table": "market_breadth_daily",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_market_breadth_daily_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date"
+   ],
+   "qdb_rows": 4055,
+   "date_min": "2010-01-04",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "stock_n",
+     "target": "stock_n",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "up_count",
+     "target": "up_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "down_count",
+     "target": "down_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "flat_count",
+     "target": "flat_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "up_down_ratio",
+     "target": "up_down_ratio",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "advance_decline_diff",
+     "target": "advance_decline_diff",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "all_market_amount",
+     "target": "all_market_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "limit_up_count",
+     "target": "limit_up_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "limit_down_count",
+     "target": "limit_down_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "new_high_count",
+     "target": "new_high_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "new_low_count",
+     "target": "new_low_count",
+     "type": "INT",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "moneyflow_cnt_ths": {
+   "source_table": "moneyflow_cnt_ths",
+   "target_table": "moneyflow_cnt_ths",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_moneyflow_cnt_ths_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date",
+    "ts_code"
+   ],
+   "qdb_rows": 187774,
+   "date_min": "2024-09-10",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "lead_stock",
+     "target": "lead_stock",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "close_price",
+     "target": "close_price",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "pct_change",
+     "target": "pct_change",
+     "type": "DOUBLE",
+     "unit": "%"
+    },
+    {
+     "source": "industry_index",
+     "target": "industry_index",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "company_num",
+     "target": "company_num",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "pct_change_stock",
+     "target": "pct_change_stock",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "net_buy_amount",
+     "target": "net_buy_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "net_sell_amount",
+     "target": "net_sell_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "net_amount",
+     "target": "net_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "moneyflow_ind_ths": {
+   "source_table": "moneyflow_ind_ths",
+   "target_table": "moneyflow_ind_ths",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_moneyflow_ind_ths_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date",
+    "ts_code"
+   ],
+   "qdb_rows": 43560,
+   "date_min": "2024-09-10",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "industry",
+     "target": "industry",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "lead_stock",
+     "target": "lead_stock",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "close",
+     "target": "close",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "pct_change",
+     "target": "pct_change",
+     "type": "DOUBLE",
+     "unit": "%"
+    },
+    {
+     "source": "company_num",
+     "target": "company_num",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "pct_change_stock",
+     "target": "pct_change_stock",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "close_price",
+     "target": "close_price",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "net_buy_amount",
+     "target": "net_buy_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "net_sell_amount",
+     "target": "net_sell_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "net_amount",
+     "target": "net_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "moneyflow_ths": {
+   "source_table": "moneyflow_ths",
+   "target_table": "moneyflow_ths",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_moneyflow_ths_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "trade_date"
+   ],
+   "qdb_rows": 2139387,
+   "date_min": "2019-07-26",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "pct_change",
+     "target": "pct_change",
+     "type": "DOUBLE",
+     "unit": "%"
+    },
+    {
+     "source": "latest",
+     "target": "latest",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "net_amount",
+     "target": "net_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "net_d5_amount",
+     "target": "net_d5_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "buy_lg_amount",
+     "target": "buy_lg_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "buy_lg_amount_rate",
+     "target": "buy_lg_amount_rate",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "buy_md_amount",
+     "target": "buy_md_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "buy_md_amount_rate",
+     "target": "buy_md_amount_rate",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "buy_sm_amount",
+     "target": "buy_sm_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "buy_sm_amount_rate",
+     "target": "buy_sm_amount_rate",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "news_sentiment": {
+   "source_table": "news_sentiment",
+   "target_table": "news_sentiment",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_news_sentiment_pt",
+   "date_basis": "news_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "assumed",
+   "watermark_rationale": "新闻发布日=业务键；增量按对齐交易日窗重拉（需 lookback，见 note）",
+   "dedup_keys": [
+    "ts_code",
+    "trade_date",
+    "title"
+   ],
+   "qdb_rows": 120946,
+   "date_min": null,
+   "date_max": null,
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "news_date",
+     "target": "news_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "title",
+     "target": "title",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "source",
+     "target": "source",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "sentiment_score",
+     "target": "sentiment_score",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "sentiment_label",
+     "target": "sentiment_label",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "raw_content",
+     "target": "raw_content",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "nlp_model",
+     "target": "nlp_model",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "fetch_batch",
+     "target": "fetch_batch",
+     "type": "STRING",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": null
+  },
+  "report_rc": {
+   "source_table": "report_rc",
+   "target_table": "report_rc",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_report_rc_pt",
+   "date_basis": "report_date",
+   "watermark_basis": "create_time",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "研报发布日=业务键；重刷/晚到按创建时间追踪",
+   "dedup_keys": [
+    "report_date",
+    "ts_code",
+    "org_name",
+    "author_name",
+    "quarter"
+   ],
+   "qdb_rows": 2896330,
+   "date_min": null,
+   "date_max": null,
+   "columns": [
+    {
+     "source": "report_date",
+     "target": "report_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "report_title",
+     "target": "report_title",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "report_type",
+     "target": "report_type",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "classify",
+     "target": "classify",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "org_name",
+     "target": "org_name",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "author_name",
+     "target": "author_name",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "quarter",
+     "target": "quarter",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "op_rt",
+     "target": "op_rt",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "op_pr",
+     "target": "op_pr",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "tp",
+     "target": "tp",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "np",
+     "target": "np",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "eps",
+     "target": "eps",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "pe",
+     "target": "pe",
+     "type": "DOUBLE",
+     "unit": "倍"
+    },
+    {
+     "source": "rd",
+     "target": "rd",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "roe",
+     "target": "roe",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ev_ebitda",
+     "target": "ev_ebitda",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rating",
+     "target": "rating",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "max_price",
+     "target": "max_price",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "min_price",
+     "target": "min_price",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "imp_dg",
+     "target": "imp_dg",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "create_time",
+     "target": "create_time",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": null
+  },
+  "rsshub_raw": {
+   "source_table": "rsshub_raw",
+   "target_table": "rsshub_raw",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_rsshub_raw_pt",
+   "date_basis": "pub_time",
+   "watermark_basis": "fetched_at",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "抓取型源，晚到抓取普遍 → 按抓取时间追踪",
+   "dedup_keys": [
+    "pub_time"
+   ],
+   "qdb_rows": 41144,
+   "date_min": null,
+   "date_max": null,
+   "columns": [
+    {
+     "source": "source_name",
+     "target": "source_name",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "category",
+     "target": "category",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "title",
+     "target": "title",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "summary",
+     "target": "summary",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "link",
+     "target": "link",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "pub_time",
+     "target": "pub_time",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "item_hash",
+     "target": "item_hash",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "fetched_at",
+     "target": "fetched_at",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": null
+  },
+  "sector_top300_daily": {
+   "source_table": "sector_top300_daily",
+   "target_table": "sector_top300_daily",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_sector_top300_daily_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "日频截面快照，按业务日就地重刷；created_at 为本地生成时间，重刷即变，不可作水位",
+   "dedup_keys": [
+    "trade_date",
+    "concept_code"
+   ],
+   "qdb_rows": 14400,
+   "date_min": null,
+   "date_max": null,
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "concept_code",
+     "target": "concept_code",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "concept_name",
+     "target": "concept_name",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "rank",
+     "target": "rank",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "pct_change",
+     "target": "pct_change",
+     "type": "DOUBLE",
+     "unit": "%"
+    },
+    {
+     "source": "close_price",
+     "target": "close_price",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "amount",
+     "target": "amount",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "turnover_rate",
+     "target": "turnover_rate",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "float_mv",
+     "target": "float_mv",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "pe",
+     "target": "pe",
+     "type": "DOUBLE",
+     "unit": "倍"
+    },
+    {
+     "source": "net_amount",
+     "target": "net_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "activity_score",
+     "target": "activity_score",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "has_etf_coverage",
+     "target": "has_etf_coverage",
+     "type": "BOOLEAN",
+     "unit": "source_native"
+    },
+    {
+     "source": "matched_etf_count",
+     "target": "matched_etf_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "fwd_5d_ret",
+     "target": "fwd_5d_ret",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "fwd_20d_ret",
+     "target": "fwd_20d_ret",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "created_at",
+     "target": "created_at",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": null
+  },
+  "sentiment_factor_daily": {
+   "source_table": "sentiment_factor_daily",
+   "target_table": "sentiment_factor_daily",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_sentiment_factor_daily_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date"
+   ],
+   "qdb_rows": 15488,
+   "date_min": "2017-08-25",
+   "date_max": "2026-09-12",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "factor_name",
+     "target": "factor_name",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "factor_value",
+     "target": "factor_value",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-12"
+  },
+  "slb_len": {
+   "source_table": "slb_len",
+   "target_table": "slb_len",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_slb_len_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date"
+   ],
+   "qdb_rows": 1834,
+   "date_min": "2018-01-02",
+   "date_max": "2025-07-25",
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ob",
+     "target": "ob",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "auc_amount",
+     "target": "auc_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "repo_amount",
+     "target": "repo_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "repay_amount",
+     "target": "repay_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "cb",
+     "target": "cb",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2025-07-25"
+  },
+  "stk_auction": {
+   "source_table": "stk_auction",
+   "target_table": "stk_auction",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_stk_auction_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "trade_date"
+   ],
+   "qdb_rows": 2248484,
+   "date_min": "2025-01-16",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "vol",
+     "target": "vol",
+     "type": "DOUBLE",
+     "unit": "股"
+    },
+    {
+     "source": "price",
+     "target": "price",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "amount",
+     "target": "amount",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "pre_close",
+     "target": "pre_close",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "turnover_rate",
+     "target": "turnover_rate",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "volume_ratio",
+     "target": "volume_ratio",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "float_share",
+     "target": "float_share",
+     "type": "DOUBLE",
+     "unit": "股"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "stk_factor_pro": {
+   "source_table": "stk_factor_pro",
+   "target_table": "stk_factor_pro",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_stk_factor_pro_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "trade_date"
+   ],
+   "qdb_rows": 14636865,
+   "date_min": "2010-01-04",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "open_qfq",
+     "target": "open_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "close_qfq",
+     "target": "close_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "high_qfq",
+     "target": "high_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "low_qfq",
+     "target": "low_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "vol",
+     "target": "vol",
+     "type": "DOUBLE",
+     "unit": "股"
+    },
+    {
+     "source": "amount",
+     "target": "amount",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "pct_chg",
+     "target": "pct_chg",
+     "type": "DOUBLE",
+     "unit": "%"
+    },
+    {
+     "source": "turnover_rate",
+     "target": "turnover_rate",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "turnover_rate_f",
+     "target": "turnover_rate_f",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "volume_ratio",
+     "target": "volume_ratio",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "pe",
+     "target": "pe",
+     "type": "DOUBLE",
+     "unit": "倍"
+    },
+    {
+     "source": "pe_ttm",
+     "target": "pe_ttm",
+     "type": "DOUBLE",
+     "unit": "倍"
+    },
+    {
+     "source": "pb",
+     "target": "pb",
+     "type": "DOUBLE",
+     "unit": "倍"
+    },
+    {
+     "source": "ps",
+     "target": "ps",
+     "type": "DOUBLE",
+     "unit": "倍"
+    },
+    {
+     "source": "ps_ttm",
+     "target": "ps_ttm",
+     "type": "DOUBLE",
+     "unit": "倍"
+    },
+    {
+     "source": "dv_ratio",
+     "target": "dv_ratio",
+     "type": "DOUBLE",
+     "unit": "%"
+    },
+    {
+     "source": "dv_ttm",
+     "target": "dv_ttm",
+     "type": "DOUBLE",
+     "unit": "%"
+    },
+    {
+     "source": "total_mv",
+     "target": "total_mv",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "circ_mv",
+     "target": "circ_mv",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "total_share",
+     "target": "total_share",
+     "type": "DOUBLE",
+     "unit": "股"
+    },
+    {
+     "source": "float_share",
+     "target": "float_share",
+     "type": "DOUBLE",
+     "unit": "股"
+    },
+    {
+     "source": "free_share",
+     "target": "free_share",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "adj_factor",
+     "target": "adj_factor",
+     "type": "DOUBLE",
+     "unit": "倍(复权因子)"
+    },
+    {
+     "source": "macd_qfq",
+     "target": "macd_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "macd_dea_qfq",
+     "target": "macd_dea_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "macd_dif_qfq",
+     "target": "macd_dif_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "kdj_qfq",
+     "target": "kdj_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "kdj_d_qfq",
+     "target": "kdj_d_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "kdj_k_qfq",
+     "target": "kdj_k_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rsi_qfq_6",
+     "target": "rsi_qfq_6",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rsi_qfq_12",
+     "target": "rsi_qfq_12",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rsi_qfq_24",
+     "target": "rsi_qfq_24",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "boll_upper_qfq",
+     "target": "boll_upper_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "boll_mid_qfq",
+     "target": "boll_mid_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "boll_lower_qfq",
+     "target": "boll_lower_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_qfq_5",
+     "target": "ma_qfq_5",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_qfq_10",
+     "target": "ma_qfq_10",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_qfq_20",
+     "target": "ma_qfq_20",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_qfq_60",
+     "target": "ma_qfq_60",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_qfq_250",
+     "target": "ma_qfq_250",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_qfq_5",
+     "target": "ema_qfq_5",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_qfq_10",
+     "target": "ema_qfq_10",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_qfq_20",
+     "target": "ema_qfq_20",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_qfq_60",
+     "target": "ema_qfq_60",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "atr_qfq",
+     "target": "atr_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "cci_qfq",
+     "target": "cci_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "wr_qfq",
+     "target": "wr_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "obv_qfq",
+     "target": "obv_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "updays",
+     "target": "updays",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "downdays",
+     "target": "downdays",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "open",
+     "target": "open",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "open_hfq",
+     "target": "open_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "high",
+     "target": "high",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "high_hfq",
+     "target": "high_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "low",
+     "target": "low",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "low_hfq",
+     "target": "low_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "close",
+     "target": "close",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "close_hfq",
+     "target": "close_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "pre_close",
+     "target": "pre_close",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "change",
+     "target": "change",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "asi_bfq",
+     "target": "asi_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "asi_hfq",
+     "target": "asi_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "asi_qfq",
+     "target": "asi_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "asit_bfq",
+     "target": "asit_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "asit_hfq",
+     "target": "asit_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "asit_qfq",
+     "target": "asit_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "atr_bfq",
+     "target": "atr_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "atr_hfq",
+     "target": "atr_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "bbi_bfq",
+     "target": "bbi_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "bbi_hfq",
+     "target": "bbi_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "bbi_qfq",
+     "target": "bbi_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "bias1_bfq",
+     "target": "bias1_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "bias1_hfq",
+     "target": "bias1_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "bias1_qfq",
+     "target": "bias1_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "bias2_bfq",
+     "target": "bias2_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "bias2_hfq",
+     "target": "bias2_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "bias2_qfq",
+     "target": "bias2_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "bias3_bfq",
+     "target": "bias3_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "bias3_hfq",
+     "target": "bias3_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "bias3_qfq",
+     "target": "bias3_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "boll_lower_bfq",
+     "target": "boll_lower_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "boll_lower_hfq",
+     "target": "boll_lower_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "boll_mid_bfq",
+     "target": "boll_mid_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "boll_mid_hfq",
+     "target": "boll_mid_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "boll_upper_bfq",
+     "target": "boll_upper_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "boll_upper_hfq",
+     "target": "boll_upper_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "brar_ar_bfq",
+     "target": "brar_ar_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "brar_ar_hfq",
+     "target": "brar_ar_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "brar_ar_qfq",
+     "target": "brar_ar_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "brar_br_bfq",
+     "target": "brar_br_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "brar_br_hfq",
+     "target": "brar_br_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "brar_br_qfq",
+     "target": "brar_br_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "cci_bfq",
+     "target": "cci_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "cci_hfq",
+     "target": "cci_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "cr_bfq",
+     "target": "cr_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "cr_hfq",
+     "target": "cr_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "cr_qfq",
+     "target": "cr_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dfma_dif_bfq",
+     "target": "dfma_dif_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dfma_dif_hfq",
+     "target": "dfma_dif_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dfma_dif_qfq",
+     "target": "dfma_dif_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dfma_difma_bfq",
+     "target": "dfma_difma_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dfma_difma_hfq",
+     "target": "dfma_difma_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dfma_difma_qfq",
+     "target": "dfma_difma_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dmi_adx_bfq",
+     "target": "dmi_adx_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dmi_adx_hfq",
+     "target": "dmi_adx_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dmi_adx_qfq",
+     "target": "dmi_adx_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dmi_adxr_bfq",
+     "target": "dmi_adxr_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dmi_adxr_hfq",
+     "target": "dmi_adxr_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dmi_adxr_qfq",
+     "target": "dmi_adxr_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dmi_mdi_bfq",
+     "target": "dmi_mdi_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dmi_mdi_hfq",
+     "target": "dmi_mdi_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dmi_mdi_qfq",
+     "target": "dmi_mdi_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dmi_pdi_bfq",
+     "target": "dmi_pdi_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dmi_pdi_hfq",
+     "target": "dmi_pdi_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dmi_pdi_qfq",
+     "target": "dmi_pdi_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dpo_bfq",
+     "target": "dpo_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dpo_hfq",
+     "target": "dpo_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "dpo_qfq",
+     "target": "dpo_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "madpo_bfq",
+     "target": "madpo_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "madpo_hfq",
+     "target": "madpo_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "madpo_qfq",
+     "target": "madpo_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_bfq_10",
+     "target": "ema_bfq_10",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_bfq_20",
+     "target": "ema_bfq_20",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_bfq_250",
+     "target": "ema_bfq_250",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_bfq_30",
+     "target": "ema_bfq_30",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_bfq_5",
+     "target": "ema_bfq_5",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_bfq_60",
+     "target": "ema_bfq_60",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_bfq_90",
+     "target": "ema_bfq_90",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_hfq_10",
+     "target": "ema_hfq_10",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_hfq_20",
+     "target": "ema_hfq_20",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_hfq_250",
+     "target": "ema_hfq_250",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_hfq_30",
+     "target": "ema_hfq_30",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_hfq_5",
+     "target": "ema_hfq_5",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_hfq_60",
+     "target": "ema_hfq_60",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_hfq_90",
+     "target": "ema_hfq_90",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_qfq_250",
+     "target": "ema_qfq_250",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_qfq_30",
+     "target": "ema_qfq_30",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ema_qfq_90",
+     "target": "ema_qfq_90",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "emv_bfq",
+     "target": "emv_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "emv_hfq",
+     "target": "emv_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "emv_qfq",
+     "target": "emv_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "maemv_bfq",
+     "target": "maemv_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "maemv_hfq",
+     "target": "maemv_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "maemv_qfq",
+     "target": "maemv_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "expma_12_bfq",
+     "target": "expma_12_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "expma_12_hfq",
+     "target": "expma_12_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "expma_12_qfq",
+     "target": "expma_12_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "expma_50_bfq",
+     "target": "expma_50_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "expma_50_hfq",
+     "target": "expma_50_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "expma_50_qfq",
+     "target": "expma_50_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "kdj_bfq",
+     "target": "kdj_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "kdj_hfq",
+     "target": "kdj_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "kdj_d_bfq",
+     "target": "kdj_d_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "kdj_d_hfq",
+     "target": "kdj_d_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "kdj_k_bfq",
+     "target": "kdj_k_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "kdj_k_hfq",
+     "target": "kdj_k_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ktn_down_bfq",
+     "target": "ktn_down_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ktn_down_hfq",
+     "target": "ktn_down_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ktn_down_qfq",
+     "target": "ktn_down_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ktn_mid_bfq",
+     "target": "ktn_mid_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ktn_mid_hfq",
+     "target": "ktn_mid_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ktn_mid_qfq",
+     "target": "ktn_mid_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ktn_upper_bfq",
+     "target": "ktn_upper_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ktn_upper_hfq",
+     "target": "ktn_upper_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ktn_upper_qfq",
+     "target": "ktn_upper_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "lowdays",
+     "target": "lowdays",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "topdays",
+     "target": "topdays",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_bfq_10",
+     "target": "ma_bfq_10",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_bfq_20",
+     "target": "ma_bfq_20",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_bfq_250",
+     "target": "ma_bfq_250",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_bfq_30",
+     "target": "ma_bfq_30",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_bfq_5",
+     "target": "ma_bfq_5",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_bfq_60",
+     "target": "ma_bfq_60",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_bfq_90",
+     "target": "ma_bfq_90",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_hfq_10",
+     "target": "ma_hfq_10",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_hfq_20",
+     "target": "ma_hfq_20",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_hfq_250",
+     "target": "ma_hfq_250",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_hfq_30",
+     "target": "ma_hfq_30",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_hfq_5",
+     "target": "ma_hfq_5",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_hfq_60",
+     "target": "ma_hfq_60",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_hfq_90",
+     "target": "ma_hfq_90",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_qfq_30",
+     "target": "ma_qfq_30",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_qfq_90",
+     "target": "ma_qfq_90",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "macd_bfq",
+     "target": "macd_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "macd_hfq",
+     "target": "macd_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "macd_dea_bfq",
+     "target": "macd_dea_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "macd_dea_hfq",
+     "target": "macd_dea_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "macd_dif_bfq",
+     "target": "macd_dif_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "macd_dif_hfq",
+     "target": "macd_dif_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mass_bfq",
+     "target": "mass_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mass_hfq",
+     "target": "mass_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mass_qfq",
+     "target": "mass_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_mass_bfq",
+     "target": "ma_mass_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_mass_hfq",
+     "target": "ma_mass_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "ma_mass_qfq",
+     "target": "ma_mass_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mfi_bfq",
+     "target": "mfi_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mfi_hfq",
+     "target": "mfi_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mfi_qfq",
+     "target": "mfi_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mtm_bfq",
+     "target": "mtm_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mtm_hfq",
+     "target": "mtm_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mtm_qfq",
+     "target": "mtm_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mtmma_bfq",
+     "target": "mtmma_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mtmma_hfq",
+     "target": "mtmma_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mtmma_qfq",
+     "target": "mtmma_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "obv_bfq",
+     "target": "obv_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "obv_hfq",
+     "target": "obv_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "psy_bfq",
+     "target": "psy_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "psy_hfq",
+     "target": "psy_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "psy_qfq",
+     "target": "psy_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "psyma_bfq",
+     "target": "psyma_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "psyma_hfq",
+     "target": "psyma_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "psyma_qfq",
+     "target": "psyma_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "roc_bfq",
+     "target": "roc_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "roc_hfq",
+     "target": "roc_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "roc_qfq",
+     "target": "roc_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "maroc_bfq",
+     "target": "maroc_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "maroc_hfq",
+     "target": "maroc_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "maroc_qfq",
+     "target": "maroc_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rsi_bfq_12",
+     "target": "rsi_bfq_12",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rsi_bfq_24",
+     "target": "rsi_bfq_24",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rsi_bfq_6",
+     "target": "rsi_bfq_6",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rsi_hfq_12",
+     "target": "rsi_hfq_12",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rsi_hfq_24",
+     "target": "rsi_hfq_24",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rsi_hfq_6",
+     "target": "rsi_hfq_6",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "taq_down_bfq",
+     "target": "taq_down_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "taq_down_hfq",
+     "target": "taq_down_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "taq_down_qfq",
+     "target": "taq_down_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "taq_mid_bfq",
+     "target": "taq_mid_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "taq_mid_hfq",
+     "target": "taq_mid_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "taq_mid_qfq",
+     "target": "taq_mid_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "taq_up_bfq",
+     "target": "taq_up_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "taq_up_hfq",
+     "target": "taq_up_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "taq_up_qfq",
+     "target": "taq_up_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "trix_bfq",
+     "target": "trix_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "trix_hfq",
+     "target": "trix_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "trix_qfq",
+     "target": "trix_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "trma_bfq",
+     "target": "trma_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "trma_hfq",
+     "target": "trma_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "trma_qfq",
+     "target": "trma_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "vr_bfq",
+     "target": "vr_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "vr_hfq",
+     "target": "vr_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "vr_qfq",
+     "target": "vr_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "wr_bfq",
+     "target": "wr_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "wr_hfq",
+     "target": "wr_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "wr1_bfq",
+     "target": "wr1_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "wr1_hfq",
+     "target": "wr1_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "wr1_qfq",
+     "target": "wr1_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "xsii_td1_bfq",
+     "target": "xsii_td1_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "xsii_td1_hfq",
+     "target": "xsii_td1_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "xsii_td1_qfq",
+     "target": "xsii_td1_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "xsii_td2_bfq",
+     "target": "xsii_td2_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "xsii_td2_hfq",
+     "target": "xsii_td2_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "xsii_td2_qfq",
+     "target": "xsii_td2_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "xsii_td3_bfq",
+     "target": "xsii_td3_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "xsii_td3_hfq",
+     "target": "xsii_td3_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "xsii_td3_qfq",
+     "target": "xsii_td3_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "xsii_td4_bfq",
+     "target": "xsii_td4_bfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "xsii_td4_hfq",
+     "target": "xsii_td4_hfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "xsii_td4_qfq",
+     "target": "xsii_td4_qfq",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "stk_limit": {
+   "source_table": "stk_limit",
+   "target_table": "stk_limit",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_stk_limit_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "trade_date"
+   ],
+   "qdb_rows": 16978511,
+   "date_min": "2010-01-04",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "pre_close",
+     "target": "pre_close",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "up_limit",
+     "target": "up_limit",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "down_limit",
+     "target": "down_limit",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "style_cross_section_daily": {
+   "source_table": "style_cross_section_daily",
+   "target_table": "style_cross_section_daily",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_style_cross_section_daily_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date"
+   ],
+   "qdb_rows": 4055,
+   "date_min": "2010-01-04",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "small_cap_return",
+     "target": "small_cap_return",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "large_cap_return",
+     "target": "large_cap_return",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "size_spread",
+     "target": "size_spread",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "value_return",
+     "target": "value_return",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "growth_return",
+     "target": "growth_return",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "value_spread",
+     "target": "value_spread",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "high_beta_return",
+     "target": "high_beta_return",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "low_vol_return",
+     "target": "low_vol_return",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "beta_vol_spread",
+     "target": "beta_vol_spread",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "small_cap_count",
+     "target": "small_cap_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "large_cap_count",
+     "target": "large_cap_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "value_count",
+     "target": "value_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "growth_count",
+     "target": "growth_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "high_beta_count",
+     "target": "high_beta_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "low_vol_count",
+     "target": "low_vol_count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "universe_count",
+     "target": "universe_count",
+     "type": "INT",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "survey_sentiment": {
+   "source_table": "survey_sentiment",
+   "target_table": "survey_sentiment",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_survey_sentiment_pt",
+   "date_basis": "inserted_at",
+   "watermark_basis": "inserted_at",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "inserted_at"
+   ],
+   "qdb_rows": 189,
+   "date_min": "2026-06-21",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "surv_date",
+     "target": "surv_date",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "source",
+     "target": "source",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "sentiment_score",
+     "target": "sentiment_score",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "confidence",
+     "target": "confidence",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "key_topics",
+     "target": "key_topics",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "positive_signals",
+     "target": "positive_signals",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "negative_signals",
+     "target": "negative_signals",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "summary",
+     "target": "summary",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "text_length",
+     "target": "text_length",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "inserted_at",
+     "target": "inserted_at",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "sw_daily": {
+   "source_table": "sw_daily",
+   "target_table": "sw_daily",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_sw_daily_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "trade_date"
+   ],
+   "qdb_rows": 1515236,
+   "date_min": "2010-01-04",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "open",
+     "target": "open",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "low",
+     "target": "low",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "high",
+     "target": "high",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "close",
+     "target": "close",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "change",
+     "target": "change",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "pct_change",
+     "target": "pct_change",
+     "type": "DOUBLE",
+     "unit": "%"
+    },
+    {
+     "source": "vol",
+     "target": "vol",
+     "type": "DOUBLE",
+     "unit": "股"
+    },
+    {
+     "source": "amount",
+     "target": "amount",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "pe",
+     "target": "pe",
+     "type": "DOUBLE",
+     "unit": "倍"
+    },
+    {
+     "source": "pb",
+     "target": "pb",
+     "type": "DOUBLE",
+     "unit": "倍"
+    },
+    {
+     "source": "float_mv",
+     "target": "float_mv",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "total_mv",
+     "target": "total_mv",
+     "type": "DOUBLE",
+     "unit": "元"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "sw_weight": {
+   "source_table": "sw_weight",
+   "target_table": "sw_weight",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_sw_weight_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "index_code",
+    "ts_code",
+    "trade_date"
+   ],
+   "qdb_rows": 4346929,
+   "date_min": "2024-01-02",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "index_code",
+     "target": "index_code",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "weight",
+     "target": "weight",
+     "type": "DOUBLE",
+     "unit": "%"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "tdx_theme_etf_overlay": {
+   "source_table": "tdx_theme_etf_overlay",
+   "target_table": "tdx_theme_etf_overlay",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_tdx_theme_etf_overlay_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date"
+   ],
+   "qdb_rows": 1138,
+   "date_min": "2026-01-05",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "theme",
+     "target": "theme",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "etf_code",
+     "target": "etf_code",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "etf_name",
+     "target": "etf_name",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "sentiment",
+     "target": "sentiment",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "zscore",
+     "target": "zscore",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "fwd_ret_5",
+     "target": "fwd_ret_5",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "fwd_ret_10",
+     "target": "fwd_ret_10",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "fwd_ret_20",
+     "target": "fwd_ret_20",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "signal",
+     "target": "signal",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "tdx_theme_llm_scores": {
+   "source_table": "tdx_theme_llm_scores",
+   "target_table": "tdx_theme_llm_scores",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_tdx_theme_llm_scores_pt",
+   "date_basis": "scored_at",
+   "watermark_basis": "scored_at",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "scored_at"
+   ],
+   "qdb_rows": 15230,
+   "date_min": "2026-07-21",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "doc_id",
+     "target": "doc_id",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "sentiment_score",
+     "target": "sentiment_score",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "sentiment_label",
+     "target": "sentiment_label",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "nlp_model",
+     "target": "nlp_model",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "scored_at",
+     "target": "scored_at",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "tdx_theme_news": {
+   "source_table": "tdx_theme_news",
+   "target_table": "tdx_theme_news",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_tdx_theme_news_pt",
+   "date_basis": "ts",
+   "watermark_basis": "ts",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts"
+   ],
+   "qdb_rows": 15993,
+   "date_min": "2022-01-12",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "ts",
+     "target": "ts",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "theme",
+     "target": "theme",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "category",
+     "target": "category",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "source",
+     "target": "source",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "ingest_batch",
+     "target": "ingest_batch",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "sentiment_label",
+     "target": "sentiment_label",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "doc_id",
+     "target": "doc_id",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "nlp_model",
+     "target": "nlp_model",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "title",
+     "target": "title",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "summary",
+     "target": "summary",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "url",
+     "target": "url",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "published_time",
+     "target": "published_time",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "sentiment_score",
+     "target": "sentiment_score",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "tdx_theme_sentiment_daily": {
+   "source_table": "tdx_theme_sentiment_daily",
+   "target_table": "tdx_theme_sentiment_daily",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_tdx_theme_sentiment_daily_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date"
+   ],
+   "qdb_rows": 7824,
+   "date_min": "2022-01-13",
+   "date_max": "2026-09-12",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "factor_name",
+     "target": "factor_name",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "factor_value",
+     "target": "factor_value",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-12"
+  },
+  "ths_daily": {
+   "source_table": "ths_daily",
+   "target_table": "ths_daily",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_ths_daily_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "trade_date"
+   ],
+   "qdb_rows": 2661227,
+   "date_min": "2018-01-02",
+   "date_max": "2026-09-11",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "open",
+     "target": "open",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "high",
+     "target": "high",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "low",
+     "target": "low",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "close",
+     "target": "close",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "pre_close",
+     "target": "pre_close",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "avg_price",
+     "target": "avg_price",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "change",
+     "target": "change",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "pct_change",
+     "target": "pct_change",
+     "type": "DOUBLE",
+     "unit": "%"
+    },
+    {
+     "source": "vol",
+     "target": "vol",
+     "type": "DOUBLE",
+     "unit": "股"
+    },
+    {
+     "source": "turnover_rate",
+     "target": "turnover_rate",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "total_mv",
+     "target": "total_mv",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "float_mv",
+     "target": "float_mv",
+     "type": "DOUBLE",
+     "unit": "元"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-11"
+  },
+  "ths_hot": {
+   "source_table": "ths_hot",
+   "target_table": "ths_hot",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_ths_hot_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date",
+    "data_type",
+    "ts_code"
+   ],
+   "qdb_rows": 365449,
+   "date_min": "2023-08-21",
+   "date_max": "2026-09-10",
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "data_type",
+     "target": "data_type",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "ts_name",
+     "target": "ts_name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "rank",
+     "target": "rank",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "pct_change",
+     "target": "pct_change",
+     "type": "DOUBLE",
+     "unit": "%"
+    },
+    {
+     "source": "current_price",
+     "target": "current_price",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "concept",
+     "target": "concept",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "rank_reason",
+     "target": "rank_reason",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "hot",
+     "target": "hot",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "rank_time",
+     "target": "rank_time",
+     "type": "STRING",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-10"
+  },
+  "ths_index": {
+   "source_table": "ths_index",
+   "target_table": "ths_index",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_ths_index_pt",
+   "date_basis": "list_date",
+   "watermark_basis": "list_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "list_date"
+   ],
+   "qdb_rows": 1434,
+   "date_min": "2007-08-01",
+   "date_max": "2026-07-31",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "count",
+     "target": "count",
+     "type": "INT",
+     "unit": "source_native"
+    },
+    {
+     "source": "exchange",
+     "target": "exchange",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "list_date",
+     "target": "list_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "type",
+     "target": "type",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-07-31"
+  },
+  "ths_member": {
+   "source_table": "ths_member",
+   "target_table": "ths_member",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_ths_member_pt",
+   "date_basis": "in_date",
+   "watermark_basis": "ingest_time",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "成分生效日=业务键；调入调出/回填按入库时间追踪（源止 8/13 属源内现状）",
+   "dedup_keys": [
+    "ts_code",
+    "con_code",
+    "ingest_time"
+   ],
+   "qdb_rows": 3536866,
+   "date_min": null,
+   "date_max": null,
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "con_code",
+     "target": "con_code",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "con_name",
+     "target": "con_name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "weight",
+     "target": "weight",
+     "type": "DOUBLE",
+     "unit": "%"
+    },
+    {
+     "source": "in_date",
+     "target": "in_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "out_date",
+     "target": "out_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "is_new",
+     "target": "is_new",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "ingest_time",
+     "target": "ingest_time",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": null
+  },
+  "top_inst": {
+   "source_table": "top_inst",
+   "target_table": "top_inst",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_top_inst_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date",
+    "ts_code",
+    "exalter",
+    "side"
+   ],
+   "qdb_rows": 85513,
+   "date_min": "2023-02-10",
+   "date_max": "2026-09-10",
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "exalter",
+     "target": "exalter",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "side",
+     "target": "side",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "buy",
+     "target": "buy",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "buy_rate",
+     "target": "buy_rate",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "sell",
+     "target": "sell",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "sell_rate",
+     "target": "sell_rate",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "net_buy",
+     "target": "net_buy",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "reason",
+     "target": "reason",
+     "type": "STRING",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-10"
+  },
+  "top_list": {
+   "source_table": "top_list",
+   "target_table": "top_list",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_top_list_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "trade_date",
+    "ts_code"
+   ],
+   "qdb_rows": 104522,
+   "date_min": "2020-01-02",
+   "date_max": "2026-09-10",
+   "columns": [
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "close",
+     "target": "close",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "pct_change",
+     "target": "pct_change",
+     "type": "DOUBLE",
+     "unit": "%"
+    },
+    {
+     "source": "turnover_rate",
+     "target": "turnover_rate",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "amount",
+     "target": "amount",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "l_sell",
+     "target": "l_sell",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "l_buy",
+     "target": "l_buy",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "l_amount",
+     "target": "l_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "net_amount",
+     "target": "net_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "net_rate",
+     "target": "net_rate",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "amount_rate",
+     "target": "amount_rate",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "float_values",
+     "target": "float_values",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "reason",
+     "target": "reason",
+     "type": "STRING",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-09-10"
+  },
+  "ws_asfund": {
+   "source_table": "ws_asfund",
+   "target_table": "ws_asfund",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_ws_asfund_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "trade_date"
+   ],
+   "qdb_rows": 42974,
+   "date_min": "2026-04-10",
+   "date_max": "2026-06-23",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "main_net_flow",
+     "target": "main_net_flow",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "main_in_flow",
+     "target": "main_in_flow",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "main_out_flow",
+     "target": "main_out_flow",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "jumbo_net_flow",
+     "target": "jumbo_net_flow",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "big_net_flow",
+     "target": "big_net_flow",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "mid_net_flow",
+     "target": "mid_net_flow",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "small_net_flow",
+     "target": "small_net_flow",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "close_price",
+     "target": "close_price",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "code",
+     "target": "code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "BlockNetFlow",
+     "target": "BlockNetFlow",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "FwdClosePrice",
+     "target": "FwdClosePrice",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "LastestTradedPrice",
+     "target": "LastestTradedPrice",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "LhbInfos",
+     "target": "LhbInfos",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "MainInflowCircRate",
+     "target": "MainInflowCircRate",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "MainInflowIndustryRank",
+     "target": "MainInflowIndustryRank",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "MainInflowRank",
+     "target": "MainInflowRank",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "MainNetFlow10D",
+     "target": "MainNetFlow10D",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "MainNetFlow20D",
+     "target": "MainNetFlow20D",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "MainNetFlow5D",
+     "target": "MainNetFlow5D",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "RetailInFlow",
+     "target": "RetailInFlow",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "RetailOutFlow",
+     "target": "RetailOutFlow",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "SecuCode",
+     "target": "SecuCode",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "BlockTradingInfos",
+     "target": "BlockTradingInfos",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "MarginTradeInfos",
+     "target": "MarginTradeInfos",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "LhbTradingDetails",
+     "target": "LhbTradingDetails",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "symbol",
+     "target": "symbol",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-06-23"
+  },
+  "ws_blocktrade": {
+   "source_table": "ws_blocktrade",
+   "target_table": "ws_blocktrade",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_ws_blocktrade_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "trade_date"
+   ],
+   "qdb_rows": 2773,
+   "date_min": "2026-06-02",
+   "date_max": "2026-06-23",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "price",
+     "target": "price",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "volume",
+     "target": "volume",
+     "type": "DOUBLE",
+     "unit": "股"
+    },
+    {
+     "source": "amount",
+     "target": "amount",
+     "type": "DOUBLE",
+     "unit": "元"
+    },
+    {
+     "source": "buyer_branch",
+     "target": "buyer_branch",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "seller_branch",
+     "target": "seller_branch",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "premium_rate",
+     "target": "premium_rate",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "code",
+     "target": "code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "change_pct",
+     "target": "change_pct",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-06-23"
+  },
+  "ws_etf_holders": {
+   "source_table": "ws_etf_holders",
+   "target_table": "ws_etf_holders",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_ws_etf_holders_pt",
+   "date_basis": "report_date",
+   "watermark_basis": "report_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "etf_code",
+    "report_date"
+   ],
+   "qdb_rows": 3132,
+   "date_min": "2026-03-31",
+   "date_max": "2026-06-18",
+   "columns": [
+    {
+     "source": "etf_code",
+     "target": "etf_code",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "report_date",
+     "target": "report_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "holder_account",
+     "target": "holder_account",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "individual_share",
+     "target": "individual_share",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "individual_ratio",
+     "target": "individual_ratio",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "institution_share",
+     "target": "institution_share",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "institution_ratio",
+     "target": "institution_ratio",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "top10_share",
+     "target": "top10_share",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "top10_ratio",
+     "target": "top10_ratio",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "code",
+     "target": "code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-06-18"
+  },
+  "ws_etf_holdings": {
+   "source_table": "ws_etf_holdings",
+   "target_table": "ws_etf_holdings",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_ws_etf_holdings_pt",
+   "date_basis": "hold_date",
+   "watermark_basis": "hold_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "etf_code",
+    "hold_date",
+    "stock_code"
+   ],
+   "qdb_rows": 12356,
+   "date_min": "2026-06-08",
+   "date_max": "2026-06-19",
+   "columns": [
+    {
+     "source": "etf_code",
+     "target": "etf_code",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "hold_date",
+     "target": "hold_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "stock_code",
+     "target": "stock_code",
+     "type": "SYMBOL",
+     "unit": "source_native"
+    },
+    {
+     "source": "stock_name",
+     "target": "stock_name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "ratio",
+     "target": "ratio",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-06-19"
+  },
+  "ws_ipo": {
+   "source_table": "ws_ipo",
+   "target_table": "ws_ipo",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_ws_ipo_pt",
+   "date_basis": "subscribe_date",
+   "watermark_basis": "subscribe_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "subscribe_date"
+   ],
+   "qdb_rows": 3427,
+   "date_min": "2010-01-01",
+   "date_max": "2026-06-18",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "subscribe_date",
+     "target": "subscribe_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "list_date",
+     "target": "list_date",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "issue_price",
+     "target": "issue_price",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "stage",
+     "target": "stage",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "code",
+     "target": "code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "price",
+     "target": "price",
+     "type": "VARCHAR",
+     "unit": "元"
+    },
+    {
+     "source": "sgrq",
+     "target": "sgrq",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "ssrq",
+     "target": "ssrq",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-06-18"
+  },
+  "ws_lhb": {
+   "source_table": "ws_lhb",
+   "target_table": "ws_lhb",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_ws_lhb_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "trade_date"
+   ],
+   "qdb_rows": 8496,
+   "date_min": "2026-06-05",
+   "date_max": "2026-06-26",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "close_price",
+     "target": "close_price",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "change_pct",
+     "target": "change_pct",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "reason",
+     "target": "reason",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "buy_amount",
+     "target": "buy_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "sell_amount",
+     "target": "sell_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "net_amount",
+     "target": "net_amount",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "buy_broker",
+     "target": "buy_broker",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "sell_broker",
+     "target": "sell_broker",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "ts_code_raw",
+     "target": "ts_code_raw",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "stock_name",
+     "target": "stock_name",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "turnoverValue",
+     "target": "turnoverValue",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "turnoverRate",
+     "target": "turnoverRate",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-06-26"
+  },
+  "ws_margintrade": {
+   "source_table": "ws_margintrade",
+   "target_table": "ws_margintrade",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_ws_margintrade_pt",
+   "date_basis": "trade_date",
+   "watermark_basis": "trade_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "trade_date"
+   ],
+   "qdb_rows": 14361,
+   "date_min": "2026-06-05",
+   "date_max": "2026-06-26",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "trade_date",
+     "target": "trade_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "close_price",
+     "target": "close_price",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "change_pct",
+     "target": "change_pct",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "finance_value",
+     "target": "finance_value",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "security_value",
+     "target": "security_value",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "finance_buy_value",
+     "target": "finance_buy_value",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "finance_refund_value",
+     "target": "finance_refund_value",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "trading_value",
+     "target": "trading_value",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "trading_value_dif",
+     "target": "trading_value_dif",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "finance_value_dod",
+     "target": "finance_value_dod",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "security_value_dod",
+     "target": "security_value_dod",
+     "type": "DOUBLE",
+     "unit": "source_native"
+    },
+    {
+     "source": "code",
+     "target": "code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "FinanceValue",
+     "target": "FinanceValue",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "SecurityValue",
+     "target": "SecurityValue",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "FinanceBuyValue",
+     "target": "FinanceBuyValue",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "FinanceRefundValue",
+     "target": "FinanceRefundValue",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "TradingValue",
+     "target": "TradingValue",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "TradingValueDif",
+     "target": "TradingValueDif",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "FinanceValueDOD",
+     "target": "FinanceValueDOD",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    },
+    {
+     "source": "SecurityValueDOD",
+     "target": "SecurityValueDOD",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-06-26"
+  },
+  "ws_reserve": {
+   "source_table": "ws_reserve",
+   "target_table": "ws_reserve",
+   "source": "questdb",
+   "freq": "daily",
+   "dataset_kind": "passthrough",
+   "task_name": "mcp_ws_reserve_pt",
+   "date_basis": "report_end_date",
+   "watermark_basis": "report_end_date",
+   "watermark_confidence": "derived",
+   "watermark_rationale": "QuestDB 指定时间列（单时间列，水位=业务键）",
+   "dedup_keys": [
+    "ts_code",
+    "report_end_date"
+   ],
+   "qdb_rows": 5278,
+   "date_min": "2025-12-31",
+   "date_max": "2026-03-31",
+   "columns": [
+    {
+     "source": "ts_code",
+     "target": "ts_code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "report_end_date",
+     "target": "report_end_date",
+     "type": "TIMESTAMP",
+     "unit": "时间"
+    },
+    {
+     "source": "disclosure_end_date",
+     "target": "disclosure_end_date",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "disclosure_date",
+     "target": "disclosure_date",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "disclosure_desc",
+     "target": "disclosure_desc",
+     "type": "STRING",
+     "unit": "source_native"
+    },
+    {
+     "source": "code",
+     "target": "code",
+     "type": "SYMBOL",
+     "unit": "代码"
+    },
+    {
+     "source": "name",
+     "target": "name",
+     "type": "VARCHAR",
+     "unit": "source_native"
+    }
+   ],
+   "units_basis": "source_native（单位与 QuestDB 源一致，逐列声明见 columns[].unit）",
+   "date_max_qdb": "2026-03-31"
+  }
+ }
+}
