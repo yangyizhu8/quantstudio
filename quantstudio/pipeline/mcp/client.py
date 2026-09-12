@@ -519,11 +519,19 @@ class MCPClient:
 
     def query_snapshot(self, dataset_id: str,
                        columns: Optional[List[str]] = None,
-                       limit: int = 100) -> SnapshotPage:
-        """小表内存路径：直接返回行 JSON（含 adj_factor）。"""
+                       limit: int = 100,
+                       filters: Optional[List[Dict[str, Any]]] = None) -> SnapshotPage:
+        """小表内存路径：直接返回行 JSON（含 adj_factor）。
+
+        filters（2026-09-12 新增，向后兼容）：云端支持的列过滤，
+        形如 [{"column": "trade_date", "op": "=", "value": "2026-09-11"}]
+        （实测可用形态；服务端 limit 上限 10,000 行，响应含 returned/limit）。
+        """
         args: Dict[str, Any] = {"dataset_id": dataset_id, "limit": int(limit)}
         if columns:
             args["columns"] = list(columns)
+        if filters:
+            args["filters"] = list(filters)
         d = self._call_with_retry(self._call_tool, "query_snapshot", args)
         rows = d.get("rows", []) or []
         cols = d.get("columns", []) or (list(rows[0].keys()) if rows else [])
