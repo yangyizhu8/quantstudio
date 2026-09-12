@@ -82,10 +82,19 @@ def main():
         db_ = spec["date_basis"]
         keys = spec.get("dedup_keys") or [db_]
         n_dates = HIGH_RISK_DATES if t in HIGH_RISK else 1
+        # 日期列选择：date_basis 在本地可能全空（实测 ths_member.in_date 非空=0，
+        # 旧 ETL 未填）→ 回退到 watermark_basis（该列必有值，否则回填也无从取窗）
+        date_col = db_
+        try:
+            _nn = qdb(f'SELECT count("{db_}") FROM "{t}"')["dataset"][0][0]
+            if int(_nn) == 0:
+                date_col = spec["watermark_basis"]
+        except Exception:
+            pass
         try:
             dts = [str(r[0])[:10] for r in qdb(
-                f'SELECT DISTINCT "{db_}" FROM "{t}" WHERE "{db_}" IS NOT NULL '
-                f'ORDER BY "{db_}" DESC LIMIT {n_dates}')["dataset"]]
+                f'SELECT DISTINCT "{date_col}" FROM "{t}" WHERE "{date_col}" IS NOT NULL '
+                f'ORDER BY "{date_col}" DESC LIMIT {n_dates}')["dataset"]]
         except Exception as e:
             blockers.append((t, "local-date", str(e)[:80])); continue
         if not dts:
@@ -97,14 +106,14 @@ def main():
                 d_ = client._call_with_retry(
                     client._call_tool, "query_snapshot",
                     {"dataset_id": f"qdb.{t}", "limit": CAP,
-                     "filters": [{"column": db_, "op": "=", "value": d}]})
+                     "filters": [{"column": date_col, "op": "=", "value": d}]})
                 crows = d_.get("rows", []) or []
             except Exception as e:
                 t_err += 1
                 detail.append((d, "cloud-err", str(e)[:70])); continue
             try:
                 lrows = con.execute(
-                    f'SELECT * FROM "{t}" WHERE CAST("{db_}" AS VARCHAR) LIKE ?',
+                    f'SELECT * FROM "{t}" WHERE CAST("{date_col}" AS VARCHAR) LIKE ?',
                     [d + "%"]).fetchdf().to_dict("records")
             except Exception as e:
                 detail.append((d, "local-err", str(e)[:70])); continue
