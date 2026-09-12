@@ -1,4 +1,4 @@
-# 本地未推提交台账（QuantStudio 数据线）
+﻿# 本地未推提交台账（QuantStudio 数据线）
 
 > 规则：**本线不自行 push**。提交登记入册，随「下次维护批」走用户确认后统一推送。
 > 记录人：数据拉取线（会话 trading-battle-back 域）
@@ -103,3 +103,19 @@ Get-ScheduledTask -TaskName Trading_Minutes* , Trading_Repair_Minutes |
 | A-1 审计读 / A-2 仲裁包 | **已交付并被逐项采纳**；方案已 v1.5 归档、本链闭环 |
 | 分钟链守卫（4 任务）| **已重建**（09-13 02:53，提权脚本 `scripts/register_minutes_elevated.ps1`）|
 | 待推提交 | **ahead 9**，本线不自行 push |
+
+## ✅ 已推送（2026-09-13 维护批：跨仓指针文件）
+
+| 项 | 值 |
+|---|---|
+| commit | `ae736cb`（docs(data): 跨仓指针——数据域仓库位置）|
+| 推送前 HEAD | `ae736cb569f4aeebfedf8dc2915d1aeaff78518d` |
+| 双远程核对 | `quantstudio-plus/main` = `quantstudio/main` = 本地 HEAD ⇔ **三端逐位一致** ✓ |
+| ahead | 0（`main...origin/main` 无 ahead）|
+
+### trading 同步门豁免登记
+
+- **豁免对象**：本次推送内容 **纯 docs 提交**（新增 1 个跨仓指针 .md，零代码/零配置/零数据变更）
+- **豁免依据**：不触及 trading 副本所依赖的任何 code/config/data 面 ⇒ 无需 trading 同步门
+- **登记人/时点**：数据拉取线 ｜ 2026-09-13
+
