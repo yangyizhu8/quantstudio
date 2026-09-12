@@ -463,7 +463,8 @@ class ResidentCollector:
 
     def execute_task(self, task: Dict, mode: Optional[str] = None,
                      run_quality_audit: bool = True,
-                     cancel_check=None) -> bool:
+                     cancel_check=None,
+                     progress_cb=None) -> bool:
         """Public task entry shared by GUI, CLI and resident scheduling.
 
         The task is copied before the run so mode overrides cannot mutate the
@@ -496,6 +497,9 @@ class ResidentCollector:
         self._task_cancel_check = cancel_check
         self._task_cancelled = False
         self._task_resume = None
+        # 段级进度回调（可选）：A4 修复段等待期文案需要把 A4 进度送到 GUI
+        # ——停止等待提示若只承诺主循环粒度，用户会误判「没反应」。
+        self._task_progress_cb = progress_cb
         try:
             if self._needs_manual_qfq_cycle(run_task):
                 owns_qfq_cycle = self.qfq_begin_cycle() is not None
@@ -526,6 +530,7 @@ class ResidentCollector:
                 self._task_resume.clear(reason="completed")
             self._task_cancel_check = None
             self._task_resume = None
+            self._task_progress_cb = None
         return task_ok and audit_ok
 
     def execute_task_with_quality(self, task: Dict) -> bool:
@@ -555,6 +560,39 @@ class ResidentCollector:
         if hit:
             raise TaskCancelled(
                 f"stop requested at boundary {unit_type}={value}")
+
+    def _emit_task_progress(self, msg: str) -> None:
+        """段级进度上报（可选通道；无回调时静默，零副作用）。"""
+        cb = getattr(self, "_task_progress_cb", None)
+        if cb is None:
+            return
+        try:
+            cb(msg)
+        except Exception as e:
+            logger.debug("[progress] 回调异常（忽略）: %s", e)
+
+    def _a4_boundary(self, trade_date, idx: int, total: int) -> None:
+        """A4 修复段边界：**先记录 A4 进度，再查取消谓词**（与主循环同谓词）。
+
+        命中 → raise TaskCancelled（不再进入主增量；A4 已修复窗口保留在库）。
+        """
+        cursor = getattr(self, "_task_resume", None)
+        if cursor is not None:
+            cursor.advance_a4(trade_date, total=total)
+        self._emit_task_progress(f"A4 修复段 {idx}/{total} 窗口完成（{trade_date}）")
+        check = getattr(self, "_task_cancel_check", None)
+        if check is None:
+            return
+        try:
+            hit = bool(check())
+        except TaskCancelled:
+            raise
+        except Exception as e:
+            logger.warning("[stop] 取消谓词异常（按未命中处理）: %s", e)
+            hit = False
+        if hit:
+            raise TaskCancelled(
+                f"stop requested at A4 boundary {idx}/{total} ({trade_date})")
 
     def _open_day_resume(self, task: Dict, source: str, table: str, freq: str,
                          start: str, end: str) -> str:
@@ -2389,19 +2427,40 @@ class ResidentCollector:
             logger.info(f"[{batch_id}] A4 检测到 {table} 有 {len(repull_dates)} 个 "
                         f"repair/full 更新窗口，开始局部重拉: {repull_dates[:5]}")
             # 逐日局部重拉（全市场单日，DEDUP 幂等）
+            # ① 停止语义 v3.1：A4 修复段同样要有取消检查点——否则停止请求在 A4 段
+            #    被完全忽略（用户已点停止，GUI 仍在逐窗口重拉，且文案只承诺主循环粒度）。
+            # ② A4 段进度记账：每窗口完成后写入游标（a4.completed_windows），
+            #    停止后再次运行跳过已修复窗口（否则 A4 段进度整段丢失、重复修复）。
+            _a4_done = set()
+            _a4_cursor = getattr(self, "_task_resume", None)
+            if _a4_cursor is not None:
+                try:
+                    _a4_done = _a4_cursor.a4_completed()
+                except Exception:
+                    _a4_done = set()
+            _a4_total = len(repull_dates)
+            _a4_idx = 0
+            if _a4_done:
+                logger.info(f"[{batch_id}] A4 续传：跳过已修复窗口 "
+                            f"{len(_a4_done)}/{_a4_total} 个")
             _a4_invalidated = False
             for trade_date in repull_dates:
+                if str(trade_date) in _a4_done:
+                    _a4_idx += 1
+                    continue
                 try:
                     raw_df, _ = adapter.fetch_table(
                         table, trade_date, trade_date, freq=freq, codes=["ALL"])
                     if len(raw_df) == 0:
-                        continue
-                    std_df, _ = self.aligner.align(raw_df, table, source, freq=freq)
-                    res = self.validator.validate(std_df, table, batch_id, source, expected_freq=freq)
-                    if len(res.passed_df) > 0:
-                        self._stamp_and_write(res, table, batch_id, source)
-                    logger.info(f"[{batch_id}] A4 重拉 {table}/{trade_date}: "
-                                f"{len(res.passed_df)} 行入库（幂等覆盖）")
+                        # 空窗口不写库，但**仍走段边界**（否则该窗口绕过取消检查）
+                        pass
+                    else:
+                        std_df, _ = self.aligner.align(raw_df, table, source, freq=freq)
+                        res = self.validator.validate(std_df, table, batch_id, source, expected_freq=freq)
+                        if len(res.passed_df) > 0:
+                            self._stamp_and_write(res, table, batch_id, source)
+                        logger.info(f"[{batch_id}] A4 重拉 {table}/{trade_date}: "
+                                    f"{len(res.passed_df)} 行入库（幂等覆盖）")
                 except Exception as e:
                     # F-5 修复（2026-09-08，方案 §3.2）：invalidated/FATAL 属连接级毒化，
                     # 继续"不影响增量"只会让剩余窗口全败+毒化主增量——首个即中止 A4 段。
@@ -2412,6 +2471,12 @@ class ResidentCollector:
                             f"invalidated/FATAL（连接毒化），剩余窗口中止——主增量前重建连接: {e}")
                         break
                     logger.warning(f"[{batch_id}] A4 重拉 {table}/{trade_date} 失败（不影响增量）: {e}")
+                # ①+② A4 段边界（窗口完成后）：先记账 A4 进度，再查取消（同主循环谓词）。
+                # 命中 → TaskCancelled 上抛至 execute_task 收口：不再进入主增量、
+                # 水位不推进、A4 已修复窗口保留在库。TaskCancelled 不走上面 except Exception，
+                # 因此**不会**被 F-5 判定或降级为「不影响增量」。
+                _a4_idx += 1
+                self._a4_boundary(trade_date, _a4_idx, _a4_total)
             # F-5：毒化后重建写连接，防主增量继承 invalidated 连接
             if _a4_invalidated:
                 try:
@@ -2420,6 +2485,10 @@ class ResidentCollector:
                 except Exception as re_conn:
                     logger.error(f"[{batch_id}] A4 毒化后重连失败: {re_conn}")
             return len(repull_dates)
+        except TaskCancelled:
+            # 停止请求在 A4 段命中：**不得**降级为「A4 异常跳过」——那会带着
+            # 用户已停止的任务继续跑主增量。上抛至 execute_task 统一收口。
+            raise
         except Exception as e:
             logger.warning(f"[{batch_id}] A4 变更检测异常（降级跳过，不影响增量）: {e}")
             return 0

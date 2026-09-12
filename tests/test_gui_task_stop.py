@@ -87,6 +87,9 @@ class _StubAdapter:
     def fetch_table_streaming(self, table, start, end, freq="daily", codes=None):
         return {"source": "probe"}, iter(self.shards)
 
+    def fetch_table(self, table, start, end, freq="daily", codes=None):
+        return _shard(str(start)), {"source": "probe"}
+
 
 def _streaming_host(cancel_check, processed, watermarks):
     """真实 ResidentCollector 宿主：__new__ + 注入协作者（方法体全部真实）。"""
@@ -243,6 +246,7 @@ class _FakeCollector:
 
     def __init__(self, *, stop_after=None, cancel_trigger=None):
         self.calls = []
+        self.progress_cbs = []
         self.audit_calls = 0
         self.closed = False
         self.stop_after = stop_after
@@ -251,8 +255,10 @@ class _FakeCollector:
     def resolve_source_chain(self, task):
         return ["mcp"]
 
-    def execute_task(self, task, mode=None, run_quality_audit=True, cancel_check=None):
+    def execute_task(self, task, mode=None, run_quality_audit=True, cancel_check=None,
+                     progress_cb=None):
         self.calls.append((task.get("name"), cancel_check))
+        self.progress_cbs.append(progress_cb)
         if self.cancel_trigger is not None and self.cancel_trigger():
             raise TaskCancelled("stop requested at boundary")
         return True
@@ -305,7 +311,7 @@ def test_v1_batch_stop_after_first_task(tmp_path, monkeypatch):
 
     class _FakeAfterFirst(_FakeCollector):
         def execute_task(self, task, mode=None, run_quality_audit=True,
-                         cancel_check=None):
+                         cancel_check=None, progress_cb=None):
             self.calls.append((task.get("name"), cancel_check))
             flag["stop"] = True          # 第 1 个任务完成 → 用户点停止
             return True
@@ -337,6 +343,8 @@ def test_worker_passes_cancel_check_through(tmp_path, monkeypatch):
     worker.finished_ok.connect(ok.append)
     worker.run()
     assert fake.calls == [("t1", sentinel)]
+    assert fake.progress_cbs and fake.progress_cbs[0] is not None, \
+        "缺陷③：停止能力启用时须同时接线段级进度回调（A4 文案依赖）"
     assert ok and ok[0]["task_ok"] is True
 
 
@@ -401,3 +409,126 @@ class _StubMainWindow:
 
     def hold_worker(self, w):
         self.workers.append(w)
+
+
+# ==================== A4 修复段（V6 实测缺陷回归） ====================
+A4_DATES = ["2024-05-10", "2024-05-11", "2024-05-12"]
+
+
+def _a4_host(cancel_check, progress, processed):
+    """真实 ResidentCollector 宿主：A4 段方法体全部真实，仅注入协作者。"""
+    rc = ResidentCollector.__new__(ResidentCollector)
+    rc._task_cancel_check = cancel_check
+    rc._task_cancelled = False
+    rc._task_resume = None
+    rc._qfq_cycle_id = None
+    rc._task_progress_cb = progress.append
+    rc._A4_MAX_WINDOWS = 20
+    rc.aligner = _StubAligner()
+    rc.validator = _StubValidator()
+    rc.writer = SimpleNamespace(shared_conn=lambda: object(), reconnect=lambda: None)
+    rc._update_detector = SimpleNamespace(
+        query_updated_since=lambda since: [
+            {"table_name": PROBE_TABLE, "update_source": "repair", "trade_date": d}
+            for d in A4_DATES])
+
+    def _stamp(res, table, batch_id, source, **kw):
+        processed.append(str(res.passed_df["trade_date"].iloc[0]))
+        return len(res.passed_df)
+
+    rc._stamp_and_write = _stamp
+    return rc
+
+
+def _a4_cursor():
+    return TaskResumeCursor("probe_task", "incremental", "2024-01-01",
+                            "2024-06-30", WM)
+
+
+def _run_a4(host, monkeypatch):
+    monkeypatch.setattr(
+        "quantstudio.pipeline.update_detector.load_last_sync",
+        lambda conn, table: "2024-01-01")
+    return host._check_cloud_updates_and_repull(
+        "mcp", PROBE_TABLE, "daily", _StubAdapter([]), "batch_a4")
+
+
+def test_a4_segment_honours_stop_and_records_progress(isolated_resume_dir, monkeypatch):
+    """缺陷①：A4 段每窗口后检查取消（旧版整段无检查点，停止被忽略）。"""
+    processed, progress = [], []
+    state = {"n": 0}
+
+    def cancel_check():
+        state["n"] += 1
+        return state["n"] >= 2          # 第 2 个 A4 窗口边界命中
+
+    host = _a4_host(cancel_check, progress, processed)
+    cursor = _a4_cursor()
+    host._task_resume = cursor
+
+    with pytest.raises(TaskCancelled):
+        _run_a4(host, monkeypatch)
+
+    assert processed == A4_DATES[:2], "命中后不得继续重拉剩余窗口"
+    assert cursor.a4_completed() == set(A4_DATES[:2]), "缺陷②：A4 进度必须落盘"
+    assert any("A4 修复段" in p for p in progress), "缺陷③：A4 段进度必须上报 GUI"
+
+
+def test_a4_progress_does_not_corrupt_main_resume_point(isolated_resume_dir, monkeypatch):
+    """数据缺口防线：A4 进度**不得**写进 last_completed。
+
+    若把修复日写进主游标，续跑会从修复日起拉，跳过从未拉取的主窗口区间。
+    """
+    processed, progress = [], []
+    host = _a4_host(None, progress, processed)
+    cursor = _a4_cursor()
+    host._task_resume = cursor
+
+    _run_a4(host, monkeypatch)
+
+    assert processed == A4_DATES
+    data = json.loads(cursor.path.read_text(encoding="utf-8"))
+    assert data["last_completed"] is None, "A4 不得改写主续传点"
+    assert set(data["a4"]["completed_windows"]) == set(A4_DATES)
+    assert cursor.a4_completed() == set(A4_DATES)
+
+
+def test_a4_resume_skips_already_repaired_windows(isolated_resume_dir, monkeypatch):
+    """缺陷②续传侧：再次运行跳过已修复窗口（A4 段进度不丢失）。"""
+    processed, progress = [], []
+    host = _a4_host(None, progress, processed)
+    cursor = _a4_cursor()
+    host._task_resume = cursor
+    cursor.advance_a4(A4_DATES[0], total=len(A4_DATES))
+
+    _run_a4(host, monkeypatch)
+
+    assert processed == A4_DATES[1:], "已修复窗口应跳过，仅处理剩余窗口"
+    assert cursor.a4_completed() == set(A4_DATES)
+
+
+def test_a4_boundary_is_checked_even_for_empty_windows(isolated_resume_dir, monkeypatch):
+    """边界完整性：空窗口（无数据）同样走取消检查，不得绕过。"""
+    processed, progress = [], []
+    state = {"n": 0}
+
+    def cancel_check():
+        state["n"] += 1
+        return True                     # 首个边界即命中
+
+    host = _a4_host(cancel_check, progress, processed)
+    host._task_resume = _a4_cursor()
+    host.aligner = _StubAligner()
+
+    class _EmptyAdapter(_StubAdapter):
+        def fetch_table(self, table, start, end, freq="daily", codes=None):
+            return pd.DataFrame({"trade_date": [], "code": []}), {"source": "probe"}
+
+    monkeypatch.setattr(
+        "quantstudio.pipeline.update_detector.load_last_sync",
+        lambda conn, table: "2024-01-01")
+    with pytest.raises(TaskCancelled):
+        host._check_cloud_updates_and_repull(
+            "mcp", PROBE_TABLE, "daily", _EmptyAdapter([]), "batch_a4_empty")
+    assert processed == [], "空窗口不写库"
+    assert state["n"] == 1, "空窗口也必须到达段边界（首个即命中停止）"

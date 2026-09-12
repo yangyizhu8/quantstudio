@@ -192,6 +192,47 @@ class TaskResumeCursor:
         if not self._write(self._payload(unit_type, value, cycle_id)):
             self.degraded = True
 
+    # ---- A4 修复段进度（独立记账，§9.2 扩展）----
+    def _update(self, **fields) -> bool:
+        """在现有游标文件上打补丁（保留 last_completed 等既有字段）。"""
+        data = self._read()
+        if not data:
+            data = {
+                "schema_version": SCHEMA_VERSION,
+                "task": self.task_name,
+                "mode": self.mode,
+                "window": {"start": self.window_start, "end": self.window_end},
+                "watermark_at_start": self.watermark_at_start,
+                "last_completed": None,
+                "cycle_id_at_stop": None,
+            }
+        data.update(fields)
+        data["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        return self._write(data)
+
+    def a4_completed(self) -> set:
+        """已完成的 A4 修复窗口集合（停止后不丢失；续跑跳过已修复窗口）。"""
+        data = self._read() or {}
+        a4 = data.get("a4") or {}
+        return {str(x) for x in (a4.get("completed_windows") or [])}
+
+    def advance_a4(self, trade_date, total=None) -> None:
+        """A4 修复段进度记账（每窗口完成后调用）。
+
+        **独立于 last_completed**：A4 窗口是「云端 repair/full 声明的修复日期集合」，
+        不是主窗口的连续前缀——写进 last_completed 会让续跑从修复日起拉，
+        从而跳过从未拉取的主窗口区间（制造数据缺口）。故 A4 进度单独记账。
+        """
+        if self.degraded or not trade_date:
+            return
+        done = self.a4_completed()
+        done.add(str(trade_date))
+        payload = {"completed_windows": sorted(done)}
+        if total is not None:
+            payload["total"] = int(total)
+        if not self._update(a4=payload):
+            self.degraded = True
+
     def mark_stopped(self, cycle_id=None) -> None:
         """停止时补记 cycle_id_at_stop（非功能性，供事后审计追溯；§9.2/审计 S5）。"""
         data = self._read()

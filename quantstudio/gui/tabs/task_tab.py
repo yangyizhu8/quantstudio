@@ -356,8 +356,10 @@ class TaskTab(QWidget):
         self._stop_state = "stop_requested"
         self.stop_btn.setEnabled(False)
         self.stop_btn.setText("⏳ 正在停止…")
+        # ③ 停止等待提示须覆盖 A4 修复段（A4 逐窗口重拉同样响应停止），
+        #    否则文案只承诺主循环粒度，A4 段等待会被误判为「没反应」
         self._set_status_text(
-            "停止已请求：当前日批完成后停止（分钟表最长约 20-30 分钟）")
+            "停止已请求：A4 修复段 / 当前日批完成后停止（分钟表最长约 20-30 分钟）")
 
     def _finish_stop(self, status_text: str):
         """停止收口：复位旗标与按钮态，落到 stopped 稳定态。"""

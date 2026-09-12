@@ -143,9 +143,12 @@ class LockedTaskWorker(BaseWorker):
                 task_error = None
                 try:
                     # V5 向后兼容：未下发取消谓词时按**原签名**调用（现行为逐位一致，
-                    # 既有调用方/测试替身零感知）；仅在停止能力启用时才传该可选参数。
+                    # 既有调用方/测试替身零感知）；仅在停止能力启用时才传这些可选参数。
+                    # progress_cb：把段级进度（含 A4 修复段 X/Y）送到 GUI 状态栏——
+                    # 停止等待提示必须含 A4 段状态，否则用户误判「没反应」。
                     _extra = ({} if self._cancel_check is None
-                              else {"cancel_check": self._cancel_check})
+                              else {"cancel_check": self._cancel_check,
+                                    "progress_cb": self.progress.emit})
                     task_ok = collector.execute_task(
                         self.task, mode=self.mode, run_quality_audit=False, **_extra)
                 except TaskCancelled:
@@ -296,7 +299,8 @@ class LockedRunAllWorker(BaseWorker):
                 try:
                     # V5 向后兼容：未下发取消谓词时按原签名调用（见 LockedTaskWorker 同款）
                     _extra = ({} if self._cancel_check is None
-                              else {"cancel_check": self._cancel_check})
+                              else {"cancel_check": self._cancel_check,
+                                    "progress_cb": self.progress.emit})
                     ok = collector.execute_task(
                         task, mode=self.mode, run_quality_audit=False, **_extra)
                     results.append({"name": name, "ok": ok,
