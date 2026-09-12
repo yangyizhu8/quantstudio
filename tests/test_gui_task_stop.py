@@ -411,6 +411,34 @@ class _StubMainWindow:
         self.workers.append(w)
 
 
+def test_resume_start_handles_epoch_ms_cursor_value(isolated_resume_dir):
+    """V6 现场回归：生产游标 last_completed 是**毫秒时间戳字符串**（非日期串）。
+
+    实证取值来自真实运行态游标 data/task_resume/mcp_etf_minutes__incremental__*.json：
+    last_completed.value = "1767578760000"。旧实现（只认 YYYY-MM-DD）返回 None
+    → 游标被静默忽略、退回全窗重拉——续传语义整体失效且无任何报错。
+    """
+    from quantstudio.pipeline.task_resume import next_trade_date_after
+    assert next_trade_date_after("1767578760000") == "2026-01-06"
+    assert next_trade_date_after("2026-05-10") == "2026-05-11"
+    assert next_trade_date_after("20260510") == "2026-05-11"
+    assert next_trade_date_after(None) is None
+
+    # 端到端：毫秒形态游标必须真正被 _open_day_resume 采用（不得静默退回起点）
+    processed, watermarks = [], []
+    host = _streaming_host(None, processed, watermarks)
+    host._task_cancel_check = lambda: False
+    cursor = TaskResumeCursor("probe_task", "incremental", "2026-01-01",
+                              "2026-09-12", None)
+    host._task_resume = cursor
+    cursor.advance(UNIT_TRADE_DATE, "1767578760000")
+
+    effective = host._open_day_resume({"name": "probe_task", "mode": "incremental"},
+                                      "probe", PROBE_TABLE, "daily",
+                                      "2026-01-01", "2026-09-12")
+    assert effective == "2026-01-06", "毫秒形态游标必须被采纳为续传起点"
+
+
 # ==================== A4 修复段（V6 实测缺陷回归） ====================
 A4_DATES = ["2024-05-10", "2024-05-11", "2024-05-12"]
 

@@ -125,9 +125,19 @@ class TaskResumeCursor:
                 and str(stored_wm) != str(current_watermark):
             return "official_watermark_moved"
         last = str((data.get("last_completed") or {}).get("value") or "")
-        if _looks_like_date(last) and _looks_like_date(current_watermark) \
-                and str(current_watermark) >= last:
-            return "official_watermark_past_cursor"
+        if last and current_watermark not in (None, ""):
+            # 毫秒时间戳形态与日期字符串形态分别比较（混合形态无法比较 → 不判废，
+            # 保守放行续传但不跳数据）
+            try:
+                if int(last) >= 0 and int(str(current_watermark)) >= 0:
+                    if int(str(current_watermark)) >= int(last):
+                        return "official_watermark_past_cursor"
+                    return None
+            except (TypeError, ValueError):
+                pass
+            if _looks_like_date(last) and _looks_like_date(current_watermark) \
+                    and str(current_watermark) >= last:
+                return "official_watermark_past_cursor"
         return None
 
     def try_resume(self, current_watermark=None) -> Optional[dict]:
@@ -269,17 +279,32 @@ class TaskResumeCursor:
             logger.warning("[resume] 陈旧游标清理失败（忽略）: %s", e)
 
 
-def next_trade_date_after(date_str: str) -> Optional[str]:
-    """游标续传起点：last_completed + 1 自然日（与 _bump_date 语义同族的本地实现）。
+def next_trade_date_after(value) -> Optional[str]:
+    """游标续传起点：last_completed 的次日（YYYY-MM-DD）。
 
-    只做自然日推进——交易日过滤交给各执行路径既有的日历/水位逻辑，
-    避免在游标层复刻交易日历语义。
+    口径必须与 ResidentCollector._bump_date 一致——游标值来自 _max_date
+    （str(int(max_val))，即毫秒时间戳字符串），不是日期字符串。
+    V6 现场实证：生产游标 last_completed.value = "1767578760000"；
+    旧实现只认 YYYY-MM-DD，会返回 None → 游标被**静默忽略**、退回全窗重拉
+    （与「停止即续传」语义完全背离，且用户无从察觉）。
+
+    兼容三形态：毫秒时间戳（>10^11）/ YYYY-MM-DD / YYYYMMDD；时区 Asia/Shanghai。
+    只做自然日推进——交易日过滤交给各执行路径既有的日历/水位逻辑。
     """
-    if not _looks_like_date(date_str):
+    if value in (None, ""):
         return None
-    from datetime import date, timedelta
     try:
-        y, m, d = (int(x) for x in str(date_str).split("-"))
-        return (date(y, m, d) + timedelta(days=1)).strftime("%Y-%m-%d")
+        import pandas as pd
+        from datetime import timedelta
+        v = str(value).strip()
+        if v.isdigit() and int(v) > 10**11:
+            current = pd.to_datetime(int(v), unit="ms", utc=True).tz_convert("Asia/Shanghai")
+        else:
+            current = pd.Timestamp(v)
+            if current.tzinfo is None:
+                current = current.tz_localize("Asia/Shanghai")
+            else:
+                current = current.tz_convert("Asia/Shanghai")
+        return (current + timedelta(days=1)).strftime("%Y-%m-%d")
     except Exception:
         return None
