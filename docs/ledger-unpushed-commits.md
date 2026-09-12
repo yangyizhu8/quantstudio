@@ -61,3 +61,45 @@
 - 09-12 全日 QuantStudio 日志：**无 income_statement 写入行**
 - 备份脚本 frontfix_backup.py 在档；未获直接证据
 - 结论：**来源未查明（日志无痕）**，按派单方指示不阻塞；已排除阶段 2 缩编补跑
+
+## 排程层观察与待收项（2026-09-13 登记）
+
+### O-1 · 重复异常关机观察（总调度登记①）
+
+| 项 | 内容 |
+|---|---|
+| 实证 | `Kernel-Power id=41`（未正常关机即重启）**8 天内两例**：**2026-09-05 11:39**（EventLog 6008 记载）+ **2026-09-13 02:01:09** |
+| 后果 | 9/13 那例经 Windows 更新（TrustedInstaller）任务存储变动窗，**连带丢失 4 个业务计划任务** |
+| 承载面 | 承载全部业务的宿主机稳定性 |
+| 处置 | **纳入观察**；若再现 ⇒ 建议硬件/系统层检查（内存/磁盘/驱动/供电）|
+
+### O-2 · 持久性复查（总调度登记②，照排 ~05:53）
+
+检查四任务在位性：`Trading_MinutesCoverage_0855` / `MinutesDailyBackfill_2100` / `MinutesGapAudit_Sun` / `Repair_Minutes`
+
+```powershell
+Get-ScheduledTask -TaskName Trading_Minutes* , Trading_Repair_Minutes |
+  Select-Object TaskName, State   # 4 条 Ready = 在位；任一消失 = 存在活跃删除者 -> 立即上报
+```
+
+### A-3 · GapAudit_Sun 首跑验证（09-13 22:30，两分支结论待收）
+
+**首跑后须回答**：该审计**能否自动捕获「周末 + 末交易日」组合**（即 9/11 那类整日缺失）？
+
+| 分支 | 判据 | 后续动作 |
+|---|---|---|
+| **能捕获** | 首跑告警/报告中出现「末交易日（周五/近期最后交易日）整日缺失」条目 | 与 `--force-day` 形成**双保险**，本项关闭 |
+| **不能捕获** | 首跑报「无残留缺口」但 9/11 类缺口在审计窗内未被识别 | **审计任务自身判据亦为同族盲区，需修**（与 `_due` 周末盲区同源）|
+
+取证路径：`logs/minutes_gap_audit_*.log`（或该任务 wrapper 指定输出）；对照 `data/logs/` 中 9/11 补拉前后记录。
+
+### 本轮数据线状态汇总
+
+| 项 | 状态 |
+|---|---|
+| income_statement FY2015-2017 补拉（客户裁定 B）| **已闭环**（四判据全过 + 云端会话双确认）|
+| profile 显式校验（防同类误选）| **已实施**（daemon，exit=2；`--allow-no-main-target` 显式放行）|
+| staging by-product | **已删除**（163,818 → 128,764）|
+| A-1 审计读 / A-2 仲裁包 | **已交付并被逐项采纳**；方案已 v1.5 归档、本链闭环 |
+| 分钟链守卫（4 任务）| **已重建**（09-13 02:53，提权脚本 `scripts/register_minutes_elevated.ps1`）|
+| 待推提交 | **ahead 9**，本线不自行 push |
