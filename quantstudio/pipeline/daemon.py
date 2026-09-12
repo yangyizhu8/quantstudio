@@ -3307,6 +3307,9 @@ def main():
     # staging 分阶段装载用 none，避免尚未回填的兄弟目标表导致当前任务假失败。
     parser.add_argument("--quality-audit", choices=["full", "none"], default="full",
                         help="once 模式下任务后的全库质量审计：full(默认)|none")
+    parser.add_argument("--allow-non-main-target", action="store_true",
+                        help="允许写入非主库目标（默认拒绝：目标库必须为主库 data/quantstudio.db）。"
+                             "2026-09-13 裁定①：误选 profile 导致数据落 staging 库的同类错误不再靠人工兜底。")
     args = parser.parse_args()
 
     # v3 日志：TimedRotatingFileHandler（午夜轮转，保留 14 天）+ 控制台
@@ -3340,6 +3343,30 @@ def main():
         # once 模式：collector_run.lock 内 from_configs + run_once + close（不写 daemon status）
         from .daemon_lifecycle import CollectorRunLock
         logger.info(f"[CLI] 单次执行模式 task={args.task or 'ALL'}")
+        # ── 目标库显式校验（2026-09-13 裁定①：自动兜底，不靠人工判据复核）──
+        # 教训：误选 prehandover_staging profile（其 data_config.path 指向
+        # data/staging/.../quantstudio.db）→ 拉取成功但未入主库，直至人工判据①复核才暴露。
+        # 规则：once 模式的写入目标**必须为主库**；非主库目标需显式 --allow-non-main-target。
+        try:
+            _cfg = json.loads((cdir / "data_config.json").read_text(encoding="utf-8"))
+            _raw = str(_cfg.get("path", "") or "")
+            _tgt = Path(_raw)
+            _resolved = (_tgt if _tgt.is_absolute() else (ROOT / _tgt)).resolve()
+            _main = Path(db_path()).resolve()
+            logger.info(f"[CLI] 目标库校验: config_dir={cdir} path={_raw} -> {_resolved}")
+            if _resolved != _main and not args.allow_non_main_target:
+                logger.error(
+                    "[CLI] 目标库非主库，拒绝执行（防同类 profile 误选）：\n"
+                    f"       解析目标 = {_resolved}\n"
+                    f"       主库     = {_main}\n"
+                    f"       如确需写非主库目标，请显式加 --allow-non-main-target")
+                # 用 SystemExit 保证非零退出码（入口未 sys.exit(main())，
+                # 单纯 return 会让调用方误判成功）
+                raise SystemExit(2)
+        except FileNotFoundError as _e:
+            logger.error(f"[CLI] data_config.json 缺失: {_e}")
+            raise SystemExit(2)
+
         try:
             with CollectorRunLock(timeout=30):  # once 模式给较长等锁时间
                 collector = ResidentCollector.from_configs(
