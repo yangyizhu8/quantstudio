@@ -27,6 +27,10 @@ from .task_resume import (  # 停止语义 v3.1：协作式停止 + 续传游标
     TaskResumeCursor,
     next_trade_date_after,
 )
+from .qfq_snapshot import (  # T3 抽取：QFQ 全局因子快照公共工具（甲形态）
+    load_qfq_global_snapshot,
+    qfq_snapshot_kwargs,
+)
 
 import argparse
 import json
@@ -1044,42 +1048,15 @@ class ResidentCollector:
         Returns:
             (adj_latest_map, adj_earliest_map)：{裸码: 因子值}；非价格表返回 (None, None)。
         """
+        # T3 抽取（2026-09-14）：实现已移至 pipeline/qfq_snapshot.py（甲形态显式入参）。
+        # 保留同序守卫——原实现先判价格表、后解析 aux/db 路径；勿改为先求值入参。
         if table not in self._QFQ_PRICE_TABLES:
             return None, None
-        from pathlib import Path as _P
-        main_db = getattr(self.writer, "db_path", None)
-        if not main_db:
-            return None, None
-        aux = self._qfq_aux_path()   # TD-D2：统一路由（双条件，fail-secure legacy）
-        if not _P(str(aux)).exists():
-            logger.warning(f"[QFQ] qfq_aux.db 不存在: {aux}，无法构建全局因子快照")
-            return None, None
-        aux_table = "fund_adj" if table.startswith("etf_") else "adj_factor"
-        import sqlite3 as _sq
-        conn = None
-        try:
-            conn = _sq.connect(f"file:{aux}?mode=ro", uri=True, timeout=30)
-            # GROUP BY + JOIN 走 (code, time) 索引——相关子查询在 880 万行上需 50s+
-            rows = conn.execute(
-                f"SELECT f.code, f.adj_factor FROM {aux_table} f "
-                f"JOIN (SELECT code, MAX(time) AS mt FROM {aux_table} "
-                f"GROUP BY code) m ON f.code = m.code AND f.time = m.mt").fetchall()
-            latest_map = {r[0]: float(r[1]) for r in rows if r[1] is not None}
-            rows_e = conn.execute(
-                f"SELECT f.code, f.adj_factor FROM {aux_table} f "
-                f"JOIN (SELECT code, MIN(time) AS mt FROM {aux_table} "
-                f"GROUP BY code) m ON f.code = m.code AND f.time = m.mt").fetchall()
-            earliest_map = {r[0]: float(r[1]) for r in rows_e if r[1] is not None}
-            logger.info(
-                f"[QFQ] {table} 全局因子快照已构建（实时读 {aux_table}）："
-                f"{len(latest_map)} code")
-            return latest_map, earliest_map
-        except Exception as exc:
-            logger.error(f"[QFQ] 全局因子快照构建失败（{table}）: {exc}")
-            return None, None
-        finally:
-            if conn is not None:
-                conn.close()
+        return load_qfq_global_snapshot(
+            table,
+            price_tables=self._QFQ_PRICE_TABLES,
+            qfq_aux_path=self._qfq_aux_path(),
+            main_db_path=getattr(self.writer, "db_path", None))
 
     def _qfq_snapshot_kwargs(self, table: str, batch_id: str = "") -> Dict:
         """价格表 align 调用的全局快照 kwargs（非价格表返回空 dict 直通）。
@@ -1087,17 +1064,14 @@ class ResidentCollector:
         用法：self.aligner.align(..., **self._qfq_snapshot_kwargs(table, batch_id))
         自动展开为 adj_latest_map=..., adj_earliest_map=...（价格表）或 {}（非价格表）。
         """
+        # T3 抽取：实现移至 pipeline/qfq_snapshot.py；保留同序守卫（非价格表不解析路径）
         if table not in self._QFQ_PRICE_TABLES:
             return {}
-        latest, earliest = self._load_qfq_global_snapshot(table)
-        if latest is None:
-            # qfq_aux.db 不可读 → 传空 dict 会触发 aligner fail-fast（正确行为：
-            # 宁可任务失败也不写坏 front）
-            logger.error(
-                f"[{batch_id}] [QFQ] {table} 无法构建全局因子快照，"
-                f"align 将 fail-fast（防止批次内基准写坏 front）")
-            return {"adj_latest_map": {}, "adj_earliest_map": {}}
-        return {"adj_latest_map": latest, "adj_earliest_map": earliest}
+        return qfq_snapshot_kwargs(
+            table, batch_id,
+            price_tables=self._QFQ_PRICE_TABLES,
+            qfq_aux_path=self._qfq_aux_path(),
+            main_db_path=getattr(self.writer, "db_path", None))
 
     def _run_with_source_streaming(self, task: Dict, source: str, batch_id: str,
                                     started_at: str, adapter,
