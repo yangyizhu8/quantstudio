@@ -1,0 +1,11 @@
+{
+  "report_version": "2.1",
+  "strategy_id": "dividend_defense_smallcap_5d",
+  "source": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\dividend_defense_smallcap_5d\\strategy.py",
+  "target_profile": "ptrade",
+  "status": "NOT_APPLICABLE",
+  "block_count": 0,
+  "warning_count": 0,
+  "reason": "design targets exclude ptrade; no PTrade artifact was generated",
+  "issues": []
+}

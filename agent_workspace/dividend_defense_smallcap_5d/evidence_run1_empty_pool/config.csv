@@ -1,0 +1,2 @@
+﻿strategy_file,strategy,start_time,end_time,init_capital,commission_rate,min_commission,stamp_tax_rate,transfer_fee_rate,slippage_rate,fixed_slippage,match_price_mode,engine_semantics_version,min_rebalance_pct
+strategy.py,strategy,2020-01-01,2026-07-31,100000,0.0003,5.0,0.001,1e-05,0.001,0.0,close,0.1.0-legacy,0.005

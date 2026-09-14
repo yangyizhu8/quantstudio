@@ -1,0 +1,33 @@
+{
+  "schema": "r5_evidence/agent-managed",
+  "strategy_id": "dividend_defense_smallcap_5d",
+  "strategy_name": "股息防守小市值五日轮动",
+  "window": {
+    "start": "2020-01-01",
+    "end": "2026-07-31"
+  },
+  "data_source": "data/staging/r5_maincopy_20260913/quantstudio.db",
+  "g3_5": {
+    "runs": [
+      "G351",
+      "G352"
+    ],
+    "verdict": "PASS",
+    "dual_run_identical": true
+  },
+  "artifacts": {
+    "config_csv": {
+      "path": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\dividend_defense_smallcap_5d\\evidence_g35\\g35_run1\\config.csv",
+      "sha256": "9f0ebe9ab273e25e7e6b793dbe4e898ee724dcdd77d2a9738127a9183bbc4333"
+    },
+    "daily_stats_csv": {
+      "path": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\dividend_defense_smallcap_5d\\evidence_g35\\g35_run1\\daily_stats.csv",
+      "sha256": "3f7b986f1426a03378649cc656e72db4bb98ff5e399667ed50713e66d590cb76"
+    },
+    "trades_csv": {
+      "path": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\dividend_defense_smallcap_5d\\evidence_g35\\g35_run1\\trades.csv",
+      "sha256": "965c5bdde78ef57439ec0b84eca5ccac6da63c0258a2d0110bdb8d3f38a0d773"
+    }
+  },
+  "result_dir": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\dividend_defense_smallcap_5d\\evidence_g35\\g35_run1"
+}

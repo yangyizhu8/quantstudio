@@ -1,0 +1,4 @@
+﻿physical=693 logical=327 hits(QS_REBALANCE_AUDIT)=24
+05:24:54 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=20200102-001 date=2020-01-02 selected=5 tradable=5 sell_submitted=0 buy_submitted=5 note=mode_defensive
+05:25:44 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=20200109-002 date=2020-01-09 selected=5 tradable=5 sell_submitted=1 buy_submitted=5 note=exit_deferred:1
+05:26:34 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=20200116-003 date=2020-01-16 selected=5 tradable=5 sell_submitted=1 buy_submitted=5 note=exit_deferred:1

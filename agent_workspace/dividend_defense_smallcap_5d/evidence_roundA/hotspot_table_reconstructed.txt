@@ -1,0 +1,4 @@
+﻿physical=693 logical=327 hits(QS_PERF)=24
+05:24:54 INFO quantstudio.backtest.ptrade_api: QS_PERF rebalance_id=20200102-001 div_scan_cold=241316次/530.7s f_pool_total=1次/7.7s f_rank=1次/699.8s f_screen=1次/1.3s p_income=1次/2.1s p_listed=1次/1.5s p_universe=1次/4.0s p_val=1次/0.2s
+05:25:44 INFO quantstudio.backtest.ptrade_api: QS_PERF rebalance_id=20200109-002 div_scan_cold=242051次/532.4s div_scan_incr=4920次/10.2s f_pool_total=2次/12.7s f_rank=2次/742.2s f_screen=2次/2.8s p_income=2次/3.6s p_listed=2次/1.5s p_universe=2次/7.3s p_val=2次/0.3s
+05:26:34 INFO quantstudio.backtest.ptrade_api: QS_PERF rebalance_id=20200116-003 div_scan_cold=242051次/532.4s div_scan_incr=9855次/19.9s f_pool_total=3次/19.2s f_rank=3次/783.2s f_screen=3次/4.0s p_income=3次/5.9s p_listed=3次/1.5s p_universe=3次/11.3s p_val=3次/0.4s

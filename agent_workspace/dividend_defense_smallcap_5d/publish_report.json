@@ -1,0 +1,66 @@
+{
+  "report_version": "2.1",
+  "strategy_id": "dividend_defense_smallcap_5d",
+  "status": "PASS",
+  "ptrade_profile_validation_status": "NOT_APPLICABLE",
+  "ptrade_runtime_validation_status": "NOT_APPLICABLE",
+  "deployment_status": "NOT_DEPLOYABLE",
+  "canonical_sha256": "415d1b9bd2e31b1deae5b7d2f7c3b0811320698ea92433b09ad234080a6f14f2",
+  "identical_source": null,
+  "validated_after_target_generation": true,
+  "quantstudio_output_status": "GENERATED",
+  "ptrade_output_status": "NOT_GENERATED",
+  "candidate_promotion": {
+    "mode": "agent_managed",
+    "candidate_sha256": null,
+    "candidate_removed": false,
+    "status": "NOT_APPLICABLE"
+  },
+  "targets": [
+    {
+      "platform": "quantstudio",
+      "path": "D:\\miniQMT策略实盘\\QuantStudio\\quantstudio\\backtest\\strategies\\股息防守小市值五日轮动.py",
+      "sha256": "415d1b9bd2e31b1deae5b7d2f7c3b0811320698ea92433b09ad234080a6f14f2"
+    }
+  ],
+  "local_validation": {
+    "report_version": "2.1",
+    "strategy_id": "dividend_defense_smallcap_5d",
+    "source": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\dividend_defense_smallcap_5d\\.dual_target_stage_05ks3vol\\dividend_defense_smallcap_5d_quantstudio.py",
+    "target_profile": "quantstudio",
+    "status": "PASS",
+    "profile_validation_status": "PASS",
+    "runtime_validation_status": "NOT_VERIFIED",
+    "deployment_status": "NOT_DEPLOYABLE",
+    "block_count": 0,
+    "warning_count": 1,
+    "issues": [
+      {
+        "rule_id": "HARDFILTER-LIMIT",
+        "severity": "WARN",
+        "message": "PTrade backtest has no public check_limit(); document that order rejection/price fields enforce limit behavior."
+      }
+    ]
+  },
+  "ptrade_validation": {
+    "report_version": "2.1",
+    "strategy_id": "dividend_defense_smallcap_5d",
+    "source": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\dividend_defense_smallcap_5d\\strategy.py",
+    "target_profile": "ptrade",
+    "status": "NOT_APPLICABLE",
+    "block_count": 0,
+    "warning_count": 0,
+    "reason": "design targets exclude ptrade; no PTrade artifact was generated",
+    "issues": []
+  },
+  "dual_consistency": {
+    "report_version": "1.1",
+    "strategy_id": "dividend_defense_smallcap_5d",
+    "status": "NOT_APPLICABLE",
+    "comparison_phase": "NOT_APPLICABLE",
+    "staged_targets_exist_before_comparison": true,
+    "reason": "single-target QuantStudio publication",
+    "issues": []
+  },
+  "workflow_stage": "PUBLISHED"
+}

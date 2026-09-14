@@ -1,0 +1,465 @@
+{
+  "design_version": "2.3",
+  "strategy_id": "dividend_defense_smallcap_5d",
+  "strategy_name": "股息防守小市值五日轮动",
+  "asset_class": "stock",
+  "targets": [
+    "quantstudio"
+  ],
+  "engine_profile": {
+    "profile_id": "daily-bar-v1",
+    "bar_frequency": "1d",
+    "match_price_mode": "close"
+  },
+  "market_data_contract": {
+    "signal_price_adjustment": "pre",
+    "execution_price_basis": "raw_trade_price"
+  },
+  "factor_definitions": {
+    "provenance_note": "全部因子口径来自客户提示词 + R0/R1 客户裁定，未做任何回测驱动寻优（参数冻结声明见 components.implementation_notes）。",
+    "filters": {
+      "source": "customer_prompt + R0 确认",
+      "raw_formula": "非ST ∧ 上市满1年 ∧ 未停牌 ∧ 流通市值>5亿 ∧ 净利润为正 ∧ 股息率>0 ∧ 近三年净利润复合增速>15% ∧ 非科创板(688/689) ∧ 非北交所；创业板保留",
+      "price_basis": "流通市值走 get_fundamentals(table='valuation', fields=['float_value'])（单位=万元，5亿→50000；源列 circ_mv，PIT）；禁止 close×股本手算（skill 规则 25）",
+      "update_time": "决策日 T 的 T-1 PIT 快照"
+    },
+    "dividend_yield": {
+      "source": "customer_prompt + R0 乙项修订 + R1 实测（get_stock_exrights 为 PTrade 同名可移植 API）",
+      "raw_formula": "股息率 = Σ bonus_ps（ex_date ∈ [决策日−12个月, 决策日]）÷ T-1 前复权收盘价；bonus_ps = cash_div_before_tax（元/股税前，四案例对拍吻合）",
+      "price_basis": "分母 = get_history(fq='pre', include=False) 的 T-1 前复权 close",
+      "update_time": "每个调仓日按池内标的计算；会话内游标增量缓存（见 implementation_notes 性能契约）"
+    },
+    "net_profit_cagr": {
+      "source": "customer_prompt + R0 01/02/03 确认",
+      "raw_formula": "CAGR = (NP_T ÷ NP_{T-3})^(1/3) − 1 > 15%；NP 取 np_parent_company_owners（归母）；以决策日 PIT 可见的最近 3 个完整会计年度年报计算；T 期与 T−3 期须同为正，否则该标的数据性排除",
+      "price_basis": "get_fundamentals(table='income_statement', fields=['end_date','np_parent_company_owners'], start_year, end_year)（D4 PIT 接线，ann_date ≤ 决策日）",
+      "update_time": "决策日 T 的 T-1 PIT"
+    },
+    "turnover_volatility": {
+      "source": "customer_prompt + R0 04 确认 + R1 实测（B2 修复后可用）",
+      "raw_formula": "近 20 个交易日 turnover_ratio 的标准差，升序取最小 5 只",
+      "price_basis": "按日循环 get_fundamentals(pool, 'valuation', fields=['turnover_ratio'], date=D_i)，D_i 遍历近 20 交易日（B2 修复使 date<T-1 走真 as-of）",
+      "update_time": "决策日 T 的 T-1 起往前 20 个交易日"
+    }
+  },
+  "design_choice_standardization": {
+    "universe": "get_Ashares(date=T-1) 全 A 股（.SS/.SZ）",
+    "board_exclusion": "剔除科创板 688/689 与北交所（43/83/87/920）；创业板 300/301 保留（R0 06 确认）",
+    "listing_age": "上市满 1 年：决策日 − listed_date ≥ 365 天；listed_date 取自 get_stock_info",
+    "dividend_mode": "调仓日所在自然月 ∈ {1月, 4月} → 防守模式：过滤池按股息率降序取 Top10（R0 06 确认按调仓日判定）",
+    "attack_mode": "其余月份 → 进攻模式：过滤池按流通市值升序取 Top10",
+    "secondary_screen": "Top10 按近 20 日换手率波动率升序保留最小 5 只",
+    "weighting": "5 只等权（runtime_total_value，单只目标 = 运行时总资产×(1−0.03)÷5；R0 07 客户裁定）",
+    "rebalance_cadence": "每 5 个交易日一次；回测窗口首个交易日为第 0 个调仓日（R0 05 确认）",
+    "benchmark": "沪深300（set_benchmark('000300.SS')）"
+  },
+  "strategy_semantics": {
+    "objective": "在给定的前置过滤池内，按月份切换『股息率防守』与『小市值进攻』两种排序，二次筛选低换手波动率，等权持有 5 只，每 5 个交易日换股一次；对标沪深300。",
+    "rules_summary": [
+      "严禁改动客户原始策略逻辑；不额外新增任何因子（R0 约束 1）",
+      "前置过滤池为合取（全部条件同时满足），过滤顺序不影响结果池",
+      "防守/进攻两模式仅排序键不同，选股池与二次筛选完全一致",
+      "二次筛选只在 Top10 内进行，不回溯全池",
+      "持仓与调仓：5 只等权、总资金上限 10 万元、每 5 个交易日调仓换股",
+      "严格 PIT：信号/排序/过滤一律 T-1 及更早；执行用 T 日 raw bar",
+      "执行层风控（涨停不买跳过留现金 / 跌停顺延 / 停牌防御性卖出）**仅执行层**，绝不进入选股池或排序逻辑（R0 约束 1 边界，见 constraints.execution_layer_boundary）"
+    ],
+    "universe": "全 A 股（get_Ashares(T-1)），剔除科创板 688/689 与北交所 43/83/87/920；创业板 300/301 保留；再经前置过滤池八条筛选。",
+    "entry_rules": [
+      "调仓日（每 5 个交易日，窗口首日为第 0 个调仓日）计算过滤池",
+      "调仓日所在自然月 ∈ {1月,4月} → 防守模式：过滤池按股息率降序取 Top10",
+      "其余月份 → 进攻模式：过滤池按流通市值（float_value，万元）升序取 Top10",
+      "Top10 按近 20 个交易日换手率标准差升序保留最小 5 只",
+      "【分母统一，2026-09-04 审计修正】等权买入 N 只（N = 二次筛选后实际候选数，N ≤ 5）：单只目标 = 运行时总资产 × (1 − 0.03) ÷ N —— 与 portfolio_contract.allocation_denominator = 'actual_selected_count' 同语义；N=5 时单只名义权重 0.194",
+      "候选不足 5 只时不递补，按实际数量等权、持满可投敞口（见 A-9）"
+    ],
+    "exit_rules": [
+      "下一个调仓日不在新 Top5 名单内的持仓全部卖出（order_target_value(code, 0)）",
+      "无止损、无单独止盈（客户提示词未设，禁止自行新增）",
+      "跌停不可卖 → 顺延至下一可卖日（仅执行层）"
+    ],
+    "portfolio_rules": [
+      "5 只等权；sizing_mode=runtime_total_value；gross_exposure_target=0.97；cash_buffer_ratio=0.03",
+      "总资金上限 10 万元；不融资、不做空、无杠杆",
+      "先卖后买，close 模式卖出所得同批可用于买入"
+    ],
+    "risk_rules": [
+      "无个股止损（客户提示词未设）",
+      "执行层风控三项（涨停不买/跌停顺延/停牌防御性卖出）仅作用于执行，不进入选股与排序",
+      "严格 PIT：过滤/排序/二次筛选一律 T-1 及更早数据；T 日仅执行"
+    ]
+  },
+  "timing": {
+    "signal_data_cutoff": "全部信号（过滤、排序、二次筛选）用 T-1 及更早的已完成 bar 与 PIT 财务/分红快照；T 日仅执行。",
+    "holding_semantics": "等权 5 只持有至下一个调仓日；T+1 引擎强制；close 模式当日卖出所得同批可用于买入。",
+    "decision_events": [
+      {
+        "name": "rebalance_check",
+        "lifecycle": "handle_data",
+        "time": "14:55",
+        "purpose": "判断是否调仓日（每 5 个交易日）与所在月份，输出 QS_REBALANCE_AUDIT"
+      },
+      {
+        "name": "filter_and_rank",
+        "lifecycle": "handle_data",
+        "time": "14:55",
+        "purpose": "前置过滤池 → 月份模式排序 Top10 → 近20日换手波动率二次筛选 Top5（全部 T-1 PIT）"
+      },
+      {
+        "name": "sell_then_buy",
+        "lifecycle": "handle_data",
+        "time": "14:55",
+        "purpose": "先卖后买等权建仓（涨跌停跳过），输出 QS_REBALANCE_AUDIT + QS_PORTFOLIO_AUDIT（rule 21）"
+      }
+    ]
+  },
+  "components": {
+    "lifecycle_hooks": [
+      "initialize",
+      "handle_data",
+      "after_trading_end"
+    ],
+    "api_groups": [
+      "benchmark",
+      "universe",
+      "status_filter",
+      "fundamentals",
+      "history",
+      "portfolio",
+      "logging"
+    ],
+    "required_apis": [
+      "set_benchmark",
+      "get_Ashares",
+      "get_stock_status",
+      "get_stock_info",
+      "get_fundamentals",
+      "get_history",
+      "get_trade_days",
+      "get_positions",
+      "get_position",
+      "order_target_value",
+      "set_commission",
+      "set_slippage",
+      "get_stock_exrights"
+    ],
+    "implementation_notes": [
+      "持仓读取条款（R3 白名单，2026-09-04 持仓视图契约修复后）：一律经契约视图读取，只用 sid/amount/enable_amount/cost_basis/last_sale_price/market_value 六字段；按 code 索引对齐，禁止按位置取值（as-of 分支行序不保证稳定）",
+      "股息聚合：get_stock_exrights(security, date) 为单除权日精确匹配（非区间查询），近 12 个月聚合必须按日扫描；强制会话内『游标增量 + 除权事件列表』缓存，缓存不跨回测运行持久化；缓存迭代禁止依赖 set()/frozenset() 哈希序",
+      "性能契约四钉死：① 游标增量结果与全窗口逐日扫描逐值严格相等（R4 单测硬门）② 确定性：禁哈希序依赖、缓存不跨运行 ③ 时长预算：R5 主跑须预声明预期墙钟（股息扫描约 16 分钟量级），R5.5 五折重扫约 80+ 分钟，防误判挂起 ④ get_stock_exrights 的 date=None → None 与 PTrade 原生语义未实证，登记为同名 API 已知偏差（PTRADE_RUNTIME_UNVERIFIED），本批不修",
+      "股息率无分红 → 0 → 被『股息率>0』天然剔除；过滤与防守排序同口径（R0 乙④）",
+      "全部分红数据读取禁止手写平台兜底；代码后缀统一 .SS/.SZ/.BJ",
+      "所有信号价格调用字面 fq='pre' + include=False",
+      "参数冻结声明：CAGR阈值=0.15 / 流通市值下限=50000万元 / Top10 / Top5 / 调仓周期=5交易日 / buffer=0.03 / COMMISSION=0.0003 / SLIPPAGE=0.001 —— 全部来自客户提示词或 R0 确认，未做任何寻优（R5.4 NOT_APPLICABLE）",
+      "【rule 17 定谳 · R3 实现选择】股息率分母（T-1 前复权 close）**不使用** get_history(is_dict=True)：R3 实测 multi-code is_dict=False 返回的 DataFrame 无 code 列且 index 恒为 [-1]（不可映射），故改为**逐标的**调用 get_history(code, count=1, unit='1d', fields=['close'], fq='pre', include=False, is_dict=False) → 返回普通 DataFrame（单标的，非 mapping item），直接按列取值。**从源头免除 rule 17 的 _extract_history_field 义务**（避免 DataFrame/structured array/recarray 三种形状歧义）；代价：逐标的调用，仅在防守月（1/4 月）对过滤后池求排名时发生，量级可接受。",
+      "【成本优化说明】『股息率>0』过滤**不需要价格**（Σ bonus_ps > 0 ⟺ 股息率 > 0，因 close > 0），故过滤阶段零价格调用；仅『防守模式按股息率降序』排名才需要 T-1 close。进攻模式（市值升序）完全不需要 close。"
+    ]
+  },
+  "constraints": {
+    "hard_filters": [
+      "exclude_st",
+      "exclude_halt",
+      "listed_over_1y",
+      "float_value_over_5e8",
+      "net_profit_positive",
+      "dividend_yield_positive",
+      "np_cagr_3y_over_15pct",
+      "exclude_star_market (688/689)",
+      "exclude_bse (43/83/87/920)",
+      "block_limit_up_buy",
+      "block_limit_down_sell",
+      "enforce_t1",
+      "round_lot",
+      "max_total_capital_100k"
+    ],
+    "execution_layer_boundary": {
+      "mode": "execution_only",
+      "items": [
+        "涨停不买：跳过该标的并保留现金，不递补（不进入选股池与排序）",
+        "跌停不卖：顺延至下一可卖日（不进入选股池与排序）",
+        "停牌防御性卖出通道：止损/换出触发且 get_position().enable_amount > 0 时保留卖出尝试，不因冻结静默放弃"
+      ],
+      "note": "三项均为执行层风控，绝不新增因子、绝不改变选股池与排序（R0 约束 1；客户 X6 裁定）"
+    },
+    "no_lookahead": true,
+    "portable_source_required": false,
+    "runtime_state_guard_required": true
+  },
+  "universe_contract": {
+    "mode": "portable_public_api",
+    "local_dynamic_api_allowed": false
+  },
+  "portfolio_contract": {
+    "sizing_mode": "runtime_total_value",
+    "required_initial_cash": null,
+    "fixed_target_value": null,
+    "allocation_mode": "equal_weight",
+    "allocation_denominator": "actual_selected_count",
+    "target_holdings": 5,
+    "gross_exposure_target": 0.97,
+    "cash_buffer_ratio": 0.03,
+    "per_position_target_weight": 0.194,
+    "max_single_weight": 0.2,
+    "allow_leverage": false,
+    "max_single_weight_note": "0.2 系设计保守推论（5 只等权 0.194 ≤ 0.2），非客户独立约束；N<5 时候选实际权重可 >0.2，以 A-9 豁免并在 QS_REBALANCE_AUDIT note 标记"
+  },
+  "rebalance_funding_contract": {
+    "requires_same_cycle_sell_proceeds": true,
+    "implementation_mode": "sell_then_buy_immediate",
+    "cash_only_for_new_buys": false
+  },
+  "history_coverage_contract": {
+    "lookback_bars": 21,
+    "frequency": "1d",
+    "history_required_before_first_decision": true,
+    "backtest_start_does_not_truncate_provider_history": true,
+    "minimum_candidates_with_full_history": 5
+  },
+  "r5_deployment_invariants": {
+    "holding_count_mode": "strict_target_when_candidates_available",
+    "target_holdings": 5,
+    "minimum_fill_ratio": 0.6,
+    "minimum_gross_exposure": 0.7,
+    "maximum_cash_ratio_after_rebalance": 0.35,
+    "maximum_insufficient_cash_rejections": 2,
+    "require_at_least_one_rebalance": true,
+    "note": "每期调仓须输出 QS_REBALANCE_AUDIT id/date/selected/tradable/sell_submitted/buy_submitted 与同 id 的 QS_PORTFOLIO_AUDIT positions/cash_ratio/gross_exposure；涨停/停牌导致实际持仓 <5 须在 note 标记合法低持仓原因"
+  },
+  "validation_contract": {
+    "robustness_gates": {
+      "enabled": false
+    },
+    "sample_split": {
+      "in_sample": {
+        "start": "2020-01-01",
+        "end": "2024-12-31"
+      },
+      "out_of_sample": {
+        "start": "2025-01-01",
+        "end": "2026-07-31"
+      },
+      "note": "主 R5 运行覆盖全窗口并分段报告；样本内仅用于行为观察与稳健性判定，样本外不做任何参数调整；000300 水位 R5 前复核（本地 2026-07-31），顺延由客户裁定"
+    }
+  },
+  "approximations": [
+    {
+      "id": "A-1",
+      "description": "【L1】上市满 1 年基准：get_stock_info 对股票返回 stock_daily 首根K线日而非真实上市日（600519→2018-01-02 vs 真实 2001-08-27）。窗口内新上市 1971 只中仅 1 只（301618）偏差 8 天；2018 年前老股两口径同判 PASS，结果池不变。定性 APPROXIMATION_REQUIRES_CONFIRMATION，R2.5 verbatim 确认。",
+      "confirmed": true,
+      "customer_text": "A-1 上市满 1 年按库内首根日 K 线判定（非交易所真实上市日；窗口内仅 1 只差 8 天，选股池不变）",
+      "confirmed_at": "2026-09-12T01:02:47+08:00",
+      "source": "customer_reply",
+      "provenance": "customer_original_relayed_verbatim",
+      "note": "原文经审核会话逐字转达，文本未改动。"
+    },
+    {
+      "id": "A-2",
+      "description": "【TTM 口径】股息率 TTM 窗口按 per-share 现金分红累加；送转股本变化期不回溯调整历史 per-share（与平台 bonus_ps 同口径）。",
+      "confirmed": true,
+      "customer_text": "A-2 股息率近 12 个月按每股分红逐笔累加，不做送转股历史回溯（与平台 bonus_ps 同口径）",
+      "confirmed_at": "2026-09-12T01:02:47+08:00",
+      "source": "customer_reply",
+      "provenance": "customer_original_relayed_verbatim",
+      "note": "原文经审核会话逐字转达，文本未改动。"
+    },
+    {
+      "id": "A-3",
+      "description": "【快照锚点】get_fundamentals(table='valuation') 的预加载快照锚点 = prev_date（T-1）实测定谳；date ≥ T-1 走快照、date < T-1 走真 as-of（B2 修复）。本策略的 T-1 估值读取（流通市值/当日换手率）与锚点重合，走快照路径；更早日期（近 20 个交易日换手率序列的 T-20…T-2）走 B2 真 as-of 路径 —— 两端语义均经 B2 修复与验收定谳。",
+      "confirmed": true,
+      "customer_text": "A-3 T-1 估值读快照；更早 19 日（换手率序列）走 B2 真 as-of——两端语义已定谳",
+      "confirmed_at": "2026-09-12T01:02:47+08:00",
+      "source": "customer_reply",
+      "provenance": "customer_original_relayed_verbatim",
+      "note": "原文经审核会话逐字转达，文本未改动。"
+    },
+    {
+      "id": "A-4",
+      "description": "成本口径（R0 09 采纳）：set_commission(0.0003) 双边万3最低5元 + 引擎默认印花税/过户费 + set_slippage(0.001)。",
+      "confirmed": true,
+      "customer_text": "A-4 成本：双边万 3 最低 5 元 + 框架默认印花税/过户费 + 滑点 0.001",
+      "confirmed_at": "2026-09-12T01:02:47+08:00",
+      "source": "customer_reply",
+      "provenance": "customer_original_relayed_verbatim",
+      "note": "原文经审核会话逐字转达，文本未改动。"
+    },
+    {
+      "id": "A-5",
+      "description": "涨跌停与停牌执行处理（X6）：涨停不买跳过留现金、跌停顺延下一可卖日、停牌防御性卖出通道 —— 仅执行层。",
+      "confirmed": true,
+      "customer_text": "A-5 涨跌停/停牌仅执行层（涨停不买不递补、跌停顺延、换出遇停牌保留卖出尝试），不进选股排序；若要改递补请明说",
+      "confirmed_at": "2026-09-12T01:02:47+08:00",
+      "source": "customer_reply",
+      "provenance": "customer_original_relayed_verbatim",
+      "note": "原文经审核会话逐字转达，文本未改动。"
+    },
+    {
+      "id": "A-6",
+      "description": "as-of 分支行序不保证稳定：读取一律按 trade_date/code 索引对齐，禁止按位置取值。",
+      "confirmed": true,
+      "customer_text": "A-6 历史估值行序不稳定，代码一律按代码/日期对齐取值（纯实现纪律）",
+      "confirmed_at": "2026-09-12T01:02:47+08:00",
+      "source": "customer_reply",
+      "provenance": "customer_original_relayed_verbatim",
+      "note": "原文经审核会话逐字转达，文本未改动。"
+    },
+    {
+      "id": "A-7",
+      "description": "股息聚合性能契约：get_stock_exrights 单次探测约 1.4–1.55 ms；游标增量 + 事件列表缓存为强制项（无缓存全回测约 114 分钟，带缓存约 16 分钟）。",
+      "confirmed": true,
+      "customer_text": "A-7 股息接口逐日扫描 + 强制游标缓存（不缓存约 114 分钟 / 缓存后约 16 分钟；R5 预声明墙钟）",
+      "confirmed_at": "2026-09-12T01:02:47+08:00",
+      "source": "customer_reply",
+      "provenance": "customer_original_relayed_verbatim",
+      "note": "原文经审核会话逐字转达，文本未改动。"
+    },
+    {
+      "id": "A-8",
+      "description": ".value 定谳前持仓字段白名单：只用 sid/amount/enable_amount/cost_basis/last_sale_price/market_value 六字段（不确定性隔离在框架线内）。",
+      "confirmed": true,
+      "customer_text": "A-8 持仓仅用六字段白名单（sid/amount/enable_amount/cost_basis/last_sale_price/market_value；.value 平台定谳前隔离在框架线）",
+      "confirmed_at": "2026-09-12T01:02:47+08:00",
+      "source": "customer_reply",
+      "provenance": "customer_original_relayed_verbatim",
+      "note": "原文经审核会话逐字转达，文本未改动。"
+    },
+    {
+      "id": "A-9",
+      "description": "【候选不足 5 只】二次筛选后候选 <5 只 → 按实际数量 N 等权、不递补、持满可投敞口（单只 = 运行时总资产 × 0.97 ÷ N）；max_single_weight=0.2 在上限情形以实际权重豁免，并在 QS_REBALANCE_AUDIT note 标记合法原因（candidates_below_5_legal）。属客户规则邻接语义（客户提示词只写『保留波动率最小 5 只』，未定义不足 5 只），须 R2.5 verbatim 确认。",
+      "confirmed": true,
+      "customer_text": "A-9 候选不足 5 只 → 按实际数量等权、不递补、持满可投敞口（例：剩 3 只每只约 32.3%；20% 单票上限系 5 只等权推论值，该情形豁免并审计行标记）",
+      "confirmed_at": "2026-09-12T01:02:47+08:00",
+      "source": "customer_reply",
+      "provenance": "customer_original_relayed_verbatim",
+      "note": "原文经审核会话逐字转达，文本未改动。"
+    }
+  ],
+  "open_questions": [],
+  "user_confirmations": {
+    "generation_target": true,
+    "strategy_semantics": true,
+    "execution_approximations": true,
+    "component_plan": true,
+    "backtest_validation_mode": true
+  },
+  "confirmation_evidence": {
+    "generation_target": {
+      "confirmed": true,
+      "customer_text": "甲：确认。本地 QuantStudio 单目标、agent 托管执行 R5。",
+      "confirmed_at": "2026-09-04T00:00:00+08:00",
+      "source": "customer_reply"
+    },
+    "strategy_semantics": {
+      "confirmed": true,
+      "customer_text": "丙：01/02/03/04/05/06/08 确认，07 修改。（附 09 采纳、乙=A1→修正为策略层计算、丁 策略名确认）",
+      "confirmed_at": "2026-09-04T00:00:00+08:00",
+      "source": "customer_reply"
+    },
+    "portfolio_contract": {
+      "confirmed": true,
+      "customer_text": "07 修改：改为 runtime_total_value：单只目标 = 运行时总资产 × (1 − 3%) ÷ 5 ≈ 19,400 元；gross_exposure_target=0.97、cash_buffer_ratio=0.03。",
+      "confirmed_at": "2026-09-04T00:00:00+08:00",
+      "source": "customer_reply"
+    },
+    "rebalance_funding_contract": {
+      "confirmed": true,
+      "customer_text": "调仓下单先卖后买，close 模式同日资金可用。",
+      "confirmed_at": "2026-09-04T00:00:00+08:00",
+      "source": "customer_reply"
+    },
+    "backtest_window_contract": {
+      "confirmed": true,
+      "customer_text": "C2 采纳：样本内 2020-01-01 ~ 2024-12-31、样本外 2025-01-01 ~ 2026-07-31；R5 前水位复核。",
+      "confirmed_at": "2026-09-04T00:00:00+08:00",
+      "source": "customer_reply"
+    },
+    "execution_approximations": {
+      "confirmed": true,
+      "customer_text": "execution_approximations：A-1~A-9 总体确认",
+      "confirmed_at": "2026-09-12T01:02:47+08:00",
+      "source": "customer_reply",
+      "provenance": "customer_original_relayed_verbatim",
+      "note": "原文经审核会话逐字转达，文本未改动。"
+    },
+    "component_plan": {
+      "confirmed": true,
+      "customer_text": "component_plan：骨架确认（三钩子无 before_trading_start、13 个 API 全注册、性能契约/白名单/PIT/参数冻结）",
+      "confirmed_at": "2026-09-12T01:02:47+08:00",
+      "source": "customer_reply",
+      "provenance": "customer_original_relayed_verbatim",
+      "note": "原文经审核会话逐字转达，文本未改动。"
+    },
+    "r5_deployment_invariants": {
+      "confirmed": true,
+      "customer_text": "r5_deployment_invariants：每期调仓按“持仓 5 只 / 敞口 ≈97% / 目标现金约 3%（建不满时允许临时更高、上限 35%并审计标记）/ 先卖后买”机器核账",
+      "confirmed_at": "2026-09-12T01:02:47+08:00",
+      "source": "customer_reply",
+      "provenance": "customer_original_relayed_verbatim",
+      "note": "原文经审核会话逐字转达，文本未改动。"
+    },
+    "robustness_exemption": {
+      "confirmed": true,
+      "customer_text": "客户意见A，直接发布",
+      "confirmed_at": "2026-09-15T00:00:00+08:00",
+      "source": "customer_reply",
+      "note": "客户风险接受型发布：知悉 R5.5 门控 G2（最大回撤 -27.23% vs 阈值 -25.00%，差 2.23pp）未通过，裁定接受该回撤特征并放行。G2 FAIL 在证据账中原样留痕，不豁免为 PASS。"
+    }
+  },
+  "validation_execution": {
+    "mode": "agent_managed",
+    "require_hash_bound_evidence": true,
+    "formal_publish_requires_backtest_pass": true
+  },
+  "backtest_window_contract": {
+    "strategy_must_not_hardcode_backtest_dates": true,
+    "agent_must_not_start_unconfirmed_backtest": true,
+    "recommended_start_date": "2020-01-01",
+    "recommended_end_date_as_of_local_data": "2026-07-31",
+    "actual_window_selected_by": "customer_confirmed_agent_run",
+    "required_close_bars": 21,
+    "lookback_trading_days": 21,
+    "index_watermark_note": "本地库 data/quantstudio.db：index_daily 000300 最新 2026-07-31；R5 前复核水位，若已补齐 8-9 月数据由客户裁定是否顺延"
+  },
+  "output": {
+    "overwrite": false,
+    "quantstudio_path": "quantstudio/backtest/strategies/股息防守小市值五日轮动.py"
+  },
+  "r3_prep": {
+    "rule17_decision": "逐标的 is_dict=False，免除 _extract_history_field 义务（已写入 implementation_notes）",
+    "dividend_equivalence_harness": {
+      "file": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\dividend_defense_smallcap_5d\\verify_dividend_cache_equivalence.py",
+      "purpose": "游标增量结果 vs 全窗逐日扫描逐值严格相等（A-7 性能契约①）",
+      "timing": "R5 前执行",
+      "evidence_into": "R5 预备文档（记录执行时间点 + 两种口径行数 + 逐值相等断言结果）"
+    },
+    "r5_prep_doc_must_contain": [
+      "水位复核结果（000300 最新日期）",
+      "墙钟预声明（主跑≈16 分钟 / R5.5 五折≈80+ 分钟）",
+      "等价性硬测执行时间点与断言结果"
+    ]
+  },
+  "r5_5_outcome": {
+    "overall": "FAILED",
+    "failed_gates": [
+      "G2"
+    ],
+    "gates": {
+      "G1": "PASS",
+      "G2": "FAIL",
+      "G3": "PASS",
+      "G4": "PASS",
+      "G5": "PASS",
+      "G6": "PASS"
+    },
+    "wf": {
+      "valid_folds": 5,
+      "positive_folds": 4,
+      "positive_ratio": 0.8
+    },
+    "mc": {
+      "n": 1000,
+      "p_value": 0.005994005994005994
+    },
+    "report": "robustness/robustness_report_iter0.json",
+    "release_mode": "CUSTOMER_RISK_ACCEPTED_RELEASE"
+  }
+}
