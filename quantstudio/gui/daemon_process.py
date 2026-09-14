@@ -44,11 +44,16 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def is_daemon_running() -> bool:
-    """判断 daemon 是否在运行（status 存在 + psutil 五验 alive）。"""
+    """判断 daemon 是否在运行（status 存在 + psutil 身份校验）。
+
+    V4（2026-09-14 客户 macOS 案）：'unknown'（内核查询瞬时失败，D2）**不得**收敛为
+    False——否则调用侧会把修复完全吃掉。语义：无法确证死亡 → 按在运行对待
+    （保持现状、继续观察，绝不清理 token/status）；仅确证 stale 才返回 False。
+    """
     status = read_daemon_status()
     if status is None:
         return False
-    return verify_daemon_identity(status) == "alive"
+    return verify_daemon_identity(status) in ("alive", "unknown")
 
 
 def get_daemon_status() -> Optional[dict]:
@@ -196,6 +201,9 @@ def force_kill_daemon() -> Tuple[bool, str]:
         return False, "无 daemon status 文件，无需强制停止"
 
     identity = verify_daemon_identity(status)
+    if identity == "unknown":
+        # D2 三态：无法确认 ≠ 死亡 → 不清理 status（清了就永久脱钩），不误杀
+        return False, "无法确认 daemon 身份（内核查询瞬时失败），不清不杀，请稍后重试"
     if identity == "denied":
         return False, "无权限确认进程身份（AccessDenied），请手动结束进程"
     if identity == "stale":

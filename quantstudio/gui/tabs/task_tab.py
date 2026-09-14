@@ -65,6 +65,8 @@ class TaskTab(QWidget):
         self._stop_requested = False
         self._stop_state = None
         self._active_worker = None
+        # S1 去抖：daemon 身份校验未通过的连击计数（N=3 才判死，防瞬态误判永久脱钩）
+        self._daemon_death_streak = 0
         self._setup_ui()
         self._load_tasks()
         # v3：低频状态同步 QTimer（3s 轮询 daemon status）
@@ -584,16 +586,33 @@ class TaskTab(QWidget):
             self._update_daemon_btn()
 
     def _on_daemon_poll(self):
-        """低频状态同步（3s）：daemon 异常退出时按钮自动恢复 stopped。"""
+        """低频状态同步（3s）：daemon 异常退出时按钮自动恢复 stopped。
+
+        S1 去抖（2026-09-14 客户 macOS 案）：身份校验未通过**单次不判死**——
+        需连续 N=3 次（3s 轮询 ⇒ ~9s）才终结，防止瞬态误判造成永久脱钩
+        （GUI 显示 stopped 而 daemon 持锁 → 全部读空，客户感知产品损坏）。
+        期间状态栏可见进度，用户不会误判「没反应」。
+        """
         if self._daemon_state == "running":
             if not is_daemon_running():
-                logger.warning("[TaskTab] daemon 进程消失（异常退出），按钮恢复 stopped")
+                streak = getattr(self, "_daemon_death_streak", 0) + 1
+                self._daemon_death_streak = streak
+                if streak < 3:
+                    logger.warning(
+                        "[TaskTab] daemon 身份校验未通过（第 %d/3 次），暂不清理，继续观察",
+                        streak)
+                    self._set_status_text(
+                        f"⚠ daemon 身份校验未通过（第 {streak}/3 次），暂不清理，继续观察")
+                    return
+                logger.warning("[TaskTab] daemon 连续 3 次校验未通过，判定退出，按钮恢复 stopped")
                 self._daemon_state = "stopped"
                 self._daemon_token = None
                 self._daemon_proc = None
                 self._update_daemon_btn()
                 self._daemon_poll_timer.stop()
                 self._set_status_text("⚠ 常驻进程异常退出")
+            else:
+                self._daemon_death_streak = 0
 
     def _sync_daemon_state(self):
         """从 status 文件同步 daemon 状态（GUI 启动时 + refresh 时）。

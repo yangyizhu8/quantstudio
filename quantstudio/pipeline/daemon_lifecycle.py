@@ -63,15 +63,17 @@ def daemon_stop_request_path() -> Path:
 def verify_daemon_identity(status: dict) -> str:
     """校验状态文件对应的进程身份。
 
-    返回 'alive' | 'stale' | 'denied'：
+    返回 'alive' | 'stale' | 'denied' | 'unknown'：
       - alive：五项全部通过，可安全 stop/clear。
       - stale：进程不存在或身份不匹配（PID 复用他进程），可清理 stale status。
       - denied：权限不足，**不清不杀**，只能提示用户。
+      - unknown：内核查询瞬时失败（D2，2026-09-14 客户 macOS 案）——**不得**当作死亡；
+        调用方应保持现状、继续观察，绝不清理 token/status（族谱第四例：「未知必须自成一态」）。
 
     五项校验：
       1. PID 存活；
       2. create_time ±1s；
-      3. exe 路径（normcase+abspath）；
+      3. exe 路径（双侧 realpath 容错，不匹配仅告警不判死）；
       4. cmdline 含 'quantstudio.pipeline.daemon'；
       5. instance_token（仅当 status 的 cmdline 含 token 时，要求 p.cmdline() 亦含）。
     """
@@ -89,11 +91,17 @@ def verify_daemon_identity(status: dict) -> str:
         # create_time ±1s 浮点误差容忍
         if abs(p.create_time() - float(status.get("create_time", 0))) > 1.0:
             return "stale"
-        # exe 路径：normcase + abspath（评审 9）
-        actual_exe = os.path.normcase(os.path.abspath(p.exe()))
-        stored_exe = os.path.normcase(os.path.abspath(status.get("exe", "")))
+        # exe 路径：双侧 realpath 容错（D1，2026-09-14 客户 macOS 案）——
+        # p.exe() 在 macOS/Linux 取内核真路径（symlink 已解引用），而 status["exe"]
+        # 记的是启动调用路径；单侧 abspath 会让 symlink 安装场景必然不等 → 活进程被判死。
+        # 不等时降级为「不匹配但非致命」：记 warning 交调用方去抖裁决，不在此单点判死
+        # （PID 复用场景由 create_time 校验兜底，见上）。
+        actual_exe = os.path.normcase(os.path.realpath(os.path.abspath(p.exe() or "")))
+        stored_exe = os.path.normcase(os.path.realpath(os.path.abspath(str(status.get("exe", "") or ""))))
         if actual_exe != stored_exe:
-            return "stale"
+            logger.warning(
+                "[daemon-identity] exe 路径不一致（疑似 symlink 真路径漂移，不据此判死）："
+                "actual=%r stored=%r", actual_exe, stored_exe)
         # cmdline 含 quantstudio.pipeline.daemon
         p_cmdline = p.cmdline()
         cmdline_str = " ".join(p_cmdline)
@@ -112,7 +120,9 @@ def verify_daemon_identity(status: dict) -> str:
     except psutil.AccessDenied:
         return "denied"
     except (psutil.Error, OSError):
-        return "stale"
+        # D2（2026-09-14 客户 macOS 案）：「查不出来」必须自成一态，不得塌缩成死亡；
+        # 调用方语义：unknown = 无法确认 → 保持现状、继续观察，绝不清理 token/status。
+        return "unknown"
 
 
 # ---------------------------------------------------------------------------

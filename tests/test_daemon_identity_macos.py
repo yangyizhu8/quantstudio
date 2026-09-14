@@ -20,9 +20,20 @@
 """
 from __future__ import annotations
 
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 import pytest
+from PyQt6.QtWidgets import QApplication
 
 import quantstudio.pipeline.daemon_lifecycle as dl
+
+
+@pytest.fixture(scope="module")
+def app():
+    instance = QApplication.instance() or QApplication([])
+    yield instance
 
 
 class _FakeProc:
@@ -133,3 +144,53 @@ def test_access_denied_still_distinct(monkeypatch):
     monkeypatch.setattr(dl.psutil, "Process",
                         lambda pid: (_ for _ in ()).throw(_FakePsutil.AccessDenied(pid)))
     assert dl.verify_daemon_identity(_status()) == "denied"
+
+
+# ==================== 方案 V4/V5 验收 ====================
+def test_v4_is_daemon_running_unknown_is_not_death(monkeypatch):
+    """V4：unknown 经 is_daemon_running **不得**收敛为 False（调用侧不被吃掉）。"""
+    import quantstudio.gui.daemon_process as dp
+    monkeypatch.setattr(dp, "read_daemon_status", lambda: {"pid": 36456})
+    monkeypatch.setattr(dp, "verify_daemon_identity", lambda s: "unknown")
+    assert dp.is_daemon_running() is True, (
+        "D2 三态若在 is_daemon_running 收敛为 False，D2 修复即被调用侧完全吃掉")
+
+
+def test_v5_debounce_requires_three_consecutive(app, monkeypatch):
+    """V5：去抖 N=3——前 2 次不清理且状态栏可见进度，第 3 次才判死。"""
+    import pandas as pd
+    from quantstudio._paths import DATA_ROOT
+    from quantstudio.gui.tabs.task_tab import TaskTab as _TaskTab
+
+    class _Db:
+        def get_watermarks(self):
+            return pd.DataFrame(columns=["table_name", "freq", "source", "watermark"])
+
+    class _MW:
+        def __init__(self):
+            self.app_root = DATA_ROOT.parent
+            self.config_dir = DATA_ROOT.parent / "config" / "profiles" / "mcp_only"
+            self.current_profile = "mcp_only"
+            self.db_helper = _Db()
+            self.workers = []
+
+        def profile_options(self):
+            return [("mcp_only", "MCP-only")]
+
+        def hold_worker(self, w):
+            self.workers.append(w)
+
+    tab = _TaskTab(_MW())
+    tab._daemon_state = "running"
+    monkeypatch.setattr("quantstudio.gui.tabs.task_tab.is_daemon_running", lambda: False)
+    tab._on_daemon_poll()
+    assert tab._daemon_state == "running"
+    assert tab._daemon_death_streak == 1
+    assert "1/3" in tab.status_label.text()
+    tab._on_daemon_poll()
+    assert tab._daemon_state == "running"
+    assert tab._daemon_death_streak == 2
+    assert "2/3" in tab.status_label.text()
+    tab._on_daemon_poll()
+    assert tab._daemon_state == "stopped"
+    assert tab.status_label.text() == "⚠ 常驻进程异常退出"
