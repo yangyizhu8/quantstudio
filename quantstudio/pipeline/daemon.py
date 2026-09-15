@@ -1092,6 +1092,12 @@ class ResidentCollector:
         write_new = write_updated = 0
         last_passed_df = None
         fixed_count = 0
+        # A1a 阶段打点（2026-09-14）：**按批累计、末尾一行汇总**（非按分片逐行，避开热路径）。
+        # 目的：定位端到端耗时构成（写段外 vs 写段内）。纯日志，零行为变更。
+        import time as _tprobe
+        _sp_t0 = _tprobe.perf_counter()
+        _sp = {"align": 0.0, "validate": 0.0, "write": 0.0}
+        _sp_shards = 0
         # QFQ 快照优化：流式路径入口预查一次全局快照（循环内复用，避免每分片
         # 重复查 SQLite——实测每分片 8s × 200 分片 = 28min 纯开销）
         _qfq_snap = self._qfq_snapshot_kwargs(table, batch_id)
@@ -1118,6 +1124,7 @@ class ResidentCollector:
                             f"（冷启动已注入），重建获 "
                             f"{len(_refreshed['adj_latest_map'])} code")
                 rows_raw += len(df_shard)
+                _sp_shards += 1
                 # adj_factor 提取（与普通路径 636-652 一致）
                 adj_factor_df = None
                 if (source == "mcp" and table in ("stock_daily", "stock_minutes",
@@ -1137,17 +1144,23 @@ class ResidentCollector:
                     if "adj_factor" in df_shard.columns:
                         df_shard = df_shard.drop(columns=["adj_factor"])
 
+                _ta = _tprobe.perf_counter()
                 std_df, align_meta = self.aligner.align(
                     df_shard, table, source, adj_factor_df=adj_factor_df, freq=freq,
                     **_qfq_snap)
+                _sp["align"] += _tprobe.perf_counter() - _ta
                 rows_aligned += len(std_df)
+                _tv = _tprobe.perf_counter()
                 res = self.validator.validate(std_df, table, batch_id, source, expected_freq=freq)
+                _sp["validate"] += _tprobe.perf_counter() - _tv
                 rows_passed += len(res.passed_df)
                 rows_rejected += len(res.rejected_rows)
                 fixed_count += getattr(res, "fixed_count", 0) or 0
                 if len(res.passed_df) > 0:
+                    _tw = _tprobe.perf_counter()
                     wr = self._stamp_and_write(res, table, batch_id, source, task=task,
                                                adj_latest_map=_qfq_snap.get("adj_latest_map"))
+                    _sp["write"] += _tprobe.perf_counter() - _tw
                     rows_written += wr
                     write_new += getattr(wr, "new", 0)
                     write_updated += getattr(wr, "updated", 0)
@@ -1184,6 +1197,14 @@ class ResidentCollector:
             logger.info(f"[{batch_id}] ✅[streaming] raw={rows_raw} aligned={rows_aligned} "
                         f"passed={rows_passed} rejected={rows_rejected} written={rows_written} "
                         f"(new {write_new} + upd {write_updated}) watermark→{new_watermark}")
+            # A1a 阶段时延汇总（每批一行；other = 取数/迭代/校验门禁等未细分部分）
+            _sp_total = _tprobe.perf_counter() - _sp_t0
+            _sp_other = max(0.0, _sp_total - _sp["align"] - _sp["validate"] - _sp["write"])
+            logger.info(
+                f"[{batch_id}] [阶段时延] table={table} shards={_sp_shards} rows={rows_written} "
+                f"total={_sp_total:.1f}s | other={_sp_other:.1f}s align={_sp['align']:.1f}s "
+                f"validate={_sp['validate']:.1f}s write={_sp['write']:.1f}s | "
+                f"write_share={100.0 * _sp['write'] / _sp_total:.1f}%")
             self.batch_audit.record(batch_id, name, source, table, freq,
                                     rows_raw, rows_aligned, rows_passed, rows_rejected,
                                     rows_written, "success", None, started_at,
