@@ -53,7 +53,7 @@ python agent_workspace\acceptance\acceptance_runner.py --all --round final
 
 ## 四、与冻结基线的对照口径（A2 冻结，裁定②）
 
-| 态 | 冻结基线（2026-09-17） |
+| 态 | 冻结基线（2026-09-16） |
 |---|---|
 | GUI 空闲 × daemon 空闲 | 0.0%（24/24 成功） |
 | GUI 浏览 × daemon 空闲 | 4.2%（1/24 失败；holder 主库值 53.8% 仅作参照） |
@@ -61,7 +61,7 @@ python agent_workspace\acceptance\acceptance_runner.py --all --round final
 | 采集结束后恢复 | 0.0%（19/19） |
 | 反向：采集期 GUI 只读 | 7/12 返回空（显式降级） |
 
-冻结件：`docs/evidence/gui-daemon-lock-baseline-20260917.md`。
+冻结件：`docs/evidence/gui-daemon-lock-baseline-20260916.md`。
 
 ## 五、dev T2 落地后的切换点（即插即用）
 
