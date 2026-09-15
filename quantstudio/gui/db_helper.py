@@ -8,8 +8,10 @@ v3 评审 4：daemon 采集期持有 DuckDB RW 连接（collector_run.lock 内�
 """
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -17,13 +19,48 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# A-prime (T3): GUI 只读打开快速重试 —— 针对源①(GUI 高频只读查询 vs daemon RW 打开)的跨进程锁冲突。
+# 保守取值(1-2 次 / ~150-300ms): 只覆盖"采集收尾瞬间仍需短等待"的窗口,
+# 不掩盖真正的配置性故障(重试耗尽仍按原契约优雅降级并记录忙态)。
+READ_ONLY_RETRY_ATTEMPTS = 2
+READ_ONLY_RETRY_INTERVAL_S = 0.2
+
+# A4: UI 降级提示的默认观察窗口(秒)
+BUSY_HINT_WINDOW_S = 30.0
+
+
+def _daemon_check_interval_seconds() -> Optional[int]:
+    """读取 daemon 调度检查间隔(秒) —— A4 提示文案"预计等待"的唯一来源。
+
+    来源: config/profiles/mcp_only/collector_tasks.json 的
+    daemon_schedule.check_interval_sec (本机实测 300)。
+    取不到配置时返回 None; 调用方不得编造数字(只显示不含秒数的提示)。
+    """
+    try:
+        root = Path(__file__).resolve().parents[2]  # quantstudio/gui/db_helper.py -> 项目根
+        cfg_path = root / "config" / "profiles" / "mcp_only" / "collector_tasks.json"
+        data = json.loads(cfg_path.read_text(encoding="utf-8"))
+        val = int((data.get("daemon_schedule") or {}).get("check_interval_sec"))
+        return val if val > 0 else None
+    except Exception:
+        return None
+
 
 def _is_db_busy_error(exc: Exception) -> bool:
-    """识别 DuckDB 文件锁冲突异常（跨中英文环境）。"""
+    """识别 DuckDB 文件锁冲突异常（跨中英文 + 跨平台）。
+
+    平台补强（2026-09-17，红态用例 tests/test_gui_db_helper_retry.py 捕获）：
+    - Windows 实测：中文「另一个程序正在使用此文件」/ 英文 "File is already open in"；
+    - POSIX（macOS/Linux）："Could not set lock on file ..." / "Conflicting lock is held"。
+    缺 POSIX 串会导致 macOS 上锁冲突被判为非 busy -> 异常上抛而非优雅降级
+    （GUI 报错而非"采集中，请稍后刷新"）。本串表为纯扩充：不影响其它异常的上抛。
+    """
     msg = str(exc).lower()
     return ("another process" in msg or "used by another process" in msg
             or "另一进程" in str(exc) or "正在使用" in str(exc)
-            or "could not lock" in msg or "io error" in msg)
+            or "could not lock" in msg or "could not set lock" in msg
+            or "conflicting lock" in msg or "already open in" in msg
+            or "io error" in msg)
 
 
 class DbHelper:
@@ -33,29 +70,77 @@ class DbHelper:
         self.duckdb_path = Path(duckdb_path)
         self.quarantine_path = Path(quarantine_path)
         self.batch_audit_path = Path(batch_audit_path)
+        # A4: 跨进程锁冲突的可观测状态(仅新增只读属性对外暴露; 不改任何既有返回契约)
+        self._last_busy_at: Optional[float] = None
+        self._busy_count: int = 0
+
+    def _mark_busy(self, exc: Exception) -> None:
+        """A4：记录最近一次跨进程锁冲突（供 UI 提示）。不改变任何返回值。"""
+        self._last_busy_at = time.time()
+        self._busy_count += 1
 
     def _safe_query(self, sql: str) -> pd.DataFrame:
-        """v3 评审 4：DuckDB 查询统一包装，捕获 IO/lock 异常优雅降级。
+        """v3 评审 4 + A-prime（T3）：DuckDB 查询统一包装，锁冲突时快速重试后优雅降级。
 
         daemon 采集期（持有 RW 连接）时，GUI read_only 查询会触发 IOException。
-        返回空 DataFrame + 警告日志，调用方据此显示"数据库采集中，请稍后刷新"。
-        其它异常（SQL 语法错等）正常向上抛。
+        A-prime：遭遇锁冲突时按 READ_ONLY_RETRY_ATTEMPTS / READ_ONLY_RETRY_INTERVAL_S
+        快速重试（覆盖采集收尾的短等待窗口）；重试耗尽仍按原契约返回空 DataFrame +
+        警告日志（调用方可据 busy_hint() 显示"数据库采集中，请稍后刷新"）。
+        其它异常（SQL 语法错等）正常向上抛 —— 重试只针对锁冲突，不掩盖真故障。
         """
         import duckdb
-        try:
-            with duckdb.connect(str(self.duckdb_path), read_only=True) as conn:
-                return conn.execute(sql).fetchdf()
-        except duckdb.IOException as e:
-            if _is_db_busy_error(e):
-                logger.warning(f"[DbHelper] DuckDB 忙（daemon 采集中？），返回空结果: {e}")
-                return pd.DataFrame()
-            raise
-        except Exception as e:
-            # 兼容某些 duckdb 版本将 IO 错误归为普通 Exception 的情况
-            if _is_db_busy_error(e):
-                logger.warning(f"[DbHelper] DuckDB 忙（daemon 采集中？），返回空结果: {e}")
-                return pd.DataFrame()
-            raise
+        last_exc: Optional[Exception] = None
+        for attempt in range(READ_ONLY_RETRY_ATTEMPTS + 1):
+            try:
+                with duckdb.connect(str(self.duckdb_path), read_only=True) as conn:
+                    return conn.execute(sql).fetchdf()
+            except duckdb.IOException as e:
+                if not _is_db_busy_error(e):
+                    raise
+                last_exc = e
+            except Exception as e:
+                # 兼容某些 duckdb 版本将 IO 错误归为普通 Exception 的情况
+                if not _is_db_busy_error(e):
+                    raise
+                last_exc = e
+            if attempt < READ_ONLY_RETRY_ATTEMPTS:
+                time.sleep(READ_ONLY_RETRY_INTERVAL_S)
+        self._mark_busy(last_exc)
+        logger.warning(
+            f"[DbHelper] DuckDB 忙（daemon 采集中？），{READ_ONLY_RETRY_ATTEMPTS + 1} 次尝试后返回空结果: {last_exc}")
+        return pd.DataFrame()
+
+    # ---------------- A4：跨进程锁冲突的可观测与提示 ----------------
+    @property
+    def last_busy_at(self) -> Optional[float]:
+        """最近一次跨进程锁冲突的时间戳（epoch 秒）；从未发生为 None。"""
+        return self._last_busy_at
+
+    @property
+    def busy_count(self) -> int:
+        """本实例累计遭遇跨进程锁冲突的次数。"""
+        return self._busy_count
+
+    def is_busy_recent(self, window_s: float = BUSY_HINT_WINDOW_S) -> bool:
+        """最近 window_s 秒内是否遭遇过跨进程锁冲突（UI 据此显示降级提示）。"""
+        if self._last_busy_at is None:
+            return False
+        return (time.time() - self._last_busy_at) <= window_s
+
+    def busy_hint(self, window_s: float = BUSY_HINT_WINDOW_S) -> str:
+        """锁冲突降级提示文案（空串 = 当前无冲突，调用方按原样显示常规信息）。
+
+        预计等待时长来源：collector_tasks.json 的
+        daemon_schedule.check_interval_sec（本机实测 300s）。
+        取不到配置时不编造数字，只返回不含秒数的提示。
+        """
+        if not self.is_busy_recent(window_s):
+            return ""
+        base = "数据库采集中（守护进程正在写入），请稍后刷新"
+        interval = _daemon_check_interval_seconds()
+        if interval is None:
+            return base + "。"
+        return f"{base}（守护进程每 {interval} 秒检查一轮，最长约 {interval} 秒内自动恢复）。"
 
     # ---------------- DuckDB（主库，只读）----------------
     def query_duckdb(self, sql: str) -> pd.DataFrame:
@@ -63,19 +148,22 @@ class DbHelper:
         return self._safe_query(sql)
 
     def list_tables(self) -> list:
-        """SHOW TABLES"""
+        """SHOW TABLES（A-prime：统一经 _safe_query —— 含快速重试与忙态记录；返回契约不变）"""
         try:
-            import duckdb
-            with duckdb.connect(str(self.duckdb_path), read_only=True) as conn:
-                return [r[0] for r in conn.execute("SHOW TABLES").fetchall()]
+            df = self._safe_query("SHOW TABLES")
+            if len(df) == 0:
+                return []
+            return [str(v) for v in df.iloc[:, 0].tolist()]
         except Exception:
             return []
 
     def table_rowcount(self, table: str) -> int:
+        """表行数（A-prime：统一经 _safe_query；返回契约不变：失败/忙时返回 0）"""
         try:
-            import duckdb
-            with duckdb.connect(str(self.duckdb_path), read_only=True) as conn:
-                return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            df = self._safe_query(f"SELECT COUNT(*) AS n FROM {table}")
+            if len(df) == 0:
+                return 0
+            return int(df.iloc[0]["n"])
         except Exception:
             return 0
 
@@ -96,10 +184,15 @@ class DbHelper:
             return pd.DataFrame()
 
     def get_table_columns(self, table: str) -> list:
+        """表结构 [(列名, 类型)]（A-prime：统一经 _safe_query；返回契约不变）"""
         try:
-            import duckdb
-            with duckdb.connect(str(self.duckdb_path), read_only=True) as conn:
-                return [(r[0], r[1]) for r in conn.execute(f"DESCRIBE {table}").fetchall()]
+            df = self._safe_query(f"DESCRIBE {table}")
+            if len(df) == 0:
+                return []
+            cols = list(df.columns)
+            name_col = "column_name" if "column_name" in cols else cols[0]
+            type_col = "column_type" if "column_type" in cols else (cols[1] if len(cols) > 1 else cols[0])
+            return [(str(r[name_col]), str(r[type_col])) for _, r in df.iterrows()]
         except Exception:
             return []
 

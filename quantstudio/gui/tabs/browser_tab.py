@@ -131,7 +131,13 @@ class BrowserTab(QWidget):
             model = PandasTableModel(df)
             self.result_table.setModel(model)
             self.result_table.resizeColumnsToContents()
-            self.info_label.setText(f"{len(df)} 行 × {len(df.columns)} 列")
+            # A4：跨进程锁冲突时显示降级提示（含预计等待，来源 daemon_schedule.check_interval_sec）；
+            # 无冲突时保持原有文案不变（纯增益）。
+            hint = self.mw.db_helper.busy_hint()
+            if hint:
+                self.info_label.setText(hint)
+            else:
+                self.info_label.setText(f"{len(df)} 行 × {len(df.columns)} 列")
         except Exception as e:
             logger.error(f"查询失败: {e}")
             self.info_label.setText(f"❌ {e}")
