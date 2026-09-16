@@ -19,6 +19,11 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# A-prime (T3): 跨进程写锁冲突判据 —— 切换为共享中立实现（dev T1，提交 c8f062d）。
+# 串表唯一来源 quantstudio/pipeline/db_lock_errors.py，pipeline 侧(writers 重试层)与本侧共用，
+# 避免"各写一份 → 重试层只认 Windows 串 → macOS 上永不重试"的串表分叉。
+from quantstudio.pipeline.db_lock_errors import is_db_lock_conflict  # noqa: E402
+
 # A-prime (T3): GUI 只读打开快速重试 —— 针对源①(GUI 高频只读查询 vs daemon RW 打开)的跨进程锁冲突。
 # 保守取值(1-2 次 / ~150-300ms): 只覆盖"采集收尾瞬间仍需短等待"的窗口,
 # 不掩盖真正的配置性故障(重试耗尽仍按原契约优雅降级并记录忙态)。
@@ -47,20 +52,19 @@ def _daemon_check_interval_seconds() -> Optional[int]:
 
 
 def _is_db_busy_error(exc: Exception) -> bool:
-    """识别 DuckDB 文件锁冲突异常（跨中英文 + 跨平台）。
+    """识别 DuckDB 跨进程写锁冲突（busy）—— 共享中立实现的向后兼容薄包装。
 
-    平台补强（2026-09-17，红态用例 tests/test_gui_db_helper_retry.py 捕获）：
-    - Windows 实测：中文「另一个程序正在使用此文件」/ 英文 "File is already open in"；
-    - POSIX（macOS/Linux）："Could not set lock on file ..." / "Conflicting lock is held"。
-    缺 POSIX 串会导致 macOS 上锁冲突被判为非 busy -> 异常上抛而非优雅降级
-    （GUI 报错而非"采集中，请稍后刷新"）。本串表为纯扩充：不影响其它异常的上抛。
+    实现已切换至 quantstudio/pipeline/db_lock_errors.is_db_lock_conflict
+    （dev T1，提交 c8f062d；串表含 Windows 中/英 + POSIX 三串）。保留本函数名，
+    既有调用点与用例零改动（re-export 形态）。
+
+    **口径变化（如实记录）**：相较切换前的本地串表，判定**收窄且更精确**——
+    移除了过宽的 `io error` 兜底与 `another process` / `used by another process` /
+    中文短串，以免把"路径不存在/权限不足/库损坏"等**响亮失败**误判为 busy 而送入退避
+    （共享模块 docstring 明确该语义）。真实冲突形态的判定覆盖率由 A6 验收轮实测
+    （矩阵 record_3 归因命中 / record_4 降级提示）验证。
     """
-    msg = str(exc).lower()
-    return ("another process" in msg or "used by another process" in msg
-            or "另一进程" in str(exc) or "正在使用" in str(exc)
-            or "could not lock" in msg or "could not set lock" in msg
-            or "conflicting lock" in msg or "already open in" in msg
-            or "io error" in msg)
+    return is_db_lock_conflict(exc)
 
 
 class DbHelper:
