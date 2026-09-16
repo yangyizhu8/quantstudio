@@ -38,20 +38,20 @@ GUI_STATES = ["idle", "browse", "pull"]
 DAEMON_STATES = ["idle", "collecting"]
 FENCE = chr(96) * 3  # markdown 围栏（避免源码中出现三反引号）
 
-# 归因命中判据 —— 与 dev T1 归因锚点使用**同一套字面**（2026-09-16 开工前口径钉死）。
-# dev 输出顺序：db_path -> 轨迹 -> 持有者(pid=/name=/started=/cmdline=) -> 原始文本。
-# 约定：我方只匹配**关键字 token**，不匹配分隔符（冒号/括号/空格形式由 dev 定），避免与格式细节耦合。
-# 中文锚可行性依据：daemon 日志 FileHandler 显式 UTF-8（quantstudio/pipeline/daemon.py:3316），
-#   中文锚在日志文件内安全；控制台（GBK）可能乱码，故判据一律以**日志文件**为来源。
-ATTRIB_PATTERNS = [
-    r"db_path",         # 锚点 1（ASCII）
-    r"轨迹",             # 锚点 2（中文）
-    r"持有者",           # 锚点 3（中文）
-    r"pid[=: ]\s*\d+",  # 锚点 3 子字段：pid= 必填；name/started/cmdline 可选（我方不依赖）
-    r"原始文本",         # 锚点 4（中文）
-    # 兼容保留（他源/旧文本形态，不删除）
-    r"psutil", r"holder", r"open_files",
-]
+# 归因判据 —— 与 dev T1 四锚同字面（口径 32eadc7 钉死；2026-09-16 依 dev 实现校准）。
+# dev 真实输出（writers.py:500-513）：
+#   形态 A（有候选）：  持有者  : pid=… name=… started=…（另有 N 个候选）
+#                                cmdline=…            <-- **在续行**（正则须容忍换行）
+#   形态 B（无候选）：  持有者  : 未能归因（psutil 不可用或无匹配候选进程）  <-- **合法如实分支**
+# **命中判据（总调度校准）**："归因未命中" = "持有者**行**缺失"，**不要求 pid= 存在**——
+#   形态 B 同样含「持有者」锚，属如实报告，**不得判为未命中**（否则终轮误报）；
+#   仅当「持有者」锚完全缺失时才判未命中（真判据缺失）。故本表以「持有者」为**唯一判据锚**，
+#   其余三锚与 pid= 仅作诊断信息记录（不参与命中判定）。
+ATTRIB_ANCHOR_HOLDER = "持有者"          # 唯一判据锚
+ATTRIB_ANCHORS_DIAGNOSTIC = ["db_path", "轨迹", "原始文本"]  # 诊断锚（不入判据）
+ATTRIB_UNABLE_MARKERS = ["未能归因", "无法归因", "no holder", "not attributed"]
+# 兼容保留（他源/旧文本形态，不删除；仅用于诊断输出）
+ATTRIB_PATTERNS = [r"psutil", r"holder", r"open_files"]
 
 
 def _tail(path, n=400):
@@ -61,10 +61,31 @@ def _tail(path, n=400):
         return ""
 
 
+def attribution_verdict(text):
+    """四项记录之三：持有者归因判定（三态，口径见文件头注释）。
+
+    返回 (hit, kind)：
+      hit  = 「持有者」锚是否出现（**唯一判据**；"未能归因"形态 B 同样满足）
+      kind = "resolved"（形态 A：给出 pid=/name=/started=）
+             | "unable"（形态 B：如实报未能归因 —— 合法分支，非失败）
+             | "anchor_only"（有锚但两形态特征均不匹配，需人工看）
+             | "absent"（**锚缺失 = 真未命中**）
+    re.DOTALL：容忍 dev 的 cmdline= **续行**（writers.py:509）与多行文本形态。
+    """
+    t = text or ""
+    if ATTRIB_ANCHOR_HOLDER not in t:
+        return False, "absent"
+    low = t.lower()
+    if any(m.lower() in low for m in ATTRIB_UNABLE_MARKERS):
+        return True, "unable"
+    if re.search(r"pid[=: ]\s*\d+", low, re.DOTALL):
+        return True, "resolved"
+    return True, "anchor_only"
+
+
 def attribution_hit(text):
-    """四项记录之三：锁持有者归因是否出现。"""
-    low = (text or "").lower()
-    return any(re.search(p, low) for p in ATTRIB_PATTERNS)
+    """向后兼容：仅返回是否命中（= 「持有者」锚是否出现）。"""
+    return attribution_verdict(text)[0]
 
 
 def silent_empty_check(text):
@@ -123,12 +144,15 @@ def run_cell(gui_state, daemon_state):
     handles.append(drive_daemon(daemon_state))
     probe = probe_rw(SHADOW_DB, PROBE_DUR, PROBE_IV, label)
     logs = "\n".join(_tail(h["log"]) for h in handles if h.get("log"))
+    blob = logs + " " + " ".join(probe.get("sample_errors", []))
+    _v = attribution_verdict(blob)
     cell = {
         "cell": label, "gui_state": gui_state, "daemon_state": daemon_state,
         "lock_held_during": lock_held(), "probe": probe,
         "record_1_success_rate_pct": round(100.0 - (probe.get("fail_rate_pct") or 0.0), 1),
         "record_2_error_samples": probe.get("sample_errors", [])[:3],
-        "record_3_attribution_hit": attribution_hit(logs + " ".join(probe.get("sample_errors", []))),
+        "record_3_attribution_hit": _v[0], "record_3_holder_kind": _v[1],
+        "record_3_diagnostic_anchors": [a for a in ATTRIB_ANCHORS_DIAGNOSTIC if a in blob],
         "record_4_silent_empty": silent_empty_check(logs),
     }
     cleanup(handles)
