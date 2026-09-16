@@ -427,14 +427,127 @@ class DuckDBWriter(BaseWriter):
         self._shared_conn = None
         self._init_tables()
 
+    # ── T1（2026-09-17）：RW 打开退避重试与持有者归因 ──
+    # 退避序列合计 30s（全窗统一，两处 RW 打开点共用）
+    _RW_BACKOFF_SECONDS = (1, 2, 4, 8, 15)
+
+    def _describe_lock_holder(self):
+        """psutil 归因：谁可能持有该库（**尽力而为**，不可得则返回 None，不得抛）。
+
+        归因口径：候选 = 命令行提及本库文件名或 daemon/GUI 入口的进程；
+        不试图读取真实文件句柄（跨平台不可靠），只给出可人工核验的候选清单。
+        """
+        try:
+            import psutil
+        except Exception:
+            return None
+        import os as _os
+        db_name = self.db_path.name
+        db_stem = self.db_path.stem
+        # 自身与父进程、以及常见 shell 包装器**一律排除**：否则「含项目路径的 pwsh 包装」
+        # 会被误判为持有者（2026-09-17 样例实测命中 pid=…powershell.exe = 假归因）。
+        _SHELLS = {"powershell.exe", "pwsh.exe", "cmd.exe", "bash", "sh", "zsh", "pythonw.exe"}
+        exclude = {_os.getpid(), _os.getppid()}
+        try:
+            import psutil as _ps
+            try:
+                for parent in _ps.Process(_os.getpid()).parents():
+                    exclude.add(parent.pid)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        hits = []
+        try:
+            for proc in psutil.process_iter(["pid", "name", "cmdline", "create_time"]):
+                try:
+                    info = proc.info
+                    pid = info.get("pid")
+                    name = str(info.get("name") or "")
+                    if pid in exclude or name.lower() in _SHELLS:
+                        continue
+                    joined = " ".join(str(c) for c in (info.get("cmdline") or []))
+                    # 排序权重：daemon/GUI 入口（真持有者）> 命令行提及本库文件
+                    rank = None
+                    if "quantstudio.pipeline.daemon" in joined or "main_gui" in joined:
+                        rank = 0
+                    elif db_name in joined:
+                        rank = 1
+                    if rank is None:
+                        continue
+                    import datetime as _dt
+                    ct = info.get("create_time")
+                    started = (_dt.datetime.fromtimestamp(ct).strftime("%Y-%m-%d %H:%M:%S")
+                               if ct else "?")
+                    hits.append((rank, pid, name, started, joined))
+                except Exception:
+                    continue
+        except Exception:
+            return None
+        if not hits:
+            return None
+        hits.sort(key=lambda h: h[0])
+        _, pid, name, started, joined = hits[0]
+        line = f"pid={pid} name={name} started={started}"
+        if len(hits) > 1:
+            line += f"（另有 {len(hits) - 1} 个候选）"
+        return {"line": line, "cmdline": joined[:200], "count": len(hits)}
+
+    def _rw_exhausted_message(self, trace, last_err) -> str:
+        """耗尽异常文本——四锚点固定，供跨线 ATTRIB_PATTERNS 解析（见 32eadc7 已钉口径）。"""
+        total = sum(self._RW_BACKOFF_SECONDS)
+        seq = "/".join(str(s) for s in self._RW_BACKOFF_SECONDS)
+        lines = [
+            f"[db-lock] DuckDB 写连接获取失败：{total}s 内重试 {len(self._RW_BACKOFF_SECONDS)} 次"
+            f"（{seq}s）全部冲突",
+            f"  db_path : {self.db_path}",
+            f"  轨迹    : {' / '.join(trace)}",
+        ]
+        holder = self._describe_lock_holder()
+        if holder:
+            lines.append(f"  持有者  : {holder['line']}")
+            lines.append(f"            cmdline={holder['cmdline']}")
+        else:
+            lines.append("  持有者  : 未能归因（psutil 不可用或无匹配候选进程）")
+        lines.append(f"  原始文本: {last_err}")
+        return "\n".join(lines)
+
+    def _open_rw_with_backoff(self, purpose: str = "conn"):
+        """打开 DuckDB read_write 连接；**仅**跨进程写锁冲突时退避重试。
+
+        - 判据：pipeline.db_lock_errors.is_db_lock_conflict（Windows 中文/英文 + POSIX 三串）；
+          **非冲突**（路径/权限/库损坏/参数错）**立即抛**——不把响亮失败磨成哑失败；
+        - 退避 1/2/4/8/15s（合计 30s）；耗尽抛 RuntimeError（四锚文本，含持有者归因）；
+        - **不写任何窗口/锁状态**——E-3 的写窗判据归 E-3，本 helper 不参与、不落任何文件。
+        """
+        import time as _time
+        from .db_lock_errors import is_db_lock_conflict
+        trace = []
+        last_err = None
+        attempts = (0,) + self._RW_BACKOFF_SECONDS
+        for idx, wait in enumerate(attempts, start=1):
+            if wait:
+                _time.sleep(wait)
+            try:
+                return self._duckdb.connect(str(self.db_path))
+            except Exception as e:
+                if not is_db_lock_conflict(e):
+                    raise                      # 非锁冲突：立即抛，不进退避
+                last_err = e
+                trace.append(f"#{idx} {type(e).__name__}")
+        raise RuntimeError(self._rw_exhausted_message(trace, last_err))
+
     def _conn(self):
-        """新建连接（线程安全：调用方应在 write_lock/conn_lock 内使用并及时关闭）"""
-        return self._duckdb.connect(str(self.db_path))
+        """新建连接（线程安全：调用方应在 write_lock/conn_lock 内使用并及时关闭）
+
+        T1：跨进程写锁冲突时退避重试（见 _open_rw_with_backoff）。
+        """
+        return self._open_rw_with_backoff(purpose="conn")
 
     def _ensure_shared_conn(self):
         """确保持久 read_write 连接已创建（调用方须持有 _conn_lock）。"""
         if self._shared_conn is None:
-            self._shared_conn = self._duckdb.connect(str(self.db_path))
+            self._shared_conn = self._open_rw_with_backoff(purpose="shared")
         return self._shared_conn
 
     def reconnect(self):
