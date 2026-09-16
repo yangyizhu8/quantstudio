@@ -38,8 +38,20 @@ GUI_STATES = ["idle", "browse", "pull"]
 DAEMON_STATES = ["idle", "collecting"]
 FENCE = chr(96) * 3  # markdown 围栏（避免源码中出现三反引号）
 
-# 归因命中判据（dev T1 的持有者归因文本特征）
-ATTRIB_PATTERNS = [r"psutil", r"holder", r"持有者", r"pid[= ]?\d+", r"open_files"]
+# 归因命中判据 —— 与 dev T1 归因锚点使用**同一套字面**（2026-09-16 开工前口径钉死）。
+# dev 输出顺序：db_path -> 轨迹 -> 持有者(pid=/name=/started=/cmdline=) -> 原始文本。
+# 约定：我方只匹配**关键字 token**，不匹配分隔符（冒号/括号/空格形式由 dev 定），避免与格式细节耦合。
+# 中文锚可行性依据：daemon 日志 FileHandler 显式 UTF-8（quantstudio/pipeline/daemon.py:3316），
+#   中文锚在日志文件内安全；控制台（GBK）可能乱码，故判据一律以**日志文件**为来源。
+ATTRIB_PATTERNS = [
+    r"db_path",         # 锚点 1（ASCII）
+    r"轨迹",             # 锚点 2（中文）
+    r"持有者",           # 锚点 3（中文）
+    r"pid[=: ]\s*\d+",  # 锚点 3 子字段：pid= 必填；name/started/cmdline 可选（我方不依赖）
+    r"原始文本",         # 锚点 4（中文）
+    # 兼容保留（他源/旧文本形态，不删除）
+    r"psutil", r"holder", r"open_files",
+]
 
 
 def _tail(path, n=400):
