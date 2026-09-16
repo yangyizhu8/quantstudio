@@ -2,7 +2,7 @@
 
 - 出具：数据拉取线（C 组核对责任方）｜裁定：总调度
 - 权威原文：docs/cgroup-key-definition-list-20260915.md（89e3b7c4）—— 本表第 2/3/4 行键值自此直读，与两线中继三值互相印证
-- 硬约束（引擎层，N5）：DEDUP 键首列必须是 designated 列 —— 键去 designated 则 ALTER 被拒；designated 在键首但为入库时间则每行唯一 ⇒ DEDUP 恒 no-op
+- 硬约束（引擎层，N5，**2026-09-16 订正为包含性**）：**DEDUP 键必须【包含】designated 列（位置不限）** —— 原「键首列必须是 designated」系过度推广；实测 7 表落地中 5 张键首列≠designated 却全部 dedup=True 成功。
 
 ## 一、键表（8 张）
 
@@ -18,6 +18,8 @@
 | 8 | qfq_checkpoint | fix_time | ts_code | (fix_time, ts_code) | — |
 
 > 勘误（权威原文 vs 实测）：原清单对第 2/3/4 行标「需先补 designated」——**该标记已被 2026-09-15 运行态前置筛推翻**：`tables()` 实测 9/9 表**均已有 designatedTimestamp**（第 2/3/4 行 = `ts`）。原标记反映的是清单出件时的状态，**早于 designated 落地**。
+
+> **同口径订正（2026-09-16）**：本表「重排后键（DTS 打头）」做法**保留为无害**（重排后键仍【包含】designated，语义不变），依据由「首列红线」改为「**包含性**」。Trae 预检按实测**无需回退**。
 
 ## 二、冻结成员（不进键表）
 
