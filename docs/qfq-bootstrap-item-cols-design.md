@@ -61,6 +61,7 @@ SQL 侧三列已被实际使用（`qfq_resident_orchestrator.py`）：
 | V2 | 契约测试 | 上述 2 条 schema 契约测试**由红转绿**；若仍红 ⇒ 存在第二处不一致，须继续定位（**不得以"本来就是红的"结案**） |
 | V3 | 既有失败集对表 | 全量套件结果与**改动前既有失败集逐条比对**：新增失败必须为 0；"本来就红"≠"被我改红" |
 | V4 | 消费点回归 | `qfq_fresh_capture` / `qfq_reanchor_schema:766` 路径相关测试全绿 |
+| **V5** | **迁移双态（②升格）** | `reanchor:766` 是**自动迁移循环**（DESCRIBE→缺列→`ALTER TABLE ADD COLUMN`）。须分别验证：**已建库（含三列）= no-op**（不得产生任何 ALTER）；**缺列库 = 补列成功**且补后列集 = 13。仅验"COLS=DDL"**不充分** |
 
 ## 五、回退条件
 
@@ -68,8 +69,42 @@ SQL 侧三列已被实际使用（`qfq_resident_orchestrator.py`）：
 - V3 出现任何新增失败 → 立即回退并上报；
 - 若 V2 显示两条契约测试**改前就已因别处不一致而红**，本修复不背该责，但须在验收文档中**分列归因**。
 
-## 六、待确认（实施方案前需落定）
+## 六、三项落定结果（原待确认，已全部取证）
 
-1. `qfq_reanchor_schema.py:766` 的迭代点是否消费本表（若是，追加三列会改变其行为，需评估）；
-2. 是否存在**独立的 manifest/fingerprint** 记录本表列序（若有，须**同 commit** 更新——矩阵哈希追认同批纪律）；
-3. 两条契约测试**改动前的失败原因**（先跑一次留基线，才能证明本修复是否为其成因）。
+### 落定 1｜`reanchor:766` **确实消费本表——且是自动迁移循环**（本件性质升格）
+
+```python
+for table, ddl in DDL_DUCKDB.items():
+    actual = {r[0] for r in conn.execute(f"DESCRIBE {table}").fetchall()}
+    for col in DUCKDB_COLS.get(table, []):
+        if col not in actual:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {_infer_col_type(ddl, col)}")
+```
+
+⇒ 本改动**不是簿记订正，而是激活一条既有迁移路径**：缺三列的库将被自动 ALTER 补列；
+已含三列的库为 no-op。**按铁律属 schema 迁移生效**，验收须含 V5 双态。
+
+### 落定 2｜指纹**不含错**——单文件改动成立，无需同批更新
+
+- `SCHEMA_CONTRACT_DUCKDB = project_legacy_contract_shape(TARGET_QFQ_2_1_FINGERPRINT)`（:1223）⇒ manifest **由指纹派生**；
+- 指纹两处条目**均为 13 列**（含 `approved_at`）：`:675` 条目 columns 677–689（末三行 687/688/689）；`:963` 同构条目 columns 965–977（末三行 975/976/977）；
+- **比对矩阵**：
+
+| 比对 | 现状 | 本改动后 |
+|---|---|---|
+| DDL(13) vs `DUCKDB_COLS`(10) | 红 | **绿** |
+| manifest/指纹(13) vs `DUCKDB_COLS`(10) | 红 | **绿** |
+
+⇒ 两条红**同源于唯一落后项 `DUCKDB_COLS`**，预期**双绿**，不存在"第二处不一致"；
+⇒ 指纹无错 ⇒ **不触发矩阵哈希追认同批纪律**，改动面 = **单文件三行**。
+
+### 落定 3｜改前基线已留证
+
+```
+tests/test_qfq_schema_status.py::TestContractConsistency::test_duckdb_cols_matches_ddl_order
+tests/test_qfq_reanchor_batch1.py::TestSchemaDDL::test_duckdb_column_order_matches_manifest
+→ 2 failed in 1.45s（改动前基线：两条均红）
+```
+
+V2 判据因此可判：本改动须使**两条同时转绿**；若仅一条转绿，则与落定 2 的推断矛盾，
+须回指纹/manifest 链路继续定位（**不得以"本来就红"结案**）。
