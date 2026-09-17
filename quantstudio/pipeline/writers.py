@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 from quantstudio._paths import db_path
 from quantstudio.pipeline.snapshot_lock import (ensure_write_lock,
                                                 release_write_lock,
+                                                assert_lock_owner,
                                                 WriteLockHeld)
 from quantstudio.pipeline.eps_backfill import backfill_eps_gap  # P-A3 写后回补
 
@@ -698,6 +699,7 @@ class DuckDBWriter(BaseWriter):
     def _write_locked(self, df: pd.DataFrame, table: str, batch_id: str,
                       passthrough: bool = False) -> int:
         """write() 的锁内实现（3A 重构：原 write 主体平移，逻辑零改动）。"""
+        assert_lock_owner()  # 所有权校验（批一 S3）：锁被他人取得 → WriteLockLost，禁静默双写
         if df is None or len(df) == 0:
             logger.info(f"[DuckDBWriter] {table} batch={batch_id}: 0 rows (skip)")
             return 0

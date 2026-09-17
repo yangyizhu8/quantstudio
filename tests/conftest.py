@@ -186,3 +186,28 @@ def _qmessagebox_modal_guard(monkeypatch):
     for _name in ("information", "warning", "critical", "question", "about"):
         monkeypatch.setattr(QMessageBox, _name, _noop)
     yield
+
+
+# ---------------------------------------------------------------------------
+# 3A 写锁目录会话级隔离（批一 S8，2026-09-17）
+# 背景：本机存在常驻采集 daemon（--mode forever，旧版代码，无死亡自愈）。测试若使用
+# 生产锁路径 <repo>/data/snapshots/.write_lock，会与 daemon 抢锁；个别测试的锁卫生
+# fixture 更会直接 unlink 该文件——可能删掉 daemon 正在持有的锁（双写风险）。
+# 处理：本会话把 QS_WRITE_LOCK_DIR 指向会话级临时目录，使**所有**测试文件（不只
+# tests/test_snapshot_lock.py）对生产锁路径零接触。调用方若已显式设置该变量，则尊重之。
+# 生产行为零影响：该变量默认不设，`snapshot_lock.lock_path()` 解析路径与接入前逐位一致。
+# ---------------------------------------------------------------------------
+@pytest.fixture(scope="session", autouse=True)
+def _isolate_write_lock_dir(tmp_path_factory):
+    import os as _os
+    if _os.environ.get("QS_WRITE_LOCK_DIR"):
+        yield
+        return
+    d = tmp_path_factory.mktemp("write_lock_dir")
+    _os.environ["QS_WRITE_LOCK_DIR"] = str(d)
+    _os.environ.setdefault("QS_WRITE_LOCK_AUDIT_LOG",
+                           str(d / "write_lock_reclaim.log"))
+    try:
+        yield
+    finally:
+        _os.environ.pop("QS_WRITE_LOCK_DIR", None)

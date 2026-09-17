@@ -27,9 +27,15 @@ import pandas as pd
 import pytest
 @pytest.fixture(autouse=True)
 def _clean_write_lock():
-    """3A 锁卫生：清理陈锁文件（被杀测试进程残留），防止 30s 超时串扰。"""
-    from pathlib import Path as _P
-    lk = _P(__file__).resolve().parent.parent / "data" / "snapshots" / ".write_lock"
+    """3A 锁卫生：清理陈锁文件（被杀测试进程残留），防止 30s 超时串扰。
+
+    批一（2026-09-17）改走 `snapshot_lock.lock_path()`：本机有常驻采集 daemon 运行，
+    原先硬编码 <repo>/data/snapshots/.write_lock 并直接 unlink，可能与 daemon 抢锁、
+    甚至删除 daemon 正持有的锁（双写风险）。改后尊重 `QS_WRITE_LOCK_DIR` 会话级
+    重定向（tests/conftest.py::_isolate_write_lock_dir），测试对生产锁零接触。
+    """
+    from quantstudio.pipeline.snapshot_lock import lock_path as _lock_path
+    lk = _lock_path()
     lk.unlink(missing_ok=True)
     yield
     lk.unlink(missing_ok=True)

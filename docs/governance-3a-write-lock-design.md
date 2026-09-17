@@ -1,8 +1,8 @@
 # 3A 写锁收口 — 微流水线设计（第 3 步前置，自第 5 步前移）
 
-- 状态：**待审计**（设计文档，未实施）
+- 状态：**已实施**（3A 写锁收口）；**陈锁语义已于 2026-09-17 修订（批一写锁死亡自愈）**
 - 依据：DSH A 线 v3+ 终审阻塞 2（循环依赖：快照等锁、锁排在第 5 步、修复等快照）
-- 日期：2026-08-17
+- 日期：2026-08-17（原）／2026-09-17（陈锁语义修订）
 
 ---
 
@@ -34,7 +34,13 @@ snapshot create 要求 MAIN/AUX 全部 locked=true
 
 `quantstudio/pipeline/snapshot_lock.py`：
 - `acquire_write_lock(task_id, timeout_s=30) -> WriteLock` / `WriteLock.release()` / `heartbeat()`；
-- 锁文件 `data/snapshots/.write_lock`（内容：PID、task_id、心跳时间戳）；获取失败/超时抛 `WriteLockHeld`（含持有者信息）；
+- 锁文件 `data/snapshots/.write_lock`（v2 payload：PID、task_id、心跳时间戳 + host、pid_create_time、token、acquired_at）；获取失败/超时抛 `WriteLockHeld`（含持有者信息与判定结论）；
+- **陈锁语义（2026-09-17 批一修订）**：持有者进程**存活** → 仍 fail-closed 不回收（红线）；
+  持有者**进程已不存在**（同主机；或 PID 复用已由 `pid_create_time` 排除）→ acquire 侧安全回收
+  （reclaim 互斥 + CAS 四字段 + 审计 `data/snapshots/write_lock_reclaim.log` + WARNING）；
+  跨主机 / legacy 且 pid 不可判定 / psutil 不可用 → 不回收；
+  回退开关 `QS_WRITE_LOCK_SELFHEAL=0`（退回旧「仅告警」行为）。详见
+  `docs/write-lock-selfheal-design.md`；
 - 装饰器/上下文管理器 `with_write_lock(task_id)`；
 - **语义保证**：文件锁为协作锁，权威性由三层防御补齐（锁协议 + registry 准入 + 快照三重 hash 事后检测，见快照设计 §1/§2）。
 
@@ -83,3 +89,34 @@ snapshot create 要求 MAIN/AUX 全部 locked=true
 1. **daemon 持锁粒度 = 任务批次级**。补充要求：批次边界日志可观测（锁获取/释放时间 + 任务 ID 落日志）；批次内即唯一写会话，无外部写者预期。
 2. **GUI 入口 = GUI 操作即持锁**（短事务、持锁窗口短）。补充要求：锁获取失败时**弹窗提示持有者信息**（PID/task_id/心跳时间），禁止静默失败。
 3. **修复脚本族 = CLI 包裹**（`python -m quantstudio.pipeline.snapshot_lock run <cmd>`）。补充要求：包裹器**透传退出码/stdout/stderr/环境变量**；文档化限制——**脚本 fork 出的子进程不继承锁**（全部写操作必须在包裹器进程内完成）。
+
+---
+
+## 8. 陈锁语义修订记录（2026-09-17，批一「写锁死亡自愈」）
+
+### 8.1 触发事故
+
+两客户各中一次同一缺陷：`.write_lock` 被**已终止进程**残留持有，此后全部写任务在 30 s
+超时后失败，采集全线停更——客户A 陈锁年龄 390,915 s（≈4.52 天），客户B 21,295 s（≈5.92 h）。
+两客户均为无人值守 7×24 部署。
+
+### 8.2 修订内容
+
+原语义「陈锁（>10 min 无心跳）仅告警不自动清除，人工确认」以**有人值守**为前提；该前提在
+客户部署形态下不成立，一次进程终止即被放大为**永久全量写入阻断**。修订为：
+
+1. **存活红线不变**：持有者进程存活 → 一律 fail-closed，**绝不回收**（避免双写者）；
+2. **明证死亡则自愈**：陈锁 + 持有者进程已不存在（同主机）→ 安全回收（reclaim 互斥 +
+   CAS 四字段比对 + 审计留痕 + WARNING 告警）；
+3. **判据以存活为准、心跳仅辅助**：`.heartbeat()` 全仓零生产调用（长任务持锁可远超 10 min），
+   故心跳年龄不得单独作为回收依据；
+4. **legacy payload**（历史格式，无 host/token）→ 「陈锁 + pid 不存在」即可回收，
+   审计标注 `predicate=legacy_weak`（两客户现场即此形态）；
+5. **回退**：`QS_WRITE_LOCK_SELFHEAL=0` 一行退回旧行为。
+
+### 8.3 影响面与验收
+
+- 无竞争行为逐位等价（签名/异常类型/退出码/重入语义/`read_holder()` 仅增键）；
+- 新增唯一语义：持锁期间锁文件被外部删除/替换 → `WriteLockLost`（fail-closed，可观测失败）；
+- 硬门验收：AC-replay（两客户真实 payload 回放）+ AC5（八进程并发回收恰一获锁）；
+- 完整设计/验收见 `docs/write-lock-selfheal-design.md`。

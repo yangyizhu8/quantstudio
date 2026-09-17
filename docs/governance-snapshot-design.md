@@ -21,7 +21,10 @@
 - **写路径覆盖准入（DSH 复审 S3-B1 强化）**：create 启动时读取 `data/snapshots/write_path_registry.json`（写路径覆盖清单，见 §1.1），**任一 MAIN/AUX 写路径未标记 `locked: true` 即拒绝创建**（退出码 5）——不做"manifest 记录后继续"的弱处置；清单随新增写脚本同步更新，清单本身纳入登记表管理；
 - 清单 v2（DSH 三审补全）：`data/snapshots/write_path_registry.json`，**MAIN 写路径 10 项 + AUX 写路径 5 项**（glob 已全部展开为具体脚本），另列排除项 5 类（写入对象非快照源：exporter 只写导出副本且源库 read_only 实测 L77、daemon 状态库/审计库、export 缓存清理、治理 json——qfq_invariant 黄金行 json 已从 sqlite 分类移出单列 GOV 类）；当前 MAIN/AUX 15 项全部 locked=false → create 处于拒绝状态（正确），**禁止手工放行**；
 - 注意：文件锁是协作锁的本质不可消除，故 B1 的最终保证 = 锁协议 + 覆盖清单准入 + B2 三重 hash 的事后检测（锁外写入必然导致 source_hash_pre 不等 source_hash_post，快照失败），三层防御；
-- 心跳超时（>10 分钟无更新）视为陈锁 → create 仍拒绝但报告陈锁告警（不自动清除，人工确认）。
+- 心跳超时（>10 分钟无更新）视为陈锁 → create 仍拒绝；**陈锁语义 2026-09-17 修订（批一）**：
+  持有者进程**存活** → 仍 fail-closed 拒绝且不回收（红线）；持有者**进程已不存在**（同主机）
+  → 由写锁模块安全回收后放行（reclaim 互斥 + CAS 四字段 + 审计 + WARNING）；详见
+  `docs/write-lock-selfheal-design.md`，回退开关 `QS_WRITE_LOCK_SELFHEAL=0`。
 
 ## 2. 冻结窗口与竞态防护（S3-B2）
 

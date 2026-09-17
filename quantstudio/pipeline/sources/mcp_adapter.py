@@ -328,6 +328,10 @@ class MCPAdapter(BaseSourceAdapter):
 
     def __init__(self, config: Dict):
         super().__init__(config)
+        # D1 修复（2026-09-17，批一）：宽文本 passthrough 路由判据读 self._config
+        # （fetch_table 内 export_wide_text 覆写），而此前 __init__ 从未赋值 _config
+        # → 7 个宽文本表 100% 抛 AttributeError。此处保留完整配置副本，默认值不变。
+        self._config = dict(config or {})
         # 与 MCPClient 对齐：统一使用 endpoint（兼容旧 base_url 配置键，profile 不用改）
         self.endpoint = config.get("endpoint") or config.get("base_url", "https://124.223.159.234/mcp")
         self.tls_verify = bool(config.get("tls_verify", False))
