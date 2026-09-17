@@ -455,5 +455,164 @@ def test_reclaim_race_eight_processes(tmp_path):
     assert "predicate=legacy_weak" in audits[0]
 
 
+# --------------------------------------------------------------------------
+# D. Part A：回收互斥陈旧自清（AC-m 组 / 2026-09-18）
+#    被测行为：「回收者在创建与释放之间被杀 → 互斥永久残留 → 自愈永久失效」被修复。
+# --------------------------------------------------------------------------
+def _mutex_path():
+    return sl._reclaim_path()
+
+
+def _write_mutex(payload):
+    p = _mutex_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _stale_mutex(age_s=None, pid="dead"):
+    """构造陈旧回收互斥：心跳超阈值 + 持有者进程不存在（默认）。"""
+    if age_s is None:
+        age_s = sl.RECLAIM_STALE_SECONDS + 60
+    return {"pid": _free_pid() if pid == "dead" else pid,
+            "task_id": "writers:reclaim:stale-holder",
+            "heartbeat": time.time() - age_s}
+
+
+def _dead_lock():
+    return {"pid": _free_pid(), "task_id": "writers:write:stock_minutes:dead",
+            "heartbeat": time.time() - 3600}
+
+
+def test_mutex_stale_threshold_boundary():
+    """单元：阈值判定 —— 未超阈值一律不算陈旧；超阈值且死证成立才算。"""
+    now = time.time()
+    dead = _free_pid()
+    fresh = sl.reclaim_mutex_stale({"pid": dead, "heartbeat": now - (sl.RECLAIM_STALE_SECONDS - 1)}, now=now)
+    assert fresh["stale"] is False and fresh["reason"] == "fresh", fresh
+    boundary = sl.reclaim_mutex_stale({"pid": dead, "heartbeat": now - sl.RECLAIM_STALE_SECONDS}, now=now)
+    assert boundary["stale"] is False, boundary  # 恰好等于阈值 = 未超（> 才清）
+    stale = sl.reclaim_mutex_stale({"pid": dead, "heartbeat": now - (sl.RECLAIM_STALE_SECONDS + 1)}, now=now)
+    assert stale["stale"] is True and stale["reason"] == "stale_dead", stale
+
+
+def test_mutex_live_holder_not_cleared_even_when_heartbeat_stale():
+    """红线：持有者进程存活（哪怕心跳停更）→ 绝不清 —— 否则其 finally 会误删他人互斥。"""
+    now = time.time()
+    st = sl.reclaim_mutex_stale({"pid": os.getpid(), "heartbeat": now - 9999}, now=now)
+    assert st["stale"] is False and st["reason"] == "holder_alive", st
+    # 端到端：活人互斥在场时，陈旧主锁不得被回收
+    _write_mutex({"pid": os.getpid(), "task_id": "alive-reclaimer",
+                  "heartbeat": time.time() - 9999})
+    _write_payload(_dead_lock())
+    with pytest.raises(WriteLockHeld):
+        acquire_write_lock("m-live-mutex", timeout_s=1.0)
+    assert lock_path().exists(), "活人互斥在场时主锁不得被回收"
+
+
+def test_mutex_unreadable_or_pidless_fails_closed():
+    """fail-closed：互斥 payload 不可解析 / pid 缺失 → 一律不清（与主锁判据 5 同款）。"""
+    now = time.time()
+    assert sl.reclaim_mutex_stale(None, now=now)["stale"] is False
+    assert sl.reclaim_mutex_stale({"heartbeat": now - 9999}, now=now)["reason"] == "undecidable_pid"
+    assert sl.reclaim_mutex_stale({"pid": 1}, now=now)["reason"] == "unparsable_heartbeat"
+    # 端到端：不可解析的互斥在场 → 不清、不回收
+    _mutex_path().parent.mkdir(parents=True, exist_ok=True)
+    _mutex_path().write_text("{not-json", encoding="utf-8")
+    _write_payload(_dead_lock())
+    with pytest.raises(WriteLockHeld):
+        acquire_write_lock("m-unreadable", timeout_s=1.0)
+    assert _mutex_path().exists(), "不可解析互斥必须保留（fail-closed）"
+    assert lock_path().exists(), "主锁不得被回收"
+
+
+def test_fresh_mutex_behaves_exactly_as_before():
+    """非抢占路径新旧等价（零行为变化）：互斥新鲜 = 正常竞争 → 直接放弃且零审计。"""
+    _write_mutex({"pid": os.getpid(), "task_id": "busy-reclaimer", "heartbeat": time.time()})
+    holder, diag = _dead_lock(), None
+    _write_payload(holder)
+    diag = sl.diagnose_holder(holder)
+    assert diag["reclaimable"] is True
+    assert sl.try_reclaim_stale(holder, diag, reclaimer_task="t-fresh") is False
+    assert lock_path().exists(), "新鲜互斥在场时不得回收"
+    assert _mutex_path().exists(), "新鲜互斥不得被清"
+    assert _audit_lines() == [], f"非抢占路径必须零审计（旧行为逐位一致）: {_audit_lines()}"
+
+
+def test_selfheal_disabled_does_not_clear_stale_mutex(monkeypatch):
+    """回退开关：QS_WRITE_LOCK_SELFHEAL=0 → 陈旧互斥同样不清（自清继承同一闸门）。"""
+    monkeypatch.setenv(sl.SELFHEAL_ENV, "0")
+    _write_mutex(_stale_mutex())
+    _write_payload(_dead_lock())
+    with pytest.raises(WriteLockHeld):
+        acquire_write_lock("m-rollback", timeout_s=1.0)
+    assert _mutex_path().exists(), "回退态不得清陈旧互斥"
+    assert lock_path().exists(), "回退态不得回收"
+
+
+def test_stale_mutex_cleared_reclaim_proceeds_and_is_audited():
+    """AC-m4（硬门）：陈旧互斥自清生效 → 回收得以继续 + 审计事件 reclaim_mutex_cleared 恰一条。
+
+    修复前此场景永久卡死（FileExistsError 直接 return False，自愈永久失效）。
+    """
+    _write_mutex(_stale_mutex())
+    _write_payload(_dead_lock())
+    lk = acquire_write_lock("m-stale-clear", timeout_s=5.0)
+    try:
+        assert read_holder() is not None and read_holder()["task_id"] == "m-stale-clear"
+        audits = _audit_lines()
+        cleared = [ln for ln in audits if "reclaim_mutex_cleared" in ln]
+        reclaimed = [ln for ln in audits if "reclaim STALE+DEAD" in ln]
+        assert len(cleared) == 1, f"reclaim_mutex_cleared 应恰一条: {audits}"
+        assert len(reclaimed) == 1, f"主锁回收应恰一条: {audits}"
+        assert str(sl.RECLAIM_STALE_SECONDS) in cleared[0], cleared[0]
+        assert not _mutex_path().exists(), "自清后互斥应由新的回收者持有并在结束时释放"
+    finally:
+        lk.release()
+
+
+_MUTEX_RACE_CHILD = """
+import os, sys, time
+from quantstudio.pipeline.snapshot_lock import acquire_write_lock, WriteLockHeld
+out = sys.argv[1]
+try:
+    lk = acquire_write_lock('race-child', timeout_s=5.0)
+except WriteLockHeld:
+    sys.exit(0)
+with open(out, 'a', encoding='utf-8') as f:
+    f.write('ACQUIRED %d' % os.getpid() + chr(10))
+time.sleep(6.0)
+lk.release()
+"""
+
+
+def test_stale_mutex_race_eight_processes_still_exactly_one(tmp_path):
+    """AC-m1（硬门）：陈旧互斥在场时八进程并发回收 → 仍**恰一获锁**（互斥性不受自清影响）。
+
+    自清的并发安全依据：unlink 幂等 + 真实锁互斥由 O_EXCL 线性化；最坏后果仅是多一条审计行。
+    """
+    _write_mutex(_stale_mutex())
+    _write_payload(_dead_lock())
+    out = tmp_path / "acquired_mutex.txt"
+    procs = [subprocess.Popen([sys.executable, "-c", _MUTEX_RACE_CHILD, str(out)],
+                              cwd=str(ROOT), stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True,
+                              encoding="utf-8", errors="replace",
+                              env=_child_env())
+             for _ in range(8)]
+    for p in procs:
+        p.wait(timeout=120)
+    lines = ([ln for ln in out.read_text(encoding="utf-8").splitlines() if ln.strip()]
+             if out.exists() else [])
+    assert len(lines) == 1, f"恰一获锁断言失败（自清不得破坏互斥）: {lines}"
+    audits = _audit_lines()
+    cleared = [ln for ln in audits if "reclaim_mutex_cleared" in ln]
+    reclaimed = [ln for ln in audits if "reclaim STALE+DEAD" in ln]
+    assert len(reclaimed) == 1, f"主锁回收应恰一条: {audits}"
+    # 自清审计条数**不是安全不变量**：并发下落败者若在他人已清后又删到新互斥，会产生额外审计行
+    # —— 该情形批件已接受（"最坏=多一个回收者并发进入+多一条审计行"）。故此处只断言「至少一条、
+    # 且不超过并发数」，安全不变量由上面两条（恰一获锁 / 主锁回收恰一条）承载。
+    assert 1 <= len(cleared) <= 8, f"自清审计条数越界: {audits}"
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))

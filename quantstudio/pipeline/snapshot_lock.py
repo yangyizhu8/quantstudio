@@ -56,6 +56,9 @@ SELFHEAL_ENV = "QS_WRITE_LOCK_SELFHEAL"      # 默认 1=启用；0=退回旧「�
 AUDIT_LOG_NAME = "write_lock_reclaim.log"    # data/snapshots/ 下，单行文本审计
 AUDIT_LOG_ENV = "QS_WRITE_LOCK_AUDIT_LOG"    # 可选：审计落盘路径覆盖（测试/运维）
 CAS_FIELDS = ("pid", "heartbeat", "task_id", "token")
+# 回收互斥陈龄阈值（Part A 陈旧自清）：正常回收为毫秒级，>120 s 且持有者进程已不存在 = 残骸。
+# 只用于「回收互斥 .write_lock.reclaim」自身的残留判定，与主锁 STALE_SECONDS(600) 无关。
+RECLAIM_STALE_SECONDS = 120
 
 # 判定结论（diagnose_holder 的 verdict 取值）
 V_FREE = "free"                 # 无锁
@@ -404,6 +407,93 @@ def _audit_reclaim(holder: dict, diag: dict, reclaimer_task: str) -> None:
         logger.debug("[write-lock] 回收审计写盘失败（不影响回收）", exc_info=True)
 
 
+def _audit_mutex_cleared(mutex: dict, cleared_by_task: str, age) -> None:
+    """回收互斥陈旧自清审计（Part A）：单行文本，锚点 reclaim_mutex_cleared。
+
+    失败不影响自清（但记 debug）——与 _audit_reclaim 同款失败语义。
+    """
+    try:
+        ts = datetime.now().astimezone().isoformat()
+        line = (
+            f"{ts} reclaim_mutex_cleared "
+            f"mutex_path={_reclaim_path()} "
+            f"prev={{pid={mutex.get('pid')},task={mutex.get('task_id')},"
+            f"heartbeat_age={_fmt_age(age)}s}} "
+            f"cleared_by={{pid={os.getpid()},task={cleared_by_task}}} "
+            f"threshold_s={RECLAIM_STALE_SECONDS}"
+        )
+        with open(_audit_path(), "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        logger.debug("[write-lock] 回收互斥自清审计写盘失败（不影响自清）", exc_info=True)
+
+
+def reclaim_mutex_stale(payload: Optional[dict], now: Optional[float] = None) -> dict:
+    """判定「回收互斥」是否陈旧可清（**只读**，不写任何文件）。
+
+    返回 {stale, reason, age}。判据（两条同时成立才可清）：
+      1. 陈龄： heartbeat_age > RECLAIM_STALE_SECONDS(120)；
+      2. 死证： 持有者 pid 实测不存在（psutil）。
+
+    **fail-closed（任一不可判定一律不清）**：payload 不可解析 / pid 缺失 / psutil 不可用
+    → stale=False（与主锁 §3 判据 5「pid 缺失不可解析 → 不回收」同款）。
+    持有者存活（哪怕心跳停更）→ 不清：不清活人互斥，否则其 finally 会误删他人的互斥。
+    """
+    now = time.time() if now is None else now
+    if not isinstance(payload, dict):
+        return {"stale": False, "reason": "unreadable_payload", "age": None}
+    try:
+        age = now - float(payload.get("heartbeat"))
+    except (TypeError, ValueError):
+        return {"stale": False, "reason": "unparsable_heartbeat", "age": None}
+    if age <= RECLAIM_STALE_SECONDS:
+        return {"stale": False, "reason": "fresh", "age": age}
+    alive = _pid_alive(payload.get("pid"))
+    if alive is None:
+        return {"stale": False, "reason": "undecidable_pid", "age": age}
+    if alive:
+        return {"stale": False, "reason": "holder_alive", "age": age}
+    return {"stale": True, "reason": "stale_dead", "age": age}
+
+
+def _clear_stale_reclaim_mutex(cleared_by_task: str) -> bool:
+    """陈旧回收互斥自清（Part A）。返回 True = 本次已清除，可再试取互斥。
+
+    安全性（与设计 §4.3 一致）：unlink 幂等；**真实锁的互斥仍由 O_EXCL 线性化**，
+    故最坏后果是「多一个回收者并发进入 + 多一条审计行」，不构成双写。
+    """
+    rp = _reclaim_path()
+    try:
+        payload = json.loads(rp.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return False  # 不可解析 → fail-closed，不清
+    st = reclaim_mutex_stale(payload)
+    if not st.get("stale"):
+        return False
+    # 二次读取：确认「仍是刚才判定为陈旧的同一份互斥」。
+    # 收窄 TOCTOU —— 在读取与删除之间，他人可能已清掉旧互斥并写入一份**新鲜**互斥；
+    # 若不做此比对，延迟的清者会误删他人新鲜互斥（并发下审计条数亦无界）。
+    try:
+        if json.loads(rp.read_text(encoding="utf-8")) != payload:
+            return False
+    except (ValueError, OSError):
+        return False  # 已消失或已变形：交给正常竞争路径，本进程不再动手
+    try:
+        rp.unlink()          # 有意不用 missing_ok：以「本进程是否真的删掉了该文件」决定是否记审计
+    except FileNotFoundError:
+        return True          # 极端窗口内被他人删掉：互斥已空，可再试抢一次（不记审计）
+    except OSError:
+        return False
+    _audit_mutex_cleared(payload, cleared_by_task, st.get("age"))
+    logger.warning(
+        "[write-lock] 回收互斥陈旧自清（原回收者进程已不存在）: mutex_path=%s "
+        "prev_pid=%s prev_task=%s heartbeat_age=%ss 阈值=%ss 清除者 pid=%s task=%s",
+        rp, payload.get("pid"), payload.get("task_id"),
+        _fmt_age(st.get("age")), RECLAIM_STALE_SECONDS,
+        os.getpid(), cleared_by_task)
+    return True
+
+
 def try_reclaim_stale(holder: dict, diag: dict,
                       reclaimer_task: str = "unnamed") -> bool:
     """安全回收「陈锁 + 持有者进程已不存在」的残留锁。
@@ -417,7 +507,14 @@ def try_reclaim_stale(holder: dict, diag: dict,
     try:
         fd = os.open(str(rp), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
-        return False  # 已有回收者在进行：交由正常等待路径（下轮再看）
+        # Part A：互斥可能是「回收者在创建与释放之间被杀」留下的残骸 —— 陈旧则自清后再试。
+        # 不清活人互斥；不可判定（psutil 不可用 / payload 不可解析）一律不清（fail-closed）。
+        if not _clear_stale_reclaim_mutex(reclaimer_task):
+            return False  # 正常竞争或不可判定：交由正常等待路径（下轮再看）
+        try:
+            fd = os.open(str(rp), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except OSError:
+            return False  # 抢输：别人已清并取走 —— 退回等待，绝不触碰他人互斥
     except OSError:
         return False
     try:

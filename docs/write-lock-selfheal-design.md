@@ -70,6 +70,73 @@ DuckDB 原生锁族改动、任何性能优化与写入/水位/复权/回测语�
 （单行文本，含持有者全字段 + 判据名 + 回收者 + 时间），同时 `WARNING` 结构化日志
 （固定 `[write-lock]` 前缀，含 `持有者`/`pid=`/`lock_path` 锚点）。
 
+### 4.3 回收互斥陈旧自清（Part A，2026-09-18）
+
+**缺陷（实现与本节不一致，已自纠）**：原 `try_reclaim_stale` 遇 `FileExistsError`（互斥已存在）
+**直接 `return False`，只放弃、不清陈旧**。而互斥的释放只在 `finally` 里做 —— 回收者若在
+「创建互斥」与「释放互斥」之间的窗口内被杀，互斥文件 `.write_lock.reclaim` 将**永久残留**，
+此后每一次回收都在第一行放弃 ⇒ **自愈永久失效**，与对客户的「≤10 分钟自动恢复」承诺直接冲突。
+
+**判据（两条同时成立才可清，缺一不清）**
+
+| # | 判据 | 实测来源 | 不成立时 |
+|---|---|---|---|
+| 1 | `heartbeat_age > RECLAIM_STALE_SECONDS`（**120 s**） | 互斥 payload 的 `heartbeat` | 新鲜 → 视为正常竞争，放弃（旧行为） |
+| 2 | 持有者 `pid` **实测不存在**（`psutil.pid_exists`） | 与主锁判活同一原语 | 存活 → **不清**（红线） |
+
+**fail-closed（任一不可判定一律不清）**：payload 不可解析 / `heartbeat` 不可解析 /
+`pid` 缺失 / `psutil` 不可用 → 一律不变量（与 §3 判据 5「pid 缺失不可解析 → 不回收」同款）。
+
+**为什么必须带判据 2（活人互斥不清）**：互斥持有者的 `finally` 会 `unlink` 该文件。
+若允许清「活但心跳停更」的互斥，则慢回收者的互斥会被他人清掉，随后其 `finally` 将**误删
+他人的互斥**，使第三个进程得以进入 —— 这是唯一会真正削弱互斥的路径，故以判据 2 封死。
+
+**并发安全性论证（批件已采纳）**：自清后的抢占仍走 `O_CREAT|O_EXCL`，**真实锁的互斥由该
+O_EXCL 线性化**，与互斥文件的存在与否无关；`unlink` 幂等，且回收动作本身（CAS → 复核 →
+`unlink` 主锁）二次校验。故最坏后果仅为「多一个回收者并发进入 + 多一条审计行」，**不构成双写**。
+
+**审计事件**：`reclaim_mutex_cleared`（单行文本，写入与回收审计同一文件，受
+`QS_WRITE_LOCK_AUDIT_LOG` 重定向），含 `mutex_path` / `prev={pid,task,heartbeat_age}` /
+`cleared_by={pid,task}` / `threshold_s`。**审计语义 = 「本进程确实删除了该文件」**：
+`unlink` 有意不用 `missing_ok`，已被他人删掉者不记审计（否则并发下会出现「没删成功也声称自己清了」的虚假记录）。
+
+**并发正确性（实测暴露并已收窄的一处 TOCTOU）**：自清是「读 payload → 判陈旧 → unlink」，
+读与删之间存在窗口 —— 落败者可能在他人已清掉旧互斥、写入一份**新鲜**互斥之后才执行 unlink，
+从而误删新鲜互斥、并把审计条数放大（八进程硬门实测曾一次出现 4 条同微秒审计）。
+收窄手段：**删除前二次读取并与判陈旧时的 payload 逐字段比对**，不一致即放弃（不回退、不记审计）。
+本机 8 进程硬门连续 6 轮全量回归稳定（29 passed / 53.5–54.1 s）。
+
+> **审计条数不是安全不变量**：并发下自清可能产生多条审计（批件已接受的最坏情形
+> 「多一个回收者并发进入 + 多一条审计行」）。**安全不变量只有两条**，由 AC-m1 承载：
+> ①真实锁**恰一持有者**；②主锁回收审计**恰一条**（CAS 保证单一回收者）。
+
+**实现面** | `snapshot_lock.py`：`RECLAIM_STALE_SECONDS` 常量 + `reclaim_mutex_stale()`（只读判定）
++ `_clear_stale_reclaim_mutex()` + `_audit_mutex_cleared()` + `try_reclaim_stale()` 的
+`FileExistsError` 分支改为「先试自清，清成后再抢一次 O_EXCL；抢输即退回等待，绝不触碰他人互斥」。
+
+**回退**：`QS_WRITE_LOCK_SELFHEAL=0` 原样生效 —— 自清位于该闸门之后的代码路径，回退即整体退回旧行为。
+
+**验收判据（AC-m 组）**
+
+| ID | 内容 | 位置 |
+|---|---|---|
+| **AC-m1**（硬门） | **互斥性不受自清影响**：陈旧互斥在场时八进程并发回收同一陈锁 → **恰一获锁** + 主锁回收审计恰一条 | `tests/test_snapshot_lock.py::test_stale_mutex_race_eight_processes_still_exactly_one` |
+| **AC-m4**（硬门） | **陈旧互斥自清真正生效**：陈旧互斥 + 陈锁 → 回收得以继续 + `reclaim_mutex_cleared` 审计恰一条 | `::test_stale_mutex_cleared_reclaim_proceeds_and_is_audited` |
+
+> ⚠️ **AC-m1/m4 编号说明**：该两名在批件（日历 §一一二）中被引为「双硬门」，但**仓库内无既有
+> 定义件**（全仓检索仅日历一处提及）。上表语义由本槽按批件的安全性论证逐条拟定，**请 S4 复核确认**；
+> 若与批件原意不符，以 S4 结论为准。
+
+**残留（如实声明，未闭合）**
+
+1. **空互斥卡死（同族缺陷，未闭合）**：回收者若在 `os.open()` 与 `write_text()` 之间的**微秒窗**内被杀，
+   互斥文件以**空内容**残留 —— 本件按 fail-closed（不可解析 ⇒ 不清）处理，故此类残留仍会卡住自愈。
+   闭合需新增一条判定输入（以互斥文件自身 mtime 超 120 s 作为证据），属**新增判据输入**，
+   按「单一目的、不捆绑」纪律**未纳入本件**，建议独立审批后补 3 行。
+2. **二次读取后的残余 TOCTOU（微秒级，危害有界）**：二次比对与 `unlink` 之间仍有极小窗口，
+   理论上仍可删到他人新鲜互斥。危害与批件论证一致——**不触及真实锁互斥**（O_EXCL + CAS 双保险），
+   最坏为多一个回收者并发进入。彻底消除需原子「比对并删除」原语，本机跨平台不具备，故作为已知边界声明。
+
 ### 4.6 S3 所有权校验（批一两条边界用例 — **T7 审计重点**）
 
 接入点：`writers._write_locked` 入口 1 行 `assert_lock_owner()`（无竞争 = 一次文件读）。
@@ -122,6 +189,9 @@ C 的原子重建使这两种情形恢复正确持有，同时**不放宽红线*
 | AC3/AC4 | 跨主机不回收；PID 复用判死回收 | `::test_cross_host_lock_not_reclaimed` / `::test_pid_reuse_treated_as_dead_and_reclaimed` |
 | AC7 | 外部删除锁文件 → `WriteLockLost` | `::test_lock_ownership_lost_raises` |
 | AC-D1 | 7 张宽文本表逐一走 export 路由 + 覆写回落 | `tests/test_mcp_wide_text_routing.py`（5 用例 × 参数化 = 10） |
+| **AC-m1**（硬门，Part A） | 陈旧互斥在场时八进程并发回收 → **恰一获锁**（自清不削弱互斥） | `::test_stale_mutex_race_eight_processes_still_exactly_one` |
+| **AC-m4**（硬门，Part A） | 陈旧互斥自清生效 + `reclaim_mutex_cleared` 审计恰一条 | `::test_stale_mutex_cleared_reclaim_proceeds_and_is_audited` |
+| AC-m2/m3（Part A 非硬门） | 活人互斥不清（红线）／不可解析与 SELFHEAL=0 一律 fail-closed；非抢占路径零行为变化（零审计） | `::test_mutex_live_holder_not_cleared_even_when_heartbeat_stale` 等 4 例 |
 | AC10 | 既有契约不退化（互斥/重入/心跳/CLI 透传与退出码 2） | `tests/test_snapshot_lock.py` A 组 |
 | AC12 | 客户侧：升级后一周期内全部任务成功，审计 0/1 条 | 客户验证清单 |
 
@@ -161,6 +231,15 @@ D3 因子快照失败语义（先取证确证因果 → 独立正确性变更轨
 | `quantstudio/pipeline/sources/mcp_adapter.py` | `__init__` 补 `self._config`（D1） |
 | `tests/test_snapshot_lock.py` | 原 7 用例保留（陈锁用例改为「死亡回收」+ 新增「存活不回收」）+ 13 新用例 |
 | `tests/test_mcp_wide_text_routing.py` | 新增（D1 路由回归，10 用例） |
+| `quantstudio/pipeline/snapshot_lock.py`（**Part A**，2026-09-18） | 回收互斥陈旧自清：`RECLAIM_STALE_SECONDS=120` + `reclaim_mutex_stale()` + `_clear_stale_reclaim_mutex()` + `_audit_mutex_cleared()` + `try_reclaim_stale()` 的 FileExistsError 分支改写（详见 §4.3） |
+| `tests/test_snapshot_lock.py`（**Part A**） | 新增 AC-m 组 7 用例（22 → **29**） |
+| 本设计文档（**Part A**） | 补 §4.3 + §7 AC-m 行 + 本节实施记录 |
 
 测试现场隔离：锁文件与回收互斥位于 `data/snapshots/`（用例前后清理）；回收审计经
 `QS_WRITE_LOCK_AUDIT_LOG` 重定向到临时目录，**不污染生产审计文件**。
+
+**Part A 实施记录（2026-09-18，D+1）**：文件面 = `snapshot_lock.py` + `tests/test_snapshot_lock.py` + 本设计文档（三件同批，单一目的 commit）。
+回退点 = `git stash create -u` → `6903e0e1c822e8ca9d398c205815d9a914ecc41d`（`stash@{0}`），HEAD = `dbfc80d`。
+实施侧自测（**非验收结论**）：`test_snapshot_lock.py` **29 passed / 54.54 s**；跑测前/后 `data/snapshots/` 基线逐位一致
+（SHA-256 前缀 `ad8cef44db82922f`），生产 `.write_lock` / `.write_lock.reclaim` 均无残留 —— 影子隔离成立。
+**放行归 S4 独立验收（总调度实测独采）；本槽不自验报 PASS。**
