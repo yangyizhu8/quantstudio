@@ -1098,6 +1098,7 @@ class ResidentCollector:
         _sp_t0 = _tprobe.perf_counter()
         _sp = {"align": 0.0, "validate": 0.0, "write": 0.0}
         _sp_shards = 0
+        self._sp_probe = _sp          # 供 _stamp_and_write 累计 write 桶三分（下一刀）
         # QFQ 快照优化：流式路径入口预查一次全局快照（循环内复用，避免每分片
         # 重复查 SQLite——实测每分片 8s × 200 分片 = 28min 纯开销）
         _qfq_snap = self._qfq_snapshot_kwargs(table, batch_id)
@@ -1204,7 +1205,11 @@ class ResidentCollector:
                 f"[{batch_id}] [阶段时延] table={table} shards={_sp_shards} rows={rows_written} "
                 f"total={_sp_total:.1f}s | other={_sp_other:.1f}s align={_sp['align']:.1f}s "
                 f"validate={_sp['validate']:.1f}s write={_sp['write']:.1f}s | "
-                f"write_share={100.0 * _sp['write'] / _sp_total:.1f}%")
+                f"write_share={100.0 * _sp['write'] / _sp_total:.1f}% | "
+                f"write_split: copy={_sp.get('copy', 0.0):.1f}s "
+                f"invariant={_sp.get('invariant', 0.0):.1f}s "
+                f"sqlwrite={_sp.get('sqlwrite', 0.0):.1f}s")
+            self._sp_probe = None
             self.batch_audit.record(batch_id, name, source, table, freq,
                                     rows_raw, rows_aligned, rows_passed, rows_rejected,
                                     rows_written, "success", None, started_at,
@@ -2878,9 +2883,17 @@ class ResidentCollector:
         df 做（skip_unchanged 过滤后 df 才与实际写入行一致）。
         """
         task = task or {}
+        # A1a 下一刀（2026-09-17）：仅在流式打点探针在场时累计三段耗时（零行为变更；
+        # 探针不在场时仅为两次 getattr 判断）。用于把 "write" 桶拆成 copy / invariant / sqlwrite。
+        _probe = getattr(self, "_sp_probe", None)
+        import time as _tsp
+        _t_seg = _tsp.perf_counter() if _probe is not None else None
         df = res.passed_df
         if df is not None and len(df) > 0:
             df = df.copy()
+        if _probe is not None:
+            _probe["copy"] = _probe.get("copy", 0.0) + (_tsp.perf_counter() - _t_seg)
+            _t_seg = _tsp.perf_counter()
         if df is not None and len(df) > 0 and "data_source" in self.writer._table_columns(table):
             df["data_source"] = task.get("data_source_label", source)
         if (df is not None and len(df) > 0
@@ -2891,7 +2904,12 @@ class ResidentCollector:
         # —— 防线 1：写入前自洽自检（只读观测；bad 落审计+告警，不阻断本次写入）——
         self._qfq_invariant_after_align(df, table, batch_id, source,
                                         adj_latest_map=adj_latest_map)
+        if _probe is not None:
+            _probe["invariant"] = _probe.get("invariant", 0.0) + (_tsp.perf_counter() - _t_seg)
+            _t_seg = _tsp.perf_counter()
         result = self.writer.write(df, table, batch_id)
+        if _probe is not None:
+            _probe["sqlwrite"] = _probe.get("sqlwrite", 0.0) + (_tsp.perf_counter() - _t_seg)
         if table == "index_constituents" and df is not None and len(df) > 0:
             # F3 修订：成分批次写入后立即打 snapshot_meta 完整性契约
             # （expected_count/status 在打点确定，不依赖未来数据）。
