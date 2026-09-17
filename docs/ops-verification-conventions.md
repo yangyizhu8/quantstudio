@@ -73,6 +73,9 @@ sha256(norm)   # 用于跨仓/跨形态比较
 ## C6 并发会话下的提交纪律（补充）
 
 - 一律 `git commit -m "..." -- <精确路径>`（路径限定），**禁** `git add -A`；
+- **若目标文件尚未被 git 跟踪（`??` 状态）**：`git commit -- <路径>` 会报
+  `pathspec ... did not match any file(s) known to git` → 须先 `git add <精确路径>` 完成跟踪，
+  再做路径限定提交（2026-09-18 实例：`fc97edc` 两个新文档提交）；
 - 提交后核对 `git show --stat HEAD` **恰含预期文件**；
 - 推送后核对**两远程 READ（`git ls-remote`）与本地 HEAD 逐位一致**；
 - 若提交前发现 HEAD 已被其他会话推进：不回退、不覆盖，只提交自己的路径（本仓 2026-09-17 实例：
