@@ -68,6 +68,8 @@ sha256(norm)   # 用于跨仓/跨形态比较
 |---|---|---|---|---|
 | 2026-09-17 | `7192017` | 仅 `docs/customer-user-guide.md`（+10/−1） | **豁免同步门** | 未触及任何共享层文件；纯客户文档修正 |
 | 2026-09-17 | docs-only 小提交（本 ops 规范 + 客户通知草稿，2 文件） | 仅 `docs/ops-verification-conventions.md`、`docs/handoff/customer-notice-lock-selfheal-20260917.md` | **豁免同步门** | 同上：未触及 `quantstudio/`、`config/`、`skills/`、`scripts/`、`tests/`、`main_gui.py` |
+| 2026-09-18 | `9edce70` | 仅 `docs/` 4 文件（三客户通知定稿 A/B/C-macOS + 客户指南判定表） | **豁免同步门** | 同上；纯客户交付文档 |
+| 2026-09-18 | 三客户统一简版通知（docs-only，本 ops 规范同步） | 仅 `docs/handoff/notice-unified-3customers-20260918.md`、`docs/ops-verification-conventions.md` | **豁免同步门** | 同上；纯客户交付文档 |
 | 2026-09-17 | `6b8fde1` | 共享层（`quantstudio/pipeline/*`、`tests/*`）+ 文档 | **需同步门** | trading 线已执行并登记：`bf3e787` merge → `853817f docs(sync)`（全绿含三新测试） |
 
 ## C6 并发会话下的提交纪律（补充）
