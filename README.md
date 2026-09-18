@@ -524,6 +524,39 @@ backlog**：小市值与双均线真实策略 `get_history` 命中均为 0；`Pt
 `_query_cache` 层；synthetic 86× 不构成生产收益证据；4096 条目上限是条目数而非字节内存上限；
 后续实施须满足 byte-bounded LRU + 真实生产命中证据。
 
+## 框架层变更审阅记录（perf/daily-snapshot-cache-key，2026-09-18）
+
+`quantstudio/backtest/providers/` 的内部语义等价性能**回归修复**（P-D14 D3 引入）：
+
+- **缺陷**（2026-08-27 commit `bb602f3` 引入）：`preload_daily_snapshots` 用
+  `time // 86_400_000 * 86_400_000`（**UTC 日界**截断，结果 mod 恒为 0）生成缓存键，而
+  `query_daily_snapshot` 的查询键来自 `_start_ms`（**CST 日界**，mod 恒为 57_600_000）——
+  两个键空间**交集为空**，预取结果 **100% 未被消费**，每个交易日退化为一次对
+  `stock_daily`/`etf_daily` 的全市场窗口扫描。该提交之前的实现为 `groupby("time")`
+  原值键（= 查询键，命中有效），故本次为**性能回归**而非新需求。
+- **修复**：日界语义收敛到唯一真相源 `quantstudio/backtest/providers/time_axis.py`
+  （`CST_OFFSET_MS` / `start_ms` / `end_ms` / `day_start_ms`），预取键与查询键由同一函数派生；
+  `duckdb_provider._start_ms/_end_ms` 改为 re-export（实现与签名逐字符不变、全部既有引用点零改动，
+  `preload` 中原有的 `str(start_date)[:10]` 归一留在原调用点不挪不删）。
+- **防御**：`query_daily_snapshot` 落缓存前增加**纯防御**（非 CST 日界键不写入）——读键与写键
+  仍同为 `date_ms`、逻辑零改动；防的是未来出现非日界 `date_ms` 时，其错位窗口
+  `[date_ms, date_ms+86_399_999]` 的结果污染真实当日键（午夜查询静默命中错数据）。
+  返回值与异常行为均不变，判据走 `time_axis` 真相源、不硬编码日界常量（避免第二真相源）。
+- **实测**：预取区间内逐交易日缓存命中率 **0% → 100%**（只读探针 + 断网取证）。
+- **防回归**：`tests/test_daily_snapshot_cache_key.py` T-1~T-5 —— 日界同源恒等 / 预取后
+  **真命中**（断网取证）/ 缓存命中与 DB 兜底逐值等价 / 08:00 组归并不回归 / 防御分支自身覆盖。
+  P-D14 的 T6 只比较行数与 code 集合、**未断言缓存确实命中**，缺陷当年被 DB 兜底掩盖；
+  T-2 直接堵住该验收漏洞。
+
+**AGENTS.md 框架铁律适用**：本变更为纯性能优化。端到端黄金对照证明语义完全等价——同一策略
+同一区间（影子库，2026-01-05~2026-03-13）：修前等价态 `cache hit/miss = 0/45`、修后 `45/0`
+（**确证走的是不同路径**），而 `nav_sha` / `trades_sha` / 净值长度 / 交易数 / 结果属性集
+**逐项全等**（净值末值 101328.63776）。未改变任何公共/注入 API 的函数名、签名、默认值、
+返回类型、返回字段、列顺序、索引、dtype、空值行为、异常行为或兼容行为；未改变行情取数范围、
+复权口径、生命周期调用时机、撮合/费用/持仓/现金/涨跌停处理、策略信号或回测指标。
+
+完整验证见 `docs/performance_optimization.md`。
+
 > **PyQt single-task result contract (2026-08-03)**: manual task status is determined by that task's fetch?align?validate?write result. Full-database `QualityAudit` still runs afterward, but unrelated-table failures are displayed as `success (audit warning)` rather than falsely marking the data pull as failed. Real task failures remain failures.
 
 > **Full-database audit reference-table contract (2026-08-03)**: MCP `stock_basic` and the shared MCP/QFQ `trade_calendar` are writer-managed canonical tables. `trade_calendar` keeps its original `cal_date` single primary key and QFQ behavior; `exchange/pretrade_date` are compatibility metadata. Enum auditing uses native typed values, and QFQ pending SLA uses the current-state update time.

@@ -25,6 +25,7 @@ import numpy as np
 from pathlib import Path
 
 from .base import ReferenceDataCapabilityError
+from .time_axis import day_start_ms, is_day_start_ms
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -434,7 +435,15 @@ class DuckDBDataAccess:
         except Exception as e:
             logger.warning(f"[DuckDB] 日线快照查询失败 date_ms={date_ms}: {e}")
             return pd.DataFrame()
-        self._daily_snapshot_cache[date_ms] = df.copy()
+        # 防御（2026-09-18，F2 裁定）：仅当 date_ms 本身恰为 CST 日界时才落缓存。
+        # 读键（412）与写键（437）同为 date_ms、逻辑零改动，自洽性不变；本分支只
+        # 防一件事——若未来出现**非日界**的 date_ms，其查询窗口
+        # [date_ms, date_ms+86_399_999] 已偏离真实当日窗口，结果一旦写入会污染
+        # 真实当日键（午夜查询静默命中错位窗口数据）。
+        # 纯防御：返回值与异常行为均不变，仅跳过写入。判据走 time_axis 真相源，
+        # 不硬编码日界常量（防第二真相源）。
+        if is_day_start_ms(date_ms):
+            self._daily_snapshot_cache[date_ms] = df.copy()
         return df
 
     def _snapshot_sql(self, where_clause: str) -> str:
@@ -496,7 +505,13 @@ class DuckDBDataAccess:
                 # （T6 实证：预取 5584 行 vs 单日 7558 行，字节级一致契约被破坏）。
                 # 修复：08:00 组并入当日 00:00 键（与 query_daily_snapshot 窗口
                 # 语义对齐）；去重护栏同单日路径（同日同 code 取最大 time 行）。
-                df = df.assign(_day=df['time'] // 86_400_000 * 86_400_000)
+                # 修复（2026-09-18，P-D14 D3 回归）：原式 `time // 86_400_000 * 86_400_000`
+                # 是 **UTC** 日界截断（结果 mod 恒为 0），而查询侧 query_daily_snapshot
+                # 用的 date_ms 来自 _start_ms 的 **CST** 日界（mod 恒为 57_600_000）——
+                # 两个键空间交集为空，预取结果 100% 未被消费，每交易日退化为一次
+                # 全市场窗口扫描。改用 time_axis.day_start_ms（CST 日界唯一真相源），
+                # 预取键与查询键自然重合。
+                df = df.assign(_day=day_start_ms(df['time']))
                 df = (df.sort_values('time')
                         .groupby(['_day', 'code'], as_index=False, sort=False)
                         .tail(1))

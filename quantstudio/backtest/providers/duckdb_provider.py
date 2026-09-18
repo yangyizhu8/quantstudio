@@ -9,15 +9,13 @@ import pandas as pd
 from .base import (CalendarProvider, FundamentalDataProvider,
                    MarketDataProvider, ReferenceDataProvider)
 from .duckdb_data_access import DuckDBDataAccess
+# 时间轴真相源迁移（2026-09-18）：_start_ms/_end_ms 下沉到 time_axis.py，与
+# duckdb_data_access 的日界归一（day_start_ms）共用同一份 CST 日界定义，从结构上
+# 消除「预取缓存键 / 查询键」日界漂移（P-D14 D3 回归根因，见 time_axis 模块头）。
+# 此处保留原私有名作 re-export：全部既有引用点（含 tests）零改动；实现与签名与
+# 迁移前逐字符等价（含不带 [:10] 截断——截断留在原调用点 preload）。
+from .time_axis import end_ms as _end_ms, start_ms as _start_ms
 from ..libs.security_code_rules import exchange as security_exchange
-
-
-def _start_ms(date: str) -> int:
-    return int(pd.Timestamp(date, tz='Asia/Shanghai').timestamp() * 1000)
-
-
-def _end_ms(date: str) -> int:
-    return _start_ms(date) + 86_399_999
 
 
 def _fields(df: pd.DataFrame, fields: Optional[List[str]]) -> pd.DataFrame:
