@@ -182,3 +182,35 @@ L371-389 的异常分支里，**L385 `self._reset_connection()` 不在任何超�
 - 回退探针 `agent_workspace/mcp_retry_budget_probe.py`：**RESULT: PASS**（A1-A5 旧行为等价；B1-B4 有界；**B2 真锚点：_post_rpc 挂死时重握手 0.52 s 受界返回**）
 - 黄金对比 `agent_workspace/mcp_retry_golden_probe.py`（HEAD 树 vs 当前，zip 解包避 tar 的 CJK 缺陷）：**PASS（差异集 = 已批准差异集）**——10 项中 8 项逐位相同（成功路径/尝试次数/最终错误类型与文案/不可重试路径），仅 2 项已申报差异：①`_reset_connection` 新增 `timeout` 形参（预算=0 时值=None=旧语义）；②退避次数 3→2（裁定2）。
 - 回退点：`git stash` `eb731a570c884cb62e7d7c5d18739abd19ffb544`（实施前工作树快照）
+---
+
+## 十、六步④独采发现与修复（2026-09-18，追加提交，不改写已审历史）
+
+**独采结论**：有条件通过——九项通过，揪出一处**回退等价缺陷**。
+
+### 缺陷（独采发现，本槽已独立复现确认）
+
+`QS_MCP_RETRY_BUDGET_SEC=0`（回退模式）下 `_call_with_retry` 的 `wait_s=None` → `_run_bounded` 走**无界 join**；而真旧代码恒有 `th.join(call_timeout)`（每 attempt 硬界 90s）。
+⇒ 回退开关**丢掉了旧行为的第二道防线**：滴流挂死时无限阻塞，**比真旧行为更糟**，直接违反「0=逐行等效旧行为」——而回退开关恰是应急时唯一敢按的钮。
+
+**本槽独立复现（before/after 物理证据）**：同一复现脚本（budget=0 + 挂死 fn + call_timeout=0.5 + retry_max=1，外层 6s 超时判界）
+
+- `c8c1b75`（修复前）：**6.04s 内未退出**（被强制 Kill）⇒ 无界成立
+- 修复后：**0.50s 受界退出**，`MCPTransportError: MCP 重试 1 次仍失败: <lambda> 超过 0.5s 未返回`
+
+**探针未暴露的原因（独采指出，采信）**：回退探针 A 组桩 fn 从不挂死，只测次数/文案/reset/退避。已补 A6 组堵住该测试面。
+
+### 修复（三处，均在批准边界内）
+
+1. **1 行修复**：`wait_s = float(self.call_timeout) if rem is None else min(float(self.call_timeout), max(0.0, rem))` —— 回退模式恢复每次尝试的 `call_timeout` 硬界。
+2. **补 1 例测试**（独采指定）：`test_rollback_mode_keeps_per_attempt_hard_timeout` —— budget=0 + 挂死 fn + 小 call_timeout ⇒ 断言尝试满 retry_max、总耗时 ≤ call_timeout×retry_max+ε、文案逐字一致。
+3. **补文档**（独采附加条件）：类 docstring 增「预算粒度」声明——**每次调用点独立计算，非整任务/整日累计**；「最坏持锁上界 = 调用次数 × 预算」。
+
+**本槽自查追加一处（同类缺口，一并修）**：`_run_bounded` 的 TimeoutError 文案原为「…未返回（预算/超时收窄）」，与旧代码「…超过 {call_timeout}s 未返回」**不逐字一致** ⇒ 已改为 `f"{label} 超过 {float(timeout)}s 未返回"（收窄时数值自然不同）。
+
+### 修复后验证（实施侧，非验收）
+
+- 新件：**12 passed**（11 + 独采指定用例）
+- 邻域回归：13 文件 **207 passed** 零退化
+- 回退探针：**PASS**（A1-A6 + B1-B4 + B2 真锚点；A6.2 总耗时 0.94s 受界、A6.3 文案一致）
+- 黄金对比：**PASS（差异集 = 已批准差异集）**，基线由 HEAD 改为 `c8c1b75^`（= f81436f 真旧代码；独采指出 HEAD 已含新码致比对无信息量），并**新增 timeout 路径用例**——该路径修复后与真旧代码**逐位相同**（12 项 10 同 / 2 项已申报差异）

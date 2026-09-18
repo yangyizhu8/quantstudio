@@ -158,6 +158,10 @@ class MCPClient:
         backoff_sec: 退避序列（秒）。
         retry_budget_sec: 重试+重握手**总预算**（秒）；None=按 QS_MCP_RETRY_BUDGET_SEC →
             默认 900；0/负值=不限（逐行等效旧行为）。
+
+    **预算粒度（六步④ 附加条件，勿误读）**：预算是**每次 _call_with_retry / handshake_bounded
+    调用点独立计算**的，**不是**整任务、整批次或整日累计。单个 MCP 任务会发起多次调用，
+    每次各自持有一份预算；故「最坏持锁时长」的上界由「调用次数 × 预算」决定，而非等于预算本身。
         idempotency_namespace: 应用级 job 缓存命名空间（同一 dataset+page_size 复用 manifest_ref）。
     """
 
@@ -412,8 +416,9 @@ class MCPClient:
         else:
             th.join(max(0.0, float(timeout)))
             if th.is_alive():
-                raise TimeoutError(
-                    f"{label} 超过 {float(timeout):.1f}s 未返回（预算/超时收窄）")
+                # 文案与旧实现逐字一致（旧: f"{fn.__name__} 超过 {self.call_timeout}s 未返回"），
+                # 以保证回退模式下异常文案也逐行等效；仅在预算收窄时数值不同。
+                raise TimeoutError(f"{label} 超过 {float(timeout)}s 未返回")
         if err[0] is not None:
             raise err[0]
         return result[0]
@@ -442,7 +447,11 @@ class MCPClient:
                 rem = _remaining()
                 if rem is not None and rem <= 0:
                     self._raise_budget_exhausted(t0, budget, attempt, last_err)
-                wait_s = None if rem is None else min(float(self.call_timeout), max(0.0, rem))
+                # 六步④独采发现修复：rem is None（预算=0 回退模式）时**必须**回落到
+                # call_timeout 硬界 —— 旧代码恒有 th.join(call_timeout)，此处若传 None（无界 join）
+                # 会让回退模式比真旧行为更糟（滴流挂死=无限阻塞），违反「0=逐行等效旧行为」。
+                wait_s = (float(self.call_timeout) if rem is None
+                          else min(float(self.call_timeout), max(0.0, rem)))
                 return self._run_bounded(lambda: fn(*args, **kwargs), wait_s,
                                          label=getattr(fn, "__name__", "mcp_call"))
             except MCPRetryBudgetExhausted:

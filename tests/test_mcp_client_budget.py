@@ -164,6 +164,31 @@ def test_reset_handshake_is_bounded_when_post_rpc_hangs(monkeypatch):
     assert elapsed < 2.0, f"重握手应有界（0.5s），实际 {elapsed:.2f}s"
 
 
+def test_rollback_mode_keeps_per_attempt_hard_timeout():
+    """**六步④独采发现修复**：预算=0（回退）时仍须保有「每次尝试的 call_timeout 硬界」。
+
+    缺陷（独采揪出）：wait_s=None → _run_bounded 走无界 join ⇒ 回退模式遇 _post_rpc 滴流挂死
+    会**无限阻塞**，比真旧行为更糟（旧代码恒有 th.join(call_timeout)），违反「0=逐行等效旧行为」
+    —— 而回退开关正是应急时唯一敢按的钮。本用例堵住该测试面。
+    """
+    c = _client(call_timeout=0.3, retry_max=3, backoff_sec=(0, 0, 0), retry_budget_sec=0)
+    calls = []
+
+    def hangs():
+        calls.append(1)
+        time.sleep(5.0)
+
+    t0 = time.monotonic()
+    with pytest.raises(MCPTransportError) as ei:
+        c._call_with_retry(hangs)
+    elapsed = time.monotonic() - t0
+    assert len(calls) == 3, f"旧行为：尝试应满 retry_max，实际 {len(calls)}"
+    assert elapsed <= 0.3 * 3 + 1.0, \
+        f"总耗时须受 call_timeout×retry_max 约束（回退模式不得无界），实际 {elapsed:.2f}s"
+    assert "超过 0.3s 未返回" in str(ei.value), \
+        f"TimeoutError 文案应与旧实现逐字一致: {ei.value}"
+
+
 def test_handshake_bounded_uses_budget_and_zero_is_unbounded(monkeypatch):
     """首握手入口：预算>0 → 有界；预算=0 → 直接走实现体（不限 = 旧行为）。"""
     c_bounded = _client(retry_budget_sec=0.5)
