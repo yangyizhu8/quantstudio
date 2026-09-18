@@ -70,6 +70,7 @@ sha256(norm)   # 用于跨仓/跨形态比较
 | 2026-09-17 | docs-only 小提交（本 ops 规范 + 客户通知草稿，2 文件） | 仅 `docs/ops-verification-conventions.md`、`docs/handoff/customer-notice-lock-selfheal-20260917.md` | **豁免同步门** | 同上：未触及 `quantstudio/`、`config/`、`skills/`、`scripts/`、`tests/`、`main_gui.py` |
 | 2026-09-18 | `9edce70` | 仅 `docs/` 4 文件（三客户通知定稿 A/B/C-macOS + 客户指南判定表） | **豁免同步门** | 同上；纯客户交付文档 |
 | 2026-09-18 | 三客户统一简版通知（docs-only，本 ops 规范同步） | 仅 `docs/handoff/notice-unified-3customers-20260918.md`、`docs/ops-verification-conventions.md` | **豁免同步门** | 同上；纯客户交付文档 |
+| 2026-09-18 | 本案归档批（CASE-005 卷宗 + 通知口径桥接，docs-only） | 仅 `docs/case005-write-lock-stale-selfheal-incident.md`、`docs/ops-verification-conventions.md`、`docs/handoff/notice-*`（4 份） | **豁免同步门** | 同上；纯归档与客户文档（不触 `quantstudio/`、`tests/`） |
 | 2026-09-17 | `6b8fde1` | 共享层（`quantstudio/pipeline/*`、`tests/*`）+ 文档 | **需同步门** | trading 线已执行并登记：`bf3e787` merge → `853817f docs(sync)`（全绿含三新测试） |
 
 ## C6 并发会话下的提交纪律（补充）
@@ -82,3 +83,18 @@ sha256(norm)   # 用于跨仓/跨形态比较
 - 推送后核对**两远程 READ（`git ls-remote`）与本地 HEAD 逐位一致**；
 - 若提交前发现 HEAD 已被其他会话推进：不回退、不覆盖，只提交自己的路径（本仓 2026-09-17 实例：
   HEAD 由 `f3b405a` → `65ec433` → `6b8fde1` 期间，本会话两次路径限定提交均安全落地）。
+
+## C7 推送闸门与「本地历史含未确认提交」的检查（2026-09-18 实例固化）
+
+**规则**：推送前必须**实测**三件事，不得以本地假设代替——
+① `git log --oneline origin/main..HEAD`（本地领先远程哪些提交）；
+② `git ls-remote <两个远程> refs/heads/main`（**网络权威真值**）；
+③ 闸门状态（待推的框架层提交是否已过「用户确认」）。
+若本地历史含未获用户确认的框架层提交，**任何推送都会把它们一并带上去**，等同绕过闸门。
+
+**实例（2026-09-18）**：收到「Part A（`698d751`）未推送、提前推送会带走它」的约束后实测：
+两远程 main 已 = `698d751`、`git reflog show origin/main` 显示 `update by push`、trading 副本已 merge
+并登记 `08f0bbb docs(sync): Part A 同步门登记` ⇒ 该批**已推送、同步门已闭环**，约束前提不成立。
+
+**教训**：闸门/推送状态**必须以 `ls-remote` 实测为准**——本地 `origin/main` 追踪引用、他人转述的
+「还没推」以及自己的记忆都可能滞后或失真；据此判断会得出错误结论（本次差点据此推迟一次 docs-only 推送）。
