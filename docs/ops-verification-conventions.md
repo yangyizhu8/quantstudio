@@ -72,6 +72,13 @@ sha256(norm)   # 用于跨仓/跨形态比较
 | 2026-09-18 | 三客户统一简版通知（docs-only，本 ops 规范同步） | 仅 `docs/handoff/notice-unified-3customers-20260918.md`、`docs/ops-verification-conventions.md` | **豁免同步门** | 同上；纯客户交付文档 |
 | 2026-09-18 | 本案归档批（CASE-005 卷宗 + 通知口径桥接，docs-only） | 仅 `docs/case005-write-lock-stale-selfheal-incident.md`、`docs/ops-verification-conventions.md`、`docs/handoff/notice-*`（4 份） | **豁免同步门** | 同上；纯归档与客户文档（不触 `quantstudio/`、`tests/`） |
 | 2026-09-17 | `6b8fde1` | 共享层（`quantstudio/pipeline/*`、`tests/*`）+ 文档 | **需同步门** | trading 线已执行并登记：`bf3e787` merge → `853817f docs(sync)`（全绿含三新测试） |
+| 2026-09-19 | `80b7744` | 共享层（`quantstudio/backtest/providers/*`）+ `tests/*` + 文档 | **需同步门** | 本线已执行：merge `5fb6f7b`（他线 52 项在途改动保全）+ ci-smoke ALL PASS（5/6 共享层回归 64 passed / 10 文件全绿）；check-drift 1 项 FAIL（`docs/sync-ledger.md`，**既存排除清单遗漏**，已派单线调度） |
+| 2026-09-19 | `73cd8b4` | 仅 `docs/` 2 文件（验收证据 + 客户通知待定稿） | **豁免同步门** | 未触及 `quantstudio/`、`config/`、`skills/`、`scripts/`、`tests/`、`main_gui.py` |
+| 2026-09-19 | `6546cbf` | 仅 `docs/evidence/daily-snapshot-cachekey-acceptance-20260918.md`（A-3 + A-0~A-2 证据入卷） | **豁免同步门** | 同上 |
+| 2026-09-19 | `741ae61` | 共享层（`quantstudio/backtest/backtest_engine.py`）+ `tests/test_prev_close_map_equiv.py` + 文档 | **需同步门** | 本线已执行：merge `68f7abe`（他线 69 项在途改动保全）+ ci-smoke ALL PASS（64 passed）+ 副本内本件新测试 16 passed / 1 skipped（E-1 因副本无真库 skip，系设计行为）；共享层 `git hash-object` 双侧一致 |
+| 2026-09-19 | `9abb9cd` | 仅 `docs/evidence/prev-close-map-deiterrows-20260919.md`（A-3′ 终口径） | **豁免同步门** | 同上 |
+| 2026-09-19 | `50fa570` | 仅 `docs/` 3 文件（客户一号通知定稿 + 旧稿作废标注 + §7 现网校准入卷） | **豁免同步门** | 同上；纯客户交付与归档文档 |
+| 2026-09-19 | CASE-006 归档批（卷宗 + 本台账补登，docs-only） | 仅 `docs/case006-backtest-speedup-optimization.md`、`docs/ops-verification-conventions.md` | **豁免同步门** | 同上；纯归档文档 |
 
 ## C6 并发会话下的提交纪律（补充）
 
