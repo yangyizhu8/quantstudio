@@ -3224,13 +3224,351 @@
           "float_share": "free_share",
           "total_share": "total_share",
           "circ_mv": "circ_mv",
-          "total_mv": "total_mv"
+          "total_mv": "total_mv",
+          "free_share": "_raw_free_share"
+        },
+        "copy_columns": {
+          "trade_date": "ann_date"
         },
         "code_format": "tushare_to_raw",
         "time_to_ms": true,
         "unit_conversions": {},
-        "_note": "MCP 唯一权威源（stock_daily_basic 派生）：float_share→free_share（万股），circ_mv/total_mv（万元）。ann_date 无对应（日频）→ NULL。"
+        "_note": "MCP 唯一权威源（stock_daily_basic 派生）：float_share→free_share（万股），circ_mv/total_mv（万元）。上游同名字段 free_share（自由流通股本，与 target 不同量）以 _raw_free_share 改名让位——否则 aligner._map_columns 保留未映射原始列，float_share→free_share 后与原始 free_share 同名，aligner.py:316-320 抛 Duplicate column names 中止整批（2026-09-17 修复，用户拍板）。ann_date 取『数据适用日』= trade_date（copy_columns 派生；日频源无公告日，且该列在 schema 内 required 且属主键，NULL 物理不可行）。"
       }
+    },
+    "questdb": {
+      "_note": "QuestDB 本地库源条目（2026-09-14 新增，裁定(a)①）：以 mcp 条目为蓝本克隆，列名实测一致；data_source=questdb 诚实溯源，禁复用 mcp 标签（溯源列是审计资产）。",
+      "stock_daily": {
+        "column_map": {
+          "ts_code": "code",
+          "trade_date": "time",
+          "open": "open",
+          "high": "high",
+          "low": "low",
+          "close": "close",
+          "vol": "volume",
+          "amount": "amount",
+          "pre_close": "preClose",
+          "pct_chg": "pctChg"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {
+          "volume": {
+            "factor": 100,
+            "_note": "手→股 ×100（QuestDB vol 为手单位）"
+          },
+          "amount": {
+            "factor": 1000,
+            "_note": "千元→元 ×1000（QuestDB amount 为千元）"
+          }
+        },
+        "time_to_ms": true,
+        "pctchg_source": "official",
+        "_note": "adj_factor 不在此映射（P3-2 修复）：MCP 原样返回的 adj_factor 由 daemon 经 normalize_mcp_adj_factor_df 单独提取传给 aligner 计算复权，不经过 column_map，避免 _apply_qfq merge 列名冲突。"
+      },
+      "stock_minutes": {
+        "column_map": {
+          "ts_code": "code",
+          "trade_time": "time",
+          "open": "open",
+          "high": "high",
+          "low": "low",
+          "close": "close",
+          "vol": "volume",
+          "amount": "amount",
+          "freq": "freq"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "_note": "分钟线不含 adj_factor 字段映射（P3-2 修复）：原样返回的 adj_factor 由 daemon 单独提取复权，不走 column_map。 [codex审计P1-11修复：补freq列]"
+      },
+      "etf_daily": {
+        "column_map": {
+          "ts_code": "code",
+          "trade_date": "time",
+          "open": "open",
+          "high": "high",
+          "low": "low",
+          "close": "close",
+          "vol": "volume",
+          "amount": "amount",
+          "pre_close": "preClose",
+          "pct_chg": "pctChg"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {
+          "volume": {
+            "factor": 100,
+            "_note": "手→股 ×100（QuestDB vol 为手单位）"
+          },
+          "amount": {
+            "factor": 1000,
+            "_note": "千元→元 ×1000（QuestDB amount 为千元）"
+          }
+        },
+        "time_to_ms": true,
+        "pctchg_source": "official",
+        "_note": "ETF daily 不含 adj_factor 字段映射（P3-2 修复）：原样返回的 adj_factor 由 daemon 单独提取复权，不走 column_map。"
+      },
+      "etf_minutes": {
+        "column_map": {
+          "ts_code": "code",
+          "trade_time": "time",
+          "open": "open",
+          "high": "high",
+          "low": "low",
+          "close": "close",
+          "vol": "volume",
+          "amount": "amount",
+          "freq": "freq"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "_note": "ETF 分钟线不含 adj_factor 字段映射（P3-2 修复）：原样返回的 adj_factor 由 daemon 单独提取复权，不走 column_map。 [codex审计P1-11修复：补freq列]"
+      },
+      "stock_dividend": {
+        "column_map": {
+          "ts_code": "code",
+          "ex_date": "ex_date",
+          "record_date": "record_date",
+          "ann_date": "ann_date",
+          "end_date": "end_date",
+          "cash_div_before_tax": "cash_div_before_tax",
+          "cash_div_after_tax": "cash_div_after_tax",
+          "cash_div": "cash_div",
+          "stk_div": "stk_div",
+          "stk_bo_rate": "stk_bo_rate",
+          "stk_co_rate": "stk_co_rate",
+          "div_proc": "div_proc",
+          "update_time": "update_time"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "_note": "【管线方案 v2】源切换：ws_exdiv（westock 遗留，仅 2026 现金、单位缺陷 ×100）→ stock_dividend_full（tushare dividend 每股口径全字段）。adapter 侧已归一化 cash_div_tax→cash_div_before_tax 并过滤 div_proc=实施 + ex_date 非空 + (ts_code,ex_date) 去重。旧 unit_conversions ×10 已移除（tushare 为每股口径，无需换算）。驱动 qfq_event_discovery.scan_stock_dividend。"
+      },
+      "etf_dividend": {
+        "column_map": {
+          "ts_code": "code",
+          "ex_date": "ex_date",
+          "ann_date": "ann_date",
+          "imp_anndate": "imp_anndate",
+          "base_date": "base_date",
+          "div_proc": "div_proc",
+          "record_date": "record_date",
+          "pay_date": "pay_date",
+          "earpay_date": "earpay_date",
+          "net_ex_date": "net_ex_date",
+          "div_cash": "div_cash",
+          "base_unit": "base_unit",
+          "ear_distr": "ear_distr",
+          "ear_amount": "ear_amount",
+          "account_date": "account_date",
+          "base_year": "base_year",
+          "update_time": "update_time"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "_note": "ETF 基金分红（fund_div）；adapter 侧已过滤 div_proc=实施 + ex_date 非空 + (code,ex_date) 去重"
+      },
+      "balance_statement": {
+        "column_map": {
+          "ts_code": "code",
+          "ann_date": "ann_date",
+          "f_ann_date": "f_ann_date",
+          "end_date": "end_date",
+          "report_type": "report_type",
+          "comp_type": "comp_type",
+          "end_type": "end_type"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "_note": "资产负债表（P3-5 新增 mcp 映射）：云端 QuestDB 列名与 tushare 段一致。仅映射 PIT 元数据列（ann_date/f_ann_date/end_date/report_type/comp_type/end_type），科目列由下游按需扩展。time_to_ms 将 YYYYMMDD 时间列转毫秒；f_ann_date 经 schema 定义转毫秒。 [codex审计P1-8修复：删除不存在的update_time]"
+      },
+      "stock_daily_valuation": {
+        "column_map": {
+          "ts_code": "code",
+          "trade_date": "time",
+          "circ_mv": "circ_mv",
+          "total_mv": "total_mv",
+          "pe_ttm": "pe_ttm",
+          "pb": "pb",
+          "turnover_rate": "turnover_rate"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "_note": "每日估值表（类别A 新增）：云端 QuestDB 源表 stock_daily_basic。估值表无 OHLCV，UnitCheck 不拦（schema 仅 circ_mv/total_mv 等估值字段，无 open/high/low/close 必填）。"
+      },
+      "index_constituents": {
+        "column_map": {
+          "index_code": "index_code",
+          "trade_date": "time",
+          "weight": "weight",
+          "ts_code": "code"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "_note": "指数成分股（类别A 新增）：云端 QuestDB 源表 index_weight。 [codex审计P1-6修复：stock_code→ts_code]",
+        "code_cols": [
+          "index_code",
+          "code"
+        ]
+      },
+      "industry_classification": {
+        "column_map": {
+          "industry_code": "industry_code",
+          "industry_name": "industry_name",
+          "level": "industry_level",
+          "parent_code": "parent_industry_code",
+          "src": "classification_version",
+          "ingest_time": "update_time"
+        },
+        "code_col": "industry_code",
+        "code_format": "identity",
+        "unit_conversions": {},
+        "_note": "行业分类定义（codex审计P0修复+classification_version/classification_system疑点修正）。column_map 映射 src→classification_version（云端src='SW2021'）；code_col=industry_code 防止 aligner 把 PK 首列 classification_system 误当证券码 normalize（'SW'→None 的根因，对齐 tushare 路径）；classification_system='SW'/effective_from=0/effective_to=NULL 由 adapter 补常量。L1 过滤+去重在 adapter 侧（对齐 tushare SW2021 31个L1）。"
+      },
+      "stock_namechange": {
+        "identity": true,
+        "time_to_ms": true,
+        "_note": "简称变更历史（类别A 新增，同名表）：云端 QuestDB 源表 stock_namechange（7451行）。字段 code/change_date/status_after/name_before/name_after 与 schema 一致。change_date 由 aligner time_to_ms 转上海午夜毫秒。"
+      },
+      "stock_basic": {
+        "column_map": {},
+        "code_format": "identity",
+        "time_to_ms": true,
+        "_note": "Copy source symbol to canonical code while preserving symbol and authoritative ts_code. Keep list_status/data_source for metadata APIs.",
+        "copy_columns": {
+          "symbol": "code"
+        }
+      },
+      "trade_calendar": {
+        "column_map": {
+          "exchange": "exchange",
+          "cal_date": "cal_date",
+          "is_open": "is_open",
+          "pretrade_date": "pretrade_date"
+        },
+        "code_format": "identity",
+        "time_to_ms": true,
+        "_note": "Fetch cloud trade_cal (SSE) through fetch_page cursor pagination; convert cal_date/pretrade_date to Shanghai-midnight epoch ms and retain QFQ single-calendar compatibility."
+      },
+      "etf_basic": {
+        "identity": true,
+        "time_to_ms": false,
+        "_note": "ETF基础资料（codex审计TD-15 etf_basic专项）：standardizer 在 align 前(raw_df 阶段)执行 build_payload_mcp，输出已是 BASELINE_COLUMNS(canonical 名)。故 aligner 走 identity（standardizer 已完成 code 派生/列名适配/分类/daily_bounds 兜底，aligner 只补 update_time）。data_source=mcp_questdb_etf_basic 区分 tushare。"
+      },
+      "index_daily": {
+        "column_map": {
+          "ts_code": "code",
+          "trade_date": "time",
+          "open": "open",
+          "high": "high",
+          "low": "low",
+          "close": "close",
+          "amount": "amount",
+          "pct_chg": "pctChg",
+          "vol": "volume",
+          "pre_close": "preClose"
+        },
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "_note": "指数日线（类别A 映射表）：云端 QuestDB 源表 index_daily。 [codex审计P1-7修复：vol→volume/pctChg/preClose]"
+      },
+      "income_statement": {
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "column_map": {
+          "ts_code": "code",
+          "ann_date": "ann_date",
+          "f_ann_date": "f_ann_date",
+          "end_date": "end_date",
+          "report_type": "report_type",
+          "comp_type": "comp_type",
+          "end_type": "end_type",
+          "total_revenue": "operating_revenue",
+          "oper_cost": "operating_cost",
+          "operate_profit": "operating_profit",
+          "total_profit": "total_profit",
+          "n_income": "net_profit",
+          "n_income_attr_p": "np_parent_company_owners",
+          "sell_exp": "sale_expense",
+          "admin_exp": "manage_expense",
+          "fin_exp": "finance_expense",
+          "rd_exp": "rd_expense",
+          "income_tax": "income_tax",
+          "basic_eps": "basic_eps"
+        },
+        "_note": "利润表（codex审计P0-5补映射）：云端 stock_income 列名与 tushare 段一致。映射 PIT 元数据列 + schema 期望科目列。time_to_ms 将 YYYYMMDD 转毫秒。"
+      },
+      "cashflow_statement": {
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "column_map": {
+          "ts_code": "code",
+          "ann_date": "ann_date",
+          "f_ann_date": "f_ann_date",
+          "end_date": "end_date",
+          "report_type": "report_type",
+          "comp_type": "comp_type",
+          "end_type": "end_type",
+          "n_cashflow_act": "net_operate_cash_flow",
+          "n_cashflow_inv_act": "net_invest_cash_flow",
+          "n_cash_flows_fnc_act": "net_finance_cash_flow",
+          "n_incr_cash_cash_equ": "cash_add_balance",
+          "c_fr_sale_sg": "goods_sale_and_services",
+          "c_paid_goods_s": "goods_buy_and_services",
+          "depr_fa_coga_dpba": "fixed_asset_depreciation"
+        },
+        "_note": "现金流量表（codex审计P0-5补映射）：云端 stock_cashflow 列名与 tushare 段一致。"
+      },
+      "fin_indicator": {
+        "code_format": "tushare_to_raw",
+        "unit_conversions": {},
+        "time_to_ms": true,
+        "column_map": {
+          "ts_code": "code",
+          "ann_date": "ann_date",
+          "end_date": "end_date",
+          "eps": "eps",
+          "bps": "bps",
+          "roe": "roe",
+          "or_yoy": "or_yoy",
+          "tr_yoy": "tr_yoy",
+          "update_flag": "update_flag",
+          "dt_eps": "diluted_eps",
+          "netprofit_yoy": "np_yoy"
+        },
+        "_note": "财务指标表（codex审计P0-5补映射）：云端 stock_fina_indicator 实际列名 dt_eps(稀释EPS)/netprofit_yoy。pe_ttm/pb/ps_ttm 在 stock_daily_valuation。"
+      },
+      "stock_float_share": {
+        "column_map": {
+          "ts_code": "code",
+          "trade_date": "end_date",
+          "float_share": "free_share",
+          "total_share": "total_share",
+          "circ_mv": "circ_mv",
+          "total_mv": "total_mv",
+          "free_share": "_raw_free_share"
+        },
+        "copy_columns": {
+          "trade_date": "ann_date"
+        },
+        "code_format": "tushare_to_raw",
+        "time_to_ms": true,
+        "unit_conversions": {},
+        "_note": "MCP 唯一权威源（stock_daily_basic 派生）：float_share→free_share（万股），circ_mv/total_mv（万元）。上游同名字段 free_share（自由流通股本，与 target 不同量）以 _raw_free_share 改名让位——否则 aligner._map_columns 保留未映射原始列，float_share→free_share 后与原始 free_share 同名，aligner.py:316-320 抛 Duplicate column names 中止整批（2026-09-17 修复，用户拍板）。ann_date 取『数据适用日』= trade_date（copy_columns 派生；日频源无公告日，且该列在 schema 内 required 且属主键，NULL 物理不可行）。（本 entry 当前 dormant：零任务使用 source=questdb，2026-09-17 同批照改保口径一致。）"
+      },
+      "_data_source_contract": "questdb"
     }
   },
   "code_format_converters": {
