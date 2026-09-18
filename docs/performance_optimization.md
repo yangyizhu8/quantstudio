@@ -127,3 +127,53 @@ P-D14 的目标（把 08:00 异常组并入当日键）正确，但实现把日�
 无 `ORDER BY`，其后处理 `sort_values('time')` 亦为不稳定排序，任何版本下均无行序承诺。
 **按 code 取值（`df[df.code == x]` / 自建 code→行 映射 / `_df_index`）的策略不受任何影响。**
 
+---
+
+## 已落地：prev_close_map 去 iterrows 化（2026-09-19，纯性能优化）
+
+### 问题
+
+`quantstudio/backtest/backtest_engine.py::_apply_factor_derived_split` 内，每交易日重建
+「全市场 `code → close` 映射」使用 `DataFrame.iterrows()`。经主因件归因（A-0~A-3）与
+**全仓 `iterrows` 运行时普查**：
+
+- 静态 **58 处** `iterrows` → **回测路径实触仅 4 处** → **该调用点独占回测总耗时 64.04 %**
+  （85.094 s / 132.87 s；245 交易日、179.7 万行迭代）；
+- 其余 3 处（`backtest_engine.py:848/1024`、`ptrade_metrics.py:59`）合计 **0.16 %**，**登记不改**；
+- `strategies/` 下 6 处 `iterrows` **零触碰**（策略源码零改动铁律）。
+
+### 修复
+
+`prev_close_map` 改为向量化构造：`dict(zip(prev_data['code'].astype(str), prev_data['close']))`；
+`close` 列缺失时构造**全 0 map**（与原式 `row.get('close', 0)` **实现级**全等）。
+净 **+10 / −2 行**，**不新增任何开关**。
+
+### 等价性：本类改造的经典静默差源
+
+`iterrows` 内部走 `DataFrame.values`，会把整表**提升为公共 dtype**（int64 与 float64 混排 →
+全升 float64）。因此**只有当 `code` 列为 object 时**，`str(row['code'])` 才与
+`Series.astype(str)` 逐值一致。实测 `query_daily_snapshot` 的 `code` 列恒为 **object**、
+`df.values.dtype` 亦为 object。
+
+**该前提由契约测试 E-1 哨兵锁定**——前提若被上游破坏（如 code 列变数值型），测试立即变红；
+数值型 code 下的两式差异由 **E-4 显式登记**（已知事实、非缺陷、实际路径不触发）。
+
+### 验证（可重复）
+
+- 契约测试 `tests/test_prev_close_map_equiv.py` → **17 passed**
+  （E-1 dtype 前提 / E-2 map 级等价含**带区阈值邻域** 0.99·1.01·1.10 ±eps /
+  E-3 **缺列语义**（`code` 缺列→空 map、`close` 缺列→全 0 map）/
+  E-4 数值 code 已知差异登记 / E-5 **ETF 除权四带区**+持仓变化）；
+- 端到端黄金对比（**文件级还原取证**，`RECOVER OK`）：`双均线策略` 与 `ETF轮动` 的
+  `nav_sha` / `trades_sha` / `ca_sha` 改前改后**逐位全等**；
+- 性能 A/B（同还原机制，各 3 轮交替）：单股 309 交易日 **中位数 159.674 s → 44.621 s
+  （−115.053 s，−72.1 %）**；**路径分离已证**（`iterrows:907` 计数 **307 → 0**）；
+  6 次运行 `nav_sha` 唯一（行为零变化）；
+- **未宣称项**：`fall_reversal` 样本耗时方向（单轮 n=1，与组内极差同量级，**不足以判定**）、
+  8 年窗口耗时收益（未测）。
+
+**AGENTS.md 框架铁律适用**：本变更为纯性能优化——未改变任何公共/注入 API 的函数名、签名、
+默认值、返回类型、返回字段、列顺序、索引、dtype、空值行为、异常行为或兼容行为；未改变行情
+取数范围、复权口径、生命周期调用时机、撮合/费用/持仓/现金/涨跌停处理、策略信号或回测指标。
+完整证据见 `docs/evidence/prev-close-map-deiterrows-20260919.md`。
+

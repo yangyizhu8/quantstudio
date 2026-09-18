@@ -904,8 +904,16 @@ class BacktestEngine:
                            and a.get('type') != 'etf_cash_dividend'}
         prev_close_map = {}
         if 'code' in prev_data.columns:
-            for _, row in prev_data.iterrows():
-                prev_close_map[str(row['code'])] = row.get('close', 0)
+            # 去 iterrows 化（纯性能优化，语义等价）：iterrows 内部走 self.values，
+            # 会把整表升为公共 dtype；已实测 query_daily_snapshot 的 code 列 dtype
+            # 恒为 object（df.values.dtype 亦为 object），此前提下 str(row['code'])
+            # 与 astype(str) 逐值一致（契约测试断言该 dtype 前提）。
+            # close 列缺失时构造全 0 map —— 与原式 `row.get('close', 0)` 实现级全等。
+            _codes = prev_data['code'].astype(str)
+            if 'close' in prev_data.columns:
+                prev_close_map = dict(zip(_codes, prev_data['close']))
+            else:
+                prev_close_map = dict.fromkeys(_codes, 0)
         for code, pos in self.account.positions.items():
             if pos.volume <= 0:
                 continue

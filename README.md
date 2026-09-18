@@ -557,6 +557,29 @@ backlog**：小市值与双均线真实策略 `get_history` 命中均为 0；`Pt
 
 完整验证见 `docs/performance_optimization.md`。
 
+## 框架层变更审阅记录（perf/prev-close-map-deiterrows，2026-09-19）
+
+`quantstudio/backtest/backtest_engine.py::_apply_factor_derived_split` 内部的
+`prev_close_map` 构造**去 `iterrows` 化**（纯性能优化·语义等价）：
+
+- **问题**（主因件归因 + 全仓运行时普查）：静态 58 处 `iterrows` → **回测路径实触 4 处** →
+  该调用点**独占回测总耗时 64.04 %**（85.094 s / 132.87 s；245 交易日、179.7 万行迭代）；
+- **修复**：改为向量化构造 `dict(zip(col.astype(str), col))`；`close` 列缺失时构造**全 0 map**
+  （与原式 `row.get('close', 0)` **实现级**全等）。净 **+10 / −2 行**，**无开关**；
+  其余 3 处被触发的调用点合计 0.16 %，**登记不改**；`strategies/` 零触碰；
+- **等价性要害**：`iterrows` 走 `DataFrame.values` 会**提升公共 dtype**，故仅当 `code` 列为
+  **object** 时 `str(row['code'])` 与 `astype(str)` 逐值一致（实测恒成立）；
+  该前提由 **E-1 哨兵断言**锁定，数值型 code 的差异由 **E-4 显式登记**；
+- **验证**：契约测试 **17 passed**（含 ETF 除权四带区与缺列语义）；端到端黄金对比
+  `双均线策略` / `ETF轮动` 的 `nav_sha`/`trades_sha`/`ca_sha` **逐位全等**（文件级还原取证）；
+  A/B 各 3 轮：单股 309 交易日**中位数 159.674 s → 44.621 s（−72.1 %）**，
+  **路径分离已证**（`iterrows:907` 计数 **307 → 0**）。
+
+**AGENTS.md 框架铁律适用**：本变更为纯性能优化，未改变任何公共/注入 API 的函数名、签名、
+默认值、返回类型、返回字段、列顺序、索引、dtype、空值行为、异常行为或兼容行为；未改变
+行情取数范围、复权口径、生命周期调用时机、撮合/费用/持仓/现金/涨跌停处理、策略信号或
+回测指标。完整验证见 `docs/performance_optimization.md`。
+
 > **PyQt single-task result contract (2026-08-03)**: manual task status is determined by that task's fetch?align?validate?write result. Full-database `QualityAudit` still runs afterward, but unrelated-table failures are displayed as `success (audit warning)` rather than falsely marking the data pull as failed. Real task failures remain failures.
 
 > **Full-database audit reference-table contract (2026-08-03)**: MCP `stock_basic` and the shared MCP/QFQ `trade_calendar` are writer-managed canonical tables. `trade_calendar` keeps its original `cal_date` single primary key and QFQ behavior; `exchange/pretrade_date` are compatibility metadata. Enum auditing uses native typed values, and QFQ pending SLA uses the current-state update time.
