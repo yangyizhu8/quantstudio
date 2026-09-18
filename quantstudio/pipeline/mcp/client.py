@@ -47,6 +47,7 @@ from .errors import (
     MCPClientError,
     MCPExportBudgetError,
     MCPProtocolError,
+    MCPRetryBudgetExhausted,
     MCPToolError,
     MCPTransportError,
 )
@@ -70,6 +71,34 @@ _PROTOCOL_VERSION = "2024-11-05"
 _SSE_CT = "text/event-stream"
 _PARQUET_MAGIC = b"PAR1"
 _SECRET_HEADERS = {"x-mcp-key", "authorization"}
+
+# ── 重试总预算（六步③ 2026-09-18：client.py:362 重试有界）────────────────────
+# 依据：D6 晨窗实测 mcp_stock_float_share 3h12m 持锁。真锚点 = 重试超时后的
+# _reset_connection() → handshake() → _post_rpc() 整体读 resp.content（该路径
+# 不在任何超时包装内，可无限期阻塞）。本预算为**总时长上限**，并覆盖重握手路径。
+# 语义：0 / 负值 = 不限（逐行等效旧行为，回退开关）。
+RETRY_BUDGET_ENV = "QS_MCP_RETRY_BUDGET_SEC"
+DEFAULT_RETRY_BUDGET_SEC = 900.0
+
+
+def resolve_retry_budget(explicit: Optional[float] = None) -> float:
+    """预算解析优先级：构造参数 → 环境变量 QS_MCP_RETRY_BUDGET_SEC → 默认。
+
+    无法解析的输入一律回落下一优先级（不抛错，避免配置笔误导致 fail-fast）。
+    返回 float；<=0 表示不限（旧行为）。
+    """
+    if explicit is not None:
+        try:
+            return float(explicit)
+        except (TypeError, ValueError):
+            logger.warning("[MCP retry] 构造参数 retry_budget_sec 无法解析，改用下一优先级")
+    raw = os.environ.get(RETRY_BUDGET_ENV)
+    if raw is not None and str(raw).strip() != "":
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            logger.warning("[MCP retry] 环境变量 %s 无法解析，改用默认", RETRY_BUDGET_ENV)
+    return DEFAULT_RETRY_BUDGET_SEC
 
 
 def _mask_headers(headers: Dict[str, str]) -> Dict[str, str]:
@@ -127,6 +156,8 @@ class MCPClient:
         call_timeout: 单次 HTTP 硬超时（秒）。
         retry_max: 幂等请求最大重试次数。
         backoff_sec: 退避序列（秒）。
+        retry_budget_sec: 重试+重握手**总预算**（秒）；None=按 QS_MCP_RETRY_BUDGET_SEC →
+            默认 900；0/负值=不限（逐行等效旧行为）。
         idempotency_namespace: 应用级 job 缓存命名空间（同一 dataset+page_size 复用 manifest_ref）。
     """
 
@@ -138,6 +169,7 @@ class MCPClient:
         call_timeout: float = 90.0,
         retry_max: int = 5,
         backoff_sec: Tuple[int, ...] = (30, 60, 120, 240, 480),
+        retry_budget_sec: Optional[float] = None,
         rate_per_min: int = 200,
         api_key: Optional[str] = None,
         secrets_path: Optional[Union[str, Path]] = None,
@@ -152,6 +184,8 @@ class MCPClient:
         self.call_timeout = float(call_timeout)
         self.retry_max = int(retry_max)
         self.backoff_sec = tuple(int(x) for x in backoff_sec)
+        # 六步③：重试+重握手总预算（0/负=不限=旧行为）
+        self.retry_budget_sec = resolve_retry_budget(retry_budget_sec)
         self.rate_per_min = int(rate_per_min)
 
         self._session = requests.Session()
@@ -342,29 +376,78 @@ class MCPClient:
             return result
         return result
 
+    def _raise_budget_exhausted(self, t0: float, budget, attempts: int, last_err) -> None:
+        """预算耗尽：记审计行（固定锚点 BUDGET_EXHAUSTED）并抛专用异常。"""
+        elapsed = time.monotonic() - t0
+        attempts = int(attempts)
+        logger.warning(
+            "[MCP retry] BUDGET_EXHAUSTED budget=%ss attempts=%s/%s elapsed=%.1fs last_err=%s: %s",
+            f"{float(budget):.0f}", attempts, self.retry_max, elapsed,
+            type(last_err).__name__ if last_err is not None else "n/a", last_err)
+        raise MCPRetryBudgetExhausted(
+            f"MCP 重试预算耗尽（{elapsed:.1f}s / {float(budget):.0f}s，已尝试 {attempts}/{self.retry_max} 次）: "
+            f"{type(last_err).__name__ if last_err is not None else 'n/a'}: {last_err}",
+            budget_sec=float(budget), elapsed_sec=elapsed, attempts=attempts, last_err=last_err)
+
+    def _run_bounded(self, fn, timeout: Optional[float], label: str = "mcp_call"):
+        """有界执行：子线程 + join(timeout)；超时抛 TimeoutError（不等待子线程退出）。
+
+        timeout=None = 不限（旧行为）。线程不可取消：超时后子线程仍在后台运行
+        （既有语义，本次不改变）；本助手只保证**调用方有界返回**。
+        三处复用：单次尝试 / 连接重置（含重握手）/ 首次握手。
+        """
+        result = [None]
+        err = [None]
+
+        def _run():
+            try:
+                result[0] = fn()
+            except BaseException as e:  # noqa: BLE001
+                err[0] = e
+
+        th = threading.Thread(target=_run, daemon=True)
+        th.start()
+        if timeout is None:
+            th.join()
+        else:
+            th.join(max(0.0, float(timeout)))
+            if th.is_alive():
+                raise TimeoutError(
+                    f"{label} 超过 {float(timeout):.1f}s 未返回（预算/超时收窄）")
+        if err[0] is not None:
+            raise err[0]
+        return result[0]
+
     def _call_with_retry(self, fn, *args, **kwargs):
-        """幂等请求重试（线程超时包裹 + 退避 + 心跳）。"""
+        """幂等请求重试（**总预算有界** + 线程超时包裹 + 退避 + 心跳）。
+
+        六步③（2026-09-18）新增：预算 self.retry_budget_sec（0/负=不限=旧行为）。
+        成功路径零变更：预算内的返回值/重试次数/退避序列/请求参数逐项不变；
+        仅当剩余预算不足时收窄 join 与退避，耗尽即抛 MCPRetryBudgetExhausted。
+        """
         last_err: Optional[BaseException] = None
+        budget = self.retry_budget_sec
+        t0 = time.monotonic()
+        deadline = None if (budget is None or float(budget) <= 0) else (t0 + float(budget))
+
+        def _remaining() -> Optional[float]:
+            return None if deadline is None else (deadline - time.monotonic())
+
         for attempt in range(self.retry_max):
+            rem = _remaining()
+            if rem is not None and rem <= 0:
+                self._raise_budget_exhausted(t0, budget, attempt, last_err)
             try:
                 self._acquire_rate()
-                result = [None]
-                err = [None]
-
-                def _run():
-                    try:
-                        result[0] = fn(*args, **kwargs)
-                    except BaseException as e:  # noqa: BLE001
-                        err[0] = e
-
-                th = threading.Thread(target=_run, daemon=True)
-                th.start()
-                th.join(self.call_timeout)
-                if th.is_alive():
-                    raise TimeoutError(f"{fn.__name__} 超过 {self.call_timeout}s 未返回")
-                if err[0] is not None:
-                    raise err[0]
-                return result[0]
+                rem = _remaining()
+                if rem is not None and rem <= 0:
+                    self._raise_budget_exhausted(t0, budget, attempt, last_err)
+                wait_s = None if rem is None else min(float(self.call_timeout), max(0.0, rem))
+                return self._run_bounded(lambda: fn(*args, **kwargs), wait_s,
+                                         label=getattr(fn, "__name__", "mcp_call"))
+            except MCPRetryBudgetExhausted:
+                # 预算耗尽：立即上抛（不再进入退避/重试；上层按传输层失败处理）
+                raise
             except (MCPAuthError, MCPProtocolError):
                 # 鉴权/协议错误不可重试，直接上抛
                 raise
@@ -378,21 +461,30 @@ class MCPClient:
                 # 重试若复用同一已损坏的 _session 和失效 _session_id 必败。
                 # 对传输层错误（MCPTransportError/网络异常），重试前重置连接并重握手，
                 # 使后续重试走全新 session。这不改变任何数据语义/API 契约。
-                if attempt + 1 < self.retry_max:  # 还有重试机会才重置
+                if attempt + 1 < self.retry_max:  # 还有重试机会才重置与退避
                     from .errors import MCPTransportError as _TE
                     if isinstance(e, (_TE,)) or isinstance(e, requests.RequestException):
                         try:
-                            self._reset_connection()
+                            # 六步③：重握手是「真锚点」——同样受剩余预算有界约束
+                            self._reset_connection(timeout=_remaining())
                             logger.info("[MCP retry] 已重置连接并重握手，准备重试")
                         except Exception as _re:  # 重置失败则按原错误继续重试
                             logger.warning(f"[MCP retry] 连接重置失败（将按原错误重试）: {_re}")
-                self._sleep_with_heartbeat(wait, "[MCP retry]")
+                    # 六步③ 裁定2：最后一次失败不再空等退避（无谓 480s 已去）
+                    rem = _remaining()
+                    if rem is not None:
+                        if rem <= 0:
+                            self._raise_budget_exhausted(t0, budget, attempt + 1, last_err)
+                        wait = min(wait, rem)
+                    self._sleep_with_heartbeat(wait, "[MCP retry]")
         raise MCPTransportError(
             f"MCP 重试 {self.retry_max} 次仍失败: {last_err}") from last_err
 
     # ---------------- 连接重置（重连） ----------------
-    def _reset_connection(self) -> None:
+    def _reset_connection(self, timeout: Optional[float] = None) -> None:
         """重建底层 HTTP session 并重新握手，用于 server 间歇性断连后恢复。
+
+        timeout（六步③）：重握手的**有界**上限；None = 不限（旧行为）。
 
         不改变任何数据语义/API 契约：仅重置传输层状态
         （_session / _session_id / _initialized），随后重新 initialize 握手。
@@ -413,12 +505,29 @@ class MCPClient:
         self._session_id = None
         self._initialized = False
         self._job_cache.clear()  # 旧 session 的 job 缓存失效，避免跨 session 复用脏 job
-        # 重新握手（建立新 session_id）
-        self.handshake()
+        # 重新握手（建立新 session_id）；六步③：受剩余预算有界约束
+        self.handshake(timeout=timeout)
 
     # ---------------- 握手 ----------------
-    def handshake(self) -> ServerInfo:
-        """initialize → 记录 mcp-session-id → notifications/initialized。幂等。"""
+    def handshake(self, timeout: Optional[float] = None) -> ServerInfo:
+        """initialize → 记录 mcp-session-id → notifications/initialized。幂等。
+
+        timeout（六步③）：非 None 时对整个握手做有界包裹（None = 旧行为）。
+        背景：握手直接走 _post_rpc（整体读 resp.content，无总时长上限），
+        在「重试超时后 _reset_connection → handshake」路径上曾造成无限期阻塞。
+        """
+        if timeout is None:
+            return self._handshake_impl()
+        return self._run_bounded(self._handshake_impl, float(timeout), label="handshake")
+
+    def handshake_bounded(self) -> ServerInfo:
+        """首握手入口（六步③）：按 self.retry_budget_sec 有界；0/负值 = 不限 = 旧行为。"""
+        budget = self.retry_budget_sec
+        timeout = None if (budget is None or float(budget) <= 0) else float(budget)
+        return self.handshake(timeout=timeout)
+
+    def _handshake_impl(self) -> ServerInfo:
+        """握手实现体（无界版）；是否加预算包裹由 handshake() 决定。"""
         if self._initialized and self._session_id:
             return self._server_info
         msg = self._post_rpc(

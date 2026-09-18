@@ -398,7 +398,8 @@ class MCPAdapter(BaseSourceAdapter):
                 tls_verify=self.tls_verify,
                 api_key=load_mcp_api_key(),
             )
-            self._client.handshake()  # 建立 session（initialize→mcp-session-id→notifications/initialized）
+            # 六步③：首次握手同样按 retry_budget_sec 有界（0/负值 = 不限 = 旧行为）
+            self._client.handshake_bounded()  # 建立 session（initialize→mcp-session-id→notifications/initialized）
         return self._client
 
     def close(self):

@@ -23,6 +23,29 @@ class MCPTransportError(MCPClientError):
     """网络层失败（连接/超时/TLS/非 2xx）。"""
 
 
+class MCPRetryBudgetExhausted(MCPTransportError):
+    """重试/重握手总预算耗尽（六步③，2026-09-18，client.py:362 重试有界）。
+
+    继承 MCPTransportError：上层既有 except 语义零变更（仍按传输层失败处理），
+    仅新增可辨识类型，供任务失败标记与审计行区分「预算耗尽」与「单次失败」。
+
+    attributes:
+        budget_sec: 生效预算（秒）
+        elapsed_sec: 实际耗时（秒）
+        attempts: 已尝试次数
+        last_err: 最后一次底层异常（可能为 None）
+    """
+
+    def __init__(self, message: str, *, budget_sec: float = 0.0,
+                 elapsed_sec: float = 0.0, attempts: int = 0,
+                 last_err: object = None, raw: object = None):
+        super().__init__(message, raw=raw)
+        self.budget_sec = float(budget_sec)
+        self.elapsed_sec = float(elapsed_sec)
+        self.attempts = int(attempts)
+        self.last_err = last_err
+
+
 class MCPProtocolError(MCPClientError):
     """JSON-RPC 协议层失败（解析失败 / 缺 session / 非法响应）。"""
 
