@@ -344,6 +344,12 @@ DEFAULT_ORCHESTRATOR_CFG: Dict = {
     "factor_cross_check_enabled": False,
     "require_bootstrap": True,
     "price_source": "xtquant",
+    # 2026-09-17 ConfigLint 登记：source_generation 为**真实被消费**的键
+    # （_parse_identifier 于 :451 读取；qfq_orchestrator_cli.py:626 依其值分支）。
+    # 此前未列入本真相源 ⇒ ConfigLint 每轮误报「未知配置键」（5 分钟一次）。
+    # 默认值与 _parse_identifier(cfg, "source_generation", "xtquant-legacy") 的兜底**逐字相同**
+    # ⇒ 登记行为中性：未设置的 profile 取值不变，已设置的 profile 由 cfg.update(file_cfg) 覆盖后亦不变。
+    "source_generation": "xtquant-legacy",
     "generation_mode": "pre_cutover",
     "stock_factor_detector": "tushare_adj_factor",
     "etf_factor_detector": "tushare_fund_adj",
