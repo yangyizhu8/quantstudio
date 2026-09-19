@@ -1,0 +1,91 @@
+name: strategy-contrib-scan
+
+# 策略贡献 PR 的静态扫描门（策略生态准入 · D2b，2026-09-19）
+#
+# 与 D1 路径门并列，二者共同构成「合入门」的机械层：
+#   D1（strategy-contrib-path-gate）管「改哪儿」——路径白名单 + symlink/gitlink 防护；
+#   D2（本件）管「改成了什么」——静态安全扫描 + 新增策略的元信息头。
+# 二者设为分支保护 required status checks 后，未过者无法合入。
+#
+# 扫描范围：**仅本 PR 变更的 .py**（不扫全目录）——避免每次 PR 都撞存量目录卫生问题，
+# 也把检查聚焦在贡献者实际提交的内容上。
+#
+# 边界声明：本门是静态过滤，**通过不代表安全性结论**；真正的边界是
+# 本地沙箱试跑（D3）+ 所有者人工审查。
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  static-scan:
+    name: strategy-contrib-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout（需完整历史以解析 base/head）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 计算本次变更 / 新增的策略文件
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          IN_SCOPE='^quantstudio/backtest/strategies/.*\.py$'
+
+          ALL="$(git diff --name-status --diff-filter=ACMRDT "$BASE_SHA" "$HEAD_SHA" \
+                 | awk 'NF>=3 {print $2; print $3; next} NF==2 {print $2}' || true)"
+          PY="$(printf '%s\n' "$ALL" | grep -E "$IN_SCOPE" || true)"
+          ADDED="$(git diff --name-status --diff-filter=A "$BASE_SHA" "$HEAD_SHA" \
+                   | awk 'NF>=3 {print $3; next} NF==2 {print $2}' \
+                   | grep -E "$IN_SCOPE" || true)"
+
+          { echo "py<<EOF"; printf '%s\n' "$PY"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+          { echo "added<<EOF"; printf '%s\n' "$ADDED"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+
+          echo "--- 本次变更的 .py ---"
+          if [ -z "$PY" ]; then echo "<空>"; else printf '%s\n' "$PY"; fi
+          echo "--- 其中新增的 .py ---"
+          if [ -z "$ADDED" ]; then echo "<空>"; else printf '%s\n' "$ADDED"; fi
+
+      - name: 静态安全扫描（仅本 PR 变更的 .py）
+        if: steps.changed.outputs.py != ''
+        env:
+          PY_LIST: ${{ steps.changed.outputs.py }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$PY_LIST" | tr '\n' '\0' | xargs -0 python scripts/scan_contrib_strategy.py
+
+      - name: 新增策略的元信息头校验（仅新增文件）
+        if: steps.changed.outputs.added != ''
+        env:
+          ADDED_LIST: ${{ steps.changed.outputs.added }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$ADDED_LIST" | tr '\n' '\0' | xargs -0 python scripts/check_strategy_meta.py
+
+      - name: 通过提示
+        if: success() && steps.changed.outputs.py != ''
+        run: |
+          echo "策略贡献静态门通过。"
+          echo "提醒：本门为静态过滤，通过不代表安全性结论；"
+          echo "      合入前仍需所有者人工审查（含前视偏差与策略逻辑）。"
+
+      - name: On failure（定位提示）
+        if: failure()
+        run: |
+          echo "STRATEGY CONTRIB SCAN FAILED —— 请检查："
+          echo "  1) 禁用项（网络 / 进程 / 动态执行 / 文件 I/O / 内部模块）→ 移除后重推；"
+          echo "  2) 新增策略缺少元信息头（@strategy_name / @author / @license / @risk_level）"
+          echo "     → 参见 CONTRIBUTING-STRATEGIES.md 的模板。"

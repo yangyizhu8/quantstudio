@@ -1,0 +1,112 @@
+name: strategy-contrib-path-gate
+
+# 策略贡献 PR 的路径门（策略生态准入 · 六步流水线 2026-09-19）
+#
+# 目的：客户贡献 PR 的变更范围严格限于 `quantstudio/backtest/strategies/`。
+#
+# 架构依据（方案阶段实测确认）：
+#   · GitHub 无目录级权限；Push rulesets 在**公开仓不可用**（GA 时限定 private/internal）
+#     → 路径锁的执行点从「推送门」移到「合入门」；
+#   · 公开个人仓的分支保护可用（Free 计划）：本 check 设为 required status check 后，
+#     越界 PR **无法合入**（客户本就无 write 权限，无推送动作可拦）；
+#   · required reviewers 在个人仓不可用，但 `Require approvals: 1` 可用
+#     （PR 作者不能自批 ⇒ 事实上的所有者审查）。
+#
+# 防绕过设计（四处，均来自审计意见）：
+#   ① `--name-status` + `ACMRDT`：改名/类型变更的**两侧路径**都被列出，不能靠改名逃逸；
+#   ② **符号链接防护**：路径字符串合规但 symlink 实体可指向目录外 ⇒ 按 git mode `120000` 拒绝；
+#   ③ **submodule 防护**：gitlink mode `160000` 同理拒绝；
+#   ④ **扩展名白名单**：策略目录内仅允许 `.py` / `.md`。
+#
+# 空集处理：本次 PR 无文件变更 → 判 **PASS**（并在日志中显式声明）。
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  path-gate:
+    name: strategy-contrib-path-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout（需完整历史以解析 base/head）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 变更范围白名单校验
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          echo "base=$BASE_SHA"
+          echo "head=$HEAD_SHA"
+
+          ALLOWED_RE='^quantstudio/backtest/strategies/'
+          EXT_RE='\.(py|md)$'
+
+          # ① 变更路径：含改名（R）/类型变更（T）两侧，新增/修改/删除
+          CHANGED="$(git diff --name-status --diff-filter=ACMRDT "$BASE_SHA" "$HEAD_SHA" \
+                     | awk 'NF>=3 {print $2; print $3; next} NF==2 {print $2}' || true)"
+
+          echo "--- 变更路径 ---"
+          if [ -z "$CHANGED" ]; then echo "<空>"; else printf '%s\n' "$CHANGED"; fi
+          echo "----------------"
+
+          if [ -z "$CHANGED" ]; then
+            echo "::notice::本次 PR 无文件变更 —— 路径门判 PASS（空集放行）"
+            exit 0
+          fi
+
+          FAIL=0
+
+          # ② 白名单：全部变更必须落在策略目录内
+          OFFEND="$(printf '%s\n' "$CHANGED" | grep -v -E "$ALLOWED_RE" || true)"
+          if [ -n "$OFFEND" ]; then
+            echo "::error title=越界变更::以下变更不在 quantstudio/backtest/strategies/ 内："
+            printf '%s\n' "$OFFEND"
+            FAIL=1
+          fi
+
+          # ③ 扩展名白名单（仅对目录内变更生效）
+          IN_SCOPE="$(printf '%s\n' "$CHANGED" | grep -E "$ALLOWED_RE" || true)"
+          if [ -n "$IN_SCOPE" ]; then
+            BADEXT="$(printf '%s\n' "$IN_SCOPE" | grep -v -E "$EXT_RE" || true)"
+            if [ -n "$BADEXT" ]; then
+              echo "::error title=扩展名不允许::策略目录内仅允许 .py / .md："
+              printf '%s\n' "$BADEXT"
+              FAIL=1
+            fi
+          fi
+
+          # ④ 符号链接防护（git mode 120000）——按 HEAD 整树扫描，不限本次变更
+          SYMLINKS="$(git ls-tree -r "$HEAD_SHA" --format='%(objectmode) %(path)' \
+                      | awk '$1=="120000" {print $2}' \
+                      | grep -E "$ALLOWED_RE" || true)"
+          if [ -n "$SYMLINKS" ]; then
+            echo "::error title=禁止符号链接::策略目录内不得存在 symlink（实体可指向目录外，绕过路径门语义）："
+            printf '%s\n' "$SYMLINKS"
+            FAIL=1
+          fi
+
+          # ⑤ submodule / gitlink 防护（git mode 160000）
+          GITLINKS="$(git ls-tree -r "$HEAD_SHA" --format='%(objectmode) %(path)' \
+                      | awk '$1=="160000" {print $2}' \
+                      | grep -E "$ALLOWED_RE" || true)"
+          if [ -n "$GITLINKS" ]; then
+            echo "::error title=禁止子模块::策略目录内不得存在 gitlink/submodule："
+            printf '%s\n' "$GITLINKS"
+            FAIL=1
+          fi
+
+          if [ "$FAIL" -ne 0 ]; then
+            echo "::error::路径门未通过 —— 贡献 PR 的变更范围必须严格限于 quantstudio/backtest/strategies/，且仅 .py/.md、不含 symlink 与 submodule。"
+            exit 1
+          fi
+
+          echo "OK: 全部变更均在 quantstudio/backtest/strategies/ 内，且无 symlink / submodule"

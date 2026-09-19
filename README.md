@@ -123,6 +123,42 @@ result, output_dir = payload
 
 策略文件无需导入数据库或 provider，只实现 `initialize`、`before_trading_start`、`handle_data` 和可选 `after_trading_end`。
 
+## 策略生态与外部贡献（2026-09-19）
+
+策略生态开在**公开仓** [`yangyizhu8/quantstudio`](https://github.com/yangyizhu8/quantstudio)：
+外部用户（含客户）可通过 **fork + Pull Request** 贡献策略，**变更范围严格限于**——
+
+```
+quantstudio/backtest/strategies/     （且仅 .py 与 .md）
+```
+
+**准入四道门**（前两道为该 PR 的 CI 机械门，后两道由维护者执行）：
+
+| # | 门 | 实现 | 作用 |
+|---|---|---|---|
+| 1 | **路径门** | `.github/workflows/strategy-contrib-path-gate.yml` | 越界改动、**改名跨越目录**、**符号链接（git mode 120000）**、**子模块（160000）**一律拒绝；白名单正则 `^quantstudio/backtest/strategies/` |
+| 2 | **静态扫描** | `.github/workflows/strategy-contrib-scan.yml` + `scripts/scan_contrib_strategy.py` | 禁用网络 / 进程 / 动态执行 / 文件 I/O / 内部模块；对**新增**策略另校验元信息头（`scripts/check_strategy_meta.py`） |
+| 3 | **本地沙箱** | `scripts/run_contrib_sandbox.ps1` | 维护者执行：**只读影子库** + 隔离目录 + **断网三层降级**（防火墙 → 代理黑洞 → 告警）+ 硬超时与进程树清理，短窗试跑 |
+| 4 | **人工审查** | — | 前视偏差、策略逻辑、风险控制 |
+
+**为什么不用「目录级权限」？** GitHub **没有**目录级权限（CODEOWNERS 对已有 push 权限者
+不生效）；Push rulesets（含 Restrict file paths）在**公开仓不可用**——仅 private/internal。
+因此路径锁的执行点是**合入门**而非推送门：把上述两个 CI 检查设为 `main` 分支保护的
+**required status checks**，越界 PR 即**无法合入**（外部贡献者本无 write 权限，
+不存在可拦的推送动作）。
+
+**贡献者入口**：见 [`CONTRIBUTING-STRATEGIES.md`](CONTRIBUTING-STRATEGIES.md) ——
+含公开性确认、**plus 分发知情条款**（贡献将随客户分发包交付全体客户）、MIT 许可模板与免责、
+元信息头模板、以及首次贡献者需维护者批准运行 CI 的说明。
+
+**维护者推送前**：除既有三查（领先清单 / `ls-remote` 双远程 / 闸门状态）外，须增加
+**第四查**——`git fetch eco` 并确认 `eco/main` 未领先本地。因为贡献合入公开仓后该仓会领先，
+而本地对它是 **push-only**，直接双推会被**非快进拒绝**。详见
+`docs/ops-verification-conventions.md` 的 **C7 第四查**。
+
+**边界声明**：策略贡献**只落在公开仓的 `strategies/` 目录**，不触碰任何框架代码；
+合入策略**不自动进入实盘**，实盘需另经独立集成流程。
+
 ## 策略工具箱（PTrade 兼容 API + QuantStudio 本地扩展）
 
 写策略 / 移植 PTrade 策略时，可直接使用的**全部生命周期回调、注入式 API 函数、MyTT 指标库与 A股交易规则**，详见 **[`docs/strategy_toolbox.md`](docs/strategy_toolbox.md)**。其中 `get_etf_list()` 保持 PTrade 同名契约且禁止用于回测动态池；本地单端策略可使用 `get_etf_list_local(query_date=None, etf_type="equity", active_only=True)`，该接口经 ReferenceDataProvider → DuckDB 数据适配层按 `etf_basic` + `etf_daily` 做 PIT 查询。

@@ -105,3 +105,34 @@ sha256(norm)   # 用于跨仓/跨形态比较
 
 **教训**：闸门/推送状态**必须以 `ls-remote` 实测为准**——本地 `origin/main` 追踪引用、他人转述的
 「还没推」以及自己的记忆都可能滞后或失真；据此判断会得出错误结论（本次差点据此推迟一次 docs-only 推送）。
+
+---
+
+### C7 第四查（2026-09-19 追加 · 策略生态准入件）：`eco/main` 待拉取检查
+
+**规则**：推送前在原有三查之外增加第四查——
+
+④ `git fetch eco` 后 `git rev-list --left-right --count eco/main...main`；
+**若 `eco/main` 领先本地（左计数 > 0），必须先 `git merge eco/main` 再推送**，
+否则双推会遭**非快进（non-fast-forward）拒绝**。
+
+**来源事件（2026-09-19，策略生态准入件）**：策略生态开在**公开仓** `quantstudio`，
+客户以 **fork/PR** 方式贡献策略。**贡献合入 `quantstudio/main` 后，该仓即领先本地**；
+而本地对 `quantstudio` 一直是 **push-only**（`origin` 的第二 push URL）、**从不 fetch**
+⇒ 一旦有人合入 PR，本地再双推必然被拒。
+
+**配套修订（本件 D5）**：
+
+- 新增独立 remote **`eco`** = `https://github.com/yangyizhu8/quantstudio.git`（**fetch 用**）。
+  **不并入 `origin`**——`origin` 现有 `fetch=plus / push=plus+qs` 口径已固化在多次推送流程中，
+  直接改其 fetch URL 会引入「fetch 到底取哪个」的歧义。
+- **三方一致性核对口径扩展**：原口径 `本地 = plus = qs` 升级为
+  **`本地 = plus`，且 `eco/main ∈ {本地, 领先待拉取}`**；出现领先态时**先 merge 再核对**。
+
+**操作**：
+
+```powershell
+git fetch eco
+git rev-list --left-right --count eco/main...main   # 左=eco 独有（待拉取）  右=本地独有（待推送）
+# 左 > 0  =>  git merge eco/main
+```
