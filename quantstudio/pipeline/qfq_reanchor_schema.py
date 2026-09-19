@@ -657,6 +657,10 @@ DUCKDB_COLS: Dict[str, List[str]] = {
     "qfq_bootstrap_item": [
         "bootstrap_run_id", "asset_type", "code", "status", "attempt_count",
         "block_reason", "last_error", "started_at", "finished_at", "updated_at",
+        # 2026-09-17 修复：真源落后于 DDL（:312-327）与指纹（qfq_schema_contracts :675/:963）
+        # 尾部 3 列。本表三列自 DDL 起即存在，COLS 漏列导致两条严格列序契约测试恒红，
+        # 并使 reanchor:766 的自动迁移循环无法在缺列库上补列。顺序与 DDL 第 11/12/13 位逐一对应。
+        "approved", "approved_reason", "approved_at",
     ],
     "trade_calendar": ["cal_date", "is_open", "source", "updated_at",
                        "exchange", "pretrade_date"],
