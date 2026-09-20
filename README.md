@@ -616,6 +616,34 @@ backlog**：小市值与双均线真实策略 `get_history` 命中均为 0；`Pt
 行情取数范围、复权口径、生命周期调用时机、撮合/费用/持仓/现金/涨跌停处理、策略信号或
 回测指标。完整验证见 `docs/performance_optimization.md`。
 
+## 框架层变更审阅记录（fix/source-import-industry-extract，2026-09-19）
+
+`quantstudio/strategy_compiler/source_import.py::_extract_industry_codes` 的**提取判据重写**
+（**正确性修复**·非性能优化）。该函数从策略源码提取「行业剔除码集」，再经
+`_QS_INDUSTRY_EXT` 模板的 `__QS_INDUSTRY_CODES__` 占位符烘焙进 PTrade 转换产物。
+
+- **缺陷**：旧判据「`ast.walk` 遍历**全文件全部字符串常量**，凡纯 6 位数字即收」
+  **无法区分「行业码」与「业务哨兵 / 无关代码表」**。四策略直测实测三例误提取：
+  `断板反包策略` 的 `_QS_BSE_LEGACY`（n=248 北交所映射快照，**另一语义**）被**整表收走**（≈200 码）；
+  `连板梯队龙头打板套利策略` 的业务哨兵 `'999999'` 被收走；`F-Score选股RSRS择时` 恰好正确
+  （源码内只有那 4 个 6 位数字）——**属侥幸，非判据有效**。
+  **误收后果**：无关集合被烘焙进产物 ⇒ 平台端逐个查行业（**池查询灾难**）。
+- **修复**：判据改为「**两路锚定 + 三面排除**」——
+  **路 A** `Compare(op=In)` 右侧字面量元组（左值须为行业语义变量名，如 `ic in (...)`）；
+  **路 B** `Assign` 目标名匹配 `INDUSTRY_EXCLUDE*` / `_QS_INDUSTRY_CODES`；
+  **排除** docstring/注释（**结构性排除——不再遍历全量 Constant，非补丁过滤**）、
+  **哨兵/魔法值**（`999999`/`000000`）、**已知无关集合常量名**（`*BSE*` 映射等）。
+  判据**保守偏空**：宁返回空集（仍触发转换器告警 + 下游 fail-open，RD-3）也不误收。
+- **验证**：四策略直测 —— `F-Score` 结果**与修复前逐字相同**（**零变更硬门**，重转产物
+  `_QS_INDUSTRY_CODES` 与现存 12 版一致）；`断板反包` 由 ≈200 码 → `()`；
+  `连板梯队` 由 `('999999',)` → `()`（**与现存产物一致 ⇒ 该策略无需重转**）；
+  新增回归测试 `tests/test_industry_code_extract.py` **16 项**，相关套件 **125 passed / 1 skipped**。
+- **契约矩阵**：`scripts/check_fund_matrix.py --check` **哈希一致 + MD 一致**
+  （本修复只动函数体，未触碰 `_QS_INDUSTRY_EXT` / `_QS_FUNDAMENTALS_EXT` 模板字符串）。
+- **零改动**：**任何策略源码未改**（铁律）；渲染格式（tuple 字面量）与空集语义（告警 + fail-open）不变。
+
+完整方案与归因见 `docs/source-import-industry-extract-fix-design.md`。
+
 > **PyQt single-task result contract (2026-08-03)**: manual task status is determined by that task's fetch?align?validate?write result. Full-database `QualityAudit` still runs afterward, but unrelated-table failures are displayed as `success (audit warning)` rather than falsely marking the data pull as failed. Real task failures remain failures.
 
 > **Full-database audit reference-table contract (2026-08-03)**: MCP `stock_basic` and the shared MCP/QFQ `trade_calendar` are writer-managed canonical tables. `trade_calendar` keeps its original `cal_date` single primary key and QFQ behavior; `exchange/pretrade_date` are compatibility metadata. Enum auditing uses native typed values, and QFQ pending SLA uses the current-state update time.
