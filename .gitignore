@@ -90,3 +90,7 @@ data/quantstudio.zip
 /scripts/_probe*_tmp*
 /scripts/_git_*.txt
 /scripts/_qdb*_out.txt
+
+# Rust hybrid Phase 0 剖析产物（2026-09-20 补充指示③批准：原始 profile 不入 git）
+agent_workspace/phase0/
+*.prof

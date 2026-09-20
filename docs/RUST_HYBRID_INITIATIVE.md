@@ -42,7 +42,8 @@
 
 - `attach_bar` 是 O(1)：仅 8 个字段引用交换 + 缓存失效，无 pandas 操作（`quantstudio/backtest/ptrade_api.py:586-604`）
 - `DataDict` 已是惰性：`data[code]` 被策略访问时才构建 BarData（`ptrade_api.py:258-308`）
-- 热浪费集中在引擎侧：iterrows 构价（`backtest_engine.py:2432-2435`）、bar 分组（`_load_minute_snapshots`）、strftime（`:2426`）
+- ~~热浪费集中在引擎侧：iterrows 构价（`backtest_engine.py:2432-2435`）、bar 分组（`_load_minute_snapshots`）、strftime（`:2426`）~~
+  **【勘误 2026-09-20（总调度批准登记）】**上条经客户实测修正：iterrows 构价占比 **4.46%**（35.5577s = 34.7761+0.7816，归档实录；此前 4.36% 作废）；**B 段主导假设作废**——Phase 0 实测大头为数据访问查询链（锚点场景 86.35%，详见 docs/RUST_HYBRID_DESIGN.md §4）；strftime 证伪（0.00s）；**迁移顺序以 Phase 0 实测为准**（方案件 §1 已按实测份额重排）
 
 ### 2.2 原理五层拆解
 
@@ -159,3 +160,4 @@
 |---|---|---|
 | 2026-09-20 | 创建：立项令 + 008 结论 + 基线声明 + 交接 | 分析会话（交接轮） |
 | 2026-09-20 | 总调度裁定落档：GitHub 远程取消（§7 重写）；段门同步纪律入铁律 9（§2.7/§5 同步更新） | 总调度（用户） |
+| 2026-09-20 | 勘误登记（批准）：§2.1 iterrows 4.46% 修正、B 段主导假设作废、迁移顺序以 Phase 0 实测为准；§6 热点表落点偏离登记（总调度裁定④：表入方案件子④ + 证据入 docs/evidence/phase0_hotspots.md + PROJECT_STATE 指针，替代本文件落位） | 实施主体会话（簿记） |
