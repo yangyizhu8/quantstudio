@@ -165,6 +165,8 @@ class ResidentCollector:
 
         self._running = True
         self._adapters: Dict[str, object] = {}  # source → adapter 实例（复用连接）
+        # 同 candidate 幂等短路："source:table:freq" → 上次真实拉取时间戳（进程内锚）
+        self._deferred_replay_last_pull: Dict[str, float] = {}
 
         # —— A4 变更检测器（UpdateDetector，默认 Mock 零行为变化）——
         # MCP server 工具上线后，在 _get_adapter 后替换为 MCPUpdateDetector。
@@ -399,6 +401,30 @@ class ResidentCollector:
                     f"下轮 daemon 周期从旧水位幂等重拉后统一提交）")
             return
         self.writer.advance_watermark(source, table, freq, new_watermark, batch_id)
+
+    def _maybe_skip_deferred_replay(self, source: str, table: str, freq: str,
+                                    a4_verdict: int, batch_id: str):
+        """同 candidate 幂等短路（建议 1）：返回 (skip, reason)。
+
+        仅对 qfq 协调的价格表生效；其余表/源恒不短路（行为逐位不变）。
+        """
+        if not deferred_shortcircuit_enabled():
+            return False, "disabled-by-env"
+        cfg = self._qfq_config()
+        if not cfg.can_coordinate_watermark(table):
+            return False, "not-coordinated"
+        key = "%s:%s:%s" % (source, table, freq)
+        try:
+            stored = self.writer.get_last_date(source, table, freq)
+            skip, why = should_skip_deferred_replay(
+                self.writer.shared_conn(), stored, source=source, table=table, freq=freq,
+                a4_verdict=a4_verdict, last_pull_ts=self._deferred_replay_last_pull.get(key),
+                now_ts=time.time())
+        except Exception as e:      # 任何异常 ⇒ 保守不短路（不得阻断主流程）
+            return False, "probe-error: %s" % str(e)[:80]
+        if skip:
+            logger.info(f"[{batch_id}] 同 candidate 幂等短路判定命中：{why}")
+        return skip, why
 
     # ---------------- 单任务执行（核心流水线，硬编码顺序不可绕过）----------------
     def _execute_task(self, task: Dict) -> bool:
@@ -771,8 +797,23 @@ class ResidentCollector:
             adapter = self._get_adapter(source, task)
 
             # A4 变更检测：增量模式 + MCP 源时，拉取前检测云端更新并局部重拉
+            _a4_verdict = 0
             if mode != "full_range":
-                self._check_cloud_updates_and_repull(source, table, freq, adapter, batch_id)
+                _a4_verdict = self._check_cloud_updates_and_repull(source, table, freq, adapter, batch_id)
+
+            # 同 candidate 幂等短路（2026-09-20 批准，建议 1）：
+            # A4 判「无需重拉」+ 水位被 qfq gate hold ⇒ 本轮重放必然同产 ⇒ 跳过拉取。
+            # 详情与四条判据见模块级 should_skip_deferred_replay。
+            if mode != "full_range":
+                _skip, _why = self._maybe_skip_deferred_replay(source, table, freq, _a4_verdict, batch_id)
+                if _skip:
+                    self.batch_audit.record(batch_id, name, source, table, freq,
+                                            0, 0, 0, 0, 0, "empty",
+                                            "deferred_replay_short_circuit: " + _why, started_at)
+                    logger.info(f"[{batch_id}] 同 candidate 幂等短路：跳过本轮重放（{_why}）")
+                    return True
+                # 真实拉取 ⇒ 刷新锚（30 天强放旁路的计时起点）
+                self._deferred_replay_last_pull["%s:%s:%s" % (source, table, freq)] = time.time()
 
             # stock_daily 任务：自动先拉依赖表 stock_daily_valuation
             # 范围跟随 stock_daily：start 前推 30 自然日（≈20交易日），满足回测/采集期
@@ -3278,6 +3319,63 @@ def build_authority_rules(tasks_cfg: Dict) -> Dict:
                 "allow_fallback": task.get("allow_fallback", True),
             }
     return rules
+
+
+# ---------------------------------------------------------------------------
+# 同 candidate 幂等短路（2026-09-20 批准，建议 1 · 小件）
+# 背景：etf_minutes 等价格表的 deferred 水位被 qfq gate 长期 hold 时，每轮
+#   从旧水位重放同一窗口（实测 1,214,811 行/轮 × 每日 4–5 轮），空耗配额与 IO。
+# 判据（四条同时成立才短路）：
+#   ① A4 变更检测裁决 = 0（无 repair/full 变更；有则照常重拉，绝不漏上游修订）；
+#   ② 已有锚（本进程内至少做过一次真实拉取）——重启后首轮必真实拉取（兜底）；
+#   ③ 距上次真实拉取 < FORCED_REPLAY_DAYS（30 天强放旁路，防上游回溯修订）；
+#   ④ qfq_watermark_intent 存在 pending 且其 candidate 领先存储水位。
+# 回退：环境变量 QS_DEFERRED_REPLAY_SHORTCIRCUIT=0/off 关闭（等效旧行为）。
+# ---------------------------------------------------------------------------
+FORCED_REPLAY_DAYS = 30          # 与 qfq_orchestrator.factor_overlap_lookback_days 默认同量级
+DEFERRED_SHORTCIRCUIT_ENV = "QS_DEFERRED_REPLAY_SHORTCIRCUIT"
+
+
+def should_skip_deferred_replay(conn, stored_watermark, *, source: str, table: str,
+                                freq: str, a4_verdict: int, last_pull_ts,
+                                now_ts: float,
+                                forced_replay_days: int = FORCED_REPLAY_DAYS):
+    """纯判定：本轮是否可因「同 candidate 延迟提交」而跳过重放。
+
+    Returns: (skip: bool, reason: str)
+    """
+    if a4_verdict != 0:
+        return False, "a4_verdict=%s（有 repair/full 或熔断 ⇒ 照常重拉）" % a4_verdict
+    if last_pull_ts is None:
+        return False, "no-anchor（本进程内尚未真实拉取过）"
+    age = float(now_ts) - float(last_pull_ts)
+    if age >= float(forced_replay_days) * 86400.0:
+        return False, "forced-replay-due（锚龄 %.1f 天 >= %d 天）" % (age / 86400.0, forced_replay_days)
+    try:
+        row = conn.execute(
+            "SELECT MAX(CAST(candidate_watermark AS BIGINT)) FROM qfq_watermark_intent "
+            "WHERE source=? AND table_name=? AND freq=? AND status='pending'",
+            [source, table, freq]).fetchone()
+    except Exception as e:  # 表缺失/历史库 ⇒ 不短路（保守）
+        return False, "intent 查询失败（保守不短路）: %s" % str(e)[:80]
+    cand = row[0] if row else None
+    if cand is None:
+        return False, "no-pending-intent"
+    if stored_watermark is None:
+        return False, "no-stored-watermark"
+    try:
+        if int(cand) <= int(stored_watermark):
+            return False, "candidate-not-ahead（cand=%s <= wm=%s）" % (cand, stored_watermark)
+    except (TypeError, ValueError):
+        return False, "candidate-unparsable"
+    return True, ("pending candidate %s > watermark %s，A4=0，锚龄 %.1f 小时"
+                  % (cand, stored_watermark, age / 3600.0))
+
+
+def deferred_shortcircuit_enabled() -> bool:
+    """环境回退开关：默认开；=0/false/off/空以外任意值仍视为开（fail-open 语义同 writer 闸）。"""
+    v = os.environ.get(DEFERRED_SHORTCIRCUIT_ENV, "").strip().lower()
+    return v not in ("0", "false", "off")
 
 
 # ---------------------------------------------------------------------------
