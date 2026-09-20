@@ -190,13 +190,15 @@ def _acquire_dual_locks() -> _LockState:
             raise FormalCutoverRefused("daemon identity=denied; cannot verify DB ownership; refuse")
         # stale: the recorded process is gone, but this does NOT mean the DB is writable.
     # 2. non-blocking acquire in fixed order: daemon lock first.
-    state.daemon_lock = FileLock(str(daemon_lock_path()), timeout=0)
+    state.daemon_lock = FileLock(str(daemon_lock_path()), timeout=0,
+                                   preserve_lock_file=True)  # T2 锁文件常驻
     try:
         state.daemon_lock.acquire(timeout=0)
     except Timeout as exc:
         raise FormalCutoverRefused(".daemon.lock busy; refuse to cutover") from exc
     try:
-        state.collector_lock = FileLock(str(collector_run_lock_path()), timeout=0)
+        state.collector_lock = FileLock(str(collector_run_lock_path()), timeout=0,
+                                       preserve_lock_file=True)  # T2 锁文件常驻
         try:
             state.collector_lock.acquire(timeout=0)
         except Timeout as exc:

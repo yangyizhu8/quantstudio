@@ -1949,7 +1949,8 @@ class ResidentCollector:
         """
         lock_path = DATA_ROOT / ".collector.lock"
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        lock = FileLock(str(lock_path), timeout=5)
+        lock = FileLock(str(lock_path), timeout=5,
+                        preserve_lock_file=True)  # T2 锁文件常驻（DEPRECATED 路径同参，§一六四裁定）
 
         # 优雅退出信号：仅在主解释器主线程注册。
         # 原因：signal.signal() 只能在主线程调用；GUI 通过 DaemonWorker(QThread) 跑

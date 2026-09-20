@@ -21,6 +21,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Optional, Tuple
@@ -119,6 +120,95 @@ def start_daemon_subprocess(config_dir: Path) -> Tuple[str, subprocess.Popen]:
     logger.info(f"[GUI] daemon 子进程已启动 pid={proc.pid} token={token[:8]}... "
                 f"bootstrap={bootstrap_path.name}")
     return token, proc
+
+
+# ---------------------------------------------------------------------------
+# T2（2026-09-20）：GUI 委托通道——once 子进程跑采集，GUI 不再自建采集锁
+# ---------------------------------------------------------------------------
+
+def start_once_subprocess(task_name: str, config_dir: Path, mode: str = "incremental",
+                          run_quality_audit: bool = True,
+                          pull_mode: Optional[str] = None
+                          ) -> Tuple[str, subprocess.Popen, Path, Path]:
+    """以 once 子进程执行单个采集任务（T2 委托通道，复用 L68 Popen 模式）。
+
+    与旧 Worker 的本质差别：GUI 进程不再构造 FileLock——采集锁由子进程内的
+    CollectorRunLock(timeout=30)（daemon.py once 路径既有）持有，从根源消除
+    GUI×daemon 的跨进程写锁冲突面。
+
+    成败判定契约（A2 障碍 3）：调方读 runtime-manifest（原子写 JSON：task/pid/
+    nonce/created_at/DATA_ROOT/三锁路径），不得以退出码判定（pwsh 包装 exit 1
+    为假阳性，实证见 handoff-data-line-20260917）。
+
+    采集期排队为有界：子进程 30s 等锁超时即退出并落日志——GUI 侧据此提示
+    「采集中，请稍后重试」，不做无限等待。
+    """
+    nonce = uuid.uuid4().hex[:8]
+    _data_root().mkdir(parents=True, exist_ok=True)
+    log_dir = _data_root() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stem = "once_{}_{}_{}_{}".format(task_name, mode, time.strftime("%Y%m%d_%H%M%S"), nonce)
+    log_path = log_dir / (stem + ".log")
+    manifest_path = log_dir / (stem + ".manifest.json")
+
+    cmd = [
+        sys.executable, "-m", "quantstudio.pipeline.daemon",
+        "--mode", "once",
+        "--task", task_name,
+        "--config-dir", str(config_dir),
+        "--quality-audit", "full" if run_quality_audit else "none",
+        "--runtime-manifest", str(manifest_path),
+        "--runtime-nonce", nonce,
+    ]
+    if pull_mode:
+        cmd += ["--pull-mode", pull_mode]
+
+    log_fd = os.open(str(log_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    popen_kwargs = dict(
+        stdin=subprocess.DEVNULL,
+        stdout=log_fd,
+        stderr=subprocess.STDOUT,
+        cwd=str(_project_root()),
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        close_fds=True,
+    )
+    if sys.platform == "win32":
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        popen_kwargs["creationflags"] = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    else:
+        popen_kwargs["start_new_session"] = True
+
+    try:
+        proc = subprocess.Popen(cmd, **popen_kwargs)
+    finally:
+        try:
+            os.close(log_fd)
+        except OSError:
+            pass
+
+    logger.info("[GUI] once 委托已启动 task={} pid={} nonce={} manifest={}".format(
+                task_name, proc.pid, nonce, manifest_path.name))
+    return nonce, proc, manifest_path, log_path
+
+
+def read_once_manifest(manifest_path: Path) -> Optional[dict]:
+    """读取 once 委托的 runtime-manifest（不存在/损坏返回 None，不抛）。"""
+    try:
+        return json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def once_busy_hint(log_path: Path) -> Optional[str]:
+    """有界排队提示：从 once 日志探测「等锁超时」形态，返回用户可读文案。"""
+    try:
+        tail = Path(log_path).read_text(encoding="utf-8", errors="replace")[-4000:]
+    except Exception:
+        return None
+    if "collector_run.lock" in tail and ("获取失败" in tail or "正在采集" in tail):
+        return "数据库采集中（守护进程正在写入），请稍后重试"
+    return None
 
 
 def _project_root() -> Path:

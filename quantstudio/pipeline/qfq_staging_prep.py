@@ -81,8 +81,10 @@ def _write_exclusive(path: Path, payload: dict) -> None:
 
 def _hold_copy_locks():
     stack = ExitStack()
-    daemon = FileLock(str(daemon_lock_path()), timeout=0)
-    collector = FileLock(str(collector_run_lock_path()), timeout=0)
+    daemon = FileLock(str(daemon_lock_path()), timeout=0,
+                       preserve_lock_file=True)  # T2 锁文件常驻
+    collector = FileLock(str(collector_run_lock_path()), timeout=0,
+                           preserve_lock_file=True)  # T2 锁文件常驻
     try:
         stack.enter_context(daemon.acquire(timeout=0))
         stack.enter_context(collector.acquire(timeout=0))

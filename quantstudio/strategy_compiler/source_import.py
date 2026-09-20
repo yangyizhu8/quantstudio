@@ -3259,23 +3259,83 @@ def _source_uses_industry_api(source: str) -> bool:
     return False
 
 
-def _extract_industry_codes(source: str) -> tuple[str, ...]:
-    """从策略源码提取行业码集（6 位数字引号字面量，如 ('801780','801790','480000','490000')
-    的行业剔除判定集）→ 烘焙进 _QS_INDUSTRY_EXT 的 _QS_INDUSTRY_CODES。
+# ---- 行业码提取：锚定「专用声明位」，替代全文件字符串扫描（ISS-004 修复，2026-09-19）
+#
+# 旧判据「ast.walk 遍历全文件全部字符串常量，凡纯 6 位数字即收」无法区分
+# 「行业码」与「业务哨兵 / 无关代码表」，四策略直测实测三例误提取：
+#   · 断板反包策略：`_QS_BSE_LEGACY`（n=248 北交所映射快照，**另一语义**）被整表收走；
+#   · 连板梯队策略：业务哨兵 '999999' 被收走；
+#   · F-Score：恰好正确（源码内只有那 4 个 6 位数字）——**属侥幸，非判据有效**。
+# 新判据 = 两路锚定 + 三面排除，且**保守偏空**（宁空集告警，不误收）。
+_INDUSTRY_VAR_NAMES = frozenset({
+    "ic", "ind", "industry", "industry_code", "ind_code",
+    "sw_industry", "sw_l1", "l1_code", "industry_codes",
+})
+_INDUSTRY_CONST_NAME_RE = re.compile(
+    r"^(?:[A-Za-z_]*_)?(?:INDUSTRY_EXCLUDE|QS_INDUSTRY_CODES)[A-Za-z_]*$", re.I)
+# 已知「非行业语义」的常量名（同形的 6 位数字集合，如北交所存量映射）
+_NON_INDUSTRY_NAME_RE = re.compile(r"BSE|LEGACY_TO_920", re.I)
+# 哨兵/魔法值（非行业码）
+_INDUSTRY_SENTINELS = frozenset({"999999", "000000"})
 
-    AST 遍历全部字符串常量：纯 6 位数字即候选（行业码惯用 6 位；'000001' 类股票代码
-    一般 6/7 位带后缀不命中；日期/数字串有引号极少）。空 → 空元组（转换器告警，
-    行业剔除降级 fail-open 登记 RD-3）。"""
+
+def _is_industry_code_literal(value) -> bool:
+    """6 位数字字面量，且非哨兵/魔法值（E2 排除）。"""
+    return (isinstance(value, str)
+            and len(value.strip()) == 6
+            and value.strip().isdigit()
+            and value.strip() not in _INDUSTRY_SENTINELS)
+
+
+def _extract_industry_codes(source: str) -> tuple[str, ...]:
+    """从策略源码提取行业码集 → 烘焙进 _QS_INDUSTRY_EXT 的 _QS_INDUSTRY_CODES。
+
+    **锚定「专用声明位」**（替代旧的全文件字符串扫描）：
+
+      路 A 结构位：``<行业语义变量> in (<字面量元组/集合>)``，左值名精确匹配
+                  ``_INDUSTRY_VAR_NAMES``（如 ``ic in ('801780', ...)``）；
+      路 B 命名常量：``Assign`` 目标名匹配 ``_INDUSTRY_CONST_NAME_RE``
+                  （如 ``INDUSTRY_EXCLUDE`` / ``_QS_INDUSTRY_CODES``）。
+
+    排除三面：
+
+      E1 docstring / 注释 —— **不再遍历全量 Constant**，结构上天然排除（非补丁过滤）；
+      E2 哨兵 / 魔法值 —— ``_INDUSTRY_SENTINELS``；
+      E3 已知无关集合 —— 常量名黑名单 ``_NON_INDUSTRY_NAME_RE``（BSE 映射等）。
+
+    判据**保守偏空**：宁可返回空集（仍触发转换器告警 + 下游 fail-open，RD-3），
+    也不误收非行业码——误收会把无关集合烘焙进产物、在 PTrade 端逐个查行业（池灾难）。
+
+    返回 tuple（模板内 ``[0]`` 下标与 ``','.join`` 保序依赖此形态）。空 → 空元组。
+    """
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return ()
     codes: list[str] = []
+
+    def _take_literal(node) -> None:
+        if isinstance(node, (ast.Tuple, ast.Set, ast.List)):
+            for elt in node.elts:
+                if isinstance(elt, ast.Constant) and _is_industry_code_literal(elt.value):
+                    v = elt.value.strip()
+                    if v not in codes:
+                        codes.append(v)
+
     for node in ast.walk(tree):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            v = node.value.strip()
-            if len(v) == 6 and v.isdigit() and v not in codes:
-                codes.append(v)
+        # 路 B：显式命名常量
+        if isinstance(node, ast.Assign):
+            for tgt in node.targets:
+                name = tgt.id if isinstance(tgt, ast.Name) else ""
+                if (name and _INDUSTRY_CONST_NAME_RE.match(name)
+                        and not _NON_INDUSTRY_NAME_RE.search(name)):
+                    _take_literal(node.value)
+        # 路 A：``<行业语义变量> in (字面量元组)``
+        elif isinstance(node, ast.Compare) and isinstance(node.left, ast.Name):
+            if node.left.id.lower() in _INDUSTRY_VAR_NAMES:
+                for op, comp in zip(node.ops, node.comparators):
+                    if isinstance(op, ast.In):
+                        _take_literal(comp)
     return tuple(codes)
 
 # ============================================================================
