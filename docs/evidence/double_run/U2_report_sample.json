@@ -1,0 +1,60 @@
+{
+ "case": "U2",
+ "strategy": "smallcap_overnight_scalp_7_quantstudio.py",
+ "a_wall_s": 444.017,
+ "b_wall_s": 465.831,
+ "nav_count": 3,
+ "trade_count": 5,
+ "audit_lines": 0,
+ "diffs_full_channel": [],
+ "pass": true,
+ "negative": [
+  {
+   "kind": "nav_1ulp",
+   "label": "谱a nav 1ulp",
+   "fail_expected": true,
+   "first_diff": {
+    "item": "nav_full",
+    "row": 1,
+    "field": "nav",
+    "A": "100425.79109000003",
+    "B": "100425.79109000001"
+   }
+  },
+  {
+   "kind": "trade_1ulp",
+   "label": "谱b trades 1ulp",
+   "fail_expected": true,
+   "first_diff": {
+    "item": "trades_full",
+    "row": 2,
+    "field": "price",
+    "A": "11.960000000000003",
+    "B": "11.960000000000001"
+   }
+  },
+  {
+   "kind": "code_char",
+   "label": "谱c code 单字符",
+   "fail_expected": true,
+   "first_diff": {
+    "item": "trades_full",
+    "row": 0,
+    "field": "code",
+    "A": "X02661.SZ",
+    "B": "002661.SZ"
+   }
+  },
+  {
+   "kind": "row_drop",
+   "label": "谱d 增删行",
+   "fail_expected": true,
+   "first_diff": {
+    "item": "trades_full",
+    "field": "__rowcount__",
+    "A": 4,
+    "B": 5
+   }
+  }
+ ]
+}

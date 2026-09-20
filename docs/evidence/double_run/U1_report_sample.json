@@ -1,0 +1,48 @@
+{
+ "case": "U1",
+ "strategy": "连板梯队龙头打板套利策略.py",
+ "a_wall_s": 818.151,
+ "b_wall_s": 1025.819,
+ "nav_count": 2,
+ "trade_count": 0,
+ "audit_lines": 0,
+ "diffs_full_channel": [],
+ "pass": true,
+ "negative": [
+  {
+   "kind": "nav_1ulp",
+   "label": "谱a nav 1ulp",
+   "fail_expected": true,
+   "first_diff": {
+    "item": "nav_full",
+    "row": 1,
+    "field": "nav",
+    "A": "100000.00000000001",
+    "B": "100000"
+   }
+  },
+  {
+   "kind": "trade_1ulp",
+   "label": "谱b trades 1ulp",
+   "fail_expected": null,
+   "note": "无可用扰动对象"
+  },
+  {
+   "kind": "code_char",
+   "label": "谱c code 单字符",
+   "fail_expected": null,
+   "note": "无可用扰动对象"
+  },
+  {
+   "kind": "row_drop",
+   "label": "谱d 增删行",
+   "fail_expected": true,
+   "first_diff": {
+    "item": "nav_full",
+    "field": "__rowcount__",
+    "A": 1,
+    "B": 2
+   }
+  }
+ ]
+}

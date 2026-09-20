@@ -33,7 +33,7 @@ backtest_engine.py:2195      2 次   14772 行   0.6175s  0.07%
 
 **成本模型闭合（场景 10 vs 3）**：T(D) = 670.4s（日1装载）+ 94.06s/日；670.4+2×94.06 = 858.52 ≈ 858.50 ✓
 
-**交叉跑失败（归因已申报）**：`FrequencyCapabilityError [TABLE_EMPTY] 2026-03-02`——SNAP003 etf_minutes 无 3 月数据（BR etf_minutes 03-02~04 = 1,022,291 行独有；stock_minutes 两库 3 月均 0——锚点 bar 实由 etf_minutes ~1411 只 ETF 构成，universe=日快照 ~5200 只，股票表 freq_check 跳过）。3 月域锁定 BR，6-8 月域 SNAP003。
+**交叉跑失败（归因已申报）**：`FrequencyCapabilityError [TABLE_EMPTY] 2026-03-02`——SNAP003 etf_minutes 无 3 月数据（BR etf_minutes 03-02~04 = 1,022,291 行独有；stock_minutes 两库 3 月均 0——锚点 bar 实由 etf_minutes ~1411 只 ETF 构成，universe=日快照 ~5200 只，股票表 freq_check 跳过）。**（②审加注：锚点窗口 universe=ETF-only——stock_minutes 2026-02~05 四个月全零，总调度亲测覆盖范围 01-05→09-04；1410 行/bar 实证）**。3 月域锁定 BR，6-8 月域 SNAP003。
 
 **overnight 4B 切片路径单列（分钟策略场景）**：`_current_minute_bar`（get_history frequency='1m' include=True）650 次 46.19s = **3.82%**（~71ms/次：全日 DF 掩码+isin+copy+逐 code 子扫）；对照日线 SQL 路径 `get_bars_by_count` 1500 次 112.87s = 9.33%。
 

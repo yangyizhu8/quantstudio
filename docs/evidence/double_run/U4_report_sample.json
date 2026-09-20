@@ -1,0 +1,60 @@
+{
+ "case": "U4",
+ "strategy": "小市值策略ptrade.py",
+ "a_wall_s": 4.839,
+ "b_wall_s": 5.484,
+ "nav_count": 23,
+ "trade_count": 19,
+ "audit_lines": 1,
+ "diffs_full_channel": [],
+ "pass": true,
+ "negative": [
+  {
+   "kind": "nav_1ulp",
+   "label": "谱a nav 1ulp",
+   "fail_expected": true,
+   "first_diff": {
+    "item": "nav_full",
+    "row": 11,
+    "field": "nav",
+    "A": "98926.350160000016",
+    "B": "98926.350160000002"
+   }
+  },
+  {
+   "kind": "trade_1ulp",
+   "label": "谱b trades 1ulp",
+   "fail_expected": true,
+   "first_diff": {
+    "item": "trades_full",
+    "row": 9,
+    "field": "price",
+    "A": "7.3900000000000006",
+    "B": "7.3899999999999997"
+   }
+  },
+  {
+   "kind": "code_char",
+   "label": "谱c code 单字符",
+   "fail_expected": true,
+   "first_diff": {
+    "item": "trades_full",
+    "row": 0,
+    "field": "code",
+    "A": "X03003.SZ",
+    "B": "003003.SZ"
+   }
+  },
+  {
+   "kind": "row_drop",
+   "label": "谱d 增删行",
+   "fail_expected": true,
+   "first_diff": {
+    "item": "trades_full",
+    "field": "__rowcount__",
+    "A": 18,
+    "B": 19
+   }
+  }
+ ]
+}
