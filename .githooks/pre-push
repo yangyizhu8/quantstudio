@@ -1,0 +1,60 @@
+#!/bin/sh
+# 推送前闸门（C7 机器化）—— Git 的 pre-push hook
+#
+# 设计见 docs/prepush-gate-design.md；核心判据在 scripts/prepush-gate.ps1。
+#
+# 触发：`git push` 时由 Git 自动执行，待推 ref 经 stdin 传入，格式为：
+#   <local-ref> <local-sha> <remote-ref> <remote-sha>
+# **非零退出即中止推送** —— 这是「机器拦人」真正的技术落点
+# （纯脚本无人调用即等于不存在，故必须有本 hook）。
+#
+# 语义：
+#   对本仓 main 分支的推送，调用 prepush-gate.ps1 ——
+#   `origin/main..HEAD` 清单中若含**非本件提交**，即拒绝推送（exit 9）。
+#
+# 放行通道（唯一例外，刻意人工）：
+#   经用户裁定批准的捆绑推送，须**人显式导出**两个环境变量后再 push：
+#     QS_PUSH_BUNDLE_RULING=<裁定标识>
+#     QS_PUSH_BUNDLE_ALLOWALSO=<sha1,sha2>
+#   本 hook 不自动读取任何裁定 ⇒ 例外永远是有意识的动作（不留后门）。
+#   放行事实由 gate 侧强制写入 docs/handoff/push-bundle-rulings.log。
+#
+# 已知可绕过面（诚实披露，不声称绝对安全）：
+#   `git push --no-verify` 可跳过本 hook —— 技术上无法阻止。
+#   对策：C7 人工三查照旧执行（本门是叠加非替代）；留痕缺失可被事后审计发现；
+#        纪律要求任何 --no-verify 推送须在回报中声明。
+
+ROOT=$(git rev-parse --show-toplevel)
+COMMIT=""
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$remote_ref" in
+        refs/heads/main) COMMIT="$local_sha" ;;
+    esac
+done
+
+# 非 main 分支的推送不在本门管辖（本门针对 main 的「本地领先清单」）
+if [ -z "$COMMIT" ]; then
+    exit 0
+fi
+
+if command -v pwsh >/dev/null 2>&1; then
+    PS=pwsh
+elif command -v powershell >/dev/null 2>&1; then
+    PS=powershell
+else
+    echo "[prepush-gate] 未找到 pwsh/powershell —— 无法执行闸门。" >&2
+    echo "[prepush-gate] 按纪律拒绝推送；如确认无风险须显式 git push --no-verify（并在回报中声明）。" >&2
+    exit 9
+fi
+
+# 放行参数：**必须显式给出才传** —— hook 不自动读取任何裁定，
+# 保证「捆绑推送」永远是有意识的动作（不留后门）。
+if [ -n "$QS_PUSH_BUNDLE_ALLOWALSO" ]; then
+    "$PS" -NoProfile -ExecutionPolicy Bypass -File "$ROOT/scripts/prepush-gate.ps1" \
+        -Commit "$COMMIT" -AllowAlso "$QS_PUSH_BUNDLE_ALLOWALSO"
+else
+    "$PS" -NoProfile -ExecutionPolicy Bypass -File "$ROOT/scripts/prepush-gate.ps1" \
+        -Commit "$COMMIT"
+fi
+exit $?
