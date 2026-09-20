@@ -271,8 +271,9 @@ QuantStudio MCP 全数据源替代项目（含云端数据基础设施、同步�
    `ssh-keygen -q -t ed25519 -N "" -f "D:\miniQMT策略实盘\私募工作文件\客户密钥对\<客户名>\id_ed25519" -C "<客户名>"`
    - 私钥统一命名 `id_ed25519`（无任何后缀），公钥为同目录 `id_ed25519.pub`；
    - key comment（-C）与目录名均使用客户名（如 Jun、邓老师）；
-   - 落坑记录（2026-09-06）：本机 pwsh 对原生命令传空参 `-N ''` 会被丢弃、致 `Too many arguments`，
-     须用 `cmd /c "... -N \"\" ..."` 包装执行（Git Bash 下 `-N ''` 正常）。
+   - 落坑记录（2026-09-06 立档；2026-09-19 审核修订）：本机 pwsh 对原生命令传空参 `-N ''` 会被丢弃、
+     致 `Too many arguments`；**主径为 `-N '""'`（pwsh 直跑；2026-09-19 实测：生成 + 空口令校验双 PASS）**，
+     `cmd /c "... -N \"\" ..."` 包装降为 dsh 备选（⚠ Trae 等工具链安全门禁会硬拦 `cmd /c` 字样，勿在该类环境用）；Git Bash 下 `-N ''` 正常。
 2. **公钥加入仓库**（用户人工执行）：GitHub → yangyizhu8/quantstudio-plus → Settings → Deploy keys →
    Add deploy key，**必须勾选 Read-only**。
 3. **交付客户**：私钥 `id_ed25519` + 随附《客户使用说明.md》（方案 A 零配置）：
