@@ -133,6 +133,22 @@ class DuckDBDataAccess:
         self._bars_history_cache: Dict[tuple, pd.DataFrame] = {}
         # 实例级开关：True 走原 SQL 路径（等价性对比测试/回滚用），False（默认）走内存缓存路径。
         self._use_sql_path = False
+        # ---- M1 段一性能优化（2026-09-20，方案件 §1.2 路径 A）：当日单码调用回看式聚合 ----
+        # 病灶（Phase 0 实证）：策略每日筛查经 get_history_batch shim 逐 code 发起单码
+        # 调用（每码一次），PR7 路径下每日 ~5176 次 _ensure_bars_in_cache 单码装载 SQL
+        # （第 1 日 943s 线程锁等待）+ 每日同型 _post 重跑（~87s/日）。
+        # 机制：同族单码调用计数达阈值后，用当日已见全集一次批量执行（复用 impl 多码
+        # 路径，零新 SQL 语义），结果按码拆存；此后同族单码调用直接命中拆存（深拷贝
+        # 返回，防下游变异——get_price 路径对返回 df 有 trade_date 写入）。
+        # 语义不变约束：结果与逐次单码执行值等价（同一 impl 代码路径；仅执行时机与
+        # 批量度不同；返回经 .copy()，值/dtype/索引逐位一致）。族键=(before_ms,count,
+        # use_qfq)；族变化（新交易日/不同参数）即整体重置——绝不跨族命中。
+        self._agg_family: Optional[tuple] = None
+        self._agg_single_seen: List[str] = []        # 当日已见单码（去重保序）
+        self._agg_singles_done: bool = False         # 当日已触发批量
+        self._agg_result_cache: Dict[str, Optional[pd.DataFrame]] = {}
+        # （值 = 拆存单码结果 df 或 None 哨兵 = 该 code 当族无数据 → 返回空 dict）
+
         self._preload_fs: Optional[pd.DataFrame] = None
         self._preload_fs_month: Optional[str] = None
         # 纯性能优化：日线快照内存缓存（query_daily_snapshot 结果）。
@@ -701,7 +717,55 @@ class DuckDBDataAccess:
                 table, loaded, len(missing),
                 (len(missing) + chunk_size - 1) // chunk_size, elapsed)
 
+    # M1 段一：单码调用聚合阈值（计划⑤-1 批准：自适应升级；50 次后批量，
+    # 沉没成本 ~50×17ms≈0.9s 可忽略）
+    _AGG_SINGLE_THRESHOLD = 50
+    _AGG_MISS = object()   # 「未入缓存」哨兵（区别于 None=已入缓存但无数据）
+
     def query_bars_by_count_batch(self, codes, count, before_ms, use_qfq: bool = False) -> Dict[str, pd.DataFrame]:
+        """单码调用回看式聚合 wrapper（M1 段一 · 纯性能优化，2026-09-20）。
+
+        行为契约（与 impl 值等价）：
+        - 多码调用 / SQL 路径开关 / 族不匹配重置后首段：与原实现完全一致（直接透传 impl）；
+        - 同族单码调用：阈值前逐次执行并回填拆存缓存；计数达阈值后对已见全集一次
+          批量执行（impl 多码路径），此后同族单码调用命中拆存缓存，深拷贝返回
+          （值/dtype/索引与逐次执行逐位一致；对象为新副本，防下游变异污染缓存）；
+        - 族键 = (before_ms, count, use_qfq)；任何族变化（新交易日 end_ms 不同/
+          count 不同/复权不同）整体重置，绝不跨族命中；
+        - 无数据 code：拆存 None 哨兵 → 后续同族调用返回空 dict（与逐次执行一致）。
+        分钟路径不经过本函数（走 query_minute_bars_by_count_batch），零触碰。
+        """
+        if self._use_sql_path or len(codes) != 1:
+            return self._query_bars_by_count_batch_impl(codes, count, before_ms, use_qfq)
+        fam = (int(before_ms), int(count), bool(use_qfq))
+        if fam != self._agg_family:
+            self._agg_family = fam
+            self._agg_single_seen = []
+            self._agg_singles_done = False
+            self._agg_result_cache = {}
+        code = codes[0]
+        cached = self._agg_result_cache.get(code, self._AGG_MISS)
+        if cached is not self._AGG_MISS:
+            return {code: cached.copy()} if cached is not None else {}
+        if not self._agg_singles_done and code not in self._agg_single_seen:
+            self._agg_single_seen.append(code)
+            if len(self._agg_single_seen) >= self._AGG_SINGLE_THRESHOLD:
+                batch = self._query_bars_by_count_batch_impl(
+                    list(self._agg_single_seen), count, before_ms, use_qfq)
+                for c in self._agg_single_seen:
+                    dfc = batch.get(c)
+                    self._agg_result_cache[c] = dfc if dfc is not None else None
+                self._agg_singles_done = True
+                cached = self._agg_result_cache.get(code, self._AGG_MISS)
+                if cached is not self._AGG_MISS:
+                    return {code: cached.copy()} if cached is not None else {}
+        # 阈值前逐次 / 批量后迟到 code：单码正常执行并回填缓存
+        result = self._query_bars_by_count_batch_impl([code], count, before_ms, use_qfq)
+        dfc = result.get(code)
+        self._agg_result_cache[code] = dfc if dfc is not None else None
+        return {code: dfc.copy()} if dfc is not None else {}
+
+    def _query_bars_by_count_batch_impl(self, codes, count, before_ms, use_qfq: bool = False) -> Dict[str, pd.DataFrame]:
         """阶段1 批量化：与 query_bars_by_count_multi_table 逐只调用字节级等价，
         但用单次/少量批量 SQL 取代 N 次单码 SQL（O(N) -> O(1)）。
 

@@ -5,7 +5,7 @@
 
 ## 当前阶段
 
-**③实施 · M0 轮完成待验收**（双跑对比器落地 + U1-U5 自校验五报告全 PASS + 四谱负样本全红 + v1.2 勘误落档）。
+**③实施 · M1 段一轮完成待验收**（两文件收敛为单文件改动、U1-U5 逐位门全 PASS、回归门+契约门全绿、U2 复测+后段一热点快照齐备、v1.3 定谳落档）。
 
 ## ②审归档（2026-09-20 总调度审通过）
 
@@ -18,10 +18,11 @@
 ## 已锁定基线
 
 - 副本：`C:\QuantStudioHybrid`（真浅克隆 --depth 1 --no-local --single-branch）
-- 基线提交：main@366596d；当前 HEAD **`72e8c6e`**（feat/rust-hybrid；v1.1 commit，2026-09-20 用户验收后按裁定⑥执行；前一提交 29b2dbb 为交接件）
+- 基线提交：main@366596d；当前 HEAD **`bb80115`**（M0 commit：对比器+五报告样例+v1.2+簿记；前序 72e8c6e v1.1 / 29b2dbb 交接）
 - git 身份：yangyizhu8（副本 local config）
 - 权威立项文件：`docs/RUST_HYBRID_INITIATIVE.md`（含 2026-09-20 勘误登记）
-- **方案件：`docs/RUST_HYBRID_DESIGN.md` v1.1（②审通过；v1.2 勘误=M0 轮首项工作）**
+- **方案件：`docs/RUST_HYBRID_DESIGN.md` v1.2（已入库）**
+- **M0 工件：`scripts/double_run_engine.py`（双通道零容差比对器）+ `docs/evidence/double_run/` 样例**
 - **Phase 0 证据：`docs/evidence/phase0_hotspots.md`（热点表正文在方案件④，本件为底层证据）；原始剖析产物 `agent_workspace/phase0/`（.gitignore 已隔离）**
 
 ## Phase 0 核心结论（详见方案件 §4）
@@ -41,7 +42,8 @@
 5. 2026-09-20 方案子 v1.0-draft 落盘 + 卷宗勘误登记 + 证据文档 + .gitignore 两行 + ISS-003 登记/归因落定
 6. 2026-09-20 用户验收（四裁定：分阶段路线/段三留 Python/overnight 终局/commit）+ 四修订（R1-R4）→ v1.1 commit **72e8c6e**
 7. 2026-09-20 **②审通过（附硬条件：universe 口径声明/M2 换窗/段一复测窗口锁定）** → ③实施 M0 轮启动；ISS-004 量级更新+台账关闭追踪
-8. 2026-09-20 **M0 完成**：段门同步（stash 3b040a3 基线，Already up to date）；v1.2 勘误落档（三处加注+§4.4 注+M2 换窗+§1.2 复测锁定）；`scripts/double_run_engine.py` 落地（~370 行：双通道比对[全精度 %.17g 主裁决 + CSV 字符串第二通道] + QS_FILL_AUDIT 裸消息体通道[载体核实=引擎日志行 backtest_engine.py:818，分钟档无产出如实报，日线 U4 实捕 1 行] + 四谱负样本 + --rust-kernel 占位 fail-fast）；**U1-U5 自校验五报告全 PASS**（U4 23nav/19trades/1audit、U5 1/2/0、U2 3/5/0、U1 2/0/0、U3 8/0/0）+ 四谱负样本全部 FAIL 检出（1 ulp 灵敏度实证）；写遏制链前后双库逐位一致；样例入 docs/evidence/double_run/（五用例报告+镜像）；工具开发期缺陷 2 处（--worker 参数形态/CSV 目录定位）当轮修复并留痕
+8. 2026-09-20 **M0 完成**（bb80115）：对比器落地 + U1-U5 全 PASS + 四谱负样本 + v1.2 勘误
+9. 2026-09-20 **M1 段一完成（待验收）**：段门同步（主仓 4 新提交 f2d588f 等带入，engine/providers 零触碰，merge 02b073f）+ 双备份 SHA256 与席位基线交叉核对一致；**改动收敛为单文件**（duckdb_data_access.py：query_bars_by_count_batch 单码回看式聚合 wrapper + impl 重命名；provider 零改动）——**逐位门五用例全 PASS**（U4 1.78×/U5 1.00×/U2 1.03×/U1 1.07×/U3 1.07×，两态子进程序列+哈希终检）；回归门 79 passed + 契约门 PASS（skip-matrix，全量留主仓 CI）；**U2 净口径三跑中位 520.48s（vs 基线门禁单跑 484.6s——收益 0~3% 噪声带内，如实记录）**；后段一热点快照：B 80.67%（iterrows 61.36%）主导强化、C-api 16.92%（装载扫描残余 8.84%）——**乙增量决策输入定型：段二甲收益 ≈0，2× 战场在 B 段（→0 则 ~5×）**；v1.3 定谳落档（影子库陈旧 + 基线族低估声明 + 唯一有效口径=U2 族）；写遏制双库全程一致
 
 ## 未闭合 Issue 清单
 
@@ -49,9 +51,9 @@
 
 ## 下一步待确认事项
 
-1. **M0 轮八项 Plan 呈批中**（首项工作=v1.2 勘误落档；然后双跑对比器实施 + U1-U5 自校验门）
-2. M0 完成申报 → 用户验收 → M1 段一轮（Python 批量化先行）
-3. 性能基准用例：默认 U2 窗口 07-15~17（裁定 2 备选：提名新满 universe 用例呈批）
+1. **M1 段一轮 Plan 呈批中**（首个动引擎代码的里程碑：批量预装 + 日级结果缓存，落点 duckdb_data_access.py / duckdb_provider.py；写前备份 + U1-U5 逐位门是生死线）
+2. M1 完成申报 → 用户验收 → 净口径复测解读（②审硬条件：U2 窗口满 universe 复证 Amdahl 与 2×）→ 乙增量决策
+3. 规范指令台账（2026-09-20）：完成申报引用行号必须对最终入库版本
 
 ## 当前有效迭代范围
 
