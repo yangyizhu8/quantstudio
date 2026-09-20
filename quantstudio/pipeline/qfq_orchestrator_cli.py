@@ -740,7 +740,8 @@ def cmd_cutover_activate(args) -> int:
     _guard_mutating(args, db)
     from filelock import FileLock, Timeout
     from .daemon_lifecycle import collector_run_lock_path
-    run_lock = FileLock(str(collector_run_lock_path()), timeout=0)
+    run_lock = FileLock(str(collector_run_lock_path()), timeout=0,
+                         preserve_lock_file=True)  # T2 锁文件常驻
     try:
         run_lock.acquire()
     except Timeout as exc:
@@ -789,7 +790,8 @@ def cmd_cutover_canary(args) -> int:
         return 0
     from filelock import FileLock, Timeout
     from .daemon_lifecycle import collector_run_lock_path
-    lock = FileLock(str(collector_run_lock_path()), timeout=0)
+    lock = FileLock(str(collector_run_lock_path()), timeout=0,
+                     preserve_lock_file=True)  # T2 锁文件常驻
     try:
         lock.acquire()
     except Timeout as exc:

@@ -293,7 +293,10 @@ class CollectorRunLock:
         self._lock: Optional[FileLock] = None
 
     def __enter__(self) -> "CollectorRunLock":
-        self._lock = FileLock(str(collector_run_lock_path()), timeout=self.timeout)
+        # T2（2026-09-20）：preserve_lock_file=True —— 锁文件常驻不删，
+        # 消除释放删文件的跨进程竞态（POSIX flock 陷阱，计划 §0.3）
+        self._lock = FileLock(str(collector_run_lock_path()), timeout=self.timeout,
+                              preserve_lock_file=True)
         self._lock.acquire()
         return self
 
@@ -307,7 +310,8 @@ class CollectorRunLock:
 
     def try_acquire(self) -> bool:
         """非阻塞尝试，失败返回 False（不抛）。"""
-        self._lock = FileLock(str(collector_run_lock_path()), timeout=0)
+        self._lock = FileLock(str(collector_run_lock_path()), timeout=0,
+                              preserve_lock_file=True)
         try:
             self._lock.acquire(timeout=0)
             return True
@@ -343,7 +347,8 @@ class DaemonLifecycle:
         """[1] 获取 .daemon.lock（非阻塞）。失败=另一个 daemon 在跑。"""
         lock_path = daemon_lock_path()
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        self._instance_lock = FileLock(str(lock_path), timeout=0)
+        self._instance_lock = FileLock(str(lock_path), timeout=0,
+                                        preserve_lock_file=True)
         try:
             self._instance_lock.acquire(timeout=0)
             return True
@@ -358,11 +363,12 @@ class DaemonLifecycle:
                 self._instance_lock.release()
             except Exception:
                 pass
-            try:
-                # 清理 lock 文件（FileLock 不会自动删）
-                daemon_lock_path().unlink(missing_ok=True)
-            except Exception:
-                pass
+            # T2（2026-09-20）步④：锁文件**常驻不删**——与九处 preserve_lock_file=True
+            # 为同一决定。原显式 unlink（:368）是该决定的漏网点，且注释"FileLock 不会
+            # 自动删"为加参前旧语义残留：
+            #   POSIX：删锁文件 = flock inode 竞态本体（计划 §0.3 陷阱）；
+            #   Windows：释放后立即删与并发 acquire 的重建竞态（msvcrt 句柄语义）。
+            # 无调用方依赖"退出后文件消失"（acquire 自动建文件）。
             self._instance_lock = None
 
     def publish_status(self):

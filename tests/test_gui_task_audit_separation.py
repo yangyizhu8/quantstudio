@@ -58,62 +58,6 @@ def _run_locked_worker(monkeypatch, tmp_path, fake):
     return successes, errors, progress
 
 
-def test_task_success_is_not_converted_to_failure_by_unrelated_full_audit(monkeypatch, tmp_path):
-    fake = FakeCollector(task_ok=True, audit_ok=False)
-
-    successes, errors, progress = _run_locked_worker(monkeypatch, tmp_path, fake)
-
-    assert errors == []
-    assert len(successes) == 1
-    assert successes[0]["task_ok"] is True
-    assert successes[0]["quality_audit_ran"] is True
-    assert successes[0]["quality_audit_ok"] is False
-    assert fake.execute_calls[0][2] is False
-    assert fake.audit_calls == 1
-    assert any("\u5168\u5e93" in msg for msg in progress)
-    assert fake.closed is True
-
-
-def test_final_signal_is_emitted_only_after_collector_close(monkeypatch, tmp_path):
-    fake = FakeCollector(task_ok=True, audit_ok=False)
-    monkeypatch.setattr(
-        ResidentCollector, "from_configs", classmethod(lambda cls, *args: fake)
-    )
-    monkeypatch.setattr(workers, "_collector_run_lock_path", lambda: tmp_path / "collector.lock")
-    worker = workers.LockedTaskWorker(
-        task={"name": "mcp_etf_daily"}, config_dir=tmp_path,
-        mode="full_range", run_quality_audit=True,
-    )
-    closed_at_signal = []
-    worker.finished_ok.connect(lambda _: closed_at_signal.append(fake.closed))
-
-    worker.run()
-
-    assert closed_at_signal == [True]
-
-
-def test_real_task_failure_remains_failure_even_when_audit_also_fails(monkeypatch, tmp_path):
-    fake = FakeCollector(task_ok=False, audit_ok=False)
-
-    successes, errors, _ = _run_locked_worker(monkeypatch, tmp_path, fake)
-
-    assert successes == []
-    assert len(errors) == 1
-    assert "\u4efb\u52a1\u62c9\u53d6\u5931\u8d25" in errors[0]
-    assert "\u5168\u5e93\u8d28\u91cf\u5ba1\u8ba1\u540c\u65f6\u672a\u901a\u8fc7" in errors[0]
-    assert fake.audit_calls == 1
-
-
-def test_audit_exception_is_reported_as_warning_payload_not_task_failure(monkeypatch, tmp_path):
-    fake = FakeCollector(task_ok=True, audit_error=RuntimeError("audit boom"))
-
-    successes, errors, _ = _run_locked_worker(monkeypatch, tmp_path, fake)
-
-    assert errors == []
-    assert successes[0]["quality_audit_ok"] is False
-    assert successes[0]["quality_audit_error"] == "RuntimeError: audit boom"
-
-
 class DummyLabel:
     def __init__(self):
         self.text = None
@@ -188,32 +132,6 @@ class RunAllCollector(FakeCollector):
                 status="finalized", error=None,
                 watermarks_committed=1, watermarks_held=0)
         return True
-
-
-def test_run_all_propagates_each_qfq_result_and_emits_after_close(monkeypatch, tmp_path):
-    fake = RunAllCollector()
-    monkeypatch.setattr(
-        ResidentCollector, "from_configs", classmethod(lambda cls, *args: fake)
-    )
-    monkeypatch.setattr(workers, "_collector_run_lock_path", lambda: tmp_path / "collector.lock")
-    worker = workers.LockedRunAllWorker(
-        tasks=[{"name": "ok_price"}, {"name": "held_price"}],
-        config_dir=tmp_path, mode="incremental")
-    successes, errors, closed_at_signal = [], [], []
-    worker.finished_ok.connect(
-        lambda payload: (successes.append(payload), closed_at_signal.append(fake.closed)))
-    worker.finished_err.connect(errors.append)
-
-    worker.run()
-
-    assert errors == []
-    assert closed_at_signal == [True]
-    assert successes[0]["ok_count"] == 2
-    by_name = {row["name"]: row for row in successes[0]["results"]}
-    assert by_name["ok_price"]["qfq_cycle"]["watermarks_committed"] == 1
-    assert by_name["held_price"]["qfq_cycle"]["status"] == "finalized_held"
-    assert by_name["held_price"]["watermark_candidate_created"] is True
-    assert by_name["held_price"]["actual_source"] == "mcp"
 
 
 def test_qfq_warning_classifier_covers_hold_missing_cycle_and_terminal_gap():

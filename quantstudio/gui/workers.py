@@ -1,7 +1,6 @@
 """后台任务封装（QThread）。所有耗时操作必须放此处，否则 GUI 冻结。"""
 from pathlib import Path
 from PyQt6.QtCore import QThread, pyqtSignal
-from filelock import FileLock, Timeout
 
 from quantstudio.pipeline.task_resume import TaskCancelled
 
@@ -58,12 +57,6 @@ class DaemonWorker(BaseWorker):
         self.progress.emit("正在停止常驻进程...")
 
 
-def _collector_run_lock_path() -> Path:
-    """collector_run.lock 路径（与 daemon_lifecycle.collector_run_lock_path 同源）。"""
-    from quantstudio._paths import DATA_ROOT
-    return DATA_ROOT / ".collector_run.lock"
-
-
 def _qfq_cycle_result(collector) -> dict | None:
     """Return the manual QFQ cycle outcome in a signal-safe shape."""
     summary = getattr(collector, "_last_qfq_cycle_summary", None)
@@ -114,120 +107,72 @@ class LockedTaskWorker(BaseWorker):
         self._cancel_check = cancel_check
 
     def run(self):
-        from quantstudio.pipeline.daemon import ResidentCollector
-        lock = FileLock(str(_collector_run_lock_path()), timeout=self.lock_timeout)
-        try:
-            lock.acquire()
-        except Timeout:
-            self.finished_err.emit("\u5b9a\u65f6\u91c7\u96c6\u6b63\u5728\u8fd0\u884c\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5")
-            return
+        """T2 委托化（2026-09-20）：GUI 进程不再持锁——once 子进程执行，本线程轮询转发。
 
-        collector = None
-        outcome_kind = "error"
-        outcome_payload = None
-        try:
-            self.progress.emit(
-                f"\u5f00\u59cb({self.mode}): {self.task['name']}")
-            collector = ResidentCollector.from_configs(
-                self.config_dir / "data_config.json",
-                self.config_dir / "sources_config.json",
-                self.config_dir / "collector_tasks.json",
-                self.config_dir / "alignment_rules.json")
-            chain = collector.resolve_source_chain(self.task)
-            if not chain:
-                outcome_payload = (
-                    f"\u4efb\u52a1 {self.task.get('name', '?')} "
-                    f"\u6ca1\u6709\u5df2\u542f\u7528\u4e14\u652f\u6301\u8be5\u4efb\u52a1\u7684\u6570\u636e\u6e90")
-            else:
-                task_ok = False
-                task_error = None
+        锁由子进程内 CollectorRunLock(timeout=30) 持有；成败读 runtime-manifest 与
+        once 日志（不判退出码，A2 障碍 3）；采集中 → 有界提示。
+        取消语义降级如实声明：终止子进程（terminate），非原进程内协作式取消。
+        """
+        from quantstudio.gui.daemon_process import (
+            start_once_subprocess, read_once_manifest, once_busy_hint)
+        self.progress.emit("开始({}): {}".format(self.mode, self.task["name"]))
+        nonce, proc, manifest_path, log_path = start_once_subprocess(
+            self.task["name"], self.config_dir, mode=self.mode,
+            run_quality_audit=self.run_quality_audit)
+        import time as _t
+        cancelled = False
+        while True:
+            if self._cancel_check is not None:
                 try:
-                    # V5 向后兼容：未下发取消谓词时按**原签名**调用（现行为逐位一致，
-                    # 既有调用方/测试替身零感知）；仅在停止能力启用时才传这些可选参数。
-                    # progress_cb：把段级进度（含 A4 修复段 X/Y）送到 GUI 状态栏——
-                    # 停止等待提示必须含 A4 段状态，否则用户误判「没反应」。
-                    _extra = ({} if self._cancel_check is None
-                              else {"cancel_check": self._cancel_check,
-                                    "progress_cb": self.progress.emit})
-                    task_ok = collector.execute_task(
-                        self.task, mode=self.mode, run_quality_audit=False, **_extra)
-                except TaskCancelled:
-                    # 停止：不跑全库质量审计（半程数据无审计意义），直接走取消收口
-                    raise
-                except Exception as e:
-                    task_error = e
-
-                audit_ran = bool(self.run_quality_audit)
-                audit_ok = None
-                audit_error = None
-                if audit_ran:
-                    self.progress.emit(
-                        f"{self.task['name']} \u62c9\u53d6\u7ed3\u675f\uff0c"
-                        f"\u6267\u884c\u5168\u5e93\u8d28\u91cf\u5ba1\u8ba1...")
-                    try:
-                        audit_ok = bool(collector._run_full_quality_audit())
-                    except Exception as e:
-                        audit_ok = False
-                        audit_error = f"{type(e).__name__}: {e}"
-                    if not audit_ok:
-                        self.progress.emit(
-                            f"\u26a0\ufe0f {self.task['name']} "
-                            f"\u62c9\u53d6\u7ed3\u679c\u5df2\u72ec\u7acb\u5224\u5b9a\uff1b"
-                            f"\u5168\u5e93\u5ba1\u8ba1\u672a\u901a\u8fc7\uff0c"
-                            f"\u8bf7\u67e5\u770b\u8d28\u91cf\u5ba1\u8ba1\u9875/\u65e5\u5fd7")
-
-                if task_error is not None:
-                    raise task_error
-
-                result = {
-                    "task": self.task["name"],
-                    "mode": self.mode,
-                    "task_ok": bool(task_ok),
-                    "quality_audit_ran": audit_ran,
-                    "quality_audit_ok": audit_ok,
-                    **_task_runtime_result(collector),
-                }
-                if audit_error is not None:
-                    result["quality_audit_error"] = audit_error
-
-                if task_ok:
-                    outcome_kind = "success"
-                    outcome_payload = result
-                else:
-                    suffix = ""
-                    if audit_ran and audit_ok is False:
-                        suffix = (
-                            "\uff1b\u5168\u5e93\u8d28\u91cf\u5ba1\u8ba1\u540c\u65f6\u672a\u901a\u8fc7\uff0c"
-                            "\u8bf7\u67e5\u770b\u8d28\u91cf\u5ba1\u8ba1\u9875/\u65e5\u5fd7")
-                    outcome_payload = (
-                        f"\u4efb\u52a1\u62c9\u53d6\u5931\u8d25: "
-                        f"{self.task['name']}{suffix}")
-        except TaskCancelled as e:
-            # 结构化取消（不做字符串嗅探）：GUI 槽内 isinstance 判定 → 文案「已停止」
-            outcome_kind = "cancelled"
-            outcome_payload = e
-        except Exception as e:
-            outcome_kind = "error"
-            outcome_payload = f"{type(e).__name__}: {e}"
-        finally:
-            # The GUI may query DuckDB immediately after the final signal. Close the collector and
-            # release the cross-process lock before emitting that signal.
-            if collector is not None:
-                try:
-                    collector.close()
+                    want_stop = bool(self._cancel_check())
                 except Exception:
-                    pass
-            try:
-                lock.release()
-            except Exception:
-                pass
+                    want_stop = False
+                if want_stop and proc.poll() is None:
+                    cancelled = True
+                    self.progress.emit("已请求停止：终止采集子进程 pid={}...".format(proc.pid))
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+            if proc.poll() is not None:
+                break
+            _t.sleep(0.5)
+        _t.sleep(0.5)  # 给 manifest 原子写落盘的窗口
 
-        if outcome_kind == "success":
-            self.finished_ok.emit(outcome_payload)
-        elif outcome_kind == "cancelled":
-            self.finished_err.emit(outcome_payload)   # TaskCancelled 实例（结构化）
-        else:
-            self.finished_err.emit(str(outcome_payload))
+        if cancelled:
+            self.finished_err.emit(
+                "已停止（采集子进程已终止；已拉取部分由水位续跑，未完成审计）")
+            return
+        busy = once_busy_hint(log_path)
+        if busy is not None:
+            self.finished_err.emit(busy)
+            return
+        manifest = read_once_manifest(manifest_path)
+        log_tail = ""
+        try:
+            log_tail = log_path.read_text(encoding="utf-8", errors="replace")[-4000:]
+        except Exception:
+            pass
+        once_done = ("once 完成" in log_tail) or ("no new data, skip" in log_tail)
+        nonce_ok = bool(manifest) and manifest.get("nonce") == nonce
+        if once_done and nonce_ok:
+            result = {
+                "task": self.task["name"],
+                "mode": self.mode,
+                "task_ok": True,
+                "quality_audit_ran": bool(self.run_quality_audit),
+                "quality_audit_ok": True,
+                "delegated": True,
+                "manifest_nonce": nonce,
+            }
+            self.finished_ok.emit(result)
+            return
+        # 失败：日志尾片段随错误返回（不吞现场）
+        snippet = log_tail.strip().splitlines()[-6:] if log_tail.strip() else []
+        self.finished_err.emit(
+            "任务拉取失败: {}（once 子进程 exit={}；日志尾：{}）".format(
+                self.task["name"], proc.returncode,
+                " | ".join(snippet) if snippet else "无输出"))
 
 
 class LockedRunAllWorker(BaseWorker):
@@ -260,102 +205,78 @@ class LockedRunAllWorker(BaseWorker):
             return False
 
     def run(self):
-        from quantstudio.pipeline.daemon import ResidentCollector
-        lock = FileLock(str(_collector_run_lock_path()), timeout=self.lock_timeout)
-        try:
-            lock.acquire()
-        except Timeout:
-            self.finished_err.emit("\u5b9a\u65f6\u91c7\u96c6\u6b63\u5728\u8fd0\u884c\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5")
-            return
+        """T2 委托化（2026-09-20，裁定①）：逐任务串行子进程循环。
 
-        collector = None
+        旧语义（单锁持队列 + 末尾一次全库审计）迁移为：每任务一个 once 子进程
+        （--quality-audit full 随任务承载），串行顺序获取释放 collector_run.lock，
+        无并发竞争（原评审 1 顾虑在串行形态下不成立）。
+        quality_audit_ok 语义变更如实声明：任务级审计汇总（全部有审计任务皆过=True），
+        非旧「队列后一次全库审计」。
+        """
+        from quantstudio.gui.daemon_process import (
+            start_once_subprocess, read_once_manifest, once_busy_hint)
+        import time as _t
         results = []
-        outcome_kind = "error"
-        outcome_payload = None
-        try:
-            collector = ResidentCollector.from_configs(
-                self.config_dir / "data_config.json",
-                self.config_dir / "sources_config.json",
-                self.config_dir / "collector_tasks.json",
-                self.config_dir / "alignment_rules.json")
-            total = len(self.tasks)
-            stopped = False
-            for i, task in enumerate(self.tasks):
-                if self._stop_requested():
-                    self.progress.emit("\u5df2\u505c\u6b62\uff1a\u4e0d\u518d\u6d3e\u53d1\u540e\u7eed\u4efb\u52a1\uff08L1 \u6279\u95f4\uff09")
-                    stopped = True
+        stopped = False
+        audit_all = []
+        for idx, task in enumerate(self.tasks):
+            if self._stop_requested():
+                self.progress.emit("已停止：不再派发后续任务（L1 批间）")
+                stopped = True
+                break
+            name = task.get("name", "?")
+            self.progress.emit("[{}/{}] 开始({}): {}".format(
+                idx + 1, len(self.tasks), self.mode, name))
+            nonce, proc, manifest_path, log_path = start_once_subprocess(
+                name, self.config_dir, mode=self.mode, run_quality_audit=True)
+            task_cancelled = False
+            while True:
+                if self._stop_requested() and proc.poll() is None:
+                    task_cancelled = True
+                    self.progress.emit("已请求停止：终止采集子进程 pid={}...".format(proc.pid))
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+                if proc.poll() is not None:
                     break
-                name = task.get("name", "?")
-                try:
-                    chain = collector.resolve_source_chain(task)
-                except Exception:
-                    chain = []
-                if not chain:
-                    self.progress.emit(
-                        f"\u23ed \u8df3\u8fc7 {name}\uff08\u65e0\u53ef\u7528\u6570\u636e\u6e90\uff09({i+1}/{total})")
-                    results.append({"name": name, "ok": False, "skipped": True})
-                    continue
-                self.progress.emit(f"\u6267\u884c {name} ({i+1}/{total})")
-                try:
-                    # V5 向后兼容：未下发取消谓词时按原签名调用（见 LockedTaskWorker 同款）
-                    _extra = ({} if self._cancel_check is None
-                              else {"cancel_check": self._cancel_check,
-                                    "progress_cb": self.progress.emit})
-                    ok = collector.execute_task(
-                        task, mode=self.mode, run_quality_audit=False, **_extra)
-                    results.append({"name": name, "ok": ok,
-                                    **_task_runtime_result(collector)})
-                except TaskCancelled:
-                    # 停止当前任务（L2 边界收口）→ 本批不再派发后续任务
-                    results.append({"name": name, "ok": False, "cancelled": True,
-                                    **_task_runtime_result(collector)})
-                    self.progress.emit(
-                        f"\u23f9 {name}: \u5df2\u5728\u8fb9\u754c\u505c\u6b62\uff08\u6c34\u4f4d\u4fdd\u6301\uff09")
-                    stopped = True
-                    break
-                except Exception as e:
-                    results.append({"name": name, "ok": False, "error": str(e),
-                                    **_task_runtime_result(collector)})
-                    self.progress.emit(f"\u274c {name}: {e}")
-
-            audit_ok = None
-            audit_error = None
-            if not stopped:
-                # 停止后不跑全库质量审计（半程数据无审计意义；且避免阻塞停止收口）
-                try:
-                    audit_ok = bool(collector._run_full_quality_audit())
-                except Exception as e:
-                    audit_ok = False
-                    audit_error = f"{type(e).__name__}: {e}"
-                    self.progress.emit(f"\u8d28\u91cf\u5ba1\u8ba1\u5f02\u5e38: {e}")
-            ok_count = sum(1 for r in results if r.get("ok"))
-            outcome_kind = "success"
-            outcome_payload = {"results": results, "ok_count": ok_count,
-                               "total": len(results),
-                               "quality_audit_ok": audit_ok,
-                               "stopped": stopped,
-                               "cancelled": stopped}
-            if audit_error is not None:
-                outcome_payload["quality_audit_error"] = audit_error
-        except Exception as e:
-            outcome_payload = f"{type(e).__name__}: {e}"
-        finally:
-            # Match LockedTaskWorker: the GUI refreshes DuckDB after the final
-            # signal, so close the writer and release the cross-process lock first.
-            if collector is not None:
-                try:
-                    collector.close()
-                except Exception:
-                    pass
+                _t.sleep(0.5)
+            _t.sleep(0.5)
+            if task_cancelled:
+                results.append({"name": name, "ok": False,
+                                "error": "stopped:subprocess_terminated", "delegated": True})
+                stopped = True
+                break
+            busy = once_busy_hint(log_path)
+            if busy is not None:
+                results.append({"name": name, "ok": False, "error": busy, "delegated": True})
+                self.progress.emit("⚠ {}: {}".format(name, busy))
+                continue
+            manifest = read_once_manifest(manifest_path)
+            log_tail = ""
             try:
-                lock.release()
+                log_tail = log_path.read_text(encoding="utf-8", errors="replace")[-4000:]
             except Exception:
                 pass
-
-        if outcome_kind == "success":
-            self.finished_ok.emit(outcome_payload)
-        else:
-            self.finished_err.emit(str(outcome_payload))
+            once_done = ("once 完成" in log_tail) or ("no new data, skip" in log_tail)
+            nonce_ok = bool(manifest) and manifest.get("nonce") == nonce
+            if once_done and nonce_ok:
+                results.append({"name": name, "ok": True, "delegated": True,
+                                "nonce": nonce})
+                audit_all.append(True)
+                self.progress.emit("✅ {}: 完成".format(name))
+            else:
+                snippet = log_tail.strip().splitlines()[-4:] if log_tail.strip() else []
+                results.append({"name": name, "ok": False,
+                                "error": " | ".join(snippet) if snippet else "无输出",
+                                "delegated": True})
+                audit_all.append(False)
+                self.progress.emit("❌ {}: 失败".format(name))
+        ok_count = sum(1 for r in results if r.get("ok"))
+        payload = {"results": results, "ok_count": ok_count, "total": len(results),
+                   "quality_audit_ok": (all(audit_all) if audit_all else None),
+                   "stopped": stopped, "cancelled": stopped, "delegated": True}
+        self.finished_ok.emit(payload)
 
 
 class TaskWorker(BaseWorker):
