@@ -399,6 +399,9 @@ class BacktestEngine:
         self.etf_t0 = bool(etf_t0) if engine_profile == "minute-bar-v1" else False
         # per-code T+0 分类缓存：None=未装载；dict={code: is_t0}（仅 etf_t0=True 时懒装载）
         self._t0_cache: Optional[dict] = None
+        # M2-P 裸码→QMT 映射缓存（纯静态映射，实例级永续；None=懒初始化，
+        # 见 _run_minute_day 构价段——_to_qmt 纯函数性已由审核席+实施复核双重确认）
+        self._qmt_map_cache: Optional[dict] = None
         self.account = Account(cash=capital)
         self.result = BacktestResult()
         if providers is None:
@@ -2429,10 +2432,28 @@ class BacktestEngine:
             if hasattr(ctx, 'blotter') and ctx.blotter is not None:
                 ctx.blotter.current_dt = bar_ts
             # 该 bar 全 universe 收盘价（end-labeled：bar.close 是该分钟真实收盘）
-            bar_prices = {}
-            for _, row in bar_df.iterrows():
-                bare = str(row.get('code', ''))
-                bar_prices[self._to_qmt(bare)] = row.get('close', 0)
+            # M2-P 向量化构价（2026-09-20，纯性能优化，语义逐位等价）：
+            # - 热路径（code/close 列齐备，快照契约恒成立）：dict(zip) 一次构建，
+            #   与 :557/:2279 日线孪生位同款惯用法；重复 code 最后行胜 == iterrows
+            #   覆盖序；裸码→QMT 映射走实例级缓存（_to_qmt 为 @staticmethod 纯委托
+            #   normalize_to_qmt :2585-2589，无日期/状态依赖——永续缓存成立）。
+            # - 病态列缺失：保留原 iterrows 路径（row.get 回退语义绝对等价）。
+            if 'code' in bar_df.columns and 'close' in bar_df.columns:
+                qmap = self._qmt_map_cache
+                if qmap is None:
+                    qmap = self._qmt_map_cache = {}
+                to_qmt = self._to_qmt
+                bares = [str(b) for b in bar_df['code'].values]
+                for b in bares:
+                    if b not in qmap:
+                        qmap[b] = to_qmt(b)
+                bar_prices = dict(zip([qmap[b] for b in bares],
+                                      bar_df['close'].values))
+            else:
+                bar_prices = {}
+                for _, row in bar_df.iterrows():
+                    bare = str(row.get('code', ''))
+                    bar_prices[self._to_qmt(bare)] = row.get('close', 0)
             # 【修正缺口 1】attach_bar 注入 current_bar_ts
             _api.attach_bar(self, bar_df, day_str, prev_day_str, bar_prices,
                             daily_pctchg, current_bar_ts=bar_ts)
