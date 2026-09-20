@@ -79,6 +79,9 @@ sha256(norm)   # 用于跨仓/跨形态比较
 | 2026-09-19 | `9abb9cd` | 仅 `docs/evidence/prev-close-map-deiterrows-20260919.md`（A-3′ 终口径） | **豁免同步门** | 同上 |
 | 2026-09-19 | `50fa570` | 仅 `docs/` 3 文件（客户一号通知定稿 + 旧稿作废标注 + §7 现网校准入卷） | **豁免同步门** | 同上；纯客户交付与归档文档 |
 | 2026-09-19 | CASE-006 归档批（卷宗 + 本台账补登，docs-only） | 仅 `docs/case006-backtest-speedup-optimization.md`、`docs/ops-verification-conventions.md` | **豁免同步门** | 同上；纯归档文档 |
+| 2026-09-19 | `e7aef61` | 共享层（`tests/test_prev_close_map_equiv.py`：两处脆性断言版本容忍化） | **需同步门** | 本线已执行：merge `6f32a77`（他线 74 项在途改动保全）+ ci-smoke ALL PASS（64 passed / 10 文件全绿）；check-drift FAIL 2 项（`docs/sync-ledger.md` 既存 + `docs/qfq-bootstrap-item-cols-design.md` 新出现，**均非本件**） |
+| 2026-09-20 | `f2d588f` | 共享层（`quantstudio/strategy_compiler/source_import.py` 行业码提取器判据重写）+ `tests/test_industry_code_extract.py`（新增 16 项）+ 文档 | **需同步门** | 本线已执行：merge `45e7e49`（他线 73 项在途改动保全）+ ci-smoke ALL PASS（Agent-Quant 83 passed + 共享层 10 文件全绿）；check-drift FAIL 1 项（`docs/sync-ledger.md` 既存） |
+| 2026-09-20 | 本批：**prepush-gate 机器门** | 共享层（`scripts/prepush-gate.ps1` + `.githooks/pre-push`）+ `docs/`（`prepush-gate-design.md` + 本规范 C7⑤ + 客户通知 2/3 号） | **需同步门** | 见回执。**C7 实例 #3**（`4a863af` 自述「六步①，待审」随推泄漏，**因机器门当时尚未存在**）已在 **C7⑤** 完整记录；**本批推送即机器门首次实战过闸** |
 
 ## C6 并发会话下的提交纪律（补充）
 
@@ -135,4 +138,67 @@ sha256(norm)   # 用于跨仓/跨形态比较
 git fetch eco
 git rev-list --left-right --count eco/main...main   # 左=eco 独有（待拉取）  右=本地独有（待推送）
 # 左 > 0  =>  git merge eco/main
+```
+
+---
+
+### C7⑤ 机器门（2026-09-20 追加 · C7 实例 #3 后固化）：清单含非本件提交即拒推
+
+**规则**：C7 ①②③④ 为**人工核对**；本条为**机器强制**——二者**叠加执行，后者不替代前者**。
+
+**判据**：`origin/main..HEAD` 清单中若含**非本件提交** ⇒ **拒绝推送（exit 9）**。
+
+**实现（三名件）**：
+
+| 件 | 作用 |
+|---|---|
+| `scripts/prepush-gate.ps1` | 核心判据：读清单 → 逐笔归属 → 判定 |
+| `.githooks/pre-push` | **技术拦截点**：`git push` 时由 Git 自动调用，**非零退出即中止推送** |
+| `git config core.hooksPath .githooks` | 使 hook **随仓分发**（`.git/hooks/` 不入版本库） |
+
+**放行通道（唯一例外，刻意不自动化）**——经**用户裁定批准**的捆绑推送，须**人显式**给出：
+
+```powershell
+$env:QS_PUSH_BUNDLE_RULING    = '<裁定标识>'       # 如日历节号
+$env:QS_PUSH_BUNDLE_ALLOWALSO = '<sha1>,<sha2>'    # 逐笔列明
+git push origin main
+```
+
+- **无裁定引用** ⇒ 一律拒推；
+- **未用 `-AllowAlso` 逐笔列明** ⇒ 拒推；
+- **列明不足以覆盖清单中全部非本件提交** ⇒ 拒推（**一一对应，不留后门**）；
+- **放行强制留痕**：`docs/handoff/push-bundle-rulings.log`
+  （时间 / 裁定引用 / 本件 / 捆绑清单）。
+
+**由来（C7 实例 #2 / #3）**：
+
+- **#2**（2026-09-18）：`c8c1b75`（闸门未齐）随推泄漏；
+- **#3**（2026-09-20）：`4a863af`（自述「**六步①，待审**」）随推泄漏；
+- **两次根因相同**：**检查动作做了、判据用错**——C7 ① 每次都执行（清单已打印），
+  但 ③ 的判据只覆盖「**本笔**闸门齐备」，**未覆盖清单中其他笔**；
+- ⇒ 本门把该纪律从「**人看清单**」变为「**机器拦人**」。
+
+**验收（七场景实测，隔离裸仓，2026-09-20）**：
+
+| 场景 | 期望 | 实测 |
+|---|---|---|
+| 首次推送（远程无 main） | 放行 | ✅ PASS |
+| 含他件 · 无裁定 | 拒 | ✅ exit 9 |
+| 有裁定 · 未列明 | 拒 | ✅ exit 9 |
+| 有裁定 · 逐一列明 | 放行 + 留痕 | ✅ exit 0 + 留痕 |
+| **真实 `git push` · 无裁定** | **被拦** | ✅ 推送失败 |
+| **真实 `git push` · 带裁定** | **放行** | ✅ 推送成功 |
+| 清单为空 | 放行 | ✅ PASS |
+
+**已知可绕过面（诚实披露，不声称绝对安全）**：
+
+`git push --no-verify` 可跳过 hook —— **技术上无法阻止**。对策：
+① C7 ①②③④ **人工核对照旧执行**；② 留痕缺失可被**事后审计**发现；
+③ 纪律要求：**任何 `--no-verify` 推送须在回报中声明**。
+
+**启用（新克隆 / 新环境一次）**：
+
+```powershell
+git config core.hooksPath .githooks
+git config --get core.hooksPath     # 应输出 .githooks
 ```
