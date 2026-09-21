@@ -28,8 +28,11 @@ DDL/DML。所有校验由调用方传入连接后只读执行。
 """
 from __future__ import annotations
 
+import logging
 import re
 from typing import Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # 标识常量
@@ -351,10 +354,21 @@ def _table_foreign_keys(conn, table: str) -> List[dict]:
     for col_names, text in rows:
         if not text:
             continue
+        # D1（2026-09-21）：容忍**可选 schema 限定名**——DuckDB 某些渲染形态给出
+        # "REFERENCES main.qfq_source_cutover(...)"，旧正则匹配到 "main" 后遇 "." 失败，
+        # 曾静默 continue 致 FK 漏报 → 安全闸误判 partial_or_mixed（两库同中招）。
+        # 非捕获组只吃前缀，group(1) 仍为**裸表名**（与指纹存值口径一致）。
+        # 残留登记：带引号形态 "main"."tab" 不处理——实测 1.4.5 渲染剥离引号
+        # （"Id"→Id）且本项目受管表名/FK 引用名全为简单词，双重不可能触发；
+        # 不为此扩正则（禁顺手加固扩大改动面）。
         m = re.search(
-            r"REFERENCES\s+([A-Za-z_][\w]*)\s*\(([^)]*)\)",
+            r"REFERENCES\s+(?:[A-Za-z_][\w]*\s*\.\s*)?([A-Za-z_][\w]*)\s*\(([^)]*)\)",
             text, re.IGNORECASE)
         if not m:
+            # 不再静默吞：解析失败可观测（行为不变——仍跳过该条，但不隐藏）
+            logger.warning(
+                "[SchemaContract] FK constraint_text 解析失败（跳过该条）table=%s text=%r",
+                table, text[:200])
             continue
         cols = [str(c).strip().strip('"').lower() for c in (col_names or []) if str(c).strip()]
         fks.append({
