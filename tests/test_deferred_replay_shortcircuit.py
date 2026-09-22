@@ -97,6 +97,37 @@ def test_missing_stored_watermark_never_skips():
     assert skip is False and "no-stored-watermark" in why
 
 
+# ── 裁定 a/b（2026-09-22）─────────────────────────────────────────────
+def test_forced_replay_days_is_one_per_20260922_ruling():
+    """裁定 a：30 → 1 —— 上游新增的可见延迟 <=1 天。
+
+    依据：实测同一轮 A4=0 且 new=1,221,147 ⇒「A4=0」与「上游有新增」不互斥。
+    """
+    assert FORCED_REPLAY_DAYS == 1
+
+
+def test_miss_reason_carries_four_measured_values():
+    """裁定 b：未命中理由须携带四判据实测值（消除回看黑箱）。"""
+    cases = [
+        (lambda: _conn(), {"a4": 1}, "a4="),
+        (lambda: _conn(), {"last_pull": None}, "anchor_age_h="),
+        (lambda: _conn(), {"last_pull": NOW - FORCED_REPLAY_DAYS * 86400 - 1}, "anchor_age_h="),
+        (lambda: _conn(status="superseded"), {}, "pending_candidate="),
+        (lambda: _conn(cand=WM), {}, "candidate-not-ahead"),
+    ]
+    for mk, kw, needle in cases:
+        skip, why = _call(mk(), **kw)
+        assert skip is False, (kw, why)
+        assert needle in why, (needle, why)
+        assert "wm=" in why and "forced_replay_days=" in why, why
+
+
+def test_hit_reason_also_carries_context():
+    skip, why = _call(_conn())
+    assert skip is True
+    assert "pending candidate" in why and "锚龄" in why, why
+
+
 # ── 环境回退开关 ────────────────────────────────────────────────────────
 def test_env_kill_switch(monkeypatch):
     monkeypatch.delenv(DEFERRED_SHORTCIRCUIT_ENV, raising=False)

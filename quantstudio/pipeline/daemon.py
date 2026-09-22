@@ -424,6 +424,9 @@ class ResidentCollector:
             return False, "probe-error: %s" % str(e)[:80]
         if skip:
             logger.info(f"[{batch_id}] 同 candidate 幂等短路判定命中：{why}")
+        # 裁定 b：**未命中也留痕**（含四判据实测值），消除回看黑箱
+        _SC_LOG.debug("[%s] 短路判定：skip=%s 理由=%s (source=%s table=%s freq=%s)",
+                      batch_id, skip, why, source, table, freq)
         return skip, why
 
     # ---------------- 单任务执行（核心流水线，硬编码顺序不可绕过）----------------
@@ -3332,8 +3335,15 @@ def build_authority_rules(tasks_cfg: Dict) -> Dict:
 #   ④ qfq_watermark_intent 存在 pending 且其 candidate 领先存储水位。
 # 回退：环境变量 QS_DEFERRED_REPLAY_SHORTCIRCUIT=0/off 关闭（等效旧行为）。
 # ---------------------------------------------------------------------------
-FORCED_REPLAY_DAYS = 30          # 与 qfq_orchestrator.factor_overlap_lookback_days 默认同量级
+FORCED_REPLAY_DAYS = 1           # 2026-09-22 裁定 a：30→1（上游新增的可见延迟 <=1 天；
+                                 # 依据：实测 A4=0 与「上游有新增行」并不互斥 —— 原 30 天会把新增可见性
+                                 # 最坏推到 30 天后。每日至少真实拉取一次，仍省掉同日其余轮次重放。）
 DEFERRED_SHORTCIRCUIT_ENV = "QS_DEFERRED_REPLAY_SHORTCIRCUIT"
+# 未命中留痕专用 logger（2026-09-22 裁定 b）：显式降到 DEBUG —— daemon 的 root 为 INFO，
+# 若沿用模块 logger 打 DEBUG 将**不落盘**（实测近 3 日 DEBUG 行数=0）。子 logger 自行放行
+# DEBUG 记录、经 root handler 输出，且**只影响本 logger**（模块其它 DEBUG 仍被 INFO 挡住）。
+_SC_LOG = logging.getLogger("quantstudio.pipeline.watermark_shortcircuit")
+_SC_LOG.setLevel(logging.DEBUG)
 
 
 def should_skip_deferred_replay(conn, stored_watermark, *, source: str, table: str,
@@ -3344,30 +3354,37 @@ def should_skip_deferred_replay(conn, stored_watermark, *, source: str, table: s
 
     Returns: (skip: bool, reason: str)
     """
+    age_h = ("n/a" if last_pull_ts is None
+             else "%.2f" % ((float(now_ts) - float(last_pull_ts)) / 3600.0))
+    ctx = "a4=%s anchor_age_h=%s wm=%s forced_replay_days=%s" % (
+        a4_verdict, age_h, stored_watermark, forced_replay_days)
     if a4_verdict != 0:
-        return False, "a4_verdict=%s（有 repair/full 或熔断 ⇒ 照常重拉）" % a4_verdict
+        return False, "a4_verdict=%s（有 repair/full 或熔断 ⇒ 照常重拉）| %s" % (a4_verdict, ctx)
     if last_pull_ts is None:
-        return False, "no-anchor（本进程内尚未真实拉取过）"
+        return False, "no-anchor（本进程内尚未真实拉取过）| %s" % ctx
     age = float(now_ts) - float(last_pull_ts)
     if age >= float(forced_replay_days) * 86400.0:
-        return False, "forced-replay-due（锚龄 %.1f 天 >= %d 天）" % (age / 86400.0, forced_replay_days)
+        return False, ("forced-replay-due（锚龄 %.2f 天 >= %d 天）| %s"
+                       % (age / 86400.0, forced_replay_days, ctx))
     try:
         row = conn.execute(
             "SELECT MAX(CAST(candidate_watermark AS BIGINT)) FROM qfq_watermark_intent "
             "WHERE source=? AND table_name=? AND freq=? AND status='pending'",
             [source, table, freq]).fetchone()
     except Exception as e:  # 表缺失/历史库 ⇒ 不短路（保守）
-        return False, "intent 查询失败（保守不短路）: %s" % str(e)[:80]
+        return False, "intent 查询失败（保守不短路）: %s | %s" % (str(e)[:80], ctx)
     cand = row[0] if row else None
+    ctx2 = "%s pending_candidate=%s" % (ctx, cand)
     if cand is None:
-        return False, "no-pending-intent"
+        return False, "no-pending-intent | %s" % ctx2
     if stored_watermark is None:
-        return False, "no-stored-watermark"
+        return False, "no-stored-watermark | %s" % ctx2
     try:
         if int(cand) <= int(stored_watermark):
-            return False, "candidate-not-ahead（cand=%s <= wm=%s）" % (cand, stored_watermark)
+            return False, ("candidate-not-ahead（cand=%s <= wm=%s）| %s"
+                           % (cand, stored_watermark, ctx2))
     except (TypeError, ValueError):
-        return False, "candidate-unparsable"
+        return False, "candidate-unparsable | %s" % ctx2
     return True, ("pending candidate %s > watermark %s，A4=0，锚龄 %.1f 小时"
                   % (cand, stored_watermark, age / 3600.0))
 
