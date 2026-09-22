@@ -59,6 +59,9 @@ CAS_FIELDS = ("pid", "heartbeat", "task_id", "token")
 # 回收互斥陈龄阈值（Part A 陈旧自清）：正常回收为毫秒级，>120 s 且持有者进程已不存在 = 残骸。
 # 只用于「回收互斥 .write_lock.reclaim」自身的残留判定，与主锁 STALE_SECONDS(600) 无关。
 RECLAIM_STALE_SECONDS = 120
+# Part A-2（2026-09-22 批准）：空/不可解析互斥的 mtime 佐证清除精确开关
+#   默认 1=启用；0=退回 Part A 的 fail-closed（空互斥仍永久楔住，等效旧行为）
+EMPTY_MTIME_ENV = "QS_WRITE_LOCK_EMPTY_MTIME"
 
 # 判定结论（diagnose_holder 的 verdict 取值）
 V_FREE = "free"                 # 无锁
@@ -456,6 +459,75 @@ def reclaim_mutex_stale(payload: Optional[dict], now: Optional[float] = None) ->
     return {"stale": True, "reason": "stale_dead", "age": age}
 
 
+def _empty_mtime_enabled() -> bool:
+    """Part A-2 精确开关：默认启用；=0/false/off 关闭（退回 Part A 行为）。"""
+    v = os.environ.get(EMPTY_MTIME_ENV, "").strip().lower()
+    return v not in ("0", "false", "off")
+
+
+def _audit_mutex_cleared_empty_mtime(mutex_path, reason: str, mtime_age, size, cleared_by_task: str) -> None:
+    """Part A-2 审计：空/不可解析互斥按 mtime 佐证清除（锚点与 Part A 的 ..._cleared 区分）。"""
+    try:
+        ts = datetime.now().astimezone().isoformat()
+        line = (
+            f"{ts} reclaim_mutex_cleared_empty_mtime "
+            f"mutex_path={mutex_path} reason={reason} size={size} "
+            f"mtime_age={_fmt_age(mtime_age)}s threshold_s={RECLAIM_STALE_SECONDS} "
+            f"cleared_by={{pid={os.getpid()},task={cleared_by_task}}}"
+        )
+        with open(_audit_path(), "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        logger.debug("[write-lock] 空互斥 mtime 审计写盘失败（不影响自清）", exc_info=True)
+
+
+def _clear_stale_reclaim_mutex_by_mtime(cleared_by_task: str, reason: str, size: int) -> bool:
+    """Part A-2：内容不可解析 AND 无法判活 的互斥，以 **mtime** 作陈旧佐证清除。
+
+    判据（四条同时成立）：
+      P1 主锁存在（上游已确认，本函数在其路径内）
+      P2 互斥存在（本函数内 stat 成功）
+      P3 开关未关（EMPTY_MTIME_ENV）
+      P4 mtime_age >= RECLAIM_STALE_SECONDS（120s）——正常持有者在同一次
+         open→write→flush 内写完内容（毫秒窗口）⇒「不可解析」持续 120s 只能由
+         进程被杀/崩溃造成，不存在「正在写还没写完」的合理解释。
+    防误删：unlink 前**二次 stat 身份比对**（mtime+size 逐项相同）⇒ 期间有人重建即放弃。
+    失败一律 fail-closed 且不抛异常（与 Part A 同款失败语义）。
+    """
+    if not _empty_mtime_enabled():
+        logger.debug("[write-lock] 空互斥 mtime 清除已关闭（%s）", EMPTY_MTIME_ENV)
+        return False
+    rp = _reclaim_path()
+    try:
+        st1 = rp.stat()
+    except OSError:
+        return False
+    age = time.time() - st1.st_mtime
+    if age < RECLAIM_STALE_SECONDS:
+        logger.debug("[write-lock] 空互斥未达 mtime 阈值：mtime_age=%.1fs size=%s reason=%s",
+                     age, st1.st_size, reason)
+        return False
+    try:
+        st2 = rp.stat()
+    except OSError:
+        return False
+    if (st2.st_mtime_ns, st2.st_size) != (st1.st_mtime_ns, st1.st_size):
+        logger.debug("[write-lock] 空互斥二次读身份不符（期间被重建）⇒ 放弃：%s", rp)
+        return False
+    try:
+        rp.unlink()          # 有意不用 missing_ok（同 Part A：以「确实删掉了」决定是否记审计）
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    _audit_mutex_cleared_empty_mtime(rp, reason, age, st1.st_size, cleared_by_task)
+    logger.warning(
+        "[write-lock] 空/不可解析互斥按 mtime 佐证自清（Part A-2）: mutex_path=%s reason=%s "
+        "size=%s mtime_age=%.1fs 阈值=%ss 清除者 pid=%s task=%s",
+        rp, reason, st1.st_size, age, RECLAIM_STALE_SECONDS, os.getpid(), cleared_by_task)
+    return True
+
+
 def _clear_stale_reclaim_mutex(cleared_by_task: str) -> bool:
     """陈旧回收互斥自清（Part A）。返回 True = 本次已清除，可再试取互斥。
 
@@ -464,9 +536,28 @@ def _clear_stale_reclaim_mutex(cleared_by_task: str) -> bool:
     """
     rp = _reclaim_path()
     try:
-        payload = json.loads(rp.read_text(encoding="utf-8"))
-    except (ValueError, OSError):
-        return False  # 不可解析 → fail-closed，不清
+        raw = rp.read_text(encoding="utf-8")
+        payload = json.loads(raw)
+    except FileNotFoundError:
+        return False          # 文件已消失：无物可清
+    except ValueError:
+        # Part A-2：空/空白/非法 JSON ⇒ 内容不可解析、无法判活 ⇒ 走 mtime 佐证（Part A 此处 fail-closed）
+        try:
+            size = len(raw)
+        except NameError:
+            size = -1
+        return _clear_stale_reclaim_mutex_by_mtime(cleared_by_task, "unparseable_json", size)
+    except OSError:
+        return False          # 读不动（权限等）：不臆断，保持 fail-closed
+    if not isinstance(payload, dict) or "pid" not in payload:
+        # Part A-2：解析成功但**缺 pid** ⇒ 无法判活（Part A 亦 fail-closed）⇒ 走 mtime 佐证。
+        # 注：仅「缺 pid」纳入；缺 v2 附加键（token/task_id/heartbeat）**不**纳入——
+        #     legacy 持有者可能无这些键，按其清除会误删活人互斥（安全收窄，已回报）。
+        try:
+            size = len(raw)
+        except NameError:
+            size = -1
+        return _clear_stale_reclaim_mutex_by_mtime(cleared_by_task, "missing_pid", size)
     st = reclaim_mutex_stale(payload)
     if not st.get("stale"):
         return False

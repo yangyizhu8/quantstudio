@@ -616,3 +616,96 @@ def test_stale_mutex_race_eight_processes_still_exactly_one(tmp_path):
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# ── Part A-2（2026-09-22 批准）：空/不可解析互斥的 mtime 佐证（AC-m2 组）──────
+def _age_mutex(seconds: float):
+    """把回收互斥的 mtime 回拨 seconds 秒（构造「不可解析且 mtime 陈旧」场景）。"""
+    p = _mutex_path()
+    t = time.time() - seconds
+    os.utime(p, (t, t))
+
+
+def _write_empty_mutex():
+    _mutex_path().parent.mkdir(parents=True, exist_ok=True)
+    _mutex_path().write_text("", encoding="utf-8")
+
+
+def test_ac_m5_stale_empty_mutex_cleared_by_mtime_and_audited():
+    """AC-m5（硬门）：空互斥 + mtime 陈旧 ⇒ 清除 + 审计 reclaim_mutex_cleared_empty_mtime。
+
+    Part A 在此 fail-closed ⇒ 空互斥永久楔住后续回收；本件以 mtime 作陈旧佐证。
+    """
+    _write_empty_mutex()
+    _age_mutex(sl.RECLAIM_STALE_SECONDS + 5)
+    _write_payload(_dead_lock())
+    lk = acquire_write_lock("m-a2-empty-stale", timeout_s=5.0)
+    try:
+        audits = _audit_lines()
+        hits = [ln for ln in audits if "reclaim_mutex_cleared_empty_mtime" in ln]
+        assert len(hits) == 1, f"应恰一条空互斥审计: {audits}"
+        assert "reason=unparseable_json" in hits[0], hits[0]
+        assert str(sl.RECLAIM_STALE_SECONDS) in hits[0], hits[0]
+        assert any("reclaim STALE+DEAD" in ln for ln in audits), "主锁回收应继续"
+    finally:
+        lk.release()
+
+
+def test_ac_m6_fresh_empty_mutex_not_cleared():
+    """AC-m6（硬门）：空互斥但 mtime 新鲜（<阈值）⇒ 不清（防误删「正在创建」的互斥）。"""
+    _write_empty_mutex()
+    _write_payload(_dead_lock())
+    with pytest.raises(WriteLockHeld):
+        acquire_write_lock("m-a2-empty-fresh", timeout_s=1.0)
+    assert _mutex_path().exists(), "新鲜空互斥不得被清"
+
+
+def test_ac_m7_second_read_identity_mismatch_aborts(monkeypatch):
+    """AC-m7：二次 stat 身份不符（期间被重建）⇒ 放弃清除（TOCTOU 收窄）。"""
+    class _St:
+        def __init__(self, ns, size):
+            self.st_mtime_ns = ns
+            self.st_size = size
+            self.st_mtime = ns / 1e9
+
+    class _P:
+        def __init__(self):
+            self.i = 0
+            self._seq = [_St(1_000_000_000_000, 0), _St(2_000_000_000_000, 12)]
+
+        def stat(self):
+            v = self._seq[min(self.i, len(self._seq) - 1)]
+            self.i += 1
+            return v
+
+        def unlink(self, *a, **kw):
+            # 记录式桩（不抛异常：fixture 清理亦会调用 unlink，抛异常会污染其它用例）
+            self.unlinked += 1
+
+    p = _P()
+    p.unlinked = 0
+    monkeypatch.setattr(sl, "_reclaim_path", lambda: p)
+    assert sl._clear_stale_reclaim_mutex_by_mtime("t-a2", "unparseable_json", 0) is False
+    assert p.unlinked == 0, "身份不符时不得 unlink"
+
+
+def test_ac_m8_live_holder_stale_mtime_not_cleared():
+    """AC-m8：payload **有效**（可解析且持有者活着）⇒ mtime 再old 也不得走 mtime 清除。"""
+    _write_mutex({"pid": os.getpid(), "task_id": "a2-live", "heartbeat": time.time()})
+    _age_mutex(sl.RECLAIM_STALE_SECONDS + 999)
+    _write_payload(_dead_lock())
+    with pytest.raises(WriteLockHeld):
+        acquire_write_lock("m-a2-live", timeout_s=1.0)
+    assert _mutex_path().exists(), "有效互斥（活人）不得被 mtime 路径清除"
+
+
+def test_ac_m9_empty_mtime_kill_switch(monkeypatch):
+    """AC-m9：QS_WRITE_LOCK_EMPTY_MTIME=0 ⇒ 空互斥（陈旧 mtime）仍 fail-closed（等效 Part A）。"""
+    monkeypatch.setenv(sl.EMPTY_MTIME_ENV, "0")
+    _write_empty_mutex()
+    _age_mutex(sl.RECLAIM_STALE_SECONDS + 5)
+    _write_payload(_dead_lock())
+    with pytest.raises(WriteLockHeld):
+        acquire_write_lock("m-a2-off", timeout_s=1.0)
+    assert _mutex_path().exists(), "开关关闭时空互斥不得被清（逐位等效 Part A）"
+    assert not any("reclaim_mutex_cleared_empty_mtime" in ln for ln in _audit_lines())
