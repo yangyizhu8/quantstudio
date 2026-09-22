@@ -29,6 +29,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Sequence
 
+from quantstudio.pipeline.code_contract import validate_sec_code
 from quantstudio.pipeline.qfq_orchestrator_types import (
     QFQOrchestratorConfig,
     TriggerRecord,
@@ -305,10 +306,23 @@ class EventDiscovery:
                 factor_sql += f" WHERE code IN ({placeholders})"
                 factor_params.extend(codes_filter)
             factor_rows = aux_conn.execute(factor_sql, factor_params).fetchall()
-            observations = [
-                (asset_type, str(code), int(time), float(adj_factor))
-                for code, time, adj_factor in factor_rows
-            ]
+            # T4 fail-safe（错误二，9-22 01:48 实录：aux 快照混入 FIXTEST →
+            # record_observations 整批 ValueError → qfq_orch 全周期崩 → re-anchor 停摆）：
+            # 快照行先过形式契约（code_contract），非契约行**源头 skip + 聚合可见**，
+            # 不再打断周期。record_observations 的阻断2 整批契约保持不动（fail-safe
+            # 在调用方；_normalize_code 本体保持严格）。
+            observations = []
+            _bad: List[str] = []
+            for code, time, adj_factor in factor_rows:
+                ok, cd, _reason = validate_sec_code(code)
+                if not ok:
+                    _bad.append(str(code))
+                    continue
+                observations.append((asset_type, cd, int(time), float(adj_factor)))
+            if _bad:
+                logger.warning(
+                    f"[qfq_event] {table} code 契约预过滤 skip {len(_bad)} 行"
+                    f"（样例 {_bad[:8]}），本周期不受影响；存量清理见错误二 T5")
 
             result = self.obs_store.record_observations(
                 observations, run_id, as_of_ms=as_of_ms,

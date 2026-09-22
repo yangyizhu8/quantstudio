@@ -30,7 +30,43 @@ def _adapter(tmp_path):
     adapter._adj_latest_cache = {}
     adapter.enable_adj_coldstart = False
     adapter._coldstart_done = set()
+    # fed25dc（TD-D2 路由）后 _query_adj_latest 经 _qfq_aux_path() 读 override 属性——
+    # __new__ harness 未同步致 HEAD 既有 3 例红（qfq_aux_override AttributeError）。
+    # 补正常 __init__ 语义同款属性：None=legacy 推导（tmp 主库同目录 aux_db，与本 harness 布局一致）。
+    adapter.qfq_aux_override = None
     return adapter
+
+
+def test_dirty_code_excluded_before_coldstart_trigger(tmp_path, monkeypatch):
+    """错误二 T2（9-22 实录机制回归钉）：TEST999 形态不得进 want 集。
+
+    修复前路径：TEST999.SH 归一为裸 TEST999 进 want → fund_adj 查询必缺 →
+    still 非空 → **误触全历史冷启动重导出**（报告 §2.1 实害）。
+    修复后：契约预过滤源头剔除，合法码 510500 行为逐位不变。
+    """
+    adapter = _adapter(tmp_path)
+    adapter.enable_adj_coldstart = True
+    calls: list = []
+    monkeypatch.setattr(adapter, "_coldstart_adj_factors",
+                        lambda at: calls.append(at))
+
+    out = adapter._get_adj_latest_global(
+        ["510500.SH", "TEST999.SH", "FIXTEST"], asset_type="ETF")
+
+    assert out == {"510500": pytest.approx(0.3401)}   # 合法码正常返回
+    assert calls == []                                 # 冷启动零触发（修复前必炸此断言）
+
+
+def test_all_dirty_input_returns_empty_no_coldstart(tmp_path, monkeypatch):
+    """全脏输入 → {} 且不查询不冷启动（源头静默，非异常路径）。"""
+    adapter = _adapter(tmp_path)
+    adapter.enable_adj_coldstart = True
+    calls: list = []
+    monkeypatch.setattr(adapter, "_coldstart_adj_factors",
+                        lambda at: calls.append(at))
+    assert adapter._get_adj_latest_global(["TEST.SH", "GISISI_TEST"],
+                                          asset_type="ETF") == {}
+    assert calls == []
 
 
 def test_etf_restore_anchor_uses_factor_at_latest_time_not_historical_max(tmp_path):

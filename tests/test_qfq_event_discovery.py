@@ -248,6 +248,33 @@ def test_stock_adj_factor_revision_and_factor_new(env):
 
 
 # ---------------------------------------------------------------------------
+# 5b. T4 fail-safe：aux 快照脏 code 不崩周期（错误二，9-22 01:48 实录回归钉）
+#     修复前：FIXTEST 行 → record_observations 整批 ValueError → 本测试必炸。
+# ---------------------------------------------------------------------------
+def test_observe_snapshot_contract_prefilter_dirty_skipped(env):
+    dconn, aux_path = env
+    disc = EventDiscovery(_make_cfg(), aux_db=aux_path)
+    a = sqlite3.connect(aux_path)
+    a.execute("INSERT INTO adj_factor VALUES ('600000', ?, 1.0)", [FT])
+    a.execute("INSERT INTO adj_factor VALUES ('FIXTEST', ?, 1.0)", [FT])    # aux 实锤脏值
+    a.execute("INSERT INTO adj_factor VALUES ('TEST.SH', ?, 1.0)", [FT2])   # 主库污染形态
+    a.commit(); a.close()
+
+    # 核心断言：**不抛异常**（旧行为=整批 ValueError）
+    res = disc.observe_stock_adj_factor(dconn, as_of_ms=FT + 1000, run_id="r1")
+
+    a = sqlite3.connect(aux_path)
+    n_valid = a.execute(
+        "SELECT count(*) FROM qfq_factor_observation WHERE code='600000'").fetchone()[0]
+    n_dirty = a.execute(
+        "SELECT count(*) FROM qfq_factor_observation "
+        "WHERE upper(code) LIKE '%TEST%'").fetchone()[0]
+    a.close()
+    assert res.new_count == 1          # 合法行正常入观察
+    assert n_valid == 1 and n_dirty == 0   # 脏行源头 skip，未进账本
+
+
+# ---------------------------------------------------------------------------
 # 6. ETF fund_adj → etf_fund_adj trigger
 # ---------------------------------------------------------------------------
 def test_etf_fund_adj_trigger(env):

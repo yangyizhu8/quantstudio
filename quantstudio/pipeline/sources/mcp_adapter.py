@@ -38,6 +38,7 @@ from quantstudio.pipeline.mcp import MCPClient
 from quantstudio.pipeline.mcp.client import load_mcp_api_key
 from quantstudio.pipeline.mcp.errors import MCPClientError, MCPToolError
 from quantstudio.pipeline.qfq_reanchor_schema import aux_db_path
+from quantstudio.pipeline.code_contract import validate_sec_code
 
 logger = logging.getLogger(__name__)
 
@@ -1563,7 +1564,23 @@ class MCPAdapter(BaseSourceAdapter):
             {裸码: adj_latest_global}；查不到的 code 不出现在返回值中
             （由调用方按 _RESTORE_MISSING_FACTOR_FAIL_FAST 决定处理方式）
         """
-        want = {self._bare_code(c) for c in codes if str(c).strip() != ""}
+        # T2 契约预过滤（错误二：TEST999 形态若进 want → 查询必缺 → still 误触
+        # 全历史冷启动重导出；非标准码源头剔除，合法码行为逐位不变——
+        # _bare_code 对合法码的归一结果与 validate_sec_code 一致）。
+        want: set = set()
+        _noncanon: List[str] = []
+        for c in codes:
+            if str(c).strip() == "":
+                continue
+            _ok, _norm, _reason = validate_sec_code(c)
+            if _ok:
+                want.add(_norm)
+            else:
+                _noncanon.append(str(c).strip())
+        if _noncanon:
+            logger.warning(
+                f"[MCPAdapter] code 契约预过滤剔除非标准 code {len(_noncanon)} 个"
+                f"（样例 {_noncanon[:5]}，不查询不冷启动）")
         if not want:
             return {}
         cache = self._adj_latest_cache.setdefault(asset_type, {})
