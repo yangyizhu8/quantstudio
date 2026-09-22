@@ -959,19 +959,19 @@ class FieldAligner:
         if adj_latest_map and adj_earliest_map:
             merged["_adj_latest"] = merged[code_col].map(adj_latest_map)
             merged["_adj_earliest"] = merged[code_col].map(adj_earliest_map)
-            # 快照里没有的 code，回退到批次内 max/min（记 warning 供追溯）
-            anchors = (adj.sort_values(time_field).groupby(code_col)["adj_factor"]
-                       .agg(adj_earliest="first", adj_latest="last"))
-            _fallback_latest = merged["_adj_latest"].isna() & merged[code_col].map(
-                anchors["adj_latest"]).notna()
-            if bool(_fallback_latest.any()):
+            # T5 fallback fail-safe（错误一⑤，2026-09-22 裁定）：快照缺失 code **不再
+            # 回退批次内基准**——批次内"末行因子"正是 2026-08-14 实测 1442 万行
+            # front=raw 的同机理（修复只是把它从主路径降级到回退分支，机理未除：
+            # 9-06 起 16 次/713 行经此路径写入错值，510020/520550 类非单调 ETF
+            # 首当其冲）。改为该行 front/back 置 NULL（NaN 自然传播，宁 NULL 勿错值）
+            # + 计数 WARNING（fallback_disabled 语义：缺锚行可见、可审计）。
+            _miss = merged["_adj_latest"].isna() | merged["_adj_earliest"].isna()
+            if bool(_miss.any()):
                 logger.warning(
-                    f"[QFQ] {int(_fallback_latest.sum())} 行 code 不在全局快照中，"
-                    f"回退批次内基准（这些 code 的 front 可能不准确）")
-            merged["_adj_latest"] = merged["_adj_latest"].fillna(
-                merged[code_col].map(anchors["adj_latest"]))
-            merged["_adj_earliest"] = merged["_adj_earliest"].fillna(
-                merged[code_col].map(anchors["adj_earliest"]))
+                    f"[QFQ] {int(_miss.sum())} 行 code 不在全局快照中，"
+                    f"front/back 留 NULL（fallback fail-safe，宁 NULL 勿错值；"
+                    f"codes 样例="
+                    f"{sorted(merged.loc[_miss, code_col].astype(str).unique())[:8]})")
             adj_latest = merged["_adj_latest"]
             adj_earliest = merged["_adj_earliest"]
         else:

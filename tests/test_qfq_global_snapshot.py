@@ -79,6 +79,26 @@ class TestApplyQfqShardWithoutLatestFactor:
         # 正确值（全局基准）应为 5.1
         assert buggy_front != 5.1
 
+    def test_t5_missing_code_in_snapshot_nulls_not_batch_anchor(self):
+        """T5 fallback fail-safe（错误一⑤，2026-09-22）：map 非空但缺该 code →
+        front/back **NULL**（宁 NULL 勿错值），**不得**回退批次内锚
+        （批次内末行因子 = 1442 万行事故同机理，此前仅藏于回退分支）。"""
+        df, adj_df = _make_qfq_inputs()
+        aligner = FieldAligner.__new__(FieldAligner)
+        aligner.schemas = {"etf_daily": {"time_key": "time"}}
+
+        out = aligner._apply_qfq(
+            df.copy(), adj_df, "etf_daily",
+            adj_latest_map={"OTHER": 2.0},      # 全局快照不含 X
+            adj_earliest_map={"OTHER": 1.0})
+
+        # 缺锚行：front/back 全 NULL（NaN 传播）——旧行为会回退批次内锚算出 front=raw 错值
+        assert out["close_front"].isna().all()
+        assert out["open_front"].isna().all()
+        assert out["close_back"].isna().all()
+        # raw 保留原值（观测面不清零）
+        assert (out["close"].values == df["close"].values).all()
+
 
 class TestDaemonSnapshotKwargs:
     """用例 3：daemon._qfq_snapshot_kwargs 路径级测试。"""
