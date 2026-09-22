@@ -432,3 +432,60 @@ def test_e_paged_full_read_no_truncation():
     r = audit_factor_integrity(conn, None, per_table_page_size=3)
     assert r["stats"]["tables"]["adj_factor"]["rows"] == 8   # 全量，无截断
     conn.close()
+
+
+# —————————————————————— 错误一 T1/T2（2026-09-22）：UNKNOWN 语义 + 阻断规则修订 ——————————————————————
+
+def test_t1_r3_reload_counts_unknown_not_bad():
+    """T1：r3_reload（9-22 06:44 实录兜底重载路径）行级偏离计 unknown 不计 bad
+    ——streak 不被锚不一致推高；UNKNOWN 不吞真异常：caller 路径同输入照常 bad。"""
+    aux = _make_aux_conn([("600000", "2026-06-01", 1.0)])
+    # front=10.0 系写入时旧锚 1.0 算出的正确值；r3 重载传入新锚 4.0 → 偏离
+    df = _make_daily_df([("600000", "2026-06-01", 10.0, 10.0)])
+    r = check_qfq_invariant(df, "stock_daily", {"600000": 4.0}, aux_conn=aux,
+                            source="mcp", anchor_source="r3_reload")
+    assert r["bad"] == 0 and r["unknown_rows"] >= 1 and r["sampled"] >= 1
+    # 反证：caller 路径同输入 → bad（真错写不被 UNKNOWN 掩护）
+    r2 = check_qfq_invariant(df, "stock_daily", {"600000": 4.0}, aux_conn=aux,
+                             source="mcp", anchor_source="caller")
+    assert r2["bad"] >= 1 and r2["unknown_rows"] == 0
+
+
+def test_t1_in_row_factor_same_source_kills_cross_source_false_positive():
+    """T1：复算输入同源——行内 adj_factor（=写入时值）优先；aux 同日被后续
+    注入刷新（修订窗）时不得再造成跨源误报（520550 ratio=1.0352 类形态）。"""
+    import pandas as _pd
+    aux = _make_aux_conn([("600000", "2026-06-01", 3.0)])   # aux 已被刷新为新因子
+    df = _pd.DataFrame({
+        "code": ["600000"], "time": [_ms("2026-06-01")],
+        "open": [8.0], "high": [10.0], "low": [7.0], "close": [10.0],
+        "open_front": [4.0], "high_front": [5.0], "low_front": [3.5],
+        "close_front": [5.0],           # = raw × 行内adj 1.0 / 锚 2.0（写入时正确值）
+        "adj_factor": [1.0],            # 行内因子（与 aux 表的 3.0 不一致=修订窗）
+    })
+    r = check_qfq_invariant(df, "stock_daily", {"600000": 2.0}, aux_conn=aux,
+                            source="mcp")
+    assert r["bad"] == 0 and r["sampled"] == 1 and r["cross_source_adj_i"] == 0
+    # 反证：行内无 adj_factor → aux 回退查 3.0 → expect=15 ≠ 5 → 旧式跨源误报复现
+    df2 = df.drop(columns=["adj_factor"])
+    r2 = check_qfq_invariant(df2, "stock_daily", {"600000": 2.0}, aux_conn=aux,
+                             source="mcp")
+    assert r2["bad"] >= 1 and r2["cross_source_adj_i"] >= 1
+
+
+def test_t2_block_rule_single_batch_10pct_no_block(tmp_path):
+    """T2：单批 rate=10% 不再立即阻断（9-06 33 次 CRITICAL 全在锚演进/重载窗的
+    误报面实证；旧规则 rate>0.05 即拦）。双批 rate>20% 保留真错写快通道。"""
+    c = _fake_collector_for_invariant(tmp_path)
+    rows = [("600000", "2026-06-01", 10.0, 5.0)] * 18 + \
+           [("600000", "2026-06-01", 10.0, 10.0)] * 2      # 20 采样 2 坏 = 10%
+    df10 = _make_daily_df(rows)
+    m = {"600000": 2.0}
+    c._qfq_invariant_after_align(df10, "stock_daily", "bA", "mcp", adj_latest_map=m)
+    assert not c.qfq_invariant_should_block("stock_daily")   # 旧规则此处已阻断
+    # 双批且 rate=25%>20% → 快通道阻断
+    rows25 = [("600000", "2026-06-01", 10.0, 5.0)] * 15 + \
+             [("600000", "2026-06-01", 10.0, 10.0)] * 5
+    df25 = _make_daily_df(rows25)
+    c._qfq_invariant_after_align(df25, "stock_daily", "bB", "mcp", adj_latest_map=m)
+    assert c.qfq_invariant_should_block("stock_daily")

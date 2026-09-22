@@ -108,43 +108,59 @@ def check_qfq_invariant(df: pd.DataFrame, table: str,
                         aux_conn: Optional[sqlite3.Connection] = None,
                         aux_path=None,
                         source: Optional[str] = None,
-                        seed: Optional[int] = None) -> Dict[str, Any]:
+                        seed: Optional[int] = None,
+                        anchor_source: str = "caller") -> Dict[str, Any]:
     """对已 align 的 std_df 抽样行做精确复权自洽校验（独立重算，不比对自己）。
 
     校验式（与 _apply_qfq 同公式、独立实现）：
         front_expect = raw × adj_i / adj_latest
         bad  ⇔  |front - front_expect| / max(|front_expect|, eps) > REL_TOL
 
-    数据来源（独立于 _apply_qfq 内部计算）：
+    数据来源（错误一 T1 修订 2026-09-22——**复算输入与写入公式同源**）：
         raw        ← df 的 open/high/low/close（aligner 只算 front/back，raw 保留原值）
-        adj_i      ← qfq_aux.db 按 (code, bar_day) 精确查（分钟按交易日连接）
+        adj_i      ← **优先 df 行内 adj_factor 列（=_apply_qfq 写入时同一值）**；
+                     行内缺失 → 回退 qfq_aux.db 按 (code, bar_day) 精确查（分钟按交易日
+                     连接）并计 cross_source_adj_i（跨源行可见——锚演进窗的旧误报源）
         adj_latest ← 调用方传入的快照 map（口径 A：本批 align 实际使用的写入时锚）
+        anchor_source ← "caller"=map 沿调用链同批传入（bad 判定可信）；
+                     "r3_reload"=daemon 兜底重载（9-22 06:44 实录路径：自检锚可能与
+                     写入锚不一致）——锚不可信路径行级偏离一律计 **unknown 不计 bad
+                     不计 streak**（UNKNOWN 不得吞真异常：真错写在 caller 路径照常 bad）。
 
-    三类行跳过（任务书 §1.3，防误报）：
+    四类行跳过（任务书 §1.3 + T1 修订，防误报）：
         - native 直通源（source ∈ {baostock, akshare, xtquant}）→ 整批跳过；
         - NULL front（front 或 adj_i 缺失）→ 计入 skipped；
-        - 无因子日（qfq_aux.db 查不到该 (code, bar_day)）→ 计入 skipped。
+        - 无因子日（qfq_aux.db 查不到该 (code, bar_day)）→ 计入 skipped；
+        - 锚 map 缺该 code → skipped（既有）+ unknown_rows（T1 新增维度）。
 
-    返回：
+    返回（旧键全保留向后兼容；T1 新增 unknown_rows/unknown_rate/
+    cross_source_adj_i/anchor_source）：
         {"sampled": int, "bad": int, "skipped": int,
          "bad_detail": [ {code, day, col, front, expect} ... ]（≤ 20 条）,
-         "missing_factor_rows": int,
-         "no_anchor_codes": int}
-        adj_latest_map 为空 → {"sampled": 0, "skipped": len(df)}（测试 6：跳过不抛错，
-        自检是观测，不承担 fail-fast 职责）。
+         "missing_factor_rows": int, "no_anchor_codes": int,
+         "unknown_rows": int, "unknown_rate": float,
+         "cross_source_adj_i": int, "anchor_source": str}
+        adj_latest_map 为空 → {"sampled": 0, "skipped": len(df),
+        "unknown_rows": len(df), "unknown_rate": 1.0}（测试 6：跳过不抛错，
+        自检是观测，不承担 fail-fast 职责；UNKNOWN 计数可见）。
     """
     out: Dict[str, Any] = {"sampled": 0, "bad": 0, "skipped": 0,
                            "bad_detail": [], "missing_factor_rows": 0,
-                           "no_anchor_codes": 0}
+                           "no_anchor_codes": 0,
+                           "unknown_rows": 0, "unknown_rate": 0.0,
+                           "cross_source_adj_i": 0,
+                           "anchor_source": anchor_source}
     if df is None or len(df) == 0:
         return out
     # 跳过类 1：native 直通源（front 是 passthrough 值，非 raw×factor）
     if source is not None and source in NATIVE_ADJUSTMENT_SOURCES:
         out["skipped"] = int(len(df))
         return out
-    # 测试 6：无锚 → 全跳过（不抛错、不阻断）
+    # 测试 6：无锚 → 全跳过（不抛错、不阻断）；T1：同时计 UNKNOWN 可见
     if not adj_latest_map:
         out["skipped"] = int(len(df))
+        out["unknown_rows"] = int(len(df))
+        out["unknown_rate"] = 1.0
         return out
 
     sampled = _stratified_sample(df, seed=seed)
@@ -176,10 +192,19 @@ def check_qfq_invariant(df: pd.DataFrame, table: str,
             adj_latest = adj_latest_map.get(code)
             if adj_latest is None or adj_latest <= 0:
                 no_anchor_codes.add(code)
-                out["skipped"] += 1
+                out["skipped"] += 1        # 既有语义保留
+                out["unknown_rows"] += 1   # T1：锚 map 缺该 code=锚不可信维度可见
                 continue
             day = days.loc[idx]
-            adj_i = factor_lookup.get((code, day))
+            # T1 同源优先（错误一，2026-09-22）：行内 adj_factor 列 = _apply_qfq
+            # 写入时同一值；行内缺失才回退 aux 查询（520550 类锚演进窗内
+            # "行内旧因子 vs aux 新因子"正是跨源误报源）并计数可见。
+            row_f = row.get("adj_factor")
+            if row_f is not None and not pd.isna(row_f) and float(row_f) > 0:
+                adj_i = float(row_f)
+            else:
+                adj_i = factor_lookup.get((code, day))
+                out["cross_source_adj_i"] += 1
             if adj_i is None:
                 out["missing_factor_rows"] += 1
                 out["skipped"] += 1
@@ -202,8 +227,16 @@ def check_qfq_invariant(df: pd.DataFrame, table: str,
                             "code": code, "day": day, "col": f"{col}_front",
                             "front": float(front_v), "expect": expect})
             if row_bad:
-                out["bad"] += 1
+                if anchor_source == "r3_reload":
+                    # T1 核心（9-22 06:44 实录路径）：R3 兜底重载锚可能与写入锚
+                    # 不一致——该路径行级偏离计 unknown（不判 bad 不计 streak），
+                    # 真错写在 caller 路径照常 bad，UNKNOWN 不吞真异常。
+                    out["unknown_rows"] += 1
+                else:
+                    out["bad"] += 1
         out["no_anchor_codes"] = len(no_anchor_codes)
+        _denom_u = out["unknown_rows"] + out["sampled"]
+        out["unknown_rate"] = (out["unknown_rows"] / _denom_u) if _denom_u else 0.0
         return out
     finally:
         if own_conn:

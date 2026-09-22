@@ -2642,15 +2642,45 @@ class ResidentCollector:
                         ts TEXT, batch_id TEXT, table_name TEXT, status TEXT,
                         sampled INTEGER, bad INTEGER, skipped INTEGER,
                         missing_factor_rows INTEGER, detail TEXT)""")
-                conn.execute(
-                    "INSERT INTO qfq_selfcheck_log "
-                    "(ts, batch_id, table_name, status, sampled, bad, skipped, "
-                    " missing_factor_rows, detail) VALUES (?,?,?,?,?,?,?,?,?)",
-                    [datetime.now().isoformat(timespec="seconds"), batch_id, table,
-                     status, int(result.get("sampled", 0)), int(result.get("bad", 0)),
-                     int(result.get("skipped", 0)), int(result.get("missing_factor_rows", 0)),
-                     json.dumps(result.get("bad_detail", [])[:20], ensure_ascii=False,
-                                default=float)])
+                # T1 观测增补（过审硬约束"UNKNOWN 占比可发现"落库面）：
+                # unknown_rows/anchor_source 两列扩展——旧库 ALTER 失败仅降级
+                # 为「日志可见」不回退失败（观测不扰主路径）。
+                _cols = [r[1] for r in conn.execute(
+                    "PRAGMA table_info(qfq_selfcheck_log)").fetchall()]
+                if "unknown_rows" not in _cols:
+                    try:
+                        conn.execute("ALTER TABLE qfq_selfcheck_log "
+                                     "ADD COLUMN unknown_rows INTEGER")
+                        conn.execute("ALTER TABLE qfq_selfcheck_log "
+                                     "ADD COLUMN anchor_source TEXT")
+                        _cols += ["unknown_rows", "anchor_source"]
+                    except sqlite3.Error:
+                        pass
+                if "unknown_rows" in _cols:
+                    conn.execute(
+                        "INSERT INTO qfq_selfcheck_log "
+                        "(ts, batch_id, table_name, status, sampled, bad, skipped, "
+                        " missing_factor_rows, detail, unknown_rows, anchor_source) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        [datetime.now().isoformat(timespec="seconds"), batch_id,
+                         table, status, int(result.get("sampled", 0)),
+                         int(result.get("bad", 0)), int(result.get("skipped", 0)),
+                         int(result.get("missing_factor_rows", 0)),
+                         json.dumps(result.get("bad_detail", [])[:20],
+                                    ensure_ascii=False, default=float),
+                         int(result.get("unknown_rows", 0)),
+                         str(result.get("anchor_source", "caller"))])
+                else:
+                    conn.execute(
+                        "INSERT INTO qfq_selfcheck_log "
+                        "(ts, batch_id, table_name, status, sampled, bad, skipped, "
+                        " missing_factor_rows, detail) VALUES (?,?,?,?,?,?,?,?,?)",
+                        [datetime.now().isoformat(timespec="seconds"), batch_id,
+                         table, status, int(result.get("sampled", 0)),
+                         int(result.get("bad", 0)), int(result.get("skipped", 0)),
+                         int(result.get("missing_factor_rows", 0)),
+                         json.dumps(result.get("bad_detail", [])[:20],
+                                    ensure_ascii=False, default=float)])
                 conn.commit()
         except Exception as exc:
             logger.warning(f"[QFQ-Invariant] 自检审计落库失败（不影响写入）: {exc}")
@@ -2712,9 +2742,11 @@ class ResidentCollector:
             if df is None or len(df) == 0:
                 return
             latest = adj_latest_map
+            _anchor_src = "caller"
             if not latest:
                 latest, _earliest = self._load_qfq_global_snapshot(table)  # 兜底
                 if latest:
+                    _anchor_src = "r3_reload"  # T1：自检锚可能与写入锚不一致
                     logger.warning(
                         f"[QFQ-Invariant] {table} {batch_id} 自检锚缺失，回退重新加载"
                         f"（可能与写入锚不一致，R3 兜底路径）")
@@ -2725,28 +2757,42 @@ class ResidentCollector:
             from .qfq_invariant import check_qfq_invariant
             r = check_qfq_invariant(df, table, latest,
                                     aux_path=self._qfq_align_aux_path(),
-                                    source=source)
+                                    source=source, anchor_source=_anchor_src)
             if r["bad"] > 0 or r["sampled"] > 0 or r["skipped"] > 0:
                 self._qfq_selfcheck_log(table, batch_id, r)
-            # 告警升级链（任务书 §1.4，D 修复：streak 按 distinct batch_id）：
-            # 连续 N=3 个不同批次 bad>0，或单批偏离率 >5% → 阻断下一轮该表任务；
-            # good 批清空 streak 并自动解除 blocked。
+            # T1 观测增补（过审硬约束）：UNKNOWN 占比>20% → mass_unknown 可见，
+            # 防 UNKNOWN 沦为吞异常后门（检查器覆盖退化须可被发现）。
+            _unk = int(r.get("unknown_rows", 0))
+            _udenom = _unk + int(r.get("sampled", 0))
+            if _udenom and _unk / _udenom > 0.20:
+                logger.warning(
+                    f"[QFQ-Invariant] {table} {batch_id} mass_unknown："
+                    f"UNKNOWN 占比 {_unk}/{_udenom}（anchor_source={_anchor_src}"
+                    f" cross_source_adj_i={r.get('cross_source_adj_i', 0)}）"
+                    f"——检查器覆盖退化，须排查 map 传递链")
+            # 告警升级链（任务书 §1.4，D 修复：streak 按 distinct batch_id；
+            # 错误一 T2 修订 2026-09-22：单批 rate>5% 立即阻断撤销——9-06 33 次
+            # CRITICAL 实证该阈值在锚演进/重载窗下大面积误报；改为
+            #   连续 ≥3 distinct 坏批，或 双批且单批 rate>20%（真错写快通道）。
+            # r3_reload 路径偏离已计 unknown 不计 bad（streak 天然不被锚不一致推高）。
             if r["bad"] > 0:
                 rate = r["bad"] / max(r["sampled"], 1)
                 logger.error(
                     f"[QFQ-Invariant] {table} {batch_id} 自洽偏离 {r['bad']}/{r['sampled']}"
-                    f" 行（rate={rate:.2%}）例: {r['bad_detail'][:3]}")
+                    f" 行（rate={rate:.2%} unknown={_unk}"
+                    f" xsrc={r.get('cross_source_adj_i', 0)}）例: {r['bad_detail'][:3]}")
                 lock, streaks, blocked = self._qfq_inv_state()
                 with lock:
                     batches = streaks.setdefault(table, [])
                     if batch_id not in batches:
                         batches.append(batch_id)
-                    if len(batches) >= 3 or rate > 0.05:
+                    if len(batches) >= 3 or (rate > 0.20 and len(batches) >= 2):
                         blocked.add(table)
                         logger.critical(
-                            f"[QFQ-Invariant] {table} 连续 {len(batches)} 个批次自洽偏离"
-                            f"（或单批偏离率 {rate:.2%}>5%）→ 阻断下一轮该表任务"
-                            f"（水位不推进，任务书 §1.4；good 批自动解除）")
+                            f"[QFQ-Invariant] {table} 自洽偏离达阻断阈值："
+                            f"连续 {len(batches)} 个批次（或双批且单批 {rate:.2%}>20%）"
+                            f"→ 阻断下一轮该表任务（水位不推进，任务书 §1.4；"
+                            f"good 批自动解除；解除须重启 daemon 或 good 批）")
             else:
                 lock, streaks, blocked = self._qfq_inv_state()
                 with lock:
