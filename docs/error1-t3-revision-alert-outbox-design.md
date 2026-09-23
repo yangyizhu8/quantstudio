@@ -5,6 +5,11 @@
   检测规则 `(code, 新值≠旧值@max_time) → outbox`、表与消费链已就绪（`qfq_reanchor_schema.py:537` / `consume_revision_alerts:417`）、
   验收硬指标 = 双空表 0→非 0、fail-soft 边界
 - 本方案在勘察基础上**补齐两处精确化**（见 §1 注）并给出写入设计 + 幂等去重 + 验收判据
+- **修订 v1.3（2026-09-23，未决项 5 取证后 · 实施形态定案）**：**情形 A（锚前移）已由既有 `factor_new` 通道覆盖**
+  （实证：`qfq_trigger_queue` 总 111,604 行 = `stock_dividend` 109,284 + **`factor_new` 2,320**，
+  `detection_source='tushare_adj_factor_new'`，样例 `factor_old→factor_new` 值确不同，effective_date 至 1790006400000）
+  ⇒ **T3 职责收敛为「情形 B（同 `(code,time)` 值变化）」**，不重复造情形 A 的 outbox 告警。
+  取证脚本：`agent_workspace/t3_factor_new_coverage_probe.py`（守卫式：daemon 状态探测 + 90s 超时放弃）
 - **修订 v1.2（2026-09-23，方案过审后 / 实施前取证）**：**未决项 1 已定谳**（观察链在跑、抽样全为 `revision_no=1`、
   outbox=0；真因 = **覆盖先于观察 + 新 time 无基线** → 只有注入点覆盖前读旧值能捕获，实证支撑本设计）；
   **冷启动开关默认开**（审核裁定）；**新增未决项 5**（情形 A 是否已由既有 `factor_new` 通道覆盖 → 决定 T3 是否需为情形 A
@@ -51,14 +56,14 @@ outbox 生产恒为 0 → QFQ 重锚闭环收不到因子修订信号（双空�
 
 勘察件 §2.2 已定规则：注入路径检测 `(code, 新值 ≠ 旧值 @ max_time)`。**「@ max_time」= 该 code 在目标表中的最大 time（锚点）**，分两种情形（本方案**写死**）：
 
-| 情形 | 本批新值落点 | 比对对象 | alert 的 `factor_time` |
-|---|---|---|---|
-| **A. 锚前移** | 落在**新的更大 time** 上 | 与**上一锚**（旧 `max(time)` 行）的值比较 | **本次观测到的锚 time**（即新的更大 time） |
-| **B. 同锚刷新** | 落在**已有 time** 上 | 与**同 time** 旧值比较 | 同该 time |
+| 情形 | 本批新值落点 | 比对对象 | alert 的 `factor_time` | 本项是否负责 |
+|---|---|---|---|---|
+| **A. 锚前移** | 落在**新的更大 time** 上 | 与**上一锚**（旧 `max(time)` 行）的值比较 | （无需本项构造） | **否——已由既有 `factor_new` 通道覆盖**（`_observe_factors` 的相邻 factor_time 值变化 → `_emit_factor_new_triggers` → DuckDB `qfq_trigger_queue`；实证 **2,320 条**，含 `factor_old/factor_new`） |
+| **B. 同锚刷新** | 落在**已有 time** 上 | 与**同 time** 旧值比较 | 同该 time | **是——本项唯一职责**（discovery 因「覆盖先于观察」结构性看不到旧值 ⇒ 只有注入点覆盖前读旧值能捕获） |
 
 - **比对口径 = 分钟表去重后**的 `(code, time)` 集合（去重在前，见 `_inject_adjfactor` 2169-2173）。
 - **比较容差**：沿用 `ObservationStore` 的 `epsilon_abs=1e-9` + 相对分量，避免浮点噪声误报（与写入器同口径，防"检测说变、写入器说没变"分叉）。
-- **无旧值**（新 code，或情形 A 中该 code 在目标表无任何行）→ **不算修订**（走基线语义，见 §3.6）。
+- **无旧值**（新 code，或情形 A）→ **不算修订**（走基线语义，见 §3.6；情形 A 的留痕由 `factor_new` 通道承担）。
 
 ### 3.6 `revision_no` 口径（勘察标注的必答设计点）
 
@@ -76,14 +81,13 @@ outbox 生产恒为 0 → QFQ 重锚闭环收不到因子修订信号（双空�
 > （`logger.info` 含 asset_type/code/factor_time/新值），供 §4-V8 的生产规模评估与漏检审视。
 > 生产侧 observation 已有 3740 万行基线，预计绝大多数键落在「已观察」分支 → 变化即告警。
 
-> **⚠️ 实施前必读（v1.2 新增，由未决项 1 取证引出）**：`record_observations` 是**按 `(asset_type, code, factor_time)` 逐键**
+> **⚠️ 实施前必读（v1.3 定案，未决项 5 已取证）**：`record_observations` 是**按 `(asset_type, code, factor_time)` 逐键**
 > 与自身历史比较的——因此：
-> - **情形 B（同 time 值变化）**：只要该键在 observation 已有 `revision≥1`（discovery 每周期全表观察 ⇒ **已存在的 time 键都有**），
->   交给 `record_observations` 即可产生 `revision+1` + alert ✓；
-> - **情形 A（锚前移，新更大 time）**：该 time 在 observation **无旧值** → `record_observations` 只会记 `new`（`revision_no=1`），
->   **不产生 alert** ✗ ⇒ **情形 A 不能依赖 `record_observations` 告警**，须在实施前按 §6 未决项 5 取证后二择一：
->   ① 依赖既有 `factor_new` 通道（trigger 留痕）→ T3 收敛为只管情形 B；② 由注入点**直接构造 outbox 告警**
->   （`alert_id_of(asset_type, code, 新锚 time, revision_no, source_generation)`，同事务 `INSERT OR IGNORE`）。
+> - **情形 B（同 time 值变化）＝ 本项唯一职责**：该键在 observation 已有 `revision≥1`（discovery 每周期全表观察 ⇒ **已存在的 time 键都有**），
+>   交给 `record_observations` 即可产生 `revision+1` + alert ✓ —— **这是 T3 要实现的**；
+> - **情形 A（锚前移，新更大 time）＝ 不由本项承担**：该 time 在 observation 无旧值 → `record_observations` 只会记 `new`（`revision_no=1`）；
+>   而**既有 `factor_new` 通道已覆盖该语义**（实证 `qfq_trigger_queue` 中 `factor_new` **2,320 条**，带 `factor_old/factor_new`，
+>   来源 `tushare_adj_factor_new`）⇒ **不重复造**（避免同一事件双通道留痕与双倍重锚）。
 
 ### 3.2 写入路径（同事务原子）
 ```
@@ -124,7 +128,8 @@ outbox 生产恒为 0 → QFQ 重锚闭环收不到因子修订信号（双空�
 
 | # | 判据（副本库/测试环境） |
 |---|---|
-| V1 | **outbox 0 → 非 0**：空库 → 首注（基线：observation 有行、outbox=0）→ **同 time 不同值再注** → observation 新增 1 条 `revision_no=2` 行 **且** outbox 新增 1 条 `status='pending'`（生产口径：outbox 0→非0） |
+| V1 | **outbox 0 → 非 0（触发场景 = 情形 B：同 `(code,time)` 值变化）**：空库 → 首注（基线：observation 有行、outbox=0）→ **同 time 不同值再注** → observation 新增 1 条 `revision_no=2` 行 **且** outbox 新增 1 条 `status='pending'`（生产口径：outbox 0→非0） |
+| V1-note | **情形 A（锚前移）不纳入本项验收**（已由既有 `factor_new` 通道覆盖，其实证与回归归 `test_qfq_factor_new_date_trigger` / `test_qfq_event_discovery`；本项仅需保证**不干扰**该通道、不产生双份留痕） |
 | V2 | **幂等**：同值重复注入 → 无新增 alert（仅 `last_seen` 刷新）；同批重放 → 无重复 alert（alert_id 去重）；`revision_no` 不跳号 |
 | V3 | **容差**：容差内微变 → 不记修订（与写入器同口径） |
 | V4 | **fail-soft**：注入留痕失败（模拟异常）→ 快照**仍写入成功**、批次不失败、WARNING 落日志 |
@@ -157,13 +162,13 @@ outbox 生产恒为 0 → QFQ 重锚闭环收不到因子修订信号（双空�
 4. ~~同域线索（云端 `etf_minutes` close 口径）~~ → **已核：不重叠**（勘察件 §2.5：数据面与语义面均不相交；
    仅间接关联——本轮实证「部分码历史 `adj_factor` 与 close 口径不一致（约 3%~5% 行）」，
    若 T3 告警恰好捕到这些码的因子刷新事件，可作该 tech-debt 的**旁证线索**，**不构成本项前置**）。
-5. **【新增·定谳前必须查】情形 A（锚前移）是否已由既有 `factor_new` 通道覆盖？**
-   `qfq_event_discovery._observe_factors` 在 `record_observations` 后会对 `result.factor_new`
-   （**相邻 factor_time 值变化**）调 `_emit_factor_new_triggers`（`:330-332`）→ 即「锚演进」可能**已**以
-   **DuckDB trigger**（而非 outbox alert）形式留痕。
-   **取证动作**：只读查 DuckDB 主库 `qfq_trigger_queue` 中 factor_new 类 trigger 的历史留痕（条数/时间分布）；
-   **裁定分支**：① 若已覆盖 → T3 的 outbox 职责**收敛为情形 B（同 time 值变化）**；
-   ② 若未覆盖/留痕不足 → T3 需**为情形 A 单独构造 outbox 告警**（见 §3.6 注）。
+5. ~~**情形 A（锚前移）是否已由既有 `factor_new` 通道覆盖？**~~ → **已定谳（2026-09-23 守卫式只读取证）**：
+   - `qfq_trigger_queue` 总 **111,604** 行 = `stock_dividend` 109,284 + **`factor_new` 2,320**；
+   - `factor_new` 的 `detection_source = tushare_adj_factor_new`，样例带 `factor_old → factor_new`（值确不同），
+     `effective_date` 至 **1790006400000**（≈2026-09-21）；
+   - ⇒ **情形 A 已被覆盖**，**T3 收敛为只管情形 B**（不重复造，避免同一事件双通道留痕/双倍重锚）。
+   - 取证脚本：`agent_workspace/t3_factor_new_coverage_probe.py`（守卫：daemon 状态探测 + 90s 超时放弃；
+     本次实测查询 0.37 s 完成，daemon status 残留但 pid 已不存在 → 空闲窗）
 
 ## 7. 派单与期限
 
