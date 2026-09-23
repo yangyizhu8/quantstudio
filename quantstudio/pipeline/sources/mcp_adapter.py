@@ -2137,6 +2137,61 @@ class MCPAdapter(BaseSourceAdapter):
         finally:
             release_write_lock()
 
+    # ------------------------------------------------------------------
+    # 错误一 T3：注入点修订检测（情形 B：同 (code,time) 值变化 → revision_alert outbox）
+    # 方案 v1.3：docs/error1-t3-revision-alert-outbox-design.md
+    # 冷启动开关默认开（QS_T3_REVISION_DETECT=0 可关）；fail-soft：留痕失败绝不影响快照写入。
+    # ------------------------------------------------------------------
+    def _detect_and_record_revisions(self, conn, target: str, asset_type: str,
+                                     rows, run_id: str) -> int:
+        """覆盖前读**同 time** 旧值，容差外变化 → record_observations（同事务写 revision + alert）。
+
+        - **情形 B（本项唯一职责）**：键已在快照表存在且值变化 → 交版本化写入器产 `revision_no+1` + alert(pending)；
+        - **情形 A（新更大 time / 新 code）不在此列**：已由既有 `factor_new` 通道覆盖（方案 §3.1，实证 2320 条），
+          不重复造（避免同一事件双通道留痕/双倍重锚）；
+        - 容差与写入器**同口径**（复用 `qfq_observation._tol_eq` + `DEFAULT_EPSILON_*`），
+          防"检测说变、写入器说没变"分叉；
+        - 只查本批键（临时表 JOIN 快照表走 PK 索引），不扫全表；
+        - 返回检测到的修订条数（0 = 未启用 / 无变化）。
+        """
+        import os
+
+        if os.environ.get("QS_T3_REVISION_DETECT", "1").strip() == "0":
+            return 0
+        if not rows:
+            return 0
+
+        from quantstudio.pipeline.qfq_observation import (
+            DEFAULT_EPSILON_ABS,
+            DEFAULT_EPSILON_REL,
+            ObservationStore,
+            _tol_eq,
+        )
+
+        # 本批键值 → 临时表（主键去重，与快照 INSERT OR REPLACE 语义一致），再 JOIN 快照取旧值
+        conn.execute("CREATE TEMP TABLE IF NOT EXISTS _t3_new "
+                     "(code TEXT, time INTEGER, val REAL, PRIMARY KEY (code, time))")
+        conn.execute("DELETE FROM _t3_new")
+        conn.executemany("INSERT OR REPLACE INTO _t3_new (code, time, val) VALUES (?, ?, ?)", rows)
+        pairs = conn.execute(
+            f"SELECT n.code, n.time, n.val, o.adj_factor FROM _t3_new n "
+            f"JOIN {target} o ON o.code = n.code AND o.time = n.time").fetchall()
+
+        changed = [(str(cd), int(t), float(nv))
+                   for cd, t, nv, ov in pairs
+                   if not _tol_eq(float(ov), float(nv), DEFAULT_EPSILON_ABS, DEFAULT_EPSILON_REL)]
+        if not changed:
+            return 0
+
+        # 同事务写入（conn 传入 → 写入器不自行 BEGIN/commit，随快照写入一并原子提交）
+        res = ObservationStore(self._qfq_aux_path()).record_observations(
+            [(asset_type, cd, t, nv) for cd, t, nv in changed], run_id, conn=conn)
+        n_rev = int(getattr(res, "revised_count", 0) or 0)
+        logger.info(
+            f"[MCPAdapter] §T3 修订检测（情形B）: {target} 本批键={len(pairs)} 变化={len(changed)} "
+            f"revision={n_rev}（run_id={run_id}）")
+        return n_rev
+
     def _inject_adjfactor(self, df: pd.DataFrame, freq: str, table: str,
                           conn=None) -> int:
         """标准化 MCP adj_factor 并写入 qfq_aux.db 的 adj_factor(股票)/fund_adj(ETF) 表。
@@ -2185,6 +2240,16 @@ class MCPAdapter(BaseSourceAdapter):
                 conn.execute(
                     f"CREATE TABLE IF NOT EXISTS {target} ("
                     f"code TEXT, time INTEGER, adj_factor REAL, PRIMARY KEY (code, time))")
+            # 错误一 T3（情形 B）：**覆盖前**读同 time 旧值 → 容差外变化即同事务写 revision+alert。
+            # fail-soft：留痕失败只告警，**绝不影响快照写入**（主采集优先，方案 §3.5）。
+            try:
+                self._detect_and_record_revisions(
+                    conn, target, asset_type, rows,
+                    run_id=f"adjfactor-inject:{target}")
+            except Exception as _t3e:
+                logger.warning(
+                    f"[MCPAdapter] §T3 修订检测失败（fail-soft，不影响快照写入）: "
+                    f"{type(_t3e).__name__}: {_t3e}")
             conn.executemany(
                 f"INSERT OR REPLACE INTO {target} (code, time, adj_factor) "
                 f"VALUES (?, ?, ?)", rows)
