@@ -692,7 +692,8 @@ class MCPClient:
                           *, idempotency_key: Optional[str] = None,
                           time_start: Optional[str] = None,
                           time_end: Optional[str] = None,
-                          row_limit: Optional[int] = None) -> str:
+                          row_limit: Optional[int] = None,
+                          async_mode: bool = False) -> str:
         """触发 Parquet 导出作业，返回 manifest_ref（= get_manifest 要的 job_id）。
 
         防重复创建策略（应用级幂等，不依赖未验证的服务端 idempotency 语义）：
@@ -700,13 +701,19 @@ class MCPClient:
         - idempotency_key 可选透传给服务端（若服务端支持则进一步防重）。
         - time_start/time_end：服务端 WHERE 下推时间范围（ISO 或 YYYYMMDD），避免
           默认 row_limit 截断到最老数据。
+        - async_mode（客户反馈包 2026-09-23 问题1，默认 False）：服务端支持异步导出
+          ——实测立即返回 {"job_id": …, "status": "running"}，绕过单作业 60s 软时间
+          预算；随后由 get_manifest 轮询至 status=ready。默认关闭 ⇒ 同步路径零影响。
+          注意：异步只解决「预算」不解决「行数上限」（服务端单作业恒 5,000,000 行）。
         """
+        # 异步作业不可缓存复用：同窗口重复 create 会各自产生独立作业，缓存语义失真。
         cache_key = (dataset_id, int(page_size), time_start, time_end)
-        with self._lock:
-            cached = self._job_cache.get(cache_key)
-        if cached:
-            logger.debug(f"[MCP] reuse cached export job {cached} for {cache_key}")
-            return cached
+        if not async_mode:
+            with self._lock:
+                cached = self._job_cache.get(cache_key)
+            if cached:
+                logger.debug(f"[MCP] reuse cached export job {cached} for {cache_key}")
+                return cached
         args: Dict[str, Any] = {"dataset_id": dataset_id, "page_size": int(page_size)}
         if row_limit is not None:
             args["row_limit"] = int(row_limit)
@@ -716,6 +723,8 @@ class MCPClient:
             args["time_start"] = time_start
         if time_end is not None:
             args["time_end"] = time_end
+        if async_mode:
+            args["async_mode"] = True
         d = self._call_with_retry(self._call_tool, "create_export_job", args)
         # F-4 修复（2026-09-08）：识别服务端结构化错误（60s 软超时等）——
         # 抛携带 hint/suggested_shards 的专用异常，上层缩小窗口重试而非原样重发。
@@ -729,20 +738,39 @@ class MCPClient:
         ref = d.get("manifest_ref") or d.get("job_id")
         if not ref:
             raise MCPProtocolError(f"create_export_job 未返回 manifest_ref: {d}")
-        with self._lock:
-            self._job_cache[cache_key] = ref
+        if not async_mode:
+            with self._lock:
+                self._job_cache[cache_key] = ref
         return ref
 
-    def get_manifest(self, job_id: str) -> ExportManifest:
-        d = self._call_with_retry(self._call_tool, "get_manifest", {"job_id": job_id})
-        # F-4 修复（2026-09-08）：P1-3 异步语义兼容——status 字段存在时校验，
-        # failed 即抛错、running 在同步路径属异常（防把半成品 manifest 当完整结果消费）。
-        _status = d.get("status")
-        if _status == "failed":
-            raise MCPProtocolError(f"export job {job_id} failed: {d.get('error')}")
-        if _status == "running":
-            raise MCPProtocolError(
-                f"export job {job_id} still running（同步路径不应出现，async_mode 未启用）")
+    def get_manifest(self, job_id: str, *, await_ready: bool = False,
+                     poll_interval_sec: float = 2.0,
+                     poll_timeout_sec: float = 600.0) -> ExportManifest:
+        """取作业 manifest。
+
+        await_ready=False（默认，既有行为）：status=running 属异常（同步路径不应出现），
+        立即抛 MCPProtocolError，防把半成品 manifest 当完整结果消费。
+        await_ready=True（客户反馈包 2026-09-23 问题1，仅 async_mode 启用时使用）：
+        轮询等待 status 变为 ready，超时抛 MCPProtocolError（不静默返回半成品）。
+        """
+        _deadline = time.monotonic() + max(0.0, float(poll_timeout_sec))
+        while True:
+            d = self._call_with_retry(self._call_tool, "get_manifest", {"job_id": job_id})
+            # F-4 修复（2026-09-08）：P1-3 异步语义兼容——status 字段存在时校验。
+            _status = d.get("status")
+            if _status == "failed":
+                raise MCPProtocolError(f"export job {job_id} failed: {d.get('error')}")
+            if _status == "running":
+                if not await_ready:
+                    raise MCPProtocolError(
+                        f"export job {job_id} still running（同步路径不应出现，async_mode 未启用）")
+                if time.monotonic() >= _deadline:
+                    raise MCPProtocolError(
+                        f"export job {job_id} still running after {poll_timeout_sec}s "
+                        f"（异步轮询超时）")
+                time.sleep(max(0.1, float(poll_interval_sec)))
+                continue
+            break
         shards = [Shard(
             shard_id=s.get("shard_id", ""),
             row_start=int(s.get("row_start", 0) or 0),
@@ -821,7 +849,9 @@ class MCPClient:
                        verify_concat: bool = False,
                        time_start: Optional[str] = None,
                        time_end: Optional[str] = None,
-                       row_limit: Optional[int] = None) -> List[Artifact]:
+                       row_limit: Optional[int] = None,
+                       async_mode: bool = False,
+                       poll_timeout_sec: float = 600.0) -> List[Artifact]:
         """端到端导出：create_export_job → get_manifest → 逐 shard get_artifact。
 
         Args:
@@ -830,14 +860,17 @@ class MCPClient:
             time_start/time_end: 服务端时间范围下推（ISO 或 YYYYMMDD），服务端按此
                 WHERE 过滤导出，避免默认 row_limit 截断到最老数据。
             row_limit: 大表(stock_minutes/etf_minutes)服务端强制要求，非大表可不传。
+            async_mode: 异步导出（默认 False）。True 时服务端立即返回 job_id，
+                此处轮询至 ready 再逐 shard 取件——绕过单作业 60s 软时间预算。
         Returns:
             解码后的 Artifact 列表（parquet_bytes 已加载内存）。
         """
         self.handshake()
         ref = self.create_export_job(dataset_id, page_size=page_size,
                                      time_start=time_start, time_end=time_end,
-                                     row_limit=row_limit)
-        manifest = self.get_manifest(ref)
+                                     row_limit=row_limit, async_mode=async_mode)
+        manifest = self.get_manifest(ref, await_ready=async_mode,
+                                     poll_timeout_sec=poll_timeout_sec)
         artifacts: List[Artifact] = []
         for shard in manifest.shards:
             art = self.get_artifact(ref, shard.artifact_id, verify_sha256=verify_each_shard)

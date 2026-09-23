@@ -100,8 +100,74 @@ def test_grid_aligned_still_works():
     assert d >= 1
 
 
-# ---------- R4：预算错误与 manifest status ----------
+# ---------- 客户反馈包 2026-09-23 问题1：窗口纳入时间预算 + 可配置 ----------
 
+def _window_span(batches):
+    from datetime import datetime
+    return max((datetime.strptime(be, "%Y-%m-%d")
+                - datetime.strptime(bs, "%Y-%m-%d")).days for bs, be in batches)
+
+
+def test_minute_window_time_budget_default_is_one_day():
+    """默认配置（minute_export_window_days=1 / target_rows=2.5M）→ 分钟窗 = 1 天。
+
+    机理：服务端单作业 60s 软时间预算，2 天窗实测仍会瞬时触顶
+    （客户两次死于批 44/87 与 70/89，export_exceeds_time_budget）。
+    """
+    assert _window_span(A._export_batches(
+        "2026-08-01", "2026-08-10", is_minute=True,
+        est_rows=480_000_000, grid_aligned=False)) == 1
+    # etf_minutes 同样被 1 天上限约束（其行数约束本可放宽到 4 天）
+    assert _window_span(A._export_batches(
+        "2026-08-01", "2026-08-10", is_minute=True,
+        est_rows=120_000_000, grid_aligned=False)) == 1
+
+
+def test_minute_window_target_rows_budget_math():
+    """关闭 cfg 窗上限后：窗口由**时间预算目标行数**反算（2.5M/(日行数×1.2)）。"""
+    A.minute_export_window_days = 0          # 仅留 target_rows 约束
+    A.minute_export_target_rows = 2_500_000
+    try:
+        # stock_minutes：日行数≈1.975M → int(2.5M/(1.975M×1.2)) = 1 天
+        assert _window_span(A._export_batches(
+            "2026-08-01", "2026-08-20", is_minute=True,
+            est_rows=480_000_000, grid_aligned=False)) == 1
+        # etf_minutes：日行数≈0.494M → int(2.5M/(0.494M×1.2)) = 4 天
+        assert _window_span(A._export_batches(
+            "2026-08-01", "2026-08-20", is_minute=True,
+            est_rows=120_000_000, grid_aligned=False)) == 4
+    finally:
+        del A.minute_export_window_days
+        del A.minute_export_target_rows
+
+
+def test_minute_window_config_can_restore_old_behaviour():
+    """回退护栏：cfg 键置 0/负值 → 退回纯行数约束（旧行为可恢复）。"""
+    A.minute_export_window_days = 0
+    A.minute_export_target_rows = 0
+    try:
+        assert _window_span(A._export_batches(
+            "2026-08-01", "2026-08-20", is_minute=True,
+            est_rows=480_000_000, grid_aligned=False)) == 2
+    finally:
+        del A.minute_export_window_days
+        del A.minute_export_target_rows
+
+
+def test_daily_table_window_not_affected_by_minute_budget():
+    """日线表不受分钟预算约束影响（回归：365 天窗不变）。"""
+    A.minute_export_window_days = 1
+    A.minute_export_target_rows = 100_000
+    try:
+        batches = A._export_batches("2025-01-01", "2026-09-07", is_minute=False,
+                                    est_rows=14_000_000, grid_aligned=False)
+        assert len(batches) == 2
+    finally:
+        del A.minute_export_window_days
+        del A.minute_export_target_rows
+
+
+# ---------- R4：预算错误与 manifest status ----------
 def test_export_budget_error_attrs():
     e = MCPExportBudgetError("budget exceeded", error_code="export_exceeds_time_budget",
                              hint="shard by date", suggested_shards=[{"a": 1}])
@@ -156,6 +222,94 @@ def test_get_manifest_ready_passthrough(monkeypatch):
                                                 "total_rows": 1256815, "shards": []})
     m = c.get_manifest("j1")
     assert m.total_rows == 1256815
+
+
+# ---------- 客户反馈包 2026-09-23 问题1：async_mode 透传与轮询 ----------
+
+def test_create_export_job_async_mode_passthrough(monkeypatch):
+    """async_mode=True → 请求带 async_mode，且不写 job 缓存（异步作业不可复用）。"""
+    import threading
+    from quantstudio.pipeline.mcp.client import MCPClient
+    seen = {}
+
+    def _fake(fn, tool, args):
+        seen.update(args)
+        return {"job_id": "j_async_1", "status": "running"}
+
+    c = object.__new__(MCPClient)
+    c._lock = threading.Lock()
+    c._job_cache = {}
+    monkeypatch.setattr(c, "_call_with_retry", _fake)
+    ref = c.create_export_job("qdb.stock_minutes", time_start="2026-09-08T00:00:00",
+                              time_end="2026-09-10T00:00:00", row_limit=5_000_000,
+                              async_mode=True)
+    assert ref == "j_async_1"
+    assert seen["async_mode"] is True
+    assert c._job_cache == {}
+
+
+def test_create_export_job_sync_mode_no_async_key(monkeypatch):
+    """async_mode 默认 False → 请求**不含** async_mode 键（同步路径零影响，回归）。"""
+    import threading
+    from quantstudio.pipeline.mcp.client import MCPClient
+    seen = {}
+
+    def _fake(fn, tool, args):
+        seen.update(args)
+        return {"manifest_ref": "j_sync_1"}
+
+    c = object.__new__(MCPClient)
+    c._lock = threading.Lock()
+    c._job_cache = {}
+    monkeypatch.setattr(c, "_call_with_retry", _fake)
+    ref = c.create_export_job("qdb.stock_minutes", time_start="2026-09-08T00:00:00")
+    assert ref == "j_sync_1"
+    assert "async_mode" not in seen
+    assert c._job_cache  # 同步路径仍写缓存（既有幂等行为不变）
+
+
+def test_get_manifest_await_ready_polls_until_ready(monkeypatch):
+    """await_ready=True：running → 轮询到 ready（异步作业消费路径）。"""
+    from quantstudio.pipeline.mcp.client import MCPClient
+    calls = {"n": 0}
+
+    def _fake(fn, tool, args):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            return {"job_id": "j1", "status": "running"}
+        return {"status": "ready", "job_id": "j1", "total_rows": 7, "shards": []}
+
+    c = object.__new__(MCPClient)
+    monkeypatch.setattr(c, "_call_with_retry", _fake)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    m = c.get_manifest("j1", await_ready=True, poll_interval_sec=0.01,
+                       poll_timeout_sec=5)
+    assert m.total_rows == 7
+    assert calls["n"] == 3
+
+
+def test_get_manifest_await_ready_timeout_raises(monkeypatch):
+    """await_ready=True 且超时 → 抛错，**不静默返回半成品**。"""
+    from quantstudio.pipeline.mcp.client import MCPClient
+    from quantstudio.pipeline.mcp.errors import MCPProtocolError
+    c = object.__new__(MCPClient)
+    monkeypatch.setattr(c, "_call_with_retry",
+                        lambda fn, tool, args: {"job_id": "j1", "status": "running"})
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    with pytest.raises(MCPProtocolError, match="轮询超时"):
+        c.get_manifest("j1", await_ready=True, poll_interval_sec=0.01,
+                       poll_timeout_sec=0)
+
+
+def test_get_manifest_running_without_await_ready_still_raises(monkeypatch):
+    """await_ready 默认 False → running 仍抛错（既有防线不被削弱，回归）。"""
+    from quantstudio.pipeline.mcp.client import MCPClient
+    from quantstudio.pipeline.mcp.errors import MCPProtocolError
+    c = object.__new__(MCPClient)
+    monkeypatch.setattr(c, "_call_with_retry",
+                        lambda fn, tool, args: {"status": "running"})
+    with pytest.raises(MCPProtocolError, match="running"):
+        c.get_manifest("j1")
 
 
 if __name__ == "__main__":

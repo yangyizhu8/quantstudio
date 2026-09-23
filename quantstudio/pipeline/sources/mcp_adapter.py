@@ -352,6 +352,25 @@ class MCPAdapter(BaseSourceAdapter):
         # 跨证券共享同一组缓存键 (table, grid_bs|grid_be)，export 次数从 2181×N 降至 ~N。
         # daemon 日常采集路径不开启 → 每次 fetch 走真实 export_dataset，行为与修复前一致。
         self.export_cache = bool(config.get("export_cache", False))
+        # 客户反馈包 2026-09-23 问题1（export_exceeds_time_budget）：
+        # 服务端单作业 60s 软时间预算——窗口只按行数收缩到 2 天时仍会触顶，
+        # 故分钟表窗口同时受「时间预算反算的目标行数」约束（默认 1 天）。
+        # 两个键可覆写（缺省即用新默认）；置 0/负值 = 不施加该约束（回退旧行为）。
+        try:
+            self.minute_export_window_days = int(
+                config.get("minute_export_window_days", 1))
+        except (TypeError, ValueError):
+            logger.warning("[MCPAdapter] minute_export_window_days 无法解析，用默认 1")
+            self.minute_export_window_days = 1
+        try:
+            self.minute_export_target_rows = int(
+                config.get("minute_export_target_rows", 2_500_000))
+        except (TypeError, ValueError):
+            logger.warning("[MCPAdapter] minute_export_target_rows 无法解析，用默认 2500000")
+            self.minute_export_target_rows = 2_500_000
+        # 异步导出（服务端已支持 async_mode：立即返回 job_id + status=running）。
+        # 默认关——同步路径行为零影响；开启后由 get_manifest 轮询等待。
+        self.export_async = bool(config.get("export_async", False))
         # 全局最新因子缓存：{asset_type: {裸码: adj_latest}}；每进程每资产类型只查一次
         self._adj_latest_cache: Dict[str, Dict[str, float]] = {}
         # 已执行过冷启动的资产类型（避免同一进程内重复全历史导出）
@@ -801,8 +820,21 @@ class MCPAdapter(BaseSourceAdapter):
             daily_rows = est_total / 243
             safe_window = max(1, int(self._EXPORT_ROW_LIMIT_BIG / (daily_rows * 1.2)))
             window = min(window, safe_window)
+            # 客户反馈包 2026-09-23 问题1：行数约束之外叠加**时间预算**约束。
+            # 服务端单作业 60s 软超时（export_exceeds_time_budget）；2 天窗实测仍会
+            # 瞬时触顶（客户两次死于批 44/87 与 70/89），故按目标行数反算更保守的窗口。
+            # getattr 默认值：本方法为纯静态窗口逻辑，测试可直接绕过 __init__ 调用。
+            _target_rows = int(getattr(self, "minute_export_target_rows", 2_500_000) or 0)
+            _cfg_window = int(getattr(self, "minute_export_window_days", 1) or 0)
+            if _target_rows > 0 and daily_rows > 0:
+                budget_window = max(1, int(_target_rows / (daily_rows * 1.2)))
+                window = min(window, budget_window)
+            if _cfg_window > 0:
+                window = min(window, _cfg_window)
             logger.info(f"[MCPAdapter] 分钟安全窗口: {window}天 "
                         f"(daily_rows≈{daily_rows:.0f}, row_limit={self._EXPORT_ROW_LIMIT_BIG}, "
+                        f"target_rows={_target_rows}, "
+                        f"cfg_window_days={_cfg_window}, "
                         f"grid_aligned={grid_aligned}, est_total={est_total})")
         if grid_aligned:
             # Bug 2 修复：网格化窗口需适配 row_limit，避免服务端截断。
@@ -1060,11 +1092,13 @@ class MCPAdapter(BaseSourceAdapter):
                 # F-探针：请求参数全量留痕（time/row_limit 原文，防参数丢失类缺陷无迹可查）
                 logger.info(f"[F-探针] export 请求: dataset={qdb_tbl} "
                             f"time_start={ts_iso} time_end={te_iso} "
-                            f"row_limit={5_000_000 if _is_big else None} page_size=50000")
+                            f"row_limit={5_000_000 if _is_big else None} page_size=50000 "
+                            f"async={getattr(self, 'export_async', False)}")
                 arts = self.client.export_dataset(
                     dataset_id=qdb_tbl, page_size=50_000,
                     time_start=ts_iso, time_end=te_iso,
-                    row_limit=5_000_000 if _is_big else None)
+                    row_limit=5_000_000 if _is_big else None,
+                    async_mode=bool(getattr(self, "export_async", False)))
                 all_artifacts.extend(arts)
                 jid = (arts[0].raw.get("job_id") if arts and arts[0].raw.get("job_id") else f"export_{i}")
                 job_ids.append(jid)
@@ -1413,7 +1447,8 @@ class MCPAdapter(BaseSourceAdapter):
             arts = self.client.export_dataset(
                 dataset_id=qdb_tbl, page_size=50_000,
                 time_start=ts_iso, time_end=te_iso,
-                row_limit=5_000_000 if _is_big else None)
+                row_limit=5_000_000 if _is_big else None,
+                async_mode=bool(getattr(self, "export_async", False)))
             if arts:
                 jid = (arts[0].raw.get("job_id") if arts[0].raw.get("job_id") else f"export_{i}")
                 if job_id == "export":
@@ -1700,7 +1735,8 @@ class MCPAdapter(BaseSourceAdapter):
         try:
             artifacts = self.client.export_dataset(
                 dataset_id=qdb_tbl, page_size=50_000,
-                time_start=t0, time_end=t1, row_limit=None)
+                time_start=t0, time_end=t1, row_limit=None,
+                async_mode=bool(getattr(self, "export_async", False)))
         except Exception as e:
             logger.error(f"[MCPAdapter] 线1 冷启动导出失败({qdb_tbl}): "
                          f"{type(e).__name__}: {e}")
