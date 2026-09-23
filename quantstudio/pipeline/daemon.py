@@ -191,7 +191,12 @@ class ResidentCollector:
         读写连接，避免跨进程读库冲突。writer.close() 已存在（writers.py），
         对其它组件做防御性 try/except（aligner/quarantine/validator 当前不持有
         长连接，但接口预留）。
+
+        **笔3（2026-09-23 GUI 启动卡死案）**：释放连接后追加一次**安全检查点**——
+        残留 WAL 会让下一次任何打开都先回放（实测 2.33 GB → 22.3 分钟），而检查点本体
+        仅 7.3 s、无 WAL 时为空操作。带超时放弃，绝不阻塞收尾（见 db_checkpoint）。
         """
+        main_db = getattr(getattr(self, "writer", None), "db_path", None)
         for comp_attr in ("writer", "aligner", "quarantine", "validator"):
             comp = getattr(self, comp_attr, None)
             if comp is not None and hasattr(comp, "close"):
@@ -207,6 +212,15 @@ class ResidentCollector:
                 except Exception:
                     pass
         self._adapters.clear()
+        # 笔3：连接已释放 → 收敛 WAL（失败/超时只记日志，不影响收尾）
+        if main_db:
+            try:
+                from quantstudio.pipeline.db_checkpoint import checkpoint_database
+
+                ok, detail = checkpoint_database(main_db)
+                logger.debug(f"[ResidentCollector.close] WAL 检查点: ok={ok} {detail}")
+            except Exception as e:
+                logger.debug(f"[ResidentCollector.close] WAL 检查点异常（忽略）: {e}")
 
     @classmethod
     def from_configs(cls, data_cfg_path, sources_cfg_path, tasks_cfg_path, align_rules_path):
