@@ -12,6 +12,12 @@ sys.path.insert(0, str(ROOT))
 
 
 def main():
+    # 笔5（2026-09-23 A 案裁定①）：版本闸 —— 非 1.4.x 拒启（覆盖 GUI 入口；
+    # GUI 拉起的 daemon 子进程由 daemon.py 自身再校验一次）
+    from quantstudio.pipeline.duckdb_version_gate import require_duckdb_version
+
+    require_duckdb_version("GUI (main_gui.py)")
+
     from quantstudio._paths import db_path, quarantine_db_path, DATA_ROOT
     from PyQt6.QtWidgets import QApplication
     from quantstudio.gui.main_window import MainWindow

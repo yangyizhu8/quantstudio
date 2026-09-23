@@ -3474,6 +3474,12 @@ def _get_git_commit() -> str:
 
 
 def main():
+    # 笔5（2026-09-23 A 案裁定①）：版本闸 —— 非 1.4.x 拒启。
+    # 覆盖 daemon 的两种入口形态：`-m quantstudio.pipeline.daemon` 与**直启** `python daemon.py`。
+    from quantstudio.pipeline.duckdb_version_gate import require_duckdb_version
+
+    require_duckdb_version("daemon (quantstudio.pipeline.daemon)")
+
     parser = argparse.ArgumentParser(description="QuantStudio 常驻采集进程")
     parser.add_argument("--mode", choices=["forever", "once"], default="forever",
                         help="forever=7×24常驻 / once=单次执行")
@@ -3690,4 +3696,11 @@ def main():
 
 
 if __name__ == "__main__":
+    # 注（笔5 实测）：`python quantstudio/pipeline/daemon.py`（直启文件形态）**结构上不支持**——
+    # 本模块使用相对导入（`from .task_resume import …`），无包上下文必然
+    # ImportError: attempted relative import with no known parent package。
+    # 受支持的入口：`-m quantstudio.pipeline.daemon`、GUI 拉起的子进程、
+    # 以及 `python -c "from quantstudio.pipeline.daemon import main; main()"`；
+    # 三者均在 main() 首行过版本闸。daemon_status.json 记的 cmdline 在 `-m` 下与直启同形，
+    # 不能据此判断启动形态（A 案卷宗已更正）。
     main()
