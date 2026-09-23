@@ -1,4 +1,4 @@
-﻿"""Regression tests for MCP fetch completeness and QFQ routing isolation."""
+"""Regression tests for MCP fetch completeness and QFQ routing isolation."""
 from __future__ import annotations
 
 from collections import OrderedDict
@@ -279,3 +279,58 @@ def test_empty_qfq_frame_skips_factor_sync(monkeypatch):
     assert result is frame
     assert meta["restore_skip_reason"] == "empty_df"
     assert meta["restored_rows"] == 0
+
+
+# ===========================================================================
+# 客户反馈包 2026-09-23 问题4：pyarrow 依赖缺失必须显式报错（不得静默降级）
+# ===========================================================================
+
+def test_parquet_has_column_missing_pyarrow_raises_explicit_error(monkeypatch, tmp_path):
+    """缺 pyarrow ⇒ 显式 ImportError + 安装指引（而非伪装成「列不存在」）。
+
+    事故链：旧实现 `except Exception: return False` 把依赖缺失降级为「列不存在」
+    → 因子列投影空 → 注入 0 行 → 误导性报错
+    「streaming xxx/daily 第一遍因子同步失败（注入 0 行）」。
+    """
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *a, **k):
+        if name == "pyarrow.parquet" or name.startswith("pyarrow"):
+            raise ImportError("No module named 'pyarrow'")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(ImportError) as ei:
+        MCPAdapter._parquet_has_column(tmp_path / "x.parquet", "adj_factor")
+    msg = str(ei.value)
+    assert "pyarrow" in msg
+    assert "pip install" in msg, msg
+
+
+def test_parquet_has_column_returns_false_for_missing_column(tmp_path):
+    """业务兜底不变：列确实不存在 ⇒ 返回 False（不是抛错）。"""
+    pq = pytest.importorskip("pyarrow.parquet")
+    import pyarrow as pa
+
+    p = tmp_path / "s.parquet"
+    pq.write_table(pa.table({"ts_code": ["159327.SZ"], "close": [1.0]}), str(p))
+    assert MCPAdapter._parquet_has_column(p, "ts_code") is True
+    assert MCPAdapter._parquet_has_column(p, "adj_factor") is False
+
+
+def test_pyproject_declares_pyarrow():
+    """打包声明回归钉：dependencies 与 [all] 均须声明 pyarrow。"""
+    from pathlib import Path
+    try:
+        import tomllib  # py3.11+
+    except ModuleNotFoundError:  # pragma: no cover - py3.10 及以下
+        pytest.skip("tomllib 需要 Python 3.11+")
+
+    root = Path(__file__).resolve().parent.parent
+    data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    deps = data["project"]["dependencies"]
+    all_extra = data["project"]["optional-dependencies"]["all"]
+    assert any(d.startswith("pyarrow") for d in deps), deps
+    assert any(d.startswith("pyarrow") for d in all_extra), all_extra

@@ -1381,6 +1381,10 @@ class MCPAdapter(BaseSourceAdapter):
                     try:
                         if self._parquet_has_column(sp, c):
                             proj.append(c)
+                    except ImportError:
+                        # 客户反馈包 2026-09-23 问题4：依赖缺失必须显式上抛，不得被
+                        # 这里的业务兜底 except 吞掉（否则退化为「注入 0 行」误导报错）。
+                        raise
                     except Exception:
                         pass
                 if "adj_factor" not in proj:
@@ -1500,13 +1504,27 @@ class MCPAdapter(BaseSourceAdapter):
 
     @staticmethod
     def _parquet_has_column(path: Path, col: str) -> bool:
-        """检查 parquet 文件是否含指定列（用 pyarrow schema，不全量读）。"""
+        """检查 parquet 文件是否含指定列（用 pyarrow schema，不全量读）。
+
+        客户反馈包 2026-09-23 问题4：原实现 `except Exception: return False` 把
+        **依赖缺失**（无 pyarrow）静默降级成「列不存在」——上层据此跳过因子列投影
+        → 注入 0 行 → 报出误导性的
+        「streaming xxx/daily 第一遍因子同步失败（注入 0 行）」。
+        现区分两类：依赖缺失 ⇒ 显式抛 ImportError（带安装指引，含 pyproject 已声明
+        的 extras）；真正的 schema 读取失败/列不存在 ⇒ 仍返回 False（业务兜底不变）。
+        """
         try:
             import pyarrow.parquet as pq
+        except ImportError as e:
+            raise ImportError(
+                "[MCPAdapter] 缺少 pyarrow —— MCP export 分片（Parquet）读写必需。"
+                "安装：pip install -e \".[all]\"（或 pip install 'pyarrow>=14'）。"
+                f"原始错误：{e}") from e
+        try:
             schema = pq.read_schema(str(path))
-            return col in schema.names
         except Exception:
             return False
+        return col in schema.names
 
     def _filter_date_window(self, df: pd.DataFrame, start: str, end: str) -> pd.DataFrame:
         """日期窗口过滤（与 _fetch_export 的 _norm_date 逻辑一致）。

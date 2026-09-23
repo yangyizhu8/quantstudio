@@ -23,6 +23,11 @@ dependencies = [
     "jinja2>=3.1",
     "pyyaml>=6.0",
     "psutil>=5.9",  # 常驻采集进程身份校验（PID + create_time + exe + cmdline）
+    # 客户反馈包 2026-09-23 问题4：MCP export 分片读写 Parquet 的引擎依赖
+    # （pandas.read_parquet / pyarrow.parquet.read_schema）。此前未声明 ⇒ 全新克隆
+    # 装完 ".[all]" 仍缺 pyarrow，表现为「注入 0 行」的误导性报错（见
+    # mcp_adapter._parquet_has_column 的依赖缺失显式化）。
+    "pyarrow>=14",
 ]
 
 [project.optional-dependencies]
@@ -46,6 +51,7 @@ all = [
     "PyQt6>=6.5.0",
     "PyQt6-Fluent-Widgets>=1.11",
     "matplotlib>=3.5",
+    "pyarrow>=14",  # 客户反馈包 2026-09-23 问题4（MCP export Parquet 引擎）
 ]
 
 [project.scripts]
