@@ -7,7 +7,10 @@
 
 | # | 项 | 状态 | 暂缓原因 | 解除条件 | 登记时点 |
 |---|---|---|---|---|---|
-| S1 | **错误一 T3**：`quantstudio/pipeline/sources/mcp_adapter.py` 的 `revision_alert` outbox | **暂缓-等会话 2 批** | 客户运维 2 的新客户四问题批对**同一文件**大改先行，避免共享文件并行叠加（本周期第二类事故的针对性防线） | 会话 2 该批**落地后**（其提交入库、工作区该文件不再被其占用）即恢复实施 | 2026-09-23（ZCode 协调令） |
+| S1 | **错误一 T3**：`quantstudio/pipeline/sources/mcp_adapter.py` 的 `revision_alert` outbox | **已解除暂缓 → 恢复实施**（排本线节奏） | 曾因客户运维 2 的新客户四问题批对**同一文件**大改而暂缓（防共享文件并行叠加） | **已满足**：会话 2 该批已落地并推送（`c62c1cc` 分表型质量门禁、`41d70bb` 等）；工作区该文件不再被其占用 | 2026-09-23（ZCode 协调令 / 同日解除令） |
+
+> 恢复实施纪律（共享文件）：`mcp_adapter.py` 每次 edit 后**即时 `git diff` 自检** + 精确清单提交；
+> 若实施涉及云端 `etf_minutes` close 口径域（会话 2 已登记 tech-debt），一并核。
 
 > 处置口径：本条**不是取消**；恢复时按六步流水线正常推进（方案→审计→实施→验收→确认→双推）。
 
@@ -31,6 +34,21 @@
 
 | 案 | 结论 | 证据 |
 |---|---|---|
-| CASE-005 写锁残留停更（三客户） | 已闭环（用户裁定 2026-09-18），卷宗 `docs/case005-write-lock-stale-selfheal-incident.md` | T7 验收 + 通知链 + 归档提交 `9df318c` |
-| GUI 启动卡死案（维护+归因） | CHECKPOINT 完成（WAL 2.33 GB→0，回放 1338.4 s / 检查点 7.3 s）；冷启动 12.4 s | `docs/evidence/gui-startup-wal-checkpoint-baseline-20260923.md` |
-| A 案：duckdb 混版 | **定谳**：钉版从未覆盖实际运行环境；裁定①=版本闸三入口 + 连接级隔离 | `docs/evidence/duckdb-version-environment-map-20260923.md`（含 §6 今晚口径落地闭环：pid 40096 / `python3.12.9` / duckdb 1.4.5 / WAL=0） |
+| **CASE-007 GUI 启动卡死**（WAL 残留 × 构造期同步打开） | **已闭环**：维护 CHECKPOINT（WAL 2.33GB→0；回放 1338.4s / 检查点 7.3s）+ 六笔修复 + V1a–V8 全 PASS（V1a 2.45s；回归 312 passed） | 卷宗 `docs/case007-gui-startup-hang-wal-replay-incident.md` |
+| **CASE-008 duckdb 混版统一**（A 案 + 版本闸 + V8） | **已闭环**：定谳「钉版从未覆盖实际运行环境」；版本闸三入口真实拒启 exit 3；V8 主 venv 降级 1.4.5 + 补装 + GUI 冒烟 1.76s + psutil 自愈 PASS | 卷宗 `docs/case008-duckdb-version-mixing-unification-incident.md` |
+| CASE-005 写锁残留停更（三客户） | 已闭环（用户裁定 2026-09-18） | `docs/case005-write-lock-stale-selfheal-incident.md` |
+
+**推送闭环**：21 笔上远程；三方核对 local = origin/main = quantstudio-plus = quantstudio = `000b5bb`（0 笔残留）。
+
+## 四、本线 backlog（低优先）
+
+| # | 项 | 性质 | 追单 |
+|---|---|---|---|
+| B1 | `test_pit_filter::test_validator_is_single_chokepoint` 既有红（`writer.write` 实际 4 处：1334/1336/2993/3021，断言要求 1 处；15 passed / 1 failed） | **基线即红、与本批无关**；待归因（契约漂移 vs 期望陈旧） | `docs/handoff/tracking-test_pit_filter-baseline-red-20260923.md` |
+| B2 | 云端 `etf_minutes` close 口径与还原链自洽性疑问（会话 2 已登记 tech-debt） | 同域核查（若错误一 T3 实施涉同域则一并核） | 会话 2 tech-debt 条目 |
+
+## 五、探针脚本入库（验收可复现性）
+
+本线探针已随批入库（精确清单，6 文件）：`agent_workspace/v8_gui_smoke.py`（V8 GUI 冒烟）、
+`selfheal_psutil_check.py`（psutil 自愈路径）、`wal_semantics_probe.py`（read_only 不收敛 WAL 实证）、
+`db_checkpoint_once.py`（一次性 CHECKPOINT 维护）、`gui_startup_profile.py` / `gui_tab_profile.py`（V1a 定位计时）。
