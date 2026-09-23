@@ -27,7 +27,7 @@
 | **V5** | GUI 回归全绿 | ① GUI 相关 10 文件 **87 passed**（含修复 1 处因延后加载引起的既有用例时序回归：改用「拆分」——JSON 读取留构造期、DB 查询延后）；② **更大范围回归 312 passed / 22 文件 / 127.87 s，零失败零跳过**（daemon 族 4 + 写入器 2 + 管线族 6 + 基线族 3 + 写锁/批一 3 + 本批新增 3）——覆盖 `daemon.py` 收尾路径（新增检查点调用）与新增脚本的管线面 | **PASS** |
 | **V6** | 证据入 `docs/evidence/` | 本文件 + `gui-startup-wal-checkpoint-baseline-20260923.md` + `duckdb-version-environment-map-20260923.md` | **PASS** |
 | **V7** | 版本闸：以 `venv_miniQMT`（1.5.3）**实际触发**拒启（验证器过≠闸过） | 真实进程触发三条受支持入口**全部拒启（exit 3）**：① `venv_miniQMT\python.exe main_gui.py` ② `venv_miniQMT\python.exe -m quantstudio.pipeline.daemon …` ③ `venv_miniQMT\python.exe -c "from quantstudio.pipeline.daemon import main; main()"`（GUI 拉起路径等价形态）；逃生阀 `QS_DUCKDB_VERSION_GATE=0` 放行且留醒目警告；合规解释器（1.4.5）`-m --help` 正常。机制用例 `tests/test_duckdb_version_gate.py` **8 passed** | **PASS** |
-| **V8** | 主 venv `venv_quant_studio`（1.5.4）迁移验证 | **降级完成**：降级前快查无包硬依赖 `duckdb>1.4`（仅 `quantstudio-0.1.0` 声明 `>=0.9.0`）+ `pip check` 无破损 → 执行 `pip install "duckdb>=1.4.5,<1.5"` → **Successfully installed duckdb-1.4.5**；闸门放行三证：① `-m daemon --help` 正常 ② activate 路径 `gate PASSED` ③ **GUI 已越过闸门**（失败点在闸门之后的 `qfluentwidgets` 导入） | **PASS**（含附带发现，见 §3.4） |
+| **V8** | 主 venv `venv_quant_studio` 迁移验证（裁定 (c)：(b) 修正笔 + (a) 补装） | **(b) 口径修正落地**：官方解释器口径改为 **Python311**（含全部依赖 + duckdb 1.4.5），`activate_venv.bat` 头部注释与帮助文本同步修正（诚实性缺陷）。**(a) 补装 + 冒烟全 PASS**：降级前快查无包硬依赖 `duckdb>1.4`（仅 `quantstudio-0.1.0` 声明 `>=0.9.0`）+ `pip check` 无破损 → 降级至 **1.4.5**；补装 `PyQt6-Fluent-Widgets 1.11.3 / psutil 7.2.2 / pyarrow 25.0.1`（matplotlib 3.11.0 已有）；**GUI 冒烟 PASS：窗口「QuantStudio 数据管线控制台」1.76 s 出现**（该 venv）；**psutil 自愈路径 PASS**：死 pid 锁 → `stale_dead`/`v2_local_dead` → 回收成功、锁移除、审计 1 行（隔离目录，未触生产锁）；闸门放行三证齐备 | **PASS** |
 
 ## 3. 实施期发现与更正（如实记录）
 
@@ -41,12 +41,21 @@
 3. **一处测试时序回归（已修）**：笔1 初版把 `_load_tasks` 整体延后，导致既有用例
    `test_gui_task_stop::test_v3_cancelled_task_done_marks_stopped` 读 `tab.tasks` 为空而失败；
    改为**拆分**（JSON 读取留构造期 → `self.tasks` 契约不变；仅 DB 查询延后）后 87 passed。
-4. **V8 附带发现（既有环境缺口，非本批引入）**：`_runtime\venv_quant_studio`（官方
-   `activate_venv.bat` 指向的「主 venv」）**缺 GUI/运维依赖**——`qfluentwidgets` 与 `psutil`
-   均 `ModuleNotFoundError`（PyQt6、pandas 正常）。影响两面：① 该 venv **本就无法运行 GUI**，
-   `activate_venv.bat` 帮助文本中的 `python main_gui.py` 属**失实**（实际 GUI 一直用 Python311 1.4.5）；
-   ② **`psutil` 缺失**会使批次一的写锁自愈走 fail-closed（不回收）——若按官方脚本用该 venv 跑
-   daemon，自愈能力实际不生效。**待裁定**：补装依赖 / 改口径为 Python311 并修正帮助文本 / 两者都做。
+4. **V8 附带发现与处置（既有环境缺口，非本批引入；裁定 (c) 已执行完毕）**：
+   `_runtime\venv_quant_studio`（官方 `activate_venv.bat` 指向的「主 venv」）原**缺 GUI/运维依赖**
+   ——`qfluentwidgets` 与 `psutil` 均 `ModuleNotFoundError`（PyQt6、pandas 正常）。影响两面：
+   ① 该 venv **当时无法运行 GUI**，`activate_venv.bat` 帮助文本 `python main_gui.py` 属**失实**
+   （GUI 实际一直用 Python311 1.4.5）；② **`psutil` 缺失**会使批一写锁自愈走 fail-closed。
+   **处置（裁定 (c) 两者都做）**：
+   - **(b) 口径修正笔**：官方解释器口径改为 **Python311**（含全部依赖 + duckdb 1.4.5）；
+     `scripts/activate_venv.bat` 头部注释 + 帮助文本同步修正并说明该 venv 的现状与修正原因；
+   - **(a) 补装 + 冒烟**：`PyQt6-Fluent-Widgets 1.11.3`、`psutil 7.2.2`、`pyarrow 25.0.1`
+     （matplotlib 3.11.0 已有）；随后两项验证均 PASS：
+     · **GUI 冒烟**（该 venv，精确标题匹配「数据管线控制台」）：窗口 **1.76 s** 出现
+       （注：首版测量用 `MainWindowTitle` 且标题过滤过宽，曾误报 Edge 窗口，已收紧修正）；
+     · **psutil 自愈路径**（`agent_workspace/selfheal_psutil_check.py`，隔离 `QS_WRITE_LOCK_DIR`）：
+       psutil 7.2.2 → 死 pid 锁判 `stale_dead`（`v2_local_dead`）→ `try_reclaim_stale=True` →
+       锁文件移除 → 审计 1 行；**生产锁未被触碰**。
 
 ## 3.5 黄金对比适用性（如实说明，避免以不适用项充数）
 
@@ -58,10 +67,7 @@
 
 ## 4. 待办
 
-1. **V8**：主 venv（`_runtime\venv_quant_studio`，duckdb 1.5.4）迁移路径落地（降级或切换解释器），
-   并记录迁移后启动实测；
-2. **V5 全量回归**：GUI 面已 87 passed；待跑与本次改动相关的更大范围回归（数据管线/写入器）
-   与黄金结果对比；
-3. **推送**：五笔 + 文档批均为**本地提交**（未推送）；按六步第 5/6 步经用户确认后双推
-   （注意：本地领先远程含他会话提交，推送需协调，见 `docs/ops-verification-conventions.md` C7）；
-4. trading 同步门：本次触及 `quantstudio/`、`main_gui.py`、`scripts/` → **不豁免**。
+1. ~~V8 主 venv 迁移~~ → **已完成**：(b) 口径修正 + (a) 补装 + GUI 冒烟 + psutil 自愈验证全 PASS（见 §2 V8、§3.4）；
+2. ~~V5 更大范围回归~~ → **已完成**：**312 passed**（22 文件 / 127.87 s）；黄金对比经审核采信**不适用**（依据见 §3.5）；
+3. **推送（⑤协调批）**：本会话全部提交均为**本地提交（未推送）**。口径三步走：①补跑回归 ✅ → ②总调度独采抽查 ✅（已通过）→ ③一次⑤协调批呈批（含会话 2 的 T1/T2/T4 与 FM `b50fe43`）；推送后三方核对 → CI → **trading 同步门（共享层不豁免）**；
+4. 既有红 1 例（`test_pit_filter` 单一入口期望）按「基线即红、与本批无关」登记在案，后续单独归因。

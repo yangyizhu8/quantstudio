@@ -18,11 +18,12 @@
 
 | 笔 | 内容 | 落点 | 状态 |
 |---|---|---|---|
-| 1 | GUI 异步化（窗口先显示，首查移出构造期 + 首屏「读取中」占位） | `main_gui.py` / `gui/main_window.py` / `gui/tabs/task_tab.py` | 进行中 |
-| 2 | 超时降级 + 降级后自动恢复（deadline 5 s / 自动重试 30 s / 手动刷新） | `gui/db_helper.py`（+ GUI 侧重试入口） | 待实施 |
-| 3 | daemon 收尾 CHECKPOINT（轮次收尾/优雅退出前） | `pipeline/daemon_lifecycle.py` | 待实施 |
-| 4 | WAL 体积巡检 + 阈值告警（**前置：daemon 不在运行 + RW open 超时放弃**） | `scripts/wal_health_check.py`（+ daemon 空闲期挂载） | 待实施 |
-| 5 | 版本闸三入口（wrapper / 直启 / GUI 拉起；非 1.4.x 拒启；含主 venv 迁移路径） | `main_gui.py` / `pipeline/daemon.py` / `scripts/activate_venv.bat` | 待实施 |
+| 1 | GUI 异步化（窗口先显示，首查移出构造期 + 首屏「读取中」占位） | `main_gui.py` / `gui/main_window.py` / `gui/tabs/task_tab.py` | **已完成** `22d7c5b`（V1a 2.45 s） |
+| 2 | 超时降级 + 降级后自动恢复（deadline 5 s / 自动重试 30 s / 手动刷新） | `gui/db_helper.py`（+ GUI 侧重试入口） | **已完成** `7ca1d6a`（5 passed） |
+| 3 | daemon 收尾 CHECKPOINT（轮次收尾/优雅退出前） | `pipeline/daemon_lifecycle.py` → 实落 `daemon.py:close()` + `pipeline/db_checkpoint.py` | **已完成** `aef6b9d`（5 passed） |
+| 4 | WAL 体积巡检 + 阈值告警（**前置：daemon 不在运行 + RW open 超时放弃**） | `scripts/wal_health_check.py` | **已完成** `28eaf41`（守卫实测 exit 2） |
+| 5 | 版本闸三入口（非 1.4.x 拒启；含主 venv 迁移路径） | `main_gui.py` / `pipeline/daemon.py` / `scripts/activate_venv.bat` + `pipeline/duckdb_version_gate.py` | **已完成** `b429f98`（三入口真实拒启 exit 3） |
+| 6 | **V8 收口**：口径修正笔（官方解释器=Python311 + bat 帮助文本修正）+ 主 venv 降级 1.4.5 + 补装依赖 + GUI 冒烟 + psutil 自愈验证 | `scripts/activate_venv.bat`（修正笔）+ 环境（`_runtime\venv_quant_studio`） | **已完成**（GUI 冒烟 1.76 s / psutil 自愈 PASS） |
 
 **验收**：V1a/V1b｜V2｜V3｜V4｜V5｜V6｜**V7（`venv_miniQMT` 1.5.3 真实触发拒启）**｜V8（主 venv 迁移验证）。
 
