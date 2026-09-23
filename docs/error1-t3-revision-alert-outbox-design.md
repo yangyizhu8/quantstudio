@@ -1,0 +1,126 @@
+# 错误一 T3 修复设计：adj_factor 注入点修订检测 → revision alert outbox — 六步第 1 步
+
+- 状态：**方案（待审计）**｜日期：2026-09-23｜归属：客户运维会话（错误一案案主）
+- 勘察输入：客户运维 2 的勘察结论（已裁定作为本方案输入）——落点 `mcp_adapter.py:2140-2206 _inject_adjfactor`、
+  检测规则 `(code, 新值≠旧值@max_time) → outbox`、表与消费链已就绪（`qfq_reanchor_schema.py:537` / `consume_revision_alerts:417`）、
+  验收硬指标 = 双空表 0→非 0、fail-soft 边界
+- 本方案在勘察基础上**补齐两处精确化**（见 §1 注）并给出写入设计 + 幂等去重 + 验收判据
+
+---
+
+## 1. 问题定义（现状取证，全部为实测）
+
+| 项 | 实测 |
+|---|---|
+| 注入点 | `mcp_adapter._inject_adjfactor(df, freq, table, conn=None)`（2140-2206）：写 `qfq_aux.db` 的 `adj_factor`(股票)/`fund_adj`(ETF)，PK `(code,time)` |
+| 写入方式 | **`INSERT OR REPLACE`**（2188-2190）→ **同 time 的旧值被静默覆盖**，无版本、无变化检测 |
+| 调用点 | **5 处**（1395 / 1755 / 1809 / 2070 + 定义）→ **单点改动即可全覆盖** ✓ |
+| 版本化写入器（已就绪） | `qfq_observation.ObservationStore.record_observations(observations, run_id, *, as_of_ms, epsilon_abs/rel, source_generation, conn)`：与最新 revision 比较 → 未变仅刷 `last_seen`；**变化则 INSERT 新 `revision_no` 行 + 同事务 `INSERT OR IGNORE` alert(pending)**（375-382） |
+| outbox 表（已就绪） | `qfq_reanchor_schema.py:537` `qfq_factor_revision_alert(alert_id PK, asset_type, code, factor_time, revision_no, status, first_seen_run_id, created_at, acknowledged_at)` |
+| 消费链（已就绪） | `qfq_event_discovery.consume_revision_alerts(conn, run_id, as_of_ms)`（417）← `qfq_resident_orchestrator:367` 调用；`qfq_observation.acknowledge_alert` 幂等置 acknowledged |
+| **生产表状态（本次实测）** | `qfq_factor_observation` = **37,407,501 行**（基线已建）；**`qfq_factor_revision_alert` = 0 行**（outbox 空）；`adj_factor` = 25,219,309 行；`fund_adj` = 11,930,536 行 |
+
+> **注（对勘察结论的两处精确化）**
+> ① 「双空表 0→非0」在**生产**应精确表述为 **outbox 0 → 非 0**（observation 已有 3740 万行基线）；
+> 副本/测试环境才是双表 0→非0（首次观察建基线 + 修订产 alert）。
+> ② 缺口不只在「无检测」：注入点**从不调用版本化写入器**，故修订捕获**依赖 discovery 侧观察时序**；
+> 注入点检测 + 写入器调用可使捕获**不依赖时序**（快照覆盖前即留痕）。
+
+**缺口一句话**：`adj_factor`/`fund_adj` 快照的**同 time 值变化**在注入时被 `INSERT OR REPLACE` 吞掉，
+outbox 生产恒为 0 → QFQ 重锚闭环收不到因子修订信号（双空表/空 outbox 即其表征）。
+
+## 2. 改动范围（文件面）
+
+| # | 落点 | 改动 |
+|---|---|---|
+| ① | `quantstudio/pipeline/sources/mcp_adapter.py::_inject_adjfactor` | **注入前**做「每 code @max(time) 键」的新旧值比对；变化键 → 调 `ObservationStore.record_observations(..., conn=<同一连接>)`（**同事务**）→ 再 `INSERT OR REPLACE` 快照 |
+| ② | 同上（自管连接路径） | 自管路径显式 `BEGIN IMMEDIATE`，使「检测 + observation/alert + 快照覆盖」**原子一致**；复用连接路径并入调用方事务（`record_observations(conn=…)` 不自行 BEGIN/commit，见其契约） |
+| ③ | 新增（可选，建议同批） | **冷启动保护开关**（见 §5 风险 1）：首轮「只记 observation 不告警」或按 code 限速；默认值待审计裁定 |
+| ④ | 文档 | README + `docs/strategy_toolbox.md` / `docs/prompt_engineering.md` 涉及 QFQ 闭环/因子修订的表述同步（若涉） |
+
+**不做**：不改快照表结构与语义（仍是 `(code,time)` PK + REPLACE 语义）；不改 `ObservationStore` 既有契约
+（容差/幂等/事务语义原样复用）；不改消费链与 trigger 生成；不触碰 QFQ 复权口径与价格链。
+
+## 3. 写入设计（核心）
+
+### 3.1 检测规则（采用勘察口径）
+- **检测集合**：本次待写 rows 中，**每个 code 的 `max(time)` 键**（`code × max(time)`）——因子历史行极少变，
+  最新行变化才是真实修订；成本 = 每 code 一次索引查（`PRIMARY KEY (code,time)` 命中）。
+- **比较**：`新值 ≠ 旧值`，**沿用 `ObservationStore` 的容差**（`epsilon_abs=1e-9` + 相对分量），
+  避免浮点噪声误报（与写入器同口径，防"检测说变、写入器说没变"的分叉）。
+- **无旧值**（新 code 或新 time）→ **不算修订**（由写入器按 new 处理，建立基线）。
+
+### 3.2 写入路径（同事务原子）
+```
+[自管连接] locked_connect(qfq_aux) → PRAGMA → BEGIN IMMEDIATE
+[复用连接] 直接用调用方 conn（调用方事务）
+   ↓
+1) SELECT code,time,adj_factor FROM {target} WHERE (code,time) IN <本次检测集合>   ← 只查检测集合，不扫全表
+2) changed = [(asset_type, code, max_time, new_value) ...]                        ← 容差外变化
+3) if changed: ObservationStore(aux_db=aux).record_observations(
+        changed, run_id=<见 3.3>, conn=conn)                                     ← 同事务：写 revision + alert(pending)
+4) conn.executemany("INSERT OR REPLACE INTO {target} ...", rows)                  ← 快照照旧覆盖
+   ↓
+[自管连接] commit；[复用连接] 由调用方 commit
+```
+- **原子性**：检测、修订留痕、快照覆盖在**同一事务**；任一失败整体回滚（快照与留痕不分裂）。
+- **并发**：沿用既有 3A 写锁（`locked_connect`）；复用连接路径**不重复取锁**（避免嵌套锁）。
+
+### 3.3 run_id 来源（需实施时逐一核对 5 处调用点）
+- 优先复用调用方作用域内已有的批次/run 标识（如 parquet 批次 id）；
+- 缺省用**确定性 id**：`adjfactor-inject:{asset_type}:{target}`（`run_id` 仅落 `first_seen_run_id/last_seen_run_id`
+  与 alert 溯源，**不参与 alert_id 生成**——alert_id 由 `alert_id_of(asset_type, code, factor_time, revision_no, source_generation)`
+  决定，天然幂等可重放）。
+
+### 3.4 幂等去重（三层）
+| 层 | 机制 | 效果 |
+|---|---|---|
+| 同批同键 | `ObservationStore._preprocess`（228-236）：同键同值/容差内合并；**超容差冲突 → ValueError 整批拒绝** | 同一批内不会产生跨 revision |
+| 跨批重复 | 与最新 revision 比较：**值未变 → 仅刷 `last_seen`**（357-364） | 重复注入同值**不产生** alert |
+| alert 本身 | `alert_id` 确定性 + `INSERT OR IGNORE`（375-382） | 即使重复触发也**不重复入库** |
+| 消费侧 | `consume_revision_alerts` 幂等转 trigger + `acknowledge_alert` 幂等置位 | 重复消费不产生重复 trigger |
+
+### 3.5 fail-soft 边界（硬要求）
+- 检测与留痕**整体** try/except 包裹：失败仅 `logger.warning`，**绝不影响快照写入**（主采集优先）；
+- `record_observations` 的 `ValueError`（同批冲突/非法输入）**必须捕获**——不得因修订检测失败而让采集批次失败；
+- 若「留痕」失败但快照已写：记 WARNING 含 `(asset_type, code, factor_time)` 与异常，便于事后补账（不静默）。
+
+## 4. 验收标准（预钉）
+
+| # | 判据（副本库/测试环境） |
+|---|---|
+| V1 | **outbox 0 → 非 0**：空库 → 首注（基线：observation 有行、outbox=0）→ **同 time 不同值再注** → observation 新增 1 条 `revision_no=2` 行 **且** outbox 新增 1 条 `status='pending'`（生产口径：outbox 0→非0） |
+| V2 | **幂等**：同值重复注入 → 无新增 alert（仅 `last_seen` 刷新）；同批重放 → 无重复 alert（alert_id 去重）；`revision_no` 不跳号 |
+| V3 | **容差**：容差内微变 → 不记修订（与写入器同口径） |
+| V4 | **fail-soft**：注入留痕失败（模拟异常）→ 快照**仍写入成功**、批次不失败、WARNING 落日志 |
+| V5 | **消费闭环**：`consume_revision_alerts` → DuckDB `qfq_trigger_queue` 生成对应 trigger + alert 置 `acknowledged`（幂等重放不重复） |
+| V6 | **回归全绿**：`test_qfq_event_discovery` / `test_qfq_factor_new_date_trigger` / `test_qfq_reanchor_batch1` 等 QFQ 相关套件 + 快照锁套件 |
+| V7 | **性能**：注入路径增量成本量化（每 code 一次索引查；以 minutes 5220 码/日为例实测增量耗时，阈值实测后钉） |
+| V8 | **生产规模评估**：真实采集一轮后 outbox 条数与 revision 分布记录（防激增，见 §5 风险 1） |
+
+## 5. 风险与缓解（含回退）
+
+| # | 风险 | 缓解 | 回退 |
+|---|---|---|---|
+| 1 | **首次启用 outbox 激增**（observation 3740 万行基线 vs 快照现值可能已漂移 → 一轮产生海量 alert → 触发海量重锚） | **前置只读普查**：先跑「快照现值 vs observation 最新 revision」差异普查，量化规模；**冷启动保护**（首轮只记 observation 不告警 / 按 code 限速 / 分批放行）；V8 记录分布 | 关闭检测开关（默认关闭冷启动保护可由配置控制） |
+| 2 | 浮点噪声误报 | 沿用写入器容差（同口径）；V3 覆盖 | 调容差（配置） |
+| 3 | 注入路径性能退化 | 只查「检测集合」（code×max_time，走 PK 索引），不扫全表；V7 量化 | 关闭检测（开关） |
+| 4 | 事务/锁：同事务使写锁持有时长增加 | 检测集合小、索引命中；复用连接不重复取锁 | 改「先留痕后覆盖」两段式（放弃原子性，换取锁时长） |
+| 5 | 与 discovery 侧观察路径**重复计数** | 写入器 revision 比较天然幂等（值未变不新增）；实施期核对 discovery 观察覆盖范围，确认无双重 revision | 调整检测集合口径 |
+
+## 6. 未决项（实施前需确认，禁止未证实归因）
+
+1. **discovery 侧观察路径为何未产生 alert**：是未覆盖这些键、还是时序（覆盖后才发现）？→ 只读取证
+   （`_observe_factors` 覆盖范围 + 最近 run 的 observation 写入分布）。
+2. **5 处调用点的 run/batch 标识可得性**（§3.3）。
+3. **冷启动保护形态**（默认值/限速参数）→ 待审计裁定。
+4. 同域线索（会话 2 tech-debt）：云端 `etf_minutes` close 口径与还原链自洽性——若与本改动相交则一并核。
+
+## 7. 派单与期限
+
+| 项 | 内容 |
+|---|---|
+| 归属 | 客户运维会话（错误一案案主） |
+| 期限 | 本方案 **24h 内呈审**；审计通过后实施 → 验收 → 用户确认 → 双推（触及 `quantstudio/` → trading 同步门**不豁免**） |
+| 提交纪律 | `mcp_adapter.py` 为共享文件：**每次 edit 后即时 `git diff` 自检 + 精确清单提交**；与 `fee165f` 合并入同批推送 |
+| 关联 | 本线台账 S1（已解除暂缓）；CASE-005/007/008 |
