@@ -57,6 +57,10 @@ from .sources import create_adapter
 
 logger = logging.getLogger(__name__)
 
+# 分钟频段集合（客户反馈包 2026-09-23 问题3 选项1：分钟表独立拒绝率门禁）。
+# 与 validator 的频率白名单、alignment_rules 的 freq 取值保持一致。
+_MINUTE_FREQS = frozenset({"1min", "5min", "15min", "30min", "60min"})
+
 # 项目根
 ROOT = Path(__file__).resolve().parent.parent.parent
 from quantstudio._paths import db_path, quarantine_db_path, DATA_ROOT
@@ -1029,7 +1033,8 @@ class ResidentCollector:
             # 导致拒绝率用拉取失败率阈值（0.01%）而非拒绝率阈值（应放宽）。MCP/xtquant
             # 的拒绝率应放宽到 1%（QuestDB/xtquant 数据异常行属正常质量过滤）。
             accepted, reject_rate, threshold = self._failure_gate(
-                task, rows_rejected, rows_raw, source=source, is_reject=True)
+                task, rows_rejected, rows_raw, source=source, is_reject=True,
+                freq=freq)
             if not accepted or (rows_raw > 0 and rows_passed == 0):
                 raise RuntimeError(
                     f"校验拒绝率超限或无可入库数据: rejected={rows_rejected}/{rows_raw} "
@@ -1238,7 +1243,8 @@ class ResidentCollector:
 
             # 累计门禁一次判定
             accepted, reject_rate, threshold = self._failure_gate(
-                task, rows_rejected, rows_raw, source=source, is_reject=True)
+                task, rows_rejected, rows_raw, source=source, is_reject=True,
+                freq=freq)
             if not accepted or (rows_raw > 0 and rows_passed == 0):
                 raise RuntimeError(
                     f"校验拒绝率超限或无可入库数据(streaming): rejected={rows_rejected}/{rows_raw} "
@@ -1697,7 +1703,7 @@ class ResidentCollector:
                                 f"已用 {elapsed:.0f}s, 剩余 {eta:.0f}s")
 
         fetch_ok, failure_rate, threshold = self._failure_gate(task, fail_count[0], done_count[0], source=source)
-        reject_ok, reject_rate, _ = self._failure_gate(task, total_rejected[0], total_raw[0], source=source, is_reject=True)
+        reject_ok, reject_rate, _ = self._failure_gate(task, total_rejected[0], total_raw[0], source=source, is_reject=True, freq=freq)
         has_usable_result = total_written[0] > 0 or (mode == "incremental" and fail_count[0] == 0)
         task_ok = fetch_ok and reject_ok and has_usable_result
 
@@ -1957,7 +1963,7 @@ class ResidentCollector:
                     last_progress_ts = now
 
         fetch_ok, failure_rate, threshold = self._failure_gate(task, fail_count[0], done_count[0], source=source)
-        reject_ok, reject_rate, _ = self._failure_gate(task, total_rejected[0], total_raw[0], source=source, is_reject=True)
+        reject_ok, reject_rate, _ = self._failure_gate(task, total_rejected[0], total_raw[0], source=source, is_reject=True, freq=freq)
         has_usable_result = total_written[0] > 0 or (mode == "incremental" and fail_count[0] == 0)
         task_ok = fetch_ok and reject_ok and has_usable_result
 
@@ -3240,7 +3246,8 @@ class ResidentCollector:
         except (ValueError, TypeError, OverflowError):
             return None
 
-    def _failure_gate(self, task: Dict, failed: int, attempted: int, source: str = None, is_reject: bool = False):
+    def _failure_gate(self, task: Dict, failed: int, attempted: int, source: str = None,
+                      is_reject: bool = False, freq: str = None):
         """统一分片任务失败率门禁；默认允许失败比例不超过 0.01%。
 
         PR6b-1 修复（2026-07-23）：拒绝率（is_reject=True）对 xtquant source
@@ -3256,6 +3263,24 @@ class ResidentCollector:
         过滤，daemon 的 0.01% 阈值把这些正常隔离当任务失败。MCP 数据量巨大
         （stock_daily 960万行/etf_daily 209万行），0.01% 阈值过于严格。
 
+        【分表型校准（客户反馈包 2026-09-23 问题3，用户裁定选项1）】：
+        `max_reject_rate_mcp` 的 1% 系**日线口径校准**，对分钟表偏严——分钟表
+        真实异常率天然高一个量级，导致「异常被正确拦截、批次却被整体判负、
+        水位不推进」。新增按 freq 分键的分钟阈值（沿用 `_health_check` 的
+        `*_by_freq` 风格）。
+
+        **本项只调整「批次判负线」，不改变任何行的判拒结果**：越界行仍由
+        validator 照常 REJECT → 进隔离区，不因阈值放宽而入库。
+
+        阈值取值依据（实测，见 docs/evidence/mcp-pull-four-issues-acceptance-20260923.md）：
+        - 40 个 1 日窗逐窗拒绝率（2025-01~2026-09，etf_minutes + stock_minutes 各 20 窗）：
+          etf P50=4.38% / P99=5.05% / max=5.06%；stock P50=0.15% / P99=2.03% / max=2.03%
+        - 客户实测判负记录：etf_minutes 全窗 1.4985%（932,382/62.2M）触发 1% 判负
+        - 历史记录（既有文档）：etf_minutes 1.49%（905,599/60.6M）触发判负；
+          stock_minutes 回补 0.108% 未触发
+        - 真实单位错（手/股 ×100）时拒绝率 = 100% ⇒ 阈值须远低于它
+        ⇒ 取 max(P99)×1.58 ≈ **8%**（整数、单一值覆盖两表、余量对最大窗 58%）。
+
         拉取失败率（is_reject=False）保持 0.01% 严格——那是真正的拉取失败，
         不是数据质量过滤。
         """
@@ -3267,6 +3292,12 @@ class ResidentCollector:
         # 拒绝率对 mcp 放宽（QuestDB 数据异常行属正常质量过滤）
         if is_reject and source == "mcp":
             threshold = max(threshold, float(cfg.get("max_reject_rate_mcp", 0.01)))
+        # 分表型校准：分钟表独立阈值。判定**只按 freq**，与 source 无关——
+        # xtquant 分钟表是历史事故路径（手/股单位错配批量误拒），同样适用。
+        # （开发期自纠：初版嵌在 `source == "mcp"` 分支内，测试反证 xtquant 分钟
+        #   漏配阈值 0.01，已移出。）
+        if is_reject and freq in _MINUTE_FREQS:
+            threshold = max(threshold, float(cfg.get("max_reject_rate_minute", 0.08)))
         threshold = max(0.0, threshold)
         rate = (failed / attempted) if attempted > 0 else 0.0
         return rate <= threshold, rate, threshold
