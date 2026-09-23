@@ -39,6 +39,7 @@ from quantstudio.pipeline.mcp.client import load_mcp_api_key
 from quantstudio.pipeline.mcp.errors import MCPClientError, MCPToolError
 from quantstudio.pipeline.qfq_reanchor_schema import aux_db_path
 from quantstudio.pipeline.code_contract import validate_sec_code
+from quantstudio.pipeline.validator import _UNIT_CHECK_FACTOR_COL
 
 logger = logging.getLogger(__name__)
 
@@ -1922,6 +1923,19 @@ class MCPAdapter(BaseSourceAdapter):
         ratio = (adj_latest / adj_i).where(valid, 1.0)
         for col in price_cols:
             out[col] = pd.to_numeric(out[col], errors="coerce") * ratio
+
+        # 客户反馈包 2026-09-23 问题3（判据归一，方案 a）：随行附**还原乘数**
+        # adj_latest / adj_i（即 raw = qfq × 该乘数）供 validator 的 UnitCheck 把
+        # 已还原的 raw close 折算回云端交易口径（amount/volume 的基准）：
+        #     amount/(qfq_close×vol) ≡ 1      ⇒  amount/(raw_close×vol) = adj_i/adj_latest
+        #     ⇒ 乘以 adj_latest/adj_i 即归一为 1。
+        # 缺失行填 1.0（= 该行按旧行为判定）。只在还原确实发生时附列 ⇒ 非还原表零影响。
+        try:
+            out[_UNIT_CHECK_FACTOR_COL] = (adj_latest / adj_i).where(valid, 1.0)
+        except Exception as _e:  # pragma: no cover - 防御：列名冲突等极端场景
+            logger.warning(f"[MCPAdapter] 线1 附加 UnitCheck 归一因子失败"
+                           f"（{table}/{freq}，UnitCheck 退回旧口径）: {_e}")
+            out.drop(columns=[_UNIT_CHECK_FACTOR_COL], errors="ignore", inplace=True)
 
         meta.update({
             "is_qfq_restored": True,
