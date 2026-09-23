@@ -716,6 +716,24 @@ class DaemonLifecycle:
             except Exception as e:
                 logger.warning(f"[DaemonLifecycle] QFQ 因子完整性扫描异常（不阻断）: {e}",
                                exc_info=True)
+            # FM 代答两工件导出（2026-09-22，线调度 FM 需求规格 v1；落裁②）：
+            # 与 _run_full_quality_audit 并列的**必然执行点**（finally 必跑）。
+            # 关键：导出在 daemon 进程内、复用既有 writer.shared_conn() ⇒ **零新增
+            # 读连接、零读窗依赖、不触 DuckDB 单写者锁**（这正是落裁②的目的）。
+            # 失败必告警（禁静默）：run_fm_export 内部消化异常并写 _status.json + ERROR，
+            # 此处再兜一层，**一律不阻断轮次收尾**。
+            try:
+                from .fm_export import run_fm_export
+                _fm = run_fm_export(collector.writer.shared_conn())
+                if not _fm.get("ok"):
+                    logger.error("[DaemonLifecycle] FM 导出未成功（旧件保留，_status.json 已记）: %s",
+                                 _fm.get("error"))
+                elif not _fm.get("skipped"):
+                    logger.info("[DaemonLifecycle] FM 导出完成 as_of=%s health=%s",
+                                _fm.get("as_of"), _fm.get("health"))
+            except Exception as e:
+                logger.error(f"[DaemonLifecycle] FM 导出异常（不阻断轮次收尾）: {e}",
+                             exc_info=True)
             # Review FIX-1：质量审计完成后消费 stop
             _check_stop_at_boundary("post_quality_audit")
         except Exception as e:
