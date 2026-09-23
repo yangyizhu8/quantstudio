@@ -79,6 +79,12 @@ GUI 把这次打开放在 **`MainWindow` 构造期同步执行** → 窗口永�
 
 - ⇒ 写 WAL 的 daemon 由 **`venv_miniQMT`（duckdb 1.5.3）** 启动，且为 **直启**（`python daemon.py …`，
   **非** `-m quantstudio.pipeline.daemon` wrapper 形式）；
+  **⚠️ 更正（2026-09-23 实施期实测）**：此判断**不成立**。`daemon_status.json.cmdline` 记录的是
+  `sys.argv`，而 `-m` 形态下 `sys.argv[0]` **同为模块文件绝对路径** → 与直启**同形、不可区分**；
+  且实测 `python quantstudio/pipeline/daemon.py`（直启文件形态）**必然失败**
+  （`ImportError: attempted relative import with no known parent package`，模块使用相对导入
+  `from .task_resume import …`）。故 09-21 那次 daemon **应为 `-m` 启动**。
+  受支持入口 = `-m` / GUI 拉起子进程 / `python -c "from quantstudio.pipeline.daemon import main; main()"`。
 - `daemon_launch*.txt` 只到 **09-19** → 今天这次**不是 wrapper 启动**（与审核所述「非 wrapper 先例」一致）；
 - `pid 1564` 现已不在进程表（`status: running` 为残留）→ 与「硬杀/异常消失 → 留 WAL」吻合。
 

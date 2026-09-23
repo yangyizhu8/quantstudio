@@ -60,6 +60,14 @@ main_gui.py:33 → gui/main_window.py:96 __init__ → :146 _setup_navigation →
 | ⑤ | 文档 | README + `docs/strategy_toolbox.md` + `docs/prompt_engineering.md` 涉及 GUI/daemon 运维表述同步（若涉） | 铁律 |
 | ⑥ | **启动版本闸（三入口）**：`main_gui.py`、`quantstudio/pipeline/daemon.py`（`-m` 与**直启** `python daemon.py …` 两形态）、`scripts/activate_venv.bat` / GUI 拉起路径 | 启动即校验 `duckdb.__version__` 属 **1.4.x**；非 1.4.x **拒启**并打印修复指引（钉版依据：`pyproject` 双处 `duckdb>=1.4.5,<1.5`）；**必须覆盖 wrapper / 直启 / GUI 拉起三入口**（09-23 定谳的「直启」路径在内）。**主 venv `_runtime\venv_quant_studio`（duckdb 1.5.4）迁移路径**：①（推荐）将该 venv 降到 1.4.5，与钉版一致；② 临时改由已合规解释器（`Python311` 或 `python3.12.9`，均 1.4.5）承担 GUI/daemon，并在 `activate_venv.bat` 注释标注；闸门落地后该 venv 未迁移将被**拒启**（预期行为，禁止静默绕过） | 裁定① |
 
+> **实施期更正（2026-09-23，笔5 实测）**：「直启文件形态」（`python quantstudio/pipeline/daemon.py`）
+> 在本代码库**结构上不被支持**——该模块使用相对导入（`from .task_resume import …`），无包上下文必然
+> `ImportError: attempted relative import with no known parent package`（补 sys.path 引导亦无效，已回退）。
+> 故闸门**实际覆盖的受支持入口**为：① `main_gui.py`（GUI）② `-m quantstudio.pipeline.daemon`
+> ③ GUI 拉起的 daemon 子进程（继承解释器且子进程自身过闸；等价形态
+> `python -c "from quantstudio.pipeline.daemon import main; main()"`）④ `scripts/activate_venv.bat`。
+> 另：`daemon_status.json.cmdline` 在 `-m` 下与直启同形，**不能据此判断启动形态**（A 案卷宗已更正）。
+
 **不做**：不改任何数据语义、表结构、水位、复权、回测行为；不改 `_safe_query` 既有返回契约（空 DataFrame 降级语义保留）；不用 1.5.x 打开生产库。
 
 ## 4. 必答项（审计要求）
