@@ -1161,7 +1161,18 @@ class MCPAdapter(BaseSourceAdapter):
 
         缓存键 = ckey + 文件指纹（首 shard 的 mtime+size，防文件覆盖后误用）。
         LRU 容量 30：覆盖一个批次全部 ckey。
+
+        **jabberwock 缺陷修复（2026-09-24）**：`shard_paths` 为空时**降级为缓存 miss**
+        （返回空 DataFrame），**禁止 IndexError 上抛**。成因：manifest 命中但 shard 文件
+        全部缺失（被清理/过期/跨版本残留）→ 回退直连重取 → 重取仍无产出 → 空列表；
+        旧实现 `shard_paths[0]` 直接抛 IndexError → 周期异常停摆重锚环。
         """
+        # 空 shard 列表 → 降级（本缺陷核心守卫；命中路径已由调用方守卫，此处覆盖重取后仍空的情形）
+        if not shard_paths:
+            logger.warning(
+                f"[MCPAdapter] _read_ckey_cached 收到空 shard 列表（ckey={ckey}）→ "
+                f"降级为空 DataFrame（视为缓存 miss，不上抛；周期继续）")
+            return pd.DataFrame()
         # 文件指纹：用第一个 shard 的 mtime+size 做 quick check
         first_sp = shard_paths[0]
         first_stat = first_sp.stat()
@@ -1255,6 +1266,13 @@ class MCPAdapter(BaseSourceAdapter):
                 # 然后只读回目标 codes 的行（避免全量 concat OOM）
                 miss_paths, one_job_id = self._resolve_shard_paths(
                     table, freq, [(bs, be)], qdb_tbl, _is_big)
+                # jabberwock 缺陷修复（2026-09-24）：重取后仍无 shard → 本批**降级为空并继续**
+                # （周期不中断），且**不写 manifest**（防 0-shard 条目污染后续命中判定）。
+                if not miss_paths:
+                    logger.warning(
+                        f"[MCPAdapter] export_cache 重取无 shard（ckey={ckey}）：本批降级为空、"
+                        f"不写 manifest，周期继续（不中断重锚环）")
+                    continue
                 # 落盘后，用 ckey 级别缓存（与命中路径一致）
                 _is_all_miss = codes and (len(codes) == 1 and str(codes[0]).upper() == "ALL")
                 want_codes_miss = None if _is_all_miss else ({str(c) for c in codes} if codes else None)
