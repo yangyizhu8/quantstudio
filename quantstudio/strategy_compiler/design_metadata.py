@@ -118,7 +118,12 @@ def _profile_combo_valid(profile_id: str, design: dict) -> bool:
     bf = ep.get("bar_frequency")
     mp = ep.get("match_price_mode")
     if profile_id == "daily-bar-v1":
-        return bf == "1d" and mp == "close"
+        # E1-2（2026-09-22 定稿）：close / open 均合法——策略语义为「开盘执行」时
+        # 必须显式声明 match_price_mode='open'。此前硬编码 mp == "close" 会把
+        # E1 合规的 open 设计误判为 INVALID_PROFILE，导致 design 元数据可信链失效
+        # （GUI 转 PTrade tab 自动解析 profile 失败 → 门禁 BLOCK）。
+        # next_open 仍拒（2026-08-13 废弃：把 T+1 数据引入 T 日时间片）。
+        return bf == "1d" and mp in ("close", "open")
     if profile_id == "minute-bar-v1":
         return bf in _MINUTE_FREQS
     if profile_id == "daily-open-close-proxy-v1":

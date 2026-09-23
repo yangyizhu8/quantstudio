@@ -1,0 +1,31 @@
+{
+  "run_tag": "run2",
+  "strategy_path": "D:\\miniQMT策略实盘\\QuantStudio\\agent_workspace\\ou_reversal_csi300_10\\strategy.py",
+  "strategy_sha256": "9cfb26e568d8be118c96efd79ca27b85f133c37413c49d542afbf9faa65a05d9",
+  "backtest_db_path": "D:\\miniQMT策略实盘\\QuantStudio\\data\\quantstudio.old_20260920.db",
+  "backtest_db_sha256": "321291870c7b3da900220bd4e81391a9187884c5392e8fd09d42f40dfd850680",
+  "start": "2025-07-01",
+  "end": "2026-09-01",
+  "init_capital": 100000.0,
+  "match_price_mode": "open",
+  "engine_profile": "daily-bar-v1",
+  "engine_semantics_version": "0.1.0-legacy",
+  "output_dir": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260923_121155_strategy",
+  "artifacts": {
+    "config.csv": {
+      "path": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260923_121155_strategy\\config.csv",
+      "sha256": "0e02576f6fa1e34a85629886302f257c848bfdbe11cda9359ef0249346510ab4",
+      "bytes": 322
+    },
+    "daily_stats.csv": {
+      "path": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260923_121155_strategy\\daily_stats.csv",
+      "sha256": "6da36f30d6df60ed9ef1e0d46241a15a5f229ff4e8889235b9bf39bae06c8cc4",
+      "bytes": 23449
+    },
+    "trades.csv": {
+      "path": "D:\\miniQMT策略实盘\\QuantStudio\\output\\backtest_results\\20260923_121155_strategy\\trades.csv",
+      "sha256": "4ee8e68ded8cced2022b75532e22c7495c968820eaff246898ff214b32d9e832",
+      "bytes": 51716
+    }
+  }
+}

@@ -2663,6 +2663,35 @@ def _qs_warn_zero_order(api, security, value, px, reason):
         pass
 
 
+def _qs_report_noop(security, direction, reason):
+    """F2-A（2026-09-23）：接线层 no-op 计数上报引擎 QS_FILL_AUDIT。
+
+    背景：order_target_value 的接线层（本模块）在 `_qs_split_order` 返回空列表时走
+    `_qs_noop_target`，不经引擎 `_finalize_immediate` → 不进 `_day_rejections` →
+    QS_FILL_AUDIT 出现 submitted=N / filled=M / rejected=K 的对账缺口（N≠M+K），
+    「计划 vs 实际」机械对齐失效（实测缺口 201/574，本策略 R5）。
+
+    语义边界（行为等价）：仅向引擎的 `_day_rejections` 追加一条
+    `(qmt_code, direction, reason)`——该列表只被 `_emit_fill_audit` 消费用于生成日志行，
+    不参与任何订单、资金、持仓、估值或信号计算。故本上报**只增加可观测性，
+    不改变任何可观察回测结果**。P-D12 B3 的 `QS_ZERO_ORDER` 告警原样保留。
+
+    引擎未 attach / 列表不可得 → 静默跳过（行为与改动前等价）。
+    """
+    try:
+        engine = getattr(_api, '_engine', None)
+        if engine is None:
+            return
+        bucket = getattr(engine, '_day_rejections', None)
+        if bucket is None:
+            return
+        to_qmt = getattr(engine, '_to_qmt', None)
+        code = to_qmt(bare_code(security)) if to_qmt is not None else bare_code(security)
+        bucket.append((code, direction, reason))
+    except Exception:
+        pass
+
+
 def _qs_noop_target(security, delta, reason):
     """P-D12：接线层 no-op Order（对齐引擎原生 below_rebalance_threshold 形态——
     status='rejected'+reason，bool(filled)==False，策略可感知跳过）。"""
@@ -2711,6 +2740,9 @@ def _qs_wire_order_target_value(security, value, *args, **kwargs):
     if not orders:
         _qs_warn_zero_order('order_target_value', security, delta, px_exec,
                             reason='delta_below_one_lot')
+        # F2-A：no-op 计数上报（仅日志可观测性，零行为影响）
+        _qs_report_noop(security, 'buy' if (delta or 0) > 0 else 'sell',
+                        'delta_below_one_lot')
         return _qs_noop_target(security, delta, 'delta_below_one_lot')
     ids = []
     for code, amt in orders:

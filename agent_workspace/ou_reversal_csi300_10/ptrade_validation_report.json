@@ -1,0 +1,11 @@
+{
+  "report_version": "2.1",
+  "strategy_id": "ou_reversal_csi300_10",
+  "source": "agent_workspace\\ou_reversal_csi300_10\\strategy.py",
+  "target_profile": "ptrade",
+  "status": "NOT_APPLICABLE",
+  "block_count": 0,
+  "warning_count": 0,
+  "reason": "design targets exclude ptrade; no PTrade artifact was generated",
+  "issues": []
+}

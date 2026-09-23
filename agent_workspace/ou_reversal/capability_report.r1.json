@@ -1,0 +1,250 @@
+{
+  "report_version": "1.0",
+  "generated_at": "2026-09-22T21:35:47.894474+08:00",
+  "strategy_id": "ou_reversal_csi300_10",
+  "requested_profile": "daily-open-close-proxy-v1",
+  "capabilities": [
+    {
+      "capability": "stock_daily_backtest",
+      "required": true,
+      "event_type": "bar",
+      "schema_status": "READY",
+      "data_status": "AVAILABLE",
+      "adapter_status": "AVAILABLE",
+      "provider_status": "AVAILABLE",
+      "engine_status": "READY",
+      "platform_status": "AVAILABLE",
+      "evidence": [
+        "stock_daily: 9775971 rows",
+        "etf_daily: 2162552 rows",
+        "stock_daily range: (1514822400000, 1789920000000)"
+      ],
+      "message": "Daily bar backtest: data + engine ready",
+      "remediation": [],
+      "execution_status": "READY"
+    },
+    {
+      "capability": "stock_minute_backtest",
+      "required": false,
+      "event_type": "bar",
+      "schema_status": "READY",
+      "data_status": "AVAILABLE",
+      "adapter_status": "AVAILABLE",
+      "provider_status": "AVAILABLE",
+      "engine_status": "READY",
+      "platform_status": "AVAILABLE",
+      "evidence": [
+        "stock_minutes: 202169973 rows",
+        "etf_minutes: 131590956 rows",
+        "stock_minutes freqs: ['1min']"
+      ],
+      "message": "Minute bar backtest: data + engine ready (PR4 verified)",
+      "remediation": [],
+      "execution_status": "READY"
+    },
+    {
+      "capability": "tick_backtest",
+      "required": false,
+      "event_type": "tick",
+      "schema_status": "SCHEMA_ONLY",
+      "data_status": "DATA_MISSING",
+      "adapter_status": "ADAPTER_MISSING",
+      "provider_status": "PROVIDER_MISSING",
+      "engine_status": "ENGINE_MISSING",
+      "platform_status": "PLANNED",
+      "evidence": [
+        "Tick engine is PR9 scope; tick_data table empty or missing"
+      ],
+      "message": "Tick backtest is PLANNED, not executable in v1 (invariant: tick never READY)",
+      "remediation": [
+        "Tick support arrives in PR9; do not declare tick READY"
+      ],
+      "execution_status": "PLANNED"
+    },
+    {
+      "capability": "output_dir_writable",
+      "required": true,
+      "event_type": "reference",
+      "schema_status": "READY",
+      "data_status": "AVAILABLE",
+      "adapter_status": "AVAILABLE",
+      "provider_status": "AVAILABLE",
+      "engine_status": "READY",
+      "platform_status": "AVAILABLE",
+      "evidence": [
+        "Output dir writable: output\\generated_strategies\\ou_reversal_csi300_10"
+      ],
+      "message": "Output directory writable",
+      "remediation": [],
+      "execution_status": "READY"
+    },
+    {
+      "capability": "security_metadata_stock",
+      "required": false,
+      "event_type": "reference",
+      "schema_status": "READY",
+      "data_status": "AVAILABLE",
+      "adapter_status": "AVAILABLE",
+      "provider_status": "AVAILABLE",
+      "engine_status": "READY",
+      "platform_status": "AVAILABLE",
+      "evidence": [
+        "get_stock_info(000001.SZ) -> {'stock_name': '000001', 'stock_type': 'stock', 'listed_date': '2018-01-02', 'de_listed_date': None, 'exchange_type': 'SZ', 'code': '000001.SZ'}",
+        "unknown compat -> {'stock_name': '999999.SH', 'stock_type': 'stock', 'listed_date': None, 'de_listed_date': None, 'exchange_type': 'SH', 'code': '999999.SH'}"
+      ],
+      "message": "get_stock_info stock metadata verified via real API call",
+      "remediation": [],
+      "status_detail": [
+        "API_PROFILE_READY",
+        "LOCAL_DATA_READY",
+        "LOCAL_RUNTIME_READY",
+        "PTRADE_STATIC_PROFILE_READY",
+        "PTRADE_RUNTIME_UNVERIFIED"
+      ],
+      "execution_status": "READY"
+    },
+    {
+      "capability": "security_metadata_etf",
+      "required": false,
+      "event_type": "reference",
+      "schema_status": "READY",
+      "data_status": "AVAILABLE",
+      "adapter_status": "AVAILABLE",
+      "provider_status": "AVAILABLE",
+      "engine_status": "READY",
+      "platform_status": "AVAILABLE",
+      "evidence": [
+        "get_stock_info(159001.SZ) -> {'stock_name': '易方达保证金收益货币ETF-A', 'stock_type': 'etf', 'listed_date': '2014-10-20', 'de_listed_date': None, 'exchange_type': 'SZ', 'code': '159001.SZ'}"
+      ],
+      "message": "get_stock_info ETF metadata (type/list/delist) verified via real API call",
+      "remediation": [],
+      "status_detail": [
+        "API_PROFILE_READY",
+        "LOCAL_DATA_READY",
+        "LOCAL_RUNTIME_READY",
+        "PTRADE_RUNTIME_UNVERIFIED"
+      ],
+      "execution_status": "READY"
+    },
+    {
+      "capability": "index_constituents_pit",
+      "required": false,
+      "event_type": "reference",
+      "schema_status": "READY",
+      "data_status": "AVAILABLE",
+      "adapter_status": "AVAILABLE",
+      "provider_status": "AVAILABLE",
+      "engine_status": "READY",
+      "platform_status": "AVAILABLE",
+      "evidence": [
+        "sample=000300 complete_snapshots=35",
+        "as_of(2018-01-31) n=300 deterministic=True",
+        "as_of(2026-08-31) n=300 changes_result=True",
+        "not_history_union=True"
+      ],
+      "message": "get_index_stocks(date) strict as-of PIT verified via real provider calls",
+      "remediation": [],
+      "status_detail": [
+        "API_PROFILE_READY",
+        "LOCAL_DATA_READY",
+        "LOCAL_RUNTIME_READY",
+        "PTRADE_RUNTIME_UNVERIFIED"
+      ],
+      "execution_status": "READY"
+    },
+    {
+      "capability": "index_constituents_history_coverage",
+      "required": false,
+      "event_type": "reference",
+      "schema_status": "READY",
+      "data_status": "AVAILABLE",
+      "adapter_status": "AVAILABLE",
+      "provider_status": "AVAILABLE",
+      "engine_status": "READY",
+      "platform_status": "AVAILABLE",
+      "evidence": [
+        "index coverage: 000001 8 snapshots [1769702400000..1788105600000]; 000016 104 snapshots [1517328000000..1788105600000]; 000300 48 snapshots [1517328000000..1788105600000]; 000688 63 snapshots [1596124800000..1788105600000]; 000852 107 snapshots [1548864000000..1788105600000]; 000905 71 snapshots [1643299200000..1788105600000]; 399001 17 snapshots [1745942400000..1788105600000]; 399005 50 snapshots [1609344000000..1788105600000]; 399006 57 snapshots [1601395200000..1788105600000]; 399101 81 snapshots [1548864000000..1769702400000]; 399102 5 snapshots [1764259200000..1788105600000]; 399107 8 snapshots [1769702400000..1788105600000]; 399673 26 snapshots [1517328000000..1788105600000]"
+      ],
+      "message": "index constituents snapshot coverage report attached",
+      "remediation": [],
+      "status_detail": [
+        "LOCAL_DATA_READY",
+        "PTRADE_RUNTIME_UNVERIFIED"
+      ],
+      "execution_status": "READY"
+    },
+    {
+      "capability": "industry_classification_sw2021",
+      "required": false,
+      "event_type": "reference",
+      "schema_status": "AVAILABLE",
+      "data_status": "DATA_MISSING",
+      "adapter_status": "AVAILABLE",
+      "provider_status": "AVAILABLE",
+      "engine_status": "AVAILABLE",
+      "platform_status": "AVAILABLE",
+      "evidence": [
+        "versions=['SW2021'], L1 count=62, pseudo SW_ codes=0"
+      ],
+      "message": "industry_classification missing/incomplete or contains pseudo SW_ codes",
+      "remediation": [
+        "Run the industry_classification pipeline (tushare index_classify)"
+      ],
+      "status_detail": [
+        "DATA_BLOCKED"
+      ],
+      "execution_status": "BLOCKED"
+    },
+    {
+      "capability": "industry_membership_pit",
+      "required": false,
+      "event_type": "reference",
+      "schema_status": "AVAILABLE",
+      "data_status": "DEGRADED",
+      "adapter_status": "AVAILABLE",
+      "provider_status": "AVAILABLE",
+      "engine_status": "AVAILABLE",
+      "platform_status": "AVAILABLE",
+      "evidence": [
+        "interval quality gate: {'present': True, 'positive_overlaps': 239, 'multi_current_codes': 0, 'orphan_rows': 0, 'bad_ranges': 0}",
+        "APPROXIMATION_REQUIRES_CONFIRMATION: overlapping intervals present (raw, kept as-is, no custom conflict-resolution rule). industry_membership is NOT PIT READY; ambiguous dates are fail-closed at API level.",
+        "ambiguous-date fail-closed verified (000005 @ 1999-12-30)"
+      ],
+      "message": "raw overlapping intervals preserved; ambiguous dates fail-closed (verified); APPROXIMATION_REQUIRES_CONFIRMATION (NOT formal PIT READY)",
+      "remediation": [
+        "R1 must classify APPROXIMATION_REQUIRES_CONFIRMATION and obtain customer confirmation before relying on historical industry membership"
+      ],
+      "status_detail": [
+        "DATA_BLOCKED",
+        "PTRADE_RUNTIME_UNVERIFIED"
+      ],
+      "execution_status": "BLOCKED"
+    },
+    {
+      "capability": "sw_l1_index_daily",
+      "required": false,
+      "event_type": "reference",
+      "schema_status": "AVAILABLE",
+      "data_status": "DATA_MISSING",
+      "adapter_status": "AVAILABLE",
+      "provider_status": "AVAILABLE",
+      "engine_status": "AVAILABLE",
+      "platform_status": "AVAILABLE",
+      "evidence": [
+        "coverage 0/62, ohlc_violations=0, duplicates=0",
+        "resident path reachable=False (enabled index_daily task + get_index_daily_universe)"
+      ],
+      "message": "SW index daily coverage/quality/routing/resident check failed",
+      "remediation": [
+        "Run the formal index_daily daemon task (universe includes SW L1)"
+      ],
+      "status_detail": [
+        "DATA_BLOCKED"
+      ],
+      "execution_status": "BLOCKED"
+    }
+  ],
+  "overall_execution_status": "READY",
+  "blockers": [],
+  "repair_actions": []
+}

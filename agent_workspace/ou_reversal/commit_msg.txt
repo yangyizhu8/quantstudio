@@ -1,0 +1,30 @@
+feat(strategy): 沪深300均值回归超跌反弹 全链路交付 + E1 铁律落位 + F2-A/F3-A 框架修复
+
+策略线收官批（ou_reversal_csi300_10）。用户批复：授权代写 + 合并提交 + 双仓 + 同步门一次走完。
+
+一、策略交付（R0→R6 全链路）
+- R6 发布 quantstudio/backtest/strategies/沪深300均值回归超跌反弹.py（sha256 9cfb26e568d8be11…）
+- R5 PASS：287 交易日；G3.5 两跑三件套 + canonical + DB 逐位一致；部署不变量 0 FAIL；0 ERROR
+- 数据源：R5 以 data/quantstudio.old_20260920.db 为外部库覆盖（客户批准，external_db_override_confirmed=true）
+  等价性：101 表 / 窗口内 287 开市日 286 指数日（含同一 2026-08-03 缺口）/ 15 complete 快照 / 前复权锚点抽检逐位一致
+- R5.5 客户风险接受型豁免（verbatim 入 confirmation_evidence.robustness_exemption）
+- PTrade 转换跑通：source_import=PASS / api_portability=PASS / get_index_day_bar DENY-SHIM 生效 / 0 BLOCK
+
+二、E1 铁律落位（日线策略信号取数：执行日以 include=False 读取前一交易日日线）
+- AGENTS.md 铁律节新增 E1 七条（本次代写，纯新增；代写前 AGENTS.md 无在途编辑，git diff 为空）
+- SKILL.md + references/no-lookahead-rules.md 双副本同步（项目内 + 用户级 SHA 逐位一致）
+- A′（proxy 15:00 日线 include=True 豁免）未进入实施，登记为治理转向
+
+三、框架修复（各附验收证据）
+- F2-A：接线层 no-op（delta_below_one_lot）计数上报 QS_FILL_AUDIT（quantstudio/backtest/ptrade_api.py）
+  根因：_qs_noop_target 绕过引擎 _finalize_immediate → 不进 _day_rejections → 对账缺口
+  验收：改动前 287 行审计含该明细 0 行（QS_ZERO_ORDER 762 次）→ 改动后 44 行含 39 行；4 条常设单测；行为等价（收益/笔数不变）
+- F3-A：design_metadata 接受 match_price_mode='open'（E1-2 合法化后遗留的硬编码假设）
+  根因：_profile_combo_valid 硬编码 mp == "close" → E1 合规 open 设计被判 INVALID_PROFILE → GUI 转换 BLOCK
+  验收：INVALID_PROFILE → RESOLVED；不传 --engine-profile 亦通过 get_index_day_bar 门禁；2 条新单测；全框架同类硬编码复扫归零
+
+四、回归
+- python scripts/run_contract_gate.py --strategies → PASS（契约套件 + 矩阵门禁 + 6 策略 api_portability 冒烟）
+
+排除：skills/agent_workspaces/fall_reversal/（他线在途）、strategies/ 下 D 状态候选文件、其他会话 M 项。
+回退点：stash f5923d3a4e34c8ede7e91b8037fedd6a9b2bcf89（create + store 已持久化）。

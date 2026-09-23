@@ -134,6 +134,38 @@ def test_profile_combo_inconsistent(tmp_path):
     assert r.status == "INVALID_PROFILE"
 
 
+# ---- 6b. F3-A（2026-09-23）：E1-2 合法化 open → (daily-bar-v1, 1d, open) 必须 RESOLVED ----
+def test_profile_combo_accepts_open_match_price(tmp_path):
+    """E1-2 定稿：close/open 均合法；open 设计不得被误判为 profile 组合矛盾。
+
+    回归背景：design_metadata 曾硬编码 mp == "close"，使 E1 合规的 open 设计
+    返回 INVALID_PROFILE → GUI 转 PTrade tab 自动解析 profile 失败 → 门禁 BLOCK。
+    """
+    src = ("STRATEGY_ID = \"combo_open\"\n"
+           "def handle_data(context, data):\n    return\n")
+    name = "测试组合开放撮合策略"
+    ok_design = _valid_design_template("combo_open", name,
+                                       profile_id="daily-bar-v1", bar_frequency="1d",
+                                       match_price_mode="open")
+    sp, ws_root = _make_ws(tmp_path, "combo_open", name, src, design=ok_design)
+    r = find_design_for_strategy(sp, ws_root)
+    assert r.status == "RESOLVED", r.reason
+    assert r.engine_profile == "daily-bar-v1"
+
+
+def test_profile_combo_still_rejects_next_open(tmp_path):
+    """next_open 仍拒（2026-08-13 废弃：把 T+1 数据引入 T 日时间片）。"""
+    src = ("STRATEGY_ID = \"combo_no\"\n"
+           "def handle_data(context, data):\n    return\n")
+    name = "测试组合拒绝旧撮合策略"
+    bad_design = _valid_design_template("combo_no", name,
+                                        profile_id="daily-bar-v1", bar_frequency="1d",
+                                        match_price_mode="next_open")
+    sp, ws_root = _make_ws(tmp_path, "combo_no", name, src, design=bad_design)
+    r = find_design_for_strategy(sp, ws_root)
+    assert r.status == "INVALID_PROFILE"
+
+
 # ---- 7. 转换器消费者条件执法：legacy 无 profile-sensitive API 零 BLOCK ----
 def test_legacy_no_profile_sensitive_zero_block():
     from quantstudio.strategy_compiler.source_import import convert_source

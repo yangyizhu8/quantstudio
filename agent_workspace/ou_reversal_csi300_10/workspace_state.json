@@ -1,0 +1,88 @@
+{
+  "strategy_id": "ou_reversal_csi300_10",
+  "stage": "PUBLISHED",
+  "targets": [
+    "quantstudio"
+  ],
+  "universe_mode": "portable_public_api",
+  "validation_execution_mode": "agent_managed",
+  "candidate_status": "NOT_GENERATED",
+  "backtest_evidence_status": "NOT_APPLICABLE",
+  "robustness": {
+    "stage": "EXEMPTED",
+    "exempted": true,
+    "reason": "客户风险接受型发布（verbatim 确认见 design.validation_contract.robustness_gates）",
+    "customer_text": "发布，我的意图旨在测试回测功能和转换ptrade管线的双端对齐功能，策略本身盈亏不重要。",
+    "exempted_at": "2026-09-23T10:57:46+08:00"
+  },
+  "formal_publish_allowed": true,
+  "backtest_window_contract": {
+    "strategy_must_not_hardcode_backtest_dates": true,
+    "agent_must_not_start_unconfirmed_backtest": true,
+    "recommended_start_date": "2025-07-01",
+    "recommended_end_date_as_of_local_data": "2026-09-01",
+    "actual_window_selected_by": "customer_confirmed_agent_run",
+    "required_close_bars": 61,
+    "lookback_trading_days": 61,
+    "window_narrowing_reason": "complete 快照空档 2021-03-31 → 2025-07-01（2025-01-02..2025-06-30 共 117 交易日 as-of 回落至 2021-03-31 快照，总调度与审核方双独立实测在卷）；前 117 交易日未覆盖（D2-A 裁定）"
+  },
+  "agent_implementation_required": true,
+  "canonical_source": "strategy.py",
+  "strategy_name": "沪深300均值回归超跌反弹",
+  "quantstudio_output": "quantstudio/backtest/strategies/沪深300均值回归超跌反弹.py",
+  "ptrade_output": "NOT_GENERATED",
+  "backtest_status": "PASS",
+  "backtest_execution_owner": "agent_managed",
+  "r5_evidence": {
+    "run1_output_dir": "output/backtest_results/20260923_101807_strategy",
+    "run1_provenance": "agent_workspace/ou_reversal_csi300_10/r5_provenance_run1.json",
+    "backtest_db_path": "D:\\miniQMT策略实盘\\QuantStudio\\data\\quantstudio.old_20260920.db",
+    "external_db_override_confirmed": true,
+    "window": "2025-07-01..2026-09-01",
+    "trading_days": 287,
+    "metrics": {
+      "total_return_pct": -29.29,
+      "benchmark_pct": 17.16,
+      "excess_pp": -46.45,
+      "max_dd_pct": -30.75,
+      "trades": 695
+    },
+    "deployment_invariants_fails": 0,
+    "runtime_errors": 0,
+    "reproducibility": {
+      "gate": "G3.5",
+      "result": "PASS",
+      "artifacts": {
+        "config.csv": {
+          "run1": "0e02576f6fa1e34a85629886302f257c848bfdbe11cda9359ef0249346510ab4",
+          "run2": "0e02576f6fa1e34a85629886302f257c848bfdbe11cda9359ef0249346510ab4",
+          "identical": true
+        },
+        "daily_stats.csv": {
+          "run1": "6da36f30d6df60ed9ef1e0d46241a15a5f229ff4e8889235b9bf39bae06c8cc4",
+          "run2": "6da36f30d6df60ed9ef1e0d46241a15a5f229ff4e8889235b9bf39bae06c8cc4",
+          "identical": true
+        },
+        "trades.csv": {
+          "run1": "4ee8e68ded8cced2022b75532e22c7495c968820eaff246898ff214b32d9e832",
+          "run2": "4ee8e68ded8cced2022b75532e22c7495c968820eaff246898ff214b32d9e832",
+          "identical": true
+        }
+      },
+      "run2_output_dir": "output/backtest_results/20260923_121155_strategy"
+    },
+    "status": "PASS"
+  },
+  "quantstudio_output_status": "GENERATED",
+  "canonical_sha256": "9cfb26e568d8be118c96efd79ca27b85f133c37413c49d542afbf9faa65a05d9",
+  "backtest_data_source": "duckdb_provider",
+  "backtest_db_path": "D:\\miniQMT策略实盘\\QuantStudio\\data\\quantstudio.old_20260920.db",
+  "external_db_override_confirmed": true,
+  "publish_status": "PASS",
+  "local_validation_status": "PASS",
+  "ptrade_validation_status": "NOT_APPLICABLE",
+  "dual_consistency_status": "NOT_APPLICABLE",
+  "dual_consistency_phase": "NOT_APPLICABLE",
+  "ptrade_output_status": "NOT_GENERATED",
+  "candidate_removed": false
+}

@@ -1,0 +1,97 @@
+{
+  "ledger_version": 1,
+  "created_at": "2026-09-22",
+  "skill": "quantstudio-strategy-compiler",
+  "skill_release_note": "R0-R6 mandatory pipeline; local-only target (targets=[quantstudio])",
+  "strategy_id": "ou_reversal_csi300_10",
+  "strategy_title": "沪深300 OU 相对偏离度超跌反弹（日线·等权10只·T+1开盘执行）",
+  "workspace": "agent_workspace/ou_reversal/",
+  "data_source": {
+    "selected_path": "D:\\miniQMT策略实盘\\QuantStudio\\data\\quantstudio.db",
+    "resolution_reason": "项目本地库存在（38.08 GB / 101 表）且可只读打开 → 按 R1 规则首选，无需外部库或客户批准覆盖",
+    "size_gb": 38.08,
+    "tables": 101,
+    "read_mode": "read_only",
+    "probed_at": "2026-09-22"
+  },
+  "pipeline": {
+    "R0": {
+      "status": "COMPLETED",
+      "completed_at": "2026-09-22",
+      "target_platform": "quantstudio-local-only",
+      "r5_executor": "agent-managed",
+      "workflow_diagram": "agent_workspace/ou_reversal_r0/flowchart.html",
+      "workflow_nodes": 17,
+      "customer_reply_verbatim": "C1-A、C2-A、C3-B、C4-A、C5-B、C6-A、C7-A、C8-A、C9-A、C10-A、C11-B、C12-A",
+      "customer_reply_verbatim_2": "以上 C1-C12 裁定定稿，可直接进入 R1 阶段开展能力核验（API 就绪性 + 数据可用性 + 预热窗口核验）",
+      "adjudications": {
+        "C1-A": "交易成本：买入 0.3% / 卖出 0.4%（千三/千四）",
+        "C2-A": "执行时序：T 日收盘信号 → T+1 开盘执行（R0 记为引擎 next_open）",
+        "C3-B": "候选不足 10 只：等权满仓按实际数量分配，整手取整，余额留存现金",
+        "C4-A": "清仓后次日立即重建，不设空仓冷却期",
+        "C5-B": "ADX 采用经典 Wilder(14) 内联实现；禁用 MyTT DMI",
+        "C6-A": "布林中轨方向：当日中轨 > 昨日中轨",
+        "C7-A": "年化波动率 = std(ddof=1) × √250",
+        "C8-A": "近 3 日累计跌幅过滤阈值 = 8%",
+        "C9-A": "所有指标窗口均包含 T 日收盘",
+        "C10-A": "拒单处理走框架默认（拦截 + 重试），不强制平仓",
+        "C11-B": "在指数成分之外显式剔除 ST/*ST",
+        "C12-A": "不设个股止损"
+      },
+      "note": "裁定字母语义按 R0 对照表口径记录；R2.5 硬确认闸门将逐项复核，客户可在此修正。"
+    },
+    "R1": {
+      "status": "BLOCKED",
+      "blocked_at": "2026-09-22",
+      "blocked_reasons": [
+        "DATA_BLOCKED: 2025-01-02..2025-06-30（117 个交易日）沪深300 PIT 成分快照缺失，as-of 查询回落到 2021-03-31 快照（陈旧约 4 年）",
+        "PROFILE_REMAP_REQUIRED: R0 C2-A 所指 next_open 撮合模式已被 skill 于 2026-08-13 废弃；T+1 开盘执行语义须改由 daily-open-close-proxy-v1 承载（需客户确认）"
+      ],
+      "capability_report": "agent_workspace/ou_reversal/capability_report.r1.json",
+      "evidence_doc": "agent_workspace/ou_reversal/R1_capability_evidence.md",
+      "classifications": {
+        "data_source_local_db": "READY",
+        "stock_daily_coverage": "READY",
+        "front_adjusted_ohlc": "READY",
+        "index_constituents_pit_full_window": "DATA_BLOCKED (2025-01-02..2025-06-30)",
+        "index_constituents_pit_from_20250701": "READY",
+        "csi300_index_daily_timing_gate": "READY (1 日缺口 2026-08-03)",
+        "benchmark_000300": "READY (1 日缺口 2026-08-03)",
+        "st_halt_status_filters": "READY",
+        "listing_date_metadata": "READY",
+        "warmup_window": "READY",
+        "engine_profile_t1_open": "PROFILE_REMAP_REQUIRED (next_open 废弃 -> daily-open-close-proxy-v1)",
+        "cost_model_asymmetric_buy_sell": "APPROXIMATION_REQUIRES_CONFIRMATION",
+        "ptrade_context": "NOT_APPLICABLE"
+      }
+    },
+    "R5": {
+      "status": "RUNNING",
+      "data_source": "D:\\miniQMT策略实盘\\QuantStudio\\data\\quantstudio.old_20260920.db",
+      "external_db_override": {
+        "approved": true,
+        "customer_text": "用 data/quantstudio.old_20260920.db 跑 R5",
+        "approved_at": "2026-09-23T08:08:41+08:00"
+      },
+      "window": "2025-07-01..2026-09-01",
+      "capital": 100000,
+      "match_price_mode": "open",
+      "engine_profile": "daily-bar-v1",
+      "runner": "agent_workspace/ou_reversal_csi300_10/r5_run.py",
+      "note": "两跑独立进程（G3.5 复现性门禁）；三件套 SHA-256 逐位比对。"
+    },
+    "R2_5": {
+      "status": "COMPLETED",
+      "closed_at": "2026-09-23T00:05:22+08:00",
+      "customer_text": "确认，无异议，继续推进",
+      "approximations_confirmed": 14
+    },
+    "R6": {
+      "status": "PENDING",
+      "customer_text": "发布，我的意图旨在测试回测功能和转换ptrade管线的双端对齐功能，策略本身盈亏不重要。",
+      "authorized_at": "2026-09-23T10:38:47+08:00",
+      "purpose": "回测功能 + PTrade 转换管线双端对齐验证",
+      "r5_5": "CUSTOMER_WAIVED"
+    }
+  }
+}
