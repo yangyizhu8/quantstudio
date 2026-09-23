@@ -68,7 +68,14 @@ class TaskTab(QWidget):
         # S1 去抖：daemon 身份校验未通过的连击计数（N=3 才判死，防瞬态误判永久脱钩）
         self._daemon_death_streak = 0
         self._setup_ui()
-        self._load_tasks()
+        # 笔1（GUI 异步化，2026-09-23 GUI 启动卡死案）：**只把「贵的那一步」移出构造期**。
+        # 背景：主库带大 WAL 时 duckdb.connect() 需先回放 WAL（生产实测 22.3 分钟），
+        # 构造期同步读库会让 MainWindow 构造永不返回 → 窗口永不出现。
+        # 拆分：读 collector_tasks.json（毫秒级，构造期同步 → self.tasks 契约不变）
+        #       vs 水位查询 _render_tasks（昂贵，延后到窗口显示后的事件循环）。
+        self._set_loading_placeholder(True)
+        self._load_tasks_config()
+        QTimer.singleShot(0, self._deferred_first_render)
         # v3：低频状态同步 QTimer（3s 轮询 daemon status）
         self._daemon_poll_timer = QTimer(self)
         self._daemon_poll_timer.setInterval(3000)
@@ -166,6 +173,10 @@ class TaskTab(QWidget):
         self.task_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.task_table.setBorderVisible(True)
         self.task_table.setBorderRadius(6)
+        # 笔1：首屏「读取中」占位（构造期不再阻塞，DB 读取延后；读取完成即隐藏）
+        self.loading_label = QLabel("读取中…（数据库可能正在采集或恢复，稍候自动刷新）")
+        self.loading_label.setVisible(False)
+        task_layout.addWidget(self.loading_label)
         task_layout.addWidget(self.task_table)
         layout.addWidget(task_group, 3)
 
@@ -190,7 +201,18 @@ class TaskTab(QWidget):
         self.mw.apply_data_source_mode(value, self.data_source_combo)
 
     def _load_tasks(self):
-        """读 collector_tasks.json 的 tasks 数组"""
+        """读配置 + 渲染（「刷新」按钮与自动重试的入口；返回契约不变）。"""
+        self._load_tasks_config()
+        self._render_tasks()
+        # 笔2：降级后自动恢复 —— 库忙/超时（含 WAL 回放）时启动 30s 自动重试；成功即停。
+        self._schedule_degraded_retry()
+
+    def _load_tasks_config(self):
+        """读 collector_tasks.json 的 tasks 数组（**便宜步骤**：构造期同步执行）。
+
+        笔1 拆分依据：任务清单来自本地 JSON（毫秒级），而 `_render_tasks` 要查 DuckDB 水位
+        （大 WAL 时可分钟级）。只延后后者 → `self.tasks` 在构造后即可用（既有契约不变）。
+        """
         tasks_path = self.mw.config_dir / "collector_tasks.json"
         try:
             with tasks_path.open("r", encoding="utf-8") as f:
@@ -206,7 +228,49 @@ class TaskTab(QWidget):
         except Exception as e:
             logger.error(f"加载任务配置失败: {e}")
             self.tasks = []
+
+    def _deferred_first_render(self):
+        """笔1：首屏的 DB 读取（水位查询）延后到窗口显示后的事件循环执行。"""
         self._render_tasks()
+        self._schedule_degraded_retry()
+
+    def _set_loading_placeholder(self, on: bool) -> None:
+        """笔1/笔2：首屏与恢复期「读取中」占位显隐（读取成功即隐藏）。"""
+        try:
+            self.loading_label.setVisible(bool(on))
+        except Exception:
+            pass
+
+    def _schedule_degraded_retry(self) -> None:
+        """笔2（2026-09-23 案）：降级态自动重试 + 提示；手动入口 = 既有「刷新」按钮。
+
+        设计依据（方案 §3-②）：超时降级后 UI 必须有出路——自动重试（每 30s）与手动刷新
+        两者都要，避免用户停在空表无动作。成功读取时停止定时器并隐藏占位。
+        """
+        hint = ""
+        try:
+            hint = self.mw.db_helper.recovering_hint() or self.mw.db_helper.busy_hint()
+        except Exception:
+            hint = ""
+        if hint:
+            self._set_loading_placeholder(True)
+            try:
+                self.loading_label.setText(hint)
+                self.status_label.setText("数据库忙/恢复中…")
+                self.status_label.setToolTip(hint)
+            except Exception:
+                pass
+            if getattr(self, "_degraded_retry_timer", None) is None:
+                from quantstudio.gui.db_helper import AUTO_RETRY_INTERVAL_S
+                self._degraded_retry_timer = QTimer(self)
+                self._degraded_retry_timer.setInterval(int(AUTO_RETRY_INTERVAL_S * 1000))
+                self._degraded_retry_timer.timeout.connect(self._load_tasks)
+            self._degraded_retry_timer.start()
+        else:
+            self._set_loading_placeholder(False)
+            timer = getattr(self, "_degraded_retry_timer", None)
+            if timer is not None:
+                timer.stop()
 
     def _render_tasks(self):
         # 查一次水位缓存（P1-3：不再每任务查一次 DuckDB）
