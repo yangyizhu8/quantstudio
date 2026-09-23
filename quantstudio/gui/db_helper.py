@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -32,6 +33,14 @@ READ_ONLY_RETRY_INTERVAL_S = 0.2
 
 # A4: UI 降级提示的默认观察窗口(秒)
 BUSY_HINT_WINDOW_S = 30.0
+
+# 笔2（2026-09-23 GUI 启动卡死案）：查询 deadline 与自动重试节奏。
+# 背景：主库带大 WAL 时 duckdb.connect() 需先回放 WAL（生产实测 22.3 分钟），
+# 属「慢的成功」——既不抛异常也不返回，既有忙态重试（2×0.2s）永不触发 →
+# 构造期同步调用会永久阻塞。故新增 deadline：主调方最多等 QUERY_DEADLINE_S。
+QUERY_DEADLINE_S = 5.0          # 单次查询主调方等待上限（可配）
+AUTO_RETRY_INTERVAL_S = 30.0    # UI 侧降级后自动重试间隔（方案 §3-②）
+STUCK_WARN_S = 120.0            # 后台尝试阻塞多久后升级为显式告警（只报一次）
 
 
 def _daemon_check_interval_seconds() -> Optional[int]:
@@ -77,20 +86,23 @@ class DbHelper:
         # A4: 跨进程锁冲突的可观测状态(仅新增只读属性对外暴露; 不改任何既有返回契约)
         self._last_busy_at: Optional[float] = None
         self._busy_count: int = 0
+        # 笔2：单槽后台尝试（daemon 线程，进程退出不阻塞）+ 降级/恢复态
+        self._attempt_thread: Optional[threading.Thread] = None
+        self._attempt_slot: Optional[dict] = None
+        self._attempt_started_at: Optional[float] = None
+        self._stuck_warned: bool = False
+        self._recovering: bool = False
 
     def _mark_busy(self, exc: Exception) -> None:
         """A4：记录最近一次跨进程锁冲突（供 UI 提示）。不改变任何返回值。"""
         self._last_busy_at = time.time()
         self._busy_count += 1
 
-    def _safe_query(self, sql: str) -> pd.DataFrame:
-        """v3 评审 4 + A-prime（T3）：DuckDB 查询统一包装，锁冲突时快速重试后优雅降级。
+    def _query_once(self, sql: str) -> pd.DataFrame:
+        """单次同步查询（含 A-prime 既有快速重试）—— 由单槽工作线程执行，见 _safe_query。
 
-        daemon 采集期（持有 RW 连接）时，GUI read_only 查询会触发 IOException。
-        A-prime：遭遇锁冲突时按 READ_ONLY_RETRY_ATTEMPTS / READ_ONLY_RETRY_INTERVAL_S
-        快速重试（覆盖采集收尾的短等待窗口）；重试耗尽仍按原契约返回空 DataFrame +
-        警告日志（调用方可据 busy_hint() 显示"数据库采集中，请稍后刷新"）。
-        其它异常（SQL 语法错等）正常向上抛 —— 重试只针对锁冲突，不掩盖真故障。
+        保持既有语义：锁冲突（busy）重试 READ_ONLY_RETRY_ATTEMPTS 次后返回空 DataFrame；
+        非锁冲突异常（SQL 语法错等）**向上抛**。
         """
         import duckdb
         last_exc: Optional[Exception] = None
@@ -112,6 +124,88 @@ class DbHelper:
         self._mark_busy(last_exc)
         logger.warning(
             f"[DbHelper] DuckDB 忙（daemon 采集中？），{READ_ONLY_RETRY_ATTEMPTS + 1} 次尝试后返回空结果: {last_exc}")
+        return pd.DataFrame()
+
+    def _start_attempt(self, sql: str) -> None:
+        """起一次后台尝试（**daemon 线程**：进程退出不被阻塞，见 _safe_query 单槽策略）。"""
+        slot: dict = {}
+
+        def _run() -> None:
+            try:
+                slot["result"] = self._query_once(sql)
+            except BaseException as e:      # noqa: BLE001 — 需原样带回主调方按契约处理
+                slot["error"] = e
+            finally:
+                slot["done"] = True
+
+        t = threading.Thread(target=_run, daemon=True, name="dbhelper-query")
+        self._attempt_slot = slot
+        self._attempt_thread = t
+        self._attempt_started_at = time.time()
+        self._stuck_warned = False
+        t.start()
+
+    def _harvest(self) -> pd.DataFrame:
+        """收割已完成的尝试（不阻塞）。真故障上抛；锁冲突/超时返回空表 + 记录忙态。"""
+        slot = self._attempt_slot or {}
+        self._attempt_slot = None
+        self._attempt_thread = None
+        self._attempt_started_at = None
+        self._stuck_warned = False
+        if "error" in slot:
+            err = slot["error"]
+            self._recovering = False
+            if not _is_db_busy_error(err):
+                raise err                     # 真故障：保持既有「上抛」语义
+            self._mark_busy(err)
+            logger.warning(f"[DbHelper] 后台查询以锁冲突结束: {err}")
+            return pd.DataFrame()
+        self._recovering = False
+        return slot.get("result", pd.DataFrame())
+
+    def _safe_query(self, sql: str) -> pd.DataFrame:
+        """v3 评审 4 + A-prime（T3）+ **笔2 超时降级**：DuckDB 查询统一包装。
+
+        笔2 变更（2026-09-23 GUI 启动卡死案）：新增 deadline 保护。主库带大 WAL 时
+        `duckdb.connect()` 需先回放 WAL（生产实测 22.3 分钟）——这是**「慢的成功」**：
+        既不抛异常也不返回，既有 2×0.2s 忙态重试**永不触发**，调用方（GUI 构造期）永久阻塞。
+        现改为：在工作线程内执行，主调方最多等 `QUERY_DEADLINE_S`；超时即返回空 DataFrame
+        + 记录降级态（UI 可据 `busy_hint()` / `is_recovering` 提示「正在恢复」并自动重试）。
+
+        **单槽策略（防 09-23 卡死进程重演）**：同一时刻至多 1 个在跑的尝试；若上次尝试仍在跑
+        （例如 connect 阻塞在锁/WAL 回放上），本次**直接返回降级空表、不新起线程**——
+        避免线程堆积成新的卡死源。该尝试完成后由下一次调用自动收割（即「降级后自动恢复」）。
+        线程为 **daemon**：即使永久阻塞也不会拖住进程退出。
+
+        契约不变：成功→DataFrame；忙/超时→空 DataFrame + 警告日志；
+        真故障（SQL 语法错等非锁冲突异常）仍向上抛（含超时后在下次收割时上抛）。
+        """
+        # 1) 上次尝试仍在跑 → 保持降级，不新起线程（非阻塞）
+        if self._attempt_thread is not None and not (self._attempt_slot or {}).get("done"):
+            pending_s = time.time() - (self._attempt_started_at or time.time())
+            if pending_s >= STUCK_WARN_S and not self._stuck_warned:
+                self._stuck_warned = True
+                logger.warning(
+                    f"[DbHelper] 后台查询已阻塞 {pending_s:.0f}s（库被占用或正在回放 WAL）；"
+                    f"本进程保持降级态且不新起线程，建议稍后刷新，必要时重启 GUI。")
+            self._recovering = True
+            self._mark_busy(RuntimeError("query still pending"))
+            return pd.DataFrame()
+
+        # 2) 上次尝试已完成 → 先收割结果（含「降级后自动恢复」路径）
+        if self._attempt_thread is not None:
+            return self._harvest()
+
+        # 3) 空闲 → 新起一次尝试，最多等 QUERY_DEADLINE_S
+        self._start_attempt(sql)
+        self._attempt_thread.join(QUERY_DEADLINE_S)
+        if (self._attempt_slot or {}).get("done"):
+            return self._harvest()
+        self._recovering = True
+        self._mark_busy(RuntimeError(f"query timeout after {QUERY_DEADLINE_S}s"))
+        logger.warning(
+            f"[DbHelper] 查询超时（>{QUERY_DEADLINE_S}s，疑 WAL 回放或库被占用）→ 降级返回空表；"
+            f"该尝试仍在后台继续，完成后由下次调用自动收割（不新起线程）。")
         return pd.DataFrame()
 
     # ---------------- A4：跨进程锁冲突的可观测与提示 ----------------
@@ -145,6 +239,20 @@ class DbHelper:
         if interval is None:
             return base + "。"
         return f"{base}（守护进程每 {interval} 秒检查一轮，最长约 {interval} 秒内自动恢复）。"
+
+    # ---------------- 笔2：降级恢复态（UI 据此显示提示与自动重试） ----------------
+    @property
+    def is_recovering(self) -> bool:
+        """是否处于「查询超时降级 / 后台尝试仍在跑」的恢复态（UI 显示恢复提示）。"""
+        return bool(self._recovering or (
+            self._attempt_thread is not None and not (self._attempt_slot or {}).get("done")))
+
+    def recovering_hint(self) -> str:
+        """恢复态提示文案（空串 = 未处于恢复态）。"""
+        if not self.is_recovering:
+            return ""
+        return ("数据库正在恢复（可能正在回放 WAL 或守护进程写入中），已降级显示空数据；"
+                f"每 {int(AUTO_RETRY_INTERVAL_S)} 秒自动重试，也可点「刷新」立即重试。")
 
     # ---------------- DuckDB（主库，只读）----------------
     def query_duckdb(self, sql: str) -> pd.DataFrame:
