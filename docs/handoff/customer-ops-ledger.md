@@ -34,6 +34,8 @@
 
 | 案 | 结论 | 证据 |
 |---|---|---|
+| **jabberwock 缺陷（ckey 空 shard → IndexError）** | **实施完成，呈快审**（`c44c81f`）：取证先复现（`mcp_adapter.py:1166` IndexError）→ 两处最小守卫（空 shard 降级 + 重取空 `continue` 且不写 manifest）→ 复现用例 3 passed + 叠加回归 49 passed | `docs/jabberwock-ckey-empty-shards-fix-design.md` |
+| **错误一 T3（revision_alert outbox）** | **实施完成并过验收**（`bcd6268`）：V1–V6 已验（V1 = outbox 0→非0）+ A/B 归因证实 8 例基线红；**V9 排明晨窗口**（与三测/T6 同窗）、**V7/V8 下轮真实采集后只读取样** | `docs/evidence/error1-t3-revision-alert-implementation-20260924.md` |
 | **CASE-007 GUI 启动卡死**（WAL 残留 × 构造期同步打开） | **已闭环**：维护 CHECKPOINT（WAL 2.33GB→0；回放 1338.4s / 检查点 7.3s）+ 六笔修复 + V1a–V8 全 PASS（V1a 2.45s；回归 312 passed） | 卷宗 `docs/case007-gui-startup-hang-wal-replay-incident.md` |
 | **CASE-008 duckdb 混版统一**（A 案 + 版本闸 + V8） | **已闭环**：定谳「钉版从未覆盖实际运行环境」；版本闸三入口真实拒启 exit 3；V8 主 venv 降级 1.4.5 + 补装 + GUI 冒烟 1.76s + psutil 自愈 PASS | 卷宗 `docs/case008-duckdb-version-mixing-unification-incident.md` |
 | CASE-005 写锁残留停更（三客户） | 已闭环（用户裁定 2026-09-18） | `docs/case005-write-lock-stale-selfheal-incident.md` |
