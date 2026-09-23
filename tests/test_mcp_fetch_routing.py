@@ -293,6 +293,7 @@ def test_parquet_has_column_missing_pyarrow_raises_explicit_error(monkeypatch, t
     「streaming xxx/daily 第一遍因子同步失败（注入 0 行）」。
     """
     import builtins
+    import sys
 
     real_import = builtins.__import__
 
@@ -301,7 +302,12 @@ def test_parquet_has_column_missing_pyarrow_raises_explicit_error(monkeypatch, t
             raise ImportError("No module named 'pyarrow'")
         return real_import(name, *a, **k)
 
+    # 关键：`import pyarrow.parquet` 命中 sys.modules 缓存时不走 __import__，
+    # 必须先清掉缓存才能真实模拟「未安装」环境。
+    for mod in [m for m in list(sys.modules) if m == "pyarrow" or m.startswith("pyarrow.")]:
+        monkeypatch.delitem(sys.modules, mod, raising=False)
     monkeypatch.setattr(builtins, "__import__", fake_import)
+
     with pytest.raises(ImportError) as ei:
         MCPAdapter._parquet_has_column(tmp_path / "x.parquet", "adj_factor")
     msg = str(ei.value)
