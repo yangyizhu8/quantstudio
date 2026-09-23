@@ -186,6 +186,12 @@ _EXPORT_TABLES = {
     ("cashflow_statement", "daily"),
     ("fin_indicator", "daily"),
     ("income_statement", "daily"),
+    # 客户反馈包 2026-09-23 问题2：stock_float_share 实际 1,430 万行
+    # （云端 stock_daily_basic 全史，实测 14,321,322 行 / 5,919 码），此前未入本
+    # 集合 ⇒ 落 _fetch_small_table → _fetch_all_pages 全量累积 JSON dict 进内存
+    # ⇒ 客户三次 OOM（Unable to allocate 109 MiB @ shape 14,299,109 → 1.28 GiB）。
+    # 与同源的 stock_daily_valuation 对齐：走 export Parquet 分片落盘。
+    ("stock_float_share", "daily"),
     # trade_cal has no ts_code column, while the generic export path currently
     # orders by ts_code. It therefore uses cursor pagination like other
     # non-export mapped tables.
@@ -776,6 +782,9 @@ class MCPAdapter(BaseSourceAdapter):
     _EXPORT_DAILY_WINDOW_DAYS = 365  # 日线表每批最大窗口（~120万行/年）
     _EXPORT_MINUTE_WINDOW_DAYS = 10  # 分钟表每批最大窗口（~6000万行/年，10天~160万行）
     _EXPORT_ROW_LIMIT_BIG = 5_000_000  # 分钟表 export 的 row_limit（_fetch_export 传参）
+    # 客户反馈包 2026-09-23 问题2：施加「非分钟大表 row_limit 预算窗口」的表集合。
+    # 刻意收窄为显式声明——未声明的既有大表分批行为逐位不变（零衰减）。
+    _ROW_LIMIT_BUDGET_TABLES = frozenset({"stock_float_share"})
 
     @staticmethod
     def _parse_flexible_date(s: str) -> datetime:
@@ -791,13 +800,18 @@ class MCPAdapter(BaseSourceAdapter):
 
     def _export_batches(self, start: str, end: str, is_minute: bool,
                         est_rows: int = None,
-                        grid_aligned: bool = False) -> List[Tuple[str, str]]:
+                        grid_aligned: bool = False,
+                        table: str = "") -> List[Tuple[str, str]]:
         """按时间窗口切分 export 批次，避免服务端 200 万行截断。
 
         行数估算驱动：est_rows < _EXPORT_SAFE_ROWS（<200万）时返回单批（全历史一次，
         不切碎）；否则按窗口切分。
         日线行情（~120万行/年）：365天/批；分钟表（~6000万行/年）：10天/批。
         快照大表（财务/指数成分等，<200万行全历史）：单批。
+
+        table（可选，默认 ""）：表名。仅用于判定「非分钟大表 row_limit 预算窗口」
+        是否对该表生效（见 _ROW_LIMIT_BUDGET_TABLES）；未传/未声明 ⇒ 逐行保持
+        旧行为（既有大表分批零影响）。
 
         grid_aligned=True（仅 bootstrap 链路开启）：窗口边界对齐到固定 epoch 网格
         （日线 365 天 / 分钟 10 天），且**尾部批次不截断到 end**（nxt = cur + window）。
@@ -836,6 +850,19 @@ class MCPAdapter(BaseSourceAdapter):
                         f"target_rows={_target_rows}, "
                         f"cfg_window_days={_cfg_window}, "
                         f"grid_aligned={grid_aligned}, est_total={est_total})")
+        elif est_rows is not None and est_rows > 0 and table in self._ROW_LIMIT_BUDGET_TABLES:
+            # 客户反馈包 2026-09-23 问题2 关联防线：**声明表**的非分钟大表同样施加
+            # row_limit 预算约束。若沿用 _EXPORT_DAILY_WINDOW_DAYS=365 天窗而单批
+            # 越过服务端 5,000,000 行硬上限，服务端按最老优先**静默截断**（批尾丢数据）。
+            # 作用域刻意收窄为显式声明的表集合：既有大表（stock_daily 等）的批次数
+            # 与产物逐位不变（既有功能零衰减），避免以「防潜在截断」为名改动在产行为。
+            _daily_rows = est_rows / 243
+            if _daily_rows > 0:
+                window = min(window, max(
+                    1, int(self._EXPORT_ROW_LIMIT_BIG / (_daily_rows * 1.2))))
+            logger.info(f"[MCPAdapter] 大表安全窗口: {table} {window}天 "
+                        f"(est_rows={est_rows}, daily_rows≈{_daily_rows:.0f}, "
+                        f"row_limit={self._EXPORT_ROW_LIMIT_BIG})")
         if grid_aligned:
             # Bug 2 修复：网格化窗口需适配 row_limit，避免服务端截断。
             # 全市场分钟数据 ~1200 万行/10天 > row_limit=5M → 窗口缩到安全值。
@@ -879,6 +906,8 @@ class MCPAdapter(BaseSourceAdapter):
         "stock_daily": 14_000_000, "etf_daily": 2_400_000,
         "stock_minutes": 480_000_000, "etf_minutes": 120_000_000,
         "stock_daily_valuation": 14_000_000,
+        # 客户反馈包 2026-09-23 问题2：实测云端 stock_daily_basic 全史 14,321,322 行
+        "stock_float_share": 14_300_000,
         # 快照大表（<200万，单批）
         "index_constituents": 250_000, "balance_statement": 210_000,
         "cashflow_statement": 210_000, "fin_indicator": 230_000,
@@ -905,7 +934,8 @@ class MCPAdapter(BaseSourceAdapter):
         _export_cache = getattr(self, "export_cache", False)
         batches = self._export_batches(start, end, _is_big,
                                        est_rows=self._EXPORT_ROW_ESTIMATE.get(table),
-                                       grid_aligned=_export_cache)
+                                       grid_aligned=_export_cache,
+                                       table=table)
 
         frames: List[pd.DataFrame] = []
         job_id = "export"
@@ -1269,9 +1299,14 @@ class MCPAdapter(BaseSourceAdapter):
     # 逐片用同一快照还原 → yield。保证跨分片基准一致（铁律：与直连路径逐值等价）。
 
     # 5 类行情大表（任务书 §2.2 已核对立即可分片）
+    # + stock_float_share（客户反馈包 2026-09-23 问题2）：非行情表，但同样
+    #   1,430 万行、无 OHLCV ⇒ 不需要 qfq 因子注入/还原（_requires_qfq_restore
+    #   按表频白名单返回 False，两遍流程的第一遍自动跳过）；仅取 export 分片 +
+    #   逐片 align/validate/write 的**内存收益**（峰值 = 单分片量级）。
     _STREAMING_TABLES = frozenset({
         "stock_daily", "etf_daily", "stock_daily_valuation",
         "stock_minutes", "etf_minutes",
+        "stock_float_share",
     })
 
     def fetch_table_streaming(self, table: str, start: str, end: str,
@@ -1306,7 +1341,8 @@ class MCPAdapter(BaseSourceAdapter):
         _export_cache = getattr(self, "export_cache", False)
         batches = self._export_batches(start, end, _is_big,
                                        est_rows=self._EXPORT_ROW_ESTIMATE.get(table),
-                                       grid_aligned=_export_cache)
+                                       grid_aligned=_export_cache,
+                                       table=table)
         # 获取分片 parquet 路径列表（命中缓存或 export 落盘）
         shard_paths, job_id = self._resolve_shard_paths(table, freq, batches,
                                                         qdb_tbl, _is_big)

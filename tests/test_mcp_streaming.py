@@ -113,6 +113,69 @@ def test_streaming_vs_full_value_equivalence(tmp_path):
         frame_direct.reset_index(drop=True), frame_stream.reset_index(drop=True))
 
 
+def _make_float_share_df(codes, dates):
+    """stock_float_share 原始形态（云端 stock_daily_basic 列集子集）。
+
+    客户反馈包 2026-09-23 问题2：该表 1,430 万行，此前未进 _EXPORT_TABLES /
+    _STREAMING_TABLES ⇒ 走 fetch_page 全量累积 JSON 进内存 ⇒ OOM。
+    """
+    rows = []
+    for code in codes:
+        for d in dates:
+            rows.append({
+                "ts_code": code, "trade_date": d,
+                "circ_mv": 123456.78, "total_mv": 234567.89,
+                "free_share": 10000.0, "total_share": 20000.0,
+                "turnover_rate": 1.23,
+            })
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# Test 5: stock_float_share 走 export + 流式（客户问题2 回归钉）
+# ---------------------------------------------------------------------------
+def test_stock_float_share_routed_to_export_and_streaming():
+    """三断言：在 _EXPORT_TABLES ∧ 在 _STREAMING_TABLES ∧ 不在 _QFQ_ADJFACTOR_TABLES。
+
+    第一项防「回落 fetch_page 全量内存路径」（OOM 根因）；
+    第三项防「非行情表被误纳入复权还原白名单」。
+    """
+    from quantstudio.pipeline.sources.mcp_adapter import (
+        _EXPORT_TABLES, _QFQ_ADJFACTOR_TABLES)
+    assert ("stock_float_share", "daily") in _EXPORT_TABLES
+    assert "stock_float_share" in MCPAdapter._STREAMING_TABLES
+    assert ("stock_float_share", "daily") not in _QFQ_ADJFACTOR_TABLES
+    assert not MCPAdapter._requires_qfq_restore("stock_float_share", "daily")
+    # 与同源表 stock_daily_valuation 口径一致（防两表路径分裂）
+    assert ("stock_daily_valuation", "daily") in _EXPORT_TABLES
+    assert "stock_daily_valuation" in MCPAdapter._STREAMING_TABLES
+
+
+def test_stock_float_share_streaming_vs_direct_value_equivalence(tmp_path):
+    """流式 concat 后 vs 直连 fetch_table 逐值一致（铁律硬指标）。"""
+    df = _make_float_share_df(["000001.SZ", "000002.SZ"],
+                              ["2026-07-01", "2026-07-02", "2026-07-03"])
+    adapter_direct = _bare_adapter(_ExportClient(df), tmp_path / "direct")
+    frame_direct, meta_direct = adapter_direct.fetch_table(
+        "stock_float_share", "2026-07-01", "2026-07-03", freq="daily", codes=None)
+    assert meta_direct["fetch_mode"] == "export"
+
+    adapter_stream = _bare_adapter(_ExportClient(df), tmp_path / "stream")
+    meta, shard_iter = adapter_stream.fetch_table_streaming(
+        "stock_float_share", "2026-07-01", "2026-07-03", freq="daily", codes=None)
+    frames = list(shard_iter)
+    frame_stream = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    assert meta["fetch_mode"] == "export_streaming"
+
+    pd.testing.assert_frame_equal(
+        frame_direct.reset_index(drop=True), frame_stream.reset_index(drop=True))
+
+
+def test_stock_float_share_row_estimate_registered():
+    """行数估算已登记（决定是否分批 + 大表窗口预算约束）。"""
+    assert MCPAdapter._EXPORT_ROW_ESTIMATE["stock_float_share"] >= 1_500_000
+
+
 # ---------------------------------------------------------------------------
 # Test 3: 非行情大表走透传（yield 单片 = fetch_table 结果）
 # ---------------------------------------------------------------------------
