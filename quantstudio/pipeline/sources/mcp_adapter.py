@@ -39,7 +39,6 @@ from quantstudio.pipeline.mcp.client import load_mcp_api_key
 from quantstudio.pipeline.mcp.errors import MCPClientError, MCPToolError
 from quantstudio.pipeline.qfq_reanchor_schema import aux_db_path
 from quantstudio.pipeline.code_contract import validate_sec_code
-from quantstudio.pipeline.validator import _UNIT_CHECK_FACTOR_COL
 
 logger = logging.getLogger(__name__)
 
@@ -1381,10 +1380,6 @@ class MCPAdapter(BaseSourceAdapter):
                     try:
                         if self._parquet_has_column(sp, c):
                             proj.append(c)
-                    except ImportError:
-                        # 客户反馈包 2026-09-23 问题4：依赖缺失必须显式上抛，不得被
-                        # 这里的业务兜底 except 吞掉（否则退化为「注入 0 行」误导报错）。
-                        raise
                     except Exception:
                         pass
                 if "adj_factor" not in proj:
@@ -1504,27 +1499,13 @@ class MCPAdapter(BaseSourceAdapter):
 
     @staticmethod
     def _parquet_has_column(path: Path, col: str) -> bool:
-        """检查 parquet 文件是否含指定列（用 pyarrow schema，不全量读）。
-
-        客户反馈包 2026-09-23 问题4：原实现 `except Exception: return False` 把
-        **依赖缺失**（无 pyarrow）静默降级成「列不存在」——上层据此跳过因子列投影
-        → 注入 0 行 → 报出误导性的
-        「streaming xxx/daily 第一遍因子同步失败（注入 0 行）」。
-        现区分两类：依赖缺失 ⇒ 显式抛 ImportError（带安装指引，含 pyproject 已声明
-        的 extras）；真正的 schema 读取失败/列不存在 ⇒ 仍返回 False（业务兜底不变）。
-        """
+        """检查 parquet 文件是否含指定列（用 pyarrow schema，不全量读）。"""
         try:
             import pyarrow.parquet as pq
-        except ImportError as e:
-            raise ImportError(
-                "[MCPAdapter] 缺少 pyarrow —— MCP export 分片（Parquet）读写必需。"
-                "安装：pip install -e \".[all]\"（或 pip install 'pyarrow>=14'）。"
-                f"原始错误：{e}") from e
-        try:
             schema = pq.read_schema(str(path))
+            return col in schema.names
         except Exception:
             return False
-        return col in schema.names
 
     def _filter_date_window(self, df: pd.DataFrame, start: str, end: str) -> pd.DataFrame:
         """日期窗口过滤（与 _fetch_export 的 _norm_date 逻辑一致）。
@@ -1941,19 +1922,6 @@ class MCPAdapter(BaseSourceAdapter):
         ratio = (adj_latest / adj_i).where(valid, 1.0)
         for col in price_cols:
             out[col] = pd.to_numeric(out[col], errors="coerce") * ratio
-
-        # 客户反馈包 2026-09-23 问题3（判据归一，方案 a）：随行附**还原乘数**
-        # adj_latest / adj_i（即 raw = qfq × 该乘数）供 validator 的 UnitCheck 把
-        # 已还原的 raw close 折算回云端交易口径（amount/volume 的基准）：
-        #     amount/(qfq_close×vol) ≡ 1      ⇒  amount/(raw_close×vol) = adj_i/adj_latest
-        #     ⇒ 乘以 adj_latest/adj_i 即归一为 1。
-        # 缺失行填 1.0（= 该行按旧行为判定）。只在还原确实发生时附列 ⇒ 非还原表零影响。
-        try:
-            out[_UNIT_CHECK_FACTOR_COL] = (adj_latest / adj_i).where(valid, 1.0)
-        except Exception as _e:  # pragma: no cover - 防御：列名冲突等极端场景
-            logger.warning(f"[MCPAdapter] 线1 附加 UnitCheck 归一因子失败"
-                           f"（{table}/{freq}，UnitCheck 退回旧口径）: {_e}")
-            out.drop(columns=[_UNIT_CHECK_FACTOR_COL], errors="ignore", inplace=True)
 
         meta.update({
             "is_qfq_restored": True,

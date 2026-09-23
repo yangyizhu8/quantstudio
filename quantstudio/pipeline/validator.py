@@ -1,4 +1,4 @@
-"""
+﻿"""
 PreIngestValidator — 入库前置校验 [E-2]
 
 强制原则（基线 §1.2 第2条 + §1.2 第5条）：
@@ -26,16 +26,6 @@ from .quarantine import Quarantine
 
 logger = logging.getLogger(__name__)
 from quantstudio._paths import quarantine_db_path
-
-# 客户反馈包 2026-09-23 问题3：UnitCheck 判据归一所依赖的**行内还原乘数**列名。
-# 值 = adj_latest_global / adj_i（该证券全局最新因子 ÷ 该行因子）——即 MCP 线1
-# 还原公式 raw = qfq × adj_latest/adj_i 的乘数，由适配器随行附上。
-# 归一依据：云端 amount/(qfq_close×volume) ≡ 1（实测恒等）
-#   ⇒ amount/(raw_close×volume) = adj_i/adj_latest
-#   ⇒ 乘该列即把 raw close 折算回云端交易口径，判据恢复 [0.5,2.0] 有效性。
-# 语义边界：仅当行内**存在**该列时 UnitCheck 才做归一；缺失 ⇒ 逐行等同旧行为
-# （非 MCP 还原表、非价格表、xtquant/tushare 直供路径全部零影响）。
-_UNIT_CHECK_FACTOR_COL = "__qs_unit_factor_ratio__"
 
 
 @dataclass
@@ -218,18 +208,6 @@ class PreIngestValidator:
             reject_mask_batch("OHLCLogic", "low", bad_low.to_numpy(), df["low"])
 
         # ---- 6. UnitCheck：amount/(close*volume) 比值在合理范围（防单位错配）----
-        # 客户反馈包 2026-09-23 问题3（判据归一，方案 a）：
-        # amount/volume 是**不复权**量（金额与成交量在复权下不变），而 close 经
-        # MCP 线1「qfq→raw 还原」后是 **raw**。两者不同基准 ⇒ 原判据在还原表上
-        # 恒等于 adj_latest_global / adj_i，凡该比值落在 [0.5,2.0] 之外的行被
-        # **系统性误拒**（客户 etf_minutes 2026 全年实测 1.4985% = 932,382 行；
-        # 5 时段云端取样实测 0.00%~3.51%，与「ETF 因子历史未回填（=1.0）vs 最新
-        # 3.0~6.0」的 132 只 ETF 集合完全对应）。
-        # 归一：乘上适配器随行附带的**还原乘数** adj_latest/adj_i（见
-        # mcp_adapter._UNIT_CHECK_FACTOR_COL），把 raw close 折算回云端交易口径。
-        # **行内无该列 ⇒ 逐行等同旧行为**（非 MCP 还原表零影响）。
-        # 不使用 close_front 替代 close（该方案会掩盖上游 qfq→raw 锚误差，
-        # 已由既往定谳否决，见 docs/strategy_toolbox.md）。
         close_unit = schema["columns"].get("close", {}).get("unit", "")
         ratio_lo, ratio_hi = 0.5, 2.0
         if close_unit != "元":
@@ -237,29 +215,15 @@ class PreIngestValidator:
                 logger.debug(f"[Validator] {table}: 跳过 UnitCheck（close.unit='{close_unit}'，非'元'口径）")
         elif all(c in df.columns for c in ["amount", "close", "volume"]):
             amt = pd.to_numeric(df["amount"], errors="coerce")
-            # UnitCheck validates the canonical OHLCV/amount unit contract and must use
-            # the same price basis as amount/volume. A derived adjusted column cannot
-            # substitute for the invariant; the caller supplies the exact per-row
-            # qfq-to-raw factor ratio instead (see _UNIT_CHECK_FACTOR_COL).
+            # UnitCheck validates the canonical raw OHLCV/amount unit contract and must use
+            # raw close. A derived adjusted column cannot substitute for this invariant; doing so
+            # masks upstream qfq-to-raw anchor errors and expands false rejection.
             cls = pd.to_numeric(df["close"], errors="coerce")
             vol = pd.to_numeric(df["volume"], errors="coerce")
             valid = (amt > 0) & (cls > 0) & (vol > 0)
-            # 客户反馈包 2026-09-23 问题3：factor_unusable 表示「行内**带**了归一
-            # 因子列，但该值非有限/非正」——属异常输入，必须判失败而不是放行
-            # （放行会让非法行静默进主库）。该列**完全缺失**时 factor_unusable 恒
-            # False ⇒ 逐行等同旧行为（非 MCP 还原表零影响）。
-            factor = None
-            factor_unusable = np.zeros(n, dtype=bool)
-            if _UNIT_CHECK_FACTOR_COL in df.columns:
-                factor = pd.to_numeric(df[_UNIT_CHECK_FACTOR_COL], errors="coerce")
-                factor_unusable = ~(np.isfinite(factor) & (factor > 0))
-                factor_unusable = factor_unusable.to_numpy(dtype=bool)
-                factor = factor.where(~factor_unusable, other=np.nan)
             with np.errstate(divide="ignore", invalid="ignore"):
                 ratio = (amt / (cls * vol)).where(valid, other=np.nan)
-                if factor is not None:
-                    ratio = (ratio * factor).where(valid, other=np.nan)
-            bad = factor_unusable | (valid & ~ratio.between(ratio_lo, ratio_hi))
+            bad = valid & ~ratio.between(ratio_lo, ratio_hi)
             # 用 round 后的 ratio 值作为错误值（匹配旧行为 round(ratio, 4)）
             rounded = ratio.round(4)
             reject_mask_batch("UnitCheck", "amount/(close*volume)_ratio", bad.to_numpy(), rounded)

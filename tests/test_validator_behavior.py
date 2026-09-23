@@ -177,120 +177,68 @@ def test_perf_minute_30k(validator):
 
 
 # ===========================================================================
-# 客户反馈包 2026-09-23 问题3：UnitCheck 判据归一（方案 a）回归钉
+# 客户反馈包 2026-09-23 问题3：**「朴素归一」路径证伪**回归钉
 # ---------------------------------------------------------------------------
-# 机理：amount/volume 是不复权量，而 close 经 MCP 线1「qfq→raw 还原」后是 raw；
-# 二者不同基准 ⇒ 原判据在还原表上恒 = adj_latest/adj_i，凡该比值 ∉ [0.5,2.0]
-# 的行被系统性误拒（客户 etf_minutes 2026 全年 1.4985% = 932,382 行）。
-# 归一：乘上适配器随行附带的 adj_i/adj_latest（列 _UNIT_CHECK_FACTOR_COL）。
+# 结论（2026-09-23 云端只读实测 + 步骤4 验收反证；T3 实现已整体回退）：
+#   云端 etf_minutes 的 close **本身就是可成交价口径**（与 amount/vol 同基准），
+#   不需要任何复权归一。UnitCheck 的拒绝是真阳性——数据/因子本身矛盾。
+#
+# 实测证据（三项独立取样，见 docs/mcp-pull-four-issues-fix-design.md §八）：
+#   ① close/(amount/vol) ≈ 1 的行占比：2025-06 84.40% / 2026-01 92.03% /
+#      2026-09 99.94%（close 已是可成交价）
+#   ② 单码日内实证（159388.SZ 2025-06-03）：close/close_2159 = 0.376/0.9404
+#      = 0.3998 = adj_i/adj_latest(1/2.5011) —— 同日内恒定比例，证明 close 是
+#      「已复权到最新锚」的可成交价，而非需再乘倍数的 qfq
+#   ③ 归一实现前后的交叉表（旧拒 → 新拒）：2025-06 4575→7173 ；
+#      2026-01 6789→7527 ；2026-09 0→0。A 类「归一消除的误拒」=3427，
+#      D 类「归一后新增拒」=6763 ⇒ **净增拒**，修复方向被证伪，实现整体回退。
+#
+# 本测试的作用：把该结论固化为可复现判据，防止后人再次以相同思路「修」UnitCheck。
 # ===========================================================================
 
-def _qfq_restored_minute_df(n=200, factor_ratio=3.0):
-    """构造「云端 qfq → 客户端还原 raw」之后的分钟数据（三步保真）。
+# 云端实测：2026-01-05 窗，159327.SZ 一分钟 bar（trade_time 10:03:00）
+#   open/high/low/close = 0.213/0.214/0.213/0.214，vol = 550300，
+#   amount = 1056648.8，adj_factor = 1.0
+# 该行被 UnitCheck 判拒，属**真阳性**：amount/(close×vol) ≈ 8.97，
+# 与「手/股 ×100」「千元/元 ×1000」等已知单位错配倍率均不吻合。
+_CLOUD_MINUTE_BAR = {
+    "close": 0.214, "volume": 550300.0, "amount": 1056648.8,
+    "adj_factor": 1.0, "adj_latest": 3.0,
+}
 
-    factor_ratio = **还原乘数** adj_latest / adj_i（例如 adj_latest=3.0 / adj_i=1.0），
-    即 mcp_adapter 随行附带的 __qs_unit_factor_ratio__ 语义。
-    真实链条（实测：云端 qfq_close ≡ amount/volume，恒等比值 1.0）：
-        ① 基表 close 取作**云端 qfq 价**（未复权、可成交口径）
-        ② amount = qfq_close × volume      （金额/成交量在复权下不变）
-        ③ raw_close = qfq_close × factor_ratio
-           （客户端还原：raw = qfq × adj_latest/adj_i）
-           价格谱系（OHLC）同步 × factor_ratio，保持 OHLC 自洽
-    ⇒ 还原后 amount/(raw_close×volume) = 1/factor_ratio ∉ [0.5,2.0]（旧行为误拒），
-      乘 factor_ratio 归一后 = 1.0（应放行）。
+
+def test_unitchk_rejection_on_cloud_bar_is_true_positive_not_anchor_artifact(validator):
+    """该云端 bar 的 UnitCheck 拒绝在「归一」前后都成立 ⇒ 归一救不了它。"""
+    b = _CLOUD_MINUTE_BAR
+    base_ratio = b["amount"] / (b["close"] * b["volume"])
+    normalized = base_ratio * (b["adj_latest"] / b["adj_factor"])
+    assert base_ratio > 2.0, f"实测 base ratio={base_ratio:.4f} 应越界"
+    assert normalized > 2.0, (
+        f"归一后 ratio={normalized:.4f} 仍越界 —— 归一无法消除该拒绝")
+
+    df = _base_minute_df(3)
+    df.loc[1, "close"] = b["close"]
+    df.loc[1, "volume"] = b["volume"]
+    df.loc[1, "amount"] = b["amount"]
+    res = validator.validate(df, "stock_minutes", "b", "mcp", expected_freq="1min")
+    flat = {r for rs in res.rejected_rules for r in rs}
+    assert "UnitCheck" in flat, "该行必须被判拒（真阳性守护）"
+
+
+def test_unitchk_must_not_be_normalized_by_adjustment_factor(validator):
+    """守护：UnitCheck 判据**不得**乘复权因子（close 已是可成交价口径）。
+
+    实测量：close/(amount/vol) ≈ 1 的行占比 84.40%~99.94%；对绝大多数行乘因子
+    会把 ratio 推离 1.0（净增误拒 6763 行 vs 消除 3427 行）。
     """
-    df = _base_minute_df(n)
-    qfq_close = df["close"].astype(float)          # ① 云端 qfq 价
-    df["amount"] = (qfq_close * df["volume"]).round(2)   # ② 金额按 qfq 价计
-    for col in ("open", "high", "low", "close"):         # ③ 还原为 raw
-        df[col] = (df[col].astype(float) * factor_ratio).round(3)
-    df["close"] = (qfq_close * factor_ratio).round(3)    # 与 amount 严格同源
-    if "pre_close" in df.columns:
-        df["pre_close"] = (df["pre_close"].astype(float) * factor_ratio).round(3)
-    return df, factor_ratio
-
-
-def test_unit_check_false_positive_removed_with_factor_ratio(validator):
-    """**假阳性消除**：行内带因子比 ⇒ 还原表合法行不再被误拒。"""
-    from quantstudio.pipeline.validator import _UNIT_CHECK_FACTOR_COL
-    df, fr = _qfq_restored_minute_df(200)
-    # 未附因子比列 → 旧行为：全部被 UnitCheck 误拒
-    res_old = validator.validate(df.copy(), "stock_minutes", "b", "mcp",
-                                 expected_freq="1min")
-    flat_old = {r for rs in _fingerprint(res_old)["rejected_rule_sets"] for r in rs}
-    assert "UnitCheck" in flat_old, "无因子比列时应维持旧行为（回归钉）"
-
-    # 附因子比列 → 归一后全部通过
-    df[_UNIT_CHECK_FACTOR_COL] = fr
-    res_new = validator.validate(df, "stock_minutes", "b", "mcp", expected_freq="1min")
-    fp_new = _fingerprint(res_new)
-    assert fp_new["rejected"] == 0, fp_new
-    assert fp_new["passed"] == 200, fp_new
-
-
-def test_unit_check_true_positive_still_caught_with_factor_ratio(validator):
-    """**真阳性保留**：单位真错（手 vs 股 ×100）+ 正确因子比 ⇒ 仍被拦。
-
-    这是方案 a 相对「跳过检查」的关键差异——归一不削弱真阳性能力。
-    """
-    from quantstudio.pipeline.validator import _UNIT_CHECK_FACTOR_COL
-    df, fr = _qfq_restored_minute_df(50)
-    df[_UNIT_CHECK_FACTOR_COL] = fr
-    # 注入真实单位错：volume 少 ×100（= 手单位未换算）⇒ 归一后比值仍 ≈100
-    df["volume"] = df["volume"] / 100.0
+    df = _base_minute_df(50)
     res = validator.validate(df, "stock_minutes", "b", "mcp", expected_freq="1min")
-    fp = _fingerprint(res)
-    flat = {r for rs in fp["rejected_rule_sets"] for r in rs}
-    assert "UnitCheck" in flat, fp
-    assert fp["passed"] == 0, fp
+    assert len(res.rejected_rows) == 0, "干净数据（close 与 amount/vol 同基准）必须通过"
 
+    # adj_factor 列存在本身不得改变 UnitCheck 判定（判据与复权无关）
+    df2 = df.copy()
+    df2["adj_factor"] = 3.0
+    res2 = validator.validate(df2, "stock_minutes", "b", "mcp", expected_freq="1min")
+    assert len(res2.rejected_rows) == 0, (
+        "存在 adj_factor 列不得改变 UnitCheck 判定")
 
-def test_unit_check_factor_ratio_out_of_range_still_rejects(validator):
-    """因子比本身无法救回的真异常（金额错 4 倍）仍被拦。"""
-    from quantstudio.pipeline.validator import _UNIT_CHECK_FACTOR_COL
-    df, fr = _qfq_restored_minute_df(20)
-    df[_UNIT_CHECK_FACTOR_COL] = fr
-    df.loc[3, "amount"] = df.loc[3, "amount"] * 4.0   # 归一后比值 ≈4 → 越界
-    res = validator.validate(df, "stock_minutes", "b", "mcp", expected_freq="1min")
-    fp = _fingerprint(res)
-    flat = {r for rs in fp["rejected_rule_sets"] for r in rs}
-    assert "UnitCheck" in flat, fp
-    assert fp["rejected"] == 1, fp
-
-
-def test_unit_check_no_factor_column_identical_to_legacy(validator):
-    """**无因子比列 ⇒ 逐行等同旧行为**（非 MCP 还原表零影响，回归钉）。"""
-    from quantstudio.pipeline.validator import _UNIT_CHECK_FACTOR_COL
-    df = _base_minute_df(100)
-    assert _UNIT_CHECK_FACTOR_COL not in df.columns
-    res = validator.validate(df, "stock_minutes", "b", "xtquant", expected_freq="1min")
-    fp = _fingerprint(res)
-    assert fp["passed"] == 100 and fp["rejected"] == 0, fp
-
-
-def test_unit_check_factor_ratio_column_passthrough_documented(validator):
-    """归一辅助列经 validator 原样传递（不静默改写列集）——锁定当前契约。
-
-    该列仅用于 UnitCheck 归一；写库侧只落 schema 声明列（writers 按 schema 取列），
-    故不会污染 DuckDB。若未来改为在 validator 内剔除，请同步更新本断言与
-    `_restore_to_raw` 的 docstring。
-    """
-    from quantstudio.pipeline.validator import _UNIT_CHECK_FACTOR_COL
-    df, fr = _qfq_restored_minute_df(30)
-    df[_UNIT_CHECK_FACTOR_COL] = fr
-    res = validator.validate(df, "stock_minutes", "b", "mcp", expected_freq="1min")
-    assert len(res.passed_df) == 30
-    assert _UNIT_CHECK_FACTOR_COL in res.passed_df.columns
-
-
-def test_unit_check_nonfinite_factor_ratio_degrades_to_legacy(validator):
-    """因子比非有限/非正 ⇒ 该行按旧行为判定（不静默放过）。"""
-    from quantstudio.pipeline.validator import _UNIT_CHECK_FACTOR_COL
-    df, fr = _qfq_restored_minute_df(20)
-    df[_UNIT_CHECK_FACTOR_COL] = np.nan      # 归一信息缺失
-    res = validator.validate(df, "stock_minutes", "b", "mcp", expected_freq="1min")
-    fp = _fingerprint(res)
-    # 旧行为下这 20 行比值 = 1/3 ∉ [0.5,2.0] ⇒ 全部被 UnitCheck 拒
-    assert fp["rejected"] == 20, fp
-    flat = {r for rs in fp["rejected_rule_sets"] for r in rs}
-    assert "UnitCheck" in flat, fp
