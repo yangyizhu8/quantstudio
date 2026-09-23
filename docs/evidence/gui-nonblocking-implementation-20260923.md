@@ -24,10 +24,10 @@
 | **V2** | 超时降级文案出现 + **降级后自动恢复** + 数据不损坏 | `tests/test_gui_db_helper_deadline.py` **5 passed**：C1 超时快速降级（≤deadline）/ C2 下次调用自动收割结果 / C3 真故障仍上抛 / C4 不新起线程 / C5 成功路径透传；UI 侧每 30 s 自动重试 + 提示 + 手动「刷新」入口 | **PASS** |
 | **V3** | daemon 收尾后 WAL 体积上限 | `daemon.py ResidentCollector.close()`（每轮采集后调用）追加安全检查点；`tests/test_db_checkpoint.py` **5 passed**：无 WAL 空操作 / 副本库真实收敛归零 / 超时放弃 / 失败不抛 | **PASS**（机制+副本实证） |
 | **V4** | WAL 巡检告警 | `scripts/wal_health_check.py` 实跑：只巡 → 生产 WAL 3.0 MB / 阈值 268.4 MB → 正常（exit 0）；`--checkpoint` 在 daemon 运行时**拒绝**（exit 2，理由「status=running 且 pid=40096 存活」）→ **防自卡死守卫生效** | **PASS** |
-| **V5** | GUI 回归全绿 | GUI 相关 10 文件 **87 passed**（含修复 1 处因延后加载引起的既有用例时序回归：改用「拆分」——JSON 读取留构造期、DB 查询延后） | **PASS**（GUI 面） |
+| **V5** | GUI 回归全绿 | ① GUI 相关 10 文件 **87 passed**（含修复 1 处因延后加载引起的既有用例时序回归：改用「拆分」——JSON 读取留构造期、DB 查询延后）；② **更大范围回归 312 passed / 22 文件 / 127.87 s，零失败零跳过**（daemon 族 4 + 写入器 2 + 管线族 6 + 基线族 3 + 写锁/批一 3 + 本批新增 3）——覆盖 `daemon.py` 收尾路径（新增检查点调用）与新增脚本的管线面 | **PASS** |
 | **V6** | 证据入 `docs/evidence/` | 本文件 + `gui-startup-wal-checkpoint-baseline-20260923.md` + `duckdb-version-environment-map-20260923.md` | **PASS** |
 | **V7** | 版本闸：以 `venv_miniQMT`（1.5.3）**实际触发**拒启（验证器过≠闸过） | 真实进程触发三条受支持入口**全部拒启（exit 3）**：① `venv_miniQMT\python.exe main_gui.py` ② `venv_miniQMT\python.exe -m quantstudio.pipeline.daemon …` ③ `venv_miniQMT\python.exe -c "from quantstudio.pipeline.daemon import main; main()"`（GUI 拉起路径等价形态）；逃生阀 `QS_DUCKDB_VERSION_GATE=0` 放行且留醒目警告；合规解释器（1.4.5）`-m --help` 正常。机制用例 `tests/test_duckdb_version_gate.py` **8 passed** | **PASS** |
-| **V8** | 主 venv `venv_quant_studio`（1.5.4）迁移验证 | **待执行**（运维动作：降级该 venv 或改用合规解释器；闸门落地后未迁移即被拒启——预期行为） | **PENDING** |
+| **V8** | 主 venv `venv_quant_studio`（1.5.4）迁移验证 | **降级完成**：降级前快查无包硬依赖 `duckdb>1.4`（仅 `quantstudio-0.1.0` 声明 `>=0.9.0`）+ `pip check` 无破损 → 执行 `pip install "duckdb>=1.4.5,<1.5"` → **Successfully installed duckdb-1.4.5**；闸门放行三证：① `-m daemon --help` 正常 ② activate 路径 `gate PASSED` ③ **GUI 已越过闸门**（失败点在闸门之后的 `qfluentwidgets` 导入） | **PASS**（含附带发现，见 §3.4） |
 
 ## 3. 实施期发现与更正（如实记录）
 
@@ -41,6 +41,20 @@
 3. **一处测试时序回归（已修）**：笔1 初版把 `_load_tasks` 整体延后，导致既有用例
    `test_gui_task_stop::test_v3_cancelled_task_done_marks_stopped` 读 `tab.tasks` 为空而失败；
    改为**拆分**（JSON 读取留构造期 → `self.tasks` 契约不变；仅 DB 查询延后）后 87 passed。
+4. **V8 附带发现（既有环境缺口，非本批引入）**：`_runtime\venv_quant_studio`（官方
+   `activate_venv.bat` 指向的「主 venv」）**缺 GUI/运维依赖**——`qfluentwidgets` 与 `psutil`
+   均 `ModuleNotFoundError`（PyQt6、pandas 正常）。影响两面：① 该 venv **本就无法运行 GUI**，
+   `activate_venv.bat` 帮助文本中的 `python main_gui.py` 属**失实**（实际 GUI 一直用 Python311 1.4.5）；
+   ② **`psutil` 缺失**会使批次一的写锁自愈走 fail-closed（不回收）——若按官方脚本用该 venv 跑
+   daemon，自愈能力实际不生效。**待裁定**：补装依赖 / 改口径为 Python311 并修正帮助文本 / 两者都做。
+
+## 3.5 黄金对比适用性（如实说明，避免以不适用项充数）
+
+本批改动面 = GUI 启动路径、`db_helper` 查询包装、daemon 收尾检查点、独立巡检脚本、版本闸；
+**未触及回测引擎、策略逻辑、注入 API、数据语义**（改动文件清单可核）。
+故 **回测黄金结果对比不适用**；适用证据为：① 更大范围回归 **312 passed**（含 daemon/写入器/管线/
+基线族）；② 检查点只影响 WAL 文件，**不改表结构与数据**（`db_checkpoint` 仅执行 `CHECKPOINT`，
+用例 C3 在副本库上验证收敛）；③ 本批新增用例 18 条全绿。
 
 ## 4. 待办
 
