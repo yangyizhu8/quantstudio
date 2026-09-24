@@ -1,7 +1,7 @@
 # 通知件 N-20260924-02（jabberwock）：取数周期 IndexError 停摆修复
 
-- 状态：**草稿（待推送落地后下发）**——按裁定**不先于推送**：文中 `git pull origin main` 必须指向**已含修复**的远程
-- 出件时需填入：**推送后 HEAD SHA**（下方 `【SHA】` 占位）与**下发日期**
+- 状态：**已出件（2026-09-24）**——推送已落地（远程 HEAD = **`1ae083f`**，三方核对 local = origin/main = 双远程一致）
+- 下发：**用户转发**（客户确认通道 = 用户转发；回执登记见 `docs/handoff/customer-notice-registry.md`）
 - 对应客户：**jabberwock**（部署 `D:\hasym\PycharmProjects\QuantStudio`）
 - 缺陷链与修复：`docs/jabberwock-ckey-empty-shards-fix-design.md`（快审通过 `c44c81f`）
 
@@ -23,7 +23,7 @@
 ```powershell
 cd D:\hasym\PycharmProjects\QuantStudio
 git pull origin main
-git log --oneline -1        # 应显示【SHA】（含本次修复）
+git log --oneline -1        # 应显示 1ae083f 或更新（含本次修复）
 # 然后重新启动采集程序，观察一个完整采集周期
 ```
 

@@ -34,8 +34,8 @@
 
 | 案 | 结论 | 证据 |
 |---|---|---|
-| **jabberwock 缺陷（ckey 空 shard → IndexError）** | **实施完成，快审通过**（`c44c81f`/`e1a828b`）：取证先复现（`mcp_adapter.py:1166` IndexError）→ 两处最小守卫（空 shard 降级 + 重取空 `continue` 且不写 manifest）→ 复现用例 3 passed + 叠加回归 49 passed；**通知件 N-20260924-02 草稿就绪，待推送落地后下发**（裁定：不先于推送） | `docs/jabberwock-ckey-empty-shards-fix-design.md`、`docs/handoff/notice-to-jabberwock-20260924.md` |
-| **错误一 T3（revision_alert outbox）** | **实施完成并过验收**（`bcd6268`）：V1–V6 已验（V1 = outbox 0→非0）+ A/B 归因证实 8 例基线红；**V9 常令：明晨排定窗开启即开工（窗口流程触发=开工信号，不必逐次请示）**；**V7/V8 下轮真实采集后只读取样** | `docs/evidence/error1-t3-revision-alert-implementation-20260924.md` |
+| **jabberwock 缺陷（ckey 空 shard → IndexError）** | **已闭环**：快审通过（`c44c81f`）→ **推送落地（远程 HEAD `1ae083f`，三方一致、在途 0）** → **通知件 N-20260924-02 已出件下发（用户转发，2026-09-24，目标版本 `1ae083f`）**，待客户回报（三路由） | `docs/jabberwock-ckey-empty-shards-fix-design.md`、`docs/handoff/notice-to-jabberwock-20260924.md` |
+| **错误一 T3（revision_alert outbox）** | **实施完成并过验收 + 已推送**（`bcd6268`）：V1–V6 已验（V1 = outbox 0→非0）+ A/B 归因证实 8 例基线红；**V9 常令：明晨排定窗开启即开工**；**V7/V8 下轮真实采集后只读取样**；**G4 判据（部署后）：本机换代际后 `qfq_factor_revision_alert` 首笔写入 = outbox 通道首次实弹** | `docs/evidence/error1-t3-revision-alert-implementation-20260924.md` |
 | **CASE-007 GUI 启动卡死**（WAL 残留 × 构造期同步打开） | **已闭环**：维护 CHECKPOINT（WAL 2.33GB→0；回放 1338.4s / 检查点 7.3s）+ 六笔修复 + V1a–V8 全 PASS（V1a 2.45s；回归 312 passed） | 卷宗 `docs/case007-gui-startup-hang-wal-replay-incident.md` |
 | **CASE-008 duckdb 混版统一**（A 案 + 版本闸 + V8） | **已闭环**：定谳「钉版从未覆盖实际运行环境」；版本闸三入口真实拒启 exit 3；V8 主 venv 降级 1.4.5 + 补装 + GUI 冒烟 1.76s + psutil 自愈 PASS | 卷宗 `docs/case008-duckdb-version-mixing-unification-incident.md` |
 | CASE-005 写锁残留停更（三客户） | 已闭环（用户裁定 2026-09-18） | `docs/case005-write-lock-stale-selfheal-incident.md` |
