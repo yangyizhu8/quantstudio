@@ -156,21 +156,76 @@ def test_mixed_valid_and_invalid_only_rejects_invalid():
 # ========== 管线唯一性：所有入库路径过 validator ==========
 
 def test_validator_is_single_chokepoint():
-    """管线唯一性：所有校验路径汇聚到唯一写入 chokepoint。"""
-    daemon_src = (ROOT / "quantstudio" / "pipeline" / "daemon.py").read_text(encoding="utf-8")
+    """管线唯一性：canonical 入库路径一律过 validator，写入仅两合法通道。
+
+    本用例口径（P2 定谳，2026-09-23）——**语义通道口径**，与权威契约一致：
+      · canonical 路径：`validator.validate` ≥4 处 + `self._stamp_and_write(` 调用 ≥4 处
+        （所有校验路径汇聚到 _stamp_and_write → validator 为唯一 chokepoint）；
+      · 写入落点：`writer.write` **恰 2 处**，且分别位于两合法通道
+        （passthrough 上下文 / `_stamp_and_write` 方法体内）——**禁止第三处裸写入**。
+
+    ⚠️ 口径变更说明（旧断言已过期，非契约漂移）：
+      原断言为 `len(write_lines) == 1`（单一写入入口假设）。该假设自
+      `d960d33`（2026-08-03，passthrough 基础设施引入）起失效——passthrough 通道新增
+      第二处合法 `writer.write`（服务 69 张非 canonical 表：全量覆盖、不推水位、
+      不走 aligner/validator，与 canonical 表语义不同，**不可收口**）。
+      权威契约 = `tests/test_writer_channel_contract.py`（`d2b0913`，2026-09-06）：
+      「应恰 2 处（stamp+passthrough）+ stamp 体内必含 QFQ 防线 + passthrough 不推水位」。
+      本条曾因硬编码 == 1 而长期红（约 7 周）⇒ 实质防护缺口（真出现第三处裸写入亦无信号）。
+      现对齐权威契约，并以该测试为**单一规格引用**（避免两处规格再次漂移）。
+
+    口径标注（三元）：容差＝无（精确计数）；样本口径＝**AST 语义调用点**
+    （`self.writer.write(...)`，排除注释/文档串中的同名文本——与 grep 行口径不同，
+    grep 计数会含同方法内多分支引用行）；子集说明＝仅 daemon.py。
+    """
+    import ast
+
+    daemon_path = ROOT / "quantstudio" / "pipeline" / "daemon.py"
+    daemon_src = daemon_path.read_text(encoding="utf-8")
     lines = daemon_src.split('\n')
-    validate_lines = [i for i, l in enumerate(daemon_src.split('\n'), 1)
+    validate_lines = [i for i, l in enumerate(lines, 1)
                       if 'validator.validate' in l and 'def ' not in l]
     assert len(validate_lines) >= 4, f"应有 ≥4 处 validator.validate，实际 {len(validate_lines)}"
     stamp_calls = [i for i, line in enumerate(lines, 1)
                    if 'self._stamp_and_write(' in line and 'def ' not in line]
     assert len(stamp_calls) >= 4, f"应有 ≥4 处 _stamp_and_write 调用，实际 {len(stamp_calls)}"
-    write_lines = [i for i, line in enumerate(lines, 1)
-                   if 'writer.write' in line and 'def ' not in line]
-    assert len(write_lines) == 1, f"writer.write 应仅存在于统一入口，实际 {len(write_lines)}"
+
+    # --- 写入落点：AST 语义口径（排除注释/文档串中的同名文本）---
+    tree = ast.parse(daemon_src)
+    write_sites = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        if (isinstance(f, ast.Attribute) and f.attr == "write"
+                and isinstance(f.value, ast.Attribute) and f.value.attr == "writer"):
+            write_sites.append(node.lineno)
+    assert len(write_sites) == 2, (
+        f"writer.write 语义调用点应恰 2 处（stamp + passthrough），实际 {len(write_sites)}: "
+        f"{write_sites} —— 出现第 3 处裸写入即通道违规（绕过 QFQ 自检/审计/契约），"
+        f"请改走 _stamp_and_write 或 passthrough 通道。"
+        f"权威契约见 tests/test_writer_channel_contract.py")
+    assert "passthrough=True" in daemon_src, "passthrough 通道锚丢失（应含 passthrough=True）"
+
+    # --- 通道归属：两处分别落在 passthrough 上下文与 _stamp_and_write 方法体内 ---
     stamp_def = next(i for i, line in enumerate(lines, 1)
                      if 'def _stamp_and_write(' in line)
-    assert write_lines[0] > stamp_def, "writer.write 必须位于 _stamp_and_write 内"
+    stamp_ends = [n.end_lineno for n in ast.walk(tree)
+                  if isinstance(n, ast.FunctionDef) and n.name == "_stamp_and_write"]
+    stamp_end = stamp_ends[0]
+    in_stamp = [ln for ln in write_sites if stamp_def < ln <= stamp_end]
+    assert len(in_stamp) == 1, (
+        f"_stamp_and_write 方法体内应恰 1 处 writer.write，实际 {len(in_stamp)}"
+        f"（定义 L{stamp_def}-L{stamp_end}）")
+    assert "_qfq_invariant_after_align" in daemon_src, \
+        "stamp 通道 QFQ 自检防线锚丢失（_qfq_invariant_after_align）"
+    pt_sites = [ln for ln in write_sites if ln not in in_stamp]
+    assert len(pt_sites) == 1, f"passthrough 通道应恰 1 处 writer.write，实际 {len(pt_sites)}"
+    pt_ln = pt_sites[0]
+    pt_ctx = "\n".join(lines[max(0, pt_ln - 12): pt_ln + 3])
+    assert "passthrough=True" in pt_ctx, (
+        f"非 stamp 的写入落点（L{pt_ln}）必须位于 passthrough 通道"
+        f"（邻近 ±12 行应见 passthrough=True）")
 
 
 # ========== 规则 11：PositiveNumeric（负值/0 脏数据）==========
