@@ -1,0 +1,47 @@
+{
+  "_note": "quality_orchestrator v0.2 的 6 表行数/水位巡检基线（R3：基线对比，非拍阈值）。阈值本体见 CONFIG（dates_min 取自 verify_v2_cloud_parity.py 的 HIGH_RISK_DATES=3；row_delta_tol_pct / watermark_max_lag_days 为对比容差，可环境变量覆写）。6 表**异构**：可用表记实测三件（行数/日期覆盖/水位），不可用表明记 unavailable（**不假设 schema、不编造阈值**）。",
+  "generated_at": "2026-09-24T11:04:46.326044",
+  "source": "live DuckDB read-only（按各表声明的 db/time_col）",
+  "high_risk_ref": "scripts/verify_v2_cloud_parity.py HIGH_RISK + HIGH_RISK_DATES=3（2026-09-12 口径）",
+  "tables": {
+    "cyq_chips": {
+      "availability": "unavailable",
+      "reason": "本机不在主库（trading-battle-back 库）"
+    },
+    "ths_daily": {
+      "availability": "unavailable",
+      "reason": "本机不在主库；schema 未探测（不假设）"
+    },
+    "ths_hot": {
+      "availability": "available",
+      "db": "data/quantstudio.db",
+      "time_col": "trade_date",
+      "row_count": 335752,
+      "n_dates": 732,
+      "max_watermark": "2026-09-21T00:00:00",
+      "count_sec": 0.67
+    },
+    "sw_daily": {
+      "availability": "available",
+      "db": "data/quantstudio.db",
+      "time_col": "trade_date",
+      "row_count": 271779,
+      "n_dates": 660,
+      "max_watermark": "2026-09-21T00:00:00",
+      "count_sec": 0.25
+    },
+    "stk_factor_pro": {
+      "availability": "unavailable",
+      "reason": "本机不在主库；schema 未探测（不假设）"
+    },
+    "index_constituents": {
+      "availability": "available",
+      "db": "data/quantstudio.db",
+      "time_col": "time",
+      "row_count": 255836,
+      "n_dates": 133,
+      "max_watermark": "1788105600000",
+      "count_sec": 0.24
+    }
+  }
+}
