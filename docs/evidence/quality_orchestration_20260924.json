@@ -1,0 +1,171 @@
+{
+  "generated_at": "2026-09-24T11:20:34.440040",
+  "orchestrator_version": "v0.2",
+  "verdict": "FAIL",
+  "total_rules": 13,
+  "implemented_rules": 11,
+  "detected": 2,
+  "errors": 5,
+  "not_implemented": 2,
+  "error_summary": [
+    {
+      "rule": "rowcount_watermark.cyq_chips",
+      "error_kind": "basis_unavailable",
+      "details": "cyq_chips 未声明可巡检库/时间列（本机不在主库（trading-battle-back 库））—— 不假设 schema，不静默"
+    },
+    {
+      "rule": "rowcount_watermark.ths_daily",
+      "error_kind": "basis_unavailable",
+      "details": "ths_daily 未声明可巡检库/时间列（本机不在主库；schema 未探测（不假设））—— 不假设 schema，不静默"
+    },
+    {
+      "rule": "rowcount_watermark.stk_factor_pro",
+      "error_kind": "basis_unavailable",
+      "details": "stk_factor_pro 未声明可巡检库/时间列（本机不在主库；schema 未探测（不假设））—— 不假设 schema，不静默"
+    },
+    {
+      "rule": "timestamp_normalize",
+      "error_kind": "not_implemented",
+      "details": "v0.1 未实现检查分支（仅声明）；修复排期见方案 T3/T4"
+    },
+    {
+      "rule": "minute_front_rewrite",
+      "error_kind": "not_implemented",
+      "details": "v0.1 未实现检查分支（仅声明）"
+    }
+  ],
+  "details": [
+    {
+      "rule": "gap_heal",
+      "level": "L1",
+      "description": "数据缺口自愈（OPEN→HEALED→云补推）",
+      "detected": true,
+      "status": "detected",
+      "error_kind": null,
+      "details": "存在 OPEN 缺口 4 条",
+      "timestamp": "2026-09-24T11:19:51.768231"
+    },
+    {
+      "rule": "eps_backfill",
+      "level": "L1",
+      "description": "EPS跨表回补（income_statement→fin_indicator）",
+      "detected": false,
+      "status": "ok",
+      "error_kind": null,
+      "details": "eps gap=0",
+      "timestamp": "2026-09-24T11:19:52.074579",
+      "exit_code": 0
+    },
+    {
+      "rule": "cloud_parity",
+      "level": "L1",
+      "description": "云端对等巡检（水位+残留+行数守恒）",
+      "detected": false,
+      "status": "ok",
+      "error_kind": null,
+      "details": "cloud_parity verdict PASS",
+      "timestamp": "2026-09-24T11:19:53.321347",
+      "exit_code": 0
+    },
+    {
+      "rule": "rowcount_watermark.cyq_chips",
+      "level": "L1",
+      "description": "cyq_chips 行数/水位/日期覆盖巡检（高风险表，≥3 日期）",
+      "detected": false,
+      "status": "error",
+      "error_kind": "basis_unavailable",
+      "details": "cyq_chips 未声明可巡检库/时间列（本机不在主库（trading-battle-back 库））—— 不假设 schema，不静默",
+      "timestamp": "2026-09-24T11:20:31.051154"
+    },
+    {
+      "rule": "rowcount_watermark.ths_daily",
+      "level": "L1",
+      "description": "ths_daily 行数/水位/日期覆盖巡检（高风险表，≥3 日期）",
+      "detected": false,
+      "status": "error",
+      "error_kind": "basis_unavailable",
+      "details": "ths_daily 未声明可巡检库/时间列（本机不在主库；schema 未探测（不假设））—— 不假设 schema，不静默",
+      "timestamp": "2026-09-24T11:20:31.051154"
+    },
+    {
+      "rule": "rowcount_watermark.ths_hot",
+      "level": "L1",
+      "description": "ths_hot 行数/水位/日期覆盖巡检（高风险表，≥3 日期）",
+      "detected": false,
+      "status": "ok",
+      "error_kind": null,
+      "details": "db=quantstudio.db dates=732 max=2026-09-21T00:00:00 lag=3d rows=335752 base=335752 Δ=0.00%",
+      "timestamp": "2026-09-24T11:20:31.051154"
+    },
+    {
+      "rule": "rowcount_watermark.sw_daily",
+      "level": "L1",
+      "description": "sw_daily 行数/水位/日期覆盖巡检（高风险表，≥3 日期）",
+      "detected": false,
+      "status": "ok",
+      "error_kind": null,
+      "details": "db=quantstudio.db dates=660 max=2026-09-21T00:00:00 lag=3d rows=271779 base=271779 Δ=0.00%",
+      "timestamp": "2026-09-24T11:20:32.886378"
+    },
+    {
+      "rule": "rowcount_watermark.stk_factor_pro",
+      "level": "L1",
+      "description": "stk_factor_pro 行数/水位/日期覆盖巡检（高风险表，≥3 日期）",
+      "detected": false,
+      "status": "error",
+      "error_kind": "basis_unavailable",
+      "details": "stk_factor_pro 未声明可巡检库/时间列（本机不在主库；schema 未探测（不假设））—— 不假设 schema，不静默",
+      "timestamp": "2026-09-24T11:20:33.683265"
+    },
+    {
+      "rule": "rowcount_watermark.index_constituents",
+      "level": "L1",
+      "description": "index_constituents 行数/水位/日期覆盖巡检（高风险表，≥3 日期）",
+      "detected": true,
+      "status": "detected",
+      "error_kind": null,
+      "details": "db=quantstudio.db dates=133 max=1788105600000 lag=24d rows=255836 base=255836 Δ=0.00% | 水位滞后 24d > 5d",
+      "timestamp": "2026-09-24T11:20:33.683265"
+    },
+    {
+      "rule": "timestamp_normalize",
+      "level": "L2",
+      "description": "时刻戳归一（8:00→0:00 CST）",
+      "detected": false,
+      "status": "error",
+      "error_kind": "not_implemented",
+      "details": "v0.1 未实现检查分支（仅声明）；修复排期见方案 T3/T4",
+      "timestamp": "2026-09-24T11:20:34.440040"
+    },
+    {
+      "rule": "minute_front_rewrite",
+      "level": "L2",
+      "description": "分钟front除权重写（跳变>10%非限价）",
+      "detected": false,
+      "status": "error",
+      "error_kind": "not_implemented",
+      "details": "v0.1 未实现检查分支（仅声明）",
+      "timestamp": "2026-09-24T11:20:34.440040"
+    },
+    {
+      "rule": "minute_t1_lag",
+      "level": "DETECT",
+      "description": "分钟数据T+1滞后（设计内预期）",
+      "detected": false,
+      "status": "ok",
+      "error_kind": null,
+      "details": "T+1 允许（_prev_trade_day 判据已修正）",
+      "timestamp": "2026-09-24T11:20:34.440040"
+    },
+    {
+      "rule": "wal_false_positive",
+      "level": "DETECT",
+      "description": "WAL确认误报（30s apply延迟）",
+      "detected": false,
+      "status": "ok",
+      "error_kind": null,
+      "details": "#21c 就绪重试已缓解",
+      "timestamp": "2026-09-24T11:20:34.440040"
+    }
+  ]
+}
