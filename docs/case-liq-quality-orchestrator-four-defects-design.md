@@ -203,7 +203,57 @@
 
 ---
 
-## 九、请裁定
+## 九、规则接口预留（v0.2 已具备，供后续规则接入；**本批不重复建设**）
+
+> 用户 2026-09-24 指示：**ST 失配检测入巡检规则库**的建议，与客户专属总运维会话的
+> **F-2 归因**衔接（该会话将做 ST 巡检盲区排查）；本案**只预留规则接口**，
+> **不重复建设 ST 检测实现**。
+
+### 9.1 已落地的接入契约（v0.2 实测可用的扩展面）
+
+| 契约要素 | 现状 | 接入方需要做的 |
+|---|---|---|
+| 规则声明 | `QUALITY_RULES[rule_id]`，字段：`level` / `description` / `detection` / `repair` / `tool` / **`implemented`** / **`threshold`** | 新增一条规则声明，`implemented=False`（或 true 且补分支） |
+| 检查分支 | `run_check()` 内 `if/elif rule_id == ...` | 增一个 `elif` 分支 |
+| 三态返回 | 分支须返回 `_set_ok` / `_set_detected` / **`_set_error(kind, ...)`**（`kind ∈ timeout/not_implemented/basis_unavailable/lock_conflict/tool_error/parse_error/internal_error`） | 统一走这三个 helper |
+| 判定链 | `generate_report`：任一 `error` ⇒ ≥WARN；**L1 error ⇒ FAIL**；`detected` 按 level 汇总 | **无需改**（自动纳入） |
+| 阈值 | `threshold` 可机读字典 + `_source` 标注来源 | 阈值须**附来源或实测推导**（禁拍数） |
+| 覆盖可见性 | 报告分列 `total_rules` / `implemented_rules` / `not_implemented` / `error_summary` | **无需改**；未实现规则自动单列 |
+| CLI | `--list-rules` 输出实现状态与阈值 | **无需改** |
+
+### 9.2 ST 检测接入的预留位（**占位声明，非实现**）
+
+若 F-2 归因判定需要把 ST 失配纳入巡检，按上表新增（建议命名与形态）：
+
+```
+"st_consistency.<table>": {
+    "level": "L1"（或 L2，按修复动作风险定）,
+    "description": "<table> ST 状态与行情/名称变更一致性巡检",
+    "detection": "…（由 F-2 归因给出判据）…",
+    "repair": "…（归因后走对应通道）…",
+    "tool": "…",
+    "implemented": False,          # 接入前先声明为未实现 ⇒ 报告单列，不造成覆盖幻觉
+    "threshold": {"…": "…", "_source": "F-2 归因结论 + 实测推导"},
+}
+```
+
+**约束（避免重复建设与越界）**：
+1. 判据与阈值**由 F-2 归因会话给出**，本案不预设（不猜判据）；
+2. 接入前 `implemented=False` ⇒ 报告如实显示「未实现」，**不得**先声明 implemented=true 而无分支（revert 缺陷③的覆盖幻觉）；
+3. ST 检测若触及数据写入（如修正 ST 标记），按 `level=L2`（需 `--approve`）+ 走空档窗（D4 门禁自动生效）；
+4. 本批**不新增任何 ST 规则**（零实现、零阈值、零判据），仅在上表契约内预留形态。
+
+### 9.3 与客户专属总运维会话的分工
+
+| 角色 | 职责 |
+|---|---|
+| 客户专属总运维会话（F-2 归因） | ST 巡检盲区排查；给出判据与阈值；确认是否入巡检 |
+| 本案（客户运维会话 2） | 提供规则接口契约与三态/阈值/覆盖可见性框架（已完成）；**不实现 ST 检测** |
+| 接入时机 | F-2 归因结论落地后，作为**独立一笔**新增规则（走六步轻量或完整路径，按形态定） |
+
+---
+
+## 十、请裁定
 
 1. **方案是否通过**（六模块）？
 2. **T4 时机/通道的范围**：一期只做「探测 + 拒绝 + 提示」（推荐，改动小、零操作复杂度）／一期即做「自动空档窗对接」（改动大，需与 daemon 排程耦合）？
