@@ -33,6 +33,19 @@ assert len(write_lines) == 1, f"writer.write 应仅存在于统一入口，实�
 | A. **契约漂移** | 「所有写入汇聚唯一 chokepoint」的设计约束被后续 4 处直调破坏（设计意图 vs 实现的漂移） | 查 4 处的引入提交（`git log -L`）与当时是否有意放宽；核 `_stamp_and_write` 与直调 `writer.write` 的语义差（是否绕过 stamp/校验/审计） |
 | B. **期望陈旧** | 用例写于「单入口」时代，之后架构合法演进为 4 个受控入口（断言未同步） | 查用例引入提交与最近一次架构变更记录；核对 4 处是否都在受控路径内（是否均经 validator 前置） |
 
+## 附：双口径说明（2026-09-24 勘注，**结论不变**）
+
+本单 §1 的「4 处」与 P2 定谳的「2 处」是**同一事实的两种口径**，非矛盾：
+
+| 口径 | 计数 | 构成（逐行核对） |
+|---|---|---|
+| **grep 行口径**（本单 §1 实测；亦为该用例**自身断言**的口径） | **4** | **真实调用 2 处**：`:1336 self.writer.write(raw_df, table, batch_id, passthrough=True)`（passthrough 通道）、`:3021 self.writer.write(df, table, batch_id)`（stamp 主通道）；**+ 注释行 2 处**：`:1334`（通道契约声明注释里的 `writer.write` 字样）、`:2993`（说明性注释里的 `writer.write` 字样）——**非调用** |
+| **语义通道口径**（P2 定谳 `docs/p2-stale-assertion-diagnosis-and-fix-design.md` §四；`tests/test_writer_channel_contract.py` 锁定） | **2** | 恰为**两合法通道**：stamp 主通道（`_stamp_and_write`）+ passthrough 通道；契约测试按「**调用点**」收集（`assert len(sites) == 2`，第 3 处裸写入才算违规） |
+
+⇒ **差异来源**：① 行口径**把注释行计入**（`writer.write` 字样出现在契约声明/说明注释中）；② 计数粒度不同（源码行 vs 调用点/通道）。
+⇒ **结论不变**：过期断言 `len(write_lines) == 1` 在两种口径下**均不成立**（4 ≠ 1、2 ≠ 1）→ 该用例**基线即红**、待归因（A 契约漂移 / B 期望陈旧）。
+⇒ 附带结论：该断言**自身也用行口径**（含注释），故其「实际 4」的报告值与本单一致；修断言时须同时纠正口径（改为调用点/通道口径）**或**改为委托 `test_writer_channel_contract.py` 的既有契约，避免同类误计。
+
 ## 4. 关单标准（本单）
 
 - 归因结论**证据确凿**（A 或 B，含引入提交与语义差/受控性核对）；
