@@ -107,3 +107,39 @@
 - **回退**：A/B 单 commit revert 即可（三文件无交织）；ST F-1 回退 = `st_f1_backfill.py --mode restore --backup <备份>`（备份文件 `agent_workspace/st_f1_backup/mismatch_20260925_163425.parquet`（3,539 行）与 `mismatch_20260925_200734.parquet`（553 行））
 - **随批清单（本线）**：`backtest_engine.py`、`providers/duckdb_data_access.py`、`strategies/断板反包策略.py` 三文件 + 本证据件；另有**已独立成笔**的纳管补录 `4c30cf2`（7 策略文件，未推送）
 - **推送纪律**：待总调度统一盘点（巡检 5 笔 + Q2 两笔 + ST F-1 产物）呈批后，一次推送并按 C7 逐笔声明 + QuantStudio-trading 同步门
+
+---
+
+## 八、窗后三项收尾（2026-09-25 追加）
+
+### 8.1 验收脚本口径校准（已闭环）
+- **动因**：原脚本以 `log.count('执行失败')` 计数，而引擎实际文案为 `[Ptrade] handle_data 错误: ...` ⇒ 字符串不匹配造成 161 日窗"三类错误归零"**假绿**（§六·缺陷 3）。
+- **校准**：`agent_workspace/verify_a_calibrated.py` 改为**按日志级别统计**（ERROR 级 record 计数，与文案解耦），不再依赖任何字符串。
+- **小窗校准实测**（2026-06-01→06-05）：级别分布 `INFO 25 / DEBUG 14`（无 WARNING/ERROR）→ **ERROR 级记录数 = 0 ⇒ PASS**。
+- **效力论证**：`_bare` 期错误（`[Ptrade] handle_data 错误`）本就以 ERROR 级记录 ⇒ 新口径按级别计数**必然捕获**该错误类；旧口径漏掉它纯属字符串不匹配。
+- **161 日窗结论**：判据①现由「ERROR=0 口径（小窗校准）+ 成交/持仓强证据（161 日窗）」双重支撑，无需重跑 43 分钟。
+
+### 8.2 防线第 4 口径（作用域敏感定义收集）已闭环并回溯验证
+- **三处根因修正**（7 项假阳性 → 0）：
+  1. load 收集用 `ast.walk(fn)` 会**下钻嵌套函数体**，却以外层函数局部名判定 ⇒ 改为 `own_nodes`（仅自身作用域）；
+  2. 缺**闭包链**支持（嵌套函数引用外层局部名合法）⇒ 加词法外层传递 `visit(fn, chain | loc)`；
+  3. `local_names` 未收**嵌套 `def`/`class` 的名字**（`_attr` 案例，L299 嵌套 def）⇒ 补 `names.add(n.name)`。
+- **回溯验证**：内存态移除 `def _bare` ⇒ 检出 `(1522, '_bare')`；恢复后 **0 缺失** ⇒ 该口径对本案有直接预防效力（与第三维签名兼容同法）。
+- **量化论据（直接支撑防线第 1 口径）**：修正后全 strategies 复扫仍报 **24 个文件"缺失"**，逐项核实**全部为 PTrade 平台 API**（`set_slippage` / `get_stock_info` / `order_value` / `get_trade_days` / `get_open_orders` / `get_order` / `current_price` / `get_industry` / `get_etf_list_local` / `get_fundamentals_batch` / `query` / `get_trading_day` …）⇒ **手列白名单必然漂移**（本次手列即造成 24 文件误报）⇒ 白名单**必须从 PTrade 官方 API 面自动派生**，否则机器门上线即被假阳性淹没。
+
+### 8.3 ⑦ 失败清单补全归因（已闭环）
+- **全量复现法**：`.pytest_cache/v/cache/lastfailed` 提取失败面（累计 92 条，过滤存在性后 43 文件）→ 在 **`7311317^`（ec68627，不含本批改动）** worktree 以**文件粒度**复现 ⇒ **58 failed / 746 passed / 17 skipped / 8 xfailed**。
+- **裁定**：同一失败面（或超集）在**基线即失败** ⇒ 与本批改动**因果无关**，100% 归因他线在途（E1 include=False / 编译发布管线 / 分钟批处理等）；与 §五 的 7 文件复现（16 failed）相互印证。
+- **放行条件达成**：本批相关套件全绿（⑥ CONTRACT GATE : PASS）+ 既有失败基线复现 + 逐项声明（本节即载体）。
+
+### 8.4 收尾状态汇总
+| 项 | 状态 |
+|---|---|
+| ⑤ ST F-1 / ⑥ 横验 / ⑦ 归因 / 动量铁证 | ✅ 全闭环（本件 §四/§五/§八.3/§一） |
+| 验收脚本口径校准 | ✅ 闭环（§8.1） |
+| 防线第 4 口径 + `_bare` 回溯 | ✅ 闭环（§8.2） |
+| 证据件归档 | ✅ 本件即为归档载体 |
+| 防线第 1 口径（白名单自动派生） | 待方案定稿实现（量化论据已在 §8.2） |
+| 转派小修（`test_d4_write_path_rejected_when_daemon_active` 子进程边界漏 patch） | **待执行**（改 mock 注入为子进程可控通道：环境变量/参数） |
+
+
