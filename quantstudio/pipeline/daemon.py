@@ -121,6 +121,40 @@ class BatchAudit:
                 f"SELECT * FROM batch_audit ORDER BY finished_at DESC LIMIT {limit}", conn)
 
 
+# ── Q2b ①③（2026-09-25，jabberwock 案）：因子刷新 degraded 分类留痕 + 死信告警 ──────
+# 裁定：①分类留痕（纯增量）②未知异常**保留 degraded 保守语义**（fail-closed 以防漏）
+#       ③死信通道**默认仅告警**（连续 N 轮同因触发，N=3 可配）——三者均**不改变 hold 决策**。
+QFQ_DEGRADED_DEADLETTER_N_ENV = "QS_QFQ_DEGRADED_DEADLETTER_N"
+_QFQ_DEGRADED_DEFAULT_N = 3
+
+# 已知「因子/取数链」异常清单（分类用；按**类名**匹配，避免 daemon 顶层导入 MCP 包引发环）：
+#   MCP 客户端家族：传输/工具/协议/校验/预算
+#   数据访问层：duckdb（IOException 等）/ sqlite3（OperationalError 等）
+#   数据形态：ValueError/KeyError/TypeError/IndexError（列缺失、键缺失、类型不符）
+#   文件系统：OSError 及其子类（parquet 缺失/权限）
+_QFQ_KNOWN_ERROR_NAMES = frozenset({
+    "MCPClientError", "MCPAuthError", "MCPTransportError", "MCPRetryBudgetExhausted",
+    "MCPProtocolError", "MCPToolError", "MCPChecksumError", "MCPExportBudgetError",
+    "IOException", "OperationalError", "DatabaseError", "IntegrityError", "ProgrammingError",
+    "ValueError", "KeyError", "TypeError", "IndexError",
+    "OSError", "FileNotFoundError", "PermissionError", "IOError",
+})
+
+
+def _classify_qfq_factor_error(exc: BaseException) -> str:
+    """因子链异常分类（**仅用于留痕与死信计数**，不改变 degraded/hold 决策）。"""
+    name = type(exc).__name__
+    return f"known:{name}" if name in _QFQ_KNOWN_ERROR_NAMES else f"unknown:{name}"
+
+
+def _qfq_degraded_deadletter_limit() -> int:
+    """死信阈值 N（连续同因失败轮数）；env `QS_QFQ_DEGRADED_DEADLETTER_N`，默认 3。"""
+    try:
+        return max(1, int(os.environ.get(QFQ_DEGRADED_DEADLETTER_N_ENV, _QFQ_DEGRADED_DEFAULT_N)))
+    except Exception:
+        return _QFQ_DEGRADED_DEFAULT_N
+
+
 class ResidentCollector:
     """常驻采集进程主类
 
@@ -341,16 +375,53 @@ class ResidentCollector:
             summary = orch.run_post_ingest(
                 conn, cycle_id=self._qfq_cycle_id, run_id=run_id,
                 as_of_ms=int(_time.time() * 1000),
-                detector_degraded=detector_degraded)
+                detector_degraded=detector_degraded,
+                # ① 分类留痕：把 degraded 的**分类**透传给编排器写入 hold_reason
+                detector_degraded_kind=getattr(self, "_qfq_last_degraded_kind", ""))
         finally:
             self._qfq_cycle_id = None
         return summary
+
+    # ── Q2b ①③：degraded 分类留痕 + 死信计数（不改 hold 决策）────────────────
+    def _qfq_degraded_reset(self) -> None:
+        """③ 成功（非 degraded）→ 清零连续失败计数与分类留痕。"""
+        self._qfq_degraded_streak = {}
+        self._qfq_last_degraded_kind = ""
+
+    def _note_qfq_degraded(self, kind: str, detail: str) -> None:
+        """③ 记录一次 degraded（连续**同因**计数）；达阈值输出**死信锚点** ERROR 告警。
+
+        默认**仅告警**：不改变水位/门禁行为（hold 仍按原语义执行）。
+        """
+        streak = getattr(self, "_qfq_degraded_streak", None)
+        if streak is None:
+            streak = self._qfq_degraded_streak = {}
+        streak[kind] = streak.get(kind, 0) + 1
+        n = streak[kind]
+        limit = _qfq_degraded_deadletter_limit()
+        self._qfq_last_degraded_kind = kind
+        if n == limit:
+            logger.error(
+                f"[qfq] 因子刷新连续 {n} 轮同因失败（{kind}）达死信阈值 N={limit} → "
+                f"**死信告警**（水位仍 hold，未改变行为；建议运维介入检查因子/artifact 服务）；"
+                f"detail={str(detail)[:200]}")
+        elif n > limit and n % limit == 0:
+            logger.error(
+                f"[qfq] 因子刷新同因失败累计 {n} 轮（{kind}）——死信持续（阈值 N={limit}）")
 
     def _qfq_refresh_factors(self, orch) -> bool:
         """任务2.2：调用 QFQFactorRefresher 主动刷股票/ETF 因子。
 
         返回 True 表示本轮 detector 不可信（刷新失败/异常）→ 调用方须 hold 水位。
         任何异常一律 fail-safe 降级为 degraded=True，绝不抛到上层破坏 post-ingest。
+
+        **Q2b ①③（2026-09-25，jabberwock 案）**：
+        - ① **分类留痕**：失败按「已知因子/取数链异常清单」分类（`known:<类型>` / `unknown:<类型>`），
+          随日志与死信锚点输出，并通过返回值旁的属性 `_qfq_last_degraded_kind` 传给编排器写入
+          `hold_reason`；**不改变 hold 决策**（纯留痕）。
+        - ③ **死信通道（默认仅告警）**：连续 N 轮**同因**失败 → 死信锚点 ERROR 告警
+          （`N = QS_QFQ_DEGRADED_DEADLETTER_N`，默认 3）；成功后清零。**默认不改变水位行为**。
+        - ② **未知异常保留 degraded 保守语义**（fail-closed 以防漏），仅细化分类与告警。
         """
         try:
             from .qfq_factor_refresh import QFQFactorRefresher
@@ -363,6 +434,7 @@ class ResidentCollector:
             adapter = self._get_adapter("mcp", None)
             if isinstance(adapter, __import__("quantstudio.pipeline.sources.mcp_adapter", fromlist=["MCPAdapter"]).MCPAdapter):
                 logger.info("[qfq] MCP 唯一源：因子随行情任务常态注入，refresher 短路（非 degraded）")
+                self._qfq_degraded_reset()          # ③ 非 degraded → 清零连续失败计数
                 return False
             main_db = str(self.writer.db_path)
             stock_universe = get_stock_universe(main_db)
@@ -376,17 +448,26 @@ class ResidentCollector:
                 overlap_days=overlap_days, lookback_days=lookback_days,
                 rate_limiter=rate_limiter)
             if res.degraded:
+                _kind = (_classify_qfq_factor_error(res.error)
+                         if isinstance(res.error, BaseException) else "degraded:result")
                 logger.warning(
-                    f"[qfq] 因子刷新 degraded（stock_failed={res.stock_failed}, "
-                    f"etf_failed={res.etf_failed}, err={res.error}）→ 水位 hold")
+                    f"[qfq] 因子刷新 degraded（kind={_kind}, stock_failed={res.stock_failed}, "
+                    f"etf_failed={res.etf_failed}, err={res.error}）→ 水位 hold（① 分类留痕）")
+                self._note_qfq_degraded(_kind, str(res.error))
                 return True
             logger.info(
                 f"[qfq] 因子刷新完成 stock={res.stock_refreshed}/"
                 f"etf={res.etf_refreshed}（degraded=False）")
+            self._qfq_degraded_reset()          # ③ 成功 → 清零连续失败计数
             return False
-        except Exception as e:  # pragma: no cover - fail-safe 降级
+        except Exception as e:
+            # ② 无法归类为已知因子链异常时，**保留 degraded 保守语义**（fail-closed 以防漏），
+            #    但不再静默：分类 + 死信计数 + exc_info 全留痕。
+            _kind = _classify_qfq_factor_error(e)
             logger.warning(
-                f"[qfq] 因子刷新异常 → degraded=True（水位 hold）: {e}", exc_info=True)
+                f"[qfq] 因子刷新异常（kind={_kind}）→ degraded=True（水位 hold，② 保守语义）: {e}",
+                exc_info=True)
+            self._note_qfq_degraded(_kind, str(e))
             return True
 
     def _advance_or_defer_watermark(self, source: str, table: str, freq: str,

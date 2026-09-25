@@ -1331,6 +1331,7 @@ class QFQResidentOrchestrator:
     def run_post_ingest(self, conn, *, cycle_id: str, run_id: str,
                         as_of_ms: int, fetcher: Optional[FreshFetcher] = None,
                         detector_degraded: bool = False,
+                        detector_degraded_kind: str = "",
                         codes_filter: Optional[Sequence[str]] = None) -> CycleSummary:
         """daemon 在普通增量任务 + 水位延迟写完后调用。
 
@@ -1423,10 +1424,14 @@ class QFQResidentOrchestrator:
             if detector_degraded:
                 # 因子检测器本轮不可信（刷新失败/缺失）→ 四价格表水位强制 hold：
                 # 仍跑 discover，但 gate 不通过，避免基于不可信因子重锚推进水位。
+                # Q2b ①（2026-09-25）：把 degraded 的**分类**（known:/unknown:）写入 hold_reason，
+                # 便于运维一眼区分「已知因子链失败」与「未知异常」；未传 kind 时文案与旧版逐字一致。
                 passed = False
+                _kind_suffix = f"(kind={detector_degraded_kind})" if detector_degraded_kind else ""
                 report.setdefault("reasons", []).append(
-                    "detector_degraded: 因子刷新失败，价格水位强制 hold")
-                logger.warning("[qfq_orch] detector_degraded=True → 本轮价格水位强制 hold")
+                    f"detector_degraded{_kind_suffix}: 因子刷新失败，价格水位强制 hold")
+                logger.warning(
+                    f"[qfq_orch] detector_degraded=True{_kind_suffix} → 本轮价格水位强制 hold")
             summary.gate_report = report
 
             self._set_cycle_phase(conn, cycle_id, "finalized")
