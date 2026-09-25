@@ -58,16 +58,28 @@ def _lookup_history_item(history, code):
     return None
 
 
-def _extract_history_field(history_item, field):
+def _extract_history_field(history_item, field, dtype=float):
+    """get_history(is_dict=True) 字段抽取标准守卫（运行时形状契约，规则 17）。
+
+    per-security item 可能是 DataFrame / pandas Series / NumPy structured array /
+    recarray；抽取字段可能是 Series 或 ndarray。fail-soft 契约：
+    None 条目或缺失字段 → 空数组（调用方按数据不足跳过，绝不抛异常）；
+    Series 条目（字段值本身）→ 直接取其值；一律经 np.asarray 归一后参与数值运算。
+    """
     if history_item is None:
-        return np.asarray([], dtype=object)
-    try:
-        values = history_item[field]
-    except (KeyError, IndexError, TypeError, ValueError):
-        return np.asarray([], dtype=object)
+        return np.asarray([], dtype=dtype)
+    if hasattr(history_item, 'iloc') and not hasattr(history_item, 'columns'):
+        values = history_item                    # pandas Series：字段值本身
+    else:
+        try:
+            values = history_item[field]
+        except (KeyError, IndexError, TypeError):
+            return np.asarray([], dtype=dtype)
+    if values is None:
+        return np.asarray([], dtype=dtype)
     if hasattr(values, 'values'):
         values = values.values
-    return np.asarray(values, dtype=object)
+    return np.asarray(values, dtype=dtype)
 
 
 def _bare_code(code):
@@ -1488,6 +1500,51 @@ def get_position(security):
     p = _QSPositionState.get_position_orig(code)
     return _QSPositionView(p, code)
 
+
+
+INDEX_CODE = '000852.SS'
+HIST_COUNT = 27            # MA20(T-2) 需 T-21..T-2 共 20 根 + 余量
+VOL_RATIO_MIN = 0.8
+VOL_RATIO_MAX = 1.2
+DROP_MIN_PCT = -8.0        # T-1 涨跌幅下限（百分比）
+DROP_MAX_PCT = -3.0        # T-1 涨跌幅上限（百分比）
+NO_VOL_ONEWORD_RATIO = 0.5
+LIQ_AMT_MIN = 5e7          # T-1 成交额下限（元）
+HOLD_DAYS = 2              # T+2 收盘卖出
+MAX_HOLDINGS = 2
+PER_POSITION_WEIGHT = 0.5
+FIELDS = ['open', 'high', 'close', 'volume', 'amount', 'pctChg', 'preClose']
+F_TOL = 1e-4               # 复权因子跳变判定容差（除权日检测）
+
+
+def _bare(code):
+    return str(code).split('.')[0]
+
+
+def _limit_pct(code):
+    """板块涨停幅度（按裸码前缀复刻 shared_ashare_rules；ST 已被状态硬过滤剔除）。"""
+    b = _bare(code)
+    if b.startswith('688') or b.startswith('689'):
+        return 0.20          # 科创板
+    if b.startswith('300') or b.startswith('301') or b.startswith('302'):
+        return 0.20          # 创业板
+    if b.startswith('43') or b.startswith('83') or b.startswith('87') or b.startswith('92'):
+        return 0.30          # 北交所
+    return 0.10              # 沪深主板
+
+
+def _ensure_runtime_state():
+    """幂等运行时状态守卫：任何生命周期入口的首条可执行语句。
+
+    真实平台 initialize 异常后仍可能继续调用后续生命周期，状态安全不得依赖
+    initialize 成功完成（R3 契约）。
+    """
+    if not hasattr(g, 'universe'):
+        g.universe = []
+    if not hasattr(g, 'holdings'):
+        g.holdings = {}
+    if not hasattr(g, 'rebalance_seq'):
+        g.rebalance_seq = 0
 
 
 def initialize(context):

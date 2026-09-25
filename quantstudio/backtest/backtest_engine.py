@@ -513,7 +513,10 @@ class BacktestEngine:
                              if pre_start is not None else trade_days[0].strftime('%Y-%m-%d'))
             self._providers.market.preload(pre_start_str, trade_days[-1].strftime('%Y-%m-%d'))
         except Exception as e:
-            logger.debug(f"[Backtest] 日线快照预取跳过（性能优化不可用）: {e}")
+            # B2（2026-09-24）：预取被跳过会让后续每日退化为逐日重查询（实测 4.7s/日，
+            # 161 日回测 ≈ 12.6 分钟），属性能面显著退化 —— 故由 debug 升为 warning，
+            # 使「回测突然变慢」在日志中可见（仅日志级别变化，控制流零改动）。
+            logger.warning(f"[Backtest] 日线快照预取跳过（性能优化不可用，后续将逐日取数）: {e}")
 
         for i, day in enumerate(trade_days):
             day_str = day.strftime('%Y-%m-%d')

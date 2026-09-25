@@ -1526,33 +1526,44 @@ class DuckDBDataAccess:
         """迁移自 PtradeAPI._refresh_fundamentals_pit() 的每日估值查询 (ptrade_api.py:446-470)
 
         含 stock_daily_valuation + stock_daily(close) + stock_float_share(free_share) 三层 JOIN
+
+        B1（2026-09-24 纯性能优化，语义等价）：三处 `QUALIFY ROW_NUMBER() OVER
+        (PARTITION BY code ORDER BY <ts> DESC) = 1` 改为 `max(<ts>) GROUP BY code`
+        哈希聚合 + 等值连接，消除三次全表排序（965 万/971 万/74 万行）。
+        等价性依据（B0 前置双证）：①三表 `(code, <ts>)` 均唯一（实测 distinct == count，
+        无 tie ⇒ ROW_NUMBER 与 max+等值连接结果集逐行相同）；②5 个交易日旧/新对照：
+        行数、列序、dtype、排序后逐值全等；③唯一消费方
+        `get_fundamentals_from_preload` 全程按 code 做 isin 掩码/逐元素 apply/set_index，
+        无任何位置依赖 ⇒ 行序差异不影响可观察结果。实测单次 5.58-10.69s → 0.19-0.42s（约 24x）。
         """
         conn = self._get_conn()
         if conn is None:
             return pd.DataFrame()
         return conn.execute(f"""
+            WITH lv AS (
+                SELECT code, max(time) AS t FROM stock_daily_valuation
+                WHERE time <= {query_ms} GROUP BY code
+            ), ld AS (
+                SELECT code, max(time) AS t FROM stock_daily
+                WHERE time <= {query_ms} GROUP BY code
+            ), lf AS (
+                SELECT code, max(end_date) AS a FROM stock_float_share
+                WHERE end_date <= {query_ms} GROUP BY code
+            )
             SELECT v.code, v.circ_mv AS float_value, v.total_mv AS total_value,
                    v.pe_ttm AS pe_ratio, v.pe_ttm, v.pb AS pb_ratio, v.turnover_rate AS turnover_ratio,
                    COALESCE(fs.free_share,
                             CASE WHEN d.close IS NULL OR d.close = 0 THEN NULL
                                  ELSE v.circ_mv / d.close END) AS a_floats
-            FROM (
-                SELECT code, circ_mv, total_mv, pe_ttm, pb, turnover_rate
-                FROM stock_daily_valuation
-                WHERE time <= {query_ms}
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY code ORDER BY time DESC) = 1
-            ) v
+            FROM stock_daily_valuation v
+            JOIN lv ON v.code = lv.code AND v.time = lv.t
             LEFT JOIN (
-                SELECT code, close
-                FROM stock_daily
-                WHERE time <= {query_ms}
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY code ORDER BY time DESC) = 1
+                SELECT s.code, s.close FROM stock_daily s
+                JOIN ld ON s.code = ld.code AND s.time = ld.t
             ) d ON d.code = v.code
             LEFT JOIN (
-                SELECT code, free_share
-                FROM stock_float_share
-                WHERE end_date <= {query_ms}
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY code ORDER BY end_date DESC) = 1
+                SELECT f.code, f.free_share FROM stock_float_share f
+                JOIN lf ON f.code = lf.code AND f.end_date = lf.a
             ) fs ON fs.code = v.code
         """).fetchdf()
 
