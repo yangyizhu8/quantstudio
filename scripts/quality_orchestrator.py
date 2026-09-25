@@ -317,7 +317,27 @@ def _probe_db_lock(db_path: Path) -> tuple:
 
 
 def _daemon_active() -> tuple:
-    """daemon 活性判定（D4 写路径门禁）：返回 (active: bool, detail: str)。"""
+    """daemon 活性判定（D4 写路径门禁）：返回 (active: bool, detail: str)。
+
+    【子进程可控通道（2026-09-24 小修）】
+    环境变量 `QS_QUALITY_DAEMON_FORCE_STATE` 可**强制覆盖**判定结果：
+        active   ⇒ 强制判「活跃」（写路径拒绝）
+        inactive ⇒ 强制判「不活跃」（写路径放行）
+        auto / 未设 ⇒ 走真实判定（生产默认）
+    用途：本模块以 subprocess 自调（CLI）时，**父进程的 monkeypatch 无法跨进程生效**，
+    导致门禁测试结果依赖运行机真实 daemon 态（环境敏感、在无 daemon 的机器上必红）。
+    该通道使调用方可**跨进程**注入确定的 daemon 态 ⇒ 门禁测试在任意环境确定性通过。
+    安全性：仅改变「门禁前置判定」这一处，不触碰巡检判定链与任何数据写入；
+    未设该变量时行为与修复前**逐位一致**（生产默认走真实判定）。
+    """
+    forced = (os.environ.get("QS_QUALITY_DAEMON_FORCE_STATE") or "").strip().lower()
+    if forced in ("active", "1", "true"):
+        return True, f"强制判活跃（QS_QUALITY_DAEMON_FORCE_STATE={forced}；子进程可控通道）"
+    if forced in ("inactive", "0", "false"):
+        return False, f"强制判不活跃（QS_QUALITY_DAEMON_FORCE_STATE={forced}；子进程可控通道）"
+    if forced and forced != "auto":
+        # 非法取值：保守判活跃（宁可拒绝写路径，不可误放行）
+        return True, f"QS_QUALITY_DAEMON_FORCE_STATE 取值非法({forced!r})，保守判活跃"
     status_path = Path(CONFIG["daemon_status_path"])
     if not status_path.exists():
         return False, "daemon_status.json 不存在 ⇒ 判定为不活跃"

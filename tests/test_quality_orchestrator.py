@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -190,13 +191,57 @@ def test_d3_list_rules_shows_status_and_threshold():
 # D4 时机/通道（一期：探测 + 拒绝 + 提示）
 # ===========================================================================
 
-def test_d4_write_path_rejected_when_daemon_active(qo, monkeypatch):
-    """写路径（--repair）在 daemon 活跃期被拒（退出码 3）+ 提示空档窗。"""
-    monkeypatch.setattr(qo, "_daemon_active", lambda: (True, "daemon 活跃（pid=1）"))
+def test_d4_write_path_rejected_when_daemon_active():
+    """写路径（--repair）在 daemon 活跃期被拒（退出码 3）+ 提示空档窗。
+
+    【2026-09-24 小修】改用**子进程可控通道**（env `QS_QUALITY_DAEMON_FORCE_STATE`）。
+    原实现用 monkeypatch 打父进程 `_daemon_active`，但被测对象是 subprocess 自调的
+    **子进程** —— monkeypatch 不跨进程生效，子进程改查运行机**真实** daemon 态，
+    致本用例结果依赖环境（有 daemon 绿 / 无 daemon 红，同步门即在此暴露）。
+    现由环境变量在子进程内强制注入确定态 ⇒ 任意 daemon 态下确定性。
+    """
+    env = dict(os.environ, QS_QUALITY_DAEMON_FORCE_STATE="active")
     p = subprocess.run([sys.executable, str(MOD), "--repair", "L1"],
-                       capture_output=True, text=True, timeout=60, cwd=str(ROOT))
+                       capture_output=True, text=True, timeout=60, cwd=str(ROOT), env=env)
     assert p.returncode == 3, (p.returncode, p.stdout[-200:], p.stderr[-300:])
     assert "空档窗" in (p.stderr + p.stdout), "拒执行须提示空档窗路径"
+
+
+def test_d4_force_state_inactive_allows_write_path():
+    """反向确定性：强制「不活跃」⇒ 写路径**放行**（越过门禁），证明门禁非恒拒。"""
+    env = dict(os.environ, QS_QUALITY_DAEMON_FORCE_STATE="inactive")
+    p = subprocess.run([sys.executable, str(MOD), "--repair", "L1"],
+                       capture_output=True, text=True, timeout=180, cwd=str(ROOT), env=env)
+    assert p.returncode == 0, (p.returncode, p.stdout[-300:], p.stderr[-300:])
+
+
+def test_d4_two_states_differ_and_are_deterministic():
+    """两态结果**不同**且各自确定 ⇒ 门禁既非恒拒也非恒放（防"两头都过"的假修复）。"""
+    env_a = dict(os.environ, QS_QUALITY_DAEMON_FORCE_STATE="active")
+    env_i = dict(os.environ, QS_QUALITY_DAEMON_FORCE_STATE="inactive")
+    ra = subprocess.run([sys.executable, str(MOD), "--repair", "L2"],
+                        capture_output=True, text=True, timeout=60, cwd=str(ROOT), env=env_a)
+    ri = subprocess.run([sys.executable, str(MOD), "--repair", "L2"],
+                        capture_output=True, text=True, timeout=60, cwd=str(ROOT), env=env_i)
+    assert ra.returncode == 3, (ra.returncode, ra.stderr[-200:])   # 门禁拒
+    # L2 无 --approve ⇒ 退出码 2（关键是「已越过 daemon 门禁」）
+    assert ri.returncode == 2, (ri.returncode, ri.stderr[-200:])
+
+
+def test_d4_forced_state_invalid_value_is_conservative(qo, monkeypatch):
+    """非法取值 ⇒ 保守判活跃（宁可拒绝写路径，不可误放行）。"""
+    monkeypatch.setenv("QS_QUALITY_DAEMON_FORCE_STATE", "banana")
+    active, detail = qo._daemon_active()
+    assert active is True and "非法" in detail, (active, detail)
+
+
+def test_d4_no_force_env_keeps_legacy_behavior(qo, monkeypatch, tmp_path):
+    """未设环境变量 ⇒ 走真实判定（回归钉：小修不得改变生产默认行为）。"""
+    monkeypatch.delenv("QS_QUALITY_DAEMON_FORCE_STATE", raising=False)
+    missing = tmp_path / "no_such_status.json"
+    monkeypatch.setitem(qo.CONFIG, "daemon_status_path", str(missing))
+    active, detail = qo._daemon_active()
+    assert active is False and "不存在" in detail, (active, detail)
 
 
 def test_d4_lock_probe_propagates_lock_conflict(qo, monkeypatch, tmp_path):
