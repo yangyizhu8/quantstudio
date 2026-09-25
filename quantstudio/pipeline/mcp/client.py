@@ -72,6 +72,41 @@ _SSE_CT = "text/event-stream"
 _PARQUET_MAGIC = b"PAR1"
 _SECRET_HEADERS = {"x-mcp-key", "authorization"}
 
+# ── Q2 修复（2026-09-25，jabberwock 案）：get_artifact 载荷级 error 分类 ──────────
+# 服务端可能把错误放进**载荷内**（如 {"error": …, "artifact_id": …}），旧实现会落成
+# 「缺少 Parquet base64 字段」的 MCPProtocolError（不可重试）→ 周期 hold、水位可永久卡死。
+_TRANSIENT_PAYLOAD_HINTS = (
+    "timeout", "timed out", "not ready", "preparing", "busy", "try again",
+    "temporarily", "rate limit", "too many requests", "unavailable", "reset",
+    "稍后", "未就绪", "超时", "正在生成", "繁忙", "限流",
+)
+_DETERMINISTIC_PAYLOAD_HINTS = (
+    "not found", "no such", "expired", "invalid", "gone", "missing", "malformed",
+    "不存在", "过期", "无效", "已清理", "缺失", "非法", "不正确", "格式错",
+)
+
+
+class _ArtifactPayloadError(Exception):
+    """载荷级 error 的**内部哨兵**：仅供 `_call_with_retry` 按既有预算重试，不对外暴露。"""
+
+    def __init__(self, msg: str, payload: object):
+        super().__init__(msg)
+        self.msg = msg
+        self.payload = payload
+
+
+def _payload_error_retryable(msg: str) -> bool:
+    """按语义判定载荷级 error 是否可重试。
+
+    - 命中**确定性**关键词 → False（不重试，外层立即显式失败）；
+    - 其余（含瞬时关键词与**未知**）→ True（默认重试，避免「一次性失败即永久 hold」）。
+    """
+    low = (msg or "").lower()
+    if any(k in low for k in _DETERMINISTIC_PAYLOAD_HINTS):
+        return False
+    return True
+
+
 # ── 重试总预算（六步③ 2026-09-18：client.py:362 重试有界）────────────────────
 # 依据：D6 晨窗实测 mcp_stock_float_share 3h12m 持锁。真锚点 = 重试超时后的
 # _reset_connection() → handshake() → _post_rpc() 整体读 resp.content（该路径
@@ -799,15 +834,62 @@ class MCPClient:
 
         artifact_id 格式："{job_id}/{shard_id}"（实测必须，非裸 shard_id）。
         verify_sha256：比对 artifact.sha256 与 manifest 中该 shard 的 sha256。
+
+        **Q2 修复（2026-09-25，jabberwock 案）**：服务端可能把错误放进**载荷内**
+        （如 `{"error": …, "artifact_id": …}`），此时旧实现会落成「缺少 Parquet base64 字段」
+        的 **MCPProtocolError**（不可重试）→ 周期 hold、水位可永久卡死。现改为：
+        ① 载荷级 error **显式识别**；② 按语义**可重试分类**（瞬时类走既有重试预算与审计；
+        确定性类不重试、显式失败）；③ **结构化留痕**（artifact_id/job_id/error 原文）；
+        ④ `MCPProtocolError` 只保留给**真正的协议违例**。
         """
-        d = self._call_with_retry(
-            self._call_tool, "get_artifact",
-            {"job_id": job_id, "artifact_id": artifact_id})
+        def _fetch() -> Dict[str, Any]:
+            d = self._call_tool(
+                "get_artifact", {"job_id": job_id, "artifact_id": artifact_id})
+            err = d.get("error") if isinstance(d, dict) else None
+            if err:
+                msg = err.get("message", err) if isinstance(err, dict) else err
+                if _payload_error_retryable(str(msg)):
+                    # 瞬时类：抛哨兵 → 由 _call_with_retry 按既有预算/退避重试
+                    raise _ArtifactPayloadError(str(msg), d)
+                # 确定性类：原样返回，由外层立即显式失败（不进入重试）
+            return d
+
+        try:
+            d = self._call_with_retry(_fetch)
+        except _ArtifactPayloadError as e:
+            raise MCPToolError(
+                f"get_artifact 载荷级 error（重试后仍失败）: {e.msg[:400]} "
+                f"（artifact_id={artifact_id} job_id={job_id}）",
+                tool="get_artifact", is_error=True, raw=e.payload) from e
+        except MCPTransportError as e:
+            # 重试耗尽时 _call_with_retry 会把最后一次异常包成 MCPTransportError
+            # （client.py:524）；若**根因**是载荷级 error，则转为工具级失败并补留痕，
+            # 使上层能按工具级语义处理（可重试/可降级），而不是笼统的传输层失败。
+            cause = e.__cause__
+            while cause is not None and not isinstance(cause, _ArtifactPayloadError):
+                cause = cause.__cause__
+            if isinstance(cause, _ArtifactPayloadError):
+                raise MCPToolError(
+                    f"get_artifact 载荷级 error（重试耗尽）: {cause.msg[:400]} "
+                    f"（artifact_id={artifact_id} job_id={job_id} attempts={self.retry_max}）",
+                    tool="get_artifact", is_error=True, raw=cause.payload) from e
+            raise
+
+        err = d.get("error") if isinstance(d, dict) else None
+        if err:
+            msg = err.get("message", err) if isinstance(err, dict) else err
+            raise MCPToolError(
+                f"get_artifact 载荷级 error（确定性，不重试）: {str(msg)[:400]} "
+                f"（artifact_id={artifact_id} job_id={job_id} keys={list(d.keys())}）",
+                tool="get_artifact", is_error=True, raw=d)
+
         b64 = (d.get("content_base64") or d.get("content_base64_b64")
                or d.get("data") or d.get("parquet_b64") or "")
         if not b64:
+            # 无 error 载荷但仍缺 base64 → 真协议违例（保留原语义），补上下文便于归因
             raise MCPProtocolError(
-                f"get_artifact 缺少 Parquet base64 字段: keys={list(d.keys())}")
+                f"get_artifact 缺少 Parquet base64 字段: keys={list(d.keys())} "
+                f"（artifact_id={artifact_id} job_id={job_id}）")
         try:
             raw = base64.b64decode(b64, validate=True)
         except (binascii.Error, ValueError) as e:
