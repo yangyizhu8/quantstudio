@@ -1,0 +1,61 @@
+{
+  "window": "A 受控窗（端到端本机增量）",
+  "started_at": "2026-09-26T22:18:44",
+  "stop": [
+    {
+      "pid": 40060,
+      "mode": "forever",
+      "graceful_exit": true,
+      "waited_s": 2.0
+    }
+  ],
+  "precheckpoint": {
+    "wal_before_mb": 2289.1,
+    "wal_after_mb": 2289.1,
+    "rc": 0,
+    "out": "CHECKPOINT False timeout>120.0s\n",
+    "err": "[db_checkpoint] CHECKPOINT 超时（>120.0s，疑库被占用）→ 放弃本次检查点，不阻塞调用方: D:\\miniQMT策略实盘\\QuantStudio\\data\\quantstudio.db\n"
+  },
+  "once_cmd": "C:\\python3.12.9\\python.exe -m quantstudio.pipeline.daemon --mode once --config-dir D:\\miniQMT策略实盘\\QuantStudio\\config\\profiles\\mcp_only --instance-token 0e042acc343d45fe8b2302b947a3c054 --pull-mode incremental",
+  "once_pid": 43324,
+  "once_elapsed_s": 1140.1,
+  "once_exit_code": 4294967295,
+  "once_timed_out": false,
+  "log_criteria": {
+    "IndexError": 0,
+    "epoch-1970": 0,
+    "skipped_engine": 0,
+    "tombstone": 0,
+    "detector_degraded": 0,
+    "artifact_payload_error": 0,
+    "gate_failed": 0,
+    "watermark_committed": 0,
+    "lines": 9
+  },
+  "db_criteria": {
+    "db_open_err": "IOException: IO Error: Cannot open file \"d:\\miniqmt策略实盘\\quantstudio\\data\\quantstudio.db\": 另一个程序正在使用此文件，进程无法访问。\r\n\nFile is already open in \nC:\\python3.12.9\\python.exe (PID 45036)",
+    "revision_alert_count": 58
+  },
+  "once_log_tail": "\n===== 2026-09-26 22:20:55 启动 mode=once =====\n",
+  "verdict": {
+    "lt_2h": true,
+    "no_gate_veto": true,
+    "watermark_committed": false,
+    "no_indexerror": true,
+    "skipped_visible": true,
+    "tombstone_visible": 0
+  },
+  "restore_cmd": "C:\\python3.12.9\\python.exe -m quantstudio.pipeline.daemon --mode forever --config-dir D:\\miniQMT策略实盘\\QuantStudio\\config\\profiles\\mcp_only --instance-token 0e042acc343d45fe8b2302b947a3c054",
+  "restore_pid": 11912,
+  "restore_alive": {
+    "pid": 45036,
+    "cmdline": "C:\\python3.12.9\\python.exe -m quantstudio.pipeline.daemon --mode forever --config-dir D:\\miniQMT策略实盘\\QuantStudio\\config\\profiles\\mcp_only --instance-token 65834f35a6ce4ac2bc6d2f95807819e3",
+    "created": "22:39:57"
+  },
+  "three_checks": {
+    "process": true,
+    "log_advancing": false,
+    "db_openable": "被占用/异常: IO Error: Cannot open file \"d:\\miniqmt策略实盘\\quantstudio\\data\\quantstudio.db\": 另一个"
+  },
+  "finished_at": "2026-09-26T22:40:46"
+}
