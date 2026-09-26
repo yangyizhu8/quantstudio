@@ -151,11 +151,11 @@ class DuckDBDataAccess:
         # 语义不变约束：结果与逐次单码执行值等价（同一 impl 代码路径；仅执行时机与
         # 批量度不同；返回经 .copy()，值/dtype/索引逐位一致）。族键=(before_ms,count,
         # use_qfq)；族变化（新交易日/不同参数）即整体重置——绝不跨族命中。
-        self._agg_family: Optional[tuple] = None
-        self._agg_single_seen: List[str] = []        # 当日已见单码（去重保序）
-        self._agg_singles_done: bool = False         # 当日已触发批量
-        self._agg_result_cache: Dict[str, Optional[pd.DataFrame]] = {}
-        # （值 = 拆存单码结果 df 或 None 哨兵 = 该 code 当族无数据 → 返回空 dict）
+        # T1（2026-09-26）：bars 窗口缓存 —— **唯一** bars 缓存实现（T2 单一真相源）
+        # 键 = (code, before_ms, use_qfq)；R3：before_ms 变化（新交易日）即整体回收，
+        # 与 ptrade_api _query_cache 每日清空的 PIT 纪律同构
+        self._bars_window_cache: Dict[tuple, Optional[pd.DataFrame]] = {}
+        self._bars_window_ms: Optional[int] = None
 
         self._preload_fs: Optional[pd.DataFrame] = None
         self._preload_fs_month: Optional[str] = None
@@ -725,53 +725,47 @@ class DuckDBDataAccess:
                 table, loaded, len(missing),
                 (len(missing) + chunk_size - 1) // chunk_size, elapsed)
 
-    # M1 段一：单码调用聚合阈值（计划⑤-1 批准：自适应升级；50 次后批量，
-    # 沉没成本 ~50×17ms≈0.9s 可忽略）
-    _AGG_SINGLE_THRESHOLD = 50
-    _AGG_MISS = object()   # 「未入缓存」哨兵（区别于 None=已入缓存但无数据）
+    # T1（2026-09-26）：窗口缓存哨兵与最小窗口（覆盖本场景最大 count=27 并留余量）
+    _BARS_MISS = object()          # 「未入缓存」哨兵（区别于 None=已入缓存但无数据）
+    _BARS_WINDOW_MIN = 60
 
     def query_bars_by_count_batch(self, codes, count, before_ms, use_qfq: bool = False) -> Dict[str, pd.DataFrame]:
-        """单码调用回看式聚合 wrapper（M1 段一 · 纯性能优化，2026-09-20）。
+        """单码调用**窗口缓存 + count 内存切片**（T1，2026-09-26 · 纯性能优化）。
 
-        行为契约（与 impl 值等价）：
-        - 多码调用 / SQL 路径开关 / 族不匹配重置后首段：与原实现完全一致（直接透传 impl）；
-        - 同族单码调用：阈值前逐次执行并回填拆存缓存；计数达阈值后对已见全集一次
-          批量执行（impl 多码路径），此后同族单码调用命中拆存缓存，深拷贝返回
-          （值/dtype/索引与逐次执行逐位一致；对象为新副本，防下游变异污染缓存）；
-        - 族键 = (before_ms, count, use_qfq)；任何族变化（新交易日 end_ms 不同/
-          count 不同/复权不同）整体重置，绝不跨族命中；
-        - 无数据 code：拆存 None 哨兵 → 后续同族调用返回空 dict（与逐次执行一致）。
+        动因（族键诊断实证）：原 M1 单码回看式聚合以 (before_ms, count, use_qfq) 为族键，
+        而同日内 count=5 与 count=27 **交替调用** ⇒ 每次切换即整体重置 ⇒ 聚合阈值(50)
+        永不触发 ⇒ 逐码 SQL + 逐次 _post（含 _build_trade_date_map）⇒ 实测 1,334 次/日
+        （断板反包：SQL 占 6%、Python 占 94%）。
+
+        新契约（T1 逐位比对预证实录：400 codes × {count=5,27} ⇒ 12,799 行，不一致项 0）：
+        - 缓存键 = **(code, before_ms, use_qfq)**：按**时间窗**缓存足量窗口（≥ 本场景最大 count），
+          count 经 `tail(count)` **内存切片**返回 —— 同一 (code, before_ms) 下不同 count
+          共享同一份底层数据（选项①「复用批量结果」在单码路径的落地形态）；
+        - **切片后 reset_index(drop=True)**：对齐逐次 SQL 的 0-based index 契约
+          （预证首次 FAIL 的唯一实差即 index，非值差异 —— 该纪律性停止避免了 index 契约漂移）；
+        - **R3 按日回收**：`before_ms` 变化（新交易日）即整体清空 —— 与 ptrade_api
+          `_query_cache` 每日清空的 PIT 纪律同构（绝不跨日复用），并天然按日释放内存；
+        - 多码调用 / SQL 路径开关：完全透传 impl（与既有行为一致）；
+        - **T2 单一真相源**：本函数为 bars 缓存的唯一实现；原 M1 族键聚合（`_agg_*`）已退役，
+          避免双缓存真相源。
         分钟路径不经过本函数（走 query_minute_bars_by_count_batch），零触碰。
         """
         if self._use_sql_path or len(codes) != 1:
             return self._query_bars_by_count_batch_impl(codes, count, before_ms, use_qfq)
-        fam = (int(before_ms), int(count), bool(use_qfq))
-        if fam != self._agg_family:
-            self._agg_family = fam
-            self._agg_single_seen = []
-            self._agg_singles_done = False
-            self._agg_result_cache = {}
         code = codes[0]
-        cached = self._agg_result_cache.get(code, self._AGG_MISS)
-        if cached is not self._AGG_MISS:
-            return {code: cached.copy()} if cached is not None else {}
-        if not self._agg_singles_done and code not in self._agg_single_seen:
-            self._agg_single_seen.append(code)
-            if len(self._agg_single_seen) >= self._AGG_SINGLE_THRESHOLD:
-                batch = self._query_bars_by_count_batch_impl(
-                    list(self._agg_single_seen), count, before_ms, use_qfq)
-                for c in self._agg_single_seen:
-                    dfc = batch.get(c)
-                    self._agg_result_cache[c] = dfc if dfc is not None else None
-                self._agg_singles_done = True
-                cached = self._agg_result_cache.get(code, self._AGG_MISS)
-                if cached is not self._AGG_MISS:
-                    return {code: cached.copy()} if cached is not None else {}
-        # 阈值前逐次 / 批量后迟到 code：单码正常执行并回填缓存
-        result = self._query_bars_by_count_batch_impl([code], count, before_ms, use_qfq)
-        dfc = result.get(code)
-        self._agg_result_cache[code] = dfc if dfc is not None else None
-        return {code: dfc.copy()} if dfc is not None else {}
+        bms = int(before_ms)
+        if bms != self._bars_window_ms:          # R3：日/窗口切换 → 整体回收（PIT 隔离）
+            self._bars_window_cache = {}
+            self._bars_window_ms = bms
+        key = (code, bms, bool(use_qfq))
+        wide = self._bars_window_cache.get(key, self._BARS_MISS)
+        if wide is self._BARS_MISS:
+            need = max(int(count), self._BARS_WINDOW_MIN)
+            wide = self._query_bars_by_count_batch_impl([code], need, bms, use_qfq).get(code)
+            self._bars_window_cache[key] = wide
+        if wide is None or len(wide) == 0:
+            return {}
+        return {code: wide.tail(int(count)).reset_index(drop=True)}
 
     def _query_bars_by_count_batch_impl(self, codes, count, before_ms, use_qfq: bool = False) -> Dict[str, pd.DataFrame]:
         """阶段1 批量化：与 query_bars_by_count_multi_table 逐只调用字节级等价，
