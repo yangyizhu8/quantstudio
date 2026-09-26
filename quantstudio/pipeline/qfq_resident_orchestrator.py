@@ -80,7 +80,24 @@ def _now_iso() -> str:
     return datetime.now(BJ_TZ).isoformat(timespec="seconds")
 
 
+def _fresh_len(x) -> int:
+    """P1-2a 辅助：fresh 采集载体的**长度判据**（None / 空容器 / 空 DataFrame → 0）。
+
+    统一处理三种形态，避免各处各写一套空值判断（空值判断口径单点化）。
+    """
+    if x is None:
+        return 0
+    try:
+        return len(x)
+    except TypeError:
+        return 0
+
+
 def _ms_to_yyyymmdd(ms: int) -> str:
+    # P1-2b 取证注记（2026-09-25）：本函数对 ms<=0 **不设守卫** —— `_ms_to_yyyymmdd(0)`
+    # 会产出 "19700101"，而 `mcp_adapter._parse_flexible_date` 会把它当合法 %Y%m%d 接受，
+    # 再经 `_export_batches` 格式化即得 "1970-01-01"（客户 ckey `etf_minutes|1970-01-01|1970-01-02`
+    # 的复现路径之一）。修复见四项方案 P1-2b（转换处守卫 + 出口健全性守卫 + 缓存键防腐）。
     return datetime.fromtimestamp(ms / 1000, BJ_TZ).strftime("%Y%m%d")
 
 
@@ -497,6 +514,23 @@ class QFQResidentOrchestrator:
         record.source_generation = self._ident["source_generation"]
         record.cutover_id = self._ident["cutover_id"]
         capture_id = record.capture_id
+
+        # P1-2a（2026-09-25，jabberwock 案）：**前置空值检查**——fresh 采集为空时**不传引擎**。
+        # 背景：引擎守卫遇空 fresh 会抛错 → 单证券空值即崩**整轮**（重锚环停摆）。
+        # 语义：跳过该证券（WARNING + 计数），**不改 trigger 状态**（保持 pending，
+        # 由后续轮次自然重试，避免把「源暂时无数据」误判为永久失败/死信）。
+        # 与 P1-2b 同源：空/退化输入不应落到下游（此处拦在引擎之前）。
+        if _fresh_len(fresh_daily) == 0 and _fresh_len(fresh_minute) == 0:
+            self._empty_fresh_skipped = int(getattr(self, "_empty_fresh_skipped", 0)) + 1
+            logger.warning(
+                f"[qfq_orch] {asset_type}/{code} fresh 采集为空"
+                f"（daily={_fresh_len(fresh_daily)}, minute={_fresh_len(fresh_minute)}；"
+                f"triggers={len(trigger_ids)}；区间 daily={daily_range} minute={minute_range}）"
+                f"→ **跳过引擎**（不崩整轮；trigger 保持 pending 由后续轮次重试）")
+            return ReanchorOutcome(trigger_id=primary_tid, asset_type=asset_type,
+                                   code=code, status="skipped",
+                                   reason="empty_fresh_capture")
+
         event_id = event_id_of(primary_tid, attempt, capture_id)
         # 崩溃恢复关键：apply 前把本次 event_id 预写入全部 trigger（与引擎同事务/
         # 同连接提交）。若引擎 committed 后崩溃，下一轮 _already_committed 可据
