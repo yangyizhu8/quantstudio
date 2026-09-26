@@ -81,6 +81,25 @@
 
 ## P1-4 etf_basic TLS：`REQUESTS_CA_BUNDLE` 覆盖 session.verify
 
+> ### ⚠️ 实测补充（2026-09-25，真连云端 smoke，**请审核裁定归因修订**）
+>
+> 实施后做真连实测（`agent_workspace/e2e_smoke_cloud.py`）发现：**端点 = `https://124.223.159.234/mcp`
+> （IP 直连），其证书与 IP 不匹配** →
+> `SSLCertVerificationError(1, "IP address mismatch, certificate is not valid for '124.223.159.234'")`。
+> 即：**该端点在任何 CA 配置下都无法通过标准 TLS 校验**（设计如此，故 config 为
+> `tls_verify: false` = 开发 IP 模式）。
+>
+> **由此产生的归因修订建议**：
+> 1. 客户 etf_basic 的 TLS 失败，**更可能的直接原因是 `tls_verify=true`**（对 IP 端点必然失败），
+>    而非「env `REQUESTS_CA_BUNDLE` 覆盖」——后者在 `verify=False` 时**根本不参与**；
+> 2. 故**可行动修复**是：配置 `tls_verify: false`，或使用本项新增的 **`MCP_TLS_VERIFY=0`** 逃生通道
+>    （+ INFO 日志一眼可见生效来源与策略）；
+> 3. **本项改动无回归**：`verify=False` 路径逐行不变；`verify=True` 路径**前后同样失败**于 IP 不匹配
+>    （certifi/系统 CA 皆然），故不存在「修一送一」；新增能力 = 逃生通道 + 可见化。
+>
+> **待审核裁定**：① 是否按上文修订 P1-4 归因（env CA → `tls_verify=true` 对 IP 端点）；
+> ② 是否需要在客户通知中增加「检查/调整 `tls_verify` 配置」一条（大概率即其症结）。
+
 ### 取证
 - `client.py:207 tls_verify: bool = False`（构造参数）→ `:222 self.tls_verify` → **`:231 self._session.verify = self.tls_verify`**（`:542` 重连后重设）；
 - `requests` 语义：`session.verify=True` 时，**仍会读取环境变量 `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE`** 作为 CA 包路径 ⇒
