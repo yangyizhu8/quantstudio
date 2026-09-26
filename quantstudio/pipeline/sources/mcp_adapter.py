@@ -821,6 +821,14 @@ class MCPAdapter(BaseSourceAdapter):
         """
         s = self._parse_flexible_date(str(start).strip()[:10])
         e = self._parse_flexible_date(str(end).strip()[:10])
+        # P1-2b 修复②（2026-09-25）：**出口健全性守卫**——拒 epoch/逆序窗。
+        # 背景：客户实证缓存键退化 `etf_minutes|1970-01-01|1970-01-02`（上游 ms=0 →
+        # "19700101" 被接受 → 此处格式化为 1970-01-01）。非法窗在此显式失败，
+        # **不产出 1970 批次、不污染 manifest**；调用侧按跳过该证券处理。
+        if s.year < 1990 or e.year < 1990 or s > e:
+            raise ValueError(
+                f"export 窗口非法（epoch/逆序）: start={s:%Y-%m-%d} end={e:%Y-%m-%d}"
+                f"（要求年份 ≥ 1990 且 start ≤ end）")
         # 估算行数 < 安全阈值 → 单批（不切碎，减少 job 开销）
         if est_rows is not None and est_rows < self._EXPORT_SAFE_ROWS:
             return [(s.strftime("%Y-%m-%d"), e.strftime("%Y-%m-%d"))]
@@ -1097,7 +1105,26 @@ class MCPAdapter(BaseSourceAdapter):
 
     @staticmethod
     def _cache_key(table: str, bs: str, be: str) -> str:
-        """缓存键：table + 网格化批次边界。全证券共享（grid_aligned 保证边界一致）。"""
+        """缓存键：table + 网格化批次边界。全证券共享（grid_aligned 保证边界一致）。
+
+        **P1-2b 修复③（2026-09-25）：防腐守卫**——拒 epoch/逆序边界，避免退化键
+        （客户实证 `etf_minutes|1970-01-01|1970-01-02`）写进 manifest 并被后续轮次反复命中。
+        可解析格式与 `_parse_flexible_date` 同口径（`%Y-%m-%d` / `%Y%m%d`）。
+        """
+        def _p(x) -> datetime:
+            raw = str(x).strip()[:10]
+            for fmt in ("%Y-%m-%d", "%Y%m%d"):
+                try:
+                    return datetime.strptime(raw, fmt)
+                except ValueError:
+                    continue
+            raise ValueError(f"_cache_key 边界不可解析: {x!r}（期望 %Y-%m-%d 或 %Y%m%d）")
+
+        _bs, _be = _p(bs), _p(be)
+        if _bs.year < 1990 or _be.year < 1990 or _bs > _be:
+            raise ValueError(
+                f"_cache_key 边界非法（epoch/逆序）: {_bs:%Y-%m-%d}|{_be:%Y-%m-%d}"
+                f"（要求年份 ≥ 1990 且 bs ≤ be）")
         return f"{table}|{bs}|{be}"
 
     def _fetch_export_direct(self, table: str, freq: str,

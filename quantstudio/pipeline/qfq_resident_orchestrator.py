@@ -93,12 +93,28 @@ def _fresh_len(x) -> int:
         return 0
 
 
+_MS_LOWER_BOUND = 631_152_000_000      # 1990-01-01 UTC：数据源不存在更早数据的合理下界
+_MS_UPPER_BOUND = 4_102_444_800_000    # 2100-01-01 UTC：上界（防未来值/单位错）
+
+
 def _ms_to_yyyymmdd(ms: int) -> str:
-    # P1-2b 取证注记（2026-09-25）：本函数对 ms<=0 **不设守卫** —— `_ms_to_yyyymmdd(0)`
-    # 会产出 "19700101"，而 `mcp_adapter._parse_flexible_date` 会把它当合法 %Y%m%d 接受，
-    # 再经 `_export_batches` 格式化即得 "1970-01-01"（客户 ckey `etf_minutes|1970-01-01|1970-01-02`
-    # 的复现路径之一）。修复见四项方案 P1-2b（转换处守卫 + 出口健全性守卫 + 缓存键防腐）。
-    return datetime.fromtimestamp(ms / 1000, BJ_TZ).strftime("%Y%m%d")
+    """ms → `%Y%m%d`，**带有效性守卫**（P1-2b 修复①，2026-09-25）。
+
+    背景（先红矩阵定谳）：`ms=0` 会被静默转成 `"19700101"`，而
+    `mcp_adapter._parse_flexible_date` 会以 `%Y%m%d` **接受**它，最终产生
+    客户实证的退化缓存键 `etf_minutes|1970-01-01|1970-01-02`。
+    现改为：非法 ms（零/负/越界/不可转）→ **抛 ValueError**（显式失败，不再静默产 epoch 日期）。
+    调用侧（`_reanchor_security`）捕获后按 P1-2a 语义**跳过该证券**（trigger 保持 pending）。
+    """
+    try:
+        v = int(ms)
+    except (TypeError, ValueError):
+        raise ValueError(f"非法 range ms（不可转 int）: {ms!r}") from None
+    if not (_MS_LOWER_BOUND <= v < _MS_UPPER_BOUND):
+        raise ValueError(
+            f"非法 range ms（零值/越界）: {v}"
+            f"（要求 ∈ [1990-01-01, 2100-01-01)，即 [{_MS_LOWER_BOUND}, {_MS_UPPER_BOUND})）")
+    return datetime.fromtimestamp(v / 1000, BJ_TZ).strftime("%Y%m%d")
 
 
 @dataclass
@@ -472,6 +488,24 @@ class QFQResidentOrchestrator:
                  self._ident["source_generation"], self._ident["cutover_id"]]).fetchone()
         return row[0] if row else None
 
+    def _skip_security(self, primary_tid: str, asset_type: str, code: str,
+                       reason: str, detail: str, n_triggers: int) -> ReanchorOutcome:
+        """P1-2a / P1-2b 共用：**跳过该证券**（不传引擎、不改 trigger 状态）。
+
+        - 语义：trigger 保持 `pending`（**不计失败、不写 last_event_id**）→ 后续轮次自然重试；
+        - 留痕：WARNING + 分类计数（`_empty_fresh_skipped` / `_invalid_range_skipped`）；
+        - 目的：把「源暂时无数据 / range 非法」与「永久失败」区分开，**单证券异常不崩整轮**
+          （重锚环停摆的结构性止损点）。
+        """
+        attr = ("_empty_fresh_skipped" if reason == "empty_fresh_capture"
+                else "_invalid_range_skipped")
+        setattr(self, attr, int(getattr(self, attr, 0)) + 1)
+        logger.warning(
+            f"[qfq_orch] {asset_type}/{code} **跳过引擎**（reason={reason}；"
+            f"triggers={n_triggers}）：{detail}")
+        return ReanchorOutcome(trigger_id=primary_tid, asset_type=asset_type,
+                               code=code, status="skipped", reason=reason)
+
     def _reanchor_security(self, conn, *, run_id: str, asset_type: str, code: str,
                            trigger_ids: List[str], effective_dates: List[int],
                            attempt: int, fetcher: FreshFetcher) -> ReanchorOutcome:
@@ -496,7 +530,12 @@ class QFQResidentOrchestrator:
         _t_steps = {} if _QFQ_PROFILE else None
 
         _t0 = time.perf_counter() if _QFQ_PROFILE else 0
-        daily_range, minute_range = self._security_range(conn, asset_type, code)
+        try:
+            daily_range, minute_range = self._security_range(conn, asset_type, code)
+        except ValueError as _e:
+            # P1-2b 修复①配套：range ms 非法（零值/越界）→ 跳过该证券，绝不产出 1970 窗
+            return self._skip_security(primary_tid, asset_type, code, "invalid_range_ms",
+                                       f"range 非法: {_e}", len(trigger_ids))
         if _QFQ_PROFILE: _t_steps["1_security_range"] = time.perf_counter() - _t0
 
         cap = FreshCapture(self.cfg)
@@ -504,11 +543,17 @@ class QFQResidentOrchestrator:
         # （resolve_fresh_capture → NEW 时 write_fresh_capture plain INSERT）完成，
         # 避免在编排器侧用 INSERT OR REPLACE 覆盖已提交捕获（write=False）。
         _t0 = time.perf_counter() if _QFQ_PROFILE else 0
-        record, fresh_daily, fresh_minute = cap.capture(
-            conn, asset_type=asset_type, code=code, run_id=run_id,
-            daily_range_ms=daily_range, minute_range_ms=minute_range, fetcher=fetcher,
-            source=self.cfg.price_source,  # P2-4：xtquant/mcp 由 price_source 驱动
-            write=False)
+        try:
+            record, fresh_daily, fresh_minute = cap.capture(
+                conn, asset_type=asset_type, code=code, run_id=run_id,
+                daily_range_ms=daily_range, minute_range_ms=minute_range, fetcher=fetcher,
+                source=self.cfg.price_source,  # P2-4：xtquant/mcp 由 price_source 驱动
+                write=False)
+        except ValueError as _e:
+            # P1-2b 修复①配套（关键）：`capture` 内经 `_ms_to_yyyymmdd` 守卫抛出的
+            # 非法 ms 在此被捕获 → 同样「跳过该证券」，不让它冒泡成整轮异常。
+            return self._skip_security(primary_tid, asset_type, code, "invalid_range_ms",
+                                       f"capture 期 range 非法: {_e}", len(trigger_ids))
         if _QFQ_PROFILE: _t_steps["2_fetch_capture"] = time.perf_counter() - _t0
 
         record.source_generation = self._ident["source_generation"]
@@ -521,15 +566,12 @@ class QFQResidentOrchestrator:
         # 由后续轮次自然重试，避免把「源暂时无数据」误判为永久失败/死信）。
         # 与 P1-2b 同源：空/退化输入不应落到下游（此处拦在引擎之前）。
         if _fresh_len(fresh_daily) == 0 and _fresh_len(fresh_minute) == 0:
-            self._empty_fresh_skipped = int(getattr(self, "_empty_fresh_skipped", 0)) + 1
-            logger.warning(
-                f"[qfq_orch] {asset_type}/{code} fresh 采集为空"
-                f"（daily={_fresh_len(fresh_daily)}, minute={_fresh_len(fresh_minute)}；"
-                f"triggers={len(trigger_ids)}；区间 daily={daily_range} minute={minute_range}）"
-                f"→ **跳过引擎**（不崩整轮；trigger 保持 pending 由后续轮次重试）")
-            return ReanchorOutcome(trigger_id=primary_tid, asset_type=asset_type,
-                                   code=code, status="skipped",
-                                   reason="empty_fresh_capture")
+            return self._skip_security(
+                primary_tid, asset_type, code, "empty_fresh_capture",
+                f"fresh 采集为空（daily={_fresh_len(fresh_daily)}, "
+                f"minute={_fresh_len(fresh_minute)}；区间 daily={daily_range} "
+                f"minute={minute_range}）→ trigger 保持 pending 由后续轮次重试",
+                len(trigger_ids))
 
         event_id = event_id_of(primary_tid, attempt, capture_id)
         # 崩溃恢复关键：apply 前把本次 event_id 预写入全部 trigger（与引擎同事务/
