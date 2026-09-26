@@ -1104,6 +1104,61 @@ class MCPAdapter(BaseSourceAdapter):
             logger.warning(f"[MCPAdapter] export_cache manifest 写入失败（不影响取数）: {e}")
 
     @staticmethod
+    def _empty_ttl_s() -> int:
+        """P2-1：空窗墓碑 TTL（秒）——env `QS_EXPORT_EMPTY_TTL_S`，默认 7 天（604800）。"""
+        try:
+            return max(60, int(os.environ.get("QS_EXPORT_EMPTY_TTL_S", 604800)))
+        except Exception:
+            return 604800
+
+    @staticmethod
+    def _tombstone_active(entry, *, now=None) -> bool:
+        """P2-1：墓碑是否在 TTL 内有效。
+
+        **硬不变量②**：命中判定**先于** size 校验，且命中**不刷新** `empty_ts`
+        （`_fetch_export_cached` 命中即 `continue`、不置 `manifest_dirty`）→ 防 TTL 无限续期。
+        """
+        if not isinstance(entry, dict) or not entry.get("empty"):
+            return False
+        ts, ttl = entry.get("empty_ts"), int(entry.get("empty_ttl_s") or 0)
+        if not ts or ttl <= 0:
+            return False
+        try:
+            age = (now or datetime.now()) - datetime.strptime(str(ts), "%Y-%m-%dT%H:%M:%S")
+        except Exception:
+            return False
+        return age.total_seconds() < ttl
+
+    def _record_empty_tombstone(self, table_cache: Dict, ckey: str, table: str, freq: str,
+                                bs: str, be: str, miss_paths: list, entry) -> bool:
+        """P2-1：**真·空窗** → 写轻量负缓存墓碑（4 谓词**合取**）；返回是否已写入。
+
+        - ① 无异常：本方法只在顺手路径被调用（异常已在上游抛出）；
+        - ② 服务端零分片：`shards=[] ∧ total_rows=0 ∧ shard_count=0`
+          （`_last_export_meta["shards"]==0`；零分片必零行）+ 零落盘（`miss_paths` 为空）；
+        - ③ ckey 已过 P1-2b 防腐守卫（调用方 `_cache_key` 未抛即已通过）；
+        - ④ 该 ckey **无既有条目**（严格互斥：条目存在——无论真实或失效——**一律不写墓碑**，
+          既避免 `empty` 与 `shards` 共存，也不覆盖「可能有产物但文件暂时缺失」的条目）。
+
+        **硬不变量①**：**整体替换**写入（禁 `.update()`/merge）。
+        """
+        meta = getattr(self, "_last_export_meta", None)
+        if not (isinstance(meta, dict)
+                and meta.get("key") == (table, freq, ((bs, be),))
+                and int(meta.get("shards") or 0) == 0
+                and int(meta.get("written") or 0) == 0):
+            return False
+        if miss_paths or entry is not None:
+            return False
+        ttl = self._empty_ttl_s()
+        table_cache[ckey] = {"empty": True,
+                             "empty_ts": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+                             "empty_ttl_s": ttl}
+        logger.info(f"[MCPAdapter] export_cache 记录空窗墓碑 {ckey}"
+                    f"（服务端零分片/零落盘、无既有条目；TTL={ttl}s → TTL 内跳过重取）")
+        return True
+
+    @staticmethod
     def _cache_key(table: str, bs: str, be: str) -> str:
         """缓存键：table + 网格化批次边界。全证券共享（grid_aligned 保证边界一致）。
 
@@ -1248,6 +1303,12 @@ class MCPAdapter(BaseSourceAdapter):
             ckey = self._cache_key(table, bs, be)
             entry = table_cache.get(ckey)
             hit = False
+            # P2-1 硬不变量②：**墓碑命中判定先于 size 校验**；命中即 continue（不置 manifest_dirty、
+            # 不刷新 empty_ts）⇒ TTL 有限期内跳过重取，且不会无限续期。
+            if entry is not None and self._tombstone_active(entry):
+                logger.info(f"[MCPAdapter] export_cache 命中空窗墓碑 {ckey}"
+                            f"（跳过重取；TTL={entry.get('empty_ttl_s')}s）")
+                continue
             if entry is not None:
                 # 逐文件 size 校验（防半写文件）；任一文件缺失/size 不符 → 回退直连
                 shards_info = entry.get("shards", [])
@@ -1293,6 +1354,12 @@ class MCPAdapter(BaseSourceAdapter):
                 # 然后只读回目标 codes 的行（避免全量 concat OOM）
                 miss_paths, one_job_id = self._resolve_shard_paths(
                     table, freq, [(bs, be)], qdb_tbl, _is_big)
+                # P2-1（2026-09-25）：**真·空窗** → 写轻量负缓存墓碑（4 谓词合取；TTL 内跳过重取）。
+                # 必须先于下方「重取无产出降级」分支判定：服务端零分片时 miss_paths 亦为空。
+                if self._record_empty_tombstone(table_cache, ckey, table, freq, bs, be,
+                                                miss_paths, entry):
+                    manifest_dirty = True
+                    continue
                 # jabberwock 缺陷修复（2026-09-24）：重取后仍无 shard → 本批**降级为空并继续**
                 # （周期不中断），且**不写 manifest**（防 0-shard 条目污染后续命中判定）。
                 if not miss_paths:
@@ -1516,6 +1583,7 @@ class MCPAdapter(BaseSourceAdapter):
         # 始终走直连逐批落盘（不查缓存，避免与 _fetch_export_cached 循环调用）。
         # 缓存命中/未命中由 _fetch_export_cached 自身管理；此处只负责落盘 + 返回路径。
         paths: List[Path] = []
+        n_arts = 0          # P2-1：服务端返回的分片总数（0 = 真·空窗）
         # 唯一 job_id 前缀（table+freq+时间戳），避免不同 export 混入同一目录
         import uuid
         job_id = f"exp_{table}_{uuid.uuid4().hex[:8]}"
@@ -1535,6 +1603,7 @@ class MCPAdapter(BaseSourceAdapter):
                 row_limit=5_000_000 if _is_big else None,
                 async_mode=bool(getattr(self, "export_async", False)))
             if arts:
+                n_arts += len(arts)
                 jid = (arts[0].raw.get("job_id") if arts[0].raw.get("job_id") else f"export_{i}")
                 if job_id == "export":
                     job_id = jid
@@ -1543,6 +1612,10 @@ class MCPAdapter(BaseSourceAdapter):
                     local_parquet.write_bytes(art.parquet_bytes)
                     paths.append(local_parquet)
                     # art 引用在此循环迭代结束后释放，不累积
+        # P2-1（2026-09-25）：记录**服务端事实**（供 _fetch_export_cached 判定「真·空窗」）。
+        # shards=0 ⇔ 服务端 shards=[] ∧ total_rows=0 ∧ shard_count=0（零分片必零行）。
+        self._last_export_meta = {"key": (table, freq, tuple(batches)),
+                                 "shards": n_arts, "written": len(paths)}
         logger.info(f"[MCPAdapter] {table}/{freq} 流式 export 分批={len(batches)} 落盘分片={len(paths)}")
         return paths, job_id
 

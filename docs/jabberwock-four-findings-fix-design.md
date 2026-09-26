@@ -127,6 +127,43 @@
 
 ## P2-1 空窗口墓碑（轻量负缓存，TTL 内跳过重取）
 
+> ### ✅ 实施定稿（2026-09-25，依 Trae 兼容判定回执 + 审核实施令）
+>
+> **落点**：`quantstudio/pipeline/sources/mcp_adapter.py`
+> （`_resolve_shard_paths` 记录服务端事实；`_fetch_export_cached` 命中/写入；新增 3 个助手）
+>
+> **写墓碑 4 条谓词（合取）**：
+> ① 无异常（仅在顺手路径调用，异常已在上游抛出）；
+> ② **服务端零分片**：`shards=[] ∧ total_rows=0 ∧ shard_count=0`
+>    —— 以 `_last_export_meta["shards"]==0`（按其 key 精确匹配本次批次）为准（零分片必零行），
+>    并要求零落盘（`miss_paths` 为空）；
+> ③ ckey 已过 **P1-2b 防腐守卫**（调用方 `_cache_key` 未抛即已通过）；
+> ④ 该 ckey **无既有条目**（严格互斥：条目存在——无论真实或失效——**一律不写墓碑**）。
+>
+> **2 硬不变量**：
+> ① **整体替换写入**（`table_cache[ckey] = {...}`，**禁 `.update()`/merge**）⇒ 防 `empty:true` 与 `shards` 共存；
+> ② **命中判定先于 size 校验**，且命中即 `continue`、**不置 `manifest_dirty`**（不刷新 `empty_ts`）
+>    ⇒ 防 TTL 无限续期。
+>
+> **口径（采信）**：字段名 `empty` / `empty_ts` / `empty_ttl_s`（同 ckey 命名空间，不新增顶层键）；
+> TTL 默认 **7 天**（604800s），env **`QS_EXPORT_EMPTY_TTL_S`** 可配；
+> **`export_artifacts` → `export_dataset` 修正**（本项实际调用链为 `client.export_dataset`，见 `_resolve_shard_paths`）；
+> 失败路径清理：**`purge_non_authoritative` 仅针对主库行/水位，与 export manifest 无关**（已核），
+> 故「purge 跳过 empty」在本实现中体现为：**墓碑条目不含 `shards`** ⇒ 即使走到既有 size 校验路径，
+> 也是 `shards_info=[]` → `all_ok=True` 但 `shard_paths=[]` → 走既有「回退直连」分支（安全），
+> **不会**被误当作有效产物；TTL 过期后正是经此路径重取 ✓。
+>
+> **消费者处置 4 项**：① 清理/purge：如上（无 manifest purge 消费点，语义已核）；② **测试桩同步**：
+> 存量桩（`test_mcp_ckey_empty_shards` / `test_mcp_export_cache` 等）**47 passed 未受影响**；
+> ③ **盘点排除**：凡按条目计数/体积盘点 manifest 的脚本应排除 `empty` 条目（本轮无此类在跑消费点，
+> 已登记约束）；④ **客户通知追加**：随下批通知档增补「已知空窗在 TTL 内不再重复重取」。
+>
+> **周末预判**：二期（本批不做）。
+>
+> **验收**：`tests/test_mcp_empty_tombstone.py` **8 passed**
+> （T1 真·空窗写墓碑 / T2 命中跳过重取且不续期 / T3 过期回落重取 / T4 谓词②拒绝 /
+> T5 谓词④拒绝 / T6 真实条目整体替换（旧 `empty` 消失）/ T7 TTL env 与默认 / T8 `_tombstone_active` 边界）。
+
 ### 取证
 - 空窗形态：`export_dataset` 返回 `0 shards / rows=0`（历史实例：`[MCP] export_dataset index_weight: 0 shards, total_rows=0`）；
 - 空窗规律（派单给定）：**每 2 周**出现 → 可由**交易日历/周末规则预判**；
