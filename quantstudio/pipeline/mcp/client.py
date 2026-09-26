@@ -103,14 +103,28 @@ def _apply_tls_policy(session, tls_verify: bool) -> Tuple[object, str]:
         return False, "已关闭（tls_verify=False 或 MCP_TLS_VERIFY=0）"
     explicit = (os.environ.get(MCP_CA_BUNDLE_ENV) or "").strip()
     if explicit:
-        session.verify = explicit
-        return explicit, f"显式 CA 路径（env {MCP_CA_BUNDLE_ENV}）"
+        if os.path.exists(explicit):
+            session.verify = explicit
+            return explicit, f"显式 CA 路径（env {MCP_CA_BUNDLE_ENV}）"
+        logger.warning(f"[MCP tls] {MCP_CA_BUNDLE_ENV}={explicit} 路径不存在 → 忽略该配置，回落默认 CA")
+    # 纯增益补强（2026-09-25）：env 的 CA 路径**仅在文件确实存在时沿用**——
+    # 既保住「企业/内网 CA 代理」等既有可用部署（不误伤），又消除客户机的故障形态
+    # （路径失效/指向错误 → 不再让 requests 静默采用，而回落 certifi 并留痕 WARNING）。
+    _env_ca = (os.environ.get("REQUESTS_CA_BUNDLE")
+               or os.environ.get("CURL_CA_BUNDLE") or "").strip()
+    if _env_ca:
+        if os.path.exists(_env_ca):
+            session.verify = _env_ca
+            return _env_ca, f"env CA 路径沿用（{_env_ca}；文件存在，保留既有部署行为）"
+        logger.warning(
+            f"[MCP tls] env CA 路径不存在（{_env_ca}）→ **忽略**并回落默认 CA"
+            f"（此即客户机故障形态：env 失效仍被 requests 采用 → 握手失败）")
     try:
         import certifi
 
         ca = certifi.where()
         session.verify = ca
-        return ca, "certifi 默认 CA（已隔离 REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE）"
+        return ca, "certifi 默认 CA（已隔离失效/错误的 env CA 配置）"
     except Exception as e:  # pragma: no cover - certifi 缺失时回落系统默认
         session.verify = True
         return True, f"系统默认（certifi 不可用: {type(e).__name__}）"

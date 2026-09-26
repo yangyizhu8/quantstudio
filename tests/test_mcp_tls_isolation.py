@@ -30,24 +30,51 @@ class _Sess:
         self.verify = None
 
 
-def test_c1_env_ca_bundle_is_isolated(monkeypatch):
+def test_c1_env_ca_bundle_invalid_is_ignored(monkeypatch):
+    """失效 env CA 路径（客户机故障形态）→ 忽略并回落默认 CA。"""
     monkeypatch.setenv("REQUESTS_CA_BUNDLE", "/no/such/bundle.pem")
     monkeypatch.delenv(C.MCP_CA_BUNDLE_ENV, raising=False)
     monkeypatch.delenv(C.MCP_TLS_VERIFY_ENV, raising=False)
     s = _Sess()
     verify, src = C._apply_tls_policy(s, True)
-    assert verify != "/no/such/bundle.pem", "不得采用 env REQUESTS_CA_BUNDLE（隔离）"
+    assert verify != "/no/such/bundle.pem", "失效路径不得被采用（客户机故障形态消除）"
     assert s.verify == verify and verify is not False
     assert "certifi" in src or "系统默认" in src
 
 
-def test_c2_explicit_ca_wins(monkeypatch):
-    monkeypatch.setenv(C.MCP_CA_BUNDLE_ENV, "/tmp/my-ca.pem")
+def test_c1b_env_ca_bundle_valid_is_honored(monkeypatch, tmp_path):
+    """**纯增益补强**：env CA 路径**文件确实存在**时沿用（不误伤企业/内网 CA 部署）。"""
+    ca = tmp_path / "corp-ca.pem"
+    ca.write_text("dummy", encoding="utf-8")
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(ca))
+    monkeypatch.delenv(C.MCP_CA_BUNDLE_ENV, raising=False)
+    monkeypatch.delenv(C.MCP_TLS_VERIFY_ENV, raising=False)
+    s = _Sess()
+    verify, src = C._apply_tls_policy(s, True)
+    assert verify == str(ca) and s.verify == str(ca)
+    assert "沿用" in src and "既有部署" in src
+
+
+def test_c2_explicit_ca_wins(monkeypatch, tmp_path):
+    ca = tmp_path / "my-ca.pem"
+    ca.write_text("dummy", encoding="utf-8")
+    monkeypatch.setenv(C.MCP_CA_BUNDLE_ENV, str(ca))
     monkeypatch.setenv("REQUESTS_CA_BUNDLE", "/no/such/bundle.pem")
     monkeypatch.delenv(C.MCP_TLS_VERIFY_ENV, raising=False)
     s = _Sess()
     verify, src = C._apply_tls_policy(s, True)
-    assert verify == "/tmp/my-ca.pem" and "显式 CA" in src
+    assert verify == str(ca) and "显式 CA" in src
+
+
+def test_c2b_explicit_ca_missing_is_ignored(monkeypatch):
+    """显式路径不存在 → 不采用（避免静默 TLS 失败），回落默认并 WARNING。"""
+    monkeypatch.setenv(C.MCP_CA_BUNDLE_ENV, "/no/such/explicit-ca.pem")
+    monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
+    monkeypatch.delenv(C.MCP_TLS_VERIFY_ENV, raising=False)
+    s = _Sess()
+    verify, src = C._apply_tls_policy(s, True)
+    assert verify != "/no/such/explicit-ca.pem" and verify is not False
+    assert "certifi" in src or "系统默认" in src
 
 
 def test_c3_escape_hatch_off(monkeypatch):
