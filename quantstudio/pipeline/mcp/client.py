@@ -72,6 +72,49 @@ _SSE_CT = "text/event-stream"
 _PARQUET_MAGIC = b"PAR1"
 _SECRET_HEADERS = {"x-mcp-key", "authorization"}
 
+# ── P1-4（2026-09-25，jabberwock 案）：TLS 显式隔离 + 逃生通道 + 生效来源可见化 ─────
+# 背景：`requests` 在 `verify=True` 时**仍会读取 env `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE`**
+# 作为 CA 包路径 ⇒ 客户机若设了错误/失效的 CA，即使 `tls_verify=True` 也会握手失败，
+# 且失败原因只落 DEBUG 级（客户侧不可见）。本修复：显式设置 CA（不再受 env 影响），
+# 提供 `MCP_TLS_VERIFY` 逃生通道，并把**生效策略与来源**提到 INFO。
+MCP_TLS_VERIFY_ENV = "MCP_TLS_VERIFY"
+MCP_CA_BUNDLE_ENV = "MCP_CA_BUNDLE"
+
+
+def _resolve_tls_verify(default: bool) -> bool:
+    """逃生通道：`MCP_TLS_VERIFY=1/0/true/false` 显式覆盖；未设 → 用调用方默认值。"""
+    v = (os.environ.get(MCP_TLS_VERIFY_ENV) or "").strip().lower()
+    if v in ("1", "true", "yes", "on"):
+        return True
+    if v in ("0", "false", "no", "off"):
+        return False
+    return bool(default)
+
+
+def _apply_tls_policy(session, tls_verify: bool) -> Tuple[object, str]:
+    """把 TLS 策略应用到 session；返回 `(生效 verify 值, 来源描述)`。
+
+    - 校验开启 → 显式设置 CA 路径（`MCP_CA_BUNDLE` > certifi 默认），
+      **使 requests 不再读取 `REQUESTS_CA_BUNDLE`/`CURL_CA_BUNDLE`**（隔离）；
+    - 校验关闭 → `verify=False`（开发白名单 IP 模式，逐行保持旧行为）。
+    """
+    if not _resolve_tls_verify(tls_verify):
+        session.verify = False
+        return False, "已关闭（tls_verify=False 或 MCP_TLS_VERIFY=0）"
+    explicit = (os.environ.get(MCP_CA_BUNDLE_ENV) or "").strip()
+    if explicit:
+        session.verify = explicit
+        return explicit, f"显式 CA 路径（env {MCP_CA_BUNDLE_ENV}）"
+    try:
+        import certifi
+
+        ca = certifi.where()
+        session.verify = ca
+        return ca, "certifi 默认 CA（已隔离 REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE）"
+    except Exception as e:  # pragma: no cover - certifi 缺失时回落系统默认
+        session.verify = True
+        return True, f"系统默认（certifi 不可用: {type(e).__name__}）"
+
 # ── Q2 修复（2026-09-25，jabberwock 案）：get_artifact 载荷级 error 分类 ──────────
 # 服务端可能把错误放进**载荷内**（如 {"error": …, "artifact_id": …}），旧实现会落成
 # 「缺少 Parquet base64 字段」的 MCPProtocolError（不可重试）→ 周期 hold、水位可永久卡死。
@@ -228,8 +271,14 @@ class MCPClient:
         self.rate_per_min = int(rate_per_min)
 
         self._session = requests.Session()
-        self._session.verify = self.tls_verify
-        if not self.tls_verify:
+        # P1-4：显式隔离 CA（不再受 REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE 影响）+ 生效策略 INFO
+        self._tls_verify_effective, self._tls_source = _apply_tls_policy(
+            self._session, self.tls_verify)
+        logger.info(
+            f"[MCP tls] 生效策略 verify={self._tls_verify_effective!r}（来源: {self._tls_source}；"
+            f"env {MCP_TLS_VERIFY_ENV}="
+            f"{os.environ.get(MCP_TLS_VERIFY_ENV, '未设')}）")
+        if self._tls_verify_effective is False:
             # 开发 IP 模式（tls_verify=False + 白名单 IP）下抑制 urllib3 的
             # InsecureRequestWarning 噪音（告警文本固定指向 127.0.0.1 误报，
             # 实际连接目标由 endpoint 决定）。这不改变任何安全语义。
@@ -539,8 +588,10 @@ class MCPClient:
         except Exception:
             pass
         self._session = requests.Session()
-        self._session.verify = self.tls_verify
-        if not self.tls_verify:
+        # P1-4：重连同样走显式隔离策略（与构造期一致，防 env 在运行期影响）
+        self._tls_verify_effective, self._tls_source = _apply_tls_policy(
+            self._session, self.tls_verify)
+        if self._tls_verify_effective is False:
             try:
                 import urllib3
                 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
