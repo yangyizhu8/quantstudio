@@ -437,6 +437,10 @@ class BacktestEngine:
         # 覆盖 no_price / limit_up(down)_blocked / halted / insufficient_cash_or_rounding；
         # below_rebalance_threshold 属正常微调跳过，不采集。
         self._day_rejections: list = []
+        # 空跑检测（2026-09-26）：生命周期执行错误计数 —— 与「全周期零成交」合并判定策略空跑
+        # 动因：2026-09-02~09-24 断板反包策略定义被剥 ⇒ 每日 handle_data 抛错 + 全程零成交，
+        # 但只有逐日 ERROR 行、回测仍「正常完成」，22 天无人察觉。
+        self._lifecycle_errors: int = 0
 
     @property
     def engine_semantics_version(self) -> str:
@@ -629,6 +633,14 @@ class BacktestEngine:
                 self._expire_remaining_baskets()
 
         logger.info(f"[Backtest] completed: {len(self.result.nav_history)} days")
+        # 空跑检测告警（2026-09-26）：全周期零成交 + 存在生命周期执行错误 ⇒ 显式告警。
+        # 动因：2026-09-02~09-24 断板反包策略 16 项定义被剥 ⇒ 每日 handle_data 抛错、
+        # 全程零成交，却仅有逐日 ERROR 行、回测仍「正常完成」，22 天无人察觉。
+        # 判定口径：零成交取 result.trade_records 总数为 0；执行错误数取生命周期错误计数。
+        if self._lifecycle_errors > 0 and len(self.result.trade_records) == 0:
+            logger.warning(
+                f"[Backtest] 策略可能空跑：零成交 + 存在 {self._lifecycle_errors} 次"
+                f"生命周期执行错误 —— 本回测结果不代表策略行为，请检查上方 ERROR 行")
         from .ptrade_metrics import calculate_ptrade_like_metrics
         metrics = calculate_ptrade_like_metrics(self.result, self)
         self.result.metrics_summary = metrics.summary
@@ -2162,6 +2174,7 @@ class BacktestEngine:
                 # §3.6: before_trading_start 不并入 basket（_current_basket 仍 None → legacy pending）
                 self.strategy['before_trading_start'](ctx, data)
         except Exception as e:
+            self._lifecycle_errors += 1
             logger.error(f"[Ptrade] before_trading_start 错误: {e}")
         try:
             # G1-I: handle_data 内的订单形成一个 basket（§3.6）。
@@ -2181,6 +2194,7 @@ class BacktestEngine:
             for func, _time in daily_tasks:
                 func(ctx)
         except Exception as e:
+            self._lifecycle_errors += 1
             logger.error(f"[Ptrade] handle_data 错误: {e}")
             # 异常时 abort basket context（audit-fix 阻断6：不提交半成品 basket）
             if self.basket_active and self._current_basket is not None:

@@ -72,11 +72,19 @@ def _build_trade_date_map(time_series: pd.Series) -> pd.Series:
     - time 列无 NaN（主键语义），map 不产生缺失键。
     """
     _unique_times = time_series.unique()
-    _td_map = {
-        int(t): pd.Timestamp(int(t), unit="ms").tz_localize("UTC")
-        .tz_convert("Asia/Shanghai").strftime("%Y-%m-%d")
-        for t in _unique_times
-    }
+    # (a) 向量化改造（2026-09-26 纯性能优化，语义等价）：原实现为**逐唯一值 Python 循环**
+    #     （每元素 4 次 pandas 调用：Timestamp/tz_localize/tz_convert/strftime）。
+    #     等价性依据即本函数 docstring 已记载的恒等式：
+    #       pd.Timestamp(t, unit="ms").tz_localize("UTC").tz_convert("Asia/Shanghai")
+    #       ≡ pd.to_datetime(t, unit="ms", utc=True).tz_convert("Asia/Shanghai")
+    #     此处仅把该恒等式一次施加于整个唯一值数组（C 层向量化），
+    #     仍以 dict 映射后 .map() 广播回全列 —— 「唯一值 + 广播」结构不变。
+    _uniq_dates = (
+        pd.to_datetime(_unique_times, unit="ms", utc=True)
+        .tz_convert("Asia/Shanghai")
+        .strftime("%Y-%m-%d")
+    )
+    _td_map = {int(t): str(d) for t, d in zip(_unique_times, _uniq_dates)}
     return time_series.map(_td_map)
 
 # 日线快照原始价口径（方案A逆转，2026-08-14 PTrade 实证决策），供 query_daily_snapshot
