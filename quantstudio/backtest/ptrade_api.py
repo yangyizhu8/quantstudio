@@ -582,6 +582,8 @@ class PtradeAPI:
             self._fundamental.preload(prev_date)
         if self._reference is not None:
             self._reference.preload()
+        # A 通道（2026-09-26）：日切换后同步当日池给数据访问层（池状态随日回收 → 重新预填）
+        self._sync_pool_to_data_access()
 
     def attach_bar(self, engine, bar_data: pd.DataFrame, curr_date: str, prev_date: str,
                    prices: dict = None, pct_chg_map: dict = None,
@@ -630,8 +632,74 @@ class PtradeAPI:
     def set_limit_mode(self, mode):
         self._limit_mode = mode
 
+    _POOL_MAX_CODES = 6000          # A2：池规模上限（R1 缓解，超限截断保确定性）
+
+    def _offer_pool_codes(self, codes) -> None:
+        """A2 第二来源（2026-09-26）：把「指数成分发现」型策略的成分集并入当日池。
+
+        断板反包等策略不调 set_universe，而以 get_index_stocks 发现成分（全库 33 策略中仅
+        4 个调 set_universe）⇒ 仅靠显式声明会使池为空、功能惰性。此处按 **并集** 并入：
+        池 = set_universe 声明 ∪ get_index_stocks 返回值（超集作**预取范围**，未命中仍走
+        按需路径，正确性不受影响）。池规模设上限（R1），超限截断并保持确定性顺序。
+        """
+        try:
+            _raw = set(codes or [])
+        except Exception:
+            return
+        if not _raw:
+            return
+        # 双形态入池（2026-09-26 实证修正）：池与请求的 code 形态可能不同
+        # （策略常以 _bare 剥后缀后请求，而 get_index_stocks 返回带 .SS/.SZ 的形式）
+        # ⇒ 同时收「原形 + 裸码形」，免疫形态差异；池仅为预取范围，多余项无副作用。
+        _add = set(_raw)
+        for _c in _raw:
+            try:
+                _add.add(str(_c).split('.')[0])
+            except Exception:
+                pass
+        _cur = set(getattr(self, '_universe_pool', None) or [])
+        _cur |= _add
+        if len(_cur) > self._POOL_MAX_CODES:
+            _cur = set(sorted(_cur)[:self._POOL_MAX_CODES])
+        self._universe_pool = sorted(_cur)
+        self._sync_pool_to_data_access()
+
+    def _sync_pool_to_data_access(self) -> None:
+        """A 通道（2026-09-26）：把当日池写入数据访问层（全池共享 bars 缓存）。
+
+        运行时自适应定位 set_pool 宿主（market provider 自身或其内部数据访问对象），
+        不硬编码内部属性名；句柄/池缺失即静默跳过 —— 数据访问层自然退化为按需填充
+        同一缓存（零额外代码路径，不阻塞回测）。
+        """
+        pool = list(getattr(self, '_universe_pool', None) or [])
+        if not pool:
+            return
+        market = getattr(self, '_market', None)
+        cands = [market]
+        if market is not None:
+            try:
+                cands.extend(vars(market).values())
+            except Exception:
+                pass
+        for obj in cands:
+            if obj is not None and hasattr(obj, 'set_pool'):
+                try:
+                    obj.set_pool(pool)
+                except Exception:
+                    pass
+                return
+
     def set_universe(self, security_list):
-        pass  # DuckDB 模式无需订阅
+        """A 通道（2026-09-26）：记录策略当日 PIT 池（原为 no-op：DuckDB 模式无需订阅）。
+
+        本改动**不改变既有对外行为**（无返回值、无异常、不涉订阅语义），仅额外记录池；
+        实际推送给数据访问层在 attach_day（该时点 provider 句柄已就绪）与本次调用时各同步一次。
+        """
+        try:
+            self._universe_pool = list(security_list) if security_list else []
+        except Exception:
+            self._universe_pool = []
+        self._sync_pool_to_data_access()
 
     def set_commission(self, **kwargs):
         """支持策略在 initialize 中动态调整回测成本。
@@ -697,7 +765,11 @@ class PtradeAPI:
                 if code not in seen:
                     seen.add(code)
                     unique.append(code)
-            return [self._to_ptrade_code(code) for code in unique]
+            # A2（2026-09-26）：池注入必须用**映射后**代码（与策略请求同形），
+            # 否则池 code 与请求 code 不同形 ⇒ 命中率恒为 0（功能惰性）。
+            _pool_codes = [self._to_ptrade_code(code) for code in unique]
+            self._offer_pool_codes(_pool_codes)
+            return _pool_codes
         except Exception as e:
             logger.warning(f"get_index_stocks({index_code}) 失败: {e}")
         return []

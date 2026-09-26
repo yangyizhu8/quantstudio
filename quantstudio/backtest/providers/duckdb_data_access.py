@@ -156,6 +156,14 @@ class DuckDBDataAccess:
         # 与 ptrade_api _query_cache 每日清空的 PIT 纪律同构
         self._bars_window_cache: Dict[tuple, Optional[pd.DataFrame]] = {}
         self._bars_window_ms: Optional[int] = None
+        # 全池共享（2026-09-26）：A 通道写入的当日池 + 预取状态
+        # 池 = 「同一份窗口缓存」的**批量填充范围**（非第二缓存，T2 单一真相源）
+        self._bars_pool: list = []
+        self._bars_pool_set: set = set()
+        self._bars_pool_seeded = None
+        self._bars_pool_w: int = 0
+        self._bars_pool_expansions: int = 0
+        self._bars_pool_expand_locked: bool = False
 
         self._preload_fs: Optional[pd.DataFrame] = None
         self._preload_fs_month: Optional[str] = None
@@ -728,6 +736,27 @@ class DuckDBDataAccess:
     # T1（2026-09-26）：窗口缓存哨兵与最小窗口（覆盖本场景最大 count=27 并留余量）
     _BARS_MISS = object()          # 「未入缓存」哨兵（区别于 None=已入缓存但无数据）
     _BARS_WINDOW_MIN = 60
+    # 全池共享（2026-09-26）：池预取最小窗口 / 扩窗上限 / 超限后的固定窗口
+    _POOL_W_MIN = 30
+    _POOL_EXPAND_LIMIT = 2
+    _POOL_FIXED_W = 60
+
+    def set_pool(self, codes) -> None:
+        """A 通道（2026-09-26）：由 ptrade_api 在 set_universe(...)/attach_day 写入当日池。
+
+        池 = 「同一份 bars 窗口缓存」的**批量填充范围**（非第二缓存 —— T2 单一真相源）。
+        池变更即重置预取状态；日切换（before_ms 变化）由 query_bars_by_count_batch 回收。
+        池为空/未声明 ⇒ 自然退化为按需填充同一缓存（零额外代码路径）。
+        """
+        _new = set(codes) if codes else set()
+        if _new == self._bars_pool_set:
+            return          # 幂等（2026-09-26）：池未变 ⇒ 不重置预取状态/窗口，避免打断命中
+        self._bars_pool = sorted(_new)
+        self._bars_pool_set = _new
+        self._bars_pool_seeded = None
+        self._bars_pool_w = 0
+        self._bars_pool_expansions = 0
+        self._bars_pool_expand_locked = False
 
     def query_bars_by_count_batch(self, codes, count, before_ms, use_qfq: bool = False) -> Dict[str, pd.DataFrame]:
         """单码调用**窗口缓存 + count 内存切片**（T1，2026-09-26 · 纯性能优化）。
@@ -754,18 +783,43 @@ class DuckDBDataAccess:
             return self._query_bars_by_count_batch_impl(codes, count, before_ms, use_qfq)
         code = codes[0]
         bms = int(before_ms)
+        qfq = bool(use_qfq)
         if bms != self._bars_window_ms:          # R3：日/窗口切换 → 整体回收（PIT 隔离）
             self._bars_window_cache = {}
             self._bars_window_ms = bms
-        key = (code, bms, bool(use_qfq))
+            self._bars_pool_seeded = None        # 池状态同步回收（绝不跨日复用）
+            self._bars_pool_w = 0
+            self._bars_pool_expansions = 0
+            self._bars_pool_expand_locked = False
+        need = int(count)
+        key = (code, bms, qfq)
+        # 池填充路径：池就绪且当日未预取 ⇒ 一次全池批量预填「同一份窗口缓存」
+        if self._bars_pool_set and self._bars_pool_seeded != (bms, qfq):
+            W = max(need, self._POOL_W_MIN)
+            for _c, _df in self._query_bars_by_count_batch_impl(list(self._bars_pool), W, bms, qfq).items():
+                self._bars_window_cache[(_c, bms, qfq)] = _df
+            self._bars_pool_seeded = (bms, qfq)
+            self._bars_pool_w = W
         wide = self._bars_window_cache.get(key, self._BARS_MISS)
+        # 池窗口不足 ⇒ 扩窗（重新批量）；超上限 ⇒ 锁定固定 W（防御性条款，§2.3）
+        if (wide is not self._BARS_MISS and wide is not None and 0 < len(wide) < need
+                and self._bars_pool_set):
+            self._bars_pool_expansions += 1
+            if self._bars_pool_expansions > self._POOL_EXPAND_LIMIT:
+                self._bars_pool_expand_locked = True
+            W = self._POOL_FIXED_W if self._bars_pool_expand_locked else max(need, self._bars_pool_w + 30)
+            for _c, _df in self._query_bars_by_count_batch_impl(list(self._bars_pool), W, bms, qfq).items():
+                self._bars_window_cache[(_c, bms, qfq)] = _df
+            self._bars_pool_w = W
+            wide = self._bars_window_cache.get(key, self._BARS_MISS)
+        # 按需填充路径（池缺失 / 非池 code）：填「同一份缓存」
         if wide is self._BARS_MISS:
-            need = max(int(count), self._BARS_WINDOW_MIN)
-            wide = self._query_bars_by_count_batch_impl([code], need, bms, use_qfq).get(code)
+            _need = max(need, self._BARS_WINDOW_MIN)
+            wide = self._query_bars_by_count_batch_impl([code], _need, bms, qfq).get(code)
             self._bars_window_cache[key] = wide
         if wide is None or len(wide) == 0:
             return {}
-        return {code: wide.tail(int(count)).reset_index(drop=True)}
+        return {code: wide.tail(need).reset_index(drop=True)}
 
     def _query_bars_by_count_batch_impl(self, codes, count, before_ms, use_qfq: bool = False) -> Dict[str, pd.DataFrame]:
         """阶段1 批量化：与 query_bars_by_count_multi_table 逐只调用字节级等价，
