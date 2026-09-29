@@ -697,8 +697,17 @@ class DaemonLifecycle:
                                               "水位保持（下轮清障重算）")
                 else:
                     write_run_state(qfq_phase="post_ingest_running")
+                    # P1.0：post_ingest 内可中断。回调**复用本函数内唯一的
+                    # stop.request 消费点** _check_stop_at_boundary（内部调
+                    # consume_stop_request_if_matched），编排器不读文件、不做二次读，
+                    # 「消费点唯一」硬不变量保持（与 D 件同款）。
+                    # 回退：QFQ_REANCHOR_STOP_CALLBACK=0 → 传 None（旧行为）。
+                    _qfq_stop_cb = None
+                    if os.environ.get("QFQ_REANCHOR_STOP_CALLBACK", "1") != "0":
+                        _qfq_stop_cb = lambda: _check_stop_at_boundary("post_ingest_unit")
                     try:
-                        qfq_summary = collector.qfq_run_post_ingest(run_id)
+                        qfq_summary = collector.qfq_run_post_ingest(
+                            run_id, should_stop=_qfq_stop_cb)
                         if qfq_summary is not None:
                             write_run_state(
                                 qfq_phase=qfq_summary.status,

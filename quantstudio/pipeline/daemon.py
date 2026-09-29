@@ -359,7 +359,7 @@ class ResidentCollector:
                     f"（四价格表水位延迟到周期结束统一提交）")
         return self._qfq_cycle_id
 
-    def qfq_run_post_ingest(self, run_id: str):
+    def qfq_run_post_ingest(self, run_id: str, should_stop=None):
         """增量任务全部结束后执行 post-ingest 闭环（recover→discover→claim→
         reanchor→gate→commit/hold watermarks）。disabled 或未开周期 → no-op None。"""
         if not self.qfq_enabled() or self._qfq_cycle_id is None:
@@ -377,7 +377,9 @@ class ResidentCollector:
                 as_of_ms=int(_time.time() * 1000),
                 detector_degraded=detector_degraded,
                 # ① 分类留痕：把 degraded 的**分类**透传给编排器写入 hold_reason
-                detector_degraded_kind=getattr(self, "_qfq_last_degraded_kind", ""))
+                detector_degraded_kind=getattr(self, "_qfq_last_degraded_kind", ""),
+                # P1.0：透传可中断回调（None = 旧行为，applying 相位不可中断）
+                should_stop=should_stop)
         finally:
             self._qfq_cycle_id = None
         return summary

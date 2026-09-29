@@ -1408,7 +1408,8 @@ class QFQResidentOrchestrator:
                         as_of_ms: int, fetcher: Optional[FreshFetcher] = None,
                         detector_degraded: bool = False,
                         detector_degraded_kind: str = "",
-                        codes_filter: Optional[Sequence[str]] = None) -> CycleSummary:
+                        codes_filter: Optional[Sequence[str]] = None,
+                        should_stop: Optional[Callable[[], bool]] = None) -> CycleSummary:
         """daemon 在普通增量任务 + 水位延迟写完后调用。
 
         流程：recover → discover → claim/merge → reanchor → gate → commit/hold watermarks。
@@ -1478,13 +1479,36 @@ class QFQResidentOrchestrator:
             summary.claimed = len(units)
 
             self._set_cycle_phase(conn, cycle_id, "applying")
+            # P1.0：applying 相位逐单元边界消费停。should_stop 由 daemon 侧注入，
+            # 内部复用 daemon_lifecycle 的**唯一** stop.request 消费点
+            # （consume_stop_request_if_matched / _check_stop_at_boundary）；
+            # 本编排器**不读** stop.request 文件（D 件「消费点唯一」硬不变量）。
+            _stop_hit = False
+            _done = 0
             for unit in units:
+                if should_stop is not None and should_stop():
+                    _stop_hit = True
+                    break
                 outcome = self._reanchor_security(
                     conn, run_id=run_id, asset_type=unit["asset_type"], code=unit["code"],
                     trigger_ids=unit["triggers"], effective_dates=unit["effective_dates"],
                     attempt=int(unit.get("attempt", 0)) + 1, fetcher=fetcher)
                 self._apply_trigger_outcome(conn, run_id=run_id, unit=unit,
                                             outcome=outcome, fetcher=fetcher, summary=summary)
+                _done += 1
+            if _stop_hit:
+                # 中断语义：不经 gate、不提交水位；已 committed 单元保留
+                # （_already_committed 早退），未提交单元 trigger 保持 pending，
+                # 下轮 begin_cycle 的 supersede_stale_intents 清障重算。
+                summary.status = "interrupted"
+                summary.error = ("stop_requested：applying 相位在单元边界中断，"
+                                 "不经 gate、不提交水位（已 committed 单元保留，"
+                                 "未提交单元 trigger 保持 pending，下轮清障重算）")
+                logger.warning(
+                    f"[qfq_orch] {summary.error}；本轮已完成 unit={_done}，"
+                    f"剩余未处理 unit={len(units) - _done}")
+                self._finish_cycle(conn, cycle_id, "interrupted", summary)
+                return summary
 
             self._set_cycle_phase(conn, cycle_id, "gating")
             passed, report = self._qfq_gate(
