@@ -54,6 +54,8 @@ def _bare_adapter(client=None, export_cache=False, landing_root=None):
     adapter._landing_root = landing_root  # caller must provide tmp_path
     adapter._shard_table_cache = OrderedDict()   # 优化 A：裸实例补属性（绕过 __init__）
     adapter._SHARD_CACHE_MAX = 30
+    adapter._ckey_meta_cache = OrderedDict()     # P1.1：裸实例补属性（绕过 __init__）
+    adapter._CKEY_META_CACHE_MAX = 256
     return adapter
 
 

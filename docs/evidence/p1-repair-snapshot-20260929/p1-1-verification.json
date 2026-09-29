@@ -1,0 +1,152 @@
+{
+  "ts": "2026-09-29 22:05:58",
+  "pushdown_flag": true,
+  "shard_sets": {
+    "etf_minutes": {
+      "dir": "exp_etf_minutes_d07a4b4f",
+      "n_shards": 78,
+      "bytes": 54808389,
+      "checks": {
+        "codes_1": {
+          "rows_old": 2169,
+          "t_old_s": 0.65,
+          "rss_old_gb": 0.624,
+          "rows_new": 2169,
+          "t_new_s": 0.31,
+          "rss_new_gb": 0.005,
+          "speedup": 2.1,
+          "rows_equal": true,
+          "frame_equal": true,
+          "lru_entries_new": 0
+        },
+        "codes_50": {
+          "rows_old": 108450,
+          "t_old_s": 0.785,
+          "rss_old_gb": 0.351,
+          "rows_new": 108450,
+          "t_new_s": 0.483,
+          "rss_new_gb": -0.017,
+          "speedup": 1.63,
+          "rows_equal": true,
+          "frame_equal": true,
+          "lru_entries_new": 0
+        },
+        "ALL": {
+          "rows_old": 3661031,
+          "t_old_s": 0.732,
+          "rss_old_gb": 0.311,
+          "frame_equal": "ALL 路径同函数（未改）"
+        }
+      },
+      "row_groups_first_shard": [
+        {
+          "rg": 0,
+          "rows": 50000,
+          "ts_code_min": "158000.SZ",
+          "ts_code_max": "589990.SH"
+        }
+      ],
+      "prunable_by_code_filter": false
+    },
+    "stock_daily": {
+      "dir": "exp_stock_daily_06e80619",
+      "n_shards": 21,
+      "bytes": 50290668,
+      "checks": {
+        "codes_1": {
+          "rows_old": 187,
+          "t_old_s": 0.273,
+          "rss_old_gb": 0.141,
+          "rows_new": 187,
+          "t_new_s": 0.142,
+          "rss_new_gb": -0.027,
+          "speedup": 1.92,
+          "rows_equal": true,
+          "frame_equal": true,
+          "lru_entries_new": 0
+        },
+        "codes_50": {
+          "rows_old": 9245,
+          "t_old_s": 0.253,
+          "rss_old_gb": 0.106,
+          "rows_new": 9245,
+          "t_new_s": 0.157,
+          "rss_new_gb": -0.03,
+          "speedup": 1.62,
+          "rows_equal": true,
+          "frame_equal": true,
+          "lru_entries_new": 0
+        },
+        "ALL": {
+          "rows_old": 1028781,
+          "t_old_s": 0.21,
+          "rss_old_gb": 0.114,
+          "frame_equal": "ALL 路径同函数（未改）"
+        }
+      },
+      "row_groups_first_shard": [
+        {
+          "rg": 0,
+          "rows": 50000,
+          "ts_code_min": "000001.SZ",
+          "ts_code_max": "920992.BJ"
+        }
+      ],
+      "prunable_by_code_filter": false
+    },
+    "stock_minutes": {
+      "dir": "exp_stock_minutes_15b24912",
+      "n_shards": 600,
+      "bytes": 730656345,
+      "checks": {
+        "codes_1": {
+          "rows_old": 5716,
+          "t_old_s": 12.515,
+          "rss_old_gb": 4.028,
+          "rows_new": 5716,
+          "t_new_s": 4.632,
+          "rss_new_gb": -0.374,
+          "speedup": 2.7,
+          "rows_equal": true,
+          "frame_equal": true,
+          "lru_entries_new": 0
+        },
+        "codes_50": {
+          "rows_old": 319073,
+          "t_old_s": 9.291,
+          "rss_old_gb": 2.739,
+          "rows_new": 319073,
+          "t_new_s": 4.796,
+          "rss_new_gb": -0.789,
+          "speedup": 1.94,
+          "rows_equal": true,
+          "frame_equal": true,
+          "lru_entries_new": 0
+        },
+        "ALL": {
+          "rows_old": 30000000,
+          "t_old_s": 6.629,
+          "rss_old_gb": 3.121,
+          "frame_equal": "ALL 路径同函数（未改）"
+        }
+      },
+      "row_groups_first_shard": [
+        {
+          "rg": 0,
+          "rows": 50000,
+          "ts_code_min": "000001.SZ",
+          "ts_code_max": "920832.BJ"
+        }
+      ],
+      "prunable_by_code_filter": false
+    }
+  },
+  "log_counts": {
+    "log": "D:\\miniQMT策略实盘\\QuantStudio\\data\\logs\\daemon.log",
+    "export_cache_hit_lines": 51169,
+    "by_table": {
+      "stock_minutes": 47601,
+      "stock_daily": 3568
+    }
+  }
+}

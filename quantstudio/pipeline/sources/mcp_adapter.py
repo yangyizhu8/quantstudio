@@ -44,6 +44,8 @@ logger = logging.getLogger(__name__)
 
 _QFQ_PROFILE = bool(os.environ.get("QFQ_PROFILE", ""))
 _profile_logger = logging.getLogger("qfq_profile")
+# P1.1（2026-09-29）：per-code 过滤下推开关。默认开；置 '0' 回退「全市场 concat 后过滤」旧行为。
+_QFQ_FILTER_PUSHDOWN = os.environ.get("QFQ_REANCHOR_FILTER_PUSHDOWN", "1") != "0"
 
 # ---------------------------------------------------------------------------
 # 覆盖矩阵（基于 P2-0 探针 + 任务书 §4）
@@ -392,6 +394,10 @@ class MCPAdapter(BaseSourceAdapter):
         # LRU 容量 30：覆盖一个批次全部 ckey（ETF ~13 + STOCK ~17 = ~30）。
         self._shard_table_cache: "OrderedDict[str, pd.DataFrame]" = OrderedDict()
         self._SHARD_CACHE_MAX = 30
+        # P1.1（2026-09-29）：ckey 级**元信息**缓存 —— 只存与 code 无关的 schema 事实
+        # （码列名），**不含任何行数据**。键 = ckey|mtime|size（与旧 LRU 同指纹口径）。
+        self._ckey_meta_cache: "OrderedDict[str, dict]" = OrderedDict()
+        self._CKEY_META_CACHE_MAX = 256
         self._client: Optional[MCPClient] = None
         self._landing_root = _resolve_data_root() / self.landing_subdir
         try:
@@ -1235,6 +1241,94 @@ class MCPAdapter(BaseSourceAdapter):
                          f"→ Raw Landing {local_parquet.name}")
         return frames, job_id
 
+    # 码列候选（与旧路径 `next((c for c in ("ts_code", "code", "stock_code") ...))` 同序）
+    _CODE_COL_CANDIDATES = ("ts_code", "code", "stock_code")
+
+    def _ckey_code_col(self, ckey: str, shard_paths: list) -> Optional[str]:
+        """P1.1：探测 shard 的「证券码列」名 —— 只读 parquet schema，不读行数据。
+
+        返回值：可用码列名；None = 本批不可下推（无码列 / 码列非字符串 / schema 读取异常）。
+        元信息缓存只存 schema 事实、不存行数据（设计件 §2 P1.1 缓存口径 a）。
+        """
+        first_sp = shard_paths[0]
+        first_stat = first_sp.stat()
+        meta_key = f"{ckey}|{int(first_stat.st_mtime)}|{first_stat.st_size}"
+        meta = self._ckey_meta_cache.get(meta_key)
+        if meta is not None:
+            self._ckey_meta_cache.move_to_end(meta_key)
+            return meta.get("code_col")
+        code_col: Optional[str] = None
+        try:
+            import pyarrow.parquet as pq
+            schema = pq.ParquetFile(first_sp).schema_arrow
+            for cand in self._CODE_COL_CANDIDATES:
+                if cand in schema.names:
+                    if "string" in str(schema.field(cand).type):
+                        code_col = cand
+                    break
+        except Exception as e:
+            logger.warning(
+                f"[MCPAdapter] P1.1 码列探测失败（ckey={ckey}）→ 本批回退全市场读: "
+                f"type={type(e).__name__} msg={e}")
+            code_col = None
+        self._ckey_meta_cache[meta_key] = {"code_col": code_col}
+        while len(self._ckey_meta_cache) > self._CKEY_META_CACHE_MAX:
+            self._ckey_meta_cache.popitem(last=False)
+        return code_col
+
+    def _read_ckey_filtered(self, ckey: str, shard_paths: list,
+                            want_codes: set) -> pd.DataFrame:
+        """P1.1（2026-09-29）：per-code 过滤**下推到 per-shard 读取**。
+
+        逐 shard `read_parquet(filters=[(码列, 'in', want)])` → 只取目标码的行再 concat；
+        **不再把全市场帧 concat 出来**（消 P1-a 分片全市场重扫 + P1-b 全市场帧驻留的公共放大器）。
+
+        语义等价性：下推仅作 I/O 前置裁剪，concat 后**再按 `astype(str).isin` 复筛一次**，
+        与旧路径「全市场 concat → isin」逐行等价。
+
+        降级/回退（均不得中断周期）：
+          - 空 `shard_paths` → 空 DataFrame（沿用 jabberwock 守卫语义）；
+          - 码列不可用（无列/非字符串/探测异常）或下推抛错 → 回退 `_read_ckey_cached` 旧路径；
+          - 过滤结果**不进** `_shard_table_cache`（该 LRU 语义为「未过滤全市场帧」，不得污染）。
+        """
+        if not shard_paths:
+            logger.warning(
+                f"[MCPAdapter] _read_ckey_filtered 收到空 shard 列表（ckey={ckey}）→ "
+                f"降级为空 DataFrame（视为缓存 miss，不上抛；周期继续）")
+            return pd.DataFrame()
+        want = sorted({str(c) for c in want_codes})
+        _t0 = time.perf_counter() if _QFQ_PROFILE else 0.0
+        code_col = self._ckey_code_col(ckey, shard_paths) if _QFQ_FILTER_PUSHDOWN else None
+        parts: Optional[list] = [] if code_col is not None else None
+        if parts is not None:
+            try:
+                for sp in shard_paths:
+                    sdf = pd.read_parquet(sp, filters=[(code_col, "in", want)])
+                    if len(sdf):
+                        parts.append(sdf)
+            except Exception as e:
+                logger.warning(
+                    f"[MCPAdapter] P1.1 过滤下推异常（ckey={ckey}, code_col={code_col}）→ "
+                    f"本批复筛回退全市场读: type={type(e).__name__} msg={e}")
+                parts = None
+        if parts is None:
+            # 回退旧路径（下推关闭 / 码列不可用 / 下推抛错）
+            full_df = self._read_ckey_cached(ckey, shard_paths)
+            if len(full_df) and code_col is None:
+                code_col = next((c for c in self._CODE_COL_CANDIDATES
+                                 if c in full_df.columns), None)
+            if len(full_df) and code_col:
+                return full_df[full_df[code_col].astype(str).isin(want)]
+            return full_df
+        df = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+        if len(df):
+            df = df[df[code_col].astype(str).isin(want)]
+        if _QFQ_PROFILE:
+            _profile_logger.info(
+                f"PROFILE_2a_pushdown ckey={ckey} shards={len(shard_paths)} "
+                f"codes={len(want)} rows={len(df)} time={time.perf_counter() - _t0:.3f}s")
+        return df
+
     def _read_ckey_cached(self, ckey: str, shard_paths: list) -> pd.DataFrame:
         """优化 A：ckey 级别 DataFrame LRU 缓存。
 
@@ -1322,22 +1416,17 @@ class MCPAdapter(BaseSourceAdapter):
                         all_ok = False
                         break
                 if all_ok and shard_paths:
-                    # 命中：ckey 级别缓存读取 → codes 过滤
+                    # 命中：ckey 级别读取 → codes 过滤
                     _is_all = codes and (len(codes) == 1 and str(codes[0]).upper() == "ALL")
                     want_codes = None if _is_all else ({str(c) for c in codes} if codes else None)
                     _t_shard_total = time.perf_counter() if _QFQ_PROFILE else 0
-                    # 优化 A：ckey 级别缓存（全 shard concat 后缓存，跨证券共享）
-                    full_df = self._read_ckey_cached(ckey, shard_paths)
-                    if _QFQ_PROFILE: _t_shard_total = time.perf_counter() - _t_shard_total
-                    if len(full_df) > 0 and want_codes is not None:
-                        code_col = next((c for c in ("ts_code", "code", "stock_code")
-                                         if c in full_df.columns), None)
-                        if code_col:
-                            sdf = full_df[full_df[code_col].astype(str).isin(want_codes)]
-                        else:
-                            sdf = full_df
+                    if want_codes is None:
+                        # codes=None / ["ALL"]：全市场语义 —— **行为逐位不变**
+                        sdf = self._read_ckey_cached(ckey, shard_paths)
                     else:
-                        sdf = full_df
+                        # P1.1：per-code 过滤下推到 per-shard（不 concat 全市场帧、不入全市场 LRU）
+                        sdf = self._read_ckey_filtered(ckey, shard_paths, want_codes)
+                    if _QFQ_PROFILE: _t_shard_total = time.perf_counter() - _t_shard_total
                     if len(sdf):
                         frames.append(sdf)
                     hit = True
@@ -1367,19 +1456,14 @@ class MCPAdapter(BaseSourceAdapter):
                         f"[MCPAdapter] export_cache 重取无 shard（ckey={ckey}）：本批降级为空、"
                         f"不写 manifest，周期继续（不中断重锚环）")
                     continue
-                # 落盘后，用 ckey 级别缓存（与命中路径一致）
+                # 落盘后，与命中路径同口径读取
                 _is_all_miss = codes and (len(codes) == 1 and str(codes[0]).upper() == "ALL")
                 want_codes_miss = None if _is_all_miss else ({str(c) for c in codes} if codes else None)
-                full_df_miss = self._read_ckey_cached(ckey, miss_paths)
-                if len(full_df_miss) > 0 and want_codes_miss is not None:
-                    code_col_miss = next((c for c in ("ts_code", "code", "stock_code")
-                                          if c in full_df_miss.columns), None)
-                    if code_col_miss:
-                        sdf = full_df_miss[full_df_miss[code_col_miss].astype(str).isin(want_codes_miss)]
-                    else:
-                        sdf = full_df_miss
+                if want_codes_miss is None:
+                    # codes=None / ["ALL"]：全市场语义 —— **行为逐位不变**
+                    sdf = self._read_ckey_cached(ckey, miss_paths)
                 else:
-                    sdf = full_df_miss
+                    sdf = self._read_ckey_filtered(ckey, miss_paths, want_codes_miss)
                 if len(sdf):
                     frames.append(sdf)
                 # 记录本批实际写入的 parquet 文件到 manifest（不用 glob 全目录，避免旧文件混入）
