@@ -88,6 +88,65 @@ ALL_DETAIL_TOKENS = {
 # DB probing
 # =====================================================================
 
+PIT_SNAPSHOT_GAP_MAX_DAYS = 45
+"""complete 快照相邻间隔告警阈值（天）。可经环境变量覆盖：
+
+    QS_PIT_SNAPSHOT_GAP_MAX_DAYS=60
+
+A 项门禁（2026-10-02）：complete 快照中段空洞检测阈值——首尾两点探针存在结构性
+盲区（中段空洞位于两端之间时发现不了），故引入相邻 complete 快照间隔检测。
+"""
+
+
+def _pit_gap_threshold_days() -> float:
+    """阈值解析：环境变量 QS_PIT_SNAPSHOT_GAP_MAX_DAYS 优先，非法值回退常量。"""
+    raw = os.environ.get("QS_PIT_SNAPSHOT_GAP_MAX_DAYS")
+    if raw:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            pass
+    return float(PIT_SNAPSHOT_GAP_MAX_DAYS)
+
+
+def _fmt_ms_date(ms: int) -> str:
+    """epoch ms → 'YYYY-MM-DD'（东八区；与探针内 _fd 口径一致）。"""
+    return datetime.datetime.fromtimestamp(
+        ms / 1000,
+        tz=datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d")
+
+
+def _snapshot_gap_intervals(times_ms: List[int],
+                            threshold_days: Optional[float] = None) -> List[Any]:
+    """相邻 complete 快照间隔超阈 → [(起, 止, 天数), ...]（按时间升序）。
+
+    输入为**快照序列**，故对任意指数通用（非 000300 专用）。
+    判据为**严格大于**阈值（恰等于阈值不算超阈）。
+    """
+    th = float(threshold_days if threshold_days is not None
+               else _pit_gap_threshold_days())
+    out: List[Any] = []
+    for a, b in zip(times_ms, times_ms[1:]):
+        days = (b - a) / 86400000.0
+        if days > th:
+            out.append((_fmt_ms_date(a), _fmt_ms_date(b), round(days, 1)))
+    return out
+
+
+def _coverage_gaps(by_index: Dict[str, List[int]],
+                   threshold_days: Optional[float] = None) -> Dict[str, List[Any]]:
+    """按指数计算覆盖空档；**仅返回存在超阈空档的指数**（降噪）。
+
+    A-2 覆盖连续性门的数据来源：{index_code: [(起, 止, 天数), ...]}。
+    """
+    out: Dict[str, List[Any]] = {}
+    for code, times in (by_index or {}).items():
+        g = _snapshot_gap_intervals(list(times), threshold_days)
+        if g:
+            out[code] = g
+    return out
+
+
 def _probe_db(db_path: Path) -> Dict[str, Any]:
     """Probe the live DuckDB. Returns a dict of raw findings (table -> stats).
 
@@ -274,6 +333,15 @@ def _probe_reference_data(db_path: Path) -> Dict[str, Any]:
                         [sample]).fetchall()]
                 else:
                     info["complete_snapshots"] = []
+                if meta_rows > 0:
+                    by_index: Dict[str, List[int]] = {}
+                    for _c, _t in conn.execute(
+                            "SELECT index_code, time FROM index_constituents_snapshot_meta "
+                            "WHERE status='complete' ORDER BY index_code, time").fetchall():
+                        by_index.setdefault(_c, []).append(_t)
+                    info["complete_snapshots_by_index"] = by_index
+                else:
+                    info["complete_snapshots_by_index"] = {}
             findings["index_constituents"] = info
 
         if {"industry_classification", "industry_membership"} <= existing:
@@ -576,19 +644,33 @@ def _build_reference_capabilities(ref: Dict[str, Any],
                     return _dt.datetime.fromtimestamp(
                         ms / 1000,
                         tz=_dt.timezone(_dt.timedelta(hours=8))).strftime("%Y-%m-%d")
-                f1, f2 = _fd(snaps[0]), _fd(snaps[-1])
+                # A-1（2026-10-02）：分层抽样 {首, 中, 尾}（去重；len<3 自动退化，不改 len(snaps)>=2 门槛）+ 相邻 complete 快照间隔检测。
+                _idx = sorted({0, len(snaps) // 2, len(snaps) - 1})
+                f1, f2 = _fd(snaps[_idx[0]]), _fd(snaps[_idx[-1]])
                 r1 = provider.get_index_constituents(sample, f1)
                 r1b = provider.get_index_constituents(sample, f1)
                 r2 = provider.get_index_constituents(sample, f2)
                 deterministic = r1 == r1b
-                changes = set(r1) != set(r2)
+                changes = set(r1) != set(r2)          # 语义不变：仍为首尾比较
                 union = set(r1) | set(r2)
                 not_union = set(r1) != union or len(snaps) == 1
-                pit_ok = bool(deterministic and changes and not_union and r1)
+                # 中段点：仅作附加诊断证据，**不参与** changes 判定（只加严，不放宽）
+                _mid_ev = []
+                for _i in _idx[1:-1]:
+                    _fm = _fd(snaps[_i])
+                    _mid_ev.append(
+                        f"as_of({_fm}) n={len(provider.get_index_constituents(sample, _fm))}")
+                gaps = _snapshot_gap_intervals(snaps)
+                pit_ok = bool(deterministic and changes and not_union and r1 and not gaps)
                 pit_ev = [f"sample={sample} complete_snapshots={len(snaps)}",
+                          "sampled_dates=" + ",".join(_fd(snaps[_i]) for _i in _idx),
                           f"as_of({f1}) n={len(r1)} deterministic={deterministic}",
                           f"as_of({f2}) n={len(r2)} changes_result={changes}",
-                          f"not_history_union={not_union}"]
+                          f"not_history_union={not_union}"] + _mid_ev + [
+                          f"gap_threshold_days={_pit_gap_threshold_days():g}",
+                          ("gap_intervals=" + "; ".join(
+                              f"[{s}..{e}] {d} 天" for s, e, d in gaps)) if gaps
+                          else "gap_intervals=none"]
             else:
                 pit_ev.append("no index with >=2 complete snapshots")
     except Exception as e:
@@ -602,14 +684,25 @@ def _build_reference_capabilities(ref: Dict[str, Any],
         ["Rebuild snapshot meta (refresh_snapshot_meta); verify as-of behavior"]))
 
     # ---- index_constituents_history_coverage ----
-    cov_ok = bool(ic.get("present") and ic.get("indices"))
+    # A-2（2026-10-02）：覆盖判据增**连续性门**——存在性之外，要求 complete 快照
+    # 序列无超阈空档（按指数判定；输入为快照序列，故任意指数通用）。
+    _by_index = ic.get("complete_snapshots_by_index", {})
+    _gap_map = _coverage_gaps(_by_index)
+    cov_ok = bool(ic.get("present") and ic.get("indices") and not _gap_map)
+    _cov_ev = ["index coverage: " + "; ".join(
+        f"{code} {meta['snapshots']} snapshots "
+        f"[{meta['min_time']}..{meta['max_time']}]"
+        for code, meta in sorted(ic.get("indices", {}).items()))]
+    if _gap_map:
+        for _code, _gaps in sorted(_gap_map.items()):
+            for _s, _e, _d in _gaps:
+                _cov_ev.append(f"gap: {_code} [{_s}..{_e}] {_d} 天")
+    else:
+        _cov_ev.append("gap_intervals=none (threshold=%g 天)" % _pit_gap_threshold_days())
     caps.append(_ref_cap(
         "index_constituents_history_coverage",
         cov_ok,
-        ["index coverage: " + "; ".join(
-            f"{code} {meta['snapshots']} snapshots "
-            f"[{meta['min_time']}..{meta['max_time']}]"
-            for code, meta in sorted(ic.get("indices", {}).items()))][:600],
+        _cov_ev[:600],
         "index constituents snapshot coverage report attached",
         "no index_constituents snapshots available",
         [DETAIL_LOCAL_DATA_READY, DETAIL_PTRADE_RUNTIME_UNVERIFIED],
