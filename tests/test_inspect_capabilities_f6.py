@@ -42,10 +42,20 @@ def test_real_db_reference_capabilities_ready(tmp_path):
     # industry_membership_pit：源端重叠区间按原始事实保留（官方契约无裁决
     # 规则），歧义日期 fail-closed → 不得宣称正式 PIT READY
     degraded = {"industry_membership_pit"}
+    # A 项门禁（2026-10-03）：连续性判据（S-3a 间隔检测 / S-3b 覆盖连续性门）生效后，
+    # 存在**超阈快照空档**的指数其两能力由 READY 变 BLOCKED —— 属「新增检测型」的
+    # 预期 verdict 变化（依据件 §A3），非回归。判定依**实测**（真实库 000300 等确有
+    # 58~1613 天空档），不预写期望。
+    gap_blocked = {"index_constituents_pit",
+                   "index_constituents_history_coverage"}
     for name in sorted(EXPECTED_CAPS):
         cap = caps[name]
         assert cap["required"] is False  # 不参与整体门禁，仅按策略声明引用
-        if name in degraded:
+        if name in gap_blocked:
+            assert cap["execution_status"] == "BLOCKED", (name, cap.get("message"))
+            assert any("gap" in str(e).lower() for e in cap["evidence"]), \
+                (name, cap["evidence"][:2])
+        elif name in degraded:
             assert cap["execution_status"] == "BLOCKED"
             assert cap["data_status"] == "DEGRADED"
             assert "DATA_BLOCKED" in cap["status_detail"]

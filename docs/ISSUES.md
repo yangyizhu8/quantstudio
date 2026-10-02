@@ -58,3 +58,25 @@
 - **修复方案（候选）**：—（属主判定后另立）
 - **验证证据**：M0 五用例自校验报告
 - **关闭时间**：—（本项目台账挂候选，不追踪）
+
+## ISS-006
+
+- **问题描述**：`inspect_capabilities.py` 的 F6 参考数据能力 `industry_classification_sw2021` 在当前生产库判 **BLOCKED**（`industry_classification missing/incomplete or contains pseudo SW_ codes`）——SW2021 行业分类数据缺失/不完整，使该能力恒红。
+- **定位证据**：2026-10-03 A 项门禁窗口跑（`--db data/quantstudio.db --profile daily-bar-v1`）报告，**修复前/后两侧均为 BLOCKED**；`tests/test_inspect_capabilities_f6.py` 因此在本库无法通过（能力循环按字母序，先撞 `index_constituents*`，A 项修复后往下露出本项）。
+- **严重等级**：中（`required=False` 不参与 overall 门禁，overall 仍 READY；但使 F6 测试恒红，**掩盖后续真实回归**）。
+- **当前状态**：**待处置（数据线）**——A 项门禁修复（新增检测型）**不扩大范围**处理本项：`index_constituents` 两能力已按实测更新期望并转绿，本项与其后项保持红并在此登记。
+- **归属迭代**：数据线（industry_classification 数据回补）。
+- **修复方案（待定）**：核查 `industry_classification` 表数据来源与完整性（是否含 pseudo `SW_` 代码）；补数后 F6 该能力复判。
+- **验证证据**：2026-10-03 窗口 BEFORE / AFTER 两侧能力报告（均 BLOCKED）；能力 message 原文见上「定位证据」。
+- **关闭时间**：—
+
+## ISS-007
+
+- **问题描述**：F6 参考数据能力 `sw_l1_index_daily` 判 **BLOCKED**（`SW index daily coverage/quality/routing/resident check failed`）——SW L1 指数日线的覆盖/质量/801 路由/resident 路径检查未通过。
+- **定位证据**：同 ISS-006（2026-10-03 窗口报告，修复前后两侧均 BLOCKED）。
+- **严重等级**：中（同上：不参与 overall 门禁，但使 F6 测试恒红）。
+- **当前状态**：**待处置（数据线）**。
+- **归属迭代**：数据线。
+- **修复方案（待定）**：核查 SW L1 指数日线覆盖与质量门、801 路由数据、以及正式 resident 采集路径是否可达（能力 message 已列四类失败面）。
+- **验证证据**：同 ISS-006。
+- **关闭时间**：—

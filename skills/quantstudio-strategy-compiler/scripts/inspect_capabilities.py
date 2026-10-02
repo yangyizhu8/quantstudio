@@ -631,6 +631,7 @@ def _build_reference_capabilities(ref: Dict[str, Any],
     ic = ref.get("index_constituents", {})
     pit_ok = False
     pit_ev = []
+    gaps: List[Any] = []   # A 项：间隔检测结果。异常/无样本路径下保持空 ⇒ 文案不误报
     try:
         if not ic.get("meta_present"):
             pit_ev.append("index_constituents_snapshot_meta missing: "
@@ -678,7 +679,10 @@ def _build_reference_capabilities(ref: Dict[str, Any],
     caps.append(_ref_cap(
         "index_constituents_pit", pit_ok, pit_ev,
         "get_index_stocks(date) strict as-of PIT verified via real provider calls",
-        "snapshot_meta missing, or as-of probe nondeterministic/unchanged/union",
+        ("index constituents snapshot gaps over threshold "
+         "(see gap_intervals in evidence)"
+         if gaps else
+         "snapshot_meta missing, or as-of probe nondeterministic/unchanged/union"),
         [DETAIL_API_PROFILE_READY, DETAIL_LOCAL_DATA_READY,
          DETAIL_LOCAL_RUNTIME_READY, DETAIL_PTRADE_RUNTIME_UNVERIFIED],
         ["Rebuild snapshot meta (refresh_snapshot_meta); verify as-of behavior"]))
@@ -704,7 +708,8 @@ def _build_reference_capabilities(ref: Dict[str, Any],
         cov_ok,
         _cov_ev[:600],
         "index constituents snapshot coverage report attached",
-        "no index_constituents snapshots available",
+        ("index constituents coverage has over-threshold snapshot gaps"
+         if _gap_map else "no index_constituents snapshots available"),
         [DETAIL_LOCAL_DATA_READY, DETAIL_PTRADE_RUNTIME_UNVERIFIED],
         ["Backfill index_constituents history for required indices"]))
 
