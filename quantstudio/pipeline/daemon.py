@@ -3303,7 +3303,12 @@ class ResidentCollector:
            保持数据适配层 duckdb_data_access.py 读 stock_daily 这些列时拿到非 NULL 值，避免回测层歧义）。
         返回 None 表示无数据（aligner 退化为仅靠 close<1 兜底 + 估值列留 NULL）。
 
-        ⚠️ 依赖顺序：stock_daily_valuation 任务必须在 stock_daily 之前执行（collector_tasks.json 顺序）。
+        ⚠️ 依赖顺序：本函数依赖 stock_daily_valuation 的**数据已入库**——该依赖由**代码自动
+        前置**满足，不依赖 collector_tasks.json 的数组顺序：stock_daily 任务执行时会自动先跑
+        stock_daily_valuation（三条执行路径均有：_run_with_source、_execute_task_per_trade_date、
+        _execute_task_per_stock；触发块以该任务 enabled 为门）。
+        （2026-10-03 取证订正：原文案「必须在 stock_daily 之前执行（collector_tasks.json 顺序）」
+        把机制误归于配置顺序——实为代码自动前置，配置顺序对该依赖不构成约束。）
         """
         try:
             from .aligner import to_ms_timestamp
