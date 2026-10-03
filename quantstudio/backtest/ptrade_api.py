@@ -486,6 +486,49 @@ def query(*fields) -> QueryBuilder:
 valuation = _ValuationTable()
 
 
+def _qs_normalize_date_arg(value):
+    """日期入参归一（F3 修复，2026-10-03）：返回 YYYY-MM-DD；无法识别返回 None。
+
+    依据 docs/get-index-stocks-date-normalization-design.md（审计 PASS，候选甲）：
+
+    - 覆盖形态：datetime.datetime（含 pd.Timestamp，其为 datetime 子类）/ datetime.date /
+      YYYYMMDD 八位串 / YYYY-MM-DD 横线串；
+    - 额外回落：其它字符串形态先试 pd.Timestamp 解析（保护既有调用面**零回归**——
+      修复前 str(date)[:10] 对 YYYY-MM-DD HH:MM:SS 等形态同样可用）；
+      仅当 pd.Timestamp 也解析失败时才判为不可识别；
+    - 八位串与横线串在返回前经 pd.Timestamp 校验，非法日历日期（如 20261301）
+      同样判为不可识别（早于下游 fail-closed）。
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime.datetime):          # 含 pd.Timestamp
+        try:
+            return value.strftime('%Y-%m-%d')
+        except Exception:
+            return None
+    if isinstance(value, datetime.date):
+        try:
+            return value.strftime('%Y-%m-%d')
+        except Exception:
+            return None
+    s = value if isinstance(value, str) else str(value)
+    s = s.strip()
+    cand = None
+    if len(s) == 8 and s.isdigit():
+        cand = '%s-%s-%s' % (s[:4], s[4:6], s[6:8])
+    elif len(s) >= 10 and s[4] == '-' and s[7] == '-':
+        cand = s[:10]
+    if cand is not None:
+        try:
+            pd.Timestamp(cand)
+            return cand
+        except Exception:
+            return None
+    try:
+        return pd.Timestamp(s).strftime('%Y-%m-%d')
+    except Exception:
+        return None
+
 class PtradeAPI:
     """Ptrade API 兼容层。所有 Ptrade 策略调用的函数在这里实现。
     数据来自 DuckDB，通过 _engine 注入。"""
@@ -770,12 +813,21 @@ class PtradeAPI:
         - 显式 ``date``：标准化为 YYYY-MM-DD 后严格 as-of 查询；
         - 未显式传入：回测上下文注入当前回测日期（绝不使用数据库全局最新快照）；
           非回测直接调用由 Provider 保留"最新快照"兼容行为；
+        - **返空可能系非法日期形态**：入参无法识别时不 raise（raise 会中断策略当日执行链），
+          而是 logger.warning + 返回空列表（fail-closed），调用方可据日志留痕区分；
         - 返回标准 .SS/.SZ 成分股代码，去重且顺序确定。
         """
         bare = bare_code(index_code)
-        # 日期契约：显式 date 标准化；未传时回测期间注入当前回测日期
+        # 日期契约（F3 修复，2026-10-03）：显式 date **归一为 YYYY-MM-DD**；
+        # 不可识别 → fail-closed（logger.warning + 返空列表，**不 raise**——raise 会中断
+        # 策略 handle_data 当日执行链）；调用方可据日志区分「当日无成分池」与「日期形态非法」。
         if date is not None:
-            effective_date = str(date)[:10]
+            effective_date = _qs_normalize_date_arg(date)
+            if effective_date is None:
+                logger.warning(
+                    "get_index_stocks(%s, date=%r): 日期形态无法识别 -> 返空列表（fail-closed）",
+                    index_code, date)
+                return []
         elif self._current_date:
             effective_date = str(self._current_date)[:10]
         else:
