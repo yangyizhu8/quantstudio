@@ -70,36 +70,6 @@
       "_note": "类别A 映射表（align→validate→write）"
     },
     {
-      "name": "mcp_etf_minutes",
-      "enabled": true,
-      "source": "mcp",
-      "table": "etf_minutes",
-      "freq": "1min",
-      "start_date": "2026-01-01",
-      "codes": [
-        "ALL"
-      ],
-      "max_workers": 4,
-      "retry": {
-        "max": 5,
-        "backoff_sec": [
-          60,
-          120,
-          240,
-          480,
-          960
-        ]
-      },
-      "rate_limit": {
-        "calls_per_min": 1,
-        "wait_on_429": true
-      },
-      "source_priority": [
-        "mcp"
-      ],
-      "_note": "类别A 映射表（align→validate→write）"
-    },
-    {
       "name": "mcp_index_daily",
       "enabled": true,
       "source": "mcp",
@@ -362,36 +332,6 @@
       },
       "rate_limit": {
         "calls_per_min": 30,
-        "wait_on_429": true
-      },
-      "source_priority": [
-        "mcp"
-      ],
-      "_note": "类别A 映射表（align→validate→write）"
-    },
-    {
-      "name": "mcp_stock_minutes",
-      "enabled": true,
-      "source": "mcp",
-      "table": "stock_minutes",
-      "freq": "1min",
-      "start_date": "2026-01-01",
-      "codes": [
-        "ALL"
-      ],
-      "max_workers": 4,
-      "retry": {
-        "max": 5,
-        "backoff_sec": [
-          60,
-          120,
-          240,
-          480,
-          960
-        ]
-      },
-      "rate_limit": {
-        "calls_per_min": 1,
         "wait_on_429": true
       },
       "source_priority": [
@@ -2714,6 +2654,66 @@
         "wait_on_429": true
       },
       "_note": "股本结构（MCP 权威源 stock_daily_basic 派生：每日精确 float_share/free_share/total_share）"
+    },
+    {
+      "name": "mcp_etf_minutes",
+      "enabled": true,
+      "source": "mcp",
+      "table": "etf_minutes",
+      "freq": "1min",
+      "start_date": "2026-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "max_workers": 4,
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 1,
+        "wait_on_429": true
+      },
+      "source_priority": [
+        "mcp"
+      ],
+      "_note": "类别A 映射表（align→validate→write）"
+    },
+    {
+      "name": "mcp_stock_minutes",
+      "enabled": true,
+      "source": "mcp",
+      "table": "stock_minutes",
+      "freq": "1min",
+      "start_date": "2026-01-01",
+      "codes": [
+        "ALL"
+      ],
+      "max_workers": 4,
+      "retry": {
+        "max": 5,
+        "backoff_sec": [
+          60,
+          120,
+          240,
+          480,
+          960
+        ]
+      },
+      "rate_limit": {
+        "calls_per_min": 1,
+        "wait_on_429": true
+      },
+      "source_priority": [
+        "mcp"
+      ],
+      "_note": "类别A 映射表（align→validate→write）"
     }
   ],
   "qfq_maintenance": {
