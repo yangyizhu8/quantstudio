@@ -2798,6 +2798,37 @@ def _qs_noop_target(security, delta, reason):
                  target=abs(delta or 0), status="rejected", reason=reason)
 
 
+def _qs_exec_basis_px(security):
+    """换算价 = 引擎本日**成交基准价**（D4-S6 修复的 open 模式补正）。
+
+    依据 docs/px-exec-basis-mismatch-design.md §3A（审计 PASS + 两条件补入）：
+
+    - **日线 ptrade 路径**：主循环以 match_prices 传入
+      （backtest_engine.py:602 → :2169 → 本文件 :584 self._prices = prices），
+      open 模式下 match_prices 即当日开盘价（backtest_engine.py:1313-1314），
+      close 模式下即当日收盘价 —— 故 _api._prices 恒等于引擎实际成交基准价，
+      **两条模式语义自动正确，零新增取数路径**。
+    - **分钟 profile**：_api._prices 来自 attach_bar 的 bar_prices（当根 bar close，
+      backtest_engine.py:2299 / :2467-2468），非 match_prices —— 本件**只作声明、
+      不覆盖分钟面**（见设计件 §3A.3），此处保持「取不到即回退」的不劣化保证。
+    - **回退**：_api._prices 为空 dict（initialize 前的初始 attach，:488）或该标的无价
+      → 回退 ② 层原语义 _QSPriceState.orig（= _api.current_price），行为与修复前一致。
+
+    修复前缺陷：一律取 _api.current_price（恒为当日收盘价）→ 在 open 模式下
+    与开盘成交基准分叉，导致定股数股数与实际成交金额双向系统性偏离目标值。
+    """
+    try:
+        prices = getattr(_api, '_prices', None)
+        if prices:
+            qmt = _api._bare_to_qmt(bare_code(security))
+            px = float(prices.get(qmt, 0.0) or 0.0)
+            if px > 0:
+                return px
+    except Exception:
+        pass
+    return _QSPriceState.orig(security)
+
+
 def _qs_wire_order_target_value(security, value, *args, **kwargs):
     """P-D12：target 语义恢复（delta 修复）。
 
@@ -2813,10 +2844,13 @@ def _qs_wire_order_target_value(security, value, *args, **kwargs):
     if value == 0:
         return _QSOrderWiringState.target_orig(security, 0, *args, **kwargs)
     # D4-S6（拆分换算价修复，2026-08-27，docs/bbrev-pd12-split-px-design.md v3）：
-    # 换算价用 ② 层原语义（_QSPriceState.orig = _api.current_price，close 模式=当日收盘），
-    # 与引擎成交基准一致，消除长假缺口价差（超支/拒单）。delta 保持 ① 层
+    # 换算价须与引擎成交基准一致，消除长假缺口价差（超支/拒单）。delta 保持 ① 层
     # （目标市值语义，_qs_current_value PIT 理由在案）——新仓 amount=0 → delta=value。
-    px_exec = _QSPriceState.orig(security)
+    # 2026-10-03 补正（docs/px-exec-basis-mismatch-design.md）：D4-S6 的「② 层原语义
+    # =_api.current_price」论证**只在 close 模式成立**（该 API 恒返回当日收盘）；
+    # open 模式下会与开盘成交基准分叉 → 改由 _qs_exec_basis_px() 取引擎本日
+    # match_prices（open→开盘 / close→收盘，语义自动正确），取不到再回退原语义。
+    px_exec = _qs_exec_basis_px(security)
     if px_exec <= 0:
         return _QSOrderWiringState.target_orig(security, value, *args, **kwargs)
     px = _qs_last_close_lookup(security)
@@ -2869,7 +2903,7 @@ def _qs_wire_order(security, amount, *args, **kwargs):
 
 def _qs_wire_order_value(security, value, *args, **kwargs):
     """order_value 拆单包装：金额语义 → ② 层换算价（D4-S6 修复，与 order_target_value 同链路）。"""
-    px_exec = _QSPriceState.orig(security)
+    px_exec = _qs_exec_basis_px(security)
     if px_exec <= 0:
         return _QSOrderWiringState.value_orig(security, value, *args, **kwargs)
     cash_avail = getattr(getattr(_api, '_engine', None), 'account', None)

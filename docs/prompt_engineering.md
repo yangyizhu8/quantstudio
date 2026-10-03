@@ -221,7 +221,7 @@ def handle_data(context, data):
 
 | 维度 | 行为 |
 |---|---|
-| **撮合模式** | 引擎 `match_price_mode`：默认即时（close / 当前价），或 `next_open`（下一交易日开盘）。**策略代码写法一致**，只是成交时点不同。 |
+| **撮合模式** | 引擎 `match_price_mode`：`close`（默认，当日收盘）／`open`（当日开盘——**开盘执行语义的策略必须显式声明**，见 AGENTS.md 铁律 E1-2）／`next_open`（下一交易日开盘）。**策略代码写法一致**，只是成交时点不同。**下单换算价与成交基准对齐（2026-10-03 修复）**：接线层 `order_target_value`/`order_value` 的换算价取**引擎本日撮合价**（open→开盘 / close→收盘），不再固定取 `current_price`（恒为当日收盘，open 模式下与成交基准分叉）。详见 [docs/px-exec-basis-mismatch-design.md](px-exec-basis-mismatch-design.md)。 |
 | **即时成交** | `order` / `order_value` / `order_target` / `order_target_value` 在当前交易日收盘/当前价成交，组合持仓**瞬时刷新**（回测态）。 |
 | **T+1 卖出** | 卖出数量受 `enabled_amount`（可卖持仓）约束，`can_sell()` 校验；买入不受限。 |
 | **ETF T+0 分类（per-code，2026-08-16）** | 仅 `minute-bar-v1` + `--etf-t0 true`（GUI 勾选）生效：`fund_type ∈ {qdii,gold,commodity,bond,money}` → 当日买入可卖（T+0）；`equity`/未知（LOF）→ T+1（当日新买 `can_sell=0`，当日卖出成交 0 股，次日盘前解锁）。**含止损的策略**必须用"触发即锁→尝试卖出→成交 0 股→次日顺延"拒绝处理模式（每事件 ≤1 次被拒），不得假设"当日必卖"；不查类别、不读订单返回字段。 |
