@@ -1078,7 +1078,12 @@ class DuckDBWriter(BaseWriter):
                     "WHERE source=? AND table_name=? AND freq=?",
                     [source, table, freq]).fetchone()
                 return str(res[0]) if res else None
-            except Exception:
+            except Exception as _e:
+                # W5（2026-10-04）：不再静默——读失败与「本表无水位行」此前同形不可区分。
+                # 仅增加可观测性；返回语义保持不变（仍按无水位处理）。
+                logger.warning(
+                    "[Watermark] get_last_date 读失败（按无水位处理）: %s: %s | key=%s/%s/%s",
+                    type(_e).__name__, _e, source, table, freq)
                 return None
             finally:
                 conn.close()
