@@ -92,6 +92,12 @@ python -m quantstudio.pipeline.daemon --mode forever
 
 GUI 中的“全量拉取”“增量拉取”“进程常驻增量拉取”调用相同公共入口。
 
+> **生产 profile（重要）**：`--config-dir` 的默认值是 `config/`（**不是**生产 profile）。
+> 命令行手动启动采集进程时必须显式指定生产 profile：
+> `python -m quantstudio.pipeline.daemon --mode forever --config-dir config/profiles/mcp_only`。
+> 若省略 `--config-dir`，会解析到 `config/`（profile 的父目录），可能触发 `--allow-non-main-target`
+> 拒绝，或得到空任务集。GUI 启动会自动传入生产 profile，无需手动指定。
+
 指数日线（F5）：`index_daily` 任务的正式动态宇宙（`get_index_daily_universe`）统一覆盖普通指数与 31 个 SW2021 L1 申万行业指数，full/incremental/resident 同一路径——tushare 普通指数走 `index_daily` 接口、申万指数走 `sw_daily` 正式接口，同一 canonical schema（股/元）；`industry_classification` / `industry_membership` 任务维护正式 SW2021 行业分类与 PIT 成员历史（tushare `index_classify`/`index_member`），旧 `sw_industry` 仅为审计快照。契约详见 `docs/data-pipeline-contract.md`。
 
 ### MCP 数据源与 is_qfq 还原（线1）

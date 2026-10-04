@@ -157,7 +157,20 @@ OFF SQL 与基线完全相同（未追加 WHERE）。
 - 探针：`docs/evidence/probe-t2-committed-gate-off-20261004.py`
 - 运行环境：`git worktree`（T2 提交后的 HEAD 提交态，**非工作区**）
 - 探针判据：①默认关 = True；②关闭态 SQL 无 `IS DISTINCT FROM`；③开启态 SQL = 关闭态基线 + `WHERE ... IS DISTINCT FROM ...`。
-- 提交态结果：**见 T5 提交补录**（本文件随 T2 提交；T2 提交后以 worktree 实跑，结果补录于 T5 提交）。
+- 提交态结果：**PASS**（`git worktree` @ `b46be47`，HEAD 提交态，**非工作区**）
+
+```
+PROBE_ROOT: D:\miniQMT策略实盘\t2_head_wt_20261004
+DEFAULT_OFF: True
+OFF_HAS_WHERE: False
+ON_APPENDS_WHERE: True
+OFF_SQL_SHA256: a6d7034e55fa543e0a973343e7ea780fc86673a46d50720421962c4988462fcf
+RESULT: PASS
+```
+
+- 环境自证：worktree `git status --porcelain` 为空（纯提交态，未混入工作区在途改动）；worktree 内 `quantstudio/pipeline/writers.py` SHA256 = `C98D613E00120C58055FC2563FB29C1651F89741C14C7A153907F3B5F794EB07`（与 §四 一致）。
+- `OFF_SQL_SHA256` 与 §2.3（工作区基线）**逐字节相同**；`ON_SQL` = 基线 + ` WHERE (code, time, close, volume, amount, preClose, pctChg) IS DISTINCT FROM (EXCLUDED...) RETURNING 1`。
+- 条件③「提交态 gate 默认关实测」= **通过**。
 
 ## 十、探针脚本 SHA256
 

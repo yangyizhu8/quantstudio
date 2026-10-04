@@ -92,6 +92,11 @@ PTrade 平台代码（output/ptrade_export/）
 
 **你不需要修改数据源配置**——除非 MCP 服务地址变更（极罕见），此时联系技术支持。
 
+> **技术附注（命令行启动 daemon 时）**：`--config-dir` 的默认值是 `config/`（profile 的父目录，
+> **不是**生产 profile）。命令行手动启动采集进程须显式指定生产 profile：
+> `python -m quantstudio.pipeline.daemon --mode forever --config-dir config/profiles/mcp_only`；
+> 否则可能触发 `--allow-non-main-target` 拒绝或得到空任务集。GUI 启动会自动传入该路径，无需手动指定。
+
 ### 3.2 查看采集任务列表
 
 打开文件 `config/profiles/mcp_only/collector_tasks.json`，可以看到所有 88 个任务。每个任务包含：
