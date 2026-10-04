@@ -40,6 +40,21 @@ def _is_writer_auto_backfill_enabled() -> bool:
     return v in ("1", "true", "on")
 
 
+def _is_upsert_skip_identical_enabled() -> bool:
+    """T2 feature gate：upsert 跳过"已存在且逐位一致行"默认关闭。
+
+    fail-closed：仅环境变量 QS_UPSERT_SKIP_IDENTICAL 为 "1"/"true"/"on"
+    （不区分大小写）时开启；未设置、"0"、"false"、"off"、空字符串及其他任意值
+    一律关闭 ⇒ 关闭态与现状逐字节等同（SQL 不追加 WHERE）。
+
+    开启时：ON CONFLICT DO UPDATE 追加行值元组 IS DISTINCT FROM 条件
+    （NULL-safe）。一致行不进 delete 相位（DuckDB 对带 PK 表的 UPDATE 一律
+    改写为 DELETE+INSERT），吞吐逼近纯插入。new/updated 审计口径不变。
+    """
+    v = os.environ.get("QS_UPSERT_SKIP_IDENTICAL", "").strip().lower()
+    return v in ("1", "true", "on")
+
+
 class WriteResult(int):
     """write() 返回值：作为 int 向后兼容（=提交行数），同时携带 .new/.updated 审计字段。
 
@@ -47,14 +62,18 @@ class WriteResult(int):
         n = writer.write(df, ...)      # n 当 int 用 = 提交行数（向后兼容）
         result = writer.write(df, ...)
         result.new, result.updated     # 新增行数 / 更新行数（审计准确）
+        result.changed                 # T2：真实变化（已存在且值不同）行数；
+                                       #   仅 QS_UPSERT_SKIP_IDENTICAL 开启时统计，默认 0
     """
     new: int = 0
     updated: int = 0
+    changed: int = 0
 
-    def __new__(cls, submitted: int, new: int = 0, updated: int = 0):
+    def __new__(cls, submitted: int, new: int = 0, updated: int = 0, changed: int = 0):
         obj = int.__new__(cls, submitted)
         obj.new = new
         obj.updated = updated
+        obj.changed = changed
         return obj
 
     def __repr__(self) -> str:
@@ -830,12 +849,32 @@ class DuckDBWriter(BaseWriter):
                 if pk_cols:
                     col_list = ", ".join(df.columns)
                     update_set = ", ".join(f"{c}=EXCLUDED.{c}" for c in df.columns)
-                    conn.execute(
+                    # T2（开关化，默认关）：一致行不进 delete 相位。
+                    # 形态 B（行值元组 IS DISTINCT FROM，NULL-safe，实测通过）；列集合
+                    # 与本批 df 同源（含主键列）；关闭时不追加 WHERE ⇒ SQL 逐字节等同现状。
+                    _skip_identical = _is_upsert_skip_identical_enabled()
+                    _where_identical = ""
+                    if _skip_identical:
+                        _lhs = ", ".join(df.columns)
+                        _rhs = ", ".join(f"EXCLUDED.{c}" for c in df.columns)
+                        _where_identical = f" WHERE ({_lhs}) IS DISTINCT FROM ({_rhs})"
+                    _upsert_sql = (
                         f"INSERT INTO {table} ({col_list}) "
                         f"SELECT * FROM _tmp_write "
-                        f"ON CONFLICT {pk_cols} DO UPDATE SET {update_set}")
+                        f"ON CONFLICT {pk_cols} DO UPDATE SET {update_set}"
+                        f"{_where_identical}")
+                    if _skip_identical:
+                        # changed = RETURNING 实际写入行数(新增+真实变化) − 新增行数
+                        # = 真实变化（已存在且值不同）行数；仅开关开启时统计
+                        _new_pre = max(0, len(df) - updated_rows)
+                        _returned = len(conn.execute(f"{_upsert_sql} RETURNING 1").fetchall())
+                        changed_rows = max(0, _returned - _new_pre)
+                    else:
+                        conn.execute(_upsert_sql)
+                        changed_rows = 0
                 else:
                     conn.execute(f"INSERT INTO {table} SELECT * FROM _tmp_write")
+                    changed_rows = 0
                 conn.unregister("_tmp_write")
                 # new/updated 审计：updated = 写前已存在的行数；new = 本批其余
                 # （精度：本批内主键重复已由 validator 去重，故 new + updated = len(df)）
@@ -861,7 +900,7 @@ class DuckDBWriter(BaseWriter):
         logger.info(f"[DuckDBWriter] {table} batch={batch_id}: wrote {len(df)} rows "
                     f"(新增 {new_rows} + 更新 {updated_rows}) 防重复 upsert")
         # 返回 WriteResult：作为 int = 提交行数（向后兼容），.new/.updated 供审计使用
-        return WriteResult(len(df), new_rows, updated_rows)
+        return WriteResult(len(df), new_rows, updated_rows, changed_rows)
 
     # ------------------------------------------------------------------
     # 类别B passthrough 同名表：CREATE OR REPLACE TABLE 全量覆盖
