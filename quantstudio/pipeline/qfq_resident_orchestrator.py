@@ -262,6 +262,7 @@ class QFQResidentOrchestrator:
         # 被旧周期提交（水位从未推进，daemon 下轮会从旧水位幂等重拉），
         # 新周期开始时统一标 superseded 清障，防止残留 pending 永久堆积。
         self.supersede_stale_intents(conn)
+        self._check_intent_backlog(conn)
         cycle_id = f"cyc_{uuid.uuid4().hex[:12]}"
         now = _now_ts()
         conn.execute(
@@ -274,6 +275,45 @@ class QFQResidentOrchestrator:
             [cycle_id, business_date_ms, "resident_v2", config_hash, schema_hash,
              now, now, self._ident["price_source"], self._ident["source_generation"], self._ident["cutover_id"]])
         return cycle_id
+
+    def _check_intent_backlog(self, conn) -> None:
+        """W2（2026-10-04）：pending 水位意图积压告警（阈值起步硬编码，可配置化另登记）。
+
+        背景：中断周期的 pending 意图永不提交（水位不推进 ⇒ 大表每轮幂等重拉），
+        此前**无任何告警**，实测曾积压至最老≈29 天而无人察觉。
+        阈值（总调度 2026-10-04 裁定）：pending>5 或最老>24h → WARNING；
+        pending>20 或最老>72h → ERROR。只读探测，不改变任何提交语义。
+        """
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*), MIN(cr.started_at) FROM qfq_watermark_intent wi "
+                "LEFT JOIN qfq_cycle_run cr ON cr.cycle_id = wi.cycle_id "
+                "WHERE wi.status='pending' AND wi.source_generation=? AND wi.cutover_id=?",
+                [self._ident["source_generation"], self._ident["cutover_id"]]).fetchone()
+        except Exception as e:  # 告警失败不得影响主流程
+            logger.warning("[qfq] 意图积压探测失败（忽略）: %s: %s", type(e).__name__, e)
+            return
+        n = int(row[0] or 0) if row else 0
+        if n <= 0:
+            return
+        oldest = row[1] if row else None
+        age_h = None
+        if oldest is not None:
+            try:
+                import datetime as _dt
+                age_h = (_dt.datetime.now(getattr(oldest, 'tzinfo', None))
+                         - oldest).total_seconds() / 3600.0
+            except Exception:
+                age_h = None
+        age_txt = ('%.1fh' % age_h) if age_h is not None else 'n/a'
+        msg = ("[qfq] 水位意图积压：pending=%d 最老=%s（中断周期即放弃提交⇒水位不推进⇒"
+               "大表每轮幂等重拉；缓解：保证一个不受扰窗让周期走到 finalize）" % (n, age_txt))
+        if n > 20 or (age_h is not None and age_h > 72):
+            logger.error(msg)
+        elif n > 5 or (age_h is not None and age_h > 24):
+            logger.warning(msg)
+        else:
+            logger.info(msg)
 
     def supersede_stale_intents(self, conn) -> int:
         rows = conn.execute(
@@ -875,6 +915,18 @@ class QFQResidentOrchestrator:
             "status='pending', hold_reason=NULL, committed_at=NULL",
             [cycle_id, source, table, freq, self._ident["source_generation"],
              self._ident["cutover_id"], old, candidate_watermark])
+        # W3（2026-10-04）：重拉窗口可见化——old→candidate 天数即「提交前每轮重复拉取」窗口。
+        # 未乘表行数（200M 级表 COUNT(*) 代价高且非必须）——行量以 daemon 任务日志 written 为准。
+        try:
+            if old is not None and candidate_watermark is not None:
+                _win_d = (int(candidate_watermark) - int(old)) / 86400000.0
+                if _win_d >= 1.0:
+                    logger.warning(
+                        "[qfq] %s/%s/%s 待提交窗口 %.1f 天（old=%s → candidate=%s）："
+                        "提交前每轮将幂等重拉该窗口",
+                        source, table, freq, _win_d, old, candidate_watermark)
+        except Exception:
+            pass
 
     def _read_watermark(self, conn, source: str, table: str, freq: str):
         row = conn.execute(
