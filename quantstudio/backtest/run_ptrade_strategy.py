@@ -26,6 +26,8 @@ def load_strategy(strategy_path: str) -> dict:
     return _load_strategy(strategy_path)
 
 
+
+
 def resolve_design_capital_contract(strategy_path):
     """设计契约本金**纯查询**（无副作用；D1 件一，2026-10-06）。
 
@@ -95,6 +97,7 @@ def run_backtest(strategy_path, start, end, *,
                  db_path=None, capital=100_000,
                  match_price_mode='close', engine_profile='daily-bar-v1',
                  etf_t0=False, cost=None, rebalance_mode='legacy',
+                 cost_basis_method='diluted',
                  fidelity_config=None, progress_callback=None):
     """CLI 和 GUI 共用的回测入口。统一所有默认值，确保双端口径一致。
 
@@ -103,6 +106,7 @@ def run_backtest(strategy_path, start, end, *,
       - engine_profile='daily-bar-v1'（默认日线）
       - cost=DEFAULT_TRADE_COST（滑点 0.0、佣金万3.5、印花税千1）
       - capital=100_000（对齐 PTrade 回测初始资金）
+      - cost_basis_method='diluted'（POS-01 摊薄成本，对齐 PTrade 平台实证 2026-10-06）
 
     fidelity_config（P-A0/P-A1/P-A2，2026-08-24）：PTrade 保真模式配置
     （opt-in，验证转换产物用）。非 None 时在 engine.run() 前注入
@@ -139,6 +143,7 @@ def run_backtest(strategy_path, start, end, *,
         match_price_mode=match_price_mode,
         engine_profile=engine_profile,
         etf_t0=etf_t0,
+        cost_basis_method=cost_basis_method,
         progress_callback=progress_callback,
     )
     engine._strategy_name = Path(strategy_path).stem
@@ -269,6 +274,8 @@ def main():
     # PR4: 引擎 Profile 选择（daily-bar-v1 / minute-bar-v1）+ ETF T+0 开关
     engine_profile = _parse_flag(sys.argv[1:], '--profile', 'daily-bar-v1')
     etf_t0_flag = _parse_flag(sys.argv[1:], '--etf-t0', 'false')
+    # POS-01: 成本记账口径（diluted=PTrade 摊薄默认 / moving_avg=legacy 对照）
+    cost_basis_method = _parse_flag(sys.argv[1:], '--cost-basis', 'diluted')
     # P-A0/P-A1/P-A2: 保真模式旗标（opt-in，验证转换产物用；默认全关 = 本地语义锚）
     fidelity_flag = _parse_flag(sys.argv[1:], '--fidelity', '')
     eps_basis_flag = _parse_flag(sys.argv[1:], '--eps-basis', 'passthrough')
@@ -277,6 +284,9 @@ def main():
         sys.exit(1)
     if engine_profile not in ("daily-bar-v1", "minute-bar-v1", "daily-open-close-proxy-v1"):
         print(f"❌ --profile 必须是 daily-bar-v1/minute-bar-v1/daily-open-close-proxy-v1，got {engine_profile!r}")
+        sys.exit(1)
+    if cost_basis_method not in ("diluted", "moving_avg"):
+        print(f"❌ --cost-basis 必须是 diluted/moving_avg，got {cost_basis_method!r}")
         sys.exit(1)
     # 保真旗标校验（非法值 fail-closed，禁止静默忽略）
     _FIDELITY_OPTS = {"ashares", "st_filter"}
@@ -340,6 +350,7 @@ def main():
         engine_profile=engine_profile,
         etf_t0=etf_t0,
         cost=cost,
+        cost_basis_method=cost_basis_method,
         fidelity_config=fidelity_config,
     )
     result.report()
