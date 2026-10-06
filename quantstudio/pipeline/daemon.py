@@ -52,7 +52,7 @@ from filelock import FileLock
 from .aligner import FieldAligner
 from .quarantine import Quarantine
 from .validator import PreIngestValidator
-from .writers import create_writer
+from .writers import create_writer, _is_batch_checkpoint_enabled
 from .sources import create_adapter
 
 logger = logging.getLogger(__name__)
@@ -662,6 +662,15 @@ class ResidentCollector:
             # R3 清除规则：自然成功完成 → 游标清除（官方水位已接管）。
             if task_ok and not _cancelled and self._task_resume is not None:
                 self._task_resume.clear(reason="completed")
+            # T1：任务自然成功后清理批级断点（gate 关闭 no-op；异常不外溢）
+            if task_ok and not _cancelled:
+                try:
+                    self.writer.batch_checkpoint_clear(
+                        run_task.get("name", str(run_task.get("table", ""))),
+                        str(run_task.get("table", "")),
+                        str(run_task.get("freq", "daily")))
+                except Exception as e:
+                    logger.warning("[BatchCheckpoint] clear 异常（忽略）: %s", e)
             self._task_cancel_check = None
             self._task_resume = None
             self._task_progress_cb = None
@@ -694,6 +703,43 @@ class ResidentCollector:
         if hit:
             raise TaskCancelled(
                 f"stop requested at boundary {unit_type}={value}")
+    def _bc_filter_completed(self, task_name, table, freq, windows):
+        """T1：从预枚举窗口列表中剔除 status=completed 的批（gate 关闭时原样返回）。
+
+        断点缺失 / 读取失败 → 原样返回（零回归：按现状全窗重跑）。
+        """
+        if not _is_batch_checkpoint_enabled():
+            return windows
+        try:
+            done = self.writer.batch_checkpoint_load(task_name, table, freq)
+        except Exception as e:
+            logger.warning("[BatchCheckpoint] load 异常（按无断点全窗重跑）: %s", e)
+            return windows
+        if not done:
+            return windows
+        kept = [w for w in windows if done.get(str(w)) != "completed"]
+        skipped = len(windows) - len(kept)
+        if skipped:
+            logger.info("[BatchCheckpoint] 断点续跑: %s/%s/%s 跳过 %d 个已完成批（共 %d）",
+                        task_name, table, freq, skipped, len(windows))
+        return kept
+
+    def _bc_commit(self, task_name, table, freq, batch_id, window_key, wr) -> None:
+        """T1：批级断点提交（fail-closed；gate 关闭/异常一律 no-op）。
+
+        调用点必须在 ``writer.write()`` 已返回（本批写入提交成功）之后；写失败
+        路径不调用本方法 ⇒ 不落断点 ⇒ 下次重跑该批（upsert 幂等保证安全）。
+        返回 False（未提交）不回滚已写入数据，只是该窗口下次重放。
+        """
+        if not _is_batch_checkpoint_enabled():
+            return
+        try:
+            self.writer.batch_checkpoint_commit(
+                task_name, table, freq, str(window_key), batch_id, int(wr))
+        except Exception as e:  # 断点设施绝不阻断主写入通道
+            logger.warning("[BatchCheckpoint] commit 异常（不推进断点）: %s: %s",
+                           type(e).__name__, e)
+
 
     def _emit_task_progress(self, msg: str) -> None:
         """段级进度上报（可选通道；无回调时静默，零副作用）。"""
@@ -1131,6 +1177,9 @@ class ResidentCollector:
                 rows_written = wr
                 write_new = getattr(wr, "new", 0)
                 write_updated = getattr(wr, "updated", 0)
+                # T1：写入成功后提交批级断点（fail-closed；gate 关闭 no-op）
+                self._bc_commit(name, table, freq, batch_id,
+                                self._max_date(res.passed_df, table), wr)
 
             # 6. 水位推进（仅成功）
             if task.get("dataset_kind") == "snapshot":
@@ -1316,6 +1365,8 @@ class ResidentCollector:
                     # → 同一钩子先推进续传游标，再查取消谓词（命中抛 TaskCancelled）
                     _shard_unit = self._max_date(res.passed_df, table)
                     if _shard_unit:
+                        # T1：写入成功后提交批级断点（fail-closed；gate 关闭 no-op）
+                        self._bc_commit(name, table, freq, batch_id, _shard_unit, wr)
                         self._task_boundary(UNIT_TRADE_DATE, _shard_unit)
 
             if rows_raw == 0:
@@ -1475,6 +1526,8 @@ class ResidentCollector:
             logger.error(f"[{batch_id}] trade calendar fetch failed: {e}")
             return False
 
+        # T1：断点续跑——剔除已完成日批（gate 关闭时原样返回，零回归）
+        trade_days = self._bc_filter_completed(name, table, freq, trade_days)
         total = len(trade_days)
         logger.info(f"[{batch_id}] {start}~{end} 共 {total} 个交易日，{max_workers} 线程并行")
 
@@ -1744,6 +1797,8 @@ class ResidentCollector:
                                                    adj_latest_map=_qfq_snap.get("adj_latest_map"))
                         total_new[0] += getattr(wr, "new", 0)
                         total_updated[0] += getattr(wr, "updated", 0)
+                        # T1：写入成功后提交批级断点（fail-closed；gate 关闭 no-op）
+                        self._bc_commit(name, table, freq, batch_id, trade_day, wr)
                         return wr
                 return 0
             except Exception as e:
@@ -1870,6 +1925,8 @@ class ResidentCollector:
         # 停止语义 v3.1 R2：续传游标命中则裁剪「已完成证券前缀」（§8.1 每股粒度）
         all_codes = self._open_stock_resume(
             task, source, table, freq, start, end, all_codes)
+        # T1：断点续跑——剔除已完成证券批（gate 关闭时原样返回，零回归）
+        all_codes = self._bc_filter_completed(name, table, freq, all_codes)
         total = len(all_codes)
         logger.info(f"[{batch_id}] 全市场 {total} 只，{max_workers} 线程并行拉取")
 
@@ -1986,6 +2043,8 @@ class ResidentCollector:
                                                   adj_latest_map=_qfq_snap.get("adj_latest_map"))
                         total_new[0] += getattr(n, "new", 0)
                         total_updated[0] += getattr(n, "updated", 0)
+                        # T1：写入成功后提交批级断点（fail-closed；gate 关闭 no-op）
+                        self._bc_commit(name, table, freq, batch_id, code, n)
                         return n
                 return 0
             except Exception as e:

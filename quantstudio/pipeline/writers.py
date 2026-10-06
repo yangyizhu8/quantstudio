@@ -55,6 +55,35 @@ def _is_upsert_skip_identical_enabled() -> bool:
     return v in ("1", "true", "on")
 
 
+def _is_batch_checkpoint_enabled() -> bool:
+    """T1 feature gate：批级断点（fail-closed）默认关闭。
+
+    fail-closed：仅环境变量 QS_BATCH_CHECKPOINT 为 "1"/"true"/"on"（不区分大小写）
+    时开启；未设置、"0"、"false"、"off"、空字符串及其他任意值一律关闭 ⇒
+    关闭态不建表、不读写断点、不产生任何新表/新日志（逐字节等同现状）。
+
+    开启时：任务内每个「批级窗口」（日批 = 交易日；每股 = 证券代码）在
+    ``writer.write()`` 返回（本批写入已提交）之后，向批级断点表提交
+    ``status='completed'``；崩溃重启后按窗口跳过已完成批、只重跑未完成批。
+    断点表职责与 ``source_watermark``（source/table/freq 级增量水位）不同，
+    不改动后者语义（规格件 §三 T1）。
+    """
+    v = os.environ.get("QS_BATCH_CHECKPOINT", "").strip().lower()
+    return v in ("1", "true", "on")
+
+
+# T1：批级断点表 DDL（**不**进 DDL_DUCKDB —— 关闭态不得创建该表）。
+# 键自规格件 §三 T1：(task_name, table, freq, window_key)；列名用 table_name
+# 与既有 source_watermark.table_name 同口径（table 为 SQL 保留字，不宜作列名，
+# 语义仍为「表名」，非口径变更）。
+BATCH_CHECKPOINT_DDL = """
+    CREATE TABLE IF NOT EXISTS batch_checkpoint (
+        task_name VARCHAR, table_name VARCHAR, freq VARCHAR, window_key VARCHAR,
+        batch_id VARCHAR, status VARCHAR, rows_written BIGINT, updated_at TIMESTAMP,
+        PRIMARY KEY (task_name, table_name, freq, window_key)
+    )"""
+
+
 class WriteResult(int):
     """write() 返回值：作为 int 向后兼容（=提交行数），同时携带 .new/.updated 审计字段。
 
@@ -1119,6 +1148,125 @@ class DuckDBWriter(BaseWriter):
                     [source, table, freq, last_date, batch_id, now, gen, cutover])
             finally:
                 conn.close()
+
+    # ------------------------------------------------------------------
+    # T1：批级断点（fail-closed，开关 QS_BATCH_CHECKPOINT 默认关）
+    # 契约（规格件 §三 T1）：
+    #   · 断点**只在** writer.write() 返回（本批写入已提交）且调用点确认写后
+    #     回读验证通过之后提交；提交失败 → 不推进（下次重放该批；upsert 幂等
+    #     保证安全）。禁止在写提交前落断点。
+    #   · 键 (task_name, table_name, freq, window_key)；window_key = 日批交易日 /
+    #     每股证券代码。
+    #   · 断点缺失 → 调用方退回既有任务级窗口/证券前缀行为（零回归）。
+    #   · 开关关闭 → 不建表、不读写、不产生新表/新日志（逐字节等同现状）。
+    # 关闭态与任何异常一律**降级为「无断点」**（load 返回 {}、commit 返回 False），
+    # 由调用方重跑；绝不因断点设施异常而阻断主写入通道。
+    # ------------------------------------------------------------------
+    _BATCH_CHECKPOINT_TABLE = "batch_checkpoint"
+
+    def _bc_ensure_table(self, conn) -> None:
+        conn.execute(BATCH_CHECKPOINT_DDL)
+
+    def batch_checkpoint_load(self, task_name: str, table: str,
+                              freq: str) -> Dict[str, str]:
+        """读某 (task_name, table, freq) 的批级断点 → {window_key: status}。
+
+        关闭态 / 任何异常 → 返回 {}（= 无断点；调用方按现状全窗/全证券重跑）。
+        """
+        if not _is_batch_checkpoint_enabled():
+            return {}
+        try:
+            with self._conn_lock:
+                conn = self._conn()
+                try:
+                    self._bc_ensure_table(conn)
+                    rows = conn.execute(
+                        "SELECT window_key, status FROM batch_checkpoint "
+                        "WHERE task_name=? AND table_name=? AND freq=?",
+                        [str(task_name), str(table), str(freq)]).fetchall()
+                    return {str(r[0]): str(r[1]) for r in rows}
+                finally:
+                    conn.close()
+        except Exception as e:
+            logger.warning("[BatchCheckpoint] load 失败（降级为无断点，全窗重跑）: %s: %s",
+                           type(e).__name__, e)
+            return {}
+
+    def batch_checkpoint_commit(self, task_name: str, table: str, freq: str,
+                                window_key, batch_id: str,
+                                rows_written: int = 0) -> bool:
+        """提交一个「已完成批」断点（fail-closed）。
+
+        调用前提（红线）：``writer.write()`` 已返回且写后回读验证通过。
+        写入后**回读校验**（status='completed' 且 rows_written 一致）方返回 True；
+        写入或回读任一失败 → 撤销本窗口 completed 标记并返回 False（不推进，下次重放该批）。
+        绝不抛异常。
+        """
+        if not _is_batch_checkpoint_enabled():
+            return False
+        wk = str(window_key)
+        try:
+            with self._conn_lock:
+                conn = self._conn()
+                try:
+                    self._bc_ensure_table(conn)
+                    conn.execute(
+                        "INSERT INTO batch_checkpoint "
+                        "(task_name, table_name, freq, window_key, batch_id, status, "
+                        " rows_written, updated_at) VALUES (?,?,?,?,?,?,?, now()) "
+                        "ON CONFLICT (task_name, table_name, freq, window_key) "
+                        "DO UPDATE SET batch_id=EXCLUDED.batch_id, status=EXCLUDED.status, "
+                        "rows_written=EXCLUDED.rows_written, updated_at=EXCLUDED.updated_at",
+                        [str(task_name), str(table), str(freq), wk, str(batch_id),
+                         "completed", int(rows_written)])
+                    back = conn.execute(
+                        "SELECT status, rows_written FROM batch_checkpoint "
+                        "WHERE task_name=? AND table_name=? AND freq=? AND window_key=?",
+                        [str(task_name), str(table), str(freq), wk]).fetchone()
+                    if (not back or str(back[0]) != "completed"
+                            or int(back[1]) != int(rows_written)):
+                        logger.warning(
+                            "[BatchCheckpoint] 回读校验失败（不推进断点）: "
+                            "%s/%s/%s window=%s back=%s",
+                            task_name, table, freq, wk, back)
+                        # fail-closed 补偿：撤销本窗口 completed 标记，确保下次重跑该批
+                        try:
+                            conn.execute(
+                                "DELETE FROM batch_checkpoint WHERE task_name=? "
+                                "AND table_name=? AND freq=? AND window_key=? "
+                                "AND status='completed'",
+                                [str(task_name), str(table), str(freq), wk])
+                        except Exception as e2:
+                            logger.warning(
+                                "[BatchCheckpoint] 回读失败补偿删除亦失败: %s: %s",
+                                type(e2).__name__, e2)
+                        return False
+                    return True
+                finally:
+                    conn.close()
+        except Exception as e:
+            logger.warning("[BatchCheckpoint] commit 失败（不推进断点，下次重放）: %s: %s",
+                           type(e).__name__, e)
+            return False
+
+    def batch_checkpoint_clear(self, task_name: str, table: str,
+                               freq: str) -> None:
+        """任务自然成功后清理该 (task_name, table, freq) 的全部批级断点。关闭态 no-op。"""
+        if not _is_batch_checkpoint_enabled():
+            return
+        try:
+            with self._conn_lock:
+                conn = self._conn()
+                try:
+                    if _table_exists(conn, self._BATCH_CHECKPOINT_TABLE):
+                        conn.execute(
+                            "DELETE FROM batch_checkpoint "
+                            "WHERE task_name=? AND table_name=? AND freq=?",
+                            [str(task_name), str(table), str(freq)])
+                finally:
+                    conn.close()
+        except Exception as e:
+            logger.warning("[BatchCheckpoint] clear 失败: %s: %s", type(e).__name__, e)
 
     # ------------------------------------------------------------------
     # 事务感知内部方法（QFQ 重锚编排专用）
