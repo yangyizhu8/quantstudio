@@ -84,7 +84,7 @@ class Position:
     """持仓"""
     code: str          # QMT 格式 600000.SH
     volume: int = 0    # 持股股数
-    avg_cost: float = 0.0  # 持仓均价
+    avg_cost: float = 0.0  # 持仓均价（口径由 cost_basis_method 决定：diluted=PTrade 摊薄净投入 / moving_avg=买入移动加权，见 POS-01）
     can_sell: int = 0  # 可卖股数（T+1：今日买入的不可卖）
     # PR2: next_open pending 卖单预扣股数。close/open 模式恒为 0（隔离契约）。
     # get_positions() 返回的 enable_amount = can_sell - pending_sell_shares，
@@ -327,7 +327,8 @@ class BacktestEngine:
                  providers=None,
                  engine_profile: str = "daily-bar-v1",
                  etf_t0: bool = False,
-                 rebalance_mode: Optional[str] = None):
+                 rebalance_mode: Optional[str] = None,
+                 cost_basis_method: str = "diluted"):
         """strategy_type: 'ptrade' = Ptrade 原版策略（唯一支持模式，即时成交 + 精确涨跌停）。
 
         注：custom 自定义信号模式已于 2026-07-19 废弃（不保证撮合精度、无涨跌停阻断、
@@ -366,6 +367,15 @@ class BacktestEngine:
         # must never mutate DEFAULT_TRADE_COST or leak into the next backtest.
         self.cost = replace(cost or TradeCost())
         self.min_rebalance_pct = min_rebalance_pct
+        # POS-01 成本记账口径（2026-10-06 摊薄对齐，docs/cost-basis-diluted-alignment-design.md）：
+        #   "diluted"（默认，对齐 PTrade 平台实证）：买入含费净投入加权；卖出摊薄
+        #     （新成本 = (原成本总额 - 卖出净得) / 剩余数量，负值钳 0 留痕）。
+        #   "moving_avg"（legacy，2026-10-06 前行为）：买入按成交额加权（不含费），卖出不改成本。
+        if cost_basis_method not in ("diluted", "moving_avg"):
+            logger.warning(f"[BacktestEngine] cost_basis_method={cost_basis_method!r} 非法，"
+                           f"回退默认 diluted")
+            cost_basis_method = "diluted"
+        self.cost_basis_method = cost_basis_method
         # custom 模式已废弃：任何非 ptrade 入参强制回退，避免误用保真黑洞
         if strategy_type != "ptrade":
             logger.warning(f"[BacktestEngine] strategy_type={strategy_type!r} 已废弃，"
@@ -641,6 +651,16 @@ class BacktestEngine:
             logger.warning(
                 f"[Backtest] 策略可能空跑：零成交 + 存在 {self._lifecycle_errors} 次"
                 f"生命周期执行错误 —— 本回测结果不代表策略行为，请检查上方 ERROR 行")
+        # 零成交诊断（B 件，2026-10-06）：**零成交本身就是异常信号**，不该只在「同时有执行错误」时才报。
+        # 动因：2026-10-05 用户 GUI 回测 161 个交易日零成交、执行错误 0 ⇒ 既有分支不触发 ⇒ 全程静默；
+        # 真实根因是初始资金低于策略设计契约（见 run_ptrade_strategy 的设计契约校验）。
+        # 与 :649-662「无条件诊断——防『空数据静默出回测』」的既有裁定原则同构。
+        elif len(self.result.trade_records) == 0:
+            logger.warning(
+                f"[Backtest] 全程零成交：{len(self.result.nav_history)} 个交易日、0 笔成交、执行错误 0。"
+                f"可能原因：① 初始资金低于策略设计契约（见本回测日志开头的设计契约校验）；"
+                f"② 策略信号未触发（窗口内无买点）；③ 股票池/数据异常。"
+                f"请核对上方 QS_SIGNAL 与设计元数据后再采信本结果")
         from .ptrade_metrics import calculate_ptrade_like_metrics
         metrics = calculate_ptrade_like_metrics(self.result, self)
         self.result.metrics_summary = metrics.summary
@@ -1153,7 +1173,10 @@ class BacktestEngine:
         is_etf_t0 = self.etf_t0 and self._is_t0(code)
         if pos:
             new_total = pos.volume + target_vol
-            pos.avg_cost = (pos.avg_cost * pos.volume + fill_price * target_vol) / new_total
+            # POS-01 成本口径（双锚点实证 2026-10-06：四象限案例 9/2→0.973、9/11→0.972）：
+            # 平台买入加权【不含费】（cost_amount）——diluted 与 moving_avg 买入同式；
+            # 两口径唯一差异在卖出摊薄（见 _execute_sell）。
+            pos.avg_cost = (pos.avg_cost * pos.volume + cost_amount) / new_total
             pos.volume = new_total
             if is_etf_t0:
                 pos.can_sell = new_total   # ETF T+0：买入后立即全部可卖
@@ -1201,8 +1224,19 @@ class BacktestEngine:
         pnl = (fill_price - pos.avg_cost) * target_vol - commission - stamp_tax - transfer_fee
 
         self.account.cash += net_proceeds
+        old_volume = pos.volume
         pos.volume -= target_vol
         pos.can_sell -= target_vol
+        if pos.volume > 0 and self.cost_basis_method == "diluted":
+            # 摊薄法（POS-01）：新成本 = (原成本总额 - 卖出净得) / 剩余数量，
+            # 卖出净得 = 成交额 - 佣金 - 印花税 - 过户费（net_proceeds）。
+            # 平台实证：四象限案例 0.9731 四位吻合（knowledge/contracts/position-fields.md §1）。
+            remaining_cost = pos.avg_cost * old_volume - net_proceeds
+            if remaining_cost < 0:
+                logger.info(f"[摊薄成本] {code} 摊薄后成本总额为负"
+                            f"（原始值 {remaining_cost:.2f}），钳 0 留痕")
+                remaining_cost = 0.0
+            pos.avg_cost = remaining_cost / pos.volume
         if pos.volume <= 0:
             pos.avg_cost = 0
             pos.can_sell = 0

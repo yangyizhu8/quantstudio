@@ -86,6 +86,9 @@ QuantStudio 本地注入 API / 指标 / 全局对象（g、log、pd、np、MyTT�
   键 `.SS/.SZ/.BJ` **精确匹配、非 alias-aware**。策略**禁止**再写 `amount or volume` / `getattr(pos,'volume',…)`
   之类双形态兜底（契约已唯一，兜底只会掩盖问题）；也**禁止**用 `getattr(pos,'market_value',0)` 静默吞 0。
   `enable_amount` 含 T+1 语义（当日买入为 0）。设计 `docs/portfolio-position-view-contract-design.md`。
+  `cost_basis` 口径 = **PTrade 摊薄成本**（POS-01，2026-10-07：卖出摊薄扣费+买入加权不含费，
+  平台双锚点 0.973/0.972 实证；引擎默认 diluted，CLI `--cost-basis moving_avg` 可回历史口径对照）——
+  策略按成本止损/解禁判定时与平台行为一致，证据 `docs/evidence/cost-basis-diluted-acceptance-20261007.md`。
 - **get_fundamentals(valuation) date 分界（2026-09-04 修复）**：预加载快照锚点 = `prev_date`（T-1）。
   `date` 未传 / `>= T-1` → 快照路径（逐位不变）；`date < T-1` → 真 as-of。
   策略取历史估值/换手率序列的正确写法是**按日循环** `get_fundamentals(pool_list, 'valuation', fields, date=D_i)`

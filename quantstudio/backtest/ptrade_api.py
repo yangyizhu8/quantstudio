@@ -211,6 +211,9 @@ class Position:
         # 缺省回落 volume 以保持既有构造兼容；引擎适配器显式传入
         # can_sell - pending_sell_shares（close/open 模式下 pending 恒为 0）。
         self.enable_amount = volume if enable_amount is None else int(enable_amount)
+        # cost_basis 口径（POS-01，2026-10-06）：透传引擎 avg_cost，其口径由
+        # BacktestEngine.cost_basis_method 决定——默认 'diluted'（PTrade 摊薄：
+        # 卖出摊薄扣费 + 买入加权不含费，平台双锚点实证）。
         self.cost_basis = avg_cost
         self.last_sale_price = current_price
         self.avg_cost = avg_cost

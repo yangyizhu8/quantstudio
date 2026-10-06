@@ -499,7 +499,9 @@ W2-0.8 审核发现 9 项问题，W2-0.9 逐项关闭（详见 `docs/framework-f
 - **三个本地持仓入口统一契约**：`context.portfolio.positions` / `get_positions()` / `get_position()`
   一律经 `_get_ptrade_positions` 产出 PTrade `Position`（键 `.SS/.SZ/.BJ` 精确匹配）；
 - 字段映射：`amount←volume`、`enable_amount←can_sell − pending_sell_shares`、
-  `cost_basis/avg_cost←avg_cost`、`last_sale_price←当日价`（缺失**仅**在盘前/收盘后空窗或当日无行情时回退 `avg_cost`）；
+  `cost_basis/avg_cost←avg_cost`（口径 = **PTrade 摊薄成本** POS-01，2026-10-06：卖出摊薄扣费 +
+  买入加权不含费，平台双锚点 0.973/0.972 实证复现；引擎 `cost_basis_method` 默认 `'diluted'`，
+  CLI `--cost-basis moving_avg` 可回旧口径）、`last_sale_price←当日价`（缺失**仅**在盘前/收盘后空窗或当日无行情时回退 `avg_cost`）；
 - `get_positions()`/`get_position()` 现传入当日价字典（此前不传价 → `last_sale_price` 实际落 `avg_cost`）；
 - **不下沉、不触转换模板** → 转换产物零变化、矩阵哈希无需 reverify；
 - 设计 `docs/portfolio-position-view-contract-design.md`；验收 `docs/evidence/portfolio-position-view-acceptance.md`；
