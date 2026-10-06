@@ -1,0 +1,414 @@
+{
+ "generated_at": "2026-10-06T22:20:07",
+ "source": "https://dict.thinktrader.net/innerApi/start_now.html?id=70GYeq",
+ "basis": "client-rendered DOM",
+ "pages": [
+  {
+   "file": "01-快速开始.md",
+   "slug": "start_now",
+   "src": {
+    "h234": 16,
+    "tables": 1,
+    "pres": 4,
+    "pres_empty": 0,
+    "tabgroups": 4,
+    "labels": 1
+   },
+   "md": {
+    "h234": 16,
+    "tables": 1,
+    "fences": 4,
+    "tabgroups": 4,
+    "chars": 10323
+   },
+   "ok_headings": true,
+   "ok_tables": true,
+   "ok_code": true,
+   "ok_tabs": true,
+   "labels_missing": [],
+   "fence_balanced": true,
+   "empty": false
+  },
+  {
+   "file": "02-使用须知.md",
+   "slug": "user_attention",
+   "src": {
+    "h234": 9,
+    "tables": 0,
+    "pres": 2,
+    "pres_empty": 0,
+    "tabgroups": 0,
+    "labels": 0
+   },
+   "md": {
+    "h234": 9,
+    "tables": 0,
+    "fences": 2,
+    "tabgroups": 0,
+    "chars": 2069
+   },
+   "ok_headings": true,
+   "ok_tables": true,
+   "ok_code": true,
+   "ok_tabs": true,
+   "labels_missing": [],
+   "fence_balanced": true,
+   "empty": false
+  },
+  {
+   "file": "03-变量约定.md",
+   "slug": "variable_convention",
+   "src": {
+    "h234": 24,
+    "tables": 4,
+    "pres": 28,
+    "pres_empty": 0,
+    "tabgroups": 19,
+    "labels": 3
+   },
+   "md": {
+    "h234": 24,
+    "tables": 4,
+    "fences": 28,
+    "tabgroups": 19,
+    "chars": 7940
+   },
+   "ok_headings": true,
+   "ok_tables": true,
+   "ok_code": true,
+   "ok_tabs": true,
+   "labels_missing": [],
+   "fence_balanced": true,
+   "empty": false
+  },
+  {
+   "file": "04-数据结构.md",
+   "slug": "data_structure",
+   "src": {
+    "h234": 30,
+    "tables": 24,
+    "pres": 0,
+    "pres_empty": 0,
+    "tabgroups": 0,
+    "labels": 0
+   },
+   "md": {
+    "h234": 30,
+    "tables": 24,
+    "fences": 0,
+    "tabgroups": 0,
+    "chars": 30537
+   },
+   "ok_headings": true,
+   "ok_tables": true,
+   "ok_code": true,
+   "ok_tabs": true,
+   "labels_missing": [],
+   "fence_balanced": true,
+   "empty": false
+  },
+  {
+   "file": "05-枚举常量.md",
+   "slug": "enum_constants",
+   "src": {
+    "h234": 42,
+    "tables": 38,
+    "pres": 0,
+    "pres_empty": 0,
+    "tabgroups": 0,
+    "labels": 0
+   },
+   "md": {
+    "h234": 42,
+    "tables": 38,
+    "fences": 0,
+    "tabgroups": 0,
+    "chars": 28532
+   },
+   "ok_headings": true,
+   "ok_tables": true,
+   "ok_code": true,
+   "ok_tabs": true,
+   "labels_missing": [],
+   "fence_balanced": true,
+   "empty": false
+  },
+  {
+   "file": "06-系统函数.md",
+   "slug": "system_function",
+   "src": {
+    "h234": 19,
+    "tables": 6,
+    "pres": 32,
+    "pres_empty": 0,
+    "tabgroups": 20,
+    "labels": 4
+   },
+   "md": {
+    "h234": 19,
+    "tables": 6,
+    "fences": 32,
+    "tabgroups": 20,
+    "chars": 10366
+   },
+   "ok_headings": true,
+   "ok_tables": true,
+   "ok_code": true,
+   "ok_tabs": true,
+   "labels_missing": [],
+   "fence_balanced": true,
+   "empty": false
+  },
+  {
+   "file": "07-行情函数.md",
+   "slug": "data_function",
+   "src": {
+    "h234": 61,
+    "tables": 65,
+    "pres": 133,
+    "pres_empty": 0,
+    "tabgroups": 86,
+    "labels": 9
+   },
+   "md": {
+    "h234": 61,
+    "tables": 65,
+    "fences": 133,
+    "tabgroups": 86,
+    "chars": 102311
+   },
+   "ok_headings": true,
+   "ok_tables": true,
+   "ok_code": true,
+   "ok_tabs": true,
+   "labels_missing": [],
+   "fence_balanced": true,
+   "empty": false
+  },
+  {
+   "file": "08-交易函数.md",
+   "slug": "trading_function",
+   "src": {
+    "h234": 41,
+    "tables": 14,
+    "pres": 48,
+    "pres_empty": 0,
+    "tabgroups": 19,
+    "labels": 3
+   },
+   "md": {
+    "h234": 41,
+    "tables": 14,
+    "fences": 48,
+    "tabgroups": 19,
+    "chars": 49727
+   },
+   "ok_headings": true,
+   "ok_tables": true,
+   "ok_code": true,
+   "ok_tabs": true,
+   "labels_missing": [],
+   "fence_balanced": true,
+   "empty": false
+  },
+  {
+   "file": "09-引用函数.md",
+   "slug": "quote_function",
+   "src": {
+    "h234": 8,
+    "tables": 8,
+    "pres": 10,
+    "pres_empty": 0,
+    "tabgroups": 2,
+    "labels": 2
+   },
+   "md": {
+    "h234": 8,
+    "tables": 8,
+    "fences": 10,
+    "tabgroups": 2,
+    "chars": 7278
+   },
+   "ok_headings": true,
+   "ok_tables": true,
+   "ok_code": true,
+   "ok_tabs": true,
+   "labels_missing": [],
+   "fence_balanced": true,
+   "empty": false
+  },
+  {
+   "file": "10-绘图函数.md",
+   "slug": "drawing_function",
+   "src": {
+    "h234": 5,
+    "tables": 5,
+    "pres": 5,
+    "pres_empty": 0,
+    "tabgroups": 1,
+    "labels": 1
+   },
+   "md": {
+    "h234": 5,
+    "tables": 5,
+    "fences": 5,
+    "tabgroups": 1,
+    "chars": 2942
+   },
+   "ok_headings": true,
+   "ok_tables": true,
+   "ok_code": true,
+   "ok_tabs": true,
+   "labels_missing": [],
+   "fence_balanced": true,
+   "empty": false
+  },
+  {
+   "file": "11-成交回报实时主推函数.md",
+   "slug": "callback_function",
+   "src": {
+    "h234": 10,
+    "tables": 0,
+    "pres": 12,
+    "pres_empty": 0,
+    "tabgroups": 6,
+    "labels": 2
+   },
+   "md": {
+    "h234": 10,
+    "tables": 0,
+    "fences": 12,
+    "tabgroups": 6,
+    "chars": 17791
+   },
+   "ok_headings": true,
+   "ok_tables": true,
+   "ok_code": true,
+   "ok_tabs": true,
+   "labels_missing": [],
+   "fence_balanced": true,
+   "empty": false
+  },
+  {
+   "file": "12-完整示例.md",
+   "slug": "code_examples",
+   "src": {
+    "h234": 39,
+    "tables": 2,
+    "pres": 34,
+    "pres_empty": 2,
+    "tabgroups": 33,
+    "labels": 3
+   },
+   "md": {
+    "h234": 39,
+    "tables": 2,
+    "fences": 34,
+    "tabgroups": 33,
+    "chars": 65513
+   },
+   "ok_headings": true,
+   "ok_tables": true,
+   "ok_code": true,
+   "ok_tabs": true,
+   "labels_missing": [],
+   "fence_balanced": true,
+   "empty": false
+  },
+  {
+   "file": "13-相关说明.md",
+   "slug": "related_instructions",
+   "src": {
+    "h234": 4,
+    "tables": 1,
+    "pres": 0,
+    "pres_empty": 0,
+    "tabgroups": 0,
+    "labels": 0
+   },
+   "md": {
+    "h234": 4,
+    "tables": 1,
+    "fences": 0,
+    "tabgroups": 0,
+    "chars": 7537
+   },
+   "ok_headings": true,
+   "ok_tables": true,
+   "ok_code": true,
+   "ok_tabs": true,
+   "labels_missing": [],
+   "fence_balanced": true,
+   "empty": false
+  },
+  {
+   "file": "14-常见问题.md",
+   "slug": "question_answer",
+   "src": {
+    "h234": 30,
+    "tables": 3,
+    "pres": 0,
+    "pres_empty": 0,
+    "tabgroups": 0,
+    "labels": 0
+   },
+   "md": {
+    "h234": 30,
+    "tables": 3,
+    "fences": 0,
+    "tabgroups": 0,
+    "chars": 15710
+   },
+   "ok_headings": true,
+   "ok_tables": true,
+   "ok_code": true,
+   "ok_tabs": true,
+   "labels_missing": [],
+   "fence_balanced": true,
+   "empty": false
+  },
+  {
+   "file": "15-界面操作.md",
+   "slug": "interface_operation",
+   "src": {
+    "h234": 15,
+    "tables": 4,
+    "pres": 0,
+    "pres_empty": 0,
+    "tabgroups": 0,
+    "labels": 0
+   },
+   "md": {
+    "h234": 15,
+    "tables": 4,
+    "fences": 0,
+    "tabgroups": 0,
+    "chars": 10358
+   },
+   "ok_headings": true,
+   "ok_tables": true,
+   "ok_code": true,
+   "ok_tabs": true,
+   "labels_missing": [],
+   "fence_balanced": true,
+   "empty": false
+  }
+ ],
+ "summary": {
+  "pages": 15,
+  "headings_ok": 15,
+  "tables_ok": 15,
+  "code_ok": 15,
+  "tabs_ok": 15,
+  "all_fences_balanced": true,
+  "empty_files": [],
+  "src_pres_total": 308,
+  "src_pres_empty_total": 2,
+  "md_fences_total": 308,
+  "src_tabgroups_total": 190,
+  "md_tabgroups_total": 190,
+  "src_headings_total": 353,
+  "src_tables_total": 175,
+  "errors": []
+ }
+}

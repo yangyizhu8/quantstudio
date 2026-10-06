@@ -1,0 +1,134 @@
+{
+ "summary": {
+  "pages": 15,
+  "page_lines": 6043,
+  "unmatched": 0,
+  "line_coverage_pct": 100.0,
+  "min_page_coverage_pct": 100.0,
+  "pages_100": [
+   "01-快速开始.md",
+   "02-使用须知.md",
+   "03-变量约定.md",
+   "04-数据结构.md",
+   "05-枚举常量.md",
+   "06-系统函数.md",
+   "07-行情函数.md",
+   "08-交易函数.md",
+   "09-引用函数.md",
+   "10-绘图函数.md",
+   "11-成交回报实时主推函数.md",
+   "12-完整示例.md",
+   "13-相关说明.md",
+   "14-常见问题.md",
+   "15-界面操作.md"
+  ]
+ },
+ "pages": [
+  {
+   "file": "01-快速开始.md",
+   "lines": 228,
+   "miss": 0,
+   "coverage_pct": 100.0,
+   "miss_samples": []
+  },
+  {
+   "file": "02-使用须知.md",
+   "lines": 29,
+   "miss": 0,
+   "coverage_pct": 100.0,
+   "miss_samples": []
+  },
+  {
+   "file": "03-变量约定.md",
+   "lines": 183,
+   "miss": 0,
+   "coverage_pct": 100.0,
+   "miss_samples": []
+  },
+  {
+   "file": "04-数据结构.md",
+   "lines": 768,
+   "miss": 0,
+   "coverage_pct": 100.0,
+   "miss_samples": []
+  },
+  {
+   "file": "05-枚举常量.md",
+   "lines": 643,
+   "miss": 0,
+   "coverage_pct": 100.0,
+   "miss_samples": []
+  },
+  {
+   "file": "06-系统函数.md",
+   "lines": 211,
+   "miss": 0,
+   "coverage_pct": 100.0,
+   "miss_samples": []
+  },
+  {
+   "file": "07-行情函数.md",
+   "lines": 1278,
+   "miss": 0,
+   "coverage_pct": 100.0,
+   "miss_samples": []
+  },
+  {
+   "file": "08-交易函数.md",
+   "lines": 1141,
+   "miss": 0,
+   "coverage_pct": 100.0,
+   "miss_samples": []
+  },
+  {
+   "file": "09-引用函数.md",
+   "lines": 138,
+   "miss": 0,
+   "coverage_pct": 100.0,
+   "miss_samples": []
+  },
+  {
+   "file": "10-绘图函数.md",
+   "lines": 72,
+   "miss": 0,
+   "coverage_pct": 100.0,
+   "miss_samples": []
+  },
+  {
+   "file": "11-成交回报实时主推函数.md",
+   "lines": 176,
+   "miss": 0,
+   "coverage_pct": 100.0,
+   "miss_samples": []
+  },
+  {
+   "file": "12-完整示例.md",
+   "lines": 837,
+   "miss": 0,
+   "coverage_pct": 100.0,
+   "miss_samples": []
+  },
+  {
+   "file": "13-相关说明.md",
+   "lines": 25,
+   "miss": 0,
+   "coverage_pct": 100.0,
+   "miss_samples": []
+  },
+  {
+   "file": "14-常见问题.md",
+   "lines": 155,
+   "miss": 0,
+   "coverage_pct": 100.0,
+   "miss_samples": []
+  },
+  {
+   "file": "15-界面操作.md",
+   "lines": 159,
+   "miss": 0,
+   "coverage_pct": 100.0,
+   "miss_samples": []
+  }
+ ],
+ "unmatched": []
+}
