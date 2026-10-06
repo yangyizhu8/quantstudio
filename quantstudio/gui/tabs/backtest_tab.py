@@ -223,6 +223,40 @@ class BacktestTab(QWidget):
                 "close/open 请使用 legacy。")
             return
 
+        # D1 件二（2026-10-06）：设计契约本金「运行前确认门」。
+        # 与 A 件（run_ptrade_strategy._check_design_capital_contract）**共用同一事实源**
+        # resolve_design_capital_contract，杜绝两处判定分叉。
+        # 仅当「本金 < 设计契约」时询问；资金充足 / legacy / runtime_total_value(null) 设计
+        # 时**完全不出现**，流程与既有逐字一致。
+        # 「取消」＝用户主动放弃本次运行（**非系统阻断**，与已确认的 C1「不阻断」不冲突）。
+        # 整块异常一律放行：GUI 门自身绝不阻塞正常回测（与 A 件同款守卫原则）。
+        try:
+            from quantstudio.backtest.run_ptrade_strategy import resolve_design_capital_contract
+            _contract = resolve_design_capital_contract(strategy_path)
+        except Exception:
+            _contract = None
+        if _contract is not None:
+            _required = float(_contract["required_initial_cash"])
+            _capital = float(self.capital_spin.value())
+            if _capital < _required:
+                _box = QMessageBox(self)
+                _box.setIcon(QMessageBox.Icon.Warning)
+                _box.setWindowTitle("初始资金低于策略设计契约")
+                _box.setText(
+                    f"本策略声明 required_initial_cash = {_required:,.0f}，"
+                    f"当前设置的初始资金 = {_capital:,.0f}"
+                    f"（sizing_mode = {_contract.get('sizing_mode')}）。")
+                _box.setInformativeText(
+                    "资金不足时本策略可能无法足额建仓，甚至全程零成交——回测结果将不具备参考意义。\n\n"
+                    "【继续】仍按当前资金运行回测；\n"
+                    "【取消】返回修改初始资金后再运行。")
+                _btn_go = _box.addButton("继续", QMessageBox.ButtonRole.AcceptRole)
+                _box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+                _box.setDefaultButton(_btn_go)
+                _box.exec()
+                if _box.clickedButton() is not _btn_go:
+                    return   # 用户选择取消：不启动 Worker，表单保留，改金额后可重跑
+
         params = {
             'db_path': db_path_str,
             'start': self.start_edit.text().strip(),
@@ -290,6 +324,18 @@ class BacktestTab(QWidget):
 
         output_dir = result.get("output_dir", "")
         self.status_label.setText(f"✅ 回测完成: {output_dir}")
+
+        # D1 件三（2026-10-06）：运行后「零成交」提示。
+        # 复用 workers.finished_ok **已携带**的 trade_records（与 B 件同判据 result.trade_records），
+        # 无需任何日志管道。仅在零成交时提示；有成交时流程与本件前逐字一致。
+        if not result.get("trade_records"):
+            QMessageBox.warning(
+                self, "回测全程零成交",
+                "本次回测 0 笔成交。可能原因：\n"
+                "① 初始资金低于策略设计契约（回测开始时若已提示，请核对初始资金）；\n"
+                "② 策略信号未触发（窗口内无买点）；\n"
+                "③ 股票池 / 数据异常。\n\n"
+                "结果窗口仍将打开，但请核对后再采信。")
 
         # 打开结果可视化窗口。
         # 注意：窗口构造/显示期间的任何异常都必须捕获并反馈。否则异常会从 Qt 槽

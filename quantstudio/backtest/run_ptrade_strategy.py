@@ -26,6 +26,71 @@ def load_strategy(strategy_path: str) -> dict:
     return _load_strategy(strategy_path)
 
 
+def resolve_design_capital_contract(strategy_path):
+    """设计契约本金**纯查询**（无副作用；D1 件一，2026-10-06）。
+
+    返回 dict：{"required_initial_cash": float, "sizing_mode": str|None, "design_path": str}；
+    不满足条件时返回 None。判据与 A 件完全一致（同源，杜绝两处判定分叉）：
+    - 仅当 design_metadata 可信解析链给出 RESOLVED（ledger 生命周期 + SHA 绑定 + schema 2.3）；
+    - 且 portfolio_contract.required_initial_cash 非空、> 0（runtime_total_value 的 null → None）；
+    - 其余（legacy 策略 / 解析异常 / 读文件失败）一律 None。
+
+    消费者：A 件的 _check_design_capital_contract（打日志）与 GUI 运行前确认门（弹窗）。
+    """
+    try:
+        import json
+        from quantstudio.strategy_compiler.design_metadata import find_design_for_strategy
+
+        res = find_design_for_strategy(strategy_path, ROOT)
+        if getattr(res, "status", None) != "RESOLVED":
+            return None
+        design_path = getattr(res, "design_path", None)
+        if not design_path:
+            return None
+        with open(design_path, "r", encoding="utf-8") as fh:
+            design = json.load(fh)
+        contract = (design or {}).get("portfolio_contract") or {}
+        required = contract.get("required_initial_cash")
+        if required is None:
+            return None
+        required = float(required)
+        if required <= 0:
+            return None
+        return {"required_initial_cash": required,
+                "sizing_mode": contract.get("sizing_mode"),
+                "design_path": design_path}
+    except Exception:
+        return None
+
+
+def _check_design_capital_contract(strategy_path, capital):
+    """A 件（2026-10-06）：按**设计契约**校验初始资金，不足则显式告警（**不阻断**）。
+
+    动因：GUI/CLI 的默认初始资金都是 10 万，而按更大本金设计的固定名义金额策略
+    （portfolio_contract.sizing_mode=fixed_notional + required_initial_cash）在资金不足时
+    会**整程零成交且全程静默**（2026-10-05 用户实测 161 交易日零成交）。
+
+    只读、无副作用。判据来源＝design_metadata 的可信解析链（ledger 生命周期 + SHA 绑定 +
+    design schema 2.3 校验）。**仅当 RESOLVED 且 required_initial_cash 非空且 capital 低于它**
+    时才输出一条 warning；其余情形（legacy 策略 / runtime_total_value 的 null / 资金充足 /
+    任何异常）**零输出、零行为影响**。诊断自身绝不引入新失败路径（沿用 backtest_engine.py 既有守卫原则）。
+    """
+    try:
+        info = resolve_design_capital_contract(strategy_path)
+        if not info:
+            return
+        required = info["required_initial_cash"]
+        if float(capital) >= required:
+            return
+        logging.getLogger(__name__).warning(
+            "[Backtest] 初始资金低于策略设计契约：本策略声明 required_initial_cash=%.2f，"
+            "本次 capital=%.2f（sizing_mode=%s）。若为 fixed_notional 策略，可能因此无法足额建仓、"
+            "甚至全程零成交——请核对回测的初始资金设置（设计文件 %s）。"
+            "本次回测仍按给定资金执行，不中断。",
+            required, float(capital), info["sizing_mode"], info["design_path"])
+    except Exception:
+        pass
+
 def run_backtest(strategy_path, start, end, *,
                  db_path=None, capital=100_000,
                  match_price_mode='close', engine_profile='daily-bar-v1',
@@ -94,6 +159,8 @@ def run_backtest(strategy_path, start, end, *,
                   f"ashares快照={fidelity_config.fidelity_ashares_snapshot} "
                   f"st_filter={fidelity_config.fidelity_st_filter} "
                   f"eps_basis={fidelity_config.fidelity_eps_basis}")
+
+    _check_design_capital_contract(strategy_path, capital)
 
     result, output_dir = engine.run()
     return result, output_dir, engine
