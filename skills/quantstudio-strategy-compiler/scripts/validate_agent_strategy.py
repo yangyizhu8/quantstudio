@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Validate agent-authored QuantStudio/PTrade strategy code against real profiles."""
 from __future__ import annotations
 
@@ -1255,7 +1255,47 @@ def validate_strategy(
         _validate_history_helper_required(design, tree, functions, parents, issues)
     _validate_portfolio_contract_code(design, tree, functions, issues)
     _validate_r5_audit_logs(design, tree, functions, parents, issues)
+    _validate_alignment_gate(source_name, strategies_dir, issues)
     return _report(design, source_name, target_profile, issues)
+
+
+def _validate_alignment_gate(source_name: str, strategies_dir: str | Path | None,
+                             issues: list[dict[str, Any]]) -> None:
+    """ALIGNMENT-GATE · 对齐生命周期门（件 A，docs/alignment-lifecycle-gate-design.md，2026-10-07）。
+
+    对齐从事后审计升格为管线门禁：检查策略对应产物的 alignment/report.md（S1 报告
+    落盘约定路径）。三态语义（缺失与失败分态，存量柔性过渡）：
+      - 报告存在且判定「已对齐」→ 不发 issue（PASS 态，无信号即通过）；
+      - 报告缺失 → WARN（新策略提示补跑 S1；存量策略豁免登记，不阻断）；
+      - 报告存在但判定未达标 → BLOCK（跑了对齐未达标，禁止毕业 graduated）。
+    verdict 解析目标：S1 §5「- **判定：<verdict>**」行。
+    """
+    if strategies_dir is None:
+        return
+    stem = Path(source_name).stem
+    base = Path(strategies_dir)
+    candidates = [
+        base.parent / "output" / "generated_strategies" / stem / "alignment" / "report.md",
+        base / stem / "alignment" / "report.md",
+    ]
+    report_path = next((p for p in candidates if p.is_file()), None)
+    if report_path is None:
+        issues.append(_issue(
+            "ALIGNMENT-GATE", "WARN",
+            f"alignment/report.md not found for {stem!r}: platform S1 alignment not yet "
+            f"run/archived (scripts/align_diff_report.py --output <产物>/alignment/report.md). "
+            f"Lifecycle gate: aligned is required before graduated; legacy strategies "
+            f"are exempt via registration", None))
+        return
+    text = report_path.read_text(encoding="utf-8", errors="replace")
+    m = re.search(r"\*\*判定：\s*([^*]+?)\*\*", text)
+    verdict = m.group(1).strip() if m else ""
+    if verdict.startswith("已对齐") or "残差达标" in text:
+        return
+    issues.append(_issue(
+        "ALIGNMENT-GATE", "BLOCK",
+        f"alignment report exists ({report_path.name}) but verdict is {verdict!r} "
+        f"(not 已对齐): resolve the alignment gap before graduating this strategy", None))
 
 
 def _report(design: dict[str, Any], source_name: str, target_profile: str,
@@ -1322,9 +1362,6 @@ def main(argv=None) -> int:
     return 0 if report["status"] == "PASS" else 1
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
 
 def _validate_platform_fallback_handwritten(tree, issues):
     """R5（2026-08-22，PTrade 平台对齐治理 v4 C 组）：禁止策略手写平台差异兜底。
@@ -1368,4 +1405,7 @@ def _validate_platform_fallback_handwritten(tree, issues):
     for n in ast.walk(tree):
         _visit(n)
 
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 

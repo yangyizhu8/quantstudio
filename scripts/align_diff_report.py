@@ -140,6 +140,8 @@ def main():
         rep.append("- 全部委托（合并后）逐笔一致 ✅")
     J["order_div_count"] = len(odiffs)
     J["order_first_div"] = odiffs[0][0][0] if odiffs else None
+    # S3 路由消费（件 B 2026-10-07）：委托分歧明细（--as-json 新增字段，报告文本不变）
+    J["order_divs"] = [[list(k), p, l] for (k, p, l) in odiffs]
 
     # ---- 4. 市值差分解（首偏日与末日）----
     rep.append("\n## 4. 市值差分解（本地隐含 vs 平台快照）")
@@ -166,6 +168,35 @@ def main():
         verdict = "混合形态（需人工仲裁）"
     rep.append(f"- **判定：{verdict}**")
     J["verdict"] = verdict
+
+    # ---- 6. 案件路由 S3（件 B，2026-10-07；§1-5 逐字节不变，本节纯追加）----
+    try:
+        from align_triage_rules import triage
+        route = triage(J)
+        rep.append("\n## 6. 案件路由（S3 判别特征规则库 · 机判人核，非终判）")
+        # 残差达标判定（对齐生命周期 aligned 态的机检判据 <0.5%；§5 零偏差口径之外
+        # 的达标语义由本节承载——尾差级噪声带内即达标，防误 BLOCK 已达标策略）
+        last_dev = nz[-1][1] if nz else 0.0
+        total_asset = loc_daily[common[-1]]["total_asset"] if common else 0.0
+        residual_pct = abs(last_dev) / total_asset if total_asset else 0.0
+        route["residual_pct"] = round(residual_pct, 6)
+        route["residual_ok"] = residual_pct < 0.005
+        if route["residual_ok"] and nz:
+            rep.append(f"- **残差达标 ✅**：末值 {last_dev:+.2f} 元 / 总资产 {total_asset:.2f} "
+                       f"= {residual_pct:.4%} < 0.5%（对齐门 aligned 判据满足）")
+        if not route["candidates"] and not route["new_case"]:
+            rep.append("- 已对齐，无需路由 ✅")
+        elif route["candidates"]:
+            for c in route["candidates"]:
+                rep.append(f"- 候选 `{c['id']}` → {c['case_type']}：{c['reason']}")
+                rep.append(f"  - 证据：{c['evidence']}")
+            if route["residual_ok"]:
+                rep.append("- 残差已达对齐门判据：候选若属台账 §4 登记噪声带（尾差级）可直接判 aligned")
+        else:
+            rep.append("- **无规则命中 → 立新案**（进根因证实，铁律 L2 人审：未证实不得修）")
+        J["triage"] = route
+    except Exception as exc:            # 路由失败不拖垮 S1 报告
+        rep.append(f"\n## 6. 案件路由（S3）\n- 路由器不可用：{exc}")
 
     out = "\n".join(rep)
     print(out)
