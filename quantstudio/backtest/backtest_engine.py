@@ -1205,7 +1205,14 @@ class BacktestEngine:
         if sell_all:
             target_vol = pos.can_sell
         elif sell_shares is not None:
-            target_vol = min(round_to_lot(sell_shares, 100), pos.can_sell)
+            # 【CORP-02 修订（2026-10-07 ②审计 PASS ③实施）】数量式卖出零股全清：
+            # 上层传入委托量即成交量（受可卖钳制）。依据三层——PTrade order 数量式
+            # 契约无整手声明（Context7 /kay-ou/ptradeapi，仅 order_target_value 声明
+            # 取整）+ 平台实证 2026-01-29 四象限清仓单 3296 原量成交（非 100 倍数）
+            # + A 股规则卖出允许零股一次性卖出。整手纪律由策略层负责（四象限
+            # submit_target_amount 非清仓分支已自整手）；买入方向仍强制整手
+            # （_execute_buy round_to_lot 保留）。方案 docs/corp02-odd-lot-sell-design.md。
+            target_vol = min(sell_shares, pos.can_sell)
         elif sell_value is not None:
             max_vol = int(sell_value / price)
             target_vol = min(round_to_lot(max_vol, 100), pos.can_sell)
