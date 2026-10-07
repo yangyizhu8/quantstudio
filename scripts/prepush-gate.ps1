@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   推送前闸门（C7 机器化）—— 本地领先清单含「非本件提交」即拒推。
 
@@ -52,11 +52,47 @@ $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 $LogPath = Join-Path $Root 'docs\handoff\push-bundle-rulings.log'
 
+function Test-PartialPushLeak([object[]]$PendingEntries) {
+  # 【CORP-01 附录（2026-10-07 裁定照准）】拒绝路径部分成功检测：
+  # 多 push URL 场景下，git 按子推送串行执行，本门拒绝时**第一个 URL 可能已完成传输**
+  # （10-07 实证：无裁定首推被拒时 quantstudio-plus 已上云）。本检测在拒绝时主动
+  # ls-remote 各 push URL，若待推清单中任一提交已可追溯于远端 tip ⇒ 大声告警+留痕，
+  # 供人工立即处置（补裁定/回滚远端），消除「拒了以为没推」盲点。
+  try {
+    $pushUrls = @(git remote get-url --all --push $Remote 2>$null)
+    foreach ($u in $pushUrls) {
+      $tipLine = git ls-remote $u "refs/heads/$Branch" 2>$null | Select-Object -First 1
+      if (-not $tipLine) { continue }
+      $tip = ($tipLine -split "`t")[0]
+      if (-not $tip -or $tip -notmatch '^[0-9a-f]{40}$') { continue }
+      $leaked = @()
+      foreach ($e in $PendingEntries) {
+        git merge-base --is-ancestor $e.Sha $tip 2>$null
+        if ($LASTEXITCODE -eq 0) { $leaked += $e }
+      }
+      if ($leaked.Count -gt 0) {
+        Write-Host ''
+        Write-Host ("[prepush-gate] ⚠️ 部分成功泄漏：拒绝之后 {0} 已含待推提交 {1} 笔（{2}…）"
+                    -f $u, $leaked.Count, ($leaked[0].Sha.Substring(0,8))) -ForegroundColor Yellow
+        Write-Host '[prepush-gate] 处置：立即人工核对（补裁定推送 or 远端回滚），并在回报中声明。'
+        $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+        $shas = ($leaked | ForEach-Object { $_.Sha.Substring(0,8) }) -join ','
+        Add-Content -Path $LogPath -Value ("[{0}] PARTIAL-PUSH-LEAK remote={1} branch={2} leaked={3}" `
+          -f $stamp, $u, $Branch, $shas) -Encoding utf8
+      }
+    }
+  } catch {
+    # 检测失败不改变本门主判定（拒绝仍拒绝），只提示检测不可用
+    Write-Host '[prepush-gate] （部分成功检测异常跳过：' $_.Exception.Message '）'
+  }
+}
+
 function Write-Denied([string]$msg) {
   Write-Host ''
   Write-Host ('[prepush-gate] 拒绝推送：' + $msg) -ForegroundColor Red
   Write-Host '[prepush-gate] 纪律（C7）：非本件提交须先声明、由归属会话确认闸门；'
   Write-Host '              确需捆绑须带用户裁定引用（QS_PUSH_BUNDLE_RULING）+ 显式列明（-AllowAlso）。'
+  Test-PartialPushLeak $script:DeniedEntries
   if ($ReportOnly) {
     Write-Host '[prepush-gate] （ReportOnly 模式：仅报告，不阻断）'
     exit 0
@@ -103,6 +139,8 @@ foreach ($line in $raw) {
     Subject = $(if ($p.Count -gt 1) { $p[1] } else { '' })
   }
 }
+# 供拒绝路径部分成功检测消费（CORP-01 附录）
+$script:DeniedEntries = $entries
 
 if ($entries.Count -eq 0) {
   Write-Host ("[prepush-gate] 清单为空（无本地领先 {0}/{1} 的提交）⇒ PASS" -f $Remote, $Branch)

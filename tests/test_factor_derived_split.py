@@ -257,40 +257,42 @@ def test_share_merge_symmetric(engine):
 
 
 def test_share_merge_rounds_down_to_lot(engine):
-    """非整手合并：10100×0.5=5050 → 整手向下取整 5000（与送股整手取整语义对称）。"""
+    """【CORP-01 黄金重算】非整份合并：10100×0.5=5050 → 按份取整 5050（ETF 合并精确
+    到份，平台 3796 非 100 倍数实证；旧整手 5000 断言随整手假设退役）。"""
     _add_pos(engine, "511030.SS", 10100, 10.0)
     curr_df, prev_df = _dfs(1.0, 2.0, code="511030")   # ratio = 0.5
     engine._apply_factor_derived_split(curr_df, prev_df, "2026-07-07")
 
     pos = engine.account.positions["511030.SS"]
-    assert pos.volume == 5000
-    assert pos.avg_cost == pytest.approx(10.0 * 10100 / 5000)
+    assert pos.volume == 5050
+    assert pos.avg_cost == pytest.approx(10.0 * 10100 / 5050)
 
 
 def test_share_merge_to_zero_skips(engine):
-    """合并到 0 股（100×0.5=50 → 整手 0）为数值异常 → 跳过，不除零。"""
+    """【CORP-01 黄金重算】100×0.5=50（按份非 0）→ 合并生效到 50 份（旧"整手得 0
+    跳过"随整手假设退役；真正到 0 的保护由 new_volume<=0 分支覆盖）。"""
     _add_pos(engine, "511030.SS", 100, 10.0)
     curr_df, prev_df = _dfs(1.0, 2.0, code="511030")   # ratio = 0.5
     engine._apply_factor_derived_split(curr_df, prev_df, "2026-07-07")
 
     pos = engine.account.positions["511030.SS"]
-    assert pos.volume == 100
-    assert pos.avg_cost == pytest.approx(10.0)
-    assert _evt(engine) == []
+    assert pos.volume == 50
+    assert pos.avg_cost == pytest.approx(10.0 * 100 / 50)
+    assert len(_evt(engine)) == 1
 
 
 def test_share_merge_unmatched_ratio_skips(engine, caplog):
-    """ratio=0.9718（未吸附，偏差 2.8%>0.5%）→ WARN + 跳过（保守，不误合并）。"""
+    """【CORP-01 黄金重算】ratio=0.9718 任意比合并 → 生效（159934 同款场景：
+    0.948127 曾被 0.5 吸附拒=四象限残差 3.88pp 根因；旧"未吸附跳过"契约退役）。"""
     _add_pos(engine, "159870.SZ", 10000, 10.0)
-    with caplog.at_level(logging.WARNING, logger="quantstudio.backtest.backtest_engine"):
-        curr_df, prev_df = _dfs(0.9718, 1.0, code="159870")
-        engine._apply_factor_derived_split(curr_df, prev_df, "2026-07-07")
+    curr_df, prev_df = _dfs(0.9718, 1.0, code="159870")
+    engine._apply_factor_derived_split(curr_df, prev_df, "2026-07-07")
 
     pos = engine.account.positions["159870.SZ"]
-    assert pos.volume == 10000
-    assert pos.avg_cost == pytest.approx(10.0)
-    assert _evt(engine) == []
-    assert "疑似份额合并" in caplog.text
+    assert pos.volume == 9718
+    assert pos.avg_cost == pytest.approx(10.0 * 10000 / 9718)
+    evts = _evt(engine)
+    assert len(evts) == 1 and evts[0]["type"] == "factor_derived_merge"
 
 
 # =====================================================================

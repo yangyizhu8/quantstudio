@@ -974,24 +974,23 @@ class BacktestEngine:
 
             # ---- 带区规则（v2-final §3.2）----
             if ratio < 0.99:
-                # 【P1-4 修订】份额合并：对称处理（吸附 0.5 倍数）
-                snapped = round(ratio * 2) / 2
-                if snapped > 0 and abs(ratio - snapped) / snapped < 0.005:
-                    ratio = snapped
-                else:
-                    logger.warning(f"[Split] {code} {day_str} 疑似份额合并 ratio={ratio:.4f} "
-                                   f"未吸附，跳过（数据异常/非 0.5 倍数）")
+                # 【CORP-01 修订（2026-10-07 裁定③实施）】合并带任意比：
+                #   去 0.5 吸附 + 按份取整。依据：除权参考价由交易所按公告比例精确计算
+                #   （159934 黄金ETF 2025-09-22 实证：反推 0.948127 与公告 0.948126035
+                #   六位吻合）——反推 ratio 本身即事实源，无需再吸附；0.5 吸附只适用
+                #   送股整数比，合并带任意比是常态（0.948 被旧吸附拒=四象限残差 3.88pp
+                #   根因）。ETF 合并份额精确到份（平台 3796 非 100 倍数），不按整手。
+                #   方案 docs/corp-action-etf-merge-design.md；证据
+                #   docs/evidence/corp-action-etf-merge-2025-09-22.md。
+                if ratio < 0.50:
+                    logger.warning(f"[Split] {code} {day_str} 合并带出界 ratio={ratio:.4f}"
+                                   f"（<0.50，疑脏数据），跳过")
                     continue
                 old_volume = int(pos.volume)
-                new_total = int(round(old_volume * ratio))
-                # 【P1-4 执行修正】round_to_lot 对负值截 0（max(raw/100*100, 0)，A股订单语义），
-                # 合并为负向变化会恒得 0 → 合并永不生效（v2-final §3.5 代码缺陷，与 §3.2 表格/
-                # §六 测试 7 矛盾）。此处按 §3.2 "volume ×= ratio（整手向下取整）"直接对乘积取整手。
-                new_volume = int(new_total / 100) * 100
-                added = new_volume - old_volume
-                if added >= 0 or new_volume <= 0:
-                    continue  # 合并且无净减少/合并到 0 股（数值异常）→ 跳过
-                new_volume = old_volume + added
+                new_volume = int(round(old_volume * ratio))  # 按份取整（尾份<1 舍去）
+                if new_volume <= 0 or new_volume >= old_volume:
+                    continue  # 合并到 0 / 无净减少（数值异常）→ 跳过
+                added = new_volume - old_volume  # 负值（合并缩减无现金对价）
                 pos.avg_cost = pos.avg_cost * old_volume / new_volume
                 pos.volume = new_volume
                 pos.can_sell += added
@@ -1000,10 +999,11 @@ class BacktestEngine:
                     'type': 'factor_derived_merge',
                     'ratio': ratio, 'old_volume': old_volume,
                     'new_volume': new_volume, 'added': added,
-                    'note': 'preClose反推合并（stock_dividend无记录）',
+                    'note': 'preClose反推合并（CORP-01：任意比去吸附+按份取整；'
+                            '平台尾差规则见证据件）',
                 })
-                logger.info(f"[Split] {code} {day_str} 因子反推合并: "
-                            f"{old_volume}→{new_volume} (ratio={ratio:.4f})")
+                logger.info(f"[Split] {code} {day_str} ETF份额合并: "
+                            f"{old_volume}→{new_volume} (ratio={ratio:.6f})")
                 continue
 
             if ratio <= 1.01:
