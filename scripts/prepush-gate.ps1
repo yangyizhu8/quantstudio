@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   推送前闸门（C7 机器化）—— 本地领先清单含「非本件提交」即拒推。
 
@@ -72,7 +72,7 @@ function Test-PartialPushLeak([object[]]$PendingEntries) {
       }
       if ($leaked.Count -gt 0) {
         Write-Host ''
-        Write-Host ("[prepush-gate] ⚠️ 部分成功泄漏：拒绝之后 {0} 已含待推提交 {1} 笔（{2}…）"
+        Write-Host ("[prepush-gate] ⚠️ 部分成功泄漏：拒绝之后 {0} 已含待推提交 {1} 笔（{2}…）" `
                     -f $u, $leaked.Count, ($leaked[0].Sha.Substring(0,8))) -ForegroundColor Yellow
         Write-Host '[prepush-gate] 处置：立即人工核对（补裁定推送 or 远端回滚），并在回报中声明。'
         $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
