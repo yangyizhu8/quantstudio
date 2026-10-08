@@ -75,6 +75,14 @@ ASSET_PRICE_TABLES = {
 # R3a（裁定②）：活跃态周期视为死周期的 updated_at 阈值，N=4h 起步
 # （applying 长重算实证可到 6.5h，N 过小会误清真活跃周期；R3b 心跳上线后可收紧到 2h）。
 _STALE_ACTIVE_CYCLE_S = 4 * 3600
+# R3b：applying 相位心跳间隔与停滞告警阈值（W2 风格硬编码起步，可配置化另登记）。
+_APPLY_HEARTBEAT_S = 600
+_APPLY_STALL_ALARM_S = 4 * 3600
+
+
+def _monotonic() -> float:
+    """R3b 心跳/停滞计时的单调钟（独立 helper 便于测试 monkeypatch 时钟）。"""
+    return time.monotonic()
 
 
 def _stale_active_cutoff():
@@ -1572,10 +1580,29 @@ class QFQResidentOrchestrator:
             # 本编排器**不读** stop.request 文件（D 件「消费点唯一」硬不变量）。
             _stop_hit = False
             _done = 0
+            # R3b（write-integrity，新增检测型·fail-closed）：applying 心跳 + 停滞告警。
+            # 只告警不处置、不自动改状态、不提交水位；不改变循环控制流/数据语义。
+            # - 心跳：距上次心跳 ≥_APPLY_HEARTBEAT_S → INFO（cycle_id + 就地可得指标）；
+            # - 停滞：单元完成时距上次周期状态推进（相位切换/上一单元完成）≥
+            #   _APPLY_STALL_ALARM_S → ERROR（一次性，W2 风格）——实证 applying 可
+            #   停滞 6.5h+ 无任何周期面日志，此前完全不可见。
+            _hb_last = _monotonic()
+            _prog_last = _monotonic()
+            _stall_alarmed = False
             for unit in units:
                 if should_stop is not None and should_stop():
                     _stop_hit = True
                     break
+                _now_m = _monotonic()
+                if _now_m - _hb_last >= _APPLY_HEARTBEAT_S:
+                    _hb_last = _now_m
+                    logger.info(
+                        "[qfq_orch] applying 心跳: cycle=%s 已处理 %d/%d 剩余 %d "
+                        "committed=%d retryable_failed=%d dead_letter=%d blocked=%d "
+                        "pending_due=%d",
+                        cycle_id, _done, len(units), len(units) - _done,
+                        summary.committed, summary.retryable_failed,
+                        summary.dead_letter, summary.blocked, summary.pending_due)
                 outcome = self._reanchor_security(
                     conn, run_id=run_id, asset_type=unit["asset_type"], code=unit["code"],
                     trigger_ids=unit["triggers"], effective_dates=unit["effective_dates"],
@@ -1583,6 +1610,15 @@ class QFQResidentOrchestrator:
                 self._apply_trigger_outcome(conn, run_id=run_id, unit=unit,
                                             outcome=outcome, fetcher=fetcher, summary=summary)
                 _done += 1
+                _done_m = _monotonic()
+                if not _stall_alarmed and _done_m - _prog_last >= _APPLY_STALL_ALARM_S:
+                    _stall_alarmed = True
+                    logger.error(
+                        "[qfq_orch] applying 停滞告警: cycle=%s 距上次周期状态推进 "
+                        "%.0fs ≥ %ds（W2 风格只告警不处置；已处理 %d/%d 剩余 %d）",
+                        cycle_id, _done_m - _prog_last, _APPLY_STALL_ALARM_S,
+                        _done, len(units), len(units) - _done)
+                _prog_last = _done_m
             if _stop_hit:
                 # 中断语义：不经 gate、不提交水位；已 committed 单元保留
                 # （_already_committed 早退），未提交单元 trigger 保持 pending，
