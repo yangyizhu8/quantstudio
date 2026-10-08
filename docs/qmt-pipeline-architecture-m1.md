@@ -26,7 +26,7 @@ verdict。修复前置三问：①影响其他功能=无（加法式分支，PTr
 
 | # | 项 | 结论（勘误后） | 依据 |
 |---|---|---|---|
-| ① | 盘前钩子等价 | **主路径定谳：handlebar 内时点判断**（日周期=每根日 bar 前段执行盘前逻辑段）。run_time 兜底通道**文档已明**：3 参签名 `run_time(funcName, period, startTime)`，且「**模型回测时无效**」——回测先行（四问①）下 run_time 仅作实盘增强路径（M5+）。run_daily 调度器（3/6 策略消费）→ `_qs_should_run_daily` 门控 wrapper（注册于 init 的时点判定） | 06-系统函数.md:225-229（3 参签名）；06:257（回测无效明文——R2① 提前闭合）；01:333+06:222（run_daily 映射先例） |
+| ① | 盘前钩子等价 | **主路径定谳：handlebar 内时点判断**（日周期=每根日 bar 前段执行盘前逻辑段）。run_time 兜底通道**文档已明**：3 参签名 `run_time(funcName, period, startTime)`，且「**模型回测时无效**」——回测先行（四问①）下 run_time 仅作实盘增强路径（M5+）。run_daily 调度器（3/6 策略消费）→ `_qs_should_run_daily` 门控 wrapper（注册于 init 的时点判定） | 06-系统函数.md:225-229（3 参签名）；06:257（回测无效明文——R2① 提前闭合）；01:333+06:160-223（run_daily 映射先例，schedule_run 族节首） |
 | ② | 持仓查询 | `get_trade_detail_data(accountID, 'STOCK', 'POSITION')`；m_nVolume/m_nCanUseVolume 对齐本地 amount/enable_amount 面；'ACCOUNT'/'ORDER'/'DEAL' 同源 | 08-交易函数.md:583-601（枚举）+8:645-649（m_nVolume/m_nCanUseVolume 字段行 648） |
 | ③ | include=False 等价 | E1 上移渲染层不变：注入 `_qs_get_history`→`C.get_market_data_ex`+**剔除当日 bar**（count 多取一根取 `[-2]`，对齐本地 `count>=2 取[-2]` 惯例，本地锚定 ptrade_api.py:1479-1480）。**统一用 _ex 版**（官方对非 ex 版标「不推荐」：00:114-115/07:1641）；「最后一根是否含当前未完成 bar」M5 实测钉死 | 00:114；07:1641；本地 ptrade_api 实测 |
 | ④ | ETF/股票池 | **`C.get_stock_list_in_sector(sector_name)`**（innerApi 版，归属勘误：去 xtdata 前缀——xtdata 属 nativeApi 不在转写册）；ETF 池=转换期固化 ETF_POOL_STATIC（双端铁律）；`get_Ashares`(5/6 策略)→`C.get_stock_list_in_sector('沪深A股')` | 07:3288-3326；01:328（A股先例） |
@@ -86,7 +86,7 @@ K 线周期；本地 handle_data 随 engine_profile 变：daily 每日一次 bac
 | `before_trading_start` | handlebar 内时点判断段（**日周期=每根日 bar 前段**；分钟周期禁用域不适用） | §1.1① |
 | `handle_data` | `def handlebar(C):`（daily-bar-v1 对齐） | §2.2 基准声明 |
 | `after_trading_end` | handlebar 尾段 wrapper `_qs_should_run_after`（日=每根 bar 尾；分钟=15:00 时间比较）；**弃 is_last_bar** | §1.2 |
-| `run_daily(time, func)` | init 内注册时点判定+`_qs_should_run_daily` 门控 | 01:333；06:222 |
+| `run_daily(time, func)` | init 内注册时点判定+`_qs_should_run_daily` 门控 | 01:333；06:160-223（schedule_run 族节首） |
 | `order(code, n)` | `_qs_order(code, n, C)`→passorder **23/24 按符号分支**，位序依 08:75-90 | 05:42-44 |
 | **`order_target_value(code, value)`（六策略 6/6 全用，实测调用点 13 处——ORDER 件真实主体）** | `_qs_order_target_value(code, value, C)`：get_trade_detail_data POSITION 持仓库存+get_market_data_ex 最新价→目标量换算→delta→passorder 下单（买 23/卖 24） | 三端旅程：本地 ptrade_api 同构（差额→引擎撮合）；QMT wrapper 吸收差额逻辑 |
 | `get_history(..., include=False)` | `_qs_get_history`→C.get_market_data_ex+剔除当日 bar（count+1 取 [-2]） | §1.1③ |
@@ -101,7 +101,7 @@ K 线周期；本地 handle_data 随 engine_profile 变：daily 每日一次 bac
 
 | API（消费面） | 决策 | QMT 实现 |
 |---|---|---|
-| order_target_value（6/6，15 处） | **wrapper** | §3 行（ORDER 件主体） |
+| order_target_value（6/6，13 处） | **wrapper** | §3 行（ORDER 件主体） |
 | order（试点 1 处） | wrapper | §3 行 |
 | get_history / get_history_batch（3/6） | wrapper | _qs_get_history（批量=循环+合并，_batch 同构） |
 | get_fundamentals(+_batch)（3/6） | **wrapper（FR-QMT-01 立项）** | §1.3；字段映射表 M2 盘点定稿；**announce_time PIT** |
