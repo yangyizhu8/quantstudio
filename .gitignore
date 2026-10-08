@@ -94,3 +94,13 @@ data/quantstudio.zip
 # Rust hybrid Phase 0 剖析产物（2026-09-20 补充指示③批准：原始 profile 不入 git）
 agent_workspace/phase0/
 *.prof
+
+# ── 双端对齐知识库 · Obsidian 阅读器配置（2026-10-08 补 · 对齐副本 .gitignore:105-111 同款）──
+# knowledge/ vault 的阅读器配置**整目录**不入库（2026-10-05 用户裁定·方案 A）：
+#   ① `.obsidian/` 是**阅读器本地配置**（appearance/core-plugins/graph）与**个人窗口状态**（workspace），
+#      不是知识内容——Obsidian 会在各人本地自建一份，入库只会互相覆盖；
+#   ② 共享载体是 Markdown 内容件（README/index/contracts/playbooks/registry/archive 等），已随库 tracked；
+#   ③ 社区插件（如 Dataview）需各人自行安装，**不把第三方插件本体推入仓库**；
+#   ④ 本行覆盖上行 `workspace*.json`（保留上行以注明初始意图）。
+.obsidian/workspace*.json
+knowledge/.obsidian/
