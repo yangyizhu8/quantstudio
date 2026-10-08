@@ -97,8 +97,10 @@ class BatchAudit:
                rows_raw: int, rows_aligned: int, rows_passed: int, rows_rejected: int,
                rows_written: int, status: str, error: Optional[str] = None,
                started_at: str = None, finished_at: str = None,
-               rows_new: int = 0, rows_updated: int = 0,
+               rows_new: Optional[int] = 0, rows_updated: Optional[int] = 0,
                rows_fixed: Optional[int] = None):
+        """rows_new/rows_updated 允许 None（R1 write-integrity 裁定③：记账失效批写
+        NULL——列本就允许 NULL，比假 0/假新增诚实；正常批语义不变）。"""
         import sqlite3
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
@@ -1171,12 +1173,21 @@ class ResidentCollector:
 
             # 5. 入库（幂等）
             write_new = write_updated = 0
+            _acct_degraded = 0          # R1 write-integrity：记账失效批计数（-1 哨兵）
             if rows_passed > 0:
                 wr = self._stamp_and_write(res, table, batch_id, source, task=task,
                                            adj_latest_map=_qfq_snap.get("adj_latest_map"))
                 rows_written = wr
-                write_new = getattr(wr, "new", 0)
-                write_updated = getattr(wr, "updated", 0)
+                _wr_new = getattr(wr, "new", 0)
+                _wr_updated = getattr(wr, "updated", 0)
+                if _wr_new < 0 or _wr_updated < 0:
+                    # R1 哨兵：pre-count 记账失效 → 不累计假数、审计账本写 NULL（裁定③）
+                    _acct_degraded += 1
+                    write_new = None
+                    write_updated = None
+                else:
+                    write_new = _wr_new
+                    write_updated = _wr_updated
                 # T1：写入成功后提交批级断点（fail-closed；gate 关闭 no-op）
                 self._bc_commit(name, table, freq, batch_id,
                                 self._max_date(res.passed_df, table), wr)
@@ -1190,10 +1201,15 @@ class ResidentCollector:
                 # 红线：水位推进唯一入口（qfq enabled 时四价格表延迟提交）
                 self._advance_or_defer_watermark(source, table, freq, new_watermark, batch_id)
 
+            # R1：degraded 批汇总行显示 ? 并行尾追加 accounting-degraded 计数（与
+            # writer 侧「新增 ? + 更新 ? 记账失效」同口径；正常批逐位不变）
+            _new_txt = write_new if write_new is not None else "?"
+            _upd_txt = write_updated if write_updated is not None else "?"
             logger.info(f"[{batch_id}] ✅ raw={rows_raw} aligned={rows_aligned} "
                         f"passed={rows_passed} rejected={rows_rejected} written={rows_written} "
-                        f"(new {write_new} + upd {write_updated}) "
-                        f"watermark→{new_watermark}")
+                        f"(new {_new_txt} + upd {_upd_txt}) "
+                        f"watermark→{new_watermark}"
+                        + (f" accounting-degraded={_acct_degraded}" if _acct_degraded else ""))
             # P1-⑥ 追溯：MCP qfq→raw 还原行数 metadata.restored_rows（由
             # mcp_adapter._restore_to_raw 产出）仅作 metadata 追溯，**不并入 rows_fixed**。
             # rows_fixed 的语义是 validator 的修正计数（res.fixed_count），
@@ -1285,6 +1301,7 @@ class ResidentCollector:
         start = self._open_day_resume(task, source, table, freq, start, end)
         rows_raw = rows_aligned = rows_passed = rows_rejected = rows_written = 0
         write_new = write_updated = 0
+        _acct_degraded = 0          # R1 write-integrity：记账失效分片计数（-1 哨兵）
         last_passed_df = None
         fixed_count = 0
         # A1a 阶段打点（2026-09-14）：**按批累计、末尾一行汇总**（非按分片逐行，避开热路径）。
@@ -1358,8 +1375,14 @@ class ResidentCollector:
                                                adj_latest_map=_qfq_snap.get("adj_latest_map"))
                     _sp["write"] += _tprobe.perf_counter() - _tw
                     rows_written += wr
-                    write_new += getattr(wr, "new", 0)
-                    write_updated += getattr(wr, "updated", 0)
+                    _wr_new = getattr(wr, "new", 0)
+                    _wr_updated = getattr(wr, "updated", 0)
+                    if _wr_new < 0 or _wr_updated < 0:
+                        # R1 哨兵：记账失效分片跳过累计（防 -1 污染合计），计数 degraded
+                        _acct_degraded += 1
+                    else:
+                        write_new += _wr_new
+                        write_updated += _wr_updated
                     last_passed_df = res.passed_df
                     # 停止语义 v3.1：日批边界（validator PASS + 写入提交之后）
                     # → 同一钩子先推进续传游标，再查取消谓词（命中抛 TaskCancelled）
@@ -1393,9 +1416,13 @@ class ResidentCollector:
             if new_watermark:
                 self._advance_or_defer_watermark(source, table, freq, new_watermark, batch_id)
 
+            # R1：degraded 分片存在时合计不可知 → 显示 ? 并行尾追加 degraded 分片数
+            _new_txt = "?" if _acct_degraded else write_new
+            _upd_txt = "?" if _acct_degraded else write_updated
             logger.info(f"[{batch_id}] ✅[streaming] raw={rows_raw} aligned={rows_aligned} "
                         f"passed={rows_passed} rejected={rows_rejected} written={rows_written} "
-                        f"(new {write_new} + upd {write_updated}) watermark→{new_watermark}")
+                        f"(new {_new_txt} + upd {_upd_txt}) watermark→{new_watermark}"
+                        + (f" accounting-degraded={_acct_degraded}" if _acct_degraded else ""))
             # A1a 阶段时延汇总（每批一行；other = 取数/迭代/校验门禁等未细分部分）
             _sp_total = _tprobe.perf_counter() - _sp_t0
             _sp_other = max(0.0, _sp_total - _sp["align"] - _sp["validate"] - _sp["write"])
@@ -1408,10 +1435,12 @@ class ResidentCollector:
                 f"invariant={_sp.get('invariant', 0.0):.1f}s "
                 f"sqlwrite={_sp.get('sqlwrite', 0.0):.1f}s")
             self._sp_probe = None
+            # R1：degraded 分片 → rows_new/rows_updated 写 NULL（合计不可知，裁定③）
             self.batch_audit.record(batch_id, name, source, table, freq,
                                     rows_raw, rows_aligned, rows_passed, rows_rejected,
                                     rows_written, "success", None, started_at,
-                                    rows_new=write_new, rows_updated=write_updated,
+                                    rows_new=(None if _acct_degraded else write_new),
+                                    rows_updated=(None if _acct_degraded else write_updated),
                                     rows_fixed=fixed_count)
             # A4：增量拉取成功后持久化 last_sync 基准（按 table 粒度）
             if task.get("mode", "incremental") != "full_range":
@@ -1714,8 +1743,13 @@ class ResidentCollector:
                     if len(res.passed_df) > 0:
                         with write_lock:
                             wr = self._stamp_and_write(res, table, batch_id, source)
-                            total_new[0] += getattr(wr, "new", 0)
-                            total_updated[0] += getattr(wr, "updated", 0)
+                            _wr_new = getattr(wr, "new", 0)
+                            _wr_updated = getattr(wr, "updated", 0)
+                            # R1 write-integrity：记账失效批（-1 哨兵）跳过累计，防合计被污染
+                            if _wr_new >= 0:
+                                total_new[0] += _wr_new
+                            if _wr_updated >= 0:
+                                total_updated[0] += _wr_updated
                             return wr
                     return 0
 
@@ -1736,8 +1770,13 @@ class ResidentCollector:
                     if len(res.passed_df) > 0:
                         with write_lock:
                             wr = self._stamp_and_write(res, table, batch_id, source)
-                            total_new[0] += getattr(wr, "new", 0)
-                            total_updated[0] += getattr(wr, "updated", 0)
+                            _wr_new = getattr(wr, "new", 0)
+                            _wr_updated = getattr(wr, "updated", 0)
+                            # R1 write-integrity：记账失效批（-1 哨兵）跳过累计，防合计被污染
+                            if _wr_new >= 0:
+                                total_new[0] += _wr_new
+                            if _wr_updated >= 0:
+                                total_updated[0] += _wr_updated
                             return wr
                     return 0
 
@@ -1795,8 +1834,13 @@ class ResidentCollector:
                     with write_lock:
                         wr = self._stamp_and_write(res, table, batch_id, source,
                                                    adj_latest_map=_qfq_snap.get("adj_latest_map"))
-                        total_new[0] += getattr(wr, "new", 0)
-                        total_updated[0] += getattr(wr, "updated", 0)
+                        _wr_new = getattr(wr, "new", 0)
+                        _wr_updated = getattr(wr, "updated", 0)
+                        # R1 write-integrity：记账失效批（-1 哨兵）跳过累计，防合计被污染
+                        if _wr_new >= 0:
+                            total_new[0] += _wr_new
+                        if _wr_updated >= 0:
+                            total_updated[0] += _wr_updated
                         # T1：写入成功后提交批级断点（fail-closed；gate 关闭 no-op）
                         self._bc_commit(name, table, freq, batch_id, trade_day, wr)
                         return wr
@@ -2041,8 +2085,13 @@ class ResidentCollector:
                     with write_lock:  # 线程安全写库
                         n = self._stamp_and_write(res, table, batch_id, source,
                                                   adj_latest_map=_qfq_snap.get("adj_latest_map"))
-                        total_new[0] += getattr(n, "new", 0)
-                        total_updated[0] += getattr(n, "updated", 0)
+                        _wr_new = getattr(n, "new", 0)
+                        _wr_updated = getattr(n, "updated", 0)
+                        # R1 write-integrity：记账失效批（-1 哨兵）跳过累计，防合计被污染
+                        if _wr_new >= 0:
+                            total_new[0] += _wr_new
+                        if _wr_updated >= 0:
+                            total_updated[0] += _wr_updated
                         # T1：写入成功后提交批级断点（fail-closed；gate 关闭 no-op）
                         self._bc_commit(name, table, freq, batch_id, code, n)
                         return n

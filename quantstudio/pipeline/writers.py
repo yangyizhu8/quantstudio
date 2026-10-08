@@ -833,6 +833,9 @@ class DuckDBWriter(BaseWriter):
             if df[c].dtype == object:
                 df[c] = pd.to_numeric(df[c], errors="coerce")
 
+        # R2（write-integrity）：写事务临界区整段进按表锁——pre-count 探测与 upsert
+        # 写入必须同临界区（防探测/写入间窗口错配）；锁范围仅写事务段，不含上游
+        # 对齐/校验与普通读路径；汇总日志行留锁外无碍。
         with self._conn_lock:
             conn = self._conn()
             try:
@@ -844,37 +847,65 @@ class DuckDBWriter(BaseWriter):
                     "stock_daily": "(code, time)",
                     "stock_minutes": "(code, time, freq)",
                 "etf_minutes": "(code, time, freq)",
-                    "tick": "(code, time)",
-                    "fin_indicator": "(code, end_date, ann_date)",
-                    "index_daily": "(code, time)",
-                    "stock_daily_valuation": "(code, time)",
-                    "etf_daily": "(code, time)",
-                    "etf_basic": "(code)",
-                    "stock_basic": "(code)",
-                    "trade_calendar": "(cal_date)",
-                    "stock_float_share": "(code, end_date, ann_date)",
-                    "index_constituents": "(index_code, code, time)",
-                    "index_constituents_snapshot_meta": "(index_code, time)",
-                    "balance_statement": "(code, end_date, ann_date)",
-                    "income_statement": "(code, end_date, ann_date)",
-                    "cashflow_statement": "(code, end_date, ann_date)",
-                    "stock_dividend": "(code, ex_date)",
-                    "etf_dividend": "(code, ex_date)",
-                    "sw_industry": "(code, industry_code)",
-                    "industry_classification": "(classification_system, classification_version, industry_level, industry_code, effective_from)",
-                    "industry_membership": "(classification_system, classification_version, industry_level, industry_code, code, effective_from)",
-                    "stock_namechange": "(code, change_date)",
-                    "stock_delist": "(code, market)",
-                }.get(table)
+                "tick": "(code, time)",
+                "fin_indicator": "(code, end_date, ann_date)",
+                "index_daily": "(code, time)",
+                "stock_daily_valuation": "(code, time)",
+                "etf_daily": "(code, time)",
+                "etf_basic": "(code)",
+                "stock_basic": "(code)",
+                "trade_calendar": "(cal_date)",
+                "stock_float_share": "(code, end_date, ann_date)",
+                "index_constituents": "(index_code, code, time)",
+                "index_constituents_snapshot_meta": "(index_code, time)",
+                "balance_statement": "(code, end_date, ann_date)",
+                "income_statement": "(code, end_date, ann_date)",
+                "cashflow_statement": "(code, end_date, ann_date)",
+                "stock_dividend": "(code, ex_date)",
+                "etf_dividend": "(code, ex_date)",
+                "sw_industry": "(code, industry_code)",
+                "industry_classification": "(classification_system, classification_version, industry_level, industry_code, effective_from)",
+                "industry_membership": "(classification_system, classification_version, industry_level, industry_code, code, effective_from)",
+                "stock_namechange": "(code, change_date)",
+                "stock_delist": "(code, market)",
+            }.get(table)
                 # 写前：数本批主键在目标表已存在的行数（=将被 UPDATE 的，走索引快）
+                # R1（write-integrity，2026-10-08）：pre-count 探测失效不再静默置 0——
+                # 旧形态曾致整批全量误标「新增」（生产实证 65,962,748 行全假新增）。
+                # 新语义：捕获 → logger.warning（table/batch_id/异常类型与文本，唯一失效
+                # 可观测点）→ 新连接单次重试 → 仍失败 accounting_unknown=True
+                # （new/updated 置 -1 哨兵，消费端跳过累计、审计账本写 NULL，裁定③）。
                 updated_rows = 0
+                accounting_unknown = False
+                _acct_err = None
                 if pk_cols:
+                    _pre_count_sql = (
+                        f"SELECT COUNT(*) FROM {table} WHERE {pk_cols} IN "
+                        f"(SELECT {pk_cols} FROM _tmp_write)")
                     try:
-                        updated_rows = conn.execute(
-                            f"SELECT COUNT(*) FROM {table} WHERE {pk_cols} IN "
-                            f"(SELECT {pk_cols} FROM _tmp_write)").fetchone()[0]
-                    except Exception:
+                        updated_rows = conn.execute(_pre_count_sql).fetchone()[0]
+                    except Exception as e:
+                        _acct_err = e
+                        logger.warning(
+                            f"[DuckDBWriter] {table} batch={batch_id}: pre-count 记账探测失败"
+                            f"（{type(e).__name__}: {e}），换新连接重试一次")
                         updated_rows = 0
+                        try:
+                            _retry_conn = self._conn()
+                            try:
+                                # 注册视图是连接级隔离的：重试连接须重新 register 同一份 df
+                                _retry_conn.register("_tmp_write", df)
+                                updated_rows = _retry_conn.execute(
+                                    _pre_count_sql).fetchone()[0]
+                            finally:
+                                _retry_conn.close()
+                        except Exception as e2:
+                            _acct_err = e2
+                            accounting_unknown = True
+                            logger.warning(
+                                f"[DuckDBWriter] {table} batch={batch_id}: pre-count 重试仍失败"
+                                f"（{type(e2).__name__}: {e2}），本批记账失效"
+                                f"（new/updated 置 -1 哨兵，审计账本写 NULL）")
                 if pk_cols:
                     col_list = ", ".join(df.columns)
                     update_set = ", ".join(f"{c}=EXCLUDED.{c}" for c in df.columns)
@@ -907,7 +938,13 @@ class DuckDBWriter(BaseWriter):
                 conn.unregister("_tmp_write")
                 # new/updated 审计：updated = 写前已存在的行数；new = 本批其余
                 # （精度：本批内主键重复已由 validator 去重，故 new + updated = len(df)）
-                new_rows = max(0, len(df) - updated_rows)
+                # R1：探测失效批记账不可知 → -1 哨兵（WriteResult int 语义仍 len(df)；
+                # T2 开启时 changed 依 updated_rows=0 退化计算为 0，同为不可知口径）
+                if accounting_unknown:
+                    new_rows = -1
+                    updated_rows = -1
+                else:
+                    new_rows = max(0, len(df) - updated_rows)
                 # P-A3：fin_indicator 写后跨表回补（eps ← income_statement.basic_eps）。
                 # 默认关闭，需显式设置 QS_AUTO_BACKFILL_EPS=1/true/on 才触发；
                 # CLI --apply 保持人工独立执行，不受此 gate 影响；
@@ -926,8 +963,13 @@ class DuckDBWriter(BaseWriter):
                     )
             finally:
                 conn.close()
-        logger.info(f"[DuckDBWriter] {table} batch={batch_id}: wrote {len(df)} rows "
-                    f"(新增 {new_rows} + 更新 {updated_rows}) 防重复 upsert")
+        if accounting_unknown:
+            # R1 汇总行（方案裁定口径）：记账失效批显示 unknown，不再虚报「新增」
+            logger.info(f"[DuckDBWriter] {table} batch={batch_id}: wrote {len(df)} rows "
+                        f"(新增 ? + 更新 ? 记账失效: {type(_acct_err).__name__}) 防重复 upsert")
+        else:
+            logger.info(f"[DuckDBWriter] {table} batch={batch_id}: wrote {len(df)} rows "
+                        f"(新增 {new_rows} + 更新 {updated_rows}) 防重复 upsert")
         # 返回 WriteResult：作为 int = 提交行数（向后兼容），.new/.updated 供审计使用
         return WriteResult(len(df), new_rows, updated_rows, changed_rows)
 
@@ -958,6 +1000,8 @@ class DuckDBWriter(BaseWriter):
 
         col_defs = ", ".join(_col_sql(c, df[c].dtype) for c in df.columns)
         create_sql = f'CREATE TABLE IF NOT EXISTS "{table}" ({col_defs})'
+        # R2（write-integrity）：全表覆盖段（建临时→灌数→原子换名）整段进按表锁，
+        # 防同进程并发覆盖互相踩踏；汇总日志行留锁外无碍。
         with self._conn_lock:
             conn = self._conn()
             try:
