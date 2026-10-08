@@ -1,6 +1,8 @@
-# QMT 管线 M2a · Plan-Mode 八项计划（2026-10-08 呈批）
+# QMT 管线 M2a · Plan-Mode 八项计划（rev1 换策略令版，2026-10-08 呈批）
 
-> M1 四版三轮终判通过（`aadf4f7`）；总调度 M2a 开工批照准（首策略四象限 spec 路径打通）。
+> **rev1 说明**：总调度裁定 A（换有现成 design 的同构 ETF 轮动）后勘察发现 etf_double_pool_momentum_rotation 为 **minute-bar-v1**——撞 M1 终判 deny 门（分钟域 M2 不支持）；同一裁定意图（同构+现成 design+零构造）下落位 **etf_hot_theme_rotation**（daily-bar-v1 ✓；universe=dynamic_local+get_etf_list_local 与四象限完全同款——动态池→转换期固化链全验证，即 M1 选四象限的初衷）。四象限保留 M3 source 路径旁路（总调度照准）。
+
+> M1 四版三轮终判通过（`aadf4f7`）；总调度 M2a 开工批照准+换策略令裁定 A（首策略由四象限换为有现成 design 的同构 ETF 轮动，rev1 落位 etf_hot_theme_rotation）。
 > 本件=六步①方案轮产出，②审过后进③实施。依据：M1-rev2 定稿（§2.1/§2.2/§3/§7）。
 
 ## 🔹 M2a Plan-Mode 八项计划
@@ -10,7 +12,7 @@ M1 架构定稿终判通过（P1 PIT 勘误 announce_time+全部笔误清零）�
 （六步流水线：本计划①→②审→③实施→④验收→⑤确认→随批⑥）。
 
 **② 本轮唯一核心工作目标**：
-spec 路径端到端打通：四象限 design→orchestrate→render_qmt→`qmt/四象限ETF轮动_qmt.py`
+spec 路径端到端打通：etf_hot_theme_rotation design→orchestrate→render_qmt→`qmt/etf_hot_theme_rotation_qmt.py`
 （gbk 编码）——验证 IR→QMT 渲染面+gbk 写盘链+publish 新分支。
 
 **③ 本轮严格角色分工**：
@@ -26,11 +28,12 @@ spec 路径端到端打通：四象限 design→orchestrate→render_qmt→`qmt/
 | 3 | `render.py` | `_PROFILE_TEMPLATE_MAP` 加 qmt 条目+`render_strategy` 分发（加法式，字典驱动本就预留 normalize_to_qmt） | render.py:105-113/138 |
 | 4 | `orchestrator.py` | ①gbk 写盘（186-187/387 硬编码 utf-8→按 profile 选编码，qmt→gbk）②`--target qmt` 参数链 ③api_portability 汇总面（209-215/407-414）qmt 分支 | M1 §2.1 |
 | 5 | `publish.py` | QMT 发布新分支（单目标读单文件——不触碰既有双平台双文件逻辑 59-71） | M1 §2.1 |
-| 6 | `portability_rules.py` | **最小 QMT 白名单**（四象限消费面：order_target_value/get_history/get_positions/静态池/print 日志+基础 Python）+禁用集（get_history_data/get_market_data 非 ex 版） | M1 §2.1（SHIM 登记门禁模式） |
+| 6 | `portability_rules.py` | **最小 QMT 白名单**（etf_hot_theme_rotation 消费面：order_target_value/get_history/get_positions/静态池固化段/print 日志+基础 Python）+禁用集（get_history_data/get_market_data 非 ex 版） | M1 §2.1（SHIM 登记门禁模式） |
 | 7 | `cli.py` | `--target qmt` 透传 | 微扩 |
 
-**实施首步勘察**（③轮第一步）：确认四象限 design 存在性（`output/generated_strategies/` 下
-对应目录+`agent_strategy_design.json`；若缺→改用 IR 直构路径，计划不变仅入口适配，如实登记）。
+**首策略勘察（已完成，rev1）**：`output/generated_strategies/etf_hot_theme_rotation/agent_strategy_design.json`
+已核实（design_version/engine_profile=**daily-bar-v1**/universe_contract.mode=dynamic_local+
+get_etf_list_local/12 键齐）。
 
 **Out of scope（M2b）**：source 路径（convert_source target 维度+AST 改写规则面）、全量 wrapper
 （FR-QMT-01 fundamentals/run_daily 门控/filter_status/Ashares/trade_days/stock_info/order 简单版）、
@@ -42,7 +45,8 @@ spec 路径端到端打通：四象限 design→orchestrate→render_qmt→`qmt/
 **⑥ 本轮潜在风险与技术卡点**：
 - render.py 分发表扩展的回归面（既有 quantstudio/ptrade 两分支零改变——byte-diff 验证）；
 - 模板 Jinja2 语法面与 gbk 字符冲突（模板源 UTF-8，产物转码点单点，转码失败 fail-closed BLOCK）；
-- 四象限 design 可能不含 QMT 所需语义节点（IR 节点覆盖面）——实施首步勘察+如实登记。
+- etf_hot_theme_rotation 的 IR 节点覆盖面已勘察（design 12 键齐+daily-bar-v1）；渲染期若遇
+  IR→QMT 语义缺口，如实登记并最小适配（模板层吸收，不扩 scope）。
 
 **⑦ 本轮合规约束**：
 六步流水线全走（本计划①；②审后③）；多会话共享工作区纪律（写前快照+精确 add+edit 后 diff
@@ -50,9 +54,9 @@ spec 路径端到端打通：四象限 design→orchestrate→render_qmt→`qmt/
 publish/portability 涉及时遵守共享文件提交纪律）。
 
 **⑧ 本轮验收判据+回退条件**：
-- **判据**：①`qmt/四象限ETF轮动_qmt.py` 产出：gbk 解码 ✓+AST 编译过 ✓+生命周期完备（init/
+- **判据**：①`qmt/etf_hot_theme_rotation_qmt.py` 产出：gbk 解码 ✓+AST 编译过 ✓+生命周期完备（init/
   handlebar 在+`#coding:gbk` 头）✓+静态池直灌段在 ✓；②portability QMT 白名单对产物 PASS；
-  ③**PTrade 既有行为零改变**：四象限+六策略 PTrade 产物重转 byte-diff 逐字节不变（M1 §7 硬门
+  ③**PTrade 既有行为零改变**：etf_hot_theme_rotation+六策略 PTrade 产物重转 byte-diff 逐字节不变（M1 §7 硬门
   前移验证）+既有测试套件全绿；④api_portability 六策略回归全 PASS。
 - **回退**：git 还原至写前快照（③轮实施前建）；模块级单点回退（新文件整删/render.py 分发
   条目单点摘除）。
