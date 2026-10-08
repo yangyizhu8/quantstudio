@@ -128,7 +128,7 @@ def cmd_package(args: argparse.Namespace) -> int:
 
 
 def cmd_import(args: argparse.Namespace) -> int:
-    """`import <strategy.py> [--out <dir>] [--start <date>] [--end <date>] [--no-smoke]`."""
+    """`import <strategy.py> [--out <dir>] [--start <date>] [--end <date>] [--no-smoke] [--target dual|qmt]`."""
     source_path = Path(args.strategy)
     if not source_path.exists():
         print(f"ERROR: strategy file not found: {source_path}", file=sys.stderr)
@@ -148,6 +148,7 @@ def cmd_import(args: argparse.Namespace) -> int:
             db_path=Path(args.db_path) if args.db_path else None,
             exclude_bse=getattr(args, 'exclude_bse', False),  # P-D13 C1b
             engine_profile=getattr(args, 'engine_profile', None),
+            target=getattr(args, 'target', 'dual'),  # M2b 块3：--target dual|qmt 透传
         )
     except GoldenProtectionError as e:
         print(f"ERROR: golden protection — {e}", file=sys.stderr)
@@ -183,7 +184,9 @@ def build_parser() -> argparse.ArgumentParser:
                             "（qmt/<id>_qmt.py，gbk；经 orchestrator，不跑本地 smoke）")  # M2a
     p_pkg.set_defaults(func=cmd_package)
 
-    p_imp = sub.add_parser("import", help="Convert a local strategy .py to PTrade (source entry)")
+    p_imp = sub.add_parser(
+        "import",
+        help="Convert a local strategy .py to PTrade or QMT (source entry; --target dual|qmt)")
     p_imp.add_argument("strategy", help="Path to local strategy .py (quantstudio/backtest/strategies/*.py)")
     p_imp.add_argument("--out", default=None, help="Output directory (default: output/ptrade_export/<strategy_id>)")
     p_imp.add_argument("--start", default=None, help="Round-trip smoke backtest start (YYYY-MM-DD)")
@@ -198,6 +201,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_imp.add_argument("--engine-profile", default=None,
                        help="回测引擎周期（daily-bar-v1/minute-bar-v1/daily-open-close-proxy-v1；"
                             "get_index_day_bar 重写门禁判定输入，缺失→BLOCK 禁默认）")  # 2026-09-09
+    p_imp.add_argument("--target", choices=("dual", "qmt"), default="dual",
+                       help="dual (default): PTrade 转换面（既有行为）；qmt: M2b 块3 QMT 产物"
+                            "（qmt/<id>_qmt.py，gbk fail-closed 写盘；QMT 白名单面校验；"
+                            "不跑本地冒烟）")  # M2b 块3
     p_imp.set_defaults(func=cmd_import)
     return parser
 

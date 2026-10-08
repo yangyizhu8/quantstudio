@@ -132,3 +132,44 @@ M0 基线（本件）→M1 架构方案定稿+②审→M2 render_qmt+契约（�
 - [x] 纯文档轮零改动（判型兑现）
 
 **暂停语义**：基线呈批（确认节点 1）——批复后进入 M1（架构方案定稿，另出 Plan-Mode 计划）。
+
+---
+
+## 🔹 M 系列进展台账（截至 2026-10-08，M2b ④验收轮刷新）
+
+| 里程碑 | 状态 | 载体 / 证据 |
+|---|---|---|
+| M0 立项基线 | ✓ 完成 | 本文件 |
+| M1 架构定稿（四版三轮②审终判） | ✓ 完成 | `docs/qmt-pipeline-architecture-m1.md` |
+| M2a spec 路径打通（首策略 etf_hot_theme_rotation，四判据全 PASS） | ✓ 完成 | `docs/qmt-pipeline-m2a-plan.md` + `docs/evidence/qmt-m2a-acceptance-20261008.md` |
+| **M2b source 路径（六策略全通）** | **✓ 六步 ①②③④⑤ 全部闭合 → ⑥推送批候批** | `docs/qmt-pipeline-m2b-plan.md`（rev2）+ `docs/evidence/qmt-m2b-acceptance-20261008.md` |
+| M3 六策略横验证 + 回测数值对照 | 待启动（**前置项：minute deny 负例补实现**；附加项：archify HTML 影响面图，不强制） | — |
+| M4 文档同步（README / strategy_toolbox / prompt_engineering） | 待启动（M2b 未触发同步义务：新模块 + 三处加法式分支，既有行为零改变） | — |
+| M5 用户域实测 | 待启动 | — |
+| M6 推送批 | 待用户批准（**本会话不推送**） | — |
+
+**M2b 新增/改动件**：`source_import_qmt.py`（新建，1937 行）、`orchestrator.py`（+target 维度与 qmt 分支）、
+`portability_rules.py`（QMT 白名单 3→44 条、`_QMT_CONTEXT_METHODS` 1→5）、`cli.py`（import 加 `--target`）、
+`tests/test_source_import_qmt.py`（新建，6 测试）。`source_import.py` 零改动（架构 D）。
+
+### M2b 未闭合项（2026-10-08）
+
+1. **minute deny 负例未实现**（M2b 判据①所列负例之一）——source 路径尚无分钟域 deny 面；六策略均日线，
+   实际影响 0，防护缺失 → 建议 M3 前补（**待用户裁定**）。
+2. **M5 实测项**（详见 M2b 证据文档 §9）：`get_market_data_ex` 末根 bar 语义 / ACCOUNT 资金字段 /
+   单股 orderType 取值 / `get_financial_data` 返回形态与 PERSHAREINDEX 是否含 `m_anntime`·`m_timetag` /
+   `get_trading_dates` 元素形态与 init 内不可用 / `get_stock_status` 枚举对齐 / 板块名「沪深A股」 / bar 节拍。
+3. **ETF 动态池固化 QMT 化**——六策略消费 0，按 M2b 计划缓提。
+4. **影响面图 archify 独立产物未产出**——以 mermaid 结构图随 M2b ④ 呈报，**降级登记**
+   （原因：会话执行预算已耗尽于缺陷修复与五判据验证；见 M2b 证据文档 §9）。
+
+### 方法论沉淀（M2b 固化，跨轮复用）
+
+- **同源同名终证法**（承 M2a）：判「框架改动是否影响既有产物」时，把**同一份源**同步至双侧框架重跑，
+  隔离源码变量——本轮回溯至「他线在途 M + HEAD 推进」场景。
+- **禁门不放宽（二次实证）**：白名单 / 编码门拦截均以**改设计或限定范围**解决，不为通过而放宽
+  （承 M2a BOM 案；本轮两次触发：产物内循环变量调用、非 gbk 字符写盘）。
+- **委派方无自测能力时的收尾纪律**：ZCode 侧 Python 执行权限缺失 → 全部机器验证由 DSH 侧承担（合 C4 审计禁区）；
+  产物缺陷定位精确后按「局部阻断豁免」代修，**超出笔误范围者逐项登记**（M2b 证据文档 §7.2 共 7 项）。
+- **共享工作区隔离**：实施期间他线推进 HEAD（c27d21f→68743cb，4 提交）——本会话改动全程未提交、零卷入，
+  以 git status 集合差机械核对（不以委派方自述为准）。

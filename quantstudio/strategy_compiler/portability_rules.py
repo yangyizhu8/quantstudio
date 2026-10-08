@@ -298,24 +298,77 @@ from typing import Any
 
 from .validators.scan_lookahead import Violation
 
-# 产物内可裸调用的平台函数/模板 wrapper（QMT innerApi 转写册登记面）
+# 产物内可裸调用的平台函数/模板 wrapper（QMT innerApi 转写册登记面）。
+# 准入红线（M2b 块3）：每条登记必须真实对应实际注入的平台 API / 模板 wrapper，
+# 逐一附行级依据（转写册行号或 source_import_qmt.py 定义行号）；严禁为让校验
+# 通过而放宽、严禁新增 fail-open 分支。source 注入面的 wrapper 同时被
+# validate_qmt_portability 的 local_calls_ok（文件内定义即可调）覆盖——此处
+# 显式登记为注入面单一来源登记册（产物恒全量注入，见 QmtSourceConverter._assemble）。
 _QMT_API_WHITELIST: frozenset[str] = frozenset({
-    # 平台行情/交易函数（07-行情函数.md / 08-交易函数.md）
-    "get_market_data_ex",
-    "passorder",
-    "get_trade_detail_data",
-    # 模板注入 wrapper（qmt_daily.py.j2 注入区，行级注释标注转写册依据）
-    "_qs_get_history",
-    "_qs_order_target_value",
-    "_qs_get_positions",
-    "_qs_should_run_daily",
+    # ---- 平台行情/交易函数（QMT innerApi 全局，产物内裸调用；转写册行级依据）----
+    "get_market_data_ex",       # 07-行情函数.md:81/:96（source 路径经 C. 属性形态消费）
+    "passorder",                # 08-交易函数.md:8/:27/:84/:85（_qs_passorder 下单底座）
+    "get_trade_detail_data",    # 08-交易函数.md:583（持仓/账户明细；_qs_get_trade_detail 底座）
+    # ---- M2a spec 模板 wrapper（render_qmt/qmt_daily.py.j2 注入区，不在 source 注入面）----
     "_qs_account_total_value",
     "_qs_get_ma",
+    # ---- M2a+M2b 双面 wrapper（spec 模板与 source 模板均有定义）----
+    "_qs_get_history",          # M2b source_import_qmt.py:538（E1：count+1 剔当日 bar）
+    "_qs_order_target_value",   # M2b source_import_qmt.py:679（passorder 底座）
+    "_qs_get_positions",        # M2b source_import_qmt.py:605（08:583/:648/:649）
+    "_qs_should_run_daily",     # M2b source_import_qmt.py:1212（handlebar 前段门控）
+    # ---- M2b source 注入面：机制②同名遮蔽（14 件，_WIRED_WRAPPER_NAMES :1263-1268）----
+    "get_history",              # source_import_qmt.py:1079（双签名识别 ptrade_api.py:1407-1423 同款）
+    "get_history_batch",        # :1119（B1 契约 {code: DataFrame}）
+    "order",                    # :1126（本地签名 ptrade_api.py:1258）
+    "order_target_value",       # :1131（本地签名 ptrade_api.py:1240）
+    "get_positions",            # :1141（本地签名 ptrade_api.py:1211）
+    "get_position",             # :625（定义于 _QS_QMT_POSITION_EXT；空仓返回零持仓视图）
+    "get_fundamentals",         # :1149（本地签名 ptrade_api.py:938-940）
+    "get_fundamentals_batch",   # :1166（本地签名 ptrade_api.py:1734-1735）
+    "filter_stock_by_status",   # :1177（本地签名 ptrade_api.py:1078）
+    "get_stock_status",         # :848（定义于 _QS_QMT_STOCK_INFO_EXT；ptrade_api.py:2552-2566）
+    "get_Ashares",              # :1184（本地签名 ptrade_api.py:1859；07:3288/:3297）
+    "get_trade_days",           # :1190（本地签名 ptrade_api.py:1801；07:3341/:3350）
+    "get_stock_info",           # :1200（本地签名 ptrade_api.py:2472；07:2446/:2459）
+    "current_price",            # :874（定义于 _QS_QMT_STOCK_INFO_EXT；07:81/:96/:122）
+    # ---- M2b source 注入面：机制①视图/内部 helper（EXT/ZONE 实际定义，逐条登记）----
+    "_qs_log_view",             # :243（log 视图成品）
+    "_qs_pick_ctx",             # :257（机制② C 捕获源）
+    "_qs_context_view",         # :359（context 视图）
+    "_qs_data_view",            # :466（data 视图）
+    "_qs_norm_history_fields",  # :495（字段别名映射 ptrade_api.py:1441 同款）
+    "_qs_fetch_bars",           # :507（E1 取数底座）
+    "_qs_get_history_batch",    # :556
+    "_qs_get_trade_detail",     # :579（08:583）
+    "_qs_passorder",            # :654（08:8/:27/:84/:85；05:43-44/:132）
+    "_qs_order",                # :660
+    "_qs_get_ashares",          # :715（07:3288/:3297）
+    "_qs_get_trade_days",       # :743（07:3341/:3350；init 内不可用 06:12）
+    "_qs_get_stock_info",       # :784（07:2446/:2459；字段 :2479-2511）
+    "_qs_status_flags",         # :803（ST/HALT/DELISTING 三判）
+    "_qs_filter_stock_by_status",  # :888
+    "_qs_fin_ms_to_date",       # :949（07:1837 毫秒时间戳归一）
+    "_qs_last_close",           # :957
+    "_qs_get_fundamentals",     # :1010（07:1839/:1852/:1863/:1867）
+    "_qs_get_fundamentals_batch",  # :1052
+    "_qs_should_run_after",     # :1221（handlebar 尾段门控）
 })
 
-# ContextInfo（约定形参名 C）上允许调用的方法（06-系统函数.md）
+# ContextInfo（约定形参名 C）上允许调用的方法（06-系统函数.md / 07-行情函数.md）。
+# 准入红线同上：source_import_qmt.py 注入面实际消费的 C.<method>() 全集，
+# 逐一对应 + 行级依据（转写册行号 + source_import_qmt.py 消费点行号）。
 _QMT_CONTEXT_METHODS: frozenset[str] = frozenset({
+    # 07-行情函数.md:81/:96 —— 行情取数（消费点 :279/:388/:516/:878/:959）
     "get_market_data_ex",
+    # 07-行情函数.md:1839/:1852（签名 :1863/:1867）—— 财务取数（消费点 :1023）
+    "get_financial_data",
+    # 07-行情函数.md:3288/:3297 —— 板块成分（消费点 :729，'沪深A股' 动态池）
+    "get_stock_list_in_sector",
+    # 07-行情函数.md:2446/:2459（字段 :2479-2511）—— 证券详情快照（消费点 :399/:787/:815）
+    "get_instrument_detail",
+    # 07-行情函数.md:3341/:3350 —— 交易日历（消费点 :754；init 内不可用 06:12）
+    "get_trading_dates",
 })
 
 # 显式 DENY：QMT 已废弃/错误形态 API（命中即 BLOCK，rule_id 见 value）

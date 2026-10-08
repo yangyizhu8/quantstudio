@@ -393,6 +393,7 @@ def orchestrate_source(
     db_path: str | Path | None = None,        # 07 规格：查 etf_basic 的库路径（默认 data/quantstudio.db）
     exclude_bse: bool = False,                # P-D13 C1b：北交所过滤（对齐平台口径）
     engine_profile: str | None = None,        # 2026-09-09 转换门禁：get_index_day_bar 生命周期/profile 判定输入
+    target: str = "dual",                     # M2b 块3：'dual'（PTrade 面，缺省）或 'qmt'（QMT 转换面）
 ) -> dict[str, Any]:
     """Source entry 全流程：源码 → 转换 → 门禁 → round-trip 冒烟 → run_card（T4）。
 
@@ -406,16 +407,27 @@ def orchestrate_source(
         out_dir: 输出目录（默认 output/ptrade_export/<strategy_id>）。
         run_smoke: False 时跳过冒烟（stage 停在 STATIC_VALIDATED）。
         strict: True 时 BLOCK 动作即失败（一期固定 True）。
+        target: 'dual'（缺省；PTrade 转换面——既有行为与产物零改变）或 'qmt'
+            （M2b 块3：convert_source_qmt 转换面；产物 qmt/<id>_qmt.py 经
+            _write_qmt_product 以 gbk fail-closed 写盘；api_portability 走
+            validate_qmt_portability QMT 白名单面，不调 PTrade 双校验器；
+            smoke 不适用——stage 停在 STATIC_VALIDATED、smoke_result=None，
+            照 M2a orchestrate(target='qmt') 口径）。
 
     Returns:
         run_card dict（已写盘）。
 
     Raises:
+        ValueError: target 非 'dual'/'qmt'。
         GoldenProtectionError: strategy_id 命中 golden-protected 清单。
         FileNotFoundError: source_path 不存在或不是 .py。
         ContractValidationError: source_import_report 校验失败（BLOCK actions）。
+        StrategyPipelineError: target='qmt' 且产物含 gbk 不可编码字符（fail-closed）。
     """
-    from .source_import import convert_source
+    if target not in ("dual", "qmt"):
+        raise ValueError(
+            f"unsupported target {target!r}; expected 'dual' or 'qmt' (M2b 块3 source 路径)"
+        )
 
     path = Path(source_path)
     if not path.is_file() or path.suffix != ".py":
@@ -424,10 +436,18 @@ def orchestrate_source(
     created_at = datetime.datetime.now().astimezone().isoformat()
     run_id = f"{path.stem}-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
 
-    # 1) 转换（07 规格：ETF FREEZE 参数透传；P-D13 C1b exclude_bse 透传）
-    result = convert_source(path, etf_pool_start_date=etf_pool_start_date,
-                            db_path=db_path, exclude_bse=exclude_bse,
-                            engine_profile=engine_profile)
+    # 1) 转换（07 规格：ETF FREEZE 参数透传；P-D13 C1b exclude_bse 透传）——
+    #    target='qmt'（M2b 块3）：QMT 转换面 convert_source_qmt（独立模块，不触
+    #    PTrade 侧 convert_source；不写盘——写盘在步骤 3 gbk fail-closed 落盘）
+    if target == "qmt":
+        from .source_import_qmt import convert_source_qmt
+        result = convert_source_qmt(
+            path, strategy_id=path.stem.replace("_quantstudio", ""), verbose=True)
+    else:
+        from .source_import import convert_source
+        result = convert_source(path, etf_pool_start_date=etf_pool_start_date,
+                                db_path=db_path, exclude_bse=exclude_bse,
+                                engine_profile=engine_profile)
     strategy_id = path.stem.replace("_quantstudio", "")
     build_id = hashlib.sha256(result.converted_code.encode("utf-8")).hexdigest()[:12]
 
@@ -454,7 +474,11 @@ def orchestrate_source(
     if result.errors:
         validation["source_import"] = _CHECK_BLOCKED
         known_limitations.extend(result.errors)
-        report = _assemble_source_report(path, strategy_id, created_at, result, "BLOCKED")
+        # （与 dual 同构：早退路径组装 report 但不落盘——不产半成品）
+        if target == "qmt":
+            report = _assemble_source_report_qmt(path, strategy_id, created_at, result, "BLOCKED")
+        else:
+            report = _assemble_source_report(path, strategy_id, created_at, result, "BLOCKED")
         run_card = _build_run_card(
             run_id=run_id, strategy_id=strategy_id, build_id=build_id,
             created_at=created_at, stage=stage, status="BLOCKED",
@@ -467,13 +491,21 @@ def orchestrate_source(
         _write_run_card(run_card, out_dir)
         return run_card
 
-    # 3) 落盘转换产物 + 报告
-    pt_path = out_dir / f"{strategy_id}_ptrade.py"
-    pt_path.write_text(result.converted_code, encoding="utf-8")
-    artifacts.append({"name": pt_path.name, "path": str(pt_path),
-                      "sha256": _sha256_file(pt_path)})
-
-    report = _assemble_source_report(path, strategy_id, created_at, result, "PASS")
+    # 3) 落盘转换产物 + 报告（dual：PTrade 产物 utf-8；qmt：QMT 产物 gbk fail-closed）
+    if target == "qmt":
+        qmt_dir = out_dir / "qmt"  # out_dir 仍为 base_out/<strategy_id>（与 dual 同构）
+        qmt_dir.mkdir(parents=True, exist_ok=True)
+        qmt_path = qmt_dir / f"{strategy_id}_qmt.py"
+        _write_qmt_product(result.converted_code, qmt_path)  # :102-116 gbk fail-closed 复用
+        artifacts.append({"name": qmt_path.name, "path": str(qmt_path),
+                          "sha256": _sha256_file(qmt_path)})
+        report = _assemble_source_report_qmt(path, strategy_id, created_at, result, "PASS")
+    else:
+        pt_path = out_dir / f"{strategy_id}_ptrade.py"
+        pt_path.write_text(result.converted_code, encoding="utf-8")
+        artifacts.append({"name": pt_path.name, "path": str(pt_path),
+                          "sha256": _sha256_file(pt_path)})
+        report = _assemble_source_report(path, strategy_id, created_at, result, "PASS")
     from .contracts import ContractValidationError, validate_source_import_report
     try:
         validate_source_import_report(report)
@@ -486,23 +518,39 @@ def orchestrate_source(
     artifacts.append({"name": "source_import_report.json", "path": str(report_path),
                       "sha256": _sha256_file(report_path)})
 
-    # 4) 静态校验（复用现有校验器）
-    from .validators.validate_local_strategy import validate_local_strategy
-    from .validators.validate_ptrade_portability import validate_ptrade_portability
-    ok_qs, v_qs, w_qs = validate_local_strategy(
-        None, None, result.converted_code, "ptrade-default")
-    ok_port, v_port, w_port = validate_ptrade_portability(
-        result.converted_code, None, None)
-    port_ok = ok_qs and ok_port
-    validation["api_portability"] = _check_status_from_ok(port_ok)
-    warnings_all.extend([*w_qs, *w_port])
-    known_limitations.extend(_collect_violation_strs([*v_qs, *v_port]))
+    # 4) 静态校验（dual：复用现有 PTrade 双校验器——既有行为零改变；
+    #    qmt：validate_qmt_portability QMT 白名单面，不调 PTrade 双校验器）
+    if target == "qmt":
+        ok_port, v_port, w_port = validate_qmt_portability(result.converted_code)
+        port_ok = ok_port
+        validation["api_portability"] = _check_status_from_ok(port_ok)
+        warnings_all.extend(w_port)
+        known_limitations.extend(_collect_violation_strs(v_port))
+    else:
+        from .validators.validate_local_strategy import validate_local_strategy
+        from .validators.validate_ptrade_portability import validate_ptrade_portability
+        ok_qs, v_qs, w_qs = validate_local_strategy(
+            None, None, result.converted_code, "ptrade-default")
+        ok_port, v_port, w_port = validate_ptrade_portability(
+            result.converted_code, None, None)
+        port_ok = ok_qs and ok_port
+        validation["api_portability"] = _check_status_from_ok(port_ok)
+        warnings_all.extend([*w_qs, *w_port])
+        known_limitations.extend(_collect_violation_strs([*v_qs, *v_port]))
     stage = _STAGE_STATIC_VALIDATED
 
-    # 5) capability + round-trip 冒烟
+    # 5) capability + round-trip 冒烟（dual 专属；qmt 不适用——照 M2a 口径）
     smoke_result: dict[str, Any] | None = None
     execution_status_for_card = "BLOCKED"
-    if port_ok and run_smoke:
+    if target == "qmt":
+        # M2b 块3：QMT 产物（innerApi init(C)/handlebar(C)）面向 QMT 客户端运行时，
+        # 不入本地引擎冒烟（stage 停在 STATIC_VALIDATED、smoke_result=None；
+        # M5 用户域 QMT 客户端核验清单承接——与 orchestrate(target='qmt') 同款文案）。
+        known_limitations.append(
+            "smoke backtest skipped: qmt target product (QMT innerApi lifecycle) "
+            "is not local-engine runnable; M5 user-domain QMT client verification"
+        )
+    elif port_ok and run_smoke:
         try:
             capability_report = _inspect_capabilities(strategy_id, "ptrade-default")
         except Exception as e:
@@ -546,6 +594,8 @@ def orchestrate_source(
         known_limitations=known_limitations, warnings=warnings_all,
         start=start, end=end,
         design_metadata_resolution=getattr(result, "design_metadata_resolution", None),
+        # M2b 块3：qmt 单目标构建登记（顶层新键，schema 已支持；dual 恒 None）
+        qmt_target={"target": "qmt", "encoding": "gbk"} if target == "qmt" else None,
     )
     _write_run_card(run_card, out_dir)
     return run_card
@@ -576,6 +626,87 @@ def _assemble_source_report(
         # 2026-09-09 设计元数据解析（终审阻断 C：结构化记录，转换证据可追溯）
         "design_metadata_resolution": getattr(result, "design_metadata_resolution", None),
     }
+
+
+# QmtAction 内部动作分类 → source_import_report.schema.json action_type 枚举映射
+# （M2b 块3）。QmtAction 六字段（action_type/rule_id/api_name/line/severity/message）
+# 与 schema actions[].required 逐一同构；old_text/new_text QMT 侧不承载 → 省略
+# （该二键为 schema 可选项且非 nullable，不得传 None）。
+_QMT_ACTION_TYPE_MAP: dict[str, str] = {
+    "coding_header": "REWRITE",      # (e) PEP263 编码声明替换为 #coding:gbk
+    "code_normalized": "NORMALIZE",  # (d) 证券代码字面量归一（.SS→.SH）
+    "deny_removed": "REMOVE",        # (f) DENY API 调用剥除（留审计行）
+    "semantic_diff": "DEGRADE",      # (i) run_daily 时间坍缩等语义差登记
+    "lifecycle_rename": "REWRITE",   # (h) initialize→init / handle_data→handlebar
+    "lifecycle_move": "REWRITE",     # (h) before/after 迁移至 handlebar 前后段
+    "wrapper_wired": "SHIM",         # (m2) 机制②同名遮蔽接线审计
+}
+
+
+def _assemble_source_report_qmt(
+    source_path: Path, strategy_id: str, created_at: str,
+    result, status: str,
+) -> dict[str, Any]:
+    """把 QmtSourceResult 组装为 source_import_report.schema.json 契约 dict（M2b 块3）。
+
+    与 PTrade 侧 _assemble_source_report 同构、差异显式登记：
+    - actions：内部动作分类经 _QMT_ACTION_TYPE_MAP 映射到契约枚举（未知类型回退
+      REWRITE 并在 message 标注原值——新内部类型须补映射，不静默）；severity
+      info/warn → INFO/WARN（契约枚举大写）；line=0（接线审计不落行号）→ 夹取
+      为 1（schema minimum:1）。
+    - coverage：QmtSourceResult 无 coverage 承载 → 现场统计（api_calls_seen=源码
+      Name 调用 AST 计数；denylist_hits/normalized_params 按 rule_id f/d 计数；
+      injected_helpers=机制②接线面 _WIRED_WRAPPER_NAMES——EXT/ZONE 组装恒全量注入）。
+    - design_metadata_resolution：dict 透传（find_design_for_strategy 与 PTrade 侧
+      同源）；None 省略（schema 该键可缺省、非 nullable）。
+    """
+    from .source_import_qmt import _WIRED_WRAPPER_NAMES
+    actions: list[dict[str, Any]] = []
+    for a in result.actions:
+        mapped = _QMT_ACTION_TYPE_MAP.get(a.action_type)
+        message = a.message
+        if mapped is None:
+            mapped = "REWRITE"
+            message = "%s（action_type=%r 未入映射表，回退 REWRITE）" % (
+                message, a.action_type)
+        actions.append({
+            "action_type": mapped, "rule_id": a.rule_id, "api_name": a.api_name,
+            "line": max(1, int(a.line or 0)), "severity": str(a.severity).upper(),
+            "message": message,
+        })
+    # coverage 现场统计（防御式：早退/编码异常路径不因统计失败二次崩溃）
+    api_calls_seen = 0
+    try:
+        import ast as _ast
+        try:
+            text = source_path.read_text(encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            text = source_path.read_text(encoding="gbk")
+        api_calls_seen = sum(
+            1 for n in _ast.walk(_ast.parse(text))
+            if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name)
+        )
+    except Exception:
+        api_calls_seen = 0
+    report: dict[str, Any] = {
+        "report_version": "1.0",
+        "source_path": str(source_path),
+        "strategy_id": strategy_id,
+        "created_at": created_at,
+        "status": status,
+        "actions": actions,
+        "coverage": {
+            "api_calls_seen": api_calls_seen,
+            "denylist_hits": sum(1 for a in result.actions if a.rule_id == "f"),
+            "normalized_params": sum(1 for a in result.actions if a.rule_id == "d"),
+            "injected_helpers": sorted(_WIRED_WRAPPER_NAMES),
+        },
+        "warnings": result.warnings,
+        "errors": result.errors,
+    }
+    if result.design_metadata_resolution is not None:
+        report["design_metadata_resolution"] = result.design_metadata_resolution
+    return report
 
 
 def _inspect_capabilities(strategy_id: str, profile_id: str) -> dict[str, Any]:
