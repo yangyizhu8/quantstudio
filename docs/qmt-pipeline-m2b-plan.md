@@ -33,17 +33,20 @@
 ## 🔹 AST 改写规则面（rev2：九项扩充，②审 R1）
 
 **三机制钉死**：
-1. **g/context/data = 别名注入式视图 shim**（PTrade `_qs_capture_ctx`/`_QS_RUNTIME_CTX`
-   `source_import.py:448-456/4802-4804/4968` 先例）：模块级 `g = C` / `context = _qs_context_view(C)`
-   / `data = _qs_data_view(C)`——**天然全覆盖 `hasattr(g,'name')` 55 处守卫**（无需 AST 节点改写）；
-2. **wrapper = 同名遮蔽 + C 捕获**（PTrade 同款先例）：模块级定义同名函数捕获 C；
-3. **参数兼容 keyword/位置双形态**（S3/S4 用 `order_target_value(security=,value=)`，其余位置式）。
+1. **g/context/data = 别名注入式视图 shim**：模块级 `g = C` / `context = _qs_context_view(C)` / `data = _qs_data_view(C)`——**天然全覆盖 `hasattr(g,'name')` 55 处守卫**（无需 AST 节点改写）。先例：`_qs_capture_ctx` def 在 `source_import.py:983-986`（注入点 `:4968` 所引）；
+2. **wrapper = 同名遮蔽 + C 捕获**（先例：`source_import.py:448-456` get_history 同名重绑定+orig 类属性捕获）；
+3. **参数兼容 keyword/位置双形态**（S3/S4 用 `order_target_value(security=,value=)`，其余位置式；注入序先例依据 `source_import.py:4802-4804`）。
+
+> **命名口径（rev2-fix 勘正，②审复核轮追认）**：模板侧与 source 侧 wrapper **均为小写 `_qs_*`**
+> （两套独立实现：`qmt_daily.py.j2` 注入区 6 个 `def _qs_*`／M2b 新模块自持一套）；
+> **`_QS_QMT_*` 仅限 M2b 新模块的 EXT 常量**（`_QS_QMT_FUNDAMENTALS_EXT` 等，尚不存在）——
+> M1/M2a 文档中「模板侧 `_QS_QMT_*`」表述以代码为准。
 
 **九项规则**（②审判定 2 a-i 逐项落）：
 
 | # | 规则 | 依据/形态 |
 |---|---|---|
-| a | **context 视图**：`current_dt`/`portfolio.{total_value,cash,market_value,positions}`/`portfolio_value`（S3 异名）/`getattr(portfolio,'str')` 回退链（S4） | 六策略 100% 用 current_dt；5/6 用 portfolio.* |
+| a | **context 视图**：`current_dt`/`portfolio.{total_value,cash,market_value,positions}`/`portfolio_value`（S3 异名）/`getattr(portfolio,'str')` 回退链（S4） | 六策略 100% 用 current_dt；`context.portfolio` 实测 6/6（复核勘正） |
 | b | **data 视图**：`data[code].{close,volume,high_limit,low_limit,preclose}`（S5/S6）+data 作形参传 helper | `_qs_data_view` 实现 Subscript+属性；②审核实校验器静默放行→**须自建负例断言** |
 | c | **g 机制**=别名注入（覆盖裸 `g.`+`hasattr(g,...)` 55 处守卫） | 不逐节点改写 |
 | d | **`.SS`→`.SH` 归一**：常量与池（S1/S3/S4）经 `normalize_to_qmt` 改写 | `security_code_rules:174` |
