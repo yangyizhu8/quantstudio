@@ -201,6 +201,8 @@ quantstudio/backtest/strategies/     （且仅 .py 与 .md）
 >
 > ⚠️ **AI 生成策略同样受 `StrategyIsolationGuard` 约束**：自动生成的策略代码**不得包含 `open()` / `read_csv()` 等直接文件 I/O**，也不得 import 框架内部模块；需要外部数据（如研报/信号 CSV）时，必须调用框架注入的 `load_research_signals` 等 API，否则加载即报 `StrategyIsolationError`。提示词中应明确该约束。
 >
+> 🧭 **双端对齐闭环（2026-10-08 建成）**：本地策略生成 → 转换 → 回测对齐 → 差异修复 → 知识库沉淀 → 回灌生成的常态化闭环。组成：策略六态生命周期门（[`docs/strategy-compiler/alignment-lifecycle.md`](docs/strategy-compiler/alignment-lifecycle.md)）+ 循环编排 SOP（[`docs/alignment-loop-sop.md`](docs/alignment-loop-sop.md)）+ **契约档案库**（[`knowledge/contracts/`](knowledge/contracts/)，生成端 R2 强制加载，冲突以档案为准）+ 收敛台账（[`knowledge/alignment-convergence.md`](knowledge/alignment-convergence.md)）+ 差异路由（`scripts/align_diff_report.py` / `scripts/align_triage_rules.py`）。闭环资产唯一权威源=本仓库；客户侧 pull 后即含全链（读 `AGENTS.md` + SOP 即可执行，无需总调度侧机制）。
+>
 > 🔗 **跨智能体承接开发/优化工作（2026-10-07）**：任意 AI 智能体（Claude Code 读 `CLAUDE.md`、Cursor 读 `.cursorrules`、Gemini 读 `GEMINI.md`，均已随仓库提供一行转链）承接本项目时，先读 [`AGENTS.md`](AGENTS.md)（项目铁律），再按 [`docs/AGENT-PRESET-dev-optimizer.md`](docs/AGENT-PRESET-dev-optimizer.md)（项目开发与优化通用工作法镜像：Plan-Mode 前置审批/确认节点/判型声明/红名单/证据化交付）执行——两者叠加，冲突以 AGENTS.md 为准。
 
 ## 策略转换管线（PTrade / QMT）

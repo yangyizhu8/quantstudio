@@ -5,7 +5,7 @@ description: Local-only QuantStudio strategy engineering (agent-first R0-R6 pipe
 
 # QuantStudio Agent-first Strategy Engineering
 
-Skill release: `1.0.0-r54-optimize` (built on `0.9.0-r55-robustness`; new optional R5.4 parameter optimization stage: authorized grid/Optuna search + nested walk-forward + majority-vote proposal + verbatim re-confirmation, design doc `docs/strategy-compiler/parameter-optimization-design.md`, new contract `optimization_study_report 1.0`, agent design schema 2.3; compiler/package baseline `0.3.2-mvp` unchanged).
+Skill release: `1.0.0-r55-loop-contract-surfaces` (built on `0.9.0-r55-robustness`; new optional R5.4 parameter optimization stage: authorized grid/Optuna search + nested walk-forward + majority-vote proposal + verbatim re-confirmation, design doc `docs/strategy-compiler/parameter-optimization-design.md`, new contract `optimization_study_report 1.0`, agent design schema 2.3; compiler/package baseline `0.3.2-mvp` unchanged).
 
 Contract versions at this release: agent design `2.3`, PTrade profile `1.10.0`, user backtest evidence `2.1`, validation report `2.1`, robustness report `1.0`, optimization study report `1.0`. Design `2.1` artifacts must not be auto-migrated to PASS; regenerate the design under 2.2/2.3 and repeat the R2.5 confirmation.
 
@@ -276,7 +276,23 @@ The cross-checks BLOCK self-contradicting capital math before R3: `gross_exposur
 
 The design must also carry the Chinese naming contract (absolute rule 26): `strategy_name` is the Chinese published filename (`quantstudio/backtest/strategies/<strategy_name>.py`, no ASCII suffix), schema-pattern-validated for filename safety — at least one CJK character, no leading `_`/whitespace, no trailing `.`/whitespace (Windows filename stripping), no `\ / : * ? " < > |`, at most 50 characters — and stem-conflict-checked against every existing strategy file at R4/candidate/publish (`STRATEGY-NAME-CONTRACT` / `STRATEGY-NAME-CONFLICT` BLOCK; `design.output.overwrite=true` is the explicit overwrite consent). `strategy_id` stays the lowercase-ASCII machine identifier and must not be sinicized. The R2 customer review package must show the Chinese strategy name.
 
-**R2 exit gate:** schema PASS and complete customer review package.
+### Contract surfaces (knowledge/contracts/) — mandatory at R2
+
+Read **every** contract archive under `knowledge/contracts/` and treat them as binding design constraints. Discover them by **directory listing** — never a hardcoded filename list, so newly added archives are picked up automatically (the closure plan adds a dimension-alignment archive here later). The path is repo-root relative: a full-repo checkout is the applicability premise.
+
+Platform semantic boundaries to honor (each with its provenance — do not claim archive coverage where none exists):
+
+- **Odd-lot sell semantics** — a quantity sell `order(-N)` trades the exact委托 quantity (clamped by `can_sell`), never lot-rounded; buys stay lot-forced. Source: `knowledge/contracts/etf-share-merge.md` (CORP-02 section).
+- **Dilution / share-merge caliber** — merge band `0.50 ≤ ratio < 0.99` adopts the reverse-derived ratio as-is with per-share rounding and cost conservation. Source: `knowledge/contracts/etf-share-merge.md` (CORP-01 section), `knowledge/contracts/position-fields.md`.
+- **E1 no-lookahead retrieval** — daily signals read the previous trading day via `include=False`; never `include=True` for daily signal input. Source: `knowledge/contracts/api-semantics.md`, `knowledge/contracts/data-caliber.md`.
+- **Cash-first rebalance funding** — same-cycle proceeds fund new buys (`sell_then_buy_immediate`). Source: `knowledge/contracts/matching-rules.md`.
+- **Dynamic ETF universe** — **no contract archive exists yet** (the archives only mention it as a pending item). Follow the existing rules in `docs/strategy_toolbox.md` (dynamic ETF pool section) and this file's `universe_contract` block. Label it as "existing rule", not as a contract-archive rule.
+
+**Contract-conformant call patterns:** the R3 implementation must emit order/rebalance code inside these contracted shapes. Reference shape (**read-only pointer** — the strategy source stays untouched, per the framework-layer-only repair rule): `quantstudio/backtest/strategies/四象限ETF轮动策略.py` L400-402 (full liquidation including odd lots) and L406-408 (lot rounding on non-liquidation branches).
+
+**Enforcement honesty:** the conflict check below is a **workflow/session-layer gate**. The static validator has no knowledge-base awareness, so never describe this gate as machine-enforced.
+
+**R2 exit gate:** schema PASS and complete customer review package. The design contract must additionally be **conflict-free against every archive under `knowledge/contracts/`** (see Contract surfaces above); a conflict is a BLOCK — the archive is authoritative.
 
 ## R2.5 - Explicit customer hard confirmation
 
