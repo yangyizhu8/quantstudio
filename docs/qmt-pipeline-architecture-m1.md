@@ -1,79 +1,153 @@
-# 大 QMT 转换管线 · 架构定稿（M1，2026-10-07 呈②审）
+# 大 QMT 转换管线 · 架构定稿（M1-rev1，2026-10-07 呈复审）
 
-> M0 已批（确认节点 1）；本件=架构方案定稿，**呈 ZCode ②审**后 M2 实施。
-> R2 四项勘察已完成（每条带 ctx7 依据），一项含 M5 实测验证标注。
+> **rev1 版本说明**：②审（ZCode，基座=仓内 `docs/qmt/inner-api/` 6043 行转写+七策略 API 消费面实测）
+> 判定「修订后通过」；两裁（总调度 2026-10-07）：裁定一 A=M0/M1 代为基干吸收二代文档修正
+> （未提交件快照 `85c20ee` 保护）；裁定二 A=补勘察 QMT 基本面数据源（已闭合，见 §1.3）。
+> 本版落实 A 类修订 9 项+B 类 3 项；基线 commit `4bc7195` 可 diff 审。
 
-## 🔹 M1 Plan-Mode 执行记录（八项）
+## 🔹 M1 Plan-Mode 执行记录（rev1）
 
-① 阶段：架构定稿（M0 基线已批）；② 目标：R2 四项闭合+可实施架构定稿；③ 分工：主导=本会话
-（PDO 载体），②审=ZCode，终审=用户；④ 事项：ctx7 四项勘察（只读，已完成）+本文件；
-⑤ 待确认：本定稿②审；⑥ 风险：见 §5；⑦ M2 实施另出 Plan；⑧ 验收=R2 四项有依据+
-模块接口可实施（M2 可直接照做）；回退=纯文档无回滚。
-⑧·判型：M1 纯文档；管线整体维持新增检测型声明。
+① 阶段：架构定稿修订（②审「修订后通过」回执后）；② 目标：A 类 9 项全落+基本面勘察并入；
+③ 分工：主导=本会话，复审=ZCode，终审=用户；④ 事项：快照保护二代文档+ctx7 基本面勘察 2 次+
+二代文档吸收扫描+本文件修订；⑤ 待确认：rev1 复审；⑥ 风险 §6；⑦ M2 实施②审过后另出 Plan；
+⑧ 验收=A 类 9 项逐项落位可勾验+证据源全切 inner-api 行级引用；回退=git checkout 4bc7195。
+⑧·判型声明（补依据）：**新增检测型**——既有产物/行为零漂移以回归+六策略 PTrade 产物
+byte-diff 逐字节不变实证（§7 硬门）；新增能力面（qmt 渲染+QMT 白名单检测）对新目标报告
+verdict。修复前置三问：①影响其他功能=无（加法式分支，PTrade 既有行为零改变）；②影响性能=
+无（新增分支不在既有路径上，既有 render/publish 路径零额外开销）；③影响精度=无（本地引擎
+与 PTrade 产物零触碰）。
 
 ---
 
-## 1. R2 勘察结论（四项闭合）
+## 1. R2 勘察结论（rev1：三处勘误+基本面新增）
 
-| # | 项 | 结论 | 依据（ctx7 `/websites/dict_thinktrader_net`） |
+### 1.1 生命周期与下单（勘误后，依据源=inner-api 转写行级引用）
+
+| # | 项 | 结论（勘误后） | 依据 |
 |---|---|---|---|
-| ① | 盘前钩子等价 | **`ContextInfo.run_time(func, time_point, interval, repeat_times)`** 定时回调：注册每日固定时刻（如 09:25）触发 `func(C)`——before_trading_start 映射通道确认。**限制**：run_time 周期语义（interval+repeat_times=0 无限重复）在**回测模式**下的驱动行为文档未明——回测优先策略（四问①）M2 渲染时以「handlebar 内时点判断」为主实现、run_time 为实盘增强路径，**M5 实测裁定** | innerApi run_time 函数页（func/time_point/repeat_times 签名实测） |
-| ② | 持仓查询 | **`get_trade_detail_data(accountID, 'STOCK', 'POSITION')`**；资金='ACCOUNT'，委托='ORDER'，成交='DEAL'——get_positions/get_account 全映射面确认；账号在策略交易界面运行时自动赋值（编辑器运行需手填——与回测先行兼容：回测账号任意串） | innerApi get_trade_detail_data 页（参数枚举实测） |
-| ③ | include=False 等价 | QMT **无显式 include 参数**；等价组合=`C.barpos`（当前 K 线位置）+`is_last_bar()`+`get_market_data` count 语义（count>=0 取 N 根）。**E1 铁律迁移**：信号取 D-1 = 渲染层保证信号 API 取数**多取一根取 `[-2]`**（对齐本地 `count>=2 取[-2]` 既有惯例）——「最后一根是否含当前未完成 bar」在回测/实盘语境有差异，**M5 实测验证后钉死** | is_last_bar/barpos/get_market_data count 语义页 |
-| ④ | ETF 动态池 | **`xtdata.get_stock_list_in_sector(sector_name)`**：板块成分股/基金合约（含 ETF/LOF，如'沪深300'）——get_etf_list_local 的 QMT 注入等价确认；PIT 语义（历史时点池）QMT 侧仅最新快照——**双端策略静态池铁律本就要求转换期固化 ETF_POOL_STATIC**（四象限先例），无 PIT 缺口 | get_stock_list_in_sector 页 |
+| ① | 盘前钩子等价 | **主路径定谳：handlebar 内时点判断**（日周期=每根日 bar 前段执行盘前逻辑段）。run_time 兜底通道**文档已明**：3 参签名 `run_time(funcName, period, startTime)`，且「**模型回测时无效**」——回测先行（四问①）下 run_time 仅作实盘增强路径（M5+）。run_daily 调度器（3/6 策略消费）→ `_qs_should_run_daily` 门控 wrapper（注册于 init 的时点判定） | 06-系统函数.md:225-229（3 参签名）；06:257（回测无效明文——R2① 提前闭合）；01:333+06:222（run_daily 映射先例） |
+| ② | 持仓查询 | `get_trade_detail_data(accountID, 'STOCK', 'POSITION')`；m_nVolume/m_nCanUseVolume 对齐本地 amount/enable_amount 面；'ACCOUNT'/'ORDER'/'DEAL' 同源 | 08-交易函数.md:583-601（枚举）+8:643-646（持仓字段） |
+| ③ | include=False 等价 | E1 上移渲染层不变：注入 `_qs_get_history`→`C.get_market_data_ex`+**剔除当日 bar**（count 多取一根取 `[-2]`，对齐本地 `count>=2 取[-2]` 惯例，本地锚定 ptrade_api.py:1479-1480）。**统一用 _ex 版**（官方对非 ex 版标「不推荐」：00:114-115/07:1641）；「最后一根是否含当前未完成 bar」M5 实测钉死 | 00:114；07:1641；本地 ptrade_api 实测 |
+| ④ | ETF/股票池 | **`C.get_stock_list_in_sector(sector_name)`**（innerApi 版，归属勘误：去 xtdata 前缀——xtdata 属 nativeApi 不在转写册）；ETF 池=转换期固化 ETF_POOL_STATIC（双端铁律）；`get_Ashares`(5/6 策略)→`C.get_stock_list_in_sector('沪深A股')` | 07:3288-3326；01:328（A股先例） |
 
-## 2. 模块设计（M2 实施清单）
+**下单（勘误+覆盖倒挂修复）**：passorder 以 **08:75-90 参数表为准**（第 5 位 prType/第 6 位 price/第 7 位 volume——M0 速写位序作废）；**23=买入/24=卖出分支**（05:42-44），order(n) 正买负卖按符号分支。gbk-only 决策获转写实测支持（全册 106 处 gbk/0 处 utf-8）。
+
+### 1.2 after_trading_end 映射（②审实质缺陷修复）
+
+弃 `is_last_bar()`（语义=全部 K 线最后一根/实盘当前未完成 bar，05:260-262/06:106——日周期回测中仅末日 True，与本地每日一次 backtest_engine.py:615-618 不等价）。**重写**：日周期=每根日 bar 尾段（时间无关）；分钟周期=15:00 bar（时间比较）尾段。同构 wrapper：`_qs_should_run_after`（时点判定，单测锁定触发次数=交易日数）。
+
+### 1.3 QMT 基本面数据面（裁定二 A 勘察闭合，ctx7 nativeApi/xtdata.html 实测）
+
+| 面 | API | 说明 |
+|---|---|---|
+| 下载补充 | `xtdata.download_financial_data(stock_list, table_list)` / `download_financial_data2(..., start_time, end_time, callback)` | 同步执行，返回后数据补齐；**部署前提**：QMT 客户端「数据管理-财务数据」补充（M5 用户域操作清单项） |
+| innerApi 读取 | `C.get_financial_data(fieldList, stockList, startDate, endDate, report_type='report_time')` | **按报告期**语义（PIT 对齐点）；另有 raw 版（get_financial_data 为每交易日填充版） |
+| 数据表 | ASHAREBALANCESHEET（资产负债）/ASHAREINCOME（利润）/ASHARECASHFLOW（现金流）/CAPITALSTRUCTURE（股本结构）/PERSHAREINDEX（财务指标） | 表名大小写不敏感；单位元或 %（公告/报告期字段为毫秒时间戳） |
+
+**结论**：fundamentals 缺口**可入方案**（非降级豁免）——`get_fundamentals(query, date)` →
+注入 `_qs_get_fundamentals` wrapper：字段映射表（本地 query 字段→ASHARE 表英文字段）+
+report_type='report_time' 报告期语义+本地 PIT 断言保留。M2 立项为独立 wrapper 件（FR-QMT-01），
+字段映射表按六策略实际消费字段盘点后定稿。
+
+## 2. 模块设计（rev1：模板命名/写盘点/source 路径规格化）
 
 ### 2.1 新增/扩展面
 
-| 模块 | 动作 | 接口（定稿） |
+| 模块 | 动作（rev1 修订处加粗） | 接口 |
 |---|---|---|
-| `render_qmt.py`（**新文件**） | QMT 渲染器 | `render_qmt(ir: StrategyIR) -> str`（返回 gbk 待写盘的源码文本）；内部复用 `_build_template_context` 语义装配+QMT 专属上下文（生命周期映射/注入 wrapper 集合） |
-| `render.py` | 分发扩展（最小侵入） | `render_strategy` profile 分发表加 `qmt`→`render_qmt.render`（3 行级，不动既有两分支逻辑） |
-| `templates/qmt_strategy.j2`（新） | QMT 模板 | `#coding:gbk` 头+`_QS_QMT_*` 注入区+init/handlebar 主体+（盘前）handlebar 内时点判断段 |
-| `portability_rules.py` | QMT 白名单分支 | 允许集：C.* 属性/get_market_data(_ex)/passorder/get_trade_detail_data/xtdata.get_stock_list_in_sector；**禁用集**：get_history_data（官方 deprecated） |
-| `contracts.py` | profile='qmt' 契约 | 生命周期映射+编码契约（gbk）+E1 D-1 语义契约 |
-| `publish.py` | gbk 写盘 | 按 profile 选编码：qmt→`encoding='gbk'`（其余路径不动） |
-| `source_import.py` | QMT 注入 wrapper 模板 | `_QS_QMT_ORDER_EXT`（order(n)→passorder 包装：拒单/资金容错吸收）+`_QS_QMT_HISTORY_EXT`（get_history→get_market_data 重定向+D-1 取行）+`_QS_QMT_POSITION_EXT`（get_positions→get_trade_detail_data 视图）+`_QS_QMT_ETF_POOL_EXT`（静态池直灌）——**矩阵哈希追认同批纪律适用** |
-| `cli.py`/`orchestrator.py` | profile 透传 | `--target qmt` 参数链 |
+| `render_qmt.py`（新） | QMT 渲染器 | `render_qmt(ir: StrategyIR) -> str`；**产物编码约定**：返回 unicode，gbk 转码在写盘点（见 orchestrator 行） |
+| `templates/qmt_daily.py.j2` + `qmt_minute.py.j2`（新，**命名合规**） | QMT 模板（`_select_template_name` 强制 `{prefix}_{daily\|minute}.py.j2`，render.py:105-113） | **双目录同步**：包内 templates/+skills 仓库回退目录（render.py:41-46）两处齐放 |
+| `render.py` | 分发表 `_PROFILE_TEMPLATE_MAP` 加 qmt 条目（字典驱动，代码本就预留 normalize_to_qmt，render.py:138） | 加法式；非 ptrade profile 已走 QMT 码制路径 |
+| `orchestrator.py` | **gbk 写盘点在此**（现硬编码 utf-8：186-187/387）：按 profile 选编码 qmt→gbk；`--target qmt` 参数链贯穿 cli→orchestrate/orchestrate_source；209-215/407-414 api_portability 汇总+218 compare_strategy_variants 的 profile 面扩展 | 参数链+写盘编码+汇总面三处扩展 |
+| `publish.py` | **修正认知**：`_atomic_publish` 为字节级 copy 无转码层（publish.py:35），59-71 硬编码双平台读双文件——**QMT 产物发布走新分支**（单目标读单文件，不触碰既有双平台逻辑） | 新分支加法式 |
+| `portability_rules.py` | QMT 白名单分支（**继承 SHIM_CONTRACT_REGISTRY 式登记门禁：_QS_QMT_* 未登记即 BLOCK**）；**统一 get_market_data_ex**（非 ex 版列不推荐面）；**禁用集**：get_history_data（deprecated）+get_market_data（非 ex） | 扩展 |
+| `contracts.py` | profile='qmt' 契约：生命周期映射+gbk+**E1 D-1 语义+复权口径**（§4） | 扩展 |
+| `source_import.py` | **source 路径规格化（A 类 8）**：`convert_source`/`orchestrate_source` 的 target 维度（现硬编码 PTrade）；**AST 改写 QMT 变体规则面**：生命周期签名改写（initialize(ctx)→init(C)/handle_data(ctx,data)→handlebar(C)）、coding:gbk 头注入、`g.`→`C.` 属性改写、PTrade 专属归一规则适用性裁剪、`_inject_all`（4784-4918）的 _QS_QMT_* EXT 注入序 | **六策略门槛实际通道（主路径）** |
+| `cli.py` | `--target qmt` 透传 | 微扩 |
 
-### 2.2 生命周期映射定稿表
+**矩阵哈希边界写准（B 类 11）**：`check_fund_matrix` 只锁 `_QS_FUNDAMENTALS_EXT`/`_QS_INDUSTRY_EXT` 两常量（check_fund_matrix.py:34-38）——新增 _QS_QMT_* **不触发**矩阵追认；仅当 M2 改动这两常量时同 commit 追认。
 
-| 本地/PTrade 语义 | QMT 渲染 | 备注 |
+### 2.2 双路径声明（A 类 8）
+
+- **spec 路径**（render_qmt/IR 渲染）：M2a 首策略打通用（四象限）——验证 IR→QMT 渲染面；
+- **source 路径**（orchestrate_source→convert_source，AGENTS.md 明确 qs-compile import 承接）：**六策略横验证门槛的实际通道（M3 主路径）**——source_import 的 QMT 变体规则面是 M2b 主体。
+
+## 3. 生命周期映射定稿表（rev1 重写）
+
+**profile 对齐基准声明（A 类 3）**：QMT 产物对齐 **daily-bar-v1+日线订阅**（handlebar 频率=订阅
+K 线周期；本地 handle_data 随 engine_profile 变：daily 每日一次 backtest_engine.py:2190-2244）。
+**分钟策略（minute-bar-v1）M2 不支持、portability 显式 deny**（QMT 面后续按需立项）。
+
+| 本地语义 | QMT 渲染（rev1） | 依据/备注 |
 |---|---|---|
-| `initialize(ctx)` | `def init(C):` | g.*→C.*_attr（C 动态属性）；账号：回测='testS' 占位+注释头声明 |
-| `before_trading_start(ctx, data)` | handlebar 内时点判断段（`C.barpos` 首根/固定时刻分支）为主；run_time 注释模板备实盘 | R2①限制项 M5 裁定 |
-| `handle_data(ctx, data)` | `def handlebar(C):` | data[code] 面→注入 `qs_data_snapshot(C, codes)`（get_market_data 实时段） |
-| `after_trading_end` | handlebar 尾分支（is_last_bar 判定） | 语义等价待 M5 复核 |
-| `order(code, n)`/`order_value` | 注入 `_qs_order(code, n, C)`→passorder(23,1101,...) 包装 | 数量语义保持（零股 CORP-02 经验：卖出全量语义直传） |
-| `get_history(..., include=False)` | 注入 `_qs_get_history(code, n, ...)`→get_market_data(count=n+1)+取`[-2]` | E1 铁律渲染层保证（R2③） |
-| `get_positions()` | 注入 `_qs_get_positions(C)`→get_trade_detail_data POSITION 视图 | R2② |
-| `get_etf_list_local()` | 转换期固化 ETF_POOL_STATIC（双端铁律）+注入静态直灌 | R2④ |
+| `initialize(ctx)` | `def init(C):`；g.*→C.* 动态属性；账号 'testS' 占位 | 06:12（仅开始运行一次）；05:132 |
+| `before_trading_start` | handlebar 内时点判断段（**日周期=每根日 bar 前段**；分钟周期禁用域不适用） | §1.1① |
+| `handle_data` | `def handlebar(C):`（daily-bar-v1 对齐） | §2.2 基准声明 |
+| `after_trading_end` | handlebar 尾段 wrapper `_qs_should_run_after`（日=每根 bar 尾；分钟=15:00 时间比较）；**弃 is_last_bar** | §1.2 |
+| `run_daily(time, func)` | init 内注册时点判定+`_qs_should_run_daily` 门控 | 01:333；06:222 |
+| `order(code, n)` | `_qs_order(code, n, C)`→passorder **23/24 按符号分支**，位序依 08:75-90 | 05:42-44 |
+| **`order_target_value(code, value)`（六策略 6/6 全用，15 处——ORDER 件真实主体）** | `_qs_order_target_value(code, value, C)`：get_trade_detail_data POSITION 持仓库存+get_market_data_ex 最新价→目标量换算→delta→passorder 下单（买 23/卖 24） | 三端旅程：本地 ptrade_api 同构（差额→引擎撮合）；QMT wrapper 吸收差额逻辑 |
+| `get_history(..., include=False)` | `_qs_get_history`→C.get_market_data_ex+剔除当日 bar（count+1 取 [-2]） | §1.1③ |
+| `get_positions()` | `_qs_get_positions(C)`→get_trade_detail_data POSITION 视图 | 08:583-601 |
+| `get_open_orders`/`has_open_order` | get_trade_detail_data 'ORDER' 面映射（四象限试点 4 处消费） | 08 枚举 |
+| `get_fundamentals(query, date)` | `_qs_get_fundamentals`→C.get_financial_data（report_type='report_time'）+字段映射 | §1.3（FR-QMT-01） |
 
-### 2.3 oracle L0 静态校验（M3）
+## 4. 六策略 API 消费清单 → QMT 映射/禁用决策表（A 类 5，新）
 
-- portability QMT 白名单全 PASS（禁 API 拦截）；
-- gbk 解码+AST 编译过（`compile(src.decode? / ast.parse(gbk_text))`——产物语法级验证）；
-- 生命周期完备性：init/handlebar 必在+注入区哈希登记。
+实测（②审 grep 七策略）：6/6 order_target_value；5/6 get_Ashares；4/6 filter_stock_by_status；
+3/6 get_fundamentals(+_batch)/run_daily/get_history_batch；vol/weekly/周频 get_trade_days/get_stock_info。
 
-## 3. 判型与不变面（复述）
+| API（消费面） | 决策 | QMT 实现 |
+|---|---|---|
+| order_target_value（6/6，15 处） | **wrapper** | §3 行（ORDER 件主体） |
+| order（试点 1 处） | wrapper | §3 行 |
+| get_history / get_history_batch（3/6） | wrapper | _qs_get_history（批量=循环+合并，_batch 同构） |
+| get_fundamentals(+_batch)（3/6） | **wrapper（FR-QMT-01 立项）** | §1.3；字段映射表 M2 盘点定稿 |
+| run_daily（3/6） | wrapper | _qs_should_run_daily 门控 |
+| filter_stock_by_status（4/6） | wrapper | 状态面由 get_instrument_detail/停牌停权数据组合（M2 勘察细节定稿） |
+| get_Ashares（5/6） | wrapper | C.get_stock_list_in_sector('沪深A股')（01:328） |
+| get_trade_days（3 策略） | wrapper | QMT 交易日历 API（M2 勘察定稿） |
+| get_stock_info（3 策略） | wrapper | get_instrument_detail（07:2459） |
+| get_open_orders/has_open_order（试点） | wrapper | get_trade_detail_data 'ORDER' |
+| minute-bar-v1 策略（若有） | **deny** | portability 显式 BLOCK（§2.2 基准） |
 
-新增检测型/纯增益：render 分发 3 行外 PTrade 管线零触碰；`api_portability` 六策略回归+
-既有测试套件全绿为证（M3 验收硬门）。策略源码零改动（重转生效）。
+## 5. 复权口径契约（A 类 7）
 
-## 4. M2 实施计划预告（批后另出 Plan-Mode）
+本地 `fq='pre'`（前复权，QFQ 基建深重）↔ QMT `get_market_data_ex(dividend_type=...)` 参数映射
+**入契约硬写**：wrapper 默认 dividend_type 对齐本地前复权口径（具体枚举值 M2 依 07-行情函数
+转写定稿+M5 实测验证）；复权不一致=对齐门 BLOCK 项。
 
-M2a render_qmt+模板+单策略打通（四象限——双端铁律已固化静态池，转换面最小）→
-M2b 注入 wrapper 四件+portability 分支 → M3 六策略横验证+L0 校验+回归全绿 →
-M4 文档同步 → M5 用户域实测（R2①③ 裁定项）→ M6 推送批。
+## 6. 风险清单（rev1：补四项）
 
-## 5. 风险（诚实申报）
+1. R2③「最后一根含未完成 bar」M5 实测钉死（设计假定=渲染层单点可改，策略零改动兜底）；
+2. passorder 容错面对齐本地 `_QS_ORDER_SPLIT_EXT` 同构物（ptrade_api.py:3157-3216 作基准）；差集 M5 补；
+3. gbk 不可编码字符 fail-closed（BLOCK 报错不静默替换；转写实测 gbk-only 支持）；
+4. **撮合口径/T+1/涨跌停执行层语义**：QMT 侧撮合与本地引擎差异面（二代文档「三层对齐」并入 M5 对账设计）；
+5. **数据订阅链**：get_market_data_ex 依赖本地已下载补充数据（QMT 客户端数据管理操作面，M5 清单）——标注待核；
+6. **run_card 双产物 schema**：orchestrator 209-218 双 profile 汇总/比对面扩展时的 schema 适配。
 
-1. R2①③两项 M5 实测前为「设计假定」——M2 渲染实现按主路径写，M5 若裁定相反则渲染层
-   单点改（注入层吸收，策略零改动——框架层铁律兜底）；
-2. passorder 拒单/资金不足容错面复杂——包装层先对齐 PTrade 侧 `_QS_ORDER_SPLIT_EXT`
-   既有容错语义，差集 M5 实测补；
-3. gbk 不可编码字符（策略名/注释生僻字）——渲染层转码失败即 BLOCK 报错（fail-closed，
-   不静默替换）。
+## 7. M3 验收硬门（A 类 9）
 
-**暂停语义**：本定稿呈②审（ZCode）——审过后 M2 另出 Plan-Mode 实施计划呈批。
+- 「PTrade 既有行为**零改变**」（改述，替代"零触碰"）：**六策略 PTrade 产物 byte-diff 逐字节不变**
+  （重转前后比对，golden/compare_roundtrip 承载）+api_portability 六策略全 PASS+既有测试套件全绿；
+- QMT 产物：qmt/<strategy_id>_qmt.py（gbk）六策略全产出+portability QMT 白名单全 PASS+gbk 解码 AST 过；
+- 判型判定依据=本节 byte-diff 实证（新增检测型成立凭证）。
+
+## 8. M 系列路线（rev1 重排）
+
+M1-rev1（本件，复审）→ M2a spec 路径首策略打通（四象限：render_qmt+qmt_daily.py.j2 双目录+
+publish 新分支）→ **M2b source 路径主体**（convert_source target 维度+AST 改写规则面+_QS_QMT_*
+四件 wrapper+FR-QMT-01 fundamentals 字段映射）→ M3 六策略横验证+L0 校验+**byte-diff 硬门** →
+M4 文档同步（README/toolbox/prompt_engineering）→ M5 用户域实测（R2③ 钉死+撮合对账+数据补充
+操作清单）→ M6 推送批（与在途批协调）。
+
+---
+
+**rev1 自检（A 类 9 项）**：1✓证据勘误三处+行级引用切换（§1.1）；2✓after_trading_end 重写（§1.2）；
+3✓触发条件周期精确化+基准声明（§2.2/§3）；4✓order_target_value+订单状态（§3/§4）；5✓决策表（§4）；
+6✓fundamentals 立项（§1.3 FR-QMT-01）；7✓get_market_data_ex 统一+复权契约（§1.1③/§5）；
+8✓source 路径规格化+双路径声明（§2.1/§2.2）；9✓零改变改述+byte-diff 硬门（§7）。
+B 类：10✓模板命名+双目录（§2.1）；11✓登记门禁+矩阵边界写准（§2.1）；12✓风险补四项（§6）；
+13✓判型依据+性能声明（Plan ⑧·）。
+
+**暂停语义**：rev1 呈 ZCode 复审——复审通过后 M2a 另出 Plan-Mode 实施计划呈批。
