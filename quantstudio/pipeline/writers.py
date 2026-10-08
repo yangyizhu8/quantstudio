@@ -10,10 +10,12 @@
 from __future__ import annotations
 
 import abc
+import contextlib
 import json
 import logging
 import os
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -82,6 +84,42 @@ BATCH_CHECKPOINT_DDL = """
         batch_id VARCHAR, status VARCHAR, rows_written BIGINT, updated_at TIMESTAMP,
         PRIMARY KEY (task_name, table_name, freq, window_key)
     )"""
+
+
+# R2（write-integrity，2026-10-08 裁定④）：DuckDBWriter 进程内按表写互斥。
+# 动机（取证②）：同进程并发写曾致 23 次 TransactionContext write-write conflict
+# （FAIL×7 + A4WARN×11 + OTHER×5，key 样本 "000055,1788744600000,1min"）；
+# T1 的 RW 打开退避只防跨进程文件锁，进程内并发写靠本锁串行。
+# 纯恢复型修复：加锁后写入结果与串行执行一致。
+# 首期范围（裁定④）：仅 stock_minutes / etf_minutes 两张高频大表；其余表后续评估扩面。
+_SERIAL_WRITE_TABLES = frozenset({"stock_minutes", "etf_minutes"})
+
+# R2 第二阶段（write-integrity，2026-10-08）：锁注册表升为**模块级**——重锚引擎
+# （qfq_reanchor_engine）在**自有连接的自持事务**（BEGIN→COMMIT，不取 writer 的
+# _conn_lock）里直 UPDATE 价格表 front 列，与 streaming 分片 upsert（_conn_lock 内）
+# 对同一行并发即取证②的进程内 write-write 冲突真源。进程内按表互斥须经**同一把锁**
+# 才成立，故注册表从 DuckDBWriter 实例级上提为模块级，供引擎侧跨模块共享。
+# 引擎侧接入：quantstudio/pipeline/qfq_reanchor_engine.py 顶层
+# `from quantstudio.pipeline.writers import table_write_lock`（已核无循环导入——
+# 本模块内部依赖链 _paths / snapshot_lock / eps_backfill / qfq_schema_contracts
+# 均不回导引擎）。
+_TABLE_WRITE_LOCKS: dict = {}
+
+
+def table_write_lock(table: str):
+    """R2 按表写锁上下文（模块级公共入口，跨模块共享同一把锁）。
+
+    - table ∈ _SERIAL_WRITE_TABLES → 返回进程内 RLock（登记于模块级
+      _TABLE_WRITE_LOCKS）；其余表 → contextlib.nullcontext()（零行为变化）；
+    - RLock（非 Lock）：防同线程嵌套获取自死锁（引擎主事务若与 writer 写路径
+      同线程嵌套时安全）；
+    - setdefault：CPython 字典操作原子，并发首建也只暴露同一把锁；
+    - 实例方法 DuckDBWriter._table_write_lock() 委托本函数——writer 写路径
+      与重锚引擎价格写事务由此拿到**同一把**锁。
+    """
+    if table in _SERIAL_WRITE_TABLES:
+        return _TABLE_WRITE_LOCKS.setdefault(table, threading.RLock())
+    return contextlib.nullcontext()
 
 
 class WriteResult(int):
@@ -474,6 +512,10 @@ class DuckDBWriter(BaseWriter):
         # （DuckDB 规则：同 db 文件 read_only 与 read_write 不能并存，哪怕不同线程）。
         # 所有内部查询统一走 read_write，永不冲突。GUI 的 read_only 查询属独立进程范畴。
         self._shared_conn = None
+        # R2（write-integrity，第二阶段升模块级）：原实例级按表写锁登记表
+        # self._table_write_locks 已上提为模块级 _TABLE_WRITE_LOCKS——重锚引擎
+        # 在自有事务里直写价格表，须与 writer 写路径共享同一把锁（见模块级
+        # table_write_lock()）；_table_write_lock() 方法委托模块函数，调用点零变化。
         self._init_tables()
 
     # ── T1（2026-09-17）：RW 打开退避重试与持有者归因 ──
@@ -598,6 +640,15 @@ class DuckDBWriter(BaseWriter):
         if self._shared_conn is None:
             self._shared_conn = self._open_rw_with_backoff(purpose="shared")
         return self._shared_conn
+
+    def _table_write_lock(self, table: str):
+        """R2 按表写锁上下文（第二阶段起委托模块级 table_write_lock()）。
+
+        与重锚引擎（qfq_reanchor_engine）自有事务的价格表写共享**同一把**
+        进程内锁——注册表已上提模块级；本方法保留以使现调用点零变化，
+        语义与第一阶段逐位一致（serial 表 → RLock；其余 → nullcontext）。
+        """
+        return table_write_lock(table)
 
     def reconnect(self):
         """F-5 修复（2026-09-08）：关闭并重建持久写连接（invalidated 毒化后调用）。
@@ -836,133 +887,134 @@ class DuckDBWriter(BaseWriter):
         # R2（write-integrity）：写事务临界区整段进按表锁——pre-count 探测与 upsert
         # 写入必须同临界区（防探测/写入间窗口错配）；锁范围仅写事务段，不含上游
         # 对齐/校验与普通读路径；汇总日志行留锁外无碍。
-        with self._conn_lock:
-            conn = self._conn()
-            try:
-                # 性能修复（2026-07-22）：原实现 write 前后各跑一次 SELECT COUNT(*) FROM <table>
-                # 全表统计，在大表（百万→千万行）上每次数秒，8 线程持 _conn_lock 串行 →
-                # 全量拉取 56 秒/只（理论 1.9s）。改为只数本批主键已存在的行（走索引，毫秒级）。
-                conn.register("_tmp_write", df)
-                pk_cols = {
-                    "stock_daily": "(code, time)",
-                    "stock_minutes": "(code, time, freq)",
-                "etf_minutes": "(code, time, freq)",
-                "tick": "(code, time)",
-                "fin_indicator": "(code, end_date, ann_date)",
-                "index_daily": "(code, time)",
-                "stock_daily_valuation": "(code, time)",
-                "etf_daily": "(code, time)",
-                "etf_basic": "(code)",
-                "stock_basic": "(code)",
-                "trade_calendar": "(cal_date)",
-                "stock_float_share": "(code, end_date, ann_date)",
-                "index_constituents": "(index_code, code, time)",
-                "index_constituents_snapshot_meta": "(index_code, time)",
-                "balance_statement": "(code, end_date, ann_date)",
-                "income_statement": "(code, end_date, ann_date)",
-                "cashflow_statement": "(code, end_date, ann_date)",
-                "stock_dividend": "(code, ex_date)",
-                "etf_dividend": "(code, ex_date)",
-                "sw_industry": "(code, industry_code)",
-                "industry_classification": "(classification_system, classification_version, industry_level, industry_code, effective_from)",
-                "industry_membership": "(classification_system, classification_version, industry_level, industry_code, code, effective_from)",
-                "stock_namechange": "(code, change_date)",
-                "stock_delist": "(code, market)",
-            }.get(table)
-                # 写前：数本批主键在目标表已存在的行数（=将被 UPDATE 的，走索引快）
-                # R1（write-integrity，2026-10-08）：pre-count 探测失效不再静默置 0——
-                # 旧形态曾致整批全量误标「新增」（生产实证 65,962,748 行全假新增）。
-                # 新语义：捕获 → logger.warning（table/batch_id/异常类型与文本，唯一失效
-                # 可观测点）→ 新连接单次重试 → 仍失败 accounting_unknown=True
-                # （new/updated 置 -1 哨兵，消费端跳过累计、审计账本写 NULL，裁定③）。
-                updated_rows = 0
-                accounting_unknown = False
-                _acct_err = None
-                if pk_cols:
-                    _pre_count_sql = (
-                        f"SELECT COUNT(*) FROM {table} WHERE {pk_cols} IN "
-                        f"(SELECT {pk_cols} FROM _tmp_write)")
-                    try:
-                        updated_rows = conn.execute(_pre_count_sql).fetchone()[0]
-                    except Exception as e:
-                        _acct_err = e
-                        logger.warning(
-                            f"[DuckDBWriter] {table} batch={batch_id}: pre-count 记账探测失败"
-                            f"（{type(e).__name__}: {e}），换新连接重试一次")
-                        updated_rows = 0
+        with self._table_write_lock(table):
+            with self._conn_lock:
+                conn = self._conn()
+                try:
+                    # 性能修复（2026-07-22）：原实现 write 前后各跑一次 SELECT COUNT(*) FROM <table>
+                    # 全表统计，在大表（百万→千万行）上每次数秒，8 线程持 _conn_lock 串行 →
+                    # 全量拉取 56 秒/只（理论 1.9s）。改为只数本批主键已存在的行（走索引，毫秒级）。
+                    conn.register("_tmp_write", df)
+                    pk_cols = {
+                        "stock_daily": "(code, time)",
+                        "stock_minutes": "(code, time, freq)",
+                    "etf_minutes": "(code, time, freq)",
+                    "tick": "(code, time)",
+                    "fin_indicator": "(code, end_date, ann_date)",
+                    "index_daily": "(code, time)",
+                    "stock_daily_valuation": "(code, time)",
+                    "etf_daily": "(code, time)",
+                    "etf_basic": "(code)",
+                    "stock_basic": "(code)",
+                    "trade_calendar": "(cal_date)",
+                    "stock_float_share": "(code, end_date, ann_date)",
+                    "index_constituents": "(index_code, code, time)",
+                    "index_constituents_snapshot_meta": "(index_code, time)",
+                    "balance_statement": "(code, end_date, ann_date)",
+                    "income_statement": "(code, end_date, ann_date)",
+                    "cashflow_statement": "(code, end_date, ann_date)",
+                    "stock_dividend": "(code, ex_date)",
+                    "etf_dividend": "(code, ex_date)",
+                    "sw_industry": "(code, industry_code)",
+                    "industry_classification": "(classification_system, classification_version, industry_level, industry_code, effective_from)",
+                    "industry_membership": "(classification_system, classification_version, industry_level, industry_code, code, effective_from)",
+                    "stock_namechange": "(code, change_date)",
+                    "stock_delist": "(code, market)",
+                }.get(table)
+                    # 写前：数本批主键在目标表已存在的行数（=将被 UPDATE 的，走索引快）
+                    # R1（write-integrity，2026-10-08）：pre-count 探测失效不再静默置 0——
+                    # 旧形态曾致整批全量误标「新增」（生产实证 65,962,748 行全假新增）。
+                    # 新语义：捕获 → logger.warning（table/batch_id/异常类型与文本，唯一失效
+                    # 可观测点）→ 新连接单次重试 → 仍失败 accounting_unknown=True
+                    # （new/updated 置 -1 哨兵，消费端跳过累计、审计账本写 NULL，裁定③）。
+                    updated_rows = 0
+                    accounting_unknown = False
+                    _acct_err = None
+                    if pk_cols:
+                        _pre_count_sql = (
+                            f"SELECT COUNT(*) FROM {table} WHERE {pk_cols} IN "
+                            f"(SELECT {pk_cols} FROM _tmp_write)")
                         try:
-                            _retry_conn = self._conn()
-                            try:
-                                # 注册视图是连接级隔离的：重试连接须重新 register 同一份 df
-                                _retry_conn.register("_tmp_write", df)
-                                updated_rows = _retry_conn.execute(
-                                    _pre_count_sql).fetchone()[0]
-                            finally:
-                                _retry_conn.close()
-                        except Exception as e2:
-                            _acct_err = e2
-                            accounting_unknown = True
+                            updated_rows = conn.execute(_pre_count_sql).fetchone()[0]
+                        except Exception as e:
+                            _acct_err = e
                             logger.warning(
-                                f"[DuckDBWriter] {table} batch={batch_id}: pre-count 重试仍失败"
-                                f"（{type(e2).__name__}: {e2}），本批记账失效"
-                                f"（new/updated 置 -1 哨兵，审计账本写 NULL）")
-                if pk_cols:
-                    col_list = ", ".join(df.columns)
-                    update_set = ", ".join(f"{c}=EXCLUDED.{c}" for c in df.columns)
-                    # T2（开关化，默认关）：一致行不进 delete 相位。
-                    # 形态 B（行值元组 IS DISTINCT FROM，NULL-safe，实测通过）；列集合
-                    # 与本批 df 同源（含主键列）；关闭时不追加 WHERE ⇒ SQL 逐字节等同现状。
-                    _skip_identical = _is_upsert_skip_identical_enabled()
-                    _where_identical = ""
-                    if _skip_identical:
-                        _lhs = ", ".join(df.columns)
-                        _rhs = ", ".join(f"EXCLUDED.{c}" for c in df.columns)
-                        _where_identical = f" WHERE ({_lhs}) IS DISTINCT FROM ({_rhs})"
-                    _upsert_sql = (
-                        f"INSERT INTO {table} ({col_list}) "
-                        f"SELECT * FROM _tmp_write "
-                        f"ON CONFLICT {pk_cols} DO UPDATE SET {update_set}"
-                        f"{_where_identical}")
-                    if _skip_identical:
-                        # changed = RETURNING 实际写入行数(新增+真实变化) − 新增行数
-                        # = 真实变化（已存在且值不同）行数；仅开关开启时统计
-                        _new_pre = max(0, len(df) - updated_rows)
-                        _returned = len(conn.execute(f"{_upsert_sql} RETURNING 1").fetchall())
-                        changed_rows = max(0, _returned - _new_pre)
+                                f"[DuckDBWriter] {table} batch={batch_id}: pre-count 记账探测失败"
+                                f"（{type(e).__name__}: {e}），换新连接重试一次")
+                            updated_rows = 0
+                            try:
+                                _retry_conn = self._conn()
+                                try:
+                                    # 注册视图是连接级隔离的：重试连接须重新 register 同一份 df
+                                    _retry_conn.register("_tmp_write", df)
+                                    updated_rows = _retry_conn.execute(
+                                        _pre_count_sql).fetchone()[0]
+                                finally:
+                                    _retry_conn.close()
+                            except Exception as e2:
+                                _acct_err = e2
+                                accounting_unknown = True
+                                logger.warning(
+                                    f"[DuckDBWriter] {table} batch={batch_id}: pre-count 重试仍失败"
+                                    f"（{type(e2).__name__}: {e2}），本批记账失效"
+                                    f"（new/updated 置 -1 哨兵，审计账本写 NULL）")
+                    if pk_cols:
+                        col_list = ", ".join(df.columns)
+                        update_set = ", ".join(f"{c}=EXCLUDED.{c}" for c in df.columns)
+                        # T2（开关化，默认关）：一致行不进 delete 相位。
+                        # 形态 B（行值元组 IS DISTINCT FROM，NULL-safe，实测通过）；列集合
+                        # 与本批 df 同源（含主键列）；关闭时不追加 WHERE ⇒ SQL 逐字节等同现状。
+                        _skip_identical = _is_upsert_skip_identical_enabled()
+                        _where_identical = ""
+                        if _skip_identical:
+                            _lhs = ", ".join(df.columns)
+                            _rhs = ", ".join(f"EXCLUDED.{c}" for c in df.columns)
+                            _where_identical = f" WHERE ({_lhs}) IS DISTINCT FROM ({_rhs})"
+                        _upsert_sql = (
+                            f"INSERT INTO {table} ({col_list}) "
+                            f"SELECT * FROM _tmp_write "
+                            f"ON CONFLICT {pk_cols} DO UPDATE SET {update_set}"
+                            f"{_where_identical}")
+                        if _skip_identical:
+                            # changed = RETURNING 实际写入行数(新增+真实变化) − 新增行数
+                            # = 真实变化（已存在且值不同）行数；仅开关开启时统计
+                            _new_pre = max(0, len(df) - updated_rows)
+                            _returned = len(conn.execute(f"{_upsert_sql} RETURNING 1").fetchall())
+                            changed_rows = max(0, _returned - _new_pre)
+                        else:
+                            conn.execute(_upsert_sql)
+                            changed_rows = 0
                     else:
-                        conn.execute(_upsert_sql)
+                        conn.execute(f"INSERT INTO {table} SELECT * FROM _tmp_write")
                         changed_rows = 0
-                else:
-                    conn.execute(f"INSERT INTO {table} SELECT * FROM _tmp_write")
-                    changed_rows = 0
-                conn.unregister("_tmp_write")
-                # new/updated 审计：updated = 写前已存在的行数；new = 本批其余
-                # （精度：本批内主键重复已由 validator 去重，故 new + updated = len(df)）
-                # R1：探测失效批记账不可知 → -1 哨兵（WriteResult int 语义仍 len(df)；
-                # T2 开启时 changed 依 updated_rows=0 退化计算为 0，同为不可知口径）
-                if accounting_unknown:
-                    new_rows = -1
-                    updated_rows = -1
-                else:
-                    new_rows = max(0, len(df) - updated_rows)
-                # P-A3：fin_indicator 写后跨表回补（eps ← income_statement.basic_eps）。
-                # 默认关闭，需显式设置 QS_AUTO_BACKFILL_EPS=1/true/on 才触发；
-                # CLI --apply 保持人工独立执行，不受此 gate 影响；
-                # 只 UPDATE eps IS NULL 且 income 同 key basic_eps 非空的行——无缺口库零行为；
-                # 幂等；异常 log-error 不阻断 write（失败由 quality_audit EpsBackfillGap 兜底）。
-                # 水位/写锁/batch_audit 语义零变化（回补是 UPDATE 非拉取，不推进 watermark）。
-                if table == "fin_indicator" and _is_writer_auto_backfill_enabled():
-                    try:
-                        backfill_eps_gap(conn)
-                    except Exception as exc:
-                        logger.error(f"[DuckDBWriter] {table} 写后回补失败（门禁将告警）: {exc}")
-                elif table == "fin_indicator":
-                    logger.debug(
-                        "[DuckDBWriter] fin_indicator 写后自动回补已关闭 "
-                        "(QS_AUTO_BACKFILL_EPS 未显式开启)"
-                    )
-            finally:
-                conn.close()
+                    conn.unregister("_tmp_write")
+                    # new/updated 审计：updated = 写前已存在的行数；new = 本批其余
+                    # （精度：本批内主键重复已由 validator 去重，故 new + updated = len(df)）
+                    # R1：探测失效批记账不可知 → -1 哨兵（WriteResult int 语义仍 len(df)；
+                    # T2 开启时 changed 依 updated_rows=0 退化计算为 0，同为不可知口径）
+                    if accounting_unknown:
+                        new_rows = -1
+                        updated_rows = -1
+                    else:
+                        new_rows = max(0, len(df) - updated_rows)
+                    # P-A3：fin_indicator 写后跨表回补（eps ← income_statement.basic_eps）。
+                    # 默认关闭，需显式设置 QS_AUTO_BACKFILL_EPS=1/true/on 才触发；
+                    # CLI --apply 保持人工独立执行，不受此 gate 影响；
+                    # 只 UPDATE eps IS NULL 且 income 同 key basic_eps 非空的行——无缺口库零行为；
+                    # 幂等；异常 log-error 不阻断 write（失败由 quality_audit EpsBackfillGap 兜底）。
+                    # 水位/写锁/batch_audit 语义零变化（回补是 UPDATE 非拉取，不推进 watermark）。
+                    if table == "fin_indicator" and _is_writer_auto_backfill_enabled():
+                        try:
+                            backfill_eps_gap(conn)
+                        except Exception as exc:
+                            logger.error(f"[DuckDBWriter] {table} 写后回补失败（门禁将告警）: {exc}")
+                    elif table == "fin_indicator":
+                        logger.debug(
+                            "[DuckDBWriter] fin_indicator 写后自动回补已关闭 "
+                            "(QS_AUTO_BACKFILL_EPS 未显式开启)"
+                        )
+                finally:
+                    conn.close()
         if accounting_unknown:
             # R1 汇总行（方案裁定口径）：记账失效批显示 unknown，不再虚报「新增」
             logger.info(f"[DuckDBWriter] {table} batch={batch_id}: wrote {len(df)} rows "
@@ -1002,22 +1054,23 @@ class DuckDBWriter(BaseWriter):
         create_sql = f'CREATE TABLE IF NOT EXISTS "{table}" ({col_defs})'
         # R2（write-integrity）：全表覆盖段（建临时→灌数→原子换名）整段进按表锁，
         # 防同进程并发覆盖互相踩踏；汇总日志行留锁外无碍。
-        with self._conn_lock:
-            conn = self._conn()
-            try:
-                conn.execute(create_sql)
-                # 全量覆盖：建临时表→REPLACE→DROP 临时（DuckDB 无原生 CREATE OR REPLACE
-                # 对含数据的表，用事务内 建临时+原子替换 实现等价语义）
-                tmp = f"_pt_tmp_{table}"
-                conn.execute(f'DROP TABLE IF EXISTS "{tmp}"')
-                conn.execute(f'CREATE TABLE "{tmp}" AS SELECT * FROM "{table}" LIMIT 0')
-                conn.register("_pt_src", df)
-                conn.execute(f'INSERT INTO "{tmp}" SELECT * FROM _pt_src')
-                conn.unregister("_pt_src")
-                conn.execute(f'DROP TABLE IF EXISTS "{table}"')
-                conn.execute(f'ALTER TABLE "{tmp}" RENAME TO "{table}"')
-            finally:
-                conn.close()
+        with self._table_write_lock(table):
+            with self._conn_lock:
+                conn = self._conn()
+                try:
+                    conn.execute(create_sql)
+                    # 全量覆盖：建临时表→REPLACE→DROP 临时（DuckDB 无原生 CREATE OR REPLACE
+                    # 对含数据的表，用事务内 建临时+原子替换 实现等价语义）
+                    tmp = f"_pt_tmp_{table}"
+                    conn.execute(f'DROP TABLE IF EXISTS "{tmp}"')
+                    conn.execute(f'CREATE TABLE "{tmp}" AS SELECT * FROM "{table}" LIMIT 0')
+                    conn.register("_pt_src", df)
+                    conn.execute(f'INSERT INTO "{tmp}" SELECT * FROM _pt_src')
+                    conn.unregister("_pt_src")
+                    conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+                    conn.execute(f'ALTER TABLE "{tmp}" RENAME TO "{table}"')
+                finally:
+                    conn.close()
         logger.info(f"[DuckDBWriter] {table} passthrough 全量覆盖 {len(df)} 行 "
                     f"(列原样: {list(df.columns)[:8]}{'...' if len(df.columns) > 8 else ''})")
         return len(df)

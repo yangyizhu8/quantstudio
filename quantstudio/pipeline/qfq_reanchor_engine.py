@@ -77,6 +77,7 @@ DuckDB 连接；测试一律使用临时库/合成 fixture，禁止在正式 dat
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -106,6 +107,10 @@ from quantstudio.pipeline.qfq_fresh_capture import (
     CAPTURE_ACTION_RECOLLECT_OK, CAPTURE_ACTION_RECOVER_APPLIED_NO_EVENT,
 )
 from quantstudio.pipeline.qfq_orchestrator_types import FreshCaptureRecord
+# R2 第二阶段（write-integrity）：价格写事务接入 writer 同款按表写锁。
+# 循环导入已核（2026-10-08）：writers 内部依赖链 _paths / snapshot_lock /
+# eps_backfill / qfq_schema_contracts 均不回导本模块，顶层导入无环。
+from quantstudio.pipeline.writers import table_write_lock
 
 logger = logging.getLogger(__name__)
 
@@ -426,6 +431,9 @@ def update_daily_front_from_staged(conn, asset_type: str, code: str,
         f"SELECT COUNT(*) FROM {daily_table} t JOIN {staged_table} s "
         f"ON t.code = s.code AND t.time = s.time WHERE t.code = ?",
         [code]).fetchone()[0]
+    # R2 write-integrity 同锁串行（取证② TransactionContext write-write：engine
+    # 自持事务 × streaming upsert）——本 UPDATE 在调用方主事务内执行，价格表
+    # 锁覆盖见 apply_reanchor_for_security 事务包（锁横跨 BEGIN→COMMIT/ROLLBACK）。
     conn.execute(
         f"UPDATE {daily_table} AS t SET "
         f"open_front = s.open_front, high_front = s.high_front, "
@@ -639,6 +647,9 @@ def apply_minute_segments(conn, asset_type: str, code: str,
             f"SELECT COUNT(*) FROM {minute_table} "
             f"WHERE code = ? AND freq = ? AND time >= ? AND time < ?",
             [code, seg.freq, seg.t_start, seg.t_end]).fetchone()[0]
+        # R2 write-integrity 同锁串行（取证② TransactionContext write-write：engine
+        # 自持事务 × streaming upsert）——本 UPDATE 在调用方主事务内执行，价格表
+        # 锁覆盖见 apply_reanchor_for_security 事务包（锁横跨 BEGIN→COMMIT/ROLLBACK）。
         conn.execute(
             f"UPDATE {minute_table} SET "
             f"open_front = open_front * ?, high_front = high_front * ?, "
@@ -1134,6 +1145,9 @@ def apply_fresh_minute_staged(conn, asset_type: str, code: str, freq: str,
             coverage=coverage, phase="precheck", freq=freq_c)
 
     # —— 逐值 UPDATE：仅四个 front 列 ——
+    # R2 write-integrity 同锁串行（取证② TransactionContext write-write：engine
+    # 自持事务 × streaming upsert）——本 UPDATE 在调用方主事务内执行，价格表
+    # 锁覆盖见 apply_reanchor_for_security 事务包（锁横跨 BEGIN→COMMIT/ROLLBACK）。
     conn.execute(
         f"UPDATE {minute_table} AS t SET "
         f"open_front = s.open_front, high_front = s.high_front, "
@@ -1996,6 +2010,9 @@ def _record_failure_event(conn, *, event_id: str, asset_type: str, code: str,
                           rows_detail: Optional[str] = None) -> None:
     """ROLLBACK 后用**独立短事务**记录 failed / rolled_back / blocked。绝不触碰 anchor。
 
+    R2 write-integrity 范围界定：本短事务只写 qfq_reanchor_event 控制表、不写价格表，
+    按裁定④范围外**不取价格表写锁**（锁覆盖见 apply_reanchor_for_security 主事务包）。
+
     第六轮阻断 3：失败事件同样必须携带审计上下文（model / model_reason /
     fresh_source / fresh_capture_id / metadata_sha256 / freqs / coverage
     摘要，经 ``minute_ratio_plan`` JSON 传入），否则 BLOCK 后无法审计
@@ -2150,6 +2167,25 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
         if phase:
             payload["precheck_phase"] = phase
         return json.dumps(payload, ensure_ascii=False, default=float)
+
+    # —— R2 write-integrity 同锁串行（取证② TransactionContext write-write：
+    #    engine 自持事务 × streaming upsert）——
+    # 本事务包（BEGIN→COMMIT/ROLLBACK）内既写价格表（minute/daily front 列
+    # UPDATE，经 apply_minute_segments / apply_fresh_minute_staged /
+    # update_daily_front_from_staged）又写控制表（event / anchor）——混合事务
+    # 按价格表锁全覆盖：锁在 BEGIN 之前获取、COMMIT/ROLLBACK 之后释放，
+    # 完整覆盖事务（不得只包 UPDATE 语句；ROLLBACK 也须在锁内——锁释放与
+    # 回滚之间不得留并发写窗口）。
+    # 两表锁都取：minute 表 ∈ _SERIAL_WRITE_TABLES 取真 RLock；daily 表
+    # （stock_daily/etf_daily）不在首期名单 → nullcontext 零成本。
+    # ExitStack + finally 单一释放点：任何异常路径（含 ROLLBACK 自身抛错）
+    # 都不泄漏锁。失败路径 _record_failure_event 纯控制表短事务落在锁动态
+    # 范围内仅为结构性包含，其自身不取价格表锁，无死锁面（event 表不在
+    # _SERIAL_WRITE_TABLES；RLock 同线程可重入）。
+    _r2_daily_table, _r2_minute_table = _tables_of(asset_type)
+    _r2_price_locks = contextlib.ExitStack()
+    _r2_price_locks.enter_context(table_write_lock(_r2_minute_table))
+    _r2_price_locks.enter_context(table_write_lock(_r2_daily_table))
 
     try:
         # —— canonical freq：事务前统一 canonicalize + 去重（"1m"/"1min" 等别名重复
@@ -2338,6 +2374,10 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
                               minute_ratio_plan=_audit_json())
         raise
     finally:
+        # R2 write-integrity 同锁串行：事务已终结（COMMIT/ROLLBACK 均执行完）
+        # 后释放价格表写锁（单一释放点，先于 staged 临时表清理——让等待中的
+        # writer 写路径尽早恢复）。
+        _r2_price_locks.close()
         if staged is not None:
             try:
                 conn.execute(f"DROP TABLE IF EXISTS {staged}")
