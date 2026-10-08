@@ -71,6 +71,21 @@ ASSET_PRICE_TABLES = {
     "ETF": ("etf_daily", "etf_minutes"),
 }
 
+# ── write-integrity R3a/R3b（2026-10-08，四裁定落定版）──────────────────
+# R3a（裁定②）：活跃态周期视为死周期的 updated_at 阈值，N=4h 起步
+# （applying 长重算实证可到 6.5h，N 过小会误清真活跃周期；R3b 心跳上线后可收紧到 2h）。
+_STALE_ACTIVE_CYCLE_S = 4 * 3600
+
+
+def _stale_active_cutoff():
+    """R3a：活跃态周期判死的 updated_at 截止时刻（now−N）。
+
+    qfq_cycle_run.updated_at 为 TIMESTAMP（naive），写入基点是 _now_ts() 的
+    BJ 墙钟字符串——比较必须同基：返回 BJ 墙钟 naive datetime（勿混 tz-aware）。
+    """
+    return (datetime.now(BJ_TZ) - timedelta(seconds=_STALE_ACTIVE_CYCLE_S)
+            ).replace(tzinfo=None)
+
 
 def _now_ts() -> str:
     return datetime.now(BJ_TZ).strftime("%Y-%m-%d %H:%M:%S")
@@ -316,18 +331,32 @@ class QFQResidentOrchestrator:
             logger.info(msg)
 
     def supersede_stale_intents(self, conn) -> int:
+        # R3a（write-integrity 2026-10-08，裁定①甲）：第五可清条件——周期行存在且
+        # 处于活跃态（非四终态）但 updated_at 早于 now−_STALE_ACTIVE_CYCLE_S。
+        # 洞：周期卡活跃态 + 进程死亡 → 永不命中旧条件（DB 实证 11 条 pending 挂
+        # 5 个死周期，水位锚不可见 → 下任务 last_watermark=None → 全年重拉）。
+        # 终态条件原样保留（回归面零变化）；新条件是 OR 扩展；活跃但新鲜的周期
+        # （可能是真活着）不动。
+        _cutoff = _stale_active_cutoff()
         rows = conn.execute(
-            "SELECT wi.cycle_id, wi.source, wi.table_name, wi.freq "
+            "SELECT wi.cycle_id, wi.source, wi.table_name, wi.freq, cr.status "
             "FROM qfq_watermark_intent wi "
             "LEFT JOIN qfq_cycle_run cr ON cr.cycle_id=wi.cycle_id "
             "AND cr.price_source=? AND cr.source_generation=? AND cr.cutover_id=? "
             "WHERE wi.source_generation=? AND wi.cutover_id=? "
             "AND wi.status='pending' AND (cr.cycle_id IS NULL "
-            "OR cr.status IN ('finalized','finalized_held','failed','interrupted'))",
+            "OR cr.status IN ('finalized','finalized_held','failed','interrupted') "
+            "OR (cr.status IS NOT NULL "
+            "AND cr.status NOT IN ('finalized','finalized_held','failed','interrupted') "
+            "AND cr.updated_at < ?))",
             [self._ident["price_source"], self._ident["source_generation"], self._ident["cutover_id"],
-             self._ident["source_generation"], self._ident["cutover_id"]],
+             self._ident["source_generation"], self._ident["cutover_id"], _cutoff],
         ).fetchall()
-        for cyc, source, table, freq in rows:
+        _terminal = ("finalized", "finalized_held", "failed", "interrupted")
+        stale_active = 0
+        for cyc, source, table, freq, cr_status in rows:
+            if cr_status is not None and cr_status not in _terminal:
+                stale_active += 1
             conn.execute(
                 "UPDATE qfq_watermark_intent SET status='superseded', "
                 "hold_reason='stale pending superseded by new cycle' "
@@ -335,6 +364,12 @@ class QFQResidentOrchestrator:
                 "AND source_generation=? AND cutover_id=?",
                 [cyc, source, table, freq, self._ident["source_generation"],
                  self._ident["cutover_id"]])
+        if rows:
+            # begin_cycle 调用点清理数日志（原无）：含清理条数与 stale-active 命中标记
+            logger.info(
+                "[qfq_orch] supersede_stale_intents: 清障 %d 条残留 pending intent"
+                "（其中 stale-active 死周期 %d 条；hold_reason='stale pending "
+                "superseded by new cycle'）", len(rows), stale_active)
         return len(rows)
 
     def _set_cycle_phase(self, conn, cycle_id: str, phase: str) -> None:
