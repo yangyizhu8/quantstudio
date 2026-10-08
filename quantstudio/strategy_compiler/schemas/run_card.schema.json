@@ -89,6 +89,16 @@
       },
       "additionalProperties": false
     },
+    "qmt_target": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/definitions/qmtTarget"
+        }
+      ]
+    },
     "data_window": {
       "type": "object",
       "required": [
@@ -370,6 +380,22 @@
         "NOT_RUN",
         "FAILED"
       ]
+    },
+    "qmtTarget": {
+      "type": "object",
+      "required": [
+        "target",
+        "encoding"
+      ],
+      "properties": {
+        "target": {
+          "const": "qmt"
+        },
+        "encoding": {
+          "const": "gbk"
+        }
+      },
+      "additionalProperties": false
     },
     "smokeResult": {
       "type": "object",

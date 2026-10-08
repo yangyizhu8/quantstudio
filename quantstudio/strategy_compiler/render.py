@@ -11,6 +11,12 @@ The only differences (contract §5) are 3 points handled by the Profile diff lay
   2. Header: PTrade output top declares Profile version.
   3. Suffix: QS -> <id>_quantstudio.py; PTrade -> <id>_ptrade.py.
 
+M2a additive (docs/qmt-pipeline-architecture-m1.md): profile 'qmt' renders the
+QMT innerApi daily strategy via templates/qmt_daily.py.j2 (dual-directory with
+the skills fallback). QMT products are unicode here; gbk transcoding happens at
+the orchestrator write point (fail-closed). The quantstudio/ptrade paths above
+are byte-identical to the pre-M2a behavior.
+
 Golden protection (contract §6 PORTFOLIO-POSITIONS-EXACT-MATCH + handoff §11):
 render() raises if strategy_id matches a protected ID. IDs come from TWO sources
 (plan §3.6): dynamic (config/strategy_fidelity_gates.json gates keys) + hardcoded
@@ -46,9 +52,12 @@ _SKILL_TEMPLATES = (
 _TEMPLATES_DIR = _PKG_TEMPLATES if _PKG_TEMPLATES.is_dir() else _SKILL_TEMPLATES
 
 # Profile -> (template filename prefix, output suffix)
+# M2a additive: 'qmt' entry (QMT innerApi daily template; qmt_minute.py.j2 is a
+# deliberate deny-domain absence — render_qmt raises fail-closed on minute specs).
 _PROFILE_TEMPLATE_MAP: dict[str, dict[str, str]] = {
     "quantstudio": {"prefix": "quantstudio", "suffix": "_quantstudio.py"},
     "ptrade-default": {"prefix": "ptrade", "suffix": "_ptrade.py"},
+    "qmt": {"prefix": "qmt", "suffix": "_qmt.py"},
 }
 
 
@@ -319,12 +328,20 @@ def render_strategy(
 ) -> str:
     """Render IR to a .py source string for the given profile.
 
-    profile ∈ {"quantstudio", "ptrade-default"}. Raises GoldenProtectionError
-    if ir.strategy_id is golden-protected (双源: config + hardcoded).
+    profile ∈ {"quantstudio", "ptrade-default", "qmt"}. Raises
+    GoldenProtectionError if ir.strategy_id is golden-protected (双源:
+    config + hardcoded). QMT profile gets the additive context hook
+    enrich_qmt_context (M2a); quantstudio/ptrade paths are unchanged.
     """
     _assert_not_protected(ir.strategy_id, config_path)
     template_name = _select_template_name(profile, _bar_frequency(ir))
     ctx = _build_template_context(ir, profile)
+    if profile == "qmt":
+        # M2a additive qmt dispatch branch: QMT 专属上下文装配（render_qmt.py）。
+        # lazy import 防环：render_qmt 反向依赖本模块的 render_strategy。
+        from .render_qmt import enrich_qmt_context
+
+        enrich_qmt_context(ctx, ir)
     template = _get_jinja_env().get_template(template_name)
     return template.render(**ctx)
 

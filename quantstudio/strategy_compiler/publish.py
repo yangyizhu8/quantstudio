@@ -44,17 +44,34 @@ def publish_strategy_entry_points(
     spec: dict[str, Any],
     package_dir: str | Path,
     project_root: str | Path,
+    *,
+    target: str = "dual",
 ) -> dict[str, Path]:
     """Publish package entry points to the stable GUI/PTrade directories.
 
     QuantStudio files are published to ``quantstudio/backtest/strategies`` so
     the PyQt backtest strategy selector sees them immediately after refresh.
     PTrade files are published to the project-root ``ptrade`` directory.
+
+    M2a qmt 单目标发布分支：``target="qmt"`` 时 package 内只有 ``qmt/`` 一个产物，
+    发布到项目根 ``qmt`` 目录（gbk 字节原样复制，不重编码）。dual 路径行为零改变。
     """
     strategy_id = spec["strategy_id"]
     package_dir = Path(package_dir).resolve()
     project_root = Path(project_root).resolve()
     overwrite = bool(spec.get("output", {}).get("overwrite", False))
+
+    if target == "qmt":
+        # M2a：qmt 单目标构建产物落位于 package/qmt/（orchestrator render 分支）。
+        qmt_name = output_filename(strategy_id, "qmt")
+        qmt_source = package_dir / "qmt" / qmt_name
+        if not qmt_source.is_file():
+            raise StrategyPublishError(f"package entry point missing: {qmt_source}")
+        qmt_target = project_root / "qmt" / qmt_name
+        return {"qmt": _atomic_publish(qmt_source, qmt_target, overwrite=overwrite)}
+
+    if target != "dual":
+        raise ValueError(f"unknown target {target!r} (expected 'dual' or 'qmt')")
 
     qs_name = output_filename(strategy_id, "quantstudio")
     pt_name = output_filename(strategy_id, "ptrade-default")

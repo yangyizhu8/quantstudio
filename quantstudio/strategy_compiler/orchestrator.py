@@ -45,13 +45,23 @@ from typing import Any
 from .build_strategy_ir import build_strategy_ir
 from .contracts import ContractValidationError, validate_strategy_spec
 from .ir_nodes import StrategyIR
-from .render import GoldenProtectionError, render_ptrade, render_quantstudio
+from .portability_rules import validate_qmt_portability
+from .render import GoldenProtectionError, output_filename, render_ptrade, render_quantstudio
+from .render_qmt import render_qmt
 from .validators.check_hard_filters import check_hard_filters
 from .validators.compare_strategy_variants import compare_strategy_variants
 from .validators.run_smoke_backtest import run_smoke_backtest
 from .validators.scan_lookahead import scan_lookahead
 from .validators.validate_local_strategy import validate_local_strategy
 from .validators.validate_ptrade_portability import validate_ptrade_portability
+
+
+class StrategyPipelineError(RuntimeError):
+    """QMT 产物写盘 fail-closed 错误（M2a：gbk 转码失败，不静默替换）。
+
+    依据：M1-rev2 风险清单 3（gbk 不可编码字符 fail-closed——BLOCK 报错不静默
+    替换；转写册实测 gbk-only 支持）。CLI 以独立退出码（5）面上报。
+    """
 
 # Stages (run_card.schema.json `stage` enum subset for PR6b-1; FIDELITY_COMPARED
 # is PR6b-2/PR7 scope — never produced here).
@@ -89,6 +99,23 @@ def _collect_violation_strs(violations: list) -> list[str]:
     return [str(v) for v in violations]
 
 
+def _write_qmt_product(code: str, path: Path) -> None:
+    """Write a QMT product as gbk bytes (M2a write point; fail-closed).
+
+    纯 unicode -> gbk 转码在此执行（M1 §2.1 render_qmt 行：渲染层返回 unicode，
+    写盘点集中转码）。转码失败 raise StrategyPipelineError——不静默替换字符
+    （M1 风险清单 3）。LF 行尾直写（write_bytes，跨进程确定性与 byte-diff 稳定）。
+    """
+    try:
+        data = code.encode("gbk")
+    except UnicodeEncodeError as e:
+        raise StrategyPipelineError(
+            f"QMT product contains non-gbk-encodable characters "
+            f"(fail-closed, no silent substitution): {path} — {e}"
+        ) from e
+    path.write_bytes(data)
+
+
 def orchestrate(
     spec: dict[str, Any],
     *,
@@ -96,6 +123,7 @@ def orchestrate(
     end: str | None = None,
     out_dir: Path | None = None,
     run_smoke: bool = True,
+    target: str = "dual",
 ) -> dict[str, Any]:
     """Run the full pipeline for a strategy spec and write run_card.json.
 
@@ -104,6 +132,9 @@ def orchestrate(
         start, end: backtest window passed to the smoke engine.
         out_dir: output directory (default: output/generated_strategies/<id>).
         run_smoke: if False, skip the smoke step (stage stays STATIC_VALIDATED).
+        target: 'dual' (default; QuantStudio+PTrade 双平台，既有行为零改变) or
+            'qmt' (M2a：只渲染 QMT 平台——单产物 qmt/<id>_qmt.py，gbk 写盘；
+            api_portability 走 QMT 白名单面；smoke 不适用本地引擎)。
 
     Returns:
         The run_card dict that was written.
@@ -112,7 +143,12 @@ def orchestrate(
         GoldenProtectionError: if strategy_id is golden-protected (render aborts).
         ContractValidationError: if the spec fails schema validation (stage
             stays SPEC_ONLY; still writes a run_card recording the failure).
+        StrategyPipelineError: target='qmt' 且产物含 gbk 不可编码字符（fail-closed）。
     """
+    if target not in ("dual", "qmt"):
+        raise ValueError(
+            f"unsupported target {target!r}; expected 'dual' or 'qmt' (M2a)"
+        )
     strategy_id = spec["strategy_id"]
     profile_id = spec.get("engine_profile", {}).get("profile_id", "daily-bar-v1")
     ptrade_profile_id = spec.get("ptrade_profile", {}).get("profile_id", "ptrade-default")
@@ -178,15 +214,27 @@ def orchestrate(
     artifacts.append({"name": "strategy_spec.json", "path": str(spec_path), "sha256": _sha256_file(spec_path)})
     artifacts.append({"name": "strategy_ir.json", "path": str(ir_path), "sha256": _sha256_file(ir_path)})
 
-    # Render both platforms (may raise GoldenProtectionError — surfaced to caller)
-    qs_code = render_quantstudio(ir)
-    pt_code = render_ptrade(ir)
-    qs_path = out_dir / f"{strategy_id}_quantstudio.py"
-    pt_path = out_dir / f"{strategy_id}_ptrade.py"
-    qs_path.write_text(qs_code, encoding="utf-8")
-    pt_path.write_text(pt_code, encoding="utf-8")
-    artifacts.append({"name": f"{strategy_id}_quantstudio.py", "path": str(qs_path), "sha256": _sha256_file(qs_path)})
-    artifacts.append({"name": f"{strategy_id}_ptrade.py", "path": str(pt_path), "sha256": _sha256_file(pt_path)})
+    # Render platforms (may raise GoldenProtectionError — surfaced to caller).
+    # M2a additive branch: target='qmt' renders ONLY the QMT platform (single
+    # product qmt/<id>_qmt.py, gbk fail-closed write); the dual branch below is
+    # byte-identical to the pre-M2a behavior.
+    if target == "qmt":
+        qmt_code = render_qmt(ir)  # may also raise ValueError (minute deny)
+        qmt_dir = out_dir / "qmt"
+        qmt_dir.mkdir(parents=True, exist_ok=True)
+        qmt_path = qmt_dir / output_filename(strategy_id, "qmt")
+        _write_qmt_product(qmt_code, qmt_path)
+        artifacts.append({"name": qmt_path.name, "path": str(qmt_path),
+                          "sha256": _sha256_file(qmt_path)})
+    else:
+        qs_code = render_quantstudio(ir)
+        pt_code = render_ptrade(ir)
+        qs_path = out_dir / f"{strategy_id}_quantstudio.py"
+        pt_path = out_dir / f"{strategy_id}_ptrade.py"
+        qs_path.write_text(qs_code, encoding="utf-8")
+        pt_path.write_text(pt_code, encoding="utf-8")
+        artifacts.append({"name": f"{strategy_id}_quantstudio.py", "path": str(qs_path), "sha256": _sha256_file(qs_path)})
+        artifacts.append({"name": f"{strategy_id}_ptrade.py", "path": str(pt_path), "sha256": _sha256_file(pt_path)})
 
     validation["schema"] = _CHECK_PASS  # contracts.validate_strategy_spec ran above
 
@@ -194,7 +242,11 @@ def orchestrate(
     # Stage 3: static validators (→ STATIC_VALIDATED)
     # ------------------------------------------------------------------
     # timing = scan_lookahead (lookahead/timing high-risk items)
-    ok_look, v_look, w_look = scan_lookahead(ir, qs_code)
+    # M2a qmt target: scan the QMT product (AST detectors key on local lifecycle
+    # names; IR-based checks are product-agnostic) — E1 wrapper semantics audited here.
+    ok_look, v_look, w_look = scan_lookahead(
+        ir, qmt_code if target == "qmt" else qs_code
+    )
     validation["timing"] = _check_status_from_ok(ok_look)
     warnings_all.extend(w_look)
     known_limitations.extend(_collect_violation_strs(v_look))
@@ -205,30 +257,50 @@ def orchestrate(
     warnings_all.extend(w_hf)
     known_limitations.extend(_collect_violation_strs(v_hf))
 
-    # api_portability (validate_local_strategy QS+PTrade + ptrade portability)
-    ok_qs, v_qs, w_qs = validate_local_strategy(spec, ir, qs_code, "quantstudio")
-    ok_pt, v_pt, w_pt = validate_local_strategy(spec, ir, pt_code, "ptrade-default")
-    ok_port, v_port, w_port = validate_ptrade_portability(pt_code, ir, spec)
-    port_ok = ok_qs and ok_pt and ok_port
-    validation["api_portability"] = _check_status_from_ok(port_ok)
-    warnings_all.extend([*w_qs, *w_pt, *w_port])
-    known_limitations.extend(_collect_violation_strs([*v_qs, *v_pt, *v_port]))
+    # api_portability: dual = validate_local_strategy QS+PTrade + ptrade
+    # portability (既有行为零改变)；qmt target = QMT 白名单面（M2a：对产物跑
+    # validate_qmt_portability 而非 PTrade 面——PTrade 面对单目标 qmt 产物不适用）。
+    if target == "qmt":
+        ok_port, v_port, w_port = validate_qmt_portability(qmt_code)
+        port_ok = ok_port
+        validation["api_portability"] = _check_status_from_ok(port_ok)
+        warnings_all.extend(w_port)
+        known_limitations.extend(_collect_violation_strs(v_port))
+    else:
+        ok_qs, v_qs, w_qs = validate_local_strategy(spec, ir, qs_code, "quantstudio")
+        ok_pt, v_pt, w_pt = validate_local_strategy(spec, ir, pt_code, "ptrade-default")
+        ok_port, v_port, w_port = validate_ptrade_portability(pt_code, ir, spec)
+        port_ok = ok_qs and ok_pt and ok_port
+        validation["api_portability"] = _check_status_from_ok(port_ok)
+        warnings_all.extend([*w_qs, *w_pt, *w_port])
+        known_limitations.extend(_collect_violation_strs([*v_qs, *v_pt, *v_port]))
 
-    # variant_consistency (14-dimension)
-    ok_var, v_var, w_var, variant_report = compare_strategy_variants(spec, ir, qs_code, pt_code)
-    validation["variant_consistency"] = _check_status_from_ok(ok_var)
-    warnings_all.extend(w_var)
-    known_limitations.extend(_collect_violation_strs(v_var))
+    # variant_consistency (14-dimension) — dual only: qmt 单目标构建无双产物
+    # 变体可比（NOT_RUN 诚实登记；下方 status 汇总只计入实际运行的校验项，
+    # 与 orchestrate_source 同款语义）。
+    ok_var = True
+    variant_report = None
+    if target == "qmt":
+        known_limitations.append(
+            "variant_consistency NOT_RUN: single-target qmt build (no dual variants to compare)"
+        )
+    else:
+        ok_var, v_var, w_var, variant_report = compare_strategy_variants(spec, ir, qs_code, pt_code)
+        validation["variant_consistency"] = _check_status_from_ok(ok_var)
+        warnings_all.extend(w_var)
+        known_limitations.extend(_collect_violation_strs(v_var))
 
     static_ok = ok_look and ok_hf and port_ok and ok_var
     # Stage advances to STATIC_VALIDATED once the static validators have RUN,
     # regardless of pass/block — the step executed. (status reflects pass/block.)
     stage = _STAGE_STATIC_VALIDATED
 
-    # Write variant_consistency_report.json (single writer rule)
-    vc_path = out_dir / "variant_consistency_report.json"
-    vc_path.write_text(json.dumps(variant_report, indent=2, ensure_ascii=False), encoding="utf-8")
-    artifacts.append({"name": "variant_consistency_report.json", "path": str(vc_path), "sha256": _sha256_file(vc_path)})
+    # Write variant_consistency_report.json (single writer rule; dual only —
+    # qmt target does not run the 14-dimension compare)
+    if variant_report is not None:
+        vc_path = out_dir / "variant_consistency_report.json"
+        vc_path.write_text(json.dumps(variant_report, indent=2, ensure_ascii=False), encoding="utf-8")
+        artifacts.append({"name": "variant_consistency_report.json", "path": str(vc_path), "sha256": _sha256_file(vc_path)})
 
     # ------------------------------------------------------------------
     # Stage 4: capability inspection + smoke (→ SMOKE_EXECUTED)
@@ -237,7 +309,7 @@ def orchestrate(
     overall_status = "BLOCKED"
     execution_status_for_card = "BLOCKED"
 
-    if static_ok and run_smoke:
+    if static_ok and run_smoke and target == "dual":
         try:
             capability_report = _inspect_capabilities(strategy_id, profile_id)
         except Exception as e:  # pragma: no cover — env-dependent
@@ -266,12 +338,24 @@ def orchestrate(
         known_limitations.append(
             "smoke backtest skipped: static validation BLOCKED (strategy not engine-worthy)"
         )
+    elif target == "qmt":
+        # M2a: QMT product (QMT innerApi init(C)/handlebar(C)) targets the QMT
+        # client runtime — not local-engine runnable. Verification belongs to
+        # the M5 user-domain QMT client checklist (M1 路线 M5).
+        known_limitations.append(
+            "smoke backtest skipped: qmt target product (QMT innerApi lifecycle) "
+            "is not local-engine runnable; M5 user-domain QMT client verification"
+        )
 
     # ------------------------------------------------------------------
     # Assemble run_card.json
     # ------------------------------------------------------------------
     # Overall status: PASS only if all checks PASS AND smoke PASS.
-    all_checks_pass = all(v == _CHECK_PASS for v in validation.values())
+    # Only checks that RAN are judged (NOT_RUN 不计入失败)——与 orchestrate_source
+    # 同款语义；dual 路径五个校验键此刻必然全部置位（schema-fail 已提前返回），
+    # 故该过滤对 dual 为逐行为等价（M2a qmt: variant_consistency=NOT_RUN）。
+    checks_run = {k: v for k, v in validation.items() if v != _CHECK_NOT_RUN}
+    all_checks_pass = all(v == _CHECK_PASS for v in checks_run.values())
     if not all_checks_pass:
         overall_status = "BLOCKED"
     elif smoke_result is None:
@@ -291,6 +375,7 @@ def orchestrate(
         artifacts=artifacts, validation=validation, smoke_result=smoke_result,
         known_limitations=known_limitations, warnings=warnings_all,
         start=start, end=end,
+        qmt_target={"target": "qmt", "encoding": "gbk"} if target == "qmt" else None,
     )
     _write_run_card(run_card, out_dir)
     return run_card
@@ -520,7 +605,7 @@ def _build_run_card(
     *, run_id, strategy_id, build_id, created_at, stage, status,
     spec, ir, profile_id, ptrade_profile_id, execution_status,
     artifacts, validation, smoke_result, known_limitations, warnings,
-    start, end, design_metadata_resolution=None,
+    start, end, design_metadata_resolution=None, qmt_target=None,
 ) -> dict[str, Any]:
     """Assemble the run_card.json dict (run_card.schema.json-conformant)."""
     cv = spec.get("contract_versions", {})
@@ -555,6 +640,8 @@ def _build_run_card(
             "ptrade_profile_id": ptrade_profile_id,
             "execution_status": execution_status,
         },
+        # M2a qmt 单目标构建登记（顶层新键，不动 profile 对象结构；dual 恒 None）
+        "qmt_target": qmt_target,
         # 2026-09-09 设计元数据解析（终审阻断 C：run_card 记录解析状态与证据链）
         "design_metadata_resolution": design_metadata_resolution,
         "data_window": {"start": dw_start, "end": dw_end, "as_of": as_of},

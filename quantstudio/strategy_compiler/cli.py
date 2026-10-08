@@ -8,6 +8,9 @@ The `package` subcommand wires the G3 package builder into a CLI flow that:
 - propagates Golden Protection and invalid-spec failures honestly (non-zero exit);
 - optionally links G2 frozen closure (data_digest_status recorded honestly, never faked).
 
+M2a additive: `package --target qmt` renders a single QMT product via the
+orchestrator (gbk fail-closed; exit 5 on StrategyPipelineError).
+
 Boundaries (G4 release): no real market data / live QMT / resident daemon; no faked
 data digest; real Fidelity/Reference stays deferred.
 """
@@ -46,7 +49,7 @@ def _g2_reference_from_dir(g2_frozen_dir: Optional[Path]) -> Optional[dict]:
 
 
 def cmd_package(args: argparse.Namespace) -> int:
-    """`package <spec> --out <dir> [--g2-frozen-dir <dir>] [--package-version <v>]`."""
+    """`package <spec> --out <dir> [--g2-frozen-dir <dir>] [--package-version <v>] [--target dual|qmt]`."""
     spec_path = Path(args.spec)
     if not spec_path.exists():
         print(f"ERROR: spec file not found: {spec_path}", file=sys.stderr)
@@ -68,6 +71,33 @@ def cmd_package(args: argparse.Namespace) -> int:
     except Exception as e:  # other contract errors (missing keys, etc.)
         print(f"ERROR: spec validation error: {e}", file=sys.stderr)
         return 2
+
+    # M2a qmt 单目标：直通 orchestrator（dual 走 build_strategy_package，既有
+    # 行为零改变）。QMT 产物不是本地引擎可跑件（QMT innerApi 生命周期），smoke
+    # 恒不适用（M5 用户域 QMT 客户端验收承接）。
+    if args.target == "qmt":
+        if args.g2_frozen_dir:
+            print("NOTE: --g2-frozen-dir applies to dual packages only; ignored for --target qmt",
+                  file=sys.stderr)
+        from .orchestrator import StrategyPipelineError, orchestrate
+        try:
+            run_card = orchestrate(
+                spec, out_dir=Path(args.out), target="qmt", run_smoke=False,
+            )
+        except GoldenProtectionError as e:
+            print(f"ERROR: golden protection — {e}", file=sys.stderr)
+            return 3
+        except StrategyPipelineError as e:
+            # gbk fail-closed（M2a）：产物含 gbk 不可编码字符 → 不落盘、稳定退出码 5。
+            print(f"ERROR: QMT pipeline failure — {e}", file=sys.stderr)
+            return 5
+        out_dir = Path(args.out)
+        print(f"qmt package built: {out_dir}")
+        print(f"  strategy_id={run_card['strategy_id']}")
+        print(f"  run_card: {out_dir / 'run_card.json'}")
+        print(f"  stage={run_card['stage']} status={run_card['status']}")
+        print(f"  validation={run_card['validation']}")
+        return 0 if run_card["status"] in ("PASS", "PARTIAL") else 1
 
     g2_ref = _g2_reference_from_dir(Path(args.g2_frozen_dir) if args.g2_frozen_dir else None)
 
@@ -148,6 +178,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_pkg.add_argument("--g2-frozen-dir", default=None,
                        help="Directory with G2 frozen reference artifacts (4 files)")
     p_pkg.add_argument("--package-version", default="0.3.2-mvp", help="Package semver (default 0.3.2-mvp)")
+    p_pkg.add_argument("--target", choices=("dual", "qmt"), default="dual",
+                       help="dual (default): QuantStudio+PTrade 双平台包；qmt: M2a 单目标 QMT 产物"
+                            "（qmt/<id>_qmt.py，gbk；经 orchestrator，不跑本地 smoke）")  # M2a
     p_pkg.set_defaults(func=cmd_package)
 
     p_imp = sub.add_parser("import", help="Convert a local strategy .py to PTrade (source entry)")

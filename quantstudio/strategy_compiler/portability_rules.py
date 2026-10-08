@@ -282,3 +282,187 @@ INJECTED_MARKER = "# [qs-import-generated]"
 def denylist() -> frozenset[str]:
     """全部禁止/需处理 API 并集（校验器用）。"""
     return DENY_REMOVE | DENY_SHIM | DENY_BLOCK
+
+
+# ============================================================================
+# M2a：QMT（迅投大QMT 内置 Python）产物最小白名单 + validate_qmt_portability
+#   依据：docs/qmt/inner-api/ 转写册（05-枚举常量/06-系统函数/07-行情函数/
+#   08-交易函数）+ docs/qmt-pipeline-architecture-m1.md（M1-rev2）。
+#   作用域：spec 路径 QMT 渲染产物（qmt/<id>_qmt.py）静态校验——
+#   不与上方 PTrade 分类共用清单（平台域独立，防双边漂移同理各自单一来源）。
+# ============================================================================
+import ast
+import builtins as _py_builtins
+import re as _re
+from typing import Any
+
+from .validators.scan_lookahead import Violation
+
+# 产物内可裸调用的平台函数/模板 wrapper（QMT innerApi 转写册登记面）
+_QMT_API_WHITELIST: frozenset[str] = frozenset({
+    # 平台行情/交易函数（07-行情函数.md / 08-交易函数.md）
+    "get_market_data_ex",
+    "passorder",
+    "get_trade_detail_data",
+    # 模板注入 wrapper（qmt_daily.py.j2 注入区，行级注释标注转写册依据）
+    "_qs_get_history",
+    "_qs_order_target_value",
+    "_qs_get_positions",
+    "_qs_should_run_daily",
+    "_qs_account_total_value",
+    "_qs_get_ma",
+})
+
+# ContextInfo（约定形参名 C）上允许调用的方法（06-系统函数.md）
+_QMT_CONTEXT_METHODS: frozenset[str] = frozenset({
+    "get_market_data_ex",
+})
+
+# 显式 DENY：QMT 已废弃/错误形态 API（命中即 BLOCK，rule_id 见 value）
+_QMT_API_DENY: dict[str, str] = {
+    # 07-行情函数.md：get_history_data 为旧版废弃接口，新版 get_market_data_ex
+    "get_history_data": "QMT-DEPRECATED-API",
+    # get_market_data（无 _ex）非 QMT innerApi 登记形态（聚宽/本地风格名）
+    "get_market_data": "QMT-NONEX-MARKET-DATA",
+    # 06-系统函数.md schedule_run 节：run_time 为旧版定时器，新版 schedule_run；
+    # M2a 产物面不注入定时器（每日 bar 驱动 = handlebar 天然节拍）
+    "run_time": "QMT-RUNTIME-INVALID",
+}
+
+_QMT_LIFECYCLE_REQUIRED = ("init", "handlebar")
+
+# PEP 263 coding 声明（首行）——产物必须显式 gbk（QMT 客户端读取约定）
+_QMT_CODING_RE = _re.compile(r"^[ \t\f]*#.*?coding[:=][ \t]*gbk\b", _re.IGNORECASE)
+
+
+def validate_qmt_portability(
+    source_text: str,
+) -> tuple[bool, list[Violation], list[str]]:
+    """Statically validate a rendered QMT product (unicode text, pre-gbk write).
+
+    Checks (M2a 最小面，BLOCK 语义)：
+      1. QMT-GBK-HEADER   —— 首行 PEP 263 coding:gbk 声明在位
+      2. QMT-SYNTAX       —— ast.parse 语法合法
+      3. QMT-LIFECYCLE-SHAPE —— 顶层 init(C)/handlebar(C) 生命周期在位
+      4. QMT-DENY-API     —— 废弃/错误形态 API（Name 调用或属性调用名命中）
+      5. QMT-API-WHITELIST —— 裸名调用必须属 白名单/本地函数/builtin；
+                              C.<method>() 必须属 _QMT_CONTEXT_METHODS；
+                              导入模块属性调用（np./pd.）与运行时对象方法放行
+                             （与 validate_local_strategy 同款判定形态）。
+
+    Returns (ok, violations, warnings)——与 scan_lookahead / validate_local_strategy
+    同形，供 orchestrator 统一消费。
+    """
+    violations: list[Violation] = []
+    warnings: list[str] = []
+
+    # 1. gbk header（首行）
+    first_line = source_text.split("\n", 1)[0]
+    if not _QMT_CODING_RE.match(first_line):
+        violations.append(Violation(
+            rule_id="QMT-GBK-HEADER",
+            severity="BLOCK",
+            message="first line must declare `#coding:gbk` (PEP 263; QMT 客户端"
+                    " 读取约定) — 产物缺 gbk 编码声明",
+            location="line 1",
+        ))
+
+    # 2. syntax
+    try:
+        tree = ast.parse(source_text)
+    except SyntaxError as e:
+        violations.append(Violation(
+            rule_id="QMT-SYNTAX",
+            severity="BLOCK",
+            message=f"Python SyntaxError: {e}",
+            location=f"line {e.lineno}",
+        ))
+        return False, violations, warnings
+
+    # 3. lifecycle shape（QMT innerApi：init/handlebar 顶层）
+    top_level_funcs = {
+        n.name for n in ast.iter_child_nodes(tree)
+        if isinstance(n, ast.FunctionDef)
+    }
+    for req in _QMT_LIFECYCLE_REQUIRED:
+        if req not in top_level_funcs:
+            violations.append(Violation(
+                rule_id="QMT-LIFECYCLE-SHAPE",
+                severity="BLOCK",
+                message=f"required QMT lifecycle function {req!r} missing"
+                        " (06-系统函数.md: init/handlebar)",
+            ))
+
+    # 本地函数（含嵌套 def）与本地类——文件内定义即可调
+    local_calls_ok: set[str] = {
+        n.name for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    }
+    imported_modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imported_modules.add((alias.asname or alias.name).split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                imported_modules.add(alias.asname or alias.name)
+
+    builtin_names = frozenset(dir(_py_builtins))
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+
+        # 属性调用（X.method(...)）
+        if isinstance(func, ast.Attribute):
+            attr = func.attr
+            # 4. deny 按属性名拦（如 C.get_market_data(...)）
+            if attr in _QMT_API_DENY:
+                violations.append(Violation(
+                    rule_id=_QMT_API_DENY[attr],
+                    severity="BLOCK",
+                    message=f"call {attr!r} on an object — QMT DENY 名命中"
+                            "（废弃/错误形态；见 docs/qmt/inner-api/ 转写册）",
+                    location=f"line {node.lineno}",
+                ))
+                continue
+            # C.<method>()：ContextInfo 方法面收口（约定形参名 C）
+            if isinstance(func.value, ast.Name) and func.value.id == "C":
+                if attr not in _QMT_CONTEXT_METHODS:
+                    violations.append(Violation(
+                        rule_id="QMT-CONTEXT-METHOD",
+                        severity="BLOCK",
+                        message=f"C.{attr}(...) — ContextInfo 方法不在"
+                                " _QMT_CONTEXT_METHODS 登记面（06-系统函数.md）",
+                        location=f"line {node.lineno}",
+                    ))
+                continue
+            # 导入模块属性调用（np./pd.）放行；其余运行时对象方法放行
+            # （判定形态与 validate_local_strategy 一致）
+            continue
+
+        # 裸名调用
+        if isinstance(func, ast.Name):
+            name = func.id
+            if name in _QMT_API_DENY:
+                violations.append(Violation(
+                    rule_id=_QMT_API_DENY[name],
+                    severity="BLOCK",
+                    message=f"call {name!r} — QMT DENY 名命中（废弃/错误形态；"
+                            "见 docs/qmt/inner-api/ 转写册）",
+                    location=f"line {node.lineno}",
+                ))
+            elif name not in _QMT_API_WHITELIST and name not in local_calls_ok \
+                    and name not in builtin_names:
+                violations.append(Violation(
+                    rule_id="QMT-API-WHITELIST",
+                    severity="BLOCK",
+                    message=f"calls unknown API {name!r} — not in QMT whitelist,"
+                            " not a local helper, not a builtin, not an imported-"
+                            "module/context method",
+                    location=f"line {node.lineno}",
+                ))
+
+    ok = not any(v.severity == "BLOCK" for v in violations)
+    return ok, violations, warnings
