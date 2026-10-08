@@ -537,3 +537,23 @@ audit/held-canary/observation tools must require:
 - no formal main/aux read-write, no formal `mcp-gen1` activation, no formal
   canary, no formal watermark advance, and no Git stage/commit/push until G1
   PASS and a separate explicit user authorization.
+
+
+## 本地策略 → 大 QMT 转换约束（M2a，2026-10-08）
+
+智能体承接「把本地策略转大 QMT（迅投内置 Python）」任务时：
+
+1. **前置查文档**（项目铁律）：先查仓内 `docs/qmt/inner-api/` 转写册或 Context7
+   `/websites/dict_thinktrader_net`；产物中每个 QMT API 调用处标注依据（页/行）——**无标注视为未查**；
+2. **区分两条路径**：spec 路径 `qs-compile package <spec> --target qmt`（IR 渲染，M2a 已通）；
+   source 路径 `qs-compile import <strategy.py> --target qmt`（M2b 在途）——**不得把 PTrade 转换
+   结论直接套到 QMT**（契约距离不同：PTrade 侧 wrapper 薄，QMT 侧契约距离大）；
+3. **禁止事项**：产物编码必须 gbk（fail-closed，不得为通过而放宽门禁）；日线信号必须走 E1 语义
+   （剔当日 bar）；不得使用 `get_history_data` / 非 ex 版 `get_market_data` / `run_time`
+   （回测无效域）；分钟策略在 QMT 面显式 deny（M2 阶段不支持）；
+4. **动态池**：本地 `get_etf_list_local` 动态池在转换期固化静态（spec `universe.codes` 或
+   `--etf-pool-start-date`），与 PTrade 侧同源；
+5. **验证清单**：产物须过 gbk 解码 + `ast.parse` + `validate_qmt_portability` 白名单 +
+   生命周期/静态池/E1 wrapper 契约点检查；
+6. **策略源码零改动**：转换问题一律在框架层（模板/渲染器/编排/门禁）修复，重转生效——
+   禁止改具体策略源码强行通过。

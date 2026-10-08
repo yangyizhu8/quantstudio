@@ -203,6 +203,22 @@ quantstudio/backtest/strategies/     （且仅 .py 与 .md）
 >
 > 🔗 **跨智能体承接开发/优化工作（2026-10-07）**：任意 AI 智能体（Claude Code 读 `CLAUDE.md`、Cursor 读 `.cursorrules`、Gemini 读 `GEMINI.md`，均已随仓库提供一行转链）承接本项目时，先读 [`AGENTS.md`](AGENTS.md)（项目铁律），再按 [`docs/AGENT-PRESET-dev-optimizer.md`](docs/AGENT-PRESET-dev-optimizer.md)（项目开发与优化通用工作法镜像：Plan-Mode 前置审批/确认节点/判型声明/红名单/证据化交付）执行——两者叠加，冲突以 AGENTS.md 为准。
 
+## 策略转换管线（PTrade / QMT）
+
+本地 QuantStudio 策略 → 平台策略的转换通道（`qs-compile`）：
+
+| 通道 | 命令 | 状态 |
+|---|---|---|
+| → PTrade（source 路径） | `qs-compile import <strategy.py> [--etf-pool-start-date ...]` | 成熟（六策略横验证基线） |
+| → 大 QMT 迅投内置 Python（spec 路径） | `qs-compile package <strategy_spec.json> --target qmt --out <dir>` | **M2a 已打通**（首策略 `etf_hot_theme_rotation`） |
+| → QMT（source 路径） | `qs-compile import <strategy.py> --target qmt` | M2b 在途（六策略门槛实际通道） |
+
+**QMT 产物契约（M2a）**：`#coding:gbk` 编码（不可编码字符 fail-closed BLOCK，独立退出码 5，不静默替换）；生命周期 `init(C)` / `handlebar(C)`（对齐 `daily-bar-v1` + 日线订阅，`minute-bar-v1` 显式 deny）；取数经 `C.get_market_data_ex` + **E1 语义**（剔除当日 bar，`count` 多取一根取 `[-2]`）+ 前复权 `dividend_type`；下单经 `passorder`（23 买 / 24 卖）；持仓经 `get_trade_detail_data(acct,'STOCK','POSITION')`；动态 ETF 池在转换期固化静态直灌（双端铁律同源）；`run_card` 顶层 `qmt_target` 字段。QMT API 白名单校验 `validate_qmt_portability`（未登记即 BLOCK）+ 禁用集（`get_history_data` deprecated / 非 ex 版 `get_market_data` / `run_time` 回测域无效）。
+
+平台契约依据：仓内 `docs/qmt/inner-api/` 离线转写册（6043 行，行级引用）+ Context7 `/websites/dict_thinktrader_net`。
+
+分阶段状态：M2a = spec 路径首策略打通（验收四判据 PASS：产物 14/14 契约点 / QMT 白名单 / PTrade 产物 byte-diff 零回归 / CONTRACT GATE）；M2b = source 路径（六策略门槛实际通道）；M3 = 六策略横验证 + L0 静态校验；M4 = 文档完整同步（M3 后）。设计：`docs/qmt-pipeline-architecture-m1.md`、`docs/qmt-pipeline-m2a-plan.md`；证据：`docs/evidence/qmt-m2a-acceptance-20261008.md`。
+
 ## 质量与对齐
 
 ```bash

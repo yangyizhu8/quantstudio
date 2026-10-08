@@ -627,3 +627,35 @@ activation, formal canary and formal watermark release remain unauthorized
 pending G2 and a separate explicit user authorization.  This formal runner does
 not change the strategy toolbox API, strategy signal/selection/rebalance/order
 semantics, or any回测 engine behavior; it is a data-layer cutover tool only.
+
+
+## 本地策略 → 大 QMT 转换产物契约（M2a，2026-10-08）
+
+QMT（迅投）目标由 `qs-compile package <spec> --target qmt` 渲染（spec 路径；首策略
+`etf_hot_theme_rotation` 已打通）。产物 `qmt/<strategy_id>_qmt.py` 契约：
+
+- **编码**：`#coding:gbk`——渲染层返回 unicode str，gbk 转码在写盘点单点执行；不可编码字符
+  **fail-closed BLOCK**（独立退出码 5），禁止静默替换；
+- **生命周期映射**：`initialize(ctx)`→`init(C)`；`handle_data(ctx,data)`→`handlebar(C)`
+  （对齐 `daily-bar-v1` + 日线订阅；`minute-bar-v1` 显式 deny）；`before_trading_start`→
+  handlebar 内时点判断段（日周期=每根日 bar 前段）；`after_trading_end`→handlebar 尾段
+  （**禁 `is_last_bar`**——其语义为全 K 线末根/实盘未完成 bar，非「每日末根」）；`run_daily`→
+  `_qs_should_run_daily` 门控；
+- **注入 wrapper（QMT 侧等价物）**：
+  - `_qs_get_history` → `C.get_market_data_ex` + **剔除当日 bar**（count 多取一根取 `[-2]`，
+    E1 铁律 D-1 语义）+ 前复权 `dividend_type`；
+  - `_qs_order_target_value` → `get_trade_detail_data(acct,'STOCK','POSITION')` 持仓库存 +
+    最新价 → 目标量换算 delta → `passorder(23|24, 1101, acct, code, price, vol, -1, C)`
+    （23 买 / 24 卖，参数位序依 08-交易函数.md）；
+  - `_qs_get_positions` → POSITION 面视图（code/amount 映射）；
+  - `_qs_should_run_daily` → 日线周期门控（预留实盘 run_time 增强位）；
+- **静态池直灌**：spec `universe.codes` 渲染为 `C.stock_list = [...]`（动态 ETF 池转换期
+  固化的双端铁律同源）；
+- **API 白名单**：`_QMT_API_WHITELIST` + `validate_qmt_portability`（未登记即 BLOCK）；
+  禁用 `get_history_data`（deprecated）/ 非 ex 版 `get_market_data` / `run_time`（迅投文档
+  明文「模型回测时无效」）；
+- **run_card**：顶层 `qmt_target={"target":"qmt","encoding":"gbk"}`（profile 对象零触碰，
+  `run_card.schema.json` 同批扩）。
+
+平台契约依据：仓内 `docs/qmt/inner-api/`（6043 行离线转写；05-枚举常量/06-系统函数/
+07-行情函数/08-交易函数行级引用）+ Context7 `/websites/dict_thinktrader_net`。
