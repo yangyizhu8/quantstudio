@@ -52,6 +52,9 @@ def daemon_status_path() -> Path:
 def daemon_run_state_path() -> Path:
     return _data_root() / "daemon_run_state.json"
 
+def qfq_cycle_terminal_path() -> Path:
+    return _data_root() / "qfq_cycle_terminal.json"
+
 def daemon_stop_request_path() -> Path:
     return _data_root() / "daemon_stop.request"
 
@@ -246,6 +249,108 @@ def is_today_pending_rerun() -> bool:
     if state.get("status") in ("running", "interrupted"):
         return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# QFQ 周期终态 JSON「代读件」（六步③）
+# 方案件：docs/qfq-cycle-terminal-json-design-20261009.md（②审已通过）
+# 目的：为 QFQ applying 自停巡检（任务 6dceb0d5）提供**无锁可读**的终态判据源
+#      （daemon 独占期 DB read_only 亦被拒；本件纯文件读，不触 DuckDB 锁）。
+# 纪律：零新增读连接——字段全部来自 daemon 进程内已持有的 CycleSummary / cycle_id。
+# ---------------------------------------------------------------------------
+
+QFQ_TERMINAL_SCHEMA_VERSION = 1
+QFQ_TERMINAL_KEEP_CYCLES = 30  # 滚动保留最近 N 个 cycle（方案件 §3）
+
+
+def read_qfq_cycle_terminal() -> Optional[dict]:
+    """读取代读件。缺失/损坏返回 None。"""
+    path = qfq_cycle_terminal_path()
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+
+def _derive_qfq_terminal_flags(status: Optional[str],
+                               committed, retryable_failed):
+    """派生布尔（方案件 §2）：terminal / substantively_closed。
+
+    - terminal = status ∈ {finalized, finalized_held, failed, interrupted}
+    - substantively_closed = terminal ∧ committed>0 ∧ retryable_failed==0
+      —— **专防「修判据掩蔽真问题」**：周期落定 ≠ 实质闭环。
+    """
+    terminal = status in ("finalized", "finalized_held", "failed", "interrupted")
+    substantively_closed = bool(
+        terminal
+        and isinstance(committed, int) and committed > 0
+        and isinstance(retryable_failed, int) and retryable_failed == 0
+    )
+    return terminal, substantively_closed
+
+
+def write_qfq_cycle_terminal(**fields):
+    """原子写 QFQ 周期终态 JSON（读-合并-原子写，形态对齐 write_run_state）。
+
+    - 零新增读连接：字段全部来自 daemon 进程内已持有的 CycleSummary / cycle_id。
+    - 幂等：同 cycle_id 重复写为覆盖（不重复段）；cycle_id 变化则把上一 cycle
+      推入 history（滚动保留最近 N=QFQ_TERMINAL_KEEP_CYCLES 个，按写入顺序倒序）。
+    - 落点与 daemon_run_state.json 同目录（方案件 §1）。
+    """
+    path = qfq_cycle_terminal_path()
+    existing = read_qfq_cycle_terminal() or {}
+    prev = dict(existing)
+    history = list(prev.pop("history", []) or [])
+
+    committed = fields.get("committed")
+    retryable_failed = fields.get("retryable_failed")
+    terminal, substantively_closed = _derive_qfq_terminal_flags(
+        fields.get("status"), committed, retryable_failed)
+
+    record = {
+        "schema_version": QFQ_TERMINAL_SCHEMA_VERSION,
+        "written_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "source": "daemon",
+        "run_id": fields.get("run_id"),
+        "scheduled_date": fields.get("scheduled_date"),
+        "cycle_id": fields.get("cycle_id"),
+        "phase": fields.get("phase"),
+        "status": fields.get("status"),
+        "started_at": fields.get("started_at"),
+        "finished_at": fields.get("finished_at"),
+        # —— 计数镜像（方案件 §2）——
+        # 说明：discovered_count/executed_count/success_count/failed_count/
+        # pending_count/detector_degraded 是 qfq_cycle_run 表列，daemon 进程内的
+        # CycleSummary **不携带**；方案件 §1「零新增读连接」禁止为本件新开读连接
+        # ⇒ 如实置 null（known-unknown），**不臆造 0**（0 会被误读为「无发现/无失败」）。
+        "discovered_count": fields.get("discovered_count"),
+        "executed_count": fields.get("executed_count"),
+        "success_count": fields.get("success_count"),
+        "failed_count": fields.get("failed_count"),
+        "pending_count": fields.get("pending_count"),
+        "detector_degraded": fields.get("detector_degraded"),
+        # —— 实质信号（来自 CycleSummary / qfq_summary）——
+        "triggers_found": fields.get("triggers_found"),
+        "claimed": fields.get("claimed"),
+        "committed": committed,
+        "retryable_failed": retryable_failed,
+        "dead_letter": fields.get("dead_letter"),
+        "watermarks_committed": fields.get("watermarks_committed"),
+        "watermarks_held": fields.get("watermarks_held"),
+        "bootstrap_required": fields.get("bootstrap_required"),
+        "error": fields.get("error"),
+        # —— 派生布尔（供巡检直接读，避免口径漂移）——
+        "terminal": terminal,
+        "substantively_closed": substantively_closed,
+    }
+
+    # 滚动保留：cycle_id 变化 → 上一 cycle 入 history；同 cycle_id → 覆盖（幂等）
+    if prev.get("cycle_id") and prev.get("cycle_id") != record["cycle_id"]:
+        history.insert(0, prev)
+    doc = dict(record)
+    doc["history"] = history[: max(QFQ_TERMINAL_KEEP_CYCLES - 1, 0)]
+    _atomic_write_json(path, doc)
 
 
 # ---------------------------------------------------------------------------
@@ -629,12 +734,21 @@ class DaemonLifecycle:
             # enabled=true → 先开周期再跑增量任务，任务内四价格表水位改为延迟提交；
             # 开启失败则 fail-closed：任务照跑，但价格表水位保持不动（绝不提前推进）。
             qfq_cycle_id = None
+            qfq_cycle_started_at = None
             if not stop_requested:
                 try:
                     qfq_cycle_id = collector.qfq_begin_cycle()
                     if qfq_cycle_id:
+                        qfq_cycle_started_at = datetime.now().isoformat(timespec="seconds")
                         write_run_state(qfq_phase="cycle_started",
                                         qfq_cycle_id=qfq_cycle_id, qfq_error=None)
+                        # 代读件：周期开启（terminal=False）
+                        write_qfq_cycle_terminal(
+                            run_id=run_id, scheduled_date=today,
+                            cycle_id=qfq_cycle_id,
+                            phase="cycle_started", status="started",
+                            started_at=qfq_cycle_started_at, finished_at=None,
+                            error=None)
                 except Exception as e:
                     logger.error(f"[DaemonLifecycle] QFQ 协调周期开启失败"
                                  f"（fail-closed，价格表水位本轮保持）: {e}",
@@ -695,6 +809,14 @@ class DaemonLifecycle:
                     write_run_state(qfq_phase="interrupted",
                                     qfq_error="stop_requested，post-ingest 未执行，"
                                               "水位保持（下轮清障重算）")
+                    # 代读件：中断终态
+                    write_qfq_cycle_terminal(
+                        run_id=run_id, scheduled_date=today,
+                        cycle_id=qfq_cycle_id,
+                        phase="interrupted", status="interrupted",
+                        started_at=qfq_cycle_started_at,
+                        finished_at=datetime.now().isoformat(timespec="seconds"),
+                        error="stop_requested，post-ingest 未执行，水位保持（下轮清障重算）")
                 else:
                     write_run_state(qfq_phase="post_ingest_running")
                     # P1.0：post_ingest 内可中断。回调**复用本函数内唯一的
@@ -725,6 +847,23 @@ class DaemonLifecycle:
                                     "bootstrap_required":
                                         qfq_summary.bootstrap_required,
                                 })
+                            # 代读件：周期终态（terminal = status ∈ 终态集）
+                            write_qfq_cycle_terminal(
+                                run_id=run_id, scheduled_date=today,
+                                cycle_id=qfq_summary.cycle_id,
+                                phase=qfq_summary.status,
+                                status=qfq_summary.status,
+                                started_at=qfq_cycle_started_at,
+                                finished_at=datetime.now().isoformat(timespec="seconds"),
+                                triggers_found=qfq_summary.triggers_found,
+                                claimed=qfq_summary.claimed,
+                                committed=qfq_summary.committed,
+                                retryable_failed=qfq_summary.retryable_failed,
+                                dead_letter=qfq_summary.dead_letter,
+                                watermarks_committed=qfq_summary.watermarks_committed,
+                                watermarks_held=qfq_summary.watermarks_held,
+                                bootstrap_required=qfq_summary.bootstrap_required,
+                                error=qfq_summary.error)
                             if qfq_summary.status != "finalized":
                                 logger.warning(
                                     f"[DaemonLifecycle] QFQ post-ingest 未完全通过："
@@ -737,6 +876,14 @@ class DaemonLifecycle:
                                      f"（水位保持，下轮重试）: {e}", exc_info=True)
                         write_run_state(qfq_phase="failed",
                                         qfq_error=f"{type(e).__name__}: {e}")
+                        # 代读件：失败终态
+                        write_qfq_cycle_terminal(
+                            run_id=run_id, scheduled_date=today,
+                            cycle_id=qfq_cycle_id,
+                            phase="failed", status="failed",
+                            started_at=qfq_cycle_started_at,
+                            finished_at=datetime.now().isoformat(timespec="seconds"),
+                            error=f"{type(e).__name__}: {e}")
             # Review FIX-1：质量审计开始前消费 stop
             if not stop_requested:
                 _check_stop_at_boundary("pre_quality_audit")
