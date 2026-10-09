@@ -1286,6 +1286,16 @@ _QS_GBK_ASCII_MAP = {
 }
 
 _DENY_APIS = ("set_benchmark", "set_commission")
+
+# ---- 分钟域显式 deny（M3 前置项；与 M2a render_qmt.py:33-61 同构）-----------------
+# 判定口径双源：① engine_profile == 'minute-bar-v1'；② 源内 get_history /
+# get_history_batch / get_price 的 unit/frequency 关键字字面量 ∈ 分钟集合。
+# 口径复制自 source_import.py:3105-3106 `_MINUTE_FREQ_SET` 与 :3109-3130
+# `_source_uses_minute_history`——本模块自持，不 import 共享文件（架构 D 零触碰）。
+# 依据：M1 §2.2 基准声明「分钟策略（minute-bar-v1）M2 不支持、portability 显式 deny」
+#      + render_qmt.py:57-61（spec 路径同款 deny，qmt_minute 模板有意缺席）。
+_QMT_MINUTE_FREQ_SET = ("1m", "5m", "15m", "30m", "60m")
+_QMT_MINUTE_PROFILE = "minute-bar-v1"
 _LIFECYCLE_INIT = "initialize"
 _LIFECYCLE_HANDLE = "handle_data"
 _LIFECYCLE_BEFORE = "before_trading_start"
@@ -1880,6 +1890,41 @@ class QmtSourceConverter:
 # 模块级编排入口（块2/3）—— source 路径主径的 QMT 分支
 # ============================================================================
 
+def _qmt_minute_deny_reason(source: str, engine_profile: str | None) -> str | None:
+    """QMT 分钟域 deny 判定——返回命中原因；None = 非分钟域（放行）。
+
+    口径（与 M1 §2.2 基准声明、M2a render_qmt.py:57-61 spec 路径同构）：
+    ① profile 面：``engine_profile == 'minute-bar-v1'``；
+    ② 源面：``get_history`` / ``get_history_batch`` / ``get_price`` 的 ``unit`` /
+       ``frequency`` 关键字字面量 ∈ ``_QMT_MINUTE_FREQ_SET``（AST 精确；AST 解析失败
+       时退化为文本字面量探测——与 source_import.py:3120 同款退化策略）。
+
+    deny 语义 = fail-closed 硬门：命中即**不产出** QMT 产物（qmt_minute 模板有意缺席，
+    分钟域待后续立项），而非静默按日线转换。
+    """
+    if engine_profile == _QMT_MINUTE_PROFILE:
+        return "engine_profile=%r" % (engine_profile,)
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        hits = [f for f in _QMT_MINUTE_FREQ_SET
+                if ("'%s'" % f) in source or ('"%s"' % f) in source]
+        return ("文本探测命中分钟频率字面量 %s（AST 解析失败退化）" % (hits,)) if hits else None
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+            continue
+        if node.func.id not in ("get_history", "get_history_batch", "get_price"):
+            continue
+        for kw in node.keywords:
+            if kw.arg in ("unit", "frequency") \
+                    and isinstance(kw.value, ast.Constant) \
+                    and isinstance(kw.value.value, str) \
+                    and kw.value.value in _QMT_MINUTE_FREQ_SET:
+                return ("line %d: %s(..., %s=%r) 命中分钟频率"
+                        % (node.lineno, node.func.id, kw.arg, kw.value.value))
+    return None
+
+
 def convert_source_qmt(source_path: str | Path, *, strategy_id: str | None = None,
                        verbose: bool = True,
                        etf_pool_start_date: str | None = None,
@@ -1901,7 +1946,7 @@ def convert_source_qmt(source_path: str | Path, *, strategy_id: str | None = Non
     - etf_pool_start_date / db_path：ETF 静态池固化为 PTrade 转换面特性，
       QMT 侧沿用 get_Ashares / sector 动态池（见 _QS_QMT_ASHARES_EXT）；
     - exclude_bse：'沪深A股' sector 自身即沪深口径（07:3297）；
-    - engine_profile：QMT 侧 profile 门禁为块3 接线项。
+    - engine_profile：**已消费**——分钟域 deny 判定（minute-bar-v1 → fail-closed BLOCK）。
     """
     path = Path(source_path)
     try:
@@ -1915,6 +1960,20 @@ def convert_source_qmt(source_path: str | Path, *, strategy_id: str | None = Non
                                    warnings=[], actions=[])
     if strategy_id is None:
         strategy_id = path.stem.replace("_quantstudio", "")
+
+    # 分钟域显式 deny（fail-closed 硬门；M3 前置项）——命中即不产出产物，不静默降级为日线
+    deny = _qmt_minute_deny_reason(source_code, engine_profile)
+    if deny is not None:
+        if verbose:
+            print("[convert_source_qmt] strategy_id=%s BLOCKED: QMT-MINUTE-DENY (%s)"
+                  % (strategy_id, deny))
+        return QmtSourceResult(
+            converted_code="",
+            errors=["QMT-MINUTE-DENY: 分钟域为显式 deny 域（M1 §2.2 基准声明；qmt_minute 模板"
+                    "有意缺席，分钟域待立项）——%s。已 fail-closed 阻断，未按日线静默转换。"
+                    % deny],
+            warnings=[], actions=[])
+
     converter = QmtSourceConverter(source_code, strategy_path=str(path))
     result = converter.convert()
     notes = []
@@ -1926,8 +1985,8 @@ def convert_source_qmt(source_path: str | Path, *, strategy_id: str | None = Non
     if exclude_bse:
         notes.append("exclude_bse=True 未消费（'沪深A股' sector 自身即沪深口径，07:3297）")
     if engine_profile is not None:
-        notes.append("engine_profile=%r 未消费（QMT 侧 profile 门禁为块3 接线项）"
-                     % (engine_profile,))
+        notes.append("engine_profile=%r 已消费于分钟域 deny 判定（M3 前置；非 minute-bar-v1 "
+                     "profile 在 QMT 侧无其他差异面）" % (engine_profile,))
     for note in notes:
         result.warnings.append("convert_source_qmt: " + note)
     if verbose:

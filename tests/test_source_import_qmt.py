@@ -199,3 +199,57 @@ def test_converted_product_passes_qmt_portability_whitelist():
     ok, violations, _warnings = validate_qmt_portability(result.converted_code)
     assert ok, "QMT whitelist must cover the source-path injected surface: %r" % (
         [str(v) for v in violations],)
+
+
+# ---------------------------------------------------------------------------
+# 7. 负例·分钟域显式 deny（M3 前置；fail-closed 硬门）
+#    依据：M1 §2.2 基准声明「minute-bar-v1 不支持、portability 显式 deny」
+#    + render_qmt.py:57-61（spec 路径同款 deny）
+# ---------------------------------------------------------------------------
+
+_MINUTE_SOURCE = (
+    "def initialize(ctx):\n"
+    "    g.ready = True\n"
+    "\n"
+    "def handle_data(ctx, data):\n"
+    "    h = get_history('600000.SS', 5, unit='5m', fields=['close'])\n"
+)
+
+
+def test_minute_deny_reason_profile_face():
+    from quantstudio.strategy_compiler.source_import_qmt import _qmt_minute_deny_reason
+    assert _qmt_minute_deny_reason("def initialize(ctx):\n    pass\n",
+                                   "minute-bar-v1") is not None
+    assert _qmt_minute_deny_reason("def initialize(ctx):\n    pass\n",
+                                   "daily-bar-v1") is None
+
+
+def test_minute_deny_reason_source_face():
+    from quantstudio.strategy_compiler.source_import_qmt import _qmt_minute_deny_reason
+    reason = _qmt_minute_deny_reason(_MINUTE_SOURCE, None)
+    assert reason is not None and "5m" in reason
+    # 日线 unit 不误杀
+    assert _qmt_minute_deny_reason(
+        "def handle_data(ctx, data):\n"
+        "    h = get_history('600000.SS', 5, unit='1d', fields=['close'])\n",
+        None) is None
+
+
+def test_minute_source_convert_source_qmt_blocked(tmp_path):
+    """端到端：分钟源经 convert_source_qmt → fail-closed BLOCK，不产出产物。"""
+    from quantstudio.strategy_compiler.source_import_qmt import convert_source_qmt
+    p = tmp_path / "minute_demo_quantstudio.py"
+    p.write_text(_MINUTE_SOURCE, encoding="utf-8")
+    result = convert_source_qmt(p, verbose=False)
+    assert result.converted_code == ""
+    assert any("QMT-MINUTE-DENY" in e for e in result.errors), result.errors
+
+
+def test_daily_source_not_minute_denied(tmp_path):
+    """反例：日线源不触发 deny（防误杀）。"""
+    from quantstudio.strategy_compiler.source_import_qmt import convert_source_qmt
+    p = tmp_path / "daily_demo_quantstudio.py"
+    p.write_text(_POSITIVE_SOURCE, encoding="utf-8")
+    result = convert_source_qmt(p, verbose=False)
+    assert not any("QMT-MINUTE-DENY" in e for e in result.errors), result.errors
+    assert result.converted_code != ""
