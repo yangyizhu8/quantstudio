@@ -420,6 +420,33 @@ class DuckDBDataAccess:
 
     # ===================== 行情查询 =====================
 
+    def query_security_name_pit(self, query_ms: int) -> pd.DataFrame:
+        """D-6（2026-10-09，方案 docs/r1-framework-fix-design-20261009.md）：证券简称 PIT 映射。
+
+        口径（与 D-4 同源同窗）：`stock_namechange` 中 `change_date <= query_ms` 的最近一条
+        `name_after`；无变更记录的 code 回退 `stock_basic.name`（**当前快照**，属已知轻度前视，
+        在方案 D-6 中显式登记——「名称不含退」判据所需的退市/ST 标记均出现在 namechange 中，
+        故回退路径不影响该判据的正确性）。
+
+        返回列：code / name / name_source（'namechange' | 'stock_basic'）。
+        """
+        conn = self._get_conn()
+        if conn is None:
+            return pd.DataFrame(columns=['code', 'name', 'name_source'])
+        return conn.execute(f"""
+            WITH nc AS (
+                SELECT code, change_date, name_after
+                FROM stock_namechange
+                WHERE change_date <= {query_ms}
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY code ORDER BY change_date DESC) = 1
+            )
+            SELECT b.code,
+                   COALESCE(nc.name_after, b.name) AS name,
+                   CASE WHEN nc.name_after IS NOT NULL THEN 'namechange' ELSE 'stock_basic' END AS name_source
+            FROM stock_basic b
+            LEFT JOIN nc ON nc.code = b.code
+        """).fetchdf()
+
     def query_daily_snapshot(self, date_ms: int) -> pd.DataFrame:
         """迁移自 BacktestEngine._get_daily_data() (backtest_engine.py:724-735)
 

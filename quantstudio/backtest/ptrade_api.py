@@ -2481,7 +2481,10 @@ class PtradeAPI:
         result = {}
         for security in stock_list:
             bare = bare_code(security)
-            info = self._reference.get_security_info(bare) if self._reference is not None else None
+            # D-6（2026-10-09）：传 as_of → 股票简称由 stock_namechange 做 PIT 推导
+            _as_of = self._current_date or self._prev_date
+            info = (self._reference.get_security_info(bare, as_of=_as_of)
+                    if self._reference is not None else None)
             start_date = info.get('start_date') if info else None
             end_date = info.get('end_date') if info else None
             listed_date = None
@@ -2514,17 +2517,20 @@ class PtradeAPI:
         """获取证券基础信息（对应 Ptrade get_security_info）
         返回含 start_date（上市日期）的对象，策略用于剔除次新股。"""
         bare = bare_code(code)
-        # 当日缓存（上市日期不变，同一天内重复查直接返回）
-        cache_key = ("sec_info", bare)
+        # D-6（2026-10-09）：简称按日 PIT ⇒ 缓存键必须含 as_of（跨日不可复用）
+        _as_of = self._current_date or self._prev_date
+        cache_key = ("sec_info", bare, str(_as_of)[:10])
         if hasattr(self, '_query_cache') and cache_key in self._query_cache:
             return self._query_cache[cache_key]
         # 优先从预加载查（避免逐只 MIN(time) 查询）
-        info = self._reference.get_security_info(bare) if self._reference is not None else None
+        info = (self._reference.get_security_info(bare, as_of=_as_of)
+                if self._reference is not None else None)
         start_dt = info.get('start_date') if info else None
         # 返回轻量对象（支持 .start_date 属性访问）
+        _nm = (info or {}).get('display_name') or code
         result = type("SecurityInfo", (), {
             "code": code, "start_date": start_dt,
-            "display_name": code, "name": code,
+            "display_name": _nm, "name": _nm,
         })()
         if hasattr(self, '_query_cache'):
             self._query_cache[cache_key] = result

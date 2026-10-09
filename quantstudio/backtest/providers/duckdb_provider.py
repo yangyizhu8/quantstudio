@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -16,6 +17,8 @@ from .duckdb_data_access import DuckDBDataAccess
 # 迁移前逐字符等价（含不带 [:10] 截断——截断留在原调用点 preload）。
 from .time_axis import end_ms as _end_ms, start_ms as _start_ms
 from ..libs.security_code_rules import exchange as security_exchange
+
+logger = logging.getLogger(__name__)
 
 
 def _fields(df: pd.DataFrame, fields: Optional[List[str]]) -> pd.DataFrame:
@@ -208,6 +211,7 @@ class DuckDBFundamentalDataProvider(FundamentalDataProvider):
             selected = [field for field in fields if field in df.columns]
             if selected: df = df[selected]
         return df
+
     def get_valuation_query(self, filters, order_by, limit, date, fields):
         df = self._data.query_valuation_orm(_end_ms(date))
         for condition in filters:
@@ -296,6 +300,8 @@ class DuckDBReferenceDataProvider(ReferenceDataProvider):
         self._status_cache_key = None
         self._status_source = None
         self._status_source_by_code: dict = {}
+        # D-6（2026-10-09）：PIT 简称映射缓存 {as_of_ms: {bare: (name, source)}}（一日一次查询）。
+        self._name_pit_cache: dict = {}
     def preload(self):
         if self._data._preload_listing is None:
             self._data._preload_listing = self._data.query_listing_dates()
@@ -315,8 +321,12 @@ class DuckDBReferenceDataProvider(ReferenceDataProvider):
     def get_all_stocks(self, date=None):
         df = self._data.query_all_stocks(_end_ms(date) if date else 2**63 - 1)
         return df['code'].astype(str).tolist() if not df.empty else []
-    def get_security_info(self, code):
+    def get_security_info(self, code, as_of=None):
         """证券元数据（F2 修订版）：股票行为与修复前一致，仅扩展 ETF。
+
+        D-6（2026-10-09）：新增可选 `as_of`——传入时股票分支的 `display_name` 由
+        `stock_namechange` 做 PIT 推导（与 D-4 同源同窗），供策略「名称不含退」等判据使用；
+        **不传时保持既有行为（display_name=入参代码）**，既有调用方字节级不变。
 
         - ETF（etf_basic 元数据成员）：返回真实名称、'etf' 类型、etf_basic
           上市/退市日；list_date 缺失时按 etf_basic 管线契约用首个 etf_daily
@@ -378,11 +388,34 @@ class DuckDBReferenceDataProvider(ReferenceDataProvider):
             return None
         return {'code': code,
                 'start_date': self._ms_to_pydatetime(listing_ms),
-                'display_name': code,
+                'display_name': (self.get_security_name(bare, as_of=as_of) or code),
                 'security_type': 'stock',
                 'exchange': None,
                 'end_date': None,
                 'data_source': None}
+    def _name_pit_map(self, as_of_ms: int) -> dict:
+        """D-6：PIT 简称映射（按 as_of_ms 缓存；失败时回退空表→调用方用代码兜底）。"""
+        cached = self._name_pit_cache.get(as_of_ms)
+        if cached is not None:
+            return cached
+        mapping: dict = {}
+        try:
+            df = self._data.query_security_name_pit(as_of_ms)
+            if df is not None and not df.empty:
+                mapping = {str(r['code']): (r['name'], r['name_source'])
+                           for _, r in df.iterrows()}
+        except Exception as exc:
+            logger.warning('[D-6] 证券简称 PIT 查询失败（回退代码作名称）: %s', exc)
+        self._name_pit_cache[as_of_ms] = mapping
+        return mapping
+
+    def get_security_name(self, code, as_of=None):
+        """D-6：PIT 证券简称；`as_of` 为空时返回 None（调用方保持既有行为）。"""
+        if not as_of:
+            return None
+        entry = self._name_pit_map(_end_ms(str(as_of)[:10])).get(str(code).split('.')[0])
+        return entry[0] if entry else None
+
     def get_industry(self, code, date=None):
         """正式行业归属 PIT 查询（F4）。
 
