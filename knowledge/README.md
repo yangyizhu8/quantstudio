@@ -10,6 +10,7 @@
 |---|---|
 | 接手双端对齐工作（新会话/智能体必读） | [alignment-loop-guide.md](alignment-loop-guide.md)（闭环管线总指导） |
 | 查某个字段/API/规则的**正确口径** | [contracts/](contracts/)（契约档案） |
+| 查**维度对齐状态与宣布进度**（件 G） | [contracts/dimension-alignment.md](contracts/dimension-alignment.md)（维度对齐档案）+ scripts/check_dimension_alignment.py（机检，只提示） |
 | 诊断一个双端差异（SOP） | [playbooks/diff-triage.md](playbooks/diff-triage.md)（三态仲裁总纲） |
 | 查洞的**总账本与收敛进度** | [registry.md](registry.md)（对齐面注册表） |
 | 查历史修复案例的证据 | [archive-index.md](archive-index.md)（147 份证据件分类索引） |

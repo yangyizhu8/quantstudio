@@ -96,3 +96,5 @@ IDX-01 总收益｜IDX-02 年化｜IDX-03 基准收益（=DAT-02 复用）｜IDX
 
 - 2026-10-07 POS-01 →已锚定（修复落地+契约测试）；FEE-05 →已锚定（双锚点判别：买入不含费）；DAT-16 新增（估值价格快照微差，V2 残差 3.88pp 归因）。
 - 2026-10-06 v1 建账：17 POS + 6 类骨架；回填历史锚点（DAT-01/03、API-00）；四象限案例新增排查锚点 7 条 + 已知分歧 1 条（POS-01）。
+
+> **维度对齐档案（件 G，2026-10-08）**：维度宣布机制与首例候选（DIM-01 ETF 日线策略域，N=1/3）见 [contracts/dimension-alignment.md](contracts/dimension-alignment.md)；机检 scripts/check_dimension_alignment.py（只提示不自动宣布）。
