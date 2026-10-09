@@ -277,11 +277,14 @@ def _derive_qfq_terminal_flags(status: Optional[str],
                                committed, retryable_failed):
     """派生布尔（方案件 §2）：terminal / substantively_closed。
 
-    - terminal = status ∈ {finalized, finalized_held, failed, interrupted}
+    - terminal = status ∈ {finalized, finalized_held, failed, interrupted, begin_failed}
     - substantively_closed = terminal ∧ committed>0 ∧ retryable_failed==0
       —— **专防「修判据掩蔽真问题」**：周期落定 ≠ 实质闭环。
     """
-    terminal = status in ("finalized", "finalized_held", "failed", "interrupted")
+    # begin_failed 亦为终态（2026-10-10 总调度补接线令：begin 失败当日须出终态记录，
+    # 防「昨日终态冒充今日」被巡检误读为闭环）。
+    terminal = status in ("finalized", "finalized_held", "failed", "interrupted",
+                          "begin_failed")
     substantively_closed = bool(
         terminal
         and isinstance(committed, int) and committed > 0
@@ -756,6 +759,15 @@ class DaemonLifecycle:
                     write_run_state(qfq_phase="begin_failed",
                                     qfq_cycle_id=None,
                                     qfq_error=f"{type(e).__name__}: {e}")
+                    # 代读件：begin 失败终态（terminal=true / substantively_closed=false
+                    # / cycle_id=null）——防「昨日终态冒充今日」闭环。
+                    write_qfq_cycle_terminal(
+                        run_id=run_id, scheduled_date=today,
+                        cycle_id=None,
+                        phase="begin_failed", status="begin_failed",
+                        started_at=None,
+                        finished_at=datetime.now().isoformat(timespec="seconds"),
+                        error=f"{type(e).__name__}: {e}")
             tasks = tasks_cfg.get("tasks", [])
             for task in tasks:
                 # Review FIX-1：每个 task 开始前消费 stop；
