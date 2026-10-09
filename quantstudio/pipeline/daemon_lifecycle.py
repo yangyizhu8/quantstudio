@@ -262,6 +262,13 @@ def is_today_pending_rerun() -> bool:
 QFQ_TERMINAL_SCHEMA_VERSION = 1
 QFQ_TERMINAL_KEEP_CYCLES = 30  # 滚动保留最近 N 个 cycle（方案件 §3）
 
+# 终态口径唯一来源（F3 口径统一，2026-10-10 dev 复核）：
+# 派生函数与巡检契约共用此常量，避免「终态集」口径散落各处。
+QFQ_TERMINAL_STATUSES = (
+    "finalized", "finalized_held", "failed", "interrupted",
+    "begin_failed", "skipped_disabled",
+)
+
 
 def read_qfq_cycle_terminal() -> Optional[dict]:
     """读取代读件。缺失/损坏返回 None。"""
@@ -274,22 +281,22 @@ def read_qfq_cycle_terminal() -> Optional[dict]:
 
 
 def _derive_qfq_terminal_flags(status: Optional[str],
-                               committed, retryable_failed):
+                               committed, triggers_found, retryable_failed):
     """派生布尔（方案件 §2）：terminal / substantively_closed。
 
-    - terminal = status ∈ {finalized, finalized_held, failed, interrupted, begin_failed}
-    - substantively_closed = terminal ∧ committed>0 ∧ retryable_failed==0
-      —— **专防「修判据掩蔽真问题」**：周期落定 ≠ 实质闭环。
+    - terminal = status ∈ QFQ_TERMINAL_STATUSES（终态口径唯一来源，F3 统一）。
+    - substantively_closed = terminal ∧ (committed>0 ∨ triggers_found==0)
+      ∧ retryable_failed==0。
+      · 防「修判据掩蔽真问题」：周期落定 ≠ 实质闭环；
+      · 防「无事可做」误报：triggers_found==0 时零提交亦属正常闭环
+        （F2，2026-10-10 dev 复核）。
     """
-    # begin_failed 亦为终态（2026-10-10 总调度补接线令：begin 失败当日须出终态记录，
-    # 防「昨日终态冒充今日」被巡检误读为闭环）。
-    terminal = status in ("finalized", "finalized_held", "failed", "interrupted",
-                          "begin_failed")
+    terminal = status in QFQ_TERMINAL_STATUSES
+    committed_ok = isinstance(committed, int) and committed > 0
+    no_triggers = isinstance(triggers_found, int) and triggers_found == 0
+    retry_clear = isinstance(retryable_failed, int) and retryable_failed == 0
     substantively_closed = bool(
-        terminal
-        and isinstance(committed, int) and committed > 0
-        and isinstance(retryable_failed, int) and retryable_failed == 0
-    )
+        terminal and (committed_ok or no_triggers) and retry_clear)
     return terminal, substantively_closed
 
 
@@ -309,7 +316,8 @@ def write_qfq_cycle_terminal(**fields):
     committed = fields.get("committed")
     retryable_failed = fields.get("retryable_failed")
     terminal, substantively_closed = _derive_qfq_terminal_flags(
-        fields.get("status"), committed, retryable_failed)
+        fields.get("status"), committed, fields.get("triggers_found"),
+        retryable_failed)
 
     record = {
         "schema_version": QFQ_TERMINAL_SCHEMA_VERSION,
@@ -751,6 +759,17 @@ class DaemonLifecycle:
                             cycle_id=qfq_cycle_id,
                             phase="cycle_started", status="started",
                             started_at=qfq_cycle_started_at, finished_at=None,
+                            error=None)
+                    else:
+                        # 代读件：编排器关闭（skipped_disabled）——形态对齐 begin_failed，
+                        # cycle_id=null / scheduled_date=当日 / terminal=true / closed=false，
+                        # 防「昨日终态冒充今日」（F1，2026-10-10 dev 复核）。
+                        write_qfq_cycle_terminal(
+                            run_id=run_id, scheduled_date=today,
+                            cycle_id=None,
+                            phase="skipped_disabled", status="skipped_disabled",
+                            started_at=None,
+                            finished_at=datetime.now().isoformat(timespec="seconds"),
                             error=None)
                 except Exception as e:
                     logger.error(f"[DaemonLifecycle] QFQ 协调周期开启失败"
