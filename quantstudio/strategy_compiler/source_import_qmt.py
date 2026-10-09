@@ -968,12 +968,25 @@ def _qs_last_close(C, code):
     return None
 
 
-def _qs_fin_to_rows(raw):
-    """get_financial_data 原始返回 → {code: {field: value}} 归一。
+def _qs_fin_to_rows(raw, shape=None):
+    """get_financial_data 原始返回 → {code: {field: value}} 归一（M3.1 双轨修复 F-1）。
 
-    返回形态未入本次行级索引 →【M5 实测项】：兼容 {field: {code: v}} /
-    {code: {field: v}} / DataFrame(index=code) 三形态。
+    轨 A（主）**显式形态声明**：``shape='code_major'`` / ``'field_major'`` 时按声明解析、
+    **零猜测**——M5-1 钉死真实返回形态后由调用方经此路径接入（**声明优先于识别**）。
+
+    轨 B（兜底）**证券代码模式识别**：``shape=None`` 时以「六位数字 + 点 + SH/SZ/BJ 后缀」的
+    正则（函数体 ``code_re`` 处，完整形态见该行代码）判定哪一层是 code 层（抽样 ≤5 键）。
+
+    **不确定即保守**（②审裁定）：两层均不命中代码形态、**或两层同时命中（歧义）** → 返回 ``{}``
+    并打印 ``QS_QMT_FIN_SHAPE_UNDETERMINED`` 审计行——**绝不猜**。原实现按「两层 value 是否 dict」
+    探测，而 ``{code:{field:v}}`` 与 ``{field:{code:v}}`` 结构同构不可区分 → 纯 dict 形态被误判，
+    致全 NaN 且与「真的缺数」不可区分（静默错值；M3 桩冒烟发现 F-1）。
+
+    DataFrame 形态（``to_dict('index')``，依据 07-行情函数.md:1889 投影）路径**不变**。
     """
+    import re as _qs_re  # 局部 import：不依赖产物头部 import 面（产物仅 import pandas）
+    code_re = _qs_re.compile(r'^\\d{6}\\.(SH|SZ|BJ)$', _qs_re.IGNORECASE)
+
     rows = {}
     if raw is None:
         return rows
@@ -984,16 +997,44 @@ def _qs_fin_to_rows(raw):
             return rows
     if not isinstance(raw, dict):
         return rows
-    first = next(iter(raw.values()), None)
-    if isinstance(first, dict):
-        probe = next(iter(first.values()), None)
-        if isinstance(probe, dict):
-            for code, fdict in raw.items():          # 形态：{code: {field: v}}
+
+    def _code_major(d):
+        for code, fdict in d.items():
+            if isinstance(fdict, dict):
                 rows.setdefault(str(code), {}).update(fdict)
-        else:
-            for field, cmap in raw.items():          # 形态：{field: {code: v}}
+
+    def _field_major(d):
+        for field, cmap in d.items():
+            if isinstance(cmap, dict):
                 for code, v in cmap.items():
                     rows.setdefault(str(code), {})[field] = v
+
+    # 轨 A：显式声明（零猜测）
+    if shape == 'code_major':
+        _code_major(raw)
+        return rows
+    if shape == 'field_major':
+        _field_major(raw)
+        return rows
+
+    # 轨 B：证券代码模式识别（抽样 ≤5 键；歧义/均不命中 → 保守）
+    outer_keys = [str(k) for k in list(raw.keys())[:5]]
+    outer_is_code = bool(outer_keys) and all(code_re.match(k) for k in outer_keys)
+    first = next(iter(raw.values()), None)
+    inner_is_code = False
+    if isinstance(first, dict) and first:
+        inner_keys = [str(k) for k in list(first.keys())[:5]]
+        inner_is_code = all(code_re.match(k) for k in inner_keys)
+
+    if outer_is_code and not inner_is_code:
+        _code_major(raw)
+        return rows
+    if inner_is_code and not outer_is_code:
+        _field_major(raw)
+        return rows
+    print('QS_QMT_FIN_SHAPE_UNDETERMINED: get_financial_data 返回形态无法判定'
+          '（outer_code=%s inner_code=%s）——保守返回空，不猜'
+          % (outer_is_code, inner_is_code))
     return rows
 
 
@@ -1030,7 +1071,9 @@ def _qs_get_fundamentals(table, codes, date=None, fields=None, C=None):
                                    report_type='announce_time')  # 显式钉死 :1867/:1877
     except Exception:
         return frame
-    rows = _qs_fin_to_rows(raw)
+    # 形态声明（轨 A，M3.1）：M5-1 钉死真实返回形态后，此处改传 'code_major'/'field_major'
+    # 即由显式声明路径解析（声明优先于识别）；当前传 None → 走轨 B 证券代码模式识别。
+    rows = _qs_fin_to_rows(raw, shape=None)
     for code in codes:
         row = rows.get(code)
         if not row:

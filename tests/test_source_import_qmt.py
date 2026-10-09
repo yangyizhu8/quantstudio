@@ -253,3 +253,77 @@ def test_daily_source_not_minute_denied(tmp_path):
     result = convert_source_qmt(p, verbose=False)
     assert not any("QMT-MINUTE-DENY" in e for e in result.errors), result.errors
     assert result.converted_code != ""
+
+
+# ---------------------------------------------------------------------------
+# 8. F-1 修复（M3.1 双轨）：产物内 _qs_fin_to_rows 形态解析
+#    修复面在**产物**内（EXT 注入模板），故测试从真实产物命名空间取函数调用
+#    （而非测转换器模块）——保证测的是产物实际运行的那份实现。
+# ---------------------------------------------------------------------------
+
+_PRODUCT_NS: dict = {}
+
+_CODE_MAJOR = {"600000.SH": {"s_fa_eps_basic": 1.23},
+               "000009.SZ": {"s_fa_eps_basic": 4.56}}
+_FIELD_MAJOR = {"s_fa_eps_basic": {"600000.SH": 1.23, "000009.SZ": 4.56}}
+
+
+def _product_ns() -> dict:
+    """转换最小源并 exec 产物，返回其模块命名空间（真实产物面）。"""
+    if not _PRODUCT_NS:
+        code = QmtSourceConverter(_POSITIVE_SOURCE).convert().converted_code
+        exec(compile(code, "<qmt_product>", "exec"), _PRODUCT_NS)
+    return _PRODUCT_NS
+
+
+def test_fin_to_rows_explicit_code_major():
+    """轨 A：显式声明 code_major → 零猜测正确解析。"""
+    f = _product_ns()["_qs_fin_to_rows"]
+    assert f(_CODE_MAJOR, shape="code_major") == _CODE_MAJOR
+
+
+def test_fin_to_rows_explicit_field_major():
+    """轨 A：显式声明 field_major → 零猜测正确解析。"""
+    f = _product_ns()["_qs_fin_to_rows"]
+    assert f(_FIELD_MAJOR, shape="field_major") == _CODE_MAJOR
+
+
+def test_fin_to_rows_auto_detect_code_major():
+    """轨 B：外层键为证券代码 → 自动识别为 code_major。"""
+    f = _product_ns()["_qs_fin_to_rows"]
+    assert f(_CODE_MAJOR) == _CODE_MAJOR
+
+
+def test_fin_to_rows_auto_detect_field_major():
+    """轨 B：内层键为证券代码 → 自动识别为 field_major。"""
+    f = _product_ns()["_qs_fin_to_rows"]
+    assert f(_FIELD_MAJOR) == _CODE_MAJOR
+
+
+def test_fin_to_rows_undetermined_returns_empty(capsys):
+    """两层均不命中代码形态 → 保守返回 {} + 审计行（显式缺数优于静默错值）。"""
+    f = _product_ns()["_qs_fin_to_rows"]
+    assert f({"foo": {"bar": 1}}) == {}
+    assert "QS_QMT_FIN_SHAPE_UNDETERMINED" in capsys.readouterr().out
+
+
+def test_fin_to_rows_ambiguous_both_layers_code(capsys):
+    """②审补充裁定：两层**同时**命中代码形态（歧义）→ 亦判 UNDETERMINED。"""
+    f = _product_ns()["_qs_fin_to_rows"]
+    assert f({"600000.SH": {"000009.SZ": 1.0}}) == {}
+    assert "QS_QMT_FIN_SHAPE_UNDETERMINED" in capsys.readouterr().out
+
+
+def test_fin_to_rows_dataframe_path_unchanged():
+    """to_dict('index') 路径**不变**（07-行情函数.md:1889 投影）。"""
+    import pandas as pd
+    f = _product_ns()["_qs_fin_to_rows"]
+    df = pd.DataFrame({"s_fa_eps_basic": [1.23]}, index=["600000.SH"])
+    assert f(df) == {"600000.SH": {"s_fa_eps_basic": 1.23}}
+
+
+def test_fin_to_rows_none_and_nondict_safe():
+    """None / 非 dict → 空（既有防御不变）。"""
+    f = _product_ns()["_qs_fin_to_rows"]
+    assert f(None) == {}
+    assert f([1, 2, 3]) == {}
