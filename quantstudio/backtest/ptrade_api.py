@@ -271,11 +271,17 @@ class BarData:
         self.volume = float(row.get('volume', 0))
         self.preclose = float(row.get('preClose', row.get('pre_close', 0)))
         # 涨跌停价计算（用 shared_ashare_rules）
+        # D-1b（2026-10-10）：档位判定必须带 PIT 简称——is_st_stock 在 name 为空时恒 False，
+        # 此前未传 name ⇒ ST/*ST 股一律按 10% 计算（high_limit 偏高、涨停判据失真）。
+        # name 由引擎按日注入（与 D-6 同源：stock_namechange as-of）。
         from .libs.shared_ashare_rules import get_price_limit_pct
         bare = bare_code(row.get('code', ''))
         qmt_code = normalize_to_qmt(bare)
+        _nm = row.get('name')
+        if not isinstance(_nm, str) or not _nm.strip():
+            _nm = None
         if self.preclose > 0:
-            limit_pct = get_price_limit_pct(qmt_code)
+            limit_pct = get_price_limit_pct(qmt_code, _nm)
             self.high_limit = round(self.preclose * (1 + limit_pct), 2)
             self.low_limit = round(self.preclose * (1 - limit_pct), 2)
         else:
@@ -917,7 +923,10 @@ class PtradeAPI:
 
         从 stock_float_share + stock_daily 查 valuation 字段，按 QueryBuilder 的
         filter/order_by/limit 处理，返回 DataFrame（含 code 列，Ptrade 格式）。
-        market_cap/circ_mv/total_mv 单位：亿元（stock_float_share 存元 → /1e8）。
+        单位口径（2026-10-09 D-2/D-3 修正，方案 docs/r1-framework-fix-design-20261009.md）：
+        market_cap / circulating_market_cap 统一为**亿元**
+        （源表 stock_daily_valuation 存**万元** → /1e4；双锚点实测：600000≈3030 亿、000001≈2270 亿）；
+        float_value / total_value / circ_mv 保持**源表原值（万元）不换算**，兼容存量策略。
         """
         try:
             if self._fundamental is None:

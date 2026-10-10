@@ -1688,6 +1688,8 @@ class DuckDBDataAccess:
                 WHERE end_date <= {query_ms} GROUP BY code
             )
             SELECT v.code, v.circ_mv AS float_value, v.total_mv AS total_value,
+                   v.total_mv / 1e4 AS market_cap,
+                   v.circ_mv / 1e4 AS circulating_market_cap,
                    v.pe_ttm AS pe_ratio, v.pe_ttm, v.pb AS pb_ratio, v.turnover_rate AS turnover_ratio,
                    COALESCE(fs.free_share,
                             CASE WHEN d.close IS NULL OR d.close = 0 THEN NULL
@@ -1717,9 +1719,9 @@ class DuckDBDataAccess:
         return conn.execute(f"""
             SELECT s.code,
                    s.circ_mv          AS float_value,
-                   s.circ_mv          AS circulating_market_cap,
+                   s.circ_mv / 1e4    AS circulating_market_cap,
                    s.total_mv         AS total_value,
-                   s.total_mv         AS market_cap,
+                   s.total_mv / 1e4   AS market_cap,
                    s.pe_ttm           AS pe_ratio,
                    s.pe_ttm           AS pe_ttm,
                    s.pb               AS pb_ratio,
@@ -1831,8 +1833,8 @@ class DuckDBDataAccess:
                 QUALIFY ROW_NUMBER() OVER (PARTITION BY code ORDER BY time DESC) = 1
             )
             SELECT v.code,
-                   v.total_mv / 1e8   AS market_cap,
-                   v.circ_mv / 1e8    AS circulating_market_cap,
+                   v.total_mv / 1e4   AS market_cap,
+                   v.circ_mv / 1e4    AS circulating_market_cap,
                    v.circ_mv          AS circ_mv,
                    v.circ_mv          AS float_value,
                    COALESCE(v.free_share, fs.free_share,

@@ -199,6 +199,7 @@ class DuckDBFundamentalDataProvider(FundamentalDataProvider):
             if df is not None and not df.empty:
                 df = df.copy()
                 df.index = [str(code).split('.')[0] for code in df.index]
+                self._warn_missing_fields(df, fields, 'preload')
                 return df
         df = self._data.query_valuation_daily_pit(codes, query_ms)
         if df.empty: df = self._data.query_valuation_monthly_fallback(codes, query_ms)
@@ -207,10 +208,27 @@ class DuckDBFundamentalDataProvider(FundamentalDataProvider):
         if not shares.empty: df = df.merge(shares[['code', 'total_share']], on='code', how='left')
         df['pe_ratio_lyr'] = df['pe_ratio']
         df = df.set_index('code')
+        self._warn_missing_fields(df, fields, 'as_of')
         if fields:
             selected = [field for field in fields if field in df.columns]
             if selected: df = df[selected]
         return df
+
+    @staticmethod
+    def _warn_missing_fields(df, fields, path):
+        """D-2/D-3（2026-10-09 方案 docs/r1-framework-fix-design-20261009.md）：
+
+        请求的 valuation 字段若不在返回列中，必须**显式上报**——
+        本次 D-2 缺陷（market_cap/circulating_market_cap 被静默丢弃）正由此掩盖。
+        仅告警不抛错：部分调用方按需请求可选字段，硬抛会破坏既有调用面。
+        """
+        if not fields or df is None:
+            return
+        missing = [f for f in fields if f not in df.columns]
+        if missing:
+            logger.warning(
+                "[valuation] %s 路径缺失请求字段 %s（可得字段：%s）——显式上报，不静默丢弃",
+                path, missing, list(df.columns))
 
     def get_valuation_query(self, filters, order_by, limit, date, fields):
         df = self._data.query_valuation_orm(_end_ms(date))
@@ -415,6 +433,15 @@ class DuckDBReferenceDataProvider(ReferenceDataProvider):
             return None
         entry = self._name_pit_map(_end_ms(str(as_of)[:10])).get(str(code).split('.')[0])
         return entry[0] if entry else None
+
+    def get_security_name_map(self, as_of=None):
+        """D-1b（2026-10-10）：{bare: name} 全市场 PIT 简称映射（按 as_of 缓存，一日一次查询）。
+
+        供引擎为快照行批量注入 `name`（BarData 判涨跌停档位用），避免逐码调用。
+        """
+        if not as_of:
+            return {}
+        return {k: v[0] for k, v in self._name_pit_map(_end_ms(str(as_of)[:10])).items()}
 
     def get_industry(self, code, date=None):
         """正式行业归属 PIT 查询（F4）。

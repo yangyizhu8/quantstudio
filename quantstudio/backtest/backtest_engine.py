@@ -2178,11 +2178,44 @@ class BacktestEngine:
         if hasattr(self, '_ptrade_context') and self._ptrade_context is not None:
             self._ptrade_context.portfolio = Portfolio(self.account.cash, ptrade_positions)
 
+    def _pit_name_map(self, day_str):
+        """D-1b：当日 PIT 简称映射 {bare: name}；不可用时返回 None（调用方保持原样）。"""
+        try:
+            ref = getattr(self._providers, "reference", None)
+            if ref is None or not hasattr(ref, "get_security_name_map"):
+                return None
+            mapping = ref.get_security_name_map(day_str)
+            return mapping or None
+        except Exception as exc:
+            logger.debug("[D-1b] 简称映射不可用（保持原样）: %s", exc)
+            return None
+
+    def _attach_pit_names(self, df, day_str):
+        """D-1b（2026-10-10）：为快照行注入 PIT 简称（`name` 列），供 BarData 判定涨跌停档位。
+
+        与 D-6 同源（stock_namechange as-of）。纯补齐：已有可用 name 列时不覆盖；
+        provider 不可用时原样返回（容错，不改变既有行为）。
+        """
+        try:
+            if df is None or not hasattr(df, 'columns') or 'code' not in df.columns:
+                return df
+            if 'name' in df.columns and bool(df['name'].notna().any()):
+                return df
+            mapping = self._pit_name_map(day_str)
+            if not mapping:
+                return df
+            out = df.copy()
+            out['name'] = out['code'].astype(str).str.split('.').str[0].map(mapping)
+            return out
+        except Exception as exc:
+            logger.debug("[D-1b] 简称注入失败（保持原样）: %s", exc)
+            return df
+
     def _build_data_dict(self, curr_data, day_str):
         """构建 Ptrade data 字典（供 after_trading_end 使用）"""
         from .ptrade_api import DataDict
         data = DataDict()
-        data.set_curr_data(curr_data, day_str)
+        data.set_curr_data(self._attach_pit_names(curr_data, day_str), day_str)
         return data
 
     # ===================== Ptrade 策略执行 =====================
@@ -2203,8 +2236,9 @@ class BacktestEngine:
         self._ptrade_context = ctx
 
         # 构建 data 字典（惰性：不预先构建 5000 个 BarData，只在 data[code] 被访问时构建）
+        # 【D-1b 2026-10-10】注入 PIT 简称 → BarData 判涨跌停档位（ST/*ST=5%）
         data = DataDict()
-        data.set_curr_data(curr_data, day_str)
+        data.set_curr_data(self._attach_pit_names(curr_data, day_str), day_str)
 
         # 注入 API（含 prices + curr_data 供即时执行使用）
         _api.attach(self, curr_data, prev_data, day_str, prev_day_str, prices)
@@ -2402,10 +2436,35 @@ class BacktestEngine:
             raise FrequencyCapabilityError(
                 "TABLE_EMPTY", api_freq='1m', table="stock_minutes/etf_minutes",
                 detail=f"{day_str} 全 universe 无分钟数据")
+        # 【D-1 修复 2026-10-09，方案 docs/r1-framework-fix-design-20261009.md（纯恢复型）】
+        # 分钟表 stock_minutes/etf_minutes 无 preClose 列（实测为 NULL），而分钟档位的
+        # bar 快照直接由这些行构造 BarData ⇒ preclose=nan ⇒ high_limit=round(nan×档位,2)=0，
+        # 使「现价 ≥ high_limit×0.99」类判据恒真（该分支永不退出）。
+        # 修法：以**当日日线 snapshot** 的 preClose 兜底注入到分钟行（纯补齐，不覆盖已有列；
+        # 日线档位不受影响——本函数仅分钟档位使用）。
+        # 注：分钟表虽**有** preClose 列但实测整列为 NULL（不可用），故判定条件为
+        # 「列缺失 **或** 全列 NaN」。注入落在 **bar 组**（bar_df）而非 all_bars——
+        # all_bars 是 Phase 4B 内存切片的源帧，其列集须与 SQL 回退路径逐位一致
+        # （tests/test_phase4_minute_memory_slice.py 为硬门），故保持原样不动。
+        _pc_usable = ('preClose' in all_bars.columns) and bool(all_bars['preClose'].notna().any())
+        _pc_map = None
+        if ((not _pc_usable) and daily_data is not None
+                and 'code' in all_bars.columns
+                and 'preClose' in getattr(daily_data, 'columns', [])):
+            _pc_map = dict(zip(daily_data['code'].astype(str), daily_data['preClose']))
+        # 【D-1b 2026-10-10】PIT 简称映射：BarData 判涨跌停档位需 name（ST/*ST=5%），
+        # 分钟行无该列 ⇒ 与 preClose 同样注入 bar 组（all_bars 保持原样，理由同上）。
+        _name_map = self._pit_name_map(day_str)
         # 按 time 分组为 (bar_ts, snapshot_df)
         snapshots = []
         for ts_ms, group in all_bars.groupby('time'):
             bar_ts = pd.Timestamp(ts_ms, unit='ms', tz='Asia/Shanghai')
+            if _pc_map is not None or _name_map is not None:
+                group = group.copy()
+                if _pc_map is not None:
+                    group['preClose'] = group['code'].astype(str).map(_pc_map)
+                if _name_map is not None:
+                    group['name'] = group['code'].astype(str).str.split('.').str[0].map(_name_map)
             snapshots.append((bar_ts, group))
         # Phase 4B：all_bars 原样返回（零拷贝），供 ptrade_api 当日分钟历史内存切片
         return snapshots, all_bars
