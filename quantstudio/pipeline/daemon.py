@@ -1325,6 +1325,27 @@ class ResidentCollector:
         # QFQ 快照优化：流式路径入口预查一次全局快照（循环内复用，避免每分片
         # 重复查 SQLite——实测每分片 8s × 200 分片 = 28min 纯开销）
         _qfq_snap = self._qfq_snapshot_kwargs(table, batch_id)
+        # 【M-1 2026-10-11，方案 docs/st-truth-path-coverage-design-20261011.md】
+        # 分片流式路径此前**未向 aligner 传 namechange_df/valuation_df** ⇒ stock_daily 的
+        # is_st_reliable/is_delisting_risk/估值字段恒为 False/NULL，且每轮批次都会覆盖此前
+        # 正确值（2026-10-10 事故根因）。此处按 stock_daily 准备依赖；其余表保持 None ⇒
+        # 行为逐位不变。
+        _nc_df = None
+        _val_df = None
+        if table == "stock_daily":
+            try:
+                _nc_df = self._prepare_namechange_df()
+            except Exception as e:
+                logger.warning(f"[{batch_id}] namechange 准备失败（分片路径）: {e}")
+                _nc_df = None
+            try:
+                _val_df = self._prepare_valuation_df(start, end)
+            except Exception as e:
+                logger.warning(f"[{batch_id}] valuation 准备失败（分片路径）: {e}")
+                _val_df = None
+            # F-1（M-2）：依赖表缺失/未准备 → fail-loud（本路径不触发网络拉取 ⇒ pull_failed=False）
+            if not self._namechange_gate(_nc_df, batch_id, pull_failed=False):
+                return False
         # CASE-003b（2026-09-08）：流式路径快照新鲜度——预查快照在拉取前构建，
         # 全新机冷启动（首分片还原触发 aux 注入）发生在拉取中，预查快照陈旧为空
         # → 对齐器按 2026-08-14 防线正确 fail-fast。修复：首分片处理时若快照为空
@@ -1371,8 +1392,12 @@ class ResidentCollector:
                 _ta = _tprobe.perf_counter()
                 std_df, align_meta = self.aligner.align(
                     df_shard, table, source, adj_factor_df=adj_factor_df, freq=freq,
+                    namechange_df=_nc_df, valuation_df=_val_df,
                     **_qfq_snap)
                 _sp["align"] += _tprobe.perf_counter() - _ta
+                # F-3（M-2 2026-10-11）：ST 真值覆盖率门——fail-loud，防静默写全 False
+                if table == "stock_daily" and not self._st_coverage_gate(std_df, _nc_df, batch_id):
+                    return False
                 rows_aligned += len(std_df)
                 _tv = _tprobe.perf_counter()
                 res = self.validator.validate(std_df, table, batch_id, source, expected_freq=freq)
@@ -2748,6 +2773,24 @@ class ResidentCollector:
                 logger.info(f"[{batch_id}] A4 续传：跳过已修复窗口 "
                             f"{len(_a4_done)}/{_a4_total} 个")
             _a4_invalidated = False
+            # 【M-3 2026-10-11】A4 局部重拉同属 stock_daily 写入路径，同样需依赖 + 门
+            _a4_nc_df = None
+            _a4_val_df = None
+            if table == "stock_daily":
+                try:
+                    _a4_nc_df = self._prepare_namechange_df()
+                except Exception as e:
+                    logger.warning(f"[{batch_id}] namechange 准备失败（A4）: {e}")
+                    _a4_nc_df = None
+                try:
+                    _a4_val_df = self._prepare_valuation_df(
+                        repull_dates[0], repull_dates[-1])
+                except Exception as e:
+                    logger.warning(f"[{batch_id}] valuation 准备失败（A4）: {e}")
+                    _a4_val_df = None
+                if not self._namechange_gate(_a4_nc_df, batch_id, pull_failed=False):
+                    logger.error(f"[{batch_id}] A4 段中止：依赖表缺失/未准备（防写全 False）")
+                    return _a4_idx
             for trade_date in repull_dates:
                 if str(trade_date) in _a4_done:
                     _a4_idx += 1
@@ -2759,7 +2802,14 @@ class ResidentCollector:
                         # 空窗口不写库，但**仍走段边界**（否则该窗口绕过取消检查）
                         pass
                     else:
-                        std_df, _ = self.aligner.align(raw_df, table, source, freq=freq)
+                        std_df, _ = self.aligner.align(
+                            raw_df, table, source, freq=freq,
+                            namechange_df=_a4_nc_df, valuation_df=_a4_val_df)
+                        # F-3（M-3 2026-10-11）：覆盖率门未过 ⇒ 中止 A4 段（防覆盖正确值）
+                        if table == "stock_daily" and not self._st_coverage_gate(
+                                std_df, _a4_nc_df, batch_id):
+                            logger.error(f"[{batch_id}] A4 段中止：ST 覆盖率门未过（{trade_date}）")
+                            break
                         res = self.validator.validate(std_df, table, batch_id, source, expected_freq=freq)
                         if len(res.passed_df) > 0:
                             self._stamp_and_write(res, table, batch_id, source)
