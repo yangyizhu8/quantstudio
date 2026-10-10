@@ -707,7 +707,10 @@ class FieldAligner:
                     df["is_st_reliable"] = st_flags["is_st"].values
                     df.loc[df["is_st_reliable"], "is_st_reliable_source"] = "namechange"
             except Exception as e:
-                logger.warning(f"[Aligner] derive_st_status namechange PIT 失败（is_st_reliable 留 False）: {e}")
+                # F-2（D-4，2026-10-10 ②审照准）：PIT 异常由静默 WARNING 升级为 error + 堆栈，
+                # 计入批次可观测面；**不阻断写入**（保持既有容错语义，仅提升可观测性——纯增益）。
+                logger.error("[Aligner] derive_st_status namechange PIT 失败（is_st_reliable 留 False）: %s",
+                             e, exc_info=True)
 
         # ---- is_delisting_risk：close<1 + 近 20 日 circ_mv<5 亿 ----
         try:

@@ -990,6 +990,7 @@ class ResidentCollector:
             # 适配 stock_daily 所有数据源（tushare/akshare/baostock/xtquant），
             # 只需首次触发全量拉取（7445 行深市简称变更），后续复用已入库数据。
             # is_st_reliable PIT 依赖 namechange，缺失时留 False 不阻断主流程。
+            nc_pull_failed = False   # F-1（D-4）：区分「网络拉取失败」与「依赖表缺失/未准备」
             if table == "stock_daily":
                 nc_task = next((t for t in self.tasks_cfg.get("tasks", [])
                                  if t.get("table") == "stock_namechange"), None)
@@ -1002,6 +1003,7 @@ class ResidentCollector:
                             _nc_run["mode"] = "full_range"
                             self._execute_task(_nc_run)
                     except Exception as e:
+                        nc_pull_failed = True   # 网络语义不变：既有重试+告警
                         logger.warning(f"[{batch_id}] 依赖表 stock_namechange 拉取失败（is_st_reliable 留 False）: {e}")
 
             codes = task.get("codes")
@@ -1140,6 +1142,11 @@ class ResidentCollector:
                     valuation_df = self._prepare_valuation_df(start, end)
                 except Exception as e:
                     logger.warning(f"[{batch_id}] valuation 准备失败: {e}")
+                # F-1（D-4 2026-10-10）：依赖表缺失/未准备 → fail-loud（网络失败不触发）
+                if not self._namechange_gate(namechange_df, batch_id, pull_failed=nc_pull_failed):
+                    raise RuntimeError(
+                        "依赖表 stock_namechange 缺失/未准备：拒绝写入 stock_daily"
+                        "（防 is_st_reliable 静默全 False）")
             etf_daily_bounds_df = None
             if table == "etf_basic":
                 etf_daily_bounds_df = self._prepare_etf_daily_bounds()
@@ -1155,6 +1162,10 @@ class ResidentCollector:
                                                      freq=freq,
                                                      **_qfq_snap)
             rows_aligned = len(std_df)
+            # F-3（D-4 2026-10-10）：ST 真值覆盖率门——fail-loud，防静默写全 False
+            if table == "stock_daily" and not self._st_coverage_gate(std_df, namechange_df, batch_id):
+                raise RuntimeError(
+                    "ST 覆盖率门未过：namechange 有 ST 记录但 is_st_reliable 全为 False（推导未生效）")
 
             # 4. 校验（硬编码 + 失败进 Quarantine [E-2]）
             res = self.validator.validate(std_df, table, batch_id, source, expected_freq=freq)
@@ -1690,6 +1701,7 @@ class ResidentCollector:
 
         # stock_daily 任务：自动先拉依赖表 stock_namechange（ST 更名历史，hidden 任务）。
         # 适配 stock_daily 所有数据源，只需首次触发全量拉取，后续复用已入库数据。
+        nc_pull_failed = False   # F-1（D-4）：区分「网络拉取失败」与「依赖表缺失/未准备」
         if table == "stock_daily":
             nc_task = next((t for t in self.tasks_cfg.get("tasks", [])
                              if t.get("table") == "stock_namechange"), None)
@@ -1702,6 +1714,7 @@ class ResidentCollector:
                         _nc_run["mode"] = "full_range"
                         self._execute_task(_nc_run)
                 except Exception as e:
+                    nc_pull_failed = True   # 网络语义不变：既有重试+告警
                     logger.warning(f"[{batch_id}] 依赖表 stock_namechange 拉取失败（is_st_reliable 留 False）: {e}")
 
         # stock_daily 任务额外准备：namechange（从已入库读取）+ valuation（delisting_risk 兜底）
@@ -1715,6 +1728,9 @@ class ResidentCollector:
             except Exception as e:
                 logger.warning(f"[{batch_id}] namechange 准备失败（is_st_reliable 将留 False）: {e}")
                 namechange_df = None
+            # F-1（D-4 2026-10-10）：依赖表缺失/未准备 → fail-loud（网络失败不触发）
+            if not self._namechange_gate(namechange_df, batch_id, pull_failed=nc_pull_failed):
+                return False
             # 2. valuation：从已入库 stock_daily_valuation 读（要求该表先入库）
             try:
                 valuation_df = self._prepare_valuation_df(start, end)
@@ -1828,6 +1844,9 @@ class ResidentCollector:
                                                **_qfq_snap,
                                                namechange_df=namechange_df, valuation_df=valuation_df,
                                                freq=freq)
+                # F-3（D-4 2026-10-10）：ST 真值覆盖率门——fail-loud，防静默写全 False
+                if table == "stock_daily" and not self._st_coverage_gate(std_df, namechange_df, batch_id):
+                    return 0
                 res = self.validator.validate(std_df, table, batch_id, source, expected_freq=freq)
                 record_validation(len(std_df), res)
                 if len(res.passed_df) > 0:
@@ -2001,6 +2020,7 @@ class ResidentCollector:
 
         # stock_daily 任务：自动先拉依赖表 stock_namechange（ST 更名历史，hidden 任务）。
         # 适配 stock_daily 所有数据源，只需首次触发全量拉取，后续复用已入库数据。
+        nc_pull_failed = False   # F-1（D-4）：区分「网络拉取失败」与「依赖表缺失/未准备」
         if table == "stock_daily":
             nc_task = next((t for t in self.tasks_cfg.get("tasks", [])
                              if t.get("table") == "stock_namechange"), None)
@@ -2013,6 +2033,7 @@ class ResidentCollector:
                         _nc_run["mode"] = "full_range"
                         self._execute_task(_nc_run)
                 except Exception as e:
+                    nc_pull_failed = True   # 网络语义不变：既有重试+告警
                     logger.warning(f"[{batch_id}] 依赖表 stock_namechange 拉取失败（is_st_reliable 留 False）: {e}")
 
         # stock_daily 任务额外准备：namechange（从已入库读取）+ valuation（与 per_trade_date 路径同款注入）
@@ -2023,6 +2044,9 @@ class ResidentCollector:
                 namechange_df = self._prepare_namechange_df()
             except Exception as e:
                 logger.warning(f"[{batch_id}] namechange 准备失败: {e}")
+            # F-1（D-4 2026-10-10）：依赖表缺失/未准备 → fail-loud（网络失败不触发）
+            if not self._namechange_gate(namechange_df, batch_id, pull_failed=nc_pull_failed):
+                return False
             try:
                 valuation_df = self._prepare_valuation_df(start, end)
             except Exception as e:
@@ -2073,6 +2097,9 @@ class ResidentCollector:
                                                namechange_df=namechange_df, valuation_df=valuation_df,
                                                freq=freq,
                                                **_qfq_snap)
+                # F-3（D-4 2026-10-10）：ST 真值覆盖率门——fail-loud，防静默写全 False
+                if table == "stock_daily" and not self._st_coverage_gate(std_df, namechange_df, batch_id):
+                    return 0
                 res = self.validator.validate(std_df, table, batch_id, source, expected_freq=freq)
                 with write_lock:
                     total_raw[0] += len(std_df)
@@ -3365,6 +3392,69 @@ class ResidentCollector:
         except Exception as e:
             logger.warning(f"[Daemon] _prepare_close_df 失败（市值补算将跳过）: {e}")
             return None
+
+    def _namechange_gate(self, namechange_df, batch_id: str, pull_failed: bool = False) -> bool:
+        """F-1（D-4，2026-10-10）：stock_daily 的 ST 推导依赖表缺失/未准备 → fail-loud。
+
+        范围精确（②审修订）：**仅**「依赖表缺失/未准备」fail-loud；
+        「网络拉取失败」（pull_failed=True）维持既有重试+告警语义，本门不触发。
+        返回 False ⇒ 调用方中止该批次（拒绝写入 ST 列全 False 的数据）。
+        """
+        if pull_failed:
+            return True
+        if namechange_df is not None and len(namechange_df) > 0:
+            return True
+        msg = "依赖表 stock_namechange 缺失/未准备：拒绝写入 stock_daily（防 is_st_reliable 静默全 False）"
+        logger.error("[%s] %s", batch_id, msg)
+        try:
+            self.batch_audit.record(batch_id, "stock_daily", "unknown", "stock_daily", "daily",
+                                    0, 0, 0, 0, 0, "failed", msg, datetime.now().isoformat())
+        except Exception:
+            pass
+        return False
+
+    def _st_coverage_gate(self, std_df, namechange_df, batch_id: str) -> bool:
+        """F-3（D-4 新增检测型）：stock_daily 的 ST 真值覆盖率门。
+
+        规则：若 namechange 在本批日期区间内存在 ST/*ST 记录（code 在批内、变更日 ≤ 批末日），
+        而写出行 `is_st_reliable` 无任何 True ⇒ 判定推导未生效（2026-08~09 事故形态），fail-loud。
+        返回 False ⇒ 调用方跳过写入。
+        """
+        try:
+            if std_df is None or len(std_df) == 0:
+                return True
+            if 'is_st_reliable' not in getattr(std_df, 'columns', []):
+                return True
+            if namechange_df is None or len(namechange_df) == 0:
+                return True
+            import pandas as _pd
+            nc = namechange_df
+            if 'status_after' not in nc.columns or 'change_date' not in nc.columns:
+                return True
+            st_rows = nc[nc['status_after'].astype(str).isin(('ST', '*ST'))]
+            if len(st_rows) == 0:
+                return True
+            codes = set(std_df['code'].astype(str))
+            max_t = _pd.to_numeric(std_df['time'], errors='coerce').max()
+            hit = st_rows[st_rows['code'].astype(str).isin(codes)
+                          & (_pd.to_numeric(st_rows['change_date'], errors='coerce') <= max_t)]
+            if len(hit) == 0:
+                return True
+            n_true = int(_pd.Series(std_df['is_st_reliable']).fillna(False).astype(bool).sum())
+            if n_true == 0:
+                msg = (f"ST 覆盖率门未过：namechange 命中 {len(hit)} 条 ST 记录，"
+                       f"但本批 is_st_reliable 全为 False（推导未生效）→ 拒绝写入")
+                logger.error("[%s] %s", batch_id, msg)
+                try:
+                    self.batch_audit.record(batch_id, "stock_daily", "unknown", "stock_daily", "daily",
+                                            0, 0, 0, 0, 0, "failed", msg, datetime.now().isoformat())
+                except Exception:
+                    pass
+                return False
+            return True
+        except Exception as exc:
+            logger.warning("[%s] ST 覆盖率门异常（不阻断，按既有语义继续）: %s", batch_id, exc)
+            return True
 
     def _prepare_namechange_df(self) -> Optional["pd.DataFrame"]:
         """为 stock_daily 推导 is_st_reliable 读取已入库简称变更历史。
