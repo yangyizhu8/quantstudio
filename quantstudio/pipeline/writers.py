@@ -106,6 +106,24 @@ _SERIAL_WRITE_TABLES = frozenset({"stock_minutes", "etf_minutes"})
 _TABLE_WRITE_LOCKS: dict = {}
 
 
+# ── §10.2 冲突归因（2026-10-11 总调度裁定①）──────────────────────────────
+# 分工：**writers 侧只出原始标识**（表/批次/写路径/是否串行表/连接号），
+#       **daemon 侧单点组装**为一行判别特征（避免两处重复输出）。
+# 纪律：只增观测——不参与任何判定逻辑、不改异常传播、不吞异常。
+_LAST_WRITE_CTX: dict = {}
+
+
+def note_write_context(**kw) -> None:
+    """记录最近一次写路径的原始标识（归因用；不参与判定）。"""
+    _LAST_WRITE_CTX.clear()
+    _LAST_WRITE_CTX.update(kw)
+
+
+def last_write_context() -> dict:
+    """读取最近写路径原始标识（只读；供 daemon 侧单点组装）。"""
+    return dict(_LAST_WRITE_CTX)
+
+
 def table_write_lock(table: str):
     """R2 按表写锁上下文（模块级公共入口，跨模块共享同一把锁）。
 
@@ -1054,6 +1072,8 @@ class DuckDBWriter(BaseWriter):
         create_sql = f'CREATE TABLE IF NOT EXISTS "{table}" ({col_defs})'
         # R2（write-integrity）：全表覆盖段（建临时→灌数→原子换名）整段进按表锁，
         # 防同进程并发覆盖互相踩踏；汇总日志行留锁外无碍。
+        note_write_context(table=table, batch_id=batch_id, path="_write_passthrough",
+                           serial=table in _SERIAL_WRITE_TABLES)
         with self._table_write_lock(table):
             with self._conn_lock:
                 conn = self._conn()
@@ -1137,6 +1157,9 @@ class DuckDBWriter(BaseWriter):
         # 本路径做整表重建（staging → DROP → RENAME）且 staging/ledger 协议本质单写者
         # ⇒ 锁粒度只能整操作级；锁序遵循全仓统一层级「表锁 → 连接锁」
         # （同款：_write_locked:890 / _write_passthrough:1057）。
+        note_write_context(table=table, batch_id=batch_id,
+                           path="_write_passthrough_chunked",
+                           serial=table in _SERIAL_WRITE_TABLES)
         with self._table_write_lock(table):
             with self._conn_lock:
                 conn = self._conn()

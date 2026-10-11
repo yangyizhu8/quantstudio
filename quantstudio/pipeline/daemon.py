@@ -143,6 +143,36 @@ _QFQ_KNOWN_ERROR_NAMES = frozenset({
 })
 
 
+def _assemble_write_failure_features(table: str, batch_id: str,
+                                       exc: BaseException) -> str:
+    """§10.2 归因小件（2026-10-11 总调度裁定①）：**daemon 侧单点组装**判别特征。
+
+    分工：writers 侧只出原始标识（`note_write_context`/`last_write_context`），
+    此处组装为**一行**判别特征——供写冲突复发时当场归因（回灌判别特征原则）。
+    纪律：只增观测——不改异常传播、不吞异常、不参与任何判定；组装自身失败不得抛。
+    """
+    try:
+        from quantstudio.pipeline.writers import last_write_context
+        ctx = last_write_context()
+    except Exception:
+        ctx = {}
+    try:
+        msg = str(exc)
+        key = ""
+        if "write-write conflict on key" in msg:
+            key = msg.split("write-write conflict on key", 1)[1].strip().lstrip(": ").strip()[:120]
+        return ("table=%s batch=%s path=%s serial=%s ctx_table=%s ctx_path=%s "
+                "exc=%s conflict_key=%s"
+                % (table, batch_id, ctx.get("path") or "?",
+                   ctx.get("serial"),
+                   ctx.get("table") or "?",
+                   ctx.get("path") or "?",
+                   type(exc).__name__,
+                   key or "无"))
+    except Exception as _e:  # 组装失败绝不影响主流程
+        return "组装失败(%s)" % type(_e).__name__
+
+
 def _classify_qfq_factor_error(exc: BaseException) -> str:
     """因子链异常分类（**仅用于留痕与死信计数**，不改变 degraded/hold 决策）。"""
     name = type(exc).__name__
@@ -1245,6 +1275,8 @@ class ResidentCollector:
             raise
         except Exception as e:
             logger.error(f"[{batch_id}] ❌ FAILED: {e}", exc_info=True)
+            logger.error("[%s] 写失败判别特征: %s",
+                 batch_id, _assemble_write_failure_features(table, batch_id, e))
             self.batch_audit.record(batch_id, name, source, table, freq,
                                     rows_raw, rows_aligned, rows_passed, rows_rejected,
                                     rows_written, "failed", str(e), started_at)
@@ -1492,6 +1524,8 @@ class ResidentCollector:
             raise
         except Exception as e:
             logger.error(f"[{batch_id}] ❌ FAILED[streaming]: {e}", exc_info=True)
+            logger.error("[%s] 写失败判别特征: %s",
+                 batch_id, _assemble_write_failure_features(table, batch_id, e))
             self.batch_audit.record(batch_id, name, source, table, freq,
                                     rows_raw, rows_aligned, rows_passed, rows_rejected,
                                     rows_written, "failed", str(e), started_at)
@@ -1544,6 +1578,8 @@ class ResidentCollector:
             return True
         except Exception as e:
             logger.error(f"[{batch_id}] ❌ PASSTHROUGH FAILED: {e}", exc_info=True)
+            logger.error("[%s] 写失败判别特征: %s",
+                 batch_id, _assemble_write_failure_features(table, batch_id, e))
             self.batch_audit.record(batch_id, name, source, table, freq,
                                     0, 0, 0, 0, 0, "failed", str(e), started_at)
             return False

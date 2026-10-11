@@ -310,6 +310,30 @@ def main():
         probe = s1_probe(target, require_main_free=args.write_main)
     if not probe["ok"]:
         LOG.error("S1 未通过，拒绝启动写入：%s", probe)
+        # ── 人机可读指引（2026-10-11 微件·总调度裁定）────────────────────────
+        # 定位＝人机工效：**不新增任何探测机制**，仅把 S1 已有信号翻译成可执行的下一步，
+        # 避免出现第二套护栏口径（与 S1 判定分叉）。DuckDB 独占锁语义：任何持有者
+        # （含只读打开）都会让读写打开失败并在 target_error/main_error 中报持有 PID。
+        _hint = probe.get("target_error") or probe.get("main_error") or ""
+        _locks = []
+        if (probe.get("daemon_lock") or {}).get("exists"):
+            _locks.append("daemon_lock")
+        if (probe.get("collector_lock") or {}).get("exists"):
+            _locks.append("collector_lock")
+        if (probe.get("write_lock") or {}).get("exists"):
+            _locks.append("write_lock")
+        LOG.error(
+            "S1 指引：目标库被占用 ⇒ **先停止持有者后重跑**（数据管线：daemon/collector；"
+            "pipeline_writers=%s%s）。DuckDB 持有者线索：%s",
+            probe.get("pipeline_writers") or "无",
+            ("；锁文件存在：" + ",".join(_locks)) if _locks else "",
+            (_hint or "无")[:200],
+        )
+        LOG.error(
+            "S1 指引补充：若持有者为 daemon 且本次回填目标是**独立包文件**，"
+            "通常无需停 daemon（主库仅在 require_main_free=True / --write-main 时才要求空闲）；"
+            "确需主库空闲请走协调库窗（停 daemon → 执行 → 恢复）。",
+        )
         return 3
 
     # ── S5 避让 ──
