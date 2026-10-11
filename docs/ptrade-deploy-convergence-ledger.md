@@ -37,14 +37,14 @@
 
 | 条目 | 状态 | fix_layer | commit |
 |---|---|---|---|
-| PD-2026-0001 | closed（轮 1） | kernel（equiv.py） | pending-M8（双推后回填） |
-| PD-2026-0002 | closed（轮 1） | kernel（equiv.py + runner.py） | pending-M8 |
-| PD-2026-0003 | closed（轮 1） | contract_table | pending-M8 |
-| PD-2026-0004 | closed（轮 1） | gate（gates.py） | pending-M8 |
-| PD-2026-0005 | closed（轮 2） | gate（gates.py） | pending-M8 |
+| PD-2026-0001 | closed（轮 1） | kernel（equiv.py） | aee3e77（主仓本地 commit 2026-10-11；推送候令下批统出） |
+| PD-2026-0002 | closed（轮 1） | kernel（equiv.py + runner.py） | aee3e77 |
+| PD-2026-0003 | closed（轮 1） | contract_table | aee3e77 |
+| PD-2026-0004 | closed（轮 1） | gate（gates.py） | aee3e77 |
+| PD-2026-0005 | closed（轮 2） | gate（gates.py） | aee3e77 |
 | PD-2026-0006 | **open**（轮 2 登记） | transformer（待立项） | 待六步方案件 |
 
-> 待办：M8 双推后回填四条目 commit sha（trading 仓条目 fix_target 字段与本表同步）。
+> 回填记录：五条目 commit sha 已于 M8 本地轮回填（aee3e77，2026-10-11；trading 仓条目 fix_target 字段与本表同步落盘）；推送后 sha 不变，双推完成即本表口径生效。
 
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 
