@@ -1,0 +1,9 @@
+# V6 横验证配置（ETF 轮动/静态池固化场景）
+strategy_id: hv_tech_etf_mvo_v6
+source: ../../../output/ptrade_export/tech_etf_mvo_rotation/tech_etf_mvo_rotation_ptrade.py
+execution:
+  profile: daily_eod_1450
+persistence:
+  enabled: true
+  state_file: "/home/fly/notebook/hv_tech_etf_mvo_v6_state.pkl"
+  save_points: ["after_trading_end"]

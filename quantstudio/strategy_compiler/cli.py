@@ -11,6 +11,10 @@ The `package` subcommand wires the G3 package builder into a CLI flow that:
 M2a additive: `package --target qmt` renders a single QMT product via the
 orchestrator (gbk fail-closed; exit 5 on StrategyPipelineError).
 
+M4 additive (qs-deploy): `deploy <deploy.yaml>` converts a PTrade backtest
+strategy to a sim/live deployment artifact via the ptrade_deploy kernel
+(P0-P6 pipeline; thin shell only — see docs/ptrade-deploy-pipeline-design.md).
+
 Boundaries (G4 release): no real market data / live QMT / resident daemon; no faked
 data digest; real Fidelity/Reference stays deferred.
 """
@@ -166,6 +170,39 @@ def cmd_import(args: argparse.Namespace) -> int:
     return 0 if run_card["status"] == "PASS" else 1
 
 
+def cmd_deploy(args: argparse.Namespace) -> int:
+    """`deploy <deploy.yaml>` — PTrade 回测策略 → 模拟盘/实盘部署转换（qs-deploy M4 薄壳）。
+
+    薄壳职责仅参数收集与结果展示；转换全部在 quantstudio.ptrade_deploy 内核
+    （run_deploy 绝不抛异常，失败结构化返回——exit 1；本层仅对用户输入错 exit 2）。
+    """
+    config_path = Path(args.config)
+    if not config_path.exists():
+        print(f"ERROR: deploy.yaml not found: {config_path}", file=sys.stderr)
+        return 2
+    if config_path.suffix not in (".yaml", ".yml"):
+        print(f"ERROR: deploy config must be .yaml: {config_path}", file=sys.stderr)
+        return 2
+
+    from quantstudio.ptrade_deploy import run_deploy
+    d = run_deploy(str(config_path)).to_dict()
+
+    for stage, payload in d["stages"].items():
+        status = payload.get("status") if isinstance(payload, dict) else payload
+        reason = payload.get("reason") if isinstance(payload, dict) else None
+        line = f"  {stage}: {status}"
+        if reason:
+            line += f" — {reason}"
+        print(line)
+    for note in d.get("notes") or []:
+        print(f"  note: {note}")
+    if d["status"] == "PASS":
+        for key, p in (d.get("artifacts") or {}).items():
+            print(f"  artifact[{key}]: {p}")
+        return 0
+    return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="qs-compile",
@@ -206,6 +243,12 @@ def build_parser() -> argparse.ArgumentParser:
                             "（qmt/<id>_qmt.py，gbk fail-closed 写盘；QMT 白名单面校验；"
                             "不跑本地冒烟）")  # M2b 块3
     p_imp.set_defaults(func=cmd_import)
+
+    p_dep = sub.add_parser(
+        "deploy",
+        help="PTrade 回测策略 → 模拟盘/实盘部署转换（qs-deploy；deploy.yaml 驱动 P0-P6 内核）")
+    p_dep.add_argument("config", help="Path to deploy.yaml (qs-deploy 部署配置)")
+    p_dep.set_defaults(func=cmd_deploy)
     return parser
 
 

@@ -1,0 +1,9 @@
+# V6 横验证配置（M1 §9 / 修订③：日线×3 替代——池中无适用分钟策略，登记理由见台账）
+strategy_id: hv_canslim_v6
+source: ../../../output/ptrade_export/CANSLIM突破成长选股策略/CANSLIM突破成长选股策略_ptrade.py
+execution:
+  profile: daily_eod_1450
+persistence:
+  enabled: true
+  state_file: "/home/fly/notebook/hv_canslim_v6_state.pkl"
+  save_points: ["after_trading_end"]

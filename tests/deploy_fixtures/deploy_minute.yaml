@@ -1,0 +1,19 @@
+# qs-deploy 管线固件配置：分钟策略 → minute_keep 保持原生命周期（设计文档 §5.3 schema）
+strategy_id: deploy_minute_keep
+source: tests/deploy_fixtures/fixture_minute_strategy.py
+execution:
+  profile: minute_keep
+persistence:
+  enabled: true
+  state_file: "/home/fly/notebook/deploy_minute_keep_state.pkl"
+  save_points: ["after_trading_end"]
+guards:
+  limit_price_explicit: false
+  limit_up_down_block: true
+  suspension_block: true
+  order_idempotency: false
+  fundamentals_retry: 0
+notify:
+  email: ""
+report:
+  fidelity_notes: []

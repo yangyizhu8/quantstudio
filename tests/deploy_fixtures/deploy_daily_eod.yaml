@@ -1,0 +1,19 @@
+# qs-deploy 管线固件配置：日线策略 → 尾盘 14:50 执行档（设计文档 §5.3 schema）
+strategy_id: deploy_daily_eod
+source: tests/deploy_fixtures/fixture_daily_strategy.py
+execution:
+  profile: daily_eod_1450
+persistence:
+  enabled: true
+  state_file: "/home/fly/notebook/deploy_daily_eod_state.pkl"
+  save_points: ["after_trading_end"]
+guards:
+  limit_price_explicit: true
+  limit_up_down_block: true
+  suspension_block: true
+  order_idempotency: true
+  fundamentals_retry: 3
+notify:
+  email: ""
+report:
+  fidelity_notes: []

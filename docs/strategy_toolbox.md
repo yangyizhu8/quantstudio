@@ -661,3 +661,12 @@ QMT（迅投）目标由 `qs-compile package <spec> --target qmt` 渲染（spec 
 
 平台契约依据：仓内 `docs/qmt/inner-api/`（6043 行离线转写；05-枚举常量/06-系统函数/
 07-行情函数/08-交易函数行级引用）+ Context7 `/websites/dict_thinktrader_net`。
+
+## 转模拟盘/实盘（qs-deploy，2026-10-11）
+
+PTrade 回测策略产物 → 模拟盘/实盘部署代码的下游转换通道（独立于本工具箱的
+策略生成域）：`qs-compile deploy <deploy.yaml>` 或 GUI「转模拟盘/实盘」tab。
+P0-P6 流水线（预检 vault 回哺→画像→配置校验→AST 变换→等价验证→平台门禁→
+交付）；CLI/PyQt 双壳同一内核（产物 SHA256 对等）。部署化护栏含状态持久化、
+定时任务管控、未知 API 保守确认；修复知识库（vault）驱动下次运行自动回哺。
+详见 `docs/ptrade-deploy-pipeline-design.md` 与 `docs/ptrade-deploy-convergence-ledger.md`。

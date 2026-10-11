@@ -1,0 +1,485 @@
+# =====================================================================
+# PTrade 部署转换契约表（API 可用性矩阵）——qs-deploy 内核唯一 API 事实源
+# 对应设计文档：docs/ptrade-deploy-pipeline-design.md §5.1（M3 种子条目集）
+#
+# schema（每条目 8 字段）：
+#   signature    —— 函数签名（不确定处以 (...) 泛化，不伪造精度）
+#   backtest     —— 回测环境可用
+#   trading      —— 交易（模拟盘/实盘）环境可用
+#   action       —— 变换动作：strip_or_gate(门控保留) | strip(剔除) | gate(门控)
+#                   | keep(保持) | replace(替换) | reject(依赖即判不可转换)
+#                   ※ reject 为 M3 在设计文档四值（strip|gate|keep|replace）基础上的
+#                     显式扩展（P0 可转换性判定需表驱动，禁止代码内散落硬编码），
+#                     偏差已在 runner 返回汇总中声明
+#   replacement  —— replace 动作的替代表达式（种子集无 replace 条目）
+#   pbox_version —— 可用性依赖的最低 PBOX 版本（"all"=无版本约束）
+#   source       —— 文档出处（可溯源，设计文档 §1.2 F1-F10 查证链）
+#   note         —— 备注
+#
+# 条目变更走框架层六步流水线（AGENTS.md 铁律）。
+# =====================================================================
+api:
+  # ---------- 回测专用（backtest:true / trading:false）8 个 ----------
+  set_commission:
+    signature: "set_commission(commission_ratio=..., min_commission=..., type=...)"
+    backtest: true
+    trading: false
+    action: strip_or_gate
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-设置函数（设计文档 §1.2 F8）"
+    note: "回测撮合费率参数；交易环境无撮合语义，以 is_trade() 门控保留（回测行为不变）"
+  set_slippage:
+    signature: "set_slippage(value)"
+    backtest: true
+    trading: false
+    action: strip_or_gate
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-设置函数（设计文档 §1.2 F8）"
+    note: "回测滑点模型参数；交易环境由真实柜台盘口替代"
+  set_fixed_slippage:
+    signature: "set_fixed_slippage(fixedslippe)"
+    backtest: true
+    trading: false
+    action: strip_or_gate
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-设置函数（设计文档 §1.2 F8）"
+    note: "回测固定滑点参数；同 set_slippage 门控保留"
+  set_volume_ratio:
+    signature: "set_volume_ratio(volume_ratio)"
+    backtest: true
+    trading: false
+    action: strip_or_gate
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-设置函数（设计文档 §1.2 F8）"
+    note: "回测撮合量限制参数；门控保留"
+  set_limit_mode:
+    signature: "set_limit_mode(limit_mode)"
+    backtest: true
+    trading: false
+    action: strip_or_gate
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-设置函数（设计文档 §1.2 F8）"
+    note: "回测涨跌停撮合模式参数；门控保留"
+  set_yesterday_position:
+    signature: "set_yesterday_position(filename)"
+    backtest: true
+    trading: false
+    action: strip_or_gate
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-设置函数（设计文档 §1.2 F8）"
+    note: "回测昨日底仓导入；交易环境持仓以柜台为准（F8 账户数据 6 秒同步）"
+  get_trades_file:
+    signature: "get_trades_file()"
+    backtest: true
+    trading: false
+    action: reject
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-回测专用接口（设计文档 §5.2 P0）"
+    note: "回测专用成交回报文件；交易环境无此文件语义，依赖即判不可转换（REJECT）"
+  convert_position_from_csv:
+    signature: "convert_position_from_csv(filename)"
+    backtest: true
+    trading: false
+    action: reject
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-回测专用接口（设计文档 §5.2 P0）"
+    note: "回测专用持仓 CSV 导入；交易环境依赖该核心逻辑即判不可转换（REJECT）"
+
+  # ---------- 交易专用（backtest:false / trading:true）16 个 ----------
+  run_interval:
+    signature: "run_interval(context, func, seconds)"
+    backtest: false
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md（设计文档 §1.2 F4/F5）"
+    note: "仅交易可用；股票最小 3 秒；与 run_daily 累计线程上限 5，超限任务不触发（F4）"
+  tick_data:
+    signature: "tick_data(context, security)"
+    backtest: false
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md-交易实时数据"
+    note: "tick 级行情回调；回测引擎不支持 tick 回测（设计文档 §3 OUT）"
+  get_snapshot:
+    signature: "get_snapshot(security)"
+    backtest: false
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md-交易实时数据"
+    note: "交易实时快照；护栏模板仅在 is_trade() 分支内引用"
+  get_individual_entrust:
+    signature: "get_individual_entrust(...)"
+    backtest: false
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md-交易实时数据"
+    note: "逐笔委托（交易专用）"
+  get_individual_transaction:
+    signature: "get_individual_transaction(...)"
+    backtest: false
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md-交易实时数据"
+    note: "逐笔成交（交易专用）"
+  get_tick_direction:
+    signature: "get_tick_direction(context, security)"
+    backtest: false
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md-交易实时数据"
+    note: "买卖方向（交易专用）"
+  get_gear_price:
+    signature: "get_gear_price(...)"
+    backtest: false
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md-交易实时数据"
+    note: "档位行情（交易专用）"
+  get_deliver:
+    signature: "get_deliver(start_date, end_date)"
+    backtest: false
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md-盘后接口"
+    note: "交割单（交易专用）"
+  get_fundjour:
+    signature: "get_fundjour(start_date, end_date)"
+    backtest: false
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md-盘后接口"
+    note: "资金流水（交易专用）"
+  after_trading_order:
+    signature: "after_trading_order(...)"
+    backtest: false
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md-盘后接口"
+    note: "盘后单数据接口（交易专用）"
+  after_trading_cancel_order:
+    signature: "after_trading_cancel_order(...)"
+    backtest: false
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md-盘后接口"
+    note: "盘后撤单数据接口（交易专用）"
+  on_order_response:
+    signature: "on_order_response(context, order)"
+    backtest: false
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md-回调"
+    note: "订单回报回调（交易专用）"
+  on_trade_response:
+    signature: "on_trade_response(context, trade)"
+    backtest: false
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md-回调"
+    note: "成交回报回调（交易专用）"
+  send_email:
+    signature: "send_email(subject, body, to_addr)"
+    backtest: false
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md-工具"
+    note: "邮件通知（交易专用）；notify.email 留空则不使用"
+  send_qywx:
+    signature: "send_qywx(context, title, body)"
+    backtest: false
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md-工具"
+    note: "企业微信通知（交易专用）"
+  permission_test:
+    signature: "permission_test()"
+    backtest: false
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md-工具"
+    note: "权限探测（交易专用）"
+
+  # ---------- 双端可用（backtest:true / trading:true）27 个 ----------
+  set_universe:
+    signature: "set_universe(security_list)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "api-reference-en/framework.md-initialize 可调 Setting Functions"
+    note: "设置股票池（双端可用）；M3 实测种子补漏（P5 未知 API 命中后补录）"
+  set_benchmark:
+    signature: "set_benchmark(code)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "api-reference-en/framework.md-initialize 可调 Setting Functions"
+    note: "设置基准（双端可用）；M3 种子补漏同批"
+  set_parameters:
+    signature: "set_parameters(...)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "api-reference-en/framework.md-initialize 可调 Setting Functions"
+    note: "策略配置参数（双端可用）；M3 种子补漏同批"
+  get_history:
+    signature: "get_history(count, frequency='1d', field='close', security_list=None, fq=None, include=False)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-数据接口 + E1 铁律（2026-09-22 定稿）"
+    note: "日线信号必须 include=False 取 D-1（E1 铁律；include=True 已被 NO-LOOKAHEAD-INCLUDE 校验器 BLOCK）"
+  get_price:
+    signature: "get_price(security, start_date, end_date, frequency, fields)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-数据接口"
+    note: "历史行情（双端可用）；E1 口径同 get_history"
+  get_fundamentals:
+    signature: "get_fundamentals(...)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-数据接口"
+    note: "财务数据（双端可用）；交易环境在线调用建议配 fundamentals_retry 重试（§6.3）"
+  order:
+    signature: "order(security, amount, limit_price=None)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-交易函数（设计文档 §1.2 F8）"
+    note: "按数量下单；限价单不传 limit_price 默认最新价报单、行情失败则下单失败（F8）"
+  order_target:
+    signature: "order_target(security, amount, limit_price=None)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-交易函数（设计文档 §1.2 F8）"
+    note: "调仓至目标数量；F8 限价语义同 order"
+  order_value:
+    signature: "order_value(security, value, limit_price=None)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-交易函数（设计文档 §1.2 F8）"
+    note: "按金额下单；F8 限价语义同 order"
+  order_target_value:
+    signature: "order_target_value(security, value, limit_price=None)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-交易函数（设计文档 §1.2 F8）"
+    note: "调仓至目标金额；F8 限价语义同 order"
+  order_market:
+    signature: "order_market(security, amount, ...)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-交易函数"
+    note: "市价委托（双端可用）；护栏显式限价带不适用于市价单"
+  get_position:
+    signature: "get_position(security)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-持仓查询（本地镜像 ptrade_api.py 签名对齐）"
+    note: "单标的持仓；空仓返回 amount=0 的 Position（非 None）"
+  get_positions:
+    signature: "get_positions()"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-持仓查询（本地镜像 ptrade_api.py 签名对齐）"
+    note: "全部持仓 dict"
+  get_orders:
+    signature: "get_orders(...)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-订单查询"
+    note: "当日订单列表（双端可用）"
+  get_all_orders:
+    signature: "get_all_orders(...)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-订单查询"
+    note: "全部订单（双端可用）"
+  get_trades:
+    signature: "get_trades(...)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-成交查询"
+    note: "当日成交列表（双端可用）；与回测专用的 get_trades_file 区分"
+  cancel_order:
+    signature: "cancel_order(order_id)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-交易函数"
+    note: "按单号撤单（双端可用）"
+  cancel_order_ex:
+    signature: "cancel_order_ex(order_id, ...)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-交易函数"
+    note: "撤单（扩展形态，双端可用）"
+  check_limit:
+    signature: "check_limit(security)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "PBOXQT1.0V202202.01.038"
+    source: "utilities.md + Ptrade东莞.md-接口版本变动（设计文档 §1.2 F6）"
+    note: "涨跌停检查：真实平台返回 {1,-1,2,-2,0}（1/2 涨停、-1/-2 跌停）；本地镜像返回 dict——护栏模板双形态容忍"
+  run_daily:
+    signature: "run_daily(context, func, time)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md（设计文档 §1.2 F4）"
+    note: "定时任务；交易场景 time 可设 00:00~23:59（回测日线周期固定 15:00 执行）；与 run_interval 累计线程上限 5"
+  get_research_path:
+    signature: "get_research_path()"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md + docs/advanced/faq.md（设计文档 §1.2 F2）"
+    note: "研究根目录 /home/fly/notebook/（回测/交易通用），策略级文件持久化的定位锚点"
+  create_dir:
+    signature: "create_dir(path)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-工具"
+    note: "目录创建（双端可用）"
+  log:
+    signature: "log.info(msg) / log.warning(msg)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-日志"
+    note: "日志对象（双端可用）；注入模板统一用 log.warning/log.info"
+  is_trade:
+    signature: "is_trade()"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade东莞.md-环境判断"
+    note: "回测返回 False、交易返回 True——GATE 门控的判定基准（回测行为不变的关键）"
+  get_stock_status:
+    signature: "get_stock_status(stocks, query_type='ST')"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "本地镜像 ptrade_api.py 签名对齐（query_type：ST/HALT/DELISTING）"
+    note: "股票状态 dict；护栏模板用 query_type='HALT' 判停牌"
+  get_Ashares:
+    signature: "get_Ashares(date=None)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md-标的池（本地镜像 ptrade_api.py 签名对齐）"
+    note: "全 A 股列表（双端可用）"
+  get_etf_list:
+    signature: "get_etf_list(...)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Ptrade山西.md-标的池"
+    note: "ETF 列表（双端可用）"

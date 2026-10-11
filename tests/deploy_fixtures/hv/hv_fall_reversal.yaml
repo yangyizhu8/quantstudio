@@ -1,0 +1,9 @@
+# V6 横验证配置（下跌反转场景；tech_etf_mvo 因 run_daily 源形态能力边界换位——见台账轮 2）
+strategy_id: hv_fall_reversal_v6
+source: ../../../output/ptrade_export/fall_reversal/fall_reversal_ptrade.py
+execution:
+  profile: daily_eod_1450
+persistence:
+  enabled: true
+  state_file: "/home/fly/notebook/hv_fall_reversal_v6_state.pkl"
+  save_points: ["after_trading_end"]

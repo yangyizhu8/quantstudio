@@ -59,6 +59,7 @@ _NAV_ITEMS = [
     ("配置编辑", FluentIcon.EDIT,              NavigationItemPosition.TOP),
     ("策略回测", FluentIcon.GAME,              NavigationItemPosition.TOP),
     ("导出PTrade", FluentIcon.SEND,            NavigationItemPosition.TOP),
+    ("转模拟盘/实盘", FluentIcon.CLOUD,        NavigationItemPosition.TOP),  # M5 qs-deploy
 ]
 
 
@@ -207,6 +208,9 @@ class MainWindow(FluentWindow):
             elif row == 8:
                 from .tabs.ptrade_export_tab import PtradeExportTab
                 return PtradeExportTab(self)
+            elif row == 9:  # M5 qs-deploy（薄壳：deploy.yaml → ptrade_deploy 内核）
+                from .tabs.deploy_tab import DeployTab
+                return DeployTab(self)
         except Exception as e:
             logger.error(f"加载 Tab {row} 失败: {e}", exc_info=True)
             label = QLabel(f"加载失败: {e}")

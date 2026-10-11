@@ -558,3 +558,11 @@ audit/held-canary/observation tools must require:
    生命周期/静态池/E1 wrapper 契约点检查；
 6. **策略源码零改动**：转换问题一律在框架层（模板/渲染器/编排/门禁）修复，重转生效——
    禁止改具体策略源码强行通过。
+
+## 10. 部署转换通道（qs-deploy，2026-10-11）
+
+策略生成（本文件域）与部署转换分工：本地策略经 `qs-compile import` 转 PTrade
+回测形态后，如需上模拟盘/实盘，再经 `qs-compile deploy <deploy.yaml>`（或 GUI
+「转模拟盘/实盘」tab）完成部署化（状态持久化护栏 / 定时任务管控 / 平台门禁 /
+vault 知识库回哺）。智能体在策略生成阶段不承担部署化——两阶段严格分离，
+与「策略生成默认通过 skill 开发，仅本地 QuantStudio」铁律一致。
