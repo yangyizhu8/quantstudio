@@ -142,12 +142,13 @@ M0 基线（本件）→M1 架构方案定稿+②审→M2 render_qmt+契约（�
 | M0 立项基线 | ✓ 完成 | 本文件 |
 | M1 架构定稿（四版三轮②审终判） | ✓ 完成 | `docs/qmt-pipeline-architecture-m1.md` |
 | M2a spec 路径打通（首策略 etf_hot_theme_rotation，四判据全 PASS） | ✓ 完成 | `docs/qmt-pipeline-m2a-plan.md` + `docs/evidence/qmt-m2a-acceptance-20261008.md` |
-| **M2b source 路径（六策略全通）** | **✓ 六步 ①②③④⑤ 全部闭合 → ⑥推送批候批** | `docs/qmt-pipeline-m2b-plan.md`（rev2）+ `docs/evidence/qmt-m2b-acceptance-20261008.md` |
-| **M3 桩冒烟（方案 B，②审批准）** | **✓ 六步 ①②③④⑤ 闭合 → ⑥候下批（批次 `e2faba3`，8 件）** | `docs/qmt-pipeline-m3-plan.md` + `docs/evidence/qmt-m3-acceptance-20261009.md` |
-| **M3.1 F-1 修复**（产物 `_qs_fin_to_rows` 形态探测） | **已立项（用户 ⑤ 裁②）**：方案＝证券代码模式识别 + 显式形态声明（不依赖真实形态、可先行）；**正确目标形态由 M5-1 钉死后合并验收**；走小六步（方案→②审→实施→验收） | 发现记录见 M3 证据文档 §4 |
-| M4 文档同步（README / strategy_toolbox / prompt_engineering） | 待启动（M2b/M3 未触发同步义务：既有行为零改变） | — |
-| M5 用户域实测（**数值对照正式落位此**） | 待启动（**作业书 = M3 证据文档 §6 十四项**；P0：M5-1 财务返回形态 / M5-2 末根 bar 语义 / M5-3 交易日历形态 / M5-4 run_daily 节拍 + O-1 归因） | — |
-| M6 推送批 | 待用户批准（**本会话不推送**；M2b 批已随 18 笔上远程，**M3 批 `e2faba3` 候下批**） | — |
+| **M2b source 路径（六策略全通）** | **✓ 六步全闭（含 ⑥ 已推送）** | `docs/qmt-pipeline-m2b-plan.md`（rev2）+ `docs/evidence/qmt-m2b-acceptance-20261008.md` |
+| **M3 桩冒烟（方案 B，②审批准）** | **✓ 六步全闭（含 ⑥ 已推送：`e2faba3`，8 件）** | `docs/qmt-pipeline-m3-plan.md` + `docs/evidence/qmt-m3-acceptance-20261009.md` |
+| **M3.1 F-1 修复**（产物 `_qs_fin_to_rows` 形态探测） | **段一闭合 + ⑥ 已推送（`b65d577`）；段二挂 M5-1**（真实形态钉死后以轨 A 显式声明接入 → 合并验收关闭） | `docs/qmt-pipeline-m3.1-plan.md` + `docs/evidence/qmt-m3.1-acceptance-20261009.md` |
+| 补收批（PRD / 架构设计 / M2a 会话基线） | ✓ 已推送（`e9ba30a`） | — |
+| M4 文档同步（README / strategy_toolbox / prompt_engineering） | 待启动（M2b/M3/M3.1 未触发同步义务：既有行为零改变） | — |
+| **M5 用户域实测**（数值对照正式落位此） | **批1 已交付**（探针 11/11 覆盖 + 操作手册；**未提交，随 M5 后续件统出**）→ **批2 候用户排期** → 批3 归因（P-4/P-5）+ M3.1 段二合并验收 | `docs/qmt-pipeline-m5-plan.md` + `docs/qmt/m5-probe/` |
+| M6 推送批 | **本会话不推送**；M2b/M3/M3.1/补收**均已上远程**（实测：`HEAD=origin/main=e9ba30a`；fetch 时点 2026-10-09 23:38:11 本机） | — |
 
 **M2b 新增/改动件**：`source_import_qmt.py`（新建，1937 行）、`orchestrator.py`（+target 维度与 qmt 分支）、
 `portability_rules.py`（QMT 白名单 3→44 条、`_QMT_CONTEXT_METHODS` 1→5）、`cli.py`（import 加 `--target`）、

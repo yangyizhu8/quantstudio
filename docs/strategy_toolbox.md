@@ -662,6 +662,11 @@ QMT（迅投）目标由 `qs-compile package <spec> --target qmt` 渲染（spec 
 平台契约依据：仓内 `docs/qmt/inner-api/`（6043 行离线转写；05-枚举常量/06-系统函数/
 07-行情函数/08-交易函数行级引用）+ Context7 `/websites/dict_thinktrader_net`。
 
+> **源导入路线（M5，2026-10-11）**：既有本地策略源码 `.py` → QMT 转换（`convert_source_qmt`）
+> 与上述 spec 渲染路线并存；契约（GBK 物理编码、canonical 重转门 `scripts/qmt_reconvert_six.py`、
+> 基本面/审计行 wrapper）见 `docs/qmt-pipeline-baseline.md` 与
+> `docs/evidence/qmt-m5-batch2-probe-20261010.md`（§1-§8.11）。
+
 ## 转模拟盘/实盘（qs-deploy，2026-10-11）
 
 PTrade 回测策略产物 → 模拟盘/实盘部署代码的下游转换通道（独立于本工具箱的

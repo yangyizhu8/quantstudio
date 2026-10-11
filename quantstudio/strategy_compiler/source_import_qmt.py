@@ -265,6 +265,22 @@ def _qs_pick_ctx(C):
     return g
 
 
+def _qs_snap_kwargs(C):
+    """快照类取数锚定（D-1 配套，2026-10-10）：count=1=全局最新一根，回测语境
+    构成未来函数。改窗口（end=当前 bar 当日、start=回退 10 自然日，消费端
+    tail(1)）——实盘语境 end=今日、回测语境 end=回测当日，两语境统一正确。
+    timetag 不可得（异常语境）→ 回退 count=1（原实盘语义，fail-safe）。"""
+    try:
+        import datetime as _qs_dtg
+        ts = C.get_bar_timetag(C.barpos)
+        end_dt = _qs_dtg.datetime.fromtimestamp(ts / 1000.0)
+        start_dt = end_dt - _qs_dtg.timedelta(days=10)
+        return {'start_time': start_dt.strftime('%Y%m%d'),
+                'end_time': end_dt.strftime('%Y%m%d')}
+    except Exception:
+        return {'count': 1}
+
+
 class _QmtPortfolioView(object):
     """组合视图（PTrade portfolio 语义子集）。
 
@@ -278,7 +294,7 @@ class _QmtPortfolioView(object):
 
     def _last_close(self, code):
         try:
-            mkt = self._qs_C.get_market_data_ex(['close'], [code], period='1d', count=1,
+            mkt = self._qs_C.get_market_data_ex(['close'], [code], period='1d', **_qs_snap_kwargs(self._qs_C),
                                                 dividend_type='none')
             df = mkt.get(code) if isinstance(mkt, dict) else None
             if df is not None and len(df) > 0:
@@ -289,15 +305,27 @@ class _QmtPortfolioView(object):
 
     @property
     def cash(self):
-        # 【M5 实测项】ACCOUNT 明细字段（如 m_dCash）未入本次行级索引，失败回退 0.0。
+        # D-18 修复（2026-10-11）：实盘链字段名实测修正——ACCOUNT 明细可用
+        # 金额字段为 m_dAvailable（08-交易函数.md:655 示例；v1 假设的 m_dCash
+        # 不存在于 04-数据结构 ACCOUNT 字段表）。
         try:
             acc = get_trade_detail_data(getattr(self._qs_C, 'accountID', ''), 'STOCK', 'ACCOUNT')
             for a in acc or []:
-                v = getattr(a, 'm_dCash', None)
+                v = getattr(a, 'm_dAvailable', None)
                 if v is not None:
                     return float(v)
         except Exception:
             pass
+        # D-18 修复：回测语境无柜台查询通道（C.accountID 探针 v1 实证不存在；
+        # 模块级 account 变量探针 v2 实证 NOGLOBAL；get_trade_detail_data 存在
+        # 但无账号可查）——C.capital 回测初始资金（03-变量约定.md:168-186，
+        # 探针 v1 实证存在，默认 1000000）推导近似：cash = capital - 持仓市值。
+        cap = getattr(self._qs_C, 'capital', None)
+        if cap is not None:
+            try:
+                return max(float(cap) - self.positions_value, 0.0)
+            except Exception:
+                pass
         return 0.0
 
     @property
@@ -330,9 +358,9 @@ class _QmtPortfolioView(object):
 class _QmtContextView(object):
     """PTrade context → ContextInfo 视图（机制①）。
 
-    显式映射：portfolio；current_dt / previous_date 为【M5 实测项】（bar_date /
-    pre_bar_date 属性未入本次行级索引，取不到返回 None 不抛错）。
-    其余属性 __getattr__ 透传 C。
+    显式映射：portfolio；current_dt / previous_date 由 get_bar_timetag 推导
+    （M5 批2 实测落锤：bar_date / pre_bar_date 属性不存在，D-10；timetag 为
+    北京午夜锚定毫秒 int，M5-13）。其余属性 __getattr__ 透传 C。
     """
 
     def __init__(self, C):
@@ -344,11 +372,34 @@ class _QmtContextView(object):
 
     @property
     def current_dt(self):
-        return getattr(self._qs_C, 'bar_date', None)  # 【M5 实测项】
+        # M5 批2 实测落锤：C.bar_date 不存在（getattr→None→daily_logic strftime 崩溃，
+        # 证据 docs/evidence/qmt-m5-batch2-probe-20261010.md D-10）。
+        # 改由 get_bar_timetag(barpos)（M5-13 实测：北京午夜锚定毫秒 int）推导 bar 时点
+        # datetime；消费面为日期级（strftime/.date()/isocalendar/日期算术），
+        # 本地时区=北京时间（QMT 国内交易端前提，方案 §2.1 登记）。
+        import datetime as _qs_dtc
+        try:
+            ts = self._qs_C.get_bar_timetag(self._qs_C.barpos)
+            return _qs_dtc.datetime.fromtimestamp(ts / 1000.0)
+        except Exception as _qs_exc:
+            print('QS_QMT_CONTEXT_DT_UNAVAILABLE: %r' % (_qs_exc,))
+            return None
 
     @property
     def previous_date(self):
-        return getattr(self._qs_C, 'pre_bar_date', None)  # 【M5 实测项】
+        # M5 实测：pre_bar_date 不存在；用 barpos-1 的 timetag 推导前一交易 bar 时点。
+        # 首 bar（barpos<=0）→ None：QMT 侧边界语义差（PTrade 侧首日形态未核实，
+        # 不声称一致）；六产物策略主体现无消费（潜伏机制修复）。
+        import datetime as _qs_dtp
+        try:
+            bp = self._qs_C.barpos
+            if bp is None or bp <= 0:
+                return None
+            ts = self._qs_C.get_bar_timetag(bp - 1)
+            return _qs_dtp.datetime.fromtimestamp(ts / 1000.0)
+        except Exception as _qs_exc:
+            print('QS_QMT_CONTEXT_DT_UNAVAILABLE: %r' % (_qs_exc,))
+            return None
 
     @property
     def portfolio_value(self):
@@ -387,18 +438,20 @@ class _QmtDataBar(object):
     def __init__(self, C, code):
         vals = {}
         try:
-            mkt = C.get_market_data_ex(list(self._FIELDS), [code], period='1d', count=1,
+            mkt = C.get_market_data_ex(list(self._FIELDS), [code], period='1d', **_qs_snap_kwargs(C),
                                        dividend_type='none')
             df = mkt.get(code) if isinstance(mkt, dict) else None
             if df is not None and len(df) > 0:
                 last = df.iloc[-1]
                 for k in self._FIELDS:
-                    vals[k] = float(last[k])
+                    # D-16a 修复（2026-10-11）：QMT volume=手（04-数据结构.md:24），
+                    # 本地/PTrade 语义=股——快照口径层同步 ×100（与 _qs_fetch_bars 一致）
+                    vals[k] = float(last[k]) * (100.0 if k == 'volume' else 1.0)
         except Exception:
             vals = {}
         det = {}
         try:
-            det = C.get_instrument_detail(code, False) or {}  # 07:2459
+            det = C.get_instrument_detail(code) or {}  # M5-8 实测签名：单位置参数（iscomplete 非位置参，3 参 TypeError）
         except Exception:
             det = {}
         vals['preclose'] = det.get('PreClose')        # :2490
@@ -507,18 +560,28 @@ def _qs_norm_history_fields(fields):
 
 
 def _qs_fetch_bars(C, codes, fields, fq, count, period):
-    """count+1 根取数 → 剔最末根当日 bar（仅日线）→ 至多 count 根（E1）。
-
-    返回 {code: DataFrame}；取数异常 → 打印登记行并返回已得部分（不抛错）。
+    """D-1 修复（2026-10-10）：count 形态实测=全局最新 N 根（回测未来函数，
+    探针证据 docs/evidence/qmt-m5-batch2-probe-20261010.md M5-2/D-11 探针）。
+    改 start_time/end_time 显式窗口：end=当前 bar 前一自然日（E1 语义），
+    start=自然日粗窗（2x+30，宁可多取仅更早历史，方向安全），取回 tail 截尾。
+    审计要点①（M5.1b ②审）：实际取得数 < count 时如实返回（停牌/长假/上市晚），
+    不凑数；E1 端点含当日与否未定谳 → 末行日期 >= bar 当日则剔（防御性双保险）。
     """
     div = _QS_QMT_FQ_MAP.get(fq, 'front')  # 未知 fq 按本地默认 fq='pre' → front
     want = max(int(count or 1), 1)
-    fetch_n = want + 1 if period == '1d' else want  # 仅日线留 E1 剔除余量
     try:
+        import datetime as _qs_dtf
+        ts = C.get_bar_timetag(C.barpos)
+        bar_dt = _qs_dtf.datetime.fromtimestamp(ts / 1000.0)
+        end_dt = bar_dt - _qs_dtf.timedelta(days=1)
+        start_dt = end_dt - _qs_dtf.timedelta(days=want * 2 + 30)
         mkt = C.get_market_data_ex(list(fields), [str(c) for c in codes],
-                                   period=period, count=fetch_n, dividend_type=div)
+                                   period=period,
+                                   start_time=start_dt.strftime('%Y%m%d'),
+                                   end_time=end_dt.strftime('%Y%m%d'),
+                                   dividend_type=div)
     except Exception as exc:
-        print('QS_QMT_WRAPPER_FETCH_FAIL: get_market_data_ex period=%s: %s'
+        print('QS_QMT_WRAPPER_FETCH_FAIL: get_market_data_ex window period=%s: %s'
               % (period, exc))
         return {}
     out = {}
@@ -527,10 +590,30 @@ def _qs_fetch_bars(C, codes, fields, fq, count, period):
             if df is None or len(df) == 0:
                 out[code] = df
                 continue
-            if period == '1d' and len(df) > want:
-                df = df.iloc[:-1].tail(want)  # E1：剔最末根（当日 bar）
-            else:
-                df = df.tail(want)
+            # D-16a 修复（2026-10-11）：QMT volume 单位=手（docs/qmt/inner-api/
+            # 04-数据结构.md:24「成交总量（手）」，pvolume=原始股数但文档标注不
+            # 推荐），本地/PTrade 语义 volume=股——成交额类计算 close*volume 低估
+            # 100 倍（D-15/D-16 探针实证：平安银行 amt20=1123万 vs 真实~15亿；
+            # 修正后过线率 23/500→491/500）。wrapper 口径层统一 ×100 股数换算。
+            if 'volume' in fields:
+                try:
+                    if 'volume' in df.columns:
+                        df = df.copy()
+                        df['volume'] = df['volume'] * 100
+                except Exception as vexc:
+                    print('QS_QMT_WRAPPER_VOLUME_CONV_FAIL: %s %r' % (code, vexc))
+            if period == '1d':
+                # E1 防御：QMT end_time 端点语义（含不含当日）未定谳——
+                # 末行日期串 >= bar 当日则剔末根（索引兼容 int/str/时间戳形态）
+                try:
+                    _last = ''.join(ch for ch in str(df.index[-1])
+                                    if ch.isdigit())[:8]
+                    if len(_last) == 8 and _last >= bar_dt.strftime('%Y%m%d'):
+                        df = df.iloc[:-1]
+                except Exception:
+                    pass
+            if len(df) > want:
+                df = df.tail(want)  # 只截多不凑少（审计要点①）
             out[code] = df
         except Exception:
             out[code] = df
@@ -572,14 +655,25 @@ def _qs_get_history_batch(codes, count, unit='1d', fields=None, fq='pre',
 # ---- 持仓视图 + get_position（机制②同名遮蔽面之一）----------------------------
 _QS_QMT_POSITION_EXT = '''
 # ---- QS-QMT position 视图 ---------------------------------------------------
+# D-18 修复（2026-10-11）：QMT 以模块 globals 预注入原生回测交易函数族（探针
+# v3 15:54 实证 order_target_value/order_value/order_shares/order_lots/
+# order_target_percent/get_trade_detail_data in_globals=True、in_builtins=
+# False，Boost.Python C++ 绑定）。机制②同名遮蔽 def 执行后原生引用丢失——
+# 在首个遮蔽 def 之前捕获原生 order_target_value 供回测语境转发（引擎虚拟
+# 账户自管持仓差额/可卖仓位，08-交易函数.md:1517「仅回测可用」段）。
+_qs_native_otv = globals().get('order_target_value')
+
 # 行级依据（docs/qmt/inner-api/08-交易函数.md）：
 #   get_trade_detail_data(accountID, 'STOCK', 'POSITION') :583；
 #   m_nVolume（总持仓量）/ m_nCanUseVolume（可用持仓量） :648；m_dOpenPrice（开仓价） :649。
-# accountID 取 C.accountID →【M5 实测项】（该属性未入本次行级索引）。
+# D-18 修复：账号解析链 C.accountID（实盘属性）→ 模块级 account 变量（08:623
+# 文档形态：策略交易界面运行时被赋值）→ '' 兜底；回测语境两者皆无（探针 v1/v2
+# 实证）→ 查询返回空，交易走原生函数转发分支。
 
 
 def _qs_get_trade_detail(C, biz_type):
-    return get_trade_detail_data(getattr(C, 'accountID', ''), 'STOCK', biz_type)
+    acc = getattr(C, 'accountID', None) or globals().get('account') or ''
+    return get_trade_detail_data(acc, 'STOCK', biz_type)
 
 
 class _QmtPositionView(object):
@@ -681,12 +775,22 @@ def _qs_order(code, amount, C=None):
 def _qs_order_target_value(code, value, C=None):
     """PTrade order_target_value(code, value) 语义：调仓至目标市值（元）。
 
-    现价以最新收盘价近似（get_market_data_ex count=1 不复权，07:81/:96/:122）；
-    目标卖超可用持仓时按可用上限卖出（清仓零股全清）。取整规则【M5 实测项】。
-    静默跳过分支（_qs_noop_target 式）：现价不可得 / delta=0 / 目标卖超空仓 →
-    原地返回不下单（PTrade noop 语义，无声不抛错）。
+    回测语境（D-18 修复）：转发 QMT 原生 order_target_value（08:1517「仅回测
+    可用」）——引擎虚拟账户自管持仓差额与可卖仓位；现 passorder 链在回测语境
+    positions 恒空（accountID/account 双无，探针 v1/v2 实证）→ 每 bar 重复
+    建仓买入 + closeable=0 卖单全灭（03:24 复测 buy_submitted=0 实证）。
+    实盘语境：现价以最新收盘价近似（get_market_data_ex count=1 不复权，
+    07:81/:96/:122）；目标卖超可用持仓时按可用上限卖出（清仓零股全清）。
+    取整规则【M5 实测项】。静默跳过分支（_qs_noop_target 式）：现价不可得 /
+    delta=0 / 目标卖超空仓 → 原地返回不下单（PTrade noop 语义，无声不抛错）。
     """
     C = _qs_pick_ctx(C)
+    # D-18 修复：回测语境（无实盘账号——C.accountID 探针 v1 实证不存在）且有
+    # 原生引用（模块加载期捕获，本地/异常语境 None 回退实盘链）→ 转发原生
+    # （Boost.Python 签名 (str)code, (float)value, (object)C，探针 v3 实证）。
+    if getattr(C, 'accountID', None) is None and _qs_native_otv is not None:
+        _qs_native_otv(code, float(value), C)
+        return
     price = current_price(code, C)
     if price is None or price != price:
         return
@@ -728,7 +832,10 @@ def _qs_get_ashares(date=None, exclude_bse=None, include_delisted=None, C=None):
         print('QS_QMT_SEMANTIC_DIFF: get_Ashares date=%r 不消费'
               '（QMT sector=当前上市名单，无历史 PIT）' % (date,))
     try:
-        return list(C.get_stock_list_in_sector('沪深A股', 1))
+        # D-12 final（2026-10-11 PROBE 定谳）：realtime 实参传任何值（毫秒时间戳
+        # 或数字 1）回测模式均返回空；唯一可用形态 = 单参调用（板块当前全名单
+        # 5227 只）。与上方 SEMANTIC_DIFF 声明一致（sector=当前上市名单，无 PIT）。
+        return list(C.get_stock_list_in_sector('沪深A股'))
     except Exception:
         return []
 '''
@@ -764,7 +871,7 @@ def _qs_get_trade_days(start_date=None, end_date=None, count=-1, C=None):
     for t in raw:
         try:
             if isinstance(t, (int, float)):
-                out.append(_qs_dtd.fromtimestamp(float(t) / 1000.0).strftime('%Y-%m-%d'))
+                out.append(_qs_dtd.fromtimestamp(float(t) / 1000.0).strftime('%Y%m%d'))
             else:
                 out.append(str(t))
         except Exception:
@@ -776,7 +883,8 @@ def _qs_get_trade_days(start_date=None, end_date=None, count=-1, C=None):
 _QS_QMT_STOCK_INFO_EXT = '''
 # ---- QS-QMT stock info / status / current price ------------------------------
 # 行级依据（docs/qmt/inner-api/07-行情函数.md）：
-#   C.get_instrument_detail(stockcode, iscomplete=False) :2446/:2459；
+#   C.get_instrument_detail(stockcode) :2446/:2459——M5-8 实测签名：单位置参数
+#   （iscomplete 非位置参数，3 参 TypeError；文档签名与实测不符，实测优先）；
 #   字段 :2479-2511：InstrumentName :2481、OpenDate :2488、ExpireDate :2489、
 #   UpStopPrice :2492、DownStopPrice :2493、FloatVolume :2494、
 #   InstrumentStatus（停牌状态）:2502、IsTrading :2503；
@@ -786,7 +894,7 @@ _QS_QMT_STOCK_INFO_EXT = '''
 def _qs_get_stock_info(code, C=None):
     C = _qs_pick_ctx(C)
     try:
-        d = C.get_instrument_detail(code, False) or {}
+        d = C.get_instrument_detail(code) or {}  # M5-8 实测签名：单位置参数
     except Exception:
         d = {}
     return {
@@ -810,11 +918,13 @@ def _qs_status_flags(code, C):
       HALT：InstrumentStatus >= 1（:2502）或 IsTrading 为 False（:2503）；
       DELISTING：ExpireDate（:2489）有效且已过期（当日 > ExpireDate）。
     详情取不到 → ({}, False)（不可判定，调用方保守处置 + 审计行）。
-    ExpireDate 形态（数值毫秒/日期串）→【M5 实测项】，双形态防御解析。
+    ExpireDate 形态：D-13 定谳（2026-10-11 PROBE 实测）= int YYYYMMDD
+    （99999999=永续标记，OpenDate 同形态佐证）；>=1e10 数值按毫秒时间戳
+    防御解析（实测未现）；日期串双形态保留。
     """
     C = _qs_pick_ctx(C)
     try:
-        d = C.get_instrument_detail(code, False) or {}  # 07:2459
+        d = C.get_instrument_detail(code) or {}  # M5-8 实测签名：单位置参数  # 07:2459
     except Exception:
         return {}, False
     if not d:
@@ -834,8 +944,25 @@ def _qs_status_flags(code, C):
     if exp:
         try:
             from datetime import datetime as _qs_dte
+            exp_dt = None
             if isinstance(exp, (int, float)):
-                exp_dt = _qs_dte.fromtimestamp(float(exp) / 1000.0)  # 毫秒 →【M5 实测项】
+                # D-13 定谳（2026-10-11 PROBE 实测，新建策略文件8）：QMT
+                # ExpireDate 为 int YYYYMMDD 形态（99999999=永续标记，
+                # OpenDate=19910403 同形态佐证）。旧代码误按毫秒 /1000 →
+                # fromtimestamp(99999.999)=1970-01-02 → now()>1970 恒真 →
+                # 5227 只全部误判退市（复测 F=0）。仅当数值达到毫秒时间戳
+                # 量级（>=1e10）才按时间戳解析（防御形态，实测未现）。
+                if float(exp) >= 1e10:
+                    exp_dt = _qs_dte.fromtimestamp(float(exp) / 1000.0)
+                else:
+                    txt = str(int(exp))
+                    if len(txt) == 8:
+                        try:
+                            exp_dt = _qs_dte.strptime(txt, '%Y%m%d')
+                        except ValueError:
+                            # 99999999 永续标记（99 月 99 日非法）及其他非法
+                            # 月日 → 不过期（保守保留，不误剔）。
+                            exp_dt = None
             else:
                 txt = str(exp).replace('-', '').replace('/', '')[:8]
                 exp_dt = _qs_dte.strptime(txt, '%Y%m%d') if len(txt) == 8 else None
@@ -877,7 +1004,7 @@ def current_price(code, C=None):
     """最新收盘价（count=1，不复权；07:81/:96/:122）。取不到返回 None。"""
     C = _qs_pick_ctx(C)
     try:
-        mkt = C.get_market_data_ex(['close'], [code], period='1d', count=1,
+        mkt = C.get_market_data_ex(['close'], [code], period='1d', **_qs_snap_kwargs(C),
                                    dividend_type='none')
         df = mkt.get(code) if isinstance(mkt, dict) else None
         if df is not None and len(df) > 0:
@@ -958,7 +1085,7 @@ def _qs_fin_ms_to_date(ms):
 
 def _qs_last_close(C, code):
     try:
-        mkt = C.get_market_data_ex(['close'], [code], period='1d', count=1,
+        mkt = C.get_market_data_ex(['close'], [code], period='1d', **_qs_snap_kwargs(C),
                                    dividend_type='none')
         df = mkt.get(code) if isinstance(mkt, dict) else None
         if df is not None and len(df) > 0:
@@ -968,7 +1095,7 @@ def _qs_last_close(C, code):
     return None
 
 
-def _qs_fin_to_rows(raw, shape=None):
+def _qs_fin_to_rows(raw, shape=None, codes=None):
     """get_financial_data 原始返回 → {code: {field: value}} 归一（M3.1 双轨修复 F-1）。
 
     轨 A（主）**显式形态声明**：``shape='code_major'`` / ``'field_major'`` 时按声明解析、
@@ -982,7 +1109,17 @@ def _qs_fin_to_rows(raw, shape=None):
     探测，而 ``{code:{field:v}}`` 与 ``{field:{code:v}}`` 结构同构不可区分 → 纯 dict 形态被误判，
     致全 NaN 且与「真的缺数」不可区分（静默错值；M3 桩冒烟发现 F-1）。
 
-    DataFrame 形态（``to_dict('index')``，依据 07-行情函数.md:1889 投影）路径**不变**。
+    D-9 轨（2026-10-10，M5.1b ②审要点②）：get_financial_data 实测两形态——多代码 =
+    ``pandas.Panel``（items=codes × major=dates × minor=fields）、单代码 = ``DataFrame``
+    （index=date_str，columns=无前缀字段名；证据 probe 17:18 / M5-1b）。原 ``to_dict('index')``
+    轨对两形态均产出 **date 层嵌套**，与消费方 ``{code:{field:v}}`` 契约错位 → 全 NaN
+    （不可与真缺数区分）。新轨：逐 code 取其 DataFrame **末行**（report_type='announce_time'
+    过滤后的最新宣告记录，as-of 近似）投影为字段映射；Panel 判定用 duck-typing
+    （``major_axis`` 为 Panel 独有签名，QMT 内置旧版 pandas 有 Panel、本仓新版无——避免直接 import）。
+    **不放宽轨 A/B 与 UNDETERMINED 保守语义**（第三形态扩展，原 dict 路径零改动）。
+
+    DataFrame 形态（``to_dict('index')``，依据 07-行情函数.md:1889 投影）路径**不变**
+    （D-9 轨在前拦截实测两形态后，该路径保留给未实测的其余 DataFrame 场景）。
     """
     import re as _qs_re  # 局部 import：不依赖产物头部 import 面（产物仅 import pandas）
     code_re = _qs_re.compile(r'^\\d{6}\\.(SH|SZ|BJ)$', _qs_re.IGNORECASE)
@@ -990,6 +1127,26 @@ def _qs_fin_to_rows(raw, shape=None):
     rows = {}
     if raw is None:
         return rows
+    # ---- D-9 轨：实测形态（Panel / 单代码 DataFrame）→ {code: 末行字段映射} ----
+    try:
+        if hasattr(raw, 'major_axis'):  # Panel（多代码实测形态，duck-typing）
+            for _code in list(raw.items):
+                df_one = raw[_code]
+                if df_one is not None and len(df_one) > 0:
+                    rows[str(_code)] = {str(_k): _v for _k, _v in
+                                        df_one.iloc[-1].to_dict().items()}
+            return rows
+    except Exception:
+        return rows
+    if codes and hasattr(raw, 'loc') and hasattr(raw, 'columns') \
+            and not isinstance(raw, dict):  # 单代码 DataFrame 实测形态
+        try:
+            if len(raw) > 0 and len(codes) == 1:
+                rows[str(codes[0])] = {str(_k): _v for _k, _v in
+                                       raw.iloc[-1].to_dict().items()}
+            return rows
+        except Exception:
+            return rows
     if hasattr(raw, 'to_dict'):
         try:
             return raw.to_dict('index')
@@ -1038,6 +1195,45 @@ def _qs_fin_to_rows(raw, shape=None):
     return rows
 
 
+def _qs_fin_to_rows_hist(raw, shape=None, codes=None):
+    """get_financial_data 原始返回 → {code: [行字段映射, ...]} 全历史行收集
+    （D-19 二层修复，2026-10-11）。
+
+    与 _qs_fin_to_rows 同一实测形态族（D-9：多代码 Panel / 单代码 DataFrame），
+    但按本地契约收集**全部报告期行**而非仅末行——本地 ptrade_api.py:1022-1027
+    eps/profit_ability/growth_ability 走 get_financial 返回 PIT 窗口全报告期行
+    （index=code 重复多行）；消费方实证：CANSLIM:406 groupby('code') 逐期拆
+    单季算 C（当季加速）/A（3 年 CAGR），weekly:138-163 _latest_by_code 按
+    (end_date, publ_date) 取最新有值行。实测形态命中即多行收集；其余形态
+    （dict / 未实测 DataFrame）委托 _qs_fin_to_rows 单行语义包装单元素列表
+    （识别 / 保守语义与其完全一致，不新增猜测路径）。
+    """
+    rows = {}
+    if raw is None:
+        return rows
+    try:
+        if hasattr(raw, 'major_axis'):  # Panel（多代码实测形态，duck-typing）
+            for _code in list(raw.items):
+                df_one = raw[_code]
+                if df_one is not None and len(df_one) > 0:
+                    rows[str(_code)] = [{str(_k): _v for _k, _v in _r.items()}
+                                        for _, _r in df_one.iterrows()]
+            return rows
+    except Exception:
+        return rows
+    if codes and hasattr(raw, 'loc') and hasattr(raw, 'columns') \
+            and not isinstance(raw, dict):  # 单代码 DataFrame 实测形态
+        try:
+            if len(raw) > 0 and len(codes) == 1:
+                rows[str(codes[0])] = [{str(_k): _v for _k, _v in _r.items()}
+                                       for _, _r in raw.iterrows()]
+            return rows
+        except Exception:
+            return rows
+    single = _qs_fin_to_rows(raw, shape=shape, codes=codes)
+    return {str(_c): [_r] for _c, _r in single.items()}
+
+
 _QS_QMT_FUND_FIELD_MAP = {
     # table → (QMT 原生表, {本地字段 → 原生字段})
     'eps': ('PERSHAREINDEX', {'eps': 's_fa_eps_basic',          # :2388
@@ -1066,14 +1262,80 @@ def _qs_get_fundamentals(table, codes, date=None, fields=None, C=None):
     # :1837 建议使用对照表中的英文表名和迅投英文字段。
     native_fields = sorted(set([f"{native_table}.{fmap.get(f, f)}" for f in fields]))
     try:
+        # endDate 为必填字符串（Context7 /websites/dict_thinktrader_net·
+        # innerApi/data_function.html：startDate/endDate required；示例
+        # '20171209'→'20231204'）——date 缺省时空串属未定义行为（17:31 复测
+        # QSFUNDHIST cc=0 定谳候选：get_financial_data 返回空）。补安全终点
+        # '20991231'：report_type='announce_time' 自身保证不取未来数据（文档：
+        # 'announce_time' ensures data is not from the future），窗口右界拉大
+        # 仅放宽取数范围；PIT 过滤由消费方按 publ_date/end_date 自行执行
+        # （本地契约同构：ptrade_api get_financial 回窗口全行、策略侧自滤）。
         raw = C.get_financial_data(native_fields, codes, '19900101',
-                                   str(date) if date else '',
+                                   str(date) if date else '20991231',
                                    report_type='announce_time')  # 显式钉死 :1867/:1877
     except Exception:
         return frame
     # 形态声明（轨 A，M3.1）：M5-1 钉死真实返回形态后，此处改传 'code_major'/'field_major'
-    # 即由显式声明路径解析（声明优先于识别）；当前传 None → 走轨 B 证券代码模式识别。
-    rows = _qs_fin_to_rows(raw, shape=None)
+    # 即由显式声明路径解析（声明优先于识别）；当前传 None → 走 D-9 实测形态轨（Panel/
+    # 单代码 DataFrame），未命中再落轨 B 证券代码模式识别。
+    # D-19 二层修复（2026-10-11 16:05 复测定谳）：eps/growth_ability/profit_ability
+    # （本地 ptrade_api.py:1022 get_financial 支持表）契约 = PIT 窗口全报告期多行
+    # （index=code 重复）且只回完整行；wrapper 此前「每 code 单行 + 缺数 NaN 契约行」
+    # 双重错位：①CANSLIM:406 需跨季度序列拆单季算 C/A，单行使 EPS 因子静默退化
+    # 纯价量；②NaN end_date 行令策略 :391-392 to_datetime→NaT→strftime('NaT')→
+    # astype('Int64') 即 int('NaT') 崩（16:05 复测每 FUN 行 warning 实证）。
+    # 修复：全历史行收集 + 完整行过滤（任一请求字段 float 不可转或 NaN → 整行
+    # 剔除，对齐本地只回完整行契约）；valuation（快照语义）路径不动。
+    if table in ('eps', 'growth_ability', 'profit_ability'):
+        rows_h = _qs_fin_to_rows_hist(raw, shape=None, codes=codes)
+        recs = []
+        for _code in codes:
+            for _row in rows_h.get(_code) or []:
+                _rec = {}
+                _ok = True
+                for _lf in fields:
+                    _v = _row.get(fmap.get(_lf, _lf))
+                    try:
+                        _fv = float(_v)
+                    except (TypeError, ValueError):
+                        _ok = False
+                        break
+                    if _fv != _fv:  # NaN 自不等（None 经 float 已抛 TypeError）
+                        _ok = False
+                        break
+                    _rec[_lf] = _fv
+                if _ok:
+                    recs.append((_code, _rec))
+        if recs:
+            frame = pd.DataFrame([_r for _, _r in recs], columns=fields)
+            frame.index = [_c for _c, _ in recs]
+        else:
+            frame = pd.DataFrame(columns=fields)
+        # D-19 验收审计行（2026-10-11 17:0x 复测补证，新增检测型·纯增益）：
+        # kept=完整行数 / drop=被完整行过滤剔除数 / cc=有完整行的代码数 / n=请求
+        # 代码数。消费方 composite 为 NaN 按剩余权重归一（CANSLIM _composite_score
+        # :489-494），C/A 全 NaN 与有值在选股结果上不可区分——本行是 C/A 因子
+        # 是否真有数据流入的唯一可机检判据（kept>0 即历史表多行契约生效）。
+        try:
+            _tot = sum(len(rows_h.get(_c) or []) for _c in codes)
+            _rt = type(raw).__name__
+            _rl = ''
+            try:
+                if raw is None:
+                    _rl = '0'
+                elif hasattr(raw, 'major_axis'):
+                    _rl = 'items=%d' % len(list(raw.items))
+                elif hasattr(raw, '__len__'):
+                    _rl = 'len=%d' % len(raw)
+            except Exception:
+                _rl = '?'
+            print('[QS-QMT log.info] QSFUNDHIST t=%s kept=%d drop=%d cc=%d n=%d raw=%s %s'
+                  % (table, len(recs), _tot - len(recs),
+                     len(set(_c for _c, _ in recs)), len(codes), _rt, _rl))
+        except Exception:
+            pass
+        return frame
+    rows = _qs_fin_to_rows(raw, shape=None, codes=codes)
     for code in codes:
         row = rows.get(code)
         if not row:
@@ -1081,8 +1343,15 @@ def _qs_get_fundamentals(table, codes, date=None, fields=None, C=None):
         rec = {}
         for lf in fields:
             v = row.get(fmap.get(lf, lf))
-            if lf in ('publ_date', 'end_date'):
-                v = _qs_fin_ms_to_date(v)  # 毫秒时间戳 :1837 → 'YYYYMMDD'
+            # D-19 修复（2026-10-11）：本地契约 publ_date/end_date = epoch 毫秒
+            # 数值（消费方实证：CANSLIM:389 to_datetime(unit='ms') 自转 /
+            # weekly_smallcap:154 与 周频三层:150 astype(float)；fall_reversal
+            # / tech_etf 不消费）。wrapper 此前 _qs_fin_ms_to_date 过度归一成
+            # 'YYYYMMDD' 字符串制造三方错位，且缺失毫秒→None→策略 strftime 产
+            # 'NaT' 字符串→astype('Int64') 即 int('NaT') 崩（03:24 复测每 bar
+            # get_fundamentals failed: invalid literal for int() 实证）。
+            # 修复：原始毫秒值直通（缺失保持 NaN 契约行，消费方 dropna/fillna
+            # 天然剔除）；_qs_fin_ms_to_date 函数保留备用但不再于此调用。
             rec[lf] = v
         if table == 'valuation' and 'float_value' in fields:
             cap = row.get('circulating_capital')      # 股 :2376
@@ -1155,6 +1424,14 @@ def get_history(security=None, count=None, unit='1d', fields=None, frequency=Non
         count = 20
     if frequency and unit == '1d':
         unit = frequency
+    # D-17 修复（2026-10-11）：纯关键字调用形态（count=/frequency=/field=/
+    # security_list= 全关键字，无位置参数）不进上方 int 重映射分支——
+    # field 关键字被丢弃、fields 恒 None → wrapper 默认 ['close'] →
+    # high/volume 根本未请求 → 产物门槛 len(high/volume)<260 全灭（q=0，
+    # 03:12 复测实证；H=4414 因 close 列在而自洽）。无条件归一：field
+    # 显式给则覆盖 fields（与重映射分支优先级一致，幂等不冲突）。
+    if field is not None:
+        fields = field
     codes = [security] if isinstance(security, str) else list(security)
     out = _qs_get_history(codes, count, unit=unit, fields=fields, fq=fq,
                           include=include, C=C)

@@ -317,6 +317,9 @@ _QMT_API_WHITELIST: frozenset[str] = frozenset({
     "_qs_order_target_value",   # M2b source_import_qmt.py:679（passorder 底座）
     "_qs_get_positions",        # M2b source_import_qmt.py:605（08:583/:648/:649）
     "_qs_should_run_daily",     # M2b source_import_qmt.py:1212（handlebar 前段门控）
+    "_qs_native_otv",           # D-18（2026-10-11）：_QS_QMT_POSITION_EXT 模块加载期捕获的
+                                # QMT 原生 order_target_value 引用（赋值型 helper，非 def——
+                                # 探针 v3 实证模块 globals 预注入，回测语境转发底座，08:1517）
     # ---- M2b source 注入面：机制②同名遮蔽（14 件，_WIRED_WRAPPER_NAMES :1263-1268）----
     "get_history",              # source_import_qmt.py:1079（双签名识别 ptrade_api.py:1407-1423 同款）
     "get_history_batch",        # :1119（B1 契约 {code: DataFrame}）
@@ -369,6 +372,9 @@ _QMT_CONTEXT_METHODS: frozenset[str] = frozenset({
     "get_instrument_detail",
     # 07-行情函数.md:3341/:3350 —— 交易日历（消费点 :754；init 内不可用 06:12）
     "get_trading_dates",
+    # 06-系统函数.md ContextInfo 节 + M5-13 实测（毫秒 int，北京午夜锚定）——
+    # bar 时间戳（消费点 _qs_fetch_bars/_qs_snap_kwargs，D-1 窗口锚定依据）
+    "get_bar_timetag",
 })
 
 # 显式 DENY：QMT 已废弃/错误形态 API（命中即 BLOCK，rule_id 见 value）

@@ -73,3 +73,93 @@
 ## 基线差异备忘
 
 主仓工作树在 366596d 之上有 395 个未提交文件——副本不含；M0 轮首动作=段门同步（fetch+merge，铁律 9）；工作树现存簿记改动（PROJECT_STATE ②审归档 + ISS-004 量级更新）随 M0 轮产物一并 commit。
+
+## 2026-10-10 M5.1b 状态快照（⑤确认已获，⑥挂起）
+
+- 当前阶段：M5 批2 陪同执行——M5.1b（D-1 count 形态未来函数 + D-9 Panel 解析）③④⑤ 完成。
+- ⑤确认（用户裁定，总调度转达）：④验收采信（27 单测+6 桩冒烟+矩阵零漂移+六产物重转+文件7 byte-identical+审计三要点落证）；复测指引确认已转用户。
+- ⑥推送裁定：**复测通过后并入下批推送批统出呈批**（不单独批复，批次惯例）——当前挂起，等待文件7 用户域复测日志回传（判据：FUN 行窗口首/尾逐bar变化、E1 端点定谳、无 FETCH_FAIL/UNDETERMINED 刷屏）。
+- 门禁落位：主仓 AGENTS.md ✅ / 副本跟随 ✅ / 全局预设模板 ✅ / 方案文档留痕示范 ✅ / **退回演练留证＝下轮待办（已照准）**。
+- 回退基线：output/backups/m5.1b-20261010/（三 .bak + deployed-file7-m51a.py.bak）；git stash 基线沿用 M5.1a。
+- 未闭合：D-2b（BLOCKED 暂缓，解除条件=首个持仓交易链复测）、stub 保真度第二批、M5-11（BLOCKED D-2）、退回演练留证、六产物中其余五产物部署（等文件7 复测通过后建文件8-12）。
+- 下一步：等待复测日志 → 判定 PASS/差异归因 → 并入下批推送批统出呈批。
+
+## 2026-10-11 02:00 M5 批2 状态快照（D-12 final 通过，F=0 新瓶颈待定位）
+
+- D-12 final 验收通过：01:48 复测 A=5227（原 0）→ 单参 get_stock_list_in_sector 唯一可用形态（PROBE 定谳：realtime 实参任何值回测模式均空）；33 passed / 矩阵零漂移 / 文件7 sha 77f83acc76ffb152。证据 §8.1。
+- M 闸门 m=1 全程稳定（D-1/D-9 持续有效）。
+- **新瓶颈（D-13 候选，未定谳）**：FUN 漏斗 A=5227 F=0——filter_stock_by_status 把 5227 全剔。
+  - 已核：_qs_filter_stock_by_status 实现（source_import_qmt.py:951-979）语义正确（剔除命中/保守保留+UNDETERMINED 登记行）；
+  - **未读**：_qs_status_flags（约 :850-908）——ok/flags 提取逻辑；F=0 且无 UNDETERMINED 刷屏 → 每只 ok=True 且三 flag 恒命中，或循环未执行即空转（下轮首选：读 _qs_status_flags 全文 + 核对产物 :1311 调用实参）；
+  - 定位后修复走 D-12 同款微批 profile（PROBE 取证→修 wrapper→33+ 门禁→重转→部署文件7→复测）。
+- 直达闭环授权仍有效；下一步 = D-13 定位修复 → 五产物部署（文件8-12）→ 下批推送批呈批（M5.1a+M5.1b+D-12+D-13 合并）。
+- 待办不变：退回演练留证、D-2b（BLOCKED）、Obsidian 回灌（count 形态未来函数/Panel shape/realtime 参数回测语义三条候选，结案批统一做）。
+
+## 2026-10-11 03:1x M5 批2 状态快照（D-13 修复完成，待文件7 复测）
+
+- **D-13 定谳并修复**：PROBE（02:31，文件8）实锤 `ExpireDate=99999999 type=int`（YYYYMMDD 永续，OpenDate 同形态佐证）→ 旧代码按毫秒 /1000 得 1970-01-02 → now()>1970 恒真 → 5227 全判退市（F=0 根因）。修复：wrapper `_qs_status_flags` 数值分流（>=1e10 毫秒防御 / 否则 strptime YYYYMMDD，非法月日 ValueError 保守不过期）；ST/HALT 路径零改动。判型=数据修正型（影响面=DELISTING 行集）。
+- **门禁**：38 passed（+5 D-13 测试）+ 矩阵零漂移（中途白名单拦 `_qs_dte(...)` 直接名调用一次——改 strptime 属性形态后绿，校验器未放宽）。
+- **六产物重转+部署**：文件7 69067B sha=17af261996c02af6 byte-identical；五产物 output/qmt_import/ 待部署文件8-12。
+- **D-12 关单**：01:48 复测 A=5227 实证（ISSUES 已更新）。
+- **回退链**：stash 1498d3d9（baseline-before-d13）+ .bak-d13-pre 两件 + deployed-file7-d12.py.bak。
+- **下一步**：等文件7 复测日志（预期 F≈5000+ → H/q/b → selected>0 → 买卖链）→ 五产物部署（用户建文件8-12）→ 下批推送批呈批（M5.1a+M5.1b+D-12+D-13 合并）。
+- 待办不变：退回演练留证、D-2b（BLOCKED，解除条件=首个持仓交易链复测——本轮复测若出持仓即触发重评）、Obsidian 回灌四条候选（D-1/D-9/D-12/D-13）。
+
+### 快照 2026-10-11 03:1x（D-16a 实施完成，待部署裁定+复测）
+- 当前阶段：M5 批2 微批推进中（M5.1a ⑤done/⑥pending；M5.1b ③④⑤done/⑥pending）。
+- D-13 复测通过（F=4414 实证）；D-14 吞吐降级非阻断（缓存生效）；D-15/D-16 双探针定谳 volume 单位=手（04-数据结构.md:24），q=0 根因=D-16a 单位错位（低估 100 倍）。
+- D-16a 已实施：wrapper 双层 volume×100（:435-437/:581-592）；pytest 36 passed；六产品重转 +942B 同构（CANSLIM 70009B cf2feefe0f906550）。
+- **待用户裁定**：file7/file8 被 QMT 客户端回测后自动改写为 token 加密形态（新发现）——D-16a 部署落点（新文件名 or 覆盖）。
+- D-16b（批竞态）证伪关闭。回滚链：stash 1498d3d9 + bak-d13-pre ×2 + deployed-file7-d12.py.bak + 本地产物在位。
+- 推送批（M5.1a+M5.1b+D-12+D-13+D-16a）待 file7 复测通过后呈批；矩阵 reverify 随推送批同 commit（wrapper 模板已改）。
+
+### 快照 2026-10-11 03:4x（D-17 修复完成，待复测）
+- D-16a 复测 q=0 恒定 → 深挖定谳 **D-17**：get_history 纯关键字形态 field= 路由洞（high/volume 根本未请求）；D-16a 换算逻辑本身正确。
+- D-17 已修复（get_history 适配层无条件 field→fields 归一）+ pytest 39 passed + stub 冒烟 6 + 六产品重转（CANSLIM 70484B 673cb230564a24be）+ 部署 QMT转换测试.py。
+- 待用户复测：FUN q 预期打开（~4300+）；q>0 后 b/selected/tradable 链条依次验证。
+- 推送批（M5.1a+M5.1b+D-12+D-13+D-16a+D-17）待复测通过呈批；矩阵 reverify 同 commit。
+- 主库回灌已提交 b25cc62（QuantStudio QMT管线两件+MOC 索引）。
+
+### 快照 2026-10-11 03:5x（漏斗全通里程碑 + D-18/D-19 待授权）
+- **里程碑**：M5 批2 漏斗 A→F→H→q→b→selected 全通（03:24 复测 q=4135+/b 非零/selected=5）——D-13+D-16a+D-17 三层修复链闭环。
+- 新登记：D-18（P0 回测资金源恒 0，buy 链断）/ D-19（P1 fundamentals NaT）——均待用户授权推进（探针→修复→重转→复测）。
+- 推送批（M5.1a+M5.1b+D-12+D-13+D-16a+D-17）待 buy 链打通后一并呈批更完整；矩阵 reverify 同 commit。
+- 主库已提交 b25cc62；回灌候选累积 D-1/D-9/D-12/D-13/D-16a/D-17。
+
+### 快照 2026-10-11 16:0x（D-18 修复落位待复测）
+- D-19（fundamentals 毫秒直通）+ D-18（回测资金源/交易转发四处）模板修复完成；门禁 46+6+66 全绿；六产品重转全 PASS（CANSLIM 73072B 337b1c32 已部署 QMT转换测试.py）；矩阵 reverify 7a424f397983 同批追认。
+- 待用户 QMT back test 复测：验收判据 cash_ratio 非零 / buy_submitted>0 / 无 NaT 报错 / EPS 因子恢复。
+- 推送批（M5.1a+M5.1b+D-12+D-13+D-16a+D-17+D-18+D-19）待复测通过后一并呈批。
+
+### 快照 2026-10-11 16:2x（D-18 关闭里程碑 + D-19 残余待授权）
+- **里程碑**：QMT 回测主链全通（16:05 复测九个月 0105→1009 无崩溃）：买卖/止损/调仓/持仓管理全活——D-13+D-16a+D-17+D-18 四层修复链闭环。
+- D-19 残余（NaT 仍报）：第二层根因新定谳=wrapper 单行形态 vs 本地多行历史契约错位 + NaN 行未剔除（登记 ISSUES）。
+- D-20（P3 显示层 gross_exposure 恒 0）登记。
+- 推送批待 D-19 残余处置后一并呈批（或用户裁定接受现状先呈批）。
+
+### 快照 2026-10-11 16:4x（D-19 二层修复部署完成）
+- D-18 已关闭（16:05 复测四判据全过，回测主链全通）。
+- D-19 二层修复已部署：历史表多行契约 + 完整行过滤（49 测试全绿 / 六策略 portability 全 PASS / CANSLIM sha16=522db759 已部署 QMT转换测试.py）。待用户复测：NaT 消失 + EPS 因子恢复。
+- 基线 stash：e40e3ba1（D-19 二层写前快照）。
+- 推送批（M5.1a+M5.1b+D-12+D-13+D-16a+D-17+D-18+D-19）待 D-19 复测过后一并呈批。
+
+### 快照 2026-10-11 16:5x（D-21 编码契约修复 + D-19 二层重新部署）
+- D-21：临时脚本 UTF-8 落盘违反 GBK 产物契约 → scripts/qmt_reconvert_six.py canonical 重转门固化（四自检）；六策略 GBK 重转全 PASS。
+- CANSLIM（D-19 二层 + D-21 编码修复）76540B sha16=23f79b1a 已部署 QMT转换测试.py，待复测（无 NaT / EPS 因子恢复 / 漏斗维持 + 无编码错误）。
+- canonical 重转入口此后固定为 scripts/qmt_reconvert_six.py，禁止手搓临时重转脚本。
+
+### 快照 2026-10-11 17:1x（17:00 复测 ①②④ PASS + QSFUNDHIST 审计行）
+- 17:00 复测：编码/NaT/漏斗三判据 PASS，回测全区间 183 轮无崩溃；③ EPS 因子恢复受 composite skipna 归一影响不可从选股结果区分。
+- 已部署 QSFUNDHIST 审计行版 CANSLIM（sha16=fc8e76d1），复测 kept>0 即 D-19/D-21 全关。
+- 门禁实录：⟺ 注释被 GBK fail-closed 测试拦截——D-21 修复后写盘点门禁首次实战拦截。
+
+### 快照 2026-10-11 17:4x（D-22 endDate 空串修复部署）
+- 17:31 复测：QSFUNDHIST cc=0 定谳数据源为空（D-19 二层消灭 NaN 契约行为真，数据空是独立缺陷 D-22）。
+- D-22 修复：endDate 缺省补 20991231（文档依据：innerApi/data_function.html 必填参数），审计行增 raw 形态；CANSLIM sha16=330e16e5 部署待复测。
+- 快照链：1498d3d9 -> e40e3ba1 -> e4be74ff -> 9f349c05。
+
+### 快照 2026-10-11 17:5x（D-22 复测全过，四案全关，待推送批审批）
+- 17:45 复测：QSFUNDHIST kept>0 恒成立 cc=n 全覆盖，raw=Panel 确认；判据③关闭（选股 diff 可归因：002908 出/603055 进）。
+- D-18/D-19/D-21/D-22 四案全关。M5 batch2 累计：M5.1a+M5.1b+D-12+D-13+D-16a+D-17+D-18+D-19+D-21+D-22。
+- 下一步：推送批呈批件（精确文件清单 + 快照链 1498d3d9/e40e3ba1/e4be74ff/9f349c05 + 双远程核验 + QuantStudio-trading 同步门），待用户批准。
+- 可选优化（非缺陷）：get_fundamentals 窗口起点 19900101 可收窄（本地契约仅需 3 年年报，当前全历史窗口单轮 3-10s）。
