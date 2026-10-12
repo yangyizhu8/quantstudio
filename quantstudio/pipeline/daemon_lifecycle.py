@@ -706,6 +706,18 @@ class DaemonLifecycle:
                 logger.info(f"[DaemonLifecycle] 任务边界({point_name})收到停止请求，"
                             f"中断遍历")
                 return True
+            # ── QS 按需只读导出（2026-10-12 裁定③）────────────────────────
+            # 周期内消费：复用既有 writer 连接（**不新增连接、不触 DuckDB 单写者锁**、
+            # 不扰动周期）。无请求时仅一次文件存在性检查，零开销；异常不阻断周期。
+            try:
+                from .qs_export import serve_request_if_any
+                if collector is not None:
+                    _w = getattr(collector, "writer", None)
+                    if _w is not None:
+                        serve_request_if_any(_w.shared_conn(), self.instance_token)
+            except Exception as _qe:
+                logger.error(f"[DaemonLifecycle] 按需导出异常（不阻断周期）: {_qe}",
+                             exc_info=True)
             return False
 
         try:
