@@ -5,6 +5,8 @@
 fixture 化：档案与 S1 JSON 全部落 tmp_path，不依赖真实台账/档案/output 树；
 另覆盖：首跑去重、fail→pass 终判口径、连续重置、S1 JSON 源、--local 兼容、
 只读 grep 核验（验收判据⑤）。
+另覆盖（loop-ri-ni 件③，2026-10-12）：收敛台账面四态——收敛达成／R_i>0 流程违规／
+序列不足（<3 轮不误报）／「暂无≠0」（fixture 台账，不依赖真实收敛台账）。
 """
 import json
 import sys
@@ -51,11 +53,33 @@ def q(strategy, date, verdict="已对齐"):
     return [strategy, date, verdict, f"ev-{strategy}"]
 
 
-def run(capsys, tmp_path, archive_text, json_files=None, use_local=False, extra=None):
+# ---------- 收敛台账夹具（loop-ri-ni 件③：fixture 化，不依赖真实台账） ----------
+
+LEDGER_HEADER = (
+    "# S4 收敛台账（测试夹具）\n\n## 1. 残差矩阵（主表）\n\n"
+    "| 策略 | 口径 | 日期 | 残差（末日） | 分歧组 | verdict | S3 路由 | 产物 | N_i | R_i |\n"
+    "|---|---|---|---|---|---|---|---|---|---|\n"
+)
+
+
+def ledger_row(strategy="四象限ETF轮动", n="0", r="0", date="2026-10-07"):
+    """一行主表数据（N_i/R_i 由参数注入；r 可含内嵌管道，如 1(CORP-01类|缺条目)）。"""
+    return (f"| {strategy} | diluted | {date} | 0.01% | 3 | 已对齐 | ✅ 无需路由 | p "
+            f"| {n} | {r} |")
+
+
+def build_ledger(rows):
+    return LEDGER_HEADER + "\n".join(rows) + "\n"
+
+
+def run(capsys, tmp_path, archive_text, json_files=None, use_local=False, extra=None,
+        ledger_text=None):
     """落盘夹具并执行 cda.main → (exit_code, stdout, stderr)。
 
     json_files=None 时给一个空的显式 alignment 目录（不触达真实 output/ 树，且正好走
-    「命中 0 → 回退人工清单」降级路径）。
+    「命中 0 → 回退人工清单」降级路径）。ledger_text=None 时落一份空主表夹具台账
+    （件③台账面零有效轮次 → 台账面退出 0，既有断言不受真实 knowledge/
+    alignment-convergence.md 影响——fixture 化，不依赖真实台账）。
     """
     arch = tmp_path / "dimension-alignment.md"
     arch.write_text(archive_text, encoding="utf-8")
@@ -74,6 +98,10 @@ def run(capsys, tmp_path, archive_text, json_files=None, use_local=False, extra=
         args += ["--alignment-dir", str(adir)]
     if extra:
         args += extra
+    led = tmp_path / "alignment-convergence.md"
+    led.write_text(ledger_text if ledger_text is not None else build_ledger([]),
+                   encoding="utf-8")
+    args += ["--ledger", str(led)]
     code = cda.main(args)
     cap = capsys.readouterr()
     return code, cap.out, cap.err
@@ -290,6 +318,67 @@ def test_state1_json_unknown_dimension(capsys, tmp_path):
     code, out, err = run(capsys, tmp_path, build_archive(sec),
                          json_files=[jrec("s1", "2026-10-01", dimension="DIM-99 未知域")])
     assert code == 1 and "无法唯一归属" in err
+
+
+# ---------- loop-ri-ni 件③：收敛台账面四态（fixture 台账，不依赖真实台账） ----------
+
+def test_ri_face_convergence_achieved(capsys, tmp_path):
+    """态①收敛达成：N=1,1,0 / R=0,0,0 → 收敛提示 + 综合退出 0（维度面 N=1 无提示）。"""
+    sec = dim_section(rows=[q("s1", "2026-10-01")])
+    led = build_ledger([ledger_row(n="1", r="0", date="2026-10-01"),
+                        ledger_row(n="1", r="0", date="2026-10-03"),
+                        ledger_row(n="0", r="0", date="2026-10-05")])
+    code, out, err = run(capsys, tmp_path, build_archive(sec), ledger_text=led)
+    assert code == 0
+    assert "== 维度对齐收敛机检" in out          # 既有维度面输出段仍在（逐字不变面）
+    assert "✓ 收敛达成" in out
+    assert "N=1,1,0 / R=0,0,0" in out
+    assert "同坑复发" not in out
+
+
+def test_ri_face_violation_ri_positive(capsys, tmp_path):
+    """态②流程违规：R_i=1(CORP-01类|缺条目) → 退出 3 + 先修管线文案 + 案号/归因回显。
+
+    R_i 单元格内嵌管道（案号|归因）→ 行拆分 11 段回并末两段（10 列契约解析路径）。
+    """
+    sec = dim_section(rows=[q("s1", "2026-10-01")])
+    led = build_ledger([ledger_row(n="1", r="0", date="2026-10-01"),
+                        ledger_row(n="1", r="1(CORP-01类|缺条目)", date="2026-10-04")])
+    code, out, err = run(capsys, tmp_path, build_archive(sec), ledger_text=led)
+    assert code == 3
+    assert "同坑复发" in out
+    assert "先修管线再修漏洞" in out
+    assert "案号=CORP-01类" in out and "归因=缺条目" in out
+    assert "✓ 收敛达成" not in out
+
+
+def test_ri_face_sequence_insufficient(capsys, tmp_path):
+    """态③序列不足：有效轮次 2 < 3 → 无收敛提示（不误报）+ 退出 0。"""
+    sec = dim_section(rows=[q("s1", "2026-10-01")])
+    led = build_ledger([ledger_row(n="1", r="0", date="2026-10-01"),
+                        ledger_row(n="0", r="0", date="2026-10-02")])
+    code, out, err = run(capsys, tmp_path, build_archive(sec), ledger_text=led)
+    assert code == 0
+    assert "✓ 收敛达成" not in out
+    assert "序列不足" in out and "有效轮次 2" in out
+
+
+def test_ri_face_zanwu_not_coerced_to_zero(capsys, tmp_path):
+    """态④「暂无≠0」：暂无轮不计入序列（自首个有效记录起算），不得 coerce 为 0 伪造连击。
+
+    若「暂无」被错误 coerce 为 0，将凑满 3 轮 R=0/N=0,0,0 → 伪造「✓ 收敛达成」，
+    本用例三重断言（无收敛标记／无 0,0,0 序列／序列仅 2 轮）拦截该回归。
+    """
+    sec = dim_section(rows=[q("s1", "2026-10-01")])
+    led = build_ledger([ledger_row(n="暂无", r="暂无", date="2026-09-30"),
+                        ledger_row(n="0", r="0", date="2026-10-01"),
+                        ledger_row(n="0", r="0", date="2026-10-02")])
+    code, out, err = run(capsys, tmp_path, build_archive(sec), ledger_text=led)
+    assert code == 0
+    assert "✓ 收敛达成" not in out
+    assert "0,0,0" not in out
+    assert "暂无≠0" in out
+    assert "N_i 序列: 0,0" in out and "R_i 序列: 0,0" in out
 
 
 # ---------- 工程面 ----------

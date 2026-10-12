@@ -35,6 +35,19 @@
 退出码（与提示严格区分，供 CI 判型）：
   0=无提示；3=有候选提示或维护态告警；1=异常/档案或 JSON 解析失败。
 
+收敛台账面（loop-ri-ni 件③，docs/loop-ri-ni-plan.md rev2；轮次口径=2026-10-12 用户裁定 A）：
+  轮=案闭环（一次修复迭代），S1 对账跑=观测点非修复轮；N_i/R_i 锚定案闭环行，
+  非闭环行留「—」不参与序列；「暂无≠0」（不 coerce 为 0，序列自首个有效记录起算）。
+  ① 格式校验前置：S4 台账主表（knowledge/alignment-convergence.md）另立 10 列契约
+    （不复用维度档案 TABLE_COLUMNS，P2-7）——表头逐列全等（含 N_i/R_i）；R_i 单元格
+    文法 0 或 <n>(<案号>[|<归因>])（归因∈{缺条目, 回哺链断裂}）；N_i 纯数字/—/暂无；
+    不合规 → 退出码 1（stderr 报行号）；
+  ② 收敛达成提示：某策略案闭环序列连续 3 轮 R_i=0 且 N_i 单调不增且末轮 N_i=0；
+  ③ 流程违规提示：任一轮 R_i>0 → 同坑复发，须先归因（知识库缺条目 or 回哺链断裂）
+    并先修管线再修漏洞（回显该轮案号与归因字段）；
+  ④ 台账面退出码：违规→3；收敛达成/序列不足→0；格式不合规→1；与维度宣布面综合
+    取最高（1>3>0）。既有「维度对齐」输出段逐字不变（新判据以新增段追加输出）。
+
 只读保证：本脚本零文件写入（台账/档案/产物均不动；可 grep 核验无写入路径，
 对应测试 tests/test_check_dimension_alignment.py::test_read_only_no_write_paths）。
 
@@ -42,6 +55,7 @@
   python scripts/check_dimension_alignment.py [--archive <档案.md>]
                                               [--alignment-dir <目录|文件>]
                                               [--local <回测产物目录>]
+                                              [--ledger <收敛台账.md>]
 """
 from __future__ import annotations
 
@@ -61,9 +75,18 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DIM_HEADER_RE = re.compile(r"^###\s+(DIM-\d+)\s+(.+?)\s*$")
 SEP_CELL_RE = re.compile(r"^:?-+:?$")
 
+# 收敛台账面（loop-ri-ni 件③）：S4 台账主表另立 10 列契约（P2-7：不复用 TABLE_COLUMNS）
+LEDGER_TABLE_COLUMNS = ("策略", "口径", "日期", "残差（末日）", "分歧组",
+                        "verdict", "S3 路由", "产物", "N_i", "R_i")
+CONV_ROUNDS = 3                                    # 收敛判据轮数：连续 3 轮（铁律口径）
+NI_CELL_RE = re.compile(r"^(?:—|暂无|[0-9]+)$")     # N_i 单元格文法（纯数字/—/暂无）
+RI_CELL_RE = re.compile(                           # R_i 单元格文法（0 或 <n>(<案号>[|<归因>])）
+    r"^(?:—|暂无|0|[1-9]\d*\([^()|]+(?:\|(?:缺条目|回哺链断裂))?\))$")
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ARCHIVE_DEFAULT = REPO_ROOT / "knowledge" / "contracts" / "dimension-alignment.md"
 PRODUCT_ROOT_DEFAULT = REPO_ROOT / "output"
+LEDGER_DEFAULT = REPO_ROOT / "knowledge" / "alignment-convergence.md"
 
 SOURCE_JSON = "S1 JSON"
 SOURCE_MANUAL = "人工清单"
@@ -71,6 +94,10 @@ SOURCE_MANUAL = "人工清单"
 
 class ArchiveFormatError(Exception):
     """维度档案格式不合规（要素③表格/④宣布状态等）→ 退出码 1。"""
+
+
+class LedgerFormatError(Exception):
+    """收敛台账主表格式不合规（10 列契约/N_i·R_i 文法）→ 台账面退出码 1。"""
 
 
 # ---------- 终判分类 ----------
@@ -306,6 +333,193 @@ def compute_streak(records):
     return n, streak, resets
 
 
+# ---------- 收敛台账面（loop-ri-ni 件③：R_i/N_i 复发·收敛判据，只读+只提示） ----------
+
+def _table_blocks(text):
+    """Markdown 表块切分：围栏外连续「|」开头行各成一块 → [(行号, 行), ...] 列表。"""
+    blocks, cur, in_fence = [], [], False
+    for idx, raw in enumerate(text.splitlines()):
+        stripped = raw.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if stripped.startswith("|"):
+            cur.append((idx + 1, stripped))
+        elif cur:
+            blocks.append(cur)
+            cur = []
+    if cur:
+        blocks.append(cur)
+    return blocks
+
+
+def _ledger_row_cells(line):
+    """主表行拆分：R_i 文法允许内嵌一道管道（<案号>|<归因>）→ 11 段时回并末两段。"""
+    cells = _table_cells(line)
+    if len(cells) == len(LEDGER_TABLE_COLUMNS) + 1:
+        cells = cells[:-2] + [cells[-2] + "|" + cells[-1]]
+    return cells
+
+
+def parse_ledger_rounds(text, origin):
+    """解析 S4 台账主表（10 列契约）→ 行字典列表（strategy/date/n_raw/r_raw/line_no）。
+
+    格式校验前置（先校验后统计）：表头逐列全等（含 N_i/R_i）；分隔行单元格形态合规
+    （列数从宽——既有台账分隔行为 9 格历史形态，不据此判死）；数据行列数与
+    N_i/R_i 单元格文法逐行校验，不合规抛 LedgerFormatError（含行号）。
+    """
+    target = list(LEDGER_TABLE_COLUMNS)
+    header = None
+    for block in _table_blocks(text):
+        if _table_cells(block[0][1]) == target:
+            header = block
+            break
+    if header is None:
+        raise LedgerFormatError(
+            f"{origin}：未找到收敛台账主表（表头须逐列全等："
+            f"｜{'｜'.join(LEDGER_TABLE_COLUMNS)}｜）")
+    if len(header) < 2:
+        raise LedgerFormatError(f"{origin}:{header[0][0]}：主表缺分隔行")
+    sep = _table_cells(header[1][1])
+    if not sep or not all(SEP_CELL_RE.match(c) for c in sep):
+        raise LedgerFormatError(f"{origin}:{header[1][0]}：主表分隔行不合规")
+    rows = []
+    for line_no, line in header[2:]:
+        cells = _ledger_row_cells(line)
+        where = f"{origin}:{line_no}"
+        if len(cells) != len(LEDGER_TABLE_COLUMNS):
+            raise LedgerFormatError(
+                f"{where}：主表数据行列数 {len(cells)}（应 {len(LEDGER_TABLE_COLUMNS)}）")
+        n_raw, r_raw = cells[-2], cells[-1]
+        if not NI_CELL_RE.match(n_raw):
+            raise LedgerFormatError(
+                f"{where}：N_i 单元格「{n_raw}」不合规（允许纯数字/—/暂无）")
+        if not RI_CELL_RE.match(r_raw):
+            raise LedgerFormatError(
+                f"{where}：R_i 单元格「{r_raw}」不合规（文法 0 或 "
+                f"<n>(<案号>[|<归因>])，归因∈{{缺条目, 回哺链断裂}}；或 —/暂无）")
+        rows.append({"strategy": cells[0], "date": cells[2],
+                     "n_raw": n_raw, "r_raw": r_raw, "line_no": line_no})
+    return rows
+
+
+def parse_ri_cell(cell):
+    """R_i 单元格 → (复发数, 案号, 归因)。文法已在 parse_ledger_rounds 前置校验。"""
+    if cell in ("—", "暂无", "0"):
+        return 0, None, None
+    m = re.match(r"^([1-9]\d*)\(([^()|]+)(?:\|([^()|]+))?\)$", cell)
+    return int(m.group(1)), m.group(2), m.group(3)
+
+
+def build_rounds(rows):
+    """同策略行序列 → (数值轮列表, 暂无跳过数)。
+
+    口径 A（2026-10-12 用户裁定）：轮=案闭环——「—」行（非案闭环/观测点）不参与
+    序列；「暂无≠0」：暂无行跳过且中断其后连续性（未知轮不得计入 R_i=0 连击）；
+    序列自首个有效记录起算（前置「暂无」行不阻断起算、不被 coerce 为 0）。
+    """
+    rounds, zanwu, gap_pending, started = [], 0, False, False
+    for row in rows:
+        n_raw, r_raw = row["n_raw"], row["r_raw"]
+        if n_raw == "—" or r_raw == "—":
+            continue
+        if n_raw == "暂无" or r_raw == "暂无":
+            zanwu += 1
+            if started:
+                gap_pending = True
+            continue
+        rcount, case, attr = parse_ri_cell(r_raw)
+        rounds.append({"n": int(n_raw), "r": rcount, "case": case, "attr": attr,
+                       "r_raw": r_raw, "date": row["date"], "line_no": row["line_no"],
+                       "contig": not gap_pending})
+        started = True
+        gap_pending = False
+    return rounds, zanwu
+
+
+def find_convergence_window(rounds):
+    """末个满足判据的连续 CONV_ROUNDS 轮窗口：R_i 全 0 且 N_i 单调不增且末轮 N_i=0。
+
+    连续性以 contig 标记判定（跨「暂无」缺口的窗口不算连续，防伪造连击）。
+    """
+    best = None
+    for i in range(len(rounds) - CONV_ROUNDS + 1):
+        win = rounds[i:i + CONV_ROUNDS]
+        if not all(w["contig"] for w in win[1:]):
+            continue
+        if any(w["r"] != 0 for w in win):
+            continue
+        ns = [w["n"] for w in win]
+        if all(ns[k + 1] <= ns[k] for k in range(len(ns) - 1)) and ns[-1] == 0:
+            best = win
+    return best
+
+
+def run_ledger_face(ledger_path):
+    """收敛台账面主流程 → (输出行列表, 台账面退出码)。
+
+    只读只提示：R_i>0 违规→3；收敛达成/序列不足→0；台账缺失或格式不合规→1
+    （stderr 报行号）。绝不写文件、绝不自动宣布（宣布/关单一律人工确认动作）。
+    """
+    try:
+        text = ledger_path.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        print(f"[异常·退出码1] 收敛台账读取失败：{exc}", file=sys.stderr)
+        return [], 1
+    try:
+        rows = parse_ledger_rounds(text, str(ledger_path))
+    except LedgerFormatError as exc:
+        print(f"[异常·退出码1] 收敛台账格式校验失败：{exc}", file=sys.stderr)
+        return [], 1
+    out = ["", "== 收敛台账 R_i/N_i 复发·收敛机检（loop-ri-ni 件③ · 只读 · 只提示） ==",
+           f"台账: {ledger_path}"]
+    by_strat = {}
+    for row in rows:
+        by_strat.setdefault(row["strategy"], []).append(row)
+    if not by_strat:
+        out.append("（主表无数据行——无有效轮次，序列不足不判收敛）")
+    n_conv = n_viol = 0
+    for strategy, srows in by_strat.items():
+        rounds, zanwu = build_rounds(srows)
+        out.append(f"[{strategy}] 案闭环有效轮次 {len(rounds)}"
+                   "（轮=案闭环·2026-10-12 裁定 A；「—」非闭环行不参与；"
+                   "「暂无≠0」自首个有效记录起算）")
+        if zanwu:
+            out.append(f"  · 跳过「暂无」轮 {zanwu} 行（暂无≠0，不计入序列、不计为 R_i=0）")
+        if rounds:
+            out.append("  N_i 序列: " + ",".join(str(r["n"]) for r in rounds))
+            out.append("  R_i 序列: " + ",".join(str(r["r"]) for r in rounds))
+            out.append("  轮明细: " + "｜".join(
+                f"{r['date']} N={r['n']} R={r['r']}" for r in rounds))
+        for r in rounds:
+            if r["r"] > 0:
+                n_viol += 1
+                attr = f"归因={r['attr']}" if r["attr"] else "归因未附（须补归因落点）"
+                out.append("  ⚠ 同坑复发：须先归因（知识库缺条目 or 回哺链断裂）"
+                           "并先修管线再修漏洞")
+                out.append(f"    · 轮（台账行{r['line_no']}，{r['date']}）: "
+                           f"R_i={r['r_raw']} → 案号={r['case']}｜{attr}")
+        window = find_convergence_window(rounds)
+        if window:
+            n_conv += 1
+            wn = ",".join(str(r["n"]) for r in window)
+            wr = ",".join(str(r["r"]) for r in window)
+            out.append(f"  ✓ 收敛达成: 连续 {CONV_ROUNDS} 轮 R_i=0 且 N_i 单调不增"
+                       f"且末轮 N_i=0（N={wn} / R={wr}）")
+        elif len(rounds) < CONV_ROUNDS:
+            out.append(f"  序列不足: 有效轮次 {len(rounds)} < {CONV_ROUNDS} → "
+                       "不判收敛（不误报）")
+        else:
+            out.append("  未收敛: 有效轮次充足但判据未满足（连续 R_i=0／N_i 单调不增／"
+                       "末轮 N_i=0 任一未达）")
+    code = 3 if n_viol else 0
+    out.append(f"汇总: 策略 {len(by_strat)} 个｜收敛达成 {n_conv}｜复发违规 {n_viol}｜"
+               f"台账面退出码 {code}")
+    return out, code
+
+
 # ---------- CLI ----------
 
 def _parse_args(argv):
@@ -315,13 +529,18 @@ def _parse_args(argv):
         epilog=(f"退出码：0=无提示；3=有候选提示或维护态告警；1=异常/解析失败。"
                 f"数据源：S1 JSON 优先（显式参数或缺省扫 output 树下 alignment/*.json），"
                 f"零 JSON 时回退档案要素③人工清单（输出显式标注，不静默）。"
-                f"N 阈值={N_THRESHOLD}（模块常量）。本脚本零文件写入。"))
+                f"N 阈值={N_THRESHOLD}（模块常量）。"
+                f"收敛台账面（loop-ri-ni 件③）：R_i>0 违规→3；收敛达成/序列不足→0；"
+                f"格式不合规→1；综合退出码两面取最高（1>3>0）。本脚本零文件写入。"))
     ap.add_argument("--archive",
                     help="维度档案路径（缺省 knowledge/contracts/dimension-alignment.md）")
     ap.add_argument("--alignment-dir",
                     help="S1 终判 JSON 显式路径（目录或单文件；目录扫 *.json；优先于 --local）")
     ap.add_argument("--local",
                     help="回测产物目录（兼容 align_diff_report.py --local：扫 <dir>/alignment/*.json）")
+    ap.add_argument("--ledger",
+                    help="S4 收敛台账路径（缺省 knowledge/alignment-convergence.md；"
+                         "loop-ri-ni 件③ R_i/N_i 复发·收敛判据，只读只提示）")
     return ap.parse_args(argv)
 
 
@@ -403,7 +622,20 @@ def main(argv=None):
     out.append(f"汇总: 维度 {len(dims)} 个｜候选提示 {hints_cand}｜维护态告警 {hints_maint}｜"
                f"数据源={source}｜退出码 {code}（{kind}）")
     print("\n".join(out))
-    return code
+    # ---- 收敛台账面（loop-ri-ni 件③）：以上既有「维度对齐」输出段逐字不变， ----
+    # ---- 新判据（R_i/N_i 复发·收敛）以新增段追加；综合退出码两面取最高（1>3>0）。 ----
+    ledger_path = Path(args.ledger) if args.ledger else LEDGER_DEFAULT
+    ledger_out, ledger_code = run_ledger_face(ledger_path)
+    if code == 1 or ledger_code == 1:
+        combined = 1
+    elif code == 3 or ledger_code == 3:
+        combined = 3
+    else:
+        combined = 0
+    ledger_out += ["", f"综合退出码: 维度面 {code}｜台账面 {ledger_code} → {combined}"
+                       "（两面取最高 1>3>0）"]
+    print("\n".join(ledger_out))
+    return combined
 
 
 if __name__ == "__main__":
