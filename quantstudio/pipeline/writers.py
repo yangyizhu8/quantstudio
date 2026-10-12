@@ -124,6 +124,36 @@ def last_write_context() -> dict:
     return dict(_LAST_WRITE_CTX)
 
 
+# ── §10.2 修正（2026-10-12 实战暴露：全局最近槽会与失败写错配）────────────────
+# 首例实战（10:18:43 stock_minutes 冲突）显示 ctx_table=sw_weight / serial=False ——
+# 即「最近一次写」并非「失败的那次写」⇒ 该字段误导。修正：在写路径的 except 中
+# **复制当时上下文到失败槽**（此刻 _LAST_WRITE_CTX 正是本次失败写的上下文）。
+_LAST_WRITE_FAILURE: dict = {}
+
+
+def record_write_failure(exc: BaseException) -> None:
+    """§10.2 修正：记录**失败写自身**的上下文（键控于本次调用写入的 _LAST_WRITE_CTX）。
+
+    只增观测：不吞异常、不改传播；自身异常一律兜住（观测失败不得影响写路径）。
+    """
+    try:
+        info = dict(_LAST_WRITE_CTX)
+        info["exc_type"] = type(exc).__name__
+        info["exc_msg"] = str(exc)[:300]
+        _LAST_WRITE_FAILURE.clear()
+        _LAST_WRITE_FAILURE.update(info)
+    except Exception:
+        pass
+
+
+def last_write_failure() -> dict:
+    """读取最近一次**失败写**的上下文（只读；供 daemon 侧单点组装）。"""
+    try:
+        return dict(_LAST_WRITE_FAILURE)
+    except Exception:
+        return {}
+
+
 def table_write_lock(table: str):
     """R2 按表写锁上下文（模块级公共入口，跨模块共享同一把锁）。
 
@@ -1089,6 +1119,9 @@ class DuckDBWriter(BaseWriter):
                     conn.unregister("_pt_src")
                     conn.execute(f'DROP TABLE IF EXISTS "{table}"')
                     conn.execute(f'ALTER TABLE "{tmp}" RENAME TO "{table}"')
+                except BaseException as _wf:
+                    record_write_failure(_wf)          # §10.2 修正：失败写自身上下文
+                    raise
                 finally:
                     conn.close()
         logger.info(f"[DuckDBWriter] {table} passthrough 全量覆盖 {len(df)} 行 "
@@ -1220,6 +1253,9 @@ class DuckDBWriter(BaseWriter):
                                 'resumed_from=%d', table, final_rows, n_chunks, resumed_from)
                     return dict(written=final_rows, chunks=n_chunks,
                                 resumed_from=resumed_from, rebuilt=rebuilt)
+                except BaseException as _wf:
+                    record_write_failure(_wf)          # §10.2 修正：失败写自身上下文
+                    raise
                 finally:
                     conn.close()
 

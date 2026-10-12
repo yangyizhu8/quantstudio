@@ -152,21 +152,30 @@ def _assemble_write_failure_features(table: str, batch_id: str,
     纪律：只增观测——不改异常传播、不吞异常、不参与任何判定；组装自身失败不得抛。
     """
     try:
-        from quantstudio.pipeline.writers import last_write_context
-        ctx = last_write_context()
+        from quantstudio.pipeline.writers import (last_write_context,
+                                                  last_write_failure)
+        _fail = last_write_failure()
+        if _fail.get("exc_type"):
+            # §10.2 修正（2026-10-12）：优先用**失败写自身**的上下文——
+            # 全局「最近写」槽会与失败写错配（首例实战 ctx_table=sw_weight 即证）。
+            ctx, src = _fail, "failure"
+        else:
+            ctx, src = last_write_context(), "last"
     except Exception:
-        ctx = {}
+        ctx, src = {}, "?"
     try:
         msg = str(exc)
         key = ""
         if "write-write conflict on key" in msg:
             key = msg.split("write-write conflict on key", 1)[1].strip().lstrip(": ").strip()[:120]
-        return ("table=%s batch=%s path=%s serial=%s ctx_table=%s ctx_path=%s "
-                "exc=%s conflict_key=%s"
+        return ("table=%s batch=%s path=%s serial=%s ctx_src=%s ctx_table=%s ctx_path=%s "
+                "ctx_exc=%s exc=%s conflict_key=%s"
                 % (table, batch_id, ctx.get("path") or "?",
                    ctx.get("serial"),
+                   src,
                    ctx.get("table") or "?",
                    ctx.get("path") or "?",
+                   ctx.get("exc_type") or "-",
                    type(exc).__name__,
                    key or "无"))
     except Exception as _e:  # 组装失败绝不影响主流程
