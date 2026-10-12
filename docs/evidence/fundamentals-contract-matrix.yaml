@@ -10,6 +10,8 @@ meta:
       list / eps / or_yoy / report_types×range）；P5-7 dist={0:3,1:6,2:20,3:35,4:47,5:59,6:45,7:21,8:13}
       pass6=79 cost_missing=0 cur_missing=0（RD-4 定量证据）；v8.7b 九次复验收敛：fscore_pass 35、roa_removed
       15、total_share 0——RD-5 定量证据
+  qmt_wrapper_hash: 75108c301bf3
+  qmt_last_reverified: '2026-10-12'
 matrix:
 - id: f01
   shape: single

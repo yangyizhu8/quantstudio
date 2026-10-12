@@ -675,3 +675,39 @@ P0-P6 流水线（预检 vault 回哺→画像→配置校验→AST 变换→等
 交付）；CLI/PyQt 双壳同一内核（产物 SHA256 对等）。部署化护栏含状态持久化、
 定时任务管控、未知 API 保守确认；修复知识库（vault）驱动下次运行自动回哺。
 详见 `docs/ptrade-deploy-pipeline-design.md` 与 `docs/ptrade-deploy-convergence-ledger.md`。
+
+
+---
+
+## 本地策略 → 大 QMT 转换管线：取数层三项修复（2026-10-12）
+
+> 对应上文「本地策略 → 大 QMT 转换产物契约」（M2a）下的 **wrapper 取数层**修复，实测端测贯通。
+
+### 1. `get_stock_info` 契约键补全（D-23）
+QMT `get_instrument_detail` 的 `OpenDate` 为 **int YYYYMMDD**（实测 `19910403`）且键名与本地契约不同 →
+wrapper 侧新增归一 helper `_qs_norm_ymd` 并补 **本地契约键** `listed_date` / `de_listed_date`
+（`'YYYY-MM-DD'` 字符串，与 `ptrade_api.get_stock_info` 一致）；`0`/`None`/`99999999`（永续）/非法月日 → `None`。
+**修复前**：`get_stock_info(codes, field=['listed_date'])` 恒 `None` → 策略 L1 全滤 → `L1_listed=0` 零交易。
+
+### 2. 取数层进度审计行（D-24）
+新增 `_qs_progress` 系列（`stocks_info/filter_stock_by_status/query_last_close` 逐只 tick +
+`get_financial_data` begin/end `finally` 配对），行形态：
+
+```
+QS_QMT_PROGRESS func=<name> done=<n>/<total> pct=<p> elapsed=<s> phase=<tick|begin|end>[ extra=...]
+```
+
+节流：固定步长 **500**，批 <500 全静默，`done==total` 收尾恒打印。用于区分「在计算」与「已死锁」。
+
+### 3. `_qs_fin_to_rows_hist` 结构与性能（D-26）
+**QMT 真实结构（端测探针定谳）**：
+
+```
+raw = QMT 自定义 Panel
+raw.to_frame() → index = MultiIndex(major=日期, minor=字段)，columns = 股票代码
+raw[code]      → DataFrame(8739 行 × 3 列)，index = 日期（日频全历史）
+```
+
+- `raw[code]` 行数为**日频全历史**（实测 8739/只），远超「PIT 全报告期」契约（~40 期）→ 超量 ~200×；
+- 修复：`to_dict('records')` 取代 `iterrows`（4×）+ `dropna(how='all')` 删全 NaN 行（32.0M → 9.7M）；
+- `.loc[code]` 对上述结构**必然失败**（index 首层是日期）→ batch 仅为加速尝试，失败即回落 `raw[code]`。

@@ -6,6 +6,8 @@
 
 > wrapper 模板哈希：`7a424f397983`；最后复证：`2026-08-31`
 
+> QMT wrapper 契约哈希（M5.2 件1，source_import_qmt.py 全渲染常量）：`75108c301bf3`；QMT 最后复证：`2026-10-12`
+
 ## 一、形态矩阵（YAML 行）
 
 | id | shape | mode | table | fields | tested | probed | probe_ref | rd | notes |

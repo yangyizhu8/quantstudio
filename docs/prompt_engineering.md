@@ -566,3 +566,39 @@ audit/held-canary/observation tools must require:
 「转模拟盘/实盘」tab）完成部署化（状态持久化护栏 / 定时任务管控 / 平台门禁 /
 vault 知识库回哺）。智能体在策略生成阶段不承担部署化——两阶段严格分离，
 与「策略生成默认通过 skill 开发，仅本地 QuantStudio」铁律一致。
+
+
+---
+
+## 本地策略 → 大 QMT 转换管线：取数层三项修复（2026-10-12）
+
+> 对应上文「本地策略 → 大 QMT 转换产物契约」（M2a）下的 **wrapper 取数层**修复，实测端测贯通。
+
+### 1. `get_stock_info` 契约键补全（D-23）
+QMT `get_instrument_detail` 的 `OpenDate` 为 **int YYYYMMDD**（实测 `19910403`）且键名与本地契约不同 →
+wrapper 侧新增归一 helper `_qs_norm_ymd` 并补 **本地契约键** `listed_date` / `de_listed_date`
+（`'YYYY-MM-DD'` 字符串，与 `ptrade_api.get_stock_info` 一致）；`0`/`None`/`99999999`（永续）/非法月日 → `None`。
+**修复前**：`get_stock_info(codes, field=['listed_date'])` 恒 `None` → 策略 L1 全滤 → `L1_listed=0` 零交易。
+
+### 2. 取数层进度审计行（D-24）
+新增 `_qs_progress` 系列（`stocks_info/filter_stock_by_status/query_last_close` 逐只 tick +
+`get_financial_data` begin/end `finally` 配对），行形态：
+
+```
+QS_QMT_PROGRESS func=<name> done=<n>/<total> pct=<p> elapsed=<s> phase=<tick|begin|end>[ extra=...]
+```
+
+节流：固定步长 **500**，批 <500 全静默，`done==total` 收尾恒打印。用于区分「在计算」与「已死锁」。
+
+### 3. `_qs_fin_to_rows_hist` 结构与性能（D-26）
+**QMT 真实结构（端测探针定谳）**：
+
+```
+raw = QMT 自定义 Panel
+raw.to_frame() → index = MultiIndex(major=日期, minor=字段)，columns = 股票代码
+raw[code]      → DataFrame(8739 行 × 3 列)，index = 日期（日频全历史）
+```
+
+- `raw[code]` 行数为**日频全历史**（实测 8739/只），远超「PIT 全报告期」契约（~40 期）→ 超量 ~200×；
+- 修复：`to_dict('records')` 取代 `iterrows`（4×）+ `dropna(how='all')` 删全 NaN 行（32.0M → 9.7M）；
+- `.loc[code]` 对上述结构**必然失败**（index 首层是日期）→ batch 仅为加速尝试，失败即回落 `raw[code]`。

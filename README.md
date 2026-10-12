@@ -796,3 +796,17 @@ canary and formal watermark release remain unauthorized pending G2 and a
 separate explicit user authorization.  See
 `docs/mcp_migration/b6-formal-cutover-runbook.md` and
 `docs/mcp_migration/b6-post-cutover-observation-runbook.md`.
+
+
+---
+
+## 大 QMT 转换管线（2026-10-12 更新）
+
+本地策略 → 大 QMT（迅投内置 Python）转换产物的 **wrapper 取数层**已修复三项并通过 QMT 端实测贯通
+（详见 `docs/strategy_toolbox.md` §本地策略 → 大 QMT 转换管线：取数层三项修复）：
+
+- `get_stock_info` 补本地契约键 `listed_date`/`de_listed_date`（修复前上市日取不到 → L1 全滤 → 零交易）；
+- 取数层进度审计行 `QS_QMT_PROGRESS`（可区分「在计算」与「已死锁」）；
+- `_qs_fin_to_rows_hist` 性能修复（509s → 127s，4×）与结构契约对齐（`raw.to_frame()` 的 index=(日期,字段)、columns=代码）。
+
+实测结果：`L0=5227 → L1_listed=4410 → … → R_selected=10`，产生买单并成交持仓。

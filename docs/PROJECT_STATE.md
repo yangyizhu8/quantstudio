@@ -163,3 +163,65 @@
 - D-18/D-19/D-21/D-22 四案全关。M5 batch2 累计：M5.1a+M5.1b+D-12+D-13+D-16a+D-17+D-18+D-19+D-21+D-22。
 - 下一步：推送批呈批件（精确文件清单 + 快照链 1498d3d9/e40e3ba1/e4be74ff/9f349c05 + 双远程核验 + QuantStudio-trading 同步门），待用户批准。
 - 可选优化（非缺陷）：get_fundamentals 窗口起点 19900101 可收窄（本地契约仅需 3 年年报，当前全历史窗口单轮 3-10s）。
+
+### 快照 2026-10-11 21:4x（M5 batch2 推送批七步执行完成·终态）
+- ①全库回归：61 failed/3461 passed 与 V1a 基线逐位一致（27:00，零新增失败）；②strategy_toolbox 交叉引用 +5 行；③commit ccbd97c（14 文件 +2090/-49）；④push origin 双远程（prepush-gate 裁定通道，rulings.log 在案）；⑤双远程 HEAD 逐位一致（21:23:17 fetch 核验）；⑥trading 同步门：merge 8f3e195（台账 union）+ 共享代码路径 diff=0 + ci-smoke 49/49 副本绿（drift FAIL 9 项=trading 合法本地增量已归因，sync-ledger 在案）；⑦Obsidian 回灌 3 条目 + D-9 条目补案例。
+- M5 batch2 六步流水线全闭。D-18/D-19/D-21/D-22 四案关单。P3 队列（矩阵门 QMT 覆盖缺口升级、D-20 显示层、E1 端点、D-2b、M5-11、qmt_paste_utf8 清理）候下次排期。
+
+### 快照 2026-10-12（M5.2 闭环基建批开工：件1/3/4/5 落地，总调度批复+加速令在案）
+- 立项：docs/qmt-m5.2-closure-design.md v1.0 落盘（总调度批复全文+四审计要点+判型+验收 a-g+知识反哺留痕 4 命中）。
+- 件1 矩阵门：check_fund_matrix.py SRC 扩 qmt 双哈希分立（meta.qmt_wrapper_hash=9b4892f7eeff 首录，PTrade 7a424f397983 隔离不变）；负向实证 FAIL+还原 PASS；tests/test_fund_matrix_qmt_gate.py 5 用例；AGENTS.md 矩阵铁律 QMT 扩充电。
+- 件3 收敛台账：docs/evidence/qmt-pipeline-convergence.md（batch1 N=11/R=0 + batch2 N=11/R=0 回填，R>0 处置预案在案）。
+- 件4 部署器：内核 quantstudio/strategy_compiler/qmt_deploy.py（三级目录解析+SHA256 双端核对+manifest+幂等覆盖+CJK 文件名保留）+ CLI scripts/qmt_deploy.py 层1（--all/--strategy/--file/--list/--qmt-path --save）+ 层2 钩子（orchestrator --deploy-qmt：产物落盘自动部署，run_card artifacts 带 deployed 条目）；tests/test_qmt_deploy.py 10 用例（含 canonical 六名单一致性守护）；六产物实测部署 D:/QMT/国金QMT交易端模拟/python 全 verified（层2 端到端 sha=b945cb56542b521d 与目录实际逐位一致）。
+- 件5 目录配置化：config/qmt_deploy.json（deploy_dir 持久化，--save 实测写入 D:/QMT/国金QMT交易端模拟/python）；无自动探测（用户裁定）；PyQt 选择器归件6。
+- 测试：新增 15 用例（5+10）+ 既有 49 用例零衰减 = 59 passed。
+- 事故 1 起自愈：手写清理清单与 target_filename 漂移误删 4 个正确部署文件→幂等重部署 <1min 恢复（manifest 18 条可追溯）；教训=清理清单必须由部署函数同名生成（候回灌 Obsidian）。
+- 待续：件6 PyQt（QMT tab+口径选择器+CLI/PyQt 哈希一致门）、件2 对齐执行器、件7 双撮合口径（Context7 前置查询+双列证据链+口径标签全链路）；⑥推送随下批统出。
+- 快照链：f44674d7（M5.2 pkg135 写前）。
+### 快照 2026-10-12（M5.2 件6 落地：PyQt 双端对等——用户验收令+件6 继续令在案）
+- 件6：qmt_export_tab.py 新建（独立 tab row10 界面现状裁定：平台转换均独立 tab 同构；FluentIcon.SYNC）；转换区（策略选择+deploy checkbox→QmtExportWorker 调 orchestrate_source target=qmt deploy_qmt 同内核）+ 部署目录设置区（件5 PyQt 落点：QFileDialog 手选→save_deploy_dir 持久化，无自动探测）+ 批量部署区（canonical 六产物 ListWidget 多选→deploy_strategy 层1 内核）+ 结果区（artifacts sha/deployed 标记/warnings）；main_window 注册 +4 行（_NAV_ITEMS 第 11 项+工厂 row10）。
+- 双端一致性门禁：tests/test_qmt_export_parity.py 3 用例（内核确定性两次转换 sha 逐位一致+薄壳纯透传静态断言+导航注册检查）——单一内核架构下测内核一次=证两端。
+- 回测 tab 撮合口径选择器：依赖件7 match_profile 参数，随件7 落地后补（依赖序自然结果）。
+- 测试：62 passed（59+3）零衰减。事故教训（清理清单禁手写）候 Obsidian 回灌已获准。
+- 待续：件2 对齐执行器 ∥ 件7 双撮合口径（件7 实施前复核权保留——参数定谳件呈总调度）。
+### 快照 2026-10-12（M5.2 件7 引擎落地：总调度三裁定在案——A/B 入库+C 采(a)+节奏确认）
+- 件7：backtest_engine.py match_profile 参数（ptrade|qmt；缺省 ptrade 零行为改变）+ qmt 口径 logger 标签快照 + metrics_summary 注入 match_profile/match_price_mode 两键（批复③全链路可追溯审计点：GUI/CLI/run_card/对照报告统一消费位）；backtest_tab Match profile 选择器三处落位（combo 构建/取值/params dict）+ workers.py 透传（GUI→引擎链闭合）。
+- 关键发现：引擎 TradeCost 已对齐市场真实费率（印花税 2023-08-28 减半分段 :864-868、过户费万0.1、佣金万3.5）——B 类参数引擎现行已具，件7 实质=口径标签体系+参数快照（C 类候反推）。
+- 定谳呈报件：docs/evidence/qmt-match-profile-params-20261012.md（六参数双列证据链；A 类 prType=5/枚举表/wrapper 三方交叉，B 类央视网/浙商公示来源，C 类批复②a 反推路径）。
+- 测试：撮合相关 24 用例零衰减 + test_match_profile.py 5 用例（参数校验/B 类值锚点/印花税分段/缺省零行为/标签契约）+ M5.2 四件套 18 passed 全绿。
+- CLI 回测入口 match_profile 透传：候下轮（GUI 链已闭合，CLI 壳 BacktestEngine 调用点透传一行待补+测试）。件2 对齐执行器：未启动（context 预算），候下轮 zcode 委派任务包（总调度已照准）。
+### 快照 2026-10-12（M5.2 件2/件7 残项全闭：继续令三项完成）
+- ①CLI 透传：run_ptrade_strategy.py run_backtest 增 match_profile='ptrade' 缺省+透传（CLI/GUI 共用入口），test_match_profile 增透传链静态断言=6 用例绿。
+- ②件2 对齐执行器（E7 委派）：任务包 docs/zcode-taskpkg-m52-item2.md 落盘→zcode_code 交付两新文件（634+290 行）→O5 验收五步过环（17 passed+--help 契约+diff 零越界+ISSUES.md E7 登记）。纯观测铁律：脚本零引擎 import（AST 机检）。
+- 真实 CANSLIM 对照（判据 b）：候用户 QMT 端复测日志到位后跑执行器出报告（验收 g 不阻塞）。
+- M5.2 七件套全落地：件1/3/4/5/6/7+件2。全批候⑤用户确认→⑥下批统推（61/3461 全库大回归随推送批）。
+### 快照 2026-10-12（QMT 端策略落地机制定谳 · 剪贴板直通路线）
+- **重大定谳**：QMT 内置 Python 策略为**加密存储**（Base64 形态，体积=明文×1.3333）+ 策略名大写规范化；**明文 .py 拷入 python\ 目录对 QMT 模型树无效**（树条目由 QMT 内存态权威，外部改 indexUserConfig.xml 被 QMT 保存时回写覆盖）。
+- **落地路线改定**：GBK 解码读产物→剪贴板→QMT 编辑器粘贴保存（QMT 自行加密落盘）。六份全部落地（10:18-11:10），比值逐份 1.3333 一致=粘贴内容与产物原文一致的证据链。
+- **件4 部署器设计前提被证伪**（验收判据 d 失效）——「拷明文 .py 即部署」不成立，须重新设计（粘贴文本生成+界面引导，或探索 QMT 导入通道）；属框架层改动，回退六步流水线方案环节，候呈批。
+- 备份/归档：`config\indexUserConfig.xml.bak-20261012-m52`（127537B）；`python\_qs_plaintext_bak\`（5 份明文，fall_reversal 明文被 QMT 覆盖）；`新建策略文件6.py` 残留已清理（用户授权）。
+- 待办：六策略 QMT 端回测运行（判据 b/g 数据源）+ 件4 部署器重设计呈批。
+### 快照 2026-10-12（M5.2 件8 · D-23 QMT `get_stock_info` 日期契约键缺失修复：实施+验收完成）
+- **根因定谳**（QMT 端实测实证）：`QMT_WEEKLY_SMALLCAP` 零交易 = L1 全滤（`L0_all=5227 → L1_listed=0`）。链：策略 L1 读 `listed_date`（`weekly_smallcap...:180`）→ wrapper `get_stock_info` 按 `field` 白名单取键（`source_import_qmt.py:1531-1533`）→ `_qs_get_stock_info` 返回字典**无 `listed_date` 键**（只有 QMT 原生 `start_date`/`end_date` 等）→ 恒 None → `continue` 全滤。本地契约（`ptrade_api.py:2481-2523`）listed_date = `'YYYY-MM-DD'` 字符串。
+- **消费面取证**：12 策略 / 54 处消费点**全部只用 `listed_date`**（个别带 `list_date` fallback）→ 修复面收敛为单键。
+- **修复**（框架层，策略源码零改动）：`_QS_QMT_STOCK_INFO_EXT` 内新增 `_qs_norm_ymd` 归一 helper（int/str YYYYMMDD → 'YYYY-MM-DD'；0/负/None/bool/非 8 位/非法月日含 99999999 → None，与本地「取不到」同判）+ `_qs_get_stock_info` 增 `listed_date`/`de_listed_date` 两契约键，**既有 9 键零改动**。
+- **判型=数据修正型**：diff `1 file changed, 42 insertions(+)` 零删除；六份产物统一 **+2007B** （无其他漂移）→ diff 完全源于归一化行集。
+- **验收证据**（`docs/evidence/qmt-l1-listed-date-norm-20261012.md`）：新增单测 `tests/test_qmt_stock_info_date_norm.py` **24 passed**（含边界矩阵 18 例 + L1 阻断回归闸 + 既有键零回归断言）；既有 `test_source_import_qmt.py` **49 passed 零衰减**；QMT 族五套件 **100 passed**；六策略 canonical 重转 **ALL 6 PASS (enc=gbk)** + portability/selfcheck 全 PASS；矩阵 `--check --reverify` → `qmt_wrapper_hash=c45941bf5399`（同批追认）+ `--check` 绿。
+- **写前回退点**：`b248385`（`baseline-20261012-qmt-l1-normalize` @15:17:37，四步配方）+ 文件级定向备份 `docs/evidence/_bak/source_import_qmt.py.bak-20261012-qmt-l1`（SHA256 `C60FEADF…`）。**附注**：首跑快照因工作区含 `agent_workspace/_wt_*` 嵌入仓库致 `git add -A` 超时被 kill 并残留 `.git/index.lock`（0B）；核实无 git 进程后清理，属本轮阻断性清理（局部豁免申报）。
+- **零越权登记**：wrapper 其余键名（`stock_name`/`stock_type`/`exchange_type`/`code`）与本地契约差异，策略侧零消费，本轮未改 → `docs/ISSUES.md` P2 open 候批。
+- **当前阶段**：④验收完成 → **⑤用户端测/确认**（GBK 产物经剪贴板粘入 QMT 复测，主判据 `L1_listed > 0` 且产生交易）→ ⑥推送随统出批。
+- **未闭合**：D-23 端测（用户端）；件4 部署器重设计（候呈批）；键名差异补全（候裁定）；`python\_qs_plaintext_bak\` 与 `indexUserConfig.xml.bak-20261012-m52` 清理（候答复）。
+### 快照 2026-10-12（D-24 进度审计行：③实施+④验收完成）
+- **判型＝新增检测型**。五落点：`_QS_QMT_LOG_EXT` helper（`_qs_progress_start`/`_qs_progress`，local import time）+ `filter_stock_by_status`/`get_stock_info`/per-code 三处 tick + `get_financial_data` begin/end（`finally` 配对 + `err=` 尾键）。
+- **验收全绿**：新单测 15 passed（判据 a/b/h/i，含 vs 改动前副本 `bak-20261012-d24` 的真黄金对照）+ 既有 49 用例零衰减 + 六策略 `ALL 6 PASS (enc=gbk)` + 产物**统一 +2969B** + `qmt_wrapper_hash=5c3586666747`（yaml+md 同批追认，`--check` 绿）。
+- **实施中自测发现**：t0=0.0 → `elapsed=1791806094.2s`（epoch 天文数字，误导判读）→ 按局部豁免加固（`t0 > 0` 才计时）；契约描述澄清 `done=<n>/<total>` 为复合字段。
+- **回退**：stash `cc8c087`（`baseline-20261012-d24-progress` 19:48:33）+ 文件级备份 SHA256 `694C45D9…`。
+- **未闭合**：端测（D-23+D-24 并轮，候用户）；**正式 archify 影响面图**（本会话 context 不足，如实申报，候下轮）；D-25 另起一轮；wrapper 键名差异候裁定。
+### 快照 2026-10-12（D-23/D-24/D-26 三卷端测贯通 · QMT 端首次产生交易）
+- **里程碑**：QMT 端 `QMT_WEEKLY_SMALLCAP` 全区间回测**首次贯通并产生交易**——`QS_FUNNEL_AUDIT L0=5227 → L1_listed=4410 → L2=3816 → L3=3666 → L3v_complete=3663 → L4=366 → L5=30 → L6=17 → R_rankable=16 → R_selected=10 note=ok`；`buy_submitted=7`、持仓 7 只、总资产 1,003,261.49。
+- **三卷达成**：D-23（listed_date 契约键，L1 由 0 → 4410）；D-24（取数层进度审计行，全程无静默段）；D-26（hist 段 509s → 127/109s，4×）。
+- **D-26 卷四轮**：D-26（批量+去 iterrows）→ D-26b（回落修 `kept=0`）→ D-26c（结构探针：`to_frame()` index=(major=日期,minor=字段) × columns=code，`.loc` 方向错；契约超量 200×）→ D-26d（`dropna(how='all')`，纯性能型）。
+- **教训固化**：self-made mock Panel 无法代替真实结构——D-26 本地黄金对照全绿、真实环境却破（`kept=0`）；真实结构以端测探针定谳。
+- **验证链**：70 passed 零衰减 + 六策略 ALL 6 PASS + `qmt_wrapper_hash=75108c301bf3`；回退点链 `9912f07→2266e36→bdd7efb→b23e724→26cf345`。
+- **阶段**：④验收完成 → **⑤用户确认**（呈批中）→ ⑥双仓推送（待用户点头）。
+- **未闭合**：archify 影响面图；D-27（m_anntime 过滤 / query_last_close 批量化 / 消费面 mask 审计）；wrapper 键名差异（P2）。

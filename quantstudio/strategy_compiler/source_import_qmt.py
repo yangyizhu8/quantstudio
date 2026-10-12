@@ -244,6 +244,54 @@ class _QmtLogView(object):
 
 def _qs_log_view():
     return _QmtLogView()
+
+
+# ---- D-24 进度审计行（漏斗取数层可观测性）------------------------------------
+# 设计依据：docs/qmt-progress-audit-design.md v1.2 §4.2（六步流水线②审计两轮闭环）。
+# 判型＝新增检测型：只 print，不改任何既有返回值/计数/调用顺序/分支语义。
+# 动机：首个 bar 的漏斗取数（≈14000 次逐只 API 调用）全程静默，用户无法区分
+#       「在计算」与「已死锁」（2026-10-12 16:34 实测两行日志后长时间无输出）。
+_QS_QMT_PROGRESS_EVERY = 500
+
+
+def _qs_progress_start():
+    """批次起算点（D-24）。局部 import：产物头部仅 import pandas
+    （_QS_QMT_MODULE_HEADER），不得依赖模块级 time——与本模块 re/datetime
+    既有局部 import 纪律同款。失败返回 None（elapsed 记 0.0，不抛）。"""
+    try:
+        import time as _qs_t
+        return _qs_t.time()
+    except Exception:
+        return None
+
+
+def _qs_progress(func, done, total, t0=None, phase='tick', extra=None):
+    """批次进度审计行（D-24）：仅 total >= 阈值时按固定步长打印，防刷屏。
+
+    行形态（七字段契约）：
+      QS_QMT_PROGRESS func=<name> done=<n>/<total> pct=<p> elapsed=<s> phase=<tick|begin|end>[ extra=...]
+    节流（用户裁定）：固定步长 500；批 <500 全静默（小批刷屏风险 > 可见性价值）；
+    done==total 收尾恒打印（总量非 500 整数倍亦可观测批次结束）。
+    零行为影响：只 print，无返回值。
+    """
+    if not total or total < _QS_QMT_PROGRESS_EVERY:
+        return
+    if phase == 'tick' and done % _QS_QMT_PROGRESS_EVERY and done != total:
+        return
+    elapsed = 0.0
+    try:
+        import time as _qs_t
+        # t0 须为有效正时间戳（_qs_progress_start() 的返回值）；0/负数视为无效 →
+        # 记 0.0，避免把 epoch 零点误算成天文数字 elapsed（如 1791806094.2s）误导判读。
+        if t0 is not None and t0 > 0:
+            elapsed = _qs_t.time() - t0
+    except Exception:
+        elapsed = 0.0
+    line = ('QS_QMT_PROGRESS func=%s done=%d/%d pct=%.1f elapsed=%.1fs phase=%s'
+            % (func, done, total, 100.0 * done / float(total), elapsed, phase))
+    if extra:
+        line += ' extra=%s' % (extra,)
+    print(line)
 '''
 
 # ---- context 视图 + C 捕获底座（机制①；_qs_pick_ctx 为机制② wrapper 的 C 捕获源）----
@@ -891,6 +939,42 @@ _QS_QMT_STOCK_INFO_EXT = '''
 #   行情现价：C.get_market_data_ex(['close'], ...) :81/:96；dividend_type 枚举 :122。
 
 
+def _qs_norm_ymd(value):
+    """QMT 日期字段归一为本地契约形态 'YYYY-MM-DD'（取不到 → None）。
+
+    D-13（2026-10-11 PROBE 实测）定谳：QMT C.get_instrument_detail 的
+    OpenDate（:2488）/ ExpireDate（:2489）为 **int YYYYMMDD**
+    （OpenDate=19910403、ExpireDate=99999999=永续标记）。
+    本地契约（ptrade_api.py:2481-2523 get_stock_info）：
+      listed_date = pd.Timestamp(start_date).strftime('%Y-%m-%d')
+    即 'YYYY-MM-DD' 字符串；本函数把 QMT 形态映射为该契约形态。
+    以下一律返回 None（=本地「取不到」语义，策略侧 `if not listed: continue`
+    保守跳过，双端同判）：0 / 负数 / None / bool / 非 8 位整数 /
+    非法月日（含 99999999 永续标记 → strptime 自然 ValueError）。
+    L1 阻断根因（2026-10-12 QMT_WEEKLY_SMALLCAP 复测 L1_listed=0）：
+    本模块 get_stock_info 原返回字典无 'listed_date' 键，field=['listed_date']
+    白名单取键恒 None → 全部标的被跳过（L0_all=5227 → L1_listed=0）。
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            iv = int(value)
+            if iv <= 0:
+                return None
+            txt = str(iv)
+            if len(txt) != 8:
+                return None
+        else:
+            txt = str(value).strip().replace('-', '').replace('/', '')
+            if len(txt) != 8 or not txt.isdigit():
+                return None
+        from datetime import datetime as _qs_ymd_dt
+        return _qs_ymd_dt.strptime(txt, '%Y%m%d').strftime('%Y-%m-%d')
+    except Exception:
+        return None
+
+
 def _qs_get_stock_info(code, C=None):
     C = _qs_pick_ctx(C)
     try:
@@ -907,6 +991,12 @@ def _qs_get_stock_info(code, C=None):
         'float_shares': d.get('FloatVolume'),           # :2494
         'instrument_status': d.get('InstrumentStatus'), # :2502（停牌状态）
         'is_trading': d.get('IsTrading'),               # :2503
+        # ---- 本地契约键（ptrade_api.py:2481-2523）——上列键名系 QMT 原生字段名，
+        #      本地 get_stock_info 契约键名为 listed_date / de_listed_date
+        #      （'YYYY-MM-DD' 字符串）。D-14（2026-10-12）：补契约键以消 L1 阻断；
+        #      既有键一律不动（零回归），键名差异其余项登记 docs/ISSUES.md 待批。
+        'listed_date': _qs_norm_ymd(d.get('OpenDate')),      # ← 本地契约键
+        'de_listed_date': _qs_norm_ymd(d.get('ExpireDate')),  # ← 本地契约键
     }
 
 
@@ -1032,8 +1122,11 @@ def _qs_filter_stock_by_status(stocks, filter_type=None, query_date=None, C=None
         print('QS_QMT_SEMANTIC_DIFF: filter_stock_by_status query_date=%r 不消费'
               '（QMT 详情为当前快照，无历史 PIT）' % (query_date,))
     out = []
-    for s in list(stocks):
+    _src = list(stocks)
+    _t0 = _qs_progress_start()  # D-24 进度审计（批 <500 自动静默）
+    for _i, s in enumerate(_src):
         flags, ok = _qs_status_flags(s, C)
+        _qs_progress('filter_stock_by_status', _i + 1, len(_src), _t0)
         if not ok:
             print('QS_QMT_UNDETERMINED: filter_stock_by_status %s 状态不可判定，'
                   '保守保留' % (s,))
@@ -1213,11 +1306,109 @@ def _qs_fin_to_rows_hist(raw, shape=None, codes=None):
         return rows
     try:
         if hasattr(raw, 'major_axis'):  # Panel（多代码实测形态，duck-typing）
-            for _code in list(raw.items):
-                df_one = raw[_code]
-                if df_one is not None and len(df_one) > 0:
-                    rows[str(_code)] = [{str(_k): _v for _k, _v in _r.items()}
-                                        for _, _r in df_one.iterrows()]
+            # D-26 修复（2026-10-12）：per-code `raw[_code]` + `iterrows()` 双反模式
+            # 实测 0.55s/只 × 3666 只 ≈ 35 分钟（21:23-21:37 端测：500→263s /
+            # 1000→539s / 1500→848s，近似线性）。改双路径：
+            #   path=batch   —— 一次 raw.to_frame()（Panel → MultiIndex DataFrame）后按
+            #                    code 取子表，避免 3666 次 Panel 取值；
+            #   path=percode —— to_frame 不可用/结构不匹配时回落（仍逐 code 取值）；
+            # 两路径的行展开一律以 to_dict('records') 取代 iterrows()（消除逐行 Series
+            # 构造）。输出结构（dict-of-list-of-dict、键 str 化、行序）与修复前逐位一致
+            # —— 判型＝纯性能型，任何输出 diff 即验收失败回退。
+            _codes = list(raw.items)
+            _t0 = _qs_progress_start()
+            _frame = None
+            try:
+                _frame = raw.to_frame() if hasattr(raw, 'to_frame') else None
+            except Exception:
+                _frame = None
+            _path = 'batch' if (_frame is not None and hasattr(_frame, 'loc')
+                                and hasattr(_frame, 'index')) else 'percode'
+            _qs_progress('fin_to_rows_hist', 0, len(_codes), _t0, 'begin',
+                         'path=%s' % _path)
+            # D-26c 结构探针（2026-10-12）：一次打印、不进热路径。目的＝定位
+            #   ① `.loc` 全 miss 的真实结构原因（B 计划依据：frame_levels=2 而非
+            #      pandas Panel 的 3 层 (items, major, minor)）；
+            #   ② 单只行数量级（是否 2651 行/只——对照「PIT 全报告期」契约是否合理）。
+            # 安全约束：frame index 可达千万行，一律切片取值，禁止 list(完整 index)。
+            try:
+                _c0 = _codes[0] if _codes else None
+                _o0 = raw[_c0] if _c0 is not None else None
+                _ix = getattr(_frame, 'index', None)
+                # 注意：names/columns 可能是 Index 对象，对 Index 求布尔会抛
+                # 「truth value of a Index is ambiguous」——一律显式 None 判定，
+                # 禁用 `x or []`（2026-10-12 22:59 端测实证的探针自身缺陷）。
+                _nm = getattr(_ix, 'names', None)
+                _nm = list(_nm) if _nm is not None else None
+                _cl = getattr(_frame, 'columns', None)
+                _cl = list(_cl)[:4] if _cl is not None else None
+                _oix = getattr(_o0, 'index', None)
+                _oih = list(_oix[:3]) if _oix is not None else None
+                _oic = type(_oix).__name__ if _oix is not None else None
+                print('[QS-QMT log.info] QS_QMT_HISTDBG2 raw=%s frame=%s levels=%s '
+                      'idx_names=%s idx_head=%s cols=%s one_shape=%s one_idxcls=%s '
+                      'one_idx_head=%s'
+                      % (type(raw).__name__, type(_frame).__name__,
+                         len(_nm) if _nm is not None else -1, _nm,
+                         list(_ix[:2]) if _ix is not None else None,
+                         _cl, getattr(_o0, 'shape', None), _oic, _oih))
+            except Exception as _e0:
+                print('[QS-QMT log.info] QS_QMT_HISTDBG2 err=%r' % (_e0,))
+            _miss = 0
+            for _i, _code in enumerate(_codes):
+                _qs_progress('fin_to_rows_hist', _i + 1, len(_codes), _t0)
+                _one = None
+                if _path == 'batch':
+                    try:
+                        _one = _frame.loc[_code]
+                    except Exception:
+                        _one = None
+                    if _one is None or len(_one) == 0:
+                        # D-26b 回落（2026-10-12 端测实证）：batch 仅为加速尝试。
+                        # 真实 QMT Panel 的 to_frame() index 结构与本地假设不同 →
+                        # .loc[_code] 取不到 → rows 空 → QSFUNDHIST kept=0 cc=0 →
+                        # L3v_complete=0（22:19 复测实证）。取不到即退回原路径，
+                        # 保证行为不劣于修复前。miss 计数由下方诊断行输出。
+                        _miss += 1
+                        try:
+                            _one = raw[_code]
+                        except Exception:
+                            _one = None
+                else:
+                    try:
+                        _one = raw[_code]
+                    except Exception:
+                        _one = None
+                if _one is not None and len(_one) > 0:
+                    # D-26d 契约对齐（2026-10-12 结构探针定谳）：QMT Panel 按
+                    # (日期 × 字段) 展开为**日频全历史**（实测 one_shape=(8739,3)），
+                    # 而「PIT 全报告期」契约只需有报告期数据的行（~40 期）→ 超量 ~200×，
+                    # 这是 8.5 分钟/表 的真正根因（非转换方式）。
+                    # 删除「请求字段全 NaN」的行：消费端策略 mask 显式丢弃 value=NaN 行
+                    # （weekly_smallcap_growth_momentum_10_quantstudio.py:149
+                    #  mask = ~np.isnan(val) / :158 frame = frame[mask]），
+                    # 故**消费结果不变**——判型＝纯性能型（口径与证据见证据文档）。
+                    try:
+                        _one = _one.dropna(how='all')
+                    except Exception:
+                        pass
+                if _one is not None and len(_one) > 0:
+                    try:
+                        _rs = _one.to_dict('records')
+                        rows[str(_code)] = [{str(_k): _v for _k, _v in _r.items()}
+                                            for _r in _rs]
+                    except Exception:
+                        rows[str(_code)] = [
+                            {str(_k): _v for _k, _v in _r.items()}
+                            for _, _r in _one.iterrows()]
+            # D-26b 诊断行（每批一次）：直接回答「.loc 是否取到」与「回落是否生效」，
+            # 用于二分「本地 `.loc` 假设错」与「D-19 既有契约问题」。
+            if _path == 'batch':
+                print('[QS-QMT log.info] QS_QMT_HISTDBG path=batch '
+                      'frame_levels=%d miss=%d rows=%d n=%d'
+                      % (len(getattr(getattr(_frame, 'index', None), 'names', []) or []),
+                         _miss, len(rows), len(_codes)))
+            _qs_progress('fin_to_rows_hist', len(_codes), len(_codes), _t0, 'end')
             return rows
     except Exception:
         return rows
@@ -1261,6 +1452,12 @@ def _qs_get_fundamentals(table, codes, date=None, fields=None, C=None):
     # ['ASHAREBALANCESHEET.fix_assets', '利润表.净利润']）、:1906（'CAPITALSTRUCTURE.total_capital'）；
     # :1837 建议使用对照表中的英文表名和迅投英文字段。
     native_fields = sorted(set([f"{native_table}.{fmap.get(f, f)}" for f in fields]))
+    # D-24：单次大批量调用是静默黑洞 → begin/end 哨兵成对（finally 保证配对，
+    # 异常路径亦不留孤儿 begin——否则「批失败」与「死锁」在日志上不可区分）。
+    _n = len(codes)
+    _t0 = _qs_progress_start()
+    _qs_progress('get_financial_data', 0, _n, _t0, 'begin', 'table=%s' % (table,))
+    _err = 0
     try:
         # endDate 为必填字符串（Context7 /websites/dict_thinktrader_net·
         # innerApi/data_function.html：startDate/endDate required；示例
@@ -1274,7 +1471,11 @@ def _qs_get_fundamentals(table, codes, date=None, fields=None, C=None):
                                    str(date) if date else '20991231',
                                    report_type='announce_time')  # 显式钉死 :1867/:1877
     except Exception:
+        _err = 1  # D-24 新增语句（既有 return 语义零变：仍静默返回空契约行）
         return frame
+    finally:
+        _qs_progress('get_financial_data', _n, _n, _t0, 'end',
+                     'table=%s err=%d' % (table, _err))
     # 形态声明（轨 A，M3.1）：M5-1 钉死真实返回形态后，此处改传 'code_major'/'field_major'
     # 即由显式声明路径解析（声明优先于识别）；当前传 None → 走 D-9 实测形态轨（Panel/
     # 单代码 DataFrame），未命中再落轨 B 证券代码模式识别。
@@ -1336,8 +1537,10 @@ def _qs_get_fundamentals(table, codes, date=None, fields=None, C=None):
             pass
         return frame
     rows = _qs_fin_to_rows(raw, shape=None, codes=codes)
-    for code in codes:
+    _t0 = _qs_progress_start()  # D-24 进度审计（批 <500 自动静默）
+    for _i, code in enumerate(codes):
         row = rows.get(code)
+        _qs_progress('query_last_close', _i + 1, len(codes), _t0)
         if not row:
             continue  # 缺数保持 NaN 契约行
         rec = {}
@@ -1526,8 +1729,10 @@ def get_stock_info(stocks, field=None, C=None):
     """机制②同名遮蔽（本地签名 ptrade_api.py:2472：结果按调用方原码键控）。"""
     lst = [stocks] if isinstance(stocks, str) else list(stocks or [])
     out = {}
-    for s in lst:
+    _t0 = _qs_progress_start()  # D-24 进度审计（批 <500 自动静默）
+    for _i, s in enumerate(lst):
         out[s] = _qs_get_stock_info(s, C=C)
+        _qs_progress('get_stock_info', _i + 1, len(lst), _t0)
     if field:
         keys = [field] if isinstance(field, str) else list(field or [])
         out = dict((c, dict((k, d.get(k)) for k in keys)) for c, d in out.items())
