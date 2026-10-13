@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "4d0f64b6-8563-4da4-bc8d-6606b5feff25",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "D:\\miniQMT策略实盘\\QuantStudio\\.archify\\candidate-workflow-qmt-fetch-chain.json",
+  "output": "D:\\miniQMT策略实盘\\QuantStudio\\.archify\\workflow-qmt-fetch-chain-20261013-005255\\index.html",
+  "specification": {
+    "sha256": "3309e41c760b7196c6d2f97d6f10e1717e0d6ef3cbfc0b4658926bb1e2dd83db",
+    "bytes": 8199
+  },
+  "artifact": {
+    "sha256": "bbf6aadd977730b9a2f07ba7ab7133a8ba7691410aadba65d4654dec6d636597",
+    "bytes": 781000
+  }
+}

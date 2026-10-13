@@ -225,3 +225,33 @@
 - **验证链**：70 passed 零衰减 + 六策略 ALL 6 PASS + `qmt_wrapper_hash=75108c301bf3`；回退点链 `9912f07→2266e36→bdd7efb→b23e724→26cf345`。
 - **阶段**：④验收完成 → **⑤用户确认**（呈批中）→ ⑥双仓推送（待用户点头）。
 - **未闭合**：archify 影响面图；D-27（m_anntime 过滤 / query_last_close 批量化 / 消费面 mask 审计）；wrapper 键名差异（P2）。
+### 快照 2026-10-13（D-27a 自保护版：收敛未生效但正确性零漂移 · 交接新会话）
+- **D-27a**：`_qs_fin_to_rows_hist` 新增「`m_anntime` 收敛 + **自保护**」（仅当被删行 value 全为 NaN 才收敛，否则退回 `dropna(how='all')`）。端测（00:03–00:12）：`QSFUNDHIST kept` 未变（9,718,706 / 9,692,826）；`R_selected=10` 保持 → **正确性零漂移**（纯性能型判据满足）。单周区间耗时 572s。**S3 更正（2026-10-13）**：`kept 未变 = 无行被删（m_anntime 全非空或全 NaN 二义），未获收敛效果`——原「QMT 对 m_anntime 亦做日频填充 → 不可作收敛键」为证据不足断言，已废（方案 §1.3）。
+- **消费面审计（D-27 第 3 项）完成**：四大主策略全部显式 mask NaN——`weekly_smallcap :149/:158`、`周频三层 :145`、`低流动性 :121`、`CANSLIM :394/:490` → **D-26d 纯性能型判型成立、无残留口径风险**。
+- **git**：`e269fc8`（三卷，15 项精确清单）**已提交未 push**；D-27a 改动未提交；`main...origin/main [ahead 11]`（用户裁定 B：并入明晨批统出批）。
+- **交接**：`docs/handoff/handoff-20261013-d27-resume.md`（新会话首读）；回退点 `da21e0d`；`qmt_wrapper_hash=a3719f737dfb`（`--check` 绿）。
+- **明晨轮待办（按序）**：① archify 影响面图（预检已过 → 走 Edge）② D-27b 探针（`m_anntime`/`m_timetag` 唯一值分布 → 定收敛键）③ `query_last_close` 批量化（**先用 Context7 复核 `get_market_data_ex` 批量语义**）④ ⑥双仓推送收口（含 QuantStudio-trading 同步门）。
+
+### 快照 2026-10-13（D-27b 实施验收完成 + M1 增补：B 探针 + C/D/E 分批 + asc 机检 · 候⑤用户端测确认）
+- **明晨待办①②③全部完成**：① archify 影响面图已过四门禁+用户审阅（交付目录 `docs/evidence/archify-qmt-fetch-chain-20261013-005255/`，S1 用户目验 index.html 仍未闭合）；②③ 方案 v1.4（两轮 ZCode 审计：一轮 FAIL→修订、二轮 PASS+N1-N8）→ 写前快照（stash `00b0c5a3`，add 路径排除实测 17.5s）→ E7 委派实施（sess_51082fe4，两文件零越界）→ O5 五步全过。
+- **M1 增补（用户批复方案 A）**：判据 3 由人工改机检——`_qs_close_batch` 首调逐帧升序断言汇入 `CLOSE_EQC asc=1|0|-1`；门禁终态 **81 passed** / 六策略 ALL 6 PASS（weekly_smallcap `d298641ba3a0f4c8` 已入剪贴板）/ `qmt_wrapper_hash=92c05ce43085`。
+- **验收证据**：`docs/evidence/qmt-d27-close-batch-20261013.md`（含 M1 增补节 + 验收期局部阻断修复 3 处申报 + M1 实施期过程申报——1 次编辑事故当轮修复净零 + e4 两次测试侧迭代）。
+- **判型落定**：B＝新增检测型（候端测 HISTDBG3 `uk` 定谳）；C/D/E＝纯性能型（候端测 `CLOSE_EQC diff=0 且 asc=1` + `L5=30/R_selected=10/buy_submitted=7` 逐位不变 + 耗时<572s）；A 折叠＝D-28 下轮（数据修正型，BLOCKED 候探针读数）。
+- **M2 呈报（候裁）**：D-29 详情已呈（映射表 `_QS_QMT_FUND_FIELD_MAP:1581-1590` 三表缺 `profit_ability` → `:1600-1602` 早退空帧 → `:1643` hist 分支死代码；4 消费点均不在六策略门禁集 → **不阻断本批推送**，候用户裁定单独立项）。
+- **未闭合**：D-28（候 HISTDBG3 读数三分支）；D-29（候裁定立项）；R1-B（archify 交付目录随本批 commit，候用户确认）；R1-C（双仓推送门禁，需新确认——携他线 ahead 提交）；S1（archify index.html 用户目验）。
+- **git**：HEAD `e269fc8` + D-27a/D-27b 改动未提交（回退点 stash `00b0c5a3` + 文件备份 `_bak/source_import_qmt.py.bak-20261013-d27b`）；`ahead 11`（含他线）。
+- **端测第一轮裁定（2026-10-13 用户批复三项）**：①判据 1 → **(a) 键可用，D-28 正式立项**（数据修正型；立项要件 4 项已登记 ISSUES：79 期更正 / drop_duplicates 组合键 / 三项证据含 SG-MS-PEG ROE 前后对照 / 226s→~10s；m_anntime ffill 之谜解开——单独不可作键与组合键可用同时成立）；②判据 3/5 → **(a) 盘后 A/B 黄金对照**（A=当前工作树批量版 vs B=stash `00b0c5a3` D-27a 态逐只版，背靠背同窗，L1/L2/L3/L5/L6/R_selected/buy_submitted/positions/total_value 逐位一致 + close 段 A≪B；任一不同→回退批量）；③D-29 → 暂不裁定候详情（本轮已补完整详情呈报）。证据链之①已按批复升级（L1/L2 纯本地也变＝输入数据源变了，最强证据）。纪律固化：**端测须盘后**（已回灌主库 + 项目记忆）。
+- **下一步（按序）**：① 盘后（≥15:30）执行 A/B：detached worktree 从 `00b0c5a3` 提取 B 版 source_import_qmt.py 重转旧产物（不触主工作树），先 A 后 B 背靠背，读数并列进证据文档 → ② 定谳判据 3/5（逐位一致→R1-B/R1-C 呈报；不同→回退批量）→ ③ D-28 数据修正型方案起草（含 SG-MS-PEG ROE 均值前后对照设计）→ ④ D-29 候裁 → ⑤ R1-B 提交 + R1-C 推送（S1 archify 目验仍开放）。
+
+### 快照 2026-10-13 盘后（D-27b A/B 黄金对照定谳：等价 PASS / 性能预期 FAIL——候裁定批量去留）
+
+- **A/B 对照（15:11 A → 15:28 B 背靠背，方法＝用户批复②）**：A=批量版产物 sha16 d298641（canonical 重转）vs B=stash `00b0c5a3` D-27a 态逐只版（`git show` 单路径字节级提取→`--only weekly_smallcap` canonical 重转 sha16 69966ef2，portability/selfcheck PASS）；转换后 wrapper+产物 sha 校验逐位还原，工作树零残留。**判据 3 ✅ PASS：14/14 读数逐位一致**（L0…total_value + QSFUNDHIST 两表 kept/drop/cc 全等），且 A 与上午 10:12 r1 亦逐位一致（同窗无推送）——纯性能型行为等价闭环。**判据 5 ❌ FAIL：close 段 A=182.4s vs B=182.9s 持平（批量零净收益）**——瓶颈在每只全史数据服务端扫描/传输量，非调用开销（EQC 热缓存 1.1ms/只为证）；未改动段噪声（valuation 33.6↔8.9s 等）反证总墙钟差 67s 非批量功劳。证据：`docs/evidence/qmt-d27-close-batch-20261013.md` §八。
+- **待裁定（阻塞 R1-B/R1-C）**：批量版**保留**（推荐：等价已证+EQC 每轮运行内生护栏+零成本保留）vs **回退**（零收益换简化）。回退条款「任一不同→回退」未触发（无不同）。裁定后 → R1-B 精确清单提交 → R1-C 双仓推送（携他线 ahead 提交，需新确认）。
+- 其余未闭合：D-30 实施候 R1-C 后（方案 v0.3 已⑤批准）；D-28 方案①起草排队；D-29 候裁；S1 archify 目验。
+
+### 快照 2026-10-13 午后（机理二次修正 + D-30/D-31 立项：PIT 冻结合约快照层）
+
+- **机理二次修正（用户据官方文档质证）**：回测＝逐K遍历固定本地历史数据（dict.thinktrader.net + wrapper `_qs_snap_kwargs:316-329` 锚定回测 bar 当日）→ K线读数跨运行稳定；**漂移源＝本地合约信息表**（`get_instrument_detail` 无 as-of 参数，`07-行情函数.md:2446-2475`），随供应商推送更新 → L1/L2 漂移、下游继承。原「query_last_close 盘中读实时价」归因**已撤回**（过度归因）——证据文档 §六 / 主库端测纪律条目 / 项目记忆 630903d5 三处同步修正。盘后 A/B 结论不变（理由更正为：压名单推送窗口 + 负载回落）。
+- **D-30 立项（用户裁定）**：wrapper 数据访问层加 PIT 冻结合约快照层。**②审计两轮闭环（2026-10-13 午后）**：第一轮 ZCode sess_29a2d2aa FAIL（P0=第 4 消费点 `:502` `_QmtDataBar` 三字段遗漏，已独立复核属实；P1=判型枚举+三问审计；P2×6）→ v0.2 修订 → 第二轮增量重审 sess_82a9a1c0 **PASS-with-findings**（7 项全闭环，grep 证实无第 5 消费点）→ 2 项新 P2（模板落点钉死 MODULE_HEADER / broken 态 n=-1）已折叠入 **v0.3**。**现候⑤用户审批**（含判型映射裁定：新增检测型↔新增能力型措辞）。实施排在 D-27b R1-C 之后；实施轮附 archify 影响面图+矩阵哈希同 commit 追认。E7 台账：两轮审计 tokens 418723+229616 已登记 ISSUES。
+- **D-31 已定谳（2026-10-13 14:35 实测，closed）**：`get_stock_list_in_sector(sector, realtime)` 传毫秒时间戳（now/2026-01-05/2020-01-01 三档均同）→ **静默返回空列表 0 只不抛错**；不传参正常（base=5227）→ **B4=无源**（QMT innerApi 板块成份/合约信息无 as-of 能力，ST/板块历史正式登记为能力边界）；静默空返回坑已回灌主库（06-数据与工具/QMT大转换管线…形态坑.md 复现固件节）。推论：D-30 快照层+B1 在场性推导是可复现性唯一路径，方案 §七已更新。
+- **未闭合**：A/B 盘后执行（≥15:30）；D-30 方案②审计→审批→实施；D-31 探针读数；D-28 方案；D-29 候裁；R1-B/R1-C；S1 archify 目验。

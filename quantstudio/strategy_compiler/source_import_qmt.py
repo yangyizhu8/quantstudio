@@ -1188,6 +1188,88 @@ def _qs_last_close(C, code):
     return None
 
 
+def _qs_close_batch(codes, C=None, batch=400):
+    """D-27b 件 C（2026-10-13，方案 §2.3；判型＝纯性能型）：close 批量预取。
+
+    与 _qs_last_close 逐只调用**取数语义逐位对齐**（同 _qs_snap_kwargs 窗口 /
+    同 dividend_type='none' / 同 df.iloc[-1]['close'] 末行取法，:1181-1185 同式），
+    仅以单批调用替代 N 次逐只（端测 3666 次 × ~39ms ≈ 144s → ~10 批次）。
+    五态回落（方案 §2.3 审计 #2 钉死）：
+      ① 批内缺码（code 不在返回 dict）→ 该码回落逐只；
+      ② 空表（len(df)==0）→ 该码回落逐只；
+      ③ 单码取值异常（iloc[-1]['close'] 抛错/非数值——含 NaN，float(NaN) 不抛
+         但无可用值，且逐只回落同得 NaN → float_value 同为 NaN，逐位等价）→
+         该码回落逐只；
+      ④ 返回非 dict（isinstance 判定；_qs_last_close:1183 已防备的真实形态）→
+         整批回退逐只；
+      ⑤ 批级异常（整批调用抛错）→ 整批回退逐只。
+    任何情况下不抛异常冒泡；失败码一律记 None 交调用方回落（回落数计入 miss，
+    绝不静默吞掉失败批——D-26b「批量 miss → kept=0 → 零交易」先例）。
+    批间审计行 QS_QMT_CLOSE_BATCH 仅首次 valuation 调用打印（_QS_QMT_ONCE
+    ['close_batch_log'] 限定，防每 bar ×10 行日志膨胀——方案 §2.3 审计 #10）。
+    """
+    out = {}
+    _scodes = [str(c) for c in (codes or [])]
+    if not _scodes:
+        return out
+    _bs = max(int(batch), 1)
+    _nb = (len(_scodes) + _bs - 1) // _bs
+    _log = _QS_QMT_ONCE.get('close_batch_log') is None
+    _QS_QMT_ONCE['close_batch_log'] = 1
+    _asc = True  # M1（2026-10-13 用户批复方案 A）：首调批量帧时间升序机检，
+    # 逐帧 df.index.is_monotonic_increasing 取与；结果汇入 CLOSE_EQC 行
+    # asc=1|0（-1＝首调无有效帧，未知——防零帧时的 vacuous-true 误导）。
+    _asc_n = 0
+    try:
+        _kw = _qs_snap_kwargs(C)
+    except Exception:
+        _kw = {'count': 1}  # 与 _qs_snap_kwargs 内部回退同款 fail-safe
+    for _k in range(_nb):
+        _bc = _scodes[_k * _bs:(_k + 1) * _bs]
+        _t0 = _qs_progress_start()
+        _hit = 0
+        mkt = None
+        try:
+            mkt = C.get_market_data_ex(['close'], _bc, period='1d', **_kw,
+                                       dividend_type='none')
+        except Exception:
+            mkt = None  # 态⑤批级异常 → 整批回退逐只
+        if not isinstance(mkt, dict):  # 态④返回非 dict → 整批回退逐只
+            mkt = None
+        for _code in _bc:
+            _v = None
+            if mkt is not None:
+                df = mkt.get(_code)  # 态①缺码 → get 得 None → 回落
+                try:
+                    if df is not None and len(df) > 0:  # 态②空表 → 回落
+                        _v = float(df.iloc[-1]['close'])  # 态③非数值 → 回落
+                        if _v != _v:  # NaN 视非数值（双哨兵之一）→ 回落
+                            _v = None
+                except Exception:
+                    _v = None
+            out[_code] = _v
+            if _v is not None:
+                _hit += 1
+                if _log:  # M1：升序机检独立 try（异常不污染取值路径）
+                    try:
+                        if not bool(df.index.is_monotonic_increasing):
+                            _asc = False
+                    except Exception:
+                        _asc = False
+                    _asc_n += 1
+        if _log:
+            _el = 0.0
+            _t1 = _qs_progress_start()
+            if _t0 is not None and _t0 > 0 and _t1 is not None and _t1 > 0:
+                _el = _t1 - _t0
+            print('[QS-QMT log.info] QS_QMT_CLOSE_BATCH i=%d/%d size=%d hit=%d '
+                  'miss=%d elapsed=%.1fs'
+                  % (_k + 1, _nb, len(_bc), _hit, len(_bc) - _hit, _el))
+    if _log:
+        _QS_QMT_ONCE['close_asc'] = (1 if _asc else 0) if _asc_n else -1
+    return out
+
+
 def _qs_fin_to_rows(raw, shape=None, codes=None):
     """get_financial_data 原始返回 → {code: {field: value}} 归一（M3.1 双轨修复 F-1）。
 
@@ -1288,9 +1370,13 @@ def _qs_fin_to_rows(raw, shape=None, codes=None):
     return rows
 
 
-def _qs_fin_to_rows_hist(raw, shape=None, codes=None):
+def _qs_fin_to_rows_hist(raw, shape=None, codes=None, table=None):
     """get_financial_data 原始返回 → {code: [行字段映射, ...]} 全历史行收集
     （D-19 二层修复，2026-10-11）。
+
+    table（D-27b 件 B，方案 §2.3 审计 N5）：缺省 None 保持既有调用兼容；
+    调用方 _qs_get_fundamentals 显式传入，仅供 HISTDBG3 探针行标注表名，
+    不参与任何取值逻辑。
 
     与 _qs_fin_to_rows 同一实测形态族（D-9：多代码 Panel / 单代码 DataFrame），
     但按本地契约收集**全部报告期行**而非仅末行——本地 ptrade_api.py:1022-1027
@@ -1354,6 +1440,47 @@ def _qs_fin_to_rows_hist(raw, shape=None, codes=None):
                          _cl, getattr(_o0, 'shape', None), _oic, _oih))
             except Exception as _e0:
                 print('[QS-QMT log.info] QS_QMT_HISTDBG2 err=%r' % (_e0,))
+            # D-27b 件 B 探针（2026-10-13，方案 §2.2 v1.3 定稿；判型＝新增检测型）：
+            #   每表首只 code 一次打印。读数定位「按报告期去重折叠键」（§9.2，D-28
+            #   下轮立项）可用性——uk=unique(m_anntime,m_timetag) 组合数为**定谳读数**
+            #   （≈报告期数→键可用 / ≈行数→放弃 / 中间值→呈报裁定，三分支不预设）；
+            #   after=§9.2 折叠表达式**预演读数**（数值恒等于 uk——drop_duplicates
+            #   (subset=K) 行数与 keep 无关，保留仅提前暴露该表达式在真实数据上的
+            #   异常路径，审计 N4）。
+            #   字段口径（审计 #5 钉死）：ua/ut/uk/uv 一律 drop_duplicates 口径
+            #   （NaN 视相等），**禁 nunique()**——其默认弃 NaN，m_anntime 全 NaN
+            #   时 ua=0 而 uk≈40 会误判键可用性；uv=值列（排除 m_anntime/m_timetag
+            #   两列）上的 drop_duplicates 行数。
+            # 安全约束（D-26c 教训，§2.2）：全段 try/except 静默 pass（异常绝不影响
+            #   主流程）；切片取值、禁 list(完整 index)、禁对 pandas 对象求布尔
+            #   （禁 x or []）；打印前取值显式 None 判定；一次打印、不进热路径。
+            try:
+                if _QS_QMT_ONCE.get('histdbg3:' + str(table)) is None:
+                    _c0 = _codes[0] if _codes else None
+                    _o0 = raw[_c0] if _c0 is not None else None
+                    if _o0 is not None and hasattr(_o0, 'drop_duplicates'):
+                        _ua = len(_o0.drop_duplicates(subset=['m_anntime']))
+                        _ut = len(_o0.drop_duplicates(subset=['m_timetag']))
+                        _uk = len(_o0.drop_duplicates(
+                            subset=['m_anntime', 'm_timetag']))
+                        _vc = [c for c in list(_o0.columns)
+                               if c not in ('m_anntime', 'm_timetag')]
+                        _uv = (len(_o0.drop_duplicates(subset=_vc))
+                               if _vc else -1)  # 无值列哨兵 -1（防御）
+                        _after = len(_o0.drop_duplicates(
+                            subset=['m_anntime', 'm_timetag'], keep='last'))
+                        # 单行纪律（验收期局部修复 2026-10-13）：DataFrame repr
+                        # 天然多行，须空白折叠为单行，否则审计行断行、grep 失效。
+                        print('[QS-QMT log.info] QS_QMT_HISTDBG3 t=%s code=%s '
+                              'rows=%d ua=%d ut=%d uk=%d uv=%d after=%d '
+                              'head=%s tail=%s'
+                              % (table, _c0, len(_o0), _ua, _ut, _uk, _uv,
+                                 _after,
+                                 ' '.join(repr(_o0.iloc[:3]).split())[:120],
+                                 ' '.join(repr(_o0.iloc[-3:]).split())[:120]))
+                        _QS_QMT_ONCE['histdbg3:' + str(table)] = 1
+            except Exception:
+                pass
             _miss = 0
             for _i, _code in enumerate(_codes):
                 _qs_progress('fin_to_rows_hist', _i + 1, len(_codes), _t0)
@@ -1380,7 +1507,7 @@ def _qs_fin_to_rows_hist(raw, shape=None, codes=None):
                     except Exception:
                         _one = None
                 if _one is not None and len(_one) > 0:
-                    # D-26d 契约对齐（2026-10-12 结构探针定谳）：QMT Panel 按
+                    # [历史背景·D-26d 首版；D-27a 起由下方收敛逻辑取代] QMT Panel 按
                     # (日期 × 字段) 展开为**日频全历史**（实测 one_shape=(8739,3)），
                     # 而「PIT 全报告期」契约只需有报告期数据的行（~40 期）→ 超量 ~200×，
                     # 这是 8.5 分钟/表 的真正根因（非转换方式）。
@@ -1388,8 +1515,26 @@ def _qs_fin_to_rows_hist(raw, shape=None, codes=None):
                     # （weekly_smallcap_growth_momentum_10_quantstudio.py:149
                     #  mask = ~np.isnan(val) / :158 frame = frame[mask]），
                     # 故**消费结果不变**——判型＝纯性能型（口径与证据见证据文档）。
+                    # D-27a 契约收敛（2026-10-12）：QMT 返回日频全历史（8739 行/只），
+                    # 而「PIT 全报告期」契约只需报告期行（~40 期）。
+                    # 收敛条件＝「m_anntime（公告日）非空」，**但仅在可证安全时生效**：
+                    # 必须同时满足「被删行的值字段全为 NaN」——与四大消费策略的
+                    # mask = ~np.isnan(val)（weekly_smallcap:149/:158、周频三层:145、
+                    # 低流动性:121、CANSLIM:394/:490）语义一致；任一被删行含有效值即
+                    # **退回 dropna(how='all')**（保守）。判型＝纯性能型：
+                    # 被删行必然被消费端 mask 丢弃 → 消费结果不变。
                     try:
-                        _one = _one.dropna(how='all')
+                        _vc = [c for c in _one.columns
+                               if c not in ('m_anntime', 'm_timetag')]
+                        _hit = False
+                        if 'm_anntime' in list(_one.columns) and _vc:
+                            _keep = _one['m_anntime'].notna()
+                            if bool(_keep.any()) and not bool(
+                                    _one.loc[~_keep, _vc].notna().any().any()):
+                                _one = _one[_keep]
+                                _hit = True
+                        if not _hit:
+                            _one = _one.dropna(how='all')
                     except Exception:
                         pass
                 if _one is not None and len(_one) > 0:
@@ -1424,6 +1569,14 @@ def _qs_fin_to_rows_hist(raw, shape=None, codes=None):
     single = _qs_fin_to_rows(raw, shape=shape, codes=codes)
     return {str(_c): [_r] for _c, _r in single.items()}
 
+
+# D-27b 一次性标志（2026-10-13，方案 §2.3 审计 #6 钉死）：产物文件**模块级** dict。
+# 局部变量跨调用丢失；g 即 ContextInfo（:308），挂任意属性属 M5 未实测项——均
+# 不可用。每产物文件独立模块命名空间 → 多策略同进程加载不串味。
+# 键：'histdbg3:<table>'（HISTDBG3 探针每表一次）/ 'close_batch_log'
+# （CLOSE_BATCH 批间行仅首次 valuation 调用打印）/ 'close_eqc'（CLOSE_EQC
+# 自检仅首次 valuation 调用执行）。
+_QS_QMT_ONCE = {}
 
 _QS_QMT_FUND_FIELD_MAP = {
     # table → (QMT 原生表, {本地字段 → 原生字段})
@@ -1488,7 +1641,7 @@ def _qs_get_fundamentals(table, codes, date=None, fields=None, C=None):
     # 修复：全历史行收集 + 完整行过滤（任一请求字段 float 不可转或 NaN → 整行
     # 剔除，对齐本地只回完整行契约）；valuation（快照语义）路径不动。
     if table in ('eps', 'growth_ability', 'profit_ability'):
-        rows_h = _qs_fin_to_rows_hist(raw, shape=None, codes=codes)
+        rows_h = _qs_fin_to_rows_hist(raw, shape=None, codes=codes, table=table)
         recs = []
         for _code in codes:
             for _row in rows_h.get(_code) or []:
@@ -1538,6 +1691,49 @@ def _qs_get_fundamentals(table, codes, date=None, fields=None, C=None):
         return frame
     rows = _qs_fin_to_rows(raw, shape=None, codes=codes)
     _t0 = _qs_progress_start()  # D-24 进度审计（批 <500 自动静默）
+    # D-27b 件 D（2026-10-13，方案 §2.3；判型＝纯性能型）：valuation 循环前对
+    # 「row 非空码集」分批预取 close（批 400），循环内查表——预取命中且值非
+    # None 即用之（与 _qs_last_close 同窗口/同末行取法/同 float 转换，值逐位
+    # 一致）；未命中或 None → 回落 _qs_last_close 逐只（现行为逐位不变）。
+    # 预取集合＝row 非空码集（对齐下方 `if not row: continue` 条件，不对无
+    # row 码做无效取数——方案 §2.3 审计 #11；hit/miss 口径与该集合对齐）。
+    _close_map = {}
+    if table == 'valuation' and 'float_value' in fields:
+        _pref = [c for c in codes if rows.get(c)]
+        if _pref:
+            _close_map = _qs_close_batch(_pref, C=C, batch=400)
+        # D-27b 件 E EQC 自检（2026-10-13；判型＝新增检测型，一次性——
+        # _QS_QMT_ONCE['close_eqc']）：首次 valuation 调用对**批量命中码集**
+        # 前 ≤20 只，批量值 vs _qs_last_close 逐只值真实差分。分母＝批量命中
+        # 码集（防回落码自指空转：五态回落后双测同源恒 diff=0——审计 N6）；
+        # None/NaN 双哨兵归一记 miss、不计 diff；diff 仅对双侧均有值计数；
+        # hit+miss==n 对账；批量命中数为 0 → 显式 n=0 SKIP（禁止误导性
+        # diff=0）。自检只 print，不改任何返回值。
+        try:
+            if _QS_QMT_ONCE.get('close_eqc') is None:
+                _QS_QMT_ONCE['close_eqc'] = 1
+                _hitc = [c for c in _pref if _close_map.get(c) is not None]
+                if not _hitc:
+                    print('[QS-QMT log.info] QS_QMT_CLOSE_EQC n=0 SKIP asc=%s'
+                          % _QS_QMT_ONCE.get('close_asc', -1))
+                else:
+                    _smp = _hitc[:20]
+                    _h = _d = _m = 0
+                    for c in _smp:
+                        _b = _close_map.get(c)
+                        _r = _qs_last_close(C, c)
+                        if _r is None or _r != _r or _b != _b:  # 双哨兵归一
+                            _m += 1
+                        else:
+                            _h += 1
+                            if _b != _r:
+                                _d += 1
+                    print('[QS-QMT log.info] QS_QMT_CLOSE_EQC n=%d hit=%d '
+                          'diff=%d miss=%d asc=%s'
+                          % (len(_smp), _h, _d, _m,
+                             _QS_QMT_ONCE.get('close_asc', -1)))
+        except Exception:
+            pass
     for _i, code in enumerate(codes):
         row = rows.get(code)
         _qs_progress('query_last_close', _i + 1, len(codes), _t0)
@@ -1558,7 +1754,12 @@ def _qs_get_fundamentals(table, codes, date=None, fields=None, C=None):
             rec[lf] = v
         if table == 'valuation' and 'float_value' in fields:
             cap = row.get('circulating_capital')      # 股 :2376
-            close = _qs_last_close(C, code)           # 元（不复权 :122）
+            # D-27b 件 D：优先查预取表（命中且值非 None → 用之，与逐只取数
+            # 同式逐位一致）；未命中或 None → 回落 _qs_last_close 逐只
+            # （与现行为逐位一致——五态回落钉死于此）。
+            close = _close_map.get(code)
+            if close is None:
+                close = _qs_last_close(C, code)       # 元（不复权 :122）
             try:
                 usable = cap is not None and close is not None
                 rec['float_value'] = float(cap) * float(close) if usable else float('nan')

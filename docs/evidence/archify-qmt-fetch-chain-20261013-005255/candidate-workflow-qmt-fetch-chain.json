@@ -1,0 +1,93 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "QMT 取数链影响面图（D-23 → D-27b）",
+    "subtitle": "生成 2026-10-13 00:52 ｜ 基线 e269fc8（含 D-27a 工作树改动）｜ 行号依据 source_import_qmt.py",
+    "locale": "zh-CN",
+    "output": ".archify/workflow-qmt-fetch-chain-20261013-005255/index.html",
+    "animation": "trace",
+    "visual_preset": "blueprint",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/yangyizhu8/quantstudio-plus",
+      "provider": "github",
+      "link_mode": "local-only",
+      "revision": "e269fc837d45f52753ae9a8debd92e810fc54d87"
+    },
+    "views": [
+      { "id": "v_hist", "label": "hist 收敛路径", "focus": ["s_call", "w_hist_entry", "w_hist_norm", "n_fin", "d_fin", "s_consume"], "note": "D-26d / D-27b 收敛落点" },
+      { "id": "v_close", "label": "valuation 批量化路径", "focus": ["s_val_call", "w_val_entry", "w_close", "n_mkt1", "d_mkt", "s_l5"], "note": "D-27② 3666 次 → 分批批量" },
+      { "id": "v_audit", "label": "审计落点", "focus": ["a_status", "a_prog", "a_hist", "a_dbg", "a_funnel"], "note": "D-23 / D-24 / D-26 / D-27 审计行" }
+    ]
+  },
+  "lanes": [
+    { "id": "hist", "label": "hist 路径（eps / growth / profit）· 本轮 D-27b 收敛落点" },
+    { "id": "audit", "label": "审计落点与自检（D-23 / D-24 / D-26 / D-27）" },
+    { "id": "valuation", "label": "valuation 路径（流通市值 / 现价）· 本轮 D-27② 批量化落点" }
+  ],
+  "phases": [
+    { "id": "p_call", "label": "调用与分发", "fromCol": 0, "toCol": 1 },
+    { "id": "p_norm", "label": "归一与收敛", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "p_judge", "label": "审计与判定", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "groups": [
+    { "id": "g_conv", "label": "D-26d / D-27b 收敛落点", "lane": "hist", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "g_audit", "label": "审计面（纯增益·新增检测型）", "lane": "audit", "fromCol": 0, "toCol": 5, "variant": "security" }
+  ],
+  "mainPath": ["s_call", "w_hist_entry", "w_hist_norm", "n_fin", "d_fin", "s_consume"],
+  "nodes": [
+    { "id": "s_call", "lane": "hist", "col": 0, "width": 108, "type": "frontend", "label": "策略调用", "sublabel": "get_fundamentals(...)",
+      "sources": [{ "path": "quantstudio/backtest/strategies/weekly_smallcap_growth_momentum_10_quantstudio.py", "line": 207, "label": "L207 growth" }] },
+    { "id": "w_hist_entry", "lane": "hist", "col": 1, "width": 108, "type": "backend", "label": "入口分发", "sublabel": "_qs_get_fundamentals",
+      "sources": [{ "path": "quantstudio/strategy_compiler/source_import_qmt.py", "line": 1458, "label": "entry" }] },
+    { "id": "w_hist_norm", "lane": "hist", "col": 2, "type": "backend", "label": "hist 收敛", "sublabel": "_qs_fin_to_rows_hist", "tag": "D-27b",
+      "sources": [{ "path": "quantstudio/strategy_compiler/source_import_qmt.py", "line": 1291, "label": "hist" }] },
+    { "id": "n_fin", "lane": "hist", "col": 3, "type": "external", "label": "财务取数", "sublabel": "get_financial_data" },
+    { "id": "d_fin", "lane": "hist", "col": 4, "type": "database", "label": "财务 Panel", "sublabel": "日频 8739 行/只", "tag": "超量 ~200×" },
+    { "id": "s_consume", "lane": "hist", "col": 5, "type": "frontend", "label": "消费判定", "sublabel": "_latest_by_code", "tag": "重复行不敏感",
+      "sources": [{ "path": "quantstudio/backtest/strategies/weekly_smallcap_growth_momentum_10_quantstudio.py", "line": 138, "end_line": 163, "label": "_latest_by_code" }] },
+
+    { "id": "a_status", "lane": "audit", "col": 0, "type": "messagebus", "label": "信息状态审计", "sublabel": "get_stock_info", "tag": "D-23",
+      "sources": [{ "path": "quantstudio/strategy_compiler/source_import_qmt.py", "line": 978, "label": "get_stock_info" }] },
+    { "id": "a_prog", "lane": "audit", "col": 1, "type": "messagebus", "label": "进度审计", "sublabel": "QS_QMT_PROGRESS", "tag": "D-24 五落点" },
+    { "id": "a_hist", "lane": "audit", "col": 2, "type": "messagebus", "label": "hist 审计", "sublabel": "QSFUNDHIST kept", "tag": "D-19 / D-22" },
+    { "id": "a_dbg", "lane": "audit", "col": 3, "type": "messagebus", "label": "探针与自检", "sublabel": "HISTDBG3 / CLOSE_EQC", "tag": "D-27b / D-27②" },
+    { "id": "a_funnel", "lane": "audit", "col": 5, "type": "messagebus", "label": "漏斗审计", "sublabel": "L0 → R_selected", "tag": "R_selected=10" },
+
+    { "id": "s_val_call", "lane": "valuation", "col": 0, "width": 108, "type": "frontend", "label": "估值调用", "sublabel": "get_fundamentals" },
+    { "id": "w_val_entry", "lane": "valuation", "col": 1, "width": 108, "type": "backend", "label": "估值分支", "sublabel": ":1508-1587" },
+    { "id": "w_close", "lane": "valuation", "col": 2, "type": "backend", "label": "逐只现价", "sublabel": "_qs_last_close", "tag": "D-27② 待批量化",
+      "sources": [{ "path": "quantstudio/strategy_compiler/source_import_qmt.py", "line": 1179, "label": "_qs_last_close" }] },
+    { "id": "n_mkt1", "lane": "valuation", "col": 3, "type": "external", "label": "行情取数", "sublabel": "get_market_data_ex", "tag": "批量 dict" },
+    { "id": "d_mkt", "lane": "valuation", "col": 4, "type": "database", "label": "日线窗口", "sublabel": "end=回测当日", "tag": "D-1 防未来函数" },
+    { "id": "s_l5", "lane": "valuation", "col": 5, "type": "frontend", "label": "L5 市值排序", "sublabel": "float_value" }
+  ],
+  "edges": [
+    { "from": "s_call", "to": "w_hist_entry", "role": "main", "variant": "emphasis" },
+    { "from": "w_hist_entry", "to": "w_hist_norm", "role": "main", "variant": "emphasis" },
+    { "from": "w_hist_norm", "to": "n_fin", "role": "main", "variant": "emphasis" },
+    { "from": "n_fin", "to": "d_fin", "role": "main" },
+    { "from": "d_fin", "to": "s_consume", "role": "main", "variant": "emphasis", "label": "多行契约" },
+
+    { "from": "s_val_call", "to": "w_val_entry", "role": "main", "variant": "emphasis" },
+    { "from": "w_val_entry", "to": "w_close", "role": "main" },
+    { "from": "w_close", "to": "n_mkt1", "role": "main", "variant": "emphasis", "label": "分批批量" },
+    { "from": "n_mkt1", "to": "d_mkt", "role": "main" },
+    { "from": "d_mkt", "to": "s_l5", "role": "main", "label": "float_value" },
+
+    { "from": "a_status", "to": "a_prog", "variant": "dashed" },
+    { "from": "a_prog", "to": "a_hist", "variant": "dashed" },
+    { "from": "a_hist", "to": "a_dbg", "variant": "dashed" },
+    { "from": "a_dbg", "to": "a_funnel", "variant": "dashed" },
+
+    { "from": "w_hist_norm", "to": "a_hist", "variant": "dashed", "label": "kept/drop", "route": "drop", "fromSide": "bottom", "toSide": "top" },
+    { "from": "s_consume", "to": "a_funnel", "variant": "dashed", "label": "漏斗计数", "route": "drop", "fromSide": "bottom", "toSide": "top" },
+    { "from": "n_mkt1", "to": "a_dbg", "variant": "dashed", "label": "批量等价", "route": "straight", "fromSide": "top", "toSide": "bottom" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "取数链主干", "items": ["策略 → wrapper 分发 → 归一/收敛 → QMT 原生 → 数据形态 → 消费判定", "hist 与 valuation 两条路径共用入口，收敛落点在 wrapper 内", "E1 铁律：日线信号一律 include=False 读 D-1；信息/状态路径另走 get_stock_info"] },
+    { "dot": "amber", "title": "本轮改动落点", "items": ["D-27b：hist 收敛过滤改「同行折叠」（safe-by-construction），探针行 HISTDBG3 同行输出折叠前/后行数", "D-27②：valuation 现价由逐只 3666 次改分批批量 + 缺码回落 per-code", "D-27②：首次调用对 ≤20 只跑 EQC 等价自检（QS_QMT_CLOSE_EQC diff=0）"] },
+    { "dot": "emerald", "title": "闸门与回退", "items": ["写前快照 stash baseline-20261013-d27b + 文件级备份（SHA256 双向核对）", "六策略重转 ALL 6 PASS (enc=gbk) + 矩阵哈希 qmt_wrapper_hash 同批追认", "端测判据：L5=30 / R_selected=10 / 耗时 <572s；不符即按路径单文件回退"] }
+  ]
+}
