@@ -840,6 +840,19 @@ class QFQResidentOrchestrator:
             raise
         # blocked 也记 pending_backfill 精确区间（已含在上一分支）
 
+        # ── 单元级 outcome 诊断（2026-10-13 总调度三裁定）─────────────────
+        # 裁① 审计行落 qfq_aux.db:qfq_deep_audit_item（既有表·外部可读）；
+        # 裁② 逐单元全量（成功面基线）；裁③ 日志仅失败单元、env 默认开。
+        # 纪律：只读结果后记录；不改判定/写路径/水位；记录异常一律兜住。
+        try:
+            from .qfq_unit_diag import record_unit_outcome
+            record_unit_outcome(
+                asset_type=at, code=code, status=str(outcome.status),
+                attempt_count=int(getattr(outcome, "attempt_count", 0) or 0),
+                last_error=getattr(outcome, "error", None), log=logger)
+        except Exception as _de:
+            logger.error("[qfq_orch] 单元诊断记录异常（不阻断 applying）: %s", _de)
+
     def _bump_attempt(self, conn, tids: List[str]) -> int:
         placeholders = ','.join(['?'] * len(tids))
         gen_params = [self._ident["price_source"], self._ident["source_generation"],
