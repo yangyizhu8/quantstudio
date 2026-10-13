@@ -977,6 +977,28 @@ class ResidentCollector:
                 start = self._bump_date(last) or task.get("start_date", "2020-01-01")
                 end = datetime.now().strftime("%Y-%m-%d")
                 logger.info(f"[{batch_id}] INCREMENTAL: {start} → {end} (last_watermark={last})")
+                if not last:
+                    # ── D7（2026-10-13 六步①统一方案·②审裁②）──────────────────────
+                    # **无锚点（首次/升级后）⇒「增量」静默退化为全量**：原实现照常全区间拉取
+                    # 且不向调用方提示，是客户「以为只拉一点、结果两天跑不完」的**第一因**
+                    # （移交件 §7.4）。处置：显式 WARNING + **「建基线」语义** + 天数/量级暴露
+                    # + 下游后果提示（避免只治下游）。
+                    try:
+                        _nd = (datetime.strptime(end, "%Y-%m-%d")
+                               - datetime.strptime(start, "%Y-%m-%d")).days
+                    except Exception:
+                        _nd = -1
+                    _scale = {
+                        "stock_minutes": "全市场分钟级（≈4.8 亿行量级）",
+                        "etf_minutes": "全市场 ETF 分钟级（≈亿行量级）",
+                        "stock_daily": "全市场日线（≈千万行量级）",
+                        "etf_daily": "全市场 ETF 日线（≈百万行量级）",
+                    }.get(table, "全历史口径")
+                    logger.warning(
+                        f"[{batch_id}] **无锚点（首次/升级后）⇒ 增量退化为「建基线」全量拉取**："
+                        f"{start} → {end}（≈{_nd} 天，{_scale}）——**代价显著**"
+                        f"（小时至数十小时量级），完成后将产生大量因子事件、可能触发全市场重锚；"
+                        f"**如需中止请立即停止本任务**。")
 
             if self._date_range_empty(start, end):
                 logger.info(f"[{batch_id}] 水位已追平，无需拉取: {start} > {end}")
