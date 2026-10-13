@@ -783,10 +783,46 @@ def stage_fresh_minutes(conn, asset_type: str, code: str, freq: str,
 #   * 新增 fresh raw 与库内 raw 逐 bar 精确对齐（核心安全网，替代乘法/加法假设）。
 # ---------------------------------------------------------------------------
 
+def _coverage_diff_sample(conn, table: str, view: str, code: str,
+                          limit: int = 5) -> str:
+    """日线覆盖差集样本（2026-10-13 六步①第一段·总调度照准）。
+
+    目的：该校验是本项**唯一可读出口**（明细在独占库内）——把「缺/多哪几行」
+    直接写进消息，下一单元即可零成本指名具体日期，使第二段修法唯一化。
+    纪律：只读 + 只格式化；**任何异常一律兜住返回空串**（不得影响校验判定本身）；
+    只**增**消息内容，**不改**任何判定/阈值。
+    """
+    try:
+        miss = conn.execute(
+            f'SELECT t.time FROM "{table}" t WHERE t.code=? '
+            f'EXCEPT SELECT s.time FROM "{view}" s WHERE s.code=? '
+            f'ORDER BY 1 LIMIT {int(limit)}', [code, code]).fetchall()
+        ext = conn.execute(
+            f'SELECT s.time FROM "{view}" s WHERE s.code=? '
+            f'EXCEPT SELECT t.time FROM "{table}" t WHERE t.code=? '
+            f'ORDER BY 1 LIMIT {int(limit)}', [code, code]).fetchall()
+
+        def _fmt(rows) -> str:
+            out = []
+            for row in rows:
+                try:
+                    ms = int(row[0])
+                    d = datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d")
+                except Exception:
+                    d = str(row[0] if row else "?")
+                out.append(f"{code}@{d}")
+            return "[" + ",".join(out) + "]"
+
+        return f"；差集样本 缺{_fmt(miss)} 多{_fmt(ext)}"
+    except Exception:
+        return ""
+
+
 def _check_daily_coverage_strict(conn, asset_type, code, df):
     """rebase 日线全历史覆盖：target == staged == matched，缺/多/重复行一律 BLOCK。"""
     daily_table, _ = _tables_of(asset_type)
     view = f"_qfq_cov_d_{code}"
+    _sample = ""
     conn.register(view, df[["code", "time"]])
     try:
         target_count = int(conn.execute(
@@ -795,6 +831,9 @@ def _check_daily_coverage_strict(conn, asset_type, code, df):
         matched = int(conn.execute(
             f"SELECT COUNT(*) FROM {daily_table} t JOIN {view} s "
             f"ON t.code=s.code AND t.time=s.time WHERE t.code=?", [code]).fetchone()[0])
+        # 2026-10-13 六步①第一段：差集样本**必须在 view 存活期内取**——
+        # finally 会 unregister(view)，若在其后查询会因视图已注销而取不到（实测踩坑）。
+        _sample = _coverage_diff_sample(conn, daily_table, view, code, limit=5)
     finally:
         conn.unregister(view)
     if df.duplicated(subset=["code", "time"]).any():
@@ -803,9 +842,12 @@ def _check_daily_coverage_strict(conn, asset_type, code, df):
     missing_target = target_count - matched
     extra = staged_count - matched
     if missing_target != 0 or extra != 0:
+        # 2026-10-13 六步①第一段（总调度照准）：消息带差集样本 ⇒ 指名缺/多哪几行。
+        # 只增消息内容，判定与阈值一律不变（判型：纯增益·新增检测型）。
+        # （样本已在 view 存活期内取好，见上方 try 块注释。）
         raise ReanchorBlocked("daily_coverage_mismatch",
             f"rebase 日线覆盖不全：缺 {missing_target}/多 {extra} 行"
-            f"（要求全历史严格一致，禁止缺行/增行）")
+            f"（要求全历史严格一致，禁止缺行/增行）{_sample}")
 
 
 def _check_daily_raw_align(conn, asset_type, code, df, tol):
