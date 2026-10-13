@@ -298,6 +298,14 @@ _RESTORE_TABLES = frozenset({"stock_daily", "etf_daily",
 # 因子缺失时的兜底策略：fail-fast。静默放行 = 把 qfq 当 raw 写进主库 = 数据污染，
 # 比取数失败严重得多，故宁可让本次任务失败。
 _RESTORE_MISSING_FACTOR_FAIL_FAST = True
+# ── D1（2026-10-13 六步①·②审四裁①）：缺因子**按比例隔离**而非「任一行即整批失败」──
+#   阈值 = 0 ⇒ 保持旧严格语义（任一行 bad ⇒ fail-fast，与修复前逐位一致）
+#   阈值 > 0 ⇒ 占比 ≤ 阈值时**按行隔离跳过**（被跳过的行**不写入** ⇒ 无双重复权），
+#              其余行照常还原；登记 meta + WARNING 告警
+#              （照 code_contract「拒绝 ⇒ 隔离计数 + 审计行，不中断整批/整轮」）
+# 默认 1%（裁①：两案实测 0.016% / 0.53% 远低于 1%）；env 可覆盖、客户按场景切换。
+RESTORE_MISSING_FACTOR_MAX_RATIO_ENV = "QS_RESTORE_MISSING_FACTOR_MAX_RATIO"
+_RESTORE_MISSING_FACTOR_MAX_RATIO_DEFAULT = 0.01
 
 _QFQ_DIVIDEND_TABLE = ("stock_dividend", "daily")
 _QFQ_ADJFACTOR_TABLES = {("stock_daily", "daily"), ("etf_daily", "daily"),
@@ -351,6 +359,15 @@ class MCPAdapter(BaseSourceAdapter):
         self.enable_qfq_restore = bool(config.get("enable_qfq_restore", True))
         # 线1：因子冷启动（qfq_aux.db 未覆盖的 code → 全历史导出注入）
         self.enable_adj_coldstart = bool(config.get("enable_adj_coldstart", True))
+        # D1（2026-10-13）：缺因子按比例隔离阈值（0=保持旧严格语义）；env 优先，默认 1%。
+        try:
+            _env_ratio = os.environ.get(RESTORE_MISSING_FACTOR_MAX_RATIO_ENV)
+            self.restore_missing_factor_max_ratio = float(
+                _env_ratio if _env_ratio not in (None, "")
+                else config.get("restore_missing_factor_max_ratio",
+                                _RESTORE_MISSING_FACTOR_MAX_RATIO_DEFAULT))
+        except Exception:
+            self.restore_missing_factor_max_ratio = _RESTORE_MISSING_FACTOR_MAX_RATIO_DEFAULT
         # TD-D2 统一路由：daemon 在 _get_adapter 每次注入 resolved 路径
         # （qfq_aux_paths.json released + active cutover 双条件；None → 兜底
         # aux_db_path(main_db) 推导，仅独立 CLI/测试场景使用）
@@ -2127,11 +2144,33 @@ class MCPAdapter(BaseSourceAdapter):
             msg = (f"[MCPAdapter] 线1 还原缺因子：{table}/{freq} "
                    f"{int(bad.sum())} 行无法还原，涉及 {len(bad_codes)} 个 code，"
                    f"示例={bad_codes[:5]}")
-            if _RESTORE_MISSING_FACTOR_FAIL_FAST:
+            _n = len(out) or 1
+            _ratio = int(bad.sum()) / float(_n)
+            _max_ratio = float(getattr(self, "restore_missing_factor_max_ratio", 0.0) or 0.0)
+            if _max_ratio > 0 and _ratio <= _max_ratio:
+                # D1（裁①）：占比在阈值内 ⇒ **按行隔离跳过**（丢弃不可还原行 ⇒ 不写入
+                # ⇒ 无双重复权），其余行照常还原；登记 + 告警（不中断本批）。
+                _keep = ~bad
+                out = out[_keep].reset_index(drop=True)
+                adj_i = adj_i[_keep].reset_index(drop=True)
+                adj_latest = adj_latest[_keep].reset_index(drop=True)
+                bare = bare[_keep].reset_index(drop=True)
+                valid = (adj_i.notna() & (adj_i > 0)
+                         & adj_latest.notna() & (adj_latest > 0))
+                bad = ~valid
+                _saved = _n - len(out)          # 被跳过的行数（out 已过滤，直接取差值）
+                meta["restore_isolated"] = True
+                meta["restore_isolated_rows"] = int(_saved)
+                meta["restore_isolated_ratio"] = _ratio
+                logger.warning(
+                    msg + f"。**占比 {_ratio:.4%} ≤ 阈值 {_max_ratio:.2%} ⇒ 按行隔离跳过"
+                          f"（{_saved} 行不写入）+ 登记**")
+            elif _RESTORE_MISSING_FACTOR_FAIL_FAST:
                 logger.error(msg)
                 raise ValueError(
                     msg + "。放行会把 qfq 当 raw 写入主库造成双重复权，故 fail-fast。")
-            logger.warning(msg)
+            else:
+                logger.warning(msg)
 
         # Adjustment-factor histories are not guaranteed to be monotonic. ETF share
         # splits/consolidations and some capital restructurings can leave historical adj_i above
