@@ -1,0 +1,298 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "QMT 合约信息四消费点·快照拦截影响面图（D-30 实施轮）",
+    "subtitle": "生成 2026-10-13 16:25 ｜ 基线 e06ed52（已双仓推送）｜ 行号依据 source_import_qmt.py（D-27b 终态）与设计文档 v0.3",
+    "locale": "zh-CN",
+    "output": ".archify/dataflow-qmt-instr-snapshot-20261013-162500/index.html",
+    "viewBox": [
+      1150,
+      700
+    ],
+    "animation": "trace",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/yangyizhu8/quantstudio-plus",
+      "provider": "github",
+      "link_mode": "local-only",
+      "revision": "e06ed52e2de1cbd348d880cf26e476761c4f6507"
+    }
+  },
+  "stages": [
+    {
+      "label": "冻结源"
+    },
+    {
+      "label": "快照加载（三态）"
+    },
+    {
+      "label": "访问与回落"
+    },
+    {
+      "label": "四消费点（原位拦截）"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "snap",
+      "type": "database",
+      "label": "快照文件",
+      "sublabel": "instrument_snapshot.json",
+      "stage": 0,
+      "row": 0,
+      "width": 150,
+      "tag": "PIT 冻结·sha16·enabled",
+      "sources": [
+        {
+          "path": "docs/qmt-instrument-snapshot-design.md",
+          "line": 43,
+          "label": "§三 快照文件约定"
+        }
+      ]
+    },
+    {
+      "id": "ldr",
+      "type": "security",
+      "label": "三态加载器",
+      "sublabel": "_qs_snapshot_load()（新增）",
+      "stage": 1,
+      "row": 0,
+      "tag": "loaded/absent/broken 均缓存",
+      "sources": [
+        {
+          "path": "docs/qmt-instrument-snapshot-design.md",
+          "line": 37,
+          "label": "§三-①"
+        }
+      ]
+    },
+    {
+      "id": "acc",
+      "type": "backend",
+      "label": "统一访问器",
+      "sublabel": "_qs_instr_detail＋快照名单",
+      "stage": 2,
+      "row": 1,
+      "tag": "命中→冻结值；未启用/缺码→None",
+      "sources": [
+        {
+          "path": "docs/qmt-instrument-snapshot-design.md",
+          "line": 37,
+          "label": "§三-②④"
+        }
+      ],
+      "width": 150
+    },
+    {
+      "id": "live",
+      "type": "external",
+      "label": "innerApi 活表",
+      "sublabel": "get_instrument_detail(code)",
+      "stage": 2,
+      "row": 2,
+      "tag": "漂移源·单位置参数",
+      "sources": [
+        {
+          "path": "quantstudio/strategy_compiler/source_import_qmt.py",
+          "line": 981,
+          "label": "live 调用现状"
+        }
+      ]
+    },
+    {
+      "id": "sector",
+      "type": "external",
+      "label": "板块成份活表",
+      "sublabel": "get_stock_list_in_sector",
+      "stage": 2,
+      "row": 3,
+      "tag": "严禁传 realtime（D-31 坑）",
+      "sources": [
+        {
+          "path": "quantstudio/strategy_compiler/source_import_qmt.py",
+          "line": 886,
+          "label": "get_Ashares live"
+        }
+      ]
+    },
+    {
+      "id": "c1",
+      "type": "frontend",
+      "label": "① 信息状态",
+      "sublabel": "_qs_get_stock_info :978",
+      "stage": 3,
+      "row": 0,
+      "tag": "回落 :982→{}",
+      "sources": [
+        {
+          "path": "quantstudio/strategy_compiler/source_import_qmt.py",
+          "line": 978,
+          "label": "消费点 1"
+        }
+      ]
+    },
+    {
+      "id": "c2",
+      "type": "frontend",
+      "label": "② 三态判定",
+      "sublabel": "_qs_status_flags :1003",
+      "stage": 3,
+      "row": 1,
+      "tag": "回落 →({},False)",
+      "sources": [
+        {
+          "path": "quantstudio/strategy_compiler/source_import_qmt.py",
+          "line": 1003,
+          "label": "消费点 2"
+        }
+      ]
+    },
+    {
+      "id": "c4",
+      "type": "frontend",
+      "label": "④ 执行层 bar",
+      "sublabel": "_QmtDataBar :502/:505-507",
+      "stage": 3,
+      "row": 2,
+      "tag": "回落 :503→det={}",
+      "sources": [
+        {
+          "path": "quantstudio/strategy_compiler/source_import_qmt.py",
+          "line": 502,
+          "label": "消费点 4"
+        }
+      ]
+    },
+    {
+      "id": "c3",
+      "type": "frontend",
+      "label": "③ L0 名单",
+      "sublabel": "get_Ashares :1913",
+      "stage": 3,
+      "row": 3,
+      "tag": "保留 SEMANTIC_DIFF 行",
+      "sources": [
+        {
+          "path": "quantstudio/strategy_compiler/source_import_qmt.py",
+          "line": 1913,
+          "label": "消费点 3"
+        }
+      ]
+    }
+  ],
+  "flows": [
+    {
+      "id": "f_load",
+      "from": "snap",
+      "to": "ldr",
+      "label": "读取＋sha16/schema 校验",
+      "classification": "惰性单次",
+      "variant": "emphasis",
+      "route": "straight",
+      "labelDy": 54
+    },
+    {
+      "id": "f_state",
+      "from": "ldr",
+      "to": "acc",
+      "label": "loaded→dict｜其余→None",
+      "classification": "三态缓存",
+      "variant": "emphasis",
+      "route": "vertical-channel",
+      "channelX": 460,
+      "labelDy": -22
+    },
+    {
+      "id": "f_none",
+      "from": "live",
+      "to": "acc",
+      "label": "None 信号→各消费点原位 live（异常语义逐点保留）",
+      "classification": "回落路径",
+      "variant": "dashed",
+      "route": "straight",
+      "labelDx": -200,
+      "labelDy": 6
+    },
+    {
+      "id": "f_hit1",
+      "from": "acc",
+      "to": "c1",
+      "label": "冻结 dict",
+      "classification": "快照路径",
+      "variant": "emphasis",
+      "route": "vertical-channel",
+      "channelX": 624
+    },
+    {
+      "id": "f_hit2",
+      "from": "acc",
+      "to": "c2",
+      "label": "冻结 dict",
+      "classification": "快照路径",
+      "variant": "emphasis",
+      "route": "straight",
+      "labelDy": 30
+    },
+    {
+      "id": "f_hit4",
+      "from": "acc",
+      "to": "c4",
+      "label": "三字段冻结",
+      "classification": "快照路径",
+      "variant": "emphasis",
+      "route": "vertical-channel",
+      "channelX": 648
+    },
+    {
+      "id": "f_hit3",
+      "from": "acc",
+      "to": "c3",
+      "label": "冻结名单",
+      "classification": "快照路径",
+      "variant": "emphasis",
+      "route": "vertical-channel",
+      "channelX": 612
+    },
+    {
+      "id": "f_fb3",
+      "from": "sector",
+      "to": "c3",
+      "label": "未启用→活名单",
+      "classification": "回落路径",
+      "variant": "dashed",
+      "route": "straight",
+      "labelDy": 26
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "新增能力（默认关·判型=新增检测型）",
+      "items": [
+        "无快照文件＝零审计行输出 + 行为与现行基线逐位一致（判据 C）",
+        "enabled＝仅数据来源替换（活表→冻结快照），返回结构/契约/签名不变，既有测试零衰减",
+        "同一快照指纹下任意时刻任意次数回测同区间，漏斗全层逐位一致（判据 A）",
+        "下游：漏斗 L0→L3v→R_selected 同指纹逐位一致（判据 A）；执行层涨跌停 E1 域冻结（buy 链路）；审计行无文件=零输出"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "风险边界（实盘防线）",
+      "items": [
+        "wrapper 无语境判别——文件存在即任何语境消费（含同机实盘）；防线＝文件管理纪律＋审计行首印＋文档红字",
+        "三态缓存：运行中新建/修改文件不生效，须重跑回测；刷新＝重跑导出＋重跑回测",
+        "快照老化以指纹披露，不为历史 PIT 真相（§七 另案）"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "闸门与回退",
+      "items": [
+        "允许写入清单：source_import_qmt.py（MODULE_HEADER 落点·不新增 EXT 常量）＋导出脚本＋单测≥12 用例＋矩阵 yaml/md＋簿记",
+        "wrapper 渲染常量变动 → qmt_wrapper_hash 同 commit 追认（M5.2 纪律）",
+        "运行时回退＝删快照文件秒级禁用；代码回退＝stash 基线 git reset --hard；验收失败即回退回炉"
+      ]
+    }
+  ]
+}

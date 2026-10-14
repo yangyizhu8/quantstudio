@@ -497,11 +497,12 @@ class _QmtDataBar(object):
                     vals[k] = float(last[k]) * (100.0 if k == 'volume' else 1.0)
         except Exception:
             vals = {}
-        det = {}
-        try:
-            det = C.get_instrument_detail(code) or {}  # M5-8 实测签名：单位置参数（iscomplete 非位置参，3 参 TypeError）
-        except Exception:
-            det = {}
+        det = _qs_instr_detail(code, C)  # D-30 快照层：非 None 即冻结值（跳过 live）
+        if det is None:
+            try:
+                det = C.get_instrument_detail(code) or {}  # M5-8 实测签名：单位置参数（iscomplete 非位置参，3 参 TypeError）
+            except Exception:
+                det = {}
         vals['preclose'] = det.get('PreClose')        # :2490
         vals['high_limit'] = det.get('UpStopPrice')   # :2492
         vals['low_limit'] = det.get('DownStopPrice')  # :2493
@@ -879,6 +880,11 @@ def _qs_get_ashares(date=None, exclude_bse=None, include_delisted=None, C=None):
     if date is not None:
         print('QS_QMT_SEMANTIC_DIFF: get_Ashares date=%r 不消费'
               '（QMT sector=当前上市名单，无历史 PIT）' % (date,))
+    # D-30 快照层：loaded 时直接返回 sorted 冻结名单（零 live；严禁 realtime）。
+    # 登记行在快照分支之上——冻结名单同样非历史 PIT，登记语义仍真（设计 §三⑤）。
+    lst = _qs_instr_list()
+    if lst is not None:
+        return lst
     try:
         # D-12 final（2026-10-11 PROBE 定谳）：realtime 实参传任何值（毫秒时间戳
         # 或数字 1）回测模式均返回空；唯一可用形态 = 单参调用（板块当前全名单
@@ -977,10 +983,12 @@ def _qs_norm_ymd(value):
 
 def _qs_get_stock_info(code, C=None):
     C = _qs_pick_ctx(C)
-    try:
-        d = C.get_instrument_detail(code) or {}  # M5-8 实测签名：单位置参数
-    except Exception:
-        d = {}
+    d = _qs_instr_detail(code, C)  # D-30 快照层：非 None 即冻结值（跳过 live）
+    if d is None:
+        try:
+            d = C.get_instrument_detail(code) or {}  # M5-8 实测签名：单位置参数
+        except Exception:
+            d = {}
     return {
         'display_name': d.get('InstrumentName'),        # :2481
         'name': d.get('InstrumentName'),                # :2481
@@ -1013,12 +1021,14 @@ def _qs_status_flags(code, C):
     防御解析（实测未现）；日期串双形态保留。
     """
     C = _qs_pick_ctx(C)
-    try:
-        d = C.get_instrument_detail(code) or {}  # M5-8 实测签名：单位置参数  # 07:2459
-    except Exception:
-        return {}, False
-    if not d:
-        return {}, False
+    d = _qs_instr_detail(code, C)  # D-30 快照层：非 None 即冻结值（跳过 live）
+    if d is None:
+        try:
+            d = C.get_instrument_detail(code) or {}  # M5-8 实测签名：单位置参数  # 07:2459
+        except Exception:
+            return {}, False
+        if not d:  # live 空结果仍 ({}, False)；快照命中不经本分支（设计 §三：命中即 raw dict）
+            return {}, False
     flags = {}
     flags['ST'] = 'ST' in str(d.get('InstrumentName') or '').upper()  # :2481
     halted = False
@@ -1974,6 +1984,122 @@ _QS_QMT_MODULE_HEADER = '''\
 # ==== QS-QMT auto-generated header（source_import_qmt.py · M2b 架构 D · 块1骨架）====
 # 产物落盘物理编码必须为 GBK（与首行 #coding:gbk 声明一致），由写出方负责。
 import pandas as pd  # _QS_QMT_FUNDAMENTALS_EXT 消费
+import os            # D-30 快照层（instrument snapshot）：路径存在性/文件名
+import json          # D-30 快照层：快照 JSON 解析（UTF-8）
+import hashlib       # D-30 快照层：快照指纹 sha256 前 16 位
+
+# ---- D-30 PIT 冻结合约快照层（instrument snapshot，2026-10-13）------------------
+# 设计：docs/qmt-instrument-snapshot-design.md v0.3（§三=合同）。
+# 动机：四消费点（_qs_get_stock_info/_qs_status_flags/_qs_get_ashares/
+# _QmtDataBar）读活的本地合约信息表，供应商推送更新该表 -> 跨推送窗口两次
+# 回测漂移（含执行层涨跌停判断链）-> 逐位门禁不可判；本层以冻结快照替换数据
+# 来源，根治可复现性（非历史 PIT 真相，PIT 三层另案见设计 §七）。
+# 约定优于配置（v1 不参数化）：启用=文件存在且 enabled:true；禁用=删文件/改
+# false；刷新=重跑导出脚本（docs/probe/qmt_instrument_snapshot_export-20261013.py）
+# + 重跑回测（三态缓存下运行中变更文件不生效）。
+# 【实盘风险】wrapper 无语境判别能力——文件存在即任何语境消费（含同机 QMT
+# 实盘运行）：实盘运行机不部署快照文件（删除即禁用）。
+
+_QS_QMT_INSTR_SNAP_PATH = r'D:\\miniQMT策略实盘\\QuantStudio\\output\\qmt_snapshot\\instrument_snapshot.json'
+
+# 三态缓存载体：None=未加载；否则 dict(state/records/sha16/n)——四态
+# （loaded/disabled/broken/absent）均缓存，运行中新建/变更文件不生效（须重跑
+# 回测）。模块级理由同 _QS_QMT_ONCE（局部变量跨调用丢失；每产物文件独立模块
+# 命名空间，多策略同进程加载不串味）。
+_QS_QMT_SNAP_STATE = None
+
+
+def _qs_snapshot_load():
+    """D-30 快照惰性单次加载 + 四态缓存（loaded/disabled/broken/absent）。
+
+    判序：文件不存在 -> absent（零输出=默认零漂移）；读失败 -> broken；
+    JSON 解析失败 / records 非 dict -> broken（n=-1）；enabled 非 true ->
+    disabled；否则 loaded（records dict 可用）。加载期任何异常一律坍缩为
+    broken/absent，不抛出（消费点回落 live）。非 absent 态首印审计行恰一次
+    （_QS_QMT_ONCE['snap_print']，定义于 _QS_QMT_FUNDAMENTALS_EXT，调用期
+    解析可用）：
+      QS_QMT_SNAPSHOT mode=on|off|off(broken) file=<文件名> sha=<sha256 前16位> n=<len(records) 或 -1>
+    """
+    global _QS_QMT_SNAP_STATE
+    if _QS_QMT_SNAP_STATE is not None:
+        return _QS_QMT_SNAP_STATE
+    st = {'state': 'absent', 'records': None, 'sha16': None, 'n': -1}
+    try:
+        exists = os.path.exists(_QS_QMT_INSTR_SNAP_PATH)
+    except Exception:
+        exists = False
+    if exists:
+        raw = None
+        try:
+            with open(_QS_QMT_INSTR_SNAP_PATH, 'rb') as _f:
+                raw = _f.read()
+        except Exception:
+            raw = None
+        if raw is None:
+            # 读失败（如权限/占锁）：文件存在但字节不可得 -> broken（sha 无从
+            # 计算，占位 '-' 披露；n=-1）。
+            st['state'] = 'broken'
+            st['sha16'] = '-'
+        else:
+            st['sha16'] = hashlib.sha256(raw).hexdigest()[:16]
+            try:
+                doc = json.loads(raw.decode('utf-8'))
+            except Exception:
+                doc = None
+            if not isinstance(doc, dict) or not isinstance(doc.get('records'), dict):
+                # schema 不符（顶层非 dict / records 非 dict）-> broken（n=-1）。
+                st['state'] = 'broken'
+            elif doc.get('enabled') is not True:
+                # enabled 非 true（文件在=已部署但显式关闭）-> disabled。
+                st['state'] = 'disabled'
+                st['n'] = len(doc.get('records'))
+            else:
+                st['state'] = 'loaded'
+                st['records'] = doc.get('records')
+                st['n'] = len(st['records'])
+    _QS_QMT_SNAP_STATE = st
+    if st['state'] != 'absent' and 'snap_print' not in _QS_QMT_ONCE:
+        _QS_QMT_ONCE['snap_print'] = True
+        print('QS_QMT_SNAPSHOT mode=%s file=%s sha=%s n=%d' % (
+            'on' if st['state'] == 'loaded'
+            else ('off(broken)' if st['state'] == 'broken' else 'off'),
+            os.path.basename(_QS_QMT_INSTR_SNAP_PATH),
+            st['sha16'], st['n']))
+    return st
+
+
+def _qs_instr_detail(code, C=None):
+    """快照命中替换访问器（只负责命中替换：不吞任何异常、不调 live）。
+
+    loaded 且码在 records -> 返回 raw dict（冻结值，调用方跳过 live）；
+    loaded 但缺码 -> 打印 QS_QMT_SNAPSHOT first_miss=<code>（_QS_QMT_ONCE
+    ['snap_first_miss'] 恰一次）后返回 None（调用方回落原 live 路径）；
+    其余态（absent/disabled/broken）-> 恒 None。C 仅保持消费点统一传参
+    形态（本访问器不消费 C）。
+    """
+    st = _qs_snapshot_load()
+    if st is None or st.get('state') != 'loaded':
+        return None
+    d = (st.get('records') or {}).get(code)
+    if d is None:
+        if 'snap_first_miss' not in _QS_QMT_ONCE:
+            _QS_QMT_ONCE['snap_first_miss'] = True
+            print('QS_QMT_SNAPSHOT first_miss=%s' % (code,))
+        return None
+    return d
+
+
+def _qs_instr_list():
+    """快照名单访问器（_qs_get_ashares 用；loaded -> sorted 稳定序冻结名单）。
+
+    严禁向 get_stock_list_in_sector 传 realtime（D-31 定谳：回测模式静默
+    返回空列表）；本访问器不触 live。其余态（absent/disabled/broken）
+    恒 None（调用方回落原 live 路径）。
+    """
+    st = _qs_snapshot_load()
+    if st is None or st.get('state') != 'loaded':
+        return None
+    return sorted((st.get('records') or {}).keys())
 '''
 
 # ---- run_daily 驱动段（规则 i；0 缩进块，由 _shell_body 统一施加缩进）--------------

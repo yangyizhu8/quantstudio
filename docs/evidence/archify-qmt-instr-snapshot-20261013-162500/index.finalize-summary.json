@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "dataflow",
+  "quality": "standard",
+  "specification": {
+    "path": "D:\\miniQMT策略实盘\\QuantStudio\\.archify\\dataflow-qmt-instr-snapshot-20261013-162500\\candidate.dataflow.json",
+    "sha256": "8b4e16572b10827f1570669f46bee15c9de588b8e42c688b1a6b54ea8fce4948",
+    "bytes": 8109
+  },
+  "artifact": {
+    "path": "D:\\miniQMT策略实盘\\QuantStudio\\.archify\\dataflow-qmt-instr-snapshot-20261013-162500\\index.html",
+    "sha256": "c3f2c61f31e0eecf817a610126aa049f9cda30f1c3949ade2d793c1e2c59ae49",
+    "bytes": 764474
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "D:\\miniQMT策略实盘\\QuantStudio\\.archify\\dataflow-qmt-instr-snapshot-20261013-162500\\index.finalize.json",
+    "summaryReceipt": "D:\\miniQMT策略实盘\\QuantStudio\\.archify\\dataflow-qmt-instr-snapshot-20261013-162500\\index.finalize-summary.json",
+    "browserCheckReceipt": "D:\\miniQMT策略实盘\\QuantStudio\\.archify\\dataflow-qmt-instr-snapshot-20261013-162500\\index.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.0.1",
+    "availableVersion": "3.0.1",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-12T16:54:15.073Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 4819
+}
