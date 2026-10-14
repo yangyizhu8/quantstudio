@@ -676,6 +676,12 @@ P0-P6 流水线（预检 vault 回哺→画像→配置校验→AST 变换→等
 定时任务管控、未知 API 保守确认；修复知识库（vault）驱动下次运行自动回哺。
 详见 `docs/ptrade-deploy-pipeline-design.md` 与 `docs/ptrade-deploy-convergence-ledger.md`。
 
+**源形态支持（PD-0006，2026-10-15）**：除 `handle_data` 形态外，支持 **`run_daily` 单挂载形态**
+（`initialize` 顶层 `run_daily(context, <自定义函数>, time=...)`）——挂载函数体内联为部署执行体
+并按档位时点重挂（源时点记入 provenance）。边界：**多挂载**与「`handle_data` + 挂载」**混合形态**
+均 fail-closed 拒绝（挂载对象歧义，防选错执行体）。详见 `docs/ptrade-deploy-rundaily-design.md`
+与 `docs/evidence/ptrade-deploy-pd0006-evidence.md`。
+
 
 ---
 
