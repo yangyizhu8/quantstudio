@@ -401,7 +401,8 @@ def _apply_persistence(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> No
 
 # ---------------------------------------------------------------- ④ 执行时点挂载 --
 
-def _apply_mount(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> None:
+def _apply_mount(tree: ast.Module, cfg, edits: List[Dict[str, str]],
+                 profile: Optional[Dict[str, object]] = None) -> None:
     time_str = RUN_DAILY_TIME[cfg.execution.profile]
     idx = None
     handle_data = None
@@ -409,9 +410,28 @@ def _apply_mount(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> None:
         if isinstance(node, ast.FunctionDef) and node.name == "handle_data":
             handle_data, idx = node, i
             break
+
+    # PD-0006 第二输入形态：run_daily 源（无 handle_data，恰 1 个执行挂载）——
+    # 包装源挂载函数（如 weekly_rebalance）并替换源注册语句为部署档位挂载。
+    mounts = list((profile or {}).get("run_daily_mounts") or [])
+    src_fn_name = None
+    src_time = None
+    if handle_data is None and len(mounts) == 1 and mounts[0].get("func"):
+        src_fn_name = mounts[0]["func"]
+        src_time = mounts[0].get("time")
+        for i, node in enumerate(tree.body):
+            if isinstance(node, ast.FunctionDef) and node.name == src_fn_name:
+                handle_data, idx = node, i
+                break
+        if handle_data is None:
+            raise TransformError(
+                f"run_daily 挂载目标函数 {src_fn_name} 未在模块级定义（PD-0006 D1 "
+                "识别与定义不一致）")
+
     if handle_data is None or idx is None:
         raise TransformError(
-            "日线执行档要求源码存在模块级 handle_data（挂载包装输入，§6.2）")
+            "日线执行档要求源码存在模块级 handle_data（挂载包装输入，§6.2），"
+            "或恰 1 个 initialize 内 run_daily 挂载（PD-0006 源形态）")
 
     ctx_name = handle_data.args.args[0].arg if handle_data.args.args else "context"
     data_name = (handle_data.args.args[1].arg if len(handle_data.args.args) > 1
@@ -426,12 +446,41 @@ def _apply_mount(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> None:
         body=handle_data.body, decorator_list=[], returns=None, type_comment=None)
     _mark(wrapper, MARKER_MOUNT, "wrap")
     tree.body[idx] = wrapper
-    edits.append({"kind": "MOUNT", "location": "handle_data",
-                  "detail": f"包装为 {MOUNT_WRAPPER_PREFIX}_exec({ctx_name}, {data_name}=None)"
-                            f"（函数体原样内联；原 handle_data 移除，交易端由 run_daily 驱动）"})
+    if src_fn_name:
+        edits.append({"kind": "MOUNT", "location": src_fn_name,
+                      "detail": f"包装为 {MOUNT_WRAPPER_PREFIX}_exec({ctx_name}, {data_name}=None)"
+                                f"（函数体原样内联；原 {src_fn_name} 移除，run_daily 源形态"
+                                f" PD-0006：源挂载 time='{src_time}' 重挂到档位时点）"})
+    else:
+        edits.append({"kind": "MOUNT", "location": "handle_data",
+                      "detail": f"包装为 {MOUNT_WRAPPER_PREFIX}_exec({ctx_name}, {data_name}=None)"
+                                f"（函数体原样内联；原 handle_data 移除，交易端由 run_daily 驱动）"})
 
     init, created = _get_or_create_function(tree, "initialize", MARKER_MOUNT)
     init_ctx = init.args.args[0].arg if init.args.args else "context"
+
+    # run_daily 源形态：定点移除源注册语句 run_daily(init_ctx, src_fn_name, ...)
+    if src_fn_name:
+        kept = []
+        removed = 0
+        for stmt in init.body:
+            if (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
+                    and getattr(stmt.value.func, "id", "") == "run_daily"
+                    and len(stmt.value.args) >= 2
+                    and isinstance(stmt.value.args[1], ast.Name)
+                    and stmt.value.args[1].id == src_fn_name):
+                removed += 1
+                continue
+            kept.append(stmt)
+        if removed == 0:
+            raise TransformError(
+                f"源 run_daily({init_ctx}, {src_fn_name}, ...) 注册语句未找到"
+                "（与 P1 识别不一致）")
+        init.body[:] = kept
+        edits.append({"kind": "MOUNT", "location": "initialize",
+                      "detail": f"移除源注册 run_daily({init_ctx}, {src_fn_name}, "
+                                f"time='{src_time}')（{removed} 处）"})
+
     reg = ast.Expr(value=ast.Call(
         func=ast.Name(id="run_daily", ctx=ast.Load()),
         args=[ast.Name(id=init_ctx, ctx=ast.Load()),
@@ -442,7 +491,9 @@ def _apply_mount(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> None:
     init.body.append(reg)
     edits.append({"kind": "MOUNT", "location": "initialize",
                   "detail": f"注入 run_daily({init_ctx}, {MOUNT_WRAPPER_PREFIX}_exec, "
-                            f"time='{time_str}')（档位 {cfg.execution.profile}，F4）"})
+                            f"time='{time_str}')（档位 {cfg.execution.profile}，F4"
+                            + (f"；源时点 {src_time} 重挂，provenance 记录" if src_fn_name
+                               else "") + "）"})
 
 
 # ---------------------------------------------------------------- ⑤ 护栏注入 --
@@ -588,7 +639,7 @@ def transform(source_text: str, profile: Dict[str, object], cfg,
     if cfg.persistence.enabled:
         _apply_persistence(tree, cfg, edits)              # b) 持久化层
     if cfg.execution.profile in RUN_DAILY_TIME:
-        _apply_mount(tree, cfg, edits)                    # c) 执行时点挂载
+        _apply_mount(tree, cfg, edits, profile)          # c) 执行时点挂载
     _apply_guards(tree, cfg, edits)                       # d) 护栏
 
     return TransformResult(product_text=_emit_module(tree), edits=edits,

@@ -223,8 +223,33 @@ def cross_validate(cfg: DeployConfig, profile: Dict[str, object]) -> List[str]:
             f"档位交叉校验失败：分钟策略不得选日线执行档（{cfg.execution.profile}），"
             "应保持 minute_keep（§5.2 P2）")
     lifecycle = profile.get("lifecycle", [])
-    if cfg.execution.profile != "minute_keep" and "handle_data" not in lifecycle:
+    mounts = profile.get("run_daily_mounts", [])
+    if cfg.execution.profile != "minute_keep" and "handle_data" in lifecycle and mounts:
+        # PD-0006 边界：混合形态（handle_data 与 run_daily 挂载并存——上游
+        # convert-pipeline 曾产出的 stub+挂载体）挂载对象有歧义（stub 非真逻辑），
+        # 显式拒绝优先于 P4 隐晦 diff 拦截；待上游形态稳定后单独立项扩展
         errors.append(
-            "档位交叉校验失败：日线执行档要求源码存在 handle_data（挂载包装的输入），"
-            f"实际生命周期函数: {lifecycle or '无'}")
+            f"档位交叉校验失败：混合形态暂不支持——handle_data 与 run_daily 挂载"
+            f"（{mounts}）并存，挂载对象歧义；请用纯 handle_data 源或纯 run_daily 源"
+            "（PD-0006 D3 边界）")
+    if cfg.execution.profile != "minute_keep" and "handle_data" not in lifecycle:
+        # PD-0006 扩展：run_daily 源形态（恰 1 个执行挂载）作为第二合法输入
+        if len(mounts) == 1 and mounts[0].get("func"):
+            pass  # 合法：P3 将包装源挂载函数并重挂到档位时点（设计文档 §4/D2）
+        elif len(mounts) > 1:
+            errors.append(
+                f"档位交叉校验失败：检测到 {len(mounts)} 个 run_daily 挂载——"
+                "多挂载源暂不支持（PD-0006 D3 单挂载限制；错峰多策略形态待后续扩展），"
+                f"挂载清单: {mounts}")
+        else:
+            errors.append(
+                "档位交叉校验失败：日线执行档要求源码存在 handle_data（挂载包装的输入），"
+                f"或恰 1 个 initialize 内 run_daily 挂载（PD-0006 源形态），"
+                f"实际生命周期函数: {lifecycle or '无'}")
+    # 交易环境 run_daily+run_interval 累计上限 5（平台文档；部署产物恒 1 个执行挂载，
+    # 源挂载在 P3 被替换不残留——此校验为防御性预算断言）
+    if cfg.execution.profile != "minute_keep" and len(mounts) > 4:
+        errors.append(
+            f"档位交叉校验失败：源 run_daily 挂载 {len(mounts)} 个，叠加部署挂载将超"
+            "平台交易定时任务上限 5（run_daily+run_interval 累计，超限堵塞）")
     return errors

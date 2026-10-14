@@ -241,6 +241,40 @@ def _profile_g_vars(tree: ast.Module, table: Dict[str, dict],
 
 # ---------------------------------------------------------------- 主入口 --
 
+def _run_daily_mounts(tree: ast.Module) -> List[Dict[str, str]]:
+    """P1 识别 run_daily 源形态（PD-0006）：initialize 直接语句级
+    run_daily(context, <func_name>, time='<str>') 挂载调用。
+
+    保守识别（设计文档 D1）：仅 initialize body 顶层 Expr-Call；func 须为简单
+    Name；time 取第 3 位置参数或 time= 关键字（str 常量，缺省 '9:31' 文档默认）。
+    kwargs/变量引用/条件分支内挂载不识别（fail-closed 交 P2 拒绝，不猜测）。
+    """
+    mounts: List[Dict[str, str]] = []
+    for node in tree.body:
+        if not (isinstance(node, ast.FunctionDef) and node.name == "initialize"):
+            continue
+        for stmt in node.body:
+            if not (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)):
+                continue
+            call = stmt.value
+            name = call_name(call)
+            if name != "run_daily" or len(call.args) < 2:
+                continue
+            func_arg = call.args[1]
+            if not isinstance(func_arg, ast.Name):
+                continue
+            time_val = "9:31"
+            if len(call.args) >= 3 and isinstance(call.args[2], ast.Constant) \
+                    and isinstance(call.args[2].value, str):
+                time_val = call.args[2].value
+            for kw in call.keywords:
+                if kw.arg == "time" and isinstance(kw.value, ast.Constant) \
+                        and isinstance(kw.value.value, str):
+                    time_val = kw.value.value
+            mounts.append({"func": func_arg.id, "time": time_val})
+    return mounts
+
+
 def build_profile(source_text: str,
                   contract: Optional[Dict[str, dict]] = None) -> Dict[str, object]:
     """执行 P1 画像，输出 profile dict（结构见返回值各键）。"""
@@ -260,6 +294,12 @@ def build_profile(source_text: str,
         warnings.append(f"回测源码定义了交易专用回调函数（转换保留）: {', '.join(callbacks)}")
 
     universe = _universe_source(tree)
+
+    run_daily_mounts = _run_daily_mounts(tree)
+    if len(run_daily_mounts) > 1:
+        warnings.append(
+            f"检测到 {len(run_daily_mounts)} 个 run_daily 挂载（多挂载源暂不支持，"
+            "P2 将拒绝；PD-0006 D3 单挂载限制）")
 
     order_apis = sorted({
         name for node in ast.walk(tree)
@@ -282,5 +322,6 @@ def build_profile(source_text: str,
         "order_apis": order_apis,
         "g_vars": g_vars,
         "g_exempt": g_exempt,
+        "run_daily_mounts": run_daily_mounts,
         "warnings": warnings,
     }

@@ -63,7 +63,12 @@ def test_deploy_tab_offscreen_smoke():
 
 
 def test_main_window_registration_ast():
-    """main_window.py 最小侵入验证：_NAV_ITEMS 追加第 10 项 + row==9 分支（AST 级）。"""
+    """main_window.py 最小侵入验证：_NAV_ITEMS 第 10 项为 deploy + row==9 分支（AST 级）。
+
+    长度断言为演进稳健锚定（>=10）：其他会话可 append-only 追加后续 tab
+    （M5.2 件6 row==10 实例，2026-10-11 叠加时本断言由 ==10 放宽）——
+    deploy 项的位置（elts[9]）与分支存在性才是本测试锚定目标。
+    """
     src = Path("quantstudio/gui/main_window.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     nav = None
@@ -73,7 +78,7 @@ def test_main_window_registration_ast():
             nav = node.value
             break
     assert nav is not None and isinstance(nav, ast.List)
-    assert len(nav.elts) == 10
+    assert len(nav.elts) >= 10
     assert "转模拟盘/实盘" in ast.unparse(nav.elts[9])
     # _create_tab 含 row==9 → DeployTab 分支
     assert "elif row == 9:" in src and "DeployTab(self)" in src

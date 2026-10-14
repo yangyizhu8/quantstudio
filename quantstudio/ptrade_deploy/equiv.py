@@ -246,10 +246,42 @@ def _diff_stmt_lists(location: str, src_body: List[ast.stmt],
                           "product": _excerpt(_dump(prod_body[k]))})
 
 
+def _source_run_daily_targets(tree: ast.Module) -> set:
+    """PD-0006：源侧 run_daily 挂载目标识别（initialize 直接语句级
+    run_daily(ctx, <Name>, ...)）。用于等价比较的源侧对称规范化。"""
+    targets = set()
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "initialize":
+            for stmt in node.body:
+                if (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
+                        and call_name(stmt.value) == "run_daily"
+                        and len(stmt.value.args) >= 2
+                        and isinstance(stmt.value.args[1], ast.Name)):
+                    targets.add(stmt.value.args[1].id)
+    return targets
+
+
+def _strip_source_registrations(tree: ast.Module) -> None:
+    """源侧对称规范化（第 5 类前半）：剔除源 initialize 内 run_daily 注册语句——
+    产物侧注册已被 MOUNT 剥离剔除，源侧对称剔除后方为可比形态（挂载行为差异
+    归白名单，函数体逻辑仍逐句比对）。"""
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "initialize":
+            node.body[:] = [
+                s for s in node.body
+                if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Call)
+                        and call_name(s.value) == "run_daily")]
+
+
 def _compare_asts(source_text: str, normalized_product: str) -> List[dict]:
     src_tree = ast.parse(source_text)
     prod_tree = ast.parse(normalized_product)
     diffs: List[dict] = []
+
+    # PD-0006 第 5 类（run_daily 源形态）：源挂载目标 → 还原产物 handle_data
+    rd_targets = _source_run_daily_targets(src_tree)
+    if rd_targets:
+        _strip_source_registrations(src_tree)  # 源侧对称剔除注册（与产物对称）
 
     src_funcs = _func_nodes(src_tree)
     prod_funcs = _func_nodes(prod_tree)
@@ -259,11 +291,18 @@ def _compare_asts(source_text: str, normalized_product: str) -> List[dict]:
     for name, fn in src_funcs.items():
         tgt_name = (f"{MOUNT_WRAPPER_PREFIX}_exec"
                     if mount and name == "handle_data" else name)
+        # 第 5 类：run_daily 源挂载目标（如 weekly_rebalance）经 P3 包装、
+        # P4 还原后名为 handle_data——名字映射 + 签名白名单（挂载函数仅
+        # (context,) 单参，包装还原为 (context, data=None) 双参，行为等价）
+        rd_mounted = name in rd_targets and "handle_data" in prod_funcs
+        if rd_mounted:
+            tgt_name = "handle_data"
         tgt = prod_funcs.get(tgt_name)
         if tgt is None:
             diffs.append({"location": name, "kind": "missing_function"})
             continue
-        if not (mount and name == "handle_data"):  # 挂载签名行为白名单第 4 类
+        if not (mount and name == "handle_data") and not rd_mounted:
+            # 挂载签名行为白名单（第 4 类既有 + 第 5 类 run_daily 源形态）
             if _dump(fn.args) != _dump(tgt.args):
                 diffs.append({"location": name, "kind": "args_mismatch",
                               "source": _excerpt(_dump(fn.args)),
@@ -271,7 +310,10 @@ def _compare_asts(source_text: str, normalized_product: str) -> List[dict]:
         _diff_stmt_lists(name, fn.body, tgt.body, diffs)
 
     for name in prod_funcs:
-        if name not in src_funcs and not (mount and name.startswith(MOUNT_WRAPPER_PREFIX)):
+        if name not in src_funcs and not (mount and name.startswith(MOUNT_WRAPPER_PREFIX)) \
+                and not (name == "handle_data" and rd_targets):
+            # 第 5 类尾段：run_daily 源形态还原产物的 handle_data 为合法还原名
+            # （源挂载目标函数经 P3 包装、P4 恒名还原——rd_targets 非空时豁免）
             diffs.append({"location": name, "kind": "extra_function"})
 
     # 模块级非函数语句（import/常量/类定义等）

@@ -1,0 +1,9 @@
+# PD-0006 固件配置：run_daily 源形态 → daily_eod_1450 部署档
+strategy_id: fixture_rundaily
+source: ./fixture_rundaily_strategy.py
+execution:
+  profile: daily_eod_1450
+persistence:
+  enabled: true
+  state_file: "/tmp/fixture_rundaily_state.pkl"
+  save_points: ["after_trading_end"]

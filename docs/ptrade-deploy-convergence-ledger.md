@@ -42,9 +42,16 @@
 | PD-2026-0003 | closed（轮 1） | contract_table | aee3e77 |
 | PD-2026-0004 | closed（轮 1） | gate（gates.py） | aee3e77 |
 | PD-2026-0005 | closed（轮 2） | gate（gates.py） | aee3e77 |
-| PD-2026-0006 | **open**（轮 2 登记） | transformer（待立项） | 待六步方案件 |
+| PD-2026-0006 | closed（轮 3，⑤过 2026-10-15） | profiler+config+transformer+equiv | 本批 commit（sha 随批回填） |
 
 > 回填记录：五条目 commit sha 已于 M8 本地轮回填（aee3e77，2026-10-11；trading 仓条目 fix_target 字段与本表同步落盘）；推送后 sha 不变，双推完成即本表口径生效。
+
+## 4.1 轮 3（PD-0006 run_daily 源形态，2026-10-11）
+
+- **N₃=1**（新发现）：上游 convert-pipeline 在途把 hv_canslim/hv_vol_regime 源重写为混合形态（handle_data stub + run_daily 真逻辑挂载并存）——挂载对象歧义，P2 显式拒绝（fail-closed）；混合形态支持待上游形态稳定后单独立项（vault 观察项）。
+- **R₃=0**（无复发）：轮 1-2 五条目修复无复发；既有 25 用例全绿（1 处断言演进放宽归因他线合法叠加）。
+- **能力增量**：hv_tech_etf_mvo 复现件转正（7 阶段全 PASS）；deploy 套件 35/35；证据 `docs/evidence/ptrade-deploy-pd0006-evidence.md`。
+- 收敛判据对照：R 连续 3 轮 =0 ✓（轮 1/2/3）；N 序列 4→2→1 单调递减 ✓——**收敛闭环判据达成**（工程侧；真实使用周期继续验证）。
 
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 
