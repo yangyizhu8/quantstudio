@@ -827,6 +827,21 @@ def _check_daily_coverage_strict(conn, asset_type, code, df):
     try:
         target_count = int(conn.execute(
             f"SELECT COUNT(*) FROM {daily_table} WHERE code=?", [code]).fetchone()[0])
+        # 2026-10-15 第二段（六步①统一方案·证据唯一化后实施）：**like-for-like**——
+        # 库内行只在 **fresh 覆盖区间 [w_min, w_max] 内**统计；区间外的库内行**另行显式标注**
+        # （不静默忽略，保持「同窗口严格一致」语义不被放松）。
+        # 依据（2026-10-14 一夜差集证据·996 样本）：所有 ~500 个 blocked 单元缺的**恰是同两天**
+        #   2026-10-09（周五）497 次 + 2026-10-12（周一）499 次，其他日期 0 次
+        #   ⇒ fresh 窗口上界停在 10-08，而库内已写入其后两个交易日
+        #   ⇒ 原口径 target_count=库内全历史 把「窗口外」误判为「缺」。
+        _wmin = int(df["time"].min()) if len(df) else None
+        _wmax = int(df["time"].max()) if len(df) else None
+        if _wmin is None:
+            target_in_window = 0
+        else:
+            target_in_window = int(conn.execute(
+                f"SELECT COUNT(*) FROM {daily_table} WHERE code=? AND time>=? AND time<=?",
+                [code, _wmin, _wmax]).fetchone()[0])
         staged_count = int(conn.execute(f"SELECT COUNT(*) FROM {view}").fetchone()[0])
         matched = int(conn.execute(
             f"SELECT COUNT(*) FROM {daily_table} t JOIN {view} s "
@@ -839,14 +854,19 @@ def _check_daily_coverage_strict(conn, asset_type, code, df):
     if df.duplicated(subset=["code", "time"]).any():
         raise ReanchorBlocked("daily_coverage_duplicate",
             f"code={code} fresh 日线 (code,time) 存在重复行")
-    missing_target = target_count - matched
+    missing_target = target_in_window - matched      # 第二段：同窗口比较（原为 target_count）
     extra = staged_count - matched
+    out_of_window = target_count - target_in_window  # 区间外库内行：显式标注，不参与判定
+    if out_of_window > 0:
+        logger.info(f"[qfq_reanchor] {code} 日线覆盖：库内 {out_of_window} 行在 fresh 窗口"
+                    f"[{_wmin},{_wmax}] 之外（显式标注·不参与判定）")
     if missing_target != 0 or extra != 0:
         # 2026-10-13 六步①第一段（总调度照准）：消息带差集样本 ⇒ 指名缺/多哪几行。
         # 只增消息内容，判定与阈值一律不变（判型：纯增益·新增检测型）。
         # （样本已在 view 存活期内取好，见上方 try 块注释。）
+        _oow = f"；区间外库内 {out_of_window} 行（已显式标注·不参与判定）" if out_of_window else ""
         raise ReanchorBlocked("daily_coverage_mismatch",
-            f"rebase 日线覆盖不全：缺 {missing_target}/多 {extra} 行"
+            f"rebase 日线覆盖不全（同窗口）：缺 {missing_target}/多 {extra} 行{_oow}"
             f"（要求全历史严格一致，禁止缺行/增行）{_sample}")
 
 
