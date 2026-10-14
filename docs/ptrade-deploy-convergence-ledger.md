@@ -42,9 +42,9 @@
 | PD-2026-0003 | closed（轮 1） | contract_table | aee3e77 |
 | PD-2026-0004 | closed（轮 1） | gate（gates.py） | aee3e77 |
 | PD-2026-0005 | closed（轮 2） | gate（gates.py） | aee3e77 |
-| PD-2026-0006 | closed（轮 3，⑤过 2026-10-15） | profiler+config+transformer+equiv | 本批 commit（sha 随批回填） |
+| PD-2026-0006 | closed（轮 3，⑤过 2026-10-15） | profiler+config+transformer+equiv | 38087eb（主仓本地 commit 2026-10-15；推送候令随批统出） |
 
-> 回填记录：五条目 commit sha 已于 M8 本地轮回填（aee3e77，2026-10-11；trading 仓条目 fix_target 字段与本表同步落盘）；推送后 sha 不变，双推完成即本表口径生效。
+> 回填记录：五条目 commit sha 已于 M8 本地轮回填（aee3e77，2026-10-11；trading 仓条目 fix_target 字段与本表同步落盘）；PD-0006 条目 sha 已于轮 3 回填（38087eb，2026-10-15）。推送后 sha 不变，双推完成即本表口径生效。
 
 ## 4.1 轮 3（PD-0006 run_daily 源形态，2026-10-11）
 
