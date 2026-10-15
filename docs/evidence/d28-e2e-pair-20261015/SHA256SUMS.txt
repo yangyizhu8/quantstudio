@@ -1,0 +1,2 @@
+﻿weekly_smallcap_A_prefix.py  sha256=9d00de2fc2d58d4ac84a675297f314fe8af67186b1aa55de9cffda691d1d2baa  bytes=101999  bom=False  firstLine=#coding:gbk
+weekly_smallcap_B_fold.py  sha256=9d54605aeb83d556fc09fd492fde0335b2c9406b161cd1074be4ddc4927765ef  bytes=106423  bom=False  firstLine=#coding:gbk

@@ -62,7 +62,9 @@ def _ns(mod):
     for n in _MODULE_NAMES:
         if hasattr(mod, n):
             ns[n] = getattr(mod, n)
-    for t in _TEMPLATES:
+    # D-32（2026-10-15）：_assemble 序首项为 _QS_QMT_MODULE_HEADER（wrapper :2735），
+    # 其定义的 _qs_instr_detail 等被 STOCK_INFO/DATA_VIEW 模板调用——命名空间缺它即 NameError。
+    for t in ("_QS_QMT_MODULE_HEADER",) + _TEMPLATES:
         if hasattr(mod, t):
             exec(getattr(mod, t), ns)
     return ns

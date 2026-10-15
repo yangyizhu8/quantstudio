@@ -243,7 +243,47 @@
 - **端测第一轮裁定（2026-10-13 用户批复三项）**：①判据 1 → **(a) 键可用，D-28 正式立项**（数据修正型；立项要件 4 项已登记 ISSUES：79 期更正 / drop_duplicates 组合键 / 三项证据含 SG-MS-PEG ROE 前后对照 / 226s→~10s；m_anntime ffill 之谜解开——单独不可作键与组合键可用同时成立）；②判据 3/5 → **(a) 盘后 A/B 黄金对照**（A=当前工作树批量版 vs B=stash `00b0c5a3` D-27a 态逐只版，背靠背同窗，L1/L2/L3/L5/L6/R_selected/buy_submitted/positions/total_value 逐位一致 + close 段 A≪B；任一不同→回退批量）；③D-29 → 暂不裁定候详情（本轮已补完整详情呈报）。证据链之①已按批复升级（L1/L2 纯本地也变＝输入数据源变了，最强证据）。纪律固化：**端测须盘后**（已回灌主库 + 项目记忆）。
 - **下一步（按序）**：① 盘后（≥15:30）执行 A/B：detached worktree 从 `00b0c5a3` 提取 B 版 source_import_qmt.py 重转旧产物（不触主工作树），先 A 后 B 背靠背，读数并列进证据文档 → ② 定谳判据 3/5（逐位一致→R1-B/R1-C 呈报；不同→回退批量）→ ③ D-28 数据修正型方案起草（含 SG-MS-PEG ROE 均值前后对照设计）→ ④ D-29 候裁 → ⑤ R1-B 提交 + R1-C 推送（S1 archify 目验仍开放）。
 
-### 快照 2026-10-13 盘后（D-27b A/B 黄金对照定谳：等价 PASS / 性能预期 FAIL——候裁定批量去留）
+### 快照 2026-10-15 凌晨（D-30 R1-B 提交 `0b88728` ＋ D-28 ③实施④验收全过 · 双候⑤确认）
+
+- **D-30 ⑤批准落地——R1-B 提交完成**：commit **`0b88728`**（2026-10-15，15 文件 +16479/−17；父 `43f985c`）。精确清单＝wrapper + 导出脚本 + 15 用例 + 矩阵 yaml/md + 影响面图目录 10 文件；**AGENTS.md hunk 与他线 40 项 M 均未纳入**。写前快照 `d6a6140f`（全树超集，stash store 持久化）。矩阵 `--check` 复跑 OK。**R1-C 并入统出批，勿单独推**（本会话无 dev 成员可寻址 → 提交事实经台账＋本轮申报转 dev）。E2E 盘后端测并入用户端测窗。
+- **D-28 A 批准——③实施轮**：①图：archify `dataflow` 型，预检 READY（本机无 Chrome → 写死 Edge x86，`ARCHIFY_CHROME` 已置）；**7 轮修复后版式闸不可收敛**（showcase 41→31、standard 18→16→13，全为走廊穿越/净空类；证据类诊断已清零）→ 按「工具故障不得变成流程故障」**降级 mermaid 载体**并留 7 轮记录：`docs/evidence/archify-qmt-hist-fold-20261015-0115/IMPACT-DIAGRAM.md`（HTML 未生成，四门状态如实标注）；②写前快照 `17040123`＋`agent_workspace/_d28_backup/`；③实施 **E7 ZCode**（wrapper `_qs_hist_fold` :1383＋两路径接入 :1612/:1642＋键恒附 :1696-1700；测试文件 354→382 行）；④**就地修复三项（披露）**：F1 `≪`(U+226A)→`<<`（破坏渲染 GBK 契约，连带 17 例失败）/ F2 测试机制改 exec 命名空间 / F3 用例 5 改调真实 `_latest_by_code` 并按码折叠。
+- **④O5 五步全过**：diff⊆清单 ✓ / py_compile ✓ / ruff 基线对照**零新增** ✓ / `check_fund_matrix --check` OK（`qmt_wrapper_hash: d89e3aa103e6→20f58868117f` 同批追认）＋**CONTRACT GATE : PASS（含 6 策略 api_portability 全过）** ✓ / 七套件 **111 passed / 3 failed**（3 例系 **D-32 既有遗留**、已归因登记候裁）＋新套件 **12/12 passed** ✓。证据：`docs/evidence/qmt-d28-hist-fold-acceptance.md` 等 5 份。
+- **编码委派台账**：`zcode_code` 5 次——1 次产出 wrapper；测试文件 2 次回执中断（产物实际落盘 02:35:08）＋2 次 `[zcode-fallback:ratelimit]`（GLM 5 小时窗口、重置 02:42:30、两次重试均在其前 3 分钟）。最终测试文件仍为 ZCode 产物，DSH 未重写。
+- **候⑤双项**：①D-30 R1-B 提交确认（→ dev 统推/R1-C 并入统出批）；②D-28 ③④验收确认（→ 提交批次精确清单：wrapper＋`tests/test_qmt_hist_fold.py`＋矩阵 yaml/md＋图交付＋证据文档＋簿记）。
+- **新增候裁**：**D-32**（`test_qmt_progress_audit` 3 例 NameError：exec 命名空间缺 D-30 的 MODULE_HEADER；修点不在 D-28 清单 → 零越权登记，建议并入 D-28 提交批次或独立 mini 轮）。
+- **未闭合**：D-32、D-29 候裁；D-28/D-30 端测判据候用户端测窗；统出批（R1-C）；trading 同步门 BLOCKED（候四线清理回报齐后本线补跑，D-27b+本批欠账同窗）；S1 archify 目验。
+- **端测轮启动（2026-10-15 09:4x）**：D-28 A/B 背靠背材料已产出并过门禁——**A（折叠前）**`9d00de2fc2d58d4a` 101,999B、**B（折叠后）**`9d54605aeb83d556` 106,423B，均 `enc=gbk`/无 BOM/首行 `#coding:gbk`、portability+selfcheck PASS（A 折叠标记 0、B 5；隔离性＝两件**只差 D-28**，D-30 同在两件且默认关）；产物 diff `ADD=113/REM=31/5 hunks` **全落 wrapper 注入段（行 1246–1564）**。落盘：`docs/evidence/d28-e2e-pair-20261015/`（两件＋`SHA256SUMS.txt`）＋操作手册 `docs/evidence/d28-e2e-checklist-20261015.md`（含判据 1/2/3 判定表、回抄清单、diff 处置次序、回退条款）。**纪律**：判据取证须**盘后同窗（≥15:30）**背靠背；盘中跑仅算冒烟轮、不入判据。临时 detached worktree 已清理。
+- **端测 E2E 判据结果（2026-10-15 用户裁定「判据 1/2/3 验收通过」）**：**判据 1 PASS**——`HISTFOLD t=growth_ability/t=eps before=8742 after=79 intravar=0`（`before` 与 HISTDBG3 `rows=8742` 逐位吻合；**`intravar=0` 证明「组内值列恒等」前提在真实数据成立**）；**判据 2 PASS（超设计预期）**——处理段 `fin_to_rows_hist` 313.0s+284.8s → 6.1s+6.1s（**597.8s→12.2s，≈49×**），未改动段（拉取 / close）B 轮整体更快属窗口负载波动，**诚实归因不归功折叠**；**判据 3 PASS**——**14/14 逐位零漂移**（L0…total_value 全等，`CLOSE_EQC n=20 diff=0`），QSFUNDHIST kept 9.74M/9.72M → 148,555/148,196＝折叠后行数（预披露口径变更）。**判据 4**：D-29 未裁不判，由 `test_qmt_hist_fold.py::test_12` 真实函数合成对照代偿。旁证：**L1_listed 4409→4408**（合约信息表再次变动，**D-30 快照层立项依据第三次得证**）；eps `uv=71 vs uk=79` 与立项要件一致。证据：`docs/evidence/d28-e2e-run-20261015.md`。
+- **三裁（2026-10-15 用户裁定）**：①**盘后复跑照准**——本轮为「盘中同窗背靠背」强证据轮，盘后 ≥15:30 静止窗复跑**同一对件**（sha16 不变：wrapper 提交只改版本控制不改内容）作正式归档；②**D-28 提交批次照准（含 D-32 两行）**——commit 后**随下次批推**（与 dev ahead=1 同队，**不单独推**）；③D-32 在案。
+- **D-32 修复落地**：`tests/test_qmt_progress_audit.py::_ns()` 的 exec 序列补 **`_QS_QMT_MODULE_HEADER`**（`_assemble` 序首项 wrapper :2735；不动 `_TEMPLATES` 以免波及 :250 扫描断言）→ 该套件 3F → **15 passed**，七套件 **114 passed / 0 failed**。证据 `docs/evidence/d28-d32-progress-audit-fix.txt`＋`d28-seven-suites-final.txt`。
+
+
+
+- **D-28 方案①完成**：`docs/qmt-hist-fold-design.md` **v0.2.1**——按裁定 (a) 立项要件 4 项成文（79 期全史/`drop_duplicates(subset=['m_anntime','m_timetag'], keep='last')`/数据修正型三项证据含 SG-MS-PEG ROE 前后对照/处理段 226s→~10s+拉取段不削披露）。核心设计四件：①折叠 helper `_qs_hist_fold` 取代 D-27a 自保护块（`:1536-1549`，ffill 已证空操作）+单码路径（`:1570-1578`）对称接入；②**键字段恒附**（P1-1：返回列=请求列结构洞——SG-MS-PEG:358/F-Score:329 缺 publ_date 折叠不生效 → `_qs_get_fundamentals` hist 表 native_fields 恒附两键，辅助键经 `:1660-1677` 既有投影自动剥离，返回契约零变化）；③**组内恒等前提明示+intravar 哨兵**（P1-2，三层设防：语义论证/每表一次零热路径哨兵/单测 8 预期语义）；④HISTFOLD 审计行与 HISTDBG3 并存互证+QSFUNDHIST kept 语义变更披露。影响面六变化项+不变面穷举（含单码路径二阶变化 P2-9）。
+- **②审计两轮（均 E7 外部委派，ISSUES D-28 表已登记）**：第一轮 sess_c910dab0 **PASS-with-findings**（P1×2+P2×9，tokens 818555）→ v0.2 逐条采纳；第二轮增量复审 sess_075aae9a **P1×2 均闭环·判「进③实施」**（tokens 1508362；无行号漂移/未偏离 §9.2/要件 4 项完整承载；D-P2-1 F-Score:77 空引更正 :329+P3×2 已随 v0.2.1 更正）。知识反哺留痕在位（[无命中] 折叠类 + [命中] 端测纪律条目）。
+- **⑤阶段进展（2026-10-13 用户裁定）**：①②**验收通过**——「两轮审计闭环（P1-1 结构洞经键字段恒附+投影剥离零契约变化无条件闭合 / P1-2 暗前提三层设防〔语义论证+运行时哨兵零热路径+单测〕）+知识反哺留痕+判型数据修正型+回退齐备——合格，**v0.2.1 在卷**」。**A/B 裁定随 2026-10-14（周三）08:00 呈批轮**（附总调度审计意见：A=D-28 v0.2.1 进③实施，建议批准——②已判进③、实施轮流程与 D-30 同款合规；B=排期口径认可，建议认可——D-29 决定折叠对 profit_ability 的意义、不决定对 eps/growth_ability 的可实施性，D-29 候独立裁定）。**A 终裁通过前不启动③**。
+- **A 通过后即启动③实施**（流程与 D-30 同款）：archify 预检（Chrome→Edge 降级链）→ 影响面图随 Plan 第⑧项子项提审 → 写前快照四步配方 → O4 七件套委派 E7 → O5 五步（邻接六套件+12 新用例/六策略重转 ALL PASS/矩阵哈希同 commit 追认）；B 认可后 D-29 维持候独立裁定。
+- **验收设计要点（供⑤审阅）**：单测 12 例（含 importlib 加载 SG-MS-PEG 真实函数前后对照——要件③合成级代偿）；端测四判据（HISTFOLD 读数/处理段性能口径/盘后背靠背 A/B 零漂移+窗污染处置次序/D-29 条件项）。
+- **未闭合更新**：D-28 ①②完成候⑤；D-29 候裁（与 D-28 §七 排期口径同呈）；E2E 盘后判据（D-30/D-28 同队随用户排期）；trading 同步门 BLOCKED 候协调；S1 archify 目验；统出批（D-30 提交+R1-C，候用户调用）。
+
+### 快照 2026-10-13 晚（D-30 实施+O5 验收全过：快照层落地 3 文件+矩阵哈希同 commit 追认 · 候⑤用户确认提交）
+
+- **实施轮 Plan 照准**（用户+总调度审核：v0.3 两轮审计闭环+⑤已批；影响面图降档 standard 披露合规——showcase 版式闸 5 轮拓扑收敛不纳四消费点扇出，四门+visual-check+AI 目验全过；E2E 盘后端测并入用户排期与 D-23/D-24 粘贴同队；D-28 排队维持）。影响面图：`docs/evidence/archify-qmt-instr-snapshot-20261013-162500/`（基线 e06ed52）。
+- **③实施（E7）**：写前快照 `c2ef3f0f`（stash store 持久化，含全部在途态）；ZCode sess_5f0b2f67（tokens 4252906）三文件：`source_import_qmt.py` +141/−15（全落 `_QS_QMT_MODULE_HEADER`：`_QS_QMT_INSTR_SNAP_PATH`+`_qs_snapshot_load()` 四态缓存+`_qs_instr_detail()`/`_qs_instr_list()`+四消费点原位拦截+首印/first_miss 两审计行；ZCode 侧 Bash 权限阻断 pytest 如实呈报未虚称）；`docs/probe/qmt_instrument_snapshot_export-20261013.py`（QMT 粘贴运行型，100 行）；`tests/test_qmt_instrument_snapshot.py`（15 用例，设计 §五 8 组全覆盖）。
+- **④O5 五步全过（DSH 侧）**：① diff⊆允许写入清单（3 文件+矩阵 yaml/md 追认 1 行各）② pytest 三套件 **70 passed**（15 新+49/50 存量零衰减）③ py_compile ✓+`run_contract_gate.py` 契约套件绿 ④ 契约零变化（四消费点原位、live 调用/异常语义逐点保留）⑤ 六策略 api_portability 冒烟 **全部通过**。矩阵哈希同 commit 追认 `92c05ce43085→d89e3aa103e6`，追认后 --check OK+`test_fund_matrix_qmt_gate` 5/5。
+- **缺陷处置台账**：DSH 侧修 1（导出脚本 GBK 重编码，披露）；委派轮规格缺口裁定 5 项（ISSUES D-30 行）；CR 备注 1（`not d` 分支移位 edge 不可达）。
+- **当前 HEAD `9fd8cc1`**（他线推进，wrapper 文件两版间逐位一致已核）；**候⑤**：用户确认本轮验收 → R1-B 式精确清单提交（6 文件：3 实施+矩阵 yaml/md+簿记 2——ISSUES/PROJECT_STATE 已含本轮）→ 双仓推送 → trading 同步门（与 D-27b 欠账同批协调）。
+- **未闭合**：E2E 盘后判据 A/B/C（用户排期）；D-28 方案①起草排队；D-29 候裁；trading 同步门（BLOCKED 候协调）；S1 archify 目验。
+
+### 快照 2026-10-13 盘后（D-27b 全链收口：R1-B 提交 e06ed52 + R1-C 双仓推送三方一致；trading 同步门受阻候协调）
+
+- **裁定落地**：用户裁定批量版**保留**（EQC 护栏价值）+ 指令「走 R1-B→R1-C」。
+- **R1-B 提交 `e06ed52`**（16:09，24 文件 +19585/−11）：wrapper（D-27a+D-27b，+206/−5 归属自查无他线叠加）+ check_fund_matrix.py（M5.2 件1 `_QMT_HASH_SCOPE`）+ tests/test_fund_matrix_qmt_gate.py + 矩阵 yaml/md（qmt_wrapper_hash 92c05ce43085 同批追认，reverify 闸 PASS）+ 证据文档 §八 + archify 交付目录 + handoff/D-30 方案/D-31 探针 + ISSUES/PROJECT_STATE 簿记。写前快照 `dd254d0b`（stash store 已持久化）；精确 add 12 路径，未卷入任何他线 M 文件。
+- **R1-C 双仓推送完成**（16:11）：prepush-gate 裁定捆绑放行（QS_PUSH_BUNDLE_RULING=用户令「走 R1-B→R1-C」，14 笔他线提交逐一 AllowAlso 列明，留痕 `docs/handoff/push-bundle-rulings.log` 第 3 行）；两远程 `ccbd97c..e06ed52`，**双远程 HEAD+本地三方逐位一致 `e06ed52e2de1…`**，ahead/behind=0/0。GitHub「Bypassed rule violations」系管理员直推信息提示非错误。
+- **⚠ QuantStudio-trading 同步门 BLOCKED（候协调）**：推送触及共享层 → 同步义务成立；但副本工作树脏 94 项（含 `M AGENTS.md`/`docs/sync-ledger.md`/`review-kb/` 等他线在途改动），前置条件「工作树干净」不满足——按零越权不清理，**候用户协调他线后补跑**（fetch origin → merge origin/main → check-drift 九项 + ci-smoke 共享层段 → 台账登记）。副本 HEAD `a8f5eb6` 落后 origin/main（`e06ed52`）。
+- **D-30 实施解锁**（R1-C 完成即解缠绕前置）：下一轮 = D-30 实施 Plan-Mode（v0.3 已⑤批准）+ archify 影响面图（四消费点分支）+ O4 七件套 → zcode_code（E7）+ O5 五步验收。
+
+### 快照 2026-10-13 盘后·前一条（A/B 黄金对照定谳：等价 PASS / 性能预期 FAIL——批量保留裁定已落）
 
 - **A/B 对照（15:11 A → 15:28 B 背靠背，方法＝用户批复②）**：A=批量版产物 sha16 d298641（canonical 重转）vs B=stash `00b0c5a3` D-27a 态逐只版（`git show` 单路径字节级提取→`--only weekly_smallcap` canonical 重转 sha16 69966ef2，portability/selfcheck PASS）；转换后 wrapper+产物 sha 校验逐位还原，工作树零残留。**判据 3 ✅ PASS：14/14 读数逐位一致**（L0…total_value + QSFUNDHIST 两表 kept/drop/cc 全等），且 A 与上午 10:12 r1 亦逐位一致（同窗无推送）——纯性能型行为等价闭环。**判据 5 ❌ FAIL：close 段 A=182.4s vs B=182.9s 持平（批量零净收益）**——瓶颈在每只全史数据服务端扫描/传输量，非调用开销（EQC 热缓存 1.1ms/只为证）；未改动段噪声（valuation 33.6↔8.9s 等）反证总墙钟差 67s 非批量功劳。证据：`docs/evidence/qmt-d27-close-batch-20261013.md` §八。
 - **待裁定（阻塞 R1-B/R1-C）**：批量版**保留**（推荐：等价已证+EQC 每轮运行内生护栏+零成本保留）vs **回退**（零收益换简化）。回退条款「任一不同→回退」未触发（无不同）。裁定后 → R1-B 精确清单提交 → R1-C 双仓推送（携他线 ahead 提交，需新确认）。

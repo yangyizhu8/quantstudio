@@ -1,0 +1,196 @@
+﻿FFFFFFFFFFFFFFFFF................................................F.F.... [ 70%]
+...................FFF........                                           [100%]
+================================== FAILURES ===================================
+____________ test_no_file_stock_info_live_bitwise_and_zero_output _____________
+tests\test_qmt_instrument_snapshot.py:120: in test_no_file_stock_info_live_bitwise_and_zero_output
+    ns = _render_ns()
+         ^^^^^^^^^^^^
+tests\test_qmt_instrument_snapshot.py:62: in _render_ns
+    code.encode("gbk")
+E   UnicodeEncodeError: 'gbk' codec can't encode character '\u226a' in position 47614: illegal multibyte sequence
+__________________ test_no_file_status_flags_live_semantics ___________________
+tests\test_qmt_instrument_snapshot.py:138: in test_no_file_status_flags_live_semantics
+    ns = _render_ns()
+         ^^^^^^^^^^^^
+tests\test_qmt_instrument_snapshot.py:62: in _render_ns
+    code.encode("gbk")
+E   UnicodeEncodeError: 'gbk' codec can't encode character '\u226a' in position 47614: illegal multibyte sequence
+__________________ test_no_file_ashares_live_and_zero_output __________________
+tests\test_qmt_instrument_snapshot.py:153: in test_no_file_ashares_live_and_zero_output
+    ns = _render_ns()
+         ^^^^^^^^^^^^
+tests\test_qmt_instrument_snapshot.py:62: in _render_ns
+    code.encode("gbk")
+E   UnicodeEncodeError: 'gbk' codec can't encode character '\u226a' in position 47614: illegal multibyte sequence
+_____________ test_no_file_databar_three_fields_current_behavior ______________
+tests\test_qmt_instrument_snapshot.py:175: in test_no_file_databar_three_fields_current_behavior
+    ns = _render_ns()
+         ^^^^^^^^^^^^
+tests\test_qmt_instrument_snapshot.py:62: in _render_ns
+    code.encode("gbk")
+E   UnicodeEncodeError: 'gbk' codec can't encode character '\u226a' in position 47614: illegal multibyte sequence
+______________ test_absent_cached_mid_run_file_creation_ignored _______________
+tests\test_qmt_instrument_snapshot.py:191: in test_absent_cached_mid_run_file_creation_ignored
+    ns = _render_ns()
+         ^^^^^^^^^^^^
+tests\test_qmt_instrument_snapshot.py:62: in _render_ns
+    code.encode("gbk")
+E   UnicodeEncodeError: 'gbk' codec can't encode character '\u226a' in position 47614: illegal multibyte sequence
+________________ test_enabled_all_four_consumers_hit_zero_live ________________
+tests\test_qmt_instrument_snapshot.py:210: in test_enabled_all_four_consumers_hit_zero_live
+    ns = _render_ns()
+         ^^^^^^^^^^^^
+tests\test_qmt_instrument_snapshot.py:62: in _render_ns
+    code.encode("gbk")
+E   UnicodeEncodeError: 'gbk' codec can't encode character '\u226a' in position 47614: illegal multibyte sequence
+____________ test_missing_code_stock_info_fallback_first_miss_once ____________
+tests\test_qmt_instrument_snapshot.py:242: in test_missing_code_stock_info_fallback_first_miss_once
+    ns = _render_ns()
+         ^^^^^^^^^^^^
+tests\test_qmt_instrument_snapshot.py:62: in _render_ns
+    code.encode("gbk")
+E   UnicodeEncodeError: 'gbk' codec can't encode character '\u226a' in position 47614: illegal multibyte sequence
+______________ test_missing_code_status_flags_two_fallback_forms ______________
+tests\test_qmt_instrument_snapshot.py:262: in test_missing_code_status_flags_two_fallback_forms
+    ns = _render_ns()
+         ^^^^^^^^^^^^
+tests\test_qmt_instrument_snapshot.py:62: in _render_ns
+    code.encode("gbk")
+E   UnicodeEncodeError: 'gbk' codec can't encode character '\u226a' in position 47614: illegal multibyte sequence
+_____________________ test_missing_code_databar_fallback ______________________
+tests\test_qmt_instrument_snapshot.py:283: in test_missing_code_databar_fallback
+    ns = _render_ns()
+         ^^^^^^^^^^^^
+tests\test_qmt_instrument_snapshot.py:62: in _render_ns
+    code.encode("gbk")
+E   UnicodeEncodeError: 'gbk' codec can't encode character '\u226a' in position 47614: illegal multibyte sequence
+______________ test_broken_json_all_fallback_and_disclosure_once ______________
+tests\test_qmt_instrument_snapshot.py:302: in test_broken_json_all_fallback_and_disclosure_once
+    ns = _render_ns()
+         ^^^^^^^^^^^^
+tests\test_qmt_instrument_snapshot.py:62: in _render_ns
+    code.encode("gbk")
+E   UnicodeEncodeError: 'gbk' codec can't encode character '\u226a' in position 47614: illegal multibyte sequence
+_____________________ test_broken_schema_records_not_dict _____________________
+tests\test_qmt_instrument_snapshot.py:320: in test_broken_schema_records_not_dict
+    ns = _render_ns()
+         ^^^^^^^^^^^^
+tests\test_qmt_instrument_snapshot.py:62: in _render_ns
+    code.encode("gbk")
+E   UnicodeEncodeError: 'gbk' codec can't encode character '\u226a' in position 47614: illegal multibyte sequence
+___________________ test_broken_read_failure_directory_path ___________________
+tests\test_qmt_instrument_snapshot.py:335: in test_broken_read_failure_directory_path
+    ns = _render_ns()
+         ^^^^^^^^^^^^
+tests\test_qmt_instrument_snapshot.py:62: in _render_ns
+    code.encode("gbk")
+E   UnicodeEncodeError: 'gbk' codec can't encode character '\u226a' in position 47614: illegal multibyte sequence
+__________________ test_first_print_fields_complete_and_once __________________
+tests\test_qmt_instrument_snapshot.py:349: in test_first_print_fields_complete_and_once
+    ns = _render_ns()
+         ^^^^^^^^^^^^
+tests\test_qmt_instrument_snapshot.py:62: in _render_ns
+    code.encode("gbk")
+E   UnicodeEncodeError: 'gbk' codec can't encode character '\u226a' in position 47614: illegal multibyte sequence
+________________ test_disabled_enabled_false_off_mode_all_live ________________
+tests\test_qmt_instrument_snapshot.py:370: in test_disabled_enabled_false_off_mode_all_live
+    ns = _render_ns()
+         ^^^^^^^^^^^^
+tests\test_qmt_instrument_snapshot.py:62: in _render_ns
+    code.encode("gbk")
+E   UnicodeEncodeError: 'gbk' codec can't encode character '\u226a' in position 47614: illegal multibyte sequence
+_____________ test_round_trip_raw_dict_and_expiredate_three_forms _____________
+tests\test_qmt_instrument_snapshot.py:394: in test_round_trip_raw_dict_and_expiredate_three_forms
+    ns = _render_ns()
+         ^^^^^^^^^^^^
+tests\test_qmt_instrument_snapshot.py:62: in _render_ns
+    code.encode("gbk")
+E   UnicodeEncodeError: 'gbk' codec can't encode character '\u226a' in position 47614: illegal multibyte sequence
+_______________ test_ashares_snapshot_keeps_semantic_diff_line ________________
+tests\test_qmt_instrument_snapshot.py:432: in test_ashares_snapshot_keeps_semantic_diff_line
+    ns = _render_ns()
+         ^^^^^^^^^^^^
+tests\test_qmt_instrument_snapshot.py:62: in _render_ns
+    code.encode("gbk")
+E   UnicodeEncodeError: 'gbk' codec can't encode character '\u226a' in position 47614: illegal multibyte sequence
+________________ test_positive_minimal_ptrade_source_converts _________________
+tests\test_source_import_qmt.py:104: in test_positive_minimal_ptrade_source_converts
+    data = code.encode("gbk")
+           ^^^^^^^^^^^^^^^^^^
+E   UnicodeEncodeError: 'gbk' codec can't encode character '\u226a' in position 47614: illegal multibyte sequence
+________________________ test_green_path_check_passes _________________________
+tests\test_fund_matrix_qmt_gate.py:36: in test_green_path_check_passes
+    assert r.returncode == 0, f"--check 应过：\n{r.stdout}\n{r.stderr}"
+E   AssertionError: --check 应过：
+E     FAIL: QMT wrapper 渲染常量已变更（d89e3aa103e6 → 378a34113d82）——source_import_qmt.py 契约面需复证：
+E        受影响面：D-12~D-22 修复链（STOCK_INFO/ASHARES/HISTORY/FUNDAMENTALS/FQ_MAP 等 20 常量）
+E        复证清单：pytest tests/test_source_import_qmt.py（49 用例）+ 六策略 canonical 重转门
+E        + QMT 端代表性复测（docs/evidence/qmt-m5-batch2-probe-20261010.md §8 判据族）
+E     提示：复证全过后运行 `--check --reverify` 更新 qmt 哈希（矩阵哈希追认同批纪律，AGENTS.md 铁律）。
+E     
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...m5-batch2-probe-20261010.md §8 判据族）\n提示：复证全过后运行 `--check --reverify` 更新 qmt 哈希（矩阵哈希追认同批纪律，AGENTS.md 铁律）。\n', stderr='').returncode
+______________ test_negative_tamper_qmt_const_fails_and_restores ______________
+tests\test_fund_matrix_qmt_gate.py:61: in test_negative_tamper_qmt_const_fails_and_restores
+    assert r2.returncode == 0, f"还原后应恢复绿：\n{r2.stdout}"
+E   AssertionError: 还原后应恢复绿：
+E     FAIL: QMT wrapper 渲染常量已变更（d89e3aa103e6 → 378a34113d82）——source_import_qmt.py 契约面需复证：
+E        受影响面：D-12~D-22 修复链（STOCK_INFO/ASHARES/HISTORY/FUNDAMENTALS/FQ_MAP 等 20 常量）
+E        复证清单：pytest tests/test_source_import_qmt.py（49 用例）+ 六策略 canonical 重转门
+E        + QMT 端代表性复测（docs/evidence/qmt-m5-batch2-probe-20261010.md §8 判据族）
+E     提示：复证全过后运行 `--check --reverify` 更新 qmt 哈希（矩阵哈希追认同批纪律，AGENTS.md 铁律）。
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...m5-batch2-probe-20261010.md §8 判据族）\n提示：复证全过后运行 `--check --reverify` 更新 qmt 哈希（矩阵哈希追认同批纪律，AGENTS.md 铁律）。\n', stderr='').returncode
+______________________ test_b_stock_info_golden[codes0] _______________________
+tests\test_qmt_progress_audit.py:167: in test_b_stock_info_golden
+    new = cur["get_stock_info"](codes, field=["listed_date", "start_date"], C=_FakeCtx(tbl))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+<string>:152: in get_stock_info
+    ???
+<string>:50: in _qs_get_stock_info
+    ???
+E   NameError: name '_qs_instr_detail' is not defined
+______________________ test_b_stock_info_golden[codes1] _______________________
+tests\test_qmt_progress_audit.py:167: in test_b_stock_info_golden
+    new = cur["get_stock_info"](codes, field=["listed_date", "start_date"], C=_FakeCtx(tbl))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+<string>:152: in get_stock_info
+    ???
+<string>:50: in _qs_get_stock_info
+    ???
+E   NameError: name '_qs_instr_detail' is not defined
+_________________________ test_b_filter_status_golden _________________________
+tests\test_qmt_progress_audit.py:177: in test_b_filter_status_golden
+    new = cur["_qs_filter_stock_by_status"](codes, ["ST", "HALT", "DELISTING"], None, _FakeCtx(tbl))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+<string>:202: in _qs_filter_stock_by_status
+    ???
+<string>:88: in _qs_status_flags
+    ???
+E   NameError: name '_qs_instr_detail' is not defined
+=========================== short test summary info ===========================
+FAILED tests/test_qmt_instrument_snapshot.py::test_no_file_stock_info_live_bitwise_and_zero_output
+FAILED tests/test_qmt_instrument_snapshot.py::test_no_file_status_flags_live_semantics
+FAILED tests/test_qmt_instrument_snapshot.py::test_no_file_ashares_live_and_zero_output
+FAILED tests/test_qmt_instrument_snapshot.py::test_no_file_databar_three_fields_current_behavior
+FAILED tests/test_qmt_instrument_snapshot.py::test_absent_cached_mid_run_file_creation_ignored
+FAILED tests/test_qmt_instrument_snapshot.py::test_enabled_all_four_consumers_hit_zero_live
+FAILED tests/test_qmt_instrument_snapshot.py::test_missing_code_stock_info_fallback_first_miss_once
+FAILED tests/test_qmt_instrument_snapshot.py::test_missing_code_status_flags_two_fallback_forms
+FAILED tests/test_qmt_instrument_snapshot.py::test_missing_code_databar_fallback
+FAILED tests/test_qmt_instrument_snapshot.py::test_broken_json_all_fallback_and_disclosure_once
+FAILED tests/test_qmt_instrument_snapshot.py::test_broken_schema_records_not_dict
+FAILED tests/test_qmt_instrument_snapshot.py::test_broken_read_failure_directory_path
+FAILED tests/test_qmt_instrument_snapshot.py::test_first_print_fields_complete_and_once
+FAILED tests/test_qmt_instrument_snapshot.py::test_disabled_enabled_false_off_mode_all_live
+FAILED tests/test_qmt_instrument_snapshot.py::test_round_trip_raw_dict_and_expiredate_three_forms
+FAILED tests/test_qmt_instrument_snapshot.py::test_ashares_snapshot_keeps_semantic_diff_line
+FAILED tests/test_source_import_qmt.py::test_positive_minimal_ptrade_source_converts
+FAILED tests/test_fund_matrix_qmt_gate.py::test_green_path_check_passes - Ass...
+FAILED tests/test_fund_matrix_qmt_gate.py::test_negative_tamper_qmt_const_fails_and_restores
+FAILED tests/test_qmt_progress_audit.py::test_b_stock_info_golden[codes0] - N...
+FAILED tests/test_qmt_progress_audit.py::test_b_stock_info_golden[codes1] - N...
+FAILED tests/test_qmt_progress_audit.py::test_b_filter_status_golden - NameEr...
+22 failed, 80 passed in 4.17s

@@ -1380,6 +1380,85 @@ def _qs_fin_to_rows(raw, shape=None, codes=None):
     return rows
 
 
+def _qs_hist_fold(_one, table=None, code=None):
+    """D-28 报告期折叠 helper（2026-10-15，方案 §三①；判型＝数据修正型——
+    QMT 端回归本地「PIT 全报告期」契约口径）。
+
+    hist 表（eps/growth_ability/profit_ability——与 _qs_get_fundamentals 内
+    既有 hist 表集一致）原始帧为**日频全历史填充**（值列与 m_anntime 均
+    ffill；首只全史 8740 行、均值 ≈2655 行/只），本地契约为「每报告期一行
+    （最新公告版）」（首只 79 期、均值 ≈24 期/只）。HISTDBG3 定谳：组合键
+    (m_anntime, m_timetag) 一一对应报告期（ua=ut=uk=79 << rows=8740、
+    after=uk）→ 以该组合键 drop_duplicates(keep='last') 折叠——keep='last'
+    保留组内**末行**＝最新填充值，与本地「最新公告版」语义一致（§9.2 钉死；
+    NaN 键视相等——drop_duplicates 口径，组合键全 NaN 行折叠为一行）。
+
+    回落保护（设计 §三①）：缺任一键列 / 折叠表达式异常 → dropna(how='all')
+    （D-26d 既有保护语义降为回落路径）；dropna 亦异常或对象非 DataFrame
+    （无 drop_duplicates 面）→ 原帧直通（与 D-27a 块的 except-pass 终态
+    同款）。任何异常不外抛。
+
+    table/code 仅供 HISTFOLD 审计行标注（每表一次、仅首只、不进热路径——
+    设计 §三⑤），不参与取值逻辑（与 _qs_fin_to_rows_hist 的 table 参数
+    同款定位；code 为触发首折叠的证券代码，即审计行 code=<首只> 的取值源）：
+      [QS-QMT log.info] QS_QMT_HISTFOLD t=<table> code=<code> before=<n>
+      after=<n> intravar=<k>
+    intravar＝首只**折叠前**帧上 (m_anntime, m_timetag) 组内值列（排除两键）
+    不全等（NaN 视相等）的组数——设计 §四「组内恒等」前提的运行时哨兵，
+    >0 即披露；无值列/计算异常打 -1（HISTDBG3 uv 哨兵同款）。NaN 键组
+    groupby 默认弃组不计入（生产数据 ffill 后无 NaN 键——HISTDBG3 实证，
+    该局限如实披露）。审计代码任何异常必须吞掉不得外抛。
+    """
+    try:
+        if _one is None or not hasattr(_one, 'drop_duplicates'):
+            return _one
+        _cols = list(_one.columns)
+        _folded = None
+        if 'm_anntime' in _cols and 'm_timetag' in _cols:
+            try:
+                _folded = _one.drop_duplicates(
+                    subset=['m_anntime', 'm_timetag'], keep='last')
+            except Exception:
+                _folded = None  # 折叠表达式异常 → 回落 dropna（设计 §三①）
+            if _folded is not None:
+                # HISTFOLD 审计行（每表一次，_QS_QMT_ONCE 范式——与 HISTDBG3
+                # 'histdbg3:<table>' 同款；仅折叠路径打印，before/after 语义恒为
+                # 「折叠前后行数」；全段 try/except 吞异常，绝不外抛、不进热路径）
+                try:
+                    if _QS_QMT_ONCE.get('histfold:' + str(table)) is None:
+                        _QS_QMT_ONCE['histfold:' + str(table)] = 1
+                        _iv = -1
+                        try:
+                            _vc = [c for c in _cols
+                                   if c not in ('m_anntime', 'm_timetag')]
+                            if _vc:
+                                _bad = 0
+                                for _k, _gf in _one.groupby(
+                                        ['m_anntime', 'm_timetag'], sort=False):
+                                    for _c in _vc:
+                                        _nv = _gf[_c].dropna()
+                                        if len(_nv) > 1 and \
+                                                len(_nv.unique()) > 1:
+                                            _bad += 1
+                                            break
+                                _iv = _bad
+                        except Exception:
+                            _iv = -1
+                        print('[QS-QMT log.info] QS_QMT_HISTFOLD t=%s code=%s '
+                              'before=%d after=%d intravar=%d'
+                              % (table, code, len(_one), len(_folded), _iv))
+                except Exception:
+                    pass
+        if _folded is None:
+            try:
+                _folded = _one.dropna(how='all')
+            except Exception:
+                _folded = _one
+        return _folded
+    except Exception:
+        return _one
+
+
 def _qs_fin_to_rows_hist(raw, shape=None, codes=None, table=None):
     """get_financial_data 原始返回 → {code: [行字段映射, ...]} 全历史行收集
     （D-19 二层修复，2026-10-11）。
@@ -1517,36 +1596,20 @@ def _qs_fin_to_rows_hist(raw, shape=None, codes=None, table=None):
                     except Exception:
                         _one = None
                 if _one is not None and len(_one) > 0:
-                    # [历史背景·D-26d 首版；D-27a 起由下方收敛逻辑取代] QMT Panel 按
-                    # (日期 × 字段) 展开为**日频全历史**（实测 one_shape=(8739,3)），
-                    # 而「PIT 全报告期」契约只需有报告期数据的行（~40 期）→ 超量 ~200×，
-                    # 这是 8.5 分钟/表 的真正根因（非转换方式）。
-                    # 删除「请求字段全 NaN」的行：消费端策略 mask 显式丢弃 value=NaN 行
-                    # （weekly_smallcap_growth_momentum_10_quantstudio.py:149
-                    #  mask = ~np.isnan(val) / :158 frame = frame[mask]），
-                    # 故**消费结果不变**——判型＝纯性能型（口径与证据见证据文档）。
-                    # D-27a 契约收敛（2026-10-12）：QMT 返回日频全历史（8739 行/只），
-                    # 而「PIT 全报告期」契约只需报告期行（~40 期）。
-                    # 收敛条件＝「m_anntime（公告日）非空」，**但仅在可证安全时生效**：
-                    # 必须同时满足「被删行的值字段全为 NaN」——与四大消费策略的
-                    # mask = ~np.isnan(val)（weekly_smallcap:149/:158、周频三层:145、
-                    # 低流动性:121、CANSLIM:394/:490）语义一致；任一被删行含有效值即
-                    # **退回 dropna(how='all')**（保守）。判型＝纯性能型：
-                    # 被删行必然被消费端 mask 丢弃 → 消费结果不变。
-                    try:
-                        _vc = [c for c in _one.columns
-                               if c not in ('m_anntime', 'm_timetag')]
-                        _hit = False
-                        if 'm_anntime' in list(_one.columns) and _vc:
-                            _keep = _one['m_anntime'].notna()
-                            if bool(_keep.any()) and not bool(
-                                    _one.loc[~_keep, _vc].notna().any().any()):
-                                _one = _one[_keep]
-                                _hit = True
-                        if not _hit:
-                            _one = _one.dropna(how='all')
-                    except Exception:
-                        pass
+                    # [沿革·D-26d dropna(how='all') → D-27a m_anntime notna 自保护
+                    #  收敛 → D-28 报告期折叠取代（2026-10-15，方案 §三②）] QMT Panel
+                    # 按 (日期 × 字段) 展开为**日频全历史**（实测 one_shape=(8739,3)、
+                    # 首只全史 8740 行、均值 ≈2655 行/只），而本地「PIT 全报告期」契约
+                    # 为每报告期一行（首只 79 期、均值 ≈24 期/只）——行集 ~110× 冗余
+                    # 即处理段 226s 的根因。HISTDBG3 定谳：m_anntime 亦被 ffill 填充
+                    # → D-27a 的 notna 过滤在当前数据形态下恒为空操作；组合键
+                    # (m_anntime, m_timetag) 一一对应报告期（ua=ut=uk=79、after=uk）
+                    # → D-28 改按组合键 drop_duplicates(keep='last') 折叠（判型＝
+                    # 数据修正型：QMT 端回归本地契约口径；三可达消费点结果逐位
+                    # 不变——不变式论证见设计 §四）。缺键列/异常 → helper 内回落
+                    # dropna(how='all')（D-26d 保护语义降为回落路径）；HISTFOLD
+                    # 审计行（每表一次）在 helper 内打印，不进热路径。
+                    _one = _qs_hist_fold(_one, table, _code)
                 if _one is not None and len(_one) > 0:
                     try:
                         _rs = _one.to_dict('records')
@@ -1571,8 +1634,14 @@ def _qs_fin_to_rows_hist(raw, shape=None, codes=None, table=None):
             and not isinstance(raw, dict):  # 单代码 DataFrame 实测形态
         try:
             if len(raw) > 0 and len(codes) == 1:
+                # D-28 ③（2026-10-15，方案 §三③）：单码 DataFrame 路径对称接入
+                # 同一折叠 helper（与 Panel 路径同一口径，消除不对称——此前该
+                # 路径无任何收敛）。缺键列帧回落 dropna(how='all') 的二阶变化
+                # （此前全 NaN 行存活到策略）见设计 §四⑥——当前无可达单码
+                # hist 调用，实害为零，披露入册。
+                _one = _qs_hist_fold(raw, table, codes[0])
                 rows[str(codes[0])] = [{str(_k): _v for _k, _v in _r.items()}
-                                       for _, _r in raw.iterrows()]
+                                       for _, _r in _one.iterrows()]
             return rows
         except Exception:
             return rows
@@ -1615,6 +1684,20 @@ def _qs_get_fundamentals(table, codes, date=None, fields=None, C=None):
     # ['ASHAREBALANCESHEET.fix_assets', '利润表.净利润']）、:1906（'CAPITALSTRUCTURE.total_capital'）；
     # :1837 建议使用对照表中的英文表名和迅投英文字段。
     native_fields = sorted(set([f"{native_table}.{fmap.get(f, f)}" for f in fields]))
+    # D-28 键字段恒附（2026-10-15，方案 §三④·审计 P1-1）：hist 表（表集与下方
+    # hist 装配段既有 hist 集一致）请求列恒附两折叠键原生字段——实测「返回列=
+    # 请求列」结构（one_shape=(8739,3)，weekly 请求 3 字段得 3 列）下，消费点
+    # 不请求 publ_date 时帧缺 m_anntime，折叠无从生效（SG-MS-PEG:358
+    # fields=['roe','end_date']、F-Score:329 fields=['roe'] 缺键实例）。已存在
+    # 则幂等跳过（不重复、不改既有键序，仅在表尾追加）；辅助键经下方既有投影
+    # 段（for _lf in fields / columns=fields——只遍历调用方请求列）自动剥离，
+    # 返回帧契约零变化（内部帧列数 +2，one_shape 读数变化属披露项，设计 §四
+    # 影响面④）。
+    if table in ('eps', 'growth_ability', 'profit_ability'):
+        for _kf in ('%s.m_anntime' % native_table,
+                    '%s.m_timetag' % native_table):
+            if _kf not in native_fields:
+                native_fields.append(_kf)
     # D-24：单次大批量调用是静默黑洞 → begin/end 哨兵成对（finally 保证配对，
     # 异常路径亦不留孤儿 begin——否则「批失败」与「死锁」在日志上不可区分）。
     _n = len(codes)

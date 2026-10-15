@@ -1,0 +1,11 @@
+﻿........................................................................ [ 70%]
+...................FFF........                                           [100%]
+================================== FAILURES ===================================
+<string>:50: NameError: name '_qs_instr_detail' is not defined
+<string>:50: NameError: name '_qs_instr_detail' is not defined
+<string>:88: NameError: name '_qs_instr_detail' is not defined
+=========================== short test summary info ===========================
+FAILED tests/test_qmt_progress_audit.py::test_b_stock_info_golden[codes0] - N...
+FAILED tests/test_qmt_progress_audit.py::test_b_stock_info_golden[codes1] - N...
+FAILED tests/test_qmt_progress_audit.py::test_b_filter_status_golden - NameEr...
+3 failed, 99 passed in 4.32s
