@@ -429,7 +429,7 @@ class _QfqFakeCollector:
             raise RuntimeError("begin boom")
         return self._cycle_id
 
-    def qfq_run_post_ingest(self, run_id):
+    def qfq_run_post_ingest(self, run_id, **kwargs):   # A 项 2026-10-15
         self.post_ingest_run_ids.append(run_id)
         return self._summary
 
@@ -437,7 +437,7 @@ class _QfqFakeCollector:
         self.executed.append(task["name"])
         return True
 
-    def _run_full_quality_audit(self):
+    def _run_full_quality_audit(self, **kwargs):   # A 项：容忍 should_stop 等新增 kwarg（2026-10-15）
         return True
 
     def close(self):
@@ -556,7 +556,7 @@ class TestLifecycleQfqIntegration:
 
     def test_post_ingest_exception_fail_closed(self, tmp_data_root, monkeypatch):
         fc = _QfqFakeCollector()
-        fc.qfq_run_post_ingest = lambda run_id: (_ for _ in ()).throw(
+        fc.qfq_run_post_ingest = lambda run_id, **kwargs: (_ for _ in ()).throw(
             RuntimeError("post boom"))
         _patch_collector(monkeypatch, fc)
         _make_lifecycle(tmp_data_root).run_one_cycle(
