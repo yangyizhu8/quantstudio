@@ -2150,6 +2150,28 @@ class MCPAdapter(BaseSourceAdapter):
             if _max_ratio > 0 and _ratio <= _max_ratio:
                 # D1（裁①）：占比在阈值内 ⇒ **按行隔离跳过**（丢弃不可还原行 ⇒ 不写入
                 # ⇒ 无双重复权），其余行照常还原；登记 + 告警（不中断本批）。
+                # ── a0 修订（2026-10-16 客户运维补审·总调度照准）──────────────────
+                # 全局占比阈值会**吸收整码全缺**（如 300457：241/45,790 = 0.53% < 1%）
+                # ⇒ 客户端表现为「悄悄少一只票」（与 D2 顶格静默丢弃同病理）。
+                # ⇒ 补 **code 维度**：整码全缺必须**告警升级 + 明示登记**，不得被全局
+                #   占比阈值吸收。（被跳过行仍不写入 ⇒ 安全性不变。）
+                _whole_bad = []
+                try:
+                    _codes = bare.astype(str).reset_index(drop=True)
+                    _badser = pd.Series(list(bad), index=_codes.index)
+                    for _c, _idx in _codes.groupby(_codes).groups.items():
+                        if len(_idx) > 0 and bool(_badser.loc[list(_idx)].all()):
+                            _whole_bad.append(str(_c))
+                except Exception:
+                    _whole_bad = []
+                if _whole_bad:
+                    meta["whole_code_missing"] = _whole_bad[:50]
+                    meta["whole_code_missing_count"] = len(_whole_bad)
+                    logger.error(
+                        msg + f"。⚠️ **整码全缺 {len(_whole_bad)} 个 code**"
+                              f"（**不得被全局占比阈值吸收**）：示例={_whole_bad[:5]} —— "
+                              f"该 code 本批**全部行不可还原**，客户端会表现为「悄悄少一只票」；"
+                              f"按 **code 级告警** 处置。")
                 _keep = ~bad
                 out = out[_keep].reset_index(drop=True)
                 adj_i = adj_i[_keep].reset_index(drop=True)
