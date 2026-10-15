@@ -101,10 +101,20 @@
 本纪律与数据层快照原则同构，防止同类事故重演。
 
 1. **任何批量/破坏性 git 操作（checkout -- / reset / revert / clean / stash pop 冲突覆盖）前，
-   必须先建零副作用回退点**：`git stash create -u -m "baseline-<时间戳>"`（只建对象不动工作区），
-   **随即 `git stash store <hash>` 持久化**（create 产出的对象无引用、可被 `git gc` 清理；
-   store 固定进 stash 引用后才防丢，2026-09-04 v10 线实操确认纳入），
+   必须先建零副作用回退点（四步配方，2026-10-12 修订；2026-10-14 定 scope 再修订）**：
+   `git add -A -- <本会话涉及路径>`（未跟踪新建文件入暂存——**定 scope 变体，2026-10-14 修订**：
+   全仓 `git add -A` 在共享工作区有两起实证风险——一次暂存 694 条他线未跟踪件制造"无 pathspec
+   commit 卷入"窗口、且嵌入仓库致超时 >10min〔QMT 线案〕；scope 限定后仍完整捕获本会话未跟踪件。
+   另 **`git stash create` 不接受 `-u`**，旧配方中 `-u` 会被并入 message、未跟踪文件从不入 stash；
+   2026-10-12 trading-runtime 1,619 行委派产物因此不可逆丢失，实测定谳）
+   → `git stash create -m "baseline-<时间戳>"`（只建对象不动工作区）
+   → **随即 `git stash store <hash>` 持久化**（create 产出的对象无引用、可被 `git gc` 清理；
+   store 固定进 stash 引用后才防丢）
+   → `git reset`（撤暂存、不动工作区）。
    将返回的 commit hash 记入会话记录或登记表；误操作后 `git reset --hard <hash>` 找回。
+   **引用/删除/回退前必 `git stash show --stat <hash>` 核对内容**——"有回退点"≠"回退点里有东西"；
+   引用 stash 内容一律**按路径单文件提取**（`git show <hash>:<path>`），禁整仓 pop
+   （stash 可能混入他线未提交改动，2026-10-12 案实证）。
 2. **操作前核对目标文件状态**：`git status --porcelain` 确认待回退文件是否含**其他会话的
    未提交改动**（非本会话创建的 M 文件一律视为他人工作，禁止盲回退）。
 3. **每轮会话开始时记录工作区基线**：`git status --porcelain` + `git diff --stat`
@@ -232,8 +242,9 @@ QuantStudio MCP 全数据源替代项目（含云端数据基础设施、同步�
 
 1. 涉及 `quantstudio/strategy_compiler/source_import.py`、`quantstudio/backtest/ptrade_api.py`、
    `quantstudio/backtest/backtest_engine.py` 等**共享核心文件**的改动，提交前必须：
-   ① `git stash create -u -m "baseline-<时间戳>"` 建立零副作用回退点（只建对象不动工作区），
-      **随即 `git stash store <hash>` 持久化**（防未引用对象被 GC 清理，与铁律③写前快照细则同款）；
+   ① 按铁律「写前快照」四步配方建立零副作用回退点（`git add -A -- <本会话涉及路径>` →
+      `git stash create -m` → `git stash store <hash>` → `git reset`；2026-10-14 定 scope 修订版——
+      `create` 不接受 `-u`，未跟踪新建文件须先入暂存才被捕获）；
    ② `git status --porcelain` 核对待提交**精确文件清单**只含本会话改动；
    ③ **提交信息自查不含他人改动内容**（2026-09-03 事故：本会话 source_import 吸收规则
    改动被其他会话整体提交卷入 commit 0321364 推送，事后追认——禁止重演）。
@@ -259,6 +270,14 @@ QuantStudio MCP 全数据源替代项目（含云端数据基础设施、同步�
      --reverify` → yaml/md 哈希同步 → 与代码同 commit 提交（禁止哈希追认后置单拆）；
    - 若 CI 已红：补 reverify + 单独 chore(matrix) commit 追认（如 d828781 先例），
      并在本条登记案例。
+    - **QMT 侧同等适用（M5.2 件1，2026-10-12 扩展）**：凡改动
+      `quantstudio/strategy_compiler/source_import_qmt.py` 的 **wrapper 渲染常量**
+      （`_QMT_HASH_SCOPE` 清单 20 常量：12 个三引号模板 + 枚举/map——
+      `_QS_QMT_FUNDAMENTALS_EXT`/`_QS_QMT_STOCK_INFO_EXT`/`_QS_QMT_FQ_MAP` 等），
+      同一 commit 内必须包含 `--check --reverify` 产出的 `qmt_wrapper_hash` 更新
+      （yaml `meta.qmt_wrapper_hash`，与 PTrade `wrapper_hash` 分立隔离防串）；
+      未追认推送 → CI contract-gate FAIL。负向行为测试：
+      `tests/test_fund_matrix_qmt_gate.py`（5 用例）。
 
 ## 【铁律】客户仓库交付密钥对标准流程（quantstudio-plus 只读分发，2026-09-06 用户确立）
 
@@ -504,3 +523,13 @@ F 系列/双案八里程碑脱同步实例）。三条规则固化为标准动�
 > 时刻严格对齐。
 
 6. **激活条款（2026-09-27 用户裁定保温模式）**：本条同步义务**自副本 Rust 段实施启动之日起生效**——保温态（G0 基线同步+映射登记册骨架维护，无 Rust 改写代码）下**不产生同步义务**，仅维护副本基线与登记册骨架；段实施触发条件（tick 数据实际接入/全市场研究真被卡死/准实时回测需求兑现）任一兑现时，重启决定呈用户裁定后本条全面生效。
+
+## 【铁律】六步流水线方案①强制知识反哺留痕（2026-10-10 总调度批准落位）
+
+1. 凡框架层改动方案文档（`docs/*-design.md`），正文必须含固定字段「**知识反哺检索留痕**」：记录方案起草前对 Obsidian 主库（`knowleage_base`，按域 MOC）的检索——命中条目（条目名+所属域+检索日期+被采纳要点，摘入方案「依据/参考」节并标注来源+日期）**或显式声明「主库无相关条目」**（声明本身即留痕，不空转）。
+2. **双闸拦截**：缺失该字段的方案，②审计环节判不完整退回；⑤用户审批呈报必须附带该字段。
+3. **格式可机检**（grep-able）：`知识反哺：[命中] <条目名>（<域>/<文件名>，YYYY-MM-DD）` 或 `知识反哺：[无命中] <检索域清单>，YYYY-MM-DD`。
+4. **例外亦须留痕**：纯文案/紧急热修复轮可标 `知识反哺：[豁免] 本轮无技术决策内容`——禁止静默跳过。
+5. 落点顺序（总调度批复）：主仓 AGENTS.md → 副本 AGENTS.md 跟随 → 全局预设 Plan-Mode 模板同步（本批即备案）→ 一次退回演练留证；二期审计脚本登记后批。
+
+> 批复原话（2026-10-10）：「『知识反哺检索留痕』硬门禁立项批准：条文照准（主动反哺补硬门禁=闭环铁律最后一块拼图，论证成立；grep-able 格式+豁免亦留痕设计合格）；全局预设 Plan-Mode 模板同步照准（本批即备案）；二期审计脚本登记后批。」
