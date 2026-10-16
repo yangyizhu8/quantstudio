@@ -48,6 +48,16 @@ CREATE INDEX IF NOT EXISTS idx_quarantine_status ON quarantine(status);
 """
 
 
+class QuarantineFullError(RuntimeError):
+    """隔离区顶格背压信号（D2 最小面·2026-10-16 ②审通过）。
+
+    语义：**容器级写不进去**（pending_repair 达 max_rows）⇒ 与「本批无有效行（0 行）」
+    必须可区分。原实现 `return 0` 是成功语义 ⇒ 静默丢弃（10-13 实证 9 小时 712 批被丢），
+    且会吞掉 D1 的按行隔离登记成果。⇒ 改为抛出本异常，由调用方中止本批并上报。
+    注意：本异常**不得**被 `except Exception` 静默吞并后继续返回 0（那会退回原缺陷）。
+    """
+
+
 class Quarantine:
     """校验失败数据隔离区（SQLite 存储，轻量零依赖）
 
@@ -120,8 +130,12 @@ class Quarantine:
                     f"(batch={batch_id} table={table} {len(rows)} rows)。"
                     f"当前隔离区规则分布: {dist_str}。"
                     f"若来自全量拉取(full_range)，依赖表(valuation/float_share)批量拒绝属正常；"
-                    f"可运行 archive_expired 腾出配额或调高 max_rows（当前 {self.max_rows}）。")
-                return 0
+                    f"**遇顶格需人工腾退**：运行 archive_expired 或调高 max_rows（当前 {self.max_rows}）。")
+                # ── D2 最小面：背压替代静默 return 0（顶格=容器级写不进，登记无门可入）──
+                raise QuarantineFullError(
+                    f"隔离区顶格（{current} >= {self.max_rows}）：batch={batch_id} table={table} "
+                    f"{len(rows)} rows 未入库。需人工腾退（archive_expired 或调高 max_rows）后重跑。"
+                    f"规则分布: {dist_str}")
 
             records = []
             for row in rows:
