@@ -1179,43 +1179,80 @@ class PtradeAPI:
             return result
 
     def check_limit(self, security, query_date=None) -> dict:
-        """检查涨跌停（对应 Ptrade check_limit）
-        使用 shared_ashare_rules 精确涨跌停规则（主板10%/创业板20%/科创板20%/北交所30%/ST5%）
-        返回 {code: 1(涨停)/-1(跌停)/0(正常)}"""
+        """涨跌停判定（对齐 PTrade check_limit；返回 1/-1/2/-2/0 五态）。
+
+        - 1 涨停 / -1 跌停 / 2 触涨停 / -2 触跌停 / 0 无
+        - **与 PTrade 原生的显式安全分歧**：query_date 缺省取「上一交易日」而非当日
+          （PTrade 原生默认当日）。见 knowledge/contracts/api-semantics.md「分歧点」节。
+        - 单一路径：由日线原始价（close/preClose/high/low，fq=None）派生；不读任何
+          涨跌停列表/价表，避免双源口径漂移。
+        """
         from .libs.shared_ashare_rules import get_price_limit_pct
         result = CodeDict()
-        securities = [security] if isinstance(security, str) else security
-        data = self._current_day_data
-        if data is not None:
-            status = data.copy()
-        elif self._reference is not None and (query_date or self._current_date):
-            status = self._reference.get_stock_status(
-                [bare_code(sec) for sec in securities], query_date or self._current_date)
-        else:
+        securities = [security] if isinstance(security, str) else list(security or [])
+        if not securities:
             return result
-        for sec in securities:
-            bare = bare_code(sec)
-            qmt_code = normalize_to_qmt(bare)
-            ptrade_code = self._to_ptrade_code(bare)
-            row = status[status['code'] == bare] if 'code' in status.columns else pd.DataFrame()
-            if len(row) > 0:
-                r = row.iloc[0]
-                close = r.get('close', 0)
-                preclose = r.get('preClose', 0)
-                if preclose and preclose > 0:
-                    pct = (close - preclose) / preclose
-                    limit_pct = get_price_limit_pct(qmt_code)
-                    if pct >= limit_pct - 0.002:  # 容差0.2%
-                        result[ptrade_code] = 1  # 涨停
-                    elif pct <= -(limit_pct - 0.002):
-                        result[ptrade_code] = -1  # 跌停
-                    else:
-                        result[ptrade_code] = 0
-                else:
-                    result[ptrade_code] = 0
+        bare_codes = [bare_code(sec) for sec in securities]
+        qd = query_date
+        if qd is None:
+            try:
+                prev = self._reference.get_trading_day(self._current_date, offset=-1)
+            except Exception as exc:
+                log.warning("QS_DIAG {'kind': 'LIMIT_CHECK_NO_PREV_DAY', 'error': '%s'}" % exc)
+                prev = None
+            if prev is None:
+                for _sec, _bare in zip(securities, bare_codes):
+                    result[self._to_ptrade_code(_bare)] = 0
+                return result
+            qd = prev
+        qd_text = qd.strftime("%Y%m%d") if hasattr(qd, "strftime") else str(qd)
+        try:
+            bars = self._reference.get_bars(
+                bare_codes, qd_text, qd_text,
+                fields=["close", "preClose", "high", "low"], fq=None, frequency="1d")
+        except Exception as exc:
+            log.warning("QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'date': '%s', 'error': '%s'}"
+                        % (qd_text, exc))
+            bars = {}
+        for _sec, _bare in zip(securities, bare_codes):
+            _key = self._to_ptrade_code(_bare)
+            _df = (bars or {}).get(_bare)
+            if _df is None or len(_df) == 0:
+                log.warning("QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '%s', 'date': '%s'}"
+                            % (_bare, qd_text))
+                result[_key] = 0
+                continue
+            _row = _df.iloc[-1]
+            _pre = _row.get("preClose")
+            _close = _row.get("close")
+            _high = _row.get("high")
+            _low = _row.get("low")
+            if _pre is None or float(_pre) <= 0 or _close is None:
+                log.warning("QS_DIAG {'kind': 'LIMIT_CHECK_NO_PRECLOSE', 'code': '%s', 'date': '%s'}"
+                            % (_bare, qd_text))
+                result[_key] = 0
+                continue
+            _pct = float(get_price_limit_pct(normalize_to_qmt(_bare)))
+            _pref = float(_pre)
+            _up = round(_pref * (1 + _pct), 2)
+            _down = round(_pref * (1 - _pct), 2)
+            _tol = 0.001
+            _c = float(_close)
+            if _high is None or _low is None:
+                log.warning("QS_DIAG {'kind': 'LIMIT_CHECK_NO_HILO', 'code': '%s', 'date': '%s'}"
+                            % (_bare, qd_text))
+            if _c >= _up - _tol:
+                result[_key] = 1
+            elif _c <= _down + _tol:
+                result[_key] = -1
+            elif _high is not None and float(_high) >= _up - _tol:
+                result[_key] = 2
+            elif _low is not None and float(_low) <= _down + _tol:
+                result[_key] = -2
             else:
-                result[ptrade_code] = 0
+                result[_key] = 0
         return result
+
 
     def get_positions(self, security=None) -> dict:
         """获取持仓（对应 Ptrade get_positions）
