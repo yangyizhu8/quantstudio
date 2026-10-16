@@ -1,0 +1,11 @@
+﻿OK: 契约矩阵门禁通过（哈希一致 + MD 一致）
+
+== 契约套件（pytest，受控文件清单 + 既有失败白名单放行） ==
+全部通过；既有白名单无触发
+
+== 矩阵门禁（check_fund_matrix --check） ==
+
+== 6 策略 api_portability 冒烟（同受控清单 -k 子集） ==
+全部通过；既有白名单无触发
+
+===== CONTRACT GATE : PASS =====

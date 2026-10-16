@@ -105,15 +105,26 @@ def _write_qmt_product(code: str, path: Path) -> None:
     纯 unicode -> gbk 转码在此执行（M1 §2.1 render_qmt 行：渲染层返回 unicode，
     写盘点集中转码）。转码失败 raise StrategyPipelineError——不静默替换字符
     （M1 风险清单 3）。LF 行尾直写（write_bytes，跨进程确定性与 byte-diff 稳定）。
+
+    D-33 件 D（2026-10-16，②审边界表 B1 照准）：本函数即「GBK 写前拦截」的**实效位置**
+    （写盘点单点；非独立脚本可独立达成）——失败消息带库条目指针 QD-2026-0001
+    （knowledge/qmt/）；B1 属**不可豁免**类（编码契约不可协商，无 QS_KB_ACK 通道）；
+    成功/失败各留一行 QS_KB_WRITEGATE 审计（纯增益：不改变写盘结果与转码语义）。
     """
     try:
         data = code.encode("gbk")
     except UnicodeEncodeError as e:
+        bad = code[e.start:e.start + 1]
+        print("[QS-QMT log.info] QS_KB_WRITEGATE path=%s verdict=BLOCK "
+              "qd=QD-2026-0001 off=%d char=%r" % (path, e.start, bad))
         raise StrategyPipelineError(
             f"QMT product contains non-gbk-encodable characters "
-            f"(fail-closed, no silent substitution): {path} — {e}"
+            f"(fail-closed, no silent substitution): {path} — {e}; "
+            f"库条目 QD-2026-0001（knowledge/qmt/，B1 不可豁免）"
         ) from e
     path.write_bytes(data)
+    print("[QS-QMT log.info] QS_KB_WRITEGATE path=%s verdict=PASS gbk=1 bytes=%d"
+          % (path, len(data)))
 
 
 def orchestrate(
