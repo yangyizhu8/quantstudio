@@ -1196,7 +1196,7 @@ class PtradeAPI:
         qd = query_date
         if qd is None:
             try:
-                prev = self._reference.get_trading_day(self._current_date, offset=-1)
+                prev = self.get_trading_day(-1)
             except Exception as exc:
                 log.warning("QS_DIAG {'kind': 'LIMIT_CHECK_NO_PREV_DAY', 'error': '%s'}" % exc)
                 prev = None
@@ -1207,7 +1207,7 @@ class PtradeAPI:
             qd = prev
         qd_text = qd.strftime("%Y%m%d") if hasattr(qd, "strftime") else str(qd)
         try:
-            bars = self._reference.get_bars(
+            bars = self._market.get_bars(
                 bare_codes, qd_text, qd_text,
                 fields=["close", "preClose", "high", "low"], fq=None, frequency="1d")
         except Exception as exc:
