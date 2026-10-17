@@ -566,6 +566,34 @@ DDL_SQLITE: Dict[str, str] = {
             updated_at    TEXT    NOT NULL,
             PRIMARY KEY (asset_type, code, round_no)
         )""",
+    # ---- D1/a0 隔离登记（D1-补1 2026-10-17）：一码一行全量不截断，客户免库窗只读自查 ----
+    # 方案件：docs/d1-isolation-log-design-20261017.md §4。批次级事实（total_rows /
+    # missing_codes_total / listed_codes / truncated / 阈值）冗余复制到该批每一行
+    # （刻意反范式：免库窗单行读取即可自证，不必 JOIN 另一张表）；truncated 置 1
+    # 表示所见码列表不完整（missing_codes_total 才是真值）。hit_count UPSERT +1
+    # 防「最后写胜」覆盖「曾被跳过」的证据；asset_type 值域复用
+    # MCPAdapter._asset_type_of 的 {ETF, STOCK}（不新造词表）。
+    "qfq_d1_isolation_log": """
+        CREATE TABLE IF NOT EXISTS qfq_d1_isolation_log (
+            asset_type          TEXT    NOT NULL,
+            code                TEXT    NOT NULL,
+            round_no            INTEGER NOT NULL,
+            batch_id            TEXT,
+            table_name          TEXT,
+            freq                TEXT,
+            kind                TEXT    NOT NULL,
+            skipped_rows        INTEGER DEFAULT 0,
+            total_rows          INTEGER DEFAULT 0,
+            missing_codes_total INTEGER DEFAULT 0,
+            listed_codes        INTEGER DEFAULT 0,
+            truncated           INTEGER DEFAULT 0,
+            missing_ratio       REAL,
+            max_ratio           REAL,
+            whole_code_missing  INTEGER DEFAULT 0,
+            hit_count           INTEGER DEFAULT 1,
+            updated_at          TEXT    NOT NULL,
+            PRIMARY KEY (asset_type, code, round_no)
+        )""",
     # ---- 股票复权因子表（仅股票，裸码口径；结构与 fund_adj 完全一致）----
     "adj_factor": """
         CREATE TABLE IF NOT EXISTS adj_factor (

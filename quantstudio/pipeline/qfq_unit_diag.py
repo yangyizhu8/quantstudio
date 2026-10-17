@@ -89,3 +89,128 @@ def record_unit_outcome(*, asset_type: str, code: str, status: str,
         except Exception:
             pass
         return False
+
+
+# ---------------------------------------------------------------------------
+# D1-补1（2026-10-17）：D1/a0 隔离登记落盘（独立表 qfq_d1_isolation_log）
+# 方案件：docs/d1-isolation-log-design-20261017.md（§5 fail-soft 三条 / §6 独立函数）
+# ---------------------------------------------------------------------------
+
+_D1_ISOLATION_TABLE = "qfq_d1_isolation_log"
+_D1_ISOLATION_KINDS = ("row_skipped", "whole_code_missing")
+
+
+def record_d1_isolation(*, asset_type: str, code: str, kind: str,
+                        skipped_rows: int, total_rows: int,
+                        missing_codes_total: int, listed_codes: int,
+                        truncated: int, missing_ratio: Optional[float],
+                        max_ratio: Optional[float], whole_code_missing: int,
+                        batch_id: Optional[str] = None,
+                        table_name: Optional[str] = None,
+                        freq: Optional[str] = None,
+                        round_no: Optional[int] = None,
+                        log=LOG) -> bool:
+    """把一条 D1/a0 隔离登记写入 qfq_aux.db:qfq_d1_isolation_log（一码一行）。
+
+    与 record_unit_outcome 的区别（方案 §6）：**不受 QS_QFQ_UNIT_DIAG 开关约束**——
+    D1 的免库窗核对是对客户的书面承诺，不应随内部诊断开关消失。
+
+    fail-soft 三条（方案 §5，总调度 2026-10-17 必加项）：
+      ① 绝不向取数路径抛出（异常一律兜住）；
+      ② 失败必须 log.error（禁止无 ERROR 的静默 return False）；
+      ③ 只写 qfq_aux.db 短连接（timeout=5 + PRAGMA busy_timeout），
+        不碰主库、不进价格事务；**禁止**在热路径补跑全量 DDL
+        （三类失败面：no such table / database is locked / 其他异常 ⇒ 均 ERROR +
+         return False）。
+
+    kind 值域断言：仅接受 'row_skipped' / 'whole_code_missing'，越域 raise
+    ValueError（照 07-经验库「准入裁决函数唯一性」+ P8-001 同型；调用点自行兜住）。
+
+    UPSERT 口径：同 (asset_type, code, round_no) 再命中 ⇒ hit_count = hit_count + 1，
+    其余载荷取 excluded（计数累加保住「今天漏过几次」的证据，载荷取最后一次）。
+    """
+    if kind not in _D1_ISOLATION_KINDS:
+        raise ValueError(
+            f"非法 kind: {kind!r}（仅允许 {_D1_ISOLATION_KINDS}）")
+    try:
+        rn = _round_no() if round_no is None else int(round_no)
+        ts = datetime.now().isoformat(timespec="seconds")
+        conn = sqlite3.connect(str(_aux_path()), timeout=5)
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute(
+                "INSERT INTO %s (asset_type, code, round_no, batch_id, table_name,"
+                " freq, kind, skipped_rows, total_rows, missing_codes_total,"
+                " listed_codes, truncated, missing_ratio, max_ratio,"
+                " whole_code_missing, hit_count, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT(asset_type, code, round_no) DO UPDATE SET"
+                " hit_count=hit_count+1, batch_id=excluded.batch_id,"
+                " table_name=excluded.table_name, freq=excluded.freq,"
+                " kind=excluded.kind, skipped_rows=excluded.skipped_rows,"
+                " total_rows=excluded.total_rows,"
+                " missing_codes_total=excluded.missing_codes_total,"
+                " listed_codes=excluded.listed_codes, truncated=excluded.truncated,"
+                " missing_ratio=excluded.missing_ratio, max_ratio=excluded.max_ratio,"
+                " whole_code_missing=excluded.whole_code_missing,"
+                " updated_at=excluded.updated_at" % _D1_ISOLATION_TABLE,
+                [str(asset_type), str(code), rn, batch_id, table_name, freq,
+                 str(kind), int(skipped_rows or 0), int(total_rows or 0),
+                 int(missing_codes_total or 0), int(listed_codes or 0),
+                 int(1 if truncated else 0),
+                 (None if missing_ratio is None else float(missing_ratio)),
+                 (None if max_ratio is None else float(max_ratio)),
+                 int(1 if whole_code_missing else 0), 1, ts])
+            conn.commit()
+        finally:
+            conn.close()
+        return True
+    except Exception as e:      # fail-soft ①：落盘失败绝不影响还原/取数
+        try:
+            log.error("[qfq_orch] D1 隔离登记落盘失败（不阻断）: %s/%s kind=%s: %s",
+                      asset_type, code, kind, e)
+        except Exception:
+            pass
+        return False
+
+
+def mark_d1_isolation_truncated(*, asset_type: str, table_name: str, freq: str,
+                                listed_codes: int, round_no: Optional[int] = None,
+                                log=LOG) -> bool:
+    """**部分写失败**时把该批已落盘行的 listed_codes 校正为实际值并置 truncated=1。
+
+    ②审 2026-10-17 裁定（判据②缺口修法）：方案 §4 的列语义本就是
+    「listed < missing_codes_total ⇒ truncated 置 1」；原实现「全量落盘无上限」
+    使该列**恒为死列**（truncated 恒 0）。⇒ 改为：
+      · `listed_codes` ＝ **实际成功落盘行数**；
+      · `truncated` **写时计算** —— 个别行写失败即自然产生 1。
+    本函数即该「写时计算」的落地：**只在失败路径被调用一次**，把本批已落盘行
+    校正为真实计数（成功路径零额外开销）。
+
+    fail-soft 契约与 record_d1_isolation 同（方案 §5 三条）：绝不抛出、失败必
+    log.error、只写 qfq_aux.db 短连接、不碰主库、热路径不跑 DDL。
+    """
+    try:
+        rn = _round_no() if round_no is None else int(round_no)
+        ts = datetime.now().isoformat(timespec="seconds")
+        conn = sqlite3.connect(str(_aux_path()), timeout=5)
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute(
+                "UPDATE %s SET listed_codes=?, truncated=1, updated_at=?"
+                " WHERE asset_type=? AND table_name=? AND freq=? AND round_no=?"
+                % _D1_ISOLATION_TABLE,
+                [int(listed_codes or 0), ts, str(asset_type), str(table_name),
+                 str(freq), rn])
+            conn.commit()
+        finally:
+            conn.close()
+        return True
+    except Exception as e:      # fail-soft ①：校正失败绝不影响还原/取数
+        try:
+            log.error("[qfq_orch] D1 隔离登记 truncated 校正失败（不阻断）: "
+                      "%s/%s/%s listed=%s: %s",
+                      asset_type, table_name, freq, listed_codes, e)
+        except Exception:
+            pass
+        return False

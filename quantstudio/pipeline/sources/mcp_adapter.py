@@ -2172,6 +2172,51 @@ class MCPAdapter(BaseSourceAdapter):
                               f"（**不得被全局占比阈值吸收**）：示例={_whole_bad[:5]} —— "
                               f"该 code 本批**全部行不可还原**，客户端会表现为「悄悄少一只票」；"
                               f"按 **code 级告警** 处置。")
+                # ── D1-补1（2026-10-17）：隔离登记落盘 qfq_aux.db:qfq_d1_isolation_log ──
+                # 旁路观测（方案 §5 fail-soft 三条）：①绝不向取数路径抛出；②失败必
+                # log.error（禁静默）；③只经 qfq_unit_diag 写 qfq_aux.db 短连接，
+                # 不碰主库、不进价格事务。对 bad_codes **全量**逐码一行（不受 meta
+                # [:50] 截断影响）；整码全缺 kind='whole_code_missing'，其余
+                # kind='row_skipped'。meta/日志的取值与截断行为一律不变（仍 [:50]）。
+                try:
+                    from quantstudio.pipeline import qfq_unit_diag as _diag
+                    _whole_set = set(_whole_bad)
+                    _per_code = bad.groupby(bare.astype(str)).sum()
+                    _listed = 0
+                    # listed_codes 初值＝计划行数（成功路径下即实际值）；**部分写失败**
+                    # 时由下方校正为实际落盘数并置 truncated=1（②审 2026-10-17 判据②
+                    # 缺口修法：方案 §4 列语义本就是 listed<total 置 1，原实现使其恒为
+                    # 死列）。
+                    for _c in bad_codes:
+                        if _diag.record_d1_isolation(
+                                asset_type=asset_type, code=str(_c),
+                                kind=("whole_code_missing" if _c in _whole_set
+                                      else "row_skipped"),
+                                skipped_rows=int(_per_code.get(_c, 0)),
+                                total_rows=int(_n),
+                                missing_codes_total=len(bad_codes),
+                                listed_codes=len(bad_codes),
+                                truncated=0,
+                                missing_ratio=float(_ratio),
+                                max_ratio=float(_max_ratio),
+                                whole_code_missing=1 if _c in _whole_set else 0,
+                                batch_id=f"{table}/{freq}",
+                                table_name=str(table), freq=str(freq)):
+                            _listed += 1
+                    if _listed < len(bad_codes):
+                        logger.error(
+                            f"[MCPAdapter] D1-补1 隔离登记落盘不完整（不阻断）："
+                            f"计划 {len(bad_codes)} 行 / 实际落盘 {_listed} 行"
+                            f"（{table}/{freq}）")
+                        # 写时计算 truncated：把本批已落盘行校正为**实际成功落盘行数**
+                        # 并置 truncated=1 ⇒ 该列不再是恒死列（判据②闭合）。
+                        _diag.mark_d1_isolation_truncated(
+                            asset_type=asset_type, table_name=str(table),
+                            freq=str(freq), listed_codes=_listed)
+                except Exception as _iso_e:
+                    logger.error(
+                        f"[MCPAdapter] D1-补1 隔离登记落盘异常（不阻断还原）: "
+                        f"{type(_iso_e).__name__}: {_iso_e}")
                 _keep = ~bad
                 out = out[_keep].reset_index(drop=True)
                 adj_i = adj_i[_keep].reset_index(drop=True)
