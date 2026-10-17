@@ -1,0 +1,15 @@
+﻿python.exe : Traceback (most recent call last):
+At line:5 char:19
++ ... 基线证据留档==="; & $py 'C:\Users\Administrator\AppData\Local\Temp\d29_ab_a ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "C:\Users\Administrator\AppData\Local\Temp\d29_ab_align.py", line 6, in <module>
+    con = duckdb.connect('data/quantstudio.db', read_only=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_duckdb.IOException: IO Error: Cannot open file "d:\miniqmt策略实盘\quantstudio\data\quantstudio.db": 另一个程序正在使用此文件，进程无法访问。
+
+
+File is already open in 
+C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe (PID 45936)

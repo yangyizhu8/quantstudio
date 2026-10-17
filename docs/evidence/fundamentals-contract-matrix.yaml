@@ -10,8 +10,33 @@ meta:
       list / eps / or_yoy / report_types×range）；P5-7 dist={0:3,1:6,2:20,3:35,4:47,5:59,6:45,7:21,8:13}
       pass6=79 cost_missing=0 cur_missing=0（RD-4 定量证据）；v8.7b 九次复验收敛：fscore_pass 35、roa_removed
       15、total_share 0——RD-5 定量证据
-  qmt_wrapper_hash: 20f58868117f
-  qmt_last_reverified: '2026-10-15'
+  qmt_wrapper_hash: 6927447ea23c
+  qmt_last_reverified: '2026-10-17'
+  qmt_rows:
+  - id: qmt-pa-01
+    table: profit_ability
+    fields:
+    - roe
+    native: PERSHAREINDEX.du_return_on_equity
+    keys: [PERSHAREINDEX.m_anntime, PERSHAREINDEX.m_timetag]
+    tested: true
+    probed: true
+    probe_ref: v5 (docs/probe/qmt_profit_ability_probe_v5-20261017.py, 2026-10-17 00:21 valid=9460/ratio=0.541/sample=7.81)
+    rd: RD-2
+    notes: D-29 裁定 1A 映射；口径未确证（本地 profit_ability 无口径定义）+ 仅排序消费（L82/RD-2）
+      -> 实施后 A/B 对照一次定口径；equity_roe 因覆盖率低(7891/0.451)+sample 整数异常(16.0) 排除；
+      net_roe(valid=9460) 保留为对照候选
+  - id: qmt-pa-02
+    table: profit_ability
+    fields:
+    - net_profit_margin
+    native: PERSHAREINDEX.net_profit
+    keys: [PERSHAREINDEX.m_anntime, PERSHAREINDEX.m_timetag]
+    tested: true
+    probed: true
+    probe_ref: v5 (same run, valid=9460/ratio=0.541/sample=22.75)
+    rd: null
+    notes: D-29 裁定独立映射行（与 qmt-pa-01 各自验收，防一轮吞全量）；口径未确证，同 qmt-pa-01 处置
 matrix:
 - id: f01
   shape: single

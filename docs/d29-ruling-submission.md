@@ -111,5 +111,75 @@
 
 **②审结论**：呈裁件**就绪**，随专轮呈用户裁定；**裁定前不实施任何路径**（S2 探针亦待裁定后执行）。
 
-**裁定包构成（供用户一次决策）**：本呈裁件（§一 问题定义／§一·补 文档查证／§二 判据 4 原文／§三 8 维代偿差异／§四 两路径成本／§五 S1–S5 闭环计划／§六 呈裁请求）＋ 本节 ②审意见。
+**裁定包构成（供用户一次决策）**：本呈裁件（§一 问题定义／§一·补 文档查证／§二 判据 4 原文／§三 8 维代偿差异／§四 两路径成本／§五 S1–S5 闭环计划／§六 呈裁请求）＋ 本节 ②审意见 ＋ **§八 S2 定谳结果**。
+
+## 八、S2 探针定谳结果（v4 生产口径复刻版，2026-10-16 23:48 端测）
+
+| 对照 | 字段 | valid_rows | total_rows | value_cols | sample |
+|---|---|---|---|---|---|
+| **POS** 正对照 | `PERSHAREINDEX.s_fa_eps_basic` | **9383** | 17486 | `['s_fa_eps_basic']` | **0.27** |
+| **NEG** 负对照 | `PERSHAREINDEX.__probe_invalid__` | **0** | 17486 | `['__probe_invalid__']` | None |
+| CAND1 | `PERSHAREINDEX.s_fa_roe` | **0** | 17486 | `['s_fa_roe']` | None |
+| CAND2 | `PERSHAREINDEX.roe` | **0** | 17486 | `['roe']` | None |
+| CAND3 | `PERSHAREINDEX.s_fa_roe_weighted` | **0** | 17486 | `['s_fa_roe_weighted']` | None |
+
+`VERDICT=NO_ROE_FIELD: 三候选全 0 且对照成立`
+
+### 8.1 确证事实（可引用）
+
+1. **判据前提全部成立**＝探针可区分：正对照 `s_fa_eps_basic` 有 **9383** 有效行（值域合理 sample=0.27），
+   负对照 `__probe_invalid__` **0** 有效行 ⇒ v4 判据链完整生效（v1–v3 三轮仪器迭代的收敛产物）。
+2. **`PERSHAREINDEX`（QMT 关键指标表）中不存在 ROE 类字段**：`s_fa_roe`／`roe`／`s_fa_roe_weighted`
+   三候选**全为全 NaN**（Panel 同形同维、列名正确回显、仅值缺失）
+   ⇒ **路径①（`PERSHAREINDEX` 补映射）被否证**，无需再裁。
+3. **探针形态全貌（v2＋v4 合并，候选回灌主库形态库）**：
+   ①`get_financial_data` 返回 **`pandas.core.panel.Panel`**（D-9 形态轨 Panel 轨实测复现）；
+   ②维度 `2 items[代码] × 8743 major_axis[日期 19901219..20261016] × 1 minor_axis[字段]`，
+   子对象 `total_rows=17486`（＝2 码 × 8743 日）；③**无效字段亦返回同形同维 Panel**，
+   形态/维度/标签**均不可区分**，**唯一判别信号是值**（有效=有值／无效=全 NaN）；
+   ④取子与取值须走**生产口径**：`raw[_code]` → 按其自身 `columns` 取非键列（排除 `m_anntime`/`m_timetag`）。
+
+### 8.2 未确证部分（诚实标注）
+
+v4 **只否证了「`PERSHAREINDEX` 无 ROE 字段」**，**未**证明「QMT 端全无 ROE 数据」：
+
+- `ASHAREINCOME`（利润表）／`ASHAREBALANCESHEET`（资产负债表）**未测**——理论上存在**合成路径**
+  （净利润 ÷ 股东权益），但①本地 `profit_ability` 契约另含 `roa/roic/net_profit_margin/
+  gross_profit_margin/operating_profit_margin/expense_to_revenue/operate_profit_to_profit` 等**十余字段**，
+  ②合成口径与本地契约的**定义一致性未评估**（加权 vs 期末净资产、年化与否），③成本与回归风险均未量化。
+
+### 8.2·补 v4 结论更正（2026-10-17，终裁裁②′后查证所得）
+
+> **v4 的 `NO_ROE_FIELD` 结论作废**：v4 候选（`s_fa_roe`/`roe`/`s_fa_roe_weighted`）系**跨族猜名**。
+> 依据 Context7 `/websites/dict_thinktrader_net`（`nativeApi/xtdata.html`），QMT `PERSHAREINDEX`
+> **比率类字段无 `s_fa_` 前缀**：`du_return_on_equity`（净资产收益率）、`equity_roe`（加权 ROE）、
+> `net_roe`（摊薄 ROE）、`total_roe`（摊薄 ROA）、`gross_profit`（毛利率）、`net_profit`（净利率）。
+> **路径①未被否证**——v5 以文档明列名重测（`docs/probe/qmt_profit_ability_probe_v5-20261017.py`）。
+> 终裁＝**裁②′（先探合成）**，2026-10-17。
+
+## 九、六步①方案 v1.0 成稿（2026-10-17 01:1x，候总调度②审）
+
+**方案件**：`docs/qmt-profit-ability-mapping-design.md`
+
+| 项 | 内容 |
+| --- | --- |
+| 判型 | **数据修正型**（QMT 端 hist 行集回归本地契约口径；diff 只能归因补映射后非空帧；准确度只升不降） |
+| 改动清单（允许写入清单） | ①`source_import_qmt.py::_QS_QMT_FUND_FIELD_MAP` 增 `profit_ability` 行（`roe`→`du_return_on_equity` ＋ `net_profit_margin`→`net_profit`，**两映射行独立登记**）；②契约矩阵 yaml/md `qmt.*` section 增契约行；③`tests/test_qmt_fund_field_map.py`（新建）；④`docs/probe/` v1–v5 保留为仪器迭代证据链；⑤`knowledge/qmt/QD-2026-0007.md`（新建） |
+| 明确不在范围 | `roa`/`roic`/`gross_profit_margin`/…其余十项字段；`total_roe`/`gross_profit`（v5 已证 0 命中） |
+| 哈希纪律 | 触 `_QMT_HASH_SCOPE` ⇒ `check_fund_matrix --check --reverify` 产物（yaml `meta.qmt_wrapper_hash`＋md）**同 commit 追认** |
+| 验收七判据 | ①矩阵哈希同批追认 ②六策略零回归（CONTRACT GATE）③消费点可达性（`roe_probe_batch` 读数 `rows>0`/`kept>0`）④口径 A/B 对照三分支 ⑤阈值档对照（或记不适用＋理由）⑥契约矩阵登记 ⑦纯增益（eps/growth/valuation 三映射零变化） |
+| 回退四分支 | 判据③/⑦失败 ⇒ 单 commit revert＋哈希随退；判据④判「无值」⇒ 回退并转裁②或合成（独立立项）；判「单位差/口径差」不可定案 ⇒ 不扩范围、登记 ISSUE 呈裁 |
+| 知识反哺留痕 | 3 条命中（审计方法论-先证可达性／ROE因子／行情因子适配+工作流）＋ 1 条无命中（QMT PERSHAREINDEX 命名族 ⇒ **本轮新增形态知识须回灌**） |
+
+**六步推进**（用户令）：方案落盘 ✅ → **总调度②审** → 实施（哈希同批追认）→ 验收（A/B＋六策略＋CONTRACT GATE）→ ⑤用户确认 → 双推＋同步门。
+
+### 8.3 终裁请求（路径①已被否证，剩二择一）
+
+| 选项 | 内容 | 收益 | 代价 |
+|---|---|---|---|
+| **裁②（推荐）** | 移除 hist 表集中的 `profit_ability` ＋ wrapper 显式告警行 ＋ **登记平台能力边界（与 D-31 同类）** | 消除「静默退化」与死代码矛盾；缺口**显性化** | 4 消费点在 QMT 端**永久无 ROE 数据**（对齐缺口保留但可见）；触 `_QS_QMT_FUNDAMENTALS_EXT` ⇒ 矩阵哈希同批追认 |
+| **裁②′（先探合成）** | 再一轮探针：`ASHAREINCOME` 净利润 ÷ `ASHAREBALANCESHEET` 股东权益，确证口径可对齐后再走合成 | 可能恢复 QMT 端 ROE 数据 | ＋1 轮端测；本地 ROE **定义未确证**（加权/期末/年化）；十余契约字段的合成口径工作量与回归风险未量化 |
+
+**建议裁②**（先让缺口可见、可度量、可台账跟踪；合成留作独立议题按需立项）。
+
 

@@ -1666,6 +1666,19 @@ _QS_QMT_FUND_FIELD_MAP = {
                                          'publ_date': 'm_anntime',
                                          'end_date': 'm_timetag'}),
     'valuation': ('CAPITALSTRUCTURE', {'float_value': 'circulating_capital'}),  # :2376 派生
+    'profit_ability': ('PERSHAREINDEX', {'roe': 'du_return_on_equity',  # D-29：净资产收益率
+                                    'net_profit_margin': 'net_profit',  # D-29：净利率
+                                    'publ_date': 'm_anntime',
+                                    'end_date': 'm_timetag'}),
+    # D-29（2026-10-17）：profit_ability 原生比率字段映射。依据 Context7
+    # /websites/dict_thinktrader_net（nativeApi/xtdata.html）：PERSHAREINDEX 比率类字段**无
+    # s_fa_ 前缀**（du_return_on_equity/equity_roe/net_roe/net_profit 等）；v5 生产口径探针
+    # （docs/probe/qmt_profit_ability_probe_v5-20261017.py，2026-10-17 00:21 端测）实测：
+    # du_return_on_equity valid=9460/ratio=0.541/sample=7.81；net_profit 9460/0.541/22.75；
+    # equity_roe 7891/0.451/sample=16.0（覆盖率低+整数异常，②审明确排除）；
+    # total_roe/gross_profit 0 命中（不纳入）。映射口径未确证（本地 profit_ability 无口径定义）
+    # + 消费面仅排序（契约矩阵 L82/RD-2）→ 实施后 A/B 对照一次定口径，见方案
+    # docs/qmt-profit-ability-mapping-design.md §三。余项字段（roa/roic/…）本轮不映射。
 }
 
 

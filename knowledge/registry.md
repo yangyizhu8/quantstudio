@@ -122,7 +122,7 @@ IDX-01 总收益｜IDX-02 年化｜IDX-03 基准收益（=DAT-02 复用）｜IDX
 | QCAL-01 | 合约信息活表漂移（get_instrument_detail 无 as-of，跨推送窗 L1/L2 漂移） | **已锚定（D-30 冻结快照层；E2E 判据 A/B/C 候用户端测窗）** | `docs/qmt-instrument-snapshot-design.md` v0.3＋`tests/test_qmt_instrument_snapshot.py`（15 用例）＋commit `0b88728` |
 | QCAL-02 | 板块成份无 as-of（realtime 传毫秒时间戳→静默空列表，不抛错） | **已排查（D-31 探针定谳）** | `docs/probe/qmt_realtime_sector_probe-20261013.py`（三档时间戳全空返回）；主库「QMT大转换管线…形态坑」复现固件节 |
 | QCAL-03 | hist 财务日频全史帧→报告期折叠（组合键 keep=last） | **已锚定（D-28 盘后正式归档）** | `docs/qmt-hist-fold-design.md` v0.2.1＋`tests/test_qmt_hist_fold.py`（12 用例）＋`docs/evidence/d28-e2e-run-20261015.md`（判据 1/2/3＋四轮交叉）＋commit `8be00aa` |
-| QCAL-04 | profit_ability 表映射缺失（映射表三表→hist 分支死代码→恒空帧） | **已知分歧（D-29 候裁：修①补映射／裁②移除表集）** | `docs/ISSUES.md` D-29 节 |
+| QCAL-04 | profit_ability 表映射缺失（映射表三表→hist 分支死代码→恒空帧） | **已锚定（D-29 ③实施＋④验收通过 2026-10-17）** | 方案 `docs/qmt-profit-ability-mapping-design.md` v1.0（②审通过）｜映射行 `roe`→`PERSHAREINDEX.du_return_on_equity` ＋ `net_profit_margin`→`PERSHAREINDEX.net_profit`｜v5 探针实证 `docs/probe/qmt_profit_ability_probe_v5-20261017.py`｜单测 `tests/test_qmt_fund_field_map.py`（7 passed）｜矩阵 `qmt_rows` qmt-pa-01/02｜哈希同批追认 `6927447ea23c`｜**待判据 3/4/5 端测** |
 | QCAL-05 | 必填参数空串未定义行为（get_financial_data endDate 空串→静默空） | **已锚定（D-22 安全终点 '20991231'＋QSFUNDHIST 审计行）** | 主库「平台转换坑-必填参数空串」；`docs/evidence/qmt-m5-batch2-probe-20261010.md` |
 | QCAL-06 | 产物物理编码契约（GBK 可解码；注释特殊字符高频复发） | **已锚定（canonical 重转门四自检＋测试强制 encode('gbk')）** | 主库「产物落盘编码契约」；`scripts/qmt_reconvert_six.py`；**R 口径案例：D-28 轮 `≪`(U+226A) 复发计 R_i>0→先修管线＝D-33 件D 写前拦截（`docs/qmt-alignment-loop-closure-design.md`）** |
 

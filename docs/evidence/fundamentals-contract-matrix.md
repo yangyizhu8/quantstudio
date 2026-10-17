@@ -6,7 +6,7 @@
 
 > wrapper 模板哈希：`7a424f397983`；最后复证：`2026-08-31`
 
-> QMT wrapper 契约哈希（M5.2 件1，source_import_qmt.py 全渲染常量）：`20f58868117f`；QMT 最后复证：`2026-10-15`
+> QMT wrapper 契约哈希（M5.2 件1，source_import_qmt.py 全渲染常量）：`6927447ea23c`；QMT 最后复证：`2026-10-17`
 
 ## 一、形态矩阵（YAML 行）
 
