@@ -82,13 +82,13 @@ LC-01 initialize 时机｜LC-02 before_trading｜LC-03 handle_data 时刻遍历�
 
 | 编号 | 条目 | 状态 | 证据指针 | QMT 锚点 |
 |---|---|---|---|---|
-| DAT-01 | pctChg 合成口径（除权日涨跌幅） | 已锚定 | `docs/evidence/ptrade-pctchg-synth-evidence.md` | 未验证 |
+| DAT-01 | pctChg 合成口径（除权日涨跌幅） | 已锚定 | `docs/evidence/ptrade-pctchg-synth-evidence.md` | **已锚定（QMT 侧 2026-10-18）**：平台**无** `pctChg` 字段（返回全 `None`）⇒ 须自行合成 `close/preClose-1`；`preClose`/`open`/`high`/`low`/`close` 均可得（`docs/evidence/qmt-probe-batch-ab-readings-20261018.md` §二） |
 | DAT-16 | ~~估值价格快照微差~~（2026-10-07 P1 S1+S2 破案：价格逐位一致已证伪）→ **归因转移 CORP-01** | 已关闭（归因转移） | 破案链 `docs/evidence/corp-action-etf-merge-2025-09-22.md` | 未验证 |
 | **CORP-01** | **ETF 份额合并/折算处理缺失**（引擎公司行为层；159934 黄金ETF 2025-09-22 合并比例 0.948126，平台 4000→3796 份+成本等比 7.673→8.086+nav 连续；本地未处理→9/22 净值虚高 +1715.23=204×8.408 逐位，滚存至 9/30 差 1780.92→回撤判定异号→10/9 级联 3.88pp 残差全链） | **④验收 PASS（2026-10-07 ③实施+④验收，待⑤确认推送）** | 修复证据 `docs/evidence/corp-action-etf-merge-fix-acceptance-20261007.md`：合并带去吸附+按份取整，30 测试绿，9/30 差 1780.92→−26.19，首分歧推迟 112 日 | 未验证 |
 | **CORP-02** | **零股卖出整手截断**（2026-01-29 四象限清仓单本地 3200 vs 平台 3296：持仓 3293 被 int(n/100)×100 截 93 份滞留；A 股清仓单零股可全卖）——CORP-01 修复后暴露的级联缺口，V2'' 残差 2.23% 主源 | **④验收 PASS（2026-10-07 ③实施+④验收，待⑤确认推送）** | 单点修复 `_execute_sell` 数量式分支；证据 `docs/evidence/corp02-odd-lot-sell-acceptance-20261007.md`：36 测试绿，V2''' 残差 2.23%→**0.013%**，分歧 18→3 组（全为 CORP-01 尾差级，两组总量对齐 35300=35300），末日持仓逐位一致；**双端对齐主线<0.5% 判据达成（CORP-01+02 合并）**；V3''' 基线 2.08%（moving_avg） | 未验证 |
-| DAT-02 | 基准收益（000300） | 已排查（双端 36.85% 逐位一致） | 四象限案例 | 未验证 |
+| DAT-02 | 基准收益（000300） | 已排查（双端 36.85% 逐位一致） | 四象限案例 | **已锚定（QMT 侧 2026-10-18）**：`000300.SH` 日线可得（rows=5，收盘 4287.98/4275.68/4217.681/4166.013/4170.613） |
 | DAT-03 | 日线 include 语义（D-1 锚定） | 已锚定（E1 铁律 + 四格实测） | AGENTS.md E1 条；ptrade_api.py:598 | 已锚定：wrapper `_qs_snap_kwargs` 锚定回测 bar 当日＋D-28 端测四轮 L0-L6 逐位一致（`docs/evidence/d28-e2e-run-20261015.md`） |
-| DAT-04 | 前复权 fq='pre' | 已排查（本案例价格序列逐笔一致） | 四象限案例 | 未验证 |
+| DAT-04 | 前复权 fq='pre' | 已排查（本案例价格序列逐笔一致） | 四象限案例 | **已排查（QMT 侧 2026-10-18）**：`dividend_type` 确被识别（`back` 与 `none` 差异巨大 133.756 vs 9.67）；`front≡none` 于 2026-10 窗口（该窗无除权 ⇒ 合理）⇒ **含除权窗口对照待补**，不以单窗口结论冒充已锚定 |
 | DAT-05..15 | 日期边界/首末日/fallback/指数日线专门 API/停牌日 K 线/ETF 池 PIT/… | 未验证（P2 枚举细化） | — | 未验证 |
 
 ## IDX · 指标计算（骨架）
@@ -101,10 +101,10 @@ IDX-01 总收益｜IDX-02 年化｜IDX-03 基准收益（=DAT-02 复用）｜IDX
 
 | 编号 | 条目 | 状态 | 证据指针 |
 |---|---|---|---|
-| QLC-01 | handlebar/bar 驱动回调时机 | 未验证 | probe_lifecycle（QMT 腿待建） |
+| QLC-01 | handlebar/bar 驱动回调时机 | **已锚定（2026-10-18 端测）** | `docs/evidence/qmt-probe-batch-ab-readings-20261018.md` §一：逐 bar 驱动（`barpos=1321+n` 恒等、`period='1d'`、`bar_timetag` 相邻差 86,400,000ms＝1日、日期锚定 00:00 CST 非收盘时刻）；**`C.stock_code` 不存在**（False）⇒ 策略不得依赖其取当前标的 |
 | QLC-02 | ContextInfo 对象语义（C.get_*/订阅面） | 已排查（形态库定谳） | `docs/qmt/inner-api/`（2043 行离线转写＋11 项实测定谳）；主库「平台转换铁律-文档签名不可信」 |
 | QLC-03 | 生命周期壳改写（initialize/handle_data 保留时序） | **已锚定** | portability `QMT-LIFECYCLE-SHAPE` 规则（`quantstudio/strategy_compiler/portability_rules.py`）＋六策略端测运行通过 |
-| QLC-04 | 定时任务/遍历语义（run_by_bar 等） | 未验证 | — |
+| QLC-04 | 定时任务/遍历语义（run_by_bar 等） | **已排查（接口存在；调度语义待细验）** | `docs/evidence/qmt-probe-batch-ab-readings-20261018.md` §一：`ctx_has run_time=True`（接口面存在）；本轮未实测其周期回调注册/触发语义 ⇒ **不以属性存在冒充语义已锚定** |
 
 ## QMCH · QMT 撮合/回测引擎专属（D-33 件B，2026-10-16 建面）
 
