@@ -230,6 +230,10 @@ sdf = self._read_ckey_filtered(ckey, shard_paths, want_codes) # :1445  per-code 
 | `1_security_range` | 0.2% | 已排除（初版误判作废 + 实测背书） |
 | `3_effective_dates` | 0.0% | 已排除 |
 | `4_reanchor_apply` | 7.6%（**max 22.48 s**） | **非主项，长尾登记**——串行下尾部主导墙钟 |
+| **C5 manifest `truncated` / `rows_dropped` 消费** | 未上线（云端 T5 前置） | **客户端候选项，不排期、不动代码**（2026-10-19 登记） |
+
+> **C5 候选项登记（2026-10-19，②审裁定「不立项」）**：云端条件 C5（截断显式化）落地后，`_export_cache_manifest.json` 将带 `truncated` / `rows_dropped` 字段。届时我方 `mcp_adapter` **可消费该标志，把「静默截断」转为显式告警**——与 **QCAL-05 / DAT-17 静默语义陷阱族**同治（同族纪律：静默失败必须转为可观测信号）。
+> **状态**：**候选，不排期、不动代码**；触发条件＝云端 T5 上线且有实际截断发生。**不预写代码、不预改 manifest 解析**。
 
 **成本全景（70 单元，单实例单周期）**：合计 4284.2 s，均值 **61.20 s/单元**；`2_fetch_capture` **91.9%**（内含 `2a shard_read` **81.5%**）／`4_reanchor_apply` 7.6%／`1_security_range` 0.2%。
 
