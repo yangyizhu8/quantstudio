@@ -17,3 +17,5 @@ notify:
   email: ""
 report:
   fidelity_notes: []
+output:
+  root: output/deploy

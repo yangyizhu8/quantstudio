@@ -69,6 +69,22 @@ class ReportConfig:
 
 
 @dataclass
+class OutputConfig:
+    """交付输出目录配置（PD-0008 D3/D4）。
+
+    - ``root``：输出根；空 = 缺省「仓库根 / Demo_account_Real_account」；相对路径按
+      仓库根解析（保证 cwd 无关的确定性）；
+    - ``dir_name``：策略子目录名（可中文）；空 = 用 ``strategy_id``；
+    - ``keep_versions``：``None``/缺省 = 归档**不限份数**；``0`` = **关闭归档**
+      （直接覆盖）；``N>0`` = 仅保留最近 N 份归档。
+    """
+
+    root: str = ""
+    dir_name: str = ""
+    keep_versions: Optional[int] = None
+
+
+@dataclass
 class DeployConfig:
     strategy_id: str = ""
     source: str = ""
@@ -77,6 +93,7 @@ class DeployConfig:
     guards: GuardsConfig = field(default_factory=GuardsConfig)
     notify: NotifyConfig = field(default_factory=NotifyConfig)
     report: ReportConfig = field(default_factory=ReportConfig)
+    output: OutputConfig = field(default_factory=OutputConfig)
 
 
 # ---------------------------------------------------------------- 校验辅助 --
@@ -172,6 +189,26 @@ def load_config(raw: object) -> DeployConfig:
         else:
             fidelity_notes.append(note)
 
+    # PD-0008：输出目录配置（D3 契约变更 + D4 重转语义）
+    output_raw = _require_dict(raw, "output", errors)
+    out_root = output_raw.get("root", "")
+    if not isinstance(out_root, str):
+        errors.append(f"output.root: 应为字符串，实际为 {out_root!r}")
+        out_root = ""
+    out_dir_name = output_raw.get("dir_name", "")
+    if not isinstance(out_dir_name, str):
+        errors.append(f"output.dir_name: 应为字符串，实际为 {out_dir_name!r}")
+        out_dir_name = ""
+    keep_raw = output_raw.get("keep_versions", None)
+    keep_versions: Optional[int] = None
+    if keep_raw is not None:
+        if isinstance(keep_raw, bool) or not isinstance(keep_raw, int) or keep_raw < 0:
+            errors.append(
+                f"output.keep_versions: 应为非负整数或 null（null/缺省=不限份数、"
+                f"0=关闭归档、N>0=保留最近 N 份），实际为 {keep_raw!r}")
+        else:
+            keep_versions = keep_raw
+
     if errors:
         raise ConfigError(errors)
 
@@ -197,6 +234,8 @@ def load_config(raw: object) -> DeployConfig:
         ),
         notify=NotifyConfig(email=email),
         report=ReportConfig(fidelity_notes=tuple(fidelity_notes)),
+        output=OutputConfig(root=out_root, dir_name=out_dir_name,
+                            keep_versions=keep_versions),
     )
 
 

@@ -104,3 +104,6 @@ agent_workspace/phase0/
 #   ④ 本行覆盖上行 `workspace*.json`（保留上行以注明初始意图）。
 .obsidian/workspace*.json
 knowledge/.obsidian/
+
+# PD-0008: qs-deploy unified output root (deploy artifacts, keep out of git)
+/Demo_account_Real_account/

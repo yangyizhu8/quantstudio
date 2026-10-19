@@ -7,3 +7,5 @@ persistence:
   enabled: true
   state_file: "/tmp/fixture_rundaily_state.pkl"
   save_points: ["after_trading_end"]
+output:
+  root: output/deploy

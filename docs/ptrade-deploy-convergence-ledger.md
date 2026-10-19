@@ -44,6 +44,7 @@
 | PD-2026-0005 | closed（轮 2） | gate（gates.py） | aee3e77 |
 | PD-2026-0006 | closed（轮 3，⑤过 2026-10-15） | profiler+config+transformer+equiv | 38087eb（主仓本地 commit 2026-10-15；推送候令随批统出） |
 | PD-2026-0007 | closed（轮 4，④过待⑤） | profiler+config+transformer+equiv | 17c8f0c（主仓本地 commit 2026-10-19；推送候令随批统出） |
+| PD-2026-0008 | closed（轮 5，④过待⑤） | gates(P5)+config+deliver+quickmode+gui | 待⑤确认后随批 commit |
 
 > 回填记录：五条目 commit sha 已于 M8 本地轮回填（aee3e77，2026-10-11；trading 仓条目 fix_target 字段与本表同步落盘）；PD-0006 条目 sha 已于轮 3 回填（38087eb，2026-10-15）。推送后 sha 不变，双推完成即本表口径生效。
 
@@ -61,6 +62,20 @@
 - **能力增量**：`hv_canslim` / `hv_vol_regime` 由「P2 fail-closed 拒绝」转为 **7 阶段全 PASS**（6 铁律策略部署化通道补齐 2/2）；D1′ 判据在 45 个源上零误放行（39 真决策体全拒）。
 - 收敛判据对照：R 连续 **4** 轮 =0 ✓；N 序列 **4→2→1→0** 单调递减至零 ✓——工程侧收敛闭环进一步巩固（真实使用周期仍为最终口径）。
 - 证据：`docs/evidence/ptrade-deploy-pd0007-evidence.md`；方案：`docs/ptrade-deploy-mixedform-design.md`（②审通过）。
+
+## 4.3 轮 5（PD-0008 快捷模式 + 统一输出根 + P5 误报，2026-10-20）
+
+- **N₅=1**（**新域暴露**）：P5 未知 API 门禁误报（`history.keys()` / `ch.isdigit()` 一类局部变量
+  方法调用被报「契约表外」）——属**门禁噪音域**，非转换正确性域；根因 `call_name` 返根名 +
+  `_local_names` 漏 7 类作用域绑定；已修（补全绑定面 + 引擎全局 `g` 豁免，正负双测 9 用例）。
+- **R₅=0**（无复发）：轮 1-4 修复无复发；deploy 套件 **73/73**（49 既有 + 9 P5 + 15 快捷）。
+- **能力增量**：GUI 快捷模式（选本地产物 → 一键转换；薄壳唯一内核调用点不变，parity 不破）+
+  统一输出根 `Demo_account_Real_account/<中文策略名>/`（契约变更 D3=A；既有固件钉旧根 → 零回归）+
+  重转归档三档语义（`null`=不限 / `0`=关闭 / `N>0`=保留最近 N 份）。
+- 收敛判据说明：R 连续 **5** 轮 =0 ✓；N 序列 4→2→1→0→**1**——本轮增量为**新功能域**（GUI/交付层
+  首次纳入验收面）暴露，不构成转换正确性域回涨；据此登记判据适用边界（N 仅度量「转换正确性域」）。
+- 证据：`docs/evidence/ptrade-deploy-pd0008-evidence.md`；方案：`docs/ptrade-deploy-quickmode-design.md`
+  （②审通过 + 三条件 + D3=A）。
 
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 

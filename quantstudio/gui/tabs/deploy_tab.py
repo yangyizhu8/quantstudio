@@ -1,7 +1,11 @@
-"""Tab10: 转模拟盘/实盘（qs-deploy M5 薄壳）
+"""Tab10: 转模拟盘/实盘（qs-deploy M5 薄壳 + PD-0008 快捷模式）
 
-设计文档 docs/ptrade-deploy-pipeline-design.md §7.2：与「导出PTrade」tab 同族的
-下游段——PTrade 回测策略 → 模拟盘/实盘部署代码（P0-P6 内核流水线）。
+设计文档 docs/ptrade-deploy-pipeline-design.md §7.2 与
+docs/ptrade-deploy-quickmode-design.md（PD-0008 D5）：
+- **快捷模式**：选本地 PTrade 存量产物（`output/ptrade_export/**/*_ptrade.py`）→
+  选执行档位 → 一键转换（配置由内核纯函数 `quickmode` 生成，落
+  `output/.qs-deploy-quick/<strategy_id>.yaml`）；
+- **高级模式**：沿用 deploy.yaml 手写路径（不删不改，向后兼容）。
 
 薄壳纪律（§7.3 审计检查点）：本文件零转换逻辑，唯一内核调用点 = run_deploy_kernel
 （CLI 壳 cmd_deploy 与 parity 测试共用同一函数 → 哈希门禁可机检对等）。
@@ -13,16 +17,20 @@ from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import (
-    QFileDialog, QHBoxLayout, QLabel, QProgressBar, QTextEdit,
+    QFileDialog, QHBoxLayout, QLabel, QProgressBar, QTabWidget, QTextEdit,
     QVBoxLayout, QWidget,
 )
 from qfluentwidgets import (
-    BodyLabel, GroupHeaderCardWidget, LineEdit, PrimaryPushButton, PushButton,
+    BodyLabel, ComboBox, GroupHeaderCardWidget, LineEdit, PrimaryPushButton,
+    PushButton,
 )
 
 from ..skin import PageHeader
 
 logger = logging.getLogger(__name__)
+
+#: 快捷页执行档位（与 config.PROFILES 同序；默认日线尾盘）
+QUICK_PROFILES = ("daily_eod_1450", "daily_open_0931", "minute_keep")
 
 
 def run_deploy_kernel(config_path: str) -> dict:
@@ -57,11 +65,12 @@ class DeployWorker(QThread):
 
 
 class DeployTab(QWidget):
-    """转模拟盘/实盘 tab：deploy.yaml 选择 → 运行 → 报告展示（薄壳）。"""
+    """转模拟盘/实盘 tab：快捷模式（选策略）+ 高级模式（deploy.yaml）→ 运行 → 报告。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._worker = None
+        self._strategies = []
         self._setup_ui()
 
     # ------------------------------------------------------------------
@@ -75,7 +84,71 @@ class DeployTab(QWidget):
             "PTrade 回测策略 → 模拟盘/实盘部署代码 · P0-P6 内核流水线 · "
             "与 qs-compile deploy 同内核（产物 SHA256 对等）"))
 
-        # 部署配置选择（与 CLI 完全同输入：deploy.yaml 文件）
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._build_quick_page(), "快捷模式")
+        self.tabs.addTab(self._build_advanced_page(), "高级模式（deploy.yaml）")
+        layout.addWidget(self.tabs)
+
+        action_row = QHBoxLayout()
+        self.status_label = BodyLabel("就绪")
+        action_row.addWidget(self.status_label, 1)
+        layout.addLayout(action_row)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        layout.addWidget(self.progress_bar)
+
+        layout.addWidget(QLabel("转换报告（逐段状态 / 注记 / 产物）"))
+        self.report_view = QTextEdit()
+        self.report_view.setReadOnly(True)
+        layout.addWidget(self.report_view, 1)
+
+        self._refresh_strategies()
+
+    def _build_quick_page(self) -> QWidget:
+        page = QWidget()
+        outer = QVBoxLayout(page)
+
+        grp = GroupHeaderCardWidget()
+        grp.setTitle("本地存量策略（output/ptrade_export/**/*_ptrade.py）")
+        inner = QWidget()
+        row = QHBoxLayout(inner)
+        grp.layout().addWidget(inner)
+
+        self.strategy_combo = ComboBox()
+        self.strategy_combo.setMinimumWidth(480)
+        row.addWidget(self.strategy_combo, 1)
+        refresh_btn = PushButton("刷新扫描")
+        refresh_btn.clicked.connect(self._refresh_strategies)
+        row.addWidget(refresh_btn)
+        outer.addWidget(grp)
+
+        grp2 = GroupHeaderCardWidget()
+        grp2.setTitle("执行档位与输出")
+        inner2 = QWidget()
+        row2 = QHBoxLayout(inner2)
+        grp2.layout().addWidget(inner2)
+        self.profile_combo = ComboBox()
+        self.profile_combo.addItems(list(QUICK_PROFILES))
+        self.profile_combo.setCurrentIndex(0)
+        row2.addWidget(BodyLabel("执行档位"))
+        row2.addWidget(self.profile_combo)
+        self.out_hint = BodyLabel("输出：Demo_account_Real_account/<策略名>/")
+        row2.addWidget(self.out_hint, 1)
+        outer.addWidget(grp2)
+
+        row3 = QHBoxLayout()
+        self.quick_btn = PrimaryPushButton("一键转换")
+        self.quick_btn.clicked.connect(self._on_quick_clicked)
+        row3.addWidget(self.quick_btn)
+        row3.addStretch(1)
+        outer.addLayout(row3)
+        outer.addStretch(1)
+        return page
+
+    def _build_advanced_page(self) -> QWidget:
+        page = QWidget()
+        outer = QVBoxLayout(page)
+
         grp_cfg = GroupHeaderCardWidget()
         grp_cfg.setTitle("部署配置（deploy.yaml）")
         inner = QWidget()
@@ -89,28 +162,71 @@ class DeployTab(QWidget):
         browse_btn = PushButton("浏览...")
         browse_btn.clicked.connect(self._browse_config)
         row.addWidget(browse_btn)
-        layout.addWidget(grp_cfg)
+        outer.addWidget(grp_cfg)
 
-        # 动作 + 进度
-        action_row = QHBoxLayout()
+        row2 = QHBoxLayout()
         self.run_btn = PrimaryPushButton("开始转换")
         self.run_btn.clicked.connect(self._on_start_clicked)
-        action_row.addWidget(self.run_btn)
-        self.status_label = BodyLabel("就绪")
-        action_row.addWidget(self.status_label, 1)
-        layout.addLayout(action_row)
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        layout.addWidget(self.progress_bar)
-
-        # 报告区
-        layout.addWidget(QLabel("转换报告（逐段状态 / 注记 / 产物）"))
-        self.report_view = QTextEdit()
-        self.report_view.setReadOnly(True)
-        layout.addWidget(self.report_view, 1)
+        row2.addWidget(self.run_btn)
+        row2.addStretch(1)
+        outer.addLayout(row2)
+        outer.addStretch(1)
+        return page
 
     # ------------------------------------------------------------------
-    # 交互
+    # 快捷模式
+    # ------------------------------------------------------------------
+    def _refresh_strategies(self):
+        """扫描本地存量产物（失败降级为空列表，不阻塞 UI）。"""
+        from quantstudio.ptrade_deploy.quickmode import discover_strategies
+        try:
+            self._strategies = discover_strategies()
+        except Exception:
+            logger.exception("策略扫描失败（降级为空列表）")
+            self._strategies = []
+        self.strategy_combo.clear()
+        for item in self._strategies:
+            self.strategy_combo.addItem(
+                f"{item['name']}（{item['strategy_id']}）", userData=item)
+        if not hasattr(self, "status_label"):
+            return
+        if self._strategies:
+            self.status_label.setText(f"发现 {len(self._strategies)} 个可部署产物")
+        else:
+            self.status_label.setText("未发现 *_ptrade.py 产物（先做「转 PTrade」）")
+
+    def _on_quick_clicked(self):
+        item = self.strategy_combo.currentData()
+        if not item:
+            self.status_label.setText("请先选择本地策略")
+            return
+        if self._worker is not None and self._worker.isRunning():
+            self.status_label.setText("转换进行中，请等待完成")
+            return
+        from quantstudio.ptrade_deploy.quickmode import write_quick_config
+        try:
+            profile = (self.profile_combo.currentText() or QUICK_PROFILES[0]).strip()
+            config_path = write_quick_config(
+                item["name"], item["product_path"], profile=profile)
+        except Exception as exc:  # 配置生成失败不进入 worker
+            logger.exception("快捷配置生成失败")
+            self.status_label.setText(f"配置生成失败: {exc}")
+            return
+        self.status_label.setText(f"配置已生成：{config_path}")
+        self._start(str(config_path))
+
+    def _start(self, config_path: str):
+        self.quick_btn.setEnabled(False)
+        self.run_btn.setEnabled(False)
+        self.status_label.setText("运行中...")
+        self._worker = DeployWorker(config_path)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.finished_ok.connect(self._on_finished)
+        self._worker.finished_err.connect(self._on_error)
+        self._worker.start()
+
+    # ------------------------------------------------------------------
+    # 高级模式（原行为不变）
     # ------------------------------------------------------------------
     def _browse_config(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -129,19 +245,17 @@ class DeployTab(QWidget):
         if self._worker is not None and self._worker.isRunning():
             self.status_label.setText("转换进行中，请等待完成")
             return
-        self.run_btn.setEnabled(False)
-        self.status_label.setText("运行中...")
-        self._worker = DeployWorker(config_path)
-        self._worker.progress.connect(self._on_progress)
-        self._worker.finished_ok.connect(self._on_finished)
-        self._worker.finished_err.connect(self._on_error)
-        self._worker.start()
+        self._start(config_path)
 
+    # ------------------------------------------------------------------
+    # 回调
+    # ------------------------------------------------------------------
     def _on_progress(self, pct: int, msg: str):
         self.progress_bar.setValue(pct)
         self.status_label.setText(msg)
 
     def _on_finished(self, d: dict):
+        self.quick_btn.setEnabled(True)
         self.run_btn.setEnabled(True)
         self.progress_bar.setValue(100)
         self.status_label.setText(f"完成（{d['status']}）")
@@ -159,6 +273,7 @@ class DeployTab(QWidget):
         self.report_view.setPlainText("\n".join(lines) or "(无报告内容)")
 
     def _on_error(self, msg: str):
+        self.quick_btn.setEnabled(True)
         self.run_btn.setEnabled(True)
         self.status_label.setText(f"失败: {msg}")
         self.report_view.setPlainText(f"ERROR: {msg}")

@@ -2,7 +2,9 @@
 """P6 交付段（对应设计文档 docs/ptrade-deploy-pipeline-design.md §5.2 P6 / §2 / §14）。
 
 职责：
-- 产物写入 output/deploy/<strategy_id>/<strategy_id>_trade.py；
+- 产物写入 `<输出根>/<策略目录名>/<strategy_id>_trade.py`（PD-0008：输出根缺省
+  仓库根 `Demo_account_Real_account`，目录名可中文；旧 `output/deploy` 保留为
+  显式可选值）；
 - 转换报告 report.md（改写清单逐条 + 保真差异声明（按 execution.profile 生成对应
   声明文案）+ 门禁结果汇总）；
 - runbook.md 模板（占位符化：模拟盘部署步骤 / 验收清单 / 实盘迁移清单 / 状态重建流程；
@@ -20,8 +22,70 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
-#: 交付根目录（cwd 相对；与仓库 .gitignore 的 output/ 规则对齐）
-OUTPUT_ROOT = Path("output") / "deploy"
+#: 仓库根（deliver.py 位于 <repo>/quantstudio/ptrade_deploy/ → parents[2]）
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+#: 缺省输出根目录名（PD-0008 D3：仓库根下统一输出根，尊重用户口径）
+DEFAULT_OUTPUT_ROOT_NAME = "Demo_account_Real_account"
+
+#: 旧缺省（output/deploy）——保留为**显式可选值**（既有固件钉此值保零回归）
+LEGACY_OUTPUT_ROOT = Path("output") / "deploy"
+
+#: 兼容旧引用名（外部若 import OUTPUT_ROOT 仍可用）
+OUTPUT_ROOT = LEGACY_OUTPUT_ROOT
+
+#: 子目录名过滤（Windows 非法字符 + 控制符）；长度上限 40（PD-0008 条件②，防 MAX_PATH 260）
+_UNSAFE_DIR_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+MAX_DIR_NAME_LEN = 40
+
+
+def safe_dir_name(name: str, fallback: str = "strategy") -> str:
+    """策略子目录名过滤：保留中文，剔除非法字符/控制符，长度 ≤ 40。"""
+    cleaned = _UNSAFE_DIR_CHARS.sub("_", str(name or "")).strip().strip(".").strip()
+    if not cleaned:
+        cleaned = str(fallback or "strategy")
+    return cleaned[:MAX_DIR_NAME_LEN]
+
+
+def resolve_out_root(cfg, out_root=None) -> Path:
+    """输出根解析：显式参数 > cfg.output.root > 缺省（仓库根 / Demo_account_Real_account）。
+
+    相对路径一律按**仓库根**解析（与 cwd 无关，保证跨入口确定性）。
+    """
+    raw = out_root
+    if raw is None:
+        raw = getattr(getattr(cfg, "output", None), "root", "") or None
+    base = Path(raw) if raw else (REPO_ROOT / DEFAULT_OUTPUT_ROOT_NAME)
+    if not base.is_absolute():
+        base = REPO_ROOT / base
+    return base
+
+
+def _archive_previous(out_dir: Path, keep_versions) -> None:
+    """重转归档（PD-0008 D4）：``None``/缺省=不限份数；``0``=关闭归档；``N>0``=保留最近 N 份。
+
+    归档目录用 ``vNNN`` 序号（不用时间戳）——保证同输入多次转换的目录结构可复跑、
+    不污染产物/报告文本的确定性（§7.3 parity 基础）。
+    """
+    if keep_versions == 0 or not out_dir.is_dir():
+        return
+    files = sorted(p for p in out_dir.iterdir() if p.is_file())
+    if not files:
+        return
+    arch_root = out_dir / "_archive"
+    seq = 1
+    while (arch_root / f"v{seq:03d}").exists():
+        seq += 1
+    dest = arch_root / f"v{seq:03d}"
+    dest.mkdir(parents=True, exist_ok=True)
+    for path in files:
+        path.replace(dest / path.name)
+    if keep_versions is not None and keep_versions > 0:
+        versions = sorted(p for p in arch_root.iterdir() if p.is_dir())
+        for old in versions[:-keep_versions]:
+            for f in old.iterdir():
+                f.unlink()
+            old.rmdir()
 
 #: 敏感词模式（§2.2：命中 → ROUTE-TO-TRADING 标注；列表常量便于扩展）
 SENSITIVE_PATTERNS: Dict[str, str] = {
@@ -221,8 +285,18 @@ def build_runbook(cfg) -> str:
 def deliver(product_text: str, edits: List[Dict[str, str]], equiv_result,
             gate_result, cfg, profile: Dict[str, object],
             out_root: Optional[Path] = None) -> DeliverResult:
-    """P6 交付：产物/报告/runbook 落盘 + 敏感词扫描路由标注。"""
-    out_dir = (Path(out_root) if out_root else OUTPUT_ROOT) / cfg.strategy_id
+    """P6 交付：产物/报告/runbook 落盘 + 敏感词扫描路由标注。
+
+    PD-0008：输出根与子目录名由 ``cfg.output`` 决定（缺省「仓库根 /
+    Demo_account_Real_account」；``dir_name`` 可中文）；重转按 ``keep_versions``
+    归档上一版（D4），主位恒为最新。
+    """
+    base = resolve_out_root(cfg, out_root)
+    output_cfg = getattr(cfg, "output", None)
+    dir_name = safe_dir_name(getattr(output_cfg, "dir_name", "") or cfg.strategy_id,
+                             fallback=cfg.strategy_id or "strategy")
+    out_dir = base / dir_name
+    _archive_previous(out_dir, getattr(output_cfg, "keep_versions", None))
     out_dir.mkdir(parents=True, exist_ok=True)
 
     product_path = out_dir / f"{cfg.strategy_id}_trade.py"

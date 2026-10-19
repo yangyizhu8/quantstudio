@@ -28,6 +28,9 @@ from quantstudio.ptrade_deploy import run_deploy  # noqa: E402
 from quantstudio.strategy_compiler.cli import main  # noqa: E402
 from quantstudio.gui.tabs.deploy_tab import DeployTab, run_deploy_kernel  # noqa: E402
 
+#: 全进程常驻 QApplication（见 smoke 用例注释）
+_QT_APP = None
+
 
 def _sha_of_kernel_run() -> tuple[str, str]:
     d = run_deploy(str(DAILY_CFG)).to_dict()
@@ -51,8 +54,12 @@ def test_three_way_parity_sha():
 
 
 def test_deploy_tab_offscreen_smoke():
+    # QApplication 必须全进程存活（qfluentwidgets 的 QConfig 是 QObject 单例，
+    # app 被回收后其 C++ 侧悬空 → 后续 Qt 用例 RuntimeError）。故提到模块级持有。
+    global _QT_APP
     from PyQt6.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication([])
+    if _QT_APP is None:
+        _QT_APP = QApplication.instance() or QApplication([])
     tab = DeployTab()
     assert tab.run_btn.text() == "开始转换"
     assert tab.config_edit is not None
