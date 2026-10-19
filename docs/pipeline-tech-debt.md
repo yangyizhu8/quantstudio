@@ -369,3 +369,27 @@ else:
 - **纪律关联**：本条与 W-3 同族（可观测性缺陷），且是**「看到了但看到的是错的」**形态——
   比 W-3 的「看不到」更隐蔽：**W-3 会让人知道证据没了，W-4 会让人拿错证据去定罪**。
 
+---
+
+## 工具链卫生项（2026-10-19 登记 · 本线专属 · 不改历史）
+
+### H-1 commit message 首字符带 UTF-8 BOM
+
+- **现象**：本线 2026-10-19 前的 **8 笔**提交（`28fc9c9`…`f6f6dbe`）commit message **首字符带 UTF-8 BOM**
+  （`﻿docs(...)`）。**实测（原始 commit 对象直读首字节，非日志显示）**：
+  - 本线 8 笔：**BOM = 8/8**
+  - 同区间他线 5 笔（`a7172f9`…`1ee8e8b`）：**BOM = 0/5**
+  ⇒ **BOM 专属本线**，非仓内普遍现象。
+- **根因（已定位）**：本线在 **Windows PowerShell 5.1.26100.9444** 下用
+  `Set-Content -Encoding UTF8` 写 commit message 临时文件，再 `git commit -F`。
+  **PS 5.1 的 `-Encoding UTF8` 必写 BOM**（PS 7 才有 `utf8NoBOM`）。
+  他线走的路径无 BOM。
+- **后果**：**仅表述层**——不影响提交内容、树对象、diff；BOM 落在 message 首字符，
+  部分工具链的 `git log --oneline` 会将其显示为不可见前缀。
+- **处置（②审 2026-10-19 裁定）**：**不改历史、不重写已推提交**；
+  **下次提交前消除**——本线改用
+  `[System.IO.File]::WriteAllText($p, $msg, (New-Object System.Text.UTF8Encoding($false)))`
+  写 commit message（**不写 BOM**），再 `git commit -F $p`。
+- **自证**：本登记所在的提交（**BOM-free 样本**）即以该方式提交，可据
+  `git cat-file commit <sha>` 首字节复核（应为 `d` 而非 `EF BB BF`）。
+
