@@ -48,7 +48,7 @@
 
 ## 4.1 轮 3（PD-0006 run_daily 源形态，2026-10-11）
 
-- **N₃=1**（新发现）：上游 convert-pipeline 在途把 hv_canslim/hv_vol_regime 源重写为混合形态（handle_data stub + run_daily 真逻辑挂载并存）——挂载对象歧义，P2 显式拒绝（fail-closed）；混合形态支持待上游形态稳定后单独立项（vault 观察项）。
+- **N₃=1**（新发现；**2026-10-19 更正成因**）：上游产出中存在**混合形态**源（`handle_data` 诊断型 stub + 单 `run_daily` 真逻辑挂载并存，样例 hv_canslim / hv_vol_regime，**mtime 2026-08-27 = 上游既有形态，非在途重写**）——PD-0006 的 P2 显式拒绝（fail-closed，防双驱动坏产物）行为正确；因该 stub 非决策体，此形态实为**能力缺口**（6 铁律策略中 2 个受制），**已立 PD-0007**（`docs/ptrade-deploy-mixedform-design.md`，待②审）。
 - **R₃=0**（无复发）：轮 1-2 五条目修复无复发；既有 25 用例全绿（1 处断言演进放宽归因他线合法叠加）。
 - **能力增量**：hv_tech_etf_mvo 复现件转正（7 阶段全 PASS）；deploy 套件 35/35；证据 `docs/evidence/ptrade-deploy-pd0006-evidence.md`。
 - 收敛判据对照：R 连续 3 轮 =0 ✓（轮 1/2/3）；N 序列 4→2→1 单调递减 ✓——**收敛闭环判据达成**（工程侧；真实使用周期继续验证）。

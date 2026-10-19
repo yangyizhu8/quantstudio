@@ -24,20 +24,28 @@ runner 无需改动（profile dict 全程透传，P2/P3/P4 直接消费新键）
 | 1 | 新固件+6-8 用例 | ✅ 10 用例（超出：混合形态边界用例追加） |
 | 2 | hv_tech_etf_mvo 真实产物 7 阶段全 PASS（P4 等价零回退） | ✅ P0→P6 全 PASS（原 P2 blocked 复现件转正） |
 | 3 | 既有 25 用例全绿 | ✅ 25/25（含 1 处断言演进放宽：`test_main_window_registration_ast` `==10`→`>=10`，归因他线 M5.2 件6 追加 row==10 tab 的合法叠加，锚定改为 deploy 项存在性+位置，断言语义不弱化） |
-| 4 | V6 池补齐 4/4 | ⚠️ **口径修正**：tech_etf_mvo ✅ PASS + fall_reversal ✅ PASS；canslim/vol_regime **非本方案范围 FAIL**——见 §3 归因（他线源形态演进） |
+| 4 | V6 池补齐 4/4 | ⚠️ **口径修正**：tech_etf_mvo ✅ PASS + fall_reversal ✅ PASS；canslim/vol_regime **非本方案范围 FAIL**——见 §3 归因（上游**既有**混合形态；2026-10-19 成因更正） |
 | 5 | CONTRACT GATE 零干扰 | ✅ `check_fund_matrix.py --check` 哈希一致（本地快验；CI 全量随推送批） |
 
 **deploy 套件终态：35/35 全绿**（新 10+既有 25，1.65s）。
 
-## 3. V6 池 canslim/vol_regime 归因（他线演进，非本方案回归）
+## 3. V6 池 canslim/vol_regime 归因（上游**既有**混合形态；2026-10-19 成因更正）
 
-**现象**：两策略 P4 FAIL（26 处 diff：initialize 错位+daily_logic 函数体 mismatch）。
+**现象**：两策略 P4 FAIL（26 处 diff：initialize 错位 + 决策函数体 mismatch）。
 
-**取证**：源文件（`output/ptrade_export/`）已被他线在途 convert-pipeline 重写为**混合形态**——`handle_data` 空操作 stub（docstring「引擎每 bar 调用…此处空操作」）+ `run_daily(context, daily_logic, time=…)` 真逻辑挂载并存。M7 验收时两策略为纯 handle_data 形态（PASS 基线），源演进在 M8 后发生。
+**取证（2026-10-19 复查，取代原「在途重写」表述）**：两策略源均为**上游既有混合形态**，mtime 均为
+**2026-08-27**：`initialize` 内单 `run_daily` 挂载**真决策体**（CANSLIM：`daily_logic` @`time='14:55'`；
+vol_regime：`monthly_rebalance` @`time='15:00'`），而 `handle_data` 是**诊断型 stub**
+（docstring「引擎每 bar 调用…此处空操作」/「Bar-level hook（daily-bar-v1 close 模式；决策在 run_daily 15:00）」，
+函数体仅 `_ensure_runtime_state()` + `log.*`）。全域扫描 `output/ptrade_export/**/*_ptrade.py`：
+该形态**仅此 2 个策略**（去重后；其余为纯 handle_data 或纯 run_daily 形态）。
+→ 原表述「他线在途重写 / M7 时为纯 handle_data 形态」**不成立**，据此更正；PD-0006 的 P2 拒绝行为本身仍正确（fail-closed）。
 
 **处置（实施中增强）**：P3 会对混合形态选错挂载对象（包装 stub 而非真逻辑）→ 原 P4 隐晦拦截（26 处错位 diff，可诊断性差）。本实施在 P2 增加**混合形态显式拒绝**（「混合形态暂不支持——挂载对象歧义；请用纯 handle_data 源或纯 run_daily 源」）+ 负向测试 `test_p2_hybrid_form_explicitly_rejected`。fail-closed 行为正确保留（防双驱动坏产物：_deploy_daily_exec 空操作+源挂载照跑）。
 
-**边界声明**：混合形态支持待上游 convert-pipeline 形态稳定后**单独立项**（vault 登记观察项）；本方案 D3 边界（纯单挂载源）不变。
+**边界声明（2026-10-19 更新）**：因该 stub **非决策体**，此形态实为**能力缺口**——**已立 PD-0007**
+（`docs/ptrade-deploy-mixedform-design.md`：诊断型 stub 判据 + 单挂载走挂载路径；实质 handle_data + 挂载仍 fail-closed），
+待②审计。PD-0006 的 D3 边界（纯单挂载源）不变。
 
 ## 4. 平台文档依据（先查文档铁律）
 
