@@ -215,7 +215,7 @@ quantstudio/backtest/strategies/     （且仅 .py 与 .md）
 | → PTrade（source 路径） | `qs-compile import <strategy.py> [--etf-pool-start-date ...]` | 成熟（六策略横验证基线） |
 | → 大 QMT 迅投内置 Python（spec 路径） | `qs-compile package <strategy_spec.json> --target qmt --out <dir>` | **M2a 已打通**（首策略 `etf_hot_theme_rotation`） |
 | → QMT（source 路径） | `qs-compile import <strategy.py> --target qmt` | M2b 在途（六策略门槛实际通道） |
-| PTrade 回测产物 → 模拟盘/实盘部署 | `qs-compile deploy <deploy.yaml>` | 新增（qs-deploy：P0-P6 内核，CLI/PyQt 双端对等；**源形态**支持 handle_data、run_daily 单挂载（PD-0006，2026-10-15）与「诊断型 stub handle_data + 单挂载」混合形态（PD-0007，2026-10-19），多挂载与「实质 handle_data + 挂载」fail-closed，详见 `docs/ptrade-deploy-pipeline-design.md`） |
+| PTrade 回测产物 → 模拟盘/实盘部署 | `qs-compile deploy <deploy.yaml>` | 新增（qs-deploy：P0-P6 内核，CLI/PyQt 双端对等；**源形态**支持 handle_data、run_daily 单挂载（PD-0006，2026-10-15）与「诊断型 stub handle_data + 单挂载」混合形态（PD-0007，2026-10-19），多挂载与「实质 handle_data + 挂载」fail-closed；**GUI 快捷模式**选本地产物一键转换（PD-0008，2026-10-20），产物统一落 `Demo_account_Real_account/<策略名>/`（`output.root` / `--out-root` 可覆盖），详见 `docs/ptrade-deploy-pipeline-design.md`） |
 
 **QMT 产物契约（M2a）**：`#coding:gbk` 编码（不可编码字符 fail-closed BLOCK，独立退出码 5，不静默替换）；生命周期 `init(C)` / `handlebar(C)`（对齐 `daily-bar-v1` + 日线订阅，`minute-bar-v1` 显式 deny）；取数经 `C.get_market_data_ex` + **E1 语义**（剔除当日 bar，`count` 多取一根取 `[-2]`）+ 前复权 `dividend_type`；下单经 `passorder`（23 买 / 24 卖）；持仓经 `get_trade_detail_data(acct,'STOCK','POSITION')`；动态 ETF 池在转换期固化静态直灌（双端铁律同源）；`run_card` 顶层 `qmt_target` 字段。QMT API 白名单校验 `validate_qmt_portability`（未登记即 BLOCK）+ 禁用集（`get_history_data` deprecated / 非 ex 版 `get_market_data` / `run_time` 回测域无效）。
 

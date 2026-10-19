@@ -572,6 +572,10 @@ vault 知识库回哺）。智能体在策略生成阶段不承担部署化—�
 判据保守 fail-closed）。多挂载与「实质 `handle_data` + 挂载」fail-closed 拒绝。该边界属部署通道职责，
 策略生成阶段无需处理。
 
+**快捷模式与输出根（PD-0008，2026-10-20）**：GUI 可直接选本地 PTrade 产物一键部署（免手写 yaml），
+产物统一落 `Demo_account_Real_account/<策略名>/`；高级模式（deploy.yaml）与 CLI 行为不变。
+P5 未知 API 判定同步修正（局部变量方法调用不再误报）。
+
 
 ---
 

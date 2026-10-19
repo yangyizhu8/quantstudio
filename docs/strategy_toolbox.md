@@ -684,6 +684,17 @@ stub 原样保留、以挂载目标为执行体）。边界：**多挂载**与�
 （双驱动风险）。详见 `docs/ptrade-deploy-rundaily-design.md`、`docs/ptrade-deploy-mixedform-design.md`、
 `docs/evidence/ptrade-deploy-pd0006-evidence.md`、`docs/evidence/ptrade-deploy-pd0007-evidence.md`。
 
+**快捷模式与统一输出根（PD-0008，2026-10-20）**：GUI「转模拟盘/实盘」tab 分两页——**快捷模式**选
+`output/ptrade_export/**/*_ptrade.py` 本地产物（递归扫描；`_verify*`/`_probe*` 默认过滤）→ 选执行档位
+（默认 `daily_eod_1450`）→ 一键转换，配置由内核 `quickmode` 生成（`output/.qs-deploy-quick/<id>.yaml`）；
+**高级模式**保留 deploy.yaml 手写路径（行为不变）。产物默认落 `<仓库根>/Demo_account_Real_account/<策略目录名>/`
+（目录名可中文、≤40 字符；`strategy_id` 为 ASCII，名称含非 ASCII 时追加名称哈希后缀以保证稳定）；
+`output.root` 或 CLI `--out-root` 可覆盖。同策略重转默认把上一版三件归档至 `_archive/vNNN/`
+（`output.keep_versions`：`null`=不限份数、`0`=关闭归档、`N>0`=保留最近 N 份）。
+P5 未知 API 判定同步修正：局部变量方法调用（`history.keys()`、`ch.isdigit()`）不再误报
+（补全 7 类作用域绑定 + 引擎全局 `g` 豁免；正例仍捕获）。
+详见 `docs/ptrade-deploy-quickmode-design.md`、`docs/evidence/ptrade-deploy-pd0008-evidence.md`。
+
 
 ---
 
