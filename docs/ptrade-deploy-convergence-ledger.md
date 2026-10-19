@@ -43,8 +43,9 @@
 | PD-2026-0004 | closed（轮 1） | gate（gates.py） | aee3e77 |
 | PD-2026-0005 | closed（轮 2） | gate（gates.py） | aee3e77 |
 | PD-2026-0006 | closed（轮 3，⑤过 2026-10-15） | profiler+config+transformer+equiv | 38087eb（主仓本地 commit 2026-10-15；推送候令随批统出） |
-| PD-2026-0007 | closed（轮 4，④过待⑤） | profiler+config+transformer+equiv | 17c8f0c（主仓本地 commit 2026-10-19；推送候令随批统出） |
-| PD-2026-0008 | closed（轮 5，④过待⑤） | gates(P5)+config+deliver+quickmode+gui | ad7c0db + 5649224（主仓本地 commit 2026-10-20；推送候令随批统出） |
+| PD-2026-0007 | closed（轮 4，⑤过 2026-10-20「全部A」） | profiler+config+transformer+equiv | 17c8f0c（主仓本地 commit 2026-10-19；推送候令随批统出） |
+| PD-2026-0008 | closed（轮 5，⑤过 2026-10-20「裁A」） | gates(P5)+config+deliver+quickmode+gui | ad7c0db + 5649224（主仓本地 commit 2026-10-20；推送候令随批统出） |
+| PD-2026-0009 | closed（轮 6，当日发现当日修） | kernel（preflight 回哺读取） | 214aedf（主仓本地 commit 2026-10-20；推送候令随批统出） |
 
 > 回填记录：五条目 commit sha 已于 M8 本地轮回填（aee3e77，2026-10-11；trading 仓条目 fix_target 字段与本表同步落盘）；PD-0006 条目 sha 已于轮 3 回填（38087eb，2026-10-15）；PD-0007 已于轮 4 回填（17c8f0c，2026-10-19）；PD-0008 已于轮 5 回填（ad7c0db + P5 5649224，2026-10-20）。推送后 sha 不变，双推完成即本表口径生效。
 
@@ -76,6 +77,19 @@
   首次纳入验收面）暴露，不构成转换正确性域回涨；据此登记判据适用边界（N 仅度量「转换正确性域」）。
 - 证据：`docs/evidence/ptrade-deploy-pd0008-evidence.md`；方案：`docs/ptrade-deploy-quickmode-design.md`
   （②审通过 + 三条件 + D3=A）。
+
+## 4.4 轮 6（PD-2026-0009 vault BOM 静默断链，2026-10-20）
+
+- **N₆=1**（**回哺链域**）：vault 8 条目中 5 条（PD-2026-0001..0005）因 BOM 被 P0 **静默跳过**
+  （`read_vault` 实际只读 3 条、零告警）——「面上存在、实质失效」，属最隐蔽的一类断链。
+  根因：`_parse_frontmatter` 以 `lines[0].strip() == "---"` 起判，而 `str.strip()` 不去 BOM。
+  已修：`read_text(encoding="utf-8-sig")` + PD-* 解析失败告警（断链可见）+ 数据侧剥离 5 条 BOM。
+- **R₆=0**（无复发）：轮 1-5 修复无复发；deploy 套件 **79/79**（73 + 6 vault 用例）。
+- **能力增量**：回哺链由 3/8 恢复为 **9/9 全读**（0 open、0 告警）；此后任何条目解析失败都会
+  以 `vault_warnings` 进 P0 findings，不再沉默。
+- 判据说明：本轮同属**非转换正确性域**（回哺/知识域）。R 连续 **6** 轮 =0；N 序列
+  4→2→1→0→1→1——后两次「1」皆为**新域首次纳入验收面**，非既有域回退。
+- 证据：trading 仓 vault `PD-2026-0009`；主仓 `tests/test_deploy_vault.py`（6 用例）。
 
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 
