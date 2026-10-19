@@ -121,12 +121,21 @@ def read_vault(vault_dir: Optional[Path] = None) -> Tuple[List[Dict[str, str]], 
     # sorted 保证确定性（同输入同输出，交付段 SHA256 门禁前提）
     for md in sorted(vdir.glob("*.md")):
         try:
-            text = md.read_text(encoding="utf-8")
+            # PD-2026-0009：用 utf-8-sig 读——vault 条目可能被带 BOM 的编辑器写出，
+            # 而 `_parse_frontmatter` 以 `lines[0].strip() == "---"` 起判，BOM 会让
+            # 首行变成 "\ufeff---"（str.strip 不去 BOM）→ 条目被**静默跳过**，
+            # 回哺链面上"存在"实则未生效（实测 8 条中 5 条如此）。
+            text = md.read_text(encoding="utf-8-sig")
         except OSError as exc:  # 单文件损坏不拖垮整段
             warnings.append(f"vault 条目读取失败（跳过）: {md.name} ({exc})")
             continue
         fm = _parse_frontmatter(text)
         if not fm:
+            # 断链必须可见：条目文件名是 PD-* 但 frontmatter 解析不出来 → 告警
+            if md.stem.upper().startswith("PD-"):
+                warnings.append(
+                    "vault 条目 frontmatter 解析失败（回哺未生效）："
+                    f"{md.name}——检查首行是否 `---`（BOM/空白）或 YAML 形态")
             continue  # 非 frontmatter 文件（README 等）不计入条目
         entries.append({
             "file": md.name,
