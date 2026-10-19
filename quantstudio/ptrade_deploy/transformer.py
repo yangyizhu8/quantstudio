@@ -413,10 +413,13 @@ def _apply_mount(tree: ast.Module, cfg, edits: List[Dict[str, str]],
 
     # PD-0006 第二输入形态：run_daily 源（无 handle_data，恰 1 个执行挂载）——
     # 包装源挂载函数（如 weekly_rebalance）并替换源注册语句为部署档位挂载。
+    # PD-0007：混合形态（handle_data 为诊断型 stub + 恰 1 挂载）走同一路径——
+    # 以挂载目标为部署执行体，stub 函数体保持原样（诊断日志不丢、语义零变化）。
     mounts = list((profile or {}).get("run_daily_mounts") or [])
+    stub_mixed = bool((profile or {}).get("handle_data_stub"))
     src_fn_name = None
     src_time = None
-    if handle_data is None and len(mounts) == 1 and mounts[0].get("func"):
+    if (handle_data is None or stub_mixed) and len(mounts) == 1 and mounts[0].get("func"):
         src_fn_name = mounts[0]["func"]
         src_time = mounts[0].get("time")
         for i, node in enumerate(tree.body):

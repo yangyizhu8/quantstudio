@@ -275,6 +275,113 @@ def _run_daily_mounts(tree: ast.Module) -> List[Dict[str, str]]:
     return mounts
 
 
+# ------------------------------------------------------- PD-0007 D1′ 判据 --
+#: 诊断型 stub 黑名单前缀（命中即判非 stub；大小写敏感的保守前缀表）
+_STUB_BLACKLIST_PREFIXES = (
+    "order", "cancel", "get_", "filter_", "set_", "run_daily", "run_interval",
+    "passorder", "batch", "buy", "sell", "close", "position",
+)
+
+#: 诊断型 stub 允许的日志/输出调用全名
+_STUB_LOG_CALLS = frozenset({"log.debug", "log.info", "log.warning",
+                             "log.error", "print"})
+
+
+def _callee_full(call: ast.Call) -> str:
+    """取调用全名形态：`log.debug` / `print` / `_ensure_runtime_state` / ''（动态）。"""
+    fn = call.func
+    if isinstance(fn, ast.Attribute):
+        if isinstance(fn.value, ast.Name):
+            return f"{fn.value.id}.{fn.attr}"
+        return fn.attr
+    if isinstance(fn, ast.Name):
+        return fn.id
+    return ""
+
+
+def _is_blacklisted(base: str) -> bool:
+    return any(base.startswith(prefix) for prefix in _STUB_BLACKLIST_PREFIXES)
+
+
+def _scan_blacklist_calls(nodes, mod_funcs: Dict[str, ast.FunctionDef],
+                          depth: int = 2) -> List[str]:
+    """遍历 nodes 内**全部** Call 节点比对黑名单（PD-0007 ②审条件一）。
+
+    覆盖 log 调用参数内的嵌套调用（如 ``log.debug(f"{get_history(...)}")``）、
+    推导式内调用等——非仅语句顶层 callee。私有 helper 递归二级校验（限深 2），
+    防「stub 调私有 helper、helper 内下单」的间接绕过。
+    """
+    hits: List[str] = []
+    for node in nodes:
+        if not isinstance(node, ast.Call):
+            continue
+        full = _callee_full(node)
+        base = full.rsplit(".", 1)[-1] if full else ""
+        if not base:
+            continue
+        if base.startswith("_"):
+            helper = mod_funcs.get(base)
+            if helper is not None and depth > 0:
+                hits.extend(f"{base}→{hit}" for hit in
+                            _scan_blacklist_calls(ast.walk(helper), mod_funcs,
+                                                  depth - 1))
+            continue
+        if _is_blacklisted(base):
+            hits.append(f"{full}@L{getattr(node, 'lineno', 0)}")
+    return hits
+
+
+def _is_diagnostic_stub(fn: ast.FunctionDef,
+                        mod_funcs: Dict[str, ast.FunctionDef]
+                        ) -> Tuple[bool, List[str]]:
+    """PD-0007 D1′：判 handle_data 是否为「诊断型 stub」（不参与决策）。
+
+    顺序：黑名单优先（ast.walk 全节点）→ 禁状态赋值 → 噪声剥离（任意位置裸字符串
+    表达式，实证上游会把 docstring 写在 helper 之后）→ 可执行语句 ≤3 → 允许集
+    （日志 / 私有状态·上下文 helper）。任一不确定 → 非 stub（fail-closed）。
+    """
+    hits = _scan_blacklist_calls(ast.walk(fn), mod_funcs)
+    if hits:
+        return False, sorted(set(hits))[:5]
+
+    for node in ast.walk(fn):
+        if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign,
+                             ast.NamedExpr)):
+            return False, [f"含状态赋值 {type(node).__name__}@L"
+                           f"{getattr(node, 'lineno', 0)}"]
+
+    body = [stmt for stmt in fn.body
+            if not (isinstance(stmt, ast.Expr)
+                    and isinstance(stmt.value, ast.Constant)
+                    and isinstance(stmt.value.value, str))]
+    if len(body) > 3:
+        return False, [f"可执行语句 {len(body)} > 3"]
+
+    reasons: List[str] = []
+    for stmt in body:
+        if isinstance(stmt, ast.Pass):
+            continue
+        if isinstance(stmt, ast.Return):
+            if stmt.value is None or (isinstance(stmt.value, ast.Constant)
+                                      and stmt.value.value is None):
+                continue
+            return False, [f"return 非 None@L{getattr(stmt, 'lineno', 0)}"]
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+            full = _callee_full(stmt.value)
+            base = full.rsplit(".", 1)[-1] if full else ""
+            if full in _STUB_LOG_CALLS:
+                reasons.append(f"诊断日志 {full}@L{getattr(stmt, 'lineno', 0)}")
+                continue
+            if base.startswith("_") and base in mod_funcs:
+                reasons.append(f"状态 helper {full}@L{getattr(stmt, 'lineno', 0)}")
+                continue
+            return False, [f"非允许调用 {full or '<dynamic>'}@L"
+                           f"{getattr(stmt, 'lineno', 0)}"]
+        return False, [f"非允许语句 {type(stmt).__name__}@L"
+                       f"{getattr(stmt, 'lineno', 0)}"]
+    return True, reasons or ["仅 docstring/诊断日志/状态 helper"]
+
+
 def build_profile(source_text: str,
                   contract: Optional[Dict[str, dict]] = None) -> Dict[str, object]:
     """执行 P1 画像，输出 profile dict（结构见返回值各键）。"""
@@ -301,6 +408,20 @@ def build_profile(source_text: str,
             f"检测到 {len(run_daily_mounts)} 个 run_daily 挂载（多挂载源暂不支持，"
             "P2 将拒绝；PD-0006 D3 单挂载限制）")
 
+    # PD-0007：handle_data 诊断型 stub 判定（混合形态放行前提，D1′）
+    hd_fn = next((f for f in functions if f.name == "handle_data"), None)
+    mod_funcs = {f.name: f for f in functions}
+    handle_data_stub = False
+    handle_data_stub_reasons: List[str] = []
+    if hd_fn is not None:
+        handle_data_stub, handle_data_stub_reasons = _is_diagnostic_stub(
+            hd_fn, mod_funcs)
+        if handle_data_stub and run_daily_mounts:
+            warnings.append(
+                "handle_data 判为诊断型 stub（PD-0007 D1′）——混合形态：以 run_daily "
+                f"挂载目标 {run_daily_mounts[0].get('func')} 为部署执行体，"
+                "stub 原样保留（诊断日志不丢）")
+
     order_apis = sorted({
         name for node in ast.walk(tree)
         if isinstance(node, ast.Call)
@@ -323,5 +444,7 @@ def build_profile(source_text: str,
         "g_vars": g_vars,
         "g_exempt": g_exempt,
         "run_daily_mounts": run_daily_mounts,
+        "handle_data_stub": handle_data_stub,
+        "handle_data_stub_reasons": handle_data_stub_reasons,
         "warnings": warnings,
     }

@@ -224,14 +224,22 @@ def cross_validate(cfg: DeployConfig, profile: Dict[str, object]) -> List[str]:
             "应保持 minute_keep（§5.2 P2）")
     lifecycle = profile.get("lifecycle", [])
     mounts = profile.get("run_daily_mounts", [])
+    hd_stub = bool(profile.get("handle_data_stub"))
     if cfg.execution.profile != "minute_keep" and "handle_data" in lifecycle and mounts:
-        # PD-0006 边界：混合形态（handle_data 与 run_daily 挂载并存——上游
-        # convert-pipeline 曾产出的 stub+挂载体）挂载对象有歧义（stub 非真逻辑），
-        # 显式拒绝优先于 P4 隐晦 diff 拦截；待上游形态稳定后单独立项扩展
-        errors.append(
-            f"档位交叉校验失败：混合形态暂不支持——handle_data 与 run_daily 挂载"
-            f"（{mounts}）并存，挂载对象歧义；请用纯 handle_data 源或纯 run_daily 源"
-            "（PD-0006 D3 边界）")
+        # PD-0007 混合形态细分：诊断型 stub（不参与决策）+ 恰 1 挂载 → 以挂载目标为
+        # 部署执行体（D2′，stub 原样保留）；多挂载拒绝（D3′）；非 stub 拒绝并报判据
+        # 命中（D4′——实质语句与挂载并存属双驱动风险）
+        if not hd_stub:
+            reasons = [str(r) for r in (profile.get("handle_data_stub_reasons") or [])]
+            why = ("；判据命中: " + "，".join(reasons[:5])) if reasons else ""
+            errors.append(
+                "档位交叉校验失败：混合形态暂不支持——handle_data 含实质语句（非诊断型 "
+                f"stub），与 run_daily 挂载（{mounts}）并存构成双驱动风险{why}；"
+                "请用纯 handle_data 源或纯 run_daily 源（PD-0007 D4′）")
+        elif len(mounts) != 1:
+            errors.append(
+                f"档位交叉校验失败：诊断型 stub + {len(mounts)} 个 run_daily 挂载——"
+                f"多挂载源暂不支持（PD-0006 D3 单挂载限制），挂载清单: {mounts}")
     if cfg.execution.profile != "minute_keep" and "handle_data" not in lifecycle:
         # PD-0006 扩展：run_daily 源形态（恰 1 个执行挂载）作为第二合法输入
         if len(mounts) == 1 and mounts[0].get("func"):

@@ -78,11 +78,12 @@ def test_p2_no_handle_no_mount_still_rejected():
 
 
 def test_p2_hybrid_form_explicitly_rejected():
-    """PD-0006 边界：混合形态（handle_data stub + run_daily 挂载并存）显式拒绝。
+    """PD-0006 边界（PD-0007 后收窄）：非 stub 的 handle_data + 挂载并存仍显式拒绝。
 
-    背景：上游 convert-pipeline 在途重写 hv_canslim/hv_vol_regime 源为
-    stub+挂载混合体（2026-10-11 实测）——挂载对象歧义，P2 显式报错优先于
-    P3 选错挂载对象 + P4 隐晦 26 处错位 diff 的拦截路径。
+    背景更正（2026-10-19）：混合形态系上游**既有**产出形态（mtime 2026-08-27），
+    非「在途重写」。PD-0007 后诊断型 stub 混合形态放行；本用例构造的是
+    「handle_data 判非 stub」路径（RD_SOURCE 无 handle_data → stub=False）→
+    仍拒绝，报「含实质语句」。
     """
     profile = build_profile(RD_SOURCE)
     profile["lifecycle"] = ["initialize", "handle_data"]  # 模拟混合形态

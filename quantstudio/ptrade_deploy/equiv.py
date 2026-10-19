@@ -107,13 +107,16 @@ def _handle_persist(indent: str, block: List[str]) -> List[str]:
     return []  # 持久化注入整体剔除（含新建生命周期函数场景）
 
 
-def _handle_mount(indent: str, block: List[str]) -> List[str]:
+def _handle_mount(indent: str, block: List[str],
+                  restore_name: str = "handle_data") -> List[str]:
     tree = ast.parse(_dedent_lines(block, indent))
-    # 形态一：挂载包装函数 → 还原为 handle_data（签名还原，函数体已由前序剥离还原）
+    # 形态一：挂载包装函数 → 还原（签名还原，函数体已由前序剥离还原）：
+    # PD-0006 纯 run_daily 源还原为 handle_data；PD-0007 混合形态（源已有
+    # handle_data 诊断型 stub）还原为**源挂载目标名**，避免与保留的 stub 撞名（D5′）
     if len(tree.body) == 1 and isinstance(tree.body[0], ast.FunctionDef) \
             and tree.body[0].name.startswith(MOUNT_WRAPPER_PREFIX):
         fn = tree.body[0]
-        fn.name = "handle_data"
+        fn.name = restore_name
         fn.args = ast.arguments(
             posonlyargs=[], args=[ast.arg(arg="context"), ast.arg(arg="data")],
             vararg=None, kwonlyargs=[], kw_defaults=[], kwarg=None, defaults=[])
@@ -136,7 +139,8 @@ _HANDLERS = {"GATE": _handle_gate, "GUARD": _handle_guard,
 
 
 def _strip_pass(text: str, kinds: Tuple[str, ...],
-                anomalies: List[str]) -> str:
+                anomalies: List[str],
+                mount_restore_name: str = "handle_data") -> str:
     """单类标记块剥离一遍（GATE → GUARD → PERSIST → MOUNT 逐类多遍，避免嵌套问题）。"""
     lines = text.split("\n")
     out: List[str] = []
@@ -166,7 +170,10 @@ def _strip_pass(text: str, kinds: Tuple[str, ...],
                 continue
             block = lines[i + 1:j]
             try:
-                out.extend(_HANDLERS[kind](indent, block))
+                if kind == "MOUNT":
+                    out.extend(_handle_mount(indent, block, mount_restore_name))
+                else:
+                    out.extend(_HANDLERS[kind](indent, block))
             except (ValueError, SyntaxError) as exc:
                 anomalies.append(f"{kind} 块剥离失败（行 {i + 1}）: {exc}")
                 out.extend(lines[i:j + 1])  # 保留原文 → 必然产生 diff → FAIL
@@ -198,13 +205,19 @@ class _GExemptRestore(ast.NodeTransformer):
 
 
 def normalize_product(product_text: str,
-                      g_exempt=()) -> Tuple[str, List[str]]:
-    """按白名单六类剥离产物标记改写，返回 (规范化文本, 异常清单)。"""
+                      g_exempt=(),
+                      mount_restore_name: str = "handle_data"
+                      ) -> Tuple[str, List[str]]:
+    """按白名单六类剥离产物标记改写，返回 (规范化文本, 异常清单)。
+
+    ``mount_restore_name``：MOUNT 包装体还原名（PD-0007 D5′——纯 run_daily 源用
+    'handle_data'，混合形态源用其挂载目标名，避免与保留的 stub 撞名）。
+    """
     anomalies: List[str] = []
     text = product_text
     # 顺序：叶子块先行（GATE/GUARD 可嵌于 MOUNT 包装函数内、MOUNT 可嵌于新建 PERSIST 函数内）
     for kinds in (("GATE",), ("GUARD",), ("PERSIST",), ("MOUNT",)):
-        text = _strip_pass(text, kinds, anomalies)
+        text = _strip_pass(text, kinds, anomalies, mount_restore_name)
     # 第 6 类：import 追加行剔除
     text = "\n".join(ln for ln in text.split("\n")
                      if not ln.rstrip().endswith(_IMPORT_TAG))
@@ -292,16 +305,21 @@ def _compare_asts(source_text: str, normalized_product: str) -> List[dict]:
         tgt_name = (f"{MOUNT_WRAPPER_PREFIX}_exec"
                     if mount and name == "handle_data" else name)
         # 第 5 类：run_daily 源挂载目标（如 weekly_rebalance）经 P3 包装、
-        # P4 还原后名为 handle_data——名字映射 + 签名白名单（挂载函数仅
+        # P4 还原后名/签名变化——名字映射 + 签名白名单（挂载函数仅
         # (context,) 单参，包装还原为 (context, data=None) 双参，行为等价）
-        rd_mounted = name in rd_targets and "handle_data" in prod_funcs
+        # PD-0007 D5′：混合形态源（已有 handle_data stub）下还原名 = 挂载目标名，
+        # 故不做 handle_data 映射，按同名比对 + 签名白名单。
+        is_mount_target = name in rd_targets
+        rd_mounted = (is_mount_target and "handle_data" in prod_funcs
+                      and "handle_data" not in src_funcs)
         if rd_mounted:
             tgt_name = "handle_data"
         tgt = prod_funcs.get(tgt_name)
         if tgt is None:
             diffs.append({"location": name, "kind": "missing_function"})
             continue
-        if not (mount and name == "handle_data") and not rd_mounted:
+        if not (mount and name == "handle_data") and not rd_mounted \
+                and not is_mount_target:
             # 挂载签名行为白名单（第 4 类既有 + 第 5 类 run_daily 源形态）
             if _dump(fn.args) != _dump(tgt.args):
                 diffs.append({"location": name, "kind": "args_mismatch",
@@ -327,10 +345,30 @@ def _compare_asts(source_text: str, normalized_product: str) -> List[dict]:
 
 # ---------------------------------------------------------------- 主入口 --
 
+def _mount_restore_name(source_text: str) -> str:
+    """PD-0007 D5′：MOUNT 包装体归一化目标名选择。
+
+    纯 run_daily 源（无 handle_data）→ 'handle_data'（PD-0006 既有契约）；
+    混合形态源（已有 handle_data 诊断型 stub + 恰 1 挂载）→ 源挂载目标名，
+    避免与保留的 stub 撞名（否则归一化后两函数同名，dict 覆盖产生伪 diff）。
+    """
+    try:
+        tree = ast.parse(source_text)
+    except SyntaxError:
+        return "handle_data"
+    targets = _source_run_daily_targets(tree)
+    names = {f.name for f in tree.body
+             if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    if "handle_data" in names and len(targets) == 1:
+        return next(iter(targets))
+    return "handle_data"
+
+
 def compare_sources(source_text: str, product_text: str,
                     g_exempt=()) -> EquivResult:
     """P4 等价 diff：白名单外 diff=0 且无标记块异常 → passed=True。"""
-    normalized, anomalies = normalize_product(product_text, g_exempt)
+    normalized, anomalies = normalize_product(
+        product_text, g_exempt, _mount_restore_name(source_text))
     try:
         diffs = _compare_asts(source_text, normalized)
     except SyntaxError as exc:

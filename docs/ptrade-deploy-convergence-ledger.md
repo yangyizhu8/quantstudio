@@ -43,15 +43,24 @@
 | PD-2026-0004 | closed（轮 1） | gate（gates.py） | aee3e77 |
 | PD-2026-0005 | closed（轮 2） | gate（gates.py） | aee3e77 |
 | PD-2026-0006 | closed（轮 3，⑤过 2026-10-15） | profiler+config+transformer+equiv | 38087eb（主仓本地 commit 2026-10-15；推送候令随批统出） |
+| PD-2026-0007 | closed（轮 4，④过待⑤） | profiler+config+transformer+equiv | 待⑤确认后随批 commit |
 
 > 回填记录：五条目 commit sha 已于 M8 本地轮回填（aee3e77，2026-10-11；trading 仓条目 fix_target 字段与本表同步落盘）；PD-0006 条目 sha 已于轮 3 回填（38087eb，2026-10-15）。推送后 sha 不变，双推完成即本表口径生效。
 
 ## 4.1 轮 3（PD-0006 run_daily 源形态，2026-10-11）
 
-- **N₃=1**（新发现；**2026-10-19 更正成因**）：上游产出中存在**混合形态**源（`handle_data` 诊断型 stub + 单 `run_daily` 真逻辑挂载并存，样例 hv_canslim / hv_vol_regime，**mtime 2026-08-27 = 上游既有形态，非在途重写**）——PD-0006 的 P2 显式拒绝（fail-closed，防双驱动坏产物）行为正确；因该 stub 非决策体，此形态实为**能力缺口**（6 铁律策略中 2 个受制），**已立 PD-0007**（`docs/ptrade-deploy-mixedform-design.md`，待②审）。
+- **N₃=1**（新发现；**2026-10-19 更正成因**）：上游产出中存在**混合形态**源（`handle_data` 诊断型 stub + 单 `run_daily` 真逻辑挂载并存，样例 hv_canslim / hv_vol_regime，**mtime 2026-08-27 = 上游既有形态，非在途重写**）——PD-0006 的 P2 显式拒绝（fail-closed，防双驱动坏产物）行为正确；因该 stub 非决策体，此形态实为**能力缺口**（6 铁律策略中 2 个受制）→ **PD-0007 立项**（2026-10-19 ②审通过，轮 4 已实施）。
 - **R₃=0**（无复发）：轮 1-2 五条目修复无复发；既有 25 用例全绿（1 处断言演进放宽归因他线合法叠加）。
 - **能力增量**：hv_tech_etf_mvo 复现件转正（7 阶段全 PASS）；deploy 套件 35/35；证据 `docs/evidence/ptrade-deploy-pd0006-evidence.md`。
 - 收敛判据对照：R 连续 3 轮 =0 ✓（轮 1/2/3）；N 序列 4→2→1 单调递减 ✓——**收敛闭环判据达成**（工程侧；真实使用周期继续验证）。
+
+## 4.2 轮 4（PD-0007 混合形态诊断型 stub，2026-10-19）
+
+- **N₄=0**（新增缺口零）：无新发现缺陷；实施前全域预演暴露的 1 例判据假阴性（docstring 非首句，`_verify8` 变体）已在 D1′ 精化中闭合——属判据完善，不计新增缺口。
+- **R₄=0**（无复发）：轮 1-3 修复无复发；deploy 套件 **49/49**（35 既有 + 14 新）。
+- **能力增量**：`hv_canslim` / `hv_vol_regime` 由「P2 fail-closed 拒绝」转为 **7 阶段全 PASS**（6 铁律策略部署化通道补齐 2/2）；D1′ 判据在 45 个源上零误放行（39 真决策体全拒）。
+- 收敛判据对照：R 连续 **4** 轮 =0 ✓；N 序列 **4→2→1→0** 单调递减至零 ✓——工程侧收敛闭环进一步巩固（真实使用周期仍为最终口径）。
+- 证据：`docs/evidence/ptrade-deploy-pd0007-evidence.md`；方案：`docs/ptrade-deploy-mixedform-design.md`（②审通过）。
 
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 

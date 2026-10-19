@@ -567,8 +567,10 @@ audit/held-canary/observation tools must require:
 vault 知识库回哺）。智能体在策略生成阶段不承担部署化——两阶段严格分离，
 与「策略生成默认通过 skill 开发，仅本地 QuantStudio」铁律一致。
 
-部署阶段的**源形态边界（PD-0006，2026-10-15）**：`handle_data` 形态与 `run_daily` 单挂载形态
-均支持；多挂载与混合形态 fail-closed 拒绝。该边界属部署通道职责，策略生成阶段无需处理。
+部署阶段的**源形态边界（PD-0006 2026-10-15 / PD-0007 2026-10-19）**：`handle_data` 形态与
+`run_daily` 单挂载形态均支持；另支持「诊断型 stub `handle_data` + 单挂载」混合形态（stub 无取数/下单，
+判据保守 fail-closed）。多挂载与「实质 `handle_data` + 挂载」fail-closed 拒绝。该边界属部署通道职责，
+策略生成阶段无需处理。
 
 
 ---
