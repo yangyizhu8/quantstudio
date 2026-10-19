@@ -123,21 +123,60 @@ MODULE_NAME_EXEMPTIONS = frozenset({
 STDLIB_MODULE_NAMES = MODULE_NAME_EXEMPTIONS
 
 
+def _add_target_names(target, names: Set[str]) -> None:
+    """解包目标展开（`a, b = ...` / `a, *rest = ...` / `(a, b)`）。"""
+    if isinstance(target, ast.Name):
+        names.add(target.id)
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        for elt in target.elts:
+            _add_target_names(elt, names)
+    elif isinstance(target, ast.Starred):
+        _add_target_names(target.value, names)
+
+
 def _local_names(tree: ast.Module) -> Set[str]:
-    """全量收集本文件绑定名（含嵌套函数/类 + import 绑定名）。
+    """全量收集本文件绑定名（含嵌套函数/类 + import 绑定名 + 7 类作用域绑定）。
 
     嵌套函数（M3 固件命中）与 import 别名（M7 横验证命中：`import pandas as
     _qs_pd`、`from datetime import date`、wrapper 的 `from x import history`）
     都不是平台 API，不应被未知 API 门禁误报。
+
+    PD-0008 补全（P5 误报修复）：`call_name` 对 `X.method()` 返回**根对象名 X**
+    （为兼容 `log.info` 归入契约表 `log` 条目），故 X 只要不是本地绑定就会被报
+    「契约表外」。旧实现只收 函数/类名 + 赋值目标 + import 绑定，漏掉 7 类作用域
+    绑定 —— `history.keys()`（history 为参数）、`ch.isdigit()`（ch 为 for 目标）
+    因而误报。此处补全：函数参数 / for 目标 / with as / except 名 / walrus 目标 /
+    推导式目标 / 解包赋值目标。
     """
-    names = set()
+    names: Set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(node.name)
+            args = node.args
+            for arg in (list(args.posonlyargs) + list(args.args)
+                        + list(args.kwonlyargs)
+                        + ([args.vararg] if args.vararg else [])
+                        + ([args.kwarg] if args.kwarg else [])):
+                names.add(arg.arg)
+        elif isinstance(node, ast.ClassDef):
             names.add(node.name)
         elif isinstance(node, ast.Assign):
             for tgt in node.targets:
-                if isinstance(tgt, ast.Name):
-                    names.add(tgt.id)
+                _add_target_names(tgt, names)
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            _add_target_names(node.target, names)
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            _add_target_names(node.target, names)
+        elif isinstance(node, ast.withitem):
+            if node.optional_vars is not None:
+                _add_target_names(node.optional_vars, names)
+        elif isinstance(node, ast.ExceptHandler):
+            if node.name:
+                names.add(node.name)
+        elif isinstance(node, ast.NamedExpr):
+            _add_target_names(node.target, names)
+        elif isinstance(node, ast.comprehension):
+            _add_target_names(node.target, names)
         elif isinstance(node, ast.Import):
             for a in node.names:
                 names.add(a.asname or a.name.split(".")[0])
@@ -145,6 +184,10 @@ def _local_names(tree: ast.Module) -> Set[str]:
             for a in node.names:
                 names.add(a.asname or a.name)
     return names
+
+
+#: 引擎注入全局（PTrade 运行时提供；其属性/方法调用不是平台 API —— PD-0008）
+ENGINE_GLOBALS = frozenset({"g"})
 
 
 def _is_class_instantiation(call: ast.Call) -> bool:
@@ -195,7 +238,7 @@ def run_gates(product_text: str, contract: Dict[str, dict],
             if pbox and pbox != "all":
                 version_notes.append(f"{name} 依赖 PBOX ≥ {pbox}（{entry.get('source', '')}）")
         elif name not in BUILTIN_NAMES and name not in STDLIB_MODULE_NAMES \
-                and name not in local_names:
+                and name not in local_names and name not in ENGINE_GLOBALS:
             unknown.append(f"行 {getattr(node, 'lineno', '?')}: {name}（契约表外，需人工确认）")
     result.unknown_apis = unknown
     result.version_notes = sorted(set(version_notes))
