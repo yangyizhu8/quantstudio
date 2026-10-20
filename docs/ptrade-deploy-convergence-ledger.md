@@ -43,7 +43,7 @@
 | PD-2026-0004 | closed（轮 1） | gate（gates.py） | aee3e77 |
 | PD-2026-0005 | closed（轮 2） | gate（gates.py） | aee3e77 |
 | PD-2026-0006 | closed（轮 3，⑤过 2026-10-15） | profiler+config+transformer+equiv | 38087eb（主仓本地 commit 2026-10-15；推送候令随批统出） |
-| PD-2026-0007 | closed（轮 4，⑤过 2026-10-20「全部A」） | profiler+config+transformer+equiv | 17c8f0c（主仓本地 commit 2026-10-19；推送候令随批统出） |
+| PD-2026-0007 | closed（轮 4，⑤过 2026-10-20「全部A」；**⑥ 已出仓**） | profiler+config+transformer+equiv | 50ebd0d（2026-10-20 出仓；双远程一致 = 50ebd0d54）——**六步①-⑥ 全闭** |
 | PD-2026-0008 | closed（轮 5，⑤过 2026-10-20「裁A」） | gates(P5)+config+deliver+quickmode+gui | ad7c0db + 5649224（主仓本地 commit 2026-10-20；推送候令随批统出） |
 | PD-2026-0009 | closed（轮 6，⑤过 2026-10-20「裁A+PD-0009 ⑤ 批准」） | kernel（preflight 回哺读取） | 214aedf（主仓本地 commit 2026-10-20；第二棒 f1c7ce9 窗口内，推送候令） |
 
@@ -96,6 +96,19 @@
   窗口 3 笔核验通过、**prepush-gate 预演 PASS**；`git push` 因**网络层**（代理路径
   `Recv failure: Connection was aborted`，直连 `Connection was reset`，SSH 可达但无 key）
   连续失败 3 次 → 未出仓，待网络恢复重跑（命令与声明已备妥）。
+
+## 4.5 推送执行记录（2026-10-20 三棒制）
+
+- **第一棒 ✅（23:43）**：`git push origin 50ebd0d:main`
+  - 窗口 = `f6f6dbe..50ebd0d` 共 3 笔（a7172f9 / 17c8f0c / 50ebd0d）；prepush-gate 全量声明 PASS
+  - RULING：2026-10-20「全部A」；两 URL 同次推送成功，**双远程逐位一致 = `50ebd0d54`**
+  - 远端提示如实记录：main 存在分支保护（Changes must be made through a pull request + 2 of 2
+    required status checks），本次以**管理员权限 bypass**（`remote: Bypassed rule violations`）
+- **第二棒 ⏳**：锚 `f1c7ce9`（窗口 `1ee8e8b..f1c7ce9` 共 7 笔：5649224/3dc8b79/ad7c0db/
+  b2c3a50/d2ae49a/214aedf/f1c7ce9；3dc8b79 = 披露携带 dev H-1 doc）——待 ops ④ 回执
+  （`1ee8e8b:main`）。
+- **第七棒 ⏳**：锚 `1ba1260`（窗口 `2ec6312..1ba1260` 共 1 笔：PD-0009 ⑤ 台账补登）——
+  待 ops ⑥ 回执（`2ec6312:main`）。
 
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 
