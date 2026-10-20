@@ -143,3 +143,44 @@ hook 据此取 `origin/main..<local-sha>` 清单 → 调用 D1。
 5. **不声称绝对安全**：R1 的 `--no-verify` 绕过面在文档与回报中如实披露；
 6. **六步全程**；`scripts/` 属共享层 ⇒ **推送后同步门强制无豁免**；
 7. 回退点：实施前 `git stash create -u` + `store` 持久化。
+
+---
+
+## 七、方案 a 修订（2026-10-20 总调度裁定，推送序列第一棒）
+
+### 7.1 背景
+
+推送序列改为**按 sha 形态分棒推送**（`git push <sha>:main`）：dev 推 `f6f6dbe4:main`（8 笔）→ PD 推
+`50ebd0d5:main`（3 笔）→ 本线推 `1ee8e8b:main`（WAL 2 笔 + 门修复笔）→ PD 收尾推 PD-0008 段。
+旧门以 `origin/main..HEAD` 为清单窗口：当**本地 HEAD 领先于实际推送 tip** 时，会把尚未推送、也不在本次
+推送范围内的后续提交计入清单并误拦（或反向漏算），与分棒推送语义冲突。
+
+### 7.2 两处修复
+
+1. **窗口 = pre-push stdin 的实际推送范围**（`<remote_sha>..<local_sha>`）——hook 解析 stdin 的
+   `local_sha`/`remote_sha` 并传入门；sha 形态 refspec 下 `local_ref` 可能是 sha 本身，一律不依赖 ref 名。
+   删除推送（local_sha 全零）跳过；新建分支（remote_sha 全零/无参照）保持 PASS + 显式提示。
+2. **归属判定 = 全量显式声明制**：推送范围内**全部提交**须被 `-Commit` 锚（仅覆盖其自身）或
+   `-AllowAlso` 声明覆盖；任一未声明即 exit 9。声明经 `QS_PUSH_BUNDLE_ALLOWALSO`（hook 透传）或
+   `-AllowAlso` 传入；`QS_PUSH_BUNDLE_RULING` 降为**可选留痕元数据**（放行事实仍强制写入
+   `docs/handoff/push-bundle-rulings.log`）。
+
+### 7.3 回归矩阵（`scripts/prepush_gate_regression.sh`，13 断言全绿）
+
+| # | 场景 | 期望 |
+|---|---|---|
+| S1 | 单笔正常推送（HEAD=c1） | 放行 + 远端更新（不误拦） |
+| S2 | 两笔未声明 | exit 9 + 远端不变 |
+| S3 | 两笔声明齐全 | 放行 + 远端更新 + 留痕 |
+| S4 | 声明不全（缺 1 笔） | exit 9 |
+| S5 | 空范围（base=tip） | 放行 |
+| S6 | 锚不在推送范围 | exit 9（防误传） |
+| S7 | **refspec sha 形态**·声明齐全（HEAD 领先、仅推中间 sha） | 放行（修复前会误拦） |
+| S8 | **refspec sha 形态**·混入未声明 | exit 9 |
+
+### 7.4 边界与兼容
+
+- `QS_PUSH_BUNDLE_ALLOWALSO` 语义不变（逐一覆盖，支持前缀）；
+- 已知绕过面（`--no-verify`）不变，诚实披露口径不变；
+- 门文件（`.githooks/pre-push`、`scripts/prepush-gate.ps1`）实施前已建 stash 回退点
+  （`git stash create` + `store`，按路径单文件提取）。
