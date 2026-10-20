@@ -45,7 +45,7 @@
 | PD-2026-0006 | closed（轮 3，⑤过 2026-10-15） | profiler+config+transformer+equiv | 38087eb（主仓本地 commit 2026-10-15；推送候令随批统出） |
 | PD-2026-0007 | closed（轮 4，⑤过 2026-10-20「全部A」） | profiler+config+transformer+equiv | 17c8f0c（主仓本地 commit 2026-10-19；推送候令随批统出） |
 | PD-2026-0008 | closed（轮 5，⑤过 2026-10-20「裁A」） | gates(P5)+config+deliver+quickmode+gui | ad7c0db + 5649224（主仓本地 commit 2026-10-20；推送候令随批统出） |
-| PD-2026-0009 | closed（轮 6，当日发现当日修） | kernel（preflight 回哺读取） | 214aedf（主仓本地 commit 2026-10-20；推送候令随批统出） |
+| PD-2026-0009 | closed（轮 6，⑤过 2026-10-20「裁A+PD-0009 ⑤ 批准」） | kernel（preflight 回哺读取） | 214aedf（主仓本地 commit 2026-10-20；第二棒 f1c7ce9 窗口内，推送候令） |
 
 > 回填记录：五条目 commit sha 已于 M8 本地轮回填（aee3e77，2026-10-11；trading 仓条目 fix_target 字段与本表同步落盘）；PD-0006 条目 sha 已于轮 3 回填（38087eb，2026-10-15）；PD-0007 已于轮 4 回填（17c8f0c，2026-10-19）；PD-0008 已于轮 5 回填（ad7c0db + P5 5649224，2026-10-20）。推送后 sha 不变，双推完成即本表口径生效。
 
@@ -90,6 +90,12 @@
 - 判据说明：本轮同属**非转换正确性域**（回哺/知识域）。R 连续 **6** 轮 =0；N 序列
   4→2→1→0→1→1——后两次「1」皆为**新域首次纳入验收面**，非既有域回退。
 - 证据：trading 仓 vault `PD-2026-0009`；主仓 `tests/test_deploy_vault.py`（6 用例）。
+- **⑤ 结论（2026-10-20）**：用户批准「裁A + PD-0009 ⑤ 批准」；本条随**第二棒**（锚 `f1c7ce9`，
+  7 笔窗口含 `214aedf`）出仓，裁定引用写入 push-bundle 留痕。
+- 推送执行记录：2026-10-20 22:5x 首轮尝试 —— `f6f6dbe` 回执已到（origin/main=f6f6dbe）、
+  窗口 3 笔核验通过、**prepush-gate 预演 PASS**；`git push` 因**网络层**（代理路径
+  `Recv failure: Connection was aborted`，直连 `Connection was reset`，SSH 可达但无 key）
+  连续失败 3 次 → 未出仓，待网络恢复重跑（命令与声明已备妥）。
 
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 
