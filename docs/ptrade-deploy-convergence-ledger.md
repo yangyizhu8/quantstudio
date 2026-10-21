@@ -116,6 +116,9 @@
 - **终窗清零**：`origin/main = 8026b8c`，本地 `origin/main..HEAD` = **0 笔**
 - 每棒均执行「fetch 重验窗口 → 三查（笔数/逐笔声明/无未声明携带）→ gate 全量声明 → 双 URL 推送
   → 双远程 ls-remote 逐位核验」；每棒 2 行留痕（两 URL 各一）写入 `docs/handoff/push-bundle-rulings.log`。
+- **C7.5 全案闭环采信（2026-10-21 总调度终裁）**：四棒连锁 + 终窗清零 + 代推留痕合规——本节归档。
+  尾笔 `a56a99e`（本登记件）裁②并入下批统推（纯台账不单开一棒）；trading 仓 `490ab10`（vault
+  ⑥ 补记）随该线节奏。
 
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 
