@@ -161,14 +161,17 @@ class TaskTab(QWidget):
         task_group.setTitle("采集任务")
         task_layout = task_group.layout()  # reuse the card's existing QVBoxLayout
         self.task_table = TableWidget()
-        self.task_table.setColumnCount(7)
+        # FP-1/FP-2（2026-10-18 firefly 水位线案）：列由 7 → 9，新增
+        # 「数据止点」（库内 max(time)）与「水位状态」（正常/延迟提交/门控保持）。
+        # 原「水位线」列语义不变（= source_watermark.last_date，下次增量起点）。
+        self.task_table.setColumnCount(9)
         self.task_table.setHorizontalHeaderLabels(
-            ["任务名", "数据源", "目标表", "频率", "水位线", "状态", "操作"])
+            ["任务名", "数据源", "目标表", "频率", "水位线", "数据止点", "水位状态", "状态", "操作"])
         header = self.task_table.horizontalHeader()
         # 操作列固定宽（容纳"全量拉取"+"增量拉取"两按钮），其余列自适应拉伸
         header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)  # 操作列固定
-        self.task_table.setColumnWidth(6, 240)
+        header.setSectionResizeMode(8, QHeaderView.ResizeMode.Fixed)  # 操作列固定
+        self.task_table.setColumnWidth(8, 240)
         self.task_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.task_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.task_table.setBorderVisible(True)
@@ -275,6 +278,10 @@ class TaskTab(QWidget):
     def _render_tasks(self):
         # 查一次水位缓存（P1-3：不再每任务查一次 DuckDB）
         wms = self.mw.db_helper.get_watermarks()
+        # FP-1/FP-2（2026-10-18）：数据止点 + 水位门控状态，各查一次（只读，带 TTL 缓存；
+        # 任一失败降级为空 → 显示「—」/「正常」，不阻断任务页其余渲染）
+        bounds = self._load_data_bounds()
+        gate_status = self._load_gate_status()
         self.task_table.setRowCount(len(self.tasks))
         for i, task in enumerate(self.tasks):
             self.task_table.setItem(i, 0, QTableWidgetItem(task.get("name", "")))
@@ -300,10 +307,22 @@ class TaskTab(QWidget):
                     source_item.toolTip()
                     + f"\n\u5f53\u524d\u663e\u793a\u7684\u6c34\u4f4d\u6765\u81ea\u56de\u9000\u6e90 {wm_source}\u3002")
             self.task_table.setItem(i, 4, wm_item)
+            # FP-1：数据止点（只读 max(time)）——与「水位线」并列展示。
+            # 两列语义不同：水位线=下次增量起点；数据止点=库内真实边界。
+            bound_text, bound_tip = self._format_data_bound(bounds, table_name)
+            bound_item = QTableWidgetItem(bound_text)
+            bound_item.setToolTip(bound_tip)
+            self.task_table.setItem(i, 5, bound_item)
+            # FP-2：水位状态（正常 / 延迟提交 / 门控保持 + 原因）
+            gate_text, gate_tip = self._format_gate_status(
+                gate_status, table_name, task.get("freq", "daily"))
+            gate_item = QTableWidgetItem(gate_text)
+            gate_item.setToolTip(gate_tip)
+            self.task_table.setItem(i, 6, gate_item)
             task_name = task.get("name", "")
             running_mode = self._running_tasks.get(task_name)
             status_text = self._get_status_text(task_name, running_mode)
-            self.task_table.setItem(i, 5, QTableWidgetItem(status_text))
+            self.task_table.setItem(i, 7, QTableWidgetItem(status_text))
             # 操作栏：全量拉取 + 增量拉取 两个按钮（替代原单个"▶ 执行"）
             op_widget = QWidget()
             op_layout = QHBoxLayout(op_widget)
@@ -325,7 +344,7 @@ class TaskTab(QWidget):
             )
             op_layout.addWidget(full_btn)
             op_layout.addWidget(inc_btn)
-            self.task_table.setCellWidget(i, 6, op_widget)
+            self.task_table.setCellWidget(i, 8, op_widget)
 
     def _apply_task_button_state(self, full_btn: PushButton, inc_btn: PushButton, running_mode: str | None):
         """统一维护单任务两颗按钮的文案/可点击状态。
@@ -351,7 +370,7 @@ class TaskTab(QWidget):
         依赖 _render_tasks 给按钮 setObjectName('fullBtn'/'incBtn')。
         """
         for row in range(self.task_table.rowCount()):
-            op_widget = self.task_table.cellWidget(row, 6)
+            op_widget = self.task_table.cellWidget(row, 8)
             if op_widget is None:
                 continue
             full_btn = op_widget.findChild(PushButton, "fullBtn")
@@ -378,9 +397,9 @@ class TaskTab(QWidget):
         row = self._find_task_row(task_name)
         if row is None:
             return
-        item = self.task_table.item(row, 5)
+        item = self.task_table.item(row, 7)
         if item is None:
-            self.task_table.setItem(row, 5, QTableWidgetItem(status_text))
+            self.task_table.setItem(row, 7, QTableWidgetItem(status_text))
         else:
             item.setText(status_text)
 
@@ -452,6 +471,66 @@ class TaskTab(QWidget):
         if hasattr(self, "stop_btn"):
             self.stop_btn.setText("⏹ 停止")
             self.stop_btn.setEnabled(False)
+
+    # ---------------- FP-1/FP-2（2026-10-18 firefly 水位线案）----------------
+    def _load_data_bounds(self) -> dict:
+        """本页任务表的**真实数据止点**（只读 max(time)，带 TTL 缓存）。
+
+        失败一律降级为空 dict → 对应单元格显示「—」，绝不阻断任务页其余列。
+        """
+        try:
+            if getattr(self.mw.db_helper, "is_recovering", False):
+                return {}          # 库忙/恢复中：不叠加查询，交由「未知」/「—」与自动重试
+            tables = [t.get("table", "") for t in self.tasks if t.get("table")]
+            return self.mw.db_helper.get_data_bounds(tables)
+        except Exception:
+            logger.warning("读取数据止点失败（降级为空）", exc_info=True)
+            return {}
+
+    def _load_gate_status(self) -> dict:
+        """QFQ 水位门控状态聚合（只读；失败降级为空 → 显示「未知」）。"""
+        try:
+            if getattr(self.mw.db_helper, "is_recovering", False):
+                return {}
+            return self.mw.db_helper.get_watermark_gate_status()
+        except Exception:
+            logger.warning("读取水位门控状态失败（降级为空）", exc_info=True)
+            return {}
+
+    @staticmethod
+    def _format_data_bound(bounds: dict, table: str) -> tuple[str, str]:
+        """返回（显示文本, tooltip）。空表/查询失败 → 「—」+ 具体原因。"""
+        info = (bounds or {}).get(table) or {}
+        if info.get("max_date"):
+            return str(info["max_date"]), (
+                f"库内真实数据止点：max(time)={info['max_date']}（{table}）\n"
+                f"与「水位线」语义不同：水位线是下次增量起点，落后不代表数据缺失。")
+        err = str(info.get("error") or "")
+        if err == "invalid_identifier":
+            return "—", "表名不合法，未查询"
+        if err == "no_time_column":
+            return "—", (f"该表无 time 列（如股票分红按 ex_date 存储），"
+                         f"不适用「数据止点」口径；请查该表自身日期字段。")
+        if err:
+            return "—", f"数据止点查询失败：{err}"
+        return "—", "库内暂无可读数据（表为空或读取降级）"
+
+    @staticmethod
+    def _format_gate_status(gate_status: dict, table: str, freq: str) -> tuple[str, str]:
+        """返回（状态标签, tooltip 原因）。
+
+        降级区分（重要）：读不到聚合数据时返回「未知」而不是「正常」——
+        否则库忙/恢复期会把"门控保持"误显示成"正常"，正是本案要消除的误导。
+        """
+        if not gate_status or not gate_status.get("queue"):
+            return "未知", "门控状态读取降级（库忙/恢复中），请稍后刷新"
+        by_table = (gate_status or {}).get("by_table") or {}
+        info = by_table.get((table, freq)) or by_table.get((table, None)) or {}
+        label = str(info.get("label") or "正常")
+        reason = str(info.get("reason") or "")
+        if reason:
+            return label, reason
+        return label, "水位门控：正常（本表不受 QFQ 协调约束，或门控已通过）"
 
     def _resolve_watermark_cached(self, wms, source, table, freq) -> tuple[str, str | None]:
         """Return display date and the source row actually used.

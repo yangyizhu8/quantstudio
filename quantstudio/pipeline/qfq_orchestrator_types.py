@@ -358,6 +358,7 @@ DEFAULT_ORCHESTRATOR_CFG: Dict = {
     "fresh_fetch_workers": 4,
     "claim_lease_sec": 600,
     "retry_max": 5,
+    "max_units_per_cycle": 60,
     "retry_backoff_sec": [60, 120, 240, 480, 960],
     "dead_letter_policy": {"max_attempts": 8},
     "watermark_policy": "hold_until_consistent",
@@ -415,6 +416,9 @@ class QFQOrchestratorConfig:
     fresh_fetch_workers: int = 4
     claim_lease_sec: int = 600
     retry_max: int = 5
+    # FP-7（2026-10-20）：每周期 applying 单元配额。默认 60：按 10-17 生产实测
+    # ≈5.4 min/单元 × 单窗 6h 反推（≈66），取 60 留余量；0 = 不限（回退语义）。
+    max_units_per_cycle: int = 60
     retry_backoff_sec: List[int] = field(default_factory=lambda: [60, 120, 240, 480, 960])
     dead_letter_max_attempts: int = 8
     watermark_policy: str = "hold_until_consistent"
@@ -475,6 +479,7 @@ class QFQOrchestratorConfig:
             fresh_fetch_workers=int(cfg.get("fresh_fetch_workers", 4)),
             claim_lease_sec=int(cfg.get("claim_lease_sec", 600)),
             retry_max=int(cfg.get("retry_max", 5)),
+            max_units_per_cycle=int(cfg.get("max_units_per_cycle", 60)),
             retry_backoff_sec=list(cfg.get("retry_backoff_sec", [60, 120, 240, 480, 960])),
             dead_letter_max_attempts=int(dl.get("max_attempts", 8)),
             watermark_policy=str(cfg.get("watermark_policy", "hold_until_consistent")),
@@ -515,6 +520,8 @@ class QFQOrchestratorConfig:
             raise QFQConfigError("qfq_orchestrator.retry_max 必须 >= 1")
         if self.claim_lease_sec < 1:
             raise QFQConfigError("qfq_orchestrator.claim_lease_sec 必须 >= 1")
+        if int(self.max_units_per_cycle) < 0:
+            raise QFQConfigError("qfq_orchestrator.max_units_per_cycle 必须 >= 0（0=不限）")
 
     def can_coordinate_watermark(self, table: str) -> bool:
         """该表是否在本轮协调周期内延迟提交水位（四张价格表 + 启用）。"""

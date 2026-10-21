@@ -860,6 +860,16 @@ class DaemonLifecycle:
                         started_at=qfq_cycle_started_at,
                         finished_at=datetime.now().isoformat(timespec="seconds"),
                         error="stop_requested，post-ingest 未执行，水位保持（下轮清障重算）")
+                    # FP-4（2026-10-18 firefly 水位线案）：DB 周期行同步置终态。
+                    # 既往只写 sidecar → qfq_cycle_run 永久 started（生产 10 条悬挂）。
+                    # 只补终态字段：不推进水位、不改 intent、不改 trigger。
+                    try:
+                        _abort = getattr(collector, "qfq_abort_cycle", None)
+                        if callable(_abort):
+                            _abort("stop_requested，post-ingest 未执行"
+                                   "（FP-4 停止路径终态补齐）")
+                    except Exception as e:
+                        logger.warning(f"[DaemonLifecycle] FP-4 周期终态补齐失败（忽略）: {e}")
                 else:
                     write_run_state(qfq_phase="post_ingest_running")
                     # P1.0：post_ingest 内可中断。回调**复用本函数内唯一的

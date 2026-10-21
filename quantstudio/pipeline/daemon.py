@@ -395,6 +395,31 @@ class ResidentCollector:
             if aux_conn is not None:
                 aux_conn.close()
                 _lc.__exit__(None, None, None)  # 3A 写锁随连接释放
+        # FP-3（2026-10-18 firefly 水位线案）：开新周期前回收「上一进程遗留且非终态」
+        # 的悬挂周期。纯恢复型——只补 DB 终态（started/recovering/applying → interrupted），
+        # **不推进水位、不改 intent、不影响 gate**。双条件门防误杀活进程的长 applying：
+        #   ① updated_at < now−4h；② started_at < 本进程启动时刻。
+        # 回收失败一律降级（不阻断采集）。
+        if self._qfq_cycle_id is None:
+            try:
+                import psutil as _psutil
+                _proc_start_ms = int(_psutil.Process().create_time() * 1000)
+                # 2026-10-21 缺陷修复：必须先解析动态世代，否则 _ident 仍是
+                # pre_cutover 默认哨兵（xtquant-legacy），与 mcp-gen1 的周期行
+                # 世代不匹配 → 回收零命中且无日志（10-20 受控窗实证：
+                # cyc_e9e72441d15e 未被回收，FP-3 行计数=0）。
+                orch._resolve_dynamic_identity(conn)
+                _reaped = orch.reap_stale_cycles(conn, process_start_ms=_proc_start_ms)
+                if not _reaped:
+                    logger.info("[qfq] FP-3 无悬挂周期需回收（ident=%s/%s）",
+                                orch._ident.get("source_generation"),
+                                orch._ident.get("cutover_id"))
+                if _reaped:
+                    logger.warning(
+                        f"[qfq] FP-3 悬挂周期回收 {len(_reaped)} 条（终态 interrupted，"
+                        f"水位/intent 未动）：{[r['cycle_id'] for r in _reaped]}")
+            except Exception as e:
+                logger.warning(f"[qfq] FP-3 周期回收失败（不阻断采集）: {type(e).__name__}: {e}")
         self._qfq_cycle_id = orch.begin_cycle(conn)
         logger.info(f"[qfq] 协调周期开启 cycle_id={self._qfq_cycle_id}"
                     f"（四价格表水位延迟到周期结束统一提交）")
@@ -424,6 +449,28 @@ class ResidentCollector:
         finally:
             self._qfq_cycle_id = None
         return summary
+
+    def qfq_abort_cycle(self, reason: str) -> bool:
+        """FP-4（2026-10-18 firefly 水位线案）：停止路径把本周期置 DB 终态。
+
+        背景：停止时只写 sidecar（run_state / qfq_cycle_terminal），DB 的
+        ``qfq_cycle_run`` 永久停在 ``started``（生产实测 10 条悬挂）。
+        本方法只补终态字段：**不推进水位、不改 intent、不改 trigger、不进 gate**。
+        无活跃周期 / 编排器未启用 / 异常 → 返回 False（静默降级，不影响停止主流程）。
+        """
+        cid = self._qfq_cycle_id
+        if cid is None or not self.qfq_enabled():
+            return False
+        try:
+            orch = self._qfq_orchestrator()
+            return bool(orch.close_cycle_interrupted(
+                self.writer.shared_conn(), cycle_id=cid, reason=reason))
+        except Exception as e:
+            logger.warning(f"[qfq] FP-4 停止路径周期终态补齐失败（忽略）: "
+                           f"{type(e).__name__}: {e}")
+            return False
+        finally:
+            self._qfq_cycle_id = None
 
     # ── Q2b ①③：degraded 分类留痕 + 死信计数（不改 hold 决策）────────────────
     def _qfq_degraded_reset(self) -> None:

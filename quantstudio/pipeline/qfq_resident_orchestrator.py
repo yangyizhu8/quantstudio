@@ -85,14 +85,39 @@ def _monotonic() -> float:
     return time.monotonic()
 
 
-def _stale_active_cutoff():
+def _gate_scope() -> str:
+    """FP-6（2026-10-20）：gate 判定域选择。
+
+    ``cycle``（新默认）= 判定域收敛到「本周期 claim 集合 ∪ 候选水位窗口」；
+    ``global``         = 修复前语义（全表全历史），A28 逐位回退门。
+    非法值一律按 cycle 处理（fail-safe 到新语义，而非静默回退到旧域）。
+    """
+    v = (os.environ.get("QS_QFQ_GATE_SCOPE", "cycle") or "cycle").strip().lower()
+    return v if v in ("cycle", "global") else "cycle"
+
+
+def _has_column(conn, table: str, column: str) -> bool:
+    """FP-5：探测表是否已含某列（迁移未执行/旧库兼容用；失败按不存在处理）。"""
+    try:
+        row = conn.execute(
+            "SELECT count(*) FROM duckdb_columns() WHERE table_name=? AND column_name=?",
+            [table, column]).fetchone()
+        return bool(row and int(row[0]) > 0)
+    except Exception:
+        return False
+
+
+def _stale_active_cutoff(max_age_s: Optional[float] = None):
     """R3a：活跃态周期判死的 updated_at 截止时刻（now−N）。
 
     qfq_cycle_run.updated_at 为 TIMESTAMP（naive），写入基点是 _now_ts() 的
     BJ 墙钟字符串——比较必须同基：返回 BJ 墙钟 naive datetime（勿混 tz-aware）。
+
+    FP-3（2026-10-18）：新增 ``max_age_s`` 覆盖参数（默认沿用 _STALE_ACTIVE_CYCLE_S），
+    供周期回收按调用方阈值复用同一比较基，避免第二套时基实现。
     """
-    return (datetime.now(BJ_TZ) - timedelta(seconds=_STALE_ACTIVE_CYCLE_S)
-            ).replace(tzinfo=None)
+    _age = _STALE_ACTIVE_CYCLE_S if max_age_s is None else float(max_age_s)
+    return (datetime.now(BJ_TZ) - timedelta(seconds=_age)).replace(tzinfo=None)
 
 
 def _now_ts() -> str:
@@ -156,6 +181,9 @@ class CycleSummary:
     status: str = "finalized"
     error: Optional[str] = None
     gate_report: Dict = field(default_factory=dict)
+    # FP-7（2026-10-20）：本周期因配额未处理的单元数（观测用；不参与判定）
+    units_total: int = 0
+    units_deferred: int = 0
 
 
 @dataclass
@@ -503,17 +531,6 @@ class QFQResidentOrchestrator:
             params.extend(codes_filter)
         sql += " ORDER BY asset_type, code, trigger_id"
         rows = conn.execute(sql, params).fetchall()
-        claimed_ids = [r[0] for r in rows]
-        if claimed_ids:
-            placeholders = ", ".join(["?"] * len(claimed_ids))
-            claimed = conn.execute(
-                f"UPDATE qfq_trigger_queue SET status='in_progress', claimed_by=?, "
-                f"claimed_at=?, updated_at=? WHERE trigger_id IN ({placeholders}) "
-                f"AND status='pending' AND price_source=? AND source_generation=? AND cutover_id=? "
-                f"RETURNING trigger_id",
-                [run_id, now_iso, _now_ts(), *claimed_ids, *gen_params]).fetchall()
-            if {r[0] for r in claimed} != set(claimed_ids):
-                raise RuntimeError("trigger claim CAS 失败；拒绝跨并发继续")
         units: Dict[Tuple[str, str], Dict] = {}
         for r in rows:
             (tid, at, code, ttype, source_key, eff, phash,
@@ -533,7 +550,33 @@ class QFQResidentOrchestrator:
             u["attempt"] = max(u["attempt"], int(att or 0))
         for u in units.values():
             u["effective_dates"] = sorted(set(u["effective_dates"]))
-        return list(units.values())
+        # FP-7（2026-10-20）：每周期 applying 单元配额。只限制"本轮处理多少单元"，
+        # 未入选单元**不 claim**（保持 pending，下轮 recover_pending_due 续处理），
+        # 单元内部流程与 outcome 判定零改动。cap=0 → 不限（回退语义）。
+        cap = int(getattr(self.cfg, "max_units_per_cycle", 0) or 0)
+        units_list = list(units.values())
+        deferred = 0
+        if cap > 0 and len(units_list) > cap:
+            deferred = len(units_list) - cap
+            units_list = units_list[:cap]
+        self._last_units_total = len(units_list) + deferred
+        self._last_units_deferred = deferred
+        if deferred:
+            logger.info("[qfq_orch] FP-7 配额生效：本轮处理 %d 单元，顺延 %d 单元"
+                        "（cap=%d；顺延单元保持 pending，不进 applying）",
+                        len(units_list), deferred, cap)
+        claimed_ids = [tid for u in units_list for tid in u["triggers"]]
+        if claimed_ids:
+            placeholders = ", ".join(["?"] * len(claimed_ids))
+            claimed = conn.execute(
+                f"UPDATE qfq_trigger_queue SET status='in_progress', claimed_by=?, "
+                f"claimed_at=?, updated_at=? WHERE trigger_id IN ({placeholders}) "
+                f"AND status='pending' AND price_source=? AND source_generation=? AND cutover_id=? "
+                f"RETURNING trigger_id",
+                [run_id, now_iso, _now_ts(), *claimed_ids, *gen_params]).fetchall()
+            if {r[0] for r in claimed} != set(claimed_ids):
+                raise RuntimeError("trigger claim CAS 失败；拒绝跨并发继续")
+        return units_list
 
     # ------------------------------------------------------------------
     # 单证券重锚（核心）
@@ -912,23 +955,60 @@ class QFQResidentOrchestrator:
         report: Dict = {"passed": True, "reasons": [], "identity": dict(self._ident)}
         gen_sql, gen_params = self._generation_where()
         cutoff = (_now_iso_ts() - timedelta(seconds=self.cfg.claim_lease_sec)).isoformat(timespec="seconds")
+        scope = _gate_scope()
+        report["gate_scope"] = scope
         orphan_sql = ("SELECT COUNT(*) FROM qfq_trigger_queue WHERE status='in_progress' "
                       "AND (claimed_at IS NULL OR claimed_at >= ?) AND " + gen_sql)
         orphan_params: List[object] = [cutoff, *gen_params]
         if codes_filter:
             orphan_sql += f" AND code IN ({', '.join(['?'] * len(codes_filter))})"
             orphan_params.extend(codes_filter)
-        orphan = conn.execute(orphan_sql, orphan_params).fetchone()[0]
-        if orphan:
-            report["passed"] = False
-            report["reasons"].append(f"orphan in_progress={orphan}")
         dl_sql = "SELECT COUNT(*) FROM qfq_trigger_queue WHERE status='dead_letter' AND " + gen_sql
         dl_params: List[object] = list(gen_params)
         if codes_filter:
             dl_sql += f" AND code IN ({', '.join(['?'] * len(codes_filter))})"
             dl_params.extend(codes_filter)
-        dl = conn.execute(dl_sql, dl_params).fetchone()[0]
         dl_max = int(self.cfg.quality_thresholds.get("dead_letter_max", 0))
+
+        if scope == "global":
+            # A28 回退门：修复前语义逐位不变（全表全历史判定）
+            orphan = conn.execute(orphan_sql, orphan_params).fetchone()[0]
+            dl = conn.execute(dl_sql, dl_params).fetchone()[0]
+            report["health"] = {"in_progress_fresh": int(orphan), "dead_letter": int(dl)}
+        else:
+            # FP-6（2026-10-20）：判定域 = 本周期 claim 集合 ∪ 候选水位窗口。
+            # 全表全历史计数降级为 health（只告警、不参与 passed）。
+            health_orphan = conn.execute(orphan_sql, orphan_params).fetchone()[0]
+            health_dl = conn.execute(dl_sql, dl_params).fetchone()[0]
+            report["health"] = {"in_progress_fresh": int(health_orphan),
+                                "dead_letter": int(health_dl)}
+            claim_codes = sorted({u["code"] for u in claimed_units})
+            if codes_filter:
+                claim_codes = sorted(set(claim_codes) | set(codes_filter))
+            if claim_codes:
+                _ph = ", ".join(["?"] * len(claim_codes))
+                orphan = conn.execute(orphan_sql + f" AND code IN ({_ph})",
+                                      [*orphan_params, *claim_codes]).fetchone()[0]
+            else:
+                orphan = 0        # 本周期无 claim → 无"我的"孤儿可判
+            wrows = conn.execute(
+                "SELECT old_watermark, candidate_watermark FROM qfq_watermark_intent "
+                "WHERE cycle_id=? AND source_generation=? AND cutover_id=? "
+                "AND old_watermark IS NOT NULL AND candidate_watermark IS NOT NULL",
+                [cycle_id, self._ident["source_generation"],
+                 self._ident["cutover_id"]]).fetchall()
+            if not wrows:
+                dl = 0
+                report["dead_letter_window"] = None
+            else:
+                lo = min(int(r[0]) for r in wrows)
+                hi = max(int(r[1]) for r in wrows)
+                dl = conn.execute(dl_sql + " AND effective_date BETWEEN ? AND ?",
+                                  [*dl_params, lo, hi]).fetchone()[0]
+                report["dead_letter_window"] = [lo, hi]
+        if orphan:
+            report["passed"] = False
+            report["reasons"].append(f"orphan in_progress={orphan}")
         if dl > dl_max:
             report["passed"] = False
             report["reasons"].append(f"dead_letter={dl} 超过阈值 {dl_max}")
@@ -1026,7 +1106,22 @@ class QFQResidentOrchestrator:
             return
         # 回退：直接 upsert source_watermark（与 writer.advance_watermark 同表）。
         # v2.4 B-3a：8 列显式 INSERT + pre-cutover 静态哨兵（source 保留真实值不改写）。
+        # FP-5（2026-10-20）：若已迁移 last_run_id 列，则同时写 run_id（=batch_id 调用方
+        # 传的是 run_id），使"哪一轮提交的"可追溯；last_batch_id 语义与格式保持不变。
         gen, cutover = self._ident["source_generation"], self._ident["cutover_id"]
+        if _has_column(conn, "source_watermark", "last_run_id"):
+            conn.execute(
+                "INSERT INTO source_watermark (source, table_name, freq, last_date, "
+                " last_batch_id, updated_at, source_generation, cutover_id, last_run_id) "
+                "VALUES (?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT (source, table_name, freq) DO UPDATE SET "
+                " last_date=excluded.last_date, last_batch_id=excluded.last_batch_id, "
+                " updated_at=excluded.updated_at, "
+                " source_generation=excluded.source_generation, "
+                " cutover_id=excluded.cutover_id, last_run_id=excluded.last_run_id",
+                [source, table, freq, new_watermark, batch_id, _now_ts(), gen, cutover,
+                 batch_id])
+            return
         conn.execute(
             "INSERT INTO source_watermark (source, table_name, freq, last_date, "
             " last_batch_id, updated_at, source_generation, cutover_id) "
@@ -1585,6 +1680,9 @@ class QFQResidentOrchestrator:
                 conn, cycle_id=cycle_id, run_id=run_id, as_of_ms=as_of_ms,
                 codes_filter=scope)
             summary.claimed = len(units)
+            # FP-7：配额观测透传（顺延单元数；不参与任何判定）
+            summary.units_total = int(getattr(self, "_last_units_total", len(units)))
+            summary.units_deferred = int(getattr(self, "_last_units_deferred", 0))
 
             self._set_cycle_phase(conn, cycle_id, "applying")
             # P1.0：applying 相位逐单元边界消费停。should_stop 由 daemon 侧注入，
@@ -1688,6 +1786,104 @@ class QFQResidentOrchestrator:
     # 兼容别名
     def run_cycle(self, conn, **kw) -> CycleSummary:
         return self.run_post_ingest(conn, **kw)
+
+    # ------------------------------------------------------------------
+    # FP-3（firefly 水位线案，2026-10-18）：悬挂周期终态回收
+    # ------------------------------------------------------------------
+    def reap_stale_cycles(self, conn, *, process_start_ms: int,
+                          max_age_s: float = _STALE_ACTIVE_CYCLE_S,
+                          dry_run: bool = False) -> list:
+        """类内薄壳：用本实例 identity 调模块级 ``reap_stale_cycles``。"""
+        return reap_stale_cycles(conn, ident=self._ident,
+                                 process_start_ms=process_start_ms,
+                                 max_age_s=max_age_s, dry_run=dry_run)
+
+    def close_cycle_interrupted(self, conn, *, cycle_id: str, reason: str) -> bool:
+        """FP-4（2026-10-18）：把**本周期**置终态 ``interrupted``。
+
+        停止路径的缺口：``daemon``/``daemon_lifecycle`` 收到停止请求时只写 sidecar
+        （run_state / qfq_cycle_terminal），DB 的 ``qfq_cycle_run`` 行永久停在
+        ``started``（生产实测 10 条）。本方法只补终态字段——**不推进水位、不改
+        intent、不改 trigger、不影响 gate**；非本 identity 或已终态 → 返回 False。
+        """
+        if not cycle_id or not self._ident:
+            return False
+        params = [cycle_id, self._ident.get("price_source"),
+                  self._ident.get("source_generation"), self._ident.get("cutover_id")]
+        row = conn.execute(
+            "SELECT status FROM qfq_cycle_run WHERE cycle_id=? AND price_source=? "
+            "AND source_generation=? AND cutover_id=?", params).fetchone()
+        if row is None or row[0] in _TERMINAL_CYCLE_STATES:
+            return False
+        now = _now_ts()
+        conn.execute(
+            "UPDATE qfq_cycle_run SET status='interrupted', phase='interrupted', "
+            "finished_at=?, updated_at=?, error=? WHERE cycle_id=? AND price_source=? "
+            "AND source_generation=? AND cutover_id=? "
+            f"AND status NOT IN ({', '.join(['?'] * len(_TERMINAL_CYCLE_STATES))})",
+            [now, now, f"interrupted: {reason}", *params, *_TERMINAL_CYCLE_STATES])
+        logger.warning("[qfq_orch] FP-4 周期置终态 interrupted：%s（%s；水位/intent 未动）",
+                       cycle_id, reason)
+        return True
+
+
+_TERMINAL_CYCLE_STATES = ("finalized", "finalized_held", "failed", "interrupted")
+
+
+def reap_stale_cycles(conn, *, ident: dict, process_start_ms: int,
+                      max_age_s: float = _STALE_ACTIVE_CYCLE_S,
+                      dry_run: bool = False) -> list:
+    """把「**上一进程遗留** 且非终态」的协调周期标为 ``interrupted``（纯恢复型）。
+
+    背景（firefly 案，2026-10-18）：``begin_cycle`` 只清 intent、不关闭周期行；
+    停止路径只写 sidecar（``daemon_lifecycle`` 注释自陈"停止代码不读写 cycle 状态机"）。
+    进程重启后 DB 里留下永久 ``started`` 行（生产实测 10 条，最早 09-28），
+    GUI/运维无法区分"真在跑"与"进程已死"。
+
+    语义边界（**只修终态记录**）：
+      - 不推进 ``source_watermark``；不改 ``qfq_watermark_intent``；不改 trigger 队列；
+      - 不改 gate 判定；不产生新的候选水位。
+
+    双条件门（防误杀长 applying 周期——实测 applying 可停滞 6.5h+）：
+      ① ``updated_at < now − max_age_s``（默认 4h，与 intent 清障同阈值）；
+      ② ``started_at < 本进程启动时刻``（本进程自己/并发活进程的周期必然更晚开始）。
+    仅当两条同时成立才回收；`dry_run=True` 只返回清单、不写库。
+
+    返回：[{"cycle_id", "status", "phase", "updated_at"}]（供干跑取证与日志）。
+    """
+    if not ident:
+        return []
+    cutoff = _stale_active_cutoff(max_age_s)
+    proc_start = datetime.fromtimestamp(int(process_start_ms) / 1000.0)
+    rows = conn.execute(
+        "SELECT cycle_id, status, phase, started_at, updated_at FROM qfq_cycle_run "
+        "WHERE price_source=? AND source_generation=? AND cutover_id=? "
+        f"AND status NOT IN ({', '.join(['?'] * len(_TERMINAL_CYCLE_STATES))}) "
+        "AND updated_at < ? AND started_at < ? "
+        "ORDER BY started_at",
+        [ident.get("price_source"), ident.get("source_generation"), ident.get("cutover_id"),
+         *_TERMINAL_CYCLE_STATES, cutoff, proc_start],
+    ).fetchall()
+    reaped = [{"cycle_id": r[0], "status": r[1], "phase": r[2], "updated_at": r[4]}
+              for r in rows]
+    if dry_run or not reaped:
+        return reaped
+    now = _now_ts()
+    for item in reaped:
+        conn.execute(
+            "UPDATE qfq_cycle_run SET status='interrupted', phase='interrupted', "
+            "finished_at=?, updated_at=?, "
+            "error='reaped: previous process not alive before finalize "
+            "(FP-3 2026-10-18; 水位未推进、intent 未改)' "
+            "WHERE cycle_id=? AND price_source=? AND source_generation=? AND cutover_id=? "
+            f"AND status NOT IN ({', '.join(['?'] * len(_TERMINAL_CYCLE_STATES))})",
+            [now, now, item["cycle_id"], ident.get("price_source"),
+             ident.get("source_generation"), ident.get("cutover_id"),
+             *_TERMINAL_CYCLE_STATES])
+    logger.warning(
+        "[qfq_orch] FP-3 回收悬挂周期 %d 条（终态置 interrupted，水位/intent 未动）：%s",
+        len(reaped), ", ".join(f"{i['cycle_id']}({i['status']}/{i['phase']})" for i in reaped))
+    return reaped
 
 
 def phase_of(status: str) -> str:

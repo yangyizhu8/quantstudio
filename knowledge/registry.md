@@ -25,22 +25,22 @@
 | 编号 | 字段 | 语义 | 状态 | 证据/测试指针 | QMT 锚点 |
 |---|---|---|---|---|---|
 | **POS-01** | `cost_basis` | 每股持仓成本 | **已锚定（2026-10-07 修复落地）** | 平台=摊薄（卖出扣费净得+买入不含费加权），双锚点实证 0.973/0.972；引擎 `cost_basis_method='diluted'` 默认；契约测试 `tests/test_cost_basis_diluted.py`；验收 `docs/evidence/cost-basis-diluted-acceptance-20261007.md` | 未验证 |
-| POS-02 | `amount` | 总持仓量 | 已排查（四象限案例逐笔一致） | `docs/evidence/dual-end-alignment-final-report-20260827.md`；本案例 26 笔委托一致 | 未验证 |
-| POS-03 | `enable_amount` | 可用量（T+1） | 未验证 | 探针 probe_enable_amount 规划 | 未验证 |
-| POS-04 | `today_long_amount` | 今买量 | 未验证 | — | 未验证 |
-| POS-05 | `today_short_amount` | 今卖量 | 未验证 | — | 未验证 |
-| POS-06 | `long_amount` | 多头量 | 未验证（A股场景可能恒 0） | — | 未验证 |
-| POS-07 | `short_amount` | 空头量 | 未验证（同上） | — | 未验证 |
-| POS-08 | `last_sale_price` | 最新价 | 未验证 | — | 未验证 |
-| POS-09 | `sid` | 证券代码 | 已排查（四象限案例代码口径一致 .SS/.SZ 归一） | 本案例代码归一实证 | 未验证 |
-| POS-10 | `business_type` | 业务类型 | 未验证 | — | 未验证 |
-| POS-11 | `contract_multiplier` | 合约乘数 | 未验证（ETF/股票恒 1?） | — | 未验证 |
-| POS-12 | `margin_rate` | 保证金率 | 未验证 | — | 未验证 |
-| POS-13 | `long_pnl` | 多头浮盈 | 未验证 | — | 未验证 |
-| POS-14 | `short_pnl` | 空头浮盈 | 未验证 | — | 未验证 |
-| POS-15 | `long_cost_basis` | 多头成本 | 未验证 | — | 未验证 |
-| POS-16 | `short_cost_basis` | 空头成本 | 未验证 | — | 未验证 |
-| POS-17 | `delivery_date` | 交割日 | 未验证（股票场景 None?） | — | 未验证 |
+| POS-02 | `amount` | 总持仓量 | 已排查（四象限案例逐笔一致） | `docs/evidence/dual-end-alignment-final-report-20260827.md`；本案例 26 笔委托一致 | **已锚定（QMT 侧 2026-10-19）**：`m_nVolume`（实测 26900） |
+| POS-03 | `enable_amount` | 可用量（T+1） | 未验证 | 探针 probe_enable_amount 规划 | **已锚定（QMT 侧 2026-10-19）**：`m_nCanUseVolume`（实测 26900＝总量，昨仓已过 T+1） |
+| POS-04 | `today_long_amount` | 今买量 | 未验证 | — | **派生可用（无原生字段）**：`m_nVolume − m_nYesterdayVolume`（实测 26900−26900＝0）；**登记派生式，不冒充原生锚定**（`docs/evidence/b2-pos-readings-20261019.md` §二） |
+| POS-05 | `today_short_amount` | 今卖量 | 未验证 | — | **缺口（2026-10-19 实测）**：无原生字段；`m_nCloseVolume`＝0 语义疑为「平仓量」，**语义待验，不冒充锚定** |
+| POS-06 | `long_amount` | 多头量 | 未验证（A股场景可能恒 0） | — | **不适用（现货）**：QMT 无多空分离字段；`m_nDirection`＝48（='0'）恒买向 |
+| POS-07 | `short_amount` | 空头量 | 未验证（同上） | — | **不适用（现货）**：无该字段 |
+| POS-08 | `last_sale_price` | 最新价 | 未验证 | — | **已锚定（QMT 侧 2026-10-19）**：`m_dLastPrice`（实测 1.626；另有 `m_dSettlementPrice` 结算价同值） |
+| POS-09 | `sid` | 证券代码 | 已排查（四象限案例代码口径一致 .SS/.SZ 归一） | 本案例代码归一实证 | **已锚定（QMT 侧 2026-10-19/20）**：`m_strInstrumentID`＝**裸码**＋`m_strExchangeID` ⇒ 拼 `code.exchange`；**C1 定谳（`docs/evidence/c1-position-key-verdict-20261020.md`）**：持仓键＝**`.SH/.SZ`**（15 笔）；universe＝**5226 只同构**（SH 2318 / SZ 2908）⇒ **端内自洽无 miss**；**`get_position` 为精确键**（`.SS`/`.SZ`/裸码 全落零视图 `amount=0`）⇒ **跨端形态差异（本地 `.SS` ↔ QMT `.SH`）；硬编码 `.SS` 会静默误判空仓（QD-2026-0009）** |
+| POS-10 | `business_type` | 业务类型 | 未验证 | — | **近似但语义不同**：`m_eFutureTradeType`＝48（期货交易类型，现货恒 '0'）⇒ **不冒充锚定** |
+| POS-11 | `contract_multiplier` | 合约乘数 | 未验证（ETF/股票恒 1?） | — | **平台不提供该字段**（ETF/股票按 1 约定，非读取） |
+| POS-12 | `margin_rate` | 保证金率 | 未验证 | — | **不适用（现货）**：无「率」字段；`m_dMargin`＝0.0 为保证金额 |
+| POS-13 | `long_pnl` | 多头浮盈 | 未验证 | — | **已锚定（QMT 侧 2026-10-19）**：`m_dFloatProfit`（当日浮动，实测 80.70）／`m_dPositionProfit`（持仓累计，实测 −64.56）⇒ **两字段并存，须区分语义** |
+| POS-14 | `short_pnl` | 空头浮盈 | 未验证 | — | **不适用（现货）**：无该字段 |
+| POS-15 | `long_cost_basis` | 多头成本 | 未验证 | — | **已锚定（QMT 侧 2026-10-19）**：`m_dPositionCost`＝43803.96（成本额）／`m_dAvgOpenPrice`＝1.6274（均价）／`m_dOpenCost`＝43803.96 |
+| POS-16 | `short_cost_basis` | 空头成本 | 未验证 | — | **不适用（现货）**：无该字段 |
+| POS-17 | `delivery_date` | 交割日 | 未验证（股票场景 None?） | — | **已排查（2026-10-19 实测）**：`m_strOpenDate`＝**空串 `''`**／`m_strExpireDate`＝**空串 `''`** ⇒ **现货返回空串而非 None，判空须用 `not v` 不能 `is None`** |
 
 ## API · 注入 API 契约（待全量枚举，首批已知锚点）
 
@@ -90,6 +90,7 @@ LC-01 initialize 时机｜LC-02 before_trading｜LC-03 handle_data 时刻遍历�
 | DAT-03 | 日线 include 语义（D-1 锚定） | 已锚定（E1 铁律 + 四格实测） | AGENTS.md E1 条；ptrade_api.py:598 | 已锚定：wrapper `_qs_snap_kwargs` 锚定回测 bar 当日＋D-28 端测四轮 L0-L6 逐位一致（`docs/evidence/d28-e2e-run-20261015.md`） |
 | DAT-04 | 前复权 fq='pre' | 已排查（本案例价格序列逐笔一致） | 四象限案例 | **已排查（QMT 侧 2026-10-18）**：`dividend_type` 确被识别（`back` 与 `none` 差异巨大 133.756 vs 9.67）；`front≡none` 于 2026-10 窗口（该窗无除权 ⇒ 合理）⇒ **含除权窗口对照待补**，不以单窗口结论冒充已锚定 |
 | DAT-05..15 | 日期边界/首末日/fallback/指数日线专门 API/停牌日 K 线/ETF 池 PIT/… | 未验证（P2 枚举细化） | — | 未验证 |
+| DAT-17 | `get_market_data_ex` **参数优先级**（`count` vs `start_time`） | **已锚定（2026-10-18 端测）** | 证据 `docs/evidence/qmt-probe-batch-ab-readings-20261018.md` §二/§三；探针件 `docs/probe/qmt_shared_surface_dat_probe-20261017.py`（P2 三段对照） | **已锚定**：同传 `count`＋`start_time` 时 **`count` 优先、`start_time` 被忽略**（实测 `{count:3, start_time:'20240102'}` ⇒ 返回最新 3 行 `20261014..20261016`，**静默无报错**）；与「`endDate` 空串→静默空」（QCAL-05）同类**静默语义陷阱**；**wrapper 调用面待排查**（是否存在 count＋start_time 同传的潜在偏差） |
 
 ## IDX · 指标计算（骨架）
 
