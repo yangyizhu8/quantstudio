@@ -2657,7 +2657,7 @@
     },
     {
       "name": "mcp_etf_minutes",
-      "enabled": true,
+      "enabled": false,
       "source": "mcp",
       "table": "etf_minutes",
       "freq": "1min",
