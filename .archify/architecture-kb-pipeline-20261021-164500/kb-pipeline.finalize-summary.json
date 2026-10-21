@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "D:\\miniQMT策略实盘\\QuantStudio\\.archify\\architecture-kb-pipeline-20261021-164500\\candidate.json",
+    "sha256": "e585ef6db574c56832443c2eae1f40be0777305480c21ca1ab6f34b4fd57ef1c",
+    "bytes": 7014
+  },
+  "artifact": {
+    "path": "D:\\miniQMT策略实盘\\QuantStudio\\.archify\\architecture-kb-pipeline-20261021-164500\\kb-pipeline.html",
+    "sha256": "a64b31d2fbe816127669a8498312deeb434c9512cf0626fa82ec376876218e8e",
+    "bytes": 766793
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "D:\\miniQMT策略实盘\\QuantStudio\\.archify\\architecture-kb-pipeline-20261021-164500\\kb-pipeline.finalize.json",
+    "summaryReceipt": "D:\\miniQMT策略实盘\\QuantStudio\\.archify\\architecture-kb-pipeline-20261021-164500\\kb-pipeline.finalize-summary.json",
+    "browserCheckReceipt": "D:\\miniQMT策略实盘\\QuantStudio\\.archify\\architecture-kb-pipeline-20261021-164500\\kb-pipeline.browser-check.json"
+  },
+  "update": {
+    "status": "update_available",
+    "installedVersion": "3.0.1",
+    "availableVersion": "3.2.0",
+    "releaseNotes": "https://github.com/tt-a1i/archify/releases/tag/v3.2.0",
+    "severity": "normal",
+    "checkedAt": "2026-10-20T17:40:57.365Z",
+    "source": "cache",
+    "noticeRequired": true,
+    "noticeText": "Archify update: 3.0.1 → 3.2.0. A previous check at 2026-10-20T17:40:57.365Z found a newer release. Release notes: https://github.com/tt-a1i/archify/releases/tag/v3.2.0. The installed Skill has not changed; ask to snooze or ignore this reminder.",
+    "eventKey": "archify@sha256:70e210265c59f24dcbdf2a502ff671104b5454e7ee7d3554aecd86bad32384f5"
+  },
+  "visualReview": "not-requested",
+  "durationMs": 12228,
+  "visualReviewRecommendation": {
+    "action": "inspect-route-readability",
+    "signals": {
+      "routesOverSuggestedBends": 1
+    },
+    "reason": "Automated gates passed, but crossings or detours still need perceptual review before claiming visual quality.",
+    "affectedRoutes": {
+      "crossings": [],
+      "detours": [
+        {
+          "relationship": {
+            "id": "e-draft-kbp",
+            "from": "draft",
+            "to": "kbp",
+            "label": "草稿产物须过 validate_entry",
+            "collectionIndex": 4,
+            "artifactIndex": 5
+          },
+          "bends": 4,
+          "stretch": 1.23
+        }
+      ],
+      "truncated": false
+    },
+    "hints": [
+      "draft → kbp needs 4 bends: move node draft or kbp so they share a row or column with matching centers, or sit diagonally with a clear corner."
+    ],
+    "repair": "Trace these relationships at the desktop viewport. For Architecture, use references/architecture-layout-repair.md: reflow a blocked main path or tangled connected scene, and repair an isolated defect locally only when the surrounding composition is accepted. Preserve all semantic content and user-fixed geometry. Rerun finalize once after the edit."
+  }
+}

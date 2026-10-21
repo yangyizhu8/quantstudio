@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "QuantStudio 知识库可机读化 · P0 影响面",
+    "subtitle": "生成时点 2026-10-21 16:45 +08:00 · 批准基线 e4dd5f2 · 生成时 HEAD ec8323d7",
+    "locale": "zh-CN",
+    "output": ".archify/architecture-kb-pipeline-20261021-164500/kb-pipeline.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/yangyizhu8/quantstudio-plus.git",
+      "provider": "github",
+      "link_mode": "local-only",
+      "revision": "ec8323d7a2cb65f06598aeb9dd2626c1aea99dc5"
+    }
+  },
+  "components": [
+    {
+      "id": "src",
+      "type": "external",
+      "label": "症状与证据源",
+      "sublabel": "端测读数 / 缺陷登记 / 策略源码",
+      "pos": [40, 50],
+      "size": [170, 76],
+      "sources": [
+        { "path": "docs/evidence/qmt-probe-batch-ab-readings-20261018.md", "label": "端测读数归档" },
+        { "path": "docs/qmt-shared-surface-probe-batch.md", "label": "探针批次设计件" }
+      ]
+    },
+    {
+      "id": "draft",
+      "type": "backend",
+      "label": "kb_draft.py 草稿器",
+      "sublabel": "symptom + 证据 → 规范条目",
+      "pos": [385, 50],
+      "size": [170, 76]
+    },
+    {
+      "id": "kb",
+      "type": "database",
+      "label": "knowledge/qmt 知识库",
+      "sublabel": "QD-2026-0001..0009 条目",
+      "pos": [710, 50],
+      "size": [190, 90],
+      "sources": [
+        { "path": "knowledge/qmt/README.md", "line": 9, "end_line": 18, "label": "条目索引" },
+        { "path": "knowledge/qmt/QD-2026-0001.md", "line": 1, "end_line": 15, "label": "条目 frontmatter 样例" }
+      ]
+    },
+    {
+      "id": "reg",
+      "type": "database",
+      "label": "kb-info.yaml 注册卡",
+      "sublabel": "主库 / 第二库 / 通用库",
+      "pos": [1060, 50],
+      "size": [170, 76]
+    },
+    {
+      "id": "shell",
+      "type": "backend",
+      "label": "qmt_kb_preflight.py 薄壳",
+      "sublabel": "向后兼容层（CLI 形态与退出码不变）",
+      "pos": [40, 250],
+      "size": [170, 86],
+      "sources": [
+        { "path": "scripts/qmt_kb_preflight.py", "line": 30, "end_line": 45, "label": "KB_DIR 与规则表" },
+        { "path": "scripts/qmt_kb_preflight.py", "line": 49, "end_line": 66, "label": "load_kb_index 索引" },
+        { "path": "scripts/qmt_kb_preflight.py", "line": 168, "end_line": 198, "label": "CLI 与退出码语义" }
+      ]
+    },
+    {
+      "id": "kbp",
+      "type": "backend",
+      "label": "kb_preflight.py 泛化读取器",
+      "sublabel": "--kb / --domain / --source / --product / --json",
+      "pos": [375, 250],
+      "size": [190, 86],
+      "sources": [
+        { "path": "scripts/qmt_kb_preflight.py", "line": 30, "end_line": 45, "label": "待抽公共核：规则表" },
+        { "path": "scripts/qmt_kb_preflight.py", "line": 100, "end_line": 153, "label": "待抽公共核：命中判定" },
+        { "path": "knowledge/qmt/README.md", "line": 50, "end_line": 53, "label": "回哺消费约定" }
+      ]
+    },
+    {
+      "id": "readme",
+      "type": "database",
+      "label": "README schema 与域编码表",
+      "sublabel": "domain / trigger / recurrence ＋ D1–D5",
+      "pos": [710, 250],
+      "size": [190, 86],
+      "sources": [
+        { "path": "knowledge/qmt/README.md", "line": 20, "end_line": 48, "label": "schema 节与判定规则" }
+      ]
+    },
+    {
+      "id": "gate",
+      "type": "backend",
+      "label": "转换管线既有门禁",
+      "sublabel": "转换前调用预检、判定是否阻断",
+      "pos": [40, 450],
+      "size": [170, 86],
+      "sources": [
+        { "path": "quantstudio/strategy_compiler/orchestrator.py", "label": "写前拦截调用方" }
+      ]
+    },
+    {
+      "id": "tests",
+      "type": "backend",
+      "label": "test_qmt_kb_preflight.py",
+      "sublabel": "既有 10 例 ＋ 新增等价性/域过滤/schema 例",
+      "pos": [375, 450],
+      "size": [190, 86],
+      "sources": [
+        { "path": "tests/test_qmt_kb_preflight.py", "line": 1, "end_line": 20, "label": "既有套件说明" },
+        { "path": "tests/test_qmt_kb_preflight.py", "line": 34, "end_line": 42, "label": "importlib 直调夹具" }
+      ]
+    },
+    {
+      "id": "metrics",
+      "type": "backend",
+      "label": "R/B/H 指标定义",
+      "sublabel": "docs/evidence/kb-metrics-definition.md",
+      "pos": [710, 450],
+      "size": [190, 86]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "主仓 QuantStudio（P0 唯一落位面）",
+      "wraps": ["src", "draft", "kb", "reg", "shell", "kbp", "readme", "gate", "tests", "metrics"]
+    }
+  ],
+  "connections": [
+    { "id": "e-src-draft", "from": "src", "to": "draft", "label": "symptom + 证据路径" },
+    { "id": "e-draft-kb", "from": "draft", "to": "kb", "label": "写条目（先过 schema 机检）" },
+    { "id": "e-kb-reg", "from": "kb", "to": "reg", "label": "entry_glob 登记三库" },
+    { "id": "e-shell-kbp", "from": "shell", "to": "kbp", "label": "委托 main（KB_DIR 隐式）" },
+    { "id": "e-draft-kbp", "from": "draft", "to": "kbp", "label": "草稿产物须过 validate_entry", "fromSide": "bottom", "toSide": "top" },
+    { "id": "e-readme-kb", "from": "readme", "to": "kb", "label": "schema + 域编码 D1–D5", "fromSide": "top", "toSide": "bottom" },
+    { "id": "e-tests-kbp", "from": "tests", "to": "kbp", "label": "直调断言（等价性/域过滤/schema）", "fromSide": "top", "toSide": "bottom" },
+    { "id": "e-gate-shell", "from": "gate", "to": "shell", "label": "既有 CLI 调用（形态/退出码不变）", "fromSide": "top", "toSide": "bottom" },
+    { "id": "e-kbp-metrics", "from": "kbp", "to": "metrics", "label": "hits[] 供 H 指标", "fromSide": "right", "toSide": "left" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "P0 可动项",
+      "items": [
+        "A1 域编码表：落点优先判域（fix_target 归属），fix_layer 仅辅助校验",
+        "A2 schema 三字段 domain/trigger/recurrence：九条纯增，禁改原语义",
+        "A6 kb-info.yaml 单文件三条登记卡：只在主仓出文件，trading 仓零写入"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "等价性协议",
+      "items": [
+        "新 CLI 与旧 CLI 输出全等：kb_entries / verdict / block[] / warn[] / exit code",
+        "负向：--kb 目录缺失必须报错退出（旧脚本静默 0 条目缺陷不得复制）",
+        "未标注 domain 的条目不匹配任何域且输出 warn，不静默"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "等窗与禁动",
+      "items": [
+        "AGENTS.md / .gitattributes / .gitignore 继续挂起，等用户明示等窗已开",
+        "QuantStudio-trading 全仓、P1–P3、wrapper/引擎/策略、契约矩阵、推送 全部禁动",
+        "R1 降级声明：P0 阶段 R1 自动触发尚非机检强制，条款仅草案备档"
+      ]
+    }
+  ]
+}

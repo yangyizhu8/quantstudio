@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "7bbaf709-b74e-428d-a5ab-58b42af2b72f",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "D:\\miniQMT策略实盘\\QuantStudio\\.archify\\architecture-kb-pipeline-20261021-164500\\candidate.json",
+  "output": "D:\\miniQMT策略实盘\\QuantStudio\\.archify\\architecture-kb-pipeline-20261021-164500\\kb-pipeline.html",
+  "specification": {
+    "sha256": "e585ef6db574c56832443c2eae1f40be0777305480c21ca1ab6f34b4fd57ef1c",
+    "bytes": 7014
+  },
+  "artifact": {
+    "sha256": "a64b31d2fbe816127669a8498312deeb434c9512cf0626fa82ec376876218e8e",
+    "bytes": 766793
+  }
+}

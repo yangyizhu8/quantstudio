@@ -1,0 +1,48 @@
+# kb-info.yaml —— 三库注册卡（A6 · 2026-10-21）
+#
+# 落位纪律：本文件是唯一落位面（主仓 knowledge/）。trading 第二库与通用库只在此处登记，
+#           不在其目录内落任何文件（副本共享层零本地改动）。
+# 字段六件：owner / scope / type / lifecycle / domains / entry_glob。
+# 机检判据：YAML 可解析；三条 scope 互不重叠；每条 entry_glob 实际命中文件数 > 0
+#           （entry_count_at 为登记时读数，随库增长会漂移，不作强断言）。
+
+schema_version: 1
+updated: "2026-10-21"
+domains_vocab: [D1, D2, D3, D4, D5]     # 语义见 knowledge/qmt/README.md §2.1
+
+registries:
+
+  - id: kb-main
+    owner: "QuantStudio 主仓（knowledge/）"
+    scope: "qmt-conversion-alignment"      # QMT 转换/对齐领域条目 + 契约/playbook/probe
+    type: "versioned-in-repo"
+    lifecycle: "active"
+    domains: [D1, D2, D3, D4, D5]
+    entry_glob: "knowledge/**/*.md"
+    entry_count_at: 24
+    notes: "QD-2026-* 条目库在 knowledge/qmt/；本库为主仓唯一权威落位面"
+
+  - id: kb-review
+    owner: "QuantStudio-trading 第二库（review-kb/）"
+    scope: "daily-review-experience"       # 每日复盘/经验沉淀/harness 记录
+    type: "versioned-in-sibling-repo"
+    lifecycle: "active"
+    domains: [D1, D3]
+    entry_glob: "../QuantStudio-trading/review-kb/**/*.md"
+    entry_count_at: 17
+    notes: "跨仓只读登记；本仓不向其落文件（trading 合并预案见 knowledge/qmt/README.md §4）"
+
+  - id: kb-general
+    owner: "通用知识库（Obsidian vault knowleage_base/）"
+    scope: "cross-project-knowledge"       # 跨项目通用知识（策略/因子/数据/风控等域 MOC）
+    type: "external-vault"
+    lifecycle: "active"
+    domains: [D1, D2, D3, D4, D5]
+    entry_glob: "D:/miniQMT策略实盘/knowleage_base/**/*.md"
+    entry_count_at: 103
+    notes: "绝对路径为**本机事实**，迁移/换机须同步改写；主库条目经「知识反哺留痕」引用它，不回写"
+
+# 变更记录
+changelog:
+  - date: "2026-10-21"
+    change: "建卡：三库登记（主库/trading 第二库/通用库），六字段齐；domains 词表引用 README §2.1"
