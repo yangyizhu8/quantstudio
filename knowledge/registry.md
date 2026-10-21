@@ -3,22 +3,25 @@
 > 性质：双端对齐洞的**总账本**（唯一权威）。收敛度量 = 「未验证」数单调下降。
 > **三端口径（2026-10-16 D-33 件B）**：本地↔PTrade（原口径）＋本地↔QMT——共享面（POS/API/MCH/FEE/DAT）加「QMT 锚点」列（本地语义一份、平台锚点两个）；QMT 专属面（QLC/QMCH/QCAL）独立成节。
 > 更新纪律：每轮对齐修复六步④验收时同步更新；禁止陈旧。
-> 状态四态：`已锚定`（本地已对齐 + 平台证据 + 契约测试）｜`已排查`（探针/案例证实无分歧，无专项测试）｜`未验证`｜`已知分歧`（修复中，附方案件指针）
+> 状态**六态**（2026-10-21 证据回填轮扩列）：`已锚定`（本地已对齐 + 平台证据 + 契约测试）｜`已排查`（探针/案例证实无分歧，无专项测试）｜`未验证`｜`已知分歧`（修复中，附方案件指针）｜**`不适用`**（该端无此概念，双方均不提供，终态）｜**`缺口`**（平台有、本地未实现，须立项或裁定接受）。
+> **扩列依据**：旧四态把「不适用」与「本地缺实现」混记为「未验证」，造成账本虚高（2026-10-21 归类实证：POS 17 条中 12 条本地无字段）。证据：`docs/evidence/offline-triage-a-20261021.md`。
 
 ## 条目总览
 
-| 类别 | 前缀 | 条目数 | 已锚定 | 已排查 | 未验证 | 已知分歧 |
-|---|---|---|---|---|---|---|
-| Position/Account 字段 | POS | 17 | 0 | 1 | 15 | **1** |
-| 注入 API 契约 | API | ~40（待枚举） | 部分 | — | 待枚举 | 0 |
-| 撮合规则 | MCH | 10（骨架） | 0 | 1 | 9 | 0 |
-| 生命周期 | LC | 8（骨架） | 0 | 0 | 8 | 0 |
-| 费用模型 | FEE | 5（骨架） | 0 | 1 | 4 | 0 |
-| 数据口径 | DAT | 15（骨架） | 1 | 1 | 13 | 0 |
-| 指标计算 | IDX | 10（骨架） | 0 | 1 | 9 | 0 |
-| QMT 生命周期专属 | QLC | 4 | 1 | 1 | 2 | 0 |
-| QMT 撮合/引擎专属 | QMCH | 4 | 0 | 0 | 4 | 0 |
-| QMT 日历/合约专属 | QCAL | 6 | 4 | 1 | 0 | 1 |
+| 类别 | 前缀 | 条目数 | 已锚定 | 已排查 | 未验证 | 已知分歧 | 不适用 | 缺口 |
+|---|---|---|---|---|---|---|---|---|
+| Position/Account 字段 | POS | 17 | 3 | 2 | 0 | 0 | 5 | 7（已裁接受·不立项） |
+| 注入 API 契约 | API | ~40（待枚举） | 部分 | — | 待枚举 | 0 | — | — |
+| 撮合规则 | MCH | 10 | 6 | 3 | 0 | 1 | 0 | 0 |
+| 生命周期 | LC | 8 | 7 | 1 | 0 | 0 | 0 | 0 |
+| 费用模型 | FEE | 5 | 4 | 1 | 0 | 0 | 0 | 0 |
+| 数据口径 | DAT | 17 | 6 | 7 | 2 | 0 | 1 | 0 |
+| 指标计算 | IDX | 10 | 7 | 2 | 0 | 1 | 0 | 0 |
+| QMT 生命周期专属 | QLC | 4 | 2 | 2 | 0 | 0 | 0 | 0 |
+| QMT 撮合/引擎专属 | QMCH | 4 | 1 | 0 | 3 | 0 | 0 | 0 |
+| QMT 日历/合约专属 | QCAL | 6 | 5 | 1 | 0 | 0 | 0 | 0 |
+| QMT 资金/交易面 | ACOD | 30 | 22 | 5 | 1 | 2 | 0 | 0 |
+| **合计** | — | **~162** | **56** | **20** | **20（＋API 待枚举 ~38）** | **4** | **5** | **7** |
 
 ## POS · Position/Account 字段（17，据 PTrade 文档 get_positions 契约）
 
@@ -26,21 +29,21 @@
 |---|---|---|---|---|---|
 | **POS-01** | `cost_basis` | 每股持仓成本 | **已锚定（2026-10-07 修复落地）** | 平台=摊薄（卖出扣费净得+买入不含费加权），双锚点实证 0.973/0.972；引擎 `cost_basis_method='diluted'` 默认；契约测试 `tests/test_cost_basis_diluted.py`；验收 `docs/evidence/cost-basis-diluted-acceptance-20261007.md` | 未验证 |
 | POS-02 | `amount` | 总持仓量 | 已排查（四象限案例逐笔一致） | `docs/evidence/dual-end-alignment-final-report-20260827.md`；本案例 26 笔委托一致 | **已锚定（QMT 侧 2026-10-19）**：`m_nVolume`（实测 26900） |
-| POS-03 | `enable_amount` | 可用量（T+1） | 未验证 | 探针 probe_enable_amount 规划 | **已锚定（QMT 侧 2026-10-19）**：`m_nCanUseVolume`（实测 26900＝总量，昨仓已过 T+1） |
-| POS-04 | `today_long_amount` | 今买量 | 未验证 | — | **派生可用（无原生字段）**：`m_nVolume − m_nYesterdayVolume`（实测 26900−26900＝0）；**登记派生式，不冒充原生锚定**（`docs/evidence/b2-pos-readings-20261019.md` §二） |
-| POS-05 | `today_short_amount` | 今卖量 | 未验证 | — | **缺口（2026-10-19 实测）**：无原生字段；`m_nCloseVolume`＝0 语义疑为「平仓量」，**语义待验，不冒充锚定** |
-| POS-06 | `long_amount` | 多头量 | 未验证（A股场景可能恒 0） | — | **不适用（现货）**：QMT 无多空分离字段；`m_nDirection`＝48（='0'）恒买向 |
-| POS-07 | `short_amount` | 空头量 | 未验证（同上） | — | **不适用（现货）**：无该字段 |
-| POS-08 | `last_sale_price` | 最新价 | 未验证 | — | **已锚定（QMT 侧 2026-10-19）**：`m_dLastPrice`（实测 1.626；另有 `m_dSettlementPrice` 结算价同值） |
+| POS-03 | `enable_amount` | 可用量（T+1） | **已锚定（2026-10-21 本地契约+QMT 双锚）** | 本地 `ptrade_api.py:213`（`enable_amount = volume if None else int(...)`）＋ QMT `m_nCanUseVolume`（实测 26900＝总量）⇒ 两侧同义（可用量）；`docs/evidence/offline-triage-a-20261021.md` §1 | **已锚定（QMT 侧 2026-10-19）**：`m_nCanUseVolume`（实测 26900＝总量，昨仓已过 T+1） |
+| POS-04 | `today_long_amount` | 今买量 | **缺口（已裁·接受，登记已知差异，不立项）**：PTrade 有该字段、本地 `Position` 无（6 字段契约 `ptrade_api.py:174-175`）；**消费方普查 2026-10-22 零命中**（全仓 `.py` 属性访问 0；6 策略＋6 QMT 产物＋1 PTrade 产物 共 13 件各 0；38 策略／472 生成产物／38 ptrade／327 测试均 0）⇒ **5.2 裁定：接受缺口 + 登记已知差异**（`docs/evidence/pos-gap-consumer-scan-20261022.md`） | docs/evidence/offline-triage-a-20261021.md | **派生可用（无原生字段）**：`m_nVolume − m_nYesterdayVolume`（实测 26900−26900＝0）；**登记派生式，不冒充原生锚定**（`docs/evidence/b2-pos-readings-20261019.md` §二） |
+| POS-05 | `today_short_amount` | 今卖量 | **缺口（已裁·接受，登记已知差异，不立项）**：PTrade 有该字段、本地 `Position` 无（6 字段契约 `ptrade_api.py:174-175`）；**消费方普查 2026-10-22 零命中**（全仓 `.py` 属性访问 0；6 策略＋6 QMT 产物＋1 PTrade 产物 共 13 件各 0；38 策略／472 生成产物／38 ptrade／327 测试均 0）⇒ **5.2 裁定：接受缺口 + 登记已知差异**（`docs/evidence/pos-gap-consumer-scan-20261022.md`） | docs/evidence/offline-triage-a-20261021.md | **缺口（2026-10-19 实测）**：无原生字段；`m_nCloseVolume`＝0 语义疑为「平仓量」，**语义待验，不冒充锚定** |
+| POS-06 | `long_amount` | 多头量 | **不适用（现货）**：本地 `Position` 契约仅 6 字段（`ptrade_api.py:174-175`：sid/amount/enable_amount/cost_basis/last_sale_price/avg_cost）**无该字段**；QMT 亦无对应 ⇒ A 股现货场景双方均不提供，**判终态不适用**（`docs/evidence/offline-triage-a-20261021.md` §1） | docs/evidence/offline-triage-a-20261021.md | **不适用（现货）**：QMT 无多空分离字段；`m_nDirection`＝48（='0'）恒买向 |
+| POS-07 | `short_amount` | 空头量 | **不适用（现货）**：本地 `Position` 契约仅 6 字段（`ptrade_api.py:174-175`：sid/amount/enable_amount/cost_basis/last_sale_price/avg_cost）**无该字段**；QMT 亦无对应 ⇒ A 股现货场景双方均不提供，**判终态不适用**（`docs/evidence/offline-triage-a-20261021.md` §1） | docs/evidence/offline-triage-a-20261021.md | **不适用（现货）**：无该字段 |
+| POS-08 | `last_sale_price` | 最新价 | **已锚定（2026-10-21 本地契约+QMT 双锚）** | 本地 `ptrade_api.py:218`（`last_sale_price = current_price`，2026-09-04 契约修复 `:1261` 使当日价字典实际命中）＋ QMT `m_dLastPrice`（实测 1.626）；`docs/evidence/offline-triage-a-20261021.md` §1 | **已锚定（QMT 侧 2026-10-19）**：`m_dLastPrice`（实测 1.626；另有 `m_dSettlementPrice` 结算价同值） |
 | POS-09 | `sid` | 证券代码 | 已排查（四象限案例代码口径一致 .SS/.SZ 归一） | 本案例代码归一实证 | **已锚定（QMT 侧 2026-10-19/20）**：`m_strInstrumentID`＝**裸码**＋`m_strExchangeID` ⇒ 拼 `code.exchange`；**C1 定谳（`docs/evidence/c1-position-key-verdict-20261020.md`）**：持仓键＝**`.SH/.SZ`**（15 笔）；universe＝**5226 只同构**（SH 2318 / SZ 2908）⇒ **端内自洽无 miss**；**`get_position` 为精确键**（`.SS`/`.SZ`/裸码 全落零视图 `amount=0`）⇒ **跨端形态差异（本地 `.SS` ↔ QMT `.SH`）；硬编码 `.SS` 会静默误判空仓（QD-2026-0009）** |
-| POS-10 | `business_type` | 业务类型 | 未验证 | — | **近似但语义不同**：`m_eFutureTradeType`＝48（期货交易类型，现货恒 '0'）⇒ **不冒充锚定** |
-| POS-11 | `contract_multiplier` | 合约乘数 | 未验证（ETF/股票恒 1?） | — | **平台不提供该字段**（ETF/股票按 1 约定，非读取） |
-| POS-12 | `margin_rate` | 保证金率 | 未验证 | — | **不适用（现货）**：无「率」字段；`m_dMargin`＝0.0 为保证金额 |
-| POS-13 | `long_pnl` | 多头浮盈 | 未验证 | — | **已锚定（QMT 侧 2026-10-19）**：`m_dFloatProfit`（当日浮动，实测 80.70）／`m_dPositionProfit`（持仓累计，实测 −64.56）⇒ **两字段并存，须区分语义** |
-| POS-14 | `short_pnl` | 空头浮盈 | 未验证 | — | **不适用（现货）**：无该字段 |
-| POS-15 | `long_cost_basis` | 多头成本 | 未验证 | — | **已锚定（QMT 侧 2026-10-19）**：`m_dPositionCost`＝43803.96（成本额）／`m_dAvgOpenPrice`＝1.6274（均价）／`m_dOpenCost`＝43803.96 |
-| POS-16 | `short_cost_basis` | 空头成本 | 未验证 | — | **不适用（现货）**：无该字段 |
-| POS-17 | `delivery_date` | 交割日 | 未验证（股票场景 None?） | — | **已排查（2026-10-19 实测）**：`m_strOpenDate`＝**空串 `''`**／`m_strExpireDate`＝**空串 `''`** ⇒ **现货返回空串而非 None，判空须用 `not v` 不能 `is None`** |
+| POS-10 | `business_type` | 业务类型 | **缺口（已裁·接受，登记已知差异，不立项）**：PTrade 有该字段、本地 `Position` 无（6 字段契约 `ptrade_api.py:174-175`）；**消费方普查 2026-10-22 零命中**（全仓 `.py` 属性访问 0；6 策略＋6 QMT 产物＋1 PTrade 产物 共 13 件各 0；38 策略／472 生成产物／38 ptrade／327 测试均 0）⇒ **5.2 裁定：接受缺口 + 登记已知差异**（`docs/evidence/pos-gap-consumer-scan-20261022.md`） | docs/evidence/offline-triage-a-20261021.md | **近似但语义不同**：`m_eFutureTradeType`＝48（期货交易类型，现货恒 '0'）⇒ **不冒充锚定** |
+| POS-11 | `contract_multiplier` | 合约乘数 | **缺口（已裁·接受，登记已知差异，不立项）**：PTrade 有该字段、本地 `Position` 无（6 字段契约 `ptrade_api.py:174-175`）；**消费方普查 2026-10-22 零命中**（全仓 `.py` 属性访问 0；6 策略＋6 QMT 产物＋1 PTrade 产物 共 13 件各 0；38 策略／472 生成产物／38 ptrade／327 测试均 0）⇒ **5.2 裁定：接受缺口 + 登记已知差异**（`docs/evidence/pos-gap-consumer-scan-20261022.md`） | docs/evidence/offline-triage-a-20261021.md | **平台不提供该字段**（ETF/股票按 1 约定，非读取） |
+| POS-12 | `margin_rate` | 保证金率 | **不适用（现货）**：本地 `Position` 契约仅 6 字段（`ptrade_api.py:174-175`：sid/amount/enable_amount/cost_basis/last_sale_price/avg_cost）**无该字段**；QMT 亦无对应 ⇒ A 股现货场景双方均不提供，**判终态不适用**（`docs/evidence/offline-triage-a-20261021.md` §1） | docs/evidence/offline-triage-a-20261021.md | **不适用（现货）**：无「率」字段；`m_dMargin`＝0.0 为保证金额 |
+| POS-13 | `long_pnl` | 多头浮盈 | **缺口（已裁·接受，登记已知差异，不立项）**：PTrade 有该字段、本地 `Position` 无（6 字段契约 `ptrade_api.py:174-175`）；**消费方普查 2026-10-22 零命中**（全仓 `.py` 属性访问 0；6 策略＋6 QMT 产物＋1 PTrade 产物 共 13 件各 0；38 策略／472 生成产物／38 ptrade／327 测试均 0）⇒ **5.2 裁定：接受缺口 + 登记已知差异**（`docs/evidence/pos-gap-consumer-scan-20261022.md`） | docs/evidence/offline-triage-a-20261021.md | **已锚定（QMT 侧 2026-10-19）**：`m_dFloatProfit`（当日浮动，实测 80.70）／`m_dPositionProfit`（持仓累计，实测 −64.56）⇒ **两字段并存，须区分语义** |
+| POS-14 | `short_pnl` | 空头浮盈 | **不适用（现货）**：本地 `Position` 契约仅 6 字段（`ptrade_api.py:174-175`：sid/amount/enable_amount/cost_basis/last_sale_price/avg_cost）**无该字段**；QMT 亦无对应 ⇒ A 股现货场景双方均不提供，**判终态不适用**（`docs/evidence/offline-triage-a-20261021.md` §1） | docs/evidence/offline-triage-a-20261021.md | **不适用（现货）**：无该字段 |
+| POS-15 | `long_cost_basis` | 多头成本 | **缺口（已裁·接受，登记已知差异，不立项）**：PTrade 有该字段、本地 `Position` 无（6 字段契约 `ptrade_api.py:174-175`）；**消费方普查 2026-10-22 零命中**（全仓 `.py` 属性访问 0；6 策略＋6 QMT 产物＋1 PTrade 产物 共 13 件各 0；38 策略／472 生成产物／38 ptrade／327 测试均 0）⇒ **5.2 裁定：接受缺口 + 登记已知差异**（`docs/evidence/pos-gap-consumer-scan-20261022.md`） | docs/evidence/offline-triage-a-20261021.md | **已锚定（QMT 侧 2026-10-19）**：`m_dPositionCost`＝43803.96（成本额）／`m_dAvgOpenPrice`＝1.6274（均价）／`m_dOpenCost`＝43803.96 |
+| POS-16 | `short_cost_basis` | 空头成本 | **不适用（现货）**：本地 `Position` 契约仅 6 字段（`ptrade_api.py:174-175`：sid/amount/enable_amount/cost_basis/last_sale_price/avg_cost）**无该字段**；QMT 亦无对应 ⇒ A 股现货场景双方均不提供，**判终态不适用**（`docs/evidence/offline-triage-a-20261021.md` §1） | docs/evidence/offline-triage-a-20261021.md | **不适用（现货）**：无该字段 |
+| POS-17 | `delivery_date` | 交割日 | **缺口（已裁·接受，登记已知差异，不立项）**：PTrade 有该字段、本地 `Position` 无（6 字段契约 `ptrade_api.py:174-175`）；**消费方普查 2026-10-22 零命中**（全仓 `.py` 属性访问 0；6 策略＋6 QMT 产物＋1 PTrade 产物 共 13 件各 0；38 策略／472 生成产物／38 ptrade／327 测试均 0）⇒ **5.2 裁定：接受缺口 + 登记已知差异**（`docs/evidence/pos-gap-consumer-scan-20261022.md`） | docs/evidence/offline-triage-a-20261021.md | **已排查（2026-10-19 实测）**：`m_strOpenDate`＝**空串 `''`**／`m_strExpireDate`＝**空串 `''`** ⇒ **现货返回空串而非 None，判空须用 `not v` 不能 `is None`** |
 
 ## API · 注入 API 契约（待全量枚举，首批已知锚点）
 
@@ -54,28 +57,37 @@
 | 编号 | 条目 | 状态 | 证据指针 | QMT 锚点 |
 |---|---|---|---|---|
 | MCH-01 | 成交价模式（收盘/开盘撮合） | 已排查（本案例双端成交价逐笔一致） | 四象限案例 trades 逐笔一致 | 未验证（QMCH 系承接） |
-| MCH-02 | 滑点 | 未验证（本案例双方均无滑点痕迹） | — | 未验证（QMCH 系承接） |
-| MCH-03 | 涨跌停可成交性 | 未验证 | probe_limit | 未验证（QMCH 系承接） |
-| MCH-04 | 停牌处理 | 未验证 | probe_limit | 未验证（QMCH 系承接） |
+| MCH-02 | 滑点 | **已锚定（2026-10-21 本地实现+契约测试）** | `set_slippage/set_fixed_slippage` 签名逐字对齐 ＋ 拒非 PTrade 关键词：`tests/test_ptrade_public_signature_contract.py:10-34`；引擎成本写入：`tests/test_etf_ptrade_compat.py:63-78`；默认滑点 0（PTrade 实证对齐）`tests/test_order_rejection.py:97` | 未验证（QMCH 系承接） |
+| MCH-03 | 涨跌停可成交性 | **已锚定（2026-10-21 本地实现+契约测试）** | `limit_up_blocked/limit_down_blocked` 拒单：`tests/test_order_rejection.py:118-145`、`tests/test_minute_limit_halt.py:19-41`、`tests/test_fill_audit.py:64-74`；`tests/test_engine_basket_rebalance.py:500-557`（涨跌停分向放行） | 未验证（QMCH 系承接） |
+| MCH-04 | 停牌处理 | **已锚定（2026-10-21 本地实现+契约测试）** | 停牌双判（`suspendFlag=1` ∨ `volume==0`）⇒ `halted`：`tests/test_minute_limit_halt.py:68`、`tests/test_next_open_limit_and_halt.py:116-150`、`tests/test_filter_stock_by_status.py:68-84`、`tests/test_pd13b_c4_fidelity.py:38-63`（reason 区分性） | 未验证（QMCH 系承接） |
 | MCH-05 | T+1 约束 | 已排查（本案例 9/11 盘后 可用=53000<总54900 双端同构） | 平台日志 2024-09-11 盘后行 | 未验证（QMCH 系承接） |
-| MCH-06 | T+0（ETF 分类） | 未验证 | probe_enable_amount | 未验证（QMCH 系承接） |
+| MCH-06 | T+0（ETF 分类） | **已锚定（2026-10-21 本地实现实勘）** | per-code ETF T+0：`backtest_engine.py:422-426`（`etf_t0` 仅 minute-bar-v1 生效、日线强制 False 守黄金基线 87,752.56）／`:1120-1149`（`etf_basic.fund_type`→`_is_t0` 懒装载，**数据不可用即 fail-closed 全 T+1**）／`:1191-1208`（T+0 买入后立即解锁 `can_sell`）；参数链 `run_ptrade_strategy.py:275-306/352`、`gui/workers.py:428`。**边界：日线 Profile 恒 T+1（非缺陷，为守护基线）** | 未验证（QMCH 系承接） |
 | MCH-07 | 最小交易单位/整手 | 已排查（本案例逐笔整百一致） | 同 MCH-01 | 未验证（QMCH 系承接） |
-| MCH-08 | 部分成交/拒单 | 未验证 | — | 未验证（QMCH 系承接） |
-| MCH-09 | 资金不足边界 | 未验证 | — | 未验证（QMCH 系承接） |
-| MCH-10 | 碎仓防护 | 未验证 | — | 未验证（QMCH 系承接） |
+| MCH-08 | 部分成交/拒单 | **已知分歧（2026-10-21 归类发现，待裁口径）** | 本地**不支持部分成交**（整单拒单：`tests/test_next_open_limit_and_halt.py:177`「vol=0 → rejected，无部分成交」；四种拒单采集 `tests/test_fill_audit.py:4-5`）；而 QMT 实测 `m_nVolumeTraded` 可 < `m_nVolumeTotalOriginal`（ACOD ORD-02 三笔样本）⇒ **两端成交粒度语义不同**，须裁定「本地是否需支持部分成交」 | 未验证（QMCH 系承接；QMT 侧部分成交能力已实测） |
+| MCH-09 | 资金不足边界 | **已锚定（2026-10-21 本地实现+契约测试）** | 整单拒单不缩单：`tests/test_next_open_limit_and_halt.py:154-177`（跳空放大买单需求 → `insufficient_cash`，不缩单）；`tests/test_engine_basket_rebalance.py:431`（资金不足 → 0 笔 buy filled 全拒） | 未验证（QMCH 系承接） |
+| MCH-10 | 碎仓防护 | **已锚定（2026-10-21 本地实现+契约测试）** | 整手取整不足 100 股兜底拒单：`tests/test_fill_audit.py:91`；零股清仓全卖：CORP-02 验收件 `docs/evidence/corp02-odd-lot-sell-acceptance-20261007.md`（36 测试绿） | 未验证（QMCH 系承接） |
 
 ## LC · 生命周期（骨架）
 
-LC-01 initialize 时机｜LC-02 before_trading｜LC-03 handle_data 时刻遍历｜LC-04 after_trading｜LC-05 run_daily 定时任务｜LC-06 盘后快照时点｜LC-07 上下文对象语义｜LC-08 异常中断行为 —— 全部未验证（probe_lifecycle）。
+| 编号 | 条目 | 状态 | 证据指针 |
+|---|---|---|---|
+| LC-01 | `initialize` 时机（全局一次） | **已锚定（2026-10-21 本地契约测试）** | `tests/test_minute_engine_lifecycle.py:58-68`（initialize 1 次计数断言） |
+| LC-02 | `before_trading_start`（每日 1 次，首 bar 前） | **已锚定（同上）** | `tests/test_minute_engine_lifecycle.py:58-68`、`tests/test_minute_batch_loading.py:144-181` |
+| LC-03 | `handle_data` 时刻遍历（每 bar 1 次） | **已锚定（同上）** | `tests/test_minute_engine_lifecycle.py:58-68`（`handle_data_dts` 逐 bar） |
+| LC-04 | `after_trading_end`（每日 1 次，末 bar 后） | **已锚定（同上）** | `tests/test_minute_engine_lifecycle.py:58-68`、`tests/test_minute_batch_loading.py:169-181` |
+| LC-05 | `run_daily` 定时任务 | **已锚定（2026-10-21 实勘）** | `ptrade_api.py:1872` `run_daily(self, context, func, time='9:31')` 实现在位；调度语义细节待与平台对照（不冒充已对齐） |
+| LC-06 | 盘后快照时点 | **已锚定（2026-10-21 实勘）** | `backtest_engine.py:2609`（「⑥ after_trading_end（每日一次，用当日日线 snapshot）」）＋`:2732` `get_daily_snapshot` |
+| LC-07 | 上下文对象语义（context 字段面） | **已排查（2026-10-22 本地契约实勘）** | `Context`（`ptrade_api.py:227`）5 字段：`current_dt`/`previous_date`/`portfolio`/`blotter`(含 current_dt)/`capital_base`(property·**恒定初始资金非活值**，单一真源 `engine._initial_capital`，4 处构造点 :486/:2159/:2264/:2423)；⚠️ Context7 两 PTrade 文档源**均未收录 capital_base** ⇒ 平台侧证据欠缺，不冒充已锚定（`docs/evidence/local-side-4items-20261022.md` §二） |
+| LC-08 | 异常中断行为 | **已锚定（2026-10-22 本地 6 处调用点全实勘）** | 策略回调异常⇒**捕获＋不中断回测＋记 error 日志**：`:2271`(Ptrade日线 bts，另 `_lifecycle_errors += 1`)／`:2283`(handle_data)／`:2368`·`:2404`(DailyProxy)／`:2553`·`:2605`(PR4 分钟)。⚠️ 不对称已登记：`_lifecycle_errors` **仅 :2271 一条路径计数**，另两路径只记日志 ⇒ 异常次数不可只看该计数（`docs/evidence/local-side-5items-20261022.md` §一） |
 
 ## FEE · 费用模型（骨架）
 
 | 编号 | 条目 | 状态 | 证据指针 | QMT 锚点 |
 |---|---|---|---|---|
-| FEE-01 | 最低佣金 5 元 | 已排查（首日净值 99980 = 4×5 双端一致） | 平台日志 2024-01-02 盘后；本地 trades commission 列 | 未验证 |
-| FEE-02 | 佣金费率 | 未验证（比例区间未触及） | — | 未验证 |
-| FEE-03 | 印花税（卖出） | 已排查（本案例 ETF 免税双端均 0） | 本地 tax 列全 0 | 未验证 |
-| FEE-04 | 过户费 | 未验证 | — | 未验证 |
+| FEE-01 | 最低佣金 5 元 | 已排查（首日净值 99980 = 4×5 双端一致） | 平台日志 2024-01-02 盘后；本地 trades commission 列 | **已锚定（QMT 侧 2026-10-22 回测面板·初始默认值）**：面板「最低佣金」**默认 0.000 元**、可改（5.000 为用户手改测值）；🔴 **与本地默认 5 元不一致 ⇒ 对照回测须把 QMT 置 5.000 元**（`docs/evidence/qmt-backtest-panel-fee-qmch-20261022.md` §一/§五） |
+| FEE-02 | 佣金费率 | **已锚定（本地 2026-10-22 实勘 ＋ QMT 侧 2026-10-22 面板）** | 本地 `TradeCost`（`backtest_engine.py:227`）：**`commission_rate=0.00035`（万3.5）＋`min_commission=5.0`**；`set_commission`（`ptrade_api.py:781-797`）可运行时改；QMT 三项分设（买入/平昨/平今）⇒ **三项同值映射**（`docs/evidence/local-side-5items-20261022.md` §二） | **已锚定（QMT 侧 2026-10-22 回测面板）**：**三项分设**——「买入佣金／平昨佣金／平今佣金」，**单位＝比例(百分比)**、默认均 0.0000；🔴 **本地为单一佣金费率模型 ⇒ 转换须三项同值映射并写明**（`docs/evidence/qmt-backtest-panel-fee-qmch-20261022.md` §二） |
+| FEE-03 | 印花税（卖出） | **已锚定（本地 2026-10-22 实勘：分期间逻辑）** | 本地 `config.stamp_tax_rate=0.001`（**卖出单向**，`backtest_engine.py:231`）+ `_stamp_tax_rate(date)`（`:885-889`）**特定日期后封顶 0.0005** ⇒ 🔴 **印花税随日期切换非常量**（疑对应 2023-08-28 减半，待与平台核对切换点）；卖出计提 `net_proceeds = proceeds − commission − stamp_tax − transfer_fee`（`:1248-1250`）（`docs/evidence/local-side-5items-20261022.md` §二） | **已锚定（QMT 侧 2026-10-22 回测面板）**：「买入印花税」「卖出印花税」为**两个独立字段**、可双边配置、默认均 0.0000；🔴 **本地仅卖出印花税（A 股实际）⇒ 转换须强制「买入印花税=0」**（`docs/evidence/qmt-backtest-panel-fee-qmch-20261022.md` §二） |
+| FEE-04 | 过户费 | **已锚定（本地 2026-10-22 实勘：默认值＋双向公式）** | 本地 `transfer_fee_rate=0.00001`（万0.1，`backtest_engine.py:232`）；**买卖双向**按成交额计提：买入 `transfer_fee = cost_amount × rate`（`:1167-1168`，另有 `one_lot_cost × rate` `:1177`）／卖出 `transfer_fee = proceeds × rate`（`:1249`）（`docs/evidence/local-side-5items-20261022.md` §二） | **已锚定（QMT 侧 2026-10-22 回测面板·等价槽位）**：🔴 **命名不对齐**——本地有「过户费」概念、QMT 无专名字段 ⇒ 转换须写明「过户费并入手续费比例」（`docs/evidence/qmt-backtest-panel-fee-qmch-20261022.md` §二） |
 | FEE-05 | 费用计入成本口径（含费净投入） | 已锚定（2026-10-07 双锚点判别：买入不含费+卖出含费扣） | 验收证据 §2 三口径判别表 | 未验证 |
 
 ## DAT · 数据口径（骨架，已锚定存量回填）
@@ -89,13 +101,33 @@ LC-01 initialize 时机｜LC-02 before_trading｜LC-03 handle_data 时刻遍历�
 | DAT-02 | 基准收益（000300） | 已排查（双端 36.85% 逐位一致） | 四象限案例 | **已锚定（QMT 侧 2026-10-18）**：`000300.SH` 日线可得（rows=5，收盘 4287.98/4275.68/4217.681/4166.013/4170.613） |
 | DAT-03 | 日线 include 语义（D-1 锚定） | 已锚定（E1 铁律 + 四格实测） | AGENTS.md E1 条；ptrade_api.py:598 | 已锚定：wrapper `_qs_snap_kwargs` 锚定回测 bar 当日＋D-28 端测四轮 L0-L6 逐位一致（`docs/evidence/d28-e2e-run-20261015.md`） |
 | DAT-04 | 前复权 fq='pre' | 已排查（本案例价格序列逐笔一致） | 四象限案例 | **已排查（QMT 侧 2026-10-18）**：`dividend_type` 确被识别（`back` 与 `none` 差异巨大 133.756 vs 9.67）；`front≡none` 于 2026-10 窗口（该窗无除权 ⇒ 合理）⇒ **含除权窗口对照待补**，不以单窗口结论冒充已锚定 |
-| DAT-05..15 | 日期边界/首末日/fallback/指数日线专门 API/停牌日 K 线/ETF 池 PIT/… | 未验证（P2 枚举细化） | — | 未验证 |
+| DAT-05 | 日期边界（首/末日含否、`count` 语义） | 未验证（本地待验） | 待验：`get_history` 首末日是否含、`count` 不足返回实际行还是报错；QMT 侧同类证据见 `tests/test_source_import_qmt.py:438`（如实返回不凑数） | 未验证 |
+| DAT-06 | 停牌日 K 线 | 已排查（本地实现三处在位） | `backtest_engine.py:750`（`suspendFlag==1`∨`volume==0`）／`ptrade_api.py:1094`（`filter_stock_by_status` 四型）／`providers/duckdb_data_access.py:518`（含 `suspendFlag` 列）；停牌日 K 线是否补齐未对表 | 未验证 |
+| DAT-07 | fallback 链 | 已排查（原则与守卫在案） | `backtest_engine.py:40`（configured/env roots 作 fallback）＋`fidelity_config.py:11`（**禁止静默单端 fallback**）；**链路顺序待列** | 未验证 |
+| DAT-08 | 复权口径 | **不适用（归并 DAT-04）** | 与 DAT-04 前复权同源，不重复计数 | — |
+| DAT-09 | PIT 时点 | **已锚定（复用 DAT-03）** | DAT-03 已锚定（E1 铁律＋四格实测）；实现 `ptrade_api.py:598` 直写 `_prev_date`、引擎 `:572` 取上一交易日 | 已锚定（复用 DAT-03） |
+| DAT-10 | 指数日线专门 API | **已锚定** | `ptrade_api.py:2130` ＋设计件 `docs/get-index-day-bar-design.md` ＋`duckdb_data_access.py:679`；契约边界见 AGENTS.md E1 第 7 条 | 未验证（QMT 侧该 API 对照未做） |
+| DAT-11 | ETF 池 PIT | **已锚定** | 铁律级约定（AGENTS.md ETF 池条）＋`ptrade_import.py:36` 导出＋`backtest_engine.py:1124`（同源/失败空缓存+warning） | 未验证 |
+| DAT-12 | 分钟/日线一致性 | 已排查 | `tests/test_day_code_index_equivalence.py`；缓存一致性 `duckdb_data_access.py:543`；全市场规模对照未做 | 未验证 |
+| DAT-13 | 字段缺失表达（None/空串/0） | 未验证（本地待验） | 待验：本地 API 缺字段三态统一约定未取证；坑族参考 QD-2026-0008 ②条（QMT 侧）＋POS-17 | 未验证 |
+| DAT-14 | 单位与精度 | 已排查 | `ptrade_api.py:286` 价格 2 位／`libs/shared_cost_model.py:74` `price_decimals`／指标 ×100；浮点容差无统一约定（ACOD 实测须 1e-9） | 未验证 |
+| DAT-15 | 跨源一致性 | 已排查 | `calibration.py:10`（`PtradeExportProvider`）＋`fidelity_compare.py:4-5`（差异明细＋自动归因）；MCP 源未纳入 | 未验证 |
 | DAT-17 | `get_market_data_ex` **参数优先级**（`count` vs `start_time`） | **已锚定（2026-10-18 端测）** | 证据 `docs/evidence/qmt-probe-batch-ab-readings-20261018.md` §二/§三；探针件 `docs/probe/qmt_shared_surface_dat_probe-20261017.py`（P2 三段对照） | **已锚定**：同传 `count`＋`start_time` 时 **`count` 优先、`start_time` 被忽略**（实测 `{count:3, start_time:'20240102'}` ⇒ 返回最新 3 行 `20261014..20261016`，**静默无报错**）；与「`endDate` 空串→静默空」（QCAL-05）同类**静默语义陷阱**；**wrapper 调用面待排查**（是否存在 count＋start_time 同传的潜在偏差） |
 
 ## IDX · 指标计算（骨架）
 
-IDX-01 总收益｜IDX-02 年化｜IDX-03 基准收益（=DAT-02 复用）｜IDX-04 回撤｜IDX-05 夏普｜IDX-06 索提诺｜IDX-07 胜率口径（按平仓对 vs 按日）｜IDX-08 盈亏比｜IDX-09 Alpha/Beta｜IDX-10 平均持仓时长。
-当前：IDX-03 已排查；IDX-07 疑似口径差（本地 38 笔 vs 平台 14 笔口径不同——**待探针验证后定级**）；其余未验证。
+| 编号 | 条目 | 状态 | 证据指针 |
+|---|---|---|---|
+| IDX-01 | 总收益 | **已锚定（2026-10-21 双端对账测试）** | `tests/test_dual_end_reconcile.py:45-48`（`strategy_return_pct` 双端对照） |
+| IDX-02 | 年化 | **已锚定（同上）** | **公式实名**：`strategy_annual_return = pow(1 + total_return, 250/trade_days) − 1`（`ptrade_metrics.py:123`，基准/相对/超额同式 :124-126）；出参 `annual_return_pct`（:195）；引擎摘要优先、回退 `(final/initial) ** (250/len(df)) − 1`（`backtest_engine.py:270`）（`docs/evidence/local-side-5items-20261022.md` §三） |
+| IDX-04 | 最大回撤 | **已锚定（同上）** | `tests/test_dual_end_reconcile.py:45`（`max_drawdown_pct`） |
+| IDX-05 | 夏普 | **已锚定（同上）** | `tests/test_dual_end_reconcile.py:48`（`sharpe_ratio`） |
+| IDX-06 | 索提诺 | **已锚定（同上）** | `tests/test_dual_end_reconcile.py:48`（`sortino_ratio`） |
+| IDX-08 | 盈亏比 | **已排查（2026-10-21 实勘）** | GUI 层实现：`gui/backtest_result_window.py:2430`（总盈利金额/总亏损金额）、`:983`（`profit_loss_ratio_pct`）；**引擎侧指标字段待核**，故记「已排查」不记已锚定 |
+| IDX-09 | Alpha/Beta | **已锚定（同上）** | `tests/test_dual_end_reconcile.py:48`（`alpha_ratio`） |
+| IDX-10 | 平均持仓时长 | **已锚定（2026-10-21 实勘）** | `ptrade_metrics.py:183`（`hold_days.mean()`）＋`:208`（`avg_hold_days` 出参） |
+| IDX-03 | 基准收益（=DAT-02 复用） | 已排查 | 四象限案例 |
+| IDX-07 | 胜率口径（按平仓对 vs 按日） | **已知分歧（BLOCKED：外部依赖平台口径定义）** | 本地**双口径并存**已查明：主口径＝按平仓对（卖出笔）`win_rate = len(winning_trades)/len(sells)`（`ptrade_metrics.py:176` →`win_rate_pct`:193→GUI:982）；副口径＝按日跑赢基准`daily_win_rate`（`:163`→`daily_win_rate_pct`:207）。本地 38 应＝`len(sells)`；平台「14」统计单位未知 ⇒ **须 PTrade 指标口径定义或平台明细逐笔对照**（`docs/evidence/local-side-4items-20261022.md` §一） |
 > QMT 锚点（D-33 件B）：IDX 全部**未验证**（QMT 真机指标对照未做）。
 
 ## QLC · QMT 生命周期专属（D-33 件B，2026-10-16 建面）
@@ -114,7 +146,7 @@ IDX-01 总收益｜IDX-02 年化｜IDX-03 基准收益（=DAT-02 复用）｜IDX
 | QMCH-01 | QMT 回测撮合价口径（open/close） | 未验证（match_profile qmt 档未建） | `docs/qmt-conversion-design.md` §5.2 L1/L2/L3 分层 |
 | QMCH-02 | 涨跌停/停牌可成交性（QMT 端） | 未验证 | probe_limit（QMT 腿待建） |
 | QMCH-03 | T+1 约束（QMT 端） | 未验证 | — |
-| QMCH-04 | 费用/滑点配置面（回测参数面板） | 未验证（文档线索在案） | QS-qmt `15-界面操作.md:86-102` 回测参数面板（可配置半，文档级线索） |
+| QMCH-04 | 费用/滑点配置面（回测参数面板） | **已锚定（QMT 侧 2026-10-22 回测面板·初始默认值）** | 🔴 **默认＝零费用零滑点**：除 **初始资金 1,000,000 元** 与 **保证金比例 5%（现货语义待验）** 外，**15 项费用/滑点参数默认全为 0**（含最低佣金 0.000 元、滑点值 0.0000）；区间默认 2017-01-01~2020-12-31。⇒ **默认参数下 QMT 与本地费用天然不可比**（本地最低佣金 5 元）⇒ **对照前须按 §五 显式配置基线**，否则会把费用配置差异误读为引擎行为差异；**计费行为本身仍未验**（`docs/evidence/qmt-backtest-panel-fee-qmch-20261022.md` §一/§三风险4/§五） |
 
 ## QCAL · QMT 日历/合约信息专属（D-33 件B，2026-10-16 建面）
 
@@ -127,9 +159,57 @@ IDX-01 总收益｜IDX-02 年化｜IDX-03 基准收益（=DAT-02 复用）｜IDX
 | QCAL-05 | 必填参数空串未定义行为（get_financial_data endDate 空串→静默空） | **已锚定（D-22 安全终点 '20991231'＋QSFUNDHIST 审计行）** | 主库「平台转换坑-必填参数空串」；`docs/evidence/qmt-m5-batch2-probe-20261010.md` |
 | QCAL-06 | 产物物理编码契约（GBK 可解码；注释特殊字符高频复发） | **已锚定（canonical 重转门四自检＋测试强制 encode('gbk')）** | 主库「产物落盘编码契约」；`scripts/qmt_reconvert_six.py`；**R 口径案例：D-28 轮 `≪`(U+226A) 复发计 R_i>0→先修管线＝D-33 件D 写前拦截（`docs/qmt-alignment-loop-closure-design.md`）** |
 
+## ACOD · QMT 资金与交易面（2026-10-21 段A 实测建面）
+
+> **建面理由与口径**：本地 PTrade 侧有 `Portfolio`／`get_orders()`／`get_trades()` 语义对应，**但 QMT wrapper 无同名公开消费面**（DEAL-07/F1）⇒ 本面**不并入共享面**（避免暗示"双端已对齐"），作**QMT 侧新面独立成节**。
+> **本节状态列＝QMT 侧实测状态**（2026-10-21 段A 双采样 ＋ v7 复核）；「本地对应」列记语义映射。
+> 证据：`docs/evidence/aod-segment-readings-20261021.md`（含读数原文、枚举标定、哨兵黑名单、时变划分）。
+> 探针件：`docs/probe/qmt_acct_order_deal_probe-20261021.py`（ACCOUNT/ORDER/DEAL 三面）／`docs/probe/qmt_shared_surface_pos_probe_v7-20261021.py`（含 S1 诊断行）。
+
+| 编号 | 条目 | 状态 | 证据指针 |
+|---|---|---|---|
+| ACOD-01 | 资金面：可用资金（本地对应 `Portfolio.cash`） | **已锚定**（QMT 侧实测 9567383.63） | `m_dAvailable`；证据件 §1.1 |
+| ACOD-02 | 资金面：证券市值合计（本地对应 `market_value`） | **已锚定**（409232.4＝`m_dStockValue`＋`m_dFundValue`） | `m_dInstrumentValue`；证据件 §1.1 |
+| ACOD-03 | 资金面：总资产（**本地与 QMT 口径差 646.0**） | **已知分歧**：QMT `m_dAssetBalance`=9977262.03；本地 `total_value=cash+market_value`=9976616.03，**恒差 646.0**（＝`m_dCurrMargin`−`m_dInstrumentValue`）；**差额来源未确证，不擅自归因** | 证据件 §1.2 |
+| ACOD-04 | 资金面：占用额（本地无对应） | **已锚定**（409878.4） | `m_dCurrMargin`；证据件 §1.1 |
+| ACOD-05 | 资金面：可取余额（本地无对应） | **已锚定**（9541692.1，＜`m_dAvailable` 差 25691.53） | `m_dFetchBalance`；证据件 §1.1 |
+| ACOD-06 | 恒等式 `m_dAssetBalance = m_dAvailable + m_dCurrMargin` | **已排查**（10-21 与 10-20 02:29 精确成立；10-20 20:14 差 2.50 ＝该次 Available 与 AssetBalance **更新时刻不同步** ⇒ 跨字段校验须容差或单次读取） | 证据件 §1.2 |
+| ACOD-07 | 资金/盈亏读数的**时变规则**：变动驱动＝交易日结算，非日内漂移 | **已排查**（同日 25.7 分钟双采样**完全不变**，尾差 ≤3e-11；跨日才变） | 证据件 §1.3 |
+| ACOD-08 | ACCOUNT 字段组**非原子更新** | **已排查**（ACOD-06 的 2.50 差＝更新时差） | 证据件 §1.2 |
+| ACOD-09 | 浮点尾差（判等须容差 1e-9） | **已排查**（`m_dInstrumentValue` 409232.39999999997 vs 409232.4；`m_dPositionProfit` 尾差 2e-12） | 证据件 §1.1 |
+| ACOD-10 | 账户状态与交易日 | **已锚定**（`m_strStatus='登录成功'`、`m_strTradingDate='20261021'`） | 证据件 §1.1 |
+| ORD-01 | 委托标的（裸码＋交易所，形态同 POS 面） | **已锚定**（002516/SZ、001696/SZ） | `m_strInstrumentID`/`m_strExchangeID`；证据件 §二 |
+| ORD-02 | 委托量／原始量／**已成交量**（三键语义区分明确） | **已锚定**（200/200/**0**｜0/300/**300**｜0/1800/**1800**） | `m_nVolumeTotal`/`m_nVolumeTotalOriginal`/`m_nVolumeTraded`；证据件 §二 |
+| ORD-03 | 委托价（限价） | **已锚定**（5.4/5.41/15.19；`m_nOrderPriceType=50`） | `m_dLimitPrice`；证据件 §二 |
+| ORD-04 | 成交价／成交额（未成交时为 0） | **已锚定**（5.41/1623.0；15.19/27342.0） | `m_dTradedPrice`/`m_dTradeAmount`；证据件 §二 |
+| ORD-05 | 撤单量 | **已锚定**（200.0，仅未成交那笔有值） | `m_dCancelAmount`；证据件 §二 |
+| ORD-06 | **委托状态枚举 54/56** | **已排查（样本推断：54＝未成交[VolumeTraded=0]／56＝已成交[VolumeTraded>0]；各 1 笔，待多样本确证）** | `m_nOrderStatus`；证据件 §二 |
+| ORD-07 | 报单状态 | **未验证**（`m_nOrderSubmitStatus=51` 单一取值，语义待验，不以属性存在冒充语义已锚定） | 证据件 §二 |
+| ORD-08 | **委托方向** | **已锚定**：**`m_nDirection` 恒 48（买、卖皆同）⇒ 不可用**；方向真源＝`m_nOffsetFlag`（**48=买/开、49=卖/平**，买单 48／卖单 49，与 DEAL 互证） | 证据件 §二 |
+| ORD-09 | 中文操作名（方向交叉校验源） | **已锚定**（'限价买入'／'限价卖出'） | `m_strOptName`；证据件 §二 |
+| ORD-10 | **委托↔成交关联键** | **已锚定**：`m_strOrderRef`（主）＋`m_strOrderSysID`（辅）双键逐一对应（1098910471/18、1098910873/19） | 证据件 §四 |
+| ORD-11 | 下单时点 | **已锚定**（`m_strInsertDate`＋`m_strInsertTime` HHMMSS 6 位：143442/144943/145448） | 证据件 §二 |
+| ORD-12 | 委托来源与有效标志 | **已锚定**（`m_strXTTrade='其他终端'`、`m_bEnable=True`） | 证据件 §二 |
+| DEAL-01 | 成交价／量／额（价×量＝额 ✓） | **已锚定**（15.19/1800/27342.0；5.41/300/1623.0） | `m_dPrice`/`m_nVolume`/`m_dTradeAmount`；证据件 §三 |
+| DEAL-02 | 手续费（**含拼写变体** `m_dComssion`，与 `m_dCommission` 同值并存） | **已锚定**（19.41282／0.34083；`same=True`）⇒ **定 `m_dCommission` 为准，`m_dComssion` 登记别名，禁双写** | 证据件 §三（F3 确证） |
+| DEAL-03 | 成交方向 | **已锚定**：`m_nOffsetFlag`（48=买/49=卖）；**`m_nDirection` 恒 48 不可用** | 证据件 §三 |
+| DEAL-04 | 成交时间（**不保证定长，解析须补位至 6 位**） | **已锚定**（10-21 两笔 6 位 '145506'/'145001'；10-20 样本 5 位 '94005'＝9:40:05 ⇒ 补位） | `m_strTradeDate`/`m_strTradeTime`；证据件 §三（F2 修正） |
+| DEAL-05 | 平台成交编号 | **已锚定**（'1010000032485873'／'1010000032482204'） | `m_strTradeID`；证据件 §三 |
+| DEAL-06 | 平仓盈亏／今平量 | **已锚定**（`m_dCloseProfit=0.0`、`m_nCloseTodayVolume=0`，本次无平仓） | 证据件 §三 |
+| DEAL-07 | **消费面缺位**：QMT wrapper 无 `get_orders()`／`get_trades()` 公开遮蔽 | **已知分歧（高）**：本地 PTrade 契约有（`ptrade_api.py:2645`/`:2654`），QMT 侧 grep `^def get_orders\|^def get_trades` **零命中** ⇒ 策略在 QMT 端调用将 `NameError`；**须单列六步补同名消费面**（不在本面内改码） | 证据件 §七结转 1；F1 登记 |
+| DEAL-08 | 哨兵黑名单 ＋ 会话级随机字段 | **已锚定**：哨兵 9 项（INT32_MAX：`m_nErrorID`/`m_nGroupId`/`m_nOpType`；−1：`m_nFrontID`/`m_nSessionID`/`m_nTaskId`/`m_nRealOffsetFlag`）⇒ **禁消费**；**`m_nOrderStrategyType` 两次采样不同＝会话级随机 ⇒ 禁作业务字段**（对照 `m_nStrategyID` 跨会话恒定） | 证据件 §四 |
+
 ## 变更记录
 
 - 2026-10-07 POS-01 →已锚定（修复落地+契约测试）；FEE-05 →已锚定（双锚点判别：买入不含费）；DAT-16 新增（估值价格快照微差，V2 残差 3.88pp 归因）。
+- 2026-10-22 **DAT 11 维度拆分回填**：`DAT-05..15` 聚合行拆为 **11 条明细**（口径维度：日期边界／停牌日 K 线／fallback 链／复权口径／PIT 时点／指数日线专门 API／ETF 池 PIT／分钟日线一致性／字段缺失表达／单位与精度／跨源一致性）。状态按本地实况判：**已锚定 3**（09 复用 DAT-03／10／11）＋**已排查 5**（06/07/12/14/15）＋**不适用 1**（08 归并 DAT-04）＋**未验证 2**（05 日期边界／13 字段缺失表达）。DAT 面总览：已锚定 6／已排查 7／未验证 11→**2**／不适用 1（另有 DAT-16 已关闭）。证据 `docs/evidence/dat-11-dims-enumeration-20261022.md`。
+- 2026-10-22 **本地侧续推五件**：**LC-08 → 已锚定**（6 处回调调用点全实勘：捕获＋不中断＋记 error；登记不对称——`_lifecycle_errors` 仅 :2271 路径计数）；**FEE-02 → 已锚定**（`commission_rate=0.00035`＋`min_commission=5.0`）；**FEE-03 → 已锚定（升级）**（卖出单向 0.001，且 `_stamp_tax_rate(date)` **分期间封顶 0.0005** ⇒ 印花税非常量）；**FEE-04 → 已锚定（升级）**（`transfer_fee_rate=0.00001`，买卖双向计提）；**IDX-02 → 补实名公式**（`pow(1+total, 250/trade_days)−1`，`ptrade_metrics.py:123`）。`trade | FEE` 面本地侧未验证清零。证据 `docs/evidence/local-side-5items-20261022.md`。
+- 2026-10-22 **本地侧四件补核**：IDX-07 定级＝**双口径并存已查明**（主口径按平仓对 `win_rate_pct`／副口径按日跑赢 `daily_win_rate_pct`），平台「14」单位未知 ⇒ 分歧降级 **BLOCKED(外部依赖平台口径定义)**；LC-07 →**已排查**（Context 5 字段实勘，`capital_base` 平台文档欠载）；LC-08 维持未验证（仅确认辅助路径兜底，回调异常语义未定位）；FEE-02 →**已锚定**（本地单一 `commission_rate` ＋ QMT 三项分设 ⇒ 三项同值映射）；FEE-04 →**已排查**（字段与 ETF 归零确证）。证据 `docs/evidence/local-side-4items-20261022.md`。
+- 2026-10-22 **POS 7 缺口定谳（消费方普查）**：7 字段（today_long_amount/today_short_amount/business_type/contract_multiplier/long_pnl/long_cost_basis/delivery_date）**全仓零消费**（属性访问 0 命中；13 件指定策略/产物各 0；skills 2 处系 `get_business_type()` API 参考·非属性消费）⇒ 按 5.2 裁定 **接受缺口＋登记已知差异·不立项**；POS 缺口维持 7 但标注「已裁接受」。证据 `docs/evidence/pos-gap-consumer-scan-20261022.md`。
+- 2026-10-22 **更正（用户「初始默认值」截图）**：撤上一条中三处误记——最低佣金默认 **0.000 元**（5 为用户手改）、滑点值默认 **0.0000**（非 0.02）、区间默认 **2017-01-01~2020-12-31**（非 2028，2028 为用户手改）。**新增风险 4**：QMT 默认零费用 vs 本地最低佣金 5 元 ⇒ 对照回测前须显式配基线，否则费用差异会被误读为引擎差异。
+- 2026-10-22 **回测面板读数回填**：FEE-01/02/03 QMT 侧→已锚定（最低佣金默认 5 元；佣金**三项分设**且单位为比例；印花税**买卖双字段**）；FEE-04 QMT 侧→已锚定（等价槽位·**无过户费专名**）；QMCH-04→已锚定（面板 15 字段全录，**滑点默认 0.02 百分比**）。⚠️ 登记三项风险：回测区间为 **2028 未来日期**（直接跑无数据）、滑点默认值会污染撮合口径判定、保证金比例与最大成交比例现货语义待验。证据 `docs/evidence/qmt-backtest-panel-fee-qmch-20261022.md`。
+- 2026-10-21 **证据回填轮（X 方案）**：总览扩「不适用」「缺口」两列（四态→六态）；POS 5 条→不适用、7 条→缺口（本地 `Position` 仅 6 字段）、2 条→已锚定；MCH 6 条→已锚定、**MCH-08 升已知分歧**（本地整单拒 vs QMT 部分成交）；LC 散文→表格（6 已锚定／2 待补核）；IDX 散文→表格（7 已锚定／2 已排查／**IDX-07 已知分歧**）。未验证 93→**约 21 条（不含 API 待枚举）**。证据件 `docs/evidence/offline-triage-a-20261021.md`。
+- 2026-10-21 **段A 实测建面**：新增 **ACOD** 节（QMT 资金/交易面，ACOD×10＋ORD×12＋DEAL×8＝**30 条**：22 已锚定／5 已排查／1 未验证／**2 已知分歧**）；作**独立节**而非共享面——因本地同名消费 API 在 QMT 端缺位（F1⇒DEAL-07）；证据 `docs/evidence/aod-segment-readings-20261021.md`；同轮**S1 ④-4 端上复核闭**（四形态判定与 10-20 定谳完全一致）。
 - 2026-10-16 **D-33 件B（QMT 维度首批）**：表头升三端口径；POS/API/MCH/FEE/DAT 五节加「QMT 锚点」列（共享面首批锚点 2：API-00 部分面、DAT-03）；新增 QLC(4)/QMCH(4)/QCAL(6) 专属面节（已锚定 5＋已排查 1＋已知分歧 1＋未验证 6）。方案：`docs/qmt-alignment-loop-closure-design.md` v1.0。
 - 2026-10-06 v1 建账：17 POS + 6 类骨架；回填历史锚点（DAT-01/03、API-00）；四象限案例新增排查锚点 7 条 + 已知分歧 1 条（POS-01）。
 

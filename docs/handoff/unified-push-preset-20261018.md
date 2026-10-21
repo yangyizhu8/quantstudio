@@ -44,8 +44,13 @@ $allow = $list -join ','            # PowerShell 口径
 & 'scripts\prepush-gate.ps1' -Commit 7c2cf40 -AllowAlso $allow -ReportOnly
 
 # ⑤ 推送（唯一放行通道：裁定引用 + 逐一覆盖；门强制留痕）
-$env:QS_PUSH_BUNDLE_RULING = '<专轮批准记录标识>'
-git push origin main                # .githooks/pre-push 自动调门
+# ★★ 勾子坑（2026-10-18 实证，务必先读）：两个环境变量**都必须显式导出**
+#   · 只设 QS_PUSH_BUNDLE_RULING 时，勾子报「有裁定引用（<标识>）但未用 -AllowAlso 列明允许捆绑的提交」⇒ 拒推；
+#   · 勾子是从 **QS_PUSH_BUNDLE_ALLOWALSO**（环境变量）取清单，**不是**从命令行 -AllowAlso 取；
+#     -AllowAlso 只用于手工调用 prepush-gate.ps1（含 -ReportOnly 预检）的场合。
+$env:QS_PUSH_BUNDLE_RULING    = '<专轮批准记录标识>'
+$env:QS_PUSH_BUNDLE_ALLOWALSO = (git rev-list origin/main..HEAD) -join ','   # 逗号拼接（教训 24）
+git push origin main                # .githooks/pre-push 自动调门（读上面两个变量）
 
 # ⑥ 双远程逐位核验（quantstudio-plus / quantstudio）
 git ls-remote origin refs/heads/main
@@ -65,7 +70,7 @@ git rev-list --left-right --count origin/main...HEAD   # 期望 0 0
 
 | 项 | 要求 |
 | --- | --- |
-| 放行通道 | 唯一：`QS_PUSH_BUNDLE_RULING` ＋ `-AllowAlso` **逐一覆盖**（门不留后门） |
+| 放行通道 | 唯一：`QS_PUSH_BUNDLE_RULING` ＋ **`QS_PUSH_BUNDLE_ALLOWALSO`** 两个环境变量**都须显式导出**（实测只设前者 ⇒ 勾子拒推「未用 -AllowAlso 列明」）；手工 ReportOnly 调用才用 `-AllowAlso` 参数 |
 | 留痕 | 门强制写 `docs/handoff/push-bundle-rulings.log`（放行事实） |
 | 教训 24 | `-AllowAlso` **逗号拼接**；禁空格分隔（>4 sha 假通过） |
 | C7 三查 | 本门是**叠加**非替代——人工三查照旧执行 |
