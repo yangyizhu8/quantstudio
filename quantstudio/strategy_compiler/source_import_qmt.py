@@ -767,15 +767,33 @@ def _qs_get_positions(C=None):
     return out
 
 
+# 码形态不匹配诊断开关（QD-2026-0009 S1）：默认开；置 False 即完全恢复旧行为（零输出）
+_QS_QMT_DIAG_FORM_MISS = True
+
+
 def get_position(code, C=None):
     """PTrade get_position 同名遮蔽（机制②）。
 
     本地契约（ptrade_api.py:1832-1835）：空仓返回 amount=0 的 Position 对象而非
     None——策略常写 get_position(code).amount == 0 判空仓，据此返回零持仓视图。
+
+    QD-2026-0009 S1（诊断行·新增检测型·纯增益）：未命中且「裸码在持仓键中以其它
+    交易所形态存在」时打一行 [QS_QMT_CODE_FORM_MISS] 审计行；返回值与行为不变。
+    仅覆盖单标查询路径；成员测试（code in get_positions()）属行为变更，另立项。
     """
-    pos = _qs_get_positions(C).get(code)
+    pos_map = _qs_get_positions(C)   # 只取一次；诊断复用同一字典，避免二次取数
+    pos = pos_map.get(code)
     if pos is not None:
         return pos
+    try:
+        if _QS_QMT_DIAG_FORM_MISS:
+            _bare = code.split('.')[0] if isinstance(code, str) else code
+            _other = [k for k in pos_map.keys()
+                      if isinstance(k, str) and k.split('.')[0] == _bare and k != code]
+            if _other:
+                print('[QS_QMT_CODE_FORM_MISS] code=%r hit_forms=%r' % (code, _other[:3]))
+    except Exception:
+        pass                          # 诊断体整体兜底，永不影响主路径
     return _QmtPositionView(code, 0, 0, 0.0)
 '''
 
