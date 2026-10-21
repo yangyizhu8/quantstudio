@@ -25,7 +25,7 @@ id: QD-2026-xxxx
 symptom: "现象一句话（可检索）"
 root_cause: "根因一句话"
 fix_target: "修复落点：文件路径 + commit sha"
-fix_layer: wrapper | portability_rule | matrix | probe | ledger   # 强制框架层
+fix_layer: wrapper | portability_rule | matrix | probe | ledger | engine   # 强制框架层（engine 为 2026-10-22 扩容）
 domain: D1 | D2 | D3 | D4 | D5          # 域编码（§2.1 判域规则；必填）
 trigger: "最小复现触发条件（非空；一句话可判定是否命中）"
 recurrence: 0                            # 同族复发次数（整数；R 指标数据源，默认 0）
@@ -41,14 +41,18 @@ closed_round: <n>                      # 闭环轮次：历史 D 条目按回填
 正文：复现步骤 / 影响面 / 讨论（散文允许，frontmatter 必须完整）
 ```
 
-**`fix_layer` 枚举语义**：`wrapper`（wrapper 模板/代码）｜`portability_rule`（转换校验规则/门禁）｜
-`matrix`（契约矩阵/哈希）｜`probe`（探针/形态库）｜`ledger`（台账/验收覆盖面）。
+**`fix_layer` 枚举语义（六枚举，2026-10-22 扩 `engine`）**：`wrapper`（wrapper 模板/代码）｜`portability_rule`（转换校验规则/门禁）｜
+`matrix`（契约矩阵/哈希）｜`probe`（探针/形态库）｜`ledger`（台账/验收覆盖面）｜
+**`engine`（宿主引擎/本地回测内核——`quantstudio/backtest/*` 等宿主侧代码；2026-10-22 总调度令扩容）**。
 
 > **`fix_layer` 机械判定规则（②审裁定 2026-10-16，替代原「枚举内最接近」口径）**：按 `fix_target` 的
 > **实际落点域**判定——**契约测试/矩阵域 ⇒ `matrix`**；纯台账登记类 ⇒ `ledger`；wrapper 模板/代码 ⇒ `wrapper`；
 > 校验规则/门禁 ⇒ `portability_rule`；探针/形态库 ⇒ `probe`。
-> **禁止扩枚举**（五枚举系与 PD schema 1:1 对齐的硬设计；扩值＝双库 schema 分叉）。
-> 已按此规则落定：QD-2026-0006 落点域＝契约测试域 ⇒ `matrix`（原「待②审确认项」**已销**）。
+> **扩枚举纪律（2026-10-22 修订，取代原「禁止扩枚举」）**：原五枚举系与 PD schema **1:1 对齐**的硬设计；
+> **扩容即打破 1:1 ⇒ 须 PD 库同步同值**，否则双库 schema 分叉。**本次扩 `engine` 的 PD 侧同步状态：待办**
+> （责任：PD 库维护方/KB 会话；未同步前，`engine` 在 QMT 库属**单侧扩容**，检索/校验跨库时须显式注意）。
+> 已按此规则落定：QD-2026-0006 落点域＝契约测试域 ⇒ `matrix`（原「待②审确认项」**已销**）；
+> **QD-2026-0010 落点域＝宿主引擎（`backtest_engine.py` 印花税分期间）⇒ `engine`**（2026-10-22 由权宜 `probe` 正式改判）。
 
 ## 2.1 域编码（D1–D5，A1 · 2026-10-21）
 
@@ -111,4 +115,5 @@ closed_round: <n>                      # 闭环轮次：历史 D 条目按回填
 |---|---|
 | 2026-10-16 | 建库（D-33 件A 批 1）：README＋首批 P1 级 6 条 QD 条目（D-21/22/28/30/31/32）；schema 1:1 对齐 PD |
 | 2026-10-16 | ②审裁定入册：**`fix_layer` 机械判定规则**（按 fix_target 落点域；禁止扩枚举）；QD-2026-0006 ⇒ `matrix` |
+| 2026-10-22 | **总调度令扩 `fix_layer` 六枚举（＋`engine`）**：host 引擎/本地回测内核类缺陷无所属层（QD-2026-0010 权宜 `probe` 暴露）；同时把「禁止扩枚举」改写为「扩容须 PD 库同步同值」——**PD 侧同步状态＝待办**（未同步前 `engine` 为 QMT 库单侧扩容）；QD-2026-0010 ⇒ `engine` |
 | 2026-10-21 | **A1 域编码表落位**：新增 §2.1 五域（D1 对齐／D2 转换／D3 运维与缺陷／D4 性能／D5 扩展与研发）＋落点优先判域规则＋wrapper 归属澄清（生效面判 D3）＋九条一次性落域＋未标注 domain 行为写死 |
