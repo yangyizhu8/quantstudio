@@ -330,6 +330,9 @@ class ReanchorOutcome:
     event_id: Optional[str] = None
     error: Optional[str] = None
     reason: Optional[str] = None
+    # B（2026-10-21 专项）：raw 不一致被判为「因子版本等价」而放行（不 block，
+    # front 按现因子重算，最终正确性由 apply/postcheck 裁决）。观测期用。
+    factor_equivalent: bool = False
 
 
 # ---------------------------------------------------------------------------

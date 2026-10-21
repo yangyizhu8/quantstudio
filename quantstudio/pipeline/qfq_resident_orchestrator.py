@@ -184,6 +184,9 @@ class CycleSummary:
     # FP-7（2026-10-20）：本周期因配额未处理的单元数（观测用；不参与判定）
     units_total: int = 0
     units_deferred: int = 0
+    # B（2026-10-21 专项）：因子等价放行 / 仍 blocked 的单元数（观察期放行率）
+    factor_equivalent_units: int = 0
+    blocked_units: int = 0
 
 
 @dataclass
@@ -791,7 +794,9 @@ class QFQResidentOrchestrator:
 
             return ReanchorOutcome(trigger_id=primary_tid, asset_type=asset_type,
                                    code=code, status=status, event_id=res.event_id,
-                                   error=getattr(res, "error", None))
+                                   error=getattr(res, "error", None),
+                                   factor_equivalent=bool(
+                                       getattr(res, "factor_equivalent", False)))
         except Exception as e:  # 引擎以外异常 → 记 failed / blocked
             logger.exception(f"[qfq_orch] {code} apply 异常: {e}")
             # 捕获不可变契约冲突 / 引擎明确 BLOCK（如 RECOVER_APPLIED_NO_EVENT）：
@@ -810,6 +815,12 @@ class QFQResidentOrchestrator:
         now_iso = _now_iso_ts().isoformat(timespec="seconds")
         at, code = unit["asset_type"], unit["code"]
         tids = unit["triggers"]
+        # B（2026-10-21 专项）：观察期计数——因子等价放行 vs 仍 blocked。
+        # 总调度观察期条件①：放行率 >90% 须回查「比值是否掩盖真实漂移」。
+        if outcome.status == "committed" and getattr(outcome, "factor_equivalent", False):
+            summary.factor_equivalent_units += 1
+        elif outcome.status == "blocked":
+            summary.blocked_units += 1
         records = {r["trigger_id"]: r for r in unit.get("trigger_records", [])}
         tables = ASSET_TABLE_MAP.get(at, frozenset())
         gen_params = [self._ident["price_source"], self._ident["source_generation"],
@@ -1745,8 +1756,20 @@ class QFQResidentOrchestrator:
                 return summary
 
             self._set_cycle_phase(conn, cycle_id, "gating")
+            # B（2026-10-21 专项）观察期留痕：因子等价放行数 / 仍 blocked 数 / 单元总数
+            # （总调度条件①：放行率 >90% 须回查「比值是否掩盖真实漂移」）
+            _fe = int(summary.factor_equivalent_units)
+            _bl = int(summary.blocked_units)
+            _ut = int(summary.units_total) or (_fe + _bl)
+            _rate = (float(_fe) / float(_fe + _bl)) if (_fe + _bl) > 0 else None
+            logger.warning(
+                "[qfq_orch] B 观察期：factor_equivalent=%d blocked=%d units=%d 放行率=%s",
+                _fe, _bl, _ut, ("%.1f%%" % (_rate * 100.0)) if _rate is not None else "n/a")
             passed, report = self._qfq_gate(
                 conn, cycle_id, units, run_id, codes_filter=scope)
+            report["factor_equivalent_units"] = _fe
+            report["blocked_units"] = _bl
+            report["factor_equivalent_rate"] = _rate
             if scope:
                 scoped_passed = passed
                 passed = False

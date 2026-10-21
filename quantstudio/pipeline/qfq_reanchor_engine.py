@@ -82,6 +82,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import uuid
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -128,6 +129,102 @@ MODELS: Tuple[str, ...] = ("ratio", "fresh_staged", "fresh_authoritative_rebase"
 # stored raw vs fresh(dividend_type=none) raw 一致性硬阈（浮点存取噪声级，
 # 实测 fixture 最大差 <4e-15；任何真实数据差异都远大于此阈）
 _RAW_MATCH_EPS = 1e-9
+
+# ---------------------------------------------------------------------------
+# B（2026-10-21 专项）：因子等价识别（factor equivalence）
+# ---------------------------------------------------------------------------
+# 背景：上游复权因子（fund_adj/adj_factor）历史被持续微调（2026-10-21 量级谱实证：
+# 513530 跳变 1347 个、同日成对往返、日间 ~1e-3 级 jitter），而库内 raw 是「写入时
+# 因子快照」的还原产物 ⇒ fresh raw 与库内 raw 在该历史段呈**结构化比例差**，
+# 逐位 |Δ|>1e-9 判据永不可能满足 ⇒ rebase 自锁（水位永远不前进）。
+#
+# 本判据只回答一个问题：「这批不一致是否**像**因子版本漂移（而非数据损坏）」。
+# 通过 ⇒ 不 block，交给 front 重算 + apply/postcheck 最终裁决（正确性不在此层拍板）。
+# 任一判据不通过 ⇒ 维持 block（fail-closed）。覆盖检查与 NULL/NaN 判据**完全不受影响**。
+_FACTOR_EQUIV_MIN_BARS = 8        # 证据量下限：样本太少不做结构推断（fail-closed）
+_FACTOR_EQUIV_RATIO_LO = 1e-3     # 比值下界（排除 0/极端乱码）
+_FACTOR_EQUIV_RATIO_HI = 1e3      # 比值上界
+_FACTOR_EQUIV_COL_TOL = 1e-9      # 跨列比值一致容差（相对）
+_FACTOR_EQUIV_JUMP_MED_MAX = 1e-2  # 相邻不一致 bar 的比值跳变：中位数上限
+_FACTOR_EQUIV_JUMP_P95_MAX = 5e-2  # 相邻不一致 bar 的比值跳变：p95 上限
+
+
+def _factor_equivalent_enabled() -> bool:
+    """B 开关（env `QS_QFQ_FACTOR_EQUIVALENCE`，默认 1；置 0 逐位还原旧行为）。"""
+    v = str(os.environ.get("QS_QFQ_FACTOR_EQUIVALENCE", "1")).strip().lower()
+    return v not in ("0", "false", "off", "no")
+
+
+def _factor_equivalent_analysis(mismatch_df) -> Dict:
+    """结构化「因子版本漂移」识别（纯函数，便于单测）。
+
+    输入：**仅不一致行**的 DataFrame，列为 ``time`` + 每列 ``db_<c>`` / ``fresh_<c>``。
+    判据（任一不过 → 不放行）：
+      E1 跨列标量一致：同一 bar 各列比值 ρ=fresh/db 彼此相等（相对容差 1e-9）
+         ——因子比值是标量，故各列必须同值；真实数据损坏（改一列）会失败；
+      E2 比值有界非退化：ρ ∈ [1e-3, 1e3] 且恒正；
+      E3 逐日连续性：相邻不一致 bar 的 |ρ_t/ρ_{t-1} − 1| 中位数 ≤1e-2、p95 ≤5%
+         ——因子日间微调连续；数据损坏呈突变离群；
+      E4 证据量：不一致 bar 数 ≥ 8（少样本不做结构推断）。
+    返回：{"equivalent": bool, "reason": str, "mismatch_bars": int, "ratio_median",
+          "ratio_p95", "day_jump_median", "day_jump_p95"}。
+    """
+    out: Dict = {"equivalent": False, "reason": "not_analyzed", "mismatch_bars": 0,
+                 "ratio_median": None, "ratio_p95": None,
+                 "day_jump_median": None, "day_jump_p95": None}
+    if mismatch_df is None or len(mismatch_df) == 0:
+        out["reason"] = "no_mismatch_rows"
+        return out
+    m = int(len(mismatch_df))
+    out["mismatch_bars"] = m
+    if m < _FACTOR_EQUIV_MIN_BARS:
+        out["reason"] = f"insufficient_evidence(m={m}<{_FACTOR_EQUIV_MIN_BARS})"
+        return out
+    cols = list(RAW_COLS)
+    ratios: Dict[str, np.ndarray] = {}
+    for c in cols:
+        db = mismatch_df[f"db_{c}"].astype(float).to_numpy()
+        fr = mismatch_df[f"fresh_{c}"].astype(float).to_numpy()
+        with np.errstate(divide="ignore", invalid="ignore"):
+            r = fr / db
+        if not np.all(np.isfinite(r)):
+            out["reason"] = f"ratio_undefined({c})"
+            return out
+        if np.any(r <= 0):
+            out["reason"] = f"ratio_nonpositive({c})"
+            return out
+        ratios[c] = r
+    base = ratios[cols[0]]
+    for c in cols[1:]:
+        rc = ratios[c]
+        denom = np.maximum(np.abs(base), 1e-300)
+        if np.any(np.abs(rc - base) / denom > _FACTOR_EQUIV_COL_TOL):
+            out["reason"] = f"cross_column_inconsistent({c})"
+            return out
+    if np.any(base < _FACTOR_EQUIV_RATIO_LO) or np.any(base > _FACTOR_EQUIV_RATIO_HI):
+        out["reason"] = "ratio_out_of_bounds"
+        return out
+    t = mismatch_df["time"].astype("int64").to_numpy()
+    order = np.argsort(t, kind="stable")
+    r_sorted = base[order]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        jump = np.abs(r_sorted[1:] / r_sorted[:-1] - 1.0)
+    jump = jump[np.isfinite(jump)]
+    if jump.size == 0:
+        out["reason"] = "no_jump_samples"
+        return out
+    j_med = float(np.median(jump))
+    j_p95 = float(np.quantile(jump, 0.95))
+    out["ratio_median"] = float(np.median(base))
+    out["ratio_p95"] = float(np.quantile(base, 0.95))
+    out["day_jump_median"] = j_med
+    out["day_jump_p95"] = j_p95
+    if j_med > _FACTOR_EQUIV_JUMP_MED_MAX or j_p95 > _FACTOR_EQUIV_JUMP_P95_MAX:
+        out["reason"] = f"ratio_discontinuity(med={j_med:.3g},p95={j_p95:.3g})"
+        return out
+    out["equivalent"] = True
+    out["reason"] = "factor_equivalent"
+    return out
 
 # —— tick_size 资产路由（第六轮阻断 4：tick 不得统一写死 0.01）——
 # A 股股票最小变动 0.01 元；场内 ETF 最小变动 0.001 元。
@@ -247,6 +344,8 @@ class ReanchorResult:
     error: Optional[str] = None
     model: str = "ratio"              # 本次实际使用的分钟修正模型（显式选择）
     minute_coverage: Dict = field(default_factory=dict)  # B-1 覆盖统计（按 freq）
+    # B（2026-10-21 专项）：本证券的 raw 不一致被判为「因子版本等价」而放行（不 block）。
+    factor_equivalent: bool = False
 
 
 class ReanchorBlocked(Exception):
@@ -875,6 +974,11 @@ def _check_daily_raw_align(conn, asset_type, code, df, tol):
 
     保障范围：证明 fresh 与库内 raw 来源对齐、未被传输错位/串码/截断（信任边界不覆盖
     fresh front 自身污染）。
+
+    B（2026-10-21 专项）：第一级判据不变；失败时追加第二级「因子版本等价识别」——
+    若不一致呈**结构化比例差**（跨列同比值 + 比值连续 + 样本充足），判定为上游因子
+    版本漂移 ⇒ **不 block**（front 本就按现因子重算，最终正确性由 apply/postcheck 裁决），
+    返回 factor_equivalent=True 供观测；否则维持原 block（fail-closed）。
     """
     daily_table, _ = _tables_of(asset_type)
     view = f"_qfq_raw_d_{code}"
@@ -886,12 +990,34 @@ def _check_daily_raw_align(conn, asset_type, code, df, tol):
             f"SELECT COUNT(*) FROM {daily_table} t JOIN {view} s "
             f"ON t.code=s.code AND t.time=s.time WHERE t.code=? AND ({raw_pred})",
             [code]).fetchone()[0])
+        mismatch = None
+        if n and _factor_equivalent_enabled():
+            _cols = ", ".join([f"t.{c} AS db_{c}" for c in RAW_COLS] +
+                              [f"s.{c} AS fresh_{c}" for c in RAW_COLS])
+            mismatch = conn.execute(
+                f"SELECT t.time AS time, {_cols} FROM {daily_table} t JOIN {view} s "
+                f"ON t.code=s.code AND t.time=s.time WHERE t.code=? AND ({raw_pred})",
+                [code]).fetchdf()
     finally:
         conn.unregister(view)
+    flags: Dict = {"factor_equivalent": False, "raw_mismatch": int(n), "detail": {}}
     if n:
-        raise ReanchorBlocked("daily_raw_mismatch",
-            f"日线 raw OHLC 共 {n} 行与库内不一致（|Δ|>{_RAW_MATCH_EPS}）；"
-            f"fresh raw 与库内 raw 未对齐，无法安全 rebase")
+        verdict = _factor_equivalent_analysis(mismatch)
+        flags["detail"] = verdict
+        if not verdict.get("equivalent"):
+            _why = ("" if verdict.get("reason") == "not_analyzed"
+                    else f"（因子等价识别未通过：{verdict.get('reason')}）")
+            raise ReanchorBlocked("daily_raw_mismatch",
+                f"日线 raw OHLC 共 {n} 行与库内不一致（|Δ|>{_RAW_MATCH_EPS}）；"
+                f"fresh raw 与库内 raw 未对齐，无法安全 rebase{_why}")
+        flags["factor_equivalent"] = True
+        logger.warning(
+            "[qfq_reanchor] %s 日线 raw 不一致 %d 行判定为**因子版本等价**（不 block，"
+            "front 按现因子重算）：reason=%s ratio_median=%.9g ratio_p95=%.9g "
+            "day_jump_median=%.4g day_jump_p95=%.4g",
+            code, n, verdict.get("reason"), verdict.get("ratio_median") or 0.0,
+            verdict.get("ratio_p95") or 0.0, verdict.get("day_jump_median") or 0.0,
+            verdict.get("day_jump_p95") or 0.0)
     view2 = f"_qfq_raw_d2_{code}"
     conn.register(view2, df[["code", "time"] + list(RAW_COLS)])
     try:
@@ -908,9 +1034,11 @@ def _check_daily_raw_align(conn, asset_type, code, df, tol):
     if ninv:
         raise ReanchorBlocked("daily_raw_invalid",
             f"日线 raw 存在 NULL/NaN/Inf/<=0 共 {ninv} 根（raw 被污染）")
+    return flags
 
 
-def _stage_fresh_daily_rebase(conn, asset_type, code, fresh_daily, tol, calendar):
+def _stage_fresh_daily_rebase(conn, asset_type, code, fresh_daily, tol, calendar,
+                             out_flags: Optional[Dict] = None):
     """rebase 日线预检 + 构建 STAGED_DAILY：A 基本 + B 全历史严格覆盖 + C raw 逐 bar 对齐。
 
     与 stage_fresh_daily 的差异：**不做乘法/加法比例校验**；覆盖要求全历史严格一致；
@@ -947,14 +1075,16 @@ def _stage_fresh_daily_rebase(conn, asset_type, code, fresh_daily, tol, calendar
                         f"time={row['time']} {c}={v!r}")
     # B 全历史严格覆盖（缺/多/重复行一律 BLOCK）
     _check_daily_coverage_strict(conn, asset_type, code, df)
-    # C raw 逐 bar 对齐
-    _check_daily_raw_align(conn, asset_type, code, df, tol)
+    # C raw 逐 bar 对齐（B：返回 factor_equivalent 标记，见 _check_daily_raw_align）
+    _raw_flags = _check_daily_raw_align(conn, asset_type, code, df, tol)
     staged = f"qfq_staged_fresh_daily_{code}"
     view = f"_qfq_staged_view_{code}"
     conn.register(view, df[list(_STAGED_REQUIRED)])
     conn.execute(f"DROP TABLE IF EXISTS {staged}")
     conn.execute(f"CREATE TEMP TABLE {staged} AS SELECT * FROM {view}")
     conn.unregister(view)
+    if out_flags is not None:
+        out_flags.update(_raw_flags or {})
     return staged
 
 
@@ -1060,15 +1190,43 @@ def _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol,
             f"rebase 分钟 freq={mfreq} raw 存在 {n_invalid} 根 NULL/NaN/Inf/<=0"
             f"（raw 被污染，无法安全 rebase）")
     if n_raw:
-        raise ReanchorBlocked("minute_raw_mismatch",
-            f"rebase 分钟 freq={mfreq} raw OHLC 共 {n_raw} 行与库内不一致"
-            f"（|Δ|>{_eps!r}）；fresh raw 与库内 raw 未对齐")
+        # B（2026-10-21 专项）：第二级「因子版本等价识别」——结构化比例差 ⇒ 不 block。
+        mismatch = None
+        if _factor_equivalent_enabled():
+            _cols = ", ".join([f"t.{c} AS db_{c}" for c in RAW_COLS] +
+                              [f"s.{c} AS fresh_{c}" for c in RAW_COLS])
+            _view3 = f"_qfq_raw_m3_{code}_{mfreq}"
+            conn.register(_view3, fm[["code", "time"] + list(RAW_COLS)])
+            try:
+                mismatch = conn.execute(
+                    f"SELECT t.time AS time, {_cols} FROM {minute_table} t JOIN {_view3} s "
+                    f"ON t.time = s.time AND t.code = ? AND t.freq = ? AND ({raw_pred})",
+                    [code, mfreq]).fetchdf()
+            finally:
+                conn.unregister(_view3)
+        verdict = _factor_equivalent_analysis(mismatch)
+        if not verdict.get("equivalent"):
+            _why = ("" if verdict.get("reason") == "not_analyzed"
+                    else f"（因子等价识别未通过：{verdict.get('reason')}）")
+            raise ReanchorBlocked("minute_raw_mismatch",
+                f"rebase 分钟 freq={mfreq} raw OHLC 共 {n_raw} 行与库内不一致"
+                f"（|Δ|>{_eps!r}）；fresh raw 与库内 raw 未对齐{_why}")
+        cov["factor_equivalent"] = True
+        cov["factor_equivalent_detail"] = verdict
+        logger.warning(
+            "[qfq_reanchor] %s freq=%s 分钟 raw 不一致 %d 行判定为**因子版本等价**"
+            "（不 block，front 按现因子重算）：reason=%s ratio_median=%.9g "
+            "day_jump_median=%.4g day_jump_p95=%.4g",
+            code, mfreq, n_raw, verdict.get("reason"),
+            verdict.get("ratio_median") or 0.0,
+            verdict.get("day_jump_median") or 0.0, verdict.get("day_jump_p95") or 0.0)
     return cov
 
 
 def stage_fresh_authoritative(conn, asset_type, code, fresh_daily, fresh_minutes,
                                canon_freqs, tol, calendar,
-                               allow_partial_minute: bool = False):
+                               allow_partial_minute: bool = False,
+                               out_flags: Optional[Dict] = None):
     """rebase 模型预检（A-D）→ 构建 STAGED_DAILY（分钟构建在 apply 循环内完成）。
 
     - 日线：A 基本 + B 全历史严格覆盖 + C raw 逐 bar 对齐（**删除乘法/加法比例校验**）。
@@ -1079,10 +1237,14 @@ def stage_fresh_authoritative(conn, asset_type, code, fresh_daily, fresh_minutes
     启用。当某分钟 freq 库内历史缺失（fresh ⊃ target）时，_check_minute_cov_raw 返回
     partial 信号而非 BLOCK；该信号汇总进返回值 dict 的 ``minute_partial`` 字段，供
     apply_fresh_minute_staged 与 postcheck 仅对共有区间做 front UPDATE（不 INSERT）。
-    返回结构：{staged_daily, minute_partial: {freq: coverage}}。
+    返回结构：{staged_daily, minute_partial: {freq: coverage}, factor_equivalent: bool}。
+
+    B（2026-10-21 专项）：``out_flags`` 汇总「因子版本等价」放行标记（日线 + 分钟），
+    供 apply/编排器观测期统计。
     """
+    _flags: Dict = {}
     staged_daily = _stage_fresh_daily_rebase(
-        conn, asset_type, code, fresh_daily, tol, calendar)
+        conn, asset_type, code, fresh_daily, tol, calendar, out_flags=_flags)
     actual_freqs = {str(f) for f in fresh_minutes["freq"].unique()}
     if actual_freqs != set(canon_freqs):
         raise ReanchorBlocked("minute_freq_mismatch",
@@ -1102,7 +1264,14 @@ def stage_fresh_authoritative(conn, asset_type, code, fresh_daily, fresh_minutes
                                     allow_partial=allow_partial_minute)
         if cov.get("partial"):
             minute_partial[freq_c] = cov
-    return {"staged_daily": staged_daily, "minute_partial": minute_partial}
+        if cov.get("factor_equivalent"):
+            _flags["factor_equivalent"] = True
+            _flags.setdefault("factor_equivalent_detail", {})[freq_c] = \
+                cov.get("factor_equivalent_detail") or {}
+    if out_flags is not None:
+        out_flags.update(_flags)
+    return {"staged_daily": staged_daily, "minute_partial": minute_partial,
+            "factor_equivalent": bool(_flags.get("factor_equivalent"))}
 
 
 def apply_fresh_minute_staged(conn, asset_type: str, code: str, freq: str,
@@ -2262,9 +2431,14 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
         conn.execute("BEGIN")
         if model == "fresh_authoritative_rebase":
             # rebase：日线严格覆盖 + raw 逐 bar 对齐（无乘法/加法比例校验）
+            # B（2026-10-21 专项）：收集「因子版本等价」放行标记（观测期统计用）
+            _b_flags: Dict = {}
             staged = stage_fresh_authoritative(
                 conn, asset_type, code, fresh_daily, fresh_minutes, canon_freqs, tol, calendar,
-                allow_partial_minute=allow_partial_minute)
+                allow_partial_minute=allow_partial_minute, out_flags=_b_flags)
+            result.factor_equivalent = bool(_b_flags.get("factor_equivalent"))
+            if result.factor_equivalent:
+                audit_ctx["factor_equivalent"] = True
         else:
             staged = stage_fresh_daily(conn, asset_type, code, fresh_daily, tol,
                                        model=model)

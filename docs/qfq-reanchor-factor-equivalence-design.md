@@ -34,6 +34,39 @@
 **不放宽面（红线）**：传输完整性保护保留——覆盖检查（缺行/多行）不变；NULL/NaN/Inf/≤0 检查不变；
 比值解释不成立 ⇒ 维持 blocked；因子等价放行仅改「raw 逐位」这一项。
 
+### 2.5 定稿修正（2026-10-21 实施版·数学与判据）
+
+**数学基础**：MCP 侧 `raw(t) = qfq(t) × af_latest / af(t)`（`McpFreshFetcher`：front = raw × af_i/af_latest）。
+库内 raw 由**写入时**因子快照 af_w 还原，fresh raw 由**现**因子快照 af_n 还原 ⇒
+
+```
+ρ(t) := fresh_raw(t)/db_raw(t) = [qfq_n/qfq_w] × (af_n_latest/af_w_latest) × (af_w(t)/af_n(t))
+```
+
+上游 qfq 未变而因子被微调 ⇒ ρ(t) 是**标量**（同 bar 各列同值），随 af 编辑历史逐 bar 变化。
+
+**第二级判据（定稿；任一不过 ⇒ 维持 block，fail-closed）**
+
+| 判据 | 内容 | 排除的失效模式 |
+|---|---|---|
+| E1 跨列标量一致 | 同 bar 各列 ρ 彼此相等（相对容差 1e-9） | 单列被改（真实数据损坏） |
+| E2 比值有界非退化 | ρ ∈ [1e-3, 1e3] 且恒正 | 乱码 / 0 / inf |
+| E3 逐日连续性 | 相邻不一致 bar 的 \|ρ_t/ρ_{t-1}−1\|：中位数 ≤1e-2、p95 ≤5% | 全列同缩放但逐 bar 突变（数据损坏） |
+| E4 证据量 | 不一致 bar 数 ≥ 8 | 少样本巧合（单点损坏） |
+
+> **初稿判据废弃说明**：骨架初稿的「比值族规模 K ≤ M/4」与「时间成段」判据**已废弃**——
+> 实测 af 存在**逐日微调**（~1e-3 级 jitter），真实场景下 ρ 逐 bar 变化、簇不成段，
+> 按初稿判据会把真场景误杀。改用上表四判据：真场景（E1+E3 通过）放行，损坏场景（A41 负例）拒绝。
+
+**放行语义（分层关键）**：放行 **≠ 提交**——第二级只回答「这批不一致是否像因子版本漂移」，
+不拍板数据正确性；放行后 front 仍按现因子重算，最终由 apply/postcheck（覆盖审计 + golden 自洽 +
+kline 关系）裁决，后段不过仍失败。
+
+**开关与留痕**：env `QS_QFQ_FACTOR_EQUIVALENCE`（默认 1；置 0 逐位还原旧行为 = A43 回退门）；
+引擎 WARNING（比值中位数/p95、跳变统计）→ `ReanchorResult.factor_equivalent` →
+`ReanchorOutcome.factor_equivalent` → `CycleSummary.factor_equivalent_units / blocked_units` →
+gate 前日志「B 观察期：factor_equivalent=N blocked=M 放行率=R」（观察期条件①的数据源）。
+
 ## 3. 落点与改动面
 
 | 文件 | 改动 |
