@@ -1227,17 +1227,22 @@ class DuckDBDataAccess:
         result = result.sort_values('time').reset_index(drop=True)
 
         # 复权替换（与单 code 版完全一致）
+        # QFQ-ROW-LEVEL（2026-10-20）：守卫由整列 any() 改为行级 notna() 掩码——
+        # 批量上下文下不同 code 的 *_front 可能整列 NULL，整列覆盖会把原始价污染为 NaN
+        # （单码全 NULL -> 不覆盖；有值 -> 同值覆盖，逐位不变）。
         fq_norm = str(fq).lower() if fq else ""
         if fq_norm in ('pre', 'dypre'):
             for orig, qfq in [("open", "open_front"), ("high", "high_front"),
                               ("low", "low_front"), ("close", "close_front")]:
-                if qfq in result.columns and result[qfq].notna().any():
-                    result[orig] = result[qfq]
+                if qfq in result.columns:
+                    _m = result[qfq].notna()
+                    result.loc[_m, orig] = result.loc[_m, qfq]
         elif fq_norm in ('post', 'dyback', 'dy_post'):
             for orig, qfq in [("open", "open_back"), ("high", "high_back"),
                               ("low", "low_back"), ("close", "close_back")]:
-                if qfq in result.columns and result[qfq].notna().any():
-                    result[orig] = result[qfq]
+                if qfq in result.columns:
+                    _m = result[qfq].notna()
+                    result.loc[_m, orig] = result.loc[_m, qfq]
         return result
 
 
@@ -1332,17 +1337,22 @@ class DuckDBDataAccess:
             return pd.DataFrame()
         result = pd.concat(parts, ignore_index=True)
         # fq 替换（与 query_minute_bars_by_range(_batch) 一致口径）
+        # QFQ-ROW-LEVEL（2026-10-20）：守卫由整列 any() 改为行级 notna() 掩码——
+        # 批量上下文下不同 code 的 *_front 可能整列 NULL，整列覆盖会把原始价污染为 NaN
+        # （单码全 NULL -> 不覆盖；有值 -> 同值覆盖，逐位不变）。
         fq_norm = str(fq).lower() if fq else ""
         if fq_norm in ('pre', 'dypre'):
             for orig, qfq in [("open", "open_front"), ("high", "high_front"),
                               ("low", "low_front"), ("close", "close_front")]:
-                if qfq in result.columns and result[qfq].notna().any():
-                    result[orig] = result[qfq]
+                if qfq in result.columns:
+                    _m = result[qfq].notna()
+                    result.loc[_m, orig] = result.loc[_m, qfq]
         elif fq_norm in ('post', 'dyback', 'dy_post'):
             for orig, qfq in [("open", "open_back"), ("high", "high_back"),
                               ("low", "low_back"), ("close", "close_back")]:
-                if qfq in result.columns and result[qfq].notna().any():
-                    result[orig] = result[qfq]
+                if qfq in result.columns:
+                    _m = result[qfq].notna()
+                    result.loc[_m, orig] = result.loc[_m, qfq]
         return result.sort_values(["code", "time"]).reset_index(drop=True)
 
     @staticmethod

@@ -1546,13 +1546,15 @@ class PtradeAPI:
                     if fq_norm in ('pre', 'dypre'):
                         for orig, qfq in [("open", "open_front"), ("high", "high_front"),
                                           ("low", "low_front"), ("close", "close_front")]:
-                            if qfq in sliced.columns and sliced[qfq].notna().any():
-                                sliced[orig] = sliced[qfq]
+                            if qfq in sliced.columns:
+                                _m = sliced[qfq].notna()
+                                sliced.loc[_m, orig] = sliced.loc[_m, qfq]
                     elif fq_norm in ('post', 'dyback', 'dy_post'):
                         for orig, qfq in [("open", "open_back"), ("high", "high_back"),
                                           ("low", "low_back"), ("close", "close_back")]:
-                            if qfq in sliced.columns and sliced[qfq].notna().any():
-                                sliced[orig] = sliced[qfq]
+                            if qfq in sliced.columns:
+                                _m = sliced[qfq].notna()
+                                sliced.loc[_m, orig] = sliced.loc[_m, qfq]
                     for bare in bare_codes:
                         sub = sliced[sliced['code'] == bare].tail(count)
                         if not sub.empty:
