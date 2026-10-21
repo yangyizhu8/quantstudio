@@ -1,0 +1,179 @@
+{
+ "platform": "PTrade",
+ "start_url": "https://ptradeapi.com/",
+ "crawled_at": "2026-10-12T03:07:45+08:00",
+ "max_depth": 4,
+ "max_pages": 300,
+ "total_pages": 11,
+ "failed": [
+  {
+   "url": "https://ptradeapi.com/stra.html",
+   "reason": "RuntimeError: HTTP 404"
+  },
+  {
+   "url": "https://ptradeapi.com/data/send_qywx",
+   "reason": "RuntimeError: HTTP 404"
+  },
+  {
+   "url": "https://ptradeapi.com/start",
+   "reason": "RuntimeError: HTTP 404"
+  },
+  {
+   "url": "https://ptradeapi.com/home",
+   "reason": "RuntimeError: HTTP 404"
+  },
+  {
+   "url": "https://ptradeapi.com/strategys",
+   "reason": "RuntimeError: HTTP 404"
+  },
+  {
+   "url": "https://ptradeapi.com/trades",
+   "reason": "RuntimeError: HTTP 404"
+  },
+  {
+   "url": "https://ptradeapi.com/data",
+   "reason": "RuntimeError: HTTP 404"
+  },
+  {
+   "url": "https://ptradeapi.com/help/api",
+   "reason": "RuntimeError: HTTP 404"
+  }
+ ],
+ "unmapped": [],
+ "redacted": [
+  "pages/001-page.md",
+  "pages/002-index.md"
+ ],
+ "dedup_dropped": 0,
+ "categories": {
+  "01-API文档主页": 2,
+  "02-数据接口": 3,
+  "03-帮助": 1,
+  "04-QMT文档-第三方收录": 1,
+  "05-维护中页面": 3,
+  "06-常见问题": 1
+ },
+ "pages": [
+  {
+   "n": 1,
+   "url": "https://ptradeapi.com/",
+   "title": "Ptrade API文档",
+   "file": "pages/001-page.md",
+   "sha256": "548dbb5901e79623cf8e49965f688b379fcec7c9f0756e557bde25c54a043101",
+   "bytes": 288707,
+   "category": "01-API文档主页",
+   "dest": "platform-docs/ptrade/01-API文档主页/001-page.md",
+   "redacted": true
+  },
+  {
+   "n": 2,
+   "url": "https://ptradeapi.com/index.html",
+   "title": "Ptrade API文档",
+   "file": "pages/002-index.md",
+   "sha256": "e73a68de8da968305e067f77c348be7bebe0f130100057179f57e933c74c47a0",
+   "bytes": 292627,
+   "category": "01-API文档主页",
+   "dest": "platform-docs/ptrade/01-API文档主页/002-index.md",
+   "redacted": true
+  },
+  {
+   "n": 3,
+   "url": "https://ptradeapi.com/trade.html",
+   "title": "数据维护中，后续开放",
+   "file": "pages/003-trade.md",
+   "sha256": "7a3e09c8672af3bd387a1705b178c815203f94714baea5e5eb382929172c162b",
+   "bytes": 574,
+   "category": "05-维护中页面",
+   "dest": "platform-docs/ptrade/05-维护中页面/003-trade.md",
+   "redacted": false
+  },
+  {
+   "n": 4,
+   "url": "https://ptradeapi.com/data.html",
+   "title": "数据维护中，后续开放",
+   "file": "pages/004-data.md",
+   "sha256": "b0c3c6b209dcd293ee6cf9bee465c073f27903d99300f08bede0bcbfe838ec6d",
+   "bytes": 573,
+   "category": "05-维护中页面",
+   "dest": "platform-docs/ptrade/05-维护中页面/004-data.md",
+   "redacted": false
+  },
+  {
+   "n": 5,
+   "url": "https://ptradeapi.com/help.html",
+   "title": "帮助 Ptrade 量化交易 API接口文档",
+   "file": "pages/005-help.md",
+   "sha256": "5b36f7e5d9a900fc85f63b7bfdf67143135648a6273fc2762c4a1a8e4a1257d9",
+   "bytes": 639,
+   "category": "03-帮助",
+   "dest": "platform-docs/ptrade/03-帮助/005-help.md",
+   "redacted": false
+  },
+  {
+   "n": 6,
+   "url": "https://ptradeapi.com/hub/data/qa_data.html",
+   "title": "Ptrade常见问题(不定期收集群友反馈的问题)",
+   "file": "pages/006-qa_data.md",
+   "sha256": "7a1ad700e4949e5a0d3aa2393c1d36fc60ba3dfc180dcc5705a2d5512cd42bdc",
+   "bytes": 4496,
+   "category": "06-常见问题",
+   "dest": "platform-docs/ptrade/06-常见问题/006-qa_data.md",
+   "redacted": false
+  },
+  {
+   "n": 7,
+   "url": "https://ptradeapi.com/hub/data/index.html",
+   "title": "标准指数编号",
+   "file": "pages/007-index.md",
+   "sha256": "957f2ce147a9d25ec50420270796a845510f35c5b31cf0a0b25e7e665d011ad5",
+   "bytes": 18595,
+   "category": "02-数据接口",
+   "dest": "platform-docs/ptrade/02-数据接口/007-index.md",
+   "redacted": false
+  },
+  {
+   "n": 8,
+   "url": "https://ptradeapi.com/hub/data/industry_concept.html",
+   "title": "行业数据",
+   "file": "pages/008-industry_concept.md",
+   "sha256": "3a7a77364202a41849d0d7c8c27f238e32baaef18a5c43286dfe1ecb06469b9f",
+   "bytes": 34542,
+   "category": "02-数据接口",
+   "dest": "platform-docs/ptrade/02-数据接口/008-industry_concept.md",
+   "redacted": false
+  },
+  {
+   "n": 9,
+   "url": "https://ptradeapi.com/hub/data/finance.html",
+   "title": "财务数据的API接口说明",
+   "file": "pages/009-finance.md",
+   "sha256": "78ca55ecf233ecb78f95825ab98852c9bb96cf3c3cee21c1d83f8ad219a9e219",
+   "bytes": 42891,
+   "category": "02-数据接口",
+   "dest": "platform-docs/ptrade/02-数据接口/009-finance.md",
+   "redacted": false
+  },
+  {
+   "n": 10,
+   "url": "https://ptradeapi.com/qmtapi.html",
+   "title": "QMT文档",
+   "file": "pages/010-qmtapi.md",
+   "sha256": "6fb344ac477751ef5a56f03c5ad7199ffbf03b035ae005047bd77aabfe460624",
+   "bytes": 587,
+   "category": "04-QMT文档-第三方收录",
+   "dest": "platform-docs/ptrade/04-QMT文档-第三方收录/010-qmtapi.md",
+   "redacted": false
+  },
+  {
+   "n": 11,
+   "url": "https://ptradeapi.com/strategy.html",
+   "title": "数据维护中，后续开放",
+   "file": "pages/011-strategy.md",
+   "sha256": "93e56ebb62fed8fea9e2ac77e525d2cef3eb1d2f1bd3f49c1dbd74ee1635598e",
+   "bytes": 577,
+   "category": "05-维护中页面",
+   "dest": "platform-docs/ptrade/05-维护中页面/011-strategy.md",
+   "redacted": false
+  }
+ ]
+}

@@ -1,0 +1,18 @@
+# knowledge/ 子树行尾规范（P1-1.4 · 2026-10-22）
+#
+# 局部文件：仅约束 knowledge/ 子树，**不改动仓库根 .gitattributes**（等窗挂起中，三文件零改动纪律）。
+# 依据：P1-1 计划 ①④；用户在 ②审时照准「eol 先限 knowledge/**」。
+# 规模预跑结论：knowledge/ 共 225 件，仅 contracts/api-semantics.md 含 CRLF（62 处），
+#   重规范预计影响 1 件 ⇒ 不触发「超阈值拆批」条件。
+
+* text=auto eol=lf
+
+# 二进制安全：不参与行尾转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.xlsx binary

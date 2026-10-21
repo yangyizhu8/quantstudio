@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "P1-1 迁移批 · platform-docs 公开化与 vault 解散",
+    "subtitle": "生成时点 2026-10-22 03:2x +08:00 · 基线 e7f366b · 迁移 195 件零 mismatch",
+    "locale": "zh-CN",
+    "output": ".archify/architecture-p1-migration-20261022-0320/p1-migration.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "srcplat", "type": "external", "label": "platform-docs（私有仓）", "sublabel": "190 件 / 3.11 MB", "pos": [40, 50], "size": [180, 76] },
+    { "id": "scan", "type": "security", "label": "红线扫描（前置门）", "sublabel": "密钥 / 客户 / 路径 / 再分发", "pos": [400, 50], "size": [180, 86] },
+    { "id": "m1", "type": "database", "label": "knowledge/platform/**", "sublabel": "185 件（不含 .obsidian）", "pos": [760, 50], "size": [190, 86] },
+    { "id": "ev", "type": "backend", "label": "证据件 p1-migration", "sublabel": "体积 / 红线 / 对账 / eol", "pos": [1130, 50], "size": [180, 86] },
+    { "id": "srcvault", "type": "external", "label": "vault / PD×9", "sublabel": "10 件 / 0.02 MB", "pos": [40, 280], "size": [180, 76] },
+    { "id": "m2", "type": "database", "label": "knowledge/ptrade-deploy/**", "sublabel": "PD-2026-0001..0009（与 qmt 对等）", "pos": [760, 280], "size": [190, 86] },
+    { "id": "m3", "type": "backend", "label": "knowledge/.gitattributes", "sublabel": "eol=lf 限域（不动根）", "pos": [1130, 280], "size": [180, 86] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "主仓公开仓（出仓面）", "wraps": ["scan", "m1", "ev", "m2", "m3"] }
+  ],
+  "connections": [
+    { "id": "e-plat-scan", "from": "srcplat", "to": "scan", "label": "迁移前扫描" },
+    { "id": "e-scan-m1", "from": "scan", "to": "m1", "label": "硬红线零命中后放行" },
+    { "id": "e-m1-ev", "from": "m1", "to": "ev", "label": "对账留证" },
+    { "id": "e-vault-m2", "from": "srcvault", "to": "m2", "label": "备份后删源" },
+    { "id": "e-m2-m3", "from": "m2", "to": "m3", "label": "行尾规范限域" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "迁移对账",
+      "items": [
+        "platform 185 件 + PD 10 件，sha256 逐件一致、0 mismatch",
+        "190 − .obsidian 5 件 = 185；PD 以盘上 9 条 + 1 索引为准",
+        "回退点：stash 8a66015f ＋ vault.bak-20261022-031150"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "红线判定",
+      "items": [
+        "密钥实值 / 人名 / 个人路径：零命中",
+        "password 2 处为占位符；C:\\Users 2 处无用户名",
+        "恒生文档再分发：按裁定一=B「已裁接受」，不列红线"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "eol 与边界",
+      "items": [
+        "只建 knowledge/.gitattributes，根 .gitattributes 零改动（等窗）",
+        "225 件中 1 件含 CRLF，重规范额外 diff = 0，未触发拆批",
+        "trading 侧 vault 删除已执行（10 项 D），提交归 trading 批次"
+      ]
+    }
+  ]
+}

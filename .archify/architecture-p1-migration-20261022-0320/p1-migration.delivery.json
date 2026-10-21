@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "0871ca73-eaeb-44dd-9a5d-7d10d74800ae",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "D:\\miniQMT策略实盘\\QuantStudio\\.archify\\architecture-p1-migration-20261022-0320\\candidate.json",
+  "output": "D:\\miniQMT策略实盘\\QuantStudio\\.archify\\architecture-p1-migration-20261022-0320\\p1-migration.html",
+  "specification": {
+    "sha256": "1d242aac177222db674881fca8535c412abd761ad4e110e4f2e946991ceb2831",
+    "bytes": 3091
+  },
+  "artifact": {
+    "sha256": "4c54311f84c34ea3c35b3d459a0414246810b934d336cbb70bfef75c12de3ba2",
+    "bytes": 755883
+  }
+}

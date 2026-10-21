@@ -1,0 +1,856 @@
+{
+ "platform": "TDX",
+ "start_url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1cfsjkbf8f3is/",
+ "crawled_at": "2026-10-12T02:41:23+08:00",
+ "max_depth": 4,
+ "max_pages": 300,
+ "total_pages": 83,
+ "failed": [],
+ "unmapped": [],
+ "categories": {
+  "01-入门与安装": 6,
+  "02-通用函数": 15,
+  "03-数据获取": 6,
+  "04-交易函数": 8,
+  "05-TdxAiData": 10,
+  "06-Lambda平台": 22,
+  "07-常量与字典": 1,
+  "08-公式调用": 2,
+  "09-场景化示例": 5,
+  "10-HTTP与Skills": 2,
+  "11-FAQ": 1,
+  "12-公众号文章": 5
+ },
+ "pages": [
+  {
+   "n": 1,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1cfsjkbf8f3is/",
+   "title": "# TdxQuant 简介",
+   "file": "pages/001-mindoc-1cfsjkbf8f3is.md",
+   "sha256": "a5c651edc31105359001968f1f8cc2e70dc8c8fecd445108c4a680888f1a0fde",
+   "bytes": 8461,
+   "category": "01-入门与安装",
+   "dest": "platform-docs/tdx/01-入门与安装/001-mindoc-1cfsjkbf8f3is.md"
+  },
+  {
+   "n": 2,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1cfsjkbf8f3is/TdxQuantVersion.html",
+   "title": "# 版本更新说明",
+   "file": "pages/002-TdxQuantVersion.md",
+   "sha256": "3d0a63eeb9ad657ecd8b1b29d6396f1f1ed2ce8988dbe8f4269d7037e3a23fa0",
+   "bytes": 8620,
+   "category": "01-入门与安装",
+   "dest": "platform-docs/tdx/01-入门与安装/002-TdxQuantVersion.md"
+  },
+  {
+   "n": 3,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1cfsjkbf8f3is/mindoc-1d00970eq1rtc.html",
+   "title": "# 安装Python及VSCode等开发环境",
+   "file": "pages/003-mindoc-1d00970eq1rtc.md",
+   "sha256": "f019ae4f40c7af2e1faf7ddfe91c9f28e2e4a841d23fa5bc6278f272ea6fffed",
+   "bytes": 4727,
+   "category": "01-入门与安装",
+   "dest": "platform-docs/tdx/01-入门与安装/003-mindoc-1d00970eq1rtc.md"
+  },
+  {
+   "n": 4,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1cfsjkbf8f3is/mindoc-1d00kk3jsibbc.html",
+   "title": "# 1. 安装通达信终端",
+   "file": "pages/004-mindoc-1d00kk3jsibbc.md",
+   "sha256": "c8f21dac164bc0c2a2fd06ea5611af16e42eac56ac40926048f75d0842af83f9",
+   "bytes": 4547,
+   "category": "01-入门与安装",
+   "dest": "platform-docs/tdx/01-入门与安装/004-mindoc-1d00kk3jsibbc.md"
+  },
+  {
+   "n": 5,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1cfsjkbf8f3is/mindoc-1cv7o3nje2gu8.html",
+   "title": "# 步骤分解",
+   "file": "pages/005-mindoc-1cv7o3nje2gu8.md",
+   "sha256": "0bbebe51f7871fdc2bb03a16aee215b4e7e00f20d24bf0fd9e8da8f12ef65927",
+   "bytes": 5720,
+   "category": "01-入门与安装",
+   "dest": "platform-docs/tdx/01-入门与安装/005-mindoc-1cv7o3nje2gu8.md"
+  },
+  {
+   "n": 6,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/ctx.stock.md",
+   "title": "# 通用函数",
+   "file": "pages/006-ctx.stock.md",
+   "sha256": "3c482e16959d073a91725f012d3d3e8f92b4814f6c11e9274df1acbe86fca7ed",
+   "bytes": 662,
+   "category": "02-通用函数",
+   "dest": "platform-docs/tdx/02-通用函数/006-ctx.stock.md"
+  },
+  {
+   "n": 7,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1ctuhthaq5qmg",
+   "title": "# 通达信TQ可以获取如下数据",
+   "file": "pages/007-mindoc-1ctuhthaq5qmg.md",
+   "sha256": "652cb402a6f23b2ac7e0ee41446f376e257bb66f28c6dac89aabeb89d39bd56e",
+   "bytes": 1543,
+   "category": "03-数据获取",
+   "dest": "platform-docs/tdx/03-数据获取/007-mindoc-1ctuhthaq5qmg.md"
+  },
+  {
+   "n": 8,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/TdxQuant.md",
+   "title": "# 财务类数据",
+   "file": "pages/008-TdxQuant.md",
+   "sha256": "a60af2fb0570cf38935debd3d251f00767a8aa4f67754d748658d95111804448",
+   "bytes": 299,
+   "category": "03-数据获取",
+   "dest": "platform-docs/tdx/03-数据获取/008-TdxQuant.md"
+  },
+  {
+   "n": 9,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1ctuhttn72svo",
+   "title": "# 分类/板块成份股",
+   "file": "pages/009-mindoc-1ctuhttn72svo.md",
+   "sha256": "eb2636be72b75e2eed152da2decdf266e6b280bfde2569d7650e7969d2f54562",
+   "bytes": 338,
+   "category": "03-数据获取",
+   "dest": "platform-docs/tdx/03-数据获取/009-mindoc-1ctuhttn72svo.md"
+  },
+  {
+   "n": 10,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1h139a4ckchkk",
+   "title": "# 自选股/自定义板块",
+   "file": "pages/010-mindoc-1h139a4ckchkk.md",
+   "sha256": "122dc58655c0a2b069fff4384ef575a39d61ebc302a7a500116fb58c0a7ec2ff",
+   "bytes": 347,
+   "category": "03-数据获取",
+   "dest": "platform-docs/tdx/03-数据获取/010-mindoc-1h139a4ckchkk.md"
+  },
+  {
+   "n": 11,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1h13a594nhvb4",
+   "title": "# ETF/可转债/期货数据",
+   "file": "pages/011-mindoc-1h13a594nhvb4.md",
+   "sha256": "4c6cb60c134af1669e05a0d978dcd9e2cdbbd1f8365dcbe35cee9197011252d5",
+   "bytes": 350,
+   "category": "03-数据获取",
+   "dest": "platform-docs/tdx/03-数据获取/011-mindoc-1h13a594nhvb4.md"
+  },
+  {
+   "n": 12,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1h3hrvkp4sc0g",
+   "title": "# 调用通达信公式",
+   "file": "pages/012-mindoc-1h3hrvkp4sc0g.md",
+   "sha256": "999250e57fa7e6f9f82897c7644852b59f3490fe2ec3b2594246343453dc2769",
+   "bytes": 335,
+   "category": "08-公式调用",
+   "dest": "platform-docs/tdx/08-公式调用/012-mindoc-1h3hrvkp4sc0g.md"
+  },
+  {
+   "n": 13,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1h7k4iqb1grk4",
+   "title": "# 交易函数",
+   "file": "pages/013-mindoc-1h7k4iqb1grk4.md",
+   "sha256": "fadda917cdca36c5ea0a8ad6ccce255732384efdb3e8c845784c42d74b6bd259",
+   "bytes": 308,
+   "category": "04-交易函数",
+   "dest": "platform-docs/tdx/04-交易函数/013-mindoc-1h7k4iqb1grk4.md"
+  },
+  {
+   "n": 14,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hdhbmi50d038.html",
+   "title": "# HTTP方式调用",
+   "file": "pages/014-mindoc-1hdhbmi50d038.md",
+   "sha256": "cc320a52981c5688898bd7975a541a3e30922b12de0d9b5a49b7b76826a3f745",
+   "bytes": 3877,
+   "category": "10-HTTP与Skills",
+   "dest": "platform-docs/tdx/10-HTTP与Skills/014-mindoc-1hdhbmi50d038.md"
+  },
+  {
+   "n": 15,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hjbgqpdhv114.html",
+   "title": "TdxAiData简介 | 通达信量化平台",
+   "file": "pages/015-mindoc-1hjbgqpdhv114.md",
+   "sha256": "adcb1b598ee58989d582e3a551cf5dbe7c3ac156631bbf3c555c55c815c6431c",
+   "bytes": 4565,
+   "category": "05-TdxAiData",
+   "dest": "platform-docs/tdx/05-TdxAiData/015-mindoc-1hjbgqpdhv114.md"
+  },
+  {
+   "n": 16,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hjbidnohpjn4",
+   "title": "# TdxAiData特有函数",
+   "file": "pages/016-mindoc-1hjbidnohpjn4.md",
+   "sha256": "5f346edd0213e0e0780faf3e523809a97acd481df09ce2b86d967fa499de6c7b",
+   "bytes": 335,
+   "category": "05-TdxAiData",
+   "dest": "platform-docs/tdx/05-TdxAiData/016-mindoc-1hjbidnohpjn4.md"
+  },
+  {
+   "n": 17,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340",
+   "title": "# 通达信Lambda量化平台专属函数",
+   "file": "pages/017-mindoc-1hho7blr2j340.md",
+   "sha256": "e8a7d0db02387559ecf83f5dd80a0c33d0fddf28fb7590f273c5c83397348030",
+   "bytes": 12342,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/017-mindoc-1hho7blr2j340.md"
+  },
+  {
+   "n": 18,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1he2c52nvvdkg.html",
+   "title": "提供3个Skills包供各智能体平台安装 | 通达信量化平台",
+   "file": "pages/018-mindoc-1he2c52nvvdkg.md",
+   "sha256": "80eb9910f9fcca64ba4548b7ebd1618880dba606e96cc1384c544d13ade117ee",
+   "bytes": 2736,
+   "category": "10-HTTP与Skills",
+   "dest": "platform-docs/tdx/10-HTTP与Skills/018-mindoc-1he2c52nvvdkg.md"
+  },
+  {
+   "n": 19,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/Dict.html",
+   "title": "常量枚举 | 通达信量化平台",
+   "file": "pages/019-Dict.md",
+   "sha256": "d1108b611316c70d1e71d39d342a4a58b353deae5fdc97655c8bb5a3487d95de",
+   "bytes": 4412,
+   "category": "07-常量与字典",
+   "dest": "platform-docs/tdx/07-常量与字典/019-Dict.md"
+  },
+  {
+   "n": 20,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1h12t4q6fg29o.html",
+   "title": "什么是量化交易 | 通达信量化平台",
+   "file": "pages/020-mindoc-1h12t4q6fg29o.md",
+   "sha256": "1b75b317f8ed50eddcfb3bf0e7f4e2d3722d27cdc59c611c692a78d7ae718f28",
+   "bytes": 8844,
+   "category": "01-入门与安装",
+   "dest": "platform-docs/tdx/01-入门与安装/020-mindoc-1h12t4q6fg29o.md"
+  },
+  {
+   "n": 21,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1h1525ci3mnkc",
+   "title": "# 场景化示例",
+   "file": "pages/021-mindoc-1h1525ci3mnkc.md",
+   "sha256": "712ace10b3b10cd58c013c9b298a5a3c986848a21c101fcd8debc9ef2cc9ee9e",
+   "bytes": 317,
+   "category": "09-场景化示例",
+   "dest": "platform-docs/tdx/09-场景化示例/021-mindoc-1h1525ci3mnkc.md"
+  },
+  {
+   "n": 22,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/gzh0122inweixinwenz",
+   "title": "公众号文章例子 | 通达信量化平台",
+   "file": "pages/022-gzh0122inweixinwenz.md",
+   "sha256": "e7b10edbaa3c36e75dc378e1a1a1383701a40ab1e719c47988e603003b3caa4f",
+   "bytes": 1752,
+   "category": "12-公众号文章",
+   "dest": "platform-docs/tdx/12-公众号文章/022-gzh0122inweixinwenz.md"
+  },
+  {
+   "n": 23,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-tdxpy.html",
+   "title": "Q：运行的python文件可不可以随便放，不一定在PYPlugins\\user目录下？ | 通达信量化平台",
+   "file": "pages/023-mindoc-tdxpy.md",
+   "sha256": "5feffbf925babaa17be8f4942e2a6eba90ead2243088520d33024804a72232fc",
+   "bytes": 14994,
+   "category": "11-FAQ",
+   "dest": "platform-docs/tdx/11-FAQ/023-mindoc-tdxpy.md"
+  },
+  {
+   "n": 24,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/ctx.stock.md/mindoc-1cv85e8u9nb0c.html",
+   "title": "# 初始化initialize",
+   "file": "pages/024-mindoc-1cv85e8u9nb0c.md",
+   "sha256": "9e3c4df16945424a4b921eac355c5820d4579c7321132b9e66360e19c5e833d5",
+   "bytes": 1216,
+   "category": "02-通用函数",
+   "dest": "platform-docs/tdx/02-通用函数/024-mindoc-1cv85e8u9nb0c.md"
+  },
+  {
+   "n": 25,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1h7k4iqb1grk4/mindoc-1h84elp5atr6o.html",
+   "title": "# 撤单",
+   "file": "pages/025-mindoc-1h84elp5atr6o.md",
+   "sha256": "77de0cf4ffd88a9a21be729e346004e9467de44c3723a8a6c7f08bc402411d89",
+   "bytes": 2489,
+   "category": "04-交易函数",
+   "dest": "platform-docs/tdx/04-交易函数/025-mindoc-1h84elp5atr6o.md"
+  },
+  {
+   "n": 26,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hjbidnohpjn4/mindoc-1hlsetap441rs.html",
+   "title": "获取分笔行情gettickdata | 通达信量化平台",
+   "file": "pages/026-mindoc-1hlsetap441rs.md",
+   "sha256": "3bc719a7ce93d9cda4729a86fea672aa5e4b6a42f0af12e34d95061a4d564cf6",
+   "bytes": 2642,
+   "category": "05-TdxAiData",
+   "dest": "platform-docs/tdx/05-TdxAiData/026-mindoc-1hlsetap441rs.md"
+  },
+  {
+   "n": 27,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hhodgohoq4j0.html",
+   "title": "# 常见问题",
+   "file": "pages/027-mindoc-1hhodgohoq4j0.md",
+   "sha256": "ac7f774851c542751be8744f27e19c4facce7a3513211c1e54bf8668ababf3a2",
+   "bytes": 2149,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/027-mindoc-1hhodgohoq4j0.md"
+  },
+  {
+   "n": 28,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1h1525ci3mnkc/mindoc-1h15262vnafcc.html",
+   "title": "# 执行选股策略并加入客户端自定义板块",
+   "file": "pages/028-mindoc-1h15262vnafcc.md",
+   "sha256": "745730e740ce6ea026adbdcd9c1a44cebe049da3b4bbd5bedabe08ea525b6128",
+   "bytes": 5837,
+   "category": "09-场景化示例",
+   "dest": "platform-docs/tdx/09-场景化示例/028-mindoc-1h15262vnafcc.md"
+  },
+  {
+   "n": 29,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/gzh0122inweixinwenz/20261008gzhwz.html",
+   "title": "# 通达信TdxAiData：用批量竞价数据做\"上提一字\"竞价形态选股",
+   "file": "pages/029-20261008gzhwz.md",
+   "sha256": "04d215551dfa2af924fc2291c436e6d88d00d96f5f620535706cd36d16102df1",
+   "bytes": 22390,
+   "category": "12-公众号文章",
+   "dest": "platform-docs/tdx/12-公众号文章/029-20261008gzhwz.md"
+  },
+  {
+   "n": 30,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/ctx.stock.md/mindoc-1h1104d65vr68.html",
+   "title": "# 订阅行情subscribe_hq",
+   "file": "pages/030-mindoc-1h1104d65vr68.md",
+   "sha256": "17e08373346b3ed105b9c9b3022b24e19cb653e46a9065ee5faa1c4bf8dfa120",
+   "bytes": 2286,
+   "category": "02-通用函数",
+   "dest": "platform-docs/tdx/02-通用函数/030-mindoc-1h1104d65vr68.md"
+  },
+  {
+   "n": 31,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/ctx.stock.md/mindoc-1h112vh7jtsms.html",
+   "title": "# 取消订阅更新unsubscribe_hq",
+   "file": "pages/031-mindoc-1h112vh7jtsms.md",
+   "sha256": "0ef362c21a3cbe202d58b3a35a38cbf600cf1ff6bc22a96bed873462d04deb5a",
+   "bytes": 1821,
+   "category": "02-通用函数",
+   "dest": "platform-docs/tdx/02-通用函数/031-mindoc-1h112vh7jtsms.md"
+  },
+  {
+   "n": 32,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/ctx.stock.md/mindoc-1h1137r4k2mas.html",
+   "title": "# 获得订阅列表get_subscribe_hq_stock_list",
+   "file": "pages/032-mindoc-1h1137r4k2mas.md",
+   "sha256": "be59a5f830c96d151dea960aca8a285930a72257bd8bfc95eaecb0b0be33951b",
+   "bytes": 1301,
+   "category": "02-通用函数",
+   "dest": "platform-docs/tdx/02-通用函数/032-mindoc-1h1137r4k2mas.md"
+  },
+  {
+   "n": 33,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/ctx.stock.md/mindoc-1h10f9145us1g.html",
+   "title": "# 刷新行情缓存(最新snapshot和K线数据)refresh_cache",
+   "file": "pages/033-mindoc-1h10f9145us1g.md",
+   "sha256": "aa314c7ee8e734d421e5ecaad376f46eb3c11eaad24ebbcd3c0a4b04de515c04",
+   "bytes": 2377,
+   "category": "02-通用函数",
+   "dest": "platform-docs/tdx/02-通用函数/033-mindoc-1h10f9145us1g.md"
+  },
+  {
+   "n": 34,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/ctx.stock.md/mindoc-1h10fh9m6recg.html",
+   "title": "# 刷新历史K线缓存refresh_kline",
+   "file": "pages/034-mindoc-1h10fh9m6recg.md",
+   "sha256": "f58c7701da7d128f552570dc1a97e5e3c815f656b70b464a69e965a541e760bf",
+   "bytes": 2359,
+   "category": "02-通用函数",
+   "dest": "platform-docs/tdx/02-通用函数/034-mindoc-1h10fh9m6recg.md"
+  },
+  {
+   "n": 35,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/ctx.stock.md/mindoc-1h10pqrdlj71o.html",
+   "title": "# 下载特定数据文件download_file",
+   "file": "pages/035-mindoc-1h10pqrdlj71o.md",
+   "sha256": "e9831b30aacb7ac612b50bc8a628a6be242b70d4390a1f0863eefdbe56591139",
+   "bytes": 3144,
+   "category": "02-通用函数",
+   "dest": "platform-docs/tdx/02-通用函数/035-mindoc-1h10pqrdlj71o.md"
+  },
+  {
+   "n": 36,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/ctx.stock.md/mindoc-1h10rkbndkb0k.html",
+   "title": "# 发送消息到通达信客户端send_message",
+   "file": "pages/036-mindoc-1h10rkbndkb0k.md",
+   "sha256": "5584903d5f8bca9929e174f03cd92ba739387c641b2b514ed69df3dcf0a20de6",
+   "bytes": 1550,
+   "category": "02-通用函数",
+   "dest": "platform-docs/tdx/02-通用函数/036-mindoc-1h10rkbndkb0k.md"
+  },
+  {
+   "n": 37,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/ctx.stock.md/mindoc-1h10u5k9qjh8o.html",
+   "title": "# 发送预警信号send_warn",
+   "file": "pages/037-mindoc-1h10u5k9qjh8o.md",
+   "sha256": "f1b2f6576420d68a812b7dd02069a39dcfc6e834a2ee31524c0a8355ff059c0f",
+   "bytes": 3416,
+   "category": "02-通用函数",
+   "dest": "platform-docs/tdx/02-通用函数/037-mindoc-1h10u5k9qjh8o.md"
+  },
+  {
+   "n": 38,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/ctx.stock.md/mindoc-1h10u17ue9464.html",
+   "title": "# 发送文件到客户端send_file",
+   "file": "pages/038-mindoc-1h10u17ue9464.md",
+   "sha256": "8fcedbc6755d5d8da81df91b704c822e058c4ca66926d9139ec49594ff2b0d52",
+   "bytes": 1590,
+   "category": "02-通用函数",
+   "dest": "platform-docs/tdx/02-通用函数/038-mindoc-1h10u17ue9464.md"
+  },
+  {
+   "n": 39,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/ctx.stock.md/mindoc-1h10vc2pot87c.html",
+   "title": "# 发送回测数据send_bt_data",
+   "file": "pages/039-mindoc-1h10vc2pot87c.md",
+   "sha256": "1ec0b3532729e5ccb587ec6c1805f58dc99d575e0a6d9403b93dd115eff20ab5",
+   "bytes": 2349,
+   "category": "02-通用函数",
+   "dest": "platform-docs/tdx/02-通用函数/039-mindoc-1h10vc2pot87c.md"
+  },
+  {
+   "n": 40,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/ctx.stock.md/mindoc-1h62l8kg2k4jc.html",
+   "title": "# 导出多组数据到通达信客户端 print_to_tdx",
+   "file": "pages/040-mindoc-1h62l8kg2k4jc.md",
+   "sha256": "9cc2f4a5e88b5663ab3c4c7d7775637eda78e88c09cc9c31124cb0e6083bd9f7",
+   "bytes": 3070,
+   "category": "02-通用函数",
+   "dest": "platform-docs/tdx/02-通用函数/040-mindoc-1h62l8kg2k4jc.md"
+  },
+  {
+   "n": 41,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/ctx.stock.md/mindoc-1h85iq443j44c.html",
+   "title": "# 调用客户端功能",
+   "file": "pages/041-mindoc-1h85iq443j44c.md",
+   "sha256": "28d2fe3e68ed5316e964d7e8238c826b61da917af2d8305a9efb092d2775fac7",
+   "bytes": 3105,
+   "category": "02-通用函数",
+   "dest": "platform-docs/tdx/02-通用函数/041-mindoc-1h85iq443j44c.md"
+  },
+  {
+   "n": 42,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/ctx.stock.md/mindoc-1hdguaia2v4bo.html",
+   "title": "# 检索证券信息get_match_stkinfo",
+   "file": "pages/042-mindoc-1hdguaia2v4bo.md",
+   "sha256": "535326a9f6f846f6f423220e009d11e8d45b8b8f1b04131f526336a61eea7339",
+   "bytes": 1890,
+   "category": "02-通用函数",
+   "dest": "platform-docs/tdx/02-通用函数/042-mindoc-1hdguaia2v4bo.md"
+  },
+  {
+   "n": 43,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1h7k4iqb1grk4/mindoc-1h7k4k5tk6q64.html",
+   "title": "# 获取资金账户句柄",
+   "file": "pages/043-mindoc-1h7k4k5tk6q64.md",
+   "sha256": "43bfe9a9b824326d63c3a3264c168fe921c26ee25fda23680ed46ce2f8c800d3",
+   "bytes": 2159,
+   "category": "04-交易函数",
+   "dest": "platform-docs/tdx/04-交易函数/043-mindoc-1h7k4k5tk6q64.md"
+  },
+  {
+   "n": 44,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1h7k4iqb1grk4/mindoc-1h84fvcjulrnc.html",
+   "title": "# 查询账户资产信息",
+   "file": "pages/044-mindoc-1h84fvcjulrnc.md",
+   "sha256": "fb5f5eb5c39a7c349271c3324aa42304b7af219349fabce249e5e9a5d8bf0db3",
+   "bytes": 2466,
+   "category": "04-交易函数",
+   "dest": "platform-docs/tdx/04-交易函数/044-mindoc-1h84fvcjulrnc.md"
+  },
+  {
+   "n": 45,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1h7k4iqb1grk4/mindoc-1h7k4rp481gt4.html",
+   "title": "# 查询账户委托信息",
+   "file": "pages/045-mindoc-1h7k4rp481gt4.md",
+   "sha256": "498762e064d325551109369bfb8c79fe024a5004c3764f7e3d56df159d4c669e",
+   "bytes": 3319,
+   "category": "04-交易函数",
+   "dest": "platform-docs/tdx/04-交易函数/045-mindoc-1h7k4rp481gt4.md"
+  },
+  {
+   "n": 46,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1h7k4iqb1grk4/mindoc-1h7k5ar9kc508.html",
+   "title": "# 查询账户持仓信息",
+   "file": "pages/046-mindoc-1h7k5ar9kc508.md",
+   "sha256": "a635d6a3085dc9a81fe202e99e7f56142a0d838931c7510d13fe4ea0494f31a5",
+   "bytes": 3905,
+   "category": "04-交易函数",
+   "dest": "platform-docs/tdx/04-交易函数/046-mindoc-1h7k5ar9kc508.md"
+  },
+  {
+   "n": 47,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1h7k4iqb1grk4/mindoc-1hlnun1348n54.html",
+   "title": "获取历史成交queryhistorytrade | 通达信量化平台",
+   "file": "pages/047-mindoc-1hlnun1348n54.md",
+   "sha256": "64560fb931f6673ca02aa9cfb56d5f5fb74312909e7f7ee4ec0faeb2ac9deb4a",
+   "bytes": 2776,
+   "category": "04-交易函数",
+   "dest": "platform-docs/tdx/04-交易函数/047-mindoc-1hlnun1348n54.md"
+  },
+  {
+   "n": 48,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1h7k4iqb1grk4/mindoc-1h7k5j4drr928.html",
+   "title": "# 交易执行函数",
+   "file": "pages/048-mindoc-1h7k5j4drr928.md",
+   "sha256": "6bf2ace218a8decbac07ffd4f2b328673b4cca6046bc86613e61af612eccf857",
+   "bytes": 3732,
+   "category": "04-交易函数",
+   "dest": "platform-docs/tdx/04-交易函数/048-mindoc-1h7k5j4drr928.md"
+  },
+  {
+   "n": 49,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hjbidnohpjn4/mindoc-1hlseu05n86ek.html",
+   "title": "获取指定日期分时数据 getminutedata | 通达信量化平台",
+   "file": "pages/049-mindoc-1hlseu05n86ek.md",
+   "sha256": "6daaa348c53a010260184928c9c161f3e84aaf63ec7a96998cbf70f50149ce23",
+   "bytes": 4210,
+   "category": "05-TdxAiData",
+   "dest": "platform-docs/tdx/05-TdxAiData/049-mindoc-1hlseu05n86ek.md"
+  },
+  {
+   "n": 50,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hjbidnohpjn4/mindoc-1hlseuoousuvo.html",
+   "title": "获取指数成分股getzzgzstocklist | 通达信量化平台",
+   "file": "pages/050-mindoc-1hlseuoousuvo.md",
+   "sha256": "404827d9dc1f8cd09d35951ea141a6e1c5bd24abe45a421674953318faefe45f",
+   "bytes": 3430,
+   "category": "05-TdxAiData",
+   "dest": "platform-docs/tdx/05-TdxAiData/050-mindoc-1hlseuoousuvo.md"
+  },
+  {
+   "n": 51,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hjbidnohpjn4/mindoc-1hlsevg97ftug.html",
+   "title": "获取集合竞价getcallauction | 通达信量化平台",
+   "file": "pages/051-mindoc-1hlsevg97ftug.md",
+   "sha256": "37f9c59ec97ed725f26ecd157c524b81fa6641eb24309cd8524c2c4dc863f5fa",
+   "bytes": 2835,
+   "category": "05-TdxAiData",
+   "dest": "platform-docs/tdx/05-TdxAiData/051-mindoc-1hlsevg97ftug.md"
+  },
+  {
+   "n": 52,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hjbidnohpjn4/mindoc-1hlsf010md5gg.html",
+   "title": "批量获取集合竞价getcallauction_batch | 通达信量化平台",
+   "file": "pages/052-mindoc-1hlsf010md5gg.md",
+   "sha256": "e6ffdb106ade1386612bd6706358e89772624e23dce68973c0fd288f50952ace",
+   "bytes": 3998,
+   "category": "05-TdxAiData",
+   "dest": "platform-docs/tdx/05-TdxAiData/052-mindoc-1hlsf010md5gg.md"
+  },
+  {
+   "n": 53,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hjbidnohpjn4/mindoc-1hmdnqahdoeo0.html",
+   "title": "获取集合排名行情getdomainsorthq | 通达信量化平台",
+   "file": "pages/053-mindoc-1hmdnqahdoeo0.md",
+   "sha256": "c854766f3f363e045842c8aaae0b5a6cc6083a3b197ce045b4376f01a7ccb239",
+   "bytes": 9179,
+   "category": "05-TdxAiData",
+   "dest": "platform-docs/tdx/05-TdxAiData/053-mindoc-1hmdnqahdoeo0.md"
+  },
+  {
+   "n": 54,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hjbidnohpjn4/mindoc-1hlsf0u13l0d4.html",
+   "title": "订阅实时行情 subscribe | 通达信量化平台",
+   "file": "pages/054-mindoc-1hlsf0u13l0d4.md",
+   "sha256": "e8403328caf41e77742114e8dd68e0066b7ca4537309d6880e34389f5e616274",
+   "bytes": 9516,
+   "category": "05-TdxAiData",
+   "dest": "platform-docs/tdx/05-TdxAiData/054-mindoc-1hlsf0u13l0d4.md"
+  },
+  {
+   "n": 55,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hjbidnohpjn4/mindoc-1hlsf1ifqpt8k.html",
+   "title": "取消实时行情订阅 unsubscribe | 通达信量化平台",
+   "file": "pages/055-mindoc-1hlsf1ifqpt8k.md",
+   "sha256": "babbdf6d1eebdc088cac487ac35019dd9d4af77b48cc476be1263ea3195b2bd2",
+   "bytes": 2150,
+   "category": "05-TdxAiData",
+   "dest": "platform-docs/tdx/05-TdxAiData/055-mindoc-1hlsf1ifqpt8k.md"
+  },
+  {
+   "n": 56,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hho9d546pbhc",
+   "title": "# 策略生命周期",
+   "file": "pages/056-mindoc-1hho9d546pbhc.md",
+   "sha256": "e5922bebcf5ce00711094ddb739435d50ddfac102aabb72fb36a58c44bb3dfde",
+   "bytes": 460,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/056-mindoc-1hho9d546pbhc.md"
+  },
+  {
+   "n": 57,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hho9d546pbhc/mindoc-1hho9hh3kshvo.html",
+   "title": "初始化函数 | 通达信量化平台",
+   "file": "pages/057-mindoc-1hho9hh3kshvo.md",
+   "sha256": "33f1e9809aa13a1f252aed56e182d168118e858df49aac8a2eb9c9799a3647a7",
+   "bytes": 3851,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/057-mindoc-1hho9hh3kshvo.md"
+  },
+  {
+   "n": 58,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hho9d546pbhc/mindoc-1hho9irt0nu3s.html",
+   "title": "开盘前函数 | 通达信量化平台",
+   "file": "pages/058-mindoc-1hho9irt0nu3s.md",
+   "sha256": "2af814af954eca746e9e1b2a6a17cf56471b21e29e0ad97b09dbf430d6aa8f79",
+   "bytes": 945,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/058-mindoc-1hho9irt0nu3s.md"
+  },
+  {
+   "n": 59,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hho9d546pbhc/mindoc-1hho9jic0qbu8.html",
+   "title": "Bar 回调函数 | 通达信量化平台",
+   "file": "pages/059-mindoc-1hho9jic0qbu8.md",
+   "sha256": "91536b59024f6b3315fb34856d30b6efd5173cfead4c071c76d2fdefb09fd34c",
+   "bytes": 1226,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/059-mindoc-1hho9jic0qbu8.md"
+  },
+  {
+   "n": 60,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hho9d546pbhc/mindoc-1hho9kq57km1c.html",
+   "title": "收盘后函数 | 通达信量化平台",
+   "file": "pages/060-mindoc-1hho9kq57km1c.md",
+   "sha256": "b0f9846b0160ccdc58daff77b5b073dc6714343115d346e4f38a0c33334c9f96",
+   "bytes": 934,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/060-mindoc-1hho9kq57km1c.md"
+  },
+  {
+   "n": 61,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hho9d546pbhc/mindoc-1hho9lb0bd8ck.html",
+   "title": "策略结束函数 | 通达信量化平台",
+   "file": "pages/061-mindoc-1hho9lb0bd8ck.md",
+   "sha256": "4b459499d8225c995c5cb7ce29ecd5913352164e26df83f53ba213b7653bd482",
+   "bytes": 886,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/061-mindoc-1hho9lb0bd8ck.md"
+  },
+  {
+   "n": 62,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hho9d546pbhc/mindoc-1hib55063ha7o.html",
+   "title": "委托回调函数 on_order | 通达信量化平台",
+   "file": "pages/062-mindoc-1hib55063ha7o.md",
+   "sha256": "3bcc2404a88ab93f445c1c0f85d501343753e7a766752a508356ae9b185a8535",
+   "bytes": 940,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/062-mindoc-1hib55063ha7o.md"
+  },
+  {
+   "n": 63,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hho9d546pbhc/mindoc-1hib60s1q4hbg.html",
+   "title": "委托回调函数 on_trade | 通达信量化平台",
+   "file": "pages/063-mindoc-1hib60s1q4hbg.md",
+   "sha256": "413b33718b74d0bb2b4c13bfbd1022d78a69c5740a41037191724525bf874144",
+   "bytes": 7907,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/063-mindoc-1hib60s1q4hbg.md"
+  },
+  {
+   "n": 64,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hho9u0cbfe60",
+   "title": "# context回测对象",
+   "file": "pages/064-mindoc-1hho9u0cbfe60.md",
+   "sha256": "810c8bb225e3fa289d88fd78cd30e7548226feb0971e00b649e7cf5f3b902ab9",
+   "bytes": 5554,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/064-mindoc-1hho9u0cbfe60.md"
+  },
+  {
+   "n": 65,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hhoa58m7i93s",
+   "title": "set_benchmark | 通达信量化平台",
+   "file": "pages/065-mindoc-1hhoa58m7i93s.md",
+   "sha256": "3f3bee5653d906fda5beed2f49bc23763b5c384f553bf561a7551ef0e59abac3",
+   "bytes": 11551,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/065-mindoc-1hhoa58m7i93s.md"
+  },
+  {
+   "n": 66,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hibf3lo5qk7g",
+   "title": "# 定时任务函数",
+   "file": "pages/066-mindoc-1hibf3lo5qk7g.md",
+   "sha256": "28195acfc9d8e7797925799073ed1f862740a48ec7397f7c9b6cace014027124",
+   "bytes": 368,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/066-mindoc-1hibf3lo5qk7g.md"
+  },
+  {
+   "n": 67,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hi3n0rqkakt4",
+   "title": "# 特有行情类函数",
+   "file": "pages/067-mindoc-1hi3n0rqkakt4.md",
+   "sha256": "913ceaefd0429543b2247eca7c7a113faedefffa864006b390400bd9cdf25983",
+   "bytes": 377,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/067-mindoc-1hi3n0rqkakt4.md"
+  },
+  {
+   "n": 68,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hhoaleti08f0",
+   "title": "# 专用数据函数",
+   "file": "pages/068-mindoc-1hhoaleti08f0.md",
+   "sha256": "a382f3a04e88f33a7c49b8ae59c223878c191071e471d7c672f541c195bee3df",
+   "bytes": 368,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/068-mindoc-1hhoaleti08f0.md"
+  },
+  {
+   "n": 69,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hhobbn0nuedg",
+   "title": "通达信量化平台",
+   "file": "pages/069-mindoc-1hhobbn0nuedg.md",
+   "sha256": "220dd76e6ce2bbfbf36f4573f3b174bc78668af530b497aad47f5c85a91e0b9b",
+   "bytes": 5734,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/069-mindoc-1hhobbn0nuedg.md"
+  },
+  {
+   "n": 70,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hib696p7b7gc",
+   "title": "# 账户查询函数",
+   "file": "pages/070-mindoc-1hib696p7b7gc.md",
+   "sha256": "8658fd1dace8a9fc07b8e6738129fec997b53d8491d0ab3eb1e966e0b125d83f",
+   "bytes": 368,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/070-mindoc-1hib696p7b7gc.md"
+  },
+  {
+   "n": 71,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hhoc0a5b29v0.html",
+   "title": "# 记录和日志",
+   "file": "pages/071-mindoc-1hhoc0a5b29v0.md",
+   "sha256": "ebe77d7c2d68b383f557efec3ded5911204ae631d1f5a586d122845f0cb0d61e",
+   "bytes": 3892,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/071-mindoc-1hhoc0a5b29v0.md"
+  },
+  {
+   "n": 72,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hibfhi6jhlqs.html",
+   "title": "统一证券代码格式 | 通达信量化平台",
+   "file": "pages/072-mindoc-1hibfhi6jhlqs.md",
+   "sha256": "be2650f0d28a7c103287c233f1477b3a7554ad0424a5871bc90876e3afa21cca",
+   "bytes": 2001,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/072-mindoc-1hibfhi6jhlqs.md"
+  },
+  {
+   "n": 73,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hhodeob36hi4.html",
+   "title": "# 完整示例",
+   "file": "pages/073-mindoc-1hhodeob36hi4.md",
+   "sha256": "73938cc6f4ee78527b8d9ac10df6d0ed0eee87078bbe07f88155efa283576592",
+   "bytes": 5382,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/073-mindoc-1hhodeob36hi4.md"
+  },
+  {
+   "n": 74,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1h1525ci3mnkc/mindoc-1h1526nmnk5n4.html",
+   "title": "# 订阅行情涨幅突破实时预计",
+   "file": "pages/074-mindoc-1h1526nmnk5n4.md",
+   "sha256": "1cda50ec0157b65088a6b49363048e1e02daaa7a1bc453e2d565f65f8a973978",
+   "bytes": 12903,
+   "category": "09-场景化示例",
+   "dest": "platform-docs/tdx/09-场景化示例/074-mindoc-1h1526nmnk5n4.md"
+  },
+  {
+   "n": 75,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1h1525ci3mnkc/mindoc-1h1ep1rl20jv8.html",
+   "title": "# 计算调仓信号并快速买卖",
+   "file": "pages/075-mindoc-1h1ep1rl20jv8.md",
+   "sha256": "12849e1d6d54a2eaac67a063d28c6ab55b51013e7fe2d3260f48d1ff77d4f1bb",
+   "bytes": 7681,
+   "category": "09-场景化示例",
+   "dest": "platform-docs/tdx/09-场景化示例/075-mindoc-1h1ep1rl20jv8.md"
+  },
+  {
+   "n": 76,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1h1525ci3mnkc/mindoc-1h62qo3mceppc.html",
+   "title": "# VBT简单回测并输出图形",
+   "file": "pages/076-mindoc-1h62qo3mceppc.md",
+   "sha256": "57a9dde22b5dd7f7f321f7f7cfe91f98042e3bb993e781aec7dce70951ff3b06",
+   "bytes": 3822,
+   "category": "09-场景化示例",
+   "dest": "platform-docs/tdx/09-场景化示例/076-mindoc-1h62qo3mceppc.md"
+  },
+  {
+   "n": 77,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/gzh0122inweixinwenz/gzh20260122wzlz.html",
+   "title": "# 通达信TQ策略介绍和应用示例",
+   "file": "pages/077-gzh20260122wzlz.md",
+   "sha256": "b2dd4363553021ac6866adeeb717a61bddfd18906106bbf1cefc46cb366d59d3",
+   "bytes": 31664,
+   "category": "12-公众号文章",
+   "dest": "platform-docs/tdx/12-公众号文章/077-gzh20260122wzlz.md"
+  },
+  {
+   "n": 78,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/gzh0122inweixinwenz/gzh20260302wzlz.html",
+   "title": "# 打通通达信量化任督二脉：公式与Python双向数据互通闭环",
+   "file": "pages/078-gzh20260302wzlz.md",
+   "sha256": "8c76d658fb04b245c06caaa45f5cf17ebe759d8735b7934a3c3f88746685122a",
+   "bytes": 20731,
+   "category": "12-公众号文章",
+   "dest": "platform-docs/tdx/12-公众号文章/078-gzh20260302wzlz.md"
+  },
+  {
+   "n": 79,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/gzh0122inweixinwenz/gzh20260302wzlz-tdxaidata.html",
+   "title": "# 通达信TdxAiData：Python独立数据接口，无需启动客户端",
+   "file": "pages/079-gzh20260302wzlz-tdxaidata.md",
+   "sha256": "403d9f7b6440c247ea0162fa1a6fe1043bd07e750e2e814c43c4496e3e51f206",
+   "bytes": 43312,
+   "category": "12-公众号文章",
+   "dest": "platform-docs/tdx/12-公众号文章/079-gzh20260302wzlz-tdxaidata.md"
+  },
+  {
+   "n": 80,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1ctuhthaq5qmg/mindoc-1h10g60jt68sc.html",
+   "title": "# 获取K线行情get_market_data",
+   "file": "pages/080-mindoc-1h10g60jt68sc.md",
+   "sha256": "961f7b619e520a5a8dba67955763659af02ae2cee5f0156923d1ab7ed6c7ca3a",
+   "bytes": 4849,
+   "category": "03-数据获取",
+   "dest": "platform-docs/tdx/03-数据获取/080-mindoc-1h10g60jt68sc.md"
+  },
+  {
+   "n": 81,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1h3hrvkp4sc0g/mindoc-1hce356csmgmo.html",
+   "title": "# 获取指定公式信息formula_get_info",
+   "file": "pages/081-mindoc-1hce356csmgmo.md",
+   "sha256": "724612739417a21585621e33f15b4033a2963fc8ce7eff8215357fc5acde436c",
+   "bytes": 2846,
+   "category": "08-公式调用",
+   "dest": "platform-docs/tdx/08-公式调用/081-mindoc-1hce356csmgmo.md"
+  },
+  {
+   "n": 82,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hho9u0cbfe60/huicecontext.html",
+   "title": "context上下文变量context.stock、context.universe的核心区别 | 通达信量化平台",
+   "file": "pages/082-huicecontext.md",
+   "sha256": "30a7528d0698a98c79ea0329b5a11a1feef2b83ce4661cf2f94e69f12c77a813",
+   "bytes": 1992,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/082-huicecontext.md"
+  },
+  {
+   "n": 83,
+   "url": "https://help.tdx.com.cn/quant/docs/markdown/mindoc-1hho7blr2j340/mindoc-1hib696p7b7gc/mindoc-1hib6pevs6fck.html",
+   "title": "取当前账户快照 get_portfolio | 通达信量化平台",
+   "file": "pages/083-mindoc-1hib6pevs6fck.md",
+   "sha256": "1f41d51a88832fa2105f0b1d59ce319ac098f6b92cd2229b8d10e4782cca386f",
+   "bytes": 921,
+   "category": "06-Lambda平台",
+   "dest": "platform-docs/tdx/06-Lambda平台/083-mindoc-1hib6pevs6fck.md"
+  }
+ ]
+}

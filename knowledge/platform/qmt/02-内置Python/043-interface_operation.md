@@ -1,0 +1,39 @@
+---
+title: "迅投知识库"
+source_url: "https://dict.thinktrader.net/innerApi/interface_operation.md"
+crawled_at: 2026-10-12T03:02:37+08:00
+platform: QMT
+category: 02-内置Python
+depth: 2
+tags: [平台/QMT, 状态/已抓取]
+---
+
+# 迅投知识库
+
+QMT说明, QMT-Python-API, QMT用户手册。
+
+[内置Python](https://dict.thinktrader.net/innerApi/start_now.html)[XtQuant文档](https://dict.thinktrader.net/nativeApi/start_now.html)[VBA](https://dict.thinktrader.net/VBA/start_now.html)[数据字典](https://dict.thinktrader.net/dictionary/)
+
+AI
+
+[股票数据提供2005年至今沪深A股全面的行情、财务、基本面等数据](https://dict.thinktrader.net/dictionary/stock.html)
+
+[行业概念数据包含行业板块、概念板块数据](https://dict.thinktrader.net/dictionary/industry.html)
+
+[指数数据包含沪深市场多只指数数据](https://dict.thinktrader.net/dictionary/indexes.html)
+
+[期货数据涵盖中金所、上期所、郑商所和大商所的所有期货合约数据](https://dict.thinktrader.net/dictionary/future.html)
+
+[期权数据提供股票期权和商品期权的合约资料和行情数据](https://dict.thinktrader.net/dictionary/option.html)
+
+[场内基金包含ETF、LOF、分级基金、货币基金完整的行情、净值数据](https://dict.thinktrader.net/dictionary/floorfunds.html)
+
+[债券数据提供债券基本信息、国债逆回购、可转债等债券数据](https://dict.thinktrader.net/dictionary/bond.html)
+
+邀请注册送VIP优惠券,分享链接给好友、QQ群、微信群,好友注册您即可获得VIP优惠券,玩转qmt,上迅投qmt知识库
+
+登录后获取
+
+以思考的速度交易
+
+ThinkTrader | Copyright © 2018-present 北京睿智融科控股股份有限公司
