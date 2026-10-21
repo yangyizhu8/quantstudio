@@ -44,8 +44,8 @@
 | PD-2026-0005 | closed（轮 2） | gate（gates.py） | aee3e77 |
 | PD-2026-0006 | closed（轮 3，⑤过 2026-10-15） | profiler+config+transformer+equiv | 38087eb（主仓本地 commit 2026-10-15；推送候令随批统出） |
 | PD-2026-0007 | closed（轮 4，⑤过 2026-10-20「全部A」；**⑥ 已出仓**） | profiler+config+transformer+equiv | 50ebd0d（2026-10-20 出仓；双远程一致 = 50ebd0d54）——**六步①-⑥ 全闭** |
-| PD-2026-0008 | closed（轮 5，⑤过 2026-10-20「裁A」） | gates(P5)+config+deliver+quickmode+gui | ad7c0db + 5649224（主仓本地 commit 2026-10-20；推送候令随批统出） |
-| PD-2026-0009 | closed（轮 6，⑤过 2026-10-20「裁A+PD-0009 ⑤ 批准」） | kernel（preflight 回哺读取） | 214aedf（主仓本地 commit 2026-10-20；第二棒 f1c7ce9 窗口内，推送候令） |
+| PD-2026-0008 | closed（轮 5，⑤过 2026-10-20「裁A」；**⑥ 已出仓**） | gates(P5)+config+deliver+quickmode+gui | ad7c0db + 5649224（2026-10-21 出仓，锚 f1c7ce9；双远程一致 = f1c7ce95）——**六步①-⑥ 全闭** |
+| PD-2026-0009 | closed（轮 6，⑤过 2026-10-20「裁A+PD-0009 ⑤ 批准」；**⑥ 已出仓**） | kernel（preflight 回哺读取） | 214aedf（2026-10-21 出仓，锚 f1c7ce9）——**六步①-⑥ 全闭** |
 
 > 回填记录：五条目 commit sha 已于 M8 本地轮回填（aee3e77，2026-10-11；trading 仓条目 fix_target 字段与本表同步落盘）；PD-0006 条目 sha 已于轮 3 回填（38087eb，2026-10-15）；PD-0007 已于轮 4 回填（17c8f0c，2026-10-19）；PD-0008 已于轮 5 回填（ad7c0db + P5 5649224，2026-10-20）。推送后 sha 不变，双推完成即本表口径生效。
 
@@ -97,18 +97,25 @@
   `Recv failure: Connection was aborted`，直连 `Connection was reset`，SSH 可达但无 key）
   连续失败 3 次 → 未出仓，待网络恢复重跑（命令与声明已备妥）。
 
-## 4.5 推送执行记录（2026-10-20 三棒制）
+## 4.5 推送执行记录（2026-10-20/21 四棒连锁，终窗清零）
 
-- **第一棒 ✅（23:43）**：`git push origin 50ebd0d:main`
+- **第一棒 ✅（10-20 23:43）**：`git push origin 50ebd0d:main`
   - 窗口 = `f6f6dbe..50ebd0d` 共 3 笔（a7172f9 / 17c8f0c / 50ebd0d）；prepush-gate 全量声明 PASS
   - RULING：2026-10-20「全部A」；两 URL 同次推送成功，**双远程逐位一致 = `50ebd0d54`**
   - 远端提示如实记录：main 存在分支保护（Changes must be made through a pull request + 2 of 2
     required status checks），本次以**管理员权限 bypass**（`remote: Bypassed rule violations`）
-- **第二棒 ⏳**：锚 `f1c7ce9`（窗口 `1ee8e8b..f1c7ce9` 共 7 笔：5649224/3dc8b79/ad7c0db/
-  b2c3a50/d2ae49a/214aedf/f1c7ce9；3dc8b79 = 披露携带 dev H-1 doc）——待 ops ④ 回执
-  （`1ee8e8b:main`）。
-- **第七棒 ⏳**：锚 `1ba1260`（窗口 `2ec6312..1ba1260` 共 1 笔：PD-0009 ⑤ 台账补登）——
-  待 ops ⑥ 回执（`2ec6312:main`）。
+- **④ 代推 ops ✅（10-21 08:5x）**：`git push origin 1ee8e8b:main`，窗口 `50ebd0d..1ee8e8b` = 2 笔
+  （569f254 / 1ee8e8b，**均为 ops 笔**）；RULING「C7.5 第四棒授权（代推 ops）」；双远程 = `1ee8e8b260`
+- **第二棒 ✅**：`git push origin f1c7ce9:main`，窗口 `1ee8e8b..f1c7ce9` = **7 笔**
+  （5649224 / 3dc8b79 / ad7c0db / b2c3a50 / d2ae49a / 214aedf / f1c7ce9；3dc8b79 = **披露携带 dev
+  H-1 doc**）；RULING「裁A + PD-0009 ⑤ 批准」；双远程 = `f1c7ce95eb`
+- **⑥ 代推 ops ✅**：`git push origin 2ec6312:main`，窗口 `f1c7ce9..2ec6312` = 1 笔（**ops 笔**，
+  prepush-gate 方案 a）；RULING「C7.5 第六棒授权（代推 ops）」；双远程 = `2ec6312678`
+- **第七棒 ✅（锚已批改 8026b8c）**：`git push origin 8026b8c:main`，窗口 `2ec6312..8026b8c` = 2 笔
+  （1ba1260 / 8026b8c，**均本线**）；双远程 = `8026b8c7c4`
+- **终窗清零**：`origin/main = 8026b8c`，本地 `origin/main..HEAD` = **0 笔**
+- 每棒均执行「fetch 重验窗口 → 三查（笔数/逐笔声明/无未声明携带）→ gate 全量声明 → 双 URL 推送
+  → 双远程 ls-remote 逐位核验」；每棒 2 行留痕（两 URL 各一）写入 `docs/handoff/push-bundle-rulings.log`。
 
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 
