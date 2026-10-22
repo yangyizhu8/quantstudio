@@ -121,6 +121,17 @@
 
 **证据**：POS 零消费普查 `docs/evidence/pos-gap-consumer-scan-20261022.md`；费用结构差异 `docs/evidence/qmt-backtest-panel-fee-qmch-20261022.md` §六。
 
+### 排期裁定（2026-10-22 总调度）
+
+**五条 WARN 同批落**（POS 7 字段／佣金三项同值／买入印花税=0／过户费并入说明／DAT-13 判空形态），
+**排 P2-c CI linter 接入之后、API 枚举之前**。
+
+**理由（写死）**：若先落 WARN 再接 CI linter，会出现「**CI 一接入即红**」的时序错位——
+linter 上线时既有产物尚未按新规则清理，红灯会被误读为新规则本身有问题。先 linter、再规则、后枚举，
+使每道门都建立在"上一道已绿"的基础上。
+
+**前置**：P2-c CI linter 落地并绿（由 KB/线调度侧推进）；**本批不动 `portability_rules.py`**。
+
 ## 5 改动范围（实施轮细化；判域 D2）
 
 | 落点 | 改动 | 判域 |

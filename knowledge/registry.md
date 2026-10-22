@@ -14,11 +14,11 @@
 | 注入 API 契约 | API | ~40（待枚举） | 部分 | — | 待枚举 | 0 | — | — |
 | 撮合规则 | MCH | 10 | 6 | 3 | 0 | 1 | 0 | 0 |
 | 生命周期 | LC | 8 | 7 | 1 | 0 | 0 | 0 | 0 |
-| 费用模型 | FEE | 5 | 4 | 1 | 0 | 0 | 0 | 0 |
-| 数据口径 | DAT | 17 | 6 | 7 | 2 | 0 | 1 | 0 |
+| 费用模型 | FEE | 5 | 4 | 0 | 0 | 1 | 0 | 0 |
+| 数据口径 | DAT | 17 | 8 | 8 | 0 | 0 | 1 | 0 |
 | 指标计算 | IDX | 10 | 7 | 2 | 0 | 1 | 0 | 0 |
 | QMT 生命周期专属 | QLC | 4 | 2 | 2 | 0 | 0 | 0 | 0 |
-| QMT 撮合/引擎专属 | QMCH | 4 | 1 | 0 | 3 | 0 | 0 | 0 |
+| QMT 撮合/引擎专属 | QMCH | 4 | 4 | 0 | 0 | 0 | 0 | 0 |
 | QMT 日历/合约专属 | QCAL | 6 | 5 | 1 | 0 | 0 | 0 | 0 |
 | QMT 资金/交易面 | ACOD | 30 | 22 | 5 | 1 | 2 | 0 | 0 |
 | **合计** | — | **~162** | **56** | **20** | **20（＋API 待枚举 ~38）** | **4** | **5** | **7** |
@@ -84,10 +84,10 @@
 
 | 编号 | 条目 | 状态 | 证据指针 | QMT 锚点 |
 |---|---|---|---|---|
-| FEE-01 | 最低佣金 5 元 | 已排查（首日净值 99980 = 4×5 双端一致） | 平台日志 2024-01-02 盘后；本地 trades commission 列 | **已锚定（QMT 侧 2026-10-22 回测面板·初始默认值）**：面板「最低佣金」**默认 0.000 元**、可改（5.000 为用户手改测值）；🔴 **与本地默认 5 元不一致 ⇒ 对照回测须把 QMT 置 5.000 元**（`docs/evidence/qmt-backtest-panel-fee-qmch-20261022.md` §一/§五） |
-| FEE-02 | 佣金费率 | **已锚定（本地 2026-10-22 实勘 ＋ QMT 侧 2026-10-22 面板）** | 本地 `TradeCost`（`backtest_engine.py:227`）：**`commission_rate=0.00035`（万3.5）＋`min_commission=5.0`**；`set_commission`（`ptrade_api.py:781-797`）可运行时改；QMT 三项分设（买入/平昨/平今）⇒ **三项同值映射**（`docs/evidence/local-side-5items-20261022.md` §二） | **已锚定（QMT 侧 2026-10-22 回测面板）**：**三项分设**——「买入佣金／平昨佣金／平今佣金」，**单位＝比例(百分比)**、默认均 0.0000；🔴 **本地为单一佣金费率模型 ⇒ 转换须三项同值映射并写明**（`docs/evidence/qmt-backtest-panel-fee-qmch-20261022.md` §二） |
-| FEE-03 | 印花税（卖出） | **已锚定（本地 2026-10-22 实勘：分期间逻辑）** | 本地 `config.stamp_tax_rate=0.001`（**卖出单向**，`backtest_engine.py:231`）+ `_stamp_tax_rate(date)`（`:885-889`）**特定日期后封顶 0.0005** ⇒ 🔴 **印花税随日期切换非常量**（疑对应 2023-08-28 减半，待与平台核对切换点）；卖出计提 `net_proceeds = proceeds − commission − stamp_tax − transfer_fee`（`:1248-1250`）（`docs/evidence/local-side-5items-20261022.md` §二） | **已锚定（QMT 侧 2026-10-22 回测面板）**：「买入印花税」「卖出印花税」为**两个独立字段**、可双边配置、默认均 0.0000；🔴 **本地仅卖出印花税（A 股实际）⇒ 转换须强制「买入印花税=0」**（`docs/evidence/qmt-backtest-panel-fee-qmch-20261022.md` §二） |
-| FEE-04 | 过户费 | **已锚定（本地 2026-10-22 实勘：默认值＋双向公式）** | 本地 `transfer_fee_rate=0.00001`（万0.1，`backtest_engine.py:232`）；**买卖双向**按成交额计提：买入 `transfer_fee = cost_amount × rate`（`:1167-1168`，另有 `one_lot_cost × rate` `:1177`）／卖出 `transfer_fee = proceeds × rate`（`:1249`）（`docs/evidence/local-side-5items-20261022.md` §二） | **已锚定（QMT 侧 2026-10-22 回测面板·等价槽位）**：🔴 **命名不对齐**——本地有「过户费」概念、QMT 无专名字段 ⇒ 转换须写明「过户费并入手续费比例」（`docs/evidence/qmt-backtest-panel-fee-qmch-20261022.md` §二） |
+| FEE-01 | 最低佣金 5 元 | **已锚定（2026-10-22 端测：最低佣金 5 元按面板生效）** | 原「首日净值 99980 = 4×5 双端一致」＋ **端测**：A 变体两笔买入费用均 **5.0000**（1170×0.035%=0.41 < 5 ⇒ 取地板；313×0.035%=0.11 同理）；B 变体最低佣金设 0 后不再取 5；证据 `docs/evidence/qmch-fee-probe-conclusion-20261022.md` §四 | **已锚定（QMT 侧 2026-10-22 回测面板·初始默认值）**：面板「最低佣金」**默认 0.000 元**、可改（5.000 为用户手改测值）；🔴 **与本地默认 5 元不一致 ⇒ 对照回测须把 QMT 置 5.000 元**（`docs/evidence/qmt-backtest-panel-fee-qmch-20261022.md` §一/§五） |
+| FEE-02 | 佣金费率 | **已锚定（本地 2026-10-22 实勘 ＋ QMT 面板 ＋ 回测计费实测）** | 本地实勘／面板读数 ＋ **端测**：B 变体佣金率设 1% ⇒ 费用实测 **11.70 / 3.13 / 11.40** 三处精确（1170×1%、313×1%、1140×1%）⇒ **费率参数按面板生效**；证据 `docs/evidence/qmch-fee-probe-conclusion-20261022.md` §四 | **已锚定（QMT 侧 2026-10-22 回测面板）**：**三项分设**——「买入佣金／平昨佣金／平今佣金」，**单位＝比例(百分比)**、默认均 0.0000；🔴 **本地为单一佣金费率模型 ⇒ 转换须三项同值映射并写明**（`docs/evidence/qmt-backtest-panel-fee-qmch-20261022.md` §二） |
+| FEE-03 | 印花税（卖出） | **已锚定（本地分期间逻辑 ＋ QMT 面板 ＋ 回测计费实测）** | 本地实勘：分期间逻辑 ＋ **端测**：A 变体卖印花 0.1% ⇒ **1.14**（1140×0.1%）；B 变体 1% ⇒ **11.40** ⇒ **按面板生效**；**分期间切换点仍未验**（QD-2026-0010 待段落）；证据 `docs/evidence/qmch-fee-probe-conclusion-20261022.md` §四 | **已锚定（QMT 侧 2026-10-22 回测面板）**：「买入印花税」「卖出印花税」为**两个独立字段**、可双边配置、默认均 0.0000；🔴 **本地仅卖出印花税（A 股实际）⇒ 转换须强制「买入印花税=0」**（`docs/evidence/qmt-backtest-panel-fee-qmch-20261022.md` §二） |
+| FEE-04 | 过户费 | **已知分歧（本地有公式；QMT 回测恒 0／未实现）** | 本地实勘：默认值＋双向公式 ＋ **端测（双变体交叉）**：A 卖出费 `6.14 = 1.14(印花)+5.00(佣金)` **无余项**、B `22.80 = 11.40+11.40` **无余项** ⇒ 理论过户费 0.0114 **两变体均缺失** ⇒ **QMT 回测不收过户费**（与「面板无过户费专名字段」一致）；证据 `docs/evidence/qmch-fee-probe-conclusion-20261022.md` §四 | **已锚定（QMT 侧 2026-10-22 回测面板·等价槽位）**：🔴 **命名不对齐**——本地有「过户费」概念、QMT 无专名字段 ⇒ 转换须写明「过户费并入手续费比例」（`docs/evidence/qmt-backtest-panel-fee-qmch-20261022.md` §二） |
 | FEE-05 | 费用计入成本口径（含费净投入） | 已锚定（2026-10-07 双锚点判别：买入不含费+卖出含费扣） | 验收证据 §2 三口径判别表 | 未验证 |
 
 ## DAT · 数据口径（骨架，已锚定存量回填）
@@ -101,15 +101,15 @@
 | DAT-02 | 基准收益（000300） | 已排查（双端 36.85% 逐位一致） | 四象限案例 | **已锚定（QMT 侧 2026-10-18）**：`000300.SH` 日线可得（rows=5，收盘 4287.98/4275.68/4217.681/4166.013/4170.613） |
 | DAT-03 | 日线 include 语义（D-1 锚定） | 已锚定（E1 铁律 + 四格实测） | AGENTS.md E1 条；ptrade_api.py:598 | 已锚定：wrapper `_qs_snap_kwargs` 锚定回测 bar 当日＋D-28 端测四轮 L0-L6 逐位一致（`docs/evidence/d28-e2e-run-20261015.md`） |
 | DAT-04 | 前复权 fq='pre' | 已排查（本案例价格序列逐笔一致） | 四象限案例 | **已排查（QMT 侧 2026-10-18）**：`dividend_type` 确被识别（`back` 与 `none` 差异巨大 133.756 vs 9.67）；`front≡none` 于 2026-10 窗口（该窗无除权 ⇒ 合理）⇒ **含除权窗口对照待补**，不以单窗口结论冒充已锚定 |
-| DAT-05 | 日期边界（首/末日含否、`count` 语义） | 未验证（本地待验） | 待验：`get_history` 首末日是否含、`count` 不足返回实际行还是报错；QMT 侧同类证据见 `tests/test_source_import_qmt.py:438`（如实返回不凑数） | 未验证 |
+| DAT-05 | 日期边界（首/末日含否、`count` 语义） | **已锚定（2026-10-22 本地实勘）** | `get_history`（`ptrade_api.py:1486`）双签名（`:1500` int 首参=count-first）；`security=None`→**空 DataFrame**（`:1517-1518`）；`count=None`→**20**（`:1519-1520`）；**`tail(count)`（`:1470`/`:1607`）⇒ 不足时如实返回实际行数、不凑数不报错**；`include=False` 默认 ⇒ 末行锚 D-1（与 DAT-03 一致）（`docs/evidence/dat-05-07-13-closure-20261022.md` §一） | 未验证（QMT 侧 get_history 边界对照未做） |
 | DAT-06 | 停牌日 K 线 | 已排查（本地实现三处在位） | `backtest_engine.py:750`（`suspendFlag==1`∨`volume==0`）／`ptrade_api.py:1094`（`filter_stock_by_status` 四型）／`providers/duckdb_data_access.py:518`（含 `suspendFlag` 列）；停牌日 K 线是否补齐未对表 | 未验证 |
-| DAT-07 | fallback 链 | 已排查（原则与守卫在案） | `backtest_engine.py:40`（configured/env roots 作 fallback）＋`fidelity_config.py:11`（**禁止静默单端 fallback**）；**链路顺序待列** | 未验证 |
+| DAT-07 | fallback 链 | **已锚定（2026-10-22 链路实名）** | **单源装配、无多源降级链**：`providers/base.py:245-248` Calendar→Market(持 calendar)→Fundamental→Reference；引擎只接收注入（`backtest_engine.py:436`）；数据根级 fallback 见 `:40`；**禁止静默单端 fallback** 守卫 `fidelity_config.py:11`（`docs/evidence/dat-05-07-13-closure-20261022.md` §二） | 未验证（QMT 侧无多源概念，对照不适用） |
 | DAT-08 | 复权口径 | **不适用（归并 DAT-04）** | 与 DAT-04 前复权同源，不重复计数 | — |
 | DAT-09 | PIT 时点 | **已锚定（复用 DAT-03）** | DAT-03 已锚定（E1 铁律＋四格实测）；实现 `ptrade_api.py:598` 直写 `_prev_date`、引擎 `:572` 取上一交易日 | 已锚定（复用 DAT-03） |
 | DAT-10 | 指数日线专门 API | **已锚定** | `ptrade_api.py:2130` ＋设计件 `docs/get-index-day-bar-design.md` ＋`duckdb_data_access.py:679`；契约边界见 AGENTS.md E1 第 7 条 | 未验证（QMT 侧该 API 对照未做） |
 | DAT-11 | ETF 池 PIT | **已锚定** | 铁律级约定（AGENTS.md ETF 池条）＋`ptrade_import.py:36` 导出＋`backtest_engine.py:1124`（同源/失败空缓存+warning） | 未验证 |
 | DAT-12 | 分钟/日线一致性 | 已排查 | `tests/test_day_code_index_equivalence.py`；缓存一致性 `duckdb_data_access.py:543`；全市场规模对照未做 | 未验证 |
-| DAT-13 | 字段缺失表达（None/空串/0） | 未验证（本地待验） | 待验：本地 API 缺字段三态统一约定未取证；坑族参考 QD-2026-0008 ②条（QMT 侧）＋POS-17 | 未验证 |
+| DAT-13 | 字段缺失表达（None/空串/0） | **已排查（规律在案、未成文统一）** | 公开面三态：**集合型→空容器**（`get_trades`/`get_open_orders`→`[]`；`get_history(None)`→空 DF）／**单值→零视图或 None**（`get_position` 未命中→零视图 amount=0〔QD-0009〕vs `get_order`→`None`）／**字符串→空串**（POS-17 `m_strOpenDate=''`）；🔴 **不对称已登记**（`get_position` 零视图 vs `get_order` None，均"查不到"但契约不同，属有意设计未成文）⇒ 待落成文契约（`docs/evidence/dat-05-07-13-closure-20261022.md` §三） | 未验证 |
 | DAT-14 | 单位与精度 | 已排查 | `ptrade_api.py:286` 价格 2 位／`libs/shared_cost_model.py:74` `price_decimals`／指标 ×100；浮点容差无统一约定（ACOD 实测须 1e-9） | 未验证 |
 | DAT-15 | 跨源一致性 | 已排查 | `calibration.py:10`（`PtradeExportProvider`）＋`fidelity_compare.py:4-5`（差异明细＋自动归因）；MCP 源未纳入 | 未验证 |
 | DAT-17 | `get_market_data_ex` **参数优先级**（`count` vs `start_time`） | **已锚定（2026-10-18 端测）** | 证据 `docs/evidence/qmt-probe-batch-ab-readings-20261018.md` §二/§三；探针件 `docs/probe/qmt_shared_surface_dat_probe-20261017.py`（P2 三段对照） | **已锚定**：同传 `count`＋`start_time` 时 **`count` 优先、`start_time` 被忽略**（实测 `{count:3, start_time:'20240102'}` ⇒ 返回最新 3 行 `20261014..20261016`，**静默无报错**）；与「`endDate` 空串→静默空」（QCAL-05）同类**静默语义陷阱**；**wrapper 调用面待排查**（是否存在 count＋start_time 同传的潜在偏差） |
@@ -143,9 +143,9 @@
 
 | 编号 | 条目 | 状态 | 证据指针 |
 |---|---|---|---|
-| QMCH-01 | QMT 回测撮合价口径（open/close） | 未验证（match_profile qmt 档未建） | `docs/qmt-conversion-design.md` §5.2 L1/L2/L3 分层 |
-| QMCH-02 | 涨跌停/停牌可成交性（QMT 端） | 未验证 | probe_limit（QMT 腿待建） |
-| QMCH-03 | T+1 约束（QMT 端） | 未验证 | — |
+| QMCH-01 | QMT 回测撮合价口径（open/close） | **已锚定（2026-10-22 端测：限价单=委托价／市价单=当日 close）** | `docs/qmt-conversion-design.md` §5.2 L1/L2/L3 分层 ＋ **端测定谳**：限价单按**委托价**（v4 变体A/B × 高低双向 **4 点**，隐含费用 ORDER_PX 精确=5.0000／11.70／3.13）；市价单(prType=5)按**当日 close**（v5：CLOSE 隐含费用 5.0000 精确）；探针 `docs/probe/qmt_qmch_backtest_probe_v4-20261022.py`／`_v5-20261022.py`；证据 `docs/evidence/qmch-fee-probe-conclusion-20261022.md` §一 |
+| QMCH-02 | 涨跌停/停牌可成交性（QMT 端） | **已锚定（涨停侧 2026-10-22 端测）；跌停侧缺口** | **涨停可成交（无封板约束）**：+9.97% 样本 000011.SZ 挂 9.49 即成交，A `delta=-954.00=949+5.00`／B `delta=-958.49=949+9.49` **双变体精确** ⇒ 与本地 `limit_up_blocked` 拒单**不一致（已知分歧）**；**跌停侧缺口（不推断）**：v5 `NO_LIMIT_DOWN_SAMPLE(前60只当日无<=-9.8%)` ⇒ 买入**未取得证据**；跌停卖出 `NOT_TESTABLE`（需提前持仓且当日跌停，不可控）；证据 `docs/evidence/qmch-fee-probe-conclusion-20261022.md` §二 |
+| QMCH-03 | T+1 约束（QMT 端） | **已锚定（2026-10-22 端测：T+1 生效，引擎原文拒单）** | **引擎原文**：`当前股票000001.SZ可卖0股,小于需卖量100股,跳过,日期时间:20260901`；配套 `L1 T1 判定 delta=-1175.0` 精确等于「只有买成交」（买卖都成交应为 -10.0）⇒ `T1_ENFORCED_SELL_REJECTED`；**v3/v4 曾误判 T0_ALLOWED 已作废**（当时卖出在买入后第 4 bar，早已过 T+1，判据无效）；探针 `docs/probe/qmt_qmch_backtest_probe_v5-20261022.py`；证据 `docs/evidence/qmch-fee-probe-conclusion-20261022.md` §三 |
 | QMCH-04 | 费用/滑点配置面（回测参数面板） | **已锚定（QMT 侧 2026-10-22 回测面板·初始默认值）** | 🔴 **默认＝零费用零滑点**：除 **初始资金 1,000,000 元** 与 **保证金比例 5%（现货语义待验）** 外，**15 项费用/滑点参数默认全为 0**（含最低佣金 0.000 元、滑点值 0.0000）；区间默认 2017-01-01~2020-12-31。⇒ **默认参数下 QMT 与本地费用天然不可比**（本地最低佣金 5 元）⇒ **对照前须按 §五 显式配置基线**，否则会把费用配置差异误读为引擎行为差异；**计费行为本身仍未验**（`docs/evidence/qmt-backtest-panel-fee-qmch-20261022.md` §一/§三风险4/§五） |
 
 ## QCAL · QMT 日历/合约信息专属（D-33 件B，2026-10-16 建面）
@@ -202,6 +202,8 @@
 ## 变更记录
 
 - 2026-10-07 POS-01 →已锚定（修复落地+契约测试）；FEE-05 →已锚定（双锚点判别：买入不含费）；DAT-16 新增（估值价格快照微差，V2 残差 3.88pp 归因）。
+- 2026-10-22 **QMCH／FEE 端测收官（探针 v1→v5）**：**QMCH-01 已锚定**（限价单=**委托价**〔v4 双变体×双方向 4 点，隐含费用 ORDER_PX 精确〕／市价单=**当日 close**〔v5〕）；**QMCH-02 已锚定（涨停侧）**（+9.97% 样本挂单即成交，与本地 `limit_up_blocked` **不一致**）＋**跌停侧缺口如实登记**（v5 前60只无样本；跌停卖出 NOT_TESTABLE）；**QMCH-03 已锚定**（**T+1 生效**，引擎原文 `当前股票000001.SZ可卖0股,小于需卖量100股,跳过`；v3/v4 的 T0_ALLOWED 已作废）；**FEE-01/02/03 已锚定**（最低佣金 5.00／佣金率 1%⇒11.70/3.13/11.40／卖印花 0.1%⇒1.14、1%⇒11.40，**逐项精确**）；**FEE-04 推翻为「已知分歧」**（本地有公式，QMT 回测两变体费用均**无余项** ⇒ 过户费恒 0／未实现）。**总览：QMCH 4/4 锚定、FEE 4 锚定＋1 分歧、两域未验证归零。** 证据 `docs/evidence/qmch-fee-probe-conclusion-20261022.md`（含五轮演进与三次判据缺陷的如实记载）。
+- 2026-10-22 **DAT 三件一次清**：**DAT-05 → 已锚定**（`get_history` 双签名／`count=None`→20／`security=None`→空 DF／**`tail(count)` 不足如实返回不凑数**／`include=False` 末行锚 D-1）；**DAT-07 → 已锚定（链路实名）**（`providers/base.py:245-248` **单源四件装配、无多源降级链**；数据根 fallback `:40`＋禁止静默单端守卫 `fidelity_config.py:11`）；**DAT-13 → 已排查**（公开面三态规律：集合→空容器／单值→零视图或 None／字符串→空串；🔴 `get_position` 零视图 vs `get_order` None **不对称属有意设计但未成文**，待落契约）。**DAT 未验证 2→0**。证据 `docs/evidence/dat-05-07-13-closure-20261022.md`。
 - 2026-10-22 **DAT 11 维度拆分回填**：`DAT-05..15` 聚合行拆为 **11 条明细**（口径维度：日期边界／停牌日 K 线／fallback 链／复权口径／PIT 时点／指数日线专门 API／ETF 池 PIT／分钟日线一致性／字段缺失表达／单位与精度／跨源一致性）。状态按本地实况判：**已锚定 3**（09 复用 DAT-03／10／11）＋**已排查 5**（06/07/12/14/15）＋**不适用 1**（08 归并 DAT-04）＋**未验证 2**（05 日期边界／13 字段缺失表达）。DAT 面总览：已锚定 6／已排查 7／未验证 11→**2**／不适用 1（另有 DAT-16 已关闭）。证据 `docs/evidence/dat-11-dims-enumeration-20261022.md`。
 - 2026-10-22 **本地侧续推五件**：**LC-08 → 已锚定**（6 处回调调用点全实勘：捕获＋不中断＋记 error；登记不对称——`_lifecycle_errors` 仅 :2271 路径计数）；**FEE-02 → 已锚定**（`commission_rate=0.00035`＋`min_commission=5.0`）；**FEE-03 → 已锚定（升级）**（卖出单向 0.001，且 `_stamp_tax_rate(date)` **分期间封顶 0.0005** ⇒ 印花税非常量）；**FEE-04 → 已锚定（升级）**（`transfer_fee_rate=0.00001`，买卖双向计提）；**IDX-02 → 补实名公式**（`pow(1+total, 250/trade_days)−1`，`ptrade_metrics.py:123`）。`trade | FEE` 面本地侧未验证清零。证据 `docs/evidence/local-side-5items-20261022.md`。
 - 2026-10-22 **本地侧四件补核**：IDX-07 定级＝**双口径并存已查明**（主口径按平仓对 `win_rate_pct`／副口径按日跑赢 `daily_win_rate_pct`），平台「14」单位未知 ⇒ 分歧降级 **BLOCKED(外部依赖平台口径定义)**；LC-07 →**已排查**（Context 5 字段实勘，`capital_base` 平台文档欠载）；LC-08 维持未验证（仅确认辅助路径兜底，回调异常语义未定位）；FEE-02 →**已锚定**（本地单一 `commission_rate` ＋ QMT 三项分设 ⇒ 三项同值映射）；FEE-04 →**已排查**（字段与 ETF 归零确证）。证据 `docs/evidence/local-side-4items-20261022.md`。
