@@ -132,7 +132,7 @@ _LAST_WRITE_FAILURE: dict = {}
 
 
 def record_write_failure(exc: BaseException) -> None:
-    """§10.2 修正：记录**失败写自身**的上下文（键控于本次调用写入的 _LAST_WRITE_CTX）。
+    """§10.2 修正 + A1（2026-10-22）：记录**失败写自身**上下文 + 并发写者指认。
 
     只增观测：不吞异常、不改传播；自身异常一律兜住（观测失败不得影响写路径）。
     """
@@ -140,6 +140,27 @@ def record_write_failure(exc: BaseException) -> None:
         info = dict(_LAST_WRITE_CTX)
         info["exc_type"] = type(exc).__name__
         info["exc_msg"] = str(exc)[:300]
+        info["pid"] = os.getpid()
+        info["thread"] = threading.get_ident()
+        # 冲突键解析（write-write conflict on key: "<code>, <time_ms>, <freq>"）
+        _msg = str(exc)
+        if "write-write conflict on key" in _msg:
+            try:
+                _k = _msg.split('key: "', 1)[1].split('"', 1)[0]
+                _parts = [p.strip() for p in _k.split(",")]
+                info["conflict_key"] = _k
+                if len(_parts) >= 2:
+                    info["conflict_time"] = int(_parts[1])
+            except Exception:
+                pass
+        # A1：并发写者指认（同表 + 时段覆盖；无同表同段写者 ⇒ 跨进程候选）
+        _tbl = info.get("table")
+        if _tbl:
+            _peers = concurrent_writers(_tbl, info.get("conflict_time"))
+            info["peers"] = _peers
+            info["peers_n"] = len(_peers)
+            if not _peers:
+                info["cross_process_candidate"] = True
         _LAST_WRITE_FAILURE.clear()
         _LAST_WRITE_FAILURE.update(info)
     except Exception:
@@ -154,6 +175,147 @@ def last_write_failure() -> dict:
         return {}
 
 
+# ── A1（六步③·2026-10-22）：进程内价格表写者登记表 + 并发写者指认 ────────────
+# 动机（W-4 定谳 + 第 15 次实证）：主 upsert 路径原无 record_write_failure（失败槽空，
+# 回退 last 槽取到误导值）；且冲突时无法指认并发写者。登记表按 (pid, thread, table)
+# 记录写窗口（含 time 段、结束时间），冲突时可反查**同时段**在程/刚结束的写者；
+# 无同表同段写者 ⇒ 跨进程候选（R6 上报口径）。
+# 纪律：只增观测，不参与判定、不改异常传播、不吞异常。
+_REGISTRY_LOCK = threading.Lock()
+_WRITER_REGISTRY: Dict[tuple, dict] = {}
+_REGISTRY_TTL_S = 300.0      # 结束条目保留时长（供「刚结束」写者被指认）
+_REGISTRY_MAX = 200          # 上限（防泄漏）
+
+
+def price_write_enter(table: str, path: str, batch_id: str = "", df=None,
+                      t_min: Optional[int] = None, t_max: Optional[int] = None) -> None:
+    """登记本次价格表写（进入写临界区后调用；失败/结束须 price_write_exit）。"""
+    try:
+        if df is not None and "time" in getattr(df, "columns", []):
+            try:
+                _t = pd.to_numeric(df["time"], errors="coerce")
+                t_min = int(_t.min())
+                t_max = int(_t.max())
+            except Exception:
+                pass
+        key = (os.getpid(), threading.get_ident(), table)
+        with _REGISTRY_LOCK:
+            _WRITER_REGISTRY[key] = {
+                "pid": os.getpid(), "thread": threading.get_ident(),
+                "table": table, "path": path, "batch": str(batch_id or ""),
+                "t_min": t_min, "t_max": t_max,
+                "n": int(len(df)) if df is not None else 0,
+                "started": datetime.now().timestamp(), "ended": None,
+            }
+            if len(_WRITER_REGISTRY) > _REGISTRY_MAX:
+                _prune_registry_locked()
+    except Exception:
+        pass
+
+
+def price_write_exit(table: str) -> None:
+    """标记本次写结束（保留 TTL 供「刚结束」写者被指认）。"""
+    try:
+        key = (os.getpid(), threading.get_ident(), table)
+        with _REGISTRY_LOCK:
+            ent = _WRITER_REGISTRY.get(key)
+            if ent is not None:
+                ent["ended"] = datetime.now().timestamp()
+    except Exception:
+        pass
+
+
+def _prune_registry_locked() -> None:
+    try:
+        now = datetime.now().timestamp()
+        dead = [k for k, v in _WRITER_REGISTRY.items()
+                if v.get("ended") is not None and now - v["ended"] > _REGISTRY_TTL_S]
+        for k in dead:
+            _WRITER_REGISTRY.pop(k, None)
+    except Exception:
+        pass
+
+
+def concurrent_writers(table: str, time_ms: Optional[int] = None,
+                       window_s: float = 180.0) -> List[dict]:
+    """返回**其他**写者（同表；活跃中或 window_s 内刚结束；给了 time_ms 则要求时段覆盖）。"""
+    out: List[dict] = []
+    try:
+        me = (os.getpid(), threading.get_ident(), table)
+        now = datetime.now().timestamp()
+        with _REGISTRY_LOCK:
+            _prune_registry_locked()
+            for k, v in list(_WRITER_REGISTRY.items()):
+                if k == me or v.get("table") != table:
+                    continue
+                ended = v.get("ended")
+                if ended is not None and now - ended > window_s:
+                    continue
+                if time_ms is not None:
+                    lo, hi = v.get("t_min"), v.get("t_max")
+                    if isinstance(lo, int) and isinstance(hi, int) and not (lo <= time_ms <= hi):
+                        continue
+                out.append(dict(v))
+    except Exception:
+        pass
+    return out
+
+
+# ── A6（六步③·2026-10-22）：有界冲突重试（写写冲突属可重试瞬时并发）──────────
+_WRITE_RETRY_STATS: Dict[str, int] = {"attempts": 0, "exhausted": 0, "success": 0}
+
+
+def _retry_stats_inc(key: str, n: int = 1) -> None:
+    try:
+        _WRITE_RETRY_STATS[key] = int(_WRITE_RETRY_STATS.get(key, 0)) + n
+    except Exception:
+        pass
+
+
+def write_retry_stats() -> dict:
+    """只读：本进程写重试统计（供 daemon run_state / 观测面板消费）。"""
+    try:
+        return dict(_WRITE_RETRY_STATS)
+    except Exception:
+        return {}
+
+
+def _write_retry_max() -> int:
+    """重试上限（默认 3；QS_WRITE_RETRY_MAX=0 关闭=回退面；上限 10 防呆）。"""
+    try:
+        v = int(os.environ.get("QS_WRITE_RETRY_MAX", "3"))
+    except Exception:
+        return 3
+    return max(0, min(v, 10))
+
+
+def is_write_conflict(exc: BaseException) -> bool:
+    """写写冲突族判定（DuckDB 文案：write-write conflict / Conflict on update）。"""
+    try:
+        _s = str(exc).lower()
+    except Exception:
+        return False
+    if "write-write conflict" in _s:
+        return True
+    if "conflict on update" in _s:
+        return True
+    if "transactioncontext" in _s and "conflict" in _s:
+        return True
+    return False
+
+
+def _retry_backoff(attempt: int) -> None:
+    """退避：0.5/1/2s（第 4 次起恒 2s）+ 0～200ms 抖动（防同步重试撞车）。"""
+    try:
+        import random
+        import time
+        _base = (0.5, 1.0, 2.0)
+        _delay = _base[min(attempt, len(_base) - 1)] + random.uniform(0.0, 0.2)
+        time.sleep(_delay)
+    except Exception:
+        pass
+
+
 def table_write_lock(table: str):
     """R2 按表写锁上下文（模块级公共入口，跨模块共享同一把锁）。
 
@@ -164,10 +326,71 @@ def table_write_lock(table: str):
     - setdefault：CPython 字典操作原子，并发首建也只暴露同一把锁；
     - 实例方法 DuckDBWriter._table_write_lock() 委托本函数——writer 写路径
       与重锚引擎价格写事务由此拿到**同一把**锁。
+    - A3（2026-10-22）：返回 _LockScope 包装——进入即登记持有线程，供
+      _assert_write_locked() 断言写入口确实在锁内（仅 _SERIAL_WRITE_TABLES 生效）。
     """
     if table in _SERIAL_WRITE_TABLES:
-        return _TABLE_WRITE_LOCKS.setdefault(table, threading.RLock())
+        return _LockScope(table, _TABLE_WRITE_LOCKS.setdefault(table, threading.RLock()))
     return contextlib.nullcontext()
+
+
+# ── A3（六步③·2026-10-22）：锁持有断言（域限定分钟表，daily nullcontext 不误伤）──
+_LOCK_HOLDERS: Dict[str, set] = {}
+
+
+def _assert_write_locked(table: str, where: str = "") -> None:
+    """断言当前线程持有该表写锁；仅 _SERIAL_WRITE_TABLES 且开关开启时生效。
+
+    fail-fast（新增检测型）：写入口若绕过 table_write_lock，立即中止而非静默并发写。
+    开关 QS_PRICE_WRITE_ASSERT=0 可关闭（回退面）。
+    """
+    try:
+        if table not in _SERIAL_WRITE_TABLES:
+            return
+        _v = (os.environ.get("QS_PRICE_WRITE_ASSERT") or "1").strip().lower()
+        if _v in ("0", "false", "off", "no"):
+            return
+        tid = threading.get_ident()
+        with _REGISTRY_LOCK:
+            held = tid in _LOCK_HOLDERS.get(table, set())
+        if not held:
+            raise RuntimeError(
+                "[writers] 写入口未持表锁（table=%s where=%s thread=%s）——"
+                "价格表写必须经 table_write_lock；见 A3/六步方案" % (table, where, tid))
+    except RuntimeError:
+        raise
+    except Exception:
+        pass
+
+
+class _LockScope:
+    """table_write_lock 返回值：进入登记持有线程、退出注销（A3 断言依据）。"""
+
+    def __init__(self, table: str, lock):
+        self._table = table
+        self._lock = lock
+
+    def __enter__(self):
+        self._lock.acquire()
+        try:
+            with _REGISTRY_LOCK:
+                _LOCK_HOLDERS.setdefault(self._table, set()).add(threading.get_ident())
+        except Exception:
+            pass
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            with _REGISTRY_LOCK:
+                _LOCK_HOLDERS.get(self._table, set()).discard(threading.get_ident())
+        except Exception:
+            pass
+        self._lock.release()
+        return False
+
+
+# 公开别名：供引擎侧在自持事务内断言「价格表写确实在锁内」（A3）。
+assert_price_write_locked = _assert_write_locked
 
 
 class WriteResult(int):
@@ -254,12 +477,15 @@ def _assert_qfq_schema_init_safe(conn) -> None:
     from quantstudio.pipeline.qfq_schema_status import (
         detect_schema_status, SchemaStatus)
     status = detect_schema_status(conn)
-    if status in (SchemaStatus.EMPTY_OR_NEW, SchemaStatus.COMPLETE_2_1):
+    # 2.2（FP-5，2026-10-22）：与 COMPLETE_2_1 一并放行——升级窗口内
+    # "新代码 + 旧库"（2.1）与"新代码 + 新库"（2.2）均不得停摆。
+    if status in (SchemaStatus.EMPTY_OR_NEW, SchemaStatus.COMPLETE_2_1,
+                  SchemaStatus.COMPLETE_2_2):
         return  # 放行
     raise _WriterSchemaMigrationRequired(
         f"[DuckDBWriter] 主库处于 {status.value} 状态，禁止 writer init（会在 QFQ init 安全闸"
-        f"执行前创建框架表，进一步修改数据库）。仅 EMPTY_OR_NEW/COMPLETE_2_1 放行。"
-        f"该库需显式 migration runner 升级到 2.1（B-3b 范围）。")
+        f"执行前创建框架表，进一步修改数据库）。仅 EMPTY_OR_NEW/COMPLETE_2_1/COMPLETE_2_2 放行。"
+        f"该库需显式 migration runner 升级到 2.1（B-3b 范围）/ 2.2（FP-5）。")
 
 
 DDL_DUCKDB = {
@@ -836,12 +1062,31 @@ class DuckDBWriter(BaseWriter):
           - 全量覆盖（CREATE OR REPLACE TABLE），不 upsert、不按 DDL 裁剪列、
             不做类型归一、不推进水位；
           - DuckDB 表名/列名 = QuestDB 原样（ts_code/trade_date 等保留）。
+
+        A6（六步③·2026-10-22）：**有界冲突重试**——DuckDB 写写冲突（write-write conflict /
+        Conflict on update）属可重试的瞬时并发；重试整操作（重取 3A 写锁 → 重放同一批 upsert，
+        幂等），默认 3 次、退避 0.5/1/2s + 抖动；`QS_WRITE_RETRY_MAX=0` 关闭（回退面）。
+        非冲突异常不重试；耗尽如实抛出并计入统计。
         """
-        ensure_write_lock(f"writers:write:{table}:{batch_id}")  # 3A 写锁（操作粒度）
-        try:
-            return self._write_locked(df, table, batch_id, passthrough)
-        finally:
-            release_write_lock()
+        _max_retry = _write_retry_max()
+        for _attempt in range(_max_retry + 1):
+            ensure_write_lock(f"writers:write:{table}:{batch_id}")  # 3A 写锁（操作粒度）
+            try:
+                return self._write_locked(df, table, batch_id, passthrough)
+            except BaseException as _exc:
+                if _attempt >= _max_retry or not is_write_conflict(_exc):
+                    if is_write_conflict(_exc):
+                        _retry_stats_inc("exhausted")
+                    raise
+                _retry_stats_inc("attempts")
+                logger.warning(
+                    "[DuckDBWriter] %s batch=%s 写冲突重试 %d/%d（%s: %s）",
+                    table, batch_id, _attempt + 1, _max_retry,
+                    type(_exc).__name__, str(_exc)[:160])
+            finally:
+                release_write_lock()
+            _retry_backoff(_attempt)   # 锁外退避，下一轮重取锁
+        raise RuntimeError("[DuckDBWriter] 写重试循环异常退出（不应到达）")
 
     def _write_locked(self, df: pd.DataFrame, table: str, batch_id: str,
                       passthrough: bool = False) -> int:
@@ -935,10 +1180,16 @@ class DuckDBWriter(BaseWriter):
         # R2（write-integrity）：写事务临界区整段进按表锁——pre-count 探测与 upsert
         # 写入必须同临界区（防探测/写入间窗口错配）；锁范围仅写事务段，不含上游
         # 对齐/校验与普通读路径；汇总日志行留锁外无碍。
+        # A1（六步③·2026-10-22）：主 upsert 路径补失败槽 + 写者登记（W-4 定谳：
+        # 该路径原无 record_write_failure，22:31/00:23 失败槽为空即此故）。
+        note_write_context(table=table, batch_id=batch_id, path="_write_locked",
+                           serial=table in _SERIAL_WRITE_TABLES,
+                           pid=os.getpid(), thread=threading.get_ident())
         with self._table_write_lock(table):
             with self._conn_lock:
                 conn = self._conn()
                 try:
+                    price_write_enter(table, "_write_locked", batch_id, df)
                     # 性能修复（2026-07-22）：原实现 write 前后各跑一次 SELECT COUNT(*) FROM <table>
                     # 全表统计，在大表（百万→千万行）上每次数秒，8 线程持 _conn_lock 串行 →
                     # 全量拉取 56 秒/只（理论 1.9s）。改为只数本批主键已存在的行（走索引，毫秒级）。
@@ -1030,6 +1281,7 @@ class DuckDBWriter(BaseWriter):
                             _returned = len(conn.execute(f"{_upsert_sql} RETURNING 1").fetchall())
                             changed_rows = max(0, _returned - _new_pre)
                         else:
+                            _assert_write_locked(table, "_write_locked")
                             conn.execute(_upsert_sql)
                             changed_rows = 0
                     else:
@@ -1061,7 +1313,11 @@ class DuckDBWriter(BaseWriter):
                             "[DuckDBWriter] fin_indicator 写后自动回补已关闭 "
                             "(QS_AUTO_BACKFILL_EPS 未显式开启)"
                         )
+                except BaseException as _wf:
+                    record_write_failure(_wf)
+                    raise
                 finally:
+                    price_write_exit(table)
                     conn.close()
         if accounting_unknown:
             # R1 汇总行（方案裁定口径）：记账失效批显示 unknown，不再虚报「新增」
@@ -1108,6 +1364,8 @@ class DuckDBWriter(BaseWriter):
             with self._conn_lock:
                 conn = self._conn()
                 try:
+                    price_write_enter(table, "_write_passthrough", batch_id, df)
+                    _assert_write_locked(table, "_write_passthrough")
                     conn.execute(create_sql)
                     # 全量覆盖：建临时表→REPLACE→DROP 临时（DuckDB 无原生 CREATE OR REPLACE
                     # 对含数据的表，用事务内 建临时+原子替换 实现等价语义）
@@ -1123,6 +1381,7 @@ class DuckDBWriter(BaseWriter):
                     record_write_failure(_wf)          # §10.2 修正：失败写自身上下文
                     raise
                 finally:
+                    price_write_exit(table)
                     conn.close()
         logger.info(f"[DuckDBWriter] {table} passthrough 全量覆盖 {len(df)} 行 "
                     f"(列原样: {list(df.columns)[:8]}{'...' if len(df.columns) > 8 else ''})")
@@ -1197,6 +1456,8 @@ class DuckDBWriter(BaseWriter):
             with self._conn_lock:
                 conn = self._conn()
                 try:
+                    price_write_enter(table, "_write_passthrough_chunked", batch_id)
+                    _assert_write_locked(table, "_write_passthrough_chunked")
                     self._pt_ensure_ledger(conn)
                     done_keys = set()
                     if resume and self._pt_staging_exists(conn, tmp):
@@ -1257,6 +1518,7 @@ class DuckDBWriter(BaseWriter):
                     record_write_failure(_wf)          # §10.2 修正：失败写自身上下文
                     raise
                 finally:
+                    price_write_exit(table)
                     conn.close()
 
     def get_last_date(self, source: str, table: str, freq: str = "daily") -> Optional[str]:

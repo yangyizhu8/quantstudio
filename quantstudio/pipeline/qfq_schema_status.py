@@ -43,9 +43,10 @@ from quantstudio.pipeline.qfq_reanchor_schema import SCHEMA_VERSION
 
 
 class SchemaStatus(str, Enum):
-    """DuckDB 主库相对最终 2.1 的物理状态分类。"""
+    """DuckDB 主库相对最终契约的物理状态分类。"""
 
     EMPTY_OR_NEW = "empty_or_new"
+    COMPLETE_2_2 = "complete_2_2"
     COMPLETE_2_1 = "complete_2_1"
     COMPLETE_2_0 = "complete_2_0"
     PARTIAL_OR_MIXED = "partial_or_mixed"
@@ -149,24 +150,34 @@ def detect_schema_status(conn) -> SchemaStatus:
             # partial，不得判空库（否则普通 init 会在旧共享表上建 15 张 QFQ 2.1 表，
             # 留下 2.0/2.1 混合 schema）。仅当共享表不存在或已精确匹配 target 时才放行。
             from quantstudio.pipeline.qfq_schema_contracts import (
-                TARGET_QFQ_2_1_FINGERPRINT, TARGET_SOURCE_WATERMARK_2_1_FINGERPRINT)
-            if not _shared_table_ok_or_absent(
-                    conn, "source_watermark", TARGET_SOURCE_WATERMARK_2_1_FINGERPRINT):
+                TARGET_QFQ_2_1_FINGERPRINT, TARGET_SOURCE_WATERMARK_2_1_FINGERPRINT,
+                TARGET_SOURCE_WATERMARK_2_2_FINGERPRINT)
+            # 2.2（FP-5）：新建库由 2.2 DDL 或 2.1 DDL 建出的 source_watermark 都不得判空库失败
+            if not (_shared_table_ok_or_absent(
+                        conn, "source_watermark", TARGET_SOURCE_WATERMARK_2_1_FINGERPRINT)
+                    or _shared_table_ok_or_absent(
+                        conn, "source_watermark", TARGET_SOURCE_WATERMARK_2_2_FINGERPRINT)):
                 return SchemaStatus.PARTIAL_OR_MIXED
             if not _shared_table_ok_or_absent(
                     conn, "trade_calendar", TARGET_QFQ_2_1_FINGERPRINT["trade_calendar"]):
                 return SchemaStatus.PARTIAL_OR_MIXED
             return SchemaStatus.EMPTY_OR_NEW
 
-        # 2. 完整 2.1：物理结构与 target 主库指纹（QFQ 15表 + source_watermark）逐字一致
+        # 2. 完整 2.2（必须先于 2.1 判定：2.2 库在 2.1 指纹下会因多一列被判 partial）
+        from quantstudio.pipeline.qfq_schema_contracts import (
+            TARGET_MAIN_DB_2_2_FINGERPRINT)
+        if verify_fingerprint(conn, TARGET_MAIN_DB_2_2_FINGERPRINT, reject_extra=True):
+            return SchemaStatus.COMPLETE_2_2
+
+        # 3. 完整 2.1：物理结构与 target 主库指纹（QFQ 15表 + source_watermark）逐字一致
         if verify_fingerprint(conn, TARGET_MAIN_DB_2_1_FINGERPRINT, reject_extra=True):
             return SchemaStatus.COMPLETE_2_1
 
-        # 3. 完整 2.0：物理结构与 legacy 主库指纹逐字一致
+        # 4. 完整 2.0：物理结构与 legacy 主库指纹逐字一致
         if verify_fingerprint(conn, LEGACY_MAIN_DB_2_0_FINGERPRINT, reject_extra=True):
             return SchemaStatus.COMPLETE_2_0
 
-        # 4. 其它 → partial
+        # 5. 其它 → partial
         return SchemaStatus.PARTIAL_OR_MIXED
     except Exception as e:
         # introspection 异常 → UNKNOWN（阻断 6），绝不误判空库
@@ -177,13 +188,15 @@ def detect_schema_status(conn) -> SchemaStatus:
 def assert_init_allowed(conn) -> SchemaStatus:
     """普通 ``init_duckdb_schema`` 写前安全闸。
 
-    仅 ``EMPTY_OR_NEW`` 与 ``COMPLETE_2_1`` 放行；``COMPLETE_2_0`` / ``PARTIAL_OR_MIXED``
-    / ``UNKNOWN`` 一律抛 ``QfqSchemaMigrationRequired``，**写前 fail-fast**。
+    放行 ``EMPTY_OR_NEW`` / ``COMPLETE_2_1`` / ``COMPLETE_2_2``（2.2 为 FP-5 新契约，
+    2.1 保留放行 → 升级窗口内"新代码 + 旧库"不得停摆）；``COMPLETE_2_0`` /
+    ``PARTIAL_OR_MIXED`` / ``UNKNOWN`` 一律抛 ``QfqSchemaMigrationRequired``，**写前 fail-fast**。
 
-    返回探测到的 SchemaStatus（COMPLETE_2_1 路径由调用方据此做只读 no-op）。
+    返回探测到的 SchemaStatus（完整版本路径由调用方据此做只读 no-op）。
     """
     status = detect_schema_status(conn)
-    if status in (SchemaStatus.EMPTY_OR_NEW, SchemaStatus.COMPLETE_2_1):
+    if status in (SchemaStatus.EMPTY_OR_NEW, SchemaStatus.COMPLETE_2_1,
+                  SchemaStatus.COMPLETE_2_2):
         return status
     raise QfqSchemaMigrationRequired(
         f"普通 init 拒绝在 {status.value} 状态的数据库上执行（代码 SCHEMA_VERSION="

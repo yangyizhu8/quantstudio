@@ -51,7 +51,11 @@ from quantstudio._paths import db_path
 # QFQ 辅助库文件名（与 qfq_maintenance.py 口径一致）
 QFQ_AUX_DB_NAME = "qfq_aux.db"
 
-SCHEMA_VERSION = "reanchor-2.1"  # v2.4 B-3：从 2.0 升级，触发世代隔离 schema 变更（trigger_id_version 列 + 世代列 + 新表）
+SCHEMA_VERSION = "reanchor-2.2"  # 2026-10-22 FP-5：2.1→2.2（source_watermark 增 last_run_id，契约变更）
+# 升级窗口双接受：旧库（2.1）与新库（2.2）都不得停摆——bootstrap 版本校验、
+# writers 安全闸、状态判定一律按本元组放行；迁移 runner 会把 qfq_bootstrap_run
+# .schema_version 一并升到 SCHEMA_VERSION。
+SCHEMA_VERSION_COMPAT = ("reanchor-2.1", "reanchor-2.2")
 
 # 任务6.3：detector 基线版本（bootstrap 建基线时的版本标识；变更需重做 bootstrap）
 DETECTOR_BASELINE_VERSION = "v1"

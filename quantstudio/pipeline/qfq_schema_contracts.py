@@ -569,6 +569,53 @@ TARGET_SOURCE_WATERMARK_2_1_FINGERPRINT: Fingerprint = {
 
 
 # ---------------------------------------------------------------------------
+# 2.2（FP-5，2026-10-21 ②审通过）：source_watermark 增 last_run_id
+# ---------------------------------------------------------------------------
+# 背景：``last_batch_id`` 被两义共用（采集批次号 / run 标识），``daemon.py:699`` 生成的
+# ``manual_<task>_<uuid12>`` run_id 经 gate 提交写入 last_batch_id ⇒ 批次审计链断裂 +
+# 被误读为"人工 pin"。``last_run_id`` 独立承载 run 语义。
+#
+# 关键：加列不是元数据操作，是**契约变更**（2026-10-20 实弹：单独 ALTER 后
+# detect_schema_status 由 complete_2_1 → partial_or_mixed，DuckDBWriter 安全闸拒启）。
+# 故本契约必须与 SCHEMA_VERSION、状态判定、安全闸放行集、迁移 runner、测试同 commit。
+#
+# 2.2 = 2.1 的 8 列 + ``last_run_id VARCHAR``（可空、无 DEFAULT；历史行不可知 → 留 NULL，不回填）。
+# ALTER ADD COLUMN 物理追加到表尾（位于 cutover_id 之后），指纹列序与之对齐。
+SOURCE_WATERMARK_2_2_DDL = """
+    CREATE TABLE IF NOT EXISTS source_watermark (
+        source             VARCHAR,
+        table_name         VARCHAR,
+        freq               VARCHAR,
+        last_date          BIGINT,
+        last_batch_id      VARCHAR,
+        updated_at         TIMESTAMP,
+        source_generation  VARCHAR NOT NULL,
+        cutover_id         VARCHAR NOT NULL,
+        last_run_id        VARCHAR,
+        PRIMARY KEY (source, table_name, freq)
+    )"""
+
+TARGET_SOURCE_WATERMARK_2_2_FINGERPRINT: Fingerprint = {
+    "columns": [
+        ("source", "VARCHAR", True, None),
+        ("table_name", "VARCHAR", True, None),
+        ("freq", "VARCHAR", True, None),
+        ("last_date", "BIGINT", False, None),
+        ("last_batch_id", "VARCHAR", False, None),
+        ("updated_at", "TIMESTAMP", False, None),
+        ("source_generation", "VARCHAR", True, None),
+        ("cutover_id", "VARCHAR", True, None),
+        # 2.2 新增：run 语义列（可空、无 DEFAULT、无约束——客户报告方案 D 的 CHECK 约束仍否决）
+        ("last_run_id", "VARCHAR", False, None),
+    ],
+    "primary_key": ["source", "table_name", "freq"],
+    "unique": [],
+    "check": [],
+    "foreign_keys": [],
+}
+
+
+# ---------------------------------------------------------------------------
 # LEGACY 2.0 QFQ 指纹（11 表，来自 B-3R 实测真实 2.0 物理结构）
 # ---------------------------------------------------------------------------
 # not_null 取物理语义：DDL 显式 NOT NULL 的列 + 表级复合 PK 列均标 True。
@@ -1222,6 +1269,12 @@ LEGACY_MAIN_DB_2_0_FINGERPRINT: FingerprintDB = _merge(
 TARGET_MAIN_DB_2_1_FINGERPRINT: FingerprintDB = _merge(
     TARGET_QFQ_2_1_FINGERPRINT,
     {"source_watermark": TARGET_SOURCE_WATERMARK_2_1_FINGERPRINT},
+)
+
+# 2.2（FP-5）：QFQ 15 表结构不变，仅 source_watermark 多 last_run_id。
+TARGET_MAIN_DB_2_2_FINGERPRINT: FingerprintDB = _merge(
+    TARGET_QFQ_2_1_FINGERPRINT,
+    {"source_watermark": TARGET_SOURCE_WATERMARK_2_2_FINGERPRINT},
 )
 
 

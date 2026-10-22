@@ -79,3 +79,38 @@
    任何会 `create_writer`/`init_schema` 的入口）——它们在 2.1→2.2 迁移中间态会触发 `_WriterSchemaMigrationRequired`
    或写入半态数据。窗口内只允许：只读探测（`detect_schema_status`）、迁移脚本、迁移后验证。
 4. **UI 与运维可见**：GUI「水位状态」列在 2.2 库上工作不变（只读聚合，不感知列集）。
+
+## 7. 实施记录（2026-10-22 ③④）与设计增补
+
+### 7.1 实施前发现的设计缺口（必须解决，否则部署即停摆）
+
+`SCHEMA_VERSION` 不只用于标记，它被 **bootstrap 版本校验**消费：
+`qfq_resident_orchestrator._require_bootstrap` 内 `schema_v != SCHEMA_VERSION → bootstrap 未完成 →
+fail-closed（本轮不推进水位、不处理 trigger）`；而生产 `qfq_bootstrap_run.schema_version`
+落的是 `reanchor-2.1`。**若仅按设计件改常量**，部署瞬间即 fail-closed —— 与 FP-5 加列事故同族。
+
+### 7.2 增补（第 7 件，与六件同 commit）
+
+| # | 文件 | 增补内容 |
+|---|---|---|
+| 7 | `qfq_reanchor_schema.py` 新增 `SCHEMA_VERSION_COMPAT = ("reanchor-2.1","reanchor-2.2")`；`qfq_resident_orchestrator._require_bootstrap` 改为**双接受**；迁移 runner 同步把 `qfq_bootstrap_run.schema_version` 由 2.1 升到 2.2（失败回退时一并回滚） | 升级窗口内"新代码 + 旧 bootstrap 行"不得 fail-closed；迁移完成后版本行直接命中 2.2，双接受仅覆盖窗口而非永久放宽 |
+
+### 7.3 实施结果（本机实测）
+
+| 判据 | 结果 |
+|---|---|
+| A29（8 列 2.1 / 9 列 2.2 / 错配 partial） | ✅ 3 例通过 |
+| A30（安全闸双放行 / partial 仍拒） | ✅ 正反各一通过 |
+| A31（迁移成功 + 行数不变 + 二次幂等；dry-run 零变更） | ✅ |
+| A32（注入首次 UPDATE 异常 → 回退后 `complete_2_1` 且列不存在，rc=7） | ✅ 负向对照 |
+| A33（2.2 写 `last_run_id`；`last_batch_id` 语义不变） | ✅ |
+| A33-b（**2.1 下写入不得产生 `last_run_id` 列/值**） | ✅ 负向对照 |
+| 契约自检（2.2 DDL 与 2.2 指纹逐字一致） | ✅ |
+| A34 全量回归 | 见回报 |
+| A35 生产窗口 | 待今夜窗（联合声明后执行） |
+
+### 7.4 遗留（不在本批，登记备查）
+
+- **新建空库仍按 2.1 DDL 建表**（`writers.DDL_DUCKDB` 引用 `SOURCE_WATERMARK_2_1_DDL` 未改）：
+  fresh 安装后需跑一次迁移才是 2.2。是否让空库直接生 2.2，需在空库实跑验证后另行裁定
+  （涉及 `assert_code_ddl_matches_target_2_1` 与指纹目标同步，超本批范围）。

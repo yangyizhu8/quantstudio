@@ -40,7 +40,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from quantstudio.pipeline.qfq_reanchor_schema import (
     init_duckdb_schema, init_sqlite_schema, aux_db_path,
-    SCHEMA_VERSION, DETECTOR_BASELINE_VERSION,
+    SCHEMA_VERSION, SCHEMA_VERSION_COMPAT, DETECTOR_BASELINE_VERSION,
     PRICE_TABLES, ASSET_TABLE_MAP,
 )
 from quantstudio.pipeline.qfq_orchestrator_types import (
@@ -1207,7 +1207,12 @@ class QFQResidentOrchestrator:
         run_id, schema_v, config_h, baseline_v = run[0], run[1], run[2], run[3]
 
         # 任务6.3：版本校验（落库值为 NULL 时视为旧库，跳过该单项校验，避免破坏历史库）
-        if schema_v is not None and schema_v != SCHEMA_VERSION:
+        # 2.2（FP-5，2026-10-22）：**双接受** 2.1/2.2 —— 升级窗口内"新代码 + 旧 bootstrap 行"
+        # 不得 fail-closed（否则水位永久不推进，与 FP-5 加列事故同族）。
+        # 迁移 runner 会把该行 schema_version 升到 2.2；双接受仅覆盖窗口，不是永久放宽。
+        _ver_ok = (schema_v is None or schema_v == SCHEMA_VERSION
+                   or schema_v in SCHEMA_VERSION_COMPAT)
+        if not _ver_ok:
             logger.warning(
                 f"[qfq_orch] bootstrap 未完成：schema_version 不匹配 "
                 f"({schema_v} != {SCHEMA_VERSION})")

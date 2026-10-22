@@ -183,23 +183,46 @@ def test_a24_advance_watermark_without_column_still_works(con):
 
 
 def test_a25_migration_script_idempotent(tmp_path):
+    """FP-5 迁移 runner：契约闸 + 预检 + 幂等（2026-10-22 升级为契约级迁移）。
+
+    2026-10-22 起本脚本是**契约级迁移**（2.1→2.2），预检要求 COMPLETE_2_1：
+    · 未确认契约变更 → exit 5（负向对照，2026-10-20 事故后加固）；
+    · legacy 6 列库 → exit 6（预检拒绝：必须先经 2.0→2.1 迁移，不得跨版本直跳）；
+    · 真 2.1 库 → 迁移成功 + 二次幂等。
+    """
     spec = importlib.util.spec_from_file_location(
         "mig_fp5", Path(__file__).resolve().parents[1] / "scripts" /
         "migrate_source_watermark_last_run_id.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    db = tmp_path / "m.db"
-    c = duckdb.connect(str(db))
+
+    # —— 负向①：legacy 6 列库（非 2.1）不得被本迁移接受 ——
+    legacy = tmp_path / "legacy.db"
+    c = duckdb.connect(str(legacy))
     c.execute("CREATE TABLE source_watermark (source VARCHAR, table_name VARCHAR, freq VARCHAR, "
               "last_date BIGINT, last_batch_id VARCHAR, updated_at TIMESTAMP)")
     c.execute("INSERT INTO source_watermark VALUES ('mcp','x','daily',1,'b',NULL)")
     c.close()
-    # 负向对照（2026-10-20 事故后加固）：未显式确认契约变更 → 必须拒执行（exit 5）
-    assert mod.main(["--db", str(db)]) == 5, "无 --allow-schema-contract-change 必须拒执行"
+    assert mod.main(["--db", str(legacy)]) == 5, "无 --allow-schema-contract-change 必须拒执行"
+    assert mod.main(["--db", str(legacy), "--allow-schema-contract-change"]) == 6, \
+        "非 COMPLETE_2_1 库必须被预检拒绝（exit 6）"
+
+    # —— 正向：真 2.1 库 → 迁移 + 幂等 ——
+    from quantstudio.pipeline.qfq_reanchor_schema import init_duckdb_schema
+    db = tmp_path / "m.db"
+    c = duckdb.connect(str(db))
+    init_duckdb_schema(c)
+    c.execute("INSERT INTO source_watermark (source, table_name, freq, last_date, "
+              "last_batch_id, updated_at, source_generation, cutover_id) VALUES "
+              "('mcp','x','daily',1,'b',now(),'mcp-gen1','cut-1')")
+    c.close()
     assert mod.main(["--db", str(db), "--dry-run"]) == 0
     assert mod.main(["--db", str(db), "--allow-schema-contract-change"]) == 0
     assert mod.main(["--db", str(db), "--allow-schema-contract-change"]) == 0, "重复执行必须幂等"
     c = duckdb.connect(str(db), read_only=True)
     n = c.execute("SELECT count(*) FROM source_watermark").fetchone()[0]
+    cols = [r[0] for r in c.execute(
+        "select column_name from duckdb_columns() where table_name='source_watermark'").fetchall()]
     c.close()
     assert n == 1
+    assert "last_run_id" in cols
