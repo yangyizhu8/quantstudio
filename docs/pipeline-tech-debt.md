@@ -557,6 +557,46 @@ AFTER：已终止、无残留）⇒ 今日 21:00 可正常新起。
 - **待评估**：①确定是**写入层**（ILP 时间戳按本地墙钟写入）还是**输出层**（REST 序列化加 Z）；
   ②统一口径（推荐真 UTC 存储 + 消费侧按需转 CST）；③登记受影响消费方清单（同步链 / 巡检 / 本会话读数习惯）。
 
+### W-10 编码坑族：PowerShell 5.1 `Get-Content -Raw` + `WriteAllText(UTF8)` 毁 UTF-8 中文文件（2026-10-22 登记 · ②审令入 W 族）
+
+**事故**：2026-10-22 改 `config/profiles/mcp_only/collector_tasks.json` 的 `enabled` 一行（`false`→`true`），
+用 `Get-Content -Raw` 读 + `[IO.File]::WriteAllText(..., UTF8)` 写 ⇒ **全文件 91 行中文 `_note` 全变乱码**
+（`类别A` → `绫诲埆A`）、**JSON 变非法**（`Invalid control character at line 2 column 118`）。
+
+**后果严重性**：该文件是采集任务清单。**daemon 下次重启会在解析阶段抛错 ⇒ 74 个任务全线停摆。**
+本次幸在 daemon 未重启前修复；**若修复窗口错过，即重演一次全量停摆**（与 W-6 同族的停机风险）。
+
+**机理**：PS 5.1 的 `Get-Content`（含 `-Raw`）按**系统 ANSI 代码页**（简中机器＝GBK/936）解码字节流 ⇒
+UTF-8 多字节中文被错误解码；再用 UTF-8 编码写回，则把错误解码结果**持久化**。
+
+**正确做法（三选一）**：
+1. **首选 Python**：`open(p, encoding="utf-8")` 读、`open(p,"w",encoding="utf-8",newline="")` 写；
+2. PS 7+（默认 UTF-8）；
+3. PS 5.1 显式 .NET：`[IO.File]::ReadAllText($p,[Text.Encoding]::UTF8)` +
+   `WriteAllText($p,$s,(New-Object Text.UTF8Encoding($false)))`。
+
+**强制三验（改生产配置文件后必做，缺一即不得收工）**：
+① **语法可解析**（JSON/YAML 实际 `load` 一遍）——本次即由此发现，若只验 `enabled` 值就会漏；
+② **中文未损**（断言原有中文串仍在、乱码串不存在）；
+③ **diff 仅预期行数**（本次最终为 1 行）。
+
+**配套纪律**：写坏后**立即 `git checkout --` 还原**再换正确方法重做，**禁止手工修补乱码**。
+
+**同族登记**：与 H-1（commit message BOM，`Set-Content -Encoding UTF8` 在 PS 5.1 必写 BOM）同源——
+**PowerShell 5.1 的默认编码是隐形杀手**，读写两个方向都会伤人（H-1 是写、W-10 是读）。
+
+### W-7 完成记录（2026-10-22 · 六步全通）
+
+| 步 | 结果 |
+|---|---|
+| ② 隔离+备份 | 13 片 / 10,525,521 B → `data/mcp_landing_quarantine/exp_etf_minutes_e13d3c1c_20261022`（Move 不删，含逐文件清单与回退命令） |
+| ③ 清 manifest 孤儿 | `etf_minutes` 648→647，删 `job 0702a84e`（rows 39283 / ts 2026-10-09T19:55:39）；仅缩 1,287 B；10 秒持久性验证通过 |
+| ④ 从源重导 | daemon repair replay 自然重导（未由本会话直连执行：直连跳过因子快照构建，被 QFQ 还原拒绝——判断正确，未制造写冲突） |
+| ⑤ **13/13 硬门** | **PASS**。新导出 `job exp_etf_minutes_6bb6a4f6`（ts 2026-10-22T09:45:04），13 片全可读、0 损坏，**总行数 612,863 ＝ 10-21 崩溃前日志记录的 total_rows 逐位相同**；原坏片位（00002–00005）已换新文件 |
+| ⑥ 恢复 enabled | `enabled: false → true`（diff 仅 1 行；JSON 解析 OK；中文完好）。写入段仍可能败于 W-1 已知冲突——由 minute 修复窗解决 |
+| ⑦ 机理深挖 | **未开始**——落盘损坏根因（边写边读／服务端分段异常）另立案，与 W-5 分族取证 |
+
+
 
 
 
