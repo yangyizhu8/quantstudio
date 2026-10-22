@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import datetime
+import os
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -564,6 +565,11 @@ class PtradeAPI:
         # Phase 4B：当日全 universe 分钟历史内存缓存（引擎 _run_minute_day 注入）。
         self._day_minute_history = None   # 原始列（fq=None 未替换 OHLC）的当日分钟 DataFrame
         self._day_minute_date = None      # 缓存对应的交易日 'YYYY-MM-DD'
+        # P1′（2026-10-22）：check_limit 结果只读缓存（按日期分桶、FIFO 淘汰）。
+        self._limit_cache = {}          # {qd_text: {bare: state}}
+        self._limit_cache_order = []    # 日期桶 FIFO 顺序
+        self._limit_cache_hit = 0
+        self._limit_cache_miss = 0
 
     def reset_session(self):
         """清理一次策略运行的可变状态。"""
@@ -1178,6 +1184,24 @@ class PtradeAPI:
         except Exception:
             return result
 
+    def _limit_cache_limit(self):
+        """P1′：日期桶上限（QS_LIMIT_CACHE_DATES，默认 8；0=关闭）。"""
+        try:
+            return max(0, int(os.environ.get("QS_LIMIT_CACHE_DATES", "8")))
+        except (TypeError, ValueError):
+            return 8
+
+    def _limit_cache_diag(self):
+        """P1′：QS_LIMIT_CACHE_DIAG=1 ⇒ 强制禁用缓存，恢复逐码 QS_DIAG。"""
+        return str(os.environ.get("QS_LIMIT_CACHE_DIAG", "") or "").lower() in ("1", "true", "yes")
+
+    def clear_limit_cache(self):
+        """P1′：清空缓存（run 隔离 / 复用实例）。"""
+        self._limit_cache = {}
+        self._limit_cache_order = []
+        self._limit_cache_hit = 0
+        self._limit_cache_miss = 0
+
     def check_limit(self, security, query_date=None) -> dict:
         """涨跌停判定（对齐 PTrade check_limit；返回 1/-1/2/-2/0 五态）。
 
@@ -1206,16 +1230,35 @@ class PtradeAPI:
                 return result
             qd = prev
         qd_text = qd.strftime("%Y%m%d") if hasattr(qd, "strftime") else str(qd)
-        try:
-            bars = self._market.get_bars(
-                bare_codes, qd_text, qd_text,
-                fields=["close", "preClose", "high", "low"], fq=None, frequency="1d")
-        except Exception as exc:
-            log.warning("QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'date': '%s', 'error': '%s'}"
-                        % (qd_text, exc))
-            bars = {}
+        # P1′（2026-10-22）：按 (qd_text, code) 只读缓存；仅未命中码发起查询。
+        _bucket = None
+        _miss = list(bare_codes)
+        if self._limit_cache_limit() > 0 and not self._limit_cache_diag():
+            _bucket = self._limit_cache.get(qd_text)
+            if _bucket is None:
+                _bucket = {}
+                self._limit_cache[qd_text] = _bucket
+                self._limit_cache_order.append(qd_text)
+                while len(self._limit_cache_order) > self._limit_cache_limit():
+                    self._limit_cache.pop(self._limit_cache_order.pop(0), None)
+            _miss = [b for b in bare_codes if b not in _bucket]
+            self._limit_cache_hit += len(bare_codes) - len(_miss)
+            self._limit_cache_miss += len(_miss)
+        bars = {}
+        if _miss:
+            try:
+                bars = self._market.get_bars(
+                    _miss, qd_text, qd_text,
+                    fields=["close", "preClose", "high", "low"], fq=None, frequency="1d")
+            except Exception as exc:
+                log.warning("QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'date': '%s', 'error': '%s'}"
+                            % (qd_text, exc))
+                bars = {}
         for _sec, _bare in zip(securities, bare_codes):
             _key = self._to_ptrade_code(_bare)
+            if _bucket is not None and _bare in _bucket:
+                result[_key] = _bucket[_bare]
+                continue
             _df = (bars or {}).get(_bare)
             if _df is None or len(_df) == 0:
                 log.warning("QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '%s', 'date': '%s'}"
@@ -1251,6 +1294,11 @@ class PtradeAPI:
                 result[_key] = -2
             else:
                 result[_key] = 0
+        if _bucket is not None:
+            for _sec, _bare in zip(securities, bare_codes):
+                _bucket[_bare] = result[self._to_ptrade_code(_bare)]
+            log.info("QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '%s', 'hit': %d, 'miss': %d}"
+                     % (qd_text, len(bare_codes) - len(_miss), len(_miss)))
         return result
 
 
