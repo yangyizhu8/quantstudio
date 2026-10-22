@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "P2-b/f · KB 体检入推送门与同步门方向参数",
+    "subtitle": "生成时点 2026-10-22 12:0x +08:00 · 基线 2aaedd0f（P2 批实施后）",
+    "locale": "zh-CN",
+    "output": ".archify/architecture-p2-abf-20261022-1200/p2-abf.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/yangyizhu8/quantstudio-plus.git",
+      "provider": "github",
+      "link_mode": "local-only",
+      "revision": "2aaedd0f6465b56dae1d96449a0d986002c3b3fe"
+    }
+  },
+  "components": [
+    { "id": "kb", "type": "database", "label": "knowledge 条目库", "sublabel": "QD×10 / PD×9（两族分治）", "pos": [40, 50], "size": [170, 76],
+      "sources": [{ "path": "knowledge/qmt/README.md", "line": 20, "end_line": 55, "label": "两族 schema 定稿" }] },
+    { "id": "py", "type": "backend", "label": "kb_preflight._fm_block", "sublabel": "行级 frontmatter 解析（本次修复·未提交）", "pos": [360, 50], "size": [190, 86] },
+    { "id": "gate", "type": "security", "label": "prepush-gate.ps1", "sublabel": "全量声明制 + KB 体检（WARN·未提交）", "pos": [700, 50], "size": [190, 86] },
+    { "id": "push", "type": "cloud", "label": "双远程推送", "sublabel": "plus 私有 + quantstudio 公开", "pos": [1040, 50], "size": [180, 76] },
+    { "id": "drift", "type": "backend", "label": "check-drift.ps1（trading）", "sublabel": "-Direction push|pull（P2-f）", "pos": [1040, 250], "size": [180, 86] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "主仓（推送前闸）", "wraps": ["kb", "py", "gate"] },
+    { "kind": "region", "label": "推送后链路（trading 仓）", "wraps": ["push", "drift"] }
+  ],
+  "connections": [
+    { "id": "e1", "from": "kb", "to": "py", "label": "推送范围内 diff 条目件" },
+    { "id": "e2", "from": "py", "to": "gate", "label": "QD/PD 分族校验" },
+    { "id": "e3", "from": "gate", "to": "push", "label": "WARN 不阻断·放行" },
+    { "id": "e4", "from": "push", "to": "drift", "label": "推送后同步门", "fromSide": "bottom", "toSide": "top" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "P2-b 读数",
+      "items": [
+        "合成场景（PD 批 9 件）：KB 体检 9/9 全合规，PASS exit 0",
+        "全库扫描 19 件：BAD=1（仅他线 QD-0010，裁定④先修不走豁免）",
+        "WARN 起步（裁定⑤）：观察一轮后裁定是否升 BLOCK"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "阻断修复披露",
+      "items": [
+        "parse_entry/load_kb_index 原 split('---',2)：值内含字面 --- 即截断（PD-0009 实证）",
+        "改为行级 _fm_block 提取，顺带容忍首行 BOM（对齐 PD-0009 记载教训）",
+        "修复后新旧 CLI 四键等价复证 EQ4=True（entries 10/10、exit 0/0）"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "P2-f 读数",
+      "items": [
+        "push 方向与基线逐字一致：PASS·九项排除后无共享层漂移·exit 0",
+        "pull 方向新读数：正确报出待同步面（README/check_wal 等）exit 1",
+        "BOM 保持（两脚本改后均还原 EF BB BF）"
+      ]
+    }
+  ]
+}

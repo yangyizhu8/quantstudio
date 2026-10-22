@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "7012c7ab-729c-4673-b5a5-818fe0074770",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "D:\\miniQMT策略实盘\\QuantStudio\\.archify\\architecture-p2-abf-20261022-1200\\candidate.json",
+  "output": "D:\\miniQMT策略实盘\\QuantStudio\\.archify\\architecture-p2-abf-20261022-1200\\p2-abf.html",
+  "specification": {
+    "sha256": "36c7043a83f474bbc23bbcbe5e7c798489e8c113261672b2081341829a6c2b37",
+    "bytes": 3257
+  },
+  "artifact": {
+    "sha256": "77fde65c89bae8f1d99e44814c7b8521256759f3be6f987d2d5e4b760823d789",
+    "bytes": 753788
+  }
+}

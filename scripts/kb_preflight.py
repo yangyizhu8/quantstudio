@@ -40,6 +40,25 @@ WARN_RULES = {
 ACK_RE = re.compile(r"#\s*QS_KB_ACK:\s*(QD-\d{4}-\d{4})\s+(.+)")
 
 
+def _fm_block(txt):
+    """按行边界提取 frontmatter（首行 `---` 起、至下一整行 `---` 止）。
+
+    修复（2026-10-22，P2-b 验收期阻断修复·如实披露）：原 `txt.split('---', 2)[1]` 在
+    值内含字面 `---` 时（实证：PD-2026-0009 root_cause 引用代码 `strip() == \"---\"`）
+    把值内 `---` 误判为结束符 ⇒ 其后字段全丢（symptom/root_cause 之后的字段全部判空）。
+    改行级判定；顺带容忍首行 BOM（\\ufeff--- 亦起判，对齐 PD-0009 记载的 utf-8-sig 教训）。
+    """
+    lines = txt.splitlines()
+    if not lines or lines[0].strip().lstrip("\ufeff") != "---":
+        return ""
+    out = []
+    for ln in lines[1:]:
+        if ln.strip() == "---":
+            break
+        out.append(ln)
+    return "\n".join(out)
+
+
 def load_kb_index(kb_dir):
     """读 <kb_dir>/QD-*.md frontmatter → 已知坑清单索引（供命中引用与域过滤）。
 
@@ -49,7 +68,7 @@ def load_kb_index(kb_dir):
     idx = {}
     for p in sorted(base.glob("QD-*.md")):
         txt = io.open(p, encoding="utf-8").read()
-        fm = txt.split("---", 2)[1] if txt.startswith("---") else ""
+        fm = _fm_block(txt)
         rec = {}
         for ln in fm.splitlines():
             if ln and not ln.startswith((" ", "\t")) and ":" in ln:
@@ -155,7 +174,7 @@ def check_source(path):
 def parse_entry(path):
     """读单条 QD-*.md frontmatter → 条目记录 dict（含嵌套 feedback 子 dict；供 validate_entry）。"""
     txt = io.open(path, encoding="utf-8").read()
-    fm = txt.split("---", 2)[1] if txt.startswith("---") else ""
+    fm = _fm_block(txt)
     rec, feedback = {}, {}
     for ln in fm.splitlines():
         if not ln or ":" not in ln:
