@@ -41,6 +41,7 @@ _LAYER_KEYS = (
     ("ledger", ("台账", "registry", "进度报告")),
     ("portability_rule", ("reconvert", "portability_rules", "orchestrator", "编码", "写盘")),
     ("probe", ("probe", "探针", "能力边界")),
+    ("engine", ("backtest_engine", "宿主引擎", "回测引擎", "引擎", "backtest/")),
 )
 
 
@@ -115,7 +116,7 @@ def main(argv=None):
     ap.add_argument("--fix-target", required=True, help="修复落点（文件路径:行 或 描述）")
     ap.add_argument("--domain", required=True, choices=["D1", "D2", "D3", "D4", "D5"],
                     help="域编码（knowledge/qmt/README.md §2.1 判域规则）")
-    ap.add_argument("--layer", choices=["wrapper", "portability_rule", "matrix", "probe", "ledger"],
+    ap.add_argument("--layer", choices=["wrapper", "portability_rule", "matrix", "probe", "ledger", "engine"],
                     help="fix_layer；缺省按 --fix-target 关键词自动判定（判据打印/入 notes）")
     ap.add_argument("--root-cause", help="根因一句话（省略则校验不过、不落盘）")
     ap.add_argument("--fixture", help="复现固件/测试路径（省略则校验不过、不落盘）")

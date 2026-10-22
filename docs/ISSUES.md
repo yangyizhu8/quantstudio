@@ -226,3 +226,12 @@
 - **PD 修订批已启动**（用户令）：PD 族补 `domain/trigger/recurrence`；**各知识族 schema 独立定谳**——ptrade-deploy 族维持自有枚举（如 `kernel`），**不入 QD 机检**；PD 线为咨询位、本会话主导。
 - **qmt 族 `fix_layer` 扩 `engine`**：待 QMT 会话改 `knowledge/qmt/README.md` schema 行后，本会话同步 `validate_entry` 枚举集与草稿器判据（一行级，随 P2 或小批）。
 - **P2 批**：排期候本会话 Plan 轮（前置：review-kb 在途 4 文件先核）。
+**DAT 三件一次清 ＋ 统推闭环簿记（2026-10-22 09:2x）**：**①统推闭环**：`1a040a1b` **三方逐位一致**（local／plus 私有／quantstudio 公开）；推送范围 `50bc9cc2..1a040a1b` 共 **9 笔**；prepush-gate **首轮拦下**（仅文字声明未设 `QS_PUSH_BUNDLE_ALLOWALSO` ⇒ exit 9，**闸门有效性再实证**），补声明后放行，留痕 `docs/handoff/push-bundle-rulings.log`（本批 2 行，含 `ruling=RULING=2026-10-22 统推批`）。**过程披露 2 项**：①首轮被门拦＝闸门有效；②`PUSH_EXIT=-1` 系 `Select-Object -First 30` **截断管道**致 git 提前终止的读数假象，**以 `ls-remote` 双库逐位为判据** ⇒ 教训入库「**推送类命令不得截断输出**」。全程未用 `--no-verify`。**②DAT 三件一次清**：**DAT-05 → 已锚定**（`get_history` 双签名／`count=None`→20／`security=None`→空 DF／**`tail(count)` 不足如实返回不凑数**）；**DAT-07 → 已锚定（链路实名）**（`providers/base.py:245-248` **单源四件装配、无多源降级链**；数据根 fallback `backtest_engine.py:40`＋**禁止静默单端 fallback** 守卫 `fidelity_config.py:11`）；**DAT-13 → 已排查**（公开面三态：集合→空容器／单值→零视图或 None／字符串→空串；🔴 **`get_position` 零视图 vs `get_order` None 的不对称属有意设计但未成文**⇒ 待落成文契约）。**DAT 面未验证 2→0**（总览：已锚定 8／已排查 8／未验证 0／不适用 1）。**③副本同步门**已由总调度转线调度（本批触共享层 3 笔：`quantstudio/backtest`×2、`scripts/kb_*`×4、`config/`×1；P1 后门清单须扩展覆盖 `knowledge/`）。证据件 `docs/evidence/dat-05-07-13-closure-20261022.md`。
+
+## PD 修订批（2026-10-22 ②审照准 · 随批制）
+
+| 日期 | 事项 | 证据 | 状态 |
+| --- | --- | --- | --- |
+| 2026-10-22 | **PD 族 schema 定稿**：README 增 3 字段（domain/trigger/recurrence）＋**八枚举**（`contract_table｜transformer｜gate｜template｜kernel｜profiler｜config｜equiv`）＋**多落点 `+` 连接**（组件须在枚举内）＋边界段拓扑纠偏（vault 解散、主仓双推、裁定一=B） | `knowledge/ptrade-deploy/README.md`；9 条 PD 各 +3/−0 纯增 | 完成 |
+| 2026-10-22 | **qmt 族 `engine` 跨库同步**：`validate_entry` 枚举集＋`kb_draft` 判据/choices＋PD 族 schema 同步同值＋QMT README 状态行「待办→已同步」 | 实测：ENGINE_ACCEPTED=True／BAD_REJECTED=True／DRAFT_LAYER=engine；PD 族 README 已含 engine | 完成 |
+| 2026-10-22 | **登记（他线·零越权不修）：QD-2026-0010 schema 不合规**——frontmatter 为 `title/date/domain/trigger/recurrence/fix_layer/status/evidence` 形态，**缺 `symptom`/`root_cause`/`fix_target`/`fixture`/`feedback` 五项必填**（来源：QMT 线 `1a040a1`）；导致 `test_a3_real_nine_entries_validate` **1 failed**（21 passed） | `knowledge/qmt/QD-2026-0010.md:1-11`；pytest 输出「QD-2026-0010.md: [symptom 为空, root_cause 为空, fix_target 为空, fixture 为空, feedback…]」 | P1 open，候 QMT 线补齐（**我方不代改**） |

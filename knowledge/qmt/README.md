@@ -49,8 +49,8 @@ closed_round: <n>                      # 闭环轮次：历史 D 条目按回填
 > **实际落点域**判定——**契约测试/矩阵域 ⇒ `matrix`**；纯台账登记类 ⇒ `ledger`；wrapper 模板/代码 ⇒ `wrapper`；
 > 校验规则/门禁 ⇒ `portability_rule`；探针/形态库 ⇒ `probe`。
 > **扩枚举纪律（2026-10-22 修订，取代原「禁止扩枚举」）**：原五枚举系与 PD schema **1:1 对齐**的硬设计；
-> **扩容即打破 1:1 ⇒ 须 PD 库同步同值**，否则双库 schema 分叉。**本次扩 `engine` 的 PD 侧同步状态：待办**
-> （责任：PD 库维护方/KB 会话；未同步前，`engine` 在 QMT 库属**单侧扩容**，检索/校验跨库时须显式注意）。
+> **扩容即打破 1:1 ⇒ 须 PD 库同步同值**，否则双库 schema 分叉。**本次扩 `engine` 的 PD 侧同步状态：已同步（2026-10-22）**
+> （PD 族 schema 已增 `engine`，见 `knowledge/ptrade-deploy/README.md`；`validate_entry` 枚举集与草稿器判据同批同步）。
 > 已按此规则落定：QD-2026-0006 落点域＝契约测试域 ⇒ `matrix`（原「待②审确认项」**已销**）；
 > **QD-2026-0010 落点域＝宿主引擎（`backtest_engine.py` 印花税分期间）⇒ `engine`**（2026-10-22 由权宜 `probe` 正式改判）。
 

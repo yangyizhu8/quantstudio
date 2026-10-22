@@ -183,8 +183,8 @@ def validate_entry(rec):
     for k in ("symptom", "root_cause", "fix_target", "evidence", "fixture", "trigger"):
         if not str(rec.get(k) or "").strip():
             errs.append("%s 为空" % k)
-    if rec.get("fix_layer") not in ("wrapper", "portability_rule", "matrix", "probe", "ledger"):
-        errs.append("fix_layer 非法（枚举 wrapper|portability_rule|matrix|probe|ledger）：%r" % (rec.get("fix_layer"),))
+    if rec.get("fix_layer") not in ("wrapper", "portability_rule", "matrix", "probe", "ledger", "engine"):
+        errs.append("fix_layer 非法（枚举 wrapper|portability_rule|matrix|probe|ledger|engine）：%r" % (rec.get("fix_layer"),))
     if rec.get("domain") not in ("D1", "D2", "D3", "D4", "D5"):
         errs.append("domain 非法（应为 D1..D5）：%r" % (rec.get("domain"),))
     try:
