@@ -219,10 +219,19 @@ def read_run_state() -> Optional[dict]:
 
 
 def write_run_state(**fields):
-    """原子写 run_state（合并已有字段）。"""
+    """原子写 run_state（合并已有字段）。
+
+    A9（六步③·2026-10-22）：附带本进程写冲突重试统计 `write_retry`
+    （attempts/exhausted/success）——只增观测字段，不参与任何判定。
+    """
     path = daemon_run_state_path()
     current = read_run_state() or {}
     current.update(fields)
+    try:
+        from quantstudio.pipeline.writers import write_retry_stats
+        current["write_retry"] = write_retry_stats()
+    except Exception:
+        pass
     _atomic_write_json(path, current)
 
 

@@ -169,7 +169,7 @@ def _assemble_write_failure_features(table: str, batch_id: str,
         if "write-write conflict on key" in msg:
             key = msg.split("write-write conflict on key", 1)[1].strip().lstrip(": ").strip()[:120]
         return ("table=%s batch=%s path=%s serial=%s ctx_src=%s ctx_table=%s ctx_path=%s "
-                "ctx_exc=%s exc=%s conflict_key=%s"
+                "ctx_exc=%s exc=%s conflict_key=%s peers_n=%s cross_proc=%s peers=%s"
                 % (table, batch_id, ctx.get("path") or "?",
                    ctx.get("serial"),
                    src,
@@ -177,7 +177,12 @@ def _assemble_write_failure_features(table: str, batch_id: str,
                    ctx.get("path") or "?",
                    ctx.get("exc_type") or "-",
                    type(exc).__name__,
-                   key or "无"))
+                   key or "无",
+                   # A1 指认字段（2026-10-22 六步③）：同表同时段并发写者 + 跨进程候选
+                   ctx.get("peers_n", "-"),
+                   ctx.get("cross_process_candidate", "-"),
+                   (",".join("%s/%s" % (p.get("path"), p.get("batch") or "-")
+                             for p in (ctx.get("peers") or [])[:3]) or "-")))
     except Exception as _e:  # 组装失败绝不影响主流程
         return "组装失败(%s)" % type(_e).__name__
 

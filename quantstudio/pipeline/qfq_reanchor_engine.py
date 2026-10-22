@@ -111,7 +111,8 @@ from quantstudio.pipeline.qfq_orchestrator_types import FreshCaptureRecord
 # R2 第二阶段（write-integrity）：价格写事务接入 writer 同款按表写锁。
 # 循环导入已核（2026-10-08）：writers 内部依赖链 _paths / snapshot_lock /
 # eps_backfill / qfq_schema_contracts 均不回导本模块，顶层导入无环。
-from quantstudio.pipeline.writers import table_write_lock
+from quantstudio.pipeline.writers import (table_write_lock, price_write_enter, price_write_exit,
+                                          assert_price_write_locked)
 
 logger = logging.getLogger(__name__)
 
@@ -2417,6 +2418,9 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
     _r2_price_locks = contextlib.ExitStack()
     _r2_price_locks.enter_context(table_write_lock(_r2_minute_table))
     _r2_price_locks.enter_context(table_write_lock(_r2_daily_table))
+    # A1（六步③·2026-10-22）：引擎侧写者登记（与 writer 同表），供冲突时指认并发写者。
+    price_write_enter(_r2_minute_table, "qfq_reanchor", ev_id)
+    assert_price_write_locked(_r2_minute_table, "qfq_reanchor")
 
     try:
         # —— canonical freq：事务前统一 canonicalize + 去重（"1m"/"1min" 等别名重复
@@ -2613,6 +2617,7 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
         # R2 write-integrity 同锁串行：事务已终结（COMMIT/ROLLBACK 均执行完）
         # 后释放价格表写锁（单一释放点，先于 staged 临时表清理——让等待中的
         # writer 写路径尽早恢复）。
+        price_write_exit(_r2_minute_table)
         _r2_price_locks.close()
         if staged is not None:
             try:
