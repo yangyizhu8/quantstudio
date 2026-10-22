@@ -747,13 +747,26 @@ def init_duckdb_schema(conn) -> "SchemaStatus":  # noqa: F821 (SchemaStatus via 
     from quantstudio.pipeline.qfq_schema_status import (
         assert_init_allowed, SchemaStatus, assert_code_ddl_matches_target_2_1)
     from quantstudio.pipeline.qfq_schema_contracts import (
-        TARGET_MAIN_DB_2_1_FINGERPRINT, verify_fingerprint)
+        TARGET_MAIN_DB_2_1_FINGERPRINT, TARGET_MAIN_DB_2_2_FINGERPRINT,
+        TARGET_QFQ_2_1_FINGERPRINT, TARGET_SOURCE_WATERMARK_2_2_FINGERPRINT,
+        _merge as _merge_fp, new_db_source_watermark_ddl, verify_fingerprint)
 
     # 代码侧预检：DDL_DUCKDB + source_watermark DDL 必须与 TARGET 指纹逐字一致。
     # 若不一致（开发中间态），即便空库也写前 fail-fast（禁止用旧 DDL 建库）。
     assert_code_ddl_matches_target_2_1()
 
     status = assert_init_allowed(conn)  # 只读门禁；2.0/partial/unknown 写前 fail-fast
+
+    # 2.2（FP-5，2026-10-22 ⑤退回③补）：**必须与 2.1 一样走严格只读 no-op**。
+    # 缺此分支时 2.2 库会落入下方建表路径，并用 2.1 指纹回读 → 必然 RuntimeError
+    # （9 列 vs 8 列）→ 迁移后 daemon 启动失败（④生产窗失败即此因）。
+    if status is SchemaStatus.COMPLETE_2_2:
+        if not verify_fingerprint(conn, TARGET_MAIN_DB_2_2_FINGERPRINT,
+                                  reject_extra=True):
+            raise RuntimeError(
+                "[qfq_schema] COMPLETE_2_2 探测通过但物理契约回读校验失败（不应发生）")
+        return SchemaStatus.COMPLETE_2_2
+
     if status is SchemaStatus.COMPLETE_2_1:
         # 严格只读 no-op：仅物理契约校验，0 写操作
         if not verify_fingerprint(conn, TARGET_MAIN_DB_2_1_FINGERPRINT,
@@ -762,18 +775,22 @@ def init_duckdb_schema(conn) -> "SchemaStatus":  # noqa: F821 (SchemaStatus via 
                 "[qfq_schema] COMPLETE_2_1 探测通过但物理契约回读校验失败（不应发生）")
         return SchemaStatus.COMPLETE_2_1
 
-    # 仅 EMPTY_OR_NEW 走建表（assert_init_allowed 已保证 status 为 EMPTY_OR_NEW）
+    # 仅 EMPTY_OR_NEW 走建表（assert_init_allowed 已保证 status 为 EMPTY_OR_NEW）。
+    # 空库目标版本由 QS_QFQ_NEW_DB_SCHEMA 决定（默认 2.1=现状零回归；2.2=直生新契约）。
+    _sw_ddl, _sw_fp = new_db_source_watermark_ddl()
     for ddl in DDL_DUCKDB.values():
         conn.execute(ddl)
     # source_watermark 由 writers.py 框架 schema 建立（共享 DDL，单一真相源）；
     # 但 QFQ init 路径也建一次以保证空库完整（CREATE TABLE IF NOT EXISTS 幂等）。
-    from quantstudio.pipeline.qfq_schema_contracts import SOURCE_WATERMARK_2_1_DDL
-    conn.execute(SOURCE_WATERMARK_2_1_DDL)
-    # 建表后回读校验（物理契约逐字一致）
-    if not verify_fingerprint(conn, TARGET_MAIN_DB_2_1_FINGERPRINT,
+    conn.execute(_sw_ddl)
+    # 建表后回读校验：按**实际所选版本**的指纹，DDL 与指纹不得混用
+    _target_fp = _merge_fp(TARGET_QFQ_2_1_FINGERPRINT, {"source_watermark": _sw_fp})
+    if not verify_fingerprint(conn, _target_fp,
                               reject_extra=True, strict_order=True):
         raise RuntimeError(
             "[qfq_schema] 空库建表后物理契约回读校验失败（DDL 与 target 指纹不一致）")
+    if _sw_fp is TARGET_SOURCE_WATERMARK_2_2_FINGERPRINT:
+        return SchemaStatus.COMPLETE_2_2
     return SchemaStatus.COMPLETE_2_1
 
 

@@ -218,8 +218,8 @@ def assert_code_ddl_matches_target_2_1() -> None:
     """
     from quantstudio.pipeline.qfq_reanchor_schema import DDL_DUCKDB
     from quantstudio.pipeline.qfq_schema_contracts import (
-        TARGET_QFQ_2_1_FINGERPRINT, SOURCE_WATERMARK_2_1_DDL,
-        TARGET_SOURCE_WATERMARK_2_1_FINGERPRINT, parse_physical_contract)
+        TARGET_QFQ_2_1_FINGERPRINT, new_db_source_watermark_ddl,
+        parse_physical_contract)
 
     # QFQ 15 表逐字一致
     if set(DDL_DUCKDB) != set(TARGET_QFQ_2_1_FINGERPRINT):
@@ -243,17 +243,19 @@ def assert_code_ddl_matches_target_2_1() -> None:
                 f"（columns/PK/FK/UNIQUE/CHECK 任一不符）。"
                 f"DDL 必须与 qfq_schema_contracts.TARGET_QFQ_2_1_FINGERPRINT 逐字一致。")
 
-    # source_watermark 共享 DDL 与 target 指纹一致
-    sw_parsed = parse_physical_contract(SOURCE_WATERMARK_2_1_DDL)
-    sw_target = TARGET_SOURCE_WATERMARK_2_1_FINGERPRINT
+    # source_watermark 共享 DDL 与 target 指纹一致（按空库目标版本取材：2.1 默认 / 2.2 可选）
+    _sw_ddl, _sw_target = new_db_source_watermark_ddl()
+    sw_parsed = parse_physical_contract(_sw_ddl)
     sw_parsed_cols = [(c[0].lower(), c[1], c[2], c[3]) for c in sw_parsed["columns"]]
-    sw_target_cols = [(c[0].lower(), c[1], c[2], c[3]) for c in sw_target["columns"]]
+    sw_target_cols = [(c[0].lower(), c[1], c[2], c[3]) for c in _sw_target["columns"]]
     if (sw_parsed_cols != sw_target_cols
-            or sw_parsed["primary_key"] != sw_target["primary_key"]
+            or sw_parsed["primary_key"] != _sw_target["primary_key"]
             or sorted(sorted(u) for u in sw_parsed.get("unique", []))
-                != sorted(sorted(u) for u in sw_target.get("unique", []))
+                != sorted(sorted(u) for u in _sw_target.get("unique", []))
             or sorted(sw_parsed.get("check", []))
-                != sorted(sw_target.get("check", []))):
+                != sorted(_sw_target.get("check", []))):
         raise QfqSchemaMigrationRequired(
-            "[qfq_schema] SOURCE_WATERMARK_2_1_DDL 与 TARGET_SOURCE_WATERMARK_2_1_FINGERPRINT "
-            "不一致（columns/PK/UNIQUE/CHECK 任一不符）。source_watermark DDL 必须与 target 指纹逐字一致。")
+            "[qfq_schema] 空库 source_watermark DDL 与所选 target 指纹不一致"
+            "（columns/PK/UNIQUE/CHECK 任一不符）。"
+            "source_watermark DDL 必须与其 target 指纹逐字一致"
+            "（QS_QFQ_NEW_DB_SCHEMA 决定 2.1/2.2）。")

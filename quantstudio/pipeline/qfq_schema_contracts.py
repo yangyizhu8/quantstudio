@@ -29,6 +29,7 @@ DDL/DML。所有校验由调用方传入连接后只读执行。
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Dict, List, Optional, Tuple
 
@@ -1276,6 +1277,23 @@ TARGET_MAIN_DB_2_2_FINGERPRINT: FingerprintDB = _merge(
     TARGET_QFQ_2_1_FINGERPRINT,
     {"source_watermark": TARGET_SOURCE_WATERMARK_2_2_FINGERPRINT},
 )
+
+
+def new_db_source_watermark_ddl() -> Tuple[str, Fingerprint]:
+    """**空库建表**用的 source_watermark DDL 与对应目标指纹（FP-5 遗留项的可切换实现）。
+
+    env ``QS_QFQ_NEW_DB_SCHEMA``：
+      · 未设 / ``2.1``（默认）= 与在产行为完全一致（零回归）；fresh 安装后需跑一次
+        2.1→2.2 迁移（设计件 §7.4 遗留项）。
+      · ``2.2`` = fresh 库直生 2.2（免迁移）；仅用于实测裁剪，切默认须总调度裁定。
+
+    返回 ``(ddl, fingerprint)``；调用方必须用**同一返回项**的指纹回读校验——
+    DDL 与指纹混用（2.2 DDL + 2.1 指纹）必然校验失败。
+    """
+    v = str(os.environ.get("QS_QFQ_NEW_DB_SCHEMA", "2.1")).strip()
+    if v == "2.2":
+        return SOURCE_WATERMARK_2_2_DDL, TARGET_SOURCE_WATERMARK_2_2_FINGERPRINT
+    return SOURCE_WATERMARK_2_1_DDL, TARGET_SOURCE_WATERMARK_2_1_FINGERPRINT
 
 
 # ---------------------------------------------------------------------------

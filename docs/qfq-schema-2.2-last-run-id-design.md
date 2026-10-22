@@ -114,3 +114,50 @@ fail-closed（本轮不推进水位、不处理 trigger）`；而生产 `qfq_boo
 - **新建空库仍按 2.1 DDL 建表**（`writers.DDL_DUCKDB` 引用 `SOURCE_WATERMARK_2_1_DDL` 未改）：
   fresh 安装后需跑一次迁移才是 2.2。是否让空库直接生 2.2，需在空库实跑验证后另行裁定
   （涉及 `assert_code_ddl_matches_target_2_1` 与指纹目标同步，超本批范围）。
+
+## 8. ⑤退回③修复记录（2026-10-22 晚，生产窗失败后）
+
+### 8.1 ④生产窗失败根因（已定位）
+
+`init_duckdb_schema` 只处理 `COMPLETE_2_1`（`:757`），**没有 `COMPLETE_2_2` 分支**：
+
+```
+2.2 库 → assert_init_allowed 放行
+      → 落空分支 → 进入"空库建表"路径（CREATE IF NOT EXISTS 无害）
+      → 用 TARGET_MAIN_DB_2_1_FINGERPRINT（8 列）回读校验，库实为 9 列
+      → RuntimeError: 空库建表后物理契约回读校验失败
+      ⇒ 迁移后 daemon 启动失败
+```
+
+**教训**：新增状态值时，**所有消费该状态的判定分支**都要同步——本批在 `detect/assert/writers`
+三处接了 2.2，却漏了 `init_duckdb_schema` 这个最关键的建表状态机；「四态放行」不等于「四态都有实现路径」。
+
+### 8.2 修复（三处，最小改动）
+
+| 处 | 改动 |
+|---|---|
+| `init_duckdb_schema` | 新增 `COMPLETE_2_2` 分支：`TARGET_MAIN_DB_2_2_FINGERPRINT` 校验后**严格只读 no-op**（与 2.1 同语义） |
+| `qfq_schema_contracts.new_db_source_watermark_ddl()` | 空库建表**版本选择器**：env `QS_QFQ_NEW_DB_SCHEMA`（默认 `2.1`=零回归；可选 `2.2`=直生）；DDL 与回读指纹取自**同一返回项**，杜绝混用 |
+| `assert_code_ddl_matches_target_2_1` | 按所选版本取材校验（2.1/2.2 各自自洽） |
+
+### 8.3 三场景补验（实测，全绿）
+
+| 场景 | 结果 |
+|---|---|
+| S1 2.2 库重启 | `complete_2_2`（**修复目标**）+ `writers._assert_qfq_schema_init_safe` PASS |
+| S2 2.1 库重启（现生产态） | `complete_2_1`（幂等 no-op） |
+| S3a fresh 空库（默认） | `complete_2_1` / 8 列 / 末列 `cutover_id` |
+| S3b fresh 空库（`QS_QFQ_NEW_DB_SCHEMA=2.2`） | `complete_2_2` / 9 列 / 末列 `last_run_id` |
+| A34 回归 | **112 passed**（schema/状态/迁移/bootstrap/本批） |
+
+**空库版本裁定建议**：维持默认 `2.1`（零回归；fresh 安装跑一次迁移），2.2 直生保留为 env 可选——
+切换默认会变更所有空库建表路径（GUI/once/测试 fixture）行为，超本批范围。
+
+### 8.4 附加产出（ρ 取证工具，随批入库以备复现）
+
+- `scripts/forensics_minute_rho.py`：在线 MCP 路径（**当前被 `factor snapshot synchronization` 闸拒绝**）
+- `scripts/forensics_minute_rho_shards.py`：离线分片路径（可用；含时间基换算 `trade_time(CST)→UTC ms` 与库内 `time` 对齐的关键实现）
+- 取证结论（2026-10-22 夜）：`ρ` 四列 median=1、`|ρ_high/ρ_open−1|` median=0、
+  p95 在 1e-5~1e-4、max ≤2.9e-3；000563 尾部约 5% 行有 +0.113% 系统性偏移。
+  即 B 判据的 `cross_column_inconsistent(high)` 主因是 **E1 容差 1e-9 对分钟精度过严**（H2 型），
+  另有 000563 局部锚差异（H3 型）需单独立项——**本批不改 B 判据**（按总调度令）。
