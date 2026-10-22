@@ -219,51 +219,18 @@ if ($uncovered.Count -gt 0) {
   Write-Denied '推送范围内存在未声明的提交（全量显式声明制，任一未声明即拒推）'
 }
 
-# —— P2-b（2026-10-22 ②审照准·裁定⑤ WARN 起步）：KB 条目 schema 体检（只 WARN 不阻断）——
-# 推送范围内改动的 knowledge 条目件逐件体检：QD 族走 kb_preflight.validate_entry（单一事实源）；
-# PD 族按 ptrade-deploy/README 2026-10-22 定稿就地校验（八+engine 枚举、多落点 '+' 连接、括注后缀容忍）。
-# 观察一轮后由总调度裁定是否升 BLOCK；检测自身异常 ⇒ 仅提示不可用，绝不阻断推送。
+# —— P2-b（2026-10-22 ②审照准·裁定⑤ WARN 起步）／M1-2 抽壳：KB 条目分族体检（只 WARN 不阻断）——
+# 体检逻辑已抽壳至 scripts/kb_hook.py（通用件）：读 knowledge/kb-info.yaml 的 families 段，
+# 按 entry_glob 把推送范围内改动的条目件路由到所属族，用该族 schema 校验。
+# 观察一轮后由总调度裁定是否升 BLOCK（kb_hook --strict）；检测自身异常 ⇒ 仅提示不可用，绝不阻断推送。
 try {
   $kbFiles = @(git diff --name-only "$base..$rangeEnd" 2>$null | Where-Object {
-      $_ -match '^knowledge/(qmt|ptrade-deploy)/(QD|PD)-[0-9]{4}-[0-9]{4}\.md$' })
+      $_ -match '^knowledge/.+\.md$' })
   if ($kbFiles.Count -gt 0) {
     $pyCmd = Get-Command python -ErrorAction SilentlyContinue
     $pyPath = if ($pyCmd) { $pyCmd.Source } else { 'C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe' }
-    $kbPy = @'
-import sys, io, json, re
-sys.path.insert(0, 'scripts')
-import kb_preflight as pf
-PD_ENUM = {'contract_table','transformer','gate','template','kernel','profiler','config','equiv','engine'}
-def pd_errors(rec):
-    errs = []
-    for k in ('symptom','root_cause','fix_target','evidence','fixture','trigger'):
-        if not str(rec.get(k) or '').strip(): errs.append(k + ' 为空')
-    layers = str(rec.get('fix_layer') or '')
-    comps = [re.sub(r'\uff08.*?\uff09$', '', c).strip() for c in layers.split('+')]
-    badc = [c for c in comps if c not in PD_ENUM]
-    if (not layers) or badc: errs.append('fix_layer 非法(应为八+engine枚举,+连接): %r' % layers)
-    if rec.get('domain') not in ('D1','D2','D3','D4','D5'): errs.append('domain 非法: %r' % rec.get('domain'))
-    try:
-        if int(rec.get('recurrence')) < 0: raise ValueError
-    except Exception: errs.append('recurrence 非整数: %r' % rec.get('recurrence'))
-    fb = rec.get('feedback') or {}
-    vals = [str(fb.get(k) or '').strip() for k in ('contract_row','gate_rule','template_patch')]
-    vals = ['' if v == 'null' else v for v in vals]
-    if not any(vals): errs.append('feedback 三项至少一项非空')
-    if rec.get('status') not in ('open','closed'): errs.append('status 非法: %r' % rec.get('status'))
-    return errs
-bad = []
-for p in sys.argv[1:]:
-    try:
-        rec = pf.parse_entry(p)
-    except Exception as e:
-        bad.append({'file': p, 'errors': ['parse_fail: %s' % e]}); continue
-    errs = pd_errors(rec) if '/PD-' in p.replace('\\','/') else pf.validate_entry(rec)
-    if errs: bad.append({'file': p, 'errors': errs})
-print(json.dumps({'checked': len(sys.argv)-1, 'bad': bad}, ensure_ascii=False))
-'@
     Push-Location $Root
-    try { $kbOut = (& $pyPath -c $kbPy @kbFiles 2>$null | Out-String) } finally { Pop-Location }
+    try { $kbOut = (& $pyPath scripts/kb_hook.py --files @kbFiles --repo-root $Root --json 2>$null | Out-String) } finally { Pop-Location }
     $kbJson = $null
     try { $kbJson = $kbOut | ConvertFrom-Json } catch { }
     if ($kbJson -and $kbJson.bad -and @($kbJson.bad).Count -gt 0) {

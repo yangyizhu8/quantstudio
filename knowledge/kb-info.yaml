@@ -6,9 +6,40 @@
 # 机检判据：YAML 可解析；三条 scope 互不重叠；每条 entry_glob 实际命中文件数 > 0
 #           （entry_count_at 为登记时读数，随库增长会漂移，不作强断言）。
 
-schema_version: 1
-updated: "2026-10-21"
+schema_version: 2
+updated: "2026-10-22"
 domains_vocab: [D1, D2, D3, D4, D5]     # 语义见 knowledge/qmt/README.md §2.1
+
+# families = 条目 schema（族独立定谳）；registries = 库归属（owner/scope/生命周期）。
+# 两轴分离：一个 registry 可含多族（本仓 kb-main 即含 qd + pd 两族）。
+# 机检消费者：scripts/kb_hook.py（推送范围分族体检）、scripts/kb_draft.py（草稿目标族定位）。
+families:
+
+  - id: qd
+    dir: "knowledge/qmt"
+    entry_glob: "knowledge/qmt/QD-*.md"
+    id_pattern: 'QD-\d{4}-\d{4}'
+    fix_layer_enum: [wrapper, portability_rule, matrix, probe, ledger, engine]
+    fix_layer_multi: false
+    domain_vocab: [D1, D2, D3, D4, D5]
+    required_fields: [symptom, root_cause, fix_target, evidence, fixture, trigger]
+    fix_layer_keywords:                 # 自动判层（kb_draft 缺省用；顺序命中即定）
+      matrix: ["matrix", "verify", "exec 命名空间", "契约测试"]
+      ledger: ["台账", "registry", "进度报告"]
+      portability_rule: ["reconvert", "portability_rules", "orchestrator", "编码", "写盘"]
+      probe: ["probe", "探针", "能力边界"]
+      engine: ["backtest_engine", "宿主引擎", "回测引擎", "引擎", "backtest/"]
+    notes: "QD 族；schema 语义见 knowledge/qmt/README.md §2"
+
+  - id: pd
+    dir: "knowledge/ptrade-deploy"
+    entry_glob: "knowledge/ptrade-deploy/PD-*.md"
+    id_pattern: 'PD-\d{4}-\d{4}'
+    fix_layer_enum: [contract_table, transformer, gate, template, kernel, profiler, config, equiv, engine]
+    fix_layer_multi: true               # 多落点以 + 连接（2026-10-22 裁定 a），组件须在枚举内
+    domain_vocab: [D1, D2, D3, D4, D5]
+    required_fields: [symptom, root_cause, fix_target, evidence, fixture, trigger]
+    notes: "PD 族；schema 见 knowledge/ptrade-deploy/README.md（族独立定谳，不入 QD 机检内存）"
 
 registries:
 
@@ -46,3 +77,5 @@ registries:
 changelog:
   - date: "2026-10-21"
     change: "建卡：三库登记（主库/trading 第二库/通用库），六字段齐；domains 词表引用 README §2.1"
+  - date: "2026-10-22"
+    change: "v2（KMAP-M1）：增 families 段（qd/pd 两族 schema：id_pattern/fix_layer_enum/multi/判层关键词），schema 与归属两轴分离；消费者 kb_hook.py（推送分族体检）+ kb_draft.py（--kb 泛化）"
