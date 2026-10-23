@@ -793,8 +793,20 @@ class TaskTab(QWidget):
             except Exception:
                 alive = False   # 探测异常不得改变既有显示（fail-soft）
             if alive:
-                self._sync_daemon_state()
-                self._set_status_text("🟢 检测到外部启动的常驻进程，按钮已同步")
+                # A11 演练实测暴露（2026-10-23）：第二源命中但 status 陈旧/损坏时，
+                # 不能依赖 `_sync_daemon_state()`——它**只看 status**，会立刻判回
+                # stopped，使自愈失效。故此处以第二源为准直接进入 running 态。
+                if not is_daemon_running():
+                    st = get_daemon_status() or {}
+                    self._daemon_state = "running"
+                    self._daemon_token = st.get("instance_token")
+                    self._daemon_proc = None
+                    self._update_daemon_btn()
+                    self._set_status_text(
+                        "🟢 检测到外部启动的常驻进程（状态文件不可用），按钮已同步")
+                else:
+                    self._sync_daemon_state()
+                    self._set_status_text("🟢 检测到外部启动的常驻进程，按钮已同步")
 
     def _sync_daemon_state(self):
         """从 status 文件同步 daemon 状态（GUI 启动时 + refresh 时）。

@@ -35,11 +35,11 @@
 - 判据：**A7/A8/A9** 顺序 `alive闸 < 第二源 < 真启动`（PASS）+ 文案四要素 PID/启动于/「刷新」/「停止」（PASS）；**A8** 结构化过滤 7 形态参数化（含 2 条误判回归、裸名、脚本路径、非 python 解释器、`-m` 后非该模块、空）（PASS）；**A9** 枚举异常 fail-soft（PASS）；**A10** once/自身排除（PASS）；真实枚举 = `[53256]` 精确（不含 51320）
 - 结果：**13/13 PASS**（修正后复验）；AST OK
 
-### FP-4（R-1）按钮状态实时化 + stopped 态探测 — ✅ 静态绿（真实启停待补）
+### FP-4（R-1）按钮状态实时化 + stopped 态探测 — ✅ 绿（A11-A13 实测通过，含 A11 缺陷修复）
 
 - 改动：`task_tab.py` 4 处 —— ①`_update_daemon_btn` 自适应间隔（running 3s / stopped 5s）+ 定时器保持激活；②`_on_daemon_poll` 新增 `elif stopped` 分支双源探测并同步；③`_toggle_daemon` 点击前 `_sync_daemon_state()`；④移除 3 处 `_daemon_poll_timer.stop()`（L708/L737/L771）
-- 判据：**A11/A12/A13 静态 10/10 PASS**（间隔、激活、stopped 分支、双源、同步、fail-soft、点击前同步、无残留自停）
-- **待补验**：A11（外部启动 ≤5s 自愈）、A12（停止 ≤5s 同步）、A13（stopped 态 60s CPU <0.5%）需**真实启停** ⇒ 因他线 daemon 窗口在跑而**推迟**，窗口结束后补验并回填本文件
+- **演练暴露并修复的缺陷（A11 自愈失效）**：初版在第二源命中后仍调 `_sync_daemon_state()`，而后者**只看 status**——当 status 陈旧/损坏（verify=stale）时会立刻判回 `stopped`，自愈无效。修为：`not is_daemon_running()` 时**以第二源为准**直接置 `running` + 回填 token + 状态栏提示「（状态文件不可用）」。
+- 判据实测（隔离环境真实进程，13/13 PASS）：**A11** 自愈 running、按钮变「🟢 运行中」、状态栏含「外部启动」、单次 poll 2.07s（≤5s）；**A12** 三次去抖后 stopped、按钮「🔴 已停止」、定时器仍激活、间隔 5000；**A13** stopped 态 60s CPU **0.317%**（<0.5%，9 次 poll/60s）
 
 ### FP-5（R-2）诊断留痕 — ✅ 绿（落点实现级调整已声明）
 
@@ -64,10 +64,10 @@
 | FP-1 | A1–A3 + 补充 | ✅ 绿（9/9） |
 | FP-2 | A4–A6 | ✅ 绿（11/11） |
 | FP-3 | A7–A10 + 误判回归 | ✅ 绿（13/13） |
-| FP-4 | A11–A13 静态 | ✅ 静态绿（10/10）；**真实启停待补** |
+| FP-4 | A11–A13 | ✅ **实测绿（13/13，隔离环境真实进程）** |
 | FP-5 | A14–A15 | ✅ 绿（2/2） |
 
-**未完成项（诚实登记）**：A11/A12/A13 的真实启停演练与 CPU 实测 —— 阻塞原因为**他线 daemon 停启窗口**（按「daemon 生命周期跨会话占用纪律」避让），非技术阻塞；窗口结束后补验。
+**未完成项**：无（A11-A13 已于 2026-10-23 夜用**隔离 `QUANTSTUDIO_DATA_ROOT` + 真实 daemon 子进程**补验通过，未占用生产停服窗口）。
 
 ## 4 范围收窄（相对方案）
 
@@ -93,3 +93,28 @@
 - **避让他线 daemon 窗口**：全程未启停任何生产 daemon、未写生产库；A4/A5 的撞锁子进程均指向临时 `QUANTSTUDIO_DATA_ROOT`。
 - **未触碰他线在途文件**：`main_window.py` 只读，未修改。
 - **编码委派**：未委派 `zcode_code`（逐点门控需即时验证、上下文强耦合；已在会话中声明）。
+
+## 7 A11-A13 补验记录（2026-10-23 夜 · 隔离环境真实进程）
+
+**为何不走生产窗**：原计划在生产停服窗内演练，实施期间检测到他线 daemon 窗口与 FP-5 迁移前置（迁移要求 daemon 停），且演练只依赖「daemon 存在/不存在」这一事实——故改为**隔离 `QUANTSTUDIO_DATA_ROOT` 起真实 daemon 子进程**，主进程对生产仅只读，任意时刻可跑，不占窗口、不干扰迁移。
+
+**脚本**：`docs/handoff/n4-a11-a13-drill-20261023.py`（可复跑）
+
+**结果（13/13 PASS）**：
+
+| 判据 | 实测 |
+|---|---|
+| A12 去抖第 1/2 次仍 running | PASS（真实日志同步输出 1/3、2/3） |
+| A12 第 3 次判 stopped | PASS |
+| A12 按钮文案=已停止 | PASS（🔴 进程常驻增量拉取：已停止（点击启动）） |
+| A12 stopped 后定时器仍激活 / 间隔 5000 | PASS |
+| A11 前置：隔离 root 真实 daemon 拉起（pid 53868） | PASS |
+| A11 前置：枚举能看见它 | PASS（`[{'pid': 53868, 'started_at': ...}]`） |
+| A11 自愈为 running（status 不可用模拟） | PASS |
+| A11 按钮文案=运行中 / 状态栏含「外部启动」 | PASS |
+| A11 单次 poll 内完成 | PASS（**2.07s** ≤5s） |
+| A13 stopped 态 60s CPU | PASS（**0.317%** <0.5%，9 次 poll/60s） |
+
+**由此修复的缺陷**：见 §1 FP-4 条目（A11 自愈失效——第二源命中后不得再走只看 status 的 `_sync_daemon_state()`）。
+
+**回归**：固件 20 passed；`test_gui_task_stop.py` / `test_gui_task_status_real.py` / `test_daemon_lifecycle.py` 42 passed。
