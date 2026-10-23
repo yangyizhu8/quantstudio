@@ -21,7 +21,7 @@ from quantstudio.pipeline.task_resume import TaskCancelled
 from ..daemon_process import (
     is_daemon_running, get_daemon_status, start_daemon_subprocess,
     request_graceful_stop, force_kill_daemon, read_bootstrap_log_tail,
-    check_db_openable,
+    check_db_openable, find_running_daemon_pids,
 )
 from quantstudio.pipeline.source_capabilities import capability_matrix
 
@@ -594,6 +594,10 @@ class TaskTab(QWidget):
                                 f"正在执行重置水印（模式：{self.mw._reset_mode}），"
                                 "请等待重置完成后再操作守护进程。")
             return
+        # FP-4（2026-10-23 方案 §FP-4）：点击前以**实况**为准，防内存缓存滞后误导
+        # （实证症状：daemon 在跑但按钮显示「已停止」，诱导用户重复点启动）。
+        if self._daemon_state == "stopped":
+            self._sync_daemon_state()
         if self._daemon_state == "running":
             self._stop_daemon()
         else:
@@ -608,6 +612,30 @@ class TaskTab(QWidget):
                 "常驻采集进程已在运行（可能是手动 CLI 启动）。如需重启请先停止。")
             self._sync_daemon_state()
             return
+        # FP-3（2026-10-23 方案 docs/daemon-gui-start-failure-design-20261023.md）：
+        # `daemon_status.json` 是**单源**判据——一旦缺失/损坏（read_daemon_status 返 None），
+        # 上面即判 False 而放行启动，子进程随后撞 .daemon.lock 失败退出，用户只看到
+        # 「常驻进程启动后立即退出」。此处以**进程表**作第二源交叉校验（只读、不试探锁）。
+        try:
+            others = find_running_daemon_pids()
+        except Exception:
+            others = []      # 第二源异常不得阻断启动（第一源已判 False，保持原有可用性）
+        if others:
+            first = others[0]
+            QMessageBox.warning(
+                self, "已有常驻进程在运行",
+                f"检测到常驻进程正在运行（PID {first['pid']}，启动于 {first['started_at']}），"
+                f"但状态文件不可读；请点「刷新」同步显示，或先「停止」再启动。")
+            self._sync_daemon_state()
+            return
+        # FP-5（2026-10-23 方案 §FP-5）：判定为「未拦住」时落一次现场诊断
+        # （env QS_GUI_DAEMON_DIAG 控制，默认开；R-2 定谳后转默认关）。
+        # 用于回答「当时前置闸为何返回 False」——静态证据不足以定谳。
+        try:
+            from ..daemon_process import diagnose_start_gate
+            diagnose_start_gate(others=[d["pid"] for d in others], note="task_tab._start_daemon")
+        except Exception:
+            pass  # 诊断不得影响启动路径
         try:
             token, proc = start_daemon_subprocess(self.mw.config_dir)
         except Exception as e:
@@ -689,7 +717,7 @@ class TaskTab(QWidget):
             self._daemon_proc = None
             self._update_daemon_btn()
             self._set_status_text("🔴 常驻采集进程已停止")
-            self._daemon_poll_timer.stop()
+            # FP-4：保留轮询（不 stop），以便发现外部重启
             return
         if self._stop_wait_elapsed >= 30:  # 60s 超时
             self._stop_wait_timer.stop()
@@ -718,7 +746,7 @@ class TaskTab(QWidget):
             self._daemon_proc = None
             self._update_daemon_btn()
             self._set_status_text("⚠ 常驻进程已被强制终止")
-            self._daemon_poll_timer.stop()
+            # FP-4：保留轮询（不 stop），以便发现外部重启
             # 强制停止后检查 DB 可打开性
             db_ok, db_msg = check_db_openable()
             if not db_ok:
@@ -752,10 +780,21 @@ class TaskTab(QWidget):
                 self._daemon_token = None
                 self._daemon_proc = None
                 self._update_daemon_btn()
-                self._daemon_poll_timer.stop()
+                # FP-4：不再 stop() 定时器——保留轮询以发现外部重启（R-1 自愈）
                 self._set_status_text("⚠ 常驻进程异常退出")
             else:
                 self._daemon_death_streak = 0
+        elif self._daemon_state == "stopped":
+            # FP-4（2026-10-23 方案 §FP-4）：stopped 态也探测**外部启动**
+            # （CLI 手动启动 / 其他会话 / 计划任务），使按钮 ≤5s 自动同步（A11/A12）。
+            # 先用便宜的 status 判据；未命中再枚举进程作第二源（覆盖 status 损坏场景）。
+            try:
+                alive = is_daemon_running() or bool(find_running_daemon_pids())
+            except Exception:
+                alive = False   # 探测异常不得改变既有显示（fail-soft）
+            if alive:
+                self._sync_daemon_state()
+                self._set_status_text("🟢 检测到外部启动的常驻进程，按钮已同步")
 
     def _sync_daemon_state(self):
         """从 status 文件同步 daemon 状态（GUI 启动时 + refresh 时）。
@@ -790,6 +829,18 @@ class TaskTab(QWidget):
         else:  # stopped
             self.daemon_btn.setText("🔴 进程常驻增量拉取：已停止（点击启动）")
             self.daemon_btn.setEnabled(True)
+        # FP-4（2026-10-23 方案 docs/daemon-gui-start-failure-design-20261023.md）：
+        # 轮询间隔按状态自适应——running 保持既有 3s；stopped 降为 5s（A11 要求 ≤5s
+        # 自愈仍满足，A13 控制开销）。并确保定时器**始终在跑**：此前 stopped 态会
+        # stop() 定时器，导致外部启动的实例永不被发现、按钮永久显示「已停止」（R-1）。
+        try:
+            want = 3000 if state != "stopped" else 5000
+            if self._daemon_poll_timer.interval() != want:
+                self._daemon_poll_timer.setInterval(want)
+            if not self._daemon_poll_timer.isActive():
+                self._daemon_poll_timer.start()
+        except Exception:  # 初始化早期（timer 未建）不得影响按钮刷新
+            pass
 
     def _run_single(self, task: dict, mode: str, full_btn: PushButton, inc_btn: PushButton):
         """执行单个采集任务（后台 LockedTaskWorker）。

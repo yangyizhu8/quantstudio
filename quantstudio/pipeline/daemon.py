@@ -4176,6 +4176,21 @@ def main():
             instance_token=args.instance_token,
             max_iterations=args.max_iter)
         if not lifecycle.acquire_instance_lock():
+            # FP-2（2026-10-23 方案 docs/daemon-gui-start-failure-design-20261023.md）：
+            # GUI 场景下 StreamHandler 已在 logging 初始化后被移除（FIX-5），
+            # 本行致命原因此前只写 daemon.log ⇒ GUI 读到的 bootstrap 为 0B、用户无从诊断。
+            # 此处向 stdout（= bootstrap 文件 fd）补写**一行**，不改 FIX-5 防增长初衷；
+            # 条件与 FIX-5 移除 handler 的条件完全一致（GUI 场景且非 tty），
+            # CLI 手动启动（无 instance_token / isatty）不打屏，避免与 logger 重复。
+            if (args.instance_token and sys.platform == "win32"
+                    and not sys.stdout.isatty()):
+                try:
+                    print(f"[bootstrap] 启动失败：另一个 daemon 已在运行"
+                          f"（token={str(args.instance_token)[:8]}，"
+                          f"状态文件：data/daemon_status.json）",
+                          file=sys.stdout, flush=True)
+                except Exception:  # 打印失败绝不影响退出语义（fail-soft）
+                    pass
             logger.error("[CLI] 另一个 daemon 已在运行，退出")
             sys.exit(1)
         try:
