@@ -2661,12 +2661,26 @@ class TestEtfMinuteRawEps:
             _check_minute_cov_raw(conn, "ETF", code, "1min", fm, None)
 
     def test_check_minute_cov_raw_stock_1e6_raises(self, env):
-        """STOCK 分钟 fresh raw 注入 1e-6（> 严格 1e-9）→ 抛 ReanchorBlocked。"""
+        """STOCK 分钟 fresh raw 注入 1e-6 元（0.0001 分）——**远低于 1 tick 精度**。
+
+        口径变更（2026-10-23 ②审批准 tick 归一，E1′）：第一级严格检查（STOCK 1e-9）不变；
+        第二级「因子版本等价」按 tick 归一放行 tick 级舍入差。1e-6 元在 10 元级标的上
+        ≈1e-7 相对，远小于 1 tick（0.01 元）⇒ 放行。**超 2 tick 仍必须 BLOCK**（见下一例）。
+        """
         conn, cal = env.conn, env.calendar
         code = "600875"
         _seed_security(conn, code)
         fm = _snap(conn, "stock_minutes").copy()
         fm["close"] = fm["close"] + 1e-6
+        _check_minute_cov_raw(conn, "STOCK", code, "1min", fm, None)   # tick 级舍入 ⇒ 不抛
+
+    def test_check_minute_cov_raw_stock_gt_2tick_raises(self, env):
+        """STOCK 分钟 fresh raw 注入 0.05 元（≫2 tick）→ 必须仍抛 ReanchorBlocked（负向保护）。"""
+        conn, cal = env.conn, env.calendar
+        code = "600875"
+        _seed_security(conn, code)
+        fm = _snap(conn, "stock_minutes").copy()
+        fm["close"] = fm["close"] + 0.05
         with pytest.raises(ReanchorBlocked):
             _check_minute_cov_raw(conn, "STOCK", code, "1min", fm, None)
 

@@ -145,9 +145,27 @@ _RAW_MATCH_EPS = 1e-9
 _FACTOR_EQUIV_MIN_BARS = 8        # 证据量下限：样本太少不做结构推断（fail-closed）
 _FACTOR_EQUIV_RATIO_LO = 1e-3     # 比值下界（排除 0/极端乱码）
 _FACTOR_EQUIV_RATIO_HI = 1e3      # 比值上界
-_FACTOR_EQUIV_COL_TOL = 1e-9      # 跨列比值一致容差（相对）
-_FACTOR_EQUIV_JUMP_MED_MAX = 1e-2  # 相邻不一致 bar 的比值跳变：中位数上限
-_FACTOR_EQUIV_JUMP_P95_MAX = 5e-2  # 相邻不一致 bar 的比值跳变：p95 上限
+_FACTOR_EQUIV_COL_TOL = 1e-9      # 跨列比值一致容差（相对）——保留为下限语义
+# —— E1′ tick 归一（2026-10-23 ②审定夺）——
+# 分钟复权往返（÷af_i ×af_latest 与反向）把末位误差放大到 1e-5~1e-3 相对量级，
+# 固定 1e-9 容差会把**全部**分钟 bar 判成 cross_column_inconsistent（H2 定谳）。
+# 故容差按「该行价格的一个 tick」归一：tol = max(1e-9, TICK_MULT × tick / price)。
+_FACTOR_EQUIV_COL_TOL_FLOOR = 1e-9  # 下限：日线严格基线（零回归）
+# tick 倍数：实测行级尾差最大 ≈1.2 tick（000726：1.63e-3×7.3 元），
+# 双侧各自舍入 ⇒ 差可达 1 tick 以上，故取 2 tick 容差（2.0）；标定见
+# scripts/calib_e5_segment_thresholds.py（2026-10-23 实测）。
+_FACTOR_EQUIV_TICK_MULT = 2.0
+# —— E5 整段系统性偏移检测（2026-10-23 ②审定夺）——
+# 舍入噪声逐 bar 不同步（段内 std 大 / median≈0）；锚差异段内**同向同幅**
+# （|median| 显著且 std 小）⇒ 必须拦住后者（000563 尾部 +0.113% 型），放行前者。
+_FACTOR_EQUIV_SEG_K = 3.0            # 段偏移显著倍数（k=3 初值，按 000563 标定微调）
+_FACTOR_EQUIV_SEG_FLOOR = 1e-4       # 段偏移绝对下限（相对）：高于纯浮点噪声、低于 tick 噪声
+_FACTOR_EQUIV_SEG_TICK_FRAC = 0.25   # 段偏移相对阈 = 该系数 × tick/price（须 < E1′ 的 1.0）
+_FACTOR_EQUIV_SEG_CONC = 0.25        # 集中度上限：std ≤ 0.25×|median|（近恒定才算整段）
+_FACTOR_EQUIV_SEG_MIN_BARS = 30      # 段最小样本（不足不做段推断）
+_FACTOR_EQUIV_SEG_MAX_ABS = 1e-2     # ≥1e-2 视为**因子版本阶跃**（正常漂移）→ 放行
+_FACTOR_EQUIV_JUMP_MED_MAX = 1e-2    # E3：相邻不一致 bar 的比值跳变中位数上限
+_FACTOR_EQUIV_JUMP_P95_MAX = 5e-2    # E3：相邻不一致 bar 的比值跳变 p95 上限
 
 
 def _factor_equivalent_enabled() -> bool:
@@ -156,23 +174,79 @@ def _factor_equivalent_enabled() -> bool:
     return v not in ("0", "false", "off", "no")
 
 
-def _factor_equivalent_analysis(mismatch_df) -> Dict:
+def _factor_equivalent_day_index(times_ms) -> np.ndarray:
+    """epoch ms → 北京日历日索引（库内 time 口径：UTC 毫秒表示 CST 墙钟）。"""
+    from datetime import datetime, timedelta, timezone
+    bj = timezone(timedelta(hours=8))
+    out = []
+    for v in np.asarray(times_ms, dtype="int64").tolist():
+        out.append(datetime.fromtimestamp(v / 1000.0, bj).strftime("%Y-%m-%d"))
+    return np.asarray(out, dtype=object)
+
+
+def _factor_equivalent_segment_check(times_ms, deltas, prices, tick,
+                                     asset_type: str) -> Tuple[bool, Dict]:
+    """E5 整段系统性偏移检测：按 BJ 日分组，段内近恒定且显著 ⇒ 判为真偏移（不放行）。
+
+    ``deltas``：逐行 Δρ（非基准列相对基准列的相对差）；``prices``：对应列的库内价格。
+    返回 ``(is_segment_offset, detail)``；``detail`` 含触发段的日期与统计量。
+    """
+    days = _factor_equivalent_day_index(times_ms)
+    detail: Dict = {"segment_offset": False, "segment_day": None,
+                    "segment_median": None, "segment_std": None,
+                    "segment_n": 0, "segment_threshold": None}
+    if deltas is None or len(deltas) == 0:
+        return False, detail
+    for day in np.unique(days):
+        mask = days == day
+        n = int(mask.sum())
+        if n < _FACTOR_EQUIV_SEG_MIN_BARS:
+            continue
+        seg = deltas[mask]
+        m = float(np.median(seg))
+        s = float(np.std(seg))
+        price_med = float(np.median(prices[mask])) if prices is not None else 0.0
+        tick_rel = (tick / price_med) if price_med > 0 else 0.0
+        # 显著阈值：max(k×绝对下限, 0.25×tick 相对) —— 0.25× 保证**比 E1′ 的 1×tick 更敏感**
+        # （H3 偏移常落在 1 个 tick 以内 ⇒ E1′ 会放行，必须由 E5 拦下）
+        thr = max(_FACTOR_EQUIV_SEG_K * _FACTOR_EQUIV_SEG_FLOOR,
+                  _FACTOR_EQUIV_SEG_TICK_FRAC * tick_rel)
+        if abs(m) < thr:
+            continue                       # 不显著（可能是噪声中位数被压到 0）
+        if abs(m) > _FACTOR_EQUIV_SEG_MAX_ABS:
+            continue                       # ≥1e-2 = 因子版本阶跃（正常漂移）→ 放行
+        if s > _FACTOR_EQUIV_SEG_CONC * abs(m):
+            continue                       # 段内不同步（舍入噪声形态）→ 放行
+        detail.update({"segment_offset": True, "segment_day": str(day),
+                       "segment_median": m, "segment_std": s, "segment_n": n,
+                       "segment_threshold": thr})
+        return True, detail
+    return False, detail
+
+
+def _factor_equivalent_analysis(mismatch_df, asset_type: str = "STOCK") -> Dict:
     """结构化「因子版本漂移」识别（纯函数，便于单测）。
 
     输入：**仅不一致行**的 DataFrame，列为 ``time`` + 每列 ``db_<c>`` / ``fresh_<c>``。
     判据（任一不过 → 不放行）：
-      E1 跨列标量一致：同一 bar 各列比值 ρ=fresh/db 彼此相等（相对容差 1e-9）
-         ——因子比值是标量，故各列必须同值；真实数据损坏（改一列）会失败；
+      E1′ 跨列标量一致（**tick 归一容差**，2026-10-23 ②审定夺）：同一 bar 各列比值
+         ρ=fresh/db 彼此相等，容差 = max(1e-9, tick/该行价格)——
+         1e-9 为下限（日线严格基线），tick 部分覆盖分钟复权往返末位误差（H2 定谳）；
+         真实数据损坏（改一列且超 tick 量级）仍失败；
       E2 比值有界非退化：ρ ∈ [1e-3, 1e3] 且恒正；
       E3 逐日连续性：相邻不一致 bar 的 |ρ_t/ρ_{t-1} − 1| 中位数 ≤1e-2、p95 ≤5%
          ——因子日间微调连续；数据损坏呈突变离群；
-      E4 证据量：不一致 bar 数 ≥ 8（少样本不做结构推断）。
+      E4 证据量：不一致 bar 数 ≥ 8（少样本不做结构推断）；
+      E5 整段系统性偏移（新增，②审定夺）：段内 Δρ 近恒定（std ≤ 0.25×|median|）
+         且显著（|median| ≥ max(3×1e-4, tick/price)）且 |median| ≤ 1e-2（≥1e-2 视为
+         版本阶跃放行）⇒ 判真偏移（000563 尾部 +0.113% 型）→ 不放行。
     返回：{"equivalent": bool, "reason": str, "mismatch_bars": int, "ratio_median",
-          "ratio_p95", "day_jump_median", "day_jump_p95"}。
+          "ratio_p95", "day_jump_median", "day_jump_p95", "segment_offset": bool}。
     """
     out: Dict = {"equivalent": False, "reason": "not_analyzed", "mismatch_bars": 0,
                  "ratio_median": None, "ratio_p95": None,
-                 "day_jump_median": None, "day_jump_p95": None}
+                 "day_jump_median": None, "day_jump_p95": None,
+                 "segment_offset": False}
     if mismatch_df is None or len(mismatch_df) == 0:
         out["reason"] = "no_mismatch_rows"
         return out
@@ -182,7 +256,10 @@ def _factor_equivalent_analysis(mismatch_df) -> Dict:
         out["reason"] = f"insufficient_evidence(m={m}<{_FACTOR_EQUIV_MIN_BARS})"
         return out
     cols = list(RAW_COLS)
+    at = str(asset_type or "STOCK").upper()
+    tick = float(_TICK_SIZE_BY_ASSET.get(at, 0.01))
     ratios: Dict[str, np.ndarray] = {}
+    prices: Dict[str, np.ndarray] = {}
     for c in cols:
         db = mismatch_df[f"db_{c}"].astype(float).to_numpy()
         fr = mismatch_df[f"fresh_{c}"].astype(float).to_numpy()
@@ -195,17 +272,37 @@ def _factor_equivalent_analysis(mismatch_df) -> Dict:
             out["reason"] = f"ratio_nonpositive({c})"
             return out
         ratios[c] = r
+        prices[c] = np.abs(db)
     base = ratios[cols[0]]
+    t = mismatch_df["time"].astype("int64").to_numpy()
+    # —— E5 整段系统性偏移检测（**先于 E1′**：E1′ 会放行落在 tick 容差内的整段偏移，
+    #    而 E5 的显著阈值比 E1′ 更敏感（0.25×tick/price），专门拦这种「同向同幅」真偏移）——
+    for c in cols[1:]:
+        with np.errstate(divide="ignore", invalid="ignore"):
+            delta = ratios[c] / base - 1.0
+        seg_bad, seg_detail = _factor_equivalent_segment_check(
+            t, delta, prices[c], tick, at)
+        if seg_bad:
+            out["reason"] = (
+                f"ratio_segment_offset({c}, day={seg_detail['segment_day']}, "
+                f"median={seg_detail['segment_median']:.3g}, "
+                f"std={seg_detail['segment_std']:.3g}, n={seg_detail['segment_n']})")
+            out.update(seg_detail)
+            out["segment_offset"] = True
+            return out
+    # —— E1′ tick 归一容差 ——
     for c in cols[1:]:
         rc = ratios[c]
-        denom = np.maximum(np.abs(base), 1e-300)
-        if np.any(np.abs(rc - base) / denom > _FACTOR_EQUIV_COL_TOL):
+        dev = np.abs(rc - base) / np.maximum(np.abs(base), 1e-300)
+        price_c = np.maximum(prices[c], tick)
+        tol = np.maximum(_FACTOR_EQUIV_COL_TOL_FLOOR,
+                         _FACTOR_EQUIV_TICK_MULT * tick / price_c)
+        if np.any(dev > tol):
             out["reason"] = f"cross_column_inconsistent({c})"
             return out
     if np.any(base < _FACTOR_EQUIV_RATIO_LO) or np.any(base > _FACTOR_EQUIV_RATIO_HI):
         out["reason"] = "ratio_out_of_bounds"
         return out
-    t = mismatch_df["time"].astype("int64").to_numpy()
     order = np.argsort(t, kind="stable")
     r_sorted = base[order]
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -1003,7 +1100,7 @@ def _check_daily_raw_align(conn, asset_type, code, df, tol):
         conn.unregister(view)
     flags: Dict = {"factor_equivalent": False, "raw_mismatch": int(n), "detail": {}}
     if n:
-        verdict = _factor_equivalent_analysis(mismatch)
+        verdict = _factor_equivalent_analysis(mismatch, asset_type=asset_type)
         flags["detail"] = verdict
         if not verdict.get("equivalent"):
             _why = ("" if verdict.get("reason") == "not_analyzed"
@@ -1205,7 +1302,7 @@ def _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol,
                     [code, mfreq]).fetchdf()
             finally:
                 conn.unregister(_view3)
-        verdict = _factor_equivalent_analysis(mismatch)
+        verdict = _factor_equivalent_analysis(mismatch, asset_type=asset_type)
         if not verdict.get("equivalent"):
             _why = ("" if verdict.get("reason") == "not_analyzed"
                     else f"（因子等价识别未通过：{verdict.get('reason')}）")
