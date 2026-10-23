@@ -584,17 +584,31 @@ class QFQResidentOrchestrator:
     # ------------------------------------------------------------------
     # 单证券重锚（核心）
     # ------------------------------------------------------------------
-    def _security_range(self, conn, asset_type: str, code: str) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+    def _security_range(self, conn, asset_type: str, code: str):
+        """返回 (daily_range, minute_range)，每项为 (start_ms, end_ms) 或 **(None, None)**。
+
+        FP-1（2026-10-24 方案 docs/qfq-empty-minute-range-design-20261024.md）：
+        **空表语义修正**。原实现把「该表结构性无数据」与「区间非法」混为一谈，统一返回
+        `(0, 0)`——`0` 经 `_ms_to_yyyymmdd` 变成 `1970-01-01`，被 fetcher 出口守卫判为
+        epoch 窗（mcp_adapter.py:851）⇒ 抛 ValueError ⇒ 落 `_skip_security`（trigger
+        保持 pending）⇒ 分钟表**永久为空**时永久 skip ⇒ committed=0 ⇒ 水位永不提交。
+
+        正解：空表 = **无事可做**（不是非法输入）⇒ 返回 `(None, None)`，由调用方决定
+        「该表无重锚对象」（capture 跳过该表 / 引擎 allow_empty_minute）。
+        语义边界：仅「MIN/MAX 为 NULL」（该表无此 code 的行）判为空。
+        """
         daily_t, minute_t = ASSET_PRICE_TABLES[asset_type]
         d = conn.execute(
             f"SELECT MIN(time), MAX(time) FROM {daily_t} WHERE code=?", [code]).fetchone()
         m = conn.execute(
             f"SELECT MIN(time), MAX(time) FROM {minute_t} WHERE code=?", [code]).fetchone()
-        daily_range = (int(d[0]) if d and d[0] is not None else 0,
-                       int(d[1]) if d and d[1] is not None else 0)
-        minute_range = (int(m[0]) if m and m[0] is not None else 0,
-                        int(m[1]) if m and m[1] is not None else 0)
-        return daily_range, minute_range
+
+        def _rng(row):
+            if not row or row[0] is None or row[1] is None:
+                return (None, None)          # 该表无此 code 的数据（结构性空）
+            return (int(row[0]), int(row[1]))
+
+        return _rng(d), _rng(m)
 
     def _already_committed(self, conn, trigger_id: str) -> Optional[str]:
         if self._ident["source_generation"] == "xtquant-legacy":
@@ -665,6 +679,17 @@ class QFQResidentOrchestrator:
             # P1-2b 修复①配套：range ms 非法（零值/越界）→ 跳过该证券，绝不产出 1970 窗
             return self._skip_security(primary_tid, asset_type, code, "invalid_range_ms",
                                        f"range 非法: {_e}", len(trigger_ids))
+        # FP-3c（2026-10-24 方案 docs/qfq-empty-minute-range-design-20261024.md）：空表语义接线
+        # · 日线**结构性为空** ⇒ 无可重锚对象 ⇒ skip（保持「不计失败」语义，与 P1-2a 一致）；
+        # · 分钟**结构性为空** ⇒ 日线-only 重锚（引擎 allow_empty_minute=True，无分钟段）。
+        if daily_range == (None, None):
+            return self._skip_security(
+                primary_tid, asset_type, code, "empty_daily_range",
+                "该证券在日线表无任何数据（结构性为空）→ 无可重锚对象", len(trigger_ids))
+        _empty_minute = (minute_range == (None, None))
+        if _empty_minute:
+            logger.info(f"[qfq_orch] {asset_type}/{code} 分钟表结构性为空 ⇒ "
+                        f"按日线-only 重锚（allow_empty_minute=True，无分钟段）")
         if _QFQ_PROFILE: _t_steps["1_security_range"] = time.perf_counter() - _t0
 
         cap = FreshCapture(self.cfg)
@@ -739,6 +764,7 @@ class QFQResidentOrchestrator:
                 event_id=event_id,
                 trigger_surface="resident_v2",
                 allow_partial_minute=True,
+                allow_empty_minute=_empty_minute,
             )
             # 工作包 D §2.2.4（口径 B 重锚后自洽）+ §3.4（S2 黄金行自动刷新）：
             # committed 后追加只读校验——用本次重锚的新锚对该 code 日线全历史
@@ -938,6 +964,14 @@ class QFQResidentOrchestrator:
         for table in tables:
             freq = "1min" if table.endswith("minutes") else "daily"
             rs, re = ranges[1] if freq == "1min" else ranges[0]
+            # FP-4 修订（2026-10-24，实现级调整·已在报告中声明）：
+            # `qfq_pending_backfill.range_start/end` 是 **BIGINT NOT NULL 且属 PK**
+            # （qfq_reanchor_schema.py:271-272,289），写 NULL 不可行；写 0 会造 1970 伪区间
+            # （原 R-Q1 污染）。语义正解：该表结构性无数据 ⇒ 无补录对象 ⇒ **不登记**（留痕即可）。
+            if rs is None or re is None:
+                logger.info(f"[qfq_orch] 跳过 backfill 登记 {asset_type}/{code} "
+                            f"table={table}（该表结构性无数据，无补录对象）")
+                continue
             status = "dead_letter" if dead_letter else "retryable_failed"
             dl_at = now_iso if dead_letter else None
             conn.execute(

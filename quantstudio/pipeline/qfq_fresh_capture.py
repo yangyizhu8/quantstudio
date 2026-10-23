@@ -401,7 +401,7 @@ class FreshCapture:
         code: str,
         run_id: str,
         daily_range_ms: Tuple[int, int],
-        minute_range_ms: Tuple[int, int],
+        minute_range_ms: Optional[Tuple[int, int]],
         fetcher: FreshFetcher,
         source: str = "xtquant",
         write: bool = True,
@@ -413,8 +413,13 @@ class FreshCapture:
             asset_type: 'STOCK' | 'ETF'。
             code: canonical 裸码（无市场后缀）。
             run_id: 本轮运行 id（参与 capture_id 确定性）。
-            daily_range_ms: (start_ms, end_ms) 日线区间（epoch-ms）。
-            minute_range_ms: (start_ms, end_ms) 分钟区间（epoch-ms）。
+            daily_range_ms: (start_ms, end_ms) 日线区间（epoch-ms）。**不可为 None**
+                （日线无可重锚对象时应由调用方 skip，而非进 capture）。
+            minute_range_ms: (start_ms, end_ms) 分钟区间（epoch-ms）；
+                **None 表示该表结构性无数据**（FP-2，2026-10-24）⇒ **跳过分钟采集**，
+                `fresh_minute` 返回带列 0 行帧、record 的 minute 字段为 None。
+                绝不把空表当 `(0,0)` 传入（那会变成 1970 区间并被出口守卫判非法，
+                mcp_adapter.py:851）。
             fetcher: 可注入的 FreshFetcher（生产用 XtquantFreshFetcher/McpFreshFetcher，测试用 Fake）。
             source: 价格源标识（锁定 'xtquant' / 'mcp'）。
         Returns:
@@ -422,6 +427,8 @@ class FreshCapture:
         """
         if source not in ("xtquant", "mcp"):
             raise ValueError(f"FreshCapture 价格源必须锁定 xtquant/mcp，收到 {source!r}")
+        if daily_range_ms is None:
+            raise ValueError("capture: daily_range_ms 不可为 None（无日线可重锚时应由调用方 skip）")
 
         # 裸码 → xtquant 格式
         xt_code = raw_to_xtquant(code)
@@ -429,8 +436,11 @@ class FreshCapture:
         # range_ms → YYYYMMDD（自然日，Asia/Shanghai）
         ds = _ms_to_yyyymmdd(daily_range_ms[0])
         de = _ms_to_yyyymmdd(daily_range_ms[1])
-        ms = _ms_to_yyyymmdd(minute_range_ms[0])
-        me = _ms_to_yyyymmdd(minute_range_ms[1])
+        # FP-2：分钟区间为 None ⇒ 结构性无数据 ⇒ 不转换、不采集（不产生 1970 窗）
+        ms = me = None
+        if minute_range_ms is not None:
+            ms = _ms_to_yyyymmdd(minute_range_ms[0])
+            me = _ms_to_yyyymmdd(minute_range_ms[1])
 
         daily_period = self._period_for(f"{asset_type.lower()}_daily", "daily")
         minute_period = self._period_for(f"{asset_type.lower()}_minutes", "1min")
@@ -438,8 +448,11 @@ class FreshCapture:
         # 拉取 none/front
         none_d, front_d = fetcher.fetch_none_front(
             asset_type, xt_code, daily_period, ds, de)
-        none_m, front_m = fetcher.fetch_none_front(
-            asset_type, xt_code, minute_period, ms, me)
+        if ms is None:
+            none_m = front_m = None          # FP-2：跳过分钟采集（结构性无数据）
+        else:
+            none_m, front_m = fetcher.fetch_none_front(
+                asset_type, xt_code, minute_period, ms, me)
 
         fresh_daily = _to_fresh_frame(none_d, front_d, asset_type, code)
         fresh_minute = _to_fresh_frame(none_m, front_m, asset_type, code, freq="1min")
@@ -496,8 +509,9 @@ class FreshCapture:
             source=source,
             daily_range_start=int(daily_range_ms[0]),
             daily_range_end=int(daily_range_ms[1]),
-            minute_range_start=int(minute_range_ms[0]),
-            minute_range_end=int(minute_range_ms[1]),
+            # FP-2：分钟表结构性无数据 ⇒ None（列本就可 NULL）；绝不写 0（0=1970 伪数据）
+            minute_range_start=(int(minute_range_ms[0]) if minute_range_ms is not None else None),
+            minute_range_end=(int(minute_range_ms[1]) if minute_range_ms is not None else None),
             daily_row_count=len(fresh_daily),
             minute_row_count=len(fresh_minute),
             daily_min_time=daily_min_time,

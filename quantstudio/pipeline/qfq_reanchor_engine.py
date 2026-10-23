@@ -1324,7 +1324,8 @@ def _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol,
 def stage_fresh_authoritative(conn, asset_type, code, fresh_daily, fresh_minutes,
                                canon_freqs, tol, calendar,
                                allow_partial_minute: bool = False,
-                               out_flags: Optional[Dict] = None):
+                               out_flags: Optional[Dict] = None,
+                               allow_empty_minute: bool = False):
     """rebase 模型预检（A-D）→ 构建 STAGED_DAILY（分钟构建在 apply 循环内完成）。
 
     - 日线：A 基本 + B 全历史严格覆盖 + C raw 逐 bar 对齐（**删除乘法/加法比例校验**）。
@@ -1343,6 +1344,18 @@ def stage_fresh_authoritative(conn, asset_type, code, fresh_daily, fresh_minutes
     _flags: Dict = {}
     staged_daily = _stage_fresh_daily_rebase(
         conn, asset_type, code, fresh_daily, tol, calendar, out_flags=_flags)
+    # FP-3b（2026-10-24）：分钟表**结构性为空** ⇒ 无分钟段可重锚（不 stage、不校验 freq 集合）。
+    # 仅 allow_empty_minute=True 放行；否则保持原 ReanchorBlocked（负向防误用）。
+    if fresh_minutes is None or len(fresh_minutes) == 0:
+        if not allow_empty_minute:
+            raise ReanchorBlocked(
+                "fresh_minutes_empty",
+                "stage_fresh_authoritative 收到空 fresh_minutes（未显式允许）")
+        if out_flags is not None:
+            out_flags.update(_flags)
+        return {"staged_daily": staged_daily, "minute_partial": {},
+                "factor_equivalent": bool(_flags.get("factor_equivalent")),
+                "minute_absent": True}
     actual_freqs = {str(f) for f in fresh_minutes["freq"].unique()}
     if actual_freqs != set(canon_freqs):
         raise ReanchorBlocked("minute_freq_mismatch",
@@ -1650,7 +1663,8 @@ def run_postchecks(conn, *, asset_type: str, code: str,
                    list_date_ms: Optional[int] = None,
                    model: str = "ratio",
                    staged_minutes: Optional[Dict[str, str]] = None,
-                   allow_partial_minute: bool = False) -> Dict:
+                   allow_partial_minute: bool = False,
+                   allow_empty_minute: bool = False) -> Dict:
     """全部 COMMIT 前硬门禁。任一失败抛 PostcheckFailed（调用方 ROLLBACK）。
 
     检查项（ratio 模式，原六项逐位不变）：daily_staged_match /
@@ -1830,6 +1844,13 @@ def run_postchecks(conn, *, asset_type: str, code: str,
             details["minute_staged_match"] = d_sm
             details["minute_raw_match"] = d_rm
             details["minute_coverage"] = d_cov
+        elif allow_empty_minute and model == "fresh_authoritative_rebase":
+            # FP-3c（2026-10-24 方案 §4.3）：分钟表**结构性为空** ⇒ 无分钟段可校验。
+            # **显式留痕**而非静默跳过——审计必须能区分「无分钟段」与「分钟已重锚 0 行」。
+            details["minute_front_coverage"] = "absent"
+            details["minute_staged_match"] = {"skipped": True, "reason": "minute_table_empty"}
+            details["minute_raw_match"] = {"skipped": True, "reason": "minute_table_empty"}
+            details["minute_coverage"] = {"skipped": True, "reason": "minute_table_empty"}
         else:
             raise PostcheckFailed(
                 "minute_staged_match",
@@ -2391,6 +2412,7 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
                                 fresh_capture_id: Optional[str] = None,
                                 fresh_metadata_sha256: Optional[str] = None,
                                 allow_partial_minute: bool = False,
+                                allow_empty_minute: bool = False,
                                 ) -> ReanchorResult:
     """单证券 QFQ 重锚修正（第二批编排入口，仅接受调用方显式连接）。
 
@@ -2421,7 +2443,20 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
                 f"model={model!r} 必须提供非空 model_reason（模型选择原因，"
                 "写入事件审计）")
         if fresh_minutes is None or len(fresh_minutes) == 0:
-            raise ValueError(f"model={model!r} 必须提供非空 fresh_minutes")
+            # FP-3a（2026-10-24 方案 docs/qfq-empty-minute-range-design-20261024.md）：
+            # 分钟表**结构性为空**（该证券在分钟表无任何行）时，允许「无分钟段」重锚日线。
+            # 仅 fresh_authoritative_rebase + 显式 allow_empty_minute=True 放行；其余组合
+            # 保持原硬失败（A9c 负向：防把「空」当「已处理」的沉默漂移）。
+            if not allow_empty_minute:
+                raise ValueError(f"model={model!r} 必须提供非空 fresh_minutes")
+            if model != "fresh_authoritative_rebase":
+                raise ValueError(
+                    f"allow_empty_minute 仅支持 model='fresh_authoritative_rebase'"
+                    f"（收到 {model!r}）")
+            if fresh_minutes is None:
+                raise ValueError(
+                    "allow_empty_minute 要求传**带列的空 DataFrame**（非 None）——"
+                    "下游 capture 契约需读取列集")
         # 第七轮审计阻断 1：来源字段强制（事务外 ValueError，不写价格/事件/anchor）。
         # 此段位于 try/BEGIN 之前，缺任一项直接抛错，绝不进入事务、不落 event/anchor。
         if not (fresh_source and str(fresh_source).strip()):
@@ -2536,7 +2571,8 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
             _b_flags: Dict = {}
             staged = stage_fresh_authoritative(
                 conn, asset_type, code, fresh_daily, fresh_minutes, canon_freqs, tol, calendar,
-                allow_partial_minute=allow_partial_minute, out_flags=_b_flags)
+                allow_partial_minute=allow_partial_minute, out_flags=_b_flags,
+                allow_empty_minute=allow_empty_minute)
             result.factor_equivalent = bool(_b_flags.get("factor_equivalent"))
             if result.factor_equivalent:
                 audit_ctx["factor_equivalent"] = True
@@ -2571,7 +2607,10 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
             # —— rebase：复用 stage_fresh_minutes（A 基本 + 构建 STAGED_MINUTE）
             #    + apply_fresh_minute_staged（B 覆盖 + C raw 对齐已在 stage_fresh_authoritative
             #    预检；此处复核并写 front 四列。写后一致由 UPDATE 只触碰 front 四列保证）——
-            for freq_c in canon_freqs:
+            # FP-3b（2026-10-24）：分钟表结构性为空 ⇒ 无分钟段可 stage（staged_min_tables
+            # 保持空，postcheck 据此留痕 minute_front_coverage="absent"，绝不静默当已处理）。
+            _skip_minute_segments = (fresh_minutes is None or len(fresh_minutes) == 0)
+            for freq_c in ([] if _skip_minute_segments else canon_freqs):
                 fm = fresh_minutes
                 if "freq" in fm.columns:
                     fm = fm[fm["freq"].astype(str).map(
@@ -2622,7 +2661,8 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
             freqs=canon_freqs, calendar=calendar, pre_counts=pre_counts, tol=tol,
             list_date_ms=list_date_ms, model=model,
             staged_minutes=staged_min_tables or None,
-            allow_partial_minute=allow_partial_minute)
+            allow_partial_minute=allow_partial_minute,
+            allow_empty_minute=allow_empty_minute)
         result.rows = result.postchecks.get("row_conservation", {}).get("post", {})
 
         plan_payload: Dict = {f: [s.to_dict() for s in segs]
