@@ -3,8 +3,9 @@
 
 职责：
 1. AST 可解析校验（不可解析 → REJECT）；
-2. vault 知识库回哺读取（trading 仓 vault/knowledge/ptrade-deploy/ 的 frontmatter
-   条目：id/symptom/status；路径不可达时降级 degraded+警告，不抛异常）；
+2. PD 族知识库回哺读取（候选落点 frontmatter 条目：id/symptom/status；
+   PD-0010 起多候选探测——trading 归口 → 主仓公开副本 → 旧址兜底；全部不可达时
+   降级 degraded+警告，不抛异常；命中来源记入 provenance）；
 3. 危险 import 扫描（F10：交易环境封闭，不能 import 自有包/连外网——
    白名单外模块即视为自有包/危险依赖 → REJECT）；
 4. 按契约表统计回测专用/交易专用 API 调用并判定可转换性
@@ -20,14 +21,36 @@ import builtins
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 import yaml
 
 # ---------------------------------------------------------------- 常量 --
 
-#: vault 知识库目录（批复修订②：vault 落 QuantStudio-trading 侧，主仓仅存指针）
-VAULT_DIR = Path(r"D:\miniQMT策略实盘\QuantStudio-trading\vault\knowledge\ptrade-deploy")
+#: PD 族知识库候选落点（PD-0010：拓扑两次纠偏后改**多候选探测**，抗落点漂移）
+#:
+#: 2026-10-22 拓扑纠偏：trading 仓 `vault/` 解散，PD 条目迁入主仓 `knowledge/ptrade-deploy/`；
+#: 随后件 D 批 2 再迁至 trading 仓 `knowledge/`（最终归口）。旧址 `vault/` 仅作末位兼容兜底。
+#: 路径一律**相对求值**（主仓根 + 同级兄弟仓目录名）——不写绝对盘符，换机/换盘即断是旧硬伤。
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_SIBLING_REPO_NAME = "QuantStudio-trading"
+
+
+def vault_candidates() -> Tuple[Tuple[str, Path], ...]:
+    """返回 PD 族知识库候选落点（按稳定性优先级）。
+
+    顺序：trading 归口 → 主仓公开副本 → 旧址（兼容期）。
+    """
+    sibling = _REPO_ROOT.parent / _SIBLING_REPO_NAME
+    return (
+        ("trading-knowledge", sibling / "knowledge" / "ptrade-deploy"),
+        ("main-knowledge", _REPO_ROOT / "knowledge" / "ptrade-deploy"),
+        ("legacy-vault", sibling / "vault" / "knowledge" / "ptrade-deploy"),
+    )
+
+
+#: 旧单点常量（**已弃用**，仅保留兼容旧引用；PD-0010 起 read_vault 走候选探测）
+VAULT_DIR = _REPO_ROOT.parent / _SIBLING_REPO_NAME / "vault" / "knowledge" / "ptrade-deploy"
 
 #: import 白名单（F10 交易环境封闭：stdlib 常见 + 项目既有三方 + 内置 tushare；
 #: 模块顶部常量便于扩展——新增白名单条目属契约层变更，走框架层六步流水线）
@@ -61,6 +84,7 @@ class PreflightResult:
     vault_entries: List[Dict[str, str]] = field(default_factory=list)
     vault_degraded: bool = False
     vault_warnings: List[str] = field(default_factory=list)
+    vault_source: str = ""          # PD-0010：实际命中的回哺库落点（provenance）
 
 
 # ---------------------------------------------------------------- 契约表加载 --
@@ -107,17 +131,49 @@ def _parse_frontmatter(text: str) -> Dict[str, str]:
     return fm
 
 
-def read_vault(vault_dir: Optional[Path] = None) -> Tuple[List[Dict[str, str]], bool, List[str]]:
-    """读取 vault 知识条目（§8.4 回哺机制）。
+class VaultRead(NamedTuple):
+    """回哺读取结果（PD-0010：增 `source` 命中来源——消除「读到了但不知道读的哪」）。"""
 
-    返回 (entries, degraded, warnings)；路径不可达 → degraded=True + 警告，
-    绝不抛异常（设计文档 §14.6：trading 仓不可达不阻塞转换）。
+    entries: List[Dict[str, str]]
+    degraded: bool
+    warnings: List[str]
+    source: str
+
+
+def read_vault(vault_dir: Optional[Path] = None,
+               candidates: Optional[Tuple[Tuple[str, Path], ...]] = None
+               ) -> VaultRead:
+    """读取 PD 族知识条目（§8.4 回哺机制；PD-0010 多候选探测）。
+
+    返回 (entries, degraded, warnings, source)：
+    - `vault_dir` 显式给出 → 单候选（`source="explicit"`）；
+    - 否则按 `vault_candidates()` 顺序取**第一个存在**的落点；
+    - 全部不可达 → degraded=True + 警告（**不抛异常**，§14.6）；
+    - 命中旧址（legacy-vault）→ 追加**提示性 warning**（兼容期，内容可能过期）；
+    - `source` 记录实际命中来源，进 P0 details（provenance）。
     """
-    vdir = Path(vault_dir) if vault_dir else VAULT_DIR
-    entries: List[Dict[str, str]] = []
     warnings: List[str] = []
-    if not vdir.exists():
-        return entries, True, [f"vault 知识库路径不可达，回哺降级（degraded）: {vdir}"]
+    if vault_dir is not None:
+        cands: Tuple[Tuple[str, Path], ...] = (("explicit", Path(vault_dir)),)
+    else:
+        cands = tuple(candidates) if candidates else vault_candidates()
+
+    picked: Optional[Tuple[str, Path]] = None
+    for name, path in cands:
+        if path.exists():
+            picked = (name, path)
+            break
+    if picked is None:
+        listed = "、".join(f"{n}:{p}" for n, p in cands)
+        return VaultRead([], True, [
+            f"vault 知识库路径全部不可达，回哺降级（degraded）：{listed}"], "")
+
+    source, vdir = picked
+    if source == "legacy-vault":
+        warnings.append(
+            f"vault 回哺命中旧址（兼容期，待迁移；内容可能过期）：{vdir}")
+
+    entries: List[Dict[str, str]] = []
     # sorted 保证确定性（同输入同输出，交付段 SHA256 门禁前提）
     for md in sorted(vdir.glob("*.md")):
         try:
@@ -143,7 +199,7 @@ def read_vault(vault_dir: Optional[Path] = None) -> Tuple[List[Dict[str, str]], 
             "symptom": fm.get("symptom", ""),
             "status": fm.get("status", ""),
         })
-    return entries, False, warnings
+    return VaultRead(entries, False, warnings, source)
 
 
 # ---------------------------------------------------------------- 危险 import 扫描 --
@@ -183,8 +239,11 @@ def run_preflight(source_text: str,
     findings: List[str] = []
     reject_reasons: List[str] = []
 
-    # ② vault 回哺读取（降级不阻塞，§14.6）
-    entries, degraded, vault_warnings = read_vault(vault_dir)
+    # ② vault 回哺读取（降级不阻塞，§14.6；PD-0010 多候选探测 + 命中源记录）
+    vault_read = read_vault(vault_dir)
+    entries = vault_read.entries
+    degraded = vault_read.degraded
+    vault_warnings = vault_read.warnings
     findings.extend(vault_warnings)
     open_entries = [e for e in entries if e.get("status") == "open"]
     for e in open_entries:  # §8.4：open 状态条目在报告中显式警告
@@ -226,6 +285,7 @@ def run_preflight(source_text: str,
         vault_entries=entries,
         vault_degraded=degraded,
         vault_warnings=vault_warnings,
+        vault_source=vault_read.source,
     )
 
 

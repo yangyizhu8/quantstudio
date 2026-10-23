@@ -135,9 +135,12 @@ def run_deploy(config_path: str) -> DeployReport:
                      "backtest_only_calls": pre.backtest_only_calls,
                      "trading_only_calls": pre.trading_only_calls,
                      "vault_entries": len(pre.vault_entries),
-                     "vault_degraded": pre.vault_degraded})
+                     "vault_degraded": pre.vault_degraded,
+                     "vault_source": pre.vault_source})
         if pre.vault_degraded:
-            notes.append("P0 vault 回哺降级（trading 仓不可达，不阻塞转换，§14.6）")
+            notes.append("P0 vault 回哺降级（全部候选落点不可达，不阻塞转换，§14.6）")
+        elif pre.vault_source:
+            notes.append(f"P0 vault 回哺来源：{pre.vault_source}")
         if not pre.passed:
             stages["P0_preflight"].reason = "；".join(pre.reject_reasons)
             return _stop("P0_preflight", stages["P0_preflight"].reason)
