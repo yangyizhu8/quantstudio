@@ -1,5 +1,8 @@
 # 新项目接入知识库闭环 · 清单（KMAP-M1 · 30 分钟）
 
+> **顺序提示（2026-10-23 M4 实测修正）**：先跑一次 `kb-kit/install.ps1 -Target <项目根> -NoHook`（只为拿到 `scripts/kb_*.py`），
+> 再建库（`kb_draft.py` 需要 scripts/ 就位），最后装钩子/CI —— 勿按「先建库后装机检」的直觉顺序走。
+>
 > 前置：全局制度层已生效（`~/.dsh/AGENTS.md` 的 R1 开工检索留痕 / R4 验收沉淀，等窗后落位）——
 > 未落位时本清单仍可执行，只是「人查」环节靠自觉。
 > 产出模板：`kb-info-template.yaml` / `kb-family-readme-template.md` / 本清单（同在 `docs/templates/`）。

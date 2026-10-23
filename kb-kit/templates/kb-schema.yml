@@ -1,0 +1,64 @@
+name: kb-schema
+
+# KMAP-M3（2026-10-23 总调度照准）：知识库条目**分族 schema 体检**（WARN 起步）
+# 触发：push / PR 涉及 knowledge/** → 取实际改动条目件 → scripts/kb_hook.py 按
+#       knowledge/kb-info.yaml 的 families 段分族校验（qd / pd / 自定义族）。
+# 三条纪律：
+#   ① **WARN 起步**——job 级 `continue-on-error: true`，不合规不阻断；观察一轮后由总调度裁定
+#      升阻断（删除该行并给 kb_hook 加 --strict）。
+#   ② **不触碰 contract-gate**——独立文件、独立 job、独立触发面；本 workflow 只读 knowledge/**。
+#   ③ **回退**——净新增单文件，删除本文件即净。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "knowledge/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "knowledge/**"
+
+jobs:
+  kb-schema:
+    name: kb-schema
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true          # ← WARN 起步标记（升阻断时删本行）
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0             # 需与 base sha 做 diff（浅克隆拿不到 base）
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装依赖
+        run: python -m pip install --quiet pyyaml
+
+      - name: 计算改动条目件
+        id: changed
+        run: |
+          set -euo pipefail
+          BASE="${{ github.event.pull_request.base.sha }}"
+          if [ -z "${BASE}" ]; then BASE="${{ github.event.before }}"; fi
+          if [ -z "${BASE}" ] || [ "${BASE}" = "0000000000000000000000000000000000000000" ]; then
+            BASE="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+          fi
+          echo "base=${BASE}" >> "$GITHUB_OUTPUT"
+          git diff --name-only "${BASE}".."${GITHUB_SHA}" | grep -E '^knowledge/.+\.md$' > kb_files.txt || true
+          echo "count=$(wc -l < kb_files.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+      - name: 分族 schema 体检（WARN）
+        run: |
+          set -euo pipefail
+          if [ ! -s kb_files.txt ]; then
+            echo "[kb-schema] 本次改动不含 knowledge 条目件，跳过"
+            exit 0
+          fi
+          echo "[kb-schema] 待检 $(wc -l < kb_files.txt | tr -d ' ') 件："
+          cat kb_files.txt
+          # 注：条目文件名不含空格（QD-/PD-/XX- 前缀族约定），此处按空白拆分传参
+          python scripts/kb_hook.py --files $(cat kb_files.txt | tr '\n' ' ') --json

@@ -286,3 +286,26 @@
 | 2026-10-23 | **kb-schema.yml**（净新增单文件）：push/PR + paths knowledge/** 触发 → 取改动条目件 → kb_hook 分族体检；job 级 continue-on-error WARN 起步 | docs/evidence/kmap-m3-20261023.md | 完成·未提交 |
 | 2026-10-23 | 验收：11 项 YAML 断言（steps 实为 5，首轮断言误写 4 已修正）＋端到端模拟（M0 范围 18 件→checked18/bad0/族 pd,qd/exit0；M1 范围 0 件→跳过分支 exit0）＋既有三 workflow 零改动 | 同上 §3 | 完成 |
 | 2026-10-23 | 边界（如实）：未在真实 GitHub Actions 触发过（本机 bash 为 WSL 版，不用其硬跑）；`--files` 依赖文件名无空格（族约定）；升阻断须两项同改（删 continue-on-error 行 + --strict） | 同上 §4 | 已披露 |
+
+
+## KMAP-M4 打包与试点完成（2026-10-23）
+
+| 日期 | 事项 | 证据 | 状态 |
+| --- | --- | --- | --- |
+| 2026-10-23 | **kb-kit v1.0.0**（主仓根 10 件自包含：KIT_VERSION/README/install.ps1/4 脚本/4 模板） | kb-kit/；docs/evidence/kmap-m4-20261023.md | 完成·未提交 |
+| 2026-10-23 | **≤30 分钟接入实测**（临时副本，零污染样板）：机器 A0.5s/B0.5s/C0.0s/D0.1s=1.1s；人工等效 15-20min；基线 6 问 M1 6/6、M2 5/6 | 同上 §2 | 完成 |
+| 2026-10-23 | **试点 1** easy-vibe：scripts 4＋templates 3 装好；**husky 保护生效**（hooksPath=.husky/_ 未变，钩子 WARN 跳过） | 同上 §4 | 完成·跨仓未提交 |
+| 2026-10-23 | **试点 2** vibe-coding-cn（自选）：scripts 4＋families(vc)＋templates 3＋钩子生效(.githooks)；会红核验 8 项错／--strict exit1；种子条目留本线 | 同上 §4 | 完成·跨仓未提交 |
+| 2026-10-23 | **实测暴露并修复 3 项**：①PS5.1 -File 中文路径 $PSScriptRoot 空→安装器失败（双回退修复）②清单顺序缺陷（kb_draft 需先有 scripts）③安装器会废 husky 钩子（改检测跳过＋写前备份） | 同上 §5 | 完成 |
+| 2026-10-23 | 边界：复制分叉(KIT_VERSION/-Sync)、仅 PS 安装器、试点2 无种子条目（kb_hook 体检 0 件）、CI 可选未装、跨仓提交权归各线 | 同上 §6 | 已披露 |
+
+
+## 两试点首月 R/B/H 观察窗起算（2026-10-23）
+
+| 试点 | 项目 | 起算 | 首月读数内容 | 责任 |
+| --- | --- | --- | --- | --- |
+| 1 | easy-vibe（husky 仓·钩子手动接入） | 2026-10-23 | R（族复发）／B（无条目命中）／H（门禁命中次数）+ 题集基线复测 | 本线（种子条目待该线写） |
+| 2 | vibe-coding-cn（钩子已装 .githooks） | 2026-10-23 | 同上（种子条目由该线自写；未沉条目前 kb_hook 体检 0 件） | 该线 |
+
+- 读数口径沿用 docs/evidence/kb-metrics-definition.md（R/B/H 定义）；题集模板见 docs/templates/kb-golden-questions-v1.md。
+- 观察窗到期：2026-11-23（首月）；到期出读数并回写本表。

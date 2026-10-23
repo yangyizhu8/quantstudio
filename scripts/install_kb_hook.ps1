@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   安装通用 KB 体检 pre-push 钩子到指定项目（KMAP-M1 · 接入模板包）。
 
@@ -24,6 +24,19 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $Repo = (Resolve-Path $Repo).Path
+
+# 既有 hooksPath 保护（2026-10-23 M4 试点暴露：easys-vibe 用 husky，无脑设 .githooks 会废掉其钩子）：
+# 若仓库已有非 .githooks 的 hooksPath（husky/lefthook/自建），不覆盖、不写 .githooks，只打印手动接入片段。
+$existing = ''
+try { $existing = ((git -C $Repo config core.hooksPath) | Out-String).Trim() } catch { $existing = '' }
+if ($existing -and ($existing -ne '.githooks')) {
+  Write-Host ("[install_kb_hook][WARN] 该仓库已有 hooksPath={0}（如 husky/lefthook）——不覆盖，跳过自动安装。" -f $existing)
+  Write-Host '[install_kb_hook] 手动接入：在现有 pre-push 钩子末尾追加（WARN 版，失败不阻断）：'
+  Write-Host '    python scripts/kb_hook.py --files <改动条目件列表> --repo-root <仓库根>'
+  Write-Host '[install_kb_hook] 或按 kb-kit/README.md §5 自管钩子（-NoHook 安装后手工挂载）。'
+  exit 0
+}
+
 $hooks = Join-Path $Repo '.githooks'
 if (-not (Test-Path $hooks)) { New-Item -ItemType Directory -Force -Path $hooks | Out-Null }
 $hook = Join-Path $hooks 'pre-push'
@@ -58,6 +71,11 @@ try {
 '@
 $body = $body.Replace('__STRICT__', $strictArg.Trim())
 $utf8Bom = New-Object System.Text.UTF8Encoding($true)
+if (Test-Path $hook) {
+  $bak = '{0}.bak-{1}' -f $hook, (Get-Date -Format 'yyyyMMdd-HHmmss')
+  Copy-Item $hook $bak -Force
+  Write-Host ("[install_kb_hook] 备份既有 pre-push → {0}" -f (Split-Path $bak -Leaf))
+}
 [System.IO.File]::WriteAllText($hook, $body, $utf8Bom)
 git -C $Repo config core.hooksPath .githooks
 Write-Host ("[install_kb_hook] 已装：{0}" -f $hook)

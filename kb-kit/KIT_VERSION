@@ -1,0 +1,5 @@
+1.0.0
+# kb-kit 版本（KMAP-M4 · 2026-10-23）
+# 语义：MAJOR=接入流程/接口不兼容变化；MINOR=新增能力；PATCH=修复。
+# 来源：QuantStudio 主仓（scripts/kb_*.py ＋ docs/templates/* ＋ .github/workflows/kb-schema.yml）
+# 同步方式：install.ps1 -Sync -CanonicalRepo <QuantStudio 根>（覆盖本目录 scripts/ 与 templates/，不动各项目知识库）

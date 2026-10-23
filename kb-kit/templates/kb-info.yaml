@@ -1,0 +1,44 @@
+# kb-info.yaml 模板 v1（KMAP-M1 · 新项目接入用）
+#
+# 用法：复制到 <项目根>/knowledge/kb-info.yaml，替换 project/families/registries 三处占位。
+# 两轴分离：
+#   families   = 条目 schema（族独立定谳：id 前缀 / fix_layer 枚举 / 是否允许多落点 / 判层关键词）
+#   registries = 库归属（owner / scope / 生命周期 / 域词表）
+# 机检消费者：scripts/kb_hook.py（推送分族体检）＋ scripts/kb_draft.py（--kb 草稿目标族定位）
+# 判据：YAML 可解析；每条 families[].dir 实存；entry_glob 与 dir 一致；id_pattern 与现有条目匹配。
+
+schema_version: 2
+updated: "YYYY-MM-DD"
+domains_vocab: [D1, D2, D3, D4, D5]     # 域词表（可自定义，须与族 domain_vocab 一致）
+
+families:
+
+  - id: <族名，如 dev>                  # 检疫：族名短、小写、无空格
+    dir: "knowledge/<族目录>"
+    entry_glob: "knowledge/<族目录>/<ID前缀>-*.md"
+    id_pattern: '<ID前缀>-\d{4}-\d{4}'   # 如 'XX-\d{4}-\d{4}'
+    fix_layer_enum: [fix, docs, tooling]  # 族自有枚举（禁抄别族；新增层必须与实现同步）
+    fix_layer_multi: false                # true = 允许多落点以 + 连接（各组件须在枚举内）
+    domain_vocab: [D1, D2, D3, D4, D5]
+    required_fields: [symptom, root_cause, fix_target, evidence, fixture, trigger]
+    # fix_layer_keywords:                 # 可选：kb_draft 自动判层（顺序命中即定）
+    #   fix: ["修复", "bugfix"]
+    #   docs: ["文档", "README"]
+    #   tooling: ["脚本", "脚本工具"]
+    notes: "族语义说明（schema 细则以本族 README 为准）"
+
+registries:
+
+  - id: kb-main
+    owner: "<项目名>（knowledge/）"
+    scope: "<领域标识，短横线>"
+    type: "versioned-in-repo"
+    lifecycle: "active"
+    domains: [D1, D2, D3, D4, D5]
+    entry_glob: "knowledge/**/*.md"
+    entry_count_at: 0
+    notes: "<登记说明>"
+
+changelog:
+  - date: "YYYY-MM-DD"
+    change: "建卡：families 1 条 + registries 1 条"
