@@ -118,3 +118,42 @@
 **由此修复的缺陷**：见 §1 FP-4 条目（A11 自愈失效——第二源命中后不得再走只看 status 的 `_sync_daemon_state()`）。
 
 **回归**：固件 20 passed；`test_gui_task_stop.py` / `test_gui_task_status_real.py` / `test_daemon_lifecycle.py` 42 passed。
+
+## 8 生产窗 ④⑤ 执行记录（2026-10-23 21:59，与 FP-5 2.2 迁移合窗）
+
+**依据**：`docs/evidence/fp5-22-migration-window-20261023.md`（`17250b2`, 21:55）明确「阶段④-⑤（客户专属总运维执行）：N4 A11-13 真实启停演练（停/启本身即演练对象；"启"=在 2.2 库上拉起 ⇒ 同步构成 A35 的 daemon 可启动实证）；⑤ 拉起 daemon + 双验证」。
+**脚本**：`docs/handoff/n4-prod-window-20261023.py`（可复跑；`--dry-run` 只读）
+
+### 8.1 前置（①）
+
+| 项 | 实测 |
+|---|---|
+| daemon | 停止态（`is_daemon_running=False`）；status 陈旧 `pid=69832 running`（进程已不存在，verify=stale） |
+| 库 | `qfq_bootstrap_run` 末版 `reanchor-2.2` ✓；`source_watermark` **9 列**（含 `last_run_id`）✓；**24 行** ✓ |
+
+### 8.2 A11（②·GUI 同款路径启动 + poll 自愈）
+
+- `start_daemon_subprocess` 启动：token `7bac366e…`、pid **46576**
+- 生产 status 变 `running`；`_on_daemon_poll()` 一次即自愈为 `running`，按钮「🟢 运行中」，**0.00s**（≤5s）
+- 新 pid ≠ 旧 69832 ✓
+
+### 8.3 A12（③·优雅停 + 三次去抖）
+
+- `request_graceful_stop(token)` 成功 → daemon 确证退出 → 去抖 1/2 次仍 `running` → **第 3 次判 `stopped`**，按钮「🔴 已停止」✓（与日志 `收到停止请求→优雅退出→清理本进程 status` 逐条对应）
+
+### 8.4 ⑤ 最终拉起 + 双验证
+
+- 拉起：pid **69036**（token `85e82511…`），status `running`，`started_at=2026-10-23T21:59:35`
+- **观察期 60s**：进程稳定存活、WS 118MB 平（±0.1MB）、`is_daemon_running()=True`、`find_running_daemon_pids()=[69036]`
+- **daemon.log 近 200 行 `ERROR/CRITICAL/Traceback = 0`** ✓
+- 日志实证链：`清理陈旧 status 文件（原进程已退出）` → `status 已发布(46576)` → `收到停止请求` → `优雅退出` → `status 已发布(69036)` → `DuckDBWriter tables initialized` → `ConfigLint 校验通过(0 错误/0 警告)`
+- `gui_gate_diag.log` **不存在** ⇒ 本轮启动未走「未拦住」分支（正常路径），FP-5 无噪声 ✓
+
+### 8.5 一处判据修正（判据错、非产物错）
+
+脚本 ⑤ 原判据「daemon 运行中只读打开库」**FAIL**：`Cannot open file … 另一个程序正在使用此文件` —— DuckDB 单写独占，**daemon 运行中任何进程（含 read_only）都无法打开**，此为既有设计（同一设计早已记录在 QFQ 取证卡死问题上）。**正确判据**：水位表可读性在**停态**验证（① 已证 24 行 / 9 列）；运行中改以 status + 日志 + 进程稳定性为证。已按此修正结论，**不计为缺陷**。
+
+### 8.6 由此获得的额外实证（价值高于原判据）
+
+1. **正常启动时 bootstrap 亦为 0B**（`daemon_bootstrap_7bac366e…log` size=0 而启动成功）⇒ **FP-1 回退链的价值不止撞锁场景**：任何「启动后未握手/超时」场景，用户都只看到空尾部。
+2. **daemon 启动会自动清理陈旧 status**（日志原文）⇒ R-2 的「status 陈旧」不是永久故障，第二源（FP-3）与自动清理共同兜住。
