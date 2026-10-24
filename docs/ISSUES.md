@@ -377,3 +377,12 @@
 - **状态**：本轮改动零新增失败；**回归全绿因既有缺陷未达成** ⇒ 待裁定：（A）登记为独立 Issue，本轮以零新增失败＋A/B 铁证通过；（B）先修既有缺陷再复跑全绿（按「框架问题立即解决」应走 B，需新 Plan）。
 - **回退点**：`C:/Users/Administrator/AppData/Local/Temp/sik_backup_065355.py`（A/B 用备份，已恢复原状）。
 - **时间**：2026-10-24
+
+
+## M2-① 后续闭环（2026-10-24）
+
+| 日期 | 事项 | 证据 | 状态 |
+| --- | --- | --- | --- |
+| 2026-10-24 | **判据 8 副本面闭环**：副本 AGENTS.md 的 R1/R4 节段与主仓 **sha256 完全相同（fb107378d529997e，30 行）⇒ diff=0 逐字一致**；副本 HEAD ee960318 含我方三笔为祖先 | docs/evidence/kmap-m2-seg1-20261023.md §7.1 | 完成 |
+| 2026-10-24 | **M3 workflow 首触读数**：首触 run 39934786668@df2d90e success（待检2→checked1/bad[]/族qd，registry.md 正确跳过）；统推#5 run 40080559780@606e688 success（待检1→checked1/bad[]/族pd）；步级 6 步全 success；同 sha contract-gate 亦 success | 同上 §7.2 | 完成 |
+| 2026-10-24 | **M3/M4 收尾证据齐**：族路由（qd/pd 各一次）、族外 md 跳过、WARN 不阻断、与 contract-gate 并存无干扰——四项设计意图在真实 Actions 环境全部验证 | 同上 §7.2 | 完成 |
