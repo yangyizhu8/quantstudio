@@ -7,7 +7,7 @@
 #           （entry_count_at 为登记时读数，随库增长会漂移，不作强断言）。
 
 schema_version: 2
-updated: "2026-10-22"
+updated: "2026-10-25"
 domains_vocab: [D1, D2, D3, D4, D5]     # 语义见 knowledge/qmt/README.md §2.1
 
 # families = 条目 schema（族独立定谳）；registries = 库归属（owner/scope/生命周期）。
@@ -73,9 +73,21 @@ registries:
     entry_count_at: 103
     notes: "绝对路径为**本机事实**，迁移/换机须同步改写；主库条目经「知识反哺留痕」引用它，不回写"
 
+  - id: kb-iron-rules
+    owner: "QuantStudio-trading 本仓（knowledge/iron-rules/）"
+    scope: "project-iron-rules-full"       # AGENTS.md 铁律完整版逐字归档库（2026-10-25 方案 B 瘦身落位）
+    type: "versioned-in-repo"
+    lifecycle: "active"
+    domains: [D1, D2, D3, D4, D5]
+    entry_glob: "knowledge/iron-rules/*.md"
+    entry_count_at: 25
+    notes: "非 QD/PD schema 条目，不入 families 与 R4 沉淀口径；原文逐字迁移不改写（sha 对拍）；禁入内部工作流条文（2026-10-24 裁定）"
+
 # 变更记录
 changelog:
   - date: "2026-10-21"
     change: "建卡：三库登记（主库/trading 第二库/通用库），六字段齐；domains 词表引用 README §2.1"
   - date: "2026-10-22"
     change: "v2（KMAP-M1）：增 families 段（qd/pd 两族 schema：id_pattern/fix_layer_enum/multi/判层关键词），schema 与归属两轴分离；消费者 kb_hook.py（推送分族体检）+ kb_draft.py（--kb 泛化）"
+  - date: "2026-10-25"
+    change: "AGENTS.md 方案 B 瘦身落位：新增 kb-iron-rules 登记段（25 条铁律逐字归档；scope=project-iron-rules-full 与既有 scope 不重叠；不入 families/R4 口径）；工单 docs/handoff/AGENTS-md-瘦身治理方案-20261025.md"
