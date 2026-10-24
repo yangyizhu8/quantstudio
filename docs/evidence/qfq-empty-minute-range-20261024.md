@@ -66,3 +66,31 @@
 ```
 
 **知识反哺命中（复用）**：`已知错误-因子版本漂移致rebase自锁`（通用库/12-客户运维）——与本案**同族**（判据设计不当致闸门自锁；被拦的恰是唯一能修复它的操作），其「分层放行 ≠ 提交、后段裁决」框架直接复用于本方案 §4.3。
+
+## 7 A9e 补丁（2026-10-24 15:5x · 生产实证回归 · 修一送一风险当轮闭合）
+
+**生产实证（当日 13:24:01）**：QFQ post-ingest 跑到新代码并失败——
+
+```
+qfq_fresh_capture.py:442  ms = _ms_to_yyyymmdd(minute_range_ms[0])
+qfq_fresh_capture.py:91   dt = pd.Timestamp(int(ms), unit="ms")
+TypeError: int() argument must be a string, a bytes-like object or a real number, not 'NoneType'
+→ [DaemonLifecycle] QFQ post-ingest 未完全通过：status=failed
+```
+
+**根因**：`_security_range` 的空表语义是 **tuple `(None, None)`**，orchestrator 原样下传给 `capture`；
+而 FP-2 的保护只判 `is not None`（**tuple 非 None ⇒ 通过**）⇒ `minute_range_ms[0]` 为 `None` ⇒ 崩。
+**定性：我方 FP-2 未核对调用点实际传值形态的疏漏**（属「修一送一」风险，按铁律当轮修复、不挂账）。
+
+**修复（3 处，双处防御 + 形态归一）**：
+1. `qfq_fresh_capture.capture`：双重判定
+   `_has_minute = (mr is not None and mr[0] is not None and mr[1] is not None)`；
+2. record 的 `minute_range_start/end` 改用 `_has_minute`（原 `is not None` 会在 `(None,None)` 时 `int(None)`）；
+3. `qfq_resident_orchestrator` 下传统一归一：`minute_range_ms=(None if _empty_minute else minute_range)`。
+
+**判据 A9e**（参数化 3 形态：`(None,None)` / `(M1,None)` / `(None,M2)`）：不崩、分钟不采集（calls=`['daily']`）、record 字段 None ⇒ **15 passed（5.60s）**。
+**生产路径复现**（ETF/160128 同参、直传 `(None,None)`）：不抛、`calls=['daily']`、`record.minute_range_start=None` ✅
+
+**回归**：`test_qfq_fresh_capture` + `test_qfq_resident_orchestrator` + `test_qfq_reanchor_batch1` ⇒ **112 passed / 1 failed**（唯一失败 `test_require_bootstrap_fail_closed` = 已证 HEAD 既有基线红）。
+
+**残留影响（如实申报）**：今日 13:24 那次 QFQ post-ingest 因本缺陷 failed ⇒ **该轮已提交的水位不含 QFQ 增量**（`14:20:49 今日轮次全部成功(74 任务)` 指采集任务，不含 QFQ 附加段）；修复将于下次重启窗生效后由下一真实周期补验 A9b/A7。

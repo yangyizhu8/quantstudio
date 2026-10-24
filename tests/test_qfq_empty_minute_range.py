@@ -141,6 +141,22 @@ def test_capture_daily_none_raises():
                        fetcher=_CountingFetcher(), source="mcp", write=False)
 
 
+@pytest.mark.parametrize("mr", [(None, None), (M1, None), (None, M2)])
+def test_a9e_partial_or_tuple_none_treated_as_empty_minute(mr):
+    """A9e（生产实证回归 2026-10-24）：`(None,None)` 或半 None 不得崩，须等同「无分钟」。
+
+    `_security_range` 的空表语义是 tuple `(None, None)`；若 capture 只判 `is not None`，
+    tuple 会通过并崩在 `_ms_to_yyyymmdd(None)`（生产 13:24 实测 TypeError）。
+    """
+    f = _CountingFetcher()
+    rec, fd, fm = _cap().capture(None, asset_type="STOCK", code="000001", run_id="r1",
+                                 daily_range_ms=(D1, D2), minute_range_ms=mr,
+                                 fetcher=f, source="mcp", write=False)
+    assert len(f.calls) == 1 and f.calls[0][0] == "daily", f.calls
+    assert rec.minute_range_start is None and rec.minute_range_end is None
+    assert len(fm) == 0
+
+
 # --------------------------------------------------------------------------- #
 # FP-3a · A9c 负向：未显式允许时仍硬失败
 # --------------------------------------------------------------------------- #

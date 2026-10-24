@@ -700,7 +700,11 @@ class QFQResidentOrchestrator:
         try:
             record, fresh_daily, fresh_minute = cap.capture(
                 conn, asset_type=asset_type, code=code, run_id=run_id,
-                daily_range_ms=daily_range, minute_range_ms=minute_range, fetcher=fetcher,
+                daily_range_ms=daily_range,
+                # A9e 修正（2026-10-24 生产实证）：空表语义是 `(None, None)`（tuple），
+                # 直接下传会让 capture 的 `_ms_to_yyyymmdd(None)` 抛 TypeError
+                # （生产 13:24 实测）。此处统一归一为 `None`，形态唯一、可断言。
+                minute_range_ms=(None if _empty_minute else minute_range), fetcher=fetcher,
                 source=self.cfg.price_source,  # P2-4：xtquant/mcp 由 price_source 驱动
                 write=False)
         except ValueError as _e:

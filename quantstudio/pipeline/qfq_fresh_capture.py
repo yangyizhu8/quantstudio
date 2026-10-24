@@ -436,9 +436,15 @@ class FreshCapture:
         # range_ms → YYYYMMDD（自然日，Asia/Shanghai）
         ds = _ms_to_yyyymmdd(daily_range_ms[0])
         de = _ms_to_yyyymmdd(daily_range_ms[1])
-        # FP-2：分钟区间为 None ⇒ 结构性无数据 ⇒ 不转换、不采集（不产生 1970 窗）
+        # FP-2 / A9e 修正（2026-10-24 生产实证）：调用方可能传 **`(None, None)`**（tuple）
+        # 而非 `None`——`_security_range` 的空表语义就是 `(None, None)`；若只判 `is not None`，
+        # tuple 会通过并崩在 `_ms_to_yyyymmdd(None)`（生产 13:24 实测 TypeError）。
+        # 故双重判定：None **或任一侧为 None** ⇒ 一律视为「结构性无数据」。
         ms = me = None
-        if minute_range_ms is not None:
+        _has_minute = (minute_range_ms is not None
+                       and minute_range_ms[0] is not None
+                       and minute_range_ms[1] is not None)
+        if _has_minute:
             ms = _ms_to_yyyymmdd(minute_range_ms[0])
             me = _ms_to_yyyymmdd(minute_range_ms[1])
 
@@ -509,9 +515,12 @@ class FreshCapture:
             source=source,
             daily_range_start=int(daily_range_ms[0]),
             daily_range_end=int(daily_range_ms[1]),
-            # FP-2：分钟表结构性无数据 ⇒ None（列本就可 NULL）；绝不写 0（0=1970 伪数据）
-            minute_range_start=(int(minute_range_ms[0]) if minute_range_ms is not None else None),
-            minute_range_end=(int(minute_range_ms[1]) if minute_range_ms is not None else None),
+            # FP-2 / A9e：分钟表结构性无数据 ⇒ None（列本就可 NULL）；
+            # 绝不写 0（0=1970 伪数据）。`(None, None)`（空表 tuple）同样归 None。
+            minute_range_start=(int(minute_range_ms[0])
+                                if _has_minute else None),
+            minute_range_end=(int(minute_range_ms[1])
+                              if _has_minute else None),
             daily_row_count=len(fresh_daily),
             minute_row_count=len(fresh_minute),
             daily_min_time=daily_min_time,
