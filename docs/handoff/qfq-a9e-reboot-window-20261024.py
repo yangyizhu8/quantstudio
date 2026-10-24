@@ -12,10 +12,14 @@ A9b/A7 补验同窗机会）"；①606e688 ⑤已批，与 4ddaf55 同批出仓�
 - **失败自动回滚**：启动失败 → 用**旧 token** 重启原命令（与窗口前一致的形态）。
 - 新 token 用 uuid4（N4 生产窗已验证换 token 合法）。
 
-用法：
-  python docs/handoff/qfq-a9e-reboot-window-20261024.py              # dry-run（默认）
-  python docs/handoff/qfq-a9e-reboot-window-20261024.py --execute    # 真停/启
-  python docs/handoff/qfq-a9e-reboot-window-20261024.py --check-only # 仅事后核验（不启停）
+用法（**按 2026-10-24 裁定：窗口执行方 = 客户运维1；本会话不执行停启**）：
+  python docs/handoff/qfq-a9e-reboot-window-20261024.py --gate-only    # ★ 前置门禁（执行方调用）
+  python docs/handoff/qfq-a9e-reboot-window-20261024.py --check-only   # 事后核验（任一方可跑）
+  python docs/handoff/qfq-a9e-reboot-window-20261024.py --execute      # 停/启全流程（仅限执行方）
+
+`--gate-only` 契约（供执行方在重启前调用，fail-closed）：
+  exit 0 = 门禁 PASS（可重启）；exit 2 = 门禁 FAIL（**禁止重启**，不把已知会崩的版本推上生产）
+  输出：前置快照（pid/status/log 字节）+（None,None）路径门禁结果
 """
 from __future__ import annotations
 
@@ -158,9 +162,20 @@ def tail_log(n: int = 12) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--execute", action="store_true", help="真正停/启 daemon")
+    ap.add_argument("--execute", action="store_true", help="停/启全流程（仅限窗口执行方）")
     ap.add_argument("--check-only", action="store_true", help="仅事后核验")
+    ap.add_argument("--gate-only", action="store_true",
+                    help="★ 前置门禁：仅快照+隔离验证，exit 0=PASS / 2=FAIL（不启停）")
     a = ap.parse_args()
+
+    if a.gate_only:
+        print("=== 前置门禁（供窗口执行方调用，fail-closed）===")
+        snapshot("前置")
+        if gate_isolated_capture():
+            print("\n[门禁] PASS → 允许执行停/启（exit 0）")
+            return 0
+        print("\n[门禁] FAIL → **禁止重启**（exit 2）")
+        return 2
 
     print("=== 今晚重启窗（A9e 生效）===")
     pre = snapshot("前置")

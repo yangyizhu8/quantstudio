@@ -94,3 +94,30 @@ TypeError: int() argument must be a string, a bytes-like object or a real number
 **回归**：`test_qfq_fresh_capture` + `test_qfq_resident_orchestrator` + `test_qfq_reanchor_batch1` ⇒ **112 passed / 1 failed**（唯一失败 `test_require_bootstrap_fail_closed` = 已证 HEAD 既有基线红）。
 
 **残留影响（如实申报）**：今日 13:24 那次 QFQ post-ingest 因本缺陷 failed ⇒ **该轮已提交的水位不含 QFQ 增量**（`14:20:49 今日轮次全部成功(74 任务)` 指采集任务，不含 QFQ 附加段）；修复将于下次重启窗生效后由下一真实周期补验 A9b/A7。
+
+## 8 积压风险裁定与**我方判断修正**（2026-10-24 20:19 总调度裁定）
+
+**我方原判断（错误）**：17:06 上报提出「本批未含限流，建议另立项限流」。
+**裁定（正确）**：**限流已在位**——FP-7 `max_units_per_cycle=60` 属 firefly 批已上生产。
+
+**代码复核（我方自查，四锚点）**：
+| 锚点 | 事实 |
+|---|---|
+| `qfq_orchestrator_types.py:364` | 默认配置 `"max_units_per_cycle": 60` |
+| `:424` / `:485` | 字段默认 `60`；`int(cfg.get("max_units_per_cycle", 60))` |
+| `:526-527` | 校验 `>= 0`（0=不限），非法即 `QFQConfigError` |
+| `qfq_resident_orchestrator.py:559` | `cap = int(getattr(self.cfg, "max_units_per_cycle", 0) or 0)` |
+| **生产实证** | `13:11:11 INFO [qfq_orch] FP-7 配额生效：本轮处理 60 单元，顺延 4576 单元（cap=60；顺延单元保持 pending，不进 apply）` |
+
+⇒ **结论修正**：51,013 积压将按 **60 单元/轮** 消化，不构成"无保护的一次性涌入"。我方"未含限流"表述作废。
+
+**消化速率算术（供后续调参决策，非本批范围）**：51,013 ÷ 60 ≈ **850 轮**。若 QFQ 每日仅 1 轮，则需 ≈850 天；实际速率取决于 daemon 每轮是否都触发 QFQ 段（今日 13:24 有 QFQ 活动即为例证）。**该算术仅作为「首轮实际节奏读数」的对照基线**；按裁定，调参属配置值变更（非代码），届时呈报。
+
+## 9 窗口分工（裁定 2026-10-24）
+
+- **窗口执行方 = 客户运维1**；本会话**不再执行任何停/启**。
+- 本件 `docs/handoff/qfq-a9e-reboot-window-20261024.py` 转为**前置门禁**：`--gate-only`
+  契约 = `exit 0` 允许重启 / `exit 2` **禁止重启**（fail-closed），供执行方在重启前调用；
+  `--check-only` 供事后核验；`--execute` 保留但**仅限执行方**使用。
+- `a4cfeaa` 列入**统推 #6**（周日晚随批出仓）。
+- A9b/A7 补验窗 = **明晨 06:00 后单码抽样**（选项 C）。
