@@ -2108,10 +2108,12 @@ class DuckDBDataAccess:
         conn = self._get_conn()
         if conn is None:
             return pd.DataFrame()
+        # L-01（2026-10-24）：DISTINCT 无序（DuckDB 并行 hash-distinct）⇒ 返回序每次不同，
+        # 致池顺序随机 ⇒ 同日多笔成交输出行序不可复现。加 ORDER BY code 确定性化（集合不变）。
         return conn.execute(f"""
             SELECT DISTINCT code FROM stock_daily WHERE time = (
                 SELECT MAX(time) FROM stock_daily WHERE time <= {before_ms}
-            )
+            ) ORDER BY code
         """).fetchdf()
 
     def query_sw_industry(self, code):
