@@ -811,3 +811,26 @@ separate explicit user authorization.  See
 - `_qs_fin_to_rows_hist` 性能修复（509s → 127s，4×）与结构契约对齐（`raw.to_frame()` 的 index=(日期,字段)、columns=代码）。
 
 实测结果：`L0=5227 → L1_listed=4410 → … → R_selected=10`，产生买单并成交持仓。
+
+### QMT 行为差异 WARN（八条规则，2026-10-24）
+
+本地↔QMT 的**已知行为差异**以纯 WARN 检测层提示（**零 BLOCK**，不构成转换门禁）——入口
+`quantstudio.strategy_compiler.portability_rules.scan_behavior_warns(tree, source, backtest_range=None)`，
+返回 `[{"rule_id", "line", "message", "grade": "WARN"}]`；规则表 `BEHAVIOR_WARN_RULES`（8 条）；
+声明面镜像常量 `source_import_qmt.QMT_BEHAVIOR_DIFF_DECLS`（纯文档级，不参与产物渲染、不在
+`_QMT_HASH_SCOPE` 契约哈希面内）。依据：DEAL-07 §4.1、registry POS 7 缺口/FEE-02/03/04、QMCH-02、
+QD-2026-0008/0009/0010。
+
+| 规则 ID | 触发 | 双端差异要点 |
+|---|---|---|
+| `QMT-POS-FIELD-UNIMPL` | `position.<七缺口字段之一>` 属性访问 | 本地 Position 未实现（PTrade 有，registry 已裁接受） |
+| `QMT-FEE-COMMISSION-TRI` | 调用 `set_commission` | QMT 面板佣金三项分设，本地单一费率须三项同值映射（FEE-02） |
+| `QMT-FEE-STAMP-BUY` | `set_commission` 传 stamp 相关关键字 | 本地印花仅卖出，QMT 侧买入印花税必须置 0（FEE-03） |
+| `QMT-FEE-TRANSFER-ALIAS` | 源码出现 `transfer_fee`/`transfer_fee_rate`/`m_dTransferFee` | QMT 回测不收过户费、面板无专名（FEE-04） |
+| `QMT-DAT-NULL-TRIPLE` | 字符串字段用 `is None` / 持仓对象用 truthiness | QMT 空串≠None（QD-0008）；零视图恒真，判命中用 `.amount>0`（QD-0009） |
+| `QMT-CODE-FORM-MASK` | 硬编码 `.SS` 码或同文件混用 `.SH`/`.SZ`/裸码 | 码形态 `.SS`(本地)↔`.SH`(QMT) 跨端静默 miss（QD-0009） |
+| `QMT-FEE-STAMP-PERIOD` | 回测区间跨 2023-08-28（**须调用方传入 `backtest_range`，None 恒不命中**） | 本地分期间封顶 0.0005 vs QMT 单一费率（QD-0010 端测定谳） |
+| `QMT-LIMIT-BOARD-FIDELITY` | 既调用 `check_limit` 又有下单分支 | 本地涨跌停拒单 vs QMT 回测不拦封板（QMCH-02） |
+
+每条 message 固定含「双端差异＋建议」两句；测试 `tests/test_qmt_behavior_warns.py`
+（8 规则 × 命中/不命中成对，防恒绿）。

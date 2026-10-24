@@ -66,6 +66,39 @@ _QS_QMT_MODULE_VERSION = "M2b-block2-rev1"
 
 
 # ============================================================================
+# QMT 行为差异声明（DEAL-07 §4.1，2026-10-24 落地）—— 纯声明面（documentation-grade）
+#   内容：portability_rules.BEHAVIOR_WARN_RULES 八条 WARN 规则的 ID + 差异一句话；
+#   用途：供文档/人工复核/CI linter 引用（"该版本转换面已知行为差异清单"）。
+#   边界（写死，防误用）：
+#   - 本常量**不参与产物渲染**（_assemble 不消费），改它不影响任何产物；
+#   - **不在 _QMT_HASH_SCOPE 契约哈希面内**（scripts/check_fund_matrix.py），
+#     新增/修改本区不触发 qmt_wrapper_hash 追认；
+#   - 规则**实现唯一来源**是 quantstudio/strategy_compiler/portability_rules.py
+#     的 scan_behavior_warns/BEHAVIOR_WARN_RULES——本表为其人工镜像，为守本模块
+#     「复用面严格限定」（docstring 架构定位）不 import，两处须同步维护；
+#   - 全部为 WARN 级提示，零 BLOCK（不构成转换门禁）。
+# ============================================================================
+QMT_BEHAVIOR_DIFF_DECLS: tuple[tuple[str, str], ...] = (
+    ("QMT-POS-FIELD-UNIMPL",
+     "POS 7 缺口字段本地 Position 未实现（PTrade 有，registry 已裁接受）"),
+    ("QMT-FEE-COMMISSION-TRI",
+     "QMT 面板佣金三项分设，本地单一费率须三项同值映射（FEE-02）"),
+    ("QMT-FEE-STAMP-BUY",
+     "本地印花仅卖出，QMT 买入印花税必须置 0（FEE-03）"),
+    ("QMT-FEE-TRANSFER-ALIAS",
+     "过户费本地有公式、QMT 回测恒 0 且面板无专名（FEE-04）"),
+    ("QMT-DAT-NULL-TRIPLE",
+     "字符串字段空串≠None / 持仓零视图恒真，判空形态双端不同（QD-0008/0009）"),
+    ("QMT-CODE-FORM-MASK",
+     "码形态 .SS(本地)↔.SH(QMT) 跨端静默 miss；混用后缀码与裸码同险（QD-0009）"),
+    ("QMT-FEE-STAMP-PERIOD",
+     "跨 2023-08-28 印花切换日：本地分期间封顶 0.0005 vs QMT 单一费率（QD-0010）"),
+    ("QMT-LIMIT-BOARD-FIDELITY",
+     "本地涨跌停拒单 vs QMT 回测不拦封板（QMCH-02），check_limit 依赖策略双端分歧"),
+)
+
+
+# ============================================================================
 # AST 工具族 —— 自 source_import.py:3350-3452 逐字复制（不得改动其逻辑）。
 # 其依赖常量 LOCAL_ONLY_PASSTHROUGH_BLOCK 的原文定义不在授权行号区间（3350-3459）内，
 # 且 PTrade 侧 curated 清单不适用于 QMT 目标——QMT 侧以空集起底（引用级拦截零误杀）。

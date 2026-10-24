@@ -730,3 +730,36 @@ raw[code]      → DataFrame(8739 行 × 3 列)，index = 日期（日频全历�
 - `raw[code]` 行数为**日频全历史**（实测 8739/只），远超「PIT 全报告期」契约（~40 期）→ 超量 ~200×；
 - 修复：`to_dict('records')` 取代 `iterrows`（4×）+ `dropna(how='all')` 删全 NaN 行（32.0M → 9.7M）；
 - `.loc[code]` 对上述结构**必然失败**（index 首层是日期）→ batch 仅为加速尝试，失败即回落 `raw[code]`。
+
+## QMT 行为差异 WARN（八条规则，2026-10-24）
+
+**定位**：本地↔QMT 已知行为差异的检测提示层——**纯 WARN、零 BLOCK**，与
+`validate_qmt_portability` 的 BLOCK 面正交，不构成转换门禁；供转换器/CI linter/人工复核消费。
+
+**入口**：`quantstudio.strategy_compiler.portability_rules.scan_behavior_warns(tree, source, backtest_range=None)`
+→ `[{"rule_id": str, "line": int, "message": str, "grade": "WARN"}]`（按 line 升序；
+每条 message 固定含「双端差异＋建议」两句；line=0 为区间级提示）。
+规则表 `BEHAVIOR_WARN_RULES: list[tuple[rule_id, 触发摘要, 建议]]`；
+声明面镜像 `source_import_qmt.QMT_BEHAVIOR_DIFF_DECLS`（纯文档级常量，不参与产物渲染、
+不在 `_QMT_HASH_SCOPE` 契约哈希面内，改它不影响 `qmt_wrapper_hash`）。
+
+**八条规则**（依据：DEAL-07 §4.1 五条原始定义 + QD-2026-0010 gate_rule 候选落地；
+字段集/差异事实来自 `knowledge/registry.md` 与 QD-2026-0008/0009/0010 端测证据）：
+
+| 规则 ID | 触发形态 | 双端差异 | 建议 |
+|---|---|---|---|
+| `QMT-POS-FIELD-UNIMPL` | Attribute 访问命中 POS 7 缺口字段（`today_long_amount`/`today_short_amount`/`business_type`/`contract_multiplier`/`long_pnl`/`long_cost_basis`/`delivery_date`，唯一来源 registry） | 本地 `Position` 6 字段契约未实现（PTrade 有；2026-10-22 普查零消费，已裁接受缺口） | 改用替代口径（如 `amount`/`enable_amount` 派生）并登记差异 |
+| `QMT-FEE-COMMISSION-TRI` | 调用 `set_commission`（本地签名 `**kwargs`，消费 `commission_ratio`/`min_commission`/`type`） | QMT 回测面板佣金**三项分设**（买入/平昨/平今），本地单一费率（FEE-02） | 三项同值映射；转换后在 QMT 面板逐一核对 |
+| `QMT-FEE-STAMP-BUY` | `set_commission` 传 stamp 相关关键字（涉印花语义） | 本地印花仅卖出计提；QMT 面板买卖双字段（FEE-03） | QMT 侧买入印花税必须置 0 |
+| `QMT-FEE-TRANSFER-ALIAS` | 源码标识符/字典键出现 `transfer_fee`/`transfer_fee_rate`/`m_dTransferFee` | 本地过户费双向计提；QMT 回测恒 0、面板无专名（FEE-04） | 对照前并入手续费比例口径并写明 |
+| `QMT-DAT-NULL-TRIPLE` | ① `is None` 用于字符串型字段（`delivery_date`/`m_strOpenDate`/`m_strExpireDate`）② `get_position(...)` 直接作布尔判定 | ① QMT 空串≠None（QD-0008/POS-17）② 未命中返回零视图恒真（QD-0009） | ① 判空用 `not v` ② 判命中用 `.amount > 0`、判空仓 `== 0` |
+| `QMT-CODE-FORM-MASK` | ① 字符串字面量 `NNNNNN.SS` ② 同文件混用 `.SH`/`.SZ` 后缀码与裸码（裸码为启发式：6 位数字非 2 开头） | 码形态 `.SS`(本地)↔`.SH`(QMT)，QMT 持仓键精确匹配、形态不符静默 miss（QD-0009） | 统一 universe 码形态，勿硬编码跨端字面量 |
+| `QMT-FEE-STAMP-PERIOD` | **仅当** `backtest_range` 入参非 None 且区间含 2023-08-28（**静态不可判定，None 恒不命中**） | 本地 `_stamp_tax_rate` 分期间封顶 0.0005 vs QMT 回测单一面板费率（QD-2026-0010 端测定谳） | 分段回测拼接，或对照报告显式声明期间差异 |
+| `QMT-LIMIT-BOARD-FIDELITY` | 既调用 `check_limit` 又有下单族调用（`order`/`order_value`/`order_target`/`order_target_value`/`order_at_price`） | 本地涨跌停封板拒单（`limit_up_blocked`）vs QMT 回测不拦封板（QMCH-02 涨跌停两侧端测） | QMT 侧逐笔核对成交并显式登记分歧 |
+
+**已知局限**（docstring 同款）：POS 字段按字段名匹配（人工确认宿主类型）；truthiness
+只覆盖布尔叶子（先赋值后判真的数据流形态不追、不误报）；裸码启发式对时间字面量可能多报
+（WARN 级人工甄别）。
+
+**测试**：`tests/test_qmt_behavior_warns.py`——8 规则各 1 命中 + 1 不命中成对（防恒绿）
++ 表结构/输出形态元契约。

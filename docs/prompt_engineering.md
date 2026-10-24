@@ -611,3 +611,21 @@ raw[code]      → DataFrame(8739 行 × 3 列)，index = 日期（日频全历�
 - `raw[code]` 行数为**日频全历史**（实测 8739/只），远超「PIT 全报告期」契约（~40 期）→ 超量 ~200×；
 - 修复：`to_dict('records')` 取代 `iterrows`（4×）+ `dropna(how='all')` 删全 NaN 行（32.0M → 9.7M）；
 - `.loc[code]` 对上述结构**必然失败**（index 首层是日期）→ batch 仅为加速尝试，失败即回落 `raw[code]`。
+
+## QMT 行为差异 WARN（八条规则，2026-10-24）
+
+给智能体的生成约束（检测层入口
+`quantstudio.strategy_compiler.portability_rules.scan_behavior_warns(tree, source, backtest_range=None)`，
+**纯 WARN 零 BLOCK**，不构成转换门禁；规则表 `BEHAVIOR_WARN_RULES`，声明面
+`source_import_qmt.QMT_BEHAVIOR_DIFF_DECLS`）。生成策略时**主动规避**以下形态，
+可在转换 QMT 前消除双端行为差异：
+
+1. **勿消费 POS 7 缺口字段**：`position.today_long_amount / today_short_amount / business_type / contract_multiplier / long_pnl / long_cost_basis / delivery_date`（本地 Position 未实现，PTrade 有——`QMT-POS-FIELD-UNIMPL`）；
+2. **费用配置**：`set_commission(...)` 触发三项同值映射提示（`QMT-FEE-COMMISSION-TRI`）；勿传 stamp 相关关键字——本地印花仅卖出、QMT 侧买入印花税必须置 0（`QMT-FEE-STAMP-BUY`）；勿写 `transfer_fee`/`transfer_fee_rate`/`m_dTransferFee` 标识符或字典键——QMT 回测不收过户费（`QMT-FEE-TRANSFER-ALIAS`）；
+3. **判空形态**：字符串型字段（`delivery_date`/`m_strOpenDate`/`m_strExpireDate`）判空用 `not v`，禁 `is None`（空串≠None）；持仓判命中用 `.amount > 0`、判空仓用 `.amount == 0`，禁 `if get_position(x):` truthiness（零视图恒真）（`QMT-DAT-NULL-TRIPLE`）；
+4. **码形态**：勿硬编码 `NNNNNN.SS` 字面量；同文件勿混用 `.SH`/`.SZ` 后缀码与裸码——统一从 universe/动态池取码（`QMT-CODE-FORM-MASK`）；
+5. **印花期间**：回测区间跨 2023-08-28 时由调用方传 `backtest_range` 触发提示（静态不可判定，None 恒不命中）——本地分期间封顶 0.0005 vs QMT 单一费率（`QMT-FEE-STAMP-PERIOD`）；
+6. **涨跌停语义**：依赖 `check_limit` 拒单 + 下单的策略，QMT 侧不拦封板、双端成交会分歧（`QMT-LIMIT-BOARD-FIDELITY`）——转换后须逐笔核对。
+
+以上差异事实来源：DEAL-07 §4.1、`knowledge/registry.md`（POS 7 缺口/FEE-02/03/04/QMCH-02）、
+QD-2026-0008/0009/0010 端测证据。测试：`tests/test_qmt_behavior_warns.py`（8 规则×命中/不命中成对）。

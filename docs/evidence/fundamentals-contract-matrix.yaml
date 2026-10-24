@@ -11,7 +11,7 @@ meta:
       pass6=79 cost_missing=0 cur_missing=0（RD-4 定量证据）；v8.7b 九次复验收敛：fscore_pass 35、roa_removed
       15、total_share 0——RD-5 定量证据
   qmt_wrapper_hash: 0c842fddbba9
-  qmt_last_reverified: '2026-10-21'
+  qmt_last_reverified: '2026-10-24'
   qmt_rows:
   - id: qmt-pa-01
     table: profit_ability

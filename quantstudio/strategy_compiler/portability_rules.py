@@ -525,3 +525,293 @@ def validate_qmt_portability(
 
     ok = not any(v.severity == "BLOCK" for v in violations)
     return ok, violations, warnings
+
+
+# ============================================================================
+# QMT 行为差异 WARN 层（纯 WARN · 零 BLOCK）—— scan_behavior_warns + 表驱动
+#   依据：docs/deal07-trade-surface-design.md §4.1（五条 WARN 原始定义，2026-10-22
+#         总调度令）＋ QD-2026-0010 feedback.gate_rule 候选（跨切换日 WARN）＋
+#         QD-2026-0008（空串≠None / 码形态 SH↔SS）、QD-2026-0009（零视图恒真 /
+#         硬编码 .SS 静默 miss）＋ registry：POS 7 缺口（POS-04/05/10/11/13/15/17，
+#         已裁接受）、FEE-02（佣金三项分设）、FEE-03（印花买卖双字段、本地仅卖出）、
+#         FEE-04（过户费无专名、QMT 回测恒 0）、QMCH-02（QMT 回测不拦封板）。
+#   定位：独立于 validate_qmt_portability 的 BLOCK 面——本层**只提示双端行为差异，
+#   绝不阻断**任何转换/校验；呈现方式由调用方（转换器 / CI linter / 人工复核）决定。
+#   位置纪律：追加于 NORMALIZE_RULES 之后（文件尾）；DENY_BLOCK / LOCAL_ONLY_
+#   PASSTHROUGH_BLOCK / PTRADE_REGISTERED_WARN / NORMALIZE_RULES 既有内容零改动
+#  （冻结基线 HEAD=4ddaf55，portability_rules.py 527 行）。
+#   先例：QD-2026-0001（fix_layer=portability_rule——落点为契约执行门，非 wrapper 模板）。
+# ============================================================================
+
+# POS 7 缺口字段（registry POS-04/05/10/11/13/15/17：PTrade 有、本地 Position 6 字段
+# 契约 ptrade_api.py:174-175 无；2026-10-22 消费方普查全仓零命中、已裁接受缺口）。
+# 字段集唯一来源＝knowledge/registry.md，禁止凭猜测增删。
+QMT_POS_GAP_FIELDS: frozenset[str] = frozenset({
+    "today_long_amount",     # POS-04 今买量（QMT 侧可派生 m_nVolume−m_nYesterdayVolume）
+    "today_short_amount",    # POS-05 今卖量
+    "business_type",         # POS-10 业务类型（get_business_type() 为 API，非本字段，不在此列）
+    "contract_multiplier",   # POS-11 合约乘数
+    "long_pnl",              # POS-13 多头浮盈
+    "long_cost_basis",       # POS-15 多头成本
+    "delivery_date",         # POS-17 交割日（QMT 侧空串而非 None）
+})
+
+# 字符串型字段（无值时返回**空串而非 None**——QD-0008 ②条实测 + POS-17）：
+# 判空禁用 is None，须用 not v。
+QMT_STRING_VALUED_FIELDS: frozenset[str] = frozenset({
+    "delivery_date",         # POS-17：m_strExpireDate=''（现货无到期日）
+    "m_strOpenDate",         # QD-0008：实测 ''（现货无开仓日）
+    "m_strExpireDate",       # QD-0008：实测 ''
+})
+
+# 过户费字段/别名（FEE-04：本地有公式双向计提；QMT 回测恒 0/未实现、面板无专名）
+QMT_TRANSFER_FEE_ALIASES: frozenset[str] = frozenset({
+    "transfer_fee", "transfer_fee_rate", "m_dTransferFee",
+})
+
+# 下单族 API（本地 order 系公开面，PTRADE_REGISTERED_WARN 登记子集；规则 8 判据之一）
+_QMT_ORDER_FAMILY: frozenset[str] = frozenset({
+    "order", "order_value", "order_target", "order_target_value", "order_at_price",
+})
+
+# 印花税分期间切换日（QD-2026-0010：本地 _stamp_tax_rate 封顶 0.0005 vs QMT 回测单一费率）
+_QMT_STAMP_SWITCH_DATE = "2023-08-28"
+
+# 行为差异 WARN 规则表：(rule_id, 触发摘要, 建议) —— 与 scan_behavior_warns 实现同步
+BEHAVIOR_WARN_RULES: list[tuple[str, str, str]] = [
+    ("QMT-POS-FIELD-UNIMPL",
+     "Attribute 访问命中 POS 7 缺口字段（today_long_amount 等）",
+     "本地 Position 未实现该字段；改用替代口径并登记已知差异"),
+    ("QMT-FEE-COMMISSION-TRI",
+     "调用 set_commission（QMT 面板佣金三项分设）",
+     "本地单一 commission_ratio 须三项同值映射；QMT 面板逐一核对"),
+    ("QMT-FEE-STAMP-BUY",
+     "set_commission 传 stamp 相关关键字（涉印花语义）",
+     "本地印花仅卖出；QMT 侧买入印花税必须置 0"),
+    ("QMT-FEE-TRANSFER-ALIAS",
+     "源码出现过户费字段/别名（transfer_fee 系）",
+     "QMT 回测不收过户费；对照前并入手续费口径并写明"),
+    ("QMT-DAT-NULL-TRIPLE",
+     "判空形态错误：字符串字段用 is None / 持仓对象用 truthiness",
+     "字符串字段判空用 not v；持仓判命中用 .amount>0 / ==0"),
+    ("QMT-CODE-FORM-MASK",
+     "硬编码 .SS 码形态或同文件混用 .SH/.SZ/裸码",
+     "统一 universe 码形态；.SS 在 QMT 端静默 miss"),
+    ("QMT-FEE-STAMP-PERIOD",
+     "回测区间跨 2023-08-28 印花切换日（须调用方传入区间）",
+     "本地分期间封顶 0.0005 vs QMT 单一费率；分段回测或声明差异"),
+    ("QMT-LIMIT-BOARD-FIDELITY",
+     "既调用 check_limit 又有下单分支",
+     "本地涨跌停拒单 vs QMT 回测不拦封板；双端成交会分歧"),
+]
+
+
+def _stamp_date_key(date_str: str) -> str:
+    """日期归一为可比较的 YYYYMMDD 键（兼容 '2023-08-28' / '20230828' 两种形态）。"""
+    return str(date_str).replace("-", "").replace("/", "")
+
+
+def _bool_operands(expr: ast.expr) -> list[ast.expr]:
+    """递归展开布尔上下文叶子操作数（只穿透 BoolOp / not，不穿透属性/比较/调用包裹）。
+
+    用于精确判定 truthiness：`get_position(x)` 作为布尔叶子（恒真零视图）才命中；
+    `get_position(x).amount > 0` 这类正确写法的叶子是 Compare，不命中。
+    """
+    if isinstance(expr, ast.BoolOp):
+        out: list[ast.expr] = []
+        for v in expr.values:
+            out.extend(_bool_operands(v))
+        return out
+    if isinstance(expr, ast.UnaryOp) and isinstance(expr.op, ast.Not):
+        return _bool_operands(expr.operand)
+    return [expr]
+
+
+def scan_behavior_warns(
+    tree: ast.AST,
+    source: str,
+    backtest_range: tuple[str, str] | None = None,
+) -> list[dict]:
+    """扫描策略源码中的 QMT↔本地行为差异（**纯 WARN，零 BLOCK**）。
+
+    参数：
+      tree：已解析的 AST（调用方 ast.parse 产物）。
+      source：源码原文（当前规则族全部基于 AST 判定；该参数保留供未来
+        文本级规则扩展与诊断用途，签名契约固定不变）。
+      backtest_range：(start, end) 回测区间，'YYYY-MM-DD' 或 'YYYYMMDD'。
+        **仅 QMT-FEE-STAMP-PERIOD 依赖**——是否跨 2023-08-28 印花切换日
+        **静态不可判定，须调用方传入区间**；None 时该规则恒不命中（如实
+        静默，不猜测）。
+
+    返回：``[{"rule_id": str, "line": int, "message": str, "grade": "WARN"}]``
+    （按 line 升序、同 line 按 rule_id 排序；line=0 表示文件/区间级提示）。
+    每条 message 固定含「双端差异」＋「建议」两句。
+
+    判定形态与已知局限（防误读）：
+      - QMT-POS-FIELD-UNIMPL 按 Attribute 字段名匹配（不区分宿主对象类型），
+        命中后由人工确认是否真为 Position 消费；
+      - QMT-DAT-NULL-TRIPLE 的 truthiness 判定覆盖 if/while/assert/三元/布尔
+        链中**直接作为布尔叶子**的 get_position(...) 调用；先赋值后判真
+        （p = get_position(x); if p:）属数据流形态，静态层不追、不误报；
+      - QMT-CODE-FORM-MASK 的裸码判定为启发式（6 位数字且非 2 开头，规避
+        8 位日期；时间字面量与个股码同形时可能多报，WARN 级人工甄别）；
+      - 本层不产生任何 BLOCK——与 validate_qmt_portability 的 BLOCK 面正交。
+    """
+    out: list[dict] = []
+    seen: set[tuple[str, int]] = set()
+
+    def _warn(rule_id: str, line: int, message: str) -> None:
+        key = (rule_id, int(line))
+        if key in seen:
+            return
+        seen.add(key)
+        out.append({"rule_id": rule_id, "line": int(line),
+                    "message": message, "grade": "WARN"})
+
+    # 预收集：Call 的 func 节点集合（区分方法调用与纯字段访问，防规则 1 误报）
+    call_func_ids: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            call_func_ids.add(id(node.func))
+
+    # 预收集：布尔判定上下文（if/while/assert/三元），规则 5b 用
+    bool_tests: list[ast.expr] = []
+    for node in ast.walk(tree):
+        for attr in ("test",):
+            t = getattr(node, attr, None)
+            if isinstance(t, ast.expr) and isinstance(
+                    node, (ast.If, ast.While, ast.IfExp, ast.Assert)):
+                bool_tests.append(t)
+
+    suffixed_lines: list[int] = []          # .SH/.SZ/.SS 后缀码字面量行号
+    bare_lines: list[int] = []              # 疑似裸码字面量行号
+    has_check_limit = False
+    first_order_line: int | None = None
+
+    for node in ast.walk(tree):
+        # ---- 规则 1：POS 7 缺口字段 Attribute 访问 ----
+        if isinstance(node, ast.Attribute) and id(node) not in call_func_ids \
+                and node.attr in QMT_POS_GAP_FIELDS:
+            _warn("QMT-POS-FIELD-UNIMPL", node.lineno,
+                  "双端差异：字段 %r 本地 Position 未实现（PTrade 有、QMT 侧可派生，"
+                  "registry POS 7 缺口·已裁接受）。建议：改用替代口径"
+                  "（如 amount/enable_amount 派生）并在双端对照报告登记该差异。"
+                  % node.attr)
+
+        # ---- 规则 4：过户费字段/别名（Name/Attribute/keyword/字典键字符串）----
+        if isinstance(node, ast.Name) and node.id in QMT_TRANSFER_FEE_ALIASES:
+            _warn("QMT-FEE-TRANSFER-ALIAS", node.lineno,
+                  "双端差异：本地过户费双向计提（标识符 %s），QMT 回测不收过户费"
+                  "且面板无专名（FEE-04 端测恒 0）。建议：对照前把过户费并入"
+                  "手续费比例口径并在文档写明，勿按本地公式对账。" % node.id)
+        elif isinstance(node, ast.Attribute) and node.attr in QMT_TRANSFER_FEE_ALIASES:
+            _warn("QMT-FEE-TRANSFER-ALIAS", node.lineno,
+                  "双端差异：本地过户费双向计提（字段 %s），QMT 回测不收过户费"
+                  "且面板无专名（FEE-04 端测恒 0）。建议：对照前把过户费并入"
+                  "手续费比例口径并在文档写明，勿按本地公式对账。" % node.attr)
+        elif isinstance(node, ast.keyword) and node.arg in QMT_TRANSFER_FEE_ALIASES:
+            _warn("QMT-FEE-TRANSFER-ALIAS", node.lineno,
+                  "双端差异：本地过户费双向计提（关键字 %s），QMT 回测不收过户费"
+                  "且面板无专名（FEE-04 端测恒 0）。建议：对照前把过户费并入"
+                  "手续费比例口径并在文档写明，勿按本地公式对账。" % node.arg)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str) \
+                and node.value in QMT_TRANSFER_FEE_ALIASES:
+            _warn("QMT-FEE-TRANSFER-ALIAS", node.lineno,
+                  "双端差异：本地过户费双向计提（字典键 %r），QMT 回测不收过户费"
+                  "且面板无专名（FEE-04 端测恒 0）。建议：对照前把过户费并入"
+                  "手续费比例口径并在文档写明，勿按本地公式对账。" % node.value)
+
+        # ---- 规则 2/3：set_commission 调用（佣金三项 / 买入印花）----
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id == "set_commission":
+            _warn("QMT-FEE-COMMISSION-TRI", node.lineno,
+                  "双端差异：QMT 回测面板佣金三项分设（买入/平昨/平今），本地为"
+                  "单一 commission_ratio（FEE-02）。建议：转换/对照时三项同值映射，"
+                  "并在 QMT 面板逐一核对，防把结构差异误读为费率差异。")
+            stamp_kws = [kw.arg for kw in node.keywords
+                         if kw.arg and "stamp" in kw.arg.lower()]
+            if stamp_kws:
+                _warn("QMT-FEE-STAMP-BUY", node.lineno,
+                      "双端差异：本地印花税仅卖出计提（set_commission 关键字 %s 涉"
+                      "印花语义），QMT 面板为买卖双字段（FEE-03）。建议：QMT 侧"
+                      "买入印花税必须置 0，仅卖出按本地费率映射。"
+                      % "/".join(stamp_kws))
+
+        # ---- 规则 5a：字符串型字段 is None 判空 ----
+        if isinstance(node, ast.Compare) \
+                and any(isinstance(op, (ast.Is, ast.IsNot)) for op in node.ops):
+            operands = [node.left] + list(node.comparators)
+            for operand in operands:
+                if isinstance(operand, ast.Attribute) \
+                        and operand.attr in QMT_STRING_VALUED_FIELDS:
+                    _warn("QMT-DAT-NULL-TRIPLE", node.lineno,
+                          "双端差异：字段 %r 在 QMT 侧无值时返回**空串而非 None**"
+                          "（QD-0008 实测 / POS-17）。建议：判空改用 not v——"
+                          "is None 对空串恒 False，会把无值误判为有值。"
+                          % operand.attr)
+                    break
+
+        # ---- 规则 8 素材：check_limit 与下单族调用 ----
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            fname = node.func.id
+            if fname == "check_limit":
+                has_check_limit = True
+            elif fname in _QMT_ORDER_FAMILY and first_order_line is None:
+                first_order_line = node.lineno
+
+        # ---- 规则 6：码形态字面量 ----
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            val = node.value
+            if _re.fullmatch(r"\d{6}\.SS", val):
+                _warn("QMT-CODE-FORM-MASK", node.lineno,
+                      "双端差异：硬编码 %r 为本地 .SS 形态，QMT 持仓键为 .SH/.SZ，"
+                      "跨端精确匹配会静默 miss（QD-2026-0009 端测）。建议：改用 "
+                      "universe/动态池码形态，勿硬编码跨端字面量。" % val)
+                suffixed_lines.append(node.lineno)
+            elif _re.fullmatch(r"\d{6}\.(SH|SZ)", val):
+                suffixed_lines.append(node.lineno)
+            elif _re.fullmatch(r"[0135689]\d{5}", val):
+                # 启发式裸码：6 位数字、非 2 开头（规避 8 位日期的 6 位残片与
+                # 2 开头日期串）；时间字面量与码同形时可能多报，WARN 级人工甄别
+                bare_lines.append(node.lineno)
+
+    # ---- 规则 5b：布尔叶子上的 get_position(...) truthiness（零视图恒真）----
+    for test in bool_tests:
+        for leaf in _bool_operands(test):
+            if isinstance(leaf, ast.Call) and isinstance(leaf.func, ast.Name) \
+                    and leaf.func.id == "get_position":
+                _warn("QMT-DAT-NULL-TRIPLE", leaf.lineno,
+                      "双端差异：get_position 未命中返回零视图对象（恒真），"
+                      "truthiness 判命中恒成立（QD-2026-0009 端测）。建议：判命中"
+                      "改用 .amount > 0，判空仓改用 .amount == 0。")
+
+    # ---- 规则 6b：同文件混用后缀码与裸码（一次性汇总）----
+    if suffixed_lines and bare_lines:
+        _warn("QMT-CODE-FORM-MASK", min(bare_lines),
+              "双端差异：同文件混用后缀码（%d 处 .SH/.SZ/.SS）与疑似裸码"
+              "（%d 处）——QMT 持仓键为精确匹配语义，形态不一致会静默 miss"
+              "（QD-2026-0009）。建议：统一码形态（转换器仅归一字面量、不做"
+              "成员语义归一），人工核对混用清单。" % (len(suffixed_lines),
+                                                      len(bare_lines)))
+
+    # ---- 规则 8：check_limit × 下单分支（本地拒单 vs QMT 不拦封板）----
+    if has_check_limit and first_order_line is not None:
+        _warn("QMT-LIMIT-BOARD-FIDELITY", first_order_line,
+              "双端差异：本地涨跌停封板拒单（limit_up_blocked），QMT 回测不拦"
+              "封板、涨跌停两侧均可成交（QMCH-02 端测定谳）。建议：依赖 "
+              "check_limit 拒单语义的策略在 QMT 侧逐笔核对成交，并显式登记该分歧。")
+
+    # ---- 规则 7：回测区间跨 2023-08-28 印花切换日（须调用方传入区间）----
+    if backtest_range is not None:
+        start_key = _stamp_date_key(backtest_range[0])
+        end_key = _stamp_date_key(backtest_range[1])
+        switch_key = _stamp_date_key(_QMT_STAMP_SWITCH_DATE)
+        if start_key <= switch_key <= end_key:
+            _warn("QMT-FEE-STAMP-PERIOD", 0,
+                  "双端差异：回测区间 %s~%s 跨 2023-08-28 印花切换日——本地 "
+                  "_stamp_tax_rate 分期间封顶 0.0005，QMT 回测为单一面板费率"
+                  "（QD-2026-0010 端测定谳）。建议：分段回测拼接，或在对照报告"
+                  "显式声明该期间差异。" % (backtest_range[0], backtest_range[1]))
+
+    out.sort(key=lambda w: (w["line"], w["rule_id"]))
+    return out

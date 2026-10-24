@@ -367,3 +367,13 @@
 | 2026-10-23 | **退回演练留证**：A 缺留痕（知识反哺=0/本轮沉淀=0）判②审不完整退回；B 含留痕（2/1）通过；三格式逐项各命中 | 同上 §4 | 完成 |
 | 2026-10-23 | **偏差申报**：笔① diff 实测 3 插入/1 删除（判据 2/1），多出 1 行为 Markdown 引用块分隔空行；实质仍＝1 处改写＋1 行 changelog | 同上 §2 | 已披露 |
 | 2026-10-23 | **未完成（如实）**：①步 3 副本跟随待主仓推送后同步门带 ②段②全局层须用户另批（完整六步） | 同上 §6 | 排队 |
+
+## DEAL-07 ③实施验收（2026-10-24）— 零新增失败，但回归全绿被既有缺陷阻断
+
+- **本轮改动**：`portability_rules.py` +290 行（8 条 WARN 规则＋`scan_behavior_warns`，零 BLOCK）；`source_import_qmt.py` +31 行（1 个模块级常量 `QMT_BEHAVIOR_DIFF_DECLS` ＋ 13 行注释，**渲染内容零改动**）；`tests/test_qmt_behavior_warns.py` 新建（20 用例）；三文档各加一节。
+- **O5 验收**：①diff 范围＝允许清单 6 类 OK（另 4 个清单外文件经内容判据确认属**他线 ptrade_deploy/PD 回拔**改动，非本批越界；`docs/evidence/fundamentals-contract-matrix.{yaml,md}` 为 `--check --reverify` 副作用，仅“最后复证日期”2026-10-21→2026-10-24，**哈希 `0c842fddbba9` 未变**）；②import OK；③静态扫描入口未配置（如实登记）；④签名/8 规则 ID/表长=8 全符，`check_fund_matrix.py --check --reverify` **PASS**；⑤新测试 20 用例收集成功，`231 passed / 5 failed`，**6 策略重转 `ALL 6 PASS (enc=gbk)`**。
+- **命中性清单（6 策略）**：`QMT-CODE-FORM-MASK` **16 处**（CANSLIM 2／tech_etf_mvo 10／vol_regime 2／weekly 1／周频 1）——抽验 8 条**全部为真实 `.SS` 后缀字面量，零误报**（QD-2026-0009 跨端静默 miss 陷阱）；`QMT-FEE-COMMISSION-TRI` 1 处（fall_reversal）；其余 6 规则 **0 命中（如实报告）**。
+- **既有缺陷（非本轮引入）**：`tests/test_qmt_stock_info_date_norm.py` **5 failed**，错误 `NameError: _qs_progress_start is not defined`（wrapper 渲染产物 `<string>:150`）。**A/B 铁证**：将 `source_import_qmt.py` 临时还原到 HEAD（无本轮改动）后重跑同文件 ⇒ 仍 `5 failed, 19 passed`（7s）⇒ **与本轮 DEAL-07 改动无关**；该符号在工作区与 HEAD 同为 9 处（定义在 `:290`），疑 D-24 进度审计（`e269fc8`）注入面缺定义。
+- **状态**：本轮改动零新增失败；**回归全绿因既有缺陷未达成** ⇒ 待裁定：（A）登记为独立 Issue，本轮以零新增失败＋A/B 铁证通过；（B）先修既有缺陷再复跑全绿（按「框架问题立即解决」应走 B，需新 Plan）。
+- **回退点**：`C:/Users/Administrator/AppData/Local/Temp/sik_backup_065355.py`（A/B 用备份，已恢复原状）。
+- **时间**：2026-10-24
