@@ -7,6 +7,7 @@
 """
 import os
 import threading
+import time
 
 import pytest
 
@@ -48,23 +49,34 @@ def test_a1_main_path_failure_ctx_recorded():
 
 
 def test_a2_peer_identified_same_table_same_range():
-    """A2：另一线程同表、时段覆盖 ⇒ 冲突时被指认。"""
+    """A2：另一线程同表、时段覆盖 ⇒ 冲突时被指认。
+
+    A1b 修正（2026-10-23）：判活改为「同进程按线程存活」后，**已结束线程**的活跃条目会被
+    剪除（正确行为）。故本用例改为「peer 线程**存活期间**做冲突取证」——这才是 A2 的真实
+    语义（并发写者被指认），而非「线程已死后仍被指认」。
+    """
+    _hold = threading.Event()
+
     def _peer():
         W.price_write_enter("etf_minutes", "qfq_reanchor", "ev1",
                             t_min=1789000000000, t_max=1789100000000)
+        _hold.wait(timeout=10)          # 保持线程存活，模拟在程写者
 
     t = threading.Thread(target=_peer)
     t.start()
-    t.join()
-
-    W.note_write_context(table="etf_minutes", batch_id="b2", path="_write_locked", serial=True)
-    W.record_write_failure(_conflict_exc())
-    ctx = W.last_write_failure()
-    assert ctx["peers_n"] == 1
-    peer = ctx["peers"][0]
-    assert peer["path"] == "qfq_reanchor"
-    assert peer["pid"] == os.getpid()
-    assert "cross_process_candidate" not in ctx
+    time.sleep(0.1)
+    try:
+        W.note_write_context(table="etf_minutes", batch_id="b2", path="_write_locked", serial=True)
+        W.record_write_failure(_conflict_exc())
+        ctx = W.last_write_failure()
+        assert ctx["peers_n"] == 1
+        peer = ctx["peers"][0]
+        assert peer["path"] == "qfq_reanchor"
+        assert peer["pid"] == os.getpid()
+        assert "cross_process_candidate" not in ctx
+    finally:
+        _hold.set()
+        t.join(timeout=5)
 
 
 def test_a2_peer_outside_range_not_identified():
@@ -89,19 +101,28 @@ def test_a1_registry_ttl_cleanup():
 
 
 def test_a1_engine_peer_registration_visible():
-    """A1：引擎登记（另一线程、无 df/时段）亦可被指认为同表写者。"""
+    """A1：引擎登记（另一线程、无 df/时段）亦可被指认为同表写者。
+
+    A1b 修正（2026-10-23）：同 a2 用例——peer 线程必须**存活**才在册（判活剪除死线程条目）。
+    """
+    _hold = threading.Event()
+
     def _peer():
         W.price_write_enter("etf_minutes", "qfq_reanchor", "ev3")
+        _hold.wait(timeout=10)
 
     t = threading.Thread(target=_peer)
     t.start()
-    t.join()
-
-    W.note_write_context(table="etf_minutes", batch_id="b4", path="_write_passthrough", serial=True)
-    W.record_write_failure(_conflict_exc())
-    ctx = W.last_write_failure()
-    assert ctx["peers_n"] == 1
-    assert ctx["peers"][0]["path"] == "qfq_reanchor"
+    time.sleep(0.1)
+    try:
+        W.note_write_context(table="etf_minutes", batch_id="b4", path="_write_passthrough", serial=True)
+        W.record_write_failure(_conflict_exc())
+        ctx = W.last_write_failure()
+        assert ctx["peers_n"] == 1
+        assert ctx["peers"][0]["path"] == "qfq_reanchor"
+    finally:
+        _hold.set()
+        t.join(timeout=5)
 
 
 # ── A3：锁覆盖断言（域限定 _SERIAL_WRITE_TABLES；fail-fast 可关）─────────────

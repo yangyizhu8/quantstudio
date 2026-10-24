@@ -20,6 +20,25 @@ ResidentCollector — 常驻采集进程（Layer 1 模块⑤，Phase 2 核心）
 from __future__ import annotations
 
 from quantstudio.pipeline.snapshot_lock import locked_connect  # 3A 写锁收口
+
+# B3/B4（六步③·2026-10-23）：写作用域 defer 异常 + 串行表集合。
+# 为什么用 try/except 兜底：daemon 与 writers 的导入链历史上曾出现过延迟导入需求
+# （GUI/CLI 复用路径），兜底定义保证即使导入失败也不会让 daemon 起不来；真实路径下
+# 必定走 writers 的正式定义（同一异常类，except 才能命中）。
+try:  # pragma: no cover - 正常路径恒成功
+    from quantstudio.pipeline.writers import (
+        WriteScopeDeferred as _WriteScopeDeferred,
+        _SERIAL_WRITE_TABLES as _SERIAL_WRITE_TABLES,
+        price_scope_mark_deferred as _price_scope_mark_deferred)
+except Exception:  # pragma: no cover
+    class _WriteScopeDeferred(Exception):
+        """兜底：让行超时 ⇒ defer 本批。"""
+        waited_s = 0.0
+
+    _SERIAL_WRITE_TABLES = frozenset({"stock_minutes", "etf_minutes"})
+
+    def _price_scope_mark_deferred():
+        return None
 from .task_resume import (  # 停止语义 v3.1：协作式停止 + 续传游标
     UNIT_STOCK,
     UNIT_TRADE_DATE,
@@ -663,6 +682,9 @@ class ResidentCollector:
                 logger.warning(f"[task={name}] 源={source} 执行返回失败，尝试下一个候选 {chain[idx+1:]}")
             except TaskCancelled:
                 # 用户停止：不得降级为「换源重试」（那等于把已停止的任务重新拉一遍）
+                raise
+            except _WriteScopeDeferred:
+                # B4（六步③·2026-10-23）：让行超时 ⇒ 本批 defer（不是源故障，禁止换源重试）
                 raise
             except Exception as e:
                 last_err = e
@@ -2460,6 +2482,7 @@ class ResidentCollector:
         task_ok = True
         audit_ok = True
         audit_run = False
+        task_deferred = 0          # B4（2026-10-23）：让行超时 ⇒ defer 的批次计数
         try:
             for task in tasks:
                 if task_name and task["name"] != task_name:
@@ -2468,7 +2491,21 @@ class ResidentCollector:
                     logger.info(f"[Daemon] skip disabled task: {task['name']}")
                     continue
                 task_found = True
-                ok = self.execute_task(task, mode=mode, run_quality_audit=False)
+                try:
+                    ok = self.execute_task(task, mode=mode, run_quality_audit=False)
+                except _WriteScopeDeferred as _dfr:
+                    # B4（六步③·2026-10-23）：引擎在程写作用域未在 WAIT_S 内释放 ⇒
+                    # **放弃本批（defer）**：不判失败、不推进水位，下轮水位内自然重拉。
+                    # 为什么不能降级 A6 重试：引擎单元实测可达 63min，重试 3 次必耗尽，
+                    # 等于 10-23 第 18/19 次失败原样重演（②审实质条件）。
+                    task_deferred += 1
+                    _price_scope_mark_deferred()
+                    logger.warning(
+                        "[Daemon] task=%s deferred（写作用域让行超时 %.0fs，在程 %s 个）"
+                        "——本批放弃，水位不推进，下轮重拉",
+                        task.get("name"), getattr(_dfr, "waited_s", 0.0),
+                        getattr(_dfr, "remaining", "?"))
+                    continue
                 if not ok:
                     task_ok = False
             if task_name and not task_found:
@@ -2481,6 +2518,7 @@ class ResidentCollector:
         return {
             "task_found": task_found,
             "task_ok": task_ok,
+            "task_deferred": task_deferred,
             "audit_run": audit_run,
             "audit_ok": audit_ok,
         }
@@ -3426,6 +3464,42 @@ class ResidentCollector:
         if _probe is not None:
             _probe["invariant"] = _probe.get("invariant", 0.0) + (_tsp.perf_counter() - _t_seg)
             _t_seg = _tsp.perf_counter()
+        # —— B3/B4（六步③·2026-10-23）：写作用域检测 + 让行/defer ——
+        # 为什么：引擎对 minute 表的分段 front UPDATE（apply_minute_segments /
+        # apply_fresh_minute_staged）与任务 streaming upsert 写**同一行**（不同列），
+        # DuckDB 按 tuple 级 MVCC 判冲突 ⇒ 提交期 write-write conflict（key 恒定为分段
+        # 首根 bar）。锁只能串行「同表写入口」，且引擎段级写未被 A1 登记覆盖（peers=0 实弹）
+        # ⇒ 唯一可靠手段：写前查在程作用域，命中则让行；超时 ⇒ defer 本批（②审条件：
+        # 不降级 A6 重试——引擎单元可达 63min，重试 3 次必耗尽等于旧失败原样重演）。
+        if (isinstance(table, str) and df is not None and len(df) > 0
+                and table in _SERIAL_WRITE_TABLES):
+            try:
+                from quantstudio.pipeline.writers import (
+                    _scope_enabled, price_scope_conflicts, wait_for_scope,
+                    WriteScopeDeferred as _WSD)
+                if _scope_enabled():
+                    _codes = (set(df["code"].astype(str))
+                              if "code" in df.columns else None)
+                    _t_ser = (pd.to_numeric(df["time"], errors="coerce")
+                              if "time" in df.columns else None)
+                    _tmin = (int(_t_ser.min()) if _t_ser is not None
+                             and _t_ser.notna().any() else None)
+                    _tmax = (int(_t_ser.max()) if _t_ser is not None
+                             and _t_ser.notna().any() else None)
+                    if price_scope_conflicts(table, _codes, _tmin, _tmax):
+                        _released, _waited, _rem = wait_for_scope(
+                            table, _codes, _tmin, _tmax)
+                        if not _released:
+                            logger.warning(
+                                "[DuckDBWriter] %s batch=%s 让行超时 %.0fs"
+                                "（在程作用域 %d 个）⇒ defer 本批（不判失败、水位不推进）",
+                                table, batch_id, _waited, len(_rem))
+                            raise _WSD(table=table, batch_id=batch_id,
+                                       waited_s=_waited, remaining=len(_rem))
+            except _WSD:
+                raise                          # defer 必须上抛（不得被吞成普通写失败）
+            except Exception:
+                pass                           # 检测自身失败绝不阻断正常写入
         result = self.writer.write(df, table, batch_id)
         if _probe is not None:
             _probe["sqlwrite"] = _probe.get("sqlwrite", 0.0) + (_tsp.perf_counter() - _t_seg)

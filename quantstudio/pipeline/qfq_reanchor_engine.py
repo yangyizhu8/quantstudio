@@ -112,6 +112,7 @@ from quantstudio.pipeline.qfq_orchestrator_types import FreshCaptureRecord
 # 循环导入已核（2026-10-08）：writers 内部依赖链 _paths / snapshot_lock /
 # eps_backfill / qfq_schema_contracts 均不回导本模块，顶层导入无环。
 from quantstudio.pipeline.writers import (table_write_lock, price_write_enter, price_write_exit,
+                                          price_scope_enter, price_scope_exit,
                                           assert_price_write_locked)
 
 logger = logging.getLogger(__name__)
@@ -2553,6 +2554,15 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
     # A1（六步③·2026-10-22）：引擎侧写者登记（与 writer 同表），供冲突时指认并发写者。
     price_write_enter(_r2_minute_table, "qfq_reanchor", ev_id)
     assert_price_write_locked(_r2_minute_table, "qfq_reanchor")
+    # B5（六步③·2026-10-23）：单元级写作用域——覆盖整个写事务（BEGIN→COMMIT/ROLLBACK），
+    # 含 apply_minute_segments / apply_fresh_minute_staged 的**分段 front UPDATE**。
+    # 为什么：分段 UPDATE 与任务 streaming upsert 写**同一行**（不同列），DuckDB 按 tuple 级
+    # MVCC 判冲突 ⇒ 提交期 write-write conflict；而 A1 登记只在单元入口、段级写未登记，
+    # 冲突时 peers_n=0（10-23 07:34 实弹）⇒ 作用域让任务侧显式可见「该 code 正在被引擎改写」。
+    # 域值 = (minute 表, {code}, 全历史)：单元重锚覆盖该 code 整段历史，保守正确。
+    _scope_id = f"qfq:{asset_type}:{code}:{ev_id}"
+    price_scope_enter(_scope_id, _r2_minute_table, codes=[code],
+                      path="qfq_reanchor")
 
     try:
         # —— canonical freq：事务前统一 canonicalize + 去重（"1m"/"1min" 等别名重复
@@ -2754,6 +2764,7 @@ def apply_reanchor_for_security(conn, *, asset_type: str, code: str,
         # R2 write-integrity 同锁串行：事务已终结（COMMIT/ROLLBACK 均执行完）
         # 后释放价格表写锁（单一释放点，先于 staged 临时表清理——让等待中的
         # writer 写路径尽早恢复）。
+        price_scope_exit(_scope_id)      # B5：先撤作用域（让等待中的任务写尽快可见释放）
         price_write_exit(_r2_minute_table)
         _r2_price_locks.close()
         if staged is not None:

@@ -189,7 +189,12 @@ _REGISTRY_MAX = 200          # 上限（防泄漏）
 
 def price_write_enter(table: str, path: str, batch_id: str = "", df=None,
                       t_min: Optional[int] = None, t_max: Optional[int] = None) -> None:
-    """登记本次价格表写（进入写临界区后调用；失败/结束须 price_write_exit）。"""
+    """登记本次价格表写（进入写临界区后调用；失败/结束须 price_write_exit）。
+
+    A1b（2026-10-23）：条目带 heartbeat（每次访问刷新）+ 存活判活；不再以固定 TTL 剪除**活跃**
+    条目——固定 TTL 会把长事务写者（引擎单元常 >300s，实测可达 63min）当死条目剪掉，
+    导致冲突时 peers_n=0 ⇒ cross_process_candidate 误报（实弹 10-23 07:34 已证）。
+    """
     try:
         if df is not None and "time" in getattr(df, "columns", []):
             try:
@@ -206,6 +211,7 @@ def price_write_enter(table: str, path: str, batch_id: str = "", df=None,
                 "t_min": t_min, "t_max": t_max,
                 "n": int(len(df)) if df is not None else 0,
                 "started": datetime.now().timestamp(), "ended": None,
+                "heartbeat": datetime.now().timestamp(),
             }
             if len(_WRITER_REGISTRY) > _REGISTRY_MAX:
                 _prune_registry_locked()
@@ -225,13 +231,216 @@ def price_write_exit(table: str) -> None:
         pass
 
 
+def _registry_entry_alive(ent: dict) -> bool:
+    """判活：同进程按线程存活；跨进程保守判活（无法安全探活 ⇒ 视为存活）。"""
+    try:
+        if ent.get("pid") != os.getpid():
+            return True
+        tid = ent.get("thread")
+        return any(t.ident == tid for t in threading.enumerate() if t.ident is not None)
+    except Exception:
+        return True
+
+
 def _prune_registry_locked() -> None:
+    """剪除：①死线程的**活跃**条目（A1b 判活，替代固定 TTL）；②超过 TTL 的**已结束**条目。"""
     try:
         now = datetime.now().timestamp()
-        dead = [k for k, v in _WRITER_REGISTRY.items()
-                if v.get("ended") is not None and now - v["ended"] > _REGISTRY_TTL_S]
+        dead = []
+        for k, v in list(_WRITER_REGISTRY.items()):
+            if v.get("ended") is not None:
+                if now - v["ended"] > _REGISTRY_TTL_S:
+                    dead.append(k)
+                continue
+            if not _registry_entry_alive(v):
+                dead.append(k)
         for k in dead:
             _WRITER_REGISTRY.pop(k, None)
+    except Exception:
+        pass
+
+
+# ── B1/B2（六步③·2026-10-23）：写作用域登记 + 判活（A1b）──────────────────
+# 为什么需要「作用域」而不是「锁」：实弹（10-22/23）证伪了「加锁即可互斥」的假设——
+# 引擎在单元事务内对 minute 表做**分段 front 列 UPDATE**（apply_minute_segments /
+# apply_fresh_minute_staged），任务侧在同一批 key 上做 streaming upsert；两者对**同一行**
+# 的不同列写，DuckDB 按 tuple 级 MVCC 判冲突 ⇒ 提交期 write-write conflict（key 恒定为
+# 分段首根 bar：etf 159512@09-11 09:30 / stock 000055@09-07 09:30）。
+# 锁只保证「同表写入口串行」，但**引擎分段写法未登记**（A1 登记只在单元入口），故冲突时
+# peers_n=0、cross_process_candidate=True 误报。正解 = 让「谁在写哪段 key」显式可见（作用域），
+# 并让任务写**让行**（超时则 defer 本批，交下轮水位内自然重拉）——不让两边盲写同一行。
+_SCOPE_REGISTRY: Dict[str, dict] = {}
+_SCOPE_STATS: Dict[str, float] = {"entered": 0, "conflicts": 0, "waits": 0,
+                                  "deferred": 0, "timeouts": 0, "wait_s": 0.0}
+_SCOPE_MAX = 64          # 在程作用域上限（正常仅个位数；防泄漏）
+_SCOPE_POLL_S = 0.5      # 让行轮询间隔
+
+
+def _scope_enabled() -> bool:
+    """作用域开关（QS_PRICE_WRITE_SCOPE=0 逐位回退旧行为）。"""
+    try:
+        return os.environ.get("QS_PRICE_WRITE_SCOPE", "1") != "0"
+    except Exception:
+        return True
+
+
+def _scope_wait_s() -> float:
+    """让行上限（默认 120s；引擎单元实测可达 63min，故超时后必须 defer 而非盲目重试）。"""
+    try:
+        return float(os.environ.get("QS_PRICE_WRITE_SCOPE_WAIT_S", "120"))
+    except Exception:
+        return 120.0
+
+
+def price_scope_enter(scope_id: str, table: str, codes=None,
+                      t_min: Optional[int] = None, t_max: Optional[int] = None,
+                      path: str = "") -> str:
+    """登记写作用域（覆盖**整个写事务/单元**，而非单条语句）。
+
+    codes=None 表示该作用域对全表代码生效（保守）；t_min/t_max 同理。
+    时间域只在**同一张表内**比较（各表 time 口径不同，禁止跨表假设）。
+    """
+    try:
+        with _REGISTRY_LOCK:
+            if len(_SCOPE_REGISTRY) >= _SCOPE_MAX:
+                _prune_scope_locked()
+            _SCOPE_REGISTRY[str(scope_id)] = {
+                "scope_id": str(scope_id), "table": table,
+                "codes": set(map(str, codes)) if codes is not None else None,
+                "t_min": t_min, "t_max": t_max,
+                "pid": os.getpid(), "thread": threading.get_ident(),
+                "path": path, "ts": datetime.now().timestamp(),
+                "heartbeat": datetime.now().timestamp(),
+            }
+            _SCOPE_STATS["entered"] = _SCOPE_STATS.get("entered", 0) + 1
+    except Exception:
+        pass
+    return str(scope_id)
+
+
+def price_scope_exit(scope_id: str) -> None:
+    """释放作用域（单元提交/回滚、任务批结束、异常路径 finally 均须调用）。"""
+    try:
+        with _REGISTRY_LOCK:
+            _SCOPE_REGISTRY.pop(str(scope_id), None)
+    except Exception:
+        pass
+
+
+def _prune_scope_locked() -> None:
+    """判活剪除：同进程条目按线程存活判活；跨进程条目保守保留（无法安全探活）。"""
+    try:
+        me_pid = os.getpid()
+        alive_threads = {t.ident for t in threading.enumerate() if t.ident is not None}
+        dead = []
+        for sid, sc in list(_SCOPE_REGISTRY.items()):
+            if sc.get("pid") != me_pid:
+                continue                      # 跨进程：保留（由 3A 文件锁兜底）
+            if sc.get("thread") not in alive_threads:
+                dead.append(sid)
+        for sid in dead:
+            _SCOPE_REGISTRY.pop(sid, None)
+    except Exception:
+        pass
+
+
+def price_scope_conflicts(table: str, codes=None,
+                          t_min: Optional[int] = None, t_max: Optional[int] = None,
+                          exclude_scope: Optional[str] = None) -> List[dict]:
+    """返回与目标 (table, codes, 时间域) **重叠**的在程作用域。
+
+    重叠判定：同表 且（码集有交集 或 任一方无码约束）且（时间域有交集 或 任一方无时间约束）。
+    """
+    out: List[dict] = []
+    try:
+        if not _scope_enabled():
+            return out
+        my_codes = set(map(str, codes)) if codes is not None else None
+        with _REGISTRY_LOCK:
+            _prune_scope_locked()
+            for sc in list(_SCOPE_REGISTRY.values()):
+                if sc.get("table") != table:
+                    continue
+                if exclude_scope is not None and sc.get("scope_id") == str(exclude_scope):
+                    continue
+                sc_codes = sc.get("codes")
+                if sc_codes is not None and my_codes is not None and not (sc_codes & my_codes):
+                    continue                      # 码集无交集 ⇒ 不重叠
+                sc_lo, sc_hi = sc.get("t_min"), sc.get("t_max")
+                if (sc_lo is not None and sc_hi is not None
+                        and t_min is not None and t_max is not None):
+                    if sc_hi < t_min or t_max < sc_lo:
+                        continue                  # 时间域不相交 ⇒ 不重叠
+                out.append(dict(sc))
+        if out:
+            _SCOPE_STATS["conflicts"] = _SCOPE_STATS.get("conflicts", 0) + len(out)
+    except Exception:
+        pass
+    return out
+
+
+def wait_for_scope(table: str, codes=None,
+                   t_min: Optional[int] = None, t_max: Optional[int] = None,
+                   timeout_s: Optional[float] = None,
+                   poll_s: float = _SCOPE_POLL_S,
+                   exclude_scope: Optional[str] = None):
+    """等待重叠作用域释放。返回 (released, waited_s, remaining_conflicts)。
+
+    released=False 且 remaining>0 ⇒ 调用方应 **defer 本批**（不写、不判失败、水位不推进），
+    而不是降级 A6 重试（②审条件：引擎单元可达 63min，重试 3 次必耗尽＝旧失败原样重演）。
+    """
+    _to = _scope_wait_s() if timeout_s is None else float(timeout_s)
+    t0 = datetime.now().timestamp()
+    waited = 0.0
+    while True:
+        remaining = price_scope_conflicts(table, codes, t_min, t_max,
+                                          exclude_scope=exclude_scope)
+        if not remaining:
+            waited = datetime.now().timestamp() - t0
+            if waited > 0:
+                _SCOPE_STATS["waits"] = _SCOPE_STATS.get("waits", 0) + 1
+                _SCOPE_STATS["wait_s"] = _SCOPE_STATS.get("wait_s", 0.0) + waited
+            return True, waited, []
+        waited = datetime.now().timestamp() - t0
+        if waited >= _to:
+            _SCOPE_STATS["timeouts"] = _SCOPE_STATS.get("timeouts", 0) + 1
+            _SCOPE_STATS["wait_s"] = _SCOPE_STATS.get("wait_s", 0.0) + waited
+            return False, waited, remaining
+        import time as _time          # 局部导入：与 _retry_backoff 一致，避免顶部新依赖
+        _time.sleep(poll_s)
+
+
+def price_scope_stats() -> dict:
+    """只读：作用域统计（在程数/冲突/等待/超时/累计等待秒）。"""
+    try:
+        with _REGISTRY_LOCK:
+            _prune_scope_locked()
+            active = len(_SCOPE_REGISTRY)
+        d = {k: v for k, v in _SCOPE_STATS.items()}
+        d["active"] = active
+        return d
+    except Exception:
+        return {}
+
+
+class WriteScopeDeferred(Exception):
+    """本批让行超时 ⇒ 放弃本批（defer）。不判失败、不推进水位，下轮自然重拉。"""
+
+    def __init__(self, table: str = "", batch_id: str = "",
+                 waited_s: float = 0.0, remaining: int = 0):
+        super().__init__(
+            f"写作用域让行超时（table={table} batch={batch_id} "
+            f"waited={waited_s:.0f}s 在程作用域={remaining}）⇒ 本批 defer")
+        self.table = table
+        self.batch_id = batch_id
+        self.waited_s = waited_s
+        self.remaining = remaining
+
+
+def price_scope_mark_deferred() -> None:
+    """计数：本批 defer（供 run_state write_scope.deferred 观测）。"""
+    try:
+        _SCOPE_STATS["deferred"] = _SCOPE_STATS.get("deferred", 0) + 1
     except Exception:
         pass
 
