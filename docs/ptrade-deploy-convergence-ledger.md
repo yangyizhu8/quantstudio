@@ -46,7 +46,7 @@
 | PD-2026-0007 | closed（轮 4，⑤过 2026-10-20「全部A」；**⑥ 已出仓**） | profiler+config+transformer+equiv | 50ebd0d（2026-10-20 出仓；双远程一致 = 50ebd0d54）——**六步①-⑥ 全闭** |
 | PD-2026-0008 | closed（轮 5，⑤过 2026-10-20「裁A」；**⑥ 已出仓**） | gates(P5)+config+deliver+quickmode+gui | ad7c0db + 5649224（2026-10-21 出仓，锚 f1c7ce9；双远程一致 = f1c7ce95）——**六步①-⑥ 全闭** |
 | PD-2026-0009 | closed（轮 6，⑤过 2026-10-20「裁A+PD-0009 ⑤ 批准」；**⑥ 已出仓**） | kernel（preflight 回哺读取） | 214aedf（2026-10-21 出仓，锚 f1c7ce9）——**六步①-⑥ 全闭** |
-| PD-2026-0010 | closed（轮 7，④过待⑤） | kernel（preflight 回哺读取·多候选探测） | 待⑤确认后随批 commit |
+| PD-2026-0010 | closed（轮 7，⑤过 2026-10-24「A」；⑥候统推 #5） | kernel（preflight 回哺读取·多候选探测） | 1083d3b（待统推 #5 出仓；推送后副本同步门不可豁免——触共享层） |
 
 > 回填记录：五条目 commit sha 已于 M8 本地轮回填（aee3e77，2026-10-11；trading 仓条目 fix_target 字段与本表同步落盘）；PD-0006 条目 sha 已于轮 3 回填（38087eb，2026-10-15）；PD-0007 已于轮 4 回填（17c8f0c，2026-10-19）；PD-0008 已于轮 5 回填（ad7c0db + P5 5649224，2026-10-20）。推送后 sha 不变，双推完成即本表口径生效。
 
@@ -135,7 +135,8 @@
   ——三次「1」皆为**新域/新面首次纳入验收面**（GUI·交付面 → 回哺解析面 → 回哺寻址面），非既有域回退。
 - 证据：`docs/evidence/ptrade-deploy-pd0010-evidence.md`；方案：`docs/ptrade-deploy-vaultpath-design.md`
   （②审通过）；沉淀：`knowledge/ptrade-deploy/PD-2026-0010.md`（`kb_hook --strict` 10/10）。
-- **⑤ 待用户确认**（④已过）；⑥随批统推。
+- **⑤ 结论（2026-10-24）**：用户批准「A」——`1083d3b` 随**统推 #5** 出仓；⑥推送后**副本同步门
+  不可豁免**（触共享层 `quantstudio/ptrade_deploy/`，由线调度执行）。
 
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 
