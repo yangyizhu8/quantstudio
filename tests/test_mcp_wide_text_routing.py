@@ -23,7 +23,11 @@ sys.path.insert(0, str(ROOT))
 from quantstudio.pipeline.sources import mcp_adapter as ma
 
 WIDE_TABLES = sorted(ma._WIDE_TEXT_PASSTHROUGH)
-NON_WIDE_PASSTHROUGH = "sw_daily"
+# 缺陷#8（firefly 2026-10-25）：sw_daily/sw_weight 现默认走 export 大表路由，
+# 「非宽文本且路由不变」回归用例改取清单外 passthrough 表。
+NON_WIDE_PASSTHROUGH = next(
+    t for t in sorted(ma._PASSTHROUGH_TABLES)
+    if t not in ma._WIDE_TEXT_PASSTHROUGH and t not in ("sw_daily", "sw_weight"))
 
 
 def _make_adapter(monkeypatch, cfg=None):
@@ -63,10 +67,28 @@ def test_wide_text_config_override_falls_back_to_page(monkeypatch):
 
 
 def test_non_wide_passthrough_still_uses_page(monkeypatch):
-    """非宽文本 passthrough 表路由不变（回归）"""
+    """非宽文本且非缺陷#8清单的 passthrough 表路由不变（回归）"""
     a, calls = _make_adapter(monkeypatch)
     a.fetch_table(NON_WIDE_PASSTHROUGH, "2026-01-01", "2026-01-02", freq="daily")
-    assert calls == ["page"], f"非宽文本表路由变化: {calls}"
+    assert calls == ["page"], f"清单外表路由变化: {calls}"
+
+
+def test_bug8_default_big_tables_route_to_export(monkeypatch):
+    """缺陷#8 正向：默认清单 sw_daily/sw_weight 走 export 通道（时间窗可下推）"""
+    a, calls = _make_adapter(monkeypatch)
+    for table in ("sw_daily", "sw_weight"):
+        calls.clear()
+        raw, meta = a.fetch_table(table, "2026-01-01", "2026-01-31", freq="daily")
+        assert calls == ["export"], f"{table} 未走 export: {calls}"
+        assert meta.get("big_table_export") is True and meta.get("passthrough") is True
+
+
+def test_bug8_config_override_empty_list_falls_back_to_page(monkeypatch):
+    """缺陷#8 负向：export_passthrough_tables=[] 显式回退 fetch_page（配置覆写生效）"""
+    a, calls = _make_adapter(
+        monkeypatch, {"name": "mcp", "export_passthrough_tables": []})
+    a.fetch_table("sw_daily", "2026-01-01", "2026-01-02", freq="daily")
+    assert calls == ["page"], f"清单清空覆写未生效: {calls}"
 
 
 if __name__ == "__main__":

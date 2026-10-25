@@ -523,6 +523,25 @@ class MCPAdapter(BaseSourceAdapter):
                 meta["passthrough"] = True
                 meta["wide_text_export"] = True
                 return raw_df, meta
+            # 缺陷#8（firefly 2026-10-25，②审照准·显式清单路由）：大 passthrough
+            # 表切 export 通道——fetch_page 无服务端日期过滤（整表分页后本地裁剪，
+            # 客户实测 sw_daily 151 万行 1005s / sw_weight 447 万行 490s，保留率
+            # 0.9%/4.1%），export 通道支持 time_start/time_end 服务端下推（同规模
+            # 实测 30s）。清单可配（export_passthrough_tables，默认两张受害表起步；
+            # 置 [] 回退全 fetch_page）；未命中表行为逐字节不变（fail-closed 显式
+            # 清单，不按行数猜测）。
+            _export_big = self._config.get(
+                "export_passthrough_tables", ["sw_daily", "sw_weight"])
+            if table in _export_big:
+                logger.info(
+                    f"[MCPAdapter] 缺陷#8 大表路由：{table} 走 export 通道"
+                    f"（time_start={start} time_end={end}；fetch_page 无服务端"
+                    f"日期过滤需整表拉取）")
+                raw_df, meta = self._fetch_export_passthrough(
+                    table, freq, start, end)
+                meta["passthrough"] = True
+                meta["big_table_export"] = True
+                return raw_df, meta
             raw_df, meta = self._fetch_passthrough(table, freq, start, end, codes)
             meta["passthrough"] = True
             return raw_df, meta
@@ -580,15 +599,23 @@ class MCPAdapter(BaseSourceAdapter):
     # ------------------------------------------------------------------
     def _fetch_export_passthrough(self, table: str, freq: str,
                                     start: str, end: str) -> Tuple[pd.DataFrame, Dict]:
-        """F-2：宽文本 passthrough 表的 export 路径。
+        """F-2：宽文本 passthrough 表的 export 路径（缺陷#8 扩展：含大表路由）。
 
         与 _fetch_passthrough 语义一致（原样返回、不映射/不注入 QFQ），
         仅拉取通道从 fetch_page JSON 改为 export Parquet 分片。
+
+        缺陷#8（firefly 2026-10-25，②审照准）：时间窗透传
+        export_dataset(time_start/time_end)——服务端按 ISO 或 YYYYMMDD WHERE
+        过滤下推（client.export_dataset 文档口径）。此前硬编码 None：宽文本表
+        本就全量语义无碍，但大表路由（缺陷#8）复用本方法后若仍传 None 会把
+        「整表导出+本地裁剪」的 1005 秒问题原样搬进 export 通道。
         """
         qdb_table = _CANONICAL_TO_QUESTDB.get(table, table)
+        time_start = self._norm_window_date(start)
+        time_end = self._norm_window_date(end)
         arts = self.client.export_dataset(
             dataset_id=qdb_table, page_size=50_000,
-            time_start=None, time_end=None, row_limit=None)
+            time_start=time_start, time_end=time_end, row_limit=None)
         frames = []
         for art in arts:
             local = self._landing_path(f"pt_export_{table}", art.artifact_id.replace("/", "_"))
@@ -596,8 +623,25 @@ class MCPAdapter(BaseSourceAdapter):
             frames.append(pd.read_parquet(local))
         raw_df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         meta = {"fetch_mode": "export_wide_text", "pages": len(arts),
-                "rows": len(raw_df)}
+                "rows": len(raw_df),
+                "time_start": time_start, "time_end": time_end}
         return raw_df, meta
+
+    @staticmethod
+    def _norm_window_date(v) -> Optional[str]:
+        """缺陷#8 配套：把任务窗口日期归一为 YYYYMMDD（8 位）或 None。
+
+        兼容 'YYYY-MM-DD' / ISO / 已 8 位三种输入（与 _fetch_passthrough 的
+        _norm_date 同口径，提为静态方法供 export 路径复用）；空值归 None
+        （None 传给 export_dataset = 该端不下推，保持原语义）。
+        """
+        if not v:
+            return None
+        s = str(v).strip()
+        if len(s) >= 10 and s[4] == "-":
+            s = s[:10].replace("-", "")
+        s = s[:8]
+        return s or None
 
     def _fetch_passthrough(self, table: str, freq: str, start: str, end: str,
                            codes: Optional[List[str]]) -> Tuple[pd.DataFrame, Dict]:

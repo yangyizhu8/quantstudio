@@ -414,6 +414,12 @@ class QFQOrchestratorConfig:
     cutover_id: str = "legacy-xtquant-pre-cutover"
     stock_factor_detector: str = "tushare_adj_factor"
     etf_factor_detector: str = "tushare_fund_adj"
+    # ⚠ 缺陷#9（firefly 2026-10-25，②审照准·注释级）：本字段**仅启动校验**
+    # （validate() 要求必须含 '1min'），**不参与任何运行时门控**——水位协调
+    # 门控只看 can_coordinate_watermark() 的 COORDINATED_PRICE_TABLES 四张价格
+    # 表全集（stock/etf × daily/minutes），与频率无关。配置 freqs: ["1min"]
+    # ≠「qfq 只管分钟线」。保留字段为兼容既有配置文件；删除属配置契约变更
+    # 另行立项。
     freqs: List[str] = field(default_factory=lambda: ["1min"])
     factor_overlap_lookback_days: int = 30
     fresh_fetch_workers: int = 4
@@ -507,6 +513,8 @@ class QFQOrchestratorConfig:
         if self.generation_mode == "pre_cutover" and self.source_generation != "xtquant-legacy":
             raise QFQConfigError(
                 "generation_mode=pre_cutover requires source_generation=xtquant-legacy")
+        # 缺陷#9：此校验是 freqs 的**唯一**运行时消费点（仅校验、不门控——
+        # 门控见 can_coordinate_watermark / COORDINATED_PRICE_TABLES）。
         if "1min" not in self.freqs:
             raise QFQConfigError(
                 f"qfq_orchestrator.freqs 必须含 '1min'（当前正式频率），收到 {self.freqs!r}")

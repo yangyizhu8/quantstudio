@@ -1267,6 +1267,10 @@ class QFQResidentOrchestrator:
         # v2.4 B-3a：8 列显式 INSERT + pre-cutover 静态哨兵（source 保留真实值不改写）。
         # FP-5（2026-10-20）：若已迁移 last_run_id 列，则同时写 run_id（=batch_id 调用方
         # 传的是 run_id），使"哪一轮提交的"可追溯；last_batch_id 语义与格式保持不变。
+        # 缺陷#7（firefly 2026-10-25，②审照准·扩围）：与 writers._advance_watermark_locked
+        # 同根因同形态的防倒退守卫（GREATEST+COALESCE）——dynamic 模式或 advancer 未注入
+        # 时水位经本路径提交，不加守卫则守卫可被配置形态绕过。候选来自 gate 通过的
+        # intent（正常单调）；守卫仅拦截异常倒退写。
         gen, cutover = self._ident["source_generation"], self._ident["cutover_id"]
         if _has_column(conn, "source_watermark", "last_run_id"):
             conn.execute(
@@ -1274,7 +1278,9 @@ class QFQResidentOrchestrator:
                 " last_batch_id, updated_at, source_generation, cutover_id, last_run_id) "
                 "VALUES (?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT (source, table_name, freq) DO UPDATE SET "
-                " last_date=excluded.last_date, last_batch_id=excluded.last_batch_id, "
+                " last_date=GREATEST(COALESCE(source_watermark.last_date, "
+                " excluded.last_date), excluded.last_date), "
+                " last_batch_id=excluded.last_batch_id, "
                 " updated_at=excluded.updated_at, "
                 " source_generation=excluded.source_generation, "
                 " cutover_id=excluded.cutover_id, last_run_id=excluded.last_run_id",
@@ -1286,7 +1292,9 @@ class QFQResidentOrchestrator:
             " last_batch_id, updated_at, source_generation, cutover_id) "
             "VALUES (?,?,?,?,?,?,?,?) "
             "ON CONFLICT (source, table_name, freq) DO UPDATE SET "
-            " last_date=excluded.last_date, last_batch_id=excluded.last_batch_id, "
+            " last_date=GREATEST(COALESCE(source_watermark.last_date, "
+            " excluded.last_date), excluded.last_date), "
+            " last_batch_id=excluded.last_batch_id, "
             " updated_at=excluded.updated_at, "
             " source_generation=excluded.source_generation, cutover_id=excluded.cutover_id",
             [source, table, freq, new_watermark, batch_id, _now_ts(), gen, cutover])

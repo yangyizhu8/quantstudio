@@ -1800,12 +1800,22 @@ class DuckDBWriter(BaseWriter):
                 # 非 QFQ 表→not-qfq-managed）。source 保留真实值不改写。B-5 替换为动态
                 # active generation/cutover；B-6 激活 mcp/mcp-gen1/<active>。
                 gen, cutover = pre_cutover_generation(table, source)
+                # 缺陷#7（firefly 2026-10-25，②审照准）：水位防倒退守卫——
+                # last_date=GREATEST(COALESCE(旧行,新值), 新值)（last_date 为 BIGINT
+                # epoch-ms，数值比较）。原实现无条件覆盖：full_range 小窗（如
+                # 2022-07~2022-12）跑完后游标被写回窗口终点（客户实测 2026-10-23
+                # →2022-12-30 倒退近 4 年），下次增量重拉数年。旧行 NULL（首写）
+                # 经 COALESCE 正常落值；其余列（last_batch_id/updated_at/世代列）
+                # 保持覆盖语义不变。bfq 价格表走 intent 机制不受影响；显式重置
+                # 水位通道（DELETE/RESET 语义）不经本 upsert，不受守卫影响。
                 conn.execute(
                     "INSERT INTO source_watermark "
                     "(source, table_name, freq, last_date, last_batch_id, updated_at, "
                     " source_generation, cutover_id) VALUES (?,?,?,?,?,?,?,?) "
                     "ON CONFLICT (source, table_name, freq) DO UPDATE SET "
-                    "last_date=EXCLUDED.last_date, last_batch_id=EXCLUDED.last_batch_id, "
+                    "last_date=GREATEST(COALESCE(source_watermark.last_date, "
+                    "EXCLUDED.last_date), EXCLUDED.last_date), "
+                    "last_batch_id=EXCLUDED.last_batch_id, "
                     "updated_at=EXCLUDED.updated_at, "
                     "source_generation=EXCLUDED.source_generation, cutover_id=EXCLUDED.cutover_id",
                     [source, table, freq, last_date, batch_id, now, gen, cutover])

@@ -216,14 +216,24 @@ class DataQualityAuditor:
                             self._add(report, "GrowthFieldAllNull", table, tushare_rows, "error",
                                       "or_yoy is 100% NULL for tushare-sourced data")
                 # P-A3：同源复制列跨表一致性门禁（eps ← income_statement.basic_eps）。
-                # gap>0 = 回补规则未生效/漏跑/源端 schema 变化（新缺口入库未免疫）→ error。
+                # gap>0 = 回补规则未生效/漏跑/源端 schema 变化（新缺口入库未免疫）。
                 # income_statement 表缺失时跳过（不引用不存在表）。
+                # 缺陷#10（firefly 2026-10-25，②审照准）：audit 项与 writer 自动回补
+                # gate 读**同一开关**（QS_AUTO_BACKFILL_EPS，fail-closed 默认关）——
+                # gate 关时降级 WARN（默认配置 --quality-audit full 不再必然 ERROR
+                # 判负，客户实测 count=3221 误报），开时维持 error（自动通道已开而
+                # 仍有缺口 = 真异常）。
                 if table == "fin_indicator" and "eps" in columns and "income_statement" in tables:
                     from quantstudio.pipeline.eps_backfill import check_eps_backfill_gap
+                    from quantstudio.pipeline.writers import _is_writer_auto_backfill_enabled
                     gap = check_eps_backfill_gap(conn)
                     if gap > 0:
-                        self._add(report, "EpsBackfillGap", table, gap, "error",
-                                  "eps NULL 但 income_statement 同 key basic_eps 非空（回补未生效或源 schema 变化）")
+                        if _is_writer_auto_backfill_enabled():
+                            self._add(report, "EpsBackfillGap", table, gap, "error",
+                                      "eps NULL 但 income_statement 同 key basic_eps 非空（回补未生效或源 schema 变化）")
+                        else:
+                            self._add(report, "EpsBackfillGap", table, gap, "warning",
+                                      "eps 回补缺口（writer 自动回补默认关闭：开 QS_AUTO_BACKFILL_EPS 或 CLI --apply 回补后复检）")
                 # Dividend field validation (stock_dividend)
                 if table == "stock_dividend" and {"cash_div_before_tax", "cash_div_after_tax"} <= columns:
                     # Both columns populated is normal (Tushare provides both pre-tax and post-tax)

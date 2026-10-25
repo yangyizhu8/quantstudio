@@ -3850,7 +3850,22 @@ class ResidentCollector:
             threshold = max(threshold, float(cfg.get("max_reject_rate_minute", 0.08)))
         threshold = max(0.0, threshold)
         rate = (failed / attempted) if attempted > 0 else 0.0
-        return rate <= threshold, rate, threshold
+        passed = rate <= threshold
+        # 缺陷#11（firefly 2026-10-25，②审预照准参数落地）：小样本豁免——
+        # 仅拒批通道（is_reject=True）。纯比率阈值在小分母上失真：同 108 条
+        # 真脏行（引擎拦截正确），159,136 行窗口 0.068% 通过，5,384 行窗口
+        # 2.006% 整体判负（客户实测，分母缩 30 倍比率放 30 倍）。豁免 =
+        # failed ≤ 绝对下限 且 rate ≤ 硬帽（quality_gate.max_reject_abs_floor
+        # 默认 200 / max_reject_hard_cap 默认 0.05，均可配）。语义边界沿用
+        # 2026-09-23 分表型校准裁定口径：只调「批次判负线」，不改变任何行的
+        # 判拒结果（越界行照常 REJECT 进隔离区）；拉取失败通道
+        # （is_reject=False，真失败）零变化不豁免。
+        if is_reject and not passed:
+            _abs_floor = float(cfg.get("max_reject_abs_floor", 200))
+            _hard_cap = float(cfg.get("max_reject_hard_cap", 0.05))
+            if failed <= _abs_floor and rate <= _hard_cap:
+                passed = True
+        return passed, rate, threshold
 
     @staticmethod
     def _date_range_empty(start: str, end: str) -> bool:
