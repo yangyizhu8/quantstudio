@@ -24,6 +24,42 @@ COMMIT=""
 LOCAL_SHA=""
 REMOTE_SHA=""
 
+# ── 铁律预算门（2026-10-26 补挂 · 修复「AGENTS v2 声称已挂、实态零引用」）──────────
+# 定位：**内容级检查，与推送范围无关** ⇒ 先于 stdin 分支解析执行，对一切 remote/分支生效
+#       （含非 main 分支、sha 形态 refspec、多 push URL 双仓）。C7 闸的既有语义不动。
+# 判据：scripts/check-iron-rules-budget.py 四查（预算/覆盖/指针/反向指针），exit 0 才放行。
+# 姿态：**fail-closed**（与下方「未找到 pwsh 即 exit 9」同纪律）——门禁找不到执行器不得静默跳过；
+#       如需绕过只能显式 `git push --no-verify`（与 C7 闸同一披露要求）。
+if command -v python >/dev/null 2>&1; then
+    PY=python
+elif command -v python3 >/dev/null 2>&1; then
+    PY=python3
+elif command -v py >/dev/null 2>&1; then
+    PY=py
+else
+    PY=""
+fi
+
+if [ -z "$PY" ]; then
+    echo "[iron-rules-budget] 未找到 python/python3/py —— 无法执行铁律预算门。" >&2
+    echo "[iron-rules-budget] 按纪律拒绝推送；如确认无风险须显式 git push --no-verify（并在回报中声明）。" >&2
+    exit 9
+fi
+
+if [ ! -f "$ROOT/scripts/check-iron-rules-budget.py" ]; then
+    echo "[iron-rules-budget] 缺 scripts/check-iron-rules-budget.py —— 门禁不可用，拒绝推送。" >&2
+    echo "[iron-rules-budget] 恢复脚本后重试；如确认无风险须显式 git push --no-verify（并在回报中声明）。" >&2
+    exit 9
+fi
+
+"$PY" "$ROOT/scripts/check-iron-rules-budget.py"
+BUDGET_RC=$?
+if [ $BUDGET_RC -ne 0 ]; then
+    echo "[iron-rules-budget] 四查未全绿（rc=$BUDGET_RC）⇒ 中止推送。" >&2
+    echo "[iron-rules-budget] 修复预算/口径（见上方明细）后重试；如确认无风险须显式 git push --no-verify（并在回报中声明）。" >&2
+    exit 9
+fi
+
 while read -r local_ref local_sha remote_ref remote_sha; do
     case "$remote_ref" in
         refs/heads/main)
