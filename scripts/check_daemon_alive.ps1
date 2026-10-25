@@ -117,7 +117,12 @@ function Get-DaemonProcs {
 }
 
 # ── H1：进程存活 ──────────────────────────────────────────────────────────────
-$daemonProcs = Get-DaemonProcs
+# ★ 2026-10-26 修（首次真跑误报实证）：必须用 @() 强制数组。
+#   缘由：`return $procs` 会把**单元素数组 unroll 成单个 [pscustomobject]**，而
+#   `[pscustomobject].Count` 返回 **$null**（PSObject 不像普通标量那样合成 Count 属性），
+#   ⇒ `$null -gt 0` = $False ⇒ **对活着的 daemon 误报「未发现进程」**。
+#   现象：h1_alive=False 但 h1_pids=[2232]（自相矛盾）、h2_consistent=True（不打自招）。
+$daemonProcs = @(Get-DaemonProcs)
 $result['h1_pids']  = @($daemonProcs | ForEach-Object { $_.pid })
 $result['h1_alive'] = ($daemonProcs.Count -gt 0)
 
