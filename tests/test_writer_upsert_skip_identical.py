@@ -6,7 +6,7 @@
   P2 幂等重放（第二次 changed=0 且表指纹不变）；
   P3 边界矩阵（NULL 四种组合 / NaN / 极值 / -0.0 已登记边界）；
   SQL 形态：关闭态不追加 WHERE（即逐字节等同现状基线），开启态=基线+WHERE；
-  changed 审计：仅开关开启时统计，默认 0；
+  changed 审计：已随缺陷#1（firefly 2026-10-25）退役——RETURNING 移除，两态恒 0；
   fail-closed 开关解析。
 """
 from __future__ import annotations
@@ -79,8 +79,9 @@ def test_p1_shadow_equivalence(tmp_path, monkeypatch):
     assert _snapshot(db_off) == _snapshot(db_on), "关闭/开启终态逐位不一致"
     # 审计口径冻结：updated 仍=「主键已存在」行数，new 仍=其余；两者不随开关变化
     assert (r_off.new, r_off.updated) == (r_on.new, r_on.updated) == (1, 2)
-    assert r_off.changed == 0, "关闭态不得统计 changed"
-    assert r_on.changed == 1, "开启态 changed=真实变化行数（仅 600001）"
+    # 缺陷#1（firefly 2026-10-25）：RETURNING 1 已移除（大表重叠 upsert 卡死嫌疑
+    # 因子；changed 全仓无下游判定消费）——两态 changed 恒 0，口径退化为 new/updated。
+    assert r_off.changed == 0 and r_on.changed == 0, "changed 审计已随缺陷#1 修复退役"
 
 
 # ── P2 幂等重放 ─────────────────────────────────────────────────────────

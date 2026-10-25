@@ -6,7 +6,10 @@
 判据：
   C1 空 fresh（daily/minute 均空）→ **引擎未被调用**，outcome.status=skipped /
      reason=empty_fresh_capture；WARNING 含 code 与区间
-  C2 trigger **不被修改**（保持 pending；不写 last_event_id、不计失败）
+  C2 trigger 回退 pending（缺陷#4 修复后契约，firefly 2026-10-25）：skip 允许且仅
+     允许「status→pending + 清 claimed_by/at」回退 UPDATE；**不写 last_event_id、
+     不置失败态（retryable_failed/dead_letter）、不 bump attempt**
+     （旧契约「零 SQL」正是缺陷#4 本体：claim 已置 in_progress 而不回退 ⇒ 毒化 gate）
   C3 计数可见：`_empty_fresh_skipped` 累加
   C4 非空路径**零变化**：引擎被调用且入参与改前一致（fresh_daily/fresh_minute 原样透传）
   C5 `_fresh_len` 判据正确（None/[]/空 DataFrame → 0；有内容 → >0）
@@ -100,7 +103,15 @@ def test_c1_c2_c3_empty_fresh_skips_engine(monkeypatch, caplog):
                                      fetcher=None)
     assert out.status == "skipped" and out.reason == "empty_fresh_capture"      # C1
     assert calls == [], "空 fresh 不得调用引擎"                                  # C1
-    assert not conn.sql, "空 fresh 不得改 trigger（不写 last_event_id）"          # C2
+    # C2（缺陷#4 修复后契约）：skip 必须显式回退 trigger → pending（清 claim 租约），
+    # 且不得写 last_event_id / 失败态 / attempt bump。
+    assert conn.sql, "skip 必须执行回退 UPDATE（否则 in_progress 毒化 gate orphan）"
+    (s0, p0), = conn.sql
+    assert "SET status='pending'" in s0 and "claimed_by=NULL" in s0, s0
+    assert "claimed_at=NULL" in s0, s0
+    assert "last_event_id" not in s0, "skip 不得写 last_event_id"
+    assert "retryable_failed" not in s0 and "dead_letter" not in s0, "skip 不得置失败态"
+    assert "t1" in p0
     assert getattr(orch, "_empty_fresh_skipped", 0) == 1                        # C3
     warns = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
     assert any("fresh 采集为空" in m and "600519" in m for m in warns)            # C1 文案

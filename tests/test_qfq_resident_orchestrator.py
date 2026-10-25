@@ -201,6 +201,21 @@ def test_require_bootstrap_fail_closed(tmpdir_path):
     conn = _new_conn()
     orch = _orch(_cfg(require_bootstrap=True), tmpdir_path)
     _insert_dividend(conn)
+    # 缺陷#2 修复（firefly 2026-10-25）后语义区分：
+    # - 全新源（零 bootstrap/cutover 记录）→ CASE-003 自动播种 completed 空基线后
+    #   **继续本轮**（原控制流缺陷导致播种成功也 fail-closed；正向用例见
+    #   tests/test_firefly_defects_batch1.py::test_bug2_seed_success_continues_cycle）；
+    # - 本例=真失败路径（存量机器有 failed bootstrap 记录 → 播种拒绝、无 completed
+    #   可匹配）→ 必须**仍** fail-closed held（负向对照硬门，安全语义零放宽）。
+    _now = "2026-07-28 08:00:00"
+    conn.execute(
+        "INSERT INTO qfq_bootstrap_run (bootstrap_run_id, asset_type, params, "
+        "resume_cursor, total_count, completed_count, blocked_count, failed_count, "
+        "status, schema_version, config_hash, baseline_version, price_source, "
+        "source_generation, cutover_id, started_at, updated_at) VALUES "
+        "('run_hist_failed', NULL, NULL, NULL, 0, 0, 0, 0, 'failed', NULL, NULL, "
+        "NULL, 'xtquant', 'xtquant-legacy', 'legacy-xtquant-pre-cutover', ?, ?)",
+        [_now, _now])
     cid = orch.begin_cycle(conn)
     orch.defer_watermark(conn, cycle_id=cid, source="tushare", table="stock_daily",
                          freq="daily", candidate_watermark=_ms("2026-07-28"))

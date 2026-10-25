@@ -311,13 +311,16 @@ class QFQResidentOrchestrator:
                     config_hash: Optional[str] = None,
                     schema_hash: Optional[str] = None) -> str:
         self._resolve_dynamic_identity(conn)
+        cycle_id = f"cyc_{uuid.uuid4().hex[:12]}"
         # 崩溃/中断恢复（restart 语义）：上一周期若在 finalize 前中断，
         # qfq_watermark_intent 会残留 status='pending'。这些 intent 永远不会
         # 被旧周期提交（水位从未推进，daemon 下轮会从旧水位幂等重拉），
         # 新周期开始时统一标 superseded 清障，防止残留 pending 永久堆积。
-        self.supersede_stale_intents(conn)
+        # 缺陷#3（firefly 2026-10-25）：可恢复 held（finalized_held 周期的 pending
+        # intent）不作废——过继给本新周期（adopt_cycle_id），候选水位经新周期
+        # gate 重新裁决后正常提交/保持。
+        self.supersede_stale_intents(conn, adopt_cycle_id=cycle_id)
         self._check_intent_backlog(conn)
-        cycle_id = f"cyc_{uuid.uuid4().hex[:12]}"
         now = _now_ts()
         conn.execute(
             "INSERT INTO qfq_cycle_run "
@@ -369,16 +372,31 @@ class QFQResidentOrchestrator:
         else:
             logger.info(msg)
 
-    def supersede_stale_intents(self, conn) -> int:
-        # R3a（write-integrity 2026-10-08，裁定①甲）：第五可清条件——周期行存在且
-        # 处于活跃态（非四终态）但 updated_at 早于 now−_STALE_ACTIVE_CYCLE_S。
-        # 洞：周期卡活跃态 + 进程死亡 → 永不命中旧条件（DB 实证 11 条 pending 挂
-        # 5 个死周期，水位锚不可见 → 下任务 last_watermark=None → 全年重拉）。
-        # 终态条件原样保留（回归面零变化）；新条件是 OR 扩展；活跃但新鲜的周期
-        # （可能是真活着）不动。
+    def supersede_stale_intents(self, conn, adopt_cycle_id: Optional[str] = None) -> int:
+        """残留 pending intent 清障 + 可恢复 held 过继。
+
+        R3a（write-integrity 2026-10-08，裁定①甲）：第五可清条件——周期行存在且
+        处于活跃态（非四终态）但 updated_at 早于 now−_STALE_ACTIVE_CYCLE_S。
+        洞：周期卡活跃态 + 进程死亡 → 永不命中旧条件（DB 实证 11 条 pending 挂
+        5 个死周期，水位锚不可见 → 下任务 last_watermark=None → 全年重拉）。
+        终态条件原样保留；新条件是 OR 扩展；活跃但新鲜的周期（可能是真活着）不动。
+
+        缺陷#3 修复（firefly 2026-10-25，②审裁定·纯恢复型）：区分死周期残留与
+        可恢复 held——
+        - cycle 缺失 / failed / interrupted / stale-active → 照旧 supersede（原语义；
+          interrupted 维持既有设计：applying 中断注释明确"下轮清障重算"，幂等重拉）；
+        - cycle='finalized_held'（数据已写、水位被门控保持=**可恢复**）→ 不作废：
+          adopt_cycle_id 提供时，把该 (source,table,freq) **最大 candidate** 的一条
+          pending intent 过继给新周期（candidate_watermark 保留、hold_reason 清空），
+          由新周期 gate 重新裁决、经 _commit_or_hold_watermarks 正常提交/保持——
+          修复「held 候选水位被永久作废、直到人工重跑任务才恢复」（firefly 实证
+          etf_daily 水位显示"无"）。同键多条只过继最大候选一条，其余照旧
+          superseded（防重复提交窗口放大）。
+        """
         _cutoff = _stale_active_cutoff()
         rows = conn.execute(
-            "SELECT wi.cycle_id, wi.source, wi.table_name, wi.freq, cr.status "
+            "SELECT wi.cycle_id, wi.source, wi.table_name, wi.freq, cr.status, "
+            "wi.candidate_watermark "
             "FROM qfq_watermark_intent wi "
             "LEFT JOIN qfq_cycle_run cr ON cr.cycle_id=wi.cycle_id "
             "AND cr.price_source=? AND cr.source_generation=? AND cr.cutover_id=? "
@@ -387,15 +405,34 @@ class QFQResidentOrchestrator:
             "OR cr.status IN ('finalized','finalized_held','failed','interrupted') "
             "OR (cr.status IS NOT NULL "
             "AND cr.status NOT IN ('finalized','finalized_held','failed','interrupted') "
-            "AND cr.updated_at < ?))",
+            "AND cr.updated_at < ?)) "
+            "ORDER BY TRY_CAST(wi.candidate_watermark AS BIGINT) DESC NULLS LAST",
             [self._ident["price_source"], self._ident["source_generation"], self._ident["cutover_id"],
              self._ident["source_generation"], self._ident["cutover_id"], _cutoff],
         ).fetchall()
         _terminal = ("finalized", "finalized_held", "failed", "interrupted")
         stale_active = 0
-        for cyc, source, table, freq, cr_status in rows:
+        adopted = 0
+        _adopted_keys = set()
+        for cyc, source, table, freq, cr_status, _cand in rows:
             if cr_status is not None and cr_status not in _terminal:
                 stale_active += 1
+            # 缺陷#3：可恢复 held（finalized_held）→ 过继给新周期（每键仅最大候选一条）
+            if (cr_status == "finalized_held" and adopt_cycle_id
+                    and (source, table, freq) not in _adopted_keys):
+                _adopted_keys.add((source, table, freq))
+                conn.execute(
+                    "UPDATE qfq_watermark_intent SET cycle_id=?, status='pending', "
+                    "hold_reason=NULL WHERE cycle_id=? AND source=? AND table_name=? "
+                    "AND freq=? AND source_generation=? AND cutover_id=?",
+                    [adopt_cycle_id, cyc, source, table, freq,
+                     self._ident["source_generation"], self._ident["cutover_id"]])
+                adopted += 1
+                logger.info(
+                    "[qfq_orch] supersede_stale_intents: 可恢复 held 过继 %s/%s/%s "
+                    "（old cycle=%s → new cycle=%s，candidate=%s 保留待新周期 gate 裁决）",
+                    source, table, freq, cyc, adopt_cycle_id, _cand)
+                continue
             conn.execute(
                 "UPDATE qfq_watermark_intent SET status='superseded', "
                 "hold_reason='stale pending superseded by new cycle' "
@@ -404,11 +441,12 @@ class QFQResidentOrchestrator:
                 [cyc, source, table, freq, self._ident["source_generation"],
                  self._ident["cutover_id"]])
         if rows:
-            # begin_cycle 调用点清理数日志（原无）：含清理条数与 stale-active 命中标记
+            # begin_cycle 调用点清理数日志（原无）：含清理/过继条数与 stale-active 标记
             logger.info(
                 "[qfq_orch] supersede_stale_intents: 清障 %d 条残留 pending intent"
-                "（其中 stale-active 死周期 %d 条；hold_reason='stale pending "
-                "superseded by new cycle'）", len(rows), stale_active)
+                "（过继可恢复 held %d 条；stale-active 死周期 %d 条；其余 "
+                "hold_reason='stale pending superseded by new cycle'）",
+                len(rows) - adopted, adopted, stale_active)
         return len(rows)
 
     def _set_cycle_phase(self, conn, cycle_id: str, phase: str) -> None:
@@ -556,18 +594,36 @@ class QFQResidentOrchestrator:
         # FP-7（2026-10-20）：每周期 applying 单元配额。只限制"本轮处理多少单元"，
         # 未入选单元**不 claim**（保持 pending，下轮 recover_pending_due 续处理），
         # 单元内部流程与 outcome 判定零改动。cap=0 → 不限（回退语义）。
+        # 缺陷#6 修复（firefly 2026-10-25，②审照准·保守口径）：周期资产域守卫。
+        # _discover 的分红扫描不分资产域（ETF 周期也产出 STOCK trigger），claim 无
+        # 域过滤时 ETF 周期会领走全部 STOCK 单元——stock_daily 结构性空 ⇒ 全部
+        # empty_daily_range skip ⇒ 毒化 gate（缺陷#4 链）⇒ ETF 水位提交不了。
+        # 守卫语义（与 FP-7 顺延同构）：对应日线表**结构性空**（无任何行）的资产域
+        # 本轮不 claim（单元保持 pending，待该域有数据后自然恢复）；表有数据
+        # （哪怕 1 行）不过滤——防过度限定。探测失败按有数据处理（fail-open，
+        # 只影响本过滤，不引入新阻断）。
+        domain_ready = self._asset_domain_ready_map(conn)
+        _pre_domain = units_list = list(units.values())
+        units_list = [u for u in _pre_domain if domain_ready.get(u["asset_type"], True)]
+        domain_deferred = len(_pre_domain) - len(units_list)
+        if domain_deferred:
+            _empty_domains = sorted({u["asset_type"] for u in _pre_domain
+                                     if not domain_ready.get(u["asset_type"], True)})
+            logger.info(
+                "[qfq_orch] 资产域守卫：本轮不 claim %d 个单元（资产域日线表结构性空: "
+                "%s；单元保持 pending，待该域有数据后自然恢复）",
+                domain_deferred, ",".join(_empty_domains))
         cap = int(getattr(self.cfg, "max_units_per_cycle", 0) or 0)
-        units_list = list(units.values())
-        deferred = 0
+        deferred = domain_deferred
         if cap > 0 and len(units_list) > cap:
-            deferred = len(units_list) - cap
+            deferred += len(units_list) - cap
             units_list = units_list[:cap]
         self._last_units_total = len(units_list) + deferred
         self._last_units_deferred = deferred
         if deferred:
-            logger.info("[qfq_orch] FP-7 配额生效：本轮处理 %d 单元，顺延 %d 单元"
-                        "（cap=%d；顺延单元保持 pending，不进 applying）",
-                        len(units_list), deferred, cap)
+            logger.info("[qfq_orch] FP-7 配额/域守卫：本轮处理 %d 单元，顺延 %d 单元"
+                        "（cap=%d，域守卫顺延 %d；顺延单元保持 pending，不进 applying）",
+                        len(units_list), deferred, cap, domain_deferred)
         claimed_ids = [tid for u in units_list for tid in u["triggers"]]
         if claimed_ids:
             placeholders = ", ".join(["?"] * len(claimed_ids))
@@ -584,6 +640,31 @@ class QFQResidentOrchestrator:
     # ------------------------------------------------------------------
     # 单证券重锚（核心）
     # ------------------------------------------------------------------
+    def _asset_domain_ready_map(self, conn) -> Dict[str, bool]:
+        """缺陷#6（firefly 2026-10-25）：各资产域日线表是否结构性非空。
+
+        - True=有数据（哪怕 1 行）→ 该域单元正常参与 claim；
+        - False=**无任何行**（结构性空）→ 该域单元本轮不 claim（保持 pending）；
+        - 探测异常按 True 处理（fail-open：守卫自身故障不得引入新阻断）。
+        - 只查日线表（EXISTS LIMIT 1，毫秒级）；分钟表空属正常（FP-3c 日线-only
+          重锚语义），不参与域判定。
+        """
+        out: Dict[str, bool] = {}
+        for _at in ("STOCK", "ETF"):
+            _daily_t = ASSET_PRICE_TABLES.get(_at, ("", ""))[0]
+            if not _daily_t:
+                out[_at] = True
+                continue
+            try:
+                out[_at] = conn.execute(
+                    f"SELECT 1 FROM {_daily_t} LIMIT 1").fetchone() is not None
+            except Exception as exc:
+                logger.warning(
+                    "[qfq_orch] 资产域探测失败（%s 按有数据处理，守卫旁路）: %s: %s",
+                    _daily_t, type(exc).__name__, exc)
+                out[_at] = True
+        return out
+
     def _security_range(self, conn, asset_type: str, code: str):
         """返回 (daily_range, minute_range)，每项为 (start_ms, end_ms) 或 **(None, None)**。
 
@@ -631,21 +712,49 @@ class QFQResidentOrchestrator:
                  self._ident["source_generation"], self._ident["cutover_id"]]).fetchone()
         return row[0] if row else None
 
-    def _skip_security(self, primary_tid: str, asset_type: str, code: str,
-                       reason: str, detail: str, n_triggers: int) -> ReanchorOutcome:
-        """P1-2a / P1-2b 共用：**跳过该证券**（不传引擎、不改 trigger 状态）。
+    def _skip_security(self, conn, trigger_ids: List[str], asset_type: str, code: str,
+                       reason: str, detail: str) -> ReanchorOutcome:
+        """P1-2a / P1-2b 共用：**跳过该证券**（不传引擎、回退 trigger 为 pending）。
 
-        - 语义：trigger 保持 `pending`（**不计失败、不写 last_event_id**）→ 后续轮次自然重试；
+        - 语义：trigger 回退 ``pending``（**不计失败、不写 last_event_id**）→ 后续轮次自然重试；
+        - 缺陷#4 修复（firefly 2026-10-25）：claim 阶段已把本单元 trigger 置为
+          ``in_progress``（_claim_and_merge 的 UPDATE）；原实现只加计数器不回退，
+          docstring 声称"保持 pending"与实际行为矛盾——跳过单元永久停留
+          ``in_progress`` ⇒ gate orphan 检查（``status='in_progress'`` 且本周期
+          claim 未终态）命中 ⇒ passed=False ⇒ finalized_held ⇒ 水位不提交。
+          现显式回退兑现 docstring 契约（CAS 守卫：仅 in_progress 态回退）。
         - 留痕：WARNING + 分类计数（`_empty_fresh_skipped` / `_invalid_range_skipped`）；
         - 目的：把「源暂时无数据 / range 非法」与「永久失败」区分开，**单证券异常不崩整轮**
           （重锚环停摆的结构性止损点）。
         """
+        primary_tid = trigger_ids[0]
         attr = ("_empty_fresh_skipped" if reason == "empty_fresh_capture"
                 else "_invalid_range_skipped")
         setattr(self, attr, int(getattr(self, attr, 0)) + 1)
+        # 缺陷#4：回退本单元全部 trigger → pending（仅 in_progress 态回退，
+        # 避免与并发 recover/claim 互相覆盖；回退异常不阻断 skip 语义，仅留痕）
+        try:
+            _ph = ", ".join(["?"] * len(trigger_ids))
+            _reset = conn.execute(
+                f"UPDATE qfq_trigger_queue SET status='pending', claimed_by=NULL, "
+                f"claimed_at=NULL, updated_at=? WHERE trigger_id IN ({_ph}) "
+                f"AND status='in_progress' AND price_source=? AND source_generation=? "
+                f"AND cutover_id=? RETURNING trigger_id",
+                [_now_ts(), *trigger_ids,
+                 self._ident["price_source"], self._ident["source_generation"],
+                 self._ident["cutover_id"]]).fetchall()
+            if len(_reset) != len(trigger_ids):
+                logger.warning(
+                    "[qfq_orch] %s/%s skip 回退：仅 %d/%d 条 trigger 从 in_progress 回退 "
+                    "pending（其余已被并发状态迁移，不覆盖）",
+                    asset_type, code, len(_reset), len(trigger_ids))
+        except Exception as _reset_err:
+            logger.error(
+                "[qfq_orch] %s/%s skip 回退 trigger 失败（不阻断本轮，留痕待查）: %s: %s",
+                asset_type, code, type(_reset_err).__name__, _reset_err)
         logger.warning(
             f"[qfq_orch] {asset_type}/{code} **跳过引擎**（reason={reason}；"
-            f"triggers={n_triggers}）：{detail}")
+            f"triggers={len(trigger_ids)}）：{detail}")
         return ReanchorOutcome(trigger_id=primary_tid, asset_type=asset_type,
                                code=code, status="skipped", reason=reason)
 
@@ -677,15 +786,16 @@ class QFQResidentOrchestrator:
             daily_range, minute_range = self._security_range(conn, asset_type, code)
         except ValueError as _e:
             # P1-2b 修复①配套：range ms 非法（零值/越界）→ 跳过该证券，绝不产出 1970 窗
-            return self._skip_security(primary_tid, asset_type, code, "invalid_range_ms",
-                                       f"range 非法: {_e}", len(trigger_ids))
+            return self._skip_security(conn, trigger_ids, asset_type, code,
+                                        "invalid_range_ms",
+                                        f"range 非法: {_e}")
         # FP-3c（2026-10-24 方案 docs/qfq-empty-minute-range-design-20261024.md）：空表语义接线
         # · 日线**结构性为空** ⇒ 无可重锚对象 ⇒ skip（保持「不计失败」语义，与 P1-2a 一致）；
         # · 分钟**结构性为空** ⇒ 日线-only 重锚（引擎 allow_empty_minute=True，无分钟段）。
         if daily_range == (None, None):
             return self._skip_security(
-                primary_tid, asset_type, code, "empty_daily_range",
-                "该证券在日线表无任何数据（结构性为空）→ 无可重锚对象", len(trigger_ids))
+                conn, trigger_ids, asset_type, code, "empty_daily_range",
+                "该证券在日线表无任何数据（结构性为空）→ 无可重锚对象")
         _empty_minute = (minute_range == (None, None))
         if _empty_minute:
             logger.info(f"[qfq_orch] {asset_type}/{code} 分钟表结构性为空 ⇒ "
@@ -710,8 +820,9 @@ class QFQResidentOrchestrator:
         except ValueError as _e:
             # P1-2b 修复①配套（关键）：`capture` 内经 `_ms_to_yyyymmdd` 守卫抛出的
             # 非法 ms 在此被捕获 → 同样「跳过该证券」，不让它冒泡成整轮异常。
-            return self._skip_security(primary_tid, asset_type, code, "invalid_range_ms",
-                                       f"capture 期 range 非法: {_e}", len(trigger_ids))
+            return self._skip_security(conn, trigger_ids, asset_type, code,
+                                        "invalid_range_ms",
+                                        f"capture 期 range 非法: {_e}")
         if _QFQ_PROFILE: _t_steps["2_fetch_capture"] = time.perf_counter() - _t0
 
         record.source_generation = self._ident["source_generation"]
@@ -725,11 +836,10 @@ class QFQResidentOrchestrator:
         # 与 P1-2b 同源：空/退化输入不应落到下游（此处拦在引擎之前）。
         if _fresh_len(fresh_daily) == 0 and _fresh_len(fresh_minute) == 0:
             return self._skip_security(
-                primary_tid, asset_type, code, "empty_fresh_capture",
+                conn, trigger_ids, asset_type, code, "empty_fresh_capture",
                 f"fresh 采集为空（daily={_fresh_len(fresh_daily)}, "
                 f"minute={_fresh_len(fresh_minute)}；区间 daily={daily_range} "
-                f"minute={minute_range}）→ trigger 保持 pending 由后续轮次重试",
-                len(trigger_ids))
+                f"minute={minute_range}）→ trigger 保持 pending 由后续轮次重试")
 
         event_id = event_id_of(primary_tid, attempt, capture_id)
         # 崩溃恢复关键：apply 前把本次 event_id 预写入全部 trigger（与引擎同事务/
@@ -1694,19 +1804,25 @@ class QFQResidentOrchestrator:
             from quantstudio.pipeline.qfq_cutover import is_fresh_source_for_qfq
             if is_fresh_source_for_qfq(conn, self._ident["price_source"]):
                 self._seed_fresh_deploy_bootstrap(conn)
-            if self.bootstrap_completed(conn):
-                pass  # 播种成功（或并发已播种）→ 通过门槛，继续本轮
-            else:
+            if not self.bootstrap_completed(conn):
+                # 缺陷#2 修复（firefly 2026-10-25）：fail-closed 仅在播种复检**仍未
+                # 通过**时生效。原实现把 error/held/return 写在 if/else 之外——即使
+                # 播种成功（bootstrap_completed 复检通过）也无条件 fail-closed 返回
+                # ⇒ 空库首跑第一个周期必然 finalized_held（客户日志：同一秒内
+                # "播种 INFO + fail-closed WARNING"）。负向对照硬门保持零放宽：
+                # 真失败路径（非全新源无 completed / 版本不匹配 / 播种不生效）
+                # 仍走下方 fail-closed held。
                 summary.bootstrap_required = True
-            summary.error = "require_bootstrap=true 且无可匹配 completed bootstrap，fail-closed"
-            logger.warning(f"[qfq_orch] {summary.error}（本轮不推进水位、不处理 trigger；数据写入不受影响）")
-            # Data was already written by daemon's writer (execute_task → upsert)
-            # before run_post_ingest was called. The gate only blocks watermark
-            # advancement, not data collection. Use finalized_held (not failed)
-            # to reflect: data written OK, watermark intentionally held.
-            summary.status = "finalized_held"
-            self._finish_cycle(conn, cycle_id, "finalized_held", summary)
-            return summary
+                summary.error = "require_bootstrap=true 且无可匹配 completed bootstrap，fail-closed"
+                logger.warning(f"[qfq_orch] {summary.error}（本轮不推进水位、不处理 trigger；数据写入不受影响）")
+                # Data was already written by daemon's writer (execute_task → upsert)
+                # before run_post_ingest was called. The gate only blocks watermark
+                # advancement, not data collection. Use finalized_held (not failed)
+                # to reflect: data written OK, watermark intentionally held.
+                summary.status = "finalized_held"
+                self._finish_cycle(conn, cycle_id, "finalized_held", summary)
+                return summary
+            # 播种成功（或并发已播种）→ 通过门槛，继续本轮（discover/claim/gate 正常走）
         if fetcher is None:
             summary.error = "fetcher 未提供（xtquant 不可用）→ 保持水位"
             logger.error(f"[qfq_orch] {summary.error}")

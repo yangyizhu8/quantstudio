@@ -1103,13 +1103,41 @@ class DuckDBWriter(BaseWriter):
             if wait:
                 _time.sleep(wait)
             try:
-                return self._duckdb.connect(str(self.db_path))
+                conn = self._duckdb.connect(str(self.db_path))
             except Exception as e:
                 if not is_db_lock_conflict(e):
                     raise                      # 非锁冲突：立即抛，不进退避
                 last_err = e
                 trace.append(f"#{idx} {type(e).__name__}")
+            else:
+                # 缺陷#1 配套（firefly 2026-10-25）：连接级 spill 兜底（fail-open）。
+                self._apply_conn_spill_defaults(conn)
+                return conn
         raise RuntimeError(self._rw_exhausted_message(trace, last_err))
+
+    _SPILL_TMP_DIRNAME = "_duckdb_tmp"
+
+    def _apply_conn_spill_defaults(self, conn) -> None:
+        """缺陷#1 配套（firefly 2026-10-25）：连接级 spill 兜底——只加护栏不改行为。
+
+        - ``temp_directory``：显式指到库旁 ``<db_dir>/_duckdb_tmp``（自动创建），
+          避免默认临时目录落在系统盘/不可用路径；大表 upsert 溢出落盘有界可控；
+        - ``memory_limit``：仅环境变量 ``QS_DUCKDB_MEMORY_LIMIT`` 显式设置时生效
+          （fail-closed：默认不设置，保持 duckdb 自身默认 ~80% RAM，不改变生产行为）；
+        - 任何设置失败只 WARNING 不抛（fail-open：兜底自身故障不得阻断写入主链）。
+        """
+        try:
+            _db_dir = Path(str(self.db_path)).resolve().parent
+            _tmp = _db_dir / self._SPILL_TMP_DIRNAME
+            _tmp.mkdir(parents=True, exist_ok=True)
+            conn.execute(f"SET temp_directory='{_tmp.as_posix()}'")
+            _ml = os.environ.get("QS_DUCKDB_MEMORY_LIMIT", "").strip()
+            if _ml:
+                conn.execute(f"SET memory_limit='{_ml}'")
+        except Exception as exc:
+            logger.warning(
+                "[DuckDBWriter] spill 兜底设置失败（不影响写入，按默认继续）: %s: %s",
+                type(exc).__name__, exc)
 
     def _conn(self):
         """新建连接（线程安全：调用方应在 write_lock/conn_lock 内使用并及时关闭）
@@ -1483,16 +1511,19 @@ class DuckDBWriter(BaseWriter):
                             f"SELECT * FROM _tmp_write "
                             f"ON CONFLICT {pk_cols} DO UPDATE SET {update_set}"
                             f"{_where_identical}")
-                        if _skip_identical:
-                            # changed = RETURNING 实际写入行数(新增+真实变化) − 新增行数
-                            # = 真实变化（已存在且值不同）行数；仅开关开启时统计
-                            _new_pre = max(0, len(df) - updated_rows)
-                            _returned = len(conn.execute(f"{_upsert_sql} RETURNING 1").fetchall())
-                            changed_rows = max(0, _returned - _new_pre)
-                        else:
-                            _assert_write_locked(table, "_write_locked")
-                            conn.execute(_upsert_sql)
-                            changed_rows = 0
+                        # 缺陷#1 修复（firefly 2026-10-25，P0）：T2 路径去掉 RETURNING 1。
+                        # 实证：大表（447 万行/42 列）重叠 upsert 下进程冻结于
+                        # `conn.execute(f"... RETURNING 1")` 单条 SQL 内（py-spy 90s×6
+                        # 次采样行号不变，CPU 单核满载 8.5h 无恢复）——RETURNING 强制
+                        # 物化本批全部写入行，与 DuckDB 对带 PK 表 UPDATE 一律
+                        # DELETE+INSERT 改写的死元组累积相叠加。changed_rows 仅审计
+                        # 口径（WriteResult 第 4 位，全仓无下游判定消费，repr 不展示），
+                        # 两分支统一退化为 new/updated 口径（changed=0），执行计划不再
+                        # 物化；T2 的 WHERE IS DISTINCT FROM（一致行不进 delete 相位）
+                        # 语义保持不变。
+                        _assert_write_locked(table, "_write_locked")
+                        conn.execute(_upsert_sql)
+                        changed_rows = 0
                     else:
                         conn.execute(f"INSERT INTO {table} SELECT * FROM _tmp_write")
                         changed_rows = 0
