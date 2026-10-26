@@ -121,3 +121,21 @@ TypeError: int() argument must be a string, a bytes-like object or a real number
   `--check-only` 供事后核验；`--execute` 保留但**仅限执行方**使用。
 - `a4cfeaa` 列入**统推 #6**（周日晚随批出仓）。
 - A9b/A7 补验窗 = **明晨 06:00 后单码抽样**（选项 C）。
+
+## 10 生产实证（2026-10-26 14:58–15:22）+ 判据修正（总调度 19:00 两裁采纳）
+
+**生产实证**（采集轮 12:03:45 重跑后 QFQ 段实际执行）：
+| 项 | 读数 | 源 |
+|---|---|---|
+| A9e | `分钟表结构性为空` **20 条**（15:21:55–15:22:45）；`int(None)` **0**（全日志） | `daemon.log` |
+| A9b | **committed 7/7 全带 absent 留痕**（STOCK 000022/23/40/43/46 + ETF 164808/508008，14:58–15:22）；`postcheck_summary` 含 `minute_front_coverage="absent"` + `minute_staged_match={"skipped":true,"reason":"minute_table_empty"}`；**全表历史 absent=7 ⇒ 全为今日新产生** | `qfq_reanchor_event.postcheck_summary` |
+| A7 | **改判达成**（见下） | `qfq_trigger_queue` + `source_watermark` |
+| 节奏 | committed 7 / blocked 46 / pending 51295；`FP-7 配额生效`=0 ⇒ 7<cap=60 未触发顺延（合理） | 库 + 日志 |
+
+**判据修正（两裁采纳，入本台账）**：
+1. **A9b 判据字段改 `postcheck_summary`**——原判据查 `minute_ratio_plan` 属我方查错字段：留痕按方案落在 postchecks（引擎 L1851 `details["minute_front_coverage"]="absent"`），经 L2702 `postcheck_summary=json.dumps(result.postchecks)` 落库；`minute_ratio_plan` 仅含 model/model_reason/model_audit/minute_coverage。
+2. **A7 改判「空分钟证券不再永久 hold」**——原判据以 QFQ 水位前进为据属过严：`hold_until_consistent` gate 为**全量语义**（committed=7/blocked=46/pending≈5.1万 ⇒ gate 不过是设计如预期）；本修复消除的是"空分钟单元永久 skip"，已由 A9b 7/7 committed 证明。采集水位另证 6 表今日前进（etf_basic/trade_calendar/双 dividend/stock_daily_valuation/stock_namechange）。
+
+**残留观察项（如实，非本修复范围）**：blocked 46 成因（`freq=1min stored raw OHLC vs fresh 不一致`、`日线 raw OHLC 与库内不一致`等）——**B-1 precheck 缺口已另立项归 dev 六步**（铁证 589300：日线放行/同券分钟 BLOCK 84,513 根）。
+
+**闭环通知**：v2 终稿 `docs/handoff/customer-notice-qfq-empty-minute-20261024.md`（2026-10-26 出稿，含生产实证 + 判据修正后验证清单 + A7 如实表述），呈总调度审 → 呈用户审定后下发。
