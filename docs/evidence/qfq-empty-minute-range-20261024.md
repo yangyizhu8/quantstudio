@@ -139,3 +139,9 @@ TypeError: int() argument must be a string, a bytes-like object or a real number
 **残留观察项（如实，非本修复范围）**：blocked 46 成因（`freq=1min stored raw OHLC vs fresh 不一致`、`日线 raw OHLC 与库内不一致`等）——**B-1 precheck 缺口已另立项归 dev 六步**（铁证 589300：日线放行/同券分钟 BLOCK 84,513 根）。
 
 **闭环通知**：v2 终稿 `docs/handoff/customer-notice-qfq-empty-minute-20261024.md`（2026-10-26 出稿，含生产实证 + 判据修正后验证清单 + A7 如实表述），呈总调度审 → 呈用户审定后下发。
+
+**R4 沉淀（2026-10-26 随通知批准下发落地）**：
+```
+本轮沉淀：已知错误-QFQ空分钟表致重锚永久跳过水位冻结（12-客户运维/已知错误/）+ 案例卷宗-QFQ空分钟水位冻结案（12-客户运维/案例卷宗/）
+```
+条目含 ≥8 症状侧检索词、六环根因、双 commit 修复落点、判据修正（postcheck_summary 字段 + 不以水位前进为判据）、复现固件指针；卷宗含节点时间线 + 四条教训（承诺即落提醒/轮转件先列全/传值形态核对/判据字段先探结构）。全案关闭条件（下发回执 + 客户五项验证回收归档）待 #7 出仓后客户侧完成。
