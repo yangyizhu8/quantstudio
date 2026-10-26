@@ -18,7 +18,12 @@
 #                     历史上两次误判均因匹配式过窄。
 #   H2 状态一致   ：daemon_status.json 的 pid 必须「活着 且 命令行匹配」。
 #                   ★ 宿主重启后 status 残留旧 pid —— 只看文件存在 / 只看 mtime 会假阳性判活。
-#   H3 心跳新鲜   ：status create_time 龄 与 日志 mtime 龄 双龄，> StaleFactor × 轮询间隔 判疑似假死。
+#   H3 心跳新鲜   ：**只认 `daemon.log` mtime 龄**，> StaleFactor × 轮询间隔 判疑似假死。
+#                   ★★ 2026-10-26 首夜实证修正：**`status.create_time` 不是心跳，是进程启动时刻**
+#                   （其龄单调增长：daemon 跑 5h ⇒ 龄 5h）。旧实现把二者并入 max(双龄) ⇒
+#                   **启动满 30 分钟即必然 WARN 且永久 WARN**（实证：03:58 起每 10min 一条，
+#                   至 08:48 累计 30 条假 WARN，而同期日志 mtime 龄仅 11s）。
+#                   现：create_time 仅作展示（已运行时长）；仅当日志不可用才降级为弱信号并注明。
 #
 # 【判级与退出码】
 #   0 = OK（静默，不产生推送噪声）
@@ -181,9 +186,18 @@ elseif ($null -ne $statusPid -and -not $result['h2_consistent']) {
     $result['reason']  = "H2: status pid=$statusPid 不在存活进程集合 [$($result['h1_pids'] -join ',')] 中（status 陈旧）"
 }
 else {
+    # ★ 2026-10-26 修（首夜实证 30 条假 WARN）：
+    #   H3 只能用**日志 mtime 龄**作心跳信号。
+    #   `status.create_time` 是**进程启动时刻**，其龄随时间单调增长（daemon 跑 5h ⇒ 龄 5h），
+    #   与「心跳是否新鲜」完全无关。旧实现把它并入 max(双龄) ⇒ **启动满 30 分钟即必然 WARN
+    #   且永久 WARN**（实证：03:58 起每 10min 一条，至 08:48 累计 30 条，而同期日志 mtime 龄仅 11s）。
+    #   create_time 仅作展示（已运行时长）；只有当日志不可用时才降级为弱信号并显式标注。
     $ages = @()
-    if ($null -ne $result['h3_status_age_s']) { $ages += [int]$result['h3_status_age_s'] }
-    if ($null -ne $result['h3_log_age_s'])    { $ages += [int]$result['h3_log_age_s'] }
+    if ($null -ne $result['h3_log_age_s']) { $ages += [int]$result['h3_log_age_s'] }
+    if ($ages.Count -eq 0 -and $null -ne $result['h3_status_age_s']) {
+        $ages += [int]$result['h3_status_age_s']
+        $result['note'] += "日志不可用 ⇒ H3 退化为 create_time 弱信号（该值是启动时刻龄，非心跳）"
+    }
     if ($ages.Count -gt 0) {
         $maxAge = ($ages | Measure-Object -Maximum).Maximum
         if ($maxAge -gt $threshold) {
@@ -196,7 +210,7 @@ else {
     } else {
         # 进程在但拿不到任何心跳输入 ⇒ 不得静默报 OK
         $result['verdict'] = 'WARN'
-        $result['reason']  = 'H3: 无法取得任何心跳输入（status create_time 与日志 mtime 均不可用）'
+        $result['reason']  = 'H3: 无法取得任何心跳输入（日志 mtime 不可用，且 create_time 缺失）'
     }
 }
 
