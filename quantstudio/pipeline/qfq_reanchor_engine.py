@@ -1479,13 +1479,46 @@ def apply_fresh_minute_staged(conn, asset_type: str, code: str, freq: str,
         [code, freq_c]).fetchone()
     raw_mismatch = int(mism[0])
     coverage["raw_mismatch"] = raw_mismatch
+    # ── B-1 修复（2026-10-26 · 方案 docs/design-b1-minute-raw-gate-20261026.md ②审通过）──
+    # 缺口：本处（分钟侧第三处 raw 硬闸）此前是**裸 BLOCK**，未接入第二级「因子版本等价识别」，
+    #   而分钟侧第一处 `_check_minute_cov_raw` 与日线侧 `_check_daily_raw_align` 均已接入
+    #   ⇒ 同一券同一批不一致：前闸判「因子版本等价、不 block」，后闸直接 BLOCK
+    #   ⇒ **白放行**（实测 589300：日线 361 行等价放行 / 分钟 84,513 行前闸放行 / 本处拦死
+    #      ⇒ qfq_orch status=blocked）。
+    # 修复：镜像日线侧三步（计数 → 取明细 db_*/fresh_* → `_factor_equivalent_analysis` 裁决），
+    #   判据实现**完全复用**（E2 比值有界 ρ∈[1e-3,1e3] / E1′ tick 归一 / E5 整段偏移 /
+    #   证据量下限 8 条），不新造判据。
+    # ★ 不放宽面（fail-closed 边界不变）：覆盖检查、minute_raw_null（NULL/NaN/≤0）在**本处之前**
+    #   已判并 BLOCK；比值越界/跨列不一致/比值不连续/样本<8/kill-switch 关 ⇒ 此处仍 BLOCK。
     if raw_mismatch:
-        raise ReanchorBlocked(
-            "minute_raw_mismatch",
-            f"freq={freq_c} stored raw OHLC vs fresh(dividend_type=none) raw "
-            f"逐 bar 不一致 {raw_mismatch} 根（首例 time={int(mism[1])}，"
-            f"eps={_eps:.0e}）——同源前提不成立，整券 BLOCK",
-            coverage=coverage, phase="precheck", freq=freq_c)
+        mismatch_df = None
+        if _factor_equivalent_enabled():
+            _cols = ", ".join([f"t.{c} AS db_{c}" for c in RAW_COLS] +
+                              [f"s.{c} AS fresh_{c}" for c in RAW_COLS])
+            mismatch_df = conn.execute(
+                f"SELECT t.time AS time, {_cols} FROM {minute_table} t "
+                f"JOIN {staged_minute} s ON t.time = s.time "
+                f"WHERE t.code=? AND t.freq=? AND ({raw_pred})",
+                [code, freq_c]).fetchdf()
+        verdict: Dict = {"equivalent": False, "reason": "not_analyzed", "detail": {}}
+        if mismatch_df is not None and len(mismatch_df) > 0:
+            verdict = _factor_equivalent_analysis(mismatch_df, asset_type=asset_type)
+        coverage["factor_equiv_detail"] = verdict
+        if not verdict.get("equivalent"):
+            _why = ("" if verdict.get("reason") == "not_analyzed"
+                    else f"（因子等价识别未通过：{verdict.get('reason')}）")
+            raise ReanchorBlocked(
+                "minute_raw_mismatch",
+                f"freq={freq_c} stored raw OHLC vs fresh(dividend_type=none) raw "
+                f"逐 bar 不一致 {raw_mismatch} 根（首例 time={int(mism[1])}，"
+                f"eps={_eps:.0e}）——同源前提不成立，整券 BLOCK{_why}",
+                coverage=coverage, phase="precheck", freq=freq_c)
+        coverage["factor_equivalent"] = True
+        logger.warning(
+            "[qfq_reanchor] %s freq=%s 分钟 raw 不一致 %d 根判定为**因子版本等价**"
+            "（不 block，front 按现因子重算）：reason=%s ratio_median=%.9g",
+            code, freq_c, raw_mismatch, verdict.get("reason"),
+            verdict.get("ratio_median") or 0.0)
 
     # —— 逐值 UPDATE：仅四个 front 列 ——
     # R2 write-integrity 同锁串行（取证② TransactionContext write-write：engine
