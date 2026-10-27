@@ -140,6 +140,30 @@
   六步①-⑥ 全闭**；随统推 #6 者仅⑤登记笔 `44a224d`（纯 docs）。推送后**副本同步门不可豁免**
   （触共享层 `quantstudio/ptrade_deploy/`，由线调度执行——候回执）。
 
+## 4.7 轮 8（首用验证轮：T1 快捷模式真实首用 + T2 回哺负向对照，2026-10-27）
+
+- **N₈=0**（无新发现缺陷）、**R₈=0**（无复发）——本轮为**首用验证轮**，非缺陷修复轮。
+- **T1 快捷模式真实首用（PASS）**：真实产物 `ashare_manual_pool_2d_momentum_top2` 走内核 quickmode
+  全链（discover 36 项 → build → write → run_deploy）**P0–P6 七阶段全 PASS**；产物三件落
+  `Demo_account_Real_account/ashare_manual_pool_2d_momentum_top2/`（trade.py `1dcead9c6ec61aca` /
+  report.md `26ed7c87332daf1a` / runbook.md `897bc3845a6d7569`）；**GUI 真点「一键转换」产物 SHA
+  逐位一致（sha_equal=True，status=完成（PASS））**；二次/三次转换生成 `_archive/v001`→`v002`
+  **递增不覆盖**且归档件与在位件 SHA 相同（转换确定性成立）。
+- **负向对照（高级模式不漂移）**：手写 deploy.yaml 夹具 `output.root=output/deploy`（未落统一根）、
+  `keep_versions=null`、GUI 高级页空输入提示「请先选择 deploy.yaml」不变、快捷页仍 tab0、
+  默认档位 `daily_eod_1450` 不变。
+- **T2 回哺负向对照（补 PD-0010 证据面）**：trading 归口不可达 → `source=main-knowledge /
+  entries=10 / degraded=False / 0 open / warnings=[]`；仅旧址可达 → `entries=0`（旧址仅余 README）
+  ＋ **提示 warning 触发**；三候选次序实测全 exists；全不可达 → `degraded=True + source=""`。
+  ⇒ 旧址即便被命中也读不到过期 PD 条目，设计预期成立。
+- **判据说明**：本轮 N₈/R₈ =0/0，R 连续 **8** 轮 =0；N 序列 4→2→1→0→1→1→1→**0**——**首次归零**
+  （新面已全部纳入验收面，无新发现）。收敛判据「连续 3 轮 R=0 且 N 单调递减趋零」达成。
+- 证据：`docs/evidence/ptrade-deploy-quickmode-firstuse-evidence.md`；
+  沉淀：`knowledge/ptrade-deploy/PD-2026-0008.md`（首用结论回填 fix_target）、
+  `PD-2026-0010.md`（负向对照读数入讨论节）；族机检 `kb_hook --strict` 复跑 **10/10**。
+- 产物说明：`Demo_account_Real_account/` 属**验证产物**，验收后清理（`.gitignore` 已含该目录）。
+  本轮 **0 代码改动**（仅证据/台账/KB 补记）——**无缺陷暴露，故未触发新六步**。
+
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 
 - 2026-10-10（M6 之前）：P0 vault 回哺降级（vault 未建，预期状态）；
