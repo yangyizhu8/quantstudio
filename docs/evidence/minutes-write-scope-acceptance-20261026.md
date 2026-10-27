@@ -57,14 +57,22 @@
 
 **共性**：无 traceback、无 Windows 事件日志、无 stop.request、非他线接管；**全部发生在高内存/IO 活动期间**（拉取/写盘/解码）⇒ **OOM 或 DuckDB native crash 嫌疑为主**（dev 已收 OOM 排查令 + faulthandler 补项）。
 
-## 四、轮 2 计划（10-27）
+## 四、轮 2 实际读数（2026-10-27，④附注收口轮）— 计划已执行
 
-| 项 | 内容 |
-|---|---|
-| 前提 | daemon 存活至 06:00（巡检兜底；五死背景下为最大不确定项） |
-| 目标 | 补 `stock_minutes` **完整面**：✅ 或 FAILED（非中断）+ applying ≤60 + B 观察期 + 排水 |
-| 取数载体 | 10-27 08:00 一次性守护（按《守护接力》纪律重挂） |
-| 判据 | 口径 A 不变：分钟任务零失败 + 零写冲突；minutes 面任一红即停并归因 |
+| 项 | 读数 | 来源 |
+|---|---|---|
+| daemon | **35700 存活**（06:03 轮正常起跑） | daemon_status.json |
+| run | `r_c2ce634c` **completed 73/1**，finished 11:58:40 | daemon_run_state.json |
+| etf_minutes | ✅ 08:36:39 raw=**4,153,876**（new 417,412 + upd 3,736,464） | daemon.log L1536 |
+| stock_minutes | ❌ FAILED 08:59:24 —— **第 21 次冲突**，key **与第 20 次完全相同** `000895, 1792373400000, 1min` | daemon.log L1868-1871 |
+| write_retry | `attempts=3, exhausted=1, success=0` | run_state |
+| write_scope | `entered=120, conflicts=0, waits=0, deferred=0, timeouts=0` | run_state |
+| applying | **56/60 ≤60 配额内 ✓**，committed=**5**、retryable_failed=32、dead_letter=19 | daemon.log L13135 |
+| B 观察期 | factor_equivalent=1 / blocked=51 / units=4599 / **放行率 1.9%**（首次非零） | daemon.log L13831 |
+| 排水 | QfqPending **51,199**（基线 51,289，**-90**）/ DeadLetter **13,320**（+1,159） | 只读探测 |
+| WAL | 无（已收敛 ✓） | data/quantstudio.db.wal |
+
+> 计划对照：原定「补 stock 完整面 ✅/FAILED + applying ≤60 + B 观察期 + 排水」——三项固定读数**全部取得**（applying 56/60 ✓ / B 观察期 1.9% + committed 5 / 排水 -90），stock 面得 FAILED（冲突）而非 ✅，按裁定归入单独立项。
 
 ## 五、回退开关
 
@@ -75,10 +83,18 @@
 | `QS_PRICE_WRITE_ASSERT=0` | 关锁覆盖断言（A3） |
 | `QS_WRITE_RETRY_MAX=0` | 关有界重试（A6） |
 
+## 五之二、④结论落账（总调度 2026-10-27 裁定：绿 + 双附注 · 台账拆两行）
+
+| 台账行 | 状态 | 判据 / 附注 |
+|---|---|---|
+| **B1-B7 写作用域隔离（本项）** | **④绿 + 附注** | 绿前提五项已满足：etf 两轮成功 + 42 测试 + `write_scope` 生产在产 + applying 56/60 + B 面 committed 首次非零 5（firefly 案专项 B 收口判据首次满足） |
+| **stock 面（单独立项）** | **待证 · 另窗裁定** | 附注①：第 21 次冲突完整证据（08:59:24 / 重试 3/3 耗尽 / **与第 20 次同 key**）；附注②：「B1-B7 对该型无效」**两轮实证**（非推测）；附注③：未登记写者假说当前状态 = **待 dev 连接级取证**（不写成结论） |
+
+> 台账口径：stock 面收口**不随 B1-B7 ⑤ 走**，待 dev 取证结论后另窗裁定。
+
 ## 六、遗留
 
-1. 附注 2 的未登记冲突者（连接级取证，另立增量）；
-2. daemon 五死根因（dev 排查中，直接威胁轮 2 前提）；
-3. 轮 2 完成后补 applying/B 观察期/排水三读数；
-4. ⑥推送：本批 `c96d09e` 待随统推（当前待推队列 20 笔，含他线）；
-5. N7 沉淀：待④闭环后按客户运维域沉淀（案例卷宗 + KEDB 条目，含五死族与写作用域族）。
+1. stock 面单独立项：未登记冲突者连接级取证（dev 增量，低优先）；
+2. daemon 五死根因（dev 排查中）；
+3. ⑥推送：`c96d09e` 已随 #7 出仓；④归档笔 `3a2ee6b` 候 #8；
+4. N7 沉淀：待按客户运维域沉淀（案例卷宗 + KEDB 条目，含五死族与写作用域族）。

@@ -46,9 +46,31 @@
 - stock：000055, 1788744600000, 1min（2026-09-07 09:30）
 - 该型在 B1-B7 之前反复复现（19 次），A6 有界重试 3/3 耗尽。
 
+## 样本 3：第 21 次冲突（轮 2，2026-10-27 · **同 key 复现**）
+
+- 时点：2026-10-27 08:59:24（轮 `r_c2ce634c`，批 `mcp_stock_minutes_mcp_20261027_083639_2ae022`）
+- key：**`000895, 1792373400000, 1min` —— 与样本 1（第 20 次）完全相同** ⇒ 同一行被持续竞争，非随机分布
+- 失败槽（逐字）：
+
+```
+08:59:24 ERROR quantstudio.pipeline.daemon: [mcp_stock_minutes_mcp_20261027_083639_2ae022] 写失败判别特征: table=stock_minutes batch=mcp_stock_minutes_mcp_20261027_083639_2ae022 path=_write_locked serial=True ctx_src=failure ctx_table=stock_minutes ctx_path=_write_locked ctx_exc=TransactionException exc=TransactionException conflict_key="000895, 1792373400000, 1min" peers_n=0 cross_proc=True peers=-
+```
+
+- 重试行（逐字）：
+
+```
+08:55:57 WARNING quantstudio.pipeline.writers: [DuckDBWriter] stock_minutes batch=mcp_stock_minutes_mcp_20261027_083639_2ae022 写冲突重试 1/3（TransactionException: TransactionContext Error: Failed to commit: write-write conflict on key ...
+08:57:05 WARNING quantstudio.pipeline.writers: [DuckDBWriter] stock_minutes batch=mcp_stock_minutes_mcp_20261027_083639_2ae022 写冲突重试 2/3（TransactionException: TransactionContext Error: Failed to commit: write-write conflict on key ...
+08:58:14 WARNING quantstudio.pipeline.writers: [DuckDBWriter] stock_minutes batch=mcp_stock_minutes_mcp_20261027_083639_2ae022 写冲突重试 3/3（TransactionException: TransactionContext Error: Failed to commit: write-write conflict on key ...
+```
+
+- 作用域面（run_state，轮 2 终态）：`entered=120, conflicts=0, waits=0, deferred=0, timeouts=0` ⇒ **引擎 120 个单元作用域已登记，与本冲突零重叠检出**
+- 轮 2 其它读数（对照）：etf_minutes ✅ 4,153,876 行；applying 56/60 committed=5；B 观察期放行率 1.9%；WAL 已收敛
+
 ## 取证要点（供 dev）
 
 1. MCPAdapter「线1 还原」在同进程内的落库路径：是否存在直写主库 stock_minutes 的分支（不经 writer 表锁 / 不登记作用域）？
 2. 冲突窗口内 daemon 内 duckdb 连接清单：谁持 stock_minutes 的 open transaction？
 3. adj_factor 注入（qfq_aux.db）与主库写盘的并发关系：是否共享连接/事务上下文？
 4. 复现触发条件：stock_minutes 增量窗写入（当前窗 key）+ 同进程 adj_factor 高频注入。
+5. **同 key 两日复现**（10-26 14:11 与 10-27 08:59，key 完全相同）⇒ 冲突者每日在同一行上稳定竞争；建议优先定位 `000895` 在 1792373400000 时点的**另一写路径**（可先做单点复现：该行是否被引擎单元 front 列写覆盖、是否被 adj_factor 还原写覆盖）。
