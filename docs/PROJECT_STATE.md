@@ -476,3 +476,32 @@
 - 行为面实证：fresh subagent 逐字复述＝分发生效；本会话 system-reminder 即时回显＝文件变更即重载。
 - M2 全段仅余：⑥生效确认（候总调度）+ B-1 落点裁定。
 - 待推批新增：本笔（证据件+ops候选+簿记）。
+## 快照 2026-10-27 15:1x（QMT 转换管线执行会话 · D-24 修复闭环 ＋ 统推 #8 授权）
+
+- **D-24 修复**（③实施 2026-10-26 → ④验收 V1-V7 全绿 → ⑤授权 2026-10-27）：
+  - 根因定谳 = **测试缺口·拼接顺序契约**（非产品缺陷）：`def _qs_instr_detail` 定义于 `_QS_QMT_MODULE_HEADER`
+    （`_assemble` 偏移 442）、`def _qs_progress_start` 定义于 `_QS_QMT_LOG_EXT`（497）；产品 `_assemble`
+    （`source_import_qmt.py:2791`）保证二者恒早于后段模板（730/754/897）⇒ 真实产物自足；缺陷在测试 `_ns()`
+    仅 exec `STOCK_INFO_EXT` ＋ `WRAPPER_ZONE`，未模拟该拼接顺序。
+  - 修法（②审 A1=(a) 只改测试）：`_ns()` 按 `_assemble` 顺序补 exec `MODULE_HEADER` ＋ `LOG_EXT`，
+    docstring 写明顺序契约来源；**产品零改动**（`quantstudio/**` 未触）。
+  - 验收：目标 `24 passed`（基线 5 failed / 19 passed）；回归 `236 passed, 3735 deselected`；
+    `qmt_wrapper_hash 0c842fddbba9` 未变；`kb_hook.validate_record(qd)` PASS。
+  - 提交：`2bfea62`（3 文件 +67/−3）；沉淀 `QD-2026-0014`（qd 族·wrapper·D4·**已关单** status=closed）。
+  - 回退点：`stash@{1} baseline-d24-20261026`。
+- **统推 #8**：待推 6 笔（`4a31618`／`8b27d2f`／`a105866`／`f515263`／`7d76bcf`／`2bfea62`），执行窗 21:00，
+  RULING=「2026-10-27 用户『两项全批』（统推批 #8）」；共享层 **1 文件**
+  （`quantstudio/pipeline/qfq_reanchor_engine.py`＝B-1 行为面）⇒ 推送后同步门**不可豁免**，
+  须含**黄金结果逐位对比**（复权口径面差异不接受「很小」放行）。
+- **本线剩余**：T3 #8 出仓（21:00）／T5 API 69 条件逐条行为验证 Plan（待②审）／
+  T6 QMT mirror 锚列枚举只读探针（待方法裁定）。
+- **边界声明**：以上为本节点（会话节点①）可见范围，非全项目穷尽。
+
+
+## M2 闭环快照（2026-10-27）
+
+- **当前阶段**：M2 全段闭环入档（知识库制度层 M0–M2 收官）→ 下一节点＝**11-23 首月观察窗读数**（提醒 `schedule-905902f5` 在位，2026-11-23 10:00 CST）。
+- **M2-①** 主仓 AGENTS R1/R4 落位 ✅（副本 diff=0）｜**M2-②** 全局层 R1/R4 落位 ✅（`~/.dsh/AGENTS.md` 17,794 B ＋ preset ⑧·本轮沉淀子项；V1–V8 全过；⑥生效确认）｜**遗留阻塞项＝无**。
+- **已锁基线**：全局 AGENTS sha `205917a18a58f837`／preset sha `e8b417b6d78c5326`（回退＝`*.bak-20261026-seg2` 覆盖，全局层无 git 仓）。
+- **未闭合 Issue**：无 M2 阻塞项；ops 族立族＝待触发（≥3 条同域）；A2 试点 2 首批落条＝待回执。
+- **待推批**：`a105866`（段②证据件＋ops 候选）＋`f515263`（R4 落件 QD-2026-0012/0013）随 #8 出仓（我方不自行推送）。
