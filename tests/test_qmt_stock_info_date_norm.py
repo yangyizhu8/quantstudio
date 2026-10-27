@@ -28,6 +28,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from quantstudio.strategy_compiler.source_import_qmt import (  # noqa: E402
+    _QS_QMT_LOG_EXT,
+    _QS_QMT_MODULE_HEADER,
     _QS_QMT_STOCK_INFO_EXT,
     _QS_QMT_WRAPPER_ZONE,
 )
@@ -46,11 +48,16 @@ class _FakeCtx(object):
 def _ns():
     """exec QMT 模板并注入 _qs_pick_ctx（模板外模块级函数）的直通替身。
 
-    需两个模板同命名空间：
-      _QS_QMT_STOCK_INFO_EXT（:883-1090）→ _qs_norm_ymd / _qs_get_stock_info；
-      _QS_QMT_WRAPPER_ZONE（:1422-1593）→ get_stock_info 同名遮蔽（:1567）。
+    需三个模板同命名空间，**顺序契约来自 _assemble（source_import_qmt.py:2791）**：
+      _QS_QMT_MODULE_HEADER（:2133 区）→ 提供 def _qs_instr_detail（偏移 442，最前）；
+      _QS_QMT_LOG_EXT（:250）→ 提供 def _qs_progress_start（D-24 进度审计，偏移 497）；
+        ——两者皆早于下列两模板（730/897），且下列模板只引用、不含定义。
+      _QS_QMT_STOCK_INFO_EXT（:988）→ _qs_norm_ymd / _qs_get_stock_info；
+      _QS_QMT_WRAPPER_ZONE（:1941）→ get_stock_info 同名遮蔽（:1567）。
     """
     ns = {"_qs_pick_ctx": lambda C=None: C}
+    exec(_QS_QMT_MODULE_HEADER, ns)  # 1：_qs_instr_detail（_assemble 偏移 442）
+    exec(_QS_QMT_LOG_EXT, ns)        # 2：_qs_progress_start（偏移 497）
     exec(_QS_QMT_STOCK_INFO_EXT, ns)
     exec(_QS_QMT_WRAPPER_ZONE, ns)
     return ns

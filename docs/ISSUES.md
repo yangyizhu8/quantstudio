@@ -431,3 +431,14 @@
 | 2026-10-26 | **B-1 受阻（零越权不擅改道）**：QD-2026-0011 feedback 落点「registry.md 域对照表 D1 行」不存在——域对照表实在 knowledge/qmt/README.md §2.1；请裁 ①README D1 行注记 ②registry 变更记录行 ③其他 | 同上 §3-D3 | **候裁** |
 | 2026-10-26 | **⑥ 生效确认证据已齐**（sha 变更/新实例可读/跨项目演练），请总调度确认收口 | 同上 §4 | 候确认 |
 | 2026-10-26 | ops 候选件（2 条草案）随本自然簿记轮出仓 | docs/handoff/ops-candidates-20261026.md | 本批提交 |
+
+## D-24 修复闭环（2026-10-26）— 测试缺口，产品零改动
+
+- **缺陷**：`tests/test_qmt_stock_info_date_norm.py` 5 用例 `NameError`（`_qs_progress_start`→补后转 `_qs_instr_detail`）。
+- **根因（定谳）**：**测试缺口，非产品缺陷**——产品 `_assemble`（`source_import_qmt.py:2791`）恒将 `_QS_QMT_MODULE_HEADER`（偏移 442→`def _qs_instr_detail`）与 `_QS_QMT_LOG_EXT`（497→`def _qs_progress_start`）排在三后段模板（730/754/897）之前；而测试 `_ns()` 仅 exec 后段两模板，未模拟该顺序。
+- **修法（②审 A1=(a)）**：只改测试——`_ns()` 按 `_assemble` 顺序补 exec `MODULE_HEADER`+`LOG_EXT`，docstring 写明顺序契约来源。
+- **验收（V1-V7）**：V1/V2 `24 passed`（基线 5 failed/19 passed）；V3 回归 `236 passed, 3735 deselected (31.79s)`；V4 本会话仅 1 文件 `+10/−3`（**产品零改动**，`quantstudio/**` 未触）；V5 `qmt_wrapper_hash 0c842fddbba9` 未变、矩阵门禁 PASS；V6 W2 缺口扫描=1（仅本文件，无同类扩散）；V7 QD-2026-0014 机检过。
+- **沉淀**：`QD-2026-0014`（qd 族·fix_layer=wrapper·domain D4）。**编号说明**：候选时预期 QD-2026-0011，但 0011 已被 `dd9782f`「QD-2026-0011 取证口径族条目」占用（随 #7 出仓），自动取 max+1=0014。
+- **回退点**：快照 `8c8a794c7338376b29a8335cfb47d6e8fa5deced`；单文件 `git checkout -- tests/test_qmt_stock_info_date_norm.py`。
+- **呈批**：⑤待用户确认，⑥随 #8 批推送。
+- **时间**：2026-10-26
