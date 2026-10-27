@@ -16,6 +16,14 @@
 | [QD-2026-0004](QD-2026-0004.md) | 合约信息活表漂移 → PIT 冻结合约快照层 | wrapper | closed | D-30 |
 | [QD-2026-0005](QD-2026-0005.md) | `realtime` 参数无 as-of 能力 → 静默空列表 | probe | closed | D-31 |
 | [QD-2026-0006](QD-2026-0006.md) | 验收套件 exec 命名空间缺 `_QS_QMT_MODULE_HEADER` → NameError | matrix | closed | D-32 |
+| [QD-2026-0007](QD-2026-0007.md) | QMT wrapper 的 _QS_QMT_FUND_FIELD_MAP 无 profit_ability 行（全 NaN 空帧） | wrapper | closed | — |
+| [QD-2026-0008](QD-2026-0008.md) | QMT 交易端持仓/账户/委托/成交面三类静默语义陷阱（sid/空串/哨兵） | wrapper | open | — |
+| [QD-2026-0009](QD-2026-0009.md) | QMT wrapper 消费面三个非直觉契约（after_init / 探针覆盖） | wrapper | open | — |
+| [QD-2026-0010](QD-2026-0010.md) | 回测卖出印花税在切换日前后两端费率差一倍（分期间 vs 单一比例） | engine | open | — |
+| [QD-2026-0011](QD-2026-0011.md) | 回测日志日期与策略参数日期差一个交易日（T vs T-1） | probe | open | — |
+| [QD-2026-0012](QD-2026-0012.md) | qfq 空库首跑：bootstrap 播种成功仍同轮 fail-closed held | engine | open | — |
+| [QD-2026-0013](QD-2026-0013.md) | duckdb 1.4.x 大表（447 万行/42 列）重叠 UPSERT 无限期冻结 | engine | open | — |
+| [QD-2026-0014](QD-2026-0014.md) | QMT 模板单测 5 用例 NameError（漏 exec 前置符号模板） | wrapper | closed | — |
 
 ## 2. 条目 schema（1:1 对齐 PD；`fix_layer` 为 QMT 适配枚举）
 
@@ -97,6 +105,7 @@ closed_round: <n>                      # 闭环轮次：历史 D 条目按回填
 | [QD-2026-0011](QD-2026-0011.md) | probe | 取证脚本口径（策略参考日 T-1 vs 日志日 T）＝平台能力边界登记 | **D1** |
 | [QD-2026-0012](QD-2026-0012.md) | engine | qfq 编排器控制流缺陷族（播种 held / skip 回退 / 候选过继 / 资产域守卫） | **D3** |
 | [QD-2026-0013](QD-2026-0013.md) | engine | duckdb 1.4.x 平台事实（ON CONFLICT 写放大 / RETURNING 物化 / estimated_size / VACUUM 空操作） | **D4** |
+| [QD-2026-0014](QD-2026-0014.md) | wrapper | 模板单测装配口径（按 _assemble 顺序补 exec MODULE_HEADER+LOG_EXT） | **D4** |
 
 **未标注 `domain` 的条目行为（写死，A3 实现判据）**：**不匹配任何 `--domain` 过滤**，且读取器必须输出
 `warn`（禁止静默归入某域或静默丢弃）——历史条目在补字段前一律走此支。
