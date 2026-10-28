@@ -184,6 +184,34 @@
 - 证据：`docs/evidence/ptrade-deploy-quickmode-firstuse-evidence.md`；轮 8 详情见 §4.7。
 - 本轮沉淀：PD-2026-0008、PD-2026-0010
 
+## 4.9 轮 9（PD-0011 闭环管线建成，2026-10-28）
+
+- **N₉=0**（无新发现缺陷）、**R₉=0**（无复发）——本轮为**管线建设轮**（新增能力型，转换行为零变更）。
+- **交付**：`scripts/check_pd_convergence.py`（G3 收敛机检）、`scripts/check_deploy_closedloop.py`
+  （G4 巡检 + G5 R1/R4 校验 + G2-L2 判定）、`scripts/kb_draft_from_deploy.py`（G1 失败→起草命令，
+  **不落盘**）、`tests/test_deploy_closedloop.py`（17 用例，含两条②审指定负向）。
+- **建成判据读数**（本轮实跑）：
+  - 收敛机检 **PASS**（N 序列 轮3→8 = 1→0→1→1→1→**0**；R 全 0，末尾连续 R=0 ≥3）；
+  - 回哺读数 `entries=10 / source=trading-knowledge / degraded=False`；
+  - PD 族机检 `--strict` **10/10 不合规 0 件**；
+  - 巡检退出码三态实测：健康 / 仅 WARN(**2**) / 硬缺口(**1**) 均可见。
+- **②审两条附加落实**：
+  - a) **L2 消费方记录制**：确认行须含 `confirmed_by=<消费方>`（含「起草/kb_draft/作者」字样即拒），
+    并须引用运行报告路径——起草方自证被机检拒绝（自测 `test_l2_drafter_self_confirmation_rejected`）；
+  - b) **「读到但不相关⇒未救」负向**：真实报告（`全球资产轮动` P5 FAIL，签名 `contract_full:
+    set_limit_mode 未门控`）+ 条目 PD-2026-0004（未知 API 误报）→ **判未救**（标识符重叠 0），
+    自测同名用例 + 通用词假阳性回归用例各一。
+- **验收中自我修正（如实登记）**：L2 初版仅用 CJK 二元组，出现**假『已救』**（重叠 token 全来自
+  报告 `notes` 的「嵌套/门禁/注入」通用词，而条目与失败主题实为无关）——当场收紧为「签名只取 FAIL 段
+  ＋ 标识符≥1 且 CJK≥2」。属③实施内的判据自我修正（未外溢为转换行为变更），已补回归用例固化。
+- **零行为变更核验**：`quantstudio/ptrade_deploy/` 零 diff；deploy 套件 **84/84**；契约矩阵哈希一致。
+- 证据：`docs/evidence/ptrade-deploy-closedloop-evidence.md`；方案：`docs/ptrade-deploy-closedloop-design.md`（②审通过）。
+- **本轮沉淀**：PD-2026-0011（闭环管线条目，随④验收落库）
+- 知识反哺：[命中] PD-2026-0009（PD/D3/PD-2026-0009.md，2026-10-28）——「读到≠生效」两级判据来源
+- 知识反哺：[命中] PD-2026-0010（PD/D3/PD-2026-0010.md，2026-10-28）——回哺链多候选与寻址面
+- 知识反哺：[命中] PD-2026-0004（PD/D2/PD-2026-0004.md，2026-10-28）——口径写入 `gate_rule` 可复用
+- 知识反哺：[无命中] PD 族检索（is_trade/set_limit_mode/嵌套门控/沉淀钩子），2026-10-28
+
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 
 - 2026-10-10（M6 之前）：P0 vault 回哺降级（vault 未建，预期状态）；
