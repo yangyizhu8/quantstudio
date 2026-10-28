@@ -788,6 +788,24 @@ class MCPClient:
         return []
 
     # ----- 大表导出作业路径 -----
+    @staticmethod
+    def _norm_iso_date(v):
+        """日期归一：``YYYYMMDD`` → ``YYYY-MM-DD``；已是 ISO / None 原样透传。
+
+        背景（2026-10-26 实证）：服务端 `create_export_job` 的 WHERE 下推**只接受 ISO**，
+        传 ``20261026`` 会报 ``Invalid date [str='20261026']`` ⇒ 任务全失败（6 个无锚全量任务）
+        本归一为其**唯一收口点**，所有调用方自动受益。
+        """
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        # 8 位纯数字（含 Compact 形态）⇒ 插连字符；其余（已 ISO / datetime 串）原样返回
+        if len(s) == 8 and s.isdigit():
+            return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+        return s
+
     def create_export_job(self, dataset_id: str, page_size: int = 50000,
                           *, idempotency_key: Optional[str] = None,
                           time_start: Optional[str] = None,
@@ -807,7 +825,7 @@ class MCPClient:
           注意：异步只解决「预算」不解决「行数上限」（服务端单作业恒 5,000,000 行）。
         """
         # 异步作业不可缓存复用：同窗口重复 create 会各自产生独立作业，缓存语义失真。
-        cache_key = (dataset_id, int(page_size), time_start, time_end)
+        cache_key = (dataset_id, int(page_size), self._norm_iso_date(time_start), self._norm_iso_date(time_end))
         if not async_mode:
             with self._lock:
                 cached = self._job_cache.get(cache_key)
@@ -819,10 +837,20 @@ class MCPClient:
             args["row_limit"] = int(row_limit)
         if idempotency_key:
             args["idempotency_key"] = idempotency_key
-        if time_start is not None:
-            args["time_start"] = time_start
-        if time_end is not None:
-            args["time_end"] = time_end
+        # ── B 并行修复（2026-10-26 · 用户即刻令）──
+        # 单点收口：**日期一律归一为 ISO**（YYYY-MM-DD）。服务端已不接受 YYYYMMDD，实证错误：
+        #   MCPExportBudgetError: create_export_job 服务端错误: Invalid date [str='20261026']
+        #   服务端 SQL: WHERE scan_date >= '20240101' AND scan_date <= '20261026'
+        # 覆盖 6 个「无锚退化全量」任务（ai_research_snapshot / cnthesims_events /
+        # llm_text_events / llm_text_events_enriched / llm_text_raw_feed 等）—— 它们把
+        # 2024-01-01 起点与当日终点以 YYYYMMDD 直传，被服务端判非法 ⇒ 任务全失败。
+        # 收口于本函数入口 ⇒ 所有调用方（含 _fetch_export_passthrough / export_dataset）一并生效。
+        _time_start = self._norm_iso_date(time_start)
+        _time_end = self._norm_iso_date(time_end)
+        if _time_start is not None:
+            args["time_start"] = _time_start
+        if _time_end is not None:
+            args["time_end"] = _time_end
         if async_mode:
             args["async_mode"] = True
         d = self._call_with_retry(self._call_tool, "create_export_job", args)
