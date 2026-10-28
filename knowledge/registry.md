@@ -11,7 +11,7 @@
 | 类别 | 前缀 | 条目数 | 已锚定 | 已排查 | 未验证 | 已知分歧 | 不适用 | 缺口 |
 |---|---|---|---|---|---|---|---|---|
 | Position/Account 字段 | POS | 17 | 3 | 2 | 0 | 0 | 5 | 7（已裁接受·不立项） |
-| 注入 API 契约 | API | **88**（已枚举） | **已枚举（PTrade 面 69 待逐条行为核验）** | — | PTrade 69 待核／QMT 锚点待枚举（镜像抽取未通） | 0 | — | — |
+| 注入 API 契约 | API | **88**（已枚举；PTrade 面 **68**） | **19**（PTrade 面逐条一致）＋**2**（QMT 锚定：get_financial_data×QCAL-05／get_instrument_detail×QCAL-01） | — | **44**（PTrade 文档配额未覆盖·待补查 2-3 轮）＋**48**（QMT 锚列候核，锚列共 50） | **4**（A `get_history.fq` 默认＝已裁有意设计／B `get_fundamentals` table+is_dataframe＝已裁／C `get_snapshot.frequency`＝已裁 QS 扩展／E `order_target` 参数名＝待转换管线核） | — | **1**（`attribute_history`＝聚宽名混入候选，PTrade 面判缺） |
 | 撮合规则 | MCH | 10 | 6 | 3 | 0 | 1 | 0 | 0 |
 | 生命周期 | LC | 8 | 7 | 1 | 0 | 0 | 0 | 0 |
 | 费用模型 | FEE | 5 | 3 | 0 | 0 | 2 | 0 | 0 |
