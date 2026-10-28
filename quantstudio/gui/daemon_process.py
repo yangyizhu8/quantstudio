@@ -54,7 +54,13 @@ def is_daemon_running() -> bool:
     status = read_daemon_status()
     if status is None:
         return False
-    return verify_daemon_identity(status) in ("alive", "unknown")
+    verdict = verify_daemon_identity(status)
+    # `denied` = 进程存在但**无权读取**（权限不匹配，如 daemon 由提权/守护包装启动）。
+    # 与 `unknown` 同族：**查不到 ≠ 不存在**。若把 denied 收敛成 False，GUI 会放行启动
+    # → 新实例撞 `.daemon.lock` → 用户只看到「启动后立即退出（另一个 daemon 已在运行）」。
+    # 实证（2026-10-28 01:41）：data/logs/gui_gate_diag.log 记录
+    #   {"verdict":"denied", "status_raw":{"pid":36500,...}, "proc_pids":[]}
+    return verdict in ("alive", "unknown", "denied")
 
 
 def get_daemon_status() -> Optional[dict]:
@@ -179,8 +185,21 @@ def find_running_daemon_pids() -> list:
                     "started_at": time.strftime(
                         "%Y-%m-%d %H:%M:%S", time.localtime(float(ct))) if ct else "unknown",
                 })
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue  # 枚举期进程消失/无权限：跳过，不影响其余
+            except psutil.NoSuchProcess:
+                continue  # 枚举期进程消失：跳过，不影响其余
+            except psutil.AccessDenied:
+                # 权限受限：进程很可能还在，只是读不到 cmdline。
+                # 若它与 status 记录同 PID，必须作为**第二源信号**返回——
+                # 否则第一源（status+身份校验）与第二源（进程表）会同时失效，
+                # 直接导致重复启动撞 `.daemon.lock`（2026-10-28 01:41 实证）。
+                try:
+                    _st = read_daemon_status() or {}
+                    _pid = getattr(p, "pid", None)   # 不能用局部 pid：info 可能尚未取到
+                    if _pid and int(_st.get("pid") or 0) == int(_pid):
+                        hits.append({"pid": int(_pid), "started_at": "unknown"})
+                except Exception:
+                    pass
+                continue
     except Exception:
         return []  # 枚举失败不得影响启动路径（与既有 fail-soft 一致）
     return sorted(hits, key=lambda d: d["pid"])

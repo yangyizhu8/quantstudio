@@ -423,6 +423,14 @@ class BacktestWorker(BaseWorker):
                 db_path=self.params['db_path'],
                 capital=self.params.get('capital', 100_000),
                 match_price_mode=self.params.get('match_price_mode', 'close'),
+                match_profile=self.params.get('match_profile', 'ptrade'),  # M5.2 件7 口径标签
+                # 常驻采集共存（specs/001-daemon-backtest-coexistence）：
+                # 默认开启——采集开着也能直接回测；等待期取消复用既有 self._cancelled。
+                coexistence=self.params.get('coexistence', True),
+                cancel_check=lambda: self._cancelled,
+                # 等待读数走 progress 信号（单参数）；引擎的逐日进度走 progress_callback
+                # （三参数 current/total/date_str）——两者是不同通道，不可混用。
+                wait_callback=lambda m: self.progress.emit(m),
                 engine_profile=self.params.get('engine_profile', 'daily-bar-v1'),
                 etf_t0=self.params.get('etf_t0', False),
                 cost=cost,

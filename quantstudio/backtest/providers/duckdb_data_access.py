@@ -106,6 +106,29 @@ _ADJ_PRECLOSE_SQL = """
                preClose,"""
 
 
+class DatabaseAccessError(RuntimeError):
+    """回测取数层无法获得数据访问权（fail-closed 模式下的**显式**失败）。
+
+    默认不抛：保持既有「返回 None + QS_DUCKDB_CONN_UNAVAILABLE 诊断计数」契约，
+    零行为漂移；仅当调用方显式开启 fail-closed（回测入口）时抛出——
+    用于杜绝「连接不可得 → 引擎带空数据静默跑完」（spec FR-010/011）。
+    """
+
+
+# 线程本地 fail-closed 默认值：回测在自己的线程内开启，不影响进程内其他调用方
+# （GUI 回测跑在 QThread；CLI 单线程）。构造时未显式传参则取本线程默认。
+_fail_closed_local = threading.local()
+
+
+def set_fail_closed(value: bool) -> None:
+    """设置当前线程的 fail-closed 默认值（回测入口用；务必在 finally 里恢复）。"""
+    _fail_closed_local.value = bool(value)
+
+
+def current_fail_closed() -> bool:
+    return bool(getattr(_fail_closed_local, "value", False))
+
+
 class DuckDBDataAccess:
     """DuckDB（QuantStudio 数据管线产出）数据访问实现。
 
@@ -113,9 +136,11 @@ class DuckDBDataAccess:
     不负责：撮合、指标计算、策略逻辑。
     """
 
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path, fail_closed: Optional[bool] = None):
         self._db_path = Path(db_path)
         self._ro_conn = None
+        # None = 跟随当前线程默认（既有调用方零改动）；True = 拿不到连接即显式抛错
+        self.fail_closed = current_fail_closed() if fail_closed is None else bool(fail_closed)
         self._tables_cache: Optional[set] = None  # 表集合缓存（SHOW TABLES 结果，回测期只读恒定）
         # 预加载缓存（与 PtradeAPI 原缓存变量一一对应）
         self._preload_daily: Optional[pd.DataFrame] = None
@@ -201,6 +226,14 @@ class DuckDBDataAccess:
                 "db_path": str(self._db_path),
                 "error": type(e).__name__ + ": " + str(e)[:200],
             }, warn_first_only=True)
+            if getattr(self, "fail_closed", False):
+                raise DatabaseAccessError(
+                    f"回测取数无法打开数据主库（{type(e).__name__}: {e}）；"
+                    f"路径={self._db_path}") from e
+        if getattr(self, "fail_closed", False):
+            # 未进异常分支也可能未取得连接（路径缺失/不是文件）
+            raise DatabaseAccessError(
+                f"回测取数无法打开数据主库：路径不存在或不可用（{self._db_path}）")
         return None
 
     # ===================== F-DUCKDB-LOCK（A2）：诊断采集与超时执行 =====================

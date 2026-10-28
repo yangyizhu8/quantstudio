@@ -33,6 +33,7 @@ class BacktestTab(QWidget):
         self._tick.setInterval(1000)
         self._tick.timeout.connect(self._update_time_label)
         self._freeze_text = None        # 定格文本缓存（幂等：以首次定格时刻为准）
+        self._queue = []                # 待执行回测（上限 3，超出显式拒绝）
         self._setup_ui()
 
     def _setup_ui(self):
@@ -99,6 +100,13 @@ class BacktestTab(QWidget):
         self.match_price_combo.addItem("next_open (anti-lookahead)", userData="next_open")
         param_form.addRow("Match price:", self.match_price_combo)
 
+        # M5.2 件7：撮合口径 profile（ptrade|qmt）——回测与 QMT 实盘对齐时选 qmt
+        # （口径标签全链路记入 metrics_summary/run_card；缺省 ptrade=现行行为零改变）
+        self.match_profile_combo = ComboBox()
+        self.match_profile_combo.addItem("ptrade (默认)", userData="ptrade")
+        self.match_profile_combo.addItem("qmt (QMT 实盘对齐)", userData="qmt")
+        param_form.addRow("Match profile:", self.match_profile_combo)
+
         # P-A0/P-A1/P-A2: PTrade 保真模式（验证用）勾选项。默认 OFF = 本地语义锚（P-D9）。
         # 勾选后按平台行为模拟（A股池快照 / ST过滤 close<1 口径 / eps 双端映射），
         # 仅供转换产物验证；严禁用于实盘前评估。快照日动态取自最新 meta.json（快照
@@ -116,6 +124,20 @@ class BacktestTab(QWidget):
             f"⚠ 回测起始日期必须 ≥ {_snap_date}（当前快照日，随快照刷新前滚），"
             "否则启动时显性报错（PIT 门禁）。")
         param_form.addRow(self.fidelity_ck)
+
+        # 常驻采集共存（specs/001-daemon-backtest-coexistence）：开着采集也能直接回测。
+        # 回测期间采集让路（不发起新轮；撞上在跑轮次按分级让路），结束后自动恢复。
+        # 关闭 = 完全回退到改动前行为（不写窗口请求件、不等待、不探测）。
+        self.coexistence_ck = CheckBox("采集开启时也可回测（回测前自动停采集，结束后需手动启动）")
+        self.coexistence_ck.setChecked(True)
+        self.coexistence_ck.setToolTip(
+            "开启后无需手动停采集即可发起回测：\n"
+            "· 回测前自动请求采集优雅停止（先等任务边界，超过 30 秒则请求在任务内单元边界中断；"
+            "未完成部分水位不推进，下次启动后重跑）；\n"
+            "· 等待期间显示真实已等时长（不做预估），可随时点「停止」取消；\n"
+            "· 回测成功/失败/取消后采集**保持停止**，不会自动重启——需要时请到任务页手动点「开启」；\n"
+            "· 若采集 60 秒内未退出，会提示「继续等待 / 强制终止 / 取消」。")
+        param_form.addRow(self.coexistence_ck)
 
         # F1: rebalance_mode 通用配置透出。内部值固定为引擎契约字符串，
         # 显示文本仅用于展示，绝不作为引擎参数。
@@ -185,6 +207,7 @@ class BacktestTab(QWidget):
             return
 
         match_price_mode = self.match_price_combo.currentData()
+        match_profile = self.match_profile_combo.currentData()
         rebalance_mode = self.rebalance_mode_combo.currentData()
 
         # P-A0/P-A1/P-A2: 保真模式勾选 → 构造 PTradeFidelityConfig（opt-in，默认全关）。
@@ -266,32 +289,61 @@ class BacktestTab(QWidget):
             'stamp_tax': self.stamp_spin.value(),
             'slippage': self.slippage_spin.value(),
             'match_price_mode': match_price_mode,
+            'match_profile': match_profile,
+            'coexistence': self.coexistence_ck.isChecked(),
             'rebalance_mode': rebalance_mode,
             'fidelity_config': fidelity_config,  # None = 默认全关（本地语义锚）
         }
 
-        # 创建 Worker
+        # 队列（spec FR-014 / T036）：已有回测在跑时排队，上限 3，超出显式拒绝
+        try:
+            _busy = self._worker is not None and bool(self._worker.isRunning())
+        except Exception:  # noqa: BLE001  测试桩/非 QThread 实现无 isRunning()
+            _busy = False
+        if _busy:
+            if len(self._queue) >= 3:
+                QMessageBox.warning(
+                    self, "队列已满",
+                    f"当前有 1 个回测在运行、{len(self._queue)} 个在排队（上限 3）。\n"
+                    "请等待当前回测结束，或先停止它。")
+                return
+            self._queue.append((strategy_path, params))
+            self.status_label.setText(
+                f"已加入队列（排队 {len(self._queue)} 个，当前回测结束后自动开始）")
+            return
+
+        self._launch_worker(strategy_path, params)
+
+    def _launch_worker(self, strategy_path, params):
+        """创建并启动回测 Worker（含按钮/计时/忙碌态复位）。"""
         self._worker = BacktestWorker(strategy_path, params)
         self._worker.progress.connect(self._on_progress)
         self._worker.day_progress.connect(self._on_day_progress)
         self._worker.finished_ok.connect(self._on_finished)
         self._worker.finished_err.connect(self._on_error)
 
-        # 按钮状态切换
         self.run_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 100)   # 复位（上一次等待可能把 range 设为 0,0 忙碌态）
         self.progress_bar.setValue(0)
 
-        # 计时：归零并开始（回测完成/出错/手动停止时由 _freeze() 停止并定格）
         self._freeze_text = None
         self._clock.restart()
         self.time_label.setText("⏱ 已用时 00:00:00")
         self._tick.start()
 
-        # 启动
         self.mw.hold_worker(self._worker)
         self._worker.start()
+
+    def _start_next_queued(self):
+        """当前回测结束（成功/失败/取消）后启动下一个排队请求。"""
+        if not self._queue:
+            return
+        _strategy, _params = self._queue.pop(0)
+        if self._queue:
+            self.status_label.setText(f"启动排队回测（剩余 {len(self._queue)} 个）")
+        QTimer.singleShot(0, lambda: self._launch_worker(_strategy, _params))
 
     def _on_stop(self):
         """停止回测（计时定格：最终用时以按下时刻为准——此处即 stop tick + 定格）。
@@ -306,8 +358,21 @@ class BacktestTab(QWidget):
             self.status_label.setText("正在停止...")
 
     def _on_progress(self, msg):
-        """记录回测进度消息并更新状态。"""
+        """记录回测进度消息并更新状态。
+
+        US2（specs/001-daemon-backtest-coexistence）：等待采集让路的读数以
+        `[coexist]` 前缀到达——此时进度条切「忙碌态」（不假装有进度、不给 ETA），
+        状态标签保留真实读数，且「停止」按钮在等待期即可用（可直接取消）。
+        """
         logger.info(msg)
+        if msg.startswith("[coexist]"):
+            self.progress_bar.setRange(0, 0)          # 忙碌态：等采集收尾
+            self.status_label.setText("⏳ " + msg[len("[coexist]"):].strip()[:76])
+            self.stop_btn.setEnabled(True)
+            return
+        if self.progress_bar.maximum() == 0:          # 从忙碌态回到确定态
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(0)
         self.status_label.setText(msg[:80])
 
     def _on_day_progress(self, current, total, date_str):
@@ -323,7 +388,15 @@ class BacktestTab(QWidget):
         self._freeze()  # 计时停止并定格（手动停止后此处幂等，不覆盖按时刻）
 
         output_dir = result.get("output_dir", "")
-        self.status_label.setText(f"✅ 回测完成: {output_dir}")
+        _suffix = ""
+        try:
+            from quantstudio.pipeline.backtest_window import read_stop_flag
+            if read_stop_flag() is not None:
+                # FR-003/004：采集因回测停止，不自动拉起——明确告知需手动启动
+                _suffix = "（采集已因回测停止，需要时请到任务页手动启动）"
+        except Exception:  # noqa: BLE001  状态查询失败不得影响完成提示
+            pass
+        self.status_label.setText(f"✅ 回测完成: {output_dir}{_suffix}")
 
         # D1 件三（2026-10-06）：运行后「零成交」提示。
         # 复用 workers.finished_ok **已携带**的 trade_records（与 B 件同判据 result.trade_records），
@@ -356,10 +429,23 @@ class BacktestTab(QWidget):
             QMessageBox.warning(self, "回测完成（窗口打开失败）",
                 f"回测已完成，结果已导出:\n{output_dir}\n\n"
                 f"但结果可视化窗口打开失败:\n{type(e).__name__}: {e}")
+        self._start_next_queued()
 
     def _on_error(self, err):
-        """回测失败/取消（定格幂等；取消=结构化 BacktestCancelled 判定，非字符串嗅探）"""
+        """回测失败/取消/停止超时（定格幂等；取消=结构化 BacktestCancelled 判定）"""
         from ..workers import BacktestCancelled
+        from quantstudio.pipeline.backtest_window import CollectorStopTimeout
+
+        if isinstance(err, CollectorStopTimeout):
+            # FR-019 / SC-013：三选项**只挂在回测等待上下文**，不做全局拦截
+            # （CLI 路径仍按其自身退出码 4 + stderr 提示，互不影响）
+            self.run_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            self.progress_bar.setVisible(False)
+            self._freeze()
+            self._handle_stop_timeout(err)
+            return
+
         is_cancel = isinstance(err, BacktestCancelled)
         self.run_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
@@ -369,10 +455,66 @@ class BacktestTab(QWidget):
             # 取消 = 主动用户动作，非失败：info 无弹窗，定格文案"已取消于"
             logger.info("用户取消回测")
             self.status_label.setText(f"⏹ 已取消于 {getattr(self, '_freeze_text', '')}")
+            self._start_next_queued()
             return
         self.status_label.setText("❌ 回测失败")
         logger.error(err)
         QMessageBox.critical(self, "回测错误", str(err)[:500])
+        self._start_next_queued()
+
+    def _handle_stop_timeout(self, err):
+        """FR-019 / SC-013：采集停止超时 → 「继续等待 / 强制终止 / 取消回测」。
+
+        映射见 contracts/cli-gui-contract.md 退出码契约：
+          · 继续等待 = 重入等待（重新发起同参回测）
+          · 强制终止 = force_kill_daemon() 后继续回测（仅限分级停止失效的卡死场景）
+          · 取消     = 不启动回测（采集保持当前状态），等价 CLI 退出码 130
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("采集尚未停止")
+        box.setText(str(err)[:500])
+        box.setInformativeText(
+            "「继续等待」：重新进入等待（计时重新开始）；\n"
+            "「强制终止」：强制结束采集进程后继续回测"
+            "（仅用于分级停止已失效的卡死场景；未提交单元会丢弃、水位不推进、下次启动重跑）；\n"
+            "「取消回测」：不启动回测，采集保持当前状态。")
+        btn_wait = box.addButton("继续等待", QMessageBox.ButtonRole.AcceptRole)
+        btn_kill = box.addButton("强制终止", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton("取消回测", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(btn_wait)
+        box.exec()
+        clicked = box.clickedButton()
+
+        params = getattr(self._worker, "params", None)
+        strategy_path = getattr(self._worker, "strategy_path", None)
+
+        if clicked is btn_wait:
+            if params is not None and strategy_path:
+                self._launch_worker(strategy_path, params)
+            return
+
+        if clicked is btn_kill:
+            try:
+                from ..daemon_process import force_kill_daemon
+                ok, msg = force_kill_daemon()
+            except Exception as e:  # noqa: BLE001
+                ok, msg = False, f"{type(e).__name__}: {e}"
+            if not ok:
+                QMessageBox.warning(self, "强制终止失败", msg)
+                return
+            # C1（终审阻断项）：强杀路径不经过 CollectorStopContext.__exit__，
+            # kill 成功后补写「因回测停止」归因，避免 GUI 误报「常驻进程异常退出」。
+            from quantstudio.pipeline.backtest_window import note_force_killed
+            note_force_killed()
+            if params is not None and strategy_path:
+                self._launch_worker(strategy_path, params)
+            return
+
+        # 取消（等价 CLI 130）
+        logger.info("用户取消回测（采集停止超时）")
+        self.status_label.setText("⏹ 已取消（回测未开始；采集保持当前状态）")
+        self._start_next_queued()
 
     @staticmethod
     def _fmt_elapsed(ms: int) -> str:

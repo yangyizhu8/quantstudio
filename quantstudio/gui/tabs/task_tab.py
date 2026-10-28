@@ -781,7 +781,7 @@ class TaskTab(QWidget):
                 self._daemon_proc = None
                 self._update_daemon_btn()
                 # FP-4：不再 stop() 定时器——保留轮询以发现外部重启（R-1 自愈）
-                self._set_status_text("⚠ 常驻进程异常退出")
+                self._set_status_text(self._exit_status_text())
             else:
                 self._daemon_death_streak = 0
         elif self._daemon_state == "stopped":
@@ -807,6 +807,19 @@ class TaskTab(QWidget):
                 else:
                     self._sync_daemon_state()
                     self._set_status_text("🟢 检测到外部启动的常驻进程，按钮已同步")
+
+    def _exit_status_text(self) -> str:
+        """daemon 消失时的文案：区分「因回测停止」与「异常退出」（spec FR-004/009）。
+
+        因回测停止是预期行为，不能被报成故障；留痕件跨界面进程有效（重启后仍可见）。
+        """
+        try:
+            from quantstudio.pipeline.backtest_window import read_stop_flag
+            if read_stop_flag() is not None:
+                return "⏸ 采集已因回测停止（不会自动重启，需要时请手动开启）"
+        except Exception:  # noqa: BLE001  观测失败不得影响状态同步
+            pass
+        return "⚠ 常驻进程异常退出"
 
     def _sync_daemon_state(self):
         """从 status 文件同步 daemon 状态（GUI 启动时 + refresh 时）。

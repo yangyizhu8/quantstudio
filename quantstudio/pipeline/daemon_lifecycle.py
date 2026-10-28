@@ -395,19 +395,30 @@ def read_stop_request() -> Optional[dict]:
         return None
 
 
-def consume_stop_request_if_matched(instance_token: str) -> bool:
-    """daemon 检测 stop.request：token 匹配则删除并返回 True。"""
+def consume_stop_request_with_reason(instance_token: str) -> Optional[dict]:
+    """daemon 检测 stop.request：token 匹配则删除并返回**请求体**（含 reason）。
+
+    `reason` 缺省视为 `"user"`——旧 GUI 不写该字段，行为与改动前一致；
+    回测入口写 `"backtest"`，用于区分「用户手动停」与「回测前停」。
+    """
     req = read_stop_request()
     if req is None:
-        return False
+        return None
     if req.get("instance_token") != instance_token:
-        return False  # 不是给我的
+        return None  # 不是给我的
     try:
         daemon_stop_request_path().unlink(missing_ok=True)
-        logger.info("[DaemonLifecycle] 收到停止请求，准备优雅退出")
-        return True
     except OSError:
-        return True
+        pass
+    reason = str(req.get("reason") or "user")
+    logger.info("[DaemonLifecycle] 收到停止请求（reason=%s），准备优雅退出", reason)
+    return {"reason": reason, "requested_at": req.get("requested_at"),
+            "owner_pid": req.get("owner_pid")}
+
+
+def consume_stop_request_if_matched(instance_token: str) -> bool:
+    """薄包装（兼容既有调用方）：token 匹配则消费并返回 True。"""
+    return consume_stop_request_with_reason(instance_token) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -568,6 +579,14 @@ class DaemonLifecycle:
         check_interval = sched_cfg.get("check_interval_sec", 300)
         skip_weekdays = list(sched_cfg.get("skip_weekdays", []) or [])
 
+        # 采集已真正启动——**GUI 按钮与 CLI 启动命令两条路径都汇聚到 run_forever**，
+        # 故在此清一次「因回测停止」留痕，避免界面在采集已恢复后仍误报（FR-004/FR-009）。
+        try:
+            from .backtest_window import clear_stop_flag
+            clear_stop_flag()
+        except Exception:  # noqa: BLE001  留痕清理失败不得阻断启动
+            pass
+
         logger.info(f"[DaemonLifecycle] 启动轻量调度循环。daily_time={daily_time}, "
                     f"check_interval={check_interval}s, skip_weekdays={skip_weekdays}, "
                     f"today_completed={is_today_completed()}, "
@@ -708,13 +727,16 @@ class DaemonLifecycle:
         attempted_task_count = 0
         traversal_completed = False
         stop_requested = False
+        stop_reason = None          # "user" | "backtest"：供界面/运维判别"为何停"
         close_ok = False
         # Review FIX-1：任务边界消费 stop.request
         def _check_stop_at_boundary(point_name: str):
-            nonlocal stop_requested
-            if consume_stop_request_if_matched(self.instance_token):
+            nonlocal stop_requested, stop_reason
+            _req = consume_stop_request_with_reason(self.instance_token)
+            if _req is not None:
                 self._running = False
                 stop_requested = True
+                stop_reason = str(_req.get("reason") or "user")
                 # 同步通知 collector 内部循环（per_stock/per_date 已支持 _running 检查）
                 if collector is not None:
                     try:
@@ -1080,6 +1102,11 @@ class DaemonLifecycle:
                 attempted_task_count=attempted_task_count,
                 traversal_completed=traversal_completed,
                 stop_requested=stop_requested,
+                # 停止原因留痕（user=用户手动 / backtest=回测前停）：界面据此区分文案
+                stop_reason=stop_reason,
+                yield_reason=("backtest_stop" if stop_reason == "backtest" else None),
+                yield_at=(datetime.now().isoformat(timespec="seconds")
+                          if stop_reason == "backtest" else None),
             )
             logger.warning(f"[DaemonLifecycle] 今日轮次未完成（{interrupt_status}, "
                            f"reason={interrupt_reason}），attempted={attempted_task_count}/"

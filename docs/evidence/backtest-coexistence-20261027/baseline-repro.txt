@@ -1,0 +1,47 @@
+==============================================================================
+T001 基线复现报告 — 常驻采集持库 vs 回测打开主库
+==============================================================================
+生成时间      : 2026-10-27T22:51:48
+模式          : sim
+Python        : 3.11.9
+DuckDB        : 1.4.5
+探针库        : C:\Users\Administrator\AppData\Local\Temp\qs_repro_gvp18028\probe.db
+
+── 主复现结论 ──
+持锁子进程就绪 : True
+只读打开结果   : fail
+错误类型       : IOException
+错误原文       : IO Error: Cannot open file "c:\users\administrator\appdata\local\temp\qs_repro_gvp18028\probe.db": 另一个程序正在使用此文件，进程无法访问。
+
+File is already open in 
+C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe (PID 49920)
+探测耗时(ms)   : 497.0
+
+── 静态证据（既有实测与代码位置，非本次新测）──
+• 生产实测（2026-10-23）
+  出处: docs/evidence/daemon-gui-start-failure-20261023.md:152-154
+  要点: daemon 运行中，任何进程（含 read_only）都无法打开：`Cannot open file … 另一个程序正在使用此文件`
+• 数据层静默路径
+  出处: quantstudio/backtest/providers/duckdb_data_access.py:183-204
+  要点: `_get_conn()` 只记首条 WARNING 并返回 None；各取数方法 `if conn is None` 直接返回 → 空结果静默跑完（本 feature FR-010/011 要堵的口子）
+• 官方并发模型（DuckDB 1.4 LTS）
+  出处: https://duckdb.org/docs/1.4/connect/concurrency
+  要点: 仅支持「单进程读写」或「多进程只读、无写者」；跨进程一写多读不在支持之列
+
+── 失败形态判定 ──
+形态 A：回测侧**打不开库**（显式 IO 错误）—— 当前唯一可用路径是人工停采集。
+
+── 机器可读 ──
+{
+  "mode": "sim",
+  "db": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\qs_repro_gvp18028\\probe.db",
+  "duckdb_version": "1.4.5",
+  "python": "3.11.9",
+  "hold_sec": 8.0,
+  "holder_ready": true,
+  "ro_open": "fail",
+  "error_type": "IOException",
+  "error_text": "IO Error: Cannot open file \"c:\\users\\administrator\\appdata\\local\\temp\\qs_repro_gvp18028\\probe.db\": 另一个程序正在使用此文件，进程无法访问。\r\n\nFile is already open in \nC:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe (PID 49920)",
+  "probe_elapsed_ms": 497.0,
+  "holder_stderr_tail": ""
+}

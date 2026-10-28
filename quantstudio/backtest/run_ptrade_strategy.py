@@ -19,6 +19,8 @@ logging.basicConfig(level=logging.INFO,
 from quantstudio.backtest.backtest_engine import BacktestEngine, DEFAULT_TRADE_COST, EngineConfig
 from quantstudio._paths import db_path
 from quantstudio.backtest.strategy_runner import load_strategy as _load_strategy
+from quantstudio.pipeline.backtest_window import (
+    CollectorStopContext, STOP_WAIT_SEC, BOUNDARY_HINT_SEC)
 
 
 def load_strategy(strategy_path: str) -> dict:
@@ -97,7 +99,217 @@ def run_backtest(strategy_path, start, end, *,
                  db_path=None, capital=100_000,
                  match_price_mode='close', engine_profile='daily-bar-v1',
                  etf_t0=False, cost=None, rebalance_mode='legacy',
-                 cost_basis_method='diluted',
+                 cost_basis_method='diluted', match_profile='ptrade',
+                 fidelity_config=None, progress_callback=None,
+                 coexistence=True,
+                 coexistence_boundary_timeout=BOUNDARY_HINT_SEC,
+                 coexistence_stop_timeout=STOP_WAIT_SEC,
+                 cancel_check=None,
+                 wait_callback=None):
+    """CLI 和 GUI 共用的回测入口（含「回测前停采集」语义）。
+
+    口径见 specs/001-daemon-backtest-coexistence（2026-10-27 变更）：
+      · 发起回测时若采集在跑：请求其**优雅停止并退出**（任务边界 30s → 任务内单元边界中断）；
+      · 等待期经 progress_callback 输出**真实读数**（不做 ETA），cancel_check() 为真则取消；
+      · 回测结束（成功/失败/取消）**不重启采集**——由用户手动启动，界面/终端据留痕提示。
+    coexistence=False ⇒ 完全回退到改动前行为（不停采集、不等待、不预检）。
+    """
+    # 裸文件名便捷解析（cwd 找不到时回退 strategies；透明打印，见 _resolve_strategy_path）
+    strategy_path = _resolve_strategy_path(strategy_path)
+
+    kwargs = dict(
+        db_path=db_path, capital=capital, match_price_mode=match_price_mode,
+        engine_profile=engine_profile, etf_t0=etf_t0, cost=cost,
+        rebalance_mode=rebalance_mode, cost_basis_method=cost_basis_method,
+        match_profile=match_profile, fidelity_config=fidelity_config,
+        progress_callback=progress_callback,
+    )
+    if not coexistence:
+        return _run_backtest_impl(strategy_path, start, end, **kwargs)
+
+    # 停采集是**有代价的动作**（结束后需用户手动恢复）：任何不依赖库的前置校验
+    # 必须放在它之前——低级错误（路径不存在/不可解析）不得以"采集被停掉"为代价。
+    _precheck_strategy_before_stop(strategy_path)
+
+    def _emit(msg: str) -> None:
+        """等待读数的出口。
+
+        注意：**不能复用 `progress_callback`**——引擎侧签名是
+        `(current, total, date_str)` 三参数（`backtest_engine.py:554` 调用），
+        而等待读数是单条字符串；混用会 TypeError（2026-10-28 实证）。
+        """
+        if wait_callback is not None:
+            try:
+                wait_callback(msg)
+            except Exception:  # noqa: BLE001  读数出口异常不得中断等待
+                pass
+        else:
+            print(msg, file=sys.stderr, flush=True)   # CLI 默认：stderr，不污染产物
+
+    def _on_wait(waited: float, phase: str) -> None:
+        # 0.1s 精度：`:.0f` 会把 0.5s 显示成 "0s"，看着像"没等"，容易被误读为缺陷
+        _emit(f"[coexist] 已等待 {waited:.1f}s · {phase}")
+
+    ctx = CollectorStopContext(
+        str(strategy_path),
+        timeout=coexistence_stop_timeout,
+        boundary_hint=coexistence_boundary_timeout,
+        on_wait=_on_wait,
+        should_cancel=cancel_check,
+    )
+    try:
+        with ctx:
+            # 采集已退出、互斥已拿到：此刻打不开库就是真不可用 → 显式拒绝（不空跑）
+            _precheck_db_available(db_path)
+            # F-6：停采集后**复检数据就绪**（采集持库时 main 已跳过前置检查；
+            # 此刻无锁竞争，四表仍空/缺列即真不就绪 → 显式拒绝，禁止空数据静默跑完）
+            if not _check_data_readiness(
+                    Path(db_path) if db_path is not None else Path(_default_db_path())):
+                raise RuntimeError(
+                    "数据未就绪（停采集后复检：四表为空或关键列缺失）。"
+                    "共存流程已执行完毕；请先完成数据拉取。")
+            from quantstudio.backtest.providers import duckdb_data_access as _dda
+            _dda.set_fail_closed(True)
+            try:
+                result, output_dir, engine = _run_backtest_impl(
+                    strategy_path, start, end, **kwargs)
+            finally:
+                _dda.set_fail_closed(False)   # 线程本地开关，必须恢复（纯增益）
+            _assert_result_not_empty(result, output_dir)
+            return result, output_dir, engine
+    finally:
+        # 不重启采集（spec FR-003/004）：只如实提示，恢复时点由用户决定
+        if ctx.stop_requested:
+            _emit("[coexist] 采集已停止（原因：回测）。需要时请手动启动采集。")
+
+
+def _resolve_strategy_path(strategy_path) -> str:
+    """裸文件名（不含路径分隔符）在 cwd 找不到时，透明回退到 strategies 目录。
+
+    动机：GUI 是从 `quantstudio/backtest/strategies/` 下拉选文件，用户直觉上
+    也会在 CLI 里只写文件名；而 CLI 原语义是"相对 cwd 解析"，于是必失败。
+    仅在「裸名 + cwd 不存在 + strategies 存在同名」时回退，并打印一行说明（不隐藏）。
+    """
+    raw = str(strategy_path)
+    p = Path(raw)
+    if p.exists() or p.is_absolute() or ("/" in raw) or ("\\" in raw):
+        return raw
+    cand = ROOT / "quantstudio" / "backtest" / "strategies" / p.name
+    if cand.exists():
+        try:
+            shown = cand.relative_to(ROOT)
+        except ValueError:
+            shown = cand
+        print(f"[resolve] 当前目录无 {p.name}，改用 {shown}")
+        return str(cand)
+    return raw
+
+
+def _precheck_strategy_before_stop(strategy_path) -> None:
+    """停采集**之前**的前置校验（只做不依赖数据库的检查）。
+
+    动机（2026-10-28 实证）：策略路径解析失败时，采集已经被停掉——用户白停一次
+    采集还要手动恢复。因此把「文件存在 + 可 AST 解析」提前到停止之前；
+    不通过就**不停采集**、直接报错，并给出可直接复制的正确命令。
+    """
+    p = Path(str(strategy_path))
+    if not p.exists():
+        strategies_dir = ROOT / "quantstudio" / "backtest" / "strategies"
+        lines = [
+            f"策略文件不存在（**采集未停止**）：{str(strategy_path)!r}",
+            f"  当前工作目录：{Path.cwd()}",
+        ]
+        same = strategies_dir / p.name
+        if same.exists():
+            try:
+                rel = same.relative_to(ROOT)
+            except ValueError:
+                rel = same
+            lines.append(f"  ✅ 在 strategies 目录找到同名文件：{rel}")
+            lines.append(f"  请改用：python -m quantstudio.backtest.run_ptrade_strategy "
+                         f"\"{rel}\" <start> <end>")
+        else:
+            try:
+                cands = sorted(strategies_dir.glob("*.py"),
+                               key=lambda x: x.stat().st_mtime, reverse=True)[:8]
+            except Exception:  # noqa: BLE001
+                cands = []
+            if cands:
+                lines.append("  strategies 目录下可用策略（最近修改 8 个）：")
+                for c in cands:
+                    try:
+                        lines.append(f"    - {c.relative_to(ROOT)}")
+                    except ValueError:
+                        lines.append(f"    - {c}")
+        raise FileNotFoundError("\n".join(lines))
+    try:
+        from quantstudio.backtest.strategy_runner import StrategyIsolationGuard
+        StrategyIsolationGuard.validate_path(str(strategy_path))
+    except FileNotFoundError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(
+            f"策略文件校验失败（**采集未停止**）：{type(e).__name__}: {e}") from e
+
+
+def _assert_result_not_empty(result, output_dir) -> None:
+    """FR-011：跑完却没有任何净值记录 ⇒ 判失败（不产出"成功但空"的结果）。
+
+    注意：**合法零交易**仍有逐日净值记录，不会被误判；只有取数全程拿不到数据才会空。
+    """
+    nav = getattr(result, "nav_history", None)
+    if nav:
+        return
+    raise RuntimeError(
+        f"回测未产出任何净值记录（output_dir={output_dir}）：取数层可能全程未拿到真实数据。"
+        "本次结果不可采信，请检查数据可用性后重试。")
+
+
+def _precheck_db_available(db_path=None) -> None:
+    """只读试连 + 试查：不可用则抛显式错误（绝不进入"空数据静默跑完"路径）。"""
+    import duckdb
+
+    p = Path(db_path) if db_path is not None else Path(_default_db_path())
+    if not p.exists():
+        raise RuntimeError(f"数据主库不存在：{p}")
+    try:
+        con = duckdb.connect(str(p), read_only=True)
+        try:
+            con.execute("SELECT 1").fetchone()
+        finally:
+            con.close()
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(
+            f"数据主库当前不可用（{type(e).__name__}: {e}）。"
+            "可能原因：采集进程仍持有库 / WAL 回放中 / 文件被其他进程占用。"
+            "共存窗已等待到采集边界；若持续失败，请确认采集进程状态后重试。"
+        ) from e
+
+
+def _db_is_locked(db_path) -> bool:
+    """库文件当前是否被其他进程持有（典型：daemon 采集轮写锁）。只探测、不持续占用。
+
+    F-6（2026-10-28 09:36 实证）：采集轮持库时发起回测，main() 的 `_check_data_readiness`
+    抢在共存流程之前 exit 3 —— 用户被迫等轮结束或手动停采集，违背「免手动停采集」的核心需求。
+    本函数用于让共存模式识别"锁被采集持有"并放行进入停采集流程，停完再复检。
+    """
+    import duckdb
+
+    try:
+        con = duckdb.connect(str(db_path), read_only=True)
+        con.close()
+        return False
+    except Exception as e:  # noqa: BLE001
+        msg = str(e)
+        return ("另一个程序正在使用" in msg) or ("already open" in msg) \
+            or ("Could not set lock" in msg) or ("被其他进程占用" in msg)
+
+
+def _run_backtest_impl(strategy_path, start, end, *,
+                 db_path=None, capital=100_000,
+                 match_price_mode='close', engine_profile='daily-bar-v1',
+                 etf_t0=False, cost=None, rebalance_mode='legacy',
+                 cost_basis_method='diluted', match_profile='ptrade',
                  fidelity_config=None, progress_callback=None):
     """CLI 和 GUI 共用的回测入口。统一所有默认值，确保双端口径一致。
 
@@ -144,6 +356,7 @@ def run_backtest(strategy_path, start, end, *,
         engine_profile=engine_profile,
         etf_t0=etf_t0,
         cost_basis_method=cost_basis_method,
+        match_profile=match_profile,  # M5.2 件7 口径标签（缺省 ptrade 零行为改变）
         progress_callback=progress_callback,
     )
     engine._strategy_name = Path(strategy_path).stem
@@ -190,7 +403,8 @@ def _parse_flag(argv, flag_name, default=None, has_value=True):
 
 # 带值的 flag 列表（用于过滤位置参数时跳过这些 flag 的值）
 _VALUE_FLAGS = {'--match-price', '--ptrade-dir', '--output', '--output-report', '--slippage', '--profile', '--etf-t0',
-                '--fidelity', '--eps-basis'}
+                '--fidelity', '--eps-basis',
+                '--coexistence-stop-timeout', '--coexistence-boundary-timeout'}
 
 
 def _is_flag_value(argv, token):
@@ -279,6 +493,16 @@ def main():
     # P-A0/P-A1/P-A2: 保真模式旗标（opt-in，验证转换产物用；默认全关 = 本地语义锚）
     fidelity_flag = _parse_flag(sys.argv[1:], '--fidelity', '')
     eps_basis_flag = _parse_flag(sys.argv[1:], '--eps-basis', 'passthrough')
+    # 共存语义（specs/001-daemon-backtest-coexistence）：默认「回测前停采集，结束后不自动重启」
+    coexistence = not _parse_flag(sys.argv[1:], '--no-coexistence', has_value=False)
+    _stop_timeout_raw = _parse_flag(sys.argv[1:], '--coexistence-stop-timeout', None)
+    _boundary_raw = _parse_flag(sys.argv[1:], '--coexistence-boundary-timeout', None)
+    try:
+        coexistence_stop_timeout = float(_stop_timeout_raw) if _stop_timeout_raw else None
+        coexistence_boundary_timeout = float(_boundary_raw) if _boundary_raw else None
+    except ValueError:
+        print("❌ --coexistence-stop-timeout / --coexistence-boundary-timeout 必须是数字（秒）")
+        sys.exit(1)
     if match_price_mode not in ("close", "open", "next_open"):
         print(f"❌ --match-price 必须是 close/open/next_open，got {match_price_mode!r}")
         sys.exit(1)
@@ -317,7 +541,11 @@ def main():
         sys.exit(1)
 
     # P2 数据前置：四表非空 + 关键列存在，否则给出可操作告警后退出
-    if not _check_data_readiness(db):
+    # F-6：采集轮持库时（readiness 只因打不开库而失败），共存模式必须放行——
+    # 停采集后在 run_backtest 内复检；否则「免手动停采集」在采集轮内反而失效。
+    if coexistence and _db_is_locked(db):
+        print("⚠ 数据主库正被采集进程持有——跳过前置检查，进入共存流程（自动停采集后复检数据就绪）")
+    elif not _check_data_readiness(db):
         print("❌ 数据未就绪，请先完成数据拉取后再运行回测（退出码 3）")
         sys.exit(3)
 
@@ -343,16 +571,44 @@ def main():
         )
 
     # P2：通过共用入口 run_backtest 确保双端口径一致
-    result, output_dir, engine = run_backtest(
-        strategy_path, start, end,
-        db_path=db,
-        match_price_mode=match_price_mode,
-        engine_profile=engine_profile,
-        etf_t0=etf_t0,
-        cost=cost,
-        cost_basis_method=cost_basis_method,
-        fidelity_config=fidelity_config,
-    )
+    from quantstudio.pipeline.backtest_window import CollectorStopTimeout, WindowCancelled
+
+    def _cli_wait(msg: str) -> None:
+        """等待读数走 stderr（不污染正常产物输出流）。
+
+        注意：与引擎的 `progress_callback(current, total, date_str)` 是**两个通道**，
+        不可混用（2026-10-28 实证：混用会 TypeError）。
+        """
+        print(msg, file=sys.stderr, flush=True)
+
+    _kw = {}
+    if coexistence_stop_timeout is not None:
+        _kw["coexistence_stop_timeout"] = coexistence_stop_timeout
+    if coexistence_boundary_timeout is not None:
+        _kw["coexistence_boundary_timeout"] = coexistence_boundary_timeout
+
+    try:
+        result, output_dir, engine = run_backtest(
+            strategy_path, start, end,
+            db_path=db,
+            match_price_mode=match_price_mode,
+            engine_profile=engine_profile,
+            etf_t0=etf_t0,
+            cost=cost,
+            cost_basis_method=cost_basis_method,
+            fidelity_config=fidelity_config,
+            coexistence=coexistence,
+            wait_callback=_cli_wait,
+            **_kw,
+        )
+    except WindowCancelled:
+        print("[coexist] 已取消：回测未开始；采集保持当前状态（需要时请手动启动）",
+              file=sys.stderr)
+        sys.exit(130)
+    except CollectorStopTimeout as e:
+        print(f"[coexist] {e}。可先手动停止采集后重试，或加大 --coexistence-stop-timeout",
+              file=sys.stderr)
+        sys.exit(4)
     result.report()
     print(f"\n结果导出: {output_dir}")
 

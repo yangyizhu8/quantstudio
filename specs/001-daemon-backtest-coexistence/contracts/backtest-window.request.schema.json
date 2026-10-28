@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "quantstudio://contracts/backtest-window.request.schema.json",
+  "title": "BacktestWindowRequest",
+  "description": "回测窗请求件：回测侧写入 data/backtest_window.request，daemon 侧读取判定让路。租约 TTL 是 fail-safe 兜底。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request_id", "owner_pid", "strategy_path", "started_at", "heartbeat_at", "ttl_sec", "token"],
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 32,
+      "pattern": "^[0-9a-fA-F]+$",
+      "description": "本次回测窗唯一标识（uuid4 hex 前 8 位）；删除时按此匹配，防误删他人请求。"
+    },
+    "owner_pid": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "持有回测窗的进程 pid（GUI 进程或 CLI 进程）。仅用于可观测与排障。"
+    },
+    "strategy_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "策略文件路径，仅用于可观测（哪个策略在等库）。"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "窗口请求创建时间（ISO8601，秒精度）。"
+    },
+    "heartbeat_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "最近一次心跳时间；回测侧每 10 秒刷新。daemon 以 now - heartbeat_at > ttl_sec 判定失效。"
+    },
+    "ttl_sec": {
+      "type": "integer",
+      "minimum": 30,
+      "maximum": 600,
+      "default": 120,
+      "description": "租约有效期（秒）。超过即视为回测侧已死亡，daemon 恢复采集（fail-safe）。"
+    },
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "description": "写入方随机令牌，仅用于清除时校验归属。"
+    }
+  }
+}

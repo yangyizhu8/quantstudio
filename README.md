@@ -112,6 +112,17 @@ MCP cloud data stores qfq rather than canonical raw prices. To prevent double ad
 - 该还原是管线内部（adapter 侧）行为，策略注入 API（`get_history` 等）仍默认 `fq='pre'`，策略层无感。
 - 细节：`docs/mcp_migration/is_qfq_restore-raw-task.md`、`docs/mcp_migration/mcp_protocol_probe.md` §7.4、验收 `docs/evidence/mcp_qfq_restore_verify_2026-08-03.md`。
 
+## 回测与常驻采集共存（2026-10-28）
+
+发起回测时若常驻采集正在运行，会自动请求其优雅停止（任务/单元边界，等待读数实时显示），
+回测结束后**采集保持停止，由用户手动启动**（GUI 任务页「开启」或 start_daemon_guarded.ps1）。
+
+- CLI 默认开启；`--no-coexistence` 回退到旧行为（不停采集）；`--coexistence-stop-timeout` 可调等待窗口（默认 60s，长采集轮建议加大）。
+- 退出码契约：`0` 成功 / `4` 停止超时 / `130` 等待中取消 / `3` 数据未就绪显式拒绝（含空库/关键列缺失——旧行为的静默空跑已收紧为显式拒绝）。
+- GUI：回测页「回测前自动停采集」复选框；停止超时弹「继续等待 / 强制终止 / 取消」三选项。
+- 停止原因留痕 data/backtest_stop.flag：任务页据此提示「采集已因回测停止（不会自动重启）」；计划任务 QS_DaemonForever 的自动拉起同样尊重该留痕（存在即跳过，-Force 可强制）。
+- 设计与验证：specs/001-daemon-backtest-coexistence（46 任务全过，双端产物 7/7 哈希一致）。
+
 ## 策略回测
 
 ```python
