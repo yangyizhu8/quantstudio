@@ -1,0 +1,1 @@
+﻿- 2026-10-28 22:36 | STOP daemon PID 28260 (quantstudio.pipeline.daemon --mode forever) | 拉起方: GUI main_gui.py PID 42936 (21:12:59, 未声明占用) | reason: 释放主库写锁供 dev A4 三用窗（件2 回写 813,140 行）| 令: 总调度 2026-10-28 22:35 GUI/daemon 协调令① | 执行: 本线（精确 PID+双向验证+排除自身）| GUI 42936 未杀（界面进程，留用户处置）| 19 号铁律注记: GUI 拉起 daemon 未事前声明
