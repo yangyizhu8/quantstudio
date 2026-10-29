@@ -26,7 +26,8 @@ from .preflight import BUILTIN_NAMES, IMPORT_WHITELIST, call_name
 #: 定时任务累计上限（F4：run_daily + run_interval 共享线程池，超限不触发）
 SCHEDULER_LIMIT = 5
 
-_MARK_BEGIN = re.compile(r"^(\s*)#\s*PTRADE-DEPLOY:(PERSIST|GUARD|MOUNT|GATE)\s+BEGIN\s*$")
+_MARK_BEGIN = re.compile(
+    r"^(\s*)#\s*PTRADE-DEPLOY:(GATE_RESTORE|PERSIST|GUARD|MOUNT|GATE)\s+BEGIN\s*$")
 
 
 @dataclass
@@ -90,19 +91,27 @@ def run_check_strategy(product_source: str) -> dict:
 
 # ---------------------------------------------------------------- 辅助 --
 
+#: 视为「已门控」的标记块种类（PD-0012 起含 GATE_RESTORE：嵌套恒真分支还原）
+_GATE_BLOCK_KINDS = ("GATE", "GATE_RESTORE")
+
+
 def _gated_linenos(product_text: str) -> Set[int]:
-    """GATE 标记块覆盖的行号集合（块内调用视为已门控）。"""
+    """门控标记块覆盖的行号集合（块内调用视为已门控）。
+
+    注：这里曾把种类**硬编码**为 `"GATE"`，PD-0012 引入 `GATE_RESTORE` 时被自测/实跑抓出
+    （`GATE_RESTORE` 块被忽略 ⇒ 门控后仍报未门控）。现按 `_GATE_BLOCK_KINDS` 统一判定。
+    """
     lines = product_text.split("\n")
     gated: Set[int] = set()
     open_depth = 0
     for idx, ln in enumerate(lines, start=1):
         m = _MARK_BEGIN.match(ln)
         if open_depth == 0:
-            if m and m.group(2) == "GATE":
+            if m and m.group(2) in _GATE_BLOCK_KINDS:
                 open_depth = 1
         else:
             stripped = ln.strip()
-            if stripped.endswith("# PTRADE-DEPLOY:GATE END"):
+            if stripped.endswith(tuple(f"# PTRADE-DEPLOY:{k} END" for k in _GATE_BLOCK_KINDS)):
                 open_depth = 0
             else:
                 gated.add(idx)

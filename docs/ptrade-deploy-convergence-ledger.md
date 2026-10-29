@@ -212,6 +212,28 @@
 - 知识反哺：[命中] PD-2026-0004（PD/D2/PD-2026-0004.md，2026-10-28）——口径写入 `gate_rule` 可复用
 - 知识反哺：[无命中] PD 族检索（is_trade/set_limit_mode/嵌套门控/沉淀钩子），2026-10-28
 
+## 4.10 轮 10（PD-0012 is_trade 恒真分支还原，2026-10-30）
+
+- **N₁₀=0**（无新发现缺陷）、**R₁₀=0**（无复发）——本轮为**缺陷修复轮**（纯恢复型）。
+- **修复**：`transformer._restore_always_true_gates`（识别面只认 `not False`；允许集=分支体仅回测专用 API/
+  `pass`/纯注释）⇒ 条件还原为 `not is_trade()`、分支体不动、打 `GATE_RESTORE` 标记 + **审计行
+  「恒真分支还原@行号」**；`equiv._handle_gate_restore` 归一重建 `not False`（P4 逐节点相等）；
+  `gates._GATE_BLOCK_KINDS` 纳入新种类（原硬编码 `"GATE"`）。
+- **验收读数**：
+  - `全球资产轮动` **status=PASS**（P0–P6 全 PASS；P4=PASS）——本轮目标用例转 PASS；
+  - `小市值策略ptrade` **status=PASS**（P4=PASS）；
+  - `ETF动量` 卡 **P0 `危险 import: sklearn`**——F10 正确 fail-closed，**与本条无关**（逐项归因）；
+  - deploy 套件 **110/110**；契约矩阵 `OK`；PD 族机检全绿（含新增 PD-2026-0012）。
+- **实施中四缺陷（自测/实跑抓出，已修并登记于证据件）**：①还原分支仍被报嵌套未门控（扫描未跳过自身）
+  ②测试断言误用 `ast.dump` 文本匹配 ③**P4 红**（还原未打标记/形态不匹配等价器）④**P5 仍拦**（`gates`
+  种类硬编码）。③④ 共性教训：**「已门控」判定与 P4 归一必须共用同一标记种类常量**（已写入条目 gate_rule）。
+- 判型：**纯恢复型**（回测侧 `not is_trade()` ≡ 原 `not False`，P4 逐位 PASS 为证；交易侧由「必执行」恢复为「跳过」）。
+- 证据：`docs/evidence/ptrade-deploy-pd0012-evidence.md`；方案：`docs/ptrade-deploy-istrade-gate-design.md`（②审四裁）。
+- **本轮沉淀**：PD-2026-0012
+- 知识反哺：[命中] PD-2026-0004（PD/D2/PD-2026-0004.md，2026-10-30）——AST 处理须覆盖嵌套节点
+- 知识反哺：[命中] PD-2026-0007（PD/D2/PD-2026-0007.md，2026-10-30）——形态判定黑名单优先 + 允许集
+- 知识反哺：[无命中] PD 族检索（is_trade / 恒真分支 / 嵌套门控还原），2026-10-30
+
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 
 - 2026-10-10（M6 之前）：P0 vault 回哺降级（vault 未建，预期状态）；

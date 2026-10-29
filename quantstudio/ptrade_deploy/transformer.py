@@ -42,6 +42,8 @@ MARKER_PERSIST = "PERSIST"
 MARKER_GUARD = "GUARD"
 MARKER_MOUNT = "MOUNT"
 MARKER_GATE = "GATE"
+#: PD-0012：「恒真分支还原」块标记（P4 归一化时把条件还原回 `not False`）
+MARKER_GATE_RESTORE = "GATE_RESTORE"
 MARKER_IMPORT = "IMPORT"
 
 #: import 追加行的行尾标记（§5.4 白名单第 6 类）
@@ -276,6 +278,86 @@ def _get_or_create_function(tree: ast.Module, name: str,
 
 # ---------------------------------------------------------------- ① GATE 门控 --
 
+def _is_not_false_literal(node) -> bool:
+    """是否**正是** `not False` 字面量形态（PD-0012 还原的唯一识别面）。
+
+    背景：`qs-compile import` 把 `is_trade()` 固化为字面量 `False`（source_import.py:3087），
+    源策略的 `if not is_trade():` 于是变成 `if not False:`（**恒真**）⇒ 交易侧门控失效。
+
+    **只认这一形态**（保守）：equiv 的还原处理器需在文本层把条件重建回源码原样，
+    而源码原样由固化规则唯一确定为 `not False`；`if True:` 等其它恒真形态一律不动
+    （source_import 不会产出，动了反而破坏 P4 重建）。
+    """
+    return (isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not)
+            and isinstance(node.operand, ast.Constant)
+            and node.operand.value is False)
+
+
+def _branch_only_gate_calls(body: List[ast.stmt], gate_apis: set) -> bool:
+    """分支体是否**只含**回测专用 API 调用（允许 pass / 纯注释常量）。
+
+    允许集式收紧（沿用 PD-2026-0007 教训）：体内只要混有一条业务语句即判否，
+    从而保证还原动作不会误伤真实业务逻辑。
+    """
+    if not body:
+        return False
+    for s in body:
+        if isinstance(s, ast.Pass):
+            continue
+        if isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant) \
+                and isinstance(s.value.value, str):
+            continue  # 纯注释/文档字符串
+        if isinstance(s, ast.Expr) and isinstance(s.value, ast.Call) \
+                and call_name(s.value) in gate_apis:
+            continue
+        return False
+    return True
+
+
+def _restore_always_true_gates(stmt: ast.stmt, gate_apis: set,
+                               edits: List[Dict[str, str]], fn_name: str) -> set:
+    """把「静态恒真 且 分支体只含回测专用 API」的条件还原为 `not is_trade()`（PD-0012）。
+
+    返回被还原节点的 `id()` 集合（供告警扫描跳过，避免重复报「嵌套未门控」）。
+    **只改条件、不动分支体**——回测语境 `is_trade()` 为 False ⇒ `not is_trade()` 为真，
+    执行行为与改前 `not False` 一致（P4 等价性红线依赖此性质）。
+    """
+    restored: set = set()
+    for node in ast.walk(stmt):
+        if not isinstance(node, (ast.If, ast.While)):
+            continue
+        if not _is_not_false_literal(getattr(node, "test", None)):
+            continue
+        if not _branch_only_gate_calls(getattr(node, "body", []), gate_apis):
+            continue
+        node.test = ast.UnaryOp(
+            op=ast.Not(),
+            operand=ast.Call(func=ast.Name(id="is_trade", ctx=ast.Load()),
+                             args=[], keywords=[]))
+        ast.copy_location(node.test, node)
+        _mark(node, MARKER_GATE_RESTORE, "wrap")   # P4 归一化据此还原条件
+        restored.add(id(node))
+        # ②审 2026-10-30 新增：还原动作须在**转换审计行**留痕（可追溯性）
+        edits.append({"kind": "GATE_RESTORE", "location": fn_name,
+                      "detail": f"恒真分支还原@{getattr(node, 'lineno', '?')}: "
+                                "静态恒真条件 → not is_trade()（分支体仅含回测专用 API；"
+                                "回测行为不变，交易侧恢复跳过）"})
+    return restored
+
+
+def _scan_ungated_calls(node: ast.AST, gate_apis: set, restored: set,
+                        sink: List[str]) -> None:
+    """递归扫描未被还原分支内的回测专用调用（还原过的分支**整体**跳过）。"""
+    if id(node) in restored:      # 首层语句本身即被还原的分支时，直接整体跳过
+        return
+    for child in ast.iter_child_nodes(node):
+        if id(child) in restored:
+            continue
+        if isinstance(child, ast.Call) and call_name(child) in gate_apis:
+            sink.append(call_name(child))
+        _scan_ungated_calls(child, gate_apis, restored, sink)
+
+
 def _apply_gates(tree: ast.Module, table: Dict[str, dict],
                  edits: List[Dict[str, str]], warnings: List[str]) -> None:
     gate_apis = {n for n, e in table.items()
@@ -306,13 +388,15 @@ def _apply_gates(tree: ast.Module, table: Dict[str, dict],
                 edits.append({"kind": "GATE", "location": fn.name,
                               "detail": f"{name}(...) 按契约表 action=strip 剔除"})
             else:
+                # PD-0012：先做「恒真分支还原」，再对**未还原**的嵌套调用告警（P5 将拦截）
+                restored = _restore_always_true_gates(stmt, gate_apis, edits, fn.name)
                 new_body.append(stmt)
-                for sub in ast.walk(stmt):  # 嵌套复合语句内的设置调用：警告（P5 拦截）
-                    if isinstance(sub, ast.Call) and call_name(sub) in gate_apis:
-                        warnings.append(
-                            f"{fn.name}: 回测专用 API {call_name(sub)} 位于嵌套复合语句内，"
-                            "M3 仅门控函数体首层语句（P5 将按未门控拦截）")
-                        break
+                sinks: List[str] = []
+                _scan_ungated_calls(stmt, gate_apis, restored, sinks)
+                if sinks:
+                    warnings.append(
+                        f"{fn.name}: 回测专用 API {sinks[0]} 位于嵌套复合语句内，"
+                        "M3 仅门控函数体首层语句（P5 将按未门控拦截）")
         fn.body = new_body
 
 

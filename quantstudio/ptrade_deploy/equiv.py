@@ -27,7 +27,7 @@ from .preflight import call_name
 from .transformer import MOUNT_WRAPPER_PREFIX
 
 _MARK_BEGIN = re.compile(
-    r"^(\s*)#\s*PTRADE-DEPLOY:(PERSIST|GUARD|MOUNT|GATE)\s+BEGIN\s*$")
+    r"^(\s*)#\s*PTRADE-DEPLOY:(GATE_RESTORE|PERSIST|GUARD|MOUNT|GATE)\s+BEGIN\s*$")
 _IMPORT_TAG = "# PTRADE-DEPLOY:IMPORT"
 
 _DUMP_EXCERPT = 160  # diff 报告中 AST dump 摘录上限（保持报告可读）
@@ -134,7 +134,27 @@ def _handle_mount(indent: str, block: List[str],
     raise ValueError("MOUNT 块非包装函数/注册语句形态")
 
 
-_HANDLERS = {"GATE": _handle_gate, "GUARD": _handle_guard,
+def _handle_gate_restore(indent: str, block: List[str]) -> List[str]:
+    """PD-0012：「恒真分支还原」块 → 还原为源码原形态 `if not False:` + 原分支体。
+
+    产物侧是 `if not is_trade(): <分支体>`（交易侧跳过、回测侧执行）；
+    源码侧是 `if not False: <分支体>`（恒真）。二者在**回测语境**等价，
+    故归一化时把产物条件重建回 `not False`，使 AST 逐节点相等（P4 不误报）。
+    """
+    tree = ast.parse(_dedent_lines(block, indent))
+    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.If):
+        raise ValueError("GATE_RESTORE 块应为单一 if 语句")
+    ifn = tree.body[0]
+    if not _is_not_is_trade(ifn.test) or ifn.orelse:
+        raise ValueError("GATE_RESTORE 块非 `if not is_trade(): <分支体>` 形态")
+    out: List[str] = [f"{indent}if not False:"]
+    for stmt in ifn.body:
+        out.extend(_emit_at_indent(ast.unparse(stmt), indent + "    "))
+    return out
+
+
+_HANDLERS = {"GATE": _handle_gate, "GATE_RESTORE": _handle_gate_restore,
+             "GUARD": _handle_guard,
              "PERSIST": _handle_persist, "MOUNT": _handle_mount}
 
 
@@ -216,7 +236,7 @@ def normalize_product(product_text: str,
     anomalies: List[str] = []
     text = product_text
     # 顺序：叶子块先行（GATE/GUARD 可嵌于 MOUNT 包装函数内、MOUNT 可嵌于新建 PERSIST 函数内）
-    for kinds in (("GATE",), ("GUARD",), ("PERSIST",), ("MOUNT",)):
+    for kinds in (("GATE_RESTORE",), ("GATE",), ("GUARD",), ("PERSIST",), ("MOUNT",)):
         text = _strip_pass(text, kinds, anomalies, mount_restore_name)
     # 第 6 类：import 追加行剔除
     text = "\n".join(ln for ln in text.split("\n")
