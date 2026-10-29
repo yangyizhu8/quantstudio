@@ -41,6 +41,22 @@ families:
     required_fields: [symptom, root_cause, fix_target, evidence, fixture, trigger]
     notes: "PD 族；schema 见 knowledge/ptrade-deploy/README.md（族独立定谳，不入 QD 机检内存）"
 
+  - id: db
+    dir: "knowledge/db"
+    entry_glob: "knowledge/db/DB-*.md"
+    id_pattern: 'DB-\d{4}-\d{4}'
+    fix_layer_enum: [write_path, constraint, lint_guard, artifact_rule, upgrade]
+    fix_layer_multi: true               # 双落点以 + 连接（同 pd 族裁定 a）；②号候选=constraint+lint_guard
+    domain_vocab: [D1, D2, D3, D4, D5]
+    required_fields: [symptom, root_cause, fix_target, evidence, fixture, trigger]
+    fix_layer_keywords:                 # 自动判层初版（kb_draft 缺省用；顺序命中即定）
+      write_path: ["executemany", "写入形态", "批量写", "TRUNCATE", "CTAS", "INSERT INTO"]
+      constraint: ["主键", "PK", "约束", "唯一", "NOT NULL", "指纹", "ON CONFLICT"]
+      lint_guard: ["lint", "巡检", "check_", "守卫", "退出码", "启动即报"]
+      artifact_rule: ["判据", "制品", "回扫", "grep 模式", "quickstart", "呈批件"]
+      upgrade: ["版本门", "升级", "兼容", "回归面", "duckdb#"]
+    notes: "数据库引擎与数据完整性域（2026-10-29 总调度裁定立族）；schema 独立于 qd/pd，枚举与⑲候选件对齐（回执全照准）"
+
 registries:
 
   - id: kb-main
