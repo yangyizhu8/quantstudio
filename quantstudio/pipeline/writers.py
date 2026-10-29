@@ -1570,13 +1570,18 @@ class DuckDBWriter(BaseWriter):
         return WriteResult(len(df), new_rows, updated_rows, changed_rows)
 
     # ------------------------------------------------------------------
-    # 类别B passthrough 同名表：CREATE OR REPLACE TABLE 全量覆盖
+    # 类别B passthrough 同名表：TRUNCATE + INSERT 全量覆盖（保留主键，PT-01a 改道）
     # ------------------------------------------------------------------
     def _write_passthrough(self, df: pd.DataFrame, table: str, batch_id: str) -> int:
         """passthrough 表全量覆盖写：DuckDB 表名/列名 = QuestDB 原样。
 
         - 表不存在：按 DataFrame dtypes 自动 CREATE TABLE IF NOT EXISTS；
-        - 存在：CREATE OR REPLACE TABLE 全量覆盖（不 upsert，不按 DDL 裁剪列）；
+        - 存在（**F2 主路径**，列集一致）：TRUNCATE + INSERT（同一事务包覆），
+          保留表对象与主键/索引 ⇒ 冲突探测继续有效；
+        - 存在（**F1 备选**，列集不一致）：按 DataFrame dtypes 重建表并显式重建同构主键；
+          命中指纹校验表则拒绝（加列属契约变更，铁律 24 六件套）；
+        - 注：旧语义「CREATE OR REPLACE TABLE」/「DROP 原表 + RENAME staging」已于
+          2026-10-29 废止 —— 它会**静默清空目标表主键**（1→0，不报错不告警）；
         - 不做数值类型归一（保留源原始字符串/数值类型）；
         - 不推进 source_watermark（passthrough 表无增量水位）。
         """
@@ -1607,16 +1612,36 @@ class DuckDBWriter(BaseWriter):
                     price_write_enter(table, "_write_passthrough", batch_id, df)
                     _assert_write_locked(table, "_write_passthrough")
                     conn.execute(create_sql)
-                    # 全量覆盖：建临时表→REPLACE→DROP 临时（DuckDB 无原生 CREATE OR REPLACE
-                    # 对含数据的表，用事务内 建临时+原子替换 实现等价语义）
+                    # 【PT-01a 改道 · spec 002-duckdb-1.5-upgrade FR-021/FR-022】
+                    # 旧：建临时表(CTAS，**不继承约束**)→灌数→DROP 原表→RENAME
+                    #     ⇒ 原表主键随 DROP 静默消失（1→0，不报错不告警；读数见
+                    #     docs/evidence/pt01-f2-truncate-20261029.md 四组 + 段A 十二组）
+                    # 新（F2，主路径）：列集一致 ⇒ TRUNCATE + INSERT（同一事务包覆）
+                    #     ⇒ 保留表对象与主键/索引，冲突探测继续有效
+                    # 备选（F1，列集不一致）：按 df 列集重建表并**显式重建同构主键**；
+                    #     命中指纹校验表 ⇒ 拒绝（加列属契约变更，铁律 24 六件套）
                     tmp = f"_pt_tmp_{table}"
                     conn.execute(f'DROP TABLE IF EXISTS "{tmp}"')
-                    conn.execute(f'CREATE TABLE "{tmp}" AS SELECT * FROM "{table}" LIMIT 0')
                     conn.register("_pt_src", df)
-                    conn.execute(f'INSERT INTO "{tmp}" SELECT * FROM _pt_src')
-                    conn.unregister("_pt_src")
-                    conn.execute(f'DROP TABLE IF EXISTS "{table}"')
-                    conn.execute(f'ALTER TABLE "{tmp}" RENAME TO "{table}"')
+                    try:
+                        if self._pt_columns_match(conn, table, df):
+                            began = self._pt_begin(conn)
+                            try:
+                                conn.execute(f'TRUNCATE TABLE "{table}"')
+                                conn.execute(f'INSERT INTO "{table}" SELECT * FROM _pt_src')
+                                if began:
+                                    conn.execute("COMMIT")
+                            except BaseException:
+                                if began:
+                                    try:
+                                        conn.execute("ROLLBACK")
+                                    except Exception:
+                                        pass
+                                raise
+                        else:
+                            self._pt_rebuild_with_pk(conn, table, tmp, list(df.columns))
+                    finally:
+                        conn.unregister("_pt_src")
                 except BaseException as _wf:
                     record_write_failure(_wf)          # §10.2 修正：失败写自身上下文
                     raise
@@ -1628,12 +1653,124 @@ class DuckDBWriter(BaseWriter):
         return len(df)
 
     # ------------------------------------------------------------------
+    # 【PT-01a】passthrough 覆盖链辅助（F2 主路径 / F1 备选）
+    #   背景：旧的「建临时表(CTAS，不继承约束)→灌数→DROP 原表→RENAME」链
+    #   会在每次全量覆盖时**静默清空目标表主键**（1→0，不报错不告警）；
+    #   读数见 docs/evidence/pt01-f2-truncate-20261029.md 四组 + 段A 十二组。
+    #   本组辅助支撑两条改道路径：
+    #     F2（主）：列集一致 ⇒ TRUNCATE + INSERT（同一事务）⇒ 保留表对象与主键；
+    #     F1（备）：列集不一致 ⇒ 按 df 列集重建 + 显式重建同构主键。
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _pt_begin(conn) -> bool:
+        """开启显式事务；若连接已在事务中则返回 False（交由外层事务提交）。"""
+        try:
+            conn.execute("BEGIN TRANSACTION")
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _pt_table_columns(conn, table) -> List[str]:
+        """按列序取表列名（表不存在则空表）。"""
+        try:
+            rows = conn.execute(
+                "SELECT column_name FROM duckdb_columns() "
+                "WHERE table_name = ? ORDER BY column_index", [table]).fetchall()
+        except Exception:
+            return []
+        return [r[0] for r in rows]
+
+    @classmethod
+    def _pt_columns_match(cls, conn, table, df) -> bool:
+        """df 列集与表列集是否一致（顺序亦须一致，`INSERT ... SELECT *` 才安全）。"""
+        cols = cls._pt_table_columns(conn, table)
+        if not cols:
+            return False
+        return list(df.columns) == cols
+
+    @staticmethod
+    def _pt_pk_columns(conn, table) -> List[str]:
+        """读原表主键列（无主键则空列表）。"""
+        try:
+            rows = conn.execute(
+                "SELECT constraint_column_names FROM duckdb_constraints() "
+                "WHERE table_name = ? AND constraint_type = 'PRIMARY KEY'",
+                [table]).fetchall()
+        except Exception:
+            return []
+        if rows and rows[0][0]:
+            return list(rows[0][0])
+        return []
+
+    @staticmethod
+    def _pt_fingerprint_tables() -> set:
+        """指纹校验表名单（qfq 契约表）：加列属契约变更，必须走六件套（铁律 24）。"""
+        try:
+            from . import qfq_schema_contracts as qsc
+        except Exception:
+            return set()
+        names = set()
+        for attr in dir(qsc):
+            if attr.endswith("FINGERPRINT"):
+                val = getattr(qsc, attr, None)
+                if isinstance(val, dict):
+                    names.update(val.keys())
+        return names
+
+    def _pt_rebuild_with_pk(self, conn, table, tmp, df_cols: List[str]) -> None:
+        """F1 备选：按 df 列集重建表 + **显式重建同构主键**（列集变化场景）。
+
+        命中指纹校验表 ⇒ 拒绝（加列属契约变更，须走铁律 24 六件套；本期不做自动加列）。
+        """
+        if table in self._pt_fingerprint_tables():
+            raise RuntimeError(
+                f"[DuckDBWriter] 表 '{table}' 属指纹校验表，列集变化须按契约变更六件套处理"
+                f"（铁律 24），本期不做自动加列")
+        pk_cols = self._pt_pk_columns(conn, table)
+        conn.execute(f'CREATE TABLE "{tmp}" AS SELECT * FROM _pt_src LIMIT 0')
+        if pk_cols and all(c in df_cols for c in pk_cols):
+            conn.execute(f'ALTER TABLE "{tmp}" ADD PRIMARY KEY ({", ".join(pk_cols)})')
+        conn.execute(f'INSERT INTO "{tmp}" SELECT * FROM _pt_src')
+        conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+        conn.execute(f'ALTER TABLE "{tmp}" RENAME TO "{table}"')
+
+    @classmethod
+    def _pt_columns_match_staging(cls, conn, table, staging) -> bool:
+        """staging 列集与原表列集是否一致（顺序亦须一致）。"""
+        cols = cls._pt_table_columns(conn, table)
+        if not cols:
+            return False
+        return cols == cls._pt_table_columns(conn, staging)
+
+    def _pt_rebuild_from_staging(self, conn, table, staging) -> None:
+        """F1 备选（分片路径）：按 staging 列集重建原表 + **显式重建同构主键**。"""
+        if table in self._pt_fingerprint_tables():
+            raise RuntimeError(
+                f"[DuckDBWriter] 表 '{table}' 属指纹校验表，列集变化须按契约变更六件套处理"
+                f"（铁律 24），本期不做自动加列")
+        pk_cols = self._pt_pk_columns(conn, table)
+        staging_cols = self._pt_table_columns(conn, staging)
+        rebuilt = staging + "_rebuilt"
+        conn.execute(f'DROP TABLE IF EXISTS "{rebuilt}"')
+        conn.execute(f'CREATE TABLE "{rebuilt}" AS SELECT * FROM "{staging}" LIMIT 0')
+        if pk_cols and all(c in staging_cols for c in pk_cols):
+            conn.execute(f'ALTER TABLE "{rebuilt}" ADD PRIMARY KEY ({", ".join(pk_cols)})')
+        conn.execute(f'INSERT INTO "{rebuilt}" SELECT * FROM "{staging}"')
+        conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+        conn.execute(f'ALTER TABLE "{rebuilt}" RENAME TO "{table}"')
+        conn.execute(f'DROP TABLE IF EXISTS "{staging}"')
+
+    # ------------------------------------------------------------------
     # 类别B passthrough 分片变体（B+ 增补，2026-09-12 总调度裁定）
     # 属同一 passthrough 通道的内部实现优化（非第三通道）：
     #   · staging 表跨尝试持久化（_pt_tmp_<table>）
     #   · 分片 ledger（_pt_staging_ledger）记录每片键与行数
     #   · 重试：ledger 累积行数 == staging 实际行数 -> 续插剩余片；不一致 -> drop 重建
-    #   · 全部片完成后原子换名（DROP 原表 + RENAME staging）——换名前最终表零触碰
+    #   · 全部片完成后落库（F2：TRUNCATE + INSERT 拷入原表，保留主键；
+    #     列集不一致则 F1 重建 + 重建同构主键）——旧语义「DROP 原表 + RENAME staging」
+    #     已废止（会静默清空主键）
     #   · 不推进 source_watermark（与 _write_passthrough 同语义）
     # 用途：大表（1.07 亿行级）分片入库，内存峰值 = 单分片；中途暂停/崩溃可续。
     # ------------------------------------------------------------------
@@ -1747,8 +1884,26 @@ class DuckDBWriter(BaseWriter):
                         raise RuntimeError(
                             '%s staging(%s) 与 ledger(%s) 不一致，拒绝换名（防半表残留）'
                             % (table, final_rows, ledger_sum))
-                    conn.execute('DROP TABLE IF EXISTS "' + table + '"')
-                    conn.execute('ALTER TABLE "' + tmp + '" RENAME TO "' + table + '"')
+                    # 【PT-01a 改道 · F2】staging 列集与原表一致 ⇒ TRUNCATE + INSERT（保留原表主键）
+                    #   列集不一致 ⇒ F1 重建（按 staging 列集重建 + 显式重建同构主键）
+                    #   旧语义：DROP 原表 + RENAME staging ⇒ 原表主键随 DROP 静默消失（1→0）
+                    if self._pt_columns_match_staging(conn, table, tmp):
+                        began = self._pt_begin(conn)
+                        try:
+                            conn.execute('TRUNCATE TABLE "' + table + '"')
+                            conn.execute('INSERT INTO "' + table + '" SELECT * FROM "' + tmp + '"')
+                            if began:
+                                conn.execute("COMMIT")
+                        except BaseException:
+                            if began:
+                                try:
+                                    conn.execute("ROLLBACK")
+                                except Exception:
+                                    pass
+                            raise
+                        conn.execute('DROP TABLE IF EXISTS "' + tmp + '"')
+                    else:
+                        self._pt_rebuild_from_staging(conn, table, tmp)
                     self._pt_clear_ledger(conn, table)
                     logger.info('[DuckDBWriter] %s passthrough 分片写完成 rows=%d chunks=%d '
                                 'resumed_from=%d', table, final_rows, n_chunks, resumed_from)

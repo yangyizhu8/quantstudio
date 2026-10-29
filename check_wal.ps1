@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   check_wal.ps1 — QuantStudio 数据库 WAL 巡检、探测与收敛（Windows，幂等）
 
@@ -6,7 +6,8 @@
   与 check_wal.sh（macOS）语义对齐：
     ① 探测优先：不论 WAL 大小，先尝试只读打开探测；打不开即判定"需收敛"，
        256MB 仅作性能阈值（不再作为唯一门槛）；
-    ② duckdb 版本门：必须 1.4.x（项目钉版 duckdb>=1.4.5,<1.5，issue #23645）；
+    ② duckdb 版本门：放行集合 = 1.4.5 ≤ x < 1.5 或 x == 1.5.6（判定源唯一：
+       quantstudio/pipeline/duckdb_version_policy.py，本脚本只调用不自持规则）；
     ③ 日期列自动探测：stock_daily 实为 time 列（非 trade_date）；
     ④ 失败即中断：CHECKPOINT 非零退出不打印"完成"，给出明确指引；
     ⑤ 早退提示（早退 ≠ 已收敛，彻底收敛用 -Force）。
@@ -63,12 +64,16 @@ function Invoke-PyFile([string]$code) {
 
 if (-not (Test-Path $Db)) { Fail "未找到 $Db，请把本脚本放在项目根目录后运行" }
 
-# 1. 版本门（单行、无内嵌双引号）
+# 1. 版本门（判定源唯一：quantstudio/pipeline/duckdb_version_policy.py，本脚本不自持规则）
 $ver = & $Py -c "import duckdb; print(duckdb.__version__)" 2>$null
 if ($LASTEXITCODE -ne 0 -or -not $ver) { Fail "无法导入 duckdb（用 -Py 指定项目解释器）" }
 Write-Host "duckdb = $ver"
-if (-not ($ver -match '^1\.4\.')) {
-  Fail "duckdb $ver 不合项目钉版（需 1.4.x，pyproject: duckdb>=1.4.5,<1.5；1.5.x 有已知回归）。修复：pip install `"duckdb>=1.4.5,<1.5`""
+$gateSrc = Join-Path $Root 'quantstudio\pipeline\duckdb_version_policy.py'
+if (-not (Test-Path $gateSrc)) { Fail "找不到判定源 $gateSrc（请把本脚本与仓库一起放置）" }
+& $Py $gateSrc --check $ver | Out-Null
+$gateRc = $LASTEXITCODE
+if ($gateRc -ne 0) {
+  Fail "duckdb $ver 不在项目放行集合（1.4.5 ≤ x < 1.5 或 x == 1.5.6）。修复：pip install `"duckdb==1.5.6`""
 }
 
 # 2. 写者进程检查（GUI/daemon）

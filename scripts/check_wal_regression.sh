@@ -38,9 +38,10 @@ if command -v cygpath >/dev/null 2>&1; then WIN_TMP="$(cygpath -w "$TMP")"; else
 "$PY" "$REPO/scripts/check_wal_fixture.py" --out "$WIN_TMP/fixtures" || { echo "!! fixture 构建失败"; exit 1; }
 FIX="$TMP/fixtures"
 
-# 版本门伪造 shim：duckdb.__version__ = 1.5.6（T1 用，不依赖真实 1.5.x 环境）
-mkdir -p "$TMP/fakeshim/duckdb"
-printf '%s\n' '__version__ = "1.5.6"' > "$TMP/fakeshim/duckdb/__init__.py"
+# 版本门伪造 shim：1.5.5（放行集合外，应拒跑）与 1.5.6（放行集合内，应放行）
+mkdir -p "$TMP/fakeshim_bad/duckdb" "$TMP/fakeshim_ok/duckdb"
+printf '%s\n' '__version__ = "1.5.5"' > "$TMP/fakeshim_bad/duckdb/__init__.py"
+printf '%s\n' '__version__ = "1.5.6"' > "$TMP/fakeshim_ok/duckdb/__init__.py"
 
 ok() { PASS=$((PASS+1)); echo "PASS  $1"; }
 ng() { FAIL=$((FAIL+1)); echo "FAIL  $1"; }
@@ -53,6 +54,9 @@ run_case() {
   local work="$TMP/work_$name"
   rm -rf "$work"; mkdir -p "$work/data"
   cp -f "$TARGET" "$work/check_wal.sh"
+  # 判定源随脚本一并复制（check_wal.sh 以相对路径单文件直调它）
+  mkdir -p "$work/quantstudio/pipeline"
+  cp -f "$REPO/quantstudio/pipeline/duckdb_version_policy.py" "$work/quantstudio/pipeline/"
   if [ -d "$FIX/$fixture/data" ]; then
     cp -f "$FIX/$fixture/data/"* "$work/data/" 2>/dev/null || true
   fi
@@ -80,10 +84,17 @@ wal_bytes() {  # $1 work dir → WAL 字节数（不存在=0）
   if [ -f "$w" ]; then wc -c < "$w" | tr -d ' '; else echo 0; fi
 }
 
-# T1 版本门：伪造 duckdb 1.5.6 → 拒跑
-CASE_PYTHONPATH="$TMP/fakeshim" run_case t1_version_gate 1 healthy
+# T1 版本门：伪造 duckdb 1.5.5（放行集合外）→ 拒跑
+CASE_PYTHONPATH="$TMP/fakeshim_bad" run_case t1_version_gate 1 healthy
 CASE_PYTHONPATH=""
-want t1_version_gate 1 "不合项目钉版" "CHECKPOINT"
+want t1_version_gate 1 "不在项目放行集合" "CHECKPOINT"
+
+# T1b 版本门：伪造 duckdb 1.5.6（放行集合内）→ 版本门**不得拦截**
+#   注：伪造模块只有 __version__、没有 connect，故放行后必然在只读探测/CHECKPOINT 阶段失败
+#   （exit 1）。本用例断言的是「版本门已放行」，不是「整流程成功」。
+CASE_PYTHONPATH="$TMP/fakeshim_ok" run_case t1b_version_gate 1 healthy
+CASE_PYTHONPATH=""
+want t1b_version_gate 1 "duckdb = 1.5.6" "不在项目放行集合"
 
 # T2 健康库（无 WAL）→ 早退 0
 run_case t2_healthy 0 healthy

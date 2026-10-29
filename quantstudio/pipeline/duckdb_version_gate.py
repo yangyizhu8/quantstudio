@@ -1,76 +1,90 @@
 # -*- coding: utf-8 -*-
-"""duckdb 版本闸（笔5，2026-09-23 A 案裁定①）。
+"""duckdb 版本闸（**薄封装** —— 判定规则唯一来源 = `duckdb_version_policy`）。
 
-背景
-----
-`pyproject.toml` 双处钉 `duckdb>=1.4.5,<1.5`（issue duckdb#23645 回归防护），但 09-23
-定谳：**钉版从未覆盖实际运行环境** ——
-  - 官方主 venv `_runtime\\venv_quant_studio` = duckdb **1.5.4**（`scripts/activate_venv.bat` 指向它）
-  - daemon 实际所用 `venv_miniQMT` = duckdb **1.5.3**（曾以该版本写主库两天）
-  - 合规落点只有 `Python311` 与 `python3.12.9`（均 1.4.5）
+2026-10-29 变更（首跳 1.4.5 → 1.5.6，spec 002-duckdb-1.5-upgrade）：
 
-本闸**启动即校验**，不合规即**拒启**，覆盖三入口：
-  1) GUI：`main_gui.py`
-  2) daemon：`quantstudio/pipeline/daemon.py` 的 `-m` 与**直启**（`python daemon.py …`）两形态
-  3) GUI 拉起的 daemon 子进程（继承 GUI 解释器，且子进程自身亦过闸）
+- 旧：`REQUIRED_SERIES = "1.4"` + `ver.startswith("1.4.")`（单值前缀匹配）
+- 新：放行集合 `{1.4.5 ≤ x < 1.5} ∪ {x == 1.5.6}`，规则集中于
+  `quantstudio/pipeline/duckdb_version_policy.py`；**本模块不再持有任何版本规则**，
+  只做「取版本 → 调策略 → 放行 / 拒启」。
+- `REQUIRED_SERIES` 常量**已删除**（全仓外部引用点 = 0，核查表：
+  `docs/evidence/duckdb-version-gate-compat-audit-20261029.md`）。
 
-逃生阀
-------
-`QS_DUCKDB_VERSION_GATE=0`：显式放行（仅限明确知情的运维场景），会打印醒目警告。
-默认（未设置或非 0）一律**拒绝**。
+三入口覆盖不变：GUI / daemon（`-m` 与直启两形态）/ GUI 拉起子进程。
+逃生阀不变：`QS_DUCKDB_VERSION_GATE=0` 显式放行并留醒目告警。
 """
 from __future__ import annotations
 
 import logging
 import os
+import sys
 from typing import Tuple
+
+from .duckdb_version_policy import (  # noqa: F401 —— ALLOWED_RANGES/parse_version 供外部引用
+    ALLOWED_RANGES,
+    describe_policy,
+    is_allowed,
+    parse_version,
+    probe_version,
+)
+from .duckdb_version_policy import main as policy_main
 
 logger = logging.getLogger(__name__)
 
-REQUIRED_SERIES = "1.4"          # 需 1.4.x（钉版 >=1.4.5,<1.5）
 GATE_ENV = "QS_DUCKDB_VERSION_GATE"
+
+_POLICY_TEXT = describe_policy()
 
 _REMEDY = (
     "修复方式（择一）：\n"
-    '  ① 把当前解释器的 duckdb 降到钉版：pip install "duckdb>=1.4.5,<1.5"\n'
-    "  ② 改用已合规的解释器启动：\n"
-    "     C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe（1.4.5）\n"
-    "     C:\\python3.12.9\\python.exe（1.4.5）\n"
-    "  ③ 官方主 venv（_runtime\\venv_quant_studio，当前 1.5.4）需先降级再使用；\n"
-    f"  ④ 确需临时放行：设 {GATE_ENV}=0（风险自负，会在日志留醒目警告）。\n"
-    "依据：pyproject 双处 duckdb>=1.4.5,<1.5（issue duckdb#23645 回归钉版）。"
+    '  ① 把当前解释器的 duckdb 升级到目标版本：pip install "duckdb==1.5.6"\n'
+    "  ② 或改用已合规的解释器启动（放行集合："
+    + _POLICY_TEXT
+    + "）：\n"
+    "     C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe\n"
+    "     C:\\python3.12.9\\python.exe\n"
+    "  ③ 确需临时放行：设 "
+    + GATE_ENV
+    + "=0（风险自负，会在日志留醒目警告）。\n"
+    "依据：依赖声明面 duckdb==1.5.6；放行集合 "
+    + _POLICY_TEXT
+    + "；判定源 quantstudio/pipeline/duckdb_version_policy.py。"
 )
 
 
 def check_duckdb_version() -> Tuple[bool, str]:
-    """校验 duckdb 版本是否属 `1.4.x`。返回 `(ok, version_or_error)`。"""
-    try:
-        import duckdb
-    except Exception as e:  # 无 duckdb 亦视为不合规（无法判定即拒绝）
-        return False, f"无法导入 duckdb: {type(e).__name__}: {e}"
-    ver = str(getattr(duckdb, "__version__", "unknown"))
-    return ver.startswith(REQUIRED_SERIES + "."), ver
+    """校验当前 duckdb 版本是否落在放行集合内。返回 `(ok, version_or_error)`。"""
+    ok, detail = probe_version()
+    if not ok:
+        return False, detail
+    return is_allowed(detail), detail
 
 
 def require_duckdb_version(component: str) -> None:
     """不合规即拒启（`SystemExit(3)`）；合规则静默通过（debug 级留痕）。"""
     ok, detail = check_duckdb_version()
     if ok:
-        logger.debug(f"[version-gate] {component}: duckdb {detail} 合规（需 {REQUIRED_SERIES}.x）")
+        logger.debug(f"[version-gate] {component}: duckdb {detail} 合规（放行集合：{_POLICY_TEXT}）")
         return
 
     if os.environ.get(GATE_ENV, "1").strip() == "0":
         logger.warning(
-            f"[version-gate] {component}: duckdb {detail} **不合规**（需 {REQUIRED_SERIES}.x），"
-            f"但 {GATE_ENV}=0 已显式放行 —— 风险自负（钉版依据 pyproject: duckdb>=1.4.5,<1.5）")
+            f"[version-gate] {component}: duckdb {detail} **不合规**（放行集合：{_POLICY_TEXT}），"
+            f"但 {GATE_ENV}=0 已显式放行 —— 风险自负")
         return
 
     msg = (
         f"[version-gate] 拒绝启动：{component} 当前 duckdb = **{detail}**，"
-        f"不在钉版区间（需 {REQUIRED_SERIES}.x，pyproject: duckdb>=1.4.5,<1.5）。\n"
-        f"原因：1.5.x 存在已知回归（issue duckdb#23645，ART index-delete fatal），"
-        f"且混版读写同一主库已被 09-23 事故证实为真实风险。\n" + _REMEDY
+        f"不在放行集合（{_POLICY_TEXT}）。\n"
+        "原因：放行集合外的版本不在本项目支持范围"
+        "（1.5.x 早期小版本含 1.5.5 存在已知 ART index-delete 回归 issue duckdb#23645）。\n"
+        + _REMEDY
     )
     logger.error(msg)
-    print(msg, file=__import__("sys").stderr)
+    print(msg, file=sys.stderr)
     raise SystemExit(3)
+
+
+if __name__ == "__main__":
+    # 契约：python -m quantstudio.pipeline.duckdb_version_gate --check [版本串] [--json]
+    raise SystemExit(policy_main(sys.argv[1:]))

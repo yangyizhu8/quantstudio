@@ -163,6 +163,17 @@ def _lint_one_task(task: Dict, name: str, schemas: Dict, sources: Dict,
     # 权威源校验：authoritative_source 必须已启用且支持该 task 的 table/freq
     # passthrough 表：无权威源概念（全量覆盖，不进入增量水位/权威源对账体系），跳过
     if is_passthrough:
+        # 【PT-01a 前瞻守卫 · spec 002-duckdb-1.5-upgrade FR-025 / B-03′】
+        # passthrough 全量覆盖链若作用于**带主键的表**，会静默清空该表主键（1→0，不报错不告警；
+        # 读数见 docs/evidence/pt01-f2-truncate-20261029.md 四组 + 段A 十二组）。
+        # 当前 67 个 passthrough 任务与带主键表交集为空 ⇒ 本规则为**前瞻守卫**（现状零告警）。
+        pk_decl = list((schemas.get(table) or {}).get("primary_key") or [])
+        pk_ref = _WRITER_PK_REFERENCE.get(table)
+        if pk_decl or pk_ref:
+            errors.append(
+                f"task '{name}': passthrough 任务不得指向带主键的表 '{table}'"
+                f"（覆盖链会静默清空主键；主键列 {pk_decl or pk_ref}）"
+                f"—— 见 spec 002-duckdb-1.5-upgrade / FR-025")
         return
     authoritative = task.get("authoritative_source")
     if authoritative:

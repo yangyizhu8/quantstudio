@@ -3,7 +3,8 @@
 # v3（2026-10-19 客户实弹修复）：
 #   ① 探测优先：不论 WAL 大小，先尝试只读打开探测；打不开即判定"需收敛"，
 #      256MB 仅作性能阈值（不再作为唯一门槛）；
-#   ② duckdb 版本门：必须 1.4.x（项目钉版 duckdb>=1.4.5,<1.5，issue #23645）；
+#   ② duckdb 版本门：放行集合 = 1.4.5 ≤ x < 1.5 或 x == 1.5.6（判定源唯一：
+#      quantstudio/pipeline/duckdb_version_policy.py，本脚本只调用不自持规则）；
 #   ③ 日期列自动探测：stock_daily 实为 time 列（非 trade_date）；
 #   ④ 失败即中断：CHECKPOINT 非零退出不打印"完成"，给出明确指引；
 #   ⑤ bash 3.2 兼容：变量一律 ${VAR} 花括号界定（$VAR 后紧跟中文字符在
@@ -38,14 +39,17 @@ fail() { echo "!! $*"; exit 1; }
 [ -f "$DB" ] || fail "未找到 ${DB}，请把本脚本放在项目根目录后运行"
 command -v "$PY" >/dev/null 2>&1 || fail "找不到解释器 ${PY}（可尝试 PY=./.venv/bin/python bash check_wal.sh）"
 
-echo "== 1. duckdb 版本门（项目钉版：1.4.x）=="
+echo "== 1. duckdb 版本门（项目放行集合：1.4.5 ≤ x < 1.5 或 x == 1.5.6）=="
 VER=$("$PY" -c "import duckdb; print(duckdb.__version__)" 2>/dev/null) || fail "无法导入 duckdb（用 PY=./.venv/bin/python 指定项目解释器）"
 echo "duckdb = $VER"
-case "$VER" in
-  1.4.*) ;;
-  *) fail "duckdb ${VER} 不合项目钉版（需 1.4.x，pyproject: duckdb>=1.4.5,<1.5；1.5.x 有已知回归）。
-   修复：pip install \"duckdb>=1.4.5,<1.5\"，或 PY=./.venv/bin/python bash check_wal.sh" ;;
-esac
+GATE_SRC="quantstudio/pipeline/duckdb_version_policy.py"
+[ -f "$GATE_SRC" ] || fail "找不到判定源 ${GATE_SRC}（请把本脚本与仓库一起放置）"
+"$PY" "$GATE_SRC" --check "$VER" >/dev/null 2>&1
+GATE_RC=$?
+if [ "$GATE_RC" -ne 0 ]; then
+  fail "duckdb ${VER} 不在项目放行集合（1.4.5 ≤ x < 1.5 或 x == 1.5.6；判定源 ${GATE_SRC}）。
+   修复：pip install \"duckdb==1.5.6\"，或 PY=./.venv/bin/python bash check_wal.sh"
+fi
 
 echo "== 2. 写者进程检查 =="
 if lsof "$(pwd)/$DB" >/dev/null 2>&1; then
