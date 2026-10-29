@@ -11,7 +11,7 @@
 | 类别 | 前缀 | 条目数 | 已锚定 | 已排查 | 未验证 | 已知分歧 | 不适用 | 缺口 |
 |---|---|---|---|---|---|---|---|---|
 | Position/Account 字段 | POS | 17 | 3 | 2 | 0 | 0 | 5 | 7（已裁接受·不立项） |
-| 注入 API 契约 | API | **88**（已枚举；PTrade 面 **68**） | **19**（PTrade 面逐条一致）＋**2**（QMT 锚定：get_financial_data×QCAL-05／get_instrument_detail×QCAL-01） | — | **44**（PTrade 文档配额未覆盖·待补查 2-3 轮）＋**48**（QMT 锚列候核，锚列共 50） | **4**（A `get_history.fq` 默认＝已裁有意设计／B `get_fundamentals` table+is_dataframe＝已裁／C `get_snapshot.frequency`＝已裁 QS 扩展／E `order_target` 参数名＝待转换管线核） | — | **1**（`attribute_history`＝聚宽名混入候选，PTrade 面判缺） |
+| 注入 API 契约 | API | **88**（已枚举；PTrade 面 **68**） | **22**（PTrade 面逐条一致）＋**2**（QMT 锚定：get_financial_data×QCAL-05／get_instrument_detail×QCAL-01） | — | **37**（PTrade 文档待补查·补查批 1 已清 7 条：一致 3／差异 4；`get_current_data` 3 次配额用尽未命中）＋**48**（QMT 锚列候核，锚列共 50） | **8**（A `get_history.fq` 默认＝已裁有意设计／B `get_fundamentals` table+is_dataframe＝已裁／C `get_snapshot.frequency`＝已裁 QS 扩展／E `order_target` 参数名＝已裁·**降级为本地命名差异·无迁移阻断**／F `get_stock_info.field` 必填＝**新登记 P1**／G `get_stock_name` 返回值语义／H `get_etf_stock_list` 仅交易环境／I `get_instruments` 返回面） | — | **1**（`attribute_history`＝聚宽名混入候选，PTrade 面判缺） |
 | 撮合规则 | MCH | 10 | 6 | 3 | 0 | 1 | 0 | 0 |
 | 生命周期 | LC | 8 | 7 | 1 | 0 | 0 | 0 | 0 |
 | 费用模型 | FEE | 5 | 3 | 0 | 0 | 2 | 0 | 0 |

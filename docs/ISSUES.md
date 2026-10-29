@@ -482,3 +482,14 @@
 | 编号 | 问题描述 | 定位证据 | 严重等级 | 当前状态 | 归属迭代 | 修复方案 | 验证证据 | 关闭时间 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | ISS-ARC-01 | 全局归档 4 件归档件合计 **6,819 B**，超方案 §4.4 体量硬门「归档件合计 ≤6,000 B」**819 B**（主文件硬门 ≤18,000 B **达标**：17,779 B） | `C:\Users\Administrator\.dsh\iron-rules\`（01=2,158B／02=2,046B／03=1,148B／04=1,467B） | 低 | **已关闭（微偏差·已登记·不返工）** | 全局归档治理 | 不返工（用户 2026-10-30 裁定「微偏差登记即可」）；超门原因＝行 56 组件白名单原文入档 ＋ 两处事故叙述逐字完整保留 | `os.path.getsize` 实测 4 件合计 6,819 B；主文件 17,779 B；四查 PASS 且全局 WARN 消除 | 2026-10-30 |
+
+
+## T5 补查批 1 新发现差异登记（F/G/H/I · 2026-10-30）
+
+
+| 编号 | 问题描述 | 定位证据 | 严重等级 | 当前状态 | 归属迭代 | 修复方案 | 验证证据 | 关闭时间 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ISS-T5-F | `get_stock_info` 的 `field` **本地必填**（无默认值），PTrade 文档 `field=None` 可选 ⇒ 只传 `stocks` 的调用平台可用、**本地 TypeError** | 本地 `quantstudio/backtest/ptrade_api.py:2568`（`def get_stock_info(self=None, stocks, field)`）；文档 Context7 `/kay-ou/ptradeapi` Ptrade社区.md（`get_stock_info(stocks, field=None)`，field 可选默认只返 stock_name） | **P1（调用面阻断）** | **已登记·未修复**（按 B3 裁定：新差异仅登记，下轮统一处置） | T5 补查批 2 | 待定：给 `field=None` 默认值（纯增益）**或**在转换产物侧显式补 field（须先核 PTrade 产物调用面）——**下轮统一评估，本轮不擅改** | evidence `api-surface-behavior-verification-20261028.md` §四 F；本地 AST 七件套提取 + Context7 文档依据 | — |
+| ISS-T5-G | `get_stock_name` **本地以代码充当名称**（DuckDB 无 name 字段），PTrade 返回真实中文名（查不到 value=None） | 本地 `ptrade_api.py:2537`（docstring「DuckDB 无 name 字段，返回代码作为名称」）；文档 Context7 Ptrade东莞.md（`get_stock_name(stocks)` → dict[str:str]） | P2（返回值语义） | **已登记·未修复**（下轮统一） | T5 补查批 2 | 待定：补 name 字段映射或登记为已知差异——**下轮统一评估** | evidence §四 G | — |
+| ISS-T5-H | `get_etf_stock_list` **文档限定「适用环境：交易」**，本地回测亦可调用 ⇒ 环境面本地更宽松 | 本地 `ptrade_api.py:2246`；文档 Context7 Ptrade国盛.md（适用环境：交易） | P3（宽松，非阻断） | **已登记·未修复**（下轮统一） | T5 补查批 2 | 待定：登记为「本地宽松」差异或加环境门——**下轮统一评估** | evidence §四 H | — |
+| ISS-T5-I | `get_instruments` **返回面差异**：平台返回合约信息（FutureParams）且实盘涨跌幅不可用；本地仅返回基础证券元信息、期货不支持 | 本地 `ptrade_api.py:2481`（docstring「futures remain unsupported locally」）；文档 Context7 Ptrade东莞.md（返回合约信息；实盘模块涨跌幅暂无法提供） | P2（返回面） | **已登记·未修复**（下轮统一） | T5 补查批 2 | 待定：期货支持列入框架层规划或登记已知差异——**下轮统一评估** | evidence §四 I | — |
