@@ -204,7 +204,7 @@
 ## 【铁律】WAL 残留处置与双平台运维脚本（2026-10-19 总调度裁定）
 
 - **触发**：采集进程被强杀/崩溃后，或 `data/quantstudio.db.wal` > 256MB。
-- **硬动作**：①先关 GUI 与 daemon，再运行项目根 `check_wal.sh`（macOS/Linux）或 `check_wal.ps1`（Windows）——脚本幂等（自动备份 + 收敛 CHECKPOINT + 验证）；**早退 ≠ 已收敛**，彻底收敛加 `--force` / `-Force`；②红线：运行期间禁 CHECKPOINT；禁手工删除 `.wal`（Windows 版默认只备份 WAL，主库备份用 `-BackupDb` 显式开）；③回归门：改任一 check_wal 脚本必须 `bash scripts/check_wal_regression.sh` 全绿（合成 fixture 绝不触生产库）；④经验钉死：体积阈值不可作唯一判据（探测优先）；bash 脚本 `${VAR}` 花括号界定；duckdb 版本门必须 1.4.x；`stock_daily` 日期列自动探测。
+- **硬动作**：①先关 GUI 与 daemon，再运行项目根 `check_wal.sh`（macOS/Linux）或 `check_wal.ps1`（Windows）——脚本幂等（自动备份 + 收敛 CHECKPOINT + 验证）；**早退 ≠ 已收敛**，彻底收敛加 `--force` / `-Force`；②红线：运行期间禁 CHECKPOINT；禁手工删除 `.wal`（Windows 版默认只备份 WAL，主库备份用 `-BackupDb` 显式开）；③回归门：改任一 check_wal 脚本必须 `bash scripts/check_wal_regression.sh` 全绿（合成 fixture 绝不触生产库）；④经验钉死：体积阈值不可作唯一判据（探测优先）；bash 脚本 `${VAR}` 花括号界定；duckdb 版本门须落在**放行集合**内且以**判定源为唯一实现**（当前集合 `{1.4.5 ≤ x < 1.5} ∪ {x == 1.5.6}`，判定源 `quantstudio/pipeline/duckdb_version_policy.py`；集合外版本拒启退出码 3）；`stock_daily` 日期列自动探测。
 - **完整版**：knowledge/iron-rules/23-WAL残留处置.md
 
 ## 【铁律】schema 指纹严格比对库：加列＝契约变更（2026-10-21 总调度备案）
