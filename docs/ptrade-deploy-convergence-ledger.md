@@ -234,6 +234,21 @@
 - 知识反哺：[命中] PD-2026-0007（PD/D2/PD-2026-0007.md，2026-10-30）——形态判定黑名单优先 + 允许集
 - 知识反哺：[无命中] PD 族检索（is_trade / 恒真分支 / 嵌套门控还原），2026-10-30
 
+## 4.11 轮 11（PD-0013 契约表补 get_order/get_open_orders，2026-10-30）
+
+- **N₁₁=0**（无新发现缺陷）、**R₁₁=0**（无复发）——本轮为**契约补漏轮**（数据修正型，产物零改动）。
+- **修复**：`contract_table.yaml` 于 `get_orders` 相邻补 `get_order(order_id)` / `get_open_orders(security=None)`
+  （`backtest:true / trading:true / action:keep / replacement:null`，同族口径；文档依据 Context7
+  `/kay-ou/ptradeapi`，实现依据 `ptrade_api.py:2731/2708`）。
+- **验收读数**：`全球资产轮动` **status=PASS / P5=PASS** 且 notes 内 `get_order` 归零（端到端实测
+  `get_order_in_notes=False`）；deploy 套件 **110/110**；契约矩阵 `OK`；PD 族机检 **13/13**。
+- 判型说明：**数据修正型**——verdict 由「未知 API（note）」变「已知 keep」，影响面仅限该 API 的 note 消失；
+  若上游实证 `get_order` 在 PTrade **回测**侧不可用，则按可逆数据修正改回 `backtest:false`（②审已留退路）。
+- 证据：`docs/evidence/ptrade-deploy-pd0013-evidence.md`；方案：`docs/ptrade-deploy-contract-getorder-design.md`（②审四裁）。
+- **本轮沉淀**：PD-2026-0013
+- 知识反哺：[命中] PD-2026-0003（PD/D2/PD-2026-0003.md，2026-10-30）——契约补充后 P5 notes 误报消失先例
+- 知识反哺：[无命中] PD 族检索（get_order / 契约表补行），2026-10-30
+
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 
 - 2026-10-10（M6 之前）：P0 vault 回哺降级（vault 未建，预期状态）；

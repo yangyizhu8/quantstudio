@@ -366,6 +366,24 @@ api:
     pbox_version: "all"
     source: "Ptrade东莞.md-订单查询"
     note: "当日订单列表（双端可用）"
+  get_order:
+    signature: "get_order(order_id)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Context7 /kay-ou/ptradeapi-get_order（单笔委托查询）；本地镜像 ptrade_api.py:2731"
+    note: "PD-0013 补漏：查本策略单笔委托（交易模块可用；本地回测侧已实现，双端可用）"
+  get_open_orders:
+    signature: "get_open_orders(security=None)"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "Context7 /kay-ou/ptradeapi-Order Query；本地镜像 ptrade_api.py:2708"
+    note: "PD-0013 补漏：查未完成委托（同族一并补齐，防同类 noise 复发）"
   get_all_orders:
     signature: "get_all_orders(...)"
     backtest: true
