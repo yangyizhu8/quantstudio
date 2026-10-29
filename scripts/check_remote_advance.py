@@ -65,11 +65,15 @@ def read_last_anchor(path=RULINGS_LOG):
         return None, "留痕文件不存在：%s" % path
     except Exception as exc:  # noqa: BLE001
         return None, "留痕不可读：%s: %s" % (type(exc).__name__, exc)
+    # 只认正式统推批次行（含 ruling=）；跳过追认/勘误等辅助行——它们也带 commit=<SHA>，
+    # 若不区分会把「追认=fa82445 ⑤=...」误读为上批锚（2026-10-29 首用实测暴露）。
     for ln in reversed(lines):
+        if 'ruling=' not in ln:
+            continue
         m = LOG_SHA_RE.search(ln)
         if m:
             return m.group(1), None
-    return None, "留痕中未找到 commit=<SHA> 记录：%s" % path
+    return None, "留痕中未找到含 ruling= 的批次行（commit=<SHA>）：%s" % path
 
 
 def expand(sha):
