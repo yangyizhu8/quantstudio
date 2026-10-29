@@ -1,0 +1,36 @@
+{
+  "_comment": "duckdb 版本线 EOL 日历（机读源，人读版见 docs/duckdb-version-eol-calendar.md）。判据以 spec 002-duckdb-1.5-upgrade FR-010 为唯一口径：距 EOL 90 天出方案 / 60 天进实施 / 30 天完成或书面接受风险。",
+  "policy_ref": "specs/002-duckdb-1.5-upgrade/spec.md#FR-010",
+  "allow_set": "{1.4.5 ≤ x < 1.5} ∪ {x == 1.5.6}",
+  "policy_source": "quantstudio/pipeline/duckdb_version_policy.py",
+  "lines": [
+    {
+      "line": "1.4",
+      "eol": "2026-11-17",
+      "eol_granularity": "day",
+      "allowed": "1.4.5 ≤ x < 1.5",
+      "in_allow_set": true,
+      "notes": "1.4 线支持终止；本次首跳升级（1.4.5 → 1.5.6）即由本行 EOL 触发。存量 1.4.5 解释器保留在位作为回退位（spec Assumptions），不在本期退役。"
+    },
+    {
+      "line": "1.5",
+      "eol": "2027-03-31",
+      "eol_granularity": "month",
+      "allowed": "x == 1.5.6",
+      "in_allow_set": true,
+      "notes": "1.5 支持至 2027-03（spec 背景口径为月份级 ⇒ 日取当月末，粒度 month）。1.5.0–1.5.5 不放行：命中 ART index-delete 致命回归 duckdb#23645（1.5.x 由静默错删变 FATAL，1.5.6 未修复）；本项目对该缺陷暴露面为 0（非唯一 ART = 0；41 个主键三臂验证不丢）。"
+    }
+  ],
+  "milestones": {
+    "plan_due_days": 90,
+    "implement_due_days": 60,
+    "close_or_accept_days": 30
+  },
+  "review_triggers": [
+    "版本线到达 EOL 日历任一里程碑（90/60/30）",
+    "上游发布新补丁",
+    "缺陷单关闭（含 duckdb#23645）"
+  ],
+  "carrier": "总调度 EOL 日历守护（外部）＋ 仓库内守护条目 scripts/check_duckdb_eol_guard.py（本件）",
+  "landed_by": "spec 002-duckdb-1.5-upgrade / T056 / FR-011（治理条文第三要素：到期复核装置）"
+}
