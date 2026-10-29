@@ -74,3 +74,23 @@
 1. ~~裁定今晚启动口径（T1/T2/T3）~~ → **已裁**：今晚口径已落地并确认（17:40 补装 3.12.9+1.4.5 → 17:41 新代际）；
 2. ~~确认 17:40 补装执行方~~ → **已定入卷口径**：**总调度裁定 (a) 授权 + 回补执行执行**（两方如实记，非「不明执行方」）；
 3. **主 venv（`venv_quant_studio` 1.5.4）与 `venv_miniQMT`（1.5.3）的覆盖方案** → 并入设计文档 §3-⑥ 与 §4.4 连接级隔离约定（裁定① = 方案 1：版本闸三入口 + trading 侧 read_only 消费；附注：read_only 读者会回放 WAL，须避开 daemon 写入高峰）。
+
+## 8. 只读消费者登记（2026-10-29 追加 · 不改 §1–§7 历史读数）
+
+> 本节为**追加登记**，上文 §1–§7 记录的是 2026-09-23 当时的实况，**不回改**。
+
+| 消费者 | 路径 | duckdb | 处置（总调度 2026-10-29 裁定） | 门禁联动 |
+|---|---|---|---|---|
+| **trading-battle-back 主 venv** | `D:\miniQMT策略实盘\trading-battle-back\venv_miniQMT` | **1.5.3**（2026-10-29 实测复核，与 09-23 记录一致） | **不升级**（首跳放行集合为 `{1.4.5 ≤ x < 1.5} ∪ {x == 1.5.6}`，1.5.3 不在集合内）；作为**只读消费者**使用 | 其**开启写者入口**（`create_writer` / `--mode once` / GUI 跑任务）将被版本门禁拒启（`SystemExit(3)`）—— 预期保护，非故障；只读消费不受影响 |
+
+**2026-10-29 实测复核读数**（来源：逐解释器 `import duckdb` 探测）：
+
+| 解释器 / venv | duckdb | 角色 |
+|---|---|---|
+| `C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe` | **1.4.5** | 生产 daemon / GUI 主解释器（首跳目标：装 1.5.6） |
+| `C:\python3.12.9\python.exe` | **1.4.5** | 备用解释器（回退位） |
+| `D:\miniQMT策略实盘\_runtime\venv_quant_studio` | **1.4.5** | 官方主 venv（09-23 记为 1.5.4，已回补 1.4.5） |
+| `D:\miniQMT策略实盘\trading-battle-back\venv_miniQMT` | **1.5.3** | **只读消费者（不升级）** |
+
+**关联**：首跳升级 spec `specs/002-duckdb-1.5-upgrade/`（T039）；放行集合与判定源见
+`quantstudio/pipeline/duckdb_version_policy.py`；证据 `docs/evidence/duckdb-version-gate-matrix-20261029.md`。

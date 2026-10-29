@@ -61,7 +61,7 @@ git pull origin main
 **第 2 步：把数据库组件切到安全版本**
 
 ```
-pip install "duckdb>=1.4.5,<1.5"
+pip install "duckdb==1.5.6"     # 放行集合：1.4.5 ≤ x < 1.5 或 x == 1.5.6
 ```
 
 **第 3 步：确认**
