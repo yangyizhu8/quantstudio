@@ -119,6 +119,17 @@ def _selftest():
         print("  %s %-34s 期望池外 %d 笔，实得 %d 笔" % ("✓" if good else "X", name, want, len(got)))
         for g in got:
             print("        池外: %s" % g)
+
+    # --- 集成负向自测（真实 git 态）：待推 > 0 且池 ⊂ 待推 ⇒ 必须判出池外 ---
+    rc2, out2, _ = _run(["git", "log", "origin/main..HEAD", "--format=%h|%s"])
+    rows2 = [ln for ln in out2.splitlines() if ln.strip()] if rc2 == 0 else []
+    if len(rows2) >= 2:
+        sub = pool_extra(rows2, [rows2[0].split("|",1)[0]])
+        good = (len(sub) == len(rows2) - 1)
+        ok = ok and good
+        print("  %s %-34s 待推 %d 笔，池取 1 笔 ⇒ 池外 %d 笔" % ("✓" if good else "X", "集成负向（池 ⊂ 待推）", len(rows2), len(sub)))
+    else:
+        print("  - %-34s 跳过（待推不足 2 笔，无法构造）" % "集成负向（池 ⊂ 待推）")
     print("  自测结论: %s" % ("全部通过" if ok else "存在失败"))
     return 0 if ok else 4
 
@@ -128,6 +139,7 @@ def main(argv=None):
     ap.add_argument("--log", default=RULINGS_LOG, help="留痕文件路径")
     ap.add_argument("--no-fetch", action="store_true", help="跳过 git fetch")
     ap.add_argument("--pool", help="已批池（逗号分隔 SHA 前缀，7-40 位）——校验待推集合是否 ⊆ 池；池外笔 > 0 则 exit 4 拦停")
+    ap.add_argument("--head", help="待推范围上界（默认 HEAD）——池外判定比对 origin/main..<head>")
     ap.add_argument("--json", action="store_true", help="机读输出")
     ap.add_argument("--selftest", action="store_true", help="负向自测：构造池外>0 场景验证判定（不依赖 git 态）")
     a = ap.parse_args(argv)
@@ -171,7 +183,8 @@ def main(argv=None):
     # ---- 池外笔判定（断言式 fail-closed · 2026-10-30 立）----
     if a.pool:
         prefixes = [p.strip() for p in a.pool.split(",") if p.strip()]
-        rc, log_out, _ = _run(["git", "log", "origin/main..%s" % act_raw, "--format=%h|%s"])
+        head_ref = (a.head or "HEAD").strip()
+        rc, log_out, _ = _run(["git", "log", "origin/main..%s" % head_ref, "--format=%h|%s"])
         if rc != 0:
             result.update(verdict="pool-extra", exit=4, reason="无法清点待推集合（rc=%s）⇒ fail-closed" % rc)
             return _emit(result, a.json)
@@ -215,7 +228,8 @@ def _emit(result, as_json):
             head = "池外笔" if result["verdict"] == "pool-extra" else "非预期推进"
             print("  %s %d 笔：" % (head, len(result["advanced"])))
             for row in result["advanced"]:
-                print("    %s | %s | %s" % (row[0], row[1], row[2][:88] if len(row) > 2 else ""))
+                parts = str(row).split("|", 1)
+                print("    %s | %s" % (parts[0], (parts[1][:92] if len(parts) > 1 else "")))
     return result["exit"]
 
 
