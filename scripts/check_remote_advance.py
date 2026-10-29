@@ -22,6 +22,7 @@
 退出码
 ------
   0  一致（远程 = 上批锚，预期推进量 0）→ 可继续本批
+  4  **池外笔 > 0**（待推集合不 ⊆ 已批池）→ **断言式 fail-closed，必须停推上报**（2026-10-30 立）
   2  非预期推进（远程 != 上批锚）→ **停推上报**（无论推进笔是否在已批池）
   3  无法判定（形态门失败 / 留痕不可读 / fetch 或 rev-parse 异常）→ fail-closed，停推
 
@@ -84,13 +85,54 @@ def expand(sha):
     return out, None
 
 
+
+def pool_extra(commits, prefixes):
+    """纯函数：给定待推 commit 列表与已批池前缀，返回池外笔列表。
+
+    判定：某笔 SHA 以池中任一前缀开头 ⇒ 在池内；否则池外。空池 ⇒ 全部池外（fail-closed）。
+    独立于 git 状态 ⇒ 可被 --selftest 复现（负向场景不依赖仓库实态）。
+    """
+    if not prefixes:
+        return list(commits)
+    out = []
+    for c in commits:
+        sha = c.split("|", 1)[0]
+        if not any(sha.startswith(p) for p in prefixes):
+            out.append(c)
+    return out
+
+
+def _selftest():
+    """负向自测：构造「池外>0」场景，验证判定必须判池外（配合 exit 4 拦停）。"""
+    cases = [
+        ("池外>0（1 笔在池、2 笔池外）", ["aaa111|在池", "bbb222|池外1", "ccc333|池外2"], ["aaa111"], 2),
+        ("池外=0（全在池）", ["aaa111|A", "bbb222|B"], ["aaa", "bbb"], 0),
+        ("空池 ⇒ 全部池外（fail-closed）", ["aaa111|A"], [], 1),
+        ("前缀匹配（7 位前缀命中 40 位 SHA）", ["209a732f1a|短"], ["209a732"], 0),
+    ]
+    ok = True
+    for name, commits, pool, want in cases:
+        got = pool_extra(commits, pool)
+        good = (len(got) == want)
+        if not good:
+            ok = False
+        print("  %s %-34s 期望池外 %d 笔，实得 %d 笔" % ("✓" if good else "X", name, want, len(got)))
+        for g in got:
+            print("        池外: %s" % g)
+    print("  自测结论: %s" % ("全部通过" if ok else "存在失败"))
+    return 0 if ok else 4
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="统推第 0 步：检出远程非预期推进")
     ap.add_argument("--expect", help="上批锚（8-40 位 SHA）；缺省自动读留痕")
     ap.add_argument("--log", default=RULINGS_LOG, help="留痕文件路径")
     ap.add_argument("--no-fetch", action="store_true", help="跳过 git fetch")
+    ap.add_argument("--pool", help="已批池（逗号分隔 SHA 前缀，7-40 位）——校验待推集合是否 ⊆ 池；池外笔 > 0 则 exit 4 拦停")
     ap.add_argument("--json", action="store_true", help="机读输出")
+    ap.add_argument("--selftest", action="store_true", help="负向自测：构造池外>0 场景验证判定（不依赖 git 态）")
     a = ap.parse_args(argv)
+    if a.selftest:
+        return _selftest()
 
     result = {"verdict": None, "exit": 3, "expect": None, "actual": None, "advanced": [], "reason": None}
 
@@ -126,6 +168,24 @@ def main(argv=None):
         return _emit(result, a.json)
     result["actual"] = act_raw
 
+    # ---- 池外笔判定（断言式 fail-closed · 2026-10-30 立）----
+    if a.pool:
+        prefixes = [p.strip() for p in a.pool.split(",") if p.strip()]
+        rc, log_out, _ = _run(["git", "log", "origin/main..%s" % act_raw, "--format=%h|%s"])
+        if rc != 0:
+            result.update(verdict="pool-extra", exit=4, reason="无法清点待推集合（rc=%s）⇒ fail-closed" % rc)
+            return _emit(result, a.json)
+        rows = [ln for ln in log_out.splitlines() if ln.strip()]
+        extra = pool_extra(rows, prefixes)
+        if extra:
+            result.update(verdict="pool-extra", exit=4,
+                          reason="池外笔 %d 个（待推集合 ⊄ 已批池）⇒ 停推上报" % len(extra),
+                          advanced=extra)
+            return _emit(result, a.json)
+        result.update(verdict="pool-ok", exit=0,
+                      reason="池外笔 0（待推 %d 笔全部 ⊆ 已批池）" % len(rows))
+        return _emit(result, a.json)
+
     # ---- 严格比对（形态②）----
     if exp_sha == act_raw:
         result.update(verdict="consistent", exit=0, reason="远程 = 上批锚，预期推进量 0")
@@ -152,7 +212,8 @@ def _emit(result, as_json):
         if result["reason"]:
             print("  判定    : %s" % result["reason"])
         if result["advanced"]:
-            print("  非预期推进 %d 笔：" % len(result["advanced"]))
+            head = "池外笔" if result["verdict"] == "pool-extra" else "非预期推进"
+            print("  %s %d 笔：" % (head, len(result["advanced"])))
             for row in result["advanced"]:
                 print("    %s | %s | %s" % (row[0], row[1], row[2][:88] if len(row) > 2 else ""))
     return result["exit"]

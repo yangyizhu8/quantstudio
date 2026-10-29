@@ -18,6 +18,8 @@ python scripts/check_remote_advance.py            # 自动读上批留痕锚
 
 **为什么需要这一步**：原「逐笔 ⊆ 已批池」判据只防「把未批内容混进本批」，**不防他线直接 `git push`**。
 
+> **2026-10-30 增补（#11 越界案驱动）**：`prepush-gate` 的「放行（全量声明覆盖）」**只验声明完整、不验⑤已获批** ⇒ 池外笔判定必须是**断言式 fail-closed**（`--pool` → exit 4），**不得只打印读数让人看**（#11 即因读数未被断言拦下而越界 3 笔）。负向自测：`python scripts/check_remote_advance.py --selftest`。
+
 **语义澄清（2026-10-29 用户确认后固化）**：exit 2 的判定是「**远程出现了未登记的推进**」，**不是违规判定**——用户手动推送**属合法**，但须经**统推台账登记**；本门的作用是保证「任何推进都留下台账痕迹」，而非拦截合法操作。
 
 > 实证：2026-10-28 的 7 笔（`76e9e50..fa82445`）＝用户手动推送（specs/001 集成验证收尾），**非纪律事件**；若非第 0 步，这 7 笔的台账缺口不会被任何判据捕获——本次流程验证了该门的价值。
@@ -31,7 +33,8 @@ python scripts/check_remote_advance.py            # 自动读上批留痕锚
 | **1** | `python scripts/check-iron-rules-budget.py` | 四查 PASS（`EXIT=0`）；①预算查 WARN 不拦截但须记录并当周期处置 |
 | **2** | `git fetch origin` | 失败即停（判无法判定） |
 | **3** | 全量清点 `git log origin/main..HEAD` | **以实态为准，禁用预演数**；逐笔核对是否在已批池 |
-| **4** | 四判据门 | ①可快进（`origin/main` 是 HEAD 祖先）②笔数==预期 ③池外笔==0 ④钩子含预算门 |
+| **4** | 四判据门 | ①可快进（`origin/main` 是 HEAD 祖先）②笔数==预期 ③**池外笔==0（断言式：必须以命令退出码判定，不得只看读数）** ④钩子含预算门 |
+| 4b | **池外笔判定（断言式 fail-closed）** | `python scripts/check_remote_advance.py --pool <已批池SHA,逗号分隔>` → **exit 4 = 池外笔>0 ⇒ 停推上报**；exit 0 = 池外 0 ✓ |
 | **5** | 逐笔⑤表 | 本线笔自证；**他线笔只标来源，不代声明⑤** |
 | **6** | 声明 | `QS_PUSH_BUNDLE_ALLOWALSO`=除锚外全部笔；`QS_PUSH_BUNDLE_RULING`=裁定原文 |
 | **7** | **锁存锚 SHA**（push 前！） | `$anchor = git rev-parse HEAD` —— **禁止 push 后再取 HEAD**（并发提交会污染） |
@@ -46,6 +49,7 @@ python scripts/check_remote_advance.py            # 自动读上批留痕锚
 | 1 | 四查 FAIL（非 WARN） | 1 |
 | 2 | fetch／ls-remote 失败 | 2／9 |
 | 3 | **非预期推进**（远程已变） | **0** |
+| 3b | **池外笔 > 0**（待推 ⊄ 已批池） | **4b** |
 | 4 | 无法判定（形态门/留痕不可读） | 0 |
 | 5 | 池外笔 > 0 | 4 |
 | 6 | 非快进 | 4 |
