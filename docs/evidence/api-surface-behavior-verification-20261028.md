@@ -145,7 +145,9 @@
 
 | # | 项 | 类型 | 处置 |
 | --- | --- | --- | --- |
-| W1 | `get_trades` 分钟级缓存语义 | 行为面 | 核转换产物是否消费 get_trades；若消费需评估缓存语义模拟 |
+| W1 | `get_trades` 分钟级缓存语义 | 行为面 | **✅ 2026-10-30 结案**：本地 `get_trades` 直返 `engine._today_trades`（`ptrade_api.py:2702`），**无分钟级缓存**；PTrade 文档为「同一分钟多次调用返回当分钟首次查询缓存」⇒ **已知差异（本地实时返回，更新鲜但不等价）** |
+| W2 | `order_target` 关键字传参现状 | 迁移面 | **✅ 2026-10-30 结案（风险不成立）**：转换管线 `order_target` 独立命中 5 处**全部为 `order_target_percent`**；`_ORDER_APIS`（`source_import.py:3133`）仅含 `order_target_value`／`order_target_percent`／`order_value`；`target_amount` 命中 **0** ⇒ **PTrade 产物不生成 `order_target`** ⇒ 差异 E **降级为本地 API 命名差异，无迁移阻断点** |
+| W3 | `run_daily` 三条语义 | 行为面 | **✅ 2026-10-30 结案**：本地实现仅注册 `_daily_tasks`（`ptrade_api.py:1924-1926`），三条语义**均未实现**——①不限仅 initialize 可调 ②无 5 任务上限 ③日线回测时点由引擎定（非恒 15:00）⇒ **行为差异（本地宽松）** |
 | W2 | `order_target` 关键字传参现状 | 迁移面 | 核 `source_import` 是否已有参数名改写；无则补（P3-1 同族） |
 | W3 | `run_daily` 三条语义 | 行为面 | ①仅 initialize 可调 ②>5 任务堵塞 ③日线回测恒 15:00｜本地是否模拟待核 |
 | W4 | `get_industry_stocks` 未来函数 | 行为面 | 文档明载「获取当下数据」；registry F3 仅锚定 index 面 PIT |

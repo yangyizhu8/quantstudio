@@ -464,3 +464,14 @@
 | 2026-10-28 补记 10-28 定谳 | **L-3「疑似 re-clone」查证定谳＝不成立**（四证链）：①reflog 仅两行（clone 2026-10-15 20:40:09 → commit 308d666 2026-10-28 00:21:16，其间零 git 操作）②文件数精确对账 1123+19=1142 tracked ③上游 ls-remote HEAD 仍 9b42dd1 与 clone 基点逐位同（上游未演进）④M4 档案时序自洽（install.ps1 只装架子不 clone）。**形态悬案登记 P3 不阻条目**：承接会话「10-15 完整工程」所指待其指认路径（大概率系外层杂项集合观察对象错位）；条目有效性不受影响（仓自 clone 零变化⇒其 10-15 底账对本仓持续有效，VC-0003 的 694 行 README 两轮吻合即证） | 20261028-R2 上报块（查证证据链 E1–E4） | 定谳（悬案 P3 登记） |
 | 2026-10-28 | **#8 出仓核实**：origin/main=HEAD=`76e9e50`、ahead=0，我方 3 笔（`a105866`/`f515263`/`53d103a`）全部进远程 | git fetch+is-ancestor 实测 | 完成 |
 
+
+
+## T5 待核清单结案登记（W1/W2/W3 · 2026-10-30）
+
+| 编号 | 问题描述 | 定位证据 | 严重等级 | 当前状态 | 归属迭代 | 修复方案 | 验证证据 | 关闭时间 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ISS-T5-W1 | `get_trades` 本地**未模拟 PTrade 的分钟级缓存语义**（平台：同一分钟多次调用返回当分钟首次查询的缓存；本地：每次直返引擎当日成交） | `quantstudio/backtest/ptrade_api.py:2702`（`def get_trades(self)` → `return self._engine._today_trades`）；文档依据 Context7 `/kay-ou/ptradeapi`（东莞.md） | 低 | **已关闭（登记为已知差异·本地实时返回）** | T5 收口 | 不修（本地语义更实时，属有意差异）；若未来需严格对齐再立项 | 只读取证：`ptrade_api.py` AST + 实现体核对；evidence `api-surface-behavior-verification-20261028.md` §六 W1 行 | 2026-10-30 |
+| ISS-T5-W2 | 差异 E（`order_target` 参数名：本地 `target_amount` vs 文档 `amount`）原疑为迁移阻断点 | `quantstudio/strategy_compiler/source_import.py:3133`（`_ORDER_APIS` 仅含 `order_target_value`／`order_target_percent`／`order_value`）；`order_target` 独立命中 5 处全为 `order_target_percent`；`target_amount` 命中 0 | 中（原疑） | **已关闭（风险不成立）** | T5 收口 | 不修——转换产物**不生成 `order_target`** ⇒ 无关键字不兼容面；差异降级为「本地 API 命名差异」 | 只读取证：两转换器正则计数（`order_target(?!_value)`＝5/1、`target_amount`＝0/0）＋`_ORDER_APIS` 逐字核 | 2026-10-30 |
+| ISS-T5-W3 | `run_daily` 三条平台语义本地**均未实现**（①仅 initialize 可调 ②累计 >5 个定时任务堵塞 ③回测周期为日时恒 15:00 执行） | `quantstudio/backtest/ptrade_api.py:1924-1926`（仅 `_daily_tasks.append((func, time))`）；文档依据 Context7 `/kay-ou/ptradeapi`（山西.md） | 低 | **已关闭（登记为行为差异·本地宽松）** | T5 收口 | 不修（本地宽松不致错；策略若依赖「仅 initialize 可调」需自行约束）；如需严格对齐须走六步流水线立项 | 只读取证：实现体 + 文档逐条比对；evidence §六 W3 行 | 2026-10-30 |
+
+> 未结项：W4（`get_industry_stocks` 未来函数面，registry F3 仅锚定 index 面）｜W5（44 条文档补查，分 5 批）｜W6（`get_current_data` 单独批核）。
