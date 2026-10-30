@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -808,6 +811,138 @@ class DataQualityAuditor:
         except sqlite3.Error:
             return None
 
+    # ------------------------------------------------------------------
+    # A2b（2026-10-31）：drift 结果缓存（跨进程落盘 · 水位键）
+    # ------------------------------------------------------------------
+    _DRIFT_CACHE_SCHEMA = 1
+
+    @staticmethod
+    def _drift_cache_enabled() -> bool:
+        v = str(os.environ.get("QS_AUDIT_DRIFT_CACHE", "1") or "1").strip().lower()
+        return v not in ("0", "false", "no", "off")
+
+    @staticmethod
+    def _drift_cache_dir() -> Path:
+        p = str(os.environ.get("QS_AUDIT_DRIFT_CACHE_DIR", "") or "").strip()
+        if p:
+            return Path(p)
+        try:
+            from quantstudio._paths import DATA_ROOT
+            return Path(DATA_ROOT) / "_audit_cache" / "drift"
+        except Exception:
+            return Path("data") / "_audit_cache" / "drift"
+
+    def _drift_cache_key(self, conn) -> str:
+        """缓存键 = 候选集 + 分钟表水位 + 除权表水位（用户修正①：水位键）。
+
+        水位未动 ⇒ 数据未动 ⇒ 结果可复用；墙钟 TTL 仅作异常兜底。
+        日期用 ``date.today()``（**非**秒级时间戳）——否则每次调用键都不同，缓存永不命中。
+        """
+        import hashlib
+        from datetime import datetime as _dt, timedelta as _td
+
+        now = _dt.now()
+        # 候选窗口**按日归一**：lo/hi 若用秒级 now，每次调用键都会不同 ⇒ 永不命中。
+        # 契约：候选窗口以「日」为粒度（120d/7d 本就按天定义，差几小时无实质影响）。
+        day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        lo = int((day0 - _td(days=self._DIV_WINDOW_BACK_DAYS)).timestamp() * 1000)
+        hi = int((day0 + _td(days=self._DIV_WINDOW_FWD_DAYS)).timestamp() * 1000)
+        parts = [f"day={now.date().isoformat()}", f"win={lo}-{hi}"]
+        for div_tbl in ("stock_dividend", "etf_dividend"):
+            try:
+                codes = sorted({str(r[0]) for r in conn.execute(
+                    f"SELECT DISTINCT code FROM {div_tbl} WHERE ex_date BETWEEN ? AND ?",
+                    [lo, hi]).fetchall()})
+            except Exception:
+                codes = []
+            parts.append(f"{div_tbl}:{','.join(codes)}")
+        # ② 水位（分钟表 + 除权表）：数据变化的唯一权威刻划
+        try:
+            rows = conn.execute(
+                "SELECT source, freq, last_date FROM source_watermark "
+                "WHERE source IS NOT NULL ORDER BY source, freq").fetchall()
+            parts.append("wm:" + "|".join(
+                f"{r[0]}/{r[1]}={r[2]}" for r in rows))
+        except Exception:
+            parts.append("wm:unavailable")
+        return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:32]
+
+    def _drift_cache_load(self, key: str):
+        """读取缓存。**三项校验**（用户补充条件）：schema ✓ / checksum ✓ / value.key==当前键 ✓。"""
+        import hashlib
+        import json as _json
+        import time as _t
+
+        path = self._drift_cache_dir() / f"{key}.json"
+        try:
+            raw = path.read_text(encoding="utf-8")
+            doc = _json.loads(raw)
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            self._drift_cache_corrupt(key, f"read/parse: {type(e).__name__}: {e}")
+            return None
+        # 校验①schema
+        if doc.get("schema") != self._DRIFT_CACHE_SCHEMA:
+            self._drift_cache_corrupt(key, f"schema={doc.get('schema')}")
+            return None
+        # 校验②checksum（防意外损坏）
+        payload = doc.get("payload") or {}
+        expect = hashlib.sha256(
+            _json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        if doc.get("checksum") != expect:
+            self._drift_cache_corrupt(key, "checksum mismatch")
+            return None
+        # 校验③内容键与当前键一致（防文件名/内容漂移：手工挪错、重命名残留）
+        if str(doc.get("key") or "") != key or str(payload.get("key") or "") != key:
+            self._drift_cache_corrupt(key, "value.key != current key")
+            return None
+        # 墙钟兜底 TTL
+        try:
+            ttl = float(os.environ.get("QS_AUDIT_DRIFT_CACHE_TTL_S", "7200") or 0)
+        except (TypeError, ValueError):
+            ttl = 7200.0
+        age = _t.time() - float(doc.get("created_at_epoch", 0) or 0)
+        if ttl > 0 and age > ttl:
+            return None
+        payload["age_s"] = max(0.0, age)
+        return payload
+
+    def _drift_cache_corrupt(self, key: str, why: str) -> None:
+        logger.warning("[QualityAudit] drift 缓存不可用（%s）key=%s… ⇒ 回退实时计算",
+                       why, key[:12])
+
+    def _drift_cache_store(self, key: str, issues) -> None:
+        """原子写缓存（tmp + os.replace；PID 后缀避免并发 tmp 冲突）。"""
+        import hashlib
+        import json as _json
+        import time as _t
+
+        d = self._drift_cache_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "key": key,
+            "issues": [
+                {"check": i.check, "table": i.table, "count": int(i.count),
+                 "severity": i.severity, "detail": i.detail}
+                for i in issues
+            ],
+        }
+        doc = {
+            "schema": self._DRIFT_CACHE_SCHEMA,
+            "key": key,
+            "created_at": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+            "created_at_epoch": _t.time(),
+            "checksum": hashlib.sha256(
+                _json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+            ).hexdigest(),
+            "payload": payload,
+        }
+        tmp = d / f".{key}.{os.getpid()}.tmp"
+        tmp.write_text(_json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, d / f"{key}.json")
+
     def _audit_minute_anchor_drift(self, conn, report, tables):
         """A1：除权候选标的的分钟 front 锚点漂移检测（AdjustmentAnchorDrift）。
 
@@ -817,6 +952,32 @@ class DataQualityAuditor:
         """
         if "stock_minutes" not in tables and "etf_minutes" not in tables:
             return
+        # A2b（2026-10-31）：缓存读取（仅 task 域 + 开关启用）。
+        # 论证：drift 的输入只有「分钟表数据」与「除权候选集」，二者分别由
+        # source_watermark 与除权表水位唯一刻划 ⇒ 水位未变则结果必然相同，
+        # 重复计算纯属浪费（不是跳过检查）。full 域（self.tables is None）不缓存。
+        _cache_key = None
+        _cache_before = len(report.issues)
+        if self.tables is not None and self._drift_cache_enabled():
+            _hit = None
+            try:
+                _cache_key = self._drift_cache_key(conn)
+                _hit = self._drift_cache_load(_cache_key)
+            except Exception as e:  # 缓存故障绝不影响审计主流程
+                logger.warning("[QualityAudit] drift 缓存键/读取异常（忽略，走实时计算）: %s", e)
+                _hit = None
+                _cache_key = None
+            if _hit is not None:
+                for _iss in (_hit.get("issues") or []):
+                    self._add(report, str(_iss.get("check", "AdjustmentAnchorDrift")),
+                              str(_iss.get("table", "__qfq__")),
+                              int(_iss.get("count", 0) or 0),
+                              str(_iss.get("severity", "warning")),
+                              str(_iss.get("detail", "")))
+                self._add(report, "drift_cached", "__qfq__", 1, "warning",
+                          f"命中 drift 缓存 key={_cache_key[:12]}… "
+                          f"age={float(_hit.get('age_s', 0) or 0):.0f}s")
+                return
         aux_path = self._resolve_aux_path(conn)
         if aux_path is None:
             self._add(report, "AnchorDriftAuxUnavailable", "__qfq__", 1, "warning",
@@ -945,6 +1106,12 @@ class DataQualityAuditor:
             if len(warns):
                 self._add(report, "AdjustmentAnchorDrift", minute_tbl, len(warns), "warning",
                           f"WARN 0.3-0.5%: {sorted(warns.index)[:10]}")
+        # A2b：写缓存（仅本次新增的 issues；缓存故障不影响审计结论）
+        if _cache_key is not None:
+            try:
+                self._drift_cache_store(_cache_key, report.issues[_cache_before:])
+            except Exception as e:
+                logger.warning("[QualityAudit] drift 缓存写入失败（忽略）: %s", e)
 
     def _clean_factor_segments(self, fdf: pd.DataFrame) -> pd.DataFrame:
         """同值段合并 + 污染尖刺剔除。
