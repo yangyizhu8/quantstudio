@@ -503,3 +503,20 @@
 | ISS-T5-J | `get_price` **start_date/end_date/frequency 本地均可省略**（文档三项必填），且本地多 `fq='pre'`/`count`/`is_dict` 三个 QS 扩展参数 | 本地 `quantstudio/backtest/ptrade_api.py`（AST：`get_price(security, start_date=None, end_date=None, frequency='1d', fields=None, fq='pre', count=None, is_dict=False)`）；文档 Context7 `/kay-ou/ptradeapi` Ptrade山西.md（get_price 参数表：security/start_date/end_date/frequency 必填，fields 可选） | P3（本地宽松·非阻断） | **已登记·未修复**（B3 下轮统一；**fq 迁移面已闭合**——P3-1 对 get_history/get_price 显式注入 fq='pre'） | T5 补查批 3 | 待定：登记为「本地宽松」差异或收紧必填——**下轮统一评估** | evidence §四 J | — |
 | ISS-T5-K | `get_trading_day` **参数语义完全不同**：文档 `get_trading_day(date)`（date 格式 'YYYY-MM-DD'，返回 bool 是否交易日）；本地 `get_trading_day(day=0)`＝**偏移天数语义** | 本地 `ptrade_api.py`（AST：`get_trading_day(day=0)`）；文档 Context7 Ptrade国盛.md（get_trading_day：date 格式 'YYYY-MM-DD'，返回 bool，适用环境 回测/交易） | **P1（调用面阻断）** | **已登记·未修复**（B3 下轮统一；**用户 2026-10-30 裁定＝下轮首位优先**） | T5 补查批 3 | 待定：本地是否改名/加 date 参数或登记为已知差异——**下轮统一评估** | evidence §四 K | — |
 | ISS-T5-L | `get_industry_stocks` 本地**恒返空 list**（DuckDB 暂无行业成分表）⇒ 与平台「返当下行业成分（回测存在未来函数）」**语义不同**：本地无未来函数（更保守），但依赖行业池的策略在本地回测**恒得零样本**（静默失效面） | 本地 `quantstudio/backtest/ptrade_api.py:2081`（docstring「DuckDB 暂无行业成分表 → 返回空 list」）＋实现体 `return [self._to_ptrade_code(code) for code in self._reference.get_industry_stocks(industry_code)]`；对照 `get_index_stocks` L825 已严格 PIT（F3） | P2（语义/静默失效） | **已登记·未修复**（B3 下轮统一） | T5 补查批 3 | 待定：补行业成分表 or 对齐 PIT or 登记已知差异＋调用方告警——**下轮统一评估** | evidence §四 L（W4 结案） | — |
+
+
+## T5 补查批 3 新增登记（M/N · 2026-10-30）
+
+
+| 编号 | 问题描述 | 定位证据 | 严重等级 | 当前状态 | 归属迭代 | 修复方案 | 验证证据 | 关闭时间 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ISS-T5-M | `get_stock_blocks` **未来函数面**：文档明载「获取当下数据，回测时注意未来函数」；本地实现**未命中 PIT/as_of 取证关键词** ⇒ 板块（行业/概念）面与差异 L 同族＝本地未做 PIT | 文档 Context7 `/kay-ou/ptradeapi` Ptrade东莞.md（get_stock_blocks(stock_code) → dict；Notes「获取的是当下的数据，回测时注意未来函数」；失败/已退市返 None）；本地 `quantstudio/backtest/ptrade_api.py`（AST `(stock_code)`；实现体 PIT 关键词核未命中） | P2（未来函数面） | **已登记·未修复**（B3 下轮统一） | T5 补查批 4 | 待定：接 DuckDB 板块成分表做 as-of 取证 or 登记为已知差异＋调用方告警——**下轮统一评估** | evidence §四 M | — |
+| ISS-T5-N | `get_stock_exrights` **首参名不一致**：平台 `stock_code`、本地 `security` ⇒ 关键字调用不兼容（位置调用等价） | 本地 AST `(security, date=None)`；文档 Context7 Ptrade东莞.md `get_stock_exrights(stock_code, date=None)` | P3（本地命名差异·无迁移阻断） | **已登记·未修复**（下轮统一） | T5 补查批 4 | 待定：登记为已知差异（同差异 E 族·转换产物不产该 API）——**下轮统一评估** | evidence §四 N | — |
+
+
+## T5 补查批 3 追加登记（O · 2026-10-30）
+
+
+| 编号 | 问题描述 | 定位证据 | 严重等级 | 当前状态 | 归属迭代 | 修复方案 | 验证证据 | 关闭时间 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ISS-T5-O | `get_trend_data` 平台约束「**stocks 与 market 不能同时入参**」，本地**未显式校验**（互斥关键词核未命中）⇒ 本地宽松；同时本地实现体**未命中 PIT/as_of 关键词**（该接口为「集中竞价期间代码数据」，平台口径为当下数据） | 本地 `quantstudio/backtest/ptrade_api.py:2310`（AST `(date=None, stocks=None, market=None)`；docstring「获取集中竞价期间代码数据」；实现体互斥/PIT 关键词核均未命中）；文档 Context7 `/kay-ou/ptradeapi` Ptrade社区.md（get_trend_data(date, stocks, market)；「stocks和market不能同时入参」；「获取失败时返回空dict{}」） | P3（本地宽松·非阻断） | **已登记·未修复**（B3 下轮统一） | T5 补查批 4 | 待定：补互斥校验（fail-closed）或登记为已知宽松——**下轮统一评估** | evidence §六 W5 批 3 行 | — |
