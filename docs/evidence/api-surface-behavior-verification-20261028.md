@@ -9,9 +9,9 @@
 
 | 结论 | 数量 | 说明 |
 | --- | --- | --- |
-| ✅ 一致/兼容 | **34** | 签名逐参对得上（含默认值）或有等价实现证据 |
-| ⚠️ 差异 | **12** | A/B/C/E 已裁（E 已降级）＋ **F/G/H/I（批 1）／J/K/L（批 2＋W4 核）／M/N（批 3）为 2026-10-30 新发现**（详见 §四） |
-| 🔸 未取到文档 | **21** | Context7 每批 3 次配额所限，如实标注待补查（补查批 1 清 7（一致 3／差异 4）、批 2 清 4（一致 2／差异 2）、批 3 清 6（一致 4／差异 2）、批 4 清 6（全一致）；另 5 条取得**存在性**证据但签名未取到；`get_current_data` 3 次配额用尽仍未命中） |
+| ✅ 一致/兼容 | **36** | 签名逐参对得上（含默认值）或有等价实现证据 |
+| ⚠️ 差异 | **13** | A/B/C/E 已裁（E 已降级）＋ **F/G/H/I（批 1）／J/K/L（批 2＋W4 核）／M/N（批 3）为 2026-10-30 新发现**（详见 §四） |
+| 🔸 未取到文档 | **18** | Context7 每批 3 次配额所限，如实标注待补查（补查批 1 清 7（一致 3／差异 4）、批 2 清 4（一致 2／差异 2）、批 3 清 6（一致 4／差异 2）、批 4 清 6（全一致）、批 5 清 3（一致 2／差异 1）；另 5 条取得**存在性**证据但签名未取到；`get_current_data` 3 次配额用尽仍未命中） |
 | ⚠️ 判缺 | **1** | attribute_history（聚宽名混入候选） |
 | **合计** | **68** | = PTRADE 面 68 |
 
@@ -28,10 +28,10 @@
 | 5 | `create_dir` | `(user_path)` | 未取到 | 配额未覆盖；注意：在 DENY_REMOVE 移除面清单 |
 | 6 | `current_price` | `(security)` | 未取到 | 配额未覆盖 |
 | 7 | `filter_stock_by_status` | `(stocks, filter_type=None, query_date=None)` | 一致 | SHIM_CONTRACT_REGISTRY 已登记（测试断言集合相等）＋QMT 侧 QS_QMT_SEMANTIC_DIFF 语义差异行（无历史 PIT） |
-| 8 | `get_CCI` | `(high, low, close, n=14)` | 未取到 | 指标族文档已证（MACD/KDJ 同族格式），CCI 未单独返回；n 默认值 14 待单查 |
+| 8 | `get_CCI` | `(high, low, close, n=14)` | 一致 | get_CCI(high, low, close, n=14)：返回 cci 时间序列，适用回测/交易（Context7 `api-reference/technical-indicators.md` ＋ 社区.md 示例）⇒ 逐参一致（含 n 默认 14） |
 | 9 | `get_KDJ` | `(high, low, close, n=9, m1=3, m2=3)` | 一致 | get_KDJ(high, low, close, n=9, m1=3, m2=3) 返回 k/d/j（Context7 Ptrade社区.md） |
 | 10 | `get_MACD` | `(close, short=12, long=26, m=9)` | 一致 | get_MACD(close, short=12, long=26, m=9) 返回 dif/dea/macd（Context7 社区/东莞双源） |
-| 11 | `get_RSI` | `(close, n=6)` | 未取到 | 配额未覆盖 |
+| 11 | `get_RSI` | `(close, n=6)` | 一致 | get_RSI(close, n=6)（Context7 `api-reference/technical-indicators.md`）⇒ 逐参一致（含 n 默认 6） |
 | 12 | `get_all_positions` | `()` | 未取到 | 配额未覆盖 |
 | 13 | `get_all_trades_days` | `(date=None)` | 一致 | get_all_trades_days(date=None)：返回 date 之前全部交易日（Context7 basic-info.md，批 3 第 3 次查询顺带覆盖） |
 | 14 | `get_business_type` | `()` | 未取到 | 配额未覆盖 |
@@ -60,7 +60,7 @@
 | 37 | `get_position` | `(security)` | 一致 | get_position(security).amount > 0（国盛.md 双均线示例）⇒ 返回 Position 含 amount 字段；本地空仓返回 amount=0 的 Position（非 None），与示例判据一致 |
 | 38 | `get_positions` | `(security=None)` | 一致 | get_positions(security) **security 可选**（可传单只/列表/不传）；适用环境 回测/交易；返回 list 持仓列表（Context7 国盛.md 参数表＋东莞.md 示例 get_positions()/('600570.SS')/(list)） |
 | 39 | `get_price` | `(security, start_date=None, end_date=None, frequency='1d', fields=None, fq='pre', count=None, is_dict=False)` | 差异 J | get_price(security, **start_date 必填**, **end_date 必填**, **frequency 必填**, fields 可选)；返回 dict/OrderedDict（多股多字段返 pandas.DataFrame，Py3.5 返 Panel），异常 None（Context7 山西.md）⇒ **本地三项均可省略（放宽）＋ 本地多 fq/count/is_dict（QS 扩展，fq='pre' 为 E1 口径）**；**fq 迁移面已闭合**（P3-1 对 get_history/get_price 显式注入 fq='pre'，同 §四 A） |
-| 40 | `get_reits_list` | `(date=None)` | 未取到 | 配额未覆盖 |
+| 40 | `get_reits_list` | `(date=None)` | 差异 P | get_reits_list()：获取 REITs 列表，适用研究/回测/交易；**文档 Parameters: N/A（未列参数）**（Context7 山西.md）⇒ 本地多 `date` 可选参数＝本地更宽松（**弱判据**：文档未列参数，未能逐参比对） |
 | 41 | `get_research_path` | `()` | 一致 | get_research_path()：返回**云端研究根路径**（/home/fly/notebook/，策略唯一可读写目录）（Context7 社区.md）⇒ 无参一致；在 DENY_REMOVE 移除面清单 |
 | 42 | `get_security_info` | `(code)` | 未取到 | 配额未覆盖 |
 | 43 | `get_snapshot` | `(security, frequency='1d')` | 差异 C | get_snapshot(security) **单参**；返回 dict[str,dict]，40+ 字段，trade_status 16 种枚举（Context7 东莞.md）；**本地多 frequency 参数＝QS 扩展** |
@@ -186,6 +186,12 @@
 
 文档 `get_stock_exrights(stock_code, date=None)`；本地 `(security, date=None)` ⇒ **首参名不同**（位置调用等价、关键字调用不兼容）＝差异 E 同族的**本地命名差异**，无迁移阻断点（PTrade 产物不产 `get_stock_exrights`）。
 
+### P. `get_reits_list` 参数面（2026-10-30 批 5 新发现·弱判据）
+
+文档（山西.md）：获取 REITs 列表，适用研究/回测/交易；**Parameters / Request Example 均标 N/A（未列参数）**。
+本地 `(date=None)`：多一个**可选** `date` 参数 ⇒ 若平台确为无参，则本地为**更宽松**（调用面不阻断）。
+**判据强度：弱**（文档未列参数，无法逐参比对）⇒ 已登记 ISS-T5-P，留待后续文档版本再判。
+
 ## 五、QS_ONLY 口径调整（随本件回写）
 
 | API | 参数 | 处置 |
@@ -205,7 +211,7 @@
 | W2 | `order_target` 关键字传参现状 | 迁移面 | 核 `source_import` 是否已有参数名改写；无则补（P3-1 同族） |
 | W3 | `run_daily` 三条语义 | 行为面 | ①仅 initialize 可调 ②>5 任务堵塞 ③日线回测恒 15:00｜本地是否模拟待核 |
 | W4 | `get_industry_stocks` 未来函数 | 行为面 | **✅ 2026-10-30 结案（本地实现侧核）**：本地 `ptrade_api.py:2081` **恒返空 list**（DuckDB 无行业成分表）⇒ **无未来函数**（比平台保守），但**语义不同＝本地恒零样本**；`get_index_stocks`（index 面）已严格 PIT（L825 F3 as-of＋fail-closed）⇒ PIT 仅覆盖 index 面 ⇒ 登记差异 L 与 ISS-T5-L |
-| W5 | 文档补查 | 取证面 | **补查批 1（2026-10-30）已完成**：清 7 条（一致 3：get_ipo_stocks/get_cb_info/get_stock_status；差异 4：F/G/H/I）⇒ 余 **21 条**，按批续查（每批 3 次配额）；批 2/3/4 另得存在性证据 |
+| W5 | 文档补查 | 取证面 | **补查批 1（2026-10-30）已完成**：清 7 条（一致 3：get_ipo_stocks/get_cb_info/get_stock_status；差异 4：F/G/H/I）⇒ 余 **18 条**，按批续查（每批 3 次配额）；批 2/3/4/5 另得存在性证据 |
 | W6 | `get_current_data` 单独批核 | 取证面 | **✅ 2026-10-30 结案＝未取到**：独立立批 3 次 Context7 查询配额用尽仍无该名（三查返回 is_trade/get_snapshot/order、get_fundamentals、get_stock_status/get_stock_info）⇒ 保留「未取到文档」标注，**不凭记忆补写签名** |
 
 ## 七、判据自纠记录（我方缺陷，同轮发现并更正）
