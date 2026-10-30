@@ -536,3 +536,12 @@
 | 编号 | 问题描述 | 定位证据 | 严重等级 | 当前状态 | 归属迭代 | 修复方案 | 验证证据 | 关闭时间 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | ISS-T5-P | `get_reits_list` 本地 `(date=None)` 多一个可选参数，而平台文档 **Parameters / Request Example 均标 N/A（未列参数）** ⇒ 若平台确为无参，则本地为更宽松（调用面不阻断）。**判据强度弱**（文档未列参数，未能逐参比对） | 本地 AST `(date=None)`（AST↔权威表自动比对 21/21 一致）；文档 Context7 `/kay-ou/ptradeapi` Ptrade山西.md（get_reits_list：Parameters N/A） | P3（弱判据·本地宽松） | **已登记·未修复**（B3 下轮统一；待后续文档版本再判） | T5 补查批 6 | 待定：若平台确认无参则登记为已知宽松差异——**下轮统一评估** | evidence §四 P | — |
+
+
+## T5 补查批 6 新增登记（Q/R · 2026-10-30）
+
+
+| 编号 | 问题描述 | 定位证据 | 严重等级 | 当前状态 | 归属迭代 | 修复方案 | 验证证据 | 关闭时间 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ISS-T5-Q | `get_all_positions` 文档**适用环境：仅交易**；本地回测亦可调 ⇒ 环境面本地更宽松（与 ISS-T5-H 同族） | 文档 Context7 `/kay-ou/ptradeapi` Ptrade山西.md（适用环境：交易；Parameters N/A）；本地 `ptrade_api.py`（AST `()`） | P3（环境面·本地宽松·非阻断） | **已登记·未修复**（B3 下轮统一） | T5 补查批 7 | 待定：登记已知宽松差异或加环境门——**下轮统一评估** | evidence §四 Q | — |
+| ISS-T5-R | `set_benchmark` **首参名不一致**：平台 `security`、本地 `sids`（位置等价、关键字不兼容）；另平台**仅 initialize() 可用**且不设默认沪深300——本地调用位置限制未核 | 文档 Context7 `api-reference/settings.md` 英中双源（set_benchmark(security)；仅 initialize；默认 000300.SS）；本地 AST `(sids)` | P3（命名差异·无迁移阻断；E/N 族） | **已登记·未修复**（B3 下轮统一） | T5 补查批 7 | 待定：登记已知命名差异（同 E/N 族，转换产物不产该调用面则无阻断）；initialize-only 限制随 W3 行为面同批评估 | evidence §四 R | — |
