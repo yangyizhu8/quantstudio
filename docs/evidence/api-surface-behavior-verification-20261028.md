@@ -9,9 +9,9 @@
 
 | 结论 | 数量 | 说明 |
 | --- | --- | --- |
-| ✅ 一致/兼容 | **28** | 签名逐参对得上（含默认值）或有等价实现证据 |
+| ✅ 一致/兼容 | **34** | 签名逐参对得上（含默认值）或有等价实现证据 |
 | ⚠️ 差异 | **12** | A/B/C/E 已裁（E 已降级）＋ **F/G/H/I（批 1）／J/K/L（批 2＋W4 核）／M/N（批 3）为 2026-10-30 新发现**（详见 §四） |
-| 🔸 未取到文档 | **27** | Context7 每批 3 次配额所限，如实标注待补查（补查批 1 清 7（一致 3／差异 4）、批 2 清 4（一致 2／差异 2）、批 3 清 6（一致 4／差异 2）、另 5 条取得**存在性**证据但签名未取到；`get_current_data` 3 次配额用尽仍未命中） |
+| 🔸 未取到文档 | **21** | Context7 每批 3 次配额所限，如实标注待补查（补查批 1 清 7（一致 3／差异 4）、批 2 清 4（一致 2／差异 2）、批 3 清 6（一致 4／差异 2）、批 4 清 6（全一致）；另 5 条取得**存在性**证据但签名未取到；`get_current_data` 3 次配额用尽仍未命中） |
 | ⚠️ 判缺 | **1** | attribute_history（聚宽名混入候选） |
 | **合计** | **68** | = PTRADE 面 68 |
 
@@ -24,7 +24,7 @@
 | 1 | `attribute_history` | `(security, count, unit='1d', fields=None)` | 判缺 | PTrade 面无此 API（聚宽名混入候选；文档查无此名，get_history 为正主；镜像曾命中系混入特征）；68 计数暂不调整，终判随 T5 收口 |
 | 2 | `cancel_order` | `(order_param)` | 一致 | cancel_order(order_param)：Order 对象或 order_id；返回 None（Context7 stock-trading.md） |
 | 3 | `check_limit` | `(security, query_date=None)` | 未取到 | 文档**存在性**已证（Context7 山西.md check_strategy 示例含 `check_limit(g.security)`）⇒ **但签名未取到**，不可逐参比对 ⇒ 仍计未取到 |
-| 4 | `convert_position_from_csv` | `(path)` | 未取到 | 配额未覆盖 |
+| 4 | `convert_position_from_csv` | `(path)` | 一致 | convert_position_from_csv(path)：**仅回测模块可用**；返回 list[dict]，元素键 sid/amount/enable_amount/cost_basis（东莞.md）⇒ 与 set_yesterday_position 配套使用 |
 | 5 | `create_dir` | `(user_path)` | 未取到 | 配额未覆盖；注意：在 DENY_REMOVE 移除面清单 |
 | 6 | `current_price` | `(security)` | 未取到 | 配额未覆盖 |
 | 7 | `filter_stock_by_status` | `(stocks, filter_type=None, query_date=None)` | 一致 | SHIM_CONTRACT_REGISTRY 已登记（测试断言集合相等）＋QMT 侧 QS_QMT_SEMANTIC_DIFF 语义差异行（无历史 PIT） |
@@ -38,7 +38,7 @@
 | 15 | `get_cb_info` | `()` | 一致 | get_cb_info() 无参；返回 DataFrame（Context7 东莞.md 示例） |
 | 16 | `get_cb_list` | `()` | 未取到 | 配额未覆盖 |
 | 17 | `get_current_data` | `()` | 未取到 | **🔸 W6 单独立批：3 次 Context7 查询配额用尽仍未命中该名**（三查分别返回 is_trade/get_snapshot/order 示例、get_fundamentals、get_stock_status/get_stock_info）⇒ 按三形态「查不到如实标注」处理，**不凭记忆作答** |
-| 18 | `get_current_kline_count` | `()` | 未取到 | 配额未覆盖 |
+| 18 | `get_current_kline_count` | `()` | 一致 | get_current_kline_count()：**无参**，取当前时间分钟 bar 数量（Context7 社区.md） |
 | 19 | `get_dominant_contract` | `(contract, date=None)` | 一致 | get_dominant_contract(contract, date=None)：返回 {'合约': {'corr_month_code','trade_date','month_contract_name'}}；date 支持 datetime/'YYYY-mm-dd'/'YYYYmmdd'，默认当前日期；**无主力合约数据权限时返回空 dict**（Context7 山西.md）⇒ 参数面逐参一致 |
 | 20 | `get_etf_info` | `(etf_code)` | 未取到 | 文档**存在性**已证（山西.md 示例含 `get_etf_info("510020.SS")`）⇒ 签名未取到 ⇒ 仍计未取到 |
 | 21 | `get_etf_list` | `()` | 一致 | get_etf_list() 无参、返回 list[str]、异常返回空 list（Context7 东莞/山西双源） |
@@ -51,13 +51,13 @@
 | 28 | `get_industry_stocks` | `(industry_code)` | 一致 | get_industry_stocks(industry_code)：尾缀须 .XBHS；文档明写「获取当下数据，回测存在未来函数」（Context7 stock-info.md/山西） |
 | 29 | `get_instruments` | `(contract)` | 差异 I | get_instruments(contract) → 合约信息（FutureParams）；**实盘模块涨跌幅平台暂无法提供**（Context7 东莞.md）⇒ 本地返回基础证券元信息、**期货不支持**（本地 docstring）＝返回面差异 |
 | 30 | `get_ipo_stocks` | `()` | 一致 | get_ipo_stocks() 无参；返回 dict（key=分类市场：上证普通/上证科创板/深证普通/深证创业板/可转债，value=申购代码列表）；异常返回 {}（Context7 东莞.md） |
-| 31 | `get_margin_rate` | `(transaction_code)` | 未取到 | 配额未覆盖 |
+| 31 | `get_margin_rate` | `(transaction_code)` | 一致 | get_margin_rate("IF")：**仅回测模块可用**（东莞.md 示例）⇒ 首参为交易代码字符串，本地 (transaction_code) **位置等价**；文档另见设置侧 set_margin_rate("IF", 0.08)（不在 PTrade 面 68 名单，未核） |
 | 32 | `get_market_detail` | `(finance_mic)` | 未取到 | 配额未覆盖 |
 | 33 | `get_market_list` | `()` | 未取到 | 配额未覆盖 |
 | 34 | `get_open_orders` | `(security=None)` | 一致 | get_open_orders(security=None)：当日未成交（Context7 stock-trading.md） |
 | 35 | `get_order` | `(order_id)` | 一致 | get_order(order_id)：单个订单（Context7 stock-trading.md） |
 | 36 | `get_orders` | `(security=None)` | 一致 | get_orders(security=None)：本策略当日全部订单（Context7 stock-trading.md/山西） |
-| 37 | `get_position` | `(security)` | 未取到 | 配额未覆盖 |
+| 37 | `get_position` | `(security)` | 一致 | get_position(security).amount > 0（国盛.md 双均线示例）⇒ 返回 Position 含 amount 字段；本地空仓返回 amount=0 的 Position（非 None），与示例判据一致 |
 | 38 | `get_positions` | `(security=None)` | 一致 | get_positions(security) **security 可选**（可传单只/列表/不传）；适用环境 回测/交易；返回 list 持仓列表（Context7 国盛.md 参数表＋东莞.md 示例 get_positions()/('600570.SS')/(list)） |
 | 39 | `get_price` | `(security, start_date=None, end_date=None, frequency='1d', fields=None, fq='pre', count=None, is_dict=False)` | 差异 J | get_price(security, **start_date 必填**, **end_date 必填**, **frequency 必填**, fields 可选)；返回 dict/OrderedDict（多股多字段返 pandas.DataFrame，Py3.5 返 Panel），异常 None（Context7 山西.md）⇒ **本地三项均可省略（放宽）＋ 本地多 fq/count/is_dict（QS 扩展，fq='pre' 为 E1 口径）**；**fq 迁移面已闭合**（P3-1 对 get_history/get_price 显式注入 fq='pre'，同 §四 A） |
 | 40 | `get_reits_list` | `(date=None)` | 未取到 | 配额未覆盖 |
@@ -80,7 +80,7 @@
 | 57 | `order` | `(security, amount, limit_price=None)` | 一致 | order(security, amount, limit_price)；返回 Order id 或 None（order_target 族文档证实 limit_price 语义） |
 | 58 | `order_target` | `(security, target_amount, limit_price=None)` | 差异 E | order_target(security, **amount**, limit_price=None)；**本地参数名 target_amount**（位置调用等价、关键字调用不兼容）（Context7 stock-trading.md） |
 | 59 | `order_target_value` | `(security, value, limit_price=None)` | 一致 | order_target_value(security, value, limit_price=None)；返回 id/None；取整：股票 100 股／可转债 10 张（Context7 山西/stock-trading 双源） |
-| 60 | `order_value` | `(security, value, limit_price=None)` | 未取到 | 配额未覆盖（与 59 同族） |
+| 60 | `order_value` | `(security, value, limit_price=None)` | 一致 | order_value(security, cash)（国盛.md 双均线示例：用全部现金买入）⇒ 前二参一致；本地多 limit_price 可选默认 None（更宽松） |
 | 61 | `run_daily` | `(context, func, time='9:31')` | 一致 | run_daily(context, func, time="9:31")；仅 initialize 可调；累计 >5 个定时任务会被堵塞；**回测周期为日时无论设值只在 15:00 执行**（Context7 山西.md） |
 | 62 | `set_benchmark` | `(sids)` | 未取到 | 配额未覆盖 |
 | 63 | `set_commission` | `(**kwargs)` | 一致 | set_commission(commission_ratio=0.0003, min_commission=5.0, type="STOCK")；总手续费＝佣金＋经手费（万分之 0.487）；**本地 **kwargs 收同名参数、实现体处理 commission_ratio/min_commission/type ⇒ 兼容**（Context7 settings.md） |
@@ -88,7 +88,7 @@
 | 65 | `set_parameters` | `(**kwargs)` | 一致 | set_parameters(holiday_not_do_before/tick_data_no_l2/receive_other_response/receive_cancel_response/**not_restart_trade**/**server_restart_not_do_before**)：平台为具名关键字入参（社区.md）；**山西.md 版本变动：PTrade1.0-QTV202401.01.000 新增 not_restart_trade、server_restart_not_do_before** ⇒ 本地 **kwargs 可吸收全部具名参数 ⇒ 逐参兼容（更宽松） |
 | 66 | `set_slippage` | `(slippage=0.0)` | 一致 | 文档未返回；本地实现体 docstring 明写「PTrade accepts set_slippage(slippage=...) or one positional value. Local-only aliases are rejected so local success predicts platform success」⇒ 强证据对齐 |
 | 67 | `set_universe` | `(security_list)` | 未取到 | 配额未覆盖 |
-| 68 | `set_yesterday_position` | `(poslist)` | 未取到 | 文档**存在性**已证（山西.md 示例含 `set_yesterday_position([pos])`，pos 含 sid/amount/enable_amount/cost_basis）⇒ 签名未取到 ⇒ 仍计未取到 |
+| 68 | `set_yesterday_position` | `(poslist)` | 一致 | set_yesterday_position(poslist)：东莞.md 示例 `poslist = convert_position_from_csv("Poslist.csv"); set_yesterday_position(poslist)` ⇒ 单参、参数名 poslist、元素含 sid/amount/enable_amount/cost_basis ⇒ 与本地逐参一致 |
 
 ## 三、方法与环境
 
@@ -205,7 +205,7 @@
 | W2 | `order_target` 关键字传参现状 | 迁移面 | 核 `source_import` 是否已有参数名改写；无则补（P3-1 同族） |
 | W3 | `run_daily` 三条语义 | 行为面 | ①仅 initialize 可调 ②>5 任务堵塞 ③日线回测恒 15:00｜本地是否模拟待核 |
 | W4 | `get_industry_stocks` 未来函数 | 行为面 | **✅ 2026-10-30 结案（本地实现侧核）**：本地 `ptrade_api.py:2081` **恒返空 list**（DuckDB 无行业成分表）⇒ **无未来函数**（比平台保守），但**语义不同＝本地恒零样本**；`get_index_stocks`（index 面）已严格 PIT（L825 F3 as-of＋fail-closed）⇒ PIT 仅覆盖 index 面 ⇒ 登记差异 L 与 ISS-T5-L |
-| W5 | 文档补查 | 取证面 | **补查批 1（2026-10-30）已完成**：清 7 条（一致 3：get_ipo_stocks/get_cb_info/get_stock_status；差异 4：F/G/H/I）⇒ 余 **27 条**，按批续查（每批 3 次配额）；批 2/3 另得存在性证据 |
+| W5 | 文档补查 | 取证面 | **补查批 1（2026-10-30）已完成**：清 7 条（一致 3：get_ipo_stocks/get_cb_info/get_stock_status；差异 4：F/G/H/I）⇒ 余 **21 条**，按批续查（每批 3 次配额）；批 2/3/4 另得存在性证据 |
 | W6 | `get_current_data` 单独批核 | 取证面 | **✅ 2026-10-30 结案＝未取到**：独立立批 3 次 Context7 查询配额用尽仍无该名（三查返回 is_trade/get_snapshot/order、get_fundamentals、get_stock_status/get_stock_info）⇒ 保留「未取到文档」标注，**不凭记忆补写签名** |
 
 ## 七、判据自纠记录（我方缺陷，同轮发现并更正）
