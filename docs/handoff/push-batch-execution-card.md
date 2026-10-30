@@ -35,9 +35,11 @@ python scripts/check_remote_advance.py            # 自动读上批留痕锚
 | **3** | 全量清点 `git log origin/main..HEAD` | **以实态为准，禁用预演数**；逐笔核对是否在已批池 |
 | **4** | 四判据门 | ①可快进（`origin/main` 是 HEAD 祖先）②笔数==预期 ③**池外笔==0（断言式：必须以命令退出码判定，不得只看读数）** ④钩子含预算门 |
 | 4b | **池外笔判定（断言式 fail-closed）** | `python scripts/check_remote_advance.py --pool <已批池SHA,逗号分隔>` → **exit 4 = 池外笔>0 ⇒ 停推上报**；exit 0 = 池外 0 ✓ |
+| 4c | **组批裁定轮的 SHA 清单义务（2026-10-30 用户令·教训 90 双侧落地）** | 裁定令**必须附 SHA 清单**（逐笔列出待推 commit 的 7 位 SHA）；执行方第 4b 步的「池」＝该清单**逐笔比对**，清单外的笔一律判池外（exit 4）⇒ 停推；**笔数标注与清单不一致时以清单为准**（#12 案：裁定笔数误标 13、枚举表实为 14，澄清后按枚举表执行；执行方未自造池、未凭笔数推断池） |
 | **5** | 逐笔⑤表 | 本线笔自证；**他线笔只标来源，不代声明⑤** |
 | **6** | 声明 | `QS_PUSH_BUNDLE_ALLOWALSO`=除锚外全部笔；`QS_PUSH_BUNDLE_RULING`=裁定原文 |
 | **7** | **锁存锚 SHA**（push 前！） | `$anchor = git rev-parse HEAD` —— **禁止 push 后再取 HEAD**（并发提交会污染） |
+| 7b | **push 前 refspec 断言（2026-10-30 #12 事故驱动）** | PowerShell 下 **"$anchor:main" 会被解析为命名空间限定**（如 `$env:PATH`）⇒ src 为空 ⇒ git **回退 HEAD**（#12 即因此把 16 笔当 14 笔推入远程）。**写法必须用 `${anchor}:main` 或 `"${anchor}:refs/heads/main"`**；push 前必须 `Write-Output` 打印实际 refspec 并断言其**含 40 位 SHA**，且断言 `git rev-list --count origin/main..<40位SHA>` == 计划笔数，二者任一不符即停推 |
 | **8** | `git push origin $anchor:main` | 双 URL；`PUSH_EXIT=0`；两闸输出全量留存 |
 | **9** | 三方核验 | `ls-remote` plus/public 与**锁存的锚**逐位一致（null-safe 单值 SHA） |
 | **10** | 留痕＋转交 | 留痕行数实报（预计 2 行）；共享层清单转线调度同步门 |

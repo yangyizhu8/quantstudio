@@ -520,3 +520,11 @@
 | 编号 | 问题描述 | 定位证据 | 严重等级 | 当前状态 | 归属迭代 | 修复方案 | 验证证据 | 关闭时间 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | ISS-T5-O | `get_trend_data` 平台约束「**stocks 与 market 不能同时入参**」，本地**未显式校验**（互斥关键词核未命中）⇒ 本地宽松；同时本地实现体**未命中 PIT/as_of 关键词**（该接口为「集中竞价期间代码数据」，平台口径为当下数据） | 本地 `quantstudio/backtest/ptrade_api.py:2310`（AST `(date=None, stocks=None, market=None)`；docstring「获取集中竞价期间代码数据」；实现体互斥/PIT 关键词核均未命中）；文档 Context7 `/kay-ou/ptradeapi` Ptrade社区.md（get_trend_data(date, stocks, market)；「stocks和market不能同时入参」；「获取失败时返回空dict{}」） | P3（本地宽松·非阻断） | **已登记·未修复**（B3 下轮统一） | T5 补查批 4 | 待定：补互斥校验（fail-closed）或登记为已知宽松——**下轮统一评估** | evidence §六 W5 批 3 行 | — |
+
+
+## 统推出仓事故登记（ISS-PUSH-01 · 2026-10-30 #12）
+
+
+| 编号 | 问题描述 | 定位证据 | 严重等级 | 当前状态 | 归属迭代 | 修复方案 | 验证证据 | 关闭时间 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ISS-PUSH-01 | **#12 实际推送 16 笔（池外 2 笔 `66d6c59`/`ce637d8` 入远程），非裁定 B′ 的 14 笔**。根因＝**PowerShell 变量插值歧义**：`"$anchor:main"` 被解析为**命名空间限定**（同 `$env:PATH`）⇒ 传给 git 的 src 为空 ⇒ git **回退 HEAD**（ce637d8）⇒ 连同池外 2 笔一并推入远程；#11 时锚恰＝HEAD ⇒ 该缺陷此前未暴露 | 复现证据：`Write-Output "$anchor:main"` 实测长度=4（空），`"${anchor}:main"` 长度=45（含 40 位 SHA）；git 输出 `e941944..ce637d8 main -> main`；三方核验 plus=public=**ce637d8**（≠锁存锚 8ec709d）；`remote.origin.push` 与 `push.default` 均**为空**（排除配置追加 refspec）；dry-run 复现 `[rejected] 8ec709d -> main (non-fast-forward)` | **P1（越权推送·范围越界）** | **已发生·如实申报·待用户裁定**（不自行 force 回退：共享工作区多线在途，force push 属禁动作） | 统推 #12 | ①**防线 A（已落盘）**：执行卡第 7b 行——push 前必须打印并断言 refspec 含 40 位 SHA ＋ `rev-list --count` == 计划笔数；②**防线 B（待批）**：`--pool` 断言与「实际推送范围」绑定（gate 窗口取 stdin local_sha＝HEAD）；③**回退与否请用户裁定** | 留痕事实更正行（2026-10-30T17:1x）；三方核验读数；dry-run 复现 | — |
