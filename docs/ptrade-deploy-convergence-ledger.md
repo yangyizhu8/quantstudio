@@ -288,6 +288,34 @@
 - 知识反哺：[无命中] QD 族检索（打开输出目录/open_dir/os.startfile），2026-10-30
 - 知识反哺：[豁免] 通用库 knowleage_base——GUI 便利功能无对应域 MOC（只读确认，不回写），2026-10-30
 
+## 4.14 轮 14（PD-0015 状态文件路径去绝对化，2026-10-30）
+
+- **N₁₄=0**（无新发现缺陷）、**R₁₄=0**（无复发）——本轮为**平台侧缺陷修复轮**
+  （数据修正型 + 新增检测型，二型在方案阶段分列）。
+- **根因**：`config.py` 默认状态文件路径硬编码研究目录 → transformer 原样注入 PERSIST 两处 `open()` →
+  产物代码文本含该路径字面量 → **部分券商静态扫描即拒绝保存**（用户实盘 2026-10-30 报
+  `/home/fly被禁止使用`）。官方依据：`platform/ptrade/01-API文档主页/001-page.md:2573` 逐字
+  「会限制使用路径 /home/fly/，如果代码里面存在该路径字符，会提示无法保存，需要替换成 get_research_path()」。
+- **修复**：`DEFAULT_STATE_FILENAME` 纯文件名；`PERSIST_NOTEBOOK_TEMPLATE` 注入
+  `_PD_NOTEBOOK = get_research_path()`（try/except 兜底）+ 两处 open 运行时拼接；`_ensure_notebook_path`
+  模块级注入（PERSIST wrap 标记，P4 可剥离）；P2 拒绝绝对路径；**P5 新增 `platform_path_policy`**
+  六口径全文扫描；契约表补 `get_research_path`；runbook 文案同步。
+- **验收读数**：`全球资产轮动` **重转 status=PASS（P0–P6 逐段 PASS）**，产物禁用路径**六口径全 0**，
+  `_PD_NOTEBOOK = get_research_path()` 在位，两处 open 均为拼接式；**P4_equiv PASS**；
+  deploy 套件 **129/129**（121+8）；契约矩阵 `OK`；PD 族机检 **15/15**。
+- **§11 两处反向修订落实**：门禁全文逐行扫描（注释/docstring/字符串都算）+ 生成注释规避字面量
+  （模板/gates/transformer 均无该字面量，重转产物六口径 0 命中为终证）。
+- **实施中自纠一处**：`_ensure_notebook_path` 初版用 begin/end 双标记，但模板解析为**单个 `ast.Try`**
+  ⇒ 两次 mark 撞同一节点、只发 END；改为 `wrap` 单标记后正常。
+- **手工临时件处置**：用户验证用的手工改件（`_archive/*.bak-pd0015-原版-含homefly`，80,088 B）已被
+  **本次重转覆盖**（方案 §10 要求的处置方式）；临时件从未入 git。
+- 判型：D1/D2/D3/D5 **数据修正型**；D4 **新增检测型**（含禁用路径的旧产物将转 FAIL = 开始报告真相）。
+- 证据：`docs/evidence/ptrade-deploy-pd0015-evidence.md`；方案：`docs/ptrade-deploy-statepath-design.md`（②审三裁）。
+- **本轮沉淀**：PD-2026-0015
+- 知识反哺：[命中] PD-2026-0013（PD/D2/PD-2026-0013.md，2026-10-30）——契约表补行先例（`get_research_path` 照此补）
+- 知识反哺：[命中] PTrade 官方文档 `get_research_path`（platform/ptrade/01-API文档主页/001-page.md:2573，2026-10-30）——决定性依据
+- 知识反哺：[无命中] PD 族检索（禁用路径 / state_file / 研究根目录），2026-10-30
+
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 
 - 2026-10-10（M6 之前）：P0 vault 回哺降级（vault 未建，预期状态）；

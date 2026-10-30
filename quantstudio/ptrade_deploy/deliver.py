@@ -248,7 +248,8 @@ def build_runbook(cfg) -> str:
 
 1. 将产物 `{product_file}` 上传至 PTrade 模拟盘策略区（{{{{券商客户端入口}}}}）。
 2. 确认运行环境 PBOX 版本满足契约表注记（{{{{实际版本}}}}）。
-3. 首启前确认状态文件路径可写：`{cfg.persistence.state_file}`
+3. 首启前确认研究根目录可写（状态文件 `{cfg.persistence.state_file}` 落在研究根目录下，
+   由产物运行时 `get_research_path()` 取根目录拼接；部分券商禁止代码内出现目录字面量，PD-0015）
    （首启无状态文件将自动回退默认状态并告警，属预期行为）。
 4. 选择执行档位对应的运行时段核对（档位 `{cfg.execution.profile}`）。
 5. 启动策略并观察首日日志（护栏拦截/持久化告警均在 log 输出）。

@@ -5,7 +5,7 @@ execution:
   profile: daily_eod_1450
 persistence:
   enabled: true
-  state_file: "/home/fly/notebook/hv_fall_reversal_v6_state.pkl"
+  state_file: "hv_fall_reversal_v6_state.pkl"
   save_points: ["after_trading_end"]
 output:
   root: output/deploy

@@ -64,7 +64,7 @@ def test_product_using_get_order_has_no_unknown_note(tmp_path):
         "  profile: daily_eod_1450\n"
         "persistence:\n"
         "  enabled: true\n"
-        f"  state_file: {(tmp_path / 'state.pkl').as_posix()}\n"
+        f"  state_file: {(tmp_path / 'state.pkl').name}\n"
         f"output:\n  root: {(tmp_path / 'out').as_posix()}\n",
         encoding="utf-8")
     d = run_deploy(str(cfg)).to_dict()

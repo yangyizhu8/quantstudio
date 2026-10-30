@@ -21,8 +21,16 @@ PROFILES = ("daily_eod_1450", "daily_open_0931", "minute_keep")
 #: M3 支持的落盘关键点（on_order_change 需订单回调注入，属后续段；出现即校验失败并明示）
 ALLOWED_SAVE_POINTS = frozenset({"after_trading_end"})
 
-#: 状态文件默认路径模板（F2：策略级文件持久化位于研究根目录 /home/fly/notebook/）
-DEFAULT_STATE_FILE = "/home/fly/notebook/{strategy_id}_state.pkl"
+#: 状态文件默认**文件名**模板（PD-0015）。
+#:
+#: 只给文件名、不给目录：研究根目录由产物在运行时用 `get_research_path()` 取。
+#: 依据 PTrade 官方文档（knowledge/platform/ptrade/01-API文档主页/001-page.md:2573）：
+#: 「在部分券商里，会限制使用路径 /home/fly/，如果代码里面存在该路径字符，会提示无法保存，
+#:  需要替换成 get_research_path()，效果一样」——故产物文本中**绝对不可出现该路径字面量**。
+DEFAULT_STATE_FILENAME = "{strategy_id}_state.pkl"
+
+#: 兼容别名（旧名保留一版；新代码请用 DEFAULT_STATE_FILENAME）
+DEFAULT_STATE_FILE = DEFAULT_STATE_FILENAME
 
 _STRATEGY_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 
@@ -146,6 +154,17 @@ def load_config(raw: object) -> DeployConfig:
     if state_file is not None and not isinstance(state_file, str):
         errors.append(f"persistence.state_file: 应为字符串，实际为 {state_file!r}")
         state_file = ""
+    # PD-0015：state_file 必须是**纯文件名**（不得含目录/盘符）
+    # 依据：部分券商禁止代码中出现 /home/fly 等绝对路径（官方 001-page.md:2573），
+    # 研究根目录由产物运行时 get_research_path() 获取；此处拒绝而非静默改写。
+    if isinstance(state_file, str) and state_file.strip():
+        _sf = state_file.strip()
+        if ("/" in _sf) or ("\\" in _sf) or re.match(r"^[A-Za-z]:", _sf) or _sf.startswith("~"):
+            errors.append(
+                f"persistence.state_file: 只接受纯文件名，实际为 {state_file!r}"
+                "（平台禁用绝对路径——部分券商限制研究目录字面量，代码含该路径即无法保存；"
+                "根目录由 get_research_path() 运行时获取，请改填形如 "
+                f"'{(state_file.rsplit('/', 1)[-1].rsplit(chr(92), 1)[-1]) or 'xxx_state.pkl'}')")
     save_points_raw = persistence_raw.get("save_points", ["after_trading_end"])
     if not isinstance(save_points_raw, list):
         errors.append(f"persistence.save_points: 应为列表，实际为 {save_points_raw!r}")
@@ -214,7 +233,7 @@ def load_config(raw: object) -> DeployConfig:
 
     # 状态文件缺省按 strategy_id 填充（设计文档 §5.3 示例形态）
     if p_enabled and not state_file:
-        state_file = DEFAULT_STATE_FILE.format(strategy_id=strategy_id)
+        state_file = DEFAULT_STATE_FILENAME.format(strategy_id=strategy_id)
 
     return DeployConfig(
         strategy_id=strategy_id,

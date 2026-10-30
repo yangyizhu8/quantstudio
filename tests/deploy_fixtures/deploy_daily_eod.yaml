@@ -5,7 +5,7 @@ execution:
   profile: daily_eod_1450
 persistence:
   enabled: true
-  state_file: "/home/fly/notebook/deploy_daily_eod_state.pkl"
+  state_file: "deploy_daily_eod_state.pkl"
   save_points: ["after_trading_end"]
 guards:
   limit_price_explicit: true

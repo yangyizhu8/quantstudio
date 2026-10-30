@@ -384,6 +384,15 @@ api:
     pbox_version: "all"
     source: "Context7 /kay-ou/ptradeapi-Order Query；本地镜像 ptrade_api.py:2708"
     note: "PD-0013 补漏：查未完成委托（同族一并补齐，防同类 noise 复发）"
+  get_research_path:
+    signature: "get_research_path()"
+    backtest: true
+    trading: true
+    action: keep
+    replacement: null
+    pbox_version: "all"
+    source: "PTrade 官方文档：get_research_path 获取研究根目录，可在回测、交易模块使用（knowledge/platform/ptrade/01-API文档主页/001-page.md:2573）"
+    note: "PD-0015：状态文件路径须运行时取研究根目录再拼文件名——部分券商禁止代码内出现目录字面量"
   get_all_orders:
     signature: "get_all_orders(...)"
     backtest: true

@@ -94,6 +94,37 @@ def run_check_strategy(product_source: str) -> dict:
 #: 视为「已门控」的标记块种类（PD-0012 起含 GATE_RESTORE：嵌套恒真分支还原）
 _GATE_BLOCK_KINDS = ("GATE", "GATE_RESTORE")
 
+#: 平台禁用路径六口径（PD-0015）。
+#: 依据 PTrade 官方文档（platform/ptrade/01-API文档主页/001-page.md:2573）：
+#: 「在部分券商里，会限制使用路径 /home/fly/，如果代码里面存在该路径字符，会提示无法保存」。
+#: **全文扫描**（含注释、docstring、字符串）——实测：注释里出现该字符同样被平台拒绝。
+_PLATFORM_FORBIDDEN_PATH_PATTERNS = (
+    ("逐字路径", re.compile(r"/home/fly", re.IGNORECASE)),
+    ("反斜杠形式", re.compile(r"home\\+fly", re.IGNORECASE)),
+    ("带空格形式", re.compile(r"home\s*/\s*fly", re.IGNORECASE)),
+    ("任意 home 子路径", re.compile(r"/home/[A-Za-z_][A-Za-z0-9_.\-]*", re.IGNORECASE)),
+    ("全角斜杠形式", re.compile(r"／\s*home\s*／\s*fly", re.IGNORECASE)),
+    ("notebook 目录引用", re.compile(r"notebook\s*/", re.IGNORECASE)),
+)
+
+
+def _platform_path_findings(product_text: str) -> List[str]:
+    """扫描产物全文是否含平台禁用路径（PD-0015）。
+
+    返回逐行命中清单（行号 + 口径名 + 截断片段）；空列表 = 通过。
+    逐行而非全文匹配，便于用户定位修改点。
+    """
+    findings: List[str] = []
+    for lineno, line in enumerate(product_text.split("\n"), start=1):
+        for label, pat in _PLATFORM_FORBIDDEN_PATH_PATTERNS:
+            m = pat.search(line)
+            if m:
+                findings.append(
+                    f"行 {lineno}: 命中平台禁用路径（{label}）`{m.group(0)}`"
+                    "——部分券商禁止代码内出现研究目录字面量，须改用 get_research_path() 运行时获取")
+                break  # 同一行只报一次（按最严口径）
+    return findings
+
 
 def _gated_linenos(product_text: str) -> Set[int]:
     """门控标记块覆盖的行号集合（块内调用视为已门控）。
@@ -312,6 +343,13 @@ def run_gates(product_text: str, contract: Dict[str, dict],
         "check_strategy", cs.get("status", "skipped").upper(),
         str(cs.get("reason", cs.get("detail", "官方预检结果"))),
         [str(cs.get(k)) for k in ("api_change_list", "package_change_list") if cs.get(k)]))
+
+    # f) 平台禁用路径检测（PD-0015；全文扫描含注释/docstring/字符串）
+    path_findings = _platform_path_findings(product_text)
+    result.checks.append(GateCheck(
+        "platform_path_policy", "FAIL" if path_findings else "PASS",
+        "平台禁用路径检测（部分券商禁止代码内出现研究目录字面量，应改用 get_research_path()）",
+        path_findings))
 
     result.passed = all(c.status != "FAIL" for c in result.checks)
     return result

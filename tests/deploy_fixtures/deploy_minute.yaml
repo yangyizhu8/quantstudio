@@ -5,7 +5,7 @@ execution:
   profile: minute_keep
 persistence:
   enabled: true
-  state_file: "/home/fly/notebook/deploy_minute_keep_state.pkl"
+  state_file: "deploy_minute_keep_state.pkl"
   save_points: ["after_trading_end"]
 guards:
   limit_price_explicit: false

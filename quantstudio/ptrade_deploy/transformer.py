@@ -447,9 +447,34 @@ def _ensure_pickle_import(tree: ast.Module, edits: List[Dict[str, str]]) -> None
                   "detail": "追加 import pickle（持久化层依赖，F2）"})
 
 
+def _ensure_notebook_path(tree: ast.Module, tpl, edits: List[Dict[str, str]]) -> None:
+    """注入模块级研究根目录解析（PD-0015）。
+
+    为什么不能写字面量：部分券商禁止产物代码中出现研究目录路径
+    （官方 knowledge/platform/ptrade/01-API文档主页/001-page.md:2573：
+    「会限制使用路径 /home/fly/，如果代码里面存在该路径字符，会提示无法保存，
+     需要替换成 get_research_path()，效果一样」）。
+    故改为运行时 `get_research_path()`，状态文件只拼纯文件名。
+
+    标记：整块带 PERSIST 标记（首行 begin / 末行 end）——P4 等价性据此整体剥离，
+    剥离后与源策略逐节点相等（该块只被 PERSIST 块自身引用，剥离后无悬挂引用）。
+    """
+    nb_stmts = ast.parse(tpl.PERSIST_NOTEBOOK_TEMPLATE).body
+    # 模板解析为**单个 ast.Try** ⇒ 用 "wrap" 标记（同时发射 BEGIN 与 END）
+    for s in nb_stmts:
+        _mark(s, MARKER_PERSIST, "wrap")
+    idx = _after_header_index(tree)
+    for k, s in enumerate(nb_stmts):
+        tree.body.insert(idx + k, s)
+    edits.append({"kind": "PERSIST", "location": "<module>",
+                  "detail": "注入 _PD_NOTEBOOK = get_research_path()（研究根目录运行时解析，"
+                            "PD-0015：规避部分券商禁用路径字面量）"})
+
+
 def _apply_persistence(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> None:
     tpl = _load_template("persistence_template")
     _ensure_pickle_import(tree, edits)
+    _ensure_notebook_path(tree, tpl, edits)
 
     restore_src = (tpl.PERSIST_RESTORE_TEMPLATE
                    .replace("__STATE_FILE__", repr(cfg.persistence.state_file))
