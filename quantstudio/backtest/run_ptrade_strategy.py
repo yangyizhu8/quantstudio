@@ -168,6 +168,14 @@ def run_backtest(strategy_path, start, end, *,
                 raise RuntimeError(
                     "数据未就绪（停采集后复检：四表为空或关键列缺失）。"
                     "共存流程已执行完毕；请先完成数据拉取。")
+            # 2026-10-30 分钟覆盖闸（QD-2026-0015）：仅 minute-bar-v1 生效——日线 profile
+            # 在调用点直接短路（连闸函数都不调用、无任何新增 IO/输出），「日线 profile
+            # 零行为改变·黄金结果逐位一致」由结构保证；BLOCK ⇒ RuntimeError（退出码非 0）。
+            minute_gate_report = None
+            if engine_profile == "minute-bar-v1":
+                minute_gate_report = _precheck_minute_coverage(
+                    Path(db_path) if db_path is not None else Path(_default_db_path()),
+                    start, end, engine_profile)
             from quantstudio.backtest.providers import duckdb_data_access as _dda
             _dda.set_fail_closed(True)
             try:
@@ -175,6 +183,7 @@ def run_backtest(strategy_path, start, end, *,
                     strategy_path, start, end, **kwargs)
             finally:
                 _dda.set_fail_closed(False)   # 线程本地开关，必须恢复（纯增益）
+            _leave_minute_gate_trace(output_dir, minute_gate_report)
             _assert_result_not_empty(result, output_dir)
             return result, output_dir, engine
     finally:
@@ -284,6 +293,58 @@ def _precheck_db_available(db_path=None) -> None:
             "可能原因：采集进程仍持有库 / WAL 回放中 / 文件被其他进程占用。"
             "共存窗已等待到采集边界；若持续失败，请确认采集进程状态后重试。"
         ) from e
+
+
+def _precheck_minute_coverage(db_path, start, end, engine_profile) -> dict:
+    """回测前分钟数据覆盖闸（2026-10-30 六步流水线 ③，QD-2026-0015 三型判据）。
+
+    唯一实现 = quantstudio/backtest/libs/coverage_gate.py（本函数与
+    scripts/check_minute_coverage.py 均复用它，禁双份逻辑）：
+      · 仅 minute-bar-v1 profile 生效（日线 profile 不打开任何库，零行为变化）；
+      · ①整日缺 BLOCK（STRICT 默认开，fail-closed）⇒ RuntimeError（退出码非 0）；
+      · ②低覆盖/③副本陈旧 WARN 不阻断；主库不可读时 ③ 自动跳过并说明；
+      · QS_MINUTE_COVERAGE_SKIP=1 整闸跳过 ⇒ stdout 留痕（本函数打印摘要）+
+        结果目录留痕（_leave_minute_gate_trace，防静默绕过）；
+      · 只读打开 DuckDB，禁写禁 CHECKPOINT，不停 daemon（闸在停采集互斥窗内执行）。
+    返回完整报告 dict（供留痕/测试断言）。
+    """
+    from quantstudio.backtest.libs.coverage_gate import (
+        check_minute_coverage, format_summary)
+
+    report = check_minute_coverage(db_path, start, end, engine_profile)
+    for line in format_summary(report):
+        print(line)
+    verdict = report.get("verdict")
+    if verdict == "BLOCK":
+        raise RuntimeError(f"回测前分钟覆盖闸 BLOCK：{report.get('block_reason')}")
+    if verdict == "ERROR":
+        # 闸自身出错：默认 fail-closed 拒跑（防带病静默）；STRICT=0 时降级放行（留痕）
+        if report.get("strict", True):
+            raise RuntimeError(
+                f"回测前分钟覆盖闸自身出错（fail-closed 拒跑）：{report.get('error')}")
+        print(f"[minute-gate] ⚠️ 闸 ERROR 已按非 STRICT 降级放行：{report.get('error')}")
+    return report
+
+
+def _leave_minute_gate_trace(output_dir, gate_report) -> None:
+    """QS_MINUTE_COVERAGE_SKIP=1 跳过时在结果目录留痕（方案 §三：防静默绕过）。
+
+    best-effort：留痕失败绝不影响回测主流程（stdout 留痕仍然有效，补一条提示）。
+    """
+    if not gate_report or not gate_report.get("skipped"):
+        return
+    try:
+        import json
+        p = Path(output_dir) / "minute_coverage_gate_SKIPPED.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        payload = {k: gate_report.get(k) for k in (
+            "gate", "schema_version", "db_path", "start", "end", "engine_profile",
+            "skipped", "skip_reason", "verdict", "elapsed_sec")}
+        with open(p, "w", encoding="utf-8", newline="\n") as fh:
+            json.dump(payload, fh, ensure_ascii=False, indent=2)
+        print(f"[minute-gate] 跳过留痕已写入结果目录: {p}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[minute-gate] ⚠️ 跳过留痕写入失败（{type(e).__name__}: {e}）——stdout 留痕仍有效")
 
 
 def _db_is_locked(db_path) -> bool:
