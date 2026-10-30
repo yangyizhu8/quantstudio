@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   check_wal.ps1 — QuantStudio 数据库 WAL 巡检、探测与收敛（Windows，幂等）
 
