@@ -222,6 +222,53 @@ quantstudio/pipeline/daemon.py | 106 +++++++++++++++++++++++----
 
 ---
 
+## 十一、daemon 换代与新代码实弹（2026-10-31 02:51–03:30）
+
+### 11.1 优雅停 + 换代
+
+| 步骤 | 读数 |
+|---|---|
+| 旧实例 | 29152（token `3267cc12…`），空闲 tick 期，无 3A/collector 锁 |
+| 首次停尝试（**错误**） | 写纯时间戳 → **未被消费**（`read_stop_request` 需 JSON，`consume` 需 `instance_token` 匹配）；累计等 340s 无效果，已如实申报 |
+| 修正后 | 写 `{"instance_token":"3267cc12…","reason":"user",…}` → **3 秒内优雅退出**（日志：`收到停止请求（reason=user），准备优雅退出` + `已清理本进程 status 文件`） |
+| 新实例 | **19148**（token `20e7f0bd…`），`git_commit=6c73be5` ⇒ 确认加载本次提交；status 已发布；调度循环启动（daily_time=06:00, check_interval=300s） |
+
+### 11.2 实弹 once（mcp_etf_daily 增量，`--quality-audit task`）—— 卡在**既有缺陷**
+
+| 阶段 | 读数 |
+|---|---|
+| 窗口 | `INCREMENTAL: 2026-09-05 → 2026-10-31` |
+| 数据写入 | ✅ `raw=70862 aligned=70862 passed=70859 written=70859`（02:54:31，124.2s） |
+| 之后 | 卡在 **QFQ post-ingest**：py-spy 栈 = `record_observations(qfq_observation.py:318)` ← `_observe_factors` ← `observe_stock_adj_factor` ← `run_post_ingest` ← `qfq_run_post_ingest` ← `execute_task` ← `run_once` |
+| 证据 | 进程 CPU 1105s 后 **90s 增量 0**（I/O 阻塞）；3A 锁持有者=自身（`event_discovery:292`）；`qfq_aux.db` **11.07GB** + `qfq_aux.db-wal` **1.56GB**；`record_observations` 为逐条 SELECT+INSERT（N+1） |
+| 定性 | **既有链路缺陷**（与 Phase 1 改动无关），表现为「数据写完但 once 永不返回」——客户「卡死感」的第二来源 |
+| 处置 | 终止 44080（CPU 1136s）；**登记另案**，不在 Phase 1 修（超范围） |
+
+### 11.3 直达审计层验证（绕开 post-ingest）
+
+**task 域**（`tables=['etf_daily']`）：
+```
+INFO  [QualityAudit] 审计范围=task(表 1: ['etf_daily'])
+audit_ok = False（5 类 error：真实数据问题，非 OOM）
+last_quality_audit = {"interrupted": false, "skipped_after_stop": 0, "elapsed_s": 441.2,
+                      "tables_audited": 1, "scope": "task", "skipped_oom": 0,
+                      "query_error": 0, "timeout": 0, "incomplete": false}
+九键齐全 = True
+```
+**逃生门**（`QS_AUDIT_SCOPE=all`）：`审计范围=all(全库)`，`scope="all"` ✓
+
+### 11.4 🔴 **新发现问题：task 域耗时几乎未改善**（必须上报）
+
+| 观察 | 含义 |
+|---|---|
+| `elapsed_s=441.2`（7.4 分钟）审 1 张表 | 表循环已收窄，但**全局段 `minute_anchor_drift` 仍扫 2.4 亿行分钟表** |
+| 该段实测报出 `stock_minutes/AdjustmentAnchorDrift count=148`、`etf_minutes count=66` | 它确实在审分钟表且跑了 7 分钟 |
+| 推算 73 任务 × 7.4 分钟 ≈ **9 小时** | 对比客户原「每任务 5–9 分钟」——**总时长基本没改善** |
+
+**结论**：Phase 1 已消除 OOM / 16h 单点崩 / 数据成功误判失败，但**「全部执行总时长」这个客户体感指标未被改善**——瓶颈从「全库表循环」转移到「全局段 drift 全表扫」。这属方案 §2.2「全局段零收窄」硬边界的**已知代价**，需用户裁决后续方向（见汇报）。
+
+---
+
 ## 十、遗留与风险
 
 1. **列级/主键/data_source 检查未纳入 `_guarded_call`**：客户实测 OOM 栈位于 `_audit_prices`，这三处为单列流式 COUNT，风险低但**未保护**——如后续在超大表上出现 OOM，按同一模式接入即可。
