@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -58,7 +59,8 @@ class DataQualityAuditor:
                   qfq_identity: Optional[Dict] = None,
                  qfq_aux_override: Optional[str | Path] = None,
                  qfq_aux_paths_config: Optional[str | Path] = None,
-                 should_stop: Optional[Callable[[], bool]] = None):
+                 should_stop: Optional[Callable[[], bool]] = None,
+                 tables: Optional[List[str]] = None):
         """shared_conn: 可选，外部传入的持久 read_write 连接（采集流程内复用 writer 连接，
         避免开 read_only 与 write 并发触发「different configuration」冲突）。
         不传则自开 read_only 短连接（CLI/独立运行场景）。
@@ -72,6 +74,12 @@ class DataQualityAuditor:
         should_stop: 可选，返回 True = 已收到停止请求 → 审计在下一个检查点中止
         （已执行项结论保留、未执行项计入 skipped_after_stop）。**缺省 None ⇒ 零
         开销且行为逐位不变**（CLI / 测试 / 未接入的调用点）。
+        tables: 可选，本轮审计的**表白名单**（Phase 1 A4，2026-10-31）。
+        **None（默认）⇒ 遍历全部 schemas（逐位还原旧行为）**；
+        给定时只审白名单内的表，**全局段（watermarks / qfq_orchestration /
+        minute_anchor_drift / factor_monotonicity / batch_pipeline / quarantine）
+        不受白名单影响，仍然每次都跑**（跨表一致性不可被任务范围裁掉）。
+        空列表 [] ⇒ 表循环 0 次、全局段照跑。
 
         注意：判据由调用方提供，**只读调用方已缓存的 stop 标志**；本模块不读、
         也不得读 daemon_stop.request（该文件在收尾前已被消费删除）。"""
@@ -92,6 +100,8 @@ class DataQualityAuditor:
         self.qfq_aux_paths_config = Path(qfq_aux_paths_config) if qfq_aux_paths_config else None
         self._price_source = str((self._qfq_identity or {}).get("price_source", "mcp"))
         self._should_stop = should_stop
+        # A4（Phase 1，2026-10-31）：表白名单。None = 全量（逐位还原旧行为）。
+        self.tables = None if tables is None else [str(t) for t in tables]
         # 检查点序号差口径的计数器（run() 内按实际表数/条件段重置；直调
         # _audit_* 且注入 should_stop 时不致 AttributeError）
         self._ckpt_top_total = 0
@@ -103,6 +113,69 @@ class DataQualityAuditor:
                     quarantine_path: Optional[str | Path] = None):
         rules = json.loads(Path(rules_path).read_text(encoding="utf-8"))
         return cls(db_path, rules["schemas"], batch_audit_path, quarantine_path)
+
+    def _guarded_call(self, report, table: str, fn, *args, **kwargs):
+        """A3（Phase 1，2026-10-31）：重型表级检查的异常隔离与耗时留痕。
+
+        背景：60GB 库上 `_audit_prices` 实测在 12.4 GiB 处抛
+        ``duckdb.OutOfMemoryException``；旧行为是异常直接抛穿到 daemon 的
+        ``except Exception`` ⇒ 整个审计返回 False ⇒ **数据写入成功却把任务判 failed**。
+
+        本方法只对**内存/查询类**异常降级留痕（``audit_skipped_oom`` /
+        ``audit_query_error``），**其余异常仍原样抛穿**——不得用降级掩盖编程错误。
+        同时按表/按检查计时：超过 ``QS_AUDIT_TABLE_TIMEOUT_S``（task 域默认 300s）
+        或 ``QS_AUDIT_FULL_TABLE_TIMEOUT_S``（全库域默认 1800s，C2 分档）时记
+        ``audit_timeout``（事后留痕：DuckDB 无法中断已发出的查询，故不做强制 kill）。
+        两者均**为 warning 级且必须可见**，绝不静默吞掉。
+        """
+        import time as _t
+
+        import duckdb as _ddb
+
+        _is_full_scope = self.tables is None
+        _env_key = ("QS_AUDIT_FULL_TABLE_TIMEOUT_S" if _is_full_scope
+                    else "QS_AUDIT_TABLE_TIMEOUT_S")
+        _default = "1800" if _is_full_scope else "300"
+        try:
+            _timeout = float(os.environ.get(_env_key, _default) or 0)
+        except (TypeError, ValueError):
+            _timeout = 0.0
+        _t0 = _t.perf_counter()
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:  # noqa: BLE001 - 分层判定后决定降级或抛穿
+            _elapsed = _t.perf_counter() - _t0
+            if isinstance(e, getattr(_ddb, "OutOfMemoryException", ())):
+                self._add(report, "audit_skipped_oom", table, 1, "warning",
+                          f"{fn.__name__} 内存不足（{type(e).__name__}: {e}）"
+                          f"耗时 {_elapsed:.0f}s —— 本项审计跳过，数据本身不受影响")
+                return None
+            if isinstance(e, _ddb.Error):
+                self._add(report, "audit_query_error", table, 1, "warning",
+                          f"{fn.__name__} 查询失败（{type(e).__name__}: {e}）"
+                          f"耗时 {_elapsed:.0f}s —— 本项审计跳过")
+                return None
+            raise
+        finally:
+            if _timeout > 0:
+                _elapsed = _t.perf_counter() - _t0
+                if _elapsed > _timeout:
+                    self._add(report, "audit_timeout", table, 1, "warning",
+                              f"{fn.__name__} 耗时 {_elapsed:.0f}s 超阈值 {_timeout}s"
+                              f"（{_env_key}）；已完成后留痕，DuckDB 不支持中断在途查询")
+
+    def _audit_table_items(self) -> List[tuple]:
+        """本轮参与表循环的 ``(table, schema)`` 序列（A4 白名单，Phase 1）。
+
+        ``self.tables is None`` ⇒ 全量（逐位还原旧行为）；
+        给定白名单 ⇒ 只保留其中的表，并**保持 schemas 原始顺序**。
+        白名单中出现但 schemas 未定义的表名直接忽略——审计侧不擅自造表，
+        由调用方（daemon）负责在日志里提示。
+        """
+        if self.tables is None:
+            return list(self.schemas.items())
+        wanted = set(self.tables)
+        return [(t, s) for t, s in self.schemas.items() if t in wanted]
 
     def _checkpoint(self, report: QualityReport, item: str, top: bool = False) -> None:
         """审计检查点：停请求已发出则中止本轮审计。
@@ -137,13 +210,16 @@ class DataQualityAuditor:
         self._ckpt_top_total = 0
         try:
             tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
+            # A4（Phase 1，2026-10-31）：表循环改为白名单驱动。
+            # self.tables is None ⇒ 全量（逐位还原旧行为）；给定 ⇒ 只审白名单表。
+            audit_items = self._audit_table_items()
             # 顶层段总数（检查点序号差口径的分母）= 表循环 N 段
             # + 4 个无条件全局段（分钟锚点漂移 / 因子单调性 / batch_pipeline /
             #   quarantine）+ 2 个条件段（source_watermark / QFQ 编排）。
-            self._ckpt_top_total = (len(self.schemas) + 4
+            self._ckpt_top_total = (len(audit_items) + 4
                                     + (1 if "source_watermark" in tables else 0)
                                     + (1 if self._qfq_thresholds is not None else 0))
-            for table, schema in self.schemas.items():
+            for table, schema in audit_items:
                 self._checkpoint(report, f"table:{table}", top=True)
                 if table not in tables:
                     self._add(report, "TableMissing", table, 1, "error", "schema 已定义但数据库无表")
@@ -167,10 +243,10 @@ class DataQualityAuditor:
                         f'GROUP BY {keys} HAVING COUNT(*)>1)').fetchone()[0]
                     self._add(report, "PrimaryKeyDuplicate", table, count, "error", ",".join(pk))
                 if table in self.PRICE_TABLES:
-                    self._audit_prices(conn, report, table, columns)
+                    self._guarded_call(report, table, self._audit_prices, conn, report, table, columns)
                 if table in self.MINUTE_TABLES:
-                    self._audit_frequency(conn, report, table, columns)
-                self._audit_future_and_pit(conn, report, table, columns)
+                    self._guarded_call(report, table, self._audit_frequency, conn, report, table, columns)
+                self._guarded_call(report, table, self._audit_future_and_pit, conn, report, table, columns)
                 if "data_source" in columns:
                     # SourceTraceability severity: elevated to error when authority rules
                     # require an authoritative source without fallback.
@@ -475,16 +551,60 @@ class DataQualityAuditor:
                     f'AND "close_{side}" IS NULL').fetchone()[0]
                 self._add(report, "AdjustmentCoverage", table, missing, "error", f"tushare/{side}")
         if {"code", "time", "close", "close_front", "close_back"}.issubset(columns):
-            # 最贵单语句（分钟表全表双 ROW_NUMBER）——须前置可退（设计 §2.3）
+            # 最贵单语句（分钟表全表窗口）——须前置可退（设计 §2.3）
             self._checkpoint(report, f"anchor:{table}")
-            anchor = conn.execute(
-                f'''WITH ranked AS (
+            # A1（Phase 1，2026-10-31）：结构性降低本语句的内存与排序代价。
+            # 旧：SELECT * + 两个 ROW_NUMBER(PARTITION BY code ORDER BY time/DESC)
+            #     ⇒ 物化整表全部列 + 两次全表排序；60GB 库实测 12.4GiB 处 OOM。
+            # 新：①只投影 4 列（原 SELECT * 会把 20+ 列一起物化）；
+            #     ②单次排序 rn + 窗口计数 cnt 取代第二个 ROW_NUMBER（COUNT 不排序）。
+            # 判据逐位等价：rn=1 ≡ 旧 first_n=1（首行）；rn=cnt ≡ 旧 last_n=1（末行）；
+            # TIME 同值重复时新旧版同样不确定（旧版亦是单键 ORDER BY），故口径未变。
+            # 回退：QS_AUDIT_ANCHOR_MODE=legacy ⇒ 逐位还原旧语句。
+            _anchor_mode = str(
+                os.environ.get("QS_AUDIT_ANCHOR_MODE", "new") or "new").strip().lower()
+            if _anchor_mode == "legacy":
+                _anchor_sql = (
+                    f'''WITH ranked AS (
                     SELECT *, ROW_NUMBER() OVER(PARTITION BY code ORDER BY time) first_n,
                               ROW_NUMBER() OVER(PARTITION BY code ORDER BY time DESC) last_n
                     FROM "{table}" WHERE close>0)
                     SELECT COUNT(*) FROM ranked WHERE
                     (last_n=1 AND close_front IS NOT NULL AND ABS(close_front/close-1)>0.02)
-                    OR (first_n=1 AND close_back IS NOT NULL AND ABS(close_back/close-1)>0.02)''').fetchone()[0]
+                    OR (first_n=1 AND close_back IS NOT NULL AND ABS(close_back/close-1)>0.02)''')
+                anchor = conn.execute(_anchor_sql).fetchone()[0]
+            else:
+                # A1b（Phase 1，2026-10-31 · C1 真实库对拍发现）：单语句在 1.4 亿行
+                # 分钟表上**仍会 OOM**（实测 7.4GiB 触顶）——窗口函数需按 code 分区
+                # 物化，规模与表行数线性相关。故再按 code 分批：每批只对一个 code 子集
+                # 做窗口，内存与批内行数成正比。语义逐位等价（每个 code 独立分区，
+                # 跨批不交叉）。QS_AUDIT_ANCHOR_BATCH_CODES=0 ⇒ 退回单语句。
+                _anchor_batch = int(
+                    os.environ.get("QS_AUDIT_ANCHOR_BATCH_CODES", "500") or 0)
+                _anchor_sql = (
+                    'WITH ranked AS ('
+                    ' SELECT close, close_front, close_back,'
+                    '        ROW_NUMBER() OVER (PARTITION BY code ORDER BY time) AS rn,'
+                    '        COUNT(*)     OVER (PARTITION BY code)               AS cnt'
+                    ' FROM "{table}" WHERE close>0{code_filter})'
+                    ' SELECT COUNT(*) FROM ranked WHERE'
+                    ' (rn=cnt AND close_front IS NOT NULL AND ABS(close_front/close-1)>0.02)'
+                    ' OR (rn=1  AND close_back  IS NOT NULL AND ABS(close_back /close-1)>0.02)')
+                if _anchor_batch <= 0:
+                    anchor = conn.execute(
+                        _anchor_sql.format(table=table, code_filter="")).fetchone()[0]
+                else:
+                    _codes = [r[0] for r in conn.execute(
+                        f'SELECT DISTINCT code FROM "{table}" WHERE close>0').fetchall()]
+                    anchor = 0
+                    for _i in range(0, len(_codes), _anchor_batch):
+                        _chunk = _codes[_i:_i + _anchor_batch]
+                        _ph = ",".join("?" * len(_chunk))
+                        anchor += conn.execute(
+                            _anchor_sql.format(
+                                table=table,
+                                code_filter=f" AND code IN ({_ph})"),
+                            _chunk).fetchone()[0]
             self._add(report, "AdjustmentAnchor", table, anchor, "warning",
                       "部分数据源复权基准不保证库内首尾=原价")
         if {"code", "time", "close_front", "pctChg"}.issubset(columns) and table.endswith("daily"):
@@ -720,6 +840,20 @@ class DataQualityAuditor:
                 continue  # 除权表结构异常 → 跳过（不阻断其余审计）
             if not codes:
                 continue
+            # A2（Phase 1，2026-10-31）：候选上限，防「除权 code 极多 ⇒ 巨大 bar 集」。
+            # 超限按字典序截断并**显式留痕**（截断必须可见，绝不静默漏检）；
+            # legacy 模式或把上限设为 0 可全跑。
+            _drift_mode = str(
+                os.environ.get("QS_AUDIT_DRIFT_MODE", "bounded") or "bounded").strip().lower()
+            _max_codes = int(os.environ.get("QS_AUDIT_DRIFT_MAX_CODES", "200") or 0)
+            if _drift_mode != "legacy" and _max_codes > 0 and len(codes) > _max_codes:
+                _total_codes = len(codes)
+                codes = sorted(codes)[:_max_codes]
+                self._add(report, "AnchorDriftTruncated", minute_tbl, _total_codes,
+                          "warning",
+                          f"候选 {_total_codes} 超上限 {_max_codes}，按字典序截断后审计 "
+                          f"{len(codes)} 个（未全覆盖；调 QS_AUDIT_DRIFT_MAX_CODES 或 "
+                          f"QS_AUDIT_DRIFT_MODE=legacy 全跑）")
             factors = self._read_factor_table(aux_path, factor_tbl, codes)
             if not factors:
                 self._add(report, "AnchorDriftFactorMissing", factor_tbl, len(codes),
@@ -751,35 +885,57 @@ class DataQualityAuditor:
             w_lo = min(int(t) for _, t in changes) - self._DRIFT_LOOKBACK_DAYS * 86400_000
             w_hi = max(int(t) for _, t in changes)
             placeholders = ",".join("?" * len(codes))
-            bars = conn.execute(
+            # A2（Phase 1，2026-10-31）：分批读取 + 逐批 merge_asof，避免一次性
+            # 把全部 bar fetchall 进内存（2.1 亿行分钟表上的主要峰值来源）。
+            # 语义等价：merge_asof 是逐行按时间向前匹配，与批次划分无关；
+            # 逐批取 per-code max 后跨批累积 ⇔ 全量 groupby max（判据不变）。
+            _fetch_batch = int(
+                os.environ.get("QS_AUDIT_DRIFT_FETCH_BATCH", "50000") or 0)
+            _cursor = conn.execute(
                 f"SELECT code, time, close, close_front FROM {minute_tbl} "
                 f"WHERE code IN ({placeholders}) AND time >= ? AND time < ? "
                 f"AND (time % 86400000) BETWEEN ? AND ? AND close > 0 "
                 f"AND close_front IS NOT NULL",
-                codes + [w_lo, w_hi, self._BAR_CLOSE_MS_LO, self._BAR_CLOSE_MS_HI]).fetchall()
-            if not bars:
-                continue
-            bdf = pd.DataFrame(bars, columns=["code", "time", "close", "close_front"])
-            bdf["time"] = pd.to_numeric(bdf["time"], errors="coerce")
-            bdf["close"] = pd.to_numeric(bdf["close"], errors="coerce")
-            bdf["close_front"] = pd.to_numeric(bdf["close_front"], errors="coerce")
-            bdf = bdf.dropna(subset=["time", "close", "close_front"])
-            if bdf.empty:
-                continue
-            # 因子最新值（每 code 最大 time）与 merge_asof 逐 bar 因子
+                codes + [w_lo, w_hi, self._BAR_CLOSE_MS_LO, self._BAR_CLOSE_MS_HI])
             latest = fdf.sort_values("time").groupby("code").tail(1).set_index("code")["adj_factor"]
             fdf_s = fdf.sort_values(["code", "time"])
-            merged = pd.merge_asof(
-                bdf.sort_values("time"), fdf_s.sort_values("time"),
-                on="time", by="code", direction="backward")
-            merged = merged.dropna(subset=["adj_factor"])
-            if merged.empty:
+            per_code_max: Dict[str, float] = {}
+            _rows_total = 0
+            while True:
+                chunk = (_cursor.fetchmany(_fetch_batch) if _fetch_batch > 0
+                         else _cursor.fetchall())
+                if not chunk:
+                    break
+                _rows_total += len(chunk)
+                bdf = pd.DataFrame(chunk, columns=["code", "time", "close", "close_front"])
+                bdf["time"] = pd.to_numeric(bdf["time"], errors="coerce")
+                bdf["close"] = pd.to_numeric(bdf["close"], errors="coerce")
+                bdf["close_front"] = pd.to_numeric(bdf["close_front"], errors="coerce")
+                bdf = bdf.dropna(subset=["time", "close", "close_front"])
+                if bdf.empty:
+                    if _fetch_batch <= 0:
+                        break
+                    continue
+                # 因子最新值（每 code 最大 time）与 merge_asof 逐 bar 因子
+                merged = pd.merge_asof(
+                    bdf.sort_values("time"), fdf_s.sort_values("time"),
+                    on="time", by="code", direction="backward")
+                merged = merged.dropna(subset=["adj_factor"])
+                if not merged.empty:
+                    adj_latest = merged["code"].map(latest)
+                    expect = merged["adj_factor"] / adj_latest
+                    actual = merged["close_front"] / merged["close"]
+                    merged["dev"] = (actual / expect - 1).abs()
+                    for _code, _dev in merged.groupby("code")["dev"].max().items():
+                        _prev = per_code_max.get(str(_code))
+                        _val = float(_dev)
+                        per_code_max[str(_code)] = (_val if _prev is None
+                                                    else max(_prev, _val))
+                if _fetch_batch <= 0:
+                    break
+            if _rows_total == 0:
                 continue
-            adj_latest = merged["code"].map(latest)
-            expect = merged["adj_factor"] / adj_latest
-            actual = merged["close_front"] / merged["close"]
-            merged["dev"] = (actual / expect - 1).abs()
-            per_code = merged.groupby("code")["dev"].max()
+            per_code = pd.Series(per_code_max, dtype="float64")
             fails = per_code[per_code > self._ANCHOR_DRIFT_FAIL]
             warns = per_code[(per_code > self._ANCHOR_DRIFT_WARN)
                              & (per_code <= self._ANCHOR_DRIFT_FAIL)]

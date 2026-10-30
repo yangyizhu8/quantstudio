@@ -1070,6 +1070,8 @@ class DaemonLifecycle:
                 success_count=success_count, failed_count=failed_count,
                 quality_audit_ok=quality_audit_ok, task_summary=task_summary,
                 interrupted=qa_interrupted, skipped_after_stop=qa_skipped,
+                # A7（Phase 1，2026-10-31）：审计摘要（范围/耗时/OOM/超时/incomplete）。
+                quality_audit=_qa_state,
                 eligible_task_count=eligible_task_count,
                 attempted_task_count=attempted_task_count,
                 traversal_completed=traversal_completed,
@@ -1098,6 +1100,8 @@ class DaemonLifecycle:
                 success_count=success_count, failed_count=failed_count,
                 quality_audit_ok=quality_audit_ok, task_summary=task_summary,
                 interrupted=qa_interrupted, skipped_after_stop=qa_skipped,
+                # A7（Phase 1，2026-10-31）：审计摘要（范围/耗时/OOM/超时/incomplete）。
+                quality_audit=_qa_state,
                 eligible_task_count=eligible_task_count,
                 attempted_task_count=attempted_task_count,
                 traversal_completed=traversal_completed,

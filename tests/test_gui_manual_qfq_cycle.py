@@ -14,7 +14,7 @@ def _collector(table="etf_daily"):
     c._qfq_config = lambda: SimpleNamespace(can_coordinate_watermark=lambda t: t in {
         "stock_daily", "stock_minutes", "etf_daily", "etf_minutes"})
     c.qfq_enabled = lambda: True
-    c._run_full_quality_audit = lambda: True
+    c._run_full_quality_audit = lambda **kw: True
     c._execute_task = lambda task: True
     c.events = []
     def begin():
@@ -126,7 +126,7 @@ def _real_manual_collector(tmp_path, table, freq, candidate, *, hold=False):
     if hold:
         c._qfq_orch._qfq_gate = lambda *args, **kwargs: (
             False, {"passed": False, "reasons": ["test hold"]})
-    c._run_full_quality_audit = lambda: True
+    c._run_full_quality_audit = lambda **kw: True
 
     def execute(run_task):
         c._advance_or_defer_watermark(

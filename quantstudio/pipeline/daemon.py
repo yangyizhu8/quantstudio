@@ -773,7 +773,14 @@ class ResidentCollector:
                 run_id = f"manual_{run_task.get('name', 'task')}_{uuid.uuid4().hex[:12]}"
                 self._last_qfq_cycle_summary = self.qfq_run_post_ingest(run_id)
             if run_quality_audit and not _cancelled:
-                audit_ok = self._run_full_quality_audit()
+                # A5（Phase 1）：单任务入口同样走 task 域（只审本任务表 + 全局段）。
+                _task_tbl = str(run_task.get("table", "") or "")
+                if not _task_tbl:
+                    logger.warning(
+                        "[QualityAudit] task=%s 无 table 字段 ⇒ 审计范围保守取全库",
+                        run_task.get("name"))
+                audit_ok = self._run_full_quality_audit(
+                    tables=[_task_tbl] if _task_tbl else None)
             # R3 清除规则：自然成功完成 → 游标清除（官方水位已接管）。
             if task_ok and not _cancelled and self._task_resume is not None:
                 self._task_resume.clear(reason="completed")
@@ -789,7 +796,22 @@ class ResidentCollector:
             self._task_cancel_check = None
             self._task_resume = None
             self._task_progress_cb = None
-        return task_ok and audit_ok
+        # A6（Phase 1，2026-10-31）：数据成败与审计完整性**分离**（D1 采纳）。
+        # 旧语义 `task_ok and audit_ok` 让「数据已写入成功、只是审计没跑完」被判 failed
+        # ——这是本案最大的客户可见伤害（3 个任务实际写入成功却显示红色失败）。
+        # 新语义：数据成功即 True；审计未完整由 `_last_quality_audit['incomplete']`
+        # 承载，并由 UI 显示第三态「数据成功·审计未完成」（绝不静默变绿，D1-①）。
+        # ERROR 级日志保留（D1-②）；`QS_AUDIT_STRICT_FAIL=1` 逐位还原旧语义（D1-③）。
+        _strict_fail = str(os.environ.get("QS_AUDIT_STRICT_FAIL", "0")
+                           or "0").strip().lower() in ("1", "true", "yes", "on")
+        if _strict_fail:
+            return task_ok and audit_ok
+        if task_ok and not audit_ok:
+            logger.error(
+                "[QualityAudit] task=%s 数据写入成功但审计未完整（第三态）——"
+                "不计入任务失败；详见 run_state.quality_audit.incomplete",
+                run_task.get("name"))
+        return task_ok
 
     def execute_task_with_quality(self, task: Dict) -> bool:
         """Backward-compatible alias for the public task entry."""
@@ -2468,6 +2490,10 @@ class ResidentCollector:
             "full" (default, production-safe) — run the full-DB quality audit after
               the task and include its result in the returned aggregate. This
               preserves the existing resident/GUI semantic.
+            "task" (Phase 1 A5, 2026-10-31) — audit only the tables this invocation
+              actually ran (plus the global segments, which are never narrowed).
+              Used by GUI single-task/batch delegation so that 73 serial tasks no
+              longer mean 73 full-DB scans.
             "none" — skip the full-DB audit. Used by staging phase_run_task for
               staged loads (each target table loaded separately; the final unified
               audit is run by staging Phase 6). A not-yet-loaded sibling target
@@ -2475,7 +2501,7 @@ class ResidentCollector:
         """
         if mode not in ("full_range", "incremental"):
             raise ValueError(f"unsupported collection mode: {mode!r}")
-        if quality_audit not in ("full", "none"):
+        if quality_audit not in ("full", "task", "none"):
             raise ValueError(f"unsupported quality_audit mode: {quality_audit!r}")
         tasks = self.tasks_cfg.get("tasks", [])
         task_found = False
@@ -2483,6 +2509,8 @@ class ResidentCollector:
         audit_ok = True
         audit_run = False
         task_deferred = 0          # B4（2026-10-23）：让行超时 ⇒ defer 的批次计数
+        # A5（Phase 1，2026-10-31）：task 域审计的「本批实际跑过的表」。
+        ran_tables = []
         try:
             for task in tasks:
                 if task_name and task["name"] != task_name:
@@ -2491,6 +2519,9 @@ class ResidentCollector:
                     logger.info(f"[Daemon] skip disabled task: {task['name']}")
                     continue
                 task_found = True
+                _tbl = str(task.get("table", "") or "")
+                if _tbl and _tbl not in ran_tables:
+                    ran_tables.append(_tbl)
                 try:
                     ok = self.execute_task(task, mode=mode, run_quality_audit=False)
                 except _WriteScopeDeferred as _dfr:
@@ -2512,9 +2543,24 @@ class ResidentCollector:
                 logger.error(f"[Daemon] task not found: {task_name}")
                 task_ok = False
         finally:
-            if quality_audit == "full":
+            # A5（Phase 1，2026-10-31）：full = 全库（旧行为 / 逃生门）；
+            # task = 只审本批实际跑过的表 + 全局段（GUI 单任务/批量委托）。
+            if quality_audit in ("full", "task"):
                 audit_run = True
-                audit_ok = self._run_full_quality_audit()
+                scope_tables = None if quality_audit == "full" else list(ran_tables)
+                audit_ok = self._run_full_quality_audit(tables=scope_tables)
+                # A6（Phase 1，2026-10-31）：审计未完整时的**机读第三态标记**。
+                # GUI 委托是独立子进程，其日志是唯一回传通道 ⇒ 用固定 token
+                # `QUALITY_AUDIT_INCOMPLETE` 供 workers.py 精确解析（不做模糊文案匹配），
+                # 使界面能显示「数据成功·审计未完成」而非静默判成功或误判失败。
+                _qa = getattr(self, "_last_quality_audit", None) or {}
+                if _qa.get("incomplete"):
+                    logger.error(
+                        "[QualityAudit] QUALITY_AUDIT_INCOMPLETE skipped_oom=%s "
+                        "query_error=%s timeout=%s interrupted=%s —— "
+                        "数据写入成功但审计未完整（第三态，不计入任务失败）",
+                        _qa.get("skipped_oom"), _qa.get("query_error"),
+                        _qa.get("timeout"), _qa.get("interrupted"))
         return {
             "task_found": task_found,
             "task_ok": task_ok,
@@ -2704,19 +2750,38 @@ class ResidentCollector:
                          f"(rolled back): {e}", exc_info=True)
         return result
 
-    def _run_full_quality_audit(self, should_stop: Optional[Callable[[], bool]] = None):
-        """采集完成后执行 Canonical 全库质量审计。
+    def _run_full_quality_audit(self, should_stop: Optional[Callable[[], bool]] = None,
+                                tables: Optional[List[str]] = None):
+        """采集完成后执行 Canonical 质量审计。
 
         should_stop: 由收尾调用方（daemon_lifecycle.run_one_cycle）注入的停请求判据；
         判据只读**已缓存**的 stop 标志（daemon_stop.request 在收尾前已被消费删除，
         重读恒 False）。缺省 None ⇒ 与改前逐位一致（CLI / 测试 / 其余调用点）。
         审计被中断 ⇒ 记录 self._last_quality_audit 并返回 False（未完整审计，非失败）。
+
+        tables（Phase 1 A5，2026-10-31）：表白名单。
+        **None ⇒ 全库（旧行为 / CLI 手动逃生门 / daemon 常驻轮次）**；
+        给定时只审这些表 + 全局段。env ``QS_AUDIT_SCOPE=all`` 可强制覆盖为全库
+        （排障用，优先级高于调用方传入值）。
         """
         # 本轮审计结论（供 run_one_cycle 落 run_state）；空 dict = 未产出结论。
         self._last_quality_audit = {}
         hc = self.tasks_cfg.get("health_check", {})
         if not hc.get("full_quality_after_run", True):
             return True
+        # A5（Phase 1）：env 覆盖优先级最高（排障 / 逃生门）。
+        _scope_env = str(os.environ.get("QS_AUDIT_SCOPE", "") or "").strip().lower()
+        if _scope_env == "all":
+            tables = None
+        elif _scope_env == "task" and tables is None:
+            # env 显式要求 task 域但调用方未给白名单 ⇒ 无法确定范围，保守走全库
+            # 并留痕（绝不静默降级为「一个表都不审」）。
+            logger.warning(
+                "[QualityAudit] QS_AUDIT_SCOPE=task 但调用方未提供表白名单 ⇒ 保守按全库审计")
+        logger.info("[QualityAudit] 审计范围=%s",
+                    "all(全库)" if tables is None else f"task(表 {len(tables)}: {tables})")
+        _audit_t0 = time.perf_counter()
+        _scope_tables = tables
         try:
             from .quality_audit import DataQualityAuditor
             # 传入 writer 的持久 read_write 连接，避免 quality_audit 自开 read_only
@@ -2736,11 +2801,31 @@ class ResidentCollector:
                 authority_rules=authority_rules,
                 shared_conn=self.writer.shared_conn(),
                 qfq_thresholds=qfq_thresholds,
-                should_stop=should_stop).run()
+                should_stop=should_stop,
+                tables=tables).run()
             interrupted = bool(getattr(report, "interrupted", False))
+            # A7（Phase 1，2026-10-31）：审计摘要五键入 run_state，供监控面消费。
+            # incomplete = 「本轮审计未完整跑完」（中断 / OOM 跳过 / 查询失败 / 超时），
+            # **不含**「审计发现了 error 级问题」（那是审计结论，不是未完成）。
+            _issues = list(getattr(report, "issues", []) or [])
+            _skipped_oom = sum(1 for i in _issues
+                               if getattr(i, "check", "") == "audit_skipped_oom")
+            _query_err = sum(1 for i in _issues
+                             if getattr(i, "check", "") == "audit_query_error")
+            _timeouts = sum(1 for i in _issues
+                            if getattr(i, "check", "") == "audit_timeout")
             self._last_quality_audit = {
                 "interrupted": interrupted,
                 "skipped_after_stop": int(getattr(report, "skipped_after_stop", 0)),
+                "elapsed_s": round(time.perf_counter() - _audit_t0, 1),
+                "tables_audited": (len(_scope_tables) if _scope_tables is not None
+                                   else len(getattr(self.aligner, "schemas", {}) or {})),
+                "scope": "all" if _scope_tables is None else "task",
+                "skipped_oom": _skipped_oom,
+                "query_error": _query_err,
+                "timeout": _timeouts,
+                "incomplete": bool(interrupted or _skipped_oom
+                                   or _query_err or _timeouts),
             }
             if interrupted:
                 # 诚实：本轮审计**未完整**（≠ 审计失败，与下方 except 路径文案可区分）
@@ -4096,8 +4181,9 @@ def main():
                         help="Nonce UUID to embed in runtime manifest for replay protection")
     # W2-0.8 缺陷 E：显式控制单任务后的全库审计。默认 full（生产/常驻语义不变）；
     # staging 分阶段装载用 none，避免尚未回填的兄弟目标表导致当前任务假失败。
-    parser.add_argument("--quality-audit", choices=["full", "none"], default="full",
-                        help="once 模式下任务后的全库质量审计：full(默认)|none")
+    parser.add_argument("--quality-audit", choices=["full", "task", "none"], default="full",
+                        help="once 模式下任务后的质量审计：full=全库(默认/逃生门) | "
+                             "task=仅本任务表+全局段(GUI 单任务/批量委托) | none=不审")
     parser.add_argument("--allow-non-main-target", action="store_true",
                         help="允许写入非主库目标（默认拒绝：目标库必须为主库 data/quantstudio.db）。"
                              "2026-09-13 裁定①：误选 profile 导致数据落 staging 库的同类错误不再靠人工兜底。")

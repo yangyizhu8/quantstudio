@@ -1113,6 +1113,7 @@ class TaskTab(QWidget):
         mode_label = "全量" if mode == "full_range" else "增量"
         entries = result.get("results", []) if isinstance(result, dict) else []
         qfq_warnings = []
+        qa_incomplete_names = []   # A6（Phase 1）：数据成功但审计未完整（第三态）
         for entry in entries:
             name = entry.get("name", "?")
             warned, reason = TaskTab._qfq_warning_from_result(entry)
@@ -1120,6 +1121,11 @@ class TaskTab(QWidget):
                 self._set_task_status(name, "\u8df3\u8fc7")
             elif not entry.get("ok"):
                 self._set_task_status(name, "\u5931\u8d25")
+            elif entry.get("quality_audit_incomplete"):
+                # A6（Phase 1，2026-10-31）：数据写入成功但审计未完整 ⇒ 第三态。
+                # 不得静默显示「成功」（掩盖审计缺口），也不得显示「失败」（误判数据）。
+                self._set_task_status(name, "\u5b8c\u6210\u00b7\u5ba1\u8ba1\u672a\u5b8c\u6210")
+                qa_incomplete_names.append(name)
             elif warned:
                 self._set_task_status(name, "\u6210\u529f\uff08\u6c34\u4f4d\u95e8\u63a7\u544a\u8b66\uff09")
                 qfq_warnings.append((name, reason))
@@ -1134,7 +1140,7 @@ class TaskTab(QWidget):
             QMessageBox.warning(
                 self, f"\u5168\u90e8\u6267\u884c\uff08{mode_label}\uff09",
                 f"\u6267\u884c\u5931\u8d25\uff1a\n\n{err}")
-        elif qfq_warnings or audit_warning:
+        elif qfq_warnings or audit_warning or qa_incomplete_names:
             parts = [f"{ok_count}/{total} \u62c9\u53d6\u6210\u529f"]
             if qfq_warnings:
                 details = ", ".join(
@@ -1142,6 +1148,11 @@ class TaskTab(QWidget):
                     for name, reason in qfq_warnings)
                 parts.append(
                     f"{len(qfq_warnings)} \u4e2a QFQ \u4efb\u52a1\u6c34\u4f4d\u672a\u63d0\u4ea4: {details}")
+            if qa_incomplete_names:
+                parts.append(
+                    f"{len(qa_incomplete_names)} \u4e2a\u4efb\u52a1\u6570\u636e\u5df2\u5199\u5165"
+                    f"\u00b7\u5ba1\u8ba1\u672a\u5b8c\u6210: "
+                    + ", ".join(qa_incomplete_names))
             if audit_warning:
                 parts.append("\u5168\u5e93\u8d28\u91cf\u5ba1\u8ba1\u672a\u901a\u8fc7")
             final_text = ("\u26a0 \u5168\u90e8\u6267\u884c\uff08" + mode_label
@@ -1207,15 +1218,22 @@ class TaskTab(QWidget):
             logger.error(f"\u4efb\u52a1 {task_name} \u5931\u8d25: {result}")
 
         warnings = []
+        # A6（Phase 1，2026-10-31）：数据成功但审计未完整 ⇒ 第三态（不静默显示成功）。
+        qa_incomplete = bool(ok and isinstance(result, dict)
+                             and result.get("quality_audit_incomplete"))
         if qfq_warning:
             detail = f" ({qfq_reason})" if qfq_reason else ""
             warnings.append("QFQ \u95e8\u63a7\u672a\u63d0\u4ea4\u6c34\u4f4d\u7ebf" + detail)
         if audit_warning:
             warnings.append("\u5168\u5e93\u8d28\u91cf\u5ba1\u8ba1\u672a\u901a\u8fc7")
+        if qa_incomplete:
+            warnings.append("\u6570\u636e\u5df2\u5199\u5165\u00b7\u5ba1\u8ba1\u672a\u5b8c\u6210")
         if warnings:
             final_text = f"\u26a0\ufe0f {task_name} \u62c9\u53d6\u6210\u529f\uff1b" + "\uff1b".join(warnings)
             if qfq_warning:
                 task_status = "\u6210\u529f\uff08\u6c34\u4f4d\u95e8\u63a7\u544a\u8b66\uff09"
+            elif qa_incomplete:
+                task_status = "\u5b8c\u6210\u00b7\u5ba1\u8ba1\u672a\u5b8c\u6210"
             else:
                 task_status = "\u6210\u529f\uff08\u5ba1\u8ba1\u544a\u8b66\uff09"
         elif ok:

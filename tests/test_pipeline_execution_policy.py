@@ -65,11 +65,30 @@ def test_max_date_uses_schema_time_key():
     assert collector._max_date(df, "etf_daily") == "3000"
 
 
-def test_execute_task_with_quality_requires_both_task_and_audit_pass():
+def test_execute_task_with_quality_separates_data_from_audit():
+    """A6（Phase 1，2026-10-31 · D1 采纳）：数据成败与审计完整性**分离**。
+
+    旧语义 `task_ok and audit_ok`：数据写入成功、只是审计没跑完 ⇒ 判 failed
+    ——本案 3 个任务实际写入成功却显示红色失败，是最大客户可见伤害。
+    新语义：数据成功即 True，审计完整性由 `_last_quality_audit['incomplete']` 承载，
+    UI 显示第三态「数据成功·审计未完成」。
+    `QS_AUDIT_STRICT_FAIL=1` ⇒ 逐位还原旧语义（D1-③ 回退路径）。
+    """
+    import os
+
     collector = _collector()
     collector._execute_task = lambda task: True
-    collector._run_full_quality_audit = lambda: False
-    assert collector.execute_task_with_quality({"name": "x"}) is False
+    collector._run_full_quality_audit = lambda **kw: False
+    # 新语义：数据成功即成功（不再因审计未过而判死）
+    assert collector.execute_task_with_quality({"name": "x"}) is True
 
-    collector._run_full_quality_audit = lambda: True
+    # 严格模式回退：逐位还原旧语义
+    os.environ["QS_AUDIT_STRICT_FAIL"] = "1"
+    try:
+        assert collector.execute_task_with_quality({"name": "x"}) is False
+    finally:
+        os.environ.pop("QS_AUDIT_STRICT_FAIL", None)
+
+    # 双绿：两种语义下都是 True
+    collector._run_full_quality_audit = lambda **kw: True
     assert collector.execute_task_with_quality({"name": "x"}) is True

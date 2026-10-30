@@ -905,6 +905,11 @@ class MCPAdapter(BaseSourceAdapter):
         # 服务端按最老优先截断会静默丢弃批尾数日（阶段 1 五缺日根因）。
         # 与 grid_aligned 路径统一公式：est_total 按全历史行数 ÷ 243 交易日折算日行数。
         if is_minute:
+            # A8（Phase 1，2026-10-31）：区分「服务端真实估算」与「本地兜底常数」。
+            # 兜底 480M 会让 daily_rows 虚高 ⇒ safe_window 被压到极窄 ⇒ 轮次暴增 ⇒
+            # 拉取变慢；且旧日志看不出是估算还是真实值，曾被据以推算「ETA≈8 天」。
+            # 故显式标 (fallback) 并输出 safe_window 实际取值（Phase 3 诊断直接引用）。
+            _est_fallback = not (est_rows and est_rows > 0)
             est_total = est_rows or self._EXPORT_ROW_ESTIMATE.get("stock_minutes", 480_000_000)
             daily_rows = est_total / 243
             safe_window = max(1, int(self._EXPORT_ROW_LIMIT_BIG / (daily_rows * 1.2)))
@@ -924,7 +929,9 @@ class MCPAdapter(BaseSourceAdapter):
                         f"(daily_rows≈{daily_rows:.0f}, row_limit={self._EXPORT_ROW_LIMIT_BIG}, "
                         f"target_rows={_target_rows}, "
                         f"cfg_window_days={_cfg_window}, "
-                        f"grid_aligned={grid_aligned}, est_total={est_total})")
+                        f"grid_aligned={grid_aligned}, "
+                        f"est_total={est_total}{'(fallback)' if _est_fallback else ''}, "
+                        f"safe_window={safe_window})")
         elif est_rows is not None and est_rows > 0 and table in self._ROW_LIMIT_BUDGET_TABLES:
             # 客户反馈包 2026-09-23 问题2 关联防线：**声明表**的非分钟大表同样施加
             # row_limit 预算约束。若沿用 _EXPORT_DAILY_WINDOW_DAYS=365 天窗而单批
@@ -943,13 +950,17 @@ class MCPAdapter(BaseSourceAdapter):
             # 全市场分钟数据 ~1200 万行/10天 > row_limit=5M → 窗口缩到安全值。
             if is_minute:
                 # 按表行数估算每日行数，反算安全窗口
+                # A8（Phase 1，2026-10-31）：同样标注兜底来源 + 输出 safe_window。
+                _est_fallback = not (est_rows and est_rows > 0)
                 est_total = est_rows or self._EXPORT_ROW_ESTIMATE.get("stock_minutes", 480_000_000)
                 # 近 1 年交易日约 243 天，估算每日行数
                 daily_rows = est_total / 243
                 safe_window = max(1, int(self._EXPORT_ROW_LIMIT_BIG / (daily_rows * 1.2)))
                 window = min(window, safe_window)
                 logger.info(f"[MCPAdapter] grid_aligned 分钟窗口: {window}天 "
-                            f"(daily_rows≈{daily_rows:.0f}, row_limit={self._EXPORT_ROW_LIMIT_BIG})")
+                            f"(daily_rows≈{daily_rows:.0f}, row_limit={self._EXPORT_ROW_LIMIT_BIG}, "
+                            f"est_total={est_total}{'(fallback)' if _est_fallback else ''}, "
+                            f"safe_window={safe_window})")
             # epoch 天数网格对齐：起点向前对齐到网格边界（只扩不缩）
             epoch = date(1970, 1, 1)
             s_date = epoch + timedelta(days=((s.date() - epoch).days // window) * window)

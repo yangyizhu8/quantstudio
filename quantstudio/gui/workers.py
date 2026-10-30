@@ -154,6 +154,8 @@ class LockedTaskWorker(BaseWorker):
         except Exception:
             pass
         once_done = ("once 完成" in log_tail) or ("no new data, skip" in log_tail)
+        # A6（Phase 1，2026-10-31）：第三态标记解析（同批量路径）。
+        qa_incomplete = "QUALITY_AUDIT_INCOMPLETE" in log_tail
         nonce_ok = bool(manifest) and manifest.get("nonce") == nonce
         if once_done and nonce_ok:
             result = {
@@ -161,7 +163,8 @@ class LockedTaskWorker(BaseWorker):
                 "mode": self.mode,
                 "task_ok": True,
                 "quality_audit_ran": bool(self.run_quality_audit),
-                "quality_audit_ok": True,
+                "quality_audit_ok": not qa_incomplete,
+                "quality_audit_incomplete": qa_incomplete,
                 "delegated": True,
                 "manifest_nonce": nonce,
             }
@@ -259,10 +262,16 @@ class LockedRunAllWorker(BaseWorker):
             except Exception:
                 pass
             once_done = ("once 完成" in log_tail) or ("no new data, skip" in log_tail)
+            # A6（Phase 1，2026-10-31）：解析子进程日志里的机读第三态标记。
+            # 审计未完整（OOM/超时/中断）时 daemon 打 QUALITY_AUDIT_INCOMPLETE；
+            # 此时数据已写入成功 ⇒ 仍算任务成功，但结果带标记，界面渲染为
+            # 「完成·审计未完成」，既不静默变绿也不误判失败。
+            qa_incomplete = "QUALITY_AUDIT_INCOMPLETE" in log_tail
             nonce_ok = bool(manifest) and manifest.get("nonce") == nonce
             if once_done and nonce_ok:
                 results.append({"name": name, "ok": True, "delegated": True,
-                                "nonce": nonce})
+                                "nonce": nonce,
+                                "quality_audit_incomplete": qa_incomplete})
                 audit_all.append(True)
                 self.progress.emit("✅ {}: 完成".format(name))
             else:

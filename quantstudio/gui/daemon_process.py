@@ -305,7 +305,11 @@ def start_once_subprocess(task_name: str, config_dir: Path, mode: str = "increme
         "--mode", "once",
         "--task", task_name,
         "--config-dir", str(config_dir),
-        "--quality-audit", "full" if run_quality_audit else "none",
+        # A0（Phase 1，2026-10-31）：单任务委托只审本任务表 + 全局段。
+        # 旧值 "full" 会让每次委托都对整个库做一次全表审计——73 个串行任务
+        # 即 73 次全库扫描，是「全部执行两天无进展」的主因（OOM + 拖队列）。
+        # 需要全库审计时走 CLI：--quality-audit full（逃生门，A10）。
+        "--quality-audit", "task" if run_quality_audit else "none",
         "--runtime-manifest", str(manifest_path),
         "--runtime-nonce", nonce,
     ]
