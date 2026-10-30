@@ -265,6 +265,29 @@
   下次重验预期**转绿**（本轮已实跑确认，非推断）。
 - 残留告知（非本域）：`ETF动量` 仍卡 P0「危险 import: sklearn」——F10 正确 fail-closed，未修、未登记为缺陷。
 
+## 4.13 轮 13（PD-0014 GUI「打开输出目录」按钮，2026-10-30）
+
+- **N₁₃=0**（无新发现缺陷）、**R₁₃=0**（无复发）——本轮为**新增能力型**功能轮（GUI 壳，内核零 diff）。
+- **实施**：qs-deploy GUI 快捷页 + 高级页各加「打开输出目录」按钮；三态反馈逐条对齐参考实现
+  `ptrade_export_tab._open_out_dir`（无目录 `InfoBar.info` / 不存在 `InfoBar.error` /
+  `os.startfile` + `OSError` 反馈）；目录来源＝内核 `artifacts["product"].parent`（`_on_finished` 缓存，
+  P6 SKIPPED 时不更新 ⇒ 走提示分支）；**内核七段零 diff**。
+- **验收读数**：
+  - 新测 **5/5 绿**（两页按钮 / 未转换提示 / 转换后 startfile 实参 / 目录不存在报错 / 目录派生纯函数）；
+  - **真实 GUI 冒烟**（offscreen 实例化 + 真控件 + 真回调）：`quick_btn`/`adv_btn` 均为「打开输出目录」；
+    未转换 `startfile_calls = []`；转换后 `startfile_calls = ['…\\Demo_account_Real_account\\全球资产轮动']`
+    且 `derived == artifact parent: True`（路径取自真实 `run_deploy` 的 artifacts，非人工构造）；
+  - deploy 套件 **121/121**；`quantstudio/ptrade_deploy/` **零 diff**；契约矩阵 `OK`；PD 族机检 **14/14**。
+- **实施中踩坑（已沉淀进条目）**：qfluentwidgets 的 QConfig 是 QObject 单例，QApplication 必须**模块级持有**，
+  否则 app 回收后 C++ 侧悬空 → 后续 Qt 用例 `RuntimeError: wrapped C/C++ object of type QConfig has been deleted`
+  （与 `tests/test_deploy_gui.py` 既有权威写法对齐）。
+- 判型：**新增能力型**（②审另裁：双端对等条款**不适用**——GUI 壳便利动作，无 CLI 等价工件、不影响产物 SHA）。
+- 证据：`docs/evidence/ptrade-deploy-pd0014-evidence.md`；方案：`docs/ptrade-deploy-opendir-design.md`（②审通过）。
+- **本轮沉淀**：PD-2026-0014
+- 知识反哺：[无命中] PD 族检索（打开输出目录/open_dir/os.startfile/GUI 按钮），2026-10-30
+- 知识反哺：[无命中] QD 族检索（打开输出目录/open_dir/os.startfile），2026-10-30
+- 知识反哺：[豁免] 通用库 knowleage_base——GUI 便利功能无对应域 MOC（只读确认，不回写），2026-10-30
+
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 
 - 2026-10-10（M6 之前）：P0 vault 回哺降级（vault 未建，预期状态）；

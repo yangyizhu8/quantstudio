@@ -13,6 +13,7 @@ docs/ptrade-deploy-quickmode-design.md（PD-0008 D5）：
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -21,8 +22,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 from qfluentwidgets import (
-    BodyLabel, ComboBox, GroupHeaderCardWidget, LineEdit, PrimaryPushButton,
-    PushButton,
+    BodyLabel, ComboBox, GroupHeaderCardWidget, InfoBar, InfoBarPosition,
+    LineEdit, PrimaryPushButton, PushButton,
 )
 
 from ..skin import PageHeader
@@ -71,6 +72,8 @@ class DeployTab(QWidget):
         super().__init__(parent)
         self._worker = None
         self._strategies = []
+        #: 最近一次成功转换的产物目录（PD-0014：「打开输出目录」按钮的定位依据）
+        self._last_out_dir = None
         self._setup_ui()
 
     # ------------------------------------------------------------------
@@ -140,6 +143,9 @@ class DeployTab(QWidget):
         self.quick_btn = PrimaryPushButton("一键转换")
         self.quick_btn.clicked.connect(self._on_quick_clicked)
         row3.addWidget(self.quick_btn)
+        self.quick_open_btn = PushButton("打开输出目录")
+        self.quick_open_btn.clicked.connect(self._open_out_dir)
+        row3.addWidget(self.quick_open_btn)
         row3.addStretch(1)
         outer.addLayout(row3)
         outer.addStretch(1)
@@ -168,6 +174,9 @@ class DeployTab(QWidget):
         self.run_btn = PrimaryPushButton("开始转换")
         self.run_btn.clicked.connect(self._on_start_clicked)
         row2.addWidget(self.run_btn)
+        self.adv_open_btn = PushButton("打开输出目录")
+        self.adv_open_btn.clicked.connect(self._open_out_dir)
+        row2.addWidget(self.adv_open_btn)
         row2.addStretch(1)
         outer.addLayout(row2)
         outer.addStretch(1)
@@ -248,6 +257,49 @@ class DeployTab(QWidget):
         self._start(config_path)
 
     # ------------------------------------------------------------------
+    # 输出目录定位（PD-0014）
+    # ------------------------------------------------------------------
+
+    def _open_out_dir(self):
+        """打开输出目录：无目录/不存在/打开失败都给用户反馈（对齐导出 PTrade 页实现）。
+
+        参考实现：`quantstudio/gui/tabs/ptrade_export_tab.py::_open_out_dir`。
+        目录来源＝最近一次成功转换的产物目录（`_on_finished` 由 artifacts 派生）。
+        """
+        if not self._last_out_dir:
+            InfoBar.info("无输出目录", "请先执行一次转换", parent=self,
+                         position=InfoBarPosition.TOP)
+            return
+        d = Path(self._last_out_dir).resolve()
+        if not d.exists():
+            InfoBar.error("输出目录不存在", str(d), parent=self,
+                          position=InfoBarPosition.TOP)
+            return
+        try:
+            os.startfile(str(d))  # noqa: S606 Windows only
+        except OSError as e:
+            InfoBar.error("打开失败", f"{d}: {e}", parent=self,
+                          position=InfoBarPosition.TOP)
+
+    @staticmethod
+    def _out_dir_from_artifacts(artifacts) -> object:
+        """由内核返回的 artifacts 派生产物目录（取任一产物所在目录）。
+
+        PD-0014：产物路径由内核给出（绝对路径），此处只取其父目录——
+        内核（preflight/transformer/equiv/gates/runner/deliver）零改动。
+        """
+        if not isinstance(artifacts, dict):
+            return None
+        for key in ("product", "report", "runbook"):
+            p = artifacts.get(key)
+            if p:
+                try:
+                    return Path(p).parent
+                except (TypeError, ValueError):
+                    continue
+        return None
+
+    # ------------------------------------------------------------------
     # 回调
     # ------------------------------------------------------------------
     def _on_progress(self, pct: int, msg: str):
@@ -259,6 +311,10 @@ class DeployTab(QWidget):
         self.run_btn.setEnabled(True)
         self.progress_bar.setValue(100)
         self.status_label.setText(f"完成（{d['status']}）")
+        # PD-0014：缓存本次产物目录，供「打开输出目录」按钮定位（P6 SKIPPED 时不更新）
+        out_dir = self._out_dir_from_artifacts(d.get("artifacts"))
+        if out_dir is not None:
+            self._last_out_dir = out_dir
         lines = []
         for stage, payload in d.get("stages", {}).items():
             status = payload.get("status") if isinstance(payload, dict) else payload
