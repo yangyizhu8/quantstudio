@@ -1145,6 +1145,126 @@ class DataQualityAuditor:
             return pd.DataFrame(columns=["code", "time", "adj_factor"])
         return pd.DataFrame(out, columns=["code", "time", "adj_factor"])
 
+    # ------------------------------------------------------------------
+    # 方案②（2026-10-31）：factor_monotonicity 结果缓存（文件指纹键 · 含 WAL）
+    # 键分立依据见 docs/audit-global-section-cache-design.md §二·五：
+    #   drift 用「水位键」（主库有 source_watermark，写入必推水位）；
+    #   本段用「文件指纹键」（aux 是无水位表的独立 SQLite 库；MAX(time) 因复合索引不 O(1)）。
+    # 实现上**独立于 A2b**（不复用其方法）：避免改动已验收代码，两份结构一致、后续可合并。
+    # ------------------------------------------------------------------
+    _FM_CACHE_SCHEMA = 1
+
+    @staticmethod
+    def _fm_cache_enabled() -> bool:
+        v = str(os.environ.get("QS_AUDIT_FM_CACHE", "1") or "1").strip().lower()
+        return v not in ("0", "false", "no", "off")
+
+    @staticmethod
+    def _fm_cache_dir() -> Path:
+        p = str(os.environ.get("QS_AUDIT_FM_CACHE_DIR", "") or "").strip()
+        if p:
+            return Path(p)
+        try:
+            from quantstudio._paths import DATA_ROOT
+            return Path(DATA_ROOT) / "_audit_cache" / "fm"
+        except Exception:
+            return Path("data") / "_audit_cache" / "fm"
+
+    @staticmethod
+    def _fm_cache_key(aux_path) -> str:
+        """文件指纹键：主库 + WAL 的 (mtime_ns, size)。
+
+        **必须含 WAL**：SQLite WAL 模式下写入先落 `-wal`，主库 mtime 不变；
+        只看主库会漏掉「已写未 checkpoint」的变更（脏命中风险）。
+
+        **不含「表名集合」成分**（实施期修正，如实申报）：
+        原设计要求「+ 因子表名集合」，实测发现**查表名需打开 sqlite 连接**，
+        而打开连接本身会创建/触碰 `-wal` ⇒ **两次调用键不同（永不命中）**。
+        改用纯 stat：文件/表结构变化必然反映在 (mtime,size) 上，覆盖等价且更快（0.32ms）。
+        """
+        import hashlib
+
+        parts = []
+        for tag, pth in (("main", Path(str(aux_path))),
+                         ("wal", Path(str(aux_path) + "-wal"))):
+            try:
+                st = pth.stat()
+                parts.append(f"{tag}/{st.st_mtime_ns}:{st.st_size}")
+            except OSError:
+                parts.append(f"{tag}/absent")
+        return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:32]
+
+    def _fm_cache_load(self, key: str):
+        """读取缓存。三项校验：schema / checksum / value.key == 当前键。"""
+        import hashlib
+        import json as _json
+        import time as _t
+
+        path = self._fm_cache_dir() / f"{key}.json"
+        try:
+            doc = _json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            self._fm_cache_corrupt(key, f"read/parse: {type(e).__name__}: {e}")
+            return None
+        if doc.get("schema") != self._FM_CACHE_SCHEMA:
+            self._fm_cache_corrupt(key, f"schema={doc.get('schema')}")
+            return None
+        payload = doc.get("payload") or {}
+        expect = hashlib.sha256(
+            _json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        if doc.get("checksum") != expect:
+            self._fm_cache_corrupt(key, "checksum mismatch")
+            return None
+        if str(doc.get("key") or "") != key or str(payload.get("key") or "") != key:
+            self._fm_cache_corrupt(key, "value.key != current key")
+            return None
+        try:
+            ttl = float(os.environ.get("QS_AUDIT_FM_CACHE_TTL_S", "7200") or 0)
+        except (TypeError, ValueError):
+            ttl = 7200.0
+        age = _t.time() - float(doc.get("created_at_epoch", 0) or 0)
+        if ttl > 0 and age > ttl:
+            return None
+        payload["age_s"] = max(0.0, age)
+        return payload
+
+    def _fm_cache_corrupt(self, key: str, why: str) -> None:
+        logger.warning("[QualityAudit] fm 缓存不可用（%s）key=%s… ⇒ 回退实时计算",
+                       why, key[:12])
+
+    def _fm_cache_store(self, key: str, issues) -> None:
+        """原子写缓存（tmp + os.replace；PID 后缀避免并发 tmp 冲突）。"""
+        import hashlib
+        import json as _json
+        import time as _t
+
+        d = self._fm_cache_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "key": key,
+            "issues": [
+                {"check": i.check, "table": i.table, "count": int(i.count),
+                 "severity": i.severity, "detail": i.detail}
+                for i in issues
+            ],
+        }
+        doc = {
+            "schema": self._FM_CACHE_SCHEMA,
+            "key": key,
+            "created_at": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+            "created_at_epoch": _t.time(),
+            "checksum": hashlib.sha256(
+                _json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+            ).hexdigest(),
+            "payload": payload,
+        }
+        tmp = d / f".{key}.{os.getpid()}.tmp"
+        tmp.write_text(_json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, d / f"{key}.json")
+
     def _audit_factor_monotonicity(self, conn, report):
         """A2：因子序列非单调告警（FactorMonotonicity，warning 级，不阻断）。
 
@@ -1154,6 +1274,29 @@ class DataQualityAuditor:
         aux_path = self._resolve_aux_path(conn)
         if aux_path is None:
             return
+        # 方案②：缓存读取（仅 task 域 + 开关启用）。键=aux 文件指纹（含 WAL）。
+        _fm_key = None
+        _fm_before = len(report.issues)
+        if self.tables is not None and self._fm_cache_enabled():
+            _hit = None
+            try:
+                _fm_key = self._fm_cache_key(aux_path)
+                _hit = self._fm_cache_load(_fm_key)
+            except Exception as e:  # 缓存故障绝不影响审计主流程
+                logger.warning("[QualityAudit] fm 缓存键/读取异常（忽略，走实时计算）: %s", e)
+                _hit = None
+                _fm_key = None
+            if _hit is not None:
+                for _iss in (_hit.get("issues") or []):
+                    self._add(report, str(_iss.get("check", "FactorMonotonicity")),
+                              str(_iss.get("table", "__qfq__")),
+                              int(_iss.get("count", 0) or 0),
+                              str(_iss.get("severity", "warning")),
+                              str(_iss.get("detail", "")))
+                self._add(report, "fm_cached", "__qfq__", 1, "warning",
+                          f"命中 fm 缓存 key={_fm_key[:12]}… "
+                          f"age={float(_hit.get('age_s', 0) or 0):.0f}s")
+                return
         import sqlite3
         try:
             conn = sqlite3.connect(str(aux_path), timeout=30)
@@ -1179,6 +1322,12 @@ class DataQualityAuditor:
                 conn.close()
         except sqlite3.Error:
             return
+        # 方案②：写缓存（仅本次新增的 issues；缓存故障不影响审计结论）
+        if _fm_key is not None:
+            try:
+                self._fm_cache_store(_fm_key, report.issues[_fm_before:])
+            except Exception as e:
+                logger.warning("[QualityAudit] fm 缓存写入失败（忽略）: %s", e)
 
     @staticmethod
     def _add(report, check, table, count, severity, detail=""):
