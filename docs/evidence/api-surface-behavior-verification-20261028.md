@@ -217,6 +217,16 @@
 
 **结论建议**：判为「**文档面系统性缺失**」（非查询配额问题）⇒ **保留「未取到文档」如实标注并结案**，不再无限续查；若后续需这些 API 的签名依据，改走他途（本地实现已按 PTrade 语义实现并经真实策略验证／必要时取官方 PDF 文档）。**待你方裁定是否收官**。
 
+## 六·补二 W5 收官（用户 2026-10-31 照准）
+
+**收官结论**：余 **15 条**判为「**文档面系统性缺失**」——补查批 1–7 共 **21 次 Context7 查询**均未命中任何独立签名条目（PTrade 文档以示例/模板为主，未逐 API 列签名）。
+
+**处置**：保留「未取到文档」如实标注，**结案**，不再继续补查；如需这些 API 的签名依据，改走他途（官方 PDF 文档等）另行立项。**不凭记忆补写签名**（三形态纪律）。
+
+结案清单（15 条）：`check_limit`／`create_dir`／`current_price`／`get_business_type`／`get_cb_list`／`get_current_data`／`get_etf_stock_info`／`get_frequency`／`get_market_detail`／`get_market_list`／`get_security_info`／`get_trading_day_by_date`／`get_underlying_code`／`get_user_name`／`set_universe`
+
+**终态计数（68 条，机检复核）**：✅ 一致 **36** ／ ⚠️ 差异 **16**（A/B/C/E/F/G/H/I/J/K/L/M/N/P/Q/R/S）／ 🔸 未取到 **15**（已收官）／ ⚠️ 判缺 **1** = **68**
+
 ## 五、QS_ONLY 口径调整（随本件回写）
 
 | API | 参数 | 处置 |

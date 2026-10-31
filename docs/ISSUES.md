@@ -553,3 +553,11 @@
 | 编号 | 问题描述 | 定位证据 | 严重等级 | 当前状态 | 归属迭代 | 修复方案 | 验证证据 | 关闭时间 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | ISS-T5-S | `get_etf_info` 文档**适用环境：交易**；本地回测亦可调 ⇒ 环境面本地更宽松（与 ISS-T5-H/Q 同族） | 文档 Context7 `/kay-ou/ptradeapi` Ptrade国盛.md（get_etf_info(etf_code) → dict；适用环境：交易）；本地 AST `(etf_code)` | P3（环境面·本地宽松·非阻断） | **已登记·未修复**（B3 下轮统一） | T5 补查批 8 | 待定：登记已知宽松差异或加环境门——**下轮统一评估** | evidence §四 S | — |
+
+
+## W5 补查收官登记（2026-10-31 用户照准）
+
+
+| 编号 | 问题描述 | 定位证据 | 严重等级 | 当前状态 | 归属迭代 | 修复方案 | 验证证据 | 关闭时间 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ISS-T5-W5-收官 | W5 补查余 **15 条**（check_limit／create_dir／current_price／get_business_type／get_cb_list／get_current_data／get_etf_stock_info／get_frequency／get_market_detail／get_market_list／get_security_info／get_trading_day_by_date／get_underlying_code／get_user_name／set_universe）经补查批 1–7 共 **21 次 Context7 查询**均未命中独立签名条目 ⇒ 判**文档面系统性缺失** | evidence `api-surface-behavior-verification-20261028.md` §六·补二；批 1–7 查询记录见同件各批小节 | P3（取证面·非缺陷） | **已关闭·收官（用户 2026-10-31 照准）** | T5 收口终态 | **无需修复**：保留「未取到文档」如实标注结案，不续查；如需签名依据改走官方 PDF 他途另行立项 | 68 条终态计数机检复核：一致 36／差异 16／未取到 15／判缺 1 = 68 | 2026-10-31 |
