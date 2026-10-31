@@ -58,6 +58,7 @@ all = [
 quantstudio-daemon = "quantstudio.pipeline.daemon:main"
 quantstudio-run = "quantstudio.engine.cli:main"
 qs-compile = "quantstudio.strategy_compiler.cli:main"
+qs-deliver = "quantstudio.delivery.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

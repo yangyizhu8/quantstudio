@@ -1,0 +1,101 @@
+{
+    "compared_at":  "2026-10-31T18:00:51.9694644+08:00",
+    "all_match":  true,
+    "run2_bundle_id":  "d90a880350f536da6cf93df943bf3d8468d0b807cf2e32596c99f9467a34cdec",
+    "run2_bundle":  "D:\\delivery_l3_tmp\\run2\\20261031_175647",
+    "run2_state_counts":  [
+                              {
+                                  "state":  "NO-WATERMARK-SYSTEM",
+                                  "count":  50
+                              },
+                              {
+                                  "state":  "UNKNOWN-BASIS",
+                                  "count":  5
+                              },
+                              {
+                                  "state":  "OK",
+                                  "count":  10
+                              },
+                              {
+                                  "state":  "BEHIND",
+                                  "count":  6
+                              }
+                          ],
+    "run2_self_check":  {
+                            "db_open":  [
+                                            {
+                                                "path":  "quantstudio.db",
+                                                "select1":  "ok"
+                                            },
+                                            {
+                                                "path":  "qfq_aux.db",
+                                                "select1":  "ok"
+                                            },
+                                            {
+                                                "path":  "qfq_aux_mcp_gen1.db",
+                                                "select1":  "ok"
+                                            }
+                                        ],
+                            "red_line":  {
+                                             "env_hits":  0,
+                                             "log_hits":  0,
+                                             "outside_files":  [
+
+                                                               ],
+                                             "outside_whitelist":  0,
+                                             "shm_hits":  0,
+                                             "zero_leak":  true
+                                         },
+                            "wal_zero":  [
+                                             {
+                                                 "bytes":  0,
+                                                 "path":  "quantstudio.db-wal",
+                                                 "present":  false
+                                             },
+                                             {
+                                                 "bytes":  0,
+                                                 "path":  "qfq_aux.db-wal",
+                                                 "present":  false
+                                             },
+                                             {
+                                                 "bytes":  0,
+                                                 "path":  "qfq_aux_mcp_gen1.db-wal",
+                                                 "present":  false
+                                             }
+                                         ]
+                        },
+    "files":  [
+                  {
+                      "path":  "quantstudio.db",
+                      "sha256_run2":  [
+                                          "18bf43e543c11db34bd1f604f67d8e94fdc94cc62d8ad9fcb7ce2c72e962ca79",
+                                          "bf497691fb2cc61e5546b3f188da6c099bbda8d04669283e7d1490443278f816",
+                                          "8f546c10e1734affe3b11fe26ee303b56c25f5c40ae91712c7cdc365702295f7"
+                                      ],
+                      "sha256_run1":  "18bf43e543c11db34bd1f604f67d8e94fdc94cc62d8ad9fcb7ce2c72e962ca79",
+                      "bytes":  62766198784
+                  },
+                  {
+                      "path":  "qfq_aux.db",
+                      "sha256_run2":  [
+                                          "18bf43e543c11db34bd1f604f67d8e94fdc94cc62d8ad9fcb7ce2c72e962ca79",
+                                          "bf497691fb2cc61e5546b3f188da6c099bbda8d04669283e7d1490443278f816",
+                                          "8f546c10e1734affe3b11fe26ee303b56c25f5c40ae91712c7cdc365702295f7"
+                                      ],
+                      "sha256_run1":  "bf497691fb2cc61e5546b3f188da6c099bbda8d04669283e7d1490443278f816",
+                      "bytes":  11643478016
+                  },
+                  {
+                      "path":  "qfq_aux_mcp_gen1.db",
+                      "sha256_run2":  [
+                                          "18bf43e543c11db34bd1f604f67d8e94fdc94cc62d8ad9fcb7ce2c72e962ca79",
+                                          "bf497691fb2cc61e5546b3f188da6c099bbda8d04669283e7d1490443278f816",
+                                          "8f546c10e1734affe3b11fe26ee303b56c25f5c40ae91712c7cdc365702295f7"
+                                      ],
+                      "sha256_run1":  "8f546c10e1734affe3b11fe26ee303b56c25f5c40ae91712c7cdc365702295f7",
+                      "bytes":  53248
+                  }
+              ],
+    "run1_bundle_id":  "e82f214035e50e60720acadf3294e49820412918d4eed3eb1f6698f44fdcc637",
+    "run1_manifest":  "docs/evidence/delivery-l3-run1-manifest-20261031.json"
+}

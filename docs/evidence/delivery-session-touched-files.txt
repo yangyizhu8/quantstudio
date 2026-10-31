@@ -1,0 +1,46 @@
+# 本会话改动清单（供 scripts/delivery_pure_gain_audit.py 分类 SELF_CHANGED / OTHER_LINE）
+# 规则：一行一个路径（相对仓库根）；只列**本会话实际写过**的文件或目录前缀。
+# 维护：每次写盘后 append；每波收口与审计读数一起核。
+.gitignore
+config/delivery_config.json
+quantstudio/delivery/__init__.py
+quantstudio/delivery/constants.py
+quantstudio/delivery/config.py
+quantstudio/delivery/manifest.py
+quantstudio/delivery/probe.py
+quantstudio/delivery/winenv.py
+quantstudio/delivery/stats.py
+quantstudio/delivery/export_kernel.py
+quantstudio/delivery/verify.py
+quantstudio/delivery/import_kernel.py
+quantstudio/delivery/journal.py
+quantstudio/delivery/cli.py
+scripts/delivery_pure_gain_audit.py
+scripts/delivery_wave_gate.py
+tests/fixtures/delivery/__init__.py
+tests/fixtures/delivery/main_db.py
+tests/test_delivery_pure_gain.py
+tests/test_delivery_verify.py
+tests/test_delivery_stats.py
+tests/test_delivery_precheck.py
+tests/test_delivery_fixtures.py
+tests/test_delivery_export.py
+tests/test_delivery_import.py
+tests/test_delivery_journal.py
+tests/test_delivery_rollback.py
+tests/test_delivery_parity.py
+specs/003-delivery-bundle-import/plan.md
+specs/003-delivery-bundle-import/tasks.md
+specs/003-delivery-bundle-import/data-model.md
+specs/003-delivery-bundle-import/contracts/cli.md
+specs/003-delivery-bundle-import/contracts/export_kernel.md
+specs/003-delivery-bundle-import/contracts/import_kernel.md
+specs/003-delivery-bundle-import/contracts/manifest-v1.schema.json
+.specify/feature.json
+docs/evidence/delivery-pure-gain-baseline-20261031.json
+docs/evidence/delivery-session-touched-files.txt
+docs/evidence/delivery-wave0-20261031.md
+docs/evidence/delivery-session-touched-files.txt
+docs/evidence/delivery-wave1-20261031.md
+docs/evidence/delivery-wave2-20261031.md
+tests/fixtures/delivery/env.py

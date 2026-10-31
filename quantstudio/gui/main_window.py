@@ -60,6 +60,8 @@ _NAV_ITEMS = [
     ("策略回测", FluentIcon.GAME,              NavigationItemPosition.TOP),
     ("导出PTrade", FluentIcon.SEND,            NavigationItemPosition.TOP),
     ("转模拟盘/实盘", FluentIcon.CLOUD,        NavigationItemPosition.TOP),  # M5 qs-deploy
+    ("QMT 转换部署", FluentIcon.SYNC,          NavigationItemPosition.TOP),  # M5.2 件6
+    ("数据交付",   FluentIcon.SHARE,           NavigationItemPosition.TOP),  # specs/003 数据交付包
 ]
 
 
@@ -211,6 +213,12 @@ class MainWindow(FluentWindow):
             elif row == 9:  # M5 qs-deploy（薄壳：deploy.yaml → ptrade_deploy 内核）
                 from .tabs.deploy_tab import DeployTab
                 return DeployTab(self)
+            elif row == 10:  # M5.2 件6（薄壳：orchestrate_source target=qmt + qmt_deploy 内核）
+                from .tabs.qmt_export_tab import QmtExportTab
+                return QmtExportTab(self)
+            elif row == 11:  # specs/003（薄壳：export / verify / import 内核）
+                from .tabs.delivery_tab import DeliveryTab
+                return DeliveryTab(self)
         except Exception as e:
             logger.error(f"加载 Tab {row} 失败: {e}", exc_info=True)
             label = QLabel(f"加载失败: {e}")

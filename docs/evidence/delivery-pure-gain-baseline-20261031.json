@@ -1,0 +1,286 @@
+{
+  "kind": "delivery-pure-gain-baseline",
+  "taken_at": "2026-10-31T03:34:34+08:00",
+  "git_head": "7a0c6a30bee19fcb346d53987ba329dc9ce3db3d",
+  "session_note": "W0 开工基线（003-delivery-bundle-import）；开工时 writers.py 已有他线在途 diff",
+  "protected": [
+    {
+      "path": "quantstudio/pipeline/qfq_aux_router.py",
+      "tracked": true,
+      "worktree_sha256": "8f2548694dbf0adf0ef57f8c10e107963bbde45989cc416d4fdf4e1b12dbecdc",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_calendar.py",
+      "tracked": true,
+      "worktree_sha256": "92507eb796b4dcc593cb89b07ba242c469f738d9c923b3b383edff9fd4286ddc",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_cutover.py",
+      "tracked": true,
+      "worktree_sha256": "6967eb8e77d7a3a56ddbc9d2626e550b3f6cb80d2c6301f8fc423a1b943ca022",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_cutover_activation.py",
+      "tracked": true,
+      "worktree_sha256": "477decc15b26185a50a3d6c45b8d2d3512e890296fa27a55b7c005f8c97a65d5",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_discovery_baseline.py",
+      "tracked": true,
+      "worktree_sha256": "ed451a90afab6b72fe286b34288ed35a6162a9f9df82ac86859a80e607271051",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_dividend_payload.py",
+      "tracked": true,
+      "worktree_sha256": "b1753c1a459a9c25d273de5e474ade51052ca34bd6426aa1ccef9866f3300111",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_event_discovery.py",
+      "tracked": true,
+      "worktree_sha256": "2b40ac637c651d40d3474971091374baf0599b27c92fb1ec2d1b60f02930c998",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_factor_refresh.py",
+      "tracked": true,
+      "worktree_sha256": "03c1aea5a8e6fa5d67b8118ee5a388adfda806c51727f5198eb16da03d45271c",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_formal_authorization.py",
+      "tracked": true,
+      "worktree_sha256": "293d09d6085af33c0be12429ae8edd5b104b03169a51b2c656513d1a84546cbd",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_formal_canary.py",
+      "tracked": true,
+      "worktree_sha256": "5b4f32e061d9b657198264cbaa0553ef022acfa210e390df4805e2bc4ef03e86",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_formal_cutover.py",
+      "tracked": true,
+      "worktree_sha256": "0eaea7e8e556f71f0193db7aec80cd6b38d8c7b7253461c205fc50859a696d0c",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_formal_cutover_cli.py",
+      "tracked": true,
+      "worktree_sha256": "17a9ff8a45dc60594ef9b4b0bd236e152946d35c64d162c3791c189a5c942e33",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_formal_observation.py",
+      "tracked": true,
+      "worktree_sha256": "02242360cc26ecaa665fe64f1857375f14ed3951d7370babdd050de236f831bd",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_formal_postcutever_audit.py",
+      "tracked": true,
+      "worktree_sha256": "5e27446b9802eaf2155be1d0d5e0324284dc16532423126bcaea38d30c83e5ee",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_formal_watermark_release.py",
+      "tracked": true,
+      "worktree_sha256": "b3fc60a38020ae5e6b6f9550b6a3e268ba2e3590fa9b5258f12b88d2fb5a859a",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_fresh_capture.py",
+      "tracked": true,
+      "worktree_sha256": "5f2b991a4227a7d5ee84fc0d9e2e1ff6f1876250dc8b7773104d5d71a6ce5ade",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_fresh_fetcher_factory.py",
+      "tracked": true,
+      "worktree_sha256": "fd769510b21349eca16d486c2062fa59476fc3ff14c1e5ecf3e8c20b6041ad2f",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_invariant.py",
+      "tracked": true,
+      "worktree_sha256": "d7d76ec7648ee4041995a3d5702f0c69184adf4302b18b22f5520c52e913a238",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_maintenance.py",
+      "tracked": true,
+      "worktree_sha256": "5f38685b8e20540528db465f4107f4a1392104df379ab0facc137e4498d820c1",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_observation.py",
+      "tracked": true,
+      "worktree_sha256": "19c30f03b1fdf96c6c4ad9dbf74119968a02c9fa32ab853b3cbb4c3e24aa2f08",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_orchestrator_cli.py",
+      "tracked": true,
+      "worktree_sha256": "00dc09316a7a4a03d8266809946bab477f460c44125b3194b9500578ce317b56",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_orchestrator_types.py",
+      "tracked": true,
+      "worktree_sha256": "263672bd002c4d5b262602610441b6e9de9e1b2187cf22a40fca0cc96756753a",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_reanchor_engine.py",
+      "tracked": true,
+      "worktree_sha256": "18c1feb0e2a826cc64c9acb5b863651a91c28d425c20d07e7c8d8b2a981c5084",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_reanchor_schema.py",
+      "tracked": true,
+      "worktree_sha256": "6ad7078cfedd9251d165f8f88a95a0a005dbc8452244175c69f15fbf590d9226",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_resident_orchestrator.py",
+      "tracked": true,
+      "worktree_sha256": "90c166e365a83c66bdc5e6eecefd66f106b2c48971146af4da5f509f2d152965",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_revision.py",
+      "tracked": true,
+      "worktree_sha256": "0717a6bc739b536eeb5f26394daa890f135c1159863367a406b834f32cffb7ec",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_schema_contracts.py",
+      "tracked": true,
+      "worktree_sha256": "10639c4098640521beb43e3c481d136586f73844b5d54919fd924151d67341b4",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_schema_migration.py",
+      "tracked": true,
+      "worktree_sha256": "94c1343c4de80d2a52cbb0582a22ebe840cf69330afd38de44c681c0be29211c",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_schema_status.py",
+      "tracked": true,
+      "worktree_sha256": "a5efdde480849f93c4eafe4a47bbb1c6bff89811e0424f988058d3ad2e35a12b",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_snapshot.py",
+      "tracked": true,
+      "worktree_sha256": "be5a6b4ad8f0a6e2221b65671f01c33e5d54c8c9c0fd214d92f2dd196347b072",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_snapshot_evidence.py",
+      "tracked": true,
+      "worktree_sha256": "56361ea4ec832f8ab1df885b100516f4e85d9bcec21e32672d81419d04e5c2bf",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_staging_canary.py",
+      "tracked": true,
+      "worktree_sha256": "b2ed58442e2b0fb14c5641e408dd02f2202272b1d090036304df26db7ef306dd",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_staging_prep.py",
+      "tracked": true,
+      "worktree_sha256": "cbbc4c3857b40e199281d9f31dbfae28fcc13327b9ec5cad9220a2a46ff337d3",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/qfq_unit_diag.py",
+      "tracked": true,
+      "worktree_sha256": "4960b1b3607ab6460e9bcfdc3b1a8b1bdeb0b46747d33ddeb26440d9505e7722",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "quantstudio/pipeline/writers.py",
+      "tracked": true,
+      "worktree_sha256": "6fec5d23c3ab1260ea9ad8d7d2920df5f1e0174cf34b10255a368355fbff1497",
+      "diff_sha256": "d03bd38e25f98359006a11ea042aac90cd23af749e99fde409e5bb3dd94cb370",
+      "diff_bytes": 6236
+    }
+  ],
+  "append_only": [
+    {
+      "path": "quantstudio/gui/main_window.py",
+      "tracked": true,
+      "worktree_sha256": "cc780a58a7e1beb159f9969d0bc63490eb0e0c46ffb20ecfa93e7ec03c7e4f37",
+      "diff_sha256": "49fa02bfc1e56f23d2ab11d5e415feed01f0bb1ccbae2fe6f5b8d9e041876e03",
+      "diff_bytes": 1103
+    },
+    {
+      "path": "quantstudio/gui/workers.py",
+      "tracked": true,
+      "worktree_sha256": "2d26941d96b572128b0f442639b688f4a96da74fc6b1a677d2733a2994e6da06",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": "pyproject.toml",
+      "tracked": true,
+      "worktree_sha256": "aca4bd94f87e737b54734ad17aa452063929e0cf81cb46f0a8017f3870cf0a6c",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    },
+    {
+      "path": ".gitignore",
+      "tracked": true,
+      "worktree_sha256": "f13c4309ed196405c907cebdb15234e0ea877cb07459dd49e46ebecc4e544751",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0
+    }
+  ],
+  "untracked_protected": [
+    "quantstudio/pipeline/sources/consume_whitelist_guard.py"
+  ]
+}

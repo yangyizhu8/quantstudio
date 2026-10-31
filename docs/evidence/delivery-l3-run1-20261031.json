@@ -1,0 +1,150 @@
+{
+    "table_set":  {
+                      "count":  71,
+                      "empty_count":  0,
+                      "out_of_map":  [
+                                         "ai_research_snapshot",
+                                         "balance_statement",
+                                         "block_trade",
+                                         "broker_recommend",
+                                         "cashflow_statement",
+                                         "etf_basic",
+                                         "etf_daily",
+                                         "etf_dividend",
+                                         "etf_minutes",
+                                         "etf_minutes",
+                                         "fin_indicator",
+                                         "income_statement",
+                                         "index_constituents",
+                                         "index_daily",
+                                         "stock_daily",
+                                         "stock_daily_valuation",
+                                         "stock_dividend",
+                                         "stock_float_share",
+                                         "stock_minutes",
+                                         "stock_minutes",
+                                         "stock_namechange",
+                                         "stock_namechange",
+                                         "trade_calendar",
+                                         "xueqiu_sentiment"
+                                     ],
+                      "rule":  "(搴旀帹杩涙按浣嶇殑琛?鈭?questdb_table_map 瑕嗙洊鐨勮〃) 鈭?搴撳唴瀹為檯瀛樺湪",
+                      "state_counts":  {
+                                           "BEHIND":  6,
+                                           "NO-WATERMARK-SYSTEM":  50,
+                                           "OK":  10,
+                                           "UNKNOWN-BASIS":  5
+                                       },
+                      "unknown_basis":  [
+                                            "ai_research_snapshot",
+                                            "block_trade",
+                                            "broker_recommend",
+                                            "etf_basic",
+                                            "xueqiu_sentiment"
+                                        ]
+                  },
+    "bundle_dir":  "D:\\delivery_l3_tmp\\run1\\20261031_175236",
+    "bundle_id":  "e82f214035e50e60720acadf3294e49820412918d4eed3eb1f6698f44fdcc637",
+    "captured_at":  "2026-10-31T17:56:41.6589857+08:00",
+    "export":  {
+                   "checkpoint":  {
+                                      "duckdb":  "ok",
+                                      "sqlite":  [
+                                                     {
+                                                         "busy":  0,
+                                                         "log":  0,
+                                                         "path":  "qfq_aux.db"
+                                                     },
+                                                     {
+                                                         "busy":  0,
+                                                         "log":  -1,
+                                                         "path":  "qfq_aux_mcp_gen1.db"
+                                                     }
+                                                 ]
+                                  },
+                   "copy_bytes_total":  74409730048,
+                   "copy_sha256_pass":  true,
+                   "duration_sec":  237.328,
+                   "lock_acquired_at":  "2026-10-31T17:52:37+08:00",
+                   "lock_task_id":  "delivery_export"
+               },
+    "files":  [
+                  {
+                      "path":  "quantstudio.db",
+                      "sha256":  "18bf43e543c11db34bd1f604f67d8e94fdc94cc62d8ad9fcb7ce2c72e962ca79",
+                      "bytes":  62766198784
+                  },
+                  {
+                      "path":  "qfq_aux.db",
+                      "sha256":  "bf497691fb2cc61e5546b3f188da6c099bbda8d04669283e7d1490443278f816",
+                      "bytes":  11643478016
+                  },
+                  {
+                      "path":  "qfq_aux_mcp_gen1.db",
+                      "sha256":  "8f546c10e1734affe3b11fe26ee303b56c25f5c40ae91712c7cdc365702295f7",
+                      "bytes":  53248
+                  }
+              ],
+    "generated_at":  "2026-10-31T17:56:33+08:00",
+    "state_counts":  [
+                         {
+                             "state":  "NO-WATERMARK-SYSTEM",
+                             "count":  50
+                         },
+                         {
+                             "state":  "UNKNOWN-BASIS",
+                             "count":  5
+                         },
+                         {
+                             "state":  "OK",
+                             "count":  10
+                         },
+                         {
+                             "state":  "BEHIND",
+                             "count":  6
+                         }
+                     ],
+    "self_check":  {
+                       "db_open":  [
+                                       {
+                                           "path":  "quantstudio.db",
+                                           "select1":  "ok"
+                                       },
+                                       {
+                                           "path":  "qfq_aux.db",
+                                           "select1":  "ok"
+                                       },
+                                       {
+                                           "path":  "qfq_aux_mcp_gen1.db",
+                                           "select1":  "ok"
+                                       }
+                                   ],
+                       "red_line":  {
+                                        "env_hits":  0,
+                                        "log_hits":  0,
+                                        "outside_files":  [
+
+                                                          ],
+                                        "outside_whitelist":  0,
+                                        "shm_hits":  0,
+                                        "zero_leak":  true
+                                    },
+                       "wal_zero":  [
+                                        {
+                                            "bytes":  0,
+                                            "path":  "quantstudio.db-wal",
+                                            "present":  false
+                                        },
+                                        {
+                                            "bytes":  0,
+                                            "path":  "qfq_aux.db-wal",
+                                            "present":  false
+                                        },
+                                        {
+                                            "bytes":  0,
+                                            "path":  "qfq_aux_mcp_gen1.db-wal",
+                                            "present":  false
+                                        }
+                                    ]
+                   }
+}

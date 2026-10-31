@@ -1,0 +1,477 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://quantstudio.local/schemas/manifest-v1.schema.json",
+  "title": "QuantStudio delivery bundle manifest v1",
+  "description": "交付包 manifest 的字段级契约（与 specs/003-delivery-bundle-import/data-model.md §2 同源）。同版本内的未知字段允许存在（读侧记 warning），新增必填字段必须升 manifest_schema_version。",
+  "type": "object",
+  "required": [
+    "manifest_schema_version",
+    "generated_at",
+    "producer",
+    "files",
+    "main_db",
+    "qfq",
+    "table_set",
+    "tables",
+    "row_count_degraded",
+    "row_count_degraded_tables",
+    "self_check",
+    "export"
+  ],
+  "properties": {
+    "manifest_schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}([+-]\\d{2}:\\d{2}|Z)$"
+    },
+    "bundle_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "producer": {
+      "type": "object",
+      "required": [
+        "app",
+        "version",
+        "python",
+        "duckdb",
+        "sqlite",
+        "platform"
+      ],
+      "properties": {
+        "app": {
+          "type": "string",
+          "const": "QuantStudio"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "python": {
+          "type": "string",
+          "minLength": 1
+        },
+        "duckdb": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sqlite": {
+          "type": "string",
+          "minLength": 1
+        },
+        "platform": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "kind",
+          "bytes",
+          "sha256"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*\\.\\.)(?!.*:)(?!.*\\\\)[^\\x00]+$"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "duckdb",
+              "sqlite"
+            ]
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "sqlite_header": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "main_db": {
+      "type": "object",
+      "required": [
+        "path",
+        "schema_status"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*\\.\\.)(?!.*:)(?!.*\\\\)[^\\x00]+$"
+        },
+        "schema_status": {
+          "type": "string",
+          "enum": [
+            "complete_2_1",
+            "complete_2_2"
+          ]
+        }
+      }
+    },
+    "qfq": {
+      "type": "object",
+      "required": [
+        "released",
+        "qfq_active_cutover",
+        "aux_route_step6_expect"
+      ],
+      "properties": {
+        "released": {
+          "type": "boolean"
+        },
+        "qfq_active_cutover": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "cutover_id",
+                "source_generation",
+                "price_source"
+              ],
+              "properties": {
+                "cutover_id": {
+                  "type": "string"
+                },
+                "source_generation": {
+                  "type": "string"
+                },
+                "price_source": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "aux_route_step6_expect": {
+          "type": "object",
+          "required": [
+            "legacy",
+            "gen1"
+          ],
+          "properties": {
+            "legacy": {
+              "type": "string"
+            },
+            "gen1": {
+              "type": "string"
+            }
+          }
+        },
+        "aux_paths_config_sha256": {
+          "type": "string"
+        }
+      }
+    },
+    "table_set": {
+      "type": "object",
+      "required": [
+        "rule",
+        "count",
+        "empty_count",
+        "unknown_basis",
+        "out_of_map"
+      ],
+      "properties": {
+        "rule": {
+          "type": "string",
+          "const": "(应推进水位的表 ∪ questdb_table_map 覆盖的表) ∩ 库内实际存在"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "empty_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unknown_basis": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "out_of_map": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "tables": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "table",
+          "source",
+          "freq",
+          "date_basis_col",
+          "basis_source",
+          "row_count_method",
+          "state"
+        ],
+        "properties": {
+          "table": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "freq": {
+            "type": "string",
+            "minLength": 1
+          },
+          "date_basis_col": {
+            "type": "string",
+            "minLength": 1
+          },
+          "basis_source": {
+            "type": "string",
+            "enum": [
+              "questdb_table_map.json",
+              "alignment_rules.time_key",
+              "none"
+            ]
+          },
+          "row_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "row_count_method": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "estimate"
+            ]
+          },
+          "max_date": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              }
+            ]
+          },
+          "watermark_last_date": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "OK",
+              "BEHIND",
+              "AHEAD",
+              "MISSING",
+              "UNKNOWN-SOURCE",
+              "UNKNOWN-BASIS",
+              "EMPTY",
+              "NO-WATERMARK-SYSTEM"
+            ]
+          }
+        }
+      }
+    },
+    "row_count_degraded": {
+      "type": "boolean",
+      "description": "本次是否有表以 estimate 方式统计（②审 A3 强化①）"
+    },
+    "row_count_degraded_tables": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "使用 estimate 的表名清单；无降级时为空数组"
+    },
+    "self_check": {
+      "type": "object",
+      "required": [
+        "red_line",
+        "db_open",
+        "wal_zero"
+      ],
+      "properties": {
+        "red_line": {
+          "type": "object",
+          "required": [
+            "outside_whitelist",
+            "env_hits",
+            "shm_hits",
+            "log_hits",
+            "zero_leak"
+          ],
+          "properties": {
+            "outside_whitelist": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "env_hits": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "shm_hits": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "log_hits": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "zero_leak": {
+              "type": "boolean"
+            }
+          }
+        },
+        "db_open": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "select1"
+            ],
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "select1": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "wal_zero": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "present",
+              "bytes"
+            ],
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "present": {
+                "type": "boolean"
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "export": {
+      "type": "object",
+      "required": [
+        "lock_task_id",
+        "duration_sec",
+        "checkpoint",
+        "copy_bytes_total",
+        "copy_sha256_pass"
+      ],
+      "properties": {
+        "lock_task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lock_acquired_at": {
+          "type": "string"
+        },
+        "lock_released_at": {
+          "type": "string"
+        },
+        "duration_sec": {
+          "type": "number",
+          "minimum": 0
+        },
+        "checkpoint": {
+          "type": "object",
+          "required": [
+            "duckdb",
+            "sqlite"
+          ],
+          "properties": {
+            "duckdb": {
+              "type": "string"
+            },
+            "sqlite": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "path",
+                  "busy",
+                  "log"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "busy": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "log": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "copy_bytes_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "copy_sha256_pass": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

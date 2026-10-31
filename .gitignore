@@ -54,6 +54,12 @@ data/logs/
 # 一次性任务续传游标（停止语义 v3.1；本地运行态，不入库、不入客户包）
 data/task_resume/
 
+# 交付包导入的备份目录与 journal（FR-031：客户回退资产与运行态，不入库）
+#   backup_import_<YYYYMMDD_HHMMSS>/ 是导入前旧库原件（rename 移入，零额外占用）
+#   import_journal.json 是崩溃恢复的相位记录，成功后删除
+data/backup_import_*/
+data/import_journal.json
+
 # OS/editor
 .DS_Store
 Thumbs.db

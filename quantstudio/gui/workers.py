@@ -468,3 +468,164 @@ class BacktestWorker(BaseWorker):
             raise BacktestCancelled("用户取消回测")
         self.day_progress.emit(current, total, date_str)
         self.progress.emit(f"[{current}/{total}] {date_str}")
+
+
+# ══ 交付包 GUI 薄壳 Worker（quantstudio.delivery 内核：W1 导出 / W2 只读校验 / W3 导入）══
+# 内核进度回调统一为 ProgressCB(done_bytes, total_bytes, phase_str)，
+# 经 _DeliveryProgress 节流后转发为 progress(str) 信号。
+
+
+def _fmt_bytes(size) -> str:
+    """字节数 → 人类可读（如 1.5 GB），进度与完成读数展示用。"""
+    n = float(size or 0)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(n) < 1024.0 or unit == "TB":
+            return f"{n:.1f} {unit}"
+        n /= 1024.0
+    return f"{n:.1f} TB"
+
+
+class _DeliveryProgress:
+    """delivery 内核 ProgressCB → progress(str) 的节流适配器。
+
+    内核 COPY 阶段每 1MiB 回调一次，直接转发会刷爆 GUI 事件循环；
+    节流规则：距上次 ≥0.2 秒、或进度前进 ≥1%、或相位名变化，任一满足才 emit。
+    """
+
+    _MIN_INTERVAL_SEC = 0.2
+    _MIN_PCT_STEP = 1.0
+
+    def __init__(self, worker: BaseWorker):
+        self._worker = worker
+        self._last_ts = 0.0
+        self._last_pct = -1e9
+        self._last_phase = ""
+
+    def __call__(self, done: int, total: int, phase: str) -> None:
+        import time as _time
+
+        now = _time.monotonic()
+        pct = (done * 100.0 / total) if total > 0 else None
+        due = (
+            phase != self._last_phase
+            or (now - self._last_ts) >= self._MIN_INTERVAL_SEC
+            or (pct is not None and (pct - self._last_pct) >= self._MIN_PCT_STEP)
+        )
+        if not due:
+            return
+        self._last_ts = now
+        self._last_phase = phase
+        if pct is not None:
+            self._last_pct = pct
+            self._worker.progress.emit(
+                f"[{phase}] {pct:.1f}%（{_fmt_bytes(done)}/{_fmt_bytes(total)}）")
+        else:
+            self._worker.progress.emit(f"[{phase}]")
+
+
+class DeliveryExportWorker(BaseWorker):
+    """整库交付包导出（W1 六相位内核）。薄壳：收参数、转发进度、回传结果。
+
+    export_root = 源数据根目录（对应内核参数 data_root），None 走内核默认探测。
+    """
+
+    def __init__(self, export_dir: str, export_root: str | None = None,
+                 verify_hashes: bool = False):
+        super().__init__()
+        self.export_dir = export_dir
+        self.export_root = export_root
+        self.verify_hashes = verify_hashes
+
+    def run(self):
+        try:
+            from quantstudio.delivery import export_bundle
+            self.progress.emit(f"开始导出交付包 → {self.export_dir}")
+            result = export_bundle(
+                export_dir=Path(self.export_dir),
+                data_root=Path(self.export_root) if self.export_root else None,
+                config_dir=None,
+                progress=_DeliveryProgress(self),
+                verify_hashes=self.verify_hashes,
+            )
+            for warn in result.warnings:
+                self.progress.emit(f"⚠ {warn}")
+            self.finished_ok.emit({
+                "bundle_dir": str(result.bundle_dir),
+                "total_bytes": result.total_bytes,
+                "duration_sec": result.duration_sec,
+                "qualified": result.qualified,
+            })
+        except Exception as e:
+            self.finished_err.emit(f"{type(e).__name__}: {e}")
+
+
+class DeliveryVerifyWorker(BaseWorker):
+    """交付包只读校验（W2，全程不写盘）。从子模块 verify 直接导入：
+    包级属性 verify_bundle 被 __init__.__getattr__ 拦截（W2 未在包 __init__ 落地）。"""
+
+    def __init__(self, import_dir: str):
+        super().__init__()
+        self.import_dir = import_dir
+
+    def run(self):
+        try:
+            from quantstudio.delivery.verify import verify_bundle
+            self.progress.emit(f"只读校验交付包：{self.import_dir}")
+            r = verify_bundle(
+                import_dir=Path(self.import_dir),
+                config_dir=None,
+                data_root=None,
+                progress=_DeliveryProgress(self),
+            )
+            for warn in r.warnings:
+                self.progress.emit(f"⚠ {warn}")
+            self.finished_ok.emit({
+                "ok": r.ok,
+                "package_dir": str(r.package_dir),
+                "failure_kind": r.failure_kind,
+                "reasons": r.reasons,
+                "warnings": r.warnings,
+                "tables": r.tables,
+                "table_set": r.table_set,
+                "files_checked": r.files_checked,
+            })
+        except Exception as e:
+            self.finished_err.emit(f"{type(e).__name__}: {e}")
+
+
+class DeliveryImportWorker(BaseWorker):
+    """交付包导入（W3 九步状态机：备份/覆盖/回滚/复验）。dry_run=True 仅演练不写盘。"""
+
+    def __init__(self, import_dir: str, dry_run: bool = False):
+        super().__init__()
+        self.import_dir = import_dir
+        self.dry_run = dry_run
+
+    def run(self):
+        try:
+            from quantstudio.delivery import import_bundle
+            action = "导入演练（dry-run）" if self.dry_run else "开始导入交付包"
+            self.progress.emit(f"{action}：{self.import_dir}")
+            r = import_bundle(
+                import_dir=Path(self.import_dir),
+                config_dir=None,
+                data_root=None,
+                dry_run=self.dry_run,
+                progress=_DeliveryProgress(self),
+            )
+            for warn in r.warnings:
+                self.progress.emit(f"⚠ {warn}")
+            self.finished_ok.emit({
+                "ok": r.ok,
+                "mode": r.mode,
+                "exit_code": r.exit_code,
+                "failure_kind": r.failure_kind,
+                "reasons": r.reasons,
+                "warnings": r.warnings,
+                "backup": r.backup,
+                "reverify": r.reverify,
+                "baseline": r.baseline,
+                "forensic": r.forensic,
+            })
+        except Exception as e:
+            self.finished_err.emit(f"{type(e).__name__}: {e}")
