@@ -84,10 +84,34 @@
 |---|---|---|
 | D-28 `ATTEST` 错误可读性（`BinderException` 透传） | 本特性（维护项） | 未做，随下一批提交 |
 | 5 张表 `UNKNOWN-BASIS`（map 与 alignment 均无基准列声明） | 实施方 / 配置 | 报告已给脚注；需补 `questdb_table_map` 或 `alignment_rules` |
-| `snapshot_lock` 两笔（D-22 任务退出不清锁 + `diagnose` 假活） | `snapshot_lock` 归属线 | 已转交（文本见上轮），铁律 08 只登记不擅动 |
+| `snapshot_lock` 两笔（D-22 任务退出不清锁 + `diagnose` 假活） | `snapshot_lock` 归属线 | 已转交（文本见 W3 回执），铁律 08 只登记不擅动 |
 | 70 项全仓既有失败 | 总调度（债面分派） | 清单已交；`test_b1_channel` 已定 PT-01a 转交 |
 | watermark-preset 另案（水位 source 多义 / 3 行同表多 source） | 另一评估案 | 材料已更新为「source 维度多义」 |
-| SC-008 带交易撮合 A/B | 需真实库窗口 | 未取得，降级已申报 |
+| **SC-008 带交易撮合 A/B** | 本特性（需真实库窗口） | 未取得，降级已申报 |
+| **fixture 业务表列名与 canonical DDL 偏差**（`stock_daily` 用 `trade_date`，`DuckDBMarketProvider` 期望 `time`） | 本特性（fixture 工厂） | **SC-008 带交易 A/B 的前置改进**：让 fixture 造 canonical 业务表，或让 provider 兼容两种列名；真实库窗口补测时该约束自然消失 |
+
+## 7 ⑥推送记录与归档（2026-10-31 23:20）
+
+- **commit**：`cd80acb3fb502cb67de98959d42f863f92801010` — `feat(delivery): 数据交付包导出与导入校验（specs/003 内核 + CLI + GUI 薄壳）`
+- **写前快照（铁律 03）**：`stash create` + `stash store` → **`4ebde7644cb6f1355f39b6a5d0cbfce184b5c80a`**
+- **精确清单 add（铁律 10）**：59 个路径，**未用 `git add -A`**；`config/delivery_config.json` 有意不提交（运行期配置）
+- **双远程核对**：
+
+| 位置 | main HEAD |
+|---|---|
+| local | `cd80acb3` |
+| `origin`（quantstudio-plus） | `cd80acb3` |
+| `origin` 第二 push URL（quantstudio） | `cd80acb3` |
+| `eco`（quantstudio） | `cd80acb3` |
+
+- **C7 推送闸**：首次拒推（范围内含他线两笔未声明）→ 按全量显式声明制以 `QS_PUSH_BUNDLE_ALLOWALSO='7aa6726,41b82b3'` 声明后放行（锚 = 本笔 `cd80acb`）
+- **铁律 14 同步门**（触共享层 `main_window.py` / `workers.py` ⇒ 不豁免）：
+  `QuantStudio-trading` `git fetch` + `git merge origin/main` → **`24241d6d → 83beee36`，MERGE_EXIT=0**；
+  合并后共享层（`quantstudio/ config/ skills/ scripts/ tests/ main_gui.py`）本地改动 **0**；
+  未推送 trading（副本推送留给该线自行决定）
+- **既有测试例外留痕**：`tests/test_qmt_export_parity.py` 的 `== 11 → >= 11` 留在工作树**未提交**（该文件是 QMT 线未跟踪在途件），已写入 commit message 例外段
+- **知会 QMT 线（待用户转达）**：「`tests/test_qmt_export_parity.py` 的 `_NAV_ITEMS == 11` 已放宽为 `>= 11`——因 specs/003 新增『数据交付』页签使 nav 项数合法变为 12，该用例意图是 QMT 已注册；改动未提交，请随你方批次入库。证据：`docs/evidence/delivery-acceptance-20261031.md` §1.1」
+
 
 ## 6 ⑤用户确认呈报包（**定稿版**，补三处后即为下发版）
 
