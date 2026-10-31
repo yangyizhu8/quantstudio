@@ -93,3 +93,33 @@ def test_cli_verify_accepts_bundle_dir_directly(tmp_path, monkeypatch):
     # 上一层仍可用（不回退）
     assert cli.main(["verify", "--import-dir", str(bundle.parent), "--config-dir", cfg,
                      "--quiet", "--json"]) == Exit.OK
+
+def test_cli_verify_prints_state_summary_and_attention(tmp_path, monkeypatch, capsys):
+    """四态汇总必须出现在人读输出里（一行 groupby），且 JSON 带 state_counts / attention。"""
+    from quantstudio.delivery import cli
+    from quantstudio.delivery.constants import Exit
+    from tests.fixtures.delivery import Env
+
+    server = Env(tmp_path / "server", monkeypatch)
+    bundle = server.make_package()
+    cfg = str(server.config_root)
+    monkeypatch.setattr("quantstudio._paths.DATA_ROOT", server.root, raising=False)
+    monkeypatch.setenv("QUANTSTUDIO_DATA_ROOT", str(server.root))
+    monkeypatch.setenv("QS_WRITE_LOCK_DIR", str(tmp_path / "_lock"))
+
+    assert cli.main(["verify", "--import-dir", str(bundle), "--config-dir", cfg, "--quiet"]) == Exit.OK
+    out = capsys.readouterr().out
+    assert "状态汇总：" in out, out
+    assert "OK=" in out or "NO-WATERMARK-SYSTEM=" in out
+
+    capsys.readouterr()
+    assert cli.main(["verify", "--import-dir", str(bundle), "--config-dir", cfg,
+                     "--quiet", "--json"]) == Exit.OK
+    payload = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith('{"ok"')][-1]
+    import json as _json
+
+    doc = _json.loads(payload)["result"]
+    counts = doc["state_counts"]
+    assert sum(counts.values()) == len(doc["tables"]), "各态之和必须等于表数"
+    assert set(counts) >= {"OK", "BEHIND", "AHEAD", "MISSING", "UNKNOWN-BASIS", "NO-WATERMARK-SYSTEM"}
+    assert isinstance(doc["attention"], list)

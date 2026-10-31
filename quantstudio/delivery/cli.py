@@ -193,6 +193,32 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 
 
+def _state_counts(tables) -> dict:
+    """逐表四态汇总（一行 groupby）：固定键序，零值也显示，便于肉眼比对两次运行。"""
+    order = (
+        "OK",
+        "BEHIND",
+        "AHEAD",
+        "MISSING",
+        "UNKNOWN-SOURCE",
+        "UNKNOWN-BASIS",
+        "NO-WATERMARK-SYSTEM",
+        "EMPTY",
+    )
+    counts = {key: 0 for key in order}
+    for row in tables or ():
+        state = str(row.get("state") or "")
+        counts[state] = counts.get(state, 0) + 1
+    return counts
+
+
+def _attention_rows(tables, limit: int = 8):
+    """需关注的表（BEHIND / AHEAD / MISSING）：带上水位与数据的日期，直接指出该修哪张。"""
+    picked = [r for r in (tables or ()) if r.get("state") in ("BEHIND", "AHEAD", "MISSING")]
+    picked.sort(key=lambda r: str(r.get("table") or ""))
+    return picked[:limit], max(0, len(picked) - limit)
+
+
 def _cmd_verify(args: argparse.Namespace) -> int:
     """只读校验交付包（FR-010）：逐文件哈希 + schema + 路由 + 逐表四态。"""
     import_dir = Path(args.import_dir)
@@ -213,6 +239,10 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         "manifest_schema_version": report.manifest_schema_version,
         "files_checked": report.files_checked,
         "tables": report.tables,
+        "state_counts": _state_counts(report.tables),
+        "attention": [
+            r for r in report.tables if r.get("state") in ("BEHIND", "AHEAD", "MISSING")
+        ],
         "table_set": report.table_set,
         "elapsed_sec": report.elapsed_sec,
     }
@@ -220,8 +250,22 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         _emit_json("verify", report.ok, report.exit_code, payload)
         return report.exit_code
     if report.ok:
+        counts = _state_counts(report.tables)
         sys.stdout.write(f"校验通过：{report.package_dir}\n")
         sys.stdout.write(f"  文件 {report.files_checked} 个；表 {len(report.tables)} 张\n")
+        sys.stdout.write("  状态汇总：" + "  ".join(f"{k}={v}" for k, v in counts.items() if v) + "\n")
+        picked, rest = _attention_rows(report.tables)
+        if picked:
+            sys.stdout.write("  需关注（水位 vs 数据）：\n")
+            for row in picked:
+                sys.stdout.write(
+                    f"    - {row.get('table')}: {row.get('state')}"
+                    f"（水位 {row.get('watermark_last_date') or '-'}"
+                    f" / 数据 {row.get('max_date') or '-'}"
+                    f" / 基准列 {row.get('date_basis_col')}）\n"
+                )
+            if rest:
+                sys.stdout.write(f"    …另有 {rest} 张，详见 --json 的 attention 字段\n")
     else:
         sys.stderr.write(f"校验失败[{report.failure_kind}]：{report.message}\n")
         for reason in report.reasons:
