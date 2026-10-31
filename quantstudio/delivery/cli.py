@@ -201,7 +201,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         import_dir=import_dir,
         config_dir=cfg_root,
         data_root=P.data_root(),
-        progress=_Progress(enabled=not args.quiet),
+        progress=_Progress(quiet=args.quiet),
     )
     payload = {
         "ok": report.ok,
@@ -242,7 +242,7 @@ def _cmd_import(args: argparse.Namespace) -> int:
         data_root=P.data_root(),
         dry_run=bool(args.dry_run),
         allow_repair=not bool(args.no_repair),
-        progress=_Progress(enabled=not args.quiet),
+        progress=_Progress(quiet=args.quiet),
     )
     payload = {
         "ok": result.ok,
