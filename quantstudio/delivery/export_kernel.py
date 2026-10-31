@@ -42,6 +42,8 @@ from .constants import (
 
 ProgressCB = Callable[[int, int, str], None]
 CHUNK = 1 << 20          # 1 MiB
+_HB_BYTES = 64 << 20     # COPY 期每 64 MiB 至少刷一次锁心跳
+_HB_SECONDS = 2.0        # 或每 2 s（先到者）
 PROGRESS_MIN_INTERVAL = 0.05
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -189,10 +191,16 @@ def _copy_file(
     total: int = 0,
     last_report: Optional[List[float]] = None,
 ) -> Dict:
-    """单文件字节精确复制 + 流式哈希（单次读盘）；可取消。"""
+    """单文件字节精确复制 + 流式哈希（单次读盘）；可取消。
+
+    COPY 期间按 **64 MiB / 2 s（先到者）** 刷一次锁心跳（P3，无线程方案）：
+    65 GB 级导出可跑十几分钟，零心跳锁会被 snapshot_lock 判为陈锁并可能被回收 ⇒ 双写风险。
+    """
     digest = hashlib.sha256()
     written = 0
     state = last_report if last_report is not None else [0.0]
+    hb_bytes = 0
+    hb_ts = time.monotonic()
     with Path(src).open("rb") as fin, Path(dst).open("wb") as fout:
         while True:
             if _cancelled(cancel):
@@ -203,6 +211,11 @@ def _copy_file(
             fout.write(block)
             digest.update(block)
             written += len(block)
+            hb_bytes += len(block)
+            now_hb = time.monotonic()
+            if hb_bytes >= _HB_BYTES or (now_hb - hb_ts) >= _HB_SECONDS:
+                _heartbeat()
+                hb_bytes, hb_ts = 0, now_hb
             if progress is not None:
                 now_ts = time.monotonic()
                 if now_ts - state[0] >= PROGRESS_MIN_INTERVAL:

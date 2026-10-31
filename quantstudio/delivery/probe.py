@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -201,6 +202,20 @@ def heals_stale_lock(task_id: str = "delivery_precheck") -> Dict:
     if not holder:
         return {"held": False, "reclaimed": False, "holder": None, "diagnosis": {}}
     diag = SL.diagnose_holder(holder)
+    # A-2 扩条：同一 host 上"持有者 pid 就是本进程"却没有被本进程句柄跟踪 ⇒ 判自身残留
+    try:
+        own = int(holder.get("pid") or -1)
+        same_host = str(holder.get("host") or "") == SL._hostname()
+        if same_host and own == os.getpid() and not SL.lock_held_locally():
+            # 只诊断、不回收：持有者 pid 存活时 CAS 复核必然拒绝（verdict != stale_dead），
+            # 硬回收等于绕过 CAS。给明确结论，让人/上层重启进程，而不是偷偷删锁。
+            diag = dict(diag)
+            diag["self_residual"] = True
+            diag["detail"] = ("本进程残留迹象：锁文件 pid 与本进程相同，但本进程未持有句柄"
+                              "（上次异常退出遗留）。请重启本进程后再试；或确认无写入后用 "
+                              "`qs-deliver unlock --force`（仅当判定可回收时生效）")
+    except Exception:
+        pass
     if diag.get("reclaimable") or diag.get("stale"):
         try:
             SL.try_reclaim_stale(holder, diag, reclaimer_task=task_id)
@@ -211,3 +226,81 @@ def heals_stale_lock(task_id: str = "delivery_precheck") -> Dict:
         return {"held": bool(still), "reclaimed": not bool(still),
                 "holder": still, "diagnosis": diag}
     return {"held": True, "reclaimed": False, "holder": holder, "diagnosis": diag}
+
+# ── 空间诊断（B 段：门槛不动，只把"还差多少 / 该清哪里"说清楚）────────────────
+_CLEANUP_PATTERNS = (
+    ("backup_import_*", "导入备份（确认新库正常后可删）"),
+    ("backup/*", "旧库备份（历史手工备份，按需保留；实测此处常是最大占用）"),
+    ("snapshots/*.bak-*", "快照/锁的历史备份"),
+)
+
+
+def _tree_bytes(path: Path, *, depth: int = 1, limit_files: int = 400) -> Tuple[int, int]:
+    """统计目录占用（**只读**，深度受限，避免拖慢拒绝路径）。返回 (bytes, files)。"""
+    total, files = 0, 0
+    try:
+        stack = [(Path(path), 0)]
+        while stack:
+            cur, level = stack.pop()
+            try:
+                entries = list(os.scandir(cur))
+            except OSError:
+                continue
+            for entry in entries:
+                try:
+                    st = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    if level < depth:
+                        stack.append((Path(entry.path), level + 1))
+                else:
+                    total += st.st_size
+                    files += 1
+                    if files >= limit_files:
+                        return total, files
+    except Exception:
+        pass
+    return total, files
+
+
+def space_report(need: int, free: int, data_root: Path) -> Dict:
+    """空间不足时的结构化明细（供 CLI / GUI 共用；**只读扫描，绝不删除**）。
+
+    用户裁定（2026-11-01）：门槛 `1.1×包体 + 64 MiB` **不放宽**；本函数只负责让拒绝可执行。
+    """
+    root = Path(data_root)
+    items = []
+    for pattern, note in _CLEANUP_PATTERNS:
+        try:
+            matches = sorted(Path(root).glob(pattern))
+        except Exception:
+            matches = []
+        total, files = 0, 0
+        for m in matches:
+            if m.is_dir():
+                b, f = _tree_bytes(m, depth=1)
+            else:
+                try:
+                    b, f = m.stat().st_size, 1
+                except OSError:
+                    b, f = 0, 0
+            total += b
+            files += f
+        if total > 0:
+            items.append({
+                "pattern": pattern,
+                "note": note,
+                "entries": len(matches),
+                "files": files,
+                "bytes": total,
+            })
+    items.sort(key=lambda x: x["bytes"], reverse=True)
+    return {
+        "need": int(need),
+        "free": int(free),
+        "shortfall": max(0, int(need) - int(free)),
+        "candidates": items,
+        "note": "只读扫描；程序不会删除任何备份目录（释放权在客户）",
+    }
+

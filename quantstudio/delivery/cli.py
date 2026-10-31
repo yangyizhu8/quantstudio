@@ -385,6 +385,64 @@ def _cmd_set(args: argparse.Namespace) -> int:
     return Exit.OK
 
 
+def _cmd_unlock(args: argparse.Namespace) -> int:
+    """写锁诊断与自助回收（A-3）。
+
+    硬条件（用户裁定 2026-11-01）：
+      - **禁止裸删锁文件**：回收必须经 `try_reclaim_stale()`（CAS 三字段比对 + 审计留痕）；
+      - `--force` 仅在诊断判定可回收（pid 已死 / 心跳陈旧）时执行；持有者存活一律拒绝。
+    """
+    from quantstudio.pipeline import snapshot_lock as SL
+
+    holder = SL.read_holder()
+    if not holder:
+        if args.json:
+            _emit_json("unlock", True, Exit.OK, {"held": False})
+        else:
+            sys.stdout.write("写锁目录干净：无持有者\n")
+        return Exit.OK
+
+    diag = SL.diagnose_holder(holder)
+    payload = {
+        "held": True,
+        "holder": holder,
+        "diagnosis": diag,
+        "reclaimable": bool(diag.get("reclaimable")),
+    }
+    if not args.force:
+        if args.json:
+            _emit_json("unlock", True, Exit.OK, payload)
+            return Exit.OK
+        sys.stdout.write(f"写锁被持有：{holder.get('task_id')}\n")
+        sys.stdout.write(f"  pid={holder.get('pid')}（心跳年龄 "
+                         f"{diag.get('heartbeat_age')}s / host={holder.get('host')}）\n")
+        sys.stdout.write(f"  判定：{diag.get('verdict')}｜可回收={payload['reclaimable']}"
+                         f"{('｜' + str(diag.get('detail'))) if diag.get('detail') else ''}\n")
+        if payload["reclaimable"]:
+            sys.stdout.write("  处置：确认无写入后执行 `qs-deliver unlock --force`\n")
+        else:
+            sys.stdout.write("  处置：持有者仍存活或不可判定 ⇒ 先停该任务（勿强删锁文件）\n")
+        return Exit.OK
+
+    if not payload["reclaimable"]:
+        sys.stderr.write("拒绝回收：诊断判定持有者仍存活或不可判定（见上）\n")
+        return Exit.REFUSED
+    try:
+        SL.try_reclaim_stale(holder, diag, reclaimer_task="qs-deliver unlock")
+    except Exception as exc:
+        sys.stderr.write(f"回收失败：{type(exc).__name__}: {exc}\n")
+        return Exit.REFUSED
+    still = SL.read_holder()
+    ok = not bool(still)
+    payload["reclaimed"] = ok
+    payload["holder_after"] = still
+    if args.json:
+        _emit_json("unlock", ok, Exit.OK if ok else Exit.REFUSED, payload)
+        return Exit.OK if ok else Exit.REFUSED
+    sys.stdout.write("已回收写锁（经 CAS + 审计留痕）\n" if ok else "回收未生效：锁仍被持有\n")
+    return Exit.OK if ok else Exit.REFUSED
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="qs-deliver", description="QuantStudio 数据交付包工具")
     sub = ap.add_subparsers(dest="command", required=True)
@@ -424,6 +482,11 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--config-dir")
     r.add_argument("--json", action="store_true")
     r.set_defaults(handler=_cmd_recover)
+
+    u = sub.add_parser("unlock", help="写锁诊断与自助回收（默认只诊断；--force 走 CAS 回收）")
+    u.add_argument("--force", action="store_true", help="经 try_reclaim_stale 回收（持有者存活则拒绝）")
+    u.add_argument("--json", action="store_true")
+    u.set_defaults(handler=_cmd_unlock)
 
     st = sub.add_parser("set", help="设置 export_dir / import_dir")
     st.add_argument("--export-dir")

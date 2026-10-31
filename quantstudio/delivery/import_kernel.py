@@ -117,14 +117,33 @@ def _replace(src: Path, dst: Path) -> None:
     os.replace(src, dst)
 
 
+_HB_BYTES = 64 << 20          # 每 64 MiB 至少刷一次心跳
+_HB_SECONDS = 2.0             # 或每 2 s（先到者）
+
+
 def _copy(src: Path, dst: Path) -> None:
-    """分块复制（可注入 ENOSPC）。"""
+    """分块复制（可注入 ENOSPC）；COPY 期间按 64 MiB / 2 s 刷一次锁心跳（P3，无线程）。"""
+    import time as _t
+
+    last_bytes = 0
+    last_ts = _t.monotonic()
+    done = 0
     with Path(src).open("rb") as fin, Path(dst).open("wb") as fout:
         while True:
             block = fin.read(1 << 20)
             if not block:
                 break
             fout.write(block)
+            done += len(block)
+            now = _t.monotonic()
+            if done - last_bytes >= _HB_BYTES or (now - last_ts) >= _HB_SECONDS:
+                try:
+                    lk = _LOCK_HANDLE.get("lk")
+                    if lk is not None:
+                        lk.heartbeat()
+                except Exception:
+                    pass
+                last_bytes, last_ts = done, now
 
 
 def _hook_after_replace(count: int) -> None:
@@ -433,11 +452,23 @@ def import_bundle(
                                        backup_bytes=0 if mode == "install" else bundle_bytes)
     free = P.disk_free_bytes(root)
     if free < required:
-        return finish(
-            failure_kind="refused",
-            reasons=[f"空间不足：需要 {required} B，可用 {free} B"],
-            exit_code=Exit.REFUSED,
-        )
+        rep = P.space_report(required, free, root)
+        reasons = [
+            f"空间不足：还差 {rep['shortfall'] / 2**30:.2f} GiB",
+            f"  包体 {bundle_bytes / 2**30:.2f} GiB ｜ 安全余量 "
+            f"{(required - bundle_bytes) / 2**30:.2f} GiB（1.10× 包体 + 64 MiB）",
+            f"  门槛 {required / 2**30:.2f} GiB ｜ 可用 {free / 2**30:.2f} GiB",
+        ]
+        reasons.append("  可清理位置（只读扫描；程序不会删除任何备份，释放权在客户）：")
+        if rep["candidates"]:
+            for item in rep["candidates"]:
+                reasons.append(
+                    f"    - data/{item['pattern']}：{item['entries']} 项 / {item['files']} 文件，"
+                    f"{item['bytes'] / 2**30:.2f} GiB（{item['note']}）"
+                )
+        else:
+            reasons.append("    - 未发现 data/backup、backup_import_*、snapshots/*.bak-* 等可清理项")
+        return finish(failure_kind="refused", reasons=reasons, exit_code=Exit.REFUSED)
 
     # ⑤ ACQUIRE_AND_JOURNAL
     from quantstudio.pipeline.snapshot_lock import WriteLockHeld
