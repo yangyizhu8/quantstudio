@@ -83,19 +83,51 @@ class ExportResult:
 
 
 # ── 测试注入点 ──────────────────────────────────────────────────────────────
+_LOCK_HANDLE = {"lk": None}   # 进程内唯一句柄（acquire 的返回值必须留着，否则 release 无处可放）
+
+
 def _acquire_lock(task_id: str = LOCK_TASK_EXPORT, timeout_s: float = 30.0):
     from quantstudio.pipeline.snapshot_lock import acquire_write_lock
 
-    return acquire_write_lock(task_id, timeout_s=timeout_s)
+    lk = acquire_write_lock(task_id, timeout_s=timeout_s)
+    _LOCK_HANDLE["lk"] = lk
+    return lk
 
 
 def _release_lock() -> None:
-    from quantstudio.pipeline.snapshot_lock import release_write_lock
+    """释放**本进程持有的句柄**。
 
-    release_write_lock()
+    实测坑（2026-11-01，用户 00:20:51 导出后锁残留 1.7h）：
+    `acquire_write_lock()` 返回 `WriteLock` 句柄，而 `release_write_lock()` 只弹
+    `_ensure_handles` 栈（那是 `ensure_write_lock()` 的配对）——取锁时丢句柄 ⇒ 释放是空操作。
+    正确做法：保存句柄并 `handle.release()`。
+    """
+    lk = _LOCK_HANDLE.pop("lk", None)
+    if lk is not None:
+        lk.release()
+
+
+def _heartbeat() -> None:
+    """刷新锁心跳（长相位之间调用）。
+
+    零心跳的锁（heartbeat == acquired_at）在 >600s 的导出里会被判为陈锁并可能被回收 ⇒ 双写风险。
+    """
+    lk = _LOCK_HANDLE.get("lk")
+    if lk is not None:
+        try:
+            lk.heartbeat()
+        except Exception:
+            pass
 
 
 # ── 小工具 ──────────────────────────────────────────────────────────────────
+def _phase_with_heartbeat(name: str) -> None:
+    """相位标记 + 刷心跳（每个相位开始都刷，覆盖 CHECKPOINT/COPY 等长相位）。"""
+    _heartbeat()
+    sys.stderr.write(f"[{name}]\n")
+    sys.stderr.flush()
+
+
 def _now(now: Optional[datetime] = None) -> datetime:
     return now or datetime.now().astimezone()
 
@@ -343,6 +375,7 @@ def export_bundle(
     ts = _now(now)
 
     def phase(name: str) -> None:
+        _heartbeat()          # 长相位间刷锁心跳：防 >600s 导出被判陈锁回收（双写风险）
         if progress is not None:
             progress(0, 0, name)
 
@@ -356,6 +389,22 @@ def export_bundle(
             "WHITELIST_FILE_MISSING",
             "白名单文件缺失，无法出包（请确认 DATA_ROOT 指向正确的数据目录）",
             {"missing": missing, "data_root": str(root)},
+        )
+
+    # ② 陈锁自愈：PRECHECK 遇锁先诊断，可回收则回收一次并留读数（否则 export 入口被陈锁堵死）
+    lock_state = P.heals_stale_lock(LOCK_TASK_EXPORT)
+    if lock_state.get("reclaimed"):
+        warnings.append(
+            "检测到陈锁并已自动回收（reclaimed）："
+            f"holder={lock_state.get('holder') or (lock_state.get('diagnosis') or {}).get('detail')}"
+        )
+    if lock_state.get("held"):
+        holder = lock_state.get("holder") or {}
+        raise ExportRefused(
+            "WRITE_LOCK_HELD",
+            "写锁被其他任务持有",
+            {"task_id": holder.get("task_id"), "pid": holder.get("pid"),
+             "diagnosis": lock_state.get("diagnosis")},
         )
 
     status = _read_schema_status(src["quantstudio.db"])

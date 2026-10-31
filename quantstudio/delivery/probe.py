@@ -186,3 +186,28 @@ def locate_package(import_dir: Path) -> Tuple[Optional[Path], List[str]]:
         + "；".join(str(p.name) for p in candidates)
         + "。请让所选目录下只保留一个交付包（或直接选择其中一个包目录）"
     ]
+
+def heals_stale_lock(task_id: str = "delivery_precheck") -> Dict:
+    """PRECHECK 阶段的陈锁自愈（一次性）。
+
+    背景（2026-11-01）：陈锁把 export/import 全部入口堵死——PRECHECK「有锁即拒」，
+    而真正的自愈只在 `acquire` 侧触发，用户到不了那一步。
+    行为：读锁 → 诊断；可回收（stale/reclaimable）⇒ 调 `try_reclaim_stale` 回收一次；
+    返回 `{held, reclaimed, holder, diagnosis}` 供调用方写进读数与文案。
+    """
+    from quantstudio.pipeline import snapshot_lock as SL
+
+    holder = SL.read_holder()
+    if not holder:
+        return {"held": False, "reclaimed": False, "holder": None, "diagnosis": {}}
+    diag = SL.diagnose_holder(holder)
+    if diag.get("reclaimable") or diag.get("stale"):
+        try:
+            SL.try_reclaim_stale(holder, diag, reclaimer_task=task_id)
+        except Exception as exc:      # 回收失败不改判据：仍按"有锁"处理
+            return {"held": True, "reclaimed": False, "holder": holder,
+                    "diagnosis": diag, "error": f"{type(exc).__name__}: {exc}"}
+        still = SL.read_holder()
+        return {"held": bool(still), "reclaimed": not bool(still),
+                "holder": still, "diagnosis": diag}
+    return {"held": True, "reclaimed": False, "holder": holder, "diagnosis": diag}

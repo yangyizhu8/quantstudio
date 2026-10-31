@@ -96,16 +96,21 @@ class RecoveryResult:
 
 
 # ── 测试注入点 ──────────────────────────────────────────────────────────────
+_LOCK_HANDLE = {"lk": None}
+
+
 def _acquire_lock(task_id: str = LOCK_TASK_IMPORT, timeout_s: float = 30.0):
     from quantstudio.pipeline.snapshot_lock import acquire_write_lock
 
-    return acquire_write_lock(task_id, timeout_s=timeout_s)
+    lk = acquire_write_lock(task_id, timeout_s=timeout_s)
+    _LOCK_HANDLE["lk"] = lk
+    return lk
 
 
 def _release_lock() -> None:
-    from quantstudio.pipeline.snapshot_lock import release_write_lock
-
-    release_write_lock()
+    lk = _LOCK_HANDLE.pop("lk", None)
+    if lk is not None:
+        lk.release()
 
 
 def _replace(src: Path, dst: Path) -> None:
@@ -391,8 +396,11 @@ def import_bundle(
             failure_kind="refused", reasons=["采集正在运行，请先停止采集"],
             exit_code=Exit.REFUSED,
         )
-    holder = P.write_lock_holder()
-    if holder:
+    lock_state = P.heals_stale_lock(LOCK_TASK_IMPORT)
+    if lock_state.get("reclaimed"):
+        result.warnings.append("检测到陈锁并已自动回收（reclaimed），继续导入")
+    if lock_state.get("held"):
+        holder = lock_state.get("holder") or {}
         return finish(
             failure_kind="refused",
             reasons=[f"写锁被持有：{holder.get('task_id')}（pid={holder.get('pid')}）"],
