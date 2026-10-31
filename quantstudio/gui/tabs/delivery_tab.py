@@ -215,10 +215,28 @@ class DeliveryTab(QWidget):
         tables = r.get("tables") or []
         self._log(f"{'✅' if ok else '❌'} 校验结束：ok={ok}"
                   f"｜files_checked={r.get('files_checked')}｜表数={len(tables)}")
+        # 四态汇总（与 CLI 同源：内核 VerifyReport.state_counts，壳层不另算）
+        counts = r.get("state_counts") or {}
+        if counts:
+            order = ("OK", "BEHIND", "AHEAD", "MISSING", "UNKNOWN-SOURCE",
+                     "UNKNOWN-BASIS", "NO-WATERMARK-SYSTEM", "EMPTY")
+            parts = [f"{k}={counts[k]}" for k in order if counts.get(k)]
+            self._log("   状态汇总：" + "  ".join(parts))
+        attention = r.get("attention") or []
+        if attention:
+            self._log("   需关注（水位 vs 数据）：")
+            for row in attention[:8]:
+                self._log(f"     - {row.get('table')}: {row.get('state')}"
+                          f"（水位 {row.get('watermark_last_date') or '-'}"
+                          f" / 数据 {row.get('max_date') or '-'}"
+                          f" / 基准列 {row.get('date_basis_col')}）")
+            if len(attention) > 8:
+                self._log(f"     …另有 {len(attention) - 8} 张，详见 --json 的 attention")
         if not ok:
             self._log(f"   failure_kind={r.get('failure_kind')}")
             for reason in (r.get("reasons") or []):
                 self._log(f"   - {reason}")
+        # 告警只在这里打印一次（worker 不再经 progress 重复播报）
         for warn in (r.get("warnings") or []):
             self._log(f"   ⚠ {warn}")
         self.status_label.setText("✅ 校验通过" if ok else "❌ 校验未通过（详见日志）")

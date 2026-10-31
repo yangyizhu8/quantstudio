@@ -141,3 +141,37 @@ def test_sc010_gui_buttons_disabled_until_dir_chosen(tmp_path, monkeypatch):
     tab.import_edit.setText(str(tmp_path / "pkg"))
     app.processEvents()
     assert tab.verify_btn.isEnabled() and tab.import_btn.isEnabled()
+
+def test_verify_slot_shows_state_summary_and_warns_once(tmp_path, monkeypatch):
+    """2026-11-01 实跑反馈：GUI 校验结果槽必须给四态汇总，且同一告警只出现一次。"""
+    app = _APP
+    from quantstudio.gui.tabs.delivery_tab import DeliveryTab
+
+    tab = DeliveryTab(_FakeMainWindow(tmp_path))
+    app.processEvents()
+    tab._on_verify_ok({
+        "ok": True,
+        "files_checked": 3,
+        "tables": [{"table": "etf_daily", "state": "BEHIND"}],
+        "state_counts": {"OK": 11, "BEHIND": 5, "UNKNOWN-BASIS": 5, "NO-WATERMARK-SYSTEM": 50},
+        "attention": [{"table": "etf_daily", "state": "BEHIND",
+                       "watermark_last_date": "2026-09-04", "max_date": "2026-10-29",
+                       "date_basis_col": "time"}],
+        "warnings": ["以下表缺基准列声明（示例告警）"],
+    })
+    log = tab.log_edit.toPlainText()
+    assert "状态汇总：" in log
+    assert "OK=11" in log and "BEHIND=5" in log and "NO-WATERMARK-SYSTEM=50" in log
+    assert log.count("需关注（水位 vs 数据）") == 1
+    assert "etf_daily: BEHIND（水位 2026-09-04 / 数据 2026-10-29 / 基准列 time）" in log
+    assert log.count("⚠ 以下表缺基准列声明") == 1, "同一告警不得打印两次"
+
+
+def test_verify_worker_does_not_replay_warnings_via_progress():
+    """静态门：校验 worker 不得再经 progress 播报告警（否则结果槽会二次打印）。"""
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1] / "quantstudio" / "gui" / "workers.py"
+    text = src.read_text(encoding="utf-8")
+    seg = text.split("class DeliveryVerifyWorker")[1].split("class DeliveryImportWorker")[0]
+    assert 'progress.emit(f"⚠ {warn}")' not in seg

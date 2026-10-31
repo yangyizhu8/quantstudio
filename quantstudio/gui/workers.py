@@ -577,11 +577,13 @@ class DeliveryVerifyWorker(BaseWorker):
                 data_root=None,
                 progress=_DeliveryProgress(self),
             )
-            for warn in r.warnings:
-                self.progress.emit(f"⚠ {warn}")
+            # 注意：warnings 不在此处经 progress 播报——结果槽会打印一次，
+            # 两处都发会让用户看到同一条告警两遍（2026-11-01 实跑反馈）。
             self.finished_ok.emit({
                 "ok": r.ok,
                 "package_dir": str(r.package_dir),
+                "state_counts": getattr(r, "state_counts", {}) or {},
+                "attention": getattr(r, "attention", []) or [],
                 "failure_kind": r.failure_kind,
                 "reasons": r.reasons,
                 "warnings": r.warnings,

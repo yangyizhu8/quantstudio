@@ -174,6 +174,8 @@ class VerifyReport:
     route: Dict = field(default_factory=dict)
     tables: List[Dict] = field(default_factory=list)
     table_set: Dict = field(default_factory=dict)
+    state_counts: Dict = field(default_factory=dict)
+    attention: List[Dict] = field(default_factory=list)
     elapsed_sec: float = 0.0
     exit_code: int = 0
 
@@ -304,6 +306,11 @@ def verify_bundle(
     tables, table_set = _collect_tables(package_dir, config_root)
     report.tables = tables
     report.table_set = table_set
+    # 四态汇总（单一真源）：CLI / GUI 都读这份，壳层不再各算一套
+    report.state_counts = dict(table_set.get("state_counts") or {})
+    report.attention = [
+        r for r in tables if r.get("state") in ("BEHIND", "AHEAD", "MISSING")
+    ]
     # A3 强化②：包内声明的 estimate 必须在报告里显式标注，禁止与 exact 静默混排
     declared = {
         str(row.get("table")): str(row.get("row_count_method"))
