@@ -333,6 +333,7 @@ def _reverify(*, data_root: Path, config_root: Path, manifest_doc: Dict) -> Dict
     """复验：再跑 FR-010 四要素中的统计口径，产出逐表四态与「可增量」结论。"""
     rows, table_set = V._collect_tables(data_root, config_root)
     can = S.can_incremental(rows)
+    why = S.reason_not_incremental(rows)
     baseline = {"stale": False, "note": ""}
     baseline_path = config_root / QUALITY_BASELINE_REL
     doc = _read_json(baseline_path, {}) or {}
@@ -345,11 +346,15 @@ def _reverify(*, data_root: Path, config_root: Path, manifest_doc: Dict) -> Dict
         }
     else:
         baseline = {"stale": False, "note": "基线可能过时（建议定期向实施方索取新基线）"}
+    attention = S.attention_tables(rows)
     return {
         "tables": rows,
         "table_set": table_set,
-        "summary": f"{len(rows)} 表：可增量" if can else f"{len(rows)} 表：存在需关注项",
+        "summary": (f"{len(rows)} 表：可增量（需关注 {len(attention)} 张，不影响增量）"
+                    if can else f"{len(rows)} 表：不可增量 —— {why}"),
         "can_incremental": can,
+        "not_incremental_reason": why,
+        "attention": attention,
         "baseline": baseline,
     }
 

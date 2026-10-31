@@ -309,12 +309,40 @@ def summarize(stats: List[Dict], *, out_of_map: Optional[Iterable[str]] = None) 
     }
 
 
-def defect_tables(stats: List[Dict]) -> List[str]:
-    """缺陷表清单（MISSING/BEHIND/AHEAD）——用于「可增量」结论。"""
-    from .constants import DEFECT_STATES
+# 「有害态」= 真的会让增量跑错的态；BEHIND / UNKNOWN-BASIS 不在此列。
+# 依据（用户裁定 2026-11-01）：MISSING 表示有数据无水位（增量会退化为全历史重拉）⇒ 有害；
+# AHEAD 表示水位领先数据（可能重复/错位）⇒ 有害；BEHIND 只是"落后待补拉"，属正常；
+# UNKNOWN-BASIS 是配置债（缺基准列声明），既不判四态、也不该让所有客户永远看到 False。
+HARMFUL_STATES = frozenset({TableState.MISSING, TableState.AHEAD})
 
-    return [r["table"] for r in stats if r["state"] in DEFECT_STATES]
+
+def defect_tables(stats: List[Dict]) -> List[str]:
+    """有害表清单（MISSING/AHEAD）——决定 `can_incremental`。"""
+    return [r["table"] for r in stats if r["state"] in HARMFUL_STATES]
+
+
+def attention_tables(stats: List[Dict]) -> List[Dict]:
+    """需关注清单（BEHIND / UNKNOWN-BASIS / MISSING / AHEAD）——只展示，不参与可增量判定。"""
+    picked = [r for r in stats if r["state"] in (TableState.BEHIND, TableState.UNKNOWN_BASIS,
+                                                 TableState.MISSING, TableState.AHEAD)]
+    return sorted(picked, key=lambda r: str(r.get("table") or ""))
 
 
 def can_incremental(stats: List[Dict]) -> bool:
+    """仅由有害态驱动：AHEAD / MISSING 存在 ⇒ False；BEHIND 与 UNKNOWN-BASIS 不参与。"""
     return not defect_tables(stats)
+
+
+def reason_not_incremental(stats: List[Dict]) -> str:
+    """不可增量的原因（人读）：只列有害态，避免把配置债混进结论。"""
+    bad = defect_tables(stats)
+    if not bad:
+        return ""
+    ahead = [r["table"] for r in stats if r["state"] == TableState.AHEAD]
+    missing = [r["table"] for r in stats if r["state"] == TableState.MISSING]
+    parts = []
+    if ahead:
+        parts.append(f"AHEAD {len(ahead)} 张（水位领先数据，可能重复/错位）：{ahead[:5]}")
+    if missing:
+        parts.append(f"MISSING {len(missing)} 张（有数据无水位，增量会退化为全历史重拉）：{missing[:5]}")
+    return "；".join(parts)

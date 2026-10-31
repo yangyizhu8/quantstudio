@@ -252,3 +252,36 @@ def test_fr006v5_table_set_and_labels_on_real_config_shape(tmp_path):
         assert in_watermark_system(name, table_map, wm) is False
     # ③ 假 MISSING = 0
     assert not [r for r in rows if r["state"] == TableState.MISSING]
+
+# ── can_incremental 判据（2026-11-01 用户裁定：只由有害态驱动）──────────────
+def _row(table, state, basis="time"):
+    return {"table": table, "state": state, "date_basis_col": basis,
+            "row_count": 1, "max_date": "2026-10-30", "watermark_last_date": "2026-10-30"}
+
+
+def test_can_incremental_true_with_unknown_basis_and_behind():
+    rows = [_row("a", TableState.OK), _row("b", TableState.BEHIND),
+            _row("c", TableState.UNKNOWN_BASIS, basis="unknown"),
+            _row("d", TableState.NO_WATERMARK_SYSTEM)]
+    assert S.can_incremental(rows) is True, "BEHIND / UNKNOWN-BASIS 不得把可增量判成 False"
+    assert S.attention_tables(rows), "它们应进『需关注』清单"
+    assert S.reason_not_incremental(rows) == ""
+
+
+def test_can_incremental_false_on_ahead():
+    rows = [_row("a", TableState.AHEAD)]
+    assert S.can_incremental(rows) is False
+    assert "AHEAD" in S.reason_not_incremental(rows)
+
+
+def test_can_incremental_false_on_missing():
+    rows = [_row("a", TableState.MISSING)]
+    assert S.can_incremental(rows) is False
+    assert "MISSING" in S.reason_not_incremental(rows)
+
+
+def test_can_incremental_true_when_only_exclusionary_states():
+    rows = [_row("a", TableState.UNKNOWN_BASIS, basis="unknown"),
+            _row("b", TableState.NO_WATERMARK_SYSTEM),
+            _row("c", TableState.EMPTY)]
+    assert S.can_incremental(rows) is True
