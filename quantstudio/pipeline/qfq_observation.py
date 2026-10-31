@@ -31,7 +31,9 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import os
 import sqlite3
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -282,10 +284,23 @@ class ObservationStore:
         er = float(epsilon_rel) if epsilon_rel is not None else self.epsilon_rel
         _validate_epsilon_pair(ea, er)
 
+        # ---- QFQ 诊断插桩（QS_QFQ_PROFILE=1 才启用；关闭时仅一次 env 判断）----
+        # 只做观测：不改 SQL / 事务 / 循环语义（方案 H-1~H-4）。
+        _prof = (os.environ.get("QS_QFQ_PROFILE", "") or "").strip() == "1"
+        _pt = _rt = None
+        _wal0: dict = {}
+        _wal1: dict = {}
+        if _prof:
+            from . import qfq_profile as _profile
+            _pt = _profile.PhaseTimer(True)
+            _rt = []
+            _pt.start("preprocess")
         # 预归一化 + 同批冲突检测（在开启事务前完成，非法输入/冲突不写任何行）
         # 注意：必须使用本次调用覆盖后的 ea/er，而非实例默认（阻断 1：per-call 覆盖
         # 必须同时作用于批内去重与后续 DB baseline 比较）。
         to_write, future_excluded = self._preprocess(observations, as_of, ea, er)
+        if _pt is not None:
+            _pt.stop("preprocess")
 
         now = _now_iso()
         result = ObservationResult(run_id=run_id)
@@ -294,11 +309,20 @@ class ObservationStore:
         own = conn is None
         _lctx = self._connect_locked() if own else None  # 3A 写锁
         c = _lctx.__enter__() if own else conn
+        if _prof:
+            _wal0 = _profile.wal_stats(c)
         try:
             if own:
+                if _pt is not None:
+                    _pt.start("begin")
                 c.execute("BEGIN IMMEDIATE")
+                if _pt is not None:
+                    _pt.stop("begin")
+                    _pt.bump("begin", 1)
             # 任务3：baseline 识别——本批之前该 (asset_type,code) 是否已有观测。
             # 首次建立基线的 code 在本批内不触发 factor_new（避免历史洪水）。
+            if _pt is not None:
+                _pt.start("baseline_select")
             _code_set = {}
             for _at, _cd, _ft, _fv in to_write:
                 _code_set[(_at, _cd)] = True
@@ -309,14 +333,25 @@ class ObservationStore:
                     "WHERE asset_type=? AND code=? LIMIT 1",
                     [_at, _cd]).fetchone()
                 baseline_map[(_at, _cd)] = (_ex is None)
+            if _pt is not None:
+                _pt.stop("baseline_select")
+                _pt.bump("baseline_select", len(_code_set))
+            if _pt is not None:
+                _t_loop = time.perf_counter()
             for asset_type, code, ft, fv in to_write:
                 result.observed += 1
+                if _pt is not None:
+                    _t_sel = time.perf_counter()
                 row = c.execute(
                     "SELECT factor_value, revision_no FROM qfq_factor_observation "
                     "WHERE asset_type=? AND code=? AND factor_time=? "
                     "ORDER BY revision_no DESC LIMIT 1",
                     [asset_type, code, ft],
                 ).fetchone()
+                if _pt is not None:
+                    _pt.add("value_select", time.perf_counter() - _t_sel)
+                    _pt.bump("value_select", 1)
+                    _rt.append((time.perf_counter() - _t_sel) * 1000.0)
 
                 if row is None:
                     # 首次观测：revision_no = 1
@@ -386,8 +421,18 @@ class ObservationStore:
                     revision_no=new_rev, previous_value=float(last_value),
                     current_value=fv, alert_id=aid))
 
+            if _pt is not None:
+                _pt.add("loop_total", time.perf_counter() - _t_loop)
+                _pt.add("write_ops", max(0.0, (time.perf_counter() - _t_loop)
+                                         - _pt.phases().get("value_select", 0.0)))
             if own:
+                if _pt is not None:
+                    _pt.start("commit")
                 c.commit()
+                if _pt is not None:
+                    _pt.stop("commit")
+            if _prof:
+                _wal1 = _profile.wal_stats(c)
         except Exception:
             if own:
                 c.rollback()
@@ -396,6 +441,25 @@ class ObservationStore:
             if own:
                 c.close()
                 _lctx.__exit__(None, None, None)  # 3A 写锁随连接释放
+
+        # ---- QFQ 诊断插桩：写事件（失败只 warning，不阻断；P6）----
+        if _prof and _pt is not None:
+            try:
+                _profile.write_event(_profile.build_event(
+                    run_id=run_id,
+                    asset_type=(to_write[0][0] if to_write else ""),
+                    n_observations=len(to_write),
+                    n_codes=len({(_a, _cd) for _a, _cd, _ft, _fv in to_write}),
+                    n_future_excluded=len(future_excluded or []),
+                    phases=_pt.phases(),
+                    queries=_pt.queries(),
+                    wal_before=_wal0,
+                    wal_after=_wal1,
+                    roundtrip_ms=(_rt or []),
+                    task=str(os.environ.get("QS_QFQ_PROFILE_TASK", "") or ""),
+                ))
+            except Exception as e:  # noqa: BLE001 — 观测失败不影响业务
+                logger.warning("[qfq_profile] 组装/写出事件失败（忽略）: %s", e)
 
         if result.revised_count:
             logger.info(
