@@ -157,13 +157,20 @@ def same_volume(a: Path, b: Path) -> bool:
 
 
 def locate_package(import_dir: Path) -> Tuple[Optional[Path], List[str]]:
-    """`import_dir` 下**恰好一个**含 manifest.json 的一层子目录（FR-038）。
+    """定位交付包目录（FR-038）。
+
+    接受**两种**选择方式（实跑反馈：用户天然会直接指向包目录本身）：
+      ① 所选目录本身就是包（自身含 `manifest.json`）→ 直接用它；
+      ② 所选目录是包的**上一层** → 其下**恰好一个**含 `manifest.json` 的子目录。
+    多个并列包仍判歧义（不猜）。
 
     返回 (包目录 or None, 问题清单)。
     """
     root = Path(import_dir)
     if not root.exists() or not root.is_dir():
         return None, [f"导入目录不存在或不是目录：{root}"]
+    if (root / "manifest.json").exists():
+        return root, []
     candidates = sorted(
         p for p in root.iterdir() if p.is_dir() and (p / "manifest.json").exists()
     )
@@ -171,11 +178,11 @@ def locate_package(import_dir: Path) -> Tuple[Optional[Path], List[str]]:
         return candidates[0], []
     if not candidates:
         return None, [
-            f"未找到交付包（{root} 下没有含 manifest.json 的子目录）。"
-            "请确认选择的是交付包的**上一层**目录"
+            f"未找到交付包（{root} 下既无 manifest.json，也没有含 manifest.json 的子目录）。"
+            "请选择交付包目录，或它所在的上一层目录"
         ]
     return None, [
         "检测到多个交付包，位置不明确："
         + "；".join(str(p.name) for p in candidates)
-        + "。请让所选目录下只保留一个交付包"
+        + "。请让所选目录下只保留一个交付包（或直接选择其中一个包目录）"
     ]

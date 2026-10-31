@@ -163,3 +163,22 @@ def test_check_path_length_warns_on_long_path(tmp_path):
     assert ok is False and "MAX_PATH" in detail
     ok_short, _ = W.check_path_length(tmp_path / "short")
     assert ok_short is True
+
+def test_locate_package_accepts_bundle_dir_itself(tmp_path):
+    """热修（2026-11-01）：用户直接指向**包目录本身**也必须可用（实跑报错复现点）。"""
+    pkg = tmp_path / "20261101_002051"
+    pkg.mkdir()
+    (pkg / "manifest.json").write_text("{}", encoding="utf-8")
+    bundle, problems = P.locate_package(pkg)
+    assert bundle == pkg and problems == [], "指向包目录本身时应直接命中"
+    # 上一层仍可用（行为不回退）
+    bundle2, problems2 = P.locate_package(tmp_path)
+    assert bundle2 == pkg and problems2 == []
+
+
+def test_locate_package_error_message_mentions_both_ways(tmp_path):
+    """报错文案须同时给出两种可选方式（避免像旧文案那样把人引向唯一解）。"""
+    bundle, problems = P.locate_package(tmp_path)
+    assert bundle is None
+    assert "manifest.json" in problems[0]
+    assert "上一层" in problems[0]

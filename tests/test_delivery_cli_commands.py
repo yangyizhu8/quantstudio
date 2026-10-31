@@ -77,3 +77,19 @@ def test_cli_progress_signature_matches_call_sites():
         assert "enabled" not in args, f"发现漂移调用点：_Progress({args})"
         if args.strip():
             assert "quiet=" in args, f"调用点参数可疑：_Progress({args})"
+
+def test_cli_verify_accepts_bundle_dir_directly(tmp_path, monkeypatch):
+    """用户实跑路径复现：`verify --import-dir <包目录>`（而非上一层）必须通过。"""
+    server = Env(tmp_path / "server", monkeypatch)
+    bundle = server.make_package()
+    cfg = str(server.config_root)
+
+    monkeypatch.setattr("quantstudio._paths.DATA_ROOT", server.root, raising=False)
+    monkeypatch.setenv("QUANTSTUDIO_DATA_ROOT", str(server.root))
+    monkeypatch.setenv("QS_WRITE_LOCK_DIR", str(tmp_path / "_lock"))
+
+    assert cli.main(["verify", "--import-dir", str(bundle), "--config-dir", cfg,
+                     "--quiet", "--json"]) == Exit.OK
+    # 上一层仍可用（不回退）
+    assert cli.main(["verify", "--import-dir", str(bundle.parent), "--config-dir", cfg,
+                     "--quiet", "--json"]) == Exit.OK
