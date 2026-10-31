@@ -22,14 +22,14 @@
 
 | # | 缺陷 | 客户级别 | 本方 Verdict | 判型（铁律18） | 修复落点 | commit | 验证结论 |
 |---|---|---|---|---|---|---|---|
-| 1 | DuckDBWriter 大表 UPSERT 卡死 | P0 | **likely valid, needs reproduction** | 性能鲁棒型 | `writers.py`：T2 路径去 `RETURNING 1`（changed 审计退役，全仓无下游消费）+ `_apply_conn_spill_defaults`（temp_directory 兜底 + `QS_DUCKDB_MEMORY_LIMIT` env 门控） | `5655fb4` | **partial**（SQL 形态/兜底配置/20 万行护栏已绿；447 万行生产挂起未本机复刻，客户 env 实际取值待回访） |
+| 1 | DuckDBWriter 大表 UPSERT 卡死 | P0 | **likely valid, needs reproduction**（2026-10-30 回访：**env 取值已固定＝T2 关闭态**；沙箱真规模 4-pass 357 批**零退化零冻结**，但**客户现场卡死未在任何环境复现** ⇒ 归因收窄至客户现场专有因子） | 性能鲁棒型 | `writers.py`：T2 路径去 `RETURNING 1`（changed 审计退役，全仓无下游消费）+ `_apply_conn_spill_defaults`（temp_directory 兜底 + `QS_DUCKDB_MEMORY_LIMIT` env 门控） | `5655fb4` | **partial**（防御性修复已落码；**T2 收益实测 ≈20 倍**（507.2s→25.0s／4.45M 次重复 upsert）；引擎侧修复**非根治项**——客户侧主处置＝开 T2 + 重建库回收死元组 + 串行 + 降批；关闭判据＝客户现场 env 值 + 「2018 起」复跑过 357 批不冻结） |
 | 2 | qfq bootstrap 播种与校验同轮竞态 | P1 | **valid（根因修正：控制流缺陷，非竞态）** | 纯恢复型 | `qfq_resident_orchestrator.py:1691-1709` fail-closed 块移入「复检未过」分支 | `5655fb4` | verified（红败→绿；负向硬门 ×2：真失败路径仍 fail-closed held） |
 | 3 | `supersede_stale_intents` 永久作废可恢复 intent | P1 | **valid** | 纯恢复型 | 同文件 `supersede_stale_intents` 排除 `finalized_held` + 每键过继最大 candidate 给新周期（经 gate 重裁）+ `begin_cycle` 重排 | `5655fb4` | verified（红败 ×2→绿；死周期/orphan 照旧清障负向） |
 | 4 | `_skip_security` 留 `in_progress` 毒化 gate | P1 | **valid** | 纯恢复型 | 同文件 `_skip_security` 显式回退 `pending` + 清 claim 租约（CAS 守卫仅 in_progress 态） | `5655fb4` | verified（红败→绿；非 in_progress 不覆盖、跨世代不动） |
 | 5 | GUI 只有水位线列、无数据止点列 | P1 | **invalid（客户 HEAD `606e688` 已含 FP-1/FP-2 修复，2026-10-18）** | — | 不改码 | — | 客户现象表自身画出了「数据止点」列且值为 2026-10-23；建议客户核对 GUI 运行构建版本 |
 | 6 | qfq 周期跨资产类别污染 | P1 | **valid** | 行为修正型（保守口径） | 同文件 `_claim_and_merge` 资产域守卫 + `_asset_domain_ready_map`（EXISTS LIMIT 1，探测 fail-open） | `5655fb4` | verified（红败→绿；域有 1 行即放行，防过度限定） |
 | 7 | `advance_watermark` 无防倒退守卫 | P2 | **valid** | 行为修正型（守卫） | `writers.py::_advance_watermark_locked` + `qfq_resident_orchestrator.py::_advance_watermark`（含/无 `last_run_id` 两形态）：`last_date=GREATEST(COALESCE(旧行,新值),新值)` | `2707414` | verified（红败 ×2→绿；旧行 NULL 首写不吞） |
-| 8 | MCP `fetch_page` 不支持日期过滤 | P2 | **valid（服务端限制属实）** | 纯性能型（判型依据=对拍门） | `mcp_adapter.py`：`_fetch_export_passthrough` 透传归一化时间窗（`_norm_window_date`，None=不下推）+ `export_passthrough_tables` 显式清单路由（默认 `sw_daily`/`sw_weight`） | `2707414` | **partial**（路由与时间窗单测已绿；生产 export vs fetch_page「列/行/值三一致」真机对拍未执行——无生产 MCP server） |
+| 8 | MCP `fetch_page` 不支持日期过滤 | P2 | **valid（口径订正：服务端 fetch_page 实测**支持**日期过滤——客户实测的「无法按窗取数」是**引擎侧 `mcp/client.py` 未透传**；本轮已落出口径修正）** | 纯性能型（判型依据=对拍门，已过） | `mcp_adapter.py`：`_fetch_export_passthrough` 透传归一化时间窗（`_norm_window_date`，None=不下推）+ `export_passthrough_tables` 显式清单路由（默认 `sw_daily`/`sw_weight`）；**更优解候选＝引擎侧透传服务端 filters，待②审/用户裁定，本轮不擅改** | `2707414` | **verified**（2026-10-30 生产同源 MCP 通道真机对拍：列 15/15 且列序一致 · 行 8,673=8,673 · 键集合全等 · 逐列逐值零差异 · parquet sha256 与 manifest 一致；附 export `trade_date` 为 DATE 的落库 dtype 风险 ⇒ 清单启用与批量启用解耦） |
 | 9 | `qfq_orchestrator.freqs` 是死配置 | P2 | **valid** | 文档注释级（零行为改动） | `qfq_orchestrator_types.py`：字段块 + `validate()` 处标注「仅启动校验、不参与门控」 | `2707414` | verified（零代码路径变化；类型套件全绿） |
 | 10 | QualityAudit 与 writer gate 不对齐 | P2 | **valid** | 行为修正型（观测面） | `quality_audit.py`：EpsBackfillGap 读同一开关 `QS_AUTO_BACKFILL_EPS`（关→WARN 带补救指引 / 开→error） | `2707414` | verified（红败→绿；gate 开维持 error 负向） |
 | 11 | 质量门阈值对小样本过严 | P2 | **valid** | 行为修正型（判负线） | `daemon.py::_failure_gate` 末端 OR 豁免：`failed≤max_reject_abs_floor(200)` 且 `rate≤max_reject_hard_cap(0.05)`（`quality_gate.*` 可配，仅拒批通道） | `2707414` | verified（红败→绿；灾难率 50% / 超下限 250 / 拉取失败通道 / 配置归零 四重负向） |
@@ -77,14 +77,15 @@
 
 **编码委派纪律**：两批均**未委派 zcode_code、自行实施**并已在 fix.md 申报——五/六处改动皆为手术式小改，与评估逐行代码证据强耦合，委派的上下文重建成本高于直接实施。
 
-## 六、#1 / #8 的 partial 口径（如实声明，未决条件）
+## 六、#1 / #8 的终验状态（2026-10-30 回访实测更新；回执全件 `docs/evidence/firefly-visit-readout-20261030.md`）
 
-| 项 | 已完成 | 未完成（关闭条件） |
+| 项 | 已完成 | 状态 |
 |---|---|---|
-| **#1** 大表 UPSERT 卡死 | 防御性修复已落码（去 RETURNING + spill 兜底 + T2 运维指引）；SQL 形态/spill 配置/20 万行重叠批护栏单测全绿 | **447 万行生产挂起未本机复刻**（客户实测 8.5h 冻结不可在会话预算内复现）⇒ 客户需提供：①`QS_UPSERT_SKIP_IDENTICAL` 实际取值 ②2018 起全量重拉复跑**过 357 批不冻结**的进度与耗时读数 ⇒ 达标后方可由 partial 升 verified |
-| **#8** 大表 passthrough export 通道 | 路由（显式清单，默认 sw_daily/sw_weight）+ 时间窗透传（服务端下推）单测全绿；清单外表行为逐字节不变 | **真机对拍未执行**（无生产 MCP server）⇒ 客户需提供：export 与 fetch_page 同窗小样本的**列集合 / 行数 / 值三一致**读数 ⇒ 达标后方可由 partial 升 verified（该对拍亦为「纯性能型」判型的成立依据） |
+| **#8** 大表 passthrough export 通道 | 路由（显式清单，默认 sw_daily/sw_weight）+ 时间窗透传（服务端下推）单测全绿；清单外表行为逐字节不变；**2026-10-30 生产同源 MCP 通道真机对拍通过**——`qdb.sw_daily` 窗口 2026-09-01~2026-09-30：列 15/15 且**列序一致**、行 **8,673 = 8,673**、键集合全等（only_a=0/only_b=0）、日期归一后**逐列逐值零差异**、export parquet sha256 与 manifest 核验一致（`844961a0…`） | **verified**（附两项口径修正：①**服务端 fetch_page 实测支持日期过滤**——客户实测的「无法按窗取数」是**引擎侧未透传**（更优解候选＝引擎侧透传 filters，待裁，本轮不擅改）；②export `trade_date` 为 DATE ⇒ **落库 dtype 风险**，建议清单启用与批量启用解耦） |
+| **#1** 大表 UPSERT 卡死 | 防御性修复已落码（去 RETURNING + spill 兜底）；**env 取值已固定＝T2 关闭态**（进程空 + 全仓配置零命中）；**沙箱真规模 4-pass 复跑零退化零冻结**（447 万行 × 42 列 × 5 万行/批 × 357 批 = 17.85M 次冲突 upsert：head 5.539s→tail 4.791s，**growth 0.865**；四 pass 均值 5.398/5.680/4.749/4.839s）；**T2 收益实测**：对逐位一致重复写提速 ≈**20 倍**（507.2s→25.0s，−95.1%，4.45M 次重复 upsert；identical 臂；首轮对照因批次改值致 skip 路径未触发已作废公示） | **partial（维持）**——客户现场卡死**未在任何环境复现**（本机同规模 4 遍重写仍稳定 ≈5.2s/批 vs 客户 52s/批后冻结）⇒ 归因收窄至客户现场专有因子（历史全量拉取遗留死元组未回收 / daemon 并发 / 磁盘内存压力）；**引擎侧修复非根治项**，客户侧运维五条见回执 §1.4；关闭判据不变（客户现场 env 值 + 「2018 起」复跑过 357 批不冻结） |
 
-> 诚实性铁律声明：在客户实测读数到位前，**#1/#8 一律维持 partial**，不以单测全绿冒充生产验证；`QD-2026-0013` 条目 `status=open`（不冒充 closed），`QD-2026-0012` 亦同。
+> 诚实性铁律声明（更新）：**#8 已 verified**（生产同源通道实测三一致成立）；**#1 维持 partial**——客户现场读数未到，不以沙箱零退化冒充生产验证；`QD-2026-0013` 条目 `status=open` 不变（不冒充 closed）。
+> 复现固件（仓内）：`.specify/bugs/firefly-engine-defects-20261025/_bench_b1_upsert.py`（真规模 4-pass + identical 双臂）· `_cmp_export_vs_fetchpage.py`（三一致对拍）· `_probe_local_db.py`（本地库只读探针）。
 
 ## 七、12-客户运维域 · 案例登记
 
@@ -98,19 +99,19 @@
 | 证据 | 本件 §二~§六 · `.specify/bugs/firefly-engine-defects-20261025/{assessment,fix,test,fix-batch2,test-batch2}.md` · `tests/test_firefly_defects_batch1.py`（13 例）· `tests/test_firefly_defects_batch2.py`（14 例）· `knowledge/qmt/QD-2026-0012.md` · `knowledge/qmt/QD-2026-0013.md` |
 | 复现固件 | `tests/test_firefly_defects_batch1.py`（红→绿 7 败→201/201）· `tests/test_firefly_defects_batch2.py`（红→绿 6 败→203/203） |
 | 知识沉淀 | `QD-2026-0012`（qfq 编排器控制流缺陷族·engine/D3）· `QD-2026-0013`（duckdb 1.4.x 平台事实·engine/D4）——两条 `gate_rule` 已写明回归门与升级/回收纪律 |
-| 状态 | **代码侧闭环**（两批提交入库，前两笔已进 origin/main，R4 笔候统推 #8）｜ **客户侧未闭**（#1/#8 待终验）｜ 通知件 `N-20261027-01` 出稿候用户审定下发 |
+| 状态 | **代码侧闭环**（两批修复 + R4 沉淀 + 三件 docs，五笔提交已全部进 origin/main）｜ **客户侧未闭**（#1 待现场读数，partial；**#8 已 verified**）｜ 通知件 `N-20261027-01` 已按回访读数修订，出稿候用户审定下发 ｜ 回访回执 `docs/evidence/firefly-visit-readout-20261030.md` |
 
 ## 八、全案关闭条件声明
 
 **本案**在下列五项全部达成前**不得宣布闭环**：
 
-1. **推送出仓**：`f515263`（R4 沉淀笔）随统推 #8 推至 origin/main，并核对双远程一致（铁律 14 同步门同窗执行）——当前 origin/main=`6fc639a`，未推 5 笔含他线 4 笔；
-2. **客户终验①（#1）**：取得 `QS_UPSERT_SKIP_IDENTICAL` 实际取值 + 2018 起全量重拉复跑过 357 批不冻结的读数 ⇒ #1 由 partial 升 verified；
-3. **客户终验②（#8）**：取得 export vs fetch_page 同窗「列/行/值三一致」对拍读数 ⇒ #8 由 partial 升 verified；
-4. **客户通知下发**：`N-20261027-01`《修复完成通知》经用户审定后由用户转发下发（不可逆动作保留用户确认闸门；本节点只出稿，不代下发）；
+1. **推送出仓**：~~`f515263`（R4 沉淀笔）随统推 #8 推至 origin/main~~ → **已达成**（2026-10-31 核实：我方五笔 `5655fb4`/`2707414`/`f515263`/`62196c3`/`76e9e50` 均已在 origin/main 等 4 个远端引用内；双远程一致性由出仓窗口核对）；
+2. **客户终验①（#1）**：取得**现场** `QS_UPSERT_SKIP_IDENTICAL` 实际取值 + 2018 起全量重拉复跑过 357 批不冻结的读数 ⇒ #1 由 partial 升 verified（我方侧已就绪：env 口径固定＝T2 关闭态、沙箱 4-pass 零退化、T2 ≈20 倍量化、客户侧处置五条已写入通知件 §4.2）；
+3. **客户终验②（#8）**：~~取得 export vs fetch_page 同窗三一致读数~~ → **已达成**（2026-10-30 生产同源 MCP 通道实测：列 15/15+列序一致 · 行 8,673=8,673 · 键集合全等 · 逐值零差异 · sha256 一致 ⇒ **#8 已 verified**；遗留：export `trade_date` 为 DATE 的落库 dtype 风险 → 清单启用与批量启用解耦 + 更优解候选「引擎侧透传服务端 filters」待裁）；
+4. **客户通知下发**：`N-20261027-01`《修复完成通知》经用户审定后由用户转发下发（不可逆动作保留用户确认闸门；本节点只出稿，不代下发）——**通知件已按回访读数修订**（终验②销号 + 终验①补处置三条 + 口径说明）；
 5. **#5 客户侧澄清**：客户确认 GUI 运行构建版本（≥`606e688` 即含 FP-1/FP-2 数据止点列）；若仍缺列，按旧构建/旧进程排查（客户侧动作，我方只出排查判据）。
 
-以上第 2/3/5 项属客户侧动作，本节点**只出判据与核验清单，不代客户执行、不代客户判终验**；第 4 项保留用户确认闸门。任一项未达成时，本案状态维持「代码侧闭环 · 客户侧未闭」，禁止以单测或单方声明升级结论。
+以上第 2/5 项属客户侧动作，本节点**只出判据与核验清单，不代客户执行、不代客户判终验**；第 4 项保留用户确认闸门。任一项未达成时，本案状态维持「代码侧闭环 · 客户侧未闭」，禁止以单测或单方声明升级结论。
 
 ## 九、留痕与纪律
 
