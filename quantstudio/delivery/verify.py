@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from . import config as delivery_config
+from .config import resolve_config_root
 from . import manifest as M
 from . import probe as P
 from . import stats as S
@@ -196,7 +198,9 @@ def verify_bundle(
     now: Optional[datetime] = None,
 ) -> VerifyReport:
     started = time.monotonic()
-    config_root = Path(config_dir) if config_dir is not None else _REPO_ROOT / "config"
+    config_root = resolve_config_root(
+        Path(config_dir) if config_dir is not None else _REPO_ROOT / "config"
+    )
     root = Path(data_root) if data_root is not None else P.data_root()
     report = VerifyReport(ok=True)
 

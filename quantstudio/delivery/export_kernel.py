@@ -28,6 +28,7 @@ from . import probe as P
 from . import stats as S
 from . import winenv as W
 from . import verify as V
+from .config import resolve_config_root
 from .constants import (
     ALIGNMENT_RULES_REL,
     AUX_PATHS_REL,
@@ -335,7 +336,9 @@ def export_bundle(
     started = time.monotonic()
     export_dir = Path(export_dir)
     root = Path(data_root) if data_root is not None else P.data_root()
-    config_root = Path(config_dir) if config_dir is not None else _REPO_ROOT / "config"
+    config_root = resolve_config_root(
+        Path(config_dir) if config_dir is not None else _REPO_ROOT / "config"
+    )
     warnings: List[str] = []
     ts = _now(now)
 

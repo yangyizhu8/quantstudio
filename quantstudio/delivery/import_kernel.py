@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import config as delivery_config
+from .config import resolve_config_root
 from . import journal as J
 from . import manifest as M
 from . import probe as P
@@ -342,7 +343,9 @@ def import_bundle(
     now: Optional[datetime] = None,
 ) -> ImportResult:
     started = time.monotonic()
-    config_root = Path(config_dir) if config_dir is not None else _REPO_ROOT / "config"
+    config_root = resolve_config_root(
+        Path(config_dir) if config_dir is not None else _REPO_ROOT / "config"
+    )
     root = Path(data_root) if data_root is not None else P.data_root()
     result = ImportResult(ok=False)
 
@@ -531,7 +534,9 @@ def recover_journal(
     config_dir: Optional[Path] = None,
     progress: Optional[ProgressCB] = None,
 ) -> RecoveryResult:
-    config_root = Path(config_dir) if config_dir is not None else _REPO_ROOT / "config"
+    config_root = resolve_config_root(
+        Path(config_dir) if config_dir is not None else _REPO_ROOT / "config"
+    )
     root = Path(data_root) if data_root is not None else P.data_root()
     result = RecoveryResult(ok=False, action=action)
 

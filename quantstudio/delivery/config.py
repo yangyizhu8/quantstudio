@@ -89,3 +89,22 @@ def save(cfg: DeliveryConfig, config_dir: Optional[Path] = None) -> Path:
 def buttons_enabled(cfg: DeliveryConfig) -> Tuple[bool, bool]:
     """(导出按钮可用, 导入按钮可用)——壳层只读这里，禁止各自判空（FR-022）。"""
     return cfg.export_path() is not None, cfg.import_path() is not None
+
+def resolve_config_root(config_dir=None):
+    """把用户给的 `--config-dir` 归一为**配置根**（含 profiles/mcp_only/ 的那一层）。
+
+    实测坑（2026-11-01）：用户按直觉传 `config/profiles/mcp_only`，而内部表/水位真源
+    都按 `config_root / TABLE_MAP_REL` 解析 ⇒ 拼成 `profiles/mcp_only/profiles/mcp_only/...`。
+    两种都接受：
+      - root/profiles/mcp_only/questdb_table_map.json 存在 → root 就是配置根；
+      - root/questdb_table_map.json 存在（root 已是 profile 目录）→ 退两级回到 config/；
+      - 其它情况原样返回（由调用方按缺文件报错）。
+    """
+    root = Path(config_dir) if config_dir is not None else DEFAULT_CONFIG_DIR
+    marker = root / "profiles" / "mcp_only" / "questdb_table_map.json"
+    if marker.exists():
+        return root
+    if (root / "questdb_table_map.json").exists():
+        return root.parent.parent
+    return root
+

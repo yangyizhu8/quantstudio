@@ -182,3 +182,33 @@ def test_locate_package_error_message_mentions_both_ways(tmp_path):
     assert bundle is None
     assert "manifest.json" in problems[0]
     assert "上一层" in problems[0]
+
+def test_resolve_config_root_accepts_both_forms(tmp_path):
+    """热修（2026-11-01）：--config-dir 传「配置根」或「profile 目录」都必须归一正确。"""
+    from quantstudio.delivery import config as C
+
+    root = tmp_path / "config"
+    prof = root / "profiles" / "mcp_only"
+    prof.mkdir(parents=True)
+    (prof / "questdb_table_map.json").write_text("{}", encoding="utf-8")
+
+    assert C.resolve_config_root(root) == root
+    assert C.resolve_config_root(prof) == root, "传 profile 目录时应退两级回到 config/"
+
+
+def test_locate_and_config_root_end_to_end_via_cli(tmp_path, monkeypatch):
+    """两个热修点的组合复现：包目录直选 + profile 目录作 --config-dir ⇒ 必须 exit 0。"""
+    from quantstudio.delivery import cli
+    from quantstudio.delivery.constants import Exit
+    from tests.fixtures.delivery import Env
+
+    server = Env(tmp_path / "server", monkeypatch)
+    bundle = server.make_package()
+    prof_dir = str(server.config_root / "profiles" / "mcp_only")
+
+    monkeypatch.setattr("quantstudio._paths.DATA_ROOT", server.root, raising=False)
+    monkeypatch.setenv("QUANTSTUDIO_DATA_ROOT", str(server.root))
+    monkeypatch.setenv("QS_WRITE_LOCK_DIR", str(tmp_path / "_lock"))
+
+    assert cli.main(["verify", "--import-dir", str(bundle), "--config-dir", prof_dir,
+                     "--quiet", "--json"]) == Exit.OK
