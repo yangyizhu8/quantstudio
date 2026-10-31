@@ -10,8 +10,8 @@
 | 结论 | 数量 | 说明 |
 | --- | --- | --- |
 | ✅ 一致/兼容 | **36** | 签名逐参对得上（含默认值）或有等价实现证据 |
-| ⚠️ 差异 | **15** | A/B/C/E 已裁（E 已降级）＋ **F/G/H/I（批 1）／J/K/L（批 2＋W4 核）／M/N（批 3）为 2026-10-30 新发现**（详见 §四） |
-| 🔸 未取到文档 | **16** | Context7 每批 3 次配额所限，如实标注待补查（补查批 1 清 7（一致 3／差异 4）、批 2 清 4（一致 2／差异 2）、批 3 清 6（一致 4／差异 2）、批 4 清 6（全一致）、批 5 清 3（一致 2／差异 1）、批 6 清 2（差异 2）；另 5 条取得**存在性**证据但签名未取到；`get_current_data` 3 次配额用尽仍未命中） |
+| ⚠️ 差异 | **16** | A/B/C/E 已裁（E 已降级）＋ **F/G/H/I（批 1）／J/K/L（批 2＋W4 核）／M/N（批 3）为 2026-10-30 新发现**（详见 §四） |
+| 🔸 未取到文档 | **15** | Context7 每批 3 次配额所限，如实标注待补查（补查批 1 清 7（一致 3／差异 4）、批 2 清 4（一致 2／差异 2）、批 3 清 6（一致 4／差异 2）、批 4 清 6（全一致）、批 5 清 3（一致 2／差异 1）、批 6 清 2（差异 2）、批 7 清 1（差异 1）；另 5 条取得**存在性**证据但签名未取到；`get_current_data` 3 次配额用尽仍未命中） |
 | ⚠️ 判缺 | **1** | attribute_history（聚宽名混入候选） |
 | **合计** | **68** | = PTRADE 面 68 |
 
@@ -40,7 +40,7 @@
 | 17 | `get_current_data` | `()` | 未取到 | **🔸 W6 单独立批：3 次 Context7 查询配额用尽仍未命中该名**（三查分别返回 is_trade/get_snapshot/order 示例、get_fundamentals、get_stock_status/get_stock_info）⇒ 按三形态「查不到如实标注」处理，**不凭记忆作答** |
 | 18 | `get_current_kline_count` | `()` | 一致 | get_current_kline_count()：**无参**，取当前时间分钟 bar 数量（Context7 社区.md） |
 | 19 | `get_dominant_contract` | `(contract, date=None)` | 一致 | get_dominant_contract(contract, date=None)：返回 {'合约': {'corr_month_code','trade_date','month_contract_name'}}；date 支持 datetime/'YYYY-mm-dd'/'YYYYmmdd'，默认当前日期；**无主力合约数据权限时返回空 dict**（Context7 山西.md）⇒ 参数面逐参一致 |
-| 20 | `get_etf_info` | `(etf_code)` | 未取到 | 文档**存在性**已证（山西.md 示例含 `get_etf_info("510020.SS")`）⇒ 签名未取到 ⇒ 仍计未取到 |
+| 20 | `get_etf_info` | `(etf_code)` | 差异 S | get_etf_info(**etf_code**)：获取 ETF 信息，返回 dict；**适用环境：交易**（Context7 国盛.md 参数表）⇒ 参数面逐参一致（etf_code）；**环境面本地更宽松**（本地回测亦可调，与差异 H/Q 同族） |
 | 21 | `get_etf_list` | `()` | 一致 | get_etf_list() 无参、返回 list[str]、异常返回空 list（Context7 东莞/山西双源） |
 | 22 | `get_etf_stock_info` | `(etf_code, security)` | 未取到 | 配额未覆盖 |
 | 23 | `get_etf_stock_list` | `(etf_code)` | 差异 H | get_etf_stock_list(etf_code) → list 成分股；**适用环境：仅交易**（Context7 国盛.md）⇒ 本地回测亦可用＝**环境面本地更宽松** |
@@ -204,6 +204,18 @@
 | PTrade | `set_benchmark(security)`（api-reference/settings.md 英中双源） |
 
 位置调用等价、**关键字调用不兼容**＝差异 E（order_target）/N（get_stock_exrights）族的本地命名差异；另注：平台**仅 initialize() 可用**、不设默认沪深300 `000300.SS`——本地是否限制调用位置未核（与 W3 run_daily 同族行为面）。
+
+### S. `get_etf_info` 适用环境（2026-10-30 批 7 新发现）
+
+文档（国盛.md）：get_etf_info(etf_code) 返回 dict，**适用环境：交易** ⇒ 本地回测亦可调＝环境面本地更宽松（与差异 H/Q 同族）。
+
+## 六·补 W5 收官建议（2026-10-30 批 7 后）
+
+余 15 条经**补查批 1–7（共 21 次 Context7 查询）**均未命中任何独立签名条目（文档以示例/模板为主，未逐 API 列签名）：
+
+　　`check_limit`／`create_dir`／`current_price`／`get_business_type`／`get_cb_list`／`get_current_data`／`get_etf_stock_info`／`get_frequency`／`get_market_detail`／`get_market_list`／`get_security_info`／`get_trading_day_by_date`／`get_underlying_code`／`get_user_name`／`set_universe`
+
+**结论建议**：判为「**文档面系统性缺失**」（非查询配额问题）⇒ **保留「未取到文档」如实标注并结案**，不再无限续查；若后续需这些 API 的签名依据，改走他途（本地实现已按 PTrade 语义实现并经真实策略验证／必要时取官方 PDF 文档）。**待你方裁定是否收官**。
 
 ## 五、QS_ONLY 口径调整（随本件回写）
 
