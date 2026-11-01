@@ -70,3 +70,34 @@ knowledge_refill: [命中] QD-2026-0011（qd/D1/knowledge/qmt/QD-2026-0011.md，
 ① 本方案（待 ② 审）→ ② 独立审核，未过禁实施 → ③ 实施（分两步：函数+审计 → 迁移）→ ④ 验收（含黄金 sha256 一致）→ ⑤ 用户确认 → ⑥ 双仓推送。
 
 > 11-04 呈批素材之一（第 7 件）。
+---
+
+# 修订记录（2026-11-01，依存量盘点结论）
+
+> 本节为**追加式修订**，原文保留以便追溯。
+
+## R1 · 落点作废与替换（必读）
+
+| 原草案表述（本文件 §二） | 状态 | 修订后 |
+| --- | --- | --- |
+| 「新增 `quantstudio/backtest/libs/` 内 `code_key(code)`」 | ❌ **作废** | **复用/提升 `quantstudio/pipeline/aligner.py :: normalize_code`**（已存在，签名含 `fmt="identity"`）；禁在 `libs/` 另造第二套 |
+| 「新增 `day_key(ts_ms)` 与 `day_key_from_date(date_str)`」 | ❌ **作废** | **以 `quantstudio/backtest/providers/time_axis.py` 为唯一源**（`start_ms` / `end_ms` / `day_start_ms` / `is_day_start_ms`）；如需对外命名，仅导出**公共别名**，不新写实现 |
+| 「迁移全部调用点」 | ❌ **作废** | 迁移范围**收窄为生产代码**（批 1 `backtest/libs/`+`providers/`；批 2 `pipeline/`；批 3 `scripts/`）；`strategies/**` **禁改**（铁律 07）；`tests/**` 只补用例 |
+
+## R2 · 排期（照准）
+
+| 批 | 范围 | 门禁 |
+| --- | --- | --- |
+| **批 0** | 函数提升 + `scripts/check_key_normalization.py` 审计（新代码 **BLOCK** / 存量 **WARN** / **零迁移**） | 审计可运行、误报可接受 |
+| 批 1 | `backtest/libs/` + `backtest/providers/`（含 `coverage_gate.py` 自查） | **黄金 sha256 一致** |
+| 批 2 | `pipeline/` | 同上 |
+| 批 3 | `scripts/` | 同上 |
+| 不迁 | `strategies/**`、`tests/**` | — |
+
+> **批 0 开工前置 = 本修订稿过 11-04 ②审 + ⑤ 用户确认**（未过不开工）。
+
+## R3 · 盘点读数口径声明
+
+- 盘点读数（code 后缀 **261 文件 / 5,515 处**；日键 **44 文件 / 230 处**）为**上界**（正则较粗，含字面量与非联接用途）。
+- **权威口径 = 批 0 审计脚本产出的存量 WARN 报告**，取代上界读数。
+- 盘点明细见 `docs/evidence/key-normalization-inventory-20261101.md`。
