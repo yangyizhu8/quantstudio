@@ -1,0 +1,9 @@
+[
+  {
+    "table": "stock_minutes",
+    "day": "2026-07-07",
+    "status": "fail_exception",
+    "error": "KeyError: 'adj_factor'",
+    "elapsed_sec": 82.7
+  }
+]

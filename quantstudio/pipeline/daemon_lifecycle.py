@@ -225,6 +225,11 @@ def write_run_state(**fields):
     （attempts/exhausted/success）——只增观测字段，不参与任何判定。
     B6（六步③·2026-10-23）：附带写作用域统计 `write_scope`
     （active/entered/conflicts/waits/waited_s/timeouts/deferred）——同样只增观测。
+    S1（四案①·2026-11-01）：附带我水位解耦统计 `watermark_decouple`
+    （own_decoupled/own_validation_blocked/foreign/unknown/poison_rejected/
+    poison_cleared）——S4 每日读数 poison_count 口径 = poison_rejected
+    （docs/evidence/s4-daily-readout-spec-20261031.md）。同样只增观测，
+    绝不参与任何门禁/判定。
     为什么：作用域让行与 defer 是新的写路径行为，必须可观测，否则「defer 了多少批、
     等了多久」无从判断；但绝不允许这些数字参与任何门禁/判定。
     """
@@ -239,6 +244,11 @@ def write_run_state(**fields):
     try:
         from quantstudio.pipeline.writers import price_scope_stats
         current["write_scope"] = price_scope_stats()
+    except Exception:
+        pass
+    try:
+        from quantstudio.pipeline.writers import watermark_decouple_stats
+        current["watermark_decouple"] = watermark_decouple_stats()
     except Exception:
         pass
     _atomic_write_json(path, current)

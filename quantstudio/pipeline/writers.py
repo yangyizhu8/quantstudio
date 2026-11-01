@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import abc
 import contextlib
+import io
 import json
 import logging
 import os
 import sqlite3
 import threading
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -124,6 +126,45 @@ def last_write_context() -> dict:
     return dict(_LAST_WRITE_CTX)
 
 
+def _fmt_ms(v) -> str:
+    """M1（方案④第一批·2026-10-30）：毫秒 epoch → 本地可读时间（失败回退原值字符串）。"""
+    try:
+        return datetime.fromtimestamp(int(v) / 1000.0).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return str(v)
+
+
+def _describe_write_scope(info: dict) -> str:
+    """M1（方案④第一批·2026-10-30）：把失败写的「写入作用域」拼成一行可人判读描述。
+
+    取可得项：table / batch_id / path / task（写上下文若有）+ 写时段 t_min~t_max
+    （本线程 A1 登记条目）+ 冲突 bar 时刻；缺失项省略而非填占位。目的：让
+    「同进程并行（scope 带任务批/path）vs 跨进程候选」可由人判读——替代 peers_n=0
+    的盲猜（F4）。只读不改判定；自身异常由调用方兜住（观测失败不得影响写路径）。
+    """
+    parts = []
+    if info.get("table"):
+        parts.append(f"table={info['table']}")
+    if info.get("batch_id"):
+        parts.append(f"batch={info['batch_id']}")
+    if info.get("path"):
+        parts.append(f"path={info['path']}")
+    if info.get("task"):
+        parts.append(f"task={info['task']}")
+    try:
+        ent = _WRITER_REGISTRY.get(
+            (os.getpid(), threading.get_ident(), info.get("table")))
+    except Exception:
+        ent = None
+    if ent is not None:
+        lo, hi = ent.get("t_min"), ent.get("t_max")
+        if isinstance(lo, int) and isinstance(hi, int):
+            parts.append(f"tseg={_fmt_ms(lo)}~{_fmt_ms(hi)} [{lo}~{hi}]")
+    if isinstance(info.get("conflict_time"), int):
+        parts.append(f"conflict_bar={_fmt_ms(info['conflict_time'])}")
+    return " ".join(parts)
+
+
 # ── §10.2 修正（2026-10-12 实战暴露：全局最近槽会与失败写错配）────────────────
 # 首例实战（10:18:43 stock_minutes 冲突）显示 ctx_table=sw_weight / serial=False ——
 # 即「最近一次写」并非「失败的那次写」⇒ 该字段误导。修正：在写路径的 except 中
@@ -161,6 +202,23 @@ def record_write_failure(exc: BaseException) -> None:
             info["peers_n"] = len(_peers)
             if not _peers:
                 info["cross_process_candidate"] = True
+        # M1（方案④第一批·2026-10-30）：冲突上下文补全——表名/写入作用域不再随 key
+        # 丢失（F4）。只增字段与日志行：不改既有键语义、is_write_conflict、A6 重试、
+        # 异常类型/退出码/写入顺序；缺失项省略不填占位（见 _describe_write_scope）。
+        # cross_process_candidate 误报的**判定修正**属 M3/另案，本批不动——新字段仅使
+        # 「同进程 vs 跨进程」可由人判读（scope 带 batch/path ⇒ 同进程并行可判）。
+        if info.get("conflict_key") and info.get("table"):
+            try:
+                info["conflict_table"] = info["table"]
+                info["conflict_scope"] = _describe_write_scope(info)
+                logger.warning(
+                    "[writers] write-write conflict 上下文：conflict_table=%s "
+                    "conflict_scope=%s conflict_key=%s peers_n=%s cross_process_candidate=%s",
+                    info["conflict_table"], info["conflict_scope"],
+                    info.get("conflict_key"), info.get("peers_n", "-"),
+                    info.get("cross_process_candidate", "-"))
+            except Exception:
+                pass
         _LAST_WRITE_FAILURE.clear()
         _LAST_WRITE_FAILURE.update(info)
     except Exception:
@@ -445,6 +503,41 @@ def price_scope_mark_deferred() -> None:
         pass
 
 
+def _register_batch_write_scope(table: str, path: str, batch_id: str, df) -> str:
+    """M2（方案④第一批·新增检测型）：分钟表批写作用域登记 + 写前重叠计数（只增观测）。
+
+    G3 定谳（2026-10-30）：批写路径（write→_write_locked）原只有 A1 单元登记
+    （price_write_enter），无 B1 作用域登记 ⇒ _SCOPE_STATS 对批写段全盲（F5）、
+    daemon 侧 B3/B4 写前让行对任务批写重叠不可见（C2）。
+    - 只增观测：登记后照常写入——不加锁、不等待、不 defer、不改写入语义/事务边界；
+      写前 price_scope_conflicts 仅计数（真实重叠窗口 ⇒ conflicts 不再恒 0）；
+      同进程双批写经 table_write_lock 串行 ⇒ 计 0 属「已核实零」非盲区。
+    - 域限定 _SERIAL_WRITE_TABLES（现 = stock_minutes/etf_minutes，不扩面）；
+      QS_PRICE_WRITE_SCOPE=0 ⇒ 不登记不计数（逐位回退旧行为）。
+    - 已登记作用域对 daemon 既有 B3/B4 写前让行可见（该机制 2026-10-23 已上线，
+      本批未改其代码）；回退开关同用 QS_PRICE_WRITE_SCOPE。
+    """
+    try:
+        if table not in _SERIAL_WRITE_TABLES or not _scope_enabled():
+            return ""
+        codes = None
+        t_min = t_max = None
+        if df is not None:
+            if "code" in getattr(df, "columns", []):
+                codes = set(df["code"].astype(str))
+            if "time" in getattr(df, "columns", []):
+                _t = pd.to_numeric(df["time"], errors="coerce")
+                if _t.notna().any():
+                    t_min, t_max = int(_t.min()), int(_t.max())
+        price_scope_conflicts(table, codes, t_min, t_max)   # 观测计数（不等待不 defer）
+        import uuid as _uuid   # 局部导入：避免顶部新依赖（与 _retry_backoff 同风格）
+        return price_scope_enter(
+            "batch:%s:%s:%s" % (table, batch_id, _uuid.uuid4().hex[:8]),
+            table, codes=codes, t_min=t_min, t_max=t_max, path=path)
+    except Exception:
+        return ""
+
+
 def concurrent_writers(table: str, time_ms: Optional[int] = None,
                        window_s: float = 180.0) -> List[dict]:
     """返回**其他**写者（同表；活跃中或 window_s 内刚结束；给了 time_ms 则要求时段覆盖）。"""
@@ -468,6 +561,168 @@ def concurrent_writers(table: str, time_ms: Optional[int] = None,
     except Exception:
         pass
     return out
+
+
+# ── S1（四案①·2026-11-01）：写入自锁环修复——失败分类 + 水位推进解耦 ──────────
+# 方案 docs/design-write-selflock-and-a4-repair-20261101.md §2-S1/§2.2（②审硬门，
+# own/foreign/unknown 三值判据与行级校验口径照抄禁改）；M1/M2 字段（④案）只消费不改。
+# 自锁环（缺陷态闭环，etf_daily 冻 09-04 落后 57 天实证）：部分写入 → 提交期
+# write-write conflict → 整批 FAILED → 水位不推进 → 下轮重拉同窗 → 再冲突 → 循环。
+# 修复形态：A6 重试耗尽后做 own 判定 + 行级校验——own 型且窗口数据完整（按日
+# COUNT(DISTINCT code) 落健康基准 ±5%）⇒ 吞冲突按「本批已完整落库」返回，上游
+# （daemon 成功路径）正常推进水位 ⇒ 环解；foreign/unknown/校验不过 ⇒ 原样抛出
+# （不推进），并以 poison 有界（计数+告警+窗口快速拒绝）防无限重拉。
+# 回退阀 QS_WATERMARK_DECOUPLE=0 ⇒ 本节全部新分支不进入（逐位改动前行为）。
+_WM_DECOUPLE_STATS: Dict[str, int] = {
+    "own_decoupled": 0,           # own + 行级校验过 ⇒ 解耦返回（水位由上游正常推进）
+    "own_validation_blocked": 0,  # own 但行级校验不过 ⇒ 不推进（该窗口 poison 计数 +1）
+    "foreign": 0,                 # foreign 型 ⇒ 不推进（让行归 S2/下轮）
+    "unknown": 0,                 # 信息不足 ⇒ 按 foreign 保守处置（不推进）
+    "poison_rejected": 0,         # poison 窗口快速拒绝次数（S4 poison_count 当日口径）
+    "poison_cleared": 0,          # poison 窗口自愈（数据补齐后校验过 ⇒ 清除放行）
+}
+
+
+def _wm_stats_inc(key: str, n: int = 1) -> None:
+    """S1 观测计数（只增；绝不参与任何门禁/判定）。"""
+    try:
+        _WM_DECOUPLE_STATS[key] = int(_WM_DECOUPLE_STATS.get(key, 0)) + n
+    except Exception:
+        pass
+
+
+def watermark_decouple_enabled() -> bool:
+    """S1 回退阀：QS_WATERMARK_DECOUPLE **默认开**（缺陷修复型——修复本体不应默认
+    关，方案 §9.1 定案）；置 0 ⇒ 冲突耗尽照旧抛出、poison 门不查（逐位回退）。"""
+    try:
+        return os.environ.get("QS_WATERMARK_DECOUPLE", "1") != "0"
+    except Exception:
+        return True
+
+
+def _poison_threshold() -> int:
+    """poison 达阈 = 连续 own 冲突且行级校验不过的次数上限（默认 3，对齐 A6 上限；
+    env QS_POISON_MAX 可调，下限 1 防呆）。"""
+    try:
+        return max(1, int(os.environ.get("QS_POISON_MAX", "3")))
+    except Exception:
+        return 3
+
+
+def watermark_decouple_stats() -> dict:
+    """只读：S1 解耦统计（daemon run_state / S4 每日读数消费；不参与判定）。
+
+    S4 poison_count 口径（docs/evidence/s4-daily-readout-spec-20261031.md）：
+    poison_rejected = 当日（本 daemon 生命周期）被 poison 机制拦下的批次计数；
+    窗口级持久计数见库旁 watermark_poison.json 各键 poison_count 字段。
+    """
+    try:
+        return dict(_WM_DECOUPLE_STATS)
+    except Exception:
+        return {}
+
+
+def _df_time_window(df):
+    """S1 辅助：本批 df 的 time 域 [t_min, t_max]（毫秒 int；缺列/空 ⇒ (None, None)）。"""
+    try:
+        if df is None or len(df) == 0 or "time" not in getattr(df, "columns", []):
+            return None, None
+        _t = pd.to_numeric(df["time"], errors="coerce")
+        if not _t.notna().any():
+            return None, None
+        return int(_t.min()), int(_t.max())
+    except Exception:
+        return None, None
+
+
+def _df_code_set(df):
+    """S1 辅助：本批 df 的 code 字符串集合（缺列/异常 ⇒ None）。"""
+    try:
+        if df is None or len(df) == 0 or "code" not in getattr(df, "columns", []):
+            return None
+        return set(df["code"].astype(str))
+    except Exception:
+        return None
+
+
+def _parse_conflict_key(key):
+    """S1 辅助：conflict_key "code, time_ms, freq" → (code, time_ms)；不可解析 ⇒ None。"""
+    try:
+        parts = [p.strip() for p in str(key).split(",")]
+        if len(parts) < 2:
+            return None
+        return parts[0], int(parts[1])
+    except Exception:
+        return None
+
+
+def classify_write_conflict_ownership(table: str, batch_id: str, df,
+                                      failure_info: Optional[dict] = None) -> str:
+    """S1 三值判定（§2.2 ②审硬门，判据照抄禁改）：'own' / 'foreign' / 'unknown'。
+
+    - **own**     = conflict_table == 本表 **且** conflict_scope 含 "batch=<本批>"
+                    **且** 冲突键落在本批写入窗口内（code ∈ 本批码集 且
+                    time ∈ [t_min, t_max]）**且** peers_n == 0（无并发写者指认）；
+    - **foreign** = M1 字段可得但任一 own 条件不满足——scope 不符（表不同 /
+                    scope 不含本批）/ 键在窗外 / peers_n>0（登记表实条目，
+                    他方写者可靠指认）；
+    - **unknown** = 信息不足（conflict_* 字段缺失 / 失败槽与本批错配 / 键不可
+                    解析 / 本批窗口不可得）——**保守按 foreign 处置（不推进）**。
+
+    纪律（方案钉死）：peers_n=0 的 cross_process_candidate 误报已证（A1b 注释、
+    实弹 10-23 07:34）⇒ **绝不单用「peers_n=0 ⇒ 跨进程」判 foreign**；peers_n>0
+    是登记表实条目方可作 foreign 依据。conflict_scope 为本失败写自身作用域
+    （M1 形态），对端任务不可见 ⇒ 「跨任务」由 peers 指认承载（peers_n>0）。
+    失败槽是进程级全局槽（_LAST_WRITE_FAILURE），并发下可能被他批覆盖 ⇒ 与
+    本批 (table, batch_id) 不符即 unknown（错配防线）。
+    """
+    try:
+        if not table or not batch_id:
+            return "unknown"
+        info = dict(failure_info) if failure_info is not None else last_write_failure()
+        # 错配防线：失败槽非本批的失败 ⇒ 信息不足（保守）
+        if info.get("table") != table or str(info.get("batch_id") or "") != str(batch_id):
+            return "unknown"
+        ct = info.get("conflict_table")
+        cs = info.get("conflict_scope")
+        ck = info.get("conflict_key")
+        peers_n = info.get("peers_n")
+        if not ct or not cs or not ck or peers_n is None:
+            return "unknown"
+        t_min, t_max = _df_time_window(df)
+        code_set = _df_code_set(df)
+        if t_min is None or code_set is None:
+            return "unknown"
+        parsed = _parse_conflict_key(ck)
+        if parsed is None:
+            return "unknown"
+        kcode, ktime = parsed
+        own = (str(ct) == str(table)
+               and ("batch=%s" % batch_id) in str(cs)
+               and kcode in code_set
+               and t_min <= ktime <= t_max
+               and int(peers_n) == 0)
+        return "own" if own else "foreign"
+    except Exception:
+        return "unknown"
+
+
+class WindowPoisonedError(RuntimeError):
+    """S1（四案①·2026-11-01）：本批写入窗口已被 poison（连续 own 冲突且行级校验
+    不过达阈）⇒ 快速拒绝（不写、不冲突、不重试）。任务侧表现为该批 FAILED、
+    水位不推进；数据补齐后（人工补拉/离线回填）_wm_poison_gate 重校验通过即
+    自愈清除。人工解除路径 = 删库旁 watermark_poison.json 对应键。"""
+
+    def __init__(self, table: str, t_min, t_max, poison_count, reason=""):
+        super().__init__(
+            f"写入窗口已 poison（table={table} window={_fmt_ms(t_min)}~"
+            f"{_fmt_ms(t_max)} poison_count={poison_count} reason={reason}）"
+            f"⇒ 本批快速拒绝（S1 有界，防无限重拉）；数据补齐后自动解除")
+        self.table = table
+        self.t_min = t_min
+        self.t_max = t_max
+        self.poison_count = poison_count
+        self.reason = reason
 
 
 # ── A6（六步③·2026-10-22）：有界冲突重试（写写冲突属可重试瞬时并发）──────────
@@ -1290,6 +1545,266 @@ class DuckDBWriter(BaseWriter):
         m = re.search(rf"\b{re.escape(col)}\s+(BIGINT|INTEGER|DOUBLE|VARCHAR|BOOLEAN|TIMESTAMP)", ddl, re.IGNORECASE)
         return m.group(1).upper() if m else "VARCHAR"
 
+    # ------------------------------------------------------------------
+    # S1（四案①·2026-11-01）：行级校验 + poison 有界 + 冲突耗尽解耦决策。
+    # 域限定：含 code+time 列的数据表（价格表族）；passthrough 路径无水位语义
+    # 不参与；查询全部走 execute_read（复用持久连接，不新增连接、不触表锁）。
+    # ------------------------------------------------------------------
+    _WM_TOL = 0.05                 # 行级校验容差（健康基准 ±5%，方案 §2.2 钉死）
+    _WM_MIN_SAMPLE_DAYS = 8        # 证据量下限（铁律 25：<8 日不做结构推断，fail-closed）
+    _POISON_FILENAME = "watermark_poison.json"
+
+    @staticmethod
+    def _wm_tz_off_ms() -> int:
+        """本地时区 UTC 偏移（毫秒）——「日」分组统一按本地日界（与 _fmt_ms 同口径），
+        避免 UTC 日界把本地同一交易日拆进两组（CST 08:00 前后分家）。"""
+        try:
+            off = datetime.now().astimezone().utcoffset()
+            return int(off.total_seconds() * 1000) if off is not None else 0
+        except Exception:
+            return 0
+
+    def _wm_daily_code_counts(self, table: str,
+                              t_min=None, t_max=None) -> Dict[int, int]:
+        """按本地交易日分组统计 COUNT(DISTINCT code)。t_min/t_max 给出则限定窗口。"""
+        tz = self._wm_tz_off_ms()
+        sql = (f"SELECT ((time + {tz}) // 86400000) AS d, COUNT(DISTINCT code) AS c "
+               f"FROM {table}")
+        params = []
+        if t_min is not None and t_max is not None:
+            sql += " WHERE time >= ? AND time <= ?"
+            params = [int(t_min), int(t_max)]
+        sql += " GROUP BY d ORDER BY d"
+        rows = self.execute_read(sql, params or None)
+        return {int(r[0]): int(r[1]) for r in rows}
+
+    def _wm_health_median(self, table: str):
+        """健康基准 = 全表按日 COUNT(DISTINCT code) 的中位数（方案 §2.2 口径）。
+
+        返回 (median, sample_days)；查询异常 ⇒ (None, 0)（fail-closed）。"""
+        try:
+            import statistics
+            counts = list(self._wm_daily_code_counts(table).values())
+            if not counts:
+                return None, 0
+            return float(statistics.median(counts)), len(counts)
+        except Exception as e:
+            logger.warning("[S1] 健康基准计算失败（fail-closed 按校验不过）: %s: %s",
+                           type(e).__name__, e)
+            return None, 0
+
+    def _wm_expected_open_local_days(self, t_min, t_max):
+        """窗口内应开市的本地日集合（trade_calendar；表空/异常 ⇒ None 降级口径）。"""
+        try:
+            tz = self._wm_tz_off_ms()
+            rows = self.execute_read(
+                "SELECT cal_date FROM trade_calendar WHERE is_open = TRUE")
+            days = set()
+            for (cal,) in rows:
+                s = str(int(cal))
+                dt = datetime.strptime(s, "%Y%m%d")
+                days.add(int((int(dt.timestamp() * 1000) + tz) // 86400000))
+            if not days:
+                return None
+            lo = int((int(t_min) + tz) // 86400000)
+            hi = int((int(t_max) + tz) // 86400000)
+            return {d for d in days if lo <= d <= hi}
+        except Exception:
+            return None
+
+    def _wm_decouple_validate(self, table: str, t_min, t_max):
+        """S1 own 推进的**前置硬门**：窗口内 COUNT(DISTINCT code)（按日粒度）须落在
+        健康基准（全表按日中位数）±5%；样本 <8 日 fail-closed；交易日历可得时
+        窗口内不得有缺失开市日（防「码数达标但中段整日缺失」的虚进），日历不可得
+        ⇒ 降级要求窗口首末日均有数据（reason 标 degraded）。
+
+        返回 (ok: bool, detail: dict)；任何查询失败 ⇒ (False, reason=query_error)。
+        收紧声明：按日粒度核算属方案原文「（或对应粒度）」授权范围内的 fail-closed
+        收紧（跨日多窗口下窗口整体 distinct 会被同批码集重复计数掩盖整日缺失），
+        不放宽任何判据。
+        """
+        try:
+            median, sample_days = self._wm_health_median(table)
+            if median is None or sample_days < self._WM_MIN_SAMPLE_DAYS:
+                return False, {"reason": "insufficient_history",
+                               "sample_days": sample_days}
+            daily = self._wm_daily_code_counts(table, t_min, t_max)
+            if not daily:
+                return False, {"reason": "no_data_in_window", "median": median}
+            lo_bound, hi_bound = median * (1 - self._WM_TOL), median * (1 + self._WM_TOL)
+            bad = {d: c for d, c in daily.items() if not (lo_bound <= c <= hi_bound)}
+            if bad:
+                return False, {"reason": "code_count_out_of_tolerance", "median": median,
+                               "bad_days": dict(list(bad.items())[:8])}
+            expected = self._wm_expected_open_local_days(t_min, t_max)
+            if expected is None:
+                # 降级口径（日历不可得）：窗口首末日必须有数据，否则视为不完整
+                tz = self._wm_tz_off_ms()
+                first = int((int(t_min) + tz) // 86400000)
+                last = int((int(t_max) + tz) // 86400000)
+                if first not in daily or last not in daily:
+                    return False, {"reason": "boundary_day_missing_degraded",
+                                   "median": median}
+                return True, {"reason": "ok_degraded_calendar_unavailable",
+                              "median": median, "days": len(daily)}
+            missing = sorted(expected - set(daily))
+            if missing:
+                return False, {"reason": "missing_open_days", "median": median,
+                               "missing_days": missing[:8]}
+            return True, {"reason": "ok", "median": median, "days": len(daily)}
+        except Exception as e:
+            return False, {"reason": "query_error", "error": f"{type(e).__name__}: {e}"}
+
+    def _wm_poison_path(self) -> Path:
+        """poison 持久化文件：库旁 watermark_poison.json（随库隔离；零 DDL，铁律 24）。"""
+        return Path(str(self.db_path)).parent / self._POISON_FILENAME
+
+    def _wm_poison_load(self) -> dict:
+        try:
+            with io.open(str(self._wm_poison_path()), "r", encoding="utf-8") as f:
+                state = json.load(f)
+            return state if isinstance(state, dict) else {}
+        except Exception:
+            return {}
+
+    def _wm_poison_save(self, state: dict) -> None:
+        """原子写（tmp + os.replace），与 daemon_lifecycle._atomic_write_json 同形态。"""
+        p = self._wm_poison_path()
+        tmp = p.with_suffix(p.suffix + f".tmp.{os.getpid()}.{uuid.uuid4().hex[:8]}")
+        with io.open(str(tmp), "w", encoding="utf-8", newline="\n") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        os.replace(str(tmp), str(p))
+
+    @staticmethod
+    def _wm_poison_key(table: str, t_min, t_max) -> str:
+        return "%s|%s|%s" % (table, int(t_min), int(t_max))
+
+    def _wm_poison_note_failure(self, table: str, batch_id: str,
+                                t_min, t_max, detail: dict) -> dict:
+        """own 冲突且行级校验不过 ⇒ 该窗口 poison_count +1；达阈 ⇒ poisoned=True
+        + error 告警（不静默）。持久化跨轮（daemon 重启后仍拦），S4 可读每键
+        poison_count。设施自身异常吞掉（不得影响原异常传播）。"""
+        try:
+            state = self._wm_poison_load()
+            key = self._wm_poison_key(table, t_min, t_max)
+            now = datetime.now().isoformat(timespec="seconds")
+            ent = state.get(key) or {"table": table, "t_min": int(t_min),
+                                     "t_max": int(t_max), "poison_count": 0,
+                                     "first_at": now, "last_batch": None,
+                                     "poisoned_at": None}
+            ent["poison_count"] = int(ent.get("poison_count", 0)) + 1
+            ent["last_at"] = now
+            ent["last_batch"] = str(batch_id)
+            ent["last_reason"] = str(detail.get("reason", ""))
+            threshold = _poison_threshold()
+            if ent["poison_count"] >= threshold and not ent.get("poisoned_at"):
+                ent["poisoned_at"] = now
+                logger.error(
+                    "[S1] %s 窗口 %s~%s 连续 own 冲突且行级校验不过达阈"
+                    "（poison_count=%s/%s, reason=%s）⇒ 该窗口转 poison（快速拒绝"
+                    "防无限重拉；数据补齐后自动清除，人工路径=删库旁 %s）——"
+                    "请转人工核查", table, _fmt_ms(t_min), _fmt_ms(t_max),
+                    ent["poison_count"], threshold, ent.get("last_reason"),
+                    self._POISON_FILENAME)
+            state[key] = ent
+            self._wm_poison_save(state)
+            return ent
+        except Exception as e:
+            logger.warning("[S1] poison 记录失败（不影响原异常传播）: %s: %s",
+                           type(e).__name__, e)
+            return {}
+
+    def _wm_poison_clear_if_present(self, table: str, t_min, t_max) -> None:
+        """best-effort：窗口成功写入后清除对应 poison 条目（防陈旧残留；键缺失零写盘）。"""
+        try:
+            state = self._wm_poison_load()
+            key = self._wm_poison_key(table, t_min, t_max)
+            if key in state:
+                state.pop(key, None)
+                self._wm_poison_save(state)
+                _wm_stats_inc("poison_cleared")
+        except Exception:
+            pass
+
+    def _wm_poison_gate(self, df, table: str, batch_id: str) -> None:
+        """write() 入口 poison 门：本批窗口已 poisoned ⇒ 先重校验——过 ⇒ 清除放行
+        （自愈：数据被补齐/回填后不再拦截）；不过 ⇒ 快速拒绝（不写、不冲突、不重试，
+        防无限重拉的成本面）。设施异常放行（不得阻断主写路径）。"""
+        try:
+            t_min, t_max = _df_time_window(df)
+            if t_min is None:
+                return
+            state = self._wm_poison_load()
+            key = self._wm_poison_key(table, t_min, t_max)
+            ent = state.get(key)
+            if not ent or not ent.get("poisoned_at"):
+                return
+            ok, detail = self._wm_decouple_validate(table, t_min, t_max)
+            if ok:
+                state.pop(key, None)
+                self._wm_poison_save(state)
+                _wm_stats_inc("poison_cleared")
+                logger.info("[S1] %s 窗口 %s~%s poison 自愈清除（行级校验已过，"
+                            "恢复正常写入）", table, _fmt_ms(t_min), _fmt_ms(t_max))
+                return
+            _wm_stats_inc("poison_rejected")
+            raise WindowPoisonedError(
+                table, t_min, t_max, ent.get("poison_count"), detail.get("reason"))
+        except WindowPoisonedError:
+            raise
+        except Exception:
+            return
+
+    def _wm_decouple_decision(self, df, table: str, batch_id: str,
+                              passthrough: bool):
+        """S1 决策核心（A6 耗尽后）：返回 WriteResult（解耦=按本批已完整落库返回）
+        或 None（照旧抛出）。只对含 code+time 的数据表面生效。"""
+        if not watermark_decouple_enabled() or passthrough:
+            return None
+        if "code" not in getattr(df, "columns", []) or \
+                "time" not in getattr(df, "columns", []):
+            _wm_stats_inc("unknown")           # 非价格表族无行级校验口径 ⇒ 保守不推进
+            return None
+        verdict = classify_write_conflict_ownership(table, batch_id, df)
+        if verdict != "own":
+            _wm_stats_inc(verdict if verdict in ("foreign", "unknown") else "unknown")
+            return None
+        t_min, t_max = _df_time_window(df)
+        if t_min is None:
+            _wm_stats_inc("unknown")
+            return None
+        ok, detail = self._wm_decouple_validate(table, t_min, t_max)
+        if not ok:
+            _wm_stats_inc("own_validation_blocked")
+            ent = self._wm_poison_note_failure(table, batch_id, t_min, t_max, detail)
+            logger.error(
+                "[S1] %s batch=%s own 冲突但行级校验不过（reason=%s）⇒ 不推进水位；"
+                "poison_count=%s/%s", table, batch_id, detail.get("reason"),
+                ent.get("poison_count", "?"), _poison_threshold())
+            return None
+        _wm_stats_inc("own_decoupled")
+        logger.warning(
+            "[DuckDBWriter] %s batch=%s own 冲突耗尽但行级校验过（reason=%s "
+            "median=%.1f days=%s）⇒ 按本批已完整落库解耦返回，水位交上游成功路径"
+            "正常推进（S1/QS_WATERMARK_DECOUPLE=1）", table, batch_id,
+            detail.get("reason"), detail.get("median", 0.0), detail.get("days"))
+        # new/updated 置 -1 哨兵（R1 记账不可知口径，daemon 侧既有消费路径）
+        return WriteResult(len(df), -1, -1, 0)
+
+    def _decide_conflict_decouple(self, df, table: str, batch_id: str,
+                                  exc: BaseException, passthrough: bool = False):
+        """S1 决策外壳（fail-closed）：决策设施自身任何异常 ⇒ 原样抛出原冲突异常
+        （绝不把失败批洗成成功）。"""
+        try:
+            outcome = self._wm_decouple_decision(df, table, batch_id, passthrough)
+        except Exception as e:
+            logger.error("[S1] 解耦决策自身异常（fail-closed 原样抛出原冲突）: "
+                         "%s: %s", type(e).__name__, e)
+            outcome = None
+        if outcome is None:
+            raise exc
+        return outcome
+
     def write(self, df: pd.DataFrame, table: str, batch_id: str,
               passthrough: bool = False) -> int:
         """幂等防重复写入：主键冲突时 UPDATE（upsert），重放同一批次不产生重复行。
@@ -1304,16 +1819,35 @@ class DuckDBWriter(BaseWriter):
         Conflict on update）属可重试的瞬时并发；重试整操作（重取 3A 写锁 → 重放同一批 upsert，
         幂等），默认 3 次、退避 0.5/1/2s + 抖动；`QS_WRITE_RETRY_MAX=0` 关闭（回退面）。
         非冲突异常不重试；耗尽如实抛出并计入统计。
+
+        S1（四案①·2026-11-01）：A6 耗尽后的**解耦决策**——own 型（与自身写入窗口
+        幂等重叠，M1 字段三条件判定）且行级校验过（窗口按日 COUNT(DISTINCT code)
+        落健康基准 ±5%）⇒ 吞冲突按本批已完整落库返回（上游成功路径正常推进水位，
+        解自锁环）；否则原样抛出 + poison 有界。`QS_WATERMARK_DECOUPLE=0` ⇒
+        本行为逐位回退（冲突耗尽必抛出）。
         """
         _max_retry = _write_retry_max()
+        # S1：poison 窗口快速拒绝（有界防无限重拉；数据补齐后校验过即自愈放行）。
+        # 开关关 ⇒ 不查（逐位回退）。
+        if watermark_decouple_enabled() and not passthrough:
+            self._wm_poison_gate(df, table, batch_id)
         for _attempt in range(_max_retry + 1):
             ensure_write_lock(f"writers:write:{table}:{batch_id}")  # 3A 写锁（操作粒度）
             try:
-                return self._write_locked(df, table, batch_id, passthrough)
+                result = self._write_locked(df, table, batch_id, passthrough)
+                # S1：成功写入 ⇒ best-effort 清除本窗口 poison 条目（防陈旧残留）
+                if watermark_decouple_enabled() and not passthrough:
+                    _tmin, _tmax = _df_time_window(df)
+                    if _tmin is not None:
+                        self._wm_poison_clear_if_present(table, _tmin, _tmax)
+                return result
             except BaseException as _exc:
                 if _attempt >= _max_retry or not is_write_conflict(_exc):
                     if is_write_conflict(_exc):
                         _retry_stats_inc("exhausted")
+                        # S1：冲突耗尽解耦决策（own+校验过 ⇒ 吞冲突返回；否则原样抛）
+                        return self._decide_conflict_decouple(
+                            df, table, batch_id, _exc, passthrough=passthrough)
                     raise
                 _retry_stats_inc("attempts")
                 logger.warning(
@@ -1425,8 +1959,14 @@ class DuckDBWriter(BaseWriter):
         with self._table_write_lock(table):
             with self._conn_lock:
                 conn = self._conn()
+                _batch_scope = ""
                 try:
                     price_write_enter(table, "_write_locked", batch_id, df)
+                    # M2（方案④第一批·2026-10-30）：分钟表批写补作用域登记（只增观测；
+                    # 域限定 _SERIAL_WRITE_TABLES + QS_PRICE_WRITE_SCOPE=0 逐位回退，
+                    # 见 _register_batch_write_scope 文档）。
+                    _batch_scope = _register_batch_write_scope(
+                        table, "_write_locked", batch_id, df)
                     # 性能修复（2026-07-22）：原实现 write 前后各跑一次 SELECT COUNT(*) FROM <table>
                     # 全表统计，在大表（百万→千万行）上每次数秒，8 线程持 _conn_lock 串行 →
                     # 全量拉取 56 秒/只（理论 1.9s）。改为只数本批主键已存在的行（走索引，毫秒级）。
@@ -1557,6 +2097,8 @@ class DuckDBWriter(BaseWriter):
                     record_write_failure(_wf)
                     raise
                 finally:
+                    if _batch_scope:
+                        price_scope_exit(_batch_scope)   # M2：先撤作用域（finally 必达）
                     price_write_exit(table)
                     conn.close()
         if accounting_unknown:
