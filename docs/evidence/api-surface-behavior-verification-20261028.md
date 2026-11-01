@@ -9,8 +9,8 @@
 
 | 结论 | 数量 | 说明 |
 | --- | --- | --- |
-| ✅ 一致/兼容 | **36** | 签名逐参对得上（含默认值）或有等价实现证据 |
-| ⚠️ 差异 | **16** | A/B/C/E 已裁（E 已降级）＋ **F/G/H/I（批 1）／J/K/L（批 2＋W4 核）／M/N（批 3）为 2026-10-30 新发现**（详见 §四） |
+| ✅ 一致/兼容 | **37** | 签名逐参对得上（含默认值）或有等价实现证据 |
+| ⚠️ 差异 | **15** | A/B/C/E 已裁（E 已降级）＋ **F/G/H/I（批 1）／J/K/L（批 2＋W4 核）／M/N（批 3）为 2026-10-30 新发现**（详见 §四） |
 | 🔸 未取到文档 | **15** | Context7 每批 3 次配额所限，如实标注待补查（补查批 1 清 7（一致 3／差异 4）、批 2 清 4（一致 2／差异 2）、批 3 清 6（一致 4／差异 2）、批 4 清 6（全一致）、批 5 清 3（一致 2／差异 1）、批 6 清 2（差异 2）、批 7 清 1（差异 1）；另 5 条取得**存在性**证据但签名未取到；`get_current_data` 3 次配额用尽仍未命中） |
 | ⚠️ 判缺 | **1** | attribute_history（聚宽名混入候选） |
 | **合计** | **68** | = PTRADE 面 68 |
@@ -66,7 +66,7 @@
 | 43 | `get_snapshot` | `(security, frequency='1d')` | 差异 C | get_snapshot(security) **单参**；返回 dict[str,dict]，40+ 字段，trade_status 16 种枚举（Context7 东莞.md）；**本地多 frequency 参数＝QS 扩展** |
 | 44 | `get_stock_blocks` | `(stock_code)` | 差异 M | get_stock_blocks(stock_code) → dict[str:list[list[str,str]]]（键 HGT/HY/DY/ZJHHY/GN，值为板块代码+名称）；失败/已退市股返回 None；**文档明载「获取的是当下的数据，回测时注意未来函数」**（Context7 东莞.md）⇒ 参数面一致；**未来函数面本地 PIT 关键词核 = 无（本地未做 PIT 取证）** |
 | 45 | `get_stock_exrights` | `(security, date=None)` | 差异 N | get_stock_exrights(**stock_code**, date=None)：date 可选（'20180228'/20180228/datetime.date），默认全部历史（Context7 东莞.md）⇒ **首参名平台为 stock_code、本地为 security**＝关键字调用不兼容（同 §四 E 族·本地命名差异） |
-| 46 | `get_stock_info` | `(stocks, field=None)` | 差异 F | get_stock_info(stocks, field=None)：**field 可选**、默认只返回 stock_name；返回嵌套 dict（Context7 社区.md）⇒ **本地 field 无默认值＝必填** ⇒ 只传 stocks 时平台可用、**本地 TypeError**＝调用面差异；QMT 侧另有 D-23 日期契约修复史 |
+| 46 | `get_stock_info` | `(stocks, field=None)` | 一致 | get_stock_info(stocks, field=None)：**field 可选**、默认只返回 stock_name；返回嵌套 dict（Context7 社区.md）⇒ **本地 `field=None` 有默认值、与文档一致**（`git blame` 实测：自 `6b7f26b` 2026-07-21 起即如此）⇒ **原「差异 F」判定作废**（系批 1 时 AST 提取器默认值错位 bug 误读为 `(self=None, stocks, field)` 所致；`self=None` 即 bug 铁证）；QMT 侧另有 D-23 日期契约修复史 |
 | 47 | `get_stock_name` | `(stocks)` | 差异 G | get_stock_name(stocks) → dict[str:str]，查不到时 value=None（Context7 东莞.md）⇒ **本地以代码充当名称**（本地 docstring「DuckDB 无 name 字段」）＝返回值语义差异 |
 | 48 | `get_stock_status` | `(stocks, query_type='ST', query_date=None)` | 一致 | get_stock_status(stocks, query_type='ST', query_date=None)：返回 dict，值 True/False，**未查到返回 None**；query_date 格式 YYYYmmdd（Context7 社区.md） |
 | 49 | `get_trade_days` | `(start_date=None, end_date=None, count=None)` | 一致 | get_trade_days(start_date=None, end_date=None, count=None)；**start_date 与 count 互斥**；返回 numpy.ndarray（Context7 basic-info.md） |
@@ -132,7 +132,11 @@
 
 裁定：位置调用 `order_target(sec, 100)` 两端等价；**仅关键字调用不兼容**（本地 `target_amount=`／平台 `amount=`）。转换管线核对项：核 `source_import` 是否已有 order_target 参数名改写（P3-1 同族），无则生成 PTrade 代码时确保位置传参或改写 `amount=`。
 
-### F. `get_stock_info` 的 `field` 是否必填（2026-10-30 新发现）
+### F. ~~`get_stock_info` 的 `field` 是否必填~~（**2026-11-02 作废·判定错误**）
+
+> **作废依据**：`git blame -L 2568` 实测 `def get_stock_info(self, stocks, field=None)` **自 `6b7f26b`（2026-07-21 Initial backup）起即有默认值**，从未必填 ⇒ 本地与文档**一致**、无差异。原判定系批 1 时 AST 提取器默认值错位 bug 所致（当时误读为 `(self=None, stocks, field)`，`self=None` 即 bug 铁证）——与本件 §七 判据自纠记录 2 同源。
+
+
 
 | 端 | 签名 |
 | --- | --- |
@@ -278,3 +282,10 @@
 `get_trades_file(save_path='')`／`get_trading_day(day=0)`）⇒ **差异 J/K 的判定依据成立，表内签名无需更正**。
 **教训**：AST 提取的默认值必须按「位置参数总数 − defaults 个数」偏移对齐；
 **临时脚本的输出在用于判定前必须与权威表自动比对**，不得凭肉眼认读（本次差异由自动比对而非人眼发现）。
+
+**判据自纠记录 3（2026-11-02 F 判定更正）**：
+F 的「field 必填」判定**作废**——`git blame` 实证该行自 `6b7f26b`（2026-07-21）起即 `field=None`。
+根因为**批 1 时 AST 提取器的默认值错位 bug 的第二个受害者**（第一个是 `get_price`，已在判据自纠记录 2 更正）；
+当时输出 `(self=None, stocks, field)`，其中 `self=None` 本身即错位铁证，但我方**未据此自证**而直接记为 P1 差异。
+**教训**：凡 AST 输出含「`self` 带默认值」或「首参偏移」形态，**必须先判提取器是否错位**，不得直接作为差异依据；
+本次由用户「呈批件引用行号须以届时 HEAD 复核」要求触发复核而发现。

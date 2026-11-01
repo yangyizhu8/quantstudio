@@ -489,7 +489,7 @@
 
 | 编号 | 问题描述 | 定位证据 | 严重等级 | 当前状态 | 归属迭代 | 修复方案 | 验证证据 | 关闭时间 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| ISS-T5-F | `get_stock_info` 的 `field` **本地必填**（无默认值），PTrade 文档 `field=None` 可选 ⇒ 只传 `stocks` 的调用平台可用、**本地 TypeError** | 本地 `quantstudio/backtest/ptrade_api.py:2568`（`def get_stock_info(self=None, stocks, field)`）；文档 Context7 `/kay-ou/ptradeapi` Ptrade社区.md（`get_stock_info(stocks, field=None)`，field 可选默认只返 stock_name） | **P1（调用面阻断）** | **已登记·未修复**；**用户 2026-10-30 裁定＝与 ISS-T5-K 并列下轮首位**：10-31 主线呈批后**首轮即办六步流水线**（两条均为调用面阻断级；复现命令已附本行） | T5 补查批 2 | 待定：给 `field=None` 默认值（纯增益）**或**在转换产物侧显式补 field（须先核 PTrade 产物调用面）——**下轮统一评估，本轮不擅改** | evidence `api-surface-behavior-verification-20261028.md` §四 F；本地 AST 七件套提取 + Context7 文档依据 | — |
+| ISS-T5-F | ~~`get_stock_info` 的 `field` 本地必填~~ ⇒ **判定错误·非缺陷**：`git blame` 实证 `def get_stock_info(self, stocks, field=None)` **自 `6b7f26b`（2026-07-21）起即有默认值**，与文档一致 | `git blame -L 2568 -- date=short` 实测；本地 `quantstudio/backtest/ptrade_api.py:2568`；文档 Context7 Ptrade社区.md（field=None 可选）⇒ **无差异** | **P1 → 无**（判定错误） | **已关闭·判定错误（2026-11-02）**：系批 1 AST 提取器默认值错位 bug 所致（误读 `(self=None, stocks, field)`，`self=None` 即 bug 铁证）；已同步修正 evidence 第 46 行为「一致」并更新计数 | T5 收口更正 | **无需修复**（本地已正确） | evidence §四 F（已作废）＋ §七 判据自纠记录 3；git blame 实测 | 2026-11-02 |
 | ISS-T5-G | `get_stock_name` **本地以代码充当名称**（DuckDB 无 name 字段），PTrade 返回真实中文名（查不到 value=None） | 本地 `ptrade_api.py:2537`（docstring「DuckDB 无 name 字段，返回代码作为名称」）；文档 Context7 Ptrade东莞.md（`get_stock_name(stocks)` → dict[str:str]） | P2（返回值语义） | **已登记·未修复**（下轮统一） | T5 补查批 2 | 待定：补 name 字段映射或登记为已知差异——**下轮统一评估** | evidence §四 G | — |
 | ISS-T5-H | `get_etf_stock_list` **文档限定「适用环境：交易」**，本地回测亦可调用 ⇒ 环境面本地更宽松 | 本地 `ptrade_api.py:2246`；文档 Context7 Ptrade国盛.md（适用环境：交易） | P3（宽松，非阻断） | **已登记·未修复**（下轮统一） | T5 补查批 2 | 待定：登记为「本地宽松」差异或加环境门——**下轮统一评估** | evidence §四 H | — |
 | ISS-T5-I | `get_instruments` **返回面差异**：平台返回合约信息（FutureParams）且实盘涨跌幅不可用；本地仅返回基础证券元信息、期货不支持 | 本地 `ptrade_api.py:2481`（docstring「futures remain unsupported locally」）；文档 Context7 Ptrade东莞.md（返回合约信息；实盘模块涨跌幅暂无法提供） | P2（返回面） | **已登记·未修复**（下轮统一） | T5 补查批 2 | 待定：期货支持列入框架层规划或登记已知差异——**下轮统一评估** | evidence §四 I | — |
@@ -546,6 +546,17 @@
 | ISS-T5-Q | `get_all_positions` 文档**适用环境：仅交易**；本地回测亦可调 ⇒ 环境面本地更宽松（与 ISS-T5-H 同族） | 文档 Context7 `/kay-ou/ptradeapi` Ptrade山西.md（适用环境：交易；Parameters N/A）；本地 `ptrade_api.py`（AST `()`） | P3（环境面·本地宽松·非阻断） | **已登记·未修复**（B3 下轮统一） | T5 补查批 7 | 待定：登记已知宽松差异或加环境门——**下轮统一评估** | evidence §四 Q | — |
 | ISS-T5-R | `set_benchmark` **首参名不一致**：平台 `security`、本地 `sids`（位置等价、关键字不兼容）；另平台**仅 initialize() 可用**且不设默认沪深300——本地调用位置限制未核 | 文档 Context7 `api-reference/settings.md` 英中双源（set_benchmark(security)；仅 initialize；默认 000300.SS）；本地 AST `(sids)` | P3（命名差异·无迁移阻断；E/N 族） | **已登记·未修复**（B3 下轮统一） | T5 补查批 7 | 待定：登记已知命名差异（同 E/N 族，转换产物不产该调用面则无阻断）；initialize-only 限制随 W3 行为面同批评估 | evidence §四 R | — |
 
+
+## 判据自纠记录 3（F 作废 · 2026-11-02）
+
+| 项 | 内容 |
+| --- | --- |
+| 作废对象 | ISS-T5-F（原判 P1「`get_stock_info.field` 本地必填」） |
+| 更正依据 | `git blame -L 2568` 实测：`def get_stock_info(self, stocks, field=None)` **自 `6b7f26b`（2026-07-21 Initial backup）起即有默认值**，从未必填 |
+| 根因 | **批 1 时 AST 提取器默认值错位 bug 的第二个受害者**（第一个是 `get_price`，已在判据自纠记录 2 更正）——当时输出 `(self=None, stocks, field)`，**`self=None` 本身即 bug 铁证** |
+| 触发 | 用户令「呈批件引用行号须以届时 HEAD 复核为准」⇒ 复核时发现 |
+| 教训 | 凡 AST 输出含「`self` 带默认值」或「首参偏移」形态，**必须先判提取器是否错位**，不得直接作为差异依据 |
+| 连带影响 | evidence 第 46 行改「一致」；计数 一致 36→37／差异 16→15（合计 68 不变）；registry 同步 |
 
 ## T5 补查批 7 新增登记（S · 2026-10-30）
 
