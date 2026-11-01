@@ -342,6 +342,18 @@
 - 知识反哺：[命中] PD-2026-0015（PD/D3/PD-2026-0015.md，2026-11-01）——本轮对照分析的发现来源
 - 知识反哺：[无命中] PD 族检索（guard context / docstring 保位 / 注入位置），2026-11-01
 
+### 4.15.1 覆盖降级登记与恢复（PD-0016 D3 后续，2026-11-01 21:2x）
+
+| 项 | 内容 |
+|---|---|
+| 降级事由 | `output/ptrade_export` 被他线清理 24→5 子目录（2026-11-01 14:16）；`output/` 在 `.gitignore:31`，git 无法恢复 |
+| 降级表现 | 20 个依赖真实产物的用例转 skip（deploy 套件读数一度降为 115 passed / 20 skipped） |
+| **处置决定** | **重建**（覆盖价值高于"不动他线地盘"的顾虑：mixedform 测「混合形态 MOUNT」核心能力、quickmode 测「快捷端到端/归档 keep_versions」日常路径；长期 skip 会掩盖真实回归） |
+| 重建动作 | `qs-compile import` 逐个重建 4 个产物：`vol_regime_mom_rev`（带 smoke，612s，**smoke=FAILED** 但产物落地 92,769 B）、`CANSLIM突破成长选股策略`（--no-smoke，157,604 B）、`tech_etf_mvo_rotation`（--no-smoke，67,390 B）、`F-Score选股RSRS择时`（--no-smoke，补 discover 断言所需） |
+| **恢复结果** | deploy 套件 **134 passed / 1 skipped**（原 20 skip → 1） |
+| 残余 1 skip | `test_discover_include_verify_flag`——真实前置是「存在 `_verify` 对照产物」，当前仓 **0 个**。已把该用例的 skip 条件由笼统 `_needs_tech` 改为**专属前置** `_has_verify_product()`；**不伪造前提**（手工造 `_verify` 目录等于给测试喂假环境）。由 `qs-compile import` 产出对照产物后自动恢复 |
+| 附带登记 | `vol_regime_mom_rev` 重建时 **smoke=FAILED**（`api_portability=PASS` / `source_import=PASS`）——属**回测冒烟**层面的问题，与本批（部署转换层）无关，**未排查、待另立条目**（如后续需该策略可部署，须先查明 smoke 失败原因） |
+
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 
 - 2026-10-10（M6 之前）：P0 vault 回哺降级（vault 未建，预期状态）；

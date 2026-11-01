@@ -32,6 +32,18 @@ from quantstudio.ptrade_deploy.deliver import (  # noqa: E402
 TECH_SRC = (REPO / "output" / "ptrade_export" / "tech_etf_mvo_rotation"
             / "tech_etf_mvo_rotation_ptrade.py")
 
+def _has_verify_product() -> bool:
+    """是否存在 `_verify` 对照产物（`qs-compile import` 的对照/校验产物）。
+
+    PD-0016 D3：该用例的真实前置是「有 _verify 产物」，而非「有 tech 产物」——
+    笼统复用 _needs_tech 会在 tech 恢复后错误执行（实测踩到）。无此类产物时 skip，
+    **不伪造测试前提**（手工造 _verify 目录等于给测试喂假环境）。
+    """
+    base = REPO / "output" / "ptrade_export"
+    return base.is_dir() and any(
+        "verify" in p.name.lower() for p in base.rglob("*_ptrade.py"))
+
+
 #: 依赖真实产物 tech_etf_mvo_rotation 的用例（产物缺失时跳过而非报错）
 _needs_tech = pytest.mark.skipif(
     not TECH_SRC.exists(),
@@ -58,7 +70,9 @@ def test_discover_recursive_and_filters_verify():
     assert not any(n.startswith(("_verify", "_probe")) for n in names)
 
 
-@_needs_tech
+@pytest.mark.skipif(not _has_verify_product(),
+                    reason="需 _verify 对照产物（当前仓无此类产物，非代码问题；"
+                           "由 qs-compile import 的对照产物提供后自动恢复）")
 def test_discover_include_verify_flag():
     items = quickmode.discover_strategies(include_verify=True)
     assert any("_verify" in it["product_path"] or it["name"].startswith("_verify")
