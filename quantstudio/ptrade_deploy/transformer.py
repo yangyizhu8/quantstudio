@@ -487,7 +487,12 @@ def _apply_persistence(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> No
     else:  # 既有函数：块级标记加在注入语句首尾（避免与函数级标记嵌套）
         _mark(restore_stmts[0], MARKER_PERSIST, "begin")
         _mark(restore_stmts[-1], MARKER_PERSIST, "end")
-    init.body[0:0] = restore_stmts  # 头部插入（try 恢复 / except 默认）
+    # PD-0016：注入避开 docstring——原 `body[0:0]` 会把原 docstring 顶下去，
+    # 使其退化为普通字符串表达式（`initialize.__doc__` 变 None）。有 docstring 时插在其后。
+    _ins = 1 if (init.body and isinstance(init.body[0], ast.Expr)
+                 and isinstance(init.body[0].value, ast.Constant)
+                 and isinstance(init.body[0].value.value, str)) else 0
+    init.body[_ins:_ins] = restore_stmts  # 头部插入（docstring 之后；try 恢复 / except 默认）
     edits.append({"kind": "PERSIST", "location": "initialize",
                   "detail": f"头部注入 try 恢复/except 默认块"
                             f"（state_file={cfg.persistence.state_file}，version={STATE_VERSION}）"})
@@ -658,12 +663,17 @@ def _order_call(stmt: ast.stmt):
     return call, sec, _order_side(call)
 
 
-def _make_guard_if(ctx_name: str, sec_expr: ast.expr, side: str,
+def _make_guard_if(sec_expr: ast.expr, side: str,
                    original: ast.stmt) -> ast.If:
+    """生成 `if _deploy_guard_pass(<security>, <side>): <原语句> else: 告警`。
+
+    PD-0016：实参**只有 2 个**（security/side）——原实现额外传了一个「被包裹函数首参」
+    冒充 context，对 `submit_target_value_order(security, ...)` 会传成 security（名实不符）。
+    护栏体从不使用 context，故直接删除该冗余形参（等价器按函数名识别 GUARD 块，不受影响）。
+    """
     test = ast.Call(
         func=ast.Name(id="_deploy_guard_pass", ctx=ast.Load()),
-        args=[ast.Name(id=ctx_name, ctx=ast.Load()), sec_expr,
-              ast.Constant(value=side)],
+        args=[copy.deepcopy(sec_expr), ast.Constant(value=side)],
         keywords=[])
     warn = ast.Expr(value=ast.Call(
         func=ast.Attribute(value=ast.Name(id="log", ctx=ast.Load()),
@@ -701,13 +711,13 @@ def _sub_bodies(stmt: ast.stmt) -> List[List[ast.stmt]]:
     return out
 
 
-def _guard_body(body: List[ast.stmt], loc: str, ctx_name: str,
+def _guard_body(body: List[ast.stmt], loc: str,
                 edits: List[Dict[str, str]]) -> None:
     for i, stmt in enumerate(body):
         info = _order_call(stmt)
         if info is not None:
             call, sec, side = info
-            body[i] = _make_guard_if(ctx_name, sec, side, stmt)
+            body[i] = _make_guard_if(sec, side, stmt)
             try:
                 detail = ast.unparse(call)
             except Exception:  # pragma: no cover
@@ -716,7 +726,7 @@ def _guard_body(body: List[ast.stmt], loc: str, ctx_name: str,
                           "detail": f"下单调用前插护栏检查块（side={side}）: {detail}"})
         else:
             for sub in _sub_bodies(stmt):
-                _guard_body(sub, loc, ctx_name, edits)
+                _guard_body(sub, loc, edits)
 
 
 def _apply_guards(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> None:
@@ -732,8 +742,8 @@ def _apply_guards(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> None:
                             "按 guards 配置启停，§6.3）"})
     for fn in [n for n in tree.body
                if isinstance(n, ast.FunctionDef) and n.name != "_deploy_guard_pass"]:
-        ctx_name = fn.args.args[0].arg if fn.args.args else "context"
-        _guard_body(fn.body, fn.name, ctx_name, edits)
+        # PD-0016：不再推导 ctx_name——护栏不需要 context（原实现把首参名当 context 传出）
+        _guard_body(fn.body, fn.name, edits)
 
 
 # ---------------------------------------------------------------- 主入口 --

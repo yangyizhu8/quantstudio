@@ -316,6 +316,32 @@
 - 知识反哺：[命中] PTrade 官方文档 `get_research_path`（platform/ptrade/01-API文档主页/001-page.md:2573，2026-10-30）——决定性依据
 - 知识反哺：[无命中] PD 族检索（禁用路径 / state_file / 研究根目录），2026-10-30
 
+## 4.15 轮 15（PD-0016 护栏首参去冗余 + PERSIST 保位 docstring，2026-11-01）
+
+- **N₁₅=0**（无新发现缺陷）、**R₁₅=0**（无复发）——本轮为**注入语义修正轮**（数据修正型）。
+- **根因（两处同源：注入的「上下文假设」错误）**：
+  D1 `transformer._apply_guards` 用 `fn.args.args[0].arg` 推导 ctx_name ⇒ 对
+  `submit_target_value_order(security, ...)` 此类首参非 context 的函数，护栏首参被填成 `security`；
+  D2 `_apply_persistence` 用 `init.body[0:0]` 头部插入 ⇒ 把 `initialize` 的 docstring 挤下去（`__doc__` 变 None）。
+- **修复**：① 删 `_deploy_guard_pass` 的冗余 `context` 形参（取证：`guard_template` 全文 `context` 仅签名 1 处，
+  四段护栏体只用 security/side/g/log）⇒ 签名 `(security, side)`，调用点实参 2 个；
+  ② 插入位置跳过 docstring；③ 附带测试健壮性修正（产物缺失 → skip 而非收集期崩）。
+- **验收读数**：重转 **status=PASS（P0–P6 全 PASS）**；签名 `['security','side']`、调用实参个数集合 `{2}`；
+  `initialize` 与模块 docstring 均非 None；**P4_equiv PASS**；P5 `platform_path_policy` 仍 PASS（PD-0015 不回退）；
+  护栏四段（`get_stock_status`/`check_limit`/`get_snapshot`/`orders_done`）全在；deploy **115 passed / 20 skipped**；
+  契约矩阵 `OK`；PD 族机检 **16/16**。
+- **修法取舍**：不采用「想法把真 context 传进去」（需向上遍历调用链，脆弱无收益），而是**删掉无人使用的形参**
+  ——修的是「bug 的存在条件」而非「bug 的表现」。equiv 按函数名识别 GUARD 块、不校验实参个数 ⇒ 去参不破 P4。
+- **环境变动登记（重要）**：`output/ptrade_export` 由 24 个子目录被清理为 **5 个**（2026-11-01 14:16，**他线动作**；
+  `output/` 在 `.gitignore` 内、git 无法恢复）。连带 20 个依赖真实产物的用例转 skip，
+  **恢复条件** = `qs-compile import` 重建 CANSLIM / vol_regime_mom_rev / tech_etf_mvo_rotation 三产物。
+- 判型：D1/D2 **数据修正型**；D3 测试层健壮性（零产品代码改动）。
+- 证据：`docs/evidence/ptrade-deploy-pd0016-evidence.md`；方案：`docs/ptrade-deploy-guard-context-design.md`（②审通过）。
+- **本轮沉淀**：PD-2026-0016
+- 知识反哺：[命中] PD-2026-0012（PD/D2/PD-2026-0012.md，2026-11-01）——注入块「打标记 + 等价器可剥离」范式沿用
+- 知识反哺：[命中] PD-2026-0015（PD/D3/PD-2026-0015.md，2026-11-01）——本轮对照分析的发现来源
+- 知识反哺：[无命中] PD 族检索（guard context / docstring 保位 / 注入位置），2026-11-01
+
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 
 - 2026-10-10（M6 之前）：P0 vault 回哺降级（vault 未建，预期状态）；

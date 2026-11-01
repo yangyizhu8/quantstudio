@@ -34,9 +34,17 @@ VOL_YAML = HV / "hv_vol_regime.yaml"
 CAN_YAML = HV / "hv_canslim.yaml"
 VOL_SRC_PATH = (REPO / "output" / "ptrade_export" / "vol_regime_mom_rev"
                 / "vol_regime_mom_rev_ptrade.py")
+#: PD-0016 D3（测试健壮性）：真实产物可能被清理（`output/` 在 `.gitignore` 内、无 git 兜底）。
+#: 原实现用 `next(...)` 硬取，产物缺失时**收集期** StopIteration 崩，会阻塞整个套件验收；
+#: 改为 next(..., None) + 模块级 skip，缺失时给出可操作原因而不是崩溃。
 CAN_SRC_PATH = next((REPO / "output" / "ptrade_export").glob(
-    "CANSLIM*/CANSLIM*_ptrade.py"))
+    "CANSLIM*/CANSLIM*_ptrade.py"), None)
 VOL_CFG = load_config_from_yaml(VOL_YAML.read_text(encoding="utf-8"))
+
+pytestmark = pytest.mark.skipif(
+    CAN_SRC_PATH is None or not VOL_SRC_PATH.exists(),
+    reason="依赖的真实 PTrade 产物缺失（output/ptrade_export 被清理）；"
+           "需先 `qs-compile import` 重建 CANSLIM / vol_regime_mom_rev 产物")
 
 
 def _src(path: Path) -> str:

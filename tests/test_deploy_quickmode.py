@@ -27,8 +27,17 @@ from quantstudio.ptrade_deploy.config import load_config_from_yaml  # noqa: E402
 from quantstudio.ptrade_deploy.deliver import (  # noqa: E402
     DEFAULT_OUTPUT_ROOT_NAME, resolve_out_root, safe_dir_name)
 
+#: PD-0016 D3（测试健壮性）：真实产物可能被清理（output/ 在 .gitignore 内）。
+#: 用到该产物的用例统一 _needs_tech 跳过，避免环境缺失被误报成代码回归。
 TECH_SRC = (REPO / "output" / "ptrade_export" / "tech_etf_mvo_rotation"
             / "tech_etf_mvo_rotation_ptrade.py")
+
+#: 依赖真实产物 tech_etf_mvo_rotation 的用例（产物缺失时跳过而非报错）
+_needs_tech = pytest.mark.skipif(
+    not TECH_SRC.exists(),
+    reason="依赖的真实 PTrade 产物缺失（output/ptrade_export 被清理）；"
+           "需先 `qs-compile import` 重建 tech_etf_mvo_rotation 产物")
+
 
 #: 全进程常驻 QApplication（见 test_deploy_tab_quick_widgets 注释）
 _QT_APP = None
@@ -40,6 +49,7 @@ def _sha(path: Path) -> str:
 
 # ------------------------------------------------------------ D5′ 发现 --
 
+@_needs_tech
 def test_discover_recursive_and_filters_verify():
     names = {it["name"] for it in quickmode.discover_strategies()}
     assert "tech_etf_mvo_rotation" in names
@@ -48,6 +58,7 @@ def test_discover_recursive_and_filters_verify():
     assert not any(n.startswith(("_verify", "_probe")) for n in names)
 
 
+@_needs_tech
 def test_discover_include_verify_flag():
     items = quickmode.discover_strategies(include_verify=True)
     assert any("_verify" in it["product_path"] or it["name"].startswith("_verify")
@@ -107,6 +118,7 @@ def test_quick_config_parses_with_expected_fields(tmp_path):
 
 # ------------------------------------------------ ②审条件③：对拍 + 端到端 --
 
+@_needs_tech
 def test_quick_equals_manual_yaml_sha(tmp_path):
     """快捷 yaml 与等价手写 yaml → 产物 SHA256 逐位一致。"""
     out = tmp_path / "out"
@@ -135,6 +147,7 @@ def test_quick_equals_manual_yaml_sha(tmp_path):
     assert h1 == h2, (h1, h2)
 
 
+@_needs_tech
 def test_quick_end_to_end_lands_in_out_root(tmp_path):
     out = tmp_path / "out"
     cfg = tmp_path / "c.yaml"
@@ -161,6 +174,7 @@ def _run_twice(tmp_path: Path, **cfg_kwargs) -> Path:
     return out / "mystrat"
 
 
+@_needs_tech
 def test_archive_default_unlimited(tmp_path):
     target = _run_twice(tmp_path)
     v001 = target / "_archive" / "v001"
@@ -173,6 +187,7 @@ def test_keep_versions_zero_disables_archive(tmp_path):
     assert not (target / "_archive").exists()
 
 
+@_needs_tech
 def test_keep_versions_n_prunes_old(tmp_path):
     out = tmp_path / "out"
     cfg = tmp_path / "c.yaml"

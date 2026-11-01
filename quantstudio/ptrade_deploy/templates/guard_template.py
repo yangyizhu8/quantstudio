@@ -17,8 +17,13 @@ transformer 在每个下单调用前插入 `if _deploy_guard_pass(...): <原下�
 """
 
 #: 护栏函数骨架（分段按 guards 配置拼装后整体注入）
+#:
+#: PD-0016：签名**不含 context** —— 四段护栏体（停牌/涨跌停/限价快照/幂等）只用
+#: `security` / `side` / `g` / `log`，从未使用 context。原实现把「被包裹函数的首参名」
+#: 当 context 传入（对 `submit_target_value_order(security, ...)` 会传成 security），
+#: 属名实不符；删掉该冗余形参即根治（而非引入脆弱的「向上解析 context」逻辑）。
 GUARD_HELPER_TEMPLATE = '''\
-def _deploy_guard_pass(context, security, side):
+def _deploy_guard_pass(security, side):
     """PTRADE-DEPLOY 注入护栏（停牌/涨跌停/限价参考/订单幂等，设计文档 §6.3）。
 
     由 qs-deploy 转换器自动注入，整块带 GUARD 标记、可整体删除；
