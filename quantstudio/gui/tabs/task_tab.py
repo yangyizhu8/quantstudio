@@ -2,6 +2,8 @@
 """Tab1: 采集任务（核心 Tab，80% 使用场景）"""
 from __future__ import annotations
 
+import time
+
 import json
 import logging
 from pathlib import Path
@@ -16,6 +18,7 @@ from qfluentwidgets import (
 
 from ..skin import PageHeader
 
+from quantstudio.gui.db_helper import BUSY_HINT_WINDOW_S
 from ..workers import LockedTaskWorker, LockedRunAllWorker
 from quantstudio.pipeline.task_resume import TaskCancelled
 from ..daemon_process import (
@@ -275,6 +278,31 @@ class TaskTab(QWidget):
             if timer is not None:
                 timer.stop()
 
+    # ── busy 占位（2026-11-01 用户实测：库被采集占用时把空查询误显成"无"）──────
+    def _busy_hint(self) -> bool:
+        """库近 BUSY_HINT_WINDOW_S 秒内发生过 busy（跨进程写锁冲突）？
+
+        只**读** DbHelper 已有的对外暴露属性（`_last_busy_at` / `_busy_count`），
+        不改 DbHelper 本体（共享核心文件，能不碰就不碰）。
+        """
+        helper = getattr(self.mw, "db_helper", None)
+        if helper is None:
+            return False
+        last = getattr(helper, "_last_busy_at", None)
+        if not last:
+            return False
+        try:
+            return (time.time() - float(last)) <= BUSY_HINT_WINDOW_S
+        except Exception:
+            return False
+
+    @staticmethod
+    def _busy_placeholder(original: str, busy: bool, empty_markers=("无", "—", "未知", "")) -> str:
+        """busy 且原值属"空/未知"时，改用占位符；否则原样返回（正常读取不受影响）。"""
+        if busy and original in empty_markers:
+            return "读取中（库被采集占用）"
+        return original
+
     def _render_tasks(self):
         # 查一次水位缓存（P1-3：不再每任务查一次 DuckDB）
         wms = self.mw.db_helper.get_watermarks()
@@ -298,7 +326,11 @@ class TaskTab(QWidget):
             # Prefer the configured source; fall back to the latest real source watermark.
             wm, wm_source = self._resolve_watermark_cached(
                 wms, effective_source, table_name, task.get("freq", "daily"))
-            wm_item = QTableWidgetItem(wm)
+            busy = self._busy_hint()
+            wm_item = QTableWidgetItem(self._busy_placeholder(wm, busy))
+            if wm == "" or wm == "无":
+                if busy:
+                    wm_item.setToolTip("水位查询返回空，且库刚被采集占用（busy）⇒ 这是\"读不到\"，不是\"没有水位\"。请稍后刷新再判断，勿据此重置水位。")
             if wm_source and wm_source != effective_source:
                 wm_item.setToolTip(
                     f"\u914d\u7f6e\u9996\u9009\u6e90: {effective_source}\n"
@@ -310,13 +342,17 @@ class TaskTab(QWidget):
             # FP-1：数据止点（只读 max(time)）——与「水位线」并列展示。
             # 两列语义不同：水位线=下次增量起点；数据止点=库内真实边界。
             bound_text, bound_tip = self._format_data_bound(bounds, table_name)
-            bound_item = QTableWidgetItem(bound_text)
+            if busy and bound_text == "—":
+                bound_tip = "数据止点查询返回空且库刚被采集占用（busy）⇒ 稍后刷新再看，不代表库内无数据。"
+            bound_item = QTableWidgetItem(self._busy_placeholder(bound_text, busy))
             bound_item.setToolTip(bound_tip)
             self.task_table.setItem(i, 5, bound_item)
             # FP-2：水位状态（正常 / 延迟提交 / 门控保持 + 原因）
             gate_text, gate_tip = self._format_gate_status(
                 gate_status, table_name, task.get("freq", "daily"))
-            gate_item = QTableWidgetItem(gate_text)
+            if busy and gate_text == "未知":
+                gate_tip = "门控状态读取降级且库刚被采集占用（busy）⇒ 稍后刷新再看。"
+            gate_item = QTableWidgetItem(self._busy_placeholder(gate_text, busy))
             gate_item.setToolTip(gate_tip)
             self.task_table.setItem(i, 6, gate_item)
             task_name = task.get("name", "")

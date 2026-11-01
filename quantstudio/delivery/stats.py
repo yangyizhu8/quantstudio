@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from .constants import (
+    CALENDAR_TABLES,
     BASIS_SOURCE_ALIGNER,
     BASIS_SOURCE_MAP,
     BASIS_SOURCE_NONE,
@@ -270,6 +271,9 @@ def collect_table_stats(
             has_task_config=has_task,
             in_system=in_system,
         )
+        if name in CALENDAR_TABLES:
+            # 日历表数据含未来日期（排期到年底）：水位"落后"属正常语义，不进四态
+            state = TableState.CALENDAR_NOT_APPLICABLE
         out.append(
             {
                 "table": name,
@@ -322,7 +326,10 @@ def defect_tables(stats: List[Dict]) -> List[str]:
 
 
 def attention_tables(stats: List[Dict]) -> List[Dict]:
-    """需关注清单（BEHIND / UNKNOWN-BASIS / MISSING / AHEAD）——只展示，不参与可增量判定。"""
+    """需关注清单（BEHIND / UNKNOWN-BASIS / MISSING / AHEAD）——只展示，不参与可增量判定。
+
+    日历表（CALENDAR-NOT-APPLICABLE）**不在此列**：它的"落后"是语义本身，挂进来只会稀释信号。
+    """
     picked = [r for r in stats if r["state"] in (TableState.BEHIND, TableState.UNKNOWN_BASIS,
                                                  TableState.MISSING, TableState.AHEAD)]
     return sorted(picked, key=lambda r: str(r.get("table") or ""))

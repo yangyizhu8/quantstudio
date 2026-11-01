@@ -78,6 +78,7 @@ def test_state_enums_stay_consistent():
         C.TableState.EMPTY,
         C.TableState.UNKNOWN_BASIS,
         C.TableState.NO_WATERMARK_SYSTEM,
+        C.TableState.CALENDAR_NOT_APPLICABLE,   # 2026-11-01：日历表排除出四态
     }
     assert C.DEFECT_STATES == {
         C.TableState.MISSING,

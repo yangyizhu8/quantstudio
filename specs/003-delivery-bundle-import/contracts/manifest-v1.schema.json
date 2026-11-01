@@ -304,7 +304,8 @@
               "UNKNOWN-SOURCE",
               "UNKNOWN-BASIS",
               "EMPTY",
-              "NO-WATERMARK-SYSTEM"
+              "NO-WATERMARK-SYSTEM",
+              "CALENDAR-NOT-APPLICABLE"
             ]
           }
         }

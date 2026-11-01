@@ -104,6 +104,7 @@ class TableState:
     EMPTY = "EMPTY"
     UNKNOWN_BASIS = "UNKNOWN-BASIS"
     NO_WATERMARK_SYSTEM = "NO-WATERMARK-SYSTEM"
+    CALENDAR_NOT_APPLICABLE = "CALENDAR-NOT-APPLICABLE"
 
 
 ALL_STATES = frozenset(
@@ -116,11 +117,21 @@ ALL_STATES = frozenset(
         TableState.EMPTY,
         TableState.UNKNOWN_BASIS,
         TableState.NO_WATERMARK_SYSTEM,
+        TableState.CALENDAR_NOT_APPLICABLE,
     }
 )
 EXCLUSIONARY_STATES = frozenset(
-    {TableState.EMPTY, TableState.UNKNOWN_BASIS, TableState.NO_WATERMARK_SYSTEM}
+    {
+        TableState.EMPTY,
+        TableState.UNKNOWN_BASIS,
+        TableState.NO_WATERMARK_SYSTEM,
+        TableState.CALENDAR_NOT_APPLICABLE,
+    }
 )
+
+# 日历表：数据天然延伸到未来（排期到年底），"水位落后于 max(cal_date)" 对它无诊断意义
+# ⇒ 不进四态（2026-11-01 用户裁定），单列说明。
+CALENDAR_TABLES = frozenset({"trade_calendar"})
 DEFECT_STATES = frozenset({TableState.MISSING, TableState.BEHIND, TableState.AHEAD})
 
 # ── 四类失败（FR-011）──────────────────────────────────────────────────────
