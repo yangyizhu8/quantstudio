@@ -37,6 +37,7 @@ python scripts/check_remote_advance.py            # 自动读上批留痕锚
 | 4b | **池外笔判定（断言式 fail-closed）** | `python scripts/check_remote_advance.py --pool <已批池SHA,逗号分隔>` → **exit 4 = 池外笔>0 ⇒ 停推上报**；exit 0 = 池外 0 ✓ |
 | 4c | **组批裁定轮的 SHA 清单义务（2026-10-30 用户令·教训 90 双侧落地）** | 裁定令**必须附 SHA 清单**（逐笔列出待推 commit 的 7 位 SHA）；执行方第 4b 步的「池」＝该清单**逐笔比对**，清单外的笔一律判池外（exit 4）⇒ 停推；**笔数标注与清单不一致时以清单为准**（#12 案：裁定笔数误标 13、枚举表实为 14，澄清后按枚举表执行；执行方未自造池、未凭笔数推断池） |
 | 4d | **裁定池呈批前的 is-ancestor 核（2026-10-31 用户令·池枚举教训双侧落地）** | 呈批前对裁定池**逐笔**跑 `git merge-base --is-ancestor <sha> origin/main`：**已在 origin 的陈旧 SHA 剔除后再呈**（#13 案：裁定时的 14/18 笔含已出仓笔与执行时新增笔，两轮均按 4c 制停推）。**建议裁定池带时点限定**（如「池＝截至 T 时刻的待推全集」），避免裁定到执行的时间窗内他线落笔造成逐轮追新 |
+| 4e | **判据注记：锚≠HEAD 部分推送可行（2026-11-01 #16 实证定谳 · 用户亲验照准）** | `prepush-gate` 的推送窗口**按 refspec 上界**（`<remote_sha>..<local_sha>`）计，**不是按 HEAD**：#16 以锚 `a64a5cf`（≠HEAD `3e1b28b`）推送成功，gate 打印「`df90a1ab..a64a5cf1` **共 2 笔**」精确匹配，锚外 `3e1b28b` 未误推（三方核 plus=public=a64a5cf True×2 为证）。**#12 越界唯一根因＝PowerShell 插值 bug**（`"$anchor:main"` 被解析为命名空间限定 → src 为空 → git 回退 HEAD），**非「锚≠HEAD 不可行」**。⇒ 部分推送可行三前提：refspec 用 **`${anchor}:main`** ＋ **7b 断言**（40 位 SHA＋笔数）＋ **三方核 vs 锁存锚** |
 | **5** | 逐笔⑤表 | 本线笔自证；**他线笔只标来源，不代声明⑤** |
 | **6** | 声明 | `QS_PUSH_BUNDLE_ALLOWALSO`=除锚外全部笔；`QS_PUSH_BUNDLE_RULING`=裁定原文 |
 | **7** | **锁存锚 SHA**（push 前！） | `$anchor = git rev-parse HEAD` —— **禁止 push 后再取 HEAD**（并发提交会污染） |
