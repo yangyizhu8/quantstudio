@@ -231,6 +231,64 @@
 
 **终态计数（68 条，机检复核）**：✅ 一致 **36** ／ ⚠️ 差异 **16**（A/B/C/E/F/G/H/I/J/K/L/M/N/P/Q/R/S）／ 🔸 未取到 **15**（已收官）／ ⚠️ 判缺 **1** = **68**
 
+
+## 八、K 结案登记（文档双源分歧 · 2026-11-02 用户裁 A）
+
+**结论**：`get_trading_day` **不是本地缺陷**——PTrade 文档存在**双源且互相冲突**，本地实现与**官方 api-reference** 一致；差异仅存在于**券商版**文档。**用户裁 A：登记结案，不改代码**（B 双语义兼容不采＝新增能力型且无实证需求，将来转换管线真遇券商版语义策略时再单列立项；C 悬空否决＝违反关单纪律）。
+
+### 8.1 两源原文摘录（证据在库内持久化）
+
+**源① 券商版** — 路径 `docs/original/Ptrade国盛.md`（上游仓库 kay-ou/ptradeapi）
+
+```
+## get_trading_day
+### Description
+获取指定日期是否为交易日。
+### 适用环境
+回测/交易
+### 参数
+- date (str) - 日期，格式为 'YYYY-MM-DD'
+### 返回值
+- bool - 是否为交易日
+```
+
+**源② 官方 api-reference** — 路径 `docs/api-reference-en/basic-info.md`（上游仓库 kay-ou/ptradeapi）
+
+```
+### `get_trading_day()` - Get Single Trading Day
+
+- **Interface Description**: Get a single trading day relative to the current date (in backtest or trading, it is `context.blotter.current_dt`) with specified offset.
+- **Parameters**: `day` (int): Day offset. Positive for future, negative for past, 0 for current trading day (if current day is not a trading day, returns next trading day). Default is 0.
+- **Return**: `datetime.date` object.
+```
+
+### 8.2 查询溯源（可复核）
+
+| 项 | 值 |
+| --- | --- |
+| Context7 库 ID | **`/kay-ou/ptradeapi`** |
+| 查询时间 | **2026-11-02T01:03+08:00**（Asia/Shanghai） |
+| 查询方式 | Context7 MCP `query-docs`，单主题「get_trading_day 获取交易日 函数签名 参数 返回值」 |
+| 上游仓库 | `https://github.com/kay-ou/ptradeapi`（`main` 分支） |
+| 命中文件 | `docs/original/Ptrade国盛.md`、`docs/api-reference-en/basic-info.md`、`docs/api-reference-en/framework.md` |
+
+### 8.3 本地实态（亲验）
+
+`quantstudio/backtest/ptrade_api.py:1887`：`def get_trading_day(self, day=0)`，docstring「获取交易日（day>0 未来N天，day<0 过去N天，day=0 当天）／返回 datetime.date 对象（Ptrade 原生行为）：支持 .strftime() 和日期减法 .days」⇒ **与源②完全一致**。
+
+调用面：全仓 **33 处**；`ptrade_api.py` 内部自调用 2 处（L1223、L2175 均 `self.get_trading_day(-1)`）；`backtest_engine.py` 使用另一套 `calendar.get_trading_day(..., offset=)`；转换管线 2 处。另有 `get_trading_day_by_date(query_date, day=0)`（L1914）内部转调。
+
+## 九、双源复核纪律（2026-11-02 用户升格 · F/K 教训泛化）
+
+**升格缘由**：T5 域两轮连败（`ISS-T5-F` 与 `ISS-T5-K`）**同根因——「单源判定」**：F 因 AST 提取器错位、K 因仅据券商版单源，两次都把「本地正确」误判为 P1 缺陷。
+
+**纪律（强制）**：
+
+1. **逐条标注判定源**：B3 类 15 条 P2/P3 差异在统一评估前，**每一条都必须写明判定所依据的文档源**（券商版 / 官方 api-reference / 两者一致 / 未取到）。
+2. **单源不得计入差异**：**凡仅据券商版单源者，须双源复核后方可计入差异**；仅据官方 api-reference 者优先采信（官方优先于券商版）。
+3. **双源冲突即登记「文档双源分歧」**：不得径判本地缺陷——本方（本地实现）与**官方 api-reference** 一致即视为合规。
+4. **溯源三要素随结论落盘**：Context7 库 ID ＋ 查询时间 ＋ 命中文件路径（正文摘录关键段落），使证据在库内持久化、可复核。
+
 ## 五、QS_ONLY 口径调整（随本件回写）
 
 | API | 参数 | 处置 |

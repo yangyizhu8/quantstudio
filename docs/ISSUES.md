@@ -501,7 +501,7 @@
 | 编号 | 问题描述 | 定位证据 | 严重等级 | 当前状态 | 归属迭代 | 修复方案 | 验证证据 | 关闭时间 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | ISS-T5-J | `get_price` **start_date/end_date/frequency 本地均可省略**（文档三项必填），且本地多 `fq='pre'`/`count`/`is_dict` 三个 QS 扩展参数 | 本地 `quantstudio/backtest/ptrade_api.py`（AST：`get_price(security, start_date=None, end_date=None, frequency='1d', fields=None, fq='pre', count=None, is_dict=False)`）；文档 Context7 `/kay-ou/ptradeapi` Ptrade山西.md（get_price 参数表：security/start_date/end_date/frequency 必填，fields 可选） | P3（本地宽松·非阻断） | **已登记·未修复**（B3 下轮统一；**fq 迁移面已闭合**——P3-1 对 get_history/get_price 显式注入 fq='pre'） | T5 补查批 3 | 待定：登记为「本地宽松」差异或收紧必填——**下轮统一评估** | evidence §四 J | — |
-| ISS-T5-K | `get_trading_day` **参数语义完全不同**：文档 `get_trading_day(date)`（date 格式 'YYYY-MM-DD'，返回 bool 是否交易日）；本地 `get_trading_day(day=0)`＝**偏移天数语义** | 本地 `ptrade_api.py`（AST：`get_trading_day(day=0)`）；文档 Context7 Ptrade国盛.md（get_trading_day：date 格式 'YYYY-MM-DD'，返回 bool，适用环境 回测/交易） | **P1（调用面阻断）** | **已登记·未修复**；**用户 2026-10-30 裁定＝与 ISS-T5-F 并列下轮首位**：10-31 主线呈批后**首轮即办六步流水线**（两条均为调用面阻断级） | T5 补查批 3 | 待定：本地是否改名/加 date 参数或登记为已知差异——**下轮统一评估** | evidence §四 K | — |
+| ISS-T5-K | ~~`get_trading_day` 参数语义完全不同~~ ⇒ **判定不成立·无缺陷**：PTrade 文档**双源冲突**——券商版 `Ptrade国盛.md` 为 `get_trading_day(date)`→bool，**官方 `api-reference-en/basic-info.md` 为 `get_trading_day(day=0)`→`datetime.date`（day 偏移）**；本地 `get_trading_day(self, day=0)` 返回 `datetime.date` ⇒ **与官方一致** | Context7 `/kay-ou/ptradeapi` 查询（2026-11-02T01:03+08:00）；本地 `ptrade_api.py:1887`；两源原文摘录见 evidence §八 | **P1 → 无**（判定不成立） | **已结案（2026-11-02 用户裁 A）**：登记「文档双源分歧·本地与官方 api-reference 一致」，**不改代码** | T5 收口终态 | **无需修复**（本地已合规）；B 双语义兼容不采（新增能力型·无实证需求，将来真遇券商版语义策略再单列立项）；C 悬空否决 | evidence §八（两源原文＋查询溯源＋本地亲验） | 2026-11-02 |
 | ISS-T5-L | `get_industry_stocks` 本地**恒返空 list**（DuckDB 暂无行业成分表）⇒ 与平台「返当下行业成分（回测存在未来函数）」**语义不同**：本地无未来函数（更保守），但依赖行业池的策略在本地回测**恒得零样本**（静默失效面） | 本地 `quantstudio/backtest/ptrade_api.py:2081`（docstring「DuckDB 暂无行业成分表 → 返回空 list」）＋实现体 `return [self._to_ptrade_code(code) for code in self._reference.get_industry_stocks(industry_code)]`；对照 `get_index_stocks` L825 已严格 PIT（F3） | P2（语义/静默失效） | **已关闭·登记即可（用户 2026-10-30 裁定：策略侧规避＝不依赖行业池依赖）·不返工** | T5 补查批 3 | **无需修复**：本地无行业成分表，依赖行业池的策略改为不依赖该接口（策略侧规避） | evidence §四 L（W4 结案） | 2026-10-30 |
 
 
@@ -546,6 +546,15 @@
 | ISS-T5-Q | `get_all_positions` 文档**适用环境：仅交易**；本地回测亦可调 ⇒ 环境面本地更宽松（与 ISS-T5-H 同族） | 文档 Context7 `/kay-ou/ptradeapi` Ptrade山西.md（适用环境：交易；Parameters N/A）；本地 `ptrade_api.py`（AST `()`） | P3（环境面·本地宽松·非阻断） | **已登记·未修复**（B3 下轮统一） | T5 补查批 7 | 待定：登记已知宽松差异或加环境门——**下轮统一评估** | evidence §四 Q | — |
 | ISS-T5-R | `set_benchmark` **首参名不一致**：平台 `security`、本地 `sids`（位置等价、关键字不兼容）；另平台**仅 initialize() 可用**且不设默认沪深300——本地调用位置限制未核 | 文档 Context7 `api-reference/settings.md` 英中双源（set_benchmark(security)；仅 initialize；默认 000300.SS）；本地 AST `(sids)` | P3（命名差异·无迁移阻断；E/N 族） | **已登记·未修复**（B3 下轮统一） | T5 补查批 7 | 待定：登记已知命名差异（同 E/N 族，转换产物不产该调用面则无阻断）；initialize-only 限制随 W3 行为面同批评估 | evidence §四 R | — |
 
+
+## T5 P1 清零口径（2026-11-02 用户确认）
+
+| Issue | 结论 | 处置 | 证据 |
+| --- | --- | --- | --- |
+| ISS-T5-F | **判定错误·非缺陷** | 已关闭（`580dc5a`） | `git blame` 实证 `field=None` 自 `6b7f26b` 起 |
+| ISS-T5-K | **判定不成立·文档双源分歧** | 已结案（本笔） | evidence §八 两源原文＋查询溯源 |
+
+**⇒ T5 域 P1 = 0**；余 **15 条 P2/P3**（B3 类·下轮统一评估，须逐条标注判定源·见 evidence §九 双源复核纪律）＋ **15 条未取到**（已收官）＋ **1 条判缺**（`attribute_history` 聚宽名混入）。
 
 ## 判据自纠记录 3（F 作废 · 2026-11-02）
 
