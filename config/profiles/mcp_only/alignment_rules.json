@@ -2090,6 +2090,26 @@
         }
       },
       "code_field": null
+    },
+    "ai_research_snapshot": {
+      "_note": "交付基准列声明（2026-11-02）：AI 研究快照的**业务扫描日** scan_date（VARCHAR 'YYYY-MM-DD 00:00:00'，0 NULL / 93 个取值 / max 2026-10-30）。不用 scan_time：它是单次运行的墙钟时刻（16k+ 取值、含夜间跨日），不是业务日。本表为 passthrough 表，仅作交付四态基准，不参与 aligner 列校验。",
+      "time_key": "scan_date",
+      "columns": {}
+    },
+    "block_trade": {
+      "_note": "交付基准列声明（2026-11-02）：大宗交易的**成交日** trade_date（VARCHAR 'YYYY-MM-DDTHH:MM:SS'，0 NULL / 360 个取值 / max 2026-10-30）。passthrough 表，仅作交付基准。",
+      "time_key": "trade_date",
+      "columns": {}
+    },
+    "broker_recommend": {
+      "_note": "交付基准列声明（2026-11-02）：券商金股/推荐的**报告日** timestamp（VARCHAR 'YYYY-MM-DDTHH:MM:SS'，0 NULL / 80 个取值 / max 2026-10-01；本表唯一日期列）。passthrough 表，仅作交付基准。",
+      "time_key": "timestamp",
+      "columns": {}
+    },
+    "xueqiu_sentiment": {
+      "_note": "交付基准列声明（2026-11-02）：雪球情绪的**归属交易日** trade_date（VARCHAR 'YYYY-MM-DDTHH:MM:SS'，0 NULL / 72 个取值 / max 2026-10-20）。passthrough 表，仅作交付基准。",
+      "time_key": "trade_date",
+      "columns": {}
     }
   },
   "source_mappings": {

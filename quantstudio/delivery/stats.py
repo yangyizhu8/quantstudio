@@ -71,7 +71,15 @@ def resolve_basis(table: str, table_map: Dict[str, Dict], time_keys: Dict[str, s
 
 
 def in_watermark_system(table: str, table_map: Dict[str, Dict], watermark_tables) -> bool:
-    """是否属水位体系（FR-006 v5）：有水位行 **或** map 的 dataset_kind != passthrough。"""
+    """是否属水位体系（FR-006 v5）：有水位行 **或** map 的 dataset_kind != passthrough。
+
+    例外（2026-11-02 用户批准）：`NO_WATERMARK_TABLES` 里的表即便有水位行也判"不在体系"——
+    etf_basic 这类基础资料快照没有"水位"语义，硬判四态只会产出 UNKNOWN-BASIS 噪声。
+    """
+    from .constants import NO_WATERMARK_TABLES
+
+    if table in NO_WATERMARK_TABLES:
+        return False
     if table in set(watermark_tables):
         return True
     spec = table_map.get(table) or {}

@@ -132,6 +132,12 @@ EXCLUSIONARY_STATES = frozenset(
 # 日历表：数据天然延伸到未来（排期到年底），"水位落后于 max(cal_date)" 对它无诊断意义
 # ⇒ 不进四态（2026-11-01 用户裁定），单列说明。
 CALENDAR_TABLES = frozenset({"trade_calendar"})
+
+# 无水位体系的表（FR-006 v5 语义的显式归法；2026-11-02 用户批准）：
+#   etf_basic = ETF 基础资料快照，list_date 是上市日、update_time 是整表刷新时刻（全表单值），
+#   二者都不是"数据随时间推进的业务日期" ⇒ 无水位语义，只报 row_count。
+# 依据来源：alignment_rules.schemas.etf_basic.dataset_kind = "snapshot"（既有配置，非新增真源）。
+NO_WATERMARK_TABLES = frozenset({"etf_basic"})
 DEFECT_STATES = frozenset({TableState.MISSING, TableState.BEHIND, TableState.AHEAD})
 
 # ── 四类失败（FR-011）──────────────────────────────────────────────────────

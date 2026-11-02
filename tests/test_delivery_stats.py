@@ -235,14 +235,20 @@ def test_fr006v5_table_set_and_labels_on_real_config_shape(tmp_path):
         con.close()
 
     by_name = {r["table"]: r for r in rows}
-    # ① 水位表：有基准的进四态；无基准（block_trade 不在 alignment）标 UNKNOWN-BASIS
+    # ① 水位表：有基准的进四态（2026-11-02 起 block_trade 已在 alignment 声明 time_key）
     for name in ("etf_daily", "stock_daily", "balance_statement", "stock_dividend"):
         row = by_name[name]
         assert row["state"] in {TableState.OK, TableState.BEHIND, TableState.AHEAD}, row
         assert row["basis_source"] in {BASIS_SOURCE_MAP, BASIS_SOURCE_ALIGNER}
-    assert by_name["block_trade"]["state"] == TableState.UNKNOWN_BASIS
-    assert by_name["block_trade"]["basis_source"] == BASIS_SOURCE_NONE
-    assert by_name["block_trade"]["max_date"] is None
+    # ①b 配置债批次后：block_trade 走 alignment 第二源，进四态、basis 非 unknown
+    bt = by_name["block_trade"]
+    assert bt["basis_source"] == BASIS_SOURCE_ALIGNER, bt
+    assert bt["date_basis_col"] == "trade_date", bt
+    assert bt["state"] in {TableState.OK, TableState.BEHIND, TableState.AHEAD}, bt
+    assert bt["max_date"] is not None
+    # ①c 全库不得再有 UNKNOWN-BASIS（配置债清零的结构性判据）
+    assert not [r for r in rows if r["state"] == TableState.UNKNOWN_BASIS], [
+        r["table"] for r in rows if r["state"] == TableState.UNKNOWN_BASIS]
     # ② passthrough：NO-WATERMARK-SYSTEM 且不输出水位
     for name in passthrough:
         row = by_name[name]
