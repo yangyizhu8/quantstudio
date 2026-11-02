@@ -328,20 +328,38 @@ v2 里"D5 来源未定谳、不排除我方模板缺陷"的保留，**现予撤�
 | 项 | 裁定 |
 |---|---|
 | **S2 执行归属** | **选项 C**：我方执行优先 + 客户自助能力保留（两段式不变，客户侧零写入仅限 S1） |
-| **备份口径** | **记录快照 + DB 文件级 双备份**（缺一即拒跑，非"二选一"） |
-| **排期分组** | 组①（不依赖客户，可先推进）：N-子8 工具实现（**候 ②审 认 §9 后开工**）、D5-c、L2-b 等；组②（候客户）：S2 窗口/取件；组③（随包）：S1 诊断件 + 操作说明 |
+| **备份口径** | 三档定稿见 §10.2：**b（`VACUUM INTO`）为主 + a（整体复制）余量允许时兜底可配置 + c（记录快照/`COPY SELECT` 双份）必做**；c **不得作为唯一回滚手段** |
+| **排期分组** | 组①（不依赖客户，可先推进）：**N-子8（候 ②审）+ D5-c（候 ②审）**；组②（候客户）：S2 窗口/取件；组③（随包）：S1 诊断件 + 操作说明 |
+| **更正（2026-11-03）** | 前版误植的 **L2-b 系 ⑪ 切隧道件术语**，已由总调度撤回；**非本线任务**，本节点不再引用 |
 
-### 10.2 备份口径细化（据此实现 N-子8）
+### 10.2 备份口径（2026-11-03 ②审倾向定稿 · 三档 + 前置余量检查）
 
-执行前必须同时产出两份备份，任一缺失 ⇒ 拒跑（退出码非零 + 明确提示）：
+**三档，职责不同，不可互相替代：**
 
-1. **记录快照**：把 `qfq_source_cutover` 全表（含将要 superseded 的那行）导出为
-   `data/logs/qfq_cutover_snapshot_<YYYYMMDD_HHMMSS>.json`（逐字段原样，含 cutover_id/aux_db_path/status/时间戳）；
-2. **DB 文件级**：备份 `data/quantstudio.db`（以及存在时的 `-wal`）到
-   `data/backup/qfq_cutover_repair_<YYYYMMDD_HHMMSS>/`；大库场景允许走 `VACUUM INTO`/复制，
-   但**必须记录实际方式与耗时**在回执里（60 GB 级库按资源治理纪律择窗执行）。
+| 档 | 手段 | 角色 | 是否可省 |
+|---|---|---|---|
+| **b（主）** | `VACUUM INTO '<备份目录>/quantstudio.vacuum.db'` 快照 | **主备份**：与 WAL 合并、体积略小、可独立打开校验（`PRAGMA integrity_check` 等价物 + 关键表行数比对） | 否（磁盘不足时才降级，见下） |
+| **a（兜底，可配置）** | 整体复制 `quantstudio.db`（+`-wal`） | 磁盘余量允许时兜底；`--backup-mode=auto\|vacuum\|copy` 可强制 | 可（auto 模式下按余量决定是否追加） |
+| **c（必做）** | 记录快照 JSON + `COPY (SELECT * FROM qfq_source_cutover) TO ... (FORMAT JSON)` **双份** | 记录级快速回滚；**但记录级还原能力弱于完整库** ⇒ **不得作为唯一回滚手段** | **否** |
 
-> 两份备份都要写进审计行（`qfq_cutover_repair_audit.log`）：路径 + sha256 + 大小 + 实际方式 + 是否 WAL 一并备份。
+**前置余量检查（S2 第一步，不满足即拒跑）**
+
+```
+db_size   = quantstudio.db 大小
+wal_size  = quantstudio.db.wal 大小（存在则计）
+need_b    = int(db_size * 1.02) + 512 MiB        # VACUUM INTO 产物 + 余量
+need_a    = db_size + wal_size + 512 MiB         # 整体复制所需
+free      = disk_usage(data_root).free
+
+if free < need_b:                       → 拒跑（退出非零），打印"还差 X GiB"
+elif free >= need_b and free < need_b*2 → 仅做 b + c（不追加 a）
+else (free >= need_b*2)                 → b + c +（auto 且 --backup-mode!=vacuum 时）a
+```
+
+- 磁盘不足时的提示复用交付侧 `probe.space_report()` 的口径（还差多少 + 可清理位置，**只读扫描**）；
+- 所有备份路径、sha256、大小、实际方式、是否含 WAL **写入审计行**；
+- 客户机实况（2026-11-02 取证）：`quantstudio.db` **62,766,198,784 B（62.7 GB）**、`data/` 已占约 **357 GB**
+  ⇒ 若 `free < need_b` 则 S2 直接拒跑并给出清理建议，**不得先动库再补备份**。
 
 ### 10.3 组①中 N-子8 的开工前置（不可跳）
 
