@@ -388,3 +388,24 @@ F 的「field 必填」判定**作废**——`git blame` 实证该行自 `6b7f26
 | G `get_stock_name` | 东莞.md/社区.md `(stocks)`→dict，查不到 value=None | **stock-info.md 双源一致**：Value is `None` when query fails | **双源坐实·差异维持**（本地查不到行为差异，判定源升级双源） |
 | B `get_fundamentals` | 东莞.md `table` 必填（无默认） | **financial-data.md `table_name` 必填（无默认）**，且官方含 `date_type` 参数 | **双源坐实·差异维持**（本地 `table='valuation'` 默认 vs 平台必传）；附参数名注记：官方 `table_name` vs 东莞/本地 `table` |
 | I `get_instruments` | 社区.md＋东莞.md **券商双版本互证**：「仅回测/交易模块」「实盘涨跌幅暂无法提供」 | **未收录**（期货 API 官方无条目） | **差异维持·注记级**（券商互证；官方未收录不构成冲突） |
+
+
+## 十三、B3 双源复核·批 3+4（M/N/P/E · 2026-11-02）——**B3 全量复核完成**
+
+**溯源**：Context7 库 ID `/kay-ou/ptradeapi`｜查询时间 **2026-11-02T10:2x+08:00**｜3 次单主题查询｜命中文件：`docs/original/Ptrade东莞.md`、`docs/original/Ptrade山西.md`、`docs/api-reference-en/stock-info.md`、`docs/api-reference-en/stock-trading.md`。
+
+| 条 | 券商版 | 官方 api-reference | 复核结论 |
+| --- | --- | --- | --- |
+| M `get_stock_blocks` | 东莞.md `(stock_code)`→dict（HY/DY/GN 键；未来函数警示） | **stock-info.md 双源一致**（current latest sector…future data） | **双源坐实·差异维持**（未来函数面） |
+| N `get_stock_exrights` | 东莞.md `(stock_code, date=None)` | **stock-info.md 一致**（stock_code 必填/date 可选默认 None/返 DataFrame） | **双源坐实·差异维持**（官方确认首参名 `stock_code`，本地命名差异实存） |
+| P `get_reits_list` | 山西.md Parameters N/A | **未收录** | **差异维持·弱判据**（券商单源；文档面参数 N/A） |
+| E `order_target` | （原未标源） | **stock-trading.md 间接佐证**：订单函数族参数名 `amount`（order 条目）；order_target 条目本次**未直接命中**（如实标注） | **差异维持·判定源=官方（间接）**（本地 `target_amount` vs 官方族命名 `amount`，位置等价） |
+
+### B3 全量复核汇总（14 条差异判定源终态）
+
+| 判定源 | 条数 | 条目 |
+| --- | --- | --- |
+| **双源坐实** | 5 | C/G/B/M/N |
+| 官方未收录（券商扩展·单源维持） | 5 | Q/S/H（环境面 P3）/I（券商互证·注记级）/P（弱判据） |
+**改写**：J（刻意设计 P3＋转换保真注记，`f1ad980`）｜**官方单源（§九豁免复核）**：A/R｜**官方间接佐证**：E。
+⇒ **14 条差异全部有判定源标注，B3 复核收官，11-04 呈批件可出**。
