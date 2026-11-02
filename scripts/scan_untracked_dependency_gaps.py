@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -87,6 +88,33 @@ def to_dotted(rel_path: str) -> str:
     return p.replace("/", ".")
 
 
+_DIR_CACHE: dict = {}
+
+
+def worktree_has_exact(repo: Path, rel: str) -> bool:
+    """工作区精确存在性（大小写敏感）：逐段以磁盘真实条目名比对。
+
+    Windows 工作区大小写不敏感 ⇒ 直接 Path.is_file() 会把 `Env.py` 误判为 `env.py`；
+    Linux CI 语义为大小写敏感。本门须与 CI 语义一致，否则假缺口会污染扫描结论。
+    Path.name 是词法串（不反映磁盘真实大小写）⇒ 用 scandir 条目名比对。
+    """
+    cur = repo
+    for part in PurePosixPath(rel).parts:
+        if part in ("", "."):
+            continue
+        names = _DIR_CACHE.get(cur)
+        if names is None:
+            try:
+                names = {e.name for e in os.scandir(cur)}
+            except OSError:
+                return False
+            _DIR_CACHE[cur] = names
+        if part not in names:
+            return False
+        cur = cur / part
+    return cur.is_file()
+
+
 def resolve_abs(module: str, repo: Path, tracked: set, untracked: set) -> str | None:
     """绝对模块名 → 仓库内文件路径；仅一等方根参与候选拼接（与 A 脚本同规则）。"""
     parts = [p for p in module.split(".") if p]
@@ -94,7 +122,7 @@ def resolve_abs(module: str, repo: Path, tracked: set, untracked: set) -> str | 
         return None
     rel = "/".join(parts)
     for cand in (rel + ".py", rel + "/__init__.py"):
-        if (repo / cand).is_file() or cand in tracked or cand in untracked:
+        if worktree_has_exact(repo, cand) or cand in tracked or cand in untracked:
             return cand
     return None
 
@@ -129,10 +157,10 @@ def resolve_ref(ref: dict, importer_rel: str, repo: Path, tracked: set, untracke
     base_cands = ((base_rel + "/__init__.py",) if not ref["module"]
                   else (base_rel + ".py", base_rel + "/__init__.py"))
     out.extend(c for c in base_cands
-               if (repo / c).is_file() or c in tracked or c in untracked)
+               if worktree_has_exact(repo, c) or c in tracked or c in untracked)
     for name in ref["names"]:
         for cand in (base_rel + "/" + name + ".py", base_rel + "/" + name + "/__init__.py"):
-            if (repo / cand).is_file() or cand in tracked or cand in untracked:
+            if worktree_has_exact(repo, cand) or cand in tracked or cand in untracked:
                 out.append(cand)
                 break
     return out

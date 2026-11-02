@@ -18,6 +18,7 @@ import argparse
 import ast
 import fnmatch
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -83,6 +84,32 @@ def match_allow(ref_path: str | None, module: str, entries: list) -> str | None:
     return None
 
 
+def worktree_has_exact(repo: Path, rel: str, cache: dict | None = None) -> bool:
+    """工作区精确存在性（大小写敏感）：逐段以磁盘真实条目名比对。
+
+    Windows 工作区大小写不敏感 ⇒ 直接 Path.is_file() 会把 `Env.py` 误判为 `env.py`
+    存在；而 Linux CI 语义为大小写敏感 ⇒ 远端 ModuleNotFoundError。本门须与 CI 语义
+    一致，否则会产出假缺口（阻断合法推送）或漏真缺口。逐段以 scandir 真实条目名比对
+    即可对齐（Path.name 是词法串，不反映磁盘真实大小写，故不可用）。
+    """
+    cur = repo
+    for part in PurePosixPath(rel).parts:
+        if part in ("", "."):
+            continue
+        names = cache.get(cur) if cache is not None else None
+        if names is None:
+            try:
+                names = {e.name for e in os.scandir(cur)}
+            except OSError:
+                return False
+            if cache is not None:
+                cache[cur] = names
+        if part not in names:
+            return False
+        cur = cur / part
+    return cur.is_file()
+
+
 def parse_imports(source: str, rel_path: str) -> list:
     """AST 解析 import → [{line, module, level, names}]。
 
@@ -117,10 +144,12 @@ class ClosureChecker:
         # <head> 树全量路径集（等价逐路径 git cat-file -e <head>:<path>，单次取齐）
         self.head_files = {ln.strip() for ln in run_git(repo, ["ls-tree", "-r", "--name-only",
                        self.head_sha]).stdout.splitlines() if ln.strip()}
+        self._dir_cache: dict = {}
 
     def exists_somewhere(self, rel: str) -> bool:
-        """候选路径命中三通道之一：待推集 / <head> 树 / 工作区。"""
-        return rel in self.push_set or rel in self.head_files or (self.repo / rel).is_file()
+        """候选路径命中三通道之一：待推集 / <head> 树 / 工作区（大小写敏感，见 worktree_has_exact）。"""
+        return (rel in self.push_set or rel in self.head_files
+                or worktree_has_exact(self.repo, rel, self._dir_cache))
 
     def classify(self, target: str) -> str:
         """三态判定（A4）：ok_push > ok_head > gap_worktree；不可确认一律按缺口（fail-closed）。"""
@@ -128,7 +157,8 @@ class ClosureChecker:
             return "ok_push"
         if target in self.head_files:
             return "ok_head"
-        return "gap_worktree" if (self.repo / target).is_file() else "gap_missing"  # 后者理论不可达
+        return ("gap_worktree" if worktree_has_exact(self.repo, target, self._dir_cache)
+                else "gap_missing")  # 后者理论不可达
 
     def resolve_abs(self, module: str) -> str | None:
         """绝对模块名 → 仓库内文件路径；仅一等方根参与候选拼接（A3）。"""
