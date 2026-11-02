@@ -60,11 +60,26 @@ GUARD_LIMIT_BLOCK = '''\
 '''
 
 #: 显式限价参考（仅交易分支，get_snapshot 为交易专用 API，F8；guards.limit_price_explicit）
+#:
+#: PD-0017 B：PTrade `get_snapshot(security)` 返回**二层嵌套** `{code: {last_px: ...}}`
+#:（官方示例 `snapshot[stock]['last_px']`，Context7 /kay-ou/ptradeapi）。
+#: 原实现 `_snap.get('last_px')` 在外层找字段名 ⇒ 恒 None。改为**一层/二层双形态兼容**
+#:（兼容而非替换：若平台版本返回一层，行为不退化）。
 GUARD_SNAPSHOT_BLOCK = '''\
     if is_trade():
         try:
             _snap = get_snapshot(security)
-            _px = _snap.get('last_px') if isinstance(_snap, dict) else _snap
+            _px = None
+            if isinstance(_snap, dict):
+                _inner = _snap.get(security)
+                if isinstance(_inner, dict):
+                    _px = _inner.get('last_px')
+                if _px is None:
+                    _px = _snap.get('last_px')
+                if _px is None and isinstance(_inner, (int, float)):
+                    _px = _inner
+            elif isinstance(_snap, (int, float)):
+                _px = _snap
             log.info('护栏参考: %s 快照最新价=%s（F8：下单请显式限价，默认最新价报单）' % (security, _px))
         except Exception:
             pass
@@ -82,6 +97,64 @@ GUARD_IDEMPOTENCY_BLOCK = '''\
                 return False
             _done.append(_key)
             _book['orders_done'] = _done
+    except Exception:
+        pass
+'''
+
+#: 陈旧挂单巡检（PD-0017 D；guards.stale_order_check，默认开启）
+#:
+#: 语义：上一交易日遗留、至今非终态的委托 = 尾盘限价单未成交。2026-11-02 实测 15 笔
+#: 「已报」成交 0（513500/159941/513030 三只零持仓），跨日存在误成交 + 策略重新下单
+#: 的**双买**风险。
+#:
+#: 判据**不依赖「今天日期」**（run_daily 回调无统一日期入口，context 日期字段各券商不一）：
+#: 框架在 `after_trading_end` 落盘时把「本次执行提交的委托号」滚动进 `qs_prev_orders`
+#:（见 persistence_template），本段在**下一次执行的首次下单前**消费该集合、消费后立即
+#: 清空 ⇒ 天然「每日一次」，且「每日执行」= 每个交易日，语义精确。
+#:
+#: 默认**只告警不撤单**；`__CANCEL_STALE__` 由 transformer 按
+#: `guards.cancel_stale_orders`（默认 false）替换为 True/False 字面量 ——
+#: 撤单是不可逆外部动作，须用户显式开启。
+GUARD_STALE_ORDER_BLOCK = '''\
+    try:
+        _pq = getattr(g, 'state', None)
+        if isinstance(_pq, dict):
+            _stale_ids = _pq.get('qs_prev_orders', [])
+            if _stale_ids:
+                _pq['qs_prev_orders'] = []
+                _stale_open = []
+                for _sid in list(_stale_ids):
+                    try:
+                        _so = get_order(_sid)
+                        _sob = None
+                        if isinstance(_so, (list, tuple)):
+                            if len(_so) > 0:
+                                _sob = _so[0]
+                        elif _so is not None:
+                            _sob = _so
+                        _sst = ''
+                        if _sob is not None:
+                            try:
+                                if isinstance(_sob, dict):
+                                    _sst = str(_sob.get('status', ''))
+                                else:
+                                    _sst = str(getattr(_sob, 'status', ''))
+                            except Exception:
+                                _sst = ''
+                        if _sst in ('5', '6', '8', '9'):
+                            continue
+                        _stale_open.append(_sid)
+                    except Exception:
+                        continue
+                if _stale_open:
+                    log.warning('PTRADE-DEPLOY 陈旧挂单巡检: 上一交易日遗留未终态委托 %d 笔 [%s]——策略本次将重新下单，存在双买风险，请人工确认是否需撤单' % (len(_stale_open), ','.join(_stale_open[:10])))
+                    if __CANCEL_STALE__:
+                        for _sid in _stale_open:
+                            try:
+                                cancel_order(_sid)
+                                log.warning('PTRADE-DEPLOY 陈旧挂单已撤: %s' % _sid)
+                            except Exception:
+                                pass
     except Exception:
         pass
 '''

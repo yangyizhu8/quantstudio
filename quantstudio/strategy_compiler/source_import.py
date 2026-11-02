@@ -986,6 +986,51 @@ def _qs_capture_ctx(context):
     _QS_RUNTIME_CTX = context
 
 
+def _qs_register_split_order(security, order_id):
+    """PD-0017 C：把拆单产生的**每一笔**委托号登记进策略审计台账 + 框架自持注册表。
+
+    背景（2026-11-02 模拟盘实测）：`order_target_value` 拆成 k 笔后只把末笔
+    `_ids[-1]` 交回策略，策略 `submit_target_value_order` 也只登记末笔 ⇒
+    `g.pending_order_audit` 漏记 k-1 笔，`audit_pending_orders` **永不核验**它们
+    （当时 15 笔挂单中 14 笔未进审计）。
+
+    登记对象：
+      1. 策略台账 `g.pending_order_audit`（字段与策略自登记同构；该审计函数对委托字段
+         访问全部用 `.get()`，故补最小 dict 安全，策略随后登记末笔会覆盖为更完整字段）；
+      2. 框架自持 `g.state['qs_cur_orders']`（供 PD-0017 D 的陈旧挂单巡检消费：
+         `after_trading_end` 落盘时滚动进 `qs_prev_orders`）。
+
+    全程受保护：无 `g` / 台账非 dict / 状态不可写时静默跳过，**绝不抛异常影响下单**。
+    不改订单序列、不改返回值 ⇒ 与本地引擎订单序列逐笔一致的同构约束不被破坏。
+    """
+    _oid = None
+    try:
+        if order_id is not None:
+            _oid = str(order_id)
+    except Exception:
+        _oid = None
+    if not _oid:
+        return
+    try:
+        _book = getattr(g, 'pending_order_audit', None)
+        if isinstance(_book, dict) and _oid not in _book:
+            _book[_oid] = {{'security': str(security), 'asset_name': '',
+                           'stage': 'split', 'action': 'auto', 'audit_count': 0}}
+    except Exception:
+        pass
+    try:
+        _st = getattr(g, 'state', None)
+        if isinstance(_st, dict):
+            _cur = _st.get('qs_cur_orders', [])
+            if not isinstance(_cur, list):
+                _cur = []
+            if _oid not in _cur:
+                _cur.append(_oid)
+            _st['qs_cur_orders'] = _cur
+    except Exception:
+        pass
+
+
 def _qs_px_exec(security):
     """D4-S7 #8（2026-08-27 ZCode 裁定）：订单换算价 = 当日撮合价优先（与本地 D4-S6 ②层镜像）。
 
@@ -1119,18 +1164,24 @@ def order_target_value(security, value, *args, **kwargs):
         return _qs_noop_target(security, _delta, 'delta_below_one_lot')
     _ids = []
     for _code, _amt2 in orders:
-        _ids.append(order(_code, _amt2))
+        _id2 = order(_code, _amt2)
+        _ids.append(_id2)
+        _qs_register_split_order(_code, _id2)
     return _ids[-1] if _ids else None
 
 
 def order(security, amount, *args, **kwargs):
     if amount is None or amount <= 0 or amount <= _QS_MAX_ORDER_SHARES:
-        return _QSOrderRefState.order_orig(security, amount, *args, **kwargs)
+        _id0 = _QSOrderRefState.order_orig(security, amount, *args, **kwargs)
+        _qs_register_split_order(security, _id0)
+        return _id0
     # 直接 order() 超限：同样拆（amount 已是股数，无需 px）；末段整手对齐。
     k = int((amount + _QS_MAX_ORDER_SHARES - 1) // _QS_MAX_ORDER_SHARES)
     per = int((amount // k) / _QS_SPLIT_LOT) * _QS_SPLIT_LOT
     if per <= 0:
-        return _QSOrderRefState.order_orig(security, amount, *args, **kwargs)
+        _id1 = _QSOrderRefState.order_orig(security, amount, *args, **kwargs)
+        _qs_register_split_order(security, _id1)
+        return _id1
     _id = None
     _placed = 0
     for _i in range(k):
@@ -1139,6 +1190,7 @@ def order(security, amount, *args, **kwargs):
         if _seg <= 0:
             break
         _id = _QSOrderRefState.order_orig(security, _seg, *args, **kwargs)
+        _qs_register_split_order(security, _id)
         _placed += _seg
     return _id if _id is not None else _QSOrderRefState.order_orig(security, amount, *args, **kwargs)
 
@@ -1155,7 +1207,9 @@ def order_value(security, value, *args, **kwargs):
         return _QSOrderRefState.value_orig(security, value, *args, **kwargs)
     _ids = []
     for _code, _amt in orders:
-        _ids.append(order(_code, _amt))
+        _idv = order(_code, _amt)
+        _ids.append(_idv)
+        _qs_register_split_order(_code, _idv)
     return _ids[-1] if _ids else None
 
 

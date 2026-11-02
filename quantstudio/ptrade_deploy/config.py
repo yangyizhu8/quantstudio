@@ -64,6 +64,10 @@ class GuardsConfig:
     suspension_block: bool = True
     order_idempotency: bool = True
     fundamentals_retry: int = 3
+    #: PD-0017 D：陈旧挂单巡检（上一交易日遗留未终态委托 → 告警）。默认开启（只告警）
+    stale_order_check: bool = True
+    #: PD-0017 D：是否自动撤陈旧挂单。默认关闭 —— 撤单是不可逆外部动作，须用户显式开启
+    cancel_stale_orders: bool = False
 
 
 @dataclass
@@ -185,6 +189,9 @@ def load_config(raw: object) -> DeployConfig:
     g_limit_ud = _require_bool(guards_raw, "limit_up_down_block", True, errors, "guards")
     g_susp = _require_bool(guards_raw, "suspension_block", True, errors, "guards")
     g_idem = _require_bool(guards_raw, "order_idempotency", True, errors, "guards")
+    # PD-0017 D：陈旧挂单巡检（默认开启只告警）/ 自动撤单（默认关闭，不可逆动作留闸门）
+    g_stale = _require_bool(guards_raw, "stale_order_check", True, errors, "guards")
+    g_cancel_stale = _require_bool(guards_raw, "cancel_stale_orders", False, errors, "guards")
     g_retry = guards_raw.get("fundamentals_retry", 3)
     if isinstance(g_retry, bool) or not isinstance(g_retry, int) or g_retry < 0:
         errors.append(f"guards.fundamentals_retry: 应为非负整数，实际为 {g_retry!r}")
@@ -250,6 +257,8 @@ def load_config(raw: object) -> DeployConfig:
             suspension_block=g_susp,
             order_idempotency=g_idem,
             fundamentals_retry=int(g_retry),
+            stale_order_check=g_stale,
+            cancel_stale_orders=g_cancel_stale,
         ),
         notify=NotifyConfig(email=email),
         report=ReportConfig(fidelity_notes=tuple(fidelity_notes)),

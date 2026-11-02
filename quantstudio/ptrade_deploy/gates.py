@@ -22,12 +22,13 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Set
 
 from .preflight import BUILTIN_NAMES, IMPORT_WHITELIST, call_name
+from .transformer import MOUNT_WRAPPER_PREFIX
 
 #: 定时任务累计上限（F4：run_daily + run_interval 共享线程池，超限不触发）
 SCHEDULER_LIMIT = 5
 
 _MARK_BEGIN = re.compile(
-    r"^(\s*)#\s*PTRADE-DEPLOY:(GATE_RESTORE|PERSIST|GUARD|MOUNT|GATE)\s+BEGIN\s*$")
+    r"^(\s*)#\s*PTRADE-DEPLOY:(GATE_RESTORE|DATA_PROXY|PERSIST|GUARD|MOUNT|GATE)\s+BEGIN\s*$")
 
 
 @dataclass
@@ -350,6 +351,25 @@ def run_gates(product_text: str, contract: Dict[str, dict],
         "platform_path_policy", "FAIL" if path_findings else "PASS",
         "平台禁用路径检测（部分券商禁止代码内出现研究目录字面量，应改用 get_research_path()）",
         path_findings))
+
+    # g) 交易态 data 代理检测（PD-0017 A）
+    #    run_daily 回调只传 context（平台契约），源策略若在 handle_data 体内用
+    #    `security in data` / `data[sec]['close']` 取价，data=None 会抛 TypeError 被策略
+    #    except 吞掉 → 落到持仓价 → 首日 0.0 → 整轮调仓中止。故：一旦产物存在挂载包装
+    #    `_deploy_daily_exec`，其 data 默认值必须是 `_qs_data_proxy()` 且代理本体在位。
+    proxy_findings: List[str] = []
+    if f"def {MOUNT_WRAPPER_PREFIX}_exec(" in product_text:
+        if "_qs_data_proxy()" not in product_text:
+            proxy_findings.append(
+                f"挂载包装 {MOUNT_WRAPPER_PREFIX}_exec 的 data 默认值未代理化"
+                "（run_daily 回调不传 data ⇒ 策略取价恒失败，PD-0017 A）")
+        if "def _qs_data_proxy(" not in product_text:
+            proxy_findings.append(
+                "缺少 _qs_data_proxy 定义（交易态 data 代理未注入，PD-0017 A）")
+    result.checks.append(GateCheck(
+        "data_proxy_policy", "FAIL" if proxy_findings else "PASS",
+        "交易态 data 代理检测（run_daily 回调不传 data；缺代理则策略取价链整链失效）",
+        proxy_findings))
 
     result.passed = all(c.status != "FAIL" for c in result.checks)
     return result

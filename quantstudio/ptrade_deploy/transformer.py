@@ -44,6 +44,8 @@ MARKER_MOUNT = "MOUNT"
 MARKER_GATE = "GATE"
 #: PD-0012：「恒真分支还原」块标记（P4 归一化时把条件还原回 `not False`）
 MARKER_GATE_RESTORE = "GATE_RESTORE"
+#: PD-0017 A：交易态 `data` 代理块标记（P4 归一化时整体剔除，源码侧无对应物）
+MARKER_DATA_PROXY = "DATA_PROXY"
 MARKER_IMPORT = "IMPORT"
 
 #: import 追加行的行尾标记（§5.4 白名单第 6 类）
@@ -498,8 +500,12 @@ def _apply_persistence(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> No
                             f"（state_file={cfg.persistence.state_file}，version={STATE_VERSION}）"})
 
     if "after_trading_end" in cfg.persistence.save_points:
-        save_src = tpl.PERSIST_SAVE_TEMPLATE.replace(
-            "__STATE_FILE__", repr(cfg.persistence.state_file))
+        # PD-0017 D：巡检关闭时不留无人消费的死状态（滚动块整体不注入）
+        _stale_roll = (tpl.PERSIST_STALE_ROLL
+                       if getattr(cfg.guards, "stale_order_check", True) else "")
+        save_src = (tpl.PERSIST_SAVE_TEMPLATE
+                    .replace("__STALE_ROLL__", _stale_roll)
+                    .replace("__STATE_FILE__", repr(cfg.persistence.state_file)))
         save_stmts = ast.parse(save_src).body
         ate, created_ate = _get_or_create_function(tree, "after_trading_end", MARKER_PERSIST)
         if created_ate:
@@ -514,6 +520,38 @@ def _apply_persistence(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> No
 
 
 # ---------------------------------------------------------------- ④ 执行时点挂载 --
+
+def _ensure_data_proxy(tree: ast.Module, edits: List[Dict[str, str]]) -> None:
+    """PD-0017 A：注入交易态 `data` 惰性代理（挂载包装默认值的来源）。
+
+    平台契约：`run_daily(context, func, time)` 的 func 签名为 `Callable[[Context], None]`
+    —— **只传 context**（Context7 /kay-ou/ptradeapi），故挂载包装
+    `_deploy_daily_exec(ctx, data=None)` 的 `data` 恒为 None。源策略若在 handle_data
+    体内用 `security in data` / `data[sec]['close']` 取价，交易态会抛 TypeError 并被
+    策略的 except 吞掉 → 落到持仓价（首日无持仓即 0.0）→ 整轮调仓中止
+    （2026-11-02 四象限ETF轮动策略 512890.SS 实测复现）。
+
+    注入物：`_QSDataItem` / `_QSDataProxy` / `_qs_data_proxy()` 三个模块级语句，逐条带
+    DATA_PROXY 标记 ⇒ P4 归一化时整体剔除（源码侧无对应物，不参与逐节点比较）。
+    幂等：已存在 `_qs_data_proxy` 定义时直接返回。
+    """
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "_qs_data_proxy":
+            return
+    tpl = _load_template("data_proxy_template")
+    proxy_stmts = ast.parse(tpl.DATA_PROXY_TEMPLATE).body
+    for s in proxy_stmts:
+        _mark(s, MARKER_DATA_PROXY, "wrap")
+    # 插在模块头部之后（所有函数定义之前）——保证 `def _deploy_daily_exec(...)` 的
+    # 默认值 `_qs_data_proxy()` 在 def 求值时已可用。
+    idx = _after_header_index(tree)
+    for k, s in enumerate(proxy_stmts):
+        tree.body.insert(idx + k, s)
+    edits.append({"kind": "DATA_PROXY", "location": "<module>",
+                  "detail": "注入 _QSDataItem/_QSDataProxy/_qs_data_proxy()"
+                            "（PD-0017 A：run_daily 回调不传 data 的交易态代理；"
+                            "取价与 _qs_px_exec 同源、代理无状态）"})
+
 
 def _apply_mount(tree: ast.Module, cfg, edits: List[Dict[str, str]],
                  profile: Optional[Dict[str, object]] = None) -> None:
@@ -559,18 +597,21 @@ def _apply_mount(tree: ast.Module, cfg, edits: List[Dict[str, str]],
             posonlyargs=[],
             args=[ast.arg(arg=ctx_name), ast.arg(arg=data_name)],
             vararg=None, kwonlyargs=[], kw_defaults=[], kwarg=None,
-            defaults=[ast.Constant(value=None)]),
+            defaults=[ast.Call(func=ast.Name(id="_qs_data_proxy", ctx=ast.Load()),
+                               args=[], keywords=[])]),
         body=handle_data.body, decorator_list=[], returns=None, type_comment=None)
     _mark(wrapper, MARKER_MOUNT, "wrap")
     tree.body[idx] = wrapper
     if src_fn_name:
         edits.append({"kind": "MOUNT", "location": src_fn_name,
-                      "detail": f"包装为 {MOUNT_WRAPPER_PREFIX}_exec({ctx_name}, {data_name}=None)"
+                      "detail": f"包装为 {MOUNT_WRAPPER_PREFIX}_exec({ctx_name}, "
+                                f"{data_name}=_qs_data_proxy())"
                                 f"（函数体原样内联；原 {src_fn_name} 移除，run_daily 源形态"
                                 f" PD-0006：源挂载 time='{src_time}' 重挂到档位时点）"})
     else:
         edits.append({"kind": "MOUNT", "location": "handle_data",
-                      "detail": f"包装为 {MOUNT_WRAPPER_PREFIX}_exec({ctx_name}, {data_name}=None)"
+                      "detail": f"包装为 {MOUNT_WRAPPER_PREFIX}_exec({ctx_name}, "
+                                f"{data_name}=_qs_data_proxy())"
                                 f"（函数体原样内联；原 handle_data 移除，交易端由 run_daily 驱动）"})
 
     init, created = _get_or_create_function(tree, "initialize", MARKER_MOUNT)
@@ -612,6 +653,11 @@ def _apply_mount(tree: ast.Module, cfg, edits: List[Dict[str, str]],
                             + (f"；源时点 {src_time} 重挂，provenance 记录" if src_fn_name
                                else "") + "）"})
 
+    # PD-0017 A：代理块在**最后**注入 —— 此前 `idx` 是 tree.body 的旧下标，
+    # 头部插入会使其失效（会把包装函数写到错误位置）。插在头部保证
+    # `def _deploy_daily_exec(..., data=_qs_data_proxy())` 的默认值求值时已可用。
+    _ensure_data_proxy(tree, edits)
+
 
 # ---------------------------------------------------------------- ⑤ 护栏注入 --
 
@@ -626,6 +672,11 @@ def _build_guard_helper(guards) -> str:
         segments.append(tpl.GUARD_SNAPSHOT_BLOCK)
     if guards.order_idempotency:
         segments.append(tpl.GUARD_IDEMPOTENCY_BLOCK)
+    if getattr(guards, "stale_order_check", True):
+        # PD-0017 D：撤单是不可逆外部动作 ⇒ 默认 false，须用户显式开启
+        _cancel_literal = "True" if getattr(guards, "cancel_stale_orders", False) else "False"
+        segments.append(tpl.GUARD_STALE_ORDER_BLOCK.replace(
+            "__CANCEL_STALE__", _cancel_literal))
     body = "\n".join(segments) if segments else "    pass"
     return tpl.GUARD_HELPER_TEMPLATE.replace("__SEGMENTS__", body.rstrip("\n"))
 

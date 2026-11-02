@@ -365,14 +365,15 @@
 
 ## 4.16 轮 16（PD-0017 交易态四缺陷批 · ①方案，2026-11-02）
 
-- **N₁₆=4**（新发现框架缺陷 4 项：A data 代理 / B 快照取值 / C 拆单审计 / D 陈旧挂单；E 时点自检为登记项不计缺陷）、**R₁₆=0**（无复发，PD 族首现）——本轮为**真实平台首验归因轮**。
+- **N₁₆=5**（A data 代理 / B 快照取值 / C 拆单审计 / D 陈旧挂单 + **③实施期新增发现 E′ 幂等台账跨日锁死**；E 时点自检为登记项不计缺陷）、**R₁₆=0**（无复发，PD 族首现）——本轮为**真实平台首验归因轮**。
 - **触发**：2026-11-02 模拟盘 14:50 三策略实跑（全球资产轮动 `strat_0c202b` / 四象限ETF轮动 `ETF_f926a7` / F-Score `149655`）+ PTrade【委托】/【普通持仓】表截图。
 - **五现象定性**：①「每标的 2–7 笔相同数量订单」= **误报**（49000 股/笔拆单设计；9/9 标的的 k 值与每笔股数与委托表**逐位吻合**；账实自洽 ≈1000 万，无重复扣款）——非缺陷；②护栏参考价 None = **B**；③四象限「512890 价格无效」整轮中止 = **A（P0）**；④「运行周期错误」= 策略自检误报（登记为 E，**不进本批**）；⑤F-Score 正常。
-- **根因（四项，均带取证行号）**：
+- **根因（五项，均带取证行号）**：
   - A：Context7 `/kay-ou/ptradeapi` 官方 `run_daily(context, func, time)` 的 func 签名 `Callable[[Context], None]`（**只传 context**）→ `transformer.py:556-565` 包装默认 `data=None` 恒 None → 四象限 `ETF_f926a7_trade.py:997-1015` `if security in data:` 抛 TypeError → except 吞掉 → `position.last_sale_price` 首日 0.0 → 「价格无效」→ L1176 `return None` **整轮中止**；512890 为 BEAR 象限首个 key ⇒ **首败即止**。
   - B：`guard_template.py:67` 在**一层**找 `last_px`，而 PTrade `get_snapshot` 返回 `{code:{last_px:...}}` **二层嵌套**（官方示例 `snapshot[stock]['last_px']`）→ 恒 None。
   - C：`source_import.py:1120-1123`（order_target_value）/`:1156-1159`（order_value）/`:1134-1143`（order）拆单**只登记末笔** → 策略 `g.pending_order_audit` 漏 k−1 笔 → `audit_pending_orders` 永不核验（该函数对委托字段访问**全部 `.get()`**，框架可安全代登记最小 dict）。
   - D：部署包**零 cancel_order**；`get_orders` 契约为「**当日**订单列表」→ 跨日未成交委托未必可查；15:53 仍 15 笔「已报」成交 0；513500/159941/513030 三只零持仓 ⇒ 跨日双买风险 + 目标仓位缺失。
+  - **E′（③实施开工核查期新增发现，比 A 更致命）**：幂等台账 `orders_done` 存于 `g.state`、随 pickle 跨日持久化，而 `guard_template` 全文**只 append 不清空** ⇒ 次日首个 `[security, side]` 命中即被判「当日重复下单」拦死 ⇒ **部署后第二天起全量下单被阻断**。按铁律 08 当场纳入本批修复（未挂账）。
 - **方案要点**（`docs/ptrade-deploy-pd0017-design.md`，①方案 10 节）：范围收敛为 **A/B/C/D 四项**（E 登记不进批）；**零契约变更**（`get_snapshot` L115 / `get_orders` L360 / `get_order` L369 / `get_open_orders` L378 / `cancel_order` L414 均已有行且 trading:true）；A 代理取价与 `_qs_px_exec` 换算价**同源**且**无状态**（默认参数在 def 时求值一次 ⇒ 禁缓存）；C 只加登记**不改订单序列**（返回值仍 `_ids[-1]`）；D 默认**只告警不撤单**（`guards.cancel_stale_orders` 默认 false，留用户闸门）。
 - **P4 等价性零影响的结构性论证（已核实，非推断）**：`equiv.py:120-122` 形态一把包装签名**重写**为 `(context, data)` 且 `defaults=[]` ⇒ 默认值改写被归一化抹除；`run_daily` 注册语句（MOUNT 标记）在 P4 **整条剔除**（形态二 `_droppable`）⇒ 注册目标改名无影响；新增 `DATA_PROXY`/`DAILY_HOOK` 块**整体剔除**（与 GUARD/PERSIST 同级）。
 - **判型**：A **新增能力型**、B **纯恢复型**、C **纯恢复型**、D **新增能力型**（撤单默认关闭 ⇒ 零行为漂移）。
@@ -386,6 +387,33 @@
 - 知识反哺：[命中] PD-2026-0006（PD/D3/knowledge/ptrade-deploy/PD-2026-0006.md，2026-10-11）——run_daily **源形态**识别/重挂，未覆盖「回调不传 data 的取价代理」⇒ 相关不覆盖
 - 知识反哺：[命中] PD-2026-0007（PD/D3/knowledge/ptrade-deploy/PD-2026-0007.md，2026-10-15）——混合形态识别，与本批 A 无交集 ⇒ 相关不覆盖
 - 知识反哺：[无命中] PD 族其余 12 条（检索面：run_daily data=None 代理 / get_snapshot 二层嵌套取值 / 拆单 49000 上限与审计登记 / 未成交陈旧挂单处置），2026-11-02
+
+## 4.17 轮 17（PD-0017 ③实施 + ④验收，2026-11-02）
+
+- **N₁₇=0**（验收轮无新发现缺陷；③实施期新增发现的 E′ 已并入轮 16 口径）、**R₁₇=0** ⇒ 收敛恢复（连续 R=0 已远超 3 轮）。
+- **实施落点（6 改 2 新，策略源码零改动 · 铁律 07）**：
+  | 文件 | 子项 | 改动 |
+  |---|---|---|
+  | `templates/data_proxy_template.py`（新建） | A | `_QSDataItem` / `_QSDataProxy` / `_qs_data_proxy()`（无状态惰性代理） |
+  | `transformer.py` | A/D | 挂载默认值 `data=None` → `data=_qs_data_proxy()`；新增 `MARKER_DATA_PROXY` + `_ensure_data_proxy`（**末尾注入**，避开 `idx` 失效陷阱）；`_build_guard_helper` 追加陈旧挂单段；`_apply_persistence` 按开关填 `__STALE_ROLL__` |
+  | `equiv.py` | A | `_MARK_BEGIN` 增 `DATA_PROXY`；`_handle_data_proxy`（整体剔除）；strip 顺序插在 `GATE` 后 `GUARD` 前 |
+  | `templates/guard_template.py` | B/D | 快照取价一层/二层双形态兼容；新增 `GUARD_STALE_ORDER_BLOCK`（默认只告警，`__CANCEL_STALE__` 配置化） |
+  | `templates/persistence_template.py` | D/E′ | 恢复后清空 `orders_done`；落盘前 `qs_cur_orders`→`qs_prev_orders` 滚动（`__STALE_ROLL__` 占位，关闭时不注入） |
+  | `strategy_compiler/source_import.py` ⚠共享核心 | C | 新增 `_qs_register_split_order`（`{{}}` 双写转义，适配 `.format` 模板）；三路径（`order_target_value` / `order` / `order_value`）全量登记 |
+  | `gates.py` | A | 新增 P5 `data_proxy_policy`（缺代理/默认值未代理化 ⇒ FAIL），构成知识回灌机检钩子 |
+  | `tests/test_deploy_pd0017.py`（新建） | 全部 | 23 用例（A 语义/无状态/降级/负向、B 双形态、C 全量登记/鲁棒、D 开关、E′ 语义、门禁正负向） |
+- **两处设计调整（对①方案的偏离，已申报）**：
+  1. **D 落点由 MOUNT 结构改造改为复用 PERSIST 钩子** —— 原设计需新增 `_deploy_daily_entry` + `equiv` 形态一′（高风险）；改为 `after_trading_end` 落盘时滚动 `cur→prev`、护栏下次执行首单前消费并清空 ⇒ 天然「每日一次」，**零 MOUNT/equiv 结构改动**，风险显著下降。
+  2. **E′ 范围外新增并纳入本批** —— 按铁律 08 当场修复，未挂账。
+- **验收读数（七项）**：①新固件 **23 passed**；②deploy 套件 **155 passed / 1 skipped**；③三策略重转 **P0–P6 全 PASS**（`P4_equiv` 全 PASS ⇒ **等价 diff 零回退**）；④产物级 **7/7 特征在位**（`DATA_PROXY` 标记块各 3 个）+ 定义顺序 3/3 OK；⑤`check_fund_matrix --check --reverify` **OK**（`wrapper_hash=7a424f397983` 未变——已核：覆盖面不含 `_QS_ORDER_SPLIT_EXT`，非漏追认；仅 QMT 复证日期 `2026-11-02`）；⑥PD 族机检 **17 件 / 不合规 0**；⑦模拟盘复跑待 2026-11-03 14:50（外部）。
+- **决定性对照（原故障路径）**：从四象限产物源码抽取 `get_market_price` 实测 —— 正向 `('512890.SS', proxy) = 1.777`（FIXED）；负向 `('512890.SS', None) = 0.0`（旧缺陷可复现）；负向 `(无价标的, proxy) = 0.0`（与旧行为同构回落、不引入新行为）。
+- **假信号留痕（防重踩）**：初次复验 `safe_float` 恒 0.0，误判 A 未修好；真因是抽取沙箱缺 `np`（`np.isnan` NameError → `except → default_value`）。**沙箱缺依赖会静默产出 0.0 假结论** ⇒ 此类复验必须同时打印依赖函数直接读数作沙箱自检。
+- **判型**：A/D **新增能力型**；B/C/E′ **纯恢复型**。
+- **遗留登记**：E 时点自检（P2，零越权不进批）；D 撤单开关默认 `false`（复跑后按实际挂单单独呈批）；B-2「PTrade 日终是否自动撤单」候用户侧查证回填。
+- 证据：`docs/evidence/ptrade-deploy-pd0017-evidence.md`；方案：`docs/ptrade-deploy-pd0017-design.md`
+- **本轮沉淀**：PD-2026-0017
+- 知识反哺：[命中] PD-2026-0016（PD/D3/knowledge/ptrade-deploy/PD-2026-0016.md，2026-11-01）——本轮 B 填补其「仅验快照在位、未验取值形态」的覆盖空白
+- 知识反哺：[无命中] PD 族其余（检索面：交易态 data 代理 / 幂等台账跨日生命周期 / 拆单全量审计登记 / 陈旧挂单处置），2026-11-02
 
 ## 5. 降级记录（trading 仓不可达时的 degraded 登记）
 

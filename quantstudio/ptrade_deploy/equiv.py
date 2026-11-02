@@ -27,7 +27,7 @@ from .preflight import call_name
 from .transformer import MOUNT_WRAPPER_PREFIX
 
 _MARK_BEGIN = re.compile(
-    r"^(\s*)#\s*PTRADE-DEPLOY:(GATE_RESTORE|PERSIST|GUARD|MOUNT|GATE)\s+BEGIN\s*$")
+    r"^(\s*)#\s*PTRADE-DEPLOY:(GATE_RESTORE|DATA_PROXY|PERSIST|GUARD|MOUNT|GATE)\s+BEGIN\s*$")
 _IMPORT_TAG = "# PTRADE-DEPLOY:IMPORT"
 
 _DUMP_EXCERPT = 160  # diff 报告中 AST dump 摘录上限（保持报告可读）
@@ -107,6 +107,16 @@ def _handle_persist(indent: str, block: List[str]) -> List[str]:
     return []  # 持久化注入整体剔除（含新建生命周期函数场景）
 
 
+def _handle_data_proxy(indent: str, block: List[str]) -> List[str]:
+    """PD-0017 A：交易态 `data` 代理块整体剔除（框架注入，源码侧无对应物）。
+
+    与 GUARD / PERSIST 同级处理：注入内容是模块级辅助类与工厂函数
+    （`_QSDataItem` / `_QSDataProxy` / `_qs_data_proxy`），属部署期基础设施，
+    在「策略语义」中不存在 ⇒ 直接剔除、不参与 P4 逐节点比较。
+    """
+    return []
+
+
 def _handle_mount(indent: str, block: List[str],
                   restore_name: str = "handle_data") -> List[str]:
     tree = ast.parse(_dedent_lines(block, indent))
@@ -154,6 +164,7 @@ def _handle_gate_restore(indent: str, block: List[str]) -> List[str]:
 
 
 _HANDLERS = {"GATE": _handle_gate, "GATE_RESTORE": _handle_gate_restore,
+             "DATA_PROXY": _handle_data_proxy,
              "GUARD": _handle_guard,
              "PERSIST": _handle_persist, "MOUNT": _handle_mount}
 
@@ -236,7 +247,8 @@ def normalize_product(product_text: str,
     anomalies: List[str] = []
     text = product_text
     # 顺序：叶子块先行（GATE/GUARD 可嵌于 MOUNT 包装函数内、MOUNT 可嵌于新建 PERSIST 函数内）
-    for kinds in (("GATE_RESTORE",), ("GATE",), ("GUARD",), ("PERSIST",), ("MOUNT",)):
+    for kinds in (("GATE_RESTORE",), ("GATE",), ("DATA_PROXY",), ("GUARD",),
+                  ("PERSIST",), ("MOUNT",)):
         text = _strip_pass(text, kinds, anomalies, mount_restore_name)
     # 第 6 类：import 追加行剔除
     text = "\n".join(ln for ln in text.split("\n")
