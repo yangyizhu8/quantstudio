@@ -2794,8 +2794,23 @@ class ResidentCollector:
             qfq_block = self.tasks_cfg.get("qfq_orchestrator", {}) or {}
             qfq_thresholds = (dict(qfq_block.get("quality_thresholds", {}) or {})
                               if qfq_block.get("enabled") else None)
+            _no_wm = set()
+            try:
+                from quantstudio.delivery.constants import NO_WATERMARK_TABLES as _NW
+                _no_wm |= set(_NW)
+            except Exception:
+                pass
+            try:
+                for _t in (self.tasks_cfg.get("tasks") or []):
+                    if isinstance(_t, dict) and _t.get("passthrough"):
+                        _tb = str(_t.get("table") or "").strip()
+                        if _tb:
+                            _no_wm.add(_tb)
+            except Exception:
+                pass
             report = DataQualityAuditor(
                 self.writer.db_path, self.aligner.schemas,
+                no_watermark_tables=_no_wm,
                 batch_audit_path=self.batch_audit.db_path,
                 quarantine_path=self.quarantine.db_path,
                 authority_rules=authority_rules,

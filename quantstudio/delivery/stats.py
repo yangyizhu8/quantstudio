@@ -70,7 +70,8 @@ def resolve_basis(table: str, table_map: Dict[str, Dict], time_keys: Dict[str, s
     return UNKNOWN_BASIS, BASIS_SOURCE_NONE
 
 
-def in_watermark_system(table: str, table_map: Dict[str, Dict], watermark_tables) -> bool:
+def in_watermark_system(table: str, table_map: Dict[str, Dict], watermark_tables,
+                        passthrough_tables=None) -> bool:
     """是否属水位体系（FR-006 v5）：有水位行 **或** map 的 dataset_kind != passthrough。
 
     例外（2026-11-02 用户批准）：`NO_WATERMARK_TABLES` 里的表即便有水位行也判"不在体系"——
@@ -79,6 +80,12 @@ def in_watermark_system(table: str, table_map: Dict[str, Dict], watermark_tables
     from .constants import NO_WATERMARK_TABLES
 
     if table in NO_WATERMARK_TABLES:
+        return False
+    # passthrough 任务（collector_tasks.json 的 task.passthrough=true）按 FR-006 v5
+    # 属"无水位体系"：全量覆盖、不推进水位 ⇒ 不判四态。**判据取 task 标记，不依赖 map 覆盖**
+    # （这些表 out_of_map，map 侧 dataset_kind 恒缺 ⇒ 旧实现会回落成"属水位体系"，
+    #  造出永不更新的假 BEHIND；2026-11-02 总调度 V3 裁决）。
+    if passthrough_tables and table in set(passthrough_tables):
         return False
     if table in set(watermark_tables):
         return True
@@ -207,6 +214,7 @@ def collect_table_stats(
     *,
     time_keys: Optional[Dict[str, str]] = None,
     watermark_tables: Iterable[str] = (),
+    passthrough_tables: Optional[Iterable[str]] = None,
     known_tasks: Optional[Iterable[str]] = None,
     row_count_estimate: bool = False,
     progress: Optional[Callable[[int, int, str], None]] = None,
@@ -229,7 +237,8 @@ def collect_table_stats(
         target = str(spec.get("target_table") or name)
         task = spec.get("task_name")
 
-        in_system = in_watermark_system(name, table_map, wm_tables)
+        in_system = in_watermark_system(name, table_map, wm_tables,
+                                        passthrough_tables=passthrough_tables)
 
         if row_count_estimate:
             rows = query(

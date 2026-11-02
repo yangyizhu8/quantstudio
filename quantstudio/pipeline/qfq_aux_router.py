@@ -1,4 +1,4 @@
-﻿"""B-5 SQLite auxiliary-database routing.
+"""B-5 SQLite auxiliary-database routing.
 
 The MCP generation owns a complete auxiliary SQLite database.  This module is the
 single path resolver used by daemon/CLI code; it deliberately does not create a
@@ -6,6 +6,9 @@ missing generation database implicitly.  Creation/initialisation is an explicit
 cutover/bootstrap action so a typo cannot silently produce an empty baseline.
 """
 from __future__ import annotations
+
+import os
+import re
 
 from quantstudio.pipeline.snapshot_lock import locked_connect  # 3A 写锁收口
 
@@ -16,6 +19,23 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from quantstudio.pipeline.qfq_reanchor_schema import aux_db_path, init_sqlite_schema
+
+
+def looks_foreign_absolute(raw: str, *, windows_host: bool) -> bool:
+    """跨平台绝对路径形态识别（**纯判据，不做映射**）。
+
+    POSIX 宿主上 `Path("D:\\x")` 的 is_absolute() 为 False ⇒ 会被当相对路径拼接，
+    产出 `data/D:\\x` 这类畸形路径（2026-11-02 客户实测：3 张核心表零取数）。
+    本判据把这种"异平台绝对路径"识别出来，交由调用方**显式拒绝**。
+    """
+    s = str(raw or "").strip()
+    if not s:
+        return False
+    if windows_host:
+        # Windows 宿主上出现 POSIX 绝对路径（且非 UNC / 非 //?/ 设备前缀）
+        return s.startswith("/") and not s.startswith("//")
+    # POSIX 宿主上出现 Windows 盘符绝对路径（D:\x 或 C:/x）
+    return bool(re.match(r"^[A-Za-z]:[\\/]", s))
 
 
 class AuxRouteError(RuntimeError):
@@ -44,6 +64,15 @@ class AuxDbRouter:
                  routes: Optional[Dict[str, str | Path]] = None):
         self.main_db = Path(main_db).resolve() if main_db is not None else None
         self.config_path = Path(config_path).resolve() if config_path is not None else None
+        if explicit_default and looks_foreign_absolute(
+                str(explicit_default), windows_host=(os.name == "nt")):
+            # D5-a（构造期）：explicit_default 若来自运行态记录（qfq_source_cutover.aux_db_path），
+            # 必须在 resolve 之前拦下——Path("D:\\x").resolve() 会把它"洗干净"成
+            # <cwd>/D:\x，之后再查形态就查不出来了（客户实测畸形路径正是这一步产生的）。
+            raise AuxRouteError(
+                f"跨平台路径不可解析（explicit_default）：{explicit_default!r}"
+                f"（宿主平台={'windows' if os.name == 'nt' else 'posix'}）"
+                "——该值形似另一操作系统的绝对路径，请改用相对路径或本机绝对路径")
         self.explicit_default = Path(explicit_default).resolve() if explicit_default else None
         self._routes: Dict[str, Path] = {}
         if routes:
@@ -68,6 +97,13 @@ class AuxDbRouter:
         return cls(main_db=main_db, explicit_default=explicit_default)
 
     def _resolve_path(self, raw: str | Path) -> Path:
+        import os as _os
+
+        if looks_foreign_absolute(str(raw), windows_host=(_os.name == "nt")):
+            raise AuxRouteError(
+                f"跨平台路径不可解析：{raw!r}（宿主平台={'windows' if _os.name == 'nt' else 'posix'}）"
+                "——该值形似另一操作系统的绝对路径，若按相对路径拼接会得到畸形路径；"
+                "请改用相对路径或本机绝对路径（D5-a 守卫）")
         p = Path(raw)
         if p.is_absolute():
             return p.resolve()
@@ -104,7 +140,24 @@ class AuxDbRouter:
         if path is None:
             raise AuxRouteError(
                 f"未配置 source_generation={generation!r} 的辅助库路径；拒绝回退到其它世代")
+        import os as _os
+
+        # D5-b：运行态记录（qfq_source_cutover.aux_db_path）里的值同样要过守卫，
+        # 否则会绕过 _resolve_path 的检查（客户实测：记录里存了我方 Windows 绝对路径）。
+        if looks_foreign_absolute(str(path), windows_host=(_os.name == "nt")):
+            raise AuxRouteError(
+                f"source_generation={generation!r} 的辅助库路径跨平台不可用：{path}"
+                f"（宿主平台={'windows' if _os.name == 'nt' else 'posix'}）；"
+                "该值很可能来自迁移前的 qfq_source_cutover.aux_db_path 记录，"
+                "请按正式流程重建/校正该记录（D5-b 守卫，禁止静默回退）")
         path = Path(path).resolve()
+        # D5-b 兜底：Resolve 之后若仍内嵌异平台盘符（如 /repo/data/D:\x），同样拒绝，
+        # 避免"已洗过一遍"的畸形路径绕过形态判据（客户报错串即此形态）。
+        if os.name != "nt" and re.search(r"[A-Za-z]:[\\/]", str(path)):
+            raise AuxRouteError(
+                f"source_generation={generation!r} 的辅助库路径含异平台盘符：{path}"
+                "；该值很可能来自迁移前的 qfq_source_cutover.aux_db_path 记录，"
+                "请按正式流程重建/校正该记录（D5-b 兜底守卫，禁止静默回退）")
         if require_exists and not path.is_file():
             raise AuxRouteError(
                 f"source_generation={generation!r} 的辅助库不存在: {path}；"

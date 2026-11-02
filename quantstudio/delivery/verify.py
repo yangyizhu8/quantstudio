@@ -412,6 +412,20 @@ def _collect_tables(package_dir: Path, config_root: Path) -> tuple:
     tasks_doc = _read_json(config_root / COLLECTOR_TASKS_REL, {}) or {}
     tasks = tasks_doc.get("tasks") if isinstance(tasks_doc, dict) else None
     known_tasks = set(tasks) if isinstance(tasks, dict) else None
+    # passthrough 任务表（collector_tasks.tasks 实际为 **list**；FR-006 v5 判据取 task 标记）
+    passthrough_tables = set()
+    if isinstance(tasks, list):
+        for item in tasks:
+            if isinstance(item, dict) and item.get("passthrough"):
+                tbl = str(item.get("table") or "").strip()
+                if tbl:
+                    passthrough_tables.add(tbl)
+    elif isinstance(tasks, dict):
+        for _k, item in tasks.items():
+            if isinstance(item, dict) and item.get("passthrough"):
+                tbl = str(item.get("table") or "").strip()
+                if tbl:
+                    passthrough_tables.add(tbl)
 
     con = duckdb.connect(str(package_dir / "quantstudio.db"), read_only=True)
     try:
@@ -432,6 +446,7 @@ def _collect_tables(package_dir: Path, config_root: Path) -> tuple:
             time_keys=S.load_alignment_time_keys(config_root / ALIGNMENT_RULES_REL),
             watermark_tables=wm_tables,
             known_tasks=known_tasks,
+            passthrough_tables=passthrough_tables,
         )
     finally:
         con.close()

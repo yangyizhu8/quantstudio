@@ -63,7 +63,8 @@ class DataQualityAuditor:
                  qfq_aux_override: Optional[str | Path] = None,
                  qfq_aux_paths_config: Optional[str | Path] = None,
                  should_stop: Optional[Callable[[], bool]] = None,
-                 tables: Optional[List[str]] = None):
+                 tables: Optional[List[str]] = None,
+                 no_watermark_tables: Optional[set] = None):
         """shared_conn: 可选，外部传入的持久 read_write 连接（采集流程内复用 writer 连接，
         避免开 read_only 与 write 并发触发「different configuration」冲突）。
         不传则自开 read_only 短连接（CLI/独立运行场景）。
@@ -103,6 +104,9 @@ class DataQualityAuditor:
         self.qfq_aux_paths_config = Path(qfq_aux_paths_config) if qfq_aux_paths_config else None
         self._price_source = str((self._qfq_identity or {}).get("price_source", "mcp"))
         self._should_stop = should_stop
+        # 无水位体系的表（passthrough / 快照表）：巡检侧与交付侧同口径排除，
+        # 避免"交付侧已排除、巡检侧仍报 WatermarkConsistency"的噪音换面板（V3 裁决）。
+        self._no_watermark_tables = {str(x) for x in (no_watermark_tables or set())}
         # A4（Phase 1，2026-10-31）：表白名单。None = 全量（逐位还原旧行为）。
         self.tables = None if tables is None else [str(t) for t in tables]
         # 检查点序号差口径的计数器（run() 内按实际表数/条件段重置；直调
@@ -658,6 +662,8 @@ class DataQualityAuditor:
         for source, table, freq, watermark in rows:
             if table not in tables or watermark is None:
                 continue
+            if table in self._no_watermark_tables:
+                continue  # 无水位体系：不判 watermark 一致性（与交付四态口径一致）
             columns = {row[0] for row in conn.execute(f'DESCRIBE "{table}"').fetchall()}
             # 优先使用 schema 的 time_key（与 daemon 水位推进口径 _advance_actual_watermark /
             # _get_safe_watermark 对齐），避免审计与采集用两套 time_col 导致 watermark 误报。
