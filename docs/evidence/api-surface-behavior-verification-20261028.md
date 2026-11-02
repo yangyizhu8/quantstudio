@@ -9,8 +9,8 @@
 
 | 结论 | 数量 | 说明 |
 | --- | --- | --- |
-| ✅ 一致/兼容 | **37** | 签名逐参对得上（含默认值）或有等价实现证据 |
-| ⚠️ 差异 | **15** | A/B/C/E 已裁（E 已降级）＋ **F/G/H/I（批 1）／J/K/L（批 2＋W4 核）／M/N（批 3）为 2026-10-30 新发现**（详见 §四） |
+| ✅ 一致/兼容 | **38** | 签名逐参对得上（含默认值）或有等价实现证据 |
+| ⚠️ 差异 | **14** | A/B/C/E 已裁（E 已降级）＋ **F/G/H/I（批 1）／J/K/L（批 2＋W4 核）／M/N（批 3）为 2026-10-30 新发现**（详见 §四） |
 | 🔸 未取到文档 | **15** | Context7 每批 3 次配额所限，如实标注待补查（补查批 1 清 7（一致 3／差异 4）、批 2 清 4（一致 2／差异 2）、批 3 清 6（一致 4／差异 2）、批 4 清 6（全一致）、批 5 清 3（一致 2／差异 1）、批 6 清 2（差异 2）、批 7 清 1（差异 1）；另 5 条取得**存在性**证据但签名未取到；`get_current_data` 3 次配额用尽仍未命中） |
 | ⚠️ 判缺 | **1** | attribute_history（聚宽名混入候选） |
 | **合计** | **68** | = PTRADE 面 68 |
@@ -72,7 +72,7 @@
 | 49 | `get_trade_days` | `(start_date=None, end_date=None, count=None)` | 一致 | get_trade_days(start_date=None, end_date=None, count=None)；**start_date 与 count 互斥**；返回 numpy.ndarray（Context7 basic-info.md） |
 | 50 | `get_trades` | `()` | 一致 | get_trades()：当日本策略全部成交；**同一分钟多次调用返回当分钟首次查询缓存**；一个订单号可对多笔成交（Context7 东莞.md）；缓存语义待核 |
 | 51 | `get_trades_file` | `(save_path='')` | 一致 | get_trades_file(save_path='')：**仅回测模块可用**；成功返回导出路径、失败 None；csv 表头 10 字段 [order_id,trading_id,entrust_id,security_code,order_type,volume,price,total_money,trading_fee,trade_time]（Context7 东莞.md）⇒ 本地实现表头逐字一致 |
-| 52 | `get_trading_day` | `(day=0)` | 差异 K | get_trading_day(**date**)：**date 格式 'YYYY-MM-DD'，返回 bool 是否交易日**；适用环境 回测/交易（Context7 国盛.md）⇒ **本地为 day 偏移量语义、参数名与语义均不同**＝调用面阻断（传日期字符串会错/报错） |
+| 52 | `get_trading_day` | `(day=0)` | 一致 | **结案注记（文档双源分歧·本地与官方一致，2026-11-02 用户裁 A）**：官方 api-reference-en/basic-info.md 为 `get_trading_day(day=0)`→`datetime.date`（本地一致）；券商版国盛.md 为 `(date)`→bool（不采，单源）；两源原文＋溯源三要素见本件 §八 ⇒ **不计入差异**（原「差异 K」系 8cf06be 结案时未同步本表所致，本笔更正） |
 | 53 | `get_trading_day_by_date` | `(query_date, day=0)` | 未取到 | 配额未覆盖 |
 | 54 | `get_trend_data` | `(date=None, stocks=None, market=None)` | 一致 | get_trend_data(date=None, stocks=None, market=None)：集中竞价期间代码数据；**不传参默认返回当日 XSHE/XSHG 全部代码**；**stocks 与 market 不能同时入参**；失败返回空 dict {}；date 格式 YYYYmmdd（Context7 社区.md）⇒ 参数面逐参一致（互斥约束本地实现核 = 未显式校验（本地宽松）） |
 | 55 | `get_underlying_code` | `(symbols)` | 未取到 | 配额未覆盖 |
@@ -347,3 +347,17 @@ F 的「field 必填」判定**作废**——`git blame` 实证该行自 `6b7f26
 当时输出 `(self=None, stocks, field)`，其中 `self=None` 本身即错位铁证，但我方**未据此自证**而直接记为 P1 差异。
 **教训**：凡 AST 输出含「`self` 带默认值」或「首参偏移」形态，**必须先判提取器是否错位**，不得直接作为差异依据；
 本次由用户「呈批件引用行号须以届时 HEAD 复核」要求触发复核而发现。
+
+
+## 十、B3 判定源盘点（2026-11-02 用户裁定口径：差异=14）
+
+**#17 豁免登记（铁律 14 第④款）**：#17 出仓（锚 `8cf06be`，7 笔）共享层触面 **0 文件**——六类路径（quantstudio/ config/ skills/ scripts/ tests/ main_gui.py）`git diff --name-only` 实测空 ⇒ 豁免同步门；RULING 字段＋本行双层留痕。
+
+| 分类 | 条数 | 条目 |
+| --- | --- | --- |
+| 券商版单源·需双源复核 | **11** | Q(`get_all_positions`)/S(`get_etf_info`)/H(`get_etf_stock_list`)/B(`get_fundamentals`)/I(`get_instruments`)/J(`get_price`)/P(`get_reits_list`)/C(`get_snapshot`)/M(`get_stock_blocks`)/N(`get_stock_exrights`)/G(`get_stock_name`) |
+| 官方 api-reference·优先采信 | 2 | A(`get_history`)/R(`set_benchmark`) |
+| 未标源·待补 | 1 | E(`order_target`) |
+| **合计（差异）** | **14** | K 已结案不计入（本笔更正） |
+
+**复核计划**：11 条单源＋E 补源＝**12 条工作量**，每轮 3 次 Context7 配额 ⇒ **~4 轮**，**2026-11-04 呈批前完成**；逐条溯源三要素落盘（库 ID＋查询时间＋命中文件）。
