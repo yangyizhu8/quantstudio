@@ -1,0 +1,4 @@
+{
+  "deploy_dir": "D:\\QMT\\国金QMT交易端模拟\\python",
+  "note": "大 QMT 客户端 python 目录（部署目标）。首次由界面目录选择器或 scripts/qmt_deploy.py --qmt-path <dir> --save 写入；之后转换/部署默认读取。"
+}

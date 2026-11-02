@@ -153,6 +153,7 @@ def cmd_import(args: argparse.Namespace) -> int:
             exclude_bse=getattr(args, 'exclude_bse', False),  # P-D13 C1b
             engine_profile=getattr(args, 'engine_profile', None),
             target=getattr(args, 'target', 'dual'),  # M2b 块3：--target dual|qmt 透传
+            deploy_qmt=getattr(args, 'deploy_qmt', False),  # M5.2 件4 层2：--deploy-qmt 末端钩子
         )
     except GoldenProtectionError as e:
         print(f"ERROR: golden protection — {e}", file=sys.stderr)
@@ -242,6 +243,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help="dual (default): PTrade 转换面（既有行为）；qmt: M2b 块3 QMT 产物"
                             "（qmt/<id>_qmt.py，gbk fail-closed 写盘；QMT 白名单面校验；"
                             "不跑本地冒烟）")  # M2b 块3
+    p_imp.add_argument("--deploy-qmt", action="store_true", default=False,
+                       help="M5.2 件4 层2：--target qmt 产物落盘后自动部署到 config 部署目录"
+                            "（config/qmt_deploy.json；目录未设置时告警跳过，不 BLOCK）")
     p_imp.set_defaults(func=cmd_import)
 
     p_dep = sub.add_parser(

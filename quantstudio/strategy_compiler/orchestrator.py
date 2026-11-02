@@ -405,6 +405,7 @@ def orchestrate_source(
     exclude_bse: bool = False,                # P-D13 C1b：北交所过滤（对齐平台口径）
     engine_profile: str | None = None,        # 2026-09-09 转换门禁：get_index_day_bar 生命周期/profile 判定输入
     target: str = "dual",                     # M2b 块3：'dual'（PTrade 面，缺省）或 'qmt'（QMT 转换面）
+    deploy_qmt: bool = False,                 # M5.2 件4 层2：QMT 产物落盘后自动部署到 config 部署目录
 ) -> dict[str, Any]:
     """Source entry 全流程：源码 → 转换 → 门禁 → round-trip 冒烟 → run_card（T4）。
 
@@ -510,6 +511,23 @@ def orchestrate_source(
         _write_qmt_product(result.converted_code, qmt_path)  # :102-116 gbk fail-closed 复用
         artifacts.append({"name": qmt_path.name, "path": str(qmt_path),
                           "sha256": _sha256_file(qmt_path)})
+        # M5.2 件4 层2：--deploy-qmt 末端钩子——产物落盘后自动部署（目录未设置则告警跳过，不 BLOCK）
+        if deploy_qmt:
+            try:
+                from .qmt_deploy import deploy_file, resolve_deploy_dir
+                _dep_dir = resolve_deploy_dir()
+                if _dep_dir is None:
+                    warnings_all.append(
+                        "[deploy-qmt] 部署跳过：部署目录未设置"
+                        "（scripts/qmt_deploy.py --qmt-path <dir> --save 或界面设置）")
+                else:
+                    _dep = deploy_file(qmt_path, _dep_dir, strategy_id=strategy_id,
+                                       origin="convert-hook")
+                    artifacts.append({"name": _dep["dst"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1],
+                                      "path": _dep["dst"], "sha256": _dep["sha256"],
+                                      "deployed": True})
+            except (FileNotFoundError, AssertionError) as _exc:
+                warnings_all.append(f"[deploy-qmt] 部署失败（转换产物不受影响）: {_exc}")
         report = _assemble_source_report_qmt(path, strategy_id, created_at, result, "PASS")
     else:
         pt_path = out_dir / f"{strategy_id}_ptrade.py"
