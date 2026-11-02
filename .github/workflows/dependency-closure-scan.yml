@@ -1,0 +1,98 @@
+name: dependency-closure-scan
+
+# 依赖闭包 CI 门（R66 (b)(d)，2026-11-02 用户三裁 + ②审 a209481）
+#
+# 与本地 .githooks/pre-push 闭包门**同源同判据**（scripts/check_dependency_closure.py），
+# 覆盖两个场景：
+#   ① 变更集闭包核（PR / push main）：本次变更的 .py 是否引用了不在目标树内的仓内模块
+#      —— 这正是 R66 簇 B 的形态（已提交的 tests/test_delivery_*.py import 了未入库的
+#      tests/fixtures/delivery/）；在 origin/main 缺夹具的旧状态下，本门判 gap_missing ⇒ CI 红。
+#   ② 全树闭包核（每次运行）：以空树为基线扫描整个仓库树，等价于「仓库自身是否闭合」，
+#      可发现任何「已入库但依赖缺失」的断裂（含历史遗留）。
+#
+# 另跑未跟踪依赖缺口扫描器（scripts/scan_untracked_dependency_gaps.py）：
+#   该门检的是「已跟踪 .py 引用了工作区里尚未入库的模块」——未跟踪集合只存在于开发者
+#   工作区，故 CI 上它是**脚本可用性冒烟**（CI 检出树内无未跟踪文件 ⇒ 缺口恒 0）；
+#   其实质告警发生在本地/周期巡检位（用户 2026-11-02 裁定：CI/周期脚本位，不挂 pre-push）。
+#
+# 边界声明：本门是静态机械层，**通过不代表正确性结论**；豁免须经
+# scripts/dependency_closure_allowlist.json 显式登记并写明依据，禁止通配批量放行。
+#
+# 已知可绕过面：git push --no-verify（须在回报中声明）。
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # 每周一 03:17 UTC（全树闭包核 + 未跟踪扫描）
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dep-closure:
+    name: dependency-closure-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout（需完整历史以解析 base/head）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 变更集 import 闭包核（PR：base..合并树）
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          echo "base=$BASE_SHA  head=$(git rev-parse HEAD)"
+          python scripts/check_dependency_closure.py --base "$BASE_SHA" --head HEAD
+
+      - name: 变更集 import 闭包核（push main：before..sha）
+        if: github.event_name == 'push'
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          case "$BEFORE_SHA" in
+            0000000000000000000000000000000000000000)
+              echo "首次推送（无 base）⇒ 跳过变更集核，仅跑全树核。"
+              ;;
+            *)
+              python scripts/check_dependency_closure.py --base "$BEFORE_SHA" --head "$HEAD_SHA"
+              ;;
+          esac
+
+      - name: 全树 import 闭包核（空树基线 ⇒ 仓库自身是否闭合）
+        run: |
+          set -euo pipefail
+          EMPTY_TREE="$(git hash-object -t tree /dev/null)"
+          BASE="$(git -c user.name=ci -c user.email=ci@local -c commit.gpgsign=false \
+                  commit-tree "$EMPTY_TREE" -m 'ci empty base')"
+          echo "全树基线：$BASE（空树 commit，不落任何 ref，不改工作区）"
+          python scripts/check_dependency_closure.py --base "$BASE" --head HEAD
+
+      - name: 未跟踪依赖缺口扫描（CI 内为脚本冒烟；实质告警在本地/周期位）
+        run: |
+          set -euo pipefail
+          python scripts/scan_untracked_dependency_gaps.py
+
+      - name: On failure（定位提示）
+        if: failure()
+        run: |
+          echo "DEPENDENCY CLOSURE SCAN FAILED —— 请检查："
+          echo "  1) [缺口] 被引用的仓内模块是否漏提交（按精确路径 git add 后重推）；"
+          echo "  2) [缺口] 是否为一等方顶层之外的模块（一等方顶层＝quantstudio/tests/scripts/config）；"
+          echo "  3) 若为已知误伤（如归档备份副本的越界相对导入），在"
+          echo "     scripts/dependency_closure_allowlist.json 显式登记并写明依据；"
+          echo "  4) 禁止通配批量放行；禁止 git push --no-verify 绕过（须在回报中声明）。"
