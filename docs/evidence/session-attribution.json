@@ -1,0 +1,37 @@
+{
+  "_doc": "SC-013 会话归属映射（机读）。审计按 session 域把路径前缀归类到图节点/会话；未登记即 OTHER_LINE。",
+  "_rule": "前缀匹配：路径 == 前缀 或 以 '前缀/' 开头；跨会话共享路径可重复登记。",
+  "_maintained_by": "各执行会话在写盘当轮追加自己的域；图调度可复核（非手记备注，审计直接消费）。",
+  "sessions": {
+    "delivery-003": {
+      "graph_node": "图行（交付特性 003）",
+      "paths": [
+        "config/delivery_config.json",
+        "quantstudio/delivery/",
+        "scripts/delivery_pure_gain_audit.py",
+        "scripts/delivery_wave_gate.py",
+        "tests/fixtures/delivery/",
+        "tests/test_delivery_",
+        "docs/evidence/delivery-"
+      ]
+    },
+    "node-20-watermark-collect-fix": {
+      "graph_node": "图行 20 · 水位线和全部执行增量拉取修复执行会话",
+      "paths": [
+        "quantstudio/pipeline/qfq_aux_router.py",
+        "quantstudio/pipeline/quality_audit.py",
+        "quantstudio/pipeline/daemon.py",
+        "quantstudio/delivery/stats.py",
+        "quantstudio/delivery/verify.py",
+        "tests/test_qfq_aux_router_guard.py",
+        "tests/test_delivery_passthrough_no_watermark.py",
+        "docs/collect-verdict-chain-design-",
+        "docs/evidence/collect-verdict-",
+        "docs/evidence/session-attribution.json",
+        "knowledge/db/DB-2026-0019.md",
+        "knowledge/db/DB-2026-0020.md",
+        "knowledge/db/DB-2026-0021.md"
+      ]
+    }
+  }
+}
