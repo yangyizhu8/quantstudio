@@ -59,7 +59,7 @@
 | 36 | `get_orders` | `(security=None)` | 一致 | get_orders(security=None)：本策略当日全部订单（Context7 stock-trading.md/山西） |
 | 37 | `get_position` | `(security)` | 一致 | get_position(security).amount > 0（国盛.md 双均线示例）⇒ 返回 Position 含 amount 字段；本地空仓返回 amount=0 的 Position（非 None），与示例判据一致 |
 | 38 | `get_positions` | `(security=None)` | 一致 | get_positions(security) **security 可选**（可传单只/列表/不传）；适用环境 回测/交易；返回 list 持仓列表（Context7 国盛.md 参数表＋东莞.md 示例 get_positions()/('600570.SS')/(list)） |
-| 39 | `get_price` | `(security, start_date=None, end_date=None, frequency='1d', fields=None, fq='pre', count=None, is_dict=False)` | 差异 J | get_price(security, **start_date 必填**, **end_date 必填**, **frequency 必填**, fields 可选)；返回 dict/OrderedDict（多股多字段返 pandas.DataFrame，Py3.5 返 Panel），异常 None（Context7 山西.md）⇒ **本地三项均可省略（放宽）＋ 本地多 fq/count/is_dict（QS 扩展，fq='pre' 为 E1 口径）**；**fq 迁移面已闭合**（P3-1 对 get_history/get_price 显式注入 fq='pre'，同 §四 A） |
+| 39 | `get_price` | `(security, start_date=None, end_date=None, frequency='1d', fields=None, fq='pre', count=None, is_dict=False)` | 差异 J（改写·2026-11-02 双源复核） | **原判定（山西版标必填）作废**（官方 market-data.md 全参 Optional，第 3 例单源误判）；**真实差异＝`fq` 默认值 `'pre'`（本地）vs `None`（官方）**——不传 fq 时本地前复权/平台不复权；**用户裁定（2026-11-02）：刻意设计·P3 登记**——依据铁律 17（E1：`fq='pre'` 为信号取数规范口径，本地默认与项目口径一致，非无意偏差）。**转换保真注记（登记不立项）**：策略若省略 fq 参数，本地=前复权/平台=不复权——转换管线遇该真实形态时**显式固化 fq 或告警** |
 | 40 | `get_reits_list` | `(date=None)` | 差异 P | get_reits_list()：获取 REITs 列表，适用研究/回测/交易；**文档 Parameters: N/A（未列参数）**（Context7 山西.md）⇒ 本地多 `date` 可选参数＝本地更宽松（**弱判据**：文档未列参数，未能逐参比对） |
 | 41 | `get_research_path` | `()` | 一致 | get_research_path()：返回**云端研究根路径**（/home/fly/notebook/，策略唯一可读写目录）（Context7 社区.md）⇒ 无参一致；在 DENY_REMOVE 移除面清单 |
 | 42 | `get_security_info` | `(code)` | 未取到 | 配额未覆盖 |
@@ -349,6 +349,9 @@ F 的「field 必填」判定**作废**——`git blame` 实证该行自 `6b7f26
 本次由用户「呈批件引用行号须以届时 HEAD 复核」要求触发复核而发现。
 
 
+
+**转换保真注记（J · 2026-11-02 用户裁定，登记不立项）**：`get_price` 的 `fq` 默认值差异（本地 `'pre'`/平台 `None`）⇒ 策略省略 fq 时两端复权口径不同——**转换管线遇「省略 fq 的 get_price 调用」真实形态时应显式固化 fq（按本地语义固化 'pre'）或产出告警**；登记于本件，不另立六步。
+
 ## 十、B3 判定源盘点（2026-11-02 用户裁定口径：差异=14）
 
 **#17 豁免登记（铁律 14 第④款）**：#17 出仓（锚 `8cf06be`，7 笔）共享层触面 **0 文件**——六类路径（quantstudio/ config/ skills/ scripts/ tests/ main_gui.py）`git diff --name-only` 实测空 ⇒ 豁免同步门；RULING 字段＋本行双层留痕。
@@ -374,3 +377,14 @@ F 的「field 必填」判定**作废**——`git blame` 实证该行自 `6b7f26
 | H `get_etf_stock_list` | 国盛.md「适用环境：交易」 | **未收录该 API** | **维持差异 P3**（同上） |
 | J `get_price` | 山西.md start/end/frequency **必填** | **market-data.md 全参 Optional**（`start_date=None,end_date=None,frequency='1d'` 等） | **判定依据不足·待 AST 对照定谳**（若本地默认值形态与官方一致 ⇒ J 作废——第 3 例单源误判候选） |
 | C `get_snapshot` | 东莞.md「仅交易模块」 | **market-data.md「Only available in trading module」** | **双源一致·差异坐实**（判定源升级双源） |
+
+
+## 十二、B3 双源复核·批 2（G/B/I · 2026-11-02）
+
+**溯源**：Context7 库 ID `/kay-ou/ptradeapi`｜查询时间 **2026-11-02T10:0x+08:00**｜3 次单主题查询｜命中文件：`docs/original/Ptrade东莞.md`、`docs/original/Ptrade社区.md`、`docs/api-reference-en/stock-info.md`、`docs/api-reference-en/financial-data.md`。
+
+| 条 | 券商版 | 官方 api-reference | 复核结论 |
+| --- | --- | --- | --- |
+| G `get_stock_name` | 东莞.md/社区.md `(stocks)`→dict，查不到 value=None | **stock-info.md 双源一致**：Value is `None` when query fails | **双源坐实·差异维持**（本地查不到行为差异，判定源升级双源） |
+| B `get_fundamentals` | 东莞.md `table` 必填（无默认） | **financial-data.md `table_name` 必填（无默认）**，且官方含 `date_type` 参数 | **双源坐实·差异维持**（本地 `table='valuation'` 默认 vs 平台必传）；附参数名注记：官方 `table_name` vs 东莞/本地 `table` |
+| I `get_instruments` | 社区.md＋东莞.md **券商双版本互证**：「仅回测/交易模块」「实盘涨跌幅暂无法提供」 | **未收录**（期货 API 官方无条目） | **差异维持·注记级**（券商互证；官方未收录不构成冲突） |
