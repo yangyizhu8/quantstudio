@@ -83,6 +83,51 @@ if [ -z "$COMMIT" ]; then
     exit 0
 fi
 
+# ── 依赖闭包门（R66 方案 b · 2026-11-02 · fail-closed）────────────────────────
+# 判据：本次待推范围（base..local-sha）内文件所引用的**一等方模块**（quantstudio/ tests/
+#       scripts/ config/ 四个顶层）是否完整落在 <local-sha> 树内——
+#       被引用模块若「工作区存在但未随本次推送入库」⇒ 远端必然 ImportError / CI 红 ⇒ 阻断。
+# 范围：与 C7 闸同域（仅 main 推送）；仅解析待推集自身的 .py（精确限定推送者自己的文件）。
+# base 取值：优先远端当前 sha（stdin 传入）；不可解析时回退 origin/main → eco/main 跟踪引用；
+#             两者皆无 ⇒ 无范围可比 ⇒ 显式提示后放行（与 C7 闸同纪律，不伪装「清单为空」）。
+# 豁免通道：scripts/dependency_closure_allowlist.json（精确/通配/目录前缀）或 QS_DEP_CLOSURE_ALLOW。
+# 已知可绕过面：`git push --no-verify`（同 C7 闸披露要求，须在回报中声明）。
+DEPCL_BASE=""
+if [ "$REMOTE_SHA" != "0000000000000000000000000000000000000000" ] \
+   && git rev-parse --verify --quiet "$REMOTE_SHA^{commit}" >/dev/null 2>&1; then
+    DEPCL_BASE="$REMOTE_SHA"
+else
+    for _ref in refs/remotes/origin/main refs/remotes/eco/main; do
+        if git rev-parse --verify --quiet "$_ref" >/dev/null 2>&1; then
+            DEPCL_BASE="$_ref"
+            break
+        fi
+    done
+fi
+
+if [ -z "$DEPCL_BASE" ]; then
+    echo "[dep-closure] 无远端参照（远端 sha 不可解析且 origin/main、eco/main 均缺）⇒ 跳过（无范围可比）。" >&2
+    echo "[dep-closure] 提示：若认为远端已存在该分支，请先 git fetch 后重试。" >&2
+else
+    if [ ! -f "$ROOT/scripts/check_dependency_closure.py" ]; then
+        echo "[dep-closure] 缺 scripts/check_dependency_closure.py —— 门禁不可用，拒绝推送。" >&2
+        echo "[dep-closure] 恢复脚本后重试；如确认无风险须显式 git push --no-verify（并在回报中声明）。" >&2
+        exit 9
+    fi
+    if [ -n "$QS_DEP_CLOSURE_ALLOW" ]; then
+        "$PY" "$ROOT/scripts/check_dependency_closure.py" \
+            --base "$DEPCL_BASE" --head "$LOCAL_SHA" --allow "$QS_DEP_CLOSURE_ALLOW"
+    else
+        "$PY" "$ROOT/scripts/check_dependency_closure.py" --base "$DEPCL_BASE" --head "$LOCAL_SHA"
+    fi
+    DEPCL_RC=$?
+    if [ $DEPCL_RC -ne 0 ]; then
+        echo "[dep-closure] 依赖闭包未闭合（rc=$DEPCL_RC）⇒ 中止推送。" >&2
+        echo "[dep-closure] 修复：把被引用的模块一并提交入库；确需豁免走 scripts/dependency_closure_allowlist.json 或 QS_DEP_CLOSURE_ALLOW。" >&2
+        exit 9
+    fi
+fi
+
 if command -v pwsh >/dev/null 2>&1; then
     PS=pwsh
 elif command -v powershell >/dev/null 2>&1; then
