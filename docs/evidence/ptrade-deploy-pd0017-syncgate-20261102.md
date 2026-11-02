@@ -91,3 +91,49 @@ merge 提交后，`check-drift` 的三点比对 `git diff --name-only origin/mai
 
 - 副本 HEAD 恢复：`git reset --hard 2ecb2db0693bf88da04f94076c405dca688b326c`（撤销本次 merge 提交 `aa22415b`）
 - merge 过程回退（若未提交）：`git merge --abort`
+
+---
+
+## 九、同步门收口（2026-11-03 01:2x）—— **PASS**
+
+### 9.1 三待裁落实到位（总调度 2026-11-03 裁定）
+
+| # | 待裁项 | 裁定 | 落实落点 | 三核实读 |
+|---|---|---|---|---|
+| ❶ | AQ-DW 21 文件 | **前缀豁免登记** ＋ 主仓归并排 11-04 呈批⑤ | `check-drift.ps1` 四前缀（`.specify/`、`docs/aq-dw-`、`specs/004-aq-dw-`、`tools/aq-dw`） | 21 文件逐条落入前缀 ⇒ 漂移 0 |
+| ❷ | `cargo fmt` | **冻结面豁免过门** | `ci-smoke.ps1` L73–76 登记（engine crate 属 battle-back 冻结令范围） | 见 §9.4 口径说明 |
+| ❸ | `scripts/archify-map.ps1` | **设计态排除** | `check-drift.ps1` 三点清单 + 两点直核清单各一处 | 两点共享层差由 1 → **0** |
+
+### 9.2 门禁改造件三核（`9f86f371`，⑩ 域）
+
+| 核项 | 判据 | 实读 |
+|---|---|---|
+| ① PS 解析 | `Parser::ParseFile` 0 错 | `check-drift.ps1` = **PARSE_OK**；`ci-smoke.ps1` = **PARSE_OK** |
+| ② `$($D)` 残留 | 字面量 grep = 0 | 双脚本 **0 命中**（00:17 版曾 36 处解析错 / 10 处污染，⑩ 已修） |
+| ③ fmt 豁免落点 | `ci-smoke.ps1` diff 实读 | **在位**（8474 B，L73–76 注释 + L76 步骤行尾登记） |
+
+> 版本差说明：我方 00:32 审计对象为 **00:17 版**（36 错），⑩ 于 00:21 提交 `9f86f371` 修复；三核确认终版已净。
+
+### 9.3 合并链与门读数
+
+| 项 | 读数 |
+|---|---|
+| merge ① | **`aa22415b`** 并入 `e748bc34`（唯一冲突 `docs/PROJECT_STATE.md` 按「origin 基底 + copy 独有段合流重建」解算，断言 5/5） |
+| merge ② | **`39ff4c3d`** 补并 `e6ccf754`（`merge-tree` 预检 rc=0 零冲突；7 文件；`docs/ISSUES.md` union 合流 497+443 → 498 行） |
+| **check-drift（push · 判据）** | **PASS** exit 0（stdout 空）——台账提交后复验仍 PASS |
+| check-drift（pull · 指示器） | 收口时点 0；主仓随后持续活跃提交（`e1b48007`/`48aa6efb`/`7435430c`）⇒ 滚动非零。**判据以 push 方向为准**，pull 为「待同步面」信息量 |
+| **ci-smoke** | **ALL PASS**：1/6 schema 3 项 OK｜2/6 contracts 5 项 `ALL PASS`｜4/6 docs 7 项 OK｜5/6 共享层回归 **64 passed / 1 skipped**｜6/6 Agent-Quant **180 passed** |
+| 台账登记 | 副本 `docs/sync-ledger.md` 追加（commit **`282257c4`**） |
+
+### 9.4 ⚠ 口径如实说明：`-SkipCargo` 实际豁免的是**整个 Rust 四件段**
+
+`ci-smoke.ps1` 的 `-SkipCargo` 是**段级开关**（`if(-not $SkipCargo){ 四件全跑 }`），故门流程以 `-SkipCargo` 运行时：
+- `cargo fmt --check`（冻结面）**未执行** —— 豁免目标达成；
+- **`cargo clippy` / `cargo test` / `cargo build --release` 亦未执行** —— 非豁免目标，属**门判定路径外的空白**。
+
+三项的既有证据来自他线笔（`769ed448`：258 测试全绿 / release rc=0 / 四件零告警），**不是本次门跑的读数**。已如实登记，建议后续把 ❷ 的豁免收紧为「仅跳过 fmt、其余三件照跑」（`-SkipFmt` 粒度），避免未来真回归被整体遮蔽。
+
+### 9.5 闭环判定
+
+- **铁律 14 同步门：PASS**（共享层零漂移 + 零代码回归），对 **21:22 推送** 与 **`31abec67` 链** 收口成立。
+- 后续主仓新推进（`e1b48007`/`48aa6efb`/`7435430c`…）属**下一轮**待同步面，不回到本轮判据。
