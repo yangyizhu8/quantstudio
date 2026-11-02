@@ -361,3 +361,16 @@ F 的「field 必填」判定**作废**——`git blame` 实证该行自 `6b7f26
 | **合计（差异）** | **14** | K 已结案不计入（本笔更正） |
 
 **复核计划**：11 条单源＋E 补源＝**12 条工作量**，每轮 3 次 Context7 配额 ⇒ **~4 轮**，**2026-11-04 呈批前完成**；逐条溯源三要素落盘（库 ID＋查询时间＋命中文件）。
+
+
+## 十一、B3 双源复核·批 1（Q/S/H/J/C · 2026-11-02）
+
+**溯源**：Context7 库 ID `/kay-ou/ptradeapi`｜查询时间 **2026-11-02T09:5x+08:00**｜3 次查询（单主题）｜命中文件：`docs/original/Ptrade国盛.md`、`docs/original/Ptrade山西.md`、`docs/original/Ptrade东莞.md`、`docs/api-reference-en/market-data.md`、`docs/api-reference-en/utilities.md`。
+
+| 条 | 券商版 | 官方 api-reference | 复核结论 |
+| --- | --- | --- | --- |
+| Q `get_all_positions` | 山西.md「适用交易场景」 | **未收录该 API** | **维持差异 P3**（券商扩展 API·本地宽松；官方无条目不构成双源冲突） |
+| S `get_etf_info` | 国盛.md「适用环境：交易」 | **未收录该 API** | **维持差异 P3**（同上） |
+| H `get_etf_stock_list` | 国盛.md「适用环境：交易」 | **未收录该 API** | **维持差异 P3**（同上） |
+| J `get_price` | 山西.md start/end/frequency **必填** | **market-data.md 全参 Optional**（`start_date=None,end_date=None,frequency='1d'` 等） | **判定依据不足·待 AST 对照定谳**（若本地默认值形态与官方一致 ⇒ J 作废——第 3 例单源误判候选） |
+| C `get_snapshot` | 东莞.md「仅交易模块」 | **market-data.md「Only available in trading module」** | **双源一致·差异坐实**（判定源升级双源） |
