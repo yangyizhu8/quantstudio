@@ -2484,7 +2484,9 @@ class ResidentCollector:
         """Run one task or all enabled tasks with explicit range semantics.
 
         Returns a dict result (W2-0.8 缺陷 D/E 修复):
-            {"task_found": bool, "task_ok": bool, "audit_run": bool, "audit_ok": bool}
+            {"task_found": bool, "task_ok": bool, "audit_run": bool, "audit_ok": bool,
+             "audit_table_ok": bool|None, "audit_global_ok": bool|None}
+            —— D1 归因细分位：表级失败 ⇒ exit 1；仅全局段失败 ⇒ exit 0 + AUDIT_GLOBAL_FAIL。
 
         `quality_audit`:
             "full" (default, production-safe) — run the full-DB quality audit after
@@ -2561,12 +2563,16 @@ class ResidentCollector:
                         "数据写入成功但审计未完整（第三态，不计入任务失败）",
                         _qa.get("skipped_oom"), _qa.get("query_error"),
                         _qa.get("timeout"), _qa.get("interrupted"))
+        _qa_scope = getattr(self, "_last_quality_audit", None) or {}
         return {
             "task_found": task_found,
             "task_ok": task_ok,
             "task_deferred": task_deferred,
             "audit_run": audit_run,
             "audit_ok": audit_ok,
+            # D1 归因细分位：表级失败 ⇒ exit 1；仅全局段失败 ⇒ exit 0 + AUDIT_GLOBAL_FAIL
+            "audit_table_ok": _qa_scope.get("audit_table_ok"),
+            "audit_global_ok": _qa_scope.get("audit_global_ok"),
         }
 
     def _run_incremental_cycle(self):
@@ -2823,6 +2829,14 @@ class ResidentCollector:
             # incomplete = 「本轮审计未完整跑完」（中断 / OOM 跳过 / 查询失败 / 超时），
             # **不含**「审计发现了 error 级问题」（那是审计结论，不是未完成）。
             _issues = list(getattr(report, "issues", []) or [])
+            # D1：归因细分位（全局段 vs 表级），供 CLI 退出码与 GUI 文案使用
+            _table_ok = bool(getattr(report, "table_ok", True))
+            _global_ok = bool(getattr(report, "global_ok", True))
+            try:
+                self._last_quality_audit["audit_table_ok"] = _table_ok
+                self._last_quality_audit["audit_global_ok"] = _global_ok
+            except Exception:
+                pass
             _skipped_oom = sum(1 for i in _issues
                                if getattr(i, "check", "") == "audit_skipped_oom")
             _query_err = sum(1 for i in _issues
@@ -4169,6 +4183,44 @@ def _get_git_commit() -> str:
     return "unknown"
 
 
+# ── D1（节点⑳ ②审）：审计裁决与退出码契约（纯函数，便于固化开关优先级表）──
+# 开关写死表（**优先级从上到下**）：
+#   ① QS_AUDIT_STRICT_FAIL=1        ⇒ 旧语义逐位还原：任何 audit 失败 ⇒ exit 1（最高优先级）
+#   ② QS_AUDIT_SCOPE_ATTRIBUTION=legacy ⇒ 旧归因：全局段失败按表级处理 ⇒ exit 1
+#   ③ 默认（新语义）                 ⇒ 表级失败 ⇒ exit 1；仅全局段失败 ⇒ exit 0 + AUDIT_GLOBAL_FAIL
+# 互斥关系：①与②同向（同为"从严"），不冲突；③只在前两者都未启用时生效。
+AUDIT_GLOBAL_FAIL_TOKEN = "AUDIT_GLOBAL_FAIL"
+
+
+def resolve_audit_exit(*, task_ok: bool, audit_run: bool, audit_ok: bool,
+                       audit_table_ok=None, audit_global_ok=None,
+                       env=None) -> Tuple[int, str]:
+    """返回 (exit_code, reason)。纯函数：不含 I/O，便于单测固化优先级与互斥。"""
+    env = os.environ if env is None else env
+
+    def _flag(name: str) -> bool:
+        return str(env.get(name, "0") or "0").strip().lower() in ("1", "true", "yes", "on")
+
+    if not audit_run:
+        return (0 if task_ok else 1), "task-only"
+    if audit_ok:
+        return (0 if task_ok else 1), "audit-pass"
+    strict = _flag("QS_AUDIT_STRICT_FAIL")
+    legacy = str(env.get("QS_AUDIT_SCOPE_ATTRIBUTION", "") or "").strip().lower() == "legacy"
+    table_bad = (audit_table_ok is False)
+    global_bad = (audit_global_ok is False)
+    if strict:
+        return 1, "strict-fail(any audit issue ⇒ 1)"
+    if legacy:
+        return 1, "legacy-attribution(global issue counted as table)"
+    if table_bad:
+        return 1, "table-scope audit failure"
+    if global_bad:
+        return 0, f"{AUDIT_GLOBAL_FAIL_TOKEN}(global-scope only)"
+    return 1, "audit failed(unclassified)"
+
+
+
 def main():
     # 笔5（2026-09-23 A 案裁定①）：版本闸 —— 非 1.4.x 拒启。
     # 覆盖 daemon 的两种入口形态：`-m quantstudio.pipeline.daemon` 与**直启** `python daemon.py`。
@@ -4338,10 +4390,23 @@ def main():
             if not result["task_ok"]:
                 logger.error(f"[CLI] task failed (see batch_audit ledger)")
                 sys.exit(1)
-            if result["audit_run"] and not result["audit_ok"]:
-                logger.error(f"[CLI] quality audit failed")
-                sys.exit(1)
-            logger.info("[CLI] once 完成（task + audit 全部通过）")
+            # D1（节点⑳ ②审）：退出码按**归因细分位**判定（纯函数，含开关优先级表）。
+            _code, _reason = resolve_audit_exit(
+                task_ok=bool(result.get("task_ok")),
+                audit_run=bool(result.get("audit_run")),
+                audit_ok=bool(result.get("audit_ok")),
+                audit_table_ok=result.get("audit_table_ok"),
+                audit_global_ok=result.get("audit_global_ok"),
+            )
+            if _code != 0:
+                logger.error(f"[CLI] quality audit failed (reason={_reason})")
+                sys.exit(_code)
+            if _reason.startswith(AUDIT_GLOBAL_FAIL_TOKEN):
+                logger.warning(
+                    "[CLI] %s 全局段审计告警（表级无错）——数据写入成功，按归因口径 exit 0；"
+                    "全局段问题请另行跟进（reason=%s）",
+                    AUDIT_GLOBAL_FAIL_TOKEN, _reason)
+            logger.info("[CLI] once 完成（task 成功；audit 归因=%s）", _reason)
         except Exception as e:
             if "collector_run" in str(e).lower() or "timeout" in str(e).lower():
                 logger.error(f"[CLI] collector_run.lock 获取失败（daemon 或 GUI 正在采集）: {e}")

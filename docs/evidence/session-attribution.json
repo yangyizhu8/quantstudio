@@ -34,7 +34,9 @@
         "docs/客户下发-S1诊断件与自助校正说明-",
         "quantstudio/pipeline/qfq_cutover_tools.py",
         "tests/test_qfq_cutover_tools.py",
-        "docs/evidence/delivery-pure-gain-baseline-v3-"
+        "docs/evidence/delivery-pure-gain-baseline-v3-",
+        "tests/test_delivery_audit_attribution.py",
+        "docs/evidence/audit-ok-consumer-sweep-"
       ]
     }
   }

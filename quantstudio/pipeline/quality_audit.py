@@ -11,6 +11,29 @@ from typing import Callable, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+# ── D1（节点⑳ ②审）：全局段检查 vs 表级检查的归因集合 ──────────────────────
+# 全局段 = 与"本任务/本表"无关的无条件段（run() 文档段：分钟锚点漂移 / 因子单调性 /
+# batch_pipeline / quarantine）+ 条件段（source_watermark / QFQ 编排）。
+# 表级 = 表循环内的列/主键/取值/因子等检查。
+_GLOBAL_CHECKS = frozenset({
+    # source_watermark 段
+    "WatermarkConsistency",
+    # QFQ 编排段
+    "QfqDeadLetter", "QfqPendingSla", "QfqStaleInProgress",
+    "QfqStaleWatermarkIntent", "QfqWatermarkHeld",
+    # 分钟锚点漂移段
+    "drift_cached", "AnchorDriftAuxUnavailable", "AnchorDriftTruncated",
+    "AnchorDriftFactorMissing", "AdjustmentAnchorDrift",
+    # 因子单调性段
+    "FactorMonotonicity", "fm_cached",
+    # batch_pipeline 段
+    "BatchAuditMissing", "StageCountConservation", "WriteCountConservation",
+    "RecentBatchFailure", "RejectedRowConservation",
+    # quarantine 段
+    "QuarantineTableMissing", "QuarantineRecordIntegrity", "QuarantineBacklog",
+})
+
+
 @dataclass
 class QualityIssue:
     check: str
@@ -18,6 +41,7 @@ class QualityIssue:
     count: int
     severity: str
     detail: str = ""
+    scope: str = "table"      # D1：table=表级；global=全局段（归因用）
 
 
 @dataclass
@@ -30,6 +54,19 @@ class QualityReport:
     # 两字段默认值保证既有构造点/消费点逐位不变。
     interrupted: bool = False
     skipped_after_stop: int = 0
+
+    # ── D1 归因聚合：表级 / 全局段 分开判定（audit_ok 仍为真值，不变）────────
+    @property
+    def table_ok(self) -> bool:
+        """表级检查无 error ⇒ True（与全局段结论无关）。"""
+        return not any(i.severity == "error" and i.count > 0 and i.scope == "table"
+                       for i in self.issues)
+
+    @property
+    def global_ok(self) -> bool:
+        """全局段检查无 error ⇒ True（与表级结论无关）。"""
+        return not any(i.severity == "error" and i.count > 0 and i.scope == "global"
+                       for i in self.issues)
 
     @property
     def passed(self) -> bool:
@@ -1336,10 +1373,12 @@ class DataQualityAuditor:
                 logger.warning("[QualityAudit] fm 缓存写入失败（忽略）: %s", e)
 
     @staticmethod
-    def _add(report, check, table, count, severity, detail=""):
+    def _add(report, check, table, count, severity, detail="", scope=None):
         report.checks_run += 1
         if count:
-            report.issues.append(QualityIssue(check, table, int(count), severity, detail))
+            scope = scope or ("global" if check in _GLOBAL_CHECKS else "table")
+            report.issues.append(
+                QualityIssue(check, table, int(count), severity, detail, scope))
 
 
 def main():

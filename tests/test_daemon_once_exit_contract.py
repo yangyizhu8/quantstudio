@@ -36,7 +36,9 @@ class TestRunOnceResultShape:
         res = coll.run_once(task_name="fin_indicator", mode="full_range",
                             quality_audit="none")
         assert isinstance(res, dict)
-        assert set(res.keys()) == {"task_found", "task_ok", "audit_run", "audit_ok"}
+        # 契约升级 v2（节点⑳ ②审 D1）：新增归因细分位；**原有键一个不删**（向后兼容）。
+        assert set(res.keys()) == {"task_found", "task_ok", "audit_run", "audit_ok",
+                                   "audit_table_ok", "audit_global_ok", "task_deferred"}
         assert res["task_found"] is True
         assert res["task_ok"] is True
         assert res["audit_run"] is False, "quality_audit=none must not run full audit"
@@ -231,3 +233,26 @@ class TestRealCliExitContract:
             assert rc != 0, (
                 f"task failure (no token) must exit non-zero; stdout={out}")
 
+
+class TestD1AttributionFields:
+    """D1：run_once 必须把归因细分位带出（表级 / 全局段）。"""
+
+    def test_attribution_fields_present_and_none_without_audit(self):
+        coll = _make_collector()
+        coll.tasks_cfg = {"tasks": [{"name": "fin_indicator", "table": "fin_indicator"}]}
+        coll.execute_task = MagicMock(return_value=True)
+        res = coll.run_once(task_name="fin_indicator", mode="full_range",
+                            quality_audit="none")
+        assert "audit_table_ok" in res and "audit_global_ok" in res
+        assert res["audit_table_ok"] is None and res["audit_global_ok"] is None
+
+    def test_attribution_fields_follow_audit_scope(self):
+        coll = _make_collector()
+        coll.tasks_cfg = {"tasks": [{"name": "fin_indicator", "table": "fin_indicator"}]}
+        coll.execute_task = MagicMock(return_value=True)
+        coll._last_quality_audit = {"audit_table_ok": True, "audit_global_ok": False}
+        res = coll.run_once(task_name="fin_indicator", mode="full_range",
+                            quality_audit="full")
+        assert res["audit_table_ok"] is True
+        assert res["audit_global_ok"] is False
+        assert res["audit_ok"] is True, "audit_ok 保持真值语义（Mock 返回 True）"
