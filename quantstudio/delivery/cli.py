@@ -443,6 +443,65 @@ def _cmd_unlock(args: argparse.Namespace) -> int:
     return Exit.OK if ok else Exit.REFUSED
 
 
+def _cmd_cutover_diag(args: argparse.Namespace) -> int:
+    """S1 只读诊断（**零写入**）：报告 cutover 记录的跨平台可迁移性。"""
+    from quantstudio.pipeline.qfq_cutover_tools import diagnose
+
+    report = diagnose(data_root=Path(args.data_root), config_root=Path(args.config_dir))
+    if args.json:
+        _emit_json("cutover-diag", bool(report.get("ok")), Exit.OK if report.get("ok") else Exit.REFUSED, report)
+        return Exit.OK if report.get("ok") else Exit.REFUSED
+    if report.get("error"):
+        sys.stdout.write(f"诊断未完成：{report['error']}\n")
+        return Exit.REFUSED
+    sys.stdout.write("QFQ 路由诊断（只读，未写入任何内容）\n")
+    for rec in report.get("records") or []:
+        flag = "可迁移" if rec.get("migratable") else "不可迁移"
+        sys.stdout.write(f"  [{flag}] {rec.get('cutover_id')} ({rec.get('source_generation')}, {rec.get('status')})\n")
+        sys.stdout.write(f"        aux_db_path = {rec.get('aux_db_path')}\n")
+        for reason in rec.get("reasons") or []:
+            sys.stdout.write(f"        · {reason}\n")
+        sug = rec.get("suggested") or {}
+        if sug.get("aux_db_path"):
+            sys.stdout.write(f"        建议值 = {sug['aux_db_path']}（存在：{sug.get('exists')}）\n")
+    sys.stdout.write(f"写入次数：{report.get('writes')}\n")
+    return Exit.OK
+
+
+def _cmd_cutover_rehost(args: argparse.Namespace) -> int:
+    """S2 执行校正（换代语义；默认 dry-run；fail-closed）。"""
+    from quantstudio.pipeline.qfq_cutover_tools import CutoverToolError, apply_rehost
+
+    if not args.apply:
+        sys.stdout.write(
+            "dry-run：将执行（换代）——\n"
+            f"  旧记录 {args.cutover_id} 的 aux_db_path = {args.expect_aux_db_path}\n"
+            f"  新 aux_db_path = {args.new_aux_db_path}\n"
+            "  备份三档：b(完整库副本, 主) + a(parquet 逻辑导出目录, 余量≥2×need_b 时追加) + c(记录双份, 必做)\n"
+            "  客户授权依据 = " + (args.authorization or "(缺)") + "\n"
+            "加 --apply 才会真正执行（无 force 通道）。\n")
+        return Exit.OK
+    try:
+        result = apply_rehost(
+            data_root=Path(args.data_root), config_root=Path(args.config_dir),
+            cutover_id=args.cutover_id,
+            expected_aux_db_path=args.expect_aux_db_path,
+            new_aux_db_path=args.new_aux_db_path,
+            authorization=args.authorization or "",
+            mode=args.backup_mode,
+        )
+    except CutoverToolError as exc:
+        sys.stderr.write(f"拒绝执行：{exc}\n")
+        return Exit.REFUSED
+    if args.json:
+        _emit_json("cutover-rehost", True, Exit.OK, result)
+        return Exit.OK
+    sys.stdout.write(f"换代完成：{result['old_cutover_id']} → {result['new_cutover_id']}\n")
+    sys.stdout.write(f"  新 aux_db_path = {result['new_aux_db_path']}\n")
+    sys.stdout.write(f"  备份目录 = {result['backups'].get('_dir')}\n")
+    return Exit.OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="qs-deliver", description="QuantStudio 数据交付包工具")
     sub = ap.add_subparsers(dest="command", required=True)
@@ -487,6 +546,24 @@ def build_parser() -> argparse.ArgumentParser:
     u.add_argument("--force", action="store_true", help="经 try_reclaim_stale 回收（持有者存活则拒绝）")
     u.add_argument("--json", action="store_true")
     u.set_defaults(handler=_cmd_unlock)
+
+    cdg = sub.add_parser("cutover-diag", help="QFQ 路由只读诊断（零写入）")
+    cdg.add_argument("--data-root", default="data")
+    cdg.add_argument("--config-dir", default="config")
+    cdg.add_argument("--json", action="store_true")
+    cdg.set_defaults(handler=_cmd_cutover_diag)
+
+    chr_ = sub.add_parser("cutover-rehost", help="cutover 记录换代校正（默认 dry-run）")
+    chr_.add_argument("--data-root", default="data")
+    chr_.add_argument("--config-dir", default="config")
+    chr_.add_argument("--cutover-id", required=True)
+    chr_.add_argument("--expect-aux-db-path", required=True, help="CAS：库内现值必须等于它")
+    chr_.add_argument("--new-aux-db-path", required=True)
+    chr_.add_argument("--authorization", default="", help="客户授权依据（审计行必填）")
+    chr_.add_argument("--backup-mode", default="auto", choices=["auto", "vacuum", "copy"])
+    chr_.add_argument("--apply", action="store_true", help="真正执行（无 force 通道）")
+    chr_.add_argument("--json", action="store_true")
+    chr_.set_defaults(handler=_cmd_cutover_rehost)
 
     st = sub.add_parser("set", help="设置 export_dir / import_dir")
     st.add_argument("--export-dir")

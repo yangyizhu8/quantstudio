@@ -31,7 +31,10 @@
         "knowledge/db/DB-2026-0019.md",
         "knowledge/db/DB-2026-0020.md",
         "knowledge/db/DB-2026-0021.md",
-        "docs/客户下发-S1诊断件与自助校正说明-"
+        "docs/客户下发-S1诊断件与自助校正说明-",
+        "quantstudio/pipeline/qfq_cutover_tools.py",
+        "tests/test_qfq_cutover_tools.py",
+        "docs/evidence/delivery-pure-gain-baseline-v3-"
       ]
     }
   }

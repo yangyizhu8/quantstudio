@@ -338,8 +338,8 @@ v2 里"D5 来源未定谳、不排除我方模板缺陷"的保留，**现予撤�
 
 | 档 | 手段 | 角色 | 是否可省 |
 |---|---|---|---|
-| **b（主）** | `VACUUM INTO '<备份目录>/quantstudio.vacuum.db'` 快照 | **主备份**：与 WAL 合并、体积略小、可独立打开校验（`PRAGMA integrity_check` 等价物 + 关键表行数比对） | 否（磁盘不足时才降级，见下） |
-| **a（兜底，可配置）** | 整体复制 `quantstudio.db`（+`-wal`） | 磁盘余量允许时兜底；`--backup-mode=auto\|vacuum\|copy` 可强制 | 可（auto 模式下按余量决定是否追加） |
+| **b（主）** | **完整库副本**：复制 `quantstudio.db`（+`-wal`） | **主备份**：DuckDB 是单文件库 ⇒ 文件副本即完整还原手段（回滚后逐位一致）；实现要求**复制时无打开句柄**（Windows 文件锁） | 否 |
+| **a（兜底，可配置）** | `EXPORT DATABASE '<备份目录>/export'`（parquet 逻辑导出） | 余量允许时追加（`free ≥ 2×need_b`）；可独立打开查询 | 可（auto 模式下按余量决定） |
 | **c（必做）** | 记录快照 JSON + `COPY (SELECT * FROM qfq_source_cutover) TO ... (FORMAT JSON)` **双份** | 记录级快速回滚；**但记录级还原能力弱于完整库** ⇒ **不得作为唯一回滚手段** | **否** |
 
 **前置余量检查（S2 第一步，不满足即拒跑）**
