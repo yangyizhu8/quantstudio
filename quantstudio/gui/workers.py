@@ -83,6 +83,45 @@ def _task_runtime_result(collector) -> dict:
     }
 
 
+def classify_once_entry(manifest: 'Optional[dict]', log_tail: str,
+                        nonce: 'Optional[str]') -> dict:
+    """单任务判读（D2-b / D6）：**结构化真源优先**，老 manifest 才回退日志判据。
+
+    返回 entry：{ok, skipped, audit_global_warn, verdict_source, error, ...}
+    - manifest.verdict 存在（D2 起 daemon 回写）⇒ 以它为准：
+      `task_ok` 决定成败；`audit_global_fail` ⇒ 第四态（完成·全局审计告警）；
+    - 无 verdict（老 manifest）⇒ 回退日志：
+      「once 完成」⇒ 成功；**放宽**的 skip 判据（含 "no new data" 且含 "skip"）⇒ 跳过（D6）；
+    - nonce 不匹配 ⇒ 失败（防张冠李戴）。
+    """
+    manifest = manifest or {}
+    verdict = manifest.get("verdict") or {}
+    nonce_ok = bool(manifest) and (nonce is None or manifest.get("nonce") == nonce)
+    skipped_marker = ("no new data" in (log_tail or "")) and ("skip" in (log_tail or ""))
+    entry: dict = {"delegated": True, "verdict_source": "manifest" if verdict else "log-fallback"}
+    if verdict:
+        entry["ok"] = bool(verdict.get("task_ok")) and nonce_ok
+        entry["audit_global_warn"] = bool(verdict.get("audit_global_fail"))
+        entry["audit_table_ok"] = verdict.get("audit_table_ok")
+        entry["audit_global_ok"] = verdict.get("audit_global_ok")
+        entry["audit_reason"] = verdict.get("audit_reason")
+        if not nonce_ok:
+            entry["ok"] = False
+            entry["error"] = "nonce 不匹配（可能读到他批次的 manifest）"
+        return entry
+    if not nonce_ok:
+        entry["ok"] = False
+        entry["error"] = "nonce 不匹配或 manifest 不可读"
+        return entry
+    if skipped_marker:
+        entry["ok"] = True
+        entry["skipped"] = True
+        return entry
+    entry["ok"] = ("once 完成" in (log_tail or ""))
+    return entry
+
+
+
 class LockedTaskWorker(BaseWorker):
     """v3：GUI 手动拉取单个任务的 Worker。
 
@@ -261,28 +300,64 @@ class LockedRunAllWorker(BaseWorker):
                 log_tail = log_path.read_text(encoding="utf-8", errors="replace")[-4000:]
             except Exception:
                 pass
-            once_done = ("once 完成" in log_tail) or ("no new data, skip" in log_tail)
-            # A6（Phase 1，2026-10-31）：解析子进程日志里的机读第三态标记。
-            # 审计未完整（OOM/超时/中断）时 daemon 打 QUALITY_AUDIT_INCOMPLETE；
-            # 此时数据已写入成功 ⇒ 仍算任务成功，但结果带标记，界面渲染为
+            # A6（Phase 1，2026-10-31）：审计未完整（OOM/超时/中断）时 daemon 打
+            # QUALITY_AUDIT_INCOMPLETE；此时数据已写入成功 ⇒ 仍算任务成功，界面渲染为
             # 「完成·审计未完成」，既不静默变绿也不误判失败。
             qa_incomplete = "QUALITY_AUDIT_INCOMPLETE" in log_tail
             nonce_ok = bool(manifest) and manifest.get("nonce") == nonce
-            if once_done and nonce_ok:
-                results.append({"name": name, "ok": True, "delegated": True,
-                                "nonce": nonce,
-                                "quality_audit_incomplete": qa_incomplete})
+            # D6：skip 文案有变体（如 "no new data (streaming), skip"）⇒ 放宽为
+            # 「含 'no new data' 且含 'skip'」，不再用精确子串匹配。
+            skipped_marker = ("no new data" in log_tail) and ("skip" in log_tail)
+            once_done = ("once 完成" in log_tail) or skipped_marker
+            # D2-b：**结构化真源优先**——daemon 已把裁决写进 manifest.verdict；
+            # 老 manifest 无该字段时才回退日志判据（并留痕）。
+            verdict = (manifest or {}).get("verdict") or {}
+            entry = {"name": name, "nonce": nonce,
+                     **classify_once_entry(manifest, log_tail, nonce)}
+            if verdict:
+                if entry["ok"]:
+                    audit_all.append(not entry["audit_global_warn"])
+                    results.append(entry)
+                    self.progress.emit(
+                        "⚠ {}: 完成·全局审计告警".format(name) if entry["audit_global_warn"]
+                        else "✅ {}: 完成".format(name))
+                    continue
+                # 数据未成功：给出 manifest 理由 + 日志尾
+                snippet = log_tail.strip().splitlines()[-4:] if log_tail.strip() else []
+                entry["error"] = (" | ".join(snippet) if snippet
+                                  else f"task_ok=False（{verdict.get('audit_reason')}）")
+                results.append(entry)
+                audit_all.append(False)
+                self.progress.emit("❌ {}: 失败".format(name))
+                continue
+            # 回退路径（老 manifest，无 verdict 字段）
+            if entry["ok"]:
+                entry["quality_audit_incomplete"] = qa_incomplete
                 audit_all.append(True)
-                self.progress.emit("✅ {}: 完成".format(name))
+                results.append(entry)
+                self.progress.emit("⏭ {}: 跳过（无新数据）".format(name)
+                                   if entry.get("skipped")
+                                   else "✅ {}: 完成".format(name))
             else:
                 snippet = log_tail.strip().splitlines()[-4:] if log_tail.strip() else []
-                results.append({"name": name, "ok": False,
-                                "error": " | ".join(snippet) if snippet else "无输出",
-                                "delegated": True})
+                entry["error"] = " | ".join(snippet) if snippet else "无输出"
+                results.append(entry)
                 audit_all.append(False)
                 self.progress.emit("❌ {}: 失败".format(name))
         ok_count = sum(1 for r in results if r.get("ok"))
+        # D3：四态计数（成功 / 跳过 / 完成·全局审计告警 / 失败）+ 任务全好标志
+        counts = {
+            "ok": sum(1 for r in results if r.get("ok") and not r.get("skipped")
+                      and not r.get("audit_global_warn")),
+            "skipped": sum(1 for r in results if r.get("skipped")),
+            "audit_global_warn": sum(1 for r in results if r.get("audit_global_warn")),
+            "failed": sum(1 for r in results if not r.get("ok")),
+        }
         payload = {"results": results, "ok_count": ok_count, "total": len(results),
+                   "counts": counts,
+                   "tasks_all_ok": all(r.get("ok") for r in results) if results else None,
+                   "audit_ok": (all(audit_all) if audit_all else None),
+                   # 旧字段保留（向后兼容）：语义 = 任务级审计汇总
                    "quality_audit_ok": (all(audit_all) if audit_all else None),
                    "stopped": stopped, "cancelled": stopped, "delegated": True}
         self.finished_ok.emit(payload)

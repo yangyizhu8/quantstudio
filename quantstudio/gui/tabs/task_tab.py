@@ -1157,6 +1157,9 @@ class TaskTab(QWidget):
                 self._set_task_status(name, "\u8df3\u8fc7")
             elif not entry.get("ok"):
                 self._set_task_status(name, "\u5931\u8d25")
+            elif entry.get("audit_global_warn"):
+                # D3：数据已写入成功，仅全局段审计告警 ⇒ 第四态（不误判失败、不静默变绿）
+                self._set_task_status(name, "\u5b8c\u6210\u00b7\u5168\u5c40\u5ba1\u8ba1\u544a\u8b66")
             elif entry.get("quality_audit_incomplete"):
                 # A6（Phase 1，2026-10-31）：数据写入成功但审计未完整 ⇒ 第三态。
                 # 不得静默显示「成功」（掩盖审计缺口），也不得显示「失败」（误判数据）。
@@ -1170,14 +1173,34 @@ class TaskTab(QWidget):
 
         self._reset_run_all_buttons()
         audit_warning = result.get("quality_audit_ok") is False
+        # D3（节点⑳ ②审）：四态如实汇总——成功 / 跳过 / 完成·全局审计告警 / 失败；
+        # **失败数必须显式出现**，"完成"不得作为主词掩盖部分失败（本次客户事故根因）。
+        counts = result.get("counts") or {}
+        n_ok = int(counts.get("ok", ok_count))
+        n_skip = int(counts.get("skipped", 0))
+        n_warn = int(counts.get("audit_global_warn", 0))
+        n_fail = int(counts.get("failed", max(0, total - ok_count)))
+        failed_names = [e.get("name", "?") for e in entries if not e.get("ok")]
         if err:
             final_text = f"\u274c \u5168\u90e8\u6267\u884c\uff08{mode_label}\uff09\u5931\u8d25: {err}"
             self._set_status_text(final_text)
             QMessageBox.warning(
                 self, f"\u5168\u90e8\u6267\u884c\uff08{mode_label}\uff09",
                 f"\u6267\u884c\u5931\u8d25\uff1a\n\n{err}")
-        elif qfq_warnings or audit_warning or qa_incomplete_names:
-            parts = [f"{ok_count}/{total} \u62c9\u53d6\u6210\u529f"]
+        elif n_fail > 0:
+            parts = [f"\u6210\u529f {n_ok}", f"\u8df3\u8fc7 {n_skip}",
+                     f"\u5b8c\u6210\u00b7\u5168\u5c40\u5ba1\u8ba1\u544a\u8b66 {n_warn}",
+                     f"\u5931\u8d25 {n_fail}"]
+            detail = ""
+            if failed_names:
+                detail = ("\uff08" + ", ".join(failed_names[:3])
+                          + ("\u7b49" if len(failed_names) > 3 else "") + "\uff09")
+            final_text = (f"\u26a0 \u5168\u90e8\u6267\u884c\uff08{mode_label}\uff09"
+                          f"\u90e8\u5206\u5931\u8d25\uff08" + "\uff0c".join(parts) + f"\uff09{detail}")
+            self._set_status_text(final_text)
+        elif qfq_warnings or audit_warning or qa_incomplete_names or n_warn:
+            parts = [f"\u6210\u529f {n_ok}", f"\u8df3\u8fc7 {n_skip}",
+                     f"\u5b8c\u6210\u00b7\u5168\u5c40\u5ba1\u8ba1\u544a\u8b66 {n_warn}"]
             if qfq_warnings:
                 details = ", ".join(
                     f"{name}({reason})" if reason else name
@@ -1187,22 +1210,16 @@ class TaskTab(QWidget):
             if qa_incomplete_names:
                 parts.append(
                     f"{len(qa_incomplete_names)} \u4e2a\u4efb\u52a1\u6570\u636e\u5df2\u5199\u5165"
-                    f"\u00b7\u5ba1\u8ba1\u672a\u5b8c\u6210: "
+                    "\uff0d\u5ba1\u8ba1\u672a\u5b8c\u6210: "
                     + ", ".join(qa_incomplete_names))
             if audit_warning:
                 parts.append("\u5168\u5e93\u8d28\u91cf\u5ba1\u8ba1\u672a\u901a\u8fc7")
             final_text = ("\u26a0 \u5168\u90e8\u6267\u884c\uff08" + mode_label
                           + "\uff09\u5b8c\u6210\uff08" + "\uff1b".join(parts) + "\uff09")
             self._set_status_text(final_text)
-        elif ok_count == total:
-            final_text = (f"\u2705 \u5168\u90e8\u6267\u884c\uff08{mode_label}\uff09"
-                          f"\u5b8c\u6210\uff08{ok_count}/{total}\uff09")
-            self._set_status_text(final_text)
         else:
-            final_text = (
-                f"\u26a0 \u5168\u90e8\u6267\u884c\uff08{mode_label}\uff09\u5b8c\u6210"
-                f"\uff08{ok_count}/{total} \u6210\u529f\uff0c"
-                f"{total-ok_count} \u5931\u8d25\uff09")
+            final_text = (f"\u2705 \u5168\u90e8\u6267\u884c\uff08{mode_label}\uff09"
+                          f"\u5b8c\u6210\uff08\u6210\u529f {n_ok}\uff0c\u8df3\u8fc7 {n_skip}\uff09")
             self._set_status_text(final_text)
         if hasattr(self, '_collect_tooltip') and self._collect_tooltip:
             self._collect_tooltip.setContent(final_text)

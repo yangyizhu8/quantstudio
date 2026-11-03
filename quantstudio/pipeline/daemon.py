@@ -4407,6 +4407,30 @@ def main():
                     "全局段问题请另行跟进（reason=%s）",
                     AUDIT_GLOBAL_FAIL_TOKEN, _reason)
             logger.info("[CLI] once 完成（task 成功；audit 归因=%s）", _reason)
+            # D2（节点⑳ ②审）：把本次裁决写回 runtime-manifest（**结构化真源**），
+            # 供 GUI 批量 worker 判读（不再靠 grep 人类日志短语）。
+            try:
+                import json as _json2
+                from pathlib import Path as _Path2
+
+                _mf = _Path2(args.runtime_manifest)
+                if _mf.exists():
+                    _doc = _json2.loads(_mf.read_text(encoding="utf-8"))
+                    _doc["verdict"] = {
+                        "verdict_version": "1.0",
+                        "task_ok": bool(result.get("task_ok")),
+                        "audit_run": bool(result.get("audit_run")),
+                        "audit_ok": bool(result.get("audit_ok")),
+                        "audit_table_ok": result.get("audit_table_ok"),
+                        "audit_global_ok": result.get("audit_global_ok"),
+                        "exit_code": _code,
+                        "audit_reason": _reason,
+                        "audit_global_fail": bool(_reason.startswith(AUDIT_GLOBAL_FAIL_TOKEN)),
+                    }
+                    _mf.write_text(_json2.dumps(_doc, ensure_ascii=False, indent=2),
+                                   encoding="utf-8")
+            except Exception as _exc:
+                logger.warning("[CLI] 回写 manifest verdict 失败（不影响任务结论）: %s", _exc)
         except Exception as e:
             if "collector_run" in str(e).lower() or "timeout" in str(e).lower():
                 logger.error(f"[CLI] collector_run.lock 获取失败（daemon 或 GUI 正在采集）: {e}")
