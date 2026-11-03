@@ -328,7 +328,8 @@ class BacktestEngine:
                  engine_profile: str = "daily-bar-v1",
                  etf_t0: bool = False,
                  rebalance_mode: Optional[str] = None,
-                 cost_basis_method: str = "diluted"):
+                 cost_basis_method: str = "diluted",
+                 match_profile: str = "ptrade"):
         """strategy_type: 'ptrade' = Ptrade 原版策略（唯一支持模式，即时成交 + 精确涨跌停）。
 
         注：custom 自定义信号模式已于 2026-07-19 废弃（不保证撮合精度、无涨跌停阻断、
@@ -385,6 +386,21 @@ class BacktestEngine:
         if match_price_mode not in ("close", "open", "next_open"):
             raise ValueError(f"match_price_mode 必须是 close/open/next_open， got {match_price_mode!r}")
         self.match_price_mode = match_price_mode
+        # M5.2 件7：撮合口径 profile（ptrade|qmt）——缺省 ptrade=现行行为零改变（黄金结果
+        # 逐位一致硬门，总调度红线：任何漂移立即回退）。qmt=QMT 实盘撮合对齐口径标签：
+        # 费率首版与 ptrade 同值（引擎 TradeCost 已对齐市场真实费率——印花税 2023-08-28
+        # 减半分段 :864-868 / 过户费万0.1 / 佣金万3.5，见呈报件
+        # docs/evidence/qmt-match-profile-params-20261012.md 双列证据链；C 类佣金/滑点
+        # 候复测反推，总调度裁定②采 (a) 首版不启用佣金差）。
+        if match_profile not in ("ptrade", "qmt"):
+            raise ValueError(f"match_profile 必须是 ptrade/qmt，got {match_profile!r}")
+        self.match_profile = match_profile
+        if match_profile == "qmt":
+            logger.info(
+                f"[Backtest] 撮合口径 profile=qmt（QMT 实盘对齐）：prType=5 最新价口径、"
+                f"费率同 TradeCost 现行值（印花税卖出分段 0.5‰/过户费双边万0.1/佣金万3.5）——"
+                f"成交价口径仍由 match_price_mode={match_price_mode!r} 声明；"
+                f"C 类（佣金差/滑点）候复测反推后立项")
         # PR4: 引擎 Profile（daily-bar-v1 逐日循环 / minute-bar-v1 分钟事件循环）
         if engine_profile not in ("daily-bar-v1", "minute-bar-v1", "daily-open-close-proxy-v1"):
             raise ValueError(f"engine_profile 必须是 daily-bar-v1/minute-bar-v1/daily-open-close-proxy-v1， got {engine_profile!r}")
@@ -665,6 +681,11 @@ class BacktestEngine:
         metrics = calculate_ptrade_like_metrics(self.result, self)
         self.result.metrics_summary = metrics.summary
         self.result.round_trips = metrics.round_trips
+        # M5.2 件7：口径标签全链路可追溯（总调度批复③审计要点）——metrics_summary 是
+        # GUI/CLI/对照报告统一消费点；两键为纯新增（下游 .get() 消费不受影响，
+        # 数值指标零变化=黄金结果逐位一致的纯增益前提）。
+        self.result.metrics_summary["match_profile"] = self.match_profile
+        self.result.metrics_summary["match_price_mode"] = self.match_price_mode
 
         # F-DUCKDB-LOCK（A2-P2/P3，2026-09-05）：数据层诊断事件回测收尾无条件汇总输出
         # （审核附加条：不依赖错误状态，事后可检——防「空数据静默出回测」事故模式）。
