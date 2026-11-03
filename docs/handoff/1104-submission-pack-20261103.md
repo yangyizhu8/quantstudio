@@ -1,0 +1,37 @@
+---
+title: 11-04 框架项呈批轮 · 正式呈报包
+date: 2026-11-03
+purpose: 呈批轮直用——两案②审 + 三裁定 + 新候选判型 + 定谳增补 + 证据指针总表
+---
+
+# 一、呈批事项（按序）
+
+| # | 事项 | 材料 | 状态 |
+| --- | --- | --- | --- |
+| 1 | **RC-001a ②审** | `docs/backtest-cli-guard-design-20261101.md`（含 V-R1~R5 + **W1 修订：白名单改 `_parse_flag` 调用点扫描**〔R344 实测：入口无 argparse，手写 `_parse_flag` ≥12 处〕）+ 自查清单（W1 已核 / W2 / W3 处置建议） | 候②审 |
+| 2 | **合并判据修订稿 ②审** | `docs/join-key-daykey-unify-design-20261101.md`（三处作废改复用）+ 盘点件（上界读数；权威口径=批0 WARN 报告）+ 批0~3 排期 | 候②审 |
+| 3 | **R1/R2/R3 裁定** | 一页摘要（R1 RC-001a 先 / R2 批0 通过即开工 / R3 P5 立项） | 候裁定 |
+| 4 | **新候选判型** | `docs/limit-up-benchmark-config-design-20261103.md`（涨停拦截基准可配置性，主张新增能力型单列） | 候判型 |
+| 5 | **B2′ 定谳增补**（并入第 5 件备案） | 同根因-涨停阻断 6/8 实锤（`7435430`）；gap13 §8.1 推翻；05-19/07-14 不追 | 已定谳候并入 |
+| 6 | **A5 全窗化窗口**（批 0 后） | 副本根全窗回测 ~4.5h，窗口申报制；**env 预置数据根、禁裸探测**（RC-001a 教训） | 已授权列批0后 |
+
+# 二、备案面（7 件维持）
+
+A1 四桶（75e4446）/ A2A3 三型+B2′增补（cff78ea+7435430）/ A5（5923cb8）/ P5 候立项 / 合并判据 / B2′闭环件 / 覆盖闸闭环（0c9cb31）。
+
+# 三、证据指针总表
+
+| 件 | 文件 / commit |
+| --- | --- |
+| RC-001a | backtest-cli-guard-design-20261101.md（66d6c59+735224f） |
+| 自查清单 | backtest-cli-guard-review-checklist-20261102.md（ec05a24） |
+| 合并判据 | join-key-daykey-unify-design-20261101.md（5923cb8+0520251） |
+| 盘点 | key-normalization-inventory-20261101.md（0520251） |
+| 对齐系列 | alignment-triage-20261102.md（75e4446/cff78ea/5923cb8） |
+| B2′ | 交接 c1af226 → 框架 e6ccf75 → 定谳 7435430 |
+| 一页摘要 | 1104-frame-items-onepager-20261102.md（ec05a24） |
+| 新候选 | limit-up-benchmark-config-design-20261103.md（本笔） |
+
+# 四、出仓态（is-ancestor 实测口径）
+
+`df86c40/4bc574e/cff78ea/75e4446/5923cb8` 已 IN_ORIGIN；`0520251/735224f/ec05a24/c1af226/e6ccf75/7435430` 候池随批——以出仓时逐笔 is-ancestor 实测为准。
