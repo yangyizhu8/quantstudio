@@ -37,6 +37,28 @@ logger = logging.getLogger(__name__)
 SOURCE_CAPABILITY = capability_matrix()
 
 
+def format_route_diag_text(report: dict) -> str:
+    """QFQ 路由诊断报告的人读文本（GUI 与 CLI 同源；**只读**，不触发任何写操作）。"""
+    if not isinstance(report, dict):
+        return "诊断未完成：无报告"
+    if report.get("error"):
+        return f"诊断未完成：{report.get('error')}"
+    lines = ["QFQ 路由诊断（只读，未写入任何内容）"]
+    for rec in report.get("records") or []:
+        flag = "可迁移" if rec.get("migratable") else "不可迁移"
+        lines.append(f"[{flag}] {rec.get('cutover_id')}"
+                     f"（{rec.get('source_generation')}, {rec.get('status')}）")
+        lines.append(f"    aux_db_path = {rec.get('aux_db_path')}")
+        for reason in rec.get("reasons") or []:
+            lines.append(f"    · {reason}")
+        sug = rec.get("suggested") or {}
+        if sug.get("aux_db_path"):
+            lines.append(f"    建议值 = {sug['aux_db_path']}（存在：{sug.get('exists')}）")
+    lines.append(f"写入次数：{report.get('writes')}")
+    return "\n".join(lines)
+
+
+
 class TaskTab(QWidget):
     """采集任务管理：加载任务列表 + 执行单任务 + 全部执行 + 刷新 + 重置水位
     + 常驻增量拉取进程开关（状态切换按钮）"""
@@ -140,6 +162,13 @@ class TaskTab(QWidget):
         self.run_all_btn = PrimaryPushButton("▶ 全部执行（增量）")
         self.run_all_btn.setToolTip("遍历所有启用任务，逐个执行增量拉取（水位线→今天）")
         self.run_all_btn.clicked.connect(lambda: self._run_all("incremental"))
+        # D5-c/GUI 对等：QFQ 路由诊断入口（CLI `qs-deliver cutover-diag` 的对等件）
+        self.qfq_route_btn = PushButton("🧭 QFQ 路由诊断")
+        self.qfq_route_btn.setToolTip(
+            "只读诊断 QFQ 辅助库路由记录（跨平台迁移后可能残留旧机器路径）\n"
+            "对应 CLI：qs-deliver cutover-diag")
+        self.qfq_route_btn.clicked.connect(self._qfq_route_diag)
+        toolbar.addWidget(self.qfq_route_btn)
         self.reset_wm_btn = PushButton("⏮ 重置水位")
         self.reset_wm_btn.clicked.connect(self._reset_watermark)
         toolbar.addWidget(self.refresh_btn)
@@ -490,6 +519,59 @@ class TaskTab(QWidget):
         self.stop_btn.setText("⏹ 停止")
         self.stop_btn.setEnabled(False)
         self._set_status_text(status_text)
+
+    def _qfq_route_diag(self):
+        """GUI 对等入口：只读诊断 + （可选）按建议换代（与 CLI 同内核）。"""
+        from quantstudio.pipeline.qfq_cutover_tools import (
+            CutoverToolError, apply_rehost, diagnose)
+        from quantstudio.gui.db_helper import DATA_ROOT
+
+        try:
+            report = diagnose(data_root=Path(DATA_ROOT),
+                              config_root=Path(self.config_dir) if getattr(self, "config_dir", None)
+                              else Path("config"))
+        except Exception as exc:
+            QMessageBox.warning(self, "QFQ 路由诊断", f"诊断失败：{exc}")
+            return
+        text = format_route_diag_text(report)
+        self._set_status_text("QFQ 路由诊断完成（只读）")
+        bad = [r for r in (report.get("records") or []) if not r.get("migratable")]
+        box = QMessageBox(self)
+        box.setWindowTitle("QFQ 路由诊断（只读）")
+        box.setText(text)
+        if bad:
+            box.setInformativeText(
+                "存在不可迁移的路由记录 ⇒ 相关采集任务会在取数前失败。\n"
+                "是否现在按建议值换代（写入操作，需客户授权依据）？")
+            apply_btn = box.addButton("按建议换代", QMessageBox.AcceptRole)
+            box.addButton("关闭", QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() is not apply_btn:
+                return
+            from PyQt6.QtWidgets import QInputDialog
+
+            auth, ok = QInputDialog.getText(self, "客户授权依据",
+                                            "请填写本次换代的授权依据（写入审计行）：")
+            if not ok or not auth.strip():
+                QMessageBox.information(self, "已取消", "未填写授权依据，换代未执行。")
+                return
+            rec = bad[0]
+            try:
+                apply_rehost(
+                    data_root=Path(DATA_ROOT), config_root=Path("config"),
+                    cutover_id=str(rec.get("cutover_id")),
+                    expected_aux_db_path=str(rec.get("aux_db_path") or ""),
+                    new_aux_db_path=str((rec.get("suggested") or {}).get("aux_db_path") or ""),
+                    authorization=auth.strip())
+            except CutoverToolError as exc:
+                QMessageBox.warning(self, "换代未执行", str(exc))
+            except Exception as exc:
+                QMessageBox.warning(self, "换代异常", f"{type(exc).__name__}: {exc}")
+            else:
+                QMessageBox.information(self, "换代完成",
+                                        f"已换代：{rec.get('cutover_id')} → 新记录已生效。")
+        else:
+            box.exec()
 
     def _reset_run_all_buttons(self):
         """两颗批量执行钮统一复原（文案 + 可用态 + 模式守卫清零）。

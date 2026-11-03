@@ -28,6 +28,36 @@ class CutoverPreconditionFailed(CutoverError):
     pass
 
 
+def _assert_migratable_aux(aux_path: str | Path, *, cutover_id: str = "") -> None:
+    """D5-c（节点⑳ ②审批准）：激活前校验辅助库路径**可迁移**。
+
+    拒绝两类：
+      ① 异平台绝对路径（迁移前遗留，如 `D:\...` 在 POSIX 上）——静默相对化会拼出畸形路径；
+      ② 指向的文件在本机不存在。
+    失败时给出**可执行指引**（引导 S2 换代，而不是让客户手工改不可变记录）。
+    """
+    import os as _os
+
+    from .qfq_aux_router import looks_foreign_absolute
+
+    raw = str(aux_path or "")
+    if not raw:
+        raise CutoverPreconditionFailed(
+            f"cutover {cutover_id or '(未命名)'} 的 aux_db_path 为空，拒绝激活；"
+            "请先执行 `qs-deliver cutover-diag` 诊断，再按建议值换代"
+            "（`qs-deliver cutover-rehost --apply`）。")
+    if looks_foreign_absolute(raw, windows_host=(_os.name == "nt")):
+        raise CutoverPreconditionFailed(
+            f"cutover {cutover_id or '(未命名)'} 的 aux_db_path 是异平台绝对路径（{raw}），"
+            "在本机不可解析，拒绝激活；请执行 `qs-deliver cutover-diag` 查看诊断，"
+            "再用 `qs-deliver cutover-rehost --apply` 换代到本机路径（禁止手工改不可变记录）。")
+    if not Path(raw).is_file():
+        raise CutoverPreconditionFailed(
+            f"cutover {cutover_id or '(未命名)'} 的辅助库不存在（{raw}），拒绝激活；"
+            "请先完成 MCP bootstrap/init，或用 `qs-deliver cutover-rehost --apply` 换代到可用路径。")
+
+
+
 def _table_names(conn) -> set[str]:
     try:
         return {str(r[0]) for r in conn.execute("SHOW TABLES").fetchall()}
@@ -71,6 +101,8 @@ def _require_tables(conn, tables: Iterable[str]) -> None:
 
 
 def _aux_evidence(path: Path) -> dict:
+    # D5-c：先判可迁移（异平台绝对路径 / 本机不存在）⇒ 拒激活并引导 S2。
+    _assert_migratable_aux(path)
     if not path.is_file():
         raise CutoverPreconditionFailed(f"dynamic aux file missing: {path}")
     conn = sqlite3.connect(str(path))

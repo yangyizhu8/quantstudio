@@ -36,7 +36,12 @@
         "tests/test_qfq_cutover_tools.py",
         "docs/evidence/delivery-pure-gain-baseline-v3-",
         "tests/test_delivery_audit_attribution.py",
-        "docs/evidence/audit-ok-consumer-sweep-"
+        "docs/evidence/audit-ok-consumer-sweep-",
+        "quantstudio/pipeline/qfq_cutover_activation.py",
+        "tests/test_qfq_cutover_migratable.py",
+        "tests/test_delivery_gui_route_parity.py",
+        "knowledge/db/DB-2026-0022.md",
+        "knowledge/db/DB-2026-0023.md"
       ]
     }
   }
