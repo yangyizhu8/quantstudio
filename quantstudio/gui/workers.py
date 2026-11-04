@@ -499,6 +499,15 @@ class BacktestWorker(BaseWorker):
                 slippage_rate=self.params.get('slippage', 0.0),
             )
 
+            # 可选共存参数：仅非 None 才传（防 None 覆盖默认；见上方 ⚠ 注释）
+            _coexist_kw = {}
+            _stop_t = self.params.get('coexistence_stop_timeout')
+            if _stop_t is not None:
+                _coexist_kw['coexistence_stop_timeout'] = _stop_t
+            _boundary_t = self.params.get('coexistence_boundary_timeout')
+            if _boundary_t is not None:
+                _coexist_kw['coexistence_boundary_timeout'] = _boundary_t
+
             self.progress.emit("开始回测...")
             result, output_dir, engine = run_backtest(
                 self.strategy_path,
@@ -511,9 +520,10 @@ class BacktestWorker(BaseWorker):
                 # 常驻采集共存（specs/001-daemon-backtest-coexistence）：
                 # 默认开启——采集开着也能直接回测；等待期取消复用既有 self._cancelled。
                 coexistence=self.params.get('coexistence', True),
-                # 等待采集停止的上限（秒）：默认沿用入口默认 60s；上层「继续等待」可递增
-                coexistence_stop_timeout=self.params.get('coexistence_stop_timeout'),
-                coexistence_boundary_timeout=self.params.get('coexistence_boundary_timeout'),
+                # 等待采集停止的上限（秒）：默认沿用入口默认 60s；上层「继续等待」可递增。
+                # ⚠ 只在**非 None** 时传：params.get() 在键不存在时返回 None，
+                #    显式传 None 会覆盖签名默认值 ⇒ float(None) TypeError（2026-11-04
+                #    实测回归：进程常驻开启时点回测即崩，本笔修复）。
                 cancel_check=lambda: self._cancelled,
                 # 等待读数走 progress 信号（单参数）；引擎的逐日进度走 progress_callback
                 # （三参数 current/total/date_str）——两者是不同通道，不可混用。
@@ -524,6 +534,7 @@ class BacktestWorker(BaseWorker):
                 rebalance_mode=self.params.get('rebalance_mode', 'legacy'),
                 fidelity_config=self.params.get('fidelity_config', None),
                 progress_callback=self._on_engine_progress,
+                **_coexist_kw
             )
 
             self.progress.emit(f"回测完成: {output_dir}")

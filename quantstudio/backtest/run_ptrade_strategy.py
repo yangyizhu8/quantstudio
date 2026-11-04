@@ -95,6 +95,20 @@ def _check_design_capital_contract(strategy_path, capital):
     except Exception:
         pass
 
+def _norm_coexist_timeouts(stop=None, boundary=None):
+    """共存等待参数归一（2026-11-04 回归防御）：None ⇒ 沿用默认；数值/数字串照常。
+
+    背景：GUI worker 曾用 `params.get('coexistence_stop_timeout')`（键缺失 ⇒ None）显式传参
+    ⇒ 覆盖签名默认 ⇒ `CollectorStopContext(timeout=None)` ⇒ float(None) TypeError。
+    此函数保证任何调用方传 None 都不会击穿到 float()。
+    """
+    from quantstudio.pipeline.backtest_window import (
+        BOUNDARY_HINT_SEC, STOP_WAIT_SEC)
+
+    return (STOP_WAIT_SEC if stop is None else float(stop),
+            BOUNDARY_HINT_SEC if boundary is None else float(boundary))
+
+
 def run_backtest(strategy_path, start, end, *,
                  db_path=None, capital=100_000,
                  match_price_mode='close', engine_profile='daily-bar-v1',
@@ -150,10 +164,13 @@ def run_backtest(strategy_path, start, end, *,
         # 0.1s 精度：`:.0f` 会把 0.5s 显示成 "0s"，看着像"没等"，容易被误读为缺陷
         _emit(f"[coexist] 已等待 {waited:.1f}s · {phase}")
 
+    # 归一（防 None 击穿 float()）：GUI/CLI 任一方显式传 None 都落到默认值
+    _stop_t, _boundary_t = _norm_coexist_timeouts(
+        coexistence_stop_timeout, coexistence_boundary_timeout)
     ctx = CollectorStopContext(
         str(strategy_path),
-        timeout=coexistence_stop_timeout,
-        boundary_hint=coexistence_boundary_timeout,
+        timeout=_stop_t,
+        boundary_hint=_boundary_t,
         on_wait=_on_wait,
         should_cancel=cancel_check,
     )

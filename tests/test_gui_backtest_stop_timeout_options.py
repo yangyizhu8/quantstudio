@@ -42,9 +42,13 @@ def test_continue_waiting_escalates_timeout():
 
 
 def test_worker_passes_wait_timeout_params():
+    """（2026-11-04 修订）worker 透传等待上限，但**只在非 None 时**——
+    裸 `params.get(...)` 直传会在键缺失时把 None 显式覆盖默认值 ⇒ float(None) TypeError。"""
     src = inspect.getsource(workers.BacktestWorker.run)
-    assert "coexistence_stop_timeout=self.params.get('coexistence_stop_timeout')" in src
-    assert "coexistence_boundary_timeout=self.params.get('coexistence_boundary_timeout')" in src
+    assert "_coexist_kw" in src
+    assert "if _stop_t is not None" in src
+    assert "if _boundary_t is not None" in src
+    assert "**_coexist_kw" in src
 
 
 def test_cli_path_still_has_its_own_contract():
