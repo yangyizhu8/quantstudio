@@ -45,7 +45,7 @@ class BackupPlan:
     free: int
     need_b: int
     need_a: int
-    mode: str = "auto"          # auto | vacuum | copy
+    mode: str = "auto"          # auto | minimal | export
     keep_copy: bool = False     # auto 模式下 free ≥ 2×need_b 才追加 a 档
 
     @property
@@ -82,7 +82,8 @@ def plan_backup(db_path: Path, data_root: Path, mode: str = "auto") -> BackupPla
     need_b = int(db_size * 1.02) + 512 * 1024 * 1024
     need_a = db_size + wal_size + 512 * 1024 * 1024
     free = _disk_free(data_root)
-    keep_copy = mode == "copy" or (mode == "auto" and free >= 2 * need_b)
+    # auto：余量够（free ≥ 2×need_b）才追加 a 档导出；minimal：只 b+c；export：强制追加 a
+    keep_copy = mode == "export" or (mode == "auto" and free >= 2 * need_b)
     return BackupPlan(db_path=db_path, data_root=data_root, db_size=db_size,
                       wal_size=wal_size, free=free, need_b=need_b, need_a=need_a,
                       mode=mode, keep_copy=keep_copy)

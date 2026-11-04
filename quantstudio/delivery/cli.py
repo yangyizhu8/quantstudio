@@ -560,7 +560,8 @@ def build_parser() -> argparse.ArgumentParser:
     chr_.add_argument("--expect-aux-db-path", required=True, help="CAS：库内现值必须等于它")
     chr_.add_argument("--new-aux-db-path", required=True)
     chr_.add_argument("--authorization", default="", help="客户授权依据（审计行必填）")
-    chr_.add_argument("--backup-mode", default="auto", choices=["auto", "vacuum", "copy"])
+    # auto=按余量自动追加 a 档导出；minimal=只 b+c；export=强制追加 a 档导出
+    chr_.add_argument("--backup-mode", default="auto", choices=["auto", "minimal", "export"])
     chr_.add_argument("--apply", action="store_true", help="真正执行（无 force 通道）")
     chr_.add_argument("--json", action="store_true")
     chr_.set_defaults(handler=_cmd_cutover_rehost)
