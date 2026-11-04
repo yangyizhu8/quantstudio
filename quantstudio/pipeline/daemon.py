@@ -250,6 +250,9 @@ class ResidentCollector:
     #    注意（任务书补充 B）：这里存的是告警升级计数，不是快照——快照必须
     #    用调用栈局部变量沿调用链传入（per_date/per_stock 多线程，实例级
     #    缓存快照会竞争错配），禁止把 adj_latest_map 存到实例上。 ——
+    # —— P2（2026-11-04）：单周期因子查询缓存（仅自检观测；禁止写入/复权路径复用）——
+    _qfq_factor_cache = None      # OrderedDict[(table, lo, hi, codes_fp)] -> lookup
+    _qfq_factor_cache_stats = None  # {"hit":0,"miss":0,"evict":0}
     _qfq_inv_lock = None          # threading.Lock（惰性创建）
     _qfq_bad_streaks = None       # {table: 连续 bad 批数}（告警升级链，N=3 阻断）
     _qfq_blocked_tables = None    # set[table]（达到阻断阈值后拦下一轮该表任务）
@@ -477,7 +480,16 @@ class ResidentCollector:
 
     def qfq_run_post_ingest(self, run_id: str, should_stop=None):
         """增量任务全部结束后执行 post-ingest 闭环（recover→discover→claim→
-        reanchor→gate→commit/hold watermarks）。disabled 或未开周期 → no-op None。"""
+        reanchor→gate→commit/hold watermarks）。disabled 或未开周期 → no-op None。
+
+        P2（2026-11-04）：本函数会写/更新复权因子 ⇒ **进入前先失效因子查询缓存**
+        （显式事件失效，不依赖 aux 文件 mtime 轮询——逐批 stat 会因 post-ingest
+        每次写入都变 mtime 而永久 miss）。
+        """
+        try:
+            self._qfq_invalidate_factor_cache("post_ingest")
+        except Exception:   # noqa: BLE001  失效失败不得阻断 post-ingest
+            pass
         if not self.qfq_enabled() or self._qfq_cycle_id is None:
             return None
         import time as _time
@@ -3333,6 +3345,69 @@ class ResidentCollector:
         """
         return self._qfq_aux_path()
 
+    # ---------------- P2：因子查询缓存（单周期）----------------
+    _QFQ_FACTOR_CACHE_ENV = "QS_QFQ_INVARIANT_FACTOR_CACHE"
+    _QFQ_FACTOR_CACHE_MAX = 8
+
+    def _qfq_factor_cache_enabled(self) -> bool:
+        import os as _os
+        return str(_os.environ.get(self._QFQ_FACTOR_CACHE_ENV, "1")).strip().lower() \
+            not in ("0", "false", "no", "off")
+
+    def _qfq_factor_lookup_cached(self, adj_table: str, codes, lo_ms, hi_ms):
+        """按 (table, 窗口, code 指纹) 缓存的因子查询。开关关闭 ⇒ 直查（不缓存）。"""
+        from .qfq_invariant import _load_factor_lookup, open_ro_sqlite
+
+        def _direct():
+            ap = self._qfq_align_aux_path()
+            con = open_ro_sqlite(ap)
+            try:
+                return _load_factor_lookup(con, adj_table, list(codes),
+                                          day_lo_ms=lo_ms, day_hi_ms=hi_ms)
+            finally:
+                con.close()
+
+        if not self._qfq_factor_cache_enabled():
+            return _direct()
+        import hashlib
+        from collections import OrderedDict
+        if self._qfq_factor_cache is None:
+            self._qfq_factor_cache = OrderedDict()
+            self._qfq_factor_cache_stats = {"hit": 0, "miss": 0, "evict": 0}
+        fp = hashlib.sha1(",".join(codes).encode("utf-8")).hexdigest()[:16]
+        key = (adj_table, lo_ms, hi_ms, fp)
+        cache = self._qfq_factor_cache
+        if key in cache:
+            cache.move_to_end(key)
+            self._qfq_factor_cache_stats["hit"] += 1
+            return cache[key]
+        self._qfq_factor_cache_stats["miss"] += 1
+        val = _direct()
+        cache[key] = val
+        while len(cache) > self._QFQ_FACTOR_CACHE_MAX:
+            cache.popitem(last=False)
+            self._qfq_factor_cache_stats["evict"] += 1
+        st = self._qfq_factor_cache_stats
+        _denom = st["hit"] + st["miss"]
+        logger.info("[qfq] 因子查询缓存 hit=%d miss=%d evict=%d hit_rate=%.1f%% (size=%d)",
+                    st["hit"], st["miss"], st["evict"],
+                    100.0 * st["hit"] / _denom if _denom else 0.0, len(cache))
+        return val
+
+    def _qfq_invalidate_factor_cache(self, reason: str = "") -> None:
+        """显式失效（P2 主失效路径）：post-ingest 写因子后 / reanchor 后 / 周期结束。"""
+        if self._qfq_factor_cache:
+            n = len(self._qfq_factor_cache)
+            self._qfq_factor_cache.clear()
+            logger.info("[qfq] 因子查询缓存失效（%s）：清 %d 条", reason or "-", n)
+
+    def _qfq_factor_cache_report(self) -> dict:
+        st = dict(self._qfq_factor_cache_stats or {"hit": 0, "miss": 0, "evict": 0})
+        _d = st["hit"] + st["miss"]
+        st["hit_rate"] = round(100.0 * st["hit"] / _d, 1) if _d else 0.0
+        st["size"] = len(self._qfq_factor_cache or {})
+        return st
+
     def _qfq_invariant_after_align(self, df, table: str, batch_id: str, source: str,
                                    adj_latest_map=None) -> None:
         """写入前自洽自检（_filter_unchanged 之后对最终写入 df 做；告警优先不阻断）。
@@ -3363,7 +3438,8 @@ class ResidentCollector:
             from .qfq_invariant import check_qfq_invariant
             r = check_qfq_invariant(df, table, latest,
                                     aux_path=self._qfq_align_aux_path(),
-                                    source=source, anchor_source=_anchor_src)
+                                    source=source, anchor_source=_anchor_src,
+                                    lookup_fn=self._qfq_factor_lookup_cached)
             if r["bad"] > 0 or r["sampled"] > 0 or r["skipped"] > 0:
                 self._qfq_selfcheck_log(table, batch_id, r)
             # T1 观测增补（过审硬约束）：UNKNOWN 占比>20% → mass_unknown 可见，

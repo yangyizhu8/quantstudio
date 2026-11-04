@@ -135,7 +135,8 @@ def check_qfq_invariant(df: pd.DataFrame, table: str,
                         aux_path=None,
                         source: Optional[str] = None,
                         seed: Optional[int] = None,
-                        anchor_source: str = "caller") -> Dict[str, Any]:
+                        anchor_source: str = "caller",
+                        lookup_fn: Optional[Callable] = None) -> Dict[str, Any]:
     """对已 align 的 std_df 抽样行做精确复权自洽校验（独立重算，不比对自己）。
 
     校验式（与 _apply_qfq 同公式、独立实现）：
@@ -209,9 +210,15 @@ def check_qfq_invariant(df: pd.DataFrame, table: str,
     try:
         # 独立查 adj_i：抽中 code 的因子（P1 起限定本批 bar_day ±3 天窗口）→ (code, bar_day) 索引
         _lo_ms, _hi_ms = _factor_window_ms(sampled["time"])
-        factor_lookup = _load_factor_lookup(
-            aux_conn, _adj_table_of(table), sorted(sampled["code"].astype(str).unique()),
-            day_lo_ms=_lo_ms, day_hi_ms=_hi_ms)
+        _codes = sorted(sampled["code"].astype(str).unique())
+        if lookup_fn is not None:
+            # P2：调用方注入 lookup（可带单周期缓存）。**仅自检观测**；禁止写入/
+            # 复权计算路径复用该缓存（方案 §2.3 红线）。
+            factor_lookup = lookup_fn(_adj_table_of(table), _codes, _lo_ms, _hi_ms)
+        else:
+            factor_lookup = _load_factor_lookup(
+                aux_conn, _adj_table_of(table), _codes,
+                day_lo_ms=_lo_ms, day_hi_ms=_hi_ms)
         # 抽样行的 bar_day（分钟表按交易日连接，非毫秒等值）
         days = _bar_day_from_ms(sampled["time"].astype("int64"))
         no_anchor_codes = set()
