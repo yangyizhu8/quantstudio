@@ -197,6 +197,72 @@ if ($mine.Count -eq 0) {
 }
 $mineSha = $mine[0].Sha
 
+# —— 授权快照层（2026-11-05 ②审通过 · 教训 80 族）——
+# 现行 C7 只验「范围 ⊆ 声明集」，而声明可自行填写 ⇒ 等于自审自批。
+# 本层补「范围 ⊆ 授权集」这一维：授权快照由授权方落盘，执行方只读。
+# 三修订（同批②审裁定，随本批落盘）：
+#   ① 无快照 ⇒ 通过但 WARN 留痕（授权面可观测，不阻断）
+#   ② 快照损坏/字段缺失 ⇒ fail-closed exit 9（证据物损坏即停，重出成本低）
+#   ③ 闸自身崩溃 ⇒ fail-open 落 C7 层 + 强制 WARNING（仅限崩溃面）
+if ($env:QS_PUSH_AUTH_SNAPSHOT -ne '0') {
+  try {
+    $snapDir = Join-Path $Root 'docs/evidence/push-authorization'
+    $snap = $null
+    $snapPath = $null
+    if (Test-Path $snapDir) {
+      $cand = @(Get-ChildItem -Path $snapDir -Filter '*.json' -File -ErrorAction Stop |
+                Sort-Object Name -Descending)
+      if ($cand.Count -gt 0) {
+        $snapPath = $cand[0].FullName
+        try {
+          $snap = (Get-Content -Path $snapPath -Raw -ErrorAction Stop) | ConvertFrom-Json -ErrorAction Stop
+        } catch {
+          Write-Host ''
+          Write-Host ("[prepush-gate] 授权快照损坏或非合法 JSON：{0}" -f $snapPath) -ForegroundColor Red
+          Write-Host ("    解析错误：{0}" -f $_.Exception.Message)
+          Write-Denied '授权快照不可解析（授权证据物损坏 ⇒ 停；请重出快照后重试）'
+        }
+        if (-not $snap.tip -or -not $snap.commits) {
+          Write-Host ''
+          Write-Host ("[prepush-gate] 授权快照字段缺失（须含 tip 与 commits）：{0}" -f $snapPath) -ForegroundColor Red
+          Write-Denied '授权快照字段缺失（tip/commits 必填）'
+        }
+      }
+    }
+    if (-not $snap) {
+      Write-Host ''
+      Write-Host ('[prepush-gate] WARN 授权快照缺失（{0}）⇒ 本批仅按 C7 声明制放行，授权面不可校验' -f $snapDir) -ForegroundColor Yellow
+      Write-Host '[prepush-gate] 提示：授权时应同步落 docs/evidence/push-authorization/<时间戳>.json（tip+commits）。'
+    } else {
+      $snapTip = ([string]$snap.tip).Trim().ToLower()
+      $snapSet = @($snap.commits | ForEach-Object { ([string]$_).Trim().ToLower() } | Where-Object { $_ })
+      $tipLower = ([string]$rangeEnd).Trim().ToLower()
+      if ($tipLower.StartsWith($snapTip)) {
+        Write-Host ('[prepush-gate] [OK] 授权快照命中：tip={0}（锚定授权末笔推送，范围必然 ⊆ 授权集）' -f $snapTip.Substring(0, [Math]::Min(8, $snapTip.Length)))
+      } else {
+        $outside = @($entries | Where-Object {
+          $s = $_.Sha.ToLower()
+          @($snapSet | Where-Object { $s.StartsWith($_) }).Count -eq 0
+        })
+        if ($outside.Count -gt 0) {
+          Write-Host ''
+          Write-Host ('[prepush-gate] 拒绝推送：范围含【授权清单之外】的提交 {0} 笔（快照 {1}，tip={2}）' -f $outside.Count, (Split-Path $snapPath -Leaf), $snapTip) -ForegroundColor Red
+          foreach ($o in $outside) {
+            Write-Host ("    {0}  {1}" -f $o.Sha.Substring(0, 8), $o.Subject)
+          }
+          Write-Host ('[prepush-gate] 正确动作：git push {0} {1}:{2}（锚定授权末笔），新增笔停手申报候裁。' -f $Remote, $snapTip, $Branch)
+          Write-Host '[prepush-gate] 纪律：C7 全量声明 != 授权；声明只让本闸放行，不构成推送授权。'
+          Write-Denied '存在授权清单之外的提交（授权快照校验失败）'
+        }
+        Write-Host ('[prepush-gate] [OK] 授权快照覆盖范围（tip={0}，范围 {1} 笔全在授权集）' -f $snapTip, $entries.Count)
+      }
+    }
+  } catch {
+    Write-Host ''
+    Write-Host ('[prepush-gate] WARNING 授权快照层自身异常 ⇒ 降级为仅 C7 声明制（fail-open，仅崩溃面）：{0}' -f $_.Exception.Message) -ForegroundColor Yellow
+  }
+}
+
 # —— 全量显式声明制（修复②）：范围内全部提交须被锚或 AllowAlso 覆盖 ——
 $allowed = @()
 if ($AllowAlso) {
