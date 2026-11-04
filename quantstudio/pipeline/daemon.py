@@ -3401,6 +3401,72 @@ class ResidentCollector:
             self._qfq_factor_cache.clear()
             logger.info("[qfq] 因子查询缓存失效（%s）：清 %d 条", reason or "-", n)
 
+    # ---------------- REPLAY-SKIP：分钟表按行去重（2026-11-04）----------------
+    _MINUTE_DEDUPE_TABLES = frozenset({"stock_minutes", "etf_minutes"})
+    _MINUTE_DEDUPE_ENV = "QS_MINUTE_DEDUPE"
+    _MINUTE_DEDUPE_CHUNK = 200_000        # 时间窗内单次读取上限（防爆内存）
+
+    def _minute_dedupe_enabled(self, table, task) -> bool:
+        """分钟表是否启用按行去重（RS）。显式配置优先，其次表名默认，env 可全局关闭。"""
+        import os as _os
+        if str(_os.environ.get(self._MINUTE_DEDUPE_ENV, "1")).strip().lower() \
+                in ("0", "false", "no", "off"):
+            return False
+        task = task or {}
+        if task.get("dedupe_unchanged") is False:
+            return False
+        if task.get("skip_unchanged") is False:
+            return False
+        if task.get("dedupe_unchanged") is True:
+            return True
+        return isinstance(table, str) and table in self._MINUTE_DEDUPE_TABLES
+
+    def _filter_unchanged_rows_scoped(self, df, table: str, exclude=None):
+        """**按本批时间窗**查库比对，剔出内容完全相同的行（分钟表专用）。
+
+        与 _filter_unchanged_snapshot_rows 的关键差异：后者 `SELECT ... FROM table`
+        **全表读**（stock_minutes 2.47 亿行 / etf_minutes 1.42 亿行 ⇒ 会读爆），
+        本函数只读 `time BETWEEN 本批 min/max` 的窗口行（≈本批规模）。
+        """
+        if df is None or len(df) == 0:
+            return df
+        schema = self.aligner.schemas.get(table, {})
+        pk = [c for c in schema.get("primary_key", []) if c in df.columns]
+        if not pk or "time" not in df.columns:
+            return df
+        exclude = set(exclude or [])
+        compare_cols = [c for c in df.columns if c not in set(pk) | exclude]
+        if not compare_cols:
+            return df
+        try:
+            t_ser = pd.to_numeric(df["time"], errors="coerce").dropna()
+            if t_ser.empty:
+                return df
+            tmin, tmax = int(t_ser.min()), int(t_ser.max())
+            selected = pk + compare_cols
+            quoted = ", ".join('"' + c.replace('"', '""') + '"' for c in selected)
+            existing = self.writer.read_df(
+                f'SELECT {quoted} FROM "{table}" '
+                f'WHERE time >= {tmin} AND time <= {tmax}')
+        except Exception as exc:      # noqa: BLE001  比对失败 ⇒ 回到全量写（保守）
+            logger.warning(f"[MinuteDiff] {table} 窗口读失败，回退全量 upsert: {exc}")
+            return df
+        if existing is None or existing.empty:
+            return df
+        incoming = df.set_index(pk, drop=False)
+        current = existing.drop_duplicates(pk, keep="last").set_index(pk, drop=False)
+        aligned = current.reindex(incoming.index)
+        changed = pd.Series(~incoming.index.isin(current.index),
+                            index=incoming.index, dtype=bool)
+        for col in compare_cols:
+            a, b = incoming[col], aligned[col]
+            equal = a.eq(b) | (a.isna() & b.isna())
+            changed |= ~equal.fillna(False)
+        out = incoming.loc[changed.to_numpy()].reset_index(drop=True)
+        logger.info(f"[MinuteDiff] {table}: validated={len(df)} changed={len(out)} "
+                    f"unchanged={len(df)-len(out)} exclude={sorted(exclude)}")
+        return out[df.columns]
+
     def _qfq_factor_cache_report(self) -> dict:
         st = dict(self._qfq_factor_cache_stats or {"hit": 0, "miss": 0, "evict": 0})
         _d = st["hit"] + st["miss"]
@@ -3673,6 +3739,12 @@ class ResidentCollector:
                 and task.get("dataset_kind") == "snapshot"
                 and task.get("skip_unchanged", False)):
             df = self._filter_unchanged_snapshot_rows(
+                df, table, exclude=task.get("change_compare_exclude", ["update_time"]))
+        elif df is not None and len(df) > 0 and self._minute_dedupe_enabled(table, task):
+            # REPLAY-SKIP（2026-11-04）：分钟表按**内容**去重（不是按时间）——
+            # 数据已在库且内容相同 ⇒ 跳过写入（原本无条件全量 upsert，229 批全部
+            # 「新增 0 + 更新 50000」= 100% 无效重写）。用时间窗限定读，避免全表读。
+            df = self._filter_unchanged_rows_scoped(
                 df, table, exclude=task.get("change_compare_exclude", ["update_time"]))
         # —— 防线 1：写入前自洽自检（只读观测；bad 落审计+告警，不阻断本次写入）——
         self._qfq_invariant_after_align(df, table, batch_id, source,
