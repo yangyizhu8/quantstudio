@@ -446,7 +446,9 @@ class BacktestTab(QWidget):
             self._handle_stop_timeout(err)
             return
 
-        is_cancel = isinstance(err, BacktestCancelled)
+        # 取消语义：用户取消 / 等待期取消（WindowCancelled）都按"取消"处理，不弹错误框
+        from quantstudio.pipeline.backtest_window import WindowCancelled
+        is_cancel = isinstance(err, (BacktestCancelled, WindowCancelled))
         self.run_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.progress_bar.setVisible(False)
@@ -475,7 +477,8 @@ class BacktestTab(QWidget):
         box.setWindowTitle("采集尚未停止")
         box.setText(str(err)[:500])
         box.setInformativeText(
-            "「继续等待」：重新进入等待（计时重新开始）；\n"
+            "「继续等待」：重新进入等待（本次等待上限会延长，最长 15 分钟）；\n"
+            "　　采集在**任务边界**退出，当前若正在拉分钟线等长任务，可能还需数分钟；\n"
             "「强制终止」：强制结束采集进程后继续回测"
             "（仅用于分级停止已失效的卡死场景；未提交单元会丢弃、水位不推进、下次启动重跑）；\n"
             "「取消回测」：不启动回测，采集保持当前状态。")
@@ -490,6 +493,14 @@ class BacktestTab(QWidget):
         strategy_path = getattr(self._worker, "strategy_path", None)
 
         if clicked is btn_wait:
+            # 递增等待上限：长任务（分钟线/全量）常远超 60s，固定上限会让用户反复超时。
+            # 本次上限 ×2（封顶 15 分钟），下轮仍未退出则再次递增。
+            if params is not None:
+                try:
+                    cur = float(params.get("coexistence_stop_timeout") or 60)
+                    params["coexistence_stop_timeout"] = min(cur * 2, 900)
+                except Exception:   # noqa: BLE001  参数异常不得阻断重入
+                    pass
             if params is not None and strategy_path:
                 self._launch_worker(strategy_path, params)
             return

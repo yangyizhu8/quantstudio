@@ -511,6 +511,9 @@ class BacktestWorker(BaseWorker):
                 # 常驻采集共存（specs/001-daemon-backtest-coexistence）：
                 # 默认开启——采集开着也能直接回测；等待期取消复用既有 self._cancelled。
                 coexistence=self.params.get('coexistence', True),
+                # 等待采集停止的上限（秒）：默认沿用入口默认 60s；上层「继续等待」可递增
+                coexistence_stop_timeout=self.params.get('coexistence_stop_timeout'),
+                coexistence_boundary_timeout=self.params.get('coexistence_boundary_timeout'),
                 cancel_check=lambda: self._cancelled,
                 # 等待读数走 progress 信号（单参数）；引擎的逐日进度走 progress_callback
                 # （三参数 current/total/date_str）——两者是不同通道，不可混用。
@@ -531,9 +534,20 @@ class BacktestWorker(BaseWorker):
             })
         except Exception as e:
             import traceback
-            # 结构化取消：BacktestCancelled 原样传递（槽内 isinstance 判定），
-            # 真错误携带 traceback 文本（保持现状）。
-            if isinstance(e, BacktestCancelled):
+            # 结构化异常原样传递（槽内 isinstance 判定才成立）：
+            #   · BacktestCancelled      —— 用户取消（info 无弹窗）
+            #   · CollectorStopTimeout   —— 采集停止超时（可恢复，槽内给「继续等待/强制终止/取消」三选项）
+            #   · WindowCancelled        —— 等待期被取消（同取消语义）
+            # 2026-11-04 实测缺陷：此前只对 BacktestCancelled 传对象，其余一律降级成**字符串**，
+            # 导致 CollectorStopTimeout 的类型信息丢失 ⇒ backtest_tab._on_error 的 isinstance 恒 False
+            # ⇒ 已实现的三选项对话框永不触发，用户只看到裸 traceback 的「回测错误」。
+            from quantstudio.pipeline.backtest_window import (
+                CollectorStopTimeout, WindowCancelled)
+            if isinstance(e, (BacktestCancelled, CollectorStopTimeout, WindowCancelled)):
+                try:
+                    e._gui_traceback = traceback.format_exc()
+                except Exception:   # noqa: BLE001  取 traceback 失败不得影响异常传递
+                    pass
                 self.finished_err.emit(e)
             else:
                 self.finished_err.emit(f"{type(e).__name__}: {e}\n{traceback.format_exc()}")
