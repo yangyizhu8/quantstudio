@@ -43,6 +43,23 @@ python -m pytest tests/test_delivery_*.py tests/test_qfq_*.py -q
   → 必须过 `kb_hook.validate_record`（族 db）；条目的 `fix_target` 要能回溯到文件/函数；
 - **回哺落点**：可机检（契约表 / 测试固件 / 扫描脚本），不接受散文式条目。
 
+## ④b 异常传递形态检查（2026-11-04 新增 · DB-2026-0027）
+
+**规约：结构化异常不得降级成字符串。**
+
+- 背景（实测缺陷）：`gui/workers.py` 异常块只对 `BacktestCancelled` 原样传递异常对象，
+  其余一律 `emit(f"{type(e).__name__}: {e}\n{traceback}")` **降级成字符串**
+  ⇒ 接收侧 `isinstance(err, CollectorStopTimeout)` 恒 False ⇒ **已实现的三选项对话框永不触发**，
+  用户只看到裸 traceback「回测错误」；CLI 与 GUI 口径同时分裂。
+- 检查动作（每轮改动涉及"worker 异常块 / 信号发射 / 槽内 isinstance 分支"时必查）：
+  1. 列出本轮新增/改动的**可恢复类异常**（超时、取消、部分失败、需用户裁决…）；
+  2. 逐个确认其在**跨层传递**时是否仍是**异常对象**（`emit(exc)`），而非 `f"{type(e).__name__}…"` 字符串；
+  3. 接收侧所有 `isinstance(...)` 分支，对每类结构化异常**至少一条用例**能命中
+     （用例断言"走的是专用分支"，不是"抛得出"）；
+  4. 若确实需要字符串化给人看，则**异常对象与文本同时携带**（如异常对象上挂 `_gui_traceback`），
+     文本只作附加信息，不作唯一载体。
+- 判据：**"能抛出"不等于"能被识别"**——本条只认"接收侧分支被用例命中"。
+
 ## ⑤ 会话归属映射登记（SC-013 归属口径）
 
 - 本轮新增/修改的文件路径必须登记进 `docs/evidence/session-attribution.json` 的对应会话域
