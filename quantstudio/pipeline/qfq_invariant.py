@@ -34,6 +34,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import sqlite3
 from pathlib import Path
@@ -50,6 +51,31 @@ REL_TOL = 1e-6                 # 相对容差：|front-expect| / max(|expect|, e
 MAX_ROWS_PER_CODE = 20         # 抽样上限：每 code
 MAX_ROWS_TOTAL = 5000          # 抽样上限：总计
 CROSS_SOURCE_SAMPLE_N = 20     # 交叉源抽核默认 code 数
+# 因子查询窗口回退开关（P1，2026-11-04）：=1 恢复「取全历史」旧行为（逐位回退）。
+# 背景：原实现 WHERE code IN (...) 不带时间范围，555 code 即返回 327 万行 / 25~39s
+# （fund_adj 259 万行 / 56~67s）；分钟任务 233 批 × ≈52s ≈ 12067s（占整轮 62%）。
+INVARIANT_FULL_FACTORS_ENV = "QS_QFQ_INVARIANT_FULL_FACTORS"
+_INVARIANT_WINDOW_PAD_MS = 3 * 86_400_000   # 窗口冗余 3 天（保守：覆盖 T 日盘后发布/时区错位）
+
+
+def _full_factors_enabled() -> bool:
+    """True ⇒ 走「取全历史」旧路径（回退开关）。"""
+    return str(os.environ.get(INVARIANT_FULL_FACTORS_ENV, "0")).strip().lower() \
+        in ("1", "true", "yes", "on")
+
+
+def _factor_window_ms(times) -> Tuple[Optional[int], Optional[int]]:
+    """由抽样行的 time 推导因子查询窗口 [lo, hi)；开关开启或空输入 ⇒ (None, None)。"""
+    if _full_factors_enabled():
+        return (None, None)
+    try:
+        ser = pd.to_numeric(pd.Series(times), errors="coerce").dropna()
+    except Exception:
+        return (None, None)
+    if ser.empty:
+        return (None, None)
+    pad = _INVARIANT_WINDOW_PAD_MS
+    return (int(ser.min()) - pad, int(ser.max()) + pad)
 SINGLE_DAY_PCT_THRESHOLD = 0.05  # 单日多 code 突增阈值（全市场 5%）
 
 PRICE_TABLES = frozenset({"stock_daily", "stock_minutes", "etf_daily", "etf_minutes"})
@@ -181,9 +207,11 @@ def check_qfq_invariant(df: pd.DataFrame, table: str,
             return out
 
     try:
-        # 独立查 adj_i：抽中 code 的全量因子 → (code, bar_day) 索引
+        # 独立查 adj_i：抽中 code 的因子（P1 起限定本批 bar_day ±3 天窗口）→ (code, bar_day) 索引
+        _lo_ms, _hi_ms = _factor_window_ms(sampled["time"])
         factor_lookup = _load_factor_lookup(
-            aux_conn, _adj_table_of(table), sorted(sampled["code"].astype(str).unique()))
+            aux_conn, _adj_table_of(table), sorted(sampled["code"].astype(str).unique()),
+            day_lo_ms=_lo_ms, day_hi_ms=_hi_ms)
         # 抽样行的 bar_day（分钟表按交易日连接，非毫秒等值）
         days = _bar_day_from_ms(sampled["time"].astype("int64"))
         no_anchor_codes = set()
@@ -274,7 +302,9 @@ def _stratified_sample(df: pd.DataFrame, seed=None) -> pd.DataFrame:
 
 
 def _load_factor_lookup(aux_conn: sqlite3.Connection, adj_table: str,
-                        codes: Sequence[str]) -> Dict[Tuple[str, str], float]:
+                        codes: Sequence[str], *,
+                        day_lo_ms: Optional[int] = None,
+                        day_hi_ms: Optional[int] = None) -> Dict[Tuple[str, str], float]:
     """从 qfq_aux.db 独立加载 (code, bar_day) → adj_factor。
 
     因子 time 为毫秒；按交易日（bar_day）建索引，与分钟 bar 连接口径一致
@@ -284,10 +314,16 @@ def _load_factor_lookup(aux_conn: sqlite3.Connection, adj_table: str,
     if not codes:
         return lookup
     placeholders = ", ".join(["?"] * len(codes))
+    sql = (f"SELECT code, time, adj_factor FROM {adj_table} "
+           f"WHERE code IN ({placeholders})")
+    params: List[Any] = list(codes)
+    # P1（2026-11-04）：限定时间窗口——只取本批 bar_day ± 冗余内的因子行。
+    # 等价性：结果键 (code, bar_day) 的全部候选行必落在窗口内 ⇒ 取 time 最大者结果不变。
+    if day_lo_ms is not None and day_hi_ms is not None:
+        sql += " AND time >= ? AND time < ?"
+        params += [int(day_lo_ms), int(day_hi_ms)]
     try:
-        rows = aux_conn.execute(
-            f"SELECT code, time, adj_factor FROM {adj_table} "
-            f"WHERE code IN ({placeholders})", list(codes)).fetchall()
+        rows = aux_conn.execute(sql, params).fetchall()
     except sqlite3.Error as exc:
         logger.warning(f"[QFQ-Invariant] 因子表 {adj_table} 查询失败: {exc}")
         return lookup
