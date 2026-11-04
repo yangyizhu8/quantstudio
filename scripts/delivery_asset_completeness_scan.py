@@ -24,6 +24,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WHITELIST_FILE = Path(__file__).with_name("delivery_local_only_assets.txt")
 
+# 扫描排除项（避免自指与草稿区噪声）：
+# ① 扫描器自身与它的自测文件——里面含 `_load_script("smoke")` 这类**示例字样**，不是依赖；
+# ② agent_workspace/ 是本地草稿区（非交付资产，其内部互引不构成完整性缺口）。
+EXCLUDE_FILES = {
+    "scripts/delivery_asset_completeness_scan.py",
+    "tests/test_delivery_asset_completeness_scan.py",
+}
+EXCLUDE_PREFIXES = (
+    "agent_workspace/",          # 本地草稿区
+    "docs/handoff/backup-",      # 交接备份副本（备份件被字面引用，不算交付资产）
+    "data/backup/",              # 数据备份副本
+    "docs/backup-",
+)
+
 SCOPES = {
     # scope → (入库文件匹配前缀, 允许被引用的资产目录)
     "delivery": (("tests/test_delivery_", "quantstudio/delivery/", "scripts/delivery_"), ()),
@@ -45,17 +59,27 @@ def _load_whitelist() -> set[str]:
 
 
 def scan(scope: str = "delivery") -> dict:
+    import time as _time
+    _t0 = _time.monotonic()
     tracked = {l.strip() for l in git("ls-files").splitlines() if l.strip()}
-    untracked = {l[3:].strip().replace("\\", "/")
-                 for l in git("status", "--porcelain").splitlines() if l.startswith("??")}
+    # 未跟踪集用 `git ls-files --others`（比 `git status --porcelain` 快得多：
+    # 后者要遍历整个工作树，在含大 data/ 的仓里是分钟级开销）
+    untracked = {l.strip().replace("\\", "/")
+                 for l in git("ls-files", "--others", "--exclude-standard").splitlines()
+                 if l.strip()}
     whitelist = _load_whitelist()
-    untracked = {p for p in untracked if p not in whitelist}
+    untracked = {p for p in untracked
+                 if p not in whitelist
+                 and p not in EXCLUDE_FILES
+                 and not p.startswith(EXCLUDE_PREFIXES)}
 
     prefixes, _ = SCOPES.get(scope, SCOPES["delivery"])
     if scope == "all":
         srcs = sorted(p for p in tracked if p.endswith(".py"))
     else:
         srcs = sorted(p for p in tracked if p.endswith(".py") and p.startswith(prefixes))
+    srcs = [p for p in srcs
+            if p not in EXCLUDE_FILES and not p.startswith(EXCLUDE_PREFIXES)]
 
     # 引用形态判据（避免"词面误命中"：普通词出现不算引用）
     #   ① 路径式：.../<stem>.py   ② _load_script("<stem>") ③ importlib.import_module("<stem>")
@@ -72,6 +96,8 @@ def scan(scope: str = "delivery") -> dict:
             stem = Path(cand).stem
             if not stem:
                 continue
+            if stem not in txt:      # 预筛：词面都不出现 ⇒ 必非引用
+                continue
             pats = [
                 r"[\w./\\-]*" + re.escape(stem) + r"\.py",
                 r"_load_script\(\s*[\"\']" + re.escape(stem) + r"[\"\']",
@@ -85,6 +111,7 @@ def scan(scope: str = "delivery") -> dict:
     return {
         "scope": scope,
         "scanned_files": len(srcs),
+        "elapsed_s": round(_time.monotonic() - _t0, 2),
         "whitelist": sorted(whitelist),
         "gaps": {k: sorted(v) for k, v in sorted(gaps.items())},
         "ok": not gaps,
@@ -106,7 +133,8 @@ def main(argv=None) -> int:
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:
-        print(f"[资产完整性扫描] scope={report['scope']} 扫描 {report['scanned_files']} 个入库文件")
+        print(f"[资产完整性扫描] scope={report['scope']} 扫描 {report['scanned_files']} 个入库文件"
+              f"（耗时 {report['elapsed_s']:.1f}s）")
         if report["whitelist"]:
             print(f"  白名单（声明式本地不推送）：{len(report['whitelist'])} 项")
         if report["ok"]:
