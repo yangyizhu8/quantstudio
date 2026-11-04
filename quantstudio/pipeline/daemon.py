@@ -3435,7 +3435,16 @@ class ResidentCollector:
         if not pk or "time" not in df.columns:
             return df
         exclude = set(exclude or [])
-        compare_cols = [c for c in df.columns if c not in set(pk) | exclude]
+        # 2026-11-04 真机首验修复：df 含 **aligner 中间列**（如 adj_factor、is_qfq 等）而表里没有
+        # ⇒ 直接用于 SELECT 会 Binder Error（实测：「Referenced column "adj_factor" not found」）
+        # ⇒ 必须与**表实际列**取交集。取不到列清单时退回原行为（仍可能报错并被 except 兜住）。
+        try:
+            _table_cols = set(self.writer._table_columns(table))
+        except Exception:      # noqa: BLE001
+            _table_cols = set(df.columns)
+        pk = [c for c in pk if c in _table_cols] or pk
+        compare_cols = [c for c in df.columns
+                        if c not in set(pk) | exclude and c in _table_cols]
         if not compare_cols:
             return df
         try:

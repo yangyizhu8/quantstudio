@@ -110,3 +110,19 @@ def test_read_failure_falls_back_to_full_write(coll):
     df = _mk()
     out = coll._filter_unchanged_rows_scoped(df, "stock_minutes")
     assert len(out) == len(df), "读失败必须回退全量写"
+
+def test_df_extra_columns_not_in_table(coll):
+    """回归（2026-11-04 真机首验命中）：df 含 aligner 中间列（adj_factor）而表里没有
+    ==> 必须与表实际列取交集，不得让 SQL 报 Binder Error。"""
+    class _W(_FakeWriter):
+        def _table_columns(self, table):
+            return ["code", "time", "freq", "open", "close"]   # 无 adj_factor
+
+    existing = _mk()
+    coll.writer = _W(existing)
+    df = _mk()
+    df["adj_factor"] = 1.5                                   # 表外列
+    out = coll._filter_unchanged_rows_scoped(df, "stock_minutes")
+    assert len(out) == 0, f"内容相同应全部跳过，实得 {len(out)} 行"
+    sql = coll.writer.sqls[0]
+    assert "adj_factor" not in sql, f"SELECT 不得含表外列: {sql}"
