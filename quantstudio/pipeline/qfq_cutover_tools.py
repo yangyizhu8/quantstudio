@@ -421,3 +421,113 @@ def apply_rehost(*, data_root: Path, config_root: Path, cutover_id: str,
         raise
     finally:
         con.close()
+
+AUTO_REHOST_ENV = "QS_QFQ_AUTO_REHOST"
+
+
+def _local_aux_candidates(config_dir: Path) -> Dict[str, str]:
+    """本机可用的辅助库候选（按 `qfq_aux_paths.json` 的 generations 解析，只收**存在**的）。"""
+    cfg = _aux_config_path(Path(config_dir))
+    if cfg is None:
+        return {}
+    out: Dict[str, str] = {}
+    try:
+        router = AuxDbRouter(main_db=None, config_path=cfg)
+    except Exception:
+        return {}
+    for gen in ("mcp-gen1", "xtquant-legacy"):
+        try:
+            p = router.path_for(gen, require_exists=False)
+        except Exception:
+            continue
+        if p is not None and Path(p).is_file():
+            out[gen] = str(p)
+    return out
+
+
+def ensure_local_cutover(conn, *, config_dir: Path,
+                         audit_path: Optional[Path] = None,
+                         operator: str = "quantstudio",
+                         dry_run: bool = False) -> Dict:
+    """**自动换代自愈**（D5-e）：把"异平台绝对路径"的 active 路由记录换成本机路径。
+
+    背景（2026-11-04 客户实测）：客户机（macOS）上 `qfq_source_cutover` 的 active 记录
+    `aux_db_path` 是**我方开发机（Windows）的绝对路径** ⇒ 路由解析把它当相对路径拼接成
+    `data/D:\...` ⇒ 三张核心表取数前崩溃。这条坏记录是我方 2026-08-07 做 B-5 正式 cutover
+    时写入并随库流到客户机的 ⇒ **属我方缺陷，应由我方程序自愈，不该让客户手工修**。
+
+    动作（换代，不原地改）：插新记录（aux_db_path=本机候选）→ 状态推进到 baseline_validated
+    → activate（旧记录自动 superseded）→ 写审计行。
+
+    只在**两个条件同时成立**时动手（宁可不改，也不猜）：
+      ① 记录里的路径确属**异平台绝对路径**（或本机不存在）；
+      ② 本机 `qfq_aux_paths.json` 为该世代提供了**存在**的候选。
+    否则只报告 `needs_manual`（例如文件真缺失），交人工处理。
+    """
+    import os as _os
+
+    from . import qfq_cutover as QC
+
+    result: Dict = {"repaired": [], "needs_manual": [], "skipped": [],
+                    "dry_run": bool(dry_run), "details": []}
+    if str(_os.environ.get(AUTO_REHOST_ENV, "1") or "1").strip().lower() in ("0", "false", "no", "off"):
+        result["skipped"].append("disabled by env")
+        return result
+    try:
+        rows = conn.execute(
+            "SELECT price_source, cutover_id, source_generation, schema_version, "
+            "baseline_version, aux_db_path, config_hash "
+            "FROM qfq_source_cutover WHERE status='active'").fetchall()
+    except Exception as exc:
+        result["skipped"].append(f"cutover 表不可读：{type(exc).__name__}")
+        return result
+    if not rows:
+        result["skipped"].append("无 active 记录")
+        return result
+    candidates = _local_aux_candidates(Path(config_dir))
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    for price_source, cutover_id, gen, schema_version, baseline_version, aux, cfg_hash in rows:
+        raw = str(aux or "")
+        if raw and not looks_foreign_absolute(raw, windows_host=(_os.name == "nt")) \
+                and Path(raw).is_file():
+            result["skipped"].append(f"{cutover_id}: 本机路径已可用")
+            continue
+        cand = candidates.get(str(gen))
+        if not cand:
+            result["needs_manual"].append(
+                f"{cutover_id}: 无本机候选（generation={gen}），保持原记录")
+            continue
+        if cand == raw:
+            result["skipped"].append(f"{cutover_id}: 已是本机路径")
+            continue
+        if dry_run:
+            result["details"].append(
+                f"{cutover_id}: {raw} → {cand}（dry-run，未执行）")
+            continue
+        try:
+            new_id = f"{cutover_id}_rehost_{stamp}"
+            QC.create_cutover(
+                conn, cutover_id=new_id, price_source=str(price_source),
+                source_generation=str(gen), schema_version=str(schema_version or ""),
+                baseline_version=str(baseline_version or ""),
+                aux_db_path=cand, config_hash=cfg_hash,
+                evidence_path=str(audit_path or ""))
+            for nxt in ("prepared", "baseline_building", "baseline_validated"):
+                QC.transition_cutover(conn, cutover_id=new_id, new_status=nxt)
+            QC.activate_cutover(conn, price_source=str(price_source),
+                                new_cutover_id=new_id, expected_old=str(cutover_id))
+        except Exception as exc:
+            result["needs_manual"].append(
+                f"{cutover_id}: 换代失败 {type(exc).__name__}: {exc}")
+            continue
+        result["repaired"].append(cutover_id)
+        result["details"].append(f"{cutover_id}: {raw} → {cand}")
+        if audit_path is not None:
+            _audit_line(Path(audit_path), {
+                "action": "auto-rehost", "result": "ok",
+                "old_cutover_id": cutover_id, "new_cutover_id": new_id,
+                "old_aux_db_path": raw, "new_aux_db_path": cand,
+                "authorization": "程序自愈（异平台遗留路由记录）",
+                "operator": operator, "ts": stamp,
+            })
+    return result

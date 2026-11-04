@@ -352,6 +352,32 @@ class ResidentCollector:
         # config_lint 只需 schemas 部分（FieldAligner 已加载并暴露）
         pseudo_align_rules = {"schemas": aligner.schemas}
         assert_configs_ok(data_cfg, sources_cfg, tasks_cfg, pseudo_align_rules)
+        # D5-e（2026-11-04）：**路由记录自动换代自愈**（客户零操作）。
+        # 我方 2026-08-07 做 B-5 正式 cutover 时把**开发机（Windows）绝对路径**写进了
+        # qfq_source_cutover，该记录随库流到客户机 ⇒ 客户侧路由解析拼出畸形路径 ⇒
+        # 取数前崩溃。此处启动即检测"异平台绝对路径"且本机候选存在 ⇒ 自动换代到本机路径。
+        # 只在两个条件同时成立时动手（不猜路径）；失败**不阻断启动**。
+        try:
+            from .qfq_cutover_tools import ensure_local_cutover
+            _conn = getattr(writer, "shared_conn", None)
+            _conn = _conn() if callable(_conn) else None
+            if _conn is not None:
+                _dbp = Path(str(getattr(writer, "db_path", ".")))
+                _rep = ensure_local_cutover(
+                    _conn, config_dir=Path(tasks_cfg_path).parent,
+                    audit_path=_dbp.parent / "logs" / "qfq_cutover_repair_audit.log",
+                    operator="quantstudio-daemon")
+                if _rep.get("repaired"):
+                    logger.warning(
+                        "[qfq] 检测到迁移遗留的异平台路由记录，已自动换代到本机路径（客户无需操作）：%s",
+                        "; ".join(_rep.get("details") or []))
+                elif _rep.get("needs_manual"):
+                    logger.warning(
+                        "[qfq] 路由记录需人工处理（未自动修改）：%s",
+                        "; ".join(_rep.get("needs_manual") or []))
+        except Exception as _e:      # noqa: BLE001  自愈失败绝不阻断启动
+            logger.warning("[qfq] 路由记录自动换代自愈跳过（不影响启动）：%s: %s",
+                           type(_e).__name__, _e)
         return cls(data_cfg, sources_cfg, tasks_cfg, aligner, validator,
                    writer, quarantine, batch_audit)
 
