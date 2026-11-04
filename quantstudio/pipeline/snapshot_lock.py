@@ -24,6 +24,18 @@
   - CLI 包裹器：python -m quantstudio.pipeline.snapshot_lock run <cmd...>（语义不变，
     透传退出码/stdout/stderr/环境变量；子进程不继承锁——写操作须在包裹器进程内完成）。
 
+软锁自锁死修复（A+C+D+E+F，2026-11-04，docs/handoff/softlock-ef-repair-spec-20261104.md）：
+  - A 浅句柄不计数：_depth 收敛 0/1 语义（owner 唯一对文件锁生命周期负责），错序释放
+    / 句柄栈序破坏不再产生计数漂移或残留；
+  - C 同进程自愈：锁 payload 归本进程（pid+create_time 双证）且本进程确无句柄 ⇒
+    审计 self_pid_lost_handle 后安全回收重试；跨进程持有者一律不碰（fail-closed）；
+  - D 状态线程锁 _STATE_LOCK（RLock）：_depth/_current_lock/_ensure_handles 全部读写；
+  - E 初始化段全异常兜底：O_EXCL 成功后至 payload 写入完成之间的任何异常（含
+    KeyboardInterrupt/MemoryError 等非 OSError）一律回收空文件并原样上抛——消除
+    「0 字节空锁永久残留」根因（客户形态3）；
+  - F 空/不可解析锁回收判据：mtime 年龄 > EMPTY_LOCK_MTIME_SECONDS(120s) ⇒ 经既有
+    CAS+审计通道回收；未超龄一律不回收（防误删初始化中的锁）。
+
 诚实边界：本模块**不覆盖** SIGKILL / 断电 / 强制重启（atexit 与信号处理器均无法执行）
 ——那正是回收判据存在的理由。
 
@@ -62,6 +74,10 @@ RECLAIM_STALE_SECONDS = 120
 # Part A-2（2026-09-22 批准）：空/不可解析互斥的 mtime 佐证清除精确开关
 #   默认 1=启用；0=退回 Part A 的 fail-closed（空互斥仍永久楔住，等效旧行为）
 EMPTY_MTIME_ENV = "QS_WRITE_LOCK_EMPTY_MTIME"
+# F（2026-11-04 软锁修复）：空/不可解析**主锁**的 mtime 超龄回收阈值（荐值 120s）——
+#   正常 acquire 在同一临界区内完成「O_EXCL 创建→payload 写入」（毫秒窗口），空锁
+#   持续超过该阈值只能由进程被杀/崩溃造成；未超龄一律不回收（防误删初始化中的锁）。
+EMPTY_LOCK_MTIME_SECONDS = 120
 
 # 判定结论（diagnose_holder 的 verdict 取值）
 V_FREE = "free"                 # 无锁
@@ -171,7 +187,8 @@ class WriteLockLost(RuntimeError):
 @dataclass
 class WriteLock:
     """已获得的写锁句柄。release 幂等；建议长任务周期调用 heartbeat()。
-    shallow=True 表示重入句柄（同进程已持锁）：release 只减计数，不释放文件锁。"""
+    shallow=True 表示重入句柄（同进程已持锁）：A（2026-11-04）后浅句柄**不参与
+    计数**——release 为空操作，文件锁由 owner 唯一负责（_depth 恒 0/1）。"""
 
     task_id: str
     _path: Path = None
@@ -248,17 +265,21 @@ class WriteLock:
             return
         self._released = True
         global _depth, _current_lock
-        if _depth > 0:
-            _depth -= 1
-        if self._shallow or _depth > 0:
-            return  # 重入层：文件锁由最外层持有者释放
-        _unregister_handle(self)
-        if _current_lock is self:
-            _current_lock = None
-        try:
-            self._path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        if self._shallow:
+            # A（2026-11-04）：浅句柄不参与计数——不碰 _depth、不 unlink（文件锁由
+            # owner 唯一负责）；任意错序释放（含 owner 先走、栈序破坏）均安全。
+            return
+        # D（2026-11-04）：owner 释放的全套状态变更（归零/注销/清 current/unlink）
+        # 与 acquire 的创建临界区互斥——杜绝同进程竞争者在此窗口误判 lost-handle。
+        with _STATE_LOCK:
+            _depth = 0                    # A：owner 释放即归零（0/1 语义，不再 -1）
+            _unregister_handle(self)
+            if _current_lock is self:
+                _current_lock = None
+            try:
+                self._path.unlink(missing_ok=True)
+            except OSError:
+                pass
         _restore_graceful_handlers()
 
     def __enter__(self):
@@ -311,6 +332,20 @@ def _pid_create_time(pid) -> Optional[float]:
         return None
 
 
+# C（2026-11-04）：本进程 create_time 的进程内缓存（与 payload 的 pid_create_time
+# 同源同值——均出自 _pid_create_time(os.getpid())——可直接 == 比对排除 PID 复用）。
+_SELF_CREATE_TIME: Optional[float] = None
+_SELF_CREATE_TIME_LOADED = False
+
+
+def _self_create_time() -> Optional[float]:
+    global _SELF_CREATE_TIME, _SELF_CREATE_TIME_LOADED
+    if not _SELF_CREATE_TIME_LOADED:
+        _SELF_CREATE_TIME = _pid_create_time(os.getpid())
+        _SELF_CREATE_TIME_LOADED = True
+    return _SELF_CREATE_TIME
+
+
 def diagnose_holder(holder: Optional[dict], now: Optional[float] = None) -> dict:
     """只读诊断当前锁状态（不写任何文件）。
 
@@ -336,6 +371,25 @@ def diagnose_holder(holder: Optional[dict], now: Optional[float] = None) -> dict
 
     if task == "<unreadable>":
         out["detail"] = "锁文件内容不可解析"
+        # F（2026-11-04）：空/不可解析锁（readable=False）以 mtime 为陈旧佐证——
+        # payload 无法提供任何存活证据，host 亦不可判（保守默认本机）。超龄
+        # （>EMPTY_LOCK_MTIME_SECONDS）⇒ 标记 reclaimable=True，走既有 CAS+审计通道
+        # 回收；未超龄 ⇒ fail-closed 不回收（防误删正在初始化的锁）。
+        try:
+            mtime_age = now - lock_path().stat().st_mtime
+        except OSError:
+            out["detail"] += "；mtime 不可读 ⇒ 不回收（fail-closed）"
+            return out
+        out["heartbeat_age"] = mtime_age
+        if mtime_age > EMPTY_LOCK_MTIME_SECONDS:
+            out.update(verdict=V_STALE_DEAD, reclaimable=True,
+                       predicate="empty_mtime_stale",
+                       detail=(f"空锁/不可解析锁×mtime 年龄 {int(mtime_age)}s > "
+                               f"{EMPTY_LOCK_MTIME_SECONDS}s（host 不可判，保守默认本机）"
+                               f" ⇒ 判残骸可回收"))
+            return out
+        out["detail"] += (f"；空锁×mtime 年龄 {int(mtime_age)}s ≤ "
+                          f"{EMPTY_LOCK_MTIME_SECONDS}s ⇒ 不回收（防误删初始化中锁）")
         return out
     if age is None:
         out["detail"] = "payload 无有效 heartbeat"
@@ -408,6 +462,37 @@ def _audit_reclaim(holder: dict, diag: dict, reclaimer_task: str) -> None:
             f.write(line + "\n")
     except Exception:
         logger.debug("[write-lock] 回收审计写盘失败（不影响回收）", exc_info=True)
+
+
+def _audit_self_pid_lost_handle(holder: dict, task_id: str) -> None:
+    """C（2026-11-04）同进程自愈审计：锚点 self_pid_lost_handle（与回收审计同文件）。
+
+    失败不影响自愈（记 debug）——与 _audit_reclaim 同款失败语义。
+    """
+    try:
+        ts = datetime.now().astimezone().isoformat()
+        line = (
+            f"{ts} self_pid_lost_handle "
+            f"holder={{pid={holder.get('pid')},task={holder.get('task_id')},"
+            f"host={holder.get('host') or '-'}}} "
+            f"reclaimer={{pid={os.getpid()},task={task_id}}}"
+        )
+        with open(_audit_path(), "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        logger.debug("[write-lock] 同进程自愈审计写盘失败（不影响自愈）", exc_info=True)
+
+
+def _force_unlink_lock_file() -> bool:
+    """C（2026-11-04）自愈专用回收：仅在「锁 payload 归本进程（pid+create_time 双证）
+    且本进程确无句柄」的三重条件成立时由 acquire 调用。幂等、尽力而为；失败返回
+    False 交由常规等待路径（防热循环刷审计）。"""
+    try:
+        lock_path().unlink(missing_ok=True)
+        return True
+    except OSError:
+        logger.debug("[write-lock] 自愈回收锁文件失败", exc_info=True)
+        return False
 
 
 def _audit_mutex_cleared(mutex: dict, cleared_by_task: str, age) -> None:
@@ -640,11 +725,15 @@ def try_reclaim_stale(holder: dict, diag: dict,
             pass
 
 
-_depth = 0  # 同进程重入深度（CLI 守卫 + 内部 ensure 共存场景）
+_depth = 0  # 同进程持有标志（A 后 0/1 语义：owner 持有=1，未持/已放=0；浅句柄不计数）
 _current_lock: Optional["WriteLock"] = None   # 本进程当前的外层持锁句柄（所有权校验对象）
 _live_handles: list = []          # 本进程持有的非重入句柄（供 atexit/信号尽力释放）
 _ensure_handles: list = []        # ensure_write_lock 配对栈
 _prev_signal_handlers: dict = {}
+# D（2026-11-04）：进程内状态线程锁（可重入——acquire 内部嵌套调用不互斥自身）。
+# 覆盖 _depth / _current_lock / _ensure_handles 的全部读写；acquire 的创建尝试与
+# 持有者分析、release 的全套状态变更均在同一临界区内互斥，等待（sleep）刻意留在外。
+_STATE_LOCK = threading.RLock()
 
 
 def _register_handle(lk: "WriteLock") -> None:
@@ -664,25 +753,27 @@ def assert_lock_owner() -> None:
     接入点：writers._write_locked 入口——防止「锁被他人取得后继续写」造成静默双写；
     锁文件仅被外部删除时由 WriteLock.assert_still_owner 原子重建恢复（见其 docstring）。
     """
-    lk = _current_lock
+    with _STATE_LOCK:                      # D：_current_lock 读取入临界区
+        lk = _current_lock
     if lk is not None:
-        lk.assert_still_owner()
+        lk.assert_still_owner()            # 文件 I/O 留在临界区外
 
 
 def release_all_write_locks() -> None:
     """尽力释放本进程持有的全部写锁（atexit / 信号处理器用；幂等）。"""
     global _current_lock
-    for lk in list(_live_handles):
-        try:
-            lk.release()
-        except Exception:
-            pass
-    while _ensure_handles:
-        try:
-            _ensure_handles.pop().release()
-        except Exception:
-            break
-    _current_lock = None
+    with _STATE_LOCK:                      # D：遍历/清栈/清 current 同一临界区
+        for lk in list(_live_handles):
+            try:
+                lk.release()               # RLock 同线程可重入（release 内部再取锁）
+            except Exception:
+                pass
+        while _ensure_handles:
+            try:
+                _ensure_handles.pop().release()
+            except Exception:
+                break
+        _current_lock = None
 
 
 def _graceful_handler(signum, frame):
@@ -740,57 +831,112 @@ def acquire_write_lock(task_id: str = "unnamed", timeout_s: float = 30.0,
                        poll_s: float = 0.5) -> WriteLock:
     """获取写锁；失败抛 WriteLockHeld（fail-closed）。
 
-    同进程重入安全：已持锁时返回浅句柄（release 只减计数）——消除 CLI 守卫与内部
-    ensure_write_lock 的自死锁。
+    同进程重入安全：已持锁时返回浅句柄（A：不计数、release 空操作）——消除 CLI 守卫
+    与内部 ensure_write_lock 的自死锁，以及错序释放/丢句柄的计数漂移与残留。
     陈锁 + 持有者进程已不存在 → 由本函数安全回收后立即重试（批一自愈）。
+    空/不可解析锁 mtime 超龄 → 按 F 判据经既有 CAS+审计通道回收。
+    锁 payload 归本进程但句柄已丢（S4 泄漏态）→ 同进程自愈（C）。
     """
     global _depth, _current_lock
-    if _depth > 0:
-        _depth += 1
-        return WriteLock(task_id=task_id, _shallow=True)
+    with _STATE_LOCK:
+        if _depth > 0:
+            # A（2026-11-04）：浅句柄不再 +1——_depth 收敛 0/1 语义，owner 唯一对
+            # 文件锁生命周期负责；错序释放（S2）/丢句柄（S4）不再产生计数漂移或残留。
+            return WriteLock(task_id=task_id, _shallow=True)
     t0 = time.time()
     while True:
         p = lock_path()
-        try:
-            fd = os.open(str(p), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            holder = read_holder()
-            diag = diagnose_holder(holder)
-            if diag.get("reclaimable") and try_reclaim_stale(
-                    holder, diag, reclaimer_task=task_id):
-                continue  # 回收成功：立即重试获取
-            if time.time() - t0 >= timeout_s:
-                raise WriteLockHeld(
-                    holder or {"pid": None, "task_id": "unknown"},
-                    stale=bool(diag.get("stale")), diagnosis=diag)
-            time.sleep(poll_s)
-            continue
-        os.close(fd)
-        lock = WriteLock(task_id=task_id, _path=p, token=uuid.uuid4().hex)
-        try:
-            lock._write_payload()
-        except OSError:
-            logger.debug("[write-lock] payload 写入失败（继续持锁）", exc_info=True)
-        _depth = 1
-        _current_lock = lock
-        _register_handle(lock)
-        _install_graceful_handlers()
-        return lock
+        acquired = None
+        # D（2026-11-04）：创建尝试与持有者分析全程持 _STATE_LOCK——与浅句柄签发、
+        # owner 释放的临界区互斥，杜绝「同进程竞争者在 O_EXCL→状态落位窗口内把
+        # 新锁误判为 lost-handle 回收」。等待（sleep）刻意留在临界区外。
+        with _STATE_LOCK:
+            fd = None
+            try:
+                fd = os.open(str(p), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                pass                      # 落到下方持有者分析
+            except OSError:
+                raise                     # 与旧行为一致：其余 OSError 原样上抛
+            if fd is not None:
+                # E（2026-11-04）：初始化段全异常兜底——O_EXCL 成功后至 payload 写入
+                # 完成之间的任何异常（含 KeyboardInterrupt/MemoryError 等非 OSError）
+                # 一律「关 fd（若未关）+ 回收空文件 + 原样上抛」，消除 0 字节空锁
+                # 残留的根因（客户形态3）。
+                fd_open = True
+                try:
+                    os.close(fd)
+                    fd_open = False
+                    lock = WriteLock(task_id=task_id, _path=p,
+                                     token=uuid.uuid4().hex)
+                    try:
+                        lock._write_payload()
+                    except OSError:
+                        logger.debug("[write-lock] payload 写入失败（继续持锁）",
+                                     exc_info=True)
+                except BaseException:
+                    if fd_open:
+                        try:
+                            os.close(fd)
+                        except OSError:
+                            pass
+                    try:
+                        p.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    raise
+                _depth = 1
+                _current_lock = lock
+                _register_handle(lock)
+                acquired = lock
+            else:
+                holder = read_holder()
+                diag = diagnose_holder(holder)
+                # C（2026-11-04）：同进程自愈——锁 payload 归本进程（pid+create_time
+                # 双证）且本进程确无句柄（_depth==0 且 _current_lock is None）⇒ 视为
+                # 丢句柄泄漏，审计后安全回收并立即重试；跨进程持有者一律不碰
+                # （fail-closed，既有 reclaim/超时逻辑不变）。
+                if (holder and holder.get("pid") == os.getpid()
+                        and holder.get("pid_create_time") == _self_create_time()
+                        and _depth == 0 and _current_lock is None):
+                    _audit_self_pid_lost_handle(holder, task_id)
+                    if _force_unlink_lock_file():
+                        continue          # 已回收：立即重试获取
+                    # 回收失败（权限等）：落常规等待路径，防热循环刷审计
+                if diag.get("reclaimable") and try_reclaim_stale(
+                        holder, diag, reclaimer_task=task_id):
+                    continue  # 回收成功：立即重试获取
+                if time.time() - t0 >= timeout_s:
+                    raise WriteLockHeld(
+                        holder or {"pid": None, "task_id": "unknown"},
+                        stale=bool(diag.get("stale")), diagnosis=diag)
+                # 等待在临界区外（见 D 注释）
+        if acquired is not None:
+            _install_graceful_handlers()
+            return acquired
+        time.sleep(poll_s)
 
 
 def ensure_write_lock(task_id: str = "unnamed") -> None:
-    """确保本进程持有写锁（幂等、可嵌套；与 acquire_write_lock 同一计数域）。"""
-    _ensure_handles.append(acquire_write_lock(task_id))
+    """确保本进程持有写锁（幂等、可嵌套；与 acquire_write_lock 同一持有域——
+    A 后 _depth 为 0/1 语义，栈内浅句柄释放为空操作，owner 释放即归零）。"""
+    lk = acquire_write_lock(task_id)
+    with _STATE_LOCK:                     # D：栈操作入临界区
+        _ensure_handles.append(lk)
 
 
 def release_write_lock() -> None:
-    """配对释放（计数归零才真正释放文件锁；幂等安全）。"""
-    if _ensure_handles:
-        _ensure_handles.pop().release()
+    """配对释放（LIFO；owner 释放即文件锁归零、浅句柄释放为空操作——幂等安全）。"""
+    with _STATE_LOCK:                     # D：栈操作入临界区
+        if not _ensure_handles:
+            return
+        lk = _ensure_handles.pop()
+    lk.release()
 
 
 def lock_held_locally() -> bool:
-    return _depth > 0
+    with _STATE_LOCK:                     # D：_depth 读取入临界区
+        return _depth > 0
 
 
 class locked_connect:

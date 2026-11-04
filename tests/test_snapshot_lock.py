@@ -52,6 +52,8 @@ def _clean_lock(tmp_path, monkeypatch):
     monkeypatch.setenv("QS_WRITE_LOCK_DIR", str(tmp_path / "lockdir"))
 
     def _reset():
+        # A（2026-11-04 软锁修复）后 _depth 为 0/1 语义（浅句柄不计数）；
+        # 直接复位私有状态（约束 B 同步面）——本文件用例单线程，无需经 _STATE_LOCK。
         sl._depth = 0
         sl._current_lock = None
         sl._ensure_handles.clear()
@@ -123,6 +125,25 @@ def test_reentrancy_same_process():
     assert lock_path().exists(), "内层释放后外层仍持锁"
     lk.release()
     assert not lock_path().exists(), "外层释放后锁文件消失"
+
+
+def test_shallow_not_counted_depth_0_1():
+    """A（2026-11-04 软锁修复·约束 B 同步）：浅句柄不参与计数——_depth 恒 0/1。
+
+    旧计数语义下嵌套 acquire 会 +1（_depth 可 >1 且错序释放产生漂移/残留）；
+    A 后 owner 唯一对文件锁生命周期负责，任意数量的浅句柄不改变 _depth。
+    """
+    lk = acquire_write_lock("owner", timeout_s=1.0)
+    assert sl._depth == 1
+    inners = [acquire_write_lock(f"inner-{i}", timeout_s=0.1) for i in range(5)]
+    assert all(h._shallow for h in inners)
+    assert sl._depth == 1, "浅句柄不得计数（A：_depth 收敛 0/1）"
+    for h in inners:
+        h.release()
+    assert sl._depth == 1 and lock_path().exists(), "浅句柄全放后 owner 仍持锁"
+    lk.release()
+    assert sl._depth == 0 and not lock_path().exists()
+    assert sl._current_lock is None
 
 
 def test_mutual_exclusion_cross_process():
