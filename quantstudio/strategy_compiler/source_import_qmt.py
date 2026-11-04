@@ -847,8 +847,29 @@ _QS_QMT_ORDERTYPE_STOCK = 1101  # 【M5 实测项】05:135-143（单股交易 or
 _QS_QMT_PRTYPE_LATEST = 5  # 05-枚举常量.md:132（最新价）
 
 
+def _qs_order_dt(C):
+    """审计行 date 推导（格式 A/B 共用，docs/qmt-order-audit-line-design-20261104.md §三）。
+
+    bar 时间戳（get_bar_timetag，M5-13 实测北京午夜锚定毫秒 int）→ 'YYYY-MM-DD'
+    （同款推导先例：_qs_snap_kwargs / current_dt）。timetag 不可得（异常语境）→
+    返回空串：date= 渲染为空值 → 对照器 TOKEN_RE 不匹配 → excluded_no_date
+    （非坏行）——fail-safe 降级，方案件 §三口径。
+    """
+    try:
+        import datetime as _qs_dto
+        return _qs_dto.datetime.fromtimestamp(
+            C.get_bar_timetag(C.barpos) / 1000.0).strftime('%Y-%m-%d')
+    except Exception:
+        return ''
+
+
 def _qs_passorder(op_type, order_code, volume, price=0, C=None, pr_type=_QS_QMT_PRTYPE_LATEST):
     C = _qs_pick_ctx(C)
+    # 格式 A 订单审计行（进五维对照；冻结词法方案件 §三；date 空值 → 对照器
+    # excluded_no_date 排除，非坏行）——先记后下单，保下单尝试可观测。
+    print('[QS-QMT log.info] QS_QMT_ORDER date=%s code=%s op=%d qty=%d price=%.4f prType=%d'
+          % (_qs_order_dt(C), str(order_code).split('.')[0], op_type,
+             int(volume), float(price), int(pr_type)))
     passorder(op_type, _QS_QMT_ORDERTYPE_STOCK, getattr(C, 'accountID', ''),
               order_code, pr_type, price, int(volume), C)
 
@@ -889,6 +910,11 @@ def _qs_order_target_value(code, value, C=None):
     # 原生引用（模块加载期捕获，本地/异常语境 None 回退实盘链）→ 转发原生
     # （Boost.Python 签名 (str)code, (float)value, (object)C，探针 v3 实证）。
     if getattr(C, 'accountID', None) is None and _qs_native_otv is not None:
+        # 格式 B 观测行（纯观测不进五维；冻结词法方案件 §三）：回测语境订单交
+        # QMT 原生引擎，wrapper 观测不到股数/价格 → 只记发生与目标市值（禁令②：
+        # 禁脑补 qty）；date 空值 → excluded_no_date，同格式 A 口径。
+        print('[QS-QMT log.info] QS_QMT_ORDER_TARGET_NATIVE date=%s code=%s target_value=%.2f'
+              % (_qs_order_dt(C), str(code).split('.')[0], float(value)))
         _qs_native_otv(code, float(value), C)
         return
     price = current_price(code, C)

@@ -25,6 +25,10 @@ tests/qmt_stub.py 头注所引 05-枚举常量.md:43-44）：
   （防量级错乱/归零；序列为空 = 无数据可判，同判红）；
 - S7 审计行在位：产物 print 的 QS_QMT_* 审计行至少 1 条被 audit_lines 捕获，
   逐策略打印捕获到的种类。
+- S8 订单审计行在位（订单审计行批 2026-11-04，docs/qmt-order-audit-line-design-20261104.md
+  §三 / V2 / V5 运行时分层）：下单路径触发 ⇒ ≥1 条格式 A（QS_QMT_ORDER）行；
+  格式 B（QS_QMT_ORDER_TARGET_NATIVE）桩语境恒 0（真机回测语境才可期 ≥1——
+  分层断言，禁一刀切）。
 
 纪律（任务规格）：
 - 产物属 output/ 本地工件域——缺失时 pytest.skip 不 fail（打印缺失路径）；
@@ -72,6 +76,11 @@ INIT_CASH = 1000000.0
 #: QS_QMT_UNDETERMINED / QS_QMT_WRAPPER_FETCH_FAIL / QS_QMT_WRAPPER_SKIP）。
 #: 大小写异形行仍计入 S7 审计行总数，仅种类提取为 best-effort）。
 _AUDIT_KIND_RE = re.compile(r'QS_QMT_[A-Z0-9_]+')
+
+#: S8 订单审计行提取（订单审计行批 2026-11-04，设计 §三格式 A/B）。A 用负向先行
+#: 断言防子串吞 B（与对照器 BODY_EVENT_RE 全 token 比对语义一致）。
+_ORDER_AUDIT_A_RE = re.compile(r'QS_QMT_ORDER(?!_TARGET_NATIVE)\b')
+_ORDER_AUDIT_B_RE = re.compile(r'QS_QMT_ORDER_TARGET_NATIVE\b')
 
 #: 违规明细展示上限（完整违规**总数**照实报告，仅展示样本截断）
 _VIOL_SAMPLE_LIMIT = 10
@@ -268,6 +277,10 @@ def _build_summary(strategy_id, runner, result, kinds,
         add('    S6 违规样本(前%d/%d)=%r' % (lim, len(s6_bad), s6_bad[:lim]))
     audit_lines = result.get('audit_lines') or []
     add('S7 审计行   = 总数=%d 种类=%r' % (len(audit_lines), kinds))
+    add('S8 订单审计 = A=%d B=%d（orders=%d；桩语境 B 恒 0）'
+        % (sum(1 for ln in audit_lines if _ORDER_AUDIT_A_RE.search(ln)),
+           sum(1 for ln in audit_lines if _ORDER_AUDIT_B_RE.search(ln)),
+           len(orders)))
     for ln in audit_lines[:5]:
         add('    %s' % ln)
     error = result.get('error')
@@ -361,6 +374,20 @@ def test_qmt_stub_smoke_s1_s7(strategy_id):
     if not audit_lines:
         reds.append('[S7 审计行在位] 未捕获任何 QS_QMT_* 审计行（期望 ≥1 条）')
 
+    # S8 订单审计行在位（订单审计行批设计 §三；V2/V5 运行时分层）：下单触发
+    # ⇒ 全部汇聚 _qs_passorder ⇒ ≥1 条格式 A 行；格式 B 仅回测语境原生转发分支
+    # 产出，桩语境 accountID 恒在（'testS'）且未注入原生 OTV ⇒ B 恒 0——B>0 即
+    # 原生转发门控疑回归（红）。真机回测语境方可期 B≥1（V5 分层，禁一刀切）。
+    n_order_a = sum(1 for ln in audit_lines if _ORDER_AUDIT_A_RE.search(ln))
+    n_order_b = sum(1 for ln in audit_lines if _ORDER_AUDIT_B_RE.search(ln))
+    if orders and (n_order_a + n_order_b) < 1:
+        reds.append('[S8 订单审计行在位] orders=%d 已触发但格式 A/B 审计行 0 条'
+                    '（A=%d B=%d）——产物疑为审计行补齐前旧版'
+                    % (len(orders), n_order_a, n_order_b))
+    if n_order_b:
+        reds.append('[S8 订单审计行在位] 桩语境不应产出格式 B 行'
+                    '（TARGET_NATIVE=%d，原生转发门控疑回归）' % n_order_b)
+
     # ---- 取证 JSON 落盘（断言之前：FAIL 时结构化结果同样在位供归因）------------
     dump_path = _dump_smoke_json(strategy_id, runner, result, kinds, s3_bad)
 
@@ -374,6 +401,8 @@ def test_qmt_stub_smoke_s1_s7(strategy_id):
     print('[M3-SMOKE] S6: nav_len=%d nav_min=%r nav_max=%r'
           % (len(nav), min(nav) if nav else None, max(nav) if nav else None))
     print('[M3-SMOKE] S7: 审计行=%d 捕获种类=%r' % (len(audit_lines), kinds))
+    print('[M3-SMOKE] S8: A行=%d B行=%d（orders=%d；桩语境 B 恒 0）'
+          % (n_order_a, n_order_b, len(orders)))
     print('[M3-SMOKE] 取证 JSON=%s' % (dump_path or '(落盘失败，见上方 WARN)'))
 
     # ---- 断言（任一红即 FAIL；失败信息含该策略结构化摘要，供归因）----------------

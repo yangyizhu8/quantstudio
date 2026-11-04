@@ -131,4 +131,5 @@ E   FileNotFoundError: [Errno 2] No such file or directory:
 | 时间 | 内容 | 状态 |
 |---|---|---|
 | 2026-11-03 23:0x | v1.0 首轮基线留痕：六策略 SHA16 ＋ QMT 测试面 168 passed ＋ 对等门 3 passed | ④验收证据 |
+| 2026-11-05 00:1x | **v1.2 换锚（订单审计行批 · 用户裁①「SHA16 换锚新旧对照留痕」）**：`_QS_QMT_ORDER_EXT` 模板串加格式 A/B 审计行（方案 `docs/qmt-order-audit-line-design-20261104.md` v1.1，②审有条件通过·总调度三修订落盘）⇒ 六产物 SHA16 **必然漂移**——**新六值生效、§二 表六值作废（保留作历史对照）**：CANSLIM `608bdd2fbb413cf5`（旧 `7f31a86baa6344e1`）｜fall_reversal `8318bdc1b59a44a8`（旧 `2f93c2282fe524df`）｜tech_etf_mvo `e690122567065db3`（旧 `6b631fb8d97a6398`）｜vol_regime_mom_rev `321742f71999f8e7`（旧 `351e46483e5cb299`）｜weekly_smallcap `2eb2b1c838b6014c`（旧 `746d6427c7d6a3fa`）｜周频三层 `c1865366ea6e5a48`（旧 `a1a64a643adb4930`）；bytes 100,080–115,660B。**V4b 契约追认**：`check_fund_matrix --check --reverify` ⇒ wrapper_hash → `7a424f397983`｜**qmt_wrapper_hash → `4f2e73bd467a`**，OK 契约矩阵门禁通过（`_QS_QMT_ORDER_EXT` 在 `_QMT_HASH_SCOPE` 哈希面内，铁律 10⑥ QMT 侧同等适用）。qmt_export 域六产物同步重生成（静态 A=1 B=1 全在位）。
 | 2026-11-03 23:4x | v1.1 补登全量回归：**94 failed / 4380 passed / 9 errors（2012.90s）**＋干净树 `f60845f` 反证（24↔23 同构）＋9 errors 根因（产物缺失）＋与 10-31 基线不可比量化 | ④验收证据 |
