@@ -240,6 +240,245 @@ class ObservationStore:
         return to_write, future_excluded
 
     # ---- 写入侧：版本化 observation + 同事务 alert ----
+    # ------------------------------------------------------------------
+    # 方案③ 增量路径（2026-11-06 · G1–G3）
+    #   目标：把 record_observations 的 O(N) sqlite 往返（N=4390 万条观测）
+    #        降为 O(块数 + new 行数)。
+    #   等价性口径：**表内容与计数逐位相同**；明细列表（factor_new / revisions）
+    #        顺序与旧路径相同（块按「asset_type 变化 / 唯一 code 数 / 条数」切分，
+    #        块内保持 to_write 原顺序）。
+    #   开关：QS_QFQ_OBS_INCREMENTAL=1 启用；**默认 0 = 旧路径**（实施期安全默认，
+    #        验收通过后再翻默认）。
+    #   逐点门控：G1 批量取 last / G2 只写变化行 / G3 未变批量刷新 / G4 alert 等价。
+    # ------------------------------------------------------------------
+    _INC_CODE_BATCH = 30        # 每块最多唯一 code 数（内存 ≈ code 数 × 该 code 历史行数）
+    _INC_ROW_BATCH = 20000      # 每块最多观测条数
+
+    @staticmethod
+    def _inc_enabled() -> bool:
+        """增量路径开关（默认 0 = 旧路径；实施期安全默认，验收后再翻）。"""
+        return (os.environ.get("QS_QFQ_OBS_INCREMENTAL", "0") or "0").strip() == "1"
+
+    def _inc_fetch_last(self, c, asset_type: str, codes):
+        """G1：一次往返取该批 code 的「每 (code,factor_time) 的 max(revision_no) 行」。
+
+        等价于旧路径逐条 `SELECT factor_value, revision_no ... ORDER BY revision_no DESC LIMIT 1`，
+        但往返次数由 O(条数) 降为 O(1/块)。
+        注：外层 `WHERE o.asset_type=?` 走 PK 前缀（PK 首列为 asset_type）。
+        """
+        if not codes:
+            return {}
+        ph = ",".join("?" * len(codes))
+        sql = (
+            "SELECT o.code, o.factor_time, o.factor_value, o.revision_no "
+            "FROM qfq_factor_observation o JOIN ("
+            "  SELECT code, factor_time, MAX(revision_no) AS mr "
+            "  FROM qfq_factor_observation "
+            "  WHERE asset_type=? AND code IN (" + ph + ") "
+            "  GROUP BY code, factor_time"
+            ") m ON o.code=m.code AND o.factor_time=m.factor_time "
+            "AND o.revision_no=m.mr "
+            "WHERE o.asset_type=?"
+        )
+        rows = c.execute(sql, [asset_type] + list(codes) + [asset_type]).fetchall()
+        last = {}
+        for code, ft, fv, rv in rows:
+            last[(code, int(ft))] = (fv, int(rv))
+        return last
+
+    def _inc_touch(self, c, rows, run_id: str, now: str) -> int:
+        """G3：未变行**批量**刷新 last_seen（一次语句多行 ⇒ 往返 O(块) 而非 O(条)）。
+
+        行值 IN 需 SQLite ≥ 3.15（本机 3.45.1）；不支持时降级 executemany
+        （结果相同、往返数变多 ⇒ 记入降级计数）。
+        """
+        if not rows:
+            return 0
+        batch = 400
+        done = 0
+        for i in range(0, len(rows), batch):
+            part = rows[i:i + batch]
+            ph = ",".join("(?,?,?,?)" for _ in part)
+            flat = [run_id, now]
+            for _at, _cd, _ft, _rv in part:
+                flat.extend([_at, _cd, _ft, _rv])
+            sql = ("UPDATE qfq_factor_observation "
+                   "SET last_seen_run_id=?, last_seen_at=? "
+                   "WHERE (asset_type, code, factor_time, revision_no) IN (VALUES "
+                   + ph + ")")
+            try:
+                c.execute(sql, flat)
+            except sqlite3.Error:
+                # 降级：逐条（语义相同，往返数变多）
+                c.executemany(
+                    "UPDATE qfq_factor_observation "
+                    "SET last_seen_run_id=?, last_seen_at=? "
+                    "WHERE asset_type=? AND code=? AND factor_time=? AND revision_no=?",
+                    [(run_id, now, _at, _cd, _ft, _rv) for _at, _cd, _ft, _rv in part])
+                self._inc_counters["touch_degraded"] = (
+                    self._inc_counters.get("touch_degraded", 0) + len(part))
+            done += len(part)
+        return done
+
+    def _inc_record_observations(
+        self,
+        observations: Sequence[Tuple[str, str, int, float]],
+        run_id: str,
+        *,
+        as_of_ms: Optional[int] = None,
+        epsilon_abs: Optional[float] = None,
+        epsilon_rel: Optional[float] = None,
+        source_generation: Optional[str] = None,
+        conn: Optional[sqlite3.Connection] = None,
+    ) -> ObservationResult:
+        """增量路径的版本化写入（与 record_observations 逐位等价）。
+
+        与旧路径的**唯一**差异在「怎么取 last 值」与「怎么刷新未变行」：
+        旧 = 逐条 SELECT + 逐条 UPDATE；新 = 分块批量 SELECT + 批量 UPDATE。
+        判据语义（epsilon / revision_no / alert / factor_new / fail-safe）全部不动。
+        """
+        # —— 与旧路径同口径的前置校验（阻断 1/2）——
+        if not isinstance(run_id, str):
+            raise ValueError(f"run_id 必须为 str: {run_id!r}")
+        run_id = run_id.strip()
+        if not run_id:
+            raise ValueError("run_id 不能为空（strip 后）")
+        as_of = _validate_as_of(as_of_ms)
+        ea = float(epsilon_abs) if epsilon_abs is not None else self.epsilon_abs
+        er = float(epsilon_rel) if epsilon_rel is not None else self.epsilon_rel
+        _validate_epsilon_pair(ea, er)
+
+        to_write, future_excluded = self._preprocess(observations, as_of, ea, er)
+        now = _now_iso()
+        result = ObservationResult(run_id=run_id)
+        result.future_excluded = future_excluded
+
+        own = conn is None
+        _lctx = self._connect_locked() if own else None  # 3A 写锁
+        c = _lctx.__enter__() if own else conn
+        self._inc_counters = {"chunks": 0, "fetch_rows": 0, "touched": 0,
+                              "inserted": 0, "alerts": 0, "touch_degraded": 0}
+        try:
+            if own:
+                c.execute("BEGIN IMMEDIATE")
+            # G1a baseline 批量：一次取该 asset_type 下已有观测的 code 集
+            baseline_known = set()
+            for _at in sorted({a for a, _cd, _f, _v in to_write}):
+                for (_cd,) in c.execute(
+                    "SELECT DISTINCT code FROM qfq_factor_observation WHERE asset_type=?",
+                    [_at]).fetchall():
+                    baseline_known.add((_at, _cd))
+
+            # 切块：asset_type 变化 / 唯一 code 数超限 / 条数超限 ⇒ 块内保持原顺序
+            chunks = []
+            cur_rows, cur_codes, cur_at = [], set(), None
+            for _r in to_write:
+                _at, _cd = _r[0], _r[1]
+                if (cur_rows and (_at != cur_at
+                                  or len(cur_codes | {_cd}) > self._INC_CODE_BATCH
+                                  or len(cur_rows) >= self._INC_ROW_BATCH)):
+                    chunks.append((cur_at, cur_rows, sorted(cur_codes)))
+                    cur_rows, cur_codes = [], set()
+                cur_rows.append(_r)
+                cur_codes.add(_cd)
+                cur_at = _at
+            if cur_rows:
+                chunks.append((cur_at, cur_rows, sorted(cur_codes)))
+
+            unchanged_rows = []
+            for _at, _rows, _codes in chunks:
+                last_map = self._inc_fetch_last(c, _at, _codes)
+                self._inc_counters["chunks"] += 1
+                self._inc_counters["fetch_rows"] += len(last_map)
+                for asset_type, code, ft, fv in _rows:
+                    result.observed += 1
+                    row = last_map.get((code, int(ft)))
+                    if row is None:
+                        # 首次观测：revision_no = 1（与旧路径同）
+                        c.execute(
+                            "INSERT INTO qfq_factor_observation "
+                            "(asset_type, code, factor_time, factor_value, revision_no, "
+                            " first_seen_run_id, last_seen_run_id, first_seen_at, last_seen_at) "
+                            "VALUES (?,?,?,?,?,?,?,?,?)",
+                            [asset_type, code, ft, fv, 1, run_id, run_id, now, now],
+                        )
+                        result.new_count += 1
+                        self._inc_counters["inserted"] += 1
+                        # 任务3：相邻 factor_time 值变化检测（仅非 baseline code 触发 factor_new）
+                        if (asset_type, code) not in baseline_known:
+                            _prev = c.execute(
+                                "SELECT factor_time, factor_value FROM qfq_factor_observation "
+                                "WHERE asset_type=? AND code=? AND factor_time < ? "
+                                "ORDER BY factor_time DESC LIMIT 1",
+                                [asset_type, code, ft]).fetchone()
+                            if _prev is not None:
+                                _pv = float(_prev[1])
+                                if not _tol_eq(_pv, fv, ea, er):
+                                    result.factor_new.append(FactorNewRow(
+                                        asset_type=asset_type, code=code,
+                                        factor_time=ft, previous_value=_pv,
+                                        current_value=fv))
+                        continue
+
+                    last_value, last_rev = row
+                    try:
+                        last_value = _validate_factor_value(last_value)
+                    except ValueError:
+                        raise ValueError(
+                            f"基线 factor_value 损坏（非有限或 ≤0），拒绝比较: "
+                            f"{(asset_type, code, ft)} value={last_value!r}")
+
+                    if _tol_eq(float(last_value), fv, ea, er):
+                        # 未变：仅刷新最新行的 last_seen（factor_value / revision_no 不动）
+                        unchanged_rows.append((asset_type, code, int(ft), last_rev))
+                        result.unchanged_count += 1
+                        continue
+
+                    # 修订：INSERT 新行 revision_no = last+1（旧行保留）+ 同事务 alert(pending)
+                    new_rev = int(last_rev) + 1
+                    c.execute(
+                        "INSERT INTO qfq_factor_observation "
+                        "(asset_type, code, factor_time, factor_value, revision_no, "
+                        " first_seen_run_id, last_seen_run_id, first_seen_at, last_seen_at) "
+                        "VALUES (?,?,?,?,?,?,?,?,?)",
+                        [asset_type, code, ft, fv, new_rev, run_id, run_id, now, now],
+                    )
+                    aid = alert_id_of(asset_type, code, ft, new_rev, source_generation)
+                    c.execute(
+                        "INSERT OR IGNORE INTO qfq_factor_revision_alert "
+                        "(alert_id, asset_type, code, factor_time, revision_no, status, "
+                        " first_seen_run_id, created_at, acknowledged_at) "
+                        "VALUES (?,?,?,?,?,?,?,?,NULL)",
+                        [aid, asset_type, code, ft, new_rev, "pending", run_id, now],
+                    )
+                    result.revised_count += 1
+                    self._inc_counters["inserted"] += 1
+                    self._inc_counters["alerts"] += 1
+                    result.revisions.append(RevisionRow(
+                        asset_type=asset_type, code=code, factor_time=ft,
+                        revision_no=new_rev, previous_value=float(last_value),
+                        current_value=fv, alert_id=aid))
+
+            # G3：未变行批量刷新（在事务内、观测写入之后 ⇒ 水位/游标与写入同事务）
+            self._inc_counters["touched"] = self._inc_touch(c, unchanged_rows, run_id, now)
+            if own:
+                c.commit()
+        except Exception:
+            if own:
+                c.rollback()
+            raise
+        finally:
+            if own:
+                c.close()
+                _lctx.__exit__(None, None, None)  # 3A 写锁随连接释放
+
+        if result.revised_count:
+            logger.info(
+                f"[qfq_obs][inc] run={run_id} observed={result.observed} "
+                f"new={result.new_count} unchanged={result.unchanged_count} "
+                f"revised={result.revised_count} counters={self._inc_counters}")
+        return result
+
     def record_observations(
         self,
         observations: Sequence[Tuple[str, str, int, float]],
@@ -271,6 +510,12 @@ class ObservationStore:
             ValueError: 输入非法（run_id/asset_type/code/factor_time/factor_value/as_of_ms）、
                 或同一 run 内同键超容差冲突（整批拒绝，未写任何行）。
         """
+        # —— 方案③ 增量路径分派（默认关；QS_QFQ_OBS_INCREMENTAL=1 启用）——
+        if self._inc_enabled():
+            return self._inc_record_observations(
+                observations, run_id, as_of_ms=as_of_ms,
+                epsilon_abs=epsilon_abs, epsilon_rel=epsilon_rel,
+                source_generation=source_generation, conn=conn)
         # —— run_id：必须是 str，strip 后非空（阻断 2）——
         if not isinstance(run_id, str):
             raise ValueError(f"run_id 必须为 str: {run_id!r}")
