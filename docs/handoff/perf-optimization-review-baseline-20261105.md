@@ -100,3 +100,37 @@ knowledge_refill: [命中] QD-2026-0011（qd/D1/knowledge/qmt/QD-2026-0011.md，
 
 **首轮交付物**：`docs/evidence/perf-minute-bar-profile-YYYYMMDD.md` + `docs/minute-bar-perf-design-YYYYMMDD.md`（六步① 骨架）
 **首轮禁区**：不改任何生产代码；不跑全窗（4~5h，须单独申报窗口）；不碰 §四 禁改清单
+
+---
+
+# 九、审核方基准修正 R1（2026-11-06，依 R-PERF-01 实测反馈 + 审核方代码复核）
+
+> **本节修正 §二 事实基线 #1 的适用范围**，并补六条新事实。原表述保留以便追溯。
+
+## 9.1 修正：「DB 已批量 ⇒ DB 不是瓶颈」只对**分钟 bar 装载**成立
+
+| 原表述 | 修正后 |
+| --- | --- |
+| 分钟取数已批量：每交易日 1 次批量 SQL，≤2 SQL/日 ⇒ DB 非瓶颈 | **收窄为**：`_load_minute_snapshots`（分钟 bar 装载）确为 ≤2 SQL/日 ✓；**但盘前池走另一条路径**——`check_limit → get_bars`（**日线区间路径**）为**逐码 SQL**，实测 5 日窗 **18,591 次 / 315.7s / 55.2%** ⇒ **DB 是主瓶颈，只是不在我原先检查的那条路径上** |
+
+**审核方自记**：此为我在 §二 基线中的**结论外推错误**（把一条路径的批量结论当成全链路结论），特此更正。
+
+## 9.2 新事实（审核方代码复核，`duckdb_provider.py` / `duckdb_data_access.py`）
+
+| # | 事实 | 位置 | 优化含义 |
+| --- | --- | --- | --- |
+| 1 | `get_bars` **日线区间分支逐码循环**：`for code in codes: query_bars_by_range(code,...)` | `duckdb_provider.py:64-66` | **C1b 对象**——18,591 SQL 的直接来源 |
+| 2 | `get_bars` **分钟区间分支同样逐码**：`for code in codes: query_minute_bars_by_range(...)` | `duckdb_provider.py:73-77` | **C1a 对象**——见 #3 |
+| 3 | **`query_minute_bars_by_range_batch` 已存在**（:1178），且 `backtest_engine.py:2448` 生产在用 | `duckdb_data_access.py:1178` | **C1a = 漏用现成批量函数**（零新增算法、已被生产验证）⇒ **风险最低、应优先** |
+| 4 | **`query_bars_by_range_batch`（日线区间批量）不存在** | — | **C1b 需新增**，可仿 #5 模板 |
+| 5 | `get_bars_by_count` **已批量化**：`query_bars_by_count_batch(codes, count, ...)`，注释「单条/少量批量 SQL 取代 N 次单码 SQL，**与逐只调用字节级等价**」 | `duckdb_provider.py:83-86` / `duckdb_data_access.py:821` | **C1b 的等价性论证模板与实现范式** |
+| 6 | `check_limit` **本身已批量**（传 list 一次 `get_bars`）+ **已有 P1′ 缓存**（`_limit_cache`，`QS_LIMIT_CACHE_DATES` 默认 8，`QS_LIMIT_CACHE_DIAG=1` 强制禁用）+ 命中率计数 | `ptrade_api.py:1256-1315`、`:1238-1247` | 逐码问题在 `get_bars` 内，**不在 check_limit**；缓存已存在，C1 落地后应评估缓存是否仍必要 |
+
+## 9.3 由此产生的审核增补要求
+
+| # | 要求 |
+| --- | --- |
+| A1 | C1 **必须拆为 C1a（分钟·用现成 batch）/ C1b（日线·新增 batch）两笔独立提交**，各带独立黄金门 |
+| A2 | C1b 等价性论证必须逐项覆盖：①空结果语义（`if not df.empty` 跳过 vs 返回空 df）②列集/列序/dtype ③`use_qfq` 分支 ④重复 code ⑤未知 code ⑥单码 vs 多码返回结构一致性 |
+| A3 | 因 `get_bars` 是**双档共用**路径，黄金门**必须双档覆盖**：分钟档（首板1进2）+ **日线档（至少 1 个日线策略，如 CANSLIM）**，不可只测首板 |
+| A4 | 报告中的「45h 口径」表述须更正：实测 484.6s / 5 日 ⇒ 96.9s/日 ⇒ 148 日 ≈ **3.98h**，与 4~5h 口径**一致**，不构成不符 |
