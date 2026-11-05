@@ -2168,6 +2168,115 @@ import os            # D-30 快照层（instrument snapshot）：路径存在性
 import json          # D-30 快照层：快照 JSON 解析（UTF-8）
 import hashlib       # D-30 快照层：快照指纹 sha256 前 16 位
 
+# ---- 时区解析垫片（QD-2026-0022，2026-11-05）------------------------------------
+# 背景：QMT 内置 Python 缺时区数据时，pandas 解析 'Asia/Shanghai' 抛
+#   pytz.UnknownTimeZoneError（KeyError 子类，str() == "'Asia/Shanghai'"）。
+#   策略 _compute_eps_factors 内 .dt.tz_convert('Asia/Shanghai') 因此抛错，被
+#   外层宽 try 吞掉 => EPS 因子整段空表 => 选股偏离且几乎无告警（真机每次调仓必现）。
+# 方案：分级垫片，探测优先（P0），能解析则零副作用直接返回。
+#   等价性：中国 1991 年后无夏令时，固定 +08:00 与 Asia/Shanghai 在本回测窗口逐位等价。
+# 纪律：三层全失败必须 fail-loud（QS_QMT_TZ_SHIM failed），严禁静默降级。
+_QS_QMT_TZ_ALIASES = ('Asia/Shanghai', 'PRC', 'Asia/Chongqing', 'Asia/Harbin', 'CTT')
+_QS_QMT_TZ_DONE = None
+
+
+def _qs_tz_shim(force=False):
+    """时区解析垫片：分级注册，探测优先，全失败 fail-loud。force=True 跳过探测（仅单测用）。"""
+    global _QS_QMT_TZ_DONE
+    if _QS_QMT_TZ_DONE is not None and not force:
+        return _QS_QMT_TZ_DONE
+    has_pytz = False
+    has_zoneinfo = False
+    resolve = 'SKIP'
+    if not force:
+        try:
+            import pytz as _p
+            has_pytz = True
+        except Exception:
+            pass
+        try:
+            import zoneinfo as _z
+            has_zoneinfo = True
+        except Exception:
+            pass
+        try:
+            pd.Timestamp('2000-01-01', tz='Asia/Shanghai')
+            resolve = 'Y'
+        except Exception as _e:
+            resolve = 'N(%s)' % type(_e).__name__
+    _qs_initial = resolve
+    n_cache = 0
+    level = 'none'
+    # P1: 注册 pytz 缓存（pytz 存在但缺命名数据时生效）
+    if resolve != 'Y':
+        try:
+            import pytz as _pytz
+            _cst = _pytz.FixedOffset(480)
+            for _name in _QS_QMT_TZ_ALIASES:
+                _pytz._tzinfo_cache[_name] = _cst
+                n_cache += 1
+            level = 'P1'
+        except Exception:
+            pass
+    # P2: patch pandas 的 tz 解析入口（原函数存模块属性，避免局部别名调用被判未知 API）
+    if resolve != 'Y' and level == 'P1':
+        try:
+            pd.Timestamp('2000-01-01', tz='Asia/Shanghai')
+            resolve = 'P1-Y'
+        except Exception:
+            try:
+                import datetime as _qs_qtdt
+                from pandas._libs.tslibs import timezones as _pdtz
+                _qs_fixed = _qs_qtdt.timezone(_qs_qtdt.timedelta(hours=8))
+                _pdtz._qs_orig_get_tz = _pdtz.maybe_get_tz
+
+                def _qs_patched_get_tz(tz):
+                    try:
+                        return _pdtz._qs_orig_get_tz(tz)
+                    except Exception:
+                        if isinstance(tz, str) and tz in _QS_QMT_TZ_ALIASES:
+                            return _qs_fixed
+                        raise
+
+                _pdtz.maybe_get_tz = _qs_patched_get_tz
+                level = 'P2'
+            except Exception:
+                pass
+    # P3: patch zoneinfo 构造器（同上，原构造器存模块属性）
+    if resolve not in ('Y', 'P1-Y') and level == 'P2':
+        try:
+            pd.Timestamp('2000-01-01', tz='Asia/Shanghai')
+            resolve = 'P2-Y'
+        except Exception:
+            try:
+                import datetime as _qs_qtdt2
+                import zoneinfo as _zi
+                _qs_fixed2 = _qs_qtdt2.timezone(_qs_qtdt2.timedelta(hours=8))
+                _zi._qs_orig_zoneinfo = _zi.ZoneInfo
+
+                def _qs_patched_zoneinfo(key, *a, **kw):
+                    if key in _QS_QMT_TZ_ALIASES:
+                        return _qs_fixed2
+                    return _zi._qs_orig_zoneinfo(key, *a, **kw)
+
+                _zi.ZoneInfo = _qs_patched_zoneinfo
+                level = 'P3'
+            except Exception:
+                pass
+    # 终判 + 探测行（幂等；仅当需要垫片时才输出 => 正常环境保持既有零输出契约）
+    if _qs_initial != 'Y':
+        if 'Y' in str(resolve):
+            print('QS_QMT_TZ_PROBE pytz=%s zoneinfo=%s resolve=%s tzcache=%d level=%s'
+                  % ('Y' if has_pytz else 'N', 'Y' if has_zoneinfo else 'N', resolve, n_cache, level))
+        else:
+            print('QS_QMT_TZ_SHIM failed pytz=%s zoneinfo=%s resolve=%s tzcache=%d level=%s'
+                  % ('Y' if has_pytz else 'N', 'Y' if has_zoneinfo else 'N', resolve, n_cache, level))
+    _QS_QMT_TZ_DONE = resolve
+    return resolve
+
+
+_qs_tz_shim()
+
 # ---- D-30 PIT 冻结合约快照层（instrument snapshot，2026-10-13）------------------
 # 设计：docs/qmt-instrument-snapshot-design.md v0.3（§三=合同）。
 # 动机：四消费点（_qs_get_stock_info/_qs_status_flags/_qs_get_ashares/
