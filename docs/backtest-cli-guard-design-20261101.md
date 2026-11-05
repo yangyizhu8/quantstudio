@@ -60,7 +60,7 @@ knowledge_refill: [命中] QD-2026-0015（qd/D1/knowledge/qmt/QD-2026-0015.md，
 
 | # | 风险 | 处置 |
 | --- | --- | --- |
-| 1 | 白名单需与 argparse 定义保持同步，防漂移 | 从解析器对象反射生成白名单（单一事实源），禁手写两份 |
+| 1 | 白名单需与 **_parse_flag 调用点** 保持同步，防漂移 | **⚠ W1 修订（2026-11-03 实测，R344 核实）**：入口**无 argparse** —— `run_ptrade_strategy.py:543-560` 为手写 `_parse_flag(sys.argv[1:], '--xxx', default)`，**≥12 处散落调用**、无 parser 实例 ⇒ 原「argparse 反射」**不可行**。改为：**AST/正则扫描 `_parse_flag` 调用点自动生成白名单**（扫描器从代码提取，禁手写两份 ⇒ 单一事实源保持）|
 | 2 | `--mode once` 任务与常驻 daemon 可能同时存在 | 判据分别列出，不混为一行 |
 | 3 | 与 RC-001b（`DATA_ROOT` 模块级常量）耦合 | 本方案只读 `DATA_ROOT` 做提示，不改其求值时机；RC-001b 独立裁定 |
 
@@ -95,3 +95,29 @@ knowledge_refill: [命中] QD-2026-0015（qd/D1/knowledge/qmt/QD-2026-0015.md，
 
 - V-R3/V-R4 直接依赖**数据根解析单源**（`quantstudio/_paths.get_data_root()`）⇒ 与「联接键归一 + 日键复用」合并判据同族（**口径必须单源**）。
 - 若合并判据批 0 落地审计脚本，V-R3/V-R4 可作为其**集成用例**复用。
+
+---
+
+## 修订 R2（2026-11-05，W1 落件执行——总调度 R345/G1 照准）
+
+### W1：入口解析机制实测（推翻「argparse 反射」）
+
+| 项 | 实测 |
+| --- | --- |
+| 解析机制 | **手写** `_parse_flag(sys.argv[1:], '--xxx', default)`（`run_ptrade_strategy.py:543-560`） |
+| argparse | **不存在**（grep `parse_known_args|parse_args(|add_argument` 零命中；再 grep `sys.argv|argparse` 定位到 `_parse_flag`） |
+| 调用点数量 | **≥12 处**（`--match-price` / `--compare` / `--ptrade-dir` / `--output` / `--output-report` / `--slippage` / `--profile` / `--etf-t0` / `--cost-basis` / `--fidelity` / `--eps-basis` / `--no-coexistence` / `--coexistence-stop-timeout` / `--coexistence-boundary-timeout` …） |
+| 结论 | ①无 parser 对象可反射 ②未知参数天然被静默忽略（= 事故 1 根因）⇒ **白名单须从调用点扫描生成** |
+
+### 实施口径（W1 修订后）
+
+| # | 项 | 内容 |
+| --- | --- | --- |
+| 1 | 白名单来源 | `ast` 解析 `run_ptrade_strategy.py`，收集 `_parse_flag(` 第 2 参数以 `--` 开头的字符串字面量 ⇒ 集合（只读生成，不落盘手写稿） |
+| 2 | 校验时机 | `main()` 内、**任何前置动作之前**（含 `CollectorStopContext`）比对 `sys.argv` 中 `--` 开头的 token（跳过值位） |
+| 3 | 兜底 | 扫描失败/零命中 ⇒ **不得放行**（fail-closed：报「白名单生成失败」退出码非 0），防扫描器失效后静默退化为无防护 |
+| 4 | 测试 | 单测覆盖：已知参数全通过 / `--help`、`--foo` 拒绝 / 扫描器失效时 fail-closed |
+
+### 验收增补（并入 §五 第 6 项）
+
+- 白名单由扫描器生成的集合**逐项列出**，与 `_parse_flag` 调用点集合**逐位一致**（机检：两集合 diff 为空）。
