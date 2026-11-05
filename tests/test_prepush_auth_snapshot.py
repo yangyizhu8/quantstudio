@@ -18,8 +18,9 @@ GATE = REPO / "scripts" / "prepush-gate.ps1"
 
 
 def _git(cwd: Path, *args: str) -> str:
+    # errors="replace"：解码失败不得让断言以"错误方式"失败（2026-11-05 ④复验教训）
     p = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
-                       text=True, encoding="utf-8")
+                       text=True, encoding="utf-8", errors="replace")
     assert p.returncode == 0, f"git {args} failed: {p.stderr}"
     return p.stdout.strip()
 
@@ -28,6 +29,18 @@ def _mk_repo(tmp: Path, n_commits: int = 3) -> tuple[Path, list[str]]:
     """建临时仓：base 后追加 n 个提交，并把 origin/main 指向 base。"""
     (tmp / "scripts").mkdir(parents=True, exist_ok=True)
     shutil.copy2(GATE, tmp / "scripts" / "prepush-gate.ps1")
+    # wrapper：强制子进程输出码页为 UTF-8 并转发全部参数。
+    # 2026-11-05 ④复验教训：闸的输出码页随 console 环境（Git Bash 管道 ⇒ GBK），
+    # 父进程用 encoding="utf-8" 硬解码 ⇒ UnicodeDecodeError ⇒ out 变空 ⇒ 断言全倒
+    # （我的 7 绿跑于 UTF-8 console，属**环境条件性全绿**，不算全绿）。
+    # ⚠ 末尾必须 `exit $LASTEXITCODE`：PowerShell 中被调脚本的 `exit 9` 只终止**被调脚本**，
+    #   wrapper 会继续跑完并返回 0 ⇒ 拒绝被"吃掉"（2026-11-05 自验实测踩到）。
+    (tmp / "scripts" / "_run_gate_utf8.ps1").write_text(
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8\n"
+        "$OutputEncoding = [Text.Encoding]::UTF8\n"
+        "& (Join-Path $PSScriptRoot 'prepush-gate.ps1') @args\n"
+        "exit $LASTEXITCODE\n",
+        encoding="utf-8", newline="\r\n")
     (tmp / "docs" / "evidence" / "push-authorization").mkdir(parents=True, exist_ok=True)
     _git(tmp, "init", "-q")
     _git(tmp, "config", "user.email", "t@t")
@@ -67,10 +80,11 @@ def _run_gate(tmp: Path, tip: str, base: str, *, allow: str = "", env_extra=None
     assert ps, "需要 pwsh 或 powershell"
     p = subprocess.run(
         [ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-         str(tmp / "scripts" / "prepush-gate.ps1"),
+         str(tmp / "scripts" / "_run_gate_utf8.ps1"),
          "-Commit", tip, "-LocalSha", tip, "-RemoteSha", base,
          "-AllowAlso", (allow or "")],
-        cwd=str(tmp), capture_output=True, text=True, encoding="utf-8", env=e)
+        cwd=str(tmp), capture_output=True, text=True, encoding="utf-8",
+        errors="replace", env=e)
     return p.returncode, (p.stdout or "") + (p.stderr or "")
 
 
@@ -144,3 +158,29 @@ def test_v6b_missing_fields_fails_closed(tmp_path):
     rc, out = _run_gate(tmp, shas[-1], _base(tmp), allow=",".join(shas[:-1]))
     assert rc == 9, out
     assert "字段缺失" in out
+
+
+def test_v7_gbk_console_environment_still_passes(tmp_path):
+    """④复验补强（2026-11-05）：**GBK 码页父环境**下必须同样 7/7。
+
+    复现用户环境：父进程码页 GBK ⇒ 子进程 powershell 输出默认 GBK。
+    wrapper 强制 UTF-8 后，输出必须仍可被父进程以 utf-8 解码，且断言全立。
+    """
+    tmp, shas = _mk_repo(tmp_path, 2)
+    _snapshot(tmp, shas[-1], shas)
+    # 用 cmd chcp 936 起父环境，模拟 Git Bash 管道形态
+    ps = shutil.which("pwsh") or shutil.which("powershell")
+    # 全程不用引号：ps 路径与临时仓路径均无空格；cmd /c 遇引号会拆参数。
+    _gate = tmp / "scripts" / "_run_gate_utf8.ps1"
+    assert " " not in str(ps) and " " not in str(_gate), "路径含空格需另设方案"
+    script = (
+        "chcp 936 >nul & "
+        f'{ps} -NoProfile -ExecutionPolicy Bypass -File {_gate} '
+        f'-Commit {shas[-1]} -LocalSha {shas[-1]} '
+        f'-RemoteSha {_base(tmp)} -AllowAlso {shas[0]}'
+    )
+    p = subprocess.run(["cmd", "/c", script], cwd=str(tmp), capture_output=True,
+                       text=True, encoding="utf-8", errors="replace")
+    out = (p.stdout or "") + (p.stderr or "")
+    assert p.returncode == 0, f"GBK 码页环境下应通过:\n{out}"
+    assert "授权快照命中" in out, f"GBK 码页环境下输出须可解码:\n{out!r}"
