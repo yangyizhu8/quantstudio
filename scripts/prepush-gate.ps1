@@ -215,11 +215,16 @@ if ($env:QS_PUSH_AUTH_SNAPSHOT -ne '0') {
       if ($cand.Count -gt 0) {
         $snapPath = $cand[0].FullName
         try {
-          $snap = (Get-Content -Path $snapPath -Raw -ErrorAction Stop) | ConvertFrom-Json -ErrorAction Stop
+          # ⚠ 必须显式 -Encoding UTF8：PS 5.1 的 Get-Content 默认按系统 ANSI 码页（GBK）解码，
+          # 快照若为 UTF-8 落盘会被解成乱码 ⇒ ConvertFrom-Json 失败 ⇒ 误判「证据物损坏」
+          # （2026-11-05 实测：真实快照被闸判损坏而拒推；Python 以 utf-8 读同一文件完全正常）。
+          $snap = (Get-Content -Path $snapPath -Raw -Encoding UTF8 -ErrorAction Stop) |
+                  ConvertFrom-Json -ErrorAction Stop
         } catch {
           Write-Host ''
           Write-Host ("[prepush-gate] 授权快照损坏或非合法 JSON：{0}" -f $snapPath) -ForegroundColor Red
           Write-Host ("    解析错误：{0}" -f $_.Exception.Message)
+          Write-Host '[prepush-gate] 提示：快照须以 UTF-8 无 BOM 落盘；tip/commits 为判据字段，authorized_by/note 仅元数据。' 
           Write-Denied '授权快照不可解析（授权证据物损坏 ⇒ 停；请重出快照后重试）'
         }
         if (-not $snap.tip -or -not $snap.commits) {
