@@ -99,6 +99,21 @@ python -m pytest tests/test_delivery_*.py tests/test_qfq_*.py -q
 （他线 `4dcdb97` 于授权后 00:15 产生），我按 C7 声明全量推送 12 笔并事后申报
 ⇒ 总调度定性「**申报面规范但推送动作违规**」；用户裁 A 追认，效力了结。
 
+### ③b 验证读数必须标执行环境（2026-11-05 ④复验不通过·我域犯次）
+
+**规约**：凡以**子进程输出**（stdout/stderr）作为断言依据的测试，**必须在两种 console 码页形态下各跑一次**（UTF-8 + GBK）；申报读数时必须标注**执行环境**（console 码页 / 解释器版本 / 平台）。
+
+> **环境条件性全绿不算全绿**——2026-11-05 实测：闸测试 harness 硬编码 `encoding="utf-8"`
+> 解码 powershell 5.1 子进程输出，而子进程输出码页随 console 环境：
+> 我这边 UTF-8 console ⇒ 7 绿；对方 Git Bash 管道 ⇒ 子进程出 GBK ⇒ `UnicodeDecodeError: byte 0xcd`
+> ⇒ `out` 变空 ⇒ **6 failed / 1 passed**，断言以"错误方式"失败（不是被测逻辑错）。
+
+**修法四件套（已验证：UTF-8 / chcp 936 / PYTHONIOENCODING=gbk 三形态各 8/8）**：
+1. 子进程侧强制输出码页：wrapper `.ps1` 首两行 `[Console]::OutputEncoding=[Text.Encoding]::UTF8` + `$OutputEncoding=[Text.Encoding]::UTF8`；
+2. **wrapper 末尾必须 `exit $LASTEXITCODE`**——被调脚本的 `exit 9` 只终止被调脚本，wrapper 会继续跑完返回 0 ⇒ 拒绝被"吃掉"；
+3. Python 侧 `errors="replace"` 兜底（解码失败不得让断言以"错误方式"失败）；
+4. 套内新增"GBK 码页形态"用例（`cmd /c "chcp 936 >nul & ..."`，**全程零引号**：cmd /c 遇引号会拆参数）。
+
 ## ⑧ 同步门（铁律 14）
 
 ```bash
