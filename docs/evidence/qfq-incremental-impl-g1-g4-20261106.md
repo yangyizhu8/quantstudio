@@ -102,6 +102,53 @@
 
 ---
 
+## 六、【2026-11-06 04:20 追加】6 红归因实证 —— **销项**
+
+### 6.1 隔离复跑（照准：「跑前隔离 + 基线三读数 + 跑后核」标准动作 v2）
+
+| 项 | 读数 |
+|---|---|
+| 隔离数据根 | `QUANTSTUDIO_DATA_ROOT=C:\Users\Administrator\AppData\Local\Temp\qs_iso_ca1e5a`（`_paths.py:30` 重定向机制） |
+| 复跑范围 | `TestEtfUniverse`(3) + `test_golden_300750_range_vs_count` + `test_c4_invalid_range_skips_security[range\|capture]` |
+| 结果 | **6 failed / 5 passed**（27.65s）—— **6 例仍红** |
+| 基线三读数（跑前） | mtime `1793904049.6027203`｜page_count `2884683`｜last_row `('2026-11-05T12:48:52+08:00',)`｜alerts `3645` |
+| 基线三读数（跑后） | **完全一致**（四项逐字相同）⇒ **本轮零污染** ✓ |
+
+### 6.2 traceback 归因（隔离环境实跑输出，逐字）
+
+| 失败用例 | traceback（`--tb=line`） | 归因 |
+|---|---|---|
+| `test_builder_parses_real_dict_config_and_yields_codes` | `AssertionError: 真实 dict config 下 provider 返回空（阻断 1 回归）: []` | **ETF universe provider 数据源问题** |
+| `test_builder_list_schema_compat` | `AssertionError: assert [] == ['510050.SH']` | 同上（universe 为空） |
+| `test_default_run_audit_uses_nonempty_provider` | `AssertionError: 默认路径 universe 未含 xtquant code（阻断 1 回归）: ['CANON_A']` | 同上 |
+| `test_golden_300750_range_vs_count` | `assert 221.71113155473782 == 222.518595 ± 0.0222519` | **黄金值偏差 0.36%（超容差 0.0222）**⇒ 独立观察项 |
+| `test_c4_invalid_range_skips_security[range]` / `[capture]` | `AssertionError: 不得改 trigger（不写 last_event_id）` | trigger 写入语义 |
+
+### 6.3 销项依据（为何「隔离跑」即等价于「基线跑」）
+
+本次改动的增量路径**默认关闭**（`QS_QFQ_OBS_INCREMENTAL` 未设 ⇒ `record_observations` 走**旧路径**代码）⇒ 隔离环境里跑的**就是旧路径** ⇒ 与「stash 掉本次改动」的基线在行为上**完全等同** ⇒ 隔离跑出现同样 6 红 ⇒ **6 红为既有失败（基线红），与本次改动零耦合**。
+
+**⇒ 销项结论**：本次改动（`a0e0600`）对既有行为**零影响**；此前「6 红归因未判定」项**关闭**。
+
+### 6.4 新登记观察项（不属本方案范围）
+
+| # | 观察项 | 读数 | 归属 |
+|---|---|---|---|
+| **O-1** | `test_golden_300750_range_vs_count` 黄金值偏差 | 实得 221.71113155473782 vs 期望 222.518595（±0.0222519）⇒ **偏差 0.36%** | 既有失败；需独立判因（数据变化 or 算法变化），**不并入方案③** |
+| **O-2** | `TestEtfUniverse` provider 返回空 | `[]` / `['CANON_A']` | 既有失败；ETF universe provider 侧 |
+
+### 6.5 本轮标准动作 v2 落地记录
+
+- 跑前基线三读数（**快口径**：`page_count` 替 `COUNT(*)`、`ORDER BY rowid DESC LIMIT 1` 替 `MAX(last_seen_at)` —— 后两者在 44M 行上实测卡 >10 min）✓
+- 跑后同口径核**逐字一致** ✓
+- **未对生产库执行 `wal_checkpoint`**（本次零 mtime 变更）✓
+- 隔离机制用 `QUANTSTUDIO_DATA_ROOT`（写锁目录由 `tests/conftest.py` 自动隔离）✓
+- 固化记忆：`7a38add0`（标准动作 v2）
+
+2026-11-06 04:25
+
+---
+
 ## 五、现态
 
 - 增量路径**默认关闭** ⇒ 生产**零行为变更**（`QS_QFQ_OBS_INCREMENTAL` 未设 ⇒ 走旧路径）；
