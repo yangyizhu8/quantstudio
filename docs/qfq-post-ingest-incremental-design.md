@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS qfq_obs_incremental_cursor (
 | **G3** | 未变行批量刷新 | 未变行 `last_seen_run_id` 更新为当轮 run_id；`revision_no` 不变；行数不变 | 关闭刷新 ⇒ 该列停更（对拍识别） |
 | **G4** | alert outbox 等价 | `qfq_factor_revision_alert` 行集与旧路径**逐位相同**（含 `alert_id`） | 去掉 alert 写入 ⇒ 行集缺 ⇒ 红灯 |
 | **G5** | 消费侧 changed-code 遍历 | 遍历 code 集 == ①`revisions` code ∪ ②`factor_new` code ∪ **③本轮新增除权事件 code** | 只取 ①②（漏除权）⇒ 红灯 |
+| **G5b** | 【v3 增补·实施期识别】**G5 的遍历范围不得小于「本轮到期单元」集合** | 实施核出：`_claim_and_merge` 的 unit 来自「①本轮新 trigger ②`promote_scheduled_due` 排期到期 ③`recover_pending_due` 待重试」三类来源（`run_post_ingest` 的 recover→discover→claim 序，见 `qfq_resident_orchestrator.py:1844-1860`）；而 `_security_effective_dates` 的 O(N) 计算发生在**unit 生成阶段**（`:858`）。⇒ 若把遍历范围直接缩到「changed code」，会**漏掉 ②③ 两类到期单元** ⇒ 正确范围 = **changed code 集 ∪ 本轮到期/待重试 code 集** | 构造「因子未变但有到期单元」的 code ⇒ 缩范围后该 unit 消失 ⇒ 红灯 |
 | **G6** | 真实库对拍（②审前置②） | 同一真实快照：旧路径 vs 新路径 ⇒ `qfq_factor_observation`（44M 行）**全表 hash 相等** + `alert` 表相等 + `qfq_trigger_queue` 相等 + 水位相等 | 引入单点差异 ⇒ hash 不等 |
 | **G7** | revision_no 链构造性证明（②审前置②） | 批量取 last == 该 `(code,factor_time)` 的 `max(revision_no)` 行 ⇒ 链 rev1…revN 无缺号 | 人工挖空某 rev ⇒ 链不连续 ⇒ 红灯 |
 | **G8** | 回退开关 | `QS_QFQ_OBS_INCREMENTAL=0` ⇒ 全表 hash 与旧路径相等、耗时回到旧量级 | 开/关两态结果同一（仅耗时不同） |
