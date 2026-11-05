@@ -1090,7 +1090,8 @@ def _qs_status_flags(code, C):
 
     数据源 get_instrument_detail（:2479-2511）：
       ST：InstrumentName 含 'ST'（:2481）；
-      HALT：InstrumentStatus >= 1（:2502）或 IsTrading 为 False（:2503）；
+      HALT：InstrumentStatus >= 1（:2502，唯一权威判据）；IsTrading（:2503）
+      不作停牌判据（QMT 回测语境恒 False，曾致全误判停牌；QD-2026-0021）；
       DELISTING：ExpireDate（:2489）有效且已过期（当日 > ExpireDate）。
     详情取不到 → ({}, False)（不可判定，调用方保守处置 + 审计行）。
     ExpireDate 形态：D-13 定谳（2026-10-11 PROBE 实测）= int YYYYMMDD
@@ -1109,12 +1110,18 @@ def _qs_status_flags(code, C):
     flags = {}
     flags['ST'] = 'ST' in str(d.get('InstrumentName') or '').upper()  # :2481
     halted = False
+    # 权威停牌字段缺失/假值/不可解析 -> 不可判定（调用方保守保留 + 审计行）。
+    # 禁用 :2503 字段兜底：QMT 回测语境下该字段对全部标的恒为 False，
+    # 曾致 5224 只全部误判停牌（QD-2026-0021，2026-11-05 真机定谳）。
+    # 注：此处不得沿用 `or 0` 默认值——它会把 None/[]/{} 这类假值静默吞成 0
+    #     （判「正常」），与本次修复的病根「凭缺失推断正常」同族。
+    _qs_st_raw = d.get('InstrumentStatus') if 'InstrumentStatus' in d else None
+    if _qs_st_raw is None:
+        return {}, False
     try:
-        halted = int(d.get('InstrumentStatus') or 0) >= 1            # :2502
+        halted = int(_qs_st_raw) >= 1                                # :2502
     except (TypeError, ValueError):
-        halted = False
-    if d.get('IsTrading') is False:                                   # :2503
-        halted = True
+        return {}, False
     flags['HALT'] = halted
     dl = False
     exp = d.get('ExpireDate')                                         # :2489

@@ -173,13 +173,45 @@ def test_b_stock_info_golden(cur, old, capsys, codes):
 
 
 def test_b_filter_status_golden(cur, old, capsys):
-    tbl = {"a.SZ": {"InstrumentName": "ST某某"}, "b.SZ": {"InstrumentName": "正常"},
+    """黄金对照：**真机形态样本**（detail 含 InstrumentStatus，DIAG2 实测 31 键齐全）。
+
+    R313（QD-2026-0021 修复·判型＝数据修正型）修订记录：
+      原样本 a/b 缺 InstrumentStatus，落在旧实现的「缺键 => int(None or 0)=0 => 判正常」
+      隐性推断上；新口径下缺键走「不可判定保守保留」出口，会与旧实现产生**预期漂移**。
+      本用例改为给出真机形态样本（a/b 补 InstrumentStatus=0），据以验证：
+      **除「缺权威字段」这一配套条件外，filter 行为与 D-24 基线逐位一致**（零漂移）。
+      缺键场景的漂移已由 test_b_filter_status_drift_missing_status 显式固化。
+    """
+    tbl = {"a.SZ": {"InstrumentName": "ST某某", "InstrumentStatus": 0},
+           "b.SZ": {"InstrumentName": "正常", "InstrumentStatus": 0},
            "c.SZ": {"InstrumentName": "正常", "InstrumentStatus": 1}}
     codes = ["a.SZ", "b.SZ", "c.SZ"]
     new = cur["_qs_filter_stock_by_status"](codes, ["ST", "HALT", "DELISTING"], None, _FakeCtx(tbl))
     capsys.readouterr()
     ref = old["_qs_filter_stock_by_status"](codes, ["ST", "HALT", "DELISTING"], None, _FakeCtx(tbl))
     assert new == ref, "filter_stock_by_status 返回未逐位一致"
+    assert new == ["b.SZ"], "真机形态样本期望：a(ST 剔除) / b(保留) / c(停牌剔除)"
+
+
+def test_b_filter_status_drift_missing_status(cur, old, capsys):
+    """**数据修正型漂移固化**（R313 / QD-2026-0021）——缺 InstrumentStatus 场景。
+
+    旧实现：缺键 => ``int(None or 0) >= 1`` 为 False => 判「正常」=> ST 股仍按 ST 剔除。
+    新口径：缺键 => ``({}, False)`` 不可判定 => 调用方**保守保留** => ST 股**不再被剔除**。
+
+    ⇒ 已知代价：detail 缺权威字段时 ST 判据被连带失效（保守方向的失效：漏剔而非误剔）。
+    真机 ``get_instrument_detail`` 必含 ``InstrumentStatus``（2026-11-05 DIAG2 实测），
+    故生产路径零影响；本条固化该差异，供②审复核与后续判据轮决策。
+    """
+    tbl = {"a.SZ": {"InstrumentName": "ST某某"}, "b.SZ": {"InstrumentName": "正常"}}
+    codes = ["a.SZ", "b.SZ"]
+    new = cur["_qs_filter_stock_by_status"](codes, ["ST", "HALT", "DELISTING"], None, _FakeCtx(tbl))
+    out = capsys.readouterr().out
+    ref = old["_qs_filter_stock_by_status"](codes, ["ST", "HALT", "DELISTING"], None, _FakeCtx(tbl))
+    assert ref == ["b.SZ"], "旧实现：缺键判正常，a 按 ST 剔除"
+    assert new == ["a.SZ", "b.SZ"], "新口径：缺键不可判定 => 保守保留（a 不再按 ST 剔除）"
+    assert new != ref, "漂移必须存在（本修复的目的即改变此行为）"
+    assert "QS_QMT_UNDETERMINED" in out, "不可判定须留审计行"
 
 
 def test_b_get_fundamentals_golden(cur, old, capsys):

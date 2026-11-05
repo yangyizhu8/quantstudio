@@ -303,7 +303,11 @@ def test_broken_json_all_fallback_and_disclosure_once(tmp_path, capsys):
     path = tmp_path / "instrument_snapshot.json"
     path.write_bytes(b'{"enabled": true, "records": {"600000.SH": {"a": 1')  # 截断
     _bind(ns, path)
-    c = _MockC(details={"600000.SH": {"InstrumentName": "LIVE"}}, sector=["600000.SH"])
+    # R313（QD-2026-0021）：live 样本补 InstrumentStatus（真机 detail 必含，
+    # DIAG2 实测 31 键齐全）；缺该键在新口径下走「不可判定」出口，
+    # 本用例目的在于验证 broken 态三处消费点回落 live，故须给出可判定样本。
+    c = _MockC(details={"600000.SH": {"InstrumentName": "LIVE", "InstrumentStatus": 0}},
+               sector=["600000.SH"])
     assert ns["_qs_get_stock_info"]("600000.SH", C=c)["name"] == "LIVE"
     assert ns["_qs_status_flags"]("600000.SH", c)[1] is True
     assert ns["_qs_get_ashares"](C=c) == ["600000.SH"]
