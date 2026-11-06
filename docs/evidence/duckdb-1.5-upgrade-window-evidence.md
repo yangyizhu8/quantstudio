@@ -74,3 +74,48 @@ exit=3
 | 库异常路径 | `check_wal.ps1 -Force`（Windows）/ `check_wal.sh --force`（macOS/Linux）已具备该能力：ps1 有 `-Force` 开关（`check_wal.ps1:38`）、sh 有 `--force` 参数（`check_wal.sh:30`），两者均「跳过无需处理早退、强制执行收敛」 | 源码核对（本轮读全文） |
 | 红线 | **禁手工删除 `.wal`**；运行期禁 CHECKPOINT（写者占用时脚本直接 fail 并给指引）；脚本移走陈旧 WAL 前已备份 | 铁律 23 + 两脚本注释 |
 | 演练记录 | **未演练**：本轮 daemon 在跑（PID 32032），演练须停写者并触碰主库 CHECKPOINT ⇒ 属停服窗动作；窗口内如触发回滚，按上表逐条执行并把读数回填本文件 | — |
+
+---
+
+## 七、11-07 窗口记录（W0 前置）
+
+- **P5 回退点已建（2026-11-07 01:30）**：铁律 03 四步配方（精确路径 add → stash create → **stash store 持久化** → reset）；
+  stash hash = `dabfb020c67a850b29d966d76f9a385facb2fcd0`（含快照面：实施卡 W8 回写增量 + tasks 钟点增量 + 本证据文件）；**他线在途文件未纳入快照**（`scripts/start_daemon_guarded.ps1` 等未 add）。
+- **P4 占用声明已发（01:00，R31）**：daemon 当前实态 PID 50452（00:00 快测）→ 01:10 复测 forever 已收工、once 35988 在跑（候总调度裁）；GUI 50864。
+- **开窗前实态（00:00/01:10 两轮实测）**：主库 **62.41 GB**；WAL **5.8 MB**（<256MB，窗内无需处置）；`daemon_status.json` 不存在 ⇒ 判据走进程双形态。
+
+### §7.1 窗口执行实录（2026-11-07 02:05–02:15，总时长 ≈10 分钟，SC-003 ✓）
+
+| 步 | 实测 |
+|---|---|
+| W0/W1 | t0=02:05:03；GUI 无进程 ✓（用户已提前关） |
+| W2 | daemon/once 零残留 ✓（用户已停 once、forever 已收工） |
+| W3 基线 | 库 **62.47 GB**、WAL 0.1 MB、duckdb **1.4.5**（升级前直读） |
+| W4 装包 | `pip install duckdb==1.5.6`（Python311）exit 0，65s；版本直读 **1.5.6** ✓；pip 附带警告：`event-quant-factory 0.1.0 requires duckdb==1.3.2`（陈旧声明，不阻断，记录在案） |
+| W5 门禁 | `-m` 面 `PASS 1.5.6` exit 0 ✓＋单文件直调面 `PASS 1.5.6` ✓ |
+| W5c 主库只读开合 | 1.5.6 下 read_only 打开 ✓（trade_calendar=3,652 / stock_daily=9,925,654） |
+| W6 冒烟 | **S1–S6 ＝ 6/6 PASS**（S1 临时库读写/S2 时区/S3 upsert/S4 主库只读点查〔补跑：stock_daily=9,925,654、snapshot_meta=719〕/S5 storage_version=**64≤68** 创建串 v1.4.5/S6 替身触发 30 组合 33s） |
+| **T057 回滚演练** | ①降版 1.4.5（54s）✓ ②**旧版 connect 现库成功 ×2**（两次 SELECT 失败均系我方列名笔误〔trade_calendar 实列 cal_date、stock_daily 实列 time〕，非库不兼容——「旧版可开库」判据已两次实证）③门禁 `PASS 1.4.5` ✓ ④复升 1.5.6（66s）⑤门禁 `PASS 1.5.6` ✓；数据侧抽样读数以 1.5.6 同库读数对照（见 W5c/S4） |
+| W8 拉起 | **工作树版 `scripts/start_daemon_guarded.ps1`**（Start-Process 脱离 job，总调度裁定）⇒ **daemon pid 33780、02:15:00 起、`-m quantstudio.pipeline.daemon --mode forever`** ✓；QS_DaemonForever 任务在册 Ready / LastResult 0 |
+| W9 | t1≈02:15:2x，窗口时长 **≈10 分钟**（SC-003 ≤60min ✓）；库 62.47 GB；WAL 窗末值见上行 |
+| W10 | 占用声明随上报块拆除（本节即窗口报告）；双方复核：dev 复核采集链（首轮读数）、我方已复核门禁与库状态（本文） |
+
+**升级结论**：**1.4.5 → 1.5.6 首跳成功**——门禁双面 PASS、冒烟 6/6、回滚演练四步全过（旧版可开库两次实证）、daemon 已以 forever 形态恢复。
+
+### §7.2 T057-②b 旧版 SELECT 抽样补齐——**执行受阻（如实记录，候裁）**
+
+总调度裁②照准后三次尝试，结果如下：
+
+| 尝试 | 结果 |
+|---|---|
+| ① Python312(duckdb 1.4.5 独立环境) RO 开库+SELECT | 脚本 import 失败：`%TEMP%\inspect.py` 遮蔽标准库（换目录后 import 解决） |
+| ② 干净目录重跑（312+1.4.5，RO） | **硬阻塞**：`IOException: File is already open in Python311 (PID 33780)` —— **daemon 以 RW 独占主库文件（Windows 文件锁）**，任何其他进程无论版本均无法打开（与 2026-11-03 实测「forever 全程持锁」一致） |
+| ③ （推论）主环境 pip 降版 | 不可行：daemon 运行中替换其已加载的 duckdb pyd 有文件锁风险，且为补读数打扰 daemon 供血不值当 |
+
+**当前事实**（SC-004 三要素状态）：
+- 「旧版本**可打开**现库」：✓ 已两次实证（窗口内 1.4.5 connect 成功 ×2，§7.1 T057 行）；
+- 「抽样查询返回结果」：**1.4.5 下未取得**（两次列名笔误 + 一次环境阻塞）；1.5.6 下同库读数齐备（trade_calendar=3,652 / stock_daily=9,925,654 / snapshot_meta=719）；
+- 「无格式不兼容」：✓ 两版本均能打开同一库文件。
+
+**可行补齐条件**（3 分钟）：daemon 停机窗或 forever 自然收工后，用 Python312+1.4.5 RO 开库跑修正列名（`trade_calendar.cal_date` / `stock_daily.time`）SELECT。候总调度裁定：〔甲〕接受现状态为 T057 终态（开库实证+跨版本读数对照）；〔乙〕择 daemon 自然收工窗补测（我方挂守护待收工信号或由 dev 侧窗口顺带）。
+
