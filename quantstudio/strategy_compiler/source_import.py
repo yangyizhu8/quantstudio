@@ -890,6 +890,14 @@ try:
 except NameError:
     _QSOrderRefState.percent_orig = None
 
+# PD-0018 F2：拆单深度计数——>0 = 处于内部拆单循环（order() 包装据此跳过幂等判定：
+# 逻辑下单入口已判定登记一次，逐笔再判会自我拦截，2026-11-06 平台实证）。
+_QS_SPLIT_DEPTH = 0
+# PD-0018 F3(a)：现金累计代际——本进程首次取预算时作废 pickle 恢复的跨日残留
+# qs_cash_reserved（其生命周期 = 本策略本次运行，设计文档 §二落点 3；E′ 的
+# orders_done 清空落在 PERSIST 块内，本标记补齐同语义而不动 PERSIST）。
+_QS_CASH_EPOCH_RESET = False
+
 
 def _qs_split_order(security, value, px, cash_avail=None):
     """把目标金额拆成 ≤_QS_MAX_ORDER_SHARES 股的多笔 order(amount=...)。
@@ -969,6 +977,41 @@ def _qs_noop_target(security, delta, reason):
     except Exception:
         pass
     return None
+
+
+def _qs_idempotent_admit(security, side):
+    """PD-0018 F2：逻辑下单入口幂等判定 + 登记（一次）。
+
+    键 = [str(security), str(side)]（逻辑单级，与护栏幂等段只读判定同键同构）；
+    已存在 ⇒ QS_NOOP_ORDER 告警 + False；不存在 ⇒ 登记 + True。登记只发生在
+    逻辑入口（拆单循环内不再逐笔判定/登记 ⇒ 拆单 k 笔不自撞；order() 直调
+    路径由本函数补上幂等——2026-11-06 前该路径完全无幂等保护的既有盲区闭合）。
+    fail-open：状态不可得/异常 ⇒ 放行不吞单；异常告警带文本（Q042：禁空吞）。"""
+    try:
+        _key = [str(security), str(side)]
+        _st = getattr(g, 'state', None)
+        if not isinstance(_st, dict):
+            return True
+        _done = _st.get('orders_done', [])
+        if not isinstance(_done, list):
+            _done = []
+        if _key in _done:
+            try:
+                log.warning('QS_NOOP_ORDER code=%s side=%s reason=duplicate_idempotent'
+                            % (security, side))
+            except Exception:
+                pass
+            return False
+        _done.append(_key)
+        _st['orders_done'] = _done
+        return True
+    except Exception as _e:
+        try:
+            log.warning('QS_IDEMPOTENT_ADMIT_ERROR code=%s side=%s err=%s'
+                        % (security, side, _e))
+        except Exception:
+            pass
+        return True
 
 
 # cash_avail 一次性告警状态（D4-S7 M2 fail-open：取数不可得只告警一次，钳制不生效）
@@ -1112,6 +1155,170 @@ def _qs_cash_avail():
     return None
 
 
+def _qs_cash_budget(security):
+    """PD-0018 F3(a)：拆单可用预算（跨标的累计扣减，替代裸 _qs_cash_avail）。
+
+    平台无按股东账号取可用资金的接口（§9.2 实证：沪A A222087012 / 深A 0028389333
+    分账、资金不可互用），context.portfolio.cash 为全账户合并口径 ⇒ 退化为保守
+    预算：budget = _qs_cash_avail()（合并口径实时可用，已不含 T+1 卖出所得）
+    − g.state['qs_cash_reserved']（本次运行已承诺额，跨标的累计）。绝不静默
+    使用全账户口径——每次取数打 QS_CASH_BUDGET basis 日志明示口径与市场位。"""
+    global _QS_CASH_EPOCH_RESET
+    _mkt = 'SZ'
+    try:
+        _b = str(security).strip().upper().split('.', 1)[0]
+        _mkt = 'SH' if _b[:1] in ('5', '6', '9') else 'SZ'
+    except Exception:
+        pass
+    if not _QS_CASH_EPOCH_RESET:
+        _QS_CASH_EPOCH_RESET = True
+        try:
+            _st0 = getattr(g, 'state', None)
+            if isinstance(_st0, dict):
+                _st0['qs_cash_reserved'] = 0.0
+                try:
+                    log.info('QS_CASH_BUDGET basis=epoch_reset market=%s'
+                             '（本进程首次取预算：作废跨日残留 qs_cash_reserved）' % _mkt)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    _cash = _qs_cash_avail()
+    _res = 0.0
+    try:
+        _st = getattr(g, 'state', None)
+        if isinstance(_st, dict):
+            _res = float(_st.get('qs_cash_reserved', 0.0) or 0.0)
+    except Exception as _e:
+        _res = 0.0
+        try:
+            log.warning('QS_CASH_BUDGET market=%s reserved_read_error=%s' % (_mkt, _e))
+        except Exception:
+            pass
+    if _cash is None:
+        try:
+            log.info('QS_CASH_BUDGET basis=unavailable market=%s reserved=%.1f'
+                     '（现金取数不可得，钳制不生效）' % (_mkt, _res))
+        except Exception:
+            pass
+        return None
+    try:
+        log.info('QS_CASH_BUDGET basis=market_pool_conservative market=%s cash_avail=%.1f'
+                 ' reserved=%.1f budget=%.1f（合并口径现金−跨标的已承诺；无按股东账号接口）'
+                 % (_mkt, _cash, _res, _cash - _res))
+    except Exception:
+        pass
+    return _cash - _res
+
+
+def _qs_check_order_state(order_id):
+    """PD-0018 F3(b)：单笔受理核验（三态）。返回 (state, px)，绝不抛异常。
+
+    平台依据（Context7 /kay-ou/ptradeapi）：get_order(order_id) → Order
+    （order_id/filled/status）；get_all_orders 不能查待报/未报 ⇒「已报」不可由
+    平台直接证明 ⇒ 三态保守判定：
+      'final_ok'      终态非废单（str(status) ∈ 5/6/9——F6 归一：int/str 版本兼容）
+      'final_reject'  终态废单（str(status) == '8'）
+      'pending'       平台可见但未终态（已报未终态 / status 不可读）
+      'missing'       平台未出现（None/异常/空——未受理或未暴露待报态，保守告警）"""
+    try:
+        _od = get_order(order_id)
+        if _od is None:
+            return ('missing', None)
+        _ob = _od
+        if isinstance(_od, (list, tuple)):
+            _ob = _od[0] if len(_od) > 0 else None
+        if _ob is None:
+            return ('missing', None)
+        _stt = ''
+        try:
+            if isinstance(_ob, dict):
+                _stt = str(_ob.get('status', ''))
+            else:
+                _stt = str(getattr(_ob, 'status', ''))
+        except Exception:
+            _stt = ''
+        _px = None
+        try:
+            _raw = _ob.get('price') if isinstance(_ob, dict) else getattr(_ob, 'price', None)
+            if _raw is not None and float(_raw) > 0:
+                _px = float(_raw)
+        except Exception:
+            _px = None
+        if _stt in ('5', '6', '8', '9'):
+            return ('final_reject' if _stt == '8' else 'final_ok', _px)
+        return ('pending', _px)
+    except Exception as _e:
+        try:
+            log.warning('QS_ACCEPT_CHECK_ERROR order=%s err=%s' % (order_id, _e))
+        except Exception:
+            pass
+        return ('missing', None)
+
+
+def _qs_reserve_cash(security, shares, px):
+    """PD-0018 F3(a)：子委托提交后按承诺额累加 qs_cash_reserved（价×数量）。
+
+    px = 受理核验读到的委托/成交价，读不到时由调用方传拆单换算价 _px_exec 兜底。
+    只记账不改下单序列；异常告警带文本（Q042），绝不影响下单主流程。"""
+    try:
+        _amt = float(shares or 0) * float(px or 0)
+        if _amt <= 0:
+            return
+        _st = getattr(g, 'state', None)
+        if isinstance(_st, dict):
+            _st['qs_cash_reserved'] = float(_st.get('qs_cash_reserved', 0.0) or 0.0) + _amt
+    except Exception as _e:
+        try:
+            log.warning('QS_CASH_RESERVE_ERROR code=%s err=%s' % (security, _e))
+        except Exception:
+            pass
+
+
+def _qs_report_acceptance(api, security, order_ids):
+    """PD-0018 F3(b)：一次逻辑下单的受理核验收尾（部分失败必须可见——新增检测型）。
+
+    三态分列：已受理 n / 拒单 m / 待核验 k（含平台未出现）；存在拒单或待核验 ⇒
+    log.warning 分列，全终态非废单 ⇒ log.info；平台未出现逐笔 warning。存在
+    非终态或未出现时绝不打印「提交状态=成功」（2026-11-06 静默少建 ≈649 万、
+    框架却报成功——Q051「静默兜底谎报」教训：查不到禁兜底成成功）。只读核验。"""
+    if not order_ids:
+        return
+    _ok = []
+    _rej = []
+    _pend = []
+    _miss = []
+    for _oid in order_ids:
+        _st, _ = _qs_check_order_state(_oid)
+        if _st == 'final_ok':
+            _ok.append(_oid)
+        elif _st == 'final_reject':
+            _rej.append(_oid)
+        else:
+            _pend.append(_oid)
+            if _st == 'missing':
+                _miss.append(_oid)
+    for _oid in _miss:
+        try:
+            log.warning('QS_ORDER_MISSING api=%s code=%s order=%s'
+                        '（平台未出现：未受理或未暴露待报态——保守计失败，禁止兜底成成功）'
+                        % (api, security, _oid))
+        except Exception:
+            pass
+    try:
+        if _rej or _pend:
+            log.warning('QS_ORDER_ACCEPT api=%s code=%s total=%d accepted=%d rejected=%d'
+                        ' pending=%d（部分失败：拒单=%s 待核验=%s）'
+                        % (api, security, len(order_ids), len(_ok), len(_rej), len(_pend),
+                           ','.join(str(_o) for _o in _rej),
+                           ','.join(str(_o) for _o in _pend)))
+        else:
+            log.info('QS_ORDER_ACCEPT api=%s code=%s total=%d accepted=%d rejected=0'
+                     ' pending=0（全部已受理终态）' % (api, security, len(order_ids), len(_ok)))
+    except Exception:
+        pass
+
+
 def order_target_value(security, value, *args, **kwargs):
     if value is None:
         return _QSOrderRefState.target_orig(security, value, *args, **kwargs)
@@ -1152,7 +1359,11 @@ def order_target_value(security, value, *args, **kwargs):
     # D4-S7 #5（2026-08-27 ZCode 定谳）：平台可透支 vs 本地现金硬约束 → 模板侧可负担钳制。
     # 系数 1.0（M1：与本地 D4-S6 buffer=1.0 同构，budget=min(cash_avail, value) 无折扣）；
     # fail-open（M2）：cash_avail 取数不可得 → None → 钳制不生效（平台现状全额下单）+ 一次性告警。
-    _cash = _qs_cash_avail()
+    # PD-0018 F3(a)：预算改取 _qs_cash_budget（跨标的累计扣减 + basis 日志明示口径）。
+    # PD-0018 F2：幂等判定上移逻辑入口一次（护栏幂等段已只读化；拆单逐笔不再判定）。
+    if not _qs_idempotent_admit(security, 'auto'):
+        return _qs_noop_target(security, _delta, 'duplicate_idempotent')
+    _cash = _qs_cash_budget(security)
     orders, _tot = _qs_split_order(security, _delta, _px_exec, cash_avail=_cash)
     if not orders:
         try:
@@ -1162,18 +1373,57 @@ def order_target_value(security, value, *args, **kwargs):
         except Exception:
             pass
         return _qs_noop_target(security, _delta, 'delta_below_one_lot')
+    # PD-0018 F1：子委托统一「独立变量赋值 + 判空收集」——被拦/失败分支不再引用
+    # 未赋值变量（11-06 加仓 8/8 UnboundLocalError 全灭修复），失败只记录不 append。
+    # PD-0018 F2：逐笔走 order_wrapped（class 属性承载：两层属性调用不被部署护栏
+    # 包裹 ⇒ 拆单逐笔不过守卫不自撞；平台白名单识别 class 模式，2026-08-22 实证）；
+    # 深度计数标记内部拆单（order() 包装据此跳过幂等）。
     _ids = []
-    for _code, _amt2 in orders:
-        _id2 = order(_code, _amt2)
-        _ids.append(_id2)
-        _qs_register_split_order(_code, _id2)
+    global _QS_SPLIT_DEPTH
+    _QS_SPLIT_DEPTH += 1
+    try:
+        for _code, _amt2 in orders:
+            _id2 = _QSOrderRefState.order_wrapped(_code, _amt2)
+            if _id2 is None:
+                try:
+                    log.warning('QS_SPLIT_MISS api=order_target_value code=%s shares=%s'
+                                ' reason=order_returned_none' % (_code, _amt2))
+                except Exception:
+                    pass
+                continue
+            _ids.append(_id2)
+            _qs_register_split_order(_code, _id2)
+    finally:
+        _QS_SPLIT_DEPTH -= 1
+    # PD-0018 F3(b)：受理核验收尾（三态分列，部分失败可见）
+    _qs_report_acceptance('order_target_value', security, _ids)
     return _ids[-1] if _ids else None
 
 
 def order(security, amount, *args, **kwargs):
+    # PD-0018 F2：order() 路径补幂等（既有盲区闭合——此前该路径完全不调守卫，
+    # 同日同标的重复下单不被拦）。内部拆单调用（_QS_SPLIT_DEPTH>0）时逻辑层
+    # 已判定登记 ⇒ 跳过，避免拆单自撞。
+    global _QS_SPLIT_DEPTH
+    if _QS_SPLIT_DEPTH <= 0:
+        if not _qs_idempotent_admit(security, 'auto'):
+            try:
+                log.warning('QS_NOOP_ORDER api=order code=%s reason=duplicate_idempotent'
+                            % security)
+            except Exception:
+                pass
+            return None
+    _ids_o = []
     if amount is None or amount <= 0 or amount <= _QS_MAX_ORDER_SHARES:
         _id0 = _QSOrderRefState.order_orig(security, amount, *args, **kwargs)
         _qs_register_split_order(security, _id0)
+        if _id0 is not None:
+            _ids_o.append(_id0)
+            _ost0, _opx0 = _qs_check_order_state(_id0)
+            _qs_reserve_cash(security, amount,
+                             _opx0 if _opx0 is not None else _qs_px_exec(security))
+        if _QS_SPLIT_DEPTH <= 0:
+            _qs_report_acceptance('order', security, _ids_o)
         return _id0
     # 直接 order() 超限：同样拆（amount 已是股数，无需 px）；末段整手对齐。
     k = int((amount + _QS_MAX_ORDER_SHARES - 1) // _QS_MAX_ORDER_SHARES)
@@ -1181,6 +1431,13 @@ def order(security, amount, *args, **kwargs):
     if per <= 0:
         _id1 = _QSOrderRefState.order_orig(security, amount, *args, **kwargs)
         _qs_register_split_order(security, _id1)
+        if _id1 is not None:
+            _ids_o.append(_id1)
+            _ost1, _opx1 = _qs_check_order_state(_id1)
+            _qs_reserve_cash(security, amount,
+                             _opx1 if _opx1 is not None else _qs_px_exec(security))
+        if _QS_SPLIT_DEPTH <= 0:
+            _qs_report_acceptance('order', security, _ids_o)
         return _id1
     _id = None
     _placed = 0
@@ -1191,25 +1448,63 @@ def order(security, amount, *args, **kwargs):
             break
         _id = _QSOrderRefState.order_orig(security, _seg, *args, **kwargs)
         _qs_register_split_order(security, _id)
+        if _id is not None:
+            _ids_o.append(_id)
+            _ost2, _opx2 = _qs_check_order_state(_id)
+            _qs_reserve_cash(security, _seg,
+                             _opx2 if _opx2 is not None else _qs_px_exec(security))
         _placed += _seg
+    if _QS_SPLIT_DEPTH <= 0:
+        _qs_report_acceptance('order', security, _ids_o)
     return _id if _id is not None else _QSOrderRefState.order_orig(security, amount, *args, **kwargs)
 
 
+# PD-0018 F2：拆单循环内部下单入口（class 属性承载——两层属性调用不被部署护栏
+# 包裹：拆单逐笔不再过守卫【停牌/涨跌停/参考价由策略调用点的护栏在拆单入口前
+# 判一次，不削弱，PD-0016 四段不动】；平台 LOCAL-API-WHITELIST 识别 class 模式，
+# 2026-08-22 平台实证，与上方 order_orig 绑定同先例）。
+_QSOrderRefState.order_wrapped = order
+
+
 def order_value(security, value, *args, **kwargs):
-    """order_value 拆单包装：金额语义 → ② 层换算价（D4-S6/D4-S7 #8 修复，与 order_target_value 同链路）。"""
+    """order_value 拆单包装：金额语义 → ② 层换算价（D4-S6/D4-S7 #8 修复，与 order_target_value 同链路）。
+
+    PD-0018 F2：幂等判定上移逻辑入口一次（判定失败不进入拆单）；
+    PD-0018 F3：预算改 _qs_cash_budget（跨标的累计）＋受理核验收尾（部分失败可见）。"""
+    if not _qs_idempotent_admit(security, 'auto'):
+        try:
+            log.warning('QS_NOOP_ORDER api=order_value code=%s reason=duplicate_idempotent'
+                        % security)
+        except Exception:
+            pass
+        return None
     _px_exec = _qs_px_exec(security)     # 当日撮合价（D4-S7 #8：不再①优先）
     if _px_exec <= 0:
         return _QSOrderRefState.value_orig(security, value, *args, **kwargs)
     # D4-S7 #5：现金钳制（与 order_target_value 同链，M1 系数 1.0 / M2 fail-open）
-    _cash = _qs_cash_avail()
+    _cash = _qs_cash_budget(security)
     orders, _tot = _qs_split_order(security, value, _px_exec, cash_avail=_cash)
     if not orders:
         return _QSOrderRefState.value_orig(security, value, *args, **kwargs)
+    # PD-0018 F1/F2/F3：判空收集 + order_wrapped（不过护栏不自撞）+ 深度计数 +
+    # 现金累计（与 order_target_value 拆单循环同构）。
     _ids = []
-    for _code, _amt in orders:
-        _idv = order(_code, _amt)
-        _ids.append(_idv)
-        _qs_register_split_order(_code, _idv)
+    global _QS_SPLIT_DEPTH
+    _QS_SPLIT_DEPTH += 1
+    try:
+        for _code, _amt in orders:
+            _idv = _QSOrderRefState.order_wrapped(_code, _amt)
+            if _idv is None:
+                try:
+                    log.warning('QS_SPLIT_MISS api=order_value code=%s shares=%s'
+                                ' reason=order_returned_none' % (_code, _amt))
+                except Exception:
+                    pass
+                continue
+            _ids.append(_idv)
+    finally:
+        _QS_SPLIT_DEPTH -= 1
+    _qs_report_acceptance('order_value', security, _ids)
     return _ids[-1] if _ids else None
 
 

@@ -86,6 +86,11 @@ GUARD_SNAPSHOT_BLOCK = '''\
 '''
 
 #: 订单幂等护栏（state 内当日记单标记，防 6 秒同步重复下单，F8；guards.order_idempotency）
+#:
+#: PD-0018 F2：本段改为**只读判定、不再登记**——原「调用即登记」在拆单循环内
+#: 逐笔调守卫时，第 1 笔登记后第 2 笔即被自己拦截（2026-11-06 平台实证：513500
+#: 拆 4 笔、循环第 2 笔即被拦）。登记统一由订单 shim 的 `_qs_idempotent_admit()`
+#: 在逻辑下单入口一次完成（键同构：[str(security), str(side)]）；本段仅消费台账。
 GUARD_IDEMPOTENCY_BLOCK = '''\
     try:
         _book = getattr(g, 'state', None)
@@ -95,8 +100,6 @@ GUARD_IDEMPOTENCY_BLOCK = '''\
             if _key in _done:
                 log.warning('护栏拦截: %s %s 当日重复下单，幂等拦截' % (security, side))
                 return False
-            _done.append(_key)
-            _book['orders_done'] = _done
     except Exception:
         pass
 '''
