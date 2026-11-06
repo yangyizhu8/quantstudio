@@ -641,6 +641,179 @@ def _qs_norm_history_fields(fields):
     return [alias.get(f, f) for f in fields]
 
 
+# ---- QFQ 因子快照层（qfq factor snapshot，2026-11-07）---------------------------
+# 设计：docs/qmt-adjust-basis-align-design-20261106.md §二（甲案：QMT 侧向本地
+# 对齐）；V0 探测：docs/evidence/qmt-qfq-snapshot-probe-20261106.md（快照源 =
+# stock_daily 的 *_front_ratio 物化列；qfq_aux.db 不在取数路径，弃用）。
+# 动机：QMT dividend_type='front' 的除权事件集/累积因子与本地不同源（C2 价格
+# 层分叉；V0-4 同段因子差 0.45% = 实测远端偏差）——改为取不复权原始价（'none'）
+# 后按本地比率跳变点换算 P_adj(t) = P_raw(t) * F(t) / F(base)（F 为快照中 <= t
+# 的最后跳变值），数学上必然复现本地 front 值；无跳变记录的 code 比率恒 1.0
+# （值不变，零扰动）。
+# 三态仿 D-30 instrument snapshot（约定优于配置：启用 = 文件存在且 enabled:
+# true；删除文件即禁用；刷新 = 重跑导出脚本 scripts/export_qfq_factor_snapshot.py
+# + 重跑回测——三态缓存下运行中变更文件不生效）。
+# 【实盘风险】同 D-30：wrapper 无语境判别能力——文件存在即任何语境消费（含
+# 同机 QMT 实盘运行）：实盘运行机不部署快照文件（删除即禁用）。
+
+_QS_QMT_QFQ_SNAP_PATH = r'D:\\miniQMT策略实盘\\QuantStudio\\output\\qmt_snapshot\\qfq_factor_snapshot.json'
+
+# 三态缓存载体：None=未加载；否则 dict(state/reason/base/base8/generated_at/
+# records/n)——loaded/absent/broken 三态均缓存，运行中新建/变更文件不生效（须
+# 重跑回测）。模块级理由同 _QS_QMT_SNAP_STATE（局部变量跨调用丢失；每产物文件
+# 独立模块命名空间，多策略同进程加载不串味）。
+_QS_QMT_QFQ_STATE = None
+
+
+def _qs_qfq_snap_load():
+    """QFQ 因子快照惰性单次加载 + 三态缓存（loaded/absent/broken）。
+
+    判序：文件不存在 -> absent（回退 dividend_type='front'，行为与今日一致）；
+    读失败/JSON 解析失败/顶层非 dict/records 非 dict/enabled 非 true/base 非
+    YYYYMMDD 量级/跳变对 [date8, ratio] 不可数值化 -> broken（带原因，同样回退
+    front）；否则 loaded（跳变对逐对转 (int, float) 并升序，缓存 base/base8/
+    generated_at/records）。加载期任何异常一律坍缩为 broken/absent 不抛出
+    （消费点回落原 front 路径）。态首印审计行恰一次（态缓存后不再打印；
+    absent/broken 必打 = fail-loud，QD-2026-0022 纪律——静默回退会让下一轮对照
+    误判「差异已消除」）：
+      QS_QMT_QFQ_SNAP loaded n=<标的数> base=<YYYYMMDD> gen=<generated_at>
+      QS_QMT_QFQ_SNAP absent
+      QS_QMT_QFQ_SNAP broken <原因>
+    """
+    global _QS_QMT_QFQ_STATE
+    if _QS_QMT_QFQ_STATE is not None:
+        return _QS_QMT_QFQ_STATE
+    st = {'state': 'absent', 'reason': 'file not found', 'base': '',
+          'base8': 0, 'generated_at': '', 'records': None, 'n': 0}
+    try:
+        exists = os.path.exists(_QS_QMT_QFQ_SNAP_PATH)
+    except Exception:
+        exists = False
+    if exists:
+        st['state'] = 'broken'
+        st['reason'] = 'read fail'
+        raw = None
+        try:
+            with open(_QS_QMT_QFQ_SNAP_PATH, 'rb') as _f:
+                raw = _f.read()
+        except Exception:
+            raw = None
+        if raw is not None:
+            doc = None
+            try:
+                doc = json.loads(raw.decode('utf-8'))
+            except Exception:
+                doc = None
+                st['reason'] = 'json parse fail'
+            if isinstance(doc, dict):
+                # 判序对齐 D-30 _qs_snapshot_load（enabled 先于 records）
+                if doc.get('enabled') is not True:
+                    st['reason'] = 'enabled is not true'
+                elif not isinstance(doc.get('records'), dict):
+                    st['reason'] = 'records not dict'
+                else:
+                    base8 = None
+                    try:
+                        base8 = int(str(doc.get('base')).strip())
+                    except Exception:
+                        base8 = None
+                    if base8 is None or base8 < 10000101 or base8 > 99991231:
+                        st['reason'] = 'base invalid: %r' % (doc.get('base'),)
+                    else:
+                        norm = {}
+                        bad = ''
+                        for _k, _pairs in doc.get('records').items():
+                            npairs = []
+                            try:
+                                for _p in _pairs:
+                                    npairs.append((int(_p[0]), float(_p[1])))
+                            except Exception:
+                                bad = 'records pair invalid: %s' % (_k,)
+                                break
+                            npairs.sort()
+                            norm[str(_k)] = npairs
+                        if bad:
+                            st['reason'] = bad
+                        else:
+                            st['state'] = 'loaded'
+                            st['base'] = str(doc.get('base'))
+                            st['base8'] = base8
+                            st['generated_at'] = str(doc.get('generated_at') or '')
+                            st['records'] = norm
+                            st['n'] = len(norm)
+            elif doc is not None:
+                st['reason'] = 'top level not dict'
+    _QS_QMT_QFQ_STATE = st
+    if st['state'] == 'loaded':
+        print('QS_QMT_QFQ_SNAP loaded n=%d base=%s gen=%s'
+              % (st['n'], st['base'], st['generated_at']))
+    elif st['state'] == 'absent':
+        print('QS_QMT_QFQ_SNAP absent')
+    else:
+        print('QS_QMT_QFQ_SNAP broken %s' % (st['reason'],))
+    return st
+
+
+def _qs_qfq_factor(pairs, d8):
+    """比率插值：升序 pairs [(date8, ratio), ...] 中 <= d8 的最后跳变值（无则 1.0）。"""
+    f = 1.0
+    for d, r in pairs:
+        if d <= d8:
+            f = r
+        else:
+            break
+    return f
+
+
+def _qs_qfq_convert_df(code, df, st):
+    """QFQ 快照换算（仅 loaded 态调用）：open/high/low/close/preClose 五列乘
+    F(t)/F_base（t = 行 index 日期 8 位数字提取，与 E1 防御段同款；F/F_base
+    见 _qs_qfq_factor）；volume 不换算（复权不涉量，QMT 侧已折股）。code 无
+    快照记录、或整窗比率与 F_base 全同 -> 原样返回（值逐位不变）。columns
+    取值显式 try/set（禁对 columns 走 or 真值兜底——pandas Index 布尔求值抛
+    ValueError 被外层 except 吞掉，R325 教训）。任何异常 fail-loud 打印
+    conv_fail 后原样返回（不部分换算、不抛出）。
+    """
+    try:
+        try:
+            cols = set(df.columns)
+        except Exception:
+            cols = set()
+        price_cols = [c for c in ('open', 'high', 'low', 'close', 'preClose')
+                      if c in cols]
+        if not price_cols:
+            return df
+        recs = st.get('records') or {}
+        key = str(code)
+        if key not in recs and '.' in key:
+            key = key.split('.')[0]  # '600971.SH' -> '600971'（快照键 6 位码）
+        pairs = recs.get(key)
+        if not pairs:
+            return df
+        fbase = _qs_qfq_factor(pairs, st.get('base8') or 0)
+        if not fbase:
+            return df  # 比率 0 防御（正常数据不可达）：拒绝除零
+        fac = []
+        for _iv in df.index:
+            _ds = ''.join(_ch for _ch in str(_iv) if _ch.isdigit())[:8]
+            try:
+                _di = int(_ds)
+            except Exception:
+                fac.append(1.0)
+                continue
+            fac.append(_qs_qfq_factor(pairs, _di))
+        if all(_f == fbase for _f in fac):
+            return df  # 整窗比率与 F_base 全同：恒等乘 1.0，跳过（保 dtype）
+        _conv = [_f / fbase for _f in fac]
+        df = df.copy()
+        for _c in price_cols:
+            df[_c] = df[_c] * _conv
+        return df
+    except Exception as _exc:
+        print('QS_QMT_QFQ_SNAP conv_fail code=%s: %s' % (code, _exc))
+        return df
+
+
 def _qs_fetch_bars(C, codes, fields, fq, count, period):
     """D-1 修复（2026-10-10）：count 形态实测=全局最新 N 根（回测未来函数，
     探针证据 docs/evidence/qmt-m5-batch2-probe-20261010.md M5-2/D-11 探针）。
@@ -650,6 +823,13 @@ def _qs_fetch_bars(C, codes, fields, fq, count, period):
     不凑数；E1 端点含当日与否未定谳 → 末行日期 >= bar 当日则剔（防御性双保险）。
     """
     div = _QS_QMT_FQ_MAP.get(fq, 'front')  # 未知 fq 按本地默认 fq='pre' → front
+    # QFQ 快照（2026-11-07，方案 docs/qmt-adjust-basis-align-design-20261106.md
+    # §2.3）：loaded -> 取不复权原始价自行换算（dividend_type='none'）；
+    # absent/broken -> 维持原 div（行为与今日一致；状态行 fail-loud 见
+    # _qs_qfq_snap_load）。
+    _qfq_st = _qs_qfq_snap_load()
+    if _qfq_st.get('state') == 'loaded':
+        div = 'none'
     want = max(int(count or 1), 1)
     try:
         import datetime as _qs_dtf
@@ -696,6 +876,10 @@ def _qs_fetch_bars(C, codes, fields, fq, count, period):
                     pass
             if len(df) > want:
                 df = df.tail(want)  # 只截多不凑少（审计要点①）
+            if _qfq_st.get('state') == 'loaded':
+                # QFQ 快照换算：作用于最终将返回的 df（volume 折股与 E1 末行
+                # 剔除之后）；无记录 code 比率恒 1.0 原样返回（零扰动）。
+                df = _qs_qfq_convert_df(code, df, _qfq_st)
             out[code] = df
         except Exception:
             out[code] = df
