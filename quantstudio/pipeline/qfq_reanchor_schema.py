@@ -610,6 +610,20 @@ DDL_SQLITE: Dict[str, str] = {
             code TEXT, time INTEGER, adj_factor REAL,
             PRIMARY KEY (code, time)
         )""",
+    # ---- 方案③ G12 增量水位游标（2026-11-06）----
+    # 用途：记录「本轮已消费到的位置」（如 stock_dividend.update_time 上界），
+    # 使下一轮只取**新增**部分，而不是重放全量窗口（G11）。
+    # 落位理由：**aux SQLite 独立新表**（不在 schema 指纹/契约覆盖集内 ⇒ 加表
+    #   **零契约变更**、不触发铁律 24 六件套）；幂等 CREATE IF NOT EXISTS ⇒
+    #   部署时自动创建，无迁移 runner、无双版本放行、无安全闸放行集。
+    # 命名避让：aux 与 DuckDB 均有同名 qfq_observation_cursor ⇒ 本表必须异名。
+    "qfq_obs_incremental_cursor": """
+        CREATE TABLE IF NOT EXISTS qfq_obs_incremental_cursor (
+            detector_name  TEXT PRIMARY KEY,
+            consumed_as_of TEXT,
+            last_run_id    TEXT,
+            updated_at     TEXT
+        )""",
 }
 
 

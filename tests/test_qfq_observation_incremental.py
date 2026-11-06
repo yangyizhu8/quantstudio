@@ -212,3 +212,75 @@ def test_inc_counters_machine_readable(tmp_path, monkeypatch):
     c = store._inc_counters
     assert c["chunks"] >= 1 and c["fetch_rows"] >= 50 and c["touched"] == 50
     assert c["inserted"] == 0 and c["alerts"] == 0
+
+
+# ------------------------------------------------------------------ G12 增量游标
+def test_g12_cursor_table_created_and_idempotent(tmp_path, monkeypatch):
+    """G12：aux 新表 `qfq_obs_incremental_cursor` 建表幂等、列集固定。"""
+    from quantstudio.pipeline.qfq_reanchor_schema import init_sqlite_schema
+    db = tmp_path / "qfq_aux.db"
+    con = sqlite3.connect(str(db))
+    init_sqlite_schema(con)
+    init_sqlite_schema(con)          # 幂等：再跑一次不报错
+    cols = [r[1] for r in con.execute(
+        "PRAGMA table_info(qfq_obs_incremental_cursor)").fetchall()]
+    assert cols == ["detector_name", "consumed_as_of", "last_run_id", "updated_at"]
+    n = con.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
+        "AND name='qfq_obs_incremental_cursor'").fetchone()[0]
+    assert n == 1
+    con.close()
+
+
+def test_g12_cursor_get_set_and_isolation(tmp_path, monkeypatch):
+    """G12：无记录⇒None；写后读回；跨 detector 隔离。"""
+    from quantstudio.pipeline.qfq_reanchor_schema import init_sqlite_schema
+    db = tmp_path / "qfq_aux.db"
+    con = sqlite3.connect(str(db))
+    init_sqlite_schema(con)
+    S = ObservationStore
+    assert S._inc_cursor_get(con, "stock_dividend") is None
+    S._inc_cursor_set(con, "stock_dividend", "2026-11-05 06:19:00", "r1")
+    con.commit()
+    assert S._inc_cursor_get(con, "stock_dividend") == "2026-11-05 06:19:00"
+    assert S._inc_cursor_get(con, "etf_fund_adj") is None, "跨 detector 必须隔离"
+    con.close()
+
+
+def test_g12_cursor_only_moves_forward(tmp_path, monkeypatch):
+    """G12：水位**只前进不后退**（重复消费防线，G11 的核心不变式）。"""
+    from quantstudio.pipeline.qfq_reanchor_schema import init_sqlite_schema
+    db = tmp_path / "qfq_aux.db"
+    con = sqlite3.connect(str(db))
+    init_sqlite_schema(con)
+    S = ObservationStore
+    S._inc_cursor_set(con, "stock_dividend", "2026-11-05 06:19:00", "r1")
+    con.commit()
+    S._inc_cursor_set(con, "stock_dividend", "2026-11-01 00:00:00", "r2")  # 回退尝试
+    con.commit()
+    assert S._inc_cursor_get(con, "stock_dividend") == "2026-11-05 06:19:00", \
+        "水位不得后退（否则会重复消费已消费区间）"
+    S._inc_cursor_set(con, "stock_dividend", "2026-11-06 06:19:00", "r3")  # 前进
+    con.commit()
+    assert S._inc_cursor_get(con, "stock_dividend") == "2026-11-06 06:19:00"
+    con.close()
+
+
+def test_g12_new_table_not_in_contract_fingerprints():
+    """G12：新增表**不在** schema 指纹/契约/迁移三个模块内 ⇒ 零契约变更（不触发铁律 24）。
+
+    口径说明：只扫「契约面」三模块（qfq_schema_contracts / qfq_schema_status /
+    qfq_schema_migration）——它们是 schema 指纹与契约变更流程的判定源；
+    **不扫** qfq_observation.py / qfq_reanchor_schema.py（实现侧提到表名是正常的）。
+    """
+    from pathlib import Path
+    import quantstudio.pipeline as pkg
+    root = Path(pkg.__file__).resolve().parent
+    contract_mods = ["qfq_schema_contracts.py", "qfq_schema_status.py",
+                     "qfq_schema_migration.py"]
+    for name in contract_mods:
+        p = root / name
+        assert p.exists(), f"契约面模块缺失: {name}"
+        src = p.read_text(encoding="utf-8", errors="ignore")
+        assert "qfq_obs_incremental_cursor" not in src, (
+            f"新表出现在契约面模块 {name} ⇒ 加表将触发契约变更流程（铁律 24）")

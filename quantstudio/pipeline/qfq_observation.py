@@ -320,6 +320,41 @@ class ObservationStore:
             done += len(part)
         return done
 
+    # ------------------------------------------------------------------
+    # G12（2026-11-06）：增量水位游标（aux SQLite 独立表 ⇒ 零契约变更）
+    #   语义：记录「本轮已消费到的位置」，供下一轮只取**新增**部分。
+    #   不变式：**只前进不后退**（consumed_as_of 格式 'YYYY-MM-DD HH:MM:SS'
+    #   ⇒ 字典序 = 时间序，字符串比较即可）。
+    #   首轮（无记录）⇒ 返回 None ⇒ 调用方走全量基线。
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _inc_cursor_get(conn, detector_name: str) -> Optional[str]:
+        """读增量水位；无记录返回 None（首轮走全量）。"""
+        try:
+            row = conn.execute(
+                "SELECT consumed_as_of FROM qfq_obs_incremental_cursor "
+                "WHERE detector_name=?", [detector_name]).fetchone()
+        except sqlite3.Error:
+            return None
+        if row is None or row[0] is None:
+            return None
+        return str(row[0])
+
+    @staticmethod
+    def _inc_cursor_set(conn, detector_name: str, consumed_as_of: str,
+                        run_id: str) -> None:
+        """写回增量水位（**只前进不后退**；同值覆盖以刷新 last_run_id/updated_at）。"""
+        conn.execute(
+            "INSERT INTO qfq_obs_incremental_cursor "
+            "(detector_name, consumed_as_of, last_run_id, updated_at) "
+            "VALUES (?,?,?,?) "
+            "ON CONFLICT(detector_name) DO UPDATE SET "
+            "consumed_as_of=excluded.consumed_as_of, "
+            "last_run_id=excluded.last_run_id, updated_at=excluded.updated_at "
+            "WHERE excluded.consumed_as_of > qfq_obs_incremental_cursor.consumed_as_of "
+            "OR excluded.consumed_as_of IS NULL",
+            [detector_name, consumed_as_of, run_id, _now_iso()])
+
     def _inc_record_observations(
         self,
         observations: Sequence[Tuple[str, str, int, float]],
