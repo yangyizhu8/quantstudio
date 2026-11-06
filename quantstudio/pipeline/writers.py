@@ -609,6 +609,25 @@ def _poison_threshold() -> int:
         return 3
 
 
+_WM_BASELINE_RECENT_DAYS = 60   # A′（2026-11-05）：S1 健康基准近期窗口默认 N（备选 30）
+
+
+def _wm_baseline_days() -> int:
+    """A′（2026-11-05）：S1 健康基准近期窗口 N。env QS_WM_BASELINE_DAYS——
+    正整数 = 窗口天数；显式 0 = 回退全表中位旧行为（逐位回退阀，对照/紧急回滚）；
+    缺省/空/非法/负数 ⇒ 默认 _WM_BASELINE_RECENT_DAYS（fail-safe 到新口径）。"""
+    try:
+        raw = (os.environ.get("QS_WM_BASELINE_DAYS") or "").strip()
+        if not raw:
+            return _WM_BASELINE_RECENT_DAYS
+        v = int(raw)
+        if v == 0:
+            return 0
+        return v if v > 0 else _WM_BASELINE_RECENT_DAYS
+    except Exception:
+        return _WM_BASELINE_RECENT_DAYS
+
+
 def watermark_decouple_stats() -> dict:
     """只读：S1 解耦统计（daemon run_state / S4 每日读数消费；不参与判定）。
 
@@ -1579,14 +1598,26 @@ class DuckDBWriter(BaseWriter):
         return {int(r[0]): int(r[1]) for r in rows}
 
     def _wm_health_median(self, table: str):
-        """健康基准 = 全表按日 COUNT(DISTINCT code) 的中位数（方案 §2.2 口径）。
+        """健康基准 = **最近 N 个「有数据日」**的按日 COUNT(DISTINCT code) 中位数
+        （A′ 口径·2026-11-05 修正：全表中位对码数增长型表恒偏低 ⇒ S1 恒拒——
+        见 docs/design-s1-baseline-recent-median-20261105.md）。
 
-        返回 (median, sample_days)；查询异常 ⇒ (None, 0)（fail-closed）。"""
+        N 默认 _WM_BASELINE_RECENT_DAYS(60)，env QS_WM_BASELINE_DAYS 覆盖（正整数）；
+        显式 =0 ⇒ 回退全表中位旧行为（逐位回退阀）。近期样本 <8 日 ⇒ (None,
+        sample_days) fail-closed（铁律 25 证据量下限；禁回落全表中位——回落即重现
+        本案缺陷）。返回 (median, sample_days)；查询异常 ⇒ (None, 0)（fail-closed）。"""
         try:
             import statistics
-            counts = list(self._wm_daily_code_counts(table).values())
-            if not counts:
+            daily = self._wm_daily_code_counts(table)   # {day: count}，按日升序
+            if not daily:
                 return None, 0
+            n = _wm_baseline_days()
+            counts = list(daily.values())               # 升序（SQL ORDER BY d 保证）
+            if n > 0:
+                if n < len(counts):
+                    counts = counts[-n:]                # 最近 N 个有数据日（升序尾段）
+                if len(counts) < self._WM_MIN_SAMPLE_DAYS:
+                    return None, len(counts)            # 近期样本不足 ⇒ fail-closed
             return float(statistics.median(counts)), len(counts)
         except Exception as e:
             logger.warning("[S1] 健康基准计算失败（fail-closed 按校验不过）: %s: %s",
@@ -1612,11 +1643,28 @@ class DuckDBWriter(BaseWriter):
         except Exception:
             return None
 
+    @staticmethod
+    def _wm_log_reject(reason: str, median, lo_bound, hi_bound,
+                       bad_days: list, bad_total: int, t_min, t_max) -> None:
+        """V5 可观测性（A′ 同批·2026-11-05）：拒绝路径单行日志四要素——
+        median / tolerance_band=[lo,hi] / bad_days（前 8 个 + 总数；条目与 detail
+        dict 同键形 day[:count]，便于对拍）/ window=[t_min,t_max]（_fmt_ms 可读化）。
+        只加日志不改返回结构；自身异常吞掉（观测失败不得影响判定）。"""
+        try:
+            logger.warning(
+                "[S1] 校验拒绝 reason=%s median=%.1f tolerance_band=[%.1f, %.1f] "
+                "bad_days=[%s] bad_days_total=%d window=[%s, %s]",
+                reason, median, lo_bound, hi_bound,
+                ", ".join(str(b) for b in bad_days), bad_total,
+                _fmt_ms(t_min), _fmt_ms(t_max))
+        except Exception:
+            pass
+
     def _wm_decouple_validate(self, table: str, t_min, t_max):
         """S1 own 推进的**前置硬门**：窗口内 COUNT(DISTINCT code)（按日粒度）须落在
-        健康基准（全表按日中位数）±5%；样本 <8 日 fail-closed；交易日历可得时
-        窗口内不得有缺失开市日（防「码数达标但中段整日缺失」的虚进），日历不可得
-        ⇒ 降级要求窗口首末日均有数据（reason 标 degraded）。
+        健康基准（近期 N 个有数据日按日中位，A′ 口径 2026-11-05）±5%；样本 <8 日
+        fail-closed；交易日历可得时窗口内不得有缺失开市日（防「码数达标但中段整日
+        缺失」的虚进），日历不可得 ⇒ 降级要求窗口首末日均有数据（reason 标 degraded）。
 
         返回 (ok: bool, detail: dict)；任何查询失败 ⇒ (False, reason=query_error)。
         收紧声明：按日粒度核算属方案原文「（或对应粒度）」授权范围内的 fail-closed
@@ -1634,6 +1682,10 @@ class DuckDBWriter(BaseWriter):
             lo_bound, hi_bound = median * (1 - self._WM_TOL), median * (1 + self._WM_TOL)
             bad = {d: c for d, c in daily.items() if not (lo_bound <= c <= hi_bound)}
             if bad:
+                self._wm_log_reject(
+                    "code_count_out_of_tolerance", median, lo_bound, hi_bound,
+                    ["%d:%d" % (d, c) for d, c in list(bad.items())[:8]],
+                    len(bad), t_min, t_max)
                 return False, {"reason": "code_count_out_of_tolerance", "median": median,
                                "bad_days": dict(list(bad.items())[:8])}
             expected = self._wm_expected_open_local_days(t_min, t_max)
@@ -1642,13 +1694,20 @@ class DuckDBWriter(BaseWriter):
                 tz = self._wm_tz_off_ms()
                 first = int((int(t_min) + tz) // 86400000)
                 last = int((int(t_max) + tz) // 86400000)
-                if first not in daily or last not in daily:
+                missing_b = [d for d in (first, last) if d not in daily]
+                if missing_b:
+                    self._wm_log_reject(
+                        "boundary_day_missing_degraded", median, lo_bound, hi_bound,
+                        [str(d) for d in missing_b], len(missing_b), t_min, t_max)
                     return False, {"reason": "boundary_day_missing_degraded",
                                    "median": median}
                 return True, {"reason": "ok_degraded_calendar_unavailable",
                               "median": median, "days": len(daily)}
             missing = sorted(expected - set(daily))
             if missing:
+                self._wm_log_reject(
+                    "missing_open_days", median, lo_bound, hi_bound,
+                    [str(d) for d in missing[:8]], len(missing), t_min, t_max)
                 return False, {"reason": "missing_open_days", "median": median,
                                "missing_days": missing[:8]}
             return True, {"reason": "ok", "median": median, "days": len(daily)}

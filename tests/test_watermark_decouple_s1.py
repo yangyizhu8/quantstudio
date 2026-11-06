@@ -459,3 +459,183 @@ def test_switch_off_blocked_case_unchanged(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="write-write conflict"):
         w.write(_df(ms, n_codes=3), "etf_daily", "b_off2")
     assert W.watermark_decouple_stats()["own_validation_blocked"] == 0
+
+
+# ── A′（2026-11-05）：S1 健康基准近期窗口中位 —— docs/design-s1-baseline- ──
+#    recent-median-20261105.md（V1 增长型可过 / V2 负向三样本 / V3 稳定码数
+#    逐位等价 / V6 QS_WM_BASELINE_DAYS=0 逐位回退阀）。
+
+def _date_range(start_yyyymmdd: str, n: int):
+    """start 起连续 n 个自然日（数据日不依赖日历——开市日由 trade_calendar 决定）。"""
+    from datetime import timedelta
+    d0 = datetime.strptime(start_yyyymmdd, "%Y%m%d")
+    return [(d0 + timedelta(days=i)).strftime("%Y%m%d") for i in range(n)]
+
+
+def _seed_days_sql(w, days, n_codes=100, prefix="5100", table="etf_daily"):
+    """直连批量种历史（离线回填形态，与 test_v3_poison_self_heals_after_backfill
+    同通道；A′ 用例需百日级样本，走 write 路径慢一个量级且绕开被测面）。"""
+    conn = w._conn()
+    try:
+        rows = []
+        for d in days:
+            ms = _day_ms(d)
+            rows += [["%s%02d" % (prefix, i), ms, 1.0, 1.0, 1.0, 1.0]
+                     for i in range(n_codes)]
+        conn.executemany(
+            "INSERT INTO %s (code, time, open, high, low, close) "
+            "VALUES (?, ?, ?, ?, ?, ?)" % table, rows)
+    finally:
+        conn.close()
+
+
+def _seed_minutes_sql(w, days, n_codes=50):
+    """stock_minutes 种子（PK 含 freq，列集与 _seed_days_sql 适配差异仅此）。"""
+    conn = w._conn()
+    try:
+        rows = []
+        for d in days:
+            ms = _day_ms(d)
+            rows += [["%s%02d" % ("6000", i), ms, "1m", 1.0, 1.0, 1.0, 1.0]
+                     for i in range(n_codes)]
+        conn.executemany(
+            "INSERT INTO stock_minutes (code, time, freq, open, high, low, close) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+    finally:
+        conn.close()
+
+
+def _growth_table(w):
+    """码数增长型样本（ETF 家族缺陷靶型）：70 个低码日×100 + 68 个近期高码日×200。
+    全表中位=100.0（138 日）；近期 60 日中位=200.0；近期 30 日中位=200.0。"""
+    old_days = _date_range("20260601", 70)
+    rec_days = _date_range("20260810", 68)     # 末日至 2026-10-16（含 ≥60 近期日）
+    _seed_days_sql(w, old_days, n_codes=100, prefix="5100")
+    _seed_days_sql(w, rec_days, n_codes=200, prefix="5101")
+    return old_days, rec_days
+
+
+def test_a1_growth_table_recent_baseline_passes(tmp_path, monkeypatch):
+    """A′ V1：2026 窗口（2026-09-07~10-16）近期基准下 ok=True；同数据同窗口在
+    全表旧行为（env=0）下必拒——正是生产缺陷（全表 1,060 vs 窗口 2,137）的靶型。"""
+    monkeypatch.delenv("QS_WM_BASELINE_DAYS", raising=False)
+    w = _mk_writer(tmp_path, monkeypatch)
+    old_days, rec_days = _growth_table(w)
+    _seed_calendar(w, rec_days)                # 近期日全开市（含窗口日）
+    t_lo, t_hi = _day_ms("20260907"), _day_ms("20261016")
+    ok, detail = w._wm_decouple_validate("etf_daily", t_lo, t_hi)
+    assert ok and detail["reason"] == "ok"
+    assert detail["median"] == 200.0, "近期 60 日中位（A′ 基准）"
+    # 对照：回退阀=0（全表旧行为）同窗口必拒（缺陷态复现，非估算——同库实测）
+    monkeypatch.setenv("QS_WM_BASELINE_DAYS", "0")
+    ok0, detail0 = w._wm_decouple_validate("etf_daily", t_lo, t_hi)
+    assert not ok0 and detail0["reason"] == "code_count_out_of_tolerance"
+    assert detail0["median"] == 100.0, "全表中位（旧口径）恒低于当前窗口 ⇒ 恒拒"
+
+
+def test_a2_negative_full_day_missing_blocks(tmp_path, monkeypatch):
+    """A′ V2-①：缺整日（日历可得）⇒ ok=False reason=missing_open_days
+    （码数达标也拦——近期基准放宽后负向硬门仍兜底）。"""
+    monkeypatch.delenv("QS_WM_BASELINE_DAYS", raising=False)
+    w = _mk_writer(tmp_path, monkeypatch)
+    days = _date_range("20260901", 12)         # 12 个健康日（≥8 近期样本）
+    miss = days[8]
+    _seed_days_sql(w, [d for d in days if d != miss], n_codes=100)
+    _seed_calendar(w, days)
+    ok, detail = w._wm_decouple_validate(
+        "etf_daily", _day_ms(days[0]), _day_ms(days[-1]))
+    assert not ok and detail["reason"] == "missing_open_days"
+    assert detail["missing_days"], "缺失日须列出"
+
+
+def test_a2_negative_half_code_count_blocks_with_log(tmp_path, monkeypatch, caplog):
+    """A′ V2-②：某日码数仅 50%（100→50 超容差）⇒ ok=False reason=
+    code_count_out_of_tolerance；V5 四要素日志行必须可见（median/tolerance_band/
+    bad_days/bad_days_total/window）。"""
+    monkeypatch.delenv("QS_WM_BASELINE_DAYS", raising=False)
+    w = _mk_writer(tmp_path, monkeypatch)
+    days = _date_range("20260901", 12)
+    _seed_days_sql(w, days[:-1], n_codes=100)
+    _seed_days_sql(w, days[-1:], n_codes=50)   # 窗口末日仅 50 码
+    _seed_calendar(w, days)
+    with caplog.at_level(logging.WARNING, logger="quantstudio.pipeline.writers"):
+        ok, detail = w._wm_decouple_validate(
+            "etf_daily", _day_ms(days[0]), _day_ms(days[-1]))
+    assert not ok and detail["reason"] == "code_count_out_of_tolerance"
+    assert detail["median"] == 100.0 and len(detail["bad_days"]) == 1
+    joined = "\n".join(r.getMessage() for r in caplog.records)
+    for key in ("reason=code_count_out_of_tolerance", "median=", "tolerance_band=",
+                "bad_days=", "bad_days_total=", "window="):
+        assert key in joined, "V5 可观测性四要素缺 %s" % key
+
+
+def test_a2_negative_window_end_missing_degraded_blocks(tmp_path, monkeypatch):
+    """A′ V2-③：日历不可得（降级口径）+ 窗口末端缺日 ⇒ ok=False reason=
+    boundary_day_missing_degraded（边界缺失）。"""
+    monkeypatch.delenv("QS_WM_BASELINE_DAYS", raising=False)
+    w = _mk_writer(tmp_path, monkeypatch)
+    days = _date_range("20260901", 16)         # 不种 calendar ⇒ 日历不可得
+    _seed_days_sql(w, days[:12], n_codes=100)   # 前 12 日有数据
+    ok, detail = w._wm_decouple_validate(
+        "etf_daily", _day_ms(days[0]), _day_ms(days[15]))   # 末端 4 日无数据
+    assert not ok and detail["reason"] == "boundary_day_missing_degraded"
+
+
+def test_a3_stock_minutes_stable_counts_bitwise_equivalent(tmp_path, monkeypatch):
+    """A′ V3：stock_minutes（码数稳定）——默认近期 60 日 vs 回退阀全表旧行为：
+    (ok, reason, median) 及 detail 全量逐位等价（80>60 日 ⇒ 近期窗口确实截断过）。"""
+    monkeypatch.delenv("QS_WM_BASELINE_DAYS", raising=False)
+    w = _mk_writer(tmp_path, monkeypatch)
+    days = _date_range("20260701", 80)         # 80 日稳定 50 码
+    _seed_minutes_sql(w, days, n_codes=50)
+    _seed_calendar(w, days[-3:])
+    t_lo, t_hi = _day_ms(days[-3]), _day_ms(days[-1])
+    ok_new, d_new = w._wm_decouple_validate("stock_minutes", t_lo, t_hi)
+    monkeypatch.setenv("QS_WM_BASELINE_DAYS", "0")
+    ok_old, d_old = w._wm_decouple_validate("stock_minutes", t_lo, t_hi)
+    assert ok_new and ok_old
+    assert (ok_new, d_new["reason"], d_new["median"]) == \
+           (ok_old, d_old["reason"], d_old["median"]) == (True, "ok", 50.0)
+    assert d_new == d_old, "detail 全量逐位等价（窗口截断不改变稳定码数中位）"
+
+
+def test_a6_baseline_days_env_valve_and_overrides(tmp_path, monkeypatch):
+    """A′ V6：QS_WM_BASELINE_DAYS=0 ⇒ _wm_health_median 逐位回退全表旧行为
+    （(median, sample_days)=(全表中位, 全表日数)）；60/30 覆盖各自生效（§2.1 备选）。"""
+    w = _mk_writer(tmp_path, monkeypatch)
+    old_days, rec_days = _growth_table(w)
+    total = len(old_days) + len(rec_days)      # 138
+    monkeypatch.setenv("QS_WM_BASELINE_DAYS", "0")
+    assert w._wm_health_median("etf_daily") == (100.0, total), \
+        "回退阀=0 ⇒ 全表旧行为逐位（旧函数即返回 (全表中位, len(全表日集))）"
+    monkeypatch.setenv("QS_WM_BASELINE_DAYS", "60")
+    assert w._wm_health_median("etf_daily") == (200.0, 60)
+    monkeypatch.setenv("QS_WM_BASELINE_DAYS", "30")
+    assert w._wm_health_median("etf_daily") == (200.0, 30)
+    monkeypatch.delenv("QS_WM_BASELINE_DAYS")  # 缺省 ⇒ 默认 60
+    assert w._wm_health_median("etf_daily") == (200.0, 60)
+    monkeypatch.setenv("QS_WM_BASELINE_DAYS", "abc")   # 非法 ⇒ fail-safe 默认 60
+    assert w._wm_health_median("etf_daily") == (200.0, 60)
+
+
+def test_a_prime_insufficient_recent_history_fail_closed(tmp_path, monkeypatch):
+    """A′ 补充：近期窗口样本 <8（env 覆盖 N=5 ⇒ 仅取最近 5 个有数据日）⇒ fail-closed
+    禁回落全表中位——全表 43 日本有中位（env=0 可取），回落即重现缺陷。"""
+    monkeypatch.delenv("QS_WM_BASELINE_DAYS", raising=False)
+    w = _mk_writer(tmp_path, monkeypatch)
+    old_days = _date_range("20260101", 40)     # 40 个老日
+    rec_days = _date_range("20260901", 3)      # 3 个近期日
+    _seed_days_sql(w, old_days, n_codes=100)
+    _seed_days_sql(w, rec_days, n_codes=100)
+    monkeypatch.setenv("QS_WM_BASELINE_DAYS", "0")
+    m0, s0 = w._wm_health_median("etf_daily")  # 旧行为：全表 43 日 ⇒ 有中位
+    assert m0 is not None and s0 == 43
+    monkeypatch.delenv("QS_WM_BASELINE_DAYS")  # 默认 N=60 ≥ 43 ⇒ 全量样本可用
+    assert w._wm_health_median("etf_daily") == (100.0, 43)
+    monkeypatch.setenv("QS_WM_BASELINE_DAYS", "5")   # 近期窗口 5 日 <8 ⇒ 拒
+    m1, s1 = w._wm_health_median("etf_daily")
+    assert m1 is None and s1 == 5, "近期样本 <8 ⇒ fail-closed 不回落全表"
+    ok, detail = w._wm_decouple_validate(
+        "etf_daily", _day_ms(rec_days[0]), _day_ms(rec_days[-1]))
+    assert not ok and detail["reason"] == "insufficient_history" \
+        and detail["sample_days"] == 5
