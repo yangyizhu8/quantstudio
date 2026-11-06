@@ -36,6 +36,20 @@
   - F 空/不可解析锁回收判据：mtime 年龄 > EMPTY_LOCK_MTIME_SECONDS(120s) ⇒ 经既有
     CAS+审计通道回收；未超龄一律不回收（防误删初始化中的锁）。
 
+G1-G4 E 项盲区补强（2026-11-05，docs/design-softlock-g1g4-e-blindspot-20261105.md）：
+  - G1 payload 写入 OSError 不再静默吞——WARNING（errno/类型/路径）后原样上抛，
+    由 E 兜底回收本次空锁文件（「持锁却无内容」态自源头消除，不再「继续持锁」
+    ——文件锁以锁文件为本，清空文件后持空句柄即破坏互斥契约）；
+  - G2 _recreate 建出后失败 ⇒ 清除**本次刚创建**的文件（ino 双重限定：本次路径
+    + 创建时 ino 逐值比对，他人已重建/替换 ⇒ ino 不符 ⇒ 不碰——禁误删他人锁），
+    不留 0 字节残骸；成功路径行为不变；
+  - G3 release unlink 失败不再静默——WARNING（errno/类型/路径/持有者）+ 有界
+    重试（RELEASE_UNLINK_RETRIES 次 × RELEASE_UNLINK_RETRY_INTERVAL_S，幂等
+    unlink）；耗尽仍失败只留 WARNING 不抛（release 契约不变）；
+  - G4 等待循环内补查「本进程是否已持锁」（持有态 + payload 归本进程 pid+
+    create_time 双证，判定在 _STATE_LOCK 内）⇒ 同进程并发 acquire 按浅句柄
+    语义放行（不等待、不抛错）；跨进程互斥绝不放宽。
+
 诚实边界：本模块**不覆盖** SIGKILL / 断电 / 强制重启（atexit 与信号处理器均无法执行）
 ——那正是回收判据存在的理由。
 
@@ -78,6 +92,12 @@ EMPTY_MTIME_ENV = "QS_WRITE_LOCK_EMPTY_MTIME"
 #   正常 acquire 在同一临界区内完成「O_EXCL 创建→payload 写入」（毫秒窗口），空锁
 #   持续超过该阈值只能由进程被杀/崩溃造成；未超龄一律不回收（防误删初始化中的锁）。
 EMPTY_LOCK_MTIME_SECONDS = 120
+# G3（2026-11-05 E 盲区③）：release unlink 失败的有界重试参数——首次失败后最多
+#   重试 RELEASE_UNLINK_RETRIES 次（每次间隔 RELEASE_UNLINK_RETRY_INTERVAL_S，
+#   幂等 unlink，总尝试 ≤ 1+RETRIES 次）；耗尽仍失败只留 WARNING 不抛
+#   （release 契约不变：幂等、绝不因清理失败阻断调用方）。
+RELEASE_UNLINK_RETRIES = 3
+RELEASE_UNLINK_RETRY_INTERVAL_S = 0.05
 
 # 判定结论（diagnose_holder 的 verdict 取值）
 V_FREE = "free"                 # 无锁
@@ -219,17 +239,68 @@ class WriteLock:
     def _owns(self, holder: Optional[dict]) -> bool:
         return bool(holder) and bool(self.token) and holder.get("token") == self.token
 
+    def _unlink_if_created_by(self, created_ino, context: str) -> None:
+        """G2（2026-11-05 E 盲区②）：清除「本次刚创建」的锁文件——ino 双重限定
+        （本次路径 + 创建时 ino 逐值比对）：路径当前文件已非本次建出的那份（他人
+        删除后重建/替换 ⇒ ino 不符）或 ino 不可证（None/0）⇒ 一律不碰
+        （禁误删他人锁，fail-closed；残留交由 F 超龄回收/人工处置）。"""
+        try:
+            st_now = self._path.stat()
+        except OSError:
+            return                          # 已不存在：无需清理
+        ino_now = getattr(st_now, "st_ino", None)
+        if (created_ino is None or not created_ino or ino_now is None
+                or ino_now != created_ino):
+            logger.warning(
+                "[write-lock] %s 失败后清理放弃：路径当前文件非本次创建"
+                "（ino 不符或不可证，防误删他人锁）: lock_path=%s created_ino=%s "
+                "ino_now=%s", context, self._path, created_ino, ino_now)
+            return
+        try:
+            self._path.unlink(missing_ok=True)
+            logger.warning(
+                "[write-lock] %s 失败已清除本次创建的空锁文件: lock_path=%s "
+                "holder={pid=%s, task=%s}", context, self._path, os.getpid(),
+                self.task_id)
+        except OSError as e:
+            logger.warning(
+                "[write-lock] %s 失败后清理空锁文件仍失败（残留可见，交由 F 超龄"
+                "回收/人工处置）: errno=%s type=%s lock_path=%s",
+                context, e.errno, type(e).__name__, self._path)
+
     def _recreate(self) -> bool:
-        """锁文件被外部删除后，以 O_EXCL 原子重建并写回本句柄 payload。"""
+        """锁文件被外部删除后，以 O_EXCL 原子重建并写回本句柄 payload。
+
+        G2（2026-11-05 E 盲区②）：建出后任何一步失败 ⇒ 清除**本次刚创建**的文件
+        （_unlink_if_created_by 以 ino 双重限定，禁误删他人锁）——消除「建出后
+        失败确定性留 0 字节残骸」的盲区；成功路径行为不变。"""
+        created_ino = None
         try:
             fd = os.open(str(self._path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except (FileExistsError, OSError):
             return False
-        os.close(fd)
         try:
+            try:
+                created_ino = getattr(os.fstat(fd), "st_ino", None)
+            except OSError:
+                created_ino = None
+            try:
+                os.close(fd)
+            except OSError:
+                pass
             self._write_payload()
-        except OSError:
+        except OSError as e:
+            logger.warning(
+                "[write-lock] _recreate 写 payload 失败: errno=%s type=%s "
+                "lock_path=%s holder={pid=%s, task=%s}",
+                e.errno, type(e).__name__, self._path, os.getpid(), self.task_id)
+            self._unlink_if_created_by(created_ino, context="_recreate")
             return False
+        except BaseException:
+            # 与 E 同款全异常兜底：非 OSError（MemoryError/KeyboardInterrupt 等）
+            # 亦先清理本次建出的空文件再原样上抛。
+            self._unlink_if_created_by(created_ino, context="_recreate")
+            raise
         return True
 
     def assert_still_owner(self):
@@ -260,6 +331,44 @@ class WriteLock:
             return
         raise WriteLockLost(self.task_id, cur2)
 
+    def _unlink_with_retry(self) -> None:
+        """G3（2026-11-05 E 盲区③）：release 删除锁文件失败不再静默——WARNING
+        （errno/类型/路径/持有者）+ 有界重试（RELEASE_UNLINK_RETRIES 次 ×
+        RELEASE_UNLINK_RETRY_INTERVAL_S，幂等 unlink）；耗尽仍失败只留 WARNING
+        不抛（release 契约不变：幂等、绝不因清理失败阻断调用方）。
+
+        注：重试 sleep 在 _STATE_LOCK 临界区内（与 D 的释放临界区设计一致），
+        最坏占用 3×50ms——仅失败路径触发。"""
+        try:
+            self._path.unlink(missing_ok=True)
+            return
+        except OSError as e:
+            logger.warning(
+                "[write-lock] release 删除锁文件失败: errno=%s type=%s "
+                "lock_path=%s holder={pid=%s, task=%s, token=%s}——进入有界重试"
+                "（%d 次×%.0fms）",
+                e.errno, type(e).__name__, self._path, os.getpid(), self.task_id,
+                self.token, RELEASE_UNLINK_RETRIES,
+                RELEASE_UNLINK_RETRY_INTERVAL_S * 1000)
+        for i in range(1, RELEASE_UNLINK_RETRIES + 1):
+            time.sleep(RELEASE_UNLINK_RETRY_INTERVAL_S)
+            try:
+                self._path.unlink(missing_ok=True)
+                logger.warning(
+                    "[write-lock] release unlink 重试成功: 第 %d/%d 次 lock_path=%s "
+                    "holder={pid=%s, task=%s}",
+                    i, RELEASE_UNLINK_RETRIES, self._path, os.getpid(), self.task_id)
+                return
+            except OSError as e:
+                logger.debug(
+                    "[write-lock] release unlink 第 %d/%d 次重试仍失败: errno=%s",
+                    i, RELEASE_UNLINK_RETRIES, e.errno)
+        logger.warning(
+            "[write-lock] release unlink 重试耗尽（%d 次）仍失败: lock_path=%s "
+            "holder={pid=%s, task=%s}——僵尸锁文件残留（可观察），交由 F 超龄回收/"
+            "人工处置；release 不抛错（契约不变）",
+            RELEASE_UNLINK_RETRIES, self._path, os.getpid(), self.task_id)
+
     def release(self):
         if self._released:
             return
@@ -276,10 +385,7 @@ class WriteLock:
             _unregister_handle(self)
             if _current_lock is self:
                 _current_lock = None
-            try:
-                self._path.unlink(missing_ok=True)
-            except OSError:
-                pass
+            self._unlink_with_retry()     # G3：unlink 失败留痕+有界重试（不抛）
         _restore_graceful_handlers()
 
     def __enter__(self):
@@ -871,9 +977,17 @@ def acquire_write_lock(task_id: str = "unnamed", timeout_s: float = 30.0,
                                      token=uuid.uuid4().hex)
                     try:
                         lock._write_payload()
-                    except OSError:
-                        logger.debug("[write-lock] payload 写入失败（继续持锁）",
-                                     exc_info=True)
+                    except OSError as e:
+                        # G1（2026-11-05 E 盲区①）：payload 写入失败不再静默吞——
+                        # WARNING（errno/类型/路径）后原样上抛，由下方 E 兜底回收
+                        # 本次创建的空锁文件。「持锁却无内容」态自源头消除，不再
+                        # 「继续持锁」——文件锁以锁文件为本，清空文件后仍持句柄
+                        # 即破坏互斥契约的可观测性。
+                        logger.warning(
+                            "[write-lock] payload 写入失败：上抛并回收本次创建的空锁"
+                            "文件（E 兜底）: errno=%s type=%s payload_path=%s task=%s",
+                            e.errno, type(e).__name__, p, task_id)
+                        raise
                 except BaseException:
                     if fd_open:
                         try:
@@ -892,6 +1006,23 @@ def acquire_write_lock(task_id: str = "unnamed", timeout_s: float = 30.0,
             else:
                 holder = read_holder()
                 diag = diagnose_holder(holder)
+                # G4（2026-11-05 E 盲区④）：等待循环内补查「本进程是否已持锁」——
+                # 本进程持有态成立（_depth>0 或 _current_lock 非空）且锁文件 payload
+                # 归本进程（pid+create_time 双证，与 C 同源同款）⇒ 判同进程并发重入，
+                # 按浅句柄语义放行（不等待、不抛错；浅句柄不计数、不授予写权限，
+                # 文件锁由 owner 唯一负责）；跨进程互斥绝不放宽（他进程持有 ⇒
+                # 本进程持有态不成立 ⇒ 判定不成立，照常等待/超时抛 WriteLockHeld）。
+                # 判定在 _STATE_LOCK 内（与 owner 释放临界区互斥，杜绝放行与
+                # 释放竞态）；与下方 C 自愈条件在持有态上互斥（C 要求 _depth==0）。
+                if ((_depth > 0 or _current_lock is not None)
+                        and holder
+                        and holder.get("pid") == os.getpid()
+                        and holder.get("pid_create_time") == _self_create_time()):
+                    logger.debug(
+                        "[write-lock] 同进程并发重入识别（G4 等待循环补查）：按浅句柄"
+                        "放行 task=%s depth=%s has_current=%s",
+                        task_id, _depth, _current_lock is not None)
+                    return WriteLock(task_id=task_id, _shallow=True)
                 # C（2026-11-04）：同进程自愈——锁 payload 归本进程（pid+create_time
                 # 双证）且本进程确无句柄（_depth==0 且 _current_lock is None）⇒ 视为
                 # 丢句柄泄漏，审计后安全回收并立即重试；跨进程持有者一律不碰

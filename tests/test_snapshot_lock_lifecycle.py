@@ -15,6 +15,13 @@
   - V7 手工 0 字节锁：mtime 超龄 ⇒ 可回收 + 审计 predicate=empty_mtime_stale；
     未超龄 ⇒ 不回收（防误删初始化中锁）。
 
+G1-G4 E 项盲区补强（2026-11-05，docs/design-softlock-g1g4-e-blindspot-20261105.md）：
+  - G1 payload 写入 OSError ⇒ WARNING（errno/类型/路径）+ 原样上抛 + 无 0 字节残留；
+  - G2 _recreate 失败 ⇒ 清除本次创建文件（ino 双重限定）+ 负向：他人锁不误删；
+  - G3 release unlink PermissionError ⇒ WARNING + 有界重试（成功/耗尽两态）；
+  - G4 同进程并发 acquire（入口检查后、循环时已持锁的确定性时序）⇒ 浅句柄放行
+    不抛 WriteLockHeld；跨进程（subprocess 双进程）互斥仍生效（守护负向）。
+
 负向对照（A·规格 T2 门）＝临时回退 A（恢复 `_depth += 1`/`-= 1` 计数语义）后重跑
 本文件：S1/S2 组必红（_depth 断言与「owner 释放即文件消失」断言双判据）——证明修在 A。
 该回退动作属验收期人工步骤，不在本文件内自动化。
@@ -22,10 +29,13 @@
 隔离三件与 tests/test_snapshot_lock.py 同款（QS_WRITE_LOCK_DIR / QS_WRITE_LOCK_AUDIT_LOG /
 用例前后状态复位）——零碰生产 data/snapshots/。
 """
+import errno
 import json
+import logging
 import os
 import random
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -309,6 +319,201 @@ def test_V7_empty_lock_fresh_mtime_not_reclaimed():
     assert "空锁" in (ei.value.diagnosis.get("detail") or "")
     assert lock_path().exists(), "未超龄空锁不得回收（防误删初始化中锁）"
     assert _audit_lines() == []
+
+
+# --------------------------------------------------------------------------
+# G1/G2/G3（2026-11-05 E 项盲区①②③）：OSError 注入——V6 补强三例 + 防误删/有界
+# --------------------------------------------------------------------------
+_LOCK_LOGGER = "quantstudio.pipeline.snapshot_lock"
+
+
+def test_G1_payload_oserror_warns_no_residue_then_reacquire(monkeypatch, caplog):
+    """V6 补①（G1）：payload 写入段注入 OSError ⇒ WARNING（errno/类型/路径）+
+    原样上抛 + 空锁文件不残留（不再「静默吞掉继续持锁」）；撤销注入后可正常获取。"""
+    def boom(self):
+        raise OSError(errno.ENOSPC, "注入：payload 写盘失败（模拟磁盘满）")
+
+    with caplog.at_level(logging.WARNING, logger=_LOCK_LOGGER):
+        monkeypatch.setattr(sl.WriteLock, "_write_payload", boom)
+        with pytest.raises(OSError):
+            acquire_write_lock("G1", timeout_s=2.0)
+    assert not lock_path().exists(), "G1：payload 写失败不得残留 0 字节锁"
+    assert sl._depth == 0 and sl._current_lock is None and not sl._live_handles
+    warns = [r.getMessage() for r in caplog.records
+             if r.levelno >= logging.WARNING and "payload 写入失败" in r.getMessage()]
+    assert warns, f"G1：必须留 WARNING 留痕: {[r.getMessage() for r in caplog.records]}"
+    msg = warns[0]
+    assert str(errno.ENOSPC) in msg and "OSError" in msg and str(lock_path()) in msg, msg
+    monkeypatch.undo()                    # 撤销注入后再验证可正常获取
+    lk = acquire_write_lock("G1-retry", timeout_s=2.0)
+    lk.release()
+    _assert_fully_released()
+
+
+def test_G2_recreate_oserror_no_residue(monkeypatch, caplog):
+    """V6 补②（G2）：_recreate 建出后写 payload 注入 OSError ⇒ 返回 False +
+    WARNING 留痕 + 本次创建的空锁文件被清除（无 0 字节残留）。"""
+    lk = sl.WriteLock(task_id="G2", _path=lock_path(), token="tok-g2")
+
+    def boom(self):
+        raise OSError(errno.ENOSPC, "注入：recreate payload 写盘失败")
+
+    with caplog.at_level(logging.WARNING, logger=_LOCK_LOGGER):
+        monkeypatch.setattr(sl.WriteLock, "_write_payload", boom)
+        assert lk._recreate() is False
+    assert not lock_path().exists(), "G2：_recreate 失败不得残留 0 字节文件"
+    assert any(r.levelno >= logging.WARNING and "_recreate 写 payload 失败" in r.getMessage()
+               for r in caplog.records), [r.getMessage() for r in caplog.records]
+
+
+def test_G2_recreate_failure_never_deletes_foreign_lock(monkeypatch):
+    """G2 负向（禁误删他人锁）：_recreate 建出后、payload 写入前，锁文件被他人
+    删除重建（外部替换）⇒ ino 双重限定生效——失败清理放弃，他人锁原样保留。"""
+    lk = sl.WriteLock(task_id="G2n", _path=lock_path(), token="tok-g2n")
+
+    def replace_then_boom(self):
+        lock_path().unlink(missing_ok=True)      # 模拟外部删除本次建出的空文件
+        _write_payload({"v": 2, "pid": os.getpid() + 1, "task_id": "G2-foreign",
+                        "heartbeat": time.time(), "host": socket.gethostname(),
+                        "pid_create_time": None, "token": "tok-foreign"})
+        raise OSError(errno.EIO, "注入：写入失败（文件已被外部替换）")
+
+    monkeypatch.setattr(sl.WriteLock, "_write_payload", replace_then_boom)
+    assert lk._recreate() is False
+    cur = read_holder()
+    assert cur and cur.get("task_id") == "G2-foreign", "G2 负向：他人锁不得被误删"
+
+
+def test_G3_release_unlink_failure_warns_and_retries(monkeypatch, caplog):
+    """V6 补③（G3）：release unlink 注入 PermissionError（前 2 次）⇒ 不抛 +
+    WARNING 留痕（errno/路径/持有者）+ 有界重试生效（第 3 次成功删锁）。"""
+    lk = acquire_write_lock("G3", timeout_s=2.0)
+    assert lock_path().exists()
+    real_unlink = Path.unlink
+    calls = []
+
+    def flaky_unlink(self, *a, **kw):
+        calls.append(str(self))
+        if len(calls) <= 2:
+            raise PermissionError(errno.EACCES, "注入：拒绝访问（模拟被占用）")
+        return real_unlink(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "unlink", flaky_unlink)
+    with caplog.at_level(logging.WARNING, logger=_LOCK_LOGGER):
+        lk.release()                        # 不得抛（release 契约不变）
+    monkeypatch.undo()                      # 先撤销注入，保障 fixture teardown 清理可用
+    assert sl._depth == 0 and sl._current_lock is None
+    assert len(calls) == 3, f"应有界重试至成功（实测 {len(calls)} 次）: {calls}"
+    assert not lock_path().exists(), "重试成功后锁文件必须删除"
+    warns = [r.getMessage() for r in caplog.records
+             if r.levelno >= logging.WARNING and "release 删除锁文件失败" in r.getMessage()]
+    assert warns and ("errno=13" in warns[0] or str(errno.EACCES) in warns[0]) \
+               and ".write_lock" in warns[0], \
+        [r.getMessage() for r in caplog.records]
+    _assert_fully_released()
+
+
+def test_G3_release_unlink_retry_bounded_when_exhausted(monkeypatch, caplog):
+    """G3 有界性：unlink 恒失败 ⇒ 总尝试恰 1+RELEASE_UNLINK_RETRIES 次；重试耗尽
+    只留 WARNING 不抛；残留文件可见（僵尸锁可观察，交由 F 超龄回收/人工处置）。"""
+    lk = acquire_write_lock("G3x", timeout_s=2.0)
+    calls = []
+
+    def always_fail(self, *a, **kw):
+        calls.append(str(self))
+        raise PermissionError(errno.EACCES, "注入：拒绝访问（恒失败）")
+
+    monkeypatch.setattr(Path, "unlink", always_fail)
+    with caplog.at_level(logging.WARNING, logger=_LOCK_LOGGER):
+        lk.release()                        # 耗尽仍不得抛
+    monkeypatch.undo()
+    assert sl.RELEASE_UNLINK_RETRIES == 3 and sl.RELEASE_UNLINK_RETRY_INTERVAL_S == 0.05
+    assert len(calls) == 1 + sl.RELEASE_UNLINK_RETRIES, \
+        f"重试必须有界（总尝试应恰 {1 + sl.RELEASE_UNLINK_RETRIES} 次，实测 {len(calls)}）"
+    lock_path().unlink(missing_ok=True)     # 手工清注入期遗留的僵尸文件
+    warns = [r.getMessage() for r in caplog.records
+             if r.levelno >= logging.WARNING and "重试耗尽" in r.getMessage()]
+    assert warns, f"G3：耗尽必须留 WARNING: {[r.getMessage() for r in caplog.records]}"
+    _assert_fully_released()
+
+
+# --------------------------------------------------------------------------
+# G4（2026-11-05 E 项盲区④）：同进程并发 acquire 重入放行 + 跨进程互斥守护
+# --------------------------------------------------------------------------
+def test_G4_same_process_concurrent_acquire_no_write_lock_held(monkeypatch):
+    """G4 正向：构造「线程 B 入口检查时未持锁（_depth==0）、进入等待循环时本进程
+    已持锁」的确定性并发窗口（lock_path 门控强制时序）⇒ B 按浅句柄语义放行，
+    不等待不抛 WriteLockHeld，且不得走 C 自愈（本进程持锁非丢句柄）。"""
+    entered = threading.Event()
+    holder_ready = threading.Event()
+    real_lock_path = sl.lock_path
+
+    def gated_lock_path():
+        # 仅拦第二线程：首次到达等待循环即报 entered（此刻必已通过入口检查且
+        # _depth==0），并阻塞至主线程持锁——确定性构造 G4 目标时序。
+        if threading.current_thread().name == "G4-second":
+            entered.set()
+            holder_ready.wait(timeout=10)
+        return real_lock_path()
+
+    monkeypatch.setattr(sl, "lock_path", gated_lock_path)
+
+    results = {}
+
+    def second_thread():
+        try:
+            lk2 = acquire_write_lock("G4-second", timeout_s=8.0, poll_s=0.05)
+            results["shallow"] = bool(lk2._shallow)
+            lk2.release()
+        except BaseException as e:
+            results["exc"] = repr(e)
+
+    t = threading.Thread(target=second_thread, name="G4-second")
+    t.start()
+    assert entered.wait(timeout=10), "第二线程未到达等待循环"
+    owner = acquire_write_lock("G4-owner", timeout_s=2.0)   # 主线程此刻才持锁
+    holder_ready.set()                     # 放行 B：O_EXCL 必 FileExistsError → G4
+    t.join(timeout=15)
+    monkeypatch.undo()
+    assert not t.is_alive(), "第二线程卡死：G4 放行未生效"
+    assert "exc" not in results, f"同进程并发不得抛 WriteLockHeld/其它异常: {results}"
+    assert results.get("shallow") is True, results
+    owner.release()
+    _assert_fully_released()
+    assert not any("self_pid_lost_handle" in ln for ln in _audit_lines()), \
+        f"G4 放行不得走 C 自愈（本进程持锁非丢句柄）: {_audit_lines()}"
+
+
+_G4_NEG_CHILD = """
+from quantstudio.pipeline.snapshot_lock import acquire_write_lock, WriteLockHeld
+try:
+    lk = acquire_write_lock('G4-neg-child', timeout_s=1.5, poll_s=0.1)
+except WriteLockHeld as e:
+    assert e.holder.get('task_id') == 'G4-neg-owner', e.holder
+    print('G4NEG-HELD-OK')
+else:
+    lk.release()
+    print('G4NEG-BUG-ACQUIRED')
+"""
+
+
+def test_G4_cross_process_mutex_still_enforced():
+    """G4 守护负向（跨进程互斥绝不放宽）：本进程持锁时，另一**进程**（subprocess）
+    并发 acquire 仍须在超时后抛 WriteLockHeld——G4 重入放行仅限同进程。"""
+    owner = acquire_write_lock("G4-neg-owner", timeout_s=2.0)
+    try:
+        env = dict(os.environ, PYTHONIOENCODING="utf-8")   # 调用时构造（继承重定向）
+        r = subprocess.run([sys.executable, "-c", _G4_NEG_CHILD],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", cwd=str(ROOT), env=env, timeout=60)
+        assert "G4NEG-HELD-OK" in r.stdout, \
+            f"跨进程互斥被放宽（G4 误放行）: rc={r.returncode} out={r.stdout} err={r.stderr}"
+        assert "G4NEG-BUG-ACQUIRED" not in r.stdout
+        assert r.returncode == 0, r.stderr
+        assert lock_path().exists(), "子进程不得回收本进程（存活）持有的锁"
+    finally:
+        owner.release()
+    _assert_fully_released()
 
 
 if __name__ == "__main__":
