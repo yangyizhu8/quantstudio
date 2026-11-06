@@ -2930,9 +2930,12 @@ class QmtSourceConverter:
 
     # ------------------------------------------------------------- assembly
 
-    def _assemble(self, body_src: str, *, pep263_replaced: bool) -> str:
+    def _assemble(self, body_src: str, *, pep263_replaced: bool, diag: bool = False) -> str:
         """注入序组装：模块头（gbk 头 + import）→ 视图 EXT（先于别名区，保证导入期可执行）
-        → 别名视图区 → wrapper 遮蔽区 → 生命周期壳（改写后策略主体）。"""
+        → 别名视图区 → wrapper 遮蔽区 → 生命周期壳（改写后策略主体）。
+        diag=True 时在 wrapper 遮蔽区之后追加因子层诊断块（factor_diag.DIAG_BLOCK，
+        2026-11-06 · D 类主因定位，六步①c6699fc ②审通过）——diag=False（默认）
+        不向 parts 追加任何内容，产物与既版 byte-identical。"""
         parts: list[str] = []
         # (e) 产物首行**恒为** #coding:gbk：PEP 263 声明必须位于首行。原实现对源内
         # 已含声明者不追加（指望被替换的声明就是首行），但策略主体拼接在模块头之后，
@@ -2946,6 +2949,13 @@ class QmtSourceConverter:
             parts.append(ext.strip("\n"))
         parts.append(_QS_QMT_ALIAS_ZONE.strip("\n"))
         parts.append(_QS_QMT_WRAPPER_ZONE.strip("\n"))
+        if diag:
+            # 因子层诊断（D 类主因定位）：仅 diag=True 注入。注入点必须在
+            # _QS_QMT_WRAPPER_ZONE 之后——get_history / get_history_batch 定义于
+            # wrapper 遮蔽区，在其之前注入同名包装会被后定义遮蔽致死；DIAG_BLOCK
+            # 经 lazy 相对导入取自单一源文件（diag=False 时本 import 不执行）。
+            from .factor_diag import DIAG_BLOCK
+            parts.append(DIAG_BLOCK.strip("\n"))
         parts.append("# " + "=" * 74)
         parts.append("# ==== 策略主体（QmtSourceConverter 改写；规则 e/d/f/h/i 见 actions 审计） ====")
         parts.append(body_src.strip("\n"))
@@ -2994,8 +3004,11 @@ class QmtSourceConverter:
 
     # ------------------------------------------------------------------ entry
 
-    def convert(self) -> QmtSourceResult:
-        """执行改写链：pass1(e+d) → pass2(f+i) → pass3(h) → 组装 → 自检。"""
+    def convert(self, diag: bool = False) -> QmtSourceResult:
+        """执行改写链：pass1(e+d) → pass2(f+i) → pass3(h) → 组装 → 自检。
+
+        diag=True 时产物追加因子层诊断块（_assemble）；默认 False = 常规产物
+        byte-identical（六产物冻结基线不受影响）。"""
         # pass0：注释/docstring 区不可 gbk 字符 → 等价 ASCII 转写（须先于其余各趟——
         # 后续 pass 均以 self.source 为替换基底，故此处原地更新）
         self.source = self._pass0_gbk_translit(self.source)
@@ -3010,7 +3023,7 @@ class QmtSourceConverter:
             src1, pep263_replaced = self._pass1_header_codes(tree0)
             src2 = self._pass2_deny_rundaily(src1)
             src3 = self._pass3_lifecycle(src2)
-            code = self._assemble(src3, pep263_replaced=pep263_replaced)
+            code = self._assemble(src3, pep263_replaced=pep263_replaced, diag=diag)
         except RuntimeError as exc:
             self._errors.append("改写链失败：%s" % (exc,))
             return QmtSourceResult(converted_code="", errors=self._errors,
