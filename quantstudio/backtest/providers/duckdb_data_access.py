@@ -653,6 +653,52 @@ class DuckDBDataAccess:
             FROM stock_daily WHERE {where} ORDER BY time
         """).fetchdf()
 
+    def query_bars_by_range_batch(self, codes, start_ms, end_ms, use_qfq: bool = False) -> Dict[str, pd.DataFrame]:
+        """【R-PERF-03/C1b 批量化（2026-11-06，docs/minute-bar-perf-design-20261105.md）】
+
+        与 query_bars_by_range 逐只调用**字节级等价**的批量版：一次 SQL per 调用
+        （WHERE code IN (SELECT unnest(?)) AND 时段），替代 get_bars 日线分支的
+        逐 code 循环（check_limit miss 桶 ~3,100 码/桶 × 单码 SQL ⇒ 5 日窗实测
+        18,591 次 execute = 240s instrumented 主热点）。
+
+        等价性六项（对齐逐只版契约；先例：query_bars_by_count_batch 阶段1批量化
+        + query_minute_bars_by_range_batch 2026-07-22）：
+        ① 空结果语义：逐只版 `if not df.empty` 跳过 ⇒ 无行 code 不在结果集
+           （unnest IN 天然同语义）；② 列集/列序/dtype：SELECT 显式 11 列同序同别名
+        （含 use_qfq `open_front AS open` 就地替换，不新增 *_front 列）；
+        ③ use_qfq 分支同款 SQL 别名；④ 重复 code 入参不放大行数（逐只同值幂等）；
+        ⑤ 未知 code 不在结果集（同①）；⑥ 全局 ORDER BY time ⇒ groupby(sort=False)
+        拆分后每码内 time 升序（== 逐只 ORDER BY time），reset_index(drop=True)
+        对齐 fetchdf 默认 RangeIndex 契约。
+        """
+        codes = [str(c) for c in (codes or []) if c is not None and str(c).strip()]
+        if not codes:
+            return {}
+        conn = self._get_conn()
+        if conn is None:
+            return {}
+        conditions = []
+        if start_ms is not None:
+            conditions.append(f"time >= {int(start_ms)}")
+        if end_ms is not None:
+            conditions.append(f"time <= {int(end_ms)}")
+        where = (" AND " + " AND ".join(conditions)) if conditions else ""
+        if use_qfq:
+            ohlc = "open_front AS open, high_front AS high, low_front AS low, close_front AS close"
+        else:
+            ohlc = "open, high, low, close"
+        df = conn.execute(f"""
+            SELECT code, time, {ohlc}, volume, amount,
+                   preClose, pctChg, turn, peTTM, pbMRQ
+            FROM stock_daily WHERE code IN (SELECT unnest(?)){where} ORDER BY time
+        """, [codes]).fetchdf()
+        if df is None or df.empty:
+            return {}
+        result: Dict[str, pd.DataFrame] = {}
+        for c, sub in df.groupby("code", sort=False):
+            result[c] = sub.reset_index(drop=True)
+        return result
+
     def query_bars_by_count(self, code, count, before_ms) -> pd.DataFrame:
         """迁移自 PtradeAPI.get_price() 的 count 分支 (ptrade_api.py:1363-1371)"""
         conn = self._get_conn()

@@ -59,13 +59,15 @@ class DuckDBMarketDataProvider(MarketDataProvider):
         # PR3: frequency="1d"（默认）走原日线路径，字节级不变。
         if frequency == "1d":
             # [R1-A] 区间路径与 count 路径契约一致：fq='pre'/'dypre' 返回前复权 OHLC
+            # 【R-PERF-03/C1b（2026-11-06）：日线区间批量化——原逐 code 循环
+            #   query_bars_by_range（check_limit miss 桶 ~3,100 码 × 单码 SQL，
+            #   5 日窗 18,591 次 execute = 240s instrumented 主热点）改为一次
+            #   query_bars_by_range_batch SQL；{code: _fields(df)} 返回结构与
+            #   空码跳过语义逐位不变（等价性六项见该函数 docstring）】
             use_qfq = str(fq).lower() in ("pre", "dypre")
-            result = {}
-            for code in codes:
-                df = self._data.query_bars_by_range(
-                    code, _start_ms(start_date), _end_ms(end_date), use_qfq)
-                if not df.empty: result[code] = _fields(df, fields)
-            return result
+            batch = self._data.query_bars_by_range_batch(
+                codes, _start_ms(start_date), _end_ms(end_date), use_qfq)
+            return {c: _fields(df, fields) for c, df in batch.items()}
         # 分钟路径：绝不进入日线 fallback 链
         from .frequency_labels import api_to_storage, FrequencyCapabilityError
         storage_freq = api_to_storage(frequency)
