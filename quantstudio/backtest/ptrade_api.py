@@ -1150,8 +1150,13 @@ class PtradeAPI:
             # set_index('code').to_dict('index') 为单趟 C 级操作；每个 code 在 status 中唯一
             # （日线快照一行一码 / get_stock_status 亦一行一码），无需 iloc[0] 取首行语义。
             # 下游 r.get(...) 对 dict / Series 均等价；'code' 缺失时回退为空字典（等价原空匹配）。
+            # 【R-PERF 同族正确性修复（2026-11-06，DB-2026-0030 D3 判据适用；单独成笔非 C2 捆绑）】
+            # 缺口：裸 set_index('code').to_dict('index') 遇重复 code 抛 ValueError（pandas 2.x
+            # 非唯一索引）→ 被本函数外层 except 吞 → 返回未滤列表（静默漏剔 ST/停牌股）。
+            # 修复：drop_duplicates('code', keep='first') 对齐逐码过滤 iloc[0] 首行语义 + 索引必唯一。
             if 'code' in status.columns:
-                status_by_code = status.set_index('code').to_dict('index')
+                status_by_code = status.drop_duplicates('code', keep='first') \
+                    .set_index('code').to_dict('index')
             else:
                 status_by_code = {}
 
