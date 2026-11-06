@@ -2668,18 +2668,36 @@ class PtradeAPI:
         data, status = self._resolve_status_source(stocks, effective_date)
         if data is None and status is None:
             return {s: False for s in stocks}
+        # 【R-PERF-02/C2 纯性能向量化（2026-11-05，docs/minute-bar-perf-design-20261105.md；
+        #    D3 修复 2026-11-06 ④前置 C1：审核方复核发现重复码语义缺口——旧 iloc[0] 取首行，
+        #    pandas 2.x to_dict('index') 遇非唯一索引抛 ValueError（沙箱实测）⇒ 上抛至策略层
+        #    fail-closed except ⇒ 当日池恒空（可观察结果剧变路径）。
+        #    修复：drop_duplicates('code', keep='first') 显式对齐首行语义 + 保证索引唯一，
+        #    等价性不再依赖「源一行一码」假设——把不可控的源去重性从等价性前提中彻底移除；
+        #    ~4,000 行多一趟 C 级遍历，开销可忽略。）】
+        # 原：逐码布尔过滤 status[status['code']==bare] / data[data['code']==bare] ——
+        # O(N_codes × N_rows) 全表扫描（首板策略盘前 ~4,000 码 × 2 调用/日）。
+        # 新：一次性去重 + set_index('code').to_dict('index')（单趟 C 级）+ O(1) dict 查找。
+        # 等价性（6 项，冻结件 §6 + filter_stock_by_status :1197-1207 同款先例）：
+        # ① 源选择不变（status 优先，None 则 data）；② 缺失码走原 len(row)==0 → False 分支；
+        # ③ 'code' 列缺失 → {} → 全 False（等价原空 DataFrame）；④ 重复码 keep='first' ==
+        #    原 iloc[0] 首行（D3 修复后不再依赖源唯一性假设）；
+        # ⑤ r.get 对 dict/Series 等价，bool()/==0/==1 对原生与 numpy 标量同值；
+        # ⑥ 唯一表达式适配：'volume' in r.index → 'volume' in r（dict 键 ⇔ Series index）。
+        _src = status if status is not None else data
+        _by_code = (_src.drop_duplicates('code', keep='first')
+                    .set_index('code').to_dict('index')
+                    if _src is not None and hasattr(_src, 'columns')
+                    and 'code' in _src.columns else {})
         for s in stocks:
             bare = bare_code(s)
-            row = ((status[status['code'] == bare] if 'code' in status.columns else pd.DataFrame())
-                   if status is not None else
-                   (data[data['code'] == bare] if 'code' in data.columns else pd.DataFrame()))
-            if len(row) > 0:
-                r = row.iloc[0]
+            r = _by_code.get(bare)
+            if r is not None:
                 if query_type == 'ST':
                     result[s] = bool(r.get('is_st', r.get('is_st_reliable', False)) or
                                      r.get('is_delisting_risk', False))
                 elif query_type == 'HALT':
-                    volume_halt = ('volume' in r.index and r.get('volume') == 0)
+                    volume_halt = ('volume' in r and r.get('volume') == 0)
                     result[s] = bool(r.get('is_halt', False) or
                                      r.get('suspendFlag', 0) == 1 or volume_halt)
                 elif query_type in {'DELISTING', 'DELISTING_SORTING'}:
