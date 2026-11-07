@@ -115,3 +115,36 @@ exit=3
 - **SC-004 三要素全部齐备**：①旧版本**可打开**现库 ✓（本次第三次实证）②抽样查询**返回结果** ✓（四项读数）③**无格式不兼容** ✓（1.4.5 / 1.5.6 双版本均可打开同一库文件）
 - 附：执行时 WAL = 无文件（daemon 停机后库已 checkpoint）
 
+### §7.3 首周观测 第 1 天（2026-11-08，窗口后首日）
+
+| 项 | 读数 | 来源 |
+|---|---|---|
+| daemon 恢复实况 | **pid 38020，2026-11-08 01:11:01 起，`-m quantstudio.pipeline.daemon --mode forever`** | Win32_Process 实测（双形态正则） |
+| 上一代 daemon 终态 | pid 33780 于 **2026-11-07 19:44:26 ExitCode=0（normal-exit）** —— P0 停机为**正常退出**非强杀 | `data/logs/daemon_guard_heartbeat.log` |
+| 版本门 | `PASS 1.5.6`，exit 0 | 判定源 CLI 实测 |
+| 主库 | **62.47 GB**，mtime 2026-11-08 00:02:28 | 文件系统实测 |
+| WAL | **无文件**（0 字节） | 文件系统实测 |
+| 上游缺陷 FATAL 关键词 | `Failed to delete all rows from index`：**30 个近期日志命中 0**（判据须 = 0）✓ | `data/logs/*.log` 扫描实测 |
+| daemon 首轮耗时 | 第 1 天窗口内无完整轮次读数（daemon 01:11 刚恢复） | 待次日补 |
+
+**首周观测窗口**：2026-11-08 ～ 2026-11-14（7 天，含 11-08/09 周末）。本节为第 1 天读数，后续每日同法补记（观测法见 `docs/handoff/duckdb-db-family-candidates-batch3-and-firstweek-prep-20261107.md` §2.1）。
+
+### §7.3.1 day-1 追测：forever 常驻终态核因（2026-11-08 02:12）
+
+| 项 | 读数 |
+|---|---|
+| forever 实例 38020 终态 | **2026-11-08 01:12:41 `ExitCode=0 (normal-exit)`**（wrapper 心跳 `daemon_guard_heartbeat.log`）——拉起后存活约 1.5 分钟即正常退出 |
+| 当前进程面 | 仅 **once 轮 pid 40620**（01:13:58 起，`once_etf_daily_verify_20261108.log` mtime 01:17）⇒ 采集链有活动，但**供血主体（`--mode forever`）当前不在位** |
+| 计划任务 | QS_DaemonForever：Status **Ready**、Last Run 2026/11/8 1:11:01、Last Result **0**、**Next Run N/A**（Daily 触发已移除，仅 Boot 触发） |
+| `data/backtest_stop.flag` | **不存在** ⇒ 非「回测停采」跳过路径 |
+| 判据结论 | day-1 **FATAL=0 ✓ / WAL<256MB ✓ / 版本门 PASS 1.5.6 ✓ / forever 常驻在位 ✗** ⇒ 观测判据如实报 **FAIL**（供血主体缺席） |
+
+> **归属**：forever 常驻的恢复归**节点1 P0 流程**（我方不介入、不接管，铁律 19 避让）；本会话仅登记实态并按「异常才上报」口径上报。
+> **注**：本会话自持的观测脚本 `scripts/check_duckdb_firstweek_obs.py` 判据**不迁就现实**——once 轮在跑不等于供血主体在位，故判据以 `--mode forever` 实例为准。
+
+### §7.4 首周观测日表（每日一行 · 由 `scripts/check_duckdb_firstweek_obs.py --evidence` 自动追加）
+
+| 日期 | 判据 | 判定 |
+|---|---|---|
+| 2026-11-08 | FATAL=0 ✓ / WAL 7.93MB<256MB ✓ / 版本门 PASS 1.5.6 ✓ / forever 常驻在位 ✗（38020 于 01:12:41 normal-exit，当前仅 once 轮 40620） | **FAIL（供血主体缺席 · 归节点1 P0）** |
+
