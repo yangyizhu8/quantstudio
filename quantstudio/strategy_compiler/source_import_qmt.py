@@ -641,7 +641,7 @@ def _qs_norm_history_fields(fields):
     return [alias.get(f, f) for f in fields]
 
 
-# ---- QFQ 因子快照层（qfq factor snapshot，2026-11-07）---------------------------
+# ---- QFQ 因子快照层·嵌入式（qfq factor snapshot embedded，2026-11-08）----------
 # 设计：docs/qmt-adjust-basis-align-design-20261106.md §二（甲案：QMT 侧向本地
 # 对齐）；V0 探测：docs/evidence/qmt-qfq-snapshot-probe-20261106.md（快照源 =
 # stock_daily 的 *_front_ratio 物化列；qfq_aux.db 不在取数路径，弃用）。
@@ -650,103 +650,98 @@ def _qs_norm_history_fields(fields):
 # 后按本地比率跳变点换算 P_adj(t) = P_raw(t) * F(t) / F(base)（F 为快照中 <= t
 # 的最后跳变值），数学上必然复现本地 front 值；无跳变记录的 code 比率恒 1.0
 # （值不变，零扰动）。
-# 三态仿 D-30 instrument snapshot（约定优于配置：启用 = 文件存在且 enabled:
-# true；删除文件即禁用；刷新 = 重跑导出脚本 scripts/export_qfq_factor_snapshot.py
-# + 重跑回测——三态缓存下运行中变更文件不生效）。
-# 【实盘风险】同 D-30：wrapper 无语境判别能力——文件存在即任何语境消费（含
-# 同机 QMT 实盘运行）：实盘运行机不部署快照文件（删除即禁用）。
+# 沿革：R331 文件版（运行期读 JSON 快照文件）真机证伪——QMT 沙箱
+# PermissionError 禁一切策略级文件读取 -> 本版改嵌入式：数据常量在转换期由
+# QmtSourceConverter.convert(qfq_embed=<emit-py 路径>) 注入产物源码（产出：
+# scripts/export_qfq_factor_snapshot.py --emit-py），运行期零文件 IO。
+# 三态（常量在位判，契约仿 D-30 而非其文件形态）：两常量缺省 -> absent（回退
+# dividend_type='front'，行为与今日一致）；在位但结构校验失败 -> broken（带
+# 原因，同样回退）；全过 -> embedded。禁用 = 重转产物不传 qfq_embed（常量即不
+# 在产物内）；刷新 = 重跑导出脚本 + 重转产物（三态缓存下运行中不可变）。
+# 【实盘风险】同 D-30：wrapper 无语境判别能力——embedded 即任何语境消费（含
+# 同机 QMT 实盘运行）：实盘产物不得携带嵌入常量（重转不传 qfq_embed 即消）。
+# 【可复现性铁律】本层一切常量与日志字符串禁任何转换时刻戳字段——同一导出
+# 数据+同一配置 => 产物字节级一致；观测性锚 = n+base 两值。
 
-_QS_QMT_QFQ_SNAP_PATH = r'D:\\miniQMT策略实盘\\QuantStudio\\output\\qmt_snapshot\\qfq_factor_snapshot.json'
+# 嵌入区定位标记：convert(qfq_embed=...) 把 emit-py 常量源文本（DATA/META 两条
+# 模块级赋值）原样替换本行；不注入（默认）保持注释形态 -> 运行期 absent 态。
+# @@QS_QMT_QFQ_SNAP_EMBED@@
 
-# 三态缓存载体：None=未加载；否则 dict(state/reason/base/base8/generated_at/
-# records/n)——loaded/absent/broken 三态均缓存，运行中新建/变更文件不生效（须
-# 重跑回测）。模块级理由同 _QS_QMT_SNAP_STATE（局部变量跨调用丢失；每产物文件
-# 独立模块命名空间，多策略同进程加载不串味）。
+# 三态缓存载体：None=未探测；否则 dict(state/reason/base8/records/n)——
+# embedded/absent/broken 三态均缓存，运行中不可变（嵌入常量是产物源码的一部
+# 分，重转才变更）。模块级理由同 _QS_QMT_SNAP_STATE（局部变量跨调用丢失；每
+# 产物文件独立模块命名空间，多策略同进程加载不串味）。
 _QS_QMT_QFQ_STATE = None
 
 
-def _qs_qfq_snap_load():
-    """QFQ 因子快照惰性单次加载 + 三态缓存（loaded/absent/broken）。
+def _qs_qfq_snap_state():
+    """QFQ 嵌入式快照三态探测（embedded/absent/broken）+ 单次缓存。
 
-    判序：文件不存在 -> absent（回退 dividend_type='front'，行为与今日一致）；
-    读失败/JSON 解析失败/顶层非 dict/records 非 dict/enabled 非 true/base 非
-    YYYYMMDD 量级/跳变对 [date8, ratio] 不可数值化 -> broken（带原因，同样回退
-    front）；否则 loaded（跳变对逐对转 (int, float) 并升序，缓存 base/base8/
-    generated_at/records）。加载期任何异常一律坍缩为 broken/absent 不抛出
-    （消费点回落原 front 路径）。态首印审计行恰一次（态缓存后不再打印；
-    absent/broken 必打 = fail-loud，QD-2026-0022 纪律——静默回退会让下一轮对照
-    误判「差异已消除」）：
-      QS_QMT_QFQ_SNAP loaded n=<标的数> base=<YYYYMMDD> gen=<generated_at>
+    判据（常量在位判，运行期零文件 IO）：_QS_QMT_QFQ_SNAP_DATA /
+    _QS_QMT_QFQ_SNAP_META 两常量均不在 globals（产物未嵌入即此态）-> absent；
+    在位但校验失败（DATA 缺/非 dict/空、META 缺/非 dict、enabled 非 true、
+    base 非 YYYYMMDD 量级 int、跳变对 [date8, ratio] 不可数值化）-> broken
+    （带原因）；全过 -> embedded（跳变对逐对转 (int, float) 并升序，缓存
+    base8/records）。探测期任何异常一律坍缩为 broken 不抛出（消费点回落原
+    front 路径）。态首印审计行恰一次（态缓存后不再打印；absent/broken 必打
+    = fail-loud，QD-2026-0022 纪律——静默回退会让下一轮对照误判「差异已
+    消除」；embedded 观测锚 = n+base 两值，禁一切时间戳——可复现性铁律：
+    同一导出数据+同一配置 => 产物字节级一致）：
+      QS_QMT_QFQ_SNAP embedded n=<标的数> base=<YYYYMMDD>
       QS_QMT_QFQ_SNAP absent
       QS_QMT_QFQ_SNAP broken <原因>
     """
     global _QS_QMT_QFQ_STATE
     if _QS_QMT_QFQ_STATE is not None:
         return _QS_QMT_QFQ_STATE
-    st = {'state': 'absent', 'reason': 'file not found', 'base': '',
-          'base8': 0, 'generated_at': '', 'records': None, 'n': 0}
-    try:
-        exists = os.path.exists(_QS_QMT_QFQ_SNAP_PATH)
-    except Exception:
-        exists = False
-    if exists:
+    st = {'state': 'absent', 'reason': 'no embedded constants', 'base8': 0,
+          'records': None, 'n': 0}
+    data = globals().get('_QS_QMT_QFQ_SNAP_DATA')
+    meta = globals().get('_QS_QMT_QFQ_SNAP_META')
+    if data is not None or meta is not None:
+        # 常量在位：逐项校验，任一失败即 broken（判序对齐 D-30 _qs_snapshot_load
+        # ——enabled 先于 base/records；两常量任一缺省亦按在位坏形态处置）
         st['state'] = 'broken'
-        st['reason'] = 'read fail'
-        raw = None
-        try:
-            with open(_QS_QMT_QFQ_SNAP_PATH, 'rb') as _f:
-                raw = _f.read()
-        except Exception:
-            raw = None
-        if raw is not None:
-            doc = None
-            try:
-                doc = json.loads(raw.decode('utf-8'))
-            except Exception:
-                doc = None
-                st['reason'] = 'json parse fail'
-            if isinstance(doc, dict):
-                # 判序对齐 D-30 _qs_snapshot_load（enabled 先于 records）
-                if doc.get('enabled') is not True:
-                    st['reason'] = 'enabled is not true'
-                elif not isinstance(doc.get('records'), dict):
-                    st['reason'] = 'records not dict'
-                else:
-                    base8 = None
+        if data is None:
+            st['reason'] = 'SNAP_DATA missing'
+        elif not isinstance(data, dict):
+            st['reason'] = 'SNAP_DATA not dict'
+        elif not data:
+            st['reason'] = 'SNAP_DATA empty'
+        elif meta is None:
+            st['reason'] = 'SNAP_META missing'
+        elif not isinstance(meta, dict):
+            st['reason'] = 'SNAP_META not dict'
+        elif meta.get('enabled') is not True:
+            st['reason'] = 'enabled is not true'
+        else:
+            base8 = meta.get('base')
+            if isinstance(base8, bool) or not isinstance(base8, int) \
+                    or base8 < 10000101 or base8 > 99991231:
+                st['reason'] = 'base invalid: %r' % (base8,)
+            else:
+                norm = {}
+                bad = ''
+                for _k, _pairs in data.items():
+                    npairs = []
                     try:
-                        base8 = int(str(doc.get('base')).strip())
+                        for _p in _pairs:
+                            npairs.append((int(_p[0]), float(_p[1])))
                     except Exception:
-                        base8 = None
-                    if base8 is None or base8 < 10000101 or base8 > 99991231:
-                        st['reason'] = 'base invalid: %r' % (doc.get('base'),)
-                    else:
-                        norm = {}
-                        bad = ''
-                        for _k, _pairs in doc.get('records').items():
-                            npairs = []
-                            try:
-                                for _p in _pairs:
-                                    npairs.append((int(_p[0]), float(_p[1])))
-                            except Exception:
-                                bad = 'records pair invalid: %s' % (_k,)
-                                break
-                            npairs.sort()
-                            norm[str(_k)] = npairs
-                        if bad:
-                            st['reason'] = bad
-                        else:
-                            st['state'] = 'loaded'
-                            st['base'] = str(doc.get('base'))
-                            st['base8'] = base8
-                            st['generated_at'] = str(doc.get('generated_at') or '')
-                            st['records'] = norm
-                            st['n'] = len(norm)
-            elif doc is not None:
-                st['reason'] = 'top level not dict'
+                        bad = 'records pair invalid: %s' % (_k,)
+                        break
+                    npairs.sort()
+                    norm[str(_k)] = npairs
+                if bad:
+                    st['reason'] = bad
+                else:
+                    st['state'] = 'embedded'
+                    st['base8'] = base8
+                    st['records'] = norm
+                    st['n'] = len(norm)
     _QS_QMT_QFQ_STATE = st
-    if st['state'] == 'loaded':
-        print('QS_QMT_QFQ_SNAP loaded n=%d base=%s gen=%s'
-              % (st['n'], st['base'], st['generated_at']))
+    if st['state'] == 'embedded':
+        print('QS_QMT_QFQ_SNAP embedded n=%d base=%d' % (st['n'], st['base8']))
     elif st['state'] == 'absent':
         print('QS_QMT_QFQ_SNAP absent')
     else:
@@ -766,7 +761,7 @@ def _qs_qfq_factor(pairs, d8):
 
 
 def _qs_qfq_convert_df(code, df, st):
-    """QFQ 快照换算（仅 loaded 态调用）：open/high/low/close/preClose 五列乘
+    """QFQ 快照换算（仅 embedded 态调用）：open/high/low/close/preClose 五列乘
     F(t)/F_base（t = 行 index 日期 8 位数字提取，与 E1 防御段同款；F/F_base
     见 _qs_qfq_factor）；volume 不换算（复权不涉量，QMT 侧已折股）。code 无
     快照记录、或整窗比率与 F_base 全同 -> 原样返回（值逐位不变）。columns
@@ -823,12 +818,12 @@ def _qs_fetch_bars(C, codes, fields, fq, count, period):
     不凑数；E1 端点含当日与否未定谳 → 末行日期 >= bar 当日则剔（防御性双保险）。
     """
     div = _QS_QMT_FQ_MAP.get(fq, 'front')  # 未知 fq 按本地默认 fq='pre' → front
-    # QFQ 快照（2026-11-07，方案 docs/qmt-adjust-basis-align-design-20261106.md
-    # §2.3）：loaded -> 取不复权原始价自行换算（dividend_type='none'）；
-    # absent/broken -> 维持原 div（行为与今日一致；状态行 fail-loud 见
-    # _qs_qfq_snap_load）。
-    _qfq_st = _qs_qfq_snap_load()
-    if _qfq_st.get('state') == 'loaded':
+    # QFQ 快照（2026-11-08 嵌入式，方案 docs/qmt-adjust-basis-align-design-20261106.md
+    # §2.3）：embedded -> 取不复权原始价自行换算（dividend_type='none'）；
+    # absent/broken -> 维持原 div（行为与嵌入前一致；状态行 fail-loud 见
+    # _qs_qfq_snap_state）。
+    _qfq_st = _qs_qfq_snap_state()
+    if _qfq_st.get('state') == 'embedded':
         div = 'none'
     want = max(int(count or 1), 1)
     try:
@@ -876,7 +871,7 @@ def _qs_fetch_bars(C, codes, fields, fq, count, period):
                     pass
             if len(df) > want:
                 df = df.tail(want)  # 只截多不凑少（审计要点①）
-            if _qfq_st.get('state') == 'loaded':
+            if _qfq_st.get('state') == 'embedded':
                 # QFQ 快照换算：作用于最终将返回的 df（volume 折股与 E1 末行
                 # 剔除之后）；无记录 code 比率恒 1.0 原样返回（零扰动）。
                 df = _qs_qfq_convert_df(code, df, _qfq_st)
@@ -917,6 +912,11 @@ def _qs_get_history_batch(codes, count, unit='1d', fields=None, fq='pre',
             print('QS_QMT_WRAPPER_SKIP: get_history_batch %s: %s' % (code, exc))
     return out
 '''
+
+# QFQ 嵌入区定位标记值（HISTORY_EXT 内注释行原文）：convert(qfq_embed=...) 以
+# emit-py 常量源文本原样替换之；标记缺失即模板漂移，注入通道 fail-closed
+# （RuntimeError 经 convert 入 errors，不静默产出无嵌入产物）。
+_QS_QMT_QFQ_EMBED_MARK = '# @@QS_QMT_QFQ_SNAP_EMBED@@'
 
 # ---- 持仓视图 + get_position（机制②同名遮蔽面之一）----------------------------
 _QS_QMT_POSITION_EXT = '''
@@ -3114,20 +3114,47 @@ class QmtSourceConverter:
 
     # ------------------------------------------------------------- assembly
 
-    def _assemble(self, body_src: str, *, pep263_replaced: bool, diag: bool = False) -> str:
+    def _inject_qfq_embed(self, qfq_embed: str) -> str:
+        """QFQ 嵌入式快照常量注入（R331 文件版 -> 嵌入式，2026-11-08）。
+
+        读 emit-py 文件**文本原样**（newline='' 防平台 CRLF 翻译；encoding=
+        'ascii' 严格——emit 契约纯 ASCII，混入非 ASCII 即 fail-closed）替换
+        HISTORY_EXT 内 _QS_QMT_QFQ_EMBED_MARK 标记行。读取失败 / 标记缺失
+        （模板漂移）-> RuntimeError（经 convert 改写链失败通道入 errors，不
+        静默产出无嵌入产物——标记被无声吞掉时产物将以 absent 态运行，恰是
+        本防线的靶点）。
+        """
+        try:
+            with open(qfq_embed, "r", encoding="ascii", newline="") as f:
+                embed_src = f.read()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise RuntimeError("qfq_embed 读取失败 %r: %s" % (qfq_embed, exc))
+        if _QS_QMT_QFQ_EMBED_MARK not in _QS_QMT_HISTORY_EXT:
+            raise RuntimeError("QFQ 嵌入标记缺失（HISTORY_EXT 模板漂移）：%r"
+                               % (_QS_QMT_QFQ_EMBED_MARK,))
+        return _QS_QMT_HISTORY_EXT.replace(_QS_QMT_QFQ_EMBED_MARK, embed_src)
+
+    def _assemble(self, body_src: str, *, pep263_replaced: bool, diag: bool = False,
+                  qfq_embed: str | None = None) -> str:
         """注入序组装：模块头（gbk 头 + import）→ 视图 EXT（先于别名区，保证导入期可执行）
         → 别名视图区 → wrapper 遮蔽区 → 生命周期壳（改写后策略主体）。
         diag=True 时在 wrapper 遮蔽区之后追加因子层诊断块（factor_diag.DIAG_BLOCK，
         2026-11-06 · D 类主因定位，六步①c6699fc ②审通过）——diag=False（默认）
-        不向 parts 追加任何内容，产物与既版 byte-identical。"""
+        不向 parts 追加任何内容，产物与既版 byte-identical。
+        qfq_embed=<emit-py 路径> 时 HISTORY_EXT 以注入后的文本参与组装（QFQ
+        嵌入式快照层，2026-11-08）；默认 None 用原模板，产物与不传参调用
+        byte-identical。"""
         parts: list[str] = []
         # (e) 产物首行**恒为** #coding:gbk：PEP 263 声明必须位于首行。原实现对源内
         # 已含声明者不追加（指望被替换的声明就是首行），但策略主体拼接在模块头之后，
         # 致首行被模块头注释占据、声明沉到中部 → portability QMT-GBK-HEADER BLOCK。
         parts.append("#coding:gbk")
         parts.append(_QS_QMT_MODULE_HEADER.strip("\n"))
+        history_ext = _QS_QMT_HISTORY_EXT
+        if qfq_embed is not None:
+            history_ext = self._inject_qfq_embed(qfq_embed)
         for ext in (_QS_QMT_LOG_EXT, _QS_QMT_CONTEXT_VIEW_EXT, _QS_QMT_DATA_VIEW_EXT,
-                    _QS_QMT_HISTORY_EXT, _QS_QMT_POSITION_EXT, _QS_QMT_ORDER_EXT,
+                    history_ext, _QS_QMT_POSITION_EXT, _QS_QMT_ORDER_EXT,
                     _QS_QMT_ASHARES_EXT, _QS_QMT_TRADE_DAYS_EXT,
                     _QS_QMT_STOCK_INFO_EXT, _QS_QMT_FUNDAMENTALS_EXT):
             parts.append(ext.strip("\n"))
@@ -3188,11 +3215,15 @@ class QmtSourceConverter:
 
     # ------------------------------------------------------------------ entry
 
-    def convert(self, diag: bool = False) -> QmtSourceResult:
+    def convert(self, diag: bool = False, qfq_embed: str | None = None) -> QmtSourceResult:
         """执行改写链：pass1(e+d) → pass2(f+i) → pass3(h) → 组装 → 自检。
 
         diag=True 时产物追加因子层诊断块（_assemble）；默认 False = 常规产物
-        byte-identical（六产物冻结基线不受影响）。"""
+        byte-identical（六产物冻结基线不受影响）。
+        qfq_embed=<emit-py 文件路径> 时，把导出脚本（export_qfq_factor_snapshot.py
+        --emit-py）产出的 QFQ 快照常量源文本经 _assemble 原样注入 HISTORY_EXT
+        快照层（嵌入式三态层，2026-11-08）；默认 None = 不注入，产物与不传参
+        调用 byte-identical（快照层保持 absent 态标记注释）。"""
         # pass0：注释/docstring 区不可 gbk 字符 → 等价 ASCII 转写（须先于其余各趟——
         # 后续 pass 均以 self.source 为替换基底，故此处原地更新）
         self.source = self._pass0_gbk_translit(self.source)
@@ -3207,7 +3238,8 @@ class QmtSourceConverter:
             src1, pep263_replaced = self._pass1_header_codes(tree0)
             src2 = self._pass2_deny_rundaily(src1)
             src3 = self._pass3_lifecycle(src2)
-            code = self._assemble(src3, pep263_replaced=pep263_replaced, diag=diag)
+            code = self._assemble(src3, pep263_replaced=pep263_replaced, diag=diag,
+                                  qfq_embed=qfq_embed)
         except RuntimeError as exc:
             self._errors.append("改写链失败：%s" % (exc,))
             return QmtSourceResult(converted_code="", errors=self._errors,

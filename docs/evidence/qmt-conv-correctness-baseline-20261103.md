@@ -29,12 +29,12 @@
 
 | # | 策略 tag | 源文件（`quantstudio/backtest/strategies/`） | 产物字节 | **SHA16（漂移锚）** | 门禁 |
 |---|---|---|---|---|---|
-| 1 | CANSLIM突破成长选股策略 | `CANSLIM突破成长选股策略.py` | 126,342 | **`d72117d7729db1dd`** | portability=PASS · enc=gbk · selfcheck=PASS |
-| 2 | fall_reversal | `fall_reversal_quantstudio.py` | 112,852 | **`185a5721a76db8f1`** | 同上 |
-| 3 | tech_etf_mvo | `tech_etf_mvo_rotation_quantstudio.py` | 120,653 | **`3649288922bf8fb9`** | 同上 |
-| 4 | vol_regime_mom_rev | `vol_regime_mom_rev_quantstudio.py` | 128,432 | **`6d3e9fa33a1f4479`** | 同上 |
-| 5 | weekly_smallcap | `weekly_smallcap_growth_momentum_10_quantstudio.py` | 122,558 | **`10bc4ad75d93b26c`** | 同上 |
-| 6 | 周频三层 | `周频小市值成长动量（三层止损）.py` | 126,940 | **`1e0da519a2fa91ad`** | 同上 |
+| 1 | CANSLIM突破成长选股策略 | `CANSLIM突破成长选股策略.py` | 893,240 | **`bc975459ddd08e81`** | portability=PASS · enc=gbk · qfq_embed |
+| 2 | fall_reversal | `fall_reversal_quantstudio.py` | 879,750 | **`cd8f0fb069456fff`** | 同上 |
+| 3 | tech_etf_mvo | `tech_etf_mvo_rotation_quantstudio.py` | 887,551 | **`27741a657ac290f6`** | 同上 |
+| 4 | vol_regime_mom_rev | `vol_regime_mom_rev_quantstudio.py` | 895,330 | **`b09680342dd1964d`** | 同上 |
+| 5 | weekly_smallcap | `weekly_smallcap_growth_momentum_10_quantstudio.py` | 889,456 | **`79c45d95532066e3`** | 同上 |
+| 6 | 周频三层 | `周频小市值成长动量（三层止损）.py` | 893,838 | **`bf01de54f902a577`** | 同上 |
 
 **结论**：`ALL 6 PASS (enc=gbk)`，rc=0。
 **留痕性质**：六值在全仓 `docs/**` 检索**无历史记录** ⇒ 本件为**首次留痕基线**（此前不可声称「跨版本零漂移」，此后可以）。
@@ -135,4 +135,5 @@ E   FileNotFoundError: [Errno 2] No such file or directory:
 | 2026-11-05 16:4x | **v1.3 换锚（停牌判据修复批 · QD-2026-0021）**：`_QS_QMT_STOCK_INFO_EXT` 的 `_qs_status_flags` 移除 `IsTrading` 停牌判据（②审裁 A：InstrumentStatus 为唯一权威判据；缺键/假值/不可解析 ⇒ 走「不可判定保守保留」出口）；六产物 SHA16 再换锚 `8261c6866e2d9dc3`/`8c591a85bc194cb3`/`3ed46b17613398c6`/`edb6dbbee1ba501f`/`49e8ddf2cfb5881c`/`28bfddc5e86590a9`；`meta.qmt_wrapper_hash` `4f2e73bd467a` → `976d9b39349e`（同 commit `check_fund_matrix.py --check --reverify` 追认 · 铁律 10⑥ QMT 侧）；**同时纠正 v1.2 遗留**：v1.2 仅写变更日志、本表未同步（仍停留 v1.0 首轮六值）⇒ 本笔一并修正 | ④验收证据 |
 | 2026-11-05 21:3x | **v1.4 换锚（时区解析垫片批 · QD-2026-0022）**：`_QS_QMT_MODULE_HEADER` 新增 `_qs_tz_shim()`（P0 探测/P1 pytz 缓存/P2 maybe_get_tz/P3 ZoneInfo；正常环境零输出，需垫片时打印 QS_QMT_TZ_PROBE，三层全失败 fail-loud）；六产物 SHA16 再换锚 `b3b3ef9f83fa54e5`/`c318199d1eb4727a`/`588c4cddb5747a82`/`65a47679345ab901`/`2cd513d153f1ca9a`/`707d679853eebbdd`；`meta.qmt_wrapper_hash` `976d9b39349e` → `df635bfed97d`（同 commit `--check --reverify` 追认）；批次内自测拦下两处（零输出契约冲突→改为仅需垫片时输出；portability 6 条 BLOCK→模块属性存原函数） | ④验收证据 |
 | 2026-11-07 01:4x | **v1.5 换锚（复权因子快照批 · QD-2026-0023 修复）**：`_QS_QMT_HISTORY_EXT` 新增 QFQ 快照三态层（loaded→dividend_type='none'+按本地 `*_front_ratio` 跳变点换算 P_adj=P_raw×F(t)/F(base)；absent/broken fail-loud 回退 front）；六产物 SHA16 换锚 `d72117d7729db1dd`/`185a5721a76db8f1`/`3649288922bf8fb9`/`6d3e9fa33a1f4479`/`10bc4ad75d93b26c`/`1e0da519a2fa91ad`；`qmt_wrapper_hash` `df635bfed97d`→`76e605e8a9e1`（同 commit `--check --reverify` 追认） | ⑥出仓批 |
+| 2026-11-08 01:5x | **v1.6 换锚（嵌入式快照批 · R338 修订 v1.1 实施）**：文件快照被真机沙箱证伪（FILEPROBE 三变体 PermissionError Forbidden fileIO）⇒ 改产物内常量 `_QS_QMT_QFQ_SNAP_DATA`（repr 全精度·禁时间戳·可复现）；三态=常量在位判（embedded/absent/broken fail-loud）；六产物换锚（~880-895KB，embed=True）；`qmt_wrapper_hash` `76e605e8a9e1`→`dd08f848e024`（同 commit `--check --reverify` 追认） | ⑥出仓批（快照族统一出仓） |
 | 2026-11-03 23:4x | v1.1 补登全量回归：**94 failed / 4380 passed / 9 errors（2012.90s）**＋干净树 `f60845f` 反证（24↔23 同构）＋9 errors 根因（产物缺失）＋与 10-31 基线不可比量化 | ④验收证据 |
