@@ -50,6 +50,24 @@ from .render import GoldenProtectionError, output_filename, render_ptrade, rende
 from .render_qmt import render_qmt
 from .validators.check_hard_filters import check_hard_filters
 from .validators.compare_strategy_variants import compare_strategy_variants
+
+
+def _write_gen_sidecar(product_path, strategy_id=None):
+    """PD-2026-0019 IMPORT-FRESHNESS：写第一跳产物的**旁挂**生成时刻戳。
+
+    形态＝`<product>.gen.json`（**不进产物本体**）：
+      - 产物本体零污染 ⇒ 第一跳产物哈希跨次可复现（黄金对照文化不可弃）；
+      - 第二跳 AST 往返会丢弃注释 ⇒ 内嵌注释形活不到交付产物（2026-11-07 实测）。
+    deploy 前置闸门（`preflight.check_import_freshness`）读该 sidecar 判「假重转」。
+    """
+    side = Path(str(product_path) + ".gen.json")
+    payload = {
+        "strategy_id": strategy_id,
+        "product": Path(product_path).name,
+        "gen_ts": datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    side.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return side
 from .validators.run_smoke_backtest import run_smoke_backtest
 from .validators.scan_lookahead import scan_lookahead
 from .validators.validate_local_strategy import validate_local_strategy
@@ -532,6 +550,7 @@ def orchestrate_source(
     else:
         pt_path = out_dir / f"{strategy_id}_ptrade.py"
         pt_path.write_text(result.converted_code, encoding="utf-8")
+        _write_gen_sidecar(pt_path, strategy_id)
         artifacts.append({"name": pt_path.name, "path": str(pt_path),
                           "sha256": _sha256_file(pt_path)})
         report = _assemble_source_report(path, strategy_id, created_at, result, "PASS")

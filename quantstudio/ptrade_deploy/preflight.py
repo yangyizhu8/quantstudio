@@ -297,20 +297,27 @@ BUILTIN_NAMES = frozenset(dir(builtins))
 # IMPORT-FRESHNESS（PD-2026-0019 假重转闸门）
 # ============================================================
 
-#: 第一跳在产物头写入的生成时刻标记（与 source_import 装配点同源）
-_GEN_MARK_RE = r"#\s*PTRADE-DEPLOY:GEN\s+([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})"
+#: 第一跳产物**旁挂**的生成时刻戳 sidecar 后缀（由 orchestrator._write_gen_sidecar 写入）
+_GEN_SIDECAR_SUFFIX = ".gen.json"
 
 
-def _gen_timestamp(text: str) -> Optional[float]:
-    """从产物文本取第一跳生成时刻戳；无标记或解析失败 ⇒ None（legacy 产物）。"""
+def _gen_timestamp(source_path: Path) -> Optional[float]:
+    """读第一跳产物旁挂的 GEN sidecar（`<product>.gen.json`）取生成时刻；无则 None。
+
+    走**旁挂 sidecar** 而非产物内嵌注释（2026-11-07 裁定乙），理由：
+      - 产物本体零污染 ⇒ 第一跳产物哈希跨次可复现（黄金对照文化不可弃）；
+      - 第二跳 AST 往返会丢弃注释 ⇒ 内嵌注释形活不到交付产物（同日实测）。
+    """
     import datetime as _dt
-    import re as _re
+    import json as _json
 
-    m = _re.search(_GEN_MARK_RE, text or "")
-    if not m:
+    side = Path(str(source_path) + _GEN_SIDECAR_SUFFIX)
+    if not side.exists():
         return None
     try:
-        return _dt.datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S").timestamp()
+        payload = _json.loads(side.read_text(encoding="utf-8"))
+        ts = str(payload.get("gen_ts") or "")
+        return _dt.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S").timestamp()
     except Exception:
         return None
 
@@ -328,27 +335,26 @@ def _first_hop_sources(repo_root: Path) -> List[Path]:
 def check_import_freshness(source_path: Path,
                            source_text: Optional[str] = None,
                            repo_root: Optional[Path] = None) -> List[str]:
-    """IMPORT-FRESHNESS：产物内嵌 GEN 时刻戳不得早于第一跳源文件 mtime。
+    """IMPORT-FRESHNESS：第一跳产物旁挂的 GEN 时刻不得早于第一跳源文件 mtime。
 
-    判据载体＝**产物内嵌时刻戳**（非 FS mtime）：
-      - mtime 会被 git 检出/操作重置，且测试夹具的 mtime 只是「写入时刻」⇒ 不可靠
-        （2026-11-07 实测：mtime 版误伤 19 条既有固件；收敛作用域后仍误伤 7 条）。
-      - 内嵌时刻戳随产物走，可复现、可审计，且同时充当「时序自证」。
+    判据载体＝`<source>.gen.json` 的 `gen_ts`（**旁挂 sidecar**，非 FS mtime、非产物内嵌注释）：
+      - FS mtime 会被 git 检出/操作重置，测试夹具的 mtime 更只是「写入时刻」
+        ⇒ 2026-11-07 实测误伤 19 条既有固件（收敛作用域后仍误伤 7 条）；
+      - 内嵌注释会被第二跳 AST 往返丢弃 ⇒ 交付产物无标记（同日实测）；
+      - 旁挂 sidecar ⇒ 产物本体零污染、哈希可复现，且标记随产物同行可审计。
 
-    legacy 兼容：**无 GEN 标记**的产物（quick 模式/历史产物）⇒ 仅 WARN **不拒**。
-    fail-closed：有标记但无法比对 ⇒ 拒。
+    legacy 兼容：**无 sidecar** 的产物（quick 模式/历史产物）⇒ 仅提示**不拒**。
+    fail-closed：有 sidecar 但无法比对 ⇒ 拒。
     """
     reasons: List[str] = []
     try:
         src = Path(source_path)
-        text = source_text
-        if text is None:
-            if not src.exists():
-                return [f"IMPORT-FRESHNESS 无法判定：source 不存在 {src}"]
-            text = src.read_text(encoding="utf-8", errors="replace")
-        gen_ts = _gen_timestamp(text)
+        if not src.exists():
+            return [f"IMPORT-FRESHNESS 无法判定：source 不存在 {src}"]
+        # source_text 参数保留以兼容调用方（判据已不读产物正文）
+        gen_ts = _gen_timestamp(src)
         if gen_ts is None:
-            # legacy 产物：无 GEN 标记 ⇒ 不拒（仅提示），避免误伤 quick 模式与历史产物
+            # legacy 产物：无 sidecar ⇒ 不拒（仅提示），避免误伤 quick 模式与历史产物
             return []
         root = Path(repo_root) if repo_root is not None else _REPO_ROOT
         hop1 = [p for p in _first_hop_sources(root) if p.exists()]
