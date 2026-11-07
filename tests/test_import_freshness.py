@@ -93,3 +93,24 @@ def test_product_body_is_reproducible_and_sidecar_works(tmp_path):
     side = _write_gen_sidecar(prod, "t_repro")
     assert side.exists() and side.name.endswith(".gen.json")
     assert check_import_freshness(prod) == [], "刚写入 sidecar 的产物必须判新鲜放行"
+
+
+def test_runbook_documents_gen_sidecar():
+    """部署 SOP 须注明 sidecar 的**用途**与**可删性**（PD-2026-0019 交付面）。"""
+
+    class _StubCfg:
+        strategy_id = "t_sid"
+
+        class execution:
+            profile = "daily_eod_1450"
+
+        class persistence:
+            state_file = "t_sid_state.pkl"
+
+    from quantstudio.ptrade_deploy.deliver import build_runbook
+
+    text = build_runbook(_StubCfg())
+    assert "t_sid_trade.py.gen.json" in text, "runbook 未指名 sidecar 文件名"
+    assert "IMPORT-FRESHNESS" in text, "runbook 未注明闸门用途"
+    assert "可安全删除" in text, "runbook 未注明可删性"
+    assert "不参与" in text and "确定性" in text, "runbook 未注明确定性边界"

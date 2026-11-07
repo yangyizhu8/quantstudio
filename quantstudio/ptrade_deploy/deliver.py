@@ -278,6 +278,17 @@ def build_runbook(cfg) -> str:
    `get_orders` 核对，不一致以柜台为准（F8：账户数据 6 秒同步，柜台为真相源）。
 2. `g.state` 持久化版本校验失败时自动回退默认状态并 log.warning——按需人工修正。
 3. 重建后手动触发一次落盘（等待 after_trading_end 或按 save_points 配置）。
+
+## 五、闸门认证件 `{product_file}.gen.json`（PD-2026-0019 IMPORT-FRESHNESS）
+
+- **是什么**：本策略第一跳转换（`qs-compile import`）的**生成时刻戳认证件**，与产物同名旁挂
+  （含 `strategy_id` / `product` / `gen_ts`）。**不参与策略运行，产物代码零依赖**。
+- **用途**：`qs-compile deploy` 前置闸门读其 `gen_ts` 与第一跳源码 mtime 比对——若产物早于源码，
+  即判「假重转」（产物看似全新、内核陈旧）并**拒绝部署**。随交付包同行＝该产物的闸门认证凭证。
+- **可删性**：**可安全删除**。删后策略照常运行；仅使该产物退化为 legacy 形态——闸门对其
+  只提示、不再认证。**重转 deploy 前请勿删**，否则失去「底材是否新鲜」的把关。
+- **确定性边界**：`gen_ts` 随生成时刻变化，故本文件**不参与**交付包确定性比对；
+  交付包的逐位确定性以 `{product_file}` 本体为准（产物本体禁时间戳，见 deliver 模块纪律）。
 """
 
 
@@ -313,6 +324,16 @@ def deliver(product_text: str, edits: List[Dict[str, str]], equiv_result,
     product_path.write_text(product_text, encoding="utf-8", newline="\n")
     report_path.write_text(report_text, encoding="utf-8", newline="\n")
     runbook_path.write_text(runbook_text, encoding="utf-8", newline="\n")
+
+    # PD-2026-0019：把第一跳产物的旁挂 GEN 认证件纳入交付包（闸门认证组成部分）。
+    # 用途：deploy 前置 IMPORT-FRESHNESS 读其 gen_ts 判「假重转」。
+    # 可删：删后策略照常运行，仅使产物退化为 legacy（闸门只提示、不再认证）。
+    # 注：**不**写入 artifacts 契约（避免新增产物键造成下游契约漂移），仅随包落盘 + runbook 说明；
+    #     含 gen_ts 时间戳 ⇒ 不参与交付包确定性比对（确定性以产物本体为准）。
+    _gen_src = Path(str(getattr(cfg, "source", "") or "") + ".gen.json")
+    if _gen_src.is_file():
+        (out_dir / f"{cfg.strategy_id}_trade.py.gen.json").write_text(
+            _gen_src.read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
 
     return DeliverResult(
         out_dir=str(out_dir),
