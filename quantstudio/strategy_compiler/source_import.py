@@ -5251,7 +5251,13 @@ class SourceConverter:
                     % ", ".join(sorted(self._ashare_needed)))
         if not blocks:
             return code
-        injected = "\n".join(blocks) + "\n\n"
+        # PD-2026-0019 IMPORT-FRESHNESS：把「本次第一跳生成时刻」内嵌进产物，供
+        # deploy 前置闸门比对。选内嵌时刻戳而非 FS mtime——mtime 会被 git 检出/操作
+        # 重置，测试夹具的 mtime 更只是「写入时刻」，2026-11-07 实测 mtime 版误伤
+        # 19 条既有固件（收敛作用域后仍误伤 7 条）。函数内局部 import：零模块级改动。
+        import datetime as _dt_gen
+        _gen_ts = _dt_gen.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        injected = ("# PTRADE-DEPLOY:GEN " + _gen_ts + "\n") + "\n".join(blocks) + "\n\n"
         out = self._insert_before_first_def(code, injected)
         # D4-S7 #5 接线（ZCode 方案 A，2026-08-27）：订单扩展注入时，在 handle_data 入口
         # 注入 _qs_capture_ctx(context)。机械安全：仅当存在 def handle_data 且签名含 context

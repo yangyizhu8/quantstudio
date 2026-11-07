@@ -126,6 +126,14 @@ def run_deploy(config_path: str) -> DeployReport:
 
     # ---------- P0 预检 ----------
     try:
+        # PD-2026-0019 IMPORT-FRESHNESS：产物内嵌 GEN 时刻早于第一跳源码 ⇒ 假重转，
+        # 拒绝部署（fail-closed）。无 GEN 标记的 legacy 产物只提示不拒。
+        _fresh = preflight_mod.check_import_freshness(source_path, source_text)
+        if _fresh:
+            stages["P0_preflight"] = StageResult(
+                "P0_preflight", "FAIL", reason="；".join(_fresh),
+                details={"import_freshness": _fresh})
+            return _stop("P0_preflight", stages["P0_preflight"].reason)
         pre = preflight_mod.run_preflight(source_text, contract)
         stages["P0_preflight"] = StageResult(
             "P0_preflight", "PASS" if pre.passed else "FAIL",

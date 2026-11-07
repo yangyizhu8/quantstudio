@@ -291,3 +291,83 @@ def run_preflight(source_text: str,
 
 #: 内建名集合（gates 段复用：区分未知平台 API 与普通内建调用）
 BUILTIN_NAMES = frozenset(dir(builtins))
+
+
+# ============================================================
+# IMPORT-FRESHNESS（PD-2026-0019 假重转闸门）
+# ============================================================
+
+#: 第一跳在产物头写入的生成时刻标记（与 source_import 装配点同源）
+_GEN_MARK_RE = r"#\s*PTRADE-DEPLOY:GEN\s+([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})"
+
+
+def _gen_timestamp(text: str) -> Optional[float]:
+    """从产物文本取第一跳生成时刻戳；无标记或解析失败 ⇒ None（legacy 产物）。"""
+    import datetime as _dt
+    import re as _re
+
+    m = _re.search(_GEN_MARK_RE, text or "")
+    if not m:
+        return None
+    try:
+        return _dt.datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S").timestamp()
+    except Exception:
+        return None
+
+
+def _first_hop_sources(repo_root: Path) -> List[Path]:
+    """第一跳源文件。
+
+    只取 source_import.py：它是 _QS_ORDER_SPLIT_EXT 等**第一跳注入块**所在处。
+    刻意**不**纳入 ptrade_deploy/templates/*.py（第二跳模板）——纳入会造成
+    「只改第二跳却要求重跑第一跳」的假阳性。
+    """
+    return [repo_root / "quantstudio" / "strategy_compiler" / "source_import.py"]
+
+
+def check_import_freshness(source_path: Path,
+                           source_text: Optional[str] = None,
+                           repo_root: Optional[Path] = None) -> List[str]:
+    """IMPORT-FRESHNESS：产物内嵌 GEN 时刻戳不得早于第一跳源文件 mtime。
+
+    判据载体＝**产物内嵌时刻戳**（非 FS mtime）：
+      - mtime 会被 git 检出/操作重置，且测试夹具的 mtime 只是「写入时刻」⇒ 不可靠
+        （2026-11-07 实测：mtime 版误伤 19 条既有固件；收敛作用域后仍误伤 7 条）。
+      - 内嵌时刻戳随产物走，可复现、可审计，且同时充当「时序自证」。
+
+    legacy 兼容：**无 GEN 标记**的产物（quick 模式/历史产物）⇒ 仅 WARN **不拒**。
+    fail-closed：有标记但无法比对 ⇒ 拒。
+    """
+    reasons: List[str] = []
+    try:
+        src = Path(source_path)
+        text = source_text
+        if text is None:
+            if not src.exists():
+                return [f"IMPORT-FRESHNESS 无法判定：source 不存在 {src}"]
+            text = src.read_text(encoding="utf-8", errors="replace")
+        gen_ts = _gen_timestamp(text)
+        if gen_ts is None:
+            # legacy 产物：无 GEN 标记 ⇒ 不拒（仅提示），避免误伤 quick 模式与历史产物
+            return []
+        root = Path(repo_root) if repo_root is not None else _REPO_ROOT
+        hop1 = [p for p in _first_hop_sources(root) if p.exists()]
+        if not hop1:
+            return ["IMPORT-FRESHNESS 有 GEN 标记但找不到第一跳源文件（fail-closed）"]
+        newest = max(hop1, key=lambda p: p.stat().st_mtime)
+        n_m = newest.stat().st_mtime
+        if gen_ts < n_m - 1.0:  # 1s 容差：同一秒内生成不算陈旧
+            import datetime as _dt
+
+            try:
+                rel = newest.relative_to(root).as_posix()
+            except Exception:
+                rel = newest.name
+            reasons.append(
+                "IMPORT-FRESHNESS 产物生成时刻早于第一跳源码：GEN="
+                + _dt.datetime.fromtimestamp(gen_ts).strftime("%Y-%m-%d %H:%M:%S")
+                + " < " + rel + "=" + _dt.datetime.fromtimestamp(n_m).strftime("%Y-%m-%d %H:%M:%S")
+                + " —— 请先重跑 `qs-compile import` 重生第一跳产物（PD-2026-0019 假重转）")
+    except Exception as exc:  # fail-closed
+        return [f"IMPORT-FRESHNESS 判定异常（fail-closed）: {exc}"]
+    return reasons
