@@ -419,3 +419,18 @@
 
 - 2026-10-10（M6 之前）：P0 vault 回哺降级（vault 未建，预期状态）；
 - M6 起 vault 建立后应无降级——若再现按 M1 §14.6 登记。
+
+---
+
+## 附录 · E′ shadow 取证证据指针（2026-11-08）
+
+- **PD-0017 E′（幂等台账跨日锁死）shadow 取证包**：位于 `QuantStudio-trading` 仓
+  `docs/evidence/pd0017-e7-shadow-evidence-20261103_04/` —— commit `c6619277` 入仓 8 文件
+  （README／e3 快照 jsonl／intents 两日 ndjson／reconcile raw 与 round1_authentic 详录），
+  commit `ac2a6b89` 补「附录 A · 日志关键片段结构化摘录」。
+- **归属裁定（用户 2026-11-08）**：取证包**不回流主仓**——产自 trading 运行域，留 trading 仓即正确归属；
+  主仓侧仅保留本指针。三日志（`watchdog_20261103_04.log` 92,066 B／`gate_20261103_04.log` 1,498 B／
+  `d1_export_20261103_04.log` 1,019 B）命中 `.gitignore:32 *.log` **未入库**，其关键片段已结构化摘录入
+  该包 README 附录 A（含原件本机路径、总行数、关键词命中行数、等距抽样原样片段），原件留存本地。
+- **推送口径**：trading 仓 `c6619277`／`ac2a6b89` 随节点10 下次同步门/统排窗处理，
+  **不入主仓第二批范围**（⑦线主仓第二批 9 笔维持不变）。
