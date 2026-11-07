@@ -217,3 +217,55 @@ P_adj(t) = P_raw(t) × F(t) / F(base)
 2. **快照落点**：`output/qmt_snapshot/`（与 D-30 同目录，便于统一部署纪律）——请确认。
 3. **是否同时把 `still` 未覆盖标的（因子=1）也写进快照**：我方倾向**不写**（减小体积，缺省按 1.0 处理）。
 4. **V7 阈值**：沿用 R316 裁定的「D 类 ≤5」不变。
+
+
+---
+
+## 十、修订节 v1.1（2026-11-07 20:5x · §2.1「快照文件」被真机环境证伪，改嵌入式）
+
+> 触发：R335 真机 V6 broken（`QS_QMT_QFQ_SNAP broken read fail` 两轮复现）→ FILEPROBE v2b 探针一轮定谳（R337）：
+> **QMT 沙箱禁止策略产物一切本地文件 IO**——`const/fwd/fwd_bsl` 三路径变体全部
+> `PermissionError('Forbidden fileIO: d:\\miniqmt策略实盘\\…')`（路径被规范化仍拒），
+> 生产三态层同刻同报，双路径互证。**本机（3.11.9）三项自证全可读 ⇒ 该机制类仅真机可探得。**
+> 环境档案（首测入档）：QMT 内置 **Python 3.6.8**；`getfilesystemencoding()='utf-8'`；
+> 回测 cwd=`D:\QMT\国金QMT交易端模拟\bin.x64`。
+
+### 10.1 变更内容（对照原 §2.1-§2.3）
+
+| # | 原设计（文件快照） | 修订（嵌入式快照） |
+|---|---|---|
+| 1 | 快照 JSON 落 `output/qmt_snapshot/`，产物运行时 `open()` 读 | **跳变点比率直接序列化为产物源码常量** `_QS_QMT_QFQ_SNAP_DATA = {'600971': ((20250523, 0.9674512975496247), …), …}`，运行时零 fileIO |
+| 2 | 三态=文件存在性/解析 | **三态=常量在位判**：常量非空 dict 且 `enabled` 字段真 ⇒ `embedded`；常量缺省/空 ⇒ `absent`；结构校验失败 ⇒ `broken`（三态打印与 fail-loud 纪律不变：`QS_QMT_QFQ_SNAP embedded n=… base=… gen=…` / `absent` / `broken <原因>`） |
+| 3 | 快照更新=重导文件 | **快照更新=重导＋重转产物**（一步；V6 流程本就重转，SOP 简化） |
+| 4 | 文件不部署=实盘机纪律 | **无部署语义**：数据随产物走；不含嵌入的转换即回退态（=现状 front 行为） |
+| 5 | 精度：JSON float 原样 | **repr 全精度往返**（禁小数截断——8 位截断在 ~100 元价位引入 ~1e-6 绝对差，贴 V6 容差边缘） |
+
+### 10.2 实现改动面（候②审照准后）
+
+1. `scripts/export_qfq_factor_snapshot.py` 增 `--emit-py <path>`：在写 JSON 外**同步产出 Python 常量源文件**（`_QS_QMT_QFQ_SNAP_DATA = {...}`＋`_QS_QMT_QFQ_SNAP_META = {'enabled': True, 'base': …, 'generated_at': …, 'n': …}`；元组键值全 ASCII ⇒ 天然 GBK 安全；repr 全精度）。
+2. `source_import_qmt.py`：`convert()` 增 `qfq_embed` 可选参数（缺省 None=不嵌入，零行为漂移）；嵌入时把上述常量块拼进 `_QS_QMT_HISTORY_EXT`；**三态层改读常量**（删文件 open 路径——其在本机可测、真机永 broken，保留只会持续误打印）；换算逻辑（F(t)/F(base) 插值、五列换算、零扰动）**逐字不变**。
+3. `tests/test_qmt_qfq_snapshot.py`：T1 三态改常量判（embedded/absent/broken 各有例＋fail-loud 断言）；T3 换算等价沿用；**新增 T7 嵌入往返**：export `--emit-py` 产物常量经 eval 后与源 JSON records 逐值相等；**新增 T8 精度守卫**：随机抽 500 跳变点，repr 往返 `float(repr(x)) == x` 全真。
+4. Python 3.6.8 兼容约束（新证据）：模板串禁 f-string（本就不用）；dict 常量 OK；`open` 相关全删。
+
+### 10.3 体积与时效账
+
+- 数据文本量：23,882 跳变点 × ~30B ≈ 720KB ⇒ 嵌入产物 ≈ **850KB**（CANSLIM 基 126KB）；六产物最大者同比例。可接受，且**换算加载从文件 IO 变为一次 dict 解析**（更快）。
+- 时敏性：跳变点历史段稳定，仅末端重锚随新交易日变 ⇒ SOP＝「新除权/改窗口/新交易日 ⇒ 重导＋重转」（R330 三补强①一并在案）。
+
+### 10.4 D-30 连带（instrument snapshot）
+
+同根因（`open()` 依赖）⇒ 其 loaded 态真机从未生效（absent 零输出掩盖，R335 申报）。**本案不搭车改**（先修 QFQ 主线闭环）；D-30 迁移嵌入**另立小批**，范式沿用本节。登记：docs/ISSUES.md 候下批呈批面。
+
+### 10.5 回退条件（更新）
+
+| 触发 | 动作 |
+|---|---|
+| 嵌入产物真机 V6 仍 broken/不一致 | git revert 本批；回退=不含嵌入的转换（=现状，无残留文件态） |
+| 产物体积致 QMT 加载失败 | export 增 `--top-n` 按近期跳变点裁剪（保底 260 根窗覆盖）后再嵌入 |
+| repr 精度守卫 T8 红 | 停实施，回本节修订 |
+
+### 10.6 验收（V1-V7 修订版）
+
+V1 三态改常量判；V7/V8 新增如上；V2-V6 判据不变（V6 真机 13 只逐位一致仍为核心；**R330 三补强③的「打印精度下限」判读在 V6 落地时执行**）。
+
+> 版本：v1.1（修订节）；上游 v1.0＝`4f800ef`；证据：R335 真机两轮日志＋R337 FILEPROBE v2b 六行（`output/qmt_diag/` 存档）。
