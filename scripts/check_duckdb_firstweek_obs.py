@@ -28,6 +28,8 @@ from typing import Any, Dict, List, Optional
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY311 = r"C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe"
 FATAL_KEYWORD = "Failed to delete all rows from index"
+# 首周观测窗口起点（升级窗口日 00:00）：只有此后的日志属「升级后故障面」
+OBS_WINDOW_START = "2026-11-07 00:00:00"
 EVIDENCE = os.path.join(REPO, "docs", "evidence", "duckdb-1.5-upgrade-window-evidence.md")
 DAEMON_RE = re.compile(r"quantstudio\.pipeline\.daemon")
 DAEMON_MODES = ("--mode forever", "--mode once")
@@ -93,9 +95,14 @@ def collect() -> Dict[str, Any]:
     logdir = os.path.join(REPO, "data", "logs")
     logs: List[str] = []
     hits: List[str] = []
+    qa_hits: List[str] = []
     try:
+        # 只统计首周窗口内（OBS_WINDOW_START 之后修改）的日志 —— 历史日志含升级前既有故障，
+        # 计入即误报（升级后故障面才是本观测的对象）
+        wstart = dt.datetime.strptime(OBS_WINDOW_START, "%Y-%m-%d %H:%M:%S").timestamp()
         files = sorted((os.path.join(logdir, f) for f in os.listdir(logdir) if f.endswith(".log")),
                        key=os.path.getmtime, reverse=True)[:60]
+        files = [f for f in files if os.path.getmtime(f) >= wstart]
         for f in files:
             logs.append(os.path.basename(f))
             try:
@@ -103,6 +110,9 @@ def collect() -> Dict[str, Any]:
                     for i, line in enumerate(fh, 1):
                         if FATAL_KEYWORD in line:
                             hits.append("%s:%d" % (os.path.basename(f), i))
+                        # 只计 CLI 级失败结论行（明细行是检测输出，不等于失败结论）
+                        if "quality audit failed" in line:
+                            qa_hits.append("%s:%d" % (os.path.basename(f), i))
             except Exception:  # noqa: BLE001
                 continue
     except Exception as exc:  # noqa: BLE001
@@ -110,6 +120,8 @@ def collect() -> Dict[str, Any]:
     res["logs_scanned"] = len(logs)
     res["fatal_hits"] = len(hits)
     res["fatal_hit_files"] = hits[:10]
+    res["qa_failed_count"] = len(qa_hits)
+    res["qa_failed_files"] = qa_hits[:10]
 
     # ④ 版本门（判定源 CLI；不触主库）
     g = sh([PY311, "-m", "quantstudio.pipeline.duckdb_version_gate", "--check"])
@@ -134,6 +146,8 @@ def collect() -> Dict[str, Any]:
         # 供血主体 = --mode forever 常驻实例（once 轮为一次性任务，会自然消失，不作存活判据）
         "daemon_alive": any(isinstance(d, dict) and d.get("mode") == "forever" for d in res.get("daemons", [])),
         "once_running": any(isinstance(d, dict) and d.get("mode") == "once" for d in res.get("daemons", [])),
+        # 采集轮质量审计失败（首周内须为 0；属升级后故障面，我方只记录不修他线域）
+        "no_qa_failure": res.get("qa_failed_count", -1) == 0,
     }
     res["checks"] = checks
     res["verdict"] = "PASS" if all(checks.values()) else "FAIL"
@@ -153,10 +167,11 @@ def render(res: Dict[str, Any]) -> str:
         "  主库: %s GB  mtime=%s" % (res.get("db_gb"), res.get("db_mtime")),
         "  WAL: %s MB" % res.get("wal_mb"),
         "  FATAL 关键词 '%s': 命中 %s（扫 %s 个日志）" % (FATAL_KEYWORD, res.get("fatal_hits"), res.get("logs_scanned")),
-        "  判据: FATAL=0 %s ｜ WAL<256MB %s ｜ 版本门 PASS 1.5.6 %s ｜ forever 常驻在位 %s ｜ (once 轮在跑 %s)"
+        "  判据: FATAL=0 %s ｜ WAL<256MB %s ｜ 版本门 PASS 1.5.6 %s ｜ forever 常驻在位 %s ｜ (once 轮在跑 %s) ｜ 采集轮质量审计失败 0 %s（命中 %s）"
         % (mark.get(c.get("fatal_zero"), "?"), mark.get(c.get("wal_under_256mb"), "?"),
            mark.get(c.get("gate_pass_1_5_6"), "?"), mark.get(c.get("daemon_alive"), "?"),
-           mark.get(c.get("once_running"), "?")),
+           mark.get(c.get("once_running"), "?"), mark.get(c.get("no_qa_failure"), "?"),
+           res.get("qa_failed_count")),
         "  判定: %s" % res.get("verdict"),
     ]
     if res.get("fatal_hit_files"):
@@ -167,14 +182,15 @@ def render(res: Dict[str, Any]) -> str:
 def append_evidence(res: Dict[str, Any]) -> None:
     """把当日读数追加进窗口证据（§7.4 日表）。"""
     c = res.get("checks", {})
-    row = ("- **%s** ｜ daemon %s ｜ 版本门 %s ｜ 库 %s GB（mtime %s）｜ WAL %s MB ｜ "
-           "FATAL 命中 **%s**（扫 %s 日志）｜ 判据 FATAL=0 %s / WAL %s / 版本门 %s / daemon %s ｜ **%s**"
+    row = ("| %s | FATAL 命中 %s（扫 %s 日志）｜ WAL %s MB ｜ 版本门 %s ｜ daemon %s ｜ 采集轮质量审计失败 %s ｜ 判据 %s ｜ **%s** |"
            % (res.get("date"),
               ", ".join("pid %s(%s)" % (d.get("pid"), d.get("mode")) for d in res.get("daemons", []) if isinstance(d, dict) and "pid" in d) or "无",
               res.get("gate_out"), res.get("db_gb"), res.get("db_mtime"), res.get("wal_mb"),
-              res.get("fatal_hits"), res.get("logs_scanned"),
-              "✓" if c.get("fatal_zero") else "✗", "✓" if c.get("wal_under_256mb") else "✗",
-              "✓" if c.get("gate_pass_1_5_6") else "✗", "✓" if c.get("daemon_alive") else "✗",
+              res.get("fatal_hits"), res.get("logs_scanned"), res.get("wal_mb"),
+              res.get("gate_out"),
+              ", ".join("pid %s(%s)" % (d.get("pid"), d.get("mode")) for d in res.get("daemons", []) if isinstance(d, dict) and "pid" in d) or "无",
+              res.get("qa_failed_count"),
+              " ".join("%s=%s" % (k, "✓" if v else "✗") for k, v in sorted(c.items())),
               res.get("verdict")))
     text = ""
     if os.path.exists(EVIDENCE):

@@ -147,4 +147,4 @@ exit=3
 | 日期 | 判据 | 判定 |
 |---|---|---|
 | 2026-11-08 | FATAL=0 ✓ / WAL 7.93MB<256MB ✓ / 版本门 PASS 1.5.6 ✓ / forever 常驻在位 ✗（38020 于 01:12:41 normal-exit，当前仅 once 轮 40620） | **FAIL（供血主体缺席 · 归节点1 P0）** |
-
+| 2026-11-08 | FATAL 命中 **0**（窗口内日志）｜ WAL 0.0 MB ｜ 版本门 PASS 1.5.6 ｜ daemon 无（once 轮 04:03 收工）｜ **采集轮质量审计 CLI 级失败结论 51 条**（窗口内 60 个日志，含 `once_etf_daily_verify_20261108.log` @04:03:24、`daemon.log` @00:05:10 与 @04:03:24 等；伴随 `etf_minutes/AdjustmentAnchorDrift count=66 FAIL>0.5%` 明细）——**属 etf_minutes 复权锚域·他线 P0 案面，我方只记录不修**｜ 判据 FATAL=0 ✓ / WAL ✓ / 版本门 ✓ / daemon ✗ / 质量审计=0 ✗ | **FAIL（供血主体缺席 + 采集轮质量审计反复失败）** |
