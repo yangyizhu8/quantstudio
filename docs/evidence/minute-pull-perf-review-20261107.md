@@ -88,7 +88,7 @@
 
 ---
 
-## 四、根因定位（代码级，本轮新发现）
+## 四、根因定位（代码级；§4.4 机理已于 22:0x 按②审运行时证据勘误）
 
 ### 4.1 水位推进的唯一入口（`daemon.py:625` `_advance_or_defer_watermark`）
 
@@ -125,26 +125,69 @@ if detector_degraded:   passed = False   # L1953「因子刷新失败，价格�
 # 另有 orphan：status='in_progress' 且本周期 claim 未终态 ⇒ passed=False（L723-724）
 ```
 
-### 4.4 **结构性死锁**（本报告最重要的判断）
+### 4.4 结构性死锁（结论保留，**机理已更正**）
 
-实测存量（`QualityAudit` 2026-11-07 16:35:03，checks=336）：
+> ⚠ **2026-11-07 22:0x 勘误**（②审运行时复核指出，我方核查确认审核方正确）：
+> 本节初版写的「gate 用**全表**计数、历史存量 17,520 恒超 ⇒ 死锁」**是错的**。
+> 真实机理如下（已按主库只读实测的 `hold_reason` 原文与 `qfq_cycle_run` 终态改写）。
 
-| 项 | 读数 | gate 阈值 | 结果 |
-|---|---|---|---|
-| `QfqDeadLetter` | **17,520** | 0 | 恒超 |
-| `QfqPendingSla`（>72h） | **47,199** | 0 | 恒超 |
-| orphan（in_progress 未终态） | 本轮 27 死信/27 重试失败下的残量 | 0 | 恒有 |
-| 本轮全 committed | `committed=2/60`（Obs-1）/`0`（11-07） | 全数 | 恒不满足 |
+**代码事实（更正）**：FP-6（2026-10-20）**已把 gate 判定域收窄为「本周期 claim ∪ 水位窗口」**，
+`QS_QFQ_GATE_SCOPE` 默认 `cycle` 且配置无覆盖。**全表 17,520 死信只进 health 报告，不参与 `passed`。**
 
-⇒ **`passed` 恒为 `False`** ⇒ `finalized_held` ⇒ **四价格表水位永久 `held`** ⇒
-**每轮从旧水位重拉同样历史** ⇒ 重拉又产生新的单元失败 ⇒ 死信/超 SLA 存量继续维持 ⇒ **死锁自我维持**。
+**运行时铁证（主库只读实测，2026-11-07 22:0x）**：
 
-**这解释了全部现象**：
-1. 为什么五张表同时冻（同一个 `passed` 开关）；
-2. 为什么 `error=None`（不是异常，是判据不满足）；
-3. 为什么数据在进、水位不动（`etf_daily` 数据止点已到 11-05，水位 09-04）；
-4. 为什么 W1-B（周期自动恢复）救不了——新周期一样 `passed=False`；
-5. 为什么死信数一路涨（16,722→17,520）——重拉不停产生失败。
+```
+hold_reason 原文 =
+  "dead_letter=428 超过阈值 0;
+   trigger d60662a5a98dec84fe25c8fd1c146fa9394ceb0c 未 committed（dead_letter）;
+   trigger 04e377495092e340ca64026b7c2d267463f0d02b 未 committed（dead_letter）;
+   trigger b36c3fd6111673c8dc4e60a836181bce312269b1 未 committed（retryable_failed）; …"
+
+qfq_cycle_run 终态（近 4 轮）：
+  cyc_b2ac05106fd1  finalized_held  exec=60 ok=0  fail=60   11-06 23:03 → 11-07 00:42
+  cyc_467e18d0a543  finalized_held  exec=60 ok=0  fail=60   11-06 21:23 → 22:55
+  cyc_edc5da5db36d  finalized_held  exec=60 ok=1  fail=59   11-06 20:06 → 21:18
+  cyc_0d7c51171df5  finalized_held  exec=60 ok=5  fail=55   11-06 09:14 → 15:32
+```
+
+**⇒ 真实根因链（更正）**：
+
+```
+水位冻结
+  → 重拉窗口巨大（etf_daily 09-04 → candidate 11-05，约 62 天）
+  → 窗口内积累死信（实测 dead_letter=428，属"即将提交区间的真实数据空洞"）
+      + 本轮 60 个重锚单元全部失败（ok=0；ART 索引损坏 + export 时限所致）
+  → gate 双判据【窗口内死信=0】、【本轮全 committed】**双双不过**
+  → finalized_held ⇒ 四表水位 held
+  → 窗口继续巨大（自维持）
+```
+
+**这解释了全部现象（机理更正后仍成立）**：
+1. 为什么五张表同时冻——**同一个全局 `passed`**（§4.2 的 L1241，此点审核方确认成立）；
+2. ~~为什么 `error=None`（不是异常，是判据不满足）~~ → **更正**：`error=None` 只说明周期未抛异常；
+   **单元每轮都在真实失败**（`ok=0/fail=60`），gate 的 hold 是对真实失败的正常拦截，**不是"空转判据"**；
+3. 为什么数据在进、水位不动（`etf_daily` 数据止点 11-05、水位 09-04）——单元失败 ⇒ 不提交；
+4. 为什么 W1-B（周期自动恢复）救不了——新周期单元仍失败 ⇒ `passed` 仍 False；
+5. 为什么死信数一路涨（16,722→17,520）——重拉不停产生新失败。
+
+**⇒ 结论（保留）**：死锁自维持判断成立；**但入口是「单元真实失败」+「窗口内死信」**，
+不是「全表历史计数」。**因此"按时间收窄计数"（初版 P0-A）解不了**——窗口内死信本就是该挡的数据空洞。
+
+### 4.5 附：GUI once 轮会制造悬挂周期（本轮新发现，与本报告关联）
+
+主库/日志实测：
+
+```
+01:28:26 INFO __main__: [qfq] 协调周期开启 cycle_id=cyc_ba891d0f25b8
+06:01:51 WARNING [qfq_orch] FP-3 回收悬挂周期 1 条（终态置 interrupted，水位/intent 未动）：cyc_ba891d0f25b8(started/observing)
+```
+
+- `__main__` logger ⇒ **GUI 拉起的 `--mode once` 进程**（非 daemon）；
+- 该 once 轮创建 qfq 协调周期后未走完 ⇒ 周期悬挂 `started/observing`；
+- 下一个 forever 轮用 **FP-3** 回收为 `interrupted`，**「水位/intent 未动」** ⇒ pending 残留 ⇒ 下轮 supersede。
+
+⇒ 这解释了 `qfq_watermark_intent` 中 **`superseded=164`** 的累积来源之一。
+**不是本次冻结的主因，但会持续制造 superseded 噪声。**
 
 ---
 
