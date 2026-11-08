@@ -1499,3 +1499,85 @@ RESULT: WARN(non-strict, not blocking)  (cutoff=2026-11-08 14:00)  exit=0
 | ① 门禁 v2（E-1~E-4） | ✅ **验收通过**（附 §10.104 如实性修正 + §10.105 改进建议） |
 | ② 存量处置 | ✅ **照准归档到 `legacy/`**（按 K-1~K-5） |
 | ③ 知识条目打包 | ✅ **启动**（E-04 ②审已过） |
+
+## R-PERF-23 · ②审 · 2026-11-08 20:12 · **KNOWN_VIOLATIONS 有条件通过（暴露 mtime 冻结盲区）；归档通过；知识条目未提交**
+
+### 10.109 审核方实跑（未采信申报）
+
+```
+files=10  compliant=0  exempt=7  known_violations=3  violations=0  legacy_frozen=21
+  KNOWN_VIOLATION: baseline_golden.json — 同上（golden 侧）；1.4.5 原版灭失…
+  KNOWN_VIOLATION: baseline_readings.json — 已于 2026-11-08 01:57 被 1.5.6 跑覆写（D-2 案发）…
+  KNOWN_VIOLATION: daily_baseline_golden.json — 同上（golden 侧）…
+  KNOWN_VIOLATION: daily_baseline_readings.json — 已于 2026-11-08 01:50 被覆写…
+RESULT: WARN(exempt>50%, gate coverage too low)   exit=0（非strict）/ exit=1（strict）
+```
+
+| 项 | 判定 |
+| --- | --- |
+| KNOWN 可见性 | ✅ 4 条理由全部打印（L123-125 遍历字典） |
+| known 不判 FAIL | ✅ judged = compliant + known + len(bad) |
+| 覆盖率 WARN | ✅ exempt/total 触发 |
+| legacy 排除 | ✅ legacy_frozen=21 |
+| strict 行为 | ✅ 实测 exit=1 |
+
+### 10.110 🔴 核心发现：mtime 冻结存在结构性盲区——D-2 覆写在冻结期内重复发生且无声
+
+| 文件 | 上次实测 mtime | 本次实测 mtime | 变化 |
+| --- | --- | --- | --- |
+| baseline_readings.json | 11-08 01:57 | **11-08 03:29:21** | 🔴 被再次覆写 |
+| baseline_golden.json | — | **11-08 03:29:21** | 🔴 被再次覆写 |
+| daily_baseline_readings.json | 01:50 | 01:50（未变） | — |
+
+> 🔴 **03:29 正是 B2_pre_hot 跑的时刻** ⇒ 四跑矩阵最后一跑又覆写了这两个文件。
+> 而 is_known_violation 条件为 mtime <= CUTOFF(14:00) ⇒ **03:29 ≤ 14:00 ⇒ 仍判 known ⇒ 门禁无声**。
+> ⇒ **D-2 违规在冻结期内第二次发生，门禁完全不报。**
+
+**概念定性（审核方）**：
+> 「冻结」应当冻结「文件的原始状态」，而不是冻结「对它的监测义务」。
+> 当前实现把 cutoff 之前的任何 mtime 都当 known 通过 ⇒ cutoff 前发生 1 次与发生 100 次覆写，输出完全一样。
+
+**改进要求（M-1~M-2）**：
+
+| # | 要求 |
+| --- | --- |
+| **M-1** | KNOWN_VIOLATIONS 每项增加登记时 mtime（frozen_mtime）；实跑比对当前 mtime，不一致 ⇒ 输出 KNOWN_VIOLATION_MUTATED: 名 frozen=… now=…，按 WARN（strict 下 FAIL） |
+| **M-2** | 若确认再次覆写，须在 README/台账记一笔（01:57 与 03:29 两次），并说明 1.4.5 原版灭失时点以首次（01:50/01:57）为准 |
+
+### 10.111 登记 4 项 vs 实计 known=3
+
+> 主目录 10 件中不存在 daily_baseline_golden.json ⇒ 登记表含一个目录中不存在的文件，故 known_violations=3。
+> 打印仍出 4 行（遍历字典），易误读为 4 件命中 ⇒ 申报的「新增登记 4 项」与实计 3 须并列说明。
+> 要求：登记表只列实际存在的文件；对不存在者单列 KNOWN_VIOLATIONS_MISSING 并说明，避免「登记了但没这文件」的隐性空洞。
+
+### 10.112 K-1~K-5 归档 —— ✅ 验收通过
+
+| 项 | 实测 |
+| --- | --- |
+| legacy/ 项数 | **21**（20 违规件 + README.md） |
+| 保留原名 | ✅（A1_post_cold.log 等在 legacy/ 内） |
+| 主目录 | **10 件**（exempt 7 + known 3 + violations 0） |
+| legacy 排除 | ✅ legacy_frozen=21 且不进判定 |
+| strict | ✅ exit=1（coverage WARN 升级） |
+
+### 10.113 知识条目 —— 🟡 已落盘、未提交
+
+| 文件 | 大小 | mtime | git 状态 |
+| --- | --- | --- | --- |
+| knowledge/db/DB-2026-0032.md | 974B | 11-08 16:09 | **未跟踪** |
+| DB-2026-0033.md | 1,070B | 16:10 | **未跟踪** |
+| DB-2026-0034.md | 1,074B | 16:10 | **未跟踪** |
+| DB-2026-0035.md | 1,044B | 16:10 | **未跟踪** |
+
+> ⇒ 「入库」应指 git 提交入库；当前仅落盘。
+> 另发现存量未跟踪：DB-2026-0024 / 0025 / 0030 / 0031 亦未跟踪，另 knowledge/未命名.base 未跟踪。
+> 要求：4 条随下一笔 commit 入库；存量未跟踪条目一并清理或说明。
+
+### 10.114 裁定
+
+| 项 | 裁定 |
+| --- | --- |
+| ① KNOWN_VIOLATIONS 语义 | 🟡 有条件通过 —— 须补 M-1/M-2（冻结须监测变更，非放任不管）+ 登记表与实际存在性对齐 |
+| ② K-1~K-5 归档 | ✅ 验收通过 |
+| ③ DB-2026-0032~0035 | 🟡 有条件通过 —— 落盘 ✓，须 git 提交入库 |
+| ④ 全窗重跑窗口申报 | ✅ 受理（须四要素命名、标冷/热态、daemon 事前实测） |
