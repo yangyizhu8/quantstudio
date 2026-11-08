@@ -412,18 +412,23 @@ def test_t7_emit_py_roundtrip_and_byte_idempotent(tmp_path, capsys):
     ns = {}
     exec(compile(src, '<emit-py>', 'exec'), ns)
     # exec 后 DATA 与源 records 逐值相等（repr 往返：float(repr(x)) == x）
+    # 【R347 语义更新】导出补记「每只 code 的首值基准比率（≠1.0 时）」——
+    #   fixture 600971 首值 0.5（20250522）、000001 首值 0.9674（20240602）
+    #   现在都作为基准跳变点入快照（否则换算端按「无记录⇒1.0」会让远端整段失复权；
+    #   实证 301557 c251 真机 74.38=raw vs 本地 front 51.91）。T9 专为此守卫。
     assert ns['_QS_QMT_QFQ_SNAP_DATA'] == {
-        '000001': ((20240603, 0.75),),
-        '600971': ((20250523, 0.9674512975496247), (20260529, 1.0)),
+        '000001': ((20240602, 0.9674512975496247), (20240603, 0.75)),
+        '300214': ((20250601, 0.5),),
+        '600971': ((20250522, 0.5), (20250523, 0.9674512975496247), (20260529, 1.0)),
     }
     assert ns['_QS_QMT_QFQ_SNAP_META'] == {'enabled': True, 'base': 20260529,
-                                           'n': 2}
+                                           'n': 3}
     # 真注入端到端：emit-py -> convert -> embedded 态 -> div='none'
     ns2 = _render_ns(qfq_embed=str(emit1))
     assert callable(ns2.get('_qs_qfq_snap_state'))
     _out, c2 = _fetch_hist(ns2, '600971.SH', _T3_DATES)
     assert c2.dividend_types == ['none']
-    assert 'QS_QMT_QFQ_SNAP embedded n=2 base=20260529' in \
+    assert 'QS_QMT_QFQ_SNAP embedded n=3 base=20260529' in \
         capsys.readouterr().out
 
 
@@ -441,3 +446,60 @@ def test_t8_repr_precision_guard():
     for _ in range(500):  # 复权比率量级（T7 fixture 仅 3 值 -> 合成 500）
         r = rng.uniform(0.05, 20.0)
         assert float(repr(r)) == r, (r, repr(r))
+
+
+# ── T9 回归（R347 缺陷守卫）────────────────────────────────────────────
+# 缺陷：导出只记「比率变化点」，未记每只 code 的**首值基准比率**（当其 != 1.0）
+#       ⇒ 换算端按「无记录 ⇒ 1.0」处理 ⇒ 该 code 远端整段失去复权
+#       （实证：301557 c251 真机 74.38 = raw×1.0 vs 本地 front 51.91）。
+# 守卫：首值基准比率 != 1.0 ⇒ 必入快照；== 1.0 且全程无跳变 ⇒ 不入（免噪声）。
+
+
+def _make_fixture_db_v2(db_path):
+    """T9 专用 fixture：
+    - '000002' 首值基准比率 0.9、其后无跳变  ⇒ **必入**快照（首点 = 0.9）
+    - '000003' 首值基准比率 1.0、其后无跳变  ⇒ **不入**快照（免噪声）
+    - '000004' 首值 ratio 列 NULL、兜底 front/close = 0.8 ⇒ 必入（兜底路径同样守卫）
+    """
+    import duckdb
+    from datetime import datetime, timezone
+    con = duckdb.connect(str(db_path))
+    con.execute('CREATE TABLE stock_daily (code VARCHAR, time BIGINT, '
+                'close_front_ratio DOUBLE, close_front DOUBLE, close DOUBLE)')
+    rows = [
+        ('000002', '20250102', 0.9, 9.0, 10.0),
+        ('000002', '20250210', 0.9, 9.0, 10.0),
+        ('000003', '20250102', 1.0, 10.0, 10.0),
+        ('000003', '20250210', 1.0, 10.0, 10.0),
+        ('000004', '20250102', None, 8.0, 10.0),
+        ('000004', '20250210', None, 8.0, 10.0),
+    ]
+    for code, d8, ratio, close_front, close in rows:
+        ts = int(datetime.strptime(d8, '%Y%m%d').replace(
+            hour=12, tzinfo=timezone.utc).timestamp() * 1000)
+        con.execute('INSERT INTO stock_daily VALUES (?, ?, ?, ?, ?)',
+                    [code, ts, ratio, close_front, close])
+    con.close()
+
+
+def test_t9_first_valid_baseline_ratio_must_be_recorded(tmp_path, capsys):
+    mod = _load_export_module()
+    db = tmp_path / 'fixture9.duckdb'
+    _make_fixture_db_v2(db)
+    out_json = tmp_path / 'out' / 'qfq_factor_snapshot.json'
+    emit = tmp_path / 'qfq_snap_embed.py'
+    argv = ['--db', str(db), '--out', str(out_json), '--since', '20240101']
+    assert mod.main(argv + ['--emit-py', str(emit)]) == 0
+    src = emit.read_text(encoding='ascii')
+    ns = {}
+    exec(compile(src, '<emit-py>', 'exec'), ns)
+    records = ns['_QS_QMT_QFQ_SNAP_DATA']
+    # ① 首值基准比率 != 1.0 ⇒ 必入快照，且首点即该基准值
+    assert '000002' in records, '首值基准比率 0.9 未入快照（T9 守卫失败）'
+    assert records['000002'][0][0] == 20250102
+    assert abs(records['000002'][0][1] - 0.9) < 1e-12
+    # ② 兜底路径同样受守卫（ratio 列 NULL ⇒ front/close 兜底 0.8）
+    assert '000004' in records, '兜底首值 0.8 未入快照（T9 守卫失败）'
+    assert abs(records['000004'][0][1] - 0.8) < 1e-12
+    # ③ 首值 = 1.0 且全程无跳变 ⇒ 不入快照（免噪声）
+    assert '000003' not in records, '首值 1.0 的 code 不应入快照（噪声）'
