@@ -116,3 +116,57 @@
 
 知识反哺：[命中] QD-2026-0023（qd 族/D3/QD-2026-0023.md，2026-11-06）——采纳「消融矩阵定位到维度层」「反证组最强」两条方法论；本件新增方法论候选：「**分层验收（目标域逐位 + 残余归因）优于单一计数阈值**」——原 D≤5 阈值隐含「价格层修复⇒选股收敛」假设，已被 2026-11-08 实测证伪，建议入 QD-2026-0023 反馈段。
 本轮沉淀：QD-2026-0023（讨论节追加 EPS 层四规格取证结论·待②审后正式化）
+
+
+---
+
+## 十一、实施规格 v1（2026-11-09 02:0x · R350 后补·前置①④⑤ 闭合）
+
+### 11.1 前置结论（四项，附证据）
+
+| # | 前置 | 结论 | 证据来源 |
+|---|---|---|---|
+| ① | **QMT 面板语义**（Context7·铁律 16） | `get_raw_financial_data`／`get_financial_data` 在 **>1 股 × >1 时段 ⇒ pandas.Panel（items=stock, major=time, minor=field）**；字段表（`nativeApi/xtdata.html`·PershareIndex 每股指标）：**`s_fa_eps_basic`＝基本每股收益（当期）**、`s_fa_eps_diluted`＝稀释、`adjusted_earnings_per_share`＝扣非；**`m_anntime`＝公告日**、**`m_timetag`＝报告截止日**；**无 TTM EPS 字段** | Context7 `/websites/dict_thinktrader_net`（2 次查询：`innerApi/data_function.html`＋`nativeApi/xtdata.html`）；⚠️`m_timetag` 在股票字典表被标为「Change Date」、在每股指标表标为「报告截止日」——**以逐字段注释表为准**，出入如实登记 |
+| ①' | **两侧 EPS 不同源（差异主机制）** | **QMT 面板比本地库新一个季度**：002568 本地最新报告期＝**2026-03-31**（ann=2026-04-29，eps=0.21）**无 2026-06-30 期**；QMT 面板 `m_timetag→2026-06-29`、`m_anntime→2026-08-04`、**s_fa_eps_basic=0.46** ⇒ **0.46 ∉ 本地该股任一报告期值** | 本地隔离副本库 `fin_indicator` 查询 ＋ 真机 HISTDBG3 |
+| ④ | **EPS 取数路径** | 产物侧走 **`C.get_financial_data(fieldList, stockList, startDate, endDate, report_type=…)`**，fieldList 含 `s_fa_eps*`；返回 Panel 形态与真机 `raw=Panel levels=2 idx_names=['major','minor']` 吻合 | 产物 grep（`get_financial_data` 12 处、`s_fa_eps` 3 处）＋真机 HISTDBG2/HISTDBG3 |
+| ⑤ | **universe 与体积** | 本地 `fin_indicator`：**distinct code 5,211／行数 135,840／同(code,end_date) 重复 0／全部行有 ann_date**；库内近窗全市场 code 5,552 | 隔离副本库查询 |
+| ② | **本地口径分叉** | `fin_indicator.eps` 与 `income_statement.basic_eps` **当期全同**（抽样 8 例），但全库 **2,346 行双向分叉**（最大年 2025 平均差 0.0393）⇒ **取 `basic_eps`**（与 QMT 面板 `basic` 语义严格对齐），分叉行需在 §11.3 规则内消解 | R344/R346 取证 |
+| ③ | **回填语义** | `update_flag` ＝ **来源/重采标记**（非 PIT 修正标记；两类公告滞后中位 56 vs 48 天同分布）；`backfill_eps_source` 3,189 行（2.3%）分散无集中期 | R346 核实 |
+
+### 11.2 PIT 映射（定谳）
+
+```
+本地 fin_indicator.ann_date  ↔  QMT m_anntime   （**可见性锚**：公告日）
+本地 fin_indicator.end_date  ↔  QMT m_timetag   （**报告期**：报告截止日）
+```
+
+⇒ 嵌入值按 **ann_date ≤ D-1** 取「最近一期」的 (end_date, eps) ⇒ 与 QMT 面板的可见性规则逐位对齐。
+
+### 11.3 实施设计（甲案·嵌入式·零 fileIO·零平台语义依赖）
+
+1. **数据源**：`fin_indicator`（主源，口径＝`eps`，与 `basic_eps` 当期同值）＋`income_statement.basic_eps`（分叉行择优）＋`ann_date`/`end_date`；
+2. **导出**：新脚本 `scripts/export_eps_snapshot.py`（仿 `export_qfq_factor_snapshot.py`）：产出
+   `_QS_QMT_EPS_SNAP_DATA = {'002568': ((end_d8, ann_d8, eps), …), …}`（**repr 全精度**、**禁时间戳**、code 升序幂等、GBK/ASCII 安全）；
+3. **注入**：与 QFQ 快照同机制——`convert(qfq_embed=…, eps_embed=…)` 将常量块拼入产物（**参数独立·缺省零漂移**）；
+4. **消费**：QMT 侧 EPS 因子取数后（或直接替换取数调用），**用 `_QS_QMT_EPS_SNAP_DATA` 按 (code, ann_date≤D-1) 取值**覆盖面板值 ⇒ 两侧 EPS 同源；面板取数保留为**兜底与对照**（面板值与嵌入值不一致时打印一行 `QS_QMT_EPS_MISMATCH code=… local=… panel=…`，fail-loud 便于归因）；
+5. **universe 裁剪**：EPS 计算范围 = **策略实际对 EPS 求因子的 code 集合**（见 §11.4 侦察结果）；若该集合仍大 ⇒ 再按「近 N 期」裁剪；**体积上限 1.5 MB**，超限则走 **zlib+base64 压缩嵌入**（R330 ②审修订② B 案，3.6.8 stdlib 可用）；
+6. **回填与更新_flag**：以**本地值为参照**（既定方向「保真以本地为参照」）；`update_flag=1` 行不排除（已证其非 PIT 语义），但**分叉行以 `basic_eps` 为准**（对齐 QMT `basic` 语义）；
+7. **不改策略源码**（铁律 07）：全部落点＝导出脚本 ＋ wrapper 层 ＋ 单测。
+
+### 11.4 待补（下一轮随实施一并做）
+
+- EPS 计算 universe 的**精确 code 集合**（侦察见 §11.5 实测输出）；
+- 体积实测（按裁剪后 universe 导出后统计）；
+- 单测：PIT 正确性（ann_date≤D-1）、回填覆盖守卫、分叉行择优、embedded/absent/broken 三态、面板对照 fail-loud。
+
+### 11.5 侦察实测（EPS 取数调用点·见脚本输出）
+
+- `get_financial_data` 调用点：**产物 L6750/6879/6892/6971/7056/7310/7316/7321**（8+ 处）；
+- `s_fa_eps` 字段：**产物 L6755/6763/7254**；
+- `_compute_eps_factors`：**产物 L12（垫片注释引用）/L7891/L8051**；
+- ⚠️**面板侧的 `get_raw_financial_data` 命中 0** ⇒ 产物走的是 `get_financial_data`（两者返回 Panel 形态在 >1×>1 时一致）——**修订方案件 §二「面板 get_raw_financial_data」的表述**（以本节为准）。
+
+---
+
+知识反哺：[命中] QD-2026-0023（qd 族/D3/QD-2026-0023.md，2026-11-06）
+本轮沉淀：QD-2026-0023（EPS 层前置结论·PIT 映射·两侧不同源机制）
