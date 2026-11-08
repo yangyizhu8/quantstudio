@@ -1345,3 +1345,80 @@ knowledge_refill: [命中] QD-2026-0011（qd/D1/knowledge/qmt/QD-2026-0011.md，
 | −71.6% 作废 | ✅ **维持** |
 | C1b 正式口径 | 🟡 **改为分场景区间**（见 10.96） |
 | E-04 修订件 | ⏳ **受理**，须含上述修正 |
+
+## R-PERF-21 · ②审 · 2026-11-08 15:18 · **①②③ 通过；④ 命名门禁不验收——100% 豁免、零检查、假 PASS**
+
+### 10.99 ①②③ 实测核验（通过）
+
+| 项 | 实测（`docs/timeout-optimization-rperf05-design-v2-20261106.md`，10,088 B） | 判定 |
+| --- | --- | --- |
+| 区间 | L22「**正式区间 [−26.6%, −64.3%]，保守界 −26.6%**（−45.7% 系取较快 A 值的乐观侧，已弃用）」 | ✅ |
+| 分场景 | L23 / L28「**必须分场景**，禁止把调试场景收益当生产收益报」 | ✅ |
+| C-approx-v1 | L30 版本化声明 + 「与历史任何冷态数字不可混用」 | ✅ |
+| 四要素标签 | L31「`version` / `thermal` / `layer` / `window`」 | ✅ |
+| R-8 两行归档 | L4 选股层已证 / L5 提交层悬置 | ✅ |
+| 判型 + 未验证范围 | L6 / L67 纯性能型 + 提交层未验证须按铁律 18 复评 | ✅ |
+| C-1~C-6 | L49 起逐条 | ✅ |
+| D-2 命名规范 | L32 格式 + 禁同路径覆写 | ✅ |
+
+### 10.100 🔴 ④ 命名门禁：**100% 豁免、零检查、假 PASS**
+
+**审核方自跑证据**：
+
+```
+compliant=0  exempt/skip=30  violations=0
+RESULT: PASS
+目录 json+log 总数 = 30
+```
+
+| 读数 | 含义 |
+| --- | --- |
+| **exempt = 30** | 目录内**全部** 30 个文件被豁免 |
+| **compliant = 0** | **没有任何一个文件被实际检查** |
+| violations = 0 | **空集恒为 0** |
+| RESULT: PASS | **假 PASS** |
+
+**根因（`scripts/check-evidence-naming.py` :48-52）**：
+
+```python
+EXEMPT_PREFIX = ('baseline_', 'daily_baseline_', 'readings_', 'golden156',
+                 'gold156', 'A1_', 'A2_', 'B1_', 'B2_', 'c1b_pre',
+                 'r8target', 'contA', 'd01_', 'fullwindow_',
+                 'cprofile_', 'memtrace_', 'daily_cprofile_')
+# :65  if f in EXEMPT or f.startswith(EXEMPT_PREFIX): continue
+```
+
+> 🔴 **这 17 个前缀 + 10 个精确名，恰好覆盖了本线全部证据件——包括它本该拦截的那一个**：
+>
+> | 前缀 | 覆盖对象 | 问题 |
+> | --- | --- | --- |
+> | `baseline_` | **`baseline_readings.json`**——**D-2 违规正是它被覆写** | 🔴 **门禁豁免了自己的立案理由** |
+> | `A1_/A2_/B1_/B2_` | 本轮四跑矩阵 | 🔴 本轮新产物未受管 |
+> | `r8target/contA/fullwindow_/c1b_pre` | R-8 相关证据 | 🔴 同上 |
+> | `gold156/golden156` | P-1 黄金重建 | 🔴 同上 |
+> | `readings_` | `readings_A1_post_cold.json` 等 | 🔴 只要起这个前缀即可绕过 |
+> | `cprofile_/memtrace_` | 1.4.5 灭失前唯一残留 | ✅ **唯一合理的豁免** |
+
+**申报缺陷（数据对、结论错）**：
+> SDD 如实报了「exempt=30」，但把 `violations=0` 读成合规 ⇒ **未察觉 `compliant=0` 意味着门禁空转**。
+> ⇒ **`violations==0` 不等于合规；空集恒满足。**
+
+### 10.101 重做要求（E-1~E-4）
+
+| # | 要求 |
+| --- | --- |
+| **E-1** | **删除会持续新增的前缀豁免**：`baseline_` / `daily_baseline_` / `readings_` / `gold156` / `golden156` / `A1_`~`B2_` / `c1b_pre` / `r8target` / `contA` / `fullwindow_` **全部移出**；仅保留 `cprofile_` / `memtrace_` / `daily_cprofile_`（真历史锚） |
+| **E-2** | **豁免绑定精确文件名 + 时间冻结**：只豁免「已存在、不再新增、且 mtime 早于 cutoff」的文件，不以通配放行 |
+| **E-3** | **PASS 判据加覆盖校验**：`compliant == 0 且 exempt > 0` ⇒ **FAIL**（未检查任何文件）；`exempt/(compliant+exempt) > 50%` ⇒ **WARN** |
+| **E-4** | 🔴 **用历史违规做负例回归**：构造 `baseline_readings.json` 同路径覆写场景，门禁**必须 FAIL**（当前必 PASS） |
+
+> **E-4 是验收硬门**：门禁必须能抓住**它诞生原因的那个案例**，否则等于没建。
+
+### 10.102 裁定
+
+| 项 | 裁定 |
+| --- | --- |
+| ① 口径区间 + 分场景 | ✅ **验收通过** |
+| ② 四要素标签 + C-approx-v1 | ✅ **验收通过** |
+| ③ E-04 修订件 | ✅ **②审通过**（内容齐备，无阻塞项）——**但 L32 证据纪律条须标注「门禁待修、当前不生效」** |
+| ④ 命名门禁 | 🔴 **不验收** ⇒ 按 E-1~E-4 重做 |
