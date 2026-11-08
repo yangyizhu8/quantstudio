@@ -160,3 +160,14 @@ exit=3
 | 提醒件落盘 | **`docs/evidence/eol-review-reminder-20261108.md`（862 B，mtime 2026-11-08 14:02:18）**——frontmatter `id: EOL-REVIEW-20261108` / `type: eol_review_reminder` / `status: open` / `as_of: "2026-11-08"` |
 | 结论 | **T056「验证能被真实触发一次」判据成立**——真实日历 ＋ 真实当日 ＋ 真实判定 ＋ 真实落盘（非模拟、非构造）；此前 2026-10-30 17:02 已有首次真实触发记录（`docs/evidence/eol-review-reminder.md`） |
 
+### §7.6 forever 恢复实况 + day-3 前置观测（2026-11-08 15:13–15:14）
+
+| 项 | 读数 |
+|---|---|
+| **forever 恢复** | **pid 36788，2026-11-08 15:13:06 起，`--mode forever`**；wrapper 心跳 `GUARD start wrapper_pid=46876 daemon_pid=36788 alive=True` / `15:14:06 alive=True uptime=1min` ⇒ **供血主体恢复（节点1 P0 链完成）** |
+| 上一代终态 | 38020 于 01:12:41 `ExitCode=0 (normal-exit)`；**01:12 → 15:13 供血主体缺席约 14 小时**（once 轮 44672 于 13:51:58 起补数，14:31:33 仍有库写入） |
+| **day-3 前置观测（15:14:25）** | FATAL **0** ✓ ｜ WAL **0.0 MB** ✓ ｜ 版本门 `PASS 1.5.6` ✓ ｜ **forever 常驻在位 ✓（36788）** ｜ once 轮在跑 ✗（此刻无 once，属轮间空档）｜ 采集轮质量审计 CLI 级失败 **46** 条 ✗（**归⑳/A 类域·etf_minutes 复权锚**，我方只记录不修） |
+| 判定 | 五项判据**四项绿**，唯一未绿项为**他线域**的采集轮质量审计 ⇒ **我方两项依赖之一已消除** |
+
+> 说明：「once 轮在跑 ✗」仅表示采集处于轮间空档（非判据项）；判据以 **forever 常驻**为供血口径。
+
