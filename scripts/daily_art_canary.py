@@ -151,6 +151,68 @@ def build_report(code: int, results: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def write_artifacts(code: int, results: list[dict], report: str | None) -> list[str]:
+    """三层留痕：md 报告 + run_state 字段 + 返回已写路径清单。
+
+    - 健康：写 latest.md（标记健康）+ run_state
+    - 损坏：写 latest.md（含模板格式修复建议）+ run_state.alert
+    """
+    written: list[str] = []
+    reports_dir = ROOT / "docs" / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    latest = reports_dir / "art-canary-latest.md"
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    broken = [r for r in results if not r.get("ok")]
+
+    if code == 2 and report:
+        latest.write_text(report, encoding="utf-8")
+        written.append(str(latest))
+    elif code == 0:
+        body = [
+            "# ART 索引巡检（最新）",
+            "",
+            f"- 检查时间：{now}",
+            f"- 结论：**✅ 全部一致（{len(results)} 张表）**",
+            "",
+            "| 表 | full-scan | grouped | 状态 |",
+            "|---|---|---|---|",
+        ]
+        for r in results:
+            if r.get("error"):
+                body.append(f"| {r['table']} | - | - | ⚠ {r['error'][:50]} |")
+            else:
+                body.append(f"| {r['table']} | {r['full']:,} | {r['grouped']:,} | ✅ |")
+        body += ["", f"> 由 `scripts/daily_art_canary.py` 生成（每日 05:00 计划任务）。"]
+        latest.write_text("\n".join(body) + "\n", encoding="utf-8")
+        written.append(str(latest))
+
+    # run_state 告警字段（供 daemon / 巡检读）
+    try:
+        import json as _json
+        rs_path = ROOT / "data" / "run_state.json"
+        state = {}
+        if rs_path.exists():
+            try:
+                state = _json.loads(rs_path.read_text(encoding="utf-8"))
+            except Exception:
+                state = {}
+        state["art_canary"] = {
+            "checked_at": now,
+            "code": code,
+            "broken": [r["table"] for r in broken],
+            "healthy": [r["table"] for r in results if r.get("ok")],
+            "report_path": str(latest) if code == 2 else None,
+        }
+        rs_path.write_text(_json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+                           encoding="utf-8")
+        written.append(str(rs_path))
+    except Exception:
+        pass
+
+    return written
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="每日 DuckDB ART 索引健康巡检")
     ap.add_argument("--json", action="store_true", help="输出 JSON")
@@ -171,6 +233,7 @@ def main() -> int:
             print(f"[{ts}] [ART-CANARY] ✅ 全部一致（{len(results)} 张表）")
             for r in results:
                 print(f"    {r['table']}: {r['full']:,} = {r['grouped']:,}")
+        write_artifacts(code, results, None)
         return 0
 
     if code == 3:
@@ -178,7 +241,11 @@ def main() -> int:
         print("[ART-CANARY] 可能原因：库被 daemon 持写锁 / 表缺失")
         return 3
 
-    print(build_report(code, results))
+    report = build_report(code, results)
+    written = write_artifacts(code, results, report)
+    print(report)
+    if written:
+        print(f"\n[ART-CANARY] 已写入: {', '.join(written)}")
     return 2
 
 
