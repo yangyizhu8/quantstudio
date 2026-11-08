@@ -1,0 +1,1391 @@
+20:22:51 INFO quantstudio.backtest.backtest_engine: [口径] 策略『买入/卖出』日志=提交级（不回查成交）；本次未启用成交级审计（如需请设 QS_ORDER_RESULT=1）
+20:22:52 INFO quantstudio.backtest.backtest_engine: [Backtest] 148 trading days: 2026-01-05 00:00:00+08:00 ~ 2026-08-13 00:00:00+08:00
+20:23:27 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=3095/3095 chunks=16 elapsed=22.1s
+20:23:33 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2025-12-31', 'hit': 0, 'miss': 3095}
+20:23:35 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002718', 'date': '2025-12-30'}
+20:23:35 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2025-12-30', 'hit': 0, 'miss': 3095}
+20:23:35 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-05: 40 只
+20:24:28 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260105 date=2026-01-05 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:24:28 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260105 date=2026-01-05 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+20:24:41 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-05', 'hit': 0, 'miss': 3094}
+20:24:41 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600337', 'date': '2025-12-31'}
+20:24:41 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2025-12-31', 'hit': 3093, 'miss': 1}
+20:24:41 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-06: 64 只
+20:24:56 INFO quantstudio.backtest.ptrade_api: 买入 600556.SS
+20:24:56 INFO quantstudio.backtest.ptrade_api: 买入 600587.SS
+20:24:58 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260106 date=2026-01-06 selected=2 tradable=2 sell_submitted=0 buy_submitted=2
+20:24:58 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260106 date=2026-01-06 positions=2 cash_ratio=0.0163 gross_exposure=0.9837
+20:25:07 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-06', 'hit': 0, 'miss': 3094}
+20:25:07 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '001331', 'date': '2026-01-05'}
+20:25:07 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-05', 'hit': 3093, 'miss': 1}
+20:25:07 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-07: 70 只
+20:25:29 INFO quantstudio.backtest.ptrade_api: 买入 000008.SZ
+20:25:31 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260107 date=2026-01-07 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+20:25:31 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260107 date=2026-01-07 positions=3 cash_ratio=0.0008 gross_exposure=0.9992
+20:25:43 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-07', 'hit': 0, 'miss': 3094}
+20:25:43 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600721', 'date': '2026-01-06'}
+20:25:43 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603508', 'date': '2026-01-06'}
+20:25:43 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-06', 'hit': 3092, 'miss': 2}
+20:25:43 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-08: 44 只
+20:26:11 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260108 date=2026-01-08 selected=1 tradable=0 sell_submitted=0 buy_submitted=0
+20:26:11 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260108 date=2026-01-08 positions=3 cash_ratio=0.0008 gross_exposure=0.9992
+20:26:25 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-08', 'hit': 0, 'miss': 3094}
+20:26:25 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-07', 'hit': 3094, 'miss': 0}
+20:26:25 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-09: 57 只
+20:26:46 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260109 date=2026-01-09 selected=1 tradable=0 sell_submitted=0 buy_submitted=0
+20:26:46 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260109 date=2026-01-09 positions=3 cash_ratio=0.0008 gross_exposure=0.9992
+20:26:55 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-09', 'hit': 0, 'miss': 3093}
+20:26:55 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-08', 'hit': 3093, 'miss': 0}
+20:26:55 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-12: 64 只
+20:27:08 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260112 date=2026-01-12 selected=3 tradable=0 sell_submitted=0 buy_submitted=0
+20:27:08 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260112 date=2026-01-12 positions=3 cash_ratio=0.0007 gross_exposure=0.9993
+20:27:17 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-12', 'hit': 0, 'miss': 3094}
+20:27:17 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002969', 'date': '2026-01-09'}
+20:27:17 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603778', 'date': '2026-01-09'}
+20:27:17 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603828', 'date': '2026-01-09'}
+20:27:17 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '605255', 'date': '2026-01-09'}
+20:27:17 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-09', 'hit': 3090, 'miss': 4}
+20:27:17 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-13: 92 只
+20:27:30 INFO quantstudio.backtest.ptrade_api: 卖出 600556.SS
+20:27:30 INFO quantstudio.backtest.ptrade_api: 卖出 000008.SZ
+20:27:30 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260113 date=2026-01-13 selected=3 tradable=0 sell_submitted=2 buy_submitted=0
+20:27:30 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260113 date=2026-01-13 positions=1 cash_ratio=0.5690 gross_exposure=0.4310
+20:27:38 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-13', 'hit': 0, 'miss': 3092}
+20:27:38 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002388', 'date': '2026-01-12'}
+20:27:38 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-12', 'hit': 3091, 'miss': 1}
+20:27:38 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-14: 26 只
+20:27:54 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260114 date=2026-01-14 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:27:54 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260114 date=2026-01-14 positions=1 cash_ratio=0.5654 gross_exposure=0.4346
+20:28:02 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-14', 'hit': 0, 'miss': 3094}
+20:28:02 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600165', 'date': '2026-01-13'}
+20:28:02 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603056', 'date': '2026-01-13'}
+20:28:02 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-13', 'hit': 3091, 'miss': 3}
+20:28:03 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-15: 62 只
+20:28:14 INFO quantstudio.backtest.ptrade_api: 买入 000591.SZ
+20:28:14 INFO quantstudio.backtest.ptrade_api: 买入 002310.SZ
+20:28:16 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260115 date=2026-01-15 selected=2 tradable=2 sell_submitted=0 buy_submitted=2
+20:28:16 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260115 date=2026-01-15 positions=3 cash_ratio=0.0048 gross_exposure=0.9952
+20:28:24 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-15', 'hit': 0, 'miss': 3096}
+20:28:24 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002049', 'date': '2026-01-14'}
+20:28:24 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002554', 'date': '2026-01-14'}
+20:28:24 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600058', 'date': '2026-01-14'}
+20:28:24 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-14', 'hit': 3093, 'miss': 3}
+20:28:24 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-16: 38 只
+20:28:34 INFO quantstudio.backtest.ptrade_api: 买入 000751.SZ
+20:28:36 INFO quantstudio.backtest.ptrade_api: 卖出 000591.SZ
+20:28:36 INFO quantstudio.backtest.ptrade_api: 卖出 002310.SZ
+20:28:36 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260116 date=2026-01-16 selected=1 tradable=1 sell_submitted=2 buy_submitted=1
+20:28:37 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260116 date=2026-01-16 positions=2 cash_ratio=0.5515 gross_exposure=0.4485
+20:28:44 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-16', 'hit': 0, 'miss': 3095}
+20:28:44 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-15', 'hit': 3095, 'miss': 0}
+20:28:44 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-19: 43 只
+20:28:56 INFO quantstudio.backtest.ptrade_api: 买入 603283.SS
+20:28:58 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260119 date=2026-01-19 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+20:28:58 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260119 date=2026-01-19 positions=3 cash_ratio=0.0499 gross_exposure=0.9501
+20:29:06 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-19', 'hit': 0, 'miss': 3096}
+20:29:06 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002931', 'date': '2026-01-16'}
+20:29:06 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '605028', 'date': '2026-01-16'}
+20:29:06 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-16', 'hit': 3094, 'miss': 2}
+20:29:06 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-20: 72 只
+20:29:34 INFO quantstudio.backtest.ptrade_api: 买入 600268.SS
+20:29:35 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260120 date=2026-01-20 selected=2 tradable=1 sell_submitted=0 buy_submitted=1
+20:29:35 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260120 date=2026-01-20 positions=4 cash_ratio=0.0375 gross_exposure=0.9625
+20:29:45 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-20', 'hit': 0, 'miss': 3098}
+20:29:45 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000670', 'date': '2026-01-19'}
+20:29:45 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603078', 'date': '2026-01-19'}
+20:29:45 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-19', 'hit': 3096, 'miss': 2}
+20:29:45 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-21: 38 只
+20:30:08 INFO quantstudio.backtest.ptrade_api: 买入 600610.SS
+20:30:10 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260121 date=2026-01-21 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+20:30:10 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260121 date=2026-01-21 positions=5 cash_ratio=0.0038 gross_exposure=0.9962
+20:30:23 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-21', 'hit': 0, 'miss': 3097}
+20:30:23 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002131', 'date': '2026-01-20'}
+20:30:23 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-20', 'hit': 3096, 'miss': 1}
+20:30:23 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-22: 63 只
+20:30:51 INFO quantstudio.backtest.ptrade_api: 卖出 603283.SS
+20:30:51 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260122 date=2026-01-22 selected=1 tradable=0 sell_submitted=1 buy_submitted=0
+20:30:51 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260122 date=2026-01-22 positions=4 cash_ratio=0.5031 gross_exposure=0.4969
+20:31:03 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-22', 'hit': 0, 'miss': 3098}
+20:31:03 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-21', 'hit': 3097, 'miss': 1}
+20:31:03 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-23: 47 只
+20:31:19 INFO quantstudio.backtest.ptrade_api: 买入 000927.SZ
+20:31:19 INFO quantstudio.backtest.ptrade_api: 买入 600330.SS
+20:31:19 INFO quantstudio.backtest.ptrade_api: 买入 605277.SS
+20:31:22 INFO quantstudio.backtest.ptrade_api: 卖出 600610.SS
+20:31:22 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260123 date=2026-01-23 selected=3 tradable=3 sell_submitted=1 buy_submitted=3
+20:31:22 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260123 date=2026-01-23 positions=6 cash_ratio=0.0436 gross_exposure=0.9564
+20:31:32 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-23', 'hit': 0, 'miss': 3099}
+20:31:32 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '601615', 'date': '2026-01-22'}
+20:31:32 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-22', 'hit': 3098, 'miss': 1}
+20:31:32 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-26: 72 只
+20:31:47 INFO quantstudio.backtest.ptrade_api: 卖出 600330.SS
+20:31:47 INFO quantstudio.backtest.ptrade_api: 卖出 605277.SS
+20:31:47 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260126 date=2026-01-26 selected=0 tradable=0 sell_submitted=2 buy_submitted=0
+20:31:47 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260126 date=2026-01-26 positions=4 cash_ratio=0.3490 gross_exposure=0.6510
+20:31:57 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-26', 'hit': 0, 'miss': 3096}
+20:31:57 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002155', 'date': '2026-01-23'}
+20:31:57 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-23', 'hit': 3095, 'miss': 1}
+20:31:57 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-27: 45 只
+20:32:11 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260127 date=2026-01-27 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:32:11 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260127 date=2026-01-27 positions=4 cash_ratio=0.3512 gross_exposure=0.6488
+20:32:20 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-27', 'hit': 0, 'miss': 3097}
+20:32:20 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603798', 'date': '2026-01-26'}
+20:32:20 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-26', 'hit': 3096, 'miss': 1}
+20:32:20 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-28: 34 只
+20:32:45 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260128 date=2026-01-28 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:32:45 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260128 date=2026-01-28 positions=4 cash_ratio=0.3512 gross_exposure=0.6488
+20:32:57 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-28', 'hit': 0, 'miss': 3096}
+20:32:57 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-27', 'hit': 3096, 'miss': 0}
+20:32:57 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-29: 65 只
+20:33:11 INFO quantstudio.backtest.ptrade_api: 买入 600313.SS
+20:33:13 INFO quantstudio.backtest.ptrade_api: 卖出 600268.SS
+20:33:13 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260129 date=2026-01-29 selected=1 tradable=1 sell_submitted=1 buy_submitted=1
+20:33:13 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260129 date=2026-01-29 positions=4 cash_ratio=0.0169 gross_exposure=0.9831
+20:33:23 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-29', 'hit': 0, 'miss': 3096}
+20:33:23 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600499', 'date': '2026-01-28'}
+20:33:23 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-28', 'hit': 3095, 'miss': 1}
+20:33:23 INFO quantstudio.backtest.ptrade_api: 首板池 2026-01-30: 60 只
+20:33:39 INFO quantstudio.backtest.ptrade_api: 卖出 600587.SS
+20:33:39 INFO quantstudio.backtest.ptrade_api: 卖出 000751.SZ
+20:33:39 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260130 date=2026-01-30 selected=3 tradable=0 sell_submitted=2 buy_submitted=0
+20:33:39 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260130 date=2026-01-30 positions=3 cash_ratio=0.4439 gross_exposure=0.5561
+20:33:49 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-30', 'hit': 0, 'miss': 3096}
+20:33:49 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-29', 'hit': 3096, 'miss': 0}
+20:33:49 INFO quantstudio.backtest.ptrade_api: 首板池 2026-02-02: 35 只
+20:34:59 INFO quantstudio.backtest.ptrade_api: 买入 603887.SS
+20:35:00 INFO quantstudio.backtest.ptrade_api: 卖出 000751.SZ
+20:35:00 INFO quantstudio.backtest.ptrade_api: 卖出 000927.SZ
+20:35:00 INFO quantstudio.backtest.ptrade_api: 卖出 600313.SS
+20:35:00 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260202 date=2026-02-02 selected=1 tradable=1 sell_submitted=3 buy_submitted=1
+20:35:00 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260202 date=2026-02-02 positions=2 cash_ratio=0.5404 gross_exposure=0.4596
+20:35:20 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-02', 'hit': 0, 'miss': 3097}
+20:35:20 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002931', 'date': '2026-01-30'}
+20:35:20 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002969', 'date': '2026-01-30'}
+20:35:20 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-01-30', 'hit': 3095, 'miss': 2}
+20:35:20 INFO quantstudio.backtest.ptrade_api: 首板池 2026-02-03: 22 只
+20:35:58 INFO quantstudio.backtest.ptrade_api: 买入 002291.SZ
+20:36:00 INFO quantstudio.backtest.ptrade_api: 卖出 000751.SZ
+20:36:00 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260203 date=2026-02-03 selected=1 tradable=1 sell_submitted=1 buy_submitted=1
+20:36:00 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260203 date=2026-02-03 positions=2 cash_ratio=0.0072 gross_exposure=0.9928
+20:36:23 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-03', 'hit': 0, 'miss': 3097}
+20:36:23 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-02', 'hit': 3097, 'miss': 0}
+20:36:23 INFO quantstudio.backtest.ptrade_api: 首板池 2026-02-04: 53 只
+20:36:57 INFO quantstudio.backtest.ptrade_api: 卖出 603887.SS
+20:36:57 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260204 date=2026-02-04 selected=2 tradable=0 sell_submitted=1 buy_submitted=0
+20:36:58 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260204 date=2026-02-04 positions=1 cash_ratio=0.4634 gross_exposure=0.5366
+20:37:12 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-04', 'hit': 0, 'miss': 3099}
+20:37:12 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002462', 'date': '2026-02-03'}
+20:37:12 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603616', 'date': '2026-02-03'}
+20:37:12 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-03', 'hit': 3097, 'miss': 2}
+20:37:12 INFO quantstudio.backtest.ptrade_api: 首板池 2026-02-05: 49 只
+20:37:47 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260205 date=2026-02-05 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:37:47 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260205 date=2026-02-05 positions=1 cash_ratio=0.4399 gross_exposure=0.5601
+20:38:03 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-05', 'hit': 0, 'miss': 3099}
+20:38:03 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-04', 'hit': 3099, 'miss': 0}
+20:38:03 INFO quantstudio.backtest.ptrade_api: 首板池 2026-02-06: 32 只
+20:38:19 INFO quantstudio.backtest.ptrade_api: 卖出 002291.SZ
+20:38:19 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260206 date=2026-02-06 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+20:38:19 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260206 date=2026-02-06 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+20:38:29 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-06', 'hit': 0, 'miss': 3099}
+20:38:29 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-05', 'hit': 3098, 'miss': 1}
+20:38:29 INFO quantstudio.backtest.ptrade_api: 首板池 2026-02-09: 48 只
+20:38:52 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260209 date=2026-02-09 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:38:52 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260209 date=2026-02-09 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+20:39:03 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-09', 'hit': 0, 'miss': 3098}
+20:39:03 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603729', 'date': '2026-02-06'}
+20:39:03 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603980', 'date': '2026-02-06'}
+20:39:03 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-06', 'hit': 3096, 'miss': 2}
+20:39:03 INFO quantstudio.backtest.ptrade_api: 首板池 2026-02-10: 60 只
+20:39:17 INFO quantstudio.backtest.ptrade_api: 买入 002272.SZ
+20:39:19 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260210 date=2026-02-10 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+20:39:19 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260210 date=2026-02-10 positions=1 cash_ratio=0.0130 gross_exposure=0.9870
+20:39:28 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-10', 'hit': 0, 'miss': 3099}
+20:39:28 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '601969', 'date': '2026-02-09'}
+20:39:28 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-09', 'hit': 3098, 'miss': 1}
+20:39:28 INFO quantstudio.backtest.ptrade_api: 首板池 2026-02-11: 35 只
+20:39:43 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260211 date=2026-02-11 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:39:44 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260211 date=2026-02-11 positions=1 cash_ratio=0.0131 gross_exposure=0.9869
+20:39:53 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-11', 'hit': 0, 'miss': 3100}
+20:39:53 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-10', 'hit': 3099, 'miss': 1}
+20:39:54 INFO quantstudio.backtest.ptrade_api: 首板池 2026-02-12: 37 只
+20:40:06 INFO quantstudio.backtest.ptrade_api: 买入 600186.SS
+20:40:07 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260212 date=2026-02-12 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+20:40:08 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260212 date=2026-02-12 positions=2 cash_ratio=0.0057 gross_exposure=0.9943
+20:40:18 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-12', 'hit': 0, 'miss': 3101}
+20:40:18 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002510', 'date': '2026-02-11'}
+20:40:18 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-11', 'hit': 3100, 'miss': 1}
+20:40:19 INFO quantstudio.backtest.ptrade_api: 首板池 2026-02-13: 39 只
+20:40:39 INFO quantstudio.backtest.ptrade_api: 卖出 002272.SZ
+20:40:39 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260213 date=2026-02-13 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+20:40:39 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260213 date=2026-02-13 positions=1 cash_ratio=0.9935 gross_exposure=0.0065
+20:40:56 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-13', 'hit': 0, 'miss': 3101}
+20:40:57 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-12', 'hit': 3099, 'miss': 2}
+20:40:57 INFO quantstudio.backtest.ptrade_api: 首板池 2026-02-24: 24 只
+20:41:21 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260224 date=2026-02-24 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:41:21 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260224 date=2026-02-24 positions=1 cash_ratio=0.9936 gross_exposure=0.0064
+20:41:36 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-24', 'hit': 0, 'miss': 3101}
+20:41:36 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002326', 'date': '2026-02-13'}
+20:41:36 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-13', 'hit': 3100, 'miss': 1}
+20:41:36 INFO quantstudio.backtest.ptrade_api: 首板池 2026-02-25: 79 只
+20:42:04 INFO quantstudio.backtest.ptrade_api: 买入 002312.SZ
+20:42:06 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260225 date=2026-02-25 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+20:42:06 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260225 date=2026-02-25 positions=2 cash_ratio=0.0029 gross_exposure=0.9971
+20:42:19 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-25', 'hit': 0, 'miss': 3100}
+20:42:19 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-24', 'hit': 3099, 'miss': 1}
+20:42:19 INFO quantstudio.backtest.ptrade_api: 首板池 2026-02-26: 48 只
+20:42:34 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260226 date=2026-02-26 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:42:34 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260226 date=2026-02-26 positions=2 cash_ratio=0.0029 gross_exposure=0.9971
+20:42:41 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-26', 'hit': 0, 'miss': 3099}
+20:42:42 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600983', 'date': '2026-02-25'}
+20:42:42 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-25', 'hit': 3098, 'miss': 1}
+20:42:42 INFO quantstudio.backtest.ptrade_api: 首板池 2026-02-27: 45 只
+20:43:13 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260227 date=2026-02-27 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:43:13 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260227 date=2026-02-27 positions=2 cash_ratio=0.0029 gross_exposure=0.9971
+20:43:26 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-27', 'hit': 0, 'miss': 3099}
+20:43:26 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-26', 'hit': 3099, 'miss': 0}
+20:43:26 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-02: 58 只
+20:44:33 INFO quantstudio.backtest.ptrade_api: 卖出 600186.SS
+20:44:33 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260302 date=2026-03-02 selected=1 tradable=0 sell_submitted=1 buy_submitted=0
+20:44:33 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260302 date=2026-03-02 positions=1 cash_ratio=0.0092 gross_exposure=0.9908
+20:44:50 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-02', 'hit': 0, 'miss': 3097}
+20:44:50 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-27', 'hit': 3097, 'miss': 0}
+20:44:50 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-03: 61 只
+20:45:24 INFO quantstudio.backtest.ptrade_api: 买入 600968.SS
+20:45:27 INFO quantstudio.backtest.ptrade_api: 卖出 002312.SZ
+20:45:27 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260303 date=2026-03-03 selected=2 tradable=1 sell_submitted=1 buy_submitted=1
+20:45:27 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260303 date=2026-03-03 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+20:45:42 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-03', 'hit': 0, 'miss': 3098}
+20:45:42 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '001285', 'date': '2026-03-02'}
+20:45:42 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603966', 'date': '2026-03-02'}
+20:45:42 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-02', 'hit': 3096, 'miss': 2}
+20:45:42 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-04: 37 只
+20:46:06 INFO quantstudio.backtest.ptrade_api: 买入 600635.SS
+20:46:08 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260304 date=2026-03-04 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+20:46:09 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260304 date=2026-03-04 positions=1 cash_ratio=0.0010 gross_exposure=0.9990
+20:46:26 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-04', 'hit': 0, 'miss': 3098}
+20:46:26 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-03', 'hit': 3098, 'miss': 0}
+20:46:26 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-05: 31 只
+20:47:03 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260305 date=2026-03-05 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:47:03 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260305 date=2026-03-05 positions=1 cash_ratio=0.0010 gross_exposure=0.9990
+20:47:24 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-05', 'hit': 0, 'miss': 3098}
+20:47:24 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-04', 'hit': 3098, 'miss': 0}
+20:47:24 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-06: 49 只
+20:47:59 INFO quantstudio.backtest.ptrade_api: 卖出 600635.SS
+20:47:59 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260306 date=2026-03-06 selected=1 tradable=0 sell_submitted=1 buy_submitted=0
+20:47:59 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260306 date=2026-03-06 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+20:48:22 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-06', 'hit': 0, 'miss': 3099}
+20:48:22 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-05', 'hit': 3098, 'miss': 1}
+20:48:22 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-09: 60 只
+20:48:43 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260309 date=2026-03-09 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:48:45 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260309 date=2026-03-09 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+20:49:00 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-09', 'hit': 0, 'miss': 3102}
+20:49:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002445', 'date': '2026-03-06'}
+20:49:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600673', 'date': '2026-03-06'}
+20:49:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603121', 'date': '2026-03-06'}
+20:49:00 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-06', 'hit': 3099, 'miss': 3}
+20:49:00 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-10: 24 只
+20:49:22 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260310 date=2026-03-10 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:49:22 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260310 date=2026-03-10 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+20:49:36 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-10', 'hit': 0, 'miss': 3100}
+20:49:36 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-09', 'hit': 3100, 'miss': 0}
+20:49:37 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-11: 43 只
+20:50:03 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260311 date=2026-03-11 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:50:03 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260311 date=2026-03-11 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+20:50:22 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-11', 'hit': 0, 'miss': 3103}
+20:50:22 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600438', 'date': '2026-03-10'}
+20:50:22 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '605389', 'date': '2026-03-10'}
+20:50:22 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-10', 'hit': 3100, 'miss': 3}
+20:50:22 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-12: 40 只
+20:51:20 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260312 date=2026-03-12 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:51:20 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260312 date=2026-03-12 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+20:51:39 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-12', 'hit': 0, 'miss': 3102}
+20:51:39 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-11', 'hit': 3102, 'miss': 0}
+20:51:39 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-13: 39 只
+20:52:22 INFO quantstudio.backtest.ptrade_api: 买入 000600.SZ
+20:52:24 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260313 date=2026-03-13 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+20:52:24 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260313 date=2026-03-13 positions=1 cash_ratio=0.0037 gross_exposure=0.9963
+20:52:42 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-13', 'hit': 0, 'miss': 3102}
+20:52:42 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-12', 'hit': 3102, 'miss': 0}
+20:52:43 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-16: 49 只
+20:53:09 INFO quantstudio.backtest.ptrade_api: 卖出 000600.SZ
+20:53:09 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260316 date=2026-03-16 selected=1 tradable=0 sell_submitted=1 buy_submitted=0
+20:53:09 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260316 date=2026-03-16 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+20:53:23 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-16', 'hit': 0, 'miss': 3103}
+20:53:23 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '601555', 'date': '2026-03-13'}
+20:53:23 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-13', 'hit': 3102, 'miss': 1}
+20:53:23 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-17: 36 只
+20:53:40 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260317 date=2026-03-17 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:53:40 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260317 date=2026-03-17 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+20:53:51 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-17', 'hit': 0, 'miss': 3104}
+20:53:51 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002859', 'date': '2026-03-16'}
+20:53:51 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-16', 'hit': 3103, 'miss': 1}
+20:53:51 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-18: 24 只
+20:54:07 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260318 date=2026-03-18 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:54:07 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260318 date=2026-03-18 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+20:54:18 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-18', 'hit': 0, 'miss': 3104}
+20:54:18 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-17', 'hit': 3104, 'miss': 0}
+20:54:18 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-19: 42 只
+20:54:33 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260319 date=2026-03-19 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:54:33 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260319 date=2026-03-19 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+20:54:43 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-19', 'hit': 0, 'miss': 3103}
+20:54:43 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-18', 'hit': 3103, 'miss': 0}
+20:54:43 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-20: 18 只
+20:55:00 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260320 date=2026-03-20 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:55:00 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260320 date=2026-03-20 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+20:55:11 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-20', 'hit': 0, 'miss': 3104}
+20:55:11 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-19', 'hit': 3103, 'miss': 1}
+20:55:11 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-23: 20 只
+20:55:27 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260323 date=2026-03-23 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:55:28 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260323 date=2026-03-23 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+20:55:38 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-23', 'hit': 0, 'miss': 3104}
+20:55:38 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600988', 'date': '2026-03-20'}
+20:55:38 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-20', 'hit': 3103, 'miss': 1}
+20:55:38 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-24: 20 只
+20:55:53 INFO quantstudio.backtest.ptrade_api: 买入 002896.SZ
+20:55:53 INFO quantstudio.backtest.ptrade_api: 买入 600376.SS
+20:55:56 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260324 date=2026-03-24 selected=2 tradable=2 sell_submitted=0 buy_submitted=2
+20:55:56 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260324 date=2026-03-24 positions=2 cash_ratio=0.1052 gross_exposure=0.8948
+20:56:07 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-24', 'hit': 0, 'miss': 3104}
+20:56:07 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603429', 'date': '2026-03-23'}
+20:56:07 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-23', 'hit': 3103, 'miss': 1}
+20:56:07 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-25: 74 只
+20:56:25 INFO quantstudio.backtest.ptrade_api: 卖出 600376.SS
+20:56:25 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260325 date=2026-03-25 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+20:56:25 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260325 date=2026-03-25 positions=1 cash_ratio=0.5884 gross_exposure=0.4116
+20:56:35 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-25', 'hit': 0, 'miss': 3105}
+20:56:35 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-24', 'hit': 3104, 'miss': 1}
+20:56:35 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-26: 56 只
+20:56:55 INFO quantstudio.backtest.ptrade_api: 买入 000993.SZ
+20:56:55 INFO quantstudio.backtest.ptrade_api: 买入 600158.SS
+20:56:57 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260326 date=2026-03-26 selected=2 tradable=2 sell_submitted=0 buy_submitted=2
+20:56:57 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260326 date=2026-03-26 positions=3 cash_ratio=0.0245 gross_exposure=0.9755
+20:57:12 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-26', 'hit': 0, 'miss': 3103}
+20:57:12 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-25', 'hit': 3103, 'miss': 0}
+20:57:12 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-27: 29 只
+20:57:34 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260327 date=2026-03-27 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+20:57:34 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260327 date=2026-03-27 positions=3 cash_ratio=0.0245 gross_exposure=0.9755
+20:57:46 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-27', 'hit': 0, 'miss': 3099}
+20:57:46 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-26', 'hit': 3099, 'miss': 0}
+20:57:46 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-30: 62 只
+20:58:10 INFO quantstudio.backtest.ptrade_api: 卖出 000993.SZ
+20:58:10 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260330 date=2026-03-30 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+20:58:10 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260330 date=2026-03-30 positions=2 cash_ratio=0.2821 gross_exposure=0.7179
+20:58:25 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-30', 'hit': 0, 'miss': 3096}
+20:58:25 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-27', 'hit': 3096, 'miss': 0}
+20:58:25 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-31: 45 只
+20:58:45 INFO quantstudio.backtest.ptrade_api: 买入 601388.SS
+20:58:48 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260331 date=2026-03-31 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+20:58:48 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260331 date=2026-03-31 positions=3 cash_ratio=0.0033 gross_exposure=0.9967
+20:59:02 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-31', 'hit': 0, 'miss': 3095}
+20:59:02 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600581', 'date': '2026-03-30'}
+20:59:02 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-30', 'hit': 3094, 'miss': 1}
+20:59:02 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-01: 40 只
+21:00:02 INFO quantstudio.backtest.ptrade_api: 卖出 600158.SS
+21:00:02 INFO quantstudio.backtest.ptrade_api: 卖出 601388.SS
+21:00:02 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260401 date=2026-04-01 selected=1 tradable=0 sell_submitted=2 buy_submitted=0
+21:00:02 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260401 date=2026-04-01 positions=1 cash_ratio=0.5592 gross_exposure=0.4408
+21:00:24 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-01', 'hit': 0, 'miss': 3096}
+21:00:24 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600249', 'date': '2026-03-31'}
+21:00:24 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-31', 'hit': 3094, 'miss': 2}
+21:00:24 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-02: 46 只
+21:01:03 INFO quantstudio.backtest.ptrade_api: 买入 002624.SZ
+21:01:06 INFO quantstudio.backtest.ptrade_api: 卖出 002896.SZ
+21:01:06 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260402 date=2026-04-02 selected=1 tradable=1 sell_submitted=1 buy_submitted=1
+21:01:06 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260402 date=2026-04-02 positions=1 cash_ratio=0.4394 gross_exposure=0.5606
+21:01:24 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-02', 'hit': 0, 'miss': 3096}
+21:01:25 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002357', 'date': '2026-04-01'}
+21:01:25 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '605555', 'date': '2026-04-01'}
+21:01:25 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-01', 'hit': 3094, 'miss': 2}
+21:01:25 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-03: 20 只
+21:01:49 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260403 date=2026-04-03 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+21:01:49 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260403 date=2026-04-03 positions=1 cash_ratio=0.4442 gross_exposure=0.5558
+21:01:59 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-03', 'hit': 0, 'miss': 3097}
+21:01:59 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002718', 'date': '2026-04-02'}
+21:01:59 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603843', 'date': '2026-04-02'}
+21:01:59 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-02', 'hit': 3095, 'miss': 2}
+21:01:59 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-07: 24 只
+21:02:15 INFO quantstudio.backtest.ptrade_api: 买入 603123.SS
+21:02:15 INFO quantstudio.backtest.ptrade_api: 买入 605589.SS
+21:02:17 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260407 date=2026-04-07 selected=2 tradable=2 sell_submitted=0 buy_submitted=2
+21:02:17 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260407 date=2026-04-07 positions=1 cash_ratio=0.4395 gross_exposure=0.5605
+21:02:28 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-07', 'hit': 0, 'miss': 3098}
+21:02:28 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000659', 'date': '2026-04-03'}
+21:02:28 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002686', 'date': '2026-04-03'}
+21:02:28 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-03', 'hit': 3096, 'miss': 2}
+21:02:28 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-08: 79 只
+21:02:45 INFO quantstudio.backtest.ptrade_api: 买入 000062.SZ
+21:02:45 INFO quantstudio.backtest.ptrade_api: 买入 002181.SZ
+21:02:45 INFO quantstudio.backtest.ptrade_api: 买入 002840.SZ
+21:02:47 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260408 date=2026-04-08 selected=3 tradable=3 sell_submitted=0 buy_submitted=3
+21:02:47 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260408 date=2026-04-08 positions=3 cash_ratio=0.1696 gross_exposure=0.8304
+21:02:57 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-08', 'hit': 0, 'miss': 3100}
+21:02:58 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600721', 'date': '2026-04-07'}
+21:02:58 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603950', 'date': '2026-04-07'}
+21:02:58 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-07', 'hit': 3098, 'miss': 2}
+21:02:58 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-09: 100 只
+21:03:22 INFO quantstudio.backtest.ptrade_api: 买入 000727.SZ
+21:03:22 INFO quantstudio.backtest.ptrade_api: 买入 002929.SZ
+21:03:22 INFO quantstudio.backtest.ptrade_api: 买入 600986.SS
+21:03:24 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260409 date=2026-04-09 selected=3 tradable=3 sell_submitted=0 buy_submitted=3
+21:03:24 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260409 date=2026-04-09 positions=5 cash_ratio=0.0695 gross_exposure=0.9305
+21:03:38 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-09', 'hit': 0, 'miss': 3101}
+21:03:38 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603182', 'date': '2026-04-08'}
+21:03:38 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-08', 'hit': 3100, 'miss': 1}
+21:03:38 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-10: 39 只
+21:04:04 INFO quantstudio.backtest.ptrade_api: 买入 002328.SZ
+21:04:06 INFO quantstudio.backtest.ptrade_api: 卖出 002840.SZ
+21:04:06 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260410 date=2026-04-10 selected=2 tradable=1 sell_submitted=1 buy_submitted=1
+21:04:06 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260410 date=2026-04-10 positions=4 cash_ratio=0.2017 gross_exposure=0.7983
+21:04:26 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-10', 'hit': 0, 'miss': 3102}
+21:04:26 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603933', 'date': '2026-04-09'}
+21:04:26 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-09', 'hit': 3101, 'miss': 1}
+21:04:26 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-13: 44 只
+21:04:46 INFO quantstudio.backtest.ptrade_api: 买入 600713.SS
+21:04:50 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260413 date=2026-04-13 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+21:04:50 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260413 date=2026-04-13 positions=5 cash_ratio=0.0031 gross_exposure=0.9969
+21:05:01 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-13', 'hit': 0, 'miss': 3103}
+21:05:02 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000959', 'date': '2026-04-10'}
+21:05:02 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '601020', 'date': '2026-04-10'}
+21:05:02 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-10', 'hit': 3101, 'miss': 2}
+21:05:02 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-14: 46 只
+21:05:21 INFO quantstudio.backtest.ptrade_api: 卖出 600713.SS
+21:05:21 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260414 date=2026-04-14 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+21:05:21 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260414 date=2026-04-14 positions=4 cash_ratio=0.1882 gross_exposure=0.8118
+21:05:25 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=1/1 chunks=1 elapsed=1.5s
+21:05:34 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-14', 'hit': 0, 'miss': 3105}
+21:05:34 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002647', 'date': '2026-04-13'}
+21:05:34 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600082', 'date': '2026-04-13'}
+21:05:34 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-13', 'hit': 3103, 'miss': 2}
+21:05:35 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-15: 40 只
+21:05:51 INFO quantstudio.backtest.ptrade_api: 买入 002647.SZ
+21:05:53 INFO quantstudio.backtest.ptrade_api: 卖出 000062.SZ
+21:05:53 INFO quantstudio.backtest.ptrade_api: 卖出 600986.SS
+21:05:53 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260415 date=2026-04-15 selected=1 tradable=1 sell_submitted=2 buy_submitted=1
+21:05:54 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260415 date=2026-04-15 positions=3 cash_ratio=0.1830 gross_exposure=0.8170
+21:06:07 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-15', 'hit': 0, 'miss': 3105}
+21:06:07 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-14', 'hit': 3105, 'miss': 0}
+21:06:07 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-16: 42 只
+21:06:26 INFO quantstudio.backtest.ptrade_api: 买入 001208.SZ
+21:06:26 INFO quantstudio.backtest.ptrade_api: 买入 002705.SZ
+21:06:26 INFO quantstudio.backtest.ptrade_api: 买入 600572.SS
+21:06:30 INFO quantstudio.backtest.ptrade_api: 卖出 002647.SZ
+21:06:30 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260416 date=2026-04-16 selected=3 tradable=3 sell_submitted=1 buy_submitted=3
+21:06:30 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260416 date=2026-04-16 positions=5 cash_ratio=0.2013 gross_exposure=0.7987
+21:06:44 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-16', 'hit': 0, 'miss': 3105}
+21:06:44 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-15', 'hit': 3105, 'miss': 0}
+21:06:44 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-17: 62 只
+21:07:07 INFO quantstudio.backtest.ptrade_api: 卖出 600572.SS
+21:07:07 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260417 date=2026-04-17 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+21:07:07 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260417 date=2026-04-17 positions=4 cash_ratio=0.2528 gross_exposure=0.7472
+21:07:22 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-17', 'hit': 0, 'miss': 3104}
+21:07:22 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000552', 'date': '2026-04-16'}
+21:07:22 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-16', 'hit': 3103, 'miss': 1}
+21:07:22 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-20: 49 只
+21:07:44 INFO quantstudio.backtest.ptrade_api: 买入 002108.SZ
+21:07:47 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260420 date=2026-04-20 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+21:07:47 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260420 date=2026-04-20 positions=5 cash_ratio=0.0031 gross_exposure=0.9969
+21:08:01 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-20', 'hit': 0, 'miss': 3103}
+21:08:01 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600358', 'date': '2026-04-17'}
+21:08:01 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603268', 'date': '2026-04-17'}
+21:08:01 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-17', 'hit': 3101, 'miss': 2}
+21:08:01 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-21: 58 只
+21:08:21 INFO quantstudio.backtest.ptrade_api: 卖出 000727.SZ
+21:08:21 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260421 date=2026-04-21 selected=1 tradable=0 sell_submitted=1 buy_submitted=0
+21:08:21 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260421 date=2026-04-21 positions=4 cash_ratio=0.0571 gross_exposure=0.9429
+21:08:33 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-21', 'hit': 0, 'miss': 3101}
+21:08:33 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603007', 'date': '2026-04-20'}
+21:08:33 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-20', 'hit': 3100, 'miss': 1}
+21:08:33 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-22: 38 只
+21:08:52 INFO quantstudio.backtest.ptrade_api: 卖出 001208.SZ
+21:08:52 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260422 date=2026-04-22 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+21:08:52 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260422 date=2026-04-22 positions=3 cash_ratio=0.0902 gross_exposure=0.9098
+21:09:02 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-22', 'hit': 0, 'miss': 3098}
+21:09:02 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-21', 'hit': 3098, 'miss': 0}
+21:09:02 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-23: 43 只
+21:09:42 INFO quantstudio.backtest.ptrade_api: 卖出 002624.SZ
+21:09:42 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260423 date=2026-04-23 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+21:09:42 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260423 date=2026-04-23 positions=2 cash_ratio=0.6740 gross_exposure=0.3260
+21:10:00 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-23', 'hit': 0, 'miss': 3096}
+21:10:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '605336', 'date': '2026-04-22'}
+21:10:00 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-22', 'hit': 3095, 'miss': 1}
+21:10:00 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-24: 37 只
+21:10:38 INFO quantstudio.backtest.ptrade_api: 买入 003022.SZ
+21:10:41 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260424 date=2026-04-24 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+21:10:42 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260424 date=2026-04-24 positions=3 cash_ratio=0.0194 gross_exposure=0.9806
+21:11:01 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-24', 'hit': 0, 'miss': 3093}
+21:11:01 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600323', 'date': '2026-04-23'}
+21:11:01 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600889', 'date': '2026-04-23'}
+21:11:01 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-23', 'hit': 3091, 'miss': 2}
+21:11:02 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-27: 45 只
+21:11:45 INFO quantstudio.backtest.ptrade_api: 卖出 002705.SZ
+21:11:45 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260427 date=2026-04-27 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+21:11:45 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260427 date=2026-04-27 positions=3 cash_ratio=0.0195 gross_exposure=0.9805
+21:12:06 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-27', 'hit': 0, 'miss': 3090}
+21:12:06 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002931', 'date': '2026-04-24'}
+21:12:06 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600265', 'date': '2026-04-24'}
+21:12:06 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600543', 'date': '2026-04-24'}
+21:12:06 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600735', 'date': '2026-04-24'}
+21:12:06 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-24', 'hit': 3086, 'miss': 4}
+21:12:06 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-28: 48 只
+21:12:31 INFO quantstudio.backtest.ptrade_api: 卖出 002705.SZ
+21:12:31 INFO quantstudio.backtest.ptrade_api: 卖出 002108.SZ
+21:12:31 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260428 date=2026-04-28 selected=1 tradable=0 sell_submitted=2 buy_submitted=0
+21:12:31 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260428 date=2026-04-28 positions=1 cash_ratio=0.3187 gross_exposure=0.6813
+21:12:44 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-28', 'hit': 0, 'miss': 3086}
+21:12:45 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '003041', 'date': '2026-04-27'}
+21:12:45 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600119', 'date': '2026-04-27'}
+21:12:45 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600423', 'date': '2026-04-27'}
+21:12:45 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600730', 'date': '2026-04-27'}
+21:12:45 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603008', 'date': '2026-04-27'}
+21:12:45 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603959', 'date': '2026-04-27'}
+21:12:45 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-27', 'hit': 3080, 'miss': 6}
+21:12:45 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-29: 43 只
+21:13:21 INFO quantstudio.backtest.ptrade_api: 买入 605168.SS
+21:13:24 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260429 date=2026-04-29 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+21:13:24 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260429 date=2026-04-29 positions=1 cash_ratio=0.3224 gross_exposure=0.6776
+21:13:41 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-29', 'hit': 0, 'miss': 3066}
+21:13:42 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600084', 'date': '2026-04-28'}
+21:13:42 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600476', 'date': '2026-04-28'}
+21:13:42 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600537', 'date': '2026-04-28'}
+21:13:42 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600759', 'date': '2026-04-28'}
+21:13:42 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600818', 'date': '2026-04-28'}
+21:13:42 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603272', 'date': '2026-04-28'}
+21:13:42 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603828', 'date': '2026-04-28'}
+21:13:42 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-28', 'hit': 3059, 'miss': 7}
+21:13:42 INFO quantstudio.backtest.ptrade_api: 首板池 2026-04-30: 83 只
+21:14:03 INFO quantstudio.backtest.ptrade_api: 卖出 003022.SZ
+21:14:03 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260430 date=2026-04-30 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+21:14:03 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260430 date=2026-04-30 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+21:14:18 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-30', 'hit': 0, 'miss': 3055}
+21:14:18 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600053', 'date': '2026-04-29'}
+21:14:18 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600080', 'date': '2026-04-29'}
+21:14:18 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600130', 'date': '2026-04-29'}
+21:14:18 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600180', 'date': '2026-04-29'}
+21:14:18 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600239', 'date': '2026-04-29'}
+21:14:18 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600370', 'date': '2026-04-29'}
+21:14:18 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600678', 'date': '2026-04-29'}
+21:14:18 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600734', 'date': '2026-04-29'}
+21:14:18 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '601010', 'date': '2026-04-29'}
+21:14:18 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603359', 'date': '2026-04-29'}
+21:14:18 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603729', 'date': '2026-04-29'}
+21:14:18 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603922', 'date': '2026-04-29'}
+21:14:18 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-29', 'hit': 3043, 'miss': 12}
+21:14:18 INFO quantstudio.backtest.ptrade_api: 首板池 2026-05-06: 54 只
+21:15:58 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT {'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.824, 'codes_in_params': 56, 'attempt': 1, 'worker_still_alive': False}
+21:15:58 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.8s budget=30.0s codes=56 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:16:22 INFO quantstudio.backtest.ptrade_api: 买入 605123.SS
+21:16:26 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260506 date=2026-05-06 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+21:16:26 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260506 date=2026-05-06 positions=1 cash_ratio=0.0975 gross_exposure=0.9025
+21:16:38 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=2/2 chunks=1 elapsed=3.5s
+21:17:00 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-06', 'hit': 0, 'miss': 3070}
+21:17:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000697', 'date': '2026-04-30'}
+21:17:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002742', 'date': '2026-04-30'}
+21:17:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600107', 'date': '2026-04-30'}
+21:17:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600187', 'date': '2026-04-30'}
+21:17:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600302', 'date': '2026-04-30'}
+21:17:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600337', 'date': '2026-04-30'}
+21:17:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600340', 'date': '2026-04-30'}
+21:17:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600491', 'date': '2026-04-30'}
+21:17:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600745', 'date': '2026-04-30'}
+21:17:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600965', 'date': '2026-04-30'}
+21:17:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '601718', 'date': '2026-04-30'}
+21:17:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603021', 'date': '2026-04-30'}
+21:17:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603189', 'date': '2026-04-30'}
+21:17:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603378', 'date': '2026-04-30'}
+21:17:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603557', 'date': '2026-04-30'}
+21:17:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603718', 'date': '2026-04-30'}
+21:17:00 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-04-30', 'hit': 3054, 'miss': 16}
+21:17:00 INFO quantstudio.backtest.ptrade_api: 首板池 2026-05-07: 72 只
+21:18:09 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=32.8s budget=30.0s codes=75 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:18:39 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.2s budget=30.0s codes=75 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:18:39 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.249s, codes=75, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=73
+21:19:09 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260507 date=2026-05-07 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+21:19:10 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260507 date=2026-05-07 positions=1 cash_ratio=0.0960 gross_exposure=0.9040
+21:20:10 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-07', 'hit': 0, 'miss': 3071}
+21:20:10 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600958', 'date': '2026-05-06'}
+21:20:10 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-06', 'hit': 3070, 'miss': 1}
+21:20:11 INFO quantstudio.backtest.ptrade_api: 首板池 2026-05-08: 72 只
+21:21:15 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=31.8s budget=30.0s codes=75 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:21:55 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=39.6s budget=30.0s codes=75 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:21:55 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=39.564s, codes=75, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=73
+21:22:29 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260508 date=2026-05-08 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+21:22:29 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260508 date=2026-05-08 positions=1 cash_ratio=0.0929 gross_exposure=0.9071
+21:23:01 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-08', 'hit': 0, 'miss': 3071}
+21:23:01 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '601003', 'date': '2026-05-07'}
+21:23:01 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-07', 'hit': 3070, 'miss': 1}
+21:23:01 INFO quantstudio.backtest.ptrade_api: 首板池 2026-05-11: 72 只
+21:24:04 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=33.4s budget=30.0s codes=75 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:24:36 INFO quantstudio.backtest.ptrade_api: 买入 002979.SZ
+21:24:38 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260511 date=2026-05-11 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+21:24:38 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260511 date=2026-05-11 positions=2 cash_ratio=0.0156 gross_exposure=0.9844
+21:25:32 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-11', 'hit': 0, 'miss': 3070}
+21:25:32 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-08', 'hit': 3070, 'miss': 0}
+21:25:32 INFO quantstudio.backtest.ptrade_api: 首板池 2026-05-12: 59 只
+21:26:40 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=33.5s budget=30.0s codes=63 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:27:13 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=32.6s budget=30.0s codes=63 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:27:13 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=32.631s, codes=63, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=61
+21:27:43 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260512 date=2026-05-12 selected=1 tradable=0 sell_submitted=0 buy_submitted=0
+21:27:43 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260512 date=2026-05-12 positions=2 cash_ratio=0.0157 gross_exposure=0.9843
+21:28:12 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-12', 'hit': 0, 'miss': 3071}
+21:28:12 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '601010', 'date': '2026-05-11'}
+21:28:12 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-11', 'hit': 3070, 'miss': 1}
+21:28:12 INFO quantstudio.backtest.ptrade_api: 首板池 2026-05-13: 35 只
+21:29:11 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=31.4s budget=30.0s codes=39 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:29:44 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260513 date=2026-05-13 selected=1 tradable=0 sell_submitted=0 buy_submitted=0
+21:29:44 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260513 date=2026-05-13 positions=2 cash_ratio=0.0156 gross_exposure=0.9844
+21:29:59 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=1/1 chunks=1 elapsed=4.8s
+21:30:33 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-13', 'hit': 0, 'miss': 3073}
+21:30:33 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002868', 'date': '2026-05-12'}
+21:30:33 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603779', 'date': '2026-05-12'}
+21:30:33 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-12', 'hit': 3071, 'miss': 2}
+21:30:33 INFO quantstudio.backtest.ptrade_api: 首板池 2026-05-14: 88 只
+21:31:38 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=31.5s budget=30.0s codes=92 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:32:08 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.3s budget=30.0s codes=92 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:32:08 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.3s, codes=92, sql=' | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=90
+21:32:43 INFO quantstudio.backtest.ptrade_api: 卖出 605123.SS
+21:32:43 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260514 date=2026-05-14 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+21:32:43 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260514 date=2026-05-14 positions=1 cash_ratio=0.9135 gross_exposure=0.0865
+21:33:21 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-14', 'hit': 0, 'miss': 3072}
+21:33:21 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-13', 'hit': 3072, 'miss': 0}
+21:33:21 INFO quantstudio.backtest.ptrade_api: 首板池 2026-05-15: 35 只
+21:34:23 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.3s budget=30.0s codes=38 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:34:53 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.2s budget=30.0s codes=38 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:34:53 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.246s, codes=38, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=36
+21:35:14 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260515 date=2026-05-15 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+21:35:14 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260515 date=2026-05-15 positions=1 cash_ratio=0.9056 gross_exposure=0.0944
+21:36:34 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-15', 'hit': 0, 'miss': 3072}
+21:36:34 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-14', 'hit': 3072, 'miss': 0}
+21:36:34 INFO quantstudio.backtest.ptrade_api: 首板池 2026-05-18: 40 只
+21:37:43 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=32.4s budget=30.0s codes=42 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:38:14 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.4s budget=30.0s codes=42 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:38:14 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.421s, codes=42, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=40
+21:38:32 INFO quantstudio.backtest.ptrade_api: 买入 002196.SZ
+21:38:32 INFO quantstudio.backtest.ptrade_api: 买入 600088.SS
+21:38:36 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260518 date=2026-05-18 selected=2 tradable=2 sell_submitted=0 buy_submitted=2
+21:38:36 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260518 date=2026-05-18 positions=3 cash_ratio=0.0514 gross_exposure=0.9486
+21:38:53 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=1/1 chunks=1 elapsed=7.9s
+21:39:24 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-18', 'hit': 0, 'miss': 3074}
+21:39:24 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000430', 'date': '2026-05-15'}
+21:39:24 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603311', 'date': '2026-05-15'}
+21:39:24 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-15', 'hit': 3072, 'miss': 2}
+21:39:24 INFO quantstudio.backtest.ptrade_api: 首板池 2026-05-19: 63 只
+21:40:34 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.7s budget=30.0s codes=68 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:41:04 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.3s budget=30.0s codes=68 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:41:04 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.263s, codes=68, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=66
+21:41:30 INFO quantstudio.backtest.ptrade_api: 买入 002515.SZ
+21:41:32 INFO quantstudio.backtest.ptrade_api: 卖出 600088.SS
+21:41:32 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260519 date=2026-05-19 selected=3 tradable=1 sell_submitted=1 buy_submitted=1
+21:41:32 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260519 date=2026-05-19 positions=3 cash_ratio=0.4050 gross_exposure=0.5950
+21:42:39 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-19', 'hit': 0, 'miss': 3072}
+21:42:39 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-18', 'hit': 3072, 'miss': 0}
+21:42:39 INFO quantstudio.backtest.ptrade_api: 首板池 2026-05-20: 58 只
+21:43:55 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=32.3s budget=30.0s codes=63 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:44:27 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=31.8s budget=30.0s codes=63 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:44:27 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=31.76s, codes=63, sql= | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=61
+21:44:56 INFO quantstudio.backtest.ptrade_api: 买入 600863.SS
+21:44:59 INFO quantstudio.backtest.ptrade_api: 卖出 002979.SZ
+21:44:59 INFO quantstudio.backtest.ptrade_api: 卖出 002196.SZ
+21:44:59 INFO quantstudio.backtest.ptrade_api: 卖出 002515.SZ
+21:44:59 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260520 date=2026-05-20 selected=1 tradable=1 sell_submitted=3 buy_submitted=1
+21:44:59 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260520 date=2026-05-20 positions=1 cash_ratio=0.6099 gross_exposure=0.3901
+21:45:34 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=4/4 chunks=1 elapsed=9.6s
+21:46:03 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-20', 'hit': 0, 'miss': 3078}
+21:46:03 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000518', 'date': '2026-05-19'}
+21:46:03 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '001270', 'date': '2026-05-19'}
+21:46:03 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '003004', 'date': '2026-05-19'}
+21:46:03 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600360', 'date': '2026-05-19'}
+21:46:03 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603789', 'date': '2026-05-19'}
+21:46:03 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-19', 'hit': 3072, 'miss': 6}
+21:46:03 INFO quantstudio.backtest.ptrade_api: 首板池 2026-05-21: 43 只
+21:47:30 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=37.1s budget=30.0s codes=46 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:48:01 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.3s budget=30.0s codes=46 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:48:01 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.259s, codes=46, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=44
+21:48:23 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260521 date=2026-05-21 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+21:48:23 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260521 date=2026-05-21 positions=1 cash_ratio=0.6011 gross_exposure=0.3989
+21:48:37 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=2/2 chunks=1 elapsed=5.9s
+21:49:03 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-21', 'hit': 0, 'miss': 3081}
+21:49:03 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000608', 'date': '2026-05-20'}
+21:49:03 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002047', 'date': '2026-05-20'}
+21:49:03 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002629', 'date': '2026-05-20'}
+21:49:03 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-20', 'hit': 3078, 'miss': 3}
+21:49:03 INFO quantstudio.backtest.ptrade_api: 首板池 2026-05-22: 26 只
+21:50:01 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.4s budget=30.0s codes=29 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:50:34 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=32.9s budget=30.0s codes=29 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:50:34 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=32.854s, codes=29, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=27
+21:50:51 INFO quantstudio.backtest.ptrade_api: 买入 002703.SZ
+21:50:54 INFO quantstudio.backtest.ptrade_api: 卖出 600863.SS
+21:50:54 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260522 date=2026-05-22 selected=1 tradable=1 sell_submitted=1 buy_submitted=1
+21:50:54 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260522 date=2026-05-22 positions=1 cash_ratio=0.4008 gross_exposure=0.5992
+21:51:29 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-22', 'hit': 0, 'miss': 3081}
+21:51:29 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-21', 'hit': 3081, 'miss': 0}
+21:51:29 INFO quantstudio.backtest.ptrade_api: 首板池 2026-05-25: 90 只
+21:52:32 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.5s budget=30.0s codes=93 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:53:02 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.1s budget=30.0s codes=93 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:53:02 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.123s, codes=93, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=91
+21:53:36 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260525 date=2026-05-25 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+21:53:36 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260525 date=2026-05-25 positions=1 cash_ratio=0.3930 gross_exposure=0.6070
+21:53:48 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=1/1 chunks=1 elapsed=4.5s
+21:54:10 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-25', 'hit': 0, 'miss': 3082}
+21:54:10 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002693', 'date': '2026-05-22'}
+21:54:10 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-22', 'hit': 3081, 'miss': 1}
+21:54:11 INFO quantstudio.backtest.ptrade_api: 首板池 2026-05-26: 68 只
+21:55:14 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=32.1s budget=30.0s codes=71 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:55:32 INFO quantstudio.backtest.ptrade_api: 买入 600310.SS
+21:55:32 INFO quantstudio.backtest.ptrade_api: 买入 600376.SS
+21:55:34 INFO quantstudio.backtest.ptrade_api: 卖出 002703.SZ
+21:55:34 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260526 date=2026-05-26 selected=2 tradable=2 sell_submitted=1 buy_submitted=2
+21:55:34 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260526 date=2026-05-26 positions=2 cash_ratio=0.6244 gross_exposure=0.3756
+21:56:04 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-26', 'hit': 0, 'miss': 3082}
+21:56:04 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-25', 'hit': 3082, 'miss': 0}
+21:56:04 INFO quantstudio.backtest.ptrade_api: 首板池 2026-05-27: 32 只
+21:57:29 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=31.6s budget=30.0s codes=36 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:57:59 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.2s budget=30.0s codes=36 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+21:57:59 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.18s, codes=36, sql= | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=34
+21:58:19 INFO quantstudio.backtest.ptrade_api: 卖出 600376.SS
+21:58:19 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260527 date=2026-05-27 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+21:58:19 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260527 date=2026-05-27 positions=1 cash_ratio=0.8024 gross_exposure=0.1976
+21:58:47 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-27', 'hit': 0, 'miss': 3082}
+21:58:47 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-26', 'hit': 3082, 'miss': 0}
+21:58:47 INFO quantstudio.backtest.ptrade_api: 首板池 2026-05-28: 38 只
+21:59:43 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=31.0s budget=30.0s codes=41 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:00:20 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=36.7s budget=30.0s codes=41 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:00:20 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=36.663s, codes=41, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=39
+22:00:51 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260528 date=2026-05-28 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+22:00:51 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260528 date=2026-05-28 positions=1 cash_ratio=0.8029 gross_exposure=0.1971
+22:01:26 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-28', 'hit': 0, 'miss': 3082}
+22:01:26 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-27', 'hit': 3081, 'miss': 1}
+22:01:27 INFO quantstudio.backtest.ptrade_api: 首板池 2026-05-29: 83 只
+22:02:31 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.8s budget=30.0s codes=86 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:03:02 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.1s budget=30.0s codes=86 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:03:02 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.142s, codes=86, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=84
+22:03:36 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260529 date=2026-05-29 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+22:03:36 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260529 date=2026-05-29 positions=1 cash_ratio=0.7980 gross_exposure=0.2020
+22:04:04 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-29', 'hit': 0, 'miss': 3082}
+22:04:04 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-28', 'hit': 3082, 'miss': 0}
+22:04:04 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-01: 37 只
+22:04:57 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.7s budget=30.0s codes=40 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:05:28 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.7s budget=30.0s codes=40 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:05:28 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.689s, codes=40, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=38
+22:05:43 INFO quantstudio.backtest.ptrade_api: 买入 002608.SZ
+22:05:43 INFO quantstudio.backtest.ptrade_api: 买入 002824.SZ
+22:05:46 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260601 date=2026-06-01 selected=2 tradable=2 sell_submitted=0 buy_submitted=2
+22:05:46 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260601 date=2026-06-01 positions=2 cash_ratio=0.4252 gross_exposure=0.5748
+22:05:59 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=1/1 chunks=1 elapsed=6.6s
+22:06:35 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-01', 'hit': 0, 'miss': 3081}
+22:06:35 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000691', 'date': '2026-05-29'}
+22:06:35 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-05-29', 'hit': 3080, 'miss': 1}
+22:06:35 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-02: 98 只
+22:07:54 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=31.1s budget=30.0s codes=102 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:08:26 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=32.6s budget=30.0s codes=102 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:08:26 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=32.576s, codes=102, sq | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=100
+22:09:17 INFO quantstudio.backtest.ptrade_api: 买入 002328.SZ
+22:09:20 INFO quantstudio.backtest.ptrade_api: 卖出 002824.SZ
+22:09:20 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260602 date=2026-06-02 selected=1 tradable=1 sell_submitted=1 buy_submitted=1
+22:09:20 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260602 date=2026-06-02 positions=2 cash_ratio=0.3904 gross_exposure=0.6096
+22:09:36 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=1/1 chunks=1 elapsed=4.9s
+22:10:03 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-02', 'hit': 0, 'miss': 3083}
+22:10:03 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002848', 'date': '2026-06-01'}
+22:10:03 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603721', 'date': '2026-06-01'}
+22:10:03 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-01', 'hit': 3081, 'miss': 2}
+22:10:03 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-03: 43 只
+22:10:56 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=31.7s budget=30.0s codes=47 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:11:27 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.4s budget=30.0s codes=47 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:11:27 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.363s, codes=47, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=45
+22:12:36 INFO quantstudio.backtest.ptrade_api: 卖出 002328.SZ
+22:12:36 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260603 date=2026-06-03 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+22:12:36 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260603 date=2026-06-03 positions=1 cash_ratio=0.7725 gross_exposure=0.2275
+22:12:57 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=3/3 chunks=1 elapsed=9.3s
+22:13:28 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-03', 'hit': 0, 'miss': 3086}
+22:13:28 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000668', 'date': '2026-06-02'}
+22:13:28 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000736', 'date': '2026-06-02'}
+22:13:28 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002200', 'date': '2026-06-02'}
+22:13:28 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-02', 'hit': 3083, 'miss': 3}
+22:13:28 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-04: 50 只
+22:14:21 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=31.9s budget=30.0s codes=52 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:14:52 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.2s budget=30.0s codes=52 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:14:52 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.244s, codes=52, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=50
+22:15:20 INFO quantstudio.backtest.ptrade_api: 卖出 600310.SS
+22:15:20 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260604 date=2026-06-04 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+22:15:20 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260604 date=2026-06-04 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+22:15:55 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-04', 'hit': 0, 'miss': 3086}
+22:15:55 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-03', 'hit': 3086, 'miss': 0}
+22:15:55 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-05: 57 只
+22:16:50 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.4s budget=30.0s codes=59 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:17:21 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.3s budget=30.0s codes=59 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:17:21 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.283s, codes=59, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=57
+22:17:56 INFO quantstudio.backtest.ptrade_api: 买入 600226.SS
+22:18:00 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260605 date=2026-06-05 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+22:18:00 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260605 date=2026-06-05 positions=1 cash_ratio=0.0063 gross_exposure=0.9937
+22:18:50 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-05', 'hit': 0, 'miss': 3088}
+22:18:50 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002969', 'date': '2026-06-04'}
+22:18:50 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-04', 'hit': 3086, 'miss': 2}
+22:18:50 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-08: 59 只
+22:19:39 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.4s budget=30.0s codes=62 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:20:10 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.3s budget=30.0s codes=62 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:20:10 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.302s, codes=62, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=60
+22:20:34 INFO quantstudio.backtest.ptrade_api: 卖出 600226.SS
+22:20:34 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260608 date=2026-06-08 selected=1 tradable=0 sell_submitted=1 buy_submitted=0
+22:20:34 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260608 date=2026-06-08 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+22:20:54 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-08', 'hit': 0, 'miss': 3087}
+22:20:54 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-05', 'hit': 3087, 'miss': 0}
+22:20:54 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-09: 32 只
+22:21:42 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.6s budget=30.0s codes=34 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:22:13 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.3s budget=30.0s codes=34 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:22:13 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.321s, codes=34, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=32
+22:22:26 INFO quantstudio.backtest.ptrade_api: 买入 001696.SZ
+22:22:27 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260609 date=2026-06-09 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+22:22:28 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260609 date=2026-06-09 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+22:22:57 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-09', 'hit': 0, 'miss': 3086}
+22:22:57 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600228', 'date': '2026-06-08'}
+22:22:57 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-08', 'hit': 3085, 'miss': 1}
+22:22:57 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-10: 101 只
+22:23:48 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.8s budget=30.0s codes=103 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:24:19 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.2s budget=30.0s codes=103 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:24:19 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.179s, codes=103, sq | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=101
+22:24:51 INFO quantstudio.backtest.ptrade_api: 买入 002057.SZ
+22:24:53 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260610 date=2026-06-10 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+22:24:53 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260610 date=2026-06-10 positions=1 cash_ratio=0.0034 gross_exposure=0.9966
+22:25:21 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-10', 'hit': 0, 'miss': 3087}
+22:25:21 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-09', 'hit': 3086, 'miss': 1}
+22:25:21 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-11: 49 只
+22:26:09 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.4s budget=30.0s codes=52 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:26:39 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.5s budget=30.0s codes=52 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:26:39 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.469s, codes=52, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=50
+22:26:59 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260611 date=2026-06-11 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+22:26:59 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260611 date=2026-06-11 positions=1 cash_ratio=0.0034 gross_exposure=0.9966
+22:27:13 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=1/1 chunks=1 elapsed=6.6s
+22:27:36 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-11', 'hit': 0, 'miss': 3088}
+22:27:36 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '003032', 'date': '2026-06-10'}
+22:27:36 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-10', 'hit': 3087, 'miss': 1}
+22:27:37 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-12: 44 只
+22:28:33 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.9s budget=30.0s codes=47 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:29:04 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.2s budget=30.0s codes=47 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:29:04 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.175s, codes=47, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=45
+22:29:25 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260612 date=2026-06-12 selected=1 tradable=0 sell_submitted=0 buy_submitted=0
+22:29:25 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260612 date=2026-06-12 positions=1 cash_ratio=0.0033 gross_exposure=0.9967
+22:29:54 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=2/2 chunks=1 elapsed=16.9s
+22:31:01 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-12', 'hit': 0, 'miss': 3090}
+22:31:01 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000504', 'date': '2026-06-11'}
+22:31:01 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000908', 'date': '2026-06-11'}
+22:31:01 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-11', 'hit': 3088, 'miss': 2}
+22:31:01 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-15: 73 只
+22:32:08 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=31.2s budget=30.0s codes=76 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:32:40 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=31.4s budget=30.0s codes=76 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:32:40 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=31.443s, codes=76, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=74
+22:33:10 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260615 date=2026-06-15 selected=1 tradable=0 sell_submitted=0 buy_submitted=0
+22:33:10 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260615 date=2026-06-15 positions=1 cash_ratio=0.0032 gross_exposure=0.9968
+22:33:31 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=2/2 chunks=1 elapsed=10.2s
+22:34:10 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-15', 'hit': 0, 'miss': 3088}
+22:34:10 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002058', 'date': '2026-06-12'}
+22:34:10 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002529', 'date': '2026-06-12'}
+22:34:10 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-12', 'hit': 3086, 'miss': 2}
+22:34:10 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-16: 116 只
+22:35:07 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.3s budget=30.0s codes=119 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:35:37 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.4s budget=30.0s codes=119 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:35:37 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.404s, codes=119, sq | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=117
+22:36:17 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260616 date=2026-06-16 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+22:36:17 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260616 date=2026-06-16 positions=1 cash_ratio=0.0032 gross_exposure=0.9968
+22:36:24 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=1/1 chunks=1 elapsed=1.7s
+22:36:34 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-16', 'hit': 0, 'miss': 3092}
+22:36:34 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000929', 'date': '2026-06-15'}
+22:36:34 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002160', 'date': '2026-06-15'}
+22:36:34 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600753', 'date': '2026-06-15'}
+22:36:34 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603261', 'date': '2026-06-15'}
+22:36:34 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603813', 'date': '2026-06-15'}
+22:36:34 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-15', 'hit': 3087, 'miss': 5}
+22:36:34 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-17: 77 只
+22:37:22 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.4s budget=30.0s codes=80 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:37:52 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.2s budget=30.0s codes=80 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:37:52 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.249s, codes=80, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=78
+22:38:22 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260617 date=2026-06-17 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+22:38:22 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260617 date=2026-06-17 positions=1 cash_ratio=0.0032 gross_exposure=0.9968
+22:38:46 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-17', 'hit': 0, 'miss': 3090}
+22:38:46 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-16', 'hit': 3090, 'miss': 0}
+22:38:46 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-18: 49 只
+22:39:34 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.3s budget=30.0s codes=52 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:40:05 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.4s budget=30.0s codes=52 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:40:05 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.434s, codes=52, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=50
+22:40:29 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260618 date=2026-06-18 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+22:40:29 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260618 date=2026-06-18 positions=1 cash_ratio=0.0031 gross_exposure=0.9969
+22:40:48 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=1/1 chunks=1 elapsed=8.9s
+22:41:17 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-18', 'hit': 0, 'miss': 3091}
+22:41:17 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002496', 'date': '2026-06-17'}
+22:41:17 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-17', 'hit': 3090, 'miss': 1}
+22:41:17 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-22: 64 只
+22:42:22 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=38.5s budget=30.0s codes=67 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:42:53 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.8s budget=30.0s codes=67 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:42:53 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.813s, codes=67, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=65
+22:43:37 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260622 date=2026-06-22 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+22:43:37 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260622 date=2026-06-22 positions=1 cash_ratio=0.0028 gross_exposure=0.9972
+22:44:00 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=2/2 chunks=1 elapsed=14.2s
+22:44:27 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-22', 'hit': 0, 'miss': 3091}
+22:44:27 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002076', 'date': '2026-06-18'}
+22:44:27 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002762', 'date': '2026-06-18'}
+22:44:27 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-18', 'hit': 3089, 'miss': 2}
+22:44:27 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-23: 101 只
+22:45:21 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.4s budget=30.0s codes=103 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:45:52 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.8s budget=30.0s codes=103 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:45:52 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.849s, codes=103, sq | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=101
+22:46:45 INFO quantstudio.backtest.ptrade_api: 卖出 002057.SZ
+22:46:45 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260623 date=2026-06-23 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+22:46:46 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260623 date=2026-06-23 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+22:47:20 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-23', 'hit': 0, 'miss': 3094}
+22:47:20 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600717', 'date': '2026-06-22'}
+22:47:20 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600777', 'date': '2026-06-22'}
+22:47:20 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603159', 'date': '2026-06-22'}
+22:47:20 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-22', 'hit': 3091, 'miss': 3}
+22:47:21 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-24: 66 只
+22:48:20 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.3s budget=30.0s codes=68 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:48:51 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.6s budget=30.0s codes=68 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:48:51 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.583s, codes=68, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=66
+22:49:23 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260624 date=2026-06-24 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+22:49:23 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260624 date=2026-06-24 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+22:49:52 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-24', 'hit': 0, 'miss': 3092}
+22:49:52 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-23', 'hit': 3092, 'miss': 0}
+22:49:52 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-25: 77 只
+22:50:45 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.5s budget=30.0s codes=79 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:51:16 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.3s budget=30.0s codes=79 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:51:16 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.339s, codes=79, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=77
+22:51:47 INFO quantstudio.backtest.ptrade_api: 买入 000967.SZ
+22:51:47 INFO quantstudio.backtest.ptrade_api: 买入 002452.SZ
+22:51:47 INFO quantstudio.backtest.ptrade_api: 买入 003043.SZ
+22:51:51 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260625 date=2026-06-25 selected=3 tradable=3 sell_submitted=0 buy_submitted=3
+22:51:51 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260625 date=2026-06-25 positions=3 cash_ratio=0.0486 gross_exposure=0.9514
+22:52:43 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-25', 'hit': 0, 'miss': 3093}
+22:52:43 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600228', 'date': '2026-06-24'}
+22:52:43 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603721', 'date': '2026-06-24'}
+22:52:43 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-24', 'hit': 3091, 'miss': 2}
+22:52:43 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-26: 63 只
+22:53:47 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.8s budget=30.0s codes=68 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:54:17 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.1s budget=30.0s codes=68 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:54:17 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.119s, codes=68, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=66
+22:54:45 INFO quantstudio.backtest.ptrade_api: 卖出 000967.SZ
+22:54:45 INFO quantstudio.backtest.ptrade_api: 卖出 002452.SZ
+22:54:45 INFO quantstudio.backtest.ptrade_api: 卖出 003043.SZ
+22:54:45 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260626 date=2026-06-26 selected=0 tradable=0 sell_submitted=3 buy_submitted=0
+22:54:45 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260626 date=2026-06-26 positions=1 cash_ratio=0.7011 gross_exposure=0.2989
+22:55:04 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=2/2 chunks=1 elapsed=10.1s
+22:55:28 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-26', 'hit': 0, 'miss': 3095}
+22:55:28 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002253', 'date': '2026-06-25'}
+22:55:28 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002289', 'date': '2026-06-25'}
+22:55:28 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-25', 'hit': 3093, 'miss': 2}
+22:55:28 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-29: 44 只
+22:56:21 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.9s budget=30.0s codes=47 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:56:53 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=32.1s budget=30.0s codes=47 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:56:53 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=32.144s, codes=47, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=45
+22:57:23 INFO quantstudio.backtest.ptrade_api: 卖出 000967.SZ
+22:57:23 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260629 date=2026-06-29 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+22:57:23 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260629 date=2026-06-29 positions=1 cash_ratio=0.7226 gross_exposure=0.2774
+22:57:40 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=1/1 chunks=1 elapsed=6.4s
+22:57:59 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-29', 'hit': 0, 'miss': 3093}
+22:58:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000972', 'date': '2026-06-26'}
+22:58:00 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '001331', 'date': '2026-06-26'}
+22:58:00 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-26', 'hit': 3091, 'miss': 2}
+22:58:00 INFO quantstudio.backtest.ptrade_api: 首板池 2026-06-30: 79 只
+22:58:55 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.4s budget=30.0s codes=82 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:59:28 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=32.9s budget=30.0s codes=82 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+22:59:28 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=32.873s, codes=82, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=80
+23:00:05 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260630 date=2026-06-30 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+23:00:05 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260630 date=2026-06-30 positions=1 cash_ratio=0.7031 gross_exposure=0.2969
+23:00:36 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-30', 'hit': 0, 'miss': 3091}
+23:00:37 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-29', 'hit': 3090, 'miss': 1}
+23:00:37 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-01: 95 只
+23:01:29 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.7s budget=30.0s codes=97 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:02:00 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.7s budget=30.0s codes=97 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:02:00 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.677s, codes=97, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=95
+23:02:40 INFO quantstudio.backtest.ptrade_api: 卖出 000967.SZ
+23:02:40 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260701 date=2026-07-01 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+23:02:40 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260701 date=2026-07-01 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+23:03:12 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-01', 'hit': 0, 'miss': 3095}
+23:03:12 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600892', 'date': '2026-06-30'}
+23:03:12 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603137', 'date': '2026-06-30'}
+23:03:12 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603389', 'date': '2026-06-30'}
+23:03:12 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603580', 'date': '2026-06-30'}
+23:03:12 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603789', 'date': '2026-06-30'}
+23:03:12 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-06-30', 'hit': 3090, 'miss': 5}
+23:03:12 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-02: 110 只
+23:04:06 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.4s budget=30.0s codes=112 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:04:37 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=31.5s budget=30.0s codes=112 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:04:37 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=31.459s, codes=112, sq | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=110
+23:05:20 INFO quantstudio.backtest.ptrade_api: 买入 002458.SZ
+23:05:20 INFO quantstudio.backtest.ptrade_api: 买入 002468.SZ
+23:05:20 INFO quantstudio.backtest.ptrade_api: 买入 002607.SZ
+23:05:22 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260702 date=2026-07-02 selected=3 tradable=3 sell_submitted=0 buy_submitted=3
+23:05:22 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260702 date=2026-07-02 positions=2 cash_ratio=0.3633 gross_exposure=0.6367
+23:05:41 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=2/2 chunks=1 elapsed=11.5s
+23:05:55 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-02', 'hit': 0, 'miss': 3100}
+23:05:55 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000595', 'date': '2026-07-01'}
+23:05:55 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000656', 'date': '2026-07-01'}
+23:05:55 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603001', 'date': '2026-07-01'}
+23:05:55 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603559', 'date': '2026-07-01'}
+23:05:55 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-01', 'hit': 3095, 'miss': 5}
+23:05:56 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-03: 68 只
+23:06:48 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.9s budget=30.0s codes=72 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:07:19 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.9s budget=30.0s codes=72 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:07:19 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.874s, codes=72, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=70
+23:07:53 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260703 date=2026-07-03 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+23:07:54 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260703 date=2026-07-03 positions=2 cash_ratio=0.3666 gross_exposure=0.6334
+23:08:32 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-03', 'hit': 0, 'miss': 3100}
+23:08:32 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-02', 'hit': 3099, 'miss': 1}
+23:08:32 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-06: 77 只
+23:09:33 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.3s budget=30.0s codes=81 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:10:04 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=31.0s budget=30.0s codes=81 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:10:04 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=31.014s, codes=81, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=79
+23:10:40 INFO quantstudio.backtest.ptrade_api: 买入 002249.SZ
+23:10:43 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260706 date=2026-07-06 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+23:10:43 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260706 date=2026-07-06 positions=3 cash_ratio=0.0087 gross_exposure=0.9913
+23:11:15 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-06', 'hit': 0, 'miss': 3101}
+23:11:15 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002729', 'date': '2026-07-03'}
+23:11:15 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603722', 'date': '2026-07-03'}
+23:11:15 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-03', 'hit': 3099, 'miss': 2}
+23:11:15 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-07: 57 只
+23:12:10 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.8s budget=30.0s codes=61 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:12:40 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.3s budget=30.0s codes=61 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:12:40 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.279s, codes=61, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=59
+23:13:10 INFO quantstudio.backtest.ptrade_api: 卖出 002249.SZ
+23:13:10 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260707 date=2026-07-07 selected=1 tradable=0 sell_submitted=1 buy_submitted=0
+23:13:10 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260707 date=2026-07-07 positions=2 cash_ratio=0.3375 gross_exposure=0.6625
+23:13:47 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-07', 'hit': 0, 'miss': 3100}
+23:13:47 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-06', 'hit': 3099, 'miss': 1}
+23:13:47 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-08: 25 只
+23:14:43 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.5s budget=30.0s codes=29 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:15:14 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.7s budget=30.0s codes=29 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:15:14 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.664s, codes=29, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=27
+23:15:32 INFO quantstudio.backtest.ptrade_api: 买入 000973.SZ
+23:15:37 INFO quantstudio.backtest.ptrade_api: 卖出 002468.SZ
+23:15:37 INFO quantstudio.backtest.ptrade_api: 卖出 002607.SZ
+23:15:37 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260708 date=2026-07-08 selected=1 tradable=1 sell_submitted=2 buy_submitted=1
+23:15:37 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260708 date=2026-07-08 positions=1 cash_ratio=0.6907 gross_exposure=0.3093
+23:16:04 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-08', 'hit': 0, 'miss': 3101}
+23:16:04 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000524', 'date': '2026-07-07'}
+23:16:04 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-07', 'hit': 3100, 'miss': 1}
+23:16:05 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-09: 38 只
+23:16:57 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=31.7s budget=30.0s codes=41 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:17:28 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.5s budget=30.0s codes=41 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:17:28 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.522s, codes=41, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=39
+23:17:49 INFO quantstudio.backtest.ptrade_api: 卖出 000973.SZ
+23:17:49 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260709 date=2026-07-09 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+23:17:49 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260709 date=2026-07-09 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+23:18:14 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-09', 'hit': 0, 'miss': 3101}
+23:18:14 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-08', 'hit': 3101, 'miss': 0}
+23:18:15 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-10: 57 只
+23:19:05 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.2s budget=30.0s codes=59 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:19:35 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.2s budget=30.0s codes=59 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:19:35 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.225s, codes=59, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=57
+23:19:59 INFO quantstudio.backtest.ptrade_api: 买入 002579.SZ
+23:20:02 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260710 date=2026-07-10 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+23:20:02 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260710 date=2026-07-10 positions=1 cash_ratio=0.0075 gross_exposure=0.9925
+23:20:14 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=2/2 chunks=1 elapsed=6.4s
+23:20:26 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-10', 'hit': 0, 'miss': 3103}
+23:20:26 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600491', 'date': '2026-07-09'}
+23:20:26 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-09', 'hit': 3100, 'miss': 3}
+23:20:26 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-13: 73 只
+23:21:17 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.5s budget=30.0s codes=76 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:21:49 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=31.3s budget=30.0s codes=76 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:21:49 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=31.341s, codes=76, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=74
+23:22:26 INFO quantstudio.backtest.ptrade_api: 卖出 002579.SZ
+23:22:26 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260713 date=2026-07-13 selected=1 tradable=0 sell_submitted=1 buy_submitted=0
+23:22:26 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260713 date=2026-07-13 positions=1 cash_ratio=0.0083 gross_exposure=0.9917
+23:22:56 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-13', 'hit': 0, 'miss': 3105}
+23:22:56 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600405', 'date': '2026-07-10'}
+23:22:56 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '601369', 'date': '2026-07-10'}
+23:22:56 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-10', 'hit': 3103, 'miss': 2}
+23:22:56 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-14: 16 只
+23:23:47 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.5s budget=30.0s codes=19 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:24:17 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.3s budget=30.0s codes=19 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:24:17 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.27s, codes=19, sql= | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=17
+23:24:28 INFO quantstudio.backtest.ptrade_api: 卖出 002579.SZ
+23:24:28 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260714 date=2026-07-14 selected=1 tradable=0 sell_submitted=1 buy_submitted=0
+23:24:28 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260714 date=2026-07-14 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+23:24:40 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=1/1 chunks=1 elapsed=6.3s
+23:25:07 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-14', 'hit': 0, 'miss': 3107}
+23:25:07 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000008', 'date': '2026-07-13'}
+23:25:07 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002005', 'date': '2026-07-13'}
+23:25:07 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603580', 'date': '2026-07-13'}
+23:25:07 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-13', 'hit': 3104, 'miss': 3}
+23:25:07 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-15: 68 只
+23:26:06 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=31.9s budget=30.0s codes=70 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:26:36 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.4s budget=30.0s codes=70 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:26:36 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.416s, codes=70, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=68
+23:27:14 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260715 date=2026-07-15 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+23:27:14 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260715 date=2026-07-15 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+23:27:52 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-15', 'hit': 0, 'miss': 3107}
+23:27:52 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-14', 'hit': 3107, 'miss': 0}
+23:27:53 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-16: 52 只
+23:28:55 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.8s budget=30.0s codes=54 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:29:26 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.5s budget=30.0s codes=54 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:29:26 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.49s, codes=54, sql= | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=52
+23:29:55 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260716 date=2026-07-16 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+23:29:55 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260716 date=2026-07-16 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+23:30:25 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-16', 'hit': 0, 'miss': 3107}
+23:30:25 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-15', 'hit': 3107, 'miss': 0}
+23:30:25 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-17: 30 只
+23:31:17 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.5s budget=30.0s codes=32 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:31:48 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=31.0s budget=30.0s codes=32 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:31:48 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.99s, codes=32, sql= | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=30
+23:32:05 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260717 date=2026-07-17 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+23:32:05 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260717 date=2026-07-17 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+23:32:27 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-17', 'hit': 0, 'miss': 3108}
+23:32:27 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002677', 'date': '2026-07-16'}
+23:32:27 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-16', 'hit': 3107, 'miss': 1}
+23:32:27 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-20: 24 只
+23:33:21 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.7s budget=30.0s codes=26 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:33:51 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.3s budget=30.0s codes=26 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:33:51 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.291s, codes=26, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=24
+23:34:03 INFO quantstudio.backtest.ptrade_api: 买入 600095.SS
+23:34:07 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260720 date=2026-07-20 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+23:34:07 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260720 date=2026-07-20 positions=1 cash_ratio=0.0022 gross_exposure=0.9978
+23:34:32 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=2/2 chunks=1 elapsed=12.7s
+23:34:54 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-20', 'hit': 0, 'miss': 3110}
+23:34:54 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002656', 'date': '2026-07-17'}
+23:34:54 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002713', 'date': '2026-07-17'}
+23:34:54 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-17', 'hit': 3108, 'miss': 2}
+23:34:54 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-21: 41 只
+23:35:53 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.7s budget=30.0s codes=44 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:36:23 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.4s budget=30.0s codes=44 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:36:23 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.381s, codes=44, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=42
+23:36:49 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260721 date=2026-07-21 selected=3 tradable=0 sell_submitted=0 buy_submitted=0
+23:36:49 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260721 date=2026-07-21 positions=1 cash_ratio=0.0023 gross_exposure=0.9977
+23:37:16 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-21', 'hit': 0, 'miss': 3110}
+23:37:16 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-20', 'hit': 3110, 'miss': 0}
+23:37:17 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-22: 77 只
+23:38:14 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.6s budget=30.0s codes=80 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:38:45 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=31.6s budget=30.0s codes=80 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:38:45 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=31.568s, codes=80, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=78
+23:39:28 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260722 date=2026-07-22 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+23:39:29 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260722 date=2026-07-22 positions=1 cash_ratio=0.0023 gross_exposure=0.9977
+23:40:06 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-22', 'hit': 0, 'miss': 3110}
+23:40:06 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-21', 'hit': 3110, 'miss': 0}
+23:40:06 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-23: 30 只
+23:41:00 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.5s budget=30.0s codes=33 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:41:30 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.3s budget=30.0s codes=33 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:41:30 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.278s, codes=33, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=31
+23:41:51 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260723 date=2026-07-23 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+23:41:51 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260723 date=2026-07-23 positions=1 cash_ratio=0.0022 gross_exposure=0.9978
+23:42:09 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=1/1 chunks=1 elapsed=8.0s
+23:42:30 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-23', 'hit': 0, 'miss': 3110}
+23:42:30 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002199', 'date': '2026-07-22'}
+23:42:30 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-22', 'hit': 3109, 'miss': 1}
+23:42:30 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-24: 95 只
+23:43:24 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.3s budget=30.0s codes=98 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:43:55 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.4s budget=30.0s codes=98 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:43:55 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.445s, codes=98, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=96
+23:44:39 INFO quantstudio.backtest.ptrade_api: 卖出 600095.SS
+23:44:39 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260724 date=2026-07-24 selected=0 tradable=0 sell_submitted=1 buy_submitted=0
+23:44:39 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260724 date=2026-07-24 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+23:45:04 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-24', 'hit': 0, 'miss': 3110}
+23:45:04 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-23', 'hit': 3110, 'miss': 0}
+23:45:04 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-27: 19 只
+23:46:03 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.4s budget=30.0s codes=21 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:46:34 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.8s budget=30.0s codes=21 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:46:34 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.825s, codes=21, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=19
+23:46:49 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260727 date=2026-07-27 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+23:46:50 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260727 date=2026-07-27 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+23:47:20 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-27', 'hit': 0, 'miss': 3109}
+23:47:20 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-24', 'hit': 3109, 'miss': 0}
+23:47:20 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-28: 95 只
+23:48:16 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.3s budget=30.0s codes=97 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:48:46 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.2s budget=30.0s codes=97 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:48:46 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.23s, codes=97, sql= | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=95
+23:49:29 INFO quantstudio.backtest.ptrade_api: 买入 002292.SZ
+23:49:33 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260728 date=2026-07-28 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+23:49:33 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260728 date=2026-07-28 positions=1 cash_ratio=0.0003 gross_exposure=0.9997
+23:49:58 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-28', 'hit': 0, 'miss': 3109}
+23:49:58 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-27', 'hit': 3109, 'miss': 0}
+23:49:58 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-29: 42 只
+23:50:53 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.4s budget=30.0s codes=45 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:51:23 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.6s budget=30.0s codes=45 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:51:23 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.596s, codes=45, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=43
+23:51:50 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260729 date=2026-07-29 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+23:51:50 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260729 date=2026-07-29 positions=1 cash_ratio=0.0003 gross_exposure=0.9997
+23:52:22 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-29', 'hit': 0, 'miss': 3109}
+23:52:22 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-28', 'hit': 3109, 'miss': 0}
+23:52:22 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-30: 62 只
+23:53:16 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.7s budget=30.0s codes=65 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:53:46 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.2s budget=30.0s codes=65 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:53:46 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.24s, codes=65, sql= | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=63
+23:54:19 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260730 date=2026-07-30 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+23:54:19 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260730 date=2026-07-30 positions=1 cash_ratio=0.0003 gross_exposure=0.9997
+23:54:37 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=1/1 chunks=1 elapsed=8.6s
+23:54:57 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-30', 'hit': 0, 'miss': 3111}
+23:54:57 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '000820', 'date': '2026-07-29'}
+23:54:57 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002036', 'date': '2026-07-29'}
+23:54:57 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-29', 'hit': 3109, 'miss': 2}
+23:54:57 INFO quantstudio.backtest.ptrade_api: 首板池 2026-07-31: 36 只
+23:55:51 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.3s budget=30.0s codes=39 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:56:22 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=31.0s budget=30.0s codes=39 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:56:22 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=31.019s, codes=39, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=37
+23:56:44 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260731 date=2026-07-31 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+23:56:44 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260731 date=2026-07-31 positions=1 cash_ratio=0.0003 gross_exposure=0.9997
+23:57:13 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-31', 'hit': 0, 'miss': 3109}
+23:57:13 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-30', 'hit': 3109, 'miss': 0}
+23:57:13 INFO quantstudio.backtest.ptrade_api: 首板池 2026-08-03: 79 只
+23:58:14 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=32.0s budget=30.0s codes=82 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:58:45 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.5s budget=30.0s codes=82 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+23:58:45 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.475s, codes=82, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=80
+23:59:29 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260803 date=2026-08-03 selected=2 tradable=0 sell_submitted=0 buy_submitted=0
+23:59:29 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260803 date=2026-08-03 positions=1 cash_ratio=0.0003 gross_exposure=0.9997
+00:00:13 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-08-03', 'hit': 0, 'miss': 3110}
+00:00:13 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002828', 'date': '2026-07-31'}
+00:00:13 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600238', 'date': '2026-07-31'}
+00:00:13 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600439', 'date': '2026-07-31'}
+00:00:13 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-07-31', 'hit': 3107, 'miss': 3}
+00:00:13 INFO quantstudio.backtest.ptrade_api: 首板池 2026-08-04: 55 只
+00:01:14 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.7s budget=30.0s codes=58 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+00:01:44 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.5s budget=30.0s codes=58 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+00:01:44 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.521s, codes=58, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=56
+00:02:18 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260804 date=2026-08-04 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+00:02:18 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260804 date=2026-08-04 positions=1 cash_ratio=0.0003 gross_exposure=0.9997
+00:02:49 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-08-04', 'hit': 0, 'miss': 3111}
+00:02:49 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '600530', 'date': '2026-08-03'}
+00:02:49 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-08-03', 'hit': 3110, 'miss': 1}
+00:02:49 INFO quantstudio.backtest.ptrade_api: 首板池 2026-08-05: 104 只
+00:03:45 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.3s budget=30.0s codes=107 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+00:04:17 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=31.7s budget=30.0s codes=107 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+00:04:17 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=31.727s, codes=107, sq | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=105
+00:05:16 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260805 date=2026-08-05 selected=1 tradable=0 sell_submitted=0 buy_submitted=0
+00:05:16 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260805 date=2026-08-05 positions=1 cash_ratio=0.0003 gross_exposure=0.9997
+00:05:37 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=1/1 chunks=1 elapsed=10.2s
+00:06:03 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-08-05', 'hit': 0, 'miss': 3112}
+00:06:03 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '002214', 'date': '2026-08-04'}
+00:06:03 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-08-04', 'hit': 3111, 'miss': 1}
+00:06:03 INFO quantstudio.backtest.ptrade_api: 首板池 2026-08-06: 63 只
+00:07:05 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=31.1s budget=30.0s codes=66 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+00:07:36 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.8s budget=30.0s codes=66 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+00:07:36 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.804s, codes=66, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=64
+00:08:15 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260806 date=2026-08-06 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+00:08:15 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260806 date=2026-08-06 positions=1 cash_ratio=0.0003 gross_exposure=0.9997
+00:09:03 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-08-06', 'hit': 0, 'miss': 3113}
+00:09:03 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603221', 'date': '2026-08-05'}
+00:09:03 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-08-05', 'hit': 3112, 'miss': 1}
+00:09:04 INFO quantstudio.backtest.ptrade_api: 首板池 2026-08-07: 52 只
+00:10:02 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.8s budget=30.0s codes=55 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+00:10:33 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.7s budget=30.0s codes=55 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+00:10:33 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.686s, codes=55, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=53
+00:11:07 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260807 date=2026-08-07 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+00:11:07 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260807 date=2026-08-07 positions=1 cash_ratio=0.0003 gross_exposure=0.9997
+00:11:41 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-08-07', 'hit': 0, 'miss': 3113}
+00:11:41 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-08-06', 'hit': 3113, 'miss': 0}
+00:11:41 INFO quantstudio.backtest.ptrade_api: 首板池 2026-08-10: 46 只
+00:12:38 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=31.1s budget=30.0s codes=49 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+00:13:09 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=31.0s budget=30.0s codes=49 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+00:13:09 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.976s, codes=49, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=47
+00:13:44 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260810 date=2026-08-10 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+00:13:44 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260810 date=2026-08-10 positions=1 cash_ratio=0.0003 gross_exposure=0.9997
+00:14:18 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-08-10', 'hit': 0, 'miss': 3113}
+00:14:18 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-08-07', 'hit': 3113, 'miss': 0}
+00:14:18 INFO quantstudio.backtest.ptrade_api: 首板池 2026-08-11: 85 只
+00:15:20 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=31.2s budget=30.0s codes=88 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+00:15:52 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=31.3s budget=30.0s codes=88 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+00:15:52 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=31.304s, codes=88, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=86
+00:16:35 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260811 date=2026-08-11 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+00:16:35 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260811 date=2026-08-11 positions=1 cash_ratio=0.0003 gross_exposure=0.9997
+00:17:08 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-08-11', 'hit': 0, 'miss': 3111}
+00:17:08 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-08-10', 'hit': 3111, 'miss': 0}
+00:17:08 INFO quantstudio.backtest.ptrade_api: 首板池 2026-08-12: 40 只
+00:18:10 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=31.2s budget=30.0s codes=43 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+00:18:41 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.8s budget=30.0s codes=43 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+00:18:41 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.765s, codes=43, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=41
+00:19:21 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260812 date=2026-08-12 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+00:19:21 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260812 date=2026-08-12 positions=1 cash_ratio=0.0003 gross_exposure=0.9997
+00:20:05 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-08-12', 'hit': 0, 'miss': 3111}
+00:20:06 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-08-11', 'hit': 3111, 'miss': 0}
+00:20:06 INFO quantstudio.backtest.ptrade_api: 首板池 2026-08-13: 72 只
+00:21:08 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=1 elapsed=30.4s budget=30.0s codes=75 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+00:21:38 WARNING quantstudio.backtest.providers.duckdb_data_access: QS_DUCKDB_QUERY_TIMEOUT attempt=2 elapsed=30.6s budget=30.0s codes=75 sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, 
+00:21:38 WARNING quantstudio.backtest.ptrade_api: QS_HIST_FAIL RuntimeError: QS_DUCKDB_QUERY_TIMEOUT: bulk cache query exceeded per-statement budget twice (budget=30.0s, last=30.561s, codes=75, sql | args: count=1 unit=1m fields=['close', 'volume', 'time'] secs=73
+00:22:23 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260813 date=2026-08-13 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+00:22:23 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260813 date=2026-08-13 positions=1 cash_ratio=0.0003 gross_exposure=0.9997
+00:22:24 INFO quantstudio.backtest.backtest_engine: [Backtest] completed: 148 days
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.824, 'codes_in_params': 56, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 32.806, 'codes_in_params': 75, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.249, 'codes_in_params': 75, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 31.808, 'codes_in_params': 75, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 39.564, 'codes_in_params': 75, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 33.429, 'codes_in_params': 75, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 33.455, 'codes_in_params': 63, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 32.631, 'codes_in_params': 63, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 31.439, 'codes_in_params': 39, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 31.511, 'codes_in_params': 92, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.3, 'codes_in_params': 92, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.34, 'codes_in_params': 38, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.246, 'codes_in_params': 38, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 32.372, 'codes_in_params': 42, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.421, 'codes_in_params': 42, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.698, 'codes_in_params': 68, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.263, 'codes_in_params': 68, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 32.294, 'codes_in_params': 63, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 31.76, 'codes_in_params': 63, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 37.09, 'codes_in_params': 46, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.259, 'codes_in_params': 46, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.435, 'codes_in_params': 29, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 32.854, 'codes_in_params': 29, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.537, 'codes_in_params': 93, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.123, 'codes_in_params': 93, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 32.15, 'codes_in_params': 71, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 31.578, 'codes_in_params': 36, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.18, 'codes_in_params': 36, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.964, 'codes_in_params': 41, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 36.663, 'codes_in_params': 41, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.762, 'codes_in_params': 86, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.142, 'codes_in_params': 86, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.696, 'codes_in_params': 40, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.689, 'codes_in_params': 40, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 31.105, 'codes_in_params': 102, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 32.576, 'codes_in_params': 102, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 31.658, 'codes_in_params': 47, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.363, 'codes_in_params': 47, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 31.853, 'codes_in_params': 52, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.244, 'codes_in_params': 52, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.392, 'codes_in_params': 59, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.283, 'codes_in_params': 59, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.416, 'codes_in_params': 62, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.302, 'codes_in_params': 62, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.645, 'codes_in_params': 34, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.321, 'codes_in_params': 34, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.805, 'codes_in_params': 103, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.179, 'codes_in_params': 103, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.397, 'codes_in_params': 52, 'attempt': 1, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'sql': 'SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, ', 'budget_s': 30.0, 'elapsed_s': 30.469, 'codes_in_params': 52, 'attempt': 2, 'worker_still_alive': False}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG {'kind': 'QS_DUCKDB_QUERY_TIMEOUT', 'occurrences': 138}
+00:22:24 WARNING quantstudio.backtest.backtest_engine: QS_DIAG summary: 51 data-layer diagnostic event(s) this run
+00:22:24 INFO quantstudio.backtest.backtest_engine: [Backtest] result exported: output\backtest_results\20261109_002224_strategy
+✓ index_constituents(399101): 53944 只
+✓ 估值市值源: stock_daily_valuation(每日) (sdv=9841092, sfs=1021802)
+✓ stock_daily 含 preClose/is_st_reliable/is_delisting_risk/suspendFlag
+[minute-gate] db=D:\miniQMT策略实盘\QuantStudio\data\backup_import_20261101_040935\quantstudio.db window=2026-01-05~2026-08-13
+[minute-gate] 交易日基准=148 天（引擎来源 stock_daily；日历对拍已做） strict=True min_ratio=0.5
+[minute-gate] ①整日缺=0 ②低覆盖=0 ③副本陈旧=0 耗时=14.199s
+[minute-gate] ✅ PASS：窗口内分钟覆盖无整日缺/低覆盖告警
+{
+  "mode": "baseline",
+  "window": [
+    "2026-01-05",
+    "2026-08-13"
+  ],
+  "wall_sec": 14391.307,
+  "wall_note": "裸跑",
+  "peak_wset_mb": 11929.4,
+  "rss_end_mb": 6697.2,
+  "tracemalloc_cur_mb": null,
+  "tracemalloc_peak_mb": null,
+  "nav_days": 148,
+  "trades": 119,
+  "golden_sha256": "77e69043bec0c078e4f34bd10521a4d8f7c930207b5641bb4287e1e3e0c25607",
+  "csv_sha256": {
+    "benchmark.csv": "7b020b028c2d58853b27191818362759b8cc745f3d02246901bcec20efef05b5",
+    "config.csv": "de33990293ced5ffc6bad6091b4da65564e2740bbc68163ec5ba69a4d352f03a",
+    "daily_stats.csv": "fec7490afbc33dca131d0d0032d00ba551618ac40ba33c6e27df9953285b1e4a",
+    "ptrade_metrics.csv": "0c4ccb87766a94739c753575efab05df4b4498470f487b4dd349f93008996365",
+    "round_trips.csv": "948d611fa196b3d42f8af725eb93cb74c336ca8743c4201536f0d878a167dedc",
+    "trades.csv": "27a7105b57d7705634fd60b568b7e7460edb8c475875ebe87bdd565097c7c178"
+  },
+  "export_dir": "output\\backtest_results\\20261109_002224_strategy",
+  "env": {
+    "python": "3.11.9",
+    "duckdb": "1.5.6",
+    "pandas": "2.3.3",
+    "data_root": "D:\\miniQMT策略实盘\\QuantStudio\\data\\backup_import_20261101_040935",
+    "cwd": "D:\\miniQMT策略实盘\\QuantStudio"
+  }
+}

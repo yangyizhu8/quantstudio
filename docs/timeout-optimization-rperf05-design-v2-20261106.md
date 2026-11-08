@@ -31,6 +31,15 @@
 > - **四要素标签（强制，每份性能读数必带）**：`version`（duckdb 版本）/ `thermal`（cold C-approx-v1 | hot）/ `layer`（wall | python-alloc | data-query）/ `window`（如 2026-03-02~03-06）——示例落笔：`r20_1.5.6_cold-C-approx-v1_wall_2026-03-02~03-06.json`。
 > - **D-2 命名规范落笔**：性能读数/日志一律 `<probe>_<version>_<thermal>_<layer>_<window>_<stamp>.json|log`，禁同路径覆写；门禁 `scripts/check-evidence-naming.py`；1.4.5 原始读数已灭失（仅 cprofile/memtrace 旁证），已在 R-PERF-19 登记。
 >   **门禁状态（截至 2026-11-08 R-PERF-22）**：v1 为假 PASS（17 前缀豁免覆盖全部文件、compliant=0）已废弃；**v2 已生效**——精确名+mtime cutoff 冻结豁免、`--self-test` 4/4（含 D-2 覆写负例必 FAIL）、`--strict` 对存量 20 件命名不合规一律 exit 1。**存量 20 件历史证据待改名归档，在此之前 D-2 纪律对「新产物」有效、对「存量」仅有登记效力。**
+>   **O-1/O-2 跑动命令模板（2026-11-08 R-PERF-26 固化，防「拷到旧数据」）**：
+>   ```bat
+>   :: ① 跑（日志与 readings 都由探针按 TAG_SUFFIX 命名，window 段已内嵌）
+>   cmd /c "python agent_workspace\perf_eval_rperf01.py baseline <START> <END> > <tag>.log 2>&1"
+>   :: ② 读**正确源**（探针 L38 TAG_SUFFIX + L117 写出）
+>   agent_workspace/perf_eval_rperf01/baseline_<START>_<END>_readings.json
+>   :: ③ 再改名到四要素：<probe>_<version>_<thermal>_<layer>_<window>_<stamp>.json
+>   ```
+>   **禁**：`Copy-Item baseline_readings.json`（固定名只在默认短窗 2026-03-02~03-06 时产生，长窗跑不会更新它 ⇒ 会拷到旧数据）。
 
 > 根因定谳（E-02）：**T-2 慢查询型为主 + T-3 内存/页缓存竞争放大**；T-1 无数据型排除（6 日数据全量在）。
 > 慢根源：`_query_bars_window_sql` 窗口 SQL `WHERE code IN (...) AND time <= ?` **无 time 下界** ⇒
