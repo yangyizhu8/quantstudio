@@ -113,3 +113,9 @@ knowledge/.obsidian/
 
 # PD-0008: qs-deploy unified output root (deploy artifacts, keep out of git)
 /Demo_account_Real_account/
+
+# 总调度图态快照仓（优化线 O1：本地版本化，不入统推）
+/docs/handoff/dispatch/
+
+# daemon 生命周期占用声明（运行态文件：各线实时改写，入库必冲突）
+data/daemon_occupancy.json

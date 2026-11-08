@@ -138,13 +138,43 @@ def collect() -> Dict[str, Any]:
         except Exception:  # noqa: BLE001
             pass
 
+    # ④ 占用声明（铁律 19）：声明窗内 daemon 缺席属计划内停机
+    occ = {"occupied": False, "owner": None, "operation": None, "window": None}
+    occ_path = os.path.join(REPO, "data", "daemon_occupancy.json")
+    try:
+        if os.path.exists(occ_path):
+            with open(occ_path, "r", encoding="utf-8", errors="replace") as fh:
+                raw = json.load(fh)
+            occ = {"occupied": bool(raw.get("occupied")),
+                   "owner": raw.get("owner"), "operation": raw.get("operation"),
+                   "window": raw.get("window")}
+            if occ["occupied"]:
+                w = occ.get("window") or {}
+                try:
+                    st = dt.datetime.fromisoformat(str(w.get("start")))
+                    en = dt.datetime.fromisoformat(str(w.get("end")))
+                    now = dt.datetime.now()
+                    res["occupancy_excused"] = st <= now <= en
+                    occ["in_window"] = res["occupancy_excused"]
+                except Exception:
+                    res["occupancy_excused"] = True   # 声明存在但窗口字段缺失 ⇒ 保守豁免
+            else:
+                res["occupancy_excused"] = False
+    except Exception as exc:  # noqa: BLE001
+        res["occupancy_error"] = str(exc)
+        res["occupancy_excused"] = False
+    res["occupancy"] = occ
+
     # 判据
     checks = {
         "fatal_zero": res.get("fatal_hits", -1) == 0,
         "wal_under_256mb": res.get("wal_mb", 999) < 256,
         "gate_pass_1_5_6": res.get("gate_rc") == 0 and "PASS 1.5.6" in res.get("gate_out", ""),
         # 供血主体 = --mode forever 常驻实例（once 轮为一次性任务，会自然消失，不作存活判据）
-        "daemon_alive": any(isinstance(d, dict) and d.get("mode") == "forever" for d in res.get("daemons", [])),
+        "daemon_alive": (any(isinstance(d, dict) and d.get("mode") == "forever" for d in res.get("daemons", []))
+                         or res.get("occupancy_excused", False)),
+        # 占用声明窗内缺席属计划内停机（铁律 19 声明窗）⇒ 不判供血失败
+        "daemon_absence_excused": res.get("occupancy_excused", False),
         "once_running": any(isinstance(d, dict) and d.get("mode") == "once" for d in res.get("daemons", [])),
         # 采集轮质量审计失败（首周内须为 0；属升级后故障面，我方只记录不修他线域）
         "no_qa_failure": res.get("qa_failed_count", -1) == 0,
@@ -167,8 +197,11 @@ def render(res: Dict[str, Any]) -> str:
         "  主库: %s GB  mtime=%s" % (res.get("db_gb"), res.get("db_mtime")),
         "  WAL: %s MB" % res.get("wal_mb"),
         "  FATAL 关键词 '%s': 命中 %s（扫 %s 个日志）" % (FATAL_KEYWORD, res.get("fatal_hits"), res.get("logs_scanned")),
+        "  占用声明: %s" % (("声明窗内（%s %s）⇒ 缺席属计划内停机，豁免" % (res.get("occupancy", {}).get("owner"), res.get("occupancy", {}).get("operation")))
+                             if res.get("occupancy_excused") else "无（data/daemon_occupancy.json 无进行中声明）"),
         "  判据: FATAL=0 %s ｜ WAL<256MB %s ｜ 版本门 PASS 1.5.6 %s ｜ forever 常驻在位 %s ｜ (once 轮在跑 %s) ｜ 采集轮质量审计失败 0 %s（命中 %s）"
-        % (mark.get(c.get("fatal_zero"), "?"), mark.get(c.get("wal_under_256mb"), "?"),
+        % (
+           mark.get(c.get("fatal_zero"), "?"), mark.get(c.get("wal_under_256mb"), "?"),
            mark.get(c.get("gate_pass_1_5_6"), "?"), mark.get(c.get("daemon_alive"), "?"),
            mark.get(c.get("once_running"), "?"), mark.get(c.get("no_qa_failure"), "?"),
            res.get("qa_failed_count")),
