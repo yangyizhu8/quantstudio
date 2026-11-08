@@ -1,0 +1,144 @@
+{
+  "table": "stock_minutes",
+  "captured_at": "2026-11-08 16:04:05",
+  "ddl": "CREATE TABLE stock_minutes(code VARCHAR, \"time\" BIGINT, freq VARCHAR, open DOUBLE, high DOUBLE, low DOUBLE, \"close\" DOUBLE, volume DOUBLE, amount DOUBLE, preClose DOUBLE, suspendFlag INTEGER, settelementPrice DOUBLE, openInterest DOUBLE, open_front DOUBLE, high_front DOUBLE, low_front DOUBLE, close_front DOUBLE, open_back DOUBLE, high_back DOUBLE, low_back DOUBLE, close_back DOUBLE, open_front_ratio DOUBLE, high_front_ratio DOUBLE, low_front_ratio DOUBLE, close_front_ratio DOUBLE, open_back_ratio DOUBLE, high_back_ratio DOUBLE, low_back_ratio DOUBLE, close_back_ratio DOUBLE, dividend_type VARCHAR, update_time VARCHAR, data_source VARCHAR, PRIMARY KEY(code, \"time\", freq));",
+  "ddl_len": 680,
+  "columns": [
+    {
+      "name": "code",
+      "type": "VARCHAR"
+    },
+    {
+      "name": "time",
+      "type": "BIGINT"
+    },
+    {
+      "name": "freq",
+      "type": "VARCHAR"
+    },
+    {
+      "name": "open",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "high",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "low",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "close",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "volume",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "amount",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "preClose",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "suspendFlag",
+      "type": "INTEGER"
+    },
+    {
+      "name": "settelementPrice",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "openInterest",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "open_front",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "high_front",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "low_front",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "close_front",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "open_back",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "high_back",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "low_back",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "close_back",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "open_front_ratio",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "high_front_ratio",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "low_front_ratio",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "close_front_ratio",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "open_back_ratio",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "high_back_ratio",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "low_back_ratio",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "close_back_ratio",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "dividend_type",
+      "type": "VARCHAR"
+    },
+    {
+      "name": "update_time",
+      "type": "VARCHAR"
+    },
+    {
+      "name": "data_source",
+      "type": "VARCHAR"
+    }
+  ],
+  "v1_rows": 251877433,
+  "v2_agg": {
+    "sum_hash_pk": "2323336371702467217242140796",
+    "sum_hash_open": "2307954898631727273313886537",
+    "sum_open": "7251776336.875936",
+    "sum_close": "7251849267.419783",
+    "sum_volume": "26602332477464.000000"
+  }
+}
