@@ -1,0 +1,14 @@
+{
+  "generated_at": "2026-11-08 13:33:36",
+  "buckets": {
+    "STOCK": {
+      "window_inside": 372,
+      "window_outside": 15418
+    },
+    "ETF": {
+      "window_inside": 66,
+      "window_outside": 2081
+    }
+  },
+  "blocked_codes_count": 85
+}
