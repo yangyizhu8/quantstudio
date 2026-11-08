@@ -799,6 +799,36 @@ def _apply_guards(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> None:
 
 # ---------------------------------------------------------------- 主入口 --
 
+def _apply_isolation(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> None:
+    """PD-0019 期 1：多策略同账户隔离注入（裁定甲＝隔离落在下单入口 + 虚拟台账层）。
+
+    ``isolation.enabled=False``（默认）⇒ **零注入** ⇒ 既有 yaml 与既有产物逐位不变（纯增益）。
+    注入两段：
+      - HEAD 插模块头：常量 + 虚拟台账（§11.3 跨日重置）+ 虚拟持仓/现金读数 + 拒单桩；
+      - TAIL 追加模块尾：覆盖 ``_qs_pos_amount``（P0-1）与 ``_QSOrderRefState.target_orig``（P0-2）。
+        **必须追加在尾部**——两者都是第一跳产物里的既有定义，头部插入会 NameError。
+    """
+    iso = getattr(cfg, "isolation", None)
+    if iso is None or not bool(getattr(iso, "enabled", False)):
+        return
+    tpl = _load_template("isolation_template")
+    head_src = (tpl._QS_ISO_HEAD
+                .replace("__CAPITAL__", repr(float(iso.capital)))
+                .replace("__POLICY__", repr(str(iso.policy)))
+                .replace("__MARKET_SPLIT__", repr(bool(iso.market_split)))
+                .replace("__RESERVE_BUFFER__", repr(float(iso.reserve_buffer))))
+    head_stmts = ast.parse(head_src).body
+    idx = _after_header_index(tree)
+    for k, st in enumerate(head_stmts):
+        tree.body.insert(idx + k, st)
+    tail_stmts = ast.parse(tpl._QS_ISO_TAIL).body
+    tree.body.extend(tail_stmts)  # 模块尾：此时既有定义已就位
+    edits.append({"kind": "ISOLATION", "location": "<module>",
+                  "detail": (f"注入虚拟台账隔离层（capital={iso.capital}，policy={iso.policy}"
+                             f"，market_split={iso.market_split}）+ 尾部覆盖 "
+                             f"_qs_pos_amount/target_orig（P0-1/P0-2）")})
+
+
 def transform(source_text: str, profile: Dict[str, object], cfg,
               contract: Dict[str, dict]) -> TransformResult:
     """执行 P3 五步变换（a→e），输出带标记注释的部署产物源码。"""
@@ -813,7 +843,8 @@ def transform(source_text: str, profile: Dict[str, object], cfg,
         _apply_persistence(tree, cfg, edits)              # b) 持久化层
     if cfg.execution.profile in RUN_DAILY_TIME:
         _apply_mount(tree, cfg, edits, profile)          # c) 执行时点挂载
-    _apply_guards(tree, cfg, edits)                       # d) 护栏
+    _apply_guards(tree, cfg, edits)                      # d) 护栏
+    _apply_isolation(tree, cfg, edits)                   # e) 多策略隔离（PD-0019，默认关）                       # d) 护栏
 
     return TransformResult(product_text=_emit_module(tree), edits=edits,
                            warnings=warnings)

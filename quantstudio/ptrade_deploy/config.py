@@ -97,6 +97,33 @@ class OutputConfig:
 
 
 @dataclass
+class IsolationConfig:
+    """多策略同账户隔离配置（PD-0019 期 1，deploy.yaml 顶层 ``isolation`` 段）。
+
+    设计纪律（PD-0019 §11.6 裁定甲）：
+    - **默认关闭** ⇒ ``enabled=False`` 时既有 yaml 与既有产物行为**逐位不变**（纯增益）；
+    - 隔离的落地位置在**下单入口与虚拟台账层**，**不**替换 ``context.portfolio``
+      （代理降级为可选：仅当策略源码直接读 ``portfolio.<attr>`` 做信号判断时才需要）；
+    - ``capital`` 为**验证期保守起步额**，非最终上限、非禁令（§11.1 反向边界）。
+
+    字段：
+    - ``enabled``：总开关；false ⇒ 一切隔离逻辑不注入。
+    - ``capital``：本策略虚拟资金额度（元）。``enabled=True`` 时须 > 0。
+    - ``policy``：超额处理策略。``strict``＝超限拒单（默认，与「隔离」诉求一致）；
+      ``soft``＝超额告警但放行。
+    - ``market_split``：是否按沪/深分池记账（True；``context.portfolio.cash`` 是全账户
+      合并口径，不分池则深A 成交会虚耗沪A 额度）。
+    - ``reserve_buffer``：预扣缓冲系数（0.001 = 0.1%，覆盖佣金与最小价差，防虚拟现金透支）。
+    """
+
+    enabled: bool = False
+    capital: float = 0.0
+    policy: str = "strict"
+    market_split: bool = True
+    reserve_buffer: float = 0.001
+
+
+@dataclass
 class DeployConfig:
     strategy_id: str = ""
     source: str = ""
@@ -106,6 +133,7 @@ class DeployConfig:
     notify: NotifyConfig = field(default_factory=NotifyConfig)
     report: ReportConfig = field(default_factory=ReportConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
+    isolation: IsolationConfig = field(default_factory=IsolationConfig)
 
 
 # ---------------------------------------------------------------- 校验辅助 --
@@ -235,6 +263,39 @@ def load_config(raw: object) -> DeployConfig:
         else:
             keep_versions = keep_raw
 
+    # PD-0019 期 1：多策略同账户隔离（裁定甲＝隔离落在下单入口与虚拟台账层）
+    # 向后兼容：无 isolation 段 ⇒ enabled=False ⇒ 既有 yaml 与产物行为逐位不变（纯增益）
+    isolation_raw = _require_dict(raw, "isolation", errors)
+    iso_enabled = _require_bool(isolation_raw, "enabled", False, errors, "isolation")
+    iso_capital_raw = isolation_raw.get("capital", 0.0)
+    iso_capital = 0.0
+    if isinstance(iso_capital_raw, bool) or not isinstance(iso_capital_raw, (int, float)):
+        errors.append(f"isolation.capital: 应为数值，实际为 {iso_capital_raw!r}")
+    else:
+        iso_capital = float(iso_capital_raw)
+        if iso_capital < 0:
+            errors.append(f"isolation.capital: 不得为负，实际为 {iso_capital!r}")
+        # enabled=True 时 capital 必须 > 0（否则虚拟额度为空，隔离退化为「全拒单」）
+        elif iso_enabled and iso_capital <= 0:
+            errors.append(
+                "isolation.capital: enabled=true 时必须为正数（虚拟资金额度，单位元）；"
+                "缺失将使隔离退化为全量拒单")
+    iso_policy = isolation_raw.get("policy", "strict")
+    if iso_policy not in ("strict", "soft"):
+        errors.append(f"isolation.policy: 必须为 'strict' | 'soft'，实际为 {iso_policy!r}")
+        iso_policy = "strict"
+    iso_market_split = _require_bool(isolation_raw, "market_split", True, errors, "isolation")
+    iso_buf_raw = isolation_raw.get("reserve_buffer", 0.001)
+    iso_buf = 0.001
+    if isinstance(iso_buf_raw, bool) or not isinstance(iso_buf_raw, (int, float)):
+        errors.append(f"isolation.reserve_buffer: 应为数值，实际为 {iso_buf_raw!r}")
+    else:
+        iso_buf = float(iso_buf_raw)
+        if not (0.0 <= iso_buf <= 0.5):
+            errors.append(
+                f"isolation.reserve_buffer: 须在 [0, 0.5]，实际为 {iso_buf!r}"
+                "（过大将把可下单额度压到不现实）")
+
     if errors:
         raise ConfigError(errors)
 
@@ -264,6 +325,13 @@ def load_config(raw: object) -> DeployConfig:
         report=ReportConfig(fidelity_notes=tuple(fidelity_notes)),
         output=OutputConfig(root=out_root, dir_name=out_dir_name,
                             keep_versions=keep_versions),
+        isolation=IsolationConfig(
+            enabled=iso_enabled,
+            capital=iso_capital,
+            policy=str(iso_policy),
+            market_split=iso_market_split,
+            reserve_buffer=iso_buf,
+        ),
     )
 
 

@@ -163,10 +163,21 @@ def _handle_gate_restore(indent: str, block: List[str]) -> List[str]:
     return out
 
 
+def _handle_iso(indent: str, block: List[str]) -> List[str]:
+    """ISO（PD-0019 隔离层）块剥离：**纯新增块** ⇒ 整体删除，无对应原文。
+
+    与 GUARD/GATE 等「原处有代码、注入后包裹」的块不同，isolation 注入的常量、
+    虚拟台账函数与尾部 monkey-patch 都是新增内容，原文中不存在对等物，
+    因此剥离结果为空列表（等价性判据据此判定「除隔离层外零差异」）。
+    """
+    return []
+
+
 _HANDLERS = {"GATE": _handle_gate, "GATE_RESTORE": _handle_gate_restore,
              "DATA_PROXY": _handle_data_proxy,
              "GUARD": _handle_guard,
-             "PERSIST": _handle_persist, "MOUNT": _handle_mount}
+             "PERSIST": _handle_persist, "MOUNT": _handle_mount,
+             "ISO": _handle_iso}
 
 
 def _strip_pass(text: str, kinds: Tuple[str, ...],
@@ -248,7 +259,7 @@ def normalize_product(product_text: str,
     text = product_text
     # 顺序：叶子块先行（GATE/GUARD 可嵌于 MOUNT 包装函数内、MOUNT 可嵌于新建 PERSIST 函数内）
     for kinds in (("GATE_RESTORE",), ("GATE",), ("DATA_PROXY",), ("GUARD",),
-                  ("PERSIST",), ("MOUNT",)):
+                  ("PERSIST",), ("MOUNT",), ("ISO",)):
         text = _strip_pass(text, kinds, anomalies, mount_restore_name)
     # 第 6 类：import 追加行剔除
     text = "\n".join(ln for ln in text.split("\n")
