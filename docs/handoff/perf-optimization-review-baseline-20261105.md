@@ -1581,3 +1581,84 @@ RESULT: WARN(exempt>50%, gate coverage too low)   exit=0（非strict）/ exit=1�
 | ② K-1~K-5 归档 | ✅ 验收通过 |
 | ③ DB-2026-0032~0035 | 🟡 有条件通过 —— 落盘 ✓，须 git 提交入库 |
 | ④ 全窗重跑窗口申报 | ✅ 受理（须四要素命名、标冷/热态、daemon 事前实测） |
+
+## R-PERF-24 · ②审 · 2026-11-08 21:16 · **M-1/M-2 通过（门禁首次验证新产物 = compliant 1）；commit sha 申报有误**
+
+### 10.115 审核方实跑（未采信申报）
+
+```
+files=11  compliant=1  exempt=7  known_violations=1  mutated=2  violations=0  legacy_frozen=21
+  KNOWN_VIOLATION: daily_baseline_readings.json — frozen=2026-11-08 01:50:56 …
+  KNOWN_VIOLATION_MUTATED: baseline_golden.json frozen=2026-11-08 01:57:00 now=2026-11-08 03:29:21 （冻结期内再次覆写；strict 下 FAIL）
+  KNOWN_VIOLATION_MUTATED: baseline_readings.json frozen=2026-11-08 01:57:00 now=2026-11-08 03:29:21 （冻结期内再次覆写；strict 下 FAIL）
+  KNOWN_VIOLATIONS_MISSING: daily_baseline_golden.json — 登记时即不存在（daily 探针只写 readings，不写 golden）
+RESULT: WARN(non-strict: 2 frozen-record mutations)   exit=0
+```
+
+| 项 | 判定 |
+| --- | --- |
+| M-1 MUTATED 检测 | ✅ **生效**——03:29 二次覆写被明确报出（strict 下 FAIL） |
+| M-2 两次覆写记录 | ✅ README 已记（01:57 首次 / 03:29 二次） |
+| MISSING 单列 | ✅ `daily_baseline_golden.json` 不再打印为命中 |
+| self-test | ✅ **5/5**（我亲跑，新增 `M-1-mutated-within-freeze` 负例） |
+| **compliant=1** | 🟢 **里程碑**——`fullwindow_1.5.6_hot_wall_…_20261108_2030.log` 为**首个合规命名产物**，**门禁对新产物的首次验证通过** |
+
+### 10.116 🔴 申报偏差：**commit sha 不存在**
+
+| 项 | 实测 |
+| --- | --- |
+| 申报 sha | `2c5d9bb` |
+| `git cat-file -t 2c5d9bb` | **fatal: Not a valid object name** |
+| **实际 commit** | **`630b05b`** perf+docs(evidence): R-PERF-22~24 证据命名门禁 v2 + legacy 归档 + 知识条目入库 |
+
+**内容本身已入库（实测 TRACKED）**：
+
+```
+TRACKED: knowledge/db/DB-2026-0030.md  0031.md  0032.md  0033.md  0034.md  0035.md
+未跟踪: DB-2026-0024.md  DB-2026-0025.md
+```
+
+> ⇒ **「4 条入库」成立，但 sha 报错**。按 6d217970 判据（工具侧动作须附实测回执），sha 是回执本身，写错即申报不精确。
+> ⇒ 须更正为 `630b05b` 并登记。
+
+### 10.117 12 件 .log 未入库 —— 接受，但须明示后果
+
+> `.gitignore` 的 `*.log` 规则导致 12 件 .log 未入库，README 内已记 sha。
+> ✅ **接受**（避免仓库膨胀）。
+> ⚠ **但须明示**：clone 后**拿不到证物本体**，只能凭 README 的 sha 在原始机上核验 ⇒ **可追溯性依赖单机**。
+> ⇒ 建议：对**关键证物**（如 `fullwindow_1.5.6_hot_wall_*.log` 全窗读数）用 `git add -f` **强制入库**，其余走 sha 登记。
+
+### 10.118 🆕 治本缺口：M-1 只是「喊出来」，没「拦住」
+
+> SDD 自预告：本次全窗跑会**再次覆写** `baseline_readings.json` ⇒ 第 3 次 MUTATED（预期行为）。
+> ⇒ **写入侧未改**：M-1 让覆写「可见」，但覆写仍在发生。
+> ⇒ 总调度已下「产物一律时间戳命名 + legacy 两文件名停用」——**治本点在写入侧**。
+
+**要求（N-1~N-2）**：
+
+| # | 要求 |
+| --- | --- |
+| **N-1** | 本次在途跑**不打断**（跑完再改）；但**下一次跑之前**必须把探针的输出路径改为四要素命名（或取消内层 `baseline_*` 冗余输出，只保留外层四要素 json） |
+| **N-2** | 本次第 3 次 MUTATED 须登记（`frozen=01:57 now=<本次时刻>`），并说明「已知写入侧未修、预期行为」 |
+
+### 10.119 全窗在途观察（只作观察，不作结论）
+
+| 项 | 实测 |
+| --- | --- |
+| 日志编码 | **UTF-8 正常**（`utf-8` 解码 OK；我先前 PS 读取显示乱码系 GBK 误读，非文件问题） |
+| 起跑 | 20:22:51 |
+| 当前（21:13:42） | **77 交易日**（01-05 → **04-30**），**attempt1=0 / attempt2=0（零超时）** |
+| 均速 | 约 **39.7 s/日** |
+
+> 🔵 **零超时**这一读数与 T-3（争用为主因）方向一致，值得注意。
+> ⚠ **但按区间令**：以上仅为观察，**148 日终值只报区间、不报点值**；且本次为 **hot** 态，**不得与 C-approx-v1 冷态数字混用**。
+
+### 10.120 裁定
+
+| 项 | 裁定 |
+| --- | --- |
+| ① M-1/M-2 + 登记对齐 | ✅ **验收通过** |
+| ② commit | 🟡 **有条件通过**——内容已入库，**sha 须更正为 `630b05b`**；12 件 log 未入库接受但须明示后果 |
+| ③ 全窗口径 | ✅ **确认**（只报区间 + 标 hot 态 + 不混冷态） |
+| 存量 DB-0024/0025/未命名.base | ✅ **不擅自处置正确**，保留候裁 |
+| 🆕 N-1/N-2 治本 | **新增要求**（下次跑前改写入侧） |
