@@ -226,6 +226,64 @@ def _strip_pass(text: str, kinds: Tuple[str, ...],
     return "\n".join(out)
 
 
+# ---------------------------------------------------- ISO 特征命名剔除（PD-0019 §11.7） --
+
+_ISO_CONST_PREFIX = "_QS_ISO_"
+_ISO_FUNC_PREFIX = "_qs_iso_"
+_ISO_LEGACY_NAME = "_qs_pos_amount_legacy"
+_ISO_FLAG_NAME = "_QS_ISO_ENABLED"
+
+
+def _is_iso_node(node: ast.stmt) -> bool:
+    """判是否 ISO 注入节点（按特征命名，不依赖注释标记）。"""
+    if isinstance(node, ast.Assign) and len(node.targets) == 1:
+        tgt = node.targets[0]
+        if isinstance(tgt, ast.Name) and (
+                tgt.id.startswith(_ISO_CONST_PREFIX) or tgt.id == _ISO_LEGACY_NAME):
+            return True
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if node.name.startswith(_ISO_FUNC_PREFIX):
+            return True
+    if isinstance(node, ast.If) and isinstance(node.test, ast.Name) \
+            and node.test.id == _ISO_FLAG_NAME:
+        return True
+    return False
+
+
+def _strip_iso_nodes(tree: ast.Module, anomalies: List[str]) -> int:
+    """剔除 ISO 注入节点，返回剔除数（PD-0019 §11.7）。
+
+    ISO 块是**纯新增**（原文无对等物）⇒ 无法像 GUARD/GATE 那样"还原原文"，
+    且 transformer._emit_module 是自定义 AST emitter、**AST 不存注释** ⇒ 文本标记剥离失效
+    ⇒ 改用特征命名剔除（命名空间为本框架保留，与 `_qs_`/`_QS_` 家族同约定）。
+
+    反向风险防御（§11.7.4，fail-loud）：若**产物里没有** `_QS_ISO_ENABLED = <常量>` 这个
+    开关赋值，却仍检出 `_qs_iso_*` 函数/`_QS_ISO_*` 赋值 ⇒ 极可能是**策略源码自占了该命名空间**，
+    此时剔除会造成假 PASS ⇒ 记 anomaly 让 P4 FAIL 并指名冲突符号，**不静默放行**。
+    """
+    has_flag = any(
+        isinstance(n, ast.Assign) and len(n.targets) == 1
+        and isinstance(n.targets[0], ast.Name) and n.targets[0].id == _ISO_FLAG_NAME
+        for n in tree.body)
+    hit_names: List[str] = []
+    kept: List[ast.stmt] = []
+    for node in tree.body:
+        if _is_iso_node(node):
+            if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+                hit_names.append(node.targets[0].id)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                hit_names.append(node.name)
+            continue
+        kept.append(node)
+    if hit_names and not has_flag:
+        anomalies.append(
+            "ISO 命名空间被源策略占用（检出 " + ", ".join(sorted(set(hit_names))[:6])
+            + " 但无 " + _ISO_FLAG_NAME + " 开关）——按保留命名空间约定应改用其他名，未静默剔除")
+        return 0
+    tree.body = kept
+    return len(hit_names)
+
+
 class _GExemptRestore(ast.NodeTransformer):
     """第 5 类白名单（g.__ 前缀还原）的 AST 级实现。
 
@@ -267,6 +325,7 @@ def normalize_product(product_text: str,
     # 第 5 类：g.__ 前缀还原（AST 级，限豁免名单；unparse 往返对 AST dump 无损）
     tree = ast.parse(text)
     _GExemptRestore(g_exempt).visit(tree)
+    _strip_iso_nodes(tree, anomalies)  # PD-0019 §11.7：ISO 纯新增块按特征命名剔除
     text = ast.unparse(tree)
     return text, anomalies
 
