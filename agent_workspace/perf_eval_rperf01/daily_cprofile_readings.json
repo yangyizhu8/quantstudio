@@ -1,0 +1,28 @@
+{
+  "mode": "daily-cprofile",
+  "window": [
+    "2026-03-02",
+    "2026-03-06"
+  ],
+  "wall_sec": 62.189,
+  "peak_wset_mb": 3415.2,
+  "rss_end_mb": 3086.8,
+  "nav_days": 5,
+  "trades": 7,
+  "golden_sha256": "1fed84dd5e762536359d9e8c11ab2cdd791248e573114c9b033cdc34469e436f",
+  "csv_sha256": {
+    "benchmark.csv": "e135e5ab46d930b78fb923d8e650b4d3057c064c2de477cea2e5ee79371bff23",
+    "config.csv": "945c2deb067655cb75f040906f061da00c6447c46532c807e01bce8fcbd87085",
+    "daily_stats.csv": "4209e64a7066df83085f46f94af95bde43d50199a0408d12c8036ce82bbf6082",
+    "ptrade_metrics.csv": "9d3fbd50f3aa8cc7209c813036bd19d8e0712f7664eecacafb5bbf696123403d",
+    "round_trips.csv": "b2c4554aa13f2f3ac42ae92766275fdc50289c273b3d15feae8c778a32258cbc",
+    "trades.csv": "e6bf2d39c09b8505e0f16f75ae743904806b817ff3feb1b5d5de8fae2082f1fc"
+  },
+  "export_dir": "output\\backtest_results\\20261105_234750_CANSLIM突破成长选股策略",
+  "env": {
+    "python": "3.11.9",
+    "duckdb": "1.4.5",
+    "pandas": "2.3.3",
+    "data_root": "D:\\miniQMT策略实盘\\QuantStudio\\data\\backup_import_20261101_040935"
+  }
+}

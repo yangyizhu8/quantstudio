@@ -1,0 +1,30 @@
+{
+  "mode": "cprofile",
+  "window": [
+    "2026-03-02",
+    "2026-03-06"
+  ],
+  "wall_sec": 572.641,
+  "wall_note": "cProfile 含 profiler 开销，墙钟以 baseline 模式为准",
+  "peak_wset_mb": 8373.6,
+  "rss_end_mb": 5850.5,
+  "nav_days": 5,
+  "trades": 4,
+  "golden_sha256": "b4b538a0ca0eff1ae69a283fe15b1793b2c3ed6e00b7897ea2f0757caf85fabb",
+  "csv_sha256": {
+    "benchmark.csv": "e135e5ab46d930b78fb923d8e650b4d3057c064c2de477cea2e5ee79371bff23",
+    "config.csv": "35906bf62b73c05040de03dc2fab9ece01a4d62c9c1f895d52f54bee231d0a27",
+    "daily_stats.csv": "30769dda640d3a9d557540d4f94f84540a0dc472344ca6861f52d91c24f863e1",
+    "ptrade_metrics.csv": "830cec5462c8fe00fcdfa7b01984fd0b79763fef1252cd35021e90a6814148e3",
+    "round_trips.csv": "cac83be5862cebfaa9fc3b8135411269ef6a8b1953a9c67afb84e034bed3d7d2",
+    "trades.csv": "353e52be7a76167b9938c9d2744b6ec6d2629ac36b4e27da7105da7d97dc8847"
+  },
+  "export_dir": "output\\backtest_results\\20261105_234614_strategy",
+  "env": {
+    "python": "3.11.9",
+    "duckdb": "1.4.5",
+    "pandas": "2.3.3",
+    "data_root": "D:\\miniQMT策略实盘\\QuantStudio\\data\\backup_import_20261101_040935",
+    "cwd": "D:\\miniQMT策略实盘\\QuantStudio"
+  }
+}

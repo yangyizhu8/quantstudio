@@ -1,0 +1,32 @@
+{
+  "mode": "baseline",
+  "window": [
+    "2026-01-05",
+    "2026-08-13"
+  ],
+  "wall_sec": 14071.615,
+  "wall_note": "裸跑",
+  "peak_wset_mb": 15035.3,
+  "rss_end_mb": 10581.9,
+  "tracemalloc_cur_mb": null,
+  "tracemalloc_peak_mb": null,
+  "nav_days": 148,
+  "trades": 119,
+  "golden_sha256": "77e69043bec0c078e4f34bd10521a4d8f7c930207b5641bb4287e1e3e0c25607",
+  "csv_sha256": {
+    "benchmark.csv": "7b020b028c2d58853b27191818362759b8cc745f3d02246901bcec20efef05b5",
+    "config.csv": "de33990293ced5ffc6bad6091b4da65564e2740bbc68163ec5ba69a4d352f03a",
+    "daily_stats.csv": "fec7490afbc33dca131d0d0032d00ba551618ac40ba33c6e27df9953285b1e4a",
+    "ptrade_metrics.csv": "0c4ccb87766a94739c753575efab05df4b4498470f487b4dd349f93008996365",
+    "round_trips.csv": "948d611fa196b3d42f8af725eb93cb74c336ca8743c4201536f0d878a167dedc",
+    "trades.csv": "27a7105b57d7705634fd60b568b7e7460edb8c475875ebe87bdd565097c7c178"
+  },
+  "export_dir": "output\\backtest_results\\20261106_061201_strategy",
+  "env": {
+    "python": "3.11.9",
+    "duckdb": "1.4.5",
+    "pandas": "2.3.3",
+    "data_root": "D:\\miniQMT策略实盘\\QuantStudio\\data\\backup_import_20261101_040935",
+    "cwd": "D:\\miniQMT策略实盘\\QuantStudio"
+  }
+}
