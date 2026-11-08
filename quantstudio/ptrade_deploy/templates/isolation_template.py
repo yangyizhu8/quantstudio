@@ -33,6 +33,9 @@ _QS_ISO_CAPITAL = __CAPITAL__
 _QS_ISO_POLICY = __POLICY__
 _QS_ISO_MARKET_SPLIT = __MARKET_SPLIT__
 _QS_ISO_RESERVE_BUFFER = __RESERVE_BUFFER__
+# 认货行（PD-0019 期1 验证舱）：首启与每次跨日重置打一行，供平台日志核对身份
+_QS_ISO_BANNER = ('QS-ISO-PHASE1 capital=%.1f policy=%s market_split=%s build=__BUILD__'
+                  % (float(_QS_ISO_CAPITAL), _QS_ISO_POLICY, str(_QS_ISO_MARKET_SPLIT)))
 
 
 def _qs_iso_today():
@@ -113,6 +116,10 @@ def _qs_iso_state():
         iso['reserved'] = 0.0
         iso['rejects'] = 0
         iso['epoch'] = _ep
+        try:
+            log.info(_QS_ISO_BANNER)
+        except Exception:
+            pass
         try:
             log.info('QS_ISO_RESET epoch=%s capital=%.2f overnight=%.2f cash_base=%.2f'
                      % (_ep, float(_QS_ISO_CAPITAL), _overnight, _base))

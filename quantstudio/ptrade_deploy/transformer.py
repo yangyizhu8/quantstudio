@@ -816,7 +816,8 @@ def _apply_isolation(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> None
                 .replace("__CAPITAL__", repr(float(iso.capital)))
                 .replace("__POLICY__", repr(str(iso.policy)))
                 .replace("__MARKET_SPLIT__", repr(bool(iso.market_split)))
-                .replace("__RESERVE_BUFFER__", repr(float(iso.reserve_buffer))))
+                .replace("__RESERVE_BUFFER__", repr(float(iso.reserve_buffer)))
+                .replace("__BUILD__", "20261109-p1"))
     head_stmts = ast.parse(head_src).body
     idx = _after_header_index(tree)
     for k, st in enumerate(head_stmts):
