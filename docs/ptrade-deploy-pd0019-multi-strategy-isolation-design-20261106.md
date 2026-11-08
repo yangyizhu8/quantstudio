@@ -302,3 +302,48 @@ def _qs_iso_portfolio(real):
    ⇒ 修 A＝承诺额去重；修 B＝定位 `_QS_ORDER_SPLIT_EXT` 注入路径差（3 条红中 2 条的定性） ⇒ ④验收 ⇒ ⑤确认 ⇒ ⑥出仓
 2. **PD-0019 期 1**：单策略四象限 `capital: 100000.0`，跑通 **代理 → 台账 → 预扣 → 对账 → 收盘核对** 全链路
 3. **PD-0019 期 2–4** 按 §五 推进（期 2 含 N10 专项负向对照）
+
+---
+
+## 11.6 ②审结论与 P0 三项前置（2026-11-08）
+
+**②审裁决：有条件通过**（zcode 独立审核「有条件可实施」＋ 我方复核三处修正，用户 2026-11-08 21:12 照准）。
+裁决件：`docs/handoff/pd0019-phase1-review-verdict-20261108.md`。
+
+### 11.6.1 复核修正（改变了风险方向）
+
+| 编号 | 修正 | 实证 |
+|---|---|---|
+| R-1 | 「双读分叉」真实落点**不是** `order_target_value` 内部折算（产物 L1105 是**自实现**、买入侧 L1150 已走 `_qs_split_order` 显式股数），而是 **`_qs_pos_amount`→`get_position()` 读平台真实持仓、不吃代理**；而 `_qs_cash_budget`→`portfolio.cash` **吃代理** | 产物 L740／L1133／L1149／L1150 原文 |
+| R-2 | 风险方向**反转**：虚拟 `capital=10 万` ＜ 真实持仓 512890≈150 万 ⇒ `_delta` **恒负** ⇒ 命中 L1138-1140 `target_orig`（平台原生）⇒ **期 1 首发动作可能是「按真实账户把持仓卖掉」**（不可逆），非 zcode 所说的「100 倍超买」 | 产物 L1135／L1138-1140；`target_orig(` 全文 6 处 |
+| R-3 | zcode 的「target 折算显式数量」**买入侧已存在**，须扩展到 `_delta≤0` 分支与 6 处兜底 | 同上 |
+
+### 11.6.2 P0 三项硬前置（用户照准：三项齐后进③）
+
+| 编号 | 必办项 | 约束 |
+|---|---|---|
+| **P0-1** | `_qs_pos_amount` 代理化（isolation 启用时持仓读数走虚拟台账，杜绝 `get_position` 真实持仓混入 delta） | 仅 isolation 分支 |
+| **P0-2** | `isolation.enabled=true` 时 **6 处 `target_orig` 全部禁用**（改自算显式股数或 fail-closed 拒单），禁回落平台原生折算 | **仅 isolation 分支禁用，护旧路径**（用户明示） |
+| **P0-3** | N9 判据修正 | 见 11.6.3 实证结论 |
+
+### 11.6.3 P0-3 实证结论（2026-11-08，本地代码级）
+
+- **`Portfolio` 不可 import / 不可继承**：`quantstudio/ptrade_deploy/preflight.py` 的 `IMPORT_WHITELIST`（L57）只含 stdlib ＋ `numpy/pandas/dateutil/pytz/tushare`，**不含 `ptrade`** ⇒ `from ptrade... import Portfolio` 属 F10 白名单外 ⇒ 部署前置即 REJECT。
+- ⇒ **N9 判据改为**：「`isinstance(代理, type(真实))` 成立（经实例 `__class__` property）"**且** `type(代理) is not type(真实)` **登记豁免**」。
+  理由：CPython 中 `isinstance()` 会 consult 实例 `__class__`（可经 `@property` 伪造），而 `type()` 直接返回 `ob_type`（C 层，纯 Python 不可伪造）⇒ 原判据「`type()` 相等」**不可达**。
+- **仍属「需实证」**：平台内部是否对 `context.portfolio` 做 `isinstance`/`type` 判断、是否 pickle/深拷贝 context ⇒ 期 1 落地后补入形态库。
+
+### 11.6.4 P0 实现路线建议（本次实证带来的降险结论）
+
+**关键发现**：官方隔离模板（`D:\Ptrade\ptrade策略仓位隔离.txt`）**根本不代理 `context.portfolio`**，而是换下单入口——`safe_buy(strategy_name, security, amount, price)`，台账存 `g.strategies[name]`。它要求策略改调 `safe_buy`，这在我们这里**违反铁律 07（策略源码零改动）**，故不可照抄。
+
+但这反证出一件事：**实现隔离并不必需替换 `context.portfolio`**。据此建议期 1 实现：
+
+| 层 | 做法 | 效果 |
+|---|---|---|
+| **必需** | 虚拟台账（现金/持仓）＋ `_qs_pos_amount`／`_qs_cash_budget` 改读台账 ＋ `target_orig` 分支禁用 | **P0-1/P0-2 全部在此层完成，绕开 portfolio 代理** |
+| **可选** | `context.portfolio` 代理 | 仅当策略源码**直接读 `portfolio.<attr>` 做信号/风控判断**时才需要；四象限/三策略当前读点见 §3.4 |
+
+⇒ **收益**：直接规避 ②审第 1 点列出的全部代理陷阱（`isinstance`/`type`/`__setattr__`/pickle/深拷贝/平台内部重取），把期 1 的首日失败面从「代理形态是否被平台接受」收缩为「台账口径是否正确」——后者**可本地充分验证**。
+
+⇒ **待你裁定**：期 1 是否采纳该路线（即 portfolio 代理降级为可选）。若采纳，P0-3 在期 1 变为**非触发项**（不代理即无 `type()` 问题），可延后到实际需要代理时再做。
