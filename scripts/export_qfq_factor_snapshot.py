@@ -138,6 +138,7 @@ def main(argv=None):
         records = {}        # code -> [[date8, ratio], ...]（只收录有跳变的 code）
         all_codes = set()   # 扫描窗内出现过的全部 code（universe 覆盖率分母用）
         fallback_rows = 0   # ratio 为 NULL 且 close_front/close 兜底成功的行数
+        base_rows = 0       # 【R347】补记为基准跳变点的 code 首值行数
         skipped_rows = 0    # 兜底不可行（close_front/close NULL 或 close=0）跳过行数
         max_d8 = ''         # 扫描窗内最大 date8（= base，库内最新交易日）
         cur_code = None
@@ -165,7 +166,15 @@ def main(argv=None):
                     fallback_rows += 1
                 else:
                     ratio = float(ratio)
-                if prev_ratio is not None and abs(ratio - prev_ratio) > JUMP_EPS:
+                if prev_ratio is None:
+                    # 【R347 修复】首个有效比率即「该 code 的基准比率」——若其 != 1.0
+                    # 必须记录为基准跳变点；否则换算端按「无记录 ⇒ 1.0」处理，
+                    # 会让该 code 换算窗内的**远端整段**失去复权（实证：301557 远端
+                    # c251 真机 74.38 = raw×1.0 vs 本地 front 51.91，差 22.5）。
+                    if abs(ratio - 1.0) > JUMP_EPS:
+                        jumps.append([int(d8), ratio])
+                        base_rows += 1
+                elif abs(ratio - prev_ratio) > JUMP_EPS:
                     jumps.append([int(d8), ratio])
                 prev_ratio = ratio
         if cur_code is not None and jumps:
