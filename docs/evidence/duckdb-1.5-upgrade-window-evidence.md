@@ -148,3 +148,15 @@ exit=3
 |---|---|---|
 | 2026-11-08 | FATAL=0 ✓ / WAL 7.93MB<256MB ✓ / 版本门 PASS 1.5.6 ✓ / forever 常驻在位 ✗（38020 于 01:12:41 normal-exit，当前仅 once 轮 40620） | **FAIL（供血主体缺席 · 归节点1 P0）** |
 | 2026-11-08 | FATAL 命中 **0**（窗口内日志）｜ WAL 0.0 MB ｜ 版本门 PASS 1.5.6 ｜ daemon 无（once 轮 04:03 收工）｜ **采集轮质量审计 CLI 级失败结论 51 条**（窗口内 60 个日志，含 `once_etf_daily_verify_20261108.log` @04:03:24、`daemon.log` @00:05:10 与 @04:03:24 等；伴随 `etf_minutes/AdjustmentAnchorDrift count=66 FAIL>0.5%` 明细）——**属 etf_minutes 复权锚域·他线 P0 案面，我方只记录不修**｜ 判据 FATAL=0 ✓ / WAL ✓ / 版本门 ✓ / daemon ✗ / 质量审计=0 ✗ | **FAIL（供血主体缺席 + 采集轮质量审计反复失败）** |
+
+### §7.5 T056 到期复核装置「真实触发一次」验证（2026-11-08 14:02 · 真实当日）
+
+| 项 | 实测 |
+|---|---|
+| 触发方式 | **真实日期触发**（`scripts/check_duckdb_eol_guard.py --check --emit …`，**无 `--as-of` 模拟**） |
+| as-of | **2026-11-08**（真实 today） |
+| 判定 | 1.4 线 EOL **2026-11-17**（day）｜距 EOL **+9 天**｜状态 **`close_or_accept`**（距 EOL 30 天：完成或书面接受风险）；1.5 线 EOL 2027-03-31（month）｜+143 天｜`normal` |
+| 退出码 | **1**（有到期复核提醒，需人处理） |
+| 提醒件落盘 | **`docs/evidence/eol-review-reminder-20261108.md`（862 B，mtime 2026-11-08 14:02:18）**——frontmatter `id: EOL-REVIEW-20261108` / `type: eol_review_reminder` / `status: open` / `as_of: "2026-11-08"` |
+| 结论 | **T056「验证能被真实触发一次」判据成立**——真实日历 ＋ 真实当日 ＋ 真实判定 ＋ 真实落盘（非模拟、非构造）；此前 2026-10-30 17:02 已有首次真实触发记录（`docs/evidence/eol-review-reminder.md`） |
+
