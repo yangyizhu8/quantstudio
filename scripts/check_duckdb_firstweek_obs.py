@@ -215,10 +215,8 @@ def render(res: Dict[str, Any]) -> str:
 def append_evidence(res: Dict[str, Any]) -> None:
     """把当日读数追加进窗口证据（§7.4 日表）。"""
     c = res.get("checks", {})
-    row = ("| %s | FATAL 命中 %s（扫 %s 日志）｜ WAL %s MB ｜ 版本门 %s ｜ daemon %s ｜ 采集轮质量审计失败 %s ｜ 判据 %s ｜ **%s** |"
-           % (res.get("date"),
-              ", ".join("pid %s(%s)" % (d.get("pid"), d.get("mode")) for d in res.get("daemons", []) if isinstance(d, dict) and "pid" in d) or "无",
-              res.get("gate_out"), res.get("db_gb"), res.get("db_mtime"), res.get("wal_mb"),
+    row = ("| %s %s | FATAL 命中 %s（扫 %s 日志）｜ WAL %s MB ｜ 版本门 %s ｜ daemon %s ｜ 采集轮质量审计失败 %s ｜ 判据 %s ｜ **%s** |"
+           % (res.get("date"), (res.get("ts") or "")[11:19],
               res.get("fatal_hits"), res.get("logs_scanned"), res.get("wal_mb"),
               res.get("gate_out"),
               ", ".join("pid %s(%s)" % (d.get("pid"), d.get("mode")) for d in res.get("daemons", []) if isinstance(d, dict) and "pid" in d) or "无",
@@ -231,7 +229,7 @@ def append_evidence(res: Dict[str, Any]) -> None:
             text = fh.read()
     if "### §7.4 首周观测日表" not in text:
         text = text.rstrip() + ("\n\n### §7.4 首周观测日表（每日一行 · 由 `scripts/check_duckdb_firstweek_obs.py --evidence` 自动追加）\n\n"
-                                "| 日期 | 判据 | 判定 |\n|---|---|---|\n")
+                                "| 日期 时点 | 判据 | 判定 |\n|---|---|---|\n")
     text = text.rstrip() + "\n" + row + "\n"
     with open(EVIDENCE, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(text)

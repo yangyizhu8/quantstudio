@@ -144,10 +144,14 @@ exit=3
 
 ### §7.4 首周观测日表（每日一行 · 由 `scripts/check_duckdb_firstweek_obs.py --evidence` 自动追加）
 
-| 日期 | 判据 | 判定 |
+| 日期 时点 | 判据 | 判定 |
 |---|---|---|
 | 2026-11-08 | FATAL=0 ✓ / WAL 7.93MB<256MB ✓ / 版本门 PASS 1.5.6 ✓ / forever 常驻在位 ✗（38020 于 01:12:41 normal-exit，当前仅 once 轮 40620） | **FAIL（供血主体缺席 · 归节点1 P0）** |
 | 2026-11-08 | FATAL 命中 **0**（窗口内日志）｜ WAL 0.0 MB ｜ 版本门 PASS 1.5.6 ｜ daemon 无（once 轮 04:03 收工）｜ **采集轮质量审计 CLI 级失败结论 51 条**（窗口内 60 个日志，含 `once_etf_daily_verify_20261108.log` @04:03:24、`daemon.log` @00:05:10 与 @04:03:24 等；伴随 `etf_minutes/AdjustmentAnchorDrift count=66 FAIL>0.5%` 明细）——**属 etf_minutes 复权锚域·他线 P0 案面，我方只记录不修**｜ 判据 FATAL=0 ✓ / WAL ✓ / 版本门 ✓ / daemon ✗ / 质量审计=0 ✗ | **FAIL（供血主体缺席 + 采集轮质量审计反复失败）** |
+| 2026-11-08 15:58 | FATAL **0** ｜ WAL 0.0 MB ｜ 版本门 `PASS 1.5.6` ｜ **forever 在位 ✓（44904，15:58:24 起）** ｜ 采集轮质量审计 CLI 级失败 **45** ｜ 判据 FATAL=0 ✓ / WAL ✓ / 版本门 ✓ / forever ✓ / 质量审计=0 ✗ | **FAIL（唯一红项为⑳/A 类域质量审计）** |
+| 2026-11-08 20:12 | FATAL **0** ｜ WAL **9.12 MB** ｜ 版本门 `PASS 1.5.6` ｜ forever 在位 ✗（once 40344，18:56:11 起）｜ 采集轮质量审计 CLI 级失败 **43** ｜ 判据 FATAL=0 ✓ / WAL ✓ / 版本门 ✓ / forever ✗ / 质量审计=0 ✗ | **FAIL（⑳阶段执行窗内·豁免未生效）** |
+| 2026-11-08 22:44 | FATAL **0** ｜ WAL 0.0 MB ｜ 版本门 `PASS 1.5.6` ｜ **进程面全空**（once 40344 亦已收工；库 mtime 22:15:22）｜ forever ✗ ｜ 采集轮质量审计 CLI 级失败 **43** ｜ 判据 FATAL=0 ✓ / WAL ✓ / 版本门 ✓ / forever ✗ / 质量审计=0 ✗ | **FAIL（⑳窗内采集轮已收工·forever 未重拉）** |
+| 2026-11-09 01:13 | FATAL **0** ｜ WAL **9.28 MB** ｜ 版本门 `PASS 1.5.6` ｜ **forever 在位 ✓（豁免命中：⑳补登声明窗内）** ｜ once 8700 在跑（00:22:25 起）｜ 采集轮质量审计 CLI 级失败 **40** ｜ 判据 FATAL=0 ✓ / WAL ✓ / 版本门 ✓ / forever ✓（豁免）/ 质量审计=0 ✗ | **FAIL（唯一红项为⑳/A 类域质量审计·豁免机制生产命中）** |
 
 ### §7.5 T056 到期复核装置「真实触发一次」验证（2026-11-08 14:02 · 真实当日）
 
@@ -276,4 +280,4 @@ exit=3
 `docs/handoff/duckdb-firstweek-sentinel-keywords-20261108.md`、`docs/handoff/duckdb-eol-guard-sentinel-onboarding-20261030.md`、
 `docs/handoff/duckdb-window-execution-card-20261030.md`、`docs/evidence/duckdb-1.5-upgrade-window-evidence.md` 等；
 跨线转述时的路径笔误**由我方认领**，以**仓内实际路径**为准（`git log`/`git show --name-only` 可逐笔核对）。
-
+| 2026-11-09 02:03:02 | FATAL 命中 0（扫 60 日志）｜ WAL 9.28 MB ｜ 版本门 PASS 1.5.6 ｜ daemon pid 8700(once) ｜ 采集轮质量审计失败 40 ｜ 判据 daemon_absence_excused=✓ daemon_alive=✓ fatal_zero=✓ gate_pass_1_5_6=✓ no_qa_failure=✗ once_running=✓ wal_under_256mb=✓ ｜ **FAIL** |
