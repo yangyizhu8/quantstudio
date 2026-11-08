@@ -1422,3 +1422,80 @@ EXEMPT_PREFIX = ('baseline_', 'daily_baseline_', 'readings_', 'golden156',
 | ② 四要素标签 + C-approx-v1 | ✅ **验收通过** |
 | ③ E-04 修订件 | ✅ **②审通过**（内容齐备，无阻塞项）——**但 L32 证据纪律条须标注「门禁待修、当前不生效」** |
 | ④ 命名门禁 | 🔴 **不验收** ⇒ 按 E-1~E-4 重做 |
+
+## R-PERF-22 · ②审 · 2026-11-08 15:59 · **门禁 v2 验收通过（附 1 项如实性修正 + 1 项改进）；存量处置照准归档**
+
+### 10.103 审核方实跑复核（未采信申报读数）
+
+**`--self-test`（我亲跑）**：
+
+```
+[OK] conforming-name: r20_1.5.6_cold-C-approx-v1_wall_2026-03-02~2026-03-06_20261108_0313.json -> PASS
+[OK] D-2-overwrite-case: baseline_readings.json -> FAIL
+[OK] historical-frozen: baseline_readings.json -> PASS
+[OK] removed-prefix-no-exempt: A1_post_cold.log -> FAIL
+SELF_TEST: PASS (4/4)   exit=0
+```
+
+**实扫**：
+
+```
+files=30  compliant=0  exempt=10  violations=20
+RESULT: WARN(non-strict, not blocking)  (cutoff=2026-11-08 14:00)  exit=0
+```
+
+| 项 | 判定 |
+| --- | --- |
+| E-1 删除 13 前缀 | ✅ 落实（`A1_post_cold.log` 实证落违规桶） |
+| E-2 精确名 + mtime cutoff | ✅ 落实（`is_exempt = name in EXEMPT_FILES and mtime <= CUTOFF`） |
+| E-3 判据顺序 | ✅ 落实（L100 bad 优先 → L101 idle-gate → L104 exempt>50%） |
+| E-4 负例回归 | ✅ **4/4 通过（我亲跑）** |
+| v1 假 PASS | ✅ **已消除**（violations=20 如实列出） |
+
+### 10.104 🔴 须修正的一处如实性：**「抓住原案」只对合成用例成立**
+
+| 对象 | mtime | 落桶 |
+| --- | --- | --- |
+| self-test 用例 2（**合成 fresh mtime**） | > 14:00 | **FAIL** ✅ |
+| **真实 `baseline_readings.json`** | **01:57 ≤ 14:00** | **exempt（PASS）** ⚠ |
+
+> 违规清单 20 项中**不含** `baseline_readings.json` / `daily_baseline_readings.json` ⇒ **二者仍在豁免桶**。
+> ⇒ **cutoff（14:00）设在 D-2 违规（01:57）之后**，故**那次覆写被冻结为「历史」**。
+> ⇒ 表述须改为：「**门禁能抓住 14:00 之后的新覆写**（合成用例已证）；**01:57 的历史覆写被冻结豁免**，不在此门禁管辖内」。
+> **不得**宣称「门禁已抓住它诞生原因的那个案例」——真实文件未被抓。
+
+### 10.105 🆕 改进建议：把已知违规从「豁免」改为「显式登记」
+
+> 当前二者混在 `exempt=10` 里**静默通过**，看不出它们曾是违规对象。
+> **建议**：移出 `EXEMPT_FILES`，改置 `KNOWN_VIOLATIONS`（带说明「已于 2026-11-08 01:57 被覆写，1.4.5 原版灭失」）；输出增一行 `known_violations=2`。
+> ⇒ 效果：**仍不 FAIL（历史既成），但可见**。豁免应当是「不该管」，而非「管不了就藏起来」。
+
+### 10.106 `compliant=0` 的观察（下一批才是真考验）
+
+> 30 个文件**仍无一个合规命名**（10 豁免 + 20 违规）。
+> ⇒ 门禁对**新产物**的有效性，**要等下一批产物落盘才被验证**。
+> ⇒ **下一批产物必须按四要素命名**；若仍用旧名，门禁将直接列出违规（此时不应再靠豁免放行）。
+
+### 10.107 存量 20 件处置 —— **照准 SDD 倾向（归档优于改名）**
+
+| 方案 | 评价 |
+| --- | --- |
+| 改名 | ❌ 破坏「文件名 ↔ sha」登记引用（R-17~R-21 登记表逐件列名） |
+| **归档到 `legacy/`** | ✅ **采纳**——保留原文件名使历史申报文本（如 `c1b_pre_cold.log`）仍可对应；sha 随内容不变仍可核对 |
+
+**执行要求**：
+| # | 要求 |
+| --- | --- |
+| K-1 | 移入 `agent_workspace/perf_eval_rperf01/legacy/`，保留原名 |
+| K-2 | `legacy/` 整目录**排除扫描**（标 `legacy-frozen`），并在 README 注明冻结日期与原因 |
+| K-3 | **新建产物目录开 `--strict`**（如 `perf_eval_rperf02/`） |
+| K-4 | sha 登记表**补一行路径变更记录**（原路径 → legacy 路径，sha 不变） |
+| K-5 | 归档后重跑门禁：`legacy/` 内应被排除，**主目录应只剩合规命名（否则仍 WARN）** |
+
+### 10.108 裁定
+
+| 项 | 裁定 |
+| --- | --- |
+| ① 门禁 v2（E-1~E-4） | ✅ **验收通过**（附 §10.104 如实性修正 + §10.105 改进建议） |
+| ② 存量处置 | ✅ **照准归档到 `legacy/`**（按 K-1~K-5） |
+| ③ 知识条目打包 | ✅ **启动**（E-04 ②审已过） |
