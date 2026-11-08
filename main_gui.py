@@ -18,6 +18,19 @@ def main():
 
     require_duckdb_version("GUI (main_gui.py)")
 
+    # T2.3（2026-11-08 P0 治本）：入口 CHECKPOINT —— 09-23 事故即 GUI 打开 2.17GB WAL
+    # 卡死 22 分钟。此处先收敛遗留 WAL 再构造窗口；带超时、失败不阻断。
+    try:
+        from quantstudio.pipeline.checkpoint_policy import format_on_open_log
+        from quantstudio.pipeline.db_checkpoint import checkpoint_database
+        from quantstudio._paths import DATA_ROOT
+
+        _ok, _detail = checkpoint_database(DATA_ROOT / "quantstudio.db")
+        import logging as _lg
+        _lg.getLogger(__name__).info(format_on_open_log("gui", _ok, _detail))
+    except Exception:  # noqa: BLE001 — 入口自检不得阻断 GUI 启动
+        pass
+
     from quantstudio._paths import db_path, quarantine_db_path, DATA_ROOT
     from PyQt6.QtWidgets import QApplication
     from quantstudio.gui.main_window import MainWindow

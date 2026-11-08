@@ -2539,6 +2539,17 @@ class ResidentCollector:
               audit is run by staging Phase 6). A not-yet-loaded sibling target
               table must NOT cause a staged task to appear failed.
         """
+
+        # T2.3（2026-11-08 P0 治本）：入口 CHECKPOINT —— 收敛上一进程遗留 WAL。
+        # 逐入口一行（②审条件①）：once 入口必加（强杀遗留 WAL 在此收干净）。
+        try:
+            from .checkpoint_policy import format_on_open_log
+            from .db_checkpoint import checkpoint_database as _ckpt
+            from quantstudio._paths import DATA_ROOT as _DR
+            _ok, _detail = _ckpt(_DR / "quantstudio.db")
+            logger.info(format_on_open_log("once", _ok, _detail))
+        except Exception as _e:  # noqa: BLE001 — 入口自检不得阻断任务
+            logger.debug(f"[T2.3] 入口 CHECKPOINT 异常（忽略）: {_e}")
         if mode not in ("full_range", "incremental"):
             raise ValueError(f"unsupported collection mode: {mode!r}")
         if quality_audit not in ("full", "task", "none"):

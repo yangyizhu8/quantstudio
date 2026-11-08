@@ -667,6 +667,11 @@ class DaemonLifecycle:
                 self.run_health_check(tasks_cfg)
             except Exception as e:
                 logger.debug(f"[DaemonLifecycle] 健康检查跳过或异常: {e}")
+
+            # T2.1（2026-11-08 P0 治本）：周期 CHECKPOINT —— 消除 duckdb#23788
+            # 「pending WAL 长期存在 + 另一引擎 checkpoint」的触发条件。
+            # 本循环空闲期执行（不持有 collector/连接）；失败不阻断、超时放弃。
+            self._maybe_periodic_checkpoint(sched_cfg)
             # 再次检测停止请求（健康检查后）
             if consume_stop_request_if_matched(self.instance_token):
                 self._graceful_exit()
@@ -679,6 +684,34 @@ class DaemonLifecycle:
             self._interruptible_sleep(check_interval)
 
         self.clear_own_status()
+
+    def _maybe_periodic_checkpoint(self, sched_cfg: dict) -> None:
+        """T2.1：按间隔执行周期 CHECKPOINT（空闲期、失败不阻断）。
+
+        设计依据 docs/t21-t23-implementation-plan-20261108.md：
+        - 首 tick 强制执行一次（收干净上一进程遗留 WAL，兼作 T2.3 首 tick 形态）
+        - 之后每 `checkpoint_interval_sec`（默认 1800s）一次
+        - 失败也推进时间戳（避免每 tick 反复失败刷噪声）
+        - `QS_PERIODIC_CHECKPOINT=0` 或 interval=0 ⇒ 完全关闭（逐位回退）
+        """
+        import time as _time
+        try:
+            from .checkpoint_policy import (format_periodic_log, next_last_ts,
+                                            resolve_interval,
+                                            should_run_periodic_checkpoint)
+            interval = resolve_interval(sched_cfg)
+            now_ts = _time.time()
+            last_ts = float(getattr(self, "_last_checkpoint_ts", 0.0) or 0.0)
+            if not should_run_periodic_checkpoint(now_ts, last_ts, interval):
+                return
+            from quantstudio._paths import DATA_ROOT
+            from .db_checkpoint import checkpoint_database
+            t0 = _time.time()
+            ok, detail = checkpoint_database(DATA_ROOT / "quantstudio.db")
+            self._last_checkpoint_ts = next_last_ts(now_ts, ok, last_ts)
+            logger.info(format_periodic_log("daemon_forever", ok, detail, _time.time() - t0))
+        except Exception as e:  # noqa: BLE001 — 周期自检不得阻断调度
+            logger.debug(f"[T2.1] 周期 CHECKPOINT 异常（忽略）: {type(e).__name__}: {e}")
 
     def _is_first_run_today(self, today_str: str) -> bool:
         """pending_rerun 时的首 tick 补跑判定（总是 True，靠水位线防重复）。"""
