@@ -115,6 +115,18 @@ def backfill_day(col, table: str, day: str, source_label: str, apply_: bool,
 
     freq = str(raw["freq"].iloc[0]) if "freq" in raw.columns else "1min"
 
+    # ---- 时区预处理（2026-11-08 第 4 个同族缺陷修正）----
+    # QuestDB 的 trade_time 是「本地时间（Asia/Shanghai）语义」，但 HTTP /exec 返回时
+    # 被格式化为带 Z 的 ISO 串。而 aligner.to_ms_timestamp() 见 tz-aware 就跳过
+    # tz_localize ⇒ 直接取 UTC epoch ⇒ 整体 +8 小时（实测 09:30 CST → 17:30 CST）。
+    # 因此在进入 aligner 前剥掉尾部 Z，使其成为 naive 串，由 aligner 按本地时区解析。
+    if "trade_time" in raw.columns:
+        before = str(raw["trade_time"].iloc[0])
+        raw["trade_time"] = raw["trade_time"].astype(str).str.replace(
+            r"Z$", "", regex=True)
+        after = str(raw["trade_time"].iloc[0])
+        rep["tz_preprocess"] = {"before": before, "after": after}
+
     # ---- 对齐（复用框架；先不传 adj_factor_df，必要时自举）----
     kwargs = {}
     try:
@@ -200,13 +212,36 @@ def _to_ms_like(reference_ms, raw_iso: str) -> int:
 
 
 def pd_ms(iso: str) -> int:
+    """把 QuestDB 返回的时间串转成 epoch 毫秒。
+
+    **时区口径（2026-11-08 第 4 个同族缺陷修正）**：
+    QuestDB 的 `trade_time` 是**本地时间（Asia/Shanghai）语义**，但 HTTP `/exec`
+    返回时被格式化为带 `Z` 的 ISO 串（如 `2026-11-04T09:30:00.000000Z`）。
+    若直接交给 pandas，`Z` 会被当作 UTC ⇒ epoch 比正确值**大 8 小时**
+    （实测：解析出 1793784600000 = 17:30 CST，而正确值 1793755800000 = 09:30 CST）。
+
+    因此：剥掉尾部 `Z`，再**显式** `tz_localize("Asia/Shanghai")`——不依赖机器本地时区。
+    """
     import pandas as pd
-    return int(pd.to_datetime(iso).value // 10**6)
+
+    s = str(iso).strip()
+    if s.endswith("Z"):
+        s = s[:-1]
+    ts = pd.to_datetime(s)
+    if getattr(ts, "tzinfo", None) is None:
+        ts = ts.tz_localize("Asia/Shanghai")
+    return int(ts.value // 10**6)
 
 
 def _duckdb_day_rows(table: str, day: str) -> int:
+    """取该日在库内行数（写前基线 / 写后对账）。
+
+    注意（2026-11-08 第三次同型事故后修正）：**不得用 read_only=True**——
+    本进程的 build_stack() 已持有 read_write 连接，DuckDB 拒绝同进程内
+    同一库文件的第二种配置（ConnectionException: different configuration）。
+    """
     import duckdb
-    c = duckdb.connect(str(ROOT / "data" / "quantstudio.db"), read_only=True)
+    c = duckdb.connect(str(ROOT / "data" / "quantstudio.db"))
     try:
         lo = int(pd_ms(f"{day} 00:00:00"))
         hi = int(pd_ms(f"{day} 23:59:59"))
