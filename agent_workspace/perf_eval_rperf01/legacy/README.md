@@ -46,3 +46,14 @@
 **修正（M-1）**：KNOWN_VIOLATIONS 每项登记 rozen_mtime（= 首次覆写时刻），实跑比对当前 mtime，
 不一致即报 KNOWN_VIOLATION_MUTATED（WARN / strict FAIL）。登记表只列实际存在的文件，
 不存在者移入 KNOWN_VIOLATIONS_MISSING 单列。
+
+## R100 rename 误配登记（2026-11-09 R-PERF-27）
+
+commit **233bf5e** 的 git diff --cached --name-status 出现：
+R100 fullwindow_1.5.6_hot_wall_..._2030_golden.json -> baseline_STALE_1106_golden.json
+
+**这不是真实改名** —— 实际动作是「删除 fullwindow_..._golden.json（改名为合规名）+ 新增 baseline_STALE_1106_golden.json」，
+git 的重命名启发式把它们合并成了一条 R100 记录。**将来查 aseline_STALE_1106_golden.json 的来历不得据此认为它由
+fullwindow_..._golden.json 改名而来**（两者内容不同：前者是 11-06 首跑全窗 golden，后者是 1.5.6 四跑矩阵某一跑的产物）。
+
+同 commit 另含 13 个未跟踪证据件被 git add -A 一并提交（违规已定性命，内容全在本目录、无他线文件、无破坏性，保留不 reset）。
