@@ -1,0 +1,232 @@
+{
+  "generated_at": "2026-11-09 22:30:28",
+  "basis": "B 乙口径：窗口内 requeue 暂缓；窗口外归档维持",
+  "note": "本件仅登记清单，未改动库（归档=status→archived 属写操作，候裁）",
+  "summary": {
+    "STOCK": {
+      "window_inside_rows": 394,
+      "window_inside_codes": 152,
+      "window_outside_rows": 16044,
+      "window_outside_codes": 891,
+      "window_start_ms": 1788364800000,
+      "window_start_date": "2026-09-03"
+    },
+    "ETF": {
+      "window_inside_rows": 66,
+      "window_inside_codes": 64,
+      "window_outside_rows": 2081,
+      "window_outside_codes": 13,
+      "window_start_ms": 1788451200000,
+      "window_start_date": "2026-09-04"
+    }
+  },
+  "window_outside_total_rows": 18125,
+  "by_year": {
+    "STOCK": [
+      {
+        "year": "1991",
+        "rows": 1
+      },
+      {
+        "year": "1992",
+        "rows": 4
+      },
+      {
+        "year": "1993",
+        "rows": 19
+      },
+      {
+        "year": "1994",
+        "rows": 71
+      },
+      {
+        "year": "1995",
+        "rows": 89
+      },
+      {
+        "year": "1996",
+        "rows": 91
+      },
+      {
+        "year": "1997",
+        "rows": 173
+      },
+      {
+        "year": "1998",
+        "rows": 161
+      },
+      {
+        "year": "1999",
+        "rows": 160
+      },
+      {
+        "year": "2000",
+        "rows": 157
+      },
+      {
+        "year": "2001",
+        "rows": 253
+      },
+      {
+        "year": "2002",
+        "rows": 224
+      },
+      {
+        "year": "2003",
+        "rows": 188
+      },
+      {
+        "year": "2004",
+        "rows": 180
+      },
+      {
+        "year": "2005",
+        "rows": 212
+      },
+      {
+        "year": "2006",
+        "rows": 263
+      },
+      {
+        "year": "2007",
+        "rows": 258
+      },
+      {
+        "year": "2008",
+        "rows": 305
+      },
+      {
+        "year": "2009",
+        "rows": 321
+      },
+      {
+        "year": "2010",
+        "rows": 699
+      },
+      {
+        "year": "2011",
+        "rows": 1023
+      },
+      {
+        "year": "2012",
+        "rows": 1105
+      },
+      {
+        "year": "2013",
+        "rows": 1112
+      },
+      {
+        "year": "2014",
+        "rows": 617
+      },
+      {
+        "year": "2015",
+        "rows": 606
+      },
+      {
+        "year": "2016",
+        "rows": 561
+      },
+      {
+        "year": "2017",
+        "rows": 584
+      },
+      {
+        "year": "2018",
+        "rows": 600
+      },
+      {
+        "year": "2019",
+        "rows": 568
+      },
+      {
+        "year": "2020",
+        "rows": 561
+      },
+      {
+        "year": "2021",
+        "rows": 562
+      },
+      {
+        "year": "2022",
+        "rows": 564
+      },
+      {
+        "year": "2023",
+        "rows": 609
+      },
+      {
+        "year": "2024",
+        "rows": 798
+      },
+      {
+        "year": "2025",
+        "rows": 849
+      },
+      {
+        "year": "2026",
+        "rows": 1496
+      }
+    ],
+    "ETF": [
+      {
+        "year": "2025",
+        "rows": 2081
+      }
+    ]
+  },
+  "error_families": {
+    "STOCK": [
+      {
+        "error": "rebase 日线覆盖不全：缺 32/多 0 行（要求全历史严格一致，禁止缺行/增行）",
+        "rows": 5527
+      },
+      {
+        "error": "rebase 日线覆盖不全：缺 1/多 0 行（要求全历史严格一致，禁止缺行/增行）",
+        "rows": 1982
+      },
+      {
+        "error": "rebase 分钟 freq=1min 覆盖不全：缺 964/多 11 行（要求全历史严格一致；allow_p",
+        "rows": 1807
+      },
+      {
+        "error": "rebase 分钟 freq=1min 覆盖不全：缺 482/多 11 行（要求全历史严格一致；allow_p",
+        "rows": 1548
+      },
+      {
+        "error": "rebase 分钟 freq=1min raw OHLC 共 18075 行与库内不一致（|Δ|>1e-09）",
+        "rows": 1207
+      }
+    ],
+    "ETF": [
+      {
+        "error": "rebase 分钟 freq=1min 覆盖不全：缺 482/多 1524 行（要求全历史严格一致；allow",
+        "rows": 412
+      },
+      {
+        "error": "rebase 日线覆盖不全：缺 36/多 0 行（要求全历史严格一致，禁止缺行/增行）",
+        "rows": 243
+      },
+      {
+        "error": "日线 raw OHLC 共 256 行与库内不一致（|Δ|>1e-09）；fresh raw 与库内 raw ",
+        "rows": 238
+      },
+      {
+        "error": "日线 raw OHLC 共 460 行与库内不一致（|Δ|>1e-09）；fresh raw 与库内 raw ",
+        "rows": 234
+      },
+      {
+        "error": "rebase 分钟 freq=1min 覆盖不全：缺 482/多 1523 行（要求全历史严格一致；allow",
+        "rows": 234
+      }
+    ]
+  },
+  "attempt_count": {
+    "STOCK": {
+      "5": 16044
+    },
+    "ETF": {
+      "5": 2081
+    }
+  }
+}
