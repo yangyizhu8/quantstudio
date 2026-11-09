@@ -1,0 +1,26 @@
+{
+  "generated_at": "2026-11-10 03:38:09",
+  "method": "对 no_source_pairs 逐对比较「日期 vs 该 code 在 QuestDB 的源端首日」",
+  "summary": {
+    "STOCK_minute": {
+      "total": 3260,
+      "before_first_day": 3260,
+      "after_first_day": 0,
+      "unknown": 0,
+      "pct_before": 100.0
+    },
+    "STOCK_daily": {
+      "total": 2726,
+      "before_first_day": 2556,
+      "after_first_day": 170,
+      "unknown": 0,
+      "pct_before": 93.8
+    }
+  },
+  "overall": {
+    "before": 5816,
+    "after": 170,
+    "total": 5986,
+    "pct_before": 97.2
+  }
+}
