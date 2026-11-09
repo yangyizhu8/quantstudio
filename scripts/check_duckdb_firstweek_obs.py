@@ -30,6 +30,13 @@ PY311 = r"C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.
 FATAL_KEYWORD = "Failed to delete all rows from index"
 # 首周观测窗口起点（升级窗口日 00:00）：只有此后的日志属「升级后故障面」
 OBS_WINDOW_START = "2026-11-07 00:00:00"
+
+# 占用声明语义分类（2026-11-09 总调度裁定 · 判据改进）
+# 豁免仅适用「停机/接管/阶段执行」类语义；若声明文本属「在位/正常供血描述」，
+# 则 daemon 缺席时不得豁免 ⇒ 判「声明与实态不符」并单列告警（避免豁免掩盖供血缺席）。
+STOP_WINDOW_PATTERNS = ("停", "停机", "接管", "阶段执行", "升级", "窗口", "维护",
+                        "迁移", "重建", "重启", "水位提交轮")
+INPLACE_PATTERNS = ("常驻", "采集中", "运行中", "正常供血", "在跑")
 EVIDENCE = os.path.join(REPO, "docs", "evidence", "duckdb-1.5-upgrade-window-evidence.md")
 DAEMON_RE = re.compile(r"quantstudio\.pipeline\.daemon")
 DAEMON_MODES = ("--mode forever", "--mode once")
@@ -68,6 +75,20 @@ def daemon_processes() -> List[Dict[str, Any]]:
     except Exception as exc:  # noqa: BLE001
         out.append({"error": "%s: %s" % (type(exc).__name__, exc)})
     return out
+
+
+def classify_declaration(occ: Dict[str, Any]) -> str:
+    """声明语义分类：stop_window（停机/接管/阶段执行）｜inplace（在位/供血描述）｜unclassified。
+
+    在位描述**优先**：声明若宣称「常驻/采集中」等，即便同时含窗口词，也按在位描述处理
+    ——因为该声明断言的是"正常供血"，缺席即与声明冲突（2026-11-09 总调度裁定）。
+    """
+    text = " ".join(str(occ.get(k) or "") for k in ("operation", "purpose", "note"))
+    if any(p in text for p in INPLACE_PATTERNS):
+        return "inplace"
+    if any(p in text for p in STOP_WINDOW_PATTERNS):
+        return "stop_window"
+    return "unclassified"
 
 
 def collect() -> Dict[str, Any]:
@@ -148,18 +169,24 @@ def collect() -> Dict[str, Any]:
             occ = {"occupied": bool(raw.get("occupied")),
                    "owner": raw.get("owner"), "operation": raw.get("operation"),
                    "window": raw.get("window")}
+            sem = classify_declaration(occ) if occ["occupied"] else None
+            occ["semantics"] = sem
             if occ["occupied"]:
                 w = occ.get("window") or {}
+                in_win = True
                 try:
                     st = dt.datetime.fromisoformat(str(w.get("start")))
                     en = dt.datetime.fromisoformat(str(w.get("end")))
-                    now = dt.datetime.now()
-                    res["occupancy_excused"] = st <= now <= en
-                    occ["in_window"] = res["occupancy_excused"]
+                    in_win = st <= dt.datetime.now() <= en
                 except Exception:
-                    res["occupancy_excused"] = True   # 声明存在但窗口字段缺失 ⇒ 保守豁免
+                    in_win = True   # 窗口字段缺失 ⇒ 保守视为窗内（语义分类仍生效）
+                occ["in_window"] = in_win
+                # 在位描述类 ⇒ 不豁免（缺席即与声明冲突）；停机窗/未分类 ⇒ 窗内豁免
+                res["occupancy_excused"] = in_win and sem in ("stop_window", "unclassified")
+                res["declaration_inplace"] = (sem == "inplace")
             else:
                 res["occupancy_excused"] = False
+                res["declaration_inplace"] = False
     except Exception as exc:  # noqa: BLE001
         res["occupancy_error"] = str(exc)
         res["occupancy_excused"] = False
@@ -175,6 +202,11 @@ def collect() -> Dict[str, Any]:
                          or res.get("occupancy_excused", False)),
         # 占用声明窗内缺席属计划内停机（铁律 19 声明窗）⇒ 不判供血失败
         "daemon_absence_excused": res.get("occupancy_excused", False),
+        # 声明称「在位/正常供血」但实际缺席 ⇒ 声明与实态不符（单列告警，不豁免）
+        "no_declaration_mismatch": not (
+            res.get("declaration_inplace")
+            and not any(isinstance(d, dict) and d.get("mode") == "forever" for d in res.get("daemons", []))
+        ),
         "once_running": any(isinstance(d, dict) and d.get("mode") == "once" for d in res.get("daemons", [])),
         # 采集轮质量审计失败（首周内须为 0；属升级后故障面，我方只记录不修他线域）
         "no_qa_failure": res.get("qa_failed_count", -1) == 0,
@@ -197,8 +229,15 @@ def render(res: Dict[str, Any]) -> str:
         "  主库: %s GB  mtime=%s" % (res.get("db_gb"), res.get("db_mtime")),
         "  WAL: %s MB" % res.get("wal_mb"),
         "  FATAL 关键词 '%s': 命中 %s（扫 %s 个日志）" % (FATAL_KEYWORD, res.get("fatal_hits"), res.get("logs_scanned")),
-        "  占用声明: %s" % (("声明窗内（%s %s）⇒ 缺席属计划内停机，豁免" % (res.get("occupancy", {}).get("owner"), res.get("occupancy", {}).get("operation")))
-                             if res.get("occupancy_excused") else "无（data/daemon_occupancy.json 无进行中声明）"),
+        "  占用声明: %s" % (("声明窗内（%s %s）**语义=%s** ⇒ %s" % (
+            res.get("occupancy", {}).get("owner"), res.get("occupancy", {}).get("operation"),
+            res.get("occupancy", {}).get("semantics"),
+            "在位描述类 ⇒ **不豁免**（缺席即与声明不符）" if res.get("declaration_inplace")
+            else "停机窗类 ⇒ 缺席属计划内停机，豁免"))
+            if (res.get("occupancy_excused") or res.get("declaration_inplace"))
+            else "无（data/daemon_occupancy.json 无进行中声明）"),
+        "  ⚠ 告警: %s" % ("**声明与实态不符**：声明称在位/正常供血，但无 forever 实例"
+                            if not res.get("checks", {}).get("no_declaration_mismatch", True) else "无"),
         "  判据: FATAL=0 %s ｜ WAL<256MB %s ｜ 版本门 PASS 1.5.6 %s ｜ forever 常驻在位 %s ｜ (once 轮在跑 %s) ｜ 采集轮质量审计失败 0 %s（命中 %s）"
         % (
            mark.get(c.get("fatal_zero"), "?"), mark.get(c.get("wal_under_256mb"), "?"),
