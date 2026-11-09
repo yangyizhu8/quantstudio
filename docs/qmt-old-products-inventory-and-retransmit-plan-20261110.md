@@ -55,3 +55,33 @@
 
 知识反哺：[命中] QD-2026-0023（qd 族／D3 域／`knowledge/qmt/QD-2026-0023.md`，2026-11-10）
 本轮沉淀：QD-2026-0023（EPS 层前置结论·PIT 映射·两侧不同源机制）
+
+
+---
+
+## 五、策略集重对（R354 ⑦ 指出错位·预定位结果·**只读·未改任何文件**）
+
+> R354 指出：我上轮清点的五个**代表产物**（F-Score选股RSRS择时／全球资产轮动／四象限ETF轮动策略 ×2／小市值策略ptrade）**≠ ⑦ 指名的五策略**（沪深300慢KD／etf_hot_theme_rotation／vol_regime_mom_rev／CANSLIM／tech_etf_mvo_rotation）。
+> 本节按 **⑦ 指名的五策略**重做**路径预定位**（按策略名/文件名实读定位，**未改任何产物**）；**sha 指认待总调度补齐后二次复核并更新本件**。
+> ⚠️ 我域纪律：**委派 2 文件（`scripts/export_eps_snapshot.py`／`tests/test_qmt_eps_snapshot.py`）在 O5 余四步安排下达前**禁改**——本节未触碰该 2 文件。
+
+| ⑦ 指名策略 | 仓内命中 .py | 部署域产物（`Demo_account_Real_account/`） | ptrade 域产物 | 其他（框架/转换产物/本地策略） |
+|---|---|---|---|---|
+| **沪深300慢KD** | 6 | （部署域未命中） | output/ptrade_export/沪深300慢KD超卖均值修复策略/沪深300慢KD超卖均值修复策略_ptrade.py | build/lib/quantstudio/backtest/strategies/沪深300均值回归超跌反弹.py、build/lib/quantstudio/backtest/strategies/沪深300慢KD超卖均值修复策略.py、qlib/tests/沪深300成分股机器学习.py |
+| **etf_hot_theme_rotation** | 5 | （部署域未命中） | output/ptrade_export/etf_hot_theme_rotation/strategy/strategy_ptrade.py、output/spec_packages/etf_hot_theme_rotation/etf_hot_theme_rotation__0_3_2-mvp/etf_hot_theme_rotation_ptrade.py | output/spec_packages/etf_hot_theme_qmt/qmt/etf_hot_theme_rotation_qmt.py、output/spec_packages/etf_hot_theme_rotation/etf_hot_theme_rotation__0_3_2-mvp/etf_hot_theme_rotation_quantstudio.py、output/spec_packages/etf_hot_theme_rotation/etf_hot_theme_rotation__0_3_2-mvp/__init__.py |
+| **vol_regime_mom_rev** | 10 | （部署域未命中） | output/ptrade_export/vol_regime_mom_rev/vol_regime_mom_rev_ptrade.py、output/_bytecheck_main/vol_regime_mom_rev/vol_regime_mom_rev_ptrade.py | build/lib/quantstudio/backtest/strategies/vol_regime_mom_rev_quantstudio.py、output/backups/m5.1a-20261010/products-pre-rerun/qmt_import__vol_regime_mom_rev_qmt.py、output/qmt_export/vol_regime_mom_rev/qmt/vol_regime_mom_rev_qmt.py |
+| **CANSLIM** | 62 | （部署域未命中） | output/ptrade_export/CANSLIM突破成长选股策略/CANSLIM突破成长选股策略_ptrade.py、output/_bytecheck_main/CANSLIM突破成长选股策略/CANSLIM突破成长选股策略_ptrade.py | build/lib/quantstudio/backtest/strategies/CANSLIM突破成长选股策略.py、output/backups/m5.1a-20261010/products-pre-rerun/qmt_import__CANSLIM突破成长选股策略_qmt.py、output/deploy/hv_canslim_v6/hv_canslim_v6_trade.py |
+| **tech_etf_mvo_rotation** | 13 | （部署域未命中） | output/ptrade_export/tech_etf_mvo_rotation/tech_etf_mvo_rotation_ptrade.py、output/_bytecheck_main/tech_etf_mvo_rotation/tech_etf_mvo_rotation_ptrade.py、ptrade/tech_etf_mvo_rotation_ptrade.py | build/lib/quantstudio/backtest/strategies/tech_etf_mvo_rotation_quantstudio.py、output/backups/m5.1a-20261010/products-pre-rerun/qmt_import__tech_etf_mvo_rotation_qmt.py、output/deploy/hv_tech_etf_mvo_v6/hv_tech_etf_mvo_v6_trade.py |
+
+### 读数要点（供⑦ 指认时对齐口径）
+
+1. **域判定**：`_qs_cash_budget` 只存在于 **PTrade 侧产物**（部署域／ptrade 域）——QMT 侧 `output/qmt_import/` 18 个产物命中数全 0（QMT 无下单预算段）⇒ **清点域＝PTrade 产物域**；
+2. **符号语义**：含 `_qs_cash_budget`＝已含预算口径修复（PD-0019 期1 · R-20261109-01）；缺＝OLD 候选 ⇒ **超用 `portfolio.cash` 总现金而非可用资金**；
+3. **已确认 OLD 候选（维持）**：`Demo_account_Real_account/小市值策略ptrade/ptrade_286d0d_trade.py`（budget=0）；
+4. **待⑦ 补指认**：五策略各自的**部署产物路径 + sha16**（本表已给出候选路径与各自 sha16，核对后即可判定含/缺）；
+5. **重转排期不变**：仍并入 **v1.8 六产物重转同批**（零额外窗口＋一次矩阵追认）；`_archive/` 禁改；部署域落地须经六步⑤用户确认。
+
+---
+
+知识反哺：[命中] QD-2026-0023（qd 族／D3 域／`knowledge/qmt/QD-2026-0023.md`，2026-11-10）
+本轮沉淀：QD-2026-0023（EPS 层前置结论·PIT 映射·两侧不同源机制）
