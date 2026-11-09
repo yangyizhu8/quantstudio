@@ -58,11 +58,39 @@ RAW_COLS = ["ts_code", "trade_time", "freq", "open", "high", "low", "close",
 
 
 # ---------------------------------------------------------------- QuestDB 取数
-def qdb_export(table: str, day: str, limit: int | None = None) -> str:
-    """按交易日导出 CSV（QuestDB /exp）。day 形如 2026-10-12。"""
+def _ts_code_list(codes: list[str] | None, table: str) -> str:
+    """把 6 位 code 列表转成 QuestDB 的 ts_code IN (...) 子句。
+
+    2026-11-09 新增（v2 定向回填）：`qfq_trigger_queue.code` 是 6 位（如 '002223'），
+    而 QuestDB 的 `ts_code` 带交易所后缀（'002223.SZ'）。
+    后缀推断规则：stock_minutes/stock_daily 6 开头=SH、0/3 开头=SZ；
+    etf_* 5 开头=SH、1 开头=SZ（A 股 ETF 编码惯例）。
+    """
+    if not codes:
+        return ""
+    is_etf = table.startswith("etf_")
+    suffix = ".SH" if is_etf else ".SZ"
+    parts = []
+    for c in codes:
+        c = str(c).strip()
+        if is_etf:
+            sfx = ".SH" if c.startswith("5") else ".SZ"
+        else:
+            sfx = ".SH" if c.startswith(("6", "9")) else ".SZ"
+        parts.append(f"'{c}{sfx}'")
+    return " AND ts_code IN (" + ",".join(parts) + ")"
+
+
+def qdb_export(table: str, day: str, limit: int | None = None,
+               codes: list[str] | None = None) -> str:
+    """按交易日导出 CSV（QuestDB /exp）。day 形如 2026-10-12。
+
+    codes 非空时只导出这些 code（定向回填，2026-11-09 v2 新增）。
+    """
     sql = (f"SELECT {', '.join(RAW_COLS)} FROM {table} "
            f"WHERE trade_time >= '{day}T00:00:00.000000Z' "
-           f"AND trade_time < '{day}T23:59:59.999999Z'")
+           f"AND trade_time < '{day}T23:59:59.999999Z'"
+           + _ts_code_list(codes, table))
     if limit:
         sql += f" LIMIT {int(limit)}"
     url = f"{QDB_URL}/exp?query=" + urllib.parse.quote(sql)
@@ -70,9 +98,10 @@ def qdb_export(table: str, day: str, limit: int | None = None) -> str:
         return r.read().decode("utf-8", "replace")
 
 
-def qdb_count(table: str, day: str) -> int:
+def qdb_count(table: str, day: str, codes: list[str] | None = None) -> int:
     sql = (f"SELECT count(*) FROM {table} WHERE trade_time >= '{day}T00:00:00.000000Z' "
-           f"AND trade_time < '{day}T23:59:59.999999Z'")
+           f"AND trade_time < '{day}T23:59:59.999999Z'"
+           + _ts_code_list(codes, table))
     url = f"{QDB_URL}/exec?query=" + urllib.parse.quote(sql)
     with urllib.request.urlopen(url, timeout=120) as r:
         d = json.loads(r.read().decode("utf-8"))
@@ -96,17 +125,21 @@ def build_stack():
 
 # ---------------------------------------------------------------- 主流程
 def backfill_day(col, table: str, day: str, source_label: str, apply_: bool,
-                 batch_id: str, sample_check: int) -> dict:
+                 batch_id: str, sample_check: int,
+                 codes: list[str] | None = None) -> dict:
     import pandas as pd
 
     rep = {"table": table, "day": day, "applied": False}
-    src_n = qdb_count(table, day)
+    if codes:
+        rep["codes"] = len(codes)
+        rep["codes_sample"] = codes[:5]
+    src_n = qdb_count(table, day, codes)
     rep["qdb_rows"] = src_n
     if src_n == 0:
         rep["status"] = "skip_source_empty"
         return rep
 
-    csv_txt = qdb_export(table, day)
+    csv_txt = qdb_export(table, day, codes=codes)
     raw = pd.read_csv(__import__("io").StringIO(csv_txt))
     rep["csv_rows"] = len(raw)
     if len(raw) != src_n:
@@ -182,14 +215,24 @@ def backfill_day(col, table: str, day: str, source_label: str, apply_: bool,
         rep["status"] = "dry_run_ok"
         return rep
 
-    # ---- 写前该日行数（diff 归因基线）----
-    pre_rows = _duckdb_day_rows(table, day)
+    # ---- 写库（2026-11-10 性能修正：跳过写前/写后整日对账）----
+    # 原实现的 pre/post = _duckdb_day_rows(整日或 code IN) 在 62GB 库上做全表扫描，
+    # 实测每批可拖到数十秒（111 分钟仅完成 46%）。对账价值不抵成本：
+    #   · writer.write() 返回值已给出实际写入行数（writers.py:750 upsert 语义）
+    #   · 端到端校验改由「回填后 qfq_trigger_queue 死信数 + canary 索引一致性」承担
+    # 保留开关 QS_BACKFILL_RECONCILE=1 可恢复旧行为。
+    _do_reconcile = os.environ.get("QS_BACKFILL_RECONCILE", "0") == "1"
+    pre_rows = _duckdb_day_rows(table, day, codes) if _do_reconcile else None
     n = col.writer.write(std, table, batch_id)
     rep["writer_return"] = n
-    post_rows = _duckdb_day_rows(table, day)
-    rep["duckdb_rows_before"] = pre_rows
-    rep["duckdb_rows_after"] = post_rows
-    rep["delta"] = post_rows - pre_rows
+    if _do_reconcile:
+        post_rows = _duckdb_day_rows(table, day, codes)
+        rep["duckdb_rows_before"] = pre_rows
+        rep["duckdb_rows_after"] = post_rows
+        rep["delta"] = post_rows - pre_rows
+    else:
+        rep["reconcile_skipped"] = True
+        rep["delta"] = n
     rep["new_rows_expected"] = len(std)
     rep["applied"] = True
     rep["status"] = "applied"
@@ -233,8 +276,11 @@ def pd_ms(iso: str) -> int:
     return int(ts.value // 10**6)
 
 
-def _duckdb_day_rows(table: str, day: str) -> int:
+def _duckdb_day_rows(table: str, day: str,
+                     codes: list[str] | None = None) -> int:
     """取该日在库内行数（写前基线 / 写后对账）。
+
+    codes 非空时只统计这些 code（定向回填，2026-11-09 v2 新增）。
 
     注意（2026-11-08 第三次同型事故后修正）：**不得用 read_only=True**——
     本进程的 build_stack() 已持有 read_write 连接，DuckDB 拒绝同进程内
@@ -245,8 +291,16 @@ def _duckdb_day_rows(table: str, day: str) -> int:
     try:
         lo = int(pd_ms(f"{day} 00:00:00"))
         hi = int(pd_ms(f"{day} 23:59:59"))
-        r = c.execute(f'SELECT count(*) FROM "{table}" WHERE "time" >= ? AND "time" <= ?',
-                      [lo, hi]).fetchone()
+        if codes:
+            ph = ",".join("?" * len(codes))
+            r = c.execute(
+                f'SELECT count(*) FROM "{table}" '
+                f'WHERE "time" >= ? AND "time" <= ? AND "code" IN ({ph})',
+                [lo, hi] + [str(x) for x in codes]).fetchone()
+        else:
+            r = c.execute(
+                f'SELECT count(*) FROM "{table}" WHERE "time" >= ? AND "time" <= ?',
+                [lo, hi]).fetchone()
         return int(r[0])
     finally:
         c.close()
