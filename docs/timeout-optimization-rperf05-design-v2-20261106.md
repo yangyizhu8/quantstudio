@@ -70,14 +70,15 @@
 >
 > **禁止**：单点值（如 484.6→137.7、14391s vs 14071s 的比值）、跨版本/跨态的百分比、未标态的墙钟换算。
 >
-> ## E-04 开工三条实施纪律（2026-11-09 R-PERF-28 审核方指定，新会话**首读**）
+> ## E-04 开工四条实施纪律（2026-11-09 R-PERF-28/29 审核方指定，新会话**首读**）
 >
-> 新会话无上下文，以下三条不在正文其他段落内，**开工前必须先落实**：
+> 新会话无上下文，以下四条不在正文其他段落内，**开工前必须先落实**：
 > 1. **E-1 先读现状再改**：改 `_query_bars_window_sql` 前，先实读该函数当前实现并**引用行号**；C-2 的兜底逻辑必须建在对现有实现的确切理解上，不是对本方案件描述的理解上。（本线已三次因「未读源码即断言」出错 → 记忆 70be9f05）
 > 2. **E-2 daemon 跑前实测一行**：`Get-CimInstance Win32_Process -Filter "Name like 'python%'"` 过滤 `quantstudio.pipeline.daemon`，输出 **PID / 模式(forever|once) / 启动时间**；禁止以「周六/深夜应该没跑」替代读数。（本线已提醒三次未落实）
 > 3. **E-3 产物四要素命名 + 落盘即 sha256 登记**：`<probe>_<version>_<thermal>_<layer>_<window>_<stamp>.{json,log}`；门禁 `scripts/check-evidence-naming.py` 当前 compliant=3，**新增产物必须保持合规**，禁同路径覆写、禁 `git add -A`、禁编造 sha（DB-2026-0032/0036）。
+> 4. **E-4 共享核心文件纪律**（`duckdb_data_access.py` 属铁律 10 共享核心文件）：①改前按铁律 03 建回退点——`git stash create -m "baseline-<stamp>"` → **随即 `git stash store <hash>`**（不 store 会被 gc 清掉）→ hash 记入会话记录；②**每次 edit 后即时 `git diff` 自检**（并行提交会无声覆盖，edit 成功 ≠ 改动仍在）；③工作区常有大量他线产物 ⇒ 禁整仓 `add -A` / `reset --hard`，只许精确路径；④提交后 `git show --name-only` 复核。
 >
-> **开工顺序（不可换）**：E-1 读现状 → E-2 daemon 实测 → 隔离 DATA_ROOT → 基线三读数 → 改码 → 三固件 → 优化后跑 → 黄金验收 → 单笔 commit。
+> **开工顺序（不可换）**：E-1 读现状 → E-2 daemon 实测 → 隔离 DATA_ROOT → 基线三读数 → **E-4 建回退点** → 改码（每次 edit 后 diff 自检）→ 三固件 → 优化后跑 → 黄金验收 → 单笔 commit（精确路径 → index 三查 → show --name-only 复核）。
 
 > 根因定谳（E-02）：**T-2 慢查询型为主 + T-3 内存/页缓存竞争放大**；T-1 无数据型排除（6 日数据全量在）。
 > 慢根源：`_query_bars_window_sql` 窗口 SQL `WHERE code IN (...) AND time <= ?` **无 time 下界** ⇒
