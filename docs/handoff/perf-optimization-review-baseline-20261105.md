@@ -2243,3 +2243,47 @@ git stash store [(-m | --message) <message>] [-q] <commit> ← 只有 store 有 
 | ③ v3 实施交接 | ✅ **受理**（§八即开工令，10 步不可换序） |
 | ④ 铁律 03 草案 | ✅ 待呈批面（甲/乙/丙），**仍未落位铁律** |
 | ⑤ DB-0040 格式缺陷 | 🟡 **登记上报**（他线条目，不擅改） |
+# R-PERF-36 验收 · ②审 · 2026-11-10 02:40 · **未覆盖件点名：`knowledge/db/README.md`；`checked` 语义实测钉死；DB-0040 仍未修**
+
+## 10.181 点名结论（总调度指定动作：跑清单 diff 报出未覆盖文件名）
+
+**逐件扫描 41 件（每件单跑 kb_hook，读 checked/bad）：**
+
+| 分类 | 件数 | 明细 |
+| --- | --- | --- |
+| OK（checked=1, bad=0） | **39** | 其余条目 |
+| BAD（checked=1, bad=1） | **1** | `DB-2026-0040.md` → `trigger 为空` |
+| **UNCOVERED（checked=0, bad=0）** | **1** | 🔴 **`knowledge/db/README.md`**（5,602 B，族库说明文件，非条目） |
+| 合计 | **41** | 39 + 1 + 1 = 41 ✅ |
+
+> ⇒ **未覆盖件 = `knowledge/db/README.md`**。
+> ⇒ 属「族库说明文件」，非条目 schema ⇒ 被跳过**可能是设计内行为**，但 **kb_hook 无 `skipped` 字段显式声明** ⇒ 表现为**静默排除**。
+
+## 10.182 `checked` 语义 —— 实测两轮交叉，钉死
+
+| 轮次 | 传入 | 结果 | 推论 |
+| --- | --- | --- | --- |
+| Run 1 | 41 件（含 README + DB-0040） | `checked=40, bad=1` | 40 + 1 = 41 ⇒ 看似配平 |
+| Run 2 | **40 件**（排除 DB-0040，**仍含 README**） | `checked=39, bad=0` | 39 + 0 = 39 ≠ 40 ⇒ **差 1** |
+| 逐件 | 41×1 | 39 OK / 1 BAD / 1 UNCOVERED | 41 = 39+1+1 |
+
+> ⇒ **`checked` = 被检件数（含 bad）**，`bad ⊂ checked`；**差额 = 未被检件**。
+> ⇒ Run 1 的 40 = **39 OK + 1 BAD**（README 未计入）⇒ 配平是**巧合**，不是「差额=bad」。
+> ⇒ **SDD 的算式对（41−40=1），但归因错**（把 checked 读成「通过件数」，于是差额被误判为 bad 件）。
+
+## 10.183 裁定
+
+| 项 | 裁定 |
+| --- | --- |
+| ① 审核方诊断（trigger 缩进 4 空格 → YAML 顶层键错位） | ✅ **SDD 实测复核成立**（DB-0039 列 0 / DB-0040 缩进 4） |
+| ② SDD「41−40 = bad 件」 | 🟡 **算式对、归因错**——真分解 **39 OK + 1 BAD + 1 UNCOVERED**，未覆盖件 = `README.md` |
+| ③ 审核方上轮「⚠ 有 1 件未被覆盖」 | ✅ **不撤销**，改为**点名**:`knowledge/db/README.md`；同时更正表述「checked 含 bad」 |
+| ④ SDD 提的 PowerShell 通配符坑 | ✅ **采信**（`--files knowledge\db\*.md` 不展开 ⇒ checked=0 假空），属 kb_hook 可用性缺陷，转属主 |
+| ⑤ v3 §八 开工令受理 | ✅ 受理（我方不再介入实施，除被追问） |
+| ⑥ `DB-2026-0040` 修复 | 🔴 **仍未修**：实测 trigger 行**前导 4 空格**尚在（运维1 未落或未提交） |
+
+## 10.184 🆕 根因：kb_hook 缺 `skipped` 字段（缺口反复制造歧义）
+
+> 本议题**连续两轮**（R-PERF-35 / R-PERF-36）都在「差 1 是什么」上打转，根因不是谁算错，而是**门禁输出没有 `skipped` 字段**。
+> ⇒ 建议属主给 `kb_hook.py --json` 增 `skipped: [{file, reason}]`（如 README 标 `non-entry-file`），使 `checked + skipped + bad_未计入项` 恒等于传入数。
+> ⇒ **可检性判据**：`len(files) == checked + len(skipped)` 且 `bad ⊆ checked` ⇒ 任何差额自动带名，不再需要人工 diff。
