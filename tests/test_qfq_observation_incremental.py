@@ -284,3 +284,65 @@ def test_g12_new_table_not_in_contract_fingerprints():
         src = p.read_text(encoding="utf-8", errors="ignore")
         assert "qfq_obs_incremental_cursor" not in src, (
             f"新表出现在契约面模块 {name} ⇒ 加表将触发契约变更流程（铁律 24）")
+
+
+# ------------------------------------------------------------------ G7 链构造性证明
+def _mk_aux_with_revisions(tmp: Path) -> Path:
+    """合成 aux：同 (code,factor_time) 多 revision（rev1/rev2/rev3）。"""
+    from quantstudio.pipeline.qfq_reanchor_schema import init_sqlite_schema
+    db = tmp / "qfq_aux.db"
+    con = sqlite3.connect(str(db))
+    init_sqlite_schema(con)
+    rows = [
+        ("STOCK", "000001", FT, 1.0, 1),
+        ("STOCK", "000001", FT, 1.2, 2),
+        ("STOCK", "000001", FT, 1.4, 3),   # 同键三版（修订链）
+        ("STOCK", "000002", FT, 2.0, 1),
+    ]
+    con.executemany(
+        "INSERT INTO qfq_factor_observation "
+        "(asset_type, code, factor_time, factor_value, revision_no, "
+        " first_seen_run_id, last_seen_run_id, first_seen_at, last_seen_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        [(*r, "r0", "r0", "2026-01-01T00:00:00+08:00", "2026-01-01T00:00:00+08:00")
+         for r in rows])
+    con.commit()
+    con.close()
+    return db
+
+
+def test_g7_batch_last_equals_max_revision_row(tmp_path, monkeypatch):
+    """G7：批量取 last ≡ 该 (code,factor_time) 的 max(revision_no) 行（链构造性证明）。"""
+    db = _mk_aux_with_revisions(tmp_path)
+    store = ObservationStore(aux_db=db)
+    con = sqlite3.connect(str(db))
+    last_map = store._inc_fetch_last(con, "STOCK", ["000001", "000002"])
+    con.close()
+    con = sqlite3.connect(str(db))
+    for code, ft in (("000001", FT), ("000002", FT)):
+        row = con.execute(
+            "SELECT factor_value, revision_no FROM qfq_factor_observation "
+            "WHERE asset_type='STOCK' AND code=? AND factor_time=? "
+            "ORDER BY revision_no DESC LIMIT 1", [code, ft]).fetchone()
+        assert last_map[(code, ft)] == (row[0], row[1]), code
+    con.close()
+    assert last_map[("000001", FT)][1] == 3, "多修订链的 last 必须是 max(revision_no)"
+
+
+def test_g7_negative_broken_chain_is_detectable(tmp_path, monkeypatch):
+    """G7 负向：挖空中间 rev ⇒ 链不连续 ⇒ 连续性检查必须能判出（缺号）。"""
+    db = _mk_aux_with_revisions(tmp_path)
+    con = sqlite3.connect(str(db))
+    con.execute("DELETE FROM qfq_factor_observation "
+                "WHERE code='000001' AND factor_time=? AND revision_no=2", [FT])
+    con.commit()
+    store = ObservationStore(aux_db=db)
+    last_map = store._inc_fetch_last(con, "STOCK", ["000001"])
+    revs = [r[0] for r in con.execute(
+        "SELECT revision_no FROM qfq_factor_observation "
+        "WHERE code='000001' AND factor_time=? ORDER BY revision_no", [FT]).fetchall()]
+    con.close()
+    assert revs == [1, 3], f"链应出现缺号（实测 {revs}）"
+    contiguous = revs == list(range(1, len(revs) + 1))
+    assert not contiguous, "缺号链必须被连续性检查判为不连续"
+    assert last_map[("000001", FT)][1] == 3, "取值语义不依赖链连续（仍取 max revision 行）"

@@ -127,15 +127,26 @@
 | # | 任务 | 阻塞点 | 可否即刻推进 |
 |---|---|---|---|
 | **R1** | **台账补录本节**（执行方可见通道） | 无 | ✅ 即刻（本笔） |
-| **R2** | **契约面 2 failed 销项**（`PermissionError`：生产库被 daemon 持锁） | 需无锁窗 | ✅ 即刻（**当前 3A 锁 False、窗口空**） |
+| **R2** | **契约面 2 failed 销项**（`PermissionError`：生产库被 daemon 持锁） | 无 | ✅ **已闭环**（11-10 00:00 复跑 **136 passed / 0 failed**；基线三读数 last_row='2026-11-09T10:08:55' 为生产轮次时间 ⇒ 零污染） |
 | **R3** | **方案③ G5**（消费侧 changed-code 遍历，**须带 G5b**） | 需读 `_claim_and_merge` unit 生成段 + `promote_scheduled_due`/`recover_pending_due` 返回集 | ✅ 即刻（纯代码 + 隔离测试） |
 | **R4** | **方案③ G11**（除权增量集 `stock_dividend.update_time > consumed_as_of` + G12 游标写回） | 依赖 R3 的 code 集通道 | ✅ 即刻（与 R3 同批） |
-| **R5** | **方案③ G7**（链构造性证明：批量取 last ≡ `max(revision_no)` 行） | 无 | ✅ 即刻（隔离测试） |
+| **R5** | **方案③ G7**（链构造性证明：批量取 last ≡ `max(revision_no)` 行） | 无 | ✅ **已闭环**（14 passed：链构造性证明 + 挖空 rev2 的缺号负向对照） |
 | **R6** | **方案③ G6**（真实库 44M 行全表 hash 四方相等对拍） | **需生产副本库**（不可在生产库做） | ❌ 待协调窗口/副本 |
 | **R7** | **方案③ G9**（`QfqPendingSla` 50762 排水 run） | 需与 dev 协同口径 | ⚠️ 隔离侧可先验「pending 不增」 |
 | **R8** | **O1 观察**（checkpoint 致缓存误失效率） | 需跨轮观察误失效次数 | ⚠️ 当轮可取读数（今日轮次已跑 ⇒ 有写入） |
-| **R9** | **R4 验收沉淀**（KEDB 条目：本线四族教训入册） | 需按族 schema 过 `kb_hook.validate_record` | ✅ 即刻 |
+| **R9** | **R4 验收沉淀**（KEDB 条目：本线教训入册） | 需按族 schema 过机检 | ✅ **已闭环**（`DB-2026-0040`，族 db / **D5 工程纪律** / lint_guard，`kb_hook.validate_record` **通过**；另三条教训以全局记忆承载） |
 | **R10** | 客户二次通知 | 待裁 | ⚠️ 建议**合并到下次实质变化时**（客户「不爱热闹」，勿单发） |
+
+### 7.4b 本轮进展（2026-11-10 00:05 · 节点2 照准 R2–R5+R9 全批）
+
+| # | 结果 | 证据 |
+|---|---|---|
+| **R2** | ✅ 销项：**136 passed / 0 failed**（此前 2 例 PermissionError ＝ 生产库被 daemon 持锁） | 基线三读数跑前跑后：`last_row='2026-11-09T10:08:55'`（生产轮次时间）、`page_count=3239049`、mtime 未变 ⇒ **零污染** |
+| **R5** | ✅ **14 passed**（G7 链构造性证明 + 缺号负向对照） | `tests/test_qfq_observation_incremental.py` |
+| **R9** | ✅ **`DB-2026-0040`** 落盘，族 db / D5 / lint_guard，`kb_hook.validate_record` **通过** | `knowledge/db/DB-2026-0040.md` |
+| **G5** | ⚠️ **落点修正已呈报（v3.2）**：`_claim_and_merge`（`:564-574`）unit 来自 pending 队列（**范围本就有限**）；O(N) 真源是 `_security_effective_dates` 的**逐 code 单查**（`:1752-1754`）⇒ 改为**块预取+缓存**（往返 ÷256），**范围不缩** | `docs/handoff/qfq-inc-g5-g6-g9-spec.md` §一 |
+| **G11 / G5b** | **退役**（除权侧 54,711 行小表非瓶颈；不缩范围 ⇒ 无「漏到期单元」风险）；G12 表保留备用 | 同上 §1.4 |
+| **G6 / G9** | **规格件已出**（库清单+时长+窗口草案 / 排水口径+三问），待排程与协同 | 同上 §二、§三 |
 
 ### 7.5 当轮环境基线（2026-11-09 23:12 实测）
 
