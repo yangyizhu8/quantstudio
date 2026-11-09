@@ -1941,3 +1941,58 @@ L117  (OUTDIR / f'{mode}{TAG_SUFFIX}_readings.json').write_text(...)
 | ② E-04 开工受理 | ✅ **受理**（附 E-4 共享核心文件纪律） |
 | ③ README 回填三条底线 | ✅ 记录在案（下一轮） |
 | 载体形态 | ✅ 已答复（同线上下文更替） |
+## R-PERF-29 验收 · ②审 · 2026-11-09 11:44 · **E-4 入件通过；实测勘误 `stash create -m` + 补 E-5 回退点验证**
+
+### 10.145 实测核验
+
+| 项 | 实测 |
+| --- | --- |
+| 方案件 | 8,914B / 140 行 |
+| L75 | 说明已由「三条」改为「**四条**」✅ |
+| **L79 E-4** | 完整：①`stash create`+`stash store` 建回退点（不 store 会被 gc）②每次 edit 后 `git diff` 自检（edit 成功≠改动仍在）③禁整仓 `add -A`/`reset --hard` ④提交后 `show --name-only` |
+| **L81 开工链** | **10 步**，`E-4 建回退点` 正确插在「基线三读数」之后、「改码」之前 ✅ |
+| commit `e11b856` | cat-file=**commit**，文件**恰 1 项** |
+
+### 10.146 🔴 实测勘误：`git stash create -m "..."` 的 message 会被污染
+
+**我在临时 repo 实测**（git 2.53.0.windows.1）：
+
+| 写法 | rc | 生成的 stash message |
+| --- | --- | --- |
+| `git stash create -m my-msg` | 0 | **`On master: -m my-msg`** ← 污染 |
+| `git stash create my-msg2` | 0 | **`On master: my-msg2`** ✅ 正确 |
+
+**权威语法**（`git stash -h`）：
+
+```
+git stash create [<message>]                              ← message 是位置参数，无 -m
+git stash store [(-m | --message) <message>] [-q] <commit> ← 只有 store 有 -m
+```
+
+> ⇒ **不是阻塞项**（rc=0，hash 正常），但**message 会带 `-m` 前缀**，将来 `git stash list` 里看到 `On master: -m baseline-xxx` 属记账脏污。
+> ⇒ **正确写法**：`git stash create "baseline-<stamp>"`（去 `-m`）→ `git stash store -m "baseline-<stamp>" <hash>`
+
+**溯源与自认**：该错误写法出自**我方传递**（项目铁律 03 摘要原文即 `git stash create -m "baseline-<时间戳>"`），SDD 系照抄，**非其之过**。
+> ⇒ 登记为「**铁律 03 命令模板待勘误**」，供总调度决定是否修订 AGENTS.md。
+> ⇒ 同时印证本轮判据：`git stash -h` 只让我**推断「可能报错」**，**实测才发现「不报错但 message 脏」**——**推断与实测都可能错一半，必须跑**。
+
+### 10.147 🆕 补 E-5：回退点必须验证可用（不只记 hash）
+
+> E-4 要求「建回退点 → 记 hash」，但**没要求验证它真能用于回退**。
+> 铁律 03 原文本就要求「引用 stash 前必 `git stash show --stat <hash>` 核对」，E-4 漏了这一环。
+
+| # | 要求 |
+| --- | --- |
+| **E-5** | 建完回退点后**立即验证**：`git stash show --stat <hash>` 能列出预期改动文件 ⇒ 否则视为**回退点无效**，停手重建 |
+
+> **理由**：建了但用不了的回退点，比没建更危险——它让人以为有退路。
+
+### 10.148 裁定
+
+| 项 | 裁定 |
+| --- | --- |
+| ① E-4 入件 + 开工链更新 | ✅ **验收通过** |
+| ② 交接包最终自足性 | ✅ **达标**（18 项技术规格 + 4 条纪律 + 10 步链 + 三层黄金锚） |
+| ③ `stash create -m` 勘误 | 🟡 **须在实施时改用位置参数**（我方传递之误） |
+| ④ 新增 E-5 回退点验证 | **补入** |
+| ⑤ ②审侧 | ✅ **移交完成，转候④验收** |
