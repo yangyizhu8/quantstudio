@@ -824,6 +824,25 @@ def _apply_isolation(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> None
         tree.body.insert(idx + k, st)
     tail_stmts = ast.parse(tpl._QS_ISO_TAIL).body
     tree.body.extend(tail_stmts)  # 模块尾：此时既有定义已就位
+
+    # P1-1③：收盘核对行含拒单合计（注入既有 after_trading_end；不存在则不新建，
+    # 避免改变既有落盘语义）
+    reconcile_src = (
+        "if _QS_ISO_ENABLED:\n"
+        "    try:\n"
+        "        _iso = _qs_iso_state()\n"
+        "        if _iso is not None:\n"
+        "            log.info('QS_ISO_RECONCILE epoch=%s cash_base=%.2f reserved=%.2f cash_avail=%.2f pos=%s rejects=%d'\n"
+        "                     % (_iso.get('epoch'), float(_iso.get('cash_base', 0.0) or 0.0),\n"
+        "                        float(_iso.get('reserved', 0.0) or 0.0), _qs_iso_cash_avail(),\n"
+        "                        _iso.get('pos'), int(_iso.get('rejects', 0) or 0)))\n"
+        "    except Exception:\n"
+        "        pass\n")
+    ate, created_ate = _get_or_create_function(tree, "after_trading_end", MARKER_PERSIST)
+    if not created_ate:
+        ate.body.extend(ast.parse(reconcile_src).body)
+        edits.append({"kind": "ISOLATION", "location": "after_trading_end",
+                      "detail": "追加 QS_ISO_RECONCILE 收盘核对行（虚拟现金/预扣/持仓/拒单合计）"})
     edits.append({"kind": "ISOLATION", "location": "<module>",
                   "detail": (f"注入虚拟台账隔离层（capital={iso.capital}，policy={iso.policy}"
                              f"，market_split={iso.market_split}）+ 尾部覆盖 "

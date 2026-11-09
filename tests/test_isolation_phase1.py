@@ -211,12 +211,40 @@ def test_order_blocked_stub_blocks_real_orders():
     assert any(k == "ERR" and "QS_ISO_ORDER_BLOCKED" in m for k, m in logs)
 
 
-def test_tail_patches_all_order_entrypoints():
-    """TAIL 覆盖断言：四个下单入口 orig 全部指向拒单桩（target_orig 另计）。"""
+def test_tail_patches_order_entrypoints_and_cash_budget():
+    """TAIL 接线断言（正式批）：order_orig 包装记账 / cash_budget 虚拟接管 / target_orig 阻断。"""
     from quantstudio.ptrade_deploy.templates import isolation_template as tpl
 
     tail = tpl._QS_ISO_TAIL
-    for name in ("order_orig", "value_orig", "percent_orig"):
-        assert f"_QSOrderRefState.{name} = _qs_iso_order_blocked" in tail, name
-    assert "_QSOrderRefState.target_orig = _qs_iso_target_orig_blocked" in tail
     assert "_qs_pos_amount_legacy = _qs_pos_amount" in tail
+    assert "def _qs_cash_budget(security):" in tail
+    assert "_QSOrderRefState.order_orig = _qs_iso_order_orig" in tail
+    assert "_QSOrderRefState.target_orig = _qs_iso_target_orig_blocked" in tail
+    assert "_qs_iso_announce()" in tail, "认货行须在启动期打印"
+
+
+def test_record_fill_updates_pos_and_reserved():
+    """乐观记账：受理成交 ⇒ pos 累加 + reserved 扣减；卖出为负向回补。"""
+    ns, g, logs, _q = _sandbox(capital=100000.0, quotes={"512890.SS": 10.0})
+    iso = ns["_qs_iso_state"]()
+    iso["cash_base"] = 100000.0
+    iso["reserved"] = 0.0
+    ns["_qs_iso_record_fill"]("512890.SS", 1000)
+    assert ns["_qs_iso_pos_amount"]("512890.SS") == pytest.approx(1000.0)
+    assert iso["reserved"] == pytest.approx(10000.0)
+    assert ns["_qs_iso_cash_avail"]() == pytest.approx(90000.0)
+    ns["_qs_iso_record_fill"]("512890.SS", -400)
+    assert ns["_qs_iso_pos_amount"]("512890.SS") == pytest.approx(600.0)
+    assert iso["reserved"] == pytest.approx(6000.0)
+    assert any(k == "INFO" and "QS_ISO_FILL" in m for k, m in logs)
+
+
+def test_record_fill_skips_when_price_unavailable():
+    """取不到估值价 ⇒ **不记账**（fail-closed：不虚增额度）。"""
+    ns, g, logs, _q = _sandbox(capital=100000.0, quotes={})
+    iso = ns["_qs_iso_state"]()
+    iso["cash_base"] = 100000.0
+    ns["_qs_iso_record_fill"]("512890.SS", 1000)
+    assert ns["_qs_iso_pos_amount"]("512890.SS") == pytest.approx(0.0)
+    assert iso.get("reserved", 0.0) == pytest.approx(0.0)
+    assert any(k == "WARN" and "QS_ISO_FILL_NO_PX" in m for k, m in logs)

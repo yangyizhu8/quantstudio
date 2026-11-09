@@ -177,6 +177,70 @@ def _qs_iso_order_blocked(security, amount=None, *args, **kwargs):
     return None
 
 
+def _qs_iso_announce():
+    """认货行（启动期打印）——修补「启动日志无法判别是否隔离版」的认货缺口。"""
+    try:
+        log.info(_QS_ISO_BANNER)
+    except Exception:
+        pass
+
+
+def _qs_iso_record_fill(security, amount, price=None):
+    """乐观记账：委托受理 ⇒ ``pos`` 累加 + ``reserved`` 扣减（卖出为负向回补）。
+
+    口径：股数按 ``amount``（正买负卖）；金额按昨收 `_qs_last_close_lookup` 估值
+    （与 §11.3 隔夜市值同口径）；**取不到价格则不记账**（fail-closed：不虚增额度）。
+    """
+    try:
+        iso = _qs_iso_state()
+        if iso is None:
+            return
+        code = str(security)
+        try:
+            amt = float(amount or 0)
+        except Exception:
+            return
+        if amt == 0:
+            return
+        px = 0.0
+        if price:
+            try:
+                px = float(price)
+            except Exception:
+                px = 0.0
+        if px <= 0:
+            try:
+                px = float(_qs_last_close_lookup(code) or 0.0)
+            except Exception:
+                px = 0.0
+        if px <= 0:
+            try:
+                log.warning('QS_ISO_FILL_NO_PX code=%s（取不到估值价 ⇒ 不记账）' % code)
+            except Exception:
+                pass
+            return
+        pos = iso.get('pos')
+        if not isinstance(pos, dict):
+            pos = {}
+            iso['pos'] = pos
+        try:
+            pos[code] = float(pos.get(code, 0.0) or 0.0) + amt
+        except Exception:
+            pass
+        try:
+            iso['reserved'] = max(0.0, float(iso.get('reserved', 0.0) or 0.0) + amt * px)
+        except Exception:
+            pass
+        try:
+            log.info('QS_ISO_FILL code=%s amount=%.0f px=%.4f cash_base=%.2f reserved=%.2f pos=%.0f'
+                     % (code, amt, px, float(iso.get('cash_base', 0.0) or 0.0),
+                        float(iso.get('reserved', 0.0) or 0.0), float(pos.get(code, 0.0) or 0.0)))
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
 def _qs_iso_target_orig_blocked(security, value, *args, **kwargs):
     """P0-2：isolation 启用时 target_orig 兜底全禁（strict 拒单 / soft 告警放行）。"""
     try:
@@ -213,11 +277,23 @@ if _QS_ISO_ENABLED:
         return _qs_iso_pos_amount(security)
 
     _QSOrderRefState.target_orig = _qs_iso_target_orig_blocked
-    # 止血（2026-11-09）：虚拟额度记账未接线前禁止真实下单
-    _QSOrderRefState.order_orig = _qs_iso_order_blocked
-    _QSOrderRefState.value_orig = _qs_iso_order_blocked
-    _QSOrderRefState.percent_orig = _qs_iso_order_blocked
-    if _QSOrderRefState.target_percent_orig is not None:
-        _QSOrderRefState.target_percent_orig = _qs_iso_order_blocked
+    _qs_iso_announce()  # 认货行：启动即打印（修补认货缺口）
+    # 正式批（2026-11-09）：现金预算接管 + 乐观记账（原单入口恢复，隔离在金额侧生效）
+    _qs_cash_budget_legacy = _qs_cash_budget
+
+    def _qs_cash_budget(security):
+        """虚拟额度现金接管：真实全账户可用现金**不参与**（否则额度形同虚设）。"""
+        return _qs_iso_cash_avail()
+
+    _order_orig_legacy = _QSOrderRefState.order_orig
+
+    def _qs_iso_order_orig(security, amount, *args, **kwargs):
+        """乐观记账：原生委托**受理成功**才记账（拒单/废单不记账 ⇒ 等价「拒单回滚预扣」）。"""
+        _oid = _order_orig_legacy(security, amount, *args, **kwargs)
+        if _oid is not None:
+            _qs_iso_record_fill(security, amount)
+        return _oid
+
+    _QSOrderRefState.order_orig = _qs_iso_order_orig
 # PTRADE-DEPLOY:ISO END
 '''

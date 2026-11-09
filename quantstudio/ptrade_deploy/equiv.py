@@ -266,15 +266,24 @@ def _strip_iso_nodes(tree: ast.Module, anomalies: List[str]) -> int:
         and isinstance(n.targets[0], ast.Name) and n.targets[0].id == _ISO_FLAG_NAME
         for n in tree.body)
     hit_names: List[str] = []
-    kept: List[ast.stmt] = []
-    for node in tree.body:
-        if _is_iso_node(node):
-            if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
-                hit_names.append(node.targets[0].id)
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                hit_names.append(node.name)
-            continue
-        kept.append(node)
+
+    def _clean(body: List[ast.stmt]) -> List[ast.stmt]:
+        kept: List[ast.stmt] = []
+        for node in body:
+            if _is_iso_node(node):
+                if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+                    hit_names.append(node.targets[0].id)
+                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    hit_names.append(node.name)
+                continue
+            # 递归进函数体：ISO 注入可能落在既有函数内（如 after_trading_end 的
+            # QS_ISO_RECONCILE 核对行）⇒ 只扫模块级会漏判（2026-11-09 实测）
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                node.body = _clean(node.body)
+            kept.append(node)
+        return kept
+
+    kept = _clean(tree.body)
     if hit_names and not has_flag:
         anomalies.append(
             "ISO 命名空间被源策略占用（检出 " + ", ".join(sorted(set(hit_names))[:6])
