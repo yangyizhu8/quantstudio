@@ -59,27 +59,39 @@
 
 ---
 
-## 五、策略集重对（R354 ⑦ 指出错位·预定位结果·**只读·未改任何文件**）
+---
 
-> R354 指出：我上轮清点的五个**代表产物**（F-Score选股RSRS择时／全球资产轮动／四象限ETF轮动策略 ×2／小市值策略ptrade）**≠ ⑦ 指名的五策略**（沪深300慢KD／etf_hot_theme_rotation／vol_regime_mom_rev／CANSLIM／tech_etf_mvo_rotation）。
-> 本节按 **⑦ 指名的五策略**重做**路径预定位**（按策略名/文件名实读定位，**未改任何产物**）；**sha 指认待总调度补齐后二次复核并更新本件**。
-> ⚠️ 我域纪律：**委派 2 文件（`scripts/export_eps_snapshot.py`／`tests/test_qmt_eps_snapshot.py`）在 O5 余四步安排下达前**禁改**——本节未触碰该 2 文件。
+## 五、策略集重对（**R354 ⑦ 纠正·域判定已推翻重做**·实读·未改任何产物）
 
-| ⑦ 指名策略 | 仓内命中 .py | 部署域产物（`Demo_account_Real_account/`） | ptrade 域产物 | 其他（框架/转换产物/本地策略） |
-|---|---|---|---|---|
-| **沪深300慢KD** | 6 | （部署域未命中） | output/ptrade_export/沪深300慢KD超卖均值修复策略/沪深300慢KD超卖均值修复策略_ptrade.py | build/lib/quantstudio/backtest/strategies/沪深300均值回归超跌反弹.py、build/lib/quantstudio/backtest/strategies/沪深300慢KD超卖均值修复策略.py、qlib/tests/沪深300成分股机器学习.py |
-| **etf_hot_theme_rotation** | 5 | （部署域未命中） | output/ptrade_export/etf_hot_theme_rotation/strategy/strategy_ptrade.py、output/spec_packages/etf_hot_theme_rotation/etf_hot_theme_rotation__0_3_2-mvp/etf_hot_theme_rotation_ptrade.py | output/spec_packages/etf_hot_theme_qmt/qmt/etf_hot_theme_rotation_qmt.py、output/spec_packages/etf_hot_theme_rotation/etf_hot_theme_rotation__0_3_2-mvp/etf_hot_theme_rotation_quantstudio.py、output/spec_packages/etf_hot_theme_rotation/etf_hot_theme_rotation__0_3_2-mvp/__init__.py |
-| **vol_regime_mom_rev** | 10 | （部署域未命中） | output/ptrade_export/vol_regime_mom_rev/vol_regime_mom_rev_ptrade.py、output/_bytecheck_main/vol_regime_mom_rev/vol_regime_mom_rev_ptrade.py | build/lib/quantstudio/backtest/strategies/vol_regime_mom_rev_quantstudio.py、output/backups/m5.1a-20261010/products-pre-rerun/qmt_import__vol_regime_mom_rev_qmt.py、output/qmt_export/vol_regime_mom_rev/qmt/vol_regime_mom_rev_qmt.py |
-| **CANSLIM** | 62 | （部署域未命中） | output/ptrade_export/CANSLIM突破成长选股策略/CANSLIM突破成长选股策略_ptrade.py、output/_bytecheck_main/CANSLIM突破成长选股策略/CANSLIM突破成长选股策略_ptrade.py | build/lib/quantstudio/backtest/strategies/CANSLIM突破成长选股策略.py、output/backups/m5.1a-20261010/products-pre-rerun/qmt_import__CANSLIM突破成长选股策略_qmt.py、output/deploy/hv_canslim_v6/hv_canslim_v6_trade.py |
-| **tech_etf_mvo_rotation** | 13 | （部署域未命中） | output/ptrade_export/tech_etf_mvo_rotation/tech_etf_mvo_rotation_ptrade.py、output/_bytecheck_main/tech_etf_mvo_rotation/tech_etf_mvo_rotation_ptrade.py、ptrade/tech_etf_mvo_rotation_ptrade.py | build/lib/quantstudio/backtest/strategies/tech_etf_mvo_rotation_quantstudio.py、output/backups/m5.1a-20261010/products-pre-rerun/qmt_import__tech_etf_mvo_rotation_qmt.py、output/deploy/hv_tech_etf_mvo_v6/hv_tech_etf_mvo_v6_trade.py |
+> **R354 ⑦ 指出**：我上轮清点的五个**代表产物**（F-Score选股RSRS择时／全球资产轮动／四象限ETF轮动策略 ×2／小市值策略ptrade）**≠ ⑦ 指名的五策略**。
+> **本轮实读结论（含我方前轮域判定错误纠正）**：
+> 1. **域判定纠正**：`output/qmt_import/`（QMT 产物）**不含** `_qs_cash_budget`（18 产物命中全 0，QMT 无下单预算段）；**真正的 OLD 产物域＝转换产物域 `output/ptrade_export/` ＋ `output/deploy/`**（PTrade 侧产物）⇒ 我上轮扫的 `Demo_account_Real_account/` 是**另一套（已含修复的）部署账户产物**，其 4/5 含符号、1 个缺（小市值 286d0d）——**该结论仍成立但与⑦ 风险面不是同一批**；
+> 2. **五 sha 全部定位到**（sha16 前 8 位全仓实算，非文档转述）⇒ **五策略现行产物全部 `budget=0`（缺 `_qs_cash_budget`）⇒ 确为 OLD 候选，转述成立**；
+> 3. `_archive/` 命中项一律**排除**（归档历史·禁改）。
 
-### 读数要点（供⑦ 指认时对齐口径）
+| ⑦ sha 前8 | 策略 | 现行产物路径 | sha16 | 体积 | `_qs_cash_budget` | QFQ 快照 | 判定 |
+|---|---|---|---|---|---|---|---|
+| `f37fe8d6` | 沪深300慢KD | `output/ptrade_export/沪深300慢KD超卖均值修复策略/沪深300慢KD超卖均值修复策略_ptrade.py` | f37fe8d66cddd4da | 83111 | 0 | 0 | ****OLD 候选（缺预算修复）**** |
+| `531dab84` | etf_hot_theme_rotation | `output/ptrade_export/etf_hot_theme_rotation/strategy/strategy_ptrade.py` | 531dab841a0d9bc6 | 92630 | 0 | 0 | ****OLD 候选（缺预算修复）**** |
+| `6b1516fd` | vol_regime_mom_rev | `output/ptrade_export/vol_regime_mom_rev/vol_regime_mom_rev_ptrade.py` | 6b1516fd7ddf3ae6 | 92769 | 0 | 0 | ****OLD 候选（缺预算修复）**** |
+| `6b1516fd` | vol_regime_mom_rev | `output/_bytecheck_main/vol_regime_mom_rev/vol_regime_mom_rev_ptrade.py` | 6b1516fd7ddf3ae6 | 92769 | 0 | 0 | ****OLD 候选（缺预算修复）**** |
+| `949679f2` | CANSLIM(待核) | `output/ptrade_export/CANSLIM突破成长选股策略/CANSLIM突破成长选股策略_ptrade.py` | 949679f2370890e4 | 157604 | 0 | 0 | ****OLD 候选（缺预算修复）**** |
+| `949679f2` | CANSLIM(待核) | `output/_bytecheck_main/CANSLIM突破成长选股策略/CANSLIM突破成长选股策略_ptrade.py` | 949679f2370890e4 | 157604 | 0 | 0 | ****OLD 候选（缺预算修复）**** |
+| `a884eac2` | tech_etf_mvo_rotation(待核) | `output/ptrade_export/tech_etf_mvo_rotation/tech_etf_mvo_rotation_ptrade.py` | a884eac2c6909d90 | 67390 | 0 | 0 | ****OLD 候选（缺预算修复）**** |
+| `a884eac2` | tech_etf_mvo_rotation(待核) | `output/_bytecheck_main/tech_etf_mvo_rotation/tech_etf_mvo_rotation_ptrade.py` | a884eac2c6909d90 | 67390 | 0 | 0 | ****OLD 候选（缺预算修复）**** |
 
-1. **域判定**：`_qs_cash_budget` 只存在于 **PTrade 侧产物**（部署域／ptrade 域）——QMT 侧 `output/qmt_import/` 18 个产物命中数全 0（QMT 无下单预算段）⇒ **清点域＝PTrade 产物域**；
-2. **符号语义**：含 `_qs_cash_budget`＝已含预算口径修复（PD-0019 期1 · R-20261109-01）；缺＝OLD 候选 ⇒ **超用 `portfolio.cash` 总现金而非可用资金**；
-3. **已确认 OLD 候选（维持）**：`Demo_account_Real_account/小市值策略ptrade/ptrade_286d0d_trade.py`（budget=0）；
-4. **待⑦ 补指认**：五策略各自的**部署产物路径 + sha16**（本表已给出候选路径与各自 sha16，核对后即可判定含/缺）；
-5. **重转排期不变**：仍并入 **v1.8 六产物重转同批**（零额外窗口＋一次矩阵追认）；`_archive/` 禁改；部署域落地须经六步⑤用户确认。
+### 排期（不变·并入 v1.8 同批）
+
+- **重转动作**：五策略现行产物**重转**（PTrade 转换产物域）⇒ 产出入 `_qs_cash_budget`（PD-0019 期1 预算口径修复）⇒ 消除超额委托风险面；
+- **并批**：与舱二 **v1.8 六产物重转**同批（**QMT 侧**）——⚠️ **注意两域产物由不同管线生成**（QMT＝`quantstudio/strategy_compiler/source_import_qmt.py`；PTrade＝`source_import.py`／ptrade 转换器）⇒ **同批成笔、分别追认矩阵**（`qmt_wrapper_hash` 与 `wrapper_hash` 分立·禁串）；
+- **禁改**：`_archive/` 一律不动；
+- **落地闸**：PTrade 部署产物属交付物 ⇒ 替换前须经**六步⑤用户确认**；
+- **待⑦ 确认**：五 sha 与策略的对应（上表已给出，核对后如有不符以⑦ 为准）。
+
+---
+
+知识反哺：[命中] QD-2026-0023（qd 族／D3 域／`knowledge/qmt/QD-2026-0023.md`，2026-11-10）
+本轮沉淀：QD-2026-0023（EPS 层前置结论·PIT 映射·两侧不同源机制）
 
 ---
 
