@@ -618,3 +618,24 @@
 | ISS-R66-Q | **`check_remote_advance.py --pool` 前缀长度语义与文档不符**：文档写「逗号分隔 SHA 前缀，**7-40 位**」，但实现按 `row_short_sha.startswith(prefix)` 比对，而 `rows` 取的是 **7 位缩写 SHA** ⇒ 传 **8 位或 40 位**前缀时**必然全部判池外并 exit 4**（实测：25 笔全量池传 40 位 → `池外笔 25 个`；传 8 位单笔池 → 同样 25 个） | `scripts/check_remote_advance.py:92-104`（前缀判定）＋ `:141`（`--pool` help 文本「7-40 位」）；实测于 2026-11-04 11-04 呈批日清点步骤⑤ | P3（工具可用性·有绕行） | **已定谳（2026-11-04 总调度照准）·待下轮门禁维护笔实施** | R66 闭包域 · 门禁维护笔 | **定谳＝改实现为双向匹配**（`scripts/check_remote_advance.py:100`：`sha.startswith(p)` → `sha.startswith(p) or p.startswith(sha)`，一行根治；**不改 help 文案**）。**实施边界**：`scripts/` 属共享层，**不在本出仓批内改门禁代码**，随下轮门禁维护笔落地。**绕行（生效期）**：出仓执行一律传 **7 位**前缀（`git rev-list --abbrev-commit --abbrev=7`） | 实测：7 位前缀 25 笔 → `verdict=pool-ok exit=0`、池外 0；40 位 → `pool-extra exit=4`、池外 25；8 位单笔池 → 同样池外 25。**判型：纯恢复型**（恢复 help 文本已承诺的「7-40 位」语义，仅消除误报，不放宽池外判定） | **待实施**（下轮门禁维护笔） |
 
 > **裁定注记（2026-11-03 ⑩ 晚间三裁 · 运维2 R85 三建议）**：①本台账判域更正 `D3→D1`（建议①，判据＝`knowledge/qmt/README.md` §2.1 规则第 2 条「D3 限**产物内**注入 API」＋同文件先例 `QD-2026-0010`）；②`PROJECT_STATE` 件7 入库指针已补登（建议②）；③**2 项既有基线红**（`test_next_open_limit_and_halt` / `test_minute_limit_halt`）按裁**转 dev 线登记**，本线不再持有，仅保留 F3 四臂对照归因证据。以上三项随本簿记笔（`chore(ledger)`）落地。
+
+## R86 dev 线基线红登记（拒单闸同形两例 · 2026-11-04 主仓 dev 会话）
+
+| 编号 | 问题描述 | 定位证据 | 严重级 | 状态 | 归属迭代 | 修复方案 | 验证证据 | 关闭时间 |
+|---|---|---|---|---|---|---|---|---|
+| ISS-R86-A | **拒单闸在测试构造下未触发（同形两例）**：`test_next_open_limit_and_halt.py:178`（`test_drain_rejects_buy_when_t1_gap_exceeds_cash_no_partial`）与 `test_minute_limit_halt.py:40`（`test_minute_limit_up_buy_rejected`）**同为 `AssertionError: assert 'filled' == 'rejected'`**——期望拒单却成交；实测 2 failed / 7 passed | tests/test_next_open_limit_and_halt.py:178；tests/test_minute_limit_halt.py:40；`python -m pytest tests/test_next_open_limit_and_halt.py tests/test_minute_limit_halt.py -q` ⇒ 2 failed, 7 passed | 低（P3 存量债·不阻塞） | **登记（本轮不深挖）** | dev 线（节点⑤）· 11-04 | **归因方向（已给，待深挖时核）**：两红同形＝**拒单闸未在测试构造下触发**；与 2026-11-02 步2 定谳方向相反（步2 审计实测：`status=rejected, reason=limit_up_blocked, filled=0`，证明**引擎在该场景确实会拒单**）⇒ 疑**测试侧口径**（match_price_mode 未设 close／测试数据不构成涨停价）。**与 quality-audit-oom-20261031 既有红同族性未比**（未读该件，不预判） | ①四臂对照证**早于** QS_ORDER_RESULT 插桩批与他线插桩（11-02 用户转述）②步2 审计定谳（output/order_audit_20261102/REPORT.md §二） | —（登记项） |
+| ISS-R86-A3 | **源码文本断言与实现不符（同族第三例）**：`test_writer_channel_contract.py::test_b1_chunked_variant_is_same_channel_not_third` 断言 `write_passthrough_chunked` 函数体含 `"RENAME TO"` 子串，实测函数体不含（文件级仍 2 处 RENAME TO，在其他函数） | tests/test_writer_channel_contract.py:103；`python -m pytest tests/test_writer_channel_contract.py -q` ⇒ 1 failed | 低（P3 存量债·不阻塞） | **登记（非 S1 A′ 引起）** | dev 线（节点⑤）· 11-05 | **归因方向（已核）**：S1 A′ 实施 9 hunk 全在 writers.py 612-1708，`write_passthrough_chunked` 在 :2410 **零触及**；HEAD 版与工作区版 `RENAME TO` 命中均 2（不变）⇒ 该红在实施前即存在，疑实现改用 `ALTER TABLE … RENAME` 形态或多语句换名 | ①git diff hunk 范围 612-1708 ②函数行号 2410 ③RENAME TO 计数不变（均 2026-11-05 实测） | —（登记项） |
+
+> **登记口径（2026-11-04 用户裁）**：两基线红**登记即可、本轮不深挖**（P3 存量债）；不擅自修。**四条对照前提**（①先读实现再动码 ②测试红须做基线对照 ③改判据须②审 ④反例对照）适用于后续深挖。
+
+
+### [QD-2026-0023-E1] 舱二 EPS 层：QMT 面板 EPS 与本地库不同源（两侧数据时点错位）｜登记于 2026-11-09
+
+- **问题描述**：QMT 侧 `s_fa_eps_basic`（PERSHAREINDEX 面板）由平台实时供数，**比本地采集库新一个季度**：实证 002568 本地最新报告期＝2026-03-31（ann=2026-04-29，eps=0.21）**无 2026-06-30 期**，而 QMT 面板 `m_timetag→2026-06-29`／`m_anntime→2026-08-04`／**s_fa_eps_basic=0.46** ⇒ 0.46 ∉ 本地该股任一报告期值 ⇒ 两侧 EPS 不同源 ⇒ 选股因子偏离（历史「EPS 修复不收敛」之未定位层级）。
+- **定位证据（文件:行号）**：产物 `output/qmt_import/CANSLIM突破成长选股策略.py` L7254（`'eps': ('PERSHAREINDEX', {'eps': 's_fa_eps_basic', 'publ_date': 'm_anntime'})`）、L7321（`C.get_financial_data(native_fields, codes, '19900101', …)`）、L8051（`_compute_eps_factors`）；本地库 `fin_indicator`/`income_statement`（隔离副本库只读查询）；真机 HISTDBG3（002568 面板值）。
+- **严重等级**：P1（阻断选股保真；价格层已闭合后残余差异的主因候选）
+- **当前状态**：方案已定（C1 甲案·嵌入式 EPS 面板同源对齐），**实施待启动**（zcode 委派任务包已出：`docs/handoff/dispatch/eps-impl-zcode-taskpkg-20261109.md`）
+- **归属迭代**：舱二 EPS 层实施批（R352/C1）
+- **修复方案**：仿甲案（QFQ 嵌入式快照）范式——导出 `_QS_QMT_EPS_SNAP_DATA`（code→((end_d8, ann_d8, eps),…)）嵌入产物；QMT 侧按 `ann_date ≤ D-1` 取值覆盖面板值；面板值保留为对照并 fail-loud 打印 `QS_QMT_EPS_MISMATCH`；策略源码零改动。
+- **验证证据**：`docs/qmt-eps-align-design-20261108.md`（§十一 实施规格 v1·§十二 R1 留痕）＋ `docs/evidence/qmt-eps-r3-verification-20261108.md`（update_flag 语义/分叉行统计）＋ Context7 `/websites/dict_thinktrader_net`（面板字段与 PIT 语义，带文档出处）
+- **关闭时间**：待实施批验收（未关闭）
