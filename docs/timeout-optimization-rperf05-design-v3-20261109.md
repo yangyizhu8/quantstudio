@@ -20,7 +20,7 @@ sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amou
 
 ### 1.2 两个候选落点的实测规模对照（解释为什么只有分钟表会超时）
 
-| 落点 | 源码位置（**行号基于 commit d3e52f6 实读；他线提交会整体位移 ⇒ 新会话须自实读（E-1）**） | 每码历史行数 | 103 码需排序行数 | 实测耗时量级 |
+| 落点 | 源码位置（**行号基于 74b4181（2026-11-06 C1b 提交，provider 文件最后一次改动）实读；该 commit 下文件 2706 行；此后他线提交可能整体位移 ⇒ 新会话须自实读（E-1）**） | 每码历史行数 | 103 码需排序行数 | 实测耗时量级 |
 |---|---|---|---|---|
 | 日线窗口 SQL | `duckdb_data_access.py::_query_bars_window_sql`（SQL 无 freq 列） | ~1,300（交易日数） | ~13 万 | **~150ms**（本轮实测） |
 | **分钟 count 批量** | `duckdb_data_access.py::query_minute_bars_by_count_batch`（**def L1346**；SQL **L1397-L1398**：`WHERE freq = ? AND time <= ? AND code IN (...)` + `QUALIFY ROW_NUMBER() ... <= count`） | ~31 万（1,300 × 240 根/日） | **~3,200 万** | **30s+ 超时** ✓ |
@@ -119,11 +119,24 @@ count=1 的典型场景（竞价 bar）：103 码 × 2 天 × 240 根 ≈ **4.9 
 
 | 项 | v2（已回退） | v3（本件） |
 |---|---|---|
-| 落点 | `_query_bars_window_sql`（**日线** stock/etf/index_daily） | `query_minute_bars_by_count_batch`（**分钟** stock/etf_minutes；def L1346 / SQL L1397-L1398，基线 commit d3e52f6） |
+| 落点 | `_query_bars_window_sql`（**日线** stock/etf/index_daily） | `query_minute_bars_by_count_batch`（**分钟** stock/etf_minutes；def L1346 / SQL L1397-L1398，**行号基准 commit 74b4181**，该 commit 下文件 2706 行） |
 | 下界口径 | 430 自然日固定 | max(2, ceil(count/per_day)+1) 天，per_day=240/freq分钟 |
 | 实测净收益 | **0.79~0.84x（负）** ⇒ 回退 | 待测（预期扫描量降 ~65 倍） |
 | 慢路径兜底 | 集合差 + 行数<count | 同左 + **V-1/V-2/V-3 三条硬条件**（逐码独立回退） |
 | 其余（判型/未验证范围/黄金/纪律/口径） | — | **全部沿用** |
+
+## 四之二、🔴 引用勘误记录（R-PERF-34 §三/§四，本方自查更正）
+
+| 项 | 我方上一轮申报 | 事实（复核后） | 定性 |
+|---|---|---|---|
+| 行号基准 commit | 「d3e52f6 实读」 | 该短 sha **对象存在**（`git cat-file -t d3e52f6` → commit），但它是**当时的 HEAD**，**不是** provider 文件的基线版本 ⇒ **引用不精确**（应锚 provider 文件最后改动 commit = `74b4181`，2026-11-06 14:46 C1b） | 引用不精确（对象非虚构，但语义错） |
+| 文件行数 | 「2748 → 2212」 | 真实 **2706**（python 读 LF 计数）；我方 2212 来自 PowerShell `Measure-Object -Line`，**对本文件计数失真** ⇒ 复核后更正 | **我方计数错误**（PS 工具坑） |
+| 行号差 42 的成因 | 未说明 | 2706 = 2748 − 42，42 恰为本线两段式改动净增行数（74 insertions − 32 deletions）⇒ 与旧行号 L1388 → 现 L1346 完全吻合 | 审核方复原正确 ✓ |
+
+⇒ 教训两条（候选入知识库）：
+1. **引用行号必须锚「文件最后改动 commit + 该 commit 下文件行数」，且该 commit 须 `git cat-file -t` 验证存在**；
+   他线提交会整体位移 ⇒ 新会话自实读（E-1）。
+2. **文件行数禁用 PowerShell `Measure-Object -Line`**（本文件 2212 vs 真实 2706）⇒ 用 python 读 LF 计数。
 
 ## 五、🔴 读数适用范围声明（R-PERF-33 §五）
 
