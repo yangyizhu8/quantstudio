@@ -153,6 +153,30 @@ def _qs_iso_cash_avail():
         return 0.0
 
 
+def _qs_iso_order_blocked(security, amount=None, *args, **kwargs):
+    """止血桩（PD-0019 期1 · 2026-11-09）：隔离接线未完成前，**禁止任何真实下单**。
+
+    背景（当日实测推演）：`_qs_cash_budget` 仍读 `_qs_cash_avail()` ⇒ **真实全账户可用现金**，
+    而 `_qs_pos_amount` 已改读虚拟持仓（空仓）⇒ `_delta = value`（策略按真实组合算出的目标市值）
+    ⇒ 预算按真实现金放行 ⇒ 14:50 调仓**可能下出真单**。
+    故 isolation 启用时把 `order_orig`/`value_orig`/`percent_orig`/`target_percent_orig` 全指向本桩，
+    只记日志与拒单计数，**不出真单**。虚拟额度记账接线完成后再解除。
+    """
+    try:
+        iso = _qs_iso_state()
+        if iso is not None:
+            iso['rejects'] = int(iso.get('rejects', 0)) + 1
+    except Exception:
+        pass
+    try:
+        log.error('QS_ISO_ORDER_BLOCKED code=%s amount=%s'
+                  '（隔离接线未完成 ⇒ 阻断真实下单；期 1 只验记账，不下单）'
+                  % (security, amount))
+    except Exception:
+        pass
+    return None
+
+
 def _qs_iso_target_orig_blocked(security, value, *args, **kwargs):
     """P0-2：isolation 启用时 target_orig 兜底全禁（strict 拒单 / soft 告警放行）。"""
     try:
@@ -189,5 +213,11 @@ if _QS_ISO_ENABLED:
         return _qs_iso_pos_amount(security)
 
     _QSOrderRefState.target_orig = _qs_iso_target_orig_blocked
+    # 止血（2026-11-09）：虚拟额度记账未接线前禁止真实下单
+    _QSOrderRefState.order_orig = _qs_iso_order_blocked
+    _QSOrderRefState.value_orig = _qs_iso_order_blocked
+    _QSOrderRefState.percent_orig = _qs_iso_order_blocked
+    if _QSOrderRefState.target_percent_orig is not None:
+        _QSOrderRefState.target_percent_orig = _qs_iso_order_blocked
 # PTRADE-DEPLOY:ISO END
 '''
