@@ -97,3 +97,37 @@
 
 知识反哺：[命中] QD-2026-0023（qd 族／D3 域／`knowledge/qmt/QD-2026-0023.md`，2026-11-10）
 本轮沉淀：QD-2026-0023（EPS 层前置结论·PIT 映射·两侧不同源机制）
+
+
+---
+
+## 六、R355 裁定落定（重转集冻结）
+
+**⑦ 轮3 裁定（总调度照准）**：
+1. **五 sha 交叉核对闭环**——我方全仓实算（sha16 前 8 位全扫）与 ⑦ 轮2 指认**两条独立路径的结果一致（5/5 路径一致）** ⇒ 清点表判定成立，无歧义；
+2. **矩阵分立**照准＝**铁律 10 ⑥ 既有语义**（`qmt_wrapper_hash` 与 `wrapper_hash` 分别追认、禁串）；
+3. **小市值 `ptrade_286d0d_trade.py` 同批重转**照准；
+4. **`tech_etf_mvo_rotation`（a884eac2）已证伪 ⇒ 仅登记、不重转**（证伪依据见 ⑦ 裁定件，本件不重复举证）。
+
+### PTrade 侧重转集（冻结·**5 件**）
+
+| 序 | 策略 | 现行产物 | sha16 前8 | 动作 |
+|---|---|---|---|---|
+| 1 | 沪深300慢KD | `output/ptrade_export/沪深300慢KD超卖均值修复策略/沪深300慢KD超卖均值修复策略_ptrade.py` | `f37fe8d6` | 重转 |
+| 2 | etf_hot_theme_rotation | `output/ptrade_export/etf_hot_theme_rotation/strategy/strategy_ptrade.py` | `531dab84` | 重转 |
+| 3 | vol_regime_mom_rev | `output/ptrade_export/vol_regime_mom_rev/vol_regime_mom_rev_ptrade.py` | `6b1516fd` | 重转 |
+| 4 | CANSLIM | `output/ptrade_export/CANSLIM突破成长选股策略/CANSLIM突破成长选股策略_ptrade.py` | `949679f2` | 重转 |
+| 5 | 小市值策略（部署域） | `Demo_account_Real_account/小市值策略ptrade/ptrade_286d0d_trade.py` | — | 重转 |
+| **×** | **tech_etf_mvo_rotation** | `output/ptrade_export/tech_etf_mvo_rotation/tech_etf_mvo_rotation_ptrade.py` | `a884eac2` | **不重转（已证伪·仅登记）** |
+
+### v1.8 批构成（冻结）
+
+- **QMT 侧 6 件**：`CANSLIM突破成长选股策略` / `fall_reversal` / `tech_etf_mvo` / `vol_regime_mom_rev` / `weekly_smallcap` / `周频三层`（EPS 面板嵌入换锚·`qmt_wrapper_hash` 追认）；
+- **PTrade 侧 5 件**：上表 1–5（`_qs_cash_budget` 修复·`wrapper_hash` 追认）；
+- **两域分立追认、禁串**；`_archive/` 一律禁改；PTrade 交付产物替换须经**六步⑤用户确认**；
+- ⚠️ 记：QMT 侧 `tech_etf_mvo` **仍在重转集**（QMT 六产物之一·EPS 换锚）；PTrade 侧 `tech_etf_mvo_rotation` **不重转**——**同名不同域，勿混**。
+
+---
+
+知识反哺：[命中] QD-2026-0023（qd 族／D3 域／`knowledge/qmt/QD-2026-0023.md`，2026-11-10）
+本轮沉淀：QD-2026-0023（EPS 层前置结论·PIT 映射·两侧不同源机制）
