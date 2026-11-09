@@ -437,4 +437,25 @@ exit=3
 | 本地 HEAD | — | **`6d4883a`** |
 
 ⇒ **三方逐位一致**；`hybrid`（`C:/QuantStudioHybrid`，main=`366596d`）为 **Rust 副本仓**，属铁律 20「三端框架层对齐」范畴，**非 T055 所指「双仓推送」对象**。工作区我方关键制品**干净**（无 M/??）。
+| 2026-11-10 00:22:30 | FATAL 命中 0（扫 60 日志）｜ WAL 1.13 MB ｜ 版本门 PASS 1.5.6 ｜ daemon 无 ｜ 采集轮质量审计失败 36 ｜ 判据 daemon_absence_excused=✗ daemon_alive=✗ fatal_zero=✓ gate_pass_1_5_6=✓ no_declaration_mismatch=✗ no_qa_failure=✗ once_running=✗ wal_under_256mb=✓ ｜ **FAIL** |
+
+### §7.20 跨日首读（2026-11-10 00:22:30）—— 新判据捕获「声明与实态不符」＋ 假告警排除 ＋ 库写入来源归因
+
+**① 观测读数（00:22:30，首周第 3 天首读）**：daemon 实例 **（无）**｜库 **62.06 GB**、**mtime 2026-11-10 00:18:13**（4 分钟前有写入）｜WAL **1.13 MB**｜FATAL **0** ✓｜版本门 `PASS 1.5.6` ✓｜采集轮质量审计 **36**｜⑳声明「forever 恢复常驻（供血 + 06:00 采集轮）」⇒ `语义=inplace` ⇒ **不豁免** ⇒ **⚠ 告警：声明与实态不符（声明称在位/正常供血，但无 forever 实例）**
+
+**② 假告警排除（扩展排查 · 记忆「形态不同不代表身份相同」应用）**：
+
+| 排查面 | 结果 |
+|---|---|
+| **全 python 进程**（不限 `-m quantstudio.pipeline.daemon` 形态） | 仅 `monitor.py` / `openviking-server` ×2 / `powercontext` ×2 / `main.py harness` / `main.py loop` / `serenity_daily_scan.py` / **`backfill_qfq_gaps_v2.py`**（11-10 00:08:03 起）/ `qs_r353c.py` 临时脚本 ⇒ **无任何 daemon 进程** |
+| 计划任务 `QS_DaemonForever` | Status Ready｜**Last Run 2026/11/8 15:13:06**｜Last Result 0｜NextRun N/A ⇒ **今日未由计划任务拉起** |
+| wrapper 心跳 | 尾部停在 **2026-11-08 15:58:19**（36788 外部终止）⇒ 当前 forever 468（22:30:43 起）**非 wrapper 拉起** |
+| daemon 日志最后活动 | **2026-11-09 23:41:02**（`[DuckDBWriter] tables initialized`）⇒ **forever 468 于 23:41 后消失** |
+
+⇒ **结论：告警为真，非形态误判**——`forever` **确实不在位**（23:41 后无进程），与声明所称「forever 恢复常驻（供血）」冲突。
+
+**③ 库写入来源归因（重要判据澄清）**：库 mtime `00:18:13` 的写入**来自他线回填任务** `scripts/backfill_qfq_gaps_v2.py --asset STOCK --apply --checkpoint-every 10`（pid 30808，起于 **11-10 00:08:03**），**不是 daemon 供血**。
+⇒ **判据澄清（须写入口径）**：**「库有写入」不能作为「供血主体在位」的证据**——同工作区他线任务（回填/修复/重建）亦会写库；供血判据必须以 **`--mode forever` 进程是否存在**为准（我方 `daemon_alive` 判据设计正确，本次亦未因库写入而误判 ✓）。
+
+**④ 声明再次陈旧（供⑳/运维链参考）**：⑳ 于 22:30 更新声明为「forever 恢复常驻（供血 + 06:00 采集轮）」，但该 forever（pid 468）已于 **23:41 后消失**且**未再拉起**（计划任务未跑、wrapper 无记录）⇒ 声明需再次撤销或更新；我方**不代写不代管**，仅登记并上报。
 
