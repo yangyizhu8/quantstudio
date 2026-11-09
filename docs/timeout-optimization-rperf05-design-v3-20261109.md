@@ -20,10 +20,10 @@ sql=SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amou
 
 ### 1.2 两个候选落点的实测规模对照（解释为什么只有分钟表会超时）
 
-| 落点 | 源码位置 | 每码历史行数 | 103 码需排序行数 | 实测耗时量级 |
+| 落点 | 源码位置（**行号基于 commit d3e52f6 实读；他线提交会整体位移 ⇒ 新会话须自实读（E-1）**） | 每码历史行数 | 103 码需排序行数 | 实测耗时量级 |
 |---|---|---|---|---|
-| 日线窗口 SQL | `duckdb_data_access.py::_query_bars_window_sql`（L930；SQL L980-982） | ~1,300（交易日数） | ~13 万 | **~150ms**（本轮实测） |
-| **分钟 count 批量** | `duckdb_data_access.py::query_minute_bars_by_count_batch`（L1388；SQL **L1436-1441**） | ~31 万（1,300 × 240 根/日） | **~3,200 万** | **30s+ 超时** ✓ |
+| 日线窗口 SQL | `duckdb_data_access.py::_query_bars_window_sql`（SQL 无 freq 列） | ~1,300（交易日数） | ~13 万 | **~150ms**（本轮实测） |
+| **分钟 count 批量** | `duckdb_data_access.py::query_minute_bars_by_count_batch`（**def L1346**；SQL **L1397-L1398**：`WHERE freq = ? AND time <= ? AND code IN (...)` + `QUALIFY ROW_NUMBER() ... <= count`） | ~31 万（1,300 × 240 根/日） | **~3,200 万** | **30s+ 超时** ✓ |
 
 ⇒ E-02 的根因判定（T-2 无 time 下界 ⇒ 每码全历史分区排序）**成立**，
 但 v2 把落点定在**日线**表 ⇒ **落点错配**。分钟表才是超时的真实发生地。
@@ -72,6 +72,17 @@ ORDER BY code, time
 **慢路径兜底（EC-1 集合差，语义同 v2）**：请求码集 − 结果码集（窗口内 0 根的码：停牌/次新/退市/当日无 bar）
 ∪ 结果行数 < count 的码 ⇒ 这些码用**原无下界 SQL** 重查并覆盖（慢路径权威）。
 
+### 3.1.1 慢路径三条硬条件（R-PERF-33 V-1/V-2/V-3，**缺一则「正确性不依赖下界宽度」的论证即失效**）
+
+| # | 条件 | 理由 |
+|---|---|---|
+| **V-1** | 回退查询必须是**原查询**（全历史、无 time 下界），**不得**是「再宽一点的窗口」 | 窗口再宽仍可能不足 count 根 ⇒ 结果错 |
+| **V-2** | 回退**逐码独立执行**（单码一次 SQL），**不得整批回退**（既不得回退整个请求码集，也不得把多个回退码塞进一条查询） | 一个 0 根码若触发整批重查 ⇒ 性能反噬（**日线实测已是负收益 0.79~0.84x**）；逐码执行还使每个码独立占用 timeout 预算，单个慢码不拖累同批其余码 |
+| **V-3** | 集合差判据 = **请求码全集 − 结果码集**（**禁**只用 `groupby('code').size() < count`） | 窗口内 0 根的码根本不在结果集内 ⇒ size 判据**漏判全部 22~28 个**（本轮实测） |
+
+⇒ 实现口径：`short = [c for c in request_codes if c not in fast_result] + [c for c in fast_result if len(rows(c)) < count]`；
+`fast_result` 与 `slow_result` 逐码合并（慢路径权威），**回退码逐个独立查**（V-2）。
+
 ### 3.2 下界口径（分钟专属，替代 v2 的 430 自然日）
 
 每日根密度 per_day = 240 / freq 分钟数（1min⇒240 / 5min⇒48 / 30min⇒8）；
@@ -108,8 +119,41 @@ count=1 的典型场景（竞价 bar）：103 码 × 2 天 × 240 根 ≈ **4.9 
 
 | 项 | v2（已回退） | v3（本件） |
 |---|---|---|
-| 落点 | `_query_bars_window_sql`（**日线** stock/etf/index_daily） | `query_minute_bars_by_count_batch`（**分钟** stock/etf_minutes） |
+| 落点 | `_query_bars_window_sql`（**日线** stock/etf/index_daily） | `query_minute_bars_by_count_batch`（**分钟** stock/etf_minutes；def L1346 / SQL L1397-L1398，基线 commit d3e52f6） |
 | 下界口径 | 430 自然日固定 | max(2, ceil(count/per_day)+1) 天，per_day=240/freq分钟 |
 | 实测净收益 | **0.79~0.84x（负）** ⇒ 回退 | 待测（预期扫描量降 ~65 倍） |
-| 慢路径兜底 | 集合差 + 行数<count | 同左（EC-1 口径不变） |
+| 慢路径兜底 | 集合差 + 行数<count | 同左 + **V-1/V-2/V-3 三条硬条件**（逐码独立回退） |
 | 其余（判型/未验证范围/黄金/纪律/口径） | — | **全部沿用** |
+
+## 五、🔴 读数适用范围声明（R-PERF-33 §五）
+
+| 读数 | 实测值 | **适用范围** |
+|---|---|---|
+| 命中率 | 富集码集 63~70% / 生产近似 97.5% | **仅日线落点实测；分钟落点未知，严禁外推** |
+| EXPLAIN | 0.03s → 0.02s（1.5x） | **仅日线落点实测；分钟严禁外推** |
+| 净耗时 | 177/182ms vs 149/143ms ⇒ 0.84x/0.79x（慢 16~21%） | 日线已实测否决（**见 §六登记**） |
+| 扫描量估算 | 分钟 ~3,200 万行 → ~4.9 万行（~65 倍） | **量级推算，未实测，不得当结论报** |
+
+⇒ 分钟落点的**命中率 / EXPLAIN / 净收益必须重测**（实施轮产出），本件中一律不得引用日线读数作分钟结论。
+
+## 六、🔴 已实测否决登记（防将来重做）
+
+> **日线落点（v2 方案，`_query_bars_window_sql` 两段式 time 下界）已于 2026-11-09 实测否决**：
+> 生产近似码集（80 活跃码）净耗时 **0.84x / 0.79x（慢 16~21%）**——日线查询本身仅 ~150ms（13 万行），
+> 两段式的「第二次查询 + 合并」固定开销 > 扫描节省（EXPLAIN 仅 1.5x）。
+> **等价性方法论正确（6 组逐位对拍全等 ✓、0 根码反证 ✓）≠ 该改动该入库**（铁律 02/18 纯增益审计）。
+> 实验留档：`agent_workspace/_e04_dda.patch`（sha `6ea092f2f7a1eadb30b1a49f`，`git apply --check --reverse` PASS）+
+> `agent_workspace/e04_dualcheck.py`（对拍固件，日线版）。
+> **任何人若再提出「给日线窗口 SQL 加 time 下界」，须先给出净收益为正的实测，不得凭等价性通过即入库。**
+
+## 七、铁律 03 修订建议（上报总调度，R-PERF-33 §七）
+
+**缺陷**：铁律 03 的回退点配方 `git add -A -- <路径>` → `git stash create` 在**多会话脏工作树**下，
+`git stash create` 捕获的是**整树已跟踪改动**（本轮实测：目标仅 1 个文件，stash 实际含 **40 个文件**，
+其中他线未提交改动 39 个）⇒ stash 列表留有他线快照，**误 `git stash pop` 会连带恢复他线改动**。
+
+**本线处置（已实证可行）**：立即 `git stash drop`（工作树未变=无数据损失）→ 改用**定向补丁锚**：
+`git diff --output=<file>.patch HEAD -- <我方路径>` → `git apply --check --reverse <file>.patch` 验证可回退 → sha256 登记。
+
+**建议增补**：脏工作树下**禁 `git stash create` 作回退点**，改用定向 patch 锚（或 `git stash create` 后**立即 store+drop** 仅留 hash 记录，不留 stash 条目）。
+⚠ 注意 PowerShell 5.1 下 `>` 重定向写 **UTF-16** 会使 patch 不可用（git 报 "No valid patches"）⇒ 用 `git diff --output=`（git 自写 UTF-8）。
