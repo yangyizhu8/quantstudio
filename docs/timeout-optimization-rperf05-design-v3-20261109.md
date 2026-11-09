@@ -160,7 +160,6 @@ count=1 的典型场景（竞价 bar）：103 码 × 2 天 × 240 根 ≈ **4.9 
 > **任何人若再提出「给日线窗口 SQL 加 time 下界」，须先给出净收益为正的实测，不得凭等价性通过即入库。**
 
 ## 七、铁律 03 修订建议（上报总调度，R-PERF-33 §七）
-
 **缺陷**：铁律 03 的回退点配方 `git add -A -- <路径>` → `git stash create` 在**多会话脏工作树**下，
 `git stash create` 捕获的是**整树已跟踪改动**（本轮实测：目标仅 1 个文件，stash 实际含 **40 个文件**，
 其中他线未提交改动 39 个）⇒ stash 列表留有他线快照，**误 `git stash pop` 会连带恢复他线改动**。
@@ -170,3 +169,27 @@ count=1 的典型场景（竞价 bar）：103 码 × 2 天 × 240 根 ≈ **4.9 
 
 **建议增补**：脏工作树下**禁 `git stash create` 作回退点**，改用定向 patch 锚（或 `git stash create` 后**立即 store+drop** 仅留 hash 记录，不留 stash 条目）。
 ⚠ 注意 PowerShell 5.1 下 `>` 重定向写 **UTF-16** 会使 patch 不可用（git 报 "No valid patches"）⇒ 用 `git diff --output=`（git 自写 UTF-8）。
+
+## 八、E-04 开工链（v3 版，10 步，不可换序 · 新会话首读）
+
+> ⚠ **v2 的开工链指向日线函数（`_query_bars_window_sql`），v3 全部换为分钟落点**；
+> **禁**沿用 v2 的 E-1 描述，**禁**复用任何日线读数（命中率/EXPLAIN/净耗时）作分钟结论。
+
+| 步 | 动作 | 硬要求 |
+|---|---|---|
+| 1 | **E-1 实读** `query_minute_bars_by_count_batch` | 自记行号（基准 74b4181 / 2706 行，但**以自实读为准**）；须读全：表路由 `_resolve_minute_table`、分片 200 码、`_execute_with_timeout`、三分类 freq 预检、fq 行级掩码 |
+| 2 | **E-2 daemon 实测** | `Get-CimInstance Win32_Process -Filter "Name like 'python%'"` → 过滤 `quantstudio.pipeline.daemon` → **PID / 模式 / 启动时间**（禁以日期推断替代读数） |
+| 3 | **隔离 DATA_ROOT** | `data\backup_import_20261101_040935`（禁裸探测） |
+| 4 | **基线三读数（E-6 复用）** | 复用 `fullwindow_1.5.6_hot_wall_2026-01-05~2026-08-13_20261108_2030.json`（golden `77e69043…`）；**开工前复核** provider 两文件 `porcelain` 空 **且** mtime 仍 `2026-11-08 03:29:37`；不满足 ⇒ 重跑（+3.9h）并先报我方 |
+| 5 | **E-4 补丁锚** | **脏工作树：禁 `git stash create`**（捕获整树含他线改动）⇒ `git diff --output=<f>.patch HEAD -- <我方路径>`；**E-5** 立即 `git apply --check --reverse <f>.patch` 验证（不通过 ⇒ 视同无回退点、停手重建） |
+| 6 | **改码** | 快路径：SQL 加 `time >= ?`，下界天数 = `max(2, ceil(count/per_day)+1)`，per_day=240/freq分钟（未知按 30min 取 8）。慢路径：**V-1** 原查询（无下界）/ **V-2** 逐码独立执行 / **V-3** 集合差=请求码全集−结果码集（禁 size-only）。**每次 edit 后即时 `git diff` 自检** |
+| 7 | **三固件（分钟版）** | ①EC-2 逐位对拍（check_exact + check_dtype + check_index_type，**含 0 根码反证**：构造窗口内 0 根的停牌/次新/退市码，断言走慢路径且与旧实现逐位相同）②EXPLAIN 对比（修前/修后扫描行数）③命中率实测（快/慢占比）。**禁复用日线读数** |
+| 8 | **优化后跑** | 四要素命名 + 冷/热态标注 + 落盘即 sha256 登记（门禁 `scripts/check-evidence-naming.py`，compliant 不得掉） |
+| 9 | **黄金验收** | 三层锚逐位：短窗分钟 `b4b538a0` / 短窗日线 `1fed84dd` / 全窗 `77e69043` |
+| 10 | **单笔 commit** | 精确路径 add（**禁 `-A`**）→ index 三查 → `git show --name-only` 复核 |
+
+### 8.1 ⚠ 入库判据（承接日线教训，务必先测再决定）
+
+**净收益必须实测为正才可入库**（铁律 02/18 纯增益审计）：本轮日线落点**等价性全通过但净收益 0.79~0.84x（负）**
+⇒ 已回退不入库（§六）。分钟落点实施后，若净收益 ≤ 1.0x ⇒ **同样回退不入库**，并在 §六同款「已实测否决登记」留痕。
+**判定顺序：① 逐位等价（必须过）→ ② 净收益实测（必须 >1）→ ③ 才提交入库。**
