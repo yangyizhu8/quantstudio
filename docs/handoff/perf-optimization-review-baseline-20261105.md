@@ -2567,3 +2567,44 @@ git stash store [(-m | --message) <message>] [-q] <commit> ← 只有 store 有 
 | ② 🆕 **追加硬条件** | **必须同步改 `frozen_mtime` 字段注释**（见 §10.206）——否则注释与值矛盾＝又一次静默改判据 |
 | ③ commit `59d48da` | ✅ **验收通过** |
 | ④ 门1 / 门2 | ⚠ 仍未开工（⑥，11-11 内）⇒ 门护下一批 |
+# R-PERF-44 验收 · ②审 · 2026-11-11 00:15 · 甲方案三件套全到位；门禁四读数全对；守门能力经负向用例实证保留
+
+## 10.208 审核方独立回验
+
+| 项 | 实测 | 判定 |
+| --- | --- | --- |
+| commit 7eb8f86 | cat=commit，恰 2 项（M v3 / M scripts/check-evidence-naming.py） | 通过 |
+| 值 | 两处 frozen_mtime → 2026-11-10 09:02:57（门禁输出 visible）；daily_baseline_readings.json 01:50:56 未动 | 通过 |
+| why 留痕 | 两处均含「原冻结点 2026-11-08 01:57:00；2026-11-10 依裁定 R-PERF-44 基准化至最后一次已知覆写时刻 09:02:57」⇒ 裁定编号已写入 | 通过 |
+| 字段语义注释 | 已改为「frozen_mtime = 对照基准（基准化后）；原始『1.4.5 原版灭失时点』= 2026-11-08 01:57:00，见 why 留痕」⇒ 与我给定措辞逐字一致 | 通过 |
+| 门禁 --json | rc=0：files=21 compliant=11 exempt=7 known_violations=3 mutated=0 violations=0 legacy_frozen=24 → RESULT: PASS | 通过 |
+| 门禁 --strict | rc=0（改前 exit=1）→ PASS | 通过 |
+| 门禁 --self-test | rc=0 → 5/5 PASS；含 D-2-overwrite-case FAIL(expect FAIL) 与 M-1-mutated-within-freeze FAIL(expect FAIL) 两个负向用例仍正确失败 | 通过（守门能力未被放松） |
+| v3 10.3.1 | 存在、知悉项在位；影响面与可逆性两词未在位 | 确认执行方自评准确 |
+| 门1/门2 | check-staged-scope.py MISSING；naming 门禁无 sha256/fingerprint | 仍未开工（⑥，11-11 内） |
+| 推送 | ahead 14 | 第四批在途 |
+
+## 10.209 裁定
+
+| 项 | 裁定 |
+| --- | --- |
+| ① 第四批 7eb8f86 | **验收通过**——三件套齐、门禁四读数全对、守门能力经自测负向用例实证保留 |
+| ② 知悉项表述 | 够用，但建议补两行（见 10.210）——照准执行方下轮随批补 |
+| ③ 本线是否转常态巡检 | **建议转**（见 10.211） |
+
+## 10.210 知悉项补充两行（照准，执行方下轮随批补）
+
+> **影响面**：仅 baseline_readings.json / baseline_golden.json 两件的历史覆写不再计入 mutated；不改变任何今后新发生的覆写检测（自测 M-1-mutated-within-freeze 仍 FAIL 即证）；daily_baseline_readings.json 未动。
+>
+> **可逆性**：随时可再次基准化（把两处 frozen_mtime 改回 2026-11-08 01:57:00 即恢复原判读）；git show 7eb8f86^:scripts/check-evidence-naming.py 可完整回溯改前版本。
+
+## 10.211 建议转常态巡检（触发式）
+
+| 触发 | 复核内容 |
+| --- | --- |
+| 门1/门2 落地后 | 复核 check-staged-scope.py 与 naming 门禁 legacy 指纹生效，且负例仍失败 |
+| 下一次 E-04 类框架性能改动 | 沿用本线四要素 + 分母同版本同态 + 逐位对拍口径 |
+| R-8 提交层证据到手（降级分支 buy_submitted） | 关闭该长期挂账项 |
+| 常态巡检项 | 门禁 RESULT PASS + compliant 计数 + provider 漂移检查（git diff 命中 provider 即复核回退点） |
+
+> 常态巡检不代做实施，仅在触发条件命中时重新激活本线 ②审职能。
