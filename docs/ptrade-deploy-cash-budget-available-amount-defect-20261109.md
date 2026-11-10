@@ -333,3 +333,51 @@ if not orders:                                                   # 卖出 ⇒ or
 `order_value` 的卖出走 `value_orig` ⇒ **不拆单** ⇒ 卖出量不受 `_QS_MAX_ORDER_SHARES=49,000` 约束。
 可能是**有意设计**（卖出不拆以避免部分成交/多次手续费），也可能是待议特性 ⇒
 **本批不动**，仅登记，待后续评估（若确认需要，另立条目）。
+
+### 11.8 **a 项改点修正（2026-11-10 15:0x · 读码预研，D1 判据第 3 次应用）**
+
+> **结论先行**：§11.3 的 a 项「`_qs_cash_avail` 返 `None` ⇒ `_qs_cash_budget` 返 **0.0**」**不足以 fail-closed**——
+> 因为下游有**第二道 fail-open 兜底**：`_qs_split_order` 拿到 0 预算会返回**空订单列表**，
+> 而调用方 `if not orders:` 一律**回落平台原生命令**（`target_orig`／`value_orig`）⇒ **仍全额下单**。
+> ⇒ a 项的真正落点在**调用方**（`order_target_value`／`order_value`），不是 `_qs_cash_budget` 内部。
+
+**证据链（逐行）**：
+
+```python
+# _qs_split_order L910-920
+if px is None or px <= 0 or value is None or value <= 0:
+    return [], 0                       # ① value<=0 ⇒ 空（卖出，已确认安全）
+_budget = min(cash_avail, value) if cash_avail is not None else value
+if _budget < value:
+    n = _budget / px                   # ② cash_avail=0.0 ⇒ n=0
+amount = int(n / _QS_SPLIT_LOT) * _QS_SPLIT_LOT
+return ([(security, amount)], amount) if amount > 0 else ([], 0)   # ③ amount=0 ⇒ 返回空
+
+# order_target_value L1366+  /  order_value L1485-1488
+_cash = _qs_cash_budget(security)
+orders, _tot = _qs_split_order(security, value, _px_exec, cash_avail=_cash)
+if not orders:                          # ④ 命中（预算 0 ⇒ 空）
+    return _QSOrderRefState.value_orig(security, value, ...)      # ⑤ **回落平台原生 ⇒ 全额下单**
+```
+
+⇒ **两层 fail-open 串联**：①`_qs_cash_budget` 返 None ⇒ `_qs_split_order` 用 `budget=value`（无钳制）；
+②即便把 None 改为 0.0，**空 orders 依然回落 orig**。⇒ **只改 `_qs_cash_budget` 无法实现 fail-closed。**
+
+**修正后的 a 项改点（精确到行）**：
+
+| # | 位置 | 改法 |
+|---|---|---|
+| a-1 | `_qs_cash_budget`（L1158+）返回值处 | **保留返 0.0**（表达「预算为零」），但**不得作为唯一防线** |
+| **a-2（真正落点）** | `order_target_value` L1366 之后 ／ `order_value` L1485 之后 | 取到 `_cash` 后**先判**：`if _cash is None or _cash <= 0:` ⇒ 落 `QS_CASH_BUDGET_UNAVAILABLE`（或 `ZERO_BUDGET`）**ERROR**、**累计计数**、`return None`（**显式拒单，绝不回落 `*_orig`**） |
+| a-3 | 同上两函数 | 其余分支（`px<=0` 等既有回落）**保持不变**——本次只拦「预算不可得/为零」，不改其他兜底语义（纯增益边界） |
+| a-4 | 告警去重 | 沿用既有 `_QS_CASH_WARNED_STATE` 机制改为「**每决策周期一次**」（zcode 条件③），禁逐笔刷屏 |
+| a-5 | 卖出保护 | `value <= 0` 分支已在 `_qs_split_order` 首行返回 ⇒ **a-2 的判据须置于「确认是买入」之后**（或直接判 `value > 0` 才做零预算拒单），确保**不阻断卖出**（zcode 条件②） |
+
+**验收（固件）**：
+1. `_qs_cash_avail` 返 `None` ＋ 买入调用 ⇒ **不产生任何委托**（`order_orig` 未被调用）＋ 落 ERROR；
+2. `_qs_cash_avail` 返 `None` ＋ **卖出调用** ⇒ **正常走 `value_orig`／`target_orig`**（不被拦）＋ **预算日志数 = 0**；
+3. `_qs_cash_avail` 正常 ＋ 买入 ⇒ 行为与现状一致（纯增益）。
+
+**教训补充（D1 判据第 3 次应用）**：本次误判发生在「**只看自己改的那一层**」——
+`_qs_cash_budget` 确实能返 0，但**下游还有一层把空订单解释为"回退原生命令"**。
+⇒ D1 判据④应补一句：**改动点的"坏结果"须追到最终副作用（是否发出委托），而非止于自己那层的返回值**。
