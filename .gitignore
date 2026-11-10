@@ -124,3 +124,6 @@ data/daemon_occupancy.json
 # 滚动件每晚被哨兵重写（内容随距 EOL 天数变），入库会产生每日无意义 diff
 # 裁定 2026-11-09（④节点·甲案）：滚动件排除，快照另存带日期副本入库
 docs/evidence/eol-review-reminder.md
+
+# 复活能力运行态（2026-11-10 新增；与 daemon_occupancy.json 同族，逐轮改写不可入库）
+data/daemon_revival_state.json

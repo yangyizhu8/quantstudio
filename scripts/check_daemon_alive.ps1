@@ -60,7 +60,19 @@ param(
     [string]$Webhook,
     [int]$SimulateStatusPid = 0,
     [switch]$AsJson,
-    [switch]$Quiet
+    [switch]$Quiet,
+    # ── 复活能力段参数（2026-11-10 新增；方案 v1.1 ②审通过）──
+    [ValidateSet('observe', 'active', 'off')]
+    [string]$ReviveMode = 'observe',
+    [int]$ReviveThreshold = 3,
+    [int]$ReviveCooldownMinutes = 30,
+    [switch]$NoRevive,
+    # 仅测试用：强制 verdict（与 -SimulateStatusPid 同族的合成输入通道）。
+    # 用途：负向对照需在"生产有 daemon 在跑"的环境下构造 FAIL 分支，否则 H1 恒判活。
+    # 安全约束：本参数**不**使复活段进入 simulated 跳过分支；但会**强制 ReviveMode=observe**，
+    #           因此绝不可能触发真实拉起（active 被降级并留痕）。
+    [ValidateSet('', 'OK', 'WARN', 'FAIL')]
+    [string]$SimulateVerdict = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -237,6 +249,284 @@ if ($result['verdict'] -eq 'FAIL') {
     }
 }
 
+# ══════════════════════════════════════════════════════════════════════════════
+# 【复活能力段 · 2026-11-10 新增】方案 docs/daemon-guard-revival-design-20261110.md v1.1（②审通过）
+#   判型：新增能力型（铁律 18）——**既有 H1/H2/H3 判据、匹配式、StaleFactor、退出码 0/2/3/4 一字未改**；
+#         本段只在其后追加「是否拉起」的决策与执行。
+#   闸序：F1 计数（排除 normal-exit）→ F2 阈值 → F3 占用声明 → F4 冷却 → F11 旁证四探 → 拉起 → F6 自证
+#   红线：唯一拉起路径 = schtasks /Run /TN QS_DaemonForever（禁 Start-Process）；
+#         不写库、不改 daemon 代码；observe 模式只记不拉（默认）。
+# ══════════════════════════════════════════════════════════════════════════════
+# ── 合成 verdict 注入（仅测试用；2026-11-10）────────────────────────────────
+# 不改既有判级逻辑，只在其后覆盖。安全约束：强制 observe，绝不可能真实拉起。
+if ($SimulateVerdict) {
+    $result['verdict'] = $SimulateVerdict
+    $result['reason']  = "[合成输入] verdict 强制为 $SimulateVerdict（原: $($result['reason'])）"
+    $result['note']   += "合成 verdict 注入（-SimulateVerdict）"
+    if ($ReviveMode -eq 'active') {
+        $ReviveMode = 'observe'
+        $result['note'] += "安全约束：-SimulateVerdict 下 ReviveMode 由 active 降级为 observe（禁止合成输入触发真实拉起）"
+    }
+}
+
+# ★ 模拟态标志统一在这里定义（2026-11-10）——复活段在输出段之前就要用到它，
+#   原先定义在告警落盘段（更后），会导致复活决策读到 $null ⇒ 模拟态误入真实决策链。
+$isSimulated = ($SimulateStatusPid -gt 0)
+
+$reviveStatePath = Join-Path $RepoRoot 'data\daemon_revival_state.json'
+$reviveLogPath   = Join-Path $RepoRoot 'data\logs\daemon_revival.log'
+$occupancyPath   = Join-Path $RepoRoot 'data\daemon_occupancy.json'
+$exitcodePath    = Join-Path $RepoRoot 'data\logs\daemon_exitcode.log'
+$reviveTaskName  = 'QS_DaemonForever'
+
+$revive = [ordered]@{
+    mode            = $ReviveMode
+    evaluated       = $false
+    consecutive     = 0
+    gate            = ''
+    action          = 'NONE'
+    detail          = ''
+    revived_pid     = $null
+}
+
+function Write-ReviveLog([hashtable]$f) {
+    try {
+        $dir = Split-Path -Parent $reviveLogPath
+        if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        $line = "{0} verdict={1} consecutive={2} gate={3} action={4} target_pid={5} | {6}" -f `
+            $now.ToString('yyyy-MM-dd HH:mm:ss'), $result['verdict'], $f['consecutive'],
+            $f['gate'], $f['action'], $(if ($null -ne $f['target_pid']) { $f['target_pid'] } else { '-' }), $f['detail']
+        Add-Content -LiteralPath $reviveLogPath -Value $line -Encoding UTF8
+    } catch {
+        Write-Warning "revival 日志写入失败: $($_.Exception.Message)"
+    }
+}
+
+function Save-ReviveState([hashtable]$s) {
+    try {
+        $dir = Split-Path -Parent $reviveStatePath
+        if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        $json = ($s | ConvertTo-Json -Depth 6)
+        # 无 BOM + 原子写（先 .tmp 再 Move）
+        $tmp = "$reviveStatePath.tmp"
+        [System.IO.File]::WriteAllText($tmp, $json, (New-Object System.Text.UTF8Encoding($false)))
+        Move-Item -LiteralPath $tmp -Destination $reviveStatePath -Force
+    } catch {
+        Write-Warning "revival 状态写入失败: $($_.Exception.Message)"
+    }
+}
+
+$reviveEnabled = (-not $NoRevive) -and ($ReviveMode -ne 'off')
+if (-not $reviveEnabled) {
+    $revive['gate']   = 'disabled'
+    $revive['detail'] = if ($NoRevive) { '-NoRevive 显式禁用' } else { '-ReviveMode off' }
+} elseif ($isSimulated) {
+    # 合成输入绝不触发真实拉起/状态变更（与告警落盘同纪律）
+    $revive['gate']   = 'simulated'
+    $revive['detail'] = '模拟态（-SimulateStatusPid）不参与复活决策'
+} else {
+    $revive['evaluated'] = $true
+
+    # ── 读状态 ──
+    $st = [ordered]@{ consecutive = 0; last_check_at = $null; last_revive_at = $null;
+                      last_action = $null; observed_since = $now.ToString('yyyy-MM-dd HH:mm:ss') }
+    if (Test-Path $reviveStatePath) {
+        try {
+            $old = Get-Content -LiteralPath $reviveStatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($null -ne $old.consecutive)       { $st['consecutive']    = [int]$old.consecutive }
+            if ($old.last_revive_at)              { $st['last_revive_at'] = $old.last_revive_at }
+            if ($old.observed_since)              { $st['observed_since'] = $old.observed_since }
+        } catch {
+            $revive['detail'] += "状态文件解析失败(按0计): $($_.Exception.Message); "
+        }
+    }
+
+    # ── F1：连续 FAIL 计数（★ 排除 normal-exit —— 这是与"直接对 FAIL 计数"的关键差异）──
+    $lastExit = $null
+    if (Test-Path $exitcodePath) {
+        try {
+            $tail = @(Get-Content -LiteralPath $exitcodePath -Tail 3 -Encoding UTF8)
+            for ($i = $tail.Count - 1; $i -ge 0; $i--) {
+                if ($tail[$i] -match '^\d{4}-\d{2}-\d{2}.*EXIT') { $lastExit = $tail[$i]; break }
+            }
+        } catch {
+            $revive['detail'] += "exitcode.log 读取失败: $($_.Exception.Message); "
+        }
+    }
+    $isNormalExit = ($null -ne $lastExit) -and ($lastExit -match '\(normal-exit\)')
+
+    if ($result['verdict'] -eq 'FAIL' -and -not $isNormalExit) {
+        $st['consecutive'] = [int]$st['consecutive'] + 1
+    } elseif ($result['verdict'] -eq 'FAIL' -and $isNormalExit) {
+        # 正常退出后的"进程不在"不是故障 ⇒ 计数归零，且不进任何闸
+        $st['consecutive'] = 0
+        $revive['gate']    = 'skip-normal-exit'
+        $revive['detail'] += "最近一次退出为 normal-exit（$($lastExit.Trim())）⇒ 非真死，不计数不拉起"
+    } else {
+        $st['consecutive'] = 0
+    }
+    $revive['consecutive'] = [int]$st['consecutive']
+
+    if ($revive['gate'] -eq 'skip-normal-exit') {
+        # 已判定跳过
+    }
+    # ── F2：阈值闸 ──
+    elseif ($st['consecutive'] -lt $ReviveThreshold) {
+        $revive['gate']   = "skip-threshold($($st['consecutive'])/$ReviveThreshold)"
+        $revive['detail'] += "连续 FAIL 未达阈值"
+    }
+    else {
+        # ── F3：占用声明闸 ──
+        $occupied = $false
+        $occDetail = 'occupancy.json 不存在或未占用'
+        if (Test-Path $occupancyPath) {
+            try {
+                $occ = Get-Content -LiteralPath $occupancyPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($occ.occupied -eq $true) {
+                    $inWindow = $true
+                    if ($occ.window -and @($occ.window).Count -ge 2) {
+                        try {
+                            $ws = [System.DateTimeOffset]::Parse([string]@($occ.window)[0]).LocalDateTime
+                            $we = [System.DateTimeOffset]::Parse([string]@($occ.window)[1]).LocalDateTime
+                            $inWindow = ($now -ge $ws) -and ($now -le $we)
+                        } catch {
+                            $inWindow = $true   # 窗口解析失败 ⇒ fail-closed 视为占用
+                        }
+                    }
+                    if ($inWindow) {
+                        $occupied = $true
+                        $occDetail = "占用窗内（owner=$($occ.owner)；$((@($occ.window))[0]) ~ $((@($occ.window))[1])）"
+                    }
+                }
+            } catch {
+                $occDetail = "occupancy.json 解析失败（按未占用处理并告警）: $($_.Exception.Message)"
+            }
+        }
+        if ($occupied) {
+            $revive['gate']   = 'skip-occupancy'
+            $revive['detail'] += $occDetail
+        }
+        # ── F4：冷却闸 ──
+        elseif ($st['last_revive_at']) {
+            $cooling = $false
+            try {
+                $lr = [datetime]::Parse($st['last_revive_at'])
+                $mins = ($now - $lr).TotalMinutes
+                if ($mins -lt $ReviveCooldownMinutes) { $cooling = $true; $occDetail = "冷却中（上次拉起 $($st['last_revive_at'])，已 $([int]$mins)min < $ReviveCooldownMinutes min）" }
+            } catch { }
+            if ($cooling) {
+                $revive['gate']   = 'skip-cooldown'
+                $revive['detail'] += $occDetail
+            }
+        }
+
+        if ($revive['gate'] -eq '') {
+            # ── F11：旁证四探（R3b「自停未声明」专项；任一命中即不拉）──
+            $probes = @()
+            # 探① WAL 活跃：存在且近 5 分钟 mtime 有变
+            $walPath = Join-Path $RepoRoot 'data\quantstudio.db.wal'
+            if (Test-Path $walPath) {
+                try {
+                    $w1 = Get-Item -LiteralPath $walPath
+                    $ageSec = ($now - $w1.LastWriteTime).TotalSeconds
+                    if ($ageSec -le 300) { $probes += "WAL活跃(mtime ${ageSec}s前, $([math]::Round($w1.Length/1MB,2))MB)" }
+                } catch { }
+            }
+            # 探② 独占试探：能独占打开 ⇒ 无他人持库
+            $dbPath = Join-Path $RepoRoot 'data\quantstudio.db'
+            $locked = $false
+            if (Test-Path $dbPath) {
+                try {
+                    $fs = [System.IO.File]::Open($dbPath, 'Open', 'ReadWrite', 'None')
+                    $fs.Close(); $fs.Dispose()
+                } catch {
+                    $locked = $true
+                }
+                if ($locked) { $probes += "主库被独占(不可 ReadWrite/None 打开)" }
+            }
+            # 探③ 自停痕迹：daemon.log 近 30 分钟有停止请求/清理 status，而 exitcode 无 normal-exit
+            if (Test-Path $DaemonLog) {
+                try {
+                    $logAge = ($now - (Get-Item -LiteralPath $DaemonLog).LastWriteTime).TotalMinutes
+                    if ($logAge -le 30) {
+                        $tailLog = @(Get-Content -LiteralPath $DaemonLog -Tail 40 -Encoding UTF8)
+                        $hasStopTrace = @($tailLog | Where-Object { $_ -match '收到停止请求|已清理本进程 status 文件' }).Count -gt 0
+                        if ($hasStopTrace) { $probes += "daemon.log 近30min有自停痕迹但 exitcode 无 normal-exit" }
+                    }
+                } catch { }
+            }
+            # 探④ 锁文件时间：.daemon.lock 近 30 分钟活跃
+            $lockPath = Join-Path $RepoRoot 'data\.daemon.lock'
+            if (Test-Path $lockPath) {
+                try {
+                    $lockAge = ($now - (Get-Item -LiteralPath $lockPath).LastWriteTime).TotalMinutes
+                    if ($lockAge -le 30) { $probes += ".daemon.lock 近30min活跃($([int]$lockAge)min)" }
+                } catch { }
+            }
+
+            if ($probes.Count -gt 0) {
+                $revive['gate']   = 'skip-suspected_activity'
+                $revive['detail'] += ("旁证命中 " + ($probes -join ' / '))
+            }
+            else {
+                # ── 全闸通过：执行（observe 只记不拉）──
+                $revive['gate'] = 'all-pass'
+                if ($ReviveMode -ne 'active') {
+                    $revive['action'] = 'REVIVE_ARMED'
+                    $revive['detail'] += "observe 模式：本应拉起，仅记录（切 active 需 5 组负向对照全过 + 观察 ≥24h）"
+                } else {
+                    # F5 唯一路径拉起
+                    try {
+                        $null = & schtasks /Run /TN $reviveTaskName 2>&1
+                        $runRc = $LASTEXITCODE
+                        $revive['action'] = 'REVIVE_CALLED'
+                        $revive['detail'] += "schtasks /Run 返回码=$runRc"
+                        $st['last_revive_at'] = $now.ToString('yyyy-MM-dd HH:mm:ss')
+
+                        # F6 拉起后自证（≤60s，轮询 5s）
+                        $deadline = $now.AddSeconds(60)
+                        $ok = $false
+                        while ((Get-Date) -lt $deadline) {
+                            Start-Sleep -Seconds 5
+                            $p2 = @(Get-DaemonProcs)
+                            if ($p2.Count -gt 0) {
+                                $revive['revived_pid'] = $p2[0].pid
+                                $ok = $true
+                                break
+                            }
+                        }
+                        if ($ok) {
+                            $revive['action'] = 'REVIVED'
+                            $revive['detail'] += "自证成功 pid=$($revive['revived_pid'])"
+                            $st['consecutive'] = 0
+                            $result['note'] += "[REVIVED] 已自动拉起 daemon pid=$($revive['revived_pid'])（同时记入告警流）"
+                        } else {
+                            $revive['action'] = 'REVIVE_FAILED'
+                            $revive['detail'] += "60s 内未见到进程，保留计数待下轮"
+                        }
+                    } catch {
+                        $revive['action'] = 'REVIVE_DENIED'
+                        $revive['detail'] += "拉起异常: $($_.Exception.Message)"
+                    }
+                }
+            }
+        }
+    }
+
+    # ── F10 留痕：**每次评估都落一行**（含所有 SKIP 分支）
+    #   2026-11-10 负向对照暴露：原实现把本调用嵌在「四探全过」分支内 ⇒ 5 类 SKIP 决策无痕（违反 F10 留痕完整）
+    Write-ReviveLog @{ consecutive = $st['consecutive']; gate = $revive['gate'];
+                       action = $revive['action']; target_pid = $revive['revived_pid'];
+                       detail = $revive['detail'] }
+
+    # ── 状态落盘 ──
+    $st['last_check_at'] = $now.ToString('yyyy-MM-dd HH:mm:ss')
+    $st['last_action']   = $revive['action']
+    Save-ReviveState $st
+}
+
+$result['revive'] = $revive
+
 # ── 输出 ──────────────────────────────────────────────────────────────────────
 $exitCode = switch ($result['verdict']) { 'OK' { 0 } 'WARN' { 2 } 'FAIL' { 3 } default { 4 } }
 
@@ -257,7 +547,7 @@ if ($AsJson) {
 # ── 告警落盘 + 可选 webhook（仅非 OK）────────────────────────────────────────
 # ★ 模拟态（-SimulateStatusPid）**不落盘、不发 webhook** —— 合成输入不得污染真实告警历史
 #   （2026-10-26 首测教训：模拟 FAIL 曾写入真实 daemon_heartbeat_alerts.log）。
-$isSimulated = ($SimulateStatusPid -gt 0)
+#   注：$isSimulated 已在上方复活段之前统一赋值（2026-11-10 调整），此处不重复定义。
 if ($result['verdict'] -ne 'OK' -and -not $isSimulated) {
     $line = "{0} [{1}] {2} | 归因={3} | pids=[{4}] status_pid={5}" -f `
         $result['checked_at'], $result['verdict'], $result['reason'],
