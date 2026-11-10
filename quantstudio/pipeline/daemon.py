@@ -3358,7 +3358,25 @@ class ResidentCollector:
 
     # ---------------- P2：因子查询缓存（单周期）----------------
     _QFQ_FACTOR_CACHE_ENV = "QS_QFQ_INVARIANT_FACTOR_CACHE"
-    _QFQ_FACTOR_CACHE_MAX = 8
+    # 2026-11-11（节点⑳·总调度裁甲）：容量原硬编码 8，但实测一轮 13 shard × 5 表 = 65 个
+    # 不同 key（key 含 lo_ms/hi_ms 时间窗），容量 8 < 需求 65 ⇒ 写入即 evict ⇒ hit_rate 恒 0%
+    # （日志实测 hit=0 miss=65 evict=57 hit_rate=0.0% size=8）。
+    # 改为 env 可配，默认 512（足够容纳一轮全部 key）；置 8 即退回改动前行为。
+    _QFQ_FACTOR_CACHE_MAX_ENV = "QS_QFQ_FACTOR_CACHE_MAX"
+    _QFQ_FACTOR_CACHE_MAX_DEFAULT = 512
+    _QFQ_FACTOR_CACHE_MAX = 8  # 保留旧常量（回退语义/外部引用兼容），实际容量走 _qfq_factor_cache_max()
+
+    def _qfq_factor_cache_max(self) -> int:
+        """缓存容量上限：env 覆盖 > 默认 512。非法值/异常一律回落默认（fail-safe）。"""
+        import os as _os
+        raw = str(_os.environ.get(self._QFQ_FACTOR_CACHE_MAX_ENV, "")).strip()
+        if not raw:
+            return self._QFQ_FACTOR_CACHE_MAX_DEFAULT
+        try:
+            v = int(raw)
+        except (TypeError, ValueError):
+            return self._QFQ_FACTOR_CACHE_MAX_DEFAULT
+        return max(1, v)
 
     def _qfq_factor_cache_enabled(self) -> bool:
         import os as _os
@@ -3395,14 +3413,15 @@ class ResidentCollector:
         self._qfq_factor_cache_stats["miss"] += 1
         val = _direct()
         cache[key] = val
-        while len(cache) > self._QFQ_FACTOR_CACHE_MAX:
+        _cache_max = self._qfq_factor_cache_max()  # 循环外读一次，避免每次迭代读 env
+        while len(cache) > _cache_max:
             cache.popitem(last=False)
             self._qfq_factor_cache_stats["evict"] += 1
         st = self._qfq_factor_cache_stats
         _denom = st["hit"] + st["miss"]
-        logger.info("[qfq] 因子查询缓存 hit=%d miss=%d evict=%d hit_rate=%.1f%% (size=%d)",
+        logger.info("[qfq] 因子查询缓存 hit=%d miss=%d evict=%d hit_rate=%.1f%% (size=%d/%d)",
                     st["hit"], st["miss"], st["evict"],
-                    100.0 * st["hit"] / _denom if _denom else 0.0, len(cache))
+                    100.0 * st["hit"] / _denom if _denom else 0.0, len(cache), _cache_max)
         return val
 
     def _qfq_invalidate_factor_cache(self, reason: str = "") -> None:
