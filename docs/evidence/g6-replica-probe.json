@@ -1,0 +1,29 @@
+{
+  "replica": "D:\\qs_g6_replica_20261110",
+  "aux_exists": true,
+  "main_exists": true,
+  "aux_page_count": 3239583,
+  "aux_rows_qfq_factor_observation": 45122324,
+  "aux_rows_qfq_factor_revision_alert": 3705,
+  "aux_rows_qfq_obs_incremental_cursor": 0,
+  "sampled_codes": 2000,
+  "g5_wall_old_s": 39.965,
+  "g5_wall_new_s": 38.177,
+  "g5_speedup": 1.05,
+  "g5_roundtrips_old": 2000,
+  "g5_roundtrips_new": 8,
+  "g5_roundtrip_reduction": 250.0,
+  "g5_set_diff_code_count": 0,
+  "g5_set_diff_samples": [],
+  "g5_identical": true,
+  "settle_diff_scope_codes": 500,
+  "settle_nonzero_code_count": 0,
+  "settle_nonzero_ratio": 0.0,
+  "settle_max_per_code_missing": 0,
+  "settle_diff_percentiles": {
+    "p50": 0,
+    "p90": 0,
+    "p99": 0,
+    "max": 0
+  }
+}
