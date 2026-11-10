@@ -76,3 +76,44 @@
 | 日期 | 内容 |
 |---|---|
 | 2026-11-11 | 建件：两门方案＋V1–V7 读数＋三项发现（WSL bash 测试失真／111 处存量债／空 index 过度阻断已修）＋R-20261111-01 |
+
+
+## 7 乙案落地（R-20261111-01 裁＝乙，2026-11-11 追加）
+
+**裁定内容**：KNOWN_VIOLATIONS 冻结登记 + 渐进清理；与 24 件 legacy 指纹补登同批；硬期限＝命名门禁挂 pre-push 之前完成。
+
+### 7.1 三项落地
+
+| # | 动作 | 结果 |
+|---|---|---|
+| ① | **24 件 legacy 指纹补登** | 定位＝`agent_workspace/perf_eval_rperf01/legacy/`（DEFAULT_DIRS 内 legacy 子目录，非 `docs/evidence/legacy`）；逐件 sha256+mtime+why 写入 `scripts/data/legacy-fingerprints.json`（**24 件**，5,937 B）；脚本经 `_load_json_table` 加载 |
+| ② | **111 件 naming 存量冻结登记** | 外置 `scripts/data/naming-known-violations.json`（**101 唯一 basename**，19 KB）；**+ 目录级冻结** `KNOWN_VIOLATION_DIRS`（14 个批量生成目录：archify-*／p1-repair-snapshot-*／restart-*／qfq_raw_admission_*／double_run／push-authorization／backtest-timer-smoke-*）补上 **10 件同名冲突**（8 个重复 basename 跨 10 个额外路径，basename 键机制无法表达「同名不同 mtime」） |
+| ③ | **命名门挂 pre-push** | `.githooks/pre-push` 在 `pwsh` 探测段之前插入 `[evidence-naming]` 段（25 行）：`check-evidence-naming.py --strict`，**fail-closed**（无 python／缺脚本 ⇒ exit 9；rc≠0 ⇒ 中止推送），与铁律预算门同纪律 |
+
+### 7.2 验收读数（乙案后）
+
+| 范围 | 命令 | 读数 | 判定 |
+|---|---|---|---|
+| **pre-push 所挂范围**（`DEFAULT_DIRS`＝`agent_workspace/perf_eval_rperf01`） | `check-evidence-naming.py --strict` | `files=21 compliant=11 exempt=7 known=3 mutated=0 violations=0 legacy_frozen=24` → **RESULT: PASS** exit 0 | ✅ |
+| `docs/evidence` 全量 | `check-evidence-naming.py --strict docs/evidence` | `files=111 known_violations=111 mutated=0 violations=0` → **RESULT: PASS** exit 0 | ✅ |
+| 既有自测（无回退） | `--self-test` | **PASS (5/5)**（含 D-2 覆写必须 FAIL、M-1 冻结期覆写必须报） | ✅ |
+| 门2 单测（无回退） | `pytest tests/test_evidence_naming_legacy.py` | **6 passed** | ✅ |
+
+### 7.3 乙案的三条语义边界（必读，防误读为「全放行」）
+
+1. **冻结 ≠ 免检**：登记项仍逐条打印 `KNOWN_VIOLATION`（可见性保留）；**mtime 一旦与冻结值不符 ⇒ `KNOWN_VIOLATION_MUTATED` 仍报**（根目录散件守卫未削弱，既有 D-2/M-1 自测仍红即证）。
+2. **目录级冻结仅限 14 个批量生成目录**，且以**路径前缀**匹配——新增同类生成目录须显式登记，否则仍判 `name-not-conforming`（不自动蔓延）。
+3. **渐进清理路径未关闭**：升名后把条目从 JSON 移除即可（下次 strict 若报则说明登记残留），故乙案是「停止日日红」而非「放弃治理」。
+
+### 7.4 实施中的两处自纠（如实）
+
+| # | 现象 | 归因 | 处置 |
+|---|---|---|---|
+| G1 | 首轮生成 JSON 后 strict 仍报 24/111 | **只生成表未接线**：脚本仍读内嵌空表 | 加 `_DATA_DIR`/`_load_json_table` 并在 `KNOWN_VIOLATIONS` 定义后 `update`、`LEGACY_FINGERPRINTS` 改为加载 |
+| G2 | evidence strict 报 `10 frozen-record mutations` | **basename 键机制局限**：8 个重复 basename 跨 10 个额外路径，`KNOWN_VIOLATIONS` 只能记一份 mtime | 引入 `KNOWN_VIOLATION_DIRS` 目录级冻结（对批量生成物更贴切），10 件归零 |
+
+### 7.5 变更记录（追加）
+
+| 日期 | 内容 |
+|---|---|
+| 2026-11-11 | 乙案落地：24 legacy 指纹 + 101 外置登记 + 14 目录冻结 + pre-push 挂载；两范围 strict 双 PASS；G1/G2 自纠留痕 |

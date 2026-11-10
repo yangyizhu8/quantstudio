@@ -36,6 +36,21 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 DEFAULT_DIRS = [os.path.join('agent_workspace', 'perf_eval_rperf01')]
 
+# 外置登记表目录（2026-11-11 裁定乙 R-20261111-01：存量债冻结登记，避免内嵌表膨胀）
+_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+
+
+def _load_json_table(name):
+    """读 scripts/data/<name> → dict；缺失/坏档返回 {}（保持向后兼容）。"""
+    p = os.path.join(_DATA_DIR, name)
+    if not os.path.isfile(p):
+        return {}
+    try:
+        import json as _json
+        return _json.load(io.open(p, encoding='utf-8-sig')) or {}
+    except Exception:
+        return {}
+
 # E-2：mtime cutoff —— 此时间点之后被写过的文件，一律不再享受豁免
 CUTOFF_TS = time.mktime(time.strptime('2026-11-08 14:00:00', '%Y-%m-%d %H:%M:%S'))
 
@@ -74,6 +89,35 @@ KNOWN_VIOLATIONS = {
 }
 
 # 已登记但目录中不存在（M 对齐：从 KNOWN_VIOLATIONS 移出，单列以免误读为「命中」）
+# 外置冻结登记合并（乙案：KNOWN_VIOLATIONS 冻结登记 + 渐进清理）
+KNOWN_VIOLATIONS.update(_load_json_table('naming-known-violations.json'))
+
+# 目录级冻结登记（2026-11-11）：批量生成物目录——其内文件名由生成器决定、同名跨目录必然冲突
+# （KNOWN_VIOLATIONS 以 basename 为键，无法表达「同名不同 mtime 的多路径」）。
+# 命中即计入 known（不做 mtime 比对）；仍逐条打印可见，非静默隐藏。
+KNOWN_VIOLATION_DIRS = (
+    'archify-kb-p0-20261021-164500/',
+    'archify-p1-migration-20261022-0320/',
+    'archify-p2-abf-20261022-1200/',
+    'archify-qmt-fetch-chain-20261013-005255/',
+    'archify-qmt-hist-fold-20261015-0115/',
+    'archify-qmt-instr-snapshot-20261013-162500/',
+    'backtest-timer-smoke-20260827-105802/',
+    'double_run/',
+    'p1-repair-snapshot-20260929/',
+    'push-authorization/',
+    'qfq_raw_admission_fullmarket_20260730/',
+    'qfq_raw_admission_preflight_20260729/',
+    'qfq_rebase_precision_validation_20260729/',
+    'restart-20260930/',
+)
+
+
+def _in_known_violation_dirs(rel_path):
+    r = str(rel_path).replace('\\', '/')
+    return any(r.startswith(pref) for pref in KNOWN_VIOLATION_DIRS)
+
+
 KNOWN_VIOLATIONS_MISSING = {
     'daily_baseline_golden.json':
         '登记时即不存在（daily 探针只写 readings，不写 golden）；如需 golden 侧对照走 cprofile/daily_cprofile 旁证',
@@ -91,7 +135,7 @@ LEGACY_DIRNAME = 'legacy'
 # 机制与 KNOWN_VIOLATIONS 对齐：登记表 + 内容 sha256 为主判据（mtime 仅辅助/告警）。
 # 登记格式：{"<basename>": {"sha256": "<hex64>", "mtime": "YYYY-MM-DD HH:MM:SS", "why": "<理由>"}}
 # ---------------------------------------------------------------------------
-LEGACY_FINGERPRINTS = {}
+LEGACY_FINGERPRINTS = _load_json_table('legacy-fingerprints.json')
 LEGACY_MTIME_TOL_S = 60
 DEFAULT_PROBE_DIR = 'docs/probe'
 
@@ -234,6 +278,8 @@ def scan(dirs, strict=False):
                     compliant += 1
                 elif is_exempt(f, mt):
                     exempt += 1
+                elif _in_known_violation_dirs(os.path.relpath(p, d)):
+                    known += 1          # 批量生成物目录：目录级冻结（见 KNOWN_VIOLATION_DIRS）
                 elif f in KNOWN_VIOLATIONS:
                     rec = KNOWN_VIOLATIONS[f]
                     frozen = time.mktime(time.strptime(rec['frozen_mtime'], '%Y-%m-%d %H:%M:%S'))

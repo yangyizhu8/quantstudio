@@ -128,6 +128,31 @@ else
     fi
 fi
 
+# ---------------------------------------------------------------------------
+# [evidence-naming] 命名门（2026-11-11 裁定乙 R-20261111-01：KNOWN_VIOLATIONS 冻结登记 + 渐进清理）
+# 判据：scripts/check-evidence-naming.py --strict（默认扫描目录）exit 0 才放行。
+# ---------------------------------------------------------------------------
+if command -v python >/dev/null 2>&1; then
+    PY_NAMING=python
+elif command -v python3 >/dev/null 2>&1; then
+    PY_NAMING=python3
+else
+    echo "[evidence-naming] 未找到 python —— 无法执行命名门，按纪律拒绝推送。" >&2
+    echo "[evidence-naming] 修好环境后重试；确无风险须 git push --no-verify 并在回报中声明。" >&2
+    exit 9
+fi
+if [ ! -f "$ROOT/scripts/check-evidence-naming.py" ]; then
+    echo "[evidence-naming] 缺 scripts/check-evidence-naming.py —— 门禁不可用，拒绝推送。" >&2
+    exit 9
+fi
+"$PY_NAMING" "$ROOT/scripts/check-evidence-naming.py" --strict
+NAMING_RC=$?
+if [ $NAMING_RC -ne 0 ]; then
+    echo "[evidence-naming] 命名门未通过（rc=$NAMING_RC）⇒ 中止推送。" >&2
+    echo "[evidence-naming] 修法：合规命名 / 走 KNOWN_VIOLATIONS 冻结登记 / 确认无风险 git push --no-verify（并在回报声明）。" >&2
+    exit 9
+fi
+
 if command -v pwsh >/dev/null 2>&1; then
     PS=pwsh
 elif command -v powershell >/dev/null 2>&1; then
