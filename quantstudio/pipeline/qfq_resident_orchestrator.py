@@ -1743,16 +1743,92 @@ class QFQResidentOrchestrator:
             "SELECT COUNT(*) FROM qfq_bootstrap_item WHERE bootstrap_run_id=? "
             "AND status='pending'", [run_id]).fetchone()[0]
 
+    # ------------------------------------------------------------------
+    # 方案③ G5（v3.2，2026-11-10）：factor_time 块预取 + 单轮缓存
+    #   问题：_security_effective_dates 原按 code 单查 aux
+    #         （`SELECT DISTINCT factor_time ... WHERE asset_type=? AND code=?`），
+    #         且 _aux_query 每次新建连接 ⇒ 往返 = O(code数) × 建连成本。
+    #   改法：run_post_ingest 在 applying 前按 units 的 code 分批（256/批）**一次 SQL 预取**，
+    #         同批 code 命中零往返；未命中（如 :1694 的非 unit 路径）退化为单查保正确性。
+    #   五条件：
+    #     ①批内一致：同批 code 来自**同一条 SQL**（单语句快照一致）；批间可漂移——
+    #       观测表是**只读面**（factor_time 只追加），漂移仅表现为「某 code 可能多一个新点」，
+    #       且旧路径每 code 独立时点 ⇒ 新路径漂移面**严格更小**。
+    #     ②门判据：往返次数 before/after（_inc_ft_queries 计数）+ alert 行集逐位不变 + 单轮耗时。
+    #     ③G5b 备注：本改造**不缩遍历范围**（unit 仍来自 pending 队列）⇒ 无「漏到期单元」风险；
+    #       若将来引入范围缩放，必须同批带 G5b（changed ∪ 到期 ∪ 待重试）。
+    #     ⑤生命周期：缓存**仅限单轮**——run_post_ingest 进入即 clear、finally 再 clear，
+    #       禁跨轮/跨库连接残留。
+    # ------------------------------------------------------------------
+    _INC_FT_BATCH = 256
+
+    def _inc_ft_state(self) -> Dict[str, object]:
+        """惰性初始化 G5 状态（避免改 __init__，缩小改动面）。"""
+        st = getattr(self, "_inc_ft_state_cache", None)
+        if st is None:
+            st = {"cache": {}, "queries": 0, "hits": 0, "enabled": None}
+            self._inc_ft_state_cache = st
+        if st["enabled"] is None:
+            st["enabled"] = ((os.environ.get("QS_QFQ_OBS_INCREMENTAL", "0") or "0")
+                             .strip() == "1")
+        return st
+
+    def _inc_ft_reset(self) -> None:
+        """单轮生命周期：清缓存 + 清计数（条件⑤）。"""
+        st = self._inc_ft_state()
+        st["cache"] = {}
+        st["queries"] = 0
+        st["hits"] = 0
+
+    def prefetch_factor_times(self, asset_type: str, codes: Sequence[str]) -> int:
+        """一次 SQL 预取一批 code 的全部 factor_time（G5 核心）。返回本次新取 code 数。"""
+        st = self._inc_ft_state()
+        cache = st["cache"]
+        todo = [c for c in codes if (asset_type, c) not in cache]
+        if not todo:
+            return 0
+        ph = ",".join("?" * len(todo))
+        rows = self._aux_query(
+            "SELECT code, factor_time FROM qfq_factor_observation "
+            "WHERE asset_type=? AND code IN (" + ph + ")",
+            [asset_type, *todo])
+        st["queries"] += 1
+        bucket: Dict[str, List[int]] = {c: [] for c in todo}
+        for cd, ft in rows:
+            bucket.setdefault(str(cd), []).append(int(ft))
+        for c in todo:
+            cache[(asset_type, c)] = sorted(set(bucket.get(c, [])))
+        return len(todo)
+
+    def _inc_factor_times(self, asset_type: str, code: str) -> List[int]:
+        """缓存命中零往返；未命中退化单查（正确性兜底）。"""
+        st = self._inc_ft_state()
+        hit = st["cache"].get((asset_type, code))
+        if hit is not None:
+            st["hits"] += 1
+            return hit
+        frows = self._aux_query(
+            "SELECT DISTINCT factor_time FROM qfq_factor_observation "
+            "WHERE asset_type=? AND code=?", (asset_type, code))
+        st["queries"] += 1
+        vals = sorted({int(r[0]) for r in frows})
+        st["cache"][(asset_type, code)] = vals
+        return vals
+
     def _security_effective_dates(self, conn, asset_type: str, code: str) -> List[int]:
         rows = conn.execute(
             "SELECT DISTINCT ex_date FROM stock_dividend WHERE code=? AND div_proc='实施' "
             "AND ex_date IS NOT NULL", [code]).fetchall()
         dates = [int(r[0]) for r in rows]
         # 叠加因子观察时间（SQLite 辅助库）
-        frows = self._aux_query(
-            "SELECT DISTINCT factor_time FROM qfq_factor_observation "
-            "WHERE asset_type=? AND code=?", (asset_type, code))
-        dates += [int(r[0]) for r in frows]
+        # 方案③ G5：块预取命中则零往返；开关关 / 未命中 ⇒ 原单查路径（逐位等价）
+        if self._inc_ft_state()["enabled"]:
+            dates += self._inc_factor_times(asset_type, code)
+        else:
+            frows = self._aux_query(
+                "SELECT DISTINCT factor_time FROM qfq_factor_observation "
+                "WHERE asset_type=? AND code=?", (asset_type, code))
+            dates += [int(r[0]) for r in frows]
         return sorted(set(dates))
 
     def bootstrap_audit(self, conn, run_id: str) -> Dict:
@@ -1863,6 +1939,27 @@ class QFQResidentOrchestrator:
             summary.units_deferred = int(getattr(self, "_last_units_deferred", 0))
 
             self._set_cycle_phase(conn, cycle_id, "applying")
+            # 方案③ G5（v3.2）：applying 前按 units 的 code 分批（256/批）预取 factor_time。
+            # 单轮生命周期：先 reset 再预取 ⇒ 缓存禁跨轮残留（条件⑤）。
+            # 不缩遍历范围 ⇒ 无「漏到期单元」风险（G5b 转备注条款，条件③）。
+            if self._inc_ft_state()["enabled"]:
+                self._inc_ft_reset()
+                _codes_by_at: Dict[str, List[str]] = {}
+                for _u in units:
+                    _codes_by_at.setdefault(_u["asset_type"], []).append(_u["code"])
+                _pf_total = 0
+                for _at, _codes in _codes_by_at.items():
+                    for _i in range(0, len(_codes), self._INC_FT_BATCH):
+                        _pf_total += self.prefetch_factor_times(
+                            _at, _codes[_i:_i + self._INC_FT_BATCH])
+                _st = self._inc_ft_state()
+                logger.info(
+                    "[qfq_orch][G5] factor_time 预取: units=%d codes=%d prefetched=%d "
+                    "queries=%d (before=%d)",
+                    len(units),
+                    sum(len(v) for v in _codes_by_at.values()),
+                    _pf_total, _st["queries"],
+                    sum(len(v) for v in _codes_by_at.values()))
             # P1.0：applying 相位逐单元边界消费停。should_stop 由 daemon 侧注入，
             # 内部复用 daemon_lifecycle 的**唯一** stop.request 消费点
             # （consume_stop_request_if_matched / _check_stop_at_boundary）；

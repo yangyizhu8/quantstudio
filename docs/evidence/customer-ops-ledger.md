@@ -144,9 +144,9 @@
 | **R2** | ✅ 销项：**136 passed / 0 failed**（此前 2 例 PermissionError ＝ 生产库被 daemon 持锁） | 基线三读数跑前跑后：`last_row='2026-11-09T10:08:55'`（生产轮次时间）、`page_count=3239049`、mtime 未变 ⇒ **零污染** |
 | **R5** | ✅ **14 passed**（G7 链构造性证明 + 缺号负向对照） | `tests/test_qfq_observation_incremental.py` |
 | **R9** | ✅ **`DB-2026-0040`** 落盘，族 db / D5 / lint_guard，`kb_hook.validate_record` **通过** | `knowledge/db/DB-2026-0040.md` |
-| **G5** | ⚠️ **落点修正已呈报（v3.2）**：`_claim_and_merge`（`:564-574`）unit 来自 pending 队列（**范围本就有限**）；O(N) 真源是 `_security_effective_dates` 的**逐 code 单查**（`:1752-1754`）⇒ 改为**块预取+缓存**（往返 ÷256），**范围不缩** | `docs/handoff/qfq-inc-g5-g6-g9-spec.md` §一 |
-| **G11 / G5b** | **退役**（除权侧 54,711 行小表非瓶颈；不缩范围 ⇒ 无「漏到期单元」风险）；G12 表保留备用 | 同上 §1.4 |
-| **G6 / G9** | **规格件已出**（库清单+时长+窗口草案 / 排水口径+三问），待排程与协同 | 同上 §二、§三 |
+| **G5** | ✅ **已实施（v3.2）**：`_security_effective_dates` 改块预取+单轮缓存；往返 O(code数)→O(code数/256)；`run_post_ingest` applying 前分批预取、先 reset ⇒ 禁跨轮残留；开关关走原路径 | 门 **6 passed**（往返 before/after、预取≡逐查、缓存生命周期、命中零往返、开关关原路径、开关开缓存命中）；既有 14 passed 无回退 |
+| **G11 / G5b** | **退役**（除权侧 54,711 行小表非瓶颈；不缩范围 ⇒ 无「漏到期单元」风险）；G5b 已转备注条款写入规格件；G12 表保留备用 | 同上 §1.4 |
+| **G6 / G9** | **G6**：用户裁定批窗＝**轮次后 15:00（今日首窗）**、副本=我方自拷贝、落盘 **D:\qs_g6_replica_20261110**（D 盘可用 177.5GB / 需 74.4GB）、允许副本跑旧路径、口径=db+wal 对拷（crash-consistent）；**G9**：澄清件已出（§3.4，**撤回「effective_date 误标」推测** + 揭示 「recover 刷新 updated_at ⇒ SLA 计数虚降」对账陷阱）+ 隔离先验 **1 passed** | 规格件 §二/§三/§3.4 |
 
 ### 7.5 当轮环境基线（2026-11-09 23:12 实测）
 
@@ -164,3 +164,16 @@
 | 时间 | 变更 |
 |---|---|
 | 2026-11-09 23:15 | 跨会话补录：7 项交付（17–23）、4 项观察（O4/O-1/O-2/G5b）、4 条纪律登记、**10 项剩余任务（R1–R10）+ 可即刻推进判定**、当轮环境基线 |
+
+### 7.7 本轮追加登记（2026-11-10 11:45）
+
+| 项 | 结果 |
+|---|---|
+| **DB-2026-0040 trigger 去缩进** | ✅ 已修（三轮催办直令；`trigger:` 与相邻字段对齐，去 4 空格缩进） |
+| **G5 v3.2 门证据** | ✅ `tests/test_qfq_g5_effective_dates_batch.py` **6 passed**：往返 300 code ⇒ **2 次**（ceil(300/256)）vs 逐查 **300 次**；预取结果 ≡ 逐 code 单查逐位相同；缓存 reset 清零；命中零往返；开关关走原路径；开关开缓存命中 |
+| **G9 隔离先验** | ✅ `test_g9_incremental_switch_does_not_increase_pending` **passed**：开关开/关 pending 与总 alert 计数**逐位相同**，且 total>0（非空转） |
+| **G9 澄清件** | ✅ spec §3.4：撤回「误标」推测（判据不含 effective_date，实读 `quality_audit.py:743-761`）；揭示 **SLA 计数虚降陷阱**（`recover_pending_due:534` 刷新 `updated_at` ⇒ 逾期行掉出 SLA 窗口）；四假设 + 判据未跑（顺延静默窗） |
+| **G6 准备** | ✅ 目录 `D:\qs_g6_replica_20261110` 已建；D 盘可用 **177.5GB**（需 74.4GB＝`quantstudio.db` 62.1GB + `qfq_aux.db` 12.4GB）；15:00 首窗待轮次收工 |
+| 全量增量测试回归 | ✅ **21 passed**（G1–G4/G7/G8/G12 + G5×6 + G9×1） |
+| 生产库零污染 | ✅ `last_row='2026-11-10T09:28:41'`（生产轮次时间）、`page_count=3239573`、`mtime=1794275313` ⇒ 测试未刷新 |
+

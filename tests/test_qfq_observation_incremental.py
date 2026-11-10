@@ -187,6 +187,41 @@ def test_g4_alert_outbox_identical(tmp_path, monkeypatch):
     assert a_old == a_new and a_old, "alert 行集（含 alert_id/status）必须逐位相同且非空"
 
 
+# ------------------------------------------------------------------ G9 隔离先验
+def test_g9_incremental_switch_does_not_increase_pending(tmp_path, monkeypatch):
+    """G9 隔离先验（合成库）：增量开关开/关，**pending alert 计数逐位相同**。
+
+    判据来源：`QfqPendingSla`（`quality_audit.py:750-755`）的分母是
+    `qfq_trigger_queue` 的 pending/retryable_failed，而 alert 的产生口径由
+    G4 已证「行集逐位相同」⇒ pending 源头不变。本用例把该结论**量化到计数**：
+    若增量路径多产生/少产生一条 pending alert，本用例即红。
+    """
+    res = {}
+    for flag in ("0", "1"):
+        monkeypatch.setenv("QS_QFQ_OBS_INCREMENTAL", flag)
+        d = tmp_path / f"g9_{flag}"
+        d.mkdir(exist_ok=True)
+        db = _mk_aux(d)
+        store = ObservationStore(aux_db=db)
+        # 三轮：首观测 → 修订（触发 alert）→ 再修订（再触发）
+        store.record_observations([_obs("STOCK", "000001", FT, 1.0)], "r1")
+        store.record_observations([_obs("STOCK", "000001", FT, 2.0)], "r2")
+        store.record_observations([_obs("STOCK", "000001", FT, 3.0)], "r3")
+        con = sqlite3.connect(str(db))
+        try:
+            pending = con.execute(
+                "SELECT COUNT(*) FROM qfq_factor_revision_alert "
+                "WHERE status='pending'").fetchone()[0]
+            total = con.execute(
+                "SELECT COUNT(*) FROM qfq_factor_revision_alert").fetchone()[0]
+        finally:
+            con.close()
+        res[flag] = (pending, total)
+    assert res["1"][1] > 0, f"必须真产生 alert（否则判据空转）：{res}"
+    assert res["0"] == res["1"], (
+        f"增量开关不得改变 pending/总 alert 计数（关={res['0']} 开={res['1']}）")
+
+
 # ------------------------------------------------------------------ G8
 def test_g8_switch_back_to_legacy_path(tmp_path, monkeypatch):
     """G8：关闭开关 ⇒ 走旧路径（行为与开关前一致）。"""

@@ -141,3 +141,53 @@ v3 写「G5 = 消费侧**只遍历 changed code 集**」，前提是「当前逐
 | G11 / G5b | **退役**（v3.2 §1.4） | G12 表保留备用 |
 | G6 | **规格件已出**（§二），待排程 → 用户批窗 L2 | 建议窗口乙 |
 | G9 | **口径件已出**（§三），待用户转节点1 | 三问已列 |
+
+### 3.4 澄清件（2026-11-10 · 应节点1「实测判据无 effective_date 路径」）
+
+**（一）撤回我方的错误表述**
+§3.3 原写「50762 中有多少是**误标**（`effective_date` 口径问题）」——**该推测不成立，撤回**。
+实读判据（`quality_audit.py:743-761`）：
+
+```sql
+-- QfqDeadLetter（:744-749）
+SELECT COUNT(*) FROM qfq_trigger_queue
+ WHERE status='dead_letter' AND {trig_scope}
+-- 超 dl_max ⇒ error
+
+-- QfqPendingSla（:750-755）
+SELECT COUNT(*) FROM qfq_trigger_queue
+ WHERE status IN ('pending','retryable_failed')
+   AND COALESCE(updated_at, created_at) < NOW() - INTERVAL {sla_h} HOUR
+   AND {trig_scope}
+-- 超 sla_h 小时 ⇒ error "pending/retryable_failed older than {sla_h}h SLA"
+
+-- QfqStaleInProgress（:756-761）
+SELECT COUNT(*) FROM qfq_trigger_queue
+ WHERE status='in_progress'
+   AND (claimed_at IS NULL OR claimed_at < NOW() - INTERVAL {stale_h} HOUR)
+```
+
+⇒ **判据只依赖 `status` 与「停留时长」，完全不含 `effective_date`** ⇒ 节点1 实测结论正确，我方推测作废。
+
+**（二）50,762@10-31 → 47,614@11-09（−3,148）的正确解释方向**
+
+⚠️ **口径陷阱（本轮最重要的澄清）**：`QfqPendingSla` 的分母是「**停留已超 sla_h 小时**」的行。
+而 `recover_pending_due`（`qfq_resident_orchestrator.py:521-537`）在把 `retryable_failed` 转回 `pending` 时**会刷新 `updated_at`**（`:534` `SET status='pending', updated_at=?`）。
+⇒ **每轮 recover 都会把逾期行「重新计时」⇒ 它们掉出 SLA 窗口 ⇒ 计数下降，但积压行数并未减少。**
+⇒ **「计数下降」≠「积压缓解」**，是本判据的固有失真面（不是 bug，是 SLA 判据的语义边界）。
+
+**因此 −3,148 的可能构成（均为假设，未验证）**：
+| # | 假设 | 判别特征 | 验证手段 |
+|---|---|---|---|
+| A | recover/promote 刷新 `updated_at` ⇒ 行掉出 SLA 窗口（**虚降**） | 行数不减、`MAX(updated_at)` 近期被刷新 | 需分解 SQL（顺延静默窗） |
+| B | 真排水（消费成功，行状态离开 pending/retryable_failed） | `COUNT(*) WHERE status IN (...)` 绝对值下降 | 同上 |
+| C | `retryable_failed` → `dead_letter` 迁移 | dead_letter 计数上升、pending 分母减少 | 同上 |
+| D | 历史补数堆积被消费（10-31 后确有补数轮） | 特定 trigger_type 分桶下降 | 同上 |
+
+**（三）我方口径修正（供对账基更新）**
+- 原五点基线的第 2 点「**计数下降且不新增**」应修正为：**「同时记录 `status IN ('pending','retryable_failed')` 的绝对行数（不受 SLA 刷新影响）」与「SLA 窗口内计数」两组数**——只用 SLA 计数会因 recover 刷新而虚降。
+- 建议判据：**排水成功 = ①绝对行数下降 ②dead_letter 不上升 ③SLA 计数与绝对行数同向变化**；三者背离即判「口径失真，需分解」。
+
+**（四）分解 SQL 状态**
+按调度指示「G9 分解 SQL 顺延静默窗维持」⇒ **本轮未执行任何分解 SQL**，仅出澄清。静默窗开启后按 §（二）四假设逐条判别。
+
