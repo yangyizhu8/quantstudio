@@ -2361,3 +2361,37 @@ git stash store [(-m | --message) <message>] [-q] <commit> ← 只有 store 有 
 | --- | --- |
 | **内容 sha 判据** | 基线/产物可复用性一律用内容 sha256，**禁 mtime**（`git checkout HEAD --` 等动作会重置 mtime ⇒ mtime 判据天然脆弱）；反推式回验：`sha(<改动前commit>:<path>)` == `sha(<基线commit>:<path>)` |
 | **调用点全集 → 验收强度** | 改共享函数前先 `git grep` 取调用点全集；影响面 = 调用点全集 ⇒ 零触碰路径可不重复跑 golden，但**端到端跨状态锚不可省**；白盒（调用点）与黑盒（golden 对拍）互补 |
+# R-PERF-39 验收 · ②审 · 2026-11-10 11:15 · **⑥⑦ 补申报通过（⑦ 先例更正我方接受）；🔴 性能对照口径否决 14071.6s（跨版本），改锚 14391.307s；⑥ kb_hook 改造复核通过**
+
+## 10.192 审核方独立回验
+
+| 项 | 实测 | 判定 |
+| --- | --- | --- |
+| **⑦ 先例更正** | `git log -- <file>` 溯源：fullwindow 201KB log 入库于 **`dcfac04`（R-PERF-26，本线自己）**；e04min log 入库于 `1d895b9`（本线）⇒ **两件均本线自建，非项目既有惯例** | ✅ **执行方更正正确；我方措辞撤回并更正** |
+| **🔴 性能对照基线** | `baseline_STALE_1106_readings.json` wall=**14071.615** / **duckdb 1.4.5**；`fullwindow_1.5.6_hot_wall_…_20261108_2030.json` wall=**14391.307** / **duckdb 1.5.6**；本轮新跑 `e04full_1.5.6_hot_wall_…_20261110` ⇒ **1.5.6 hot** | 🔴 **14071.6s 系跨版本，且会高估提速 ⇒ 对照口径否决** |
+| 全窗跑进度 | log 39,744 B / 322 行 / mtime 11:09:02 / 首板池 ×47 ⇒ 跑到 2026-03-18 附近；起跑 10:51:21 | ⏳ 在途（**早期推算不得当结论**） |
+| **⑥ kb_hook 改造复核** | `2d64a92` cat-file=commit，**恰 3 项**（scripts/kb_hook.py / tests/test_kb_hook_skipped.py / docs/evidence/kb-hook-skipped-20261110.md 5,062 B） | ✅ |
+| ├ 单件 README 实跑 | total=1, checked=0, skipped=[README.md / non-entry-file] ⇒ **守恒 1==0+1** | ✅ |
+| ├ PS 通配实跑 | `--files knowledge/db/*.md` ⇒ total=42, checked=41, bad=[] ⇒ **假空已修**（改前 checked=0） | ✅ |
+| ├ 全目录实跑 | 42 件 ⇒ total=42, checked=41, skipped=[README.md / non-entry-file] ⇒ **守恒成立** | ✅ |
+| ├ **total 语义** | `total = len(expanded) + len(glob_misses)` ⇒ **含 glob 零命中项** | ✅ **要点①满足** |
+| ├ **reason 枚举统一** | 5 值统一 kebab-case：glob_no_match / not_found / non-entry-file / no_family_match / kb_info_unavailable | ✅ **要点②满足** |
+| ├ 守恒判据落文 | docstring 明写「total == checked + len(skipped)；bad ⊆ checked」⇒ **可机检契约** | ✅ 亮点 |
+| └ 测试 | `pytest tests/test_kb_hook_skipped.py -q` ⇒ **6 passed in 2.66s** | ✅ |
+| 🆕 附带发现 | 门禁实跑 **bad=[]** ⇒ `DB-2026-0040` 的 trigger 缩进**已被运维1 修复**（此前连续两轮未修） | ✅ |
+
+## 10.193 裁定
+
+| 项 | 裁定 |
+| --- | --- |
+| ① ⑥ 门禁 mutated 补申报 | ✅ **验收通过** |
+| ② ⑦ `git add -f` 破例登记 | ✅ **验收通过**；**先例更正我方接受并撤回旧措辞** |
+| ③ **性能对照口径** | 🔴 **否决 14071.6s**；**改锚 14391.307s（1.5.6 hot，2026-11-08 20:30）** |
+| ④ 探针默认输出改四要素名 | ✅ **照准排入下轮**（根因治理，优于继续豁免） |
+| ⑤ 全窗补跑 | ⏳ 在途，收口后出性能数字 |
+| ⑥ **⑥ kb_hook 改造复核** | ✅ **通过**（两要点均满足，附 6 passed）⇒ 可随下轮呈批面给⑤确认 |
+
+## 10.194 审核方第六次同型（自认并入册）
+
+> 我上轮称「仓内已有先例（201KB 早已入库）」——**只查了 `git ls-files` 看到 2 件，未溯源入库者** ⇒ 该 2 件实为**本线自己**所加。
+> ⇒ 同族模式（用间接/片段证据替代直接核对）**第六次**。补充判据：**凡称「有先例 / 有惯例」，必须溯源该先例的引入者与 commit**，否则只能称「存在同类件」。
