@@ -820,6 +820,72 @@ def _qs_eps_pick(code, d8):
     return None if _pick is None else _pick[2]
 
 
+def _qs_eps_align_rows(rows_h, fmap):
+    """EPS 面板行按 (code, end_d8) 同键逐期对齐本地快照（QD-2026-0023-E1 段二）。
+
+    输入：rows_h = {code: [行 dict, ...]}，行键为**原生字段名**（source_import_qmt
+      的 _qs_fin_to_rows_hist 输出）；fmap = {'eps': 's_fa_eps_basic', 'publ_date':
+      'm_anntime', 'end_date': 'm_timetag'} 形态的本地名→原生名映射。
+    口径（§14.2 定谳）：**只替换 eps 数值**，publ_date/end_date 原样保留 => 行结构、
+      期数、PIT 语义全不变；按 (code, end_d8) 同键匹配，不做「按 D 取最近一期」。
+    stats 四计数（absent 态直接原样返回）：overridden 覆盖成功 / mismatch 面板≠本地
+      （超 1e-6，打印前 3 例）/ span_short 本地缺该期（保留面板值）/ unmatched 无 end
+      键或不可换算。
+    返回 (rows_h, stats)。本函数纯内存操作，零文件 IO。
+    """
+    st = _qs_eps_snap_state()
+    stats = {'overridden': 0, 'mismatch': 0, 'span_short': 0, 'unmatched': 0}
+    if st['state'] != 'embedded' or not rows_h:
+        return rows_h, stats
+    k_eps = fmap.get('eps', 'eps')
+    k_end = fmap.get('end_date', 'end_date')
+    recs = st['records'] or {}
+    _sample_mismatch = []
+    _sample_short = []
+    for _code, _rows in list(rows_h.items()):
+        if not _rows:
+            continue
+        _seq = recs.get(str(_code).strip())
+        _by_end = {}
+        if _seq:
+            for _ann8, _end8, _eps in _seq:
+                _by_end[_end8] = _eps
+        for _row in _rows:
+            if not isinstance(_row, dict):
+                continue
+            _end8 = _qs_eps_d8(_row.get(k_end))
+            if _end8 is None:
+                stats['unmatched'] += 1
+                continue
+            if not _by_end or _end8 not in _by_end:
+                stats['span_short'] += 1
+                if len(_sample_short) < 3:
+                    _sample_short.append('%s@%s' % (_code, _end8))
+                continue
+            _local = _by_end[_end8]
+            try:
+                _panel = float(_row.get(k_eps))
+            except Exception:
+                _panel = None
+            if _panel is not None and abs(_panel - _local) > 1e-6:
+                stats['mismatch'] += 1
+                if len(_sample_mismatch) < 3:
+                    _sample_mismatch.append('%s@%s:panel=%s,local=%s'
+                                            % (_code, _end8, _panel, _local))
+            _row[k_eps] = _local
+            stats['overridden'] += 1
+    print('QS_QMT_EPS_ALIGN overridden=%d mismatch=%d span_short=%d unmatched=%d'
+          % (stats['overridden'], stats['mismatch'], stats['span_short'],
+             stats['unmatched']))
+    if stats['mismatch']:
+        print('QS_QMT_EPS_MISMATCH n=%d sample=%s'
+              % (stats['mismatch'], ' | '.join(_sample_mismatch)))
+    if stats['span_short']:
+        print('QS_QMT_EPS_SPAN_SHORT n=%d sample=%s'
+              % (stats['span_short'], ' | '.join(_sample_short)))
+    return rows_h, stats
+
+
 # @@QS_QMT_QFQ_SNAP_EMBED@@
 
 # 三态缓存载体：None=未探测；否则 dict(state/reason/base8/records/n)——
@@ -2171,6 +2237,12 @@ def _qs_get_fundamentals(table, codes, date=None, fields=None, C=None):
     # 剔除，对齐本地只回完整行契约）；valuation（快照语义）路径不动。
     if table in ('eps', 'growth_ability', 'profit_ability'):
         rows_h = _qs_fin_to_rows_hist(raw, shape=None, codes=codes, table=table)
+        # QD-2026-0023-E1 段二（2026-11-10）：EPS 面板按 (code, end_d8) 同键逐期对齐
+        # 本地嵌入式快照（§14.2 定谳：只换 eps 数值，publ_date/end_date 不动 =>
+        # 行结构/期数/PIT 语义不变）。absent 态原样返回（零行为漂移）；覆盖数与
+        # 面板≠本地（MISMATCH）/本地缺期（SPAN_SHORT）由 align 内 fail-loud 打印。
+        if table == 'eps':
+            rows_h, _eps_stats = _qs_eps_align_rows(rows_h, fmap)
         recs = []
         for _code in codes:
             for _row in rows_h.get(_code) or []:
