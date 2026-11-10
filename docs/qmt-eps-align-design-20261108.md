@@ -347,3 +347,111 @@
 
 **补记（2026-11-10 16:4x · R364）**：明文对照档已补——`eps_snap_embed_plain.py` = **2,393,132 B／sha16 `ce17c9fa198e03bb`**，**与此前被同名覆盖丢失的明文件 sha16 逐位相同** ⇒ **无信息损失**，存档承诺完整兑现（重导字节一致＝可复现性铁律的又一次实证）。
 当前 `output/qmt_snapshot/` 四件：`eps_snap_embed.py`（压缩正式件 477,486 B／`cd400bd092e2ef66`）／`eps_snap_embed_plain.py`（明文对照 2,393,132 B／`ce17c9fa198e03bb`）／`eps_snap_embed_z.py`（副本库实测 477,486 B／`cd400bd092e2ef66`）／`eps_snapshot.json`（数据面明文 2,366,946 B／`97ca32401a93061d`）。
+
+
+---
+
+## 十五、段二第 4+5 项 · 下轮编辑蓝图（2026-11-10 · 只读备料）
+
+> 落点行号基于当前 HEAD 的 `source_import_qmt.py`（**3,593 行**）；**下轮动手前须重新核对**（本文件已多次行漂移，铁律：改前实读）。
+
+### 15.1 精确落点（现状）
+
+| 落点 | 当前行 | 现状文本（节选） |
+|---|---|---|
+| `_inject_qfq_embed` | **L3344–3362** | `def _inject_qfq_embed(self, qfq_embed: str) -> str:` … `return _QS_QMT_HISTORY_EXT.replace(_QS_QMT_QFQ_EMBED_MARK, embed_src)` |
+| `_assemble` 签名 | **L3364–3365** | `def _assemble(self, body_src: str, *, pep263_replaced: bool, diag: bool = False,` / `qfq_embed: str | None = None) -> str:` |
+| 注入链 | **L3380–3382** | `history_ext = _QS_QMT_HISTORY_EXT` / `if qfq_embed is not None:` / `history_ext = self._inject_qfq_embed(qfq_embed)` |
+| `convert` 签名 | **L3445** | `def convert(self, diag: bool = False, qfq_embed: str | None = None) -> QmtSourceResult:` |
+| `convert` 调 `_assemble` | **L3469** | `qfq_embed=qfq_embed)` |
+
+### 15.2 编辑 1：新增 `_inject_eps_embed`（插在 L3363 之后、`_assemble` 之前）
+
+```python
+    def _inject_eps_embed(self, eps_embed: str, base_src: str) -> str:
+        """EPS 嵌入式快照常量注入（QD-2026-0023-E1 段二，2026-11-10）。
+
+        与 _inject_qfq_embed 同范式：读 emit-py **文本原样**（newline='' 防 CRLF
+        翻译；encoding='ascii' 严格——emit 契约纯 ASCII，混入非 ASCII 即 fail-closed），
+        替换 HISTORY_EXT 内 EPS 层标记行（字面量 '# @@QS_QMT_EPS_SNAP_EMBED@@'）。
+        base_src 为**已注入 QFQ 的 history_ext**（EPS 层与 QFQ 层同在 HISTORY_EXT，
+        故在 QFQ 注入结果上继续替换；不传则从原模板起）。
+        读取失败 / 标记缺失（模板漂移）-> RuntimeError（经 convert 改写链失败通道入
+        errors，不静默产出无嵌入产物——标记被吞则产物恒 absent 态，正是本防线靶点）。
+        """
+        try:
+            with open(eps_embed, "r", encoding="ascii", newline="") as f:
+                embed_src = f.read()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise RuntimeError("eps_embed 读取失败 %r: %s" % (eps_embed, exc))
+        mark = _QS_QMT_EPS_EMBED_MARK
+        if mark not in base_src:
+            raise RuntimeError("EPS 嵌入标记缺失（HISTORY_EXT 模板漂移）：%r" % (mark,))
+        return base_src.replace(mark, embed_src)
+```
+
+并在模块级常量区（`_QS_QMT_QFQ_EMBED_MARK` 同处）新增：
+
+```python
+_QS_QMT_EPS_EMBED_MARK = '# @@QS_QMT_EPS_SNAP_EMBED@@'
+```
+
+### 15.3 编辑 2：`_assemble` 签名 + 注入链
+
+签名加参（L3364-3365）：
+
+```python
+    def _assemble(self, body_src: str, *, pep263_replaced: bool, diag: bool = False,
+                  qfq_embed: str | None = None,
+                  eps_embed: str | None = None) -> str:
+```
+
+注入链改为（L3380-3382 三行）：
+
+```python
+        history_ext = _QS_QMT_HISTORY_EXT
+        if qfq_embed is not None:
+            history_ext = self._inject_qfq_embed(qfq_embed)
+        if eps_embed is not None:
+            history_ext = self._inject_eps_embed(eps_embed, history_ext)
+```
+
+### 15.4 编辑 3：`convert` 签名 + 传参
+
+签名（L3445）：
+
+```python
+    def convert(self, diag: bool = False, qfq_embed: str | None = None,
+                eps_embed: str | None = None) -> QmtSourceResult:
+```
+
+传参（L3469 区域）：
+
+```python
+                   qfq_embed=qfq_embed,
+                   eps_embed=eps_embed)
+```
+
+### 15.5 验证判据（下轮一次性执行）
+
+```text
+① py_compile rc=0
+② 重转一产物（CANSLIM，eps_embed=output/qmt_snapshot/eps_snap_embed.py 压缩正式件）
+③ 产物首段出现：QS_QMT_EPS_SNAP embedded n=5206 base=20260801 mode=zlib
+④ 产物内 _QS_QMT_EPS_SNAP_ZB64 在位、ASCII 编码通过（portability PASS）
+⑤ 矩阵 --check --reverify：qmt_wrapper_hash 再变（同 commit 追认）；wrapper_hash 不变
+⑥ 回归：QMT 面 17 件 + EPS 导出器 9 件全绿
+⑦ 不传 eps_embed 时产物与既版 byte-identical（缺省零漂移）
+```
+
+### 15.6 风险与回退
+
+- 风险①：**行号漂移**（本文件已被他线/我方多次改动）⇒ 动手前**必须重新定位**，禁按本文行号盲改；
+- 风险②：EPS 标记 `# @@QS_QMT_EPS_SNAP_EMBED@@` 在 `_QS_QMT_HISTORY_EXT` 模板串内（段一已验在位）；
+- 风险③：压缩件 477,486 B 注入后产物约 **1.45 MB**（v1.7 1.04 MB 已验证可加载，1.45 MB 需真机复验）⇒ 若真机受阻，回落明文对照件（会破 1.5 MB 线，故仅作诊断用）；
+- 回退：`git checkout -- quantstudio/strategy_compiler/source_import_qmt.py`（该文件当前与 HEAD 一致，无他线叠加）。
+
+---
+
+知识反哺：[命中] QD-2026-0023（qd 族／D3 域／`knowledge/qmt/QD-2026-0023.md`，2026-11-10）
+本轮沉淀：QD-2026-0023（EPS 层前置结论·PIT 映射·两侧不同源机制·北京午夜锚·压缩形态·编辑蓝图）
