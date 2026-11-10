@@ -259,28 +259,63 @@ class ObservationStore:
         """增量路径开关（默认 0 = 旧路径；实施期安全默认，验收后再翻）。"""
         return (os.environ.get("QS_QFQ_OBS_INCREMENTAL", "0") or "0").strip() == "1"
 
-    def _inc_fetch_last(self, c, asset_type: str, codes):
-        """G1：一次往返取该批 code 的「每 (code,factor_time) 的 max(revision_no) 行」。
+    def _inc_fetch_last(self, c, asset_type: str, pairs):
+        """G1：一次往返取「本批 `(code, factor_time)` 对」的 max(revision_no) 行。
 
         等价于旧路径逐条 `SELECT factor_value, revision_no ... ORDER BY revision_no DESC LIMIT 1`，
         但往返次数由 O(条数) 降为 O(1/块)。
-        注：外层 `WHERE o.asset_type=?` 走 PK 前缀（PK 首列为 asset_type）。
+
+        **2026-11-11 修复（DB-2026-0042 / A4）**：本函数原按 `code` 取该 code 的**全部**
+        `factor_time` 行 ⇒ 20 code × 约 5,753 ft ≈ **11.5 万行**，而上层只消费约 120 个
+        `(code, ft)` 键 ⇒ 99.9% 返回行被丢弃，实测 74.9 s。现改为**行值 IN** 精确限定到
+        输入涉及的 `(code, factor_time)` 对：
+          - 外层走 `PK(asset_type, code)`；相关子查询走 `PK(asset_type, code, factor_time)` 三列全用
+          - 实测（副本 45,122,444 行，120 对）：**38.8 ms**（原 76.2 s @20code / 74.9 s @120 条端到端）
+          - 两种写法对照：行值 IN + 相关子查询 **38.8 ms** 优于 行值 IN + JOIN 聚合 65.3 ms
+        注：参数上限——`(?,?)` × N ⇒ 2N 参数，调用方 `_INC_ROW_BATCH` 保证 2N < 999。
         """
-        if not codes:
+        if not pairs:
             return {}
-        ph = ",".join("?" * len(codes))
+        # ---- 形态判定：元素是 str ⇒ 旧形态（仅 code，取该 code 全部 ft）；是 2 元 ⇒ 新形态（精确 (code,ft)）
+        #      旧形态保留给既有测试/兼容调用；生产热路径恒为新形态（由 _inc_record_observations 传 pairs）
+        _first = next(iter(pairs))
+        if isinstance(_first, str):
+            ph_c = ",".join("?" * len(pairs))
+            sql_c = (
+                "SELECT o.code, o.factor_time, o.factor_value, o.revision_no "
+                "FROM qfq_factor_observation o JOIN ("
+                "  SELECT code, factor_time, MAX(revision_no) AS mr "
+                "  FROM qfq_factor_observation "
+                "  WHERE asset_type=? AND code IN (" + ph_c + ") "
+                "  GROUP BY code, factor_time"
+                ") m ON o.code=m.code AND o.factor_time=m.factor_time "
+                "AND o.revision_no=m.mr "
+                "WHERE o.asset_type=?"
+            )
+            rows = c.execute(sql_c, [asset_type] + list(pairs) + [asset_type]).fetchall()
+            return {(r[0], int(r[1])): (r[2], int(r[3])) for r in rows}
+        # 去重保序（同 (code, ft) 重复出现只查一次）
+        seen: set[tuple[str, int]] = set()
+        uniq: list[tuple[str, int]] = []
+        for code, ft in pairs:
+            k = (str(code), int(ft))
+            if k in seen:
+                continue
+            seen.add(k)
+            uniq.append(k)
+        if not uniq:
+            return {}
+        ph = ",".join("(?,?)" for _ in uniq)
         sql = (
             "SELECT o.code, o.factor_time, o.factor_value, o.revision_no "
-            "FROM qfq_factor_observation o JOIN ("
-            "  SELECT code, factor_time, MAX(revision_no) AS mr "
-            "  FROM qfq_factor_observation "
-            "  WHERE asset_type=? AND code IN (" + ph + ") "
-            "  GROUP BY code, factor_time"
-            ") m ON o.code=m.code AND o.factor_time=m.factor_time "
-            "AND o.revision_no=m.mr "
-            "WHERE o.asset_type=?"
+            "FROM qfq_factor_observation o "
+            "WHERE o.asset_type=? AND (o.code, o.factor_time) IN (" + ph + ") "
+            "AND o.revision_no = (SELECT MAX(revision_no) FROM qfq_factor_observation p "
+            "  WHERE p.asset_type=o.asset_type AND p.code=o.code "
+            "    AND p.factor_time=o.factor_time)"
         )
-        rows = c.execute(sql, [asset_type] + list(codes) + [asset_type]).fetchall()
+        flat = [x for pair in uniq for x in pair]
+        rows = c.execute(sql, [asset_type] + flat).fetchall()
         last = {}
         for code, ft, fv, rv in rows:
             last[(code, int(ft))] = (fv, int(rv))
@@ -422,7 +457,8 @@ class ObservationStore:
 
             unchanged_rows = []
             for _at, _rows, _codes in chunks:
-                last_map = self._inc_fetch_last(c, _at, _codes)
+                last_map = self._inc_fetch_last(
+                    c, _at, [(_r[1], _r[2]) for _r in _rows])
                 self._inc_counters["chunks"] += 1
                 self._inc_counters["fetch_rows"] += len(last_map)
                 for asset_type, code, ft, fv in _rows:
