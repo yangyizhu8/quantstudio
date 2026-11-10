@@ -51,17 +51,21 @@ EXEMPT_FILES = {
 }
 
 # R-PERF-23/24：已知违规（历史既成，不 FAIL 但**必须可见**）
-# frozen_mtime = 「1.4.5 原版灭失时点」的登记值（首次覆写时刻）；实跑比对当前 mtime
+# frozen_mtime = 对照基准（基准化后）；原始「1.4.5 原版灭失时点」= 2026-11-08 01:57:00，见 why 留痕
 #   —— 不一致 ⇒ KNOWN_VIOLATION_MUTATED（覆写在冻结期内**再次发生**，WARN / strict FAIL）
 #   —— 文件不存在 ⇒ KNOWN_VIOLATIONS_MISSING（登记表与实际目录不对齐）
 KNOWN_VIOLATIONS = {
     'baseline_readings.json': {
-        'why': '01:57 被 1.5.6 跑覆写（D-2 案发），1.4.5 原版灭失；03:29 又发生第二次覆写（B2_pre_hot）；探针硬编码路径不可移走',
-        'frozen_mtime': '2026-11-08 01:57:00',
+        'why': '01:57 被 1.5.6 跑覆写（D-2 案发），1.4.5 原版灭失；03:29 又发生第二次覆写（B2_pre_hot）；探针硬编码路径不可移走'
+               '；原冻结点 2026-11-08 01:57:00；2026-11-10 依裁定 R-PERF-44 基准化至最后一次已知覆写时刻 09:02:57'
+               '（门3 落地前最后一次覆写）',
+        'frozen_mtime': '2026-11-10 09:02:57',
     },
     'baseline_golden.json': {
-        'why': 'golden 侧，1.4.5 原版灭失；03:29 第二次覆写；仅 cprofile/memtrace 旁证',
-        'frozen_mtime': '2026-11-08 01:57:00',
+        'why': 'golden 侧，1.4.5 原版灭失；03:29 第二次覆写；仅 cprofile/memtrace 旁证'
+               '；原冻结点 2026-11-08 01:57:00；2026-11-10 依裁定 R-PERF-44 基准化至最后一次已知覆写时刻 09:02:57'
+               '（门3 落地前最后一次覆写）',
+        'frozen_mtime': '2026-11-10 09:02:57',
     },
     'daily_baseline_readings.json': {
         'why': '01:50 被 1.5.6 跑覆写（D-2 案发），1.4.5 原版灭失',

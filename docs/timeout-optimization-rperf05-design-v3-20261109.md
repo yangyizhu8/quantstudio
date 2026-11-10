@@ -271,7 +271,7 @@ RESULT: WARN(non-strict: 2 frozen-record mutations)；strict exit=1
 - `-f` 破例理由：**门3 验证执行日志 = 可复现证据本体**（证明默认 mode 产出四要素名且不再覆写 `baseline_*`）+ 体积 6,675 B **远小于 100KB 呈报阈值**
 - 不推广：其余 log 继续按 sha 登记不入库
 
-### 10.3 甲方案留痕模板（R-PERF-43 ③：**待用户裁定后执行，本方不自行基准化**）
+### 10.3 甲方案留痕模板（R-PERF-43 ③ 预置 → **R-PERF-44 已执行**，随第四批落地）
 
 > 若裁定执行甲（`KNOWN_VIOLATIONS` 的 `frozen_mtime` 由 `2026-11-08 01:57:00` 基准化到 `2026-11-10 09:02:57`），
 > 两项的 `why` **必须原文追加**：
@@ -279,8 +279,31 @@ RESULT: WARN(non-strict: 2 frozen-record mutations)；strict exit=1
 >
 > **不写留痕 = 静默改判据 = 掩盖**：后人若只看到 `frozen=2026-11-10` 会误以为那是原始冻结点。
 > 归属：判据面放松，须总调度呈用户知悉/裁定后再由执行方执行。
-> 判据面附录（当前态）：`mutated=2`（`baseline_readings.json` / `baseline_golden.json`，均 now=11-10 09:02:57）
-> 属**门3 之前的既成事实**；门3（`37d9e40`）已断源——本轮实测跑后两件 mtime/sha 均未变。
+
+#### 10.3.1 ✅ 执行记录（2026-11-10，依裁定 R-PERF-44）
+
+| 项 | 内容 |
+|---|---|
+| 裁定编号 | **R-PERF-44**（「随第四批落地；留痕句照抄 §10.3；下轮呈批面以知悉项带出」） |
+| 改动文件 | `scripts/check-evidence-naming.py` |
+| 两处 `frozen_mtime` | `2026-11-08 01:57:00` → **`2026-11-10 09:02:57`**（`baseline_readings.json` / `baseline_golden.json`） |
+| 两处 `why` | 均原文追加留痕句（裁定编号填 R-PERF-44） |
+| **字段注释（R-PERF-44 §三 追加硬条件）** | 原「`frozen_mtime` = 「1.4.5 原版灭失时点」的登记值（首次覆写时刻）」→ 新「**对照基准（基准化后）；原始「1.4.5 原版灭失时点」= 2026-11-08 01:57:00，见 why 留痕**」 |
+| `daily_baseline_readings.json` | **未动**（01:50:56 保持） |
+| 自测引用 | `KNOWN_VIOLATIONS['baseline_readings.json']['frozen_mtime']` 硬编码引用自动跟随，无需另改 |
+
+**执行后实测（2026-11-10 23:41）**：
+
+| 判据 | 执行前 | 执行后 |
+|---|---|---|
+| `mutated` | 2 | **0** ✅ |
+| `violations` | 0 | **0** ✅ |
+| 门禁 RESULT | `WARN(2 frozen-record mutations)` | **`PASS`** ✅ |
+| `--strict` | exit=1（FAIL） | **exit=0** ✅ |
+| `--self-test` | 5/5 PASS | **5/5 PASS** ✅（语义由「原版灭失时点」变为「基准化对照点」，仍全绿） |
+
+> 判据面附录（基准化后状态）：`known_violations=3`（含未基准化的 `daily_baseline_readings.json` 01:50:56）、
+> `mutated=0`——此后 `baseline_*` 若再被覆写，门禁将重新报 `KNOWN_VIOLATION_MUTATED`（守门能力保留）。
 
 ## 十一、性能对照分母规则（R-PERF-40 ③ 裁定，收口前必读）
 
