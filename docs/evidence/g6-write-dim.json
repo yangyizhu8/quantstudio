@@ -1,0 +1,46 @@
+{
+  "replica": "D:\\qs_g6_replica_20261110",
+  "codes": 20,
+  "points": 6,
+  "backup_s": 67.1,
+  "pristine_bytes": 13269803008,
+  "input_rows": 120,
+  "input_dropped_dup": 0,
+  "branch_counts": {
+    "revise": 60,
+    "new": 60
+  },
+  "restore_s": 83.8,
+  "restored_obs_max_rowid": 45124444,
+  "old_wall_s": 0.066,
+  "new_wall_s": 74.947,
+  "result_old": {
+    "inserted": null,
+    "revised": 60,
+    "unchanged": 0
+  },
+  "result_new": {
+    "inserted": null,
+    "revised": 60,
+    "unchanged": 0
+  },
+  "new_obs_rows_old": 120,
+  "new_obs_rows_new": 120,
+  "new_alert_rows_old": 60,
+  "new_alert_rows_new": 60,
+  "obs_set_identical": true,
+  "alert_set_identical": true,
+  "write_dim": {
+    "compared_keys": 115070,
+    "nonzero_count": 0,
+    "nonzero_ratio": 0.0,
+    "p50": 0.0,
+    "p90": 0.0,
+    "p99": 0.0,
+    "max": 0.0,
+    "last_bit_only_count": 0,
+    "nonzero_samples": [],
+    "trade_date_nonzero_counts": {}
+  },
+  "equivalent": true
+}
