@@ -95,3 +95,63 @@
 1. **Context7 查证** `is_trade` / `get_research_path` / `set_commission`（库 ID `/kay-ou/ptradeapi`，单主题、≤3 次）；
 2. 依结果定 **A**（另立条目放宽 `portability_rules`，走②审）或 **C**（风险项登记，不动规则）；
 3. A/C 定后再送 **§12 极短版②审**（裁③：随澄清结果送）。
+
+---
+
+## 六、A／C 定性（Context7 查证完成 · 2026-11-10 23:3x）
+
+> 依据：Context7 `/kay-ou/ptradeapi`（`api-reference-en/utilities.md`、`api-reference-en/settings.md`、
+> `docs/original/Ptrade国盛.md`、`docs/original/Ptrade东莞.md`）。铁律 16 要求标注依据，故逐条引用。
+
+### 6.1 三 API 查证结果
+
+| API | 是否公有 | 文档逐字依据 | 判定 |
+|---|---|---|---|
+| `is_trade()` | ✅ **公有** | 「Determine whether the current strategy is running in **trading** environment or **backtest** environment. Returns `True` in trading environment, `False` in backtest environment.」（`api-reference-en/utilities.md`） | **A**（规则误判） |
+| `get_research_path()` | ✅ **公有** | 「获取研究根目录路径。该函数可在**回测、交易模块**使用。返回路径为'/home/fly/notebook/'。」（`docs/original/Ptrade国盛.md`） | 公有 ✓，但配套 open 见 §6.2 |
+| `set_commission(...)` | ✅ **公有** | `set_commission(commission_ratio=0.0003, min_commission=5.0, type="STOCK")`；`type` 支持 `"STOCK", "ETF", "LOF"`；「**该函数仅在回测模块可用**」（`api-reference-en/settings.md` + `Ptrade东莞.md`） | **A**（规则误判） |
+
+### 6.2 **`is_trade()` 语义纠正（我方第 6 次自纠）**
+
+⚠️ `is_trade()` 判的是「**交易环境 vs 回测环境**」，**不是**「是否交易时段」。
+⇒ 我方 §5.1 表格中「交易时段必进入」的表述**错误**，应为「**交易环境下**必进入」。
+
+**但产物用法反而因此更正确**：
+- L1824 `if not is_trade(): set_commission(...)` ＝「**回测环境**才设佣金」——而文档明确「该函数**仅在回测模块可用**」⇒ **完全正确** ✓
+- L221 `if is_trade():` ＝「**交易环境**才取 `get_snapshot` 快照价打护栏参考日志」⇒ 合理 ✓
+
+### 6.3 **`_PD_NOTEBOOK` 的真用途（推翻"仅取路径"假设）**
+
+| 位置 | 原文 | 性质 |
+|---|---|---|
+| L352 | `_PD_NOTEBOOK = get_research_path()` | 取路径（公有 API） |
+| **L1808** | `with open(_PD_NOTEBOOK + 'ETF_f926a7_state.pkl', 'rb') as _pf:` | **读本地文件** |
+| **L1973** | `with open(_PD_NOTEBOOK + 'ETF_f926a7_state.pkl', 'wb') as _pf:` | **写本地文件** |
+
+⇒ `get_research_path()` 的返回值**被实际用于 `open()` 读写文件**（PERSIST 注入块，框架层 `_apply_persist`）。
+
+### 6.4 **校验器检测点错位（新发现）**
+
+`PORTABILITY-FILE-DB-ACCESS` 报在 **L352（`get_research_path()` 调用处）**，而**真实风险在 L1808/L1973 的 `open()`**。
+⇒ 该 API 本身是官方文档明示「可在交易模块使用」的取路径函数；**被禁的是"访问本地文件"**（`ptrade-profile-contract.md` §2），
+应报在 `open()` 处。**这是校验器的检测点错位，不是 API 不能用。**
+
+### 6.5 最终定性（分项，不混办）
+
+| 项 | 定性 | 处置 |
+|---|---|---|
+| `is_trade()` 被列 `PORTABILITY-LOCAL-API` DENY | **A — 规则误判**（公有 API） | **另立条目放宽** `portability_rules`，走②审 |
+| `set_commission()` 同上（若也被列） | **A — 规则误判**（公有 API，`type='ETF'` 合法） | 同上 |
+| `get_research_path()` 被列 `PORTABILITY-FILE-DB-ACCESS` | **A（API 本身）+ C（配套 open 读写文件）** 复合 | ①规则从「禁用该 API」改为「检测 `open()` 等真实文件访问」；②`open()` 读写 `/home/fly/notebook/` 是否被公有 Profile 允许，**文档未见明确许可** ⇒ **C 风险登记**，待平台实证或用户裁定 |
+
+⚠️ **`open()` 是否真成功今日无法证明**：L1808 在 `try/except: _saved_state=None` 内 ⇒ 即使失败也静默 ⇒
+「今日未报错」**不能**作为「文件读写成功」的证据。
+
+### 6.6 结论
+
+- **A 项确凿**：`is_trade` / `set_commission` / `get_research_path` **均为公有 API** ⇒ 校验器把它们当"本地专属"是**误判**，
+  应另立条目放宽（**走②审**）；
+- **C 项待定**：`open()` 读写 `get_research_path()` 下的 `.pkl` 是否属公有 Profile 允许的文件访问 ⇒ **文档无明文**，
+  登记风险；**检测点应从 api 名改为 `open()` 位置**（这是校验器改进项）；
+- **甲方案验收**：这 3 个 BLOCK 仍是「既有问题」，**不计入甲方案改动引入**；
+- **§12 ②审**：A/C 定性已完成 ⇒ 按裁③**可送**（下一轮）。
