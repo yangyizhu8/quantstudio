@@ -2330,3 +2330,34 @@ git stash store [(-m | --message) <message>] [-q] <commit> ← 只有 store 有 
 > 本轮结论：**双方均按证据推进，分歧由工具输出语义缺失造成，非任何一方算术或态度问题。**
 > ⇒ 执行方：主动更正归因 + 补第三条独立证据；审核方：点名未覆盖件 + 语义两轮交叉。
 > ⇒ **落地要求已转⑥（skipped 字段 + glob）**，判据 `len(files)==checked+len(skipped)` 且 `bad ⊆ checked` 随批。
+# R-PERF-38 验收 · ②审 · 2026-11-10 09:30 · **E-04 等价性 PASS（独立回验）；性能数字未落全窗 ⇒ 禁止对外报；要求补跑全窗；E-6 改内容 sha 照准并升通用判据**
+
+## 10.189 审核方独立回验（全部可复现）
+
+| 项 | 实测 | 判定 |
+| --- | --- | --- |
+| commit `1d895b9` | cat-file=**commit**；**恰 6 项**（provider / v3 / patch 锚 / 分钟对拍固件 / 证据 json / 证据 log）；diffstat 6 files, +455/−3 | ✅ |
+| **E-6 内容 sha 回验** | `sha256(1d895b9^:provider)` == `sha256(74b4181:provider)` == `eb9518b2…` **逐位一致** | ✅ **基线复用成立，省 3.9h 正确** |
+| **调用点全集** | `git grep -n query_minute_bars_by_count_batch -- quantstudio/` ⇒ 外部调用**仅 1 处**（`duckdb_provider.py:101`）；provider 内 L905 明文注释「分钟路径不经过本函数（走 query_minute_bars_by_count_batch），**零触碰**」 | ✅ **日线路径零触碰** |
+| 证据 json | `e04min_1.5.6_hot_wall_2026-03-02~2026-03-06_20261110.json`（1,246 B）：golden `b4b538a0ca0eff1ae69a283fe15b1793b2c3ed6e00b7897ea2f0757caf85fabb`（**与申报逐字一致**）、wall **182.593**、nav 5 / trades 4、peak_wset 7,211.5 MB、env py3.11.9 / duckdb1.5.6 / pandas2.3.3 | ✅ |
+| 命名门禁实跑 | `files=15 compliant=5 exempt=7 known_violations=1 mutated=2 violations=0 legacy_frozen=23` | ✅ compliant 3→5 |
+| 代码实现（逐行读 diff） | `_minute_bars_per_day` 正则解析 freq（1/5/15/30/60min ⇒ 240//n，未知取 8）；`span_days=max(2, ceil(count/per_day)+1)`；快路径 `WHERE freq=? AND time>=? AND time<=?`；**V-3** `short_codes.extend([c for c in tbl_codes if c not in per_code.index or per_code[c]<count])`（集合差，禁 size-only）；freq 存在但窗口空 ⇒ `short_codes.extend(tbl_codes)`（0 根码入队）；**V-1/V-2** 慢路径 `sql_old` **无 `time>=`** 且 `for code in [...]` **逐码独立**；慢路径结果对同码**权威覆盖**快路径 | ✅ **V-1/V-2/V-3 逐条对上** |
+| `git add -f` 用法 | `.gitignore` L32 `*.log` ⇒ log 确被忽略 ⇒ `-f` 属**破例**；但仓内**已有先例**（`fullwindow_…_20261108_2030.log` 201KB 早已入库），本次仅 6,503 B | ✅ 可接受，须登记理由，**不得推广** |
+
+## 10.190 裁定
+
+| 项 | 裁定 |
+| --- | --- |
+| ① **E-04 ④验收** | 🟡 **等价性 PASS / 性能未闭环 ⇒ 有条件通过** |
+| ② **等价性** | ✅ **PASS**：EC-2 107 码（含 7 个 0 根码）逐位全等 + 短窗分钟 golden 逐位相同 + 调用点全集证日线零触碰 + 内容 sha 证基线同源 |
+| ③ **性能** | 🔴 **未闭环**：1.70x / 2.33x / 13.42x / 45.25x **全部为 5 日短窗读数** ⇒ **禁止对外报任何性能数字** |
+| ④ **补跑要求** | 🔴 **全窗 148 日必须补跑**（性能数字唯一合法来源 + 唯一覆盖跨日期端到端）；**日线档 1fed84dd 不强制**（零触碰已实测白盒证），全窗跑顺手则跑 |
+| ⑤ **E-6 改内容 sha** | ✅ **照准**，并**升为通用判据**（基线/产物可复用性一律用内容 sha256，禁用 mtime）——已固化常驻记忆 |
+| ⑥ 门禁 mutated 申报 | 🟡 **补申报**：本轮 `baseline_golden.json` / `baseline_readings.json` 的 mtime **再变**（frozen 11-08 01:57 → now 11-10 09:02:57），**strict 模式下仍 FAIL**；非新增损害（该两件早已在 known 列表），但申报「violations=0 ✓」未含此项 |
+
+## 10.191 本轮新增通用判据（已固化）
+
+| 判据 | 内容 |
+| --- | --- |
+| **内容 sha 判据** | 基线/产物可复用性一律用内容 sha256，**禁 mtime**（`git checkout HEAD --` 等动作会重置 mtime ⇒ mtime 判据天然脆弱）；反推式回验：`sha(<改动前commit>:<path>)` == `sha(<基线commit>:<path>)` |
+| **调用点全集 → 验收强度** | 改共享函数前先 `git grep` 取调用点全集；影响面 = 调用点全集 ⇒ 零触碰路径可不重复跑 golden，但**端到端跨状态锚不可省**；白盒（调用点）与黑盒（golden 对拍）互补 |
