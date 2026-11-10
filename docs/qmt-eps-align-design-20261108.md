@@ -275,3 +275,48 @@
 
 知识反哺：[命中] QD-2026-0023（qd 族／D3 域／`knowledge/qmt/QD-2026-0023.md`，2026-11-10）
 本轮沉淀：QD-2026-0023（EPS 层前置结论·PIT 映射·两侧不同源机制·北京午夜锚·压缩形态实测）
+
+
+---
+
+## 十四、段二实施规格定谳（2026-11-10 · 落点图 ＋ 对齐策略修正）
+
+### 14.1 落点归属实测（模板串内外定谳）
+
+| 模板串变量 | 起行 | 说明 |
+|---|---|---|
+| `_QS_QMT_HISTORY_EXT` | **L608–713**（105 行） | **EPS 快照层所在**（段一已插入；EPS 标记字符位 @2572，先于 QFQ @8538） |
+| `_QS_QMT_FUNDAMENTALS_EXT` | **L1575 起** | **EPS 消费点所在**：归一函数 L1707 ／ 全历史行收集 L1886 ／ 字段映射表 `_QS_QMT_FUND_FIELD_MAP` L2083 ／ 取数主体 L2152（`C.get_financial_data(native_fields, codes, '19900101', …)`） |
+| 其它 | `LOG_EXT` L250／`CONTEXT_VIEW_EXT` L331／`DATA_VIEW_EXT` L498／`POSITION_EXT` L1077／`ORDER_EXT` L1173／`ASHARES_EXT` L1279／`TRADE_DAYS_EXT` L1314／`STOCK_INFO_EXT` L1353／`WRAPPER_ZONE` L2313／`ALIAS_ZONE` L2487／`MODULE_HEADER` L2502 | — |
+
+**关键结论**：四个 EPS 落点（1707/1886/2083/2152）**全部在 `_QS_QMT_FUNDAMENTALS_EXT` 模板串内**（产物侧运行期执行）；而段一落的 `_qs_eps_*` 三函数在 `_QS_QMT_HISTORY_EXT` 内。两串最终**拼接进同一产物文件、同属模块级作用域 ⇒ 运行期互相可见**，无需调整位置。
+
+### 14.2 ★对齐策略修正（本轮实读推翻我方原设计）
+
+- **原设计（错）**：`_qs_eps_pick(code, D-1d8)` 按「公告日 ≤ D-1 取最近一期」覆盖 ⇒ **会改变面板返回的行结构/期数**，且与「面板本身已按 PIT 给出历史各期」的既有语义冲突。
+- **修正（对）**：**按 `(code, end_d8)` 同键逐期替换 `eps` 数值**——面板返回历史各期、本地快照亦为历史各期 ⇒ 逐期同键对齐才是「同源」；`publ_date`/`end_date` **不替换**（PIT 可见性锚保持面板原样）⇒ 行结构、期数、PIT 语义**全部不变**，只有 eps 数值对齐。
+- **保留**：`_qs_eps_pick` 退居辅助（未来若需「按 D 取最近一期」语义再用），主路径改走**同键对齐**。
+
+### 14.3 段二实现清单（下一轮一次性完成）
+
+| # | 动作 | 落点 | 判据 |
+|---|---|---|---|
+| 1 | 新增 `_qs_eps_align_rows(rows_by_code, table)` | `_QS_QMT_HISTORY_EXT`（EPS 层内） | 按 `(code,end_d8)` 同键覆盖 eps；返回 `(rows, stats)`；`stats={'overridden','mismatch','span_short','unmatched'}` |
+| 2 | 接线：`table=='eps'` 时在行收集后调用 | `_QS_QMT_FUNDAMENTALS_EXT`（L1886 全历史行收集 与/或 L1707 归一之后） | 面板原值保留为对照；`eps` 被本地值覆盖 |
+| 3 | fail-loud 双式 | 同上（stats 打印） | `QS_QMT_EPS_MISMATCH n=<数> sample=<code>@<end_d8>:panel=<v>,local=<v>`（面板≠本地，打印前 3 例）；`QS_QMT_EPS_SPAN_SHORT n=<数> sample=<code>@<end_d8>`（本地缺该期，保留面板值） |
+| 4 | `convert(…, eps_embed=…)` 注入参数 | `convert()` 签名与 QQF 注入同构（L3373±，随 `qfq_embed` 一并处理） | 明文/ZB64 双形态；缺省零漂移 |
+| 5 | 重转一产物验三态 | 产物 | 产物首段出现 `QS_QMT_EPS_SNAP embedded n=<…> base=<…> mode=<plain|zlib>`；absent/broken 亦打对应行 |
+| 6 | 矩阵再追认 | `fundamentals-contract-matrix.{md,yaml}` | `qmt_wrapper_hash` 再变；`wrapper_hash` 不变（分立） |
+| 7 | 回归 | QMT 面 17 件 + EPS 导出器 9 件 | 全绿；策略源码零改动 |
+
+### 14.4 读者须知（分片实施的边界）
+
+- **段一**（已成笔 `67d6a82`）：快照层三函数落地，**未接线、不生效**；
+- **段二上**（本轮）：落点定谳 ＋ 对齐策略修正（**设计层面纠错**，避免带着错误设计编码）；
+- **段二下**（下一轮）：按 §14.3 清单一次性完成 1–7，**不做半成品接线**。
+- 边界申报：**EPS 覆盖当前完全未生效**，不得据此宣称舱二对齐。
+
+---
+
+知识反哺：[命中] QD-2026-0023（qd 族／D3 域／`knowledge/qmt/QD-2026-0023.md`，2026-11-10）
+本轮沉淀：QD-2026-0023（EPS 层前置结论·PIT 映射·两侧不同源机制·北京午夜锚·对齐策略修正）
