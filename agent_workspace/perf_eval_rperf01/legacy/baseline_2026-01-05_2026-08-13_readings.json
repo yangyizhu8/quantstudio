@@ -4,10 +4,10 @@
     "2026-01-05",
     "2026-08-13"
   ],
-  "wall_sec": 14391.307,
+  "wall_sec": 4285.156,
   "wall_note": "裸跑",
-  "peak_wset_mb": 11929.4,
-  "rss_end_mb": 6697.2,
+  "peak_wset_mb": 8952.4,
+  "rss_end_mb": 5266.6,
   "tracemalloc_cur_mb": null,
   "tracemalloc_peak_mb": null,
   "nav_days": 148,
@@ -21,7 +21,7 @@
     "round_trips.csv": "948d611fa196b3d42f8af725eb93cb74c336ca8743c4201536f0d878a167dedc",
     "trades.csv": "27a7105b57d7705634fd60b568b7e7460edb8c475875ebe87bdd565097c7c178"
   },
-  "export_dir": "output\\backtest_results\\20261109_002224_strategy",
+  "export_dir": "output\\backtest_results\\20261110_120240_strategy",
   "env": {
     "python": "3.11.9",
     "duckdb": "1.5.6",
