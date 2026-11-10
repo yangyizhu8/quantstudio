@@ -1,0 +1,99 @@
+diff --git a/quantstudio/backtest/providers/duckdb_data_access.py b/quantstudio/backtest/providers/duckdb_data_access.py
+index f4e7801..c8efbe7 100644
+--- a/quantstudio/backtest/providers/duckdb_data_access.py
++++ b/quantstudio/backtest/providers/duckdb_data_access.py
+@@ -30,6 +30,25 @@ from .time_axis import day_start_ms, is_day_start_ms
+ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+ 
+ 
++def _minute_bars_per_day(storage_freq) -> int:
++    """分钟表「每交易日根数」估计（R-PERF-05/E-04 v3，仅决定快路径下界宽度）。
++
++    per_day = 240 / freq分钟数（1min⇒240 / 5min⇒48 / 15min⇒16 / 30min⇒8 / 60min⇒4）。
++    freq 无法解析时取**最稀疏 30min（8）**保守值 —— 下界更宽只降低命中率，
++    **不影响结果**：不足 count 根的码由慢路径无下界回退兜底（V-1/V-2/V-3）。
++    """
++    s = str(storage_freq or "").strip().lower()
++    m = re.match(r"^(\d+)\s*m(?:in)?$", s)
++    if m:
++        try:
++            n = int(m.group(1))
++            if n > 0:
++                return max(1, 240 // n)
++        except Exception:
++            pass
++    return 8
++
++
+ def _require_valid_identifier(name: str, where: str) -> str:
+     if not isinstance(name, str) or not _IDENTIFIER_RE.match(name):
+         raise ValueError(
+@@ -1388,16 +1407,25 @@ class DuckDBDataAccess:
+         if not table_codes:
+             return pd.DataFrame()
+         parts = []
++        # R-PERF-05/E-04 v3（2026-11-10，纯性能型）：两段式 time 下界。
++        # 快路径：SQL 追加 time >= 下界，只扫窗口内行（原 SQL 无下界 ⇒ 每码对全历史
++        # 分钟行做 PARTITION BY 排序：~31 万行/码 × 百码 ≈ 3200 万行 ⇒ 30s 预算超时）。
++        # 慢路径（V-1/V-2/V-3）：请求码集 − 快路径结果码集 ∪ 行数<count 的码 ⇒ 逐码独立
++        # 用**原无下界 SQL** 重查并覆盖（慢路径权威）。⇒ 每码结果与原查询逐位相同。
++        per_day = _minute_bars_per_day(storage_freq)
++        span_days = max(2, -(-int(count) // per_day) + 1)      # ceil(count/per_day)+1
++        lower_ms = int(cutoff_ms) - span_days * 86_400_000
++        short_codes: list = []                                  # 待慢路径回退（V-3 集合差）
+         for table, tbl_codes in table_codes.items():
+             placeholders = ", ".join(["?"] * len(tbl_codes))
+             sql = (
+                 f"SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, "
+                 f"preClose, open_front, high_front, low_front, close_front, open_back, high_back, "
+                 f"low_back, close_back FROM {table} "
+-                f"WHERE freq = ? AND time <= ? AND code IN ({placeholders}) "
++                f"WHERE freq = ? AND time >= ? AND time <= ? AND code IN ({placeholders}) "
+                 f"QUALIFY ROW_NUMBER() OVER (PARTITION BY code ORDER BY time DESC) <= {int(count)}) "
+                 f"ORDER BY code, time")
+-            params = [storage_freq, cutoff_ms] + tbl_codes
++            params = [storage_freq, lower_ms, cutoff_ms] + tbl_codes
+             df = self._execute_with_timeout(conn, sql, params)
+             if df is None or df.empty:
+                 # 表级 freq 缺失 → FREQ_NOT_IN_TABLE（三分类语义保持：与单只版 L853-857 一致）
+@@ -1410,8 +1438,39 @@ class DuckDBDataAccess:
+                     raise FrequencyCapabilityError(
+                         ERR_FREQ_NOT_IN_TABLE, api_freq=None, storage_freq=storage_freq,
+                         table=table, detail=f"{table} 有数据但缺 freq={storage_freq}")
+-                continue  # 有此 freq 但窗口内无 bar（合法空）
++                # 有此 freq ⇒ 窗口内可能全空（须逐个慢路径回退，V-3 集合差）
++                short_codes.extend(tbl_codes)
++                continue
++            per_code = df.groupby("code", sort=False).size()
++            short_codes.extend([c for c in tbl_codes
++                                if c not in per_code.index or int(per_code[c]) < int(count)])
+             parts.append(df)
++        # ---- 慢路径（V-1 原查询 / V-2 逐码独立 / V-3 集合差）----
++        if short_codes:
++            slow_parts = []
++            for table, tbl_codes in table_codes.items():
++                for code in [c for c in tbl_codes if c in set(short_codes)]:
++                    sql_old = (
++                        f"SELECT * FROM (SELECT code, time, freq, open, high, low, close, volume, amount, "
++                        f"preClose, open_front, high_front, low_front, close_front, open_back, high_back, "
++                        f"low_back, close_back FROM {table} "
++                        f"WHERE freq = ? AND time <= ? AND code IN (?) "
++                        f"QUALIFY ROW_NUMBER() OVER (PARTITION BY code ORDER BY time DESC) <= {int(count)}) "
++                        f"ORDER BY code, time")
++                    df_old = self._execute_with_timeout(
++                        conn, sql_old, [storage_freq, cutoff_ms, code])
++                    if df_old is not None and not df_old.empty:
++                        slow_parts.append(df_old)
++            if slow_parts:
++                # 慢路径结果对同一 code 权威覆盖快路径（V-1：原查询语义）
++                if parts:
++                    slow_df = pd.concat(slow_parts, ignore_index=True)
++                    slow_codes = set(slow_df["code"].unique())
++                    fast_df = pd.concat(parts, ignore_index=True)
++                    fast_df = fast_df[~fast_df["code"].isin(slow_codes)]
++                    parts = [fast_df, slow_df]
++                else:
++                    parts = slow_parts
+         if not parts:
+             return pd.DataFrame()
+         result = pd.concat(parts, ignore_index=True)

@@ -1,0 +1,77 @@
+09:00:03 INFO quantstudio.backtest.backtest_engine: [口径] 策略『买入/卖出』日志=提交级（不回查成交）；本次未启用成交级审计（如需请设 QS_ORDER_RESULT=1）
+09:00:04 INFO quantstudio.backtest.backtest_engine: [Backtest] 5 trading days: 2026-03-02 00:00:00+08:00 ~ 2026-03-06 00:00:00+08:00
+09:00:31 INFO quantstudio.backtest.providers.duckdb_data_access: QS_BARS_CACHE_PROGRESS table=stock_daily loaded=3099/3099 chunks=16 elapsed=19.7s
+09:00:38 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-27', 'hit': 0, 'miss': 3099}
+09:00:39 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-26', 'hit': 0, 'miss': 3099}
+09:00:40 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-02: 58 只
+09:01:27 INFO quantstudio.backtest.ptrade_api: 买入 600452.SS
+09:01:28 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260302 date=2026-03-02 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+09:01:28 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260302 date=2026-03-02 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+09:01:40 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-02', 'hit': 0, 'miss': 3097}
+09:01:40 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-02-27', 'hit': 3097, 'miss': 0}
+09:01:41 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-03: 61 只
+09:01:53 INFO quantstudio.backtest.ptrade_api: 买入 003009.SZ
+09:01:53 INFO quantstudio.backtest.ptrade_api: 买入 600968.SS
+09:01:54 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260303 date=2026-03-03 selected=2 tradable=2 sell_submitted=0 buy_submitted=2
+09:01:54 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260303 date=2026-03-03 positions=1 cash_ratio=0.5636 gross_exposure=0.4364
+09:02:03 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-03', 'hit': 0, 'miss': 3098}
+09:02:03 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '001285', 'date': '2026-03-02'}
+09:02:03 WARNING quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CHECK_NO_ROW', 'code': '603966', 'date': '2026-03-02'}
+09:02:03 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-02', 'hit': 3096, 'miss': 2}
+09:02:03 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-04: 37 只
+09:02:13 INFO quantstudio.backtest.ptrade_api: 买入 600635.SS
+09:02:15 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260304 date=2026-03-04 selected=1 tradable=1 sell_submitted=0 buy_submitted=1
+09:02:15 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260304 date=2026-03-04 positions=2 cash_ratio=0.0048 gross_exposure=0.9952
+09:02:23 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-04', 'hit': 0, 'miss': 3098}
+09:02:23 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-03', 'hit': 3098, 'miss': 0}
+09:02:23 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-05: 31 只
+09:02:34 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260305 date=2026-03-05 selected=0 tradable=0 sell_submitted=0 buy_submitted=0
+09:02:34 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260305 date=2026-03-05 positions=2 cash_ratio=0.0048 gross_exposure=0.9952
+09:02:43 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-05', 'hit': 0, 'miss': 3098}
+09:02:43 INFO quantstudio.backtest.ptrade_api: QS_DIAG {'kind': 'LIMIT_CACHE_HIT', 'date': '2026-03-04', 'hit': 3098, 'miss': 0}
+09:02:43 INFO quantstudio.backtest.ptrade_api: 首板池 2026-03-06: 49 只
+09:02:55 INFO quantstudio.backtest.ptrade_api: 卖出 003009.SZ
+09:02:55 INFO quantstudio.backtest.ptrade_api: 卖出 600635.SS
+09:02:55 INFO quantstudio.backtest.ptrade_api: QS_REBALANCE_AUDIT rebalance_id=fbho_20260306 date=2026-03-06 selected=1 tradable=0 sell_submitted=2 buy_submitted=0
+09:02:55 INFO quantstudio.backtest.ptrade_api: QS_PORTFOLIO_AUDIT rebalance_id=fbho_20260306 date=2026-03-06 positions=0 cash_ratio=1.0000 gross_exposure=0.0000
+09:02:55 INFO quantstudio.backtest.backtest_engine: [Backtest] completed: 5 days
+09:02:57 INFO quantstudio.backtest.backtest_engine: [Backtest] result exported: output\backtest_results\20261110_090256_strategy
+✓ index_constituents(399101): 53944 只
+✓ 估值市值源: stock_daily_valuation(每日) (sdv=9841092, sfs=1021802)
+✓ stock_daily 含 preClose/is_st_reliable/is_delisting_risk/suspendFlag
+[minute-gate] db=D:\miniQMT策略实盘\QuantStudio\data\backup_import_20261101_040935\quantstudio.db window=2026-03-02~2026-03-06
+[minute-gate] 交易日基准=5 天（引擎来源 stock_daily；日历对拍已做） strict=True min_ratio=0.5
+[minute-gate] ①整日缺=0 ②低覆盖=0 ③副本陈旧=0 耗时=5.6136s
+[minute-gate] ✅ PASS：窗口内分钟覆盖无整日缺/低覆盖告警
+{
+  "mode": "baseline",
+  "window": [
+    "2026-03-02",
+    "2026-03-06"
+  ],
+  "wall_sec": 182.593,
+  "wall_note": "裸跑",
+  "peak_wset_mb": 7211.5,
+  "rss_end_mb": 6013.9,
+  "tracemalloc_cur_mb": null,
+  "tracemalloc_peak_mb": null,
+  "nav_days": 5,
+  "trades": 4,
+  "golden_sha256": "b4b538a0ca0eff1ae69a283fe15b1793b2c3ed6e00b7897ea2f0757caf85fabb",
+  "csv_sha256": {
+    "benchmark.csv": "e135e5ab46d930b78fb923d8e650b4d3057c064c2de477cea2e5ee79371bff23",
+    "config.csv": "35906bf62b73c05040de03dc2fab9ece01a4d62c9c1f895d52f54bee231d0a27",
+    "daily_stats.csv": "30769dda640d3a9d557540d4f94f84540a0dc472344ca6861f52d91c24f863e1",
+    "ptrade_metrics.csv": "830cec5462c8fe00fcdfa7b01984fd0b79763fef1252cd35021e90a6814148e3",
+    "round_trips.csv": "cac83be5862cebfaa9fc3b8135411269ef6a8b1953a9c67afb84e034bed3d7d2",
+    "trades.csv": "353e52be7a76167b9938c9d2744b6ec6d2629ac36b4e27da7105da7d97dc8847"
+  },
+  "export_dir": "output\\backtest_results\\20261110_090256_strategy",
+  "env": {
+    "python": "3.11.9",
+    "duckdb": "1.5.6",
+    "pandas": "2.3.3",
+    "data_root": "D:\\miniQMT策略实盘\\QuantStudio\\data\\backup_import_20261101_040935",
+    "cwd": "D:\\miniQMT策略实盘\\QuantStudio"
+  }
+}
