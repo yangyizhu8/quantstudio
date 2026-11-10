@@ -235,3 +235,33 @@ E-6 原以 **mtime** 判基线可复用，但 `git checkout HEAD -- <path>` 会*
 （本轮 R-PERF-32 回退即触发：`duckdb_data_access.py` mtime 变为 11-09 22:46:19，内容仍 = `74b4181`）。
 ⇒ **改用内容指纹**：`sha256(工作树文件) == sha256(git show 74b4181:<path>)`，本轮实测两文件**逐位一致 ✓**
 ⇒ 基线读数有效（省 3.9h 重跑）。**建议把 E-6 的 mtime 判据替换为内容 sha 判据。**
+
+## 十、补申报（R-PERF-39 §六，我方上一轮申报不完整之处）
+
+### 10.1 门禁 mutated 状态（我方上一轮只报 violations=0，漏报此项）
+
+**门禁实跑（2026-11-10 10:52）**：
+```
+files=16  compliant=6  exempt=7  known_violations=1  mutated=2  violations=0  legacy_frozen=23
+KNOWN_VIOLATION_MUTATED: baseline_golden.json   frozen=2026-11-08 01:57:00 now=2026-11-10 09:02:57
+KNOWN_VIOLATION_MUTATED: baseline_readings.json frozen=2026-11-08 01:57:00 now=2026-11-10 09:02:57
+RESULT: WARN(non-strict: 2 frozen-record mutations)；strict exit=1
+```
+
+| 项 | 说明 |
+|---|---|
+| 覆写时点 | **2026-11-10 09:02:57** = 本轮黄金验收跑（5 日窗，默认路径输出） |
+| 性质 | **已知、预期、必要**（黄金验收必须用默认短窗产出 `baseline_*` 才能比对锚）；两件**早已在 known 列表**，非新增损害 |
+| 我方上一轮申报缺陷 | 只报 `violations=0 ✓`，**未报 mutated** ⇒ 本轮补齐 |
+| strict=FAIL 是否正确 | **正确**——冻结期内再次覆写就应当报出（这正是 M-1 的设计目的） |
+| 后续 | 全窗补跑完成后若再写默认路径，将再触发一次；建议下轮把探针默认输出也改为四要素名（根因治理，非豁免） |
+
+### 10.2 `git add -f` 破例登记（并更正一处先例表述）
+
+| 项 | 内容 |
+|---|---|
+| 规则 | `.gitignore` **L32 `*.log`** ⇒ 入库需 `-f` |
+| 本次破例 | `agent_workspace/perf_eval_rperf01/e04min_1.5.6_hot_wall_2026-03-02~2026-03-06_20261110.log`（**6,503 B**） |
+| 理由 | ①黄金验收（`b4b538a0` 逐位相同）的**完整执行日志**，是可复现证据本体；②体积极小（6.5KB）；③门禁要求四要素命名产物落盘可追溯 |
+| **先例更正** | 审核方 R-PERF-39 称「仓内已有先例：fullwindow_…20261108_2030.log 201KB 早已入库」——实测 `git ls-files '*.log'` **仅 2 件，均为本线自己加的**（`fullwindow_…_20261108_2030.log` = 本线 R-PERF-26 加的 201KB + 本次 6.5KB）⇒ **不构成项目既有惯例，而是本线自建的「关键证物强制入库」惯例**。如实更正。 |
+| 不推广 | **其余 log 继续按 sha256 登记、不入库**（避免仓膨胀）；全窗 log 若体积大（预计 >100KB）**须先呈报再决定**是否 `-f` |
