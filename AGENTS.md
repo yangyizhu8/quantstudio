@@ -50,7 +50,7 @@
 ## 【铁律】代码层"写前快照"纪律（多会话共享工作区防护）
 
 - **触发**：任何批量/破坏性 git 操作（checkout -- / reset / revert / clean / stash pop 冲突覆盖）前。
-- **摘要**：①先建零副作用回退点四步：`git add -A -- <本会话涉及路径>` → `git stash create -m "baseline-<时间戳>"` → **随即 `git stash store <hash>` 持久化** → `git reset`（`create` 不接受 `-u`，未跟踪件先入暂存才被捕获；不 store 会被 gc 清掉），hash 记入会话记录；②操作前 `git status --porcelain` 核对待动文件——非本会话的 M 文件视为他人工作，禁盲回退；③每轮会话开工把 status+diff 落盘 `docs/handoff/`；④回退优先逐文件定向手段，批量 git 回退是最后手段且必须在回退点建立后；⑤引用 stash 前必 `git stash show --stat <hash>` 核对，提取一律按路径单文件 `git show <hash>:<path>`，禁整仓 pop。
+- **摘要**：①操作前 `git status --porcelain`：**存在非本会话 M/?? ⇒ 判脏树**（他线清单落盘）——**脏树禁 `git stash create`**（实测会吞他线未提交改动），改 per-path 定向 patch 锚（`git diff --output=<anchor>.patch -- <显式路径>`；禁 PS5.1 `>` 写 patch〔UTF-16〕；锚登记 sha256；**同文件混两方改动 ⇒ 停手上呈**）；净树四步：`git add -A -- <路径>` → `git stash create "baseline-<时间戳>"`（位置参数无 -m）→ 随即 `git stash store <hash>` → `git reset`；②待动文件核对——非本会话 M 视为他人工作禁盲回退；③每轮开工 status+diff 落盘 `docs/handoff/`；④回退优先逐文件定向（`git show <hash>:<path>` 单文件提取），批量 git 回退最后手段；⑤**任何形式回退点建后必立验可用**（patch `git apply --check --reverse`／stash `git stash show --stat`）——不过 ⇒ 视同无回退点停手重建（建了用不了的回退点比没建更危险）。
 - **完整版**：knowledge/iron-rules/03-写前快照.md
 
 ## 【铁律】策略生成默认通过 skill 开发，仅本地 QuantStudio
@@ -107,7 +107,7 @@
 ## 【铁律】共享核心文件提交纪律（2026-09-03 追加·多会话写前快照案例固化）
 
 - **触发**：改动 `source_import.py` / `ptrade_api.py` / `backtest_engine.py` 等共享核心文件及其 wrapper 模板常量。
-- **摘要**：①提交前按 03 号铁律四步配方建回退点 + `git status --porcelain` 核对**精确文件清单**只含本会话改动 + 提交信息自查不含他人改动内容；②禁 `git add -A` / `git add .`，一律精确文件清单 add；③批提交/推送后核对双远程 HEAD 逐位一致；④检测到他人未提交改动叠加须在提交信息与设计文档显式记录；⑤共享文件每次 edit 后**即时 `git diff` 自检**（并行提交会无声覆盖，edit 成功≠改动仍在）；⑥**矩阵哈希同 commit 追认**：改 PTrade wrapper 模板串（`_QS_FUNDAMENTALS_EXT` 等）须同 commit 带 `check_fund_matrix.py --check --reverify` 的矩阵 yaml/md 哈希；QMT 侧同等适用（`source_import_qmt.py` 的 `_QMT_HASH_SCOPE` 20 常量 → `meta.qmt_wrapper_hash`，与 PTrade `wrapper_hash` 分立防串）；CI 已红则补 chore(matrix) 追认并登记案例。
+- **摘要**：①提交前按 03 号铁律修订后配方建回退点（脏树用 patch 锚） + `git status --porcelain` 核对**精确文件清单**只含本会话改动 + 提交信息自查不含他人改动内容；②禁 `git add -A` / `git add .`，一律精确文件清单 add；③批提交/推送后核对双远程 HEAD 逐位一致；④检测到他人未提交改动叠加须在提交信息与设计文档显式记录；⑤共享文件每次 edit 后**即时 `git diff` 自检**（并行提交会无声覆盖，edit 成功≠改动仍在）；⑥**矩阵哈希同 commit 追认**：改 PTrade wrapper 模板串（`_QS_FUNDAMENTALS_EXT` 等）须同 commit 带 `check_fund_matrix.py --check --reverify` 的矩阵 yaml/md 哈希；QMT 侧同等适用（`source_import_qmt.py` 的 `_QMT_HASH_SCOPE` 20 常量 → `meta.qmt_wrapper_hash`，与 PTrade `wrapper_hash` 分立防串）；CI 已红则补 chore(matrix) 追认并登记案例。
 - **完整版**：knowledge/iron-rules/10-共享核心文件提交.md
 
 ## 【铁律】客户仓库交付密钥对标准流程（quantstudio-plus 只读分发，2026-09-06 用户确立）
@@ -221,6 +221,7 @@
 
 ## 变更记录
 
+- **2026-11-10 v2.2（铁律 03 脏树场景修订·用户裁定 2026-11-10 批卅七「裁定 1：甲」落位）**：多会话共享工作树下 `git stash create` 会吞他线未提交改动（11-09/10 三案实测 39/13/3 文件）——增补：**A 脏树判定**（status 含非本会话 M/?? 即脏·他线清单落盘）；**B 脏树禁 stash create，改 per-path 定向 patch 锚**（`git diff --output=`·禁 PS5.1 `>` 写 patch〔UTF-16〕·锚登记 sha256·**B5 同文件混两方改动⇒停手上呈**）；**C E-6 立验句**（任何形式回退点建后必立验可用——patch `git apply --check --reverse`／stash `git stash show --stat`——不过视同无回退点停手重建）；**D 原条款保留**（净树四步配方不变·create 位置参数无 -m 沿 11-09 勘误）。配套：铁律 10 第①条改引「修订后配方（脏树用 patch 锚）」；归档版 knowledge/iron-rules/03-写前快照.md 同步增修订节。预算门四查全绿（33,697B/25×91 词/指针闭合/孤儿 0）。执行细则增补（㉑ 11-10 锚污染案）：patch 锚立验=反向应用通过**且锚内每个 .py 可编译**。
 - **2026-10-26 v2.1（门禁挂载实态补齐 · 修复「声称已挂、实态零引用」）**：v2 声明「四查挂 `.githooks/pre-push`」在 2026-10-25 入库时**仅脚本入库（4bb6aac）、钩子零引用**，声明与实态不符。本笔补齐：`.githooks/pre-push` 在 C7 闸**之前**新增铁律预算门（**内容级检查 ⇒ 对一切 remote/分支生效**，含非 main、sha 形态 refspec、多 push URL），`fail-closed`（找不到 python 或脚本即 exit 9，与既有「未找到 pwsh 即拒推」同纪律）。**自本笔起「挂 `.githooks/pre-push`」的声明为真。** 实测：`sh -n` 语法 OK；非 main 分支命中预算门且 exit 0；main 分支两闸串联（budget PASS → `[prepush-gate]` 范围列举）。当前四查：AGENTS.md 32,307 B / 链 48,811 B / 25 条×91 词命中 / 指针 25 双向闭合 / 孤儿 0。
 - 2026-10-25 v2（方案 B 瘦身治理）：59,357 B → 32,307 B；25 条铁律零丢失（A×4 逐字常驻 / B×7 精简 / C×14 摘要），完整版逐字归档 `knowledge/iron-rules/`（sha 对拍，manifest 见 `docs/handoff/iron-rules-archive-manifest-20261025.json`）；门禁 `scripts/check-iron-rules-budget.py` 四查挂 `.githooks/pre-push`（**挂载实态见 v2.1**）；kb-info.yaml 登记 `kb-iron-rules`。方案：docs/handoff/AGENTS-md-瘦身治理方案-20261025.md；盘点预演：docs/handoff/AGENTS-md-瘦身-盘点预演-20261025.md。
 - v1（2026-10-25 前）：全文 59,357 B，25 条铁律全文常驻；完整内容即 `knowledge/iron-rules/` 各归档文件（git 历史可 `git show a6079073:AGENTS.md` 取回）。
