@@ -1,11 +1,12 @@
 {
   "_readme": "依赖闭包门白名单（scripts/check_dependency_closure.py）。命中即豁免、不阻断。新增条目必须人工登记并写明依据；禁止以通配批量放行（凡批量放行即视为门禁失效）。",
   "_matching": "条目匹配目标路径（精确/通配/目录前缀）与模块名（精确/点前缀/通配）；本文件现用「模块名全串」精确匹配（module == pat），不覆盖任何其他模块。",
-  "_basis": "docs/handoff/backup-task_tab-20260823-204717.py（:15 '..workers'、:16 '..daemon_process'）与 docs/handoff/backup-task_tab-20260906-002001.py（:16 '..skin'、:18 '..workers'、:19 '..daemon_process'）是 GUI Tab 的归档备份副本：其相对导入在 docs/handoff/ 深度下按包上溯必然越过仓根（模块名以 '...' 开头），任何仓内模块都不可能满足 ⇒ 全树口径的必然误伤，非真实断链。新增同类归档件须显式追加条目。；agent_workspace/e04_dualcheck.py:40（R-PERF-05 对拍脚本）引用 `_dda_old_rperf05_tmp`——该模块系对拍用旧版临时副本（仅存在于工作树/agent 环境，从未入库），审计脚本入库但依赖未随——属「审计件引用工作树专属依赖」形态，登记豁免（2026-11-09 总调度，随第二批推送）。",
+  "_basis": "docs/handoff/backup-task_tab-20260823-204717.py（:15 '..workers'、:16 '..daemon_process'）与 docs/handoff/backup-task_tab-20260906-002001.py（:16 '..skin'、:18 '..workers'、:19 '..daemon_process'）是 GUI Tab 的归档备份副本：其相对导入在 docs/handoff/ 深度下按包上溯必然越过仓根（模块名以 '...' 开头），任何仓内模块都不可能满足 ⇒ 全树口径的必然误伤，非真实断链。新增同类归档件须显式追加条目。；agent_workspace/e04_dualcheck.py:40（R-PERF-05 对拍脚本）引用 `_dda_old_rperf05_tmp`——该模块系对拍用旧版临时副本（仅存在于工作树/agent 环境，从未入库），审计脚本入库但依赖未随——属「审计件引用工作树专属依赖」形态，登记豁免（2026-11-09 总调度，随第二批推送）；agent_workspace/e04_minute_dualcheck.py:32（R-PERF-05 E-04 分钟路径对拍脚本）引用 `_dda_old_min_tmp`——同族形态：对拍用旧版分钟 provider 临时副本，仅存在工作树从未入库，审计件入库而依赖未随，登记豁免（2026-11-10 总调度，随第三批推送）。",
   "allow": [
     "...workers",
     "...skin",
     "...daemon_process",
-    "quantstudio.backtest.providers._dda_old_rperf05_tmp"
+    "quantstudio.backtest.providers._dda_old_rperf05_tmp",
+    "quantstudio.backtest.providers._dda_old_min_tmp"
   ]
 }
