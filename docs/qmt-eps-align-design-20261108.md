@@ -344,3 +344,6 @@
 
 知识反哺：[命中] QD-2026-0023（qd 族／D3 域／`knowledge/qmt/QD-2026-0023.md`，2026-11-10）
 本轮沉淀：QD-2026-0023（EPS 层前置结论·PIT 映射·两侧不同源机制·北京午夜锚·压缩形态实测·正式件切换）
+
+**补记（2026-11-10 16:4x · R364）**：明文对照档已补——`eps_snap_embed_plain.py` = **2,393,132 B／sha16 `ce17c9fa198e03bb`**，**与此前被同名覆盖丢失的明文件 sha16 逐位相同** ⇒ **无信息损失**，存档承诺完整兑现（重导字节一致＝可复现性铁律的又一次实证）。
+当前 `output/qmt_snapshot/` 四件：`eps_snap_embed.py`（压缩正式件 477,486 B／`cd400bd092e2ef66`）／`eps_snap_embed_plain.py`（明文对照 2,393,132 B／`ce17c9fa198e03bb`）／`eps_snap_embed_z.py`（副本库实测 477,486 B／`cd400bd092e2ef66`）／`eps_snapshot.json`（数据面明文 2,366,946 B／`97ca32401a93061d`）。
