@@ -85,6 +85,98 @@ MUTATION_TOLERANCE_S = 60
 # 归档冻结目录（K-2）：整目录排除，标 legacy-frozen
 LEGACY_DIRNAME = 'legacy'
 
+# ---------------------------------------------------------------------------
+# 门2（2026-11-11 派单）：legacy/ 逐件内容指纹 + 探针写路径物理隔离
+# 原实现只数件数（legacy_frozen=N）——目录内文件被改写时 violations 仍为 0，静默放过。
+# 机制与 KNOWN_VIOLATIONS 对齐：登记表 + 内容 sha256 为主判据（mtime 仅辅助/告警）。
+# 登记格式：{"<basename>": {"sha256": "<hex64>", "mtime": "YYYY-MM-DD HH:MM:SS", "why": "<理由>"}}
+# ---------------------------------------------------------------------------
+LEGACY_FINGERPRINTS = {}
+LEGACY_MTIME_TOL_S = 60
+DEFAULT_PROBE_DIR = 'docs/probe'
+
+
+def sha256_file(path, chunk=1 << 20):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, 'rb') as fh:
+        for blk in iter(lambda: fh.read(chunk), b''):
+            h.update(blk)
+    return h.hexdigest()
+
+
+def verify_legacy(legacy_dir, fingerprints=None):
+    """逐件核 legacy 冻结目录 → dict(mutated, unregistered, mtime_drift, missing, ok, files)。
+
+    - mutated:      已登记但内容 sha256 变了（**派单负例：必须报**）
+    - unregistered: 目录内出现未登记文件（防「新增后冒充历史存量」）
+    - mtime_drift:  内容未变但 mtime 变了（弱信号，仅 WARN 打印）
+    - missing:      已登记但文件已不在
+    """
+    reg = LEGACY_FINGERPRINTS if fingerprints is None else fingerprints
+    res = {'mutated': [], 'unregistered': [], 'mtime_drift': [], 'missing': [],
+           'ok': 0, 'files': 0}
+    if not os.path.isdir(legacy_dir):
+        res['missing'] = sorted(reg.keys())
+        return res
+    seen = set()
+    for root, _subdirs, files in os.walk(legacy_dir):
+        for f in files:
+            p = os.path.join(root, f)
+            rel = os.path.relpath(p, legacy_dir).replace('\\', '/')
+            res['files'] += 1
+            seen.add(f)
+            rec = reg.get(f)
+            if not rec:
+                res['unregistered'].append(rel)
+                continue
+            cur = sha256_file(p)
+            if cur != rec.get('sha256'):
+                res['mutated'].append((rel, str(rec.get('sha256', ''))[:12], cur[:12]))
+                continue
+            mt_raw = os.path.getmtime(p)
+            if rec.get('mtime'):
+                try:
+                    frozen = time.mktime(time.strptime(rec['mtime'], '%Y-%m-%d %H:%M:%S'))
+                    if abs(mt_raw - frozen) > LEGACY_MTIME_TOL_S:
+                        res['mtime_drift'].append(
+                            (rel, rec['mtime'], time.strftime('%Y-%m-%d %H:%M:%S',
+                                                              time.localtime(mt_raw))))
+                except ValueError:
+                    pass
+            res['ok'] += 1
+    res['missing'] = sorted(set(reg.keys()) - seen)
+    return res
+
+
+PROBE_WRITE_RE = re.compile(
+    r"""(?:open|write_text|write_bytes|to_csv|to_json|dump)\s*\(\s*[rubfRUBF]*['"](?P<path>[^'"]+)['"]""")
+
+
+def verify_probe_isolation(probe_dir, archive_markers=('docs/evidence', 'legacy')):
+    """探针目录内脚本的写目标是否指向归档目录（物理隔离：归档只可由「移入」写入）。
+
+    → list[(rel, target, why)]；空＝隔离成立。判据：写调用首参字面量命中归档标记。
+    """
+    viol = []
+    if not os.path.isdir(probe_dir):
+        return viol
+    for root, _subdirs, files in os.walk(probe_dir):
+        for f in files:
+            if not f.endswith(('.py', '.sh', '.ps1')):
+                continue
+            p = os.path.join(root, f)
+            try:
+                src = io.open(p, encoding='utf-8', errors='replace').read()
+            except OSError:
+                continue
+            for m in PROBE_WRITE_RE.finditer(src):
+                target = m.group('path').replace('\\', '/')
+                if any(mk in target for mk in archive_markers):
+                    viol.append((os.path.relpath(p, probe_dir).replace('\\', '/'),
+                                 target, 'probe-writes-archive'))
+    return viol
+
 PATTERN = re.compile(
     r'^(?P<probe>[A-Za-z0-9_.-]+?)'
     r'_(?P<version>(?:\d+\.\d+\.\d+|dd\d{3}))'
@@ -119,9 +211,19 @@ def scan(dirs, strict=False):
             continue
         for root, subdirs, files in os.walk(d):
             if LEGACY_DIRNAME in subdirs:
-                # K-2：归档冻结目录整目录排除
+                # K-2 + 门2：归档冻结目录——逐件内容指纹校验（不再只数件数）
                 lp = os.path.join(root, LEGACY_DIRNAME)
-                legacy += sum(len(fs) for _r, _s, fs in os.walk(lp))
+                lg = verify_legacy(lp)
+                legacy += lg['files']
+                for rel, old, now in lg['mutated']:
+                    bad.append((os.path.join(lp, rel),
+                                'legacy-mutated(sha256 %s→%s)' % (old, now)))
+                for rel in lg['unregistered']:
+                    bad.append((os.path.join(lp, rel), 'legacy-unregistered'))
+                for name in lg['missing']:
+                    bad.append((os.path.join(lp, name), 'legacy-missing'))
+                for rel, old, now in lg['mtime_drift']:
+                    print('  LEGACY_MTIME_DRIFT(warn): %s  frozen=%s  now=%s' % (rel, old, now))
                 subdirs.remove(LEGACY_DIRNAME)
             for f in files:
                 if not f.endswith(('.json', '.log')):
@@ -234,8 +336,38 @@ def self_test():
 def main():
     if '--self-test' in sys.argv:
         return self_test()
-    args = [a for a in sys.argv[1:] if not a.startswith('--')]
+
+    def _arg(name, default=None):
+        if name in sys.argv:
+            i = sys.argv.index(name)
+            if i + 1 < len(sys.argv):
+                return sys.argv[i + 1]
+        return default
+
+    # 门2 注入（测试/维护用）：覆盖 legacy 指纹登记表
+    fp_path = _arg('--legacy-fingerprints')
+    if fp_path:
+        import json as _json
+        with io.open(fp_path, encoding='utf-8-sig') as fh:
+            LEGACY_FINGERPRINTS.update(_json.load(fh))
+
+    probe_dir = _arg('--probe-dir', DEFAULT_PROBE_DIR)
+    consumed = {probe_dir}
+    if fp_path:
+        consumed.add(fp_path)
+    args = [a for a in sys.argv[1:] if not a.startswith('--') and a not in consumed]
     strict = '--strict' in sys.argv
+
+    # 门2-b：探针写路径与归档目录物理隔离
+    pv = verify_probe_isolation(probe_dir)
+    if pv:
+        print('[probe-isolation] 探针写入归档目录 %d 处（归档只可由「移入」写入）：' % len(pv))
+        for rel, tgt, why in pv:
+            print('  PROBE_ISOLATION[%s]: %s → %s' % (why, rel, tgt))
+        if strict:
+            print('RESULT: FAIL(strict: probe-isolation)')
+            return 1
+        print('RESULT: WARN(non-strict: probe-isolation)')
     return scan(args or DEFAULT_DIRS, strict)
 
 

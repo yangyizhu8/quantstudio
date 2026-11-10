@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# 门1（2026-11-11 派单）：提交范围门 —— index 变更集必须 ⊆ 本会话声明的白名单。
+# 动因：多会话共享工作区，他线已 staged 的文件会被 `git commit -F msg` 一并带走
+#       （2026-11-02 AQ-DW 4 个 review-kb/ 文件；2026-11-10 批五十一自纠再发）。
+# 纪律：fail-closed —— 找不到 python 或检查脚本即拒（与 pre-push「未找到 pwsh 即拒推」同纪律）。
+# 声明白名单：STAGED_SCOPE_ALLOW="scripts/a.py;tests/;docs/evidence/"（或 .session-scope.txt）
+# 显式全员放行：STAGED_SCOPE_ALLOW="*"（审计可见）
+set -u
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -z "${REPO_ROOT:-}" ]; then
+  echo "[pre-commit][门1] 无法定位仓库根，fail-closed 拒绝提交" >&2
+  exit 1
+fi
+
+PY="$(command -v python 2>/dev/null || command -v python3 2>/dev/null || true)"
+if [ -z "$PY" ]; then
+  echo "[pre-commit][门1] 未找到 python，fail-closed 拒绝提交。" >&2
+  echo "  安装 Python 后重试，或确认本次要提交 index 全部内容：export STAGED_SCOPE_ALLOW=\"*\"（bash）/ \$env:STAGED_SCOPE_ALLOW=\"*\"（pwsh）" >&2
+  exit 1
+fi
+
+CHECKER="$REPO_ROOT/scripts/check-staged-scope.py"
+if [ ! -f "$CHECKER" ]; then
+  echo "[pre-commit][门1] 缺少 scripts/check-staged-scope.py，fail-closed 拒绝提交" >&2
+  exit 1
+fi
+
+exec "$PY" "$CHECKER" --repo "$REPO_ROOT"
