@@ -2709,3 +2709,37 @@ git stash store [(-m | --message) <message>] [-q] <commit> ← 只有 store 有 
 | ③ 派单路径 | ✅ **经总调度转发**（铁律 09/01/15） |
 | ④ **门1/门2** | ✅ **已落地并生效**（`ca91fa0`）；门1 挂在 `.githooks/pre-commit`，**fail-closed 且含 add -A 负例**，为合格门 |
 | ⑤ 🆕 **门2 存量欠账** | 🔴 **24 件 `legacy-unregistered` 须由⑥补登记指纹，或明确标为「已知历史存量」豁免**（**属存量清算，非新违规**）。**风险**：`--strict` 现为 **FAIL(24)**；若命名门禁已挂 pre-push，**将阻断下次推送** ⇒ 请总调度核该挂载并限期清理 |
+# R-PERF-47 巡检 + 两门正式复核定谳 · ②审 · 2026-11-11 01:55 · **门1 PASS（无条件）／门2 PASS（无条件）；strict 已由 WARN(24) 转 PASS**
+
+## 10.218 巡检触发 1 响应（只读复核）
+
+| 项 | 实测 | 判定 |
+| --- | --- | --- |
+| 门1 挂载（三处查全） | `core.hooksPath='.githooks'` ✓；`.githooks/pre-commit`（1,417B）L23 `CHECKER=$REPO_ROOT/scripts/check-staged-scope.py`、L25「[pre-commit][门1] 缺少 …，fail-closed 拒绝提交」 | **已挂载生效**（执行方独立复现并推翻我上轮误判，正确） |
+| **24 件归属** | 全仓**仅一个** legacy 目录（`agent_workspace/perf_eval_rperf01/legacy`），实际件数 **24 = 门禁 legacy_frozen=24** ⇒ **全部属本线，无跨线争议** | **执行方判断成立** |
+| 24 件 sha256 | 我方独立复算，与执行方提供的 4 例**逐位吻合**（`fullwindow_pre_e04.log`=251798f4／`_gate3_run.log`=58e1eadd／`baseline_…_golden.json`=c3eac8a1／`baseline_…_readings.json`=ba362a3b） | ✅ |
+
+## 10.219 🟢 两门正式复核定谳（材料：⑥ R1 上报块 + docs/evidence/gates-staged-scope-and-legacy-20261111.md）
+
+| 门 | 定谳 | 依据 |
+| --- | --- | --- |
+| **门1 `check-staged-scope.py`** | ✅ **PASS（无条件）** | ①实现逐函数读过：读 index 用 `git diff --cached --name-only --diff-filter=ACMRTUXB`；白名单四来源（`--allow`／`--allow-file`／`STAGED_SCOPE_ALLOW`／`.session-scope.txt`）；**fail-closed（未声明即拒）**；空 index 放行；退出码 0/1/2；`--index-file` 离线注入 ②挂载实态：`.githooks/pre-commit` 含该脚本（`core.hooksPath='.githooks'`）③**首次真实触发实证**：本线审核方 commit `7826aed` 被拒（`index=1 件 白名单=**未声明** verdict=FAIL`），声明白名单后 PASS ④自测含派单负例「add -A 带入他线文件 ⇒ 必须拒」 |
+| **门2 `check-evidence-naming.py` 补丁** | ✅ **PASS（无条件）** | ①逐件指纹机制：`LEGACY_FINGERPRINTS` 以**内容 sha256 为主判据**、mtime 仅辅助（WARN，容差 60s）；四类判读齐备（mutated／unregistered／mtime_drift／missing）②**盲区已被堵**：原实现「只数件数⇒目录内文件被改写时 violations 仍为 0，静默放过」（源码 L134 自述），现改逐件 ③**首跑即证其有效**：上线即报 24 件 `legacy-unregistered` ④**存量已清**：⑥ `445748b`（11-11 01:48）补登 `scripts/data/legacy-fingerprints.json`（24 条）+ `scripts/data/naming-known-violations.json`（**111 条命名冻结登记**，即总调度所称「111 处」）⑤**硬门已满足**：**strict 由 WARN(24) 转 PASS**（`--strict` rc=0 / RESULT: PASS），`--self-test` 5/5 PASS ⑥已挂 `.githooks/pre-push`（含 `check-evidence-naming` + `strict` + `budget`）⑦**扫描范围安全**：默认只扫 `DEFAULT_PROBE_DIR`（本线专属目录）⇒ **他线不受影响，不会卡他线推送** |
+
+> **⇒ 两门均无条件通过；`445748b` 已满足总调度设定的「登记完成→strict 转 PASS→方可挂载」硬门，顺序正确。**
+
+## 10.220 对执行方呈请 ②③ 的裁定
+
+| 呈请 | 裁定 |
+| --- | --- |
+| ② 随件附「件名→sha256」清单（作⑥输入） | **已自动解决**——⑥ `445748b` 已自行补登 24 条 ⇒ **不必再附**（可留作审计存档） |
+| ③ 授权本线代⑥落登记 | **不再需要**（已落地）。但由此提炼一条**通用判据**（见 §10.221） |
+
+## 10.221 🆕 通用判据（建议入条）：登记/基线确认是**判定动作**
+
+| 项 | 内容 |
+| --- | --- |
+| 判据 | **指纹登记 = 声明「这份内容就是应冻结的基线」⇒ 属判定动作**。可由他人**代写**，**不可由他人代判** |
+| 风险 | 若当前内容本身已被污染，代判登记等于**把问题洗白成合法基线**（与「自查自改判据让门禁变绿」同族） |
+| 与既有纪律的关系 | 同「不可代做实施」「责任不混」族：执行权可让渡，**判定权不可让渡** |
+| 例外 | 若登记内容为**纯客观值**（如仅 sha256，无「是否应冻结」的判断）且属主已**逐件确认清单**，则代写机械动作可行 |
