@@ -17,12 +17,25 @@ from __future__ import annotations
 # ============================================================================
 DENY_REMOVE: frozenset[str] = frozenset({
     "set_backtest",          # 本地引擎自创（ptrade_api.py:2144 lambda），档 2 等价字面量 None
-    "is_trade",              # 本地回测模式标记（ptrade_api.py:2194），档 2 等价字面量 False
     "get_etf_list_local",    # 本地 ETF 列表扩展（profile ETF split：QS-only）
     "get_strategy_events",   # 本地事件扩展（未在 profile 登记）
     "create_dir",            # 本地文件目录创建（profile 禁止本地文件访问；删除不影响策略逻辑）
-    "get_research_path",     # 本地研究目录（同 create_dir）
 })
+
+# ---- A-1/A-2（2026-11-11 用户批准·二审 A 项）：两个名字自本名单公有化移除 ----
+# 1) is_trade()——PTrade 公有 API，逐字文档依据（api-reference-en/utilities.md）：
+#      "Determine whether the current strategy is running in trading environment
+#       or backtest environment. Returns True in trading environment, False in
+#       backtest environment."
+#    迁入 PTRADE_REGISTERED_WARN（KEEP）。历史档 2 改写 is_trade()→False 正是
+#    qs-deploy 需要「恒真分支还原」的根因（tests/test_deploy_nested_gate.py 背书：
+#    `if not False:` 恒真 ⇒ 交易侧门控失效）——公有化后转换器不再改写。
+# 2) get_research_path()——PTrade 公有 API，逐字文档依据（docs/original/Ptrade国盛.md）：
+#      「获取研究根目录路径。该函数可在回测、交易模块使用。返回路径为
+#       '/home/fly/notebook/'。」
+#    迁入 PTRADE_REGISTERED_WARN（KEEP）；其文件访问风险不再按 API 名拦截，
+#    由 A-3 的「真实文件访问调用点检测」（PORTABILITY-FILE-DB-ACCESS，见下方
+#    FILE_DB_* 常量表）在 open()/pickle/os.path 等真实 IO 调用点承接。
 
 # ============================================================================
 # 分类 2：本地批量性能 API（B1，本地优化）→ SHIM
@@ -220,7 +233,16 @@ PTRADE_REGISTERED_WARN: frozenset[str] = frozenset({
     "get_margin_rate", "get_underlying_code", "set_parameters", "get_user_name",
     "get_current_kline_count", "get_all_positions",
     "query", "valuation", "g", "log",
+    # ---- A-1/A-2（2026-11-11·二审 A 项）：自 DENY_REMOVE 公有化迁入 ----
+    "is_trade",              # 依据：api-reference-en/utilities.md（逐字引文见 DENY_REMOVE 处 A-1 注释）
+    "get_research_path",     # 依据：docs/original/Ptrade国盛.md（逐字引文见 DENY_REMOVE 处 A-2 注释）
 })
+# set_commission 公有性复核（A-1，2026-11-11）：PTrade 公有 API，逐字文档依据
+# （api-reference-en/settings.md）：set_commission(commission_ratio=0.0003,
+# min_commission=5.0, type="STOCK")，type 支持 "STOCK","ETF","LOF"，且
+# 「该函数仅在回测模块可用」。本名单此前已登记（KEEP-WARN）；其位置参数/≤0 值
+# 校验（validate_ptrade_portability 的 PORTABILITY-COMMISSION-POSITIONAL /
+# MIN-ZERO）是平台契约校验而非本地专属禁令，按 A-4 负向不放松原则保留。
 
 # ============================================================================
 # 参数归一化规则表（H1：有序 list，禁止 dict 嵌套——同参名键覆盖会吞规则）
@@ -282,6 +304,49 @@ INJECTED_MARKER = "# [qs-import-generated]"
 def denylist() -> frozenset[str]:
     """全部禁止/需处理 API 并集（校验器用）。"""
     return DENY_REMOVE | DENY_SHIM | DENY_BLOCK
+
+
+# ============================================================================
+# A-3（2026-11-11 用户批准·二审 A 项）：PORTABILITY-FILE-DB-ACCESS 检测点迁移
+#   「按 api 名匹配」→「按真实文件访问调用点匹配」（AST 遍历，禁用正则）。
+#   get_research_path() 公有化（A-2）后，文件访问风险改在真实 IO 调用点拦截：
+#   命中下方 IO 调用面 **且** 调用输入（参数/关键字/方法接收者）满足任一路径条件
+#   （研究根目录变量 / get_research_path() 返回值 / 含路径分隔符的字面量路径）。
+#   本表为单一来源（校验器 validate_ptrade_portability 消费；转换器后续可共用）。
+# ============================================================================
+
+# 路径条件①：调用输入子树引用这些变量名（qs-deploy PERSIST 块的 _PD_NOTEBOOK 约定）
+FILE_DB_RESEARCH_ROOT_NAMES: frozenset[str] = frozenset({"_PD_NOTEBOOK"})
+# 路径条件②：调用输入子树含对这些 API 的调用（研究根目录的运行时来源）
+FILE_DB_RESEARCH_PATH_APIS: frozenset[str] = frozenset({"get_research_path"})
+# 路径条件③：调用输入子树含携带路径分隔符的字符串字面量
+FILE_DB_PATH_SEPARATORS: frozenset[str] = frozenset({"/", "\\"})
+
+# IO 调用面（B6-a 完整清单——二审硬约束，不得只做 open）：
+FILE_DB_BARE_FUNCS: frozenset[str] = frozenset({
+    "open",                  # 内建 open(
+})
+# 模块任意属性调用即算 IO 面（<module>.<anything>(...)）
+FILE_DB_IO_MODULE_ANY_ATTR: frozenset[str] = frozenset({
+    "shutil", "subprocess",
+})
+# 模块+函数名精确配对（import 别名经 AST 归一后匹配：<alias>.dump(...) 等）
+FILE_DB_IO_MODULE_FUNCS: frozenset[tuple[str, str]] = frozenset({
+    ("os", "makedirs"), ("os", "remove"), ("os", "rename"), ("os", "rmdir"),
+    ("json", "dump"), ("json", "load"),
+    ("pickle", "dump"), ("pickle", "load"),
+    ("csv", "reader"), ("csv", "writer"),
+})
+# os.path.<anything>(...) 整链均算 IO 面
+FILE_DB_OS_PATH_PREFIX: str = "os.path"
+# pandas 读族前缀（pd.read_* / pandas.read_*）
+FILE_DB_PD_MODULES: frozenset[str] = frozenset({"pd", "pandas"})
+FILE_DB_PD_READ_PREFIX: str = "read_"
+# 方法名匹配（接收者不可静态判型，按方法名收）：pathlib 五件套 + DataFrame 落盘族
+FILE_DB_IO_METHODS: frozenset[str] = frozenset({
+    "read_text", "write_text", "open", "read_bytes", "write_bytes",  # pathlib 五件套
+    "to_csv", "to_parquet", "to_pickle",
+})
 
 
 # ============================================================================
