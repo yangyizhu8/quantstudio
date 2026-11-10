@@ -1139,6 +1139,11 @@ def _qs_get_history_batch(codes, count, unit='1d', fields=None, fq='pre',
 # （RuntimeError 经 convert 入 errors，不静默产出无嵌入产物）。
 _QS_QMT_QFQ_EMBED_MARK = '# @@QS_QMT_QFQ_SNAP_EMBED@@'
 
+# EPS 嵌入区定位标记值（HISTORY_EXT 内 EPS 层注释行原文）：convert(eps_embed=...)
+# 以 emit-py 常量源文本原样替换之（QD-2026-0023-E1 段二，2026-11-10）；标记缺失
+# 即模板漂移，注入通道 fail-closed（RuntimeError 经 convert 入 errors）。
+_QS_QMT_EPS_EMBED_MARK = '# @@QS_QMT_EPS_SNAP_EMBED@@'
+
 # ---- 持仓视图 + get_position（机制②同名遮蔽面之一）----------------------------
 _QS_QMT_POSITION_EXT = '''
 # ---- QS-QMT position 视图 ---------------------------------------------------
@@ -3361,8 +3366,30 @@ class QmtSourceConverter:
                                % (_QS_QMT_QFQ_EMBED_MARK,))
         return _QS_QMT_HISTORY_EXT.replace(_QS_QMT_QFQ_EMBED_MARK, embed_src)
 
+    def _inject_eps_embed(self, eps_embed: str, base_src: str) -> str:
+        """EPS 嵌入式快照常量注入（QD-2026-0023-E1 段二，2026-11-10）。
+
+        与 _inject_qfq_embed 同范式：读 emit-py **文本原样**（newline='' 防平台
+        CRLF 翻译；encoding='ascii' 严格——emit 契约纯 ASCII，混入非 ASCII 即
+        fail-closed），替换 HISTORY_EXT 内 EPS 层标记行。base_src 为**已注入 QFQ
+        的 history_ext**（EPS 层与 QFQ 层同在 HISTORY_EXT，故在 QFQ 注入结果上
+        继续替换）。读取失败 / 标记缺失（模板漂移）-> RuntimeError（经 convert
+        改写链失败通道入 errors，不静默产出无嵌入产物——标记被吞则产物恒
+        absent 态运行，恰是本防线靶点）。
+        """
+        try:
+            with open(eps_embed, "r", encoding="ascii", newline="") as f:
+                embed_src = f.read()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise RuntimeError("eps_embed 读取失败 %r: %s" % (eps_embed, exc))
+        if _QS_QMT_EPS_EMBED_MARK not in base_src:
+            raise RuntimeError("EPS 嵌入标记缺失（HISTORY_EXT 模板漂移）：%r"
+                               % (_QS_QMT_EPS_EMBED_MARK,))
+        return base_src.replace(_QS_QMT_EPS_EMBED_MARK, embed_src)
+
     def _assemble(self, body_src: str, *, pep263_replaced: bool, diag: bool = False,
-                  qfq_embed: str | None = None) -> str:
+                  qfq_embed: str | None = None,
+                  eps_embed: str | None = None) -> str:
         """注入序组装：模块头（gbk 头 + import）→ 视图 EXT（先于别名区，保证导入期可执行）
         → 别名视图区 → wrapper 遮蔽区 → 生命周期壳（改写后策略主体）。
         diag=True 时在 wrapper 遮蔽区之后追加因子层诊断块（factor_diag.DIAG_BLOCK，
@@ -3380,6 +3407,8 @@ class QmtSourceConverter:
         history_ext = _QS_QMT_HISTORY_EXT
         if qfq_embed is not None:
             history_ext = self._inject_qfq_embed(qfq_embed)
+        if eps_embed is not None:
+            history_ext = self._inject_eps_embed(eps_embed, history_ext)
         for ext in (_QS_QMT_LOG_EXT, _QS_QMT_CONTEXT_VIEW_EXT, _QS_QMT_DATA_VIEW_EXT,
                     history_ext, _QS_QMT_POSITION_EXT, _QS_QMT_ORDER_EXT,
                     _QS_QMT_ASHARES_EXT, _QS_QMT_TRADE_DAYS_EXT,
@@ -3442,7 +3471,8 @@ class QmtSourceConverter:
 
     # ------------------------------------------------------------------ entry
 
-    def convert(self, diag: bool = False, qfq_embed: str | None = None) -> QmtSourceResult:
+    def convert(self, diag: bool = False, qfq_embed: str | None = None,
+                eps_embed: str | None = None) -> QmtSourceResult:
         """执行改写链：pass1(e+d) → pass2(f+i) → pass3(h) → 组装 → 自检。
 
         diag=True 时产物追加因子层诊断块（_assemble）；默认 False = 常规产物
@@ -3466,7 +3496,8 @@ class QmtSourceConverter:
             src2 = self._pass2_deny_rundaily(src1)
             src3 = self._pass3_lifecycle(src2)
             code = self._assemble(src3, pep263_replaced=pep263_replaced, diag=diag,
-                                  qfq_embed=qfq_embed)
+                                  qfq_embed=qfq_embed,
+                                  eps_embed=eps_embed)
         except RuntimeError as exc:
             self._errors.append("改写链失败：%s" % (exc,))
             return QmtSourceResult(converted_code="", errors=self._errors,
