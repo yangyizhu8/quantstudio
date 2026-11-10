@@ -305,6 +305,18 @@ RESULT: WARN(non-strict: 2 frozen-record mutations)；strict exit=1
 > 判据面附录（基准化后状态）：`known_violations=3`（含未基准化的 `daily_baseline_readings.json` 01:50:56）、
 > `mutated=0`——此后 `baseline_*` 若再被覆写，门禁将重新报 `KNOWN_VIOLATION_MUTATED`（守门能力保留）。
 
+#### 10.3.2 呈批面 · 知悉项全文（R-PERF-45 ② 补两行，随本批生效）
+
+> **判据面放松（已执行，裁定 R-PERF-44/45）**：门禁 `scripts/check-evidence-naming.py` 的 `KNOWN_VIOLATIONS` 中
+> `baseline_readings.json` / `baseline_golden.json` 两件的 `frozen_mtime` 由「首次覆写时刻 2026-11-08 01:57:00」
+> **基准化为「最后一次已知覆写时刻 2026-11-10 09:02:57」**；字段注释语义同步变更；`daily_baseline_readings.json` 未动。
+>
+> - **影响面**：**仅** `baseline_readings.json` / `baseline_golden.json` 两件的**历史**覆写不再计入 `mutated`；
+>   **不改变任何今后新发生的覆写检测**（自测 `M-1-mutated-within-freeze` 仍 FAIL 即证）；`daily_baseline_readings.json` 未动。
+> - **可逆性**：随时可再次基准化（把两处 `frozen_mtime` 改回 `2026-11-08 01:57:00` 即恢复原判读）；
+>   `git show 7eb8f86^:scripts/check-evidence-naming.py` 可完整回溯改前版本。
+> - **留痕**：两处 `why` + 字段注释 + 本节，三处齐备。
+
 ## 十一、性能对照分母规则（R-PERF-40 ③ 裁定，收口前必读）
 
 **出「提升 x 倍 / 节省 y%」时，分母必须是同版本同态读数。**
