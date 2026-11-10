@@ -51,8 +51,11 @@ _QMT_HASH_SCOPE = (
     "_QS_QMT_FUND_FIELD_MAP",
     "_QS_QMT_WRAPPER_ZONE",
     "_QS_QMT_ALIAS_ZONE",
-    "_QS_QMT_MODULE_HEADER",
-)
+      "_QS_QMT_MODULE_HEADER",
+      # EPS 嵌入标记（QD-2026-0023-E1 段二·R367 用户照准纳入）：
+      # 注入通道 convert(eps_embed=...) 的存在性与标记字面量纳入哈希面。
+      "_QS_QMT_EPS_EMBED_MARK",
+  )
 
 
 def wrapper_hash() -> str:

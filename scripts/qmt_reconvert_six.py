@@ -49,12 +49,13 @@ SRC_DIR = ROOT / "quantstudio" / "backtest" / "strategies"
 OUT_DIR = ROOT / "output" / "qmt_import"
 
 
-def reconvert_one(tag: str) -> tuple[bool, str]:
+def reconvert_one(tag: str, eps_embed: str | None = None,
+                  qfq_embed: str | None = None) -> tuple[bool, str]:
     srcp = SRC_DIR / SRC_NAME[tag]
     if not srcp.exists():
         return False, "SRC_MISSING %s" % srcp
     src = io.open(srcp, encoding="utf-8").read()
-    res = QmtSourceConverter(src).convert()
+    res = QmtSourceConverter(src).convert(qfq_embed=qfq_embed, eps_embed=eps_embed)
     code = res.converted_code
     if not code:
         return False, "convert empty: %s" % (res.errors or "unknown",)
@@ -94,11 +95,16 @@ def reconvert_one(tag: str) -> tuple[bool, str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description="QMT 六策略 canonical 重转门（GBK 契约落盘）")
     ap.add_argument("--only", default=None, help="只重转指定 tag（缺省全部六个）")
+    ap.add_argument("--eps-embed", default=None,
+                    help="EPS 嵌入式快照常量源路径（emit-py，压缩或明文形态）")
+    ap.add_argument("--qfq-embed", default=None,
+                    help="QFQ 嵌入式快照常量源路径（emit-py）")
     args = ap.parse_args()
     tags = [args.only] if args.only else SIX
     fails = []
     for tag in tags:
-        ok, msg = reconvert_one(tag)
+        ok, msg = reconvert_one(tag, eps_embed=args.eps_embed,
+                               qfq_embed=args.qfq_embed)
         if not ok:
             print("%-24s FAIL: %s" % (tag, msg))
             fails.append((tag, msg))
