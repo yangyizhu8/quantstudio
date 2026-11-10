@@ -70,6 +70,52 @@ def _match_family(rel_path, families):
     return None
 
 
+def _expand_files(root, files):
+    """展开 --files 入参 → (reals, glob_misses)。
+
+    含通配符（* ? [）的按 repo_root 做 glob 展开：PowerShell 5.1 **不替外部程序展开通配符**
+    （`--files knowledge/db/*.md` 会原样传给 Python），直接当字面路径处理会得到静默空集，
+    表现为 `checked=0` 的假空。字面路径原样保留；去重保序。
+    """
+    seen, reals, misses = set(), [], []
+    for f in files:
+        s = _norm(str(f))
+        if not s:
+            continue
+        if any(c in s for c in "*?["):
+            hits = sorted(p for p in root.glob(s) if p.is_file())
+            if not hits:
+                if s not in seen:
+                    seen.add(s)
+                    misses.append(s)
+                continue
+            for h in hits:
+                try:
+                    rel = _norm(h.relative_to(root).as_posix())
+                except ValueError:  # 绝对路径落在 root 之外
+                    rel = _norm(str(h))
+                if rel not in seen:
+                    seen.add(rel)
+                    reals.append(rel)
+        elif s not in seen:
+            seen.add(s)
+            reals.append(s)
+    return reals, misses
+
+
+def _skip_reason(rel, families):
+    """未命中任何族时的跳过原因分类（可机读，供 skipped[].reason）。
+
+    - `non-entry-file`：位于某族 dir 下但不符合该族 entry_glob（如 knowledge/db/README.md）；
+    - `no_family_match`：与该族目录无关的其它文件。
+    """
+    for fam in families:
+        d = _norm(fam.get("dir", "")).rstrip("/")
+        if d and (rel == d or rel.startswith(d + "/")):
+            return "non-entry-file"
+    return "no_family_match"
+
+
 def _fix_layer_errors(value, fam):
     raw = str(value or "").strip()
     if not raw:
@@ -121,21 +167,36 @@ def validate_record(rec, fam):
 
 
 def check_files(repo_root, kb_info, files):
-    """批量体检 → {checked, bad[], families_used[], note}。"""
+    """批量体检 → {total, checked, bad[], skipped[], families_used[], note}。
+
+    **守恒判据**：`total == checked + len(skipped)`；`bad` 的 file 必在 checked 集合内
+    （bad ⊆ checked）。`skipped[].reason` 取值：`glob_no_match` / `not_found` /
+    `non-entry-file` / `no_family_match` / `kb_info_unavailable`。
+    """
     root = pathlib.Path(repo_root)
     fams, note = _load_families(pathlib.Path(root) / kb_info if not os.path.isabs(kb_info) else kb_info)
-    out = {"checked": 0, "bad": [], "families_used": [], "note": note}
+    out = {"total": 0, "checked": 0, "bad": [], "skipped": [], "families_used": [], "note": note}
+    expanded, glob_misses = _expand_files(root, files)
+    out["total"] = len(expanded) + len(glob_misses)
+    for pat in glob_misses:
+        out["skipped"].append({"file": pat, "reason": "glob_no_match"})
     if fams is None:
+        for rel in expanded:
+            out["skipped"].append({"file": rel, "reason": "kb_info_unavailable"})
         return out
-    for f in files:
-        rel = _norm(f)
+    for rel in expanded:
+        path = root / rel
+        if not path.is_file():
+            # 存在性优先于族路由：路径即便落在族目录下，缺文件也应是 not_found 而非 non-entry-file
+            out["skipped"].append({"file": rel, "reason": "not_found"})
+            continue
         fam = _match_family(rel, fams)
         if fam is None:
-            continue  # 非条目件（族外的 md）不体检
+            out["skipped"].append({"file": rel, "reason": _skip_reason(rel, fams)})
+            continue
         out["checked"] += 1
         if fam.get("id") and fam["id"] not in out["families_used"]:
             out["families_used"].append(fam["id"])
-        path = root / rel
         try:
             rec = _pf.parse_entry(path)
         except Exception as e:  # noqa: BLE001
@@ -162,8 +223,11 @@ def main(argv=None):
         if res["note"]:
             print("[kb_hook] 跳过：%s" % res["note"], file=sys.stderr)
         else:
-            print("[kb_hook] 体检 %d 件（族：%s），不合规 %d 件" % (
-                res["checked"], "、".join(res["families_used"]) or "无", len(res["bad"])))
+            print("[kb_hook] 体检 %d 件（族：%s），不合规 %d 件，跳过 %d 件" % (
+                res["checked"], "、".join(res["families_used"]) or "无",
+                len(res["bad"]), len(res["skipped"])))
+        for s in res["skipped"]:
+            print("  [skip] %s : %s" % (s["file"], s["reason"]))
         for b in res["bad"]:
             print("  %s [%s] : %s" % (b["file"], b["family"], "; ".join(b["errors"])))
     if a.strict and res["bad"]:
