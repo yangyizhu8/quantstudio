@@ -67,7 +67,7 @@ ORDER BY code, time
 """
 
 
-def build_emit_py_source(records, base):
+def build_emit_py_source(records, base, compress=False):
     """构造 --emit-py 常量源文本（嵌入式 QFQ 快照数据源，2026-11-08）。
 
     两条模块级赋值（消费点 source_import_qmt.py 的 QFQ 嵌入式三态层经
@@ -82,6 +82,32 @@ def build_emit_py_source(records, base):
     ASCII；行尾统一 \\n（二进制写出，禁平台 CRLF 翻译）。base 接受
     'YYYYMMDD' 字符串或 int，一律写 int。
     """
+    if compress:
+        # 压缩形态（R-20261111-01 用户裁定甲·2026-11-11）：单条 ZB64 常量 +
+        # 同款 META（不含 DATA），消费端 _qs_qfq_snap_state 双形态自适应。
+        # 格式纪律：隐式字符串拼接分块（116 字符/块，diff 友好）；json 紧凑 +
+        # sort_keys 保同库同参字节一致；**allow_nan=False** 同拒 NaN/Infinity
+        # （非法 JSON 会让消费端解不开 => 静默 absent，必须组装期 fail-closed）。
+        import base64 as _b64
+        import json as _js
+        import zlib as _zl
+        payload = _js.dumps(
+            {str(k): [[int(d), float(r)] for d, r in records[k]]
+             for k in sorted(records)},
+            separators=(',', ':'), sort_keys=True, allow_nan=False)
+        blob = _b64.b64encode(_zl.compress(payload.encode('utf-8'), 9)).decode('ascii')
+        lines = [
+            '# QMT QFQ factor snapshot constants (zlib+base64 compressed form).',
+            '# Regenerate via: python scripts/export_qfq_factor_snapshot.py '
+            '--emit-py <path> --compress',
+            '_QS_QMT_QFQ_SNAP_ZB64 = (',
+        ]
+        for _i in range(0, len(blob), 116):
+            lines.append("    '%s'" % blob[_i:_i + 116])
+        lines.append(')')
+        lines.append("_QS_QMT_QFQ_SNAP_META = {'enabled': True, 'base': %d, 'n': %d}"
+                     % (int(str(base).strip()), len(records)))
+        return '\n'.join(lines) + '\n'
     lines = [
         '# QMT QFQ factor snapshot constants (embedded data source).',
         '# Regenerate via: python scripts/export_qfq_factor_snapshot.py --emit-py <path>',
@@ -109,6 +135,8 @@ def _parse_args(argv=None):
     ap.add_argument('--since', default=DEFAULT_SINCE,
                     help='扫描起始日 YYYYMMDD（默认 %s；UTC 零点换算毫秒下界，'
                          '粗窗宁可多取仅更早历史）' % DEFAULT_SINCE)
+    ap.add_argument('--compress', action='store_true',
+                    help='emit-py 产出压缩形态（zlib+base64 单常量 ZB64 + META，无 DATA）')
     ap.add_argument('--universe-file', default=None,
                     help='可选：代码清单文件（每行一个代码，空行忽略）——给出则'
                          '打印 universe 覆盖率对比')
@@ -222,7 +250,16 @@ def main(argv=None):
         emit_dir = os.path.dirname(emit_path)
         if emit_dir:
             os.makedirs(emit_dir, exist_ok=True)
-        emit_text = build_emit_py_source(records, base)
+        # 数据层双保险（②审裁定）：除 json allow_nan=False 外再显式断言无 NaN/inf
+        _bad = [(str(_c), _d, _r) for _c, _pairs in records.items()
+                for _d, _r in pairs
+                if _r != _r or _r in (float('inf'), float('-inf'))]
+        if _bad:
+            print('[qfq-snapshot] FAIL emit 前检出 NaN/inf 数值 %d 处，样例 %r'
+                  % (len(_bad), _bad[:3]), file=sys.stderr)
+            return 3
+        emit_text = build_emit_py_source(
+            records, base, compress=bool(getattr(args, 'compress', False)))
         emit_payload = emit_text.encode('ascii')
         with open(emit_path, 'wb') as f:
             f.write(emit_payload)

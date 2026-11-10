@@ -919,6 +919,26 @@ def _qs_qfq_snap_state():
           'records': None, 'n': 0}
     data = globals().get('_QS_QMT_QFQ_SNAP_DATA')
     meta = globals().get('_QS_QMT_QFQ_SNAP_META')
+    if data is None:
+        # 压缩形态兜底（R-20261111-01）：**明文优先**——DATA 在位即走既有
+        # 明文判序（零漂移）；仅 DATA 缺席时才解 ZB64。解压失败 -> broken
+        # 并打印，**绝不静默回落 absent**（QD-2026-0022 fail-loud 纪律）。
+        # 解出后复用下方全部既有校验链（单一实现，不复制校验逻辑）。
+        _zb64 = globals().get('_QS_QMT_QFQ_SNAP_ZB64')
+        if _zb64 is not None:
+            try:
+                import base64 as _b64q
+                import json as _jsq
+                import zlib as _zlq
+                data = _jsq.loads(
+                    _zlq.decompress(_b64q.b64decode(_zb64)).decode('utf-8'))
+            except Exception as _exc:
+                st['state'] = 'broken'
+                st['reason'] = ('SNAP_ZB64 decode failed: %s'
+                                % (type(_exc).__name__,))
+                print('QS_QMT_QFQ_SNAP broken %s' % (st['reason'],))
+                _QS_QMT_QFQ_STATE = st
+                return st
     if data is not None or meta is not None:
         # 常量在位：逐项校验，任一失败即 broken（判序对齐 D-30 _qs_snapshot_load
         # ——enabled 先于 base/records；两常量任一缺省亦按在位坏形态处置）
