@@ -2675,3 +2675,37 @@ git stash store [(-m | --message) <message>] [-q] <commit> ← 只有 store 有 
 | **日线档 77.6%** | 已裁不立项 |
 
 > **本线实施侧已无在办**；转入四条触发式常态巡检。
+# R-PERF-46 收口确认 · ②审 · 2026-11-11 01:15 · **门1/门2 已落地生效；⚠ 门2 首跑即抓出 24 件 legacy 存量未登记；🔴 审核方上轮误判门1未挂载（自认）**
+
+## 10.215 审核方独立复核（本轮关键变化）
+
+| 项 | 实测 | 判定 |
+| --- | --- | --- |
+| 执行方本轮零写操作 | ✅ 确认（其 00:14 基线读数已带时间戳，无谎报；但**基线其后已变**，见下） |
+| **门1 `check-staged-scope.py`** | **EXISTS 7,686 B**；`core.hooksPath = '.githooks'`；**`.githooks/pre-commit`（1,417 B）含 `check-staged-scope` ⇒ 已生效** |
+| 门1 实现质量 | 读 index = `git diff --cached --name-only --diff-filter=ACMRTUXB` ✓；白名单三来源（`--allow` / `--allow-file` / `STAGED_SCOPE_ALLOW`）✓；**fail-closed：未声明白名单即拒** ✓；空 index 放行 ✓；退出码 0/1/2 ✓；含 `--index-file` 离线注入 ✓；自测含「**add -A 带入他线文件 ⇒ 必须拒**」负例 ✓ | **合格的门** |
+| **门2 legacy 指纹** | naming 门禁已含「登记表 + **内容 sha256 为主判据**（mtime 仅辅助/告警）」机制 + 探针/归档路径隔离判据 ✓ | **机制在位** |
+| 🆕 **门2 首跑即抓存量** | 门禁读数由 `files=21 violations=0 RESULT: PASS` 变为 **`files=45 violations=24 RESULT: WARN(24 name violations)`**、**`--strict` rc=1 FAIL**；24 条全部为 **`VIOLATION[legacy-unregistered]`**（`legacy/` 下 A1/A2/B1/B2 log + `baseline_*.json` 等**历史存量未登记指纹**）⇒ **不是新产物违规，是门2 对存量的首次清算** |
+| `--self-test` | **5/5 PASS** ✓（门2 上线未破自测） |
+| 推送 | `ahead 23`；门1/门2 提交 `ca91fa0`（11-11 01:11）在途未推 |
+
+## 10.216 🔴 审核方上轮误判自认（第六/第七次同型）
+
+| 项 | 上轮我怎么说 | 实测 |
+| --- | --- | --- |
+| 门1 挂载 | 「`check-staged-scope.py` **MISSING**；naming 门禁无 sha256/fingerprint ⇒ 仍未开工」 | **错**：我上轮查的是**文件是否存在**（当时确为 MISSING，⑥ 尚未落地），但**本轮该文件已由 `ca91fa0` 落地**；且我上轮顺手断言「未挂 hook」时只看了 `.git/hooks/` ⇒ **漏查 `core.hooksPath='.githooks'`** ⇒ **该断言是错的** |
+| 门1 读 index 方式 | 「源码含 `diff --cached` = False ⇒ 疑似未用 index 判据」 | **错**：源码实为 `["git","-C",repo,"diff","--cached","--name-only",...]` **分列表元素** ⇒ 我的 grep 模式 `diff --cached` **匹配不到** ⇒ **假阴性** |
+
+> ⇒ **两处都是我自己的「未溯源即断言」**（第 6、7 次）。**教训再固一条**：
+> **凡断言「某门/某钩子未生效」，必须查全三处**：`git config core.hooksPath` / `.githooks/` / `.git/hooks/`；
+> **凡用 grep 判「代码里没有 X」，grep 模式必须容忍代码的书写形态**（列表拆项、换行、别名），否则用 `git grep -E` 或直接读该函数源码定论。
+
+## 10.217 裁定
+
+| 项 | 裁定 |
+| --- | --- |
+| ① 收口确认 | ✅ **通过**（纯确认轮，零写操作，状态对齐准确） |
+| ② 转常态巡检 | ✅ **生效**（本线不再主动推进，仅触发式响应） |
+| ③ 派单路径 | ✅ **经总调度转发**（铁律 09/01/15） |
+| ④ **门1/门2** | ✅ **已落地并生效**（`ca91fa0`）；门1 挂在 `.githooks/pre-commit`，**fail-closed 且含 add -A 负例**，为合格门 |
+| ⑤ 🆕 **门2 存量欠账** | 🔴 **24 件 `legacy-unregistered` 须由⑥补登记指纹，或明确标为「已知历史存量」豁免**（**属存量清算，非新违规**）。**风险**：`--strict` 现为 **FAIL(24)**；若命名门禁已挂 pre-push，**将阻断下次推送** ⇒ 请总调度核该挂载并限期清理 |
