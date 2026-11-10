@@ -286,3 +286,50 @@
 
 **G1 优先的理由（安全底线）**：若先落 a 而不落 G1，`order_value(−x)` 卖出会被 fail-closed 钳成 0
 ⇒ **无法止损/减仓**，后果比 `[260200]` 部分成交更严重（不可恢复的机会损失）。
+
+### 11.6 **G1 判定勘误（2026-11-10 08:5x · 我方预研自查，推翻本方 §11.2 结论）**
+
+> **结论先行**：§11.2 的「G1（P0 级·fail-closed 会阻断卖出）」**不成立**——实现已天然满足
+> zcode 条件②「零预算只阻断买入、不阻断卖出」。G1 **降级为 P2（告警噪声与语义洁净）**。
+
+**证据（`_qs_split_order` L902-911 原文）**：
+
+```python
+def _qs_split_order(security, value, px, cash_avail=None):
+    if px is None or px <= 0 or value is None or value <= 0:
+        return [], 0          # ← value<=0（卖出）直接返回空，压根不进预算/拆单链路
+```
+
+**链路复推（`order_value` L1485-1488）**：
+
+```python
+_cash = _qs_cash_budget(security)                                # 卖出时也会被调用（唯一问题）
+orders, _tot = _qs_split_order(security, value, _px_exec, cash_avail=_cash)
+if not orders:                                                   # 卖出 ⇒ orders=[] ⇒ 命中
+    return _QSOrderRefState.value_orig(security, value, ...)     # ⇒ 走平台原生，卖出正常执行
+```
+
+| 我方原判（§11.2） | 复核后 | 处置 |
+|---|---|---|
+| `order_value` 卖出会经预算 ⇒ fail-closed 返 0 ⇒ **阻断卖出** | ❌ **不成立**：`value<=0` 在 `_qs_split_order` 首行即返回空 ⇒ 走 `value_orig` ⇒ 卖出不被阻断 | **撤销 G1 的 P0 定级** |
+| zcode 条件②（零预算不得阻断卖出） | ✅ **已天然满足**（两条卖出路径均不经预算钳制：`order_target_value` 走 `target_orig`；`order_value` 走 `value_orig`） | 条件②无需代码变更即可满足 |
+
+**G1 的真实价值（降级为 P2，非阻断项）**：
+1. **告警噪声**：卖出时仍调 `_qs_cash_budget` ⇒ a 项落地后会打 `QS_CASH_BUDGET_UNAVAILABLE`／
+   `QS_CASH_BUDGET basis=…` ⇒ 日志出现「卖单却报预算不足」的**误导性告警**；
+2. **无意义取数**：卖出不需要预算，多一次平台取数（轻微开销）；
+3. **语义洁净**：预算只与买入相关，代码结构应体现该语义。
+⇒ 修法（P2）：`order_value` 内按 `value` 符号分流，`value < 0` 直接走 `value_orig`（或传 `cash_avail=None`），
+**不调** `_qs_cash_budget`。
+
+**§11.5 执行序修订**：
+- 原「**先落 G1**（安全底线）」⇒ **改为「G1 与 b 同批、作为 P2 洁净项」**；
+- **a 项仍为 P0**（fail-closed 防超发，与卖出无关）；
+- **固件仍要写**，但断言改为「**卖出路径打出的预算日志数 = 0**」（而非「卖出不被阻断」——
+  后者本就是既有行为，写了会变成「测试既有行为」而非「测试新修」）。
+
+### 11.7 附带登记（既有特性，非本批范围）
+
+`order_value` 的卖出走 `value_orig` ⇒ **不拆单** ⇒ 卖出量不受 `_QS_MAX_ORDER_SHARES=49,000` 约束。
+可能是**有意设计**（卖出不拆以避免部分成交/多次手续费），也可能是待议特性 ⇒
+**本批不动**，仅登记，待后续评估（若确认需要，另立条目）。
