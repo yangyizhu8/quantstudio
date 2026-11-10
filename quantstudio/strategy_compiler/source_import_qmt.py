@@ -665,6 +665,161 @@ def _qs_norm_history_fields(fields):
 
 # 嵌入区定位标记：convert(qfq_embed=...) 把 emit-py 常量源文本（DATA/META 两条
 # 模块级赋值）原样替换本行；不注入（默认）保持注释形态 -> 运行期 absent 态。
+# @@QS_QMT_EPS_SNAP_EMBED@@
+# ---- EPS 嵌入式快照层（QD-2026-0023-E1，2026-11-10）---------------------------
+# 背景：QMT 侧 EPS 面板（PERSHAREINDEX.s_fa_eps_basic）由平台实时供数，比本地采集库
+#   新一个季度（实证 002568：QMT m_timetag=2026-06-29 / m_anntime=2026-08-04 /
+#   s_fa_eps_basic=0.46，而本地最新报告期仅到 2026-03-31）=> 选股因子偏离。
+#   本层以「本地导出的 EPS 快照」覆盖面板值，使两侧同源（与 QFQ 嵌入式快照同构：
+#   运行期零文件 IO、可复现、三态 fail-loud）。
+# 产物形态（scripts/export_eps_snapshot.py --emit-py 产出；体积 > 1.5MB 用压缩形态）：
+#   _QS_QMT_EPS_SNAP_META = {'enabled': True, 'base': 20260801, 'since': 20150101, 'n': 5206}
+#   _QS_QMT_EPS_SNAP_DATA = {'002568': [[end_d8, ann_d8, eps], ...], ...}   # 明文
+#   _QS_QMT_EPS_SNAP_ZB64 = '<base64(zlib(utf8(json)))>'                   # 压缩
+# PIT 口径：ann_d8 <= D-1 取最近一期；d8 换算一律北京墙钟（固定 +8）——库内 end_date /
+#   ann_date 的毫秒 epoch 均为**北京午夜锚**，按 UTC 换算会使全库 d8 早一天（导出端已由
+#   T9 回归守卫；消费端同样必须 +8）。
+# 纪律：策略源码零改动（铁律 07）；本层只做「读常量 -> 取值」纯函数，不改取数时机。
+_QS_QMT_EPS_STATE = None
+
+
+def _qs_eps_d8(ms):
+    """毫秒 epoch -> YYYYMMDD 整数；北京午夜锚（固定 +8），异常返回 None。"""
+    try:
+        v = int(ms)
+    except Exception:
+        return None
+    if v <= 0:
+        return None
+    try:
+        return int(_qs_dt.datetime.utcfromtimestamp(v / 1000.0 + 28800.0)
+                   .strftime('%Y%m%d'))
+    except Exception:
+        return None
+
+
+def _qs_eps_snap_state():
+    """EPS 嵌入式快照三态探测（embedded/absent/broken）+ 单次缓存。
+
+    判据（常量在位判，运行期零文件 IO）：META 与 DATA（或压缩形态 ZB64）均不在
+    globals => absent；在位但校验失败（DATA 缺/非 dict/空、META 缺/非 dict、enabled
+    非真、base 非 YYYYMMDD 量级、三元组不可数值化）=> broken（带原因）；全过 =>
+    embedded（records 按 ann_d8 升序）。态首印审计行恰一次（absent/broken 必打 =
+    fail-loud，静默回退会让下一轮对照误判「差异已消除」；embedded 观测锚只有 n+base，
+    禁时间戳——可复现性铁律）：
+      QS_QMT_EPS_SNAP embedded n=<标的数> base=<YYYYMMDD> mode=<plain|zlib>
+      QS_QMT_EPS_SNAP absent
+      QS_QMT_EPS_SNAP broken <原因>
+    """
+    global _QS_QMT_EPS_STATE
+    if _QS_QMT_EPS_STATE is not None:
+        return _QS_QMT_EPS_STATE
+    st = {'state': 'absent', 'reason': 'no embedded constants', 'base8': 0,
+          'records': None, 'n': 0, 'mode': 'plain'}
+    meta = globals().get('_QS_QMT_EPS_SNAP_META')
+    data = globals().get('_QS_QMT_EPS_SNAP_DATA')
+    zb64 = globals().get('_QS_QMT_EPS_SNAP_ZB64')
+    if meta is None and data is None and zb64 is None:
+        print('QS_QMT_EPS_SNAP absent')
+        _QS_QMT_EPS_STATE = st
+        return st
+    st['state'] = 'broken'
+    if meta is None or not isinstance(meta, dict):
+        st['reason'] = 'SNAP_META missing or not dict'
+    elif not meta.get('enabled'):
+        st['reason'] = 'SNAP_META enabled not true'
+    else:
+        try:
+            base8 = int(meta.get('base'))
+        except Exception:
+            base8 = 0
+        if not (19900101 <= base8 <= 20991231):
+            st['reason'] = 'SNAP_META base invalid'
+        else:
+            st['base8'] = base8
+            try:
+                if data is None and zb64:
+                    import base64 as _b64
+                    import json as _json
+                    import zlib as _zlib
+                    _raw = _zlib.decompress(_b64.b64decode(zb64))
+                    data = _json.loads(_raw.decode('utf-8'))
+                    st['mode'] = 'zlib'
+                if not isinstance(data, dict) or not data:
+                    st['reason'] = 'SNAP_DATA missing/not dict/empty'
+                else:
+                    rec = {}
+                    bad = 0
+                    for _k, _seq in data.items():
+                        _code = str(_k).strip()
+                        if len(_code) != 6 or not _code.isdigit():
+                            bad += 1
+                            continue
+                        _arr = []
+                        for _t in (_seq or []):
+                            try:
+                                _end8 = int(_t[0])
+                                _ann8 = int(_t[1])
+                                _eps = float(_t[2])
+                            except Exception:
+                                bad += 1
+                                continue
+                            if _end8 < 19900101 or _ann8 < 19900101:
+                                bad += 1
+                                continue
+                            if _eps != _eps:
+                                bad += 1
+                                continue
+                            _arr.append((_ann8, _end8, _eps))
+                        if _arr:
+                            _arr.sort()
+                            rec[_code] = _arr
+                    if bad:
+                        st['reason'] = 'SNAP_DATA %d malformed triples' % bad
+                    elif not rec:
+                        st['reason'] = 'SNAP_DATA no valid records'
+                    else:
+                        st['state'] = 'embedded'
+                        st['records'] = rec
+                        st['n'] = len(rec)
+                        st['reason'] = ''
+            except Exception as _exc:
+                st['reason'] = 'SNAP_DATA parse failed: %s' % type(_exc).__name__
+    if st['state'] == 'embedded':
+        print('QS_QMT_EPS_SNAP embedded n=%d base=%d mode=%s'
+              % (st['n'], st['base8'], st['mode']))
+    else:
+        print('QS_QMT_EPS_SNAP %s %s' % (st['state'], st['reason']))
+    _QS_QMT_EPS_STATE = st
+    return st
+
+
+def _qs_eps_pick(code, d8):
+    """按 PIT（ann_d8 <= d8）取该 code 最近一期 eps；无可用期返回 None。
+
+    code 为 6 位字符串；d8 为信号日（调用方传 D-1 对应的 YYYYMMDD 整数）；
+    ann_d8 为公告日（可见性锚）。本函数纯读缓存，不触碰文件与网络。
+    """
+    st = _qs_eps_snap_state()
+    if st['state'] != 'embedded' or d8 is None:
+        return None
+    _seq = (st['records'] or {}).get(str(code).strip())
+    if not _seq:
+        return None
+    try:
+        _d = int(d8)
+    except Exception:
+        return None
+    _pick = None
+    for _ann8, _end8, _eps in _seq:
+        if _ann8 <= _d:
+            if _pick is None or _ann8 >= _pick[0]:
+                _pick = (_ann8, _end8, _eps)
+        else:
+            break
+    return None if _pick is None else _pick[2]
+
+
 # @@QS_QMT_QFQ_SNAP_EMBED@@
 
 # 三态缓存载体：None=未探测；否则 dict(state/reason/base8/records/n)——
