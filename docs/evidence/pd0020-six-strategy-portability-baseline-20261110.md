@@ -155,3 +155,58 @@
   登记风险；**检测点应从 api 名改为 `open()` 位置**（这是校验器改进项）；
 - **甲方案验收**：这 3 个 BLOCK 仍是「既有问题」，**不计入甲方案改动引入**；
 - **§12 ②审**：A/C 定性已完成 ⇒ 按裁③**可送**（下一轮）。
+
+---
+
+## 七、A 项修正方案 ＋ C 项探针（2026-11-11 00:1x · R-20261110-06 裁①②）
+
+### 7.1 A 项：条目与方案
+
+**条目**：`PD-2026-0022`（族 pd／层 gate／域 D3）——已 `kb_draft` 机检通过。
+
+**改动（`quantstudio/strategy_compiler/portability_rules.py` ＋ 校验器）**：
+
+| # | 改动 | 说明 |
+|---|---|---|
+| A-1 | `is_trade()`、`set_commission()` **从 DENY 白名单移除** | 均为 PTrade 公有 API（附 Context7 逐字依据于规则注释） |
+| A-2 | `get_research_path()` **从 FILE-DB-ACCESS 名单移除** | 它只返回路径字符串，不访问文件 |
+| **A-3** | `PORTABILITY-FILE-DB-ACCESS` **检测点迁移**：从「按 api 名匹配」改为「**按真实文件访问调用点匹配**」（`open(`／`os.path.*`／`os.makedirs`／`json.dump`／`pd.read_*`／`.to_csv`／`.to_parquet`） | **同批实施**（裁①条件②） |
+| A-4 | **负向不放松**：非 Profile 的本地专属 API **仍拦**（`DENY_REMOVE`/`DENY_BLOCK` 保留） | 裁①条件③ |
+
+**②审三条件（裁①）**：
+
+1. **仅三 API 白名单**，且**附 Context7 逐字依据**（`utilities.md`／`Ptrade国盛.md`／`settings.md`）；
+2. **FILE-DB-ACCESS 检测点迁 `open()` 调用点**——**同批**实施，不得只放宽不移点（否则真实文件访问从此无人拦）；
+3. **负向非 Profile 仍拦**——白名单化不得成为"全面放宽"。
+
+### 7.2 C 项：待实证探针（裁②）
+
+**目标**：确认 `open(get_research_path() + 'xxx.pkl', 'wb')` 在 PTrade **公有 Profile 交易环境**下是否真成功。
+
+**探针设计**（并入下次实跑产物，**只读不写业务数据**）：
+
+```python
+# PERSIST 块内，写后立即读回并打日志（自证成功性）
+try:
+    _p = _PD_NOTEBOOK + 'QS_PERSIST_PROBE.txt'
+    with open(_p, 'w') as _pf:
+        _pf.write('probe-ok')
+    with open(_p, 'r') as _pf:
+        _back = _pf.read()
+    log.info('QS_PERSIST_PROBE write_read_back=%s path_len=%d' % (_back == 'probe-ok', len(_PD_NOTEBOOK)))
+except Exception as _e:
+    log.warning('QS_PERSIST_PROBE failed=%s: %s' % (type(_e).__name__, _e))
+```
+
+| 读数 | 结论 | 后续 |
+|---|---|---|
+| `write_read_back=True` | `open()` 在 `/home/fly/notebook/` **可用** | ⇒ `C` 转为「平台支持」⇒ PERSIST **无需重构**；规则按 A-3 只迁检测点 |
+| `failed=<异常>` | `open()` **不可用**（只读或禁写） | ⇒ PERSIST **须重构**（改 `g.state` 或其它机制），另立条目 |
+| 无该日志行 | PERSIST 块未执行 | ⇒ 需先确认注入是否生效（回到产物核查） |
+
+**边界**：探针**只写一个 ~10 字节的 txt**，不触碰 `ETF_f926a7_state.pkl`，**不改变任何业务行为**。
+
+### 7.3 与 §12 ②审的关系
+
+- **A／C 两项均不改 §12 的甲方案设计**（甲方案在 `order` 包装内折算，与 portability 规则正交）；
+- §12 极短版②审**下一轮送**（裁③），A 项放宽另行走②审（条目 `PD-2026-0022`）。
