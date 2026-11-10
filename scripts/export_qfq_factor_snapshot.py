@@ -252,7 +252,7 @@ def main(argv=None):
             os.makedirs(emit_dir, exist_ok=True)
         # 数据层双保险（②审裁定）：除 json allow_nan=False 外再显式断言无 NaN/inf
         _bad = [(str(_c), _d, _r) for _c, _pairs in records.items()
-                for _d, _r in pairs
+                for _d, _r in _pairs
                 if _r != _r or _r in (float('inf'), float('-inf'))]
         if _bad:
             print('[qfq-snapshot] FAIL emit 前检出 NaN/inf 数值 %d 处，样例 %r'
