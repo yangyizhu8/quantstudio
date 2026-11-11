@@ -60,7 +60,33 @@ note: 本文件为节点⑳ 专属；节点⑫ 的台账是 docs/decisions-pendi
 | **R-20261111-01** | **照准立项**：①adj_factor 会话级缓存 + ②因子缓存容量（低风险对，22-45%）| 2026-11-11 00:35 | 总调度指示 |
 | **R-20261111-02** | **暂缓**：③全量比对改粗筛（触判据路径，settle 落地后一并评估，避免同窗双改判据面）| 同上 | 同上 |
 | **R-20261111-03** | **照准立项**：`other=1907s`（37.9%）排查（只读分段计时）| 2026-11-11 02:19 | 总调度「最大未明块·列 settle 之后，不挤明晚窗」|
-| **R-01 执行进展** | ①**V3 否定→作废**；②**已实施**（`daemon.py` +23/−4，`7 passed`）| 2026-11-11 02:28 | 待②审 |
+| **R-01 执行进展** | ①**V3 否定→作废**；②**已实施 + ②审过 + 保留**（`daemon.py` +23/−4，`7 passed`，`evict 57→0`）| 2026-11-11 02:28 | 已完成 |
+| **R-20261111-04** | **照准（丙）**：sqlwrite 拆解与 R-03 合并为「耗时结构」单一立项，即刻做 | 2026-11-11 16:21 | 已完成，见 `docs/evidence/time-cost-structure-20261111.md` |
+
+### R-20261111-04 执行结果（**已完成**，2026-11-11 16:50）
+
+**报告**：`docs/evidence/time-cost-structure-20261111.md`
+
+**三个决定性结论**：
+
+| # | 结论 | 证据 |
+|---|---|---|
+| **1** | **无单一瓶颈——按表不同四种结构** | `stock_minutes` write 61.5% / `stock_daily` validate 78.3% / `etf_minutes` other 39.1% / `etf_daily` other 60.5% |
+| **2** | **`sqlwrite` 慢的机制已确认** | DuckDB 对带 PK 表 UPDATE **一律改写 DELETE+INSERT**（`writers.py:L54-56` 自述）⇒ 266 万行 ⇒ 约 532 万次 ART 操作 |
+| **3** | **应用层**已经**用 `changed` 过滤**（澄清我此前的假设） | 昨日 `MinuteDiff changed=67` → `wrote 67 rows`；今日 `changed=358万` → `written=266万` |
+
+**新发现（今日异常）**：
+```
+今日 stock_minutes 末尾批：validated=50000 changed=50000 unchanged=0（100% 变化）
+今日 MinuteDiff 合计：changed=3,588,384 / unchanged=31,083,712（10.3%）
+昨日 MinuteDiff 合计：changed=36,877     / unchanged=28,607,725（0.13%）
+⇒ 今日变化率异常高 79 倍，成因未查
+```
+
+**未完成（如实划界）**：
+- `other` 段（`stock_minutes` 2246.6s + `etf_minutes` 926.4s ≈ **60 分钟**）**仍是黑盒**——`_sp` 只埋了 align/validate/write 三段
+- `QS_UPSERT_SKIP_IDENTICAL` 实际收益未测（需开一轮）
+- `stock_daily` validate 1809.8s 内部未拆
 
 ### R-20261111-01 立项详情（**已修订：①作废 / ②已实施**）
 
