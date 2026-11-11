@@ -1,0 +1,98 @@
+{
+  "kind": "v8-settle-baseline",
+  "captured_at": "2026-11-12T04:36:20+08:00",
+  "window": [
+    "2026-07-01",
+    "2026-07-31"
+  ],
+  "hash_algo": "sha256(rel_path + bytes) over all files in artifact dir (verbatim from scripts/baseline_rerun_20260827.py:dir_hash)",
+  "code_state": {
+    "head": "f1ec9c2",
+    "head_subject": "docs(g9): 甲1a 缺口定位取证 —— 免额度路径四条全穷尽；证出源切换口径差（xtquant→mcp）",
+    "dirty": true,
+    "files": {
+      "quantstudio/pipeline/qfq_reanchor_engine.py": "18c1feb0e2a826cc64c9acb5b863651a91c28d425c20d07e7c8d8b2a981c5084",
+      "quantstudio/backtest/backtest_engine.py": "5ffe118c2e1a0d55891a3f92a541bb863a7e07bb97a686395b365403816950a7",
+      "quantstudio/pipeline/daemon.py": "7aa92429d260187bcac1d17426f5489cb1ee2c1d41d39e6b5a5e9334a1476ccf"
+    }
+  },
+  "data_state": {
+    "ok": true,
+    "tables": {
+      "stock_minutes": {
+        "watermark": "2026-10-16",
+        "max": "2026-11-10"
+      },
+      "etf_minutes": {
+        "watermark": "2026-10-09",
+        "max": "2026-11-10"
+      },
+      "stock_daily": {
+        "watermark": "2026-09-03",
+        "max": "2026-11-10"
+      },
+      "etf_daily": {
+        "watermark": "2026-09-04",
+        "max": "2026-11-10"
+      }
+    },
+    "errors": {}
+  },
+  "strategies": {
+    "etf_theme": {
+      "artifact_dir": "20261112_041849_etf_theme_rotation_quantstudio",
+      "strategy": "quantstudio/backtest/strategies/etf_theme_rotation_quantstudio.py",
+      "extra": [],
+      "dir_hash": "a9d8c1c8037ee3552e9298a782921c79406c83d191e1b6d578ab861a397e4df5",
+      "files": {
+        "benchmark.csv": "1de2af3e000717afcb8a5995e5e5db5e47b3b563e28003264824dfe3440f3099",
+        "config.csv": "141ef37b64c5eb07da8190d4dc7da6bfe5c61cbce70047cbc97a4d656ad5f9e4",
+        "daily_stats.csv": "3d4f9cf6da57c7d52e6e98faf6bc72f1a3cbae7d11e7e0ca3dbd12046200afc0",
+        "ptrade_metrics.csv": "be4407ee580de8e17f32ce393ceef27f855b53511aec15d16efc2520b0b2f129",
+        "ptrade_metrics.json": "46cdce07c24aa6a968ae54a04a380dc09a2491ba5229f49fa8e800910d56f305",
+        "round_trips.csv": "451bdac5318d8cb7e376f545a178cae5183376e564f289bd22c279315bd72033",
+        "trades.csv": "7f865798493cf2ad833e1532a8a5773cc7a4d28b2492ccde4f5eb6defb3929bd"
+      }
+    },
+    "smallcap": {
+      "artifact_dir": "20261112_041910_小市值策略ptrade",
+      "strategy": "quantstudio/backtest/strategies/小市值策略ptrade.py",
+      "extra": [],
+      "dir_hash": "6702c72237320d9822edbee79e8077a4088d268f8b976cf2113ff7d74b6b662c",
+      "files": {
+        "benchmark.csv": "1de2af3e000717afcb8a5995e5e5db5e47b3b563e28003264824dfe3440f3099",
+        "config.csv": "dc2bcdf4717081d7c85bbbc11a1ff779c147908cdc415f3fc8dc903823083f31",
+        "daily_stats.csv": "5b22d8a89ef342732b01ed33a7c3953e5348975c9767ae01a10c9ad1720fdbb2",
+        "ptrade_metrics.csv": "dfb11226393898a98dea428fa7614c1d7234cf2e5c65cd9e1ebc7ee552a23a83",
+        "ptrade_metrics.json": "b3fcc06183fe9e4bab076e0ffe39725aedfdf97d4a8d926960654bcf8519f23e",
+        "round_trips.csv": "79e48b98733ed25cbca59a54f58a85b899aa063b6cd2711652316c855ddfbbad",
+        "trades.csv": "4bde191af7884f7959b444f3b0538d7592f5dcfe0b35082abb1cf7b4259edb38"
+      }
+    },
+    "overnight_s7": {
+      "artifact_dir": "20261112_043557_smallcap_overnight_scalp_7_quantstudio",
+      "strategy": "quantstudio/backtest/strategies/smallcap_overnight_scalp_7_quantstudio.py",
+      "extra": [
+        "--profile",
+        "minute-bar-v1"
+      ],
+      "dir_hash": "bf738a9e8f6c29caf16638c3ac8526b7d3491b95d039a7ae148e87457a429222",
+      "files": {
+        "benchmark.csv": "1de2af3e000717afcb8a5995e5e5db5e47b3b563e28003264824dfe3440f3099",
+        "config.csv": "c51860251d6e4892eeaf76c5a53a81be32f3830b0e8dff0088625375008aec7e",
+        "daily_stats.csv": "35c010462f21b86cd0db1236aad615062dc40c6580e4c99df383155dcf12bd8a",
+        "ptrade_metrics.csv": "12d36093579a3a8bde6ea2e6e5d0926eba5f0ea32d941fcab2f9d242d2a91bd0",
+        "ptrade_metrics.json": "7028778785a8271aa006966dc98f987bf3432463d193ba1e5080e6e788c3c07a",
+        "round_trips.csv": "303d25e7b50c83ec39f00aee0b5860c72d11f0ecaf2a177b02e380fb9f4b3664",
+        "trades.csv": "4ee11709b8c098ad95bcd6ceb5998a8edab46d07b6963d23b32c2a1cfd658919"
+      }
+    }
+  },
+  "overall_hash": "6ff884a952d1219eca530e086e2e68f627d29e3105660197992800d67886a51e",
+  "logs_dir": "output\\v8_baseline_logs\\20261112_041724",
+  "data_state_initial_failure": {
+    "ok": false,
+    "error": "BinderException: Binder Error: Referenced column \"time\" not found in FROM clause!\nCandidate bindings: \"inventory\", \"fixed_asset\", \"update_time\", \"total_equity\", \"total_liability\"\n\nLINE 1: SELECT MAX(time) FROM balance_statement\n                   ^"
+  },
+  "data_state_note": "首次 capture（04:17）取的 data_state 因脚本缺陷失败（对平衡表等无 time 列表跑了 MAX(time)）；本字段为 04:45 补取，与回测哈希无关（哈希只看回测产物目录）。"
+}

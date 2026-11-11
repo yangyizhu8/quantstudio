@@ -68,12 +68,40 @@ note: 本文件为节点⑳ 专属；节点⑫ 的台账是 docs/decisions-pendi
 
 | # | 项 | 状态 |
 |---|---|---|
-| 1 | **V8 回测哈希基线捕获**（改动前，冻结基线）| ⏳ **16:00 前必须完成**（改动后无法回溯）|
-| 2 | 边界 JSON 刷新（源端已到 2026-11-10，per-code 首日可能变）| ⏳ 待做 |
+| 1 | **V8 回测哈希基线捕获**（改动前，冻结基线）| ✅ **已完成**（04:37，`6ff884a9…`，见 `docs/evidence/v8-settle-baseline-20261112.json`）|
+| 2 | 边界 JSON 刷新（源端已到 2026-11-10，per-code 首日可能变）| ⏳ 待做（**须在 V8 捕获后**，✅ 时序已满足）|
 | 3 | 补 V1/V2/V4/V7 测试（接口设计已定，可先写）| ⏳ 待做 |
 | 4 | 判据改动（4 新函数 + 2 处 `missing_target` 重算）| ⏸ 窗口内 |
-| 5 | 单测 + V8 比对 + V9 回归 + V10 观察 | ⏸ 窗口内 |
+| 5 | 单测 + V8 比对（`--compare`）+ V9 回归 + V10 观察 | ⏸ 窗口内 |
 | 6 | 回退双路：`QS_QFQ_FROZEN_BEFORE=0` / `git revert` | ✅ 已在位 |
+
+### V8 基线捕获结果（2026-11-12 04:17–04:37，实测）
+
+**工具**：`scripts/v8_settle_baseline.py`（`--capture` / `--compare`）
+**口径**：`sha256(相对路径 + 文件字节)` 遍历产物目录全部文件 —— **逐字复用** `scripts/baseline_rerun_20260827.py:dir_hash`，未自造
+
+| 策略 | 窗口 | dir_hash |
+|---|---|---|
+| `etf_theme` | 2026-07-01~07-31 | `a9d8c1c8037ee3552e9298a782921c79406c83d191e1b6d578ab861a397e4df5` |
+| `smallcap` | 同上 | `6702c72237320d9822edbee79e8077a4088d268f8b976cf2113ff7d74b6b662c` |
+| `overnight_s7`（minute-bar-v1）| 同上 | `bf738a9e8f6c29caf16638c3ac8526b7d3491b95d039a7ae148e87457a429222` |
+| **overall** | | **`6ff884a952d1219eca530e086e2e68f627d29e3105660197992800d67886a51e`** |
+
+**代码态**：`HEAD=f1ec9c2`（dirty=True，含他线 `daemon.py` 日历改动与本线新脚本）
+**数据态**（04:45 补取）：四表水位 `stock_minutes 2026-10-16 / etf_minutes 2026-10-09 / stock_daily 2026-09-03 / etf_daily 2026-09-04`，四表 MAX 均 `2026-11-10`
+
+**复现性前置验证（V8 的成立前提）**：`etf_theme` 同参数连跑两次（93s / 84s）⇒ 7 个产物文件逐文件哈希**全同**、`dir_hash` **全同**；`ptrade_metrics.json` 的 `start_date/buy_date` 是**业务日期**非生成时刻 ⇒ 不入哈希污染。**⇒ 同代码同数据 ⇒ 同哈希，成立。**
+
+### 🔴 本次事故与修复（如实申报，涉他线）
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 04:12:10 `daemon.log`：`收到停止请求（reason=backtest），准备优雅退出` ⇒ **daemon 被我的回测停掉** |
+| **根因** | `run_ptrade_strategy.py` 默认 `coexistence=True`（L118/L574：**「回测前停采集，结束后不自动重启」**）|
+| **我的失误** | 跑探针/基线前**未预判**该默认行为，直接停了生产 daemon（第五死后又一次，累计影响）|
+| **已修复** | `v8_settle_baseline.py` 的 `run_one()` 显式追加 **`--no-coexistence`**（V8 只读，无需独占）；并在文档注明「须在 daemon 停止或无写锁时运行」|
+| **恢复** | 04:37:25 **PID 35108**（`start_daemon_guarded.ps1` 脱离 job 启动）⇒ `status=running`、`daily_time=06:00`、`backtest_stop.flag` 不存在 ⇒ **06:00 轮保住** |
+| **连带修正** | 11-03「daemon forever 全程持写锁」经验**已过时**：04:45 在 daemon 运行中仍可 `read_only=True` 打开（四表探测成功）⇒ 回测/V8 可在 daemon 运行期执行，只是须 `--no-coexistence` |
 
 ### R-02 执行结果（2026-11-12 03:40，`d273488`）
 
