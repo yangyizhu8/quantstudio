@@ -794,6 +794,32 @@ def _qs_eps_snap_state():
     return st
 
 
+def _qs_eps_code6(code):
+    """标的代码归一化为 6 位纯数字（QD-2026-0023-F，2026-11-11）。
+
+    动机（真机实证）：QMT 面板返回的 code 带市场后缀（'002568.SZ' / '600000.SH' /
+    '830799.BJ'），而嵌入式快照的 records key 是 6 位纯数字（'002568'）——与本地库
+    口径一致。**未归一化会让 recs.get() 恒 miss**，进而把每一行都误计入 span_short
+    （真机实测 overridden=0 的直接根因）。
+
+    规则：去空白 -> 取 '.' 前段 -> 去内部空白 -> 大写 -> 须为 6 位数字；不合法返回
+    None（由调用方按 miss 处理，不抛异常——本函数在热路径上，异常会污染回测）。
+    覆盖形态：'002568.SZ' / '600000.SH' / '830799.BJ' / '002568' / ' 002568.sz '。
+    """
+    try:
+        s = str(code).strip()
+    except Exception:
+        return None
+    if not s:
+        return None
+    if '.' in s:
+        s = s.split('.', 1)[0]
+    s = s.strip().upper()
+    if len(s) != 6 or not s.isdigit():
+        return None
+    return s
+
+
 def _qs_eps_pick(code, d8):
     """按 PIT（ann_d8 <= d8）取该 code 最近一期 eps；无可用期返回 None。
 
@@ -803,7 +829,7 @@ def _qs_eps_pick(code, d8):
     st = _qs_eps_snap_state()
     if st['state'] != 'embedded' or d8 is None:
         return None
-    _seq = (st['records'] or {}).get(str(code).strip())
+    _seq = (st['records'] or {}).get(_qs_eps_code6(code) or '')
     if not _seq:
         return None
     try:
@@ -834,7 +860,8 @@ def _qs_eps_align_rows(rows_h, fmap):
     返回 (rows_h, stats)。本函数纯内存操作，零文件 IO。
     """
     st = _qs_eps_snap_state()
-    stats = {'overridden': 0, 'mismatch': 0, 'span_short': 0, 'unmatched': 0}
+    stats = {'overridden': 0, 'mismatch': 0, 'span_short': 0,
+             'code_miss': 0, 'unmatched': 0}
     if st['state'] != 'embedded' or not rows_h:
         return rows_h, stats
     k_eps = fmap.get('eps', 'eps')
@@ -845,7 +872,7 @@ def _qs_eps_align_rows(rows_h, fmap):
     for _code, _rows in list(rows_h.items()):
         if not _rows:
             continue
-        _seq = recs.get(str(_code).strip())
+        _seq = recs.get(_qs_eps_code6(_code) or '')
         _by_end = {}
         if _seq:
             for _ann8, _end8, _eps in _seq:
@@ -857,7 +884,12 @@ def _qs_eps_align_rows(rows_h, fmap):
             if _end8 is None:
                 stats['unmatched'] += 1
                 continue
-            if not _by_end or _end8 not in _by_end:
+            if not _by_end:
+                # code 不在快照（后缀未剥/新股/非 A 股）——与「期次缺失」
+                # 分列统计：混算会让 next 轮排查再次误判为 span 范围问题。
+                stats['code_miss'] += 1
+                continue
+            if _end8 not in _by_end:
                 stats['span_short'] += 1
                 if len(_sample_short) < 3:
                     _sample_short.append('%s@%s' % (_code, _end8))
@@ -874,9 +906,10 @@ def _qs_eps_align_rows(rows_h, fmap):
                                             % (_code, _end8, _panel, _local))
             _row[k_eps] = _local
             stats['overridden'] += 1
-    print('QS_QMT_EPS_ALIGN overridden=%d mismatch=%d span_short=%d unmatched=%d'
+    print('QS_QMT_EPS_ALIGN overridden=%d mismatch=%d span_short=%d '
+          'code_miss=%d unmatched=%d'
           % (stats['overridden'], stats['mismatch'], stats['span_short'],
-             stats['unmatched']))
+             stats['code_miss'], stats['unmatched']))
     if stats['mismatch']:
         print('QS_QMT_EPS_MISMATCH n=%d sample=%s'
               % (stats['mismatch'], ' | '.join(_sample_mismatch)))
