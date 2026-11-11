@@ -827,15 +827,22 @@ def _apply_isolation(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> None
 
     # P1-1③：收盘核对行含拒单合计（注入既有 after_trading_end；不存在则不新建，
     # 避免改变既有落盘语义）
+    # PD-2026-0020 §12 期1 甲-order 第二步（②审 B1/B2/B4）：RECONCILE 汇总第一跳注入的
+    # 三个计数——未武装（clamp 因 px 缺失未生效）、零预算拒单、账本负值。用 globals().get
+    # 探测（非隔离产物或无第一跳块时不 NameError）。
     reconcile_src = (
         "if _QS_ISO_ENABLED:\n"
         "    try:\n"
         "        _iso = _qs_iso_state()\n"
         "        if _iso is not None:\n"
-        "            log.info('QS_ISO_RECONCILE epoch=%s cash_base=%.2f reserved=%.2f cash_avail=%.2f pos=%s rejects=%d'\n"
+        "            log.info('QS_ISO_RECONCILE epoch=%s cash_base=%.2f reserved=%.2f cash_avail=%.2f pos=%s rejects=%d clamp_unarmed=%d cash_reject=%d ledger_neg=%d amount_api=%d'\n"
         "                     % (_iso.get('epoch'), float(_iso.get('cash_base', 0.0) or 0.0),\n"
         "                        float(_iso.get('reserved', 0.0) or 0.0), _qs_iso_cash_avail(),\n"
-        "                        _iso.get('pos'), int(_iso.get('rejects', 0) or 0)))\n"
+        "                        _iso.get('pos'), int(_iso.get('rejects', 0) or 0),\n"
+        "                        int((globals().get('_QS_CLAMP_UNARMED_COUNT') or [0])[0]),\n"
+        "                        int((globals().get('_QS_CASH_REJECT_COUNT') or [0])[0]),\n"
+        "                        int((globals().get('_QS_LEDGER_NEG_COUNT') or [0])[0]),\n"
+        "                        int((globals().get('_qs_iso_amount_api_hits') or [0])[0])))\n"
         "    except Exception:\n"
         "        pass\n")
     ate, created_ate = _get_or_create_function(tree, "after_trading_end", MARKER_PERSIST)

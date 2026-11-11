@@ -295,5 +295,29 @@ if _QS_ISO_ENABLED:
         return _oid
 
     _QSOrderRefState.order_orig = _qs_iso_order_orig
+    # PD-2026-0020 §12 期1 F2 简化条件（②审 c 项 B5）：隔离下「金额版调用面」检测。
+    # 金额/比例语义（order_target_value / order_value / order_target_percent）内部依赖
+    # **真实持仓 delta**，而隔离下虚拟 pos 仅作对照（不参与决策）⇒ 一旦策略走这些入口，
+    # 隔离的持仓侧即失去约束力。故此处只做**发现即告警**（首次一次 ＋ 累计计数入
+    # RECONCILE），**不阻断**——避免误伤既有策略行为（纯增益边界）。
+    _qs_iso_amount_api_hits = [0]
+
+    def _qs_iso_wrap_amount_api(fn, name):
+        def _probe(*a, **k):
+            try:
+                _qs_iso_amount_api_hits[0] += 1
+                if _qs_iso_amount_api_hits[0] == 1:
+                    log.warning('QS_ISO_AMOUNT_API_DETECTED api=%s'
+                                '（隔离下金额版调用面；虚拟持仓仅作对照，'
+                                '持仓侧约束力弱化——同类调用此后仅计数不重复告警）' % name)
+            except Exception:
+                pass
+            return fn(*a, **k)
+        return _probe
+
+    for _qs_api_name in ('order_target_value', 'order_value', 'order_target_percent'):
+        if _qs_api_name in globals():
+            globals()[_qs_api_name] = _qs_iso_wrap_amount_api(
+                globals()[_qs_api_name], _qs_api_name)
 # PTRADE-DEPLOY:ISO END
 '''
