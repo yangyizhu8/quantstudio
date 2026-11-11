@@ -1516,7 +1516,13 @@ class ResidentCollector:
         # 目的：定位端到端耗时构成（写段外 vs 写段内）。纯日志，零行为变更。
         import time as _tprobe
         _sp_t0 = _tprobe.perf_counter()
-        _sp = {"align": 0.0, "validate": 0.0, "write": 0.0}
+        # 2026-11-11（节点⑳·R-03/耗时结构）：`_sp` 原有三桶（align/validate/write），
+        # 其余全部落入 `other`（实测 stock_minutes 2246.6s / etf_minutes 926.4s 为黑盒）。
+        # 新增两桶把 `other` 主体拆开：
+        #   fetch = 等待下一个 shard（= 线1 还原 + export 取数，发生在 next() 内）
+        #   norm  = normalize_mcp_adj_factor_df（每分片重复的 adj_factor 标准化）
+        # 残余 other 仍为 total - 五桶（真正的「其他」）。
+        _sp = {"align": 0.0, "validate": 0.0, "write": 0.0, "fetch": 0.0, "norm": 0.0}
         _sp_shards = 0
         self._sp_probe = _sp          # 供 _stamp_and_write 累计 write 桶三分（下一刀）
         # QFQ 快照优化：流式路径入口预查一次全局快照（循环内复用，避免每分片
@@ -1548,10 +1554,14 @@ class ResidentCollector:
         # → 对齐器按 2026-08-14 防线正确 fail-fast。修复：首分片处理时若快照为空
         # 且为价格表，重建一次（此时冷启动注入已落库）；仍空则维持 fail-fast 语义。
         _snap_refreshed = False
+        _t_fetch = _tprobe.perf_counter()   # R-03 埋点：等待下一分片的起点
         try:
             meta, shard_iter = adapter.fetch_table_streaming(
                 table, start, end, freq=freq, codes=codes)
             for df_shard in shard_iter:
+                # R-03 埋点：本次 next() 的等待时长（含线1 还原 + export 取数）
+                _sp["fetch"] += _tprobe.perf_counter() - _t_fetch
+                _t_fetch = _tprobe.perf_counter()
                 if len(df_shard) == 0:
                     continue
                 if (not _snap_refreshed and table in self._QFQ_PRICE_TABLES
@@ -1573,7 +1583,9 @@ class ResidentCollector:
                        "etf_daily", "etf_minutes") and "adj_factor" in df_shard.columns):
                     from .sources.mcp_adapter import normalize_mcp_adj_factor_df
                     asset_type = "ETF" if table.startswith("etf") else "STOCK"
+                    _t_norm = _tprobe.perf_counter()   # R-03 埋点
                     adj_factor_df = normalize_mcp_adj_factor_df(df_shard, freq, asset_type)
+                    _sp["norm"] += _tprobe.perf_counter() - _t_norm
                     tk = self.aligner.schemas[table].get("time_key", "time")
                     rename_map = {}
                     if "time" in adj_factor_df.columns and tk != "time":
@@ -1657,12 +1669,16 @@ class ResidentCollector:
                         f"(new {_new_txt} + upd {_upd_txt}) watermark→{new_watermark}"
                         + (f" accounting-degraded={_acct_degraded}" if _acct_degraded else ""))
             # A1a 阶段时延汇总（每批一行；other = 取数/迭代/校验门禁等未细分部分）
+            # 2026-11-11 R-03：other 已细分 fetch（等分片=线1还原+取数）/ norm（adj_factor 标准化），
+            # 残余 other = total − 五桶（真正的「其他」）。
             _sp_total = _tprobe.perf_counter() - _sp_t0
-            _sp_other = max(0.0, _sp_total - _sp["align"] - _sp["validate"] - _sp["write"])
+            _sp_other = max(0.0, _sp_total - _sp["align"] - _sp["validate"]
+                            - _sp["write"] - _sp["fetch"] - _sp["norm"])
             logger.info(
                 f"[{batch_id}] [阶段时延] table={table} shards={_sp_shards} rows={rows_written} "
                 f"total={_sp_total:.1f}s | other={_sp_other:.1f}s align={_sp['align']:.1f}s "
                 f"validate={_sp['validate']:.1f}s write={_sp['write']:.1f}s | "
+                f"fetch={_sp['fetch']:.1f}s norm={_sp['norm']:.1f}s | "
                 f"write_share={100.0 * _sp['write'] / _sp_total:.1f}% | "
                 f"write_split: copy={_sp.get('copy', 0.0):.1f}s "
                 f"invariant={_sp.get('invariant', 0.0):.1f}s "
