@@ -97,4 +97,17 @@
 
 本报告全部读数来自**只读**采集（`daemon_revival.log` / `exitcode.log` / `daemon.log` / `daemon_status.json` / DuckDB read_only）；未做任何模式切换、未改代码/任务定义、未启停 daemon、未写库。
 
-⚠️ **如实申报**：§六 步 3 的 `committed+absent=1` 明细**未取到**（SQL 引用不存在的 `asset` 列），仅登记计数，**下轮哨兵补查**；不据此下任何结论。
+⚠️ **如实申报（2026-11-12 03:33 已闭环）**：§六 步 3 的 `committed+absent=1` 明细当时**未取到**（初查 SQL 引用了不存在的 `asset` 列）。**已于 2026-11-12 03:33 补查完成**，结论：
+- 该条为 `event_id=fd30291… created_at=2026-11-11 14:01:18 status=committed`；
+- `daily_staged_match` **全匹配**（1465/1465，missing 0，mismatch 0）；
+- `minute_front_coverage = absent`，根因为 `minute_staged_match.skipped reason="minute_table_empty"`；
+- **直接查库判定**：`stock_minutes` / `etf_minutes` 的 **11-11 当日行数均为 0**（11-10 分别为 135.5 万 / 52.7 万），`max(time)` 止于 **2026-11-10 15:30 / 15:00**；
+- ⇒ **`minute_table_empty` 判定正确，属"当日分区空"，非判据缺陷，不立案**；同时暴露**11-11（交易日）分钟数据全天缺失**的数据缺口（归数据面采集线，本方只登记不修）。
+- 详见 `docs/evidence/duckdb-firstweek-sentinel-ledger-20261109.md` §七。
+
+## 八、R4 验收沉淀（铁律 22 · 2026-11-12 补记）
+
+- **R1 开工留痕**：`知识反哺：[无命中] knowledge/** + knowleage_base（运维域 MOC），2026-11-11`
+- **R4 验收沉淀**：`本轮沉淀：N/A（理由：观察期统计报告，无新增通用知识；R3b 与守卫设计知识由 A-4 沉淀件承载）`
+
+> 补记说明：本件首次提交时**遗漏 R4 行**（违反铁律 22），于 2026-11-12 03:36 自纠补记。

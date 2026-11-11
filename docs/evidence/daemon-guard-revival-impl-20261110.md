@@ -89,3 +89,10 @@
 - 未改 daemon 本体、未改任何采集/QFQ/schema 逻辑；
 - 所有测试在 `%TEMP%\revive_test\` / `revive_probe_test\` 隔离 RepoRoot 内，**未触碰生产 data/**（生产 `daemon_revival_state.json` 与 `daemon_revival.log` 至今不存在）；
 - 未启停任何 daemon、未推送。
+
+## 九、R4 验收沉淀（铁律 22 · 2026-11-12 补记）
+
+- **R1 开工留痕**：`知识反哺：[无命中] knowledge/**（daemon/计划任务/守护链族）+ knowleage_base（运维域 MOC），2026-11-10`（见方案件首部）
+- **R4 验收沉淀**：`本轮沉淀：N/A（理由：脚本段实施轮；通用知识统一由 A-4 沉淀件承载，避免同一条经验两处重复登记）`
+
+> 补记说明：本件首次提交时**遗漏 R4 行**（违反铁律 22），于 2026-11-12 03:36 自纠补记。N/A 不免检——实质沉淀由 A-4（`knowledge/**` 经 `kb_draft.py` 按族机检门 + Obsidian 卷宗）承担。
