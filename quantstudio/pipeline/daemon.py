@@ -561,6 +561,38 @@ class ResidentCollector:
             logger.error(
                 f"[qfq] 因子刷新同因失败累计 {n} 轮（{kind}）——死信持续（阈值 N={limit}）")
 
+    # ── 案二（2026-11）：trade_calendar 前置上游化——启动即日历可用性校验 ──────
+    def _calendar_preflight(self) -> None:
+        """启动期日历可用性校验（docs/design-trade-calendar-upstream-first-20261105.md §2.1）。
+
+        可用 → 一行 INFO；不可用 → ERROR + degraded 同因计数留痕（沿用
+        _note_qfq_degraded 模式，kind=calendar_preflight）。**默认仅告警放行**
+        （不改变现行采集可用性语义，不新增启动失败面——对齐 daemon_hold_gate
+        硬不变量 1 先例）；env QS_CALENDAR_PREFLIGHT_STRICT=1（默认关）→ 启动即
+        显式失败（运维显式选择 fail-fast 拒启）；env QS_CALENDAR_PREFLIGHT=0 →
+        整体关闭本校验（回退开关之一）。
+        """
+        if str(os.environ.get("QS_CALENDAR_PREFLIGHT", "1")).strip().lower() \
+                in ("0", "false", "off"):
+            return
+        try:
+            from .qfq_calendar import calendar_preflight
+            info = calendar_preflight(self.writer.db_path)
+        except Exception as e:  # 校验自身异常不得阻断启动（默认路径）
+            logger.warning(f"[calendar] preflight 自身异常（忽略，不阻断启动）: "
+                           f"{type(e).__name__}: {e}")
+            return
+        if info.get("ok"):
+            logger.info(f"[calendar] preflight OK: {info['detail']}")
+            return
+        logger.error(f"[calendar] preflight FAIL: {info['detail']} —— 默认放行"
+                     f"（per-date 日历将回落 tushare 现拉）")
+        self._note_qfq_degraded("calendar_preflight", info["detail"])
+        if str(os.environ.get("QS_CALENDAR_PREFLIGHT_STRICT", "0")).strip().lower() \
+                in ("1", "true", "on"):
+            raise RuntimeError(
+                f"[calendar] preflight STRICT 拒启: {info['detail']}")
+
     def _qfq_refresh_factors(self, orch) -> bool:
         """任务2.2：调用 QFQFactorRefresher 主动刷股票/ETF 因子。
 
@@ -1798,15 +1830,26 @@ class ResidentCollector:
         token = adapter.token
 
         # Trade calendar also uses the task-level limiter/retry policy.
+        # pro 无条件构建：后段 adj_factor/daily/daily_basic 等仍需 pro（pro_api 仅
+        # 构造本地 client，无网络往返）；案二本地优先省的是 trade_cal 现拉本身。
         pro = ts.pro_api(token, timeout=30)
-        try:
-            cal = adapter._retry_with_backoff(
-                pro.trade_cal, exchange="SSE",
-                start_date=start.replace("-", ""), end_date=end.replace("-", ""))
-            trade_days = cal[cal["is_open"] == 1]["cal_date"].tolist()
-        except Exception as e:
-            logger.error(f"[{batch_id}] trade calendar fetch failed: {e}")
-            return False
+
+        # 案二（2026-11）：日历获取本地优先——本地 trade_calendar 覆盖完整时直接取
+        # is_open 日列表（零网络调用，消除 30s~210s 现拉等待）；未命中（None）原样
+        # 回落 tushare 现拉（下方代码逐字保留）。env QS_CALENDAR_LOCAL_FIRST=0
+        # 可整体关闭（缺省开）。
+        from .qfq_calendar import local_first_trade_days
+        trade_days = local_first_trade_days(
+            self.writer.db_path, start, end, tag=batch_id)
+        if trade_days is None:
+            try:
+                cal = adapter._retry_with_backoff(
+                    pro.trade_cal, exchange="SSE",
+                    start_date=start.replace("-", ""), end_date=end.replace("-", ""))
+                trade_days = cal[cal["is_open"] == 1]["cal_date"].tolist()
+            except Exception as e:
+                logger.error(f"[{batch_id}] trade calendar fetch failed: {e}")
+                return False
 
         # T1：断点续跑——剔除已完成日批（gate 关闭时原样返回，零回归）
         trade_days = self._bc_filter_completed(name, table, freq, trade_days)
@@ -2566,6 +2609,8 @@ class ResidentCollector:
             logger.info(format_on_open_log("once", _ok, _detail))
         except Exception as _e:  # noqa: BLE001 — 入口自检不得阻断任务
             logger.debug(f"[T2.3] 入口 CHECKPOINT 异常（忽略）: {_e}")
+        # 案二（2026-11）：启动期日历可用性校验（默认仅告警放行；strict env 可选拒启）。
+        self._calendar_preflight()
         if mode not in ("full_range", "incremental"):
             raise ValueError(f"unsupported collection mode: {mode!r}")
         if quality_audit not in ("full", "task", "none"):
@@ -2642,6 +2687,8 @@ class ResidentCollector:
 
     def _run_incremental_cycle(self):
         """执行一轮常驻增量任务；无论成功、失败或中断，结束后必跑质量审计。"""
+        # 案二（2026-11）：启动期日历可用性校验（默认仅告警放行；strict env 可选拒启）。
+        self._calendar_preflight()
         try:
             for task in self.tasks_cfg.get("tasks", []):
                 if not self._running:

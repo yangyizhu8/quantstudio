@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import os
 import sqlite3  # noqa: F401  (保留：便于未来同库风格；本模块只用 DuckDB)
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -136,6 +137,172 @@ def _norm_freq(freq: str) -> Tuple[str, int]:
     if f.endswith("m") and f[:-1].isdigit():
         return ("minute", int(f[:-1]))
     raise ValueError(f"未知 freq: {freq!r}")
+
+
+# ---------------------------------------------------------------------------
+# 案二（2026-11）：trade_calendar 前置上游化——启动期可用性校验 + per-date 本地优先
+# 方案件：docs/design-trade-calendar-upstream-first-20261105.md（②审已裁：视窗
+# [-7d,+30d] 参数化可 env 覆盖；strict 默认关；命中留痕 `calendar local-first
+# hit rows=N`）。本节为**纯新增**：不改本文件既有函数语义（新增检测型主体 +
+# 条件等价纯性能局部）。
+# ---------------------------------------------------------------------------
+
+CALENDAR_PREFLIGHT_PAST_DAYS_ENV = "QS_CALENDAR_PREFLIGHT_PAST_DAYS"
+CALENDAR_PREFLIGHT_FUTURE_DAYS_ENV = "QS_CALENDAR_PREFLIGHT_FUTURE_DAYS"
+CALENDAR_PREFLIGHT_PAST_DAYS_DEFAULT = 7     # 视窗后界：今日 − 7 自然日
+CALENDAR_PREFLIGHT_FUTURE_DAYS_DEFAULT = 30  # 视窗前界：今日 + 30 自然日
+CALENDAR_LOCAL_FIRST_ENV = "QS_CALENDAR_LOCAL_FIRST"
+
+
+def _env_switch(env: str, default_on: bool = True) -> bool:
+    """读 env 布尔开关：'0'/'false'/'off'（大小写不敏感）→ 关；缺省/其它值 → default_on。"""
+    raw = str(os.environ.get(env, "")).strip().lower()
+    if not raw:
+        return default_on
+    return raw not in ("0", "false", "off")
+
+
+def _env_natural_days(env: str, default: int, override: Optional[int] = None) -> int:
+    """视窗天数解析：显式参数 > env > 缺省；负值/解析失败回落缺省（配置错误不得阻断启动）。"""
+    if override is not None:
+        try:
+            return max(0, int(override))
+        except Exception:
+            return default
+    raw = str(os.environ.get(env, "")).strip()
+    if not raw:
+        return default
+    try:
+        return max(0, int(raw))
+    except Exception:
+        return default
+
+
+def _norm_cal_date(s: str) -> str:
+    """'YYYY-MM-DD' / 'YYYYMMDD' → 'YYYY-MM-DD'（_at 输入口径）。"""
+    d = str(s)[:10].replace("-", "").replace("/", "")
+    if len(d) != 8 or not d.isdigit():
+        raise ValueError(f"无法解析日期: {s!r}")
+    return f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+
+
+def _ms_to_date(ms: int) -> str:
+    """epoch-ms → 'YYYY-MM-DD'（Asia/Shanghai）。"""
+    return pd.Timestamp(int(ms), unit="ms", tz=TZ).strftime("%Y-%m-%d")
+
+
+def calendar_preflight(main_db, *, today: Optional[str] = None,
+                       past_days: Optional[int] = None,
+                       future_days: Optional[int] = None) -> dict:
+    """启动期日历可用性校验（案二 §2.1）——**只读探测**，不建表、不写库。
+
+    可用 = trade_calendar 非空 且 [今日−past_days, 今日+future_days] 视窗内每个
+    自然日都已缓存（覆盖判据直接复用 ``_range_fully_covered``，不建第二套口径）。
+
+    Args:
+        main_db: DuckDB 主库路径。
+        today: 'YYYY-MM-DD'（缺省本机当前日期，与 daemon ``datetime.now()`` 习惯一致）。
+        past_days / future_days: 显式覆盖；缺省读 env QS_CALENDAR_PREFLIGHT_PAST_DAYS /
+            _FUTURE_DAYS（再缺省 7 / 30）——视窗参数化（②审要点 1）。
+
+    Returns:
+        dict：{ok, rows, cal_min, cal_max, window_lo, window_hi, window_covered,
+        today, past_days, future_days, detail}。探测异常（含表不存在）也返回
+        ok=False + detail 说明，**不抛出**（校验自身不得新增启动失败面）。
+    """
+    if today is None:
+        today = datetime.datetime.now().strftime("%Y-%m-%d")
+    today = _norm_cal_date(today)
+    past = _env_natural_days(CALENDAR_PREFLIGHT_PAST_DAYS_ENV,
+                             CALENDAR_PREFLIGHT_PAST_DAYS_DEFAULT, past_days)
+    future = _env_natural_days(CALENDAR_PREFLIGHT_FUTURE_DAYS_ENV,
+                               CALENDAR_PREFLIGHT_FUTURE_DAYS_DEFAULT, future_days)
+    base = _at(today, 0, 0, 0)
+    window_lo = base - past * DAY_MS
+    window_hi = base + future * DAY_MS
+    result = {
+        "ok": False, "rows": 0, "cal_min": None, "cal_max": None,
+        "window_lo": window_lo, "window_hi": window_hi,
+        "window_covered": False, "today": today,
+        "past_days": past, "future_days": future, "detail": "",
+    }
+    try:
+        import duckdb
+        conn = duckdb.connect(str(main_db))
+        try:
+            r = conn.execute(
+                "SELECT COUNT(*), min(cal_date), max(cal_date) FROM trade_calendar"
+            ).fetchone()
+            rows = int(r[0])
+            result["rows"] = rows
+            if r[1] is not None:
+                result["cal_min"] = int(r[1])
+            if r[2] is not None:
+                result["cal_max"] = int(r[2])
+            if rows == 0:
+                result["detail"] = "trade_calendar 空表（0 行）"
+                return result
+            result["window_covered"] = bool(
+                _range_fully_covered(conn, window_lo, window_hi))
+        finally:
+            conn.close()
+    except Exception as exc:  # 表不存在/库不可读等 → 统一 ok=False（不抛出）
+        result["detail"] = f"trade_calendar 不可读（{type(exc).__name__}）"
+        return result
+    if result["window_covered"]:
+        result["ok"] = True
+        result["detail"] = (
+            f"rows={rows}, cal=[{_ms_to_date(result['cal_min'])}"
+            f"~{_ms_to_date(result['cal_max'])}], "
+            f"视窗[{_ms_to_date(window_lo)}~{_ms_to_date(window_hi)}]自然日完整覆盖")
+    else:
+        result["detail"] = (
+            f"rows={rows}, cal=[{_ms_to_date(result['cal_min'])}"
+            f"~{_ms_to_date(result['cal_max'])}], "
+            f"视窗[{_ms_to_date(window_lo)}~{_ms_to_date(window_hi)}]存在未缓存自然日")
+    return result
+
+
+def local_first_trade_days(main_db, start_date: str, end_date: str,
+                           *, tag: str = "") -> Optional[List[str]]:
+    """per-date 日历获取**本地优先**（案二 §2.2，条件等价纯性能局部）。
+
+    本地 trade_calendar 对 [start_date, end_date] 覆盖完整（``_range_fully_covered``
+    同一判据：区间内已缓存行数 == 自然日个数，**不含 is_open 过滤**——完整性按自然日）
+    ⇒ 直接返回**开市日**列表（'YYYYMMDD' 升序；SQL 带 ``AND is_open``，与 tushare
+    ``trade_cal`` 过滤 ``cal[cal["is_open"] == 1]["cal_date"].tolist()`` 逐位同构），
+    **零网络调用**；未建表 / 覆盖不完整 / 任何异常 ⇒ 返回 None（调用方**原样回落
+    tushare 现拉**，现行为逐字保留）。env ``QS_CALENDAR_LOCAL_FIRST=0`` 整体关闭
+    （缺省开）。命中路径留痕一行：``calendar local-first hit rows=N``（②审要点 4）。
+    """
+    if not _env_switch(CALENDAR_LOCAL_FIRST_ENV, True):
+        return None
+    try:
+        s = _norm_cal_date(start_date)
+        e = _norm_cal_date(end_date)
+        lo = _at(s, 0, 0, 0)
+        hi = _at(e, 0, 0, 0)
+        import duckdb
+        conn = duckdb.connect(str(main_db))
+        try:
+            if not _range_fully_covered(conn, lo, hi):
+                logger.debug(f"calendar local-first miss: [{s}~{e}] 覆盖不完整 → 回落现拉")
+                return None
+            rows = conn.execute(
+                "SELECT cal_date FROM trade_calendar "
+                "WHERE cal_date BETWEEN ? AND ? AND is_open ORDER BY cal_date",
+                [lo, hi]).fetchall()
+        finally:
+            conn.close()
+        days = [pd.Timestamp(int(r[0]), unit="ms", tz=TZ).strftime("%Y%m%d")
+                for r in rows]
+        prefix = f"[{tag}] " if tag else ""
+        logger.info(f"{prefix}calendar local-first hit rows={len(days)} "
+                    f"[{s}~{e}]（零网络调用）")
+        return days
+    except Exception as exc:  # 任何异常（含表不存在）→ 回落现拉，绝不阻断调用方
+        logger.debug(f"calendar local-first miss: {type(exc).__name__}: {exc} → 回落现拉")
+        return None
 
 
 # ---------------------------------------------------------------------------
