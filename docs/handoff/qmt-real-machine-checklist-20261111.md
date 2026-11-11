@@ -24,12 +24,12 @@
 
 | # | 产物 | 体积（B） | sha256 前 16 位 | EPS 标记残留 | QFQ 标记残留 |
 |---|---|---|---|---|---|
-| 1 | `CANSLIM突破成长选股策略.py` | 960,210 | `805219029f30398c` | 0 | 0 |
-| 2 | `fall_reversal.py` | 946,720 | `4d29170ff6038d3d` | 0 | 0 |
-| 3 | `tech_etf_mvo.py` | 954,521 | `eff68d2b4b0b3cd6` | 0 | 0 |
-| 4 | `vol_regime_mom_rev.py` | 962,300 | `53455c7051cf9c0c` | 0 | 0 |
-| 5 | `weekly_smallcap.py` | 956,426 | `195fe22db6dd9132` | 0 | 0 |
-| 6 | `周频三层.py` | 960,808 | `ee113aa1c5625956` | 0 | 0 |
+| 1 | `CANSLIM突破成长选股策略.py` | 961,433 | `bcc1b90df7675f24` | 0 | 0 |
+| 2 | `fall_reversal.py` | 947,943 | `495e9ca3fb325519` | 0 | 0 |
+| 3 | `tech_etf_mvo.py` | 955,744 | `2e43b5445c3261f2` | 0 | 0 |
+| 4 | `vol_regime_mom_rev.py` | 963,523 | `182f1005da485530` | 0 | 0 |
+| 5 | `weekly_smallcap.py` | 957,649 | `8ac5cbffbdc35b2b` | 0 | 0 |
+| 6 | `周频三层.py` | 962,031 | `67a87cb761e594af` | 0 | 0 |
 
 **交付前自检**（在 QuantStudio 侧执行，一行即可）：
 
@@ -173,6 +173,49 @@ QS_QMT_PROGRESS func=filter_stock_by_status done=5225/5225 pct=100.0 elapsed=0.2
 - L671 字符偏移 26,809，**不落在** 32K/64K/96K/128K 任何截断边界。
 - **同一份字节内容（T3）改以文件方式载入后完整跑通** ⇒ 结论：`<string>` 报错发生在**载入/粘贴环节的内容损坏**，非产物问题。
 - **操作纪律**：960 KB / 9,734 行的产物**禁止粘贴进编辑器**，必须用「打开文件/导入」方式载入。
+
+
+## 四点六、EPS 代码归一化修复批（2026-11-11 第二轮）
+
+> 本文档 §一 的六产物 sha16 已更新为**本批**（含 EPS code 归一化修复 `2da8b40`）。
+> §四点五 记录的是**上一批**（`805219029f30398c`）的真实实测读数，保留作为历史证据，不篡改。
+
+### 本批交付基线（`output/qmt_import/`，0.917–0.919 MB）
+
+| # | 产物 | 体积（B） | sha256 前 16 位 |
+|---|---|---|---|
+| 1 | `CANSLIM突破成长选股策略.py` | 961,433 | `bcc1b90df7675f24` |
+| 2 | `fall_reversal.py` | 947,943 | `495e9ca3fb325519` |
+| 3 | `tech_etf_mvo.py` | 955,744 | `2e43b5445c3261f2` |
+| 4 | `vol_regime_mom_rev.py` | 963,523 | `182f1005da485530` |
+| 5 | `weekly_smallcap.py` | 957,649 | `8ac5cbffbdc35b2b` |
+| 6 | `周频三层.py` | 962,031 | `67a87cb761e594af` |
+
+### 本批新增必验项（G-6 / G-7，缺一即判未通过）
+
+| 门 | 判据 | 通过条件 |
+|---|---|---|
+| **G-6** | EPS 对齐**真的生效** | 日志出现 `QS_QMT_EPS_ALIGN overridden=<正整数>`（修复前恒 0）；且 `span_short` / `code_miss` 数值合理（非全量落进其一） |
+| **G-7** | 五计数审计行格式 | 必须为 `QS_QMT_EPS_ALIGN overridden=.. mismatch=.. span_short=.. code_miss=.. unmatched=..`（含 `code_miss` 字段）|
+
+### A-5b 真机数值对拍（审核补强项·必做）
+
+从日志中取 **≥1 个** `QS_QMT_EPS_MISMATCH` 样例（格式 `code@end_d8:panel=X,local=Y`），回报该样例原文；
+本线将用同一份快照独立核实：该 `(code归一化后, end_d8)` 在 `_QS_QMT_EPS_SNAP_ZB64` 解压结果中的 eps 值，必须与日志中的 `local=Y` **逐位一致**（堵住「归一化修了但取错期次」的残余风险）。
+
+> 本地段已用真实快照做等价对拍通过（`002568`：`20251231→0.62`、`20260331→0.21`，repr 逐位一致）；真机段待本批回填。
+
+### 判据汇总（本批）
+
+| 门 | 状态 |
+|---|---|
+| G-1 交付基线 | 待客户按上表核六 sha16 |
+| G-2 EPS 层 embedded | 待核 `QS_QMT_EPS_SNAP embedded n=5206 base=20260801 mode=zlib` |
+| G-3 QFQ 层 embedded | 待核 `QS_QMT_QFQ_SNAP embedded n=5385 base=20261030` |
+| G-4 环境 | 已确认 Python **3.6.8**（`python36.dll`），pandas/numpy 可用，zoneinfo 已 try 保护 |
+| G-5 无异常 | 待核无 Traceback |
+| **G-6 overridden>0** | 待核（本批修复目标） |
+| **G-7 五计数审计行** | 待核 |
 
 ## 五、判据汇总（过/不过）
 
