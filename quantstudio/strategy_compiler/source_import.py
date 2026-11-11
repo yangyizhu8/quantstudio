@@ -1017,6 +1017,15 @@ def _qs_idempotent_admit(security, side):
 # cash_avail 一次性告警状态（D4-S7 M2 fail-open：取数不可得只告警一次，钳制不生效）
 # 注：本模板字符串经 .format 渲染，字面量花括号须双写转义。
 _QS_CASH_WARNED_STATE = {{'v': False}}
+# PD-2026-0020 §12 期1 a-2（②审）：零/不可得预算显式拒单计数（买入路径；列表
+# 承载以便产物内就地累加，供 RECONCILE 汇总读取）。
+_QS_CASH_REJECT_COUNT = [0]
+# PD-2026-0020 §12 期1 b-2/B4（②审）：账本非负不变量——负值事件计数（供
+# RECONCILE 汇总）+ QS_LEDGER_NEGATIVE 日志按 (field, code) 去重状态表；
+# 卖出释放无价告警（QS_LEDGER_RELEASE_NO_PX）按代码去重表。
+_QS_LEDGER_NEG_COUNT = [0]
+_QS_LEDGER_NEG_WARNED = {{}}
+_QS_LEDGER_NO_PX_WARNED = {{}}
 # D4-S7 #5 接线（ZCode 方案 A，2026-08-27）：handle_data 入口经 _qs_capture_ctx 捕获 context，
 # 平台探针实证 context.portfolio.cash=100000 可用（与本地 engine.account.cash 同源）。None=未捕获
 # （不注入/注入失败）→ fail-open 兜底路径，行为与 B 方案等同。
@@ -1267,10 +1276,111 @@ def _qs_reserve_cash(security, shares, px):
             return
         _st = getattr(g, 'state', None)
         if isinstance(_st, dict):
-            _st['qs_cash_reserved'] = float(_st.get('qs_cash_reserved', 0.0) or 0.0) + _amt
+            # PD-2026-0020 §12 期1 b-2/B4（②审）：账本更新走非负不变量守卫——
+            # 正常累加（既有值≥0 且 _amt>0）返回值逐位不变；仅当台账已被负值
+            # 污染时钳 0 + QS_LEDGER_NEGATIVE 可见（不静默）。
+            _st['qs_cash_reserved'] = _qs_ledger_nn(
+                'qs_cash_reserved',
+                float(_st.get('qs_cash_reserved', 0.0) or 0.0) + _amt, security)
     except Exception as _e:
         try:
             log.warning('QS_CASH_RESERVE_ERROR code=%s err=%s' % (security, _e))
+        except Exception:
+            pass
+
+
+def _qs_ledger_nn(field, value, security):
+    """PD-2026-0020 §12 期1 b-2/B4（②审）：账本字段非负不变量守卫。
+
+    账本字段（reserved / cash_base / pos 三类）任何更新算出 < 0 时不静默钳零：
+    ①保留 0 作为计算值（防负值进一步传染预算/隔夜市值等下游计算）；
+    ②QS_LEDGER_NEGATIVE log.error 按 (field, code) 一次（防刷屏；计数仍逐次累加）；
+    ③计入 _QS_LEDGER_NEG_COUNT 供 RECONCILE 汇总。
+    本文件账本字段 = g.state['qs_cash_reserved']；cash_base/pos 属隔离台账
+    （isolation_template，本批不改），由隔离批按同名守卫同类接入。
+    返回守卫后的值；value 非数值时原样返回（不放大异常面）。"""
+    try:
+        _v = float(value)
+    except (TypeError, ValueError):
+        return value
+    if _v >= 0:
+        return _v
+    _QS_LEDGER_NEG_COUNT[0] += 1
+    try:
+        _key = (str(field), str(security))
+        if not _QS_LEDGER_NEG_WARNED.get(_key):
+            _QS_LEDGER_NEG_WARNED[_key] = True
+            log.error('QS_LEDGER_NEGATIVE field=%s value=%s code=%s'
+                      % (field, _v, security))
+    except Exception:
+        pass
+    return 0.0
+
+
+def _qs_ledger_release(security, amount, px=None, record_iso=True):
+    """PD-2026-0020 §12 期1 b-1/B3（②审·P1 关键缺口）：卖出成交后账本回写钩子。
+
+    缺口：qs_cash_reserved 只在买入受理时累加（_qs_reserve_cash），卖出从不
+    回补 ⇒ 调仓「卖旧买新」日 reserved 只增不减，预算被永久性挤占。
+    语义：卖出（amount < 0）⇒ reserved = max(0, reserved − |amount| × px)
+    （经 _qs_ledger_nn 守卫：算出 <0 不静默钳零，QS_LEDGER_NEGATIVE 可见），
+    使后续 _qs_cash_budget()（= 现金 − qs_cash_reserved）与隔离版
+    _qs_iso_cash_avail()（= cash_base − reserved）均能反映额度回升。
+    px 取不到（≤0，含 _qs_px_exec 昨收链兜底后仍 ≤0）⇒ 不改 reserved
+    （保守 fail-closed：不虚增额度）+ QS_LEDGER_RELEASE_NO_PX 告警一次/代码。
+
+    双层结构：
+    ① record_iso=True 时 try 调 _qs_iso_record_fill（仅隔离产物在位；globals()
+       探测——非隔离产物无此名自然跳过，不触发 NameError/白名单拦截）：
+       隔离台账 pos/reserved 由它记账。order() 包装路径必须传 record_iso=False
+       ——隔离 TAIL 正式批已把 order_orig 包成 _qs_iso_order_orig（受理即记账），
+       再记即双重。order_value 卖出路径（value_orig 未被隔离包装）保留 True。
+    ② 通用账本 g.state['qs_cash_reserved'] 按公式释放——隔离模式下预算已被
+       _qs_cash_budget 接管（不读此字段），此处为影子记账，与 _qs_reserve_cash
+       在隔离模式仍写此字段同口径。
+    隔离版覆盖生效方式：若后续隔离 TAIL 定义同名 _qs_ledger_release（模块尾
+    后注入者胜，Python 模块级名字后者定义覆盖），本通用版整体被覆盖，各调用
+    点在调用期解析全局名 ⇒ 自动走隔离版。绝不抛异常影响下单主流程。"""
+    # ① 隔离台账记账（在位才调）
+    if record_iso:
+        try:
+            _iso_fill = globals().get('_qs_iso_record_fill')
+            if _iso_fill is not None:
+                _iso_fill(security, amount, px)
+        except Exception:
+            pass
+    # ② 通用账本释放——仅卖出（amount < 0）
+    try:
+        if amount is None or float(amount) >= 0:
+            return
+    except (TypeError, ValueError):
+        return
+    _px = None
+    try:
+        _px = None if px is None else float(px)
+    except (TypeError, ValueError):
+        _px = None
+    if _px is None or _px <= 0:
+        _px = _qs_px_exec(security)     # 当日撮合价优先，内含 ① 层昨收链回退
+    if _px is None or _px <= 0:
+        try:
+            _ck = str(security)
+            if not _QS_LEDGER_NO_PX_WARNED.get(_ck):
+                _QS_LEDGER_NO_PX_WARNED[_ck] = True
+                log.warning('QS_LEDGER_RELEASE_NO_PX code=%s'
+                            '（取不到估值价 ⇒ 保守不释放额度）' % security)
+        except Exception:
+            pass
+        return
+    try:
+        _st = getattr(g, 'state', None)
+        if isinstance(_st, dict):
+            _res = float(_st.get('qs_cash_reserved', 0.0) or 0.0)
+            _st['qs_cash_reserved'] = _qs_ledger_nn(
+                'qs_cash_reserved', _res - abs(float(amount)) * _px, security)
+    except Exception as _e:
+        try:
+            log.warning('QS_LEDGER_RELEASE_ERROR code=%s err=%s' % (security, _e))
         except Exception:
             pass
 
@@ -1354,7 +1464,13 @@ def order_target_value(security, value, *args, **kwargs):
         return _qs_noop_target(security, _delta, 'below_rebalance_threshold')
     if _delta <= 0:
         if _current > 0:
-            return _QSOrderRefState.target_orig(security, value, *args, **kwargs)
+            # PD-2026-0020 §12 期1 b-1/B3（②审）：卖出受理 ⇒ 账本回写释放额度。
+            # 值口径换算：amount = _delta/_px_exec（负股数）⇒ |amount|×px = |Δ|；
+            # 平台拒单/返回 None 不释放（与「受理成功才记账」的乐观记账口径一致）。
+            _tid = _QSOrderRefState.target_orig(security, value, *args, **kwargs)
+            if _tid is not None:
+                _qs_ledger_release(security, _delta / _px_exec, _px_exec)
+            return _tid
         return _qs_noop_target(security, 0.0, 'already_flat')
     # D4-S7 #5（2026-08-27 ZCode 定谳）：平台可透支 vs 本地现金硬约束 → 模板侧可负担钳制。
     # 系数 1.0（M1：与本地 D4-S6 buffer=1.0 同构，budget=min(cash_avail, value) 无折扣）；
@@ -1364,6 +1480,18 @@ def order_target_value(security, value, *args, **kwargs):
     if not _qs_idempotent_admit(security, 'auto'):
         return _qs_noop_target(security, _delta, 'duplicate_idempotent')
     _cash = _qs_cash_budget(security)
+    # PD-2026-0020 §12 期1 a-2（②审·P0）：零/不可得预算 ⇒ 显式拒单，不回落
+    # 原生命令（原 fail-open 按目标全额放行 = 超买根因）。仅买入路径生效：上方
+    # `_delta <= 0` 分支已 return，此处天然为加仓买入；卖出不受本判影响。
+    if _cash is None or _cash <= 0:
+        try:
+            log.error('QS_CASH_BUDGET_ZERO api=%s code=%s budget=%s reason=%s'
+                      % ('order_target_value', security, _cash,
+                         'unavailable' if _cash is None else 'zero_budget'))
+        except Exception:
+            pass
+        _QS_CASH_REJECT_COUNT[0] += 1
+        return None    # 显式拒单，绝不 return *_orig(...)
     orders, _tot = _qs_split_order(security, _delta, _px_exec, cash_avail=_cash)
     if not orders:
         try:
@@ -1422,6 +1550,13 @@ def order(security, amount, *args, **kwargs):
             _ost0, _opx0 = _qs_check_order_state(_id0)
             _qs_reserve_cash(security, amount,
                              _opx0 if _opx0 is not None else _qs_px_exec(security))
+            # PD-2026-0020 §12 期1 b-1/B3（②审）：卖出（amount<0）受理 ⇒ 释放额度；
+            # record_iso=False——隔离版在位时 order_orig 已被 _qs_iso_order_orig
+            # 包装记账（TAIL 正式批），此处只补通用账本 g.state 侧释放，防双重记账。
+            if amount is not None and amount < 0:
+                _qs_ledger_release(security, amount,
+                                   _opx0 if _opx0 is not None else _qs_px_exec(security),
+                                   record_iso=False)
         if _QS_SPLIT_DEPTH <= 0:
             _qs_report_acceptance('order', security, _ids_o)
         return _id0
@@ -1483,8 +1618,32 @@ def order_value(security, value, *args, **kwargs):
         return _QSOrderRefState.value_orig(security, value, *args, **kwargs)
     # D4-S7 #5：现金钳制（与 order_target_value 同链，M1 系数 1.0 / M2 fail-open）
     _cash = _qs_cash_budget(security)
+    # PD-2026-0020 §12 期1 a-2（②审·P0）：零/不可得预算 ⇒ 显式拒单——仅买入路径
+    # （value > 0）生效；value <= 0（卖出）必须原样走既有逻辑（_qs_split_order 对
+    # value<=0 返回 []，随后 return value_orig），绝不因预算为零阻断卖出。
+    try:
+        _qs_ov_buy = (value is not None and float(value) > 0)
+    except (TypeError, ValueError):
+        _qs_ov_buy = False
+    if _qs_ov_buy and (_cash is None or _cash <= 0):
+        try:
+            log.error('QS_CASH_BUDGET_ZERO api=%s code=%s budget=%s reason=%s'
+                      % ('order_value', security, _cash,
+                         'unavailable' if _cash is None else 'zero_budget'))
+        except Exception:
+            pass
+        _QS_CASH_REJECT_COUNT[0] += 1
+        return None    # 显式拒单，绝不 return *_orig(...)
     orders, _tot = _qs_split_order(security, value, _px_exec, cash_avail=_cash)
     if not orders:
+        # PD-2026-0020 §12 期1 b-1/B3（②审）：卖出（value<0）受理 ⇒ 释放额度；
+        # 值口径换算：amount = value/_px_exec（负股数）⇒ |amount|×px = |value|；
+        # 平台拒单/返回 None 不释放。买入侧拆不出（不足一手）仍原样回退原生。
+        if value is not None and value < 0:
+            _vid = _QSOrderRefState.value_orig(security, value, *args, **kwargs)
+            if _vid is not None:
+                _qs_ledger_release(security, value / _px_exec, _px_exec)
+            return _vid
         return _QSOrderRefState.value_orig(security, value, *args, **kwargs)
     # PD-0018 F1/F2/F3：判空收集 + order_wrapped（不过护栏不自撞）+ 深度计数 +
     # 现金累计（与 order_target_value 拆单循环同构）。
@@ -5163,7 +5322,9 @@ class SourceConverter:
             blocks.append(_QS_ORDER_SPLIT_EXT.format(marker=INJECTED_MARKER))
             _order_ext_injected = True
             self.coverage["injected_helpers"].extend(
-                ["order_split", "_qs_split_order", "order_target_value_wrapper"])
+                ["order_split", "_qs_split_order", "order_target_value_wrapper",
+                 # PD-2026-0020 §12 期1：零预算拒单（a-2）+ 账本回写/非负守卫（b/B3/B4）
+                 "cash_reject", "_qs_ledger_release", "_qs_ledger_nn"])
         # 日期归一化门控扩展（A3）：仅当源策略调用 get_trade_days/get_stock_info 时注入
         if _source_uses_date_api(code):
             blocks.append(_QS_DATE_NORM_EXT.format(marker=INJECTED_MARKER))
