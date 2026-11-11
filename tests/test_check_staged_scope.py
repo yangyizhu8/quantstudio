@@ -14,10 +14,11 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "check-staged-scope.py"
 
 
-def run(tmp_path, index_lines, allow=(), expect=0):
+def run(tmp_path, index_lines, allow=(), expect=0, repo=None):
     idx = tmp_path / "index.txt"
     io.open(idx, "w", encoding="utf-8", newline="\n").write("\n".join(index_lines) + "\n")
-    cmd = [sys.executable, str(SCRIPT), "--index-file", str(idx), "--repo", str(REPO)]
+    cmd = [sys.executable, str(SCRIPT), "--index-file", str(idx),
+           "--repo", str(repo or REPO)]
     for a in allow:
         cmd += ["--allow", a]
     r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
@@ -55,6 +56,22 @@ def test_t5_glob_and_dir_prefix(tmp_path):
     r, _ = run(tmp_path, ["docs/handoff/x.md", "knowledge/db/DB-2026-0001.md"],
                allow=["docs/handoff/*.md", "knowledge/db/"])
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_t7_chinese_path_in_scope_passes(tmp_path):
+    """T1 回归（2026-11-11 裁甲）：中文路径在白名单内必须放行（不得因转义假警报误拒）。"""
+    rel = "docs/evidence/中文证据-20261111.json"
+    r, _ = run(tmp_path, [rel], allow=[rel])
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_t8_legacy_session_scope_file_rejected(tmp_path):
+    """T2 回归（2026-11-11 裁甲）：仓库根存在 .session-scope.txt ⇒ 必须拒（禁用文件的误放通道）。"""
+    (tmp_path / ".session-scope.txt").write_text("scripts/\n", encoding="utf-8")
+    r, _ = run(tmp_path, ["scripts/kb_hook.py"], allow=["scripts/kb_hook.py"], repo=tmp_path)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert ".session-scope.txt" in r.stderr, r.stderr
+    assert "禁用" in r.stderr, r.stderr
 
 
 def test_t6_self_test_builtin():

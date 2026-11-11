@@ -42,12 +42,33 @@ def read_index(repo, index_file=None):
             return [ln.strip().replace("\\", "/") for ln in fh if ln.strip()]
     try:
         out = subprocess.check_output(
-            ["git", "-C", repo, "diff", "--cached", "--name-only",
-             "--diff-filter=ACMRTUXB"], stderr=subprocess.PIPE)
+            # -c core.quotepath=false：非 ASCII 路径原样输出；否则被 C-style 八进制转义
+            # （docs/evidence/\344\270\255\346\226\207.md），与白名单字面比对必然假警报
+            # ⇒ 会误拒他线含中文路径的提交。机器闸判据自身必须处理中文路径，
+            # 不得依赖提交者手工加该参数（2026-11-11 裁定甲）。
+            ["git", "-C", repo, "-c", "core.quotepath=false",
+             "diff", "--cached", "--name-only", "--diff-filter=ACMRTUXB"],
+            stderr=subprocess.PIPE)
     except (subprocess.CalledProcessError, OSError) as e:
         raise RuntimeError("读取 git index 失败：%s" % e)
     text = out.decode("utf-8", errors="replace")
-    return [ln.strip().replace("\\", "/") for ln in text.splitlines() if ln.strip()]
+    paths = []
+    for ln in text.splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        # 防御：外部配置仍强制 quotepath=true 时输出带双引号且含八进制转义 ⇒ 还原
+        if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
+            inner = s[1:-1]
+            if re.search(r"\\[0-7]{3}", inner):
+                try:
+                    import codecs
+                    inner = codecs.escape_decode(inner.encode("latin-1"))[0].decode("utf-8")
+                except Exception:  # noqa: BLE001 —— 还原失败保留原样交人工判
+                    pass
+            s = inner
+        paths.append(s.replace("\\", "/"))
+    return paths
 
 
 def parse_allowlist(args_allow, allow_file, env_value):
@@ -186,11 +207,16 @@ def main(argv=None):
         return self_test()
 
     allow = parse_allowlist(a.allow, a.allow_file, os.environ.get("STAGED_SCOPE_ALLOW"))
-    # 兜底：仓库根的 .session-scope.txt（多会话各自写自己的一份，但同名文件需协同）
-    if not allow:
-        local = os.path.join(a.repo, ".session-scope.txt")
-        if os.path.isfile(local):
-            allow = parse_allowlist([], local, None)
+    # 2026-11-11 纪律：`.session-scope.txt` 已禁用（多会话共享单文件会互相覆盖，实测已发生）。
+    # 继续读取它等于留一条「读到他线白名单」的**静默放宽**通道——误放 > 误拒，故改为「存在即拒」。
+    legacy_scope = os.path.join(a.repo, ".session-scope.txt")
+    if os.path.isfile(legacy_scope):
+        print("[staged-scope] 检测到 .session-scope.txt —— 该文件已按 2026-11-11 纪律禁用：\n"
+              "  原因：多会话共享同一文件会互相覆盖白名单（实测已发生），继续读取会造成"
+              "「读到他线白名单」的静默放宽。\n"
+              "  处理：删除该文件（git rm --cached 或直接删除），改用环境变量 "
+              "STAGED_SCOPE_ALLOW=<路径1>;<路径2>。", file=sys.stderr)
+        return 1
 
     try:
         index = read_index(a.repo, a.index_file)
