@@ -297,6 +297,74 @@ QS_QMT_EPS_ALIGN overridden=11 mismatch=0 span_short=22  code_miss=0 unmatched=1
 ⇒ 本地库快照相对 QMT 面板**滞后约一个季度**。这是**数据新鲜度**问题（快照 `base=20260801` 导出时的库内状态），
 不是归一化缺陷；修复后 `span_short` 已能精准指向「快照缺该期」，正是 G-7 五计数分列的价值体现。
 
+
+## 四点八、重启后复跑（2026-11-12 02:19–02:26）：两条关键读数补齐 + 可复现性成立
+
+### ① `QS_QMT_TZ_PROBE` 首获（此前一直缺的时区探测行）
+
+```text
+QS_QMT_TZ_PROBE pytz=Y zoneinfo=N resolve=P1-Y tzcache=5 level=P1
+```
+
+| 字段 | 读数 | 判定 |
+|---|---|---|
+| `pytz=Y` | pytz 可用 | ✅ 3.6 环境必须依赖（zoneinfo 是 3.9+） |
+| `zoneinfo=N` | 不存在 | ✅ **预期内**，产物已 try 保护，非缺陷 |
+| `resolve=P1-Y` | 解析成功，落到 P1 级 | ✅ 分级垫片按设计回落 |
+| `tzcache=5` | 缓存 5 条 | ✅ 命中正常 |
+| `level=P1` | 最终生效级别 = P1 | ✅ **`Asia/Shanghai` 可解析**，EPS 因子不会因时区抛错 |
+
+> 这条补齐了此前「待核 QS_QMT_TZ_PROBE」的缺口（首轮与第二批日志均未出现该行）。
+
+### ② 双三态再次达成
+
+```text
+QS_QMT_QFQ_SNAP embedded n=5385 base=20261030
+QS_QMT_EPS_SNAP embedded n=5206 base=20260801 mode=zlib
+```
+
+### ③ G-6 / G-7 读数与 17:21 那次**逐位一致**（可复现性成立）
+
+| # | overridden | span_short | code_miss | unmatched |
+|---|---|---|---|---|
+| 1 | 57 | 139 | 0 | 6 |
+| 2 | 43 | 183 | 0 | 3 |
+| 3 | 22 | 41 | 0 | 2 |
+| 4 | 15 | 23 | 0 | 1 |
+| 5 | 13 | 53 | 0 | 1 |
+| 6 | 40 | 89 | 0 | 5 |
+| 7 | 15 | 4 | 0 | 1 |
+| 8 | 10 | 1 | 0 | 1 |
+| 9 | 11 | 22 | 0 | 1 |
+
+**两次独立运行（17:21 与 02:19）九处读数完全相同**，86 个调仓周期结果一致
+（`cash_ratio` / `positions` / `STOPDBG` 全序列一致）⇒ 产物**结果确定性成立**，非偶然通过。
+
+### ④ 本轮暴露的环境事故与处置（非代码缺陷）
+
+**现象**：01:48 与 01:59 两次运行均崩于 `<string>:4` / `<string>:1` 的 `import pandas as pd`，
+报 `AttributeError: module 'pandas' has no attribute 'core'`。
+
+**定性**：QMT 进程内 pandas 半初始化残留。**铁证**：新建空策略只写 `import pandas as pd`
+（`<string>:1`）**同样崩** ⇒ 与我们的产物零关系。
+
+**已排除**：pytz 实体为 2018.3 原装（34,206 B / 2023-02-08）、`pandas\core\` 七文件齐全、
+无影子模块、`.pth` 仅 matplotlib/protobuf 两条无关项。
+
+**处置**：**重启 QMT 即恢复**（02:19 起完全正常）⇒ 无需清缓存、无需动 `site-packages`。
+
+**★新增前置纪律（G-0，每次跑 QMT 策略前做，1 分钟）**：
+```python
+import pandas as pd
+print('pandas', pd.__version__, 'has core', hasattr(pd, 'core'))
+```
+冒烟通过再跑正式策略；若报 `no attribute 'core'` ⇒ **重启 QMT**，不要去改产物。
+
+**环境隐患（在册，未处置）**：`site-packages` 存在 `numpy-2.4.4.dist-info` 与
+`pytz-2026.1.post1.dist-info`（2026-04-15 21:57 装入，两版本要求 Python ≥3.11/≥3.9，
+与 QMT 的 3.6.8 不兼容）。当前 numpy/pytz **实体**仍是 1.19.1/2018.3（03-13 原装），
+故未影响运行；属**潜在隐患**，见 `ISS-20261112-01`。
+
 ## 五、判据汇总（过/不过）
 
 | 门 | 通过条件 |

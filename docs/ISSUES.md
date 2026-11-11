@@ -667,3 +667,33 @@
 | 修复方案 | 候选：①按需重导 EPS 快照（刷新库内最新期后重跑 `export_eps_snapshot.py --compress`）；②维持现状并接受「最新一期用面板值」——因 `mismatch=0` 表明面板值与库值同源同值，风险低。**倾向 ②**（成本权衡，非禁令：库刷新后重导仍应执行）。 |
 | 验证证据 | 待实施后补 |
 | 关闭时间 | — |
+
+---
+
+## ISS-20261112-01 · QMT site-packages 存在两处与 Python 3.6.8 不兼容的 dist-info 残留
+
+| 字段 | 内容 |
+|---|---|
+| 问题描述 | `D:\QMT\国金QMT交易端模拟\bin.x64\Lib\site-packages` 下同时存在 `numpy-2.4.4.dist-info`（2026-04-15 21:57:53）与 `pytz-2026.1.post1.dist-info`（同日 21:57:49），而该环境 Python 为 **3.6.8**，这两个版本分别要求 ≥3.11 / ≥3.9。 |
+| 复现步骤/定位证据 | 目录列举：`numpy-1.19.1.dist-info`(03-13 22:52:15) 与 `numpy-2.4.4.dist-info`(04-15 21:57:53) 并存；`pytz-2018.3.dist-info`(03-13) 与 `pytz-2026.1.post1.dist-info`(04-15) 并存。实体版本经 `numpy\version.py` 读为 1.19.1、`pytz\__init__.py` 为 34,206 B/2023-02-08（2018.3 原装），故当前**未**触发故障。 |
+| 严重等级 | P2（潜在隐患：一旦实体被替换为 2.x/2026.1 版本，pandas 0.22 栈将整体不可用） |
+| 当前状态 | OPEN（环境层，非本仓代码；需授权后处置） |
+| 归属迭代 | 待用户裁定 |
+| 修复方案 | 候选：①删除两个不兼容 dist-info（仅元数据，零影响）；②核查实体是否曾被部分覆盖；③长期建议：QMT 安装目录禁止执行 `pip install`，需要第三方包时用独立 venv。 |
+| 验证证据 | 待处置后补（处置后须重跑 G-0 冒烟 + 一次完整回测） |
+| 关闭时间 | — |
+
+---
+
+## ISS-20261112-02 · QMT 进程内 pandas 半初始化残留导致 `module 'pandas' has no attribute 'core'`
+
+| 字段 | 内容 |
+|---|---|
+| 问题描述 | 2026-11-12 01:48 与 01:59 两次运行，均在 `import pandas as pd` 处抛 `AttributeError: module 'pandas' has no attribute 'core'`（堆栈全在 pandas 内部 `__init__.py:42 → core/api.py:10 → groupby.py:50 → frame.py:69 → generic.py:39`）。**新建空策略只写 `import pandas as pd` 同样复现** ⇒ 与本仓产物无关。 |
+| 复现步骤/定位证据 | 空策略日志 `<string>:1` + 正式产物日志 `<string>:4`（产物 L4 = `import pandas as pd`）均崩；重启 QMT 后 02:19 起同一产物完整跑通（见 `docs/handoff/qmt-real-machine-checklist-20261111.md` §四点八）。 |
+| 严重等级 | P2（会阻断一切策略运行，但有确定恢复手段） |
+| 当前状态 | **已处置：重启 QMT 即恢复**（未清缓存、未动 site-packages） |
+| 归属迭代 | 环境运维（非六步流水线范围） |
+| 修复方案 | **前置冒烟纪律 G-0**：每次跑 QMT 策略前先跑 3 行 pandas 冒烟（`print(pd.__version__, hasattr(pd,'core'))`）；失败则重启 QMT，**禁止改产物**。根因（pandas 半初始化）未完全定位到具体触发动作，待后续观察是否复现。 |
+| 验证证据 | 02:19:43 起 `QS_QMT_TZ_PROBE pytz=Y zoneinfo=N resolve=P1-Y tzcache=5 level=P1` + 双三态 + G-6/G-7 九处读数与 17:21 逐位一致 + 86 周期跑完无 Traceback |
+| 关闭时间 | 2026-11-12（处置手段确认有效；根因观察中） |
