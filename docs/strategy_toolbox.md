@@ -667,6 +667,16 @@ QMT（迅投）目标由 `qs-compile package <spec> --target qmt` 渲染（spec 
 > 基本面/审计行 wrapper）见 `docs/qmt-pipeline-baseline.md` 与
 > `docs/evidence/qmt-m5-batch2-probe-20261010.md`（§1-§8.11）。
 
+>
+> **嵌入式快照注入（2026-11-11）**：`qmt_reconvert_six.py` 增 `--eps-embed` / `--qfq-embed`
+> 两开关，把 EPS 基本面快照与 QFQ 复权因子快照以**压缩形态**（zlib+base64 单常量；
+> `export_eps_snapshot.py --compress` / `export_qfq_factor_snapshot.py --compress`）
+> 注入产物；消费端**明文优先**、缺则解压缩常量、解压失败 fail-loud（不静默降级 absent）。
+> 六产物 v1.8 双注入实测 0.903～0.918 MB（余量 38.8%）。契约见
+> `docs/qfq-snapshot-compress-design-20261111.md` 与
+> `docs/evidence/qfq-compress-v1-v7-acceptance-20261111.md`；真机复跑交接单见
+> `docs/handoff/qmt-real-machine-checklist-20261111.md`。
+
 ## 转模拟盘/实盘（qs-deploy，2026-10-11）
 
 PTrade 回测策略产物 → 模拟盘/实盘部署代码的下游转换通道（独立于本工具箱的
