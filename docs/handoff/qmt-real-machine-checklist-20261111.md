@@ -269,6 +269,13 @@ QS_QMT_EPS_ALIGN overridden=11 mismatch=0 span_short=22  code_miss=0 unmatched=1
 即：修复前那 196 行**全部**因 code miss 落进 `span_short`；修复后**精确拆分**为「57 行成功覆盖 + 139 行真实期次缺失」，
 **无遗漏、无重复、无新增** ⇒ 归一化只修正匹配、未改变任何行数语义。
 
+### 裁定回执（2026-11-11 R-20261111-04 ＝ 甲）
+
+> **A-5b 真机段判「通过」**。审核方采信替代判据四条，并认定「守恒 9/9 为最强证据」、
+> 「方法论瑕疵自申报」可接受。原始路径（取 `QS_QMT_EPS_MISMATCH` 样例对拍）因 `mismatch=0`
+> 物理上无样本，以等价强度的四条替代判据结案：
+> ①`code_miss=0`（9/9）②守恒等式 9/9 ③本地段真实快照逐位对拍 ④`overridden>0` 且 `mismatch=0` 组合。
+
 ### 关于 `mismatch=0`：A-5b 真机段的路径说明
 
 九处 `mismatch` **全部为 0**，即不存在 `QS_QMT_EPS_MISMATCH` 行 ⇒ 审核补强项原定的「取 ≥1 个 MISMATCH 样例对拍」**无样本可依**。
