@@ -2798,3 +2798,28 @@ git stash store [(-m | --message) <message>] [-q] <commit> ← 只有 store 有 
 | 状态 | **设计完成；读数待开工令（20–30 min 窗口）** |
 
 > 复用件核实：`agent_workspace/r17_r8_redo.py`（2,023 B，`reb_map()` 解析四元组 `selected/tradable/sell_submitted/buy_submitted`，双编码兼容）✓ 可直接复用；`r8_compare.py`（1,713 B）口径为行位置归属 ⇒ **弃用**。
+
+## 10.224 ④验收条件① —— 跨入口黄金对照**已达成**（2026-11-12 03:40）
+
+| 项 | 读数 |
+| --- | --- |
+| **golden_sha256** | **`b4b538a0ca0eff1ae69a283fe15b1793b2c3ed6e00b7897ea2f0757caf85fabb`** |
+| 锚 | `b4b538a0ca0eff1ae69a…` ⇒ **MATCH = True（逐位相同）** |
+| nav_days / trades | **5 / 4**（与探针基线完全一致） |
+| wall_sec | 300.407 |
+| 证据件 | `docs/evidence/gui-minute-engine-crossentry-golden-20261112.md` |
+
+> **⇒ 跨入口对等成立**：GUI 参数集（含新增 `engine_profile='minute-bar-v1'`）经引擎产出与命令行探针**同一锚** ⇒ **参数链无信息丢失**。
+
+### 两处实施期发现（首次留痕）
+
+| # | 发现 | 含义 |
+| --- | --- | --- |
+| 1 | **`run_backtest` 不接受 `commission`/`stamp_tax`/`slippage`**（直调报 `TypeError`） | **GUI `params` ≠ 引擎 kwargs**：三者只是 Worker 构造 `TradeCost` 的中间值（L494-499）⇒ 验证跨入口对等必须**复现 Worker 的转换** |
+| 2 | 🔴 **我方误杀一个正常运行的回测进程（自认）** | 首次用真实 `BacktestWorker` 跑，>600s 未返回 ⇒ 我判为「卡在等待采集」并 kill；**实际它在正常推进**（kill 前日志有 `买入 600635.SS` / `REBALANCE_AUDIT buy_submitted=1`）⇒ **真因是该链路需 6+ 分钟**，我把「超过单次工具超时」误读为「无限等待」。**教训：超时 ≠ 卡死，判「卡住」前必须读进程日志看是否仍在推进**（同族：`Select-Object -First N` 假失败——把观测装置的边界读成被测对象的缺陷） |
+
+### 口径边界（必须与结论同框）
+
+> 本跑用**隔离库**（与探针同库，锚可比）；**GUI 实际用生产库** `db_path()`。
+> ⇒ 本跑证明的是**参数链无丢失**，**不是跨库数据等价**（两库数据若不同，生产库读数可能不同——非本次改动引入）。
+> 用隔离库的理由：①锚产生于隔离库；②**避免动生产库**（daemon 常驻持锁，铁律 19）。
