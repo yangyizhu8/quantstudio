@@ -248,3 +248,61 @@ def test_record_fill_skips_when_price_unavailable():
     assert ns["_qs_iso_pos_amount"]("512890.SS") == pytest.approx(0.0)
     assert iso.get("reserved", 0.0) == pytest.approx(0.0)
     assert any(k == "WARN" and "QS_ISO_FILL_NO_PX" in m for k, m in logs)
+
+# ===========================================================================
+# PD-2026-0020 §12 期1 第二步固件（2026-11-12）
+# 覆盖三件：B5 金额版调用面检测、B3 record_iso 双重记账防护、RECONCILE 四计数汇总。
+# 全部为结构/文本断言（不改平台行为，不依赖沙箱 exec）——因为这三项的正确性
+# 判据本身就是「代码形态是否到位」，行为级验证在实机取证轮完成。
+# ===========================================================================
+class TestIsolationStep2Firmware:
+    def test_b5_amount_api_probe_present(self):
+        """B5：隔离 TAIL 必须含金额版调用面透传包装（含三个 API 名）。"""
+        tail = tpl._QS_ISO_TAIL
+        assert "_qs_iso_wrap_amount_api" in tail, "B5 包装函数缺失"
+        assert "_qs_iso_amount_api_hits" in tail, "B5 计数缺失"
+        assert "QS_ISO_AMOUNT_API_DETECTED" in tail, "B5 告警码缺失"
+        for api in ("order_target_value", "order_value", "order_target_percent"):
+            assert api in tail, f"B5 未覆盖 {api}"
+        # 透传不阻断：必须 return fn(...)
+        assert "return fn(*a, **k)" in tail, "B5 必须透传（不得阻断）"
+        syntax = ast.parse(tail)  # TAIL 必须是合法 Python
+        assert syntax is not None
+
+    def test_b5_first_only_warn(self):
+        """B5：首次告警后仅计数（防刷屏）——判据为 `== 1` 守卫存在。"""
+        tail = tpl._QS_ISO_TAIL
+        assert "_qs_iso_amount_api_hits[0] == 1" in tail, "B5 缺少首次告警守卫"
+
+    def test_b3_record_iso_false_on_order_path(self):
+        """B3：order() 路径调 _qs_ledger_release 必须传 record_iso=False（防双重记账）。
+
+        隔离 TAIL 已把 _QSOrderRefState.order_orig 包成 _qs_iso_order_orig（受理即记账），
+        order() 包装内若再让 _qs_ledger_release 记隔离账 ⇒ 同一笔卖出入账两次。
+        """
+        from quantstudio.strategy_compiler import source_import as si
+        src = si._QS_ORDER_SPLIT_EXT  # 含 order() 包装的第一跳注入块
+        assert "_qs_ledger_release" in src, "order() 路径未见账本回写钩子"
+        assert "record_iso=False" in src, "order() 路径必须显式 record_iso=False"
+
+    def test_reconcile_has_four_new_counters(self):
+        """RECONCILE 必须汇总四个新计数（B1/B2/B4/B5 可观测性）。"""
+        import inspect
+
+        from quantstudio.ptrade_deploy import transformer as tf
+        # reconcile_src 是 _apply_isolation 内的局部字符串 ⇒ 从源码文本取
+        text = inspect.getsource(tf)
+        for field in ("clamp_unarmed", "cash_reject", "ledger_neg", "amount_api"):
+            assert field in text, f"RECONCILE 缺计数 {field}"
+        # 探测式取值（防 NameError）
+        assert "globals().get('_QS_CLAMP_UNARMED_COUNT')" in text
+        assert "globals().get('_QS_CASH_REJECT_COUNT')" in text
+        assert "globals().get('_QS_LEDGER_NEG_COUNT')" in text
+        assert "globals().get('_qs_iso_amount_api_hits')" in text
+
+    def test_build_tag_deterministic(self):
+        """BUILD 标识（R-20261112-05 裁甲）：同进程两次调用必须一致（确定性契约）。"""
+        from quantstudio.ptrade_deploy.transformer import _build_tag
+        a, b = _build_tag(), _build_tag()
+        assert a == b, f"BUILD 标识不确定: {a} vs {b}"
+        assert a.endswith("-p1"), f"BUILD 标识格式异常: {a}"

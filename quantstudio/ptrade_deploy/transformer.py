@@ -799,6 +799,35 @@ def _apply_guards(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> None:
 
 # ---------------------------------------------------------------- 主入口 --
 
+
+
+def _build_tag():
+    """隔离层 banner 的构建标识（R-20261112-05 裁甲：git 短 sha）。
+
+    为何不用「生成时刻」：本模块 L24 已立契约——「确定性：同输入同配置两次转换
+    输出逐位一致（**无时间戳**/绝对路径/随机数）」。用时刻会直接违反该契约，
+    并使「enabled=false 两次重转 sha 逐位一致」这一纯增益核心判据失效。
+
+    git 短 sha 的性质：
+      - 同一 commit 内重转 ⇒ 逐位一致（确定性契约保持）；
+      - 跨 commit ⇒ 不同（banner 成为可用的**唯一指纹**，解决 20261109-p1
+        在 20:33 与 12:20 两次重转同值、无法判定贴装版本的问题）。
+    git 不可用（非仓库/无 git/超时）⇒ 退化为固定旧值，**仍满足确定性**。
+    """
+    try:
+        import subprocess
+        from pathlib import Path
+        _root = Path(__file__).resolve().parents[2]
+        _r = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                            cwd=str(_root), capture_output=True, text=True,
+                            timeout=5)
+        _sha = (_r.stdout or "").strip()
+        if _r.returncode == 0 and _sha:
+            return "%s-p1" % _sha
+    except Exception:
+        pass
+    return "20261109-p1"
+
 def _apply_isolation(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> None:
     """PD-0019 期 1：多策略同账户隔离注入（裁定甲＝隔离落在下单入口 + 虚拟台账层）。
 
@@ -817,7 +846,7 @@ def _apply_isolation(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> None
                 .replace("__POLICY__", repr(str(iso.policy)))
                 .replace("__MARKET_SPLIT__", repr(bool(iso.market_split)))
                 .replace("__RESERVE_BUFFER__", repr(float(iso.reserve_buffer)))
-                .replace("__BUILD__", "20261109-p1"))
+                .replace("__BUILD__", _build_tag()))
     head_stmts = ast.parse(head_src).body
     idx = _after_header_index(tree)
     for k, st in enumerate(head_stmts):
