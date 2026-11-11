@@ -107,11 +107,11 @@ for m in ('pandas', 'numpy', 'pytz', 'zoneinfo'):
 
 | # | 库 | 要求 | 实测版本（待填） | 判据 |
 |---|---|---|---|---|
-| 1 | `sys.version` | ≥ 3.9（`zoneinfo` 需 3.9+） | ______ | 低于 3.9 ⇒ 报告本线（需 pytz 全量回退方案） |
+| 1 | `sys.version` | **实测 3.6.8**（`D:\QMT\国金QMT交易端模拟\python36.dll` FileVersion=3.6.8、`pythonw.exe`=3.6.4） | 客户已交付实测 | **已确认**：`zoneinfo`(3.9+) **不存在**，产物内 5 处 `zoneinfo` 引用全部在 `try/except` 保护内（L36←try@L35、L91←try@L89）⇒ 自动回落 pytz 路径；`pytz` 因此**必须有** |
 | 2 | `pandas` | 存在即可（产物只用基础 DataFrame 操作） | ______ | **缺失即致命**（`_QS_QMT_FUNDAMENTALS_EXT` 消费） |
 | 3 | `numpy` | 存在即可 | ______ | 缺失即致命 |
 | 4 | `pytz` | 存在 | ______ | 缺失则产物内 `import pytz` 会失败 ⇒ 致命 |
-| 5 | `zoneinfo` | 存在 | ______ | 缺失（Python<3.9）⇒ 需回退方案 |
+| 5 | `zoneinfo` | **3.6 不存在（预期内）** | 客户已交付实测 | 非致命：产物已 try 保护，回落 pytz；需确认日志出现 `QS_QMT_TZ_PROBE ... level=` 行 |
 | 6 | `pandas._libs.tslibs.timezones` | 存在（产物有 `from pandas._libs.tslibs import timezones as _pdtz`） | ______ | **pandas 2.x 若移除该内部路径即致命** ← 高风险项 |
 
 > ⚠️ 第 6 项是**内部私有路径**（`pandas._libs.tslibs.timezones`），跨 pandas 大版本可能消失——这是比「缺 pytz」更隐蔽的炸点，务必单独确认。
@@ -139,6 +139,40 @@ PY：____ ｜pandas：____ ｜numpy：____ ｜pytz：____ ｜zoneinfo：____ ｜
 载入耗时：____ 秒 ｜首次解压：____ 秒 ｜内存峰值：____ MB ｜回测总耗时：____ 秒
 异常：<若有，粘贴完整报错，勿节选>
 ```
+
+## 四点五、真机实测记录（2026-11-11 首轮）
+
+### 交付基线一致性
+`output/qmt_snapshot/_diag_T3_both.py` 与 `output/qmt_import/CANSLIM突破成长选股策略.py`
+**逐字节相同**：均 960,210 B / sha16 `805219029f30398c`。
+
+### 首轮成功日志（T3 双注入件 · 大 QMT 3.6.8）
+```text
+start back test mode
+QS_QMT_DENY_REMOVED: set_benchmark
+QS_QMT_SEMANTIC_DIFF: run_daily time collapsed to per-daily-bar
+[QS-QMT log.info] [canslim_breakthrough] initialize done: target=5, stop=7.5%/20.0
+QS_QMT_QFQ_SNAP embedded n=5385 base=20261030        ← G-3 达成
+QS_QMT_PROGRESS func=filter_stock_by_status done=5225/5225 pct=100.0 elapsed=0.2s
+```
+
+### 判据达成情况
+| 门 | 状态 | 证据 |
+|---|---|---|
+| G-1 交付基线 | ✅ | T3 与正式件 sha16 同为 `805219029f30398c` |
+| G-2 EPS 层 | ⏳ **待惰性触发** | `_qs_eps_snap_state()` 惰性：首次取 EPS 基本面时才打印；本轮日志止于 `filter_stock_by_status` 完成，尚未进入 EPS 取数点 |
+| G-3 QFQ 层 | ✅ | `QS_QMT_QFQ_SNAP embedded n=5385 base=20261030` |
+| G-4 环境 | ✅ 部分 | Python **3.6.8** 确认；pandas/numpy 可用（initialize 已过）；zoneinfo 缺失但已保护 |
+| G-5 无异常 | ✅ 本轮无 Traceback | — |
+
+### ⚠️ 历史误报澄清（同一内容两次结果不同）
+首次尝试报 `SyntaxError: EOL while scanning string literal (<string>, line 671)` 的**不是产物缺陷**：
+- 产物在 3.6/3.7/3.8/3.9/3.11 五种语法规则下 `ast.parse` **全部通过**；
+- 4 种编码（gbk / utf-8-replace / latin-1）解析**全部通过**；gbk 汉字次字节不含 0x5C/0x27/0x22（无经典 GBK 转义陷阱）；
+- ZB64 块逐行严格匹配 `^    '[A-Za-z0-9+/=]{116}'$`，L671 内容正常、无不可见字符；
+- L671 字符偏移 26,809，**不落在** 32K/64K/96K/128K 任何截断边界。
+- **同一份字节内容（T3）改以文件方式载入后完整跑通** ⇒ 结论：`<string>` 报错发生在**载入/粘贴环节的内容损坏**，非产物问题。
+- **操作纪律**：960 KB / 9,734 行的产物**禁止粘贴进编辑器**，必须用「打开文件/导入」方式载入。
 
 ## 五、判据汇总（过/不过）
 
