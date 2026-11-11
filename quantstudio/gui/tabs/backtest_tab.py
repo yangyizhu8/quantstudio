@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer, QElapsedTimer
@@ -18,6 +19,40 @@ from ..skin import PageHeader
 from quantstudio._paths import db_path
 
 logger = logging.getLogger(__name__)
+
+
+# ==================== 引擎 Profile 声明读取（GUI 分钟引擎支持，2026-11-11）====================
+# 背景：GUI 回测 tab 只扫正式策略目录 + 不传 engine_profile ⇒ 走引擎默认 daily-bar-v1。
+# 而 output/generated_strategies/ 下 agent 生成的策略可能是 minute-bar-v1
+# （如 first_board_high_open_1to2），用日线引擎跑它 = 静默跑错结果。
+# 契约：纯读取，只读策略头部注释；任何异常/缺失/编码问题一律回退默认值，绝不抛出。
+_ENGINE_DECL_RE = re.compile(r"engine_profile\s*=\s*([A-Za-z0-9\-]+)")
+_ENGINE_HEAD_LINES = 60          # 只扫头部注释区，避免全文扫描
+DEFAULT_ENGINE_PROFILE = "daily-bar-v1"
+
+
+def _read_engine_profile(path, default=DEFAULT_ENGINE_PROFILE):
+    """读策略文件头部声明的 engine_profile。
+
+    · 有声明 ⇒ 返回声明值（如 minute-bar-v1）
+    · 无声明 ⇒ 返回 default（daily-bar-v1）——33 个正式策略均无此声明，默认即其真实语义
+    · 文件不存在/不可读/编码异常（含 BOM、GBK 乱码）⇒ 返回 default，绝不抛异常
+
+    errors="replace" 是刻意选择：生成目录是 agent 产物，编码不可保证；
+    读取函数绝不应因编码问题让 GUI 崩溃或误判。
+    """
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for _ in range(_ENGINE_HEAD_LINES):
+                line = fh.readline()
+                if not line:
+                    break
+                m = _ENGINE_DECL_RE.search(line)
+                if m:
+                    return m.group(1)
+    except (OSError, ValueError):
+        pass
+    return default
 
 
 class BacktestTab(QWidget):
@@ -107,6 +142,14 @@ class BacktestTab(QWidget):
         self.match_profile_combo.addItem("qmt (QMT 实盘对齐)", userData="qmt")
         param_form.addRow("Match profile:", self.match_profile_combo)
 
+        # 引擎 Profile（2026-11-11）：显式声明引擎，避免分钟策略被日线引擎静默跑错。
+        # 默认 daily = 现行行为零改变（33 个正式策略均无 engine_profile 声明）。
+        # 不暴露 daily-open-close-proxy-v1：非通用路径，避免误用。
+        self.engine_combo = ComboBox()
+        self.engine_combo.addItem("daily（日线引擎 daily-bar-v1）", userData="daily-bar-v1")
+        self.engine_combo.addItem("minute（分钟引擎 minute-bar-v1）", userData="minute-bar-v1")
+        param_form.addRow("引擎 Profile:", self.engine_combo)
+
         # P-A0/P-A1/P-A2: PTrade 保真模式（验证用）勾选项。默认 OFF = 本地语义锚（P-D9）。
         # 勾选后按平台行为模拟（A股池快照 / ST过滤 close<1 口径 / eps 双端映射），
         # 仅供转换产物验证；严禁用于实盘前评估。快照日动态取自最新 meta.json（快照
@@ -185,13 +228,30 @@ class BacktestTab(QWidget):
         self._refresh_strategies()
 
     def _refresh_strategies(self):
-        """扫描 strategies/ 目录，填充下拉框"""
+        """扫描正式策略目录 + 生成策略目录，填充下拉框。
+
+        · 正式目录 quantstudio/backtest/strategies/*.py —— 既有行为，零改变
+        · 生成目录 output/generated_strategies/*/strategy.py —— 新增（2026-11-11），
+          显示名加 "[生成] " 前缀区分来源，排在正式策略之后
+        userData 仍存**路径字符串**（不改契约）：_on_run 里 currentData() 拿到的
+        就是可直接传给 run_backtest 的路径；引擎声明按路径现读，无需缓存。
+        """
         self.strategy_combo.clear()
         strat_dir = self.mw.root_path / "quantstudio" / "backtest" / "strategies"
         if strat_dir.exists():
             for f in sorted(strat_dir.glob("*.py")):
                 if not f.name.startswith("_"):
                     self.strategy_combo.addItem(f.name, userData=str(f))
+        # 生成策略目录：agent 产物，可能为分钟引擎策略（见 _read_engine_profile）
+        gen_dir = self.mw.root_path / "output" / "generated_strategies"
+        if gen_dir.exists():
+            for sub in sorted(gen_dir.iterdir()):
+                if not sub.is_dir():
+                    continue
+                sp = sub / "strategy.py"
+                if sp.is_file():
+                    self.strategy_combo.addItem(
+                        f"[生成] {sub.name}/strategy.py", userData=str(sp))
 
     def _on_run(self):
         """启动回测"""
@@ -199,6 +259,37 @@ class BacktestTab(QWidget):
         if not strategy_path:
             QMessageBox.information(self, "提示", "请先选择策略文件")
             return
+
+        # 引擎错配校验（2026-11-11，②审裁定乙：只提示不阻断「未声明」策略）
+        # · 声明为 minute 的策略被日线引擎跑 = 静默跑错 ⇒ 拦截
+        # · 声明为日线 ⇒ 选 minute 拦截
+        # · 未声明 ⇒ 只提示不阻断（「未声明」≠「是日线」，不得把推断当事实）
+        _sel_engine = self.engine_combo.currentData()
+        _decl_engine = _read_engine_profile(strategy_path)
+        if _decl_engine == "minute-bar-v1" and _sel_engine != "minute-bar-v1":
+            QMessageBox.information(
+                self, "引擎不匹配",
+                "该策略为分钟回测策略，请选择 minute 下拉项。")
+            return
+        if _decl_engine != "minute-bar-v1" and _sel_engine == "minute-bar-v1":
+            _has_decl = _read_engine_profile(strategy_path, default=None) is not None
+            if _has_decl:
+                QMessageBox.information(
+                    self, "引擎不匹配",
+                    "该策略为日线回测策略，请选择 daily 下拉项。")
+                return
+            _box = QMessageBox(self)
+            _box.setIcon(QMessageBox.Icon.Information)
+            _box.setWindowTitle("引擎类型未声明")                 
+            _box.setText("该策略未声明引擎类型，默认为日线；你选择了分钟引擎。")
+            _box.setInformativeText(
+                "如非有意，请切回 daily 下拉项。\n\n【继续】仍按分钟引擎运行。")
+            _btn_go = _box.addButton("继续", QMessageBox.ButtonRole.AcceptRole)
+            _box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+            _box.setDefaultButton(_btn_go)
+            _box.exec()
+            if _box.clickedButton() is not _btn_go:
+                return
 
         db_path_str = str(db_path())
         from pathlib import Path as P
@@ -293,6 +384,9 @@ class BacktestTab(QWidget):
             'coexistence': self.coexistence_ck.isChecked(),
             'rebalance_mode': rebalance_mode,
             'fidelity_config': fidelity_config,  # None = 默认全关（本地语义锚）
+            # 引擎 Profile：Worker 已支持（workers.py L531 读 params[engine_profile]），
+            # 此前 GUI 未传 ⇒ 恒走引擎默认 daily-bar-v1（2026-11-11 补齐）
+            'engine_profile': _sel_engine,
         }
 
         # 队列（spec FR-014 / T036）：已有回测在跑时排队，上限 3，超出显式拒绝
