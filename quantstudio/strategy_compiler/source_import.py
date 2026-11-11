@@ -1020,6 +1020,8 @@ _QS_CASH_WARNED_STATE = {{'v': False}}
 # PD-2026-0020 §12 期1 a-2（②审）：零/不可得预算显式拒单计数（买入路径；列表
 # 承载以便产物内就地累加，供 RECONCILE 汇总读取）。
 _QS_CASH_REJECT_COUNT = [0]
+# PD-2026-0020 §12 期1 B2（②审）：px 缺失致折算「未武装」的累计计数（RECONCILE 汇总）。
+_QS_CLAMP_UNARMED_COUNT = [0]
 # PD-2026-0020 §12 期1 b-2/B4（②审）：账本非负不变量——负值事件计数（供
 # RECONCILE 汇总）+ QS_LEDGER_NEGATIVE 日志按 (field, code) 去重状态表；
 # 卖出释放无价告警（QS_LEDGER_RELEASE_NO_PX）按代码去重表。
@@ -1528,6 +1530,54 @@ def order_target_value(security, value, *args, **kwargs):
     return _ids[-1] if _ids else None
 
 
+
+
+
+
+def _qs_budget_clamp(security, amount):
+    """PD-2026-0020 §12 期1 甲-order（②审·P0）：买入按虚拟额度折算可买股数。
+
+    注意：本函数所在模板会被 .format() 渲染 ⇒ **禁止使用花括号字面量**（dict/set），
+    一律用 tuple 返回。
+
+    背景（11-10 实机取证）：策略走 order(security, amount) 数量版，自己用真实持仓算
+    delta ⇒ 隔离层原持仓侧介入点（_qs_pos_amount 覆盖 / target_orig 阻断）从未被触达
+    （PD-2026-0021）。唯一可行介入点就是 order() 包装本身。
+
+    语义（§12.2）：仅买入(amount>0)且隔离启用时折算；可买=floor(额度/px/100)*100，
+    amount=min(amount,可买)；卖出一律不钳（G1/D1 教训）；px 缺失则不钳(fail-open)
+    并计入未武装计数（B2）。
+    返回 (数量, applied, orig, clamp, avail, px)。
+    """
+    _no = (amount, False, amount, None, None, None)
+    try:
+        if amount is None or amount <= 0:
+            return _no
+        if not globals().get('_QS_ISO_ENABLED'):
+            return _no
+        _get_avail = globals().get('_qs_iso_cash_avail')
+        if _get_avail is None:
+            return _no
+        avail = float(_get_avail())
+        px = _qs_px_exec(security)
+        if px is None or px <= 0:
+            try:
+                _QS_CLAMP_UNARMED_COUNT[0] += 1
+                log.warning('QS_CLAMP_UNARMED code=%s amount=%s reason=px_unavailable'
+                            % (security, amount))
+            except Exception:
+                pass
+            return (amount, False, amount, None, avail, px)
+        if avail <= 0:
+            return (0, True, amount, 0, avail, px)
+        lot = int(_QS_SPLIT_LOT) if _QS_SPLIT_LOT else 100
+        can_buy = int(avail / px / lot) * lot
+        if amount <= can_buy:
+            return (amount, False, amount, can_buy, avail, px)
+        return (can_buy, True, amount, can_buy, avail, px)
+    except Exception:
+        return _no
+
 def order(security, amount, *args, **kwargs):
     # PD-0018 F2：order() 路径补幂等（既有盲区闭合——此前该路径完全不调守卫，
     # 同日同标的重复下单不被拦）。内部拆单调用（_QS_SPLIT_DEPTH>0）时逻辑层
@@ -1541,6 +1591,23 @@ def order(security, amount, *args, **kwargs):
             except Exception:
                 pass
             return None
+
+    # PD-2026-0020 §12 期1 甲-order：买入按虚拟额度折算（卖出/非隔离不介入）
+    amount, _cl_applied, _cl_orig, _cl_can, _cl_avail, _cl_px = _qs_budget_clamp(security, amount)
+    if _cl_applied:
+        try:
+            log.info('QS_CLAMP_ORDER api=order code=%s orig=%s can_buy=%s avail=%s px=%s'
+                     % (security, _cl_orig, _cl_can, _cl_avail, _cl_px))
+        except Exception:
+            pass
+        if amount is None or amount <= 0:
+            try:
+                log.error('QS_CLAMP_ORDER_REJECT api=order code=%s orig=%s avail=%s'
+                          % (security, _cl_orig, _cl_avail))
+            except Exception:
+                pass
+            return None
+
     _ids_o = []
     if amount is None or amount <= 0 or amount <= _QS_MAX_ORDER_SHARES:
         _id0 = _QSOrderRefState.order_orig(security, amount, *args, **kwargs)
