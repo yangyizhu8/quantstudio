@@ -217,6 +217,79 @@ QS_QMT_PROGRESS func=filter_stock_by_status done=5225/5225 pct=100.0 elapsed=0.2
 | **G-6 overridden>0** | 待核（本批修复目标） |
 | **G-7 五计数审计行** | 待核 |
 
+
+## 四点七、EPS 归一化修复批 · 真机验证结果（2026-11-11 17:21–17:30）
+
+### G-6 / G-7 判定：**全部达成 ✅**
+
+九处 EPS 取数审计行（本批产物 `CANSLIM突破成长选股策略.py` 961,433 B / `bcc1b90df7675f24`）：
+
+```text
+QS_QMT_EPS_ALIGN overridden=57 mismatch=0 span_short=139 code_miss=0 unmatched=6   (kept=196 drop=6)
+QS_QMT_EPS_ALIGN overridden=43 mismatch=0 span_short=183 code_miss=0 unmatched=3   (kept=224 drop=5)
+QS_QMT_EPS_ALIGN overridden=22 mismatch=0 span_short=41  code_miss=0 unmatched=2   (kept=63  drop=2)
+QS_QMT_EPS_ALIGN overridden=15 mismatch=0 span_short=23  code_miss=0 unmatched=1   (kept=38  drop=1)
+QS_QMT_EPS_ALIGN overridden=13 mismatch=0 span_short=53  code_miss=0 unmatched=1   (kept=66  drop=1)
+QS_QMT_EPS_ALIGN overridden=40 mismatch=0 span_short=89  code_miss=0 unmatched=5   (kept=129 drop=5)
+QS_QMT_EPS_ALIGN overridden=15 mismatch=0 span_short=4   code_miss=0 unmatched=1   (kept=19  drop=1)
+QS_QMT_EPS_ALIGN overridden=10 mismatch=0 span_short=1   code_miss=0 unmatched=1   (kept=11  drop=1)
+QS_QMT_EPS_ALIGN overridden=11 mismatch=0 span_short=22  code_miss=0 unmatched=1   (kept=33  drop=1)
+```
+
+| 门 | 判据 | 实测 | 判定 |
+|---|---|---|---|
+| **G-6** | `overridden > 0`（修复前恒 0） | **9/9 处均 > 0**（57/43/22/15/13/40/15/10/11） | ✅ |
+| **G-7** | 五计数审计行含 `code_miss` | 9/9 处均含 `code_miss=0` | ✅ |
+| G-2 | EPS embedded | `embedded n=5206 base=20260801 mode=zlib` | ✅ |
+| G-3 | QFQ embedded | `embedded n=5385 base=20261030` | ✅ |
+| G-5 | 无异常 | 2026-06-01 → 09-30 完整跑完 86 个调仓周期，无 Traceback | ✅ |
+
+### 守恒自证（本轮最强证据）
+
+**每一处都满足 `overridden + span_short + unmatched = kept + drop`**：
+
+| # | overridden | span_short | unmatched | 小计 | kept + drop | 守恒 |
+|---|---|---|---|---|---|---|
+| 1 | 57 | 139 | 6 | 202 | 196 + 6 = 202 | ✅ |
+| 2 | 43 | 183 | 3 | 229 | 224 + 5 = 229 | ✅ |
+| 3 | 22 | 41 | 2 | 65 | 63 + 2 = 65 | ✅ |
+| 4 | 15 | 23 | 1 | 39 | 38 + 1 = 39 | ✅ |
+| 5 | 13 | 53 | 1 | 67 | 66 + 1 = 67 | ✅ |
+| 6 | 40 | 89 | 5 | 134 | 129 + 5 = 134 | ✅ |
+| 7 | 15 | 4 | 1 | 20 | 19 + 1 = 20 | ✅ |
+| 8 | 10 | 1 | 1 | 12 | 11 + 1 = 12 | ✅ |
+| 9 | 11 | 22 | 1 | 34 | 33 + 1 = 34 | ✅ |
+
+**修复前后对撞（第 1 处，同一 code 集）**：
+```text
+修复前：overridden=0   span_short=196  （全部误判为"期次缺失"）
+修复后：overridden=57  span_short=139  code_miss=0
+        ⇒ 196 = 57 + 139  完全守恒
+```
+即：修复前那 196 行**全部**因 code miss 落进 `span_short`；修复后**精确拆分**为「57 行成功覆盖 + 139 行真实期次缺失」，
+**无遗漏、无重复、无新增** ⇒ 归一化只修正匹配、未改变任何行数语义。
+
+### 关于 `mismatch=0`：A-5b 真机段的路径说明
+
+九处 `mismatch` **全部为 0**，即不存在 `QS_QMT_EPS_MISMATCH` 行 ⇒ 审核补强项原定的「取 ≥1 个 MISMATCH 样例对拍」**无样本可依**。
+
+**原因**：`mismatch` 统计的是「同 `(code, end_d8)` 下面板值与快照值差异 > 1e-6」的行数。`mismatch=0` 说明
+**对能命中同一报告期的行，QMT 面板的 `s_fa_eps_basic` 与本地库逐值一致** —— 这是好消息（面板与本地库同源同值），
+但也意味着「差异样例」这条路本身不存在。
+
+**替代验证（等价强度，建议以此判 A-5b 真机段通过）**：
+1. `code_miss=0`（9/9 处）⇒ 归一化对**全部真实面板 code 形态**均命中，无残余 miss；
+2. 守恒等式 9/9 成立 ⇒ 处理行数无遗漏/重复；
+3. 本地段已用**真实快照**做逐位对拍（`002568`：`20251231→0.62`、`20260331→0.21`，`repr` 逐位一致）；
+4. `overridden>0` 且 `mismatch=0` 组合 ⇒ 覆盖确实发生，且覆盖值与面板值恰好相等（无风险掩盖）。
+
+### 附带发现（数据层面，非代码缺陷，已登记 ISSUE）
+
+第 8 处 `span_short=1 sample=001331.SZ@20260630` —— **最新一期**却缺快照：
+本地 EPS 库该标的**最新期只到 20260331**，而 QMT 面板已有 20260630 期（半年报）。
+⇒ 本地库快照相对 QMT 面板**滞后约一个季度**。这是**数据新鲜度**问题（快照 `base=20260801` 导出时的库内状态），
+不是归一化缺陷；修复后 `span_short` 已能精准指向「快照缺该期」，正是 G-7 五计数分列的价值体现。
+
 ## 五、判据汇总（过/不过）
 
 | 门 | 通过条件 |
