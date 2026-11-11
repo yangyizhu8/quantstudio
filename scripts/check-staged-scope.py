@@ -8,9 +8,11 @@
 「我只 add 了三个路径」不构成安全推定。
 
 用法（挂 .githooks/pre-commit，亦可手动跑）：
-  STAGED_SCOPE_ALLOW="scripts/kb_hook.py tests/ docs/evidence/" python scripts/check-staged-scope.py
+  多个路径一律用**分号 `;`** 分隔（与解析一致；空格分隔会被当成单个条目 ⇒ 必拒）：
+  STAGED_SCOPE_ALLOW="scripts/kb_hook.py;tests/;docs/evidence/" python scripts/check-staged-scope.py
   python scripts/check-staged-scope.py --allow scripts/kb_hook.py --allow "tests/"
-  python scripts/check-staged-scope.py --allow-file .session-scope.txt
+  python scripts/check-staged-scope.py --allow-file <白名单文件>   # 一行一条；注意仓库根
+      .session-scope.txt 已按 2026-11-11 纪律**禁用**（存在即拒），请勿以它为 --allow-file
   python scripts/check-staged-scope.py --index-file <列表文件>     # 自测/离线核对（不读 git）
   python scripts/check-staged-scope.py --self-test
 
@@ -38,7 +40,9 @@ DEFAULT_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def read_index(repo, index_file=None):
     """读 index 变更集（相对路径列表）。index_file 供离线/自测注入。"""
     if index_file:
-        with io.open(index_file, encoding="utf-8") as fh:
+        # utf-8-sig：与 --allow-file 统一。带 BOM 的清单若按 utf-8 读，首行会残留 \ufeff
+        # ⇒ 该条目永不匹配，凭空伪造 FAIL（BOM 不该改变判定结果）。
+        with io.open(index_file, encoding="utf-8-sig") as fh:
             return [ln.strip().replace("\\", "/") for ln in fh if ln.strip()]
     try:
         out = subprocess.check_output(

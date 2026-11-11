@@ -74,6 +74,24 @@ def test_t8_legacy_session_scope_file_rejected(tmp_path):
     assert "禁用" in r.stderr, r.stderr
 
 
+def test_t9_bom_index_file_not_false_fail(tmp_path):
+    """BOM 回归（2026-11-12 派单）：带 BOM 的 --index-file 不得伪造 FAIL。
+
+    若按 utf-8 读带 BOM 清单，首行会残留 \\ufeff ⇒ 该条目永不匹配 ⇒ 凭空 FAIL。
+    统一 utf-8-sig 后，BOM 不该改变判定结果。
+    """
+    rel = "scripts/kb_hook.py"
+    idx = tmp_path / "index_bom.txt"
+    with io.open(idx, "w", encoding="utf-8-sig", newline="\n") as fh:
+        fh.write(rel + "\n")
+    assert idx.read_bytes().startswith(b"\xef\xbb\xbf"), "前置：文件确带 BOM"
+    r = subprocess.run([sys.executable, str(SCRIPT), "--index-file", str(idx),
+                        "--repo", str(REPO), "--allow", rel],
+                       capture_output=True, text=True, encoding="utf-8")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "\ufeff" not in r.stdout.replace(str(idx), ""), "BOM 残留进了路径集合"
+
+
 def test_t6_self_test_builtin():
     """脚本内置 --self-test 五例（含 add -A 负例）必须全过。"""
     r = subprocess.run([sys.executable, str(SCRIPT), "--self-test"],
