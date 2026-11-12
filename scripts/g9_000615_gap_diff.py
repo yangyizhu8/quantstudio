@@ -26,8 +26,19 @@ EPS = 1e-9
 CODE = "000615"
 
 
+CST_OFFSET = 8 * 3600  # 库内 stock_daily.time 存「北京零点」的 epoch-ms（= UTC 前一日 16:00）
+
+
 def ms2date(v: int) -> str:
-    return dt.datetime.utcfromtimestamp(v / 1000).strftime("%Y-%m-%d")
+    """epoch-ms → **北京日期**。
+
+    ⚠️ 2026-11-12 实测教训（本条 bug 曾造成 1,659 条虚假 OHLC 差异）：
+      stock_daily.time=1515513600000 用 utcfromtimestamp 得 2018-01-09（错），
+      加 8h 后得 2018-01-10（对，与 mcp fresh 一致）。
+      **跨源比对的双方必须用同一时区解析**；若「独有日期」全落在同一星期几，
+      几乎一定是基准错位而非真差异。
+    """
+    return dt.datetime.utcfromtimestamp(v / 1000 + CST_OFFSET).strftime("%Y-%m-%d")
 
 
 def try_open(db: str, timeout: int = 30):
