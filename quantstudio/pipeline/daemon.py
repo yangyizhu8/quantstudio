@@ -1586,14 +1586,24 @@ class ResidentCollector:
         # → 对齐器按 2026-08-14 防线正确 fail-fast。修复：首分片处理时若快照为空
         # 且为价格表，重建一次（此时冷启动注入已落库）；仍空则维持 fail-fast 语义。
         _snap_refreshed = False
-        _t_fetch = _tprobe.perf_counter()   # R-03 埋点：等待下一分片的起点
         try:
             meta, shard_iter = adapter.fetch_table_streaming(
                 table, start, end, freq=freq, codes=codes)
-            for df_shard in shard_iter:
-                # R-03 埋点：本次 next() 的等待时长（含线1 还原 + export 取数）
-                _sp["fetch"] += _tprobe.perf_counter() - _t_fetch
+            # R-03 埋点（2026-11-12 修正）：必须用**显式 next()** 计时。
+            # 首版用 `for df_shard in shard_iter:` + 循环内累加 `now - _t_fetch` 是错的——
+            # `_t_fetch` 在上一轮**循环体开头**重置，故下一轮累加值 =
+            # 「上一轮 align+validate+write 全长 + 本轮纯等待」，导致 fetch 虚高到接近 total
+            # （实测 stock_minutes fetch=6800.6s 而 total=6821.1s，五段之和 11907.5s > total
+            #  ⇒ 自证重复累计）。改 while+next 后，fetch 只含「等下一个分片」的纯等待
+            # （= export 取数 + 线1 还原 中发生在 next() 内的部分）。
+            _shard_it = iter(shard_iter)
+            while True:
                 _t_fetch = _tprobe.perf_counter()
+                try:
+                    df_shard = next(_shard_it)
+                except StopIteration:
+                    break
+                _sp["fetch"] += _tprobe.perf_counter() - _t_fetch
                 if len(df_shard) == 0:
                     continue
                 if (not _snap_refreshed and table in self._QFQ_PRICE_TABLES
