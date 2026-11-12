@@ -1563,9 +1563,10 @@ def _qs_budget_clamp(security, amount):
     try:
         if amount is None or amount <= 0:
             return _no
-        if not globals().get('_QS_ISO_ENABLED'):
-            return _no
-        # R-20261112-07 裁甲：属性承载（globals().get 持引用会被白名单 BLOCK）
+        # R-20261112-07 裁甲：属性承载（globals().get 持引用会被白名单 BLOCK）。
+        # 注：不在此读 _QS_ISO_ENABLED——iso_avail 为 None 已等价表达「非隔离」，
+        # 且非隔离通用代码不应出现 _QS_ISO_ 字样（PD-2026-0020 D4）。
+
         if _QSClampHooks.iso_avail is None:
             return _no
         avail = float(_QSClampHooks.iso_avail())
