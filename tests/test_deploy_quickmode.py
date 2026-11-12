@@ -188,12 +188,109 @@ def _run_twice(tmp_path: Path, **cfg_kwargs) -> Path:
     return out / "mystrat"
 
 
+def _sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _deploy_twice_capture(tmp_path: Path, src: Path, **cfg_kwargs):
+    """两次 deploy，返回 (target, r1, r2, first_run_files)。
+
+    first_run_files = 第一次 deploy 后 out_dir 根下 {文件名: sha256}——
+    用于断言「归档进 v001 的确实是**上一版**内容」而非新版拷贝。
+    """
+    out = tmp_path / "out"
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(quickmode.build_quick_config(
+        "tech_etf_mvo_rotation", str(src),
+        output_root=str(out), dir_name="mystrat", **cfg_kwargs), encoding="utf-8")
+    r1 = run_deploy(str(cfg))
+    target = out / "mystrat"
+    first = {q.name: _sha(q) for q in target.iterdir() if q.is_file()}
+    r2 = run_deploy(str(cfg))
+    return target, r1, r2, first
+
+
+def _assert_two_runs_ok(r1, r2) -> None:
+    """⑤ 两次 deploy 显式成功（不以文件数代替成功性）。"""
+    for tag, r in (("r1", r1), ("r2", r2)):
+        st = r.to_dict().get("status") if hasattr(r, "to_dict") else getattr(r, "status", None)
+        assert st != "FAIL", f"{tag} status=FAIL: {getattr(r, 'to_dict', lambda: r)()}"
+
+
+@_needs_tech
+def test_archive_with_sidecar_five_checks(tmp_path):
+    """态 A：源**有**伴生 .gen.json ⇒ 归档四件（含认证 sidecar）。
+
+    核①名称 ②旧版内容 ③归档位置 ④保留份数 ⑤两次成功。
+    """
+    target, r1, r2, first = _deploy_twice_capture(tmp_path, TECH_SRC)
+    _assert_two_runs_ok(r1, r2)                           # ⑤
+
+    v001 = target / "_archive" / "v001"
+    assert v001.is_dir()                                  # ③ 归档位置
+
+    names = sorted(q.name for q in v001.iterdir() if q.is_file())
+    assert names == sorted(["tech_etf_mvo_rotation_trade.py",      # ① 逐名集合，不数总数
+                            "tech_etf_mvo_rotation_trade.py.gen.json",
+                            "report.md",
+                            "runbook.md"]), names
+
+    # ② 归档的是**上一版**内容（与第一次 deploy 产物逐位同 sha）
+    arch_prod = v001 / "tech_etf_mvo_rotation_trade.py"
+    assert arch_prod.is_file()
+    assert _sha(arch_prod) == first["tech_etf_mvo_rotation_trade.py"]
+    # 附注（可选核，用户 2026-11-12 小注）：report/runbook 各核一件
+    for extra in ("report.md", "runbook.md"):
+        assert _sha(v001 / extra) == first[extra], extra
+
+    # ③ 归档后 out_dir 根下只余本次产物（同样含 sidecar）
+    root_now = sorted(q.name for q in target.iterdir() if q.is_file())
+    assert root_now == names, root_now
+
+    # ④ keep_versions=None ⇒ 不限份数（第三次 deploy 后 v001/v002 并存）
+    run_deploy(str(tmp_path / "c.yaml"))
+    arch = target / "_archive"
+    assert (arch / "v001").is_dir() and (arch / "v002").is_dir()
+
+
+@_needs_tech
+def test_archive_without_sidecar_five_checks(tmp_path):
+    """态 B：源**无**伴生 .gen.json ⇒ 归档三件（不得出现 .gen.json）。
+
+    构造：把源复制到 tmp（不复制伴生 .gen.json）——sidecar 写入条件见
+    deliver.py「_gen_src.is_file() 才写」，故无伴生件即不产 sidecar。
+    """
+    src = tmp_path / "no_gen_src.py"
+    src.write_text(TECH_SRC.read_text(encoding="utf-8"), encoding="utf-8")
+    assert not Path(str(src) + ".gen.json").exists()
+
+    target, r1, r2, first = _deploy_twice_capture(tmp_path, src)
+    _assert_two_runs_ok(r1, r2)                           # ⑤
+
+    v001 = target / "_archive" / "v001"
+    assert v001.is_dir()                                  # ③
+
+    names = sorted(q.name for q in v001.iterdir() if q.is_file())
+    assert names == sorted(["tech_etf_mvo_rotation_trade.py",     # ① 三件，无 gen.json
+                            "report.md",
+                            "runbook.md"]), names
+    assert not any(n.endswith(".gen.json") for n in names), names
+
+    # ② 旧版内容 sha 一致
+    assert _sha(v001 / "tech_etf_mvo_rotation_trade.py") == \
+        first["tech_etf_mvo_rotation_trade.py"]
+
+    # ③ 根下只余本次产物
+    assert sorted(q.name for q in target.iterdir() if q.is_file()) == names
+
+
 @_needs_tech
 def test_archive_default_unlimited(tmp_path):
+    """默认 keep_versions=None ⇒ 不限份数（保留原语义，断言按名而非数总数）。"""
     target = _run_twice(tmp_path)
     v001 = target / "_archive" / "v001"
     assert v001.is_dir()
-    assert len(list(v001.iterdir())) == 3          # product/report/runbook
+    assert len(list(v001.iterdir())) >= 3          # product/report/runbook（+ 可能 sidecar）
 
 
 def test_keep_versions_zero_disables_archive(tmp_path):
