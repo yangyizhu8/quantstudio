@@ -1,5 +1,6 @@
 # 写时锚 sidecar · 修订规格 v3（2026-11-12 · 节点21）
 ## —— 合并 ⑱R68 证伪（delivery 第二锚降级）＋ 存量段 legacy_unverified ＋ 消费方判定矩阵接口
+### 含 v3.1 补审（23:3x）：消费路径矩阵（配置直证）＋ 四项补审（版本溯源／段替换／键集与摘要／提交可见性）
 
 > **版本关系**：v1（撤回免 schema 闸断言）→ v2（逐条答⑱五问：溯源三元组／双 stage／批次清单／段级 MVCC／两阶段恢复）
 > → **v3（本件）**。**v2 仍为有效基线**，本件只对其**做三处增量修订**并列出受影响判据；
@@ -159,3 +160,133 @@ v2 判据 9 原写：「active 段并集 ∪ 回补缺口清零 ⇔ 分钟表全
 
 **结论**：v3 完成 R20 五问的**增量修订**（问1 不涉；问2 降级；问3/4/5 沿用并加严计数口径），
 并入 R21 两项输入。**未经②审不得视为规格定稿**；**11-14 不是实施令**。
+
+---
+
+# v3.1 补审（2026-11-12 23:3x · 应总调度本轮指示）
+
+> **总调度纠偏原文**：「sidecar 修订补消费路径矩阵，明确 QuestDB 源端、DuckDB 主库及镜像分别供谁消费，
+> **以实际配置验证第二锚需求。无表／陈旧不独立证明无路由。**」
+> **接受纠偏**：v3 §1.1 用「镜像陈旧／无表 ⇒ 消费方读源端」作推论，**属间接证据，不足以证明路由**。
+> 本节改以**配置直证**重建矩阵，并把举证责任按域划清。**不撤回 v3 结论，但降级其证据强度表述。**
+
+## 七、消费路径矩阵（配置直证）
+
+### 7.1 实测证据（全部来自仓内配置原件，路径与字段可回读）
+
+| # | 存储 | 供给方 | 实际消费方 | 配置证据（原文） |
+|---|---|---|---|---|
+| 1 | **QuestDB 源端**（`https://124.223.159.234/mcp`，109 表） | MCP server（**只读返回**） | QuantStudio 采集 daemon（经 MCP 客户端）；外部研究线（AQ-DW 等） | `config/profiles/mcp_only/sources_config.json`：`"upstream_authority": "mcp"`；`"_note": 全项目唯一权威源 = MCP …… 非 MCP 源（xtquant/tushare/baostock/akshare/a_stock_data）已全部停用并从配置移除`；`"enable_qfq_injection": true`、`"landing_subdir": "mcp_landing"` |
+| 2 | **DuckDB 主库** `data/quantstudio.db` | **QuantStudio 客户端**（`write_rule: MCP server 只读返回; 本地写库由 QuantStudio 客户端负责`） | 回测引擎 / GUI / 交付面 | `config/profiles/mcp_only/data_config.json`：`"type":"duckdb","path":"data/quantstudio.db"`，`upsert幂等`；`config/mcp_dataset_requirements.json` → `client_side_contract.write_rule` |
+| 3 | **镜像 `agent_quant.db`** | 未在本仓发现 | 未在本仓发现 | **本仓 `config/**`（含 22 个 json）、`quantstudio/**`、`scripts/**`、TBB `data/**` 全文检索 `agent_quant`：0 命中**（实测 grep，2026-11-12 23:2x） |
+| 4 | **delivery 面**（DuckDB `*_front`） | QuantStudio `aligner` | 交付包消费方 | **`config/delivery_config.json`：`export_dir` 与 `import_dir` 均为空串** ⇒ 交付通道**当前无实际路由配置** |
+
+### 7.2 复权口径直证（决定 sidecar 落点的那一条）
+
+`config/mcp_dataset_requirements.json` → `client_side_contract`：
+
+- `adj_rule`：**`adjusted_price = raw_price * adj_factor`**；
+- **`禁止信任云端 open_back/close_back 前端复权列`**；
+- `adj_policy`（Q1–Q4 全表）：**`raw + adj_factor (客户端复权)`**。
+
+⇒ **源端只承载 raw + 因子，复权在客户端发生** ⇒ 「写时锚」的**产生点**在源端写入路径（㉑域，TBB 五路径），
+**不在** delivery 面。这一条是**配置直证**（非推断），也是 v3 判据 12 降级的**真正依据**——此前 v3 的依据（镜像陈旧）退回为旁证。
+
+### 7.3 结论与举证责任划分（回应「无表／陈旧不独立证明无路由」）
+
+1. **本仓侧活跃路由仅两条**：`MCP → QuestDB 源端（只读）`、`客户端 → DuckDB 主库（写）`；交付通道**已存在但未配置**。
+2. **镜像不在本仓任何路由内**——但**「不在本仓路由内」≠「全域无路由」**。镜像若被 AQ-DW 侧读取，
+   其证据**只能由 AQ-DW 以其自身配置举证**（⑱ 域）。**本线不越域断言。**
+3. **第二锚需求不由本线单方宣布降级成立**：v3 §1.2 的「降级为按消费方判定矩阵处理」**维持为提案**，
+   其成立条件＝⑱ 交付矩阵时一并给出 **AQ-DW 侧实际配置证据**（读路径字段，而非「镜像无表」这类间接迹象）。
+4. **最严默认不变**（v3 §2.4）：矩阵到位前，一切消费方按 `anchor_required ∧ strict` 处理。
+
+### 7.4 附带发现：配置漂移（登记，不擅改）
+
+`config/mcp_dataset_requirements.json` 中 Q1–Q4 的 `"authority"` 仍写 **`"xtquant"`**，
+与 `sources_config.json`「非 MCP 源已全部停用」**直接冲突**；该件自述为 `schema_version: 1.0-draft`、
+`baseline_commit: da2dace` 的 round1 草案。
+⇒ **登记为配置漂移**，须其维护方更新后再作为路由判据引用；**本线不改他域名配置**。
+（本轮所有矩阵结论均**未引用**该 `authority` 字段，仅引用其 `adj_rule`／`adj_policy`／`write_rule`。）
+
+## 八、四项补审（按指示：版本溯源／段替换／实际键集与内容摘要／提交可见性）
+
+### 8.1 版本溯源 —— 发现 v2 的**关键缺口**：`factor_asof` 不可复现
+
+**缺口**：`factor_asof` 记的是因子记录自身的 `trade_date`，但**上游 Tushare 会 retroactive 重写全历史 `adj_factor`**
+（`get_tushare_data.py` L7230-7236 注释明载此机理，且它正是「尺度断层」成因）。
+⇒ 同一 `(ts_code, factor_asof)` 在不同**观测时刻**可能取到**不同值** ⇒ **只记 asof 无法复现 `a_write`**。
+
+**修订（新增 2 字段）**：
+
+| 字段 | 类型 | 语义 |
+|---|---|---|
+| `factor_observed_at` | TIMESTAMP | 该 `a_write` 值的**观测时刻**（本批取因子动作发生的时刻），与 `factor_asof` 分列 |
+| `factor_probe` | TEXT | **可机检溯源探针**：`sha256(factor_source｜factor_asof｜adj_factor值｜count(*)｜query_sha256[:16])[:16]` |
+
+⇒ `factor_version`（v2 的文本字段）**降级为展示用**，**判据只认 `factor_probe`**（文本不可机检、无法判定「同版本」）。
+**验收增补**：构造「同 asof 两值」夹具（模拟 retroactive 改写）⇒ 两批 `factor_probe` 必须不同，且 `factor_observed_at` 递增。
+
+### 8.2 段替换 —— 发现 v2 的**真缺陷**：`seg_id` 缺 `anchor_end`，切分后 id 与区间不再一一对应
+
+**缺陷**：v2 定义 `seg_id = sha256(ts_code|freq|anchor_start|write_batch_id)[:16]`。
+部分覆盖切分时，**保留侧**的 `anchor_start` 与 `write_batch_id` **均不变**，但 `anchor_end` **被裁剪**
+⇒ **同一个 `seg_id` 先后对应两个不同区间** ⇒ 历史对账、`superseded_by` 解析、重放定位**全部会串**。
+
+**修订**：
+
+1. `seg_lineage_id = sha256(ts_code|freq|write_batch_id|原 anchor_start|原 anchor_end)[:16]`——**批次落库时一次性定死，永不因切分而变**（血统锚）。
+2. `seg_id = sha256(seg_lineage_id|anchor_start|anchor_end|seg_version)[:16]`——**版本锚**，切分/重写后必然新值。
+3. 切分产生的保留侧与失效侧**共享同一 `seg_lineage_id`**、各持不同 `seg_id`；
+   `superseded_by` **只指 `seg_id`**（版本级），血统级关系由 `seg_lineage_id` 直接可查。
+4. **链式终止解析**：`superseded_by` 可链式（B 被 C 覆盖）⇒ 消费方解析「当前可见」须**沿链到尾**并做**环检测**（链长上限如 64，超限报错），
+   禁止只跟一跳（跟一跳会读到已被再次覆盖的中间态）。
+5. `tombstone` 使用规则（v2 只列枚举未给规则）：**仅用于「整段因标的下市/数据下架而清除」**；
+   tombstone 段**保留 `a_write` 与 `anchor_*` 作历史**，`seg_state='tombstone'` 且 `superseded_by=NULL`（不指向任何后继）。
+
+### 8.3 实际键集与内容摘要 —— 单摘要不足以证明「实际键集」
+
+**缺口**：v2 批次表只有 `key_lo/key_hi + n_bars + content_sha256`。
+区间端点＋行数**不能排除区间内空洞**（停牌半日、分片漏写），即「实际键集」未被证明。
+
+**修订（新增 2 字段）**：
+
+| 字段 | 语义 |
+|---|---|
+| `key_sha256` | **键序化键串**（仅键列 `ts_code,freq,bar_time`，行间 `\n`）的 sha256——与内容摘要**并列**，独立校验键集 |
+| `key_gaps` | 本批区间内**应有 bar 数 − 实际键数**（停牌/半日/无成交的可解释缺口计数；非零须附理由分类） |
+
+**规范化单一事实源（重要）**：`content_sha256` 的规范化串（列序固定、浮点 `round(6)`、NULL 记 `|N|`）
+**必须与 §七之五 全量黄金工具（`scripts/golden_fingerprint.py`）共用同一实现**。
+否则会出现「sidecar 声称重放逐位一致、黄金工具给出不同摘要」的**双口径分叉**，且两边各自自洽、极难定位。
+⇒ 落点：抽出 `qfq_serialize.py`（单一函数），sidecar 与 golden 工具**同时 import**，禁各自复制实现。
+
+### 8.4 提交可见性 —— 必须**表层保证**，不能只靠消费方 join 约定
+
+**缺口**：v2 写「段表只对 `committed` 批可见（**消费方 join 批次表过滤**）」。这是**约定**，不是**保证**：
+现存/将来的任意 SQL 直查基表即可读到 `pending` 批的段；且 QuestDB 的可见性以 **commit** 为单位，
+若批次行与业务行**分两次 commit**，中间态对读者可见。
+
+**修订**：
+
+1. **视图强制**：建 `qfq_anchor_sidecar_v`（内含 `join batches where state='committed' and seg_state in ('active')`），
+   **对外只公开视图**；基表名加受限前缀/文档标注「禁直读」，并在消费方契约中写明「只读视图」。
+   判据 13 增一例：**直读基表须被评审拒绝**（代码评审规则，非运行期闸）。
+2. **commit 粒度**：`pending` 批次行与业务行**同批 commit**；段行与 `state='committed'` 更新**同批 commit**。
+   ⇒ 任一时刻读者只可能看到「业务行无锚」或「业务行有 committed 锚」，**不可能**看到「锚指向未完成批」。
+3. **可见性判据（可机检）**：构造两阶段夹具，在 `pending` 提交后、`committed` 提交前读取视图 ⇒ 该批段**必须不可见**；
+   `committed` 后 ⇒ 可见且 `seg_state='active'`。此条并入判据 11（部分失败恢复）。
+
+## 九、v3.1 申报
+
+| # | 项 | 状态 |
+|---|---|---|
+| D-1 | 消费方判定矩阵（含 AQ-DW 侧**实际配置证据**） | **仍未到手**；v3 §1.2 降级维持为提案，不单方成立 |
+| D-2 | 存量段规模 | 候 census 11-13 09:00 |
+| D-3 | 判据 12 降级 | 候②审 |
+| D-4 | 源端读数时效 | 已标时刻，实施前重取 |
+| **D-5（新）** | **`config/mcp_dataset_requirements.json` 的 `authority` 与 `sources_config` 冲突** | 登记漂移，本线不改他域配置 |
+| **D-6（新）** | 四项补审均**只出规格与判据**，**零实施**（v2 五条写入路径未改一行） | 如实申报 |
+
+**边界重申**：本轮**未**读 AQ-DW 侧配置（不在本仓、不在本线授权域），故**未**对镜像路由下任何全域结论。
+**11-14 仍仅条件排队，非实施许可**；本轮指示亦**不构成**实施许可。
