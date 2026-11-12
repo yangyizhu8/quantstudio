@@ -481,3 +481,4 @@ exit=3
 **唯一未绿项**：采集轮质量审计 **33**（⑳/A 类域，非我方域；收官时须如实标注）。
 | 2026-11-11 07:31:03 | FATAL 命中 0（扫 60 日志）｜ WAL 0.87 MB ｜ 版本门 PASS 1.5.6 ｜ daemon pid 36372(forever) ｜ 采集轮质量审计失败 24 ｜ 判据 daemon_absence_excused=✗ daemon_alive=✓ fatal_zero=✓ gate_pass_1_5_6=✓ no_declaration_mismatch=✓ no_qa_failure=✗ once_running=✗ wal_under_256mb=✓ ｜ **FAIL** |
 | 2026-11-12 07:31:01 | FATAL 命中 0（扫 60 日志）｜ WAL 1.44 MB ｜ 版本门 PASS 1.5.6 ｜ daemon pid 35108(forever) ｜ 采集轮质量审计失败 16 ｜ 判据 daemon_absence_excused=✗ daemon_alive=✓ fatal_zero=✓ gate_pass_1_5_6=✓ no_declaration_mismatch=✓ no_qa_failure=✗ once_running=✗ wal_under_256mb=✓ ｜ **FAIL** |
+| 2026-11-13 07:31:02 | FATAL 命中 0（扫 60 日志）｜ WAL 0.0 MB ｜ 版本门 PASS 1.5.6 ｜ daemon pid 53244(forever) ｜ 采集轮质量审计失败 11 ｜ 判据 daemon_absence_excused=✗ daemon_alive=✓ fatal_zero=✓ gate_pass_1_5_6=✓ no_declaration_mismatch=✓ no_qa_failure=✗ once_running=✗ wal_under_256mb=✓ ｜ **FAIL** |
