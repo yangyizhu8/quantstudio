@@ -213,10 +213,47 @@ $b = [System.IO.File]::ReadAllBytes('scripts\check_daemon_alive.ps1'); "首3字�
 | 差异面 | `git diff --stat` | **仅 1 文件 +5/−1**（唯一 catch 段） |
 | 生产侧影响 | `occupancy=false` 合法 | **零影响**（catch 分支不触发） |
 
-## 四.4 回退（已备）
+## 四.4 回退（2026-11-13 00:57 纠正）
 
+> **纠正记录**：原文写 `git checkout HEAD -- scripts/check_daemon_alive.ps1` —— **错误**。
+> 修复提交（`2eff4d9`）之后 HEAD 已含新版本，该命令取回的是**修复后**文件（sha256 `26D762D5…`），
+> **不构成回退**。审核方 2026-11-13 指出，现改为「固定 blob / 父提交 + 原 SHA 对拍」。
+
+| 项 | 值 |
+|---|---|
+| 写前 HEAD | `38d8202`（= 修复提交的父提交 `db613e03` 之后、`2eff4d9` 之前） |
+| **原 blob** | `c784e6bda919901fa07c65fbd016cb1c413b789a` |
+| 原 sha256 | `4D1434F2383F6CFBE6AC2E365A025DA76596FB6020D381713C31822D336C39C3` |
+| 原大小 | 31419 B / 577 行 |
+
+**三条正确配方（均按路径定向）**：
 ```powershell
-# 写前锚：docs/handoff/anchor-daemon-alive-20261112235837.txt
-#   HEAD=38d8202  原文件 sha256=4D1434F2383F6CFBE6AC2E365A025DA76596FB6020D381713C31822D336C39C3
-git checkout HEAD -- scripts/check_daemon_alive.ps1
+# A) 按固定提交取回（推荐，最直观）
+git checkout 38d8202 -- scripts/check_daemon_alive.ps1
+# B) 按 blob 直取（不受提交图变化影响，最稳）
+git cat-file blob c784e6bda919901fa07c65fbd016cb1c413b789a > scripts/check_daemon_alive.ps1
+# C) 组合式
+git restore --source=38d8202 --worktree -- scripts/check_daemon_alive.ps1
 ```
+
+**建后立验（三项，缺一即视同无回退点）**：
+```powershell
+(Get-FileHash scripts\check_daemon_alive.ps1 -Algorithm SHA256).Hash
+#   == 4D1434F2383F6CFBE6AC2E365A025DA76596FB6020D381713C31822D336C39C3
+$null=[System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path scripts\check_daemon_alive.ps1).Path,[ref]$null,[ref]$e); $e  # 须为空
+$b=[System.IO.File]::ReadAllBytes('scripts\check_daemon_alive.ps1'); $b[0..2] -join ','   # 239,187,191
+```
+
+> **本轮实测**：按 B 配方导出 `38d8202:file` 副本 → sha256 **与锚内值逐位一致**；未对生产执行回退（未经授权）。
+
+## 四.5 H3 归因边界（2026-11-13 收回过度推断）
+
+我在 20261113-R1 上报中写「WARN 自愈 ⇒ **进一步支持**『长阶段静默』归因，但**仍不构成未挂死充分证明**」——
+**前半句属过度推断，现收回**。
+
+**正确的表述**：
+- `00:00:37 verdict=OK` + `daemon.log` mtime 更新 ⇒ **只证明「该时刻之后 daemon 重新推进」**；
+- 它**不能倒推** 22:28–00:00 期间先前到底发生了什么（长阶段计算 / 忙循环 / 部分卡顿后自恢复，三者观测等价）；
+- 因此对 H3 WARN 的归因应保持「**未知**」，不得以事后恢复为据回填根因。
+
+**推论**：H3 的「假阳性/假阴性双重风险」结论不变，且**无法用事后现象区分**——这正是它必须作为「能力边界」入 24h 汇总、而非「已证实无害」的理由。

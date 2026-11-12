@@ -1,6 +1,32 @@
-﻿写前锚 · scripts/check_daemon_alive.ps1
+写前锚 · scripts/check_daemon_alive.ps1
 时间: 2026-11-12 23:58:37
-HEAD: 38d8202efd76e070bdd108cb3cc00e50965cbdb9
+HEAD: 38d8202
 sha256: 4D1434F2383F6CFBE6AC2E365A025DA76596FB6020D381713C31822D336C39C3
 行数: 577
-回退: git checkout -- scripts\check_daemon_alive.ps1  （或 git show 38d8202efd76e070bdd108cb3cc00e50965cbdb9:scripts/check_daemon_alive.ps1 > 文件）
+大小: 31419 B
+
+【回退 · 2026-11-13 00:57 纠正】
+原写 "git checkout HEAD -- scripts/check_daemon_alive.ps1" —— 无效：
+修复提交 2eff4d9 之后 HEAD 已含新版本（sha256 26D762D5...），该命令取回的是修复版，不构成回退。
+
+固定锚点：
+  写前 HEAD     = 38d8202
+  原 blob hash  = c784e6bda919901fa07c65fbd016cb1c413b789a
+                 (git rev-parse 38d8202:scripts/check_daemon_alive.ps1)
+  原 sha256     = 4D1434F2383F6CFBE6AC2E365A025DA76596FB6020D381713C31822D336C39C3
+  原大小/行数   = 31419 B / 577 行
+
+三条正确配方（均按路径定向，任选其一）：
+  A) git checkout 38d8202 -- scripts/check_daemon_alive.ps1
+  B) git cat-file blob c784e6bda919901fa07c65fbd016cb1c413b789a > scripts/check_daemon_alive.ps1
+     （Windows 下经 cmd 重定向，或 git restore --source 变体）
+  C) git restore --source=38d8202 --worktree -- scripts/check_daemon_alive.ps1
+
+建后立验（三项，缺一即视同无回退点）：
+  ① (Get-FileHash scripts\check_daemon_alive.ps1 -Algorithm SHA256).Hash
+     == 4D1434F2383F6CFBE6AC2E365A025DA76596FB6020D381713C31822D336C39C3
+  ② [System.Management.Automation.Language.Parser]::ParseFile(...) 错误集为空（PARSE OK）
+  ③ 首 3 字节 == 239,187,191（UTF-8 BOM）
+
+本轮实测（2026-11-13 00:57）：按 B 导出 38d8202:file 到临时文件，sha256 与锚内值逐位一致；
+未对生产执行回退（未经授权，不执行）。
