@@ -295,6 +295,11 @@ if _QS_ISO_ENABLED:
         return _oid
 
     _QSOrderRefState.order_orig = _qs_iso_order_orig
+    # PD-2026-0020 §12 期1 R-20261112-07（裁甲）：把隔离侧的额度读数与台账记账
+    # 挂到 _QSClampHooks 的 class 属性上（第一跳的 _qs_budget_clamp / _qs_ledger_release
+    # 按属性调用——避免「变量持函数引用后调用」被 LOCAL-API-WHITELIST BLOCK）。
+    _QSClampHooks.iso_avail = _qs_iso_cash_avail
+    _QSClampHooks.iso_fill = _qs_iso_record_fill
     # PD-2026-0020 §12 期1 F2 简化条件（②审 c 项 B5）：隔离下「金额版调用面」检测。
     # 金额/比例语义（order_target_value / order_value / order_target_percent）内部依赖
     # **真实持仓 delta**，而隔离下虚拟 pos 仅作对照（不参与决策）⇒ 一旦策略走这些入口，

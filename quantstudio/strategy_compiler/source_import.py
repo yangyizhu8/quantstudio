@@ -879,6 +879,16 @@ class _QSOrderRefState:
 _QSOrderRefState.target_orig = order_target_value
 _QSOrderRefState.order_orig = order
 _QSOrderRefState.value_orig = order_value
+
+# PD-2026-0020 §12 期1 R-20261112-07（裁甲）：隔离侧「额度读数 / 台账记账」的挂载点。
+# 与 _QSOrderRefState 同法——**class 属性承载**：平台静态白名单识别 class 语句，
+# 而「变量持函数引用后调用」会被 LOCAL-API-WHITELIST BLOCK（2026-08-22 平台实证；
+# 2026-11-12 我方 a-2/B3 实现用 globals().get(...)() 又踩了一次 ⇒ 补转产物
+# [BLOCK] calls unknown API '_get_avail' / '_iso_fill'）。
+# 非隔离产物：两属性恒为 None ⇒ 调用方走「无隔离」分支；隔离 TAIL 负责赋值。
+class _QSClampHooks:
+    iso_avail = None   # 隔离：() -> 虚拟可用额度
+    iso_fill = None    # 隔离：(security, amount, px) -> 记账
 # D4-S7（2026-08-27 平台冒烟取证）：percent API 按策略使用裁剪注入——未注入时
 # 赋值引用不存在的名字（NameError，产物加载即崩）。防御式绑定（存在才绑，否则 None）。
 try:
@@ -1346,9 +1356,9 @@ def _qs_ledger_release(security, amount, px=None, record_iso=True):
     # ① 隔离台账记账（在位才调）
     if record_iso:
         try:
-            _iso_fill = globals().get('_qs_iso_record_fill')
-            if _iso_fill is not None:
-                _iso_fill(security, amount, px)
+            # R-20261112-07 裁甲：属性承载（不用 globals().get 持引用——会被白名单 BLOCK）
+            if _QSClampHooks.iso_fill is not None:
+                _QSClampHooks.iso_fill(security, amount, px)
         except Exception:
             pass
     # ② 通用账本释放——仅卖出（amount < 0）
@@ -1555,10 +1565,10 @@ def _qs_budget_clamp(security, amount):
             return _no
         if not globals().get('_QS_ISO_ENABLED'):
             return _no
-        _get_avail = globals().get('_qs_iso_cash_avail')
-        if _get_avail is None:
+        # R-20261112-07 裁甲：属性承载（globals().get 持引用会被白名单 BLOCK）
+        if _QSClampHooks.iso_avail is None:
             return _no
-        avail = float(_get_avail())
+        avail = float(_QSClampHooks.iso_avail())
         px = _qs_px_exec(security)
         if px is None or px <= 0:
             try:
