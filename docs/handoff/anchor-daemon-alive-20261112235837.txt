@@ -1,32 +1,35 @@
 写前锚 · scripts/check_daemon_alive.ps1
 时间: 2026-11-12 23:58:37
-HEAD: 38d8202
-sha256: 4D1434F2383F6CFBE6AC2E365A025DA76596FB6020D381713C31822D336C39C3
-行数: 577
-大小: 31419 B
+写前 HEAD: 38d8202
+原 blob:   c784e6bda919901fa07c65fbd016cb1c413b789a
+原 sha256: 4D1434F2383F6CFBE6AC2E365A025DA76596FB6020D381713C31822D336C39C3
+原大小/行数: 31419 B / 577 行
 
-【回退 · 2026-11-13 00:57 纠正】
-原写 "git checkout HEAD -- scripts/check_daemon_alive.ps1" —— 无效：
-修复提交 2eff4d9 之后 HEAD 已含新版本（sha256 26D762D5...），该命令取回的是修复版，不构成回退。
+【回退配方 · 2026-11-13 02:25 第二次修正（审核 R2）】
+━━ 导线：PowerShell 5.1 的 `>` 是文本重定向，不能导出原字节 ━━
+  实测（blob c784e6bd…，原 31419 B / sha 4D1434F2…）：
+    PS 内  git cat-file blob <blob> > file        ⇒ 51060 B, 头 4 字节 255,254,35,0（UTF-16LE）  ❌
+    cmd /c "git cat-file blob <blob> > file"      ⇒ 31419 B, sha 4D1434F2…                    ✅
+    ps     git cat-file blob <blob> | Set-Content -Encoding Byte  ⇒ 失败                     ❌
+  ⇒ 任何「原字节导出」禁用 PS 的 > 与 Set-Content -Encoding Byte。
 
-固定锚点：
-  写前 HEAD     = 38d8202
-  原 blob hash  = c784e6bda919901fa07c65fbd016cb1c413b789a
-                 (git rev-parse 38d8202:scripts/check_daemon_alive.ps1)
-  原 sha256     = 4D1434F2383F6CFBE6AC2E365A025DA76596FB6020D381713C31822D336C39C3
-  原大小/行数   = 31419 B / 577 行
+━━ 三条配方（按安全性排序）━━
+B（取证首选，完全不碰仓库）：
+   & cmd /c "git cat-file blob c784e6bda919901fa07c65fbd016cb1c413b789a > `"%TEMP%\orig.ps1`""
+   然后只对 %TEMP%\orig.ps1 核 SHA / Parse / BOM
 
-三条正确配方（均按路径定向，任选其一）：
-  A) git checkout 38d8202 -- scripts/check_daemon_alive.ps1
-  B) git cat-file blob c784e6bda919901fa07c65fbd016cb1c413b789a > scripts/check_daemon_alive.ps1
-     （Windows 下经 cmd 重定向，或 git restore --source 变体）
-  C) git restore --source=38d8202 --worktree -- scripts/check_daemon_alive.ps1
+A（工作树临时取回，只改工作区不动 index）：
+   git restore --source=38d8202 --worktree -- scripts/check_daemon_alive.ps1
 
-建后立验（三项，缺一即视同无回退点）：
-  ① (Get-FileHash scripts\check_daemon_alive.ps1 -Algorithm SHA256).Hash
-     == 4D1434F2383F6CFBE6AC2E365A025DA76596FB6020D381713C31822D336C39C3
-  ② [System.Management.Automation.Language.Parser]::ParseFile(...) 错误集为空（PARSE OK）
-  ③ 首 3 字节 == 239,187,191（UTF-8 BOM）
+C（会改 index，非无条件推荐）：
+   git checkout 38d8202 -- scripts/check_daemon_alive.ps1
+   ⇒ 实测 index 条目会被一并写成 38d8202 版本；若在共享工作区执行，
+     会把他线正在准备的 index 状态搅乱。用前须声明并做 B5 检查。
 
-本轮实测（2026-11-13 00:57）：按 B 导出 38d8202:file 到临时文件，sha256 与锚内值逐位一致；
-未对生产执行回退（未经授权，不执行）。
+━━ 工作树实际恢复前的前置（缺一不得执行）━━
+① 明确授权（未经批准不执行）
+② B5 检查：git status --porcelain -- <path> 若显示「他线也在改同一文件」⇒ 停手上呈
+   （铁律 03 B5：同文件混两方改动 ⇒ 停手）
+③ 恢复后建后立验三项：sha256 == 4D1434F2… / Parser::ParseFile 空错 / 首 3 字节 239,187,191
+
+本轮实测：仅做了 B（取证），未对生产工作树执行 A/C。

@@ -213,38 +213,35 @@ $b = [System.IO.File]::ReadAllBytes('scripts\check_daemon_alive.ps1'); "首3字�
 | 差异面 | `git diff --stat` | **仅 1 文件 +5/−1**（唯一 catch 段） |
 | 生产侧影响 | `occupancy=false` 合法 | **零影响**（catch 分支不触发） |
 
-## 四.4 回退（2026-11-13 00:57 纠正）
+## 四.4 回退（2026-11-13 02:25 二次修正 · 采纳 R2 审核）
 
-> **纠正记录**：原文写 `git checkout HEAD -- scripts/check_daemon_alive.ps1` —— **错误**。
-> 修复提交（`2eff4d9`）之后 HEAD 已含新版本，该命令取回的是**修复后**文件（sha256 `26D762D5…`），
-> **不构成回退**。审核方 2026-11-13 指出，现改为「固定 blob / 父提交 + 原 SHA 对拍」。
+> **第一次修正**（00:57）：`git checkout HEAD --` 无效（HEAD 已含修复）。
+> **第二次修正**（02:25）：配方 B 的 `>` 写法在 PS 5.1 下**会文本转码**，不可用于原字节导出；
+> 且 `git checkout <提交> -- <path>` **会改 index**，不无条件推荐。
 
-| 项 | 值 |
-|---|---|
-| 写前 HEAD | `38d8202`（= 修复提交的父提交 `db613e03` 之后、`2eff4d9` 之前） |
-| **原 blob** | `c784e6bda919901fa07c65fbd016cb1c413b789a` |
-| 原 sha256 | `4D1434F2383F6CFBE6AC2E365A025DA76596FB6020D381713C31822D336C39C3` |
-| 原大小 | 31419 B / 577 行 |
+### 导线实证（blob `c784e6bd…`，原 31419 B）
 
-**三条正确配方（均按路径定向）**：
-```powershell
-# A) 按固定提交取回（推荐，最直观）
-git checkout 38d8202 -- scripts/check_daemon_alive.ps1
-# B) 按 blob 直取（不受提交图变化影响，最稳）
-git cat-file blob c784e6bda919901fa07c65fbd016cb1c413b789a > scripts/check_daemon_alive.ps1
-# C) 组合式
-git restore --source=38d8202 --worktree -- scripts/check_daemon_alive.ps1
-```
+| 写法 | 结果 | 判定 |
+|---|---|---|
+| PS：`git cat-file blob <blob> > f` | **51060 B**，头 4 字节 `255,254,35,0`（UTF-16LE BOM） | ❌ **转码** |
+| `cmd /c "git cat-file blob <blob> > f"` | **31419 B**，sha `4D1434F2…` | ✅ 原字节 |
+| PS：`... | Set-Content -Encoding Byte` | 失败 | ❌ 不可用 |
 
-**建后立验（三项，缺一即视同无回退点）**：
-```powershell
-(Get-FileHash scripts\check_daemon_alive.ps1 -Algorithm SHA256).Hash
-#   == 4D1434F2383F6CFBE6AC2E365A025DA76596FB6020D381713C31822D336C39C3
-$null=[System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path scripts\check_daemon_alive.ps1).Path,[ref]$null,[ref]$e); $e  # 须为空
-$b=[System.IO.File]::ReadAllBytes('scripts\check_daemon_alive.ps1'); $b[0..2] -join ','   # 239,187,191
-```
+### 三条配方（按安全性排序）
 
-> **本轮实测**：按 B 配方导出 `38d8202:file` 副本 → sha256 **与锚内值逐位一致**；未对生产执行回退（未经授权）。
+| 配方 | 命令 | 影响面 | 适用 |
+|---|---|---|---|
+| **B（取证首选）** | `cmd /c "git cat-file blob <blob> > <tmp>"` | **完全不碰仓库** | 只需对比/核证时 |
+| **A（工作树临时取回）** | `git restore --source=38d8202 --worktree -- <path>` | **只改工作区，不动 index** | 需临时把工作树置回原版时 |
+| **C（会改 index）** | `git checkout 38d8202 -- <path>` | **同时更新 index**（实测） | **不无条件推荐**；用前须声明 |
+
+### 工作树实际恢复的三项前置（缺一不得执行）
+
+1. **明确授权**（本轮未获授权 ⇒ 未执行 A/C）
+2. **B5 检查**：`git status --porcelain -- <path>` 若显示他线也在改同一文件 ⇒ **停手上呈**（铁律 03 B5）
+3. 恢复后**建后立验**：sha256 `4D1434F2…` / `Parser::ParseFile` 空错 / 首 3 字节 `239,187,191`
+
+> 本轮实测仅执行 B（只读取证）。
 
 ## 四.5 H3 归因边界（2026-11-13 收回过度推断）
 
