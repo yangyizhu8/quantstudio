@@ -1,14 +1,52 @@
 {
-  "generated_at": "2026-11-13T00:00:00+08:00",
-  "git_head": "0f136dd",
+  "meta": {
+    "generated_at_measured": "2026-11-12T23:56:36+08:00",
+    "generated_by": "scripts-less temp script v9_scope_recon v2",
+    "time_source": "datetime.now(CST) —— 运行时实测，无预填",
+    "corrects": "R11 ③：上一版 generated_at 为手填 2026-11-13T00:00:00（假时间），本版改为实测"
+  },
+  "baseline_at_measure": {
+    "git_head": "ea04b76",
+    "git_head_subject": "test(settle): 补接线级回退红闸 + V9 路径集合对账（R10 四条纠正）",
+    "worktree_dirty": true,
+    "dirty_total": 907,
+    "dirty_ours": [],
+    "dirty_others_count": 907,
+    "dirty_others_sample": [
+      "gitignore",
+      "agent_workspace/dividend_defense_smallcap_5d/r0_review_ledger.json",
+      "agent_workspace/low_turnover_tail_premium/workspace_state.json",
+      "config/profiles/mcp_only/collector_tasks.json",
+      "config/profiles/mcp_only/sources_config.json",
+      "docs/AGENT-PRESET-dev-optimizer.md",
+      "docs/evidence/ptrade-pctchg-synth-evidence.md",
+      "docs/evidence/qfq-post-ingest-nplus1-20260927-a-acceptance.md",
+      "docs/evidence/st-path-coverage-acceptance-20261011.md",
+      "docs/evidence/upstream-failure-observation-20261012.md",
+      "docs/handoff/baseline_20260821_0040_dispatch.md",
+      "docs/handoff/dispatch-graph.md",
+      "docs/handoff/lessons-dev-line.md",
+      "docs/minutes-backfill-plan-v1.1.md",
+      "docs/portfolio-live-cash-design.md"
+    ],
+    "python": "3.11.9",
+    "duckdb": "1.5.6",
+    "pandas": "2.3.3"
+  },
   "counts": {
-    "全库_test_files": 398,
-    "全库_untracked": 2,
-    "相关引用": 41,
-    "已跑": 6,
-    "待跑": 35,
-    "方案40_存在": 40,
-    "方案40_不存在": 0
+    "full_suite_test_files": 398,
+    "full_suite_untracked": 2,
+    "related_by_content": 41,
+    "ran": 6,
+    "todo_related": 35,
+    "todo_union": 42,
+    "plan40_existing": 40,
+    "plan40_missing": 0
+  },
+  "v9_scope_ruling": {
+    "R11": "V9 维持**原正本全库回归**要求（398），**不改成 48**",
+    "48_is": "优先回归子集（可先跑排错，但**不据此关闭 V9**）",
+    "plan_only_7_kept": "方案独有 7 文件**继续保留**（间接影响不能仅以「无直接 import」排除）"
   },
   "已跑": [
     "tests/test_qfq_settle.py",
@@ -18,12 +56,17 @@
     "tests/test_qfq_authoritative_rebase.py",
     "tests/test_qfq_factor_equivalence.py"
   ],
-  "待跑": [
+  "待跑_优先子集": [
     "tests/test_daemon_qfq_integration.py",
+    "tests/test_delivery_pure_gain.py",
     "tests/test_delivery_sc008_ab.py",
     "tests/test_firefly_defects_batch1.py",
     "tests/test_firefly_defects_batch2.py",
     "tests/test_gui_manual_qfq_cycle.py",
+    "tests/test_mcp_ckey_filtered_pushdown.py",
+    "tests/test_minutes_conflict_m1m2.py",
+    "tests/test_minutes_write_conflict.py",
+    "tests/test_minutes_write_scope.py",
     "tests/test_qfq_aux_route.py",
     "tests/test_qfq_b4_staging_drill.py",
     "tests/test_qfq_b5_generation.py",
@@ -49,14 +92,15 @@
     "tests/test_qfq_orchestrator_cli.py",
     "tests/test_qfq_resident_orchestrator.py",
     "tests/test_qfq_schema_22_last_run_id.py",
+    "tests/test_qfq_schema_migration.py",
     "tests/test_qfq_schema_status.py",
     "tests/test_restore_missing_factor_d1_a0_d2.py",
+    "tests/test_snapshot_lock.py",
     "tests/test_t3_revision_detect.py",
     "tests/test_write_integrity_r123.py",
     "tests/test_write_integrity_r2_serial.py"
   ],
-  "方案40中不存在于tests的文件": [],
-  "差集_仅方案有": [
+  "仅方案有_保留": [
     "tests/test_minutes_write_scope.py",
     "tests/test_minutes_write_conflict.py",
     "tests/test_minutes_conflict_m1m2.py",
@@ -65,7 +109,7 @@
     "tests/test_delivery_pure_gain.py",
     "tests/test_mcp_ckey_filtered_pushdown.py"
   ],
-  "差集_仅相关引用有": [
+  "仅相关引用有": [
     "tests/test_qfq_authoritative_rebase.py",
     "tests/test_qfq_factor_equivalence.py",
     "tests/test_qfq_gate_scope.py",
@@ -75,8 +119,18 @@
     "tests/test_qfq_reanchor_empty_fresh_skip.py",
     "tests/test_qfq_settle.py"
   ],
-  "全库未跟踪文件": [
-    "tests/test_order_result_audit.py",
-    "tests/test_qmt_eps_snapshot.py"
+  "untracked_files_detail": [
+    {
+      "path": "tests/test_order_result_audit.py",
+      "size_kb": 11.6,
+      "mtime": "2026-11-02T12:06:31+08:00",
+      "head_first_line": "\"\"\"QS_ORDER_RESULT 下单审计插桩测试（纯观测契约）。"
+    },
+    {
+      "path": "tests/test_qmt_eps_snapshot.py",
+      "size_kb": 19.6,
+      "mtime": "2026-11-10T02:38:35+08:00",
+      "head_first_line": "\"\"\"tests for QMT EPS 面板快照导出器（eps snapshot exporter，2026-11-09）。"
+    }
   ]
 }
