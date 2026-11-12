@@ -458,6 +458,38 @@ class TestWhitelistRevision:
         finally:
             conn.close()
 
+    def test_wiring_rollback_makes_negA_mispass(self, frozen_at_d, monkeypatch):
+        """接线级反向验证（R10 ①）：把**生产判据内部**的白名单减免临时换回 legacy
+        计数式，断言负例 A 的场景**不再 BLOCK**（即误放行）。
+
+        与 `test_negA_legacy_would_mispass` 的分工（R10 纠正要点）：
+          · legacy **函数级**测试：只证明「旧算法会误抵扣」——
+            **它不构成回退红闸**（判据若被改回 legacy，该用例照样绿）
+          · **本用例**：证明「若生产接线回退，`test_negA_new_blocks_…` 会变红」
+            （它期望 BLOCK，回退后实际 PASS ⇒ 该用例失败）
+          ⇒ 两者合起来才真正具备「接线回退检测」能力。
+        """
+        # 模拟接线回退：判据拿到的减免量 = legacy 计数式结果
+        monkeypatch.setattr(
+            eng, "_count_missing_in_whitelist",
+            lambda conn, table, code, frozen_before=None, mfreq=None, view=None:
+                eng._count_in_whitelist_legacy(code, table, after=frozen_before),
+            raising=True)
+        _stub_whitelist(monkeypatch, {"2026-11-01"})   # 已匹配日（负例 A 构型）
+        conn = _mk_minute_db([_T_PRE1, _T_D, _T_POST1])
+        try:
+            mispass = False
+            try:
+                _run_minute_cov(conn, _mk_fresh([_T_PRE1, _T_D]))
+                mispass = True      # 未抛 ⇒ 误放行
+            except eng.ReanchorBlocked:
+                mispass = False
+            assert mispass, (
+                "接线回退到 legacy 后仍 BLOCK ⇒ 负例 A 无法检测接线回退（红闸失效）。"
+                "期望行为：回退 ⇒ 过度豁免 ⇒ 误放行 ⇒ 负例 A（期望 BLOCK）必然变红")
+        finally:
+            conn.close()
+
 
 # ============================================================ 附带：白名单数据质量
 

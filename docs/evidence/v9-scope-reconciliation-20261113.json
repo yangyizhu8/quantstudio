@@ -1,0 +1,82 @@
+{
+  "generated_at": "2026-11-13T00:00:00+08:00",
+  "git_head": "0f136dd",
+  "counts": {
+    "全库_test_files": 398,
+    "全库_untracked": 2,
+    "相关引用": 41,
+    "已跑": 6,
+    "待跑": 35,
+    "方案40_存在": 40,
+    "方案40_不存在": 0
+  },
+  "已跑": [
+    "tests/test_qfq_settle.py",
+    "tests/test_qfq_reanchor_batch1.py",
+    "tests/test_qfq_reanchor_batch2.py",
+    "tests/test_qfq_reanchor_empty_fresh_skip.py",
+    "tests/test_qfq_authoritative_rebase.py",
+    "tests/test_qfq_factor_equivalence.py"
+  ],
+  "待跑": [
+    "tests/test_daemon_qfq_integration.py",
+    "tests/test_delivery_sc008_ab.py",
+    "tests/test_firefly_defects_batch1.py",
+    "tests/test_firefly_defects_batch2.py",
+    "tests/test_gui_manual_qfq_cycle.py",
+    "tests/test_qfq_aux_route.py",
+    "tests/test_qfq_b4_staging_drill.py",
+    "tests/test_qfq_b5_generation.py",
+    "tests/test_qfq_b6_activation.py",
+    "tests/test_qfq_b6_wp4.py",
+    "tests/test_qfq_bootstrap_gates.py",
+    "tests/test_qfq_dividend_payload_full.py",
+    "tests/test_qfq_empty_minute_range.py",
+    "tests/test_qfq_event_discovery.py",
+    "tests/test_qfq_factor_equivalence_e1.py",
+    "tests/test_qfq_factor_new_date_trigger.py",
+    "tests/test_qfq_factor_refresh.py",
+    "tests/test_qfq_factor_split_storage.py",
+    "tests/test_qfq_formal_cutover.py",
+    "tests/test_qfq_formal_cutover_hard_crash.py",
+    "tests/test_qfq_formal_postcutever_audit.py",
+    "tests/test_qfq_fresh_capture.py",
+    "tests/test_qfq_fresh_capture_download.py",
+    "tests/test_qfq_g5_effective_dates_batch.py",
+    "tests/test_qfq_gate_scope.py",
+    "tests/test_qfq_global_snapshot.py",
+    "tests/test_qfq_observation_incremental.py",
+    "tests/test_qfq_orchestrator_cli.py",
+    "tests/test_qfq_resident_orchestrator.py",
+    "tests/test_qfq_schema_22_last_run_id.py",
+    "tests/test_qfq_schema_status.py",
+    "tests/test_restore_missing_factor_d1_a0_d2.py",
+    "tests/test_t3_revision_detect.py",
+    "tests/test_write_integrity_r123.py",
+    "tests/test_write_integrity_r2_serial.py"
+  ],
+  "方案40中不存在于tests的文件": [],
+  "差集_仅方案有": [
+    "tests/test_minutes_write_scope.py",
+    "tests/test_minutes_write_conflict.py",
+    "tests/test_minutes_conflict_m1m2.py",
+    "tests/test_snapshot_lock.py",
+    "tests/test_qfq_schema_migration.py",
+    "tests/test_delivery_pure_gain.py",
+    "tests/test_mcp_ckey_filtered_pushdown.py"
+  ],
+  "差集_仅相关引用有": [
+    "tests/test_qfq_authoritative_rebase.py",
+    "tests/test_qfq_factor_equivalence.py",
+    "tests/test_qfq_gate_scope.py",
+    "tests/test_qfq_observation_incremental.py",
+    "tests/test_qfq_reanchor_batch1.py",
+    "tests/test_qfq_reanchor_batch2.py",
+    "tests/test_qfq_reanchor_empty_fresh_skip.py",
+    "tests/test_qfq_settle.py"
+  ],
+  "全库未跟踪文件": [
+    "tests/test_order_result_audit.py",
+    "tests/test_qmt_eps_snapshot.py"
+  ]
+}
