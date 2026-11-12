@@ -1,0 +1,6 @@
+﻿写前锚 · scripts/check_daemon_alive.ps1
+时间: 2026-11-12 23:58:37
+HEAD: 38d8202efd76e070bdd108cb3cc00e50965cbdb9
+sha256: 4D1434F2383F6CFBE6AC2E365A025DA76596FB6020D381713C31822D336C39C3
+行数: 577
+回退: git checkout -- scripts\check_daemon_alive.ps1  （或 git show 38d8202efd76e070bdd108cb3cc00e50965cbdb9:scripts/check_daemon_alive.ps1 > 文件）

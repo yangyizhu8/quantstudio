@@ -399,7 +399,11 @@ if (-not $reviveEnabled) {
                     }
                 }
             } catch {
-                $occDetail = "occupancy.json 解析失败（按未占用处理并告警）: $($_.Exception.Message)"
+                # ── 2026-11-13 修（fail-open -> fail-closed；总调度 2026-11-12 指示）──
+                #   文件存在但不可解析 ⇒ 声明可能有效但已损坏，按占用处理（与下方窗口解析失败同语义）。
+                #   防：停服窗内声明损坏 ⇒ F3 失效 ⇒ F11 旁证不命中 ⇒ 误拉正在停机的 daemon。
+                $occupied = $true
+                $occDetail = "[OCC-FAILCLOSED] occupancy.json 存在但解析失败 ⇒ fail-closed 视为占用（需人工修复）: $($_.Exception.Message)"
             }
         }
         if ($occupied) {

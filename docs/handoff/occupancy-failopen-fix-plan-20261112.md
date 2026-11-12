@@ -2,7 +2,9 @@
 
 - 起草：2026-11-12 23:22（节点4）
 - 触发：总调度 2026-11-12 23:20 指示「JSON 解析失败按未占用继续判断的 fail-open 已由源码确认。**立即出最小修复方案和负例，独立审后处理；未审不改脚本、阈值或任务**」
-- 状态：**待独立审 · 未实施**（本轮零改脚本/阈值/任务）
+- 状态：**②审有条件通过 → 已按条件实施**（2026-11-13 00:00）
+  - 条件履行：① 改为**隔离 RepoRoot** 验证（非生产状态/输出）；② N1–N6 全部完成；③ 写前锚已登记；④ 唯一 catch 差异
+  - **未获授权项保持不动**：阈值、任务定义、daemon 启停
 
 ## 一、缺陷定性
 
@@ -76,17 +78,50 @@ Select-String -Path data\logs\daemon_revival.log -Pattern '\[OCC-FAILCLOSED\]'
 - 命中 > 0 ⇒ 有人工待办（修复 occupancy.json），**不是**正常态
 - 该标记只进 detail 字符串，**不改 verdict**（避免与「不自行将 WARN 升 FAIL」冲突）
 
-## 四、负例矩阵（7 条，2 条已实测）
+## 四、负例矩阵（**N1–N6 已在隔离 fixture 全部实测**，2026-11-13 00:00）
 
-| # | 构造 | 期望（修复后） | 现状（修复前） | 状态 |
+> 隔离环境：`%TEMP%\occ_fx_<ts>\`（自带 `data/`、`data/logs/`、`scripts/` 副本），
+> 以 `-RepoRoot <fixture>` 运行 ⇒ **不触碰生产 occupancy/state/日志**；`-SimulateVerdict` 强制 observe ⇒ 零拉起。
+> N1–N6 每例均先复位隔离 state，再连跑 `SimulateVerdict FAIL ×3` 至 `consecutive=3` 取第 3 次 gate。
+
+| # | 构造 | 修复前 gate | 修复后 gate | 判定 |
 |---|---|---|---|---|
-| **N1** | 文件不存在 | 未占用 → 放行 | 同 | ✅ 已由代码确认（`L382` Test-Path） |
-| **N2** | `occupied=false`（合法） | 未占用 → 放行 | 同 | ✅ 生产常态（现 `occupied=false`） |
-| **N3** | `occupied=true` + 窗口内（合法） | **`skip-occupancy`** | 同 | ✅ **2026-11-12 22:36:38 实测命中** |
-| **N4** | `occupied=true` + 窗口外（合法） | 未占用 → 放行 | 同 | ⏳ 待跑（本次未做，因需构造时间穿越） |
-| **N5** | `occupied=true`，`window` 时间格式非法 | `skip-occupancy`（`L392-394` fail-closed） | 同（已正确） | ✅ 代码确认 |
-| **N6** | **JSON 语法损坏**（缺 `}`） | **`skip-occupancy`** | **`skip-suspected_activity`/放行（fail-open）** | ✅ **2026-11-12 23:20:40 实测：未被 F3 拦，落到 F11** |
-| **N7** | `occupied` 为字符串 `"true"` | 依 `-eq $true` 语义 → 未占用（**待确认是否也算缺陷**） | 同 | ⏳ 待议 |
+| N1 | 文件不存在 | `all-pass` | `all-pass` | ✅ 行为不变 |
+| N2 | `occupied=false`（合法） | `all-pass` | `all-pass` | ✅ 不变 |
+| N3 | `occupied=true` + 窗口内 | `skip-occupancy` | `skip-occupancy` | ✅ 不变 |
+| N4a | `occupied=true` + **窗口全在过去**（隔离 fixture，不改时钟） | `all-pass` | `all-pass` | ✅ 不变 |
+| N4b | `occupied=true` + **窗口全在未来** | `all-pass` | `all-pass` | ✅ 不变 |
+| N5 | `window` 时间格式非法 | `skip-occupancy` | `skip-occupancy` | ✅ 不变（既有 fail-closed） |
+| **N6** | **JSON 语法损坏** | **`all-pass` + `action=REVIVE_ARMED`** | **`skip-occupancy` + `action=NONE` + `[OCC-FAILCLOSED]`** | ✅ **修复生效** |
+
+**N6 修复前原文（隔离环境，无 WAL 干扰）**：
+```
+23:58:16 verdict=FAIL consecutive=3 gate=all-pass action=REVIVE_ARMED target_pid=-
+         | observe 模式：本应拉起，仅记录（切 active 需 5 组负向对照全过 + 观察 ≥24h）
+```
+⇒ 隔离环境里 F11 不命中，**干净地暴露了 fail-open 的尽头就是 `REVIVE_ARMED`**（active 下即 `REVIVE_CALLED`）。
+
+**N6 修复后原文**：
+```
+23:59:12 verdict=FAIL consecutive=3 gate=skip-occupancy action=NONE target_pid=-
+         | [OCC-FAILCLOSED] occupancy.json 存在但解析失败 ⇒ fail-closed 视为占用（需人工修复）: Invalid object passed in, ':' or '}' expected.
+```
+
+### 4.0 N7 撤销（依据被总调度推翻，实测确认）
+
+我原判「`occupied` 为字符串 `"true"` 会被 `-eq $true` 静默忽略」——**实测不成立**：
+
+| 值 | 类型 | `-eq $true` |
+|---|---|---|
+| `"true"` | String | **True** ✅ 声明生效 |
+| `"True"` | String | **True** ✅ |
+| `"1"` | String | False（但无人会写） |
+| `1` | Int32 | **True** |
+| `"false"` / `0` | — | False（正确） |
+
+⇒ PowerShell 比较存在**类型转换**，`"true"` 会被正确识别。**N7 撤销，不立缺陷。**
+
+### 4.1 N6 残留取证（生产，历史留档，不再重复）
 
 ### 4.1 N6 实测原文（fail-open 证据）
 
@@ -154,3 +189,34 @@ $b = [System.IO.File]::ReadAllBytes('scripts\check_daemon_alive.ps1'); "首3字�
 3. 是否要求同时补「多分离窗口」的显式报错（当前静默只认第一对）？——**建议单列**，不捆绑。
 
 > 未获批准前**不实施任何改动**。
+
+
+## 四.2 本方案**未覆盖**的 fail-open（如实列，不扩权）
+
+| # | 形态 | 为何不在 catch 覆盖内 | 处置 |
+|---|---|---|---|
+| U1 | 合法 JSON 但**缺 `occupied` 字段**（如 `{}`、`{"owner":"x"}`） | 解析成功，不抛异常 ⇒ 不经过 catch；`$occ.occupied` 为 `$null` ⇒ `-eq $true` 为 False ⇒ **放行** | **未覆盖**，若要处理需另定语义（缺字段=未占用 or 缺字段=非法？）；**建议单列议题** |
+| U2 | 合法 JSON 但 `window` **只有 1 个元素** | `L387` 判 `<2` ⇒ `$inWindow` 默认 true ⇒ **视为占用**（fail-closed）✅ 已正确 | 无需改 |
+| U3 | 合法 JSON 但 `occupied` 为 `"1"` 字符串 | 转换后 False ⇒ 放行 | 概率极低（文件由脚本生成）；**不单列** |
+| U4 | 文件被**其他进程写坏中途读取**（竞态） | 可能读到半截 ⇒ 抛异常 ⇒ 本次修复覆盖 ✅ | 已覆盖 |
+
+> **明确**：本次 catch 修复只解决「**文件存在且 JSON 解析抛异常**」这一条路径，**不声称**覆盖 U1/U3。
+
+## 四.3 验证结果汇总（隔离 fixture）
+
+| 轮次 | 用例 | 结果 |
+|---|---|---|
+| 修复前 | N1,N2,N4a,N4b,N5,N6 | 6/6 符合预期；N6 复现 fail-open（`all-pass`） |
+| **修复后** | **N1,N2,N3,N4a,N4b,N5,N6** | **7/7 全部 PASS**；N6 转为 `skip-occupancy` + `[OCC-FAILCLOSED]` |
+| 语法定门 | `Parser::ParseFile` | `PARSE OK` |
+| 编码定门 | 首 3 字节 | `239,187,191`（UTF-8 **BOM** 保持） |
+| 差异面 | `git diff --stat` | **仅 1 文件 +5/−1**（唯一 catch 段） |
+| 生产侧影响 | `occupancy=false` 合法 | **零影响**（catch 分支不触发） |
+
+## 四.4 回退（已备）
+
+```powershell
+# 写前锚：docs/handoff/anchor-daemon-alive-20261112235837.txt
+#   HEAD=38d8202  原文件 sha256=4D1434F2383F6CFBE6AC2E365A025DA76596FB6020D381713C31822D336C39C3
+git checkout HEAD -- scripts/check_daemon_alive.ps1
+```
