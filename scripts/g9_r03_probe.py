@@ -131,7 +131,16 @@ def probe_calendar(con):
         f"SELECT MIN({date_col}), MAX({date_col}) FROM trade_calendar").fetchone()
     sv = (con.execute(f"SELECT {date_col} FROM trade_calendar LIMIT 1").fetchone() or [None])[0]
     if isinstance(sv, int):
-        form = "int_yyyymmdd" if sv > 19000000 else "int_other"
+        # ⚠️ 2026-11-13 实测：trade_calendar.cal_date 存的是 **epoch-ms**
+        #    （1483200000000 = 2017-01-01 北京零点），不是 yyyymmdd。
+        #    旧判据 `sv > 19000000 ⇒ int_yyyymmdd` 会把 epoch-ms 误判成 yyyymmdd，
+        #    导致 _norm8 取前 8 位得 "14832000"，与 "20180918" 比 ⇒ 永远「覆盖不足」。
+        if sv > 10 ** 11:
+            form = "int_epoch_ms"
+        elif sv > 19000000:
+            form = "int_yyyymmdd"
+        else:
+            form = "int_other"
     elif isinstance(sv, str):
         form = "str_dash" if "-" in sv else ("str_compact" if sv.isdigit() else "str_other")
     elif isinstance(sv, (dt.date, dt.datetime)):
@@ -151,7 +160,15 @@ def probe_calendar(con):
 
 
 def _norm8(s: str) -> str:
-    return str(s).replace("-", "").replace(" ", "")[:8]
+    """归一到 YYYYMMDD。支持 epoch-ms（>1e11）与 yyyymmdd 两种整数形态。"""
+    raw = str(s).replace("-", "").replace(" ", "").strip()
+    try:
+        v = int(float(raw))
+    except Exception:
+        return raw[:8]
+    if v > 10 ** 11:                      # epoch-ms
+        return dt.datetime.utcfromtimestamp(v / 1000 + CST).strftime("%Y%m%d")
+    return raw[:8]
 
 
 def cal_count_between(con, cal, lo: str, hi: str):
@@ -165,7 +182,9 @@ def cal_count_between(con, cal, lo: str, hi: str):
     if not (cmin <= lo8 and hi8 <= cmax):
         return None, f"日历覆盖不足（{cal['min']}~{cal['max']} 不含 {lo}~{hi}）"
     # S2 形态
-    if form == "int_yyyymmdd":
+    if form == "int_epoch_ms":
+        lo_v, hi_v = bj_zero_ms(lo), bj_zero_ms(hi)
+    elif form == "int_yyyymmdd":
         lo_v, hi_v = int(lo8), int(hi8)
     elif form == "str_dash":
         lo_v, hi_v = lo, hi
