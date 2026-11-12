@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-16"?>
+
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+
+  <RegistrationInfo>
+
+    <Description>QuantStudio daemon 外部心跳巡检（W-2 ①）：每 10 分钟只读探测 进程存活 / status 一致 / 心跳新鲜；FAIL 时按 System 事件日志 id=1074/6006/41 区分『宿主重启所致』与『daemon 自身异常退出』。只告警不拉起（用户 2026-10-26 裁定）。</Description>
+
+    <URI>\QS_DaemonHeartbeat</URI>
+
+  </RegistrationInfo>
+
+  <Principals>
+
+    <Principal id="Author">
+
+      <UserId>S-1-5-21-3029000781-1512001743-3745396256-500</UserId>
+
+      <LogonType>S4U</LogonType>
+
+    </Principal>
+
+  </Principals>
+
+  <Settings>
+
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+
+    <ExecutionTimeLimit>PT5M</ExecutionTimeLimit>
+
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+
+    <IdleSettings>
+
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+
+      <RestartOnIdle>false</RestartOnIdle>
+
+    </IdleSettings>
+
+  </Settings>
+
+  <Triggers>
+
+    <TimeTrigger>
+
+      <StartBoundary>2026-10-26T02:48:32</StartBoundary>
+
+      <Repetition>
+
+        <Interval>PT10M</Interval>
+
+      </Repetition>
+
+    </TimeTrigger>
+
+  </Triggers>
+
+  <Actions Context="Author">
+
+    <Exec>
+
+      <Command>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</Command>
+
+      <Arguments>-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "D:\miniQMT策略实盘\QuantStudio\scripts\check_daemon_alive.ps1" -Quiet -IntervalMinutes 10</Arguments>
+
+      <WorkingDirectory>D:\miniQMT策略实盘\QuantStudio</WorkingDirectory>
+
+    </Exec>
+
+  </Actions>
+
+</Task>
