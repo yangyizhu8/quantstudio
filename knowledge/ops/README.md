@@ -60,21 +60,50 @@ observability: ["日志", "心跳", "告警", "留痕", "可观测", "退出码"
 
 ## 3. 条目模板（`OPS-YYYY-NNNN.md`）
 
+> **正本格式 = YAML front-matter**（2026-11-12 实测确认：db 43/43、qd 22/22、pd 22/22、ops 1/1 **全部** front-matter 开头；`kb_hook.parse_entry` 经 `kb_preflight` 从 front-matter 解析）。
+> 正文可另起 `## 详情` 章节承载展开说明，但**机检只读 front-matter**。
+
 ```markdown
-# OPS-YYYY-NNNN <现象一句话>
+---
+id: OPS-YYYY-NNNN
+symptom: "<现象一句话，可检索>"
+root_cause: "<根因一句话>"
+fix_target: "<文件:行 或 描述>"
+fix_layer: <枚举>              # 多落点用 + 连接，如 guard+recovery
+domain: D1|D2|D3|D4|D5
+trigger: "<复现条件>；问法：<口头问法>"
+recurrence: 0                  # 同坑复发计数
+evidence: "<主仓路径#锚点>"
+fixture: "<复现固件/测试路径>"
+feedback:
+  contract_row: null           # 契约表/矩阵新增行（或描述）
+  gate_rule: null              # 门禁规则
+  template_patch: null         # 模板改动
+status: open                   # open | closed
+closed_round: null
+---
 
-- **symptom**：
-- **root_cause**：
-- **fix_target**：<文件:行 或 描述>
-- **evidence**：<主仓路径#锚点>
-- **fixture**：<复现固件/测试路径>
-- **trigger**：<复现条件>；问法：<口头问法>
-- **fix_layer**：<枚举>（多落点 `+`）
-- **domain**：D1|D2|D3|D4|D5
-
-## 详情
+## 详情（可选）
 （现象展开 / 根因机制 / 修复实现 / 验证读数 / 边界与未闭合）
 ```
+
+### 3.1 字段说明
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `symptom` / `root_cause` / `fix_target` / `evidence` / `fixture` / `trigger` | **✅ 六必填**（`required_fields`） | 任一缺失 ⇒ `kb_hook.validate_record` 不过 ⇒ 不落盘 |
+| `fix_layer` | ✅ | 五枚举内（多落点 `+`） |
+| `domain` | ✅ | D1–D5 |
+| `recurrence` | **✅ 机检强制** | 必须**整数且 ≥0**（缺失/负数 ⇒ `recurrence 非整数或为负` 拦截）。同坑复发一次 +1，并回查是缺条目还是回哺链断裂 |
+| `feedback.{contract_row,gate_rule,template_patch}` | **✅ 机检强制** | **三项至少一项非空**（全 null ⇒ `feedback 至少一项非空` 拦截）。回哺三通路登记 |
+| `status` | **✅ 机检强制** | 必须 ∈ `{open, closed}`（缺失/非法值 ⇒ `status 非法` 拦截） |
+| `closed_round` | 建议 | 闭环轮次（`status: closed` 时填） |
+| `trigger` 两段式 | ✅ | `<复现条件>；问法：<口头问法>`（问法供 N8 开案命中） |
+
+> **上表「机检强制」三项来自 2026-11-12 负向对照实测**（非读码推断）：注入缺失字段的临时条目
+> `OPS-2026-9999.md` 被 `kb_hook --strict` 精确拦下并报 7 项 —— `root_cause 为空; evidence 为空;
+> fixture 为空; trigger 为空; recurrence 非整数或为负; feedback 至少一项非空; status 非法`，exit=1。
+> 正向对照：`OPS-2026-0001`（⑫ 落）与 `DB-2026-0002` 均 `不合规 0 件` exit=0。
 
 ## 4. 落位与机检
 
@@ -108,3 +137,4 @@ observability: ["日志", "心跳", "告警", "留痕", "可观测", "退出码"
 ## 7. 变更记录
 
 - **2026-11-12 立族（草案）**：总调度批六十六 A-4＝甲；`kb-info.yaml` families 增 `id: ops`（dir/glob/id_pattern/五枚举/multi=true/38 判层关键词）；本 README 为族 schema 正本。**状态：待 ⑥ 复核族 schema 后落定**。
+- **2026-11-12 §3 模板自纠**：初稿把条目模板写成「body 六要素 + ## 详情」，经实测核对正本格式为 **YAML front-matter**（db 43/43、qd 22/22、pd 22/22、ops 1/1 全族一致；`kb_hook` 经 `kb_preflight` 从 front-matter 解析）⇒ 已改正，并补入既有通用字段 `recurrence / feedback{contract_row,gate_rule,template_patch} / status / closed_round`（此前遗漏）。同时确认 ⑫ 落的 `OPS-2026-0001` 格式正确、六必填齐 ⇒ `entry_glob` 命中由 0 变 **1**。
