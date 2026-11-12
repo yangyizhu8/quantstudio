@@ -22,9 +22,6 @@ observation 写入 ``qfq_factor_observation``（qfq_observation.ObservationStore
 """
 from __future__ import annotations
 
-# §2.b：legacy 分红扫描批量分片大小（存在性查询 IN 分批 + executemany 分片同用）
-_LEGACY_SCAN_BATCH = 1000
-
 from quantstudio.pipeline.snapshot_lock import locked_connect  # 3A 写锁收口
 
 import logging
@@ -374,87 +371,40 @@ class EventDiscovery:
     # ------------------------------------------------------------------
     def _scan_dividend_legacy(self, conn, rows, as_of_ms: int,
                               now: str) -> List[TriggerRecord]:
-        """分红 legacy 分支：批量集合化（纯性能型·成功路径逐位等价）。
-
-        §2.b：存在性查询按 trigger_id **IN 分批**（_LEGACY_SCAN_BATCH，缺省 1000；
-              谓词与 _trigger_exists 完全同源同键）。
-        §4.3：插入**单事务整批原子**——中途失败整批回滚（不再留半批）；终态等价由
-              下轮重放 + INSERT OR IGNORE 幂等收敛保证。
-        """
         _ident = self.identity
-        # 单遍收集候选（dict 保序 ⇒ 返回值顺序与逐行扫描序一致）
-        candidates: Dict[str, tuple] = {}
-        for (code, ex_date, record_date, ann_date, end_date,
-             cash_div_before_tax, cash_div_after_tax, cash_div, stk_div,
-             stk_bo_rate, stk_co_rate, div_rat, div_proc) in rows:
+        new_records: List[TriggerRecord] = []
+        for (code, ex_date, record_date, ann_date, end_date, cash_div_before_tax,
+             cash_div_after_tax, cash_div, stk_div, stk_bo_rate, stk_co_rate,
+             div_rat, div_proc) in rows:
             ex_date = int(ex_date)
             effective_date = ex_date
             payload_hash = dividend_payload_hash(
                 code, ex_date, record_date, ann_date, end_date,
-                cash_div_before_tax, cash_div_after_tax, cash_div, stk_div,
-                stk_bo_rate, stk_co_rate, div_rat, div_proc)
+                cash_div_before_tax, cash_div_after_tax, cash_div,
+                stk_div, stk_bo_rate, stk_co_rate, div_rat, div_proc)
             status = "scheduled" if ex_date > as_of_ms else "pending"
             trigger_id = trigger_id_of(
                 "STOCK", code, ex_date, "stock_dividend", payload_hash)
-            if trigger_id in candidates:
-                continue  # 同 trigger_id 重复 ⇒ 幂等（等价于逐行实现的 INSERT OR IGNORE）
-            candidates[trigger_id] = (code, effective_date, payload_hash, status)
-
-        batch = max(1, int(_LEGACY_SCAN_BATCH))
-        tids = list(candidates.keys())
-
-        # 存在性集合查询：IN 分批（谓词与 _trigger_exists 同源同键）
-        existed = set()
-        for i in range(0, len(tids), batch):
-            chunk = tids[i:i + batch]
-            ph = ",".join(["?"] * len(chunk))
-            rows_exist = conn.execute(
-                "SELECT trigger_id FROM qfq_trigger_queue WHERE trigger_id IN (%s) "
-                "AND price_source=? AND source_generation=? AND cutover_id=?" % ph,
-                list(chunk) + [_ident["price_source"],
-                               _ident["source_generation"],
-                               _ident["cutover_id"]]).fetchall()
-            existed.update(str(r[0]) for r in rows_exist)
-
-        # 批量插入：单事务整批原子（失败 ⇒ 整批回滚，异常原样上抛）
-        params = []
-        for trigger_id, (code, effective_date, payload_hash, status) in candidates.items():
-            params.append([trigger_id, "STOCK", code, "stock_dividend", "stock_dividend",
-                           str(effective_date), effective_date, payload_hash, status, 1,
-                           _ident["price_source"], _ident["source_generation"],
-                           _ident["cutover_id"], now, now])
-        if params:
-            try:
-                conn.execute("BEGIN TRANSACTION")
-                for i in range(0, len(params), batch):
-                    conn.executemany(
-                        "INSERT OR IGNORE INTO qfq_trigger_queue "
-                        "(trigger_id, asset_type, code, trigger_type, detection_source, source_key, "
-                        " effective_date, payload_hash, status, trigger_id_version, price_source, "
-                        " source_generation, cutover_id, created_at, updated_at) "
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                        params[i:i + batch])
-                conn.execute("COMMIT")
-            except Exception:
-                try:
-                    conn.execute("ROLLBACK")
-                except Exception:
-                    pass
-                raise
-
-        # 首见候选（按扫描序）——与逐行实现的 append 顺序一致
-        new_records: List[TriggerRecord] = []
-        for trigger_id, (code, effective_date, payload_hash, status) in candidates.items():
-            if trigger_id in existed:
-                continue
-            new_records.append(TriggerRecord(
-                trigger_id=trigger_id, asset_type="STOCK", code=code,
-                trigger_type="stock_dividend", detection_source="stock_dividend",
-                source_key=str(effective_date), effective_date=effective_date,
-                payload_hash=payload_hash, status=status, trigger_id_version=1,
-                price_source=_ident["price_source"],
-                source_generation=_ident["source_generation"],
-                cutover_id=_ident["cutover_id"], created_at=now, updated_at=now))
+            existed = self._trigger_exists(conn, trigger_id)
+            conn.execute(
+                "INSERT OR IGNORE INTO qfq_trigger_queue "
+                "(trigger_id, asset_type, code, trigger_type, detection_source, source_key, "
+                " effective_date, payload_hash, status, trigger_id_version, price_source, "
+                " source_generation, cutover_id, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [trigger_id, "STOCK", code, "stock_dividend", "stock_dividend",
+                 str(ex_date), effective_date, payload_hash, status, 1,
+                 _ident["price_source"], _ident["source_generation"], _ident["cutover_id"],
+                 now, now])
+            if not existed:
+                new_records.append(TriggerRecord(
+                    trigger_id=trigger_id, asset_type="STOCK", code=code,
+                    trigger_type="stock_dividend", detection_source="stock_dividend",
+                    source_key=str(ex_date), effective_date=effective_date,
+                    payload_hash=payload_hash, status=status, trigger_id_version=1,
+                    price_source=_ident["price_source"],
+                    source_generation=_ident["source_generation"],
+                    cutover_id=_ident["cutover_id"], created_at=now, updated_at=now))
         return new_records
 
     # ------------------------------------------------------------------
