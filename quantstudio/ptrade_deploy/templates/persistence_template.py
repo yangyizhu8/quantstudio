@@ -51,6 +51,22 @@ __STALE_ROLL__    with open(_PD_NOTEBOOK + __STATE_FILE__, 'wb') as _pf:
         pickle.dump(g.state, _pf, -1)
 except Exception as _pe:
     log.warning('PTRADE-DEPLOY 状态落盘失败: %s' % _pe)
+# PD-2026-0020 C 探针（2026-11-12 · 与 B5 金额版探针**分别验收**）：
+# 持久化「写后读回」自证——确认 open() 在 get_research_path() 目录下是否真可读写。
+# 背景：get_research_path() 是公有 API（Ptrade国盛.md「可在回测、交易模块使用」），
+# 但「用其返回值 open() 读写」公有 Profile 无明文许可 ⇒ 属**需实证**项（C 类）。
+# 只写一个 ~10 字节 txt，**不触碰状态文件**；失败仅告警，不影响落盘主流程。
+try:
+    _qs_probe_path = _PD_NOTEBOOK + 'QS_PERSIST_PROBE.txt'
+    with open(_qs_probe_path, 'w') as _qs_pf:
+        _qs_pf.write('probe-ok')
+    with open(_qs_probe_path, 'r') as _qs_pf:
+        _qs_back = _qs_pf.read()
+    log.info('QS_PERSIST_PROBE write_read_back=%s path_len=%d'
+             % (_qs_back == 'probe-ok', len(_PD_NOTEBOOK)))
+except Exception as _qs_pe:
+    log.warning('QS_PERSIST_PROBE failed=%s: %s'
+                % (type(_qs_pe).__name__, _qs_pe))
 '''
 
 #: 落盘前把「本次执行提交的委托号」滚动为「上一交易日待巡检」（PD-0017 D）

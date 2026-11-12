@@ -814,6 +814,7 @@ def _build_tag():
         在 20:33 与 12:20 两次重转同值、无法判定贴装版本的问题）。
     git 不可用（非仓库/无 git/超时）⇒ 退化为固定旧值，**仍满足确定性**。
     """
+    _parts = []
     try:
         import subprocess
         from pathlib import Path
@@ -823,10 +824,28 @@ def _build_tag():
                             timeout=5)
         _sha = (_r.stdout or "").strip()
         if _r.returncode == 0 and _sha:
-            return "%s-p1" % _sha
+            _parts.append(_sha)
     except Exception:
         pass
-    return "20261109-p1"
+    # 源码内容哈希：**git HEAD 不覆盖未提交变化**，故必须并入参与产物生成的
+    # 框架源文件内容摘要，才能称「源码状态指纹」（用户 2026-11-12 裁定）。
+    try:
+        import hashlib
+        from pathlib import Path
+        _files = ("strategy_compiler/source_import.py",
+                  "ptrade_deploy/transformer.py",
+                  "ptrade_deploy/templates/isolation_template.py",
+                  "ptrade_deploy/templates/persistence_template.py")
+        _root = Path(__file__).resolve().parents[1]
+        _h = hashlib.sha256()
+        for _f in _files:
+            _p = _root / _f
+            if _p.exists():
+                _h.update(_p.read_bytes())
+        _parts.append("src" + _h.hexdigest()[:8])
+    except Exception:
+        pass
+    return ("-".join(_parts) + "-p1") if _parts else "20261109-p1"
 
 def _apply_isolation(tree: ast.Module, cfg, edits: List[Dict[str, str]]) -> None:
     """PD-0019 期 1：多策略同账户隔离注入（裁定甲＝隔离落在下单入口 + 虚拟台账层）。
