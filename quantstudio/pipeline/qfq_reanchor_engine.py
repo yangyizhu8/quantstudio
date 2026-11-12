@@ -1148,31 +1148,87 @@ def _count_matched_after(conn, table: str, code: str,
     return int(conn.execute(sql, params).fetchone()[0])
 
 
-def _count_in_whitelist(code: str, table: str,
-                        after: Optional[int] = None) -> int:
-    """白名单命中数（边界之后**特定 (code,日期)** 的额外豁免）。
+def _whitelist_days(code: str, table: str) -> set:
+    """白名单该 (code, table) 的日期集合（**set 语义，天然去重**）。
 
-    fail-closed：白名单文件缺失/损坏 ⇒ 返回 0（不减，按原值 BLOCK）。
-    `after` 为 epoch ms；只计**不早于**该日的白名单条目（与冻结边界串联）。
+    fail-closed：文件缺失/损坏 ⇒ 空集（调用方按 0 减免）。
     """
     global _KNOWN_VIOLATIONS_CACHE, _KNOWN_VIOLATIONS_LOADED
     if not _KNOWN_VIOLATIONS_LOADED:
         _KNOWN_VIOLATIONS_LOADED = True
         try:
             doc = json.loads(_KNOWN_VIOLATIONS_PATH.read_text(encoding="utf-8"))
-            idx: Dict[Tuple[str, str], List[str]] = {}
+            idx: Dict[Tuple[str, str], set] = {}
             for e in (doc.get("entries") or []):
                 key = (str(e.get("code")), str(e.get("table")))
-                idx.setdefault(key, []).extend(str(d) for d in (e.get("days") or []))
+                # set.update ⇒ 重复登记自然折叠，不放大豁免额度（R8 ②审条件）
+                idx.setdefault(key, set()).update(str(d) for d in (e.get("days") or []))
             _KNOWN_VIOLATIONS_CACHE = idx
-            logger.info("[qfq_settle] 白名单已加载：%d 个 (code,table) 键", len(idx))
+            logger.info("[qfq_settle] 白名单已加载：%d 个 (code,table) 键（set 去重）",
+                        len(idx))
         except Exception as e:      # noqa: BLE001  缺失 ⇒ 不减
             logger.warning("[qfq_settle] 白名单不可用，不做减免：%s: %s",
                            type(e).__name__, e)
             _KNOWN_VIOLATIONS_CACHE = None
     if _KNOWN_VIOLATIONS_CACHE is None:
-        return 0
-    days = _KNOWN_VIOLATIONS_CACHE.get((str(code), str(table))) or []
+        return set()
+    return _KNOWN_VIOLATIONS_CACHE.get((str(code), str(table))) or set()
+
+
+def _whitelist_missing_days(conn, table: str, code: str,
+                            frozen_before: Optional[int] = None,
+                            mfreq: Optional[str] = None,
+                            view: Optional[str] = None) -> set:
+    """**实际缺失日期集 ∩ 白名单**（set 语义，天然去重）。
+
+    三条同时满足才进入结果集（R8 ②审方案 §二）：
+      ① 库内该 date 存在（target）
+      ② fresh 无该 date（真缺失，非已匹配）
+      ③ 白名单登记该 date
+    且 SQL 按 `time >= frozen_before` 过滤 ⇒ 与冻结豁免不重叠（不重复抵扣）。
+
+    ⚠ view 必须存活（两处判据的 view 都在 finally unregister）。
+    """
+    if not view:
+        return set()
+    days = _whitelist_days(code, table)
+    if not days:
+        return set()
+    sql = (f"SELECT t.time FROM {table} t "
+           f'WHERE t.code=? AND NOT EXISTS ('
+           f'  SELECT 1 FROM "{view}" s WHERE s.code=t.code AND s.time=t.time)')
+    params: List = [code]
+    if mfreq is not None:
+        sql += " AND t.freq=?"
+        params.append(mfreq)
+    if frozen_before is not None:
+        sql += " AND t.time>=?"
+        params.append(int(frozen_before))
+    missing_days = {_ms_to_date(r[0]) for r in conn.execute(sql, params).fetchall()}
+    return missing_days & days
+
+
+def _count_missing_in_whitelist(conn, table: str, code: str,
+                               frozen_before: Optional[int] = None,
+                               mfreq: Optional[str] = None,
+                               view: Optional[str] = None) -> int:
+    """**唯一正确的白名单减免量** = |实际缺失 ∩ 白名单|（集合求交，天然去重）。"""
+    return len(_whitelist_missing_days(conn, table, code,
+                                       frozen_before=frozen_before,
+                                       mfreq=mfreq, view=view))
+
+
+def _count_in_whitelist_legacy(code: str, table: str,
+                               after: Optional[int] = None) -> int:
+    """【已废弃·仅测试对照】计数式白名单减免（R8 前实现，保留以证明缺陷真实）。
+
+    三处缺陷（**不得再用于判据**）：
+      · 按「白名单登记数」而非「实际缺失 ∩ 白名单」计数 ⇒ 含已匹配日会**过度豁免**
+      · 未去重（旧实现用 list.extend）⇒ 重复登记**放大**豁免额度
+      · 仅按日期阈值过滤 ⇒ 非求交，边界情形可漏
+    仅供 test_qfq_settle 的负例**双态对照**（证明旧码必红）。
+    """
+    days = _whitelist_days(code, table)
     if not days:
         return 0
     if after is None:
@@ -1188,7 +1244,7 @@ def _check_daily_coverage_strict(conn, asset_type, code, df):
     _sample = ""
     # QFQ settle：冻结边界与本批 after 计数（**必须在 view 存活期内算完**，见下方 finally）
     _frozen_before = _resolve_frozen_before(code, asset_type)
-    _target_after = _matched_after = None
+    _target_after = _matched_after = _known_after = None
     conn.register(view, df[["code", "time"]])
     try:
         target_count = int(conn.execute(
@@ -1219,6 +1275,9 @@ def _check_daily_coverage_strict(conn, asset_type, code, df):
                 conn, daily_table, code, frozen_before=_frozen_before)
             _matched_after = _count_matched_after(
                 conn, daily_table, code, frozen_before=_frozen_before, view=view)
+            # R8 ②审：白名单减免必须与实际缺失集**求交**（不能按登记数计）
+            _known_after = _count_missing_in_whitelist(
+                conn, daily_table, code, frozen_before=_frozen_before, view=view)
         # 2026-10-13 六步①第一段：差集样本**必须在 view 存活期内取**——
         # finally 会 unregister(view)，若在其后查询会因视图已注销而取不到（实测踩坑）。
         _sample = _coverage_diff_sample(conn, daily_table, view, code, limit=5)
@@ -1233,8 +1292,8 @@ def _check_daily_coverage_strict(conn, asset_type, code, df):
     if _frozen_before is not None and _target_after is not None and _matched_after is not None:
         _strict_missing = missing_target
         missing_target = int(_target_after) - int(_matched_after)
-        # 方案 §3.4：白名单与冻结边界**串联**（边界后特定 (code,日期) 再减）
-        _known = _count_in_whitelist(code, daily_table, after=_frozen_before)
+        # R8 ②审：白名单减免 = |实际缺失 ∩ 白名单|（求交 + 去重），不再按登记数计
+        _known = int(_known_after or 0)
         if _known:
             missing_target = max(0, missing_target - _known)
         logger.warning(
@@ -1419,7 +1478,7 @@ def _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol,
     view = f"_qfq_cov_m_{code}_{mfreq}"
     # QFQ settle：冻结边界与 after 计数（view 存活期内算，finally 会 unregister）
     _frozen_before = _resolve_frozen_before(code, asset_type)
-    _target_after = _matched_after = None
+    _target_after = _matched_after = _known_after = None
     conn.register(view, fm[["code", "time"] + list(RAW_COLS)])
     try:
         target_count = int(conn.execute(
@@ -1437,6 +1496,10 @@ def _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol,
             _matched_after = _count_matched_after(
                 conn, minute_table, code, frozen_before=_frozen_before,
                 mfreq=mfreq, view=view)
+            # R8 ②审：白名单减免必须与实际缺失集**求交**（不能按登记数计）
+            _known_after = _count_missing_in_whitelist(
+                conn, minute_table, code, frozen_before=_frozen_before,
+                mfreq=mfreq, view=view)
     finally:
         conn.unregister(view)
     if fm.duplicated(subset=["code", "time", "freq"]).any():
@@ -1451,8 +1514,8 @@ def _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol,
     if _frozen_before is not None and _target_after is not None and _matched_after is not None:
         _strict_missing = missing_target
         missing_target = int(_target_after) - int(_matched_after)
-        # 方案 §3.4：白名单与冻结边界**串联**（边界后特定 (code,日期) 再减）
-        _known = _count_in_whitelist(code, minute_table, after=_frozen_before)
+        # R8 ②审：白名单减免 = |实际缺失 ∩ 白名单|（求交 + 去重），不再按登记数计
+        _known = int(_known_after or 0)
         if _known:
             missing_target = max(0, missing_target - _known)
         logger.warning(
