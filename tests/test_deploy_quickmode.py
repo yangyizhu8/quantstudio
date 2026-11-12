@@ -332,3 +332,108 @@ def test_deploy_tab_quick_widgets():
     tab._on_start_clicked()                       # 高级页空输入提示不变
     assert tab.status_label.text() == "请先选择 deploy.yaml"
     tab.deleteLater()
+
+@_needs_tech
+def test_archive_identity_distinguishable(tmp_path):
+    """受控扰动 fixture（2026-11-13 R-20261113-01 裁甲）：证明归档的是**上一版内容身份**。
+
+    关键：同输入同配置两次 deploy 的产物**字节可能相同**，此时「归档内 sha == 首版 sha」
+    无判别力（归档错版本也会通过）。故在两次 deploy 之间对**临时 fixture**（不改正式策略）
+    注入一个**模块级变量**（非注释——注释可能被转换器剥离，变量会进产物），使 B 版字节不同于 A 版。
+
+    本用例验证「归档版本身份」，与「同输入确定性」是**两个不同测试**，
+    不构成对确定性契约的放宽。
+    """
+    src = tmp_path / "dist_src.py"
+    base = TECH_SRC.read_text(encoding="utf-8")
+    src.write_text(base, encoding="utf-8")
+
+    out = tmp_path / "out"
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(quickmode.build_quick_config(
+        "tech_etf_mvo_rotation", str(src),
+        output_root=str(out), dir_name="mystrat"), encoding="utf-8")
+
+    r1 = run_deploy(str(cfg))                      # 版本 A
+    target = out / "mystrat"
+    prod = "tech_etf_mvo_rotation_trade.py"
+    a_sha = {q.name: _sha(q) for q in target.iterdir() if q.is_file()}
+
+    # 受控扰动：追加模块级变量（会进产物；注释有被剥离风险，故不用注释）
+    src.write_text(base + "\n_QS_TEST_IDENTITY_MARK = 2\n", encoding="utf-8")
+    r2 = run_deploy(str(cfg))                      # 版本 B
+    b_sha = {q.name: _sha(q) for q in target.iterdir() if q.is_file()}
+
+    # ① 先断言 A ≠ B（否则后续断言无判别力）
+    assert a_sha[prod] != b_sha[prod], "扰动未生效：A/B 产物字节相同，归档身份不可判别"
+    assert "_QS_TEST_IDENTITY_MARK" in (target / prod).read_text(encoding="utf-8"), \
+        "扰动未进产物（可能被转换器剥离）——须换可验证扰动"
+
+    # ② 归档 = A（内容身份，非 mtime）
+    v001 = target / "_archive" / "v001"
+    assert v001.is_dir()
+    assert _sha(v001 / prod) == a_sha[prod], "归档内容不是版本 A"
+
+    # ③ 根目录 = B
+    assert _sha(target / prod) == b_sha[prod], "根目录不是版本 B"
+
+    # ④ 两次 deploy 均成功（不以文件数代替）
+    for tag, r in (("r1", r1), ("r2", r2)):
+        st = r.to_dict().get("status") if hasattr(r, "to_dict") else getattr(r, "status", None)
+        assert st != "FAIL", f"{tag} status=FAIL"
+
+
+@_needs_tech
+def test_archive_third_round_history(tmp_path):
+    """第三次 deploy：v001 保留 A、v002 保留 B（历史不被覆盖，精确内容身份）。"""
+    src = tmp_path / "hist_src.py"
+    base = TECH_SRC.read_text(encoding="utf-8")
+    src.write_text(base, encoding="utf-8")
+    out = tmp_path / "out"
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(quickmode.build_quick_config(
+        "tech_etf_mvo_rotation", str(src),
+        output_root=str(out), dir_name="mystrat"), encoding="utf-8")
+    prod = "tech_etf_mvo_rotation_trade.py"
+
+    run_deploy(str(cfg))
+    target = out / "mystrat"
+    a = _sha(target / prod)
+    src.write_text(base + "\n_QS_TEST_IDENTITY_MARK = 2\n", encoding="utf-8")
+    run_deploy(str(cfg))
+    b = _sha(target / prod)
+    assert a != b
+    src.write_text(base + "\n_QS_TEST_IDENTITY_MARK = 3\n", encoding="utf-8")
+    run_deploy(str(cfg))
+
+    arch = target / "_archive"
+    assert sorted(d.name for d in arch.iterdir() if d.is_dir()) == ["v001", "v002"]
+    assert _sha(arch / "v001" / prod) == a, "v001 应为 A"
+    assert _sha(arch / "v002" / prod) == b, "v002 应为 B"
+
+
+@_needs_tech
+def test_keep_one_keeps_latest_only(tmp_path):
+    """keep_versions=1 ⇒ 只余最新一份（精确保留最新，非「留下某个」）。"""
+    src = tmp_path / "k1_src.py"
+    base = TECH_SRC.read_text(encoding="utf-8")
+    src.write_text(base, encoding="utf-8")
+    out = tmp_path / "out"
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(quickmode.build_quick_config(
+        "tech_etf_mvo_rotation", str(src),
+        output_root=str(out), dir_name="mystrat", keep_versions=1), encoding="utf-8")
+    prod = "tech_etf_mvo_rotation_trade.py"
+
+    run_deploy(str(cfg))
+    target = out / "mystrat"
+    src.write_text(base + "\n_QS_TEST_IDENTITY_MARK = 2\n", encoding="utf-8")
+    run_deploy(str(cfg))
+    b = _sha(target / prod)
+    src.write_text(base + "\n_QS_TEST_IDENTITY_MARK = 3\n", encoding="utf-8")
+    run_deploy(str(cfg))
+
+    arch = target / "_archive"
+    dirs = sorted(d.name for d in arch.iterdir() if d.is_dir())
+    assert len(dirs) == 1, f"keep=1 应只余 1 份，实际 {dirs}"
+    assert _sha(arch / dirs[0] / prod) == b, "keep=1 保留的必须是最新版（B）"
