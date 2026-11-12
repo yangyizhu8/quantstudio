@@ -289,11 +289,14 @@ def run_xu(con):
         log(f"    {r[0]}  {r[1]:>3,} 条")
 
 
-def run(db: str) -> int:
-    con, why = try_open(db)
+def run(db: str, con=None) -> int:
+    """con 非空时**复用连接**（守候拿到锁后必须复用，不得关掉重开——
+    重开与 daemon 抢锁之间存在竞态，2026-11-13 02:05 实测因此丢失一次窗口）。"""
     if con is None:
-        log(f"FATAL: 库不可读（{why}）")
-        return 3
+        con, why = try_open(db)
+        if con is None:
+            log(f"FATAL: 库不可读（{why}）")
+            return 3
     try:
         log("NOW = " + str(con.execute("SELECT NOW()").fetchone()[0]))
         run_jia(con)
@@ -324,10 +327,9 @@ def main(argv=None) -> int:
         con, why = try_open(a.db)
         el = int(time.time() - t0)
         if con is not None:
-            con.close()
-            log(f"[{time.strftime('%H:%M:%S')}] #{n} 锁已释放（等待 {el}s）⇒ 开始取证")
-            time.sleep(3)
-            return run(a.db)
+            log(f"[{time.strftime('%H:%M:%S')}] #{n} 锁已释放（等待 {el}s）⇒ **复用本连接直接取证**"
+                f"（不再 close+重开，避竞态）")
+            return run(a.db, con=con)
         log(f"[{time.strftime('%H:%M:%S')}] #{n} 仍锁（{why}，已等 {el}s）")
         time.sleep(a.poll)
     log(f"[{time.strftime('%H:%M:%S')}] 超时 {a.max_wait_hours}h（探测 {n} 次，末状态={why}）")
