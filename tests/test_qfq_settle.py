@@ -232,6 +232,21 @@ def _run_minute_cov(conn, fresh):
         conn, "STOCK", "X", "1min", fresh, 1e-9, allow_partial=False)
 
 
+@pytest.fixture
+def frozen_at_d(monkeypatch):
+    """把冻结边界打桩为 `_D`。
+
+    必要性：测试用合成 code='X'，而真实 `data/qfq_frozen_bounds.json` 里并无 'X'
+    ⇒ `_resolve_frozen_before` 会**正确地** fail-closed 返回 None ⇒ 全部走严格路径，
+    导致 V1/V4/V7 永远测不到豁免语义（2026-11-12 首次运行即踩此坑）。
+    打桩只替换「边界解析」这一个纯函数，判据本体与 SQL 全部走真实实现。
+    """
+    monkeypatch.setenv("QS_QFQ_FROZEN_BEFORE", "1")
+    monkeypatch.setattr(eng, "_resolve_frozen_before",
+                        lambda code, asset_type: _D, raising=True)
+    return _D
+
+
 # ---------- 前态（判据未实施时断言「现行严格口径会 BLOCK」）----------
 
 @pytest.mark.skipif(
@@ -270,9 +285,8 @@ class TestSettlePreStateBaseline:
 class TestSettleV1V2V4:
     """V1/V2/V4：冻结边界与白名单对 `missing_target` 的影响（判据级）。"""
 
-    def test_v1_pre_boundary_gap_is_exempt(self, monkeypatch):
+    def test_v1_pre_boundary_gap_is_exempt(self, frozen_at_d):
         """V1：边界前有缺 ⇒ 豁免且 pass（missing_target 只统计边界后）。"""
-        monkeypatch.setenv("QS_QFQ_FROZEN_BEFORE", "1")
         conn = _mk_minute_db([_T_PRE2, _T_PRE1, _T_D, _T_POST1])
         try:
             cov = _run_minute_cov(conn, _mk_fresh([_T_D, _T_POST1]))
@@ -281,9 +295,8 @@ class TestSettleV1V2V4:
         finally:
             conn.close()
 
-    def test_v2_post_boundary_gap_still_blocks(self, monkeypatch):
+    def test_v2_post_boundary_gap_still_blocks(self, frozen_at_d):
         """V2（防回归核心）：边界**后**有缺 ⇒ 不豁免，仍 BLOCK。"""
-        monkeypatch.setenv("QS_QFQ_FROZEN_BEFORE", "1")
         conn = _mk_minute_db([_T_PRE2, _T_D, _T_POST1])
         try:
             with pytest.raises(eng.ReanchorBlocked) as ei:
@@ -296,14 +309,12 @@ class TestSettleV1V2V4:
         finally:
             conn.close()
 
-    def test_v4_whitelist_reduces_missing(self, monkeypatch):
+    def test_v4_whitelist_reduces_missing(self, frozen_at_d, monkeypatch):
         """V4：白名单命中 ⇒ 从 missing_target 中减去 ⇒ 减后 0 ⇒ pass。"""
-        monkeypatch.setenv("QS_QFQ_FROZEN_BEFORE", "1")
         # 白名单强制命中 (X, D) 与 (X, D+1) 两条
         if not _HAS_WHITELIST:
             pytest.skip("实现未暴露 _count_in_whitelist，无法构造白名单减免")
-        monkeypatch.setattr(
-            eng, "_count_in_whitelist", lambda *a, **kw: 2, raising=False)
+        monkeypatch.setattr(eng, "_count_in_whitelist", lambda *a, **kw: 2, raising=False)
         conn = _mk_minute_db([_T_PRE2, _T_D, _T_POST1])
         try:
             cov = _run_minute_cov(conn, _mk_fresh([_T_PRE2]))
@@ -330,9 +341,8 @@ class TestSettleV1V2V4:
 class TestSettleV7Warning:
     """V7：豁免必须留 WARNING（日志含 history_exempt）。"""
 
-    def test_v7_exempt_emits_history_exempt_warning(self, monkeypatch, caplog):
+    def test_v7_exempt_emits_history_exempt_warning(self, frozen_at_d, caplog):
         """V7：触发豁免时日志必须含 `history_exempt` 且带 frozen_before 值。"""
-        monkeypatch.setenv("QS_QFQ_FROZEN_BEFORE", "1")
         conn = _mk_minute_db([_T_PRE2, _T_PRE1, _T_D, _T_POST1])
         try:
             with caplog.at_level("WARNING"):
@@ -342,8 +352,10 @@ class TestSettleV7Warning:
         text = "\n".join(r.getMessage() for r in caplog.records)
         assert "history_exempt" in text, (
             f"豁免必须留痕 history_exempt（便于审计放行了哪些），实际日志: {text[:400]}")
-        assert str(_D) in text, (
-            f"日志应带 frozen_before 值 {_D} 便于追溯，实际日志: {text[:400]}")
+        # 实现用 _ms_to_date 把边界渲染成 'YYYY-MM-DD'（比裸 ms 更可读）⇒ 断言日期形态
+        _expect_day = "2026-11-01"
+        assert _expect_day in text, (
+            f"日志应带 frozen_before 日期 {_expect_day} 便于追溯，实际日志: {text[:400]}")
 
 
 # ============================================================ 附带：白名单数据质量

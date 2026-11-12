@@ -87,6 +87,7 @@ import uuid
 from dataclasses import dataclass, field
 from functools import lru_cache
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -1016,11 +1017,178 @@ def _coverage_diff_sample(conn, table: str, view: str, code: str,
         return ""
 
 
+# ===========================================================================
+# QFQ settle（历史冻结）—— 丙方案实施（2026-11-12）
+#
+# 语义：各 code 在**源端可得的最早交易日**之前的库内行，不计入 missing_target。
+# 依据：docs/qfq-settle-design-20261110.md §3.2/§3.3/§3.4
+# 两条铁律：①三处 fail-closed（文件缺失/code 不在/环境变量=0 ⇒ 不豁免）
+#          ②只改 missing_target 的分子分母，不改 extra、不改 raw 对齐、不改 front UPDATE
+# ===========================================================================
+
+_FROZEN_BOUNDS_PATH = Path(__file__).resolve().parents[2] / "data" / "qfq_frozen_bounds.json"
+_KNOWN_VIOLATIONS_PATH = Path(__file__).resolve().parents[2] / "data" / "qfq_known_violations.json"
+
+_FROZEN_BOUNDS_CACHE: Optional[Dict[Tuple[str, str], int]] = None
+_FROZEN_BOUNDS_LOADED = False
+_KNOWN_VIOLATIONS_CACHE: Optional[Dict[Tuple[str, str], List[str]]] = None
+_KNOWN_VIOLATIONS_LOADED = False
+
+
+def _ms_to_date(ms) -> str:
+    """epoch ms → 'YYYY-MM-DD'（本地时区，与库内 time 列口径一致）。"""
+    try:
+        return datetime.fromtimestamp(int(ms) / 1000).strftime("%Y-%m-%d")
+    except Exception:      # noqa: BLE001
+        return str(ms)
+
+
+def _reset_frozen_bounds_cache() -> None:
+    """测试用：清模块级边界缓存（V5b 注入缺失路径后需重置）。"""
+    global _FROZEN_BOUNDS_CACHE, _FROZEN_BOUNDS_LOADED
+    _FROZEN_BOUNDS_CACHE = None
+    _FROZEN_BOUNDS_LOADED = False
+
+
+def _reset_known_violations_cache() -> None:
+    """测试用：清白名单缓存。"""
+    global _KNOWN_VIOLATIONS_CACHE, _KNOWN_VIOLATIONS_LOADED
+    _KNOWN_VIOLATIONS_CACHE = None
+    _KNOWN_VIOLATIONS_LOADED = False
+
+
+def _load_frozen_bounds() -> Optional[Dict[Tuple[str, str], int]]:
+    """读边界快照 → {(asset, code): epoch_ms}；文件缺失/损坏 ⇒ **None（fail-closed）**。
+
+    模块级缓存只读一次（settle 边界是低频快照，进程内不变）。
+    """
+    global _FROZEN_BOUNDS_CACHE, _FROZEN_BOUNDS_LOADED
+    if _FROZEN_BOUNDS_LOADED:
+        return _FROZEN_BOUNDS_CACHE
+    _FROZEN_BOUNDS_LOADED = True
+    try:
+        doc = json.loads(_FROZEN_BOUNDS_PATH.read_text(encoding="utf-8"))
+        out: Dict[Tuple[str, str], int] = {}
+        for asset, tables in (doc.get("bounds") or {}).items():
+            for _table, codes in (tables or {}).items():
+                for code, ms in (codes or {}).items():
+                    if ms is not None:
+                        out[(str(asset), str(code))] = int(ms)
+        _FROZEN_BOUNDS_CACHE = out or None
+        if _FROZEN_BOUNDS_CACHE:
+            logger.info("[qfq_settle] 冻结边界已加载：%d 条 (asset,code)", len(out))
+        else:
+            logger.warning("[qfq_settle] 冻结边界文件为空，全部走严格路径")
+    except Exception as e:      # noqa: BLE001  文件缺失/损坏 ⇒ fail-closed
+        logger.warning("[qfq_settle] 冻结边界不可用，全部走严格路径：%s: %s",
+                       type(e).__name__, e)
+        _FROZEN_BOUNDS_CACHE = None
+    return _FROZEN_BOUNDS_CACHE
+
+
+def _resolve_frozen_before(code: str, asset_type: str) -> Optional[int]:
+    """返回该 code 的冻结边界（epoch ms）；拿不到 ⇒ None（调用方走严格路径）。
+
+    三条 fail-closed（方案 §3.3 原文）：
+      · QS_QFQ_FROZEN_BEFORE='0' ⇒ 全局禁用（一键退回严格模式）
+      · 边界文件不存在/损坏 ⇒ None
+      · code 不在文件内 ⇒ None
+    """
+    if os.environ.get("QS_QFQ_FROZEN_BEFORE", "1") == "0":
+        return None
+    bounds = _load_frozen_bounds()
+    if bounds is None:
+        return None
+    return bounds.get((str(asset_type), str(code)))
+
+
+def _count_target_after(conn, table: str, code: str,
+                        frozen_before: Optional[int] = None,
+                        mfreq: Optional[str] = None) -> int:
+    """冻结边界**之后**的目标行数（库内表，code[/freq] 过滤）。
+
+    frozen_before=None ⇒ 不加时间下界（等价于全历史，供对照/测试）。
+    """
+    sql = f"SELECT COUNT(*) FROM {table} WHERE code=?"
+    params: List = [code]
+    if mfreq is not None:
+        sql += " AND freq=?"
+        params.append(mfreq)
+    if frozen_before is not None:
+        sql += " AND time>=?"
+        params.append(int(frozen_before))
+    return int(conn.execute(sql, params).fetchone()[0])
+
+
+def _count_matched_after(conn, table: str, code: str,
+                         frozen_before: Optional[int] = None,
+                         mfreq: Optional[str] = None,
+                         view: Optional[str] = None) -> int:
+    """冻结边界**之后** matched 行数（库内表 JOIN fresh view）。
+
+    ⚠ **view 必须在调用时存活**：两处判据的 view 都在 finally 里 unregister，
+    故本函数必须在 try 块内调用（方案伪代码未点明，属实现约束）。
+    view=None ⇒ 返回 0（调用方应保证不传 None）。
+    """
+    if not view:
+        return 0
+    sql = (f'SELECT COUNT(*) FROM {table} t JOIN "{view}" s '
+           f"ON t.code=s.code AND t.time=s.time")
+    params: List = []
+    if mfreq is not None:
+        # ⚠ 分钟 view 只注册 code/time/RAW_COLS，**不含 freq** ⇒ 只能过滤 t.freq
+        # （与原判据 L1237-1240 口径一致：`ON t.code=s.code AND t.time=s.time AND t.freq=?`）
+        sql += " AND t.freq=?"
+        params.append(mfreq)
+    sql += " WHERE t.code=?"
+    params.append(code)
+    if frozen_before is not None:
+        sql += " AND t.time>=?"
+        params.append(int(frozen_before))
+    return int(conn.execute(sql, params).fetchone()[0])
+
+
+def _count_in_whitelist(code: str, table: str,
+                        after: Optional[int] = None) -> int:
+    """白名单命中数（边界之后**特定 (code,日期)** 的额外豁免）。
+
+    fail-closed：白名单文件缺失/损坏 ⇒ 返回 0（不减，按原值 BLOCK）。
+    `after` 为 epoch ms；只计**不早于**该日的白名单条目（与冻结边界串联）。
+    """
+    global _KNOWN_VIOLATIONS_CACHE, _KNOWN_VIOLATIONS_LOADED
+    if not _KNOWN_VIOLATIONS_LOADED:
+        _KNOWN_VIOLATIONS_LOADED = True
+        try:
+            doc = json.loads(_KNOWN_VIOLATIONS_PATH.read_text(encoding="utf-8"))
+            idx: Dict[Tuple[str, str], List[str]] = {}
+            for e in (doc.get("entries") or []):
+                key = (str(e.get("code")), str(e.get("table")))
+                idx.setdefault(key, []).extend(str(d) for d in (e.get("days") or []))
+            _KNOWN_VIOLATIONS_CACHE = idx
+            logger.info("[qfq_settle] 白名单已加载：%d 个 (code,table) 键", len(idx))
+        except Exception as e:      # noqa: BLE001  缺失 ⇒ 不减
+            logger.warning("[qfq_settle] 白名单不可用，不做减免：%s: %s",
+                           type(e).__name__, e)
+            _KNOWN_VIOLATIONS_CACHE = None
+    if _KNOWN_VIOLATIONS_CACHE is None:
+        return 0
+    days = _KNOWN_VIOLATIONS_CACHE.get((str(code), str(table))) or []
+    if not days:
+        return 0
+    if after is None:
+        return len(days)
+    cutoff = _ms_to_date(after)
+    return sum(1 for d in days if str(d) >= cutoff)
+
+
 def _check_daily_coverage_strict(conn, asset_type, code, df):
     """rebase 日线全历史覆盖：target == staged == matched，缺/多/重复行一律 BLOCK。"""
     daily_table, _ = _tables_of(asset_type)
     view = f"_qfq_cov_d_{code}"
     _sample = ""
+    # QFQ settle：冻结边界与本批 after 计数（**必须在 view 存活期内算完**，见下方 finally）
+    _frozen_before = _resolve_frozen_before(code, asset_type)
+    _target_after = _matched_after = None
     conn.register(view, df[["code", "time"]])
     try:
         target_count = int(conn.execute(
@@ -1044,6 +1212,13 @@ def _check_daily_coverage_strict(conn, asset_type, code, df):
         matched = int(conn.execute(
             f"SELECT COUNT(*) FROM {daily_table} t JOIN {view} s "
             f"ON t.code=s.code AND t.time=s.time WHERE t.code=?", [code]).fetchone()[0])
+        # QFQ settle：冻结边界之后的 target/matched（**必须在 view 存活期内**——
+        # finally 会 unregister(view)，之后无法 JOIN）
+        if _frozen_before is not None:
+            _target_after = _count_target_after(
+                conn, daily_table, code, frozen_before=_frozen_before)
+            _matched_after = _count_matched_after(
+                conn, daily_table, code, frozen_before=_frozen_before, view=view)
         # 2026-10-13 六步①第一段：差集样本**必须在 view 存活期内取**——
         # finally 会 unregister(view)，若在其后查询会因视图已注销而取不到（实测踩坑）。
         _sample = _coverage_diff_sample(conn, daily_table, view, code, limit=5)
@@ -1053,6 +1228,20 @@ def _check_daily_coverage_strict(conn, asset_type, code, df):
         raise ReanchorBlocked("daily_coverage_duplicate",
             f"code={code} fresh 日线 (code,time) 存在重复行")
     missing_target = target_in_window - matched      # 第二段：同窗口比较（原为 target_count）
+    # QFQ settle（2026-11-12 丙方案）：边界之前的历史缺口不计入 missing_target。
+    # fail-closed：num 拿不到边界（文件缺失/code 不在/env=0）⇒ 完全按原严格口径。
+    if _frozen_before is not None and _target_after is not None and _matched_after is not None:
+        _strict_missing = missing_target
+        missing_target = int(_target_after) - int(_matched_after)
+        # 方案 §3.4：白名单与冻结边界**串联**（边界后特定 (code,日期) 再减）
+        _known = _count_in_whitelist(code, daily_table, after=_frozen_before)
+        if _known:
+            missing_target = max(0, missing_target - _known)
+        logger.warning(
+            "[qfq_settle] %s daily history_exempt frozen_before=%s "
+            "missing_strict=%d missing_after_frozen=%d known_whitelist=%d exempted=%d",
+            code, _ms_to_date(_frozen_before), _strict_missing, missing_target,
+            _known, _strict_missing - missing_target)
     extra = staged_count - matched
     out_of_window = target_count - target_in_window  # 区间外库内行：显式标注，不参与判定
     if out_of_window > 0:
@@ -1228,6 +1417,9 @@ def _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol,
     _, minute_table = _tables_of(asset_type)
     mfreq = _canon_minute_freq(freq_c)
     view = f"_qfq_cov_m_{code}_{mfreq}"
+    # QFQ settle：冻结边界与 after 计数（view 存活期内算，finally 会 unregister）
+    _frozen_before = _resolve_frozen_before(code, asset_type)
+    _target_after = _matched_after = None
     conn.register(view, fm[["code", "time"] + list(RAW_COLS)])
     try:
         target_count = int(conn.execute(
@@ -1238,12 +1430,36 @@ def _check_minute_cov_raw(conn, asset_type, code, freq_c, fm, tol,
             f"SELECT COUNT(*) FROM {minute_table} t JOIN {view} s "
             f"ON t.code=s.code AND t.time=s.time AND t.freq=? "
             f"WHERE t.code=?", [mfreq, code]).fetchone()[0])
+        # QFQ settle：after 口径计数（**必须在 view 存活期内**）
+        if _frozen_before is not None:
+            _target_after = _count_target_after(
+                conn, minute_table, code, frozen_before=_frozen_before, mfreq=mfreq)
+            _matched_after = _count_matched_after(
+                conn, minute_table, code, frozen_before=_frozen_before,
+                mfreq=mfreq, view=view)
     finally:
         conn.unregister(view)
     if fm.duplicated(subset=["code", "time", "freq"]).any():
         raise ReanchorBlocked("minute_coverage_duplicate",
             f"rebase 分钟 freq={mfreq} (code,time,freq) 重复")
     missing_target = target_count - matched
+    # QFQ settle（2026-11-12 丙方案）：边界之前的分钟历史缺口不计入 missing_target。
+    # ⚠ 与方案伪代码的有意偏离：方案写「覆盖 target_count/matched」，但那样会让
+    #   `extra = staged_count - matched` 把「边界前已匹配的行」算成多余 ⇒ V1 场景误报
+    #   「多 N 行」而 BLOCK。故此处**只把 after 口径用于 missing_target**，
+    #   extra 仍用全量 matched（语义不变）。
+    if _frozen_before is not None and _target_after is not None and _matched_after is not None:
+        _strict_missing = missing_target
+        missing_target = int(_target_after) - int(_matched_after)
+        # 方案 §3.4：白名单与冻结边界**串联**（边界后特定 (code,日期) 再减）
+        _known = _count_in_whitelist(code, minute_table, after=_frozen_before)
+        if _known:
+            missing_target = max(0, missing_target - _known)
+        logger.warning(
+            "[qfq_settle] %s minute freq=%s history_exempt frozen_before=%s "
+            "missing_strict=%d missing_after_frozen=%d known_whitelist=%d exempted=%d",
+            code, mfreq, _ms_to_date(_frozen_before), _strict_missing,
+            missing_target, _known, _strict_missing - missing_target)
     extra = staged_count - matched
     cov = None
     if missing_target == 0 and extra == 0:
