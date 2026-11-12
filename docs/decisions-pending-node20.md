@@ -70,10 +70,36 @@ note: 本文件为节点⑳ 专属；节点⑫ 的台账是 docs/decisions-pendi
 |---|---|---|
 | 1 | **V8 回测哈希基线捕获**（改动前，冻结基线）| ✅ **已完成**（04:37，`6ff884a9…`，见 `docs/evidence/v8-settle-baseline-20261112.json`）|
 | 2 | 边界 JSON 刷新（源端已到 2026-11-10，per-code 首日可能变）| ⏳ 待做（**须在 V8 捕获后**，✅ 时序已满足）|
-| 3 | 补 V1/V2/V4/V7 测试（接口设计已定，可先写）| ⏳ 待做 |
+| 3 | 补 V1/V2/V4/V7 测试（接口设计已定，可先写）| ✅ **已完成**（`tests/test_qfq_settle.py` Layer C：`10 passed / 9 skipped`）|
 | 4 | 判据改动（4 新函数 + 2 处 `missing_target` 重算）| ⏸ 窗口内 |
 | 5 | 单测 + V8 比对（`--compare`）+ V9 回归 + V10 观察 | ⏸ 窗口内 |
 | 6 | 回退双路：`QS_QFQ_FROZEN_BEFORE=0` / `git revert` | ✅ 已在位 |
+
+### V1/V2/V4/V7 测试补写结果（2026-11-12 11:52）
+
+**新增 Layer C（双态对照），实测 `10 passed / 9 skipped`：**
+
+| 用例 | 语义 | 当前状态 |
+|---|---|---|
+| `test_pre_v1_strict_blocks_on_pre_boundary_gap` | **前态基线**：现行严格口径对「库内 `[D-2,D-1,D,D+1]` / fresh `[D,D+1]`」应 BLOCK 且报「缺 2」| ✅ **PASSED**（证明 fixture 确实触发旧口径失败）|
+| `test_v1_pre_boundary_gap_is_exempt` | V1：边界前有缺 ⇒ 豁免且 pass | ⏸ SKIP（判据未实施）|
+| `test_v2_post_boundary_gap_still_blocks` | V2（防回归核心）：边界**后**有缺 ⇒ 仍 BLOCK，且「缺 2」 | ⏸ SKIP |
+| `test_v4_whitelist_reduces_missing` | V4：白名单命中 ⇒ 减后 0 ⇒ pass | ⏸ SKIP |
+| `test_v6_env_zero_disables_all_exemptions` | V6 判据级对照：env=0 ⇒ V1 场景回到 BLOCK | ⏸ SKIP |
+| `test_v7_exempt_emits_history_exempt_warning` | V7：豁免必留 `history_exempt` + `frozen_before` 值 | ⏸ SKIP |
+
+**设计要点（双态对照，避免「永远 skip = 没测」）：**
+- 前态用例 `skipif(_HAS_HELPERS)` —— 实施后**自动退役**
+- 后态用例 `skipif(not _HAS_HELPERS)` —— 实施后**自动启用**
+- 两者互斥，形成「实施前 BLOCK / 实施后 PASS」的可验证对照
+
+**fixture 设计**：`duckdb :memory:` 建最小 `stock_minutes`（code/time/freq + `RAW_COLS`=open/high/low/close），
+不触生产库；raw 值库内与 fresh 同用 10.0，确保 raw 对齐不干扰覆盖判定。
+
+**接口签名（来自方案 §3.3 原文，测试对准不自造）**：
+`_count_target_after(conn, table, code[, mfreq], frozen_before)` /
+`_count_matched_after(conn, table, code[, mfreq], frozen_before[, view])` /
+`_count_in_whitelist(code, table, after=frozen_before)`
 
 ### V8 基线捕获结果（2026-11-12 04:17–04:37，实测）
 

@@ -187,6 +187,165 @@ class TestSettleContract:
             pytest.skip("实现未暴露 _FROZEN_BOUNDS_PATH，无法注入缺失路径")
 
 
+# ============================================================ Layer C：V1/V2/V4/V7（双态对照）
+
+# 判据辅助函数是否已落地（settle 丙方案 §3.3 的 4 个新函数）
+_HAS_HELPERS = (hasattr(eng, "_count_target_after")
+                and hasattr(eng, "_count_matched_after"))
+_HAS_WHITELIST = hasattr(eng, "_count_in_whitelist")
+
+# 测试用日基准（CST 00:00）。用整数偏移构造「边界前 / 边界 / 边界后」三档。
+_D = 1793491200000                      # 2026-10-30 00:00 CST
+_DAY = 86400000
+_T_PRE2, _T_PRE1 = _D - 2 * _DAY, _D - _DAY
+_T_D, _T_POST1 = _D, _D + _DAY
+_R = 10.0                               # raw 值：库内与 fresh 用同一组，确保 raw 对齐不干扰覆盖判定
+
+
+def _mk_minute_db(rows):
+    """最小 stock_minutes（仅判据用到的列）——内存库，不触生产库。"""
+    duckdb = pytest.importorskip("duckdb")
+    conn = duckdb.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE stock_minutes(code VARCHAR, time BIGINT, freq VARCHAR, "
+        "open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE)")
+    for t in rows:
+        conn.execute(
+            "INSERT INTO stock_minutes VALUES ('X', ?, '1min', ?, ?, ?, ?)",
+            [t, _R, _R, _R, _R])
+    return conn
+
+
+def _mk_fresh(times):
+    """fresh 分钟 df（列 = code/time/freq + RAW_COLS）。"""
+    pd = pytest.importorskip("pandas")
+    n = len(times)
+    return pd.DataFrame({
+        "code": ["X"] * n, "time": list(times), "freq": ["1min"] * n,
+        "open": [_R] * n, "high": [_R] * n, "low": [_R] * n, "close": [_R] * n,
+    })
+
+
+def _run_minute_cov(conn, fresh):
+    """直接调判据（allow_partial=False，与 rebase 默认一致）。"""
+    return eng._check_minute_cov_raw(
+        conn, "STOCK", "X", "1min", fresh, 1e-9, allow_partial=False)
+
+
+# ---------- 前态（判据未实施时断言「现行严格口径会 BLOCK」）----------
+
+@pytest.mark.skipif(
+    _HAS_HELPERS,
+    reason="settle 判据已实施 ⇒ 前态对照自动退役（见下方后态用例）",
+)
+class TestSettlePreStateBaseline:
+    """**前态基线**：settle 未实施时，现行严格口径对「边界前缺行」也会 BLOCK。
+
+    作用 = 双态对照的「前」半：证明下面的 V1 fixture **确实构成旧口径下的失败**，
+    从而 V1 实施后转 PASS 才是有意义的（否则可能是 fixture 本身就不触发判据）。
+    """
+
+    def test_pre_v1_strict_blocks_on_pre_boundary_gap(self):
+        """前态：库内有 [D-2, D-1, D, D+1]，fresh 只有 [D, D+1] ⇒ 现行 BLOCK。"""
+        conn = _mk_minute_db([_T_PRE2, _T_PRE1, _T_D, _T_POST1])
+        try:
+            with pytest.raises(eng.ReanchorBlocked) as ei:
+                _run_minute_cov(conn, _mk_fresh([_T_D, _T_POST1]))
+            # ReanchorBlocked 的 args[0] 是「code: 详情」整串
+            assert ei.value.args[0].startswith("minute_coverage_mismatch"), (
+                f"应报 minute_coverage_mismatch，实际 {ei.value.args[0][:120]}")
+            assert "缺 2" in ei.value.args[0], (
+                f"旧口径应把边界前 2 行也计为缺，实际 {ei.value.args[0][:120]}")
+        finally:
+            conn.close()
+
+
+# ---------- 后态（判据实施后断言 settle 语义）----------
+
+@pytest.mark.skipif(
+    not _HAS_HELPERS,
+    reason=("settle 判据尚未实施（TDD 前置）：待 qfq_reanchor_engine 落地 "
+            "_count_target_after/_count_matched_after 后自动启用"),
+)
+class TestSettleV1V2V4:
+    """V1/V2/V4：冻结边界与白名单对 `missing_target` 的影响（判据级）。"""
+
+    def test_v1_pre_boundary_gap_is_exempt(self, monkeypatch):
+        """V1：边界前有缺 ⇒ 豁免且 pass（missing_target 只统计边界后）。"""
+        monkeypatch.setenv("QS_QFQ_FROZEN_BEFORE", "1")
+        conn = _mk_minute_db([_T_PRE2, _T_PRE1, _T_D, _T_POST1])
+        try:
+            cov = _run_minute_cov(conn, _mk_fresh([_T_D, _T_POST1]))
+            assert cov is not None, "边界前缺行应被豁免（返回 cov），实际 BLOCK"
+            assert cov["missing_target"] == 0, f"missing_target 应为 0，实际 {cov}"
+        finally:
+            conn.close()
+
+    def test_v2_post_boundary_gap_still_blocks(self, monkeypatch):
+        """V2（防回归核心）：边界**后**有缺 ⇒ 不豁免，仍 BLOCK。"""
+        monkeypatch.setenv("QS_QFQ_FROZEN_BEFORE", "1")
+        conn = _mk_minute_db([_T_PRE2, _T_D, _T_POST1])
+        try:
+            with pytest.raises(eng.ReanchorBlocked) as ei:
+                _run_minute_cov(conn, _mk_fresh([_T_PRE2]))
+            msg = ei.value.args[0]
+            assert msg.startswith("minute_coverage_mismatch"), (
+                f"应报 minute_coverage_mismatch，实际 {msg[:120]}")
+            # 缺的必须是边界后那两行（D、D+1），不是边界前的
+            assert "缺 2" in msg, f"应报缺 2 行（边界后），实际 {msg[:120]}"
+        finally:
+            conn.close()
+
+    def test_v4_whitelist_reduces_missing(self, monkeypatch):
+        """V4：白名单命中 ⇒ 从 missing_target 中减去 ⇒ 减后 0 ⇒ pass。"""
+        monkeypatch.setenv("QS_QFQ_FROZEN_BEFORE", "1")
+        # 白名单强制命中 (X, D) 与 (X, D+1) 两条
+        if not _HAS_WHITELIST:
+            pytest.skip("实现未暴露 _count_in_whitelist，无法构造白名单减免")
+        monkeypatch.setattr(
+            eng, "_count_in_whitelist", lambda *a, **kw: 2, raising=False)
+        conn = _mk_minute_db([_T_PRE2, _T_D, _T_POST1])
+        try:
+            cov = _run_minute_cov(conn, _mk_fresh([_T_PRE2]))
+            assert cov is not None, "白名单减后 missing_target=0，应 pass 而非 BLOCK"
+            assert cov["missing_target"] == 0
+        finally:
+            conn.close()
+
+    def test_v6_env_zero_disables_all_exemptions(self, monkeypatch):
+        """V6 判据级对照：QS_QFQ_FROZEN_BEFORE=0 ⇒ V1 场景回到 BLOCK（一键退回严格）。"""
+        monkeypatch.setenv("QS_QFQ_FROZEN_BEFORE", "0")
+        conn = _mk_minute_db([_T_PRE2, _T_PRE1, _T_D, _T_POST1])
+        try:
+            with pytest.raises(eng.ReanchorBlocked):
+                _run_minute_cov(conn, _mk_fresh([_T_D, _T_POST1]))
+        finally:
+            conn.close()
+
+
+@pytest.mark.skipif(
+    not (_HAS_HELPERS and hasattr(eng, "_resolve_frozen_before")),
+    reason="settle 判据尚未实施（TDD 前置，实施后自动启用）",
+)
+class TestSettleV7Warning:
+    """V7：豁免必须留 WARNING（日志含 history_exempt）。"""
+
+    def test_v7_exempt_emits_history_exempt_warning(self, monkeypatch, caplog):
+        """V7：触发豁免时日志必须含 `history_exempt` 且带 frozen_before 值。"""
+        monkeypatch.setenv("QS_QFQ_FROZEN_BEFORE", "1")
+        conn = _mk_minute_db([_T_PRE2, _T_PRE1, _T_D, _T_POST1])
+        try:
+            with caplog.at_level("WARNING"):
+                _run_minute_cov(conn, _mk_fresh([_T_D, _T_POST1]))
+        finally:
+            conn.close()
+        text = "\n".join(r.getMessage() for r in caplog.records)
+        assert "history_exempt" in text, (
+            f"豁免必须留痕 history_exempt（便于审计放行了哪些），实际日志: {text[:400]}")
+        assert str(_D) in text, (
+            f"日志应带 frozen_before 值 {_D} 便于追溯，实际日志: {text[:400]}")
+
+
 # ============================================================ 附带：白名单数据质量
 
 
