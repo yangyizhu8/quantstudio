@@ -409,6 +409,63 @@ G0_API_11 ('np_call_NaN',    'ABSENT:AttributeError `np.NaN` was removed in the 
 或在隔离副本中注入一个会发 warning 的函数（与 N2 同法）才能验证。已列为 §11 待确认项。
 
 **⑥ 仍未计入任何验收（M2 纪律延续）**：本机 3.11.9 ≠ 3.12、非 QMT 进程
+
+#### 3.5.3 R387 离线补测（②审授权的已准范围）
+
+> 原始取证：`docs/evidence/qmt-g0-warn-probe-20261113/`（`raw_output.txt` + `fp.json` + `README.md`，
+> raw sha256 `c748f2c8b256fb5d70887df5c4cadbadbd3f4b7a8ffcff771bbb714d2f6aa689`，
+> 1,803 B / 全部在隔离临时副本内运行，未改宿主 `sys.modules`/`sys.path`）
+
+**① WARN 注入 —— 四项判据全达成**（补齐 §3.5.2⑤ 申报的缺口）
+
+```text
+WARN_FILTERS_BEFORE len=5
+WARN_INJECT OK [WARN:FutureWarning:DEPRECATED_API_X will be removed] val=42
+WARN_AFTER_PROBE OK val='still-alive'          ← 后续项继续
+WARN_FILTERS_AFTER  len=5   RESTORED True   GLOBAL_LEAK False   ← 过滤恢复
+WARN_OUTSIDE_CATCH count=1 cat=FutureWarning   ← 未被全局吞掉
+```
+
+| 判据 | 结果 |
+|---|---|
+| 记录**类别 + 消息** | ✅ `FutureWarning:DEPRECATED_API_X will be removed` |
+| `OK[WARN:...]` 形态 | ✅ 正确呈现，且 value 仍可用（`val=42`） |
+| **后续项继续** | ✅ 注入项之后两项均正常执行 |
+| **warnings 过滤恢复** | ✅ `5→5`、`RESTORED True`、`GLOBAL_LEAK False` |
+
+**② 「属性不存在」与「调用内部 AttributeError」已分层**（消除 v2.1 混装缺陷）
+
+| 读数 | 定性 | 判 PASS |
+|---|---|---|
+| `ABSENT` | 属性层即不存在（**能力读数**） | ✅ |
+| `CALL_INTERNAL_ATTRIBUTE_ERROR` | 属性存在、**调用内部**抛（**不可当"API 不存在"**） | ❌ 须单独定性 |
+| `OK` / `OK[WARN]` | 可用 | ✅ |
+| `FAIL` / `ATTR_ERR` | 意外 | ❌ |
+
+实测：`pd.DataFrame.append` / `pd.Panel` / `np.float_` 均 `ABSENT`；
+人造用例 `_FakeWithInternalAbsent.broken` 正确落入 `CALL_INTERNAL_ATTRIBUTE_ERROR`。
+
+**③ 「包装目录无 `.pyd`」≠「全包无原生扩展」（②审判断成立，v2.0 推断错误）**
+
+```text
+NUMPY_PYD_TOTAL 19     全部 cp311-win_amd64（rsplit 修正后复验）
+  _core\_multiarray_umath.cp311-win_amd64.pyd    ← 真实位置在 _core（2.x 改名）
+  _core\_simd.cp311-win_amd64.pyd
+  fft\_pocketfft_umath.cp311-win_amd64.pyd
+  linalg\_umath_linalg.cp311-win_amd64.pyd ...
+WRAPPER_DIR_HAS_PYD False   ← numpy/core（旧名目录）是纯 Python 包装
+```
+
+⇒ v2.0 据 `numpy_native_pyd=[]` 推断「numpy 无原生扩展」**是错的**。
+**v2.2 起改为全包递归扫描**，并将「包装目录」与「原生扩展目录」列为**两个独立观测面**。
+
+**④ 本轮自身缺陷（如实登记）**：首次扫描 `NUMPY_PYD_CP_TAGS` 输出 `['?']`——
+`p.split('.')[-3]` 取段位置错误（**扫描本身正确，19 个已完整列出**）。
+已改 `rsplit('.', 2)[-2]` 并复验为 `['cp311-win_amd64']`。
+
+**⑤ 采纳②审两条收窄**：混合版本 / 非 QMT 目录**不自动判损坏**，按 manifest 与实测 ABI 判断；
+未反复扩大方案，仅交付授权的补测组原始输出 + 指纹。
+
 ⇒ 上述仅为**探针自身有效性的离线验证**，不计入"3.6.8 基线实跑"，不计入任何 3.12 兼容性判据。
 
 
