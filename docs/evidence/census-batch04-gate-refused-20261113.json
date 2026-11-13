@@ -1,0 +1,38 @@
+{
+  "manifest_version": "census-v4-gated",
+  "batch": "L-A/batch04",
+  "endpoint": "http://127.0.0.1:9000/exec",
+  "started_at": "2026-11-13T17:03:05+08:00",
+  "gates": {
+    "resource": {
+      "passed": false,
+      "readings": {
+        "api_rc": 1,
+        "struct_size": 64,
+        "GetLastError": 0,
+        "ram_total_gb": 34.19,
+        "ram_free_gb": 0.62,
+        "ram_load_pct": 98,
+        "disk_free_gb": 140.4,
+        "disk_total_gb": 1073.7,
+        "sampled_at": "2026-11-13T17:03:06+08:00",
+        "source": "live GlobalMemoryStatusEx / shutil.disk_usage at this run",
+        "ram_free_floor_gb": 1.03
+      },
+      "failures": [
+        "RAM free 0.62 GB < floor 1.03 GB",
+        "RAM load 98% > ceil 95%"
+      ],
+      "thresholds": {
+        "ram_free_floor_gb": 1.0,
+        "ram_free_floor_pct": 0.03,
+        "ram_load_ceil_pct": 95,
+        "disk_free_floor_gb": 5.0
+      },
+      "rationale": "阈值本地论证，非照搬：本负载为服务端聚合（SAMPLE BY 1d 仅回 614/450 行），客户端只接收小 JSON，工作集远小于 100MB；batch03 实测在 free 0.86GB / load 97% 下仍成功完成（14:55:17→14:55:18），说明阈值不是「工作负载需求」而是「给 OS 与其他会话留余量」的保守门。故取 max(1.0GB, 3% total) 与 load<=95%。云 T4 的 8GB 阈值**未在本地论证**，不采纳为本机 census 门。"
+    }
+  },
+  "tables": {},
+  "finished_at": "2026-11-13T17:03:06+08:00",
+  "decision": "REFUSED_BY_RESOURCE_GATE"
+}
