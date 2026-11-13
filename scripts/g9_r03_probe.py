@@ -182,19 +182,18 @@ def _norm8(s: str) -> str:
     return raw[:8]
 
 
-def cal_dates_between(con, cal, lo: str, hi: str, cap: int = 60):
-    """返回 (dates, note)。dates = 区间内**实际开市日**列表（北京日期 str），最多 cap 条。
+def _cal_predicate(cal, lo: str, hi: str):
+    """**唯一的日历谓词构造**（两份派生查询共用，防止口径分叉）。
 
-    与 cal_count_between 同口径，但给出**逐日明细**，供「附实际中间日期」要求
-    （2026-11-13 R3 指示）。计数不可解释、覆盖不足、形态未确认时返回 (None, note)。
+    返回 (where, params, dc, form, note)；不可判时 where 为 None 并给出 note。
     """
     if not cal.get("ok"):
-        return None, f"日历不可用（{cal.get('why') or '空表'}）"
+        return None, None, None, None, f"日历不可用（{cal.get('why') or '空表'}）"
     dc, fc, form = cal["date_col"], cal["flag_col"], cal["form"]
     cmin, cmax = _norm8(cal["min"]), _norm8(cal["max"])
     lo8, hi8 = _norm8(lo), _norm8(hi)
     if not (cmin <= lo8 and hi8 <= cmax):
-        return None, f"日历覆盖不足（{cal['min']}~{cal['max']} 不含 {lo}~{hi}）"
+        return None, None, dc, form, f"日历覆盖不足（{cal['min']}~{cal['max']} 不含 {lo}~{hi}）"
     if form == "int_epoch_ms":
         lo_v, hi_v = bj_zero_ms(lo), bj_zero_ms(hi)
     elif form == "int_yyyymmdd":
@@ -206,79 +205,57 @@ def cal_dates_between(con, cal, lo: str, hi: str, cap: int = 60):
     elif form == "date_type":
         lo_v, hi_v = lo, hi
     else:
-        return None, f"日期形态未确认（{form}）"
+        return None, None, dc, form, f"日期形态未确认（{form}）"
     where = f"{dc} > ? AND {dc} < ?"
-    sel = f"SELECT {dc} FROM trade_calendar WHERE {where}"
     params = [lo_v, hi_v]
+    note_bits = []
     if fc and cal.get("flag_vocab"):
         vocab = [str(v) for v in cal["flag_vocab"]]
         if set(vocab) <= {"0", "1", "True", "False", "true", "false"}:
             opens = [v for v in cal["flag_vocab"] if str(v).lower() in ("1", "true")]
             if opens:
-                ph = ",".join("?" for _ in opens)
-                sel += f" AND {fc} IN ({ph})"
-                params += opens
-    sel += f" ORDER BY {dc} LIMIT {cap}"
+                where += f" AND {fc} IN ({','.join('?' for _ in opens)})"
+                params = params + opens
+                note_bits.append(f"按 {fc} 过滤")
+            else:
+                note_bits.append(f"{fc} 无开市取值")
+        else:
+            note_bits.append(f"{fc} 取值域不可解释")
+    else:
+        note_bits.append("无开市标志")
+    return where, params, dc, form, "；".join(note_bits)
+
+
+def cal_dates_between(con, cal, lo: str, hi: str, cap: int = 60):
+    """返回 (dates, total, note)。
+
+    - **total** = 区间内开市日**真实总数**（独立 COUNT，不受 cap 影响）
+    - **dates** = 明细，最多 cap 条
+    - **截断必须显式标注**：total > len(dates) 时，调用方须按「仅显示前 len 条，
+      总数 total」表述，**禁止以 len(dates) 代替 total**（2026-11-13 R4 指示）
+    """
+    where, params, dc, _form, note = _cal_predicate(cal, lo, hi)
+    if where is None:
+        return None, None, note
     try:
-        rows = con.execute(sel, params).fetchall()
+        total = con.execute(
+            f"SELECT COUNT(*) FROM trade_calendar WHERE {where}", params).fetchone()[0]
+        rows = con.execute(
+            f"SELECT {dc} FROM trade_calendar WHERE {where} ORDER BY {dc} LIMIT {int(cap)}",
+            params).fetchall()
     except Exception as e:
-        return None, f"查询失败 {type(e).__name__}"
+        return None, None, f"查询失败 {type(e).__name__}"
     out = []
     for (v,) in rows:
         s = _norm8(v)
-        if len(s) == 8 and s.isdigit():
-            out.append(f"{s[:4]}-{s[4:6]}-{s[6:8]}")
-        else:
-            out.append(str(v))
-    return out, f"按 {fc} 过滤" if fc else "无标志"
+        out.append(f"{s[:4]}-{s[4:6]}-{s[6:8]}" if (len(s) == 8 and s.isdigit()) else str(v))
+    return out, int(total), note
 
 
 def cal_count_between(con, cal, lo: str, hi: str):
-    """→ (cnt | None, note)。None = 不可判（未知）。"""
-    if not cal.get("ok"):
-        return None, f"日历不可用（{cal.get('why') or '空表'}）"
-    dc, fc, form = cal["date_col"], cal["flag_col"], cal["form"]
-    cmin, cmax = _norm8(cal["min"]), _norm8(cal["max"])
-    lo8, hi8 = _norm8(lo), _norm8(hi)
-    # S1 覆盖检查（不通过 ⇒ 未知，绝不据空查询判「无交易日」）
-    if not (cmin <= lo8 and hi8 <= cmax):
-        return None, f"日历覆盖不足（{cal['min']}~{cal['max']} 不含 {lo}~{hi}）"
-    # S2 形态
-    if form == "int_epoch_ms":
-        lo_v, hi_v = bj_zero_ms(lo), bj_zero_ms(hi)
-    elif form == "int_yyyymmdd":
-        lo_v, hi_v = int(lo8), int(hi8)
-    elif form == "str_dash":
-        lo_v, hi_v = lo, hi
-    elif form == "str_compact":
-        lo_v, hi_v = lo8, hi8
-    elif form == "date_type":
-        lo_v, hi_v = lo, hi
-    else:
-        return None, f"日期形态未确认（{form}）"
-    where = f"{dc} > ? AND {dc} < ?"
-    try:
-        total = con.execute(
-            f"SELECT COUNT(*) FROM trade_calendar WHERE {where}", [lo_v, hi_v]).fetchone()[0]
-    except Exception as e:
-        return None, f"查询失败 {type(e).__name__}"
-    if total == 0:
-        return 0, "区间内日历无任何记录（覆盖检查已通过）"
-    if fc and cal.get("flag_vocab"):
-        vocab = [str(v) for v in cal["flag_vocab"]]
-        if set(vocab) <= {"0", "1", "True", "False", "true", "false"}:
-            opens = [v for v in cal["flag_vocab"] if str(v).lower() in ("1", "true")]
-            if opens:
-                ph = ",".join("?" for _ in opens)
-                try:
-                    n = con.execute(
-                        f"SELECT COUNT(*) FROM trade_calendar WHERE {where} AND {fc} IN ({ph})",
-                        [lo_v, hi_v] + opens).fetchone()[0]
-                    return n, f"按 {fc} 过滤（取值域 {vocab}）"
-                except Exception as e:
-                    return None, f"标志过滤失败 {type(e).__name__}"
-        return None, f"开市标志取值域不可解释（{vocab}）"
-    return total, "无可用开市标志 ⇒ 仅计记录数（口径未确认，按候选处理）"
+    """计数**派生自** cal_dates_between（R4：同源明细再派生计数，避免维护分叉）。"""
+    _dates, total, note = cal_dates_between(con, cal, lo, hi)
+    return total, note
 
 
 # ================= 甲 =================
@@ -309,13 +286,19 @@ def run_jia(con):
         log(f"\n  ── 断点 {i}: {lo} → {hi}（间隔 {gap} 天，仅标记）")
         lo_ms_v, hi_ms_v = bj_zero_ms(lo), bj_zero_ms(hi)
         log(f"     epoch: lo={lo_ms_v}  hi={hi_ms_v}")
-        cnt, note = cal_count_between(con, cal, lo, hi)
-        dates, dnote = cal_dates_between(con, cal, lo, hi)
+        dates, total, note = cal_dates_between(con, cal, lo, hi)
         if dates is not None:
-            shown = dates if len(dates) <= 20 else (dates[:10] + ["…"] + dates[-5:])
-            log(f"     实际中间开市日({len(dates)}{'≥' if len(dates) >= 60 else ''}): {shown}")
+            # 截断必须显式标注：绝不以明细条数代替总数（R4）
+            if total > len(dates):
+                log(f"     实际中间开市日: **总数 {total}**（明细已截断，仅显示前 {len(dates)} 条）")
+                shown = dates[:10] + ["…"] + dates[-5:] if len(dates) > 15 else dates
+            else:
+                log(f"     实际中间开市日: 总数 {total}（全量）")
+                shown = dates
+            log(f"     明细: {shown}")
         else:
-            log(f"     实际中间开市日: 不可得（{dnote}）")
+            log(f"     实际中间开市日: 不可得（{note}）")
+        cnt = total
         if cnt is None:
             v = "未知"
             log(f"     S1/S2 ⇒ **未知**（{note}）")
