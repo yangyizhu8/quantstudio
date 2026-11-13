@@ -202,7 +202,7 @@ $null   -eq $true   # False   ⚠️ 缺失即未占用
 
 ## 8.2 写方兼容核查（新增，实测）
 
-**结论：`data/daemon_occupancy.json` 无任何程序化写入方。**
+**仓内代码面结论：未发现程序化写入方（2 处命中均为只读）。该结论不外推到外部工具/他线会话/手工脚本。**
 
 | 检索面 | 命中 | 性质 |
 |---|---|---|
@@ -210,7 +210,10 @@ $null   -eq $true   # False   ⚠️ 缺失即未占用
 | `scripts/check_daemon_alive.ps1:278` | `$occupancyPath = Join-Path $RepoRoot 'data\daemon_occupancy.json'` | **只读** |
 | 全仓 `scripts/**` + `quantstudio/**` | 无 writer | — |
 
-⇒ **声明由人手工书写/手工生成**，不存在"写方格式契约"约束 ⇒ **fail-closed 只需兼容现存唯一实例的字段形态**。
+⇒ **本扫描仅覆盖仓内代码面**，**不能排除外部工具／其它会话／手工脚本写入**（总调度 R6 明确撤回
+「全仓未见 writer ⇒ 只有人工写 ⇒ 只需兼容一个实例」这一推断）。
+⇒ 因此 v2 兼容性取**保守口径**：只校验必需 3 项、未知字段一律忽略，且**任何非法形态一律 fail-closed（阻拉）**——
+即便未来出现新写方，也只会落入「阻拉待修」而不会「静默放行」。
 
 **现存生产实例实态（6 字段，含 2 个非契约字段）**：
 ```json
@@ -276,7 +279,11 @@ $null   -eq $true   # False   ⚠️ 缺失即未占用
 2. 遇到带 `[OCC-INVALID]` 的轮 ⇒ 若上一轮无标记 ⇒ **新 episode +1**；
 3. 若上一轮有标记且 **sha256 相同** ⇒ 同一 episode 续；
 4. 若上一轮有标记但 **sha256 不同** ⇒ **新 episode +1**（内容变了）；
-5. 中间出现无标记轮 ⇒ episode 闭合，之后再坏**即为新 episode**（即便 sha256 与更早某次相同）。
+5. **「无标记轮」不等于修好**——无标记可能只是 F2 阈值未达而**提前退出**（`consecutive < 3` 时根本不进 F3），
+   此时文件仍是坏的。故 **episode 闭合须满足其一**：
+   - (a) 该轮**实际进入 F3 且成功校验**（即 gate 为 `skip-occupancy`（合法占用）或走到 `all-pass`/后续闸，且 detail 无 `[OCC-INVALID]`/`[OCC-FAILCLOSED]`）；
+   - (b) 收到**明确修复回执**（人工确认文件已修好）。
+   ⇒ 仅凭"某轮日志无 OCC 标记"**不得关闭 episode**。
 
 ⇒ 同一个坏内容「坏→修好→再坏」= **2 个 episode**（旧规则会算 1）。
 
@@ -345,9 +352,35 @@ if (Test-Path $occupancyPath) {          # S1 不存在 ⇒ 走原来的"未占�
 | V8 | 合法 true + 窗口内 | `skip-occupancy`（不变） |
 | V9 | JSON 损坏 | `skip-occupancy` + `[OCC-FAILCLOSED]`（不变） |
 
-### 8.6.5 状态
+### 8.6.5 状态：**已实施**（2026-11-13 10:24，R6 ②审有条件通过后）
 
-**未实施**。等独立②审。
+**实施摘要**：`scripts/check_daemon_alive.ps1` F3 段整块替换（582 → **674** 行），新 sha256 `87BF5207548B1EB8A9B65155B4BF65D79B38ABDD2C9236F8EF6F7EA4DD0CD480`；
+写前锚 `docs/handoff/anchor-daemon-alive-F3v2-20261113.txt`（原 blob `4136d0f6…`）。`PARSE OK` + BOM 保持。
+
+**R6 六项条件落实**：
+| # | 条件 | 落实 |
+|---|---|---|
+| 1 | 同一次读取字节用于 parse 与 hash；null 诊断安全 | ✅ `[System.IO.File]::ReadAllBytes()` **一次读取** → 同一 bytes 算 sha256 + UTF8 解码 parse；`$shaShort` 缺省 `'n/a'`，`$null -eq $occVal` 单独判 |
+| 2 | 非法 occupied/多元素/反向 fail-closed；有效 false/不存在/合法窗内外/未来/跨午夜/true 缺 window 不退化 | ✅ V1–V4 新行为、V5–V13 全 PASS |
+| 3 | 数字 1/字符串 true 偏保护，改判 invalid 也须续阻拉 | ✅ 二者仍判 `isTrue`（不误放行）；V14/V15 PASS |
+| 4 | 撤回「全仓无 writer ⇒ 只需兼容一个实例」 | ✅ 已改写为「仓内扫描不能排除外部写方」+ 保守口径 |
+| 5 | 无标记轮不得当修好关闭 episode | ✅ episode 闭合改为「实际进 F3 成功校验」或「明确修复回执」 |
+| 6 | 不改阈值/闸序/任务/原 active 观察 | ✅ 仅替换 F3 内部实现，闸序与阈值零改动 |
+
+**V1–V16 隔离实测（全部 PASS）**：
+| 组 | 用例 | 结果 |
+|---|---|---|
+| 新行为 | V1 `{}` / V2 `"yes"` / V3 4 元素 / V4 反向 | 全部 `skip-occupancy` + `[OCC-INVALID]` 可诊断原因 |
+| 回归不变量 | V5 `false` / V6 现存活实例 / V7 不存在 / V8 窗内 / V9 JSON 坏 | V5/V6/V7 `all-pass`；V8 `skip-occupancy`；V9 `[OCC-FAILCLOSED]` |
+| 边界保护 | V10 true 缺 window / V11 跨午夜 / V12 未来 / V13 过去 | V10/V11 `skip-occupancy`；V12/V13 `all-pass`（窗外） |
+| 不误放行 | V14 数字 1 / V15 字符串 "true" | 均 `skip-occupancy`（不误放行） |
+| 兼容 | V16 owner 缺失 + 额外字段 | `skip-occupancy`（额外字段被忽略） |
+
+**首轮 5 例 FAIL 的归因（如实记录，非被测脚本缺陷）**：
+- `[string]` 型参数传 `$null` ⇒ **变空字符串** ⇒ V7「文件不存在」实际写入了 0 字节文件 ⇒ 落到解析失败分支；
+- PowerShell 无括号的多段拼接会被**拆成多个实参** ⇒ V15 的 JSON 被截断在第 30 字符；
+- V5/V12/V13 的判据过严（要求 detail 含特定串，而 `all-pass` 路径 detail 被后续覆盖）——gate 本身正确。
+⇒ 修正测试脚本后**5 例全部复验 PASS**。
 
 ## 8.7 不变项（审核明确）
 

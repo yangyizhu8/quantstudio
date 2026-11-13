@@ -380,30 +380,122 @@ if (-not $reviveEnabled) {
         $occupied = $false
         $occDetail = 'occupancy.json 不存在或未占用'
         if (Test-Path $occupancyPath) {
+            # ── 2026-11-13 v2（总调度 R6 ②审有条件通过）──
+            #   ① 单次读取字节：同一份 bytes 同时用于 sha256 与 parse，杜绝"三次读取致内容/hash 错配"
+            #   ② 非法声明一律 fail-closed（缺 occupied/类型非法/多元素/反向窗口）并留可诊断标记
+            #   ③ 有效 false、文件不存在、合法窗内外/未来/跨午夜、true 缺 window 的全时段保护 —— 均不退化
+            #   ④ 数字 1 / 字符串 "true" 现行为偏保护，不得因改判 invalid 而产生误放行
+            $occBytes    = $null
+            $occSha      = $null
+            $shaShort    = 'n/a'
+            $occText     = $null
+            $occReadErr  = $null
             try {
-                $occ = Get-Content -LiteralPath $occupancyPath -Raw -Encoding UTF8 | ConvertFrom-Json
-                if ($occ.occupied -eq $true) {
-                    $inWindow = $true
-                    if ($occ.window -and @($occ.window).Count -ge 2) {
-                        try {
-                            $ws = [System.DateTimeOffset]::Parse([string]@($occ.window)[0]).LocalDateTime
-                            $we = [System.DateTimeOffset]::Parse([string]@($occ.window)[1]).LocalDateTime
-                            $inWindow = ($now -ge $ws) -and ($now -le $we)
-                        } catch {
-                            $inWindow = $true   # 窗口解析失败 ⇒ fail-closed 视为占用
+                $occBytes = [System.IO.File]::ReadAllBytes($occupancyPath)
+                $hasher = [System.Security.Cryptography.SHA256]::Create()
+                try {
+                    $occSha = ([System.BitConverter]::ToString($hasher.ComputeHash($occBytes)) -replace '-', '')
+                } finally {
+                    $hasher.Dispose()
+                }
+                if ($occSha) { $shaShort = $occSha.Substring(0, 12) }
+                $occText = [System.Text.Encoding]::UTF8.GetString($occBytes)
+                if ($occText.Length -gt 0 -and $occText[0] -eq [char]0xFEFF) { $occText = $occText.Substring(1) }
+            } catch {
+                $occReadErr = if ($_.Exception.Message) { $_.Exception.Message } else { '未知读取错误' }
+            }
+
+            if ($occReadErr) {
+                $occupied  = $true
+                $occDetail = "[OCC-INVALID] occupancy.json 读取失败 ⇒ fail-closed 视为占用（需人工修复）: $occReadErr (sha=$shaShort)"
+            } else {
+                $occ      = $null
+                $parseErr = $null
+                try {
+                    if ([string]::IsNullOrWhiteSpace($occText)) { throw '文件内容为空' }
+                    $occ = $occText | ConvertFrom-Json
+                } catch {
+                    $parseErr = if ($_.Exception.Message) { $_.Exception.Message } else { '未知解析错误' }
+                }
+
+                if ($parseErr) {
+                    $occupied  = $true
+                    $occDetail = "[OCC-FAILCLOSED] occupancy.json 存在但解析失败 ⇒ fail-closed 视为占用（需人工修复）: $parseErr (sha=$shaShort)"
+                } else {
+                    $invalid = $null
+                    $isTrue  = $false
+                    $isFalse = $false
+                    $hasOcc  = $false
+                    try {
+                        if ($null -ne $occ) { $hasOcc = (@($occ.PSObject.Properties.Name) -contains 'occupied') }
+                    } catch { $hasOcc = $false }
+
+                    if (-not $hasOcc) {
+                        $invalid = 'occupied 字段缺失'
+                    } else {
+                        $occVal = $occ.occupied
+                        if ($null -eq $occVal) {
+                            $invalid = 'occupied 为 null'
+                        } elseif ($occVal -is [bool]) {
+                            if ($occVal) { $isTrue = $true } else { $isFalse = $true }
+                        } elseif ($occVal -is [string]) {
+                            if ($occVal -eq 'true' -or $occVal -eq 'True') { $isTrue = $true }
+                            elseif ($occVal -eq 'false' -or $occVal -eq 'False') { $isFalse = $true }
+                            else { $invalid = "occupied 字符串取值非法（'$occVal'）" }
+                        } elseif ($occVal -is [int] -or $occVal -is [long] -or $occVal -is [double] -or $occVal -is [decimal]) {
+                            if ($occVal -eq 1) { $isTrue = $true }
+                            elseif ($occVal -eq 0) { $isFalse = $true }
+                            else { $invalid = "occupied 数值非法（$occVal）" }
+                        } else {
+                            $invalid = "occupied 类型非法（$($occVal.GetType().Name)）"
                         }
                     }
-                    if ($inWindow) {
-                        $occupied = $true
-                        $occDetail = "占用窗内（owner=$($occ.owner)；$((@($occ.window))[0]) ~ $((@($occ.window))[1])）"
+
+                    if (-not $invalid) {
+                        if ($isFalse) {
+                            $occupied  = $false
+                            $occDetail = "occupancy.json 声明未占用（occupied=false；sha=$shaShort）"
+                        } else {
+                            $winRaw = $null
+                            try { $winRaw = $occ.window } catch { $winRaw = $null }
+                            if ($null -eq $winRaw) {
+                                # 原行为保护：true 且缺 window ⇒ 全时段占用（不退化）
+                                $occupied  = $true
+                                $occDetail = "占用声明生效（occupied=true 且无 window ⇒ 全时段占用；sha=$shaShort）"
+                            } else {
+                                $winArr   = @($winRaw)
+                                $winCount = $winArr.Count
+                                if ($winCount -ne 2) {
+                                    # 多元素/单元素 ⇒ 不静默截断 ⇒ fail-closed
+                                    $invalid = "window 元素数=$winCount（须恰好 2）"
+                                } else {
+                                    try {
+                                        $ws = [System.DateTimeOffset]::Parse([string]$winArr[0]).LocalDateTime
+                                        $we = [System.DateTimeOffset]::Parse([string]$winArr[1]).LocalDateTime
+                                        if ($ws -gt $we) { $invalid = 'window 反向（start > end）' }
+                                    } catch {
+                                        $invalid = 'window 时间不可解析'
+                                    }
+                                }
+                                if (-not $invalid) {
+                                    if (($now -ge $ws) -and ($now -le $we)) {
+                                        $occupied  = $true
+                                        $occDetail = "占用窗内（owner=$($occ.owner)；$($winArr[0]) ~ $($winArr[1])；sha=$shaShort）"
+                                    } else {
+                                        $occupied  = $false
+                                        $occDetail = "占用声明在窗外（owner=$($occ.owner)；$($winArr[0]) ~ $($winArr[1])；sha=$shaShort）"
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if ($invalid) {
+                        # S2 语义非法 ⇒ fail-closed（绝不误放行）+ 可诊断标记
+                        $occupied  = $true
+                        $occDetail = "[OCC-INVALID] $invalid ⇒ fail-closed 视为占用（需人工修复；sha=$shaShort)"
                     }
                 }
-            } catch {
-                # ── 2026-11-13 修（fail-open -> fail-closed；总调度 2026-11-12 指示）──
-                #   文件存在但不可解析 ⇒ 声明可能有效但已损坏，按占用处理（与下方窗口解析失败同语义）。
-                #   防：停服窗内声明损坏 ⇒ F3 失效 ⇒ F11 旁证不命中 ⇒ 误拉正在停机的 daemon。
-                $occupied = $true
-                $occDetail = "[OCC-FAILCLOSED] occupancy.json 存在但解析失败 ⇒ fail-closed 视为占用（需人工修复）: $($_.Exception.Message)"
             }
         }
         if ($occupied) {
