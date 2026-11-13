@@ -1,0 +1,37 @@
+=== R387 离线补测开始 ===
+PY 3.11.9  BITS 64  EXE C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe
+
+--- ① WARN 注入（隔离，不改宿主 warnings 全局状态）---
+WARN_FILTERS_BEFORE len=5
+WARN_INJECT OK [WARN:FutureWarning:DEPRECATED_API_X will be removed] val=42
+WARN_AFTER_ITEM marker-following-item-still-runs
+WARN_AFTER_PROBE OK val='still-alive'
+WARN_FILTERS_AFTER  len=5
+WARN_FILTERS_RESTORED True
+WARN_GLOBAL_LEAK False
+WARN_OUTSIDE_CATCH count=1 cat=FutureWarning
+
+--- ② 区分「属性不存在」vs「调用内部 AttributeError」---
+CASE_ABSENT_pd_append ABSENT      attr=append  msg=type object 'DataFrame' has no attribute 'append'
+CASE_ABSENT_pd_Panel ABSENT      attr=Panel  msg=module 'pandas' has no attribute 'Panel'
+CASE_ABSENT_np_float_ ABSENT      attr=float_  msg=`np.float_` was removed in the NumPy 2.0 release. Use `np.float64` ins
+CASE_INTERNAL_fake CALL_INTERNAL_ATTRIBUTE_ERROR  msg='object' object has no attribute 'no_such_attr_deep'
+CASE_OK_pd_head OK          val=(1, 1)
+
+--- ③ numpy 全包 .pyd 扫描（证明包装目录无 .pyd ≠ 全包无原生扩展）---
+NUMPY_ROOT C:\Users\Administrator\AppData\Local\Programs\Python\Python311\Lib\site-packages\numpy
+NUMPY_PYD_TOTAL 19
+  pyd _core\_multiarray_tests.cp311-win_amd64.pyd
+  pyd _core\_multiarray_umath.cp311-win_amd64.pyd
+  pyd _core\_operand_flag_tests.cp311-win_amd64.pyd
+  pyd _core\_rational_tests.cp311-win_amd64.pyd
+  pyd _core\_simd.cp311-win_amd64.pyd
+  pyd _core\_struct_ufunc_tests.cp311-win_amd64.pyd
+  pyd _core\_umath_tests.cp311-win_amd64.pyd
+  pyd fft\_pocketfft_umath.cp311-win_amd64.pyd
+  pyd linalg\_umath_linalg.cp311-win_amd64.pyd
+  pyd linalg\lapack_lite.cp311-win_amd64.pyd
+NUMPY_PYD_CP_TAGS ['?']
+WRAPPER_DIR_HAS_PYD False
+
+=== R387 结束 ===
