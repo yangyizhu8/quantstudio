@@ -1,0 +1,206 @@
+{
+  "manifest_version": "census-v1",
+  "batch": "L-A/batch01",
+  "endpoint": "L-A 本机 QDB 127.0.0.1:9000",
+  "data_root": "D:\\questdb\\quest_database",
+  "generated_at": "2026-11-13T10:28:59+08:00",
+  "instruction": "R26 第4点：持久 manifest + 可续批次；不要求新开会话",
+  "scope_note": "本批为复权域核心表；段边界需按交易日切分，另行在 batch02 展开",
+  "records": [
+    {
+      "table": "trade_cal",
+      "endpoint": "L-A 127.0.0.1:9000",
+      "ts": "2026-11-13T10:28:39",
+      "columns_count": 4,
+      "designated_ts_guess": "cal_date",
+      "rows": 13527,
+      "ts_min": "1990-12-19T00:00:00.000000Z",
+      "ts_max": "2027-12-31T00:00:00.000000Z",
+      "first_ts": null,
+      "last_ts_desc": null,
+      "key_error": "HTTP Error 400: Bad request",
+      "wal": {
+        "writerTxn": 1913,
+        "sequencerTxn": 1913,
+        "suspended": false,
+        "applied": true
+      },
+      "elapsed_sec": 0.01,
+      "status": "probed"
+    },
+    {
+      "table": "stock_daily",
+      "endpoint": "L-A 127.0.0.1:9000",
+      "ts": "2026-11-13T10:28:39",
+      "columns_count": 13,
+      "designated_ts_guess": "trade_date",
+      "rows": 14619461,
+      "ts_min": "2000-01-21T00:00:00.000000Z",
+      "ts_max": "2026-11-12T00:00:00.000000Z",
+      "first_ts": null,
+      "last_ts_desc": null,
+      "key_error": "HTTP Error 400: Bad request",
+      "wal": {
+        "writerTxn": 23582,
+        "sequencerTxn": 23582,
+        "suspended": false,
+        "applied": true
+      },
+      "elapsed_sec": 3.18,
+      "status": "probed"
+    },
+    {
+      "table": "etf_daily",
+      "endpoint": "L-A 127.0.0.1:9000",
+      "ts": "2026-11-13T10:28:43",
+      "columns_count": 13,
+      "designated_ts_guess": "trade_date",
+      "rows": 2564511,
+      "ts_min": "2010-01-04T00:00:00.000000Z",
+      "ts_max": "2026-11-12T00:00:00.000000Z",
+      "first_ts": null,
+      "last_ts_desc": null,
+      "key_error": "HTTP Error 400: Bad request",
+      "wal": {
+        "writerTxn": 999,
+        "sequencerTxn": 999,
+        "suspended": false,
+        "applied": true
+      },
+      "elapsed_sec": 2.27,
+      "status": "probed"
+    },
+    {
+      "table": "sw_daily",
+      "endpoint": "L-A 127.0.0.1:9000",
+      "ts": "2026-11-13T10:28:45",
+      "columns_count": 15,
+      "designated_ts_guess": "trade_date",
+      "rows": 1530940,
+      "ts_min": "2010-01-04T00:00:00.000000Z",
+      "ts_max": "2026-11-12T00:00:00.000000Z",
+      "first_ts": null,
+      "last_ts_desc": null,
+      "key_error": "HTTP Error 400: Bad request",
+      "wal": {
+        "writerTxn": 51747,
+        "sequencerTxn": 51747,
+        "suspended": false,
+        "applied": true
+      },
+      "elapsed_sec": 2.21,
+      "status": "probed"
+    },
+    {
+      "table": "etf_adj_factor",
+      "endpoint": "L-A 127.0.0.1:9000",
+      "ts": "2026-11-13T10:28:47",
+      "columns_count": 3,
+      "designated_ts_guess": "trade_date",
+      "rows": 1701538,
+      "ts_min": "2005-02-23T00:00:00.000000Z",
+      "ts_max": "2026-11-12T00:00:00.000000Z",
+      "first_ts": null,
+      "last_ts_desc": null,
+      "key_error": "HTTP Error 400: Bad request",
+      "wal": {
+        "writerTxn": 36042,
+        "sequencerTxn": 36042,
+        "suspended": false,
+        "applied": true
+      },
+      "elapsed_sec": 2.53,
+      "status": "probed"
+    },
+    {
+      "table": "qfq_checkpoint",
+      "endpoint": "L-A 127.0.0.1:9000",
+      "ts": "2026-11-13T10:28:50",
+      "columns_count": 3,
+      "designated_ts_guess": "fix_time",
+      "rows": 50204,
+      "ts_min": "2026-05-08T01:33:50.257572Z",
+      "ts_max": "2026-11-12T19:23:16.231401Z",
+      "first_ts": null,
+      "last_ts_desc": null,
+      "key_error": "HTTP Error 400: Bad request",
+      "wal": {
+        "writerTxn": 112,
+        "sequencerTxn": 112,
+        "suspended": false,
+        "applied": true
+      },
+      "elapsed_sec": 0.11,
+      "status": "probed"
+    },
+    {
+      "table": "market_breadth_daily",
+      "endpoint": "L-A 127.0.0.1:9000",
+      "ts": "2026-11-13T10:28:50",
+      "columns_count": 12,
+      "designated_ts_guess": "trade_date",
+      "rows": 4093,
+      "ts_min": "2010-01-04T00:00:00.000000Z",
+      "ts_max": "2026-11-12T00:00:00.000000Z",
+      "first_ts": null,
+      "last_ts_desc": null,
+      "key_error": "HTTP Error 400: Bad request",
+      "wal": {
+        "writerTxn": 106,
+        "sequencerTxn": 106,
+        "suspended": false,
+        "applied": true
+      },
+      "elapsed_sec": 1.31,
+      "status": "probed"
+    },
+    {
+      "table": "stock_minutes",
+      "endpoint": "L-A 127.0.0.1:9000",
+      "ts": "2026-11-13T10:28:51",
+      "columns_count": 11,
+      "designated_ts_guess": "trade_time",
+      "rows": 581303979,
+      "ts_min": "2024-05-06T09:30:00.000000Z",
+      "ts_max": "2026-11-12T15:30:00.000000Z",
+      "first_ts": null,
+      "last_ts_desc": null,
+      "key_error": "HTTP Error 400: Bad request",
+      "wal": {
+        "writerTxn": 979441,
+        "sequencerTxn": 979441,
+        "suspended": false,
+        "applied": true
+      },
+      "elapsed_sec": 4.29,
+      "status": "probed"
+    },
+    {
+      "table": "etf_minutes",
+      "endpoint": "L-A 127.0.0.1:9000",
+      "ts": "2026-11-13T10:28:56",
+      "columns_count": 11,
+      "designated_ts_guess": "trade_time",
+      "rows": 149814519,
+      "ts_min": "2025-01-02T09:30:00.000000Z",
+      "ts_max": "2026-11-12T15:00:00.000000Z",
+      "first_ts": null,
+      "last_ts_desc": null,
+      "key_error": "HTTP Error 400: Bad request",
+      "wal": {
+        "writerTxn": 266772,
+        "sequencerTxn": 266772,
+        "suspended": false,
+        "applied": true
+      },
+      "elapsed_sec": 3.26,
+      "status": "probed"
+    }
+  ],
+  "summary": {
+    "tables": 9,
+    "probed": 9,
+    "failed": 0,
+    "wal_not_applied": []
+  }
+}
