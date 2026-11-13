@@ -71,8 +71,8 @@ families:
     fix_layer_multi: true               # 多落点以 + 连接（同 pd/db 族裁定 a）；典型组合 guard+recovery
     domain_vocab: [D1, D2, D3, D4, D5]
     required_fields: [symptom, root_cause, fix_target, evidence, fixture, trigger]
-    placeholder_gate: "off"          # off|warn|strict（占位门·新增检测型；默认 off，升档须独立审批准）
-    placeholder_gate_since: null   # 首次启用非 off 档位时填写（审计可追溯）
+    placeholder_gate: "warn"       # 2026-11-13 B89-U1 甲裁：ops 限定试点（warn；其余族仍 off）
+    placeholder_gate_since: "2026-11-13T20:56:02+08:00"   # 工作树生效时刻 T1（带时区）
     fix_layer_keywords:                 # 自动判层初版（kb_draft 缺省用；顺序命中即定）
       probe: ["探针", "巡检", "check_", "探测", "只读", "读数", "测点"]
       guard: ["闸", "守卫", "拦截", "SKIP", "防误", "阈值", "旁证", "occupancy", "占用声明"]
