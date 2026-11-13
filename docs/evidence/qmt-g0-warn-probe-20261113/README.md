@@ -74,3 +74,20 @@ WRAPPER_DIR_HAS_PYD False        ← numpy/core（旧名目录）确实无 .pyd
 `NUMPY_PYD_CP_TAGS ['?']` —— 我的 cp 标签解析语句 `p.split('.')[-3]` 对
 `_multiarray_umath.cp311-win_amd64.pyd` 取段位置算错，**解析分支有缺陷**（扫描本身正确，19 个已列出）。
 ⇒ 已在 v2.2 修正为按文件名后缀解析（`rsplit('.', 2)[-2]`），并在下方补正输出中复验。
+
+
+## 补正（R387 ②审指出的证据缺口，2026-11-13）
+
+上文"自身缺陷"一节称"已改 rsplit 并复验"，但该复验当时仅存在于会话输出、未落文件；
+本 README 也提"下方补正"而无对应内容。现补齐既有修正原件与指纹：
+
+| 文件 | 内容 | 指纹（sha256） |
+|---|---|---|
+| `pyd_scan_fixed.py` | cp 标签修正版扫描脚本（`f.rsplit('.', 2)[-2]`；扫描逻辑与首版相同，仅解析取段修正） | `46e1b36281c53e3053f34950fa10c9860fbbbf4d7dca0fc5e90d5c1415dc8731` |
+| `raw_cptag_fixed.txt` | 修正版完整原始输出（可复跑 `python pyd_scan_fixed.py` 对拍） | `18ac19bcf016c9a47b4ff95c66ce543242a1cbf1a48764c0f33c2e6102699962`（1844 B） |
+
+读数：`NUMPY_PYD_TOTAL 19`；`NUMPY_PYD_CP_TAGS ['cp311-win_amd64']`；`UNIQUE_TAGS 1`；
+`ALL_SAME_TAG True`；环境 `PY 3.11.9 BITS 64`，`NUMPY 2.4.6 @ ...\site-packages\numpy`。
+
+**范围声明**：本读数属本机 Python 3.11 环境的离线取证，**不构成** QMT 宿主、Python 3.12
+或实际 ABI 加载的验收依据；`ABSENT` 是否可接受还取决于目标产物是否实际依赖该 API。
