@@ -1,0 +1,40 @@
+{
+  "batch": 1,
+  "purpose": "补环境与输入指纹（原始 stdout 未留存；按用户指示不为此重跑）",
+  "baseline_anchor": "7826aedbf9d634aabb48c2f7c0d988f490c78b07",
+  "baseline_worktree": "D:\\miniQMT策略实盘\\QuantStudio-wt-baseline",
+  "baseline_head": "7826aedbf9d634aabb48c2f7c0d988f490c78b07",
+  "baseline_dirty_count": 0,
+  "command": "python -m pytest tests/test_source_import.py -q",
+  "cwd": "D:\\miniQMT策略实盘\\QuantStudio-wt-baseline",
+  "result_summary": "7 failed / 50 passed / exit 1",
+  "python": "3.11.9",
+  "python_exe": "C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "deps": {
+    "duckdb": "1.5.6",
+    "pandas": "2.3.3",
+    "numpy": "2.4.6",
+    "pytest": "8.4.2"
+  },
+  "input_fingerprints": {
+    "tests/test_source_import.py": "7a211302d5f48c6cf247885f2f95d5d551714df4f25fd05e330b7b0a0b2df05b",
+    "quantstudio/strategy_compiler/source_import.py": "108e2524b2ba525c8aa50fb562485347e3fc6900bb2e09ab77a868ea909c512b"
+  },
+  "original_stdout_captured": false,
+  "original_stdout_note": "第一批未留存原始 stdout（仅取 tail）；按用户指示不为此重复跑；本件补环境+输入指纹",
+  "baseline_failed": [
+    "test_22",
+    "test_23",
+    "test_27",
+    "test_32",
+    "test_33",
+    "test_34",
+    "test_35"
+  ],
+  "baseline_passed_current_failed": [
+    "test_08_remove_banding",
+    "test_08b_rewrite_literal_inline"
+  ],
+  "boundary": "基线同失败只对该版本/配置/输入成立；不等于根因相同；不免当前修复；50 passed 不等于 135 项中解决 50 项"
+}
