@@ -1,0 +1,27 @@
+{
+  "batch": 1,
+  "baseline_anchor": "7826aedbf9d634aabb48c2f7c0d988f490c78b07",
+  "command": "python -m pytest tests/test_source_import.py -q",
+  "cwd": "D:\\miniQMT策略实盘\\QuantStudio-wt-baseline",
+  "result": "7 failed / 50 passed / exit 1",
+  "baseline_failed": [
+    "test_22",
+    "test_23",
+    "test_27",
+    "test_32",
+    "test_33",
+    "test_34",
+    "test_35"
+  ],
+  "baseline_passed_but_current_failed": [
+    "test_08",
+    "test_08b"
+  ],
+  "boundary": "基线同样失败只对该版本/配置/输入成立；不免除当前修复；不直接归本批",
+  "my_misjudgements_corrected": [
+    "test_delivery_gui_route_parity aux_db_path 是 REPORT 测试数据，不读库",
+    "test_daemon_gui_start_paths 用临时 data_root + 占锁 dummy + 跑完清理，安全",
+    "凭据：读取环境变量不等于无真实凭据，本机未设置不证明其他环境安全"
+  ],
+  "not_run": 126
+}
