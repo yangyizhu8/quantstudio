@@ -73,6 +73,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+from zoneinfo import ZoneInfo
 import sys
 import time
 
@@ -87,10 +88,20 @@ def d(v) -> str:
     return dt.datetime.utcfromtimestamp(int(v) / 1000 + CST).strftime("%Y-%m-%d")
 
 
+SH_TZ = ZoneInfo("Asia/Shanghai")
+
+
 def bj_zero_ms(yyyy_mm_dd: str) -> int:
-    """'YYYY-MM-DD' → 该日北京零点的 epoch-ms（库内 time 口径）。"""
-    base = dt.datetime.strptime(yyyy_mm_dd, "%Y-%m-%d")
-    return int((base - dt.datetime(1970, 1, 1)).total_seconds() * 1000) + CST * 1000
+    """'YYYY-MM-DD' → 该日北京零点的 epoch-ms（库内 stock_daily.time 口径）。
+
+    ⚠️ 2026-11-13 R2 审核纠错：旧实现 `(naive_base - epoch).total_seconds()*1000 + CST*1000`
+    把 naive 当 UTC（已隐含 +8h），再 +8h ⇒ 结果比北京零点**晚 16 小时**，
+    导致 `time < hi_ms` 把 hi 日 bar 漏进区间（端点未排除）。
+    现改为 **aware datetime + zoneinfo**，由 `timestamp()` 自行换算，**不做任何手算 CST 加减**。
+    自测见 scripts/g9_datemath_selftest.py（T1 同日往返 / T2 端点排除 / T3 跨日 fixture 全 PASS）。
+    """
+    d = dt.datetime.strptime(yyyy_mm_dd, "%Y-%m-%d").replace(tzinfo=SH_TZ)
+    return int(d.timestamp() * 1000)
 
 
 def log(msg: str) -> None:
