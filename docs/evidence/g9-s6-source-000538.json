@@ -1,0 +1,157 @@
+{
+  "task": "B92-U2甲 · S6 只读源核（000538.SZ 两断点区间上游是否有 bar）",
+  "executed_at": "2026-11-13T23:00:00+08:00",
+  "operator": "客户运维会话1",
+  "dataset_id": "qdb.stock_daily",
+  "write_boundary": "零写库（MCP read_only=true；本文件为唯一本地新增物；无任何 DML/回填/状态变更）",
+
+  "request_ledger": {
+    "data_requests_used": 3,
+    "data_requests_cap": 4,
+    "meta_calls": 1,
+    "note": "cap 依 R8「请求≤4次（2主+退化上限，超限停止记不可判）」；实耗 3 次（2 主 + 1 负向对照），未超限"
+  },
+
+  "schema_facts": {
+    "call": "describe_dataset(qdb.stock_daily)",
+    "columns_relevant": {"ts_code": "SYMBOL", "trade_date": "TIMESTAMP (designated)"},
+    "designated_ts": "trade_date",
+    "read_only": true,
+    "row_count": 14617201,
+    "ts_min": "2000-01-21 00:00:00",
+    "ts_max": "2026-11-12 00:00:00",
+    "inference": "上游覆盖起点 2000-01-21 ⇒ 2018/2019 落在覆盖区间内（但不等于每码每年都有行）"
+  },
+
+  "requests": [
+    {
+      "id": "R1",
+      "purpose": "断点1 · 2018-09-18 ~ 2018-11-23",
+      "request": {
+        "dataset_id": "qdb.stock_daily",
+        "filters": [
+          {"column": "ts_code", "op": "=", "value": "000538.SZ"},
+          {"column": "trade_date", "op": ">=", "value": "2018-09-18"},
+          {"column": "trade_date", "op": "<=", "value": "2018-11-23"}
+        ],
+        "limit": 500
+      },
+      "response_raw": {
+        "returned": 2,
+        "limit": 500,
+        "rows": [
+          {"ts_code": "000538.SZ", "trade_date": "2018-11-23T00:00:00", "open": 36.966, "high": 40.812, "low": 36.795, "close": 40.302, "pre_close": 37.723, "change": 2.579, "pct_chg": 6.8347, "vol": 258822.19, "amount": 1910241.474, "adj_factor": 17.187, "is_qfq": true},
+          {"ts_code": "000538.SZ", "trade_date": "2018-09-18T00:00:00", "open": 37.739, "high": 38.056, "low": 36.982, "close": 37.723, "pre_close": 37.761, "change": -0.038, "pct_chg": -0.0996, "vol": 69876.52, "amount": 486589.124, "adj_factor": 17.187, "is_qfq": true}
+        ]
+      },
+      "dates_returned": ["2018-09-18", "2018-11-23"],
+      "returned_count": 2,
+      "limit_not_hit": true
+    },
+    {
+      "id": "R2",
+      "purpose": "断点2 · 2019-05-15 ~ 2019-05-29",
+      "request": {
+        "dataset_id": "qdb.stock_daily",
+        "filters": [
+          {"column": "ts_code", "op": "=", "value": "000538.SZ"},
+          {"column": "trade_date", "op": ">=", "value": "2019-05-15"},
+          {"column": "trade_date", "op": "<=", "value": "2019-05-29"}
+        ],
+        "limit": 500
+      },
+      "response_raw": {
+        "returned": 2,
+        "limit": 500,
+        "rows": [
+          {"ts_code": "000538.SZ", "trade_date": "2019-05-29T00:00:00", "open": 42.971, "high": 43.509, "low": 38.733, "close": 42.397, "pre_close": 42.971, "change": -0.574, "pct_chg": -1.3375, "vol": 72149.47, "amount": 563551.572, "adj_factor": 17.187, "is_qfq": true},
+          {"ts_code": "000538.SZ", "trade_date": "2019-05-15T00:00:00", "open": 42.273, "high": 43.052, "low": 41.956, "close": 42.971, "pre_close": 42.263, "change": 0.708, "pct_chg": 1.6777, "vol": 76426.7, "amount": 608212.716, "adj_factor": 17.187, "is_qfq": true}
+        ]
+      },
+      "dates_returned": ["2019-05-15", "2019-05-29"],
+      "returned_count": 2,
+      "limit_not_hit": true
+    },
+    {
+      "id": "R3",
+      "purpose": "负向对照 · 2026-11-01 ~ 2026-11-12（库内该码确知连续）",
+      "request": {
+        "dataset_id": "qdb.stock_daily",
+        "filters": [
+          {"column": "ts_code", "op": "=", "value": "000538.SZ"},
+          {"column": "trade_date", "op": ">=", "value": "2026-11-01"},
+          {"column": "trade_date", "op": "<=", "value": "2026-11-12"}
+        ],
+        "limit": 500
+      },
+      "response_raw": {
+        "returned": 9,
+        "limit": 500,
+        "dates": ["2026-11-12", "2026-11-11", "2026-11-10", "2026-11-09", "2026-11-06", "2026-11-05", "2026-11-04", "2026-11-03", "2026-11-02"]
+      },
+      "returned_count": 9,
+      "limit_not_hit": true,
+      "role": "证明 filters 范围语义正常：近月返回 9 个连续交易日，非仅端点 ⇒ 排除『查询工具用法错导致的假空洞』"
+    }
+  ],
+
+  "three_state_recording": {
+    "breakpoint_1": {
+      "range": "2018-09-18 ~ 2018-11-23",
+      "calendar_open_days": 41,
+      "db_rows_strict_interior": 0,
+      "upstream_rows": 2,
+      "state": "有 bar（仅 2 根，均为区间端点日）",
+      "not_preclaimed": "未预设 41 根；实测 2 根"
+    },
+    "breakpoint_2": {
+      "range": "2019-05-15 ~ 2019-05-29",
+      "calendar_open_days": 9,
+      "db_rows_strict_interior": 0,
+      "upstream_rows": 2,
+      "state": "有 bar（仅 2 根，均为区间端点日）",
+      "not_preclaimed": "未预设 9 根；实测 2 根"
+    }
+  },
+
+  "intersection_with_calendar_open_days": {
+    "breakpoint_1": {
+      "upstream_dates": ["2018-09-18", "2018-11-23"],
+      "in_calendar_open_days": false,
+      "reason": "两端点日均为断点自身的端点（库内比对用严格 > / < 故被排除）；区间的 41 个中间开市日上游一条都没有",
+      "intersection_count": 0
+    },
+    "breakpoint_2": {
+      "upstream_dates": ["2019-05-15", "2019-05-29"],
+      "in_calendar_open_days": false,
+      "reason": "两端点日均为断点自身端点；9 个中间开市日上游一条都没有",
+      "intersection_count": 0
+    }
+  },
+
+  "conclusions": {
+    "established": [
+      "上游 qdb.stock_daily 在断点1区间仅 2 行（两个端点日），中间 41 个开市日无行",
+      "上游 qdb.stock_daily 在断点2区间仅 2 行（两个端点日），中间 9 个开市日无行",
+      "filters 范围语义经负向对照验证正常（近月 9 行连续）"
+    ],
+    "not_established_and_forbidden": [
+      "❌ 不得推「该码在该区间停牌」——上游不返回 bar 的原因未定义（契约未定义停牌返回形态）",
+      "❌ 不得推「本库正确」——本库与上游在中段同样无行，可能是共同的源级覆盖缺口",
+      "❌ 不得推「本库独有缺失」——上游中段同样没有，『缺上游有的』不成立",
+      "❌ 不得由这两区间外推「上游 2018/2019 年整体覆盖情况」",
+      "❌ 不得据此改任何库内数据或触发队列状态"
+    ],
+    "residual_unknown": [
+      "上游中段无行的原因（历史覆盖未采集 / 该码真实无交易 / 上游侧过滤）",
+      "上游停牌日返回形态（契约未定义）",
+      "本库 2018 数据的来源与上游不同（本库 2098 行覆盖 2018-01-02~2026-11-12，明显比上游该段更全）——已存疑但未验证"
+    ]
+  },
+
+  "fingerprint": {
+    "file": "docs/evidence/g9-s6-source-000538.json",
+    "content_sha256": "TO_BE_FILLED_AFTER_WRITE",
+    "note": "写入后取实际 sha256 回填于报告"
+  }
+}
