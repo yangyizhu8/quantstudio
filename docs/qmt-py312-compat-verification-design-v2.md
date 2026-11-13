@@ -1,6 +1,6 @@
 # QMT 2.1.33.0 / Python 3.12 兼容性验证方案 **v2.0**（六步①·修订版）
 
-> **状态**：**v2.0，待②审（第二轮）**
+> **状态**：**v2.1，②审第二轮「方向条件通过」，六条小修已并入；已准离线验证（不进客户端、不安装）**
 > **前版**：`qmt-py312-compat-verification-design.md`（v1.0，②审不通过，保留为审核链路证据，不删除）
 > **裁定依据**：R-20261113-01＝甲；R-20261113-02＝独立环境、保全旧基线
 > **本轮纪律**：**不下载、不安装、不切换解释器、不启动并存实例**
@@ -19,6 +19,17 @@
 | M6 | 黄金输入补行情/合约/费用撮合；九处 EPS、86 周期按策略适用不复制 | 门槛泛化 | **§5.1 补三类** + **§5.2 标注专属** |
 | M7 | "所列目录未发现 3.12"不外推全盘；空壳只证当前内容 | 结论外推 | **§6.1 限定观测面** |
 | M8 | 清理 rc=1 与探针退出状态分开留证 | 混为一谈 | **§3.6 分开留证规范** |
+
+### v2.0 → v2.1 修订对照（R385 ②审六条小修）
+
+| # | ②审小修 | v2.0 缺陷 | v2.1 修正 |
+|---|---|---|---|
+| N1 | FutureWarning **局部捕获并记录类型/消息**，不全局静默；区分 **warning 策略 vs API 实际不存在** | 未处理 warning | **§3.3** `_p()` 加局部 `catch_warnings(record=True)`，记录 warning 类别与消息，**不 suppress**；`G0_API` 每对区分 `WARN` 与 `FAIL` |
+| N2 | ERR 注入须在**隔离副本**向 `_p` 传主动抛异常函数，检查标签/类型/**后续项继续**；真实导入失败另用**隔离进程**；**不改宿主 `sys.modules`/`sys.path`** | 未规定注入方式 | **§3.7 新增 ERR 注入规范**（隔离副本 + 不改宿主） |
+| N3 | Panel 取属性**尚非实例化调用**，补最小调用或**收窄声明**；**预期缺 API 是能力读数，意外 ERR/缺标签不能判 PASS** | `pd.Panel` 只取属性 | **§3.3** 补 `Panel()` 实例化尝试并标注；**§5.3 新增判读纪律** |
+| N4 | DLL/cp/模块路径**不独证**双版本切换；**numpy 的 `.py` 包装不冒充原生扩展**；未证时**保持 unknown** | `numpy_native` 取到 `.py` | **§3.3** `_abi()` 改扫**同目录 `.pyd` 并记录 cp 标签**；**§3.4** 明标「不独证」+ 未证即 `unknown` |
+| N5 | §3.6「END＋rc 为准」改为**完成性及退出状态记录**，最终通过仍**逐项判断**，消除与前文冲突 | 与前文冲突 | **§3.6** 重写 |
+| N6 | 旧 manifest 保留、先 CANSLIM 后五策略排期保持；**R-02 实际安装仍须单独呈批** | — | 未改（§2.3 / §5.4 / §6.3 原样保留） |
 
 **②审已直接答复（采纳，不再问）**：①`G0_BITS`=`struct.calcsize('P')*8` + `sys.maxsize` 交叉核对 → §3.3；②端口键名不臆设，未证资源隔离前不启动并存实例 → §6.3；③六策略先 CANSLIM 后五个，最终不缩减，耗时为估算 → §5.4。
 
@@ -113,11 +124,19 @@
 # ③ 每项独立 try，互不影响
 import sys, struct
 
+import warnings
+
 def _p(fn, tag):
-    try:
-        print(tag, fn())
-    except Exception as e:
-        print(tag, 'ERR', type(e).__name__, str(e)[:100])
+    # N1: FutureWarning 局部捕获并记录类型/消息，不全局静默
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        try:
+            val = fn()
+            wmsg = ';'.join('%s:%s' % (w.category.__name__, str(w.message)[:60]) for w in caught)
+            print(tag, val, ('WARN[%s]' % wmsg) if wmsg else '')
+        except Exception as e:
+            wmsg = ';'.join('%s:%s' % (w.category.__name__, str(w.message)[:60]) for w in caught)
+            print(tag, 'ERR', type(e).__name__, str(e)[:100], ('WARN[%s]' % wmsg) if wmsg else '')
 
 print('G0_V', 4)
 # ---- 宿主 ----
@@ -142,13 +161,22 @@ for _n in ('numpy', 'pandas', 'pytz'):
 
 # ---- ABI / 原生扩展（与宿主分离，M3）----
 def _abi():
+    # N4: 不拿 .py 包装冒充原生扩展 —— 扫同目录 .pyd 并记录 cp 标签
     out = []
     for _tgt, _stmt in (('numpy_native', 'import numpy.core._multiarray_umath as m'),
                         ('pandas_tslib', 'import pandas._libs.tslib as m')):
         try:
             _ns = {}
             exec(_stmt, _ns)
-            out.append((_tgt, getattr(_ns['m'], '__file__', '?')))
+            mod = _ns['m']
+            f = getattr(mod, '__file__', '?')
+            kind = 'PY_WRAPPER' if f.endswith('.py') else ('EXT' if f.endswith('.pyd') else 'OTHER')
+            out.append((_tgt, kind, f))
+            # 同目录 .pyd 的 cp 标签（真正的 ABI 证据）
+            import os as _os
+            _d = _os.path.dirname(f)
+            _pyds = sorted([x for x in _os.listdir(_d) if x.endswith('.pyd')])[:3] if _os.path.isdir(_d) else []
+            out.append((_tgt + '_pyd', _pyds))
         except Exception as e:
             out.append((_tgt, 'ERR:%s' % type(e).__name__))
     return out
@@ -157,47 +185,44 @@ _p(_abi, 'G0_ABI_NATIVE')
 # ---- 存在性 vs 最小调用（M1 核心）----
 def _apis():
     r = []
+    def _call(tag, fn):
+        # N1: 局部捕获 warning，区分「有 warning 但可用」与「API 不存在」
+        with warnings.catch_warnings(record=True) as ca:
+            warnings.simplefilter('always')
+            try:
+                v = fn()
+                w = ';'.join('%s' % x.category.__name__ for x in ca)
+                return (tag, ('OK%s' % ('[WARN:%s]' % w if w else '')) + ' val=%r' % (v,))
+            except AttributeError as e:
+                return (tag, 'ABSENT:AttributeError %s' % str(e)[:60])
+            except Exception as e:
+                return (tag, 'FAIL:%s %s' % (type(e).__name__, str(e)[:60]))
+
     try:
         import pandas as pd
         r.append(('pd_exists_append', hasattr(pd.DataFrame, 'append')))
-        try:
-            u = pd.DataFrame({'a': [1]}).append(pd.DataFrame({'a': [2]}))
-            r.append(('pd_call_append', 'OK len=%d' % len(u)))
-        except Exception as e:
-            r.append(('pd_call_append', 'FAIL:%s' % type(e).__name__))
+        # N1: pandas 0.22 下应 OK 且带 FutureWarning；2.x 下应 ABSENT
+        r.append(_call('pd_call_append',
+                       lambda: pd.DataFrame({'a': [1]}).append(pd.DataFrame({'a': [2]}))))
         r.append(('pd_exists_ix', hasattr(pd.DataFrame, 'ix')))
-        try:
-            _d = pd.DataFrame({'a': [1, 2], 'b': [3, 4]})
-            r.append(('pd_call_ix', 'OK val=%s' % _d.ix[0, 'a']))
-        except Exception as e:
-            r.append(('pd_call_ix', 'FAIL:%s' % type(e).__name__))
+        r.append(_call('pd_call_ix',
+                       lambda: pd.DataFrame({'a': [1, 2], 'b': [3, 4]}).ix[0, 'a']))
         r.append(('pd_exists_Panel', hasattr(pd, 'Panel')))
-        try:
-            r.append(('pd_call_Panel', 'OK %r' % (pd.Panel,)))
-        except Exception as e:
-            r.append(('pd_call_Panel', 'FAIL:%s' % type(e).__name__))
+        # N3: 补最小实例化调用（不再是仅取属性）
+        r.append(_call('pd_call_Panel', lambda: pd.Panel({'x': pd.DataFrame({'a': [1]})})))
     except Exception as e:
-        r.append(('pandas_import', 'ERR:%s' % type(e).__name__))
+        r.append(('pandas_import', 'ERR:%s %s' % (type(e).__name__, str(e)[:60])))
 
     try:
         import numpy as np
         r.append(('np_exists_float_', hasattr(np, 'float_')))
-        try:
-            r.append(('np_call_float_', 'OK %s' % np.float_(1.5)))
-        except Exception as e:
-            r.append(('np_call_float_', 'FAIL:%s' % type(e).__name__))
+        r.append(_call('np_call_float_', lambda: np.float_(1.5)))
         r.append(('np_exists_bool8', hasattr(np, 'bool8')))
-        try:
-            r.append(('np_call_bool8', 'OK %s' % np.bool8(True)))
-        except Exception as e:
-            r.append(('np_call_bool8', 'FAIL:%s' % type(e).__name__))
+        r.append(_call('np_call_bool8', lambda: np.bool8(True)))
         r.append(('np_exists_NaN', hasattr(np, 'NaN')))
-        try:
-            r.append(('np_call_NaN', 'OK %r' % (np.NaN,)))
-        except Exception as e:
-            r.append(('np_call_NaN', 'FAIL:%s' % type(e).__name__))
+        r.append(_call('np_call_NaN', lambda: np.NaN))
     except Exception as e:
-        r.append(('numpy_import', 'ERR:%s' % type(e).__name__))
+        r.append(('numpy_import', 'ERR:%s %s' % (type(e).__name__, str(e)[:60])))
     return r
 
 for _i, _x in enumerate(_apis()):
@@ -234,7 +259,16 @@ print('G0_V4_END')
 | `G0_ABI_NATIVE` 两类扩展加载成功 | ✅ 佐证 | 加载成功说明 ABI 匹配 |
 | 客户端解释器选择配置项 | ✅ 直接证据 | **须安装后实测查明，不臆设** |
 
-> **判"支持双解释器"须同时满足**：安装目录存在 ≥2 个版本 `python3*.dll` **且** 存在 ≥2 套 site-packages **且**（若可切换）切换后 `G0_ABI_NATIVE` 仍成功。**仅凭 prefix 差异不判。**
+> **N4 修正后的判据（三重收窄）**：
+>
+> 1. **DLL 清单、`.pyd` 的 cp 标签、模块 `__file__` 路径——三者都不独证**「客户端支持双版本切换」。
+>    它们只能证明「**磁盘上存在什么**」，不能证明「**客户端能否切换**」。
+> 2. **NumPy 的 `.py` 包装路径不得冒充原生扩展**：`numpy.core._multiarray_umath.__file__` 可能指向 `.py`，
+>    真正的 ABI 证据是**同目录 `.pyd` 的 cp 标签**（§3.3 `_abi()` 已改为两者并记）。
+> 3. **两个环境实际能否进宿主、切换/选择机制如何——在未取得直接证据前一律标记 `unknown`**，
+>    不得以「目录里有两个 DLL」「prefix 不同」等间接迹象升格为「支持切换」。
+>
+> **升级为已知的唯一路径**：取得客户端解释器选择配置项或官方说明（**须安装后实测查明，不臆设**）。
 
 ### 3.5 本机 3.11 样本的定位（**M2：撤回原定性**）
 
@@ -326,7 +360,33 @@ G0_V4_END
 [CLEANUP_EXIT] <code> <cmd>      ← 外围清理命令退出码，独立记录
 ```
 
-**判据**：以 `[PROBE_END_MARKER] seen` + `[PROBE_EXIT]` 为准；`[CLEANUP_EXIT]` 非 0 **不影响**探针结论，但须独立留证，禁止合并归因。
+**判据（N5 修正，消除与前文冲突）**：
+
+- `[PROBE_END_MARKER]` 与 `[PROBE_EXIT]` **只用于记录「脚本是否跑到结尾」与「进程退出状态」**，
+  **不得作为探针通过依据**——这是 §3.5.1 血案的直接教训（END 已打印、rc=0，而 13 项探测全废）
+- **最终是否通过，一律逐项判断**：每个 `G0_*` 量项的取值必须符合 §3.2 矩阵的预期，且
+  - `ERR`（意外异常）**不能判 PASS**
+  - `'no-attr'` / `'no-file'` / 缺标签 **不能判 PASS**
+  - 只有 `ABSENT`（该 API 确实不存在，属**能力读数**）才可按矩阵计入判定
+- `[CLEANUP_EXIT]` 非 0 **不影响**探针结论，但须独立留证，禁止与探针状态合并归因
+
+### 3.7 ERR 注入规范（**N2 新增**）
+
+**目的**：验证 `_p()` / `_call()` 的错误分支确实被执行且不中断后续项。**不得在 QMT 宿主内做**。
+
+```text
+规则：
+① 只在「隔离副本」中注入（复制探针到临时目录，独立进程运行）
+② 注入方式：向 _p 传入一个「主动抛异常」的函数，例如
+      _p(lambda: (_ for _ in ()).throw(RuntimeError('INJECTED')), 'G0_INJECT_TEST')
+   验收要点（三项全须核）：
+      a) 标签正确显示为 G0_INJECT_TEST
+      b) 类型正确显示为 ERR / RuntimeError
+      c) ★后续项继续执行★（注入项之后仍能打印出 G0_* 输出，直至 G0_V4_END）
+③ 真实「导入失败」如需验证 ⇒ 另起**隔离进程**，在进程内**本地**改 sys.modules 或 sys.path，
+   **绝不修改 QMT 宿主的 sys.modules / sys.path / site-packages**
+④ 注入完成后删除隔离副本，不在仓库留存临时探针
+```
 
 ---
 
@@ -379,6 +439,16 @@ G0_V4_END
 | **黄金** | 以**同策略**在 3.6.8 下的完整审计序列为基准（**各策略各自基准，不共用**）；任一行差异即失败 |
 
 > **纪律**：差异**一律判失败并回退**，不按"数据修正型"放行。
+
+**探针读数判读纪律（N3）**：
+
+| 读数形态 | 定性 | 能否判 PASS |
+|---|---|---|
+| `ABSENT:AttributeError ...` | **能力读数**：该 API 在此版本确实不存在 | ✅ 可按矩阵计入（如 S2 乙态） |
+| `OK val=...` / `OK[WARN:FutureWarning] val=...` | 可用（带 warning 也属可用） | ✅ 可按矩阵计入（如 S1 甲态） |
+| `ERR:TypeError` / 其它**意外**异常 | **探针自身或环境异常** | ❌ **不能判 PASS**，须排查 |
+| `'no-attr'` / `'no-file'` / 缺标签 | 信息缺失 | ❌ **不能判 PASS**，须补证 |
+| warning **被静默** | 丧失区分「warning 策略」与「API 不存在」的能力 | ❌ 违规（N1 禁止全局静默） |
 
 ### 5.4 排期（采纳②审）
 
