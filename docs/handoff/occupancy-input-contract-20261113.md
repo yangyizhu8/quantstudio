@@ -187,3 +187,171 @@ $null   -eq $true   # False   ⚠️ 缺失即未占用
 本文件为**契约草案**，不含任何代码/阈值/任务改动。
 待裁定项：U1/U3 取何选项、U5 取何选项、哨兵是否接入 §6.4 判据。
 **未获裁定前不实施。**
+
+---
+
+# 八、v2 方案（2026-11-13 08:56 起草 · 依 R3 审核裁定方向 · 待独立②审）
+
+## 8.1 裁定方向（审核原文要点）
+
+- 「**非法声明 fail-closed ＋ 明确告警**」的最小方案方向
+- **不支持多区间**、**不静默截断**
+- 先核**现存声明写方兼容**
+- 补隔离用例：**缺字段、非法类型、多元素、反向区间、有效 false**
+- 再**独立②审实施**
+
+## 8.2 写方兼容核查（新增，实测）
+
+**结论：`data/daemon_occupancy.json` 无任何程序化写入方。**
+
+| 检索面 | 命中 | 性质 |
+|---|---|---|
+| `scripts/check_duckdb_firstweek_obs.py:164` | `occ_path = os.path.join(REPO,"data","daemon_occupancy.json")` | **只读** |
+| `scripts/check_daemon_alive.ps1:278` | `$occupancyPath = Join-Path $RepoRoot 'data\daemon_occupancy.json'` | **只读** |
+| 全仓 `scripts/**` + `quantstudio/**` | 无 writer | — |
+
+⇒ **声明由人手工书写/手工生成**，不存在"写方格式契约"约束 ⇒ **fail-closed 只需兼容现存唯一实例的字段形态**。
+
+**现存生产实例实态（6 字段，含 2 个非契约字段）**：
+```json
+{ "occupied": false,
+  "window": ["2026-11-11T05:55:42+08:00","2026-11-11T05:56:42+08:00"],
+  "operation": "RELEASED（第五死恢复完成，daemon PID 36372）",
+  "owner": "会话节点⑳",
+  "short_window_note": "仅覆盖操作本身...",
+  "daemon_pid": 36372 }
+```
+⇒ 方案**必须容忍未知字段**（`short_window_note`/`daemon_pid`），**不得因多字段报错**。
+
+## 8.3 隔离用例全表（2026-11-13 08:54 实测，隔离 fixture）
+
+| # | 构造 | 现状 gate | 现状 action | 应然（v2 目标） | 差异 |
+|---|---|---|---|---|---|
+| **A1** | `{}` 空对象 | `all-pass` | `REVIVE_ARMED` | **fail-closed**（缺 occupied ⇒ 非法） | ❌ 需修 |
+| A2 | `{"occupied":true}` 缺 window/owner | `skip-occupancy` | `NONE` | `skip-occupancy`（缺 window ⇒ 全时段占用） | ✅ 已正确 |
+| A3 | `{"occupied":false}` | `all-pass` | `REVIVE_ARMED` | 放行 | ✅ |
+| **B1** | `occupied:"yes"` | `all-pass` | `REVIVE_ARMED` | **fail-closed**（非法类型） | ❌ 需修 |
+| B2 | `occupied:1`（数字） | `skip-occupancy` | `NONE` | 视为占用（数字 1 → True） | ⚠️ 可接受（不误放行） |
+| **B3** | `window:"<单个字符串>"` | `skip-occupancy` | `NONE` | 视为占用（fail-closed） | ✅ 已正确（`[string].Count=1 <2`） |
+| C1 | `window` 4 元素 | `skip-occupancy` | `NONE` | **不得静默截断** ⇒ 告警/拒认 | ❌ 需修（多元素静默） |
+| **D1** | `window` **反向**（start > end） | **`all-pass`** | `REVIVE_ARMED` | **fail-closed**（区间非法） | ❌ **新发现** |
+| E1 | `occupied:false` + 完整字段 | `all-pass` | `REVIVE_ARMED` | 放行（**有效 false 不受影响**） | ✅ |
+| **F1** | **现存生产实例原样**（6 字段） | `all-pass` | `REVIVE_ARMED` | 放行（**兼容**） | ✅ **兼容性通过** |
+
+### 8.3.1 D1 反向区间（本轮新发现，fail-open 第 3 类）
+
+`window: ["<end>", "<start>"]`（start > end）⇒ 判定式 `now >= ws AND now <= we` **恒为 false** ⇒ `inWindow=false` ⇒ **放行**。
+
+声明方**把起止写反**（极易发生：复制粘贴/手填顺序错）⇒ 声明静默失效 ⇒ 与 JSON 损坏同族风险。
+**现状无任何告警**。
+
+### 8.3.2 C1 多元素（静默截断）
+
+4 元素时只读 `[0]`/`[1]`，**第 3+ 元素被静默丢弃**（U5-b 已证：前两在未来、后两在窗口内 ⇒ `all-pass`）。
+⇒ 违反审核「**不静默截断**」要求。
+
+## 8.4 三类状态分离定义（依审核「不能混判」）
+
+| 状态 | 定义 | v2 行为 | 告警标记 |
+|---|---|---|---|
+| **S1 文件不存在** | `Test-Path` false | **放行**（未声明，正常态） | 无 |
+| **S2 文件存在但内容非法** | JSON 解析失败／`occupied` 缺失／类型非法／`window` 结构非法（非 2 元素字符串、反向、时间不可解析） | **fail-closed ⇒ 视为占用**（不拉起） | `[OCC-INVALID] <具体原因>` |
+| **S3 声明合法** | `occupied` 为布尔 + （`true` 时 `window` 为 2 元素合法 ISO、start ≤ end） | 按语义判定 | 无（`true` 时 `[OCC-ACTIVE]` 可选） |
+| **S3a `owner` 缺失** | 其余合法但无 `owner` | **仍按 S3 判定**（owner 仅用于溯源） | `[OCC-NO-OWNER]` 附加提示 |
+
+⇒ **S1 / S2 / S3a 三者互斥且可区分**，不再混判为「未占用」。
+
+## 8.5 事件模型（episode，修正 R3 意见）
+
+审核指出：**同一内容修好后再次损坏可能是新 episode，事件数不能机械等于全历史唯一 SHA 数**。
+
+| 概念 | 定义 |
+|---|---|
+| **日志行** | 每轮心跳一行（同一坏文件持续 6h ⇒ 36 行） |
+| **episode** | 一段**连续的** `[OCC-INVALID]` 轮次序列；**中间出现「成���轮（无标记」即闭合** |
+| **事件数** | **episode 数**（不是唯一 SHA 数，也不是日志行数） |
+
+**判定规则**：
+1. 扫描按时间序；
+2. 遇到带 `[OCC-INVALID]` 的轮 ⇒ 若上一轮无标记 ⇒ **新 episode +1**；
+3. 若上一轮有标记且 **sha256 相同** ⇒ 同一 episode 续；
+4. 若上一轮有标记但 **sha256 不同** ⇒ **新 episode +1**（内容变了）；
+5. 中间出现无标记轮 ⇒ episode 闭合，之后再坏**即为新 episode**（即便 sha256 与更早某次相同）。
+
+⇒ 同一个坏内容「坏→修好→再坏」= **2 个 episode**（旧规则会算 1）。
+
+## 8.6 最小实施方案（**待②审，不实施**）
+
+### 8.6.1 改动点（唯一文件 `scripts/check_daemon_alive.ps1`，F3 段）
+
+在 L382 `Test-Path` 之后、L384 `ConvertFrom-Json` 周围增加**声明合法性校验**，伪代码：
+
+```powershell
+if (Test-Path $occupancyPath) {          # S1 不存在 ⇒ 走原来的"未占用"
+    try {
+        $occ = Get-Content ... | ConvertFrom-Json
+        $raw = Get-Content ... -Raw
+        $sha = (Get-FileHash $occupancyPath -Algorithm SHA256).Hash
+
+        # —— S2 合法性校验（任一不过 ⇒ fail-closed + [OCC-INVALID]）——
+        $invalid = $null
+        if (-not ($occ.PSObject.Properties.Name -contains 'occupied')) {
+            $invalid = 'occupied 字段缺失'
+        } elseif ($occ.occupied -isnot [bool]) {          # B1/B3 同类
+            $invalid = "occupied 类型非法（$($occ.occupied.GetType().Name)）"
+        } elseif ($occ.occupied -eq $true) {
+            if (-not $occ.window -or $occ.window.Count -ne 2) {
+                $invalid = "window 元素数=$($occ.window.Count)（须恰好 2）"    # A2/C1
+            } else {
+                try {
+                    $ws = [DateTimeOffset]::Parse($occ.window[0]).LocalDateTime
+                    $we = [DateTimeOffset]::Parse($occ.window[1]).LocalDateTime
+                    if ($ws -gt $we) { $invalid = "window 反向（start > end）" }  # D1
+                } catch { $invalid = 'window 时间不可解析' }
+            }
+        }
+        if ($invalid) { $occupied = $true; $occDetail = "[OCC-INVALID] $invalid ⇒ fail-closed 视为占用" }
+        else { <原有 window 判定逻辑> }
+    } catch { $occupied = $true; $occDetail = "[OCC-FAILCLOSED] JSON 解析失败 ⇒ ..." }
+}
+```
+
+### 8.6.2 与既有 `2eff4d9` 的关系
+
+- `2eff4d9` 已覆盖 **S2 的「JSON 解析失败」** 子情形（`[OCC-FAILCLOSED]`）
+- 本方案把 S2 **扩展**到「解析成功但语义非法」（`[OCC-INVALID]`）
+- 两者**同一语义方向**（非法 ⇒ 视为占用），只是标记名区分**可诊断性**
+
+### 8.6.3 兼容性保证
+
+| 约束 | 保证 |
+|---|---|
+| 现存活实例（6 字段含非标准字段） | ✅ **F1 实测放行**；新校验**只查必需 3 项**，未知字段一律忽略 |
+| `occupied=false` 合法声明 | ✅ 不受影响（E1 实测） |
+| S1 文件不存在 | ✅ 行为不变 |
+| 新标记可 grep | `[OCC-INVALID]`（语义非法）/ `[OCC-FAILCLOSED]`（解析失败）/ `[OCC-NO-OWNER]`（缺 owner 提示） |
+
+### 8.6.4 验收判据（实施时用）
+
+| # | 用例 | 期望 |
+|---|---|---|
+| V1 | `{}` | `gate=skip-occupancy` + `[OCC-INVALID] occupied 字段缺失` |
+| V2 | `occupied:"yes"` | `skip-occupancy` + `[OCC-INVALID] 类型非法` |
+| V3 | `window` 4 元素 | `skip-occupancy` + `[OCC-INVALID] 元素数=4` |
+| V4 | `window` 反向 | `skip-occupancy` + `[OCC-INVALID] 反向` |
+| V5 | `occupied:false` 合法 | `all-pass`（不变） |
+| V6 | 现存活实例原样 | `all-pass`（不变，兼容） |
+| V7 | 文件不存在 | `all-pass`（不变） |
+| V8 | 合法 true + 窗口内 | `skip-occupancy`（不变） |
+| V9 | JSON 损坏 | `skip-occupancy` + `[OCC-FAILCLOSED]`（不变） |
+
+### 8.6.5 状态
+
+**未实施**。等独立②审。
+
+## 8.7 不变项（审核明确）
+
+- 原 active 观察窗（20:50 → 11-13 20:50）**不变**
+- H3 根因**继续未知**，不倒推
+- `LastResult=2` **保留 WARN 分级**
+- 本轮**不改任务、阈值或启停进程**
