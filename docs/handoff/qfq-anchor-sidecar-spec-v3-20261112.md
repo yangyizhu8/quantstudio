@@ -695,3 +695,44 @@ v3.4 的 L3 写作「崩溃/掉电后回读仍一致」——**过强**。收敛
 - D20：本地 duckdb 1.5.6 实测；QuestDB **不在本机**（远端 MCP）⇒ 远端不可探针；官方文档**未取到**（铁律 16 如实声明）。
 - 规格仅改四处（§二十九～三十一＋本节），**未扩篇幅**。
 - **零实施维持**：五条写路径未改一行；探针 P-1/P-2 仅设计未执行；生产 DDL/强杀/掉电均未执行。
+
+
+---
+
+# v3.6 · D20 平台持久化与可见性契约并入（2026-11-13 · 节点㉑）
+
+> 依据件：`docs/evidence/d20-p2-p3-min-evidence-20261113.md`（P-2 隔离实测 + P-3 文档取证）
+> 原始数据：`docs/evidence/d20-p2-wal-visibility-result-20261113.json`／夹具 `-probe-20261113.py`
+> 触发：R26「D20 继续文档与隔离探针取证；不能整体视为无权限所以不能推进；按执行机／端点／数据根区分」
+
+## v3.6-1 平台事实（实测 + 文档双源，硬约束）
+
+| 编号 | 事实 | 等级 | 出处 |
+|---|---|---|---|
+| F-1 | `COMMIT` 返回成功 ≠ 数据可读。隔离实测：`sequencerTxn=1`、`writerTxn=0`、`count()=0` | 实测 | 证据件 §2 expB |
+| F-2 | `COMMIT` 成功 ≠ 掉电持久。`cairo.commit.mode` 默认 `nosync`（"relies on OS page cache"），仅 `sync` 才 fsync | 文档 | `/docs/architecture/storage-engine` · `/docs/configuration/cairo-engine` |
+| F-3 | `wal_tables()` 的 `writerTxn`（已 applied 可读）与 `sequencerTxn`（已 commit 进 WAL）构成可机读窗口判定器 | 文档 | `/docs/cookbook/operations/check-transaction-applied` |
+| F-4 | `wait_wal_table(t[, seqTxn])` 阻塞至 applied；**4 ms 级**收敛；非 WAL 表立即 `true`；drop/suspended 抛错 | 实测+文档 | `/docs/query/functions/meta` · 证据件 §2 expC |
+| F-5 | 新建表默认 WAL（`cairo.wal.enabled.default=true`）⇒ sidecar 表天然处于 WAL 语义下 | 本机 server.conf | 证据件 §3.1 |
+
+## v3.6-2 五项强制修订（对 v3~v3.5 的约束升级，不改公式）
+
+1. **状态语义**：`qfq_anchor_sidecar` 写入成功只能声明「**committed & applied**」。在 `cairo.commit.mode != sync` 下，**禁止**「已持久化／掉电安全」表述（含文档、日志、回执字段文案）。
+2. **写后自检强制 `wait_wal_table`**：写锚 → commit 后，必须 `wait_wal_table('qfq_anchor_sidecar')` 返回 `true`，并双读 `writerTxn == sequencerTxn` 方可记「锚已就位」。**裸 `count()` 自检判为违规实现**。
+3. **消费侧读锚强制等待**：任何 ratio 消费方在算 `front/back` 前，先 `wait_wal_table` 或比对 `seqTxn`。理由：apply 未追上时读到的是**上一版锚**——旧锚即**错值**，不是 NULL。
+4. **fail-closed 判据扩展**：原「锚表无行 ⇒ 置 NULL」扩为「**未 applied 或 `seqTxn` 落后 ⇒ 拒绝出数**」。「读到旧锚」**不得**被当作「有锚」放行（与「宁 NULL 勿错值」正面冲突）。
+5. **发布顺序**：v3.3~v3.5 五段顺序（写锚 → commit → **wait applied** → 校验 → 发布）中，`wait applied` 为**必过步**，非可选优化。
+
+## v3.6-3 未闭合项（明示，不粉饰）
+
+- **掉电耐受未做破坏性实验**（R26 明令不执行）。F-2 结论**仅由文档 + 默认配置**支撑，**无本地实测背书**；若需实测背书，须另立隔离实例 + 可接受的断电/强杀方案并单独获批。
+- **P-1 DuckDB `CHECKPOINT` 隔离探针未做**（本轮未排期）。
+- **云端端点（L-C）未完成探活**：PS 5.1 无 `-SkipCertificateCheck`，命令未发出；不得据此断言云端正/负。
+
+## v3.6-4 分层口径（R26 要求存档）
+
+D20 能力按 **执行机／端点／数据根** 三分，禁止用一层的不可达推断全任务不可为：
+- **L-A** 本机生产 QDB：`127.0.0.1:9000`，根 `D:\questdb\quest_database`，9.3.5，135 表 → 只读
+- **L-B** 本机隔离 QDB：`127.0.0.1:19000`，根 `D:\questdb\_d20probe` → 可 DDL／可写／可观测（本件 P-2 即在此完成，用后销毁）
+- **L-C** 云端源端：`https://124.223.159.234/mcp` → 只读 MCP
+- **L-D** 主仓 DuckDB：`data/quantstudio.db`（62.06 GiB）→ 单进程写锁，**与 QDB 读不同锁域**
