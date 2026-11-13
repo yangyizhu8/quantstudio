@@ -1,0 +1,59 @@
+{
+  "total": 5,
+  "checked": 5,
+  "bad": [],
+  "skipped": [],
+  "families_used": [
+    "ops"
+  ],
+  "note": null,
+  "placeholder": [
+    {
+      "file": "knowledge/ops/OPS-2026-0001.md",
+      "level": "warn",
+      "stage": "entry",
+      "fake": [],
+      "mention": [],
+      "notes": [],
+      "diagnostics": []
+    },
+    {
+      "file": "knowledge/ops/OPS-2026-0002.md",
+      "level": "warn",
+      "stage": "entry",
+      "fake": [],
+      "mention": [],
+      "notes": [],
+      "diagnostics": []
+    },
+    {
+      "file": "knowledge/ops/OPS-2026-0003.md",
+      "level": "warn",
+      "stage": "entry",
+      "fake": [],
+      "mention": [],
+      "notes": [],
+      "diagnostics": []
+    },
+    {
+      "file": "knowledge/ops/OPS-2026-0004.md",
+      "level": "warn",
+      "stage": "entry",
+      "fake": [],
+      "mention": [],
+      "notes": [],
+      "diagnostics": []
+    },
+    {
+      "file": "knowledge/ops/OPS-2026-0005.md",
+      "level": "warn",
+      "stage": "entry",
+      "fake": [],
+      "mention": [
+        "contract_row"
+      ],
+      "notes": [],
+      "diagnostics": []
+    }
+  ]
+}

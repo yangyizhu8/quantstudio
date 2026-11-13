@@ -1,0 +1,6 @@
+[kb_hook] 体检 5 件（族：ops），不合规 0 件，跳过 0 件
+  [placeholder:warn] knowledge/ops/OPS-2026-0001.md : stage=entry fake=0 mention=[] notes=[]
+  [placeholder:warn] knowledge/ops/OPS-2026-0002.md : stage=entry fake=0 mention=[] notes=[]
+  [placeholder:warn] knowledge/ops/OPS-2026-0003.md : stage=entry fake=0 mention=[] notes=[]
+  [placeholder:warn] knowledge/ops/OPS-2026-0004.md : stage=entry fake=0 mention=[] notes=[]
+  [placeholder:warn] knowledge/ops/OPS-2026-0005.md : stage=entry fake=0 mention=['contract_row'] notes=[]
