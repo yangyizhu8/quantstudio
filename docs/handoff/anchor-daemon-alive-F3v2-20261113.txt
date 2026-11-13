@@ -1,13 +1,23 @@
 ﻿写前锚 · scripts/check_daemon_alive.ps1（F3 v2 校验实施前）
 时间: 2026-11-13 10:20:53
-HEAD: d70c10b4df4a06a45f8cc69a21e714fca3ac20b0
+HEAD: ea1d3d4ae16a6363b2b6cd7b64f678704b102c20
 blob: 4136d0f6d9c7c3999b468d9eeadd49eb0d02d19c
 sha256: 26D762D5559F2AE5451E490596BF6EDCAB90F954407052DE2740312850924C32
 行数: 581
 
 【回退（字节级配方，禁 PS >）】
   B) cmd /c "git cat-file blob 4136d0f6d9c7c3999b468d9eeadd49eb0d02d19c > <tmp>"   再核 SHA（取证首选，不碰仓库）
-  A) git restore --source=d70c10b4df4a06a45f8cc69a21e714fca3ac20b0 --worktree -- scripts/check_daemon_alive.ps1   （只改工作区）
-  C) git checkout d70c10b4df4a06a45f8cc69a21e714fca3ac20b0 -- scripts/check_daemon_alive.ps1   （会改 index，非无条件推荐）
+  A) git restore --source=ea1d3d4ae16a6363b2b6cd7b64f678704b102c20 --worktree -- scripts/check_daemon_alive.ps1   （只改工作区）
+  C) git checkout ea1d3d4ae16a6363b2b6cd7b64f678704b102c20 -- scripts/check_daemon_alive.ps1   （会改 index，非无条件推荐）
   建后立验：sha256 == 26D762D5559F2AE5451E490596BF6EDCAB90F954407052DE2740312850924C32 / Parser 空错 / 首3字节 239,187,191
   工作树恢复前：①明确授权 ②B5 检查（同文件两方改动⇒停手）
+
+【2026-11-13 11:31 修正（R7 审核：回退 A 取到修复本身的问题）】
+本次提交 5551047 的直接父 = ea1d3d4ae16a6363b2b6cd7b64f678704b102c20（A/C 已改用此值）
+实施当时记录的 HEAD = d70c10b4... ——两者对本脚本的 blob **完全相同**（4136d0f6...），
+因他线在其间有提交但未触及本文件；用任一 SHA 效果等价，但**以直接父为准**最精确。
+
+⚠️ 硬警示（两次犯）：**绝不可用本次修复提交自身的 SHA 作回退源**
+   git restore --source=5551047 ...   ⇒ 取回的是**修复版**（假回退）
+   必须用：父提交 ea1d3d4ae16a6363b2b6cd7b64f678704b102c20 / 原 blob 4136d0f6... / 原 sha256 26D762D5...
+   判据：回退后文件 sha256 必须 == 26D762D5...T32，且 **不含 'OCC-INVALID' 字样**
