@@ -1,0 +1,10 @@
+{
+  "baseline_anchor": "7826aedbf9d634aabb48c2f7c0d988f490c78b07",
+  "worktree": "D:\\miniQMT策略实盘\\QuantStudio-wt-baseline",
+  "head": "ce5b8cf134fa4ea1ba95486f70eca8760dbd56a0",
+  "main_head_at_audit": "ce5b8cf134fa4ea1ba95486f70eca8760dbd56a0",
+  "detached": true,
+  "dirty_count": 0,
+  "note": "7826aed = 本批之前基线，非 PD0020 单变量归因",
+  "runs_executed_in_worktree": 0
+}
