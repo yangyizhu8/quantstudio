@@ -16,11 +16,12 @@
   ],
   "effects_boundary": "本件是段级统计清单，仅用于定位缺口与回放候选；不构成 L2 回放执行输入，也不等价于 9 表总量统计。",
   "resource_precondition": {
-    "checked_at": "2026-11-13T11:34:57",
     "disk_free_gb": 141.4,
     "ram_free_gb": 5.0,
     "ram_load_pct": 85,
-    "note": "内存偏紧；本批只读且单查询聚合，未做逐段 N 次查询"
+    "source": "manual constant carried over from probe_paths.py sampling at 2026-11-13T11:32 — NOT measured by the batch02 run itself",
+    "sampled_at": "2026-11-13T11:32:00+08:00",
+    "r28_note": "R28：字面常量不得配运行时刻冒充即时测量。本块明确标注为跨件手工转抄值，仅作当时参考；batch03 起改为运行期即时采样并记录 sampled_at。"
   },
   "tables": {
     "stock_minutes": {
