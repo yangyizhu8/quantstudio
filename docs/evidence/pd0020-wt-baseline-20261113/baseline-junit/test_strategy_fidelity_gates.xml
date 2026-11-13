@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="6" time="0.473" timestamp="2026-11-13T23:50:31.887550+08:00" hostname="USER-20251211MP"><testcase classname="tests.test_strategy_fidelity_gates" name="test_portfolio_exact_membership_semantic_gate_passes" time="0.055" /><testcase classname="tests.test_strategy_fidelity_gates" name="test_etf_approved_fidelity_and_local_result_pass" time="0.001"><failure message="FileNotFoundError: [Errno 2] No such file or directory: 'D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\output\\strategy-fidelity-gates\\etf_momentum_current.json'">def test_etf_approved_fidelity_and_local_result_pass():
+        import json
+    
+        config = load_gate_config()
+        gate = config["gates"]["etf_momentum"]
+        report = json.loads((
+            ROOT / "output" / "strategy-fidelity-gates" /
+&gt;           "etf_momentum_current.json").read_text(encoding="utf-8"))
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_strategy_fidelity_gates.py:29: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\Administrator\AppData\Local\Programs\Python\Python311\Lib\pathlib.py:1058: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = WindowsPath('D:/miniQMT策略实盘/QuantStudio-wt-baseline/output/strategy-fidelity-gates/etf_momentum_current.json')
+mode = 'r', buffering = -1, encoding = 'utf-8', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+&gt;       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: 'D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\output\\strategy-fidelity-gates\\etf_momentum_current.json'
+
+C:\Users\Administrator\AppData\Local\Programs\Python\Python311\Lib\pathlib.py:1044: FileNotFoundError</failure></testcase><testcase classname="tests.test_strategy_fidelity_gates" name="test_etf_gate_rejects_the_known_31_trade_drift" time="0.001"><failure message="assert False&#10; +  where False = any(&lt;generator object test_etf_gate_rejects_the_known_31_trade_drift.&lt;locals&gt;.&lt;genexpr&gt; at 0x000001349A295970&gt;)">def test_etf_gate_rejects_the_known_31_trade_drift():
+        config = load_gate_config()
+        gate = config["gates"]["etf_momentum"]
+        drifted_dir = ROOT / "output" / "backtest_results" / "20260721_024759_ETF动量"
+        checks, failures = validate_local_result(drifted_dir, gate)
+        assert failures
+&gt;       assert any("trade_count=31" in failure for failure in failures)
+E       assert False
+E        +  where False = any(&lt;generator object test_etf_gate_rejects_the_known_31_trade_drift.&lt;locals&gt;.&lt;genexpr&gt; at 0x000001349A295970&gt;)
+
+tests\test_strategy_fidelity_gates.py:47: AssertionError</failure></testcase><testcase classname="tests.test_strategy_fidelity_gates" name="test_fidelity_gate_rejects_nav_drift_even_if_verdict_is_pass" time="0.001"><failure message="FileNotFoundError: [Errno 2] No such file or directory: 'D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\output\\strategy-fidelity-gates\\etf_momentum_current.json'">def test_fidelity_gate_rejects_nav_drift_even_if_verdict_is_pass():
+        import json
+    
+        config = load_gate_config()
+        gate = config["gates"]["etf_momentum"]
+        report = json.loads((
+            ROOT / "output" / "strategy-fidelity-gates" /
+&gt;           "etf_momentum_current.json").read_text(encoding="utf-8"))
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_strategy_fidelity_gates.py:58: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\Administrator\AppData\Local\Programs\Python\Python311\Lib\pathlib.py:1058: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = WindowsPath('D:/miniQMT策略实盘/QuantStudio-wt-baseline/output/strategy-fidelity-gates/etf_momentum_current.json')
+mode = 'r', buffering = -1, encoding = 'utf-8', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+&gt;       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: 'D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\output\\strategy-fidelity-gates\\etf_momentum_current.json'
+
+C:\Users\Administrator\AppData\Local\Programs\Python\Python311\Lib\pathlib.py:1044: FileNotFoundError</failure></testcase><testcase classname="tests.test_strategy_fidelity_gates" name="test_smallcap_close_baseline_is_accepted_without_relaxing_submetrics" time="0.001"><failure message="FileNotFoundError: [Errno 2] No such file or directory: 'D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\output\\strategy-fidelity-gates\\smallcap_current.json'">def test_smallcap_close_baseline_is_accepted_without_relaxing_submetrics():
+        import json
+    
+        config = load_gate_config()
+        gate = config["gates"]["smallcap_guard"]
+        report = json.loads((
+            ROOT / "output" / "strategy-fidelity-gates" /
+&gt;           "smallcap_current.json").read_text(encoding="utf-8"))
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_strategy_fidelity_gates.py:72: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\Administrator\AppData\Local\Programs\Python\Python311\Lib\pathlib.py:1058: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = WindowsPath('D:/miniQMT策略实盘/QuantStudio-wt-baseline/output/strategy-fidelity-gates/smallcap_current.json')
+mode = 'r', buffering = -1, encoding = 'utf-8', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+&gt;       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: 'D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\output\\strategy-fidelity-gates\\smallcap_current.json'
+
+C:\Users\Administrator\AppData\Local\Programs\Python\Python311\Lib\pathlib.py:1044: FileNotFoundError</failure></testcase><testcase classname="tests.test_strategy_fidelity_gates" name="test_required_gate_sample_directories_exist" time="0.005" /></testsuite></testsuites>

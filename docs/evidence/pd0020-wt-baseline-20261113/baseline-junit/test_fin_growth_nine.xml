@@ -1,0 +1,303 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="9" skipped="0" tests="9" time="5.048" timestamp="2026-11-13T23:51:32.933712+08:00" hostname="USER-20251211MP"><testcase classname="tests.test_fin_growth_dividend_staging_tool.TestPrepareDryRun" name="test_prepare_dry_run_returns_0" time="0.439"><failure message="AssertionError: stderr: 23:51:33 INFO [staging] ========================================================================&#10;  23:51:33 INFO [staging] PHASE: prepare -- Create staging environment&#10;  23:51:33 INFO [staging]   Source DB:    C:\Users\Administrator\AppData\Local\Temp\tmpgfbp6p30.db&#10;  23:51:33 INFO [staging]   Staging root: C:\Users\Administrator\AppData\Local\Temp\tmpvm9d_227\staging&#10;  23:51:33 INFO [staging]   Dry run:      True&#10;  23:51:33 INFO [staging] ========================================================================&#10;  23:51:33 INFO [staging] [1/9] Daemon check: not running ✓&#10;  23:51:33 INFO [staging] [2/9] Staging/source overlap check passed ✓&#10;  23:51:33 INFO [staging] [2/9] Disk space: source=0 MB, free=447489 MB (&gt;2x required) ✓&#10;  23:51:33 INFO [staging] [3/9] [DRY-RUN] Would copy C:\Users\Administrator\AppData\Local\Temp\tmpgfbp6p30.db -&gt; C:\Users\Administrator\AppData\Local\Temp\tmpvm9d_227\staging\staging.db&#10;  23:51:33 INFO [staging] [4/9] [DRY-RUN] Would create C:\Users\Administrator\AppData\Local\Temp\tmpvm9d_227\staging\config&#10;  23:51:33 ERROR [staging]   Required config file not found: D:\miniQMT策略实盘\QuantStudio-wt-baseline\config\data_config.json&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...RROR [staging]   Required config file not found: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\config\\data_config.json\n').returncode">self = &lt;tests.test_fin_growth_dividend_staging_tool.TestPrepareDryRun object at 0x000001F2EF120CD0&gt;
+
+    def test_prepare_dry_run_returns_0(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_p = Path(tmp)
+            db_path = _make_mini_db()
+            staging_root = tmp_p / "staging"
+    
+            result = _run_staging([
+                "--source-db", db_path,
+                "--staging-root", str(staging_root),
+                "--dry-run", "--prepare",
+            ])
+    
+&gt;           assert result.returncode == 0, f"stderr: {result.stderr}"
+E           AssertionError: stderr: 23:51:33 INFO [staging] ========================================================================
+E             23:51:33 INFO [staging] PHASE: prepare -- Create staging environment
+E             23:51:33 INFO [staging]   Source DB:    C:\Users\Administrator\AppData\Local\Temp\tmpgfbp6p30.db
+E             23:51:33 INFO [staging]   Staging root: C:\Users\Administrator\AppData\Local\Temp\tmpvm9d_227\staging
+E             23:51:33 INFO [staging]   Dry run:      True
+E             23:51:33 INFO [staging] ========================================================================
+E             23:51:33 INFO [staging] [1/9] Daemon check: not running ✓
+E             23:51:33 INFO [staging] [2/9] Staging/source overlap check passed ✓
+E             23:51:33 INFO [staging] [2/9] Disk space: source=0 MB, free=447489 MB (&gt;2x required) ✓
+E             23:51:33 INFO [staging] [3/9] [DRY-RUN] Would copy C:\Users\Administrator\AppData\Local\Temp\tmpgfbp6p30.db -&gt; C:\Users\Administrator\AppData\Local\Temp\tmpvm9d_227\staging\staging.db
+E             23:51:33 INFO [staging] [4/9] [DRY-RUN] Would create C:\Users\Administrator\AppData\Local\Temp\tmpvm9d_227\staging\config
+E             23:51:33 ERROR [staging]   Required config file not found: D:\miniQMT策略实盘\QuantStudio-wt-baseline\config\data_config.json
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...RROR [staging]   Required config file not found: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\config\\data_config.json\n').returncode
+
+tests\test_fin_growth_dividend_staging_tool.py:111: AssertionError</failure></testcase><testcase classname="tests.test_fin_growth_dividend_staging_tool.TestPrepareCreatesStaging" name="test_prepare_creates_staging_with_absolute_paths" time="0.387"><failure message="AssertionError: stderr: 23:51:34 INFO [staging] ========================================================================&#10;  23:51:34 INFO [staging] PHASE: prepare -- Create staging environment&#10;  23:51:34 INFO [staging]   Source DB:    C:\Users\Administrator\AppData\Local\Temp\tmpue_rxs2o.db&#10;  23:51:34 INFO [staging]   Staging root: C:\Users\Administrator\AppData\Local\Temp\tmppoz3_bli\staging&#10;  23:51:34 INFO [staging]   Dry run:      False&#10;  23:51:34 INFO [staging] ========================================================================&#10;  23:51:34 INFO [staging] [1/9] Daemon check: not running ✓&#10;  23:51:34 INFO [staging] [2/9] Staging/source overlap check passed ✓&#10;  23:51:34 INFO [staging] [2/9] Disk space: source=0 MB, free=447486 MB (&gt;2x required) ✓&#10;  23:51:34 INFO [staging] [3/9] Copying source DB to staging (this may take a while)...&#10;  23:51:34 INFO [staging] [3/9] Copy complete: C:\Users\Administrator\AppData\Local\Temp\tmppoz3_bli\staging\staging.db (0 MB) ✓&#10;  23:51:34 INFO [staging] [3/9] Size match verified: 274432 bytes ✓&#10;  23:51:34 INFO [staging] [3/9] SHA-256 match verified: d00b0d8b6d9458a1db648c9871d773ebfc07c5c42e69387e4f2070b6c6e9a61c ✓&#10;  23:51:34 INFO [staging] [3/9] Staging marker written: C:\Users\Administrator\AppData\Local\Temp\tmppoz3_bli\staging\.quantstudio_staging.json ✓&#10;  23:51:34 INFO [staging] [4/9] Config directory: C:\Users\Administrator\AppData\Local\Temp\tmppoz3_bli\staging\config ✓&#10;  23:51:34 ERROR [staging]   Required config file not found: D:\miniQMT策略实盘\QuantStudio-wt-baseline\config\data_config.json&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...RROR [staging]   Required config file not found: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\config\\data_config.json\n').returncode">self = &lt;tests.test_fin_growth_dividend_staging_tool.TestPrepareCreatesStaging object at 0x000001F2F4351ED0&gt;
+
+    def test_prepare_creates_staging_with_absolute_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_p = Path(tmp)
+            db_path = _make_mini_db()
+            config_dir = _make_config_dir(tmp_p, db_path)
+            staging_root = tmp_p / "staging"
+    
+            result = _run_staging([
+                "--source-db", db_path,
+                "--staging-root", str(staging_root),
+                "--start-date", "2022-01-01",
+                "--prepare",
+            ])
+    
+&gt;           assert result.returncode == 0, f"stderr: {result.stderr}"
+E           AssertionError: stderr: 23:51:34 INFO [staging] ========================================================================
+E             23:51:34 INFO [staging] PHASE: prepare -- Create staging environment
+E             23:51:34 INFO [staging]   Source DB:    C:\Users\Administrator\AppData\Local\Temp\tmpue_rxs2o.db
+E             23:51:34 INFO [staging]   Staging root: C:\Users\Administrator\AppData\Local\Temp\tmppoz3_bli\staging
+E             23:51:34 INFO [staging]   Dry run:      False
+E             23:51:34 INFO [staging] ========================================================================
+E             23:51:34 INFO [staging] [1/9] Daemon check: not running ✓
+E             23:51:34 INFO [staging] [2/9] Staging/source overlap check passed ✓
+E             23:51:34 INFO [staging] [2/9] Disk space: source=0 MB, free=447486 MB (&gt;2x required) ✓
+E             23:51:34 INFO [staging] [3/9] Copying source DB to staging (this may take a while)...
+E             23:51:34 INFO [staging] [3/9] Copy complete: C:\Users\Administrator\AppData\Local\Temp\tmppoz3_bli\staging\staging.db (0 MB) ✓
+E             23:51:34 INFO [staging] [3/9] Size match verified: 274432 bytes ✓
+E             23:51:34 INFO [staging] [3/9] SHA-256 match verified: d00b0d8b6d9458a1db648c9871d773ebfc07c5c42e69387e4f2070b6c6e9a61c ✓
+E             23:51:34 INFO [staging] [3/9] Staging marker written: C:\Users\Administrator\AppData\Local\Temp\tmppoz3_bli\staging\.quantstudio_staging.json ✓
+E             23:51:34 INFO [staging] [4/9] Config directory: C:\Users\Administrator\AppData\Local\Temp\tmppoz3_bli\staging\config ✓
+E             23:51:34 ERROR [staging]   Required config file not found: D:\miniQMT策略实盘\QuantStudio-wt-baseline\config\data_config.json
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...RROR [staging]   Required config file not found: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\config\\data_config.json\n').returncode
+
+tests\test_fin_growth_dividend_staging_tool.py:133: AssertionError</failure></testcase><testcase classname="tests.test_fin_growth_dividend_staging_tool.TestPrepareStartDate" name="test_prepare_updates_start_date_for_allowed_tasks" time="0.368"><failure message="AssertionError: stderr: 23:51:34 INFO [staging] ========================================================================&#10;  23:51:34 INFO [staging] PHASE: prepare -- Create staging environment&#10;  23:51:34 INFO [staging]   Source DB:    C:\Users\Administrator\AppData\Local\Temp\tmp6jlzbfcm.db&#10;  23:51:34 INFO [staging]   Staging root: C:\Users\Administrator\AppData\Local\Temp\tmpluqcvg61\staging&#10;  23:51:34 INFO [staging]   Dry run:      False&#10;  23:51:34 INFO [staging] ========================================================================&#10;  23:51:34 INFO [staging] [1/9] Daemon check: not running ✓&#10;  23:51:34 INFO [staging] [2/9] Staging/source overlap check passed ✓&#10;  23:51:34 INFO [staging] [2/9] Disk space: source=0 MB, free=447484 MB (&gt;2x required) ✓&#10;  23:51:34 INFO [staging] [3/9] Copying source DB to staging (this may take a while)...&#10;  23:51:34 INFO [staging] [3/9] Copy complete: C:\Users\Administrator\AppData\Local\Temp\tmpluqcvg61\staging\staging.db (0 MB) ✓&#10;  23:51:34 INFO [staging] [3/9] Size match verified: 274432 bytes ✓&#10;  23:51:34 INFO [staging] [3/9] SHA-256 match verified: 7ba6b7363387291465d1c74d9e288b4ed6ffaffd91942150e63345cb2c46523f ✓&#10;  23:51:34 INFO [staging] [3/9] Staging marker written: C:\Users\Administrator\AppData\Local\Temp\tmpluqcvg61\staging\.quantstudio_staging.json ✓&#10;  23:51:34 INFO [staging] [4/9] Config directory: C:\Users\Administrator\AppData\Local\Temp\tmpluqcvg61\staging\config ✓&#10;  23:51:34 ERROR [staging]   Required config file not found: D:\miniQMT策略实盘\QuantStudio-wt-baseline\config\data_config.json&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...RROR [staging]   Required config file not found: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\config\\data_config.json\n').returncode">self = &lt;tests.test_fin_growth_dividend_staging_tool.TestPrepareStartDate object at 0x000001F2F43532D0&gt;
+
+    def test_prepare_updates_start_date_for_allowed_tasks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_p = Path(tmp)
+            db_path = _make_mini_db()
+            config_dir = _make_config_dir(tmp_p, db_path)
+            staging_root = tmp_p / "staging"
+    
+            result = _run_staging([
+                "--source-db", db_path,
+                "--staging-root", str(staging_root),
+                "--start-date", "2022-01-01",
+                "--prepare",
+            ])
+    
+&gt;           assert result.returncode == 0, f"stderr: {result.stderr}"
+E           AssertionError: stderr: 23:51:34 INFO [staging] ========================================================================
+E             23:51:34 INFO [staging] PHASE: prepare -- Create staging environment
+E             23:51:34 INFO [staging]   Source DB:    C:\Users\Administrator\AppData\Local\Temp\tmp6jlzbfcm.db
+E             23:51:34 INFO [staging]   Staging root: C:\Users\Administrator\AppData\Local\Temp\tmpluqcvg61\staging
+E             23:51:34 INFO [staging]   Dry run:      False
+E             23:51:34 INFO [staging] ========================================================================
+E             23:51:34 INFO [staging] [1/9] Daemon check: not running ✓
+E             23:51:34 INFO [staging] [2/9] Staging/source overlap check passed ✓
+E             23:51:34 INFO [staging] [2/9] Disk space: source=0 MB, free=447484 MB (&gt;2x required) ✓
+E             23:51:34 INFO [staging] [3/9] Copying source DB to staging (this may take a while)...
+E             23:51:34 INFO [staging] [3/9] Copy complete: C:\Users\Administrator\AppData\Local\Temp\tmpluqcvg61\staging\staging.db (0 MB) ✓
+E             23:51:34 INFO [staging] [3/9] Size match verified: 274432 bytes ✓
+E             23:51:34 INFO [staging] [3/9] SHA-256 match verified: 7ba6b7363387291465d1c74d9e288b4ed6ffaffd91942150e63345cb2c46523f ✓
+E             23:51:34 INFO [staging] [3/9] Staging marker written: C:\Users\Administrator\AppData\Local\Temp\tmpluqcvg61\staging\.quantstudio_staging.json ✓
+E             23:51:34 INFO [staging] [4/9] Config directory: C:\Users\Administrator\AppData\Local\Temp\tmpluqcvg61\staging\config ✓
+E             23:51:34 ERROR [staging]   Required config file not found: D:\miniQMT策略实盘\QuantStudio-wt-baseline\config\data_config.json
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...RROR [staging]   Required config file not found: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\config\\data_config.json\n').returncode
+
+tests\test_fin_growth_dividend_staging_tool.py:165: AssertionError</failure></testcase><testcase classname="tests.test_fin_growth_dividend_staging_tool.TestPrepareOtherTasks" name="test_prepare_does_not_modify_other_tasks" time="0.366"><failure message="AssertionError: stderr: 23:51:35 INFO [staging] ========================================================================&#10;  23:51:35 INFO [staging] PHASE: prepare -- Create staging environment&#10;  23:51:35 INFO [staging]   Source DB:    C:\Users\Administrator\AppData\Local\Temp\tmpz3svt7ww.db&#10;  23:51:35 INFO [staging]   Staging root: C:\Users\Administrator\AppData\Local\Temp\tmpl3tcp3jh\staging&#10;  23:51:35 INFO [staging]   Dry run:      False&#10;  23:51:35 INFO [staging] ========================================================================&#10;  23:51:35 INFO [staging] [1/9] Daemon check: not running ✓&#10;  23:51:35 INFO [staging] [2/9] Staging/source overlap check passed ✓&#10;  23:51:35 INFO [staging] [2/9] Disk space: source=0 MB, free=447482 MB (&gt;2x required) ✓&#10;  23:51:35 INFO [staging] [3/9] Copying source DB to staging (this may take a while)...&#10;  23:51:35 INFO [staging] [3/9] Copy complete: C:\Users\Administrator\AppData\Local\Temp\tmpl3tcp3jh\staging\staging.db (0 MB) ✓&#10;  23:51:35 INFO [staging] [3/9] Size match verified: 274432 bytes ✓&#10;  23:51:35 INFO [staging] [3/9] SHA-256 match verified: 2e1ac8c2de49daae4f8044b8bc9453b068e61f21ce943f94f582f77eeb671a5b ✓&#10;  23:51:35 INFO [staging] [3/9] Staging marker written: C:\Users\Administrator\AppData\Local\Temp\tmpl3tcp3jh\staging\.quantstudio_staging.json ✓&#10;  23:51:35 INFO [staging] [4/9] Config directory: C:\Users\Administrator\AppData\Local\Temp\tmpl3tcp3jh\staging\config ✓&#10;  23:51:35 ERROR [staging]   Required config file not found: D:\miniQMT策略实盘\QuantStudio-wt-baseline\config\data_config.json&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...RROR [staging]   Required config file not found: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\config\\data_config.json\n').returncode">self = &lt;tests.test_fin_growth_dividend_staging_tool.TestPrepareOtherTasks object at 0x000001F2F4353410&gt;
+
+    def test_prepare_does_not_modify_other_tasks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_p = Path(tmp)
+            db_path = _make_mini_db()
+            staging_root = tmp_p / "staging"
+    
+            # Read production config to learn original start_date values
+            prod_tasks_path = _PROJECT_ROOT / "config" / "profiles" / "mcp_only" / "collector_tasks.json"
+            prod_tasks = json.loads(prod_tasks_path.read_text(encoding="utf-8"))
+            original_start_dates = {}
+            for t in prod_tasks.get("tasks", []):
+                original_start_dates[t["name"]] = t.get("start_date")
+    
+            result = _run_staging([
+                "--source-db", db_path,
+                "--staging-root", str(staging_root),
+                "--start-date", "2022-01-01",
+                "--prepare",
+            ])
+    
+&gt;           assert result.returncode == 0, f"stderr: {result.stderr}"
+E           AssertionError: stderr: 23:51:35 INFO [staging] ========================================================================
+E             23:51:35 INFO [staging] PHASE: prepare -- Create staging environment
+E             23:51:35 INFO [staging]   Source DB:    C:\Users\Administrator\AppData\Local\Temp\tmpz3svt7ww.db
+E             23:51:35 INFO [staging]   Staging root: C:\Users\Administrator\AppData\Local\Temp\tmpl3tcp3jh\staging
+E             23:51:35 INFO [staging]   Dry run:      False
+E             23:51:35 INFO [staging] ========================================================================
+E             23:51:35 INFO [staging] [1/9] Daemon check: not running ✓
+E             23:51:35 INFO [staging] [2/9] Staging/source overlap check passed ✓
+E             23:51:35 INFO [staging] [2/9] Disk space: source=0 MB, free=447482 MB (&gt;2x required) ✓
+E             23:51:35 INFO [staging] [3/9] Copying source DB to staging (this may take a while)...
+E             23:51:35 INFO [staging] [3/9] Copy complete: C:\Users\Administrator\AppData\Local\Temp\tmpl3tcp3jh\staging\staging.db (0 MB) ✓
+E             23:51:35 INFO [staging] [3/9] Size match verified: 274432 bytes ✓
+E             23:51:35 INFO [staging] [3/9] SHA-256 match verified: 2e1ac8c2de49daae4f8044b8bc9453b068e61f21ce943f94f582f77eeb671a5b ✓
+E             23:51:35 INFO [staging] [3/9] Staging marker written: C:\Users\Administrator\AppData\Local\Temp\tmpl3tcp3jh\staging\.quantstudio_staging.json ✓
+E             23:51:35 INFO [staging] [4/9] Config directory: C:\Users\Administrator\AppData\Local\Temp\tmpl3tcp3jh\staging\config ✓
+E             23:51:35 ERROR [staging]   Required config file not found: D:\miniQMT策略实盘\QuantStudio-wt-baseline\config\data_config.json
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...RROR [staging]   Required config file not found: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\config\\data_config.json\n').returncode
+
+tests\test_fin_growth_dividend_staging_tool.py:201: AssertionError</failure></testcase><testcase classname="tests.test_fin_growth_dividend_staging_tool.TestProductionConfigUnchanged" name="test_production_config_unchanged_after_prepare" time="0.593"><failure message="AssertionError: stderr: 23:51:35 INFO [staging] ========================================================================&#10;  23:51:35 INFO [staging] PHASE: prepare -- Create staging environment&#10;  23:51:35 INFO [staging]   Source DB:    C:\Users\Administrator\AppData\Local\Temp\tmp7vfzh7ex.db&#10;  23:51:35 INFO [staging]   Staging root: C:\Users\Administrator\AppData\Local\Temp\tmpfhjj17tw\staging&#10;  23:51:35 INFO [staging]   Dry run:      False&#10;  23:51:35 INFO [staging] ========================================================================&#10;  23:51:35 INFO [staging] [1/9] Daemon check: not running ✓&#10;  23:51:35 INFO [staging] [2/9] Staging/source overlap check passed ✓&#10;  23:51:35 INFO [staging] [2/9] Disk space: source=0 MB, free=447479 MB (&gt;2x required) ✓&#10;  23:51:35 INFO [staging] [3/9] Copying source DB to staging (this may take a while)...&#10;  23:51:35 INFO [staging] [3/9] Copy complete: C:\Users\Administrator\AppData\Local\Temp\tmpfhjj17tw\staging\staging.db (0 MB) ✓&#10;  23:51:35 INFO [staging] [3/9] Size match verified: 274432 bytes ✓&#10;  23:51:35 INFO [staging] [3/9] SHA-256 match verified: 680eccdf73ecd3a21db9131cd2ab4412d65515ad00185e531965e5b64f4373a7 ✓&#10;  23:51:35 INFO [staging] [3/9] Staging marker written: C:\Users\Administrator\AppData\Local\Temp\tmpfhjj17tw\staging\.quantstudio_staging.json ✓&#10;  23:51:35 INFO [staging] [4/9] Config directory: C:\Users\Administrator\AppData\Local\Temp\tmpfhjj17tw\staging\config ✓&#10;  23:51:35 ERROR [staging]   Required config file not found: D:\miniQMT策略实盘\QuantStudio-wt-baseline\config\data_config.json&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...RROR [staging]   Required config file not found: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\config\\data_config.json\n').returncode">self = &lt;tests.test_fin_growth_dividend_staging_tool.TestProductionConfigUnchanged object at 0x000001F2F4353F50&gt;
+
+    def test_production_config_unchanged_after_prepare(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_p = Path(tmp)
+            db_path = _make_mini_db()
+            config_dir = _make_config_dir(tmp_p, db_path)
+            staging_root = tmp_p / "staging"
+    
+            # Snapshot production config before prepare
+            orig_tasks = json.loads((config_dir / "collector_tasks.json").read_text(encoding="utf-8"))
+            orig_data = json.loads((config_dir / "data_config.json").read_text(encoding="utf-8"))
+    
+            result = _run_staging([
+                "--source-db", db_path,
+                "--staging-root", str(staging_root),
+                "--start-date", "2022-01-01",
+                "--prepare",
+            ])
+    
+&gt;           assert result.returncode == 0, f"stderr: {result.stderr}"
+E           AssertionError: stderr: 23:51:35 INFO [staging] ========================================================================
+E             23:51:35 INFO [staging] PHASE: prepare -- Create staging environment
+E             23:51:35 INFO [staging]   Source DB:    C:\Users\Administrator\AppData\Local\Temp\tmp7vfzh7ex.db
+E             23:51:35 INFO [staging]   Staging root: C:\Users\Administrator\AppData\Local\Temp\tmpfhjj17tw\staging
+E             23:51:35 INFO [staging]   Dry run:      False
+E             23:51:35 INFO [staging] ========================================================================
+E             23:51:35 INFO [staging] [1/9] Daemon check: not running ✓
+E             23:51:35 INFO [staging] [2/9] Staging/source overlap check passed ✓
+E             23:51:35 INFO [staging] [2/9] Disk space: source=0 MB, free=447479 MB (&gt;2x required) ✓
+E             23:51:35 INFO [staging] [3/9] Copying source DB to staging (this may take a while)...
+E             23:51:35 INFO [staging] [3/9] Copy complete: C:\Users\Administrator\AppData\Local\Temp\tmpfhjj17tw\staging\staging.db (0 MB) ✓
+E             23:51:35 INFO [staging] [3/9] Size match verified: 274432 bytes ✓
+E             23:51:35 INFO [staging] [3/9] SHA-256 match verified: 680eccdf73ecd3a21db9131cd2ab4412d65515ad00185e531965e5b64f4373a7 ✓
+E             23:51:35 INFO [staging] [3/9] Staging marker written: C:\Users\Administrator\AppData\Local\Temp\tmpfhjj17tw\staging\.quantstudio_staging.json ✓
+E             23:51:35 INFO [staging] [4/9] Config directory: C:\Users\Administrator\AppData\Local\Temp\tmpfhjj17tw\staging\config ✓
+E             23:51:35 ERROR [staging]   Required config file not found: D:\miniQMT策略实盘\QuantStudio-wt-baseline\config\data_config.json
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...RROR [staging]   Required config file not found: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\config\\data_config.json\n').returncode
+
+tests\test_fin_growth_dividend_staging_tool.py:238: AssertionError</failure></testcase><testcase classname="tests.test_fin_growth_dividend_staging_tool.TestStaleLock" name="test_stale_lock_does_not_block" time="0.461"><failure message="AssertionError: stderr: 23:51:36 INFO [staging] ========================================================================&#10;  23:51:36 INFO [staging] PHASE: prepare -- Create staging environment&#10;  23:51:36 INFO [staging]   Source DB:    C:\Users\Administrator\AppData\Local\Temp\tmpq32o75ky.db&#10;  23:51:36 INFO [staging]   Staging root: C:\Users\Administrator\AppData\Local\Temp\tmpt6mwhhbc\staging&#10;  23:51:36 INFO [staging]   Dry run:      False&#10;  23:51:36 INFO [staging] ========================================================================&#10;  23:51:36 INFO [staging] [1/9] Daemon check: not running ✓&#10;  23:51:36 INFO [staging] [2/9] Staging/source overlap check passed ✓&#10;  23:51:36 INFO [staging] [2/9] Disk space: source=0 MB, free=447476 MB (&gt;2x required) ✓&#10;  23:51:36 INFO [staging] [3/9] Copying source DB to staging (this may take a while)...&#10;  23:51:36 INFO [staging] [3/9] Copy complete: C:\Users\Administrator\AppData\Local\Temp\tmpt6mwhhbc\staging\staging.db (0 MB) ✓&#10;  23:51:36 INFO [staging] [3/9] Size match verified: 274432 bytes ✓&#10;  23:51:36 INFO [staging] [3/9] SHA-256 match verified: 3a7ada80a0c4dc7d36742f955c7e7c28340e2c4b07f2402ed3087299d53289ea ✓&#10;  23:51:36 INFO [staging] [3/9] Staging marker written: C:\Users\Administrator\AppData\Local\Temp\tmpt6mwhhbc\staging\.quantstudio_staging.json ✓&#10;  23:51:36 INFO [staging] [4/9] Config directory: C:\Users\Administrator\AppData\Local\Temp\tmpt6mwhhbc\staging\config ✓&#10;  23:51:36 ERROR [staging]   Required config file not found: D:\miniQMT策略实盘\QuantStudio-wt-baseline\config\data_config.json&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...RROR [staging]   Required config file not found: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\config\\data_config.json\n').returncode">self = &lt;tests.test_fin_growth_dividend_staging_tool.TestStaleLock object at 0x000001F2F435C210&gt;
+
+    def test_stale_lock_does_not_block(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_p = Path(tmp)
+            db_path = _make_mini_db()
+            config_dir = _make_config_dir(tmp_p, db_path)
+            staging_root = tmp_p / "staging"
+    
+            lock_path = Path(db_path).parent / ".daemon.lock"
+            lock_path.write_text("stale")
+    
+            result = _run_staging([
+                "--source-db", db_path,
+                "--staging-root", str(staging_root),
+                "--prepare",
+            ])
+            # Stale lock file alone should NOT block (P0-2 fix).
+&gt;           assert result.returncode == 0, f"stderr: {result.stderr}"
+E           AssertionError: stderr: 23:51:36 INFO [staging] ========================================================================
+E             23:51:36 INFO [staging] PHASE: prepare -- Create staging environment
+E             23:51:36 INFO [staging]   Source DB:    C:\Users\Administrator\AppData\Local\Temp\tmpq32o75ky.db
+E             23:51:36 INFO [staging]   Staging root: C:\Users\Administrator\AppData\Local\Temp\tmpt6mwhhbc\staging
+E             23:51:36 INFO [staging]   Dry run:      False
+E             23:51:36 INFO [staging] ========================================================================
+E             23:51:36 INFO [staging] [1/9] Daemon check: not running ✓
+E             23:51:36 INFO [staging] [2/9] Staging/source overlap check passed ✓
+E             23:51:36 INFO [staging] [2/9] Disk space: source=0 MB, free=447476 MB (&gt;2x required) ✓
+E             23:51:36 INFO [staging] [3/9] Copying source DB to staging (this may take a while)...
+E             23:51:36 INFO [staging] [3/9] Copy complete: C:\Users\Administrator\AppData\Local\Temp\tmpt6mwhhbc\staging\staging.db (0 MB) ✓
+E             23:51:36 INFO [staging] [3/9] Size match verified: 274432 bytes ✓
+E             23:51:36 INFO [staging] [3/9] SHA-256 match verified: 3a7ada80a0c4dc7d36742f955c7e7c28340e2c4b07f2402ed3087299d53289ea ✓
+E             23:51:36 INFO [staging] [3/9] Staging marker written: C:\Users\Administrator\AppData\Local\Temp\tmpt6mwhhbc\staging\.quantstudio_staging.json ✓
+E             23:51:36 INFO [staging] [4/9] Config directory: C:\Users\Administrator\AppData\Local\Temp\tmpt6mwhhbc\staging\config ✓
+E             23:51:36 ERROR [staging]   Required config file not found: D:\miniQMT策略实盘\QuantStudio-wt-baseline\config\data_config.json
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...RROR [staging]   Required config file not found: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\config\\data_config.json\n').returncode
+
+tests\test_fin_growth_dividend_staging_tool.py:310: AssertionError</failure></testcase><testcase classname="tests.test_fin_growth_dividend_staging_tool.TestPrepareWorktreeInternalBlocked" name="test_prepare_worktree_internal_blocked_but_dryrun_warns" time="0.391"><failure message="AssertionError: dry-run must not BLOCK: 23:51:36 WARNING [staging] [DRY-RUN] WARNING: staging_root D:\miniQMT策略实盘\QuantStudio-wt-baseline\data\dryrun_warn_staging is inside the Git worktree. A real prepare would BLOCK here. Use an external path.&#10;  23:51:36 INFO [staging] ========================================================================&#10;  23:51:36 INFO [staging] PHASE: prepare -- Create staging environment&#10;  23:51:36 INFO [staging]   Source DB:    C:\Users\Administrator\AppData\Local\Temp\tmpr6yg_gid.db&#10;  23:51:36 INFO [staging]   Staging root: D:\miniQMT策略实盘\QuantStudio-wt-baseline\data\dryrun_warn_staging&#10;  23:51:36 INFO [staging]   Dry run:      True&#10;  23:51:36 INFO [staging] ========================================================================&#10;  23:51:36 INFO [staging] [1/9] Daemon check: not running ✓&#10;  23:51:36 INFO [staging] [2/9] Staging/source overlap check passed ✓&#10;  23:51:36 INFO [staging] [2/9] Disk space: source=0 MB, free=131662 MB (&gt;2x required) ✓&#10;  23:51:36 INFO [staging] [3/9] [DRY-RUN] Would copy C:\Users\Administrator\AppData\Local\Temp\tmpr6yg_gid.db -&gt; D:\miniQMT策略实盘\QuantStudio-wt-baseline\data\dryrun_warn_staging\staging.db&#10;  23:51:36 INFO [staging] [4/9] [DRY-RUN] Would create D:\miniQMT策略实盘\QuantStudio-wt-baseline\data\dryrun_warn_staging\config&#10;  23:51:36 ERROR [staging]   Required config file not found: D:\miniQMT策略实盘\QuantStudio-wt-baseline\config\data_config.json&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...RROR [staging]   Required config file not found: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\config\\data_config.json\n').returncode">self = &lt;tests.test_fin_growth_dividend_staging_tool.TestPrepareWorktreeInternalBlocked object at 0x000001F2F43433D0&gt;
+
+    def test_prepare_worktree_internal_blocked_but_dryrun_warns(self):
+        """dry-run 对 worktree 内路径不 BLOCK，只打印 WARNING。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = _make_mini_db()
+            staging_root = _PROJECT_ROOT / "data" / "dryrun_warn_staging"
+            result = _run_staging([
+                "--source-db", db_path,
+                "--staging-root", str(staging_root),
+                "--dry-run", "--prepare",
+            ])
+            # dry-run should not BLOCK (exit 0) but warn
+&gt;           assert result.returncode == 0, f"dry-run must not BLOCK: {result.stderr}"
+E           AssertionError: dry-run must not BLOCK: 23:51:36 WARNING [staging] [DRY-RUN] WARNING: staging_root D:\miniQMT策略实盘\QuantStudio-wt-baseline\data\dryrun_warn_staging is inside the Git worktree. A real prepare would BLOCK here. Use an external path.
+E             23:51:36 INFO [staging] ========================================================================
+E             23:51:36 INFO [staging] PHASE: prepare -- Create staging environment
+E             23:51:36 INFO [staging]   Source DB:    C:\Users\Administrator\AppData\Local\Temp\tmpr6yg_gid.db
+E             23:51:36 INFO [staging]   Staging root: D:\miniQMT策略实盘\QuantStudio-wt-baseline\data\dryrun_warn_staging
+E             23:51:36 INFO [staging]   Dry run:      True
+E             23:51:36 INFO [staging] ========================================================================
+E             23:51:36 INFO [staging] [1/9] Daemon check: not running ✓
+E             23:51:36 INFO [staging] [2/9] Staging/source overlap check passed ✓
+E             23:51:36 INFO [staging] [2/9] Disk space: source=0 MB, free=131662 MB (&gt;2x required) ✓
+E             23:51:36 INFO [staging] [3/9] [DRY-RUN] Would copy C:\Users\Administrator\AppData\Local\Temp\tmpr6yg_gid.db -&gt; D:\miniQMT策略实盘\QuantStudio-wt-baseline\data\dryrun_warn_staging\staging.db
+E             23:51:36 INFO [staging] [4/9] [DRY-RUN] Would create D:\miniQMT策略实盘\QuantStudio-wt-baseline\data\dryrun_warn_staging\config
+E             23:51:36 ERROR [staging]   Required config file not found: D:\miniQMT策略实盘\QuantStudio-wt-baseline\config\data_config.json
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...RROR [staging]   Required config file not found: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\config\\data_config.json\n').returncode
+
+tests\test_fin_growth_dividend_staging_tool.py:1596: AssertionError</failure></testcase><testcase classname="tests.test_fin_growth_dividend_staging_tool.TestFullDualTaskE2E" name="test_fast_simulated_dual_task_e2e" time="0.380"><failure message="AssertionError: prepare must succeed&#10;assert 1 == 0">self = &lt;tests.test_fin_growth_dividend_staging_tool.TestFullDualTaskE2E object at 0x000001F2F4315E10&gt;
+
+    def test_fast_simulated_dual_task_e2e(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_p = Path(tmp)
+            db_path = _make_mini_db()
+            config_dir = _make_config_dir(tmp_p, db_path)
+            staging_root_arg = tmp_p / "staging"
+    
+            # ---- STEP 1: prepare ----
+            rc_prepare = _run_staging([
+                "--source-db", db_path,
+                "--staging-root", str(staging_root_arg),
+                "--start-date", "2022-01-01",
+                "--prepare",
+            ]).returncode
+&gt;           assert rc_prepare == 0, "prepare must succeed"
+E           AssertionError: prepare must succeed
+E           assert 1 == 0
+
+tests\test_fin_growth_dividend_staging_tool.py:2220: AssertionError</failure></testcase><testcase classname="tests.test_fin_growth_dividend_staging_tool.TestProductionDbUnchangedAfterE2E" name="test_production_db_byte_identical_after_full_e2e" time="0.421"><failure message="AssertionError: assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...RROR [staging]   Required config file not found: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\config\\data_config.json\n').returncode&#10; +    where CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...RROR [staging]   Required config file not found: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\config\\data_config.json\n') = _run_staging(['--source-db', 'C:\\Users\\Administrator\\AppData\\Local\\Temp\\tmpn541hora.db', '--staging-root', 'C:\\Users\\Administrator\\AppData\\Local\\Temp\\tmptm4c51kf\\staging', '--prepare'])">self = &lt;tests.test_fin_growth_dividend_staging_tool.TestProductionDbUnchangedAfterE2E object at 0x000001F2F4309C50&gt;
+
+    def test_production_db_byte_identical_after_full_e2e(self):
+        """Independent re-assertion that the source DB SHA+size is invariant
+        across a full prepare-&gt;task-&gt;audit-&gt;promote cycle."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_p = Path(tmp)
+            db_path = _make_mini_db()
+            _make_config_dir(tmp_p, db_path)
+            staging_root_arg = tmp_p / "staging"
+    
+            before_sha = _sha256_file(db_path)
+            before_size = Path(db_path).stat().st_size
+            before_mtime = Path(db_path).stat().st_mtime_ns
+    
+            # prepare
+&gt;           assert _run_staging(["--source-db", db_path,
+                                  "--staging-root", str(staging_root_arg),
+                                  "--prepare"]).returncode == 0
+E           AssertionError: assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...RROR [staging]   Required config file not found: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\config\\data_config.json\n').returncode
+E            +    where CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python311\\python.exe', 'D:\\miniQ...RROR [staging]   Required config file not found: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\config\\data_config.json\n') = _run_staging(['--source-db', 'C:\\Users\\Administrator\\AppData\\Local\\Temp\\tmpn541hora.db', '--staging-root', 'C:\\Users\\Administrator\\AppData\\Local\\Temp\\tmptm4c51kf\\staging', '--prepare'])
+
+tests\test_fin_growth_dividend_staging_tool.py:2375: AssertionError</failure></testcase></testsuite></testsuites>

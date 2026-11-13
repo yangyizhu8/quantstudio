@@ -1,0 +1,248 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="6" skipped="0" tests="11" time="2.923" timestamp="2026-11-13T23:50:22.961373+08:00" hostname="USER-20251211MP"><testcase classname="tests.test_phase4_minute_memory_slice" name="test_single_code_count1_fq_pre" time="0.503"><failure message="AssertionError: single_count1_fq_pre code=600000.SS 两路径 DataFrame 不一致 are different&#10;&#10;single_count1_fq_pre code=600000.SS 两路径 DataFrame 不一致 shape mismatch&#10;[left]:  (1, 19)&#10;[right]: (1, 20)">mini_db = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-4881/test_single_code_count1_fq_pre0/test.duckdb')
+cal = &lt;tests.conftest.cal.&lt;locals&gt;.Cal object at 0x000001C8955F4F50&gt;
+
+    def test_single_code_count1_fq_pre(mini_db, cal):
+        """单只、count=1、fq='pre'（smallcap 真实调用形态）。"""
+        db = mini_db
+        api_sql, _ = _make_api(db, cal, with_cache=False, codes=CODES)
+        api_mem, _ = _make_api(db, cal, with_cache=True, codes=CODES)
+        r_sql = _get_history(api_sql, 1, "1m", "pre", ["600000.SH"],
+                             fields=["open", "close", "volume"])
+        r_mem = _get_history(api_mem, 1, "1m", "pre", ["600000.SH"],
+                             fields=["open", "close", "volume"])
+&gt;       _assert_code_dict_equal(r_sql, r_mem, obj="single_count1_fq_pre")
+
+tests\test_phase4_minute_memory_slice.py:121: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+sql_res = {'600000.SS':       code           time  freq  open  ...  high_back  low_back  close_back   money
+-1  600000  1767576720000  1min  11.0  ...        9.0       9.0         9.0  1000.0
+
+[1 rows x 19 columns]}
+mem_res = {'600000.SS':       code           time  freq  ...  close_back  suspendFlag   money
+-1  600000  1767576720000  1min  ...         9.0            0  1000.0
+
+[1 rows x 20 columns]}
+obj = 'single_count1_fq_pre'
+
+    def _assert_code_dict_equal(sql_res, mem_res, obj=""):
+        assert set(sql_res.keys()) == set(mem_res.keys()), (
+            f"{obj} key 集合不一致: sql={sorted(sql_res)} mem={sorted(mem_res)}")
+        for k in sql_res:
+&gt;           pd.testing.assert_frame_equal(
+                sql_res[k], mem_res[k], check_exact=True, check_dtype=True,
+                obj=f"{obj} code={k} 两路径 DataFrame 不一致")
+E           AssertionError: single_count1_fq_pre code=600000.SS 两路径 DataFrame 不一致 are different
+E           
+E           single_count1_fq_pre code=600000.SS 两路径 DataFrame 不一致 shape mismatch
+E           [left]:  (1, 19)
+E           [right]: (1, 20)
+
+tests\test_phase4_minute_memory_slice.py:75: AssertionError</failure></testcase><testcase classname="tests.test_phase4_minute_memory_slice" name="test_multi_code_count3_fq_pre" time="0.175"><failure message="AssertionError: multi_count3_fq_pre code=600000.SS 两路径 DataFrame 不一致 are different&#10;&#10;multi_count3_fq_pre code=600000.SS 两路径 DataFrame 不一致 shape mismatch&#10;[left]:  (2, 19)&#10;[right]: (2, 20)">mini_db = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-4881/test_multi_code_count3_fq_pre0/test.duckdb')
+cal = &lt;tests.conftest.cal.&lt;locals&gt;.Cal object at 0x000001C8956AF1D0&gt;
+
+    def test_multi_code_count3_fq_pre(mini_db, cal):
+        """多只、count=3、fq='pre'。"""
+        db = mini_db
+        api_sql, _ = _make_api(db, cal, with_cache=False, codes=CODES)
+        api_mem, _ = _make_api(db, cal, with_cache=True, codes=CODES)
+        r_sql = _get_history(api_sql, 3, "1m", "pre", [f"{c}.SH" for c in CODES],
+                             fields=["open", "high", "low", "close", "volume"])
+        r_mem = _get_history(api_mem, 3, "1m", "pre", [f"{c}.SH" for c in CODES],
+                             fields=["open", "high", "low", "close", "volume"])
+&gt;       _assert_code_dict_equal(r_sql, r_mem, obj="multi_count3_fq_pre")
+
+tests\test_phase4_minute_memory_slice.py:135: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+sql_res = {'600000.SS':       code           time  freq  open  ...  high_back  low_back  close_back   money
+-2  600000  17675766...9.0  1000.0
+-1  600002  1767576720000  1min  11.0  ...        9.0       9.0         9.0  1000.0
+
+[2 rows x 19 columns]}
+mem_res = {'600000.SS':       code           time  freq  ...  close_back  suspendFlag   money
+-2  600000  1767576660000  1min  .... 9.0            0  1000.0
+-1  600002  1767576720000  1min  ...         9.0            0  1000.0
+
+[2 rows x 20 columns]}
+obj = 'multi_count3_fq_pre'
+
+    def _assert_code_dict_equal(sql_res, mem_res, obj=""):
+        assert set(sql_res.keys()) == set(mem_res.keys()), (
+            f"{obj} key 集合不一致: sql={sorted(sql_res)} mem={sorted(mem_res)}")
+        for k in sql_res:
+&gt;           pd.testing.assert_frame_equal(
+                sql_res[k], mem_res[k], check_exact=True, check_dtype=True,
+                obj=f"{obj} code={k} 两路径 DataFrame 不一致")
+E           AssertionError: multi_count3_fq_pre code=600000.SS 两路径 DataFrame 不一致 are different
+E           
+E           multi_count3_fq_pre code=600000.SS 两路径 DataFrame 不一致 shape mismatch
+E           [left]:  (2, 19)
+E           [right]: (2, 20)
+
+tests\test_phase4_minute_memory_slice.py:75: AssertionError</failure></testcase><testcase classname="tests.test_phase4_minute_memory_slice" name="test_fq_post_and_none" time="0.252"><failure message="AssertionError: fq=post code=600000.SS 两路径 DataFrame 不一致 are different&#10;&#10;fq=post code=600000.SS 两路径 DataFrame 不一致 shape mismatch&#10;[left]:  (2, 19)&#10;[right]: (2, 20)">mini_db = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-4881/test_fq_post_and_none0/test.duckdb')
+cal = &lt;tests.conftest.cal.&lt;locals&gt;.Cal object at 0x000001C894420350&gt;
+
+    def test_fq_post_and_none(mini_db, cal):
+        """fq='post' 与 fq=None（缓存为原始值 → 切片时按请求 fq 替换）。"""
+        db = mini_db
+        for fq in ("post", None):
+            api_sql, _ = _make_api(db, cal, with_cache=False, codes=CODES)
+            api_mem, _ = _make_api(db, cal, with_cache=True, codes=CODES)
+            r_sql = _get_history(api_sql, 2, "1m", fq, ["600000.SH"],
+                                 fields=["close"])
+            r_mem = _get_history(api_mem, 2, "1m", fq, ["600000.SH"],
+                                 fields=["close"])
+&gt;           _assert_code_dict_equal(r_sql, r_mem, obj=f"fq={fq}")
+
+tests\test_phase4_minute_memory_slice.py:151: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+sql_res = {'600000.SS':       code           time  freq  open  ...  high_back  low_back  close_back   money
+-2  600000  17675766...9.0  1000.0
+-1  600000  1767576720000  1min   9.0  ...        9.0       9.0         9.0  1000.0
+
+[2 rows x 19 columns]}
+mem_res = {'600000.SS':       code           time  freq  ...  close_back  suspendFlag   money
+-2  600000  1767576660000  1min  .... 9.0            0  1000.0
+-1  600000  1767576720000  1min  ...         9.0            0  1000.0
+
+[2 rows x 20 columns]}
+obj = 'fq=post'
+
+    def _assert_code_dict_equal(sql_res, mem_res, obj=""):
+        assert set(sql_res.keys()) == set(mem_res.keys()), (
+            f"{obj} key 集合不一致: sql={sorted(sql_res)} mem={sorted(mem_res)}")
+        for k in sql_res:
+&gt;           pd.testing.assert_frame_equal(
+                sql_res[k], mem_res[k], check_exact=True, check_dtype=True,
+                obj=f"{obj} code={k} 两路径 DataFrame 不一致")
+E           AssertionError: fq=post code=600000.SS 两路径 DataFrame 不一致 are different
+E           
+E           fq=post code=600000.SS 两路径 DataFrame 不一致 shape mismatch
+E           [left]:  (2, 19)
+E           [right]: (2, 20)
+
+tests\test_phase4_minute_memory_slice.py:75: AssertionError</failure></testcase><testcase classname="tests.test_phase4_minute_memory_slice" name="test_count_exceeds_day_bars" time="0.214"><failure message="AssertionError: count_exceeds_day code=600000.SS 两路径 DataFrame 不一致 are different&#10;&#10;count_exceeds_day code=600000.SS 两路径 DataFrame 不一致 shape mismatch&#10;[left]:  (2, 19)&#10;[right]: (2, 20)">mini_db = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-4881/test_count_exceeds_day_bars0/test.duckdb')
+cal = &lt;tests.conftest.cal.&lt;locals&gt;.Cal object at 0x000001C895489010&gt;
+
+    def test_count_exceeds_day_bars(mini_db, cal):
+        """count 超当日 bar 数（100 &gt; 7）→ 返回当日全部 bar，两路径一致。"""
+        db = mini_db
+        api_sql, _ = _make_api(db, cal, with_cache=False, codes=CODES)
+        api_mem, _ = _make_api(db, cal, with_cache=True, codes=CODES)
+        r_sql = _get_history(api_sql, 100, "1m", "pre", ["600000.SH"],
+                             fields=["close"])
+        r_mem = _get_history(api_mem, 100, "1m", "pre", ["600000.SH"],
+                             fields=["close"])
+&gt;       _assert_code_dict_equal(r_sql, r_mem, obj="count_exceeds_day")
+
+tests\test_phase4_minute_memory_slice.py:168: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+sql_res = {'600000.SS':       code           time  freq  open  ...  high_back  low_back  close_back   money
+-2  600000  17675766...9.0  1000.0
+-1  600000  1767576720000  1min  11.0  ...        9.0       9.0         9.0  1000.0
+
+[2 rows x 19 columns]}
+mem_res = {'600000.SS':       code           time  freq  ...  close_back  suspendFlag   money
+-2  600000  1767576660000  1min  .... 9.0            0  1000.0
+-1  600000  1767576720000  1min  ...         9.0            0  1000.0
+
+[2 rows x 20 columns]}
+obj = 'count_exceeds_day'
+
+    def _assert_code_dict_equal(sql_res, mem_res, obj=""):
+        assert set(sql_res.keys()) == set(mem_res.keys()), (
+            f"{obj} key 集合不一致: sql={sorted(sql_res)} mem={sorted(mem_res)}")
+        for k in sql_res:
+&gt;           pd.testing.assert_frame_equal(
+                sql_res[k], mem_res[k], check_exact=True, check_dtype=True,
+                obj=f"{obj} code={k} 两路径 DataFrame 不一致")
+E           AssertionError: count_exceeds_day code=600000.SS 两路径 DataFrame 不一致 are different
+E           
+E           count_exceeds_day code=600000.SS 两路径 DataFrame 不一致 shape mismatch
+E           [left]:  (2, 19)
+E           [right]: (2, 20)
+
+tests\test_phase4_minute_memory_slice.py:75: AssertionError</failure></testcase><testcase classname="tests.test_phase4_minute_memory_slice" name="test_fields_none_columns_equal" time="0.177"><failure message="AssertionError: fields_none code=600000.SS 两路径 DataFrame 不一致 are different&#10;&#10;fields_none code=600000.SS 两路径 DataFrame 不一致 shape mismatch&#10;[left]:  (2, 19)&#10;[right]: (2, 20)">mini_db = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-4881/test_fields_none_columns_equal0/test.duckdb')
+cal = &lt;tests.conftest.cal.&lt;locals&gt;.Cal object at 0x000001C89544D450&gt;
+
+    def test_fields_none_columns_equal(mini_db, cal):
+        """fields=None：内存切片保留全部列（含 code 列），与 SQL 路径列集合一致。"""
+        db = mini_db
+        api_sql, _ = _make_api(db, cal, with_cache=False, codes=CODES)
+        api_mem, _ = _make_api(db, cal, with_cache=True, codes=CODES)
+        r_sql = _get_history(api_sql, 2, "1m", "pre", ["600000.SH"], fields=None)
+        r_mem = _get_history(api_mem, 2, "1m", "pre", ["600000.SH"], fields=None)
+&gt;       _assert_code_dict_equal(r_sql, r_mem, obj="fields_none")
+
+tests\test_phase4_minute_memory_slice.py:179: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+sql_res = {'600000.SS':       code           time  freq  open  ...  high_back  low_back  close_back   money
+-2  600000  17675766...9.0  1000.0
+-1  600000  1767576720000  1min  11.0  ...        9.0       9.0         9.0  1000.0
+
+[2 rows x 19 columns]}
+mem_res = {'600000.SS':       code           time  freq  ...  close_back  suspendFlag   money
+-2  600000  1767576660000  1min  .... 9.0            0  1000.0
+-1  600000  1767576720000  1min  ...         9.0            0  1000.0
+
+[2 rows x 20 columns]}
+obj = 'fields_none'
+
+    def _assert_code_dict_equal(sql_res, mem_res, obj=""):
+        assert set(sql_res.keys()) == set(mem_res.keys()), (
+            f"{obj} key 集合不一致: sql={sorted(sql_res)} mem={sorted(mem_res)}")
+        for k in sql_res:
+&gt;           pd.testing.assert_frame_equal(
+                sql_res[k], mem_res[k], check_exact=True, check_dtype=True,
+                obj=f"{obj} code={k} 两路径 DataFrame 不一致")
+E           AssertionError: fields_none code=600000.SS 两路径 DataFrame 不一致 are different
+E           
+E           fields_none code=600000.SS 两路径 DataFrame 不一致 shape mismatch
+E           [left]:  (2, 19)
+E           [right]: (2, 20)
+
+tests\test_phase4_minute_memory_slice.py:75: AssertionError</failure></testcase><testcase classname="tests.test_phase4_minute_memory_slice" name="test_pit_no_future_bar_leak" time="0.163" /><testcase classname="tests.test_phase4_minute_memory_slice" name="test_fallback_include_false_prev_date" time="0.193"><failure message="AssertionError: fallback_include_false code=600000.SS 两路径 DataFrame 不一致 are different&#10;&#10;fallback_include_false code=600000.SS 两路径 DataFrame 不一致 shape mismatch&#10;[left]:  (1, 19)&#10;[right]: (1, 20)">mini_db = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-4881/test_fallback_include_false_pr0/test.duckdb')
+cal = &lt;tests.conftest.cal.&lt;locals&gt;.Cal object at 0x000001C895420450&gt;
+
+    def test_fallback_include_false_prev_date(mini_db, cal):
+        """include=False 锚定前一日 → 缓存日期不匹配 → fallback SQL，结果一致。"""
+        db = mini_db
+        api_sql, _ = _make_api(db, cal, with_cache=False, codes=CODES)
+        api_mem, _ = _make_api(db, cal, with_cache=True, codes=CODES)
+        r_sql = _get_history(api_sql, 2, "1m", "pre", ["600000.SH"],
+                             fields=["close"], include=False)
+        r_mem = _get_history(api_mem, 2, "1m", "pre", ["600000.SH"],
+                             fields=["close"], include=False)
+&gt;       _assert_code_dict_equal(r_sql, r_mem, obj="fallback_include_false")
+
+tests\test_phase4_minute_memory_slice.py:204: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+sql_res = {'600000.SS':       code           time  freq  open  ...  high_back  low_back  close_back   money
+-1  600000  1767576660000  1min  11.0  ...        9.0       9.0         9.0  1000.0
+
+[1 rows x 19 columns]}
+mem_res = {'600000.SS':       code           time  freq  ...  close_back  suspendFlag   money
+-1  600000  1767576660000  1min  ...         9.0            0  1000.0
+
+[1 rows x 20 columns]}
+obj = 'fallback_include_false'
+
+    def _assert_code_dict_equal(sql_res, mem_res, obj=""):
+        assert set(sql_res.keys()) == set(mem_res.keys()), (
+            f"{obj} key 集合不一致: sql={sorted(sql_res)} mem={sorted(mem_res)}")
+        for k in sql_res:
+&gt;           pd.testing.assert_frame_equal(
+                sql_res[k], mem_res[k], check_exact=True, check_dtype=True,
+                obj=f"{obj} code={k} 两路径 DataFrame 不一致")
+E           AssertionError: fallback_include_false code=600000.SS 两路径 DataFrame 不一致 are different
+E           
+E           fallback_include_false code=600000.SS 两路径 DataFrame 不一致 shape mismatch
+E           [left]:  (1, 19)
+E           [right]: (1, 20)
+
+tests\test_phase4_minute_memory_slice.py:75: AssertionError</failure></testcase><testcase classname="tests.test_phase4_minute_memory_slice" name="test_fallback_no_bar_cutoff" time="0.152" /><testcase classname="tests.test_phase4_minute_memory_slice" name="test_missing_code_sql_backfill_preserves_raise" time="0.169" /><testcase classname="tests.test_phase4_minute_memory_slice" name="test_missing_code_sql_backfill_debug_logged" time="0.166" /><testcase classname="tests.test_phase4_minute_memory_slice" name="test_daily_frequency_untouched" time="0.148" /></testsuite></testsuites>

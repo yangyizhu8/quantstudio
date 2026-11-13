@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="7" skipped="0" tests="9" time="3.478" timestamp="2026-11-13T23:50:03.381492+08:00" hostname="USER-20251211MP"><testcase classname="tests.test_fund_contract_wiring_matrix" name="test_fund_contract_wired[balance_statement]" time="1.200"><failure message="AssertionError: 契约表 balance_statement 经 get_fundamentals 返回空——接线缺失&#10;assert 0 &gt; 0&#10; +  where 0 = len(Empty DataFrame\nColumns: [total_assets]\nIndex: [])">api = &lt;quantstudio.backtest.ptrade_api.PtradeAPI object at 0x000002311F2E6750&gt;
+table = 'balance_statement'
+
+    @pytest.mark.parametrize("table", sorted(FundamentalDataProvider.FUND_TABLES.keys()))
+    def test_fund_contract_wired(api, table):
+        """契约接线矩阵：FUND_TABLES 每张表经 get_fundamentals API 层应返回非空（数据在库前提下）。"""
+        if table in KNOWN_UNSOURCED_TABLES:
+            warnings.warn(f"契约表 {table} 声明但无数据源（fin_indicator 缺字段/无对应表）——豁免接线断言，留痕")
+            return
+        # 不请求 'code'（它是 index）；只请求实义字段
+        fields = [_PROBE_FIELD[table]] if table in _PROBE_FIELD else None
+        df = api.get_fundamentals("600519.SS", table=table,
+                                  fields=fields, date="2026-01-05", is_dataframe=True)
+        assert df is not None
+        # 未接线的表（else 空表）会有列但 0 行；线已接且有数据应 &gt;0 行
+&gt;       assert len(df) &gt; 0, f"契约表 {table} 经 get_fundamentals 返回空——接线缺失"
+E       AssertionError: 契约表 balance_statement 经 get_fundamentals 返回空——接线缺失
+E       assert 0 &gt; 0
+E        +  where 0 = len(Empty DataFrame\nColumns: [total_assets]\nIndex: [])
+
+tests\test_fund_contract_wiring_matrix.py:61: AssertionError</failure></testcase><testcase classname="tests.test_fund_contract_wiring_matrix" name="test_fund_contract_wired[cashflow_statement]" time="0.244"><failure message="AssertionError: 契约表 cashflow_statement 经 get_fundamentals 返回空——接线缺失&#10;assert 0 &gt; 0&#10; +  where 0 = len(Empty DataFrame\nColumns: [net_operate_cash_flow]\nIndex: [])">api = &lt;quantstudio.backtest.ptrade_api.PtradeAPI object at 0x000002311F2E6750&gt;
+table = 'cashflow_statement'
+
+    @pytest.mark.parametrize("table", sorted(FundamentalDataProvider.FUND_TABLES.keys()))
+    def test_fund_contract_wired(api, table):
+        """契约接线矩阵：FUND_TABLES 每张表经 get_fundamentals API 层应返回非空（数据在库前提下）。"""
+        if table in KNOWN_UNSOURCED_TABLES:
+            warnings.warn(f"契约表 {table} 声明但无数据源（fin_indicator 缺字段/无对应表）——豁免接线断言，留痕")
+            return
+        # 不请求 'code'（它是 index）；只请求实义字段
+        fields = [_PROBE_FIELD[table]] if table in _PROBE_FIELD else None
+        df = api.get_fundamentals("600519.SS", table=table,
+                                  fields=fields, date="2026-01-05", is_dataframe=True)
+        assert df is not None
+        # 未接线的表（else 空表）会有列但 0 行；线已接且有数据应 &gt;0 行
+&gt;       assert len(df) &gt; 0, f"契约表 {table} 经 get_fundamentals 返回空——接线缺失"
+E       AssertionError: 契约表 cashflow_statement 经 get_fundamentals 返回空——接线缺失
+E       assert 0 &gt; 0
+E        +  where 0 = len(Empty DataFrame\nColumns: [net_operate_cash_flow]\nIndex: [])
+
+tests\test_fund_contract_wiring_matrix.py:61: AssertionError</failure></testcase><testcase classname="tests.test_fund_contract_wiring_matrix" name="test_fund_contract_wired[debt_paying_ability]" time="0.001" /><testcase classname="tests.test_fund_contract_wiring_matrix" name="test_fund_contract_wired[eps]" time="0.195"><failure message="AssertionError: 契约表 eps 经 get_fundamentals 返回空——接线缺失&#10;assert 0 &gt; 0&#10; +  where 0 = len(Empty DataFrame\nColumns: [eps]\nIndex: [])">api = &lt;quantstudio.backtest.ptrade_api.PtradeAPI object at 0x000002311F2E6750&gt;
+table = 'eps'
+
+    @pytest.mark.parametrize("table", sorted(FundamentalDataProvider.FUND_TABLES.keys()))
+    def test_fund_contract_wired(api, table):
+        """契约接线矩阵：FUND_TABLES 每张表经 get_fundamentals API 层应返回非空（数据在库前提下）。"""
+        if table in KNOWN_UNSOURCED_TABLES:
+            warnings.warn(f"契约表 {table} 声明但无数据源（fin_indicator 缺字段/无对应表）——豁免接线断言，留痕")
+            return
+        # 不请求 'code'（它是 index）；只请求实义字段
+        fields = [_PROBE_FIELD[table]] if table in _PROBE_FIELD else None
+        df = api.get_fundamentals("600519.SS", table=table,
+                                  fields=fields, date="2026-01-05", is_dataframe=True)
+        assert df is not None
+        # 未接线的表（else 空表）会有列但 0 行；线已接且有数据应 &gt;0 行
+&gt;       assert len(df) &gt; 0, f"契约表 {table} 经 get_fundamentals 返回空——接线缺失"
+E       AssertionError: 契约表 eps 经 get_fundamentals 返回空——接线缺失
+E       assert 0 &gt; 0
+E        +  where 0 = len(Empty DataFrame\nColumns: [eps]\nIndex: [])
+
+tests\test_fund_contract_wiring_matrix.py:61: AssertionError</failure></testcase><testcase classname="tests.test_fund_contract_wiring_matrix" name="test_fund_contract_wired[growth_ability]" time="0.201"><failure message="AssertionError: 契约表 growth_ability 经 get_fundamentals 返回空——接线缺失&#10;assert 0 &gt; 0&#10; +  where 0 = len(Empty DataFrame\nColumns: [code, end_date, publ_date, np_yoy, or_yoy, equity_yoy, netasset_yoy, net_profit_5y_cagr, operating_revenue_5y_cagr, total_assets_yoy, deducted_np_yoy]\nIndex: [])">api = &lt;quantstudio.backtest.ptrade_api.PtradeAPI object at 0x000002311F2E6750&gt;
+table = 'growth_ability'
+
+    @pytest.mark.parametrize("table", sorted(FundamentalDataProvider.FUND_TABLES.keys()))
+    def test_fund_contract_wired(api, table):
+        """契约接线矩阵：FUND_TABLES 每张表经 get_fundamentals API 层应返回非空（数据在库前提下）。"""
+        if table in KNOWN_UNSOURCED_TABLES:
+            warnings.warn(f"契约表 {table} 声明但无数据源（fin_indicator 缺字段/无对应表）——豁免接线断言，留痕")
+            return
+        # 不请求 'code'（它是 index）；只请求实义字段
+        fields = [_PROBE_FIELD[table]] if table in _PROBE_FIELD else None
+        df = api.get_fundamentals("600519.SS", table=table,
+                                  fields=fields, date="2026-01-05", is_dataframe=True)
+        assert df is not None
+        # 未接线的表（else 空表）会有列但 0 行；线已接且有数据应 &gt;0 行
+&gt;       assert len(df) &gt; 0, f"契约表 {table} 经 get_fundamentals 返回空——接线缺失"
+E       AssertionError: 契约表 growth_ability 经 get_fundamentals 返回空——接线缺失
+E       assert 0 &gt; 0
+E        +  where 0 = len(Empty DataFrame\nColumns: [code, end_date, publ_date, np_yoy, or_yoy, equity_yoy, netasset_yoy, net_profit_5y_cagr, operating_revenue_5y_cagr, total_assets_yoy, deducted_np_yoy]\nIndex: [])
+
+tests\test_fund_contract_wiring_matrix.py:61: AssertionError</failure></testcase><testcase classname="tests.test_fund_contract_wiring_matrix" name="test_fund_contract_wired[income_statement]" time="0.195"><failure message="AssertionError: 契约表 income_statement 经 get_fundamentals 返回空——接线缺失&#10;assert 0 &gt; 0&#10; +  where 0 = len(Empty DataFrame\nColumns: [np_parent_company_owners]\nIndex: [])">api = &lt;quantstudio.backtest.ptrade_api.PtradeAPI object at 0x000002311F2E6750&gt;
+table = 'income_statement'
+
+    @pytest.mark.parametrize("table", sorted(FundamentalDataProvider.FUND_TABLES.keys()))
+    def test_fund_contract_wired(api, table):
+        """契约接线矩阵：FUND_TABLES 每张表经 get_fundamentals API 层应返回非空（数据在库前提下）。"""
+        if table in KNOWN_UNSOURCED_TABLES:
+            warnings.warn(f"契约表 {table} 声明但无数据源（fin_indicator 缺字段/无对应表）——豁免接线断言，留痕")
+            return
+        # 不请求 'code'（它是 index）；只请求实义字段
+        fields = [_PROBE_FIELD[table]] if table in _PROBE_FIELD else None
+        df = api.get_fundamentals("600519.SS", table=table,
+                                  fields=fields, date="2026-01-05", is_dataframe=True)
+        assert df is not None
+        # 未接线的表（else 空表）会有列但 0 行；线已接且有数据应 &gt;0 行
+&gt;       assert len(df) &gt; 0, f"契约表 {table} 经 get_fundamentals 返回空——接线缺失"
+E       AssertionError: 契约表 income_statement 经 get_fundamentals 返回空——接线缺失
+E       assert 0 &gt; 0
+E        +  where 0 = len(Empty DataFrame\nColumns: [np_parent_company_owners]\nIndex: [])
+
+tests\test_fund_contract_wiring_matrix.py:61: AssertionError</failure></testcase><testcase classname="tests.test_fund_contract_wiring_matrix" name="test_fund_contract_wired[operating_ability]" time="0.001" /><testcase classname="tests.test_fund_contract_wiring_matrix" name="test_fund_contract_wired[profit_ability]" time="0.190"><failure message="AssertionError: 契约表 profit_ability 经 get_fundamentals 返回空——接线缺失&#10;assert 0 &gt; 0&#10; +  where 0 = len(Empty DataFrame\nColumns: [roe]\nIndex: [])">api = &lt;quantstudio.backtest.ptrade_api.PtradeAPI object at 0x000002311F2E6750&gt;
+table = 'profit_ability'
+
+    @pytest.mark.parametrize("table", sorted(FundamentalDataProvider.FUND_TABLES.keys()))
+    def test_fund_contract_wired(api, table):
+        """契约接线矩阵：FUND_TABLES 每张表经 get_fundamentals API 层应返回非空（数据在库前提下）。"""
+        if table in KNOWN_UNSOURCED_TABLES:
+            warnings.warn(f"契约表 {table} 声明但无数据源（fin_indicator 缺字段/无对应表）——豁免接线断言，留痕")
+            return
+        # 不请求 'code'（它是 index）；只请求实义字段
+        fields = [_PROBE_FIELD[table]] if table in _PROBE_FIELD else None
+        df = api.get_fundamentals("600519.SS", table=table,
+                                  fields=fields, date="2026-01-05", is_dataframe=True)
+        assert df is not None
+        # 未接线的表（else 空表）会有列但 0 行；线已接且有数据应 &gt;0 行
+&gt;       assert len(df) &gt; 0, f"契约表 {table} 经 get_fundamentals 返回空——接线缺失"
+E       AssertionError: 契约表 profit_ability 经 get_fundamentals 返回空——接线缺失
+E       assert 0 &gt; 0
+E        +  where 0 = len(Empty DataFrame\nColumns: [roe]\nIndex: [])
+
+tests\test_fund_contract_wiring_matrix.py:61: AssertionError</failure></testcase><testcase classname="tests.test_fund_contract_wiring_matrix" name="test_fund_contract_wired[valuation]" time="0.789"><failure message="AssertionError: 契约表 valuation 经 get_fundamentals 返回空——接线缺失&#10;assert 0 &gt; 0&#10; +  where 0 = len(Empty DataFrame\nColumns: [float_value]\nIndex: [])">api = &lt;quantstudio.backtest.ptrade_api.PtradeAPI object at 0x000002311F2E6750&gt;
+table = 'valuation'
+
+    @pytest.mark.parametrize("table", sorted(FundamentalDataProvider.FUND_TABLES.keys()))
+    def test_fund_contract_wired(api, table):
+        """契约接线矩阵：FUND_TABLES 每张表经 get_fundamentals API 层应返回非空（数据在库前提下）。"""
+        if table in KNOWN_UNSOURCED_TABLES:
+            warnings.warn(f"契约表 {table} 声明但无数据源（fin_indicator 缺字段/无对应表）——豁免接线断言，留痕")
+            return
+        # 不请求 'code'（它是 index）；只请求实义字段
+        fields = [_PROBE_FIELD[table]] if table in _PROBE_FIELD else None
+        df = api.get_fundamentals("600519.SS", table=table,
+                                  fields=fields, date="2026-01-05", is_dataframe=True)
+        assert df is not None
+        # 未接线的表（else 空表）会有列但 0 行；线已接且有数据应 &gt;0 行
+&gt;       assert len(df) &gt; 0, f"契约表 {table} 经 get_fundamentals 返回空——接线缺失"
+E       AssertionError: 契约表 valuation 经 get_fundamentals 返回空——接线缺失
+E       assert 0 &gt; 0
+E        +  where 0 = len(Empty DataFrame\nColumns: [float_value]\nIndex: [])
+
+tests\test_fund_contract_wiring_matrix.py:61: AssertionError</failure></testcase></testsuite></testsuites>

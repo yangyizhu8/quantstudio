@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="7" skipped="0" tests="57" time="5.792" timestamp="2026-11-13T23:49:49.322697+08:00" hostname="USER-20251211MP"><testcase classname="tests.test_source_import" name="test_01_dual_ma_full_flow" time="0.833" /><testcase classname="tests.test_source_import" name="test_02_set_backtest_definition_removed" time="0.019" /><testcase classname="tests.test_source_import" name="test_02b_set_backtest_config_lifted" time="0.024" /><testcase classname="tests.test_source_import" name="test_03_bom_and_set_backtest_call" time="0.167" /><testcase classname="tests.test_source_import" name="test_04_complex_strategy" time="0.066" /><testcase classname="tests.test_source_import" name="test_05_no_false_replace_in_string_literal" time="0.022" /><testcase classname="tests.test_source_import" name="test_06_load_research_signals_block" time="0.019" /><testcase classname="tests.test_source_import" name="test_07_alias_call_detected" time="0.021" /><testcase classname="tests.test_source_import" name="test_08_remove_banding" time="0.020" /><testcase classname="tests.test_source_import" name="test_08b_rewrite_literal_inline" time="0.020" /><testcase classname="tests.test_source_import" name="test_09_idempotent" time="0.115" /><testcase classname="tests.test_source_import" name="test_10_shim_injected" time="0.022" /><testcase classname="tests.test_source_import" name="test_11_fq_warn_keep" time="0.022" /><testcase classname="tests.test_source_import" name="test_12_bom_file" time="0.032" /><testcase classname="tests.test_source_import" name="test_11_freeze_basic" time="0.354" /><testcase classname="tests.test_source_import" name="test_12_freeze_missing_start_block" time="0.026" /><testcase classname="tests.test_source_import" name="test_13_freeze_no_etf_basic_block" time="0.096" /><testcase classname="tests.test_source_import" name="test_14_freeze_warning_text" time="0.131" /><testcase classname="tests.test_source_import" name="test_15_freeze_suffix_conversion" time="0.118" /><testcase classname="tests.test_source_import" name="test_16_no_etf_no_calendar" time="0.011" /><testcase classname="tests.test_source_import" name="test_17_freeze_idempotent" time="0.172" /><testcase classname="tests.test_source_import" name="test_18_code_suffix_normalization" time="0.020" /><testcase classname="tests.test_source_import" name="test_18b_index_code_suffix_normalization" time="0.018" /><testcase classname="tests.test_source_import" name="test_19_shim_passes_portability" time="0.032" /><testcase classname="tests.test_source_import" name="test_20_shim_exception_not_for_deny_remove" time="0.001" /><testcase classname="tests.test_source_import" name="test_21_ashares_date_idempotent" time="0.127" /><testcase classname="tests.test_source_import" name="test_22_include_false_signature_a_unchanged" time="0.029"><failure message="AssertionError: assert 'include=True' not in '# test_stra...ict=False)\n'&#10;  &#10;  'include=True' is contained here:&#10;        # （平台 include=True 语义未实证：若返回当日含当前时点后 bar → 未来函数），&#10;  ?           ++++++++++++&#10;            # **回退改写**（主请求保持 include=False，行为保守无风险）；&#10;            # 平台 include 语义改由 QSPROBE 探针实证（仅首调观测，双形态各一次）。&#10;            if 'field' in kwargs:...&#10;  &#10;  ...Full output truncated (192 lines hidden), use '-vv' to show">def test_22_include_false_signature_a_unchanged():
+        """签名 A 形态（security-first）+ include=False → 产物 include=False 保留（不改）。"""
+        code = '''
+    def initialize(context):
+        pass
+    
+    def handle_data(context, data):
+        h = get_history(security='510300.SS', count=20, include=False)
+    '''
+        result = _convert_code(code)
+        assert result.errors == [], result.errors
+        out = result.converted_code
+        assert "include=False" in out
+&gt;       assert "include=True" not in out
+E       AssertionError: assert 'include=True' not in '# test_stra...ict=False)\n'
+E         
+E         'include=True' is contained here:
+E               # （平台 include=True 语义未实证：若返回当日含当前时点后 bar → 未来函数），
+E         ?           ++++++++++++
+E                   # **回退改写**（主请求保持 include=False，行为保守无风险）；
+E                   # 平台 include 语义改由 QSPROBE 探针实证（仅首调观测，双形态各一次）。
+E                   if 'field' in kwargs:...
+E         
+E         ...Full output truncated (192 lines hidden), use '-vv' to show
+
+tests\test_source_import.py:647: AssertionError</failure></testcase><testcase classname="tests.test_source_import" name="test_23_include_false_count_first_unchanged" time="0.027"><failure message="assert 'include=True' not in &quot;# test_stra... fq='pre')\n&quot;&#10;  &#10;  'include=True' is contained here:&#10;        # （平台 include=True 语义未实证：若返回当日含当前时点后 bar → 未来函数），&#10;  ?           ++++++++++++&#10;            # **回退改写**（主请求保持 include=False，行为保守无风险）；&#10;            # 平台 include 语义改由 QSPROBE 探针实证（仅首调观测，双形态各一次）。&#10;            if 'field' in kwargs:...&#10;  &#10;  ...Full output truncated (192 lines hidden), use '-vv' to show">def test_23_include_false_count_first_unchanged():
+        """count-first 形态 + include=False → include=False 保留（不改签名、不改 include）。"""
+        code = '''
+    def initialize(context):
+        pass
+    
+    def handle_data(context, data):
+        h = get_history(20, frequency='1d', security_list='510300.SS', include=False)
+    '''
+        result = _convert_code(code)
+        assert result.errors == [], result.errors
+        out = result.converted_code
+        assert "include=False" in out
+&gt;       assert "include=True" not in out
+E       assert 'include=True' not in "# test_stra... fq='pre')\n"
+E         
+E         'include=True' is contained here:
+E               # （平台 include=True 语义未实证：若返回当日含当前时点后 bar → 未来函数），
+E         ?           ++++++++++++
+E                   # **回退改写**（主请求保持 include=False，行为保守无风险）；
+E                   # 平台 include 语义改由 QSPROBE 探针实证（仅首调观测，双形态各一次）。
+E                   if 'field' in kwargs:...
+E         
+E         ...Full output truncated (192 lines hidden), use '-vv' to show
+
+tests\test_source_import.py:665: AssertionError</failure></testcase><testcase classname="tests.test_source_import" name="test_24_include_true_unchanged" time="0.022" /><testcase classname="tests.test_source_import" name="test_25_no_include_unchanged" time="0.031" /><testcase classname="tests.test_source_import" name="test_26_include_false_idempotent" time="0.257" /><testcase classname="tests.test_source_import" name="test_27_shim_default_include_false" time="0.030"><failure message="assert 'include=True' not in &quot;# test_stra...['close'])\n&quot;&#10;  &#10;  'include=True' is contained here:&#10;        # （平台 include=True 语义未实证：若返回当日含当前时点后 bar → 未来函数），&#10;  ?           ++++++++++++&#10;            # **回退改写**（主请求保持 include=False，行为保守无风险）；&#10;            # 平台 include 语义改由 QSPROBE 探针实证（仅首调观测，双形态各一次）。&#10;            if 'field' in kwargs:...&#10;  &#10;  ...Full output truncated (213 lines hidden), use '-vv' to show">def test_27_shim_default_include_false():
+        """get_history_batch shim 默认参数 include=False（两端 include 语义一致）。"""
+        code = '''
+    def initialize(context):
+        pass
+    
+    def handle_data(context, data):
+        df = get_history_batch(['510300.SS', '510500.SS'], 20, '1d', fields=['close'])
+    '''
+        result = _convert_code(code)
+        assert result.errors == [], result.errors
+        out = result.converted_code
+        assert "def get_history_batch" in out
+        assert "include=False" in out
+&gt;       assert "include=True" not in out
+E       assert 'include=True' not in "# test_stra...['close'])\n"
+E         
+E         'include=True' is contained here:
+E               # （平台 include=True 语义未实证：若返回当日含当前时点后 bar → 未来函数），
+E         ?           ++++++++++++
+E                   # **回退改写**（主请求保持 include=False，行为保守无风险）；
+E                   # 平台 include 语义改由 QSPROBE 探针实证（仅首调观测，双形态各一次）。
+E                   if 'field' in kwargs:...
+E         
+E         ...Full output truncated (213 lines hidden), use '-vv' to show
+
+tests\test_source_import.py:737: AssertionError</failure></testcase><testcase classname="tests.test_source_import" name="test_28_include_mapping_minute_1m_unchanged" time="0.022" /><testcase classname="tests.test_source_import" name="test_29_include_mapping_minute_5m_unchanged" time="0.022" /><testcase classname="tests.test_source_import" name="test_30_include_mapping_signature_a_minute_unchanged" time="0.030" /><testcase classname="tests.test_source_import" name="test_31_include_mapping_unknown_freq_unchanged" time="0.038" /><testcase classname="tests.test_source_import" name="test_32_include_mapping_signature_a_daily_explicit_unit" time="0.026"><failure message="AssertionError: assert 'include=True' not in '# test_stra...ict=False)\n'&#10;  &#10;  'include=True' is contained here:&#10;        # （平台 include=True 语义未实证：若返回当日含当前时点后 bar → 未来函数），&#10;  ?           ++++++++++++&#10;            # **回退改写**（主请求保持 include=False，行为保守无风险）；&#10;            # 平台 include 语义改由 QSPROBE 探针实证（仅首调观测，双形态各一次）。&#10;            if 'field' in kwargs:...&#10;  &#10;  ...Full output truncated (192 lines hidden), use '-vv' to show">def test_32_include_mapping_signature_a_daily_explicit_unit():
+        """签名 A 显式 unit='1d' + include=False → include=False 保留（不映射）。"""
+        code = '''
+    def initialize(context):
+        pass
+    
+    def handle_data(context, data):
+        h = get_history(security='510300.SS', count=20, unit='1d', include=False)
+    '''
+        result = _convert_code(code)
+        assert result.errors == [], result.errors
+        out = result.converted_code
+        assert "include=False" in out
+&gt;       assert "include=True" not in out
+E       AssertionError: assert 'include=True' not in '# test_stra...ict=False)\n'
+E         
+E         'include=True' is contained here:
+E               # （平台 include=True 语义未实证：若返回当日含当前时点后 bar → 未来函数），
+E         ?           ++++++++++++
+E                   # **回退改写**（主请求保持 include=False，行为保守无风险）；
+E                   # 平台 include 语义改由 QSPROBE 探针实证（仅首调观测，双形态各一次）。
+E                   if 'field' in kwargs:...
+E         
+E         ...Full output truncated (192 lines hidden), use '-vv' to show
+
+tests\test_source_import.py:818: AssertionError</failure></testcase><testcase classname="tests.test_source_import" name="test_33_include_mapping_count_first_positional_daily" time="0.028"><failure message="assert 'include=True' not in &quot;# test_stra... fq='pre')\n&quot;&#10;  &#10;  'include=True' is contained here:&#10;        # （平台 include=True 语义未实证：若返回当日含当前时点后 bar → 未来函数），&#10;  ?           ++++++++++++&#10;            # **回退改写**（主请求保持 include=False，行为保守无风险）；&#10;            # 平台 include 语义改由 QSPROBE 探针实证（仅首调观测，双形态各一次）。&#10;            if 'field' in kwargs:...&#10;  &#10;  ...Full output truncated (192 lines hidden), use '-vv' to show">def test_33_include_mapping_count_first_positional_daily():
+        """count-first 位置参数形态 get_history(count, '1d', ...) + include=False → 不映射。"""
+        code = '''
+    def initialize(context):
+        pass
+    
+    def handle_data(context, data):
+        h = get_history(20, '1d', ['close'], '510300.SS', include=False)
+    '''
+        result = _convert_code(code)
+        assert result.errors == [], result.errors
+        out = result.converted_code
+        assert "include=False" in out
+&gt;       assert "include=True" not in out
+E       assert 'include=True' not in "# test_stra... fq='pre')\n"
+E         
+E         'include=True' is contained here:
+E               # （平台 include=True 语义未实证：若返回当日含当前时点后 bar → 未来函数），
+E         ?           ++++++++++++
+E                   # **回退改写**（主请求保持 include=False，行为保守无风险）；
+E                   # 平台 include 语义改由 QSPROBE 探针实证（仅首调观测，双形态各一次）。
+E                   if 'field' in kwargs:...
+E         
+E         ...Full output truncated (192 lines hidden), use '-vv' to show
+
+tests\test_source_import.py:834: AssertionError</failure></testcase><testcase classname="tests.test_source_import" name="test_34_include_no_mapping_all_freqs" time="0.022"><failure message="assert 8 == 3&#10; +  where 8 = &lt;built-in method count of str object at 0x000001ADF6DCBE40&gt;('include=False')&#10; +    where &lt;built-in method count of str object at 0x000001ADF6DCBE40&gt; = &quot;# test_strategy_ptrade.py - 由 QuantStudio source_import 转换生成\n# 来源: test_strategy.py\n# profile: ptrade-default (ptra...clude=False, fq='pre')\n    h3 = get_history(20, frequency='5m', security_list='510300.SS', include=False, fq='pre')\n&quot;.count">def test_34_include_no_mapping_all_freqs():
+        """日线 + 分钟 + 5m 的 include=False → 产物全部保留 include=False（不映射）。"""
+        code = '''
+    def initialize(context):
+        pass
+    
+    def handle_data(context, data):
+        h1 = get_history(20, frequency='1d', security_list='510300.SS', include=False)
+        h2 = get_history(20, frequency='1m', security_list='510300.SS', include=False)
+        h3 = get_history(20, frequency='5m', security_list='510300.SS', include=False)
+    '''
+        result = _convert_code(code)
+        assert result.errors == [], result.errors
+        out = result.converted_code
+&gt;       assert out.count("include=False") == 3
+E       assert 8 == 3
+E        +  where 8 = &lt;built-in method count of str object at 0x000001ADF6DCBE40&gt;('include=False')
+E        +    where &lt;built-in method count of str object at 0x000001ADF6DCBE40&gt; = "# test_strategy_ptrade.py - 由 QuantStudio source_import 转换生成\n# 来源: test_strategy.py\n# profile: ptrade-default (ptra...clude=False, fq='pre')\n    h3 = get_history(20, frequency='5m', security_list='510300.SS', include=False, fq='pre')\n".count
+
+tests\test_source_import.py:851: AssertionError</failure></testcase><testcase classname="tests.test_source_import" name="test_35_include_true_no_mapping" time="0.028"><failure message="assert 'include=False' not in &quot;# test_stra... fq='pre')\n&quot;&#10;  &#10;  'include=False' is contained here:&#10;    reClose 列（include=False 日线末行 close = 上一交易日收盘，&#10;  ?           +++++++++++++&#10;    # 与本地分钟 preClose 语义一致）；本地/平台返回若已含 preClose → guard 短路零影响。&#10;    # QS_MINUTE_DIAG：分钟路径首次调用打一条形状诊断（平台分钟数据可观测性）。&#10;    # 版本自标识（2026-09-02：三次平台验证版本错位根治——diag 行内嵌版本号，平台日志直接可读）...&#10;  &#10;  ...Full output truncated (421 lines hidden), use '-vv' to show">def test_35_include_true_no_mapping():
+        """include=True → 产物 include=True（透传不改）。"""
+        code = '''
+    def initialize(context):
+        pass
+    
+    def handle_data(context, data):
+        h = get_history(20, frequency='1d', security_list='510300.SS', include=True)
+    '''
+        result = _convert_code(code)
+        assert result.errors == [], result.errors
+        out = result.converted_code
+        assert "include=True" in out
+&gt;       assert "include=False" not in out
+E       assert 'include=False' not in "# test_stra... fq='pre')\n"
+E         
+E         'include=False' is contained here:
+E           reClose 列（include=False 日线末行 close = 上一交易日收盘，
+E         ?           +++++++++++++
+E           # 与本地分钟 preClose 语义一致）；本地/平台返回若已含 preClose → guard 短路零影响。
+E           # QS_MINUTE_DIAG：分钟路径首次调用打一条形状诊断（平台分钟数据可观测性）。
+E           # 版本自标识（2026-09-02：三次平台验证版本错位根治——diag 行内嵌版本号，平台日志直接可读）...
+E         
+E         ...Full output truncated (421 lines hidden), use '-vv' to show
+
+tests\test_source_import.py:868: AssertionError</failure></testcase><testcase classname="tests.test_source_import" name="test_36_ashares_exclude_bse_constant_stripped_and_baked_true" time="0.043" /><testcase classname="tests.test_source_import" name="test_37_ashares_exclude_bse_module_const_resolved" time="0.036" /><testcase classname="tests.test_source_import" name="test_38_ashares_exclude_bse_false_bake" time="0.038" /><testcase classname="tests.test_source_import" name="test_39_ashares_exclude_bse_dynamic_expr_failsoft_warn" time="0.040" /><testcase classname="tests.test_source_import" name="test_40_set_commission_min_floor_absorb" time="0.030" /><testcase classname="tests.test_source_import" name="test_41_ashares_date_plus_exclude_bse_combined" time="0.028" /><testcase classname="tests.test_source_import" name="test_42_absorption_idempotent" time="0.275" /><testcase classname="tests.test_source_import" name="test_43_golden_unaffected_strategies_unchanged" time="0.416" /><testcase classname="tests.test_source_import" name="test_45_dynamic_date_expr_wrap_no_crash" time="0.141" /><testcase classname="tests.test_source_import" name="test_46_gf_date_synthesis_injected" time="0.060" /><testcase classname="tests.test_source_import" name="test_47_local_strategy_nested_helper_and_import_whitelist" time="0.043" /><testcase classname="tests.test_source_import" name="test_48_gf_list_chunk_dispatch" time="0.148" /><testcase classname="tests.test_source_import" name="test_49_gf_statement_range_routing" time="0.053" /><testcase classname="tests.test_source_import" name="test_50_gf_pit_publdate_epoch_ms" time="0.041" /><testcase classname="tests.test_source_import" name="test_51_gf_range_local_retry" time="0.126" /><testcase classname="tests.test_source_import" name="test_52_gf_valuation_field_map_and_probe" time="0.045" /><testcase classname="tests.test_source_import" name="test_44_ptrade_portability_guards_positive_negative" time="0.001" /></testsuite></testsuites>

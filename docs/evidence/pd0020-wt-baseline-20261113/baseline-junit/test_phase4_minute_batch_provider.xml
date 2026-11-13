@@ -1,0 +1,249 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="6" skipped="0" tests="12" time="2.682" timestamp="2026-11-13T23:50:13.066439+08:00" hostname="USER-20251211MP"><testcase classname="tests.test_phase4_minute_batch_provider" name="test_single_code_count1_fq_pre" time="0.389"><failure message="AssertionError: single_count1_fq_pre code=600000 新路径与旧路径 DataFrame 不一致 are different&#10;&#10;single_count1_fq_pre code=600000 新路径与旧路径 DataFrame 不一致 shape mismatch&#10;[left]:  (1, 18)&#10;[right]: (1, 19)">build_db = &lt;function build_db.&lt;locals&gt;._impl at 0x000001A0174BF240&gt;
+cal = &lt;tests.conftest.cal.&lt;locals&gt;.Cal object at 0x000001A01753C210&gt;
+
+    def test_single_code_count1_fq_pre(build_db, cal):
+        sm = []
+        for c in CODES:
+            sm.extend(_make_rows(c))
+        p = _make_provider(build_db, cal, sm)
+        new = p.get_bars_by_count(["600000"], 1, DAY, None, "pre", frequency="1m",
+                                  bar_cutoff_ms=_cutoff(9, 32))
+        old = _iterative_old_path(p, ["600000"], 1, DAY, "pre", frequency="1m",
+                                  bar_cutoff_ms=_cutoff(9, 32))
+&gt;       _assert_equal(new, old, obj="single_count1_fq_pre")
+
+tests\test_phase4_minute_batch_provider.py:93: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+new_res = {'600000':      code           time  freq  ...  high_back  low_back  close_back
+0  600000  1767576720000  1min  ...        9.0       9.0         9.0
+
+[1 rows x 18 columns]}
+old_res = {'600000':      code           time  freq  ...  low_back  close_back  suspendFlag
+0  600000  1767576720000  1min  ...       9.0         9.0            0
+
+[1 rows x 19 columns]}
+obj = 'single_count1_fq_pre'
+
+    def _assert_equal(new_res, old_res, obj=""):
+        assert set(new_res.keys()) == set(old_res.keys()), (
+            f"{obj} key 集合不一致: new={sorted(new_res)} old={sorted(old_res)}")
+        for k in new_res:
+&gt;           pd.testing.assert_frame_equal(
+                new_res[k], old_res[k], check_exact=True, check_dtype=True,
+                obj=f"{obj} code={k} 新路径与旧路径 DataFrame 不一致")
+E           AssertionError: single_count1_fq_pre code=600000 新路径与旧路径 DataFrame 不一致 are different
+E           
+E           single_count1_fq_pre code=600000 新路径与旧路径 DataFrame 不一致 shape mismatch
+E           [left]:  (1, 18)
+E           [right]: (1, 19)
+
+tests\test_phase4_minute_batch_provider.py:70: AssertionError</failure></testcase><testcase classname="tests.test_phase4_minute_batch_provider" name="test_multi_code_count3_fq_pre" time="0.174"><failure message="AssertionError: multi_count3_fq_pre code=600000 新路径与旧路径 DataFrame 不一致 are different&#10;&#10;multi_count3_fq_pre code=600000 新路径与旧路径 DataFrame 不一致 shape mismatch&#10;[left]:  (2, 18)&#10;[right]: (2, 19)">build_db = &lt;function build_db.&lt;locals&gt;._impl at 0x000001A0175F9620&gt;
+cal = &lt;tests.conftest.cal.&lt;locals&gt;.Cal object at 0x000001A0160F48D0&gt;
+
+    def test_multi_code_count3_fq_pre(build_db, cal):
+        sm = []
+        for c in CODES:
+            sm.extend(_make_rows(c))
+        p = _make_provider(build_db, cal, sm)
+        new = p.get_bars_by_count(CODES, 3, DAY, None, "pre", frequency="1m",
+                                  bar_cutoff_ms=_cutoff(9, 32))
+        old = _iterative_old_path(p, CODES, 3, DAY, "pre", frequency="1m",
+                                  bar_cutoff_ms=_cutoff(9, 32))
+&gt;       _assert_equal(new, old, obj="multi_count3_fq_pre")
+
+tests\test_phase4_minute_batch_provider.py:107: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+new_res = {'600000':      code           time  freq  ...  high_back  low_back  close_back
+0  600000  1767576660000  1min  ...   ... 9.0       9.0         9.0
+1  600002  1767576720000  1min  ...        9.0       9.0         9.0
+
+[2 rows x 18 columns]}
+old_res = {'600000':      code           time  freq  ...  low_back  close_back  suspendFlag
+0  600000  1767576660000  1min  ... ...        9.0            0
+1  600002  1767576720000  1min  ...       9.0         9.0            0
+
+[2 rows x 19 columns]}
+obj = 'multi_count3_fq_pre'
+
+    def _assert_equal(new_res, old_res, obj=""):
+        assert set(new_res.keys()) == set(old_res.keys()), (
+            f"{obj} key 集合不一致: new={sorted(new_res)} old={sorted(old_res)}")
+        for k in new_res:
+&gt;           pd.testing.assert_frame_equal(
+                new_res[k], old_res[k], check_exact=True, check_dtype=True,
+                obj=f"{obj} code={k} 新路径与旧路径 DataFrame 不一致")
+E           AssertionError: multi_count3_fq_pre code=600000 新路径与旧路径 DataFrame 不一致 are different
+E           
+E           multi_count3_fq_pre code=600000 新路径与旧路径 DataFrame 不一致 shape mismatch
+E           [left]:  (2, 18)
+E           [right]: (2, 19)
+
+tests\test_phase4_minute_batch_provider.py:70: AssertionError</failure></testcase><testcase classname="tests.test_phase4_minute_batch_provider" name="test_fq_post_and_none" time="0.123"><failure message="AssertionError: fq=post code=600000 新路径与旧路径 DataFrame 不一致 are different&#10;&#10;fq=post code=600000 新路径与旧路径 DataFrame 不一致 shape mismatch&#10;[left]:  (2, 18)&#10;[right]: (2, 19)">build_db = &lt;function build_db.&lt;locals&gt;._impl at 0x000001A0174BF100&gt;
+cal = &lt;tests.conftest.cal.&lt;locals&gt;.Cal object at 0x000001A01733BE50&gt;
+
+    def test_fq_post_and_none(build_db, cal):
+        sm = []
+        for c in CODES:
+            sm.extend(_make_rows(c))
+        p = _make_provider(build_db, cal, sm)
+        for fq in ("post", None):
+            new = p.get_bars_by_count(["600000"], 2, DAY, None, fq, frequency="1m",
+                                      bar_cutoff_ms=_cutoff(9, 32))
+            old = _iterative_old_path(p, ["600000"], 2, DAY, fq, frequency="1m",
+                                      bar_cutoff_ms=_cutoff(9, 32))
+&gt;           _assert_equal(new, old, obj=f"fq={fq}")
+
+tests\test_phase4_minute_batch_provider.py:122: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+new_res = {'600000':      code           time  freq  ...  high_back  low_back  close_back
+0  600000  1767576660000  1min  ...   ... 9.0       9.0         9.0
+1  600000  1767576720000  1min  ...        9.0       9.0         9.0
+
+[2 rows x 18 columns]}
+old_res = {'600000':      code           time  freq  ...  low_back  close_back  suspendFlag
+0  600000  1767576660000  1min  ... ...        9.0            0
+1  600000  1767576720000  1min  ...       9.0         9.0            0
+
+[2 rows x 19 columns]}
+obj = 'fq=post'
+
+    def _assert_equal(new_res, old_res, obj=""):
+        assert set(new_res.keys()) == set(old_res.keys()), (
+            f"{obj} key 集合不一致: new={sorted(new_res)} old={sorted(old_res)}")
+        for k in new_res:
+&gt;           pd.testing.assert_frame_equal(
+                new_res[k], old_res[k], check_exact=True, check_dtype=True,
+                obj=f"{obj} code={k} 新路径与旧路径 DataFrame 不一致")
+E           AssertionError: fq=post code=600000 新路径与旧路径 DataFrame 不一致 are different
+E           
+E           fq=post code=600000 新路径与旧路径 DataFrame 不一致 shape mismatch
+E           [left]:  (2, 18)
+E           [right]: (2, 19)
+
+tests\test_phase4_minute_batch_provider.py:70: AssertionError</failure></testcase><testcase classname="tests.test_phase4_minute_batch_provider" name="test_count_exceeds_day_bars" time="0.172"><failure message="AssertionError: count_exceeds_day code=600000 新路径与旧路径 DataFrame 不一致 are different&#10;&#10;count_exceeds_day code=600000 新路径与旧路径 DataFrame 不一致 shape mismatch&#10;[left]:  (2, 18)&#10;[right]: (2, 19)">build_db = &lt;function build_db.&lt;locals&gt;._impl at 0x000001A0175F9580&gt;
+cal = &lt;tests.conftest.cal.&lt;locals&gt;.Cal object at 0x000001A01733B450&gt;
+
+    def test_count_exceeds_day_bars(build_db, cal):
+        sm = []
+        for c in CODES:
+            sm.extend(_make_rows(c))
+        p = _make_provider(build_db, cal, sm)
+        new = p.get_bars_by_count(["600000"], 100, DAY, None, "pre", frequency="1m",
+                                  bar_cutoff_ms=_cutoff(9, 32))
+        old = _iterative_old_path(p, ["600000"], 100, DAY, "pre", frequency="1m",
+                                  bar_cutoff_ms=_cutoff(9, 32))
+&gt;       _assert_equal(new, old, obj="count_exceeds_day")
+
+tests\test_phase4_minute_batch_provider.py:139: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+new_res = {'600000':      code           time  freq  ...  high_back  low_back  close_back
+0  600000  1767576660000  1min  ...   ... 9.0       9.0         9.0
+1  600000  1767576720000  1min  ...        9.0       9.0         9.0
+
+[2 rows x 18 columns]}
+old_res = {'600000':      code           time  freq  ...  low_back  close_back  suspendFlag
+0  600000  1767576660000  1min  ... ...        9.0            0
+1  600000  1767576720000  1min  ...       9.0         9.0            0
+
+[2 rows x 19 columns]}
+obj = 'count_exceeds_day'
+
+    def _assert_equal(new_res, old_res, obj=""):
+        assert set(new_res.keys()) == set(old_res.keys()), (
+            f"{obj} key 集合不一致: new={sorted(new_res)} old={sorted(old_res)}")
+        for k in new_res:
+&gt;           pd.testing.assert_frame_equal(
+                new_res[k], old_res[k], check_exact=True, check_dtype=True,
+                obj=f"{obj} code={k} 新路径与旧路径 DataFrame 不一致")
+E           AssertionError: count_exceeds_day code=600000 新路径与旧路径 DataFrame 不一致 are different
+E           
+E           count_exceeds_day code=600000 新路径与旧路径 DataFrame 不一致 shape mismatch
+E           [left]:  (2, 18)
+E           [right]: (2, 19)
+
+tests\test_phase4_minute_batch_provider.py:70: AssertionError</failure></testcase><testcase classname="tests.test_phase4_minute_batch_provider" name="test_fields_selection_keeps_code_column" time="0.142" /><testcase classname="tests.test_phase4_minute_batch_provider" name="test_no_bar_cutoff_full_day" time="0.149"><failure message="AssertionError: no_cutoff code=600000 新路径与旧路径 DataFrame 不一致 are different&#10;&#10;no_cutoff code=600000 新路径与旧路径 DataFrame 不一致 shape mismatch&#10;[left]:  (2, 18)&#10;[right]: (2, 19)">build_db = &lt;function build_db.&lt;locals&gt;._impl at 0x000001A0175FA200&gt;
+cal = &lt;tests.conftest.cal.&lt;locals&gt;.Cal object at 0x000001A01736AC50&gt;
+
+    def test_no_bar_cutoff_full_day(build_db, cal):
+        """bar_cutoff_ms=None → 全天窗口（PR3 语义），两路径一致。"""
+        sm = []
+        for c in CODES:
+            sm.extend(_make_rows(c))
+        p = _make_provider(build_db, cal, sm)
+        new = p.get_bars_by_count(["600000"], 2, DAY, None, "pre", frequency="1m")
+        old = _iterative_old_path(p, ["600000"], 2, DAY, "pre", frequency="1m")
+&gt;       _assert_equal(new, old, obj="no_cutoff")
+
+tests\test_phase4_minute_batch_provider.py:166: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+new_res = {'600000':      code           time  freq  ...  high_back  low_back  close_back
+0  600000  1767592800000  1min  ...   ... 9.0       9.0         9.0
+1  600000  1767596400000  1min  ...        9.0       9.0         9.0
+
+[2 rows x 18 columns]}
+old_res = {'600000':      code           time  freq  ...  low_back  close_back  suspendFlag
+0  600000  1767592800000  1min  ... ...        9.0            0
+1  600000  1767596400000  1min  ...       9.0         9.0            0
+
+[2 rows x 19 columns]}
+obj = 'no_cutoff'
+
+    def _assert_equal(new_res, old_res, obj=""):
+        assert set(new_res.keys()) == set(old_res.keys()), (
+            f"{obj} key 集合不一致: new={sorted(new_res)} old={sorted(old_res)}")
+        for k in new_res:
+&gt;           pd.testing.assert_frame_equal(
+                new_res[k], old_res[k], check_exact=True, check_dtype=True,
+                obj=f"{obj} code={k} 新路径与旧路径 DataFrame 不一致")
+E           AssertionError: no_cutoff code=600000 新路径与旧路径 DataFrame 不一致 are different
+E           
+E           no_cutoff code=600000 新路径与旧路径 DataFrame 不一致 shape mismatch
+E           [left]:  (2, 18)
+E           [right]: (2, 19)
+
+tests\test_phase4_minute_batch_provider.py:70: AssertionError</failure></testcase><testcase classname="tests.test_phase4_minute_batch_provider" name="test_partial_codes_no_bars_today" time="0.198"><failure message="AssertionError: partial_no_bars key 集合不一致: new=['600000', '600001', '600002'] old=['600000', '600001']&#10;assert {'600000', '600001', '600002'} == {'600000', '600001'}&#10;  &#10;  Extra items in the left set:&#10;  '600002'&#10;  Use -v to get more diff">build_db = &lt;function build_db.&lt;locals&gt;._impl at 0x000001A0175F9940&gt;
+cal = &lt;tests.conftest.cal.&lt;locals&gt;.Cal object at 0x000001A01736A650&gt;
+
+    def test_partial_codes_no_bars_today(build_db, cal):
+        """部分 code 当日无 bar（全表有数据）→ 两路径都跳过该 code，key 集合一致。"""
+        sm = _make_rows("600000") + _make_rows("600001")
+        # 600002 无当日 bar：给一个 2026-01-04 的 bar（全表有数据但当日窗口空）
+        sm.extend(_make_rows("600002", day="2026-01-04"))
+        p = _make_provider(build_db, cal, sm)
+        new = p.get_bars_by_count(CODES, 2, DAY, None, "pre", frequency="1m",
+                                  bar_cutoff_ms=_cutoff(9, 32))
+        old = _iterative_old_path(p, CODES, 2, DAY, "pre", frequency="1m",
+                                  bar_cutoff_ms=_cutoff(9, 32))
+&gt;       _assert_equal(new, old, obj="partial_no_bars")
+
+tests\test_phase4_minute_batch_provider.py:180: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+new_res = {'600000':      code           time  freq  ...  high_back  low_back  close_back
+0  600000  1767576660000  1min  ...   ... 9.0       9.0         9.0
+1  600002  1767510000000  1min  ...        9.0       9.0         9.0
+
+[2 rows x 18 columns]}
+old_res = {'600000':      code           time  freq  ...  low_back  close_back  suspendFlag
+0  600000  1767576660000  1min  ... ...        9.0            0
+1  600001  1767576720000  1min  ...       9.0         9.0            0
+
+[2 rows x 19 columns]}
+obj = 'partial_no_bars'
+
+    def _assert_equal(new_res, old_res, obj=""):
+&gt;       assert set(new_res.keys()) == set(old_res.keys()), (
+            f"{obj} key 集合不一致: new={sorted(new_res)} old={sorted(old_res)}")
+E       AssertionError: partial_no_bars key 集合不一致: new=['600000', '600001', '600002'] old=['600000', '600001']
+E       assert {'600000', '600001', '600002'} == {'600000', '600001'}
+E         
+E         Extra items in the left set:
+E         '600002'
+E         Use -v to get more diff
+
+tests\test_phase4_minute_batch_provider.py:67: AssertionError</failure></testcase><testcase classname="tests.test_phase4_minute_batch_provider" name="test_empty_codes" time="0.119" /><testcase classname="tests.test_phase4_minute_batch_provider" name="test_index_code_raises_table_missing" time="0.133" /><testcase classname="tests.test_phase4_minute_batch_provider" name="test_code_no_data_raises_table_empty" time="0.155" /><testcase classname="tests.test_phase4_minute_batch_provider" name="test_missing_freq_raises_freq_not_in_table" time="0.137" /><testcase classname="tests.test_phase4_minute_batch_provider" name="test_mixed_missing_code_preserves_raise" time="0.159" /></testsuite></testsuites>

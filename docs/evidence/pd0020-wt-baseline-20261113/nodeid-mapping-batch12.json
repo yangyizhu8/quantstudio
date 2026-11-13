@@ -1,0 +1,820 @@
+{
+  "基线未取证（该文件未跑）": [
+    {
+      "nodeid": "test_agent_first_strategy_skill::test_agent_implemented_strategy_validates_and_publishes_identical_source",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_audit_qfq_staleness::test_builder_list_schema_compat",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_audit_qfq_staleness::test_builder_parses_real_dict_config_and_yields_codes",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_audit_qfq_staleness::test_default_run_audit_uses_nonempty_provider",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_daemon_identity_macos::test_v5_debounce_requires_three_consecutive",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_eps_backfill::test_quality_audit_eps_backfill_gap_error",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fin_growth_dividend_staging_tool::test_fast_simulated_dual_task_e2e",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fin_growth_dividend_staging_tool::test_prepare_creates_staging_with_absolute_paths",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fin_growth_dividend_staging_tool::test_prepare_does_not_modify_other_tasks",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fin_growth_dividend_staging_tool::test_prepare_dry_run_returns_0",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fin_growth_dividend_staging_tool::test_prepare_updates_start_date_for_allowed_tasks",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fin_growth_dividend_staging_tool::test_prepare_worktree_internal_blocked_but_dryrun_warns",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fin_growth_dividend_staging_tool::test_production_config_unchanged_after_prepare",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fin_growth_dividend_staging_tool::test_production_db_byte_identical_after_full_e2e",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fin_growth_dividend_staging_tool::test_real_subprocess_dual_task_e2e",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fin_growth_dividend_staging_tool::test_stale_lock_does_not_block",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_first_cover_event_daily_agent::test_active_batch_discards_today_events",
+      "current": "error",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_first_cover_event_daily_agent::test_effective_day_duplicate_normalization",
+      "current": "error",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_first_cover_event_daily_agent::test_embedded_snapshot_contract",
+      "current": "error",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_first_cover_event_daily_agent::test_entry_day_position_cannot_exit",
+      "current": "error",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_first_cover_event_daily_agent::test_holding_age_counts_only_subsequent_trading_callbacks",
+      "current": "error",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_first_cover_event_daily_agent::test_initialize_registers_confirmed_clocks",
+      "current": "error",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_first_cover_event_daily_agent::test_runtime_guard_is_idempotent",
+      "current": "error",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_first_cover_event_daily_agent::test_stop_blacklist_only_after_position_is_gone",
+      "current": "error",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_first_cover_event_daily_agent::test_two_round_sizing_respects_cash_and_lots",
+      "current": "error",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fund_statement_acceptance::test_balance_fields_flow_ratio",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fund_statement_acceptance::test_income_yoy_two_periods",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fund_statement_acceptance::test_missing_col_warns_not_silent",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fund_statement_acceptance::test_pit_boundary_no_future",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fund_statement_acceptance::test_pit_boundary_visible_same_day",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_gui_rebalance_mode::test_worker_default_engine_config_matches_pre_fix_fields",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_gui_rebalance_mode::test_worker_defaults_to_legacy_without_param",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_gui_rebalance_mode::test_worker_passes_rebalance_mode_into_engine_config",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_gui_task_audit_separation::test_run_all_done_full_mode_labels_status",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_inspect_capabilities_f6::test_real_db_reference_capabilities_ready",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_mcp_empty_tombstone::test_t2_tombstone_hit_skips_refetch_without_renewing_ttl",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_minute_limit_halt::test_minute_limit_up_buy_rejected",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_minute_query_no_future_leak::test_get_history_minute_count_returns_most_recent_n",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_minutes_conflict_m1m2::test_m2_non_minute_table_not_instrumented",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_next_open_limit_and_halt::test_drain_rejects_buy_when_t1_gap_exceeds_cash_no_partial",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_pd12_target_semantics::test_t11_compliance_stock_cases_still_green",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_pd12_target_semantics::test_t9_dual_end_homology",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_pr6b1_orchestrator::test_case1_static_validated",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_pr6b1_orchestrator::test_smoke_blocked_when_capability_not_ready",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_pr6b1_orchestrator::test_static_block_stage_static_validated_smoke_skipped",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_provider_frequency_routing::test_get_bars_daily_frequency_does_not_touch_minute_query",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_ptrade_contract_compliance::test_split_wrapper_target_value_calls_split_order",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_ptrade_contract_compliance::test_wire_local_vs_template_homology",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_ptrade_contract_compliance::test_wire_template_order_value_wrapper",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_ptrade_fidelity_config::test_run_backtest_type_check_present",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_ptrade_profile_registered_stock_apis::test_registered_stock_api_source_publishes_identical_dual_targets",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_ptrade_public_signature_contract::test_get_stock_info_returns_formal_ptrade_shape",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_ptrade_public_signature_contract::test_slippage_signatures_match_ptrade_keyword_contract",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_qfq_factor_cache::test_lru_capacity_evicts",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_qfq_range_r1a::test_golden_300750_range_none_raw",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_qfq_range_r1a::test_golden_300750_range_vs_count",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_qfq_range_window_guards::test_c4_invalid_range_skips_security[capture]",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_qfq_range_window_guards::test_c4_invalid_range_skips_security[range]",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_qfq_schema_migration::test_production_db_invariant",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_qfq_schema_migration::test_report_equals_production_refused",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_security_metadata_api::test_real_db_etf_metadata",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_security_metadata_api::test_real_db_stock_metadata",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_security_metadata_api::test_stock_api_identical_to_pre_fix_golden",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_smallcap_overnight_scalp_agent::test_buy_batch_targets_seven_percent_increment_per_name",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_smallcap_overnight_scalp_agent::test_daily_feature_uses_four_day_amplitude_and_ema5",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_smallcap_overnight_scalp_agent::test_due_exit_sells_only_t1_enabled_quantity_and_resolves_old_batch",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_smallcap_overnight_scalp_agent::test_failed_limit_down_exit_remains_pending_for_retry",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_smallcap_overnight_scalp_agent::test_initialize_registers_confirmed_0931_and_1030_schedules",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_smallcap_overnight_scalp_agent::test_overlap_buy_adds_new_seven_percent_batch_on_top_of_existing_position",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_smallcap_overnight_scalp_agent_v2::test_buy_batch_targets_seven_percent_and_uses_order_reconciliation",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_smallcap_overnight_scalp_agent_v2::test_daily_feature_uses_portable_ema_and_four_day_amplitude",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_smallcap_overnight_scalp_agent_v2::test_due_exit_sells_only_t1_enabled_quantity",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_smallcap_overnight_scalp_agent_v2::test_existing_open_exit_order_prevents_duplicate_submission",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_smallcap_overnight_scalp_agent_v2::test_failed_exit_remains_pending_without_false_fill",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_smallcap_overnight_scalp_agent_v2::test_history_field_supports_numpy_structured_arrays",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_smallcap_overnight_scalp_agent_v2::test_initialize_registers_confirmed_schedules_and_exact_slippage_keyword",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_smallcap_overnight_scalp_agent_v2::test_listing_age_uses_one_batch_get_stock_info_call",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_smallcap_overnight_scalp_agent_v2::test_overlap_adds_seven_percent_to_existing_position",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_smallcap_overnight_scalp_agent_v2::test_runtime_state_is_idempotent_and_survives_initialize_failure",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_strategy_alignment_regressions::test_run_daily_executes_even_when_handle_data_exists",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_strategy_alignment_regressions::test_valuation_orm_uses_billion_yuan_and_per_code_pit",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_strategy_name_chinese_contract::test_publish_writes_chinese_filename_and_front_blocks_collision",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_strategy_spec_schema::test_all_frozen_schema_examples_validate",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_target_aware_strategy_skill::test_local_only_publish_generates_no_ptrade_placeholder",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_user_pyqt_candidate_flow::test_user_mode_candidate_then_evidence_then_formal_promotion",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_valuation_date_pit::test_history_date_differs_from_snapshot",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_valuation_date_pit::test_history_date_returns_true_asof_values",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_valuation_date_pit::test_query_cache_key_contains_date",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_write_integrity_r2_serial::test_instance_method_delegates_to_module_registry",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_write_integrity_r2_serial::test_registry_same_lock_object",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_writer_channel_contract::test_b1_chunked_variant_is_same_channel_not_third",
+      "current": "failure",
+      "baseline": "-",
+      "reason": ""
+    }
+  ],
+  "基线 skipped（原因）": [
+    {
+      "nodeid": "test_batch_apis::test_fundamentals_batch_multiple_stocks",
+      "current": "failure",
+      "baseline": "SKIPPED",
+      "reason": "测试库不存在"
+    },
+    {
+      "nodeid": "test_batch_apis::test_fundamentals_batch_result_equals_iterative",
+      "current": "failure",
+      "baseline": "SKIPPED",
+      "reason": "测试库不存在"
+    },
+    {
+      "nodeid": "test_batch_apis::test_fundamentals_batch_single_stock",
+      "current": "failure",
+      "baseline": "SKIPPED",
+      "reason": "测试库不存在"
+    },
+    {
+      "nodeid": "test_batch_apis::test_history_batch_returns_codedict",
+      "current": "failure",
+      "baseline": "SKIPPED",
+      "reason": "测试库不存在: D:\\miniQMT策略实盘\\QuantStudio-wt-baseline\\data\\quantstudio.db"
+    },
+    {
+      "nodeid": "test_d3_firstday_noprice::test_t2_window_contains_515050",
+      "current": "failure",
+      "baseline": "SKIPPED",
+      "reason": "DB 不存在"
+    },
+    {
+      "nodeid": "test_d3_firstday_noprice::test_t3_next_day_no_leak",
+      "current": "failure",
+      "baseline": "SKIPPED",
+      "reason": "DB 不存在"
+    },
+    {
+      "nodeid": "test_d3_firstday_noprice::test_t4_no_duplicate_code_in_window",
+      "current": "failure",
+      "baseline": "SKIPPED",
+      "reason": "DB 不存在"
+    },
+    {
+      "nodeid": "test_d3_firstday_noprice::test_t6_preload_matches_single_day",
+      "current": "failure",
+      "baseline": "SKIPPED",
+      "reason": "DB 不存在"
+    },
+    {
+      "nodeid": "test_pd14b_time_normalize::test_t3_etf_abnormal_count_db",
+      "current": "failure",
+      "baseline": "SKIPPED",
+      "reason": "DB 不存在"
+    },
+    {
+      "nodeid": "test_pd14b_time_normalize::test_t4_stock_abnormal_count_db",
+      "current": "failure",
+      "baseline": "SKIPPED",
+      "reason": "DB 不存在"
+    },
+    {
+      "nodeid": "test_pd14b_time_normalize::test_t6_d3_window_still_has_515050",
+      "current": "failure",
+      "baseline": "SKIPPED",
+      "reason": "DB 不存在"
+    },
+    {
+      "nodeid": "test_pd14b_time_normalize::test_t8_backup_tables_intact",
+      "current": "failure",
+      "baseline": "SKIPPED",
+      "reason": "DB 不存在"
+    }
+  ],
+  "基线同样失败": [
+    {
+      "nodeid": "test_fund_contract_wiring_matrix::test_fund_contract_wired[balance_statement]",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fund_contract_wiring_matrix::test_fund_contract_wired[cashflow_statement]",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fund_contract_wiring_matrix::test_fund_contract_wired[eps]",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fund_contract_wiring_matrix::test_fund_contract_wired[growth_ability]",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fund_contract_wiring_matrix::test_fund_contract_wired[income_statement]",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fund_contract_wiring_matrix::test_fund_contract_wired[profit_ability]",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_fund_contract_wiring_matrix::test_fund_contract_wired[valuation]",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_phase4_minute_batch_provider::test_count_exceeds_day_bars",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_phase4_minute_batch_provider::test_fq_post_and_none",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_phase4_minute_batch_provider::test_multi_code_count3_fq_pre",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_phase4_minute_batch_provider::test_no_bar_cutoff_full_day",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_phase4_minute_batch_provider::test_partial_codes_no_bars_today",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_phase4_minute_batch_provider::test_single_code_count1_fq_pre",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_phase4_minute_memory_slice::test_count_exceeds_day_bars",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_phase4_minute_memory_slice::test_fallback_include_false_prev_date",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_phase4_minute_memory_slice::test_fields_none_columns_equal",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_phase4_minute_memory_slice::test_fq_post_and_none",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_phase4_minute_memory_slice::test_multi_code_count3_fq_pre",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_phase4_minute_memory_slice::test_single_code_count1_fq_pre",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_source_import::test_22_include_false_signature_a_unchanged",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_source_import::test_23_include_false_count_first_unchanged",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_source_import::test_27_shim_default_include_false",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_source_import::test_32_include_mapping_signature_a_daily_explicit_unit",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_source_import::test_33_include_mapping_count_first_positional_daily",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_source_import::test_34_include_no_mapping_all_freqs",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_source_import::test_35_include_true_no_mapping",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_strategy_fidelity_gates::test_etf_approved_fidelity_and_local_result_pass",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_strategy_fidelity_gates::test_etf_gate_rejects_the_known_31_trade_drift",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_strategy_fidelity_gates::test_fidelity_gate_rejects_nav_drift_even_if_verdict_is_pass",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_strategy_fidelity_gates::test_smallcap_close_baseline_is_accepted_without_relaxing_submetrics",
+      "current": "failure",
+      "baseline": "FAILED",
+      "reason": ""
+    }
+  ],
+  "基线通过（当前失败）": [
+    {
+      "nodeid": "test_source_import::test_08_remove_banding",
+      "current": "failure",
+      "baseline": "PASSED",
+      "reason": ""
+    },
+    {
+      "nodeid": "test_source_import::test_08b_rewrite_literal_inline",
+      "current": "failure",
+      "baseline": "PASSED",
+      "reason": ""
+    }
+  ]
+}
