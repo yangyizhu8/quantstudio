@@ -23,6 +23,8 @@ families:
     fix_layer_multi: false
     domain_vocab: [D1, D2, D3, D4, D5]
     required_fields: [symptom, root_cause, fix_target, evidence, fixture, trigger]
+    placeholder_gate: "off"          # off|warn|strict（占位门·新增检测型；默认 off，升档须独立审批准）
+    placeholder_gate_since: null   # 首次启用非 off 档位时填写（审计可追溯）
     fix_layer_keywords:                 # 自动判层（kb_draft 缺省用；顺序命中即定）
       matrix: ["matrix", "verify", "exec 命名空间", "契约测试"]
       ledger: ["台账", "registry", "进度报告"]
@@ -39,6 +41,8 @@ families:
     fix_layer_multi: true               # 多落点以 + 连接（2026-10-22 裁定 a），组件须在枚举内
     domain_vocab: [D1, D2, D3, D4, D5]
     required_fields: [symptom, root_cause, fix_target, evidence, fixture, trigger]
+    placeholder_gate: "off"          # off|warn|strict（占位门·新增检测型；默认 off，升档须独立审批准）
+    placeholder_gate_since: null   # 首次启用非 off 档位时填写（审计可追溯）
     notes: "PD 族；schema 见 knowledge/ptrade-deploy/README.md（族独立定谳，不入 QD 机检内存）"
 
   - id: db
@@ -49,6 +53,8 @@ families:
     fix_layer_multi: true               # 双落点以 + 连接（同 pd 族裁定 a）；②号候选=constraint+lint_guard
     domain_vocab: [D1, D2, D3, D4, D5]
     required_fields: [symptom, root_cause, fix_target, evidence, fixture, trigger]
+    placeholder_gate: "off"          # off|warn|strict（占位门·新增检测型；默认 off，升档须独立审批准）
+    placeholder_gate_since: null   # 首次启用非 off 档位时填写（审计可追溯）
     fix_layer_keywords:                 # 自动判层初版（kb_draft 缺省用；顺序命中即定）
       write_path: ["executemany", "写入形态", "批量写", "TRUNCATE", "CTAS", "INSERT INTO"]
       constraint: ["主键", "PK", "约束", "唯一", "NOT NULL", "指纹", "ON CONFLICT"]
@@ -65,6 +71,8 @@ families:
     fix_layer_multi: true               # 多落点以 + 连接（同 pd/db 族裁定 a）；典型组合 guard+recovery
     domain_vocab: [D1, D2, D3, D4, D5]
     required_fields: [symptom, root_cause, fix_target, evidence, fixture, trigger]
+    placeholder_gate: "off"          # off|warn|strict（占位门·新增检测型；默认 off，升档须独立审批准）
+    placeholder_gate_since: null   # 首次启用非 off 档位时填写（审计可追溯）
     fix_layer_keywords:                 # 自动判层初版（kb_draft 缺省用；顺序命中即定）
       probe: ["探针", "巡检", "check_", "探测", "只读", "读数", "测点"]
       guard: ["闸", "守卫", "拦截", "SKIP", "防误", "阈值", "旁证", "occupancy", "占用声明"]

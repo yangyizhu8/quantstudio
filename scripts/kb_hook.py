@@ -116,6 +116,117 @@ def _skip_reason(rel, families):
     return "no_family_match"
 
 
+# ── 占位文本检测（2026-11-13 方案 v3 §2/§3；**默认全族 off，不改变既有 verdict**）──────
+# 定性：新增检测型。启用（warn/strict）须独立审批准；本文件只提供能力，档位由 kb-info.yaml 各族
+# 的 placeholder_gate 决定，缺省/非法值一律按 off 处理（fail-safe 方向＝不新增阻断）。
+PLACEHOLDER_TOKENS = ("待补充", "待填", "TODO", "TBD", "FIXME", "placeholder", "占位")
+PLACEHOLDER_RE = re.compile("|".join(re.escape(t) for t in PLACEHOLDER_TOKENS), re.I)
+# 开头式＝「用占位词顶替内容」（假填）；句中/句尾出现＝「在讲占位这件事」（引述）
+FAKE_PREFIX_RE = re.compile(
+    r"^(?:待补充|待填|TODO|TBD|FIXME|placeholder|占位)\s*(?:[：:…\-—、，,\s]|$)", re.I)
+GATE_LEVELS = ("off", "warn", "strict")
+
+
+def classify_placeholder(value):
+    """受检字段值 → 'fake' | 'mention' | None。
+
+    **这是位置规则，不是语义完整性证明**：`mention` 只表示"占位词不在值开头"，
+    不代表该字段内容已完成；`fake` 只表示"以占位词开头"，不代表其余字段无问题。
+    """
+    v = str(value or "").strip()
+    if not v:
+        return None
+    if FAKE_PREFIX_RE.match(v):
+        return "fake"
+    if PLACEHOLDER_RE.search(v):
+        return "mention"
+    return None
+
+
+def _trigger_errors(value):
+    """trigger 两段式（T1–T5，v3 §2.2）。仅作占位门内附加判据，不并入既有 validate_record。"""
+    v = str(value or "").strip()
+    if not re.search(r"[；;]", v):
+        return ["trigger 缺两段式：未找到分隔符「；」或「;」"]
+    m = re.search(r"[；;]\s*问法[：:]", v)
+    if not m:
+        return ["trigger 缺两段式：未找到「问法：」段"]
+    head = v[:m.start()].strip()
+    tail = v[m.end():].strip()
+    errs = []
+    if len(head) < 2:
+        errs.append("trigger 前半（复现条件）为空或过短（<2 字）")
+    if len(tail) < 4:
+        errs.append("trigger 后半（口头问法）为空或过短（<4 字）")
+    if classify_placeholder(head) == "fake":
+        errs.append("trigger 前半为占位文字")
+    if classify_placeholder(tail) == "fake":
+        errs.append("trigger 后半为占位文字")
+    return errs
+
+
+def _feedback_placeholder_errors(rec, fam=None):
+    """feedback 三键假填检测（F2）；假填写了比留 null 更差。"""
+    fb = rec.get("feedback")
+    if fb is None:
+        return []
+    if not isinstance(fb, dict):
+        return ["feedback 形态非映射"]
+    keys = list((fam or {}).get("feedback_keys") or DEFAULT_FEEDBACK)
+    fake = [k for k in keys if classify_placeholder(fb.get(k)) == "fake"]
+    return ["feedback 占位假填（%s）" % "/".join(fake)] if fake else []
+
+
+def entry_stage(rel, fam):
+    """正式 entry / 草稿：**纯路径判据**（v3 §3.1）。
+
+    正式 entry ＝ 命中族 entry_glob ∧ 位于族 dir ∧ basename 匹配 id_pattern（**不再看 `.draft.`**）。
+    **`.draft.` 命名不能使族目录内的文件降级为草稿**——否则换个文件名就能跳门（2026-11-13 R2）。
+    其余（族目录之外：`docs/drafts/`、`tmp/`、任意 `--out`）一律草稿隔离区。
+    判据不引用"是否通过机检"，故无循环定义。
+    """
+    rel = _norm(rel)
+    fam = fam or {}
+    d = _norm(fam.get("dir", "")).rstrip("/")
+    glob_ = fam.get("entry_glob") or ""
+    id_pat = fam.get("id_pattern") or ""
+    base = os.path.basename(rel)
+    in_dir = bool(d) and (rel == d or rel.startswith(d + "/"))
+    glob_ok = bool(glob_) and fnmatch.fnmatch(rel, glob_)
+    id_ok = bool(re.match(id_pat, base)) if id_pat else True
+    if in_dir and glob_ok and id_ok:
+        return "entry"
+    return "draft"
+
+
+def placeholder_report(rel, rec, fam):
+    """按族档位产出占位报告；**off/非法档位返回 None（完全不介入，payload 不变）**。"""
+    fam = fam or {}
+    level = str(fam.get("placeholder_gate") or "off").strip().lower()
+    if level not in GATE_LEVELS:
+        level = "off"
+    if level == "off":
+        return None
+    stage = entry_stage(rel, fam)
+    rep = {"level": level, "stage": stage, "fake": [], "mention": [], "notes": []}
+    if stage == "draft":
+        # 草稿隔离区：允许占位，只标记（不产生 fake/mention）
+        rep["notes"].append("DRAFT_ALLOWED")
+        return rep
+    if ".draft." in os.path.basename(rel):
+        # 族目录内用 .draft. 命名企图降级：判据不认，仅提示（防"改名跳门"）
+        rep["notes"].append("DRAFT_NAME_IGNORED_ON_ENTRY_PATH")
+    for err in _trigger_errors(rec.get("trigger")):
+        rep["fake"].append(err)
+    for err in _feedback_placeholder_errors(rec, fam):
+        rep["fake"].append(err)
+    for k in ("trigger",) + tuple(list(fam.get("feedback_keys") or DEFAULT_FEEDBACK)):
+        val = rec.get(k) if k == "trigger" else (rec.get("feedback") or {}).get(k)
+        if classify_placeholder(val) == "mention":
+            rep["mention"].append(k)
+    return rep
+
+
 def _fix_layer_errors(value, fam):
     raw = str(value or "").strip()
     if not raw:
@@ -203,6 +314,12 @@ def check_files(repo_root, kb_info, files):
             out["bad"].append({"file": rel, "family": fam.get("id"), "errors": ["parse_fail: %s" % e]})
             continue
         errs = validate_record(rec, fam)
+        # 占位门（新增检测型）：仅当族档位 ≠ off 时才产出；严格档把 fake 并入 errors。
+        rep = placeholder_report(rel, rec, fam)
+        if rep is not None:
+            out.setdefault("placeholder", []).append({"file": rel, **rep})
+            if rep["level"] == "strict" and rep["fake"]:
+                errs = errs + ["占位检测(strict)：%s" % "; ".join(rep["fake"])]
         if errs:
             out["bad"].append({"file": rel, "family": fam.get("id"), "errors": errs})
     return out

@@ -104,12 +104,14 @@ trigger := <复现条件> <分隔符> "问法" <冒号> <口头问法>
 | 态 | 判据（`AND`） |
 |---|---|
 | **正式 entry** | 路径匹配族 `entry_glob` ∧ 位于 `knowledge/<族>/` ∧ basename 匹配 `id_pattern` |
-| **草稿（隔离区）** | 以下任一：①位于**族目录之外**（`docs/drafts/`、`tmp/`、任意 `--out`）；②basename 含 `.draft.` |
+| **草稿（隔离区）** | **仅**：位于**族目录之外**（`docs/drafts/`、`tmp/`、任意 `--out`） |
+
+> **实现口径（2026-11-13 R2 后定稿，与代码一致）**：族目录内**不认任何降级标记**——`basename` 含 `.draft.` 仍判**正式 entry**（仅打印 `DRAFT_NAME_IGNORED_ON_ENTRY_PATH`）。否则"改个文件名就跳门"是比 `stage: draft` 更隐蔽的后门。
 
 #### 3.1.1 `stage: draft` 的效力（R1 核心修正）
 
-- **在正式 entry 路径上：`stage: draft` 不生效**，一律按**正式态**判（并打印 `STAGE_DRAFT_IGNORED_ON_ENTRY_PATH`）。
-  理由（R1）：否则"加一行 `stage: draft` 就跳门"——标记变成后门。
+- **在正式 entry 路径上：`stage: draft` 不生效**，一律按**正式态**判（`basename` 含 `.draft.` 时另打印 `DRAFT_NAME_IGNORED_ON_ENTRY_PATH`）。
+  理由（R1/R2）：否则"加一行 `stage: draft`（或改个文件名）就跳门"——标记变成后门。
 - **在草稿隔离区内：`stage: draft` 有效**（允许占位，打 `DRAFT` 标记）。
 - 即：**路径决定身份，标记只能在隔离区内加注**，不能把正式路径降级为草稿。
 
@@ -149,7 +151,7 @@ trigger := <复现条件> <分隔符> "问法" <冒号> <口头问法>
 | 变更 | 权限 | 留痕 |
 |---|---|---|
 | `off → warn`、`warn → strict` | **须独立审/总调度批准**（书面） | `kb-info.yaml` 的 `placeholder_gate_since` 必填 + `docs/decisions-pending.md` 登记 |
-| `strict → off/warn`（降档急停） | 允许**执行方即时降档**（安全方向） | 事后 1 轮内补报原因与证据 |
+| `strict → off/warn`（**放宽检测**） | **不得笼统视为"安全方向"**：放宽会立即减少拦截面，须按**已批准的回退配方**（§8 回退项①）执行；无对应配方时一律走既有审批（R2 纠正，2026-11-13） | 同样须更新 `placeholder_gate_since` + 登记，不得以"急停"为由免审 |
 | 任何自动化 | **禁止** | **不得出现"warn 观察一轮后自动升 strict"逻辑**（v2 §3.4 的推进表已按本表改写，见下） |
 
 **推进表（改为"候选"性质，非时间表）**：
