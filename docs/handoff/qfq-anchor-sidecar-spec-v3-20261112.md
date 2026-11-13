@@ -736,3 +736,84 @@ D20 能力按 **执行机／端点／数据根** 三分，禁止用一层的不�
 - **L-B** 本机隔离 QDB：`127.0.0.1:19000`，根 `D:\questdb\_d20probe` → 可 DDL／可写／可观测（本件 P-2 即在此完成，用后销毁）
 - **L-C** 云端源端：`https://124.223.159.234/mcp` → 只读 MCP
 - **L-D** 主仓 DuckDB：`data/quantstudio.db`（62.06 GiB）→ 单进程写锁，**与 QDB 读不同锁域**
+
+
+---
+
+# v3.7 · R27 审核收窄与撤回（2026-11-13 11:3x · 节点㉑）
+
+> R27 合并审核要点：① P-2/9 表 census/日历读数**采信为节点实测回执**，但 **9 表统计不等于段清单或 L2 可执行输入**；② `wait_wal_table` **只等指定表的目标 WAL applied**；⑤ **股票因子在列、ETF 独表分别映射真实消费路径**；④ 本机新数据与云端旧读数**不在同窗**；⑥ batch02 按原只读/可续/资源前置推进；⑦ 云端**证书不匹配不默认 `-k` 绕过**。
+
+## v3.7-1 撤回：v3.6 的四处过度表述
+
+| # | v3.6 原表述 | 问题 | 撤回后口径 |
+|---|---|---|---|
+| R-1 | 「消费侧读锚强制等待 ⇒ 保证一致」暗示跨表一致 | **越权外推**：`wait_wal_table(t[,seq])` 只等**该表**到目标 WAL applied | 降级为「**该表单表**已 applied」；**不证明**跨表原子可见、**不证明**所有消费者同快照、**不证明**掉电耐久 |
+| R-2 | 由 `cairo.commit.mode` 默认 `nosync` 隐含「应改 sync／应升级」 | **推论越界**：R27 明令不改模式、不升级、不重启 | 保留「commit ≠ 掉电持久」的**事实陈述**，删除任何「须改模式/须升级」的**行动推论**；能力与代价只在 **9.3.5 版本内**按源码/文档/实际配置核算 |
+| R-3 | 「云端即源端在本机 minutes 表被证伪」 | **窗口不可比**：本机 `2026-11-12 15:30` 与云端旧读数 `2026-11-11 15:30` **不同窗**，不能据此判整体写入方向错误 | 改为「两读数**不同窗，不作方向判定**」；归属须**按表 + 请求链**逐项核 |
+| R-4 | 「股票因子寄于 `stock_daily.adj_factor` 列」 | **与实码不符**：该列是 MCP 随行返回的输入残留，`daemon.py:1330-1334` **主动 drop** 以避免 merge 冲突 | 真实消费落点＝**`data/qfq_aux.db`（SQLite）的 `adj_factor` 表**（股票）／`fund_adj` 表（ETF） |
+
+## v3.7-2 `wait_wal_table` 的正确用法（防自锁）
+
+**边界（必须写明，不得省略）**：
+
+- 只阻塞**指定表**到指定/当前 sequencer txn 被 apply；
+- **不提供**跨表原子可见性保证；
+- **不提供**多消费者同一快照保证；
+- **不提供**掉电耐久保证（与 `cairo.commit.mode` 正交）。
+
+**调用纪律（防「追全局最新 → 新写入持续到来 → 永不返回」的自锁）**：
+
+1. **绑定本批事务号**：写作返回后立即读 `wal_tables()` 取该表 `sequencerTxn`，以 **`wait_wal_table(t, 本批seqTxn)`** 显式传入；
+2. **禁止**省略 seqTxn 去「追最新」（省略语义＝等待"当前"sequencer，写入持续时可能反复落空）；
+3. **必须设超时 + 错误分支**：超时视为 **`unverified`（未证实）**，不得写成「已 aligned」；表被 drop/suspended 时 `wait_wal_table` 抛错，须捕获并记为 `failed`；
+4. 判据三元：`applied`（该表该 txn 已 apply）/ `timeout`（超时未证实）/ `failed`（抛错）——**`timeout` 与 `failed` 均不得回退为「有锚可用」**。
+
+## v3.7-3 因子真实消费路径映射（R27 第⑤点，实码取证）
+
+**实测落点（`data/qfq_aux.db`，SQLite，13.4 GB，mtime 2026-11-13 10:44:39）**：
+
+| 表 | 资产类别 | 行数 | 码数 | 时间范围 |
+|---|---|---|---|---|
+| `adj_factor` | 股票 | **32,874,481** | 5,857 | 2000-01-21 ~ 2026-11-12 15:30 |
+| `fund_adj` | ETF | **12,800,548** | 2,331 | 2010-01-04 ~ 2026-11-12 15:00 |
+| `adj_factor_snapshot` | 快照 | 5,780 | 5,780 | — |
+
+**读侧代码证据（谁读谁）**：
+
+| 消费点 | 资产 | 读的落点 | 证据 |
+|---|---|---|---|
+| `qfq_snapshot.py:56` | 按表前缀分流 | `fund_adj` if `etf_*` else `adj_factor` | `aux_table = "fund_adj" if table.startswith("etf_") else "adj_factor"` |
+| `qfq_invariant.py:117` | 同上 | `_adj_table_of(table)` 返回同一分流 | `return "fund_adj" if table in ETF_TABLES else "adj_factor"` |
+| `qfq_maintenance.py:141-143` | 写侧 | 股票写 `adj_factor`、ETF 写 `fund_adj`，**两表彻底隔离** | "不得再把 ETF 因子写入 adj_factor" |
+| `qfq_event_discovery.py:60-61` | 观察 | 股票 `ADJ_FACTOR_TABLE="adj_factor"`，ETF 读 `fund_adj` | 独立表预期 |
+| `qfq_reanchor_schema.py:602-610` | DDL | `adj_factor` / `fund_adj` 同结构两表 | 结构一致、资产隔离 |
+| `daemon.py:1330-1334` | 写前 | **drop** `raw_df["adj_factor"]`，避免与 `adj_factor_df` merge 列名冲突 | `adj_factor_x/_y` 冲突的历史修复 |
+
+⇒ **结论**：股票与 ETF 的因子**不是同一张表的两个过滤条件**，而是**两张独立表 + 两套写路径 + 一处分流函数**；`QuestDB.stock_daily.adj_factor` 列是**随行输入残留**，写前即被丢弃，**不是消费路径**。
+
+## v3.7-4 设计级缺口：锚表落点与因子落点**跨库错配**（须调度裁定）
+
+- sidecar 原设计：锚表建在 **QuestDB**（同库表，`qfq_anchor_sidecar`）；
+- 实测消费方：因子读 **`qfq_aux.db`（SQLite）** 的 `adj_factor`/`fund_adj`。
+
+⇒ **锚与因子分属两个存储、两个事务域**：QuestDB 的 WAL applied 语义**不能**约束 SQLite 侧的可见性，反之亦然。v3.6 关于 WAL 可见性窗口的结论，**只对「锚表建在 QuestDB 且消费方也读 QuestDB」这一形态成立**；若消费方读 SQLite，则须另行核 SQLite 的事务/可见性（含 WAL 模式、`synchronous` 设置），**本文件不预设结论**。
+
+**待裁定**：锚表落点应为 (甲) QuestDB 同库 / (乙) 随因子入 `qfq_aux.db` 同库 / (丙) 双写。**本轮不预设，也不实施。**
+
+## v3.7-5 census 效力边界（R27 第①点）
+
+- **batch01（9 表）**：只给「表级 count + min/max ts」。**不等于段清单，不构成 L2 回放执行输入。**
+- **batch02（2 张分钟表）**：给「段边界（单日，左闭右开）+ 段行数 + 段内 min/max」。
+  - `stock_minutes` **614 段**，行数之和 **581,303,979** == batch01 count（对账一致）；
+  - `etf_minutes` **450 段**，行数之和 **149,814,519** == batch01 count（对账一致）；
+  - 段边界抽样 3/3 `rows_match=True`。
+  - **仍未给**：每段首末键（ordered by sym 首末）、可回放判定、L2 执行可用性 ⇒ 显式标 `NOT_provided`，不冒充。
+- 时间列勘误：分钟表指定时间列为 **`trade_time`**，非 `ts`（上一版脚本按 `ts` 查得 400 Invalid column，已改动态探测）。
+
+## v3.7-6 云端取证口径（R27 第⑦点）
+
+- **不使用 `curl -k` / `--insecure` 绕过证书**。
+- 取证依据＝**仓库内已批准信任配置**：`config/profiles/mcp_only/sources_config.json` 中 `"tls_verify": false`（MCP 通道既有配置，非本轮引入、非本轮修改）。
+- 如实标注：该配置意味着**通道不校验服务端证书**，属**既存安全事实**，须与「已批准」状态一并向调度呈报；本轮**未改**该配置。
+- **状态**：本轮**未完成**云端端点探活（未发出请求）；`tls_verify=false` 是配置事实，**未据此上升为"云端已连通"**。

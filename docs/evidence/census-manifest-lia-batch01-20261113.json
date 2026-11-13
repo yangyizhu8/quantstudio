@@ -202,5 +202,13 @@
     "probed": 9,
     "failed": 0,
     "wal_not_applied": []
-  }
+  },
+  "effects_boundary": "本件仅为表级统计（count + min/max ts）。按 R27 判定：9 表统计不等于段清单，不构成 L2 回放执行输入。段级清单见 census-manifest-lia-batch02-20261113.json（仅 stock_minutes/etf_minutes）。",
+  "NOT_provided": [
+    "段边界",
+    "首末键",
+    "可回放判定",
+    "L2执行可用性"
+  ],
+  "r27_note": "R27 采信本件为节点实测回执，同时明确不得当作段清单或 L2 可执行输入。"
 }
