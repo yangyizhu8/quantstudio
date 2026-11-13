@@ -1,0 +1,107 @@
+{
+  "frozen_at": "20261113",
+  "deploy_profile": "daily_eod_1450",
+  "python": "3.11.9",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "inputs": {
+    "CANSLIM突破成长选股策略": {
+      "path": "quantstudio/backtest/strategies/CANSLIM突破成长选股策略.py",
+      "sha256": "53262acd2db3d47e3b37e9036c5b1a32e47f9dc347c6a9d674923f2df11891bf"
+    },
+    "fall_reversal": {
+      "path": "quantstudio/backtest/strategies/fall_reversal_quantstudio.py",
+      "sha256": "190d68800d0d305c9a5f01b2a1b8fbacbd7d18809af29c1650d47ee4133e5c82"
+    },
+    "tech_etf_mvo_rotation": {
+      "path": "quantstudio/backtest/strategies/tech_etf_mvo_rotation_quantstudio.py",
+      "sha256": "2c1deaedf5b7d583edac67ebfc594a744366170d71a995af634c9c8014a7a147"
+    },
+    "vol_regime_mom_rev": {
+      "path": "quantstudio/backtest/strategies/vol_regime_mom_rev_quantstudio.py",
+      "sha256": "bb639da05625b8cb43e55dd92c3baaaae6cc78980da72b0f8a89e1e28861d18b"
+    },
+    "weekly_smallcap_growth_momentum_10": {
+      "path": "quantstudio/backtest/strategies/weekly_smallcap_growth_momentum_10_quantstudio.py",
+      "sha256": "3342a490b0abf958d57a172e44d9275175e16ee393864000bf2b15b666882166"
+    },
+    "周频小市值成长动量（三层止损）": {
+      "path": "quantstudio/backtest/strategies/周频小市值成长动量（三层止损）.py",
+      "sha256": "3e3bbdedc1a9bf6c0d239f52a5a61ede7529ce06fd696b05be990ea4ebe00b08"
+    }
+  },
+  "code": {
+    "quantstudio/strategy_compiler/source_import.py": "191e9f1e1ad860e5d6b397ce5e65938db332ff6890c810447592fc61563b8497",
+    "quantstudio/strategy_compiler/portability_rules.py": "84f591ee6f74f9fba990df6b72c1340645b1af5526a9c4adc563a55aa360f397",
+    "quantstudio/strategy_compiler/validators/validate_ptrade_portability.py": "ce6f8b7caadd7237add9b1178fd011ba255d6123d8a9415243c6ff64d1b087dd",
+    "quantstudio/ptrade_deploy/transformer.py": "a0c13e8b0171f0af4702cc8351388c4b6d447ef7b2a309510eacd259518ef443",
+    "quantstudio/ptrade_deploy/templates/isolation_template.py": "72dc820e9d0a67832c18f8cc2b717b0e6ad409bc45cb778c6130dfb8a0267fb2",
+    "quantstudio/ptrade_deploy/templates/persistence_template.py": "e7dd2929952c1fc108b2fb7c60d4b219a28cc3a0e76eb95b6c4c95f4d608d0b9"
+  },
+  "tests": {
+    "tests/test_api_portability_rules.py": "6b80e11f3798095e7bd04a0d943185dc5cfe3de920073ea340d5d1994f23bcd2",
+    "tests/test_isolation_phase1.py": "1a1877fc1699604ac768c74ab2a52462c9b38b9dcfc3c492136217a6d63a05fc",
+    "tests/test_deploy_quickmode.py": "c5962f701209e524e9e63ce78a69efa574ac40ebfb3c1bfd5340adc0be461893"
+  },
+  "verify": {
+    "scripts/verify_pd0020_c_probe_diff.py": "136916f7075f54068d996e5ecf966d7149acf446616ad082902a99d6ae55d408",
+    "scripts/verify_pd0020_multicfg.py": "9a7dc655792391acb6cf4b3176914da8995a0291c2a3024728b4952983fb7a7b",
+    "scripts/verify_pd0020_ast_stub.py": "719ef5f32506b936e64f16639f9e64b313ac53ee3ee2b4f02fc91501e7d5b392"
+  },
+  "config": {
+    "strategy_id": "tech_etf_mvo_rotation",
+    "profile": "daily_eod_1450",
+    "persistence_enabled": true,
+    "isolation_enabled": false,
+    "note": "六策略重生使用 CLI 默认 profile；本字段为 ⓒ/多配置核验所用配置"
+  },
+  "deps": {
+    "duckdb": "1.5.6",
+    "pandas": "2.3.3",
+    "numpy": "2.4.6",
+    "pytest": "8.4.2"
+  },
+  "products": {
+    "CANSLIM突破成长选股策略": {
+      "path": "output\\ptrade_export\\CANSLIM突破成长选股策略\\CANSLIM突破成长选股策略_ptrade.py",
+      "sha256": "f56f891a9fae72c4e91a3e7fe436d7d0ea2ab2db7b9671503d16256468dd5346",
+      "bytes": 186755,
+      "api_portability": "PASS",
+      "returncode": 1
+    },
+    "fall_reversal": {
+      "path": "output\\ptrade_export\\fall_reversal\\fall_reversal_ptrade.py",
+      "sha256": "d99f34f4075d216554ca27724ee369c24239a923a4302dc547ae8ed647eb83b1",
+      "bytes": 91276,
+      "api_portability": "PASS",
+      "returncode": 1
+    },
+    "tech_etf_mvo_rotation": {
+      "path": "output\\ptrade_export\\tech_etf_mvo_rotation\\tech_etf_mvo_rotation_ptrade.py",
+      "sha256": "291389b72bb7d11e2f387a0d32531271bc2384823a77080749bbfebbf1fd0e4e",
+      "bytes": 96541,
+      "api_portability": "PASS",
+      "returncode": 1
+    },
+    "vol_regime_mom_rev": {
+      "path": "output\\ptrade_export\\vol_regime_mom_rev\\vol_regime_mom_rev_ptrade.py",
+      "sha256": "6e4550c8ba9a7daf06c2319bd3ea72a5d988577c13b76a4f2acf6fe52bcfbe0e",
+      "bytes": 121920,
+      "api_portability": "PASS",
+      "returncode": 1
+    },
+    "weekly_smallcap_growth_momentum_10": {
+      "path": "output\\ptrade_export\\weekly_smallcap_growth_momentum_10\\weekly_smallcap_growth_momentum_10_ptrade.py",
+      "sha256": "d72555571b8d2c48618f224f0254b4753b81b98469b413ee12e55a499124eb80",
+      "bytes": 174425,
+      "api_portability": "PASS",
+      "returncode": 1
+    },
+    "周频小市值成长动量（三层止损）": {
+      "path": "output\\ptrade_export\\周频小市值成长动量（三层止损）\\周频小市值成长动量（三层止损）_ptrade.py",
+      "sha256": "53558eadccf5d3f43da0378376d05774700565b4a4f565b7f17a009c305e44b9",
+      "bytes": 185585,
+      "api_portability": "PASS",
+      "returncode": 1
+    }
+  }
+}
