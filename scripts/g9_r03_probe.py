@@ -182,6 +182,57 @@ def _norm8(s: str) -> str:
     return raw[:8]
 
 
+def cal_dates_between(con, cal, lo: str, hi: str, cap: int = 60):
+    """返回 (dates, note)。dates = 区间内**实际开市日**列表（北京日期 str），最多 cap 条。
+
+    与 cal_count_between 同口径，但给出**逐日明细**，供「附实际中间日期」要求
+    （2026-11-13 R3 指示）。计数不可解释、覆盖不足、形态未确认时返回 (None, note)。
+    """
+    if not cal.get("ok"):
+        return None, f"日历不可用（{cal.get('why') or '空表'}）"
+    dc, fc, form = cal["date_col"], cal["flag_col"], cal["form"]
+    cmin, cmax = _norm8(cal["min"]), _norm8(cal["max"])
+    lo8, hi8 = _norm8(lo), _norm8(hi)
+    if not (cmin <= lo8 and hi8 <= cmax):
+        return None, f"日历覆盖不足（{cal['min']}~{cal['max']} 不含 {lo}~{hi}）"
+    if form == "int_epoch_ms":
+        lo_v, hi_v = bj_zero_ms(lo), bj_zero_ms(hi)
+    elif form == "int_yyyymmdd":
+        lo_v, hi_v = int(lo8), int(hi8)
+    elif form == "str_dash":
+        lo_v, hi_v = lo, hi
+    elif form == "str_compact":
+        lo_v, hi_v = lo8, hi8
+    elif form == "date_type":
+        lo_v, hi_v = lo, hi
+    else:
+        return None, f"日期形态未确认（{form}）"
+    where = f"{dc} > ? AND {dc} < ?"
+    sel = f"SELECT {dc} FROM trade_calendar WHERE {where}"
+    params = [lo_v, hi_v]
+    if fc and cal.get("flag_vocab"):
+        vocab = [str(v) for v in cal["flag_vocab"]]
+        if set(vocab) <= {"0", "1", "True", "False", "true", "false"}:
+            opens = [v for v in cal["flag_vocab"] if str(v).lower() in ("1", "true")]
+            if opens:
+                ph = ",".join("?" for _ in opens)
+                sel += f" AND {fc} IN ({ph})"
+                params += opens
+    sel += f" ORDER BY {dc} LIMIT {cap}"
+    try:
+        rows = con.execute(sel, params).fetchall()
+    except Exception as e:
+        return None, f"查询失败 {type(e).__name__}"
+    out = []
+    for (v,) in rows:
+        s = _norm8(v)
+        if len(s) == 8 and s.isdigit():
+            out.append(f"{s[:4]}-{s[4:6]}-{s[6:8]}")
+        else:
+            out.append(str(v))
+    return out, f"按 {fc} 过滤" if fc else "无标志"
+
+
 def cal_count_between(con, cal, lo: str, hi: str):
     """→ (cnt | None, note)。None = 不可判（未知）。"""
     if not cal.get("ok"):
@@ -256,7 +307,15 @@ def run_jia(con):
     verdicts = []
     for i, (lo, hi, gap) in enumerate(cand, 1):
         log(f"\n  ── 断点 {i}: {lo} → {hi}（间隔 {gap} 天，仅标记）")
+        lo_ms_v, hi_ms_v = bj_zero_ms(lo), bj_zero_ms(hi)
+        log(f"     epoch: lo={lo_ms_v}  hi={hi_ms_v}")
         cnt, note = cal_count_between(con, cal, lo, hi)
+        dates, dnote = cal_dates_between(con, cal, lo, hi)
+        if dates is not None:
+            shown = dates if len(dates) <= 20 else (dates[:10] + ["…"] + dates[-5:])
+            log(f"     实际中间开市日({len(dates)}{'≥' if len(dates) >= 60 else ''}): {shown}")
+        else:
+            log(f"     实际中间开市日: 不可得（{dnote}）")
         if cnt is None:
             v = "未知"
             log(f"     S1/S2 ⇒ **未知**（{note}）")
