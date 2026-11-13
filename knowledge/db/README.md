@@ -14,7 +14,7 @@
 
 ## 2. Schema（六必填字段，同 qd/pd）
 
-`symptom / root_cause / fix_target / evidence / fixture / trigger`（trigger 两段式「复现条件；问法：<口头问法>」）。
+`symptom / root_cause / fix_target / evidence / fixture / trigger`（trigger **约定**两段式「复现条件；问法：<口头问法>」——判据已实现于 `kb_hook._trigger_errors`，但族档位 `placeholder_gate` 现为 `off`，**尚未构成机检强制**）。
 
 ### 2.1 fix_layer 五枚举（独立于 QD 六枚举/PD 九枚举；多落点 `+` 连接）
 

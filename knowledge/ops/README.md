@@ -31,7 +31,7 @@
 
 `symptom / root_cause / fix_target / evidence / fixture / trigger`
 
-- `trigger` 两段式：`<复现条件>；问法：<口头问法>`
+- `trigger` 两段式：`<复现条件>；问法：<口头问法>`（**约定**；机检判据已实现但当前档位 `off`，见 §3.1）
 - 六字段任一缺失 ⇒ `kb_hook.validate_record` 不过 ⇒ **不落盘**（机检门）
 
 ### 2.1 fix_layer 五枚举（独立于 QD 六 / PD 九 / DB 五；多落点 `+` 连接）
@@ -98,7 +98,12 @@ closed_round: null
 | `feedback.{contract_row,gate_rule,template_patch}` | **✅ 机检强制** | **三项至少一项非空**（全 null ⇒ `feedback 至少一项非空` 拦截）。回哺三通路登记 |
 | `status` | **✅ 机检强制** | 必须 ∈ `{open, closed}`（缺失/非法值 ⇒ `status 非法` 拦截） |
 | `closed_round` | 建议 | 闭环轮次（`status: closed` 时填） |
-| `trigger` 两段式 | ✅ | `<复现条件>；问法：<口头问法>`（问法供 N8 开案命中） |
+| `trigger` 两段式 | **⚠️ 能力已实现·当前未启用** | `<复现条件>；问法：<口头问法>`（问法供 N8 开案命中）。判据在 `scripts/kb_hook.py::_trigger_errors`（T1–T5，含前半非空）；**是否阻断由族 `placeholder_gate` 决定，现四族均为 `off`** ⇒ 现阶段**只是约定，不构成机检强制** |
+
+> **已知盲区（2026-11-13 标注，勿按旧读法推定）**：上表 `feedback` 的「至少一项非空」**只判非空**——
+> 填 `"待补充：…"` 这类占位串同样通过（`OPS-2026-0005` 建条时实测复现：机检 5/5 PASS 而正文三节全为待补充）。
+> 占位检测能力已实现（`placeholder_report`，含 fake/mention 位置判别），但**四族档位全为 `off`，不生效**；
+> 启用须另行审批（见 `docs/handoff/kb-placeholder-gate-design-20261112.md` §3.3/§3.4）。
 
 > **上表「机检强制」三项来自 2026-11-12 负向对照实测**（非读码推断）：注入缺失字段的临时条目
 > `OPS-2026-9999.md` 被 `kb_hook --strict` 精确拦下并报 7 项 —— `root_cause 为空; evidence 为空;
@@ -138,3 +143,4 @@ closed_round: null
 
 - **2026-11-12 立族（草案）**：总调度批六十六 A-4＝甲；`kb-info.yaml` families 增 `id: ops`（dir/glob/id_pattern/五枚举/multi=true/38 判层关键词）；本 README 为族 schema 正本。**状态：待 ⑥ 复核族 schema 后落定**。
 - **2026-11-12 §3 模板自纠**：初稿把条目模板写成「body 六要素 + ## 详情」，经实测核对正本格式为 **YAML front-matter**（db 43/43、qd 22/22、pd 22/22、ops 1/1 全族一致；`kb_hook` 经 `kb_preflight` 从 front-matter 解析）⇒ 已改正，并补入既有通用字段 `recurrence / feedback{contract_row,gate_rule,template_patch} / status / closed_round`（此前遗漏）。同时确认 ⑫ 落的 `OPS-2026-0001` 格式正确、六必填齐 ⇒ `entry_glob` 命中由 0 变 **1**。
+- **2026-11-13 状态澄清（R3 第④条）**：① §3.1 表 `trigger` 两段式 由「✅」改为「**⚠️ 能力已实现·当前未启用**」——判据已落码（`_trigger_errors` T1–T5），但四族 `placeholder_gate` 均为 `"off"`，**不构成机检强制**；② §2 的 trigger 约定同样加注；③ 新增「已知盲区」段：`feedback` 只判非空、占位串可过（`OPS-2026-0005` 建条实测复现：机检 PASS 而正文三节全占位）——**不得据机检通过推定内容完成**；④ 族 schema 与 `kb-info.yaml` 一致，本 README 仍是正本。

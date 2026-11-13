@@ -208,14 +208,28 @@ def placeholder_report(rel, rec, fam):
     if level == "off":
         return None
     stage = entry_stage(rel, fam)
-    rep = {"level": level, "stage": stage, "fake": [], "mention": [], "notes": []}
+    rep = {"level": level, "stage": stage, "fake": [], "mention": [], "notes": [],
+           "diagnostics": []}
     if stage == "draft":
         # 草稿隔离区：允许占位，只标记（不产生 fake/mention）
         rep["notes"].append("DRAFT_ALLOWED")
         return rep
-    if ".draft." in os.path.basename(rel):
-        # 族目录内用 .draft. 命名企图降级：判据不认，仅提示（防"改名跳门"）
+    base = os.path.basename(rel)
+    if ".draft." in base:
+        # 族目录内的 .draft. 命名：entry_glob 命中（如 OPS-*.md）且 id_pattern 按**前缀**匹配
+        # ⇒ 同一 id 出现两个文件（OPS-2026-0001.md 与 OPS-2026-0001.draft.md）。
+        # 判据不认降级（防"改名跳门"），但**必须显式诊断、不得默默跳过**（2026-11-13 R3）：
         rep["notes"].append("DRAFT_NAME_IGNORED_ON_ENTRY_PATH")
+        mm = re.match(fam["id_pattern"], base) if fam.get("id_pattern") else None
+        rep["diagnostics"].append({
+            "code": "DRAFT_NAME_ON_ENTRY_PATH",
+            "entry_glob_matched": bool(fnmatch.fnmatch(rel, fam.get("entry_glob") or "")),
+            "id_pattern": fam.get("id_pattern"),
+            "id_match_mode": "prefix",          # re.match 非全匹配 ⇒ 后缀不影响 id 判定
+            "id_value": mm.group(0) if mm else None,
+            "duplicate_of": base.replace(".draft.", "."),
+            "action": "仍按正式 entry 判（不跳门）；同 id 双文件须人工处置（移出族目录或删除）",
+        })
     for err in _trigger_errors(rec.get("trigger")):
         rep["fake"].append(err)
     for err in _feedback_placeholder_errors(rec, fam):
@@ -345,6 +359,15 @@ def main(argv=None):
                 len(res["bad"]), len(res["skipped"])))
         for s in res["skipped"]:
             print("  [skip] %s : %s" % (s["file"], s["reason"]))
+        for p in res.get("placeholder") or []:
+            print("  [placeholder:%s] %s : stage=%s fake=%d mention=%s notes=%s" % (
+                p["level"], p["file"], p["stage"], len(p["fake"]),
+                p["mention"] or "[]", p["notes"] or "[]"))
+            for e in p["fake"]:
+                print("      - %s" % e)
+            for d in p.get("diagnostics") or []:
+                print("      ! %s: id=%s(%s) duplicate_of=%s → %s" % (
+                    d["code"], d["id_value"], d["id_match_mode"], d["duplicate_of"], d["action"]))
         for b in res["bad"]:
             print("  %s [%s] : %s" % (b["file"], b["family"], "; ".join(b["errors"])))
     if a.strict and res["bad"]:

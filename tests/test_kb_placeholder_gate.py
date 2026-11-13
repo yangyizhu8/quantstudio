@@ -110,6 +110,22 @@ def test_entry_stage_draft_name_inside_family_dir_is_still_entry():
     assert rep["fake"], "族目录内改名不得跳门"
 
 
+def test_draft_name_conflict_diagnostic_not_silently_skipped():
+    """R3 第④条：.draft. 命名在族目录内时，entry_glob 命中 + id_pattern 前缀匹配
+    ⇒ 同 id 双文件，必须显式诊断（不得默默跳过）。"""
+    rel = "knowledge/ops/OPS-2026-0001.draft.md"
+    rep = kb_hook.placeholder_report(rel, rec(trigger="待补充：x"), fam("strict"))
+    assert rep["diagnostics"], "必须给出冲突诊断"
+    d = rep["diagnostics"][0]
+    assert d["code"] == "DRAFT_NAME_ON_ENTRY_PATH"
+    assert d["entry_glob_matched"] is True
+    assert d["id_match_mode"] == "prefix"
+    assert d["id_value"] == "OPS-2026-0001"
+    assert d["duplicate_of"] == "OPS-2026-0001.md"
+    assert "人工处置" in d["action"]
+
+
+
 def test_draft_outside_family_dir_is_draft():
     for rel in ("docs/drafts/OPS-2026-0001.md", "tmp/OPS-2026-0001.md"):
         assert kb_hook.entry_stage(rel, fam("warn")) == "draft"
