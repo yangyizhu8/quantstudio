@@ -221,6 +221,22 @@ def _write_entry(root, name="OPS-2026-0001.md", trigger="条件成立；问法�
     return "knowledge/ops/" + name
 
 
+def test_duplicate_id_affects_result(tmp_path):
+    """R4：同 id 双条必须**影响结果**（进 bad），不能只打印诊断后仍被下游当两个有效条目。"""
+    root, kb = _sandbox(tmp_path, "off")
+    rel1 = _write_entry(root, name="OPS-2026-0001.md")
+    rel2 = _write_entry(root, name="OPS-2026-0001.draft.md")
+    res = kb_hook.check_files(str(root), str(kb), [rel1, rel2])
+    files = {b["file"] for b in res["bad"]}
+    assert files == {rel1, rel2}, res["bad"]
+    assert all(any("duplicate_id" in e for e in b["errors"]) for b in res["bad"])
+    # 重复检测独立于占位门：off 档不产出 placeholder 报告，但仍须拦下重复
+    assert "placeholder" not in res
+    rc = kb_hook.main(["--repo-root", str(root), "--kb-info", str(kb),
+                       "--files", rel1, rel2, "--json", "--strict"])
+    assert rc == 1, "--strict 下同 id 重复必须非零退出"
+
+
 def test_check_files_off_no_placeholder_key(tmp_path):
     root, kb = _sandbox(tmp_path, "off")
     rel = _write_entry(root, trigger="待补充：最小复现触发条件")

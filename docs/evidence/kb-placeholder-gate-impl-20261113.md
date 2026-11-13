@@ -55,14 +55,30 @@
 做法：`tmp_path` 内造 `kb-info.yaml` + 条目（`tests/test_kb_placeholder_gate.py::_sandbox` 已如此实现），需要真库样本时只**读**文件内容、在 fixture 里复刻，不改真库。
 本次真库改动是最后一次；后续若必须验证真库响应，走"复制到 tmp 再改副本"。
 
-## 5 `.draft.` 路由冲突诊断（R3 第④条）
+## 5 `.draft.` 路由冲突诊断（R3 第④条 / R4 追加：必须影响结果）
 
 冲突本质：族 `entry_glob`（`OPS-*.md`）会命中 `OPS-2026-0001.draft.md`，而 `id_pattern`（`OPS-\d{4}-\d{4}`）经 `re.match` 是**前缀匹配** ⇒ 该文件与 `OPS-2026-0001.md` **同 id**。
 
-处置：
-- 判据上**不认降级**（族目录内 `.draft.` 仍判 `entry`，防"改名跳门"）；
-- **但不再"仅记一条 note"**：新增 `diagnostics` 结构化诊断 `DRAFT_NAME_ON_ENTRY_PATH`，含 `entry_glob_matched` / `id_pattern` / `id_match_mode="prefix"` / `id_value` / `duplicate_of` / `action`（人工处置指引）；
-- CLI 文本输出新增 `[placeholder:…]` 段并打印 `! <code>: …` 诊断行（warn/strict 档可见）。
+### 5.1 只打印不够（R4 指出）
+
+若只在 `placeholder` 报告里留 `diagnostics`，`kb_hook` 仍会把两个文件都当 `checked` 且各自 `validate_record` 通过（`bad=[]`）⇒ 下游（R4 沉淀计数 / 检索 / 任何按 id 取条目的消费者）**会把同一 id 当两个有效条目消费**。这是**结果污染**，不是提示问题。
+
+### 5.2 处置（已实现，与族档位无关）
+
+| 层 | 行为 |
+|---|---|
+| **判据** | 族目录内 `.draft.` **不认降级**（`entry_stage` 判 `entry`，防"改名跳门"） |
+| **诊断** | `placeholder` 报告出 `diagnostics: DRAFT_NAME_ON_ENTRY_PATH`（`entry_glob_matched` / `id_match_mode="prefix"` / `id_value` / `duplicate_of` / `action`）；CLI 文本打印 `! <code>: …` 行 |
+| **结果（新增）** | `check_files` 跨文件收集 `id → [rel…]`，**同 id ≥2 ⇒ 每个涉事文件都并入 `bad`**，错误文案 `duplicate_id：id 'OPS-2026-0001' 另有 <other> —— 同 id 多条会被下游当多个有效条目消费，须人工处置`；`--strict` 下退出码 1 |
+| **轴独立** | 该检测**不受 `placeholder_gate` 档位影响**（off 档同样生效）——它属结构完整性，与"占位"是两条轴 |
+
+### 5.3 纯增益核验
+
+现库实测（2026-11-13）：**93 条 entry，`unique_ids=93`、`duplicated=0`、族目录内无 `.draft.` 文件** ⇒ 新增检测对今日任何族的 verdict **无影响**（全库仍 `bad=0`）；只有真的出现同 id 双条时才会红——即"开始报告真相"而非"制造噪声"。
+
+### 5.4 用例
+
+`tests/test_kb_placeholder_gate.py::test_duplicate_id_affects_result`（off 档下造 `OPS-2026-0001.md` + `OPS-2026-0001.draft.md` ⇒ 两条都进 `bad` 含 `duplicate_id`、无 `placeholder` 键、`--strict` 退出码 1）＋ `test_draft_name_conflict_diagnostic_not_silently_skipped`（诊断字段完整）。
 
 ## 6 OPS-2026-0005 实质复核（R3 第⑤条）
 

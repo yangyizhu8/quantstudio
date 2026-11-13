@@ -301,6 +301,7 @@ def check_files(repo_root, kb_info, files):
     root = pathlib.Path(repo_root)
     fams, note = _load_families(pathlib.Path(root) / kb_info if not os.path.isabs(kb_info) else kb_info)
     out = {"total": 0, "checked": 0, "bad": [], "skipped": [], "families_used": [], "note": note}
+    id_seen = {}   # id -> [(rel, family)]；用于同 id 重复检测（2026-11-13 R4）
     expanded, glob_misses = _expand_files(root, files)
     out["total"] = len(expanded) + len(glob_misses)
     for pat in glob_misses:
@@ -328,6 +329,9 @@ def check_files(repo_root, kb_info, files):
             out["bad"].append({"file": rel, "family": fam.get("id"), "errors": ["parse_fail: %s" % e]})
             continue
         errs = validate_record(rec, fam)
+        rid = str(rec.get("id") or "").strip()
+        if rid:
+            id_seen.setdefault(rid, []).append((rel, fam.get("id")))
         # 占位门（新增检测型）：仅当族档位 ≠ off 时才产出；严格档把 fake 并入 errors。
         rep = placeholder_report(rel, rec, fam)
         if rep is not None:
@@ -336,6 +340,22 @@ def check_files(repo_root, kb_info, files):
                 errs = errs + ["占位检测(strict)：%s" % "; ".join(rep["fake"])]
         if errs:
             out["bad"].append({"file": rel, "family": fam.get("id"), "errors": errs})
+    # ── 同 id 重复：**必须影响结果**，不能只打印（2026-11-13 R4）────────────
+    # 理由：族目录内 `X.draft.md` 与 `X.md` 的 id_pattern 前缀匹配会产生**同一 id 两条**；
+    # 若只在 placeholder 报告里留诊断，下游（R4 计数/检索/kb_search）仍会把它们当两个有效条目消费。
+    # 故此处与族档位**无关**：同 id 多条一律计入 bad（属结构完整性错误，非占位判定）。
+    for rid, pairs in id_seen.items():
+        if len(pairs) < 2:
+            continue
+        for rel, fam_id in pairs:
+            others = [r for r, _f in pairs if r != rel]
+            msg = ("duplicate_id：id %r 另有 %s —— 同 id 多条会被下游当多个有效条目消费，"
+                   "须人工处置（移出族目录或删除其一）" % (rid, "、".join(others)))
+            hit = next((b for b in out["bad"] if b["file"] == rel), None)
+            if hit is not None:
+                hit["errors"].append(msg)
+            else:
+                out["bad"].append({"file": rel, "family": fam_id, "errors": [msg]})
     return out
 
 

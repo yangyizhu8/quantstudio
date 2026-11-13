@@ -103,7 +103,12 @@ closed_round: null
 > **已知盲区（2026-11-13 标注，勿按旧读法推定）**：上表 `feedback` 的「至少一项非空」**只判非空**——
 > 填 `"待补充：…"` 这类占位串同样通过（`OPS-2026-0005` 建条时实测复现：机检 5/5 PASS 而正文三节全为待补充）。
 > 占位检测能力已实现（`placeholder_report`，含 fake/mention 位置判别），但**四族档位全为 `off`，不生效**；
-> 启用须另行审批（见 `docs/handoff/kb-placeholder-gate-design-20261112.md` §3.3/§3.4）。
+> 启用须另行审批（见 `docs/handoff/kb-placeholder-gate-design-20261112.md` §3.3/§3.4；ops 最小激活计划见
+> `docs/handoff/ops-warn-activation-plan-20261113.md`）。
+>
+> **同 id 重复（与档位无关，始终生效）**：族目录内若同时存在 `X.md` 与 `X.draft.md`，因 `id_pattern` 为**前缀匹配**，
+> 两者同 id ⇒ `kb_hook` 会把**两个文件都并入 `bad`**（`duplicate_id`），而非只打印提示——避免下游把同一 id
+> 当两个有效条目消费。`--strict` 下退出码 1。
 
 > **上表「机检强制」三项来自 2026-11-12 负向对照实测**（非读码推断）：注入缺失字段的临时条目
 > `OPS-2026-9999.md` 被 `kb_hook --strict` 精确拦下并报 7 项 —— `root_cause 为空; evidence 为空;
