@@ -351,6 +351,66 @@ G0_V4_END
 - 不是 QMT 客户端进程 ⇒ 与 `python36.dll` 环境无关
 - 未覆盖人为注入的 ERR 分支（本次暴露的 ERR 是**意外**发生，非主动注入验证）
 
+#### 3.5.2 v2.1 离线验证证据（2026-11-13，已准离线范围：不进客户端、不安装）
+
+**环境**：本机 Python 3.11.9 / pandas 2.3.3 / numpy 2.4.6，在**隔离临时副本**中运行；
+未触碰 QMT 宿主、未改宿主 `sys.modules` / `sys.path`；用完即删。
+
+**① N2 —— ERR 注入验证（三项判据全达成）**
+
+```text
+注入行：_p(lambda: (_ for _ in ()).throw(RuntimeError('INJECTED')), 'G0_INJECT_TEST')
+输出：
+  G0_V 4
+  G0_INJECT_TEST ERR RuntimeError INJECTED     ← (a) 标签正确  (b) 类型正确
+  G0_INJECT_AFTER                              ← (c) ★后续项继续★
+  G0_SYS_VERSION ...（其后 25 项全部正常输出，直至 G0_V4_END）
+  [INJECT_EXIT] 0
+```
+
+**② N4 —— `.py` 包装不冒充原生扩展（修正生效并暴露真实情况）**
+
+```text
+G0_ABI_NATIVE [('numpy_native',     'PY_WRAPPER', '...\numpy\core\_multiarray_umath.py'),
+               ('numpy_native_pyd', []),
+               ('pandas_tslib',     'EXT',        '...\pandas\_libs\tslib.cp311-win_amd64.pyd'),
+               ('pandas_tslib_pyd', ['algos.cp311-win_amd64.pyd', 'arrays.cp311-win_amd64.pyd',
+                                     'byteswap.cp311-win_amd64.pyd'])]
+```
+
+**②审 N4 的批评完全正确**：v2.0 曾把 `numpy.core._multiarray_umath.__file__` 当原生扩展，
+实测为 **`PY_WRAPPER`**（`.py` 包装），且该目录**无 `.pyd`**（`numpy_native_pyd=[]`，如实反映）。
+v2.1 已标注 kind 并额外扫同目录 `.pyd` 记录 cp 标签——`pandas_tslib` 正确识别为 `EXT`，
+同目录 `.pyd` 均为 `cp311-win_amd64`，与宿主一致。
+
+**③ N3 —— 预期缺 API 与意外 ERR 已可机读区分**
+
+```text
+G0_API_01 ('pd_call_append', "ABSENT:AttributeError 'DataFrame' object has no attribute 'append'")
+G0_API_03 ('pd_call_ix',     "ABSENT:AttributeError 'DataFrame' object has no attribute 'ix'")
+G0_API_05 ('pd_call_Panel',  "ABSENT:AttributeError module 'pandas' has no attribute 'Panel'")
+G0_API_07 ('np_call_float_', 'ABSENT:AttributeError `np.float_` was removed in the NumPy 2.0 release...')
+G0_API_09 ('np_call_bool8',  "ABSENT:AttributeError module 'numpy' has no attribute 'bool8'")
+G0_API_11 ('np_call_NaN',    'ABSENT:AttributeError `np.NaN` was removed in the NumPy 2.0 release...')
+```
+
+⇒ 六项均为 **`ABSENT`（能力读数）** 而非 `ERR`，按 §5.3 可计入 S2 判定；
+若出现 `ERR:TypeError` 之类**意外**异常则不得判 PASS —— 该区分已可机读。
+
+**④ N3 —— Panel 已补最小实例化调用**：现为 `pd.Panel({'x': pd.DataFrame({'a': [1]})})`
+的**实际构造**尝试，不再是仅取属性。本机结果 `ABSENT:AttributeError module 'pandas' has no attribute 'Panel'`
+说明属性层即不存在，符合"收窄声明"要求。
+
+**⑤ N1 —— ★WARN 分支未获实证（如实申报）**
+
+本机 pandas 2.3.3 下六个旧 API **直接 `ABSENT`、不产生 `FutureWarning`**
+⇒ `_call()` 中「`OK[WARN:FutureWarning] val=...`」这条**分支未被触发验证**。
+**这是如实申报项，不是已达成项**。须在存在该 API 且会发 warning 的环境（如 pandas 0.22）运行，
+或在隔离副本中注入一个会发 warning 的函数（与 N2 同法）才能验证。已列为 §11 待确认项。
+
+**⑥ 仍未计入任何验收（M2 纪律延续）**：本机 3.11.9 ≠ 3.12、非 QMT 进程
+⇒ 上述仅为**探针自身有效性的离线验证**，不计入"3.6.8 基线实跑"，不计入任何 3.12 兼容性判据。
+
 
 ### 3.6 退出状态留证规范（**M8**）
 
