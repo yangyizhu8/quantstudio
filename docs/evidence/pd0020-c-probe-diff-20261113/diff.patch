@@ -1,0 +1,18 @@
+--- REF
++++ CUR
+@@ -166,6 +166,15 @@
+             pickle.dump(g.state, _pf, -1)
+     except Exception as _pe:
+         log.warning('PTRADE-DEPLOY 状态落盘失败: %s' % _pe)
++    try:
++        _qs_probe_path = _PD_NOTEBOOK + 'QS_PERSIST_PROBE.txt'
++        with open(_qs_probe_path, 'w') as _qs_pf:
++            _qs_pf.write('probe-ok')
++        with open(_qs_probe_path, 'r') as _qs_pf:
++            _qs_back = _qs_pf.read()
++        log.info('QS_PERSIST_PROBE write_read_back=%s path_len=%d' % (_qs_back == 'probe-ok', len(_PD_NOTEBOOK)))
++    except Exception as _qs_pe:
++        log.warning('QS_PERSIST_PROBE failed=%s: %s' % (type(_qs_pe).__name__, _qs_pe))
+ # PTRADE-DEPLOY:PERSIST END
+ # PTRADE-DEPLOY:PERSIST BEGIN
+ try:
