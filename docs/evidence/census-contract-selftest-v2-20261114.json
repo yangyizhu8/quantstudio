@@ -1,0 +1,832 @@
+{
+  "validator": "census-batch-consistency-contract-v2",
+  "validator_version": "2.0.0",
+  "supersedes": "census-contract-validator-20261114.py (v1, 保留不覆盖)",
+  "generated_at_local": "2026-11-14T16:19:54+08:00",
+  "offline_guarantees": {
+    "added_since_baseline": [],
+    "absolutely_present_io": [],
+    "network_free": true,
+    "db_connection_attempted": false,
+    "production_write": false
+  },
+  "r32_fixes": [
+    "证据绑定判定：不再接受调用方 version_bound 布尔自证",
+    "空段/缺段/未取证三分：rows>0 不再作唯一完整判据",
+    "coverage 与 freshness 分离：12h 不作覆盖保证"
+  ],
+  "state_tests": [
+    {
+      "id": "T1-caller-claims-true-no-evidence",
+      "result": {
+        "changed_fields": {},
+        "premises": {
+          "P1": {
+            "premise": "P1",
+            "status": "unverified",
+            "reasons": [
+              "未提供 P1 证据对象"
+            ],
+            "evidence_used": []
+          },
+          "P2": {
+            "premise": "P2",
+            "status": "unverified",
+            "reasons": [
+              "未提供 P2 证据对象"
+            ],
+            "limitations": [],
+            "evidence_used": []
+          },
+          "P3": {
+            "premise": "P3",
+            "status": "unverified",
+            "reasons": [
+              "未提供 P3 证据对象"
+            ],
+            "evidence_used": []
+          },
+          "identity": {
+            "premise": "identity",
+            "status": "unverified",
+            "reasons": [
+              "未提供身份绑定证据"
+            ]
+          }
+        },
+        "snapshot_strength": "prepost_only",
+        "state": "provisional",
+        "stale_reason": null,
+        "blocking": [
+          "P1:unverified",
+          "P2:unverified",
+          "P3:unverified",
+          "identity:unverified"
+        ],
+        "notes": [
+          "缺证保持 provisional：阻塞项 P1:unverified, P2:unverified, P3:unverified, identity:unverified"
+        ],
+        "ignored_caller_claims": [
+          "调用方传入 version_bound=True —— 已忽略：版本绑定须由证据核验得出，不接受被审方自证（R32 指认 v1 缺陷）"
+        ]
+      },
+      "expect_state": "provisional",
+      "why": "R32 核心：布尔自证必须被拒；无证据即 provisional"
+    },
+    {
+      "id": "T2-forged-empty-evidence",
+      "result": {
+        "changed_fields": {},
+        "premises": {
+          "P1": {
+            "premise": "P1",
+            "status": "unverified",
+            "reasons": [
+              "未提供 P1 证据对象"
+            ],
+            "evidence_used": []
+          },
+          "P2": {
+            "premise": "P2",
+            "status": "unverified",
+            "reasons": [
+              "未提供 P2 证据对象"
+            ],
+            "limitations": [],
+            "evidence_used": []
+          },
+          "P3": {
+            "premise": "P3",
+            "status": "unverified",
+            "reasons": [
+              "未提供 P3 证据对象"
+            ],
+            "evidence_used": []
+          },
+          "identity": {
+            "premise": "identity",
+            "status": "unverified",
+            "reasons": [
+              "未提供身份绑定证据"
+            ]
+          }
+        },
+        "snapshot_strength": "prepost_only",
+        "state": "provisional",
+        "stale_reason": null,
+        "blocking": [
+          "P1:unverified",
+          "P2:unverified",
+          "P3:unverified",
+          "identity:unverified"
+        ],
+        "notes": [
+          "缺证保持 provisional：阻塞项 P1:unverified, P2:unverified, P3:unverified, identity:unverified"
+        ],
+        "ignored_caller_claims": []
+      },
+      "expect_state": "provisional",
+      "why": "空证据对象 = 缺证"
+    },
+    {
+      "id": "T3-p2-restart-only-no-powerloss",
+      "result": {
+        "changed_fields": {},
+        "premises": {
+          "P1": {
+            "premise": "P1",
+            "status": "verified",
+            "reasons": [],
+            "evidence_used": [
+              "write_paths 枚举 2 条，均带 wal 标记与来源",
+              "表级：WAL=116 非WAL=19"
+            ]
+          },
+          "P2": {
+            "premise": "P2",
+            "status": "partial",
+            "reasons": [
+              "实验仅覆盖进程边界，未覆盖断电边界（status 限 partial）"
+            ],
+            "limitations": [
+              "进程重启/正常关闭实验**不覆盖**断电、文件系统缓存丢失、磁盘/RAID控制器写缓存、虚拟化层回滚 —— 不得据此宣称断电下不回滚"
+            ],
+            "evidence_used": [
+              "隔离实例实验：exp-restart-only 观测到单调不复用"
+            ]
+          },
+          "P3": {
+            "premise": "P3",
+            "status": "verified",
+            "reasons": [],
+            "evidence_used": [
+              "版本钉定接口：synthetic://pin-api"
+            ]
+          },
+          "identity": {
+            "premise": "identity",
+            "status": "verified",
+            "reasons": []
+          }
+        },
+        "snapshot_strength": "prepost_only",
+        "state": "provisional",
+        "stale_reason": null,
+        "blocking": [
+          "P2:partial"
+        ],
+        "notes": [
+          "缺证保持 provisional：阻塞项 P2:partial"
+        ],
+        "ignored_caller_claims": []
+      },
+      "expect_state": "provisional",
+      "why": "进程重启不证明断电不回滚 ⇒ P2 限 partial ⇒ 不得 consistent"
+    },
+    {
+      "id": "T4-p3-no-pin-capability",
+      "result": {
+        "changed_fields": {},
+        "premises": {
+          "P1": {
+            "premise": "P1",
+            "status": "verified",
+            "reasons": [],
+            "evidence_used": [
+              "write_paths 枚举 2 条，均带 wal 标记与来源",
+              "表级：WAL=116 非WAL=19"
+            ]
+          },
+          "P2": {
+            "premise": "P2",
+            "status": "verified",
+            "reasons": [],
+            "limitations": [
+              "进程重启/正常关闭实验**不覆盖**断电、文件系统缓存丢失、磁盘/RAID控制器写缓存、虚拟化层回滚 —— 不得据此宣称断电下不回滚"
+            ],
+            "evidence_used": [
+              "文档明文：synthetic://doc",
+              "隔离实例实验：synthetic-exp 观测到单调不复用"
+            ]
+          },
+          "P3": {
+            "premise": "P3",
+            "status": "refuted",
+            "reasons": [
+              "读接口无版本钉定能力（read_pin_capability='none'） ⇒ 采样/查询/落盘无法绑定同一版本"
+            ],
+            "evidence_used": []
+          },
+          "identity": {
+            "premise": "identity",
+            "status": "verified",
+            "reasons": []
+          }
+        },
+        "snapshot_strength": "prepost_only",
+        "state": "provisional",
+        "stale_reason": null,
+        "blocking": [
+          "P3:refuted"
+        ],
+        "notes": [
+          "缺证保持 provisional：阻塞项 P3:refuted"
+        ],
+        "ignored_caller_claims": []
+      },
+      "expect_state": "provisional",
+      "why": "读接口无钉定 ⇒ refuted"
+    },
+    {
+      "id": "T5-premises-ok-segments-fail",
+      "result": {
+        "changed_fields": {},
+        "premises": {
+          "P1": {
+            "premise": "P1",
+            "status": "verified",
+            "reasons": [],
+            "evidence_used": [
+              "write_paths 枚举 2 条，均带 wal 标记与来源",
+              "表级：WAL=116 非WAL=19"
+            ]
+          },
+          "P2": {
+            "premise": "P2",
+            "status": "verified",
+            "reasons": [],
+            "limitations": [
+              "进程重启/正常关闭实验**不覆盖**断电、文件系统缓存丢失、磁盘/RAID控制器写缓存、虚拟化层回滚 —— 不得据此宣称断电下不回滚"
+            ],
+            "evidence_used": [
+              "文档明文：synthetic://doc",
+              "隔离实例实验：synthetic-exp 观测到单调不复用"
+            ]
+          },
+          "P3": {
+            "premise": "P3",
+            "status": "verified",
+            "reasons": [],
+            "evidence_used": [
+              "版本钉定接口：synthetic://pin-api"
+            ]
+          },
+          "identity": {
+            "premise": "identity",
+            "status": "verified",
+            "reasons": []
+          }
+        },
+        "snapshot_strength": "prepost_only",
+        "state": "provisional",
+        "stale_reason": null,
+        "blocking": [
+          "segments:failed"
+        ],
+        "notes": [
+          "缺证保持 provisional：阻塞项 segments:failed"
+        ],
+        "ignored_caller_claims": []
+      },
+      "expect_state": "provisional",
+      "why": "四前提齐备但五查未过 ⇒ 仍 provisional（段完整性是独立门）"
+    },
+    {
+      "id": "T6-full-evidence-and-complete",
+      "result": {
+        "changed_fields": {},
+        "premises": {
+          "P1": {
+            "premise": "P1",
+            "status": "verified",
+            "reasons": [],
+            "evidence_used": [
+              "write_paths 枚举 2 条，均带 wal 标记与来源",
+              "表级：WAL=116 非WAL=19"
+            ]
+          },
+          "P2": {
+            "premise": "P2",
+            "status": "verified",
+            "reasons": [],
+            "limitations": [
+              "进程重启/正常关闭实验**不覆盖**断电、文件系统缓存丢失、磁盘/RAID控制器写缓存、虚拟化层回滚 —— 不得据此宣称断电下不回滚"
+            ],
+            "evidence_used": [
+              "文档明文：synthetic://doc",
+              "隔离实例实验：synthetic-exp 观测到单调不复用"
+            ]
+          },
+          "P3": {
+            "premise": "P3",
+            "status": "verified",
+            "reasons": [],
+            "evidence_used": [
+              "版本钉定接口：synthetic://pin-api"
+            ]
+          },
+          "identity": {
+            "premise": "identity",
+            "status": "verified",
+            "reasons": []
+          }
+        },
+        "snapshot_strength": "version_bound",
+        "state": "consistent",
+        "stale_reason": null,
+        "blocking": [],
+        "notes": [
+          "四前提全 verified + 五查 complete ⇒ 可判 consistent（本夹具为机制验证）"
+        ],
+        "ignored_caller_claims": []
+      },
+      "expect_state": "consistent",
+      "why": "机制可被满足（合成为证），非空转；但真实取证仍未达成"
+    },
+    {
+      "id": "T7-age-exceeded",
+      "result": {
+        "changed_fields": {},
+        "premises": {
+          "P1": {
+            "premise": "P1",
+            "status": "verified",
+            "reasons": [],
+            "evidence_used": [
+              "write_paths 枚举 2 条，均带 wal 标记与来源",
+              "表级：WAL=116 非WAL=19"
+            ]
+          },
+          "P2": {
+            "premise": "P2",
+            "status": "verified",
+            "reasons": [],
+            "limitations": [
+              "进程重启/正常关闭实验**不覆盖**断电、文件系统缓存丢失、磁盘/RAID控制器写缓存、虚拟化层回滚 —— 不得据此宣称断电下不回滚"
+            ],
+            "evidence_used": [
+              "文档明文：synthetic://doc",
+              "隔离实例实验：synthetic-exp 观测到单调不复用"
+            ]
+          },
+          "P3": {
+            "premise": "P3",
+            "status": "verified",
+            "reasons": [],
+            "evidence_used": [
+              "版本钉定接口：synthetic://pin-api"
+            ]
+          },
+          "identity": {
+            "premise": "identity",
+            "status": "verified",
+            "reasons": []
+          }
+        },
+        "snapshot_strength": "prepost_only",
+        "state": "stale",
+        "stale_reason": "age",
+        "blocking": [],
+        "notes": [
+          "仅由超龄策略触发重取；超龄不证明任何时段内无变化，非安全门"
+        ],
+        "ignored_caller_claims": []
+      },
+      "expect_state": "stale",
+      "why": "超龄仅触发重取，不证明时段内无变化"
+    },
+    {
+      "id": "T8-fingerprint-changed",
+      "result": {
+        "changed_fields": {
+          "rows": [
+            1000,
+            2200
+          ],
+          "ts_max_ms": [
+            1794382200000,
+            1794468600000
+          ]
+        },
+        "premises": {},
+        "snapshot_strength": "prepost_only",
+        "state": "stale",
+        "stale_reason": "fingerprint_changed_during_query",
+        "blocking": [],
+        "notes": [
+          "CE-3 形态：指纹可发现 ⇒ 重取。仍不可宣称一致快照"
+        ],
+        "ignored_caller_claims": []
+      },
+      "expect_state": "stale",
+      "why": "CE-3 形态可发现"
+    }
+  ],
+  "segment_tests": [
+    {
+      "fx": "S-OK",
+      "verdict": "complete",
+      "expect": "complete",
+      "met": true,
+      "why": null,
+      "checks": {
+        "C1": "pass",
+        "C4": "pass",
+        "C2": "pass",
+        "C3": "pass",
+        "C5": "pass"
+      },
+      "segments_class": {
+        "legal_empty": [],
+        "missing": [],
+        "not_probed": [],
+        "extra": [],
+        "zero_row_violation": [],
+        "declared_empty_but_nonzero": []
+      },
+      "notes": []
+    },
+    {
+      "fx": "S-LEGAL-EMPTY",
+      "verdict": "complete",
+      "expect": "complete",
+      "met": true,
+      "why": "声明空段且有理由 ⇒ 合法空段，不计缺失，也不要求 rows>0",
+      "checks": {
+        "C1": "pass",
+        "C4": "pass",
+        "C2": "pass",
+        "C3": "pass",
+        "C5": "pass"
+      },
+      "segments_class": {
+        "legal_empty": [
+          "2026-11-14"
+        ],
+        "missing": [],
+        "not_probed": [],
+        "extra": [],
+        "zero_row_violation": [],
+        "declared_empty_but_nonzero": []
+      },
+      "notes": []
+    },
+    {
+      "fx": "S-EMPTY-NO-REASON",
+      "verdict": "incomplete_unverifiable",
+      "expect": "incomplete_unverifiable",
+      "met": true,
+      "why": "声明空段但无理由 ⇒ 未取证，不得当通过",
+      "checks": {
+        "C1": "pass",
+        "C4": "pass",
+        "C2": "pass",
+        "C3": "unverifiable",
+        "C5": "pass"
+      },
+      "segments_class": {
+        "legal_empty": [],
+        "missing": [],
+        "not_probed": [
+          "2026-11-14"
+        ],
+        "extra": [],
+        "zero_row_violation": [],
+        "declared_empty_but_nonzero": []
+      },
+      "notes": [
+        "1 个日期声明为空但无理由 ⇒ 判未取证，不得计入完整"
+      ]
+    },
+    {
+      "fx": "S-ZERO-ROW-VIOLATION",
+      "verdict": "failed",
+      "expect": "failed",
+      "met": true,
+      "why": "非声明空段却 rows==0 ⇒ 违规（rows>0 判据在此生效）",
+      "checks": {
+        "C1": "pass",
+        "C4": "pass",
+        "C2": "pass",
+        "C3": "fail",
+        "C5": "pass"
+      },
+      "segments_class": {
+        "legal_empty": [],
+        "missing": [],
+        "not_probed": [],
+        "extra": [],
+        "zero_row_violation": [
+          "2026-11-11"
+        ],
+        "declared_empty_but_nonzero": []
+      },
+      "notes": [
+        "★ C5 通过但总体不通过 —— 求和相等不证明分段正确"
+      ]
+    },
+    {
+      "fx": "S-MISSING",
+      "verdict": "failed",
+      "expect": "failed",
+      "met": true,
+      "why": "未声明且缺失 ⇒ 缺段",
+      "checks": {
+        "C1": "pass",
+        "C4": "pass",
+        "C2": "fail",
+        "C3": "fail",
+        "C5": "pass"
+      },
+      "segments_class": {
+        "legal_empty": [],
+        "missing": [
+          "2026-11-12"
+        ],
+        "not_probed": [],
+        "extra": [],
+        "zero_row_violation": [],
+        "declared_empty_but_nonzero": []
+      },
+      "notes": [
+        "★ C5 通过但总体不通过 —— 求和相等不证明分段正确"
+      ]
+    },
+    {
+      "fx": "S-SUMEQ-COMPOSITION",
+      "verdict": "failed",
+      "expect": "failed",
+      "met": true,
+      "why": "漏D1+重复D2 ⇒ sum 相等但 C1/C2/C3/C4 全违规",
+      "checks": {
+        "C1": "fail",
+        "C4": "fail",
+        "C2": "fail",
+        "C3": "fail",
+        "C5": "pass"
+      },
+      "segments_class": {
+        "legal_empty": [],
+        "missing": [
+          "2026-11-11"
+        ],
+        "not_probed": [],
+        "extra": [],
+        "zero_row_violation": [],
+        "declared_empty_but_nonzero": []
+      },
+      "notes": [
+        "★ C5 通过但总体不通过 —— 求和相等不证明分段正确"
+      ]
+    },
+    {
+      "fx": "S-NO-EXPECTED",
+      "verdict": "incomplete_unverifiable",
+      "expect": "incomplete_unverifiable",
+      "met": true,
+      "why": "缺 expected_days ⇒ 未取证",
+      "checks": {
+        "C1": "pass",
+        "C4": "pass",
+        "C2": "unverifiable",
+        "C3": "unverifiable",
+        "C5": "pass"
+      },
+      "segments_class": {
+        "not_probed": "expected_days 缺失 ⇒ 整表未取证"
+      },
+      "notes": []
+    },
+    {
+      "fx": "S-DEF-001",
+      "verdict": "incomplete_unverifiable",
+      "expect": "incomplete_unverifiable",
+      "met": true,
+      "why": "batch04 无 segments[]",
+      "checks": {
+        "C1": "unverifiable",
+        "C2": "unverifiable",
+        "C3": "unverifiable",
+        "C4": "unverifiable",
+        "C5": "unverifiable"
+      },
+      "segments_class": {},
+      "notes": [
+        "DEF-001 形态：五查全不可判定，不得宣称完整"
+      ]
+    }
+  ],
+  "coverage_tests": [
+    {
+      "fx": "F-CADENCE-21.5h",
+      "met": true,
+      "claim_tested": "12h 阈值能保证每个交易日均被覆盖吗",
+      "why": "间隔 21.5h 相位漂移 ⇒ 已有交易日无运行（coverage 破），且收盘时普遍超 12h（freshness 破）",
+      "result": {
+        "trading_days": 10,
+        "covered": 9,
+        "uncovered": [
+          "2026-11-13T00:00:00"
+        ],
+        "stale_at_close": [
+          "2026-11-02T00:00:00",
+          "2026-11-09T00:00:00",
+          "2026-11-10T00:00:00",
+          "2026-11-11T00:00:00",
+          "2026-11-12T00:00:00",
+          "2026-11-13T00:00:00"
+        ],
+        "max_gap_hours_within_day": 47.0,
+        "max_inter_run_gap_hours": 21.5,
+        "stale_after_hours": 12.0,
+        "coverage_ratio": 0.9
+      }
+    },
+    {
+      "fx": "F-WEEKEND-GAP",
+      "met": true,
+      "claim_tested": "跨周末的运行间隔与收盘新鲜度",
+      "why": "只在交易日 04:30 跑 ⇒ 周五->周一运行间隔约 72h；且每日收盘距当日运行约 19.5h > 12h，全数 stale_at_close",
+      "result": {
+        "trading_days": 10,
+        "covered": 10,
+        "uncovered": [],
+        "stale_at_close": [
+          "2026-11-02T00:00:00",
+          "2026-11-03T00:00:00",
+          "2026-11-04T00:00:00",
+          "2026-11-05T00:00:00",
+          "2026-11-06T00:00:00",
+          "2026-11-09T00:00:00",
+          "2026-11-10T00:00:00",
+          "2026-11-11T00:00:00",
+          "2026-11-12T00:00:00",
+          "2026-11-13T00:00:00"
+        ],
+        "max_gap_hours_within_day": 19.5,
+        "max_inter_run_gap_hours": 72.0,
+        "stale_after_hours": 12.0,
+        "coverage_ratio": 1.0
+      }
+    },
+    {
+      "fx": "F-NO-RUN",
+      "met": true,
+      "claim_tested": "阈值能否替代运行",
+      "why": "无运行 ⇒ coverage=0；把阈值改成 0.5h 也不会变 —— 阈值不产生运行",
+      "result": {
+        "trading_days": 10,
+        "covered": 0,
+        "uncovered": [
+          "2026-11-02T00:00:00",
+          "2026-11-03T00:00:00",
+          "2026-11-04T00:00:00",
+          "2026-11-05T00:00:00",
+          "2026-11-06T00:00:00",
+          "2026-11-09T00:00:00",
+          "2026-11-10T00:00:00",
+          "2026-11-11T00:00:00",
+          "2026-11-12T00:00:00",
+          "2026-11-13T00:00:00"
+        ],
+        "stale_at_close": [
+          "2026-11-02T00:00:00",
+          "2026-11-03T00:00:00",
+          "2026-11-04T00:00:00",
+          "2026-11-05T00:00:00",
+          "2026-11-06T00:00:00",
+          "2026-11-09T00:00:00",
+          "2026-11-10T00:00:00",
+          "2026-11-11T00:00:00",
+          "2026-11-12T00:00:00",
+          "2026-11-13T00:00:00"
+        ],
+        "max_gap_hours_within_day": 0.0,
+        "max_inter_run_gap_hours": null,
+        "stale_after_hours": 12.0,
+        "coverage_ratio": 0.0
+      }
+    },
+    {
+      "fx": "F-THRESHOLD-IRRELEVANT",
+      "met": true,
+      "claim_tested": "阈值是否影响 coverage",
+      "why": "coverage 与阈值无关；阈值只影响 freshness 标注",
+      "result": {
+        "threshold_1h": {
+          "trading_days": 10,
+          "covered": 1,
+          "uncovered": [
+            "2026-11-03T00:00:00",
+            "2026-11-04T00:00:00",
+            "2026-11-05T00:00:00",
+            "2026-11-06T00:00:00",
+            "2026-11-09T00:00:00",
+            "2026-11-10T00:00:00",
+            "2026-11-11T00:00:00",
+            "2026-11-12T00:00:00",
+            "2026-11-13T00:00:00"
+          ],
+          "stale_at_close": [
+            "2026-11-02T00:00:00",
+            "2026-11-03T00:00:00",
+            "2026-11-04T00:00:00",
+            "2026-11-05T00:00:00",
+            "2026-11-06T00:00:00",
+            "2026-11-09T00:00:00",
+            "2026-11-10T00:00:00",
+            "2026-11-11T00:00:00",
+            "2026-11-12T00:00:00",
+            "2026-11-13T00:00:00"
+          ],
+          "max_gap_hours_within_day": 283.5,
+          "max_inter_run_gap_hours": null,
+          "stale_after_hours": 1.0,
+          "coverage_ratio": 0.1
+        },
+        "threshold_48h": {
+          "trading_days": 10,
+          "covered": 1,
+          "uncovered": [
+            "2026-11-03T00:00:00",
+            "2026-11-04T00:00:00",
+            "2026-11-05T00:00:00",
+            "2026-11-06T00:00:00",
+            "2026-11-09T00:00:00",
+            "2026-11-10T00:00:00",
+            "2026-11-11T00:00:00",
+            "2026-11-12T00:00:00",
+            "2026-11-13T00:00:00"
+          ],
+          "stale_at_close": [
+            "2026-11-04T00:00:00",
+            "2026-11-05T00:00:00",
+            "2026-11-06T00:00:00",
+            "2026-11-09T00:00:00",
+            "2026-11-10T00:00:00",
+            "2026-11-11T00:00:00",
+            "2026-11-12T00:00:00",
+            "2026-11-13T00:00:00"
+          ],
+          "max_gap_hours_within_day": 283.5,
+          "max_inter_run_gap_hours": null,
+          "stale_after_hours": 48.0,
+          "coverage_ratio": 0.1
+        }
+      }
+    }
+  ],
+  "counterexamples": [
+    {
+      "id": "CE-1",
+      "name": "A→B→A 往返",
+      "detectable": false,
+      "expect_detectable": false,
+      "met": true,
+      "state": "provisional",
+      "strength": "prepost_only"
+    },
+    {
+      "id": "CE-2",
+      "name": "同计数内容替换",
+      "detectable": false,
+      "expect_detectable": false,
+      "met": true,
+      "state": "provisional",
+      "strength": "prepost_only"
+    },
+    {
+      "id": "CE-3",
+      "name": "查询期间写入",
+      "detectable": true,
+      "expect_detectable": true,
+      "met": true,
+      "state": "stale",
+      "strength": "prepost_only"
+    },
+    {
+      "id": "CE-4",
+      "name": "恢复后重用",
+      "detectable": false,
+      "expect_detectable": false,
+      "met": true,
+      "state": "provisional",
+      "strength": "prepost_only"
+    }
+  ],
+  "assertions": {
+    "A1_state_tests_all_met": true,
+    "A2_caller_bool_ignored": true,
+    "A3_restart_only_not_consistent": true,
+    "A4_mechanism_not_vacuous": true,
+    "A5_segment_tests_all_met": true,
+    "A6_legal_empty_not_missing": true,
+    "A7_empty_without_reason_undetermined": true,
+    "A8_zero_row_only_for_non_declared": true,
+    "A9_coverage_tests_all_met": true,
+    "A10_threshold_cannot_create_runs": true,
+    "A11_21h5_cadence_breaks_freshness": true,
+    "A12_counterexamples_all_met": true
+  },
+  "ALL_ASSERTIONS_PASS": true
+}
