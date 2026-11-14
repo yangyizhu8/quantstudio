@@ -1,15 +1,14 @@
 # 客户通知稿（**v6 修订终稿**）：QuantStudio 组件 duckdb 版本升级至 1.5.6（通知编号 5）
 
-> **状态**：**v6 修订终稿 · 待总调度终审 · 未下发**。
-> **v6 相对 v5 修正一处实质缺陷**：v5 的 WAL 备份命名 `q.db.wal.bak.<ts>` **不符合 duckdb 恢复约定**（应为 `<主库备份全名>.wal`），
-> 在「主库已 checkpoint、增量仍在 WAL」的现场会导致**静默丢增量**（实测读到 3 行、正确应 7 行，且不报错）。详见 §2.2 与文末修订说明。
-> 本版依据 2026-11-15 审核：「重点核**无写者**及**同一快照**能否覆盖**主库与 WAL**；**不能仅据不做 CHECKPOINT 的取舍放行**」。
-> 逐项落实见文末「修订说明」。
-> 下发须经**用户确认闸门**；本通知**仅由总调度转发**，执行会话不代下发。
-> **建议下发时间**：不晚于 **2026-11-17**（1.4.x 线 EOL 日；距发文当日仅剩 2 天）。
-> **适用范围**：使用 QuantStudio 主仓（GUI / daemon / 采集链）并会启动采集的客户端。
-
----
+> **状态**：**v6 修订候选稿 · 待总调度终审 · 未下发 · 非已批准下发版**。
+> 本版依据 2026-11-15 终审退修四点修订（见文末「修订说明」）：
+> ① §2.3 删除「完整副本 / 区间全静止」结论，降级为**拷贝忠实性**并明写证不到什么；
+> ② §2.4 恢复验证改为**冻结原件 → 隔离复制品重放 → 同基线逐表（表集/行数/内容指纹/结构）比对**，
+> 并附**错配 WAL 负例**与「打开副本会改写或清除该副本 WAL」的实测说明；
+> ③ 六条判据更名 `COPY-FIDELITY-OK`（不再暗示完整性）；
+> ④ §2.2 WAL 配对命名修正（v5 缺陷，见下）。
+> **v6 相对 v5 还修正一处实质缺陷**：v5 的 WAL 备份命名 `q.db.wal.bak.<ts>` **不符合 duckdb 恢复约定**（应为 `<主库备份全名>.wal`），
+> 在「主库已 checkpoint、增量仍在 WAL」的现场会导致**静默丢增量**（实测读到 3 行、正确应 7 行，且不报错）。
 
 ## 一、这次要做什么
 
@@ -198,13 +197,13 @@ else { "无 WAL（本次为单文件快照，跳过 WAL 备份）" }
 
 > ⚠ **拷贝期间绝对不要启动 GUI 或任何采集入口**（62 GB 可能耗时数十分钟，这正是最容易被破坏的窗口）。
 
-#### 2.3 取「拷贝后」指纹 + **校验备份产物本身**（六条判据）
+#### 2.3 取「拷贝后」指纹 + 校验备份产物本身（六条判据 · **只证「拷贝忠实」，不证「副本完整」**）
 
 ```powershell
 $fpDbAfter  = Get-Fp $db
 $fpWalAfter = Get-Fp "$db.wal"
 $bakDbSize  = (Get-Item $bak).Length
-$bakDbHt    = Get-Fp $bak            # 备份主库自身指纹
+$bakDbHt    = Get-Fp $bak
 $fail = @()
 if ($fpDbBefore  -ne $fpDbAfter)  { $fail += "① 主库源文件前后指纹不一致 ⇒ 拷贝期间有写入" }
 if ($fpWalBefore -ne $fpWalAfter) { $fail += "② WAL 源文件前后指纹不一致（含存/缺翻转）⇒ 拷贝期间有写入" }
@@ -215,61 +214,163 @@ if (Test-Path "$db.wal") {
   if ((Get-Item $bakWal).Length -ne (Get-Item "$db.wal").Length) { $fail += "⑤ WAL 备份 size ≠ 源 size" }
   if ((Get-FileHash $bakWal).Hash -ne (Get-FileHash "$db.wal").Hash) { $fail += "⑥ WAL 备份 sha256 ≠ 源 sha256 ⇒ WAL 内容不一致" }
 }
-if ($fail.Count -eq 0) { "SNAPSHOT-CONSISTENT：六条判据全过 ⇒ 主库与 WAL 系同一静止状态的一份完整副本" }
+if ($fail.Count -eq 0) { "COPY-FIDELITY-OK：六条判据全过 ⇒ 备份字节与源一致、且所测层面源文件在拷贝期间未变（注意：这不是『副本完整』的证明，见下）" }
 else { $fail | ForEach-Object { "  ✗ $_" }; "SNAPSHOT-BROKEN：删除 $bak 与 $bak.wal，从步骤 1 重做" }
 ```
 
-**六条判据一览（可自查）**
+**六条判据一览**
 
 | # | 判据 | 不满足意味着 |
 |---|---|---|
-| ① | 主库 `BEFORE == AFTER`（size+mtime+首尾哈希） | 拷贝期间主库被写 |
+| ① | 主库 `BEFORE == AFTER`（size+mtime+**首尾各 8MB** 抽样哈希） | 拷贝期间主库**在首/尾/大小/时间任一处**有变化 |
 | ② | WAL `BEFORE == AFTER`（含「存在/缺失」不得翻转） | 拷贝期间 WAL 被写或被合并清除 |
 | ③ | 备份主库 `size == BEFORE` 主库 size | 拷贝被截断/未完成 |
-| ④ | 备份主库 首尾抽样哈希 `==` BEFORE 主库哈希 | 备份内容与源不一致 |
+| ④ | 备份主库 首尾抽样哈希 `==` BEFORE 主库哈希 | 备份首/尾 8MB 或大小与源不一致 |
 | ⑤ | （有 WAL 时）备份 WAL `size ==` 源 WAL size | WAL 备份不完整 |
 | ⑥ | （有 WAL 时）备份 WAL `sha256 ==` 源 WAL sha256 | WAL 备份内容被改 |
 
-> **为什么这组判据能覆盖「主库与 WAL」**（审核关注点，逐步说明）：
-> 1. 判据①②建立的是「**区间 [BEFORE 取样, AFTER 取样] 内，主库与 WAL 两个文件都没有被修改**」；
-> 2. 2.2 的两次 `Copy-Item` **都发生在这个区间内** ⇒ 两次拷贝读到的都是**同一个静止状态**；
-> 3. 判据③–⑥ 再验证「**拷贝出来的字节确实等于那个静止状态**」，把「拷贝自身出错/被截断/被篡改」也纳入；
-> 4. 于是结论不是「两次拷贝的时间戳相同」（那只能证明时间接近），而是「**主库备份 + WAL 备份 = 同一静止状态的一份完整副本**」。
+> ### ⚠ 这六条判据**证不到**什么（审核点，务必读）
 >
-> **判据的局限（如实声明）**：
-> - 主库用的是**首尾各 8MB 抽样哈希**，不是 62 GB 全量哈希（全量代价过高，未采用）；
->   若损坏/替换恰好只发生在**中间区域**且 `size`、`mtime` 都不变，本判据检测不到。
-> - WAL 用**全量 sha256**（WAL 通常远小于主库），无此局限。
-> - 该判据已做**鉴别力四支自检**（证明它会在该报警时报警）：① 正常 → `SNAPSHOT-CONSISTENT`；
->   ② 拷贝期间源库被写 → 报「源文件前后指纹不一致」；③ 备份被截断（源未变）→ 报「备份 size ≠ 源 size」；
->   ④ WAL 备份被改一字节（size 相同）→ 报「WAL 备份 sha256 ≠ 源 sha256」。
->   其中 ③④ 恰好说明：**只看「源文件前后一致」是不够的，必须再校验备份产物本身**——这也是本版相对 v4 的实质加强。
+> **① 不能证明「主库中间区域未变」。** 主库只取**首尾各 8MB** 抽样哈希（62 GB 全量代价过高）。
+> 若写入恰好发生在**中间区域**、且 `size` 与 `mtime` 都没变，判据①会**照样通过**。
+> ⇒ 所以本文**不再声称**「区间内主库完全静止」。准确表述只能是：
+> **「在 size / mtime / 首尾各 8MB 这几个所测层面，源文件在拷贝期间未观察到变化」。**
+>
+> **② 不能证明「主库备份 + WAL 备份 = 一份完整的静止副本」。** 本版**删除**该结论。
+> 六判据证明的只有**拷贝忠实性**（备份字节 == 当时读到的源字节）；
+> **副本是否「可完整恢复」是另一回事**——那必须靠步骤 2.4 的**同基线逐表比对**去证，不能由 2.3 推出。
+>
+> **③ 不能替代恢复验证。** 判据全过仍可能「打开副本后数据比源库少」——这正是 v5 踩过的坑
+> （WAL 命名错配，六判据全过，但打开只读到 3 行 / 应有 7 行）。本版把恢复验证独立到 2.4 并加**负例自检**。
 
-#### 2.4 可恢复验证（**对真实备份执行**）
+**本节同时抓取「同基线指纹」**（供 2.4 比对，必须在**关停状态下**对源库取，只读、不改写）：
 
 ```powershell
-$bak = "$db.bak.$stamp"
 & "<解释器绝对路径>" -c @"
-import duckdb
-c = duckdb.connect(r'''$bak''', read_only=True)
-print('duckdb      =', c.execute('SELECT version()').fetchone()[0])
-print('tables      =', c.execute('SELECT count(*) FROM duckdb_tables()').fetchone()[0])
-print('stock_daily =', c.execute('SELECT count(*) FROM stock_daily').fetchone()[0])
-print('cols        =', [r[1] for r in c.execute(\"PRAGMA table_info('stock_daily')\").fetchall()])
+import duckdb, hashlib, json
+c = duckdb.connect(r'.\data\quantstudio.db', read_only=True)
+out = {}
+for t, in c.execute("SELECT table_name FROM duckdb_tables() ORDER BY table_name").fetchall():
+    cols = [(x[1], x[2], bool(x[5])) for x in c.execute(f"PRAGMA table_info('{t}')").fetchall()]
+    n = c.execute(f'SELECT count(*) FROM "{t}"').fetchone()[0]
+    h = hashlib.sha256()
+    for r in c.execute(f'SELECT * FROM "{t}" ORDER BY ALL').fetchall():
+        h.update(repr(r).encode())
+    out[t] = {"cols": cols, "rows": n, "content_sha16": h.hexdigest()[:16]}
+idx = c.execute("SELECT index_name, table_name FROM duckdb_indexes() ORDER BY index_name").fetchall()
 c.close()
-print('RESTORE-CHECK OK')
+json.dump({"tables": out, "indexes": [list(x) for x in idx]},
+          open(r'.\data\upgrade-baseline-fp-{stamp}.json','w',encoding='utf-8'),
+          ensure_ascii=False, sort_keys=True)
+print('BASELINE-FP OK tables=', len(out))
+"@ | Tee-Object -FilePath ".\data\upgrade-baseline-fp-$stamp.txt"
+```
+
+> 说明：这一步是**只读**打开源库（`read_only=True`），实测**不会改写也不会清除 WAL**（见 2.4 实测表）。
+> 它给出的是「**升级前那一刻**」的逐表基线，供 2.4 在同一基线下比对。
+
+#### 2.4 可恢复验证（**冻结原件 → 在隔离复制品上重放 → 同基线逐表比对**）
+
+> ### 三条铁律（先读，再操作）
+>
+> 1. **原件冻结，永不直接打开。** `quantstudio.db.bak.<stamp>` 与被配对的 `.wal` 是**唯一原件**，
+>    **只用 `Copy-Item` 复制出去**，任何 `duckdb.connect()` 都不要指向它。
+> 2. **只在隔离复制品上重放。** 把原件复制到一个**独立目录**（**保持文件名 `X` 与 `X.wal` 配对**），在那里打开。
+> 3. **打开会改动那个复制品**（见实测），所以：
+>    - **只读打开**：实测**不改写、不清除**该复制品的 WAL（`r.db=536576B | r.db.wal=124B` 前后一致）；
+>    - **读写打开**：实测会**把 WAL 合并进主库并清除该 WAL**（`536576B + 124B` → 单文件 `798720B`），
+>      **副本形态被永久改变** ⇒ 一旦读写打开过，这个复制品就**不能再作为「当时状态」的证据**，需重新从冻结原件复制。
+>    ⇒ **策略：只用 `read_only=True` 打开隔离复制品**；若确需读写验证，**另复制一份**专门用于读写。
+
+**① 冻结原件并建隔离复制品**（配对命名不可改）
+
+```powershell
+$bak    = "$db.bak.$stamp"
+$iso    = ".\data\restorecheck-$stamp"
+New-Item -ItemType Directory -Path $iso -Force | Out-Null
+Copy-Item $bak        (Join-Path $iso 'r.db')     -Force
+if (Test-Path "$bak.wal") { Copy-Item "$bak.wal" (Join-Path $iso 'r.db.wal') -Force }
+"  复制品目录 = $((Get-ChildItem $iso | ForEach-Object { $_.Name }) -join ', ')"
+"  原件保持不动：$bak$(if(Test-Path "$bak.wal"){ ' + ' + $bak + '.wal' })"
+```
+
+**② 在隔离复制品上做「同基线逐表比对」**（只读打开，输出落盘）
+
+```powershell
+& "<解释器绝对路径>" -c @"
+import duckdb, hashlib, json, sys
+iso  = r'.\data\restorecheck-$stamp\r.db'
+base = json.load(open(r'.\data\upgrade-baseline-fp-$stamp.json', encoding='utf-8'))
+c = duckdb.connect(iso, read_only=True)
+cur = {}
+for t, in c.execute("SELECT table_name FROM duckdb_tables() ORDER BY table_name").fetchall():
+    cols = [(x[1], x[2], bool(x[5])) for x in c.execute(f"PRAGMA table_info('{t}')").fetchall()]
+    n = c.execute(f'SELECT count(*) FROM "{t}"').fetchone()[0]
+    h = hashlib.sha256()
+    for r in c.execute(f'SELECT * FROM "{t}" ORDER BY ALL').fetchall():
+        h.update(repr(r).encode())
+    cur[t] = {"cols": cols, "rows": n, "content_sha16": h.hexdigest()[:16]}
+idx = c.execute("SELECT index_name, table_name FROM duckdb_indexes() ORDER BY index_name").fetchall()
+c.close()
+
+bad = []
+bt, ct = base["tables"], cur
+if set(bt) != set(ct):
+    bad.append("表集不一致：缺=%s 多=%s" % (sorted(set(bt)-set(ct)), sorted(set(ct)-set(bt))))
+for t in sorted(set(bt) & set(ct)):
+    if bt[t]["cols"] != ct[t]["cols"]:
+        bad.append("%s: 列定义/主键不一致" % t)
+    if bt[t]["rows"] != ct[t]["rows"]:
+        bad.append("%s: 行数 %s≠%s" % (t, ct[t]["rows"], bt[t]["rows"]))
+    if bt[t]["content_sha16"] != ct[t]["content_sha16"]:
+        bad.append("%s: 内容指纹不一致" % t)
+if base["indexes"] != [list(x) for x in idx]:
+    bad.append("索引/约束对象不一致")
+print("RESTORE-EQUIV:", "OK 与基线逐表一致" if not bad else "MISMATCH")
+for b in bad: print("   ✗", b)
 "@ | Tee-Object -FilePath ".\data\upgrade-restorecheck-$stamp.txt"
 ```
 
-**判据（三条全中）**：① 只读打开无异常；② `tables` 与 `stock_daily` 行数为正；③ `cols` 含预期列；末行 `RESTORE-CHECK OK`。
+**判据（四条全中才算通过）**
 
-> **加强（v6 新增，针对「WAL 重放」）**：若步骤 2.2 存在 WAL 备份，请在自检脚本中**再多打一行**
-> `print('wal_replayed =', c.execute("SELECT count(*) FROM duckdb_logs()").fetchone()[0])`（或用您关心的某表**增量行数**对照）。
-> 更直接的判据是：**备份打开后读到的行数/末笔时间，必须不早于源库关闭前的读数**——
-> 若发现备份「明显比源库旧」，第一嫌疑就是 **WAL 未被重放**（命名不匹配），按 §2.2 ⚠ 段核对文件名。
+| # | 判据 | 说明 |
+|---|---|---|
+| A | **表集**与基线完全一致 | 不多表、不少表 |
+| B | **逐表行数**与基线一致 | 每张表各自比，不看总数（总数可能互相抵消） |
+| C | **逐表关键内容指纹**与基线一致 | 该表全部行按 `ORDER BY ALL` 排序后的 sha256 前 16 位 |
+| D | **列定义 / 主键 / 索引对象**与基线一致 | 用 `PRAGMA table_info` + `duckdb_indexes()` |
 
-> **务必注意**：**只有在您自己的真实主库上跑出 `RESTORE-CHECK OK`，才算「备份可恢复」被验证过。**
-> 我们在开发环境用**小合成库**跑通这条命令与下面四支判据自检，那只证明**命令与判据可用**，
+> ### ⚠ 为什么必须「逐表 + 内容指纹」，而不能只看对象/schema 指纹
+> **实测（2026-11-15 03:3x，合成库三表）**：四组副本的 **`schema_sha16` 完全相同（`f9be8c231b68eb62`）**，
+> 但其中两组**实际少了整批增量数据**：
+>
+> | 副本 | 三表行数（snapshot_meta / stock_daily / trade_calendar） | schema 指纹 | 与基线 |
+> |---|---|---|---|
+> | 基线（原件只读） | **3 / 4 / 4** | `f9be8c231b68eb62` | — |
+> | A 正确配对 WAL | **3 / 4 / 4** | `f9be8c231b68eb62` | ✅ 一致 |
+> | **B 错配 WAL（负例）** | **2 / 3 / 3** | `f9be8c231b68eb62` | ❌ **丢增量** |
+> | **C 无 WAL** | **2 / 3 / 3** | `f9be8c231b68eb62` | ❌ **丢增量** |
+>
+> ⇒ **对象/schema 指纹对「数据缺失」零鉴别力**（四组一模一样），只有**逐表行数 + 内容指纹**才抓得到。
+> 这也是本版把「对象指纹」列为判据 D（结构面）而**不**当作完整性判据的原因。
+
+**③ 必做负例自检（证明你这套判据真的会报警）**
+
+再复制一份，**故意把 WAL 改名成不配对**（模拟命名写错 / WAL 漏拷），然后跑同一段比对：
+
+```powershell
+$isoNeg = ".\data\restorecheck-$stamp-neg"
+New-Item -ItemType Directory -Path $isoNeg -Force | Out-Null
+Copy-Item $bak (Join-Path $isoNeg 'r.db') -Force
+if (Test-Path "$bak.wal") { Copy-Item "$bak.wal" (Join-Path $isoNeg 'r.db.wal.displaced') -Force }
+# 把上面 ② 脚本里的 iso 路径换成 $isoNeg 再跑一次
+```
+
+**预期**：负例必须报 `RESTORE-EQUIV: MISMATCH`，并列出「某表行数 N≠M」「内容指纹不一致」。
+**若负例也报 OK，说明你这套比对没有鉴别力，恢复验证结论无效** —— 请勿据此认为备份可用。
+
+> **务必注意**：**只有在您自己的真实主库上跑出 `RESTORE-EQUIV: OK` 且负例报 `MISMATCH`，才算「备份可恢复」被验证过。**
+> 我们在开发环境用**小合成库**跑通并提供上述实测读数，那只能证明**方法与判据可用**，
 > **不能代替**您真实窗口的结果——**没跑过就等于没验证**。
 
 ### 步骤 3 · 升级代码
@@ -304,13 +405,15 @@ schtasks /Run /TN QS_DaemonForever
 
 ### 步骤 7 · 留存举证包
 
-| 文件 | 由哪一步产生 |
-|---|---|
-| `data\upgrade-nolock-evidence-<stamp>.txt` | 步骤 1 无写者举证 |
-| `data\quantstudio.db.bak.<stamp>` + `data\quantstudio.db.bak.<stamp>.wal`（如有 WAL） | 步骤 2.2 备份 |
-| `SNAPSHOT-CONSISTENT` 那几行输出（含六条判据与 BEFORE/AFTER 指纹） | 步骤 2.3 |
-| `data\upgrade-restorecheck-<stamp>.txt` | 步骤 2.4 可恢复验证 |
-| 步骤 5 自检完整输出 | 步骤 5 |
+| 文件 | 由哪一步产生 | 出问题时的作用 |
+|---|---|---|
+| `data\upgrade-nolock-evidence-<stamp>.txt` | 步骤 1 无写者举证（四节） | 证明备份时无人持库 |
+| `data\quantstudio.db.bak.<stamp>` + `data\quantstudio.db.bak.<stamp>.wal`（如有 WAL） | 步骤 2.2 备份 | **唯一原件，冻结不动** |
+| `COPY-FIDELITY-OK` 那几行（含六条判据 + BEFORE/AFTER 指纹） | 步骤 2.3 | 证明**拷贝忠实**（不等于副本完整） |
+| `data\upgrade-baseline-fp-<stamp>.json` + `.txt` | 步骤 2.3 末（同基线逐表指纹） | 恢复比对的**唯一基准** |
+| `data\upgrade-restorecheck-<stamp>.txt`（正例） | 步骤 2.4 ② | 证明隔离副本与基线逐表一致 |
+| `data\upgrade-restorecheck-<stamp>-neg.txt`（负例） | 步骤 2.4 ③ | **证明这套比对会报警**（鉴别力证据） |
+| 步骤 5 自检完整输出 | 步骤 5 | 版本门结论 |
 
 ## 四、自检输出怎么读
 
@@ -393,13 +496,13 @@ schtasks /Run /TN QS_DaemonForever
 
 ## 修订说明（v4 → v5 → v6；内部留痕，下发时可删除）
 
-| # | 审核意见 | 落实 |
+| # | 终审退修意见 | 本版落实 |
 |---|---|---|
-| 1 | 复核**独占探针的已知持有者负例** | **已做真实持有者负例实测**（2026-11-15 03:0x）：起**独立进程**以 duckdb RW 连接持有合成库（WAL 在位 112 B）后——<br>· `.NET FileShare::None` 探针（**v5/v6 采用写法**）→ **不可独占（MethodInvocationException）⇒ 正确识别持有者** ✅<br>· 同进程 `open(rb)` → `PermissionError` ✅（旁证）<br>· ctypes `CreateFileW` **未设 `restype=HANDLE`** 时返回被截断值 → **误报「可独占」（漏检）**；设 `restype` 后 → 正确返回 `INVALID_HANDLE_VALUE`。<br>⇒ **结论：`.NET` 写法可靠；若改用 ctypes 必须显式设 `restype`，否则静默漏检**。v6 保持 `.NET FileShare::None` 写法并在判据表标注该陷阱。<br>**持有者退出后** → 恢复可独占 ✅（正例） |
-| 2 | 复核**六项同一快照判据** | 六判据保持（①② 源主库/WAL 前后一致，含存缺不得翻转；③④ 备份主库 size+首尾抽样哈希==源；⑤⑥ 备份 WAL size+**全量 sha256**==源）。四支鉴别力自检复跑通过：正常→CONSISTENT；源被写→报指纹不一致；**备份被截断（源未变）→报 size 不等**；**WAL 备份改一字节→报 sha256 不等** |
-| 3 | 复核**主库／WAL 一致性** | **发现并修正 v5 实质缺陷**：v5 的 WAL 备份命名 `q.db.wal.bak.<ts>` **不符合 duckdb 恢复约定**（duckdb 只找 `<库名>.wal`）。<br>实测（主库已 CHECKPOINT 含 3 行 + 增量 4 行在 WAL）：<br>· v5 命名 → 打开只读到 **count=3（丢 4 行）且不报错（静默）**<br>· v6 命名 `<bak>.wal` → **count=7 完整**<br>⇒ v6 将命名写死为 `<主库备份全名>.wal`，并在 §2.2 加 ⚠ 实测对照表、§2.4 加「备份不得比源库旧」的 WAL 重放判据、步骤 7 举证包同步改名 |
-| 4 | **不能仅据「不做 CHECKPOINT」取舍放行** | §2 开头定性为**工程取舍、不承担举证责任**；一致性完全由 2.1–2.4 判据证明 |
-| 5 | 局限声明 | 主库为**首尾各 8MB 抽样哈希**（非 62 GB 全量），中间区损坏且 size/mtime 不变则检测不到；WAL 为全量哈希，无此局限 |
+| 1 | **首尾 8MB + size/mtime 未变不能证明中间未变，删除完整保证** | §2.3 顶部新增 ⚠ 三条「这六判据**证不到**什么」：<br>① **不能**证明主库中间区域未变（只取首尾各 8MB；中间写入且 size/mtime 不变时判据照样过）⇒ **删除「区间内主库完全静止」**，改为「在 size/mtime/首尾 8MB 几个**所测层面**未观察到变化」；<br>② **删除「主库备份+WAL 备份 = 一份完整静止副本」**，改为仅证明**拷贝忠实性**；<br>③ 明写「判据全过仍可能打开后数据偏少」（v5 踩过的坑）。<br>六判据结论串由 `SNAPSHOT-CONSISTENT` **更名 `COPY-FIDELITY-OK`**，避免暗示完整性 |
+| 2 | **「读数/末笔时间不早于源」不足证明恢复完整；补同一基线下逐表键集、行数、关键内容和对象指纹，以及错配 WAL 负例** | §2.4 全面重写：<br>· **同基线**：§2.3 末新增只读采集 `upgrade-baseline-fp-<stamp>.json`（**升级前**那一刻的逐表列定义/行数/内容 sha16 + 索引对象）；<br>· **冻结原件**：明确原件永不 `connect`，只 `Copy-Item` 出去；<br>· **隔离复制品重放**：复制到独立目录并**保持 `X` / `X.wal` 配对命名**；<br>· **四条判据**：A 表集一致 / B **逐表行数**一致 / C **逐表内容指纹**一致 / D 列定义·主键·索引对象一致；<br>· **错配 WAL 负例（必做）**：再造一份把 WAL 改名 `.wal.displaced` 的复制品，**必须报 `MISMATCH`**；若负例也报 OK ⇒ 判据无鉴别力、结论无效 |
+| 3 | **说明打开后可能改写或清除该副本 WAL** | §2.4 三条铁律第 3 条 + 实测表：**只读打开不改写 URL/WAL**（`r.db=536576B | r.db.wal=124B` 前后一致，读到 count=7）；**读写打开会把 WAL 合并进主库并清除该 WAL**（→ 单文件 `798720B`）⇒ 副本形态被永久改变、不可再作「当时状态」证据；策略=**只用 `read_only=True`**，需读写验证另复制一份 |
+| 4 | （实证支撑）**schema/对象指纹对数据缺失零鉴别力** | 实测四组副本 `schema_sha16` **完全相同 `f9be8c231b68eb62`**，但 B（错配 WAL）与 C（无 WAL）**各表少 1 行且内容指纹不同**（3/4/4 vs 2/3/3）⇒ 故判据 D（对象指纹）**只作结构面**，完整性必须靠 B（行数）+ C（内容指纹） |
+| 5 | （v5 缺陷修正保留）WAL 配对命名 | §2.2 命名写死 `<主库备份全名>.wal`，附 ⚠ 实测对照表（v5 命名丢 4 行且静默） |
 
 **口径来源（内部随附）**：
 - 放行集合与判定源：`quantstudio/pipeline/duckdb_version_policy.py`
