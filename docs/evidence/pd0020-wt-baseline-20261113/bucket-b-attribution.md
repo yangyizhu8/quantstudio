@@ -92,14 +92,29 @@ use_buffer = cash_avail is not None
 
 | nodeid | 失败信息（摘） | 待查 |
 |---|---|---|
-| `test_daemon_identity_macos::test_v5_debounce_requires_three_consecutive` | 断言 `tab._daemon_state == "running"` / `_daemon_death_streak == 1` / `"1/3" in status_label`；实际状态文本为「⏸ 采集已因回测停止（不会自动重启，需要时请手动开启）」 | 与 **daemon 回测停止标志** 相关；本批未触碰 daemon 模块，倾向无关，**待证** |
-| `test_pd12_target_semantics::test_t11_compliance_stock_cases_still_green` | `compliance 套件红：..........F.F.....` | **聚合断言**，需定位套件内具体红项 |
-| `test_qfq_factor_cache::test_lru_capacity_evicts` | `assert 10 <= 8`，实测 `{'evict': 0, 'hit': 0, 'hit_rate': 0.0, 'miss': 10, ...}` | 缓存**全 miss、evict=0**；需查缓存初始化路径 |
+| `test_daemon_identity_macos::test_v5_debounce_requires_three_consecutive` | 断言 `tab._daemon_state == "running"` / `_daemon_death_streak == 1` / `"1/3" in status_label`；实际状态文本为「⏸ 采集已因回测停止（不会自动重启，需要时请手动开启）」 | **环境差异类（非本批）**：①测试文件与 `quantstudio/gui/tabs/task_tab.py` 在 `7826aed..HEAD` **均无变化**；②`task_tab.py` L930-937 显式区分「因回测停止」文案；③**主仓 `data/backtest_stop.flag` 存在=True，基线 worktree=False** ⇒ 主仓走「回测停止」分支、基线（无 `data/`）走「异常退出」分支 ⇒ 机械上基线 PASS／当前 FAIL，**语义上是环境差异** |
+| `test_pd12_target_semantics::test_t11_compliance_stock_cases_still_green` | `compliance 套件红：..........F.F.....` | **本批 A-2 连带（非独立缺陷）**：该用例 L283-288 实为 `subprocess.run([... "pytest", "tests/test_ptrade_contract_compliance.py" ...])` 并断言 `returncode == 0` ⇒ 是 compliance 套件的**聚合门**；套件内 3 项红**正是 A 组的本批 A-2 失败项** ⇒ 修正 A-2 后应随之转绿 |
+| `test_qfq_factor_cache::test_lru_capacity_evicts` | `assert 10 <= 8`，实测 `{'evict': 0, 'hit': 0, 'hit_rate': 0.0, 'miss': 10, ...}` | **他线引入（非本批）**：被测 `quantstudio/pipeline/daemon.py` 在 `7826aed..HEAD` **+107/−15**，容量改为 env 可配（`_QFQ_FACTOR_CACHE_MAX_ENV="QS_QFQ_FACTOR_CACHE_MAX"`、`_QFQ_FACTOR_CACHE_MAX_DEFAULT=512`、新增 `_qfq_factor_cache_max()`，淘汰循环改用 `_cache_max = self._qfq_factor_cache_max()`）；而测试仍按**旧常量 `_QFQ_FACTOR_CACHE_MAX=8`** 断言 ⇒ 插 10 条不触发淘汰 ⇒ `evict=0` ⇒ **他线契约变更未同步测试** |
+
+### 3.1 B 桶人工归因汇总
+
+| 性质 | 项数 | nodeid |
+|---|---|---|
+| **本批 A-2 连带** | **1** | `test_t11_compliance_stock_cases_still_green` |
+| **环境差异类** | **1** | `test_v5_debounce_requires_three_consecutive` |
+| **他线引入** | **1** | `test_lru_capacity_evicts` |
+
+### 3.2 对映射台账的处理（不篡改机械结果）
+
+机械映射仍按「基线状态」记录（B 桶＝基线 PASSED／当前 FAILED）；
+**人工归因另列**，不因人工判断而改写机械分桶。
+⇒ B 桶 9 项人工归因合计：**本批引入 4（A 组）＋ 1（连带）＝5**；**他线 1**；**环境差异 1**；**A-1 契约类 2**（C 组，另件）。
 
 ## 四、结论边界
 
 - A 组 4 项：**根因已确证**（本批 A-2 的 `_cash is None` 判据，违反 `_qs_cash_avail` 的
-  「禁止取不到禁下单」契约）；
-- B 组 3 项：**归因未完成**，不作任何归属断言；
+  「禁止取不到禁下单」契约；方案见 `docs/pd0020-order-cash-none-vs-zero-design-20261115.md`）；
+- B 组 3 项：**归因已完成**，分别为「本批连带 1 / 环境差异 1 / 他线引入 1」，三种性质**不得混为一类**；
 - C 组 2 项：根因＝A-1（`is_trade` DENY→KEEP），见另件；
 - **基线同 fail ≠ 当前已修**；A 桶 100 项根因仅 2 项已定位。
+
