@@ -9,8 +9,9 @@
 
 | 项 | 值 |
 |---|---|
-| 快照 ID | `snapshot-20261114` |
+| 快照 ID | `snapshot-20261114-r2`（**r2**：nodeid 规范化修订版） |
 | 生成时间 | 见 `mapping.json` 的 `generated_at` |
+| nodeid 规范化规则 | **`nodeid = classname + "::" + name`**（不剥离任何前缀，**保留测试类层级**）。<br>旧版 `split(".")[0]` 丢弃类名层级 ⇒ 10 个位于测试类内的 `fin_growth` 项与 junit 原始 `classname` 对不上；<br>**修订后逐项核对已完成，且分桶计数不变**（A40/B2/C12/D81）⇒ 属表达修正，非「改结果凑一致」。 |
 | 基线锚 | `7826aedbf9d634aabb48c2f7c0d988f490c78b07`（`6a98974^`，本批之前） |
 | 当前回归 JUnit | `docs/evidence/pd0020-full-regression-20261113/junit.xml`（sha256 见 `mapping.json`） |
 | 原 nodeid 全集 | **135**（`full-135-nodeids.txt`，逐行；**不做任何剔除**） |
@@ -85,7 +86,17 @@
 | 超时清理 | `TimeoutExpired → proc.kill(); proc.wait(timeout=30)` |
 | 模式 | `--mode once`（**一次性**，非 `--mode forever` 常驻） |
 
-⇒ **安全前置满足** ⇒ 已补取证：**基线亦 FAILED** ⇒ 归入 **A 桶（fin_growth 10/10）**。
+⇒ **隔离面已读证（源码层），但本次取证并未实际验证隔离生效**。
+取证结果：基线该 nodeid **FAILED**，失败断言为
+`assert rc_prepare == 0, "prepare must succeed"`（`test_fin_growth_dividend_staging_tool.py:2538`），
+即**失败发生在 prepare 阶段、早于真实 daemon 子进程的启动**。
+
+⚠️ **因此只能得出两条结论**：
+① 该 nodeid **基线失败**（归入 A 桶）——成立；
+② **不能**据此声称「真实 daemon 子进程已启动」或「隔离已生效」——
+   本次运行**未走到** `subprocess.Popen` 那一段。
+⇒ **隔离生效与否仍属未取证**，不得由源码阅读替代运行时实证。
+
 
 ### 进程清理声明（只清本次 PID）
 
