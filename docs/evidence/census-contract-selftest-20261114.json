@@ -1,0 +1,186 @@
+{
+  "validator": "census-batch-consistency-contract-v1",
+  "validator_version": "1.0.1",
+  "generated_at_local": "2026-11-14T15:42:08+08:00",
+  "offline_guarantees": {
+    "added_since_baseline": [],
+    "absolutely_present_io": [],
+    "network_free": true,
+    "db_connection_attempted": false,
+    "production_write": false,
+    "baseline_note": "urllib/urllib.parse 由解释器启动带入（实测裸 python 即已存在），非本脚本引入；静态面唯一命中为禁用清单字符串字面量（自指），非调用"
+  },
+  "stale_after_hours_default": 12.0,
+  "stale_after_hours_is_safety_gate": false,
+  "counterexamples": [
+    {
+      "id": "CE-1",
+      "name": "A→B→A 往返",
+      "detail": "查询中途写入成 B（rows 1200），结束前回退/删除回到 A 的聚合特征",
+      "detectable_by_prepost": false,
+      "expect_detectable": false,
+      "expectation_met": true,
+      "assigned_state": "provisional",
+      "snapshot_strength": "prepost_only",
+      "stale_reason": null,
+      "implication": "指纹不可发现 -> 结果最高只能 provisional（R2-1）"
+    },
+    {
+      "id": "CE-2",
+      "name": "同计数内容替换",
+      "detail": "某批行被 UPDATE/替换（等量改值，如因子修正），rows 与 ts_max 均不变",
+      "detectable_by_prepost": false,
+      "expect_detectable": false,
+      "expectation_met": true,
+      "assigned_state": "provisional",
+      "snapshot_strength": "prepost_only",
+      "stale_reason": null,
+      "implication": "指纹不可发现 -> 结果最高只能 provisional（R2-1）"
+    },
+    {
+      "id": "CE-3",
+      "name": "查询期间写入",
+      "detail": "查询中途新增一个日段入库",
+      "detectable_by_prepost": true,
+      "expect_detectable": true,
+      "expectation_met": true,
+      "assigned_state": "stale",
+      "snapshot_strength": "prepost_only",
+      "stale_reason": "fingerprint_changed_during_query",
+      "implication": "指纹可发现 -> 判 stale 并重取"
+    },
+    {
+      "id": "CE-4",
+      "name": "恢复后重用",
+      "detail": "崩溃续跑，旧 done 键被当新结果重用；表已按 CE-2 形态变化但指纹未变",
+      "detectable_by_prepost": false,
+      "expect_detectable": false,
+      "expectation_met": true,
+      "assigned_state": "provisional",
+      "snapshot_strength": "prepost_only",
+      "stale_reason": null,
+      "implication": "指纹不可发现 -> 结果最高只能 provisional（R2-1）"
+    },
+    {
+      "id": "CE-2-age",
+      "name": "同计数内容替换 × 超龄 24h",
+      "detail": "内容已换但指纹不可见；仅因超过 12h 才被重取",
+      "detectable_by_prepost": false,
+      "expect_detectable": false,
+      "expectation_met": true,
+      "assigned_state": "stale",
+      "snapshot_strength": "prepost_only",
+      "stale_reason": "age",
+      "implication": "12h 是重取调度策略，不证明 12h 内无变化，非 L2 安全门"
+    }
+  ],
+  "segment_checks": [
+    {
+      "fx": "FX-OK",
+      "why": null,
+      "verdict": "complete",
+      "expect_verdict": "complete",
+      "expectation_met": true,
+      "checks": {
+        "C1": "pass",
+        "C4": "pass",
+        "C2": "pass",
+        "C3": "pass",
+        "C5": "pass"
+      },
+      "notes": []
+    },
+    {
+      "fx": "FX-SUMEQ-COMPOSITION",
+      "why": "漏 D1(1000) + 重复 D2(1000) => sum 仍等于 rows_sum，C5 通过但 C2/C3/C4 全违规",
+      "verdict": "failed",
+      "expect_verdict": "failed",
+      "expectation_met": true,
+      "checks": {
+        "C1": "fail",
+        "C4": "fail",
+        "C2": "fail",
+        "C3": "fail",
+        "C5": "pass"
+      },
+      "notes": [
+        "★ C5 通过但总体不通过 —— 实证「求和相等不能证明分段正确」"
+      ]
+    },
+    {
+      "fx": "FX-DUP",
+      "why": "同一 day 出现两次",
+      "verdict": "failed",
+      "expect_verdict": "failed",
+      "expectation_met": true,
+      "checks": {
+        "C1": "fail",
+        "C4": "fail",
+        "C2": "pass",
+        "C3": "pass",
+        "C5": "pass"
+      },
+      "notes": [
+        "★ C5 通过但总体不通过 —— 实证「求和相等不能证明分段正确」"
+      ]
+    },
+    {
+      "fx": "FX-MISSING",
+      "why": "expected 有 D2 但 actual 无",
+      "verdict": "failed",
+      "expect_verdict": "failed",
+      "expectation_met": true,
+      "checks": {
+        "C1": "pass",
+        "C4": "pass",
+        "C2": "fail",
+        "C3": "fail",
+        "C5": "pass"
+      },
+      "notes": [
+        "★ C5 通过但总体不通过 —— 实证「求和相等不能证明分段正确」"
+      ]
+    },
+    {
+      "fx": "FX-NO-EXPECTED",
+      "why": "expected_days 缺失 => C2/C3 unverifiable，不得当通过",
+      "verdict": "incomplete_unverifiable",
+      "expect_verdict": "incomplete_unverifiable",
+      "expectation_met": true,
+      "checks": {
+        "C1": "pass",
+        "C4": "pass",
+        "C2": "unverifiable",
+        "C3": "unverifiable",
+        "C5": "pass"
+      },
+      "notes": []
+    },
+    {
+      "fx": "FX-DEF-001",
+      "why": "batch04 未落 segments[]，五查全不可判定",
+      "verdict": "incomplete_unverifiable",
+      "expect_verdict": "incomplete_unverifiable",
+      "expectation_met": true,
+      "checks": {
+        "C1": "unverifiable",
+        "C2": "unverifiable",
+        "C3": "unverifiable",
+        "C4": "unverifiable",
+        "C5": "unverifiable"
+      },
+      "notes": [
+        "求和与分段均无法校验；不得宣称完整"
+      ]
+    }
+  ],
+  "assertions": {
+    "A1_counterexamples_expectations_met": true,
+    "A2_segment_fixtures_expectations_met": true,
+    "A3_prepost_insufficient_proven": true,
+    "A4_sum_equality_insufficient_proven": true,
+    "A5_no_consistent_without_version_binding": true,
+    "A6_age_policy_not_verification": true
+  },
+  "ALL_ASSERTIONS_PASS": true
+}
