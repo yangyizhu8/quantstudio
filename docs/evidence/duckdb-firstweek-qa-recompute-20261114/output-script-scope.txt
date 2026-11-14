@@ -1,0 +1,17 @@
+=== 复现观测脚本口径（--script-scope） ===
+  LOGDIR            = D:\miniQMT策略实盘\QuantStudio\data\logs
+  QA_NEEDLE         = 'quality audit failed'
+  WINDOW_START      = 2026-11-07 00:00:00
+  TOP_N             = 60
+  全量日志          = 266
+  最新 60 个中过滤后 = 60
+  命中行数(应=脚本 qa_failed_count) = 8
+  命中明细:
+    once_mcp_stock_float_share_incremental_20261107_012819_12b208c9.log:21
+    once_mcp_stock_namechange_incremental_20261107_012808_cd4f8148.log:22
+    once_mcp_sw_weight_pt_incremental_20261107_012729_9708aa51.log:23
+    once_mcp_sw_daily_pt_incremental_20261107_012657_a2010f4e.log:23
+    once_mcp_xueqiu_sentiment_pt_incremental_20261107_012649_46414857.log:23
+    once_mcp_ws_reserve_pt_incremental_20261107_012640_77af2724.log:23
+    once_mcp_ws_margintrade_pt_incremental_20261107_012624_7f74c261.log:23
+    once_mcp_ws_lhb_pt_incremental_20261107_012614_5213b7f8.log:23
