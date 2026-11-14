@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="12.371" timestamp="2026-11-14T14:33:48.740777+08:00" hostname="USER-20251211MP"><testcase classname="tests.test_fin_growth_dividend_staging_tool.TestRealSubprocessDualTaskE2E" name="test_real_subprocess_dual_task_e2e" time="8.781"><failure message="AssertionError: prepare must succeed&#10;assert 1 == 0">self = &lt;tests.test_fin_growth_dividend_staging_tool.TestRealSubprocessDualTaskE2E object at 0x000001CB2A5FD990&gt;
+
+    def test_real_subprocess_dual_task_e2e(self):
+        import uuid as _uuid
+        import contextlib
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_p = Path(tmp)
+            db_path = _make_mini_db()
+            _make_config_dir(tmp_p, db_path)
+            staging_root_arg = tmp_p / "staging"
+    
+            # prepare (subprocess) -- creates staging.db, ledgers, config, marker
+            rc_prepare = _run_staging([
+                "--source-db", db_path, "--staging-root", str(staging_root_arg),
+                "--start-date", "2022-01-01", "--prepare",
+            ]).returncode
+&gt;           assert rc_prepare == 0, "prepare must succeed"
+E           AssertionError: prepare must succeed
+E           assert 1 == 0
+
+tests\test_fin_growth_dividend_staging_tool.py:2538: AssertionError</failure></testcase></testsuite></testsuites>

@@ -1,5 +1,11 @@
 # nodeid 级精确映射（第一批＋第二批，已取证 8 文件）
 
+> ⚠️ **本件已失效（SUPERSEDED，2026-11-14）**——其数字（A30/B2/C12/D91）在
+> `test_fin_growth` 第 10 项取证后已过期。
+> **当前唯一有效版本＝同目录 `snapshot-20261114/INDEX.md` ＋ `snapshot-20261114/mapping.json`**
+> （A40 / B2 / C12 / D81 = 135；原全集、JUnit、映射、结论同版本对应）。
+> 本件仅作过程留痕保留，**不得作为分类依据引用**。
+
 > 判据来源：当前 `docs/evidence/pd0020-full-regression-20261113/junit.xml`（135 失败/错误）
 > × 基线 `docs/evidence/pd0020-wt-baseline-20261113/baseline-junit/*.xml`（8 文件，本次补取证）
 > 规范化为 `文件名::用例名`（去 `tests.` / `.py` 差异）。
