@@ -75,17 +75,67 @@ tmp_path_factory.mktemp("fund_synth_stmt") / "quantstudio.db"
 ⇒ 需补证项（**未完成**）：`BacktestEngine` 是否在 `db_path` 之外另有默认库路径／锁文件落点
 （如 `data/` 下的 `.lock`、默认 `quantstudio.db` 回退），须逐入口列举。
 
-### 3.2 全部入口清单（待补证后闭环）
+### 3.2 全部入口清单（**已逐入口核完 · 2026-11-15 只读取证**）
 
-| 入口 | 现状 | 待补证 |
+#### 库路径
+
+| # | 入口 | 位置 | 行为 | 触生产库？ |
+|---|---|---|---|---|
+| 1 | `BacktestEngine.__init__(db_path, …)` | `backtest_engine.py` L320 | `db_path` 是**必填位置参数**（无默认值） | — |
+| 2 | `db_path` 传入分支 | L352-359 | `EngineConfig(db_path=Path(db_path), output_dir=base.output_dir, research_dir=base.research_dir)` ⇒ **库路径＝传入值** | ❌ 否 |
+| 3 | `else` 兜底分支 | L360-361 | `EngineConfig.default()` ⇒ **不可达**（`db_path` 必填） | ❌ 否（不可达） |
+| 4 | `EngineConfig.default()` 的 db_path | L76 | `_prefer_project_data_db(root, db_path())` | ⚠️ 见 #5 |
+| 5 | `_prefer_project_data_db` | L35-44 | `project_db = root/"data"/"quantstudio.db"`；`return project_db.resolve() if project_db.exists() else Path(configured_db)` ⇒ **仅 `Path.exists()` 存在性检查（stat），不打开库** | ❌ 否（只 stat 一次） |
+| 6 | `quantstudio/_paths.py` | 全文 61 行 | `get_data_root()`：读 `config/profiles/mcp_only/data_config.json` 的 `path` 字段取父目录／读 env `QUANTSTUDIO_DATA_ROOT`／回退 `_ROOT/"data"`；`db_path()`＝`DATA_ROOT/name`；`quarantine_db_path()` 同理。**无 connect、无 ATTACH、无 READ_ONLY**（`connect(` 仅出现在 **docstring 示例** L13，非实际调用） | ❌ 否 |
+| 7 | 数据访问唯一入口 | L435 | `providers = DataProviderRegistry.from_duckdb(self.config.db_path)` ⇒ 读的就是传入的临时路径 | ❌ 否 |
+| 8 | fixture 建库 | `fund_synthetic_fixture.py` L240 | `conn = duckdb.connect(str(p))`，`p`＝传入的 tmp 路径 | ❌ 否 |
+
+#### 默认回退（`config > db_path > EngineConfig.default()`，L339-340 docstring 逐字）
+
+| 优先级 | 分支 | 结果 |
 |---|---|---|
-| `duckdb.connect`（fixture 内） | 仅临时路径 | ✅ 已证 |
-| `BacktestEngine(db_path=…)` | 传入临时路径 | ⚠️ 需查引擎内部是否有默认路径/锁文件 |
-| DuckDB **写锁** | fixture 在临时目录建库 ⇒ 锁在该目录 | ⚠️ 需查引擎是否另取锁路径 |
-| 子进程 | 无 | ✅ 已证 |
-| 凭据 | 无 | ✅ 已证 |
+| 1 | `config is not None` | 完全由调用方 config 决定 |
+| 2 | `db_path is not None`（**本测试走的分支**） | 库路径＝传入值；**仅 output_dir/research_dir 取 default 兜底** |
+| 3 | 两者皆 None | `EngineConfig.default()` ⇒ **不可达**（`db_path` 必填） |
 
-### 3.3 取证方案（**待批准后才执行**）
+docstring 逐字：「生产路径应由入口（CLI/GUI）显式构造传入；**测试可传自定义 config 指向临时库**。」
+
+#### 锁落点
+
+| 项 | 结论 | 依据 |
+|---|---|---|
+| 引擎独立锁文件 | **无** | 全文件检索 `.lock`/`FileLock`/`filelock` 命中 5 处**全部是 `account.locked_cash` 账户字段**（L220/223/1527/2005/2161），非文件锁 |
+| DuckDB 写锁 | **随 `db_path` 同目录** | 临时目录 ⇒ 不落主仓 `data/` |
+
+#### 写入面（**本轮新发现，此前未列**）
+
+| 项 | 取值 | 风险 |
+|---|---|---|
+| `output_dir` | `base.output_dir` ＝ **项目根 `output/`**（L77） | ⚠️ **会写主仓 `output/`**（非库面，属写入面） |
+| `research_dir` | **项目根 `output/research/`** | ⚠️ 同上 |
+
+⇒ `base = EngineConfig.default()` 在 `db_path` 传入分支**仍被求值**（为取 output/research 兜底），
+故该 5 项测试**若产出报告/输出文件，会写主仓 `output/`** ⇒ **写入面尚未证明无害**。
+
+#### 其余入口
+
+| 类别 | 结论 |
+|---|---|
+| 子进程 | 引擎内**无** Popen/subprocess |
+| 网络 | 无 |
+| 凭据 | 无（`os.environ` 仅用于 `QUANTSTUDIO_DATA_ROOT` 路径解析，非凭据） |
+
+### 3.3 隔离证明结论（**部分成立**）
+
+| 面 | 判定 |
+|---|---|
+| **库面** | ✅ **已证不触生产库** —— 唯一 connect 入口＝传入临时 `db_path`；生产库仅被 `exists()` stat 一次 |
+| **锁面** | ✅ **已证不触生产** —— DuckDB 写锁随 `db_path` 同目录；引擎无独立锁文件 |
+| **子进程/凭据/网络** | ✅ 已证无 |
+| **写入面** | ⚠️ **未证无害** —— `output_dir`/`research_dir` 指向**主仓 `output/`** |
+| **基线侧** | ❌ **不可运行** —— `7826aed` 版硬编码生产库绝对路径 ⇒ 基线状态**无法取证** ⇒ **D5 保持 unknown** |
+
+### 3.4 取证方案（**待批准后才执行**）
 
 - **基线侧**：`7826aed` 版本**硬编码生产库绝对路径** ⇒ **不可运行** ⇒
   基线状态**无法取证** ⇒ **D5 基线侧保持 unknown**（与总调度裁定一致）；
