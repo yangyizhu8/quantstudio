@@ -36,10 +36,15 @@
 
 | 文件 | 内容 |
 |---|---|
-| `recompute_qa.py` | 只读复算器（三个模式，见下） |
-| `input-manifest.tsv` | **全量 266 个日志**逐文件：`file / mtime / size_bytes / hit_lines / hit_line_numbers / in_top60 / ge_window_start` |
+| `recompute_qa.py` | 只读复算器（**五个**模式，见下） |
+| `input-manifest.tsv` | **全量 266 个日志**逐文件：`file / mtime / size_bytes / hit_lines / hit_line_numbers / in_top60 / ge_window_start`（行数口径，保留不裁剪） |
 | `output-script-scope.txt` | **逐位复现**观测脚本口径（应得 8） |
 | `output-byday.txt` | 按日志 mtime **自然日归桶**（固定分母=全量 266） |
+| `output-top60.txt` | **top60 分母清单**（60 个文件逐个：mtime / 大小 / 命中行数 / 命中行号 / 是否被窗口过滤） |
+| `output-verdict.txt` | **脚本 8 项 checks + verdict + 与我的独立复算对拍**（不改脚本） |
+
+> **三份输出互相独立，分别可重算**：`output-byday.txt`（全量归桶）、`output-top60.txt`（分母）、
+> `output-verdict.txt`（判据结论）。**任一项为 0 都不构成整体 PASS 的理由**——见 §四。
 
 复现（PowerShell，任一审核席可直接跑）：
 
@@ -50,6 +55,8 @@ $dir = 'docs\evidence\duckdb-firstweek-qa-recompute-20261114'
 & $py "$dir\recompute_qa.py" --manifest      # 重生成 input-manifest.tsv
 & $py "$dir\recompute_qa.py" --script-scope  # 重生成 output-script-scope.txt（应得 8）
 & $py "$dir\recompute_qa.py" --byday         # 重生成 output-byday.txt
+& $py "$dir\recompute_qa.py" --top60         # 重生成 output-top60.txt
+& $py "$dir\recompute_qa.py" --verdict       # 重生成 output-verdict.txt（会调脚本 --json，只读）
 ```
 
 **自证一致**：`--script-scope` 输出「命中行数 = **8**」，与 `check_duckdb_firstweek_obs.py --json` 的
@@ -100,8 +107,13 @@ $dir = 'docs\evidence\duckdb-firstweek-qa-recompute-20261114'
 1. **不能**证明「全周无故障」——只覆盖已落盘日志；未落盘/被轮转删除的时段与文件不在覆盖内。
 2. **不能**证明「11-14 全天无故障」——11-14 只有 07:30:31 一个抽样时点；本包生成于当日下午，**当日尚未结束**。
 3. **不能**证明「他线已修复」——只能说明「首周已落盘日志中无该关键词命中」。
-4. **不能**替代脚本判定——脚本 `verdict` 仍为 **FAIL / exit_code=1**（判据代码未改，本轮无授权改）。
+4. **不能**因某项 0 命中而改判整体 PASS。脚本 `verdict` 现为 **FAIL / exit_code=1**（判据代码本轮**未改**，
+   无授权改），且 FAIL 由**多项 ✗** 构成（见 `output-verdict.txt`：`daemon_absence_excused`／`no_qa_failure`／`once_running`）。
+   **三项输出各自独立**：全量归桶 0 命中 ≠ top60 分母无问题 ≠ 脚本判定通过。
 5. **不能**推断缺席时段内「绝无其他实例」——见 §5。
+6. **不能**把 `daemon_absence_excused` / `once_running` 的 False 读作「发生了缺陷」——
+   二者是**观测项**（记录「豁免是否命中」「此刻是否有 once 轮在跑」），却被现行 `all(checks.values())` 并入判定，
+   属**判据设计问题**，已另出六步方案件 `docs/handoff/duckdb-obs-checks-verdict-design-20261114.md`（**未过②审不改脚本**）。
 
 ---
 

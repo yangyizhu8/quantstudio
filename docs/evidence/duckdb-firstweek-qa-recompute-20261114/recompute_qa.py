@@ -161,11 +161,107 @@ def cmd_byday(outdir):
     return 0
 
 
+def cmd_top60(outdir):
+    """导出 top60 分母清单（**分母不是结论**）。"""
+    logs = iter_logs()
+    wstart = dt.datetime.strptime(WINDOW_START, "%Y-%m-%d %H:%M:%S").timestamp()
+    newest = sorted(logs, key=lambda x: x[2], reverse=True)[:TOP_N]
+    lines = ["=== top60 分母清单（--top60） ===",
+             "  全量日志 = %d ；取 mtime 最新 %d 个作为分母；再按 mtime>=%s 过滤" % (len(logs), TOP_N, WINDOW_START),
+             "",
+             "  %-3s %-58s %-20s %10s %8s %s" % ("#", "file", "mtime", "size_B", "hit行", "命中行号")]
+    kept = 0
+    for i, (n, p, mt, sz) in enumerate(newest, 1):
+        n_hit, rows = scan_file(p)
+        ok = mt >= wstart
+        if ok:
+            kept += 1
+        lines.append("  %-3d %-58s %-20s %10d %8d %s%s" % (
+            i, n[:58], dt.datetime.fromtimestamp(mt).strftime("%Y-%m-%d %H:%M:%S"),
+            sz, n_hit, ",".join(str(r) for r in rows) or "-",
+            "" if ok else "   [被窗口过滤掉]"))
+    lines += ["",
+              "  过滤后实际扫描 = %d 个" % kept,
+              "",
+              "  ★ 这是**分母清单**，不是结论。分母是滑动窗口：新日志增加会把老日志挤出 60 名之外。",
+              "  ★ 任何「命中数下降」必须先排除『老命中文件滑出窗口』，才可讨论是否修复。"]
+    txt = "\n".join(lines) + "\n"
+    io.open(os.path.join(outdir, "output-top60.txt"), "w", encoding="utf-8", newline="\n").write(txt)
+    print(txt)
+    return 0
+
+
+def cmd_verdict(outdir):
+    """独立复算 8 项 checks + verdict，并与脚本 --json 对拍（只读，不改脚本）。"""
+    import json
+    import subprocess
+    script = os.path.join(REPO, "scripts", "check_duckdb_firstweek_obs.py")
+    py = sys.executable
+    r = subprocess.run([py, script, "--json"], cwd=REPO, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
+    body = r.stdout.strip()
+    try:
+        res = json.loads(body[body.index("{"):]) if "{" in body else {}
+    except Exception:  # noqa: BLE001
+        res = {}
+    checks = res.get("checks", {}) or {}
+    # 独立复算两项纯文件面判据（不依赖脚本内部）
+    logs = iter_logs()
+    wstart = dt.datetime.strptime(WINDOW_START, "%Y-%m-%d %H:%M:%S").timestamp()
+    scoped = [x for x in sorted(logs, key=lambda y: y[2], reverse=True)[:TOP_N] if x[2] >= wstart]
+    my_hits = sum(scan_file(p)[0] for _n, p, _mt, _sz in scoped)
+    lines = ["=== 脚本 verdict 与 8 项 checks（--verdict） ===",
+             "  脚本 = scripts/check_duckdb_firstweek_obs.py --json（只读，未改动）",
+             "  脚本 rc = %s" % r.returncode,
+             "",
+             "  %-28s %-6s %s" % ("check 键", "值", "含义"),
+             ]
+    meaning = {
+        "fatal_zero": "FATAL 关键词命中==0",
+        "wal_under_256mb": "WAL < 256MB",
+        "gate_pass_1_5_6": "版本门输出 PASS 1.5.6",
+        "daemon_alive": "forever 实例在位 或 有豁免",
+        "daemon_absence_excused": "占用声明窗内缺席被豁免（**观测项：无声明时恒 False**）",
+        "no_declaration_mismatch": "声明称在位∧实际缺席==不成立",
+        "once_running": "当前有 once 轮在跑（**观测项：无 once 轮时恒 False**）",
+        "no_qa_failure": "质量审计命中行数==0",
+    }
+    for k in ("fatal_zero", "wal_under_256mb", "gate_pass_1_5_6", "daemon_alive",
+              "daemon_absence_excused", "no_declaration_mismatch", "once_running", "no_qa_failure"):
+        v = checks.get(k, "(缺)")
+        lines.append("  %-28s %-6s %s" % (k, v, meaning.get(k, "")))
+    bad = sorted(k for k, v in checks.items() if v is False)
+    lines += ["",
+              "  verdict       = %s" % res.get("verdict"),
+              "  exit_code     = %s" % res.get("exit_code"),
+              "  红项(False)   = %s" % (bad if bad else "无"),
+              "",
+              "  --- 独立复算对拍（文件面两项）---",
+              "  我算 qa 命中行数 = %d ；脚本 qa_failed_count = %s → %s" % (
+                  my_hits, res.get("qa_failed_count"),
+                  "一致" if my_hits == res.get("qa_failed_count") else "**不一致，须查口径**"),
+              "  我算扫描日志数 = %d ；脚本 logs_scanned = %s → %s" % (
+                  len(scoped), res.get("logs_scanned"),
+                  "一致" if len(scoped) == res.get("logs_scanned") else "**不一致，须查口径**"),
+              "",
+              "  ★ 判据共 8 项，verdict = all(checks.values())：任一项 False 即 FAIL。",
+              "  ★ `daemon_absence_excused` 与 `once_running` 是**观测项**（记录事实），却也参与 all()，",
+              "    故无实际缺陷的时段同样会 FAIL —— 该设计问题**未改**，另见六步方案件。",
+              "  ★ 本文件**不**把 FAIL 写成 PASS，也**不**因某项 0 命中而改判整体。",
+              ]
+    txt = "\n".join(lines) + "\n"
+    io.open(os.path.join(outdir, "output-verdict.txt"), "w", encoding="utf-8", newline="\n").write(txt)
+    print(txt)
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--manifest", action="store_true")
     ap.add_argument("--script-scope", action="store_true")
     ap.add_argument("--byday", action="store_true")
+    ap.add_argument("--top60", action="store_true")
+    ap.add_argument("--verdict", action="store_true")
     ap.add_argument("--outdir", default=os.path.dirname(os.path.abspath(__file__)))
     a = ap.parse_args(argv)
     if not os.path.isdir(a.outdir):
@@ -176,6 +272,10 @@ def main(argv=None):
         return cmd_script_scope(a.outdir)
     if a.byday:
         return cmd_byday(a.outdir)
+    if a.top60:
+        return cmd_top60(a.outdir)
+    if a.verdict:
+        return cmd_verdict(a.outdir)
     sys.argv = [sys.argv[0], "--help"]
     ap.print_help()
     return 0

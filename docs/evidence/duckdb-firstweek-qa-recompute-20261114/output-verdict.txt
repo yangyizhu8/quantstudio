@@ -1,0 +1,26 @@
+=== 脚本 verdict 与 8 项 checks（--verdict） ===
+  脚本 = scripts/check_duckdb_firstweek_obs.py --json（只读，未改动）
+  脚本 rc = 1
+
+  check 键                      值      含义
+  fatal_zero                   True   FATAL 关键词命中==0
+  wal_under_256mb              True   WAL < 256MB
+  gate_pass_1_5_6              True   版本门输出 PASS 1.5.6
+  daemon_alive                 True   forever 实例在位 或 有豁免
+  daemon_absence_excused       False  占用声明窗内缺席被豁免（**观测项：无声明时恒 False**）
+  no_declaration_mismatch      True   声明称在位∧实际缺席==不成立
+  once_running                 False  当前有 once 轮在跑（**观测项：无 once 轮时恒 False**）
+  no_qa_failure                False  质量审计命中行数==0
+
+  verdict       = FAIL
+  exit_code     = 1
+  红项(False)   = ['daemon_absence_excused', 'no_qa_failure', 'once_running']
+
+  --- 独立复算对拍（文件面两项）---
+  我算 qa 命中行数 = 8 ；脚本 qa_failed_count = 8 → 一致
+  我算扫描日志数 = 60 ；脚本 logs_scanned = 60 → 一致
+
+  ★ 判据共 8 项，verdict = all(checks.values())：任一项 False 即 FAIL。
+  ★ `daemon_absence_excused` 与 `once_running` 是**观测项**（记录事实），却也参与 all()，
+    故无实际缺陷的时段同样会 FAIL —— 该设计问题**未改**，另见六步方案件。
+  ★ 本文件**不**把 FAIL 写成 PASS，也**不**因某项 0 命中而改判整体。
