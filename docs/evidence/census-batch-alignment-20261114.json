@@ -1,0 +1,104 @@
+{
+  "_purpose": "census batch 摘要对齐表（R30）：原件指纹 + 逐批实测 rows_sum + 正文错位登记。只增不删，永不回填修改原件或旧正文。",
+  "generated_at": "2026-11-14T14:35:00+08:00",
+  "endpoint": "L-A 本机 QDB http://127.0.0.1:9000/exec",
+  "data_root": "D:\\questdb\\quest_database",
+  "discipline": {
+    "originals_immutable": true,
+    "note": "原件与旧指纹全部保留；正文错位在 alignment_errors 中登记，不回填修改，以保留差异可追溯性",
+    "cross_batch_rule": "跨批 rows_sum 不可直接相减当缺口；比对必须绑定 captured_at + wal_sequencerTxn"
+  },
+  "originals": [
+    {
+      "batch": "L-A/batch01",
+      "file": "docs/evidence/census-manifest-lia-batch01-20261113.json",
+      "bytes": 6329,
+      "mtime": "2026-11-13 11:35:58",
+      "sha256_16": "0DB03FBF9B7B0B3E",
+      "stock_minutes_rows": 581303979,
+      "etf_minutes_rows": 149814519
+    },
+    {
+      "batch": "L-A/batch02",
+      "file": "docs/evidence/census-manifest-lia-batch02-20261113.json",
+      "bytes": 85746,
+      "mtime": "2026-11-13 14:55:18",
+      "sha256_16": "A32CC5D2DBDE5D61",
+      "stock_minutes_rows": 581303979,
+      "etf_minutes_rows": 149814519
+    },
+    {
+      "batch": "L-A/batch03",
+      "file": "docs/evidence/census-manifest-lia-batch03-20261113.json",
+      "bytes": 113659,
+      "mtime": "2026-11-13 14:55:18",
+      "sha256_16": "C444030C63B20ADC",
+      "stock_minutes_rows": 581303979,
+      "etf_minutes_rows": 149814519
+    },
+    {
+      "batch": "L-A/batch04",
+      "file": "docs/evidence/census-manifest-lia-batch04-20261113.json",
+      "bytes": 30681,
+      "mtime": "2026-11-13 17:03:42",
+      "sha256_16": "70E726C2C9382AF5",
+      "stock_minutes_rows": 581305003,
+      "etf_minutes_rows": 149814519
+    }
+  ],
+  "alignment_errors": [
+    {
+      "id": "ALIGN-001",
+      "location": "sidecar spec v3.9 §v3.9-6 batch04 摘要表",
+      "field": "stock_minutes 段行数之和",
+      "body_wrote": 581303979,
+      "original_actual": 581305003,
+      "delta": -1024,
+      "root_cause": "跨批沿用旧读数：把 batch01/02/03 的 581303979 沿用进 batch04 摘要行，未重读原件",
+      "disposition": "v3.10 更正 + 本节登记；原件不改；v3.9 正文保留不回填，以保留差异可追溯",
+      "status": "corrected_with_audit_trail"
+    },
+    {
+      "id": "ALIGN-002",
+      "location": "sidecar spec v3.9 §v3.9-6 batch04 摘要表",
+      "field": "两表合计",
+      "body_wrote": 731118498,
+      "original_actual": 731119522,
+      "delta": -1024,
+      "root_cause": "同上（由 ALIGN-001 连带）",
+      "disposition": "v3.10 更正 + 本节登记；原件不改",
+      "status": "corrected_with_audit_trail"
+    }
+  ],
+  "current_live_check": {
+    "captured_at": "2026-11-14T14:33:00+08:00",
+    "stock_minutes_count": 582658264,
+    "stock_minutes_segments": 615,
+    "stock_minutes_segments_sum": 582658264,
+    "etf_minutes_count": 150345683,
+    "etf_minutes_segments": 451,
+    "etf_minutes_segments_sum": 150345683,
+    "stock_new_day_segments": {"2026-11-13": 1353261},
+    "wal": {
+      "stock_minutes": {"writerTxn": 984699, "sequencerTxn": 984699, "applied": true},
+      "etf_minutes": {"writerTxn": 266785, "sequencerTxn": 266785, "applied": true}
+    },
+    "attribution": "1,024 行差异归因于活表推进（11-13 日内增量在两次取样间自然增长），非采集缺陷；batch04 的 581305003 是当时真实读数"
+  },
+  "remaining_unfinished": {
+    "stock_minutes_segments_pending": 574,
+    "etf_minutes_segments_pending": 410,
+    "source_tz": "unverified（observed 09:30Z~15:30Z；无 tz 配置键；declared=null）",
+    "write_time_identity_protection": "in_progress（路径1-4 是否有历史快照仍 [待核]）",
+    "actual_consumers": "partial（delivery 侧在主仓域；AQ-DW 侧待节点18举证）",
+    "l2_admission_conditions": "not_finalized",
+    "case_verdict": "NOT_PASSED —— 资源门可拒跑不等于整案通过"
+  },
+  "known_manifest_defect": {
+    "id": "DEF-001",
+    "desc": "batch04 manifest 未保存 segments[] 数组（batch02/03 均有），仅有 segment_count 与 rows_sum",
+    "consequence": "manifest 内部无法做「逐段求和 == rows_sum」自校验；本次 1,024 错位无法由 manifest 自身检出",
+    "fix_plan": "下批 manifest 必须落 segments[]（day+rows）与 rows_sum_check，断言相等，不等即 fail",
+    "implemented": false
+  }
+}
