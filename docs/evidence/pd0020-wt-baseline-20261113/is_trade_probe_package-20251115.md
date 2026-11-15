@@ -1,5 +1,13 @@
 # `is_trade` 平台事实探针包（**不批准运行 · 仅提交审定**）
 
+> ⚠️ **本件已失效（SUPERSEDED，2026-11-15 R2）**——判读表退修：
+> ①把「`globals` 缺名」判作「API 缺失」（**只证该作用域未取得**）；
+> ②未区分「函数内部 `NameError`」（**须留堆栈**，≠ API 缺失）；
+> ③缺「存在但不可调用／内部异常／日志失败」三分支；
+> ④未证明「临时副本继承策略回调可能发单」的**入口可达性与副作用阻断**。
+> **当前唯一有效版本＝同目录 `is_trade_probe_package-r2-20251115.md`**（七态判读表 ＋ 完整探针源码 ＋ 11 步清单）。
+> 本件仅作过程留痕，**不得作为执行依据**。
+
 > 目的：解决 A-1 ②审的**③公开 API 依据不通过**——文档证据（乙）与仓内平台实证（甲）冲突：
 > - **乙（文档）**：上游 `kay-ou/ptradeapi` 的 `docs/api-reference-en/utilities.md` 逐字
 >   「`is_trade()` … Returns `True` in trading environment, `False` in backtest environment」
