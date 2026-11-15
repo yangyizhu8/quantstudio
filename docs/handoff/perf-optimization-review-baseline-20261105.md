@@ -4644,3 +4644,68 @@ L116 > **试点期结束后的族级兜底机制待另审**（在此之前该盲
 ### 九、R4 行
 
 `本轮沉淀：N/A（理由：本轮为状态表交付与认知更正，落 docs/handoff；未新增知识族条目；连续 N/A 第 16 轮）`
+
+## 10.255 DRIFT-N12-r1：状态机静态核**完成**（三项发现）＋ 单位**口径冲突**＋ Q-1 清单（2026-11-16 03:15）
+
+### 一、N12-V2 状态机：**已完成**（纯静态读源码，未运行未查库）
+
+**六字段三方对称（核验通过）**：dump L497-505 ↔ load L507-513 ↔ init L61-74，**6 项逐一对应**（`_state`/`_today_buy_count`/`_today_date`/`_bought_stock`/`_peak_seal_volume`/`csv_mtime`）。
+
+**🔴 三项实质发现**：
+
+| # | 发现 | 依据 |
+|---|---|---|
+| **1** | **不存在迁移链** | dump 无版本键、load 无 `if version<` 分支、**无 migrate 函数**；实际是 **`state.get(key,default)` 静默降级** ⇒ 旧版/截断状态文件**不报错不告警**，`_state` 静默回落 `INIT`、`_peak_seal_volume` 归 0 |
+| **2** | **`_check_order_status` 是简化实现** | L476 源码自承「**简化: 买入后直接进 MONITORING**」；L477 `self._state='MONITORING'` **无条件**，**不查真实成交** ⇒ ORDER_PENDING→MONITORING **不依赖成交回报** |
+| **3** | **未持久化 `_order_id`/`_entry_price`** | init 有 15+ 运行时字段，dump **只存 6 个**；`_order_id`（委托单号）、`_entry_price`（买入价）**不在 dump 内** ⇒ **重启若持仓中，二者回落 `""`/`0`** |
+
+**⇒ 行 12 由 ❓ 改为 ✅ 已核 ＋ 三项风险登记**（「迁移链」表述须改为「**无迁移链**」——不是未核，是不存在）。
+
+### 二🔴 N12-V3 单位：既有原件核对 ⇒ **发现口径冲突**
+
+| 来源 | 位置 | 所称单位 |
+|---|---|---|
+| fb 脚本注释 | **L25** | `stock_daily.vol`=**手**、`amount`=**千元**（tushare 口径） |
+| fb 脚本注释 | **L26** | `stock_minutes.vol`=**股**（10-28 实证 sum(vol)÷daily=100.0） |
+| **采集统一口径** | **`writers.py` L905** | **`volume=股，amount=元`** |
+| tushare 适配器 | L267 | 源 `units={vol:手, amount:千元}` |
+| xtquant / akshare | L3/L7/L8、L4/L26 | `volume=手`（×100转股）、`amount=元` |
+| astockdata / baostock / mcp | 各 `units` | 均 `vol=股 / amount=元` |
+
+**冲突本质**：**源口径（手/千元）→ FieldAligner 转换 → 落库口径（股/元）**，**同一字段名在不同环节单位不同**。
+- fb 脚本按**源口径**注释；`writers.py` 按**落库口径**声明——**两者都对，指向不同环节**
+- ⇒ **「`stock_daily` 实际单位」不能由既有文件唯一确定**，**取决于该表走哪条入库路径**
+
+**既有原件已核到不能证的一步**：设计意图（股/元）已证；**实际落地**未证；**fb 用法是否正确未证**（若实际为股/元则 fb 有 100 倍偏差——**未经验证，不断言**）。
+
+### 三、最小查询候选 Q-1（**供审，未执行**）
+
+| 项 | 内容 |
+|---|---|
+| 目标 | 判定 `stock_daily.vol/amount` 与 `stock_minutes.vol` 的**实际单位关系** |
+| 库 | **本地 QuestDB `127.0.0.1:9000` HTTP `/exec`，只读** |
+| 表列 | `stock_daily(ts_code,trade_date,vol,amount,close)`；`stock_minutes(ts_code,date,vol)` |
+| 单码单日 | `600519.SH` × `2026-11-13`（该表 max 日期，实测已知） |
+| SQL（3条） | ①`select vol,amount,close from stock_daily where ts_code='600519.SH' and trade_date='2026-11-13'`<br>②`select sum(vol) from stock_minutes where ts_code='600519.SH' and date='2026-11-13'`<br>③`select count() from stock_minutes where ts_code='600519.SH' and date='2026-11-13'` |
+| 限行 | 每条 ≤1 行，**总返回 ≤3 行** |
+| 判读 | ②÷①≈**100** ⇒ daily=**手**、minutes=**股**（fb 成立）；≈**1** ⇒ 同单位（另看 amount/close） |
+| 成本 | 3 次单行查询、命中前缀、**预计 <1 秒/条**、本地回环、**无写入** |
+| 版本 | 与前次实测一致（`stock_daily` max=`2026-11-13`，1,462.5 万行） |
+| 读锁 | **只读 SELECT 不取写锁**；**不停 daemon**；QuestDB 与 DuckDB 写锁无关 |
+| 失败退出 | ①非 200 或超时 15s ⇒ **立即中止如实报错，不换写法重试**；②②返回 0 行 ⇒ 记「该日无分钟数据」，**不以 0 推单位**；③三值不全 ⇒ **记「未判定」不推断** |
+
+**⇒ 只申请 Q-1，不含批量/全表扫描；不请求「笼统查库权」。当前「不新扫库」不变，本轮未执行。**
+
+### 四、边界
+
+| 约束 | 执行 |
+|---|---|
+| **不新增 DuckDB/QuestDB 查询** | ✅ **本轮零查询**（仅读 .py/.md 文件） |
+| 不实验／不改码／不选信号／不冻契约 | ✅ |
+| **资源核对：不停 daemon** | ✅ 未触碰任何进程 |
+| 已同意 10 项不重签 | ✅ 未重做 |
+| T8 不代扫 | ✅ 未代扫 |
+
+### 五、R4 行
+
+`本轮沉淀：N/A（理由：本轮为静态核对与清单，落 docs/handoff；未新增知识族条目；连续 N/A 第 17 轮）`
