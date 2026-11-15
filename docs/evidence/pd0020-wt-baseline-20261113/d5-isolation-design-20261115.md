@@ -125,6 +125,22 @@ docstring 逐字：「生产路径应由入口（CLI/GUI）显式构造传入；
 | 网络 | 无 |
 | 凭据 | 无（`os.environ` 仅用于 `QUANTSTUDIO_DATA_ROOT` 路径解析，非凭据） |
 
+### 3.4 写入重定向证明（2026-11-15 补证）
+
+| # | 检查点 | 事实 | 结论 |
+|---|---|---|---|
+| 1 | 该 5 项实际调用的 `_api` 方法 | 仅 `attach_day` / `get_fundamentals` / `reset_session` | — |
+| 2 | 上述 3 个方法在 `ptrade_api.py` 内的写面命中 | **各 0**（检索 `output_dir`/`research_dir`/`.write_text`/`.write_bytes`/`open(...,'w')`/`to_csv`/`to_parquet`/`savefig`/`json.dump`） | ✅ 三个方法**均不落盘** |
+| 3 | `output_dir` 的唯一消费点（`backtest_engine.py`） | **L726** `output_dir = export_result(self.result, self)`（在 `export()` 内） | ✅ 该 5 项**不调用 `export()`** |
+| 4 | `research_dir` 的消费点 | 全文件仅 L56/L57（字段声明）、L77-78（`default()` 赋值）、L358（构造传参）⇒ **无实际消费点** | ✅ 无写入 |
+| 5 | `EngineConfig.default()` 被求值时的副作用 | 仅 `Path.exists()`（`_prefer_project_data_db`）＋ path 运算 ⇒ **只 stat，不写** | ✅ 无写入 |
+
+⇒ **该 5 项在合成库隔离下不产生任何 `output/` 或 `research/` 写入**；
+`output_dir`/`research_dir` 虽指向主仓 `output/`，但**该 5 项的执行路径不触达**任何写入点。
+
+⚠️ **边界**：此证明**仅对当前这 5 项成立**；若后续用例调用 `engine.export()` 或任何
+落盘 API，写入面结论**不自动适用**，须重新取证。
+
 ### 3.3 隔离证明结论（**部分成立**）
 
 | 面 | 判定 |
@@ -132,7 +148,7 @@ docstring 逐字：「生产路径应由入口（CLI/GUI）显式构造传入；
 | **库面** | ✅ **已证不触生产库** —— 唯一 connect 入口＝传入临时 `db_path`；生产库仅被 `exists()` stat 一次 |
 | **锁面** | ✅ **已证不触生产** —— DuckDB 写锁随 `db_path` 同目录；引擎无独立锁文件 |
 | **子进程/凭据/网络** | ✅ 已证无 |
-| **写入面** | ⚠️ **未证无害** —— `output_dir`/`research_dir` 指向**主仓 `output/`** |
+| **写入面** | ✅ **已证无害（2026-11-15 补证）** —— 见下 §3.4 |
 | **基线侧** | ❌ **不可运行** —— `7826aed` 版硬编码生产库绝对路径 ⇒ 基线状态**无法取证** ⇒ **D5 保持 unknown** |
 
 ### 3.4 取证方案（**待批准后才执行**）
