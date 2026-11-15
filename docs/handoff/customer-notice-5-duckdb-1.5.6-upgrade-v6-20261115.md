@@ -1,14 +1,15 @@
 # 客户通知稿（**v6 修订终稿**）：QuantStudio 组件 duckdb 版本升级至 1.5.6（通知编号 5）
 
 > **状态**：**v6 修订候选稿 · 待总调度终审 · 未下发 · 非已批准下发版**。
-> 本版依据 2026-11-15 终审退修四点修订（见文末「修订说明」）：
-> ① §2.3 删除「完整副本 / 区间全静止」结论，降级为**拷贝忠实性**并明写证不到什么；
-> ② §2.4 恢复验证改为**冻结原件 → 隔离复制品重放 → 同基线逐表（表集/行数/内容指纹/结构）比对**，
-> 并附**错配 WAL 负例**与「打开副本会改写或清除该副本 WAL」的实测说明；
-> ③ 六条判据更名 `COPY-FIDELITY-OK`（不再暗示完整性）；
-> ④ §2.2 WAL 配对命名修正（v5 缺陷，见下）。
-> **v6 相对 v5 还修正一处实质缺陷**：v5 的 WAL 备份命名 `q.db.wal.bak.<ts>` **不符合 duckdb 恢复约定**（应为 `<主库备份全名>.wal`），
-> 在「主库已 checkpoint、增量仍在 WAL」的现场会导致**静默丢增量**（实测读到 3 行、正确应 7 行，且不报错）。
+> 本版在两轮退修基础上再修 **(2026-11-15 第三次终审：命令链确定缺陷)**：
+> **①路径一致性**——输出侧曾写字面量 `{stamp}`、消费侧读展开后的 `$stamp`，文件名必然对不上；
+> 本版**生产端/消费端一律用同一 PowerShell 变量**，路径**显式作为 `--out` / `--baseline` 参数**传入，并附**端到端断言**。
+> **②有界读取**——旧稿整表 `ORDER BY ALL` + `fetchall()` 在 62 GB 上未验证；本版改**流式聚合**（无排序、不物化），
+> 并显式设 `temp_directory` / `memory_limit`；实测旧写法 200 万行即 **OOM**、新写法 0.06 s。
+> **③口径一致**——内容编码统一用 `hash(有类型列)`、SHA **完整 64 位**、全部 **schema 限定**、索引取**完整 DDL**、两侧比对 `duckdb version`。
+> **④负例前提**——现场无 WAL 时「WAL 改名」无从谈起，改为**另用含增量的合成 fixture** 造负例（§2.4.5 分支 2）。
+> 另保留前两轮成果：**删除「完整副本/区间全静止」结论**（六判据只证拷贝忠实性）、**WAL 配对命名修正**（v5 缺陷）。
+> **T041 未连带核销**，仍为 `BLOCKED`。
 
 ## 一、这次要做什么
 
@@ -197,7 +198,7 @@ else { "无 WAL（本次为单文件快照，跳过 WAL 备份）" }
 
 > ⚠ **拷贝期间绝对不要启动 GUI 或任何采集入口**（62 GB 可能耗时数十分钟，这正是最容易被破坏的窗口）。
 
-#### 2.3 取「拷贝后」指纹 + 校验备份产物本身（六条判据 · **只证「拷贝忠实」，不证「副本完整」**）
+#### 2.3 取「拷贝后」指纹 + 校验备份产物本身（六条判据）
 
 ```powershell
 $fpDbAfter  = Get-Fp $db
@@ -218,160 +219,355 @@ if ($fail.Count -eq 0) { "COPY-FIDELITY-OK：六条判据全过 ⇒ 备份字节
 else { $fail | ForEach-Object { "  ✗ $_" }; "SNAPSHOT-BROKEN：删除 $bak 与 $bak.wal，从步骤 1 重做" }
 ```
 
-**六条判据一览**
-
 | # | 判据 | 不满足意味着 |
 |---|---|---|
-| ① | 主库 `BEFORE == AFTER`（size+mtime+**首尾各 8MB** 抽样哈希） | 拷贝期间主库**在首/尾/大小/时间任一处**有变化 |
+| ① | 主库 `BEFORE == AFTER`（size+mtime+**首尾各 8MB** 抽样哈希） | 拷贝期间主库在首/尾/大小/时间任一处有变化 |
 | ② | WAL `BEFORE == AFTER`（含「存在/缺失」不得翻转） | 拷贝期间 WAL 被写或被合并清除 |
 | ③ | 备份主库 `size == BEFORE` 主库 size | 拷贝被截断/未完成 |
 | ④ | 备份主库 首尾抽样哈希 `==` BEFORE 主库哈希 | 备份首/尾 8MB 或大小与源不一致 |
 | ⑤ | （有 WAL 时）备份 WAL `size ==` 源 WAL size | WAL 备份不完整 |
 | ⑥ | （有 WAL 时）备份 WAL `sha256 ==` 源 WAL sha256 | WAL 备份内容被改 |
 
-> ### ⚠ 这六条判据**证不到**什么（审核点，务必读）
+> ### ⚠ 这六条判据**证不到**什么（务必读）
+> **① 不能证明「主库中间区域未变」**——主库只取**首尾各 8MB** 抽样哈希（62 GB 全量代价过高）。
+> 若写入恰好发生在**中间区域**且 `size`/`mtime` 都不变，判据①会**照样通过**。
+> ⇒ 准确表述只能是「在 size / mtime / 首尾各 8MB 这几个所测层面，源文件在拷贝期间未观察到变化」，
+> **不能**说「区间内主库完全静止」。
 >
-> **① 不能证明「主库中间区域未变」。** 主库只取**首尾各 8MB** 抽样哈希（62 GB 全量代价过高）。
-> 若写入恰好发生在**中间区域**、且 `size` 与 `mtime` 都没变，判据①会**照样通过**。
-> ⇒ 所以本文**不再声称**「区间内主库完全静止」。准确表述只能是：
-> **「在 size / mtime / 首尾各 8MB 这几个所测层面，源文件在拷贝期间未观察到变化」。**
+> **② 不能证明「主库备份 + WAL 备份 = 一份完整副本」**——本版**删除**该结论。六判据只证明**拷贝忠实性**。
 >
-> **② 不能证明「主库备份 + WAL 备份 = 一份完整的静止副本」。** 本版**删除**该结论。
-> 六判据证明的只有**拷贝忠实性**（备份字节 == 当时读到的源字节）；
-> **副本是否「可完整恢复」是另一回事**——那必须靠步骤 2.4 的**同基线逐表比对**去证，不能由 2.3 推出。
->
-> **③ 不能替代恢复验证。** 判据全过仍可能「打开副本后数据比源库少」——这正是 v5 踩过的坑
-> （WAL 命名错配，六判据全过，但打开只读到 3 行 / 应有 7 行）。本版把恢复验证独立到 2.4 并加**负例自检**。
+> **③ 不能替代恢复验证**——判据全过仍可能「打开副本比源库少数据」（WAL 命名错配就是这样）。
 
-**本节同时抓取「同基线指纹」**（供 2.4 比对，必须在**关停状态下**对源库取，只读、不改写）：
+#### 2.4 建立「同基线指纹」并在隔离副本上比对恢复等价性
+
+> 本节修复两处**确定性缺陷**（2026-11-15 终审指出）：
+> **(a)** 旧稿输出路径写作字面量 `{stamp}`、消费端读展开后的 `$stamp` ⇒ 文件名对不上、必然找不到文件。
+> 本版**生产端与消费端一律用同一 PowerShell 变量**，路径**显式作为参数**传入，并做**端到端断言**。
+> **(b)** 旧稿用 `SELECT * ... ORDER BY ALL` + `fetchall()` 做整表内容指纹 ⇒ 62 GB 未验证、整表物化 + 排序必爆内存。
+> 本版改为**有界流式聚合**，见 2.4.6。
+
+##### 2.4.1 落盘比对工具（**单引号 here-string，PowerShell 不做任何插值**）
 
 ```powershell
-& "<解释器绝对路径>" -c @"
-import duckdb, hashlib, json
-c = duckdb.connect(r'.\data\quantstudio.db', read_only=True)
-out = {}
-for t, in c.execute("SELECT table_name FROM duckdb_tables() ORDER BY table_name").fetchall():
-    cols = [(x[1], x[2], bool(x[5])) for x in c.execute(f"PRAGMA table_info('{t}')").fetchall()]
-    n = c.execute(f'SELECT count(*) FROM "{t}"').fetchone()[0]
-    h = hashlib.sha256()
-    for r in c.execute(f'SELECT * FROM "{t}" ORDER BY ALL').fetchall():
-        h.update(repr(r).encode())
-    out[t] = {"cols": cols, "rows": n, "content_sha16": h.hexdigest()[:16]}
-idx = c.execute("SELECT index_name, table_name FROM duckdb_indexes() ORDER BY index_name").fetchall()
-c.close()
-json.dump({"tables": out, "indexes": [list(x) for x in idx]},
-          open(r'.\data\upgrade-baseline-fp-{stamp}.json','w',encoding='utf-8'),
-          ensure_ascii=False, sort_keys=True)
-print('BASELINE-FP OK tables=', len(out))
-"@ | Tee-Object -FilePath ".\data\upgrade-baseline-fp-$stamp.txt"
+$stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+$dataDir  = (Resolve-Path '.\data').Path
+$py       = '<解释器绝对路径>'
+$tool     = Join-Path $dataDir 'restorecheck_tool.py'
+
+@'
+import duckdb, hashlib, json, argparse, os, sys
+
+SYSTEM_SCHEMAS = {"main", "information_schema", "pg_catalog", "temp", "system"}
+
+def row_expr(cols):
+    # typed-column hash: no string concat, so no float/date repr drift
+    return "hash(" + ", ".join('"%s"' % c for c in cols) + ")"
+
+def table_block(con, schema, table):
+    q = '"%s"."%s"' % (schema, table)
+    cols = con.execute(
+        "SELECT column_name, data_type, is_nullable FROM duckdb_columns() "
+        "WHERE schema_name=? AND table_name=? ORDER BY column_index",
+        [schema, table]).fetchall()
+    names = [c[0] for c in cols]
+    rows = con.execute("SELECT count(*) FROM %s" % q).fetchone()[0]
+    # Bounded: streaming aggregate. No ORDER BY, no fetchall, constant memory.
+    hsum = con.execute(
+        "SELECT coalesce(sum(CAST(%s AS HUGEINT)), 0) FROM %s" % (row_expr(names), q)
+    ).fetchone()[0]
+    return {"columns": [[c[0], c[1], bool(c[2])] for c in cols],
+            "rows": rows, "row_hash_sum": str(hsum)}
+
+def snapshot(db, tempdir, memory_limit):
+    con = duckdb.connect(db, read_only=True)
+    try:
+        con.execute("SET memory_limit='%s'" % memory_limit)
+        con.execute("SET temp_directory='%s'" % tempdir.replace("\\", "/"))
+        con.execute("SET preserve_insertion_order=false")
+    except Exception as e:
+        print("  [warn] SET failed (does not affect verdict): %s" % str(e)[:80], file=sys.stderr)
+    out = {"duckdb_version": con.execute("SELECT version()").fetchone()[0],
+           "schemas": {}, "indexes": [], "constraints": []}
+    schemas = [r[0] for r in con.execute(
+        "SELECT schema_name FROM duckdb_schemas() ORDER BY schema_name").fetchall()]
+    schemas = [s for s in schemas if s.lower() not in SYSTEM_SCHEMAS] + ["main"]
+    for s in sorted(set(schemas)):
+        tabs = [r[0] for r in con.execute(
+            "SELECT table_name FROM duckdb_tables() WHERE schema_name=? ORDER BY table_name",
+            [s]).fetchall()]
+        if tabs:
+            out["schemas"][s] = {t: table_block(con, s, t) for t in tabs}
+    try:
+        out["indexes"] = sorted([list(map(str, r)) for r in con.execute(
+            "SELECT schema_name, table_name, index_name, is_unique, is_primary, sql "
+            "FROM duckdb_indexes() ORDER BY schema_name, table_name, index_name").fetchall()])
+    except Exception:
+        out["indexes"] = sorted([list(map(str, r)) for r in con.execute(
+            "SELECT index_name, table_name FROM duckdb_indexes() ORDER BY index_name").fetchall()])
+    try:
+        out["constraints"] = sorted([list(map(str, r)) for r in con.execute(
+            "SELECT schema_name, table_name, constraint_type, constraint_text "
+            "FROM duckdb_constraints() ORDER BY schema_name, table_name, constraint_type").fetchall()])
+    except Exception:
+        out["constraints"] = []
+    con.close()
+    return out
+
+def structure_sha(snap):
+    # structural face: column defs + index defs + constraint defs (no data)
+    blob = json.dumps({"schemas": {s: {t: v["columns"] for t, v in tabs.items()}
+                                   for s, tabs in snap["schemas"].items()},
+                       "indexes": snap["indexes"], "constraints": snap["constraints"]},
+                      sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+def data_sha(snap):
+    # data face: per-table (row count, row hash sum), full 64-hex SHA256
+    blob = json.dumps({s: {t: [v["rows"], v["row_hash_sum"]] for t, v in tabs.items()}
+                       for s, tabs in snap["schemas"].items()},
+                      sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--mode", required=True, choices=["baseline", "verify"])
+    ap.add_argument("--db", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--baseline", default=None)
+    ap.add_argument("--tempdir", default=None)
+    ap.add_argument("--memory-limit", default="4GB")
+    ap.add_argument("--schema", default=None)
+    a = ap.parse_args()
+    tempdir = a.tempdir or os.path.join(os.path.dirname(os.path.abspath(a.out)), "_duckdb_tmp")
+    os.makedirs(tempdir, exist_ok=True)
+
+    if a.mode == "baseline":
+        snap = snapshot(a.db, tempdir, a.memory_limit)
+        if a.schema:
+            snap["schemas"] = {k: v for k, v in snap["schemas"].items() if k == a.schema}
+            print("  [note] trimmed to schema:", a.schema)
+        snap["_structure_sha256"] = structure_sha(snap)
+        snap["_data_sha256"] = data_sha(snap)
+        snap["_db"] = os.path.abspath(a.db)
+        with open(a.out, "w", encoding="utf-8") as f:
+            json.dump(snap, f, ensure_ascii=False, sort_keys=True, indent=2)
+        print("BASELINE-WRITTEN:", os.path.abspath(a.out))
+        print("  duckdb =", snap["duckdb_version"])
+        print("  schemas =", list(snap["schemas"]))
+        for s, tabs in snap["schemas"].items():
+            print("   [%s] %s" % (s, {t: v["rows"] for t, v in tabs.items()}))
+        print("  structure_sha256 =", snap["_structure_sha256"])
+        print("  data_sha256      =", snap["_data_sha256"])
+        return 0
+
+    if not a.baseline or not os.path.exists(a.baseline):
+        print("BASELINE-MISSING:", a.baseline)
+        return 3
+    b = json.load(open(a.baseline, encoding="utf-8"))
+    snap = snapshot(a.db, tempdir, a.memory_limit)
+    snap["_structure_sha256"] = structure_sha(snap)
+    snap["_data_sha256"] = data_sha(snap)
+    with open(a.out, "w", encoding="utf-8") as f:
+        json.dump(snap, f, ensure_ascii=False, sort_keys=True, indent=2)
+
+    bad = []
+    if b.get("duckdb_version") != snap["duckdb_version"]:
+        bad.append("duckdb version differs: %s vs %s" % (b.get("duckdb_version"), snap["duckdb_version"]))
+    if b["_structure_sha256"] != snap["_structure_sha256"]:
+        bad.append("structure sha256 differs (columns/indexes/constraints)")
+    bt, ct = b["schemas"], snap["schemas"]
+    if set(bt) != set(ct):
+        bad.append("schema set differs: %s vs %s" % (sorted(bt), sorted(ct)))
+    for s in sorted(set(bt) & set(ct)):
+        if set(bt[s]) != set(ct[s]):
+            bad.append("[%s] table set differs: missing=%s extra=%s"
+                       % (s, sorted(set(bt[s]) - set(ct[s])), sorted(set(ct[s]) - set(bt[s]))))
+        for t in sorted(set(bt[s]) & set(ct[s])):
+            if bt[s][t]["columns"] != ct[s][t]["columns"]:
+                bad.append("[%s.%s] column definition differs" % (s, t))
+            if bt[s][t]["rows"] != ct[s][t]["rows"]:
+                bad.append("[%s.%s] rows %s != %s" % (s, t, ct[s][t]["rows"], bt[s][t]["rows"]))
+            if bt[s][t]["row_hash_sum"] != ct[s][t]["row_hash_sum"]:
+                bad.append("[%s.%s] row content hash sum differs" % (s, t))
+    if b["_data_sha256"] != snap["_data_sha256"]:
+        bad.append("data sha256 differs")
+
+    print("RESTORE-EQUIV:", "OK" if not bad else "MISMATCH")
+    for x in bad:
+        print("   x", x)
+    return 0 if not bad else 1
+
+if __name__ == "__main__":
+    sys.exit(main())
+'@ | Set-Content -Path $tool -Encoding UTF8
+"TOOL-WRITTEN: $tool"
 ```
 
-> 说明：这一步是**只读**打开源库（`read_only=True`），实测**不会改写也不会清除 WAL**（见 2.4 实测表）。
-> 它给出的是「**升级前那一刻**」的逐表基线，供 2.4 在同一基线下比对。
-
-#### 2.4 可恢复验证（**冻结原件 → 在隔离复制品上重放 → 同基线逐表比对**）
-
-> ### 三条铁律（先读，再操作）
+> **为什么必须用单引号 here-string**：双引号 here-string 会让 PowerShell 把 `$xxx` 当变量展开，
+> Python 代码里的 `$` 会被吃掉。单引号 here-string **逐字保留**；所有路径一律走**命令行参数**，不在源码里拼字符串。
 >
-> 1. **原件冻结，永不直接打开。** `quantstudio.db.bak.<stamp>` 与被配对的 `.wal` 是**唯一原件**，
->    **只用 `Copy-Item` 复制出去**，任何 `duckdb.connect()` 都不要指向它。
-> 2. **只在隔离复制品上重放。** 把原件复制到一个**独立目录**（**保持文件名 `X` 与 `X.wal` 配对**），在那里打开。
-> 3. **打开会改动那个复制品**（见实测），所以：
->    - **只读打开**：实测**不改写、不清除**该复制品的 WAL（`r.db=536576B | r.db.wal=124B` 前后一致）；
->    - **读写打开**：实测会**把 WAL 合并进主库并清除该 WAL**（`536576B + 124B` → 单文件 `798720B`），
->      **副本形态被永久改变** ⇒ 一旦读写打开过，这个复制品就**不能再作为「当时状态」的证据**，需重新从冻结原件复制。
->    ⇒ **策略：只用 `read_only=True` 打开隔离复制品**；若确需读写验证，**另复制一份**专门用于读写。
+> **编码（我们实测踩过，务必注意）**：Windows PowerShell 5.1 读取**无 BOM 的 .ps1** 时按系统 ANSI(GBK) 解析，
+> UTF-8 中文注释会变乱码，**甚至吞掉换行把两条语句粘成一行**（实测报 `SyntaxError` 于第 17 行）。
+> 因此：①本工具源码已**全部改为 ASCII**（注释亦为英文），从根上消除该风险；
+> ②若你把命令段存成 `.ps1` 文件，请存为 **UTF-8 带 BOM**（或在控制台里直接逐段粘贴执行）；
+> ③`Set-Content -Encoding UTF8` 在 5.1 下写出的即带 BOM，Python 3 读带 BOM 源码是允许的。
 
-**① 冻结原件并建隔离复制品**（配对命名不可改）
+##### 2.4.2 生产端：采集基线（升级前、**只读**打开源库）
 
 ```powershell
-$bak    = "$db.bak.$stamp"
-$iso    = ".\data\restorecheck-$stamp"
+$baseline = Join-Path $dataDir "upgrade-baseline-fp-$stamp.json"
+& $py $tool --mode baseline --db (Join-Path $dataDir 'quantstudio.db') --out $baseline
+
+if (-not (Test-Path $baseline)) { throw "基线未生成，停止升级：$baseline" }
+
+# 硬要求：本节必须与 §2.2 备份取自**同一状态、同一停写窗口**，且备份完成后立即执行。
+# 我们实测过反例：若基线取自「增量进 WAL 之前」，而备份取自「之后」，正例必然 MISMATCH
+# （表现为 rows N != M）——那不是备份坏了，而是基线与备份不是同一状态。
+"BASELINE-PATH = $baseline"
+"BASELINE-SHA256 = $((Get-FileHash $baseline).Hash)"
+```
+
+**端到端断言（必须做）**：2.4.4 的 `--baseline` 参数**必须直接引用同一个 `$baseline` 变量**，
+不得重新拼字符串、不得写第二个字面量路径。请在 2.4.4 输出里核对回显的 `CONSUMED-BASELINE`
+与本节 `BASELINE-PATH` **完全一致**（含 `$stamp` 展开后的实际时间戳）。
+
+##### 2.4.3 冻结原件 → 建隔离复制品（**配对命名不可改**）
+
+```powershell
+$bak = Join-Path $dataDir "quantstudio.db.bak.$stamp"
+if (-not (Test-Path $bak)) { throw "备份不存在，停止：$bak" }
+
+$iso = Join-Path $dataDir "restorecheck-$stamp"
 New-Item -ItemType Directory -Path $iso -Force | Out-Null
-Copy-Item $bak        (Join-Path $iso 'r.db')     -Force
-if (Test-Path "$bak.wal") { Copy-Item "$bak.wal" (Join-Path $iso 'r.db.wal') -Force }
-"  复制品目录 = $((Get-ChildItem $iso | ForEach-Object { $_.Name }) -join ', ')"
-"  原件保持不动：$bak$(if(Test-Path "$bak.wal"){ ' + ' + $bak + '.wal' })"
+Copy-Item $bak (Join-Path $iso 'r.db') -Force
+if (Test-Path "$bak.wal") {
+    Copy-Item "$bak.wal" (Join-Path $iso 'r.db.wal') -Force
+    "配对 WAL 已就位：r.db.wal"
+} else {
+    "现场无 WAL 备份（主库已收敛）⇒ 复制品只需 r.db"
+}
 ```
 
-**② 在隔离复制品上做「同基线逐表比对」**（只读打开，输出落盘）
+> **三条铁律**：①**原件永不打开**（只用 `Copy-Item` 复制出去）；②只在**隔离复制品**上重放，
+> 并保持 `r.db` / `r.db.wal` **配对命名**；③**只用只读方式打开**复制品——实测**读写打开会把 WAL
+> 合并进主库并清除该 WAL**（`r.db=536576B + r.db.wal=124B` → 单文件 `798720B`），
+> **副本形态被永久改变**，就再也不能代表「备份那一刻」；确需读写验证，**另复制一份**专用。
+
+##### 2.4.4 消费端：与基线比对（正例）
 
 ```powershell
-& "<解释器绝对路径>" -c @"
-import duckdb, hashlib, json, sys
-iso  = r'.\data\restorecheck-$stamp\r.db'
-base = json.load(open(r'.\data\upgrade-baseline-fp-$stamp.json', encoding='utf-8'))
-c = duckdb.connect(iso, read_only=True)
-cur = {}
-for t, in c.execute("SELECT table_name FROM duckdb_tables() ORDER BY table_name").fetchall():
-    cols = [(x[1], x[2], bool(x[5])) for x in c.execute(f"PRAGMA table_info('{t}')").fetchall()]
-    n = c.execute(f'SELECT count(*) FROM "{t}"').fetchone()[0]
-    h = hashlib.sha256()
-    for r in c.execute(f'SELECT * FROM "{t}" ORDER BY ALL').fetchall():
-        h.update(repr(r).encode())
-    cur[t] = {"cols": cols, "rows": n, "content_sha16": h.hexdigest()[:16]}
-idx = c.execute("SELECT index_name, table_name FROM duckdb_indexes() ORDER BY index_name").fetchall()
-c.close()
-
-bad = []
-bt, ct = base["tables"], cur
-if set(bt) != set(ct):
-    bad.append("表集不一致：缺=%s 多=%s" % (sorted(set(bt)-set(ct)), sorted(set(ct)-set(bt))))
-for t in sorted(set(bt) & set(ct)):
-    if bt[t]["cols"] != ct[t]["cols"]:
-        bad.append("%s: 列定义/主键不一致" % t)
-    if bt[t]["rows"] != ct[t]["rows"]:
-        bad.append("%s: 行数 %s≠%s" % (t, ct[t]["rows"], bt[t]["rows"]))
-    if bt[t]["content_sha16"] != ct[t]["content_sha16"]:
-        bad.append("%s: 内容指纹不一致" % t)
-if base["indexes"] != [list(x) for x in idx]:
-    bad.append("索引/约束对象不一致")
-print("RESTORE-EQUIV:", "OK 与基线逐表一致" if not bad else "MISMATCH")
-for b in bad: print("   ✗", b)
-"@ | Tee-Object -FilePath ".\data\upgrade-restorecheck-$stamp.txt"
+$rcOut = Join-Path $dataDir "upgrade-restorecheck-$stamp.json"
+& $py $tool --mode verify --db (Join-Path $iso 'r.db') --baseline $baseline --out $rcOut |
+    Tee-Object -FilePath (Join-Path $dataDir "upgrade-restorecheck-$stamp.txt")
+"CONSUMED-BASELINE = $baseline"
+if ($LASTEXITCODE -ne 0) { "RESTORE-EQUIV 未通过（exit=$LASTEXITCODE），停止升级" }
 ```
 
-**判据（四条全中才算通过）**
+**判据（四条全中）**
 
-| # | 判据 | 说明 |
+| # | 判据 | 实现方式 |
 |---|---|---|
-| A | **表集**与基线完全一致 | 不多表、不少表 |
-| B | **逐表行数**与基线一致 | 每张表各自比，不看总数（总数可能互相抵消） |
-| C | **逐表关键内容指纹**与基线一致 | 该表全部行按 `ORDER BY ALL` 排序后的 sha256 前 16 位 |
-| D | **列定义 / 主键 / 索引对象**与基线一致 | 用 `PRAGMA table_info` + `duckdb_indexes()` |
+| A | **schema 集合 + 表集**一致 | `duckdb_tables()` 按 `schema_name` 限定，逐 schema 枚举 |
+| B | **逐表行数**一致 | `SELECT count(*)`（schema 限定表名） |
+| C | **逐表内容**一致 | `sum(CAST(hash(全部列) AS HUGEINT))` 流式聚合（见 2.4.6） |
+| D | **列定义 / 索引 / 约束**一致 | `duckdb_columns()`（`data_type`/`is_nullable`）+ `duckdb_indexes()`（`is_unique`/`is_primary`/`sql` 完整定义）+ `duckdb_constraints()` |
 
-> ### ⚠ 为什么必须「逐表 + 内容指纹」，而不能只看对象/schema 指纹
-> **实测（2026-11-15 03:3x，合成库三表）**：四组副本的 **`schema_sha16` 完全相同（`f9be8c231b68eb62`）**，
-> 但其中两组**实际少了整批增量数据**：
->
-> | 副本 | 三表行数（snapshot_meta / stock_daily / trade_calendar） | schema 指纹 | 与基线 |
-> |---|---|---|---|
-> | 基线（原件只读） | **3 / 4 / 4** | `f9be8c231b68eb62` | — |
-> | A 正确配对 WAL | **3 / 4 / 4** | `f9be8c231b68eb62` | ✅ 一致 |
-> | **B 错配 WAL（负例）** | **2 / 3 / 3** | `f9be8c231b68eb62` | ❌ **丢增量** |
-> | **C 无 WAL** | **2 / 3 / 3** | `f9be8c231b68eb62` | ❌ **丢增量** |
->
-> ⇒ **对象/schema 指纹对「数据缺失」零鉴别力**（四组一模一样），只有**逐表行数 + 内容指纹**才抓得到。
-> 这也是本版把「对象指纹」列为判据 D（结构面）而**不**当作完整性判据的原因。
+**口径一致性（审核要求，逐条落实）**
 
-**③ 必做负例自检（证明你这套判据真的会报警）**
+| 项 | 做法 |
+|---|---|
+| **内容编码** | 一律用 duckdb `hash(列...)` 对**有类型的列**直接哈希（不做字符串拼接，避免浮点/日期 repr 差异）；`SET preserve_insertion_order=false` 使聚合与顺序无关 |
+| **完整 SHA** | 结构面 / 数据面各输出**完整 64 位十六进制** `sha256`（不截断） |
+| **schema 限定** | 查询写 `"schema"."table"`；元数据查询一律带 `WHERE schema_name=?` |
+| **索引定义** | 取 `is_unique` / `is_primary` / **`sql`（完整 DDL 文本）**，不只取名字 |
+| **版本一致** | 两侧都打印 `duckdb version` 并作为比对项（版本不同直接报错，避免 `hash()` 语义漂移） |
 
-再复制一份，**故意把 WAL 改名成不配对**（模拟命名写错 / WAL 漏拷），然后跑同一段比对：
+##### 2.4.5 负例自检（**证明这套比对真的会报警**）
+
+**关键前提**：负例必须来自「**含 WAL 增量**」的现场。若本次备份**现场本来就没有 WAL**，
+「把 WAL 改名」无从谈起（没有 WAL 可改名）——此时必须**另用合成的含增量 fixture**（分支 2）。
+
+**分支 1：本次备份有 WAL 备份**（`Test-Path "$bak.wal"` 为真）
 
 ```powershell
-$isoNeg = ".\data\restorecheck-$stamp-neg"
+$isoNeg = Join-Path $dataDir "restorecheck-$stamp-neg"
 New-Item -ItemType Directory -Path $isoNeg -Force | Out-Null
 Copy-Item $bak (Join-Path $isoNeg 'r.db') -Force
-if (Test-Path "$bak.wal") { Copy-Item "$bak.wal" (Join-Path $isoNeg 'r.db.wal.displaced') -Force }
-# 把上面 ② 脚本里的 iso 路径换成 $isoNeg 再跑一次
+Copy-Item "$bak.wal" (Join-Path $isoNeg 'r.db.wal.displaced') -Force
+& $py $tool --mode verify --db (Join-Path $isoNeg 'r.db') --baseline $baseline --out (Join-Path $dataDir "upgrade-restorecheck-$stamp-neg.json") |
+    Tee-Object -FilePath (Join-Path $dataDir "upgrade-restorecheck-$stamp-neg.txt")
+"负例 exit = $LASTEXITCODE（期望 1 = MISMATCH）"
 ```
 
-**预期**：负例必须报 `RESTORE-EQUIV: MISMATCH`，并列出「某表行数 N≠M」「内容指纹不一致」。
-**若负例也报 OK，说明你这套比对没有鉴别力，恢复验证结论无效** —— 请勿据此认为备份可用。
+**分支 2：本次备份无 WAL**（现场已收敛）⇒ 用**与生产库完全隔离**的合成 fixture 造负例
 
-> **务必注意**：**只有在您自己的真实主库上跑出 `RESTORE-EQUIV: OK` 且负例报 `MISMATCH`，才算「备份可恢复」被验证过。**
-> 我们在开发环境用**小合成库**跑通并提供上述实测读数，那只能证明**方法与判据可用**，
-> **不能代替**您真实窗口的结果——**没跑过就等于没验证**。
+```powershell
+$fxDir = Join-Path $env:TEMP "qs-wal-fix-$stamp"
+New-Item -ItemType Directory -Path $fxDir -Force | Out-Null
+$fx = Join-Path $fxDir 'fx.db'
+
+# (1) 建表 + CHECKPOINT：主库落盘 3 行（脚本用 here-string 写盘，避免任何引号转义）
+$mkFx = Join-Path $fxDir 'mk_fixture.py'
+@'
+import duckdb, sys
+c = duckdb.connect(sys.argv[1])
+c.execute("CREATE TABLE t(i INT, s VARCHAR)")
+c.execute("INSERT INTO t VALUES (1,'a'),(2,'b'),(3,'c')")
+c.execute("CHECKPOINT")
+c.close()
+print("FIXTURE-CHECKPOINTED")
+'@ | Set-Content -Path $mkFx -Encoding UTF8
+& $py $mkFx $fx
+
+# (2) 另起进程追加 4 行到 WAL，随后强杀 ⇒ WAL 留下未合并增量
+$w = Join-Path $fxDir 'w.py'
+@'
+import duckdb, sys, time
+c = duckdb.connect(sys.argv[1])
+c.execute("INSERT INTO t VALUES (4,'d'),(5,'e'),(6,'f'),(7,'g')")
+print("APPENDED", flush=True)
+time.sleep(60)
+'@ | Set-Content -Path $w -Encoding UTF8
+$pp = Start-Process -FilePath $py -ArgumentList @($w, $fx) -PassThru -NoNewWindow
+Start-Sleep -Seconds 4
+Stop-Process -Id $pp.Id -Force
+Start-Sleep -Seconds 2
+"fixture: fx.db=$((Get-Item $fx).Length)B, wal=$(if(Test-Path "$fx.wal"){(Get-Item "$fx.wal").Length}else{0})B"
+
+# (3) 采基线（此时读到的应是 3+4=7 行），再造「WAL 错配」副本
+$fxBase = Join-Path $fxDir 'fx-baseline.json'
+& $py $tool --mode baseline --db $fx --out $fxBase
+Copy-Item $fx (Join-Path $fxDir 'neg.db') -Force
+Copy-Item "$fx.wal" (Join-Path $fxDir 'neg.db.wal.displaced') -Force
+& $py $tool --mode verify --db (Join-Path $fxDir 'neg.db') --baseline $fxBase --out (Join-Path $fxDir 'fx-neg.json')
+"合成 fixture 负例 exit = $LASTEXITCODE（期望 1 = MISMATCH）"
+```
+
+**负例判据**：正例 `RESTORE-EQUIV: OK` 且 **负例必须 `MISMATCH`**。
+**若负例也报 OK ⇒ 这套比对没有鉴别力，恢复验证结论一律无效**，请勿据此认为备份可用。
+
+##### 2.4.6 有界性说明（62 GB 上**未实测**，如实声明）
+
+| 项 | 说明 |
+|---|---|
+| **不做整表物化** | 不用 `SELECT *` 后 `fetchall()`，不用 `ORDER BY ALL`；只取 `count(*)` 与一个**流式聚合** |
+| **排序临时空间** | 新写法**不含任何排序**（聚合与顺序无关），故不产生排序溢写；仍显式 `SET temp_directory` 指向 `.\data\_duckdb_tmp`、`SET memory_limit='4GB'`，让意外溢写落盘而非撑爆内存 |
+| **内存量级** | 每表只回一行聚合 ⇒ 内存与表大小无关（常量级）；元数据查询返回行数 = 表/列/索引数量级 |
+| **实测（合成库，非 62 GB）** | 200 万行 × ~210 B（59.8 MB）、`memory_limit='128MB'`：<br>· 旧写法（`ORDER BY ALL` + `fetchall()`）⇒ **`OutOfMemoryException` 失败**（121.9/122.0 MiB）<br>· 新写法（流式聚合）⇒ **0.06 s 成功**，`rows=2000000` |
+| **未验证项（必须承认）** | **62 GB 真实库的耗时与峰值内存我们没跑过**。本设计只保证「内存不随表规模线性增长」，**不保证**「全库行数哈希在您的窗口内一定跑得完」——以首次实跑耗时为准；过慢则按 2.4.7 裁剪 |
+
+##### 2.4.7 可裁剪（时间不够时的降级口径）
+
+```powershell
+& $py $tool --mode baseline --db (Join-Path $dataDir 'quantstudio.db') --out $baseline --schema main
+```
+
+> 裁剪会**缩小验证覆盖**，属「有损验收」：裁剪后通过的结论**只覆盖被比对到的表**，
+> 不得表述为「整个备份已完整验证」。时间允许时**不要裁剪**。
+
+> **务必注意**：**只有在您自己的真实主库上跑出正例 `RESTORE-EQUIV: OK` 且负例 `MISMATCH`，才算「备份可恢复」被验证过。**
+> 我们在开发环境用合成库跑通了**同一条命令链**（正例 OK / WAL 错配负例 MISMATCH / 结构负例 MISMATCH），
+> 那只能证明**命令与判据可用**，**不能代替**您真实窗口的结果——**没跑过就等于没验证**。
 
 ### 步骤 3 · 升级代码
 
@@ -410,9 +606,10 @@ schtasks /Run /TN QS_DaemonForever
 | `data\upgrade-nolock-evidence-<stamp>.txt` | 步骤 1 无写者举证（四节） | 证明备份时无人持库 |
 | `data\quantstudio.db.bak.<stamp>` + `data\quantstudio.db.bak.<stamp>.wal`（如有 WAL） | 步骤 2.2 备份 | **唯一原件，冻结不动** |
 | `COPY-FIDELITY-OK` 那几行（含六条判据 + BEFORE/AFTER 指纹） | 步骤 2.3 | 证明**拷贝忠实**（不等于副本完整） |
-| `data\upgrade-baseline-fp-<stamp>.json` + `.txt` | 步骤 2.3 末（同基线逐表指纹） | 恢复比对的**唯一基准** |
-| `data\upgrade-restorecheck-<stamp>.txt`（正例） | 步骤 2.4 ② | 证明隔离副本与基线逐表一致 |
-| `data\upgrade-restorecheck-<stamp>-neg.txt`（负例） | 步骤 2.4 ③ | **证明这套比对会报警**（鉴别力证据） |
+| `data\restorecheck_tool.py` | 步骤 2.4.1 | 比对工具（**须与通知内版本逐字一致**） |
+| `data\upgrade-baseline-fp-<stamp>.json` | 步骤 2.4.2 生产端 | 恢复比对的**唯一基准**（含 `BASELINE-SHA256`） |
+| `data\upgrade-restorecheck-<stamp>.json` + `.txt`（正例） | 步骤 2.4.4 消费端 | 证明隔离副本与基线逐表一致（含 `CONSUMED-BASELINE` 回显） |
+| `data\upgrade-restorecheck-<stamp>-neg.txt`（负例） | 步骤 2.4.5 | **证明这套比对会报警**（鉴别力证据；无 WAL 时附合成 fixture 输出） |
 | 步骤 5 自检完整输出 | 步骤 5 | 版本门结论 |
 
 ## 四、自检输出怎么读
@@ -496,13 +693,24 @@ schtasks /Run /TN QS_DaemonForever
 
 ## 修订说明（v4 → v5 → v6；内部留痕，下发时可删除）
 
-| # | 终审退修意见 | 本版落实 |
+| # | 终审意见（第三轮） | 本版落实 |
 |---|---|---|
-| 1 | **首尾 8MB + size/mtime 未变不能证明中间未变，删除完整保证** | §2.3 顶部新增 ⚠ 三条「这六判据**证不到**什么」：<br>① **不能**证明主库中间区域未变（只取首尾各 8MB；中间写入且 size/mtime 不变时判据照样过）⇒ **删除「区间内主库完全静止」**，改为「在 size/mtime/首尾 8MB 几个**所测层面**未观察到变化」；<br>② **删除「主库备份+WAL 备份 = 一份完整静止副本」**，改为仅证明**拷贝忠实性**；<br>③ 明写「判据全过仍可能打开后数据偏少」（v5 踩过的坑）。<br>六判据结论串由 `SNAPSHOT-CONSISTENT` **更名 `COPY-FIDELITY-OK`**，避免暗示完整性 |
-| 2 | **「读数/末笔时间不早于源」不足证明恢复完整；补同一基线下逐表键集、行数、关键内容和对象指纹，以及错配 WAL 负例** | §2.4 全面重写：<br>· **同基线**：§2.3 末新增只读采集 `upgrade-baseline-fp-<stamp>.json`（**升级前**那一刻的逐表列定义/行数/内容 sha16 + 索引对象）；<br>· **冻结原件**：明确原件永不 `connect`，只 `Copy-Item` 出去；<br>· **隔离复制品重放**：复制到独立目录并**保持 `X` / `X.wal` 配对命名**；<br>· **四条判据**：A 表集一致 / B **逐表行数**一致 / C **逐表内容指纹**一致 / D 列定义·主键·索引对象一致；<br>· **错配 WAL 负例（必做）**：再造一份把 WAL 改名 `.wal.displaced` 的复制品，**必须报 `MISMATCH`**；若负例也报 OK ⇒ 判据无鉴别力、结论无效 |
-| 3 | **说明打开后可能改写或清除该副本 WAL** | §2.4 三条铁律第 3 条 + 实测表：**只读打开不改写 URL/WAL**（`r.db=536576B | r.db.wal=124B` 前后一致，读到 count=7）；**读写打开会把 WAL 合并进主库并清除该 WAL**（→ 单文件 `798720B`）⇒ 副本形态被永久改变、不可再作「当时状态」证据；策略=**只用 `read_only=True`**，需读写验证另复制一份 |
-| 4 | （实证支撑）**schema/对象指纹对数据缺失零鉴别力** | 实测四组副本 `schema_sha16` **完全相同 `f9be8c231b68eb62`**，但 B（错配 WAL）与 C（无 WAL）**各表少 1 行且内容指纹不同**（3/4/4 vs 2/3/3）⇒ 故判据 D（对象指纹）**只作结构面**，完整性必须靠 B（行数）+ C（内容指纹） |
-| 5 | （v5 缺陷修正保留）WAL 配对命名 | §2.2 命名写死 `<主库备份全名>.wal`，附 ⚠ 实测对照表（v5 命名丢 4 行且静默） |
+| 1 | **输出基线用字面量 `{stamp}`，消费端读展开后的 `$stamp`，须显式传同一路径并做端到端验证** | §2.4.1-2.4.4 重写：全部改为**同一 `$baseline` 变量**，工具调用一律显式 `--out` / `--baseline` 参数；<br>· §2.4.2 写后立即 `if (-not (Test-Path $baseline)) { throw }` 并打印 `BASELINE-PATH` + `BASELINE-SHA256`；<br>· §2.4.4 打印 `CONSUMED-BASELINE`，要求与 `BASELINE-PATH` **逐字一致**；<br>· 另注明**必须用单引号 here-string**（双引号会把 Python 里的 `$` 吃掉）。<br>**实测复现**：`"...{stamp}.json"` → 字面量不展开；`"...$stamp.json"` → 展开为时间戳；两者 `-eq` 为 **False** |
+| 2 | **整表排序加 `fetchall()` 对 62GB 未验，补有界读取与排序临时空间设计** | §2.4.6 新增「有界性说明」：<br>· **不用** `SELECT *` + `fetchall()`、**不用** `ORDER BY ALL`；只取 `count(*)` + **流式聚合** `sum(CAST(hash(列...) AS HUGEINT))`；<br>· 新写法**不含排序** ⇒ 无排序溢写；仍显式 `SET temp_directory='...\_duckdb_tmp'`、`SET memory_limit='4GB'`；<br>· **实测差分**（200 万行 / 59.8 MB / `memory_limit=128MB`）：旧写法 **`OutOfMemoryException`**（121.9/122.0 MiB）；新写法 **0.06 s 成功**；<br>· **如实声明**：62 GB 真实库耗时与峰值内存**未实测**，只保证内存不随表规模线性增长；过慢按 §2.4.7 裁剪（并注明裁剪=有损验收） |
+| 3 | **内容编码、完整 SHA、schema 限定及索引定义须一致** | 新增「口径一致性」表：<br>· 编码：统一 `hash(有类型列)`（不拼字符串，避免浮点/日期 repr 差异）+ `preserve_insertion_order=false`；<br>· SHA：结构面/数据面均输出**完整 64 位**（不再截断 16 位）；<br>· schema：查询写 `"schema"."table"`，元数据查询带 `WHERE schema_name=?`；<br>· 索引：取 `is_unique`/`is_primary`/**`sql` 完整 DDL**，并纳入 `duckdb_constraints()`；<br>· 另加 `duckdb version` 比对，防 `hash()` 语义漂移 |
+| 4 | **原现场无 WAL 时，去 WAL 负例须另用含增量的合成 fixture** | §2.4.5 拆两分支：<br>· **分支 1**（有 WAL 备份）⇒ 照常把 WAL 改名 `.displaced`；<br>· **分支 2**（**无 WAL**）⇒ 明确「没有 WAL 可改名」，提供**与生产库完全隔离**的 fixture 构造（建表+CHECKPOINT=3 行 → 另起进程追加 4 行 → 强杀 → 得 `fx.db` + `fx.db.wal`），再采基线 + 造错配副本；<br>· 判据：负例必须 `MISMATCH`，否则「比对无鉴别力、结论无效」 |
+| 5 | （前两轮成果保留）删除完整保证 / WAL 配对命名 | §2.3 ⚠ 三条「证不到什么」保留；§2.2 WAL 命名 `<主库备份全名>.wal` 保留 |
+| 6 | **T041 不连带核销** | 明确写「**T041 未连带核销**，仍为 `BLOCKED`」 |
+
+**隔离命令链验收（2026-11-15 实测，合成库）**
+
+| 用例 | 期望 | 实测 |
+|---|---|---|
+| 正例（`r.db` + 配对 `r.db.wal`） | OK | ✅ `RESTORE-EQUIV: OK 与基线一致`，exit=0 |
+| 负例（WAL 改名 `.displaced`） | MISMATCH | ✅ 逐表报 `行数 3 != 4` 等，exit=1 |
+| 结构负例（数据不动，仅加一个索引） | 只报结构面 | ✅ 仅 `结构面 sha256 不一致`，未误报行数/内容 |
+| 无 WAL 现场正例 | OK | ✅ exit=0 |
+| 有界读取差分 | 旧写法失败 | ✅ 旧 OOM / 新 0.06 s |
 
 **口径来源（内部随附）**：
 - 放行集合与判定源：`quantstudio/pipeline/duckdb_version_policy.py`

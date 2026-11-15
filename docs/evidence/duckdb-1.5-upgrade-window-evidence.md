@@ -1122,3 +1122,64 @@ v6 命名则正常读到 7 行。
 `gate_out=PASS 1.5.6`、`qa_failed_count=8`（与 §7.23 已定性的 8 条 `quality audit failed` 同源，全为 11-07 旧账）。
 `verdict=FAIL` 仍由结构缺陷所致（`daemon_absence_excused`/`once_running` 两个**观测量**被并入 `all()`），
 该重构方案 `dc166fa` 仍**候②审**、脚本未动。
+
+
+### §7.31 第三次终审退修：命令链四处确定缺陷 + **隔离命令链端到端验收**（2026-11-15 14:2x–14:5x）
+
+> 依据 11-15 终审：「输出基线使用字面量 `{stamp}`，消费端读取展开后的 `$stamp`，须显式传同一路径并做端到端验证。
+> 整表排序加 `fetchall()` 对 62GB 未验，补有界读取和排序临时空间设计；内容编码、完整 SHA、schema 限定及索引定义须一致。
+> 原现场无 WAL 时，去 WAL 负例须另用含增量的合成 fixture。」
+> 边界：不备真实库｜不启采集｜不 CHECKPOINT｜不改生产脚本｜不下发｜**T041 不连带销**。
+
+#### §7.31.1 四条意见的落实与实测
+
+| # | 意见 | 落实 | 实测 |
+|---|---|---|---|
+| 1 | `{stamp}` / `$stamp` 错位，须显式传同一路径 + 端到端验证 | 生产端/消费端统一用**同一 `$baseline` 变量**，路径走 `--out`/`--baseline` 参数；§2.4.2 打印 `BASELINE-PATH`+`BASELINE-SHA256` 且 `Test-Path` 失败即 `throw`；§2.4.4 打印 `CONSUMED-BASELINE` 要求逐字一致 | **复现缺陷**：`"...{stamp}.json"` 不展开 vs `"...$stamp.json"` 展开，两者 `-eq` 为 **False**；**验收**：`CONSUMED-BASELINE` 与 `BASELINE-PATH` **完全相同** |
+| 2 | `ORDER BY ALL`+`fetchall()` 对 62GB 未验，补有界读取与排序临时空间 | 改为**流式聚合** `sum(CAST(hash(列...) AS HUGEINT))`；**无排序、不物化**；显式 `SET temp_directory` + `SET memory_limit='4GB'` | **差分实测**（200 万行 / 59.8 MB / `memory_limit='128MB'`）：旧写法 **`OutOfMemoryException`**（121.9/122.0 MiB）**失败**；新写法 **0.06 s 成功** `rows=2000000` |
+| 3 | 内容编码 / 完整 SHA / schema 限定 / 索引定义须一致 | 统一 `hash(有类型列)`（不拼字符串，避浮点日期 repr 漂移）+ `preserve_insertion_order=false`；SHA **完整 64 位**；查询 `"schema"."table"` + 元数据 `WHERE schema_name=?`；索引取 `is_unique`/`is_primary`/**`sql` 完整 DDL** + `duckdb_constraints()`；两侧比对 `duckdb version` | **结构层鉴别力实测**：数据完全不动、仅给复制品加一个索引 ⇒ 仅报 `结构面 sha256 不一致`，**未误报**行数/内容 |
+| 4 | 原现场无 WAL 时负例须另用含增量合成 fixture | §2.4.5 拆**分支1**（有 WAL：改名 `.displaced`）/ **分支2**（无 WAL：合成 fixture 建表+CHECKPOINT 3 行 → 另起进程追加 4 行 → 强杀 → 得 `fx.db`+`fx.db.wal`） | 分支2 实测：fixture `fx.db=536576B / wal=145B`，基线读到 **7 行**，负例报 **`rows 3 != 7`** + `data sha256 differs`，**exit=1** |
+
+#### §7.31.2 隔离命令链端到端验收（七块原样执行，非手写等价物）
+
+方法：从**通知 markdown 中抽取 ```powershell 代码块**，逐块原样执行（`powershell.exe -File`），不重写命令。
+
+| 块 | 内容 | 结果 |
+|---|---|---|
+| 1 | §2.4.1 落盘工具（here-string → `Set-Content`） | ✅ 落盘 7124 B，**归一化后与 markdown 逐字一致**（`normalized_equal=True`，差异仅 BOM 3B + 尾换行 1B） |
+| 2 | §2.4.2 生产端基线 | ✅ 文件名 `upgrade-baseline-fp-20261115_142325.json`（**`$stamp` 已展开，无 `{stamp}`**）；`BASELINE-SHA256` 回显 |
+| 3 | §2.4.3 冻结 + 隔离复制 | ✅ `配对 WAL 已就位：r.db.wal`；原件未被打开 |
+| 4 | §2.4.4 正例 | ✅ `RESTORE-EQUIV: OK`；`CONSUMED-BASELINE` == `BASELINE-PATH` |
+| 5 | §2.4.5 分支1 负例（WAL 改名） | ✅ `MISMATCH`，逐表 `rows 2 != 3`，**exit=1** |
+| 6 | §2.4.5 分支2 合成 fixture 负例 | ✅ `MISMATCH`，`rows 3 != 7`，**exit=1** |
+| 7 | §2.4.7 `--schema` 裁剪 | ✅ `[note] trimmed to schema: main`，基线正常产出 |
+
+#### §7.31.3 🔴 端到端验收**额外揪出三处真实缺陷**（均已修）
+
+| # | 缺陷 | 现象 | 修法 |
+|---|---|---|---|
+| A | **Windows PowerShell 5.1 把无 BOM 的 `.ps1` 当 ANSI(GBK) 读** | 工具内**中文注释变乱码，并吞掉换行**使两条语句粘成一行 ⇒ `SyntaxError` 于第 17 行 | 工具源码**全部改为 ASCII**（注释英文化），从根上消除编码依赖；通知补「若存 `.ps1` 请用 UTF-8 **带 BOM**」的说明 |
+| B | **`"` 不是 PowerShell 转义符**（转义符是反引号） | 分支2 里内联 `-c "..."INSERT...""` 提前终止字符串 ⇒ 解析错误 | 分支2 改为 `@'...'@` 写 `mk_fixture.py` / `w.py` 两个小脚本再执行，**彻底消除引号嵌套** |
+| C | **`$fx` 本身已含 `.db` 后缀** | `"$fx.db.wal"` 展开为 `fx.db.db.wal` ⇒ `Copy-Item` 找不到文件 | 全部改为 `"$fx.wal"`（3 处） |
+
+> **定性**：A/B/C 都是「命令链上确定会失败」的缺陷，且**只有真跑才会暴露**——静态审阅看不出来。
+> 这正是审核要求「隔离命令链验收」的价值所在；三处均已修并复跑通过。
+
+#### §7.31.4 验收过程中发现的**操作约束**（已写入通知 §2.4.2）
+
+首轮 E2E 出现「正例 MISMATCH / 负例 OK」的**反向结果**，排查确认**不是工具缺陷**，而是我的夹具语义错了：
+基线取自「增量进 WAL **之前**」的主库（2 行），备份却取自「**之后**」的状态（3 行）⇒ 两者本就不同源。
+
+⇒ **固化约束（通知已加硬要求）**：§2.4.2 基线**必须与 §2.2 备份取自同一状态、同一停写窗口，且备份完成后立即执行**；
+中间任何写入都会让正例误报 `MISMATCH`（表现为 `rows N != M`），**那不是备份坏了，而是基线与备份不同源**。
+按同源语义重跑后：正例 `OK`、负例 `MISMATCH`，方向正确。
+
+#### §7.31.5 边界与状态
+
+| 项 | 状态 |
+|---|---|
+| 真实库备份 / 采集 / CHECKPOINT / 生产脚本 / 下发 | **均未做** |
+| 全部实验 | 合成库 + `%TEMP%` 隔离目录 |
+| T041 | **保持 `BLOCKED`，未连带核销** |
+| v6 性质 | **候选稿，非已批准下发版**；11-17 下发闸不豁免 |
+| 未验证项（如实） | **62 GB 真实库上的耗时与峰值内存仍未实测**；只证「内存不随表规模线性增长」 |
