@@ -13,15 +13,16 @@
 
 | 版本 | commit | 全文 sha256 | blob |
 |---|---|---|---|
-| **v8（当前身份基线）** | `b7ade13` | `e16ca48e5a3d4ec780f2b3e50c85f869aff4103ed1c357ee34292a507f9a26a3` | `4c7e30052ae0` |
-| v9（本轮：§16 回退配方定点修正） | **本轮提交后登记**（见 R12 上报块） | **同左** | — |
+| v8 | `b7ade13` | `e16ca48e5a3d4ec780f2b3e50c85f869aff4103ed1c357ee34292a507f9a26a3` | `4c7e30052ae0` |
+| **v9（当前身份基线）** | `61f2c39` | `18bd1ec3fa90a01419d37513cf290c62c39ddfa9845516133695dbc066acc115` | `2d03a35bcd2b` |
+| v10（本轮：V1／V2 回退配方精确化） | **本轮提交后登记**（见 R13 上报块） | **同左** | — |
 | v7（历史） | `e3d551d` | `b80a748ed8aba0be03753cf146fdfa35439b8bbecd0bfd370731af1cdf6cf41c` | `4143f8393311` |
 
 | 项 | 值 |
 |---|---|
 | 配套件（同批送审） | 《同 id 族级兜底设计 v2》`kb-duplicate-id-fallback-design-20261115.md`，sha256 `0c84c89bf573de3bcee1090b17ac70bec2ad23bd7b56e9c306e0eeab66662322` |
 | 冻结语义 | **设计候选**：已过 R5–R12 文档退修，**未授权实现**；实施须另走 §16 申请 |
-| 复核命令 | `git show <commit>:docs/handoff/kb-parse-status-detection-design-20261115.md | sha256sum`（**只读，不落盘**） |
+| 复核命令 | `git show <commit>:docs/handoff/kb-parse-status-detection-design-20261115.md | sha256sum`（**只读，不落盘**）；v9 实测 **35912 B**（与审核主锚 35,912 B 一致） |
 
 **状态口径（写死）**：
 - **"已测基线"**＝本文所引读数来源，均产出于 **C4 实施之前**（历史实测）——**只证明改前行为**；
@@ -367,39 +368,54 @@
 
 > （← 修正 v8 表述：v8 写"含非本会话 `M`/`??` ⇒ 判脏树停手"过宽，会把无关 dirty 也当阻断。）
 
-#### B. 写前必须留的 pin（**回退的前提**）
+#### B. **N6-V1：写前必须保存「实际原字节 ＋ SHA」**（`HEAD:path` 不足以作回退源）
 
-```bash
-# 写前（在实施前执行，与 baseline.json 同一时点）
-git -C <repo> rev-parse HEAD:<path>        # → PIN_BLOB（写前 blob sha）
-sha256sum <path>                            # → PIN_SHA（写前全文 sha256，字节级）
-```
-两个值**同时登记**到 `docs/evidence/` 与当轮上报块；**未记录 pin ⇒ 不得开工**（无 pin 无法证明"已恢复到写前"）。
+> **为什么 `HEAD:path` 不够**：真实写前内容可能是 ① **dirty**（工作树有未提交改动）② **untracked**（HEAD 里根本没有该路径，`rev-parse HEAD:<path>` 直接报错）③ **部分暂存**（index 与工作树不同）。
+> 三种情形下 `HEAD:path` 都**不等于**真实写前内容 ⇒ **回退源只能是「实际原字节快照」**。
 
-#### C. 回退执行（**字节保真，禁 PS5.1 重编码路径**）
+**写前动作（实施开工那一刻，与 `baseline.json` 同批执行）**
 
-| 方式 | 命令 | 说明 |
+| 步骤 | 命令（字节保真） | 产出 |
 |---|---|---|
-| **主径（推荐）** | `git -C <repo> checkout <PIN_COMMIT> -- <path>` | **git 原生按 blob 还原工作树，字节保真**，不经 PowerShell 文本层 |
-| 备径 | `python -c "import subprocess,sys;d=subprocess.run(['git','show','<PIN>:<path>'],capture_output=True).stdout;open(r'<path>','wb').write(d)"` | `capture_output=True` **返回 bytes**，以 `wb` 落盘 ⇒ 保真 |
-| **禁用** | `git show <PIN>:<path> > <path>`（PS 5.1 `>` 写 UTF-16LE+BOM） | **重编码 ⇒ 内容被改写，绝不能用于回退** |
-| **禁用** | `Out-File` / `Set-Content -Encoding UTF8`（PS5.1 无 `utf8NoBOM`，UTF8 写 BOM） | 同上 |
-| **禁用** | `git revert <整笔>` / `git checkout -- .` / `git reset --hard`（共享 dirty 树） | 会连带他线改动 |
+| ① **原字节快照**（**唯一权威回退源**） | `python -c "import shutil,hashlib,os;src=r'<path>';dst=r'<SNAP>';shutil.copyfile(src,dst);print(hashlib.sha256(open(dst,'rb').read()).hexdigest(),os.path.getsize(dst))"`<br>或 pwsh `Copy-Item <path> <SNAP> -Force` 再 `Get-FileHash -Algorithm SHA256` | `<SNAP>` 文件 ＋ **`SNAP_SHA256`** ＋ `SNAP_SIZE` |
+| ② 快照完整性自检 | 复算 `sha256(<SNAP>)` **必须 ==** 记录值 | 不等 ⇒ 快照无效，**不得开工** |
+| ③ 状态登记（**仅辅助，不作回退源**） | `git status --porcelain -- <path>`（记录 dirty/untracked 情形）<br>`git rev-parse HEAD:<path>`（**失败即说明 untracked/新增**，如实记录"HEAD 无此路径"）<br>`git diff -- <path>` / `git diff --cached -- <path>`（差异文本快照） | `.meta.json`：`path / snap / sha256 / size / mtime / dirty_state / index_state / head_blob_or_absent` |
 
-#### D. 验证（**必须对写前 pin 比对，不得只看相对 HEAD 的 diff**）
+**快照落点与命名**：`docs/evidence/rollback-snapshots/<rel 路径中的 / 换 __>.pre-<UTC yyyymmddThhmmss>.bin` ＋ 同名 `.meta.json`。
+**留存**：保留至该轮验收通过后**不少于 7 天**；期间禁止删除或覆盖。
 
-> **核心判据**：回退是否成功，取决于**与写前 pin 的内容身份一致**——**不是**"相对当前 HEAD 的 `git diff` 为零"。
-> 因为 HEAD 可能已被他线推进，`diff` 为零只说明"与 HEAD 相同"，**不说明"已回到写前状态"**。
+#### C. **N6-V2：恢复用「定向原字节写回」，不用 `git checkout`**（保 index 原态）
 
-```bash
-# 逐项比对（三项全绿才算恢复成功）
-git -C <repo> hash-object <path>            # ① 必须 == PIN_BLOB
-sha256sum <path>                             # ② 必须 == PIN_SHA
-git -C <repo> status --porcelain -- <path>   # ③ 必须为空（该路径无残留改动）
-```
-- ① 或 ② 任一不等 ⇒ **恢复失败**，继续排查（文件可能被他线改动覆盖、或 pin 记错），**不得宣告已回退**；
-- ③ 非空 ⇒ 该路径仍有未提交差异，须查明来源（本会话/他线）；
-- 三项全绿的**结论表述**只能写"已恢复到 pin `<PIN_BLOB>`/`<PIN_SHA>` 状态"，**不得写"diff 为零所以已恢复"**。
+> **为什么不用 `git checkout <pin> -- <path>`**：
+> ① 它**会写 index**（等价于把该路径内容 stage 进去）⇒ **破坏 index 原态**，在多线共享工作树里可能把不该暂存的内容带进别人的提交；
+> ② 它走 **working-tree 转换链**（`core.autocrlf` / `.gitattributes` 的 `text`/`filter`/`ident` 等）⇒ 落盘字节**可能不等于 blob 字节**，回退后再算 sha256 与 blob 不一致。
+
+**恢复动作（从快照写回）**
+
+| 步骤 | 命令 | 说明 |
+|---|---|---|
+| ① 快照自检 | `sha256(<SNAP>) == SNAP_SHA256` | 不等 ⇒ 快照被破坏，**停止恢复**并上呈 |
+| ② **定向写回**（主径） | `python -c "import hashlib;d=open(r'<SNAP>','rb').read();assert hashlib.sha256(d).hexdigest()==r'<SNAP_SHA256>';open(r'<path>','wb').write(d)"` | **`wb` 字节写**，不经文本层、**不碰 index** |
+| ② 定向写回（备径 pwsh） | `Copy-Item <SNAP> <path> -Force` 后 `Get-FileHash` 比对 | `Copy-Item` 是**字节复制**，不碰 index |
+| ③ 若必须从 git 取内容 | `python -c "import subprocess,sys;r=subprocess.run(['git','cat-file','blob','<blob>'],capture_output=True);sys.exit(1) if r.returncode!=0 else open(r'<path>','wb').write(r.stdout)"` | **必须核 `returncode==0`** 再写盘；`cat-file` **不碰 index**、**不过 filter** |
+| **禁用** | `git checkout <pin> -- <path>`／`git restore --source` | 改 index ＋ 过转换链 |
+| **禁用** | PS 5.1 `>` ／ `Out-File` ／ `Set-Content -Encoding UTF8` | 重编码（UTF-16LE+BOM / 写 BOM） |
+
+#### D. 验证：**按「真实写前内容」判定，不以相对 HEAD 的 status 为据**
+
+> **充分判据（唯一）**：落盘内容的 **sha256 == `SNAP_SHA256`**（逐字节等同于写前原字节）。
+> **`git status --porcelain -- <path>` 非空 ≠ 恢复失败**：恢复旧内容后，若 HEAD 已含新内容，相对 HEAD 自然显示为"已修改"——**这是预期现象**，不构成失败理由。
+
+| # | 检查 | 判据 | 权重 |
+|---|---|---|---|
+| ① | `sha256(<path>) == SNAP_SHA256` | 必须相等 | **充分判据** |
+| ② | `size(<path>) == SNAP_SIZE` 且与快照逐字节比对为空（`fc /b` 或 `cmp`） | 必须一致 | **加强判据** |
+| ③ | **index 原态**：`git diff --cached --name-only -- <path>` 与写前 `.meta.json` 的 `index_state` **一致** | 必须一致 | **加强判据**（证明未误 stage） |
+| ④ | `git status --porcelain -- <path>` | **仅记录，不作判据** | 参考（非空允许） |
+
+- ① 成立即**恢复成功**，结论表述写「已恢复到写前原字节 `SNAP_SHA256`」；
+- ① 不成立 ⇒ **恢复失败**，继续排查（快照损坏／写入被并发覆盖／路径错），**不得宣告已回退**；
+- ③ 不一致 ⇒ **index 被改动**（可能误用 checkout 或误 add）⇒ 按共享工作区纪律**先上呈**，不得自行摘出。
 
 #### E. 留证
 
@@ -411,3 +427,5 @@ git -C <repo> status --porcelain -- <path>   # ③ 必须为空（该路径无�
 |---|---|
 | **2026-11-16 02:20** | **v9（R12：回退配方定点修正）**：①**§0 身份口径统一为「全文 hash」**（R12："以当前全文 hash 为身份"）——文档**不自含自身 hash**（自指），改**提交登记制**：身份＝`commit SHA ＋ 该 commit 实测全文 sha256`，附 v8/v7 登记行与复核命令 `git show <commit>:<path> | sha256sum`；②**§16.2 重写**：(A) **判脏收窄**为"仅目标路径同文件混属才停手"，**无关 dirty 不阻断独立只读工作**；(B) **写前必须留 pin**（`PIN_BLOB`＋`PIN_SHA`，未记录不得开工）；(C) 回退**主径 `git checkout <PIN> -- <path>`**（git 原生字节保真）、备径 python bytes 写盘，**明禁 PS5.1 `>`／`Out-File`／`Set-Content -Encoding UTF8`（重编码风险）**、禁共享树整笔 revert；(D) **验证＝对写前 pin 比对三绿**（`hash-object==PIN_BLOB` ∧ `sha256==PIN_SHA` ∧ `status --porcelain` 为空），**明写"不得把相对 HEAD 的 diff 为零当作恢复成功"**；(E) 留证要求。**仅文档；未改 kb_hook／路由／配置、未跑新测试、未分发、未延观察窗。** |
 | **2026-11-16 01:35** | **v8（R11：收文档退修 · 冻结候选身份）**：①新增 **§0 候选身份**——**冻结对象＝v7 正文**（commit `{head}`，sha256 `{c4_sha}`、blob `{c4_blob}`），配套件 hash；**冻结语义**（未授权实现、任何改动即新版本须重新冻结报审）；**状态口径写死**（已测基线＝实施前实测／预期＝未实现不得当实测／after 何时可称实测）；②**§13 分层改造**——标题「分层：已测基线／未测目标」＋**分层声明**（历史 93 件与 6 组合**只证明改前读数**，**after 不存在、不得写成实测**）＋表头列名改「现状（已测基线）／目标（预期 · 未实现）」＋13.1/13.2 标题与反例行同步标注；③新增 **§16 实施申请与回退纪律**——申请须附允许写入清单（禁通配）／范围外声明／**原样可复制回归命令**／证据落点；**回退写死**（禁在共享 dirty 树机械 revert 整笔；`git show <pin>:<path>` **针对本会话明确路径与版本**逐文件复原＋反向验证＋sha256 留证＋串入他线先上呈）。**仅文档；未改 kb_hook／路由／配置、未接线分发、未跑新测试、未延观察窗。** |
+
+| **2026-11-16 03:00** | **v10（R13 · DRIFT-N6-r1：V1／V2 精确配方）**：①**§0 回填 v9 身份**（`61f2c39` / sha256 `18bd1ec3fa90a01419d37513cf290c62c39ddfa9845516133695dbc066acc115` / blob `2d03a35bcd2b` / 实测 **35912 B**，与审核主锚 35,912 B 一致）＋ v10 待登记行；②**§16.2-B 改写为 N6-V1**——`HEAD:path` **不足以作回退源**（dirty／untracked／部分暂存三情形下均 ≠ 真实写前内容）⇒ 写前**必须保存实际原字节快照 + `SNAP_SHA256` + `SNAP_SIZE`**（`shutil.copyfile` 或 `Copy-Item` 字节复制），并做**快照完整性自检**，状态登记仅作辅助（含"HEAD 无此路径"的如实记录）、快照落点与≥7 天留存；③**§16.2-C 改写为 N6-V2**——**禁用 `git checkout <pin> -- <path>`**（会写 index ⇒ 破坏 index 原态；且过 `core.autocrlf`/`.gitattributes` filter ⇒ 落盘字节 ≠ blob），改为**定向原字节写回**（`wb` 写盘／`Copy-Item`／必要时 `git cat-file` 且**核 `returncode==0`**），全程不碰 index；④**§16.2-D 验证改按「真实写前内容」**——**唯一充分判据 = `sha256==SNAP_SHA256`**，另加 size/逐字节/cmp 与 **index 原态一致**为加强判据；**明写 `git status --porcelain` 非空 ≠ 恢复失败**（HEAD 已含新内容时为预期现象）。**本轮未执行任何 checkout/reset/revert；未改 kb_hook／路由／档位、未跑新测试、未分发。** |
