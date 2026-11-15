@@ -1106,3 +1106,147 @@ RAW | 2026-11-14 18:18:31 EXIT  pid=39200 ExitCode=0  (normal-exit) uptime=1,160
 ## 17.8 边界（B105 甲保持）
 
 **只读**（事件日志 / 日志文件 / 任务信息 / WMI 进程扫描）。**不清 flag、不补触发、不恢复采集、不启停或改排程、不写库**。
+
+---
+
+# 十八、任务 XML 触发源审计 + 结论范围限定（2026-11-16 02:16）
+
+> 依总调度 2026-11-16 指示：「双实例来源先只读核任务 XML 的各触发器、重复边界和实例策略；
+> **06:00 与 06:30 分别对应，不混作同一对照**；**结论限定已审任务链**，不能用事后进程为空证明所有入口从未启动」。
+
+## 18.1 任务 XML 全文（`Triggers` + `Settings`，实测）
+
+### 18.1.1 三触发器（原文结构）
+
+```xml
+<Triggers>
+  <BootTrigger>
+    <Delay>PT2M</Delay>
+  </BootTrigger>
+  <CalendarTrigger>
+    <StartBoundary>2026-11-12T06:00:00</StartBoundary>
+    <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>
+  </CalendarTrigger>
+  <CalendarTrigger>
+    <StartBoundary>2026-11-12T00:30:00</StartBoundary>
+    <Repetition>
+      <Interval>PT6H</Interval>
+      <Duration>P1D</Duration>
+    </Repetition>
+    <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>
+  </CalendarTrigger>
+</Triggers>
+```
+
+### 18.1.2 结构化逐项
+
+| # | 类型 | `StartBoundary` | `EndBoundary` | `Repetition` | `DaysInterval` | `Enabled` |
+|---|---|---|---|---|---|---|
+| 1 | `MSFT_TaskBootTrigger` | — | — | **无** | — | **True**（`Delay=PT2M`） |
+| 2 | `MSFT_TaskDailyTrigger` | **`2026-11-12T06:00:00`** | 无 | **无** | 1 | **True** |
+| 3 | `MSFT_TaskDailyTrigger` | **`2026-11-12T00:30:00`** | 无 | **`Interval=PT6H` / `Duration=P1D` / `StopAtDurationEnd=False`** | 1 | **True** |
+
+### 18.1.3 实例策略与相关 `Settings`
+
+| 键 | 值 | 含义 |
+|---|---|---|
+| **`MultipleInstancesPolicy`** | **`IgnoreNew`** | 同一任务已有实例在跑时，新实例**被忽略**（不排队、不并行） |
+| **`StartWhenAvailable`** | **`true`** | 错过计划开始时间 ⇒ **尽快补跑**（11-15 `13:42:17 id=114` 即此机制） |
+| `ExecutionTimeLimit` | **`PT0S`** | 无执行时长上限 |
+| `DisallowStartIfOnBatteries` / `StopIfGoingOnBatteries` | `false` / `false` | 电池条件不阻塞 |
+| `UseUnifiedSchedulingEngine` | **`true`** | 使用统一调度引擎 |
+
+## 18.2 重复边界推算（触发器 3）
+
+`StartBoundary 2026-11-12T00:30:00` ＋ `Interval PT6H` ＋ `Duration P1D`：
+
+⇒ **每日自 `00:30` 起 24 小时内每 6 小时**一次：**`00:30` / `06:30` / `12:30` / `18:30`**（共 4 个点位），随后本周期重复结束，等次日 `ScheduleByDay` 日触发再开新周期。
+
+## 18.3 ⚠️ `06:00` 与 `06:30` 分属不同触发器（**不可混作同一对照**）
+
+| 时刻 | 归属触发器 | 触发性质 | 预期实例数 |
+|---|---|---|---|
+| **`06:00`** | **触发器 2**（`StartBoundary 06:00`，**无 Repetition**） | 纯粹**日触发** | 1（预期，**未验证**） |
+| **`06:30`** | **触发器 3**（`00:30` + `PT6H`） | **重复点位** | 1（预期，**未验证**） |
+| `00:30` | **触发器 3**（日触发锚点 **与** 重复起点**重合**） | 日触发 + 重复锚点 | **实测 2** |
+| `12:30` | 触发器 3 重复点位 | 重复 | 1（预期，**未验证**） |
+| `18:30` | 触发器 3 重复点位 | 重复 | **实测 1** |
+
+⇒ **`06:00` 是触发器 2 的日触发、`06:30` 是触发器 3 的重复点位 —— 两者是不同触发器的不同机制，本登记不将二者合并为同一对照。**
+
+## 18.4 双实例来源：假设现状（仍非定论）
+
+### 18.4.1 已确证的事实
+
+| 事实 | 读数 |
+|---|---|
+| 触发器 3 的 `StartBoundary` 与其 `Repetition` 起点**同为 `00:30`** | XML 实测 |
+| **`00:30` 连续两日均为 2 实例** | 11-15 / 11-16 |
+| `18:30`（纯重复点位）为 **1 实例** | 11-15 |
+| `MultipleInstancesPolicy = IgnoreNew` | XML 实测 |
+
+### 18.4.2 假设与 `IgnoreNew` 的关系（重要澄清）
+
+**`IgnoreNew` 不排斥"先后两个实例"**——它只在**前一实例仍在运行**时忽略新实例。
+本任务 `skip` 路径极短（命中 flag → 写日志 → `exit 0`，毫秒级），因此**实例 1 可在 1 秒内结束后，实例 2 再被受理**，与实测「`00:30:01` / `00:30:02` 各为一完整实例」**不矛盾**。
+
+### 18.4.3 仍未证成的部分
+
+| 缺口 | 说明 |
+|---|---|
+| `06:30` / `12:30` 对照样本 | 11-15 因机器停机（`04:25`–`13:34`）**未触发**，缺这两点 |
+| `06:00`（触发器 2） | **尚未到点**（距采样 224.2 分钟） |
+| 机制级解释 | 「日触发与重复锚点重合 ⇒ 注册 2 实例」**仍属推断**，未从调度引擎日志层面取得直接证据 |
+
+⇒ **结论等级不变**：**「有可复现实证支持的方向假设」，非定论。**
+
+## 18.5 ⚠️ 结论范围限定（采纳审核）
+
+### 18.5.1 「已审任务链」的边界
+
+本登记所有「未启动采集」结论，**仅覆盖以下链路**：
+
+```text
+QS_DaemonForever（任务计划程序）
+  └─ powershell.exe（id=129 子进程，PID 5140 / 38052 / 38796 等）
+      └─ scripts/start_daemon_guarded.ps1
+          ├─ L32-37：命中 flag ⇒ 写 skip ⇒ exit 0   ← 实测走此路径
+          └─ L50-52 之后：创建 daemon_stderr/stdout 分文件 ⇒ 才真正启动 daemon
+```
+
+### 18.5.2 脚本侧指纹（用于界定"脚本是否走到启动段"）
+
+guarded 脚本在 **flag 检查之后**（`L50-52`）才创建 `daemon_stderr_<stamp>.log` / `daemon_stdout_<stamp>.log`：
+
+| 项 | 读数 |
+|---|---|
+| `daemon_stderr_*` 最新件 | **`daemon_stderr_20261113_225741.log`**（mtime `2026-11-14 18:18:23`） |
+| `daemon_stdout_*` 最新件 | **`daemon_stdout_20261113_225741.log`**（mtime `2026-11-13 22:57:41`） |
+| `daemon_stderr.current.txt` 指向 | `…20261113_225741.log`（mtime `11-13 22:57:41`） |
+| **11-16 00:30 后新 stamp 件** | **无** |
+
+⇒ **可推**：自 `11-13 22:57:41` 起，**guarded 脚本没有任何一次实例越过 flag 检查进入启动段**（含 `-Force` 路径，因其同样会写 stderr 分文件）。
+⇒ **不可推**：其他入口从未启动过 daemon。
+
+### 18.5.3 明确的不可推结论
+
+| 不能断言 | 原因 |
+|---|---|
+| ❌ 「所有入口从未启动采集」 | **GUI 启动 / CLI 直接 `python -m quantstudio.pipeline.daemon` 不写 stderr 分文件**，无指纹可查；本轮亦无历史进程快照 |
+| ❌ 「数据必缺」 | 11-16 各表**应到点未到**，缺口须按表/freq/应到点核库内行数 |
+| ❌ 「事后进程为空 ⇒ 当时未启动」 | 进程是**瞬时**观测，不能回溯 |
+
+⇒ **准确表述**：**「在已审任务链（`QS_DaemonForever` → `start_daemon_guarded.ps1`）内，11-16 `00:30` 两实例均走 flag 跳过路径，未进入 daemon 启动段。」** 其他入口**未核，不作断言**。
+
+## 18.6 下一读数（不变）
+
+| 项 | 内容 |
+|---|---|
+| 时点 | **`2026-11-16 06:00`**（触发器 2 日触发）与 **`06:30`**（触发器 3 重复点位）**分别报** |
+| 建议 | 触发后 **30 分钟内**首报（**建议，非硬截止**） |
+| 采集 | 任务事件 + 实例 GUID / skip 增量 / flag 现态 / 进程 / START-EXIT / 业务产物 |
+| 缺证 | 如实列缺项，**不补跑** |
+
+## 18.7 边界（B105 甲保持）
+
+**只读**（任务 XML / 日志文件 / 事件日志 / WMI）。**不清 flag、不补触发、不恢复采集、不启停或改排程**。
