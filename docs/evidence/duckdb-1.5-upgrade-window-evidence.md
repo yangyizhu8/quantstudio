@@ -1485,3 +1485,132 @@ if ($LASTEXITCODE -ne 0) { "RESTORE-EQUIV 未通过（exit=$LASTEXITCODE），�
 | 真实库 / 采集 / CHECKPOINT / 生产脚本 / 下发 | **均未做** |
 | T041 | **保持 `BLOCKED`，未连带核销** |
 | **62 GB 耗时与峰值内存** | **仍未实测**，继续明列 |
+
+
+### §7.35 第七轮修缺陷：stamp 双定义 · verify 未用留存解释器 · 复制自吞 · 留存配方与合成用例（2026-11-15 22:5x–23:3x）
+
+> 依据 11-15 终审：「步骤1建 stamp 并据此备份，2.4.0 又重定义，跨秒后会寻找另一备份名。统一 stamp 须在所有产物前只定义一次。
+> 若主张用 `$pyVerify` 验证，实际命令不能仍用升级后的 `$py`；版本/source_id 不符须机器拒绝。
+> `sys.prefix` 复制或 wheel 下载不等于环境可用；复制目标若位于源子树，须写前拒绝递归收自己。
+> 先交唯一可审留存配方和精确合成用例清单，不让客户承担首测。」
+> 边界：**不跑新补测**｜**不执行 pip / 环境复制 / 真实备份**｜不启采集｜不 CHECKPOINT｜不改生产脚本｜不下发。
+
+#### §7.35.1 缺陷一：`$stamp` 双定义 ⇒ 跨秒换名，后续找错备份
+
+**旧稿实证**：`$stamp = Get-Date -Format 'yyyyMMdd_HHmmss'` 出现在**两处**——步骤 1（行 102）与 2.4.0（行 276）。
+两条链路因此分叉：
+
+```
+$bak（2.2，用步骤1的 stamp） = data\quantstudio.db.bak.<T1>
+2.4.3 的 $bak（用2.4.0的stamp） = data\quantstudio.db.bak.<T2>      ← T2 ≠ T1 时
+   -> Test-Path 失败 -> throw "备份不存在"（暴露型故障）
+   -> 更糟：若该时刻恰好有另一份同名备份，则对着**错误时刻的备份**做比对（沉默型故障）
+```
+
+**这正是上一版 `{stamp}` 缺陷的同一类**：命名源不唯一。
+
+**已改为**：新增 **步骤 0**，`$stamp`/`$dataDir`/`$py` 只在此生成一次，并落盘 `data\upgrade-stamp.txt`
+作唯一权威；**删除步骤 1 与 2.4.0 的第二处定义**；重开窗口一律从该文件**读回**，明令不得重算。
+
+**机器核对（本轮实测，代码块内）**：
+
+| 项 | 读数 |
+|---|---|
+| powershell 代码块数 | 22 |
+| **块内 `$stamp = Get-Date` 处数** | **1**（步骤 0）✅ |
+| 其余 `$stamp =` 匹配 | 2 处：①block#3 是**从 `upgrade-stamp.txt` 读回**（正是要求的找回路径）；②block#4 是字符串插值 `"=== 无写者举证 $stamp ==="`，非赋值 |
+
+> 另注：全文 `Select-String '\$stamp\s*=\s*Get-Date'` 会数出 **2**，第二处是**修订表里的自述文字**
+> （"全文 `$stamp = Get-Date` 处数 | 1"）。**计数必须限定在代码块内**，否则会把自己的自述当成第二次定义——
+> 这是"以检索命中数作状态判据"的老坑，本轮已按块内统计复核。
+
+#### §7.35.2 缺陷二：主张用 `$pyVerify`，命令却仍用 `$py`
+
+**旧稿自相矛盾**：2.4.0 论证必须用留存的原版本解释器，而 2.4.4 正例写的是 `& $py $tool --mode verify`
+—— 若在升级后执行，`$py` 已是 1.5.6，工具必然 `CROSS-VERSION-INCOMPARABLE` / exit=5，白跑。
+
+**已改为**（逐点复核）：
+
+| 调用点 | 解释器 | 是否正确 |
+|---|---|---|
+| 2.4.0 固化 `pypin` | `& $py -c` | ✅ 升级前，正确 |
+| 2.4.0 可用性验证 | `& $pyVerify -c` | ✅ 用复制出的解释器 |
+| **2.4.2 采基线** | `& $py $tool --mode baseline` | ✅ 基线**必须**由原版本建（升级前） |
+| **2.4.4 正例 verify** | **`& $pyVerify $tool --mode verify`** | ✅ 已改 |
+| **2.4.5 负例（WAL 错配）** | **`& $pyVerify`** | ✅ 已改 |
+| **2.4.5 分支2 合成 fixture** | **`& $pyVerify`**（baseline + verify 均已改） | ✅ 已改 |
+| 2.4.4 命令前 | `if (-not $pyVerify) { throw ... }` | ✅ 新增存在性断言 |
+
+**机器拒绝侧**：工具在比对前先比 `duckdb_version` 与 `source_id`，不符即
+`CROSS-VERSION-INCOMPARABLE` + **exit=5**、**不输出 `OK`**（该门 r5 已实现，本轮把**调用侧**对齐）。
+
+#### §7.35.3 缺陷三：复制目标落在源子树 ⇒ 递归收自己
+
+**风险机理**：`robocopy <srcPrefix> <srcPrefix 内部路径> /E` 会在遍历时把**刚写出的目标目录**当作源内容继续复制，
+形成**自我递归**（磁盘暴涨、长时间挂死，极端情况占满卷）。
+
+**已改为写前机器拒绝两条**（归一化后比较）：
+
+```powershell
+$srcPrefix = [System.IO.Path]::GetFullPath($pyObj.prefix).TrimEnd('\')
+$pyKeep    = [System.IO.Path]::GetFullPath((Join-Path $dataDir "pykeep-$stamp")).TrimEnd('\')
+if ($pyKeep -eq $srcPrefix) { throw "留存目标与源环境同一路径，拒绝执行" }
+if ($pyKeep.StartsWith($srcPrefix + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "留存目标位于源环境子树内 ... 已拒绝"
+}
+```
+
+用 `GetFullPath` + `TrimEnd('\')` 先归一化，避免 `..\`／尾部反斜杠／大小写绕过；
+第二个判据带 `+ '\'` 分隔符，避免 `C:\py` 与 `C:\pykeep` 这类**前缀相同但非子树**的误判。
+
+#### §7.35.4 缺陷四：复制完成 / wheel 下载 ≠ 环境可用
+
+**已改为**：复制后**必须**用**复制出来的那个 python** 实跑：
+
+```powershell
+$chk = & $pyVerify -c "import sys,json,duckdb;c=duckdb.connect();v=c.execute('SELECT * FROM pragma_version()').fetchone();print(json.dumps({'python':sys.version.split()[0],'duckdb':duckdb.__version__,'source_id':v[1]}))"
+if ($LASTEXITCODE -ne 0) { throw "复制的解释器跑不起来（或 import duckdb 失败）..." }
+if ($chkObj.duckdb -ne $pyObj.duckdb) { throw "留存环境的 duckdb 版本 != 原版本，不可作为同版本链验证器" }
+```
+
+并把 `duckdb`/`source_id`/`python`/`pyVerify`/`prefix` 落到 `pykeep-verify-$stamp.txt`。
+
+**同时取消"三选一"**：唯一配方 = 复制 `sys.prefix`；wheel 下载与 venv 重建**仅作失败后的降级**，
+且**同样要过上面这套机器校验**——不得以"下载成功""目录里有文件"代替"环境可用"。
+
+#### §7.35.5 交付：单 stamp 关联链 + 合成用例清单
+
+**2.4.7b 单 stamp 关联链**（14 项）：`upgrade-stamp.txt`（权威）→ 无写者举证 → 备份主库/WAL →
+`pypin` → `pykeep` → `pykeep-verify` → 工具 → **基线** → 隔离副本 → 验证输出 → **通行证/阻断标记** →
+负例日志 → 合成 fixture。每项给「生成步骤 / 文件名 / 谁消费」，供重开窗口核对时间戳**逐字相同**。
+
+**2.4.9 精确合成用例清单 U1–U15**（**明写当前全部未执行**，客户不承担首测）：
+
+| 组 | 用例 | 判据意图 |
+|---|---|---|
+| 空 schema（U1–U4） | 登记 / 新增 / 删除 / schema 变空 | 判据**能抓到目标变更**（鉴别力） |
+| 必需 SET（U5–U6） | `memory_limit` / `temp_directory` 失败 | **必须停**（exit=6） |
+| 可选项（U7） | `preserve_insertion_order` 失败 | **不得停**（防过度 fail-closed） |
+| 真阻断（U8–U12） | exit=1/4/5、步骤 3 无通行证 / 有阻断标记 | 后续步骤**真的被拦** |
+| 留存配方（U13–U15） | 目标==源 / 目标在源子树 / 复制后不可用 | 不吞自己 + 可用性靠机器判据 |
+
+> **判据纪律**：U7 单独列出是为了防止把 fail-closed 做成**过度阻断**——可选项失败就停会误伤正常升级。
+
+#### §7.35.6 精确 diff
+
+`docs/evidence/duckdb-v6-r7-precise-diff-20261115.diff`（**372 行 / 8 hunk**，`git diff HEAD` 原文）：
+版本头、**步骤 0 新增**、2.4.0 重写（去重定义 + 拒递归 + 可用性验证）、2.4.4/2.4.5 解释器切换、
+2.4.7b 关联链、2.4.9 用例清单、修订说明。
+
+#### §7.35.7 本轮验证范围（如实）
+
+| 项 | 结果 |
+|---|---|
+| 代码块内 `$stamp = Get-Date` 处数 | **1** ✅（块外文字不计） |
+| `verify` 调用点解释器（块内 grep） | 正例 1 + 负例 2，**全部 `$pyVerify`** ✅；`baseline` 仍 `$py`（升级前，正确） |
+| 写前拒递归两条 | ✅ 均在块内（`-eq` + `StartsWith`） |
+| 可用性机器验证 | ✅ 块内（`pragma_version()` + 版本比对 + `pykeep-verify` 落盘） |
+| **U1–U15 用例执行** | ⚠ **全部未执行**（本轮边界：不跑新补测） |
+| **不执行 pip / 环境复制 / 真实备份** | ✅ 遵守（本轮未执行任何此类命令） |
+| T041 | **保持 `BLOCKED`，未连带核销** |
+| **62 GB 耗时与峰值内存** | **仍未实测**，继续明列 |

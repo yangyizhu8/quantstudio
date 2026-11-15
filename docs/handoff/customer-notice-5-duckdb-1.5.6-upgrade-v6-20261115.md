@@ -1,22 +1,23 @@
 # 客户通知稿（**v6 修订终稿**）：QuantStudio 组件 duckdb 版本升级至 1.5.6（通知编号 5）
 
 > **状态**：**v6 修订候选稿 · 待总调度终审 · 未下发 · 非已批准下发版**。
-> 本版为**第六轮**修缺陷（2026-11-15 终审：空 schema 漏报 / SET 失败不得续跑 / 非 0 须真阻断 / 解释器留存前置）：
-> **①空 schema 纳入登记**——旧稿 `if blk:` 会把**没有表的 schema 整块丢掉** ⇒ schema 增删**漏报**。
-> 本版**覆盖范围内每个 schema 一律登记**（空 schema 记为 `{}` 并打印 `<EMPTY-SCHEMA>`），
-> 使 `schema_set` / `table_set` 两面都能抓到空 schema 的出现与消失。
-> **②必需 `SET` 失败即停止**——`memory_limit` / `temp_directory` 失败时**不再打印 warn 后按默认值继续**，
-> 而是 `SETUP-FAILED` + **exit=6** 中止（读取未受限时，任何后续摘要都没有意义）。
-> 仅 `preserve_insertion_order` 属**可选项**（不影响聚合摘要），失败只记 note。
-> **③非 0 真正阻断后续**——消费端 `$LASTEXITCODE≠0` 时**撤销历史通行证、写 `UPGRADE-BLOCKED`、`throw` 中止**；
-> **步骤 3 开头加硬闸自检**，通行证缺失或存在阻断标记即拒绝执行 `git pull`（双重拦截，防人工跳过）。
-> **④原版本解释器留存进入实际前置**——新增 **2.4.0**：升级前固化 `pypin`（python/路径/duckdb 版本）并**三选一留存**
-> （A 复制 `sys.prefix` / B `pip download` 留存 wheel / C 记录重建法），**三者皆失败即禁止升级**；
-> 升级后须先证明「验证用的就是原版本解释器」，否则同版本链不成立。
-> 新增 **2.4.8 预期读数对照表**：空 schema、`SET` 失败、exit=1/3/4/5/6、步骤 3 被拦，逐项写明**预期输出与退出码**。
-> 保留前几轮：同版本版本门（跨版本 exit=5 不判成功）、撤回 192 位/2^96 强度承诺、工程摘要定位、
-> 七面独立核验、全文件 SHA 不替代逻辑验证、WAL 配对命名、有界流式聚合、错配 WAL 负例。
-> **T041 未连带核销**，仍为 `BLOCKED`。
+> 本版为**第七轮**修缺陷（2026-11-15 终审：stamp 双定义 / verify 未用留存解释器 / 复制自吞 / 留存配方与用例）：
+> **①`$stamp` 全篇只定义一次**——新增 **步骤 0**，`$stamp`/`$dataDir`/`$py` 在此生成并落盘
+> `data\upgrade-stamp.txt` 作唯一权威；**删除步骤 1 与 2.4.0 的第二处 `Get-Date`**
+> （旧稿两处各自生成，跨秒即分叉 ⇒ 后续会去找另一份不存在/另一时刻的备份）。
+> 重开窗口一律从该文件**读回**，不得重算。
+> **②验证一律用留存解释器**——2.4.4 正例与 2.4.5 负例的 `verify` 全部改用 **`$pyVerify`**（2.4.0 留存并验证过的原版本），
+> 命令前断言其存在；**版本/`source_id` 不符由工具机器拒绝**（`CROSS-VERSION-INCOMPARABLE` / **exit=5**，不输出 OK）。
+> **③留存配方改为唯一一条 + 写前拒绝递归自吞**——只保留「复制 `sys.prefix` → `data\pykeep-<stamp>`」；
+> **复制前机器拒绝**两种情形：目标**等于**源、目标**位于源子树内**（否则 robocopy 会把目标收进源、无限自我递归）。
+> **④复制成功 ≠ 环境可用**——复制后必须用**复制出来的 python** 实跑 `import duckdb` + `pragma_version()`，
+> 并机器比对 `duckdb` 版本与 `source_id`；不通过即 `throw`，**不得**用 wheel 下载/venv 重建"凑合"（那两条同样要过同一套机器校验）。
+> **⑤新增 2.4.7b 单 stamp 关联链**（14 项产物 ↔ stamp ↔ 消费者一览，供重开窗口逐个核对）。
+> **⑥新增 2.4.9 精确合成用例清单**（U1–U15：空 schema 登记/新增/删除/变空、SET 必需失败 exit=6、
+> 可选项失败不阻断、exit=1/4/5 真阻断、步骤 3 两种被拦、留存目标==源 / 在源子树 / 复制后不可用），
+> **明确「客户不承担首测」**——由我们补测证明后才算数，本表**当前全部未执行**。
+> 保留前几轮：同版本版本门、撤回强度承诺、七面独立核验、空 schema 纳登记、必需 SET 即停、非 0 真阻断、
+> 全文件 SHA 不替代逻辑验证、WAL 配对命名、有界流式聚合。**T041 未连带核销**，仍为 `BLOCKED`。
 
 ## 一、这次要做什么
 
@@ -93,14 +94,44 @@ Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
 > **空间准备**：备份要复制一份与主库等大的文件（本机主库约 **62 GB**）。请先确认
 > **可用空间 ≥ 主库大小 ×1.5**，并预留足够时间（大库复制较慢）。
 
-### 步骤 1 · 停机与「无写者」举证
+### 步骤 0 · 会话变量（**`$stamp` 全篇只在这里生成一次**）
+
+> **为什么单列一步**：本通知所有产物——无写者举证、备份（`$bak`）、基线、隔离副本、验证日志、
+> 通行证 / 阻断标记——**全部用同一个 `$stamp` 命名**。若中途再执行一次 `Get-Date`，
+> **跨秒就会得到另一个 stamp**，后续步骤便会去找**另一份根本不存在（或另一时刻）的备份**。
+> 这与上一版 `{stamp}` 缺陷是同一类错误：**命名源不唯一**。
+> ⇒ **`$stamp` 只在步骤 0 生成一次**；此后**任何小节只引用、不重定义**（本通知已无第二处定义）。
 
 ```powershell
 cd <QuantStudio 仓库根>
-schtasks /End /TN QS_DaemonForever          # ① 停计划任务（再关 GUI）
+$dataDir = (Resolve-Path '.\data').Path
+$py      = '<解释器绝对路径>'          # 必须与 §1.2 已确认的是同一个 python
+$stamp   = Get-Date -Format 'yyyyMMdd_HHmmss'
 
-$stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-$ev = ".\data\upgrade-nolock-evidence-$stamp.txt"
+# 立即把 stamp 落成「唯一权威」，供重开窗口 / 分段执行时找回（不得手改）
+$stampFile = Join-Path $dataDir 'upgrade-stamp.txt'
+"$stamp" | Set-Content -Path $stampFile -Encoding ASCII
+"STAMP       = $stamp"
+"STAMP-FILE  = $stampFile"
+"DATA-DIR    = $dataDir"
+"PY          = $py"
+```
+
+> **重开窗口 / 分段执行时**（**不得**重新 `Get-Date`）：
+> ```powershell
+> cd <QuantStudio 仓库根>
+> $dataDir = (Resolve-Path '.\data').Path
+> $py      = '<解释器绝对路径>'
+> $stamp   = (Get-Content (Join-Path $dataDir 'upgrade-stamp.txt') -Raw).Trim()
+> "STAMP (recovered) = $stamp"
+> ```
+
+### 步骤 1 · 停机与「无写者」举证
+
+```powershell
+schtasks /End /TN QS_DaemonForever          # ① 停计划任务（再关 GUI）
+# $stamp / $dataDir / $py 已由步骤 0 定义，本节不重定义
+$ev = Join-Path $dataDir "upgrade-nolock-evidence-$stamp.txt"
 "=== 无写者举证 $stamp ===" | Out-File $ev -Encoding utf8
 "--- ① 计划任务（Status 不应为 Running）---" | Out-File $ev -Append -Encoding utf8
 schtasks /Query /TN QS_DaemonForever /FO LIST | Out-File $ev -Append -Encoding utf8
@@ -253,75 +284,87 @@ else { $fail | ForEach-Object { "  ✗ $_" }; "SNAPSHOT-BROKEN：删除 $bak 与
 > **(b)** 旧稿用 `SELECT * ... ORDER BY ALL` + `fetchall()` 做整表内容指纹 ⇒ 62 GB 未验证、整表物化 + 排序必爆内存。
 > 本版改为**有界流式聚合**，见 2.4.6。
 
-##### 2.4.0 前置：**留存「原版本解释器」**（这一步做不到，就不该开始升级）
+##### 2.4.0 前置：**留存「原版本解释器」**（唯一配方 + 机器可用性判据）
 
-**为什么必须前置**：版本门要求「基线」与「验证」**同版本同 source_id**（见下方版本门）。
-而步骤 4 会把 `duckdb` 就地升到 1.5.6 —— **同一个 `$py` 升级后必然不再是 1.4.5**。
-所以**必须在升级前**把原版本环境留存/可重建的证据做出来，否则升级后**无法走同版本链**，
-恢复验证只能落进 `CROSS-VERSION-INCOMPARABLE`（exit=5，不判成功）。
+**为什么必须前置**：版本门要求「基线」与「验证」**同版本同 `source_id`**（见下方版本门）。
+步骤 4 会把 `duckdb` 就地升到 1.5.6 —— **同一个 `$py` 升级后必然不再是 1.4.5**。
+所以必须在升级前留存原版本环境，否则升级后**无法走同版本链**，恢复验证只能落
+`CROSS-VERSION-INCOMPARABLE`（exit=5，不判成功）。
 
-> **三选一，必须完成其一并留证**（A 优先）：
-> | 方案 | 做法 | 适用 |
-> |---|---|---|
-> | **A 整体复制环境** | 复制 `sys.prefix` 整个目录到 `.\data\pykeep-$stamp` | 离线可用，最稳 |
-> | **B 留存 wheel** | `pip download duckdb==<原版本> -d .\data\duckdb-wheel-$stamp --no-deps` | 环境大、有网/有内网源 |
-> | **C 记录重建法** | 记下原版本号与重建命令，升级后新建 venv 装回同版本 | 前两者都不可行时的兜底 |
->
-> **三者都失败 ⇒ 停止，不要升级**（没有原环境就没有同版本链，恢复验证给不出成功结论）。
+> **`$stamp` / `$dataDir` / `$py` 一律来自步骤 0**，本节**不重定义**（重定义就会跨秒换名）。
+
+**唯一配方：把当前解释器环境整体复制到 `.\data\pykeep-$stamp`，复制后必须通过机器可用性验证。**
 
 ```powershell
-# —— 2.4.0 统一定义本节的公共变量（2.4.1 起**不再重定义**，避免 stamp 漂移）——
-$dataDir = (Resolve-Path '.\data').Path
-$py      = '<解释器绝对路径>'        # 必须是 §1.2 已确认的那个 python
-$stamp   = Get-Date -Format 'yyyyMMdd_HHmmss'
-
-# (1) 固化解释器身份（python 版本 + 可执行路径 + duckdb 版本）
+# ---- (1) 固化解释器身份 ----
 $pyPin  = Join-Path $dataDir "pypin-$stamp.json"
 $pyInfo = & $py -c "import sys,json,duckdb;print(json.dumps({'python':sys.version.split()[0],'exe':sys.executable,'prefix':sys.prefix,'duckdb':duckdb.__version__},ensure_ascii=False))"
 if ($LASTEXITCODE -ne 0) { throw "解释器不可用，禁止开始升级：$py" }
-$pyInfo | Set-Content -Path $pyPin -Encoding UTF8
+$pyInfo | Set-Content -Path $pyPin -Encoding ASCII
 $pyObj = $pyInfo | ConvertFrom-Json
-"PY-PINNED     = $pyPin"
-"PY-EXE        = $($pyObj.exe)"
-"PY-PREFIX     = $($pyObj.prefix)"
-"PY-DUCKDB     = $($pyObj.duckdb)"
+$srcPrefix = [System.IO.Path]::GetFullPath($pyObj.prefix).TrimEnd('\')
+$pyKeep    = [System.IO.Path]::GetFullPath((Join-Path $dataDir "pykeep-$stamp")).TrimEnd('\')
+"PY-PINNED   = $pyPin"
+"PY-EXE      = $($pyObj.exe)"
+"PY-PREFIX   = $srcPrefix"
+"PY-DUCKDB   = $($pyObj.duckdb)"
+"PY-KEEP     = $pyKeep"
 
-# (2) 留存原环境：A 优先 → B → C（三者都失败就停）
-$pyKeep = Join-Path $dataDir "pykeep-$stamp"
-$wheelDir = Join-Path $dataDir "duckdb-wheel-$stamp"
-$keepMode = $null
-try {
-    robocopy $pyObj.prefix $pyKeep /E /NFL /NDL /NJH /NJS /NP | Out-Null
-    if ($LASTEXITCODE -lt 8) { $keepMode = "A-copy-env" }
-} catch { }
-if (-not $keepMode) {
-    New-Item -ItemType Directory -Path $wheelDir -Force | Out-Null
-    & $py -m pip download "duckdb==$($pyObj.duckdb)" -d $wheelDir --no-deps
-    if ($LASTEXITCODE -eq 0) { $keepMode = "B-wheel" }
+# ---- (2) 写前拒绝：目标不得落在源子树内（否则会递归把自己复制进去） ----
+# 判据：$pyKeep 以 "$srcPrefix\" 开头 => 目标在源里面 => 拒绝。同时拒绝等于源自身。
+if ($pyKeep -eq $srcPrefix) {
+    throw "留存目标与源环境同一路径，拒绝执行：$pyKeep"
 }
-if (-not $keepMode) {
-    throw "无法留存原版本解释器（A 复制环境 / B 留存 wheel 均失败）。请改用 C：记下 duckdb=$($pyObj.duckdb)，升级后新建 venv 装回该版本，并把命令留证后再继续。在此之前禁止升级。"
+if ($pyKeep.StartsWith($srcPrefix + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "留存目标位于源环境子树内（$pyKeep 在 $srcPrefix 之下）。复制会把目标收进源、无限自我递归，已拒绝。请把 --data 目录移出 python 安装目录后再试。"
 }
-"PY-KEEP-MODE  = $keepMode"
-"PY-KEEP-PATH  = $(if ($keepMode -eq 'A-copy-env') { $pyKeep } else { $wheelDir })"
+
+# ---- (3) 复制（robocopy 退出码 <8 视为成功；>=8 为失败） ----
+robocopy $srcPrefix $pyKeep /E /NFL /NDL /NJH /NJS /NP | Out-Null
+$rcCopy = $LASTEXITCODE
+"PY-COPY-RC  = $rcCopy"
+if ($rcCopy -ge 8) { throw "环境复制失败（robocopy rc=$rcCopy），禁止升级。" }
 ```
 
-**升级后、做 2.4.4 同版本链验证之前，必须先证明「我用的是原版本解释器」**：
+**复制成功 ≠ 环境可用**。必须用**复制出来的解释器**跑一次机器校验，全部通过才算留存成功：
 
 ```powershell
-# 用留存环境（A）跑验证；若走 B/C，则先重建同版本 venv 再指向它
-$pyVerify = Join-Path $pyKeep 'python.exe'          # A 方案；venv 场景可能是 Scripts\python.exe
-if (-not (Test-Path $pyVerify)) { $pyVerify = Join-Path $pyKeep 'Scripts\python.exe' }
-if (-not (Test-Path $pyVerify)) { throw "留存环境里找不到 python.exe，无法走同版本链（A 方案不可用，请按 B/C 重建）" }
-$nowInfo = & $pyVerify -c "import sys,json,duckdb;print(json.dumps({'python':sys.version.split()[0],'duckdb':duckdb.__version__},ensure_ascii=False))"
-"PY-VERIFY     = $pyVerify"
-$nowInfo
-# 硬要求：这里的 duckdb 版本必须 == $pyObj.duckdb；否则不是同版本链，验证结论无效
+# ---- (4) 可用性机器验证：用复制出的 python 实测，不靠"看起来复制完了" ----
+$pyVerify = $null
+foreach ($cand in @((Join-Path $pyKeep 'python.exe'), (Join-Path $pyKeep 'Scripts\python.exe'))) {
+    if (Test-Path $cand) { $pyVerify = $cand; break }
+}
+if (-not $pyVerify) { throw "复制目录里找不到 python.exe（$pyKeep），留存环境不可用，禁止升级。" }
+
+$chk = & $pyVerify -c "import sys,json,duckdb;c=duckdb.connect();v=c.execute('SELECT * FROM pragma_version()').fetchone();print(json.dumps({'python':sys.version.split()[0],'duckdb':duckdb.__version__,'source_id':v[1]}))" 2>&1
+if ($LASTEXITCODE -ne 0) { throw "复制的解释器跑不起来（或 import duckdb 失败），留存环境不可用：$chk" }
+"PY-VERIFY   = $pyVerify"
+$chkObj = $chk | ConvertFrom-Json
+$chkObj
+
+# ---- (5) 三项机器比对：任一不符即不是同版本链，禁止升级 ----
+if ($chkObj.duckdb -ne $pyObj.duckdb) {
+    throw "留存环境的 duckdb 版本 ($($chkObj.duckdb)) != 原版本 ($($pyObj.duckdb))，不可作为同版本链验证器。"
+}
+# python 与 source_id 记入 pypin 供后续复核（source_id 由工具在基线内再核一次）
+@(
+  "duckdb=$($pyObj.duckdb)"
+  "source_id=$($chkObj.source_id)"
+  "python=$($chkObj.python)"
+  "pyVerify=$pyVerify"
+  "prefix=$srcPrefix"
+) | Set-Content -Path (Join-Path $dataDir "pykeep-verify-$stamp.txt") -Encoding ASCII
+"PY-KEEP-VERIFIED: duckdb=$($chkObj.duckdb) source_id=$($chkObj.source_id)"
 ```
 
-> **⚠ 未实测声明（如实）**：本节 A/B/C 的具体命令**未在客户现场验证过**（我们只做了语法与流程层面核对）。
-> `sys.prefix` 复制、venv 搬迁后 `python.exe` 的可用性，**取决于您的环境布局**——
-> 请以 `PY-VERIFY` 段打印出的 duckdb 版本是否等于 `PY-DUCKDB` 为准；不等就走 B/C 重建。
+**若 (3)/(4) 任一步失败**：说明本机环境无法整体复制，**此时不允许凭 wheel 下载或 venv 重建"凑合"**——
+那两条路同样要过**上面 (4)(5) 的全部机器校验**才算数；过不了就 **`throw` 停止升级**，
+把 `pypin-*.json` 与失败信息反馈给我们，由我们给出适配您环境的配方（**不请客户承担首测**）。
+
+> **⚠ 未实测声明（如实）**：本节命令**未在客户现场验证**（本轮边界不跑补测、不执行复制/pip）。
+> 我们只保证：①**写前拒绝**逻辑覆盖「目标等于源」与「目标在源子树内」两种递归自吞情形；
+> ②**可用性判据是机器比对**（用复制出的 python 实跑 `import duckdb` + `pragma_version()`），
+> 而不是"复制完成"或"目录里有文件"。真实环境是否复制得动，**以 (4)(5) 的实际输出为准**。
 
 ##### 2.4.1 落盘比对工具（**单引号 here-string，PowerShell 不做任何插值**）
 
@@ -631,9 +674,14 @@ if (Test-Path "$bak.wal") {
 ##### 2.4.4 消费端：与基线比对（正例）
 
 ```powershell
+# 必须用 2.4.0 留存并验证过的原版本解释器（$pyVerify）来跑验证。
+# 用升级后的 $py 跑会必然触发工具的版本门 => CROSS-VERSION-INCOMPARABLE / exit=5。
+if (-not $pyVerify) { throw "未找到 2.4.0 的留存解释器 \$pyVerify，禁止做同版本链验证。" }
+"VERIFY-PY   = $pyVerify"
+
 $rcOut = Join-Path $dataDir "upgrade-restorecheck-$stamp.json"
 $rcLog = Join-Path $dataDir "upgrade-restorecheck-$stamp.txt"
-& $py $tool --mode verify --db (Join-Path $iso 'r.db') --baseline $baseline --out $rcOut |
+& $pyVerify $tool --mode verify --db (Join-Path $iso 'r.db') --baseline $baseline --out $rcOut |
     Tee-Object -FilePath $rcLog
 $rc = $LASTEXITCODE                       # 先落变量，再判定（后面还会有别的语句）
 "CONSUMED-BASELINE = $baseline"
@@ -766,7 +814,7 @@ $isoNeg = Join-Path $dataDir "restorecheck-$stamp-neg"
 New-Item -ItemType Directory -Path $isoNeg -Force | Out-Null
 Copy-Item $bak (Join-Path $isoNeg 'r.db') -Force
 Copy-Item "$bak.wal" (Join-Path $isoNeg 'r.db.wal.displaced') -Force
-& $py $tool --mode verify --db (Join-Path $isoNeg 'r.db') --baseline $baseline --out (Join-Path $dataDir "upgrade-restorecheck-$stamp-neg.json") |
+& $pyVerify $tool --mode verify --db (Join-Path $isoNeg 'r.db') --baseline $baseline --out (Join-Path $dataDir "upgrade-restorecheck-$stamp-neg.json") |
     Tee-Object -FilePath (Join-Path $dataDir "upgrade-restorecheck-$stamp-neg.txt")
 "负例 exit = $LASTEXITCODE（期望 1 = MISMATCH）"
 ```
@@ -808,10 +856,10 @@ Start-Sleep -Seconds 2
 
 # (3) 采基线（此时读到的应是 3+4=7 行），再造「WAL 错配」副本
 $fxBase = Join-Path $fxDir 'fx-baseline.json'
-& $py $tool --mode baseline --db $fx --out $fxBase
+& $pyVerify $tool --mode baseline --db $fx --out $fxBase
 Copy-Item $fx (Join-Path $fxDir 'neg.db') -Force
 Copy-Item "$fx.wal" (Join-Path $fxDir 'neg.db.wal.displaced') -Force
-& $py $tool --mode verify --db (Join-Path $fxDir 'neg.db') --baseline $fxBase --out (Join-Path $fxDir 'fx-neg.json')
+& $pyVerify $tool --mode verify --db (Join-Path $fxDir 'neg.db') --baseline $fxBase --out (Join-Path $fxDir 'fx-neg.json')
 "合成 fixture 负例 exit = $LASTEXITCODE（期望 1 = MISMATCH）"
 ```
 
@@ -827,6 +875,61 @@ Copy-Item "$fx.wal" (Join-Path $fxDir 'neg.db.wal.displaced') -Force
 | **内存量级** | 每表只回一行聚合 ⇒ 内存与表大小无关（常量级）；元数据查询返回行数 = 表/列/索引数量级 |
 | **实测（合成库，非 62 GB）** | 200 万行 × ~210 B（59.8 MB）、`memory_limit='128MB'`：<br>· 旧写法（`ORDER BY ALL` + `fetchall()`）⇒ **`OutOfMemoryException` 失败**（121.9/122.0 MiB）<br>· 新写法（流式聚合）⇒ **0.06 s 成功**，`rows=2000000` |
 | **未验证项（必须承认）** | **62 GB 真实库的耗时与峰值内存我们没跑过**。本设计只保证「内存不随表规模线性增长」，**不保证**「全库行数哈希在您的窗口内一定跑得完」——以首次实跑耗时为准；过慢则按 2.4.7 裁剪 |
+
+##### 2.4.7b 单 stamp 关联链（**所有产物共用步骤 0 的那一个 `$stamp`**）
+
+> 这张表是"命名一致性"的验收依据：**任一产物若用了别的 stamp，整条链就断了**。
+> 重开窗口时请用它逐个核对文件名里的时间戳是否**完全相同**。
+
+| # | 产物 | 生成于 | 文件名 | 谁消费它 |
+|---|---|---|---|---|
+| 0 | **stamp 权威文件** | 步骤 0 | `data\upgrade-stamp.txt` | 所有后续步骤（找回 stamp） |
+| 1 | 无写者举证 | 步骤 1 | `data\upgrade-nolock-evidence-<stamp>.txt` | 人工留档 |
+| 2 | 备份主库 | 2.2 | `data\quantstudio.db.bak.<stamp>` | 2.4.3 冻结复制 |
+| 3 | 备份 WAL（若有） | 2.2 | `data\quantstudio.db.bak.<stamp>.wal` | 2.4.3 配对复制 |
+| 4 | 解释器身份 | 2.4.0 | `data\pypin-<stamp>.json` | 2.4.0 可用性比对 |
+| 5 | 留存环境 | 2.4.0 | `data\pykeep-<stamp>\` | **2.4.4 验证解释器** |
+| 6 | 留存可用性证据 | 2.4.0 | `data\pykeep-verify-<stamp>.txt` | 人工留档 / 2.4.4 前核对 |
+| 7 | 比对工具 | 2.4.1 | `data\restorecheck_tool.py` | 2.4.2 / 2.4.4 |
+| 8 | **基线** | 2.4.2 | `data\upgrade-baseline-fp-<stamp>.json` | **2.4.4 `--baseline`（必须是同一个变量）** |
+| 9 | 隔离副本 | 2.4.3 | `data\restorecheck-<stamp>\r.db` + `r.db.wal` | 2.4.4 只读比对 |
+| 10 | 验证输出 | 2.4.4 | `data\upgrade-restorecheck-<stamp>.json` / `.txt` | 人工留档 |
+| 11 | **通行证** | 2.4.4（仅 exit=0） | `data\UPGRADE-GATE-OK-<stamp>.txt` | **步骤 3 硬闸** |
+| 12 | **阻断标记** | 2.4.4（exit≠0） | `data\UPGRADE-BLOCKED-<stamp>.txt` | **步骤 3 硬闸** |
+| 13 | 负例日志 | 2.4.5 | `data\upgrade-restorecheck-<stamp>-neg.txt` | 鉴别力证据 |
+| 14 | 合成 fixture 负例 | 2.4.5 分支2 | `%TEMP%\qs-wal-fix-<stamp>\` | 鉴别力证据（与本机库无关） |
+
+**自检一行**：`Get-ChildItem .\data\*<从 upgrade-stamp.txt 读到的 stamp>* | Select-Object Name`
+—— 上面该有文件的项目都要出现，且名字里的时间戳**逐字相同**。
+
+##### 2.4.9 合成用例清单（**我们侧补测用；客户不承担首测**）
+
+> 下面这些是**我们**在合成库上必须逐条跑通的用例。**不要求客户在自己的真实库上首次试跑**——
+> 客户现场只需按下表「客户侧预期」核对输出；**用例行为是否正确，由我们补测证明后才算数**。
+> **当前状态：全部未执行**（本轮边界：不跑新补测）。
+
+| ID | 目标 | 构造方式（合成库 / `%TEMP%`） | 预期输出 | 预期 exit |
+|---|---|---|---|---|
+| **U1** | 空 schema 被登记 | 建 schema `emp`（无表），采基线 | 基线打印 `[emp] {}   <EMPTY-SCHEMA>`；`schemas=` 含 `emp` | 0 |
+| **U2** | 空 schema **新增**被检出 | 基线后 `CREATE SCHEMA emp2`，再 verify | `x SCHEMA SET: ['main','emp2'] vs ['main']` | **1** |
+| **U3** | 空 schema **删除**被检出 | 基线含空 schema `emp`，`DROP SCHEMA emp` 后 verify | `x SCHEMA SET`（缺 `emp`） | **1** |
+| **U4** | schema **变空**被检出 | 基线含 `s1`（1 表 1 行），verify 前 `DROP TABLE s1.t` | `x TABLE SET differs`（`s1: [] vs ['t']`） | **1** |
+| **U5** | `memory_limit` 失败即停 | `--memory-limit '0B'`（或非法值） | `SETUP-FAILED` + `SET memory_limit=... failed` + `Refusing to continue` | **6** |
+| **U6** | `temp_directory` 失败即停 | `--tempdir` 指向不可创建路径（如 `Z:\nope\nope`） | `SETUP-FAILED` + `SET temp_directory failed` | **6** |
+| **U7** | 可选项 SET 失败**不**阻断 | 桩：令 `preserve_insertion_order` 抛错（或断言其失败仅 note） | `[note] optional SET ... declined`，随后正常出 `OK` | 0 |
+| **U8** | exit=1 真阻断 | 同 U2 | `UPGRADE-BLOCKED-<stamp>.txt` 生成；`UPGRADE-GATE-OK` **不存在**；步骤 3 硬闸 `throw` | 1 → 拦 |
+| **U9** | exit=4 真阻断 | 伪造基线 `hash_probe.h1="999"` | `HASH-SEMANTICS-DIFFER`；同上阻断 | **4** |
+| **U10** | exit=5 真阻断 | 基线 1.4.5，verify 用 1.5.6 | `CROSS-VERSION-INCOMPARABLE`，**无 OK**；同上阻断 | **5** |
+| **U11** | 步骤 3 无通行证被拦 | 不跑 2.4.4，直接跑步骤 3 硬闸段 | `未找到通行证 ... 禁止升级` | 脚本中止 |
+| **U12** | 步骤 3 有阻断标记被拦 | 手工造 `UPGRADE-BLOCKED-<stamp>.txt` 后跑步骤 3 | `恢复验证已判失败 ... 禁止升级` | 脚本中止 |
+| **U13** | 留存目标==源被拒 | `$pyKeep` 设为 `$srcPrefix` | `留存目标与源环境同一路径，拒绝执行` | 中止 |
+| **U14** | 留存目标在源子树被拒 | `$pyKeep` 设为 `$srcPrefix\..\pykeep` 之下的路径 | `留存目标位于源环境子树内 ... 已拒绝` | 中止 |
+| **U15** | 复制后不可用被拒 | 复制后用坏 python（或删掉 `duckdb` 包）跑 `$pyVerify` | `复制的解释器跑不起来` / `duckdb 版本 !=` | 中止 |
+
+> **判据纪律**：U1–U4 是"判据能抓到目标变更"（鉴别力），U5–U6 是"必需项失败必须停"，
+> U7 是"可选项失败**不**得停"（防止把 fail-closed 做成过度阻断），U8–U12 是"真阻断"，
+> U13–U15 是"留存配方不会吞自己、且可用性靠机器判据"。
+> **未执行前，本表只是待验清单，不构成任何已实现承诺。**
 
 ##### 2.4.8 预期读数对照表（**执行时应看到什么；对不上就是有问题**）
 
@@ -1007,22 +1110,25 @@ schtasks /Run /TN QS_DaemonForever
 
 ## 修订说明（v4 → v5 → v6；内部留痕，下发时可删除）
 
-| # | 终审意见（第六轮） | 本版落实 |
+| # | 终审意见（第七轮） | 本版落实 |
 |---|---|---|
-| 1 | **snapshot 登记覆盖范围内的空 schema，避免增删漏报** | 旧代码 `blk = schema_block(...); if blk: out["schemas"][s] = blk` —— **空 schema 被整块丢弃**，于是"某 schema 变空""空 schema 新增/消失"在 `schema_set`、`table_set` 两面**都不可见**，正是该判据要抓的变更被漏掉。<br>改为：**覆盖范围内每个 schema 一律登记**，空 schema 记 `{}`；`table_set` 对该 schema 给**显式空列表**；基线打印时标注 `<EMPTY-SCHEMA>` 让操作者看得见。<br>**预期**（见 2.4.8 第 2/3 行）：存在空 schema ⇒ 基线出现 `[<schema>] {}   <EMPTY-SCHEMA>` 且该名在 `schemas=` 内；空 schema 增删 ⇒ `x SCHEMA SET: [...] vs [...]`，**exit=1** |
-| 2 | **必需 memory/temp 设置失败须停止，不能 warn 后默认继续** | 旧代码 `except Exception: print(" [warn] SET failed")` 后照常往下跑。<br>改为：`memory_limit`、`temp_directory` 各自包 try，失败 **`raise SetupError`** ⇒ `main()` 捕获打印 `SETUP-FAILED` + 失败项 + `Refusing to continue on an implicit default (exit=6)` ⇒ **exit=6**。<br>`preserve_insertion_order` 明确为**可选项**（聚合与顺序无关，不影响摘要），失败只 `[note] ... declined` 不阻断。<br>另加 `try/finally` 确保异常路径也 `close()` 连接 |
-| 3 | **verify 非 0 的 PowerShell 链须真正阻断后续步骤，不能只打印"停止升级"** | 旧代码 `if ($LASTEXITCODE -ne 0) { "…停止升级" }` 只是**打印一行字符串**，后续语句照跑。<br>改为**双重阻断**：①先把 `$LASTEXITCODE` 落到 `$rc`；②`$rc≠0` ⇒ **撤销历史 `UPGRADE-GATE-OK`**、按退出码给出 1/3/4/5/6 的**具体原因**、写 `UPGRADE-BLOCKED-$stamp.txt`、**`throw` 中止**；③**步骤 3 开头硬闸**：存在 `UPGRADE-BLOCKED` 或缺少 `UPGRADE-GATE-OK` 即 `throw`，`git pull` 不执行；④仅 `exit=0` 才签发通行证。<br>并说明：逐段粘贴时 `throw` 不会关闭控制台，**真正拦人的是阻断标记 + 步骤 3 自检**，两道都要在 |
-| 4 | **原版本解释器保留/同版重建证据放入实际前置** | 新增 **2.4.0 前置**（在 2.4.1 之前执行）：<br>· 固化 `pypin-$stamp.json`（python 版本 / `sys.executable` / `sys.prefix` / `duckdb` 版本）；<br>· **三选一留存**：A `robocopy sys.prefix → data\pykeep-$stamp`；B `pip download duckdb==<原版> -d data\duckdb-wheel-$stamp --no-deps`；C 记录重建法。<br>· **三者皆失败 ⇒ `throw` 禁止升级**（没有原环境就没有同版本链，恢复验证只能落 exit=5）。<br>· 升级后验证前，须用留存环境跑 `PY-VERIFY` 段并**核 duckdb 版本 == `PY-DUCKDB`**。<br>· 公共变量 `$stamp/$dataDir/$py` 统一在 2.4.0 定义，**2.4.1 起不再重定义**（防 stamp 漂移——上一版 `{stamp}` 缺陷的同类风险） |
-| 5 | **给空 schema、SET 失败、exit 1/4/5 阻断后续的预期** | 新增 **2.4.8 预期读数对照表**（12 行）：正常 OK/0、空 schema 存在、空 schema 增删/1、`SET memory_limit` 失败/6、`SET temp_directory` 失败/6、可选 SET 失败/0（继续）、内容不一致/1、探针不符/4、跨版本/5、基线缺失/3、步骤 3 无通行证被拦、步骤 3 有阻断标记被拦；每行含**预期关键输出 + 预期 exit + 预期后续行为**，并给出"自己演练阻断是否生效"的合成库步骤 |
-| 6 | （历轮成果保留）同版本门 / 撤强度承诺 / 七面覆盖 / 全文件 SHA 定位 / WAL 配对命名 / 有界读取 | 均保留 |
+| 1 | **步骤 1 建 stamp 并据此备份，2.4.0 又重定义，跨秒后会寻找另一备份名；统一 stamp 须在所有产物前只定义一次** | 旧稿 `$stamp` 有**两处** `Get-Date`（步骤 1 与 2.4.0）。两者若跨秒 ⇒ `$bak`（2.2 用前者）与 2.4.3 的 `$bak`（用后者）**指向不同文件名**，2.4.3 找不到备份即 `throw`，或更糟：找到**另一时刻**的备份。<br>已改为：新增 **步骤 0**，`$stamp`/`$dataDir`/`$py` **只在此生成一次**，并落盘 `data\upgrade-stamp.txt` 作唯一权威；**删除步骤 1 与 2.4.0 的第二处定义**（全文 `Get-Date` 仅 1 处，已 grep 复核）；重开窗口从文件**读回**，明令不得重算。<br>另加 **2.4.7b 单 stamp 关联链**（14 项产物 ↔ 谁消费），供逐个核对时间戳逐字相同 |
+| 2 | **若主张用 `$pyVerify` 验证，实际命令不能仍用升级后的 `$py`；版本/source_id 不符须机器拒绝** | 旧稿 2.4.4 正例用的是 `& $py $tool --mode verify`，与"用留存解释器"的主张**自相矛盾**。<br>已改为：2.4.4 **正例**与 2.4.5 **两处负例**（WAL 错配 / 合成 fixture）的 `verify`、以及合成 fixture 的 `baseline`，**全部改用 `$pyVerify`**；并在 2.4.4 命令前 `if (-not $pyVerify) { throw ... }`。<br>机器拒绝侧：工具在比对前先比 `duckdb_version` 与 `source_id`，不符即 `CROSS-VERSION-INCOMPARABLE` + **exit=5** 且**不输出 `OK`**（该门在 r5 已实现，本轮把调用侧对齐） |
+| 3 | **`sys.prefix` 复制或 wheel 下载不等于环境可用** | 已改为：复制成功后**必须**用**复制出来的那个 python** 实跑 `import duckdb` 并查 `pragma_version()`，机器比对 `duckdb` 版本与 `source_id`，全部通过才算留存成功；任一步失败即 `throw`。<br>并明确**取消"三选一"**：唯一配方为复制 `sys.prefix`；wheel/重建仅作失败后的降级，且**同样要过这套机器校验**，不得以"下载成功"代替"环境可用" |
+| 4 | **复制目标若位于源子树，须写前拒绝递归收自己** | 新增**写前机器拒绝**两条：<br>①`$pyKeep -eq $srcPrefix`（目标==源）⇒ 拒绝；<br>②`$pyKeep.StartsWith($srcPrefix + '\')`（目标在源子树内）⇒ 拒绝。<br>理由：`robocopy <src> <src 内部某目录> /E` 会把刚写出的目标再当作源内容继续复制，**无限自我递归**（磁盘暴涨/挂死）。判据用 `GetFullPath` + `TrimEnd('\')` 归一化后再比，避免 `\`／相对路径绕过 |
+| 5 | **先交唯一可审留存配方和精确合成用例清单，不让客户承担首测** | 留存配方已收敛为**唯一一条**（复制 `sys.prefix`）+ 三条机器校验（写前拒递归 / 可用性 / 版本与 source_id）。<br>新增 **2.4.9 合成用例清单 U1–U15**，逐条给「目标 / 构造方式 / 预期输出 / 预期 exit」，并**明写现状：全部未执行**、客户不承担首测、由我们补测证明后才算数 |
+| 6 | （历轮成果保留）同版本门 / 撤强度承诺 / 七面覆盖 / 空 schema 纳登记 / 必需 SET 即停 / 非 0 真阻断 | 均保留 |
 
-**本轮实测与未实测（如实）**
+**本轮静态闭合核对（grep 实测）**
 
-| 项 | 状态 |
+| 项 | 结果 |
 |---|---|
-| 工具草稿语法（抽出源码 `py_compile`） | ✅ **通过**（12687 B，纯 ASCII） |
-| 空 schema 登记 / `SetupError`→exit 6 / `throw` 阻断 / 2.4.0 前置 | ⚠ **仅静态修改，未跑行为补测**（本轮边界：不跑新补测） |
-| 2.4.0 的 A/B/C 命令 | ⚠ **未在任何环境验证**（依赖客户侧 python 布局，已写入未实测声明） |
+| 全文 `$stamp = Get-Date` 处数 | **1**（步骤 0）✅ |
+| stamp 找回入口 | `data\upgrade-stamp.txt`（步骤 0 写入；重开窗口读回）✅ |
+| `verify` 调用点解释器 | 正例 1 处 + 负例 2 处，**全部 `$pyVerify`**✅；`baseline` 仍用 `$py`（升级前，正确） |
+| 写前拒递归 | 目标==源 / 目标在源子树，**两条**✅ |
+| 合成用例清单 | **U1–U15**，标注全部未执行 ✅ |
+| 用例是否已执行 | **否**（本轮边界：不跑新补测）⚠ |
 | **62 GB 耗时与峰值内存** | **仍未实测**，继续明列 |
 
 **口径来源（内部随附）**：
