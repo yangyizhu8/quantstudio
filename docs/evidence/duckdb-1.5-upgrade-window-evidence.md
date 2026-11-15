@@ -1352,3 +1352,136 @@ fixture 覆盖 **10 种类型**：BIGINT / VARCHAR / DATE / TIMESTAMP / DOUBLE /
 | T041 | **保持 `BLOCKED`，未连带核销** |
 | v6 | **候选稿，非已批准下发版**；11-17 原闸保持 |
 | **62 GB 耗时与峰值内存** | **仍未实测**，继续明列 |
+
+
+### §7.34 第六轮修缺陷：空 schema 漏报 · SET 失败续跑 · 非 0 只打印不阻断 · 解释器留存前置（2026-11-15 22:0x–22:4x）
+
+> 依据 11-15 终审：「snapshot 登记覆盖范围内的空 schema，避免增删漏报；必需 memory/temp 设置失败须停止，
+> 不能 warn 后默认继续；verify 非 0 的 PowerShell 链须真正阻断后续步骤，不能只打印"停止升级"。
+> 原版本解释器保留/同版重建证据放入实际前置。给空 schema、SET 失败、exit1/4/5 阻断后续的预期。」
+> 边界：**只修文档内工具草稿与命令链，不跑新补测**｜不备真实库｜不启采集｜不 CHECKPOINT｜不改生产脚本｜不下发。
+
+#### §7.34.1 缺陷一：空 schema 被 `if blk:` 静默丢弃（真漏报）
+
+**旧代码**：
+
+```python
+blk = schema_block(con, s)
+if blk:                      # <-- 没有表的 schema 直接不登记
+    out["schemas"][s] = blk
+```
+
+**为什么这是真缺陷**（不是风格问题）：`faces()` 的 `schema_set = sorted(s["schemas"])`、
+`table_set = {k: sorted(v) ...}` **都从 `schemas` 字典派生**。空 schema 不进字典 ⇒
+- 「某 schema 被删掉」当且仅当该 schema 本来就空时 → **`schema_set` 不变** ⇒ 报 `OK`；
+- 「新增一个空 schema」→ **`schema_set` 不变** ⇒ 报 `OK`；
+- 「某 schema 的表被清空但 schema 留着」→ `table_set` 该 schema 变 `[]`，但因为旧代码只在 `blk` 非空时登记，
+  一旦变空该 schema 会**整个消失**，反而表现为 schema 被删（错报类型）或完全不报（若基线也空）。
+
+这正是「空 schema 增删漏报」——**判据在构造上抓不到它存在意义所在的那类变更**。
+
+**已改为**：覆盖范围内**每个** schema 一律登记，空 schema 记 `{}`；`table_set` 对该 schema 给显式空列表；
+基线打印时标 `<EMPTY-SCHEMA>` 让操作者在日志里直接看见。
+
+> **如实**：该修复**未跑行为补测**（本轮边界禁止），仅有语法检查 + 逻辑推演。
+> 预期行为已写入通知 §2.4.8 第 2/3 行（存在空 schema / 空 schema 增删 ⇒ `x SCHEMA SET: [...] vs [...]`、exit=1）。
+
+#### §7.34.2 缺陷二：必需 SET 失败后按默认值继续
+
+**旧代码**：`memory_limit`、`temp_directory`、`preserve_insertion_order` 三条 SET 包在**同一个 try** 里，
+任意一条失败只打印 `[warn] SET failed: …` 然后**继续跑**。
+
+**为什么必须停**：这两条决定「这次读取的内存上限与溢写位置」。SET 失败 ⇒ 读取**未被限制**，
+可能吃满内存或把溢写落到未知位置；此时产出的摘要描述的是**一次限制未建立的读取**，
+把它当"恢复验证通过"的证据，等于在未验证前提上出结论。
+
+**已改为**：
+- `memory_limit` / `temp_directory` 各自 try，失败 `raise SetupError` ⇒ `main()` 打印 `SETUP-FAILED` + 失败项
+  + `Refusing to continue on an implicit default (exit=6)` ⇒ **exit=6**；
+- `preserve_insertion_order` 明确列为**可选项**（聚合与顺序无关，不影响摘要）⇒ 失败只 `[note] ... declined`，**不阻断**；
+- 补 `try/finally`，异常路径也 `con.close()`。
+
+**退出码补充**：`0` OK / `1` MISMATCH / `3` 基线缺失 / `4` hash 语义不同 / `5` 跨版本 / **`6` SETUP-FAILED（新增）**。
+
+#### §7.34.3 缺陷三：PowerShell 只打印「停止升级」，不阻断
+
+**旧代码**：
+
+```powershell
+if ($LASTEXITCODE -ne 0) { "RESTORE-EQUIV 未通过（exit=$LASTEXITCODE），停止升级" }
+```
+
+这只是**向管道输出一行字符串**——脚本继续执行、后续 `git pull` 照跑。审核指出的正是这一点。
+
+**已改为双重阻断**：
+
+1. **消费端**：先把 `$LASTEXITCODE` 落变量 `$rc`，`$rc≠0` 时
+   - 按 1/3/4/5/6 给出**具体原因**（不是笼统"未通过"）；
+   - **撤销历史 `UPGRADE-GATE-OK`**（防用旧通行证蒙混）；
+   - 写 `UPGRADE-BLOCKED-$stamp.txt`；
+   - **`throw`** 中止当前脚本。
+2. **步骤 3 开头硬闸**：存在 `UPGRADE-BLOCKED` ⇒ `throw`；缺 `UPGRADE-GATE-OK` ⇒ `throw`。`git pull` 不执行。
+3. 仅 `exit=0` 才签发通行证（含 stamp / verify_exit / CONSUMED-BASELINE / 日志路径 / 签发时间）。
+
+> **为什么必须两道**：`throw` 在**逐段粘贴到同一控制台**时只打印红字、**不关闭窗口**，人手仍可继续敲。
+> 真正拦人的是**阻断标记文件 + 步骤 3 自检**。缺任一道都可能被跳过。这一点已写进通知（不是藏在聊天里）。
+
+#### §7.34.4 缺陷四：原版本解释器留存停留在「建议文字」，未成为前置
+
+**问题**：版本门要求「基线与验证同版本同 source_id」；而**步骤 4 会就地把 duckdb 升到 1.5.6** ⇒
+同一个 `$py` 升级后必然不再是 1.4.5。若升级前没留存原环境，**升级后无法走同版本链**，
+只能落 `CROSS-VERSION-INCOMPARABLE`（exit=5，不判成功）。
+
+**已改为实际前置（新增 §2.4.0，在 2.4.1 之前执行）**：
+- 固化 `pypin-$stamp.json`：python 版本 / `sys.executable` / `sys.prefix` / duckdb 版本；
+- **三选一留存**：**A** `robocopy sys.prefix → data\pykeep-$stamp`（离线可行，优先）／
+  **B** `pip download duckdb==<原版> -d data\duckdb-wheel-$stamp --no-deps`／**C** 记录重建法；
+- **A、B 都失败 ⇒ `throw` 禁止升级**（没有原环境就没有同版本链）；
+- 升级后验证前，须用留存环境跑 `PY-VERIFY` 段并核 duckdb 版本 == `PY-DUCKDB`；
+- 公共变量 `$stamp/$dataDir/$py` 统一在 2.4.0 定义，**2.4.1 起不再重定义**——避免 stamp 漂移，
+  这正是上一版 `{stamp}` 缺陷的同类型风险。
+
+> **⚠ 未实测声明**：A/B/C 的具体命令**未在任何环境验证**（本轮边界禁止补测）。
+> `sys.prefix` 复制、venv 搬迁后 `python.exe` 可用性**取决于客户环境布局**——
+> 判据只能是 `PY-VERIFY` 打印的 duckdb 版本是否等于 `PY-DUCKDB`；不等就走 B/C 重建。该声明已写入通知。
+
+#### §7.34.5 预期读数（应审核要求，逐项给预期）
+
+新增通知 **§2.4.8（12 行对照表）**，每行给「预期关键输出 + 预期 exit + 预期后续行为」：
+
+| # | 场景 | 预期 exit | 预期后续 |
+|---|---|---|---|
+| 1 | 正常同版本链 | 0 | 签发通行证，可进步骤 3 |
+| **2** | **存在空 schema** | 0 | 基线打印 `[<schema>] {}   <EMPTY-SCHEMA>`，名在 `schemas=` 内 |
+| **3** | **空 schema 增删** | **1** | `x SCHEMA SET: [...] vs [...]`；写 BLOCKED；禁步骤 3 |
+| **4** | **`SET memory_limit` 失败** | **6** | `SETUP-FAILED` + 失败项；**不以默认值继续** |
+| **5** | **`SET temp_directory` 失败** | **6** | 同上 |
+| 6 | 可选项 SET 失败 | 0 | `[note] ... declined`，**继续** |
+| **7** | **内容/结构不一致** | **1** | MISMATCH + `throw` + BLOCKED；步骤 3 再拦一次 |
+| **8** | **探针不符** | **4** | `HASH-SEMANTICS-DIFFER`，拒比 |
+| **9** | **跨版本** | **5** | `CROSS-VERSION-INCOMPARABLE`，无 OK |
+| 10 | 基线缺失 | 3 | `BASELINE-MISSING` |
+| 11 | 步骤 3 无通行证 | 脚本中止 | `git pull` 不执行 |
+| 12 | 步骤 3 有阻断标记 | 脚本中止 | `git pull` 不执行 |
+
+并给出**阻断是否生效的自检演练法**（合成库、不碰生产）：故意用内容不同的基线 ⇒ 期望看到
+`MISMATCH` → `exit=1` 原因行 → `throw` 红字，且 `UPGRADE-BLOCKED` 生成、`UPGRADE-GATE-OK` 不存在；
+随后执行步骤 3 硬闸段应被拦住。
+
+#### §7.34.6 精确 diff
+
+`docs/evidence/duckdb-v6-r6-precise-diff-20261115.diff`（**377 行 / 10 个 hunk**，`git diff` 原文）：
+版本头、2.4.0 新增、2.4.1 变量移除、`snapshot`（空 schema + SET 即停 + finally）、`main`（SetupError→6）、
+基线打印、消费端阻断、2.4.8 预期表、步骤 3 硬闸、修订说明。
+
+#### §7.34.7 本轮验证范围（如实）
+
+| 项 | 结果 |
+|---|---|
+| 工具草稿抽源码 `py_compile` | ✅ **通过**（12687 B，纯 ASCII） |
+| 四项修复是否落位（逐项 grep 复查） | ✅ 落位；命中的旧代码字样均为**引用旧代码的说明文字** |
+| 空 schema / SET 失败 / 阻断的**行为**验证 | ⚠ **未跑**（本轮边界：不跑新补测） |
+| 2.4.0 A/B/C 命令 | ⚠ **未在任何环境验证** |
+| 真实库 / 采集 / CHECKPOINT / 生产脚本 / 下发 | **均未做** |
+| T041 | **保持 `BLOCKED`，未连带核销** |
+| **62 GB 耗时与峰值内存** | **仍未实测**，继续明列 |

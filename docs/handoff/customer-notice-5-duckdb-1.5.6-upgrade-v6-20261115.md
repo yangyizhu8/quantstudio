@@ -1,18 +1,21 @@
 # 客户通知稿（**v6 修订终稿**）：QuantStudio 组件 duckdb 版本升级至 1.5.6（通知编号 5）
 
 > **状态**：**v6 修订候选稿 · 待总调度终审 · 未下发 · 非已批准下发版**。
-> 本版为**第五轮**退修（2026-11-15 终审：版本门 / 撤回强度承诺 / 全文件SHA定位）：
-> **①版本门改为「同版本才判成功」**——版本或 `source_id` 不一致时**不进入成功判据**，
-> 打印 `CROSS-VERSION-INCOMPARABLE` 并 **exit=5**，**不输出 `RESTORE-EQUIV: OK`**；数据摘要仅作参考打印。
-> `hash_probe` **只用于拒比、不用于放行**：探针相同仅表示 3 个常量表达式碰巧一致，**不足以证明跨版本全类型兼容**。
-> **②明确同版本链**：基线在升级前原版本下建立；升级后恢复验证**用同版本解释器**执行；
-> **跨版本逻辑恢复另审**，本通知不覆盖、不承诺。
-> **③撤回强度承诺**——**删除**「三路盐 ⇒ 独立 192 位」「生日界 2^96」「构造代价 ~2^96」等表述；
-> 理由：`hash(x)` 与 `hash(x,'S2')`/`('S3')` 是**同一调用的不同参数形式**，**无依据证明相互独立**。
-> 保留**工程摘要**定位（发现意外损坏/漏拷/错配/少行多行），**不提供密码学或概率强度保证**。
-> **④保留七面覆盖**（schema 集 / 表集 / 列 / 行数 / 内容 / 索引 / 约束），逐面独立核验不变。
-> **⑤全文件 SHA 定位**——它证明的是**物理副本字节一致**，**不能替代**逻辑验证（WAL 未重放正是「字节一致但逻辑缺失」）。
-> 保留前几轮：删除「完整副本」结论、WAL 配对命名、有界流式聚合、同基线比对、错配 WAL 负例。
+> 本版为**第六轮**修缺陷（2026-11-15 终审：空 schema 漏报 / SET 失败不得续跑 / 非 0 须真阻断 / 解释器留存前置）：
+> **①空 schema 纳入登记**——旧稿 `if blk:` 会把**没有表的 schema 整块丢掉** ⇒ schema 增删**漏报**。
+> 本版**覆盖范围内每个 schema 一律登记**（空 schema 记为 `{}` 并打印 `<EMPTY-SCHEMA>`），
+> 使 `schema_set` / `table_set` 两面都能抓到空 schema 的出现与消失。
+> **②必需 `SET` 失败即停止**——`memory_limit` / `temp_directory` 失败时**不再打印 warn 后按默认值继续**，
+> 而是 `SETUP-FAILED` + **exit=6** 中止（读取未受限时，任何后续摘要都没有意义）。
+> 仅 `preserve_insertion_order` 属**可选项**（不影响聚合摘要），失败只记 note。
+> **③非 0 真正阻断后续**——消费端 `$LASTEXITCODE≠0` 时**撤销历史通行证、写 `UPGRADE-BLOCKED`、`throw` 中止**；
+> **步骤 3 开头加硬闸自检**，通行证缺失或存在阻断标记即拒绝执行 `git pull`（双重拦截，防人工跳过）。
+> **④原版本解释器留存进入实际前置**——新增 **2.4.0**：升级前固化 `pypin`（python/路径/duckdb 版本）并**三选一留存**
+> （A 复制 `sys.prefix` / B `pip download` 留存 wheel / C 记录重建法），**三者皆失败即禁止升级**；
+> 升级后须先证明「验证用的就是原版本解释器」，否则同版本链不成立。
+> 新增 **2.4.8 预期读数对照表**：空 schema、`SET` 失败、exit=1/3/4/5/6、步骤 3 被拦，逐项写明**预期输出与退出码**。
+> 保留前几轮：同版本版本门（跨版本 exit=5 不判成功）、撤回 192 位/2^96 强度承诺、工程摘要定位、
+> 七面独立核验、全文件 SHA 不替代逻辑验证、WAL 配对命名、有界流式聚合、错配 WAL 负例。
 > **T041 未连带核销**，仍为 `BLOCKED`。
 
 ## 一、这次要做什么
@@ -250,13 +253,82 @@ else { $fail | ForEach-Object { "  ✗ $_" }; "SNAPSHOT-BROKEN：删除 $bak 与
 > **(b)** 旧稿用 `SELECT * ... ORDER BY ALL` + `fetchall()` 做整表内容指纹 ⇒ 62 GB 未验证、整表物化 + 排序必爆内存。
 > 本版改为**有界流式聚合**，见 2.4.6。
 
+##### 2.4.0 前置：**留存「原版本解释器」**（这一步做不到，就不该开始升级）
+
+**为什么必须前置**：版本门要求「基线」与「验证」**同版本同 source_id**（见下方版本门）。
+而步骤 4 会把 `duckdb` 就地升到 1.5.6 —— **同一个 `$py` 升级后必然不再是 1.4.5**。
+所以**必须在升级前**把原版本环境留存/可重建的证据做出来，否则升级后**无法走同版本链**，
+恢复验证只能落进 `CROSS-VERSION-INCOMPARABLE`（exit=5，不判成功）。
+
+> **三选一，必须完成其一并留证**（A 优先）：
+> | 方案 | 做法 | 适用 |
+> |---|---|---|
+> | **A 整体复制环境** | 复制 `sys.prefix` 整个目录到 `.\data\pykeep-$stamp` | 离线可用，最稳 |
+> | **B 留存 wheel** | `pip download duckdb==<原版本> -d .\data\duckdb-wheel-$stamp --no-deps` | 环境大、有网/有内网源 |
+> | **C 记录重建法** | 记下原版本号与重建命令，升级后新建 venv 装回同版本 | 前两者都不可行时的兜底 |
+>
+> **三者都失败 ⇒ 停止，不要升级**（没有原环境就没有同版本链，恢复验证给不出成功结论）。
+
+```powershell
+# —— 2.4.0 统一定义本节的公共变量（2.4.1 起**不再重定义**，避免 stamp 漂移）——
+$dataDir = (Resolve-Path '.\data').Path
+$py      = '<解释器绝对路径>'        # 必须是 §1.2 已确认的那个 python
+$stamp   = Get-Date -Format 'yyyyMMdd_HHmmss'
+
+# (1) 固化解释器身份（python 版本 + 可执行路径 + duckdb 版本）
+$pyPin  = Join-Path $dataDir "pypin-$stamp.json"
+$pyInfo = & $py -c "import sys,json,duckdb;print(json.dumps({'python':sys.version.split()[0],'exe':sys.executable,'prefix':sys.prefix,'duckdb':duckdb.__version__},ensure_ascii=False))"
+if ($LASTEXITCODE -ne 0) { throw "解释器不可用，禁止开始升级：$py" }
+$pyInfo | Set-Content -Path $pyPin -Encoding UTF8
+$pyObj = $pyInfo | ConvertFrom-Json
+"PY-PINNED     = $pyPin"
+"PY-EXE        = $($pyObj.exe)"
+"PY-PREFIX     = $($pyObj.prefix)"
+"PY-DUCKDB     = $($pyObj.duckdb)"
+
+# (2) 留存原环境：A 优先 → B → C（三者都失败就停）
+$pyKeep = Join-Path $dataDir "pykeep-$stamp"
+$wheelDir = Join-Path $dataDir "duckdb-wheel-$stamp"
+$keepMode = $null
+try {
+    robocopy $pyObj.prefix $pyKeep /E /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -lt 8) { $keepMode = "A-copy-env" }
+} catch { }
+if (-not $keepMode) {
+    New-Item -ItemType Directory -Path $wheelDir -Force | Out-Null
+    & $py -m pip download "duckdb==$($pyObj.duckdb)" -d $wheelDir --no-deps
+    if ($LASTEXITCODE -eq 0) { $keepMode = "B-wheel" }
+}
+if (-not $keepMode) {
+    throw "无法留存原版本解释器（A 复制环境 / B 留存 wheel 均失败）。请改用 C：记下 duckdb=$($pyObj.duckdb)，升级后新建 venv 装回该版本，并把命令留证后再继续。在此之前禁止升级。"
+}
+"PY-KEEP-MODE  = $keepMode"
+"PY-KEEP-PATH  = $(if ($keepMode -eq 'A-copy-env') { $pyKeep } else { $wheelDir })"
+```
+
+**升级后、做 2.4.4 同版本链验证之前，必须先证明「我用的是原版本解释器」**：
+
+```powershell
+# 用留存环境（A）跑验证；若走 B/C，则先重建同版本 venv 再指向它
+$pyVerify = Join-Path $pyKeep 'python.exe'          # A 方案；venv 场景可能是 Scripts\python.exe
+if (-not (Test-Path $pyVerify)) { $pyVerify = Join-Path $pyKeep 'Scripts\python.exe' }
+if (-not (Test-Path $pyVerify)) { throw "留存环境里找不到 python.exe，无法走同版本链（A 方案不可用，请按 B/C 重建）" }
+$nowInfo = & $pyVerify -c "import sys,json,duckdb;print(json.dumps({'python':sys.version.split()[0],'duckdb':duckdb.__version__},ensure_ascii=False))"
+"PY-VERIFY     = $pyVerify"
+$nowInfo
+# 硬要求：这里的 duckdb 版本必须 == $pyObj.duckdb；否则不是同版本链，验证结论无效
+```
+
+> **⚠ 未实测声明（如实）**：本节 A/B/C 的具体命令**未在客户现场验证过**（我们只做了语法与流程层面核对）。
+> `sys.prefix` 复制、venv 搬迁后 `python.exe` 的可用性，**取决于您的环境布局**——
+> 请以 `PY-VERIFY` 段打印出的 duckdb 版本是否等于 `PY-DUCKDB` 为准；不等就走 B/C 重建。
+
 ##### 2.4.1 落盘比对工具（**单引号 here-string，PowerShell 不做任何插值**）
 
 ```powershell
-$stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-$dataDir  = (Resolve-Path '.\data').Path
-$py       = '<解释器绝对路径>'
-$tool     = Join-Path $dataDir 'restorecheck_tool.py'
+# $stamp / $dataDir / $py 由 §2.4.0 前置统一定义；本节**不得重定义**
+# （重定义会让 stamp 漂移、基线与验证指向不同文件名——正是上一版 {stamp} 缺陷的同类风险）
+$tool = Join-Path $dataDir 'restorecheck_tool.py'
 
 @'
 import duckdb, hashlib, json, argparse, os, sys
@@ -316,30 +388,55 @@ def constraints_of(con):
         "FROM duckdb_constraints() ORDER BY schema_name, table_name, constraint_type, constraint_text").fetchall()
     return [[str(x) for x in r] for r in rows]
 
+class SetupError(Exception):
+    pass
+
 def snapshot(db, tempdir, mem):
     con = duckdb.connect(db, read_only=True)
     try:
-        con.execute("SET memory_limit='%s'" % mem)
-        con.execute("SET temp_directory='%s'" % tempdir.replace("\\", "/"))
-        con.execute("SET preserve_insertion_order=false")
-    except Exception as e:
-        print("  [warn] SET failed: %s" % str(e)[:80], file=sys.stderr)
-    out = {"duckdb_version": con.execute("SELECT * FROM pragma_version()").fetchone()[0],
-           "duckdb_source_id": con.execute("SELECT * FROM pragma_version()").fetchone()[1],
-           "hash_probe": probe_values(con),
-           "schemas": {}, "indexes": [], "constraints": []}
-    names = [r[0] for r in con.execute(
-        "SELECT schema_name FROM duckdb_schemas() ORDER BY schema_name").fetchall()]
-    for s in names:
-        if s.lower() in SYSTEM_SCHEMAS:
-            continue
-        blk = schema_block(con, s)
-        if blk:
-            out["schemas"][s] = blk
-    out["indexes"] = indexes_of(con)
-    out["constraints"] = constraints_of(con)
-    con.close()
-    return out
+        # REQUIRED settings: without them the read is not bounded and may spill
+        # anywhere. If either fails we must STOP, not continue on an implicit
+        # default -- a silent fallback would make every later digest describe a
+        # read whose limits were never established.
+        try:
+            con.execute("SET memory_limit='%s'" % mem)
+        except Exception as e:
+            raise SetupError("SET memory_limit='%s' failed: %s" % (mem, str(e)[:120]))
+        try:
+            con.execute("SET temp_directory='%s'" % tempdir.replace("\\", "/"))
+        except Exception as e:
+            raise SetupError("SET temp_directory failed: %s" % str(e)[:120])
+        # OPTIONAL setting: purely a performance/ordering hint, never affects
+        # digests (aggregates are order-independent by construction). A failure
+        # here is reported but does not stop the run.
+        try:
+            con.execute("SET preserve_insertion_order=false")
+        except Exception as e:
+            print("  [note] optional SET preserve_insertion_order=false declined: %s"
+                  % str(e)[:80], file=sys.stderr)
+        out = {"duckdb_version": con.execute("SELECT * FROM pragma_version()").fetchone()[0],
+               "duckdb_source_id": con.execute("SELECT * FROM pragma_version()").fetchone()[1],
+               "hash_probe": probe_values(con),
+               "schemas": {}, "indexes": [], "constraints": []}
+        names = [r[0] for r in con.execute(
+            "SELECT schema_name FROM duckdb_schemas() ORDER BY schema_name").fetchall()]
+        for s in names:
+            if s.lower() in SYSTEM_SCHEMAS:
+                continue
+            # Register EVERY covered schema, EMPTY ONES INCLUDED.
+            # A schema with no tables must still appear (as {}), otherwise
+            # schema-level add/drop would be invisible: an empty schema
+            # appearing or vanishing changes nothing in schema_set/table_set,
+            # so the check would silently MISS exactly the change it exists to
+            # catch. With empty schemas registered, "table_set" carries an
+            # explicit empty list for them, so both the set of names and the
+            # per-schema table lists stay complete.
+            out["schemas"][s] = schema_block(con, s)
+        out["indexes"] = indexes_of(con)
+        out["constraints"] = constraints_of(con)
+        return out
+    finally:
+        con.close()
 
 def sha(o):
     return hashlib.sha256(json.dumps(o, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
@@ -369,7 +466,16 @@ def main():
     tempdir = a.tempdir or os.path.join(os.path.dirname(os.path.abspath(a.out)), "_duckdb_tmp")
     os.makedirs(tempdir, exist_ok=True)
 
-    snap = snapshot(a.db, tempdir, a.memory_limit)
+    try:
+        snap = snapshot(a.db, tempdir, a.memory_limit)
+    except SetupError as e:
+        print("SETUP-FAILED")
+        print("   " + str(e))
+        print("   -> memory_limit / temp_directory are REQUIRED for a bounded, spill-safe")
+        print("      read. A failure here means the read limits were never established,")
+        print("      so no digest from this run would mean anything. Refusing to continue")
+        print("      on an implicit default (exit=6).")
+        return 6
     if a.schema:
         snap["schemas"] = {k: v for k, v in snap["schemas"].items() if k == a.schema}
         snap["indexes"] = [x for x in snap["indexes"] if x[0] == a.schema]
@@ -389,7 +495,8 @@ def main():
         print("  hash_probe     =", snap["hash_probe"]["h1"])
         print("  schemas        =", list(snap["schemas"]))
         for s, tabs in snap["schemas"].items():
-            print("   [%s] %s" % (s, {t: v["rows"] for t, v in tabs.items()}))
+            print("   [%s] %s%s" % (s, {t: v["rows"] for t, v in tabs.items()},
+                                    "   <EMPTY-SCHEMA>" if not tabs else ""))
         for k in ("columns", "rows", "data192", "indexes", "constraints"):
             print("  digest.%-12s = %s" % (k, digests[k]))
         return 0
@@ -525,10 +632,40 @@ if (Test-Path "$bak.wal") {
 
 ```powershell
 $rcOut = Join-Path $dataDir "upgrade-restorecheck-$stamp.json"
+$rcLog = Join-Path $dataDir "upgrade-restorecheck-$stamp.txt"
 & $py $tool --mode verify --db (Join-Path $iso 'r.db') --baseline $baseline --out $rcOut |
-    Tee-Object -FilePath (Join-Path $dataDir "upgrade-restorecheck-$stamp.txt")
+    Tee-Object -FilePath $rcLog
+$rc = $LASTEXITCODE                       # 先落变量，再判定（后面还会有别的语句）
 "CONSUMED-BASELINE = $baseline"
-if ($LASTEXITCODE -ne 0) { "RESTORE-EQUIV 未通过（exit=$LASTEXITCODE），停止升级" }
+
+# ---- 真阻断：非 0 立即中止，且撤销/写入标记，供步骤 3 硬闸复查 ----
+$gateOk  = Join-Path $dataDir "UPGRADE-GATE-OK-$stamp.txt"
+$blocked = Join-Path $dataDir "UPGRADE-BLOCKED-$stamp.txt"
+if ($rc -ne 0) {
+    $why = switch ($rc) {
+        1       { "MISMATCH：内容/结构/行数/schema/索引/约束 存在不一致" }
+        3       { "BASELINE-MISSING：基线文件缺失" }
+        4       { "HASH-SEMANTICS-DIFFER：两侧 hash 语义不同，已拒绝比对" }
+        5       { "CROSS-VERSION-INCOMPARABLE：非同一版本链，不判成功" }
+        6       { "SETUP-FAILED：必需 SET（memory_limit/temp_directory）失败，读取未受限" }
+        default { "未知失败" }
+    }
+    if (Test-Path $gateOk) { Remove-Item $gateOk -Force }   # 撤销历史通行证，防误用
+    "RESTORE-EQUIV 未通过：exit=$rc ==> $why" | Tee-Object -FilePath $blocked
+    # 双重阻断：①throw 终止当前脚本；②留下 $blocked 供步骤 3 复查（交互式粘贴时 throw 后仍可继续敲命令）
+    throw "升级中止：恢复验证 exit=$rc（$why）。禁止执行步骤 3 及其后任何步骤；保留 .bak 原件与 $rcLog 并联系我们。"
+}
+
+# ---- 只有 exit=0 才签发通行证 ----
+if (Test-Path $blocked) { Remove-Item $blocked -Force }
+@(
+    "stamp=$stamp"
+    "verify_exit=0"
+    "CONSUMED-BASELINE=$baseline"
+    "restorecheck_log=$rcLog"
+    "issued_at=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+) | Set-Content -Path $gateOk -Encoding UTF8
+"UPGRADE-GATE-OK = $gateOk"
 ```
 
 ##### ⚠ 版本门：**只有同版本链才给 `RESTORE-EQUIV: OK`**
@@ -544,6 +681,7 @@ if ($LASTEXITCODE -ne 0) { "RESTORE-EQUIV 未通过（exit=$LASTEXITCODE），�
 | **版本 + `source_id` 完全一致** | 正常比对，通过则 `RESTORE-EQUIV: OK`，**exit=0** | ✅ **唯一的成功口径** |
 | **版本或 `source_id` 不一致** | **不进入成功判据**：打印 `CROSS-VERSION-INCOMPARABLE` 与两侧版本、`hash_probe` 值，**exit=5**，且**不输出 `OK`** | ⚠ **不判成功**；仅供人工参考 |
 | `hash_probe` 不一致 | `HASH-SEMANTICS-DIFFER`，**exit=4**，**拒绝比对任何数据摘要** | ❌ 拒比 |
+| **必需 `SET` 失败** | `SETUP-FAILED` + 失败项与原因，**exit=6**，**不以默认值继续** | ❌ 读取未受限，结论无意义 |
 
 > **`hash_probe` 的角色（已降级）**：它**只用来"拒比"，不用来"放行"**。
 > 探针相同**仅表示 3 个常量表达式在这两版下碰巧一致**，**不足以证明**两版 `hash()` 对所有类型/所有取值同语义——
@@ -690,6 +828,38 @@ Copy-Item "$fx.wal" (Join-Path $fxDir 'neg.db.wal.displaced') -Force
 | **实测（合成库，非 62 GB）** | 200 万行 × ~210 B（59.8 MB）、`memory_limit='128MB'`：<br>· 旧写法（`ORDER BY ALL` + `fetchall()`）⇒ **`OutOfMemoryException` 失败**（121.9/122.0 MiB）<br>· 新写法（流式聚合）⇒ **0.06 s 成功**，`rows=2000000` |
 | **未验证项（必须承认）** | **62 GB 真实库的耗时与峰值内存我们没跑过**。本设计只保证「内存不随表规模线性增长」，**不保证**「全库行数哈希在您的窗口内一定跑得完」——以首次实跑耗时为准；过慢则按 2.4.7 裁剪 |
 
+##### 2.4.8 预期读数对照表（**执行时应看到什么；对不上就是有问题**）
+
+> 这张表是本节的**验收预期**。实际输出与下表不符时，先查「实际」列对应的原因，**不要**按"看起来还行"往下走。
+
+| # | 场景 / 触发方式 | 预期输出（关键行） | 预期 exit | 预期后续行为 |
+|---|---|---|---|---|
+| 1 | 正常、同版本链、七面全一致 | `RESTORE-EQUIV: OK`<br>`scope: schemas=[...] tables=N` | **0** | 签发 `UPGRADE-GATE-OK-$stamp.txt`，允许进步骤 3 |
+| 2 | **存在空 schema**（有 schema 无表） | 基线打印 `[<schema>] {}   <EMPTY-SCHEMA>`；该 schema **出现在** `schemas=` 列表里 | 0 | 空 schema 已纳入判据，不因"没表"被跳过 |
+| 3 | **空 schema 被删除或新增** | `RESTORE-EQUIV: MISMATCH`<br>`x SCHEMA SET: ['main','newx'] vs ['main']` | **1** | 写 `UPGRADE-BLOCKED`；**禁止**步骤 3 |
+| 4 | **`SET memory_limit` 失败** | `SETUP-FAILED`<br>`SET memory_limit='4GB' failed: …`<br>`Refusing to continue on an implicit default (exit=6)` | **6** | 同上；**不**以默认内存继续 |
+| 5 | **`SET temp_directory` 失败** | `SETUP-FAILED` + `SET temp_directory failed: …` | **6** | 同上；**不**以默认临时目录继续 |
+| 6 | `SET preserve_insertion_order` 失败（**可选**项） | `[note] optional SET preserve_insertion_order=false declined: …` | 0 | **继续**（该项不影响摘要：聚合与顺序无关） |
+| 7 | 内容/行数/列/索引/约束不一致 | `RESTORE-EQUIV: MISMATCH` + `x ROWS ...` / `x CONTENT ...` 等 | **1** | 写 `UPGRADE-BLOCKED` + **`throw` 中止**；步骤 3 硬闸再拦一次 |
+| 8 | 基线 `hash_probe` 与当前不同 | `HASH-SEMANTICS-DIFFER` + 两侧探针值 | **4** | 同上（拒比，不给任何数据摘要结论） |
+| 9 | 版本或 `source_id` 不同 | `CROSS-VERSION-INCOMPARABLE` + 两侧版本/`source_id`；摘要只作 `ref.` 打印 | **5** | 同上（**不输出 OK**） |
+| 10 | 基线文件不存在 | `BASELINE-MISSING: <path>` | **3** | 同上 |
+| 11 | 步骤 3 被执行但通行证缺失 | `未找到通行证 … —— 2.4.4 未通过或未执行，禁止升级。` | 脚本中止 | `git pull` **不执行** |
+| 12 | 步骤 3 被执行但存在阻断标记 | `恢复验证已判失败，见 … —— 禁止升级。` | 脚本中止 | `git pull` **不执行** |
+
+**怎么自己验证"阻断真的生效"**（建议在正式升级前，用合成库演练一次，不碰生产库）：
+
+```powershell
+# 演练：故意用一个内容不同的基线，确认 ①exit≠0 ②抛错中止 ③留下 UPGRADE-BLOCKED ④步骤3 不执行
+# 期望：控制台出现 "RESTORE-EQUIV: MISMATCH" -> "RESTORE-EQUIV 未通过：exit=1 ==> ..." -> throw 红字
+#       且 .\data\UPGRADE-BLOCKED-$stamp.txt 生成、UPGRADE-GATE-OK 不存在
+# 随后执行步骤 3 的硬闸段，应被 throw 拦住（git pull 不执行）
+```
+
+> **如实说明**：上表 11/12 项的"脚本中止"来自 PowerShell `throw`；若您是**逐段粘贴**到同一个控制台窗口，
+> `throw` 会打印红字错误但**控制台不会关闭**——所以真正防你误继续的，是 ③的阻断标记文件 +
+> 步骤 3 开头的硬闸自检。**两道都要在**，缺一都可能被人手跳过。
+
 ##### 2.4.7 可裁剪（时间不够时的降级口径）
 
 ```powershell
@@ -705,7 +875,17 @@ Copy-Item "$fx.wal" (Join-Path $fxDir 'neg.db.wal.displaced') -Force
 
 ### 步骤 3 · 升级代码
 
+> **前置硬闸（不可跳过）**：只有 2.4.4 **签发**了 `UPGRADE-GATE-OK-$stamp.txt` 才允许执行本步。
+> 若存在 `UPGRADE-BLOCKED-$stamp.txt`，或通行证缺失 ⇒ **本步立即中止**，不得凭"验证看起来没问题"继续。
+> 分段执行/重开窗口导致变量丢失时，先用 `Get-ChildItem .\data\UPGRADE-*.txt` 找回原 `$stamp`，**不得改 stamp**。
+
 ```powershell
+$gateOk  = Join-Path $dataDir "UPGRADE-GATE-OK-$stamp.txt"
+$blocked = Join-Path $dataDir "UPGRADE-BLOCKED-$stamp.txt"
+if (Test-Path $blocked)         { throw "恢复验证已判失败，见 $blocked —— 禁止升级。" }
+if (-not (Test-Path $gateOk))   { throw "未找到通行证 $gateOk —— 2.4.4 未通过或未执行，禁止升级。" }
+"GATE-OK 确认：$gateOk"
+
 git pull
 ```
 
@@ -827,24 +1007,23 @@ schtasks /Run /TN QS_DaemonForever
 
 ## 修订说明（v4 → v5 → v6；内部留痕，下发时可删除）
 
-| # | 终审意见（第五轮） | 本版落实 |
+| # | 终审意见（第六轮） | 本版落实 |
 |---|---|---|
-| 1 | **无全面兼容依据时，版本/source_id 不匹配不能仅凭三常量探针相同给 `RESTORE-EQUIV` 成功** | 版本门**重写**：<br>· **同版本（`duckdb_version` **且** `source_id` 一致）** ⇒ 唯一允许出 `RESTORE-EQUIV: OK` 的口径；<br>· **不一致** ⇒ 打印 `CROSS-VERSION-INCOMPARABLE`（含两侧版本、`source_id`、探针值）+ **exit=5**，<br>　**不输出 `OK`**，数据摘要仅作 `ref.` 参考打印；<br>· `hash_probe` **只用于拒比**（不等 ⇒ `HASH-SEMANTICS-DIFFER` exit=4），**不用于放行**。<br>**实测**：1.4.5→1.4.5 ⇒ `OK`/exit=0；**1.4.5→1.5.6 ⇒ `CROSS-VERSION-INCOMPARABLE`/exit=5/无 OK**；同版本删一行 ⇒ `MISMATCH`/exit=1 |
-| 2 | **明确同版本链，跨版本逻辑恢复另审** | §2.4 增「同版本链怎么走」三步：<br>①基线**在升级前原版本**下建立并留存（记录 `duckdb_version`+`source_id`）；<br>②升级后验证**用与基线同版本的解释器**（保留旧环境或重建同版本 venv）；<br>③**必须在新版本下做逻辑恢复验证 ⇒ 属跨版本逻辑恢复，另行单独评审**，本通知不覆盖、不承诺 |
-| 3 | **撤回独立 192 位、2^96 生日界或构造代价承诺；三盐调用不证明独立** | 「碰撞边界」表改为「内容摘要的强度」表，**删除**「独立 192 位」「生日界 2^96 行对」「构造代价 ~2^96」。<br>**改动理由写在文中**：`hash(x)` 与 `hash(x,'S2')`/`hash(x,'S3')` 是**同一次调用的不同参数形式**，**无依据证明相互独立**，据此做位宽/生日界推算属**无依据外推**。<br>保留：`sum` 非 `bit_xor`（对重复行敏感，实测）、`HUGEINT` 不溢出（实测）、顺序无关（实测）。<br>定位改为**工程摘要**：用于发现意外损坏/漏拷/错配/少行多行，**不提供密码学或概率强度保证**，不用于对抗伪造 |
-| 4 | **保留工程摘要及七面覆盖** | 七面（schema 集 / 表集 / 列 / 行数 / 内容 / 索引 / 约束）**全部保留**，逐面独立摘要独立报错，9 个注入用例「只报该面不串面」结论不变；<br>E 面措辞由「192 位」改为「工程摘要」，并注明**三个盐分别与基线同一位置比对、不主张三者独立** |
-| 5 | **全文件 SHA 只证物理副本字节一致，不替代逻辑验证** | 新增专段：全文件 `Get-FileHash` 证明的是「两个文件物理字节相同（拷贝忠实）」，<br>**不能**证明「打开副本后逻辑数据等于源库」；<br>并指出**两者互不替代**：全文件 SHA 抓不到「WAL 未重放 ⇒ 字节一致但逻辑缺失」（v5 缺陷正是如此），七面比对抓不到「中间区域字节被改但逻辑不可见」；<br>结论：默认做七面比对，全文件 SHA 作**可选加强**，需两者都覆盖则**同时做** |
-| 6 | （历轮成果保留）删完整保证 / WAL 配对命名 / 有界读取 / 错配 WAL 负例 / T041 不连带 | 均保留 |
+| 1 | **snapshot 登记覆盖范围内的空 schema，避免增删漏报** | 旧代码 `blk = schema_block(...); if blk: out["schemas"][s] = blk` —— **空 schema 被整块丢弃**，于是"某 schema 变空""空 schema 新增/消失"在 `schema_set`、`table_set` 两面**都不可见**，正是该判据要抓的变更被漏掉。<br>改为：**覆盖范围内每个 schema 一律登记**，空 schema 记 `{}`；`table_set` 对该 schema 给**显式空列表**；基线打印时标注 `<EMPTY-SCHEMA>` 让操作者看得见。<br>**预期**（见 2.4.8 第 2/3 行）：存在空 schema ⇒ 基线出现 `[<schema>] {}   <EMPTY-SCHEMA>` 且该名在 `schemas=` 内；空 schema 增删 ⇒ `x SCHEMA SET: [...] vs [...]`，**exit=1** |
+| 2 | **必需 memory/temp 设置失败须停止，不能 warn 后默认继续** | 旧代码 `except Exception: print(" [warn] SET failed")` 后照常往下跑。<br>改为：`memory_limit`、`temp_directory` 各自包 try，失败 **`raise SetupError`** ⇒ `main()` 捕获打印 `SETUP-FAILED` + 失败项 + `Refusing to continue on an implicit default (exit=6)` ⇒ **exit=6**。<br>`preserve_insertion_order` 明确为**可选项**（聚合与顺序无关，不影响摘要），失败只 `[note] ... declined` 不阻断。<br>另加 `try/finally` 确保异常路径也 `close()` 连接 |
+| 3 | **verify 非 0 的 PowerShell 链须真正阻断后续步骤，不能只打印"停止升级"** | 旧代码 `if ($LASTEXITCODE -ne 0) { "…停止升级" }` 只是**打印一行字符串**，后续语句照跑。<br>改为**双重阻断**：①先把 `$LASTEXITCODE` 落到 `$rc`；②`$rc≠0` ⇒ **撤销历史 `UPGRADE-GATE-OK`**、按退出码给出 1/3/4/5/6 的**具体原因**、写 `UPGRADE-BLOCKED-$stamp.txt`、**`throw` 中止**；③**步骤 3 开头硬闸**：存在 `UPGRADE-BLOCKED` 或缺少 `UPGRADE-GATE-OK` 即 `throw`，`git pull` 不执行；④仅 `exit=0` 才签发通行证。<br>并说明：逐段粘贴时 `throw` 不会关闭控制台，**真正拦人的是阻断标记 + 步骤 3 自检**，两道都要在 |
+| 4 | **原版本解释器保留/同版重建证据放入实际前置** | 新增 **2.4.0 前置**（在 2.4.1 之前执行）：<br>· 固化 `pypin-$stamp.json`（python 版本 / `sys.executable` / `sys.prefix` / `duckdb` 版本）；<br>· **三选一留存**：A `robocopy sys.prefix → data\pykeep-$stamp`；B `pip download duckdb==<原版> -d data\duckdb-wheel-$stamp --no-deps`；C 记录重建法。<br>· **三者皆失败 ⇒ `throw` 禁止升级**（没有原环境就没有同版本链，恢复验证只能落 exit=5）。<br>· 升级后验证前，须用留存环境跑 `PY-VERIFY` 段并**核 duckdb 版本 == `PY-DUCKDB`**。<br>· 公共变量 `$stamp/$dataDir/$py` 统一在 2.4.0 定义，**2.4.1 起不再重定义**（防 stamp 漂移——上一版 `{stamp}` 缺陷的同类风险） |
+| 5 | **给空 schema、SET 失败、exit 1/4/5 阻断后续的预期** | 新增 **2.4.8 预期读数对照表**（12 行）：正常 OK/0、空 schema 存在、空 schema 增删/1、`SET memory_limit` 失败/6、`SET temp_directory` 失败/6、可选 SET 失败/0（继续）、内容不一致/1、探针不符/4、跨版本/5、基线缺失/3、步骤 3 无通行证被拦、步骤 3 有阻断标记被拦；每行含**预期关键输出 + 预期 exit + 预期后续行为**，并给出"自己演练阻断是否生效"的合成库步骤 |
+| 6 | （历轮成果保留）同版本门 / 撤强度承诺 / 七面覆盖 / 全文件 SHA 定位 / WAL 配对命名 / 有界读取 | 均保留 |
 
-**版本门与恢复验证实测（2026-11-15 第五轮，合成库）**
+**本轮实测与未实测（如实）**
 
-| 用例 | 期望 | 实测 |
-|---|---|---|
-| 同版本链 **1.4.5 → 1.4.5** | `OK` / exit=0 | ✅ `RESTORE-EQUIV: OK`，exit=**0** |
-| 跨版本链 **1.4.5 → 1.5.6**（探针相同） | **不判成功** | ✅ `CROSS-VERSION-INCOMPARABLE`，**exit=5**，**未输出 OK**，摘要仅 `ref.` 参考 |
-| 同版本但删一行 | MISMATCH / exit=1 | ✅ `ROWS 1 != 2` + `CONTENT ... differs`，exit=**1** |
-| 基线探针被伪造 | 拒比 | ✅ `HASH-SEMANTICS-DIFFER`，**exit=4** |
-| 七面逐个注入缺陷（9 例） | 只报该面 | ✅ 全命中、不串面 |
+| 项 | 状态 |
+|---|---|
+| 工具草稿语法（抽出源码 `py_compile`） | ✅ **通过**（12687 B，纯 ASCII） |
+| 空 schema 登记 / `SetupError`→exit 6 / `throw` 阻断 / 2.4.0 前置 | ⚠ **仅静态修改，未跑行为补测**（本轮边界：不跑新补测） |
+| 2.4.0 的 A/B/C 命令 | ⚠ **未在任何环境验证**（依赖客户侧 python 布局，已写入未实测声明） |
+| **62 GB 耗时与峰值内存** | **仍未实测**，继续明列 |
 
 **口径来源（内部随附）**：
 - 放行集合与判定源：`quantstudio/pipeline/duckdb_version_policy.py`
