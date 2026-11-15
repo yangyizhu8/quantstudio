@@ -66,6 +66,8 @@ checked  = 解析有内容(ok) + 解析为空(empty) + 解析异常(fail→计�
 ⇒ 差额 := 磁盘候选 − checked = 非条目件 + empty + fail + E类(name_mismatch) + 未展开
 ```
 
+**桶／标签正交模型（与 C4 v3 §3.1 对齐）**：上式的 `ok`／`empty`／`fail` 是**互斥计数桶**（每件恰一，构成 `checked`）；`skipped` 是**独立集合**（与 `checked` 互斥，构成 `total` 的另一部分）；`name_mismatch` 等是**可叠加诊断标签**（**不参与任何计数**）⇒ 增标签不破坏上式守恒。
+
 **当前缺口**：`empty`（无 front-matter／损坏但未抛异常）**在现有 payload 中不可见**（见 §4 N3 取证）⇒
 **差额目前只能算到"非条目件 + parse_fail"，其余差额项被静默吞掉** ⇒ **C4 补齐前，差额口径不闭合**。
 
