@@ -1,17 +1,18 @@
 # 客户通知稿（**v6 修订终稿**）：QuantStudio 组件 duckdb 版本升级至 1.5.6（通知编号 5）
 
 > **状态**：**v6 修订候选稿 · 待总调度终审 · 未下发 · 非已批准下发版**。
-> 本版为**第四轮**定点补齐（2026-11-15 终审：版本绑定 / 碰撞边界 / 独立核验面 / 不得称逐位等价）：
-> **①基线生成与消费的版本绑定**——基线内嵌 `duckdb_version` + **`hash_probe`**（固定常量表达式的实际 hash 值）；
-> 比对时**先比探针**，探针不等 ⇒ `HASH-SEMANTICS-DIFFER` 并 **exit=4 拒绝比对**，不给假结论。
-> **②跨版本不得无依据直接比**——已实测 1.4.5 vs 1.5.6 在 10 类型（含 NULL/中文/边界值）样本上 hash 逐位相同，
-> 但只作**已测样本结论**，真实窗口仍须由探针再证。
-> **③碰撞边界据实声明**——求和（非 XOR，对重复行敏感）、**192 位**三盐、`HUGEINT` 不溢出（62 GB 外推 2^93）、
-> 顺序无关；并**明写不抗蓄意构造**。
-> **④schema 与约束独立核验**——判据扩为**七个独立面**（schema 集 / 表集 / 列 / 行数 / 内容192 / 索引 / 约束），
-> 逐面注入缺陷实测「只报该面」；索引与约束**分视图取**（PK 只在 constraints、普通索引只在 indexes）。
-> **⑤摘要一致 ≠ 逐位等价**——新增专节逐条列出证不到什么，**删除任何等价性暗示**。
-> 保留前几轮：删除「完整副本」结论、WAL 配对命名、有界流式聚合、同基线逐表比对、错配 WAL 负例。
+> 本版为**第五轮**退修（2026-11-15 终审：版本门 / 撤回强度承诺 / 全文件SHA定位）：
+> **①版本门改为「同版本才判成功」**——版本或 `source_id` 不一致时**不进入成功判据**，
+> 打印 `CROSS-VERSION-INCOMPARABLE` 并 **exit=5**，**不输出 `RESTORE-EQUIV: OK`**；数据摘要仅作参考打印。
+> `hash_probe` **只用于拒比、不用于放行**：探针相同仅表示 3 个常量表达式碰巧一致，**不足以证明跨版本全类型兼容**。
+> **②明确同版本链**：基线在升级前原版本下建立；升级后恢复验证**用同版本解释器**执行；
+> **跨版本逻辑恢复另审**，本通知不覆盖、不承诺。
+> **③撤回强度承诺**——**删除**「三路盐 ⇒ 独立 192 位」「生日界 2^96」「构造代价 ~2^96」等表述；
+> 理由：`hash(x)` 与 `hash(x,'S2')`/`('S3')` 是**同一调用的不同参数形式**，**无依据证明相互独立**。
+> 保留**工程摘要**定位（发现意外损坏/漏拷/错配/少行多行），**不提供密码学或概率强度保证**。
+> **④保留七面覆盖**（schema 集 / 表集 / 列 / 行数 / 内容 / 索引 / 约束），逐面独立核验不变。
+> **⑤全文件 SHA 定位**——它证明的是**物理副本字节一致**，**不能替代**逻辑验证（WAL 未重放正是「字节一致但逻辑缺失」）。
+> 保留前几轮：删除「完整副本」结论、WAL 配对命名、有界流式聚合、同基线比对、错配 WAL 负例。
 > **T041 未连带核销**，仍为 `BLOCKED`。
 
 ## 一、这次要做什么
@@ -410,10 +411,28 @@ def main():
         print("      NOT comparable. Refusing to compare. Re-create the baseline with the SAME")
         print("      duckdb version that will run the verify step.")
         return 4
+    # Version gate: only a SAME-version chain may report success.
+    # A matching 3-constant probe does NOT establish cross-version compatibility,
+    # so it must never unlock the success verdict.
     ver_b, ver_c = b.get("duckdb_version"), snap["duckdb_version"]
-    if ver_b != ver_c:
-        print("  [note] duckdb version differs: baseline " + str(ver_b) + " -> now " + str(ver_c) + ", but hash_probe matched,")
-        print("         so hash semantics are verified identical on the probe; digests ARE comparable.")
+    src_b, src_c = b.get("duckdb_source_id"), snap["duckdb_source_id"]
+    if ver_b != ver_c or src_b != src_c:
+        print("CROSS-VERSION-INCOMPARABLE")
+        print("   baseline: version=%s source_id=%s" % (ver_b, src_b))
+        print("   current : version=%s source_id=%s" % (ver_c, src_c))
+        print("   hash_probe baseline:", b.get("hash_probe"))
+        print("   hash_probe current :", snap["hash_probe"])
+        print("   -> This is NOT a same-version chain. A matching probe only shows that these")
+        print("      3 constant expressions happen to agree; it does NOT establish that hash()")
+        print("      is identical for all types/values across versions. Therefore NO success")
+        print("      verdict is issued here (exit=5). To get a success verdict, run --mode verify")
+        print("      with the SAME duckdb version that produced the baseline. Cross-version")
+        print("      logical restore requires separate review.")
+        print("   (digests below are printed for reference only, NOT as a pass/fail verdict)")
+        for k in ("columns", "rows", "data192", "indexes", "constraints"):
+            print("   ref.%-12s baseline=%s" % (k, b["_digests"][k]))
+            print("   ref.%-12s current =%s" % (k, digests[k]))
+        return 5
 
     bd, cd = b["_digests"], digests
     if bd["schema_set"] != cd["schema_set"]:
@@ -437,7 +456,7 @@ def main():
         for s in sorted(set(f["data192"]) & set(faces(b)["data192"])):
             for t in sorted(set(f["data192"][s]) & set(faces(b)["data192"][s])):
                 if f["data192"][s][t] != faces(b)["data192"][s][t]:
-                    bad.append("CONTENT192 [%s.%s] salted sums differ" % (s, t))
+                    bad.append("CONTENT [%s.%s] digest differs" % (s, t))
 
     print("RESTORE-EQUIV:", "OK" if not bad else "MISMATCH")
     for x in bad:
@@ -512,52 +531,62 @@ $rcOut = Join-Path $dataDir "upgrade-restorecheck-$stamp.json"
 if ($LASTEXITCODE -ne 0) { "RESTORE-EQUIV 未通过（exit=$LASTEXITCODE），停止升级" }
 ```
 
-##### ⚠ hash 语义绑定（**升级前基线与升级后比对，必须做这一层**）
+##### ⚠ 版本门：**只有同版本链才给 `RESTORE-EQUIV: OK`**
 
-**问题**：本工具用 DuckDB 内置 `hash()` 生成内容摘要。基线与比对**可能在不同 DuckDB 版本下生成**——
-若两版 `hash()` 实现不同，摘要**必然不等**，而那是**误报**，不是备份坏了。
+**问题**：本工具用 DuckDB 内置 `hash()` 生成内容摘要，而**基线**与**比对**可能在不同 DuckDB 版本下执行
+（典型场景：升级前用 1.4.5 建基线，升级后用 1.5.6 验证）。
+**我们没有「跨版本全类型兼容」的依据** —— 只测过 10 种类型的一个样本，**不能推广到全类型/全边界**。
 
-**做法（工具已实现，exit=4 拒比）**：
-1. 基线里存 `duckdb_version` + **`hash_probe`**（对固定常量表达式 `hash(1::BIGINT,'a'::VARCHAR,DATE '2026-11-12',1.5::DOUBLE,TRUE)` 及两路盐的实际取值）；
-2. 比对时**先算同一个探针**并与基线**逐字比对**；
-3. **探针不等 ⇒ 直接 `HASH-SEMANTICS-DIFFER` 并 exit=4，拒绝比对任何数据摘要**（不给"看起来差不多"的假结论）；
-4. **探针相等但版本号不同 ⇒ 放行**，并打印说明——即"版本号不同但 hash 语义已用探针证同"。
+⇒ **因此本工具的版本门是「同版本才判成功」，跨版本一律不判成功**：
 
-> **实测（2026-11-15，本机同时装有 1.4.5 与 1.5.6）**：
-> 同一 fixture（10 种类型：BIGINT/VARCHAR/DATE/TIMESTAMP/DOUBLE/DECIMAL/BOOLEAN/BLOB/HUGEINT/UBIGINT，
-> 含 NULL、中文、`-2^63`、`2^64-1` 边界值），1.4.5 与 1.5.6 读出的
-> **hash 值、三路盐求和、逐行 hash 全部逐位相同**。
-> ⇒ **在已测样本上 1.4.5 与 1.5.6 的 `hash()` 同语义**；但仍**必须**由探针在**您自己的窗口**上再证一次——
-> 我们只证了这两个版本、这个类型矩阵，**不构成跨版本保证**。
-
-##### 碰撞边界（**据实说明，不宣称安全**）
-
-| 项 | 事实 |
-|---|---|
-| **求和性质** | 用 `sum(0..)` 而**不是** `bit_xor`：**对行重复敏感**（实测：3 行 vs 同一 3 行+1 重复行 ⇒ 摘要**不等**，能检出）；若用 XOR，成对重复会**相互抵消**（实测 XOR 在加一行重复后值改变但"两两成对"情形会抵消），故不采用 |
-| **宽度** | 三路独立盐 ⇒ **192 位**求和。生日界意义上，随机碰撞期望约 **2^96 个（行对）** 才出现一次同和 |
-| **溢出** | 求和累加器为 `HUGEINT`（上限 `2^127−1`）。实测 3×(2^64−1) 正确等于 `55340232221128654845`；62 GB 库若按 6.2 亿行外推，`sum` 上界约 **2^93**，**余量充足不溢出** |
-| **顺序** | 聚合与行序**无关**（实测乱序同表摘要相等）⇒ 集合语义，不依赖物理顺序 |
-| **⚠ 不抗恶意** | 求和是**加法**结构，理论上可被**构造**（找 `h(a)+h(b)=h(c)+h(d)`）击穿单盐；三路盐把构造代价抬到 ~2^96 量级，但这是**工程强度，不是密码学保证**。<br>本判据用于**发现意外损坏/漏拷/错配**，**不用于对抗蓄意伪造** |
-
-##### ⚠ 本判据证不到什么（**摘要一致 ≠ 数学上逐位等价**）
-
-> **必须明确**：`RESTORE-EQUIV: OK` 的含义是
-> **「在本次比对覆盖的 schema / 表 / 列 / 行数 / 索引 / 约束 / 内容摘要这几个面上，两侧未发现差异」**；
-> 它**不是**、也**不得表述为**「备份与源库逐位（bit-for-bit）等价」。原因：
-
-| 证不到 | 为什么 | 影响 |
+| 情形 | 工具行为 | 结论强度 |
 |---|---|---|
-| **哈希碰撞** | 192 位求和是概率性摘要，非逐字节比对 | 理论上存在极低概率漏报 |
-| **未被比对的 schema** | 用 `--schema` 裁剪时只比一个 schema（工具会打印 `TRIMMED -> LOSSY coverage`） | 裁剪后结论**只覆盖该 schema** |
-| **未被模式识别的对象** | 视图定义、序列、宏、`duckdb_types` 自定义类型**未纳入本判据** | 这些对象的差异不会被发现 |
-| **统计信息/物理布局** | `CHECKPOINT`、压缩、行组划分、`ANALYZE` 结果均不在判据内 | 物理层差异不影响本结论，也不被发现 |
-| **中间区域字节** | 见 §2.3⚠：主库拷贝只抽首尾 8 MB | 中间区域写入且 size/mtime 不变时漏检 |
-| **62 GB 实跑** | 真实库耗时与峰值内存**未实测** | 见 §2.4.6 |
+| **版本 + `source_id` 完全一致** | 正常比对，通过则 `RESTORE-EQUIV: OK`，**exit=0** | ✅ **唯一的成功口径** |
+| **版本或 `source_id` 不一致** | **不进入成功判据**：打印 `CROSS-VERSION-INCOMPARABLE` 与两侧版本、`hash_probe` 值，**exit=5**，且**不输出 `OK`** | ⚠ **不判成功**；仅供人工参考 |
+| `hash_probe` 不一致 | `HASH-SEMANTICS-DIFFER`，**exit=4**，**拒绝比对任何数据摘要** | ❌ 拒比 |
 
-> ⇒ 若需要**逐位等价**，唯一严谨做法是对**源与副本做全文件 `Get-FileHash`** 并比对——
-> 但那在 62 GB 上代价高、且要求**拷贝期间绝对无写者**（本通知 §三 步骤 1 的双证）。
-> 我们**没有**把摘要判据包装成逐位等价；两者是不同强度的证据，请按需选用。
+> **`hash_probe` 的角色（已降级）**：它**只用来"拒比"，不用来"放行"**。
+> 探针相同**仅表示 3 个常量表达式在这两版下碰巧一致**，**不足以证明**两版 `hash()` 对所有类型/所有取值同语义——
+> 十个类型的样本也只是样本。所以：**探针不同 ⇒ 拒比（强结论）；探针相同 ⇒ 仍不解除跨版本限制**。
+
+> **同版本链怎么走**（**本通知推荐路径**）：
+> 1. 基线**在升级前的原版本**下建立并留存（记录 `duckdb_version` + `source_id`）；
+> 2. **升级后的恢复验证，请用与基线同版本的解释器**执行——即先保留旧版本环境（或重建一个同版本 venv）跑 `--mode verify`；
+> 3. 若必须在**新版本**下做逻辑恢复验证，那属于**跨版本逻辑恢复**，须**另行单独评审**（本通知不覆盖、不承诺）。
+
+##### 内容摘要的强度（**据实，不做强度承诺**）
+
+| 项 | 事实（可复核） |
+|---|---|
+| 摘要形式 | `sum(CAST(hash(全部列) AS HUGEINT))`，**每张表三次调用**（无盐 / 盐 `S2` / 盐 `S3`），三者**分别与基线的同一位置比对** |
+| **为什么用 `sum` 不用 `bit_xor`** | `sum` **对行重复敏感**（实测：3 行 vs 同样 3 行 + 1 重复行 ⇒ 摘要不等）；`bit_xor` 在成对重复时会**相互抵消**。这是**能检出重复行**的理由，**不是**强度理由 |
+| 不溢出 | 累加器 `HUGEINT`（上限 `2^127−1`）。实测 3×(2^64−1) 正确；62 GB 按 6.2 亿行外推上界约 `2^93`，**不溢出** |
+| 顺序无关 | 聚合与行序无关（实测乱序同表摘要相等）⇒ 集合语义 |
+| **⚠ 撤回的表述** | 我们**不再**声称「三路盐 ⇒ 独立 192 位」「生日界 2^96 行对」「构造代价 ~2^96」。<br>**理由**：`hash(x)` 与 `hash(x,'S2')`、`hash(x,'S3')` 是**同一次调用的不同参数形式**，<br>**没有任何依据证明它们相互独立**——把它们当作三个独立 64 位分量做位宽/生日界推算，**属于无依据外推**，已撤回 |
+| **实际定位** | 这是一个**工程摘要（engineering digest）**：用来**发现意外损坏、漏拷、错配、少行/多行、内容漂移**，<br>**不提供任何密码学或概率强度保证**，**不用于对抗蓄意伪造** |
+
+> 三盐的实际好处**只在于**：单盐下「行内容不同但 `sum(hash)` 恰好相同」的意外情况，多一路盐能多一层区分机会——
+> 这是**经验性的冗余**，**不是可量化的安全强度**。
+
+##### ⚠ 本判据证不到什么（**摘要一致 ≠ 逐位等价**）
+
+| 证不到 | 为什么 |
+|---|---|
+| **逐位（bit-for-bit）等价** | 摘要是有损聚合，不是逐字节比对 |
+| **哈希碰撞** | 工程摘要**无强度承诺**（见上，已撤回位宽/生日界表述） |
+| **未被比对的 schema** | `--schema` 裁剪时只比一个 schema（工具打印 `TRIMMED -> LOSSY coverage`） |
+| **视图 / 序列 / 宏 / 自定义类型** | **未纳入**本判据 |
+| **物理布局与统计信息** | `CHECKPOINT`、压缩、行组、`ANALYZE` 结果均不在判据内 |
+| **主库中间区域字节** | 见 §2.3⚠：拷贝只抽首尾 8 MB |
+| **62 GB 实跑** | 耗时与峰值内存**未实测**（见 §2.4.6） |
+
+> **关于「全文件 SHA256」——它证明的是另一件事，不能替代本节**：
+> 对源与副本做全文件 `Get-FileHash`，能证明的是
+> **「这两个文件的物理字节完全相同」**（即拷贝忠实）；它**不能**证明
+> **「打开这份副本后，逻辑上读到的数据等于源库的逻辑内容」**——后者要靠本节七面比对。
+> 两者**互不替代**：全文件 SHA 抓不到「WAL 未重放导致打开后少数据」（v5 缺陷正是如此，字节一致但逻辑缺失）；
+> 七面比对也抓不到「中间区域字节被改但逻辑不可见」。
+> 若要两者都覆盖，需**同时**做全文件 SHA + 七面比对——本通知默认做七面比对，全文件 SHA 作为可选加强。
 
 **判据（七个面各自独立核验，任一不等即 MISMATCH）**
 
@@ -567,7 +596,7 @@ if ($LASTEXITCODE -ne 0) { "RESTORE-EQUIV 未通过（exit=$LASTEXITCODE），�
 | B | **表集**一致（逐 schema） | `duckdb_tables()` + `WHERE schema_name=?` | 建表 ⇒ 报 `TABLE SET` |
 | C | **列定义**一致 | `duckdb_columns()`：`data_type`+`is_nullable`+`column_default`+列序 | 加列 ⇒ 只报 `COLUMNS` |
 | D | **逐表行数**一致 | `SELECT count(*)`（schema 限定） | 加一行 ⇒ 报 `ROWS 4 != 3` |
-| E | **逐表内容**一致（**192 位**） | 三路独立盐 `sum(CAST(hash(列…, 'S2'|'S3') AS HUGEINT))` | 改 1 个字节 ⇒ 只报 `CONTENT192` |
+| E | **逐表内容**一致（工程摘要） | 三次 `sum(CAST(hash(列…) AS HUGEINT))`（无盐/`S2`/`S3`，分别比对；**不主张三者独立**） | 改 1 个字节 ⇒ 只报 `CONTENT192` |
 | F | **索引**一致 | `duckdb_indexes()`：`is_unique`+`is_primary`+`expressions`+**`sql` 完整 DDL** | 加索引 ⇒ 只报 `INDEXES: 2 vs 1`；删索引 ⇒ `0 vs 1` |
 | G | **约束**一致 | `duckdb_constraints()`：`constraint_type`+`constraint_text`+`column_names`+`referenced_table` | 去 `NOT NULL` ⇒ 报 `COLUMNS`+`CONSTRAINTS` |
 
@@ -584,8 +613,8 @@ if ($LASTEXITCODE -ne 0) { "RESTORE-EQUIV 未通过（exit=$LASTEXITCODE），�
 | **完整 SHA** | 结构面 / 数据面各输出**完整 64 位十六进制** `sha256`（不截断） |
 | **schema 限定** | 查询写 `"schema"."table"`；元数据查询一律带 `WHERE schema_name=?` |
 | **索引定义** | 取 `is_unique` / `is_primary` / **`sql`（完整 DDL 文本）**，不只取名字 |
-| **版本绑定** | 见下方「hash 语义绑定」专节 |
-| **摘要≠逐位等价** | 见下方「本判据证不到什么」 |
+| **版本门** | **同版本才判成功**，跨版本 exit=5 不判成功（见下方版本门专节） |
+| **摘要强度** | 工程摘要，无强度承诺（见下方「内容摘要的强度」） |
 
 ##### 2.4.5 负例自检（**证明这套比对真的会报警**）
 
@@ -798,26 +827,24 @@ schtasks /Run /TN QS_DaemonForever
 
 ## 修订说明（v4 → v5 → v6；内部留痕，下发时可删除）
 
-| # | 终审意见（第四轮） | 本版落实 |
+| # | 终审意见（第五轮） | 本版落实 |
 |---|---|---|
-| 1 | **补基线生成/消费的版本绑定** | 基线写入 `duckdb_version` + `duckdb_source_id` + **`hash_probe`**（h1/h2/h3 三个固定常量表达式的实际值）；<br>比对时**先算同一探针**：不等 ⇒ `HASH-SEMANTICS-DIFFER` + **exit=4 拒绝比对**；<br>探针等而版本号不同 ⇒ **放行并打印说明**（"版本不同但 hash 语义已用探针证同"）。<br>**实测**：1.4.5 建基线 → 1.5.6 verify ⇒ 探针一致、`RESTORE-EQUIV: OK`、**exit=0**；<br>把基线探针伪造为 `999` ⇒ `HASH-SEMANTICS-DIFFER`、**exit=4**、**不比对任何数据摘要** |
-| 2 | **DuckDB 内置 hash 跨版本不得无依据直接比** | 见上（探针即依据）；另**实测**：同一 fixture（BIGINT/VARCHAR/DATE/TIMESTAMP/DOUBLE/DECIMAL/BOOLEAN/BLOB/HUGEINT/UBIGINT，含 NULL、中文、`-2^63`、`2^64-1`），<br>1.4.5 与 1.5.6 的 **hash、三路盐求和、逐行 hash 全部逐位相同**。<br>**明确声明**这只是**已测样本**结论，**不构成跨版本保证**；真实窗口须由探针重证 |
-| 3 | **明确行 hash 求和的碰撞边界** | 新增「碰撞边界」表：<br>· 用 `sum` **非** `bit_xor` ⇒ **对行重复敏感**（实测 3 行 vs 3 行+1 重复 ⇒ 不等）；<br>· **192 位**三盐，生日界约 **2^96** 行对；<br>· `HUGEINT` 累加器不溢出（实测 3×(2^64−1) 正确；62 GB 按 6.2 亿行外推上界 **2^93** < 2^127）；<br>· 顺序无关（乱序同表摘要相等）；<br>· **⚠ 明写不抗恶意**：加法结构可被构造击穿，属工程强度非密码学保证 |
-| 4 | **schema 及约束独立核验范围** | 判据扩为**七面**（A schema 集 / B 表集 / C 列定义 / D 行数 / E 内容192 / F 索引 / G 约束），各自独立出摘要、独立报错。<br>**逐面注入缺陷实测**：加 schema⇒只报 SCHEMA SET；建表⇒TABLE SET；加列⇒COLUMNS；加行⇒ROWS；改 1 字节⇒CONTENT192；加/删索引⇒INDEXES；去 NOT NULL⇒COLUMNS+CONSTRAINTS。<br>**关键发现**：`PRIMARY KEY` **只在 `duckdb_constraints()`、不在 `duckdb_indexes()`**；普通 `CREATE INDEX` 反之 ⇒ **必须分视图取，只取其一必漏**。<br>另注 `duckdb_constraints()` 同一 `NOT NULL` 可能出现**重复行**（实测两条），故整体排序比对不去重 |
-| 5 | **不能把摘要一致称数学上逐位等价** | 新增专节「本判据证不到什么」，逐条列出：哈希碰撞 / `--schema` 裁剪（工具打印 `TRIMMED -> LOSSY coverage`）/ 视图·序列·宏·自定义类型未纳入 / 物理布局与统计信息 / 主库中间区域 / 62 GB 未实测。<br>并写明：**要逐位等价须对源与副本做全文件 `Get-FileHash`**，代价高且要求拷贝期绝对无写者——**两者是不同强度的证据** |
-| 6 | （历轮成果保留）删完整保证 / WAL 配对命名 / 有界读取 / 同基线逐表 / 错配 WAL 负例 / T041 不连带 | 均保留 |
+| 1 | **无全面兼容依据时，版本/source_id 不匹配不能仅凭三常量探针相同给 `RESTORE-EQUIV` 成功** | 版本门**重写**：<br>· **同版本（`duckdb_version` **且** `source_id` 一致）** ⇒ 唯一允许出 `RESTORE-EQUIV: OK` 的口径；<br>· **不一致** ⇒ 打印 `CROSS-VERSION-INCOMPARABLE`（含两侧版本、`source_id`、探针值）+ **exit=5**，<br>　**不输出 `OK`**，数据摘要仅作 `ref.` 参考打印；<br>· `hash_probe` **只用于拒比**（不等 ⇒ `HASH-SEMANTICS-DIFFER` exit=4），**不用于放行**。<br>**实测**：1.4.5→1.4.5 ⇒ `OK`/exit=0；**1.4.5→1.5.6 ⇒ `CROSS-VERSION-INCOMPARABLE`/exit=5/无 OK**；同版本删一行 ⇒ `MISMATCH`/exit=1 |
+| 2 | **明确同版本链，跨版本逻辑恢复另审** | §2.4 增「同版本链怎么走」三步：<br>①基线**在升级前原版本**下建立并留存（记录 `duckdb_version`+`source_id`）；<br>②升级后验证**用与基线同版本的解释器**（保留旧环境或重建同版本 venv）；<br>③**必须在新版本下做逻辑恢复验证 ⇒ 属跨版本逻辑恢复，另行单独评审**，本通知不覆盖、不承诺 |
+| 3 | **撤回独立 192 位、2^96 生日界或构造代价承诺；三盐调用不证明独立** | 「碰撞边界」表改为「内容摘要的强度」表，**删除**「独立 192 位」「生日界 2^96 行对」「构造代价 ~2^96」。<br>**改动理由写在文中**：`hash(x)` 与 `hash(x,'S2')`/`hash(x,'S3')` 是**同一次调用的不同参数形式**，**无依据证明相互独立**，据此做位宽/生日界推算属**无依据外推**。<br>保留：`sum` 非 `bit_xor`（对重复行敏感，实测）、`HUGEINT` 不溢出（实测）、顺序无关（实测）。<br>定位改为**工程摘要**：用于发现意外损坏/漏拷/错配/少行多行，**不提供密码学或概率强度保证**，不用于对抗伪造 |
+| 4 | **保留工程摘要及七面覆盖** | 七面（schema 集 / 表集 / 列 / 行数 / 内容 / 索引 / 约束）**全部保留**，逐面独立摘要独立报错，9 个注入用例「只报该面不串面」结论不变；<br>E 面措辞由「192 位」改为「工程摘要」，并注明**三个盐分别与基线同一位置比对、不主张三者独立** |
+| 5 | **全文件 SHA 只证物理副本字节一致，不替代逻辑验证** | 新增专段：全文件 `Get-FileHash` 证明的是「两个文件物理字节相同（拷贝忠实）」，<br>**不能**证明「打开副本后逻辑数据等于源库」；<br>并指出**两者互不替代**：全文件 SHA 抓不到「WAL 未重放 ⇒ 字节一致但逻辑缺失」（v5 缺陷正是如此），七面比对抓不到「中间区域字节被改但逻辑不可见」；<br>结论：默认做七面比对，全文件 SHA 作**可选加强**，需两者都覆盖则**同时做** |
+| 6 | （历轮成果保留）删完整保证 / WAL 配对命名 / 有界读取 / 错配 WAL 负例 / T041 不连带 | 均保留 |
 
-**隔离命令链验收（2026-11-15 第四轮实测，合成库，七块原样执行）**
+**版本门与恢复验证实测（2026-11-15 第五轮，合成库）**
 
 | 用例 | 期望 | 实测 |
 |---|---|---|
-| 基线 1.4.5 → verify 1.5.6 | 探针同 ⇒ 放行 | ✅ `RESTORE-EQUIV: OK`，exit=0，打印版本差异说明 |
-| 伪造 hash 探针 | 拒比 | ✅ `HASH-SEMANTICS-DIFFER`，exit=**4** |
-| 正例（配对 WAL，多 schema） | OK | ✅ `OK`，`scope: schemas=['main','main2'] tables=3` |
-| 负例（WAL 错配） | MISMATCH | ✅ `ROWS 2 != 3` + `CONTENT192 ... differ`，exit=1 |
-| 分支2 合成 fixture 负例 | MISMATCH | ✅ `ROWS 3 != 7`，exit=1 |
-| `--schema` 裁剪 | 有损提示 | ✅ 打印 `TRIMMED to schema 'main' -> LOSSY coverage` |
-| 七面逐个注入缺陷 | 只报该面 | ✅ 9 个用例全部命中且不串面 |
+| 同版本链 **1.4.5 → 1.4.5** | `OK` / exit=0 | ✅ `RESTORE-EQUIV: OK`，exit=**0** |
+| 跨版本链 **1.4.5 → 1.5.6**（探针相同） | **不判成功** | ✅ `CROSS-VERSION-INCOMPARABLE`，**exit=5**，**未输出 OK**，摘要仅 `ref.` 参考 |
+| 同版本但删一行 | MISMATCH / exit=1 | ✅ `ROWS 1 != 2` + `CONTENT ... differs`，exit=**1** |
+| 基线探针被伪造 | 拒比 | ✅ `HASH-SEMANTICS-DIFFER`，**exit=4** |
+| 七面逐个注入缺陷（9 例） | 只报该面 | ✅ 全命中、不串面 |
 
 **口径来源（内部随附）**：
 - 放行集合与判定源：`quantstudio/pipeline/duckdb_version_policy.py`
