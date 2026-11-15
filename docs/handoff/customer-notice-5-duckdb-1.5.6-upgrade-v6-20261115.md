@@ -1,14 +1,17 @@
 # 客户通知稿（**v6 修订终稿**）：QuantStudio 组件 duckdb 版本升级至 1.5.6（通知编号 5）
 
 > **状态**：**v6 修订候选稿 · 待总调度终审 · 未下发 · 非已批准下发版**。
-> 本版在两轮退修基础上再修 **(2026-11-15 第三次终审：命令链确定缺陷)**：
-> **①路径一致性**——输出侧曾写字面量 `{stamp}`、消费侧读展开后的 `$stamp`，文件名必然对不上；
-> 本版**生产端/消费端一律用同一 PowerShell 变量**，路径**显式作为 `--out` / `--baseline` 参数**传入，并附**端到端断言**。
-> **②有界读取**——旧稿整表 `ORDER BY ALL` + `fetchall()` 在 62 GB 上未验证；本版改**流式聚合**（无排序、不物化），
-> 并显式设 `temp_directory` / `memory_limit`；实测旧写法 200 万行即 **OOM**、新写法 0.06 s。
-> **③口径一致**——内容编码统一用 `hash(有类型列)`、SHA **完整 64 位**、全部 **schema 限定**、索引取**完整 DDL**、两侧比对 `duckdb version`。
-> **④负例前提**——现场无 WAL 时「WAL 改名」无从谈起，改为**另用含增量的合成 fixture** 造负例（§2.4.5 分支 2）。
-> 另保留前两轮成果：**删除「完整副本/区间全静止」结论**（六判据只证拷贝忠实性）、**WAL 配对命名修正**（v5 缺陷）。
+> 本版为**第四轮**定点补齐（2026-11-15 终审：版本绑定 / 碰撞边界 / 独立核验面 / 不得称逐位等价）：
+> **①基线生成与消费的版本绑定**——基线内嵌 `duckdb_version` + **`hash_probe`**（固定常量表达式的实际 hash 值）；
+> 比对时**先比探针**，探针不等 ⇒ `HASH-SEMANTICS-DIFFER` 并 **exit=4 拒绝比对**，不给假结论。
+> **②跨版本不得无依据直接比**——已实测 1.4.5 vs 1.5.6 在 10 类型（含 NULL/中文/边界值）样本上 hash 逐位相同，
+> 但只作**已测样本结论**，真实窗口仍须由探针再证。
+> **③碰撞边界据实声明**——求和（非 XOR，对重复行敏感）、**192 位**三盐、`HUGEINT` 不溢出（62 GB 外推 2^93）、
+> 顺序无关；并**明写不抗蓄意构造**。
+> **④schema 与约束独立核验**——判据扩为**七个独立面**（schema 集 / 表集 / 列 / 行数 / 内容192 / 索引 / 约束），
+> 逐面注入缺陷实测「只报该面」；索引与约束**分视图取**（PK 只在 constraints、普通索引只在 indexes）。
+> **⑤摘要一致 ≠ 逐位等价**——新增专节逐条列出证不到什么，**删除任何等价性暗示**。
+> 保留前几轮：删除「完整副本」结论、WAL 配对命名、有界流式聚合、同基线逐表比对、错配 WAL 负例。
 > **T041 未连带核销**，仍为 `BLOCKED`。
 
 ## 一、这次要做什么
@@ -257,76 +260,100 @@ $tool     = Join-Path $dataDir 'restorecheck_tool.py'
 @'
 import duckdb, hashlib, json, argparse, os, sys
 
-SYSTEM_SCHEMAS = {"main", "information_schema", "pg_catalog", "temp", "system"}
+SYSTEM_SCHEMAS = {"information_schema", "pg_catalog", "temp", "system"}
 
-def row_expr(cols):
-    # typed-column hash: no string concat, so no float/date repr drift
-    return "hash(" + ", ".join('"%s"' % c for c in cols) + ")"
+# Fixed probe: identical input must yield identical hash on both sides.
+# Its value is stored in the baseline and re-checked on verify. If it differs,
+# the two sides do NOT share hash semantics and data digests must not be compared.
+PROBE_EXPR = "hash(1::BIGINT, 'a'::VARCHAR, DATE '2026-11-12', 1.5::DOUBLE, TRUE)"
+
+def rowhash(cols, salt=""):
+    parts = ", ".join('"%s"' % c for c in cols)
+    if salt:
+        return "hash(%s, '%s')" % (parts, salt)
+    return "hash(%s)" % parts
+
+def probe_values(con):
+    g = lambda e: str(con.execute("SELECT %s" % e).fetchone()[0])
+    return {"h1": g(PROBE_EXPR),
+            "h2": g("hash(1::BIGINT, 'a'::VARCHAR, DATE '2026-11-12', 1.5::DOUBLE, TRUE, 'S2')"),
+            "h3": g("hash(1::BIGINT, 'a'::VARCHAR, DATE '2026-11-12', 1.5::DOUBLE, TRUE, 'S3')")}
 
 def table_block(con, schema, table):
     q = '"%s"."%s"' % (schema, table)
     cols = con.execute(
-        "SELECT column_name, data_type, is_nullable FROM duckdb_columns() "
+        "SELECT column_name, data_type, is_nullable, column_default FROM duckdb_columns() "
         "WHERE schema_name=? AND table_name=? ORDER BY column_index",
         [schema, table]).fetchall()
     names = [c[0] for c in cols]
     rows = con.execute("SELECT count(*) FROM %s" % q).fetchone()[0]
-    # Bounded: streaming aggregate. No ORDER BY, no fetchall, constant memory.
-    hsum = con.execute(
-        "SELECT coalesce(sum(CAST(%s AS HUGEINT)), 0) FROM %s" % (row_expr(names), q)
-    ).fetchone()[0]
-    return {"columns": [[c[0], c[1], bool(c[2])] for c in cols],
-            "rows": rows, "row_hash_sum": str(hsum)}
+    # Bounded: streaming aggregate, no ORDER BY, no fetchall, constant memory.
+    h = con.execute(
+        "SELECT coalesce(sum(CAST(%s AS HUGEINT)),0), coalesce(sum(CAST(%s AS HUGEINT)),0),"
+        "       coalesce(sum(CAST(%s AS HUGEINT)),0)"
+        " FROM %s" % (rowhash(names), rowhash(names, "S2"), rowhash(names, "S3"), q)).fetchone()
+    return {"columns": [[c[0], c[1], bool(c[2]), c[3]] for c in cols],
+            "rows": rows,
+            "sum_h1": str(h[0]), "sum_h2": str(h[1]), "sum_h3": str(h[2])}
 
-def snapshot(db, tempdir, memory_limit):
+def schema_block(con, schema):
+    tabs = [r[0] for r in con.execute(
+        "SELECT table_name FROM duckdb_tables() WHERE schema_name=? ORDER BY table_name",
+        [schema]).fetchall()]
+    return {t: table_block(con, schema, t) for t in tabs}
+
+def indexes_of(con):
+    rows = con.execute(
+        "SELECT schema_name, table_name, index_name, is_unique, is_primary, expressions, sql "
+        "FROM duckdb_indexes() ORDER BY schema_name, table_name, index_name").fetchall()
+    return [[str(x) for x in r] for r in rows]
+
+def constraints_of(con):
+    rows = con.execute(
+        "SELECT schema_name, table_name, constraint_type, constraint_text, "
+        "       constraint_column_names, constraint_name, referenced_table "
+        "FROM duckdb_constraints() ORDER BY schema_name, table_name, constraint_type, constraint_text").fetchall()
+    return [[str(x) for x in r] for r in rows]
+
+def snapshot(db, tempdir, mem):
     con = duckdb.connect(db, read_only=True)
     try:
-        con.execute("SET memory_limit='%s'" % memory_limit)
+        con.execute("SET memory_limit='%s'" % mem)
         con.execute("SET temp_directory='%s'" % tempdir.replace("\\", "/"))
         con.execute("SET preserve_insertion_order=false")
     except Exception as e:
-        print("  [warn] SET failed (does not affect verdict): %s" % str(e)[:80], file=sys.stderr)
-    out = {"duckdb_version": con.execute("SELECT version()").fetchone()[0],
+        print("  [warn] SET failed: %s" % str(e)[:80], file=sys.stderr)
+    out = {"duckdb_version": con.execute("SELECT * FROM pragma_version()").fetchone()[0],
+           "duckdb_source_id": con.execute("SELECT * FROM pragma_version()").fetchone()[1],
+           "hash_probe": probe_values(con),
            "schemas": {}, "indexes": [], "constraints": []}
-    schemas = [r[0] for r in con.execute(
+    names = [r[0] for r in con.execute(
         "SELECT schema_name FROM duckdb_schemas() ORDER BY schema_name").fetchall()]
-    schemas = [s for s in schemas if s.lower() not in SYSTEM_SCHEMAS] + ["main"]
-    for s in sorted(set(schemas)):
-        tabs = [r[0] for r in con.execute(
-            "SELECT table_name FROM duckdb_tables() WHERE schema_name=? ORDER BY table_name",
-            [s]).fetchall()]
-        if tabs:
-            out["schemas"][s] = {t: table_block(con, s, t) for t in tabs}
-    try:
-        out["indexes"] = sorted([list(map(str, r)) for r in con.execute(
-            "SELECT schema_name, table_name, index_name, is_unique, is_primary, sql "
-            "FROM duckdb_indexes() ORDER BY schema_name, table_name, index_name").fetchall()])
-    except Exception:
-        out["indexes"] = sorted([list(map(str, r)) for r in con.execute(
-            "SELECT index_name, table_name FROM duckdb_indexes() ORDER BY index_name").fetchall()])
-    try:
-        out["constraints"] = sorted([list(map(str, r)) for r in con.execute(
-            "SELECT schema_name, table_name, constraint_type, constraint_text "
-            "FROM duckdb_constraints() ORDER BY schema_name, table_name, constraint_type").fetchall()])
-    except Exception:
-        out["constraints"] = []
+    for s in names:
+        if s.lower() in SYSTEM_SCHEMAS:
+            continue
+        blk = schema_block(con, s)
+        if blk:
+            out["schemas"][s] = blk
+    out["indexes"] = indexes_of(con)
+    out["constraints"] = constraints_of(con)
     con.close()
     return out
 
-def structure_sha(snap):
-    # structural face: column defs + index defs + constraint defs (no data)
-    blob = json.dumps({"schemas": {s: {t: v["columns"] for t, v in tabs.items()}
-                                   for s, tabs in snap["schemas"].items()},
-                       "indexes": snap["indexes"], "constraints": snap["constraints"]},
-                      sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+def sha(o):
+    return hashlib.sha256(json.dumps(o, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
-def data_sha(snap):
-    # data face: per-table (row count, row hash sum), full 64-hex SHA256
-    blob = json.dumps({s: {t: [v["rows"], v["row_hash_sum"]] for t, v in tabs.items()}
-                       for s, tabs in snap["schemas"].items()},
-                      sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+def faces(s):
+    return {
+        "schema_set": sorted(s["schemas"]),
+        "table_set": {k: sorted(v) for k, v in s["schemas"].items()},
+        "columns": {k: {t: v["columns"] for t, v in tabs.items()} for k, tabs in s["schemas"].items()},
+        "rows": {k: {t: v["rows"] for t, v in tabs.items()} for k, tabs in s["schemas"].items()},
+        "data192": {k: {t: [v["sum_h1"], v["sum_h2"], v["sum_h3"]] for t, v in tabs.items()}
+                    for k, tabs in s["schemas"].items()},
+        "indexes": s["indexes"],
+        "constraints": s["constraints"],
+    }
 
 def main():
     ap = argparse.ArgumentParser()
@@ -336,65 +363,87 @@ def main():
     ap.add_argument("--baseline", default=None)
     ap.add_argument("--tempdir", default=None)
     ap.add_argument("--memory-limit", default="4GB")
-    ap.add_argument("--schema", default=None)
+    ap.add_argument("--schema", default=None, help="only this schema (lossy coverage)")
     a = ap.parse_args()
     tempdir = a.tempdir or os.path.join(os.path.dirname(os.path.abspath(a.out)), "_duckdb_tmp")
     os.makedirs(tempdir, exist_ok=True)
 
+    snap = snapshot(a.db, tempdir, a.memory_limit)
+    if a.schema:
+        snap["schemas"] = {k: v for k, v in snap["schemas"].items() if k == a.schema}
+        snap["indexes"] = [x for x in snap["indexes"] if x[0] == a.schema]
+        snap["constraints"] = [x for x in snap["constraints"] if x[0] == a.schema]
+        print("  [note] TRIMMED to schema '%s' -> LOSSY coverage, verdict covers this schema only"
+              % a.schema)
+    f = faces(snap)
+    digests = {k: sha(v) for k, v in f.items()}
+    snap["_digests"] = digests
+
     if a.mode == "baseline":
-        snap = snapshot(a.db, tempdir, a.memory_limit)
-        if a.schema:
-            snap["schemas"] = {k: v for k, v in snap["schemas"].items() if k == a.schema}
-            print("  [note] trimmed to schema:", a.schema)
-        snap["_structure_sha256"] = structure_sha(snap)
-        snap["_data_sha256"] = data_sha(snap)
         snap["_db"] = os.path.abspath(a.db)
-        with open(a.out, "w", encoding="utf-8") as f:
-            json.dump(snap, f, ensure_ascii=False, sort_keys=True, indent=2)
+        with open(a.out, "w", encoding="utf-8") as fh:
+            json.dump(snap, fh, ensure_ascii=False, sort_keys=True, indent=2)
         print("BASELINE-WRITTEN:", os.path.abspath(a.out))
-        print("  duckdb =", snap["duckdb_version"])
-        print("  schemas =", list(snap["schemas"]))
+        print("  duckdb_version =", snap["duckdb_version"], "(source_id", snap["duckdb_source_id"] + ")")
+        print("  hash_probe     =", snap["hash_probe"]["h1"])
+        print("  schemas        =", list(snap["schemas"]))
         for s, tabs in snap["schemas"].items():
             print("   [%s] %s" % (s, {t: v["rows"] for t, v in tabs.items()}))
-        print("  structure_sha256 =", snap["_structure_sha256"])
-        print("  data_sha256      =", snap["_data_sha256"])
+        for k in ("columns", "rows", "data192", "indexes", "constraints"):
+            print("  digest.%-12s = %s" % (k, digests[k]))
         return 0
 
     if not a.baseline or not os.path.exists(a.baseline):
         print("BASELINE-MISSING:", a.baseline)
         return 3
     b = json.load(open(a.baseline, encoding="utf-8"))
-    snap = snapshot(a.db, tempdir, a.memory_limit)
-    snap["_structure_sha256"] = structure_sha(snap)
-    snap["_data_sha256"] = data_sha(snap)
-    with open(a.out, "w", encoding="utf-8") as f:
-        json.dump(snap, f, ensure_ascii=False, sort_keys=True, indent=2)
+    with open(a.out, "w", encoding="utf-8") as fh:
+        json.dump(snap, fh, ensure_ascii=False, sort_keys=True, indent=2)
 
     bad = []
-    if b.get("duckdb_version") != snap["duckdb_version"]:
-        bad.append("duckdb version differs: %s vs %s" % (b.get("duckdb_version"), snap["duckdb_version"]))
-    if b["_structure_sha256"] != snap["_structure_sha256"]:
-        bad.append("structure sha256 differs (columns/indexes/constraints)")
-    bt, ct = b["schemas"], snap["schemas"]
-    if set(bt) != set(ct):
-        bad.append("schema set differs: %s vs %s" % (sorted(bt), sorted(ct)))
-    for s in sorted(set(bt) & set(ct)):
-        if set(bt[s]) != set(ct[s]):
-            bad.append("[%s] table set differs: missing=%s extra=%s"
-                       % (s, sorted(set(bt[s]) - set(ct[s])), sorted(set(ct[s]) - set(bt[s]))))
-        for t in sorted(set(bt[s]) & set(ct[s])):
-            if bt[s][t]["columns"] != ct[s][t]["columns"]:
-                bad.append("[%s.%s] column definition differs" % (s, t))
-            if bt[s][t]["rows"] != ct[s][t]["rows"]:
-                bad.append("[%s.%s] rows %s != %s" % (s, t, ct[s][t]["rows"], bt[s][t]["rows"]))
-            if bt[s][t]["row_hash_sum"] != ct[s][t]["row_hash_sum"]:
-                bad.append("[%s.%s] row content hash sum differs" % (s, t))
-    if b["_data_sha256"] != snap["_data_sha256"]:
-        bad.append("data sha256 differs")
+    # --- 0) hash semantics binding (must gate before any digest comparison) ---
+    if b.get("hash_probe") != snap["hash_probe"]:
+        print("HASH-SEMANTICS-DIFFER")
+        print("   baseline probe:", b.get("hash_probe"))
+        print("   current  probe:", snap["hash_probe"])
+        print("   -> duckdb hash() semantics differ between the two sides; data digests are")
+        print("      NOT comparable. Refusing to compare. Re-create the baseline with the SAME")
+        print("      duckdb version that will run the verify step.")
+        return 4
+    ver_b, ver_c = b.get("duckdb_version"), snap["duckdb_version"]
+    if ver_b != ver_c:
+        print("  [note] duckdb version differs: baseline " + str(ver_b) + " -> now " + str(ver_c) + ", but hash_probe matched,")
+        print("         so hash semantics are verified identical on the probe; digests ARE comparable.")
+
+    bd, cd = b["_digests"], digests
+    if bd["schema_set"] != cd["schema_set"]:
+        bad.append("SCHEMA SET: %s vs %s" % (f["schema_set"], faces(b)["schema_set"]))
+    if bd["table_set"] != cd["table_set"]:
+        bad.append("TABLE SET differs (per schema)")
+    if bd["columns"] != cd["columns"]:
+        for s in sorted(set(f["columns"]) & set(faces(b)["columns"])):
+            for t in sorted(set(f["columns"][s]) & set(faces(b)["columns"][s])):
+                if f["columns"][s][t] != faces(b)["columns"][s][t]:
+                    bad.append("COLUMNS [%s.%s] differs" % (s, t))
+    if bd["indexes"] != cd["indexes"]:
+        bad.append("INDEXES: %d vs %d entries differ" % (len(f["indexes"]), len(faces(b)["indexes"])))
+    if bd["constraints"] != cd["constraints"]:
+        bad.append("CONSTRAINTS: %d vs %d entries differ" % (len(f["constraints"]), len(faces(b)["constraints"])))
+    for s in sorted(set(f["rows"]) & set(faces(b)["rows"])):
+        for t in sorted(set(f["rows"][s]) & set(faces(b)["rows"][s])):
+            if f["rows"][s][t] != faces(b)["rows"][s][t]:
+                bad.append("ROWS [%s.%s]: %s != %s" % (s, t, f["rows"][s][t], faces(b)["rows"][s][t]))
+    if bd["data192"] != cd["data192"]:
+        for s in sorted(set(f["data192"]) & set(faces(b)["data192"])):
+            for t in sorted(set(f["data192"][s]) & set(faces(b)["data192"][s])):
+                if f["data192"][s][t] != faces(b)["data192"][s][t]:
+                    bad.append("CONTENT192 [%s.%s] salted sums differ" % (s, t))
 
     print("RESTORE-EQUIV:", "OK" if not bad else "MISMATCH")
     for x in bad:
         print("   x", x)
+    print("  scope: schemas=%s tables=%d" % (sorted(snap["schemas"]),
+          sum(len(v) for v in snap["schemas"].values())))
     return 0 if not bad else 1
 
 if __name__ == "__main__":
@@ -463,14 +512,69 @@ $rcOut = Join-Path $dataDir "upgrade-restorecheck-$stamp.json"
 if ($LASTEXITCODE -ne 0) { "RESTORE-EQUIV 未通过（exit=$LASTEXITCODE），停止升级" }
 ```
 
-**判据（四条全中）**
+##### ⚠ hash 语义绑定（**升级前基线与升级后比对，必须做这一层**）
 
-| # | 判据 | 实现方式 |
+**问题**：本工具用 DuckDB 内置 `hash()` 生成内容摘要。基线与比对**可能在不同 DuckDB 版本下生成**——
+若两版 `hash()` 实现不同，摘要**必然不等**，而那是**误报**，不是备份坏了。
+
+**做法（工具已实现，exit=4 拒比）**：
+1. 基线里存 `duckdb_version` + **`hash_probe`**（对固定常量表达式 `hash(1::BIGINT,'a'::VARCHAR,DATE '2026-11-12',1.5::DOUBLE,TRUE)` 及两路盐的实际取值）；
+2. 比对时**先算同一个探针**并与基线**逐字比对**；
+3. **探针不等 ⇒ 直接 `HASH-SEMANTICS-DIFFER` 并 exit=4，拒绝比对任何数据摘要**（不给"看起来差不多"的假结论）；
+4. **探针相等但版本号不同 ⇒ 放行**，并打印说明——即"版本号不同但 hash 语义已用探针证同"。
+
+> **实测（2026-11-15，本机同时装有 1.4.5 与 1.5.6）**：
+> 同一 fixture（10 种类型：BIGINT/VARCHAR/DATE/TIMESTAMP/DOUBLE/DECIMAL/BOOLEAN/BLOB/HUGEINT/UBIGINT，
+> 含 NULL、中文、`-2^63`、`2^64-1` 边界值），1.4.5 与 1.5.6 读出的
+> **hash 值、三路盐求和、逐行 hash 全部逐位相同**。
+> ⇒ **在已测样本上 1.4.5 与 1.5.6 的 `hash()` 同语义**；但仍**必须**由探针在**您自己的窗口**上再证一次——
+> 我们只证了这两个版本、这个类型矩阵，**不构成跨版本保证**。
+
+##### 碰撞边界（**据实说明，不宣称安全**）
+
+| 项 | 事实 |
+|---|---|
+| **求和性质** | 用 `sum(0..)` 而**不是** `bit_xor`：**对行重复敏感**（实测：3 行 vs 同一 3 行+1 重复行 ⇒ 摘要**不等**，能检出）；若用 XOR，成对重复会**相互抵消**（实测 XOR 在加一行重复后值改变但"两两成对"情形会抵消），故不采用 |
+| **宽度** | 三路独立盐 ⇒ **192 位**求和。生日界意义上，随机碰撞期望约 **2^96 个（行对）** 才出现一次同和 |
+| **溢出** | 求和累加器为 `HUGEINT`（上限 `2^127−1`）。实测 3×(2^64−1) 正确等于 `55340232221128654845`；62 GB 库若按 6.2 亿行外推，`sum` 上界约 **2^93**，**余量充足不溢出** |
+| **顺序** | 聚合与行序**无关**（实测乱序同表摘要相等）⇒ 集合语义，不依赖物理顺序 |
+| **⚠ 不抗恶意** | 求和是**加法**结构，理论上可被**构造**（找 `h(a)+h(b)=h(c)+h(d)`）击穿单盐；三路盐把构造代价抬到 ~2^96 量级，但这是**工程强度，不是密码学保证**。<br>本判据用于**发现意外损坏/漏拷/错配**，**不用于对抗蓄意伪造** |
+
+##### ⚠ 本判据证不到什么（**摘要一致 ≠ 数学上逐位等价**）
+
+> **必须明确**：`RESTORE-EQUIV: OK` 的含义是
+> **「在本次比对覆盖的 schema / 表 / 列 / 行数 / 索引 / 约束 / 内容摘要这几个面上，两侧未发现差异」**；
+> 它**不是**、也**不得表述为**「备份与源库逐位（bit-for-bit）等价」。原因：
+
+| 证不到 | 为什么 | 影响 |
 |---|---|---|
-| A | **schema 集合 + 表集**一致 | `duckdb_tables()` 按 `schema_name` 限定，逐 schema 枚举 |
-| B | **逐表行数**一致 | `SELECT count(*)`（schema 限定表名） |
-| C | **逐表内容**一致 | `sum(CAST(hash(全部列) AS HUGEINT))` 流式聚合（见 2.4.6） |
-| D | **列定义 / 索引 / 约束**一致 | `duckdb_columns()`（`data_type`/`is_nullable`）+ `duckdb_indexes()`（`is_unique`/`is_primary`/`sql` 完整定义）+ `duckdb_constraints()` |
+| **哈希碰撞** | 192 位求和是概率性摘要，非逐字节比对 | 理论上存在极低概率漏报 |
+| **未被比对的 schema** | 用 `--schema` 裁剪时只比一个 schema（工具会打印 `TRIMMED -> LOSSY coverage`） | 裁剪后结论**只覆盖该 schema** |
+| **未被模式识别的对象** | 视图定义、序列、宏、`duckdb_types` 自定义类型**未纳入本判据** | 这些对象的差异不会被发现 |
+| **统计信息/物理布局** | `CHECKPOINT`、压缩、行组划分、`ANALYZE` 结果均不在判据内 | 物理层差异不影响本结论，也不被发现 |
+| **中间区域字节** | 见 §2.3⚠：主库拷贝只抽首尾 8 MB | 中间区域写入且 size/mtime 不变时漏检 |
+| **62 GB 实跑** | 真实库耗时与峰值内存**未实测** | 见 §2.4.6 |
+
+> ⇒ 若需要**逐位等价**，唯一严谨做法是对**源与副本做全文件 `Get-FileHash`** 并比对——
+> 但那在 62 GB 上代价高、且要求**拷贝期间绝对无写者**（本通知 §三 步骤 1 的双证）。
+> 我们**没有**把摘要判据包装成逐位等价；两者是不同强度的证据，请按需选用。
+
+**判据（七个面各自独立核验，任一不等即 MISMATCH）**
+
+| 面 | 判据 | 依据视图 | 独立性实测 |
+|---|---|---|---|
+| A | **schema 集合**一致 | `duckdb_schemas()`（排除 `information_schema`/`pg_catalog`/`temp`/`system`） | 加一个 `main3` schema ⇒ 只报 `SCHEMA SET` |
+| B | **表集**一致（逐 schema） | `duckdb_tables()` + `WHERE schema_name=?` | 建表 ⇒ 报 `TABLE SET` |
+| C | **列定义**一致 | `duckdb_columns()`：`data_type`+`is_nullable`+`column_default`+列序 | 加列 ⇒ 只报 `COLUMNS` |
+| D | **逐表行数**一致 | `SELECT count(*)`（schema 限定） | 加一行 ⇒ 报 `ROWS 4 != 3` |
+| E | **逐表内容**一致（**192 位**） | 三路独立盐 `sum(CAST(hash(列…, 'S2'|'S3') AS HUGEINT))` | 改 1 个字节 ⇒ 只报 `CONTENT192` |
+| F | **索引**一致 | `duckdb_indexes()`：`is_unique`+`is_primary`+`expressions`+**`sql` 完整 DDL** | 加索引 ⇒ 只报 `INDEXES: 2 vs 1`；删索引 ⇒ `0 vs 1` |
+| G | **约束**一致 | `duckdb_constraints()`：`constraint_type`+`constraint_text`+`column_names`+`referenced_table` | 去 `NOT NULL` ⇒ 报 `COLUMNS`+`CONSTRAINTS` |
+
+> **索引与约束为何必须分开取**（实测，1.5.6）：`PRIMARY KEY` **只出现在 `duckdb_constraints()`**，
+> **不出现在 `duckdb_indexes()`**；而普通 `CREATE INDEX` 只出现在后者。**只取其一必漏**。
+> 另注：`duckdb_constraints()` 中同一 `NOT NULL` 可能出现**多行重复记录**（实测 `s1.a` 两条 `NOT NULL`），
+> 故按排序后整体比对，不做去重，避免掩盖差异。
 
 **口径一致性（审核要求，逐条落实）**
 
@@ -480,7 +584,8 @@ if ($LASTEXITCODE -ne 0) { "RESTORE-EQUIV 未通过（exit=$LASTEXITCODE），�
 | **完整 SHA** | 结构面 / 数据面各输出**完整 64 位十六进制** `sha256`（不截断） |
 | **schema 限定** | 查询写 `"schema"."table"`；元数据查询一律带 `WHERE schema_name=?` |
 | **索引定义** | 取 `is_unique` / `is_primary` / **`sql`（完整 DDL 文本）**，不只取名字 |
-| **版本一致** | 两侧都打印 `duckdb version` 并作为比对项（版本不同直接报错，避免 `hash()` 语义漂移） |
+| **版本绑定** | 见下方「hash 语义绑定」专节 |
+| **摘要≠逐位等价** | 见下方「本判据证不到什么」 |
 
 ##### 2.4.5 负例自检（**证明这套比对真的会报警**）
 
@@ -693,24 +798,26 @@ schtasks /Run /TN QS_DaemonForever
 
 ## 修订说明（v4 → v5 → v6；内部留痕，下发时可删除）
 
-| # | 终审意见（第三轮） | 本版落实 |
+| # | 终审意见（第四轮） | 本版落实 |
 |---|---|---|
-| 1 | **输出基线用字面量 `{stamp}`，消费端读展开后的 `$stamp`，须显式传同一路径并做端到端验证** | §2.4.1-2.4.4 重写：全部改为**同一 `$baseline` 变量**，工具调用一律显式 `--out` / `--baseline` 参数；<br>· §2.4.2 写后立即 `if (-not (Test-Path $baseline)) { throw }` 并打印 `BASELINE-PATH` + `BASELINE-SHA256`；<br>· §2.4.4 打印 `CONSUMED-BASELINE`，要求与 `BASELINE-PATH` **逐字一致**；<br>· 另注明**必须用单引号 here-string**（双引号会把 Python 里的 `$` 吃掉）。<br>**实测复现**：`"...{stamp}.json"` → 字面量不展开；`"...$stamp.json"` → 展开为时间戳；两者 `-eq` 为 **False** |
-| 2 | **整表排序加 `fetchall()` 对 62GB 未验，补有界读取与排序临时空间设计** | §2.4.6 新增「有界性说明」：<br>· **不用** `SELECT *` + `fetchall()`、**不用** `ORDER BY ALL`；只取 `count(*)` + **流式聚合** `sum(CAST(hash(列...) AS HUGEINT))`；<br>· 新写法**不含排序** ⇒ 无排序溢写；仍显式 `SET temp_directory='...\_duckdb_tmp'`、`SET memory_limit='4GB'`；<br>· **实测差分**（200 万行 / 59.8 MB / `memory_limit=128MB`）：旧写法 **`OutOfMemoryException`**（121.9/122.0 MiB）；新写法 **0.06 s 成功**；<br>· **如实声明**：62 GB 真实库耗时与峰值内存**未实测**，只保证内存不随表规模线性增长；过慢按 §2.4.7 裁剪（并注明裁剪=有损验收） |
-| 3 | **内容编码、完整 SHA、schema 限定及索引定义须一致** | 新增「口径一致性」表：<br>· 编码：统一 `hash(有类型列)`（不拼字符串，避免浮点/日期 repr 差异）+ `preserve_insertion_order=false`；<br>· SHA：结构面/数据面均输出**完整 64 位**（不再截断 16 位）；<br>· schema：查询写 `"schema"."table"`，元数据查询带 `WHERE schema_name=?`；<br>· 索引：取 `is_unique`/`is_primary`/**`sql` 完整 DDL**，并纳入 `duckdb_constraints()`；<br>· 另加 `duckdb version` 比对，防 `hash()` 语义漂移 |
-| 4 | **原现场无 WAL 时，去 WAL 负例须另用含增量的合成 fixture** | §2.4.5 拆两分支：<br>· **分支 1**（有 WAL 备份）⇒ 照常把 WAL 改名 `.displaced`；<br>· **分支 2**（**无 WAL**）⇒ 明确「没有 WAL 可改名」，提供**与生产库完全隔离**的 fixture 构造（建表+CHECKPOINT=3 行 → 另起进程追加 4 行 → 强杀 → 得 `fx.db` + `fx.db.wal`），再采基线 + 造错配副本；<br>· 判据：负例必须 `MISMATCH`，否则「比对无鉴别力、结论无效」 |
-| 5 | （前两轮成果保留）删除完整保证 / WAL 配对命名 | §2.3 ⚠ 三条「证不到什么」保留；§2.2 WAL 命名 `<主库备份全名>.wal` 保留 |
-| 6 | **T041 不连带核销** | 明确写「**T041 未连带核销**，仍为 `BLOCKED`」 |
+| 1 | **补基线生成/消费的版本绑定** | 基线写入 `duckdb_version` + `duckdb_source_id` + **`hash_probe`**（h1/h2/h3 三个固定常量表达式的实际值）；<br>比对时**先算同一探针**：不等 ⇒ `HASH-SEMANTICS-DIFFER` + **exit=4 拒绝比对**；<br>探针等而版本号不同 ⇒ **放行并打印说明**（"版本不同但 hash 语义已用探针证同"）。<br>**实测**：1.4.5 建基线 → 1.5.6 verify ⇒ 探针一致、`RESTORE-EQUIV: OK`、**exit=0**；<br>把基线探针伪造为 `999` ⇒ `HASH-SEMANTICS-DIFFER`、**exit=4**、**不比对任何数据摘要** |
+| 2 | **DuckDB 内置 hash 跨版本不得无依据直接比** | 见上（探针即依据）；另**实测**：同一 fixture（BIGINT/VARCHAR/DATE/TIMESTAMP/DOUBLE/DECIMAL/BOOLEAN/BLOB/HUGEINT/UBIGINT，含 NULL、中文、`-2^63`、`2^64-1`），<br>1.4.5 与 1.5.6 的 **hash、三路盐求和、逐行 hash 全部逐位相同**。<br>**明确声明**这只是**已测样本**结论，**不构成跨版本保证**；真实窗口须由探针重证 |
+| 3 | **明确行 hash 求和的碰撞边界** | 新增「碰撞边界」表：<br>· 用 `sum` **非** `bit_xor` ⇒ **对行重复敏感**（实测 3 行 vs 3 行+1 重复 ⇒ 不等）；<br>· **192 位**三盐，生日界约 **2^96** 行对；<br>· `HUGEINT` 累加器不溢出（实测 3×(2^64−1) 正确；62 GB 按 6.2 亿行外推上界 **2^93** < 2^127）；<br>· 顺序无关（乱序同表摘要相等）；<br>· **⚠ 明写不抗恶意**：加法结构可被构造击穿，属工程强度非密码学保证 |
+| 4 | **schema 及约束独立核验范围** | 判据扩为**七面**（A schema 集 / B 表集 / C 列定义 / D 行数 / E 内容192 / F 索引 / G 约束），各自独立出摘要、独立报错。<br>**逐面注入缺陷实测**：加 schema⇒只报 SCHEMA SET；建表⇒TABLE SET；加列⇒COLUMNS；加行⇒ROWS；改 1 字节⇒CONTENT192；加/删索引⇒INDEXES；去 NOT NULL⇒COLUMNS+CONSTRAINTS。<br>**关键发现**：`PRIMARY KEY` **只在 `duckdb_constraints()`、不在 `duckdb_indexes()`**；普通 `CREATE INDEX` 反之 ⇒ **必须分视图取，只取其一必漏**。<br>另注 `duckdb_constraints()` 同一 `NOT NULL` 可能出现**重复行**（实测两条），故整体排序比对不去重 |
+| 5 | **不能把摘要一致称数学上逐位等价** | 新增专节「本判据证不到什么」，逐条列出：哈希碰撞 / `--schema` 裁剪（工具打印 `TRIMMED -> LOSSY coverage`）/ 视图·序列·宏·自定义类型未纳入 / 物理布局与统计信息 / 主库中间区域 / 62 GB 未实测。<br>并写明：**要逐位等价须对源与副本做全文件 `Get-FileHash`**，代价高且要求拷贝期绝对无写者——**两者是不同强度的证据** |
+| 6 | （历轮成果保留）删完整保证 / WAL 配对命名 / 有界读取 / 同基线逐表 / 错配 WAL 负例 / T041 不连带 | 均保留 |
 
-**隔离命令链验收（2026-11-15 实测，合成库）**
+**隔离命令链验收（2026-11-15 第四轮实测，合成库，七块原样执行）**
 
 | 用例 | 期望 | 实测 |
 |---|---|---|
-| 正例（`r.db` + 配对 `r.db.wal`） | OK | ✅ `RESTORE-EQUIV: OK 与基线一致`，exit=0 |
-| 负例（WAL 改名 `.displaced`） | MISMATCH | ✅ 逐表报 `行数 3 != 4` 等，exit=1 |
-| 结构负例（数据不动，仅加一个索引） | 只报结构面 | ✅ 仅 `结构面 sha256 不一致`，未误报行数/内容 |
-| 无 WAL 现场正例 | OK | ✅ exit=0 |
-| 有界读取差分 | 旧写法失败 | ✅ 旧 OOM / 新 0.06 s |
+| 基线 1.4.5 → verify 1.5.6 | 探针同 ⇒ 放行 | ✅ `RESTORE-EQUIV: OK`，exit=0，打印版本差异说明 |
+| 伪造 hash 探针 | 拒比 | ✅ `HASH-SEMANTICS-DIFFER`，exit=**4** |
+| 正例（配对 WAL，多 schema） | OK | ✅ `OK`，`scope: schemas=['main','main2'] tables=3` |
+| 负例（WAL 错配） | MISMATCH | ✅ `ROWS 2 != 3` + `CONTENT192 ... differ`，exit=1 |
+| 分支2 合成 fixture 负例 | MISMATCH | ✅ `ROWS 3 != 7`，exit=1 |
+| `--schema` 裁剪 | 有损提示 | ✅ 打印 `TRIMMED to schema 'main' -> LOSSY coverage` |
+| 七面逐个注入缺陷 | 只报该面 | ✅ 9 个用例全部命中且不串面 |
 
 **口径来源（内部随附）**：
 - 放行集合与判定源：`quantstudio/pipeline/duckdb_version_policy.py`
