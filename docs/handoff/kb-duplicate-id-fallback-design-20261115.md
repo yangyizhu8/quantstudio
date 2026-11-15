@@ -51,13 +51,19 @@
 
 > 守恒校验逐族成立：`total == checked + len(skipped)`（22=22+0／22=22+0／44=44+0／5=5+0）。
 
+> **⚠️ 三数相等 ≠ 解析全覆盖（R5 指出，2026-11-15）**：上表「磁盘候选 = glob 展开 = checked、差额 0」只证明**文件都进了检查流程**，
+> **不证明**每件都被**正确解析**——`checked` 内部可能混有 `empty`（无 front-matter／损坏但未抛异常，N3 取证）；
+> 且**错命名但 id 有效**的件（E 类，N4 实测：`checked=2 bad=[] skipped=0`、**无任何标记**）也计入 `checked` ⇒ 同样不被上表差额体现。
+> ⇒ **在 C4 补齐 `empty`/`E 类` 可见性之前，"解析全覆盖"不可宣称**，差额口径**不闭合**。
+
 ### 3.2 恒等式（补齐 C4 后可闭合）
 
 ```
 磁盘候选 = glob 展开(total) + 未被该 glob 匹配者
 total    = checked + skipped
 checked  = 解析有内容(ok) + 解析为空(empty) + 解析异常(fail→计入 bad)
-⇒ 差额 := 磁盘候选 − checked = 非条目件 + empty + fail + 未展开
+             （其中 ok 内可能含 E 类 name_mismatch：文件名不合 pattern 但 id 有效）
+⇒ 差额 := 磁盘候选 − checked = 非条目件 + empty + fail + E类(name_mismatch) + 未展开
 ```
 
 **当前缺口**：`empty`（无 front-matter／损坏但未抛异常）**在现有 payload 中不可见**（见 §4 N3 取证）⇒
@@ -70,16 +76,18 @@ checked  = 解析有内容(ok) + 解析为空(empty) + 解析异常(fail→计�
 | 非条目件（族目录内非 `id_pattern` 件，如 `README.md`） | 列入 `skipped.non-entry-file` 明细（现有已可见） |
 | 解析异常 `fail` | 现有已进 `bad`（`parse_fail`），**可见** |
 | **解析为空 `empty`** | **当前不可见 ⇒ 由 C4 补齐**；补齐前不得声称差额已闭合 |
+| **E 类 name_mismatch**（文件名不合 pattern、id 有效） | **当前完全静默**（N4：进 `checked`、不报、不 skip）⇒ 由 C4 补齐为**逐件可见的诊断项**（不 skip、不藏错命名） |
 | 未被 glob 匹配 | 列入"磁盘候选−展开"差额项 |
 | 任一差额 > 0 | 报告须写「**该族覆盖不完整**」并**逐项列出**（禁止只报总数、禁止归入"其他"） |
 
-## 4 撞 ID 负例（N1–N3，**已实测**，沙箱内、真库零改动）
+## 4 撞 ID 负例（N1–N4，**已实测**，沙箱内、真库零改动）
 
 | # | 构造 | 期望 | 实测 | 性质 |
 |---|---|---|---|---|
 | **N1** | 同一次 glob 展开出 `X.md`＋`X.draft.md`（同 id） | 报 duplicate_id | `total=2 checked=2`，**命中 2 件**，错误文案含对方文件名 | 正例 |
 | **N2** | 同 id 两件**分两次调用** | **不报**（批内限定成立） | 单件A/B 各 `bad=0 duplicate=0` | 边界正例 |
 | **N3** | 同 id 两件，其一 front-matter **不可解析** | **不报**（范围＝成功解析的集合） | `duplicate_id=0`；**该坏件既未报 `duplicate_id`、也未报 `parse_fail`** | **漏检反例** |
+| **N4** | **文件名不匹配 `id_pattern` 但 front-matter 含有效 ID**（如 `OPS-2026-0009 副本.md` + `id: OPS-2026-0009`） | **不得一律 skip 藏错命名** | `total=2 checked=2 skipped=0 bad=[]`，placeholder 报告 `notes=[]` ⇒ **既不报、也不 skip、也无任何标记＝彻底静默**（现状最坏的一种） | **漏检反例** |
 
 **N3 取证（新增，支撑 C4）**：`kb_preflight.parse_entry("knowledge/ops/README.md")` ⇒ **返回 `keys=0`、`id=None`**（**不抛异常**）⇒ 解析器把"无 front-matter/损坏"当作**空记录**返回 ⇒ 该件在 `check_files` 里**计入 `checked`**、但 `id` 为空 ⇒ **既不进 `id_seen`（不参与查重）、也不触发任何报错** ⇒ **静默漏检**。
 （对照：正常条目 `OPS-2026-0001.md` ⇒ `keys=13`、`id='OPS-2026-0001'`。）
