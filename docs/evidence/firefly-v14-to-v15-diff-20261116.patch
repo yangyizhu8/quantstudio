@@ -1,0 +1,40 @@
+--- a/docs/handoff/firefly-site-recovery-procedure-20261114.md
++++ b/docs/handoff/firefly-site-recovery-procedure-20261114.md
+@@ -1,4 +1,4 @@
+-# firefly 案 · 现场处置流程（客户侧执行）· **v14**
++# firefly 案 · 现场处置流程（客户侧执行）· **v15**
+ 
+ > **适用**：客户收到《修复完成通知 N-20261027-01》后，**自愿**为排查 #1（大表写入卡死）现场卡顿而执行「回收死元组 / 全量重拉」。
+ > **执行方＝客户**；本方只出稿并核读数，**不代客户执行任何一步**，也不代客户判断成败。
+@@ -15,6 +15,7 @@
+ > **v12 修订（2026-11-16，依据总调度 R12 判据「局部收，终审未过 · 仍有三个确定问题」）**：①**BOM 解析键统一**——表头去 BOM 后必须把**同一份 `fieldnames` 交给 `csv.DictReader`**（v11 只在表头去掉 BOM、却把原行喂给 DictReader ⇒ 带 BOM 时数据行取不到 `table`，误报 `BAD_ROW`）；②**空库范围补全**——`information_schema.tables` 须查**整库（排除系统 schema）**；**仅 main 基表为空不得报 `PASS_EMPTY_DB`**，一律降级为新态 **`PARTIAL_EMPTY_MAIN_ONLY`（整库未证）**，并新增 `#EMPTY_DB_MAIN_ONLY` 显式声明写法；③**PARTIAL 不得绕过证④与用户闸**——删除「用户/总调度任一书面」入口：§3.0 默认**不进入阶段 3**；确需部分未证重建，**另立 §3.6 用户例外申请**（业主本人书面 + 七项要素），**不预置为已生效配方**，批准前停在阶段 2。
+ > **v13 修订（2026-11-16，依据总调度 R13 判据「局部收，静态终审未过」）**：①**「整库为空」的对象范围补齐为五源**——`information_schema.tables` **不枚举 sequence**，故仅查表/视图会在「只剩一个 sequence」时误报空库；v13 起要求**表与视图 · 序列 · 非默认 schema · 用户类型 · 宏** 五源合计为 0，且**任一源不可探测即 `FAIL(EMPTY_DB_SCOPE_UNVERIFIED)`（拒绝该未覆盖状态）**；②**`MAIN_ONLY` 分支先核后报**——必须先确认 `main` 基表**确实为 0** 才可打印 `main_base=0`，否则 `FAIL(EMPTY_DB_MAIN_ONLY_CLAIM_BUT_MAIN_HAS_TABLES)`；③**表格与代码统一**——`scope=whole_db` 只要有任何对象即 **`FAIL`（不降级）**；`PARTIAL_EMPTY_MAIN_ONLY` 只在**声明本身就是 `main_only`** 时出现。
+ > **v14 修订（2026-11-16，依据总调度 R14 判据「收 sequence、MAIN_ONLY 及 whole_db 修正，可进入合成验证命令审定，未授权运行」）**：①**宏源拆为两类**——`function_type='macro'`（scalar macro）**不完整**，须与 **`table_macro`** 分别成源（`macros_scalar` / `macros_table`），二者任一非空即「非空库」；②**`PASS_EMPTY_DB` 输出补齐 `by_source`**（表里要求、代码此前未输出）；③明确**索引/约束依附于表，不单列为独立来源**（不靠凑来源数）；④新增 **§2.4.1.2 空库判据的基线前提**——两版默认 catalog 与 internal 对象须**先由合成空库确认基线为 0**，否则会出现「空库恒 FAIL」；**查询失败不得当 0**（fail-closed 不变）。
++> **v15 修订（2026-11-16，依据总调度 R23/R24 判据「收两版合成验证、准文档合并」）**：①**两个宏源补 `AND NOT internal`** —— v14 的 `macros_scalar` / `macros_table` 只排系统 schema、**未排内置件**，而两版空库的内置宏**全部 `internal=True`**（新库 `main` 下：1.5.6 为 scalar macro **70** / table_macro **4**，1.4.5 为 **70** / **3**），故 v14 在**真空库上恒判「非空」**。v15 两源改为 `function_type='<类型>' AND NOT internal AND schema_name NOT IN ('information_schema','pg_catalog')`，与 `user_types` 源**同口径**。**明确未采用**「整类剔除宏」——那会把用户自建宏一并排掉，属**假空库**。②**实际改动面**：本文正文 **2 处**（§2.4.1 代码块内）；用于合成验证的矩阵脚本 `surface()` 内**同 2 处**同步（该脚本不在本文正文，随证据件交付）。③**两版合成验证结果**（2026-11-16，两版各一次、串行、独立环境）：`duckdb 1.5.6` 与 `1.4.5` 均 **11/11 MATCH · DIFF 0 · UNVERIFIED 0 · 退出码 0**；两版「空库基线」六源合计均 **0**；**用户宏负例 `C5f`（scalar macro）与 `C5g`（table macro）两版均判 `FAIL`**（`by_source` 各记 1）——即 v15 **既排掉内置件、又没排掉用户自建件**。证据见 `docs/evidence/firefly-emptydb-synthetic-run-20261116.md` §9–§12 与合并说明件 `docs/evidence/firefly-v15-merge-20261116.md`。④**适用界（必读）**：本节判据**只在 `duckdb_functions()` 提供 `internal` 列的版本上成立**（两版均为 20 列、实测含该列）；**「用户自建宏 `internal=False`」是两版实测结论，不是跨版本保证** —— 换用其他版本后，**必须先用 C5f / C5g 两个负例自检**：若这两例退化成「报空库」，说明该版本把用户宏也标成 internal ⇒ **本判据在该版本失效**，不得据此放行（本文**不提供**自动降级方案）。⑤本轮**未在客户现场执行任何命令**，结论只基于合成库。
+ > **版本与命令适配**：本文所有 DuckDB 命令已在 **duckdb 1.5.6（当前目标版本）** 与 **1.4.5（回退位）** 上**隔离实测通过**（合成库，不触生产库）——证据见 `docs/evidence/firefly-site-procedure-isolation-validation-20261114.md`。**若您的 DuckDB 版本与上述不同，请先在副本上重测本文命令再执行**。
+ > ⛔ 标记的步骤为**不可逆操作**（会改写或丢弃数据）。**未完成阶段 2 备份并通过「隔离恢复验证」前，禁止进入阶段 3。**
+ > 每阶段含「做什么 / 怎么验证 / 失败怎么办」。任何阶段失败：**保留现场**（命令输出、日志、截图），回传本方后再继续，不要「试一下看」。
+@@ -211,10 +212,12 @@
+       f"WHERE schema_name NOT IN {SYS_SCHEMAS} AND NOT internal")
+     q("macros_scalar",      # scalar macro
+       "SELECT schema_name, function_name FROM duckdb_functions() "
+-      "WHERE function_type = 'macro' AND schema_name NOT IN ('information_schema','pg_catalog')")
++      "WHERE function_type = 'macro' AND NOT internal "
++      "AND schema_name NOT IN ('information_schema','pg_catalog')")
+     q("macros_table",       # table macro（v13 只筛 'macro'，漏掉这一类）
+       "SELECT schema_name, function_name FROM duckdb_functions() "
+-      "WHERE function_type = 'table_macro' AND schema_name NOT IN ('information_schema','pg_catalog')")
++      "WHERE function_type = 'table_macro' AND NOT internal "
++      "AND schema_name NOT IN ('information_schema','pg_catalog')")
+     return surf
+ 
+ surf = probe_surface(con)
+@@ -343,7 +346,7 @@
+ 
+ **若基线非 0 怎么办**：记录被计入的条目（`by_source` + 明细行）→ 改进过滤器（增加 `internal`/系统 schema/默认 catalog 排除）→ 重跑基线 → **直到为 0**；**任何情况下不得**改成「允许 N 个以内的残留」这种宽松判据。
+ 
+-> **执行状态**：本节为**审定前提**；本轮**未运行**任何合成验证。具体命令与用例见 `docs/evidence/firefly-synthetic-validation-request-20261116.md`（待审定）。
++> **执行状态（v15 更新）**：本节前提**已于 2026-11-16 由合成验证实测落定**——两版（1.5.6 / 1.4.5）独立环境、各自新建空库，六源过滤后计数**均为 0**；据此确认「漏排 `internal` 会导致空库恒 FAIL」的推断成立，并在 v15 补入 `AND NOT internal`（详见文首 v15 修订③与合并说明件）。`duckdb_functions()` 在两版均为 **20 列**且含 `internal`；内置宏全部 `internal=True`。**客户现场仍须各自核实版本**（非 1.5.6 / 1.4.5 时先按 §2.4.1.1 与 C5f/C5g 负例在副本上自检）。用例与命令见 `docs/evidence/firefly-synthetic-validation-request-20261116.md`（rev4）与上条证据件。
+ 
+ #### 2.4.2 备选：参照复制品（阶段 1.4 未做时）
+ 

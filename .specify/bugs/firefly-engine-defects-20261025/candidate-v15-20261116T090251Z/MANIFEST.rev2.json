@@ -1,0 +1,113 @@
+{
+  "candidate": "candidate-v15-20261116T090251Z",
+  "revision": "rev2 (DRIFT-N17-r4: routing-only fix)",
+  "created_utc": "20261116T090251Z",
+  "rev2_utc": "20261116T120315Z",
+  "supersedes_but_keeps": "MANIFEST.json (rev1, 3847 B sha256 5C92A51EB9C50DAF7BC327CD0BD2161251F7305465ABDD92BA59B25DF6962304) — 保留未覆盖",
+  "routing_fixes": [
+    {
+      "id": "R1",
+      "file": "_iso_empty_db_matrix_v15.py",
+      "before": "PROBE = os.path.join(HERE, \"restore_probe.py\")",
+      "after": "PROBE = os.path.join(HERE, \"restore_probe_v15.py\")",
+      "why": "原指向已冻结的 v14 被测件；跑起来验的是旧 probe，v15 四谓词等于未生效",
+      "extra": "同文件用法注释同步为 _iso_empty_db_matrix_v15.py（注释，非用例/非谓词）"
+    },
+    {
+      "id": "R2",
+      "file": "_prepare_probe_v15.py",
+      "before": "ROOT = os.path.abspath(os.path.join(HERE, \"..\", \"..\", \"..\"))",
+      "after": "ROOT = _find_workspace_root(HERE)  # 向上锚定 .specify，找不到即 exit 8",
+      "why": "候选件比旧件多一层目录（candidate-v15-*/），3 层推导落到 .specify ⇒ 源路径全错",
+      "extra": "本次不执行 prepare（授权明示）"
+    }
+  ],
+  "artifacts_after_rev2": {
+    "01-probe-macros-scalar.diff": {
+      "bytes": 730,
+      "sha256": "EBFDF07FA0C0E67B05202D15C688739C64F6F67BB0E9370A7AE5C576CAF014CE"
+    },
+    "02-probe-macros-table.diff": {
+      "bytes": 603,
+      "sha256": "3BEC1D4D74112AB0D68E525742EE8D5562C5BEFE680B32B549D8B93151CD2DED"
+    },
+    "03-matrix-macros-scalar.diff": {
+      "bytes": 824,
+      "sha256": "68CDE63844604978FB1601DAA210454E75C01CD6AD583EE4D724AF4E77D500E4"
+    },
+    "04-matrix-macros-table.diff": {
+      "bytes": 667,
+      "sha256": "996A97186AE65FD5301A4B1507440756418C9B4C784788A10179F419918B6740"
+    },
+    "MANIFEST.json": {
+      "bytes": 3847,
+      "sha256": "5C92A51EB9C50DAF7BC327CD0BD2161251F7305465ABDD92BA59B25DF6962304"
+    },
+    "PLAN.md": {
+      "bytes": 7027,
+      "sha256": "A60886CD76EAD5BB6FEFADB175D3CAC23ACA73C7B23F54A075FE925F4D1CDD52"
+    },
+    "_iso_empty_db_matrix_v15.py": {
+      "bytes": 10825,
+      "sha256": "F88A759B7CC96AA5D434D24A43E70A0BD523A18C537A4AA33E5C4D01D028E227"
+    },
+    "_prepare_probe_v15.py": {
+      "bytes": 8144,
+      "sha256": "C296046FEA596CBFB6A4736103CDC067E9C723DF688CE7B45991F9319FD22BFA"
+    },
+    "restore_probe_v15.py": {
+      "bytes": 7407,
+      "sha256": "BA22F6084394ECEA6F35FEBE417C5A906670598A8CEE14A91B16E539F5D5B3CA"
+    },
+    "ROUTING-FIX.rev2.diff": {
+      "bytes": 1938,
+      "sha256": "B9141A1E0FC453B420F74541EC43965F50821991DF6D596F94597676AE7F1007"
+    }
+  },
+  "diffs_rev2_vs_rev1": {
+    "_iso_empty_db_matrix_v15.py": {
+      "patch": "--- cand/rev1/_iso_empty_db_matrix_v15.py\n+++ cand/rev2/_iso_empty_db_matrix_v15.py\n@@ -1,6 +1,6 @@\n # -*- coding: utf-8 -*-\n \"\"\"SYN-20261116-01 rev2 · 空库判据合成验证矩阵（断言式，端到端）\n-用法: python _iso_empty_db_matrix.py <EXPECT_VER> <WORK_ROOT>\n+用法: python _iso_empty_db_matrix_v15.py <EXPECT_VER> <WORK_ROOT>\n 退出码: 0=全 MATCH / 1=存在 DIFF 或 UNVERIFIED / 2=参数或前置缺失\n        4=版本不符 / 5=B0 基线非 0（立即停止）/ 6=删除边界越界\n        7=B0 基线不可探测（查询异常，立即停止）/ 8=PROBE hash 门拒绝（由 _prepare_probe.py 抛出）\n@@ -12,7 +12,7 @@\n EXPECT_VER = sys.argv[1] if len(sys.argv) > 1 else \"\"\n WORK = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 else \"\"\n HERE = os.path.abspath(os.path.dirname(__file__))\n-PROBE = os.path.join(HERE, \"restore_probe.py\")\n+PROBE = os.path.join(HERE, \"restore_probe_v15.py\")\n \n def die(tag, msg, code):\n     print(f\"{tag}: {msg}\"); print(f\"EXIT {code}\"); sys.exit(code)\n",
+      "lines_changed": 4
+    },
+    "_prepare_probe_v15.py": {
+      "patch": "--- cand/rev1/_prepare_probe_v15.py\n+++ cand/rev2/_prepare_probe_v15.py\n@@ -12,7 +12,21 @@\n import sys\n \n HERE = os.path.dirname(os.path.abspath(__file__))\n-ROOT = os.path.abspath(os.path.join(HERE, \"..\", \"..\", \"..\"))\n+def _find_workspace_root(start):\n+    cur = os.path.abspath(start)\n+    while True:\n+        if os.path.isdir(os.path.join(cur, \".specify\")):\n+            return cur\n+        parent = os.path.dirname(cur)\n+        if parent == cur:\n+            return \"\"\n+        cur = parent\n+\n+\n+ROOT = _find_workspace_root(HERE)          # r4：向上锚定 .specify（原 3 层推导在候选子目录内落错层）\n+if not ROOT:\n+    print(\"PREPARE FAIL(WORKSPACE_ROOT_NOT_FOUND) HERE=\" + HERE)\n+    sys.exit(8)\n \n SRC_PROC = os.path.join(ROOT, \"docs\", \"handoff\", \"firefly-site-recovery-procedure-20261114.md\")\n SRC_REQ = os.path.join(ROOT, \"docs\", \"evidence\", \"firefly-synthetic-validation-request-20261116.md\")\n",
+      "lines_changed": 16
+    }
+  },
+  "checks": {
+    "not_internal_count_matrix": 3,
+    "not_internal_count_prepare_patchfns": 4,
+    "matrix_probe_line": [
+      "PROBE = os.path.join(HERE, \"restore_probe_v15.py\")"
+    ],
+    "prepare_root_line": [
+      "ROOT = _find_workspace_root(HERE)          # r4：向上锚定 .specify（原 3 层推导在候选子目录内落错层）"
+    ],
+    "case_markers": {
+      "C1": 3,
+      "C2": 3,
+      "C7": 3,
+      "C5c": 3,
+      "C5c2": 3,
+      "C5c3": 3,
+      "C5f": 3,
+      "C5g": 3,
+      "C5e": 3,
+      "C5b": 3
+    },
+    "case_markers_rev1": {
+      "C1": 3,
+      "C2": 3,
+      "C7": 3,
+      "C5c": 3,
+      "C5c2": 3,
+      "C5c3": 3,
+      "C5f": 3,
+      "C5g": 3,
+      "C5e": 3,
+      "C5b": 3
+    }
+  },
+  "unchanged_assertion": "四处谓词 / 11 项用例 / must-must_not / 退出码 / RUN 布局 / 删除边界 一律未动",
+  "prepare_executed": false
+}

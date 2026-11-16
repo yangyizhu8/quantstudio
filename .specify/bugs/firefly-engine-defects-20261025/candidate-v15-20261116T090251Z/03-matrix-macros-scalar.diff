@@ -1,0 +1,12 @@
+--- v14/_iso_empty_db_matrix.py
++++ v15/_iso_empty_db_matrix.py
+@@ -71,7 +71,8 @@
+             "user_types": q("SELECT schema_name, type_name FROM duckdb_types() "
+                             f"WHERE schema_name NOT IN {SYS} AND NOT internal"),
+             "macros_scalar": q("SELECT schema_name, function_name FROM duckdb_functions() "
+-                               "WHERE function_type = 'macro' AND schema_name NOT IN "
++                               "WHERE function_type = 'macro' AND NOT internal "
++                               "AND schema_name NOT IN "
+                                "('information_schema','pg_catalog')"),
+             "macros_table": q("SELECT schema_name, function_name FROM duckdb_functions() "
+                               "WHERE function_type = 'table_macro' AND schema_name NOT IN "

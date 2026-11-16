@@ -1,0 +1,88 @@
+{
+  "actual_ver": "1.4.5",
+  "expect_ver": "1.4.5",
+  "run": "D:\\miniQMT策略实盘\\QuantStudio\\.specify\\bugs\\firefly-engine-defects-20261025\\candidate-v15-20261116T090251Z\\validation-20261116T120602Z\\145\\runs\\20261116T120723_a93d",
+  "probe_sha256": "ba22f6084394ecea6f35febe417c5a906670598a8cee14a91b16e539f5d5b3ca",
+  "counts": {
+    "MATCH": 11,
+    "DIFF": 0,
+    "UNVERIFIED": 0
+  },
+  "records": [
+    {
+      "case": "B0",
+      "verdict": "MATCH",
+      "detail": "total=0"
+    },
+    {
+      "case": "C1",
+      "rc": 0,
+      "expect_rc": 0,
+      "verdict": "MATCH",
+      "detail": ""
+    },
+    {
+      "case": "C2",
+      "rc": 0,
+      "expect_rc": 0,
+      "verdict": "MATCH",
+      "detail": ""
+    },
+    {
+      "case": "C7",
+      "rc": 0,
+      "expect_rc": 0,
+      "verdict": "MATCH",
+      "detail": ""
+    },
+    {
+      "case": "C5c",
+      "rc": 2,
+      "expect_rc": 2,
+      "verdict": "MATCH",
+      "detail": ""
+    },
+    {
+      "case": "C5c2",
+      "rc": 2,
+      "expect_rc": 2,
+      "verdict": "MATCH",
+      "detail": ""
+    },
+    {
+      "case": "C5c3",
+      "rc": 2,
+      "expect_rc": 2,
+      "verdict": "MATCH",
+      "detail": ""
+    },
+    {
+      "case": "C5f",
+      "rc": 2,
+      "expect_rc": 2,
+      "verdict": "MATCH",
+      "detail": ""
+    },
+    {
+      "case": "C5g",
+      "rc": 2,
+      "expect_rc": 2,
+      "verdict": "MATCH",
+      "detail": ""
+    },
+    {
+      "case": "C5e",
+      "rc": 2,
+      "expect_rc": 2,
+      "verdict": "MATCH",
+      "detail": ""
+    },
+    {
+      "case": "C5b",
+      "rc": 3,
+      "expect_rc": 3,
+      "verdict": "MATCH",
+      "detail": ""
+    }
+  ]
+}

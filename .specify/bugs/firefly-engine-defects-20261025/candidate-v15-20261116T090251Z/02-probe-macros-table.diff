@@ -1,0 +1,12 @@
+--- v14/restore_probe.py
++++ v15/restore_probe.py
+@@ -99,7 +99,8 @@
+       "WHERE function_type = 'macro' AND schema_name NOT IN ('information_schema','pg_catalog')")
+     q("macros_table",       # table macro（v13 只筛 'macro'，漏掉这一类）
+       "SELECT schema_name, function_name FROM duckdb_functions() "
+-      "WHERE function_type = 'table_macro' AND schema_name NOT IN ('information_schema','pg_catalog')")
++      "WHERE function_type = 'table_macro' AND NOT internal "
++      "AND schema_name NOT IN ('information_schema','pg_catalog')")
+     return surf
+ 
+ surf = probe_surface(con)

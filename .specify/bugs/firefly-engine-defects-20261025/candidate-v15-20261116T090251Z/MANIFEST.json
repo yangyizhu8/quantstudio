@@ -1,0 +1,125 @@
+{
+  "candidate": "candidate-v15-20261116T090251Z",
+  "created_utc": "20261116T090251Z",
+  "authority": "DRIFT-N17-r3：仅 v15 隔离候选创建，未准新 run",
+  "kind": "static artifacts only (no execution)",
+  "artifacts": {
+    "restore_probe_v15.py": {
+      "bytes": 7407,
+      "sha256": "BA22F6084394ECEA6F35FEBE417C5A906670598A8CEE14A91B16E539F5D5B3CA"
+    },
+    "_iso_empty_db_matrix_v15.py": {
+      "bytes": 10817,
+      "sha256": "5B538EC34B85CB4D3F270AF3FD37A8C897CF1B2225803B83F165982CAB09A1D7"
+    },
+    "_prepare_probe_v15.py": {
+      "bytes": 7717,
+      "sha256": "642EDFFC1E3132985DB567EEEBCAA7A81673559AECB483CC5AD1DF4646A5D18E"
+    },
+    "PLAN.md": {
+      "bytes": 7027,
+      "sha256": "A60886CD76EAD5BB6FEFADB175D3CAC23ACA73C7B23F54A075FE925F4D1CDD52"
+    }
+  },
+  "diffs": {
+    "01-probe-macros-scalar": {
+      "bytes": 730,
+      "sha256": "EBFDF07FA0C0E67B05202D15C688739C64F6F67BB0E9370A7AE5C576CAF014CE",
+      "hunks": 1
+    },
+    "02-probe-macros-table": {
+      "bytes": 603,
+      "sha256": "3BEC1D4D74112AB0D68E525742EE8D5562C5BEFE680B32B549D8B93151CD2DED",
+      "hunks": 1
+    },
+    "03-matrix-macros-scalar": {
+      "bytes": 824,
+      "sha256": "68CDE63844604978FB1601DAA210454E75C01CD6AD583EE4D724AF4E77D500E4",
+      "hunks": 1
+    },
+    "04-matrix-macros-table": {
+      "bytes": 667,
+      "sha256": "996A97186AE65FD5301A4B1507440756418C9B4C784788A10179F419918B6740",
+      "hunks": 1
+    }
+  },
+  "checks": {
+    "sources": {
+      "procedure_v14": {
+        "bytes": 90003,
+        "sha256": "7EBDE2EE60C6D387F2C9B7D2F5FCAA138FAEDFFC959F2750822386888CB06702"
+      },
+      "request_rev4": {
+        "bytes": 32392,
+        "sha256": "A02CBD552539AE17E6B12E7E1FA7FFA8DB0B80514BED0E9573ADD54800579A6B"
+      },
+      "probe_v14_body_sha256": "87AED462DD27F3DDA67C4EAB703714CF32B149556E2DA98B41F05792D720A309",
+      "matrix_v14_body_sha256": "B0CE0EB2CBA4306C981E37554CE8EEF8C70A12F615FDDC0BBB6977335A99D97A"
+    },
+    "patch_hits": {
+      "probe": [
+        [
+          "probe",
+          "macro"
+        ],
+        [
+          "probe",
+          "table_macro"
+        ]
+      ],
+      "matrix": [
+        [
+          "matrix",
+          "macro"
+        ],
+        [
+          "matrix",
+          "table_macro"
+        ]
+      ]
+    },
+    "minimality": {
+      "probe_unpatch_sha256": "87AED462DD27F3DDA67C4EAB703714CF32B149556E2DA98B41F05792D720A309",
+      "probe_restores_v14": true,
+      "matrix_unpatch_sha256": "B0CE0EB2CBA4306C981E37554CE8EEF8C70A12F615FDDC0BBB6977335A99D97A",
+      "matrix_restores_v14": true
+    },
+    "unchanged_surfaces": [
+      "其余四源查询",
+      "b0_stop 与退出码 0/1/2/4/5/6/7/9",
+      "check() 断言引擎与 11 项用例定义",
+      "summary.json 结构",
+      "RUN 目录布局与删除边界",
+      "restore_probe 的非宏逻辑"
+    ],
+    "not_internal_count": {
+      "probe_v15": 3,
+      "matrix_v15": 3,
+      "expected": 3
+    },
+    "ast": {
+      "restore_probe_v15.py": "PARSE_OK",
+      "_iso_empty_db_matrix_v15.py": "PARSE_OK",
+      "_prepare_probe_v15.py": "PARSE_OK"
+    },
+    "prepare_run": false
+  },
+  "frozen_not_touched": [
+    "docs/handoff/firefly-site-recovery-procedure-20261114.md (v14, sha 见 sources)",
+    "docs/evidence/firefly-synthetic-validation-request-20261116.md (rev4, sha 见 sources)",
+    "_prepare_probe.py",
+    "restore_probe.py",
+    "_iso_empty_db_matrix.py",
+    "_iso_empty_db_156/runs/20261116T063937_7b34",
+    "_iso_empty_db_145/runs/20261116T064005_f3c8"
+  ],
+  "plan_b": "仅登记候选（同版本空库基线差集判据）；首核门失败时不得自动切换，须另请裁定",
+  "not_run": [
+    "pip",
+    "prepare",
+    "restore_probe",
+    "matrix",
+    "DB diagnostic"
+  ],
+  "next": "同版核过后另批新 run（两版各一次，C5f/C5g 为首核门）"
+}

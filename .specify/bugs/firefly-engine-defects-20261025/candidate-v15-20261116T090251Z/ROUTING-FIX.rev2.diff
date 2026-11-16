@@ -1,0 +1,44 @@
+--- cand/rev1/_iso_empty_db_matrix_v15.py
++++ cand/rev2/_iso_empty_db_matrix_v15.py
+@@ -1,6 +1,6 @@
+ # -*- coding: utf-8 -*-
+ """SYN-20261116-01 rev2 · 空库判据合成验证矩阵（断言式，端到端）
+-用法: python _iso_empty_db_matrix.py <EXPECT_VER> <WORK_ROOT>
++用法: python _iso_empty_db_matrix_v15.py <EXPECT_VER> <WORK_ROOT>
+ 退出码: 0=全 MATCH / 1=存在 DIFF 或 UNVERIFIED / 2=参数或前置缺失
+        4=版本不符 / 5=B0 基线非 0（立即停止）/ 6=删除边界越界
+        7=B0 基线不可探测（查询异常，立即停止）/ 8=PROBE hash 门拒绝（由 _prepare_probe.py 抛出）
+@@ -12,7 +12,7 @@
+ EXPECT_VER = sys.argv[1] if len(sys.argv) > 1 else ""
+ WORK = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 else ""
+ HERE = os.path.abspath(os.path.dirname(__file__))
+-PROBE = os.path.join(HERE, "restore_probe.py")
++PROBE = os.path.join(HERE, "restore_probe_v15.py")
+ 
+ def die(tag, msg, code):
+     print(f"{tag}: {msg}"); print(f"EXIT {code}"); sys.exit(code)
+--- cand/rev1/_prepare_probe_v15.py
++++ cand/rev2/_prepare_probe_v15.py
+@@ -12,7 +12,21 @@
+ import sys
+ 
+ HERE = os.path.dirname(os.path.abspath(__file__))
+-ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
++def _find_workspace_root(start):
++    cur = os.path.abspath(start)
++    while True:
++        if os.path.isdir(os.path.join(cur, ".specify")):
++            return cur
++        parent = os.path.dirname(cur)
++        if parent == cur:
++            return ""
++        cur = parent
++
++
++ROOT = _find_workspace_root(HERE)          # r4：向上锚定 .specify（原 3 层推导在候选子目录内落错层）
++if not ROOT:
++    print("PREPARE FAIL(WORKSPACE_ROOT_NOT_FOUND) HERE=" + HERE)
++    sys.exit(8)
+ 
+ SRC_PROC = os.path.join(ROOT, "docs", "handoff", "firefly-site-recovery-procedure-20261114.md")
+ SRC_REQ = os.path.join(ROOT, "docs", "evidence", "firefly-synthetic-validation-request-20261116.md")

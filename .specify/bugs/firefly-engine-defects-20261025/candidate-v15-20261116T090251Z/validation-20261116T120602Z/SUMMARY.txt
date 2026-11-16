@@ -1,0 +1,66 @@
+# v15 合成验证结果（DRIFT-N17-r4 · 两版本各一次）
+
+> 授权：DRIFT-N17-r4「修正实际路由后一次两版本合成验证，不运行 prepare」。
+> 判据：先 156 一次，全部通过才 145 一次；首版非 0 或未知即停。
+> 边界：仅新合成库；未触生产/备份/客户库；未 ATTACH 真实库；未恢复补数；未清理产物；未提交/推送/下发。
+
+## 1. 两版结果
+
+| 版本 | RUN | B0 by_source | 11 项 | summary counts | rc | console 末行 |
+|---|---|---|---|---|---|---|
+| **1.5.6** | `20261116T120635_3e7d` | by_source={'tables_views': 0, 'sequences': 0, 'extra_schemas': 0, 'user_types': 0, 'macros_scalar': 0, 'macros_table': 0} total=0 | 11/11 MATCH | `{"MATCH": 11, "DIFF": 0, "UNVERIFIED": 0}` | **rc=0** | `EXIT 0` |
+| **1.4.5** | `20261116T120723_a93d` | by_source={'tables_views': 0, 'sequences': 0, 'extra_schemas': 0, 'user_types': 0, 'macros_scalar': 0, 'macros_table': 0} total=0 | 11/11 MATCH | `{"MATCH": 11, "DIFF": 0, "UNVERIFIED": 0}` | **rc=0** | `EXIT 0` |
+
+## 2. 逐例
+
+| 用例 | 1.5.6 | 1.4.5 |
+|---|---|---|
+| B0 | MATCH | MATCH |
+| C1 | MATCH | MATCH |
+| C2 | MATCH | MATCH |
+| C7 | MATCH | MATCH |
+| C5c | MATCH | MATCH |
+| C5c2 | MATCH | MATCH |
+| C5c3 | MATCH | MATCH |
+| C5f | MATCH | MATCH |
+| C5g | MATCH | MATCH |
+| C5e | MATCH | MATCH |
+| C5b | MATCH | MATCH |
+
+## 3. 首核门结论（v15 关键前提：用户宏 internal=False）
+
+`C5f`（`CREATE MACRO m1(x) AS x + 1`）与 `C5g`（`CREATE MACRO tm1(x) AS TABLE ...`）在两版均
+`rc=2` / `verdict=MATCH`，即 probe 输出 `FAIL(EMPTY_DB_CLAIM_BUT_COPY_NOT_EMPTY)`，`by_source` 含
+`'macros_scalar': 1` / `'macros_table': 1`。
+
+⇒ 「用户自建宏 `internal=False`」在 **两版均实测成立**（此前是未验证假设）。
+⇒ 亦证明 v15 **没有把用户宏一起过滤掉**（否则这两例会退化 `PASS_EMPTY_DB` 而判 DIFF）。
+
+## 4. 指纹（按原始字节）
+
+| 项 | 值 |
+|---|---|
+| 1.5.6 console.log（2326 B / **utf-16le-bom**） | `6B7BC74C7EDB3B1D369D879638B5DAECA525322878FF69657DFB7908AE2855F1` |
+| 1.5.6 summary.json | `C86255B78FB17E8310722C6C3DD55CBB8B869C4F32EA3DA66630C2CBAB3CDEAB` |
+| 1.4.5 console.log（2326 B / **utf-16le-bom**） | `3791D506C20D2F475C316735C2494257DBCFAF104317C6471C0F8872D5684CAF` |
+| 1.4.5 summary.json | `851698D9AF4DFC2026A7BBB9A0ED22F8271A6B23853E828552CB5D732074FA53` |
+| 矩阵源 rev2 | `F88A759B7CC96AA5D434D24A43E70A0BD523A18C537A4AA33E5C4D01D028E227` |
+| 被测 probe v15 | `BA22F6084394ECEA6F35FEBE417C5A906670598A8CEE14A91B16E539F5D5B3CA` |
+
+## 5. 未保存项 / 编码事实（如实申报）
+
+1. **逐例 probe 的原始 stdout/stderr 未落盘。** 矩阵（rev4 §5 原样，本次只改一处路由）在 `run_probe()` 内把
+   子进程 stdout+stderr 合并成 `out` 仅用于断言，不写独立文件。落盘的是汇总级 `console.log`（每例 rc/verdict）
+   与 `summary.json`（每例 verdict + counts）。补齐需改矩阵代码＝改脚本，未获授权 ⇒ **如实记为缺口**。
+2. **`console.log` 为 UTF-16LE（带 BOM）**——由 PowerShell `*>` 重定向的 `Out-File` 默认产生；
+   原字节未改，摘要中的 sha 按原始字节计算（UTF-8 读取器会报 `0xff` 解码错误，非文件损坏）。
+3. `rc.txt` 由 `Set-Content -Encoding UTF8` 写入（PS5.1＝UTF-8 BOM）。
+4. 145 目录内本轮自建的占位 `_NOT_EXECUTED.txt` 在 145 实际执行后已删除（状态标记，非产物）。
+5. 两版 `rc=0`、`EXIT 0` 与 `$LASTEXITCODE` 交叉一致；**未跑第三次**、未重跑求绿、未改过滤器。
+
+## 6. 与 v14 两失败 run 对照（冻结，不触碰）
+
+| 版本 | v14 run | v14 stop_reason / rc | v15 run | v15 rc |
+|---|---|---|---|---|
+| 1.5.6 | `20261116T063937_7b34` | `B0_BASELINE_NONZERO` / 5 | `20261116T120635_3e7d` | 0 |
+| 1.4.5 | `20261116T064005_f3c8` | `B0_BASELINE_NONZERO` / 5 | `20261116T120723_a93d` | 0 |

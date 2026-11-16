@@ -1,0 +1,84 @@
+{
+  "candidate": "candidate-v15-20261116T090251Z",
+  "validation": "validation-20261116T120602Z",
+  "authority": "DRIFT-N17-r4",
+  "order": "先 156，通过后 145",
+  "results": [
+    {
+      "ver": "1.5.6",
+      "run": "20261116T120635_3e7d",
+      "rc": "rc=0",
+      "console_encoding": "utf-16le-bom",
+      "console_last": "EXIT 0",
+      "b0": "by_source={'tables_views': 0, 'sequences': 0, 'extra_schemas': 0, 'user_types': 0, 'macros_scalar': 0, 'macros_table': 0} total=0",
+      "counts": {
+        "MATCH": 11,
+        "DIFF": 0,
+        "UNVERIFIED": 0
+      },
+      "probe_sha256": "ba22f6084394ecea6f35febe417c5a906670598a8cee14a91b16e539f5d5b3ca",
+      "verdicts": {
+        "B0": "MATCH",
+        "C1": "MATCH",
+        "C2": "MATCH",
+        "C7": "MATCH",
+        "C5c": "MATCH",
+        "C5c2": "MATCH",
+        "C5c3": "MATCH",
+        "C5f": "MATCH",
+        "C5g": "MATCH",
+        "C5e": "MATCH",
+        "C5b": "MATCH"
+      },
+      "summary_sha256": "C86255B78FB17E8310722C6C3DD55CBB8B869C4F32EA3DA66630C2CBAB3CDEAB",
+      "console_sha256": "6B7BC74C7EDB3B1D369D879638B5DAECA525322878FF69657DFB7908AE2855F1",
+      "console_bytes": 2326
+    },
+    {
+      "ver": "1.4.5",
+      "run": "20261116T120723_a93d",
+      "rc": "rc=0",
+      "console_encoding": "utf-16le-bom",
+      "console_last": "EXIT 0",
+      "b0": "by_source={'tables_views': 0, 'sequences': 0, 'extra_schemas': 0, 'user_types': 0, 'macros_scalar': 0, 'macros_table': 0} total=0",
+      "counts": {
+        "MATCH": 11,
+        "DIFF": 0,
+        "UNVERIFIED": 0
+      },
+      "probe_sha256": "ba22f6084394ecea6f35febe417c5a906670598a8cee14a91b16e539f5d5b3ca",
+      "verdicts": {
+        "B0": "MATCH",
+        "C1": "MATCH",
+        "C2": "MATCH",
+        "C7": "MATCH",
+        "C5c": "MATCH",
+        "C5c2": "MATCH",
+        "C5c3": "MATCH",
+        "C5f": "MATCH",
+        "C5g": "MATCH",
+        "C5e": "MATCH",
+        "C5b": "MATCH"
+      },
+      "summary_sha256": "851698D9AF4DFC2026A7BBB9A0ED22F8271A6B23853E828552CB5D732074FA53",
+      "console_sha256": "3791D506C20D2F475C316735C2494257DBCFAF104317C6471C0F8872D5684CAF",
+      "console_bytes": 2326
+    }
+  ],
+  "primary_gate": {
+    "C5f": "MATCH",
+    "C5g": "MATCH",
+    "conclusion": "用户宏 internal=False 两版成立；v15 未误滤用户宏"
+  },
+  "not_saved": [
+    "逐例 probe 原始 stdout/stderr（矩阵不落盘，未获授权改脚本）"
+  ],
+  "encodings": {
+    "console.log": "utf-16le-bom",
+    "rc.txt": "utf-8-bom"
+  },
+  "removed_marker": "145/_NOT_EXECUTED.txt（145 执行后删除）",
+  "prepare_executed": false,
+  "summary_txt_sha256": "2FCDC10402EFED1142D8EED8E7E9F506FE5701C84C7FFC9963B62761FF8BC332",
+  "summary_txt_bytes": 3931
+}
