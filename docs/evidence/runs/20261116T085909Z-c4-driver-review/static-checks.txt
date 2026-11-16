@@ -1,0 +1,54 @@
+=== C4 静态回归驱动 · 静态校验记录 ===
+UTC: 2026-11-16T08:59:09Z
+目录: docs/evidence/runs/20261116T085909Z-c4-driver-review
+
+SHA256 run.py: 6d3427481008d46e519cafbcefb54f781fe531d16f12dc25f2f60dd3b42a3cb2
+SHA256 run.sh: d4c071b8687d4f08af973843185b059c026cec42888c673b1e4d58c51fdd7278
+size run.py=10811 B, run.sh=12409 B
+
+[1] AST parse run.py: PASS
+[2] bash -n run.sh (Git Bash 5.2): PASS
+[3] 两份驱动一致性（run.sh 内嵌 vs run.py 独立）: PASS
+    embedded sha256: 9e3f8a37273bbc93173f78014fc9e2d4ff7d9ff5e329dd14f7f1fda557d64191
+    standalone sha256: 9e3f8a37273bbc93173f78014fc9e2d4ff7d9ff5e329dd14f7f1fda557d64191
+[4] AST parse 内嵌段: PASS
+
+[5] 最小阶段门与启动链在位检查：
+    门①phase.before.done 存在性+身份       OK
+    门②phase.after.started 即拒         OK
+    门②b phase.after.done 即拒          OK
+    门③JSON 可解析+必需键                   OK
+    门③b rc 仅允许 0/1                   OK
+    门③c rc=1 须有既有 bad                OK
+    Git 失败门 rc                       OK
+    Git index 非空断言                   OK
+    run.sh 侧 phase.before.done 预检    OK
+    bootstrap-2 落驱动                  OK
+    bootstrap-3 inputs.list          OK
+    after 显式传参                       OK
+
+[6] 与实施申请 v5 的关系：
+    依据件 sha256: c25427a028610bffd2d97f4a0be33de10e3fbc7b0a92715f062180b9fc3d33a9
+    依据件 commit: 91ffc6e docs(kb): 实施申请 v5 — R18 启动链闭合/显式RUN传参/Git失败门
+    落盘版相对 v5 的增量（本轮审核要求的三门，未回写文档）：
+      + assert_run_identity()  : after 核 phase.before.done 存在性 + 记录路径==传入路径
+      + phase_after 双拒        : phase.after.started / phase.after.done 已存在即 die
+      + load_payload()          : JSON 必须存在/非空/可解析/含 5 必需键
+      + rc 值域与语义门         : rc 仅允许 0/1；rc=1 时 baseline 必须含既有 bad
+      + REQUIRED_BEFORE 增项    : 加入 phase.before.done
+
+[7] 边界声明（本轮 DRIFT-N6-r2）：
+    未运行 before / after；未调用 kb_hook；未跑 pytest；
+    未生成真实沙箱/快照；未改产品/测试/配置/index；未执行任何写产品动作。
+
+=== 结论：全部 PASS ===
+
+=== DRIFT-N6-r3 增补记录 ===
+前置核对：run.py 与上一轮记录一致（6d3427481008d46e519cafbcefb54f781fe531d16f12dc25f2f60dd3b42a3cb2）；run.sh 一致（d4c071b8687d4f08af973843185b059c026cec42888c673b1e4d58c51fdd7278）
+唯一改动（审核允许的验证前移）：
+  + validate_baseline() 新增，并在 capture(baseline) 之后、write_text(phase.before.done) 之前调用
+  + 复用的既有函数：load_payload()（JSON 可解析/非空/必需键）、rc 值域 0/1、rc=1 须含既有 bad
+  + 未改动 after 侧任何门（assert_run_identity / phase.after.started 双拒 / rc_compare 均在位）
+改动后 hash: run.py=b08a2b130ff024db23a71f4d2b4257f9fa7af8c5559c7ab6044f4a745a626d2f  run.sh=b71acfc5dad73088a053f3374e850f7429e4f84f20b554c5ae74f42068adda6a
+静态复验: AST=PASS  bash -n=PASS  两份一致性=PASS
+边界：未改 kb_hook／测试／档位／index；未执行 after／pytest；未做回退清理。

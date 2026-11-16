@@ -1,0 +1,16 @@
+DRIFT-N6-r5 增量验证证据说明
+生成 UTC: 2026-11-16T13:53:39Z
+
+本目录 = **增量验证目录**，不覆盖 docs/evidence/runs/20261116T115653Z-c4-impl 的原 after 与阶段标记。
+
+阶段A 证据来源：
+  - inputs.list / inputs.before.txt / inputs.before.sha256 / kb-info.before.sha256 /
+    index.before.txt / errset.before.json(.rc) / rollback/* : src 字节拷贝，逐件 sha256 已核一致
+  - baseline.json(.rc) : src 字节拷贝，代表**改动前**真实产物（改动前 kb_hook 产出）
+  - run.py : src 拷贝，并已核与驱动目录当前版本一致
+  - run.sh : 来自驱动目录（src 内本无 run.sh——它由评审目录执行，不自我复制）
+  - errset.sandbox.path : **未拷贝**，新目录自建合成沙箱（不依赖旧 %TEMP% 残留）
+  - phase.before.done : 重写为本目录绝对路径（驱动 assert_run_identity 据此核身份）
+
+验证对象：R5 契约对齐（桶判据 ok/empty/fail 按契约 §3.1；明细字段 status/tags/id/level 按 §3.3）
+本次 after 使用**契约对齐后**的 kb_hook。

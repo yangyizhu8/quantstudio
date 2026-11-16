@@ -1,0 +1,41 @@
+{
+  "total": 1,
+  "checked": 1,
+  "bad": [
+    {
+      "file": "knowledge/ops/OPS-2026-9004.md",
+      "family": "ops",
+      "errors": [
+        "symptom 为空",
+        "root_cause 为空",
+        "fix_target 为空",
+        "evidence 为空",
+        "fixture 为空",
+        "trigger 为空",
+        "fix_layer 为空",
+        "domain 非法（族 ops 词表：D1|D2|D3|D4|D5）：None",
+        "recurrence 非整数或为负：None",
+        "feedback 至少一项非空（contract_row/gate_rule/template_patch）",
+        "status 非法（open|closed）：None"
+      ]
+    }
+  ],
+  "skipped": [],
+  "families_used": [
+    "ops"
+  ],
+  "note": null,
+  "placeholder": [
+    {
+      "file": "knowledge/ops/OPS-2026-9004.md",
+      "level": "warn",
+      "stage": "entry",
+      "fake": [
+        "trigger 缺两段式：未找到分隔符「；」或「;」"
+      ],
+      "mention": [],
+      "notes": [],
+      "diagnostics": []
+    }
+  ]
+}

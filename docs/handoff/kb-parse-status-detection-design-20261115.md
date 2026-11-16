@@ -72,7 +72,7 @@
 
 | 选项 | 族归属（前门②） | **读取边界** | 该件预期 | 代价/风险 | 我方建议 |
 |---|---|---|---|---|---|
-| **甲（维持现状＋规约）** | 仍按 `entry_glob` ⇒ 族外 ⇒ skip | **不读其内容**（现状读取边界：仅读 ①② 通过的文件，且只读 front-matter） | `skip(no_family_match)` ⇒ **不解析、不可见**；**该合法 ID 件在本门责任域之外**（**已知盲区**） | 零改动、零成本；**风险＝合法条目因命名不规整而完全失联** | **建议采纳**，并**以命名规约明文化**（族 README／运维说明写明"条目文件必须命名为 `<族前缀>-<编号>.md`"） |
+| **甲（维持现状＋规约）** | 仍按 `entry_glob` ⇒ 族外 ⇒ skip | **不读其内容**（现状读取边界：仅读 ①② 通过的文件，且只读 front-matter） | `skip(non-entry-file)` ⇒ **不解析、不可见**（族目录内不符 `entry_glob` ⇒ 按既有读取边界归 `non-entry-file`／`level=P3`；其 `id: null` 表示**未被读取、未知**，不表示已证明无 id）；**该合法 ID 件在本门责任域之外**（**已知盲区**） | 零改动、零成本；**风险＝合法条目因命名不规整而完全失联** | **建议采纳**，并**以命名规约明文化**（族 README／运维说明写明"条目文件必须命名为 `<族前缀>-<编号>.md`"） |
 | **乙（放宽前门②）** | 改为**按族 `dir`** 路由，族目录内全部 `.md` 均进流程 | **读取面扩大**：从"族前缀文件"扩大到"族目录内全部 `.md`"（含 `README.md`／`NOTES.md`／临时件）；仍只读 front-matter、**不写文件** | `notes.md` ⇒ 读 front-matter ⇒ `id` 合法 ⇒ **P1 可见**（桶按契约、命名标签在） | 每族多解析若干文件；**族目录内非条目文件也会进统计**（P3 仍 skip，但产生 `skip_detail`）；**属路由语义变更**，需另审 | **暂不采纳**（另议） |
 
 > **本版不新增 `id_prefix` 配置契约**（按 R9 指示）：甲方案下"族前缀"已由现有 `entry_glob` 隐含表达，**无需新键**。
@@ -84,7 +84,7 @@
 > | 事实 | 说明 |
 > |---|---|
 > | **成立的** | 「**通过 `entry_glob` 的合法 ID 件，不得被 skip 隐藏**」（可见性保证） |
-> | **不成立的** | 「**合法 ID ⇒ 必被发现**」——`knowledge/ops/notes.md`（无 `OPS-` 前缀、front-matter 含合法 `id: OPS-2026-0007`）**仍不可见**（前门② `skip(no_family_match)`，内容不读） |
+> | **不成立的** | 「**合法 ID ⇒ 必被发现**」——`knowledge/ops/notes.md`（无 `OPS-` 前缀、front-matter 含合法 `id: OPS-2026-0007`）**仍不可见**（前门② `skip(non-entry-file)`——族目录内不符 `entry_glob`；内容不读，`id` 未知） |
 > | 兜底 | **命名规约**：条目文件必须命名为 `<族前缀>-<编号>.md`（写入族 README／运维说明）；**该盲区不由本门解决** |
 > | 若要覆盖族外合法 ID | 走**乙方案**（前门②改按族 `dir` 路由）——**属路由语义变更，另审**（本方案不实施） |
 
@@ -128,12 +128,17 @@
   ],
   "skip_detail": [
     {"file": "knowledge/ops/README.md", "reason": "non-entry-file", "id": null, "level": "P3"},
-    {"file": "knowledge/ops/notes.md", "reason": "no_family_match", "id": null, "level": "OUT-OF-FAMILY"}
+    {"file": "knowledge/ops/notes.md", "reason": "non-entry-file", "id": null, "level": "P3"},
+    {"file": "docs/notes.md", "reason": "no_family_match", "id": null, "level": "OUT-OF-FAMILY"}
   ]
 }
 ```
 
 - `level`：P1／P2／P3／**OUT-OF-FAMILY**（族外，含完全错名的合法 ID 件 ⇒ **显式记为族外，而非"不存在"**）。
+- **`non-entry-file` ⇒ `P3`；`no_family_match` ⇒ `OUT-OF-FAMILY`**（按**既有读取边界**：族目录内不符
+  `entry_glob` 的件归 `non-entry-file`，与族目录无关的件归 `no_family_match`）。
+- **`id: null` 表示「未知」而非「已证明无 id」**：skip 件的内容**从未被读取**（前门①②不通过即不读），
+  其 `id` 只能记 `null`。
 - **未启用族**（`off`）：`parse_stats`/`parse_detail` 对所有族一视同仁；占位诊断仍无。
 
 #### 3.3.1 消费者逐件兼容锚（14 处 · 沿用不变）
@@ -159,7 +164,7 @@
 2. **P2 缺 ID**（族前缀文件名）⇒ 桶=`empty`＋`id_missing`，**不 skip**；
 3. **P2 损坏 front-matter** ⇒ 桶=`empty`/`fail`＋`parse_empty`，**不 skip**；
 4. **P3 非条目文档**（族目录内、族前缀不匹配、无 id）⇒ `skip_detail` 记 `non-entry-file`，**不进 `checked`、不占桶**；
-5. **完全错名（族外，含合法 ID）** ⇒ `skip_detail` 记 `no_family_match` ＋ `level=OUT-OF-FAMILY`（**显式记为族外，不静默**）；**内容不被读取**（读取边界不变）；
+5. **完全错名** ⇒ 按既有读取边界分两类：**族目录内**的错名件记 `non-entry-file` ＋ `level=P3`；**与族目录无关**的件记 `no_family_match` ＋ `level=OUT-OF-FAMILY`（**显式记为族外，不静默**）；两类**内容均不被读取**（读取边界不变），故其 `id` 一律记 `null`（**未知，非已证明无 id**）；
 6. **合法 ID ≠ 桶 ok**：合法 ID 但契约字段空 ⇒ 桶=`empty`；
 7. **桶互斥**、**标签可叠加**（不影响任何计数）；
 8. **守恒**：`ok+empty+fail==checked`；`total==checked+len(skipped)`（**现有测试 L81/L92/L131 须仍绿**）；

@@ -1,0 +1,814 @@
+{
+  "total": 93,
+  "checked": 93,
+  "bad": [],
+  "skipped": [],
+  "families_used": [
+    "db",
+    "ops",
+    "pd",
+    "qd"
+  ],
+  "note": null,
+  "parse_stats": {
+    "ok": 93,
+    "empty": 0,
+    "fail": 0
+  },
+  "parse_detail": [
+    {
+      "file": "knowledge/db/DB-2026-0001.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0001",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0002.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0002",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0003.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0003",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0004.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0004",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0005.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0005",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0006.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0006",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0007.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0007",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0008.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0008",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0009.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0009",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0010.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0010",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0011.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0011",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0012.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0012",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0013.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0013",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0014.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0014",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0015.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0015",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0016.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0016",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0017.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0017",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0018.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0018",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0019.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0019",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0020.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0020",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0021.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0021",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0022.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0022",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0023.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0023",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0024.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0024",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0025.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0025",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0026.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0026",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0027.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0027",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0028.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0028",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0029.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0029",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0030.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0030",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0031.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0031",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0032.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0032",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0033.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0033",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0034.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0034",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0035.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0035",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0036.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0036",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0037.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0037",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0038.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0038",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0039.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0039",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0040.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0040",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0041.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0041",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0042.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0042",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0043.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0043",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/db/DB-2026-0044.md",
+      "family": "db",
+      "bucket": "ok",
+      "labels": [],
+      "id": "DB-2026-0044",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ops/OPS-2026-0001.md",
+      "family": "ops",
+      "bucket": "ok",
+      "labels": [],
+      "id": "OPS-2026-0001",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ops/OPS-2026-0002.md",
+      "family": "ops",
+      "bucket": "ok",
+      "labels": [],
+      "id": "OPS-2026-0002",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ops/OPS-2026-0003.md",
+      "family": "ops",
+      "bucket": "ok",
+      "labels": [],
+      "id": "OPS-2026-0003",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ops/OPS-2026-0004.md",
+      "family": "ops",
+      "bucket": "ok",
+      "labels": [],
+      "id": "OPS-2026-0004",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ops/OPS-2026-0005.md",
+      "family": "ops",
+      "bucket": "ok",
+      "labels": [],
+      "id": "OPS-2026-0005",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0001.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0001",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0002.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0002",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0003.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0003",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0004.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0004",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0005.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0005",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0006.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0006",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0007.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0007",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0008.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0008",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0009.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0009",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0010.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0010",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0011.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0011",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0012.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0012",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0013.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0013",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0014.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0014",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0015.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0015",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0016.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0016",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0017.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0017",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0018.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0018",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0019.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0019",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0020.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0020",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0021.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0021",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/ptrade-deploy/PD-2026-0022.md",
+      "family": "pd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "PD-2026-0022",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0001.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0001",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0002.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0002",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0003.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0003",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0004.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0004",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0005.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0005",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0006.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0006",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0007.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0007",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0008.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0008",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0009.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0009",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0010.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0010",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0011.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0011",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0012.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0012",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0013.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0013",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0014.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0014",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0015.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0015",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0016.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0016",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0017.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0017",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0020.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0020",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0021.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0021",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0022.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0022",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0023.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0023",
+      "name_ok": true
+    },
+    {
+      "file": "knowledge/qmt/QD-2026-0024.md",
+      "family": "qd",
+      "bucket": "ok",
+      "labels": [],
+      "id": "QD-2026-0024",
+      "name_ok": true
+    }
+  ],
+  "skip_detail": [],
+  "placeholder": [
+    {
+      "file": "knowledge/ops/OPS-2026-0001.md",
+      "level": "warn",
+      "stage": "entry",
+      "fake": [],
+      "mention": [],
+      "notes": [],
+      "diagnostics": []
+    },
+    {
+      "file": "knowledge/ops/OPS-2026-0002.md",
+      "level": "warn",
+      "stage": "entry",
+      "fake": [],
+      "mention": [],
+      "notes": [],
+      "diagnostics": []
+    },
+    {
+      "file": "knowledge/ops/OPS-2026-0003.md",
+      "level": "warn",
+      "stage": "entry",
+      "fake": [],
+      "mention": [],
+      "notes": [],
+      "diagnostics": []
+    },
+    {
+      "file": "knowledge/ops/OPS-2026-0004.md",
+      "level": "warn",
+      "stage": "entry",
+      "fake": [],
+      "mention": [],
+      "notes": [],
+      "diagnostics": []
+    },
+    {
+      "file": "knowledge/ops/OPS-2026-0005.md",
+      "level": "warn",
+      "stage": "entry",
+      "fake": [],
+      "mention": [
+        "contract_row"
+      ],
+      "notes": [],
+      "diagnostics": []
+    }
+  ]
+}

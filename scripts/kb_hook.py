@@ -291,34 +291,147 @@ def validate_record(rec, fam):
     return errs
 
 
+def _name_id_parts(base, fam):
+    """从 basename 按族 id_pattern 前缀匹配出「文件名里的 id」；无 id_pattern ⇒ None。"""
+    pat = (fam or {}).get("id_pattern")
+    if not pat:
+        return None
+    m = re.match(pat, base)
+    return m.group(0) if m else None
+
+
+def _is_blank_record(rec):
+    """记录是否**无任何非空内容**（C4 `empty` 桶判据）。"""
+    for val in rec.values():
+        if isinstance(val, dict):
+            if val:
+                return False
+        elif isinstance(val, (list, tuple)):
+            if val:
+                return False
+        elif str(val if val is not None else "").strip():
+            return False
+    return True
+
+
+def _record_status(rec, errs):
+    """互斥桶判定——**严格按批准契约 §3.1**：
+
+    - `ok`   ＝解析出非空记录**且契约校验无错误**；
+    - `empty`＝解析空/残 **或** 契约字段为空/非法（含 `id` 缺失/非法）；
+    - `fail` ＝解析**抛异常**（由 `parse_fail` 分支直接给，**不经本函数**）。
+
+    ⇒ 本函数只区分 `ok <-> empty`：`errs` 非空即 `empty`。
+    **合法 id ≠ 桶 ok**（契约 §3.1 明文）；**文件名问题只附标签、不改桶**。
+    """
+    if errs:
+        return "empty"
+    return "ok"
+
+
+def _record_tags(rel, rec, fam):
+    """可叠加诊断标签——**契约 §3.1 规定的六种**，不进任何等式：
+
+    `name_not_canonical` / `name_id_conflict` / `id_missing` /
+    `parse_empty` / `field_empty` / `dup_id`（最后一个由同 id 查重段追加）。
+    """
+    tags = []
+    base = os.path.basename(_norm(rel))
+    rid = str(rec.get("id") or "").strip()
+    if _is_blank_record(rec):
+        tags.append("parse_empty")
+    if not rid:
+        tags.append("id_missing")
+    name_id = _name_id_parts(base, fam)
+    if name_id:
+        stem = os.path.splitext(base)[0]
+        if stem != name_id:
+            tags.append("name_not_canonical")
+        if rid and name_id != rid:
+            tags.append("name_id_conflict")
+    for key in list((fam or {}).get("required_fields") or DEFAULT_REQUIRED):
+        if not str(rec.get(key) or "").strip():
+            tags.append("field_empty")
+            break
+    return tags
+
+
+def _record_level(rid, fam):
+    """候选级别（契约 §3.3）：`P1`＝id 合法；`P2`＝id 缺失或非法。"""
+    pat = (fam or {}).get("id_pattern")
+    if pat and rid and re.match(pat, str(rid)):
+        return "P1"
+    return "P2"
+
+
+def _tags_summary(details):
+    """标签汇总（仅用于人读输出，不参与判据）。"""
+    counts = {}
+    for d in details:
+        for lab in d.get("tags") or []:
+            counts[lab] = counts.get(lab, 0) + 1
+    if not counts:
+        return "无"
+    return "、".join("%s=%d" % (k, counts[k]) for k in sorted(counts))
+
+
 def check_files(repo_root, kb_info, files):
     """批量体检 → {total, checked, bad[], skipped[], families_used[], note}。
 
-    **守恒判据**：`total == checked + len(skipped)`；`bad` 的 file 必在 checked 集合内
-    （bad ⊆ checked）。`skipped[].reason` 取值：`glob_no_match` / `not_found` /
+    **守恒判据（式1，既有，未变）**：`total == checked + len(skipped)`；`bad` 的 file 必在
+    checked 集合内（bad ⊆ checked）。`skipped[].reason` 取值：`glob_no_match` / `not_found` /
     `non-entry-file` / `no_family_match` / `kb_info_unavailable`。
+
+    **C4 解析状态可见化（2026-11-16 新增，纯增量）**——只**追加**以下三键，既有键
+    （`total`/`checked`/`bad`/`skipped`/`families_used`/`note`/`placeholder`）的内容、顺序与
+    语义**一律未改**：
+      - `parse_stats`：互斥桶计数 `{ok, empty, fail}`，满足**式2** `checked == ok + empty + fail`；
+      - `parse_detail`：逐件 `{file, status, tags, id, level}`（与 checked 同序）；
+      - `skip_detail`：逐件 `{file, reason, id, level}`（与 skipped 等长同序）。
+    `level` 取值 `P1`／`P2`／`P3`／`OUT-OF-FAMILY`（契约 §3.3）；`glob_no_match`／
+    `not_found`／`kb_info_unavailable` 三种 reason 契约未规定 level，保留 `None`。
+    **`id: null` 一律表示「未知」**：`skip_detail` 的件**内容未被读取**（前门①②不通过即不读），
+    故其 `id` 未知，**不得解读为「已证明没有 id」**。
+    **式3** `total == expanded + len(glob_misses)` 由 `glob_misses` 独立可复原（既有语义）。
+    桶与 `bad` **正交但不等价**：`fail`（解析抛异常）与 `empty`（解析空/残、契约字段空/非法，
+    以及末段追加的跨件 `duplicate_id`）**两桶的件都会按既有契约进 `bad`**；只有 `ok` 桶的件不进 `bad`。
+    **`bad` 的既有内容、顺序与 verdict/退出码一律不变**——新增诊断只为 `bad` 之外的**逐件可见性**
+    服务，不改变任何既有判定。
     """
     root = pathlib.Path(repo_root)
     fams, note = _load_families(pathlib.Path(root) / kb_info if not os.path.isabs(kb_info) else kb_info)
     out = {"total": 0, "checked": 0, "bad": [], "skipped": [], "families_used": [], "note": note}
+    out["parse_stats"] = {"ok": 0, "empty": 0, "fail": 0}   # 契约 §3.2 式2
+    out["parse_detail"] = []                                # 契约 §3.3：file/status/tags/id/level
+    out["skip_detail"] = []                                 # 契约 §3.3：file/reason/id/level
     id_seen = {}   # id -> [(rel, family)]；用于同 id 重复检测（2026-11-13 R4）
     expanded, glob_misses = _expand_files(root, files)
     out["total"] = len(expanded) + len(glob_misses)
     for pat in glob_misses:
         out["skipped"].append({"file": pat, "reason": "glob_no_match"})
+        out["skip_detail"].append({"file": pat, "reason": "glob_no_match",
+                                   "id": None, "level": None})
     if fams is None:
         for rel in expanded:
             out["skipped"].append({"file": rel, "reason": "kb_info_unavailable"})
+            out["skip_detail"].append({"file": rel, "reason": "kb_info_unavailable",
+                                       "id": None, "level": None})
         return out
     for rel in expanded:
         path = root / rel
         if not path.is_file():
             # 存在性优先于族路由：路径即便落在族目录下，缺文件也应是 not_found 而非 non-entry-file
             out["skipped"].append({"file": rel, "reason": "not_found"})
+            out["skip_detail"].append({"file": rel, "reason": "not_found",
+                                       "id": None, "level": None})
             continue
         fam = _match_family(rel, fams)
         if fam is None:
-            out["skipped"].append({"file": rel, "reason": _skip_reason(rel, fams)})
+            reason = _skip_reason(rel, fams)
+            out["skipped"].append({"file": rel, "reason": reason})
+            out["skip_detail"].append({
+                "file": rel, "reason": reason, "id": None,
+                "level": "P3" if reason == "non-entry-file" else "OUT-OF-FAMILY"})
             continue
         out["checked"] += 1
         if fam.get("id") and fam["id"] not in out["families_used"]:
@@ -327,6 +440,9 @@ def check_files(repo_root, kb_info, files):
             rec = _pf.parse_entry(path)
         except Exception as e:  # noqa: BLE001
             out["bad"].append({"file": rel, "family": fam.get("id"), "errors": ["parse_fail: %s" % e]})
+            out["parse_stats"]["fail"] += 1
+            out["parse_detail"].append({"file": rel, "status": "fail",
+                                        "tags": ["parse_empty"], "id": None, "level": "P2"})
             continue
         errs = validate_record(rec, fam)
         rid = str(rec.get("id") or "").strip()
@@ -340,6 +456,11 @@ def check_files(repo_root, kb_info, files):
                 errs = errs + ["占位检测(strict)：%s" % "; ".join(rep["fake"])]
         if errs:
             out["bad"].append({"file": rel, "family": fam.get("id"), "errors": errs})
+        status = _record_status(rec, errs)
+        tags = _record_tags(rel, rec, fam)
+        out["parse_stats"][status] += 1
+        out["parse_detail"].append({"file": rel, "status": status, "tags": tags,
+                                    "id": rid or None, "level": _record_level(rid, fam)})
     # ── 同 id 重复：**必须影响结果**，不能只打印（2026-11-13 R4）────────────
     # 理由：族目录内 `X.draft.md` 与 `X.md` 的 id_pattern 前缀匹配会产生**同一 id 两条**；
     # 若只在 placeholder 报告里留诊断，下游（R4 计数/检索/kb_search）仍会把它们当两个有效条目消费。
@@ -351,6 +472,17 @@ def check_files(repo_root, kb_info, files):
             others = [r for r, _f in pairs if r != rel]
             msg = ("duplicate_id：id %r 另有 %s —— 同 id 多条会被下游当多个有效条目消费，"
                    "须人工处置（移出族目录或删除其一）" % (rid, "、".join(others)))
+            det = next((d for d in out["parse_detail"] if d["file"] == rel), None)
+            if det is not None:
+                if "dup_id" not in det["tags"]:
+                    det["tags"].append("dup_id")
+                # dup_id 在末段才进 bad（跨件结构错误，非 per-file 校验）⇒ 必须同步降桶：
+                # 否则会出现「报告 status=ok 却在 bad 里挂着 duplicate_id」的自相矛盾。
+                # `ok`＝非空且**无任何契约错误**；既然已进 bad，只能落 `empty`。
+                if det["status"] == "ok":
+                    det["status"] = "empty"
+                    out["parse_stats"]["ok"] -= 1
+                    out["parse_stats"]["empty"] += 1
             hit = next((b for b in out["bad"] if b["file"] == rel), None)
             if hit is not None:
                 hit["errors"].append(msg)
@@ -377,6 +509,15 @@ def main(argv=None):
             print("[kb_hook] 体检 %d 件（族：%s），不合规 %d 件，跳过 %d 件" % (
                 res["checked"], "、".join(res["families_used"]) or "无",
                 len(res["bad"]), len(res["skipped"])))
+            ps = res.get("parse_stats") or {}
+            print("[kb_hook] 桶：ok=%d empty=%d fail=%d（式2 checked=%d）｜标签：%s" % (
+                ps.get("ok", 0), ps.get("empty", 0), ps.get("fail", 0), res["checked"],
+                _tags_summary(res.get("parse_detail") or [])))
+            for d in res.get("parse_detail") or []:
+                print("  [%s] %s : status=%s tags=%s id=%s" % (
+                    d.get("level"), d["file"], d["status"], d["tags"] or "[]", d["id"]))
+            for d in res.get("skip_detail") or []:
+                print("  [%s] %s : skip=%s" % (d.get("level"), d["file"], d["reason"]))
         for s in res["skipped"]:
             print("  [skip] %s : %s" % (s["file"], s["reason"]))
         for p in res.get("placeholder") or []:
