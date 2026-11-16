@@ -1,8 +1,8 @@
-# C4 解析状态可见化 —— **精确实施申请 v2**（待批 · 未实施）
+# C4 解析状态可见化 —— **精确实施申请 v4**（待批 · 未实施）
 
-> **版本**：**v3**（2026-11-16 R16 修正三项：**①展开恒等式更正＋集合身份判据 ②errset 改前/改后分存双断言 ③接通外层停止门＋run 目录排他新建**；承接 R15：①**冻结实际输入**（展开路径＋逐件 hash＋配置 hash，失配即停）②**真实比对退出码**（同输入同 strict 双跑、分别落 rc、覆盖既有错误返回 1 的分支）③**辅助写面单列**（唯一 UTC run 目录，禁字面占位/禁覆盖固定件））
+> **版本**：**v4**（2026-11-16 R17 修正四项：**①代码块语法合法＋AST 静态解析自证 ②`errset.before` 真正置于实施之前 ③`--files` 改传冻结后的显式路径列表（单一展开源）④唯一排他入口 `run.sh` ＋ 撤销"档位 off 则错误消失"的错误推论**）
 > **依据**：C4 候选方案 v10 `docs/handoff/kb-parse-status-detection-design-20261115.md` §16.1
-> **状态**：**待批 · 未实施**（本件仅申请工件；未改 `kb_hook`／测试／路由／档位，未运行回归、未动 index、未回退）
+> **状态**：**待批 · 未实施**（本件仅文档；未改 `kb_hook`／测试／路由／档位，未运行实验或回归，仅做静态解析自证）
 
 ---
 
@@ -13,100 +13,53 @@
 | **C4 方案 v10** | `7bdeffb` | 39,951 B | `ceb4c110b15f453bd3aa35e5dcc893aed1fab493fc5a4905e40bc132df5791f5` |
 | 配套《兜底设计 v2》 | — | — | `0c84c89bf573de3bcee1090b17ac70bec2ad23bd7b56e9c306e0eeab66662322` |
 
-复核（只读）：`git show 7bdeffb:docs/handoff/kb-parse-status-detection-design-20261115.md | sha256sum`
-
----
-
 ## 2 实际文件清单（允许写入 · 精确路径 · 禁通配）
 
 | # | 路径 | 动作 | 当前实测 |
 |---|---|---|---|
-| 1 | `scripts/kb_hook.py` | 改：候选识别 P1/P2/P3 ＋ 互斥桶 ＋ 可叠加标签 ＋ `parse_stats`/`parse_detail`/`skip_detail`/`level` | 18,568 B；sha256 `ce38ed739ab19504bd1066a6d3bca3f5d55b9b2c2c52aa33c87f2f102bca265f`；blob `90bd63232e3d` |
+| 1 | `scripts/kb_hook.py` | 改 | 18,568 B；sha256 `ce38ed739ab19504bd1066a6d3bca3f5d55b9b2c2c52aa33c87f2f102bca265f`；blob `90bd63232e3d` |
 | 2 | `tests/test_kb_parse_status.py` | 新增 | **不存在** |
 
-**清单外一律不动**（`knowledge/kb-info.yaml`、`.githooks/*`、`kb-kit/**`、其它测试文件）。
+**清单外一律不动**。回归驱动（`run.sh`／`run.py`）**全部落 run 目录**，不进仓库。
 
 ---
 
-## 3 输入定义 ＋ **冻结实际输入（R15-①）**
+## 3 输入：**单一展开源（显式路径列表）**
 
-### 3.1 glob 串（传给 `--files` 的原样文本）
+> **R17 判据**：不让"我的 glob"与"`kb_hook` 的 glob"两套并行——**glob 只用于第一次生成显式清单**；此后 `kb_hook --files` 一律吃**清单中的显式路径**，从根上消除"等数不同集合"。
 
-```
-knowledge/qmt/QD-*.md  knowledge/ptrade-deploy/PD-*.md  knowledge/db/DB-*.md  knowledge/ops/OPS-*.md
-```
-实测件数（2026-11-16 08:55）：qd 22 ＋ pd 22 ＋ db 44 ＋ ops 5 ＝ **93 件**。
-
-### 3.2 **为什么必须冻结**（R15 判据）
-
-> **同一 glob 串 ≠ 同一输入集合/同一内容**：前后两次运行之间，他线可能新增/删除/修改任一匹配文件。
-> 因此**必须把"实际展开结果"与"每个文件的字节 hash"落盘，并在 before／after 之间比对；失配即停比较**（不是判 PASS/FAIL——输入已变时比较无意义）。
-
-### 3.3 冻结三件（全部落本次 run 目录，见 §11）
-
-| 文件 | 内容 | 生成命令 |
-|---|---|---|
-| `inputs.before.txt` | **实际展开路径清单**（相对路径、排序、逐行一个） | 见下 §3.4-① |
-| `inputs.before.sha256` | **逐件字节 hash**（`<sha256>  <path>` 逐行，覆盖全部输入文件） | 见下 §3.4-② |
-| `kb-info.before.sha256` | **配置 hash**（`knowledge/kb-info.yaml` 全文 sha256，单行） | 见下 §3.4-③ |
-
-### 3.4 精确命令（跨平台，`RUN` 定义见 §11.1）
+### 3.1 生成基线清单（仅此一次，阶段 A）
 
 ```bash
-# ① 展开路径清单（与 --files 完全等价的 glob 展开，排序去重）
-python -c "import glob,sys,io;ps=[];[ps.extend(sorted(glob.glob(p))) for p in ['knowledge/qmt/QD-*.md','knowledge/ptrade-deploy/PD-*.md','knowledge/db/DB-*.md','knowledge/ops/OPS-*.md']];ps=sorted({p.replace(chr(92),'/') for p in ps});io.open(r'$RUN_DIR/inputs.before.txt','w',encoding='utf-8',newline='\n').write('\n'.join(ps)+'\n');print(len(ps))"
-
-# ② 逐件 hash（读字节，不经文本层）
-python -c "import hashlib,io;s=io.open(r'$RUN_DIR/inputs.before.txt',encoding='utf-8').read().split();out=[];[out.append(hashlib.sha256(io.open(p,'rb').read()).hexdigest()+'  '+p) for p in s];io.open(r'$RUN_DIR/inputs.before.sha256','w',encoding='utf-8',newline='\n').write('\n'.join(out)+'\n');print(len(out))"
-
-# ③ 配置 hash
-python -c "import hashlib,io;h=hashlib.sha256(io.open('knowledge/kb-info.yaml','rb').read()).hexdigest();io.open(r'$RUN_DIR/kb-info.before.sha256','w',encoding='utf-8',newline='\n').write(h+'\n');print(h)"
+python -c "import glob,io,os;ps=[];[ps.extend(sorted(glob.glob(p))) for p in ['knowledge/qmt/QD-*.md','knowledge/ptrade-deploy/PD-*.md','knowledge/db/DB-*.md','knowledge/ops/OPS-*.md']];ps=sorted({p.replace(chr(92),'/') for p in ps});io.open(os.path.join(os.environ['RUN_DIR'],'inputs.list'),'w',encoding='utf-8',newline='\n').write('\n'.join(ps)+'\n');print('inputs.list =',len(ps),'件')"
 ```
 
-### 3.5 after 侧同法 ＋ **失配即停**（写死）
+实测（2026-11-16 08:55）：qd 22 ＋ pd 22 ＋ db 44 ＋ ops 5 ＝ **93 件**。
 
-```bash
-# after 侧生成 inputs.after.txt / inputs.after.sha256 / kb-info.after.sha256（命令同上，替换 before→after）
-# 三路比对（任一不符 ⇒ 打印 MISMATCH 并 exit 9，禁止继续比较 JSON）
-python -c "import sys,io;a=io.open(r'$RUN_DIR/inputs.before.txt',encoding='utf-8').read();b=io.open(r'$RUN_DIR/inputs.after.txt',encoding='utf-8').read();h1=io.open(r'$RUN_DIR/inputs.before.sha256',encoding='utf-8').read();h2=io.open(r'$RUN_DIR/inputs.after.sha256',encoding='utf-8').read();c1=io.open(r'$RUN_DIR/kb-info.before.sha256',encoding='utf-8').read().strip();c2=io.open(r'$RUN_DIR/kb-info.after.sha256',encoding='utf-8').read().strip();bad=[];bad+=['路径集合变化'] if a!=b else [];bad+=['逐件 hash 变化'] if h1!=h2 else [];bad+=['配置 hash 变化'] if c1!=c2 else [];print('MISMATCH: '+'; '.join(bad)) if bad else print('INPUTS_FROZEN_OK');sys.exit(9 if bad else 0)"
+### 3.2 `kb_hook` 调用形态（**全部显式路径**）
+
+`_expand_files`（`kb_hook.py:73-103`）：入参**含 `*`／`?`／`[` 才做 glob，否则按路径处理** ⇒ 传显式路径时 `expanded` 恒等于该清单，无二次展开。
+
+```python
+def kb_hook(files, repo_root=".", kb_info_rel="knowledge/kb-info.yaml"):
+    argv = [sys.executable, "scripts/kb_hook.py",
+            "--repo-root", repo_root,
+            "--kb-info", kb_info_rel,
+            "--strict", "--json",
+            "--files"] + files
+    res = subprocess.run(argv, capture_output=True)
+    return res.returncode, res.stdout
 ```
-- **退出码语义**：`0`＝输入已冻结一致，可继续比较；`9`＝**输入失配，停止比较**（须查明是哪个文件变了：`diff inputs.before.sha256 inputs.after.sha256`）。
 
-**3.5.1 一致性核对（公式已更正 · R16）**
+### 3.3 冻结三件（A／B 各一次，跨阶段 diff）
 
-> ⚠️ **更正声明**：v2.1 写的 `输入文件数 == total + len(skipped)` **错误**——`total` **已包含** `skipped`，再加属**重复计数**。
-> 源码依据（只读核对 `scripts/kb_hook.py`）：
-> - `L303`：`out = {"total":0, "checked":0, "bad":[], "skipped":[], ...}`
-> - `L306`：`out["total"] = len(expanded) + len(glob_misses)`
-> - `L307-308`：`for pat in glob_misses: out["skipped"].append({"file": pat, "reason": "glob_no_match"})`
-> ⇒ **`glob_misses` 的每一项都被计入 `skipped`**，且以**模式串**（非文件路径）作为 `file`。
-
-正确关系：
-
-| 量 | 含义 |
+| 文件 | 内容 |
 |---|---|
-| `expanded` | `--files` 展开后的**真实文件路径**集合（不入 payload，需外部展开对照） |
-| `glob_misses` | **未命中的模式串**集合（入 `skipped`，`reason="glob_no_match"`） |
-| `total` | `len(expanded) + len(glob_misses)` |
-| `skipped` | **两类混装**：`{file: 模式串, reason: glob_no_match}` ＋ `{file: 路径, reason: <其他>}` |
-| `checked` | `len(expanded) − (skipped 中路径类条目数)` |
+| `inputs.<tag>.txt` | 显式路径清单副本（阶段 B 重算，用于集合 diff） |
+| `inputs.<tag>.sha256` | 逐件字节 hash（`<sha256>  <path>` 逐行） |
+| `kb-info.<tag>.sha256` | `knowledge/kb-info.yaml` 全文 hash |
 
-| 恒等式 | 状态 |
-|---|---|
-| `total = checked + len(skipped)` | **成立**（既有式(1)，锁定于 `tests/test_kb_hook_skipped.py`） |
-| `len(expanded) = total − n_glob_miss` | **本步核对用此式** |
-
-核对命令（`n_glob_miss` 从 `skipped` 里按 `reason` 过滤计数，**不用 `len(skipped)`**）：
-
-```bash
-python -c "import json,io,os,sys;run=r'$RUN_DIR';n=len([l for l in io.open(os.path.join(run,'inputs.before.txt'),encoding='utf-8').read().split('\n') if l.strip()]);j=json.load(io.open(os.path.join(run,'baseline.json'),encoding='utf-8'));gm=len([s for s in j.get('skipped',[]) if s.get('reason')=='glob_no_match']);m=j['total']-gm;print('inputs=%d expanded_by_hook=%d glob_miss=%d match=%s'%(n,m,gm,n==m));sys.exit(0 if n==m else 9)"
-```
-
-> **★ 但件数一致≠集合相同**（R16 判据）。本步**只作"我方 glob 与 `kb_hook` 展开是否等价"的实现偏差探测**；
-> **"同输入"的唯一充分证明是 §3.5 的两条 diff**：
-> 1. `diff inputs.before.txt inputs.after.txt` **为空** ⇒ **路径集合身份**；
-> 2. `diff inputs.before.sha256 inputs.after.sha256` **为空** ⇒ **逐件内容身份**。
-> ⇒ 件数核对**不得**单独作为"同输入"的结论依据；若件数一致但集合 diff 非空 ⇒ **以 diff 为准，判 MISMATCH**。
+**同输入的判据**：`diff inputs.before.txt inputs.after.txt` **为空**（路径集合身份）**且** `diff inputs.before.sha256 inputs.after.sha256` **为空**（逐件内容身份）。**件数一致不作证明。**
 
 ---
 
@@ -115,244 +68,360 @@ python -c "import json,io,os,sys;run=r'$RUN_DIR';n=len([l for l in io.open(os.pa
 ```
 qd=off  pd=off  db=off  ops=warn   ops.placeholder_gate_since=2026-11-13T20:56:02+08:00
 ```
-断言见 §5 第 0 步；变化 ⇒ 本次实施暂停（观察窗 2026-11-20T20:56:50+08:00 到期后按原批准处理）。
 
 ---
 
-## 5 **回归命令（同输入 · 同 strict · 退出码实采）**
+## 5 回归：**唯一排他入口**（`run.sh` 两阶段）
 
-> **R15-② 核心**：before／after **必须同输入、同 `--strict` 模式**，**分别保存进程退出码**再比较；
-> **不得**用"after 单跑 ops 再 `echo`"代替 93 件整次的退出码比对。
+> **R17 判据**：所有步骤只有一个入口 `run.sh`；`bash` 不会因 Python 非 0 自动停 ⇒ 首行 `set -euo pipefail`，`run.py` 内任何失败即 `sys.exit(9)`。
+> **排他**：`mkdir "$RUN_DIR"` **不带 `-p`** ⇒ 已存在即失败（不换名重试、不写入既有目录）。
+> **失败材料保留**：失败时**不清理** run 目录（禁 `trap ... EXIT` 内删除）。
+> **两阶段的理由**：实施不可自动化；"实施前"取证（pin／inputs／**errset.before**／baseline）必须先于实施落盘 ⇒ 阶段 A 末尾停下等人实施，阶段 B 跑下半段。
 
-### 第 0 步 · 写前 pin ＋ 档位断言 ＋ index 记录
+### 5.1 `run.sh`（唯一入口）
 
 ```bash
-# 0.1 档位断言
-python -c "import yaml,io;d=yaml.safe_load(io.open('knowledge/kb-info.yaml',encoding='utf-8'));g={f['id']:(f.get('placeholder_gate'),f.get('placeholder_gate_since')) for f in d['families'] if 'placeholder_gate' in f};print(g);assert {k:v[0] for k,v in g.items()}=={'qd':'off','pd':'off','db':'off','ops':'warn'};assert g['ops'][1]=='2026-11-13T20:56:02+08:00'"
+#!/usr/bin/env bash
+set -euo pipefail
 
-# 0.2 原字节快照（唯一回退源，见 C4 v10 §16.2-N6-V1）
-python -c "import shutil,hashlib,os;src='scripts/kb_hook.py';dst=os.path.join(r'$RUN_DIR','rollback','scripts__kb_hook.py.pre.bin');os.makedirs(os.path.dirname(dst),exist_ok=True);shutil.copyfile(src,dst);d=open(dst,'rb').read();h=hashlib.sha256(d).hexdigest();open(dst+'.meta','w',encoding='utf-8',newline='\n').write(h+'\n'+str(len(d))+'\n'+src+'\n');print(h,len(d))"
+PHASE="${1:-}"
+case "$PHASE" in
+  before|after) ;;
+  *) echo "usage: run.sh before|after"; exit 2 ;;
+esac
 
-# 0.3 index 条目记录（mode+blob+stage+path）
-git -c core.quotepath=false ls-files -s -- scripts/kb_hook.py tests/test_kb_parse_status.py > "$RUN_DIR/index.before.txt"
+if [ "$PHASE" = "before" ]; then
+  RUN=$(python -c "import datetime;print(datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ'))")
+  RUN_DIR="docs/evidence/runs/${RUN}-c4-impl"
+  mkdir "$RUN_DIR"
+  mkdir "$RUN_DIR/rollback"
+  export RUN_DIR
+  printf '%s\n' "$RUN_DIR" > .run-dir-pointer
+  echo "RUN_DIR=$RUN_DIR"
+else
+  RUN_DIR=$(cat .run-dir-pointer)
+  export RUN_DIR
+  echo "RUN_DIR=$RUN_DIR (resume)"
+fi
 
-# 0.4 状态登记（辅助，不作回退源）
-git -c core.quotepath=false status --porcelain -- scripts/kb_hook.py tests/test_kb_parse_status.py > "$RUN_DIR/status.before.txt"
+exec python "$RUN_DIR/run.py" "$PHASE"
 ```
 
-### 第 1 步 · **baseline（含 rc）**——同 strict 模式
+### 5.2 `run.py`（阶段实现，落 `$RUN_DIR/`）
 
-```bash
-python -c "import subprocess,sys,os;out=os.path.join(r'$RUN_DIR','baseline.json');rcf=out+'.rc';a=[sys.executable,'scripts/kb_hook.py','--repo-root','.','--strict','--json','--files','knowledge/qmt/QD-*.md','knowledge/ptrade-deploy/PD-*.md','knowledge/db/DB-*.md','knowledge/ops/OPS-*.md'];r=subprocess.run(a,capture_output=True);open(out,'wb').write(r.stdout);open(rcf,'w').write(str(r.returncode));print('baseline rc=%d bytes=%d'%(r.returncode,len(r.stdout)));sys.exit(0)"
+```python
+#!/usr/bin/env python3
+import glob
+import hashlib
+import io
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+RUN_DIR = os.environ["RUN_DIR"]
+NEWLINE = "\n"
+KB_INFO = "knowledge/kb-info.yaml"
+KEEP = ["scripts/kb_hook.py", "tests/test_kb_parse_status.py"]
+
+
+def die(msg):
+    print("STOP: " + msg)
+    sys.exit(9)
+
+
+def path(name):
+    return os.path.join(RUN_DIR, name)
+
+
+def sha(path_str):
+    with open(path_str, "rb") as fh:
+        return hashlib.sha256(fh.read()).hexdigest()
+
+
+def write_text(name, text):
+    with io.open(path(name), "w", encoding="utf-8", newline=NEWLINE) as fh:
+        fh.write(text)
+
+
+def read_text(name):
+    with io.open(path(name), encoding="utf-8") as fh:
+        return fh.read()
+
+
+def load_inputs():
+    items = [ln.strip() for ln in read_text("inputs.list").split("\n")]
+    return [i for i in items if i]
+
+
+def kb_hook(files, repo_root=".", kb_info_rel=KB_INFO):
+    argv = [sys.executable, "scripts/kb_hook.py",
+            "--repo-root", repo_root,
+            "--kb-info", kb_info_rel,
+            "--strict", "--json",
+            "--files"] + files
+    res = subprocess.run(argv, capture_output=True)
+    return res.returncode, res.stdout
+
+
+def freeze(tag):
+    files = load_inputs()
+    write_text("inputs." + tag + ".txt", NEWLINE.join(files) + NEWLINE)
+    lines = []
+    for rel in files:
+        if not os.path.isfile(rel):
+            die("输入文件缺失: " + rel)
+        lines.append(sha(rel) + "  " + rel)
+    write_text("inputs." + tag + ".sha256", NEWLINE.join(lines) + NEWLINE)
+    write_text("kb-info." + tag + ".sha256", sha(KB_INFO) + NEWLINE)
+    print("freeze(" + tag + "): " + str(len(files)) + " 件")
+
+
+def capture(tag, files, repo_root="."):
+    rc, out = kb_hook(files, repo_root=repo_root)
+    with open(path(tag + ".json"), "wb") as fh:
+        fh.write(out)
+    write_text(tag + ".json.rc", str(rc) + NEWLINE)
+    print(tag + ": rc=" + str(rc) + " bytes=" + str(len(out)))
+    return rc
+
+
+def sandbox():
+    marker = path("errset.sandbox.path")
+    if os.path.isfile(marker):
+        return read_text("errset.sandbox.path").strip()
+    sand = tempfile.mkdtemp(prefix="kb_err_")
+    os.makedirs(os.path.join(sand, "knowledge", "ops"), exist_ok=True)
+    shutil.copyfile(KB_INFO, os.path.join(sand, "knowledge", "kb-info.yaml"))
+    body = NEWLINE.join(["---", "id: OPS-2026-9004", 'trigger: ""', "---", ""])
+    target = os.path.join(sand, "knowledge", "ops", "OPS-2026-9004.md")
+    with io.open(target, "w", encoding="utf-8", newline=NEWLINE) as fh:
+        fh.write(body)
+    write_text("errset.sandbox.path", sand + NEWLINE)
+    return sand
+
+
+def errset(tag):
+    sand = sandbox()
+    found = glob.glob(os.path.join(sand, "knowledge", "ops", "OPS-*.md"))
+    rel = []
+    for item in found:
+        rel.append(os.path.relpath(item, sand).replace(os.sep, "/"))
+    if not rel:
+        die("errset 沙箱内无 OPS 文件")
+    rc, out = kb_hook(rel, repo_root=sand, kb_info_rel=KB_INFO)
+    with open(path("errset." + tag + ".json"), "wb") as fh:
+        fh.write(out)
+    write_text("errset." + tag + ".json.rc", str(rc) + NEWLINE)
+    print("errset." + tag + ": rc=" + str(rc))
+    return rc
+
+
+def assert_gates():
+    import yaml
+    with io.open(KB_INFO, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh.read())
+    got = {}
+    for fam in doc["families"]:
+        if "placeholder_gate" in fam:
+            got[fam["id"]] = (fam.get("placeholder_gate"),
+                              fam.get("placeholder_gate_since"))
+    print("gates = " + str(got))
+    expect = {"qd": "off", "pd": "off", "db": "off", "ops": "warn"}
+    for key, val in expect.items():
+        pair = got.get(key, (None, None))
+        if pair[0] != val:
+            die("档位不符: " + key)
+    ops = got.get("ops", (None, None))
+    if ops[1] != "2026-11-13T20:56:02+08:00":
+        die("ops since 不符")
+
+
+def pin():
+    src = "scripts/kb_hook.py"
+    dst = path("rollback/scripts__kb_hook.py.pre.bin")
+    shutil.copyfile(src, dst)
+    digest = sha(dst)
+    meta = NEWLINE.join([digest, str(os.path.getsize(dst)), src, ""])
+    write_text("rollback/scripts__kb_hook.py.pre.meta", meta)
+    print("pin: " + digest)
+    argv = ["git", "-c", "core.quotepath=false", "ls-files", "-s", "--"] + KEEP
+    res = subprocess.run(argv, capture_output=True)
+    with open(path("index.before.txt"), "wb") as fh:
+        fh.write(res.stdout)
+
+
+def diff_inputs():
+    pairs = [("inputs.before.txt", "inputs.after.txt"),
+             ("inputs.before.sha256", "inputs.after.sha256"),
+             ("kb-info.before.sha256", "kb-info.after.sha256")]
+    for left, right in pairs:
+        if read_text(left) != read_text(right):
+            die("输入失配: " + left + " vs " + right)
+    print("INPUTS_FROZEN_OK")
+
+
+def compare():
+    with io.open(path("baseline.json"), encoding="utf-8") as fh:
+        base = json.load(fh)
+    with io.open(path("after.json"), encoding="utf-8") as fh:
+        aft = json.load(fh)
+    allow = set(["parse_stats", "parse_detail", "skip_detail"])
+    fail = []
+    for key in sorted(set(base) | set(aft)):
+        if key in allow:
+            continue
+        if base.get(key) != aft.get(key):
+            fail.append("既有键变化: " + key)
+
+    def badmap(doc):
+        out = {}
+        for item in doc.get("bad", []):
+            out[item.get("file")] = "|".join(item.get("errors", []))
+        return out
+
+    lhs, rhs = badmap(base), badmap(aft)
+    for key in sorted(set(lhs) | set(rhs)):
+        if lhs.get(key) != rhs.get(key):
+            fail.append("逐件 bad 差异: " + str(key))
+    if fail:
+        for line in fail:
+            print("  - " + line)
+        die("JSON 对照 FAIL")
+    print("COMPARE_PASS")
+
+
+def rc_compare():
+    b = read_text("baseline.json.rc").strip()
+    a = read_text("after.json.rc").strip()
+    eb = read_text("errset.before.json.rc").strip()
+    ea = read_text("errset.after.json.rc").strip()
+    print("整次 rc: baseline=" + b + " after=" + a)
+    print("errset  : before=" + eb + " after=" + ea)
+    if b != a:
+        die("整次退出码不一致")
+    if eb != "1":
+        die("errset.before 非 1")
+    if ea != "1":
+        die("errset.after 非 1")
+
+
+def index_compare():
+    argv = ["git", "-c", "core.quotepath=false", "ls-files", "-s", "--"] + KEEP
+    res = subprocess.run(argv, capture_output=True)
+    with open(path("index.after.txt"), "wb") as fh:
+        fh.write(res.stdout)
+    if read_text("index.before.txt") != read_text("index.after.txt"):
+        die("index 条目（mode/blob）变化")
+    print("INDEX_UNCHANGED_OK")
+
+
+def phase_before():
+    assert_gates()
+    pin()
+    freeze("before")
+    rc = errset("before")
+    if rc != 1:
+        die("errset.before 应为 1，实测 " + str(rc))
+    capture("baseline", load_inputs())
+    print("PHASE_BEFORE_DONE  现在实施（仅 §2 两文件），完成后跑 run.sh after")
+
+
+def phase_after():
+    capture("after", load_inputs())
+    rc = errset("after")
+    if rc != 1:
+        die("errset.after 应为 1，实测 " + str(rc))
+    freeze("after")
+    diff_inputs()
+    compare()
+    rc_compare()
+    index_compare()
+    print("PHASE_AFTER_DONE")
+
+
+def main():
+    if len(sys.argv) < 2:
+        die("usage: run.py before|after")
+    phase = sys.argv[1]
+    if phase == "before":
+        phase_before()
+    elif phase == "after":
+        phase_after()
+    else:
+        die("未知阶段 " + phase)
+
+
+if __name__ == "__main__":
+    main()
 ```
 
-### 第 2 步 · 实施（仅 §2 两文件）
+### 5.3 步骤时序（**`errset.before` 在实施之前**）
 
-### 第 3 步 · **after（含 rc）**——**同一命令、同一 glob、同一 `--strict`**
+| 阶段 | 步 | 动作 | 产物 |
+|---|---|---|---|
+| **A（实施前）** | A1 | 档位断言 | — |
+| | A2 | 写前 pin ＋ `index.before.txt` | `rollback/*.pre.bin/.pre.meta` |
+| | A3 | 输入冻结 before ＋ `inputs.list` | `inputs.before.txt/.sha256`、`kb-info.before.sha256` |
+| | **A4** | **`errset.before`（断言 rc==1）** | **`errset.before.json` ＋ `.rc`** |
+| | A5 | `baseline`（显式路径 ＋ `--strict`） | `baseline.json` ＋ `.rc` |
+| | — | **停下，人工实施**（仅 §2 两文件） | — |
+| **B（实施后）** | B1 | `after`（同显式路径 ＋ `--strict`） | `after.json` ＋ `.rc` |
+| | B2 | `errset.after`（断言 rc==1） | `errset.after.json` ＋ `.rc` |
+| | B3 | 输入冻结 after ＋ **两条 diff** | `inputs.after.*` |
+| | B4 | JSON 逐件对照 | `COMPARE_PASS` |
+| | B5 | 整次 rc ＋ errset 双侧 rc 断言 | — |
+| | B6 | index `mode+blob` 对照 | `index.after.txt` |
+| | B7 | pytest（既有两条 ＋ 新增；含"会红"验证） | — |
 
-```bash
-python -c "import subprocess,sys,os;out=os.path.join(r'$RUN_DIR','after.json');rcf=out+'.rc';a=[sys.executable,'scripts/kb_hook.py','--repo-root','.','--strict','--json','--files','knowledge/qmt/QD-*.md','knowledge/ptrade-deploy/PD-*.md','knowledge/db/DB-*.md','knowledge/ops/OPS-*.md'];r=subprocess.run(a,capture_output=True);open(out,'wb').write(r.stdout);open(rcf,'w').write(str(r.returncode));print('after rc=%d bytes=%d'%(r.returncode,len(r.stdout)));sys.exit(0)"
-```
-
-### 第 4 步 · 输入冻结复核（**必须在比较 JSON 之前**）
-
-```bash
-# 见 §3.5：exit 0 才可继续；exit 9 ⇒ 停止
-```
-
-### 第 5 步 · **JSON 逐件对照**
-
-```bash
-python "$RUN_DIR/compare.py" "$RUN_DIR/baseline.json" "$RUN_DIR/after.json"
-```
-`compare.py`（落 run 目录，**不进 `scripts/`**）判据：
-1. 既有键**逐位相同**：`total`/`checked`/`bad`/`skipped`/`families_used`/`note`；
-2. `bad` 为**逐件错误文本**逐条相同（`{file: '|'.join(errors)}` 映射比对），非仅件数；
-3. 仅允许**新增** `parse_stats`/`parse_detail`/`skip_detail`（含其内 `level`/`tags`）；
-4. 任一不符 ⇒ `FAIL`，`exit 1`。
-
-### 第 6 步 · **退出码比对（含既有错误分支 · 改前改后各采一次）**
-
-**6.1 全量 93 件整次 rc**（同输入同 `--strict`，第 1／3 步已分别落 `.rc`）
-
-```bash
-python -c "import io,os,sys;run=r'$RUN_DIR';b=io.open(os.path.join(run,'baseline.json.rc')).read().strip();a=io.open(os.path.join(run,'after.json.rc')).read().strip();print('baseline_rc=%s after_rc=%s match=%s'%(b,a,b==a));sys.exit(0 if b==a else 9)" || { echo "STOP: 整次退出码不一致"; exit 9; }
-```
-
-**6.2 含既有错误分支（`rc=1`）：改前、改后**各跑一次并**分存**，不得覆盖改前证据**
-
-构造沙箱（不污染真库；`trigger` 置空 ⇒ 命中"六必填为空"现有 `bad` ⇒ `--strict` 应 `rc=1`）：
-
-```bash
-python - <<'PY'
-import os, shutil, tempfile, io, sys
-t = tempfile.mkdtemp(prefix='kb_err_')
-os.makedirs(os.path.join(t, 'knowledge', 'ops'), exist_ok=True)
-shutil.copyfile('knowledge/kb-info.yaml', os.path.join(t, 'knowledge', 'kb-info.yaml'))
-io.open(os.path.join(t, 'knowledge', 'ops', 'OPS-2026-9004.md'),
-        'w', encoding='utf-8', newline='
-').write('---
-id: OPS-2026-9004
-trigger: ""
 ---
-')
-io.open(os.path.join(os.environ['RUN_DIR'], 'errset.sandbox.path'), 'w', encoding='utf-8').write(t)
-print('sandbox =', t)
-PY
-```
 
-**改前采集**（写入 `errset.before.json` ＋ `.rc`）：
-
-```bash
-SB=$(cat "$RUN_DIR/errset.sandbox.path")
-python -c "import subprocess,sys,os;sb=open(r'$RUN_DIR/errset.sandbox.path',encoding='utf-8').read().strip();out=os.path.join(r'$RUN_DIR','errset.before.json');a=[sys.executable,'scripts/kb_hook.py','--repo-root',sb,'--kb-info','knowledge/kb-info.yaml','--strict','--json','--files','knowledge/ops/OPS-*.md'];r=subprocess.run(a,capture_output=True);open(out,'wb').write(r.stdout);open(out+'.rc','w').write(str(r.returncode));print('errset.before rc=%d (期望 1)'%r.returncode);sys.exit(0)"
-```
-
-**改后采集**（另存 `errset.after.json` ＋ `.rc`，**不触碰 before 文件**）：
-
-```bash
-SB=$(cat "$RUN_DIR/errset.sandbox.path")
-python -c "import subprocess,sys,os;sb=open(r'$RUN_DIR/errset.sandbox.path',encoding='utf-8').read().strip();out=os.path.join(r'$RUN_DIR','errset.after.json');a=[sys.executable,'scripts/kb_hook.py','--repo-root',sb,'--kb-info','knowledge/kb-info.yaml','--strict','--json','--files','knowledge/ops/OPS-*.md'];r=subprocess.run(a,capture_output=True);open(out,'wb').write(r.stdout);open(out+'.rc','w').write(str(r.returncode));print('errset.after rc=%d (期望 1)'%r.returncode);sys.exit(0)"
-```
-
-**断言（双侧均为 1 且相等；任一不符即停）**：
-
-```bash
-python -c "import io,os,sys;run=r'$RUN_DIR';b=io.open(os.path.join(run,'errset.before.json.rc')).read().strip();a=io.open(os.path.join(run,'errset.after.json.rc')).read().strip();ok=(b=='1' and a=='1');print('errset.before=%s errset.after=%s both_1=%s'%(b,a,ok));sys.exit(0 if ok else 9)" || { echo "STOP: 含既有错误分支未双侧返回 1"; exit 9; }
-```
-
-> **改前证据保护**：`errset.before.*` 一经写入**不得被后续步骤覆盖**（run 目录排他新建已保证跨轮不覆盖；本步 within-run 也只用不同文件名）。
-> **前提核对**（实施时先在沙箱空转一次）：确认 `--repo-root` ＋ `--kb-info knowledge/kb-info.yaml` 组合确实读到沙箱配置、且 `trigger` 为空确实产 `bad`（若沙箱档位为 `off` 则占位校验不介入，须确认 `ops` 在沙箱配置里仍为 `warn`）。
-
-### 第 7 步 · 测试
+## 6 pytest（阶段 B 第 B7 步，脚本外单列）
 
 ```bash
 python -m pytest tests/test_kb_hook_skipped.py tests/test_kb_placeholder_gate.py -q
 python -m pytest tests/test_kb_parse_status.py -q
 ```
+
 新增测试须含**「会红」验证**：注入一个应失败样例（如把 `checked` 计数故意改错 1），确认测试**变红**后再移除注入。
 
-### 第 8 步 · index 未变（mode＋blob）
-
-```bash
-git -c core.quotepath=false ls-files -s -- scripts/kb_hook.py tests/test_kb_parse_status.py > "$RUN_DIR/index.after.txt"
-diff "$RUN_DIR/index.before.txt" "$RUN_DIR/index.after.txt"
-```
-- 判据：**目标路径 `mode` 与 `blob` 一致**（`ls-files -s` 逐行 `mode blob stage<TAB>path`）；
-- **仅比清单内 2 路径**；**清单外 index 变化属他线正常活动，不归责本席**；
-- **禁用**仅 `git diff --cached --name-only`（名称相同、内容可变）。
-
 ---
 
-## 6 回退（引用，不重开设计审核）
+## 7 errset 设计说明（**撤销 R17 指出的错误推论**）
 
-严格按 **C4 v10 §16.2**：V1 原字节快照为唯一回退源（`SNAP_SHA256`/`SNAP_SIZE`）；V2 **禁 `git checkout <pin> -- <path>`**，改 `wb` 字节写回／`Copy-Item`／`git cat-file`（核 `returncode==0`）；验证**唯一充分判据 `sha256(path)==SNAP_SHA256`**，`git status` 非空不构成失败；新增测试文件回退＝删除。
+> ❌ **撤销**（v3 曾写"若沙箱档位为 off 则占位校验不介入 ⇒ 不产生 bad"）：
+> **该推论不成立**。`placeholder_gate` 档位只控制**占位校验**是否介入；而
+> **六必填为空、字段非法、`id` 非法等属 `validate_record` 的既有错误，其产生与档位无关**——
+> 档位设 `off` **也不会**让这些错误消失。
+> ⇒ 沙箱**无需**特殊设定档位，直接复制真库 `kb-info.yaml`（`ops=warn`）即可；`rc=1` 由**既有 `bad`** 决定。
+> ⇒ 判据只看"**是否存在既有 bad ⇒ strict rc==1**"，与档位取值**无因果**。
 
----
+## 8 回退（引用，不重开设计审核）
 
-## 7 范围外声明
+按 **C4 v10 §16.2**：V1 原字节快照为唯一回退源（`SNAP_SHA256`/`SNAP_SIZE`）；V2 **禁 `git checkout <pin> -- <path>`**，改字节写回（`open(..., "wb")`）／`Copy-Item`／`git cat-file`（核 `returncode==0`）；验证**唯一充分判据 `sha256(path)==SNAP_SHA256`**，`git status` 非空**不构成**失败。新增测试文件回退＝删除。
 
-不改 `knowledge/kb-info.yaml`、`.githooks/*`、`_match_family`/`entry_glob`（路由语义不变）、`kb-kit/**` 副本；不新增 `id_prefix`；不延 ops 观察窗；不 push。
+## 9 范围外
 
----
+不改 `knowledge/kb-info.yaml`、`.githooks/*`、`_match_family`/`entry_glob`（路由语义不变）、`kb-kit/**`；不新增 `id_prefix`；不延 ops 观察窗；不 push。
 
-## 11 **辅助写面单列（R15-③）**
-
-> **原则**：①**一律落本次 run 的唯一 UTC 目录**（**禁字面时间占位**，执行时取实际时间）；②**禁反复覆盖固定基线件**（如 `docs/evidence/kb-parse-baseline.json` 这类固定名会在多次运行间互相覆盖——**全部改为 run 目录内唯一路径**）。
-
-### 11.1 `RUN` / `RUN_DIR` 定义（三选一，取实际 UTC）
-
-```bash
-# Git Bash / WSL
-RUN=$(date -u +%Y%m%dT%H%M%SZ); RUN_DIR="docs/evidence/runs/${RUN}-c4-impl"; mkdir -p "$RUN_DIR/rollback"
-
-# PowerShell
-#   $RUN = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ'); $RUN_DIR = "docs/evidence/runs/$RUN-c4-impl"; New-Item -ItemType Directory -Force "$RUN_DIR\rollback" | Out-Null
-
-# 跨平台（python 取 UTC，避免本地时区）
-#   RUN_DIR=$(python -c "import datetime,os;p='docs/evidence/runs/'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-c4-impl';os.makedirs(p+'/rollback',exist_ok=True);print(p)")
-```
-
-### 11.2 辅助写面清单（全部在 `$RUN_DIR` 内，互不覆盖）
-
-| 文件 | 用途 | 生成步 |
-|---|---|---|
-| `rollback/scripts__kb_hook.py.pre.bin` | 回退源（原字节快照） | 第 0.2 步 |
-| `rollback/scripts__kb_hook.py.pre.meta` | `sha256`／`size`／源路径／UTC | 第 0.2 步 |
-| `index.before.txt` / `index.after.txt` | index `mode+blob` 记录 | 第 0.3 / 8 步 |
-| `status.before.txt` / `status.after.txt` | `git status` 辅助登记（**非判据**） | 第 0.4 / 8 步 |
-| `inputs.before.txt` / `inputs.after.txt` | **实际展开路径清单** | §3.4 / §3.5 |
-| `inputs.before.sha256` / `inputs.after.sha256` | **逐件字节 hash** | §3.4 / §3.5 |
-| `kb-info.before.sha256` / `kb-info.after.sha256` | **配置 hash** | §3.4 / §3.5 |
-| `baseline.json` / `baseline.json.rc` | baseline（JSON ＋ **进程退出码**） | 第 1 步 |
-| `after.json` / `after.json.rc` | after（JSON ＋ **进程退出码**） | 第 3 步 |
-| `errset.json` / `errset.json.rc` | 含既有错误输入集的 rc（覆盖 1 分支） | 第 6.2 步 |
-| `compare.py` | 逐件对照脚本（**临时件，落 run 目录，不进 `scripts/`**） | 第 5 步前写入 |
-| `compare.log` | 对照输出（PASS/FAIL ＋ 差异清单） | 第 5 步 |
-
-### 11.3 禁止项（写死）
-
-| 禁止 | 原因 |
-|---|---|
-| 文档/命令中保留**字面时间占位符**（未替换成实际 UTC） | 执行者会照抄成非法路径 |
-| 用**固定文件名**存 baseline（如 `docs/evidence/kb-parse-baseline.json`） | 多次运行互相覆盖，历史对比失效 |
-| 把 `compare.py` 写进 `scripts/` | 违反 §2 允许写入清单（清单外改动＝违约） |
-| 快照与日志混放同一文件 | 快照需字节保真，日志是文本 |
-
----
-
-### 11.4 run 目录**排他新建**（R16）
-
-```bash
-RUN=$(python -c "import datetime;print(datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ'))")
-RUN_DIR="docs/evidence/runs/${RUN}-c4-impl"
-mkdir "$RUN_DIR"          # 不用 -p：目录已存在 ⇒ mkdir 失败（排他，防覆盖既有材料）
-mkdir "$RUN_DIR/rollback"
-```
-
-> 若 `mkdir "$RUN_DIR"` 失败 ⇒ **立即停止**（不换名重试、不写入既有目录）——说明同秒内已有材料或路径被占。
-
-### 11.5 **外层停止门**（R16：普通 Bash 逐行执行**不会**因 Python 非 0 自动停）
-
-> **问题**：`python -c "...; sys.exit(9)"` 单独执行后，shell 默认继续执行下一行——**门形同虚设**。
-> **要求**（三选一，必须落地）：
-> 1. **单入口脚本**：全部步骤收敛进一个 `.sh`，首行 `set -euo pipefail`；
-> 2. 或**逐行串联**：每步写成 `cmd || { echo "STOP: <步名>"; exit 9; }`；
-> 3. 或 `cmd && next` 链式（不推荐，长链可读性差）。
-> **禁止**：把判定命令单独粘贴后忽略退出码继续下一步；禁止以"我看输出是 PASS/FAIL"代替退出码判定。
-> **失败材料保留**：脚本失败时**不得清理** `$RUN_DIR`（禁 `trap ... EXIT` 内 `rm -rf`、禁失败后手动删目录）——失败材料正是取证对象。
-
-**单入口脚本骨架**（实施时按第 0→8 步填入）：
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-RUN=$(python -c "import datetime;print(datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ'))")
-RUN_DIR="docs/evidence/runs/${RUN}-c4-impl"
-export RUN_DIR
-mkdir "$RUN_DIR"; mkdir "$RUN_DIR/rollback"
-# 第0步 pin/档位/index → 第1步 baseline+rc → 【实施】 → 第3步 after+rc
-# → 第4步 输入冻结 diff（失配 exit 9）→ 第5步 JSON 对照 → 第6步 rc＋errset
-# → 第7步 pytest → 第8步 index mode+blob
-```
-
-## 12 申请结论
+## 10 结论
 
 | 项 | 结论 |
 |---|---|
-| 设计依据 | C4 v10（`ceb4c110…`）已过 R5–R13 退修 |
-| 写入面 | **2 文件**（1 改 1 增），清单外零改动 |
-| 输入冻结 | §3（**展开路径＋逐件 hash＋配置 hash**；**集合身份以两条 diff 为准**，件数仅辅助；失配 exit 9） |
-| 退出码 | §5 第 1/3/6 步（**同 strict 双跑、分别落 rc、覆盖 1 分支**） |
-| 辅助写面 | §11（**唯一 UTC run 目录**、互不覆盖、禁字面占位） |
-| 回退 | §6（引用 C4 §16.2 V1/V2，不重开审核） |
+| 写入面 | **2 文件**，清单外零改动；驱动脚本全落 run 目录 |
+| 输入 | **单一展开源**：显式路径列表（`--files` 吃清单，不再两套 glob） |
+| 顺序 | **`errset.before` 在实施前**（阶段 A 第 A4 步），非靠文件名 |
+| 停止门 | 唯一入口 `run.sh` ＋ `set -euo pipefail` ＋ `run.py` 失败即 `sys.exit(9)`；run 目录排他新建；失败材料保留 |
+| 档位因果 | **已撤销错误推论**：`validate_record` 错误不随档位 `off` 消失 |
 | **状态** | **待批 · 未实施** |
 
----
+## 11 变更记录
 
-## 13 本版变更记录
-
-| 版本 | 日期 | 变更 |
-|---|---|---|
-| v2.1 | 2026-11-16 | R15 三项收口（输入冻结／退出码实采／辅助写面单列） |
-| **v3** | **2026-11-16（R16）** | **①恒等式更正**：删除错误的 `total + len(skipped)`（`total` 已含 `skipped`，重复计数），改据源码更正为 `len(expanded) = total − n_glob_miss`（`n_glob_miss` 从 `skipped` 按 `reason="glob_no_match"` 计数），并**明写件数一致≠集合相同**——集合身份由 `diff inputs.before/after.txt`（路径）与 `diff *.sha256`（内容）两条承担，件数仅作实现偏差探测；**②errset 改前/改后分存**：`errset.before.json(.rc)` 于**实施前**采集、`errset.after.json(.rc)` 于实施后另存，断言**双侧均 == 1 且相等**，任一不符 exit 9，且**明令 before 文件不得被覆盖**（附沙箱构造＋空转前提核对）；**③接通外层停止门**：新增 §11.5（`set -euo pipefail` 单入口脚本／`|| { echo STOP; exit 9; }` 串联／禁忽略退出码），§11.4 **run 目录排他新建**（`mkdir` 不带 `-p`，已存在即停），**失败材料一律保留**（禁 trap 清理）。边界不变：仅文档，未改 `kb_hook`／测试／路由／档位，未运行回归/实验；11-20 20:56:50 原 ops 回 off、清 since 保持。 |
+| 版本 | 变更 |
+|---|---|
+| v3 | R16：恒等式更正；errset 分件；停止门方向 |
+| **v4** | **R17**：①**代码块语法合法化**——`newline` 改 `NEWLINE` 常量、errset front-matter 改 `NEWLINE.join([...])` 构造（消除长行转义与换行拆断）；全文代码块经 **AST ＋ `bash -n` 静态解析自证通过**；②**`errset.before` 前移**至阶段 A（实施之前），附 A／B 时序表；③**显式路径单一展开源**；④**唯一排他入口** `run.sh`＋`run.py`；⑤**撤销**"档位 off 则 validate 错误消失"的错误推论 |
+| | 自证读数：见提交申报（python 块 N 个 AST 全通过；bash 块 M 个 `bash -n` 全通过） |
+| | 静态解析自证（R17）：**python 块 2/2 AST 通过**；**bash 块 3/3 `bash -n` 通过（Git Bash 5.2.37）**。注：本机 `bash` 实为 WSL，因 localhost 代理配置无法启动（`NAT 模式不支持`），故 shell 校验改用 Git for Windows 自带 bash；此为环境降级，已如实记录。 |
