@@ -183,7 +183,12 @@ quantstudio/backtest/strategies/     （且仅 .py 与 .md）
 要点：
 - 运行时依赖分层：QuantStudio 本地会注入 API、`g`/`log` 以及 `np`/`pd`；真实 PTrade 不注入 `numpy`/`pandas` 别名，因此双端/PTrade 源码使用它们时必须显式写 `import numpy as np` / `import pandas as pd`。数据库驱动、框架内部模块和直接文件 I/O 仍被禁止。
 - `log` 对象兼容 **printf 风格多参**：`log.info("信号=%s 条数=%d", src, n)` 按 `%` 风格格式化；双端/PTrade 可移植代码仅使用 `debug/info/warning/error/critical`，`log.warn(...)` 会被 Validator 阻断。
-- 生命周期分层：PTrade 可移植回调为 `initialize`（必需）+ `before_trading_start` / `handle_data` / `after_trading_end`（可选）；`set_backtest()` 与 `is_trade()` 仅属 QuantStudio 本地扩展，双端/PTrade 代码会被 Validator 阻断。
+- 生命周期分层：PTrade 可移植回调为 `initialize`（必需）+ `before_trading_start` / `handle_data` / `after_trading_end`（可选）。
+- **`set_backtest()` 与 `is_trade()` 分层说明（2026-11-17 更新 · 勿并称）**：
+  ① **平台文档层**：`is_trade()` 被列为**回测/交易均可用**的公有 API（`knowledge/platform/ptrade/01-API文档主页/001-page.md` L523、L3299：「该函数仅在回测、交易模块可用」，并载**无参数**、**返回 bool**）；`set_backtest()` 在平台文档中**未收录**，仍按 **QuantStudio 本地扩展**处理。
+  ② **转换器层**：`is_trade()` **既有 KEEP（原样保留、不改写）**；本次另**删除其不可达死映射**（`_REWRITE_LITERALS` 的 `"is_trade": "False"` 自公有化后永不命中）——**属清理死条目，不是新放行**。
+  ③ **尚未解除／未证**：签名 registry（`local_only_symbols`）与 skill 端校验器**仍把 `is_trade` 当 local-only 并 BLOCK**；**目标平台版本 T2 仍未证**（无目标版本实测记录）。
+  ⇒ **不得**表述为「两函数均已平台放行」：`set_backtest()` 仍属本地扩展；`is_trade()` 的 registry／skill 侧阻断仍在。
 - PTrade Profile 1.9.0 对股票双端常用 API 登记精确签名：`set_benchmark`、`run_daily`、`get_Ashares`、`get_index_stocks`、`get_stock_status`、`get_positions`、`get_position`、`get_trade_days`、`get_fundamentals`、`get_industry`。双端设计或源码调用未登记的顶层注入 API 时默认 `BLOCK`，不得用"近似确认"绕过。
 - **get_index_day_bar（2026-09-08 新增本地注入 API）**：已完成指数日线读数（独占 index_daily 路由，杜绝 000001 指数/平安银行同码串数据；profile-aware 上界：daily 含 T、minute 永不含 T、proxy 仅 15:00 时钟含 T）；count ∈ [1,250] 越界 ValueError；校验器 PREOPEN-INDEX-BAR / MINUTE-PROFILE-INDEX-BAR 双 BLOCK；已登记 local_only_symbols，PTrade 转换 fail-closed BLOCKED（重写映射+平台探针为 D4 后续项）。适用于同日指数状态读数的本地事件策略。详见 docs/get-index-day-bar-design.md。 转换门禁（2026-09-08）：转 PTrade fail-closed BLOCK，显式失败不生成静默空仓产物（docs/conversion-local-only-gate-design.md）。 2026-09-09 增强：可信 design 元数据自动解析（docs/design-metadata-auto-profile-design.md v4）——转换时按 agent_workspace 可信链（ledger 路径+SHA+design schema）自动带出 engine_profile，skill 生成策略无需手动选择引擎周期；可信 design profile 权威，显式冲突 BLOCK；legacy 无 design 可手工指定。
 - **check_limit（2026-10-17 新增本地注入 API，平台原生涨跌停判定）**：五态 `1/-1/2/-2/0`（涨停/跌停/触涨停/触跌停/无）；**本地缺省 `query_date` 取上一交易日**（PTrade 原生缺省为当日）——刻意的安全分歧，防盘中泄漏；单一数据源（`stock_daily` 原始 `close`/`preClose`/`high`/`low`），边界记 `QS_DIAG`；契约见 `knowledge/contracts/api-semantics.md` API-01；设计见 `docs/ptrade-native-limit-check-design-20261015.md`。

@@ -1,0 +1,25 @@
+{
+  "utc": "20261116T161917Z",
+  "files": {
+    "quantstudio/strategy_compiler/source_import.py": {
+      "bytes": 298775,
+      "sha256": "5dc1877f864e871b583ce244dd8e56b3e7311a676d763b638688247bc8ee40ed"
+    },
+    "tests/test_source_import.py": {
+      "bytes": 48591,
+      "sha256": "b50f310657a360f0476c4d7c49a511cdb5e6850a28c5df5e0aef4e63e53f5f8f"
+    },
+    "skills/quantstudio-strategy-compiler/SKILL.md": {
+      "bytes": 76937,
+      "sha256": "23191a16ff9f9c91d6b4573f5c563f9bd58e93793c656e8a97c3263ca9294b1a"
+    },
+    "skills/quantstudio-strategy-compiler/references/ptrade-runtime-compatibility.md": {
+      "bytes": 16199,
+      "sha256": "cddb75a941071245bc1be88e7fd00ccbfa977af750cf5baec27fc95102e41fa6"
+    },
+    "docs/evidence/pd0020-wt-baseline-20261113/b-track-implementation-20251116.md": {
+      "bytes": 16605,
+      "sha256": "87b628d3ac56704da79fa2a0de910e8e687ab291dcf43677d2b207e744324cc7"
+    }
+  }
+}

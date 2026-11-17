@@ -59,8 +59,9 @@ QuantStudio 本地注入 API / 指标 / 全局对象（g、log、pd、np、MyTT�
 因此双端/PTrade 源码使用 NumPy/pandas 时必须显式 import；所有目标都禁止数据库驱动、框架内部模块和直接文件 I/O。
 
 【生命周期（模块级函数，按需实现）】
-- initialize(context)            【必需】只跑一次。设基准、初始化 g 变量；双端/PTrade 源码禁止调用本地扩展 is_trade()/set_backtest()。
-- set_backtest()                 【仅 QuantStudio 本地单端】本地回测扩展；真实 PTrade/IQEngine 无此 API。
+- initialize(context)            【必需】只跑一次。设基准、初始化 g 变量；双端/PTrade 源码不得调用本地扩展 set_backtest()。
+- set_backtest()                 【仅 QuantStudio 本地单端】本地回测扩展；真实 PTrade/IQEngine 无此 API（平台文档未收录）。
+- is_trade()                     【分层·勿与 set_backtest 并称】平台文档列为**回测/交易均可用**公有 API（001-page.md L523/L3299，无参数、返回 bool）；转换器**已 KEEP**，本次仅删其**不可达死映射**；但 **registry／skill 端 BLOCK 尚未解除**、**目标版本 T2 仍未证** ⇒ 解除前双端源码仍不应依赖。
 - before_trading_start(ctx,data)【可选】每个交易日开盘前；data 为前一交易日快照；用于盘前选股/预热指标。
 - handle_data(ctx,data)         【可选】主循环。日线 Profile 每交易日调一次；分钟 Profile 每个 bar 调一次。
 - after_trading_end(context)    【可选】收盘后清理。
@@ -124,7 +125,7 @@ QuantStudio 本地注入 API / 指标 / 全局对象（g、log、pd、np、MyTT�
 2) 严禁任何直接文件 I/O：不得 import duckdb/sqlite3 等数据库驱动，也**不得调用 open()/read_csv()/read_parquet()/read_sql()/read_pickle() 等读取本地文件（.db/.csv/.parquet/.json 等）**。取数只通过注入的 API。若策略需要外部文件数据，必须改用框架注入的专用 API（例如 load_research_signals(csv_path, fallback=...)），文件读取由框架侧完成；否则加载时 StrategyIsolationGuard 会静态拦截并抛 StrategyIsolationError（策略文件连 import os/pathlib 都不允许，open() 为内置函数亦被禁）。
 3) 代码后缀归一化：可用 .XSHG/.XSHE/.SS/.SZ 或裸码；持仓字典用 QMT 格式(.SH/.SZ)，
    check_limit 返回 Ptrade 格式；建议全策略统一用 .XSHG/.XSHE。
-4) 双端/PTrade 目标禁止调用 set_backtest/is_trade；仅 QuantStudio 本地单端目标才可使用这些本地扩展。
+4) 双端/PTrade 目标**禁止依赖** set_backtest/is_trade：`set_backtest` 属 QuantStudio 本地扩展（平台文档未收录）；`is_trade` 平台文档列为**回测/交易均可用**公有 API、转换器**已 KEEP**（此次**仅删除其不可达死映射**），但 **registry 与 skill 端 BLOCK 尚未解除**、**目标版本 T2 未证** ⇒ 解除前不得依赖；仅 QuantStudio 本地单端目标可使用本地扩展。
 5) 生成的 .py 必须是合法 Python，定义 initialize（必需），其余回调按需。
 6) 【规则范围约束】策略代码必须严格留在框架约束内，【不得脱离】回测引擎、注入 API、生命周期回调、撮合机制与数据适配层：只能实现框架规定的生命周期回调（initialize / set_backtest / before_trading_start / handle_data / after_trading_end 及 run_daily 注册函数）；【禁止自定义】与框架注入 API 或生命周期函数【同名】的函数（如 get_history / get_fundamentals / order_target_value / is_trade 等），禁止自创撮合/取数路径或绕过 provider 适配层；可自定义【其它】辅助函数（选股/打分/信号计算等），只要函数名不与框架任何 API / 生命周期函数同名即可。
 7) 【仅生成、不回测】你的职责 = 【生成并落盘策略代码】到指定目录（见【策略文件落盘】）。【绝不】自行触发回测：不得调用 run_strategy / 引擎 API 跑回测，也不得在策略文件里写 if __name__=='__main__' 自跑。回测交由用户在 PyQt「策略回测」面板选中该文件后运行，以确保策略代码生成高效、专注。
@@ -188,7 +189,7 @@ def initialize(context):
     set_benchmark("000300.XSHG")
     g.period = 20
 
-# 双端/PTrade 代码不得调用 is_trade()/set_backtest()；本地专属设置仅留在 QuantStudio-only 源码中。
+# 双端/PTrade 代码不得依赖 set_backtest()（本地扩展）与 is_trade()（平台公有，但 registry/skill 侧 BLOCK 未解除、T2 未证）；本地专属设置仅留在 QuantStudio-only 源码中。
 
 def handle_data(context, data):
     # 主逻辑
@@ -251,7 +252,7 @@ def handle_data(context, data):
 
 > 完整签名见 [`docs/strategy_toolbox.md`](strategy_toolbox.md)。此处给智能体速查。
 
-1. **设置类**：PTrade 公共子集按签名档案使用；`set_benchmark`/`run_daily` 已进入 Profile 1.7.0；本地扩展 `set_backtest`/`is_trade` 仅限 QuantStudio-only
+1. **设置类**：PTrade 公共子集按签名档案使用；`set_benchmark`/`run_daily` 已进入 Profile 1.7.0；`set_backtest` 属本地扩展（平台文档未收录）、仅限 QuantStudio-only；`is_trade` 平台文档列为**回测/交易均可用**公有 API、转换器**已 KEEP**（此次**仅删除其不可达死映射**），但 **registry 与 skill 端 BLOCK 尚未解除**、**目标版本 T2 未证** ⇒ 解除前不得依赖
 2. **行情/历史**：`get_history`, `get_price`, `get_current_data`, `current_price`, `history`(别名)
 3. **财务/估值 ORM**：`get_fundamentals`, `query`, `valuation`, `balance_statement`, `income_statement`, `cashflow_statement`, `eps`, `profit_ability`, `growth_ability`, `operating_ability`, `debt_paying_ability`
 4. **股票状态/涨跌停**：`get_stock_status` 可移植值仅 `ST/HALT/DELISTING`；`filter_stock_by_status` 可使用 `DELISTING_SORTING`；`check_limit`/`is_suspended`/`is_st` 须按目标 Profile 分类
@@ -260,7 +261,7 @@ def handle_data(context, data):
 7. **交易函数（即时）**：`order`, `order_value`, `order_target`, `order_target_value`
 8. **交易函数（next_open）**：`order_target_value_next_open` 等（映射到 next_open 模式）
 9. **`get_*` 指标封装**：`get_MACD`, `get_KDJ`, `get_RSI`, `get_CCI`
-10. **账户/市场/文件**：`get_positions`, `get_position`, `get_open_orders`, `get_all_orders`, `context.portfolio`；`create_dir`/`get_research_path`/`is_trade` 属本地扩展，双端/PTrade 禁止
+10. **账户/市场/文件**：`get_positions`, `get_position`, `get_open_orders`, `get_all_orders`, `context.portfolio`；`create_dir`/`get_research_path` 属本地扩展，双端/PTrade 禁止；`is_trade` 平台文档列为**回测/交易均可用**公有 API、转换器**已 KEEP**（此次**仅删除其不可达死映射**），但 **registry 与 skill 端 BLOCK 尚未解除**、**目标版本 T2 未证** ⇒ 解除前不得依赖
 11. **MyTT 指标库**（全局 `MyTT`）：`MA` `EMA` `MACD` `KDJ` `RSI` `BOLL` `CROSS` `RET` `HIGH` `LOW` `ABS` 等 50+
 12. **A股规则**（全局 `shared_ashare_rules`）：`get_price_limit_pct` 等
 
@@ -360,7 +361,7 @@ def handle_data(context, data):
 | 1 | 双端/PTrade 使用 NumPy/pandas 时必须显式 import；禁止数据库/框架内部 import | 真实 IQEngine 不注入 `np/pd`，但取数与存储仍必须经过公共 API/provider |
 | 2 | 禁止 `import duckdb` / 读 `.db` | 数据走 provider 适配层，强制隔离 |
 | 3 | 代码后缀统一 | `.XSHG/.XSHE` 推荐；持仓用 `.SH/.SZ`；`check_limit` 返回 Ptrade 码；混用会导致 dict 匹配失败 |
-| 4 | 双端/PTrade 禁止 `set_backtest`/`is_trade`；仅本地单端可用 | 真实 IQEngine 无这些本地扩展，Validator 必须 BLOCK |
+| 4 | 双端/PTrade **禁止依赖** `set_backtest`/`is_trade`；仅本地单端可用 `set_backtest` | `set_backtest` 为本地扩展（真实 IQEngine 无此 API，平台文档未收录）；`is_trade` 平台文档列为**回测/交易均可用**公有 API、转换器**已 KEEP**（此次**仅删除其不可达死映射**），但 **registry 与 skill 端 BLOCK 尚未解除**、**目标版本 T2 未证** ⇒ 解除前不得依赖 |
 | 5 | 整手下单 | A股/ETF 100 整数倍；优先 `order_target_value` 规避 |
 | 6 | 检查 `order.status` | 涨停/跌停/废单会被拒，需处理 |
 | 7 | 文件名非 `_` 开头 | PyQt 回测面板只列出该目录下非下划线 `.py`（见第 8 节） |

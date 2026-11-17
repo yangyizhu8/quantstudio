@@ -92,7 +92,7 @@ R5 证据 PASS 后、R5.5 之前的可选研究阶段（`scripts/run_optimizatio
 | `set_volume_ratio(v=0.25)` | 设置成交量占比限制。 |
 | `set_yesterday_position(poslist)` | 设置初始底仓（CSV dict 列表：`sid/amount/cost_basis`）。 |
 
-> 可移植性红线：`set_backtest()`、`is_trade()` 仅供 QuantStudio 本地单端策略；双端/PTrade 源码不得调用。日志请使用 `log.warning(...)`，禁止 `log.warn(...)`。
+> 可移植性红线（2026-11-17 更新 · 勿并称）：**`set_backtest()`** 仅供 QuantStudio 本地单端策略，双端/PTrade 源码不得调用（平台文档未收录该 API）。**`is_trade()` 情况不同**：平台文档将其列为**回测/交易均可用**的公有 API（`001-page.md` L523/L3299，载无参数、返回 bool）；转换器**已 KEEP 不改写**，本次仅**删除其不可达死映射**（非新放行）；但**签名 registry（`local_only_symbols`）与 skill 端校验器仍 BLOCK、尚未解除**，**目标版本 T2 仍未证** ⇒ 解除前双端源码仍不应依赖它。日志请使用 `log.warning(...)`，禁止 `log.warn(...)`。
 
 > **签名默认拒绝**：双端设计的 `components.required_apis` 和源码中的外部顶层调用都必须登记在 `skills/quantstudio-strategy-compiler/references/ptrade-api-signatures.json`。未登记 API 会直接 `BLOCK`，不能归类为用户可确认的执行近似。
 | `set_parameters(**kw)` | 设置策略参数（交易端兼容，回测记录参数）。 |

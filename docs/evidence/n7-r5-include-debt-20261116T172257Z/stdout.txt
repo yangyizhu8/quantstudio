@@ -1,0 +1,4 @@
+........................................................................ [ 74%]
+.........................                                                [100%]
+- generated xml file: D:\miniQMT策略实盘\QuantStudio\docs\evidence\n7-r5-include-debt-20261116T172257Z\junit.xml -
+97 passed in 5.52s

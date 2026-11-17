@@ -1,0 +1,13 @@
+{
+  "utc": "20261116T172257Z",
+  "files": {
+    "tests/test_source_import.py": {
+      "bytes": 51100,
+      "sha256": "8eaefee89c39445f69fec1f9fd007fdbee0d40fbef01018753adc6e3dde33f59"
+    },
+    "quantstudio/strategy_compiler/source_import.py": {
+      "bytes": 298775,
+      "sha256": "5dc1877f864e871b583ce244dd8e56b3e7311a676d763b638688247bc8ee40ed"
+    }
+  }
+}

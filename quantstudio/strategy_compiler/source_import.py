@@ -3670,8 +3670,10 @@ def _render_data_audit_ext(marker: str, exclude_bse: bool = False) -> str:
 # 档 2 表达式内嵌的等价字面量（H2）：本地函数 → PTrade 语义等价字面量
 _REWRITE_LITERALS: dict[str, str] = {
     "set_backtest": "None",
-    "is_trade": "False",
 }
+# B 轨收尾（2026-11-16·DRIFT-N7-r3 限定批准）：原 `"is_trade": "False"` 条目已删除。
+# 该条目自 2026-11-11 A 项公有化后不可达——分派要求 name 在 DENY_REMOVE 内才进档 2 改写，
+# 而 is_trade 已移入 PTRADE_REGISTERED_WARN（KEEP）。保留 set_backtest 改写不变。
 
 # 行情字段名映射中枢在 _QS_HISTORY_WRAPPER 内（请求本地→PTrade / 返回 PTrade→本地）
 # DENY_REMOVE 中允许档 2 改写的函数；其余 DENY_REMOVE 档 2 → BLOCK

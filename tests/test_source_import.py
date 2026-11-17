@@ -26,6 +26,52 @@ def _convert_code(code: str, strategy_id: str = "test_strategy"):
         return convert_source(p)
 
 
+def _history_include_literals(source: str, func_name: str = "get_history") -> list:
+    """AST 级：取 source 中 `func_name(...)` 调用的 `include` 关键字**字面量**实参值。
+
+    为什么必须走 AST：旧断言用 `"include=False" in out` 作用于**产物全文**，
+    会把**注释/字符串**里的说明性文字（如「…include=True 则…」）也算进去，
+    从而在真实调用完全正确时依然误拒。本 helper 只看真实调用实参。
+
+    - **注释、字符串字面量内**出现的 `include=...` **不参与判定**；
+    - **真实调用**若把 `include` 反转成另一字面量，返回值随之改变 ⇒ 断言会失败；
+    - 非字面量实参（变量/表达式）无法静态判定，**不计入**返回值；
+    - `include` 若以位置参数传入不解析（本项目产物统一走关键字）。
+    """
+    values = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        name = getattr(fn, "id", None) or getattr(fn, "attr", None)
+        if name != func_name:
+            continue
+        for kw in node.keywords:
+            if kw.arg == "include" and isinstance(kw.value, ast.Constant):
+                values.append(kw.value.value)
+    return values
+
+
+def _func_kwarg_default(source: str, func_name: str, kwarg: str):
+    """AST 级：取 source 中 `def func_name(...)` 的 `kwarg` **默认值字面量**。
+
+    用于 shim 类断言——须核对**真实函数签名的默认值**，而不是在全文里找字符串
+    （注释/文档串中出现 `include=False` 不能作为签名证据）。
+    缺失或非字面量返回 None。
+    """
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.FunctionDef) and node.name == func_name:
+            a = node.args
+            for arg, default in zip(a.kwonlyargs, a.kw_defaults):
+                if arg.arg == kwarg and isinstance(default, ast.Constant):
+                    return default.value
+            pos = a.args
+            for arg, default in zip(pos[len(pos) - len(a.defaults):], a.defaults):
+                if arg.arg == kwarg and isinstance(default, ast.Constant):
+                    return default.value
+    return None
+
+
 # ---------------------------------------------------------------------------
 # 测试 1：双均线策略（最简全流程）
 # ---------------------------------------------------------------------------
@@ -204,16 +250,16 @@ def handle_data(context, data):
         pass
 '''
     result = _convert_code(code)
-    # is_trade() 内嵌 → False（档 2，字面量已知）
+    # is_trade() 内嵌 → KEEP（2026-11-11 A 项公有化后不再改写；B 轨按真实行为审）
     # set_backtest() 内嵌 → None（档 2：本地 lambda 返回 None，精确等价）
     # get_strategy_events() 内嵌且无字面量映射 → BLOCK（档 3）
     assert result.errors, "get_strategy_events 内嵌且无等价字面量应当 BLOCK"
     out = result.converted_code
     # 只检查代码正文（头部注释可含 API 名说明）
     body = out[out.find("def initialize"):]
-    assert "is_trade(" not in body
-    assert "g.trade_mode = False" in body
-    assert "g.flag = None" in body
+    assert "g.trade_mode = is_trade()" in body       # KEEP：公有 API 不被改写
+    assert "g.trade_mode = False" not in body        # 不再固化为 False
+    assert "g.flag = None" in body                   # DENY_REMOVE 档 2 仍改写 set_backtest
 
 
 def test_08b_rewrite_literal_inline():
@@ -226,7 +272,8 @@ def handle_data(context, data):
 '''
     result = _convert_code(code)
     assert result.errors == [], result.errors
-    assert "g.mode = False" in result.converted_code
+    assert "g.mode = is_trade()" in result.converted_code   # KEEP：不再固化为 False
+    assert "g.mode = False" not in result.converted_code
 
 
 # ---------------------------------------------------------------------------
@@ -643,8 +690,8 @@ def handle_data(context, data):
     result = _convert_code(code)
     assert result.errors == [], result.errors
     out = result.converted_code
-    assert "include=False" in out
-    assert "include=True" not in out
+    # AST：只看真实调用实参；注释/字符串里的相反 include 不参与判定
+    assert _history_include_literals(out) == [False]
     assert "NORM-GETHISTORY-SIG" in [a.rule_id for a in result.actions]  # 签名改写仍发生
     assert result.coverage.get("normalized_params", 0) >= 1
 
@@ -661,8 +708,7 @@ def handle_data(context, data):
     result = _convert_code(code)
     assert result.errors == [], result.errors
     out = result.converted_code
-    assert "include=False" in out
-    assert "include=True" not in out
+    assert _history_include_literals(out) == [False]
 
 
 def test_24_include_true_unchanged():
@@ -733,8 +779,8 @@ def handle_data(context, data):
     assert result.errors == [], result.errors
     out = result.converted_code
     assert "def get_history_batch" in out
-    assert "include=False" in out
-    assert "include=True" not in out
+    # AST：核对 shim 真实签名默认值（不是全文找字符串）
+    assert _func_kwarg_default(out, "get_history_batch", "include") is False
     assert any(a.action_type == "SHIM" for a in result.actions)
 
 
@@ -814,8 +860,7 @@ def handle_data(context, data):
     result = _convert_code(code)
     assert result.errors == [], result.errors
     out = result.converted_code
-    assert "include=False" in out
-    assert "include=True" not in out
+    assert _history_include_literals(out) == [False]
 
 
 def test_33_include_mapping_count_first_positional_daily():
@@ -830,8 +875,7 @@ def handle_data(context, data):
     result = _convert_code(code)
     assert result.errors == [], result.errors
     out = result.converted_code
-    assert "include=False" in out
-    assert "include=True" not in out
+    assert _history_include_literals(out) == [False]
 
 
 def test_34_include_no_mapping_all_freqs():
@@ -848,8 +892,8 @@ def handle_data(context, data):
     result = _convert_code(code)
     assert result.errors == [], result.errors
     out = result.converted_code
-    assert out.count("include=False") == 3
-    assert "include=True" not in out
+    # AST：三次真实调用逐一核参（全文 count 会被注释计数污染）
+    assert _history_include_literals(out) == [False, False, False]
 
 
 def test_35_include_true_no_mapping():
@@ -864,8 +908,8 @@ def handle_data(context, data):
     result = _convert_code(code)
     assert result.errors == [], result.errors
     out = result.converted_code
-    assert "include=True" in out
-    assert "include=False" not in out
+    # AST：真实调用应为 True，且无任何真实调用写 False
+    assert _history_include_literals(out) == [True]
 
 
 # ---------------------------------------------------------------------------
