@@ -1,0 +1,144 @@
+{
+  "report_version": "2.1",
+  "strategy_id": "a4_is_trade_fixed_sample",
+  "source": "D:\\miniQMT策略实盘\\QuantStudio\\docs\\evidence\\pd0020-wt-baseline-20261113\\a4-j4-fixed-sample\\source.py",
+  "target_profile": "ptrade",
+  "status": "BLOCKED",
+  "profile_validation_status": "BLOCKED",
+  "runtime_validation_status": "NOT_VERIFIED",
+  "deployment_status": "NOT_DEPLOYABLE",
+  "block_count": 24,
+  "warning_count": 1,
+  "issues": [
+    {
+      "rule_id": "DESIGN-SCHEMA",
+      "severity": "BLOCK",
+      "message": "$: 'strategy_name' is a required property"
+    },
+    {
+      "rule_id": "DESIGN-SCHEMA",
+      "severity": "BLOCK",
+      "message": "$: 'asset_class' is a required property"
+    },
+    {
+      "rule_id": "DESIGN-SCHEMA",
+      "severity": "BLOCK",
+      "message": "$: 'market_data_contract' is a required property"
+    },
+    {
+      "rule_id": "DESIGN-SCHEMA",
+      "severity": "BLOCK",
+      "message": "$: 'strategy_semantics' is a required property"
+    },
+    {
+      "rule_id": "DESIGN-SCHEMA",
+      "severity": "BLOCK",
+      "message": "$: 'approximations' is a required property"
+    },
+    {
+      "rule_id": "DESIGN-SCHEMA",
+      "severity": "BLOCK",
+      "message": "$: 'open_questions' is a required property"
+    },
+    {
+      "rule_id": "DESIGN-SCHEMA",
+      "severity": "BLOCK",
+      "message": "$: 'user_confirmations' is a required property"
+    },
+    {
+      "rule_id": "DESIGN-SCHEMA",
+      "severity": "BLOCK",
+      "message": "$: 'output' is a required property"
+    },
+    {
+      "rule_id": "DESIGN-SCHEMA",
+      "severity": "BLOCK",
+      "message": "components: 'api_groups' is a required property"
+    },
+    {
+      "rule_id": "DESIGN-SCHEMA",
+      "severity": "BLOCK",
+      "message": "constraints: 'hard_filters' is a required property"
+    },
+    {
+      "rule_id": "DESIGN-SCHEMA",
+      "severity": "BLOCK",
+      "message": "constraints: 'no_lookahead' is a required property"
+    },
+    {
+      "rule_id": "DESIGN-SCHEMA",
+      "severity": "BLOCK",
+      "message": "constraints: 'runtime_state_guard_required' is a required property"
+    },
+    {
+      "rule_id": "DESIGN-CONFIRMATION",
+      "severity": "BLOCK",
+      "message": "user_confirmations.strategy_semantics must be true before code generation"
+    },
+    {
+      "rule_id": "DESIGN-CONFIRMATION",
+      "severity": "BLOCK",
+      "message": "user_confirmations.execution_approximations must be true before code generation"
+    },
+    {
+      "rule_id": "DESIGN-CONFIRMATION",
+      "severity": "BLOCK",
+      "message": "user_confirmations.component_plan must be true before code generation"
+    },
+    {
+      "rule_id": "STRATEGY-NAME-CONTRACT",
+      "severity": "BLOCK",
+      "message": "strategy_name is required and must be a non-empty string"
+    },
+    {
+      "rule_id": "PTRADE-LOCAL-SYMBOL",
+      "severity": "BLOCK",
+      "message": "is_trade is a QuantStudio-local injected symbol. Define a portable helper in source or use a documented PTrade public API.",
+      "line": 2
+    },
+    {
+      "rule_id": "PTRADE-LOCAL-SYMBOL",
+      "severity": "BLOCK",
+      "message": "set_backtest is a QuantStudio-local injected symbol. Define a portable helper in source or use a documented PTrade public API.",
+      "line": 3
+    },
+    {
+      "rule_id": "PTRADE-DESIGN-LOCAL-API",
+      "severity": "BLOCK",
+      "message": "dual/PTrade design declares QuantStudio-local API is_trade()."
+    },
+    {
+      "rule_id": "TARGET-LOCAL-EXTENSION-BAN",
+      "severity": "BLOCK",
+      "message": "dual/PTrade target cannot call QuantStudio-local API is_trade().",
+      "line": 2
+    },
+    {
+      "rule_id": "TARGET-LOCAL-EXTENSION-BAN",
+      "severity": "BLOCK",
+      "message": "dual/PTrade target cannot call QuantStudio-local API set_backtest().",
+      "line": 3
+    },
+    {
+      "rule_id": "RUNTIME-STATE-GUARD",
+      "severity": "BLOCK",
+      "message": "define a non-placeholder idempotent _ensure_runtime_state() helper"
+    },
+    {
+      "rule_id": "RUNTIME-STATE-GUARD",
+      "severity": "BLOCK",
+      "message": "initialize() must call _ensure_runtime_state() as its first executable statement",
+      "line": 1
+    },
+    {
+      "rule_id": "DESIGN-CODE-SCHEDULE",
+      "severity": "BLOCK",
+      "message": "design event ('rebalance', '09:31') is not registered in code"
+    },
+    {
+      "rule_id": "ALIGNMENT-GATE",
+      "severity": "WARN",
+      "message": "alignment/report.md not found for 'source': platform S1 alignment not yet run/archived (scripts/align_diff_report.py --output <产物>/alignment/report.md). Lifecycle gate: aligned is required before graduated; legacy strategies are exempt via registration"
+    }
+  ]
+}
