@@ -1,0 +1,28 @@
+# R5.5 既有失败 · 改前/改后负向对照证据
+
+采样(UTC): 2026-11-18T13:07:47Z
+
+## 失败项
+tests/test_ptrade_profile_registered_stock_apis.py::test_registered_stock_api_source_publishes_identical_dual_targets
+ValueError: R5.5 robustness evidence missing from the ledger (stage never entered)
+位置: skills/quantstudio-strategy-compiler/scripts/publish_agent_strategy.py:49 (_load_workflow_state 的 R5.5 门，在读取任何 profile 之前)
+
+## 静态证（是否可能受 A4 影响）
+test_ptrade_profile_registered_stock_apis.py : runtime_corrections=0  is_trade_doc_basis=0
+publish_agent_strategy.py                    : runtime_corrections=0  is_trade_doc_basis=0
+=> 两文件均零命中，不可能受 A4 新增键影响
+
+## 动态证（同一单测，改前原件 vs 改后现盘）
+改后现盘 2f9ee610... : rc=1  1 failed in 0.50s
+改前原件 1b4b11ff... : rc=1  1 failed in 0.40s
+=> 改前 rc=1 / 改后 rc=1 同一结果 => 既有失败，与 A4 无关
+
+## 恢复校验
+临时换回改前原件后已恢复改后现盘，核 sha = 2f9ee610dc57db31ac15a30b357119f23fa4d2b4fc823edee1fd721d074437a0  OK
+
+## 本次批量补跑（4 文件）
+tests/test_authoritative_source_policy.py
+tests/test_conversion_gate.py
+tests/test_get_index_day_bar_validator.py
+tests/test_ptrade_profile_registered_stock_apis.py
+=> tests=34 failures=1 errors=0 skipped=0  rc=1  (33 passed / 1 failed)

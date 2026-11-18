@@ -1,0 +1,74 @@
+﻿.................................F                                       [100%]
+================================== FAILURES ===================================
+______ test_registered_stock_api_source_publishes_identical_dual_targets ______
+
+tmp_path = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-5011/test_registered_stock_api_sour0')
+
+    def test_registered_stock_api_source_publishes_identical_dual_targets(tmp_path):
+        design = _design()
+        source = _source()
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        strategy_path = workspace / "strategy.py"
+        design_path = workspace / "agent_strategy_design.json"
+        strategy_path.write_text(source, encoding="utf-8")
+        design_path.write_text(json.dumps(design), encoding="utf-8")
+    
+        project = tmp_path / "project"
+        project_db = project / "data" / "quantstudio.db"
+        project_db.parent.mkdir(parents=True)
+        project_db.touch()
+        (workspace / "workspace_state.json").write_text(json.dumps({
+            "stage": "BACKTEST_PASS",
+            "backtest_status": "PASS",
+            "backtest_data_source": "duckdb_provider",
+            "backtest_db_path": str(project_db.resolve()),
+            "backtest_db_resolution": "project_data_preferred",
+        }), encoding="utf-8")
+    
+>       result = publish(strategy_path, design_path, project)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_ptrade_profile_registered_stock_apis.py:270: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+skills\quantstudio-strategy-compiler\scripts\publish_agent_strategy.py:179: in publish
+    state_path, state = _load_workflow_state(strategy_path)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+strategy_path = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-5011/test_registered_stock_api_sour0/workspace/strategy.py')
+
+    def _load_workflow_state(strategy_path: Path) -> tuple[Path, dict]:
+        state_path = strategy_path.parent / "workspace_state.json"
+        if not state_path.exists():
+            raise ValueError("workspace_state.json is required; R0-R5 workflow evidence cannot be skipped")
+        state = load_json(state_path)
+        stage = state.get("stage")
+        if stage not in _ALLOWED_PREPUBLISH_STAGES:
+            raise ValueError(
+                f"workflow stage {stage!r} is not publishable; required one of "
+                f"{sorted(_ALLOWED_PREPUBLISH_STAGES)} after local backtest")
+        if state.get("backtest_status") != "PASS":
+            raise ValueError("local backtest evidence must be PASS before dual publication")
+        if state.get("ptrade_runtime_status") in {"FAIL", "STALE"} \
+                or state.get("ptrade_profile_validation_status") == "STALE":
+            raise ValueError(
+                "a real PTrade runtime failure retired the old evidence; repair the reusable "
+                "profile/adapter/Skill rule and regenerate fresh hashes before publishing")
+        # R5.5 statistical robustness gate (design doc robustness-gates-design.md §3, M4 compat):
+        # legacy ledgers without a "robustness" field are treated as "not yet entered R5.5"
+        # (read-compatible, no error) — but publishing still requires the gate to be satisfied,
+        # otherwise the stage could be silently skipped.
+        rob = state.get("robustness")
+        if not isinstance(rob, dict) or not rob:
+>           raise ValueError(
+                "R5.5 robustness evidence missing from the ledger (stage never entered): run "
+                "scripts/run_robustness_suite.py, or record a verbatim-confirmed exemption "
+                "(design.validation_contract.robustness_gates.enabled=false) before publishing")
+E           ValueError: R5.5 robustness evidence missing from the ledger (stage never entered): run scripts/run_robustness_suite.py, or record a verbatim-confirmed exemption (design.validation_contract.robustness_gates.enabled=false) before publishing
+
+skills\quantstudio-strategy-compiler\scripts\publish_agent_strategy.py:49: ValueError
+- generated xml file: D:\miniQMT策略实盘\QuantStudio\docs\evidence\n7-r12-a4-tests-20261118\junit.xml -
+=========================== short test summary info ===========================
+FAILED tests/test_ptrade_profile_registered_stock_apis.py::test_registered_stock_api_source_publishes_identical_dual_targets
+1 failed, 33 passed in 3.61s

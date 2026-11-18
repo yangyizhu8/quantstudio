@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="34" time="3.577" timestamp="2026-11-18T20:38:14.298807+08:00" hostname="USER-20251211MP"><testcase classname="tests.test_authoritative_source_policy" name="test_authority_null_source_error" time="0.359" /><testcase classname="tests.test_authoritative_source_policy" name="test_authority_non_tushare_error" time="0.094" /><testcase classname="tests.test_authoritative_source_policy" name="test_authority_allow_fallback_warning" time="0.084" /><testcase classname="tests.test_authoritative_source_policy" name="test_authority_ok_data_passes" time="0.085" /><testcase classname="tests.test_authoritative_source_policy" name="test_profile_consistency" time="0.011" /><testcase classname="tests.test_authoritative_source_policy" name="test_collector_tasks_authority_config" time="0.011" /><testcase classname="tests.test_authoritative_source_policy" name="test_build_authority_rules_from_daemon" time="0.610" /><testcase classname="tests.test_conversion_gate" name="test_d_no_false_positive_on_normal_patterns" time="0.603" /><testcase classname="tests.test_conversion_gate" name="test_e_unknown_attribute_method_not_blocked" time="0.022" /><testcase classname="tests.test_conversion_gate" name="test_f_daily_handle_data_shims" time="0.022" /><testcase classname="tests.test_conversion_gate" name="test_f2_premarket_reachable_blocks" time="0.021" /><testcase classname="tests.test_conversion_gate" name="test_f3_minute_profile_blocks" time="0.015" /><testcase classname="tests.test_conversion_gate" name="test_f4_missing_profile_blocks" time="0.017" /><testcase classname="tests.test_conversion_gate" name="test_f5_helper_chain_shims" time="0.026" /><testcase classname="tests.test_conversion_gate" name="test_f6_close_run_daily_shims" time="0.053" /><testcase classname="tests.test_conversion_gate" name="test_f7_premarket_run_daily_blocks" time="0.023" /><testcase classname="tests.test_conversion_gate" name="test_f8_unparseable_run_daily_blocks" time="0.020" /><testcase classname="tests.test_conversion_gate" name="test_f9_dual_reach_blocks" time="0.022" /><testcase classname="tests.test_conversion_gate" name="test_h_higher_order_patterns_not_blocked" time="0.026" /><testcase classname="tests.test_conversion_gate" name="test_i_alias_ref_daily_shims" time="0.023" /><testcase classname="tests.test_conversion_gate" name="test_g_local_only_registry_consistency" time="0.009" /><testcase classname="tests.test_get_index_day_bar_validator" name="test_preopen_index_bar_blocks" time="0.044" /><testcase classname="tests.test_get_index_day_bar_validator" name="test_minute_profile_index_bar_blocks" time="0.005" /><testcase classname="tests.test_get_index_day_bar_validator" name="test_daily_handle_data_passes_with_registered_api" time="0.005" /><testcase classname="tests.test_get_index_day_bar_validator" name="test_ptrade_target_blocked_via_local_only_symbols" time="0.005" /><testcase classname="tests.test_ptrade_profile_registered_stock_apis" name="test_profile_registers_core_stock_portability_apis" time="0.001" /><testcase classname="tests.test_ptrade_profile_registered_stock_apis" name="test_profile_project_and_install_consistent" time="0.002" /><testcase classname="tests.test_ptrade_profile_registered_stock_apis" name="test_profile_records_get_history_is_dict_return_contract" time="0.002" /><testcase classname="tests.test_ptrade_profile_registered_stock_apis" name="test_registered_stock_api_source_passes_ptrade_validation" time="0.008" /><testcase classname="tests.test_ptrade_profile_registered_stock_apis" name="test_unprofiled_required_api_blocks_dual_design" time="0.008" /><testcase classname="tests.test_ptrade_profile_registered_stock_apis" name="test_unprofiled_external_top_level_call_blocks_source" time="0.011" /><testcase classname="tests.test_ptrade_profile_registered_stock_apis" name="test_registered_api_keyword_and_query_type_are_strict" time="0.006" /><testcase classname="tests.test_ptrade_profile_registered_stock_apis" name="test_local_get_stock_status_supports_public_delisting_value" time="0.031" /><testcase classname="tests.test_ptrade_profile_registered_stock_apis" name="test_registered_stock_api_source_publishes_identical_dual_targets" time="0.028"><failure message="ValueError: R5.5 robustness evidence missing from the ledger (stage never entered): run scripts/run_robustness_suite.py, or record a verbatim-confirmed exemption (design.validation_contract.robustness_gates.enabled=false) before publishing">tmp_path = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-5011/test_registered_stock_api_sour0')
+
+    def test_registered_stock_api_source_publishes_identical_dual_targets(tmp_path):
+        design = _design()
+        source = _source()
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        strategy_path = workspace / "strategy.py"
+        design_path = workspace / "agent_strategy_design.json"
+        strategy_path.write_text(source, encoding="utf-8")
+        design_path.write_text(json.dumps(design), encoding="utf-8")
+    
+        project = tmp_path / "project"
+        project_db = project / "data" / "quantstudio.db"
+        project_db.parent.mkdir(parents=True)
+        project_db.touch()
+        (workspace / "workspace_state.json").write_text(json.dumps({
+            "stage": "BACKTEST_PASS",
+            "backtest_status": "PASS",
+            "backtest_data_source": "duckdb_provider",
+            "backtest_db_path": str(project_db.resolve()),
+            "backtest_db_resolution": "project_data_preferred",
+        }), encoding="utf-8")
+    
+&gt;       result = publish(strategy_path, design_path, project)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_ptrade_profile_registered_stock_apis.py:270: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+skills\quantstudio-strategy-compiler\scripts\publish_agent_strategy.py:179: in publish
+    state_path, state = _load_workflow_state(strategy_path)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+strategy_path = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-5011/test_registered_stock_api_sour0/workspace/strategy.py')
+
+    def _load_workflow_state(strategy_path: Path) -&gt; tuple[Path, dict]:
+        state_path = strategy_path.parent / "workspace_state.json"
+        if not state_path.exists():
+            raise ValueError("workspace_state.json is required; R0-R5 workflow evidence cannot be skipped")
+        state = load_json(state_path)
+        stage = state.get("stage")
+        if stage not in _ALLOWED_PREPUBLISH_STAGES:
+            raise ValueError(
+                f"workflow stage {stage!r} is not publishable; required one of "
+                f"{sorted(_ALLOWED_PREPUBLISH_STAGES)} after local backtest")
+        if state.get("backtest_status") != "PASS":
+            raise ValueError("local backtest evidence must be PASS before dual publication")
+        if state.get("ptrade_runtime_status") in {"FAIL", "STALE"} \
+                or state.get("ptrade_profile_validation_status") == "STALE":
+            raise ValueError(
+                "a real PTrade runtime failure retired the old evidence; repair the reusable "
+                "profile/adapter/Skill rule and regenerate fresh hashes before publishing")
+        # R5.5 statistical robustness gate (design doc robustness-gates-design.md §3, M4 compat):
+        # legacy ledgers without a "robustness" field are treated as "not yet entered R5.5"
+        # (read-compatible, no error) — but publishing still requires the gate to be satisfied,
+        # otherwise the stage could be silently skipped.
+        rob = state.get("robustness")
+        if not isinstance(rob, dict) or not rob:
+&gt;           raise ValueError(
+                "R5.5 robustness evidence missing from the ledger (stage never entered): run "
+                "scripts/run_robustness_suite.py, or record a verbatim-confirmed exemption "
+                "(design.validation_contract.robustness_gates.enabled=false) before publishing")
+E           ValueError: R5.5 robustness evidence missing from the ledger (stage never entered): run scripts/run_robustness_suite.py, or record a verbatim-confirmed exemption (design.validation_contract.robustness_gates.enabled=false) before publishing
+
+skills\quantstudio-strategy-compiler\scripts\publish_agent_strategy.py:49: ValueError</failure></testcase></testsuite></testsuites>
