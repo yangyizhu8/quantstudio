@@ -1,0 +1,23 @@
+stamp=20261116T195917
+root=D:\qssyn_s0b_20261116T195917
+outDir=D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-s0b-20261116T195917
+notice=D:\miniQMT策略实盘\QuantStudio\docs\handoff\customer-notice-5-duckdb-1.5.6-upgrade-v6-20261115.md
+notice_sha256=2CE2F9B5924097B241EB22948B74D8984B0D716DA722F06C6B8051C73E02D69D
+host_ps=5.1.26100.9711
+host_exe=C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+py_exe=C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe
+py_ver=3.11.9
+py_sha256=5F7B89A612C9B8AF1D6456CDFCD1DBE5CA630849E79AEBCED9BEE9A6694952EC
+scanRc=0
+SCAN-LINKS=0
+SCAN-DIRS=1
+SCAN-ROOT-ENTRIES=3
+SCAN-WALK-ERRORS=0
+SCAN-LSTAT-ERRORS=0
+gate_bom=EF BB BF
+gate_parse=OK-OR-FAIL-SEE-STAGES
+gate_out=PY-SRC-LINKS  = 0（dirs=1, root_entries=3, walk_err=0, lstat_err=0，结论仅限检查时刻）
+negcontrols=6/6
+verdict=PASS
+fail_class=
+fail_msg=

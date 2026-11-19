@@ -1,0 +1,104 @@
+--- _runner.ps1 (r3 失败原件·基线)
++++ _runner.candidate.ps1 (r4 候选)
+@@ -14,9 +14,35 @@
+ $script:written = $false
+ function Mark([string]$n,[string]$rc) { $script:stages.Add(("{0}`t{1}" -f $n,$rc)) | Out-Null; "STAGE $n rc=$rc" }
+ 
+-"=== S0b(r3) 开始 stamp=$stamp ==="
++"=== S0b(r4-candidate) 开始 stamp=$stamp ==="
+ "ROOT   = $root"
+ "OUTDIR = $outDir"
++
++# ---- 【修订2】STAGE BOOTSTRAP：证据目录**先于 HOST** 排他新建；runner 身份**立即**落盘 ----
++#      此后任何阶段失败（含 HOST）都不缺证据目录、不缺 runner 身份。
++$script:evDir = $null
++try {
++    if (Test-Path -LiteralPath $outDir) { throw "输出目录已存在，中止（排他新建）：$outDir" }
++    New-Item -ItemType Directory -Path $outDir -ErrorAction Stop | Out-Null
++    $script:evDir = $outDir
++    $idLines = @()
++    $idLines += "runner_path=" + $PSCommandPath
++    if ($PSCommandPath -and (Test-Path -LiteralPath $PSCommandPath)) {
++        $idLines += "runner_sha256=" + (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash
++        $idLines += "runner_bytes="  + (Get-Item -LiteralPath $PSCommandPath).Length
++        Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $outDir '_runner.ps1') -Force
++    } else {
++        $idLines += "runner_sha256=UNAVAILABLE（PSCommandPath 为空）"
++    }
++    $idLines += "boot_stamp=" + $stamp
++    [System.IO.File]::WriteAllText((Join-Path $outDir 'runner-identity.txt'), (($idLines -join "`r`n") + "`r`n"), $utf8)
++    Mark 'BOOTSTRAP' '0'
++} catch {
++    Mark 'BOOTSTRAP' "FAIL($($_.Exception.Message))"
++    "EVIDENCE-BOOTSTRAP-FAILED（显式报告）：$($_.Exception.Message)"
++    "无法建立证据目录 ⇒ 后续阶段不再执行（避免产生无证据的读数）。"
++    exit 2
++}
+ 
+ try {
+     # ---- STAGE HOST：明确并锁定宿主与解释器（不临场更换）----
+@@ -30,8 +56,14 @@
+     $py = [System.IO.Path]::GetFullPath($pyCmd.Source)
+     if (-not (Test-Path -LiteralPath $py -PathType Leaf)) { Mark 'HOST' 'FAIL(py not file)'; throw "解释器不是文件：$py" }
+     if ([System.IO.Path]::GetFileName($py) -ne 'python.exe') { Mark 'HOST' 'FAIL(py name)'; throw "不叫 python.exe：$py" }
+-    $pyVer = ((& $py -c "import sys;print(sys.version.split()[0])" | Select-Object -First 1)).Trim()
+-    if ($LASTEXITCODE -ne 0 -or -not $pyVer) { Mark 'HOST' 'FAIL(py run)'; throw "解释器无法运行：$py" }
++    # 【修订1】原生命令**完整取输出**（不接管道、不 Select-Object），随后**立即**保存 rc，
++    #          再从**变量**里取首行。避免 Select-Object -First 1 提前关管道把 rc 变成 -1（假失败）。
++    $pyVerOut = @(& $py -c "import sys;print(sys.version.split()[0])")
++    $pyRunRc  = $LASTEXITCODE
++    "PY-RUN-RC = $pyRunRc"
++    if ($pyRunRc -ne 0) { Mark 'HOST' "FAIL(py run rc=$pyRunRc)"; throw "解释器无法运行（rc=$pyRunRc）：$py" }
++    $pyVer = if ($pyVerOut.Count -ge 1) { ([string]$pyVerOut[0]).Trim() } else { '' }
++    if (-not $pyVer) { Mark 'HOST' 'FAIL(py ver empty)'; throw "解释器未输出版本号：$py" }
+     $pySha     = (Get-FileHash -LiteralPath $py     -Algorithm SHA256).Hash
+     $noticeSha = (Get-FileHash -LiteralPath $notice -Algorithm SHA256).Hash
+     "PY-EXE    = $py"
+@@ -40,11 +72,9 @@
+     "NOTICE-SHA= $noticeSha"
+     Mark 'HOST' '0'
+ 
+-    # ---- STAGE SETUP-DIRS：排他新建根与输出目录 ----
++    # ---- STAGE SETUP-DIRS：排他新建**合成根**（输出目录已由 BOOTSTRAP 排他建好，此处不再重复建）----
+     if (Test-Path -LiteralPath $root)   { Mark 'SETUP-DIRS' 'FAIL(root exists)'; throw "目标根已存在：$root" }
+     if ($root -notmatch '^[A-Za-z]:\\') { Mark 'SETUP-DIRS' 'FAIL(form)';        throw "非盘根绝对形式：$root" }
+-    if (Test-Path -LiteralPath $outDir) { Mark 'SETUP-DIRS' 'FAIL(out exists)';  throw "输出目录已存在：$outDir" }
+-    New-Item -ItemType Directory -Path $outDir -ErrorAction Stop | Out-Null
+     New-Item -ItemType Directory -Path $root   -ErrorAction Stop | Out-Null
+     Mark 'SETUP-DIRS' '0'
+ 
+@@ -196,9 +226,16 @@
+     "FAIL-MSG   = $($script:failMsg)"
+ }
+ finally {
+-    # ---- 任何失败也落 verdict ----
+-    try {
+-        if (Test-Path -LiteralPath $outDir) {
++    # ---- 【修订3】任何失败也统一落 verdict / stages / runner 身份；落不下则**显式报告** ----
++    $proofDir = $script:evDir
++    if (-not $proofDir) {
++        "EVIDENCE-WRITE-IMPOSSIBLE（显式报告）：证据目录未建立，无法落 verdict / stages。"
++        "FAIL-CLASS = $($script:failClass)"
++        "FAIL-MSG   = $($script:failMsg)"
++        "STAGES     = $((($script:stages) -join ' | '))"
++        "（本段 stdout 即唯一证据。）"
++    } else {
++        try {
+             $v = @(
+               "stamp=$stamp"
+               "root=$root"
+@@ -238,9 +275,11 @@
+             "=== EVIDENCE HASHES ==="
+             $hs | ForEach-Object { "  $_" }
+             $script:written = $true
+-        }
+-    } catch { "VERDICT-WRITE-FAILED: $($_.Exception.Message)" }
+-    "=== S0b(r3) 结束：verdict=$($script:verdict) failClass=$($script:failClass) ==="
++            "EVIDENCE-WRITTEN = $proofDir"
++        } catch { "VERDICT-WRITE-FAILED（显式报告）：$($_.Exception.Message)" }
++    }
++    "=== S0b(r4-candidate) 结束：verdict=$($script:verdict) failClass=$($script:failClass) written=$($script:written) ==="
+     "STAMP-FINAL=$stamp"
+ }
++if (-not $script:written) { exit 2 }
+ if ($script:verdict -ne 'PASS') { exit 1 } else { exit 0 }

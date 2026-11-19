@@ -1,0 +1,5 @@
+id	group	arg	expect	got	cmp	pass
+U26-EQ-TRIO-NEG	U26	8b：python 改 3.11.8	class=TRIO	class=TRIO	EXACT	Y
+U26-EQ-TRIO-POS	U26	8b：三值与原相同	threw=False	threw=False	EXACT	Y
+U26-ATTR-POS	U26	8c：keepRoot=真实 sys.prefix	threw=False	threw=False	EXACT	Y
+U26-ATTR-NEG	U26	8c：keepRoot=假留存根	class=ATTR-EXE	class=ATTR-EXE	EXACT	Y

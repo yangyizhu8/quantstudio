@@ -1,0 +1,37 @@
+=== 静态前置门 r10（摘要值边界 + 三负控 + 原 20 项不变）===
+  stamp  = 20261117T095435
+  driver = 29686 B  6E0A0F5B8ABF2306AC5CF4C23120AD9E9D98CD5279EF8F06309288E5430971A6
+  digest = 895 B  158746396792143BEE1A5A2DCEA36C0489A49DADED8BEFEAB9A2C8E110392EFB
+  notice = 117882 B  598741EF4881D71E594FA2A709DD28471FDEE78CC3B09DDF5640503C54859451
+
+  PASS  G1a-驱动语法                       errors=0 tokens=5687
+  PASS  G1b-摘要件语法                      errors=0
+  PASS  G2-业务断言 20x五参数                 合计=20(EXACT 15 + DIGEST 5) 非法=0
+  PASS  G3a-ID 唯一                      唯一=20/20
+  PASS  G3b-ID 集合=plan                 call=20 plan=20
+  PASS  G3c-ID 顺序=plan                 一致
+  PASS  G3e-负控不进 plan                  plan 内 NC=0
+  PASS  G4a-ParseFile 次数               次数=3
+  PASS  G4b-各自判错即抛                     PARSE 拒绝点=3
+  PASS  G4c-摘要pin 独立命名                 DIGEST-PIN 拒绝点=2
+  PASS  G4d-无共享 err                    残留=0
+        F1 749B OK
+        F2 1384B OK
+        COLLECT 545B OK
+        RT 271B OK
+        PARSERS 723B OK
+        EQATTR 1498B OK
+  PASS  G5-六段抽取 pin 未改                 全一致=1
+  PASS  G5b-synth pin                  ok
+  PASS  G5c-digest pin                 158746396792143BEE1A5A2DCEA36C0489A49DADED8BEFEAB9A2C8E110392EFB
+  PASS  NC1-同摘要异大小写=相等                 got=True
+  PASS  NC2-一位真实变化=不等                  got=False
+  PASS  NC3-非法hex=拒绝                   63位=THROW 非hex=THROW
+  PASS  G7a-PS 5.1                     5.1.26100.9711
+  PASS  G7b-python 存在                  ok
+  PASS  G7c-旧 run 保留                   ok
+  PASS  G7d-UTC 排他根                    Z 后缀
+  PASS  G7e-synth 编译                   rc=0
+
+  静态前置结果 = PASS  （PASS 22 / FAIL 0）
+  负控 3/3（不计入业务 20 分母）

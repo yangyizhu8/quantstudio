@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u18-u26-run-20261117T015447Z\_pyid_check.py", line 2, in <module>
+    b = open(sys.argv[1], "rb").read()
+        ^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'D:\\miniQMT策略实盘\\QuantStudio\\docs\\evidence\\duckdb-v6-u18-u26-run-20261117T015447Z\\中文 目录\\data\\synth-cn-utf8.json'

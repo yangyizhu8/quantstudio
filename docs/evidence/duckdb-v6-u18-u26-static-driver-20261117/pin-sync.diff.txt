@@ -1,0 +1,15 @@
+-if (-not (@('ALL','ENC+U26','PROBE','EQATTR') -contains $Scope)) { throw ('PARAM: 未知 Scope -> ' + $Scope) }
++if (-not (@('ALL','ENC+U26','PROBE','EQATTR','NOTICE') -contains $Scope)) { throw ('PARAM: 未知 Scope -> ' + $Scope) }
++$runNoticeOnly = ($Scope -eq 'NOTICE')
++$runFix    = @('ALL','ENC+U26','EQATTR') -contains $Scope
+-$KNOWN_NOTICE_PREV = '288AB994FE9AB6FFB6F31862B49A2AC29727E047FBEC486E96EA6139E420A681'   # U26 用例表文案订正前（2026-11-17）
+-$KNOWN_NOTICE = '598741EF4881D71E594FA2A709DD28471FDEE78CC3B09DDF5640503C54859451'   # 文案订正后；七段内容 pin 未变是硬证
++$KNOWN_NOTICE_HIST = '288AB994FE9AB6FFB6F31862B49A2AC29727E047FBEC486E96EA6139E420A681'   # 史前版：U26 用例表文案订正前（2026-11-17 r9 前）
++$KNOWN_NOTICE_PREV = '598741EF4881D71E594FA2A709DD28471FDEE78CC3B09DDF5640503C54859451'   # 上一版：r9 文案订正后（2026-11-17 r9–r15）
++$KNOWN_NOTICE = '96773A27D1D08BFAE64149A2D987871B0382D74BD7B0A2735B913C95DC1DDE8F'   # 当前：新增 §2.4.12 + §六不作承诺后（2026-11-17 r15）；六段内容 pin 未变是硬证
+-$script:plan = if ($Scope -eq 'PROBE') { @() } elseif ($Scope -eq 'EQATTR') { @($ALL_PLAN | Where-Object { $_.Id -like 'U26-EQ-TRIO-*' -or $_.Id -like 'U26-ATTR-*' }) } else { @($ALL_PLAN | Where-Object { $Scope -eq 'ALL' -or ($_.Id -like 'ENC-*') -or ($_.Id -like 'U26-*') }) }
++$script:plan = if ($Scope -eq 'PROBE' -or $Scope -eq 'NOTICE') { @() } elseif ($Scope -eq 'EQATTR') { @($ALL_PLAN | Where-Object { $_.Id -like 'U26-EQ-TRIO-*' -or $_.Id -like 'U26-ATTR-*' }) } else { @($ALL_PLAN | Where-Object { $Scope -eq 'ALL' -or ($_.Id -like 'ENC-*') -or ($_.Id -like 'U26-*') }) }
+-    $L.Add('groups           = ' + $(if($Scope -eq 'PROBE'){'0'}elseif($Scope -eq 'ALL'){'3'}elseif($Scope -eq 'EQATTR'){'1'}else{'2'}) + '   # PROBE=0（非业务组）；ENC+U26=2；EQATTR=1；ALL=3') | Out-Null
++    $L.Add('groups           = ' + $(if($Scope -eq 'PROBE' -or $Scope -eq 'NOTICE'){'0'}elseif($Scope -eq 'ALL'){'3'}elseif($Scope -eq 'EQATTR'){'1'}else{'2'}) + '   # PROBE=0（非业务组）；ENC+U26=2；EQATTR=1；ALL=3') | Out-Null
+-    } elseif (-not $runProbe) {
++    } elseif ($runFix) {

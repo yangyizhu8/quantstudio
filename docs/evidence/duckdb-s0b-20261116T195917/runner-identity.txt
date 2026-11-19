@@ -1,0 +1,4 @@
+runner_path=D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-s0b-runner-r4-candidate-20261116\_runner.candidate.ps1
+runner_sha256=DAFAB11E86C4671461B17893B923052CAC0AD64FB436337DE9D9CDAE8E8A24C0
+runner_bytes=15374
+boot_stamp=20261116T195917

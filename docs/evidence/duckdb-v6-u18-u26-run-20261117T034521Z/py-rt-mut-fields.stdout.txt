@@ -1,0 +1,3 @@
+FILE-HEX 52709633b9a6ba98c870b6ed0cb047325ccba63b7f58e67b0f225734a8977041
+PFX-HEX  b3fec617d9c148f95f04e0e10e843af948928ed9e4f52a9f62fecf1321a522af
+FIELDS   duckdb,exe,prefix,python,source_id

@@ -1614,3 +1614,3128 @@ if ($chkObj.duckdb -ne $pyObj.duckdb) { throw "留存环境的 duckdb 版本 != 
 | **不执行 pip / 环境复制 / 真实备份** | ✅ 遵守（本轮未执行任何此类命令） |
 | T041 | **保持 `BLOCKED`，未连带核销** |
 | **62 GB 耗时与峰值内存** | **仍未实测**，继续明列 |
+
+
+### §7.36 第八轮：**改正「声明与代码不符」** · 六项身份 / 留存独立性 / 无损 pin / reparse（2026-11-16 00:2x–01:0x）
+
+> 依据 11-16 终审：「留存环境『三项机器核验』的声明与代码不符；原 `pyInfo` 没有采 `source_id`，
+> (5) 实际只比较 duckdb 版本；须在升级前固化原身份并逐项比较，失败停。
+> 复制 venv 后能 import，不证明它已脱离即将升级的旧 site-packages；核实际 exe、prefix 及 duckdb 模块来源，
+> 无法证明留存独立则停升级。`ensure_ascii=False` 输出却用 ASCII 保存，会损坏中文路径，
+> 改为无损写入并读回核对。路径词法比较不覆盖 junction/reparse 情形，存在则拒绝或核真实关系。U1–U15 继续标未执行。」
+> 边界：**仅文档**｜不运行补测｜不做真实环境复制｜不执行 pip｜不下发｜**不提交推送**。
+
+#### §7.36.1 🔴 先认账：上轮「三项机器核验」是申报失实
+
+**代码事实（上轮 `3695763`）**：
+
+```powershell
+$pyInfo = & $py -c "...{'python':...,'exe':...,'prefix':...,'duckdb':duckdb.__version__}..."   # 只 4 项，无 source_id
+# (5) 标题写「三项机器比对」，实际只有一条：
+if ($chkObj.duckdb -ne $pyObj.duckdb) { throw ... }
+```
+
+**所以「三项」是我把计划写成了实现**：`source_id` 从未采集，(5) 只有一个 `if`。
+这与 §7.33.1（192 位越界外推）同类——**都是把未落实的东西当已落实申报**。审核指出成立，已改。
+
+#### §7.36.2 六项身份 + 两类判据（相等 / 归属）
+
+| 类别 | 字段 | 用途 | 不符后果 |
+|---|---|---|---|
+| **相等** | `python` | 同一解释器版本 | 非同一版本链 ⇒ **停止** |
+| **相等** | `duckdb` | 同一 duckdb 版本 | 同上 |
+| **相等** | **`source_id`** | 同一构建（此前**漏采**） | 同上 |
+| **归属** | `exe` | 必须在留存目录内 | 留存**不独立** ⇒ 停止 |
+| **归属** | `duckdb.__file__` | **必须在留存目录内** | 仍在用原 site-packages ⇒ 停止 |
+| **归属** | `sys.prefix` | 必须等于留存目录 | 留存**不独立** ⇒ 停止 |
+
+> **为什么必须分两类**：`exe`/`prefix`/`duckdb_file` 复制后**必然变化**（新目录），
+> 不能要求"相等"；它们要判的是"**归属**"——是否真的脱离了原环境。
+> 只有 `python`/`duckdb`/`source_id` 三项该相等。上轮把两者混成一句「三项核验」，才出了这个错。
+
+#### §7.36.3 「能 import」不证明独立
+
+`import duckdb` 成功只说明**能加载到某个 duckdb**；若 `duckdb.__file__` 仍指向原 prefix 的 `site-packages`，
+则步骤 4 升级会把**那份**一起改掉，留存副本形同虚设。故新增硬判据：
+
+```powershell
+if (-not $dfReal.StartsWith($keepReal + '\', OrdinalIgnoreCase)) {
+    throw "duckdb 模块不在留存目录内（$dfReal）——说明仍在用原 site-packages，升级会把它一起改掉，留存不独立，禁止升级。"
+}
+```
+
+`exe`、`prefix` 同样按真实路径判归属。
+
+#### §7.36.4 无损写入 + 读回核对
+
+| 项 | 旧 | 新 |
+|---|---|---|
+| 编码 | `Set-Content -Encoding ASCII` | `[IO.File]::WriteAllText(..., UTF8Encoding($false))`（无 BOM） |
+| 校验 | 无 | **立即 `ReadAllText` 读回，逐字比对**，不一致即 `throw` |
+| 应用处 | — | `pypin-<stamp>.json` + `pykeep-verify-<stamp>.txt` + `upgrade-stamp.txt`（**三处**） |
+
+**为什么必错**：`ensure_ascii=False` 会输出真实中文；ASCII 编码器把非 ASCII 字符写成 `?`
+⇒ `C:\用户\Python` 变 `C:\??\Python`，之后按错路径复制、按错身份比对，**且看起来"有文件"**。
+
+#### §7.36.5 reparse / junction 感知
+
+`GetFullPath` 只是**词法**归一。若留存目标是 **junction 指向源**，词法上完全看不出、复制照样自我递归。
+新增 `Get-RealTarget`（读 `Attributes -band ReparsePoint`，取 `Target` 解析为绝对路径；解析不出即 `throw`），
+**定义 1 处 / 调用 6 处**：
+
+| # | 调用点 | 作用 |
+|---|---|---|
+| 1 | `$srcReal = Get-RealTarget $pyObj.prefix` | 源环境真实路径（若为 reparse 打印 `PY-SRC-REPARSE`） |
+| 2 | `$keepReal = Get-RealTarget $pyKeep` | 目标**已存在且为 reparse ⇒ 直接拒绝**（写入会穿透） |
+| 3 | `$parentReal = Get-RealTarget $keepParent` | 目标不存在时解析**父目录**，防「父目录是 junction 指向源子树」 |
+| 4 | `$exeReal = Get-RealTarget $chkObj.exe` | 归属判据 |
+| 5 | `$dfReal = Get-RealTarget $chkObj.duckdb_file` | 归属判据（核心） |
+| 6 | `$pfxReal = Get-RealTarget $chkObj.prefix` | 归属判据 |
+
+最后用**真实路径**做 `==`（同一）与 `StartsWith($srcReal + '\')`（子树）判断。
+
+> **自查到一处声明不符并当场修正**：我最初在修订表写「调用 **5** 处」，实际 grep 出 **6** 处。
+> 已改为 6 并把 6 个调用点逐一列出。**同轮内发现、同轮内改**，不留到下一轮。
+
+#### §7.36.6 用例续标（U16–U20，仍全部未执行）
+
+| ID | 目标 |
+|---|---|
+| U16 | **`source_id` 不等被拒**（证明它真参与比较，不是摆设） |
+| U17 | **留存不独立被拒**（`duckdb` 仍从原 prefix 加载） |
+| U18 | **中文路径 pin 无损**（读回逐字一致、无 `?`） |
+| U19 | **留存目标是 junction 被拒** |
+| U20 | **父目录是 junction 指向源子树被拒** |
+
+**U1–U20 全部标注「未执行」**；客户不承担首测。
+
+#### §7.36.7 逐项对账（防再次声明与代码不符）
+
+| 声明 | 代码事实 | 结论 |
+|---|---|---|
+| 六项身份 | `python`/`exe`/`prefix`/`duckdb`/`source_id`/`duckdb_file` 均在 `$PROBE` 内 | ✅ |
+| 相等三项真比较 | 三条独立 `if`（python / duckdb / source_id）累计 `$mismatch` 后 throw | ✅ |
+| 归属三项真判定 | 三条独立判据（exe / duckdb_file / prefix） | ✅ |
+| 无损写入 | `UTF8Encoding($false)`，`WriteAllText` 2 处、`ReadAllText` 3 处 | ✅ |
+| 代码块内无 `-Encoding ASCII` | grep = **0** | ✅ |
+| reparse | 定义 1、调用 **6** | ✅（修订表已由 5 改为 6） |
+| U1–U20 执行 | **0 条执行** | ⚠ 未实测（边界） |
+| **62 GB 耗时与峰值** | **未实测** | ⚠ 继续明列 |
+
+#### §7.36.8 交付与状态
+
+- 候选 diff：`docs/evidence/duckdb-v6-r8-precise-diff-20261116.diff`（**300 行 / 4 hunk**）
+- **本轮未 commit、未推送**（依审核边界）；`git status` 中 notice 文件为 `M`、diff 文件为未跟踪
+- T041 **保持 `BLOCKED`**；11-17 闸不放；**62 GB 耗时/峰值仍未实测**
+
+
+### §7.37 第九轮：祖先 junction 绕过 · 复制内部链接 · stdout 编码链 · 用例不可代前置（2026-11-16 01:3x–02:1x）
+
+> 依据 11-16 终审：「`Get-RealTarget` 只处理末级项，不处理祖先 junction 及多级 Target；
+> 例如 alias 指向源环境、其下 child 为普通目录时仍可避过包含检查。采用逐级拒绝或完整解析候选，
+> 并约束复制内部的链接，**不能称当前已得真实路径**。
+> PS5.1 原生 stdout 还可能在写文件前损坏中文；文件写后自读相等不能证明采集链无损，
+> 补明确编码及路径字段对拍。U16／U17 不能代其他路径前置。」
+> 边界：**只文档**｜不跑 U1–U24｜不复制真实环境｜不 pip｜不碰生产验证或下发｜**不提交推送**。
+
+#### §7.37.1 🔴 祖先 junction 绕过：我上轮"真实路径"是错的
+
+**上轮的缺陷（`Get-RealTarget`）**：对传入路径**整条**做一次 reparse 判断，只处理**末级**。
+
+**绕过实例**（审核所指，我复述机理）：
+
+```
+D:\alias         -> D:\源环境        (junction)
+D:\alias\child                      (普通目录)
+
+Resolve( D:\alias\child ):
+  Test-Path 成功
+  Get-Item D:\alias\child 的 Attributes 不含 ReparsePoint   <- 末级是普通目录
+  => 返回 D:\alias\child
+  => 与 D:\源环境 词法比较: 不是同一、也不是子树  => 检查通过
+  => 但 robocopy 实际写入落到 D:\源环境\child  => 自我递归
+```
+
+**结论：上轮打印的 `$srcReal` / `$keepReal` 不是真实路径，我不该那样命名。** 已认账并改。
+
+#### §7.37.2 全链逐级解析（`Resolve-FullPathStrict`）
+
+| 要点 | 实现 |
+|---|---|
+| 逐段 | 从盘根起按 `\` 拆段，**每段**拼接后检查 `ReparsePoint` |
+| 多级 Target | 命中后用 `while` 继续解析该级目标（目标本身仍是 reparse 也能跟到底） |
+| 防成环 | `$hop -gt 32` 即 `throw`（链过长/成环） |
+| 不可解析 | `Target` 为空 ⇒ `throw`；中间级不存在 ⇒ 返回 `null`，由调用处 `throw` |
+| 调用点 | **6 处**：源 prefix / 留存目标 / 目标父目录 / 留存后 `exe` / `duckdb_file` / `prefix` |
+| 目标已存在且为 reparse | **直接拒绝**（`$keepFull -ne $pyKeep` ⇒ throw），因为写入会穿透到别处 |
+
+**措辞已改**：变量与输出统一为 `RESOLVED`，文中明确"这是**逐级解析后的候选路径**，
+**不宣称是最终真实路径**；硬链接/卷挂载点不在本判据内"。
+
+#### §7.37.3 约束复制内部的链接
+
+| 手段 | 内容 |
+|---|---|
+| 复制前扫描 | `cmd /c dir /AL /S /B "$prefix"`，**计数 > 0 即 `throw`** 并打印前 10 条 |
+| 理由 | 复制器会沿 junction 钻进目标 ⇒ 死循环/膨胀；且留存副本会混入指向原环境的链接，升级后一并被改，独立性无从谈起 |
+| 复制命令 | `robocopy ... /E /XJ` 再兜一层（排除 junction 点） |
+
+#### §7.37.4 编码链：文本不经 stdout，关键数据一律 ASCII hex
+
+**审核指出的关键点成立**：PS 5.1 在「子进程 stdout → PS 字符串」这一步按活动代码页解码，
+**损坏发生在写文件之前**；因此"写完再自读相等"**证不到采集链无损**（两边都是同一个坏值）。
+
+**已改为三处独立校验**：
+
+| 校验 | 内容 | 能证什么 |
+|---|---|---|
+| ① `FILE-HEX == META-HEX` | Python 采集时对同一字符串 `s` 算 sha256；落盘后再**读文件字节**算 sha256 | 写入编码被改（GBK/截断）即不等 |
+| ② `PFX-HEX` 对拍 | 采集时对 `sys.prefix` 算 hex；文件内 `prefix` 再算 hex | **路径字段**未被改动 |
+| ③ `FIELDS` 校验 | 必须恰为 `duckdb,duckdb_file,exe,prefix,python,source_id` | 字段没缺没多 |
+
+文本由 **Python 自己 `open(..., encoding="utf-8", newline="\n").write(s)`** 落盘，**不经过 stdout**；
+命令行只回显 `META-HEX` / `PFX-HEX` / `PFX-LEN`（纯 ASCII，过管道无损）。
+另显式设 `$OutputEncoding` / `[Console]::OutputEncoding` 为 UTF-8 作为**降低风险**的补充——
+但**结论不依赖它**，依赖 hex 对拍。
+
+#### §7.37.5 用例续标 + 限制声明
+
+新增 **U21–U24**：祖先 junction 被拒、多级 Target 被拒、源内链接拒绝复制、stdout 编码损坏被检出。
+
+并加入审核要求的限制声明：
+
+> **⚠ U16／U17 不能代替其他路径的前置**：它们分别只证 `source_id` 真参与比较、`duckdb.__file__` 真做归属判定，
+> **不涉及**祖先 junction、多级 Target、源内链接、编码链；任何一条用例通过都**不能**推出其余路径成立。
+
+**U1–U24 全部标注未执行。**
+
+#### §7.37.6 本轮自查发现并修正的两处（同类错误未留到下一轮）
+
+| # | 问题 | 处置 |
+|---|---|---|
+| 1 | 改完父目录解析后，**漏了「目标本身已存在且为 reparse」**的判据（只解析父目录，叶子未解析） | 已补：`$keepFull = Resolve-FullPathStrict $pyKeep`，若解析结果 ≠ 词法路径即 `throw` |
+| 2 | 用例 U18/U20 的**预期文案与代码不符**（仍写 `PY-PREFIX`、`（真实路径）`） | 已改为 `FILE-HEX`/`PFX-HEX` 对拍、`（逐级解析后）` |
+| 3 | 修订表写"解析调用点 5 处"，补判据后实为 **6 处** | 已改 6 并列出 6 个位置 |
+
+#### §7.37.7 对账（grep 实测）
+
+| 项 | 读数 |
+|---|---|
+| `Resolve-FullPathStrict` 定义 / 调用 | 1 / **6** |
+| 逐段循环 `foreach ($seg in $segs)` | 1 |
+| 多跳 `while` + `hop>32` 上限 | 1 / 1 |
+| `dir /AL /S /B` 扫描 + 有链接即 throw | 1 / 1 |
+| `robocopy ... /XJ` | 1 |
+| Python 直写 UTF-8 | 1 |
+| `FILE_HEX -ne $META_HEX` / `PFX_HEX1 -ne $PFX_HEX0` / `FIELDS -ne` | 各 1 |
+| 「目标已存在且是重解析点」判据 | 1 |
+| here-string 配平（含 `$VAR = @'` 形式） | **5 开 / 5 闭** ✅ |
+| 代码围栏 ``` | 40（偶数）✅ |
+| U1–U24 执行 | **0** ⚠ |
+| **62 GB 耗时与峰值** | **未实测** ⚠ |
+
+#### §7.37.8 交付与状态
+
+- 候选 diff：`docs/evidence/duckdb-v6-r9-precise-diff-20261116.diff`（**473 行 / 6 hunk**）
+- **未 commit、未推送**（依审核边界）
+- T041 **保持 `BLOCKED`**；**11-17 技术与用户闸均不豁免**；62 GB 耗时/峰值仍未实测
+
+
+### §7.38 第十轮：JSON 仍走 stdout · 留存空判据 · 跳转后祖先未校验 · 扫描吞错（2026-11-16 02:2x–03:0x）
+
+> 依据 11-16 终审：「L393／455 又将 `ensure_ascii=False` JSON 经 stdout 给 PS，前面 hex 相等没有覆盖这次最终解码；
+> 直接明确 UTF-8 读文件或用 ASCII 转义 JSON。留存身份须真正比较 FILE／META／PFX，不能只检查有摘要行。
+> 跳到 Target 后其祖先仍可能是链接，当前 while 不等重新逐段解析；可优先采用更简单的逐祖先拒绝链接方案。
+> 源目录扫描隐藏错误且不核退出状态，访问失败不能当零链接。」
+> 边界：**不补测**｜不真实复制｜不 pip｜不做生产验证｜不下发｜**不提交推送**｜T041 不销。
+
+#### §7.38.1 🔴 我上一轮自己打破了刚建立的编码纪律
+
+上轮我论证"文本不经 stdout"，并加了三条 hex 对拍。**但取对象时写的是**：
+
+```powershell
+$pyObj = (& $py -c "import sys,json;print(json.dumps(json.load(open(sys.argv[1],encoding='utf-8')),ensure_ascii=False,sort_keys=True))" $pyPin) | ConvertFrom-Json
+$chkObj = (& $py -c "...同上..." $chkPin) | ConvertFrom-Json
+```
+
+**这条路径把同一份含中文的 JSON 又送进子进程、经 stdout 回来，再让 PS 按活动代码页解码。**
+前面 `FILE-HEX == META-HEX` 校验的是**写入**；这次**最终解码**它完全覆盖不到。
+等于「前半程用 hex 证明无误，最后一步又走回会坏的路」。
+
+**已改为直读文件**（两处）：
+
+```powershell
+$pyObj = ([System.IO.File]::ReadAllText($pyPin, $utf8)) | ConvertFrom-Json
+$chkObj = ([System.IO.File]::ReadAllText($chkPin, $utf8)) | ConvertFrom-Json
+```
+
+grep 实测：`-c ... print(...ensure_ascii=False ...)` **0 处**；`ConvertFrom-Json` 2 处，来源都是 `ReadAllText`。
+
+#### §7.38.2 留存身份的空判据
+
+上轮留存侧：
+
+```powershell
+if (-not (($chkRtOut | Select-String '^FILE-HEX').Line)) { throw "留存身份文件校验失败" }   # 只判"有没有"
+```
+
+**只判有无这一行，不比数值**——即便 `FILE-HEX` 与 `META-HEX` 完全不同、`prefix` 已被改，也照样通过。
+
+已补三项**真比较**：`CHK_FILE_HEX -ne CHK_META_HEX`、`CHK_PFX_HEX1 -ne CHK_PFX_HEX0`、
+`CHK_FIELDS -ne "duckdb,duckdb_file,exe,prefix,python,source_id"`，各自取不到值也先 throw。
+
+#### §7.38.3 跳转后祖先未校验 → 改用「逐级拒绝链接」
+
+**上轮缺陷**：`Resolve-FullPathStrict` 里，命中 reparse 后 `$cur = GetFullPath($Tgt)`，然后回到 `while` 顶部——
+只检查 **`$cur` 自身**是不是 reparse，**不看 `$cur` 的祖先**。于是：
+
+```
+末级 Target = D:\alias2\x        (x 是普通目录)
+                  alias2 -> D:\源环境   (junction)
+=> 检查 D:\alias2\x 自身上无 reparse => break => 返回该路径
+=> 真实落点仍在 D:\源环境\x
+```
+
+**已采纳审核建议，改为拒绝式**：`Test-ChainNoReparse` 从盘根起用 `for` 遍历每一段，
+**任一级是 reparse 即 `throw`**；**不解析、不跳转** ⇒ "跳转后祖先未校验"在构造上不存在。
+同时**不再宣称得到真实路径**（上一轮我把它叫 `RESOLVED`/真实路径，属于过度声明）。
+
+**代价如实写进文档**：若客户环境本身含 junction（某些 OneDrive / ProgramFiles 布局），会被直接拒绝；
+这是有意为之——那种链路上无法用本配方证明"留存独立"。
+
+#### §7.38.4 源扫描吞错 → Python 扫描 + 核退出码
+
+**上轮缺陷**：`cmd /c dir /AL /S /B "$prefix" 2>$null` —— `2>$null` 丢掉错误输出，且不看 `$LASTEXITCODE`。
+扫描失败（无权限/路径异常）时输出为空 ⇒ `$linkHits.Count = 0` ⇒ **报告"0 个链接"**，把"不知道"说成"没有"。
+
+**已改**：Python `os.walk(followlinks=False)` + `os.lstat` 逐项查 `st_file_attributes & FILE_ATTRIBUTE_REPARSE_POINT`；
+输出 `SCAN-LINKS` / `SCAN-ERRORS` **两个纯 ASCII 计数**（数字过管道无损）；有访问错误时脚本 `exit 7`。
+PS 侧三道判据：`$scanRc -ne 0` ⇒ throw；`SCAN_ERRORS -ne 0` ⇒ **"结论不可靠，拒绝继续"**；`SCAN_LINKS -ne 0` ⇒ 拒绝复制。
+
+#### §7.38.5 用例续标 U24–U26（仍全部未执行）
+
+| ID | 目标 |
+|---|---|
+| U24 | **PS 直读不依赖 stdout**：控制台代码页设 936(GBK)、路径含中文，仍能正确读出 `prefix` |
+| U25 | **扫描失败不得当零链接**：源内造无权限子目录 ⇒ `SCAN-ERRORS>0` ⇒ 拒绝 |
+| U26 | **留存三值比较真生效**：改留存 json 一字节/改 `prefix` 值 ⇒ 拒绝 |
+
+**U1–U26 全部未执行。**
+
+#### §7.38.6 对账（grep 实测）
+
+| 项 | 读数 |
+|---|---|
+| `-c ... print(...ensure_ascii=False ...)` 残留 | **0** |
+| `ConvertFrom-Json` 来源 | 2 处，均 `ReadAllText` 直读 |
+| 留存 `FILE/META/PFX/FIELDS` 真比较 | 各 1 |
+| 残留"只检查有摘要行"形态 | 0 |
+| `Get-RealTarget` / `Resolve-FullPathStrict` 残留 | 0 / 0 |
+| `Test-ChainNoReparse` 定义 / 逐级 `for` / 任一级 throw | 1 / 1 / 1 |
+| `cmd /c dir /AL` 残留 | 1（**注释内引用上轮错误**，已核为注释行） |
+| Python 扫描 / `SCAN_ERRORS` 判据 / `scanRc` 判据 | 1 / 3 / 1 |
+| here-string 开/闭 | **6 / 6** |
+| 代码围栏 ``` | 40 |
+| U1–U26 执行 | **0** ⚠ |
+| **62 GB 耗时与峰值** | **未实测** ⚠ |
+
+#### §7.38.7 交付与状态
+
+- 候选 diff：`docs/evidence/duckdb-v6-r10-precise-diff-20261116.diff`（**511 行**）
+- **未 commit、未推送**
+- T041 **仍 `BLOCKED`**；**11-17 临期：技术闸与用户闸均不放宽**；62 GB 耗时/峰值仍未实测
+
+
+### §7.39 第十一轮：`os.walk` 无 onerror · 驱动器相对路径 · 静态≠运行期（2026-11-16 02:5x–03:2x）
+
+> 依据 11-16 终审（DRIFT-N19-r1）：「`os.walk` 未设 `onerror`，目录 scandir 被拒时默认忽略，
+> 内层 lstat 循环看不到内容，仍可报 SCAN_ERRORS 0。补遍历错误收集及根有效／目录断言，失败不得当无链接。
+> 链检查保留盘根绝对形式，校准 `D:` 驱动相对路径风险，不把静态检查等同运行时路径不变。
+> 先交准确纯合成候选，明确目录、退出码和失败用例；已收摘要比较不重派。」
+> 边界：**不跑补测**｜不构造 ACL｜不复制环境｜不 pip｜不生产验证｜不下发｜**不提交**｜T041 不销。
+
+#### §7.39.1 🔴 `onerror=None` 把"看不见"伪装成"没有"
+
+上版扫描：
+
+```python
+for dp, dns, fns in os.walk(root, followlinks=False):   # 无 onerror
+    for name in list(dns) + fns:
+        st = os.lstat(os.path.join(dp, name))
+```
+
+**失效链**：某目录 `scandir` 被拒 → CPython 的 `walk` 在 `onerror is None` 时**直接 continue**，
+**不 yield 该目录** → 内层循环一次都不跑 → `lstat_errors` 保持空 → 报 `SCAN-ERRORS 0`。
+**"读不到"被表达成"没有链接"**，与上一版 `2>$null` 是同一类错误的第二次出现
+（上次是命令层吞错，这次是库层默认值吞错）。
+
+**已改**：
+
+| 手段 | 作用 |
+|---|---|
+| `os.walk(..., onerror=onerror, ...)` | scandir 失败进 `walk_errors`，不再消失 |
+| `SCAN-WALK-ERRORS` | 遍历层错误计数 |
+| `SCAN-LSTAT-ERRORS` | 逐项 `lstat` 错误计数（原 `SCAN-ERRORS` 混装，现拆开） |
+| `SCAN-DIRS` | 实际进入的目录数 |
+| `SCAN-ROOT-ENTRIES` | 根的一次独立 `os.listdir` 结果数（交叉校验） |
+| 根断言 | `isdir` 假 或 `listdir` 抛错 ⇒ `SCAN-ROOT-INVALID` + **exit 8** |
+| 目录数兜底 | `SCAN-DIRS<1` ⇒ 拒；`SCAN-DIRS==1 且 ROOT-ENTRIES>0` ⇒ 拒 |
+| 退出码 | 无错 **0** / 遍历或 lstat 错 **7** / 根无效 **8** |
+
+PS 侧判据相应改为：`rc eq 8` ⇒ 根无效拒；`WALK≠0` ⇒ "未进入其内部，结论不可靠"拒；
+`LSTAT≠0` ⇒ 拒；`DIRS<1` ⇒ 拒；`DIRS==1 且 ROOT-ENTRIES>0` ⇒ 拒。**任一命中即 throw，不再可能报零链接。**
+
+#### §7.39.2 自查补强：`followlinks=False` 挡不住 junction
+
+Windows 上 junction 的 `is_dir()` 为 **True**、`is_symlink()` 为 **False**，
+所以 `os.walk(followlinks=False)` **仍会走进 junction 目标**——不仅漏检，
+在真实环境里还会顺着链接把目标整棵树遍历一遍（爆量、可能成环）。
+已在 walk 内对每个子目录 `lstat` 并检测 `FILE_ATTRIBUTE_REPARSE_POINT`，
+命中则 `hits.append` **且 `dns.remove(name)` 剪枝**（该条审核未点，属我自查发现）。
+
+#### §7.39.3 驱动器相对路径：`D:foo` 不是 `D:oo`
+
+`[System.IO.Path]::GetFullPath("D:qssyn\data")` 依 **D: 盘的当前目录**解析，
+而该当前目录是**进程状态**（可由 `cd D:\somewhere` 改变），不是固定位置。
+新增 `Assert-AbsoluteDrivePath` 在链检查入口拒绝四类：
+
+| 输入 | 判据 | 结果 |
+|---|---|---|
+| `D:qssyn\data` / `D:` | `^[A-Za-z]:(?![\\/])` | 拒（驱动器相对） |
+| `qssyn\data` | `IsPathRooted` 假 | 拒（非绝对） |
+| `\\srv\share\x` | `GetFullPath` 后以 `\\` 开头 | 拒（UNC 不在判据内） |
+| `D:\qssyn\data` | 规范化后匹配 `^[A-Za-z]:\\` | 放行 |
+
+#### §7.39.4 静态检查 ≠ 运行期不变
+
+已写入两处（§2.4.0(1) 与 2.4.9b④）：本判据是**检查时刻的快照**；
+检查与 `robocopy` 之间目录仍可能被改成 junction（**TOCTOU**），脚本**不检测该竞态**；
+结论口径只能是「**检查时刻**全链无重解析点」，**不得**写成「运行期路径稳定」。
+
+#### §7.39.5 纯合成候选（2.4.9b）与退出码口径
+
+给出合成树（`mklink /J` 不需管理员）、建树/清理脚本、S0–S3 / P0–P5 逐条预期读数。
+**关键如实点**：路径函数是 `throw`，**没有自己的退出码**，效果是中止升级步骤；
+只有 **扫描脚本**有独立可判定的 0 / 7 / 8。表里对 P0–P5 写"见下※"而非编造数字——
+把宿主行为写成"判据退出码"会让人误以为函数在报告状态。
+
+另警告：**删 junction 必须 `rmdir`**，`Remove-Item -Recurse` 会删掉**链接目标里的真实内容**。
+
+#### §7.39.6 对账（grep 实测）
+
+| 项 | 读数 |
+|---|---|
+| `os.walk(..., onerror=onerror, ...)` | 1 |
+| `onerror` 回调 / `dns.remove` 剪枝 | 1 / 2 |
+| `SCAN-ROOT-INVALID` / `ROOT-ENTRIES` / `DIRS` / `WALK-ERRORS` / `LSTAT-ERRORS` | 各 2（脚本产生 + PS 解析） |
+| `sys.exit(8)` / `else 7` | 2 / 1 |
+| `Assert-AbsoluteDrivePath` 定义 / 被调用 | 1 / 1 |
+| 驱动器相对正则 | 1（L334，逐行核过） |
+| `TOCTOU` 声明 | 1（L325） |
+| here-string 开/闭 | **6 / 6** |
+| 代码围栏 ``` | 40 |
+| U1–U30 执行 | **0** ⚠ |
+| **62 GB 耗时与峰值** | **未实测** ⚠ |
+
+#### §7.39.7 交付与状态
+
+- 通知：`docs/handoff/customer-notice-5-…-v6-…md`（**98,301 B / 1,484 行**）
+- 候选 diff：`docs/evidence/duckdb-v6-r11-precise-diff-20261116.diff`（**652 行**）
+- **未 commit、未推送**；T041 **仍 BLOCKED**；**11-17 技术与用户闸不变**（不强迫在"延期/阻断"间择一）
+- 本轮**未执行**任何补测、ACL 构造、环境复制、pip、生产验证
+
+
+### §7.40 第十二轮：自造兜底误拦 · 盘根被裁成 `D:`（2026-11-16 08:5x–09:1x）
+
+> 依据 11-16 技术终审：「合法根只有普通文件、无子目录时，DIRS=1 且 ROOT_ENTRIES>0 完全正常，
+> 不能据此判扫描异常。保留真实 onerror／lstat 错误门，删错兜底或改成能对应实际目录的证据。
+> 路径形式闸拒驱动相对可收，但链内仍 TrimEnd 把盘根变 D:，需保留绝对盘根形式。
+> 函数 throw 不必冒独立退出码，也不要求为每函数另造脚本。」
+> 边界：**不构造 ACL／junction**｜不删除清理｜不补测｜不复制真实环境｜不 pip｜不生产验证｜不下发提交。
+
+#### §7.40.1 🔴 我为了"防漏"造了一条会误删的规则
+
+上一版我加了：
+
+```powershell
+if ([int]$SCAN_DIRS -eq 1 -and [int]$SCAN_ROOTE -gt 0) {
+    throw "只遍历到 1 个目录但根下有 $SCAN_ROOTE 项 —— 可能有未记账的 scandir 拒绝，拒绝继续。"
+}
+```
+
+**反例（审核所指）**：根下**只有普通文件、没有子目录**：
+
+```
+D:\qssyn\flat\
+├── a.txt
+├── b.txt
+└── c.txt
+```
+
+`os.walk` 对这一棵树**恰好只 yield 根一次** ⇒ `SCAN-DIRS 1`；根下确有 3 项 ⇒ `SCAN-ROOT-ENTRIES 3`。
+上面那条规则把**完全正常**的目录判成"扫描异常"。**它跟真实错误通道毫无关系**，是我凭想象补的。
+
+**性质**：这与前几轮"漏了检查"方向相反——**过度检查**。而过度检查的代价不小：
+它会拒绝合法输入，且因为报错文案听起来很专业（"可能有未记账的 scandir 拒绝"），
+**很难被使用者识别为误拦**，只会在现场变成"配方跑不通"。
+
+**已删除该规则。保留的真实门**：
+
+| 门 | 来源 | 是否保留 |
+|---|---|---|
+| `$scanRc -ne 0`（含 exit 8 根无效） | 脚本退出码 | ✅ |
+| `SCAN_WERR -ne 0` | `onerror` 收集的 scandir 拒绝 | ✅ 真实通道 |
+| `SCAN_LERR -ne 0` | 逐项 `lstat` 失败 | ✅ 真实通道 |
+| `SCAN_DIRS -lt 1` | walk 对有效根必然产出 1 次 | ✅ 仅此一条结构性不变量 |
+| ~~`DIRS==1 且 ROOT-ENTRIES>0`~~ | ~~推测~~ | ❌ **已删（误拦）** |
+
+`SCAN-ROOT-ENTRIES` **降为证据字段**，写进落证（`root_entries=` / `src_scan_root_entries=`），不参与拒绝。
+
+#### §7.40.2 盘根被裁成 `D:`：自己的闸自己违反
+
+`Test-ChainNoReparse` 原本写：
+
+```powershell
+$cur = $root.TrimEnd('\')     # 对 D:\ 得到 D:
+```
+
+而同一函数入口刚刚用 `Assert-AbsoluteDrivePath` **拒绝**驱动器相对形式——
+**函数内部又把绝对盘根裁成了驱动器相对形式**。`D:` 的含义取决于「D: 盘的当前目录」，是进程状态，
+正是我在 §7.39.3 里刚论证过不能接受的东西。
+
+**已改**：`$cur = $root` **原样保留**；并在 `return` 前**出口再断言** `^[A-Za-z]:\\`；
+`$pyKeep` 同去 `TrimEnd` 并加盘根断言。代码中已无 `TrimEnd`（残留 2 处是说明性注释，逐行核过）。
+
+#### §7.40.3 补正例 S0b：让"误拦是否消失"可判
+
+新增合成用例 **S0b**（`D:\qssyn\flat`：3 个 txt、无子目录）：
+
+| 读数 | 期望 |
+|---|---|
+| `SCAN-DIRS` | **1** |
+| `SCAN-ROOT-ENTRIES` | **3** |
+| `SCAN-WALK-ERRORS` / `SCAN-LSTAT-ERRORS` | 0 / 0 |
+| 退出码 | **0 —— 必须放行** |
+
+并写明判据方向：**S0b 通过 ⇒ 误拦已消失；S0b 被拒 ⇒ 误拦仍在**。
+用例续标 **U31**（根只有普通文件不得误拦）、**U32**（盘根不被裁成驱动器相对）。
+
+#### §7.40.4 退出码：接受审核口径，不改造
+
+依审核意见，路径函数 `throw` 即中止升级步骤，**不必**有独立退出码，也**不为每个函数另造脚本**。
+2.4.9b 原有的"见下※"口径保留不动——那正是这个说明。扫描脚本的 0/7/8 不变。
+
+#### §7.40.5 对账（grep 实测）
+
+| 项 | 读数 |
+|---|---|
+| `SCAN_DIRS -eq 1` 兜底残留 | **0** |
+| "未记账的 scandir 拒绝"文案残留 | **0** |
+| `SCAN_DIRS -lt 1` 不变量 | 1 |
+| `SCAN_WERR -ne 0` / `SCAN_LERR -ne 0` | 1 / 1 |
+| `$cur = $root` | 1（L352，核在真实文件行） |
+| 路径函数出口盘根再断言 | 1 |
+| `$pyKeep` 盘根断言 | 1 |
+| 代码中 `TrimEnd` | **0**（残留 2 处为注释 L347/L516） |
+| `root_entries=` / `src_scan_root_entries=` | 1 / 1 |
+| here-string 开/闭 | **6 / 6** |
+| 代码围栏 ``` | 46 |
+| U1–U32 执行 | **0** ⚠ |
+| **62 GB 耗时与峰值** | **未实测** ⚠ |
+
+#### §7.40.6 交付与状态
+
+- 通知：`docs/handoff/customer-notice-5-…-v6-…md`（**100,500 B / 1,511 行**）
+- 候选 diff：`docs/evidence/duckdb-v6-r12-precise-diff-20261116.diff`（**679 行**）
+- **未 commit、未推送**；T041 **仍 BLOCKED**；**11-17 临期，原闸保持**（不强迫在"延期/阻断"间二选一）
+- 本轮**未**构造 ACL/junction、未删除清理、未补测、未复制环境、未 pip、未生产验证
+
+
+### §7.41 第十三轮：只交有限合成申请 · 「rc=0 不等于误拦关闭」（2026-11-16 09:4x–10:1x）
+
+> 依据 11-16 审核：「收。合法平根误拦删除、盘根保留与 S0b 正例设计通过，关闭本轮两项退修；
+> 尚未批准纯合成执行或升级。当前配方的建树仍含固定根 Force、junction 和复制，不能视为只做 S0b。
+> 交一个有限申请：不存在的新绝对根、三 txt、扫描器提取身份、逐步命令、输出路径及失败退出，
+> 不顺带运行全套建树。S0b 须真正比较 DIRS=1／ROOT_ENTRIES=3／LINKS=0／两错=0，并由消费闸接受；
+> scanner 退出 0 本身不等于误拦实测关闭。建议下一包只交有限合成申请，不重审编码三值、onerror 和已解两项。」
+> 边界：**不建树、不建 ACL、不建 junction、不清理**｜不复制真实环境｜不 pip｜不升级｜不生产验证｜不下发提交。
+
+#### §7.41.1 为什么 2.4.9b 不能拿来当 S0b 执行
+
+2.4.9b 是"整套合成验证集"的**配方**，它的建树脚本包含：
+
+```powershell
+New-Item -ItemType Directory -Force -Path "$syn\env\Lib\site-packages\duckdb"   # 固定根 + -Force
+cmd /c mklink /J "$syn\alias_to_env" "$syn\env"                                    # junction
+cmd /c mklink /J "$syn\env_with_link\Lib\sp_link" "$syn\env"                     # junction
+Copy-Item -Recurse "$syn\env" "$syn\env_with_link"                                 # 复制
+```
+
+**把它当"只做 S0b"执行，会顺带跑完固定根、junction、复制三件事**——三件都在边界禁令内。
+所以本轮不选它，另出 **§2.4.10 有限申请**：单一新根 + 三个 txt，其余一律不做。
+
+#### §7.41.2 「scanner rc=0 ≠ 误拦关闭」是本轮最要紧的一句
+
+被删掉的那条错规则（`DIRS==1 且 ROOT-ENTRIES>0 ⇒ 拒`）**位置在消费闸，不在扫描器**。
+推论很直接：
+
+| 断言 | 是否有鉴别力 |
+|---|---|
+| 「扫描器 rc=0」 | ❌ **没有**——旧配方下扫描器**同样 rc=0**，误拦发生在下游判定 |
+| 「五个计数逐项相等」 | ✅ 有 |
+| 「消费闸读到 `dirs=1`/`root_entries=3` 且**不 throw**」 | ✅ 有 |
+| 上两项**同时成立** | ✅ 才判误拦实测关闭 |
+
+这也修正了我上一轮的表述倾向：我曾把"S0b 通过（exit 0）即证明误拦消失"写进 2.4.9b，
+那句话**只在"消费闸与扫描器同一个进程"时才成立**——而它们不是。已在新申请里改正，
+并保留 2.4.9b 原文（作为历史记录），由 §2.4.10 E 表覆盖口径。
+
+#### §7.41.3 申请要件（§2.4.10）
+
+| 要件 | 内容 |
+|---|---|
+| 根 | `D:\qssyn_s0b_<stamp>` —— 本轮只读探测**不存在**；D: 可用 174,104 MB |
+| 内容 | 1 目录 + `a.txt`/`b.txt`/`c.txt`（无子目录）；建后断言 `条目=3 且子目录=0` |
+| 身份 | 扫描器与消费闸均从 §2.4.0 **原文按行提取**，不重写不粘贴副本 |
+| 命令 | 5 步，每步前置断言；提取失败即 throw，**不手写替代** |
+| 输出 | `docs\evidence\duckdb-s0b-<stamp>\` 下 4 件（`_pyid_scan.py`/`_gate_from_notice.ps1`/`scan.stdout.txt`/`scan.rc.txt`/`gate.accepted.txt`） |
+| 失败 | **8 条**，逐条写明触发条件与行为 |
+| 鉴别力 | 6 个**纯内存**变异（WALK=1/LSTAT=1/LINKS=1/DIRS=0/RC=8/RC=7），任一未被拒即判闸无鉴别力 |
+
+#### §7.41.4 本轮唯一做过的执行：提取逻辑只读自检
+
+为确认"照抄能否跑"，在**内存里**复刻了提取逻辑（未建目录、未向业务路径写文件）：
+
+| 检查 | 读数 |
+|---|---|
+| 定界符构造 | `openTok`=`@'`、`closeTok`=`'@`（各 len 2） |
+| 扫描器围栏 | `$PY_SCAN = @'` 在 L429，闭合 `'@` 在 L487；正文 **L430–L486（57 行）** |
+| 扫描器语法 | `py_compile.compile(..., doraise=True)` ⇒ **PASS**（rc=0） |
+| 消费闸边界 | L493（`if ($scanRc -eq 8)`）→ L512（`PY-SRC-LINKS  = 0（…`） |
+| 消费闸语法 | `[scriptblock]::Create(...)` ⇒ **PASS** |
+
+**自我纠正**：我最初把定界符写成 `[char]39 + [char]64`——PS 里两个 `[char]` 相加会退化成
+**整数加法**（103 = `'g'`），不是字符串拼接。已改用 `('@' + "'")` 显式拼接并实测通过。
+这类"看起来在做字符串、实际在做算术"的写法，正是"静态读起来对、跑起来不对"的典型。
+
+#### §7.41.5 对账（grep / 实测，逐条核到行）
+
+| 项 | 读数 | 说明 |
+|---|---|---|
+| `##### 2.4.10 有限合成申请` 标题行 | **1**（L1257） | 另 3 处为状态头/修订表/对账表的**引用**，非重复章节 |
+| `$cur = $root` 代码行 | **1**（L352） | 另一处在修订表说明中（L1676），非代码 |
+| "退出码 0 本身不等于误拦已关闭" | L1380（正文）+ L1675（修订表） | 一处正文一处引用 |
+| H 失败点表数据行 | **8** | 与声明一致 |
+| 五计数预期 | DIRS=1 / ROOT-ENTRIES=3 / LINKS=0 / WALK=0 / LSTAT=0 | 逐项列出 |
+| 鉴别力变异 | 6 | — |
+| 已收项是否被误动 | `CHK_FILE_HEX` / `CHK_PFX` / `onerror` / `$cur=$root` 各 1，误拦兜底 0 | ✅ 全未动 |
+| here-string 开/闭 | **6 / 6** | ✅ |
+| 代码围栏 ``` | **52**（偶数） | ✅ |
+| 本轮建树/ACL/junction/复制/pip | **全部未做** | ✅ |
+| U1–U32 执行 | **0** | ⚠ |
+| **62 GB 耗时与峰值** | **未实测** | ⚠ |
+
+#### §7.41.6 交付与状态
+
+- 通知：`docs/handoff/customer-notice-5-…-v6-…md`（**111,659 B / 1,702 行**）
+- 候选 diff：`docs/evidence/duckdb-v6-r13-precise-diff-20261116.diff`（**870 行**）
+- **未 commit、未推送**；**§2.4.10 申请待批，未执行**
+- T041 **仍 BLOCKED**；62 GB 未测；**11-17 原技术与用户闸保持**
+
+
+### §7.42 第十四轮：`Out-String` 让行首匹配失配 · 变异自检空转 · 占位符与清理授权（2026-11-16 10:3x–11:0x）
+
+> 依据 11-16 审核：「局部收。有限 S0b 范围及"五计数＋消费闸接受"判据通过；命令有可达错误，运行申请未准。
+> ①`Out-String` 把原逐行数组变为一个多行字符串，原闸的行首匹配会失配。原数组直接喂闸，落日志时再转文本。
+> ②变异只改 `$so`／`$m.rc`，实际闸仍读原 `$scanOut`／`$scanRc`。逐例显式绑定实际输入；核预期错误，
+> 不能任意异常都当变异命中。③`$py` 仍是说明占位，改为真实已核解释器取得方式；根和输出目录排他新建。
+> 先去掉清理申请，保留失败材料，不因未建 junction 自动获得递归删除权。」
+> 边界：不建树｜不扫描｜不跑变异｜不构造 ACL／junction｜不清理｜不升级｜不生产验证｜不下发提交。
+
+#### §7.42.1 `Out-String` 的失配（本轮做了一次只读实测）
+
+构造 5 元素数组模拟扫描器输出，比对「原数组」与「`Out-String` 后的 blob」对同五个行首锚点的命中：
+
+| 锚点 | 数组命中 | 数组取 `[1]` | blob 命中 | blob 取 `[1]` |
+|---|---|---|---|---|
+| `^SCAN-LINKS` | True | 0 | True（**恰好首行**） | 0 |
+| `^SCAN-DIRS` | True | 1 | **False** | `<无>` |
+| `^SCAN-ROOT-ENTRIES` | True | 3 | **False** | `<无>` |
+| `^SCAN-WALK-ERRORS` | True | 0 | **False** | `<无>` |
+| `^SCAN-LSTAT-ERRORS` | True | 0 | **False** | `<无>` |
+
+**比预想更严重**：不是"全部失配"，而是**只有首行那条侥幸命中**——这更危险，
+因为 `SCAN-LINKS 0` 恰好是最要紧的那个值，看起来"读到了"，其余四个却是空。
+闸的"缺字段"分支会先 throw，**数值比较根本执行不到**；若有人放宽了缺字段检查，就会拿空值去比。
+
+已改：`$scanOut = @(& $py $scanPy $root)` 保留数组直接喂闸；只在 `scan.stdout.txt` 落盘时 `-join`。
+另加自证：数组形态下五个锚点必须都能取到值，否则 throw。
+
+#### §7.42.2 我的变异自检是空转的
+
+上一版：
+
+```powershell
+foreach ($m in $mutations) {
+    $so = $scanOut                       # 局部副本
+    ...
+    $threw = $false
+    try { & { . $gatePath } } catch { $threw = $true }   # 闸读的是父作用域 $scanOut/$scanRc
+    if (-not $threw) { throw "..." }
+}
+```
+
+`$so` 是**局部变量**，闸从不读它；`$m.rc` 也**从未赋给 `$scanRc`**。
+`& { . $gatePath }` 走 PowerShell 的**动态作用域**，子作用域读到的是父作用域里那两个**从未变过**的变量
+⇒ 六个"变异"全都在对同一份正常输入跑 ⇒ **必然全部不 throw** ⇒ 我的自检什么也没验。
+
+**这是"形式上有自检、实质上无输入"的典型**：与第九轮"只判有没有摘要行"、第十一轮"`onerror` 默认吞错"
+是同一族——**判据的输入链没接上**。
+
+已改：逐例把变异值**赋给闸真正读的 `$scanOut` / `$scanRc`**；跑完立即还原；
+**核预期错误消息**（`throw` 但原因不符 ⇒ 判"不算命中"，不把任意异常当命中）；
+六例后再跑基线**验还原有效**；文本变异另加"替换是否真发生"断言（行数不变且 `$mut` 含新值）。
+
+#### §7.42.3 占位符、排他新建、清理授权
+
+| 项 | 上一版 | 本版 |
+|---|---|---|
+| 解释器 | `$py = '<说明：…>'` 纯占位 | `Get-Command python -CommandType Application` → 核"是文件/叫 `python.exe`/能跑出 version" → 打印 `PY-SHA` |
+| 根 | 先 `Test-Path` 再 `New-Item`（无 -Force，但 outDir 有） | 根与 outDir **都先判存在即 throw，再 `New-Item` 不带 `-Force`** |
+| 输出目录 | `New-Item … -Force`（**静默复用已存在目录**） | 同上，排他新建 |
+| 清理 | 附了一段 `Remove-Item -Recurse` | **整节删除**；失败/成功一律保留现场；清理须独立申请 |
+
+**为什么删清理**：上一版写"本申请未建 junction，故可安全删树"，是**从"没有链接"推出"可以删"**。
+三条理由说明它不成立：
+
+1. 现在没有链接，**不代表删除那一刻没有**（与 §2.4.0(1) 的 TOCTOU 同一面）；
+2. 即使真没有链接，`Remove-Item -Recurse` 的正确性依赖「路径确实是我建的那个」——
+   那要靠**排他新建**保证，不能靠"没建 junction"保证；
+3. 删除**不可逆**，不该由一个测试申请顺手携带。
+
+#### §7.42.4 对账（grep 实测）
+
+| 项 | 读数 |
+|---|---|
+| `\| Out-String` 残留 | **0** |
+| `$scanOut = @(& $py …)` | 1 |
+| 落日志才 `($scanOut -join …)` | 1 |
+| 五个锚点自证循环 | 1 |
+| `$so` 残留 | **0** |
+| `$scanOut = $mut` / `$scanRc = $m.rc` | 1 / 1 |
+| 还原 `$baselineOut` / 跑完验基线 | 1 / 1 |
+| 核预期错误 | 1 |
+| 占位符残留 | **0** |
+| `New-Item … -Force` 残留 | **0** |
+| 清理 `Remove-Item -Recurse` 残留 | **0** |
+| "不含清理授权" / "不等于获得递归删除权" | 1 / 1 |
+| here-string 开/闭 | **6 / 6** |
+| 本节代码围栏 | 4 |
+| **只读实测**：`Out-String` 后 5 锚点命中 | 首行 1 命中 / **其余 4 全 False** |
+| U1–U32 执行 | **0** ⚠ |
+| **62 GB 耗时与峰值** | **未实测** ⚠ |
+
+#### §7.42.5 交付与状态
+
+- 通知：`docs/handoff/customer-notice-5-…-v6-…md`（**118,244 B / 1,776 行**）
+- 候选 diff：`docs/evidence/duckdb-v6-r14-precise-diff-20261116.diff`（**944 行**）
+- **未 commit、未推送**；**§2.4.10 仍待批，未执行**
+- T041 **仍 BLOCKED**；62 GB 未测；**11-17 原技术与用户闸保持**
+
+
+### §7.43 S0b 首次执行：**失败**（2026-11-16 14:39:39 起；现场保留未清理）
+
+> 授权：DRIFT-N19-r2 批准**一次** S0b 最小验证。执行范围＝§2.4.10。
+> 结论：**S0b 未通过**。五计数与扫描器全对，**消费闸未能执行**（解析期失败），六负控未跑到。
+> 依边界「任何非预期即保现场报失败，不改脚本或换解释器重跑求绿」：**未重跑、未改脚本**。
+
+#### §7.43.1 结果速览
+
+| 项 | 结果 |
+|---|---|
+| 解释器 | `C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe`，ver **3.11.9**，sha256 `5F7B89A612C9B8AF1D6456CDFCD1DBE5CA630849E79AEBCED9BEE9A6694952EC` |
+| 源稿 sha256 | `C37EBF7864384A8A46525AFDBC8A25B3353CB3EB6E824AE590C1AF9AA1C27148` |
+| 排他新建 | ✅ 根 `D:\qssyn_s0b_20261116T143939`、输出目录 `docs\evidence\duckdb-s0b-20261116T143939` |
+| 三 txt | ✅ `entries=3, subDirs=0` |
+| 扫描器提取 | ✅ L427..L483（57 行，原文提取） |
+| `scanRc` | **0** |
+| `SCAN-LINKS` / `SCAN-DIRS` / `SCAN-ROOT-ENTRIES` / `SCAN-WALK-ERRORS` / `SCAN-LSTAT-ERRORS` | **0 / 1 / 3 / 0 / 0** —— **五项全对** |
+| **消费闸接受** | ❌ **未达成**（提取脚本解析失败，非逻辑拒绝） |
+| **六负控** | ⛔ **未执行**（在闸之前中止） |
+| runner 退出码 | **1** |
+
+#### §7.43.2 失败点与根因
+
+`§2.4.10` 步骤 4 把消费闸从通知里提取出来、写成 `_gate_from_notice.ps1`，再 dot-source。
+写入用的是 `New-Object System.Text.UTF8Encoding($false)` ⇒ **无 BOM 的 UTF-8**。
+而**Windows PowerShell 5.1 读取无 BOM 的 `.ps1` 时按 ANSI（本机 936/GBK）解码** ⇒ 中文全部乱码 ⇒ 脚本解析失败：
+
+| 解码方式 | 第 8 行内容 |
+|---|---|
+| 按 **UTF-8**（文件真实编码） | `throw "扫描输出缺字段（LINKS/DIRS/WALK-ERRORS/LSTAT-ERRORS/ROOT-ENTRIES），拒绝继续：$scanOut"` |
+| 按 **GBK**（PS 5.1 实际所用） | `throw "鎵弿杈撳嚭缂哄瓧娈碉紙LINKS/DIRS/WALK-ERRORS/LSTAT-ERRORS/ROOT-ENTRIES锛夛紝鎷掔粷缁х画锛?scanOut"` |
+
+实测 BOM 字节：`_gate_from_notice.ps1` 首 3 字节 = `69 66 20`（`if `）⇒ **确认无 BOM**。
+宿主：`powershell.exe` 5.1.26100.9711 / CLR 4.0.30319.42000。
+
+报错原文（节选）：
+
+```
+At ...\_gate_from_notice.ps1:8 char:12
++     throw "鎵弿杈撳嚭缂哄瓧娈碉紙LINKS/DIRS/WALK-ERRORS/...
++            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Unexpected token '鎵弿杈撳嚭缂哄瓧娈? in expression or statement.
+（另在 :12 char:37、:19 char:38 各报一次，均为中文乱码所致）
+```
+
+**性质**：这是 `§2.4.10` 命令链的**真实缺陷**（PS 5.1 无 BOM 脚本按 GBK 读），
+**不是**消费闸逻辑拒绝、**不是**扫描器问题、**不是**误拦仍在。
+
+#### §7.43.3 我自己的失败消息有一处误归因（必须改正）
+
+runner 里那句：
+
+```powershell
+if ($gateErr) { throw "消费闸拒绝了基线（误拦仍在）：$gateErr" }
+```
+
+**这句是错的**：闸**根本没有运行**（脚本没解析成功），谈不上"拒绝"。
+把"解析失败"写成"误拦仍在"，会导致后续判断方向完全跑偏（去查误拦规则，而真因是编码）。
+**应改为**：区分「闸解析失败（无法判定）」与「闸运行后被拒（误拦仍在）」两类，分别报。
+
+本项与 §7.42.2「变异自检空转」同族：**报错文案声称的因果，与实际发生的事不是一回事**。
+
+#### §7.43.4 这次失败证到了什么、没证到什么
+
+| 已证 | 未证 |
+|---|---|
+| 排他新建可用（不存在的根/输出目录） | 消费闸能否接受该读数 |
+| 三 txt 平根形态成立（`entries=3, subDirs=0`） | 六负控是否按预期原因拒绝 |
+| 从原文提取扫描器**可用**，且 `py_compile`/运行均正常 | 变异绑定与还原是否有效 |
+| 平根上 `DIRS=1` / `ROOT-ENTRIES=3` / `LINKS=0` / 两错 0 **实测成立** | —— |
+| `scanRc=0` | —— |
+
+**重要**：`DIRS=1 且 ROOT-ENTRIES>0` 在真实平根上**实测就是正常值**——这独立印证了
+第十二轮删掉那条误拦兜底是对的（此前只是推理，现在是实测）。
+
+#### §7.43.5 现场（**未清理，按边界保留**）
+
+根 `D:\qssyn_s0b_20261116T143939\`：`a.txt`(1B) / `b.txt`(1B) / `c.txt`(1B)。
+
+输出目录 `docs\evidence\duckdb-s0b-20261116T143939\`：
+
+| 文件 | 大小 | sha256 |
+|---|---|---|
+| `_gate_from_notice.ps1` | 2206 B | `7ACED800301A63E3B7272E5C59995CA2BACB4C7658957C6620132A2EF92B4EC6` |
+| `_pyid_scan.py` | 2165 B | `88772071BC24171D4DCCE38B75A736A84809F6465CA2AB81FB43F7EB70994A4C` |
+| `scan.rc.txt` | 3 B | `13BF7B3039C63BF5A50491FA3CFD8EB4E699D1BA1436315AEF9CBE5711530354` |
+| `scan.stdout.txt` | 89 B | `748E8B66CF1469E369242F953BBE618749C635F38C9980F89C013B80361237D9` |
+
+**未生成**（因提前 throw）：`s0b-verdict.txt` / `negcontrols.tsv` / `hashes.tsv` / `_runner.ps1` / `gate.accepted.txt`。
+上表 hash 是**事后由我逐文件另算**的（不是 runner 落的），如实标注。
+
+#### §7.43.6 拟修方案（**未实施，候批**）
+
+一行改动即可：提取出的 `.ps1` 必须以**带 BOM 的 UTF-8** 写盘——
+
+```powershell
+$utf8Bom = New-Object System.Text.UTF8Encoding($true)      # 供 .ps1 用（PS 5.1 认 BOM）
+[System.IO.File]::WriteAllText($gatePath, (($L[$g0..$g1]) -join "`r`n"), $utf8Bom)
+```
+
+同理 `_pyid_scan.py` 若含中文也应以 `utf-8` 写（Python 3 默认按 UTF-8 读源码，当前无 BOM 可用；
+但为一致性建议同法处理）。**注意**：本缺陷属 §2.4.10 申请内部，与 §2.4.0 生产段无关
+（生产段闸是内联在脚本里，不经过"提取→落盘→dot-source"这一环）。
+
+**未实施理由**：边界明确「不改脚本…重跑求绿」。修完必须再跑一次才算关闭，需**另批一次执行**。
+
+
+### §7.44 S0b 第二次执行（DRIFT-N19-r3，编码修后）：**仍未通过 —— HOST 阶段假失败**
+
+> 授权：批准**一次**编码修后新 S0b。本次只用掉一次，**未重跑**。
+> 结论：**S0b 未通过**，但**根因不在 §2.4.10 的 BOM 修复**（该修复本身未被检验到）。
+> 失败停在**我自己 runner 的第一步**：`HOST rc=FAIL(py run)`。**实测证明这是假失败。**
+
+#### §7.44.1 结果速览
+
+| 项 | 结果 |
+|---|---|
+| 宿主 | **PowerShell 5.1.26100.9711**（`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`）✅ 已明确并锁定 |
+| 解释器 | `Python311\python.exe`，**直跑 rc=0，输出 `3.11.9`** ✅ |
+| 失败阶段 | **HOST（第 1 步）** |
+| 失败类别 | **SETUP（假失败）** |
+| 各阶段 | HOST `FAIL(py run)`；SETUP-DIRS 起全部 **NOT-REACHED** |
+| 根 / 输出目录 | **均未创建**（HOST 在 SETUP-DIRS 之前） |
+| 五计数 / 闸 / 六负控 | **全部 NOT-REACHED** |
+| runner 退出码 | **1** |
+| 旧 `20261116T143939` 现场 | **仍在，未动** |
+
+#### §7.44.2 假失败的确证（三读数对照）
+
+| 写法 | 输出 | `$LASTEXITCODE` | 我的判据结果 |
+|---|---|---|---|
+| 直取：`& $py -c "..."` | `3.11.9` | **0** | 通过 |
+| 管道：`& $py -c "..." \| Select-Object -First 1` | `3.11.9` | **-1** | **判 FAIL** ← runner 实际走的这条 |
+
+**根因**：`Select-Object -First 1` **提前关闭管道**，上游原生命令被中断 ⇒ `$LASTEXITCODE` 变 **-1**（并非 -1 是 python 的返回码）。
+输出仍是正确的 `3.11.9`，**只有退出码是假的**——这正是「假失败」的形态。
+
+**这是本机已入册的坑**：全局 AGENTS.md 铁律 03-4「`Select-Object -First N` 会提前关管道 ⇒ 报出的退出码可能是假失败」。
+
+#### §7.44.3 更难看的一点：这是我自己**改回去**的
+
+第二次执行（r2）的 runner 写法是**对的**：
+
+```powershell
+$pyVerOut = & $py -c "import sys;print(sys.version.split()[0])"
+if ($LASTEXITCODE -ne 0 -or -not $pyVerOut) { throw ... }
+$pyVer = ($pyVerOut | Select-Object -First 1).Trim()     # 管道在**变量**上，安全
+```
+
+本轮我为了「一行写完」把它改成了**把原生命令内联进管道**：
+
+```powershell
+$pyVer = ((& $py -c "..." | Select-Object -First 1)).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $pyVer) { throw ... }   # ← 此处 $LASTEXITCODE 已是 -1
+```
+
+**把已经跑通的写法「顺手优化」成更紧凑的形式，引入了本可避免的假失败。**
+同一族教训（§7.42.2 变异空转、§7.43.3 误归因）：**改动没被要求改的部分，收益是整洁，代价是回归。**
+
+#### §7.44.4 第二处 runner 缺陷：verdict 没落盘
+
+审核明确要求「任何失败也须落 verdict」。本轮 runner **没做到**，原因是落盘逻辑写成：
+
+```powershell
+finally { if (Test-Path -LiteralPath $outDir) { ...写 verdict... } }
+```
+
+而 `$outDir` 由 **SETUP-DIRS** 创建，HOST 在它之前 ⇒ HOST 阶段失败时 `$outDir` 不存在 ⇒ **整段静默跳过，一个字的证据都没落**。
+（runner 也没打 `VERDICT-WRITE-FAILED`，因为不是异常，是 `if` 直接为假。）
+
+**已在事后补建** `docs\evidence\duckdb-s0b-20261116T154753\`（runner 实际副本 + verdict + stages + hashes），
+并如实标注「本目录由事后取证补建，非 runner 落盘」。**这是补证，不是补跑。**
+
+#### §7.44.5 本次证到了什么、没证到什么
+
+| 已证 | 未证 |
+|---|---|
+| 宿主确为 PS 5.1，已锁定未更换 | **BOM 修复是否奏效**（根本没走到 EXTRACT-GATE） |
+| 解释器可用（直跑 rc=0 / 3.11.9） | 五计数（本轮未扫） |
+| runner「首失败即停」生效（HOST 断，后 12 阶段全 NOT-REACHED） | 消费闸接受 / 六负控 / 还原 |
+| 旧 143939 现场未受影响 | 除 HOST 外任何阶段 |
+
+#### §7.44.6 现场与 hash
+
+`docs\evidence\duckdb-s0b-20261116T154753\`（**事后补建**）：
+
+| 文件 | 大小 | sha256 |
+|---|---|---|
+| `_runner.ps1` | 13080 B | `8DB0F2AC535B0B0F0F50B2903D0E7C004DDE6A5DEE0C4121F1805DA00B134C59` |
+| `s0b-stages.tsv` | 351 B | `A1AD53C36E7B5D15F0F7D2C6DE11700567CD353F3C3273318B66D93A713E0002` |
+| `s0b-verdict.txt` | 1370 B | `73B06A9A731AB86489D3DA12BA52D8692CFAFE6C132011AF508D59C1D8D1F70A` |
+
+`D:\qssyn_s0b_20261116T154753` — **未创建**（HOST 阶段即断）。
+旧 `D:\qssyn_s0b_20261116T143939`（3 txt）与 `docs\evidence\duckdb-s0b-20261116T143939\`（4 文件）**仍在，未动**。
+
+#### §7.44.7 拟修（**未实施，候批**）
+
+| # | 内容 | 类别 |
+|---|---|---|
+| 1 | 解释器取值改回 r2 的正确写法（先取输出、再在**变量**上 `Select-Object`），或不使用 `Select-Object` | **runner** |
+| 2 | verdict 落盘**不依赖** `$outDir`：失败时若 outDir 不存在则**先建**（或用 `%TEMP%` 兜底），确保任何阶段失败都有 verdict | **runner** |
+| 3 | 落盘失败时必须**显式打出**原因，不得静默跳过（`if` 为假也要留痕） | **runner** |
+
+**三项都在 runner，不在 §2.4.10 正文**；§2.4.10 的 BOM 修复**一行未动、也尚未被检验**。
+再跑需**另批一次**。
+
+
+### §7.45 S0b runner 静态修订（DRIFT-N19-r4 候选）：只交源 + hash + 最小 diff，**未运行**
+
+> 授权：仅静态修订 runner，准 `.candidate.ps1` 及解析记录；**不运行 HOST / Python / 扫描 / 负控**。
+> 结论：候选已产出并通过 PS 5.1 静态解析（0 错误）；**本轮未产生任何执行读数**。
+
+#### §7.45.1 身份与规模
+
+| 项 | 值 |
+|---|---|
+| 基线 | `docs/evidence/duckdb-s0b-20261116T154753/_runner.ps1`（r3 失败原件） |
+| 基线 bytes / sha256 | 13080 B / `8DB0F2AC535B0B0F0F50B2903D0E7C004DDE6A5DEE0C4121F1805DA00B134C59` |
+| 候选 | `docs/evidence/duckdb-s0b-runner-r4-candidate-20261116/_runner.candidate.ps1` |
+| 候选 bytes / sha256 | 15374 B / **`DAFAB11E86C4671461B17893B923052CAC0AD64FB436337DE9D9CDAE8E8A24C0`** |
+| 候选 BOM | 有（`EF BB BF`） |
+| diff | `+51 / -12`（104 行）；`_runner.candidate.diff` sha256 `35D2E7B32C2201A7BC4E771459462A3475B59BCE2921B0F9621F3B567198DF2C` |
+| 解析记录 | `_runner.candidate.parse-record.md` sha256 `ABB310EA384A9EC9B8A506236C27F5FC6DD82DC7EFCC292251B39836E6DA5E63` |
+
+#### §7.45.2 三处修订（仅此三处）
+
+| # | 修订 | 关键形态 |
+|---|---|---|
+| 1 | 原生命令完整取输出 → **立即**存 rc → 再对**变量**取首行 | `$pyVerOut = @(& $py -c ...)`；`$pyRunRc = $LASTEXITCODE`；`$pyVer = ... $pyVerOut[0] ...` |
+| 2 | 证据 bootstrap **先于 HOST** 且排他 | `STAGE BOOTSTRAP` 前置；`Test-Path` 守卫 + `New-Item` **无 -Force**；立即落 `runner-identity.txt`；失败 `exit 2` |
+| 3 | 首失败也统一落 verdict / stages / runner 身份 | 落证门改 `$proofDir = $script:evDir`；无则走 `EVIDENCE-WRITE-IMPOSSIBLE` 显式分支；`if (-not $script:written) { exit 2 }` |
+
+**修订 1 附带改善**：把基线里 `rc≠0 -or 无输出` 的**合并判据拆成两条**（`FAIL(py run rc=…)` / `FAIL(py ver empty)`）——
+合并后归因不可分，正是 r3 那次「假失败说不清是 rc 还是输出」的成因之一。
+
+#### §7.45.3 明确未改（区间逐字节 `IDENTICAL`）
+
+闸提取（含 `$utf8Bom`）/ GATE-BOM / GATE-PARSE / 五值精确比较 / 六负控 / 基线恢复 / 扫描器提取 / 扫描运行。
+
+#### §7.45.4 静态核验读数
+
+| 项 | 读数 |
+|---|---|
+| 宿主 | **5.1.26100.9711** / CLR 4.0.30319.42000 |
+| `Parser::ParseFile` | **PARSE-OK（0 错误）**，**未执行任何语句** |
+| AST 节点 | 2601 |
+| `exit` 语句 | 4：L44 `exit 2`（bootstrap 失败）/ L284 `exit 2`（未落证）/ L285 `exit 1` / `exit 0` |
+| 括号配平 | `{`104/`}`104、`(`220/`)`220 |
+| 自检 11 项 | **全部通过**（含「基线含缺陷样本=1」的**阳性对照**） |
+
+#### §7.45.5 本轮我自己的判据两次写错（留痕）
+
+1. 第一次自检把「基线含管道内联」标成「应 0」——**基线本来就该有 1 处**（那正是待修缺陷），判据写反。
+2. 第二次修复时把 `want==0` 一律当成「必须 ≥1」，**恰恰把「应 0 的残留项」判成通过**。
+3. 第三次按**显式比较符**（`eq`/`ge`）+ 逐项期望值重写，才得到可信结果。
+
+**教训**：核对表必须写「读数／比较符／期望」三元组，**只写「应 0」而由代码猜比较方向，必然出事**。
+另有一处 `finally` 冗余封装（`else { try { if ($proofDir) {`）已自查删除——该 `if` 在 `$proofDir` 为真分支内恒真。
+
+#### §7.45.6 本轮未做（边界）
+
+未运行候选任何一步；**未新建任何 `D:\qssyn_s0b_*` 根**（实测现存仍只有 `qssyn_s0b_20261116T143939` 一个）；
+未清理旧现场（143939 证据 4 文件 / 154753 证据 4 文件，均在位）；未升级、未生产验证、未下发、未提交。
+
+#### §7.45.7 待批
+
+准确源核过后，请批准**一次新 stamp 完整 S0b**（修 runner 与验 BOM 在同一次完整链内完成）。
+**r3 的一次已用尽**，不因上次停在 HOST 而视为未用。
+
+
+### §7.46 S0b 第三次执行（DRIFT-N19-r4，已审候选）：**PASS —— S0b 关闭**（2026-11-16 19:59:17）
+
+> 授权：使用已审 r4 候选（`DAFAB11E…A24C0`）执行**一次**全新 stamp 完整 S0b。
+> 结果：**12 个阶段 rc=0；`NEGCONTROLS` 一项字面值为 `6/6`（非 `0`）；verdict=PASS，runner 退出码 0。S0b 关闭。**
+> （措辞更正 2026-11-16：此前概称「13 个阶段全部 rc=0」不准确——阶段表里 `NEGCONTROLS` 记的是通过数 `6/6`，不是 rc。）
+
+#### §7.46.1 执行前门（先核后跑）
+
+| 项 | 读数 |
+|---|---|
+| 候选 sha256 | **`DAFAB11E86C4671461B17893B923052CAC0AD64FB436337DE9D9CDAE8E8A24C0`** = 批准值，**逐位一致** |
+| 候选 BOM / bytes | `EF BB BF` / 15374 |
+| 执行前静态解析 | **PARSE-OK（0 错误）** |
+| 宿主 | **5.1.26100.9711** / `System32\WindowsPowerShell\v1.0\powershell.exe`（**未更换**） |
+| 解释器 | `Python311\python.exe`（**未更换**） |
+
+#### §7.46.2 逐阶段结果（12 项 rc=0；`NEGCONTROLS` 为通过数 `6/6`，非 rc）
+
+| 阶段 | rc | 关键读数 |
+|---|---|---|
+| BOOTSTRAP | **0** | 证据目录先于 HOST 排他新建；`runner-identity.txt` 落盘 |
+| HOST | **0** | `PY-RUN-RC = 0`（**rc 紧接原生命令读取**）；`PY-VER = 3.11.9` |
+| SETUP-DIRS | **0** | 合成根排他新建 |
+| SETUP-TXT | **0** | 三 txt 平根 |
+| EXTRACT-SCAN | **0** | L425..L481（57 行） |
+| SCAN-RUN | **0** | `scanRc=0` |
+| EXTRACT-GATE | **0** | L488..L507 |
+| GATE-BOM | **0** | **`EF BB BF`** ✅ |
+| GATE-PARSE | **0** | **OK（宿主自身 Parser，读盘）** ✅ |
+| GATE-BASELINE | **0** | 闸**接受** |
+| FIVE-COUNTS | **0** | 五值全对 |
+| NEGCONTROLS | **6/6** | 六例均按预期原因被拒 |
+| RESTORE | **0** | 基线还原后仍通过 |
+
+#### §7.46.3 五值与消费闸（实测）
+
+| 项 | 读数 | 期望 | 结论 |
+|---|---|---|---|
+| `scanRc` | **0** | 0 | ✅ |
+| `SCAN-LINKS` | **0** | 0 | ✅ |
+| `SCAN-DIRS` | **1** | 1 | ✅ |
+| `SCAN-ROOT-ENTRIES` | **3** | 3 | ✅ |
+| `SCAN-WALK-ERRORS` | **0** | 0 | ✅ |
+| `SCAN-LSTAT-ERRORS` | **0** | 0 | ✅ |
+
+消费闸输出（**未抛异常**）：
+
+```
+PY-SRC-LINKS  = 0（dirs=1, root_entries=3, walk_err=0, lstat_err=0，结论仅限检查时刻）
+```
+
+#### §7.46.4 六负控（实际错误文案，逐条对位）
+
+| 变异 | 闸的实际拒绝原文 | 期望关键词 | 结论 |
+|---|---|---|---|
+| `WALK=1` | 遍历期有 1 个目录无法列出（scandir 被拒）… | 无法列出 | ✅ |
+| `LSTAT=1` | 逐项 lstat 有 1 个失败… | lstat 有 1 个失败 | ✅ |
+| `LINKS=1` | 源环境内部存在 1 个重解析点… | 重解析点 | ✅ |
+| `DIRS=0` | walk 未产出任何目录（根断言异常）… | 未产出任何目录 | ✅ |
+| `RC=8` | 源目录根无效（不存在或不可读）… | 根无效 | ✅ |
+| `RC=7` | 源目录扫描失败（exit=7，遍历错误 0 项 / lstat 错误 0 项）… | 扫描失败 | ✅ |
+
+还原：六例跑完后重跑基线，闸**仍接受** ⇒ 变异未污染基线变量。
+
+#### §7.46.5 独立复算（不信 runner 自报）
+
+| 复核项 | 方法 | 结果 |
+|---|---|---|
+| 根目录物理状态 | `os.listdir` + `os.lstat` | `a.txt/b.txt/c.txt` 各 1 B（内容 `x`），**3 文件 0 子目录 0 重解析点** |
+| 扫描器提取件 | **二进制逐字节**比对 notice L425..L481（CRLF 连接） | **一致**（2165 B，无 BOM，57 行） |
+| 消费闸提取件 | **二进制逐字节**比对 notice L488..L507（前置 BOM） | **一致**（2209 B，`EF BB BF`） |
+| 根目录本身 | `st_file_attributes` | `0x10`（Directory），**非 ReparsePoint** |
+| 旧现场 | 目录清点 | `143939` 4 文件 / `154753` 4 文件 / 候选 3 文件，**全部在位** |
+
+#### §7.46.6 证据清单（`docs\evidence\duckdb-s0b-20261116T195917\`，10 文件）
+
+| 文件 | 大小 | sha256 |
+|---|---|---|
+| `_gate_from_notice.ps1` | 2209 | `A5E9C19C45D2FAB74906B4DFD7F92CC4A57F32F11C3CE046966DE1FC2B4E0D23` |
+| `_pyid_scan.py` | 2165 | `88772071BC24171D4DCCE38B75A736A84809F6465CA2AB81FB43F7EB70994A4C` |
+| `_runner.ps1` | 15374 | `DAFAB11E86C4671461B17893B923052CAC0AD64FB436337DE9D9CDAE8E8A24C0` |
+| `hashes.tsv` | 774 | `8B9AAF905127C4ACF4118BA41DE778E821EF0D1D2A4BF56D607187308820D044` |
+| `negcontrols.tsv` | 612 | `39486A842E09032EEA917049BDFAB837B3278DBD1A43867204C6323F87BDC01A` |
+| `runner-identity.txt` | 252 | `F9E15E125BFCE82C2DF08D72D26D1F3B34137CD1C0B982DEEDE33D1223719092` |
+| `s0b-stages.tsv` | 178 | `DE1251B1C867DB7D22BCD512301A550DF2CBCCAA9D2F124D938E9F6601361C95` |
+| `s0b-verdict.txt` | 912 | `AF8649F326750A0CBD0F1EF628CE9D649B982C5A3DFBA9AE0EC2D4A1E074EE35` |
+| `scan.rc.txt` | 3 | `13BF7B3039C63BF5A50491FA3CFD8EB4E699D1BA1436315AEF9CBE5711530354` |
+| `scan.stdout.txt` | 89 | `748E8B66CF1469E369242F953BBE618749C635F38C9980F89C013B80361237D9` |
+
+根：`D:\qssyn_s0b_20261116T195917`（3 txt，1 B each）。源稿 sha256 `2CE2F9B5924097B241EB22948B74D8984B0D716DA722F06C6B8051C73E02D69D`。
+
+#### §7.46.7 三次执行对照（为何前两次失败、这次通过）
+
+| 轮次 | stamp | 结果 | 失败/通过原因 |
+|---|---|---|---|
+| r2 | 143939 | 五值全对，**闸解析失败** | PS1 提取副本**无 BOM** ⇒ PS 5.1 按 GBK 读 ⇒ 中文乱码 |
+| r3 | 154753 | **HOST 假失败** | `Select-Object -First 1` 提前关管道 ⇒ `$LASTEXITCODE` = -1 |
+| **r4** | **195917** | **PASS** | 三处 runner 修订 + PS1 带 BOM ⇒ 12 阶段 rc=0 且 NEGCONTROLS `6/6` |
+
+#### §7.46.8 本轮未做（边界）
+
+未建 junction / 未改 ACL / 未复制环境 / 未 pip / 未碰生产库 / 未升级 / 未下发 / 未提交 / **未清理**（三处现场全留）。
+**T041 仍 BLOCKED**；**62 GB 未测**；**11-17 原闸保持**。
+**S0b 关闭 ≠ 升级可执行**——S0b 只证明「合法平根上，扫描器五值与消费闸按设计工作」。
+
+
+#### §7.46.9 必读：`notice_sha256` 有**两个**版本，不可混用
+
+| 版本 | sha256 | 适用 |
+|---|---|---|
+| **执行当时** | `2CE2F9B5924097B241EB22948B74D8984B0D716DA722F06C6B8051C73E02D69D` | `s0b-verdict.txt` 里记的就是这个；**提取件的逐字节验证只对这一版成立** |
+| **执行之后**（现文档） | `D529287ECD0466EB258230D8F872A22F8C13A515FD771AD7D9E74BBCF9439E19` | 我在跑完之后改了状态头与修订表（加 S0b 结论） |
+
+**这不是隐患，但必须写明**：`verdict` 的 hash 与当前文档 hash 不一致，**不是**文档被篡改，而是**先执行、后写结论**这一必然顺序。
+
+**已当场用机检证明「只改了头/表，没动 §2.4.0 正文」**：
+
+| 区段 | 当前文档行号 | 与执行件比对 |
+|---|---|---|
+| 扫描器 | L420..L476（执行时为 L425..L481） | **逐字节一致** |
+| 消费闸 | L483..L502（执行时为 L488..L507） | **逐字节一致**（含 BOM） |
+
+行号整体前移 5 行，是因为状态头变短；**代码正文一字未改**。
+
+**纪律**：凡「先执行、后补文档结论」的轮次，**必须**在证据里同时记「执行时 hash」与「当前 hash」，并给出代码区段的改后复验——
+否则日后核对时会误判为「文档被动过」。这一条对后续任何一次「执行 → 写结论」的流程同样适用。
+
+
+### §7.47 通知 v6 差量终审整理（U1–U32 索引 + 措辞更正，2026-11-16）
+
+> 授权：S0b 关闭后进入通知 v6 差量终审整理；逐项引用既有证据，不把 32 项变成 32 个新欠件。
+> 边界：不重跑 S0b｜不复制 62 GB｜不升级｜不恢复供血｜不清 flag｜不清理｜不提交推送｜不客户下发。**均遵守，本轮零执行动作。**
+
+#### §7.47.1 交付件
+
+| 件 | 路径 | bytes | sha256 |
+|---|---|---|---|
+| **U1–U32 终审索引**（§7.47 当时版本） | `docs/evidence/duckdb-v6-u1-u32-final-review-index-20261116.md` | **16510** | **`5AE8123F7E0FB4DE7E9EE5567418CF30BA933693064A409C67D5E86A651802C8`** |
+
+#### §7.47.2 索引结论（分布）
+
+| 状态 | 数量 | 编号 |
+|---|---|---|
+| **已核** | **1** | U31（S0b 实测） |
+| **部分已核** | **3** | U25 / U28 / U29 —— **仅消费闸侧** |
+| **未测** | **28** | U1–U24、U26、U27、U30、U32 |
+| **不适用** | **0** | 逐项检查后无一项可判不适用 |
+
+**「不适用 = 0」是本轮的诚实结论，不是漏填**：连 junction 类（U19–U22/U30）也只是「边界禁建、故未测」，
+不是「该场景不存在」——客户环境若含 junction，配方会直接拒绝，那是设计意图而非不适用。
+
+**28 项未测不是本轮新增欠件**：历轮证据已逐轮登记「0 条执行」（§7.36.6 / §7.38.5 及对账表
+L1722/1834/1939/2037/2143/2235/2335），本轮只做汇总索引。
+
+#### §7.47.3 与上一轮索引的**增量**（只有 4 项，其余 28 项读数不变）
+
+| 项 | 变化 | 强度 |
+|---|---|---|
+| U31 | 未测 → **已核** | **强**：真根、真扫描器、真闸、真五值 |
+| U25 | 未测 → 部分已核 | **弱**：只证「错误计数>0 必拒」，未证「扫描器会产出 >0」 |
+| U28 | 未测 → 部分已核 | **弱**：只证「rc=8 必拒」，未证「扫描器对无效根 exit 8」 |
+| U29 | 未测 → 部分已核 | **弱**：同上 |
+
+> **为何只能算部分**：S0b 的六个负控是**对扫描器输出行与 rc 做变异**后喂消费闸，**没有**真的造 ACL 拒绝目录、
+> **没有**真的去扫不存在的根。它们证明「**闸见到这些读数会拒**」，**不证明**「**扫描器在真实异常下会产出这些读数**」。
+> 两件事必须分开记，否则会把「判据有鉴别力」误当成「检测链路已闭合」。
+
+#### §7.47.4 措辞更正（审核指出，已落四处，残留 0）
+
+审核指出：阶段表 `NEGCONTROLS` 的值是 `6/6`，**不应概称「每行字面值均 rc=0」**。
+
+| 位置 | 更正后 |
+|---|---|
+| 通知 修订表 | 「**12 项为 `0`；NEGCONTROLS 一项字面值是 `6/6`（不是 `0`）**——不得概称每行均 rc=0」 |
+| 本证据 §7.46 结论行 | 「**12 个阶段 rc=0；`NEGCONTROLS` 字面值为 `6/6`（非 `0`）**」 |
+| 本证据 §7.46.2 标题 | 「逐阶段结果（12 项 rc=0；`NEGCONTROLS` 为通过数 `6/6`，非 rc）」 |
+| 本证据 §7.46.7 对照表 | 「12 阶段 rc=0 且 NEGCONTROLS `6/6`」 |
+
+**残留复查（机检）**：两文件中「13 项全 0」= **0**、「全部 13 个阶段 rc=0」= **0**、「13 阶段全绿」= **0**。
+
+**为何不是抠字**：`s0b-stages.tsv` 里 `NEGCONTROLS` 记的是**通过计数**，不是进程返回码。误读会引出两个错误推论：
+①「六例负控各自跑出退出码 0」——它们其实是**同一进程内**的 in-process 判定，没有各自退出码；
+②「阶段数为 13 且全部 rc0」——其中一项的语义与其余 12 项不同类。
+
+#### §7.47.5 单列五项（不进 U 表）
+
+| 项 | 状态 | 依据 |
+|---|---|---|
+| **T041** | **BLOCKED(外部/用户裁定)** | `tasks.md` L94；解除 = M-5 到点（≤2026-11-17）**且** 用户明确批准下发；**S0b 关闭不核销** |
+| **62 GB 耗时与峰值** | **未实测** | 通知 §2.4.6 / L1014 / L1542；`HUGEINT` 位宽结论**不等于**耗时结论 |
+| **「正式版本」** | **术语无定义 → 需裁** | 三个制品（通知 / 本证据 / tasks.md）均无该术语；已列两种读法及各自现状，**不替审核方定口径** |
+| **旧门逃生阀 `QS_DUCKDB_VERSION_GATE=0`** | **代码判据级，未真机实测** | 通知 §二·附 L85–86；「拒启」结论仅适用默认配置 |
+| **11-17 用户窗** | **保持，不自动放宽/延期** | 1.4.x 上游支持 2026-11-17 结束（通知 L1707）；解除只认「到点 **且** 用户明确批准」 |
+
+#### §7.47.6 三件 hash（本轮结束时）
+
+| 件 | sha256 |
+|---|---|
+| **通知（回写后·当前）** | `288AB994FE9AB6FFB6F31862B49A2AC29727E047FBEC486E96EA6139E420A681` |
+| **U1–U32 索引** | `5AE8123F7E0FB4DE7E9EE5567418CF30BA933693064A409C67D5E86A651802C8` |
+| **S0b 执行当时通知**（供对照，不可混用） | `2CE2F9B5924097B241EB22948B74D8984B0D716DA722F06C6B8051C73E02D69D` |
+
+> **本证据文件自身 hash 不在此自记** —— 自引用不可行（记完即变）。核验一律现场重算：
+> `Get-FileHash docs\evidence\duckdb-1.5-upgrade-window-evidence.md -Algorithm SHA256`
+> 这是**有意留空并说明**，不是遗漏。
+
+#### §7.47.6b 索引内一处**无据引用**已自查撤除（留痕）
+
+编制索引时我在 U18 行写下「§7.11 曾实测 `io.open` 写该中文路径报 `OSError Errno 22`」。
+**该引用无据**：2026-11-16 对 `docs/**` 全文检索「Errno 22 / Invalid argument」，**除索引自身外零命中** ——
+该现象只在早前轮次的**会话过程**中出现过，**从未落进证据文件**。
+
+处置：①**撤除该引用**，不指向任何证据节；②保留「该链存在真实风险」的提示，但标明「**待补录，补录前不计入任何结论**」。
+**教训**：索引件的每一处「依据」都必须能被检索命中；凭会话记忆写节号，等于给审核方递一条查不到的线索。
+
+#### §7.47.7 本轮动作清单（零执行）
+
+未重跑 S0b ✓｜未复制 62 GB ✓｜未升级 ✓｜未恢复供血 ✓｜未清 flag ✓｜未清理现场 ✓｜未提交推送 ✓｜未客户下发 ✓
+本轮**只**做：新增索引件 1 份、措辞更正 4 处、证据追加 1 节。
+
+
+### §7.48 r5：索引两处更正 + 三小用例静态驱动（**零运行**）
+
+> 授权：DRIFT-N19-r5｜「三项小验证先交静态驱动」「两处文档更正即可，不重跑 S0b」。
+> 边界：本轮**仅静态源**，未运行链检查或 scanner，未建 ACL/junction，未复制环境，未触生产库，未恢复供血，未清 flag，未客户下发，**未提交推送**。
+
+#### §7.48.1 审核指出的两处索引错误（已改）
+
+| # | 位置 | 原（错） | 现（正） | 性质 |
+|---|---|---|---|---|
+| 1 | 索引 §一 分布表 | `已核 \| **0** \| U31` | `已核 \| **1** \| U31` | **自相矛盾**：U31 行自己写着「已核（S0b 实测）」，分布表却记 0 |
+| 2 | 索引 U31 行引用 | 「`s0b-verdict.txt` = 五值同上 + `gate_baseline=ACCEPTED`」 | 「`gate_out=PY-SRC-LINKS  = 0（dirs=1, root_entries=3, walk_err=0, lstat_err=0…）` + `s0b-stages.tsv` 的 `GATE-BASELINE` 行（rc=0）」 | **引用了不存在的字段**：verdict 实际字段只有 stamp/root/outDir/notice/notice_sha256/host_ps/host_exe/py_exe/py_ver/py_sha256/scanRc/SCAN-LINKS/SCAN-DIRS/SCAN-ROOT-ENTRIES/SCAN-WALK-ERRORS/SCAN-LSTAT-ERRORS/gate_bom/gate_parse/gate_out/negcontrols/verdict/fail_class/fail_msg，**无 `gate_baseline`** |
+
+**第③处是我自查出来的**（审核未点名）：§7.47.1 交付件表把索引 bytes 记成 **16243**，而实际当时已是 **16510**——
+16243 是我首次写盘后、改 U18 行之前的大小；改完没同步该格。**已更正并标注口径（§7.47 当时版本）**。
+
+> **教训（可复用）**：索引/台账类文件里凡写「字节数 / sha256」的格子，都是**对另一时刻快照的断言**；
+>
+> **附：本条更正我第一遍写错了，如实留痕。** 首次改 §7.47.1 时我做了字符串替换，却用 `io.open(...,"a")` **追加**模式写盘——
+> 替换只发生在内存里、根本没落盘，而 §7.48.1 已先宣称「已更正」。复核恰在下一步（查 L2753 仍是 16243）时抓到，随即改为**全量写回**并复核。
+> **形态归类**：这属「声明早于落盘」——与「凭计划宣称已完成」同一族。硬动作：**凡写入类改动，写完必须回读该行确认，不得以 `replace()` 的返回值当已落盘。**
+>
+> **教训（续）**：
+> 该文件一旦再被编辑，这些格子立即过期。**同一文件内不得混放「当前值」与「历史值」而不标时刻**。
+
+#### §7.48.2 「正式版本」按审核方定义归位（不再待裁）
+
+审核方逐字：「**正式版本**」= **正式执行所用解释器、DuckDB 包身份和放行政策一致**；**不新增 PyPI GA 联网取证门**。
+
+已写入索引 §3.3，拆成三个可核子项：
+
+| 子项 | 现状 |
+|---|---|
+| ① 所用解释器（路径/版本/可执行文件 sha256） | 流程已规定记录，**本会话未实测** |
+| ② DuckDB 包身份（`__version__` + `__file__` + `source_id`） | 三值同源一致性**未测**（落 U16/U17） |
+| ③ 放行政策（`{1.4.5≤x<1.5} ∪ {x==1.5.6}`） | **已写明**，判定源单一 |
+
+⇒ 该项**不新增欠件**；上一版列出的读法 (a)（查 PyPI 是否 GA）**作废**。
+
+#### §7.48.3 三小用例静态驱动（候选件，未运行）
+
+目录：`docs/evidence/duckdb-v6-u27-u28-u32-static-driver-20261116/`
+
+| 件 | bytes | sha256 |
+|---|---|---|
+| `_driver.candidate.ps1` | 15333 | `471B1D1E5F0FB39188BDEE1B8AD270383534854D2F1AAC22B89275F1A5808C2E` |
+| `_extracted-pathfuncs.ps1` | 2136 | `EDFFBDB3B3DB0BCE7A872426995A2BC23B1FFCE56D2363EE9B1F4D426CB85781` |
+| `_extracted-scan.py` | 2110 | `53AC95D927359DB4AB876836E9C11B1DDA06EA4B89566480E368A858D9B34A16` |
+| `_design-and-expectations.md` | 14404 | `87D6A84441238F8E1F563CAB71D18DD07DEB15CA9BF4D6205ADFC4702182D844` |
+| `static-extract.tsv` | 648 | `3ED159781B5516270E05B62CF2ECD55F7C64ED1FFAA48C6D8167B22BC0BBB081` |
+
+**静态校验（非运行）**：`_driver.candidate.ps1` `Parser::ParseFile` **errors=0**（2918 tokens）；
+`_extracted-pathfuncs.ps1` errors=0；`_extracted-scan.py` `py_compile` **OK**。
+
+**内容 pin（硬门，不符即 FAIL）**：
+
+| 段 | 行 | bytes | sha256 |
+|---|---|---|---|
+| `Assert-AbsoluteDrivePath` | L326..L336 | 749 | `1DD4DC464640BCDBDB2AAB3F6E85992FB6FDFBCE31D3B276E8DC2F60B0DB234F` |
+| `Test-ChainNoReparse` | L338..L361 | 1384 | `8B725BA145C6D0EB9EB0796922F604FA9AF86C71272E34C9267FFA84D61C486B` |
+| scanner 正文 | L420..L476 | 2110 | `53AC95D927359DB4AB876836E9C11B1DDA06EA4B89566480E368A858D9B34A16` |
+
+**用例**：10 个 / 14 条判决（C1×5 含鉴别力对照、C2×3 含反向控制、C3×6 含正向控制）。
+**不抄整通知**：只抽 4243 B（占通知 117808 B 的 3.60%）。
+
+#### §7.48.4 一处**必须记下**的差异：EOL 与末尾换行
+
+| 件 | bytes | LF | CRLF | 末尾换行 |
+|---|---|---|---|---|
+| 通知 scanner 正文（本轮抽取） | 2110 | 57 | 0 | 有 |
+| S0b 运行期落盘 `_pyid_scan.py` | 2165 | 56 | 56 | **无** |
+
+⇒ 两者 sha256 不同（`53AC95D9…4A16` vs `88772071…4A4C`），**代码内容一致**，差异仅在行尾约定与末尾换行，对 Python 无语义影响。
+
+**为什么写进证据而不是只在聊天里说**：上一轮我因 `io.open` 的 universal newlines 归一化，曾把「CRLF→LF」误判成「抽取内容不一致」（假警报）。
+本轮**先量差异再判断**，并让驱动一律写 **LF 原样**，使运行期 hash 可与静态 pin 直接比对。
+
+#### §7.48.5 若运行全 PASS，对 U 表的**预告**（非申报）
+
+| 项 | 现状 | 运行后（若全 PASS） |
+|---|---|---|
+| U27 | 未测 | 已核（被测对象即 `Assert-AbsoluteDrivePath` 本体） |
+| U32 | 未测 | 已核（被测对象即盘根保留 + 反向控制） |
+| U28 | 部分已核（仅闸侧） | **已核（两侧闭合）**：扫描器侧由 C3 补上 |
+
+**洗不掉任何单列项**：U25/U29 的真实 ACL 分支不在本驱动内；62 GB 成本、T041、11-17 原闸不受影响。
+
+#### §7.48.6 本轮动作清单（零运行）
+
+未重跑 S0b ✓｜未运行链检查 ✓｜未运行 scanner ✓｜未建 ACL ✓｜未建 junction ✓｜未复制环境 ✓｜未触生产库 ✓｜未恢复供血 ✓｜未清 flag ✓｜未清理现场 ✓｜未提交推送 ✓｜未客户下发 ✓
+
+本轮只做：索引 3 处更正 + §八追加；证据 §7.47.1 字节更正；新增静态驱动候选目录 5 件。
+
+**索引现值**：**18233 B** / **`81B6D417AA6FF5BE4EB05B7BACF7C32B0B8DE39AD869241E9B538731CC79A8AC`**（§7.47 记的 16510 / `5AE8123F…A8AC` 是更正前版本）
+
+
+### §7.49 r6：rev2 补证封口 + 一次有限验证（**PASS 15/15**）
+
+> 授权（r6 逐字）：「保原候选，另 rev2 仅补：新输出根排他创建，禁同秒覆盖；核祖先非 reparse。明确 PS5.1 和已有 Python 身份。每次 scanner 保存原 stdout、stderr 及 rc；失败也保存已完成 stages、cases 与未达项。不存在根放在本次新目录下，不创建该叶。U32 补本次新目录的链检查正例。」
+> 「Parser 核过后可沿本令执行一次，不需再交『只创建申请』。」「首失败保现场，不临场改源码换 stamp 求绿。」
+> 边界（已遵守）：不 ACL／不 junction／不环境复制／不 pip／不 62 GB／不生产升级／不恢复供血／不清 flag／不客户下发／**不做任何 Git 操作**；S0b 未重跑。
+
+#### §7.49.1 rev2 相对原候选的改动（原候选**未被改动**）
+
+| 项 | 值 |
+|---|---|
+| 原候选 | `_driver.candidate.ps1` 15333 B `471B1D1E5F0FB39188BDEE1B8AD270383534854D2F1AAC22B89275F1A5808C2E`（**保持不变**） |
+| rev2 | `_driver.rev2.ps1` **20597 B** `AD7B016DB8DABB2105A0E530DD708E82C826E1F664CC2BF41A2B9A4F063B75A6` |
+| diff | `_driver.rev2.diff` 18587 B，**+153 / −75（净增 78 行）** |
+| 静态核 | `Parser::ParseFile` **errors = 0**（3939 tokens） |
+
+**五条补证的落点（逐条对位）**：
+
+| r6 要求 | 实现 |
+|---|---|
+| 新输出根排他创建，禁同秒覆盖 | `New-Item -ItemType Directory`（**不带 `-Force`**，已存在即抛）＋ `Test-Path` 预判＋同秒重复则 `-2/-3…` 至 10 个序号；全部占用则显式抛错，**绝不覆盖** |
+| 核祖先非 reparse | 新增 `Assert-NoReparseAncestors`：自输出根逐级上溯，凡存在且带 `ReparsePoint` 属性即抛；**独立实现**，不依赖后面才抽取到的两个函数 |
+| 明确 PS5.1 与已有 Python 身份 | 新增 `STAGE 2b HOST-ID`：断言 `$PSVersionTable.PSVersion` 为 **5.1**（否则抛），记录 `powershell.exe` 全路径；Python 记录 exe/版本/sha256，并与 S0b 记录的 `5F7B89A6…52EC` 比对给出 `SAME-AS-S0B` |
+| 每次 scanner 保存原 stdout/stderr/rc | 新增 `Invoke-Scanner`：`Start-Process -Wait -PassThru -RedirectStandardOutput/-RedirectStandardError`，落 `scan-<tag>.{stdout,stderr,rc}.txt`；**不经管道**（r3 的 `-1` 假失败源自管道截断） |
+| 失败也保存 stages/cases/未达项 | 新增 `Get-AllCases` + `Save-Evidence`；`$script:plan` **预登记 15 条断言**，未跑的标 `NOT-REACHED`；成功/失败**同一落盘器** |
+| 不存在根在新目录下、不创建该叶 | `$bad = Join-Path $evDir 'no-such-leaf'`，创建前断言其不存在；**全流程不创建该叶** |
+| U32 补新目录链检查正例 | `C2-EVDIR-CHAIN`：`Test-ChainNoReparse $evDir` 须原样返回 |
+
+> **diff 说明（不美化）**：+153/−75 看起来不小，但其中相当部分是**四个写盘器从 STAGE 10 平移进 `Save-Evidence`**（纯搬移，为让失败路径复用同一落盘器）。净增 78 行 = rev2 实际新增能力。
+
+#### §7.49.2 一次执行结果（2026-11-16 23:22:56，持续约 3 秒）
+
+| 读数 | 值 |
+|---|---|
+| 退出码 | **0** |
+| verdict | **PASS** |
+| **分组数** | **3**（C1·U27 / C2·U32 / C3·U28） |
+| **判决断言数** | **15**（C1×5 + C2×4 + C3×6）——**分母含 r6 新增正例**，非原 14 |
+| 到达 / 未达 | **15 / 0** |
+| **scanner 调用数** | **2**（badroot + ctrl）——调用数≠断言数，本表分列 |
+| cases_pass | **15/15** |
+| 产物目录 | `docs/evidence/duckdb-v6-u27-u28-u32-run-20261116T232256/`（12 文件） |
+
+**身份（HOST-ID stage）**：`host_ps=5.1.26100.9711`、`host_exe=C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`；
+`py_ver=3.11.9`、`py_sha256=5F7B89A612C9B8AF1D6456CDFCD1DBE5CA630849E79AEBCED9BEE9A6694952EC`、`py_identity=**SAME-AS-S0B**`。
+`notice_sha256=288AB994…A681`、`notice_sha_note=MATCHES-KNOWN`。
+
+#### §7.49.3 逐条原结果（expect / got 原样）
+
+| # | 断言 ID | 期望 | 实际 | 判定 |
+|---|---|---|---|---|
+| 1 | `C1-ACCEPT-FULL` | `OK\|D:\qssyn\data` | `OK\|D:\qssyn\data` | PASS |
+| 2 | `C1-REJ-DRIVREL` | `THREW\|驱动器相对` | `THREW\|驱动器相对` | PASS |
+| 3 | `C1-REJ-DRIVREL-BARE` | `THREW\|驱动器相对` | `THREW\|驱动器相对` | PASS |
+| 4 | `C1-REJ-NONABS` | `THREW\|不是绝对路径` | `THREW\|不是绝对路径` | PASS |
+| 5 | `C1-REJ-UNC` | `THREW\|UNC` | `THREW\|UNC` | PASS |
+| 6 | `C2-ROOT-KEEP` | `OK\|D:\` | `OK\|D:\` | PASS |
+| 7 | `C2-ROOT-FWDSLASH` | `OK\|D:\` | `OK\|D:\` | PASS |
+| 8 | `C2-OLD-FORM-CTRL` | `D:` | `D:` | PASS |
+| 9 | `C2-EVDIR-CHAIN` | `OK\|<evDir>` | `OK\|<evDir>` | PASS |
+| 10 | `C3-BADROOT-RC` | `8` | `8` | PASS |
+| 11 | `C3-BADROOT-MSG` | `HAS-SCAN-ROOT-INVALID` | `HAS-SCAN-ROOT-INVALID` | PASS |
+| 12 | `C3-BADROOT-NO-COUNTS` | `ABSENT` | `ABSENT` | PASS |
+| 13 | `C3-CTRL-RC` | `0` | `0` | PASS |
+| 14 | `C3-CTRL-ROOTENTRIES` | `HAS-SCAN-ROOT-ENTRIES` | `HAS-SCAN-ROOT-ENTRIES` | PASS |
+| 15 | `C3-CTRL-NO-INVALID` | `ABSENT` | `ABSENT` | PASS |
+
+**阶段表（10 段，rc 全 0）**：BOOTSTRAP／NOTICE／HOST-ID／EXTRACT／EXTRACT-WRITE／PARSE／C1-U27(5/5)／C2-U32(4/4)／C3-U28(6/6)／HASHES。
+
+#### §7.49.4 排他创建与"不创建该叶"的实证
+
+| 断言 | 证据 |
+|---|---|
+| 输出根排他创建、本次未触发序号后缀 | `BOOTSTRAP` 阶段 note = `evDir=…\duckdb-v6-u27-u28-u32-run-20261116T232256`（**无 `-2` 后缀**，说明该秒未被占用） |
+| 祖先非 reparse | `Assert-NoReparseAncestors` 通过（否则 BOOTSTRAP 会抛，不会进入后续阶段） |
+| **不存在叶未被创建** | `Test-Path '<evDir>\no-such-leaf'` = **False**（运行后实测） |
+
+#### §7.49.5 scanner 原始产物（两次调用各三件）
+
+| 调用 | rc | stdout | stderr |
+|---|---|---|---|
+| badroot | **8** | `SCAN-ROOT-INVALID <evDir>\no-such-leaf` | 0 B（空） |
+| ctrl | **0** | 五行：`SCAN-ROOT-ENTRIES 7` / `SCAN-LINKS 0` / `SCAN-DIRS 1` / `SCAN-WALK-ERRORS 0` / `SCAN-LSTAT-ERRORS 0` | 0 B（空） |
+
+> **两处读数据必须写清**（否则会被误判成缺陷）：
+> 1. **`scan-badroot.stdout.txt` 是合法 UTF-8**；用 PS 默认（ANSI/936）读会显示成 `绛栫暐瀹炵洏` 之类的乱码——**那是读法错，不是产物坏**。
+>    以 UTF-8 解码后与期望整行**逐字符相等**（`bytes=123`，`sha256=0C08FB9E…`）。核验一律 `Get-Content -Encoding UTF8` 或 Python 显式 `encoding="utf-8"`。
+> 2. **ctrl 的 `SCAN-ROOT-ENTRIES 7` 含它自己的两个重定向文件**：`Start-Process` 在进程启动前就创建了 `scan-ctrl.stdout.txt` / `scan-ctrl.stderr.txt`，扫描时目录内恰好 7 项。
+>    该断言只判「五值里出现 `SCAN-ROOT-ENTRIES`」，**不判具体数值**——因为分母随落盘时序变化，拿它当固定数就是给自己埋一个假失败。
+>
+> 运行期抽取件 sha256 **与静态 pin 逐位相同**：`_pathfuncs.ps1` `EDFFBDB3…5781`（2136 B）、`_pyid_scan.py` `53AC95D9…4A16`（2110 B）。
+
+#### §7.49.6 12 件产物 hash（可复核）
+
+| 文件 | bytes | sha256 |
+|---|---|---|
+| `_pathfuncs.ps1` | 2136 | `EDFFBDB3B3DB0BCE7A872426995A2BC23B1FFCE56D2363EE9B1F4D426CB85781` |
+| `_pyid_scan.py` | 2110 | `53AC95D927359DB4AB876836E9C11B1DDA06EA4B89566480E368A858D9B34A16` |
+| `cases.tsv` | 1428 | `5A4767DF29F148C273E98BD06006746C1F49D621D884E9FEFC1B76547DE1F1B6` |
+| `hashes.tsv` | 187 | `15DAA596D8E23C9CCCB9C21ABC346B14C4D52E6168640EF6DCA3E2C95F517138` |
+| `scan-badroot.rc.txt` | 1 | `2C624232CDD221771294DFBB310ACA000A0DF6AC8B66B696D90EF06FDEFB64A3` |
+| `scan-badroot.stderr.txt` | 0 | `E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855` |
+| `scan-badroot.stdout.txt` | 123 | `0C08FB9E2359CE079AF1B3E8DE4918D6221BCE7DD7F9EDC07FD674D2D64F11A5` |
+| `scan-ctrl.rc.txt` | 1 | `5FECEB66FFC86F38D952786C6D696C79C2DBC239DD4E91B46729D73A27FB57E9` |
+| `scan-ctrl.stderr.txt` | 0 | `E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855` |
+| `scan-ctrl.stdout.txt` | 89 | `5487981A6BEC9B592DA9555CC8736F31518694904D750EF7C2544F9C7FB93E5E` |
+| `stages.tsv` | 688 | `84E73AB2D409DC27B2137986D1A688249D3A1095923408F6FED4D249B01BDF37` |
+| `verdict.txt` | 2460 | `3447D6456404EE103D8A47691A6D98A4664F147FA61F2F064547745267A94BF3` |
+
+#### §7.49.7 本次只关闭所测三链
+
+| 项 | 变化 | 依据 |
+|---|---|---|
+| **U27** | 未测 → **已核**（5/5） | 4 条拒绝 + 1 条放行（鉴别力） |
+| **U32** | 未测 → **已核**（4/4） | 盘根保留 + 前斜杠 + 反向控制 + 新目录正例 |
+| **U28** | 部分已核 → **已核（两侧闭合）**（6/6） | 扫描器侧真跑 exit 8；闸侧见 S0b `negcontrols.tsv RC=8` |
+
+**未被本次洗掉的**：`U25` / `U29` 的真实 ACL 分支仍**部分已核**（需造 `icacls` 拒绝目录，本令边界外）；
+62 GB 耗时与峰值**仍未实测**；`T041` 仍 **BLOCKED**；11-17 原闸**保持，临期不自动放宽或延期**。
+索引分布随之 **4 已核 / 2 部分 / 26 未测**（32 项表内实计一致）。
+
+#### §7.49.8 边界执行核对（零越界）
+
+未 ACL ✓｜未 junction ✓｜未环境复制 ✓｜未 pip ✓｜未触 62 GB ✓｜未生产升级 ✓｜未恢复供血 ✓｜未清 flag ✓｜未客户下发 ✓｜**未做任何 Git 操作** ✓｜未重跑 S0b ✓
+
+
+### §7.50 r7：U18 / U26 最小候选设计（**静态件，零执行**）
+
+> 授权（r7 逐字）：「下一步优先 U18、U26 的无生产序列化与 FILE／META／PFX 差异正反例，先给精确合成输入、抽取 pin、命令、写域和预期。」「后续后台助手用 Hidden，不为显示参数重跑已收 15 条。」
+> 「本次不执行新验证，不 ACL、junction、环境复制、62GB、生产升级、清 flag、客户下发或提交推送。T041 和原 11 月 17 日闸保持。」
+
+#### §7.50.1 交付件
+
+目录：`docs/evidence/duckdb-v6-u18-u26-static-driver-20261117/`
+
+| 件 | bytes | sha256 |
+|---|---|---|
+| `_design-and-expectations.md` | 11401 | `F9148E87FE54ADF16C81F0932E6564262C57AEFA676114028952FB20E7D3BF5F` |
+| `_extracted-ps.ps1` | 2225 | `A26860FB4E1B8F0D0A59E7C0B1E05C6414C4618F88ED1C79AA31014095D4824C` |
+| `_extracted-pysrc.py` | 858 | `62B1E1B1B0F879380AE9CE170E1240F69995B888AD6D069B156E32FF57DA585C` |
+| `static-extract.tsv` | 411 | `8E72261C05FBA532084D5DCE535E5A1DF1D05511E7487C3A9994997861CB8C17` |
+
+**静态核（非执行验证）**：`_extracted-ps.ps1` `Parser::ParseFile` **errors=0**（279 tokens）；`_extracted-pysrc.py` `py_compile` **OK**。
+
+#### §7.50.2 四段抽取 pin（边界 token 定位，不用行号）
+
+| 段 | 落点 | bytes | sha256 |
+|---|---|---|---|
+| `PY_COLLECT` | L366..L374 | 545 | `223231A658589E11C1449D465449C7FF62DA07120F35697AA622D710A56DD945` |
+| `PY_RT` | L396..L401 | 271 | `C0E57F7C8A47C3FF38D0FB7640F16CE3DD5B365BB4AD8C30EE7D5B828D080A8F` |
+| `CHK_PARSERS`（8a） | L546..L552 | 723 | `9545FF90F59F8D7C3E8449051FD5BC14C9B4A2561EA9FC8448E8DC4BB62C82EB` |
+| `EQ_ATTR`（8b+8c） | L558..L577 | 1498 | `18AF80E87BB2B67130F7532EA1EE8ECEBF3EA6DDB529CD8A77894F2F09CE6CBE` |
+
+8c 依赖的 `Test-ChainNoReparse` 沿用 r5 pin（L338..L361、1384 B、`8B725BA1…486B`，同一通知未变）。
+
+#### §7.50.3 **静态读码发现：用例描述与实现顺序不符**（本轮实质产出之一）
+
+8a 的四条判定有先后顺序：缺字段 → **FILE≠META** → PFX → FIELDS。而 U26 用例表写「改 prefix 值 ⇒ 留存 prefix 字段对拍不一致」——
+**按原样执行不会出现该消息**：改 prefix 值同时改了文件字节，第 5 行 FILE 检查**先抛**，prefix 支路到不了。「删一个字段」同理。
+
+**这不是实现缺陷**（fail-closed 先拦更严重者是对的），是**用例描述与代码顺序不匹配**。
+**处置**：负例跑两种模式——**整链模式**（META 保持原值，证明一定被拦）与**隔离模式**（META 对齐篡改后值，使目标支路成为首个失败点，证明该支路自身有鉴别力）。
+
+#### §7.50.4 设计规模与分母口径
+
+**2 组 / 14 条判决断言**：A 组 U18 六条（FILE==META、PFX==、FIELDS 精确、中文 prefix 逐字符且含 CJK 不含问号、`encoding='ascii'` 必抛 `UnicodeEncodeError`、`ensure_ascii=True` 使 FILE 变而 PFX 不变）；
+B 组 U26 八条（正例不抛／整链 FILE 拦／隔离 PFX 拦／隔离 FIELDS 拦／8b 相等三项正反／8c 归属三项正反）。
+预计 **Python 进程调用约 8 次**——**调用数不等于断言数**，两者分列上报。
+
+#### §7.50.5 不复制环境的等价性边界（诚实标注）
+
+| 项 | 等价程度 |
+|---|---|
+| U18 | **等价**：同一条 Python 写入链、同一 `open(...,encoding='utf-8')`，只把 `$dataDir` 换成合成中文目录 |
+| U26 | **部分等价**：覆盖**比较链路**（8a/8b/8c），**不覆盖**留存独立性前提（robocopy + 复制解释器可运行，属禁止的环境复制）——后者仍归 U13–U17 |
+
+#### §7.50.6 本轮零执行核对
+
+未执行本设计 ✓｜未复制环境 ✓｜未 ACL／junction ✓｜未触 62 GB／生产库 ✓｜未清 flag ✓｜未恢复供血 ✓｜未下发 ✓｜未提交推送 ✓｜未重跑 r6 的 15 条 ✓
+**索引保持 4 已核 / 2 部分 / 26 未测**（19557 B，本轮未改状态）；`T041` 仍 BLOCKED；11-17 原闸保持。
+
+
+### §7.51 r8：U18／U26 完整静态驱动（**候选件，零执行**）
+
+> 授权（r8 逐字）：「U26双模式及比较链上限收；U18编码反例构造未闭，完整driver前不运行。」「将真实metadata在『中文＋空格目录』的路径往返，与『明确含中文内容』的独立合成编码控制分开。目录中文不意味着 `sys.prefix` 内容中文，也不会必然让ASCI I写入失败；不能伪改环境prefix。」「交完整driver、四pin、准确分母、参数、Hidden、排他输出和失败留证。U26隔离META对齐只是试支路，不能说生产可绕校验。」
+> 边界：「不执行driver、不复制真实环境、不ACL、junction、62GB或生产操作，不重跑已收15条。」
+
+#### §7.51.1 我 r7 错在哪（认错，非修订说明）
+
+r7 §七 A5 我写的是「`encoding='ascii'` 写**中文路径** ⇒ 必抛 `UnicodeEncodeError`」。这是**概念混淆**：
+
+- `encoding=` 管的是**内容**编码；路径由 OS 宽字符 API 处理，**目录名含中文不会让 ASCII 写入失败**；
+- 本机真实 `sys.prefix` = `C:\Users\Administrator\AppData\Local\Programs\Python\Python311` —— **纯 ASCII**。所以「把真实 metadata 写进中文目录」这条链上**根本不存在非 ASCII 内容**，拿它去测编码失败等于没测。
+
+⇒ 审核判「U18 编码反例构造未闭」**成立**。r7 那条断言若照跑，预期结果会是「不抛」（与断言相反），属**构造错误**而非环境不配合。
+
+#### §7.51.2 拆法：路径面 / 内容面 / 比较链 三组
+
+| 组 | 变量 | 被测对象 | 会不会因中文目录失败 |
+|---|---|---|---|
+| **A（U18）** | 路径含 `中文` + 空格 | OS 路径 API、`open()` 路径解析、字节回读 | **不会**（与 `encoding=` 无关） |
+| **B（ENC）** | **内容**含非 ASCII（独立合成载荷） | 文本编码器三态：`ascii` 抛 / `utf-8` 通 / `ensure_ascii` 变字节不变值 | 与目录无关 |
+| **C（U26）** | 留存比较链 8a/8b/8c | 三值比较 + 相等三项 + 归属三项 | 无关 |
+
+**B5 反向对照**（r7 错处的直接反证）：纯 ASCII 内容 + `encoding='ascii'` + 中文＋空格路径 ⇒ **应当成功**。若此条失败，说明我对「路径 vs 内容」的理解仍不对，届时整轮结论作废。
+
+#### §7.51.3 交付件
+
+目录：`docs/evidence/duckdb-v6-u18-u26-static-driver-20261117/`
+
+| 件 | bytes | sha256 |
+|---|---|---|
+| `_design-and-expectations.md` | 11705 | `4792E607B678412D9309555647652E5A099F5F72D97E5ABA81B4769B0906F6C4` |
+| `_design-and-expectations.v1-20261117.md` | 11401 | `F9148E87FE54ADF16C81F0932E6564262C57AEFA676114028952FB20E7D3BF5F` |
+| `_driver.candidate.ps1` | 25021 | `17AE3B074A64CCE3611E26A11E93C0C3B065945DD9C027E7662A1CBFA9522316` |
+| `_extracted-ps.ps1` | 2225 | `A26860FB4E1B8F0D0A59E7C0B1E05C6414C4618F88ED1C79AA31014095D4824C` |
+| `_extracted-pysrc.py` | 858 | `62B1E1B1B0F879380AE9CE170E1240F69995B888AD6D069B156E32FF57DA585C` |
+| `_synth.template.py` | 2015 | `D7A906EAD538DEBEDB0FDAB8E54B5F13C841AF61D4F53D4AA7C9392E8E90739F` |
+| `static-extract.tsv` | 411 | `8E72261C05FBA532084D5DCE535E5A1DF1D05511E7487C3A9994997861CB8C17` |
+
+**静态核（非执行验证）**：`_driver.candidate.ps1` `Parser::ParseFile` **errors=0**（4883 tokens）；`_synth.template.py` `py_compile` **OK**。
+
+#### §7.51.4 七段 pin
+
+| 段 | 落点 | bytes | sha256 |
+|---|---|---|---|
+| `PY_COLLECT` | L366..L374 | 545 | `223231A6…D945` |
+| `PY_RT` | L396..L401 | 271 | `C0E57F7C…0A8F` |
+| `CHK_PARSERS`（8a） | L546..L552 | 723 | `9545FF90…C82EB` |
+| `EQ_ATTR`（8b+8c） | L558..L577 | 1498 | `18AF80E8…CE6CBE` |
+| `Assert-AbsoluteDrivePath`（沿用 r5） | L326..L336 | — | `1DD4DC46…234F` |
+| `Test-ChainNoReparse`（沿用 r5） | L338..L361 | — | `8B725BA1…486B` |
+| `_synth.template.py`（本地合成器） | — | 2015 | `D7A906EA…739F` |
+
+#### §7.51.5 分母（三者分列，不合并）
+
+| 口径 | 值 | 自证方式 |
+|---|---|---|
+| 分组数 | **3** | `$grp = 'U18'/'ENC'/'U26'` 各 1 处，`Stage-Fails $grp` 3 处 |
+| 判决断言数 | **20** | `$script:plan` 20 条；`Add-Case` 20 次；实测**无重复、无缺、无多** |
+| python 进程 spawn | **16** | `Invoke-Py` 14 次 + HOST-ID `-c` 探测 2 次（后者亦计入 `py_calls`） |
+| 抽取段 | **7** | 4 新 + 2 沿用 + 1 合成器 |
+
+#### §7.51.6 本轮自查出的驱动缺陷（写入前修掉，未污染证据）
+
+| # | 缺陷 | 后果 | 修法 |
+|---|---|---|---|
+| 1 | `_synth.py` 从 `$evDir` 取模板 | 运行期必抛「文件不存在」 | 改从 `$PSScriptRoot` 取 + `PIN_SYNTH` 校验 |
+| 2 | U26 段首 ` . $pParse` 提前执行 | `$chkRtOut` 未赋值即执行 ⇒ 立刻抛 | 移除，改为在 `Try-Compare` 内 dot-source |
+| 3 | 多出 `U18-COLLECT-RC` 未登记 plan | `reached(20) != plan(19)` ⇒ 恒 FAIL | 补登记，plan=20 |
+| 4 | `ENC-ASCII-CONTENT-REJECT` 期望串写 `rc!=0` 而实测串是 `rc=<数字>` | 该条**永不相等** | 两侧归一为 `RC-NZ=Y,UE=Y` |
+| 5 | `Write-Bytes $pSynth (Get-Content …)` 传 `string[]` | 类型不匹配 | 改 `ReadAllBytes` |
+| 6 | 3 个 mut 调用用 `& $pyExe` 直调 | **不计入 `py_calls`、不留 stdout/stderr** ⇒ 读数少报 | 改走 `Invoke-Py` |
+| 7 | HOST-ID 两次 `-c` 未计入 | `py_calls` 少报 2 | 显式递增 |
+| 8 | 未记录真实 prefix 是否 ASCII | r8 要求的事实缺席 | 增 `real_prefix_ascii` 字段（**记录，不参与 PASS/FAIL**） |
+
+#### §7.51.7 U26 隔离模式定性（写死在 verdict 内）
+
+固定行：`isolation_note = 隔离模式仅试支路；生产顺序为先 FILE 后 PFX，不存在绕过路径`。
+
+- 隔离模式证明 `PFX`/`FIELDS` 支路**自身有鉴别力** —— 成立；
+- 隔离模式证明**生产可绕过 FILE 检查** —— **不成立**：隔离只是测试期人为对齐 `$CHK_META_HEX`，生产该变量来自 `PY_COLLECT` 返回值，顺序固定。
+
+#### §7.51.8 本轮零执行核对
+
+未执行 driver ✓｜未复制真实环境 ✓｜未 ACL／junction ✓｜未触 62 GB／生产库 ✓｜未清 flag ✓｜未恢复供血 ✓｜未下发 ✓｜未提交推送 ✓｜未重跑 15 条 ✓
+实测 `docs/evidence/duckdb-v6-u18-u26-run-*` 目录数 = **0**。
+**索引保持 4 已核 / 2 部分 / 26 未测**；`T041` 仍 `BLOCKED`；11-17 原闸保持。
+
+
+### §7.52 r9：十处缺参修正 + 静态前置 PASS + **一次隔离执行（FAIL，如实记录）**
+
+> 授权（r9 逐字）：「设计面收；驱动有十处调用缺参，修正并通过静态前置后，准一次原20项隔离执行。」「限定补齐十处调用，分别明确描述、固定期望、真实读数；确认20/20调用五参数、ID唯一且与plan恰好一致，三个Parser分别检查，任一失败即停。」「上述静态前置全部通过后，无需再申请一轮纯静态审核，准一次PS5.1原driver隔离执行……首次失败保留原件和未达项，不自修重跑。」
+
+#### §7.52.1 审核的十处缺参——我复验成立，且暴露我上一轮的审计方法是假的
+
+用 PS 5.1 AST 逐调用数实参：**20 处中 10 处只有 4 个实参**，行号与审核所列**逐字一致**（326、339、370、376、382、387、395、398、403、406）。
+
+**根因不是笔误，是我上轮的"自证"方法无效**：r8 我用 `([regex]::Matches($src,"Add-Case '([^']+)'"))` 数的是**出现次数**，从未数**实参个数**。于是「20 调用 = plan 20 条」被我当成了分母自证，实际 10 条的 `$got` 参数未绑定 → 空串 → 与 expect 比较恒不等 → **假失败**。这与审核判断一致：不是少跑，是**判据错位**。
+
+#### §7.52.2 修正（限定十处，最小改动）
+
+| 类型 | 改法 |
+|---|---|
+| 10 处缺参调用 | 原第 3 位（读数表达式）**移到第 5 位**，第 3 位补**明确描述**，第 4 位固定期望不动 |
+| 三处 Parser | 原共享 `$tok/$err` 改为每件独立 `$pk/$pe`，**各判各失败即 `throw ('PARSE: _…')`**（3 个独立拒绝点） |
+
+#### §7.52.3 通知 U26 用例表文案订正（授权范围内，单行）
+
+| 项 | 值 |
+|---|---|
+| 旧 | 117808 B / `288AB994FE9AB6FFB6F31862B49A2AC29727E047FBEC486E96EA6139E420A681` |
+| 新 | 117882 B / `598741EF4881D71E594FA2A709DD28471FDEE78CC3B09DDF5640503C54859451` |
+| 差量 | **单行 L1610、+74 B**（`notice-u26-wording.diff` 在驱动目录） |
+| 新增措辞 | 「⇒ 拒绝（**保留旧 META 的整链首先被 FILE 拦**）；**对齐 META 后的隔离测试**才到 `留存 prefix 字段对拍不一致`」 |
+| **七段 pin 改动前后** | F1 749B / F2 1384B / COLLECT 545B / RT 271B / PARSERS 723B / EQATTR 1498B —— **逐段 same=Y 且 = 期望** |
+
+⇒ 文案订正**未触碰任何抽取段**，正式校验顺序**未改**。这是「内容 pin 而非整文件 hash 把关」的价值实证。
+
+#### §7.52.4 静态前置门（static-gate-20261117T085247.txt）
+
+`static-gate-20261117T085247.txt`（1483 B，28 行，**14 项 PASS / 0 FAIL**）：G1 语法 errors=0 tokens=5068｜G2 Add-Case 五参数 20/20 非法 0｜G3a ID 唯一 20/20｜G3b 集合=plan｜G3c 顺序=plan｜G4a ParseFile=3｜G4b 独立拒绝点=3｜G4c 共享 `[ref]$err` 残留=0｜G5 六段 pin 全一致｜G6a synth pin｜G6b synth 编译 rc=0｜G7a PS 5.1.26100.9711｜G7b python 存在｜G7c 输出根未被占用。
+
+> 附带自查：静态门脚本**首版回执只有 88 B**——`foreach($r in $pinRows)` 与 ArrayList `$R` 在 PowerShell 里**大小写不敏感、是同一变量**，被覆盖成 `MatchInfo`。控制台判定为真但落盘不完整。改 `$Rc` 并重出完整回执。**这是本轮第二处"读数看着对、落盘不全"的自身缺陷**，与 §7.52.1 同族。
+
+#### §7.52.5 执行结果（一次，rc=1，**未自修未重跑**）
+
+| 项 | 实测 |
+|---|---|
+| 命令 | `powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File <driver> -Py <python>` |
+| 启动 | 2026-11-17T08:53:00 |
+| 退出码 | **1（FAIL）** |
+| 输出根 | `docs/evidence/duckdb-v6-u18-u26-run-20261117T085300`（排他创建成功，无 `-2` 后缀） |
+| host / py | PS 5.1.26100.9711 / 3.11.9，`py_sha256=5F7B89A6…52EC` ⇒ **SAME-AS-S0B** |
+| `real_prefix_ascii` | **Y**（真实 prefix 纯 ASCII ⇒ A 组只证路径面，与 §7.51.2 预判一致） |
+| 分组 / 断言 | 声明 **3 组 / 20 条**；实际 **reached=7、not_reached=13** |
+| 逐条 | **6 PASS / 1 FAIL**（`U18-PS-RECOMPUTE-EQ`） |
+| python 进程 | **py_calls=4**（HOST-ID×2 + collect + rt）——**不是**设计预算的 16，因早停 |
+| stages | 6 阶段 rc=0：BOOTSTRAP／NOTICE／HOST-ID／EXTRACT／EXTRACT-WRITE／PARSE |
+| `hashes.tsv` | **18 B 空表头**（HASHES 阶段未达，如实留空） |
+
+**失败原文**：
+```text
+CASE-FAIL U18 n=1 :: U18-PS-RECOMPUTE-EQ:
+期望[1363117b1fce18d86954e20f49a3f2b42c54ea671331c09e7c60a3900523b160]
+实际[1363117B1FCE18D86954E20F49A3F2B42C54EA671331C09E7C60A3900523B160]
+```
+
+#### §7.52.6 失败定性：**我的比较口径缺陷，不是通知逻辑缺陷**
+
+同一份产物内事后核验（**只读，非重跑**）：
+
+| 观察 | 值 |
+|---|---|
+| 长度 | 64 = 64 |
+| 逐位差异 | **18 位，全部为十六进制字母大小写**（b→B、f→F…），**无一处数值不同** |
+| 小写归一后 | **相等 = True** |
+| 三路互证 | python `META-HEX` = python `FILE-HEX` = PS 复算 = `1363117b…b160`（PS 侧输出为大写） |
+
+根因：`Get-BytesSha` 用 `BitConverter.ToString()` 得**大写**，Python `hashlib.hexdigest()` 得**小写**；`Add-Case` 用 `-ceq`（大小写敏感）。
+
+⇒ 该条**判据本身不成立**（拿格式差异当内容差异）；但 U18 的**实质**（真实 metadata 经「中文 目录」路径往返字节一致，且三条独立路径互证）在本轮**已被这三处读数支持**——只是被一条写坏的断言挡住，不能据此宣称 A 组通过，只能如实记为 6/7 PASS + 1 假失败。
+
+**未做**：按 r9 边界「首次失败保留原件和未达项，不自修重跑」——本轮**未改码、未重跑、未换 stamp**。修复方案（摘要归一小写 `ToLowerInvariant()`，其余比较保持 `-ceq`）留待下次授权。
+
+#### §7.52.7 交付件哈希
+
+| 件 | bytes | sha256 |
+|---|---|---|
+| `_driver.candidate.ps1` | 26285 | `5B8EC1B69040DA906B4EFB9E6E65DCE0AF3413265CE67F5A0B5465BC412F45C5` |
+| `static-gate-20261117T085247` | 1483 | `9C3DE201046BE7DB2DFFFB95A08B6DE464012849DFCF4C509585D10842845A2B` |
+| `notice-u26-wording.diff` | 588 | `FD7E7F3FE59FC3934D890800F18E2FED2FAEAECA598C0B539F012A4B804A971F` |
+| 通知（订正后） | 117882 | `598741EF4881D71E594FA2A709DD28471FDEE78CC3B09DDF5640503C54859451` |
+
+#### §7.52.8 边界核对
+
+未触生产 62 GB 库 ✓｜未复制真实环境 ✓｜未 ACL／junction ✓｜未清 flag ✓｜未恢复供血 ✓｜未下发客户 ✓｜未提交推送 ✓
+**索引仍 4 已核 / 2 部分 / 26 未测**；`T041` 仍 `BLOCKED`；11-17 原硬闸**不自动延期**。
+
+
+### §7.53 r10：摘要值边界修正 + 三负控 + **第二次隔离执行（FAIL，新根因，同样未自修未重跑）**
+
+> 授权（r10 逐字）：「只在SHA-256值边界先验64位hex，再统一为小写；其他字段保持严格比较，不能全局忽略大小写。保留原显示值，七段pin值不改，比较边界一致。」「加三个纯内存负控……不计入业务20分母。」「五参数20/20、各Parser、七pin及负控通过后，准新排他UTC一次原20项全链隔离验证。」「首失败留证停止，不自修重跑。」
+
+#### §7.53.1 摘要边界实现（唯一件，驱动与负控共用）
+
+`_digestcmp.ps1` 895 B `158746396792143BEE1A5A2DCEA36C0489A49DADED8BEFEAB9A2C8E110392EFB`：`Test-DigestHex` 先验 `^[0-9A-Fa-f]{64}$`，`Same-Digest` 再 `ToLowerInvariant()` 比较。
+驱动 `Add-CaseDigest` 记 `Cmp='DIGEST-NORM'`、**原显示值原样入 cases.tsv**；`Add-Case` 仍 `-ceq`、记 `Cmp='EXACT'`。
+9 处最小 diff 见 `digest-boundary.diff.md`。
+
+#### §7.53.2 静态前置门（static-gate-20261117T095435.txt，1981 B，**22 PASS / 0 FAIL**）
+
+含三项负控 **3/3**（与驱动 dot-source 同一份实现）：
+`NC1 同摘要异大小写=True`｜`NC2 一位真实变化=False`｜`NC3 非法hex=63位THROW、非hex THROW`。
+`G2 业务断言 20×五参数 = 合计20（EXACT 15 + DIGEST 5）非法0`；`G3 ID 唯一/集合/顺序全一致`；`G4 ParseFile=3、PARSE 拒绝点=3、DIGEST-PIN=2、无共享 err`；`G5 六段抽取 pin 全一致`（未改）。
+
+#### §7.53.3 执行结果（rc=1，**未自修未重跑**）
+
+| 项 | 实测 |
+|---|---|
+| 输出根 | `docs/evidence/duckdb-v6-u18-u26-run-20261117T015447Z`（**UTC 排他**成功） |
+| `stamp_utc` / `stamp_local` | `20261117T015447Z` / `20261117T095447` |
+| 组数 | 声明 **3**；实际到达组 = **U18 完整 + ENC 首条** |
+| reached / not_reached | **8 / 12** |
+| cases_pass | **7 / 20** |
+| negcontrols | **3 / 3**（`neg_in_denominator=NO`） |
+| py_calls | **7**（HOST-ID×2 + collect + rt-real + enc-ascii-cn + enc-utf8 + rt-synth-utf8） |
+| stages rc=0 | 8：BOOTSTRAP／NOTICE／HOST-ID／EXTRACT／EXTRACT-WRITE／PARSE／NEGCONTROLS／U18 |
+| verdict | **FAIL**，`fail_msg = DIGEST :: DIGEST-FORMAT: 左值非 64 位 hex -> []` |
+
+**本轮修正生效的直接证据**：`U18-PS-RECOMPUTE-EQ` **由 r9 的 FAIL 转 PASS**（expect 小写 / got 大写，`Cmp=DIGEST-NORM`）。
+**U18 组首次 7/7 全过**（路径面：中文＋空格目录往返、FILE/META、PFX、六字段、prefix 逐字符、PS 复算）。
+
+#### §7.53.4 新失败根因：**我的传参口径缺陷**（与 r9 的大小写问题无关）
+
+`ENC-ASCII-CONTENT-REJECT` 得 `RC-NZ=Y,UE=N`；随后 `$utf8Hex` 为空 → `Add-CaseDigest` 左值 `[]` → `DIGEST-FORMAT`。
+
+证据原文（`py-enc-ascii-cn.stderr.txt` 357 B，按 UTF-8 读）：
+```text
+File "..._synth.py", line 35, in <module>
+    with open(dst, "w", encoding="ascii", newline="\n") as f: f.write(s)
+FileNotFoundError: [Errno 2] No such file or directory: ''
+```
+
+机理：`_synth.py` 约定 `argv[1]=mode, argv[2]=src, argv[3]=dst`；而 `Invoke-Py` 拼命令行时
+`foreach ($a in @($arg1,$arg2,$arg3)) { if ($a) { … } }` —— **空实参被跳过**，位置参数整体前移，
+于是 `dst` 落到空串。`write-*` 三种模式全部因此失败（`py-enc-utf8` 295 B、`py-rt-synth-utf8` 436 B 同因）。
+
+⇒ **断言本身没有误判**（它如实报出"场景没跑成"），坏的是**场景搭建**。这是本轮第二类自身缺陷：
+**位置参数在有空值时被压缩**。按 r10 边界未改码、未重跑。
+
+#### §7.53.5 未达项（**不提前记覆盖**）
+
+`ENC-UTF8-OK-BYTES`、`ENC-ENSUREASCII-FILE-DIFF`、`ENC-VALUE-PRESERVED`、`ENC-ASCII-CONTENT-ON-CJK-PATH-OK`、
+`U26-POS-TRIPLE`、`U26-NEG-FILE`、`U26-NEG-PFX-ISO`、`U26-NEG-FIELDS-ISO`、`U26-EQ-TRIO-NEG`、
+`U26-EQ-TRIO-POS`、`U26-ATTR-POS`、`U26-ATTR-NEG` —— 共 **12 项 NOT-REACHED，零覆盖**。
+
+#### §7.53.6 哈希
+
+| 件 | bytes | sha256 |
+|---|---|---|
+| `_driver.candidate.ps1` | 29686 | `6E0A0F5B8ABF2306AC5CF4C23120AD9E9D98CD5279EF8F06309288E5430971A6` |
+| `_digestcmp.ps1` | 895 | `158746396792143BEE1A5A2DCEA36C0489A49DADED8BEFEAB9A2C8E110392EFB` |
+| `digest-boundary.diff.md` | 2751 | `D6CE46856C059370C5E0E95693AAB9998A30D74E8A8EB8C97A0DCB3F1BA58925` |
+| `static-gate-20261117T095435.txt` | 1981 | `DEAC26E169ADE0DF6DCEF38A55A892E73A21779BED992590E30C6E324CE712B6` |
+
+#### §7.53.7 边界核对
+
+未触 62 GB 库 ✓｜未复制环境 ✓｜未 ACL／junction ✓｜未清 flag ✓｜未恢复供血 ✓｜未下发 ✓｜未 Git ✓｜未自修未重跑 ✓
+索引仍 4 已核 / 2 部分 / 26 未测；`T041` 仍 `BLOCKED`；11-17 原闸不延期。
+
+
+### §7.54 r11：槽位协议重建 + 驱动内建 argv probe —— **probe 失败即停，未进入 13 项**
+
+> 授权（r11 逐字）：「同时修调用槽位和空参数序列化。synth要求 `mode/src/dst`，当前write调用把目标路径放进src、dst仍空；只保留空参数不能修好。」「逐调用核协议：collect/rt各一个路径；write为 `mode、空src、dst`；mut为 `mode、src、dst`。」「静态核后准一次临时echo-argv probe；probe失败即停。通过后，准新UTC一次仅ENC5＋U26八，共13断言。」
+
+#### §7.54.1 槽位协议重建（17 个调用点）
+
+`Invoke-Py`（三固定形参 + `if ($a)` 跳过空值）→ `Invoke-PySlots($tag,$script,[string[]]$slots)`，**每个槽位无条件写成一对引号**，空槽写 `""` 占位。同时把拼好的命令行落 `py-<tag>.argv.txt` 供审计。
+
+| 形态 | 槽位 | 调用点数 |
+|---|---|---|
+| collect / rt | `@(path)` | 8 |
+| write | `@(mode, '', dst)` | 5 |
+| mut | `@(mode, src, dst)` | 3 |
+| probe | `@(mode,'',dst)` / `@(path)` | 2 |
+
+静态核对（逐行列出，见回执）：17/17 符合协议，旧 `Invoke-Py '` 残留 **0**。
+
+#### §7.54.2 本轮新增的三道闸
+
+| 闸 | 内容 |
+|---|---|
+| `-Scope` | `ALL`／`ENC+U26`／`PROBE`；plan 按 scope 过滤（`ENC+U26` → **13** 条：ENC5 + U26 8） |
+| `INPUT-FIXED` | 按**完整 hash** 复制 r10 已核 pin（370 B / `1363117B…B160`）作只读输入；6 个拒绝点（缺参/源不存在/解释器身份变更/源 hash 不符/复制后 hash 不符/固定输入 FILE≠META） |
+| SETUP 守卫 | 8 处（ENC 5 + U26 3）：write/mut 的 rc≠0 **立即 throw**，不让坏输入流到后续摘要检查 |
+
+#### §7.54.3 probe 结果：**FAIL（rc=1），按边界停止**
+
+`-Scope PROBE` 一次，根 `duckdb-v6-u18-u26-run-20261117T025502Z`：
+
+| ID | 期望 | 实测 | pass |
+|---|---|---|---|
+| `PROBE-WRITE-ARGC` | 3 | 3 | **Y** |
+| `PROBE-EMPTY-SRC` | `0|E3B0C442…` | `0|e3b0c442…` | N |
+| `PROBE-DST-EXACT` | `FBEA8174…` | `fbea8174…` | N |
+| `PROBE-SINGLE-ARGC` | 1 | 1 | **Y** |
+| `PROBE-SINGLE-EXACT` | `FBEA8174…` | `fbea8174…` | N |
+
+**失败性质：又是我自己的比较写法，不是槽位协议。** 我在 probe 里对哈希串用了严格 `PR`（`-ceq`），而
+`Get-BytesSha` 用 `BitConverter` 得**大写**、Python `hexdigest()` 得**小写**。同一份产物事后核验（只读，非重跑）：
+
+| ID | 逐位差异 | 小写归一后相等 |
+|---|---|---|
+| `PROBE-EMPTY-SRC` | **21 位，全部为字母大小写**（E→e、B→b…） | **True** |
+| `PROBE-DST-EXACT` | **23 位，全部为字母大小写** | **True** |
+| `PROBE-SINGLE-EXACT` | **23 位，全部为字母大小写** | **True** |
+
+⇒ 这与 r10 修过的同一类缺陷**再次复发**，只是这次发生在我新写的 probe 里。**按 r11「probe失败即停」，本轮不进入 13 项。**
+
+#### §7.54.4 不依赖我的比较的三条硬读数（证明槽位协议本身成立）
+
+| 读数 | 值 | 含义 |
+|---|---|---|
+| write 形状 `ARGC` | **3** | python 收到 3 个参数 |
+| write 第 2 槽 `LEN` | **0** | **空串作为参数到达，未被丢弃** |
+| write 第 3 槽 `LEN` | **107** | CJK+空格目标路径完整到达 |
+| single 形状 `ARGC` / `LEN` | **1 / 107** | 单槽形态同样完整 |
+| 两形状路径哈希 | **一致** | 同一路径在两种槽位形状下逐字节相同 |
+| `argv.txt` 含 `""` 空槽 | **True** | 序列化层确实写出占位 |
+
+`py-probe-write.argv.txt` 原文：
+```text
+"…\_argvprobe.py" "write-utf8" "" "…\run-20261117T025502Z\中文 目录\data\probe-中文 空格.json"
+```
+
+> 这些读数**支持**「槽位协议已修好」，但 **probe 作为判据件本身不合格**，所以本轮**不宣称 probe 通过**、也不据此进入 13 项。
+
+#### §7.54.5 静态核回执
+
+`Parser::ParseFile` errors=0（6722 tokens）；plan 文本核算 ENC=5／U26=8／U18=7（首轮 20 全量仍在）；
+固定输入源实测存在、370 B、sha 与 `$FIXED_PIN_SHA` **精确匹配**。
+
+#### §7.54.6 哈希
+
+| 件 | bytes | sha256 |
+|---|---|---|
+| `_driver.candidate.ps1` | 35482 | `12E4F030BC161964E7A797EEC66F7FB4F83F97A9244A58EF032AF69D91E7A053` |
+| `_argvprobe.py`（临时） | 313 | `CAF23AC78414C1BF8036EDF8BDF7099C57A67CBE803D68CFB2E891BB41D80526` |
+
+#### §7.54.7 边界核对
+
+仅动驱动与合成目录 ✓｜未生产 ✓｜未环境复制 ✓｜未 ACL／junction ✓｜未清 flag ✓｜未恢复供血 ✓｜未下发 ✓｜未 Git ✓
+未进入 13 项 ✓｜未重跑 U18 ✓｜未重跑摘要负控 ✓｜索引仍 4/2/26；`T041` 仍 `BLOCKED`；11-17 原闸不延期。
+
+
+### §7.55 r12：probe 比较口径修正 → **probe 5/5 通过** → 13 项首失败即停（**9 PASS / 4 NOT-REACHED**）
+
+#### §7.55.1 表述订正（审核方指正，照收）
+
+r11 我写「ARGV-PROBE 3/5」是错的：实际是 **2 通过、3 失败**（两个 ARGC 过，三个摘要比较未过）。「3/5」会被读成三项通过，属误导性表述，此后不采用。
+
+#### §7.55.2 三处复合值按审核方口径拆分
+
+`0|hash` 是复合值，**整串不得进摘要函数**。改为：
+
+| 组件 | 修法 |
+|---|---|
+| `DigestToken(expect,got)` | 先各自 `Test-DigestHex`（64hex）→ 再 `Same-Digest` 归一比较，只回 `OK` / `MISMATCH` / `EXPECT-NOT-64HEX` / `GOT-NOT-64HEX` |
+| `PROBE-EMPTY-SRC` | `LEN=0,HEX=OK` —— **长度严格比 0**（非摘要字段精确比较）＋摘要单独走 `DigestToken` |
+| `PROBE-DST-EXACT` / `PROBE-SINGLE-EXACT` | `HEX=OK` —— 只比令牌 |
+| 两个 `ARGC` | 保持精确比较（`3` / `1`） |
+| 组数口径 | `groups = 0`（PROBE 非业务组）；另列 `business_groups = 2`、`plan_by_group = ENC=5 U26=8 U18=7` |
+
+#### §7.55.3 probe 实际原件（**5/5 通过**）
+
+根 `duckdb-v6-u18-u26-run-20261117T034457Z`；`ARGV-PROBE rc=0`。
+
+```text
+id	expect	got	pass
+PROBE-WRITE-ARGC	3	3	Y
+PROBE-SINGLE-ARGC	1	1	Y
+PROBE-EMPTY-SRC	LEN=0,HEX=OK	LEN=0,HEX=OK	Y
+PROBE-DST-EXACT	HEX=OK	HEX=OK	Y
+PROBE-SINGLE-EXACT	HEX=OK	HEX=OK	Y
+```
+
+> 该根整轮 `verdict=FAIL` 的原因**不是 probe**：PROBE 模式下驱动仍进入了 `INPUT-FIXED` 分支并因缺 `-FixedPin` 抛错（`fail_msg = OTHER :: INPUT-FIXED: 未给 -FixedPin`）。probe 自身 5/5、阶段 rc=0。这是 scope 门的结构瑕疵，已在 §7.55.5 登记。
+
+#### §7.55.4 13 项实际原件（**9 PASS / 4 NOT-REACHED**，首失败即停）
+
+驱动 sha `26C905F689525A795F308D15D65FDD7A1632E2C0F6BC38BB4EC8021164E4B76B`（与通过 probe 的**同一 sha**）；
+根 `duckdb-v6-u18-u26-run-20261117T034521Z`；本地 11:45:21 ／ UTC 03:45:21Z；
+输入 = r10 已核 pin `1363117B…B160` 按完整 hash 复制，源/副本双向核验通过（`INPUT-FIXED` 阶段 rc=0）。
+
+```text
+ENC-ASCII-CONTENT-REJECT           PASS         expect=RC-NZ=Y,UE=Y got=RC-NZ=Y,UE=Y
+ENC-UTF8-OK-BYTES                  PASS         expect=ee59e2fb6dc5710bec3bc26a3987eae5935f1023b9856c49df77e0d405e79f9e got=ee59e2fb6dc5710bec3bc26a3987eae5935f1023b9856c49df77e0d405e79f9e
+ENC-ENSUREASCII-FILE-DIFF          PASS         expect=DIFF=Y got=DIFF=Y
+ENC-VALUE-PRESERVED                PASS         expect=16183739cbae0e1e1f32fb423d401c84a0e0d8757e2620263f45b3e4bdc20501 got=16183739cbae0e1e1f32fb423d401c84a0e0d8757e2620263f45b3e4bdc20501
+ENC-ASCII-CONTENT-ON-CJK-PATH-OK   PASS         expect=RC-ZERO=Y,OK=Y got=RC-ZERO=Y,OK=Y
+U26-POS-TRIPLE                     PASS         expect=threw=False got=threw=False
+U26-NEG-FILE                       PASS         expect=class=FILE got=class=FILE
+U26-NEG-PFX-ISO                    PASS         expect=class=PFX got=class=PFX
+U26-NEG-FIELDS-ISO                 PASS         expect=class=FIELDS got=class=FIELDS
+U26-EQ-TRIO-NEG                    NOT-REACHED  expect=(预登记) got=NOT-REACHED
+U26-EQ-TRIO-POS                    NOT-REACHED  expect=(预登记) got=NOT-REACHED
+U26-ATTR-POS                       NOT-REACHED  expect=(预登记) got=NOT-REACHED
+U26-ATTR-NEG                       NOT-REACHED  expect=(预登记) got=NOT-REACHED
+```
+
+分列：**plan 13 ／ reached 9 ／ not_reached 4 ／ cases_pass 9/13 ／ py_calls 15 ／ 负控 0（不重跑）**。
+
+通过的 5 条 ENC（含 `write-*` 槽位修正后 `HEX` 正常产出、`ascii 写中文` 如期抛错、纯 ASCII 内容在 CJK+空格路径上成功）＋ U26 前四条（POS-TRIPLE / NEG-FILE / NEG-PFX-ISO / NEG-FIELDS-ISO 分类全部命中）。
+
+#### §7.55.5 首失败根因（只读定位，未再跑）
+
+`fail_msg = OTHER :: 在此对象上找不到属性"python"。请确认该属性存在并且可设置。`
+
+- `$objReal` 只在 **U18 分支内**（L428 `$objReal = (ReadAllText($srcPin)) | ConvertFrom-Json`）赋值；
+- `-Scope ENC+U26` 跳过 U18 ⇒ `$objReal` **从未定义**；
+- `U26-EQ-TRIO-*` / `U26-ATTR-*` 四条的探针构造依赖它：`$chkObj = $objReal | Select-Object *` → `$chkObj` 为 `$null` → `$chkObj.python = '3.11.8'` 抛错。
+
+⇒ 与 r11 的 `$pinReal` 属**同一类缺陷**（我把 `$srcPin` 提到两分支，却把 `$objReal` 落在 U18 分支内），修法同形：`INPUT-FIXED` 分支内一并构造 `$objReal`。
+
+同时登记一处**结构瑕疵**：`INPUT-FIXED` 未对 `PROBE` scope 设门（§7.55.3 已实测）。
+
+#### §7.55.6 哈希
+
+| 件 | bytes | sha256 |
+|---|---|---|
+| `_driver.candidate.ps1` | 36516 | `26C905F689525A795F308D15D65FDD7A1632E2C0F6BC38BB4EC8021164E4B76B` |
+| `_argvprobe.py`（临时） | 313 | `CAF23AC78414C1BF8036EDF8BDF7099C57A67CBE803D68CFB2E891BB41D80526` |
+
+#### §7.55.7 边界核对
+
+仅既定驱动／合成目录／限定验证 ✓｜未生产 ✓｜未环境复制 ✓｜未 ACL／junction ✓｜未清 flag ✓｜未恢复供血 ✓｜未下发 ✓｜未 Git ✓
+未重跑 U18 ✓｜未重跑旧 15 项 ✓｜未重跑已验摘要负控（`negcontrols 0/0`）✓｜索引仍 4/2/26；`T041` 仍 `BLOCKED`；11-17 原闸不延期。
+
+
+### §7.56 r13：最小 EQATTR 范围 —— **四项 4/4 PASS**（跨轮合并覆盖，原 FAIL 保留）
+
+#### §7.56.1 最小 diff（16 处，逐处登记）
+
+| # | 位置 | 改动 |
+|---|---|---|
+| R1 | scope 白名单 | `+ 'EQATTR'` |
+| R2 | 门变量 | `+ $runEnc / $runU26 / $runEqOnly` |
+| R3 | plan 过滤 | `= 'EQATTR'` ⇒ **恰四条**（`U26-EQ-TRIO-*` ∪ `U26-ATTR-*`） |
+| R4 | 固定输入分支 | `else` → **`elseif (-not $runProbe)`** ⇒ PROBE 既不进业务也不进固定输入 |
+| **R5** | **ALL 分支赋值顺序** | `$srcPin = $pinReal` 提到 `collect-real` 之后（原 `$objReal` 在 L428 读 `$srcPin`，而 `$srcPin` 直到 U18 段末才赋值 ⇒ ALL 必读空路径） |
+| R6 | FixedPin 分支 | **显式生成 `$objReal`** + 2 个失败出口（未生成 / 缺六字段）+ `OBJREAL-INIT` 阶段行 |
+| R7 | U18 分支 | `+` `$objReal` 未生成出口（ADD-only，不改逻辑） |
+| R8/R9 | ENC 门 | 原 `if (-not $runProbe)` → **`if ($runEnc)`**，并补 `}` 收尾 |
+| R10 | U26 门 | **`if ($runU26)`**（ENC 与 U26 各自成门，不再共用一个 `-not $runProbe`） |
+| R11/R12 | mut 生成 | `if (-not $runEqOnly) { … }`（EQATTR 不生成 mut 件） |
+| R13/R14 | 前四条业务用例 | `if (-not $runEqOnly) { … }`（EQATTR 只跑 8b/8c 四条） |
+| **R15/R16** | **末尾 hash 收集空路径守卫** | `IsNullOrEmpty` ⇒ `$skipHash++; continue`；阶段行记 `skip_empty=` |
+| R17 | groups 口径 | `+ EQATTR=1` |
+
+`pEq` 冻结段**零改动**；固定输入与解释器 hash 保持（`1363117B…B160` / `SAME-AS-S0B`）。
+
+#### §7.56.2 静态三关
+
+| 关 | 结果 |
+|---|---|
+| `Parser::ParseFile` | **errors=0**，7123 tokens |
+| plan 恰四条 | 滤出 **4**：`U26-EQ-TRIO-NEG`、`U26-EQ-TRIO-POS`、`U26-ATTR-POS`、`U26-ATTR-NEG`；全量仍 20（ENC5/U26 8/U18 7） |
+| 初始化与失败出口 | `OBJREAL` 三个出口在位（FixedPin 未生成 / 缺字段 / U18 未生成）；空路径守卫在位 |
+
+#### §7.56.3 四项实际原件（**4/4 PASS，rc=0**）
+
+根 `duckdb-v6-u18-u26-run-20261117T071754Z`；本地 15:17:53 ／ **UTC 07:17:53Z**；驱动 `6558B12ED1CB3B306548F3864741A272FFEBEEE1894F833AA5A469BDC1716C23`；
+输入 `1363117B1FCE18D86954E20F49A3F2B42C54EA671331C09E7C60A3900523B160`（源/副本双向核验）。
+
+```text
+U26-EQ-TRIO-NEG                    PASS         expect=class=TRIO got=class=TRIO
+U26-EQ-TRIO-POS                    PASS         expect=threw=False got=threw=False
+U26-ATTR-POS                       PASS         expect=threw=False got=threw=False
+U26-ATTR-NEG                       PASS         expect=class=ATTR-EXE got=class=ATTR-EXE
+```
+
+分列：**plan 4 ／ reached 4 ／ not_reached 0 ／ cases_pass 4/4 ／ py_calls 3 ／ groups 1**；`verdict = PASS`。
+
+阶段回执：
+
+```text
+name	rc	note
+BOOTSTRAP	0	evDir=D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u18-u26-run-20261117T071754Z cnData=D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u18-u26-run-20261117T071754Z\中文 目录\data
+NOTICE	0	bytes=117882 lines=1812 
+HOST-ID	0	ps=5.1.26100.9711 py=3.11.9 SAME-AS-S0B prefix_ascii=Y real_prefix=C:\Users\Administrator\AppData\Local\Programs\Python\Python311
+EXTRACT	0	6 段 pin 全中：F1/F2/COLLECT/RT/PARSERS/EQATTR
+EXTRACT-WRITE	0	ps1 x3(bom) py x3 (synth 2015B pin ok)
+PARSE	0	3/3 解析通过（各自独立 err）
+INPUT-FIXED	0	src=D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u18-u26-run-20261117T015447Z\中文 目录\data\pypin-20261117T015447Z.json sha=1363117B1FCE18D86954E20F49A3F2B42C54EA671331C09E7C60A3900523B160 copy=ok META=取自源字节(声明推导)
+OBJREAL-INIT	0	fields=duckdb,duckdb_file,exe,prefix,python,source_id python=3.11.9 prefix_len=62
+U26	0	4 条
+HASHES	0	6 files, skip_empty=7
+```
+
+`OBJREAL-INIT` 行即 `$objReal` 生成的自证：`fields=duckdb,duckdb_file,exe,prefix,python,source_id python=3.11.9 prefix_len=62`（`prefix_len=62` 与 §7.54 记录的 `real_prefix` 长度一致，CJK+空格路径面未变）。
+
+#### §7.56.4 跨轮合并覆盖（**不称一次 13 项全绿**）
+
+| 轮 | 驱动 sha | 根 | 断言 | 结果 |
+|---|---|---|---|---|
+| r12 | `26C905F6…E4B76B` | `…run-20261117T034521Z` | ENC 5 + U26 前 4（共 9） | **9/9 PASS**；整轮 **FAIL**（`$objReal` 缺失） |
+| r13 | `6558B12E…C1716C23` | `…run-20261117T071754Z` | EQ-TRIO×2 + ATTR×2（共 4） | **4/4 PASS**；整轮 **PASS**（但只含 4 条） |
+
+⇒ **13/13 覆盖由两次运行合并而成，两次驱动 sha 不同，不存在「一次 13 项全绿」的运行**。r12 的 `verdict=FAIL` **原样保留**，不追溯改写成 PASS。
+
+#### §7.56.5 已知瑕疵（如实登记）
+
+- `groups` 行注释文本仍写「PROBE=0；ENC+U26=2；ALL=3」，未补 `EQATTR=1`（**仅注释**，实际值 `1` 正确）。
+- `HASHES` 阶段 `skip_empty=7`：EQATTR 范围未产出的 7 个文件按守卫跳过，**不是缺失证据**。
+
+#### §7.56.6 哈希
+
+| 件 | bytes | sha256 |
+|---|---|---|
+| `_driver.candidate.ps1` | 37693 | `6558B12ED1CB3B306548F3864741A272FFEBEEE1894F833AA5A469BDC1716C23` |
+
+#### §7.56.7 边界核对
+
+未重跑已收 9 项 ✓｜未重跑 U18 七项 ✓｜未重跑完整 13 项 ✓｜未重跑旧 15 项 ✓｜未重跑负控 ✓｜未重跑 probe ✓
+未生产 ✓｜未环境复制 ✓｜未 ACL／junction ✓｜未清 flag ✓｜未恢复供血 ✓｜未客户下发 ✓｜未 Git ✓
+索引仍 4/2/26；`T041` 仍 `BLOCKED`；11-17 原闸不延期。
+
+
+### §7.57 r14：验收归位 —— 索引更新、EQATTR 计组注释补齐（**本轮零重跑**）
+
+> 授权（r14 要点）：「更新当前索引摘要和对应 U18／U26 行：已证、部分覆盖、未测分别列明；旧 `1/3/28`、`4/2/26` 标各自历史阶段」「不同驱动合并 13 项，不能称同版一次全绿；034521Z 整轮 FAIL 永久保留」「一次汇总剩余项：哪些是当前客户交付硬阻，哪些是已接受限制，哪些须另门」「不能为做大全绿自动扩成 32 项实验」「EQATTR 注释计组缺口随正常文更补，不阻本次阶段关闭」。
+
+#### §7.57.1 索引更新（当前读数 + 历史阶段分列）
+
+件：`docs/evidence/duckdb-v6-u1-u32-final-review-index-20261116.md` **25204 B** / 280 行 / `1F8ED7157AED63854361A5DE98E07879140F4AA85918A031A71A37D151179A12`
+
+| 位置 | 更新 |
+|---|---|
+| 头部 | 增「**当前 rev：2026-11-17（r14 验收归位）**」 |
+| §〇 | 当前读数 **已核 6 / 部分 2 / 未测 24 / 不适用 0**；另设**三行历史阶段表**：`1/3/28`（11-16 r4）、`4/2/26`（11-16 rev2）、`6/2/24`（11-17 当前）——**每格标明所属阶段，不互相冒充** |
+| **U18 行** | 未测 → **已证（7/7）**；依据 = `…run-20261117T015447Z`（§7.53）+ pin `1363117B…B160` = FILE = META = PS 复算；旁证不得替代的旧注保留，`Errno 22` 仍记**待补录** |
+| **U26 行** | 未测 → **已证（8/8，跨轮合并）**；依据分列 r12 四条（`…T034521Z`）与 r13 四条（`…T071754Z`），并写死「**非同版一次全绿**：两次驱动 sha 不同；`…T034521Z` 整轮 `verdict=FAIL` **永久保留**，不追溯改写」 |
+| §分布 | 已核 **6**（U31/U27/U32/U28/**U18/U26**）／部分 **2**／未测 **24**（U1–U24、U30） |
+| §八 尾注 | 原「未运行就是未运行」标注为**历史注记（2026-11-16 当时口径）** |
+
+#### §7.57.2 新增 §九：剩余项一次汇总（**三分类**）
+
+| 类 | 组数／项数 | 内容 |
+|---|---|---|
+| **9.1 当前交付硬阻** | 7 组 / 21 项 | H1 `T041`（流程）｜H2 U1–U12（校验链主干）｜H3 U13–U17（留存链）｜H4 U24（936 代码页）｜H5 62 GB 耗时与峰值｜H6 包身份三值同源｜H7 U18 反例面（已在 r12 闭合，仅登记归属） |
+| **9.2 已接受限制** | 4 组 / 10 项 | L1 junction 六项（**设计拒绝、未实测**，须改述）｜L2 U7（失效方向=过严，风险不对称可接受）｜L3 逃生阀（代码判据级 + 通知已声明不受支持）｜L4「正式版本」术语（审核方定义已闭合、不设 PyPI 取证门） |
+| **9.3 须另门** | 4 门 | `G-ACL`（U25/U29 扫描器侧 2）｜`G-JUNCTION`（U19–U23/U30 六项若要升实测）｜`G-ENVCOPY`（U13–U17 5）｜`G-62GB`（1） |
+
+**9.4 最短剩余硬阻 = 2 项**：①`T041` 用户批准（流程，无实测）②**通知 v6 终审措辞定稿**（H2/H3/H4/H6 未测面逐条改述 + H5 降级 + L1 junction 表述）。
+**24 项「未测」不构成交付阻塞**——它们要么可被措辞显式降级，要么设计上拒绝，要么需另门。
+**明文禁止**：为把「未测 24」变「未测 0」而自动扩成 32 项实验（会把一次交付拖成一轮研究）。
+
+**9.5 建议下一自然包三选**：**包 A（推荐，纯文案、边界内）** 通知 v6 终审措辞包｜包 B（需新授权：放宽「不复制环境」）U1–U17+U24 共 18 项｜包 C（需新授权：放宽 ACL/junction）8 项，非交付必需。
+
+#### §7.57.3 EQATTR 计组注释补齐（**仅两个文本字面量**）
+
+| 项 | 值 |
+|---|---|
+| 改前 | 37693 B `6558B12ED1CB3B306548F3864741A272FFEBEEE1894F833AA5A469BDC1716C23` |
+| 改后 | 37722 B `0F7B16466EF92857092AC8A51A9066948FEE3B754041CF07F2431E8867D241E2` |
+| diff | **4 行（2 减 2 增）**，落 `eqattr-comment.diff.txt` |
+| 内容 | `groups` 行注释补 `EQATTR=1`；`business_groups` 补「EQATTR 属 U26 子范围（不另计组）」 |
+| 语法复核 | `Parser::ParseFile` **errors=0**，**tokens 7123 与改前完全相同** ⇒ 结构未动的旁证 |
+| 影响面 | 两处均为写进 `verdict.txt` 的**文本字面量**，**不参与任何判定**（verdict 只看 `cases` 通过数与 `plan` 数） |
+| 未重跑 | **本轮零重跑**（边界禁）；r13 那份 `verdict.txt` 的对应两行仍是旧文案，**原件不改**——此为已知且已授权的偏差 |
+
+#### §7.57.4 边界核对
+
+**零重跑**：4 项／9 项／13 项／U18 七项／旧 15 项／probe **均未重跑** ✓
+未升级 ✓｜未复制环境 ✓｜**未读 62 GB 库** ✓｜未建 ACL／junction ✓｜未清 flag ✓｜未供血 ✓｜未生产操作 ✓｜未客户下发 ✓｜**未 Git** ✓
+`T041` 仍 `BLOCKED`；11-17 原门**不自动放宽、不延期** ✓
+
+
+### §7.58 r15：包 A 文案（通知 v6 措辞终审准备）+ 索引摘要勘误
+
+> 授权（r15）：「通知 v6 只做措辞终审准备：H2/H3/H4/H6 写清设计与未实测，H5 不承诺 62 GB 耗时和峰值，L1 写「设计拒绝、未实测」」「摘要把已通过的 U18 混进未测列表，下次随文案改为 U1–U17、U19–U24、U30」。
+
+#### §7.58.1 索引摘要勘误（2 处）
+
+| 位置 | 改前 | 改后 |
+|---|---|---|
+| §〇 当前读数 | `未测 24 项（U1–U24、U30）` | `未测 24 项（U1–U17、U19–U24、U30；U18/U26 已证，不在其列）` |
+| §分布 表「未测」行 | `U1–U24、U30` | `U1–U17、U19–U24、U30` |
+
+残留检查：`U1–U24、U30` **0 处**；新写法 **2 处**。索引 **25228 B** `509D9148F19C12C9B5CCA50CA9983696D2627A6C59C96DBF549B2FE7CA020F44`。
+
+原 `…T034521Z` 整轮 FAIL 与「跨轮合并 13/7/8」口径**未改动**。
+
+#### §7.58.2 通知 v6 两处新增（均属措辞，未碰代码段）
+
+| 位置 | 内容 |
+|---|---|
+| **新增 §2.4.12**（L1682，位于 `## 四、自检输出怎么读` 之前） | 「判据实测状态总表」：逐组列 **设计 / 实测状态 / 客户侧含义**，覆盖 **H2**（U1–U12 未实测）、**H3**（U13–U17 未实测，指向 L611 既有声明）、**H4**（U24/936 未实测）、**H6**（U18 7/7 + U26 8/8 **跨轮合并已测**，U16/U17 跨环境复制未测）、**H5**（62 GB 未跑）、**L1**（junction **设计上拒绝、未在真实 junction 上实测**）；另附「三条规定不得反过来读」 |
+| **§六 性能提示开头**（L1730） | 「⚠ **不作承诺（2026-11-17 终审补正）**」：明文**不承诺** 62 GB 真实库的**耗时**与**峰值内存**；本节数据仅来自合成库（200 万行 / 59.8 MB / `memory_limit='128MB'`）与设计推理，**不构成**对客户库规模的任何保证 |
+
+通知 **117882 B → 121438 B**，1812 → 1836 行，`598741EF…4859451` → `96773A27D1D08BFAE64149A2D987871B0382D74BD7B0A2735B913C95DC1DDE8F`。
+
+#### §7.58.3 冻结段复核：**6/6 逐字节一致**（关键证据）
+
+措辞新增后，按**驱动自身抽取算法**（`$idx` 逐行字节偏移 + `Slice-Bytes`，切片含行尾 `\n`；行尾实测 **LF**）复现六段：
+
+| 段 | 行范围 | bytes | 结果 |
+|---|---|---|---|
+| F1 `Assert-AbsoluteDrivePath` | L326–L336 | 749 | **MATCH ✓** |
+| F2 `Test-ChainNoReparse` | L338–L361 | 1384 | **MATCH ✓** |
+| COLLECT（`$PY_COLLECT` 体） | L365–L375 | 545 | **MATCH ✓** |
+| RT（`$PY_RT` 体） | L395–L402 | 271 | **MATCH ✓** |
+| PARSERS（8a 段） | L546–L553 | 723 | **MATCH ✓** |
+| EQATTR（8b+8c 段） | L558–L578 | 1498 | **MATCH ✓** |
+
+⇒ **措辞新增全部落在冻结段之外**，被冻结的代码段与七个既有 pin 保持一致。
+
+**并且登记一次自查**：我第一版用**自己写的正则抽取**（取正文、不含行尾换行）得到 **4 段 DIFF**——那是**我的抽取与驱动算法不同**，不是冻结段变了。我没有据此下「冻结段被改动」的结论，而是回头读驱动的 `EXTRACT` 实现并逐字节复现，才得到 6/6。**判据件必须先自证，否则差异会被读成被测对象的缺陷。**
+
+#### §7.58.4 由此产生的已知偏差（必报，未修）
+
+驱动内 `$KNOWN_NOTICE = '598741EF…4859451'` 是**改前**的通知哈希；改后通知为 `96773A27…`。
+⇒ **若下次运行驱动，`NOTICE` 阶段会因 pin 不符而 FAIL**。
+
+**本轮未改该 pin**：①r15 边界只授权措辞准备，未授权改驱动内容 pin；②改 pin 而不跑一次核验，等于把一个**未经验证的字面量**写进判据件。
+**处置建议**：下一包先做「pin 同步 + 仅 NOTICE/EXTRACT 静态核」，把 `$KNOWN_NOTICE` 更新为 `96773A27…`、把 `598741EF…` 降为 `$KNOWN_NOTICE_PREV`（历史阶段用）。
+
+#### §7.58.5 边界核对
+
+**零重跑**（4／9／13／U18 七／旧 15／probe）✓｜**未做包 B/C** ✓｜未升级 ✓｜**未下发** ✓｜未复制环境 ✓｜未读 62 GB ✓｜未 ACL／junction ✓｜未清 flag ✓｜未供血 ✓｜**未 Git** ✓
+`T041` 仍 `BLOCKED`；11-17 原时间门**不自动放宽、不延期** ✓
+
+
+### §7.59 r16：pin 同步 + NOTICE/EXTRACT 静态核 + 终审呈报件
+
+#### §7.59.1 pin 同步（三级历史）
+
+| 字段 | 值 |
+|---|---|
+| `$KNOWN_NOTICE` | `96773A27…1DDE8F`（当前） |
+| `$KNOWN_NOTICE_PREV` | `598741EF…4859451`（r9–r15） |
+| `$KNOWN_NOTICE_HIST` | `288AB994…420A681`（史前） |
+
+驱动 37722 → **38088 B**，`0F7B1646…7D241E2` → `722EAF8BA6C5EFEBA99E3902B321E175D36B54FCB57FD0C29EBA93F212F1F99B`，diff **15 行**（落 `pin-sync.diff.txt`）。
+
+#### §7.59.2 一处判断订正（主动）
+
+r15 我方写「`NOTICE` 阶段会因 pin 不符 **FAIL**」——**错**。实读代码：`$KNOWN_NOTICE` 不符**只置告警**
+（`NOTICE-SHA-DRIFT(仅告警;内容级由 pin 把关)`），**不 throw**；fail-closed 的是 `EXTRACT` 六段内容 pin
+（`throw ('EXTRACT-PIN-<N> 漂移 …')`）。故本次 pin 同步是**恢复审计字段可读性**，不是修运行级缺陷。
+
+#### §7.59.3 静态核（仅 NOTICE/EXTRACT，plan 空）
+
+新增 `-Scope NOTICE`（plan 恰 0，`$runFix` 门确保不进固定输入/U18/probe/ENC/U26）；
+`Parser::ParseFile` **errors=0**（7157 tokens）；运行根 `duckdb-v6-u18-u26-run-20261117T141023Z`，**rc=0 / verdict=PASS**：
+
+```text
+notice_sha256    = 96773A27D1D08BFAE64149A2D987871B0382D74BD7B0A2735B913C95DC1DDE8F
+notice_sha_prev  = 598741EF4881D71E594FA2A709DD28471FDEE78CC3B09DDF5640503C54859451
+notice_sha_note  = MATCHES-KNOWN
+verdict          = PASS
+```
+
+阶段：BOOTSTRAP 0 ／ NOTICE 0（`bytes=121438 lines=1836`）／ HOST-ID 0（`SAME-AS-S0B`）／
+**EXTRACT 0（6 段 pin 全中）** ／ EXTRACT-WRITE 0 ／ **PARSE 0（3/3）** ／ HASHES 0（`6 files, skip_empty=7`）。
+
+#### §7.59.4 终审呈报件
+
+`docs/handoff/duckdb-v6-notice-final-review-submission-20261117.md` **6110 B** `033059AABDCBC1706941D3C08BB12E3D18E7F9112F409C181A72876B28D50404`
+含：呈审两件 hash、本轮改动、冻结段 6/6 硬证、pin 三级同步、静态核回执、状态口径（跨轮合并、原 FAIL 保留）、已知偏差 3 条、呈审请求 3 项。
+
+#### §7.59.5 边界核对
+
+零重跑（4／9／13／U18 七／旧 15／probe）✓｜未做包 B/C ✓｜未升级 ✓｜未复制环境 ✓｜未读 62 GB ✓｜
+未建 ACL／junction ✓｜未清 flag ✓｜未供血 ✓｜**未下发** ✓｜**未 Git** ✓
+`T041` 仍 `BLOCKED`；11-17 原门不自动放宽、不延期 ✓
+
+
+### §7.60 r16'：送审函编制与呈送登记（**本轮零执行**）
+
+授权（r16）：「送审核方核 §2.4.12 和 §六不作承诺措辞；通过后仍等待 T041 用户批准」。
+边界：不下发、不升级、不延期、不读 62 GB 生产库、不 Git。
+
+#### §7.60.1 送审函
+
+`docs/handoff/duckdb-v6-reviewer-request-20261117.md` **5228 B** `3B34D07B1A68352F391781FFC7C651E92BC8E385266912B9E9A908AFB0C91799`
+
+内容：两处待核（§2.4.12 @ **L1682**、§六不作承诺 @ **L1730**）+ 两问及我方建议与「若否决的后果」+
+支撑证据索引 + `T041` 状态 + **回执栏** + 边界声明。被核件 hash 均内嵌：
+通知 `96773A27D1D08BFAE64149A2D987871B0382D74BD7B0A2735B913C95DC1DDE8F`（121438 B / 1836 行）、索引 `509D9148F19C12C9B5CCA50CA9983696D2627A6C59C96DBF549B2FE7CA020F44`（25228 B）、呈审件 `033059AABDCBC1706941D3C08BB12E3D18E7F9112F409C181A72876B28D50404`（6110 B）。
+
+#### §7.60.2 两问的实质
+
+| 问 | 我方建议 | 若否决的后果（已写明） |
+|---|---|---|
+| §2.4.12 逐行口径（尤其 **H6** 拆分为「已测一半／未测一半」） | 保留拆分，表内已写明两条覆盖范围 | 可整组降级为「未实测」，但会**低估**已跑过的 7+8 条断言 |
+| §六「不作承诺」措辞是否足以免责 | 显式否定式 + 来源局限 + 降级路径已足 | 请指明需补哪一类否定（范围／时长／资源／适用环境） |
+
+#### §7.60.3 `T041` 不在送审范围
+
+`specs/002-duckdb-1.5-upgrade/tasks.md` L94 仍 `[ ]`，`BLOCKED(外部/用户裁定)`；解除须「M-5 到点 **且** 用户明确批准」。
+本会话不代发、不催办；**临期不自动放宽、不延期**。
+
+#### §7.60.4 边界核对
+
+**仅送审，未下发** ✓｜未升级 ✓｜未延期 ✓｜未读 62 GB ✓｜未复制环境 ✓｜未 ACL／junction ✓｜未清 flag ✓｜
+未供血 ✓｜**未 Git** ✓｜**未重跑任何已收实验** ✓（本轮零执行）
+
+
+### §7.61 r17：待命现况核验（**本轮零执行**）
+
+采样时刻（size/mtime/hash 同刻齐打）：**2026-11-18 00:39:53**
+
+| 件 | bytes | sha256 | 与上轮记录一致 |
+|---|---|---|---|
+| 通知 v6 | 121438 | `96773A27D1D08BFAE64149A2D987871B0382D74BD7B0A2735B913C95DC1DDE8F` | 是 |
+| 终审索引 | 25228 | `509D9148F19C12C9B5CCA50CA9983696D2627A6C59C96DBF549B2FE7CA020F44` | 是 |
+| 呈审件 | 6110 | `033059AABDCBC1706941D3C08BB12E3D18E7F9112F409C181A72876B28D50404` | 是 |
+| 送审函 | 5228 | `3B34D07B1A68352F391781FFC7C651E92BC8E385266912B9E9A908AFB0C91799` | 是 |
+| 驱动候选 | 38088 | `722EAF8BA6C5EFEBA99E3902B321E175D36B54FCB57FD0C29EBA93F212F1F99B` | 是 |
+
+六段冻结 pin（按驱动抽取算法复现）：
+
+| 段 | bytes | 结果 |
+|---|---|---|
+| F1 | 749 | MATCH |
+| F2 | 1384 | MATCH |
+| COLLECT | 545 | MATCH |
+| RT | 271 | MATCH |
+| PARSERS | 723 | MATCH |
+| EQATTR | 1498 | MATCH |
+
+**总判定**：基线未漂移（五件 hash + 六段 pin 全等于上轮记录），终审回执到达后可直接从既定返工路径续跑。
+
+#### §7.61.1 待终审期间的最小返工路径（预登记，**未执行**）
+
+| 触发 | 动作 | 明确不做 |
+|---|---|---|
+| 终审仅要求改 §2.4.12 或 §六**文案** | ①按差量改通知 → ②更新 `$KNOWN_NOTICE`（`PREV/HIST` 顺延）→ ③重跑 **`-Scope NOTICE`**（plan 0）→ ④同步呈审件与索引内嵌 hash | **不重跑** ENC／U26／U18／旧 15／负控／probe |
+| 终审要求改**判据逻辑** | 出裁定申请，另立包 | 不在本包内自决 |
+| 终审认可 | 等 `T041` 用户批准；解除前不出下发版 | 不代发、不催办 |
+
+#### §7.61.2 边界核对
+
+**零执行** ✓｜未下发 ✓｜未升级 ✓｜未延期 ✓｜未读 62 GB ✓｜未复制环境 ✓｜未 ACL／junction ✓｜未清 flag ✓｜未供血 ✓｜**未 Git** ✓
+`T041` 仍 `BLOCKED`；终审结论与用户批准**缺一不可**。
+
+
+### §7.62 r18：`T041` 时间门到期导致的状态变更（**本轮零执行，仅登记**）
+
+采样时刻：**2026-11-18 09:33:40**（本地 2026-11-18）
+
+#### §7.62.1 事实
+
+| 项 | 内容 |
+|---|---|
+| `T041` 解除条件（原文） | 「M-5 里程碑到点（**≤2026-11-17**）**且** 用户明确批准下发」 |
+| 今天 | **2026-11-18** ⇒ 时间门**已到点（逾期 1 天）** |
+| 用户批准 | **未到**（`tasks.md` L94 仍 `- [ ]`，`BLOCKED(外部/用户裁定)` 仍在） |
+| 判定 | **时间门已满足；闸仍未解除**——两条件是「且」，用户批准是唯一剩余条件 |
+
+**这不是放宽也不是延期**：纪律是「临期不自动放宽」，本条**未放宽任何标准**，只是如实记录「时间门这一项已由『未到』变为『已到』」。闸仍 `BLOCKED`，仍不出下发版。
+
+#### §7.62.2 因此变了什么（对交付的含义）
+
+| 变化前（≤11-17） | 变化后（11-18 起） |
+|---|---|
+| 两项条件**都不满足** | 时间门**已满足**，只差用户批准 |
+| 即使用户此刻批准也需等到 11-17 | 用户**此刻批准即解除**，无需再等 |
+
+⇒ `T041` 已进入**「只等用户一句话」**的状态。这是本轮唯一的实质新信息。
+
+#### §7.62.3 由此暴露的一处**待决文案项**（未改，等终审）
+
+通知 §五 回退路径（L1718–L1726）仍建议「降回 **1.4.5**」，而 L1726 已写明「1.4.x 线上游支持于 2026-11-17 结束」。
+**今天已过该日期** ⇒ 客户若在今日之后升级失败并回退到 1.4.5，该版本**已无上游支持**。
+现有措辞作为**事实陈述**没错（结束日期是既定事实），但**未向客户点明「此刻回退已处于无上游支持状态」**。
+
+| 选项 | 内容 | 影响 |
+|---|---|---|
+| 甲 | 在 L1726 补一句「**自 2026-11-18 起**，回退到 1.4.5 属**已过期上游支持**环境，回退仅作短期过渡」 | 文案 +1 行；语义更诚实；**仍需重跑 `-Scope NOTICE`** |
+| 乙 | 不改，认为「结束于 2026-11-17」已足够表达 | 零改动；但客户可能忽略时点 |
+
+**我方倾向甲**，但**不自决**——终审在途，改通知会使 `$KNOWN_NOTICE` 与送审函内嵌 hash 再次失效。
+
+#### §7.62.4 边界核对
+
+**零执行** ✓｜未改通知／索引／呈审件／送审函／驱动 ✓｜未下发 ✓｜未升级 ✓｜未延期（未放宽任何标准）✓｜
+未读 62 GB ✓｜未复制环境 ✓｜未 ACL／junction ✓｜未清 flag ✓｜未供血 ✓｜**未 Git** ✓
+五件 mtime/size 与 01:33:01、08:52:51 两次核验**逐项一致**（未变）。
+
+
+### §7.63 r19：转挂起式待命 + §7.62.3 待裁材料呈报（**零执行**）
+
+时刻：**2026-11-18 15:25:35**
+
+#### §7.63.1 挂起登记（按 r19 指示）
+
+| 项 | 状态 |
+|---|---|
+| 挂起生效 | **是**；依据 r19「审核结论：…转挂起式待命」 |
+| 保留项 | 交付件五件（通知/索引/呈审件/送审函/驱动）、`T041` 门、`§7.62` 记录——**全部原位保留，零改动** |
+| 复工触发 | ①终审回执；②`T041` 用户批准；③新的实质输入。三者任一 |
+| 停止动作 | **不再逐轮重复核对**（五件 size/mtime 采样）。无新事实不产生新读数 |
+| 未变项 | 五件 mtime/size 与 09:33:07、10:14:30 两次核验一致；`T041` 仍 `BLOCKED(外部/用户裁定)` |
+
+#### §7.63.2 §7.62.3 已升格为待裁材料（**未选甲/乙**）
+
+出件：`docs/handoff/duckdb-v6-pending-decision-s7-62-3-20261118.md`（4605 B，sha256 `51721D1A9968A5CD9E17871145830BC0903A42E003924CE2EE11B9E3A17AF507`）
+
+- 性质：**呈报材料**，不含执行席裁定；
+- 内容：问题陈述 + 事实底座（L1718/L1719/L1726 原文 + 放行集 + 今日日期）+ 甲/乙两案并列（支持理由/代价/风险）+ 我方倾向标注「仅供参考，非选择」+ 裁定所需三项确认；
+- **通知 v6 未改**（仍 `96773A27…`）；本材料**不构成**对通知的任何修改。
+
+#### §7.63.3 业务 owner 询问的三项确认：执行席只报「有/缺」，不指派
+
+| 待确认 | 记录依据 | 判定 |
+|---|---|---|
+| 终审责任人 | 送审函 L3「收件：审核方」 | **有角色、缺具名** |
+| `T041` 批准责任人 | T041 原文「用户闸门后下发」「用户明确批准下发」 | **明确：用户** |
+| §7.62 文案最终确认人 | 全仓 `终审责任人|批准责任人` 检索**零命中** | **完全空缺** |
+
+> 三项均**不由执行席自指派**。业务 owner 确认前维持 `BLOCKED(外部)`。
+
+#### §7.63.4 边界核对
+
+**零执行** ✓｜通知/索引/呈审件/送审函/驱动 **五件零改动** ✓｜未下发 ✓｜未升级 ✓｜未延期未放宽 ✓｜
+未读 62 GB ✓｜未复制环境 ✓｜未建 ACL／junction ✓｜未清 flag ✓｜未供血 ✓｜**未 Git** ✓
+本轮**新增文件仅一件**（待裁材料）；证据仅追加本节。
+
+
+### §7.64 r21：三项待决合并为单一待决包（**零执行**）
+
+时刻：**2026-11-18 18:26:51**
+
+#### §7.64.1 出件
+
+`docs/handoff/duckdb-v6-pending-decision-package-20261118.md` — **5630 B**，sha256 `597158383BD3A56D0B42A6B8AB63E7120C6205E446E1E9D9E2499AE4436E62C1`
+
+按 r21 指示「将终审责任人、§7.62 文案确认人和甲乙选择合并为一个待决包」编制。合并口径：
+
+| 编号 | 事项 | 现状 | 定的人 |
+|---|---|---|---|
+| A | 终审责任人具名 | 只有角色「审核方」，无具名 | 业务 owner |
+| B | `§7.62` 文案最终确认人 | 全仓零命中，从未指派 | 业务 owner |
+| C | §7.62.3 甲乙择一 | 未择 | B 所指确认人 + owner 认可 |
+| D | `T041` 批准 | 责任人已明确=**用户**，只等批准动作 | （不属待决） |
+
+#### §7.64.2 新增内容（相对原待裁材料）
+
+原待裁材料 `51721D1A…17AF507` 只覆盖 C 项（甲乙详版）。本包**新增**：
+
+1. **A/B 两项的问题化**——把「缺具名」「零命中」从上一轮的口头回执变为可引用的登记事实（含检索面与零命中的结论：不是记不清，是**从未指派**）；
+2. **到达后触发表 T-1／T-2／T-2'／T-2''／T-3**——每一触发对应的当轮动作与**明确不做**（防「到达后各自发挥」）；
+3. **并发到达顺序**——T-2 与 T-3 同时到达时**先定文案再下发**，避免下发后改文案；
+4. **本包不解决什么**四段明示边界（不指派/不选/不改变门/不构成版本）。
+
+原待裁材料**保留不替换**（本包引用其 §3 作甲乙详版依据）。
+
+#### §7.64.3 边界核对
+
+**零执行** ✓｜未改通知／索引／呈审件／送审函／驱动 **五件零改动** ✓｜未自选甲乙 ✓｜未指派责任人 ✓｜
+未读 62 GB ✓｜未跑断言组 ✓｜未下发 ✓｜未延期未放宽 ✓｜**未 Git** ✓
+本轮新增文件仅 1 件（待决包）；未采样（沿用挂起前末次读数 10:14:30，不宣称区间内未变）。
+
+
+### §7.65 r22：甲案文案落位 + 四处 hash 同步（**本线复工首个执行轮**）
+
+时刻：**2026-11-18 20:44:46**｜依据：业务 owner 2026-11-18 裁定「终审责任人=ZCode；§7.62 文案最终确认人=用户；处理方式=**甲**」
+
+#### §7.65.1 变更了什么（唯一一处内容改动）
+
+| 项 | 内容 |
+|---|---|
+| 位置 | 通知 v6 **L1726 之后**（EOL 句的下一行），原 L1727 空行位置 |
+| 新增原文 | `> **自 2026-11-18 起，回退到 1.4.5 属已过期上游支持，仅作短期过渡**：版本门仍放行、功能可用，但不再获得上游修复；问题定位后应重新前移至 1.5.6。` |
+| 变更前 | `121438` B / `1836` 行 / `96773A27D1D08BFAE64149A2D987871B0382D74BD7B0A2735B913C95DC1DDE8F` |
+| **变更后** | **`121638` B / `1837` 行 / `771D20A488CD61748F0D77FC46319AFB64F57D68104CEE2A46BDB6CE022249D2`** |
+| 净增 | **+200 B / +1 行**（纯插入） |
+| 编码守卫 | 无 BOM、无 CRLF（LF-only 保持，1837 个 LF / 0 个 CRLF） |
+
+#### §7.65.2 冻结段未变的**硬证**（不是「看起来没变」）
+
+插入点定位后逐字节比对：
+
+| 比对段 | 字节数 | 结果 |
+|---|---|---|
+| 插入点**前缀** | 114352 B | **逐字节一致** |
+| 插入点**后缀** | 7034 B | **逐字节一致** |
+| 前缀+后缀 | 121386 B = 121438−52 | 覆盖全文，仅 52 B 锚点被替换 |
+
+⇒ 六段内容 pin（F1／F2／COLLECT／RT／PARSERS／EQATTR）全部落在前缀内，**内容不可能改变**。运行回执亦证 6/6 全中。
+
+#### §7.65.3 NOTICE 静态核重跑（plan=0）
+
+| 项 | 值 |
+|---|---|
+| 运行根 | `docs\evidence\duckdb-v6-u18-u26-run-20261118T123850Z`（12 文件） |
+| `verdict` | **PASS** |
+| `notice_sha256` | `771D20A4…49D2` |
+| `notice_sha_prev` | `96773A27…1DDE8F` |
+| `notice_sha_note` | **MATCHES-KNOWN**（不再是告警级 drift） |
+| `scope` | NOTICE |
+| `groups` | **0**（PROBE/NOTICE 非业务组） |
+| `plan_assertions` | **0** ✅（与指示「计划为 0」一致） |
+| `reached`／`not_reached` | 0／0 |
+| `py_calls` | 2 |
+| 阶段 | BOOTSTRAP 0／NOTICE 0（`bytes=121638 lines=1837`）／HOST-ID 0／EXTRACT 0（6 段全中）／EXTRACT-WRITE 0／PARSE 0（3/3）／HASHES 0（6 files） |
+| 主机身份 | PS `5.1.26100.9711`；Python `3.11.9` `5F7B89A6…52EC` = **SAME-AS-S0B** |
+
+#### §7.65.4 驱动三常量顺延（`$KNOWN_NOTICE` 链）
+
+| 槽位 | 改前 | 改后 |
+|---|---|---|
+| `$KNOWN_NOTICE` | `96773A27…` | **`771D20A4…`** |
+| `$KNOWN_NOTICE_PREV` | `598741EF…` | **`96773A27…`** |
+| `$KNOWN_NOTICE_HIST` | `288AB994…` | **`598741EF…`** |
+
+- 驱动：`38088` B → **`38189` B**（+101 B，与三行文本净增**分毫不差**，差额 0 ⇒ 未引入 BOM 等额外字节）
+- `Parser::ParseFile` **errors=0 / 7157 tokens**（改前同值，语法未破）
+- `288AB994…` **移出三槽链**（三槽只保最近三代），其值仍存于本证据 §7.43 起的台账，可追溯
+- **`-Scope NOTICE` 不受 `$KNOWN_NOTICE` 影响改不改都 PASS**（内容级由六段 pin 把关）；本次顺延是让审计字段恢复 `MATCHES-KNOWN`，**不是修一个会失败的缺陷**
+
+#### §7.65.5 四处 hash 同步（终态，同刻齐打 2026-11-18 20:44:22）
+
+| 件 | bytes | sha256 | 变化 |
+|---|---|---|---|
+| **通知 v6** | **121638** | **`771D20A488CD61748F0D77FC46319AFB64F57D68104CEE2A46BDB6CE022249D2`** | +200 B / +1 行 |
+| **终审索引** | **27057** | **`EB6FE062F9B8BE5CFA75AC324A4E3E9F781E9AA047F93A05CF49FB67B31092C6`** | 25228 → 27057（+1829 B） |
+| **呈审件** | **7589** | **`F6F7BB48CDABA4217F1EC69276004C6421380DF251F993CD612DE4DF88600E91`** | 6110 → 7589（+1479 B） |
+| **送审函** | **5533** | **`5AE7CBC1F588896B4F59A80481F8A2EEC1F5B6D49E87C6CF0C78100AAD6CCC55`** | 5228 → 5533（+305 B） |
+| 驱动 | 38189 | `5222BBF6151D3EB6923FB0C41A311D5D0513066E52290BB9926512F8F7676D17` | 38088 → 38189 |
+
+#### §7.65.6 本轮自查出的三处错误（**如实登记，均已修正**）
+
+| # | 错误 | 发现方式 | 修正 |
+|---|---|---|---|
+| 1 | 首跑传了 `-EvDir`/`-OutRoot` 两个**驱动不存在**的参数 | 输出为空、run root 空壳；查 param 块发现只有 `$Py/$KeepFailedScene/$Scope/$FixedPin` | 驱动**静默忽略**未知参数（PS 具名参数对未声明参数不报错）；空壳目录已核 0 文件后删除；实际运行由驱动自派生的 `…run-20261118T123850Z` 完成 |
+| 2 | 首次 patch 呈审件时 `notice_sha256` 替换锚点写成「旧值开头」，而前一步已改掉 | `assert` 命中=0，**写前失败** | 文件未被写入（回读确认 6110 B `033059AA…` 未变），改用逐项 `c==1` 断言重做 |
+| 3 | **批量替换把呈审件 §4.3 的旧运行回执 `notice_sha256` 也改成了新 hash** | 交叉核对时发现 L68 与 L65/L74–L81 所记 `run-20261117T141023Z` 自相矛盾 | **还原旧回执原文**（旧运行真实值是 `96773A27…`/`121438`/`1836`），并新增 **§4.4** 分列「旧运行（保留）/ 本次运行（当前）」，明确两者不得混读 |
+
+> 第 3 条是本轮最危险的一处：把新值套进历史回执，会让「11-17 那次运行读的是新通知」这一**从未发生的事实**看起来成立。已按「历史只增不改」原则还原。
+
+#### §7.65.7 索引另修一处**既存**行号偏差（非本次引入）
+
+索引 §3.5 原写「EOL 句位于通知 **L1707**」，实测应为 **L1726**（改动前即是 L1726，与本次插入无关——插入点在 L1726 之后）。已在索引 L154 标注 `r22 更正`，并补一行 L1727 的补正记录。**这是修正旧错误，不是新错误**。
+
+#### §7.65.8 边界核对
+
+**未读 62 GB** ✓｜**未改数据库** ✓｜**未执行迁移** ✓｜**未自发下发** ✓｜**未 Git** ✓
+未重跑 ENC／U26／U18／旧 15／负控／probe ✓（`cases.tsv` 与 `negcontrols.tsv` 均只有表头）
+已收 9／4／7 项实验**一字未动** ✓｜`T041` **未因文案修订自动解除**（仍 `- [ ]` `BLOCKED`）✓
+flag 在、主库 mtime `11-14 18:17:56` 未动 ✓
+
+
+### §7.66 r23：向 ZCode 提交最小终审材料（**零执行改动**）
+
+时刻：**2026-11-18 21:06:41**｜依据：r23 指示「向 ZCode 提交最小终审材料」
+
+#### §7.66.1 出件
+
+`docs/handoff/duckdb-v6-zcode-final-review-request-r23-20261118.md` — **6299 B**，sha256 `7089F8492D153289D223CF6C1692CDC475D8AC73F79C33EA764865EC757A9828`
+收件人：**ZCode**（终审责任人，业务 owner 2026-11-18 指派）
+
+结构（10 节）：①请审什么（一个问题）②改动原文 ③**四个断言逐条附依据** ④与既有章节衔接（四处不冲突）⑤机械核（可复算）⑥四处 hash 对账 ⑦我方已自查三错 ⑧请回的三个结论 ⑨本材料不做什么 ⑩空回执栏。
+
+#### §7.66.2 关键设计：断言可逐条否决
+
+材料把新增句拆成 A1–A4 四条断言，每条给出依据与「若审认为不实，请指出」的问句：
+
+| # | 断言 | 依据（均已实测） |
+|---|---|---|
+| A1 | 「自 2026-11-18 起」 | 今日日期；EOL 日 11-17 的次日 |
+| A2 | 「已过期上游支持」 | 通知 L1726 原文 + 今日已过 11-17 |
+| A3 | 「**版本门仍放行**、功能可用」 | **本会话实测** `is_allowed('1.4.5') -> True`（`duckdb_version_policy.py`，Python 3.11.9） |
+| A4 | 「不再获得上游修复」「短期过渡」 | 回退本为过渡手段；L1725 原文 |
+
+> A3 的实测是本轮补做的：材料初稿只引放行集文字，未实跑判定。**「读代码断言」与「实跑判定」不是一回事**，已改为实测 + 代码位置双证。
+
+#### §7.66.3 边界核对
+
+**零执行改动** ✓（本轮未改通知／驱动／索引／呈审件／送审函，仅新增 1 份送审材料 + 补 A3 实测行）
+未读 62 GB ✓｜未改数据库 ✓｜未执行迁移 ✓｜未自发下发 ✓｜**未 Git** ✓
+`T041` 仍 `- [ ]` / `BLOCKED(外部/用户裁定)`；材料 §9 明写**不请求解除**
+未重跑任何断言组 ✓
+
+
+### §7.67 r24：ZCode 终审回执 + 按其意见补粗体（**唯一内容未变、仅强调级调整**）
+
+时刻：**2026-11-18 21:47:41**｜依据：r23 指示「将最小终审材料转 ZCode」
+
+#### §7.67.1 送审与只读验证
+
+- 送审：`docs/handoff/duckdb-v6-zcode-final-review-request-r23-20261118.md`（6299 B `7089F849…A9828`）
+- 通道：`zcode_code`（`mode=plan`，只读）｜session `sess_c7778e2d-f282-4927-b99a-47d952358d71`｜tokens 88669
+- **送审前后六件 hash 逐件复核**：通知／索引／呈审件／送审函／驱动／材料——**全部未变** ⇒ ZCode 确为只读，未擅自改文件（这是「只读」的实测凭证，不是它的自述）
+
+#### §7.67.2 ZCode 结论（逐条转录，不改写）
+
+**总结论：要求调整**（仅 1 处强调级别修正，语义与事实零改动）
+
+| 断言 | ZCode 判定 | 其理由（要点） |
+|---|---|---|
+| A1 时点写法 | **成立** | L1726 已明示「于 11-17 结束」（含当日），过期自 11-18 起算；改「11-17 之后」反引入歧义 |
+| A2 措辞轻重 | **成立** | 说的是**上游**支持状态，未说「我方禁止」，冒号后即给边界 |
+| **A3 醒目度** | **不成立（澄清在场但不够醒目）** | 粗体止于冒号前，略读客户沿粗体链扫读只见「已过期上游支持／仅作短期过渡」，**恰会得出「回退被收紧/禁止」的误读**；且破坏全文体例（§四 L1706「**同样在放行集合内**」是加粗的） |
+| A4 与 §六冲突 | **成立** | §六免责的是**性能耗时/峰值内存**，本句说**上游支持政策**，两轴不交叠；「应重新前移」是建议性表述，不构成承诺 |
+| B1 自相矛盾 | **成立（无矛盾）** | 与 L1718/L1719、L1725、L1726 四点互证：路径有效＋门放行＋性质变短期过渡，是逻辑递进 |
+| B2 遗漏/多言 | **成立（无）** | 「短期」不给天数是诚实选择（给天数反而是新增承诺）；「仍」字已提示是当前态非永久保证 |
+
+**它给出的替换文字**（唯一变化＝第二处加粗）：
+```text
+> **自 2026-11-18 起，回退到 1.4.5 属已过期上游支持，仅作短期过渡**：**版本门仍放行、功能可用**，但不再获得上游修复；问题定位后应重新前移至 1.5.6。
+```
+
+#### §7.67.3 我方是否照改：照改，且只改加粗
+
+- **照改理由**：其意见是「强调级」而非「语义」——原文语义它判成立；不加粗则读者误读风险真实存在（它给的是「略读扫粗体链」这一具体阅读路径，不是泛泛担忧）；且与全文既有体例一致
+- **逐字符 diff 验证**：`difflib` 输出仅两处 `insert '**'`（位置 47、58），**无任何字符被删除或替换**；净增 **+4 B**
+- 通知：`121638` B → **`121642` B**，`771D20A4…49D2` → **`5C60A4DDA2F0E213DA367716782E0D28E0302C3DDF89E1D422051697E85143B3`**
+- 行数仍 1837、LF-only、无 BOM
+
+#### §7.67.4 NOTICE 最小核重跑（第三次，仍 plan=0）
+
+| 项 | 值 |
+|---|---|
+| 运行根 | `docs\evidence\duckdb-v6-u18-u26-run-20261118T134528Z`（12 文件） |
+| `verdict` | **PASS** |
+| `notice_sha256` | `5C60A4DD…43B3` |
+| `notice_sha_prev` | `771D20A4…49D2` |
+| `notice_sha_note` | **MATCHES-KNOWN** |
+| `plan_assertions` | **0** ✅ |
+| `groups` | 0 |
+| NOTICE 阶段 | `rc=0  bytes=121642 lines=1837` |
+| EXTRACT | **6 段 pin 全中** |
+| PARSE | 3/3 |
+| HOST-ID | PS `5.1.26100.9711`／Python `3.11.9` SAME-AS-S0B |
+
+#### §7.67.5 驱动三常量二次顺延
+
+| 槽位 | r22 | **r24** |
+|---|---|---|
+| `$KNOWN_NOTICE` | `771D20A4…` | **`5C60A4DD…`** |
+| `$KNOWN_NOTICE_PREV` | `96773A27…` | **`771D20A4…`** |
+| `$KNOWN_NOTICE_HIST` | `598741EF…` | **`96773A27…`** |
+
+驱动 `38189` → **`38211` B**（+22 B）；`ParseFile` **errors=0 / 7157 tokens**。
+`598741EF…` 与 `288AB994…` 均已移出三槽链，值存于本证据 §7.43 起台账。
+
+#### §7.67.6 四处 hash r24 终态（同刻 2026-11-18 21:46:40）
+
+| 件 | bytes | sha256 |
+|---|---|---|
+| **通知 v6** | **121642** | **`5C60A4DDA2F0E213DA367716782E0D28E0302C3DDF89E1D422051697E85143B3`** |
+| 终审索引 | **28137** | 自指不稳定，**不登记自身 hash**（写入即使该值失效）；以文件系统实测为准 |
+| 呈审件 | **7867** | `F2138C6CD24778A8877AE21568B182368A4DD5CF4452823C2E5649A168152869` |
+| 送审函 | **5781** | `26D0C5B9037409E556565166C2D2ABCC7A7EB64FC38E8888C19D3D9A98406FA0` |
+| 驱动 | **38211** | `4BF82B85B6AE9D0DD51F5F96D2A14C887014D815283DFD8141FA826EAD617835` |
+
+> 索引自身 hash **不写入索引**（写自身会使值立即失效）；本节亦不登记索引自身 hash，以文件实测为准。
+
+#### §7.67.7 本轮自查
+
+| # | 事项 | 处置 |
+|---|---|---|
+| 1 | 首次 patch 呈审件时断言 `§4.4 notice_sha256` 命中=0 | **写前失败**，回读确认文件未变（7589 B `F6F7BB48…`）；改查实际结构（§4.4 无该字段，只有 §4.3 回执块），按实际结构重做 |
+| 2 | 索引 L196/L198 在首轮同步后仍留 r22 旧值 | 已补 r24 终态两行，旧行**保留并标注（r22）**——历史不删 |
+
+#### §7.67.8 边界核对
+
+**未读 62 GB** ✓｜未改数据库 ✓｜未执行迁移 ✓｜未自发下发 ✓｜**未 Git** ✓
+未重跑 ENC／U26／U18／旧 15／负控／probe ✓（`cases.tsv`/`negcontrols.tsv` 仅表头）
+已收 9／4／7 项一字未动 ✓｜`T041` 仍 `- [ ]` `BLOCKED`，**未因本次调整解除** ✓
+
+
+### §7.68 r25：§7.62 文案最终确认登记（**终局版**，零执行改动）
+
+时刻：**2026-11-18 22:17:55**｜依据：r24 指示「将用户确认登记为最终文案确认」
+
+#### §7.68.1 出件
+
+`docs/handoff/duckdb-v6-copy-final-confirmation-20261118.md` — **5077 B**，sha256 `C378EF7D27B338433D6BAB37E7A419BEC41653C46DAB87ABB14419E0CAC1D3C7`
+
+8 节：①确认结论（一句话）②终局文案逐字 ③**确认依据逐环节分列表**（谁·依据原文·性质）④机械指纹 ⑤**随附证据三件** ⑥四处 hash 对账基准 ⑦**本文案确认不带来什么**（明示边界）⑧下一读数。
+
+#### §7.68.2 终局文案（L1727，逐字）
+
+```text
+> **自 2026-11-18 起，回退到 1.4.5 属已过期上游支持，仅作短期过渡**：**版本门仍放行、功能可用**，但不再获得上游修复；问题定位后应重新前移至 1.5.6。
+```
+
+#### §7.68.3 确认链的六环分列（不合并表述）
+
+| 环 | 主体 | 依据 |
+|---|---|---|
+| 处理方式「甲」 | 业务 owner | 2026-11-18 裁定 |
+| 终审责任人 | 业务 owner 指派 | 「终审责任人为 ZCode」 |
+| 文案最终确认人 | 业务 owner 指派 | 「为**用户**」 |
+| 终审执行 | ZCode | 「要求调整」；仅 A3 不成立 |
+| 意见落实 | 节点⑲ | 只补 2 处 `**`，`difflib` 证无字符增删，+4 B |
+| **文案最终确认** | **用户** | 经总调度转达「§7.62文案已最终确认」 |
+
+> **诚实注（已写入登记件 §3）**：该确认系**经总调度转达**，非用户在本会话内直接陈述；执行席不与用户直接对话，**不作二次外推**，只登记「转达所述」这一事实及其原文。
+
+#### §7.68.4 保留件清单（不得清理）
+
+| 件 | 位置 |
+|---|---|
+| ZCode 终审回执 | `docs/handoff/duckdb-v6-zcode-final-review-request-r23-20261118.md` + 本节 §7.67.2 |
+| NOTICE 运行证据 | `docs/evidence/duckdb-v6-u18-u26-run-20261118T134528Z`（当前）＋ `…T123850Z`（r22，并列保留） |
+| 四处 hash 对账 | 本证据 §7.67.6 + 索引 §5.x r24 行 |
+
+#### §7.68.5 本轮**未**做什么（按指示）
+
+- **未重跑 NOTICE 核验**（r24 指示「不重复 NOTICE 核验」）——本轮仅只读快照
+- 未改通知／索引／呈审件／送审函／驱动 **五件**（快照与 r24 终态逐件一致）
+- 未读 62 GB｜未改数据库｜未执行迁移｜未自发下发｜**未 Git**
+- `T041` **未勾选、`BLOCKED` 仍在**（`tasks.md` L94 实测）
+
+#### §7.68.6 边界核对
+
+五件零改动 ✓｜未重跑任何断言组 ✓｜未重跑 NOTICE ✓｜文案确认**未**解除 `T041` ✓
+
+---
+
+### §7.69 r25 续：A1/A2 账实收尾（**仅文档回写，零执行改动**）
+
+#### §7.69.0 本轮定性
+
+**这是账实回写，不是新实验**：本轮不跑任何断言组、不重跑 NOTICE、不读 62 GB、不改数据库、不动被测脚本。产出是**把已发生的事实记进账**。
+
+#### §7.69.1 起因：两处账实不符（实测发现，非推测）
+
+| # | 位置 | 账面写的 | 实际 | 判据 |
+|---|---|---|---|---|
+| 1 | 索引 §9.4 L284 | 「交付硬阻只有 **2 项**」 | 只有 **1 项** | 第 2 项已于 r25 闭合 |
+| 2 | 索引 §9.4 L289 | 第 2 项仍列为**未闭合硬阻** | 已闭合 | §7.68 已登记确认 |
+| 3 | 索引 §〇 L10 | 读数标 `2026-11-17，r14` | 已滞后 11 轮 | 索引 L3 rev 当时已到 r24 |
+
+> **注**：第 3 项**未按「改日期」处理**。L10 的「未测 24」是 r14 在 11-17 的实测值，本轮**未重测**那些项，改日期会让两天前的读数冒充今天 —— 这正是 `DB-2026-0045` 记的错误形态。处理方式见 §7.69.3。
+
+#### §7.69.2 A1 执行结果（索引 §9.4）
+
+| 项 | 改前 | 改后 |
+|---|---|---|
+| 结论句 | 硬阻只有 **2 项** | 硬阻只有 **1 项**（注明 r25 复核） |
+| 第 2 项行 | 列为未闭合硬阻 | **整行划除** + 标注「已闭合（2026-11-18 r25）」，历史原文保留在删除线内 |
+| `T041` 行（序号 1） | 未动 | **未动**（仍为唯一硬阻） |
+| §9.5 包 A | 列为「建议下一自然包」 | 追加「**包 A 执行结果（2026-11-19 补记）**：已完成并闭合」 |
+| §9.6 | 无 | **新增**：`T041` 与文案定稿是两道独立的门 |
+| L3 rev 行 | r24 | r25（账实复核） |
+
+**执行方式**：Python 脚本 3 次写入，每次**改前断言唯一性**（`count==1` 才执行替换），断言失败即不写。
+
+**实测读数**：
+
+| 阶段 | size | 增量 |
+|---|---|---|
+| 改前 | 28137 B | — |
+| §9.4 结论句 + 第2项 + 归位说明 | 28797 B | +660 B |
+| 修正自造错字「ude 项」→「该项」 | 28796 B | −1 B |
+| 追加 §9.6 + 包 A 补记 | 30411 B | +1615 B |
+| 同步 L3 rev 行 | 30420 B | +9 B |
+
+**最终**：`30420` B｜`sha256=802CFCA99F6A9CF64CC8C61C6FDD2FE1FD2F2A2CEC7624206A82C5D14835F603`
+
+> **自报错字**：第一次写入时我把「该项」误打成「ude 项」（拼音输入残留）。已当场发现并修正，`ude 项` 残留实测 **0**。如实登记，不隐去。
+
+#### §7.69.3 A2 处理说明（原提案有一处被我自行更正）
+
+**我上轮提议「同步索引 §〇 当前读数为 2026-11-19」，该提议是错的，本轮未执行。**
+
+| 方案 | 判定 | 理由 |
+|---|---|---|
+| 把 L10 日期改 11-19 | **否决** | L10 的「未测 24」是 11-17 实测值；本轮未重测，改日期＝让旧读数冒充新读数 |
+| 在 L10 后**另起一行**「2026-11-19 复核」 | **采纳** | 旧行原样保留（历史只增不改），新行只陈述本轮**实际**核过什么 |
+
+⇒ 印证 `DB-2026-0045` 的判据：**批量回写会把新值写进历史位置，使从未发生的事实看似成立**。
+
+#### §7.69.4 级联面实测：改索引不需要连带同步任何文件
+
+| 引用方 | 引用的索引 hash | 性质 |
+|---|---|---|
+| 呈审件 L13 | `EB6FE062…92C6`（27057 B） | **r16 历史快照**，非当前值 |
+| 证据 L4020 | `EB6FE062…92C6`（27057 B） | 同上，r16 阶段记录 |
+
+**⇒ 零处引用索引当前值**（改前 `301ED5D9…57DE`，改后 `802CFCA9…F603`，两值均无人引用）。
+**⇒ 索引自身也不写自己的 hash**（自指即不稳定，既定规矩）。
+
+#### §7.69.5 A3 未执行（按裁定）
+
+> 用户裁定原文：「A3 提交仍需明确具体路径白名单和提交粒度，**当前不默认提交**」。
+
+本轮**未执行任何 git 写操作**。实测当前 `staged = 0` 条。
+
+**A3 待裁三项**（白名单范围 / 提交粒度 / 提交信息形态）见 r25 上报块。
+
+#### §7.69.6 边界核对
+
+| 项 | 状态 |
+|---|---|
+| 未跑任何断言组 | ✓（`plan_assertions=0`，未触碰驱动） |
+| 未重跑 NOTICE | ✓ |
+| 未读 62 GB | ✓ |
+| 未改数据库 / 未迁移 | ✓ |
+| 未下发 | ✓ |
+| **未执行 git 写操作** | ✓ |
+| 通知 / 呈审件 / 送审函 / 驱动 | ✓ **零改动**（四件） |
+| 索引 / 证据 | **已改**（本轮 A1/A2 的正当对象） |
+| `T041` | ✓ **仍未勾选、`BLOCKED` 仍在** |
+
+#### §7.69.7 T041 状态（本轮明确一件易混点）
+
+**文案定稿 ≠ 可下发。**
+
+| `tasks.md` L94 解除条件 | 状态 |
+|---|---|
+| ① M-5 到点（≤2026-11-17） | **已满足**（日期已过） |
+| ② 用户明确批准下发 | **未满足** |
+
+**条件是 `AND` 不是 `OR`** —— 时间条件已满足**不构成**下发许可；用户批准无时效替代。
+**⇒ A1/A2/A3 全部完成也不会解除 `T041`。**
+
+---
+
+### §7.70 r26：`T041` 用户批准登记 + 索引硬阻归零 + **A3 提交前遇 CRLF 阻断（候裁）**
+
+#### §7.70.0 本轮定性
+
+**三个动作：①登记 `T041` 批准（文档）②索引账实更新（文档）③尝试 A3 提交 —— 第三项在提交前被拦下，未提交。**
+
+#### §7.70.1 `T041` 用户批准登记（**勾选框保持 `[ ]`**）
+
+> 用户裁定原文：「**T041批准**」。
+
+| 解除条件 | 状态 |
+|---|---|
+| ① M-5 到点（≤2026-11-17） | **已满足**（日期已过） |
+| ② 用户明确批准下发 | **已满足（2026-11-19）** |
+
+**⇒ 两项解除条件均已满足。但勾选框仍为 `[ ]`，理由如下：**
+
+> `T041` 原文的勾选条件写作「**下发后勾选**」，而**实际下发尚未发生**——本轮边界明确「**不代发通知**」，且该动作按定义只能由用户或总调度执行。
+
+**⇒ 批准到位 ≠ 动作完成。** 此处**不勾选**不是遗漏，而是如实：勾上就等于声称「通知已发到客户手里」，而事实上没有。
+
+**登记内容**（`tasks.md` L94）：解除条件两项均满足 + 终审已闭合 + 保持 `[ ]` 的原因 + 终稿指针（121642 B `5C60A4DD…43B3`）。
+**实测**：`tasks.md` 39939 B → **40223 B**（+284 B）；勾选统计 **已勾 57 / 未勾 1**（未变）。
+
+#### §7.70.2 索引账实更新（§9.4 硬阻归零 + §〇 复核行）
+
+| 位置 | 改前 | 改后 |
+|---|---|---|
+| §9.4 结论句 | 硬阻 **1 项** | 硬阻 **0 项** |
+| §9.4 T041 行 | 列为未闭合硬阻 | **划除** + 标「已批准（2026-11-19）· 待实际下发后回执勾选」 |
+| §9.4 表格 | — | 补一行「**（无）当前无未闭合交付硬阻**」，防表头悬空被误读为表格损坏 |
+| §9.4 r25 那条历史注解 | 只写「T041 仍需批准」 | **原句保留**，追加 r26 指向（历史只增不改） |
+| §〇 | `已核 6 / 部分 2 / 未测 24`（2026-11-17 r14） | **原行不动**，另起「**2026-11-19 复核（r26，只读核对）**」行 |
+| L3 rev | r25 | r26 |
+
+**§〇 复核行的口径**：明确写「上述 `已核 6 / 部分 2 / 未测 24` **维持不变**」——r16–r26 共 11 轮未新增任何 U 项实测（全部为文案、账实与登记轮，`plan_assertions=0`）。**变动只在「交付判定」层，不在「实测计数」层。**
+
+**实测**：索引 30420 B → **31835 B**（+1415 B）｜`sha256=5E03EDA31A267123A93092184BAD663FE55863A08C2F2769B68F8393F9C30690`｜334 行。
+
+#### §7.70.3 A3 提交：**未执行**，提交前被 CRLF 归一化问题拦下
+
+**已完成的步骤**：①`git add` 精确 37 条路径（成功，`add exit=0`）②index 三查全部执行。
+
+**index 三查实测**：
+
+| 查 | 判据 | 实测 |
+|---|---|---|
+| 1/3 清单与预期一致 | staged 应展开为 289 文件 | **289** ✓ |
+| 2/3 无白名单外文件 | 越界应 0 | **0** ✓ |
+| 3/3 无 `tasks.md` 混入 | 应 0（不在批准清单） | **0** ✓ |
+
+**⇒ 三查全过。但第四项自查发现了问题，因此提交被主动中止。**
+
+#### §7.70.4 阻断原因：git 会把 44 个文件的字节改掉（实测）
+
+**机制**：`.gitattributes` 含 `* text=auto` + `*.py text eol=lf` + `*.md text eol=lf`，且 `core.autocrlf=true` ⇒ **入库时 CRLF→LF 归一化**。
+
+**实测**：逐文件比对「暂存 blob」与「磁盘文件」的字节（扫描全部 289 个）：
+
+| 结果 | 数量 |
+|---|---|
+| 逐字节一致 | **245** |
+| **字节不一致（blob 更小，差值为 CRLF 个数）** | **44** |
+
+**44 个中与已发判据直接相关的举例**：
+
+| 文件 | 磁盘 | 入 blob 后 | 该字节数是否被文档引用 |
+|---|---|---|---|
+| `duckdb-s0b-20261116T195917/_pyid_scan.py` | **2165 B**（`88772071…A4C`） | **2109 B**（−56） | **是**：通知 L13「扫描器提取件 **2165 B** 与通知 L425..L481 二进制逐字节一致」；L1822 同 |
+| `duckdb-s0b-20261116T195917/_gate_from_notice.ps1` | **2209 B**（含 BOM） | 2190 B（−19） | **是**：通知 L1822「闸 **2209 B** 含 BOM 一致」 |
+| `duckdb-s0b-20261116T143939/_pyid_scan.py` | 2165 B | 2109 B（−56） | 同上族 |
+| 其余 41 个（`*.stdout.txt` / `*.tsv` / `*verdict.txt` 等） | 各自字节 | 各自 −1..−37 | 部分字节数在证据 §7.4x 中被引用 |
+
+**为什么这构成阻断（而不是「无所谓」）**：
+
+1. **证据件的核心价值是「字节可复现」**——而通知把这些字节数**写给客户**当核对项（2165 B / 2209 B）。
+2. **工作区文件不受影响**（仍是 2165 B、hash 未变，已实测），但**入库后任何人 checkout 出来的都不是 2165 B**。
+3. 因此「从仓库复核」与「按通知复核」会得到**不同结果**——这不是文件损坏，是**判据的验证路径被改变**，而批准时未涉及这一点。
+
+**已采取的止损**：`git reset` 撤回 staging（`staged` 归 0）。**工作区 44 个文件全部原样未动**（`_pyid_scan.py` 实测仍 2165 B / `88772071…A4C` 未变）。
+
+**⇒ 未产生任何 commit，仓库历史未被写入。**
+
+#### §7.70.5 三案候裁
+
+| 方案 | 做法 | 代价 / 风险 |
+|---|---|---|
+| **甲** | 照原批准提交 37 条，接受 44 个文件入库存为 LF | 库内字节 ≠ 通知写的字节；证据 doc 需逐条标注「库内为 LF 版」 |
+| **乙（我倾向）** | 先在 `.gitattributes` 加 `docs/evidence/** -text`，使证据件按二进制原样入库，再提交 | 需改**白名单外**一个文件（`.gitattributes`）；已入库的 1000 个 evidence 文件不受影响，但新老口径并存 |
+| **丙** | 暂不提交，37 条继续留在工作区 | 无损，但产物长期裸挂有丢失风险 |
+
+> **我不自行选择**：`git add` 后 index 内容已符合批准，但「入库字节会变」是批准时未包含的实质性后果；且乙案要动白名单外的 `.gitattributes`。两者都超出「按批准范围推进」的授权。
+
+#### §7.70.6 边界核对
+
+| 项 | 状态 |
+|---|---|
+| 未读 62 GB | ✓ |
+| 未改数据库 / 未迁移 | ✓ |
+| 未下发通知 | ✓（`T041` 保持 `[ ]`） |
+| **未产生 commit** | ✓（`reset` 后 staged=0） |
+| 工作区文件 | ✓ 44 个字节未动（逐个核过关键件） |
+| 通知 / 呈审件 / 送审函 / 驱动 | ✓ 零改动 |
+| 索引 / 证据 / `tasks.md` | **已改**（本轮正当对象） |
+
+---
+
+#### §7.70.7 CRLF 方案乙：设计件已出（2026-11-19 后段，**未执行任何提交**）
+
+> 用户裁定原文：「**CRLF方案乙**」；指示「形成 `docs/evidence/**` 原字节保真设计件，核对 `.gitattributes` 影响和回退方式」；边界「**不执行 A3 提交**」。
+
+**设计件**：`docs/handoff/duckdb-evidence-byte-fidelity-design-20261119.md`（**15936 B**｜`A970EC7B620D4B0CC97BE2081DE0E4BC93B2331002D1DBA781C1C1E67E2ABFD9`｜297 行｜9 节）。
+
+##### §7.70.7.1 方案（仅一行规则）
+
+```gitattributes
+docs/evidence/duckdb-*/** -text
+```
+
+**必须写在 `.gitattributes` 末尾**（后匹配优先），且 glob 必须写 `duckdb-*/**`。
+
+##### §7.70.7.2 两个关键坑（实测，各 8 种写法 / 2 种顺序）
+
+| 坑 | 实测 | 后果 |
+|---|---|---|
+| **glob 写法** | `docs/evidence/duckdb-** -text` → `check-attr text: set`（**不生效**）；`duckdb-*/** -text` → `text: unset`（生效） | 写成 `duckdb-**` 会**静默无效**（配置看着改了、字节照旧变） |
+| **规则顺序** | `-text` 在 `*.py text eol=lf` **之后** → `unset`（赢）；在**之前** → `set`（被覆盖） | 顺序错则规则完全失效 |
+
+> 两条都是「写了但没生效」型失效 —— 不会报错，只会让人以为已修好。故设计件把二者列为必核项。
+
+##### §7.70.7.3 实测数据（决定采纳）
+
+| 验证项 | 方法 | 结果 |
+|---|---|---|
+| 字节保真 | 临时 `.git/info/attributes` + `git add` 37 条 + 逐文件比对 blob/disk | **289/289 一致** |
+| 关键件单验 | `_pyid_scan.py` / `_gate_from_notice.ps1` / `s0b-verdict.txt` / `hashes.tsv` | 4/4 保持 2165 / 2209 / 912 / 774 B |
+| 已入库文件副作用 | 规则生效后 `git status` 查 ` M docs/evidence/duckdb-*` | **0 个假 modified** |
+| 回退有效性 | 删规则 → 重 add 同一文件 | blob 回到 **2109 B** ⇒ 回退有效 |
+| 不一致文件归属 | 规则关闭，44 个不一致按路径归类 | **44/44 落在 `docs/evidence/duckdb-*/` 内，其外 0 个** |
+
+##### §7.70.7.4 一处口径更正（自报）
+
+| 项 | 上一轮口径 | 本轮实测 |
+|---|---|---|
+| 已入库 `docs/evidence/duckdb-*` 文件数 | 301 个 | **21 个** |
+
+**原因**：301 是把「已暂存待提交的 289 个」一并计入（`git ls-files` 会看到已 staged 的新增件）。`git reset` 后重测为 **21**。已如实更正，并写进设计件 §2.5 与 §九。
+
+##### §7.70.7.5 回退方式（三级）
+
+| 级别 | 操作 | 适用 | 实测 |
+|---|---|---|---|
+| **R1** | 删规则行 + `git reset` + 重 add | 已写未提交 | **✓ 实测有效**（blob 回 2109 B） |
+| R2 | 同上 + revert commit | 已提交未推送 | 逻辑推定，未实测 |
+| R3 | revert + `git add --renormalize docs/evidence/duckdb-*/` | 已推送需复原 | 逻辑推定，未实测 |
+
+> **如实标注**：R2/R3 **未实测**，设计件中标为「逻辑推定」。只有 R1 有实测回执。
+
+##### §7.70.7.6 ⚠ 阻塞项（**已实测更正**）：`.gitattributes` **从未入库**
+
+> **写本段初稿时我判断「`.gitattributes` 是被跟踪文件、当前未修改」——该判断错误，已实测推翻。**
+
+| 检查 | 命令 | 实测 |
+|---|---|---|
+| 是否被跟踪 | `git ls-files --error-unmatch .gitattributes` | **exit 1** ⇒ 未跟踪 |
+| 提交历史 | `git log --oneline -- .gitattributes` | **零条** ⇒ 从未入库 |
+| HEAD 树 | `git cat-file -p HEAD:.gitattributes` | `exists on disk, but not in 'HEAD'` |
+| 状态 | `git status --porcelain` | **`?? .gitattributes`** |
+
+**⇒ 它在**本机**生效（`check-attr` 读得到 `text: set` / `eol: lf`），但**从未进版本库** ⇒ 任何 clone 都拿不到。**
+
+**这使「白名单要不要加一条」的问法失效**。真正待裁的是：
+
+| 项 | 选项 |
+|---|---|
+| ① 入库范围 | **甲** 7 条全入（`* text=auto` + 4 条扩展名 + 新 `-text`）／**乙'** 只入 `-text` 一条（须先精简磁盘文件）／**丙** 不入库（clone 失效） |
+| ② 若选甲 | 是否接受「全仓 clone 后新增 `* text=auto`」——**作用于所有线** |
+| ③ 白名单 | 本次提交是否含 `.gitattributes`（甲乙都要含） |
+
+**关键区分（决定 A3 能否先走）**：
+
+| 事 | 只需 | 实测状态 |
+|---|---|---|
+| ① 这次提交的 44 个文件字节保真 | 本地规则（工作区 `.gitattributes` 未入库也生效） | **289/289 已验证** |
+| ② 规则对后来 clone 者生效 | `.gitattributes` **入库** | 待裁 |
+
+**⇒ 只要求「本次提交不破坏证据」⇒ 可提交；要求「clone 后仍可复核」⇒ 必须定 §6.3 甲/乙'。**
+
+##### §7.70.7.7 边界核对
+
+| 项 | 状态 |
+|---|---|
+| 未改 `.gitattributes` | ✓（设计件只给方案，白名单外待批） |
+| **未执行 A3 提交** | ✓（`staged = 0`，HEAD 仍 `ef0c9e74`） |
+| 未改 `core.autocrlf` | ✓（全局改动会波及他线） |
+| 临时测试环境已清理 | ✓（`.git/info/attributes` 已删除并复核不存在；临时仓库 `%TEMP%\ga_test` 已删） |
+| 工作区 44 个文件字节 | ✓ 未动（`_pyid_scan.py` 仍 2165 B） |
+| 未读 62 GB / 未改库 / 未迁移 / 未下发 | ✓ |
+
+##### §7.70.7.8 测试痕迹清理回执
+
+| 痕迹 | 处理 | 复核 |
+|---|---|---|
+| `.git/info/attributes`（临时规则） | 删除 | `Test-Path` = **False** ✓ |
+| `%TEMP%\ga_test`（临时 git 仓库，测 glob/顺序） | 递归删除 | 目录不存在 ✓ |
+| index 暂存 | `git reset` | `staged = 0` ✓ |
+
+---
+
+### §7.71 r26 续：`.gitattributes` 四条路径影响实测（**三处前稿更正**）
+
+#### §7.71.1 三处更正（均实测推翻前稿）
+
+| # | 前稿写的 | 实测 | 判据 |
+|---|---|---|---|
+| 1 | 「7 条规则」 | **5 条有效规则 + 3 行注释 = 8 行 / 337 B**（无末尾换行） | `[System.IO.File]::ReadAllLines` 逐行打印 |
+| 2 | 「`.gitattributes` 是被跟踪文件」 | **从未入库**（`ls-files --error-unmatch` exit 1；`git log` 零条；`cat-file HEAD:` 报 `exists on disk, but not in 'HEAD'`；status `??`） | 已在 §7.70.7.6 更正 |
+| 3 | 「三条路径」 | **存在第四条**（子树局部文件），且有**已入库先例** | `knowledge/.gitattributes`（commit `53d95118`） |
+
+#### §7.71.2 一条约束性纪律：等窗三文件零改动
+
+检索到既有裁定原文：「**A8 落位：维持等窗（`AGENTS.md`／`.gitattributes`／`.gitignore` 三文件零改动纪律照旧）**」（`docs/ISSUES.md` L197）。
+
+| 三文件 | 现状 |
+|---|---|
+| `AGENTS.md` | 已入库，`M`（2026-10-23 已落位） |
+| `.gitignore` | 已入库，`M` |
+| `.gitattributes` | **从未入库**，`??` |
+
+**⇒ 该纪律原文约束「零改动」（针对已入库文件）；`.gitattributes` 从未入库，首次入库是否等同于「改动」——严格地说不是，但**这个认定应由用户裁定**，我不自行判定。
+
+#### §7.71.3 路径甲：现有 5 条 + 新增 1 条，全量入库
+
+| 规则 | 已跟踪文件数 | 入库后对其他线影响 |
+|---|---|---|
+| `* text=auto` | **3222（全部）** | 全仓 clone 后归一化行为改变 |
+| `*.py text eol=lf` | **1167** | 全部 .py 强制 LF |
+| `*.ps1 text eol=crlf` | **15** | 强制 CRLF |
+| `*.sh text eol=lf` | **7** | 强制 LF |
+| `*.md text eol=lf` | **1377** | 强制 LF |
+| 新增 `duckdb-*/** -text` | 268 | 限域，无 |
+
+**附带副作用（可量化）**：全仓 index 内**含 CRLF 的已跟踪文件 15 个**（`.specify/bugs/**` 4、`docs/evidence/n7-*` 3、`docs/evidence/runs/*` 8），甲案入库后下次 add/checkout 会被重归一化 ⇒ 可能凭空出现「已修改」。
+
+#### §7.71.4 路径乙'：精简为只留 `-text` 后入库
+
+**影响**：仅 `docs/evidence/duckdb-*/`（268 件），全仓其余 **2954 件零影响**；跨线零影响。
+**代价**：该文件是**本机 5 条规则的唯一载体**，精简即**本机同时失去** `*.py eol=lf` 等规则 ⇒ 实质是「牺牲本机 W-11 治本方案换零跨线影响」。
+
+#### §7.71.5 路径丙：只写 `.git/info/attributes`，不入库 —— **实测出一个前稿没说的细节**
+
+| 场景 | 实测 | 结论 |
+|---|---|---|
+| 已用 `-text` 提交的件，规则消失后再改再 add | **保真（disk 12 B / CRLF=3 = blob 12 B / CRLF=3）** | 已入库件**不会**被追溯改写 |
+| **全新** CRLF 件，无规则时 add | **被归一化（disk 8 B → blob 6 B）** | 新人新加的件**仍丢字节** |
+
+> **机制未归因**：同一仓内「已有 CRLF blob 保真 / 全新文件归一化」与常规 autocrlf 规则不符。**我未能解释，故不据此下结论**，只登记实测现象，复现脚本留在设计件 §6.6。
+
+**⇒ 丙案判定**：「本次 44 件不破坏」**成立**（已验证 289/289）；「长期新增件保真」**不成立**（新文件实测被归一化）。若证据件是一次性交付 ⇒ 丙够用；若今后仍会有证据件入库 ⇒ **会复发**。
+
+#### §7.71.6 路径丁（新发现）：新建 `docs/evidence/.gitattributes` 子树局部文件
+
+**内容仅一行**：`duckdb-*/** -text`（+ 注释）。**不动仓库根 `.gitattributes`。**
+
+**已入库先例**：`knowledge/.gitattributes`（commit `53d95118`），注释原文「局部文件：仅约束 `knowledge/` 子树，**不改动仓库根 `.gitattributes`**（等窗挂起中，三文件零改动纪律）」，依据 = **用户②审照准「eol 先限 knowledge/**」**。
+
+**实测（两个独立临时仓库）**：
+
+| 验证项 | 结果 |
+|---|---|
+| 子树文件对 `duckdb-x/a.py` 判定 | **`text: unset`** ✓ |
+| 子树内字节保真 | **disk 8 B = blob 8 B** ✓ |
+| 子树外是否误伤 | `text: unspecified`（不受影响）✓ |
+| **根无 `.gitattributes` 时单独生效** | ✅ 8 B = 8 B |
+
+**影响面**：仅 268 件；跨线零；**不触等窗纪律**；**本机 W-11 方案保留**；白名单需 **+1 新文件**。
+
+#### §7.71.7 四路径对照
+
+| | 甲 | 乙' | 丙 | **丁（建议）** |
+|---|---|---|---|---|
+| 本次 44 件保真 | ✅ | ✅ | ✅ | ✅ |
+| 未来新增件保真 | ✅ | ✅ | ❌ | ✅ |
+| clone 后生效 | ✅ | ✅ | ❌ | ✅ |
+| 影响其他线 | ❌ 3222 件 | ✅ 无 | ✅ 无 | ✅ 无 |
+| 触等窗纪律 | ⚠ 需裁定 | ⚠ 需裁定 | ✅ | ✅ **不触** |
+| 本机 W-11 方案 | ✅ | ❌ **丢失** | ✅ | ✅ **保留** |
+| 白名单变更 | 1 改 | 1 改 | 0 | **1 新增** |
+
+**⇒ 建议丁案**：不改根文件（优于甲/乙'）、规则随仓分发（优于丙）、有用户照准同族先例。
+
+#### §7.71.8 边界核对
+
+| 项 | 状态 |
+|---|---|
+| **未创建 `docs/evidence/.gitattributes`** | ✓（丁案仅设计，未落盘） |
+| 未改根 `.gitattributes` | ✓（仍 `??`，7→8 行未动） |
+| **未执行 A3 提交** | ✓（`staged = 0`） |
+| 临时测试仓库 | ✓ 全部删除（`c4`/`c5`/`clean_eol`/`clone_test*`/`subtree_test*`/`ga_test`） |
+| 未读 62 GB / 未改库 / 未迁移 / 未下发 | ✓ |
+
+---
+
+### §7.72 r27：用户裁定路径丁 → **`docs/evidence/.gitattributes` 落地 + 临时仓三验 + A3 扩展为 38 入口**
+
+> 用户裁定原文：「**CRLF路径选择丁，证据目录单独使用`.gitattributes`**」「内容只限定：`duckdb-*/** -text`」
+
+#### §7.72.1 规则文件落盘（**新建，非修改**）
+
+| 项 | 实测 |
+|---|---|
+| 路径 | `docs/evidence/.gitattributes` |
+| 大小 | **18 B** |
+| sha256 | **`23D50E2E824A50339CE6426E659BC48CACD4AD57AA4D165C6AC4AC60D52D4B16`** |
+| 内容 | **仅一行** `duckdb-*/** -text` + LF 结尾 |
+| 逐字节 | `100,117,99,107,100,98,45,42,47,42,42,32,45,116,101,120,116,10` |
+| BOM | **无** |
+| CR 数 | **0** |
+| 末尾换行 | **有** |
+
+**未加注释行**：用户指示「内容只限定」，故只写规则一行（与 `knowledge/.gitattributes` 带注释的做法不同，此处从简遵守指示原文）。
+
+#### §7.72.2 临时仓三验（一次性建仓，验完即删）
+
+**验证1 规则命中**（`git check-attr text`）：
+
+| 测试对象 | 判定 | 期望 |
+|---|---|---|
+| `docs/evidence/duckdb-s0b-test/_pyid_scan.py` | **unset** | unset ✓ |
+| `docs/evidence/duckdb-s0b-test/verdict.txt` | **unset** | unset ✓ |
+| `docs/evidence/outside.py`（区外） | **unspecified** | 不受影响 ✓ |
+
+**验证2 字节保真**（磁盘 vs index blob）：
+
+| 对象 | disk | blob | 一致 |
+|---|---|---|---|
+| 证据件 `.py` | 8 B | 8 B | **True** ✓ |
+| 证据件 `.txt` | 8 B | 8 B | **True** ✓ |
+| **规则文件自身** | 18 B | 18 B | **True** ✓ |
+| 区外 `.py`（负对照） | 8 B | **6 B** | False（**如期被归一化**，证明规则有鉴别力） |
+
+**验证3 规则顺序**（子树 `-text` vs 根 `*.py text eol=lf`）：
+
+| 场景 | `text` 判定 | 结论 |
+|---|---|---|
+| 根加 `* text=auto` + `*.py text eol=lf` 后 | **unset** | **子树规则胜出** ✓（子树更局部，符合 git 层叠语义） |
+
+**附带观察**：规则文件自身被判 `text: auto`，但因其全 LF 无 CR，`blob == disk == 18 B`，**归一化对它无影响**（已实测）。
+
+#### §7.72.3 真实仓验证（不只信临时仓）
+
+| 对象 | `text` 判定 | 结论 |
+|---|---|---|
+| `duckdb-s0b-20261116T195917/_pyid_scan.py` | **unset** | ✓ 命中 |
+| `duckdb-s0b-20261116T195917/_gate_from_notice.ps1` | **unset** | ✓ 命中 |
+| `duckdb-s0b-20261116T195917/s0b-verdict.txt` | **unset** | ✓ 命中 |
+| `duckdb-v6-u18-u26-run-20261117T141023Z/verdict.txt` | **unset** | ✓ 命中 |
+| `duckdb-1.5-upgrade-window-evidence.md`（证据主件） | set | 不受影响 ✓ |
+| `duckdb-v6-u1-u32-final-review-index-20261116.md` | set | 不受影响 ✓ |
+| `docs/handoff/customer-notice-5-…md`（区外） | set | 不受影响 ✓ |
+| `knowledge/db/DB-2026-0045.md`（区外） | auto | 不受影响 ✓ |
+
+#### §7.72.4 A3 提交前：**290/290 逐字节一致（44 个问题归零）**
+
+**这一项是本次提交的核心验收**——上轮实测 44 个文件入库会被改字节，本轮同口径复测：
+
+| 口径 | 结果 |
+|---|---|
+| staged 文件数 | **290**（289 原批准 + 1 新规则文件） |
+| **逐字节一致（blob == disk）** | **290** ✓ |
+| **不一致** | **0**（上轮为 **44**） |
+| 读取失败 | 0 |
+
+**关键两件专项复核**（通知写给客户的核对字节）：
+
+| 文件 | 磁盘 | index blob | 一致 |
+|---|---|---|---|
+| `duckdb-s0b-20261116T195917/_pyid_scan.py` | **2165 B** | **2165 B** | ✓ **通知 L13/L1822 的 2165 B 现在可由仓库复核** |
+| `duckdb-s0b-20261116T195917/_gate_from_notice.ps1` | **2209 B**（含 BOM） | **2209 B** | ✓ 通知 L1822 的 2209 B 同上 |
+| `s0b-verdict.txt` | 912 B | 912 B | ✓ |
+| `hashes.tsv` | 774 B | 774 B | ✓ |
+| `docs/evidence/.gitattributes` | 18 B | 18 B | ✓ |
+
+**假修改检查**：既有已入库的 `duckdb-*` 文件**无一被新规则判成「已修改」**（` M` 状态中与 duckdb 相关的仅 `specs/002-duckdb-1.5-upgrade/tasks.md`，属本线另行在途，不在本次 index）。
+
+#### §7.72.5 index 三查（commit 前，核**整个 index**）
+
+| 查 | 判据 | 实测 | 结论 |
+|---|---|---|---|
+| 1/3 | staged 总数应 = 289 + 1 = **290** | **290** | ✓ |
+| 2/3 | 越界（不在 `docs/evidence`／`docs/handoff`／`knowledge/db` 三域）应 0 | **0** | ✓ |
+| 3/3 | 禁区混入（`tasks.md`／根 `.gitattributes`／`AGENTS.md`／`.gitignore`／`.session-scope.txt`）应 0 | 各项均 **0** | ✓ |
+| 3b | `docs/evidence` 下非 `duckdb-` 前缀（除新规则文件）应 0 | **0** | ✓ |
+
+#### §7.72.6 staged-scope 门（门1）
+
+| 项 | 实测 |
+|---|---|
+| 白名单条目 | **38**（37 原批准入口 + `docs/evidence/.gitattributes`） |
+| 声明方式 | 环境变量 `STAGED_SCOPE_ALLOW`（`;` 分隔；**未写** `.session-scope.txt`） |
+| 逐条覆盖自查 | 未覆盖 **0** |
+| 门判定 | **`index=290 件  白名单=38 条  verdict=PASS`** |
+| 门 exit | **0** |
+
+> **如实申报一个过程误差**：首次调用门时用了 `Select-Object -First 6`，管道提前关闭致 `$LASTEXITCODE` 报 **-1**（假失败）。按纪律改用 `Out-String` 收全量后复验，**真实 exit = 0**。已按「假失败不当真失败」处置，不隐瞒首次读数。
+
+#### §7.72.7 铁律03 写前快照（脏树 ⇒ 定向 patch 锚）
+
+| 项 | 值 |
+|---|---|
+| 脏树判定 | porcelain **2003** 条（他线 1712），**非本会话改动不碰** |
+| 锚文件 | `docs/handoff/a3-precommit-anchor-20261119-164100.patch` |
+| 锚 size | **2368 B** |
+| 锚 sha256 | **`5D156B4C14F7A5871032245B26FC85772B879CBA8017CBFD8B32B628E5FC20AA`** |
+| 锚内容 | 仅 `specs/002-duckdb-1.5-upgrade/tasks.md` 的未提交改动 |
+| **E-6 立验** | `git apply --check --reverse` **exit 0** ⇒ 锚可用 ✓ |
+
+#### §7.72.8 边界核对
+
+| 项 | 状态 |
+|---|---|
+| **未改仓库根 `.gitattributes`** | ✓（仍 `??`，未 add、未改内容） |
+| 未读 62 GB / 未改数据库 / 未迁移 / 未代发 / 未 push | ✓ |
+| `tasks.md` | ✓ **未入 index**（改动已存 patch 锚） |
+| 临时验证仓 | ✓ 验完即删 |

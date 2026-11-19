@@ -1,0 +1,50 @@
+# U18 / ENC / U26 完整驱动 · 运行回执
+
+stamp            = 20261117T085300
+evDir            = D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u18-u26-run-20261117T085300
+notice_sha256    = 598741EF4881D71E594FA2A709DD28471FDEE78CC3B09DDF5640503C54859451
+notice_sha_prev  = 288AB994FE9AB6FFB6F31862B49A2AC29727E047FBEC486E96EA6139E420A681
+notice_sha_note  = MATCHES-KNOWN
+host_ps          = 5.1.26100.9711
+host_exe         = C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+py_exe           = C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe
+py_ver           = 3.11.9
+py_sha256        = 5F7B89A612C9B8AF1D6456CDFCD1DBE5CA630849E79AEBCED9BEE9A6694952EC
+py_identity      = SAME-AS-S0B
+real_prefix_ascii= Y   # Y=真实 sys.prefix 纯 ASCII ⇒ A 组只证路径面，不证内容编码
+pin_F1/F2        = 1DD4DC464640BCDBDB2AAB3F6E85992FB6FDFBCE31D3B276E8DC2F60B0DB234F / 8B725BA145C6D0EB9EB0796922F604FA9AF86C71272E34C9267FFA84D61C486B
+pin_COLLECT      = 223231A658589E11C1449D465449C7FF62DA07120F35697AA622D710A56DD945
+pin_RT           = C0E57F7C8A47C3FF38D0FB7640F16CE3DD5B365BB4AD8C30EE7D5B828D080A8F
+pin_PARSERS      = 9545FF90F59F8D7C3E8449051FD5BC14C9B4A2561EA9FC8448E8DC4BB62C82EB
+pin_EQATTR       = 18AF80E87BB2B67130F7532EA1EE8ECEBF3EA6DDB529CD8A77894F2F09CE6CBE
+groups           = 3
+plan_assertions  = 20
+reached          = 7
+not_reached      = 13
+py_calls         = 4
+cases_pass       = 6/20
+isolation_note   = 隔离模式仅试支路；生产顺序为先 FILE 后 PFX，不存在绕过路径
+verdict          = FAIL
+fail_msg         = CASE :: CASE-FAIL U18 n=1 :: U18-PS-RECOMPUTE-EQ: 期望[1363117b1fce18d86954e20f49a3f2b42c54ea671331c09e7c60a3900523b160] 实际[1363117B1FCE18D86954E20F49A3F2B42C54EA671331C09E7C60A3900523B160]
+
+## 逐条（plan 全量）
+U18-PATH-HAS-CJK-SPACE             PASS         expect=CJK=Y,SPACE=Y got=CJK=Y,SPACE=Y
+U18-COLLECT-RC                     PASS         expect=0 got=0
+U18-FILE-EQ-META                   PASS         expect=1363117b1fce18d86954e20f49a3f2b42c54ea671331c09e7c60a3900523b160 got=1363117b1fce18d86954e20f49a3f2b42c54ea671331c09e7c60a3900523b160
+U18-PFX-EQ                         PASS         expect=b3fec617d9c148f95f04e0e10e843af948928ed9e4f52a9f62fecf1321a522af got=b3fec617d9c148f95f04e0e10e843af948928ed9e4f52a9f62fecf1321a522af
+U18-FIELDS-EXACT                   PASS         expect=duckdb,duckdb_file,exe,prefix,python,source_id got=duckdb,duckdb_file,exe,prefix,python,source_id
+U18-PREFIX-ROUNDTRIP               PASS         expect=C:\Users\Administrator\AppData\Local\Programs\Python\Python311 got=C:\Users\Administrator\AppData\Local\Programs\Python\Python311
+U18-PS-RECOMPUTE-EQ                FAIL         expect=1363117b1fce18d86954e20f49a3f2b42c54ea671331c09e7c60a3900523b160 got=1363117B1FCE18D86954E20F49A3F2B42C54EA671331C09E7C60A3900523B160
+ENC-ASCII-CONTENT-REJECT           NOT-REACHED  expect=(预登记) got=NOT-REACHED
+ENC-UTF8-OK-BYTES                  NOT-REACHED  expect=(预登记) got=NOT-REACHED
+ENC-ENSUREASCII-FILE-DIFF          NOT-REACHED  expect=(预登记) got=NOT-REACHED
+ENC-VALUE-PRESERVED                NOT-REACHED  expect=(预登记) got=NOT-REACHED
+ENC-ASCII-CONTENT-ON-CJK-PATH-OK   NOT-REACHED  expect=(预登记) got=NOT-REACHED
+U26-POS-TRIPLE                     NOT-REACHED  expect=(预登记) got=NOT-REACHED
+U26-NEG-FILE                       NOT-REACHED  expect=(预登记) got=NOT-REACHED
+U26-NEG-PFX-ISO                    NOT-REACHED  expect=(预登记) got=NOT-REACHED
+U26-NEG-FIELDS-ISO                 NOT-REACHED  expect=(预登记) got=NOT-REACHED
+U26-EQ-TRIO-NEG                    NOT-REACHED  expect=(预登记) got=NOT-REACHED
+U26-EQ-TRIO-POS                    NOT-REACHED  expect=(预登记) got=NOT-REACHED
+U26-ATTR-POS                       NOT-REACHED  expect=(预登记) got=NOT-REACHED
+U26-ATTR-NEG                       NOT-REACHED  expect=(预登记) got=NOT-REACHED

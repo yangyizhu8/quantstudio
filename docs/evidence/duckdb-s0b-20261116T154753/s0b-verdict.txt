@@ -1,0 +1,27 @@
+stamp=20261116T154753
+attempt=1（DRIFT-N19-r3 批准的唯一一次）
+notice=D:\miniQMT策略实盘\QuantStudio\docs\handoff\customer-notice-5-duckdb-1.5.6-upgrade-v6-20261115.md
+notice_sha256=7A681613E8D552427C7AB00BA30D34FCD187CF67A0F6949CEC135F8DEF8DFD2E
+host_ps=5.1.26100.9711
+host_exe=C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+py_exe=C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe
+runner_sha256=8DB0F2AC535B0B0F0F50B2903D0E7C004DDE6A5DEE0C4121F1805DA00B134C59
+root=NOT-CREATED
+outDir=NOT-CREATED-BY-RUNNER（本目录由事后取证补建）
+scanRc=NOT-REACHED
+SCAN-LINKS=NOT-REACHED
+SCAN-DIRS=NOT-REACHED
+SCAN-ROOT-ENTRIES=NOT-REACHED
+SCAN-WALK-ERRORS=NOT-REACHED
+SCAN-LSTAT-ERRORS=NOT-REACHED
+gate_bom=NOT-REACHED
+gate_parse=NOT-REACHED
+gate_out=NOT-REACHED
+negcontrols=0/6（NOT-REACHED）
+verdict=FAIL
+fail_class=SETUP（假失败）
+fail_msg=解释器无法运行：C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe
+fail_root_cause=runner 把原生命令内联进管道后接 Select-Object -First 1，提前关管道使 LASTEXITCODE=-1（假失败）
+recheck_python_direct_rc=0（3.11.9）
+recheck_pipelined_rc=-1（同名同路径，输出仍为 3.11.9）
+verdict_file_written_by_runner=NO（outDir 未创建，finally 分支未落盘——runner 自身缺陷）

@@ -1,0 +1,1 @@
+"D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u18-u26-run-20261117T034521Z\_synth.py" "write-ascii-cn" "" "D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u18-u26-run-20261117T034521Z\中文 目录\data\synth-cn-asciiwrite.json"

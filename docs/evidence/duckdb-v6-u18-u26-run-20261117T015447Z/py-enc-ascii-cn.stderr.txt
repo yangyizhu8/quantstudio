@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u18-u26-run-20261117T015447Z\_synth.py", line 35, in <module>
+    with open(dst, "w", encoding="ascii", newline="\n") as f: f.write(s)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: ''

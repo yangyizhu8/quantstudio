@@ -1,0 +1,40 @@
+# U27 / U32 / U28 小驱动 rev2 · 运行回执
+
+stamp            = 20261116T232256
+evDir            = D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u27-u28-u32-run-20261116T232256
+notice           = D:\miniQMT策略实盘\QuantStudio\docs\handoff\customer-notice-5-duckdb-1.5.6-upgrade-v6-20261115.md
+notice_sha256    = 288AB994FE9AB6FFB6F31862B49A2AC29727E047FBEC486E96EA6139E420A681
+notice_sha_note  = MATCHES-KNOWN
+host_ps          = 5.1.26100.9711
+host_exe         = C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+py_exe           = C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe
+py_ver           = 3.11.9
+py_sha256        = 5F7B89A612C9B8AF1D6456CDFCD1DBE5CA630849E79AEBCED9BEE9A6694952EC
+py_identity      = SAME-AS-S0B
+pin_F1           = 1DD4DC464640BCDBDB2AAB3F6E85992FB6FDFBCE31D3B276E8DC2F60B0DB234F
+pin_F2           = 8B725BA145C6D0EB9EB0796922F604FA9AF86C71272E34C9267FFA84D61C486B
+pin_SCAN         = 53AC95D927359DB4AB876836E9C11B1DDA06EA4B89566480E368A858D9B34A16
+groups           = 3
+plan_assertions  = 15
+reached          = 15
+not_reached      = 0
+scanner_calls    = 2
+cases_pass       = 15/15
+verdict          = PASS
+
+## 逐条（plan 全量，未达项显式标 NOT-REACHED）
+C1-ACCEPT-FULL       PASS         expect=OK|D:\qssyn\data got=OK|D:\qssyn\data
+C1-REJ-DRIVREL       PASS         expect=THREW|驱动器相对 got=THREW|驱动器相对
+C1-REJ-DRIVREL-BARE  PASS         expect=THREW|驱动器相对 got=THREW|驱动器相对
+C1-REJ-NONABS        PASS         expect=THREW|不是绝对路径 got=THREW|不是绝对路径
+C1-REJ-UNC           PASS         expect=THREW|UNC got=THREW|UNC
+C2-ROOT-KEEP         PASS         expect=OK|D:\ got=OK|D:\
+C2-ROOT-FWDSLASH     PASS         expect=OK|D:\ got=OK|D:\
+C2-OLD-FORM-CTRL     PASS         expect=D: got=D:
+C2-EVDIR-CHAIN       PASS         expect=OK|D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u27-u28-u32-run-20261116T232256 got=OK|D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u27-u28-u32-run-20261116T232256
+C3-BADROOT-RC        PASS         expect=8 got=8
+C3-BADROOT-MSG       PASS         expect=HAS-SCAN-ROOT-INVALID got=HAS-SCAN-ROOT-INVALID
+C3-BADROOT-NO-COUNTS PASS         expect=ABSENT got=ABSENT
+C3-CTRL-RC           PASS         expect=0 got=0
+C3-CTRL-ROOTENTRIES  PASS         expect=HAS-SCAN-ROOT-ENTRIES got=HAS-SCAN-ROOT-ENTRIES
+C3-CTRL-NO-INVALID   PASS         expect=ABSENT got=ABSENT

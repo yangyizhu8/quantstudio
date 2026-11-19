@@ -1,0 +1,3 @@
+@@ -1610 +1610 @@
+-| **U26** | **留存三值比较真生效** | 复制完成后手工改 `pykeep-id-<stamp>.json` 一个字节（或改字段值） | `留存 FILE-HEX != 其 META-HEX` ⇒ 拒绝；改 prefix 值 ⇒ `留存 prefix 字段对拍不一致` | 中止 |
++| **U26** | **留存三值比较真生效** | 复制完成后手工改 `pykeep-id-<stamp>.json` 一个字节（或改字段值） | `留存 FILE-HEX != 其 META-HEX` ⇒ 拒绝（**保留旧 META 的整链首先被 FILE 拦**）；**对齐 META 后的隔离测试**才到 `留存 prefix 字段对拍不一致` | 中止 |

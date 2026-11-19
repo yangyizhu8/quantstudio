@@ -1,0 +1,11 @@
+name	rc	note
+BOOTSTRAP	0	evDir=D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u18-u26-run-20261117T071754Z cnData=D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u18-u26-run-20261117T071754Z\中文 目录\data
+NOTICE	0	bytes=117882 lines=1812 
+HOST-ID	0	ps=5.1.26100.9711 py=3.11.9 SAME-AS-S0B prefix_ascii=Y real_prefix=C:\Users\Administrator\AppData\Local\Programs\Python\Python311
+EXTRACT	0	6 段 pin 全中：F1/F2/COLLECT/RT/PARSERS/EQATTR
+EXTRACT-WRITE	0	ps1 x3(bom) py x3 (synth 2015B pin ok)
+PARSE	0	3/3 解析通过（各自独立 err）
+INPUT-FIXED	0	src=D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u18-u26-run-20261117T015447Z\中文 目录\data\pypin-20261117T015447Z.json sha=1363117B1FCE18D86954E20F49A3F2B42C54EA671331C09E7C60A3900523B160 copy=ok META=取自源字节(声明推导)
+OBJREAL-INIT	0	fields=duckdb,duckdb_file,exe,prefix,python,source_id python=3.11.9 prefix_len=62
+U26	0	4 条
+HASHES	0	6 files, skip_empty=7

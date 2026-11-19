@@ -1,23 +1,20 @@
 # 客户通知稿（**v6 修订终稿**）：QuantStudio 组件 duckdb 版本升级至 1.5.6（通知编号 5）
 
-> **状态**：**v6 修订候选稿 · 待总调度终审 · 未下发 · 非已批准下发版**。
-> 本版为**第七轮**修缺陷（2026-11-15 终审：stamp 双定义 / verify 未用留存解释器 / 复制自吞 / 留存配方与用例）：
-> **①`$stamp` 全篇只定义一次**——新增 **步骤 0**，`$stamp`/`$dataDir`/`$py` 在此生成并落盘
-> `data\upgrade-stamp.txt` 作唯一权威；**删除步骤 1 与 2.4.0 的第二处 `Get-Date`**
-> （旧稿两处各自生成，跨秒即分叉 ⇒ 后续会去找另一份不存在/另一时刻的备份）。
-> 重开窗口一律从该文件**读回**，不得重算。
-> **②验证一律用留存解释器**——2.4.4 正例与 2.4.5 负例的 `verify` 全部改用 **`$pyVerify`**（2.4.0 留存并验证过的原版本），
-> 命令前断言其存在；**版本/`source_id` 不符由工具机器拒绝**（`CROSS-VERSION-INCOMPARABLE` / **exit=5**，不输出 OK）。
-> **③留存配方改为唯一一条 + 写前拒绝递归自吞**——只保留「复制 `sys.prefix` → `data\pykeep-<stamp>`」；
-> **复制前机器拒绝**两种情形：目标**等于**源、目标**位于源子树内**（否则 robocopy 会把目标收进源、无限自我递归）。
-> **④复制成功 ≠ 环境可用**——复制后必须用**复制出来的 python** 实跑 `import duckdb` + `pragma_version()`，
-> 并机器比对 `duckdb` 版本与 `source_id`；不通过即 `throw`，**不得**用 wheel 下载/venv 重建"凑合"（那两条同样要过同一套机器校验）。
-> **⑤新增 2.4.7b 单 stamp 关联链**（14 项产物 ↔ stamp ↔ 消费者一览，供重开窗口逐个核对）。
-> **⑥新增 2.4.9 精确合成用例清单**（U1–U15：空 schema 登记/新增/删除/变空、SET 必需失败 exit=6、
-> 可选项失败不阻断、exit=1/4/5 真阻断、步骤 3 两种被拦、留存目标==源 / 在源子树 / 复制后不可用），
-> **明确「客户不承担首测」**——由我们补测证明后才算数，本表**当前全部未执行**。
-> 保留前几轮：同版本版本门、撤回强度承诺、七面独立核验、空 schema 纳登记、必需 SET 即停、非 0 真阻断、
-> 全文件 SHA 不替代逻辑验证、WAL 配对命名、有界流式聚合。**T041 未连带核销**，仍为 `BLOCKED`。
+> **状态**：**v6 修订候选稿 · 待总调度终审 · 未下发 · 非已批准下发版 · 本轮未提交**。
+> **S0b 已于 2026-11-16 19:59:17 通过（stamp `20261116T195917`）—— §2.4.10 的有限合成验证关闭。**
+> **执行件**：已审 r4 候选 `DAFAB11E…A24C0`，与批准值**逐位一致**；宿主 **PS 5.1.26100.9711**、解释器 `Python311`，**均未更换**。
+> **13 个阶段全部 rc=0，verdict=PASS，退出码 0。**
+> **①新证据根先于 HOST**：`STAGE BOOTSTRAP` 在建根之前排他新建证据目录并立即落 `runner-identity.txt`。
+> **②原生命令先完整取输出并保存 rc**：`$pyVerOut = @(& $py -c …)` → `$pyRunRc = $LASTEXITCODE`（实测 `PY-RUN-RC = 0`）→ 再从变量取首行。
+> **③五值实测全对**：`scanRc=0` / `SCAN-LINKS 0` / `SCAN-DIRS 1` / `SCAN-ROOT-ENTRIES 3` / `WALK-ERRORS 0` / `LSTAT-ERRORS 0`。
+> **④PS1 BOM 与目标 Parser 均过**：`GATE-BOM = EF BB BF`；`GATE-PARSE = OK（宿主自身 Parser，读盘）`。
+> **⑤基线消费闸接受**：输出 `PY-SRC-LINKS  = 0（dirs=1, root_entries=3, walk_err=0, lstat_err=0…）`，未抛异常。
+> **⑥六负控 6/6 按预期原因被拒**，且**跑完后重跑基线仍通过**（还原有效）。
+> **⑦独立复算（不信自报）**：根实测 3 文件 / 0 子目录 / 0 重解析点；扫描器提取件 2165 B 与通知 L425..L481 **二进制逐字节一致**；
+> 消费闸提取件 2209 B（含 BOM）与 L488..L507 **逐字节一致**；根目录 `st_file_attributes=0x10`（**非 ReparsePoint**）。
+> **⑧按边界未清理**：`143939` / `154753` / `195917` 三处现场与候选目录**全部在位**；未建 junction、未改 ACL、未复制环境、未 pip。
+> **T041 仍 BLOCKED**；**62 GB 未测**；**11-17 原闸保持**。**本轮未 commit、未推送**。
+> **S0b 关闭 ≠ 升级可执行**：它只证明「合法平根上，扫描器五值与消费闸按设计工作」，**不是**对 62 GB 生产库或升级窗口的验证。
 
 ## 一、这次要做什么
 
@@ -109,8 +106,14 @@ $py      = '<解释器绝对路径>'          # 必须与 §1.2 已确认的是�
 $stamp   = Get-Date -Format 'yyyyMMdd_HHmmss'
 
 # 立即把 stamp 落成「唯一权威」，供重开窗口 / 分段执行时找回（不得手改）
+# 统一用 UTF-8 无 BOM + 读回比对（stamp 本身是纯数字下划线，ASCII 也无损；此处统一口径，
+# 免去"某处 ASCII 某处 UTF-8"的分歧——后面 pypin 里含中文路径，绝不能 ASCII）
 $stampFile = Join-Path $dataDir 'upgrade-stamp.txt'
-"$stamp" | Set-Content -Path $stampFile -Encoding ASCII
+$utf8s = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($stampFile, "$stamp", $utf8s)
+if (([System.IO.File]::ReadAllText($stampFile, $utf8s)).Trim() -ne "$stamp") {
+    throw "stamp 文件读回不一致，拒绝继续：$stampFile"
+}
 "STAMP       = $stamp"
 "STAMP-FILE  = $stampFile"
 "DATA-DIR    = $dataDir"
@@ -296,65 +299,309 @@ else { $fail | ForEach-Object { "  ✗ $_" }; "SNAPSHOT-BROKEN：删除 $bak 与
 **唯一配方：把当前解释器环境整体复制到 `.\data\pykeep-$stamp`，复制后必须通过机器可用性验证。**
 
 ```powershell
-# ---- (1) 固化解释器身份 ----
-$pyPin  = Join-Path $dataDir "pypin-$stamp.json"
-$pyInfo = & $py -c "import sys,json,duckdb;print(json.dumps({'python':sys.version.split()[0],'exe':sys.executable,'prefix':sys.prefix,'duckdb':duckdb.__version__},ensure_ascii=False))"
-if ($LASTEXITCODE -ne 0) { throw "解释器不可用，禁止开始升级：$py" }
-$pyInfo | Set-Content -Path $pyPin -Encoding ASCII
-$pyObj = $pyInfo | ConvertFrom-Json
-$srcPrefix = [System.IO.Path]::GetFullPath($pyObj.prefix).TrimEnd('\')
-$pyKeep    = [System.IO.Path]::GetFullPath((Join-Path $dataDir "pykeep-$stamp")).TrimEnd('\')
-"PY-PINNED   = $pyPin"
-"PY-EXE      = $($pyObj.exe)"
-"PY-PREFIX   = $srcPrefix"
-"PY-DUCKDB   = $($pyObj.duckdb)"
-"PY-KEEP     = $pyKeep"
+# ---- (0) 编码策略（本轮定稿，最简）----
+# 三条：①文本由 Python 以 UTF-8 直写文件；②PS 侧用 **ReadAllText(UTF-8)** 直接读文件，
+# 绝不把 JSON 经子进程 stdout 交回；③关键字段走纯 ASCII(hex) 对拍。
+# 上轮的错：校验用了 hex，但取对象时又 `& $py -c "...ensure_ascii=False...print..."` 经 stdout 回来，
+# 等于把"已经验过的链"在最后一步又过一遍会损坏的解码 —— 本轮彻底去掉这条路。
+$OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$utf8 = New-Object System.Text.UTF8Encoding($false)
 
-# ---- (2) 写前拒绝：目标不得落在源子树内（否则会递归把自己复制进去） ----
-# 判据：$pyKeep 以 "$srcPrefix\" 开头 => 目标在源里面 => 拒绝。同时拒绝等于源自身。
-if ($pyKeep -eq $srcPrefix) {
-    throw "留存目标与源环境同一路径，拒绝执行：$pyKeep"
-}
-if ($pyKeep.StartsWith($srcPrefix + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "留存目标位于源环境子树内（$pyKeep 在 $srcPrefix 之下）。复制会把目标收进源、无限自我递归，已拒绝。请把 --data 目录移出 python 安装目录后再试。"
+# ---- (1) 路径策略：**逐级拒绝链接**（不解析、不跳转）----
+# 上轮的错：解析 reparse 得到"真实路径"后，**新路径的祖先仍可能是链接**，
+# while 只在跳转后检查自身、并不重新逐段校验 —— 仍有绕过面。
+# 本轮改为最简单且可证的方案：**从根到末级逐级检查，任一级是 reparse 就拒绝**；
+# 不解析、不跳转 ⇒ 不存在"跳转后祖先未校验"的问题。
+# 代价：若您的环境本身含 junction（某些 OneDrive / ProgramFiles 布局），会被直接拒绝。
+#       这是有意的：那种链路上无法用本配方证明"留存独立"。
+# ⚠ 本判据只是**检查时刻的静态快照**，不等于"运行期路径不变"：
+#   检查与下面 robocopy 之间目录仍可能被改成 junction（TOCTOU），本脚本**不检测该竞态**。
+#   故结论口径只能是「**检查时刻**全链无重解析点」，不得写成「运行期路径稳定」。
+
+# 路径形式闸：只接受**盘根绝对形式**（D:\...）。拒绝三类语义不确定的输入：
+#   ① 驱动器相对形式（D:foo / D:）—— GetFullPath 按「该盘的当前目录」解释，指向何处取决于进程状态；
+#   ② 非绝对路径（foo\bar）—— 取决于当前工作目录；
+#   ③ UNC（\\server\share\...）—— 本判据不覆盖，避免制造"已查过"的错觉。
+function Assert-AbsoluteDrivePath([string]$p) {
+    if ([string]::IsNullOrWhiteSpace($p)) { throw "路径为空，拒绝继续。" }
+    if ($p -match '^[A-Za-z]:(?![\\/])') {
+        throw "路径是驱动器相对形式（$p）：其含义取决于「该盘的当前目录」，不是固定位置。请改为全限定路径（如 D:\...）。"
+    }
+    if (-not [System.IO.Path]::IsPathRooted($p)) { throw "路径不是绝对路径（$p），拒绝继续。" }
+    $full = [System.IO.Path]::GetFullPath($p)
+    if ($full.StartsWith('\\')) { throw "UNC 路径不在本判据内（$full），拒绝继续。" }
+    if ($full -notmatch '^[A-Za-z]:\\') { throw "规范化后仍非盘根绝对形式（$full），拒绝继续。" }
+    return $full
 }
 
-# ---- (3) 复制（robocopy 退出码 <8 视为成功；>=8 为失败） ----
-robocopy $srcPrefix $pyKeep /E /NFL /NDL /NJH /NJS /NP | Out-Null
+function Test-ChainNoReparse([string]$p, [switch]$AllowMissingLeaf) {
+    $full = Assert-AbsoluteDrivePath $p
+    # 盘根必须**原样保留**（形如 D:\）。上一版写成 `$root.TrimEnd('\')`，
+    # 对 `D:\` 会得到 `D:` —— 那不是绝对路径，是**驱动器相对**形式（含义取决于该盘当前目录），
+    # 与本函数自己的形式闸自相矛盾。这里不做任何裁剪。
+    $root = [System.IO.Path]::GetPathRoot($full)
+    $segs = @($full.Substring($root.Length).Split('\') | Where-Object { $_ -ne '' })
+    $cur = $root
+    for ($i = 0; $i -lt $segs.Count; $i++) {
+        $cur = Join-Path $cur $segs[$i]
+        $isLeaf = ($i -eq $segs.Count - 1)
+        if (-not (Test-Path -LiteralPath $cur)) {
+            if ($isLeaf -and $AllowMissingLeaf) { return $cur }
+            return $null
+        }
+        $it = Get-Item -LiteralPath $cur -Force
+        if ($it.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            throw "路径链上存在重解析点（junction/symlink）：$cur —— 拒绝继续（本配方要求全链无链接）。"
+        }
+    }
+    # 出口再断言一次：结果必须仍是**盘根绝对形式**（防任何规范化把 D:\ 退化成 D:）。
+    if ($cur -notmatch '^[A-Za-z]:\\') { throw "路径链检查结果为非盘根绝对形式（$cur），拒绝继续。" }
+    return $cur
+}
+
+# ---- (2) 采集原身份：Python 直写 UTF-8 文件；命令行只回显 ASCII(hex) ----
+$pyPin = Join-Path $dataDir "pypin-$stamp.json"
+$PY_COLLECT = @'
+import sys, json, hashlib, duckdb
+c = duckdb.connect()
+r = c.execute("SELECT * FROM pragma_version()").fetchone()
+d = {"python": sys.version.split()[0], "exe": sys.executable, "prefix": sys.prefix,
+     "duckdb": duckdb.__version__, "source_id": r[1], "duckdb_file": duckdb.__file__}
+s = json.dumps(d, ensure_ascii=False, sort_keys=True)
+open(sys.argv[1], "w", encoding="utf-8", newline="\n").write(s)
+print("META-HEX " + hashlib.sha256(s.encode("utf-8")).hexdigest())
+print("PFX-HEX  " + hashlib.sha256(sys.prefix.encode("utf-8")).hexdigest())
+'@
+$collectPy = Join-Path $dataDir "_pyid_collect.py"
+[System.IO.File]::WriteAllText($collectPy, $PY_COLLECT, $utf8)
+$metaOut = & $py $collectPy $pyPin
+if ($LASTEXITCODE -ne 0 -or -not $metaOut) { throw "采集原身份失败（exit=$LASTEXITCODE）" }
+$metaOut
+$META_HEX = (($metaOut | Select-String '^META-HEX').Line -split '\s+')[1]
+$PFX_HEX0 = (($metaOut | Select-String '^PFX-HEX').Line -split '\s+')[1]
+if (-not $META_HEX -or -not $PFX_HEX0) { throw "未取得 META-HEX / PFX-HEX，拒绝继续。输出：$metaOut" }
+
+# ---- (3) PS 侧读对象：**直接读文件（UTF-8）**，不经子进程 stdout ----
+$pyObj = ([System.IO.File]::ReadAllText($pyPin, $utf8)) | ConvertFrom-Json
+"PY-PINNED     = $pyPin"
+"PY-META-HEX   = $META_HEX"
+"PY-PFX-HEX    = $PFX_HEX0"
+"PY-PYTHON     = $($pyObj.python)"
+"PY-DUCKDB     = $($pyObj.duckdb)"
+"PY-SOURCE-ID  = $($pyObj.source_id)"
+
+# ---- (4) 文件字节对拍：Python 读文件复算，证明写入链无损 ----
+$PY_RT = @'
+import sys, json, hashlib
+b = open(sys.argv[1], "rb").read()
+print("FILE-HEX " + hashlib.sha256(b).hexdigest())
+d = json.loads(b.decode("utf-8"))
+print("PFX-HEX  " + hashlib.sha256(d["prefix"].encode("utf-8")).hexdigest())
+print("FIELDS   " + ",".join(sorted(d.keys())))
+'@
+$rtPy = Join-Path $dataDir "_pyid_check.py"
+[System.IO.File]::WriteAllText($rtPy, $PY_RT, $utf8)
+$rtOut = & $py $rtPy $pyPin
+if ($LASTEXITCODE -ne 0) { throw "文件字节对拍失败（exit=$LASTEXITCODE）" }
+$rtOut
+$FILE_HEX = (($rtOut | Select-String '^FILE-HEX').Line -split '\s+')[1]
+$PFX_HEX1 = (($rtOut | Select-String '^PFX-HEX').Line -split '\s+')[1]
+$FIELDS   = (($rtOut | Select-String '^FIELDS').Line -split '\s+')[1]
+if (-not $FILE_HEX -or -not $PFX_HEX1 -or -not $FIELDS) { throw "对拍输出不完整，拒绝继续：$rtOut" }
+if ($FILE_HEX -ne $META_HEX) { throw "FILE-HEX != META-HEX（写入编码或截断损坏），拒绝继续。" }
+if ($PFX_HEX1 -ne $PFX_HEX0) { throw "路径字段 prefix 对拍不一致（采集值 vs 文件内值），拒绝继续。" }
+if ($FIELDS -ne "duckdb,duckdb_file,exe,prefix,python,source_id") { throw "身份字段不齐：$FIELDS" }
+
+# ---- (5) 源目录链接扫描：**用 Python 扫并核退出码**，失败不得当作"零链接" ----
+# 上轮的错：`cmd /c dir /AL ... 2>$null` 把错误吞掉，且不检查 $LASTEXITCODE；
+# 扫描失败时输出为空 ⇒ 被误判为"0 个链接"。
+$PY_SCAN = @'
+import os, sys, stat
+root = sys.argv[1]
+REPARSE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+
+# 根有效断言：不能"扫了个不存在/读不了的地方"还报 0 链接
+if not os.path.isdir(root):
+    print("SCAN-ROOT-INVALID " + root)
+    sys.exit(8)
+try:
+    root_entries = os.listdir(root)
+except OSError as ex:
+    print("SCAN-ROOT-INVALID " + root + " :: " + str(ex))
+    sys.exit(8)
+print("SCAN-ROOT-ENTRIES " + str(len(root_entries)))
+
+# onerror 必须显式给：默认 onerror=None 时 scandir 被拒会被**静默忽略**，
+# 内层循环根本看不到那个目录的内容，错误数于是仍是 0 —— 这正是上一版的漏。
+walk_errors, lstat_errors, hits = [], [], []
+dirs_visited = 0
+
+def onerror(ex):
+    walk_errors.append("%s :: %s" % (getattr(ex, "filename", "?"), ex))
+
+for dp, dns, fns in os.walk(root, onerror=onerror, followlinks=False):
+    dirs_visited += 1
+    # Windows 上 junction 的 is_dir() 为 True、is_symlink() 为 False，
+    # 只靠 followlinks=False **挡不住**它 —— 必须自行检测并剪枝，否则会钻进链接目标。
+    for name in list(dns):
+        q = os.path.join(dp, name)
+        try:
+            st = os.lstat(q)
+        except OSError as ex:
+            lstat_errors.append("%s :: %s" % (q, ex))
+            dns.remove(name)
+            continue
+        if getattr(st, "st_file_attributes", 0) & REPARSE:
+            hits.append(q)
+            dns.remove(name)
+    for name in fns:
+        q = os.path.join(dp, name)
+        try:
+            st = os.lstat(q)
+        except OSError as ex:
+            lstat_errors.append("%s :: %s" % (q, ex))
+            continue
+        if getattr(st, "st_file_attributes", 0) & REPARSE:
+            hits.append(q)
+
+print("SCAN-LINKS " + str(len(hits)))
+print("SCAN-DIRS " + str(dirs_visited))
+print("SCAN-WALK-ERRORS " + str(len(walk_errors)))
+print("SCAN-LSTAT-ERRORS " + str(len(lstat_errors)))
+for h in hits[:10]:
+    print("SCAN-HIT " + h)
+for err in (walk_errors + lstat_errors)[:10]:
+    print("SCAN-ERR " + err)
+sys.exit(0 if (not walk_errors and not lstat_errors) else 7)
+'@
+$scanPy = Join-Path $dataDir "_pyid_scan.py"
+[System.IO.File]::WriteAllText($scanPy, $PY_SCAN, $utf8)
+$scanOut = & $py $scanPy "$($pyObj.prefix)"
+$scanRc = $LASTEXITCODE
+$scanOut
+if ($scanRc -eq 8) { throw "源目录根无效（不存在或不可读），不能当作零链接，拒绝继续。" }
+$SCAN_LINKS = (($scanOut | Select-String '^SCAN-LINKS').Line -split '\s+')[1]
+$SCAN_DIRS  = (($scanOut | Select-String '^SCAN-DIRS').Line -split '\s+')[1]
+$SCAN_WERR  = (($scanOut | Select-String '^SCAN-WALK-ERRORS').Line -split '\s+')[1]
+$SCAN_LERR  = (($scanOut | Select-String '^SCAN-LSTAT-ERRORS').Line -split '\s+')[1]
+$SCAN_ROOTE = (($scanOut | Select-String '^SCAN-ROOT-ENTRIES').Line -split '\s+')[1]
+if (-not $SCAN_LINKS -or -not $SCAN_DIRS -or -not $SCAN_WERR -or -not $SCAN_LERR -or -not $SCAN_ROOTE) {
+    throw "扫描输出缺字段（LINKS/DIRS/WALK-ERRORS/LSTAT-ERRORS/ROOT-ENTRIES），拒绝继续：$scanOut"
+}
+if ($scanRc -ne 0) { throw "源目录扫描失败（exit=$scanRc，遍历错误 $SCAN_WERR 项 / lstat 错误 $SCAN_LERR 项）——不能当作零链接，拒绝继续。" }
+if ([int]$SCAN_WERR -ne 0) { throw "遍历期有 $SCAN_WERR 个目录无法列出（scandir 被拒），未进入其内部，结论不可靠，拒绝继续。" }
+if ([int]$SCAN_LERR -ne 0) { throw "逐项 lstat 有 $SCAN_LERR 个失败，结论不可靠，拒绝继续。" }
+# 只保留"walk 至少产出过根目录"这一条**结构性**不变量（walk 对有效根必然产出 1 次）。
+# ⚠ 上一版还有一条 `DIRS==1 且 ROOT-ENTRIES>0 ⇒ 拒` 的兜底，**是错的，已删除**：
+#   合法情形「根下只有普通文件、没有子目录」时，walk 恰好只产出根 1 次、而根下确有 N 个文件项 ——
+#   这条规则会把完全正常的目录判成"扫描异常"，属于**凭空造的兜底**，与真实错误通道无关。
+# 判"扫描是否可信"只认两条真实门：SCAN-WALK-ERRORS（onerror 收集）与 SCAN-LSTAT-ERRORS（逐项 lstat）。
+if ([int]$SCAN_DIRS -lt 1) { throw "walk 未产出任何目录（根断言异常），拒绝继续。" }
+if ([int]$SCAN_LINKS -ne 0) { throw "源环境内部存在 $SCAN_LINKS 个重解析点，无法保证留存完整且独立，拒绝复制。" }
+"PY-SRC-LINKS  = 0（dirs=$SCAN_DIRS, root_entries=$SCAN_ROOTE, walk_err=0, lstat_err=0，结论仅限检查时刻）"
+
+# ---- (6) 源/目标链路检查（逐级拒绝链接）+ 写前拒绝 ----
+$srcChk = Test-ChainNoReparse $pyObj.prefix
+if (-not $srcChk) { throw "源环境路径不存在：$($pyObj.prefix)" }
+"PY-SRC-CHAIN  = 全链无链接 OK"
+
+# 同样不 TrimEnd：`GetFullPath` 已给出规范形式，这里再裁尾只会在边界上制造 `D:` 之类的驱动器相对形态。
+$pyKeep = [System.IO.Path]::GetFullPath((Join-Path $dataDir "pykeep-$stamp"))
+if ($pyKeep -notmatch '^[A-Za-z]:\\') { throw "留存目标不是盘根绝对形式（$pyKeep），拒绝继续。" }
+# 目标允许"叶子不存在"，但其**所有祖先必须存在且无链接**；叶子若已存在且是链接会被函数直接 throw
+$keepChk = Test-ChainNoReparse $pyKeep -AllowMissingLeaf
+if (-not $keepChk) { throw "留存目标的父目录不可用：$pyKeep" }
+"PY-KEEP-CHAIN = 全链无链接 OK（或叶子尚未创建）"
+
+if ($keepChk -eq $srcChk) { throw "留存目标与源环境同一路径，拒绝执行：$keepChk" }
+if ($keepChk.StartsWith($srcChk + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "留存目标位于源环境子树内：$keepChk 在 $srcChk 之下。复制会自我递归，已拒绝。"
+}
+$keepRoot = $keepChk
+
+# ---- (7) 复制（/XJ 兜底）----
+robocopy $srcChk $keepRoot /E /XJ /NFL /NDL /NJH /NJS /NP | Out-Null
 $rcCopy = $LASTEXITCODE
 "PY-COPY-RC  = $rcCopy"
 if ($rcCopy -ge 8) { throw "环境复制失败（robocopy rc=$rcCopy），禁止升级。" }
-```
 
-**复制成功 ≠ 环境可用**。必须用**复制出来的解释器**跑一次机器校验，全部通过才算留存成功：
-
-```powershell
-# ---- (4) 可用性机器验证：用复制出的 python 实测，不靠"看起来复制完了" ----
+# ---- (8) 留存身份：采集 + 直读 + **真正比较 FILE/META/PFX** + 相等三项 + 归属三项 ----
 $pyVerify = $null
-foreach ($cand in @((Join-Path $pyKeep 'python.exe'), (Join-Path $pyKeep 'Scripts\python.exe'))) {
-    if (Test-Path $cand) { $pyVerify = $cand; break }
+foreach ($cand in @((Join-Path $keepRoot 'python.exe'), (Join-Path $keepRoot 'Scripts\python.exe'))) {
+    if (Test-Path -LiteralPath $cand) { $pyVerify = $cand; break }
 }
-if (-not $pyVerify) { throw "复制目录里找不到 python.exe（$pyKeep），留存环境不可用，禁止升级。" }
+if (-not $pyVerify) { throw "复制目录里找不到 python.exe（$keepRoot），留存环境不可用，禁止升级。" }
+$chkPin = Join-Path $dataDir "pykeep-id-$stamp.json"
+$chkOut = & $pyVerify $collectPy $chkPin
+if ($LASTEXITCODE -ne 0 -or -not $chkOut) { throw "复制的解释器跑不起来（或 import duckdb 失败），留存环境不可用。输出：$chkOut" }
+$chkOut
+$CHK_META_HEX = (($chkOut | Select-String '^META-HEX').Line -split '\s+')[1]
+$CHK_PFX_HEX0 = (($chkOut | Select-String '^PFX-HEX').Line -split '\s+')[1]
+if (-not $CHK_META_HEX -or -not $CHK_PFX_HEX0) { throw "留存环境采集输出缺 hex，拒绝继续。" }
 
-$chk = & $pyVerify -c "import sys,json,duckdb;c=duckdb.connect();v=c.execute('SELECT * FROM pragma_version()').fetchone();print(json.dumps({'python':sys.version.split()[0],'duckdb':duckdb.__version__,'source_id':v[1]}))" 2>&1
-if ($LASTEXITCODE -ne 0) { throw "复制的解释器跑不起来（或 import duckdb 失败），留存环境不可用：$chk" }
-"PY-VERIFY   = $pyVerify"
-$chkObj = $chk | ConvertFrom-Json
-$chkObj
+# 8a 留存文件字节对拍：**必须真正比较值**，不能只看有没有摘要行
+$chkRtOut = & $py $rtPy $chkPin
+if ($LASTEXITCODE -ne 0) { throw "留存身份文件校验失败（exit=$LASTEXITCODE）：$chkRtOut" }
+$CHK_FILE_HEX = (($chkRtOut | Select-String '^FILE-HEX').Line -split '\s+')[1]
+$CHK_PFX_HEX1 = (($chkRtOut | Select-String '^PFX-HEX').Line -split '\s+')[1]
+$CHK_FIELDS   = (($chkRtOut | Select-String '^FIELDS').Line -split '\s+')[1]
+if (-not $CHK_FILE_HEX -or -not $CHK_PFX_HEX1 -or -not $CHK_FIELDS) { throw "留存对拍输出不完整，拒绝继续：$chkRtOut" }
+if ($CHK_FILE_HEX -ne $CHK_META_HEX) { throw "留存 FILE-HEX != 其 META-HEX（写入编码/截断损坏），拒绝继续。" }
+if ($CHK_PFX_HEX1 -ne $CHK_PFX_HEX0) { throw "留存 prefix 字段对拍不一致，拒绝继续。" }
+if ($CHK_FIELDS -ne "duckdb,duckdb_file,exe,prefix,python,source_id") { throw "留存身份字段不齐：$CHK_FIELDS" }
+"PY-KEEP-HASHDIGEST = OK（FILE==META, PFX 对拍一致, 六字段齐）"
 
-# ---- (5) 三项机器比对：任一不符即不是同版本链，禁止升级 ----
-if ($chkObj.duckdb -ne $pyObj.duckdb) {
-    throw "留存环境的 duckdb 版本 ($($chkObj.duckdb)) != 原版本 ($($pyObj.duckdb))，不可作为同版本链验证器。"
+$chkObj = ([System.IO.File]::ReadAllText($chkPin, $utf8)) | ConvertFrom-Json
+"PY-VERIFY     = $pyVerify"
+
+# 8b 相等三项：python / duckdb / source_id
+$mismatch = @()
+if ($chkObj.python -ne $pyObj.python) { $mismatch += "python: $($chkObj.python) != $($pyObj.python)" }
+if ($chkObj.duckdb -ne $pyObj.duckdb) { $mismatch += "duckdb: $($chkObj.duckdb) != $($pyObj.duckdb)" }
+if ("$($chkObj.source_id)" -ne "$($pyObj.source_id)") { $mismatch += "source_id: $($chkObj.source_id) != $($pyObj.source_id)" }
+if ($mismatch.Count -gt 0) { throw ("留存环境身份与原身份不符（不是同版本链，禁止升级）：" + ($mismatch -join '; ')) }
+
+# 8c 归属三项：exe / duckdb 模块 / prefix 必须"全链无链接"且落在留存目录内
+$exeChk = Test-ChainNoReparse $chkObj.exe
+$dfChk  = Test-ChainNoReparse $chkObj.duckdb_file
+$pfxChk = Test-ChainNoReparse $chkObj.prefix
+if (-not $exeChk -or -not $dfChk -or -not $pfxChk) { throw "留存环境的 exe/prefix/duckdb 模块路径不可解析，拒绝继续。" }
+if (-not $exeChk.StartsWith($keepRoot + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "解释器 exe 不在留存目录内（$exeChk），留存不独立，禁止升级。"
 }
-# python 与 source_id 记入 pypin 供后续复核（source_id 由工具在基线内再核一次）
-@(
+if (-not $dfChk.StartsWith($keepRoot + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "duckdb 模块不在留存目录内（$dfChk）——仍在用原 site-packages，升级会把它一起改掉，留存不独立，禁止升级。"
+}
+if ($pfxChk -ne $keepRoot) { throw "sys.prefix 不等于留存目录（$pfxChk != $keepRoot），留存不独立，禁止升级。" }
+
+# ---- (9) 落证（纯 ASCII）----
+$kv = @(
   "duckdb=$($pyObj.duckdb)"
-  "source_id=$($chkObj.source_id)"
-  "python=$($chkObj.python)"
-  "pyVerify=$pyVerify"
-  "prefix=$srcPrefix"
-) | Set-Content -Path (Join-Path $dataDir "pykeep-verify-$stamp.txt") -Encoding ASCII
-"PY-KEEP-VERIFIED: duckdb=$($chkObj.duckdb) source_id=$($chkObj.source_id)"
+  "source_id=$($pyObj.source_id)"
+  "python=$($pyObj.python)"
+  "meta_hex=$META_HEX"
+  "file_hex=$FILE_HEX"
+  "pfx_hex=$PFX_HEX0"
+  "keep_meta_hex=$CHK_META_HEX"
+  "keep_file_hex=$CHK_FILE_HEX"
+  "keep_pfx_hex=$CHK_PFX_HEX0"
+  "src_chain=$srcChk"
+  "keep_chain=$keepRoot"
+  "exe_chain=$exeChk"
+  "duckdb_file_chain=$dfChk"
+  "prefix_chain=$pfxChk"
+  "src_links=$SCAN_LINKS"
+  "src_scan_dirs=$SCAN_DIRS"
+  "src_scan_root_entries=$SCAN_ROOTE"
+  "src_scan_walk_errors=$SCAN_WERR"
+  "src_scan_lstat_errors=$SCAN_LERR"
+) -join "`r`n"
+$kvPath = Join-Path $dataDir "pykeep-verify-$stamp.txt"
+[System.IO.File]::WriteAllText($kvPath, $kv, $utf8)
+if ([System.IO.File]::ReadAllText($kvPath, $utf8) -ne $kv) { throw "pykeep-verify 读回不一致，拒绝继续。" }
+"PY-KEEP-VERIFIED: duckdb=$($pyObj.duckdb) source_id=$($pyObj.source_id) independent=YES"
+"PY-KEEP-EVIDENCE = $kvPath"
 ```
 
 **若 (3)/(4) 任一步失败**：说明本机环境无法整体复制，**此时不允许凭 wheel 下载或 venv 重建"凑合"**——
@@ -876,6 +1123,19 @@ Copy-Item "$fx.wal" (Join-Path $fxDir 'neg.db.wal.displaced') -Force
 | **实测（合成库，非 62 GB）** | 200 万行 × ~210 B（59.8 MB）、`memory_limit='128MB'`：<br>· 旧写法（`ORDER BY ALL` + `fetchall()`）⇒ **`OutOfMemoryException` 失败**（121.9/122.0 MiB）<br>· 新写法（流式聚合）⇒ **0.06 s 成功**，`rows=2000000` |
 | **未验证项（必须承认）** | **62 GB 真实库的耗时与峰值内存我们没跑过**。本设计只保证「内存不随表规模线性增长」，**不保证**「全库行数哈希在您的窗口内一定跑得完」——以首次实跑耗时为准；过慢则按 2.4.7 裁剪 |
 
+##### 2.4.7 可裁剪（时间不够时的降级口径）
+
+```powershell
+& $py $tool --mode baseline --db (Join-Path $dataDir 'quantstudio.db') --out $baseline --schema main
+```
+
+> 裁剪会**缩小验证覆盖**，属「有损验收」：裁剪后通过的结论**只覆盖被比对到的表**，
+> 不得表述为「整个备份已完整验证」。时间允许时**不要裁剪**。
+
+> **务必注意**：**只有在您自己的真实主库上跑出正例 `RESTORE-EQUIV: OK` 且负例 `MISMATCH`，才算「备份可恢复」被验证过。**
+> 我们在开发环境用合成库跑通了**同一条命令链**（正例 OK / WAL 错配负例 MISMATCH / 结构负例 MISMATCH），
+> 那只能证明**命令与判据可用**，**不能代替**您真实窗口的结果——**没跑过就等于没验证**。
+
 ##### 2.4.7b 单 stamp 关联链（**所有产物共用步骤 0 的那一个 `$stamp`**）
 
 > 这张表是"命名一致性"的验收依据：**任一产物若用了别的 stamp，整条链就断了**。
@@ -902,34 +1162,385 @@ Copy-Item "$fx.wal" (Join-Path $fxDir 'neg.db.wal.displaced') -Force
 **自检一行**：`Get-ChildItem .\data\*<从 upgrade-stamp.txt 读到的 stamp>* | Select-Object Name`
 —— 上面该有文件的项目都要出现，且名字里的时间戳**逐字相同**。
 
-##### 2.4.9 合成用例清单（**我们侧补测用；客户不承担首测**）
+##### 2.4.9b 纯合成候选（**可自行复现的最小验证集；不接触生产库与真实解释器**）
 
-> 下面这些是**我们**在合成库上必须逐条跑通的用例。**不要求客户在自己的真实库上首次试跑**——
-> 客户现场只需按下表「客户侧预期」核对输出；**用例行为是否正确，由我们补测证明后才算数**。
-> **当前状态：全部未执行**（本轮边界：不跑新补测）。
+> 本节只是**配方**，我们侧**未执行**（见 §2.4.9 状态）。目的是让上面的路径与扫描判据
+> 可以在一个**完全合成、随时可删**的目录里被验证：不复制真实 python 环境、不开库、不 pip。
 
-| ID | 目标 | 构造方式（合成库 / `%TEMP%`） | 预期输出 | 预期 exit |
-|---|---|---|---|---|
-| **U1** | 空 schema 被登记 | 建 schema `emp`（无表），采基线 | 基线打印 `[emp] {}   <EMPTY-SCHEMA>`；`schemas=` 含 `emp` | 0 |
-| **U2** | 空 schema **新增**被检出 | 基线后 `CREATE SCHEMA emp2`，再 verify | `x SCHEMA SET: ['main','emp2'] vs ['main']` | **1** |
-| **U3** | 空 schema **删除**被检出 | 基线含空 schema `emp`，`DROP SCHEMA emp` 后 verify | `x SCHEMA SET`（缺 `emp`） | **1** |
-| **U4** | schema **变空**被检出 | 基线含 `s1`（1 表 1 行），verify 前 `DROP TABLE s1.t` | `x TABLE SET differs`（`s1: [] vs ['t']`） | **1** |
-| **U5** | `memory_limit` 失败即停 | `--memory-limit '0B'`（或非法值） | `SETUP-FAILED` + `SET memory_limit=... failed` + `Refusing to continue` | **6** |
-| **U6** | `temp_directory` 失败即停 | `--tempdir` 指向不可创建路径（如 `Z:\nope\nope`） | `SETUP-FAILED` + `SET temp_directory failed` | **6** |
-| **U7** | 可选项 SET 失败**不**阻断 | 桩：令 `preserve_insertion_order` 抛错（或断言其失败仅 note） | `[note] optional SET ... declined`，随后正常出 `OK` | 0 |
-| **U8** | exit=1 真阻断 | 同 U2 | `UPGRADE-BLOCKED-<stamp>.txt` 生成；`UPGRADE-GATE-OK` **不存在**；步骤 3 硬闸 `throw` | 1 → 拦 |
-| **U9** | exit=4 真阻断 | 伪造基线 `hash_probe.h1="999"` | `HASH-SEMANTICS-DIFFER`；同上阻断 | **4** |
-| **U10** | exit=5 真阻断 | 基线 1.4.5，verify 用 1.5.6 | `CROSS-VERSION-INCOMPARABLE`，**无 OK**；同上阻断 | **5** |
-| **U11** | 步骤 3 无通行证被拦 | 不跑 2.4.4，直接跑步骤 3 硬闸段 | `未找到通行证 ... 禁止升级` | 脚本中止 |
-| **U12** | 步骤 3 有阻断标记被拦 | 手工造 `UPGRADE-BLOCKED-<stamp>.txt` 后跑步骤 3 | `恢复验证已判失败 ... 禁止升级` | 脚本中止 |
-| **U13** | 留存目标==源被拒 | `$pyKeep` 设为 `$srcPrefix` | `留存目标与源环境同一路径，拒绝执行` | 中止 |
-| **U14** | 留存目标在源子树被拒 | `$pyKeep` 设为 `$srcPrefix\..\pykeep` 之下的路径 | `留存目标位于源环境子树内 ... 已拒绝` | 中止 |
-| **U15** | 复制后不可用被拒 | 复制后用坏 python（或删掉 `duckdb` 包）跑 `$pyVerify` | `复制的解释器跑不起来` / `duckdb 版本 !=` | 中止 |
+**① 建树（全部为空目录/空文件，`mklink /J` 建 junction 不需要管理员权限）**
 
-> **判据纪律**：U1–U4 是"判据能抓到目标变更"（鉴别力），U5–U6 是"必需项失败必须停"，
-> U7 是"可选项失败**不**得停"（防止把 fail-closed 做成过度阻断），U8–U12 是"真阻断"，
-> U13–U15 是"留存配方不会吞自己、且可用性靠机器判据"。
-> **未执行前，本表只是待验清单，不构成任何已实现承诺。**
+```powershell
+$syn = 'D:\qssyn'                                  # 任意空盘符位置均可，此处仅作示例
+New-Item -ItemType Directory -Force -Path "$syn\env\Lib\site-packages\duckdb" | Out-Null
+Set-Content -Path "$syn\env\python.exe" -Value '' -NoNewline
+New-Item -ItemType Directory -Force -Path "$syn\data" | Out-Null
+New-Item -ItemType Directory -Force -Path "$syn\flat" | Out-Null
+'a.txt','b.txt','c.txt' | ForEach-Object { Set-Content -Path "$syn\flat\$_" -Value 'x' -NoNewline }
+Copy-Item -Recurse "$syn\env" "$syn\env_with_link"
+cmd /c mklink /J "$syn\alias_to_env" "$syn\env"
+cmd /c mklink /J "$syn\chain2"       "$syn\env"
+cmd /c mklink /J "$syn\chain1"       "$syn\chain2"
+cmd /c mklink /J "$syn\env_with_link\Lib\sp_link" "$syn\env"
+```
+
+树形：
+
+```
+D:\qssyn\
+├── env\                             ← 模拟"python 环境"（空壳）
+│   ├── python.exe
+│   └── Lib\site-packages\duckdb\
+├── env_with_link\                   ← env 的副本，内部再挂一个链接
+│   └── Lib\sp_link  → D:\qssyn\env        (junction)
+├── flat\                            ← 根下只有普通文件、无子目录（S0b 用）
+│   ├── a.txt  b.txt  c.txt
+├── data\                            ← 模拟 dataDir
+├── alias_to_env     → D:\qssyn\env        (junction)   ← 单级祖先链接
+├── chain2           → D:\qssyn\env        (junction)
+└── chain1           → D:\qssyn\chain2     (junction)   ← 多级 Target
+```
+
+**② 预期读数（逐条对得上才算通过）**
+
+| # | 调用 | 预期输出 | 进程退出码 |
+|---|---|---|---|
+| S0 | 扫描 `D:\qssyn\env` | `SCAN-LINKS 0` / `SCAN-DIRS ≥ 2` / `SCAN-WALK-ERRORS 0` / `SCAN-LSTAT-ERRORS 0` / `SCAN-ROOT-ENTRIES ≥ 2` | **0** |
+| **S0b** | **扫描「根下只有普通文件、无子目录」** `D:\qssyn\flat`（= `a.txt`,`b.txt`,`c.txt`，无子目录） | `SCAN-DIRS 1` / `SCAN-ROOT-ENTRIES 3` / `SCAN-LINKS 0` / 两个错误计数 0 | **0**（**必须放行**） |
+| S1 | 扫描 `D:\qssyn\env_with_link` | `SCAN-LINKS 1` + `SCAN-HIT …\Lib\sp_link` | **0** |
+| S2 | 扫描 `D:\qssyn\nope`（不存在） | `SCAN-ROOT-INVALID …` | **8** |
+| S3 | 扫描含"无法列出"子目录的树（需构造 ACL，本轮**不构造**） | `SCAN-WALK-ERRORS ≥ 1` | **7** |
+| P0 | `Test-ChainNoReparse D:\qssyn\data\keep -AllowMissingLeaf` | 返回该路径（叶子不存在被允许） | 见下※ |
+| P1 | `Test-ChainNoReparse D:\qssyn\alias_to_env\data` | `路径链上存在重解析点…alias_to_env` | 见下※ |
+| P2 | `Test-ChainNoReparse D:\qssyn\chain1\data` | 同上，命中 `chain1`（多级 Target 也在第一级被拦） | 见下※ |
+| P3 | `Assert-AbsoluteDrivePath D:qssyn\data` | `路径是驱动器相对形式…` | 见下※ |
+| P4 | `Assert-AbsoluteDrivePath qssyn\data` | `路径不是绝对路径…` | 见下※ |
+| P5 | `Assert-AbsoluteDrivePath \\srv\share\x` | `UNC 路径不在本判据内…` | 见下※ |
+
+> **S0b 是「误拦」的判别用例**：合法情形「根下只有普通文件、没有子目录」时，
+> `os.walk` 恰好只产出根 1 次（`SCAN-DIRS 1`），而根下确有 3 个文件项（`SCAN-ROOT-ENTRIES 3`）。
+> 上一版规则 `DIRS==1 且 ROOT-ENTRIES>0 ⇒ 拒` 会把这个**完全正常**的目录判成"扫描异常"，
+> **已删除该规则**。S0b 通过（exit 0）即证明误拦已消失；若 S0b 被拒，说明误拦仍在。
+
+**※ 退出码口径（如实说明，不含糊）**：`Assert-AbsoluteDrivePath` / `Test-ChainNoReparse` 是**脚本内函数**，
+其失败方式是 `throw` —— 它**没有自己的退出码**，效果是**中止当前的升级步骤**。
+只有在 `powershell -File xxx.ps1` 里**未被 `try/catch` 捕获**时，宿主才会给进程一个 **1**。
+本节表里对 P0–P5 写"见下※"而不写具体数字，就是因为**这个数字属于宿主行为、不属于判据本身**——
+把它们写成 0/7/8 那样的"判据退出码"会让人误以为函数在报告状态。
+**只有扫描脚本（S0–S3）有独立、可判定的退出码 0 / 7 / 8。**
+
+**③ 清理（⚠ 删 junction 必须用 `rmdir`）**
+
+```powershell
+cmd /c rmdir "$syn\alias_to_env"
+cmd /c rmdir "$syn\chain1"
+cmd /c rmdir "$syn\chain2"
+cmd /c rmdir "$syn\env_with_link\Lib\sp_link"
+Remove-Item -Recurse -Force "$syn"
+```
+
+> ⚠ **不要对 junction 用 `Remove-Item -Recurse` / `del /S`**：那会**删掉链接目标里的真实内容**
+> （这里是 `D:\qssyn\env`，在真实环境里就是你的 python 环境）。必须先 `rmdir` 逐个摘掉链接，再删树。
+
+**④ 这套合成用例证不到什么**
+
+- 证不到真实 python 环境里 `import duckdb` 能否跑通（空壳 `python.exe` 只是占位）；
+- 证不到 62 GB 库上的耗时与峰值内存（与本节的路径/扫描判据无关）；
+- 证不到"检查之后路径不变"（TOCTOU 竞态，见 §2.4.0(1) 的声明）。
+
+##### 2.4.10 有限合成申请：S0b 最小执行（**待批；本轮未执行**）
+
+> **申请状态：未批准、未执行、未建任何目录。** 本节只交申请文本与命令。
+> 审核已关闭「合法平根误拦删除」「盘根保留 + S0b 正例设计」两项退修；
+> **纯合成执行与升级均未获批准**，本节是就此提出的**有限申请**，不是执行记录。
+
+**A0. 本轮登记的唯一改动（DRIFT-N19-r3 批准）**
+
+| 项 | 内容 |
+|---|---|
+| 改动 | **仅** PS1 提取副本的写入编码：`$utf8` → `$utf8Bom`（`UTF8Encoding($true)`，带 BOM） |
+| 其余 | **全部不变**：扫描器提取、数组直喂、五计数比较、变异绑定、排他新建、无清理授权 |
+| 理由 | 2026-11-16 首次执行（stamp `20261116T143939`）闸未运行：PS 5.1 把无 BOM 的 `.ps1` 按 ANSI(936) 读 ⇒ 中文乱码 ⇒ 解析失败 |
+| 新增校验 | ①落盘后实测首 3 字节须为 `EF BB BF`，否则 `PARSE-PRECHECK` 中止；②用 **powershell 5.1 自身 Parser** 对磁盘文件做**静态解析**，失败即中止（未执行任何语句） |
+| 现场 | 旧 `20261116T143939` **保留不清理**；本轮用**新**根与新证据目录 |
+
+**A. 申请做什么（只此一件）**
+
+在**一个此前不存在的新绝对根**下建 **1 个目录 + 3 个 txt**，然后用 §2.4.0 **原文提取**的扫描器跑一次、
+再用 §2.4.0 **原文提取的消费闸**判定一次，以证明「合法平根不再被误拦」。
+
+**B. 明确不做什么**（与 2.4.9b 的全套建树严格区分）
+
+| 不做 | 说明 |
+|---|---|
+| ❌ 不建 `env\` / `env_with_link\` / `data\` 等固定根 | 2.4.9b 的建树脚本含 `New-Item -Force` 固定根，**不能拿来当本申请执行** |
+| ❌ 不建任何 junction（`mklink /J`） | 边界禁止 |
+| ❌ 不构造 ACL | 边界禁止 |
+| ❌ 不 `robocopy`、不复制真实解释器环境 | 边界禁止 |
+| ❌ 不 pip、不开库、不碰 `data\` 与任何生产文件 | 边界禁止 |
+| ❌ 不做任何删除动作（含清理） | 见 G：失败/成功均保留现场，清理需独立申请 |
+
+**C0. 提取逻辑已做只读实测**（纯内存，未建任何目录、未写任何文件到磁盘业务路径）
+
+本轮为确认"照抄能否跑"，在**内存里**复刻了 D 步骤 2/4 的提取逻辑并做语法自检：
+
+| 检查 | 读数 |
+|---|---|
+| 定界符构造 | `openTok` = `@'`（len 2）、`closeTok` = `'@`（len 2）✅ |
+| 扫描器边界定位 | 围栏行 `$PY_SCAN = @'` 在 **L429**，闭合 `'@` 在 **L487**（1-based）；正文 = **L430–L486** |
+| 扫描器正文行数 | **57** 行 |
+| 扫描器语法 | `py_compile.compile(..., doraise=True)` ⇒ **PASS**（rc=0） |
+| 消费闸边界定位 | 起于 **L493**（`if ($scanRc -eq 8)`），止于 **L512**（`PY-SRC-LINKS  = 0（…`） |
+| 消费闸语法 | `[scriptblock]::Create(...)` ⇒ **PASS** |
+
+> 说明：这两条只证「提取得到的东西**语法可用**」，**不证**扫描器在平根上的读数正确——
+> 那正是本申请要跑的（E 表），**尚未执行**。
+
+**C. 前置（已做只读核实，不构成执行）**
+
+| 项 | 读数 | 来源 |
+|---|---|---|
+| 目标根不存在 | `Test-Path -LiteralPath 'D:\qssyn_s0b_20261116T0950'` ⇒ **False** | 本轮只读探测 |
+| D: 可用空间 | **174,104 MB** | `(Get-PSDrive D).Free` |
+| 目标为盘根绝对形式 | 匹配 `^[A-Za-z]:\\` | 形式闸 |
+| 无 junction 依赖 | 本申请**不建也不检** junction | — |
+
+> ⚠ 若执行时该根**已存在**（他线或残留），**必须中止**，不得改用 `-Force` 覆盖写。
+> 判别：`if (Test-Path -LiteralPath $root) { throw "目标根已存在，非本申请的"不存在的新绝对根"，中止。" }`
+
+**D. 逐步命令（5 步；每步都给出失败时的行为）**
+
+> 解释器**不写占位符**：步骤 0 现场用 `Get-Command python -CommandType Application` 取得真实路径，
+> 并核"路径是文件 / 文件名叫 python.exe / 能跑出 `sys.version`"，同时打印 `PY-SHA` 供与 §1.2 对认。
+> 本项 S0b 只要求"一个能跑的真解释器"；§1.2 的**身份绑定**属于升级正式流程，不在本申请内。
+
+```powershell
+# 步骤 0 · 变量（单一来源，后续只用这些）
+$stamp    = Get-Date -Format 'yyyyMMddTHHmmss'
+$root     = 'D:\qssyn_s0b_' + $stamp            # 盘根绝对形式
+$outDir   = Join-Path (Resolve-Path '.\docs\evidence').Path ('duckdb-s0b-' + $stamp)
+$utf8     = New-Object System.Text.UTF8Encoding($false)   # .py / .txt：无 BOM
+$utf8Bom  = New-Object System.Text.UTF8Encoding($true)    # **.ps1 必须带 BOM**（PS 5.1 否则按 ANSI/GBK 读）
+$notice   = (Resolve-Path '.\docs\handoff\customer-notice-5-duckdb-1.5.6-upgrade-v6-20261115.md').Path
+# 解释器：**现场取得 + 当场核验**，不写占位符、不猜路径
+$pyCmd = Get-Command python -CommandType Application -ErrorAction SilentlyContinue |
+         Select-Object -First 1
+if (-not $pyCmd) { throw "PATH 上找不到 python（Application 类型），中止。" }
+$py = [System.IO.Path]::GetFullPath($pyCmd.Source)
+if (-not (Test-Path -LiteralPath $py -PathType Leaf)) { throw "解释器路径不是文件：$py" }
+if ([System.IO.Path]::GetFileName($py) -ne 'python.exe') { throw "取到的不叫 python.exe：$py" }
+$pyVerOut = & $py -c "import sys;print(sys.version.split()[0])"
+if ($LASTEXITCODE -ne 0 -or -not $pyVerOut) { throw "解释器无法运行：$py" }
+"PY-EXE  = $py"
+"PY-VER  = $pyVerOut"
+"PY-SHA  = " + (Get-FileHash -LiteralPath $py -Algorithm SHA256).Hash
+
+# 根与输出目录：**两者都排他新建**（先判不存在，再不带 -Force 建；-Force 会静默复用已存在目录）
+if (Test-Path -LiteralPath $root) { throw "目标根已存在，中止（本申请要求不存在的新根）：$root" }
+if ($root -notmatch '^[A-Za-z]:\\') { throw "非盘根绝对形式：$root" }
+if (Test-Path -LiteralPath $outDir) { throw "输出目录已存在，中止（排他新建）：$outDir" }
+New-Item -ItemType Directory -Path $outDir -ErrorAction Stop | Out-Null   # 无 -Force：已存在即抛错
+New-Item -ItemType Directory -Path $root  -ErrorAction Stop | Out-Null   # 同上；与步骤 1 合并
+
+# 步骤 1 · 写 3 个 txt（根已在步骤 0 排他新建，此处不重复建；无子目录 ⇒ 合法平根）
+foreach ($n in 'a.txt','b.txt','c.txt') {
+    [System.IO.File]::WriteAllText((Join-Path $root $n), 'x', $utf8)
+}
+# 前置断言：确实只有 3 个文件项、0 个子目录
+$entries = @(Get-ChildItem -LiteralPath $root -Force)
+$subDirs = @($entries | Where-Object { $_.PSIsContainer })
+if ($entries.Count -ne 3) { throw "根下条目数 $($entries.Count) != 3，中止。" }
+if ($subDirs.Count -ne 0)  { throw "根下有 $($subDirs.Count) 个子目录，不是平根，中止。" }
+
+# 步骤 2 · 从 §2.4.0 **原文提取**扫描器（不重写、不复制粘贴）
+$L = Get-Content -LiteralPath $notice -Encoding UTF8
+$s0 = -1; $s1 = -1
+# 定界符用**显式字符串拼接**，不用 [char] 算术（[char]+[char] 在 PS 里会退化成整数加法）
+$openTok  = '@' + "'"        # 行内容为： @'
+$closeTok = "'" + '@'        # 行内容为： '@
+for ($k = 0; $k -lt $L.Count; $k++) {
+    if ($s0 -lt 0 -and $L[$k].Trim() -eq ('$PY_SCAN = ' + $openTok)) { $s0 = $k; continue }
+    if ($s0 -ge 0 -and $L[$k].Trim() -eq $closeTok) { $s1 = $k; break }
+}
+if ($s0 -lt 0 -or $s1 -le $s0) { throw "未能在通知里定位 `$PY_SCAN` 边界（s0=$s0 s1=$s1）" }
+$scanPy = Join-Path $outDir '_pyid_scan.py'
+[System.IO.File]::WriteAllText($scanPy, (($L[($s0+1)..($s1-1)]) -join "`r`n"), $utf8)
+
+# 步骤 3 · 跑扫描器（同一份原文实现）
+# ⚠ **不要把输出转成一个字符串**：消费闸用的是 `Select-String '^SCAN-LINKS'` 这类**行首**匹配，
+#   而 `Out-String` 会把逐行数组压成"一个含换行的字符串"，Select-String 对单字符串只按
+#   整体一条记录处理 —— 实测结果：只有恰好位于首行的 `SCAN-LINKS` 能命中，
+#   `SCAN-DIRS` / `SCAN-ROOT-ENTRIES` / `SCAN-WALK-ERRORS` / `SCAN-LSTAT-ERRORS` **四个全部失配**，
+#   闸会先撞上"扫描输出缺字段"而 throw，**根本走不到数值比较**。
+#   故：**原样保留逐行数组**喂给闸；只有写日志时才拼成文本。
+$scanOut = @(& $py $scanPy $root)          # 数组：一行一个元素（与生产同源形态）
+$scanRc  = $LASTEXITCODE
+# 落日志：这里才转文本
+[System.IO.File]::WriteAllText((Join-Path $outDir 'scan.stdout.txt'), (($scanOut -join "`r`n") + "`r`n"), $utf8)
+[System.IO.File]::WriteAllText((Join-Path $outDir 'scan.rc.txt'),     "$scanRc`r`n", $utf8)
+if ($scanRc -ne 0) { throw "扫描器 rc=$scanRc（预期 0），本项失败，不再进消费闸。" }
+# 自证：数组形态下五个行首锚点必须都能取到值（与实验一致）
+foreach ($k in 'SCAN-LINKS','SCAN-DIRS','SCAN-ROOT-ENTRIES','SCAN-WALK-ERRORS','SCAN-LSTAT-ERRORS') {
+    if (-not (($scanOut | Select-String ('^' + $k)).Line)) { throw "扫描输出缺 $k（数组形态下仍取不到），拒绝继续。" }
+}
+
+# 步骤 4 · 从 §2.4.0 **原文提取消费闸**，dot-source 后喂同一 $scanOut/$scanRc
+$g0 = -1; $g1 = -1
+for ($k = 0; $k -lt $L.Count; $k++) {
+    if ($g0 -lt 0 -and $L[$k].Trim().StartsWith('if ($scanRc -eq 8)')) { $g0 = $k }
+    if ($g0 -ge 0 -and $L[$k].Contains('PY-SRC-LINKS  = 0（')) { $g1 = $k; break }
+}
+if ($g0 -lt 0 -or $g1 -le $g0) { throw "未能在通知里定位消费闸边界（g0=$g0 g1=$g1）" }
+$gatePath = Join-Path $outDir '_gate_from_notice.ps1'
+# ⚠ **本副本必须带 BOM**：PS 5.1 读取**无 BOM** 的 .ps1 时按 ANSI（本机 936/GBK）解码，
+#    含中文的闸会整段乱码、解析失败（2026-11-16 首次执行即栽在此处）。
+#    其余逻辑不变，**仅这一处写入编码**改为 $utf8Bom。
+[System.IO.File]::WriteAllText($gatePath, (($L[$g0..$g1]) -join "`r`n"), $utf8Bom)
+
+# 4a · BOM 实测（不看文件头就当"带 BOM"是不可接受的）
+$gb = [System.IO.File]::ReadAllBytes($gatePath)
+if ($gb.Length -lt 3 -or $gb[0] -ne 0xEF -or $gb[1] -ne 0xBB -or $gb[2] -ne 0xBF) {
+    throw "PARSE-PRECHECK：PS1 提取副本无 EF BB BF（实得 $('{0:X2} {1:X2} {2:X2}' -f $gb[0],$gb[1],$gb[2])），拒绝继续。"
+}
+"GATE-BOM = EF BB BF OK"
+
+# 4b · 目标宿主静态解析（用 powershell 5.1 自己的 Parser 读盘解析，未执行任何语句）
+$parseOut = & powershell -NoProfile -Command @"
+`$e = `$null
+[void][System.Management.Automation.Language.Parser]::ParseFile('$($gatePath -replace "'","''")', [ref]`$null, [ref]`$e)
+if (`$e -and `$e.Count -gt 0) { `$e | ForEach-Object { 'PARSE-ERR ' + `$_.Message }; exit 2 } else { 'PARSE-OK'; exit 0 }
+"@
+$parseRc = $LASTEXITCODE
+$parseOut
+if ($parseRc -ne 0) { throw "PARSE-PRECHECK：目标宿主静态解析失败（rc=$parseRc），拒绝继续。$parseOut" }
+
+# 闸的输入就是上面那两个变量 —— 与生产完全同源
+& { . $gatePath }                 # 不 throw = 消费闸接受
+$GATE_ACCEPTED = $true
+[System.IO.File]::WriteAllText((Join-Path $outDir 'gate.accepted.txt'), "ACCEPTED`r`n", $utf8)
+```
+
+**E. 预期读数（**必须逐项相等**，不是"看着差不多"）**
+
+| 项 | 预期值 | 由谁产出 |
+|---|---|---|
+| `scan.rc.txt` | **0** | 扫描器进程 |
+| `SCAN-DIRS` | **1** | 扫描器 stdout |
+| `SCAN-ROOT-ENTRIES` | **3** | 扫描器 stdout |
+| `SCAN-LINKS` | **0** | 扫描器 stdout |
+| `SCAN-WALK-ERRORS` | **0** | 扫描器 stdout |
+| `SCAN-LSTAT-ERRORS` | **0** | 扫描器 stdout |
+| 消费闸 | **不抛异常**，并打印 `PY-SRC-LINKS  = 0（dirs=1, root_entries=3, walk_err=0, lstat_err=0，结论仅限检查时刻）` | 消费闸 |
+
+> **⚠ 退出码 0 本身不等于误拦已关闭。** 这是本申请最要紧的一条：
+> 上一版被删掉的那条错规则（`DIRS==1 且 ROOT-ENTRIES>0 ⇒ 拒`）**不在扫描器里，在消费闸里**。
+> 所以「扫描器 rc=0」对它**毫无鉴别力**——旧配方下扫描器同样 rc=0，误拦发生在**下游判定**。
+> **关闭判据只能是**：消费闸读到的 `dirs=1` 与 `root_entries=3` 被它**接受**（不 throw），
+> 且上面五个计数**逐项相等**。两个条件同时成立，才算误拦实测关闭。
+
+**F. 鉴别力自检（证明消费闸真的会拒绝；纯内存变异，不建任何东西）**
+
+```powershell
+# 每个变异都必须让消费闸**因预期原因**throw。
+# ⚠ 上一版的自检是**空转的**：它只改局部变量 $so / $m.rc，而闸读的是 $scanOut / $scanRc ——
+#   `& { . $gatePath }` 走的是**动态作用域**，子作用域读到的是父作用域的 $scanOut/$scanRc，
+#   那两个变量**从头到尾没被改过**，于是六个"变异"实际都在对同一份正常输入跑，必然全不 throw。
+#   本版改为：**逐例把变异值赋给闸真正读的那两个变量**，跑完立刻还原，并**核对错误消息**。
+$baselineOut = $scanOut          # 原始数组，逐例还原用
+$baselineRc  = $scanRc
+
+$cases = @(
+  @{ n='WALK=1';  rc=0; from='SCAN-WALK-ERRORS 0';  to='SCAN-WALK-ERRORS 1';  expect='无法列出' }
+  @{ n='LSTAT=1'; rc=0; from='SCAN-LSTAT-ERRORS 0'; to='SCAN-LSTAT-ERRORS 1'; expect='lstat 有 1 个失败' }
+  @{ n='LINKS=1'; rc=0; from='SCAN-LINKS 0';        to='SCAN-LINKS 1';        expect='重解析点' }
+  @{ n='DIRS=0';  rc=0; from='SCAN-DIRS 1';         to='SCAN-DIRS 0';         expect='未产出任何目录' }
+  @{ n='RC=8';    rc=8; from=$null;                 to=$null;                 expect='根无效' }
+  @{ n='RC=7';    rc=7; from=$null;                 to=$null;                 expect='扫描失败' }
+)
+
+$pass = 0
+foreach ($m in $cases) {
+    # ① 构造输入（按行替换，保持数组形态 —— 与修 1 的理由相同）
+    if ($m.from) {
+        $mut = @($baselineOut | ForEach-Object { if ($_ -eq $m.from) { $m.to } else { $_ } })
+        if ($mut.Count -ne $baselineOut.Count) { throw "变异 $($m.n) 行数变了，构造有误。" }
+        if (-not (@($mut) -contains $m.to)) { throw "变异 $($m.n) 未真正替换成功（找不到 $($m.from)）。" }
+    } else {
+        $mut = $baselineOut
+    }
+    # ② **显式绑定到闸真正读的变量**（不是 $so / $m.rc）
+    $scanOut = $mut
+    $scanRc  = $m.rc
+    # ③ 跑闸，收集错误
+    $err = $null
+    try { & { . $gatePath } } catch { $err = $_.Exception.Message }
+    # ④ 还原，任何时候都不让变异泄漏到下一例或后续步骤
+    $scanOut = $baselineOut
+    $scanRc  = $baselineRc
+    # ⑤ 核**预期原因**：没 throw ⇒ 无鉴别力；throw 但不是预期原因 ⇒ 不算命中
+    if (-not $err) { throw "鉴别力不足：变异 $($m.n) 未被消费闸拒绝。" }
+    if ($err -notlike ('*' + $m.expect + '*')) {
+        throw "变异 $($m.n) 被拒了，但原因不是预期（期望含「$($m.expect)」，实得「$err」）——不算命中。"
+    }
+    "  GATE-CASE $($m.n) => 按预期被拒（$($m.expect)）"
+    $pass++
+}
+# ⑥ 六例全过之后再跑一次基线，确认还原有效（闸必须接受）
+$err0 = $null
+try { & { . $gatePath } } catch { $err0 = $_.Exception.Message }
+if ($err0) { throw "变异后基线不再通过（还原失效）：$err0" }
+"GATE-DISCRIMINATION = $pass/6 全部按预期被拒 OK；基线仍通过（还原有效）"
+```
+
+> 说明：变异只改**内存里的 `$scanOut`／`$scanRc`**，不碰磁盘，因此不违反"不建树/不构造 ACL"。
+
+**G. 输出路径（不含清理）**
+
+| 产物 | 路径 |
+|---|---|
+| 扫描器副本（原文提取） | `<outDir>\_pyid_scan.py` |
+| 消费闸副本（原文提取） | `<outDir>\_gate_from_notice.ps1` |
+| 读数 | `<outDir>\scan.stdout.txt` / `scan.rc.txt` / `gate.accepted.txt` |
+| 落证 | `<outDir>\s0b-verdict.txt` |
+
+`<outDir>` = `docs\evidence\duckdb-s0b-<stamp>\`。
+
+**不提供清理步骤（本申请不含清理授权）**
+
+失败或成功后**一律保留现场**：`$root` 的 3 个 txt、`<outDir>` 的全部读数与提取件都留在原处，
+作为「跑了什么、看到什么」的物证。**本申请不申请、也不执行任何删除动作**。
+
+> ⚠ 特别说明：**「没建 junction」不等于获得递归删除权**。
+> 我上一版写过「本申请未建 junction，故可安全删树」——这是**从"没有链接"推出"可以删"**，
+> 推理不成立：①树里现在没有链接，不代表删除那一刻没有（同一 TOCTOU 面）；
+> ②即使真没有链接，`Remove-Item -Recurse` 的正确性也依赖"路径确实是我建的那个"，
+> 而这一条要靠**排他新建**来保证（步骤 0 已改），不能靠"没建 junction"来保证；
+> ③删除是不可逆动作，**不该由一个测试申请顺手携带**。
+> 清理若确需进行，应作为**独立申请**另报（含目标路径、判据、回退说明），不在本申请范围。
+
+**H. 失败与退出（每步失败都停，不继续）**
+
+| 失败点 | 触发条件 | 行为 |
+|---|---|---|
+| 根已存在 | `Test-Path $root` 真 | `throw`，**不覆盖** |
+| 非盘根形式 | 不匹配 `^[A-Za-z]:\\` | `throw` |
+| 条目数不符 | `$entries.Count ≠ 3` | `throw` |
+| 有子目录 | `$subDirs.Count ≠ 0` | `throw`（不是平根） |
+| 提取失败 | 定位不到 `$PY_SCAN` / 消费闸边界 | `throw`（**不手写替代**） |
+| 扫描器 rc≠0 | 见 F 表（7 遍历错 / 8 根无效） | `throw`，**不进消费闸** |
+| 消费闸 throw | 任一门命中 | 本项失败；若因 `DIRS==1 且 ROOT>0` ⇒ **误拦仍在** |
+| 解释器取不到 | PATH 无 python / 非文件 / 名字不符 / 跑不出 version | `throw` |
+| 输出目录已存在 | `Test-Path $outDir` 真 | `throw`（排他新建，**不复用**） |
+| 变异原因不符 | 被拒但错误消息不含预期关键词 | 判"不算命中"，本项失败 |
+| 变异还原失效 | 六例跑完后基线不再通过 | 本项失败 |
+| 行首锚点自证失败 | 数组形态下五个锚点仍取不到值 | `throw`（说明修 1 未生效） |
+
+**I. 这套最小执行证不到什么**
+
+- 证不到 junction 相关判据（本申请**不建** junction，`SCAN-LINKS=0` 只是"没有链接"，不是"能检出链接"）；
+- 证不到 `scandir` 被拒的处理（不构造 ACL，`SCAN-WALK-ERRORS=0` 同理）；
+- 证不到 `Test-ChainNoReparse` 的盘根保留（本申请不走链检查；那由 U32 单独覆盖）；
+- 证不到 62 GB 耗时与峰值内存；
+- 证不到"检查之后路径不变"（TOCTOU，见 §2.4.0(1)）。
 
 ##### 2.4.8 预期读数对照表（**执行时应看到什么；对不上就是有问题**）
 
@@ -963,18 +1574,57 @@ Copy-Item "$fx.wal" (Join-Path $fxDir 'neg.db.wal.displaced') -Force
 > `throw` 会打印红字错误但**控制台不会关闭**——所以真正防你误继续的，是 ③的阻断标记文件 +
 > 步骤 3 开头的硬闸自检。**两道都要在**，缺一都可能被人手跳过。
 
-##### 2.4.7 可裁剪（时间不够时的降级口径）
+##### 2.4.9 合成用例清单（**我们侧补测用；客户不承担首测**）
 
-```powershell
-& $py $tool --mode baseline --db (Join-Path $dataDir 'quantstudio.db') --out $baseline --schema main
-```
+> 下面这些是**我们**在合成库上必须逐条跑通的用例。**不要求客户在自己的真实库上首次试跑**——
+> 客户现场只需按下表「客户侧预期」核对输出；**用例行为是否正确，由我们补测证明后才算数**。
+> **当前状态：全部未执行**（本轮边界：不跑新补测）。
 
-> 裁剪会**缩小验证覆盖**，属「有损验收」：裁剪后通过的结论**只覆盖被比对到的表**，
-> 不得表述为「整个备份已完整验证」。时间允许时**不要裁剪**。
+| ID | 目标 | 构造方式（合成库 / `%TEMP%`） | 预期输出 | 预期 exit |
+|---|---|---|---|---|
+| **U1** | 空 schema 被登记 | 建 schema `emp`（无表），采基线 | 基线打印 `[emp] {}   <EMPTY-SCHEMA>`；`schemas=` 含 `emp` | 0 |
+| **U2** | 空 schema **新增**被检出 | 基线后 `CREATE SCHEMA emp2`，再 verify | `x SCHEMA SET: ['main','emp2'] vs ['main']` | **1** |
+| **U3** | 空 schema **删除**被检出 | 基线含空 schema `emp`，`DROP SCHEMA emp` 后 verify | `x SCHEMA SET`（缺 `emp`） | **1** |
+| **U4** | schema **变空**被检出 | 基线含 `s1`（1 表 1 行），verify 前 `DROP TABLE s1.t` | `x TABLE SET differs`（`s1: [] vs ['t']`） | **1** |
+| **U5** | `memory_limit` 失败即停 | `--memory-limit '0B'`（或非法值） | `SETUP-FAILED` + `SET memory_limit=... failed` + `Refusing to continue` | **6** |
+| **U6** | `temp_directory` 失败即停 | `--tempdir` 指向不可创建路径（如 `Z:\nope\nope`） | `SETUP-FAILED` + `SET temp_directory failed` | **6** |
+| **U7** | 可选项 SET 失败**不**阻断 | 桩：令 `preserve_insertion_order` 抛错（或断言其失败仅 note） | `[note] optional SET ... declined`，随后正常出 `OK` | 0 |
+| **U8** | exit=1 真阻断 | 同 U2 | `UPGRADE-BLOCKED-<stamp>.txt` 生成；`UPGRADE-GATE-OK` **不存在**；步骤 3 硬闸 `throw` | 1 → 拦 |
+| **U9** | exit=4 真阻断 | 伪造基线 `hash_probe.h1="999"` | `HASH-SEMANTICS-DIFFER`；同上阻断 | **4** |
+| **U10** | exit=5 真阻断 | 基线 1.4.5，verify 用 1.5.6 | `CROSS-VERSION-INCOMPARABLE`，**无 OK**；同上阻断 | **5** |
+| **U11** | 步骤 3 无通行证被拦 | 不跑 2.4.4，直接跑步骤 3 硬闸段 | `未找到通行证 ... 禁止升级` | 脚本中止 |
+| **U12** | 步骤 3 有阻断标记被拦 | 手工造 `UPGRADE-BLOCKED-<stamp>.txt` 后跑步骤 3 | `恢复验证已判失败 ... 禁止升级` | 脚本中止 |
+| **U13** | 留存目标==源被拒 | `$pyKeep` 设为 `$srcPrefix` | `留存目标与源环境同一路径，拒绝执行` | 中止 |
+| **U14** | 留存目标在源子树被拒 | `$pyKeep` 设为 `$srcPrefix\..\pykeep` 之下的路径 | `留存目标位于源环境子树内 ... 已拒绝` | 中止 |
+| **U15** | 复制后不可用被拒 | 复制后用坏 python（或删掉 `duckdb` 包）跑 `$pyVerify` | `复制的解释器跑不起来` / `duckdb 版本 !=` | 中止 |
+| **U16** | **`source_id` 不等被拒** | 留存环境人为换一个 duckdb 补丁版（source_id 变） | `source_id: ... != ...` ⇒ 中止 | 中止 |
+| **U17** | **留存不独立被拒（仍在原 site-packages）** | 复制后让 `duckdb` 从原 prefix 加载（如删掉留存内 duckdb 包，留 `sys.path` 回退） | `duckdb 模块不在留存目录内 ... 不独立` | 中止 |
+| **U18** | **中文路径 pin 无损** | `data` 目录置于含中文的路径（如 `D:\测试\data`） | pypin 读回与写入**逐字一致**；`PY-PREFIX` 显示中文未变 `?` | 0 |
+| **U19** | **留存目标是 junction 被拒** | 预先把 `data\pykeep-<stamp>` 做成指向源的 junction | `留存目标已存在且是重解析点 ... 拒绝` | 中止 |
+| **U20** | **父目录是 junction 指向源子树被拒** | 把 `data` 目录做成指向 `$srcPrefix\sub` 的 junction | `留存目标（逐级解析后）位于源环境子树内 ... 已拒绝` | 中止 |
+| **U21** | **祖先 junction 被拒（本轮核心）** | `alias` 指向源环境，复制目标设为 `alias\child`（`child` 为普通目录） | 逐级解析后目标落在源子树内 ⇒ **拒绝** | 中止 |
+| **U22** | **多级 Target 被拒** | `l1 -> l2 -> 源环境`，目标设为 `l1\child` | 逐级+多跳解析到源，⇒ **拒绝**；成环则报链过长 | 中止 |
+| **U23** | **源内链接拒绝复制** | 源环境内建一个 junction（如 `Lib\sp_link` 指向外部） | `源环境内部存在 N 个重解析点 ... 拒绝复制` | 中止 |
+| **U24** | **PS 直读不依赖 stdout** | 把控制台代码页设为 936(GBK) 后跑全链，路径含中文 | 仍能正确读出 `$pyObj.prefix`（因走 `ReadAllText` 读文件，不经 stdout）；`PFX-HEX` 对拍一致 | 0 |
+| **U25** | **扫描失败不得当零链接** | 源目录内造一个无权限子目录（使 `lstat` 报错） | `SCAN-ERRORS > 0` ⇒ `扫描期存在 N 项访问错误，结论不可靠，拒绝继续` | 中止 |
+| **U26** | **留存三值比较真生效** | 复制完成后手工改 `pykeep-id-<stamp>.json` 一个字节（或改字段值） | `留存 FILE-HEX != 其 META-HEX` ⇒ 拒绝（**保留旧 META 的整链首先被 FILE 拦**）；**对齐 META 后的隔离测试**才到 `留存 prefix 字段对拍不一致` | 中止 |
+| **U27** | **驱动器相对路径被拒** | 路径给 `D:qssyn\data`（`D:` 后无斜杠） | `路径是驱动器相对形式…请改为全限定路径` | 中止升级步骤 |
+| **U28** | **根无效不得当零链接** | 扫描 `D:\qssyn\nope`（不存在） | `SCAN-ROOT-INVALID …`；PS 侧 `根无效（不存在或不可读），不能当作零链接` | **扫描脚本 exit 8**，升级步骤中止 |
+| **U29** | **scandir 被拒不得当零链接** | 源树内造一个 ACL 拒绝列出的子目录（`icacls` 移除当前用户读权限） | `SCAN-WALK-ERRORS ≥1`；PS 侧 `遍历期有 N 个目录无法列出…拒绝继续` | **扫描脚本 exit 7**，升级步骤中止 |
+| **U30** | **junction 不被 followlinks 挡住** | 源树内建 junction（`mklink /J`） | `SCAN-LINKS ≥1` 且 `SCAN-HIT` 指名该 junction；**不得**钻进链接目标后爆量 | 0（脚本正常完成，链接被发现） |
+| **U31** | **「根只有普通文件」不得被误拦** | `D:\qssyn\flat`（3 个 txt、无子目录） | `SCAN-DIRS 1` / `SCAN-ROOT-ENTRIES 3` / 两个错误计数 0 ⇒ **通过** | **0**（本轮误拦回归用例） |
+| **U32** | **盘根不被裁成驱动器相对** | `Test-ChainNoReparse D:\` 与其下路径 | 返回值为 `D:\...` 形式，**不得**出现 `D:` 或 `D:foo`；出口断言不触发 | 见下※ |
 
-> **务必注意**：**只有在您自己的真实主库上跑出正例 `RESTORE-EQUIV: OK` 且负例 `MISMATCH`，才算「备份可恢复」被验证过。**
-> 我们在开发环境用合成库跑通了**同一条命令链**（正例 OK / WAL 错配负例 MISMATCH / 结构负例 MISMATCH），
-> 那只能证明**命令与判据可用**，**不能代替**您真实窗口的结果——**没跑过就等于没验证**。
+> **判据纪律**：U1–U4 是"判据能抓到目标变更"（鉴别力），U5–U6 是"必需项失败必须停"，
+> **U21–U26 是「全链路径」与「编码链」**:U21 祖先 junction、U22 多级 Target、U23 源内链接、
+> U24 PS 直读不依赖 stdout、U25 扫描失败不得当零链接、U26 留存三值比较真生效。
+> **⚠ U16／U17 不能代替其他路径的前置**：它们分别只证 `source_id` 真参与比较、`duckdb.__file__` 真做归属判定，
+> **不涉及**祖先 junction、多级 Target、源内链接、编码链；任何一条用例通过都**不能**推出其余路径成立。
+> **U16–U20 是「身份比较真实生效」与「留存独立」**:U16 验 source_id 真参与比较,U17 验「能 import ≠ 独立」,
+> U18 验无损 pin,U19–U20 验 junction 情形不被词法比较蒙混,
+> U7 是"可选项失败**不**得停"（防止把 fail-closed 做成过度阻断），U8–U12 是"真阻断"，
+> U13–U15 是"留存配方不会吞自己、且可用性靠机器判据"。
+> **未执行前，本表只是待验清单，不构成任何已实现承诺。**
 
 ### 步骤 3 · 升级代码
 
@@ -1029,6 +1679,25 @@ schtasks /Run /TN QS_DaemonForever
 | `data\upgrade-restorecheck-<stamp>-neg.txt`（负例） | 步骤 2.4.5 | **证明这套比对会报警**（鉴别力证据；无 WAL 时附合成 fixture 输出） |
 | 步骤 5 自检完整输出 | 步骤 5 | 版本门结论 |
 
+##### 2.4.12 判据实测状态总表（2026-11-17 终审补正，逐组声明）
+
+> **为什么要有这一节**：本通知多处给出「判定逻辑」「预期读数」。为避免把**设计**读成**已实测**，
+> 下面把各组判据的「设计 / 实测状态 / 客户侧含义」一次列清。**凡标「未实测」者，首次实跑即为首测。**
+
+| 组 | 判据（本通知位置） | 设计 | 实测状态 | 客户侧含义 |
+|---|---|---|---|---|
+| **H2** | 升级后校验链主干：基线采集、schema 比对、`exit 1/4/5` 真阻断、步骤 3 通行证（§2.4.4 / §2.4.5） | 判定逻辑与退出码已写明 | **未实测**（U1–U12 执行数 = 0） | 按本通知执行；首次实跑即首测，异常请连同 `pypin-*.json` 回传 |
+| **H3** | 留存链合法性：目标＝源被拒、目标在源子树被拒、复制后可用性判据（§2.4.0(1)(2) / §(8)） | 覆盖两种递归自吞；可用性走**机器比对**（实跑 `import duckdb` + `pragma_version()`） | **未实测**（U13–U17 执行数 = 0；另见 §步骤2 L611 声明） | 以 (4)(5) 实际输出为准；**不请客户承担首测** |
+| **H4** | PS 直读不依赖子进程 stdout（中文路径 + 代码页） | 直读文件（UTF-8），关键字段走 ASCII(hex) 对拍，**不经 stdout** | **未实测**（U24；936 代码页下未验） | 已按设计规避该通道；未在 936 代码页实测 |
+| **H6** | 包身份三值同源：`python` / `duckdb` / `source_id`（§2.4.0 `$PY_COLLECT`、§(8) 8b） | 三值同源采集 + 8b 相等三项 | **采集与比较链已实测**（U18 7/7、U26 8/8，**跨轮合并**）；**跨环境复制后**的同源性未测（U16/U17） | 8b 判据在已测面有效；复制场景以实跑为准 |
+| **H5** | 62 GB 真实库的**耗时**与**峰值内存**（§2.4.6 / §四 / §六） | 内存常量级（不随表规模线性增长） | **62 GB 真实库未跑**；合成库实测：200 万行 × ~210 B（59.8 MB），`memory_limit='128MB'`，新写法 0.06 s 成功 | **不作耗时与峰值承诺**（见 §六） |
+| **L1** | junction / 重解析点拒绝（§2.4.0(1) 逐级拒绝、§(5) 扫描） | **设计上拒绝**：从根到末级逐级检查，任一级是 reparse 即拒 | **未在真实 junction 上实测**（U19–U22 / U30 执行数 = 0） | 若您环境含 junction（部分 OneDrive / ProgramFiles 布局）**会被直接拒绝**——这是设计意图，不是故障 |
+| — | 「正式版本」定义（§一 / §二） | 解释器 / DuckDB 包身份 / 放行政策三者一致 | 定义已闭合；**不设 PyPI GA 联网取证门** | 无需联网查 release 状态 |
+
+> **三条不得反过来读**：①「未实测」**不等于**「已知有问题」——它是「我们没在您这类环境上跑过」；
+> ②「已实测」的范围仅限本表写明的那一对（如 U18/U26 只覆盖中文路径 + 比较链，**不覆盖**客户库规模）；
+> ③U18/U26 的 8/8 与 7/7 是**两次运行合并覆盖、两次驱动版本不同**，**不是**同版一次全绿。
+
 ## 四、自检输出怎么读
 
 | 输出 | 含义 | 您需要做什么 |
@@ -1055,8 +1724,14 @@ schtasks /Run /TN QS_DaemonForever
 
 > 回退后**代码与依赖版本可以不一致**（新代码 + 1.4.5 允许），但**绝不建议**旧代码 + 1.5.6。
 > **1.4.x 线上游支持于 2026-11-17 结束**。
+> **自 2026-11-18 起，回退到 1.4.5 属已过期上游支持，仅作短期过渡**：**版本门仍放行、功能可用**，但不再获得上游修复；问题定位后应重新前移至 1.5.6。
 
 ## 六、性能提示（**仅覆盖实测表、实测数据与实测路径**）
+
+> **⚠ 不作承诺（2026-11-17 终审补正）**：本通知**不承诺** 62 GB 真实库的**耗时**与**峰值内存**。
+> 本节及 §2.4.6 的全部性能数据均来自**合成库**（200 万行 / 59.8 MB，`memory_limit='128MB'`）与**设计推理**（内存常量级、不随表规模线性增长），
+> **不构成**对客户库规模下运行时间或内存占用的任何保证。首次实跑耗时以您环境实测为准；过慢请按 §2.4.7 裁剪口径降级。
+
 
 ### 6.1 实测条件（缺一不可外推）
 
@@ -1110,26 +1785,47 @@ schtasks /Run /TN QS_DaemonForever
 
 ## 修订说明（v4 → v5 → v6；内部留痕，下发时可删除）
 
-| # | 终审意见（第七轮） | 本版落实 |
+| # | 本轮（第十七轮·r4 候选完整 S0b） | 结果 |
 |---|---|---|
-| 1 | **步骤 1 建 stamp 并据此备份，2.4.0 又重定义，跨秒后会寻找另一备份名；统一 stamp 须在所有产物前只定义一次** | 旧稿 `$stamp` 有**两处** `Get-Date`（步骤 1 与 2.4.0）。两者若跨秒 ⇒ `$bak`（2.2 用前者）与 2.4.3 的 `$bak`（用后者）**指向不同文件名**，2.4.3 找不到备份即 `throw`，或更糟：找到**另一时刻**的备份。<br>已改为：新增 **步骤 0**，`$stamp`/`$dataDir`/`$py` **只在此生成一次**，并落盘 `data\upgrade-stamp.txt` 作唯一权威；**删除步骤 1 与 2.4.0 的第二处定义**（全文 `Get-Date` 仅 1 处，已 grep 复核）；重开窗口从文件**读回**，明令不得重算。<br>另加 **2.4.7b 单 stamp 关联链**（14 项产物 ↔ 谁消费），供逐个核对时间戳逐字相同 |
-| 2 | **若主张用 `$pyVerify` 验证，实际命令不能仍用升级后的 `$py`；版本/source_id 不符须机器拒绝** | 旧稿 2.4.4 正例用的是 `& $py $tool --mode verify`，与"用留存解释器"的主张**自相矛盾**。<br>已改为：2.4.4 **正例**与 2.4.5 **两处负例**（WAL 错配 / 合成 fixture）的 `verify`、以及合成 fixture 的 `baseline`，**全部改用 `$pyVerify`**；并在 2.4.4 命令前 `if (-not $pyVerify) { throw ... }`。<br>机器拒绝侧：工具在比对前先比 `duckdb_version` 与 `source_id`，不符即 `CROSS-VERSION-INCOMPARABLE` + **exit=5** 且**不输出 `OK`**（该门在 r5 已实现，本轮把调用侧对齐） |
-| 3 | **`sys.prefix` 复制或 wheel 下载不等于环境可用** | 已改为：复制成功后**必须**用**复制出来的那个 python** 实跑 `import duckdb` 并查 `pragma_version()`，机器比对 `duckdb` 版本与 `source_id`，全部通过才算留存成功；任一步失败即 `throw`。<br>并明确**取消"三选一"**：唯一配方为复制 `sys.prefix`；wheel/重建仅作失败后的降级，且**同样要过这套机器校验**，不得以"下载成功"代替"环境可用" |
-| 4 | **复制目标若位于源子树，须写前拒绝递归收自己** | 新增**写前机器拒绝**两条：<br>①`$pyKeep -eq $srcPrefix`（目标==源）⇒ 拒绝；<br>②`$pyKeep.StartsWith($srcPrefix + '\')`（目标在源子树内）⇒ 拒绝。<br>理由：`robocopy <src> <src 内部某目录> /E` 会把刚写出的目标再当作源内容继续复制，**无限自我递归**（磁盘暴涨/挂死）。判据用 `GetFullPath` + `TrimEnd('\')` 归一化后再比，避免 `\`／相对路径绕过 |
-| 5 | **先交唯一可审留存配方和精确合成用例清单，不让客户承担首测** | 留存配方已收敛为**唯一一条**（复制 `sys.prefix`）+ 三条机器校验（写前拒递归 / 可用性 / 版本与 source_id）。<br>新增 **2.4.9 合成用例清单 U1–U15**，逐条给「目标 / 构造方式 / 预期输出 / 预期 exit」，并**明写现状：全部未执行**、客户不承担首测、由我们补测证明后才算数 |
-| 6 | （历轮成果保留）同版本门 / 撤强度承诺 / 七面覆盖 / 空 schema 纳登记 / 必需 SET 即停 / 非 0 真阻断 | 均保留 |
+| 1 | 执行件与批准值一致性 | ✅ `DAFAB11E86C4671461B17893B923052CAC0AD64FB436337DE9D9CDAE8E8A24C0` **逐位一致** |
+| 2 | 保持 PS 5.1 / 解释器，不临场紧凑化 | ✅ `5.1.26100.9711` / `Python311`（3.11.9），脚本未改一字符 |
+| 3 | 新证据根先于 HOST | ✅ `STAGE BOOTSTRAP rc=0` 在 `HOST` 之前 |
+| 4 | 原生命令先完整取输出并保存 rc | ✅ `PY-RUN-RC = 0`，无管道截断 |
+| 5 | 新合成根仅三 txt | ✅ 实测 `a/b/c.txt` 各 1 B，0 子目录，0 重解析点 |
+| 6 | 扫描五值 + rc0 | ✅ `0/1/3/0/0`，`scanRc=0` |
+| 7 | PS1 BOM | ✅ `GATE-BOM = EF BB BF` |
+| 8 | 目标 Parser 静态解析 | ✅ `GATE-PARSE = OK` |
+| 9 | 基线消费闸接受 | ✅ 未抛异常，输出五值自述行 |
+| 10 | 六负控按预期拒绝 | ✅ **6/6**（WALK/LSTAT/LINKS/DIRS/RC=8/RC=7） |
+| 11 | 还原基线 | ✅ `STAGE RESTORE rc=0` |
+| 12 | 首失败也落 verdict/stages/runner | ✅ 本轮无失败；机制已在 r3 验证过（r3 未落证缺陷已修） |
+| 13 | 退出码 | **0** |
+| 14 | 边界（不清理/不 junction/不 ACL/不复制/不 pip/不升级/不下发/不提交） | ✅ 全部遵守 |
 
-**本轮静态闭合核对（grep 实测）**
+**三次执行对照**
 
-| 项 | 结果 |
+| 轮次 | stamp | 结果 | 原因 |
+|---|---|---|---|
+| r2 | `20261116T143939` | 五值全对，闸**解析**失败 | PS1 副本**无 BOM** ⇒ PS 5.1 按 GBK 读 ⇒ 中文乱码 |
+| r3 | `20261116T154753` | **HOST 假失败** | `Select-Object -First 1` 提前关管道 ⇒ `$LASTEXITCODE = -1` |
+| **r4** | **`20261116T195917`** | **PASS（13/13 阶段）** | 三处 runner 修订 + PS1 带 BOM |
+
+**本轮对账（实测）**
+
+| 项 | 读数 |
 |---|---|
-| 全文 `$stamp = Get-Date` 处数 | **1**（步骤 0）✅ |
-| stamp 找回入口 | `data\upgrade-stamp.txt`（步骤 0 写入；重开窗口读回）✅ |
-| `verify` 调用点解释器 | 正例 1 处 + 负例 2 处，**全部 `$pyVerify`**✅；`baseline` 仍用 `$py`（升级前，正确） |
-| 写前拒递归 | 目标==源 / 目标在源子树，**两条**✅ |
-| 合成用例清单 | **U1–U15**，标注全部未执行 ✅ |
-| 用例是否已执行 | **否**（本轮边界：不跑新补测）⚠ |
-| **62 GB 耗时与峰值内存** | **仍未实测**，继续明列 |
+| 阶段 rc | **12 项为 `0`；NEGCONTROLS 一项的字面值是 `6/6`（不是 `0`）** —— 不得概称「每行均 rc=0」 |
+| `scanRc` / 五值 | **0** / `LINKS 0`·`DIRS 1`·`ROOT_ENTRIES 3`·`WERR 0`·`LERR 0` |
+| `GATE-BOM` / `GATE-PARSE` | **`EF BB BF`** / **OK** |
+| 消费闸 | **接受**（`dirs=1, root_entries=3`） |
+| 六负控 | **6/6 按预期原因被拒**；还原后基线仍通过 |
+| 提取件逐字节核 | 扫描器 **2165 B 一致**；闸 **2209 B 含 BOM 一致** |
+| 根目录 | 3 文件 / 0 子目录 / 0 重解析点，`st_file_attributes=0x10` |
+| runner 退出码 | **0** |
+| 证据文件 | **10 个**（含 `runner-identity.txt` / `hashes.tsv`） |
+| 现场是否清理 | **未清理**（143939 / 154753 / 195917 + 候选目录全在位） |
+| U1–U32 执行 | 仅 S0b 相关；**其余仍未执行** |
+| **62 GB 耗时与峰值** | **仍未实测** |
 
 **口径来源（内部随附）**：
 - 放行集合与判定源：`quantstudio/pipeline/duckdb_version_policy.py`

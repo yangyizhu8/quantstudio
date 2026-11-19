@@ -1,0 +1,37 @@
+# U18 / ENC / U26 完整驱动 · 运行回执
+
+stamp            = 20261118T134528Z
+evDir            = D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u18-u26-run-20261118T134528Z
+notice_sha256    = 5C60A4DDA2F0E213DA367716782E0D28E0302C3DDF89E1D422051697E85143B3
+notice_sha_prev  = 771D20A488CD61748F0D77FC46319AFB64F57D68104CEE2A46BDB6CE022249D2
+notice_sha_note  = MATCHES-KNOWN
+host_ps          = 5.1.26100.9711
+host_exe         = C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+py_exe           = C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe
+py_ver           = 3.11.9
+py_sha256        = 5F7B89A612C9B8AF1D6456CDFCD1DBE5CA630849E79AEBCED9BEE9A6694952EC
+py_identity      = SAME-AS-S0B
+real_prefix_ascii= Y   # Y=真实 sys.prefix 纯 ASCII ⇒ A 组只证路径面，不证内容编码
+pin_F1/F2        = 1DD4DC464640BCDBDB2AAB3F6E85992FB6FDFBCE31D3B276E8DC2F60B0DB234F / 8B725BA145C6D0EB9EB0796922F604FA9AF86C71272E34C9267FFA84D61C486B
+pin_COLLECT      = 223231A658589E11C1449D465449C7FF62DA07120F35697AA622D710A56DD945
+pin_RT           = C0E57F7C8A47C3FF38D0FB7640F16CE3DD5B365BB4AD8C30EE7D5B828D080A8F
+pin_PARSERS      = 9545FF90F59F8D7C3E8449051FD5BC14C9B4A2561EA9FC8448E8DC4BB62C82EB
+pin_EQATTR       = 18AF80E87BB2B67130F7532EA1EE8ECEBF3EA6DDB529CD8A77894F2F09CE6CBE
+scope            = NOTICE
+groups           = 0   # PROBE=0（非业务组）；ENC+U26=2；EQATTR=1；ALL=3
+business_groups  = 2   # 业务两组：ENC + U26；EQATTR 属 U26 子范围（不另计组）
+plan_by_group    = ENC=5 U26=8 U18=7   # 全量登记
+plan_assertions  = 0
+reached          = 0
+not_reached      = 0
+py_calls         = 2
+cases_pass       = 0/0
+negcontrols      = 0/0   # 纯内存负控，不计入业务分母
+neg_in_denominator= NO
+stamp_utc        = 20261118T134528Z
+stamp_local      = 20261118T214528
+digest_pin       = 158746396792143BEE1A5A2DCEA36C0489A49DADED8BEFEAB9A2C8E110392EFB
+isolation_note   = 隔离模式仅试支路；生产顺序为先 FILE 后 PFX，不存在绕过路径
+verdict          = PASS
+
+## 逐条（plan 全量）

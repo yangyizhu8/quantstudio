@@ -1,0 +1,1 @@
+SCAN-ROOT-INVALID D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u27-u28-u32-run-20261116T232256\no-such-leaf

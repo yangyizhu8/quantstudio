@@ -1,0 +1,4 @@
+-    $L.Add('groups           = ' + $(if($Scope -eq 'PROBE'){'0'}elseif($Scope -eq 'ALL'){'3'}elseif($Scope -eq 'EQATTR'){'1'}else{'2'}) + '   # PROBE=0（非业务组）；ENC+U26=2；ALL=3') | Out-Null
+-    $L.Add('business_groups  = 2   # 业务两组：ENC + U26（PROBE 模式未执行）') | Out-Null
++    $L.Add('groups           = ' + $(if($Scope -eq 'PROBE'){'0'}elseif($Scope -eq 'ALL'){'3'}elseif($Scope -eq 'EQATTR'){'1'}else{'2'}) + '   # PROBE=0（非业务组）；ENC+U26=2；EQATTR=1；ALL=3') | Out-Null
++    $L.Add('business_groups  = 2   # 业务两组：ENC + U26；EQATTR 属 U26 子范围（不另计组）') | Out-Null

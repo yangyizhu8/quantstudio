@@ -1,0 +1,16 @@
+id	item	arg	expect	got	pass
+C1-ACCEPT-FULL	C1-U27	D:\qssyn\data	OK|D:\qssyn\data	OK|D:\qssyn\data	Y
+C1-REJ-DRIVREL	C1-U27	D:qssyn\data	THREW|驱动器相对	THREW|驱动器相对	Y
+C1-REJ-DRIVREL-BARE	C1-U27	D:	THREW|驱动器相对	THREW|驱动器相对	Y
+C1-REJ-NONABS	C1-U27	qssyn\data	THREW|不是绝对路径	THREW|不是绝对路径	Y
+C1-REJ-UNC	C1-U27	\\server\share\x	THREW|UNC	THREW|UNC	Y
+C2-ROOT-KEEP	C2-U32	D:\	OK|D:\	OK|D:\	Y
+C2-ROOT-FWDSLASH	C2-U32	D:/	OK|D:\	OK|D:\	Y
+C2-OLD-FORM-CTRL	C2-U32	[D:\].TrimEnd(\)	D:	D:	Y
+C2-EVDIR-CHAIN	C2-U32	D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u27-u28-u32-run-20261116T232256 →链检查	OK|D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u27-u28-u32-run-20261116T232256	OK|D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u27-u28-u32-run-20261116T232256	Y
+C3-BADROOT-RC	C3-U28	D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u27-u28-u32-run-20261116T232256\no-such-leaf → rc	8	8	Y
+C3-BADROOT-MSG	C3-U28	D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u27-u28-u32-run-20261116T232256\no-such-leaf → stdout	HAS-SCAN-ROOT-INVALID	HAS-SCAN-ROOT-INVALID	Y
+C3-BADROOT-NO-COUNTS	C3-U28	不得出现 SCAN-LINKS	ABSENT	ABSENT	Y
+C3-CTRL-RC	C3-U28	evDir → rc	0	0	Y
+C3-CTRL-ROOTENTRIES	C3-U28	evDir → stdout	HAS-SCAN-ROOT-ENTRIES	HAS-SCAN-ROOT-ENTRIES	Y
+C3-CTRL-NO-INVALID	C3-U28	不得报 ROOT-INVALID	ABSENT	ABSENT	Y

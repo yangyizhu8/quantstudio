@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "D:\miniQMT策略实盘\QuantStudio\docs\evidence\duckdb-v6-u18-u26-run-20261117T034521Z\_synth.py", line 35, in <module>
+    with open(dst, "w", encoding="ascii", newline="\n") as f: f.write(s)
+                                                              ^^^^^^^^^^
+UnicodeEncodeError: 'ascii' codec can't encode characters in position 40-41: ordinal not in range(128)
