@@ -1,0 +1,8 @@
+# AGENTS.md 变更记录·历史归档
+
+> 2026-11-22 起旧版变更记录迁此（AGENTS.md 内只留最近两条+指针），原文逐字未改。
+
+- **2026-11-10 v2.2（铁律 03 脏树场景修订·用户裁定 2026-11-10 批卅七「裁定 1：甲」落位）**：多会话共享工作树下 `git stash create` 会吞他线未提交改动（11-09/10 三案实测 39/13/3 文件）——增补：**A 脏树判定**（status 含非本会话 M/?? 即脏·他线清单落盘）；**B 脏树禁 stash create，改 per-path 定向 patch 锚**（`git diff --output=`·禁 PS5.1 `>` 写 patch〔UTF-16〕·锚登记 sha256·**B5 同文件混两方改动⇒停手上呈**）；**C E-6 立验句**（任何形式回退点建后必立验可用——patch `git apply --check --reverse`／stash `git stash show --stat`——不过视同无回退点停手重建）；**D 原条款保留**（净树四步配方不变·create 位置参数无 -m 沿 11-09 勘误）。配套：铁律 10 第①条改引「修订后配方（脏树用 patch 锚）」；归档版 knowledge/iron-rules/03-写前快照.md 同步增修订节。预算门四查全绿（33,697B/25×91 词/指针闭合/孤儿 0）。执行细则增补（㉑ 11-10 锚污染案）：patch 锚立验=反向应用通过**且锚内每个 .py 可编译**。
+- **2026-10-26 v2.1（门禁挂载实态补齐 · 修复「声称已挂、实态零引用」）**：v2 声明「四查挂 `.githooks/pre-push`」在 2026-10-25 入库时**仅脚本入库（4bb6aac）、钩子零引用**，声明与实态不符。本笔补齐：`.githooks/pre-push` 在 C7 闸**之前**新增铁律预算门（**内容级检查 ⇒ 对一切 remote/分支生效**，含非 main、sha 形态 refspec、多 push URL），`fail-closed`（找不到 python 或脚本即 exit 9，与既有「未找到 pwsh 即拒推」同纪律）。**自本笔起「挂 `.githooks/pre-push`」的声明为真。** 实测：`sh -n` 语法 OK；非 main 分支命中预算门且 exit 0；main 分支两闸串联（budget PASS → `[prepush-gate]` 范围列举）。当前四查：AGENTS.md 32,307 B / 链 48,811 B / 25 条×91 词命中 / 指针 25 双向闭合 / 孤儿 0。
+- 2026-10-25 v2（方案 B 瘦身治理）：59,357 B → 32,307 B；25 条铁律零丢失（A×4 逐字常驻 / B×7 精简 / C×14 摘要），完整版逐字归档 `knowledge/iron-rules/`（sha 对拍，manifest 见 `docs/handoff/iron-rules-archive-manifest-20261025.json`）；门禁 `scripts/check-iron-rules-budget.py` 四查挂 `.githooks/pre-push`（**挂载实态见 v2.1**）；kb-info.yaml 登记 `kb-iron-rules`。方案：docs/handoff/AGENTS-md-瘦身治理方案-20261025.md；盘点预演：docs/handoff/AGENTS-md-瘦身-盘点预演-20261025.md。
+- v1（2026-10-25 前）：全文 59,357 B，25 条铁律全文常驻；完整内容即 `knowledge/iron-rules/` 各归档文件（git 历史可 `git show a6079073:AGENTS.md` 取回）。

@@ -29,7 +29,7 @@ CLAUDE = REPO / "CLAUDE.md"
 IRON_DIR = REPO / "knowledge" / "iron-rules"
 GLOBAL = Path.home() / ".dsh" / "AGENTS.md"
 
-LIMIT_AGENTS = 40_000   # 本仓 AGENTS.md 上限（方案 §二）
+LIMIT_AGENTS = 32_000   # 本仓 AGENTS.md 上限（方案 §二；2026-11-22 v2.4 收紧：Codex agents_md.load max_total=32,768 实证截断，尾部铁律不可见=失效，故线内收至 32,000 留 768B 余量）
 LIMIT_CHAIN = 60_000    # 链合计 FAIL 线（方案 §四判据 1）
 WARN_GLOBAL = 20_000    # 全局告警线（2026-10-25 用户补强条件 2；WARN 不拦截）
 FRAMEWORK_OVERHEAD = 500  # 框架自身注入开销（方案 §二账目），仅作展示，不并入 FAIL 判定
@@ -61,6 +61,9 @@ RULES = {
     "23-WAL残留处置":         ["check_wal", "CHECKPOINT", "256MB", "duckdb"],
     "24-schema指纹加列":      ["partial_or_mixed", "verify_fingerprint", "SCHEMA_VERSION", "detect_schema_status"],
     "25-上游可变因子判据":    ["结构化版本差", "fund_adj", "fail-closed", "数据损坏"],
+    "26-移植执审两席制":      ["执审两席制", "层 0 前置", "正本锚定", "分歧双呈"],
+    "27-逐会话审核同步输出":  ["同步输出", "逐会话独立成块", "继续待命", "四要素"],
+    "28-多会话裁定批量呈报":  ["合并裁定包", "批量呈报", "decision_key", "批量下发"],
 }
 
 fails = []
